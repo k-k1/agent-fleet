@@ -54,7 +54,14 @@ type CP interface {
 	CountRunningInTenant(ctx context.Context, tenantID string) (int, error)
 	WorkspaceStateByMembership(ctx context.Context, membershipID string) (container, state string)
 	StopWorkspaceByMembership(ctx context.Context, membershipID string) error
+	// CleanHomeByMembership returns runtime.ErrHomeWipeUnsupported, having stopped
+	// nothing, on a runtime that cannot reach the workspace home.
 	CleanHomeByMembership(ctx context.Context, membershipID string) error
+	// HomeBackupsByMembership / DeleteHomeBackupsByMembership reach the copies of a
+	// member's home that the runtime keeps outside it. supported=false on a runtime that
+	// keeps none, which is every runtime but the EC2 slot pool.
+	HomeBackupsByMembership(ctx context.Context, membershipID string) (b runtime.HomeBackups, supported bool, err error)
+	DeleteHomeBackupsByMembership(ctx context.Context, membershipID string) (deleted int, supported bool, err error)
 	// ResizeHomeByMembership pushes a member's just-saved disk request at the home
 	// they already have. Called after PutUserLimit, never instead of it: the row is
 	// the intent and is kept whatever the volume can do today (runtime.HomeResize

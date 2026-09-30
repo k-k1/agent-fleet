@@ -115,3 +115,44 @@ describe("wsPowerStops / wsStartBusy", () => {
     expect(wsStartBusy("stopped")).toBe(false);
   });
 });
+
+// recreate / cleanHome report what the CP answered, and whether the workspace was left as it
+// was. The Danger zone uses the second half to decide whether to reset the member's panes: a
+// refusal (not available on this deployment, another operation holding the lease, a stop that
+// failed) stopped nothing, so closing every pane for it would be damage for no reason.
+describe("workspace store recreate / cleanHome failures", () => {
+  const answer = (status: number, body: unknown) =>
+    ({
+      ok: status >= 200 && status < 300,
+      status,
+      statusText: "",
+      headers: { get: () => "application/json" },
+      text: () => Promise.resolve(JSON.stringify(body)),
+    }) as unknown as Response;
+  const serve = (lifecycle: Response) =>
+    fetchMock.mockImplementation((...args: unknown[]) =>
+      Promise.resolve(
+        /recreate|clean-home/.test(String(args[0])) ? lifecycle : answer(200, { state: "running" }),
+      ),
+    );
+
+  for (const op of ["recreate", "cleanHome"] as const) {
+    it(`${op}: a refusal before anything stopped is localized and marked untouched`, async () => {
+      serve(answer(501, { error: { code: "home_wipe_unsupported", message: "not available here" } }));
+      const fail = await useWorkspaceStore.getState()[op](true);
+      expect(fail?.untouched).toBe(true);
+      expect(fail?.message).toContain("この配備では使えない操作です");
+    });
+
+    it(`${op}: a failure after the stop is not untouched`, async () => {
+      serve(answer(500, { error: { code: "internal", message: "remove home/repos: permission denied" } }));
+      const fail = await useWorkspaceStore.getState()[op](true);
+      expect(fail).toEqual({ message: "remove home/repos: permission denied", untouched: false });
+    });
+
+    it(`${op}: success is null`, async () => {
+      serve(answer(200, { name: "af-ws-x", state: "running" }));
+      expect(await useWorkspaceStore.getState()[op](true)).toBeNull();
+    });
+  }
+});

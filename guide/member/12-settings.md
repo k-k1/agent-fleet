@@ -480,7 +480,8 @@ your **AWS profiles/SSM** registrations, and your **agent instructions**.
 ### Danger zone
 
 **Recreate the workspace** (delete `~/repos` only and rebuild from the latest image) and **clean home** (a
-deeper reset that also removes home except logins and connections). Both lose uncommitted changes.
+deeper reset that also removes home except logins and connections). Both lose uncommitted changes. The tab
+appears only on deployments that can perform them.
 → [10 Going further](10-integrations.md#recreating-the-workspace-danger-zone)
 
 ---

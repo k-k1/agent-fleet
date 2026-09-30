@@ -63,6 +63,14 @@ type fakeEC2 struct {
 	modificationState ec2types.VolumeModificationState
 	// modifyErr forces ModifyVolume to fail, standing in for EBS's 6-hour cooldown.
 	modifyErr error
+	// snapshotHidden keeps a snapshot out of the next N DescribeSnapshots calls, the way
+	// the eventually consistent API can miss one that was created a moment ago.
+	snapshotHidden map[string]int
+	// snapshotGone makes DeleteSnapshot answer NotFound for a snapshot, standing in for
+	// one that something else deleted after it was listed.
+	snapshotGone map[string]bool
+	// deleteVolumeErr makes DeleteVolume fail without deleting.
+	deleteVolumeErr error
 }
 
 func newFakeEC2() *fakeEC2 {
@@ -75,6 +83,9 @@ func newFakeEC2() *fakeEC2 {
 		runErr:    map[string]error{},
 
 		modifications: map[string]*ec2types.VolumeModification{},
+
+		snapshotHidden: map[string]int{},
+		snapshotGone:   map[string]bool{},
 	}
 }
 
@@ -357,6 +368,9 @@ func (f *fakeEC2) DeleteVolume(_ context.Context, in *ec2.DeleteVolumeInput, _ .
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.log("DeleteVolume %s", aws.ToString(in.VolumeId))
+	if f.deleteVolumeErr != nil {
+		return nil, f.deleteVolumeErr
+	}
 	delete(f.volumes, aws.ToString(in.VolumeId))
 	return &ec2.DeleteVolumeOutput{}, nil
 }
@@ -365,7 +379,11 @@ func (f *fakeEC2) DescribeSnapshots(_ context.Context, in *ec2.DescribeSnapshots
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := &ec2.DescribeSnapshotsOutput{}
-	for _, s := range f.snapshots {
+	for id, s := range f.snapshots {
+		if f.snapshotHidden[id] > 0 {
+			f.snapshotHidden[id]--
+			continue
+		}
 		if !filterMatch(in.Filters, func(name string) []string {
 			if strings.HasPrefix(name, "tag:") {
 				return []string{ec2TagValue(s.Tags, strings.TrimPrefix(name, "tag:"))}
@@ -414,6 +432,9 @@ func (f *fakeEC2) DeleteSnapshot(_ context.Context, in *ec2.DeleteSnapshotInput,
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.log("DeleteSnapshot %s", aws.ToString(in.SnapshotId))
+	if f.snapshotGone[aws.ToString(in.SnapshotId)] {
+		return nil, fmt.Errorf("InvalidSnapshot.NotFound: the snapshot '%s' does not exist", aws.ToString(in.SnapshotId))
+	}
 	delete(f.snapshots, aws.ToString(in.SnapshotId))
 	return &ec2.DeleteSnapshotOutput{}, nil
 }

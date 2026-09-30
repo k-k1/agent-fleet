@@ -6,7 +6,7 @@
 #   partial = the variable is assigned more than once, so the key set is not fully opened
 #   dyn     = a non-literal key is present, so the key set is not statically known and it cannot become a struct
 # A key gained or lost in this diff IS the wire possibly changing. State in the PR why it was retaken.
-# count: 140
+# count: 141
 admin_sessions.go adminAPI.allSessions x1 {sessions}
 admin_stats.go adminAPI.memberSessions x3 {sessions}
 admin_stats.go adminAPI.memberStats x1 {cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} cond{cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
@@ -58,6 +58,7 @@ internal/tenantsrv/tenants.go Admin.AddMembership x1 {role,tenant,user_key}
 internal/tenantsrv/tenants.go Admin.CleanHome x1 {cleaned,tenant}
 internal/tenantsrv/tenants.go Admin.CreateTenant x1 {existed,name,slug}
 internal/tenantsrv/tenants.go Admin.CreateTenant x1 {name,slug}
+internal/tenantsrv/tenants.go Admin.DeleteHomeBackups x1 {deleted,tenant}
 internal/tenantsrv/tenants.go Admin.DeleteMembership x1 {deleted,tenant}
 internal/tenantsrv/tenants.go Admin.DeleteTenant x1 {deleted,memberships_deleted}
 internal/tenantsrv/tenants.go Admin.DestroyWorkspace x1 {destroyed,leftovers,tenant}
@@ -142,7 +143,7 @@ workspace_handlers.go workspaceAPI.sessionsList x1 {sessions}
 workspace_handlers.go workspaceAPI.startResolved x1 {name,state}
 workspace_handlers.go workspaceAPI.stop x1 {error}
 workspace_handlers.go workspaceAPI.stop x1 {name,state}
-workspace_handlers.go workspaceAPI.whoami x1 {auth_mode,email,email_header,preferred_username,resolved_user,sanitized_user,scheduler_enabled,x_forwarded_user}
+workspace_handlers.go workspaceAPI.whoami x1 {auth_mode,email,email_header,home_backups,home_erase,home_wipe,preferred_username,resolved_user,sanitized_user,scheduler_enabled,x_forwarded_user}
 ws_settings.go wsSettingsAPI.get x1 {agentUpdate,allowAgentUpdate}
 ws_settings.go wsSettingsAPI.put x1 {agentUpdate,allowAgentUpdate}
 ws_settings.go wsSettingsAPI.reissuePreview x1 {agentUpdate,allowAgentUpdate,previewReissued}

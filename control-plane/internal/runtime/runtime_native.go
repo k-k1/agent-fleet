@@ -39,7 +39,7 @@ import (
 // The layout under dataDir mirrors the docker adapter exactly — home/ is the
 // process HOME (the docker bind-mount source), claude-config/ is CLAUDE_CONFIG_DIR
 // — so a workspace's data is portable between the two local runtimes, and
-// cleanHome / stageWorkspaceDocs / dirDiskUsage work unchanged.
+// wipeLocalHome / stageWorkspaceDocs / dirDiskUsage work unchanged.
 //
 // Two launch modes (docs/log/35 §35.7.2):
 //   - traditional (AF_NATIVE_AGENT_BIN): the host-built agent runs directly with

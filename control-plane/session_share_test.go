@@ -37,6 +37,11 @@ func (r *shareLifecycleRuntime) Endpoint() string             { return "" }
 func (r *shareLifecycleRuntime) Token() string                { return "" }
 func (r *shareLifecycleRuntime) Name() string                 { return "share-lifecycle" }
 
+// WipeHome makes recreate and clean-home reach the lifecycle lease: a runtime that cannot
+// wipe is refused before the lease is even asked for (home_wipe.go), and that is not what
+// these tests are about.
+func (r *shareLifecycleRuntime) WipeHome(context.Context, runtime.HomeWipe) error { return nil }
+
 func TestEffectiveSharePermission(t *testing.T) {
 	c := store.SharedSessionCatalog{OwnerMembershipID: "owner", Name: "s1", WorkingCopyID: "wc1"}
 	shares := []store.SessionShare{

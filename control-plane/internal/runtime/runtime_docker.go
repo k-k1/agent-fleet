@@ -540,10 +540,12 @@ func (d *dockerRuntime) Destroy(ctx context.Context) ([]string, error) {
 	return nil, nil
 }
 
-// homeKeep are the top-level ~ entries preserved by an admin "clean home": connection
+// homeKeep are the top-level ~ entries preserved by a "clean home": connection
 // secrets and auth/identity. Everything else under home (repos, caches, dotfiles)
 // is removed. Claude login also survives because it lives outside home (a separate
-// claude-config mount, docs/17 P3-5).
+// claude-config mount, docs/17 P3-5). ecs-ec2 keeps the same seven on EFS instead of in
+// the home (workspace/entrypoint.sh, AF_WS_KEEP), which is why an administrator's Clean
+// home there can delete the whole home volume (ecsEC2Runtime.EraseHome).
 var homeKeep = map[string]bool{
 	".config":          true, // agent-fleet encrypted secrets store (git/agent connections)
 	".ssh":             true, // git over SSH
@@ -554,14 +556,14 @@ var homeKeep = map[string]bool{
 	".codex":           true, // Codex CLI auth
 }
 
-// cleanHome removes everything under <dataDir>/home except the auth/connection
+// cleanHomeContext removes everything under <dataDir>/home except the auth/connection
 // entries in homeKeep. The caller MUST stop the container first — we mutate the host
 // bind-mount source, and deleting under a live mount risks inconsistency.
-func cleanHome(dataDir string) error {
-	return CleanHomeContext(context.Background(), dataDir)
-}
-
-func CleanHomeContext(ctx context.Context, dataDir string) error {
+//
+// Unexported so that only an adapter whose home IS <dataDir>/home can call it: from the
+// CP, on ECS, the same call answers success for a directory that does not exist
+// (home_wipe.go).
+func cleanHomeContext(ctx context.Context, dataDir string) error {
 	home := filepath.Join(dataDir, "home")
 	entries, err := os.ReadDir(home)
 	if err != nil {

@@ -44,3 +44,33 @@ func TestOnlyThePoolAdapterClaimsTheGoldenBake(t *testing.T) {
 		}
 	}
 }
+
+// The home ports (home_wipe.go). Claiming one is a promise the CP acts on: it stops the
+// workspace and reports the home wiped. An adapter that claimed one it cannot keep would
+// be the defect those ports exist to end — a success that removed nothing — so the
+// adapters that must NOT claim are pinned here.
+func TestHomePortsAreClaimedOnlyWhereTheHomeIsReachable(t *testing.T) {
+	// Fargate's home is on EFS, and nothing the CP runs can mount it: no ports at all.
+	fargate := any((*ecsRuntime)(nil))
+	if _, ok := fargate.(homeWiper); ok {
+		t.Error("ecsRuntime claims homeWiper, but the CP cannot reach an EFS home")
+	}
+	if _, ok := fargate.(homeEraser); ok {
+		t.Error("ecsRuntime claims homeEraser, but the CP cannot reach an EFS home")
+	}
+	if _, ok := fargate.(homeBackupKeeper); ok {
+		t.Error("ecsRuntime claims homeBackupKeeper, but Fargate keeps no copies of a home")
+	}
+	// The slot pool can erase (delete the volume) but not wipe for a member: emptying a
+	// home in place needs it mounted on a running slot, which a member's request behind the
+	// ingress idle timeout cannot wait for.
+	if _, ok := any((*ecsEC2Runtime)(nil)).(homeWiper); ok {
+		t.Error("ecsEC2Runtime claims homeWiper, but its wipe does not fit a member's request")
+	}
+	// Only the slot pool keeps backup copies.
+	for _, rt := range []any{(*dockerRuntime)(nil), (*nativeRuntime)(nil)} {
+		if _, ok := rt.(homeBackupKeeper); ok {
+			t.Errorf("%T claims homeBackupKeeper, but it keeps no copies of a home", rt)
+		}
+	}
+}

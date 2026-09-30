@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -300,6 +301,14 @@ const (
 	// StartTime, but the schedule is decided against this: a snapshot's StartTime is what
 	// AWS did, and the question here is when this deployment last asked.
 	EC2TagBackupAt = "af-backup-at"
+	// efsTagErasedVolumes records, on a member's keep access point, the home volumes an
+	// administrator's Clean home deleted (EraseHome). A hibernation snapshot names the
+	// volume it was taken from, so a snapshot of a recorded volume is a copy of an erased
+	// home, and restoreSnapshot never restores one — whenever it was taken and whether or
+	// not the erase's listings saw it. A snapshot of any other volume, such as the home
+	// created after the erase, is never affected. It lives on the access point because that
+	// is what outlives the erase. See eraseRecord for the two kinds of word it holds.
+	efsTagErasedVolumes = "af-home-erased-volumes"
 	// ec2TagImage stamps the golden snapshot with the workspace image it was baked from.
 	// A golden that predates an image or CLI-pin bump would start new users on the OLD
 	// tools, silently and only for them — so the CP compares and refuses a stale one
@@ -1369,8 +1378,12 @@ func (e *ecsEC2Runtime) prepare(ctx context.Context) (ec2Prep, error) {
 	// home is on EBS now, but the credentials/identity set stays on EFS: a single-AZ
 	// volume is one bad day away from taking the user's logins with it, and the whole
 	// keep-list is under 100 MiB (ADR 0045 decision 3-6). The entrypoint links ~ into it.
-	if p.keepAP, err = e.ensureAccessPoint(ctx, "keep-ec2", "/home-keep/"+e.base.membershipID); err != nil {
+	var rec eraseRecord
+	if p.keepAP, rec, err = e.ensureKeepAccessPoint(ctx); err != nil {
 		return p, fmt.Errorf("efs keep access point: %w", err)
+	}
+	if len(rec.pending) > 0 {
+		e.dropStalePendingErase(ctx, p.keepAP, rec)
 	}
 	if p.claudeAP, err = e.ensureAccessPoint(ctx, "claude-ec2", "/claude-config/"+e.base.membershipID); err != nil {
 		return p, fmt.Errorf("efs claude access point: %w", err)
@@ -1405,13 +1418,11 @@ func (e *ecsEC2Runtime) prepare(ctx context.Context) (ec2Prep, error) {
 // the rootDirectory paths are IDENTICAL — a deployment that switches profiles keeps its
 // Claude state and logins.
 func (e *ecsEC2Runtime) ensureAccessPoint(ctx context.Context, role, path string) (string, error) {
-	out, err := e.base.efs.DescribeAccessPoints(ctx, &efs.DescribeAccessPointsInput{
-		FileSystemId: aws.String(e.base.cfg.efsFileSystem),
-	})
+	aps, err := e.base.accessPoints(ctx)
 	if err != nil {
 		return "", err
 	}
-	for _, ap := range out.AccessPoints {
+	for _, ap := range aps {
 		if tagValue(ap.Tags, "af-membership") == e.base.membershipID && tagValue(ap.Tags, "af-role") == role {
 			return aws.ToString(ap.AccessPointId), nil
 		}
@@ -4078,11 +4089,281 @@ func (e *ecsEC2Runtime) Destroy(ctx context.Context) ([]string, error) {
 	// Backups are a different role and so are invisible to every other cleanup here.
 	// Without this they would outlive the person and bill forever — the exact thing
 	// Destroy exists to stop (docs/log/64 §64.18.1).
-	if err := e.deleteBackups(ctx); err != nil {
+	if _, err := e.deleteBackups(ctx); err != nil {
 		return nil, err
 	}
 	return e.base.Destroy(ctx)
 }
+
+// EraseHome is an administrator's Clean home on the slot pool: the home volume and its
+// hibernation snapshots are deleted, and the next start builds a fresh home the way a new
+// member's is built (from the golden snapshot, or empty).
+//
+// Deleting the volume rather than emptying it is what lets this happen now. Emptying needs
+// the filesystem mounted, and a stopped workspace's home is usually on a slot that has
+// gone to sleep (SSM cannot reach it), detached, or already a hibernation snapshot.
+// DeleteVolume works in every one of those states, and takes the same time whatever the
+// home holds.
+//
+// It is still Clean home and not Destroy. The seven homeKeep entries live on EFS
+// (ADR 0045 decision 3-6), and so does the Claude state, so the member's logins,
+// connections and identity survive. They survive as of the workspace's last start: a keep
+// file that a tool replaced since then, instead of writing through its link, sits on the
+// volume until the entrypoint moves it back at the next boot, and goes with the volume.
+//
+// The hibernation snapshots have to go as well, because createHomeVolume restores the
+// member's own snapshot before anything else; one left behind would hand the erased home
+// back at the next start. Backups stay: they are copies outside the home, and
+// DeleteHomeBackups is the separate step that removes them.
+func (e *ecsEC2Runtime) EraseHome(ctx context.Context) error {
+	if err := e.Stop(ctx); err != nil {
+		return err
+	}
+	// releaseSlot waits for the task to be gone and refuses while the service wants one,
+	// so a workspace somebody started in the meantime keeps its home.
+	if err := e.releaseSlot(ctx); err != nil {
+		return err
+	}
+	// Which volumes this erase makes history of: the live one, and the ones the listed
+	// hibernation snapshots were taken from (a hibernated home has no live volume).
+	vol, err := e.homeVolume(ctx)
+	if err != nil {
+		return err
+	}
+	snaps, err := e.homeSnapshots(ctx)
+	if err != nil {
+		return err
+	}
+	var candidates []string
+	if vol != nil {
+		candidates = append(candidates, aws.ToString(vol.VolumeId))
+	}
+	for _, sn := range snaps {
+		if v := aws.ToString(sn.VolumeId); v != "" {
+			candidates = append(candidates, v)
+		}
+	}
+	apID, rec, err := e.ensureKeepAccessPoint(ctx)
+	if err != nil {
+		return fmt.Errorf("keep access point of %s: %w", e.base.name, err)
+	}
+	// First, before anything is destroyed: these volumes are being erased. While any erase
+	// is pending no restore runs (restoreSnapshot), so from here on a failure can never
+	// hand the home back; and if this cannot be written, nothing is destroyed.
+	added := rec.markPending(candidates)
+	if len(added) > 0 {
+		if err := e.writeEraseRecord(ctx, apID, rec); err != nil {
+			return err
+		}
+	}
+	if err := e.deleteHomeVolume(ctx); err != nil {
+		// A DeleteVolume that answered an error may still have taken effect. A home that
+		// is really still there was not erased, so what this call marked is taken back —
+		// otherwise its legitimate hibernation copies would stay blocked.
+		if still, lerr := e.homeVolume(ctx); lerr != nil || still != nil {
+			rec.unmarkPending(added)
+			if werr := e.writeEraseRecord(ctx, apID, rec); werr != nil {
+				return fmt.Errorf("%w (and the pending erase could not be taken back, so this home cannot be restored from a hibernation until its owner starts it or Clean home runs again: %v)", err, werr)
+			}
+			return err
+		}
+	}
+	// The live volume is gone — a member has one — so every pending erase is now done:
+	// this call's, and any that an earlier attempt left.
+	rec.confirmPending()
+	recordErr := e.writeEraseRecord(ctx, apID, rec)
+	// No capture of the volume can start once it is gone. One that started just before —
+	// the pool sweeper advances a hibernation without the lifecycle lease this erase
+	// holds — can be missing from an eventually consistent listing, so look twice. The
+	// listings are cleanup; the record is what keeps such a copy from ever coming back.
+	if err := e.deleteHomeSnapshots(ctx); err != nil {
+		return errors.Join(recordErr, err)
+	}
+	if err := e.sleep(ctx, snapshotListingSettle); err != nil {
+		return errors.Join(recordErr, err)
+	}
+	return errors.Join(recordErr, e.deleteHomeSnapshots(ctx))
+}
+
+// eraseRecord is efsTagErasedVolumes read back. Each word is either a volume id — a home
+// that was erased — or "pending:<volume id>", an erase that has started and not finished.
+// A pending word is written before the erase destroys anything and becomes a plain id once
+// the volume is gone, so a failure at any point leaves either nothing destroyed or a
+// record that blocks the restore.
+type eraseRecord struct {
+	erased  []string
+	pending []string
+}
+
+const erasePendingPrefix = "pending:"
+
+func parseEraseRecord(v string) (eraseRecord, error) {
+	var r eraseRecord
+	for _, w := range strings.Fields(v) {
+		id, pending := strings.CutPrefix(w, erasePendingPrefix)
+		if !strings.HasPrefix(id, "vol-") {
+			return eraseRecord{}, fmt.Errorf("unreadable word %q", w)
+		}
+		if pending {
+			r.pending = appendNew(r.pending, id)
+		} else {
+			r.erased = appendNew(r.erased, id)
+		}
+	}
+	return r, nil
+}
+
+func (r eraseRecord) isErased(v string) bool { return slices.Contains(r.erased, v) }
+
+func (r eraseRecord) String() string {
+	words := append([]string(nil), r.erased...)
+	for _, v := range r.pending {
+		words = append(words, erasePendingPrefix+v)
+	}
+	return strings.Join(words, " ")
+}
+
+// markPending marks ids pending and returns the ones it added.
+func (r *eraseRecord) markPending(ids []string) []string {
+	var added []string
+	for _, v := range ids {
+		if v != "" && !slices.Contains(r.pending, v) {
+			r.pending = append(r.pending, v)
+			added = append(added, v)
+		}
+	}
+	return added
+}
+
+func (r *eraseRecord) unmarkPending(ids []string) {
+	r.pending = slices.DeleteFunc(r.pending, func(v string) bool { return slices.Contains(ids, v) })
+}
+
+func (r *eraseRecord) confirmPending() {
+	for _, v := range r.pending {
+		r.erased = appendNew(r.erased, v)
+	}
+	r.pending = nil
+}
+
+func appendNew(list []string, v string) []string {
+	if slices.Contains(list, v) {
+		return list
+	}
+	return append(list, v)
+}
+
+// efsTagValueMax is the longest value an EFS tag may hold.
+const efsTagValueMax = 256
+
+// writeEraseRecord stores rec on the keep access point. No id is ever dropped to make
+// room: that no copy of an erased volume is left cannot be told from an eventually
+// consistent listing, and a forgotten id makes such a copy restorable. A record that does
+// not fit fails the write instead — about ten volumes, and the pending mark is written
+// before anything is destroyed, so a full record refuses the erase. A transient refusal
+// is retried within the caller's budget.
+func (e *ecsEC2Runtime) writeEraseRecord(ctx context.Context, apID string, rec eraseRecord) error {
+	if n := len(rec.String()); n > efsTagValueMax {
+		return fmt.Errorf("the record of erased homes of %s is full (%d volumes need %d of %d characters) and never forgets one; Destroy removes this home together with the record",
+			e.base.name, len(rec.erased)+len(rec.pending), n, efsTagValueMax)
+	}
+	delay := 2 * time.Second
+	for attempt := 1; ; attempt++ {
+		_, err := e.base.efs.TagResource(ctx, &efs.TagResourceInput{
+			ResourceId: aws.String(apID),
+			Tags:       []efstypes.Tag{{Key: aws.String(efsTagErasedVolumes), Value: aws.String(rec.String())}},
+		})
+		if err == nil {
+			return nil
+		}
+		if attempt >= 6 {
+			return fmt.Errorf("write the erase record of %s: %w", e.base.name, err)
+		}
+		if serr := e.sleep(ctx, delay); serr != nil {
+			return fmt.Errorf("write the erase record of %s: %w", e.base.name, err)
+		}
+		delay *= 2
+	}
+}
+
+// eraseRecord reads the record; empty when no home of this member was ever erased.
+func (e *ecsEC2Runtime) eraseRecord(ctx context.Context) (eraseRecord, error) {
+	ap, err := e.keepAccessPoint(ctx)
+	if err != nil || ap == nil {
+		return eraseRecord{}, err
+	}
+	return e.parseKeepRecord(ap)
+}
+
+func (e *ecsEC2Runtime) parseKeepRecord(ap *efstypes.AccessPointDescription) (eraseRecord, error) {
+	rec, err := parseEraseRecord(tagValue(ap.Tags, efsTagErasedVolumes))
+	if err != nil {
+		// Unreadable is not "nothing erased": restoring an erased home is the one outcome
+		// this record exists to prevent, so the Start fails instead.
+		return eraseRecord{}, fmt.Errorf("%s on the keep access point of %s: %w", efsTagErasedVolumes, e.base.name, err)
+	}
+	return rec, nil
+}
+
+// ensureKeepAccessPoint is ensureAccessPoint for the keep role, also returning the erase
+// record its tags hold — one listing for both, since every Start asks.
+func (e *ecsEC2Runtime) ensureKeepAccessPoint(ctx context.Context) (string, eraseRecord, error) {
+	ap, err := e.keepAccessPoint(ctx)
+	if err != nil {
+		return "", eraseRecord{}, err
+	}
+	if ap == nil {
+		id, err := e.ensureAccessPoint(ctx, "keep-ec2", "/home-keep/"+e.base.membershipID)
+		return id, eraseRecord{}, err
+	}
+	rec, err := e.parseKeepRecord(ap)
+	return aws.ToString(ap.AccessPointId), rec, err
+}
+
+// dropStalePendingErase takes back every pending mark when this member's live home is one
+// of them. Start runs under the lifecycle lease, so no erase is running now: the erase
+// that marked the live volume failed before deleting it and could not take its marks back.
+// The other pending marks — older volumes a leftover copy came from — are from such an
+// erase too: an erase destroys only the live volume, and while a mark is pending no new
+// home can be created (restoreSnapshot), so a live home that is itself marked means no
+// pending erase got as far as destroying anything. Left in place, any of them would refuse
+// this very home's hibernation copy once it hibernates. Best-effort — marks left behind
+// only mean the restore path keeps refusing until this runs again.
+func (e *ecsEC2Runtime) dropStalePendingErase(ctx context.Context, apID string, rec eraseRecord) {
+	vol, err := e.homeVolume(ctx)
+	if err != nil || vol == nil || !slices.Contains(rec.pending, aws.ToString(vol.VolumeId)) {
+		return
+	}
+	stale := strings.Join(rec.pending, ", ")
+	rec.pending = nil
+	if err := e.writeEraseRecord(ctx, apID, rec); err != nil {
+		log.Printf("ecs-ec2: %s still carries a pending erase (%s) although %s is its live home: %v", e.base.name, stale, aws.ToString(vol.VolumeId), err)
+		return
+	}
+	log.Printf("ecs-ec2: took back a pending erase (%s); %s is still the live home of %s", stale, aws.ToString(vol.VolumeId), e.base.name)
+}
+
+// keepAccessPoint finds this member's keep access point (the role prepare creates), or nil.
+func (e *ecsEC2Runtime) keepAccessPoint(ctx context.Context) (*efstypes.AccessPointDescription, error) {
+	aps, err := e.base.accessPoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i, ap := range aps {
+		if tagValue(ap.Tags, "af-membership") == e.base.membershipID && tagValue(ap.Tags, "af-role") == "keep-ec2" {
+			return &aps[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// snapshotListingSettle is how long a deletion waits before listing snapshots a second
+// time. DescribeSnapshots is eventually consistent, and the snapshots these deletions race
+// are started by paths that take no lock against them (the pool sweeper's hibernation, the
+// reaper's backups); a copy created a moment before the first listing may be absent from
+// it. Measured on the sandbox account: a snapshot still pending is listed and deletable,
+// so the wait is for visibility only.
+const snapshotListingSettle = 10 * time.Second
 
 // deleteHomeVolume detaches (if needed) and deletes this workspace's home volume.
 // Absent volume = already done.
@@ -4215,6 +4496,20 @@ func (e *ecsEC2Runtime) hibernate(ctx context.Context) error {
 		}
 		switch s.State {
 		case ec2types.SnapshotStateCompleted:
+			// A Clean home that failed with this volume still here, and could not take its
+			// marks back, leaves them pending — and while any is, restoreSnapshot restores
+			// nothing, so deleting the volume would leave the home nowhere. It stays until
+			// the owner's Start takes the marks back or Clean home finishes. This step runs
+			// from the sweeper, without the lifecycle lease, which is why it asks here.
+			rec, err := e.eraseRecord(ctx)
+			if err != nil {
+				return err
+			}
+			if len(rec.pending) > 0 {
+				log.Printf("ecs-ec2 hibernate: %s has an unfinished Clean home (%s); keeping %s until it is resolved",
+					e.base.name, strings.Join(rec.pending, ", "), volumeID)
+				return nil
+			}
 			log.Printf("ecs-ec2 hibernate: %s captured in %s; deleting the volume",
 				e.base.name, aws.ToString(s.SnapshotId))
 			return e.deleteHomeVolume(ctx)
@@ -4321,9 +4616,34 @@ func (e *ecsEC2Runtime) unmarkHibernating(ctx context.Context, volumeID string) 
 // while their real one is still being captured — data loss dressed up as a fast start.
 // Returning an error instead makes the Start fail, which is the honest outcome.
 func (e *ecsEC2Runtime) restoreSnapshot(ctx context.Context) (string, error) {
-	snaps, err := e.homeSnapshots(ctx)
+	all, err := e.homeSnapshots(ctx)
 	if err != nil {
 		return "", err
+	}
+	rec, err := e.eraseRecord(ctx)
+	if err != nil {
+		return "", err
+	}
+	// An erase that has not finished may already have deleted the volume; whatever copy
+	// is listed now could be the home it was erasing. Refuse rather than guess.
+	if len(rec.pending) > 0 {
+		return "", fmt.Errorf("an erase of the home of %s did not finish (%s); run Clean home again to finish it",
+			e.base.name, strings.Join(rec.pending, ", "))
+	}
+	// A snapshot of an erased volume is a copy of an erased home — one the erase could not
+	// see yet (EraseHome). It is never restored, and it goes, so it stops billing and
+	// cannot be mistaken for anything later.
+	var snaps []ec2types.Snapshot
+	for _, s := range all {
+		if rec.isErased(aws.ToString(s.VolumeId)) {
+			log.Printf("ecs-ec2: %s is a copy of %s, a home of %s that was erased; deleting it instead of restoring it",
+				aws.ToString(s.SnapshotId), aws.ToString(s.VolumeId), e.base.name)
+			if _, err := e.ec2.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: s.SnapshotId}); err != nil && !isAWSNotFound(err) {
+				log.Printf("ecs-ec2: could not delete %s: %v", aws.ToString(s.SnapshotId), err)
+			}
+			continue
+		}
+		snaps = append(snaps, s)
 	}
 	// NEWEST completed, not first: a restore whose snapshot cleanup failed leaves an
 	// older one behind, and picking that would silently hand the user a home from two
@@ -4595,20 +4915,69 @@ func (e *ecsEC2Runtime) pruneBackups(ctx context.Context, snaps []ec2types.Snaps
 	return nil
 }
 
-// deleteBackups removes every backup of this membership. Only Destroy calls it: a backup
-// outliving its home is the entire point, so nothing short of "this person is being
-// removed for good" may take one.
-func (e *ecsEC2Runtime) deleteBackups(ctx context.Context) error {
+// deleteBackups removes every backup of this membership and returns how many it removed.
+// Only two things call it: Destroy, and an administrator deleting the backups on purpose
+// (DeleteHomeBackups). A backup outliving its home is the entire point, so no cleanup,
+// sweep or Clean home may take one as a side effect.
+func (e *ecsEC2Runtime) deleteBackups(ctx context.Context) (int, error) {
 	snaps, err := e.backupSnapshots(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
+	n := 0
 	for _, s := range snaps {
-		if _, err := e.ec2.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: s.SnapshotId}); err != nil && !isAWSNotFound(err) {
-			return fmt.Errorf("delete backup %s: %w", aws.ToString(s.SnapshotId), err)
+		_, err := e.ec2.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: s.SnapshotId})
+		switch {
+		case err == nil:
+			n++
+		case isAWSNotFound(err):
+			// Gone already — another deletion got there first. Not ours to count.
+		default:
+			return n, fmt.Errorf("delete backup %s: %w", aws.ToString(s.SnapshotId), err)
 		}
 	}
-	return nil
+	return n, nil
+}
+
+// HomeBackups counts this member's backup copies for the administrator deciding whether
+// to delete them.
+func (e *ecsEC2Runtime) HomeBackups(ctx context.Context) (HomeBackups, error) {
+	snaps, err := e.backupSnapshots(ctx) // newest first
+	if err != nil {
+		return HomeBackups{}, err
+	}
+	vol, err := e.homeVolume(ctx)
+	if err != nil {
+		return HomeBackups{}, err
+	}
+	out := HomeBackups{Count: len(snaps), HomeExists: vol != nil}
+	if len(snaps) > 0 {
+		out.Newest = backupStamp(snaps[0])
+	}
+	return out, nil
+}
+
+// DeleteHomeBackups is the step Clean home leaves out on purpose (see EraseHome). A copy
+// still being captured is deleted too: it would otherwise complete a moment later and
+// hold the very home the administrator meant to be rid of.
+//
+// The reaper takes backups without a lock, so one it started as the first listing was
+// read — or just before a Clean home deleted the volume it copies — can be missing from
+// it; the second listing after snapshotListingSettle catches that in all but an extreme
+// case. A backup is never restored automatically, so one that surfaces even later is not
+// a silent return of the home: it shows in the member's count and can be deleted again. A
+// copy the schedule takes after this returns is a new backup of the home as it now is —
+// which is why an offboarding cleans the home first.
+func (e *ecsEC2Runtime) DeleteHomeBackups(ctx context.Context) (int, error) {
+	n, err := e.deleteBackups(ctx)
+	if err != nil {
+		return n, err
+	}
+	if err := e.sleep(ctx, snapshotListingSettle); err != nil {
+		return n, err
+	}
+	m, err := e.deleteBackups(ctx)
+	return n + m, err
 }
 
 // --- drift sweeper (docs/log/64 §64.15.6) ---

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -109,12 +110,35 @@ type fakeEFS struct {
 	createCalls []*efs.CreateAccessPointInput
 	deleteCalls []*efs.DeleteAccessPointInput
 	n           int
+	// pageSize, when set, pages DescribeAccessPoints the way the real API does (at most
+	// 100 per call, NextToken for the rest).
+	pageSize int
+	// tagErr makes TagResource fail; tagErrOn, when set, decides per call (1-based).
+	tagErr   error
+	tagErrOn func(call int) error
+	tagCalls int
 }
 
-func (f *fakeEFS) DescribeAccessPoints(_ context.Context, _ *efs.DescribeAccessPointsInput, _ ...func(*efs.Options)) (*efs.DescribeAccessPointsOutput, error) {
+func (f *fakeEFS) DescribeAccessPoints(_ context.Context, in *efs.DescribeAccessPointsInput, _ ...func(*efs.Options)) (*efs.DescribeAccessPointsOutput, error) {
 	// A COPY, like the real API: a caller that deletes while iterating its own listing
 	// (Destroy does exactly that) must not have the slice change under it.
-	return &efs.DescribeAccessPointsOutput{AccessPoints: append([]efstypes.AccessPointDescription(nil), f.aps...)}, nil
+	all := append([]efstypes.AccessPointDescription(nil), f.aps...)
+	if f.pageSize <= 0 {
+		return &efs.DescribeAccessPointsOutput{AccessPoints: all}, nil
+	}
+	start := 0
+	if in.NextToken != nil {
+		start, _ = strconv.Atoi(aws.ToString(in.NextToken))
+	}
+	end := start + f.pageSize
+	out := &efs.DescribeAccessPointsOutput{}
+	if end < len(all) {
+		out.AccessPoints = all[start:end]
+		out.NextToken = aws.String(strconv.Itoa(end))
+	} else if start < len(all) {
+		out.AccessPoints = all[start:]
+	}
+	return out, nil
 }
 func (f *fakeEFS) CreateAccessPoint(_ context.Context, in *efs.CreateAccessPointInput, _ ...func(*efs.Options)) (*efs.CreateAccessPointOutput, error) {
 	f.createCalls = append(f.createCalls, in)
@@ -123,6 +147,37 @@ func (f *fakeEFS) CreateAccessPoint(_ context.Context, in *efs.CreateAccessPoint
 	// Reflect the new AP into the listing so a second ensure reuses it.
 	f.aps = append(f.aps, efstypes.AccessPointDescription{AccessPointId: id, Tags: in.Tags})
 	return &efs.CreateAccessPointOutput{AccessPointId: id}, nil
+}
+
+func (f *fakeEFS) TagResource(_ context.Context, in *efs.TagResourceInput, _ ...func(*efs.Options)) (*efs.TagResourceOutput, error) {
+	f.tagCalls++
+	if f.tagErr != nil {
+		return nil, f.tagErr
+	}
+	if f.tagErrOn != nil {
+		if err := f.tagErrOn(f.tagCalls); err != nil {
+			return nil, err
+		}
+	}
+	for i, ap := range f.aps {
+		if aws.ToString(ap.AccessPointId) != aws.ToString(in.ResourceId) {
+			continue
+		}
+		for _, nt := range in.Tags {
+			replaced := false
+			for j, t := range ap.Tags {
+				if aws.ToString(t.Key) == aws.ToString(nt.Key) {
+					f.aps[i].Tags[j].Value = nt.Value
+					replaced = true
+				}
+			}
+			if !replaced {
+				f.aps[i].Tags = append(f.aps[i].Tags, nt)
+			}
+		}
+		return &efs.TagResourceOutput{}, nil
+	}
+	return nil, fmt.Errorf("AccessPointNotFound: %s", aws.ToString(in.ResourceId))
 }
 
 func (f *fakeEFS) DeleteAccessPoint(_ context.Context, in *efs.DeleteAccessPointInput, _ ...func(*efs.Options)) (*efs.DeleteAccessPointOutput, error) {

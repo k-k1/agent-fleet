@@ -59,7 +59,7 @@ updated: "2026-09"
 | **停止は二段の graceful** | シグナル → `AF_STOP_GRACE_SEC`（既定 30）待つ → kill。Agent には、その猶予から 5 秒の余裕を引いた `AGENT_STOP_GRACE_SEC` を渡し、pane を中断して tmux を先に終わらせる。この導出は 5 秒を下限にするので、猶予を 10 未満にすると余裕が無くなる（`runtime_docker.go` の `stopGraceSec` / `agentStopGraceSec`、[03 §3.3](03-control-plane.ja.md)）|
 | **CP が常に届くエンドポイント** | `Endpoint()` は、あなたの形態が CP を動かす場所から届かなければならない——docker と native はループバックのアドレスを返すので同じホストから、ECS ではどの CP レプリカからも。CP より後に作られたワークスペースも含む。ECS では、後から足したサービスに Service Connect のエイリアスが解決されず、`agent_dial.go` はその穴を埋めるために在る |
 | **組まれたときの env を、毎回の起動で渡す** | ファクトリの `New(ws, secretKey, extraEnv)` は DEK とワークスペースごとの変数を運び、それは起動ごとに違い得る（スケジューラの無人起動、プレビューのスラグ）。コンテナの env は起動の瞬間に固定されるので、そこで入れるしかない。配備全体のテンプレートの env（`Config.ExtraEnv`：`WS_ENV` と egress プロキシの変数）は別の入力で、現在これを渡すのは docker と native だけ（[09 §9.4](09-deploy.ja.md)）——あなたのアダプタが渡すかどうかは意図して決めること。**DEK と `AGENT_TOKEN` を、土台が見せられる場所に置かない**——docker はコマンドラインではなく 0600 の env ファイルで、ECS は値ではなく SSM の参照で渡す（[09 §9.5](09-deploy.ja.md)、[07 §7.6](07-security.ja.md)）|
-| **停止をまたいで残る 2 つの領域** | `/home/dev` のホームと、`/var/lib/af/claude`（`CLAUDE_CONFIG_DIR`）の Claude の状態。後者をホームから離しているのは、ファイルブラウザから届かないようにし、ホームを初期化しても Claude のログインに触れないようにするため。**ホームを変える操作は、実際のホームに届かなければならない**——あなたの形態がホームをどこに置くにせよ。既存の各形態の置き方は [01 §1.6](01-architecture.ja.md) と [07 §7.2](07-security.ja.md) |
+| **停止をまたいで残る 2 つの領域** | `/home/dev` のホームと、`/var/lib/af/claude`（`CLAUDE_CONFIG_DIR`）の Claude の状態。後者をホームから離しているのは、ファイルブラウザから届かないようにし、ホームを初期化しても Claude のログインに触れないようにするため。**ホームを変える操作は、実際のホームに届かなければならない**——あなたの形態がホームをどこに置くにせよ。CP はホームから自分で何も消さない。作り直しとホームの掃除はアダプタの `WipeHome` / `EraseHome`（`internal/runtime/home_wipe.go`）を通る。CP 自身のディスク上のパスがホームなのは docker と native だけで、存在しないパスの削除は成功してしまうからだ。これらのポートは、あなたのアダプタがホームに届く場合にだけ名乗ること。名乗らなければ CP は何も止める前にその操作を断り、Console はボタンを出さない（21.3）。既存の各形態の置き方は [01 §1.6](01-architecture.ja.md) と [07 §7.2](07-security.ja.md) |
 | **Destroy** | `runtimeDestroyer` は全アダプタに必須で、`runtime.go` で表明している。ホームと、作ったメンバーシップごとのリソースを全部消す。戻り値の `[]string` は、消せなかったと**分かっている**ものの一覧で、運用者が「データは消えた」と思い込む代わりに監査ログへ届く |
 | **ユーザー毎に隔離する。できないなら共有で動かすのを拒否する** | [07 §7.2](07-security.ja.md) の全行に、あなたの形態の答えを書く。書けないなら `native` と同じにする——ファクトリが `dev` 以外の `AUTH` を拒否する。コンテナ境界が無ければ、ユーザーを隔てるものが何も無いから |
 
@@ -87,13 +87,17 @@ CP は形態ごとの振る舞いの多くを型アサーション（Runtime な
 | `AcquireOperationFence` / `StartFencer` | `internal/runtime/runtime.go` | DB のリースだけになる。ライフサイクルの資源が CP のホスト上にあるアダプタは、OS レベルの柵も要る |
 | `MachineProfile()`、`ResizeHome()` | `workspace_machine.go`、`workspace_home_resize.go` | 名指す箱も、広げるディスクも無い |
 | `BeginHibernate()`、`BackupHome()` | `reaper.go`（アイドルの段 3 と 4）| その段があなたには存在しない（[03 §3.7](03-control-plane.ja.md)）|
+| `WipeHome()`: メンバーの作り直しとホームの掃除を、ホームのある場所で、メンバーの要求の時間内に消す | `internal/runtime/home_wipe.go`（`homeWiper`）| どちらもワークスペースを止める前に断られ、Console に「危険な操作」が出ない |
+| `EraseHome()`: 管理者によるホームの掃除を、今すぐ消して停止したままにする | `internal/runtime/home_wipe.go`（`homeEraser`）| 何も止める前に断られ、メンバー詳細に出ない |
+| `HomeBackups()`、`DeleteHomeBackups()`: ホームの外に取ったホームのコピー | `internal/runtime/home_wipe.go`（`homeBackupKeeper`）| 見せるバックアップも消すバックアップも無い。ホームの掃除はこれを消さず、Destroy は消す |
 | `GoldenBakePool` / `GoldenSeedRuntime` | `internal/runtime/runtime_ecs_ec2_golden.go` | ゴールデンスナップショットは焼かれない |
 | `PoolStatus`、`TerminateQuarantinedSlot`、`MaxSlots` | `workspace_lifecycle.go`、`limits.go` | プールの画面が無く、テナントの上限を固定プールと突き合わせる検査も無い |
 
 固定されているのは一部だけです。`Runtime`・`RuntimeFactory`・`runtimeDestroyer`・ゴールデンの
 インタフェースにはコンパイル時の `var _ X = (*T)(nil)` があり、ハイバネートはインタフェース値
-（`runtime.Hibernating`、`runtime_seam.go` で表明）を通してコンパイル時に確かめられ、`internal/runtime/capabilities_test.go` は `DocsMounter` と
-`GoldenBakePool` を名乗っては**いけない**アダプタを表明しています。サイジングとコストを含む
+（`runtime.Hibernating`、`runtime_seam.go` で表明）を通してコンパイル時に確かめられ、ホームのポートは `internal/runtime/home_wipe.go` で表明され、
+`internal/runtime/capabilities_test.go` は `DocsMounter`・`GoldenBakePool`・ホームのポートを名乗っては**いけない**アダプタを
+表明しています。サイジングとコストを含む
 残りは、実行時に照合されるだけです。名乗る能力にも名乗らない能力にも、それが変わったら落ちる
 表明かテストを足してください。
 

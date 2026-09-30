@@ -341,6 +341,8 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.dz_lose_sessions": "Running sessions are lost",
   "env.dz_lose_repos": "Cloned repositories (including uncommitted changes) are deleted",
   "env.dz_lose_home_rest": ", caches, settings and everything else in home are all deleted",
+  "env.dz_unavailable":
+    "Recreate and Clean home are not available on this deployment: its workspace homes are out of the control plane's reach. You can still restart from the workspace bar.",
 
   // --- SSM settings (SsmTab) ---
   "ssm.comm_failed": "Communication failed: {msg}",

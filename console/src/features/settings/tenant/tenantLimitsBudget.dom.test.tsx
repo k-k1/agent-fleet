@@ -21,6 +21,13 @@ vi.mock("../../../core/api/client.ts", () => ({
   rawJSON: () => Promise.resolve(new Response("")),
   errText: (e: { message?: string }) => e?.message || "",
   rel: (p: string) => p,
+  // MemberView reads the deployment's home operations from the tenant store's whoami, and
+  // that store reads these at import.
+  getTenant: () => "",
+  getUser: () => "",
+  setTenant: () => {},
+  setUser: () => {},
+  isTransientErr: () => false,
 }));
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => toast }));
 

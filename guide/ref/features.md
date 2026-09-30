@@ -106,7 +106,7 @@ explains them.
 | Toolchains | member | Toolchains |
 | Databases (Postgres / MySQL — install, start, stop, reset) | member | Toolchains |
 | Preview-subdomain settings | member | Preview subdomains (only where they are issued) |
-| Destructive actions | member | Danger zone |
+| Destructive actions | member | Danger zone (Recreate, Clean home; only where the deployment can perform them — [deploy-targets.md](deploy-targets.md)) |
 
 ## Tenant administration
 
@@ -116,6 +116,7 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Feature | Who | Where | Details |
 |---|---|---|---|
 | Members | tenant admin | Members | [admin 01](../admin/01-members.md) |
+| Deleting a member's home backups (where the deployment keeps them) | tenant admin | Members → the member | [admin 01](../admin/01-members.md) |
 | Sessions across the tenant | tenant admin | Sessions | [admin 02](../admin/02-limits.md) |
 | Limits and idle auto-stop | tenant admin (read) | Limits & idle | [admin 02](../admin/02-limits.md) |
 | Whether this tenant may use the llm / image engines | deployment admin (super_admin) | Tenant settings → Limits | [admin 02](../admin/02-limits.md) |

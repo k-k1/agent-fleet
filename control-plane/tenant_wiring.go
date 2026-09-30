@@ -81,6 +81,12 @@ func (a adminAPI) stopWorkspace(w http.ResponseWriter, r *http.Request) { a.srv(
 
 func (a adminAPI) cleanHome(w http.ResponseWriter, r *http.Request) { a.srv().CleanHome(w, r) }
 
+func (a adminAPI) homeBackups(w http.ResponseWriter, r *http.Request) { a.srv().HomeBackups(w, r) }
+
+func (a adminAPI) deleteHomeBackups(w http.ResponseWriter, r *http.Request) {
+	a.srv().DeleteHomeBackups(w, r)
+}
+
 func (a adminAPI) destroyWorkspace(w http.ResponseWriter, r *http.Request) {
 	a.srv().DestroyWorkspace(w, r)
 }
@@ -214,6 +220,14 @@ func (d cpTenant) StopWorkspaceByMembership(ctx context.Context, mid string) err
 
 func (d cpTenant) CleanHomeByMembership(ctx context.Context, mid string) error {
 	return d.m.cleanHomeByMembership(ctx, mid)
+}
+
+func (d cpTenant) HomeBackupsByMembership(ctx context.Context, mid string) (runtime.HomeBackups, bool, error) {
+	return d.m.homeBackupsByMembership(ctx, mid)
+}
+
+func (d cpTenant) DeleteHomeBackupsByMembership(ctx context.Context, mid string) (int, bool, error) {
+	return d.m.deleteHomeBackupsByMembership(ctx, mid)
 }
 
 func (d cpTenant) ResizeHomeByMembership(ctx context.Context, mid string) (runtime.HomeResize, error) {

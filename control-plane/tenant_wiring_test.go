@@ -44,42 +44,44 @@ import (
 // reach. Same-signature neighbours are the ones a swap can hide in, so they are
 // listed adjacently on purpose: reading the two columns side by side is the review.
 var cpTenantDelegates = map[string]string{
-	"Store":                        "store",
-	"KnownProviderIDs":             "knownProviderIDs",
-	"EvictMembershipCache":         "evictMembershipCache", // ↕ same type, swappable
-	"EvictTenantCache":             "evictTenantCache",     // ↕
-	"PushEngineCatalogChanged":     "notifyEngineCatalogChangedForTenant",
-	"InvalidateTenantLogin":        "invalidate",
-	"IdleForecastFor":              "idleForecastFor",
-	"WorkspaceSizing":              "workspaceSizing",
-	"IsSystemTenantSlug":           "isSystemTenantSlug",
-	"SanitizeUser":                 "sanitizeUser",
-	"SplitCSVLower":                "splitCSVLower",  // ↕ same type (string → []string)
-	"SplitDomainCSV":               "splitDomainCSV", // ↕
-	"JoinCSV":                      "joinCSV",
-	"TrustedProxyHops":             "trustedProxyHops",
-	"IPInAny":                      "ipInAny",
-	"DomainMatches":                "domainMatches",
-	"WorkspaceLifecycleLeaseError": "workspaceLifecycleLeaseError",
-	"MembershipsFor":               "membershipsFor",
-	"CountRunningInTenant":         "countRunningInTenant",
-	"WorkspaceStateByMembership":   "workspaceStateByMembership",
-	"StopWorkspaceByMembership":    "stopWorkspaceByMembership",    // ↕ same type; swap = wiped home
-	"CleanHomeByMembership":        "cleanHomeByMembership",        // ↕
-	"DestroyWorkspaceByMembership": "destroyWorkspaceByMembership", // ↕
-	"ResizeHomeByMembership":       "resizeHomeByMembership",
-	"ResolveWorkspaceSize":         "resolveWorkspaceSize",
-	"ResolveSlotClass":             "resolveSlotClass",
-	"PoolBudget":                   "poolBudget",
-	"PoolStatus":                   "poolStatus",
-	"TerminateQuarantinedSlot":     "terminateQuarantinedSlot",
-	"TenantAdminFor":               "tenantAdminFor",
-	"ResolveMember":                "resolveMember",
-	"ClientIPFrom":                 "clientIPFrom",
-	"ParseCIDRList":                "parseCIDRList",
-	"ParseLimits":                  "parseLimits",
-	"LimitsFor":                    "GetTenant",
-	"StoreTenantLimits":            "SetTenantLimits",
+	"Store":                         "store",
+	"KnownProviderIDs":              "knownProviderIDs",
+	"EvictMembershipCache":          "evictMembershipCache", // ↕ same type, swappable
+	"EvictTenantCache":              "evictTenantCache",     // ↕
+	"PushEngineCatalogChanged":      "notifyEngineCatalogChangedForTenant",
+	"InvalidateTenantLogin":         "invalidate",
+	"IdleForecastFor":               "idleForecastFor",
+	"WorkspaceSizing":               "workspaceSizing",
+	"IsSystemTenantSlug":            "isSystemTenantSlug",
+	"SanitizeUser":                  "sanitizeUser",
+	"SplitCSVLower":                 "splitCSVLower",  // ↕ same type (string → []string)
+	"SplitDomainCSV":                "splitDomainCSV", // ↕
+	"JoinCSV":                       "joinCSV",
+	"TrustedProxyHops":              "trustedProxyHops",
+	"IPInAny":                       "ipInAny",
+	"DomainMatches":                 "domainMatches",
+	"WorkspaceLifecycleLeaseError":  "workspaceLifecycleLeaseError",
+	"MembershipsFor":                "membershipsFor",
+	"CountRunningInTenant":          "countRunningInTenant",
+	"WorkspaceStateByMembership":    "workspaceStateByMembership",
+	"StopWorkspaceByMembership":     "stopWorkspaceByMembership",    // ↕ same type; swap = wiped home
+	"CleanHomeByMembership":         "cleanHomeByMembership",        // ↕
+	"DestroyWorkspaceByMembership":  "destroyWorkspaceByMembership", // ↕
+	"HomeBackupsByMembership":       "homeBackupsByMembership",
+	"DeleteHomeBackupsByMembership": "deleteHomeBackupsByMembership",
+	"ResizeHomeByMembership":        "resizeHomeByMembership",
+	"ResolveWorkspaceSize":          "resolveWorkspaceSize",
+	"ResolveSlotClass":              "resolveSlotClass",
+	"PoolBudget":                    "poolBudget",
+	"PoolStatus":                    "poolStatus",
+	"TerminateQuarantinedSlot":      "terminateQuarantinedSlot",
+	"TenantAdminFor":                "tenantAdminFor",
+	"ResolveMember":                 "resolveMember",
+	"ClientIPFrom":                  "clientIPFrom",
+	"ParseCIDRList":                 "parseCIDRList",
+	"ParseLimits":                   "parseLimits",
+	"LimitsFor":                     "GetTenant",
+	"StoreTenantLimits":             "SetTenantLimits",
 }
 
 // bodyNames returns every identifier and selector-field name mentioned in a body.

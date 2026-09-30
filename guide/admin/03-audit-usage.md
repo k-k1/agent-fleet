@@ -99,7 +99,8 @@ department / deployment administrator ("What the roles mean" in [01-members.md](
 
 **Q. I want to delete a member who has left the company.**
 You can. From "Operations" on the member detail: **Remove member → Force-stop the workspace →
-Clean home**, in that order ("Removing a member" in [01-members.md](01-members.md)).
+Clean home → Delete backups** (where offered), in that order ("Removing a member" in
+[01-members.md](01-members.md)).
 
 **Q. Where is egress (external traffic) control?**
 Egress (external traffic) control is super_admin only. When traffic control becomes necessary,
