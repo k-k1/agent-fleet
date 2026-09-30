@@ -81,7 +81,10 @@ export function StreamRepliesRow({ kind }: { kind: string }) {
         <Choice
           value={streamReplies(s, kind)}
           options={options}
-          onChange={(v: StreamRepliesMode) => setSettings({ streamReplies: { ...s.streamReplies, [kind]: v } })}
+          // Off is stored as the boolean it always was: an older Console reading the synced
+          // prefs takes any non-false value as on, so the string "off" would turn its mirror
+          // back on. streamReplies() reads both.
+          onChange={(v: StreamRepliesMode) => setSettings({ streamReplies: { ...s.streamReplies, [kind]: v === "off" ? false : v } })}
         />
       </SettingRow>
       <p className="ps-note">{tr("agents.stream_replies_note")}</p>

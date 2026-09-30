@@ -60,14 +60,14 @@ describe("StreamRepliesRow", () => {
     expect(button(t("agents.stream_replies_typewriter")).classList.contains("active")).toBe(true);
   });
 
-  it("writes the chosen mode for the kind alone", () => {
+  it("writes the chosen mode for the kind alone, and off as false", () => {
     render();
     act(() => button(t("agents.stream_replies_lines")).click());
     expect(getSettings().streamReplies).toEqual({ codex: false, claude: "lines" });
     expect(streamReplies(getSettings(), "claude")).toBe("lines");
     expect(button(t("agents.stream_replies_lines")).classList.contains("active")).toBe(true);
-    act(() => button(t("common.off")).click());
-    expect(getSettings().streamReplies).toEqual({ codex: false, claude: "off" });
+    act(() => button(t("common.off")).click()); // off stays the boolean an older Console reads
+    expect(getSettings().streamReplies).toEqual({ codex: false, claude: false });
     expect(streamReplies(getSettings(), "claude")).toBe("off");
     act(() => button(t("agents.stream_replies_typewriter")).click());
     expect(getSettings().streamReplies).toEqual({ codex: false, claude: "typewriter" });

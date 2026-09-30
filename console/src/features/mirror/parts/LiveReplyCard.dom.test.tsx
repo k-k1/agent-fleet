@@ -44,6 +44,9 @@ afterEach(() => {
   host = null;
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  // A requestAnimationFrame spy left in place wraps the previous test's fake clock, and frames
+  // scheduled through it never fire.
+  vi.restoreAllMocks();
 });
 
 describe("LiveReplyCard", () => {
@@ -111,10 +114,11 @@ describe("LiveReplyCard typewriter", () => {
     expect(raf).not.toHaveBeenCalled();
   });
 
-  it("shows a text that does not extend the shown one at once", () => {
-    mount("abcdefghij", "typewriter");
-    frames(100);
-    expect(body().length).toBeLessThan(10);
+  it("shows a text that does not begin with the shown one at once", () => {
+    mount("abcdefghij".repeat(4), "typewriter");
+    frames(300);
+    expect(body().length).toBeGreaterThan(0);
+    expect(body().length).toBeLessThan(40);
     mount("something else entirely", "typewriter");
     expect(body()).toBe("something else entirely");
   });

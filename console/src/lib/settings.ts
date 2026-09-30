@@ -425,8 +425,10 @@ export interface Settings {
   // or "typewriter" (typed out between polls). Unlike expandThinking an unset kind is ON —
   // typewriter — and off is the opt-out for those who would rather see a reply once it is
   // complete. Booleans are what the setting stored while it was an on/off switch: false is off,
-  // true is typewriter; read through streamReplies(), never directly. Only kinds whose Agent
-  // route sends the in-progress reply read it (claude).
+  // true is typewriter; read through streamReplies(), never directly. Off is still written as
+  // false (StreamRepliesRow), so an older Console sharing the synced prefs — whose accessor takes
+  // any non-false value as on — stays off too. Only kinds whose Agent route sends the in-progress
+  // reply read it (claude).
   streamReplies: Record<string, boolean | StreamRepliesMode>;
   // ON/OFF for the CHAT title suggestion (Settings > AI assist; the rename dialog's "ask AI for
   // a suggestion" (「AIに提案してもらう」) button — the assistant has no automatic banner). Split out of

@@ -43,12 +43,23 @@ describe("retarget", () => {
     expect(t.cps).toBeGreaterThan(0);
   });
 
-  it("shows a text that does not extend the old one at once", () => {
+  it("keeps typing from what is on screen when only the unseen part was rewritten", () => {
     let t = retarget(TYPEWRITER_IDLE, "abcdef");
     t = advance(t, 50);
     expect(revealed(t)).toBe("ab");
-    expect(revealed(retarget(t, "abXYZ"))).toBe("abXYZ"); // rewritten
-    expect(revealed(retarget(t, "abc"))).toBe("abc"); // shrank
+    const rewritten = retarget(t, "abXYZ");
+    expect(revealed(rewritten)).toBe("ab");
+    expect(revealed(advance(rewritten, 10_000))).toBe("abXYZ");
+    const shorter = retarget(t, "abc"); // shrank, but not into what is shown
+    expect(revealed(shorter)).toBe("ab");
+  });
+
+  it("shows a text that does not begin with what is on screen at once", () => {
+    let t = retarget(TYPEWRITER_IDLE, "abcdef");
+    t = advance(t, 50);
+    expect(revealed(t)).toBe("ab");
+    expect(revealed(retarget(t, "XYZ"))).toBe("XYZ"); // a different message
+    expect(revealed(retarget(t, "a"))).toBe("a"); // shorter than what is shown
     expect(revealed(retarget(t, ""))).toBe("");
   });
 
@@ -67,6 +78,14 @@ describe("retarget", () => {
     const mid = retarget(TYPEWRITER_IDLE, "z".repeat(600));
     expect(revealed(mid)).toBe("");
     expect(mid.cps).toBe(TYPEWRITER_CAP_CPS);
+  });
+
+  it("lands the jump where a cut may land: not inside a surrogate pair or a table row", () => {
+    const maxLag = (TYPEWRITER_CAP_CPS * TYPEWRITER_MAX_LAG_MS) / 1000;
+    const emoji = "a😀" + "x".repeat(maxLag - 1); // the jump would land between the halves of 😀
+    expect(revealed(retarget(TYPEWRITER_IDLE, emoji))).toBe("a😀");
+    const table = "| a | b |\n" + "y".repeat(maxLag - 4); // the jump would land inside the row
+    expect(revealed(retarget(TYPEWRITER_IDLE, table))).toBe("| a | b |");
   });
 });
 
@@ -132,6 +151,14 @@ describe("cutAt", () => {
     expect(cutAt(text, lastRow + 2)).toBe(text.indexOf("\n", lastRow));
     expect(cutAt("  | indented |", 4)).toBe("  | indented |".length);
     expect(cutAt(text, text.length + 5)).toBe(text.length);
+  });
+
+  it("treats a GFM table without the leading bar as rows too", () => {
+    const text = "a | b\n--- | ---\n1 | 2\nafter";
+    expect(cutAt(text, 1)).toBe(text.indexOf("\n"));
+    expect(cutAt(text, text.indexOf("---") + 1)).toBe(text.indexOf("\n", text.indexOf("---")));
+    const after = text.indexOf("after");
+    expect(cutAt(text, after + 2)).toBe(after + 2); // prose again
   });
 
   it("is what advance cuts with", () => {

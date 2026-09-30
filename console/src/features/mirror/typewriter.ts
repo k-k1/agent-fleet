@@ -40,16 +40,19 @@ export const caughtUp = (t: Typewriter): boolean => t.shown >= t.target.length;
 /** A state showing the whole text at once. */
 export const snapped = (target: string): Typewriter => ({ target, shown: target.length, frac: 0, cps: 0 });
 
-/** retarget folds a poll's text in. Text that extends what is on screen keeps its place and is
- *  paced to catch up in about a poll; anything else — a different message, a shorter one — is
- *  shown at once, since typing over a replaced text would read as claude rewriting. Returns the
+/** retarget folds a poll's text in. Text that begins with what is ON SCREEN keeps its place and
+ *  is paced to catch up in about a poll — the part not yet shown may have been rewritten, nobody
+ *  saw it; anything else (a different message, a text shorter than what is shown) is shown at
+ *  once, since typing over text the reader has read would read as claude rewriting. Returns the
  *  same object when the target is unchanged, so callers can skip a render. */
 export function retarget(t: Typewriter, target: string): Typewriter {
   if (target === t.target) return t;
-  if (!target.startsWith(t.target)) return snapped(target);
-  let shown = t.shown;
+  if (!target.startsWith(revealed(t))) return snapped(target);
+  let shown = Math.min(t.shown, target.length);
   const maxLag = Math.round((TYPEWRITER_CAP_CPS * TYPEWRITER_MAX_LAG_MS) / 1000);
-  if (target.length - shown > maxLag) shown = target.length - maxLag;
+  // The jump lands through cutAt too: straight arithmetic can put it inside a surrogate pair or a
+  // table row, and that half shows until the next frame.
+  if (target.length - shown > maxLag) shown = cutAt(target, target.length - maxLag);
   const backlog = target.length - shown;
   const cps = Math.min(TYPEWRITER_CAP_CPS, Math.max(TYPEWRITER_FLOOR_CPS, (backlog * 1000) / TYPEWRITER_CATCH_UP_MS));
   return { target, shown, frac: 0, cps };
@@ -67,10 +70,13 @@ export function advance(t: Typewriter, dtMs: number): Typewriter {
 
 /** cutAt keeps a cut off two places where a half-shown string renders as something else: inside
  *  a surrogate pair (a lone half is U+FFFD), and inside a table row — a row typed halfway is a
- *  paragraph, then snaps into a table, and it does that for every row. Other Markdown mid-states
- *  (an open `**`, a `[` before its `](…)`) render literally for a few frames and then flip, which
- *  is what chat UIs do; an unclosed code fence already renders as a code block (CommonMark runs
- *  it to the end of the document), so fences need nothing. */
+ *  paragraph, then snaps into a table, and it does that for every row. A row is any line with a
+ *  `|` in it: GFM does not require the leading bar (`a | b` over `--- | ---` is a table), and the
+ *  cost of the over-match — a line of prose or code with a pipe in it arrives whole — is one
+ *  burst, not a layout that flips. Other Markdown mid-states (an open `**`, a `[` before its
+ *  `](…)`) render literally for a few frames and then flip, which is what chat UIs do; an
+ *  unclosed code fence already renders as a code block (CommonMark runs it to the end of the
+ *  document), so fences need nothing. */
 export function cutAt(text: string, at: number): number {
   if (at >= text.length) return text.length;
   if (at > 0 && isLowSurrogate(text.charCodeAt(at)) && isHighSurrogate(text.charCodeAt(at - 1))) at += 1;
@@ -86,7 +92,7 @@ const isHighSurrogate = (c: number): boolean => c >= 0xd800 && c <= 0xdbff;
 const isLowSurrogate = (c: number): boolean => c >= 0xdc00 && c <= 0xdfff;
 
 function isTableRow(text: string, lineStart: number): boolean {
-  let i = lineStart;
-  while (i < text.length && (text[i] === " " || text[i] === "\t")) i++;
-  return text[i] === "|";
+  const eol = text.indexOf("\n", lineStart);
+  const bar = text.indexOf("|", lineStart);
+  return bar >= 0 && (eol < 0 || bar < eol);
 }
