@@ -184,7 +184,7 @@ Kiro はアシスタントチャットとしては**利用できません**（he
 
 | 状況 | 版 | 必要なもの |
 |---|---|---|
-| WSL2 や単一ユーザー Linux で個人利用・Docker なし | **Native**（下記） | unprivileged user namespaces が使える x86_64 Linux/WSL2（素の WSL2 は可）、`curl` か `wget`、ディスク ~1.5 GB |
+| WSL2 や単一ユーザー Linux で個人利用・Docker なし | **Native**（下記） | unprivileged user namespaces が使える x86_64 または arm64 の Linux/WSL2（素の WSL2 は可）、`curl` か `wget`、ディスク ~1.5 GB。arm64 は CI でビルド・起動を確認しています。実機での報告を歓迎します |
 | 自社の Linux サーバでチーム利用 | **Docker Compose**（下記） | Docker Engine + `docker compose`、ホストに向けた公開ドメイン（自動 TLS。内部 CA フォールバックあり）、ログイン用の IdP クライアント（Google OAuth 2.0 クライアントまたは OIDC アプリ） |
 
 全版共通: 各ワークスペースの初回起動時にエージェント CLI のピン版導入で一度だけ
@@ -313,11 +313,12 @@ rm -rf ~/.local/opt/agent-fleet
 
 | tag | 添付 | 用途 |
 |---|---|---|
-| `v<版>` | `agent-fleet-<版>.tar.gz`（compose バンドル）/ `agent-fleet-native-<版>-linux-amd64.tar.gz`（native）/ `SHA256SUMS` | アプリ本体のリリース。コンテナイメージはここではなく GHCR |
-| `rootfs-<r>` | `agent-fleet-rootfs-<r>-linux-amd64.tar.zst` | native 版が初回起動時に取得する workspace rootfs。**単体では使いません**（native tar 内の `rootfs.json` が版・sha256 を指定） |
+| `v<版>` | `agent-fleet-<版>.tar.gz`（compose バンドル）/ `agent-fleet-native-<版>-linux-{amd64,arm64}.tar.gz`（native）/ `agent-fleet-rootfs-<r>-linux-{amd64,arm64}.tar.zst`（workspace rootfs）/ `SHA256SUMS` | リリース本体。コンテナイメージはここではなく GHCR |
+| `rootfs-<r>` | `agent-fleet-rootfs-<r>-linux-amd64.tar.zst` | 過去のリリースのみ: rootfs を別 tag で公開しており、それらの版は今もそこを参照します |
 
-`<r>` は内容ハッシュです。アプリの版が上がっても rootfs が不変なら同じ tag を参照し、
-再ダウンロードは発生しません。取得物は必ず `SHA256SUMS` / `rootfs.json` の sha256 で
+rootfs は native 版が初回起動時に取得するもので、**単体では使いません**（native tar 内の
+`rootfs.json` が URL・版・sha256 を指定）。`<r>` は内容ハッシュで、展開済みの rootfs は
+`<r>` ごとに保持されるため、rootfs が変わらない更新では追加のダウンロードはありません。取得物は必ず `SHA256SUMS` / `rootfs.json` の sha256 で
 検証してください（install.sh と `af start` は自動で行います）。
 
 各版の変更内容は個々のリリースのノートにあります。索引は

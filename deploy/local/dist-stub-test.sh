@@ -50,9 +50,15 @@ fi
 case "$*" in
   "repo view "*)   [ "${STUB_REPO_MISSING:-0}" = 1 ] && exit 1 || exit 0 ;;
   "repo create "*) exit 0 ;;
-  "release view rootfs-"*) [ "${STUB_ROOTFS_EXISTS:-0}" = 1 ] && exit 0 || exit 1 ;;
+  # --json assets -q ... is what publish asks of a release it reuses R from; answer
+  # with the asset names that release holds.
+  "release view rootfs-"*) [ "${STUB_ROOTFS_EXISTS:-0}" = 1 ] || exit 1
+                           printf '%s\n' ${STUB_ROOTFS_ASSETS:-}; exit 0 ;;
   "release view v"*)       [ "${STUB_APP_EXISTS:-0}" = 1 ] && exit 0 || exit 1 ;;
-  "release create "*) exit 0 ;;
+  "release create "*)
+    # keep a copy of the SHA256SUMS that would be uploaded, for the asset-set check
+    for a in "$@"; do case "$a" in */SHA256SUMS) cp "$a" "$STUB_SUMS_OUT" ;; esac; done
+    exit 0 ;;
   "api -X PUT "*) echo "{}"; exit 0 ;;
   "api repos/"*)
     if [ "${STUB_SEED_EXISTS:-0}" = 1 ]; then
@@ -67,7 +73,7 @@ case "$*" in
 esac
 FAKE
 chmod +x "$STUB/gh"
-export PATH="$STUB:$PATH" STUB_LOG="$LOG" STUB_SEED_DIR="$ROOT/deploy/release/dist-repo" \
+export PATH="$STUB:$PATH" STUB_LOG="$LOG" STUB_SUMS_OUT="$WORK/uploaded.sums" STUB_SEED_DIR="$ROOT/deploy/release/dist-repo" \
        STUB_ROOT="$ROOT"
 
 fail() { echo "NG: $1"; echo "--- full log ---"; cat "$LOG" 2>/dev/null; exit 1; }
@@ -80,13 +86,23 @@ expect_order() {
   fi
 }
 
-# ---- fixture: fake dist artifacts (R, C (with rootfs.json), A, B, SHA256SUMS) ------
+# the uploaded SHA256SUMS names exactly these files, in any order
+expect_sums() {
+  diff <(printf '%s\n' "$@" | LC_ALL=C sort) <(awk '{print $2}' "$WORK/uploaded.sums" | LC_ALL=C sort) \
+    || fail "uploaded SHA256SUMS does not list exactly the attached assets"
+}
+
+# ---- fixture: fake dist artifacts (R, C (with rootfs.json), A, SHA256SUMS) --------
 REPO="test-o/test-dist"
 V=1.0.0
 RV=0123456789ab
+RV_ARM=ba9876543210
 CN="agent-fleet-native-$V-linux-amd64"
 RN="agent-fleet-rootfs-$RV-linux-amd64.tar.zst"
+CN_ARM="agent-fleet-native-$V-linux-arm64"
+RN_ARM="agent-fleet-rootfs-$RV_ARM-linux-arm64.tar.zst"
 DISTD="$WORK/dist"
+BASE="https://github.com/$REPO/releases/download"
 
 # publish renders the release body from the notes dir and refuses to publish
 # without one. Point it at a fixture so the fake version needs no checked-in notes.
@@ -95,49 +111,102 @@ mkdir -p "$NOTES_DIR"
 printf 'stub notes for %s.\n' "$V" > "$NOTES_DIR/$V.md"
 printf '%s のスタブノート。\n' "$V" > "$NOTES_DIR/$V.ja.md"
 
-make_dist() { # make_dist <url-base>  (base baked into rootfs.json's url)
-  rm -rf "$DISTD" "$WORK/c"
-  mkdir -p "$DISTD" "$WORK/c/$CN"
-  head -c 1024 /dev/urandom > "$DISTD/$RN"
-  local rsha; rsha="$(sha256sum "$DISTD/$RN" | awk '{print $1}')"
-  printf '#!/usr/bin/env bash\necho fake-af "$@"\n' > "$WORK/c/$CN/af"
-  chmod +x "$WORK/c/$CN/af"
-  printf '%s\n' "$V" > "$WORK/c/$CN/VERSION"
-  cat > "$WORK/c/$CN/rootfs.json" <<EOF
+# make_native <arch> <r> <rootfs-url>: one C whose rootfs.json names <rootfs-url>,
+# and the R it names (R is written even when the URL points elsewhere; publish must
+# then leave it alone).
+make_native() {
+  local arch="$1" r="$2" url="$3"
+  local cn="agent-fleet-native-$V-linux-$arch" rn="agent-fleet-rootfs-$r-linux-$arch.tar.zst"
+  head -c 1024 /dev/urandom > "$DISTD/$rn"
+  local rsha; rsha="$(sha256sum "$DISTD/$rn" | awk '{print $1}')"
+  mkdir -p "$WORK/c/$cn"
+  printf '#!/usr/bin/env bash\necho fake-af "$@"\n' > "$WORK/c/$cn/af"
+  chmod +x "$WORK/c/$cn/af"
+  printf '%s\n' "$V" > "$WORK/c/$cn/VERSION"
+  cat > "$WORK/c/$cn/rootfs.json" <<EOF
 {
-  "version": "$RV",
-  "url": "$1/rootfs-$RV/$RN",
+  "version": "$r",
+  "url": "$url",
   "sha256": "$rsha",
   "size": 1024
 }
 EOF
-  tar -czf "$DISTD/$CN.tar.gz" -C "$WORK/c" "$CN"
+  tar -czf "$DISTD/$cn.tar.gz" -C "$WORK/c" "$cn"
+}
+sums() { (cd "$DISTD" && rm -f SHA256SUMS && sha256sum -- * > SHA256SUMS); }
+# make_dist [<amd64 rootfs url>]: amd64 only, R in this release by default
+make_dist() {
+  rm -rf "$DISTD" "$WORK/c"
+  mkdir -p "$DISTD"
+  make_native amd64 "$RV" "${1:-$BASE/v$V/$RN}"
   echo compose-bundle > "$DISTD/agent-fleet-$V.tar.gz"
-  (cd "$DISTD" && sha256sum -- * > SHA256SUMS)
+  sums
+}
+make_dist_both() {
+  make_dist
+  make_native arm64 "$RV_ARM" "$BASE/v$V/$RN_ARM"
+  sums
 }
 
-make_dist "https://github.com/$REPO/releases/download"
+make_dist
 
-echo "== case 1: fresh publish (rootfs + app) =="
+echo "== case 1: fresh publish (one release carries A, C, R, SHA256SUMS) =="
 : > "$LOG"
 VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" > "$WORK/out1.txt"
 cat > "$WORK/want1" <<EOF
-gh release view rootfs-$RV -R $REPO
-gh release create rootfs-$RV -R $REPO --title rootfs $RV (linux-amd64) --notes workspace rootfs (content hash $RV). Referenced by the app release's native tar; not for standalone use. $DISTD/$RN
 gh release view v$V -R $REPO
-gh release create v$V -R $REPO --title agent-fleet $V --notes-file $DISTD/RELEASE_NOTES-$V.md $DISTD/agent-fleet-$V.tar.gz $DISTD/$CN.tar.gz $DISTD/SHA256SUMS
+gh release create v$V -R $REPO --title agent-fleet $V --notes-file $DISTD/RELEASE_NOTES-$V.md $DISTD/agent-fleet-$V.tar.gz $DISTD/$CN.tar.gz $DISTD/$RN $DISTD/.publish/SHA256SUMS
 EOF
 expect_set "$WORK/want1"
-expect_order "gh release view rootfs-$RV" "gh release create rootfs-$RV"
-expect_order "gh release create rootfs-$RV" "gh release create v$V"
+expect_sums "agent-fleet-$V.tar.gz" "$CN.tar.gz" "$RN"
 grep -q "install.sh | bash" "$WORK/out1.txt" || fail "install one-liner not printed"
 echo "ok"
 
-echo "== case 2: <r> exists → no rootfs upload (reuse) =="
+echo "== case 1b: amd64 + arm64 → both C and both R in the same release =="
+make_dist_both
 : > "$LOG"
-STUB_ROOTFS_EXISTS=1 VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" > /dev/null
-grep -q "release create rootfs-" "$LOG" && fail "created rootfs despite existing <r>"
+VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" > /dev/null
+cat > "$WORK/want1b" <<EOF
+gh release view v$V -R $REPO
+gh release create v$V -R $REPO --title agent-fleet $V --notes-file $DISTD/RELEASE_NOTES-$V.md $DISTD/agent-fleet-$V.tar.gz $DISTD/$CN.tar.gz $DISTD/$CN_ARM.tar.gz $DISTD/$RN $DISTD/$RN_ARM $DISTD/.publish/SHA256SUMS
+EOF
+expect_set "$WORK/want1b"
+expect_sums "agent-fleet-$V.tar.gz" "$CN.tar.gz" "$CN_ARM.tar.gz" "$RN" "$RN_ARM"
+B="$DISTD/RELEASE_NOTES-$V.md"
+grep -qF "$CN_ARM.tar.gz" "$B" || fail "arm64 native tar missing from body"
+grep -qF "$RN_ARM" "$B" || fail "arm64 rootfs missing from body"
+echo "ok"
+
+echo "== case 1c: arm64 without amd64 → fail, no create =="
+rm -f "$DISTD/$CN.tar.gz"
+: > "$LOG"
+rc=0
+VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" > /dev/null 2> "$WORK/err1c.txt" || rc=$?
+[ "$rc" = 1 ] || fail "expected exit 1, got $rc"
+grep -q "linux-amd64.tar.gz not found" "$WORK/err1c.txt" || { cat "$WORK/err1c.txt"; fail "no amd64-required guidance"; }
+grep -q "release create" "$LOG" && fail "published without the amd64 package"
+make_dist
+echo "ok"
+
+echo "== case 2: C reuses R from an older rootfs-<r> release → R not attached =="
+make_dist "$BASE/rootfs-$RV/$RN"
+: > "$LOG"
+STUB_ROOTFS_EXISTS=1 STUB_ROOTFS_ASSETS="$RN" VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" > /dev/null
+grep -q "release create rootfs-" "$LOG" && fail "created a rootfs release"
 grep -q "release create v$V" "$LOG" || fail "app release was not created"
+grep "release create v$V" "$LOG" | grep -qF "$DISTD/$RN" && fail "attached R although C points at another release"
+expect_sums "agent-fleet-$V.tar.gz" "$CN.tar.gz"
+echo "ok"
+
+echo "== case 2b: reused release does not hold that R → fail, no create =="
+: > "$LOG"
+rc=0
+STUB_ROOTFS_EXISTS=1 STUB_ROOTFS_ASSETS="something-else.tar.zst" VERSION=$V "$PUBLISH" \
+  --repo "$REPO" --dist-dir "$DISTD" > /dev/null 2> "$WORK/err2b.txt" || rc=$?
+[ "$rc" = 1 ] || fail "expected exit 1, got $rc"
+grep -q "does not hold it" "$WORK/err2b.txt" || { cat "$WORK/err2b.txt"; fail "no missing-reuse guidance"; }
+grep -q "release create" "$LOG" && fail "published against a rootfs that is not there"
+make_dist
 echo "ok"
 
 echo "== case 3: app tag collision → fail, no create =="
@@ -151,14 +220,14 @@ grep -q "release create v$V" "$LOG" && fail "created app release despite collisi
 echo "ok"
 
 echo "== case 4: rootfs URL disagrees with publish target → fail =="
-make_dist "https://github.com/other/elsewhere/releases/download"
+make_dist "https://github.com/other/elsewhere/releases/download/v$V/$RN"
 : > "$LOG"
 rc=0
 VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" > /dev/null 2> "$WORK/err4.txt" || rc=$?
 [ "$rc" = 1 ] || fail "expected exit 1, got $rc"
 grep -q "does not match" "$WORK/err4.txt" || { cat "$WORK/err4.txt"; fail "no URL mismatch guidance"; }
 grep -q "release create" "$LOG" && fail "published despite URL mismatch"
-make_dist "https://github.com/$REPO/releases/download"
+make_dist
 echo "ok"
 
 echo "== case 5: --seed (no repo → create; contents absent → PUT ×N) =="
@@ -192,7 +261,8 @@ VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" > /dev/null 2> "$WORK/e
 grep -q "over the 2GiB" "$WORK/err7.txt" || fail "no over-limit warning"
 grep -q -- "$CN.tar.gz" <(grep "release create v$V" "$LOG") \
   && fail "attached the oversized asset"
-make_dist "https://github.com/$REPO/releases/download"
+expect_sums "agent-fleet-$V.tar.gz" "$RN"
+make_dist
 echo "ok"
 
 echo "== case 8: install.sh real run via file:// (DL → sha → extract → symlink → run af) =="
@@ -208,6 +278,28 @@ AF_DIST_URL_BASE="file://$WORK/layout" AF_VERSION=$V AF_PREFIX="$WORK/prefix" \
 AF_DIST_URL_BASE="file://$WORK/layout" AF_VERSION=$V AF_PREFIX="$WORK/prefix" \
   bash "$INSTALL" > /dev/null
 [ "$("$WORK/prefix/bin/af" again)" = "fake-af again" ] || fail "af does not run after re-run"
+echo "ok"
+
+echo "== case 8b: install.sh picks the arm64 tar on arm64, and says so when there is none =="
+make_dist_both
+LAYOUT_B="$WORK/layout-b/v$V"
+mkdir -p "$LAYOUT_B"
+cp "$DISTD/$CN.tar.gz" "$DISTD/$CN_ARM.tar.gz" "$DISTD/SHA256SUMS" "$LAYOUT_B/"
+AF_ARCH=aarch64 AF_DIST_URL_BASE="file://$WORK/layout-b" AF_VERSION=$V AF_PREFIX="$WORK/prefix8b" \
+  AF_NO_AUTOUPDATE=1 bash "$INSTALL" > "$WORK/out8b.txt"
+grep -qF "$CN_ARM.tar.gz" "$WORK/out8b.txt" || fail "arm64 install did not fetch the arm64 tar"
+[ "$("$WORK/prefix8b/bin/af" hi)" = "fake-af hi" ] || fail "arm64-installed af does not run"
+rc=0
+AF_ARCH=aarch64 AF_DIST_URL_BASE="file://$WORK/layout" AF_VERSION=$V AF_PREFIX="$WORK/prefix8c" \
+  AF_NO_AUTOUPDATE=1 bash "$INSTALL" > /dev/null 2> "$WORK/err8c.txt" || rc=$?
+[ "$rc" = 1 ] || fail "expected exit 1 for a release without arm64, got $rc"
+grep -q "publish a linux-arm64 package" "$WORK/err8c.txt" || { cat "$WORK/err8c.txt"; fail "no missing-arch guidance"; }
+rc=0
+AF_ARCH=riscv64 AF_DIST_URL_BASE="file://$WORK/layout" AF_VERSION=$V AF_PREFIX="$WORK/prefix8d" \
+  bash "$INSTALL" > /dev/null 2> "$WORK/err8d.txt" || rc=$?
+[ "$rc" = 1 ] || fail "expected exit 1 for riscv64, got $rc"
+grep -q "riscv64 is unsupported" "$WORK/err8d.txt" || { cat "$WORK/err8d.txt"; fail "no unsupported-arch guidance"; }
+make_dist
 echo "ok"
 
 echo "== case 9: install.sh tampered sha → fail, nothing installed =="
@@ -231,14 +323,14 @@ grep -q "release notes not found" "$WORK/err10.txt" \
 grep -q "release create v$V" "$LOG" && fail "created app release despite missing notes"
 echo "ok"
 
-echo "== case 11: rendered body carries both languages and the rootfs tag =="
+echo "== case 11: rendered body carries both languages and the rootfs file =="
 : > "$LOG"
 VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" > /dev/null
 B="$DISTD/RELEASE_NOTES-$V.md"
 [ -f "$B" ] || fail "rendered body not written to the dist dir"
 grep -q "stub notes for $V" "$B" || fail "English notes missing from body"
 grep -q "## 日本語" "$B" || fail "Japanese section missing from body"
-grep -q "rootfs-$RV" "$B" || fail "rootfs tag missing from body"
+grep -qF "$RN" "$B" || fail "rootfs file missing from body"
 grep -q "agent-fleet-$V.tar.gz" "$B" || fail "asset footer missing from body"
 echo "ok"
 

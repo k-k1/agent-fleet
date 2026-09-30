@@ -188,11 +188,22 @@ jobs:
   # R (lean rootfs), then live-run on the runner = af start --rootfs → workspace
   # boots under bwrap → the rootfs entrypoint boot-installs the pins into the
   # virtual HOME. The end-to-end pass on plain WSL2 (no extra installs) remains
-  # the P4 real-machine gate.
+  # the P4 real-machine gate. Runs once per published architecture: publish-dist.yml
+  # ships an arm64 C+R built the same way on the same runner label.
   native-gate:
     if: "!contains(github.event.head_commit.message, '[ecs-only]') && !contains(github.event.head_commit.message, '[dist-only]')"
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    env:
+      ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v7
 
@@ -203,9 +214,9 @@ jobs:
         run: |
           set -eux
           cd deploy/release/dist
-          C="agent-fleet-native-$VERSION-linux-amd64"
+          C="agent-fleet-native-$VERSION-linux-$ARCH"
           test -f "$C.tar.gz"
-          R="$(ls agent-fleet-rootfs-*-linux-amd64.tar.zst)"
+          R="$(ls agent-fleet-rootfs-*-linux-"$ARCH".tar.zst)"
           sha256sum -c SHA256SUMS
           tar tzf "$C.tar.gz" | grep -q "^$C/af$"
           # bundled binaries must be truly static (fail if ldd says dynamic)
@@ -216,6 +227,8 @@ jobs:
           # the rootfs.json pin matches R (af verifies/extracts against this sha)
           sha="$(sed -n 's/.*"sha256": *"\([^"]*\)".*/\1/p' "$C/rootfs.json")"
           echo "$sha  $R" | sha256sum -c -
+          # ...and names it inside the app release, not a separate rootfs-<r> one
+          grep -qF "\"url\": \"https://github.com/k-k1/agent-fleet-dist/releases/download/v$VERSION/$R\"" "$C/rootfs.json"
           # console / docs (the user guide only) / LICENSE / NOTICE / VERSION are bundled
           test -f "$C/console/index.html"
           # ⚠️ This used to assert docs/log/35-packaging.md and docs/dev — paths from the
@@ -249,7 +262,7 @@ jobs:
         run: |
           set -eux
           DIST="$PWD/deploy/release/dist"
-          C="agent-fleet-native-$VERSION-linux-amd64"
+          C="agent-fleet-native-$VERSION-linux-$ARCH"
           # installer ↔ real artifact fit: feed the real C tar + SHA256SUMS via
           # file:// (not a fake layout), up to running the installed af.
           mkdir -p "/tmp/dist-layout/v$VERSION"
@@ -273,7 +286,7 @@ jobs:
         run: |
           set -eux
           DIST="$PWD/deploy/release/dist"
-          C="agent-fleet-native-$VERSION-linux-amd64"
+          C="agent-fleet-native-$VERSION-linux-$ARCH"
           R="$(ls "$DIST"/agent-fleet-rootfs-*.tar.zst)"
           RUN=/tmp/af-native; mkdir -p "$RUN"
           tar xzf "$DIST/$C.tar.gz" -C "$RUN"

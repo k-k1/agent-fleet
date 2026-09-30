@@ -18,6 +18,11 @@
 # was never withdrawn, so we reconstruct the manifest that points at the existing
 # one — which is also why `af update` and the install one-liner keep working
 # against it.
+#
+# Only releases whose R lives in a separate `rootfs-<r>` release qualify. Newer ones
+# attach R to v<v> itself, so deleting their assets deletes the rootfs too
+# and there is nothing left to point a rebuilt C at; restoring one of those is a new
+# publish, not this script.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -52,7 +57,9 @@ gh release view "$TAG" -R "$REPO" >/dev/null 2>&1 \
   release that is already published; use publish-dist.sh for a new version."
 gh release view "$R_TAG" -R "$REPO" >/dev/null 2>&1 \
   || die "$R_TAG does not exist on $REPO — the rootfs this version pins is gone,
-  so its native tar cannot be made to work without publishing a new rootfs."
+  so its native tar cannot be made to work without publishing a new rootfs.
+  (Newer versions carry the rootfs inside $TAG, not in a rootfs-<r> release;
+  this script cannot restore them.)"
 
 assets_must_be_gone() {
   # A healthy release still holding its original bytes must never be quietly

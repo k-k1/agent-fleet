@@ -233,7 +233,12 @@ do_update() {
     case "$ans" in n | N | no) echo "aborted"; exit 1 ;; *) : ;; esac
   fi
 
-  local arch=amd64 name tmp
+  local arch name tmp
+  case "$(uname -m)" in
+    x86_64) arch=amd64 ;;
+    aarch64 | arm64) arch=arm64 ;;
+    *) echo "ERROR: no native package is published for $(uname -m)" >&2; exit 1 ;;
+  esac
   name="agent-fleet-native-$target-linux-$arch"
   tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
   echo "==> downloading $name.tar.gz"

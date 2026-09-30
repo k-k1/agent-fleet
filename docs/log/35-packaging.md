@@ -77,6 +77,9 @@ OSS のみになった（§35.4.1）ため公開の置き場に置ける — こ
 `af` は rootfs.json の sha256 で検証してから展開する（改竄・欠損は起動前に検出）。
 rootfs の版 `<r>` は app 版 `<v>` と独立させ、イメージに変更が無いリリースでは
 **既存の展開済み rootfs をそのまま使い再 DL しない**（app だけの更新が数十 MB で済む）。
+🔴 2026-09-30 訂正: 「イメージに変更が無いリリース」は構造上起きない。R に入る `workspace-agent` は
+`VERSION` を刻印する（`workspace/Dockerfile` の `-X main.buildVersion`）ので `<r>` は版ごとに必ず変わり、
+v0.1.0〜0.25.0 の app リリース 47 個に対し `rootfs-<r>` は 48 個あり、同じ `<r>` を 2 つの版が新規に参照した例は無い。再 DL しない仕組み（展開先を `<r>` で持つ）自体は正しい。
 air-gap・ファイル渡し運用には `--bundle-rootfs` の self-contained tar（従来形）と、
 `af start --rootfs <path>`（手動配置した R を使う）の両方を残す。
 
@@ -102,6 +105,10 @@ air-gap・ファイル渡し運用には `--bundle-rootfs` の self-contained ta
   （workspace_docs.go）がそのまま生きる。同梱範囲は §35.9-1。
 - **arch**: rootfs が arch 別ビルドになるため（Dockerfile 自体は amd64/arm64 対応済み）、
   **amd64 先行**。arm64 は QEMU クロスビルドのホスト負荷が重く、需要が出てから（§35.9-5）。
+  🔴 2026-09-30 訂正: この理由は [70](70-slot-instance-classes.md) §70.9 の時点で消えている
+  （本 repo は public＝無料の `ubuntu-24.04-arm` ランナーでネイティブにビルドでき、共有ホストは使わない）。
+  #1345 で native（C+R）も arm64 を出す: `build.sh --native` はホストのアーキでビルドし、
+  `publish-dist.yml` がアーキ別ジョブで 1 回ずつ走らせる。
 
 **実行の仕組み（docker run ↔ bwrap の対応）**:
 
@@ -434,6 +441,9 @@ per-file ヘッダは**入れない**方針とする。対処:
   dist repo 上で CI ビルドは回らない（無料 Actions の恩恵はソースが public の場合のみ、
   という制約の帰結）。リリースビルドは private 側（ローカル、または private Actions の
   workflow_dispatch）で行い、`gh release create -R k-k1/agent-fleet-dist` で publish する。
+- 🔴 2026-09-30 変更（#1345）: 下の「別 tag」をやめ、R も `v<v>` に添付する（C・R ともアーキ別に 2 つずつ・
+  `SHA256SUMS` は添付物ちょうど）。上の訂正のとおり `<r>` の再利用は一度も起きず、別 tag は一覧を倍にし、
+  `SHA256SUMS` に添付されていない R の行を載せていただけだった。公開済みの `rootfs-<r>` は旧版の C が指すので消さない。
 - **Releases の構成**: app リリース `v<v>`（C・B・SHA256SUMS を添付）と、rootfs リリース
   `rootfs-<r>`（R を添付）を**別 tag** で切る。C 内の rootfs.json は
   `releases/download/rootfs-<r>/agent-fleet-rootfs-<r>-linux-amd64.tar.zst` の恒久 URL を
