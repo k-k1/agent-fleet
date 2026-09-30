@@ -143,9 +143,9 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 			td.PendingApproval, td.PendingApprovalID = h.inter.Approval, h.inter.ID
 		}
 	}
-	for _, in := range h.queue {
-		td.Queued = append(td.Queued, in.Prompt)
-	}
+	td.Queued = append(td.Queued, h.tq().Texts()...)
+	td.QueuedItems = h.tq().Items()
+	td.Discards = h.tq().Discards()
 	h.mu.Unlock()
 	return td, true
 }

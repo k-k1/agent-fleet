@@ -195,7 +195,7 @@ func DropHandle(name string) {
 	}
 	h.mu.Lock()
 	h.alive = false
-	h.queue = nil
+	h.tq().DropAll() // teardown discards the queue (ADR 0105 decision 8)
 	cmd, stdin, running := h.cmd, h.stdin, h.running || h.starting != ""
 	h.mu.Unlock()
 	if running {
@@ -228,7 +228,7 @@ func ManagedBusy(name string) bool {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.running || h.starting != "" || len(h.queue) > 0
+	return h.running || h.starting != "" || h.tq().Head() != nil || h.tq().Len() > 0
 }
 
 // AbortManaged interrupts every running managed turn (the equivalent of the per-pane Ctrl-C
