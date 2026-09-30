@@ -1845,3 +1845,15 @@ export function studioTurns(locale) {
     },
   ];
 }
+
+// GET /api/repos/{name}/gitflow — console/src/features/repos/gitflow.ts GitflowState.
+export function gitflow() {
+  return {
+    current: {},
+    prefill: { production: "main", development: "develop", feature: "feature/", bugfix: "", release: "release/", hotfix: "hotfix/", versiontag: "" },
+    local: ["main"],
+    origin: ["main", "develop"],
+    native: false,
+    committed: [],
+  };
+}

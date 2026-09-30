@@ -44,6 +44,7 @@ import { sanitizeSeg } from "../../lib/reponame.ts";
 import { SESSION_TITLE_MAX, clampSessionTitle } from "../../lib/sessionTitle.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useLaunchBranchName } from "./useLaunchBranchName.ts";
+import { GitflowInitModal } from "./GitflowInitModal.tsx";
 import { bitbucketPending, warningText } from "./branchRule.ts";
 import type { BranchItem } from "./branchRule.ts";
 
@@ -259,6 +260,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
   // restores the usual behaviour.
   const [branchName, setBranchName] = useState(initialNewBranch || "");
   const naming = useLaunchBranchName({ repo, item: workItem, name: branchName, setName: setBranchName, setBase });
+  const [gitflowOpen, setGitflowOpen] = useState(false);
   const [conflict, setConflict] = useState<"local" | "remote" | "in_use" | null>(null);
   const [conflictWt, setConflictWt] = useState(""); // for "in_use": the copy holding it
   // Branch: create a new one (the default), or use a branch that already exists. The latter
@@ -767,6 +769,16 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
                         ))}
                       </ul>
                     )}
+                    {/* Offered, never done by itself (decision 9): origin has develop and the
+                        repository declares nothing, so the base is still the current branch. */}
+                    {naming.resolved?.gitflow === "suggest" && (
+                      <div className="launch-gitflow-suggest">
+                        <span className="ui-field-hint">{tr("launch.gitflow_suggest")}</span>
+                        <Button small icon="git-branch" onClick={() => setGitflowOpen(true)}>
+                          {tr("launch.gitflow_open")}
+                        </Button>
+                      </div>
+                    )}
                     {bitbucketPending(naming.resolved?.sources) && (
                       <div>
                         <Button small icon={naming.rereading ? "loading" : "refresh"} disabled={naming.rereading} onClick={naming.reread}>
@@ -935,6 +947,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
           {busy ? tr("launch.launching") : worktree ? tr("launch.start_worktree") : tr("launch.launch")}
         </Button>
       </footer>
+      {gitflowOpen && <GitflowInitModal repo={repo} onClose={() => setGitflowOpen(false)} onSaved={naming.resolveAgain} />}
     </>
   );
 }

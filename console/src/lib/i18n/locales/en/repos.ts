@@ -1,5 +1,5 @@
 // English カタログ / ドメイン: repos
-// キー接頭辞: rp, repo, scm, pj, igb, proj
+// キー接頭辞: rp, repo, scm, pj, igb, proj, gitflow
 //
 // ⚠️ 追記は**自分のドメインのファイルだけ**に行う（ADR 0067 決定 4）。分割前は 4,700 行の
 // 1 ファイルで、フロントの並列セッションが全員ここへ追記＝毎回確実に衝突していた。
@@ -423,4 +423,36 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "scm.diff_load_failed": "(failed to load diff)",
   "scm.no_file_selected": "(no file selected)",
   "repo.start_studio": "Start an image studio",
+  // --- Initialize Git Flow (ADR 0103 decision 9) ---
+  "repo.gitflow_init": "Initialize Git Flow",
+  "gitflow.title": "Initialize Git Flow — {name}",
+  "gitflow.intro":
+    "Writes git-flow's settings (the gitflow.* keys) into this clone's git config, as git flow init would. New branches for work items then follow them. Nothing is committed, and no branch is created or switched.",
+  "gitflow.shared": "Every worktree and session of this repository reads these settings at once.",
+  "gitflow.committed": "{files} in the repository takes precedence over these settings where they overlap.",
+  "gitflow.native": "This clone also has git-flow-next's own settings (gitflow.version), which take precedence over these.",
+  "gitflow.unavailable": "Could not read this repository's git settings. Check that the Workspace is running.",
+  "gitflow.field.production": "Production branch",
+  "gitflow.field.development": "Development branch",
+  "gitflow.field.feature": "Feature prefix",
+  "gitflow.field.bugfix": "Bugfix prefix",
+  "gitflow.field.release": "Release prefix",
+  "gitflow.field.hotfix": "Hotfix prefix",
+  "gitflow.field.versiontag": "Version tag prefix",
+  "gitflow.optional": "(optional)",
+  "gitflow.bugfix_hint": "Leave the bugfix prefix empty to keep what is set now (or have none). support/ is added only when it is not set.",
+  "gitflow.origin_only":
+    "Only on origin. Agent Fleet can use it, but the git flow command and Fork also need a local branch, which this does not create:",
+  "gitflow.missing": "{branch} exists neither locally nor on origin. Git Flow cannot be initialized with it.",
+  "gitflow.overwrites": "These settings already exist and will be overwritten:",
+  "gitflow.submit": "Initialize",
+  "gitflow.submit_save": "Save",
+  "gitflow.submit_overwrite": "Overwrite",
+  "gitflow.saving": "Saving…",
+  "gitflow.saved": "Initialized Git Flow on {name}",
+  "gitflow.err_changed": "The settings changed while this dialog was open. They have been reloaded — check them and save again.",
+  "gitflow.err_branch_missing": "{branch} exists neither locally nor on origin. Push or fetch it first.",
+  "gitflow.err_invalid": "Not a valid value: {detail}",
+  "gitflow.err_failed": "Could not write the settings: {err}",
+  "gitflow.err_partial": "Writing stopped part-way ({err}). Already written: {keys}. Save again to write them all.",
 };

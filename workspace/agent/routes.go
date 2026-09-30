@@ -328,6 +328,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /repos/{name}/branch-rule", handleGetBranchRule)
 	mux.HandleFunc("POST /repos/{name}/branch-name", handleBranchName)
 	mux.HandleFunc("POST /repos/{name}/branch-name/check", handleBranchNameCheck)
+	// Initialize Git Flow (ADR 0103 decision 9): writes git-flow's keys into the clone's
+	// shared config on a person's press; never switches or creates a branch.
+	mux.HandleFunc("GET /repos/{name}/gitflow", handleGetGitflow)
+	mux.HandleFunc("POST /repos/{name}/gitflow/init", handleGitflowInit)
 	// The user layer of the branch rules. Its own store, not ui-prefs (ADR 0103 decision 2).
 	mux.HandleFunc("GET /branch-rules/user", handleGetUserBranchRules)
 	mux.HandleFunc("PUT /branch-rules/user", handlePutUserBranchRules)

@@ -394,6 +394,8 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.base_origin_note": "If origin has a branch of the same name, the new branch starts at its tip (if this copy's local branch is ahead or has diverged, the local one is kept). The parent working copy is never moved.",
   "launch.base_source": "Base chosen by:",
   "launch.branch_reread": "Read Bitbucket's branch settings again",
+  "launch.gitflow_suggest": "origin has a develop branch, but this repository declares no git-flow settings, so the branch starts from the current branch.",
+  "launch.gitflow_open": "Initialize Git Flow…",
   "launch.sum.branch_warn": "branch name has a note",
   "launch.branch_warn.prefix_mismatch": "The name does not start with one of this repository's prefixes (feature/ and so on). You can still use it.",
   "launch.branch_warn.base_missing": "The base branch the rules name does not exist, so the branch starts from the current branch.",
