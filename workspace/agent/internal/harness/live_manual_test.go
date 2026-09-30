@@ -1,4 +1,4 @@
-//go:build manuallive
+//go:build contract_manual
 
 package harness
 
@@ -9,7 +9,7 @@ package harness
 // answering afterward. NOT part of `go test ./...` (build-tagged out, so it never touches a
 // real, billed GPU box by accident) — run explicitly with:
 //
-//   go test ./internal/harness/ -tags manuallive -run TestManualLiveCompaction -v -timeout 20m
+//   go test ./internal/harness/ -tags contract_manual -run TestManualLiveCompaction -v -timeout 20m
 //
 // with AF_LCPP_LIVE_BASE (the engine's own /v1-mount base URL, e.g.
 // https://<cp>/engine/llm/v1) and AF_LCPP_LIVE_TOKEN (a session/engine-scoped bearer minted via
@@ -157,7 +157,7 @@ func TestManualLiveCompaction(t *testing.T) {
 // project with real bugs through E's own Registry/Runtime/Run — the shape phase 1's kind is
 // actually meant to carry.
 //
-//	go test ./internal/harness/ -tags manuallive -run TestManualLiveAgenticSession -v -timeout 60m
+//	go test ./internal/harness/ -tags contract_manual -run TestManualLiveAgenticSession -v -timeout 60m
 //
 // Env: AF_LCPP_LIVE_BASE / AF_LCPP_LIVE_TOKEN (same as TestManualLiveCompaction),
 // AF_LCPP_LIVE_MODEL (catalogue id), AF_LCPP_LIVE_CWD (a pre-seeded scratch Go project — this

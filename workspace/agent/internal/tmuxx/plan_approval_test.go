@@ -24,7 +24,7 @@ import (
 //     planDecision.ts.
 //
 // Like footer_corpus_test.go this is a LOCK, not a live drift detector: if a future CLI
-// changes the menu, refresh the captures here (and the live tui_contract probe catches
+// changes the menu, refresh the captures here (and the live `contract`-tagged probe catches
 // drift in-image). It fails loudly the moment a refreshed capture violates an invariant.
 
 type planOption struct {

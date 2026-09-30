@@ -4,7 +4,7 @@
 # Build-tagged files are not part of the default build, so none of gofmt / go vet /
 # go build / go test touches them, and neither do the six CI jobs — a rotten reference
 # passes green. Measured: an unused import left in opencode_contract_test.go kept every
-# worker-side gate and 6/6 CI jobs green while only `go vet -tags clicontract` exited 1.
+# worker-side gate and 6/6 CI jobs green while only `go vet -tags contract` exited 1.
 # Running the tagged tests needs the real CLI binaries and cannot happen in CI, but vet is
 # type checking only, so it runs.
 #

@@ -1,4 +1,4 @@
-//go:build clicontract
+//go:build contract_manual
 
 // A hand-driven agy OAuth login: the one step of the Connections flow that cannot be
 // automated, because completing it needs a human with a browser.
@@ -8,7 +8,7 @@
 // flow — which is how the RDRAND workaround was first shown to carry a whole login on a host
 // where ADR 0008 had declared agy unrunnable.
 //
-//	AF_AGY_LOGIN=1 go test -tags clicontract -run TestAgyLoginByHand -timeout 20m ./internal/agents/agy/
+//	AF_AGY_LOGIN=1 go test -tags contract_manual -run TestAgyLoginByHand -timeout 20m ./internal/agents/agy/
 //
 // It needs a human: the URL is written to <dir>/url.txt, and the flow waits for the
 // authorization code to appear in <dir>/code.txt.

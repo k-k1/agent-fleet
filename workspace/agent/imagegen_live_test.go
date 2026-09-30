@@ -1,10 +1,10 @@
-//go:build clicontract
+//go:build contract
 
 // The one check the unit tests cannot make: drive image generation the way a session really
 // does — a separate `workspace-agent mcp-stdio` process speaking MCP over a pipe, the real
 // route table behind it, the real Codex CLI, and a real picture at the end (ADR 0069).
 //
-//	AF_IMAGEGEN_LIVE=1 go test -tags clicontract -run TestImagegenLive -timeout 15m .
+//	AF_IMAGEGEN_LIVE=1 go test -tags contract -run TestImagegenLive -timeout 15m .
 //
 // It is gated and never runs in CI for two reasons. **It spends the user's ChatGPT plan
 // quota** — one image, which the plan burns 3-5x faster than a text turn — and it needs a
@@ -292,7 +292,7 @@ func TestImagegenLiveEndToEnd(t *testing.T) {
 // isolated HOME with an allow-list of one tool — really does let generate_image through, which
 // no unit test with a stub `agy` can show.
 //
-//	AF_IMAGEGEN_LIVE=1 go test -tags clicontract -run TestImagegenLiveAgy -timeout 15m .
+//	AF_IMAGEGEN_LIVE=1 go test -tags contract -run TestImagegenLiveAgy -timeout 15m .
 //
 // It spends one image against the user's Antigravity plan.
 func TestImagegenLiveAgyEndToEnd(t *testing.T) {

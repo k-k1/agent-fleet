@@ -1,4 +1,4 @@
-//go:build drift
+//go:build contract
 
 // Can a managed session's MCP child be told WHICH session it serves?
 //

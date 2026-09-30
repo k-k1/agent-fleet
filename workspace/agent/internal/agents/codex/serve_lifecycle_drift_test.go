@@ -1,4 +1,4 @@
-//go:build drift
+//go:build contract
 
 // Tier 1 drift detection that runs the shared daemon's whole life (docs/log/27 §7.1) against the
 // real codex binary. It spends no turn - it only brings the app-server up and back down.

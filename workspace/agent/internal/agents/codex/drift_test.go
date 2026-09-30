@@ -1,7 +1,7 @@
-//go:build drift
+//go:build contract
 
 // codex CLI drift detection (Tier 1). These tests run against the real codex binary and are
-// excluded from a plain `go test ./...` by the build tag `drift` (they run in CI's dedicated
+// excluded from a plain `go test ./...` by the build tag `contract` (they run in CI's dedicated
 // job, and locally when codex is on PATH).
 //
 // Why they are needed: every other codex test uses a fixture or a mock, so it stays green

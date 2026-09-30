@@ -1,4 +1,4 @@
-//go:build drift
+//go:build contract
 
 // Does a TRUSTED project's own `.codex/config.toml` contribute MCP servers, and what
 // happens to them when af sends a thread-scoped `mcp_servers` map?

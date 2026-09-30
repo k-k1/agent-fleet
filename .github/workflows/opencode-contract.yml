@@ -7,7 +7,7 @@
 # found by hand.
 #
 # Here we assert the contract against the real opencode binary, real store, real
-# app-server, and real tmux pane (-tags clicontract). opencode bundles the free
+# app-server, and real tmux pane (-tags contract). opencode bundles the free
 # OpenCode Zen model, so the composer and real turns work without login — unlike
 # claude's L4, **no billing and no secrets needed**.
 #
@@ -84,7 +84,7 @@ jobs:
         working-directory: workspace/agent
         env:
           E2E_REQUIRE: "1" # fail rather than skip when the binary is missing
-        run: go test -tags clicontract -run TestContract -v -count=1 -timeout 15m ./internal/agents/opencode/ ./
+        run: go test -tags contract -run TestContract -v -count=1 -timeout 15m ./internal/agents/opencode/ ./
 
       # Tier B: runs a real turn on the free Zen model and verifies the message/part
       # JSON payload shapes and the LiveState working→idle transition. Depends on an
@@ -96,7 +96,7 @@ jobs:
         env:
           E2E_REQUIRE: "1"
           OPENCODE_CONTRACT_LIVE: "1"
-        run: go test -tags clicontract -run TestContractLive -v -count=1 -timeout 15m ./internal/agents/opencode/
+        run: go test -tags contract -run TestContractLive -v -count=1 -timeout 15m ./internal/agents/opencode/
 
       - name: remember successfully tested latest
         if: matrix.version == 'latest' && github.event_name != 'pull_request'

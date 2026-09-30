@@ -1,4 +1,4 @@
-//go:build drift
+//go:build contract
 
 // Replace or merge? docs/log/27 §9.3 recorded "thread config REPLACES the global set",
 // measured on EPHEMERAL threads. Production managed sessions use PERSISTENT threads,

@@ -1,4 +1,4 @@
-//go:build clicontract
+//go:build contract
 
 // A claude contract test that CONSUMES REAL TURNS: the only drift detection for branching
 // at a past message (docs/log/55).
@@ -16,7 +16,7 @@
 //
 // Opt-in, because it uses a real credential and subscription quota:
 //
-//	CLAUDE_CONTRACT_LIVE=1 go test -tags clicontract -run TestContractLiveClaudeForkAt ./internal/agents/claude/
+//	CLAUDE_CONTRACT_LIVE=1 go test -tags contract -run TestContractLiveClaudeForkAt ./internal/agents/claude/
 //
 // Cost: three haiku turns, each a one-line reply. The working conversation is created in a
 // scratch project directory and removed, transcript and all, during cleanup.

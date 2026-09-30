@@ -162,7 +162,7 @@ with the engine — the deployment's, or the member's own server
 ([08 §8.6](08-integrations.md)) — not with the workspace image, so no workflow and no
 release watcher covers it. Its contract with that server's API is an opt-in live test run
 by hand against a real engine (`internal/harness/live_contract_test.go`, build tag
-`manuallive`).
+`contract_manual`).
 
 Register it with the daily release watcher, `cli-release-watch.yml`, so that a published
 version change dispatches it. `cli-drift.yml` only reports pins that fall behind; it

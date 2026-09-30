@@ -1,11 +1,11 @@
-//go:build clicontract
+//go:build contract
 
 // Tier B: the contract checks that need a REAL turn — the message/part JSON payloads only
 // exist once a model has replied. opencode's free OpenCode Zen models make this
 // credential-free, but they are an external service, so this tier is flaky by nature:
 // gated behind OPENCODE_CONTRACT_LIVE=1 and reported non-blocking in CI.
 //
-//	OPENCODE_CONTRACT_LIVE=1 go test -tags clicontract -run TestContractLive ./internal/agents/opencode/
+//	OPENCODE_CONTRACT_LIVE=1 go test -tags contract -run TestContractLive ./internal/agents/opencode/
 package opencode
 
 import (
@@ -159,7 +159,7 @@ func liveTurn(t *testing.T, h *threadHandle, ses, prompt, id string, wantMsgs in
 // inclusivity is the whole feature: off by one turn and the branch silently carries the
 // prompt the user wanted to retake, which reads as "it worked" in the mirror.
 //
-//	OPENCODE_CONTRACT_LIVE=1 go test -tags clicontract -run TestContractLiveForkAtMessage ./internal/agents/opencode/
+//	OPENCODE_CONTRACT_LIVE=1 go test -tags contract -run TestContractLiveForkAtMessage ./internal/agents/opencode/
 func TestContractLiveForkAtMessage(t *testing.T) {
 	requireLive(t)
 	addr, home := startServe(t)
@@ -311,7 +311,7 @@ func TestContractLiveForkAtMessage(t *testing.T) {
 // loaded, so the auth call must wait for the METHOD, not for health. Starts a private
 // serve on its own port so the workspace's shared daemon is untouched.
 //
-//	OPENCODE_CONTRACT_LIVE=1 go test -tags clicontract -run TestContractLiveOAuthReadyWindow ./internal/agents/opencode/
+//	OPENCODE_CONTRACT_LIVE=1 go test -tags contract -run TestContractLiveOAuthReadyWindow ./internal/agents/opencode/
 func TestContractLiveOAuthReadyWindow(t *testing.T) {
 	requireLive(t)
 	const addr = "http://127.0.0.1:7803"
