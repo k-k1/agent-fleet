@@ -459,6 +459,15 @@ func DropHandle(name string) {
 	// is left a pending stop, so the turn it creates is interrupted when the answer names it.
 	h.tq().DropAll()
 	h.tq().Interrupt(agents.InterruptOpts{DiscardQueue: true}, running || turnID != "")
+	// The handle is out of the registry, so the turn/completed our turn/interrupt produces
+	// reaches nobody: end the pump's wait here, or it lives until the connection drops. A turn
+	// still starting reads it once turn/start answers, after delivering its pending stop.
+	if end := h.turnEnd; end != nil {
+		select {
+		case end <- agents.TurnCancelled:
+		default:
+		}
+	}
 	h.mu.Unlock()
 	if cl == nil {
 		return

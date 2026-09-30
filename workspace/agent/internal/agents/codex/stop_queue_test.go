@@ -56,6 +56,30 @@ func startLong(t *testing.T, m *mockCodexServer, h *threadHandle) {
 	waitCodexState(t, h, agents.TurnRunning)
 }
 
+// completeTurn ends the nth turn the mock has started. Waiting for the nth turn/start call is
+// not enough: the call is recorded as it arrives, before the mock names the turn, and a
+// complete() sent in between ends the previous turn again (or nothing) and the pump waits for
+// good (measured: 7 of 10 runs under -race). So it waits until the handle itself holds the turn
+// the answer named.
+func completeTurn(t *testing.T, m *mockCodexServer, h *threadHandle, n int) {
+	t.Helper()
+	want := "turn_" + string(rune('0'+n)) // the mock's id scheme
+	deadline := time.Now().Add(waitBackstop)
+	for {
+		h.mu.Lock()
+		named := h.turnID == want
+		h.mu.Unlock()
+		if named {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the handle never took turn %s", want)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	m.complete("completed")
+}
+
 func episode(h *threadHandle) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -82,10 +106,8 @@ func TestFirstStopEndsTheTurnAndTheQueueContinues(t *testing.T) {
 	if res.Stop != agents.StopFirst || res.Discard != nil {
 		t.Fatalf("first stop = %+v, want first with nothing discarded", res)
 	}
-	waitCodexCalls(t, m, "turn/start", 2)
-	m.complete("completed")
-	waitCodexCalls(t, m, "turn/start", 3)
-	m.complete("completed")
+	completeTurn(t, m, h, 2)
+	completeTurn(t, m, h, 3)
 	waitPumpDone(t, h)
 
 	if got := fmt.Sprint(sentTurns(m)); got != "[long own follow-up from a peer]" {
@@ -287,8 +309,7 @@ func TestEpisodeEndsOnMemberInputOnly(t *testing.T) {
 				t.Fatalf("stop = %s, want %s", res.Stop, tc.want)
 			}
 			if tc.want == agents.StopFirst {
-				waitCodexCalls(t, m, "turn/start", 3)
-				m.complete("completed")
+				completeTurn(t, m, h, 3)
 			}
 			waitPumpDone(t, h)
 			time.Sleep(100 * time.Millisecond)
@@ -348,8 +369,7 @@ func TestQuestionCancelIsAFirstStop(t *testing.T) {
 	if err := h.Respond(agents.InteractionReply{ID: "item_q1", Decision: agents.DecisionCancel}); err != nil {
 		t.Fatal(err)
 	}
-	waitCodexCalls(t, m, "turn/start", 2)
-	m.complete("completed")
+	completeTurn(t, m, h, 2)
 	waitPumpDone(t, h)
 	if got := fmt.Sprint(sentTurns(m)); got != "[long queued]" {
 		t.Fatalf("turns = %s, want the queued input to continue after the cancel", got)
@@ -446,8 +466,7 @@ func TestFirstStopOnATakenOverTurnKeepsTheQueue(t *testing.T) {
 	waitCodexCalls(t, m, "turn/interrupt", 1)
 	dispatchNotification(rpcMsg{Method: "turn/completed", Params: json.RawMessage(
 		`{"threadId":"thr_test","turn":{"id":"turn_external","status":"interrupted"}}`)})
-	waitCodexCalls(t, m, "turn/start", 1)
-	m.complete("completed")
+	completeTurn(t, m, h, 1)
 	waitPumpDone(t, h)
 	if got := fmt.Sprint(sentTurns(m)); got != "[after it]" {
 		t.Fatalf("turns = %s, want the queued input to run after the taken-over turn", got)
@@ -490,8 +509,45 @@ func TestDropHandleStopsTheTurnInFlight(t *testing.T) {
 	close(hold)
 	<-dropped
 	waitCodexCalls(t, m, "turn/interrupt", 1)
-	// The dropped handle is out of the registry, so no turn/completed reaches its pump; losing
-	// the connection is what ends that wait.
-	h.runtimeLost()
-	waitPumpDone(t, h)
+	// The dropped handle is out of the registry, so no turn/completed reaches its pump:
+	// DropHandle itself ends that wait (#1307).
+	waitPumpGone(t, h)
+}
+
+// A pump waiting for its turn's turn/completed must end with DropHandle (#1307). The handle
+// leaves the registry first, so the turn/completed its turn/interrupt produces reaches nobody,
+// and before the fix only a lost connection woke the pump.
+func TestDropHandleEndsThePumpWaitingOnATurn(t *testing.T) {
+	m, cl := newMockCodexServer(t)
+	h := newCodexTestHandle(t, cl, "codex-drop-running")
+	registerCodexTestHandle(t, h)
+	startLong(t, m, h)
+
+	DropHandle(h.name)
+	waitCodexCalls(t, m, "turn/interrupt", 1)
+	waitPumpGone(t, h)
+	h.mu.Lock()
+	st := h.state
+	h.mu.Unlock()
+	if st != agents.TurnCancelled {
+		t.Fatalf("state = %s, want cancelled", st)
+	}
+}
+
+// waitPumpGone fails when the pump is still running a few seconds after DropHandle. Short on
+// purpose: DropHandle ends the wait at once, and the backstop of waitPumpDone would only turn a
+// regression into a 30-second test.
+func waitPumpGone(t *testing.T, h *threadHandle) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		h.mu.Lock()
+		pumping := h.pumping
+		h.mu.Unlock()
+		if !pumping {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the pump outlived DropHandle")
+		}
+	}
 }
