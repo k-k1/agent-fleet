@@ -269,11 +269,10 @@ func sameKeys(a, b map[string]string) bool {
 	return true
 }
 
-// unbornHeads is the branches the repository's worktrees have checked out without a commit.
-// A branch without a local ref that a worktree names is unborn there; listing every named
-// branch is enough, since the caller asks only about branches that have no ref. An error
-// means the check could not be made, and the caller must then create nothing.
-func unbornHeads(dir string) (map[string]bool, error) {
+// checkedOut is the branches the repository's worktrees have checked out, unborn ones
+// included. An error means the check could not be made, and the caller must then change no
+// ref.
+func checkedOut(dir string) (map[string]bool, error) {
 	out, err := gitx.Run(dir, "worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, err
@@ -287,10 +286,18 @@ func unbornHeads(dir string) (map[string]bool, error) {
 	return heads, nil
 }
 
+// isSymref reports a ref that is a symbolic ref, dangling or not. show-ref calls a dangling
+// one absent, and a write through it would create or delete the branch it names instead.
+func isSymref(dir, ref string) bool {
+	return gitx.Cmd(dir, "symbolic-ref", "--quiet", ref).Run() == nil
+}
+
 // createTracking makes refs/heads/<b> at origin/<b>'s commit with origin/<b> as its upstream,
-// the result of `git branch --track`, in two steps so a failure leaves nothing half-made:
-// `git branch` creates the ref before it writes the upstream, and a retry would then skip the
-// branch and leave it untracked. made reports a ref that stayed despite the error.
+// the result of `git branch --track`, in two steps: `git branch` creates the ref before it
+// writes the upstream, so its failure leaves an untracked branch a retry would skip. Here a
+// failed upstream takes the ref back, unless someone has adopted it meanwhile (moved it,
+// replaced it, checked it out); then it stays, reported as made, and the error says so.
+// Every ref write is --no-deref, so none can reach through a symbolic ref to another branch.
 func createTracking(dir, b string) (made bool, err error) {
 	ref := "refs/heads/" + b
 	sha, err := gitx.Run(dir, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+b+"^{commit}")
@@ -299,14 +306,27 @@ func createTracking(dir, b string) (made bool, err error) {
 	}
 	// The empty old value makes update-ref refuse a ref that exists, so a branch that appeared
 	// since the caller's check is never moved.
-	if _, err := gitx.Run(dir, "update-ref", "-m", "branch: Created from origin/"+b, ref, sha, ""); err != nil {
+	if _, err := gitx.Run(dir, "update-ref", "--no-deref", "-m", "branch: Created from origin/"+b, ref, sha, ""); err != nil {
 		return false, err
 	}
 	if _, err := gitx.Run(dir, "branch", "--set-upstream-to=refs/remotes/origin/"+b, "--", b); err != nil {
-		// Deleted only while it still points where it was created: someone who moved it since
-		// owns it now.
-		if _, derr := gitx.Run(dir, "update-ref", "-d", ref, sha); derr != nil {
-			return true, fmt.Errorf("%w (the branch was left without an upstream: %v)", err, derr)
+		left := func(why string) (bool, error) {
+			return true, fmt.Errorf("%w (the branch was left without an upstream: %s)", err, why)
+		}
+		if isSymref(dir, ref) {
+			return left("it became a symbolic ref")
+		}
+		heads, lerr := checkedOut(dir)
+		if lerr != nil {
+			return left("the worktrees could not be listed")
+		}
+		if heads[ref] {
+			return left("a worktree checked it out")
+		}
+		// The old value keeps a ref moved since then; the checks above narrow, not close, the
+		// window for a shell git outside the Agent's lock.
+		if _, derr := gitx.Run(dir, "update-ref", "--no-deref", "-d", ref, sha); derr != nil {
+			return left(derr.Error())
 		}
 		return false, err
 	}
@@ -352,13 +372,16 @@ func InitGitflow(dir string, expected map[string]string, v GitflowValues) (Gitfl
 		if refExists(dir, "refs/heads/"+b) {
 			continue
 		}
-		// An unborn HEAD naming this branch, in any worktree, would be born by the ref: a
-		// switch in all but name, leaving that index and work tree out of step with the commit.
-		unborn, err := unbornHeads(dir)
+		if isSymref(dir, "refs/heads/"+b) {
+			return res, &GitflowBranchError{Branch: b, Created: res.Created, Err: errors.New("it is a symbolic ref")}
+		}
+		// A worktree naming a branch that has no ref has it unborn, and the ref would give it a
+		// commit: a switch in all but name, leaving that index and work tree out of step.
+		heads, err := checkedOut(dir)
 		if err != nil {
 			return res, &GitflowBranchError{Branch: b, Created: res.Created, Err: fmt.Errorf("the worktrees could not be listed: %w", err)}
 		}
-		if unborn["refs/heads/"+b] {
+		if heads["refs/heads/"+b] {
 			return res, &GitflowBranchError{Branch: b, Created: res.Created, Err: errors.New("a worktree has it checked out, not yet born")}
 		}
 		made, err := createTracking(dir, b)

@@ -428,16 +428,8 @@ func TestInitGitflowFailedUpstreamLeavesNoBranch(t *testing.T) {
 func TestInitGitflowCreatesNothingWhenWorktreesUnreadable(t *testing.T) {
 	dir := newRepo(t)
 	remoteBranch(t, dir, "develop")
-	real, err := exec.LookPath("git")
-	if err != nil {
-		t.Skip("git not available")
-	}
-	bin := t.TempDir()
-	shim := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = worktree ] && exit 128; done\nexec " + real + " \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(shim), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	shimGit(t, `for a in "$@"; do [ "$a" = worktree ] && exit 128; done`)
+	var err error
 	_, err = InitGitflow(dir, nil, defaultValues())
 	var be *GitflowBranchError
 	if !errors.As(err, &be) || be.Branch != "develop" || !strings.Contains(be.Error(), "worktrees") {
@@ -445,5 +437,86 @@ func TestInitGitflowCreatesNothingWhenWorktreesUnreadable(t *testing.T) {
 	}
 	if refExists(dir, "refs/heads/develop") || len(configKeys(t, dir)) != 0 {
 		t.Error("something was created or written")
+	}
+}
+
+// shimGit puts a git first on PATH that runs pre (sh, with $REAL the real git) before handing
+// every call to the real one.
+func shimGit(t *testing.T, pre string) {
+	t.Helper()
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not available")
+	}
+	bin := t.TempDir()
+	script := "#!/bin/sh\nREAL=" + real + "\n" + pre + "\nexec \"$REAL\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// failUpstream makes the upstream step fail after running hook against the repository.
+func failUpstream(dir, hook string) string {
+	return `case "$*" in *--set-upstream-to=*) cd "` + dir + `" && ` + hook + `; exit 1;; esac`
+}
+
+// A symbolic ref is not written through: a dangling develop → foreign must not create foreign.
+func TestInitGitflowRefusesSymbolicRef(t *testing.T) {
+	dir := newRepo(t)
+	remoteBranch(t, dir, "develop")
+	git(t, dir, "symbolic-ref", "refs/heads/develop", "refs/heads/foreign")
+	_, err := InitGitflow(dir, nil, defaultValues())
+	var be *GitflowBranchError
+	if !errors.As(err, &be) || be.Branch != "develop" || !strings.Contains(be.Error(), "symbolic") {
+		t.Fatalf("err = %#v", err)
+	}
+	if refExists(dir, "refs/heads/foreign") {
+		t.Error("the symbolic ref's target was created")
+	}
+	if got := git(t, dir, "symbolic-ref", "refs/heads/develop"); got != "refs/heads/foreign" {
+		t.Errorf("develop now = %q", got)
+	}
+}
+
+// The rollback leaves alone a branch someone adopted between its creation and the failed
+// upstream, and reports it as created.
+func TestInitGitflowRollbackSparesAdoptedBranch(t *testing.T) {
+	cases := []struct {
+		name  string
+		hook  func(dir, wt string) string
+		check func(t *testing.T, dir, wt string)
+	}{
+		{"checked out in a worktree", func(dir, wt string) string {
+			return `"$REAL" worktree add -q "` + wt + `" develop`
+		}, func(t *testing.T, dir, wt string) {
+			if !refExists(dir, "refs/heads/develop") || git(t, wt, "symbolic-ref", "HEAD") != "refs/heads/develop" {
+				t.Error("the worktree's branch was deleted")
+			}
+		}},
+		{"replaced by a symbolic ref to main", func(dir, wt string) string {
+			return `"$REAL" symbolic-ref refs/heads/develop refs/heads/main`
+		}, func(t *testing.T, dir, wt string) {
+			if !refExists(dir, "refs/heads/main") {
+				t.Error("main was deleted through the symbolic ref")
+			}
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := newRepo(t)
+			remoteBranch(t, dir, "develop")
+			wt := filepath.Join(t.TempDir(), "wt")
+			shimGit(t, failUpstream(dir, c.hook(dir, wt)))
+			_, err := InitGitflow(dir, nil, defaultValues())
+			var be *GitflowBranchError
+			if !errors.As(err, &be) || !reflect.DeepEqual(be.Created, []string{"develop"}) || !strings.Contains(be.Error(), "left without an upstream") {
+				t.Fatalf("err = %#v", err)
+			}
+			c.check(t, dir, wt)
+			if head := git(t, dir, "symbolic-ref", "--short", "HEAD"); head != "main" {
+				t.Errorf("HEAD moved to %q", head)
+			}
+		})
 	}
 }
