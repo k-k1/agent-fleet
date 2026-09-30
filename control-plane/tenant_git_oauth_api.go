@@ -148,9 +148,10 @@ func (a tenantGitOAuthAPI) save(w http.ResponseWriter, r *http.Request) {
 
 // remove (DELETE /api/admin/tenants/{slug}/git-oauth/{provider}) takes the OAuth option
 // away from this tenant's members and removes the way to make NEW connections. Existing
-// tokens stay in the members' workspaces, but Bitbucket and Jira tokens are refreshed
-// through the CP's bridge (git_oauth_bridge.go) with this row's key and secret, so each
-// such connection stops at its token's next expiry.
+// tokens stay in the members' workspaces, but from now on the CP's refresh bridge
+// (git_oauth_bridge.go) answers not_configured for Bitbucket and Jira, so those
+// connections can no longer renew through it. A Bitbucket store written before the
+// bridge still holds key/secret and may refresh directly (gitx.RefreshBitbucket).
 func (a tenantGitOAuthAPI) remove(w http.ResponseWriter, r *http.Request) {
 	provider := strings.ToLower(strings.TrimSpace(r.PathValue("provider")))
 	if !validGitOAuthProvider(provider) {

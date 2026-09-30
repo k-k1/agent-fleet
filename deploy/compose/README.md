@@ -157,6 +157,7 @@ sign-in is membership in an org you list:
 
 ```sh
 AF_GITHUB_ALLOWED_ORGS=acme,acme-labs    # required; also what enables the button
+GITHUB_OAUTH_CLIENT_ID=<client-id>
 GITHUB_OAUTH_CLIENT_SECRET=<client-secret>
 AF_GITHUB_ALLOWED_DOMAINS=example.com    # strongly recommended; see below
 ```
