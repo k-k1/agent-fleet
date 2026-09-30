@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -161,7 +162,7 @@ func TestOverviewFactsForCaching(t *testing.T) {
 		t.Fatalf("reads = %d for a stopped session, want 3 (one per stop)", n)
 	}
 
-	for _, kind := range []string{session.KindClaude, session.KindAgy, session.KindShell} {
+	for _, kind := range []string{session.KindClaude, session.KindAgy, session.KindShell, session.KindSSM} {
 		overviewFactsFor(session.Meta{Name: "skip-" + kind, Kind: kind}, true)
 	}
 	waitOverviewFactsIdle(t)
@@ -208,5 +209,143 @@ func TestPruneOverviewFacts(t *testing.T) {
 	}
 	if strings.Join(names, ",") != "keep" {
 		t.Fatalf("cache = %v, want only keep", names)
+	}
+}
+
+// TestOverviewFactsStoppedFailedReadRetried: a stopped session is read once per stop only when
+// that read succeeded; a failed one is retried after the interval rather than left empty.
+func TestOverviewFactsStoppedFailedReadRetried(t *testing.T) {
+	var fail atomic.Bool
+	var reads atomic.Int32
+	fail.Store(true)
+	stubOverviewFacts(t, func(session.Meta) ([]transcript.Turn, bool) {
+		reads.Add(1)
+		if fail.Load() {
+			return nil, false
+		}
+		return []transcript.Turn{{Role: "assistant", Text: "late"}}, true
+	})
+	m := session.Meta{Name: "st", Kind: session.KindCopilot}
+	overviewFactsFor(m, false)
+	waitOverviewFactsIdle(t)
+	overviewFactsFor(m, false) // within the interval: not yet
+	waitOverviewFactsIdle(t)
+	if n := reads.Load(); n != 1 {
+		t.Fatalf("reads = %d within the interval, want 1", n)
+	}
+	fail.Store(false)
+	overviewFactsMu.Lock()
+	overviewFactsCache["st"].at = time.Now().Add(-overviewFactsRefresh)
+	overviewFactsMu.Unlock()
+	overviewFactsFor(m, false)
+	waitOverviewFactsIdle(t)
+	if f := overviewFactsFor(m, false); f.say != "late" {
+		t.Fatalf("say = %q, want the retried read's", f.say)
+	}
+}
+
+// TestOverviewFactsPanicRecovered: a kind's parser panicking must neither take the Agent down
+// (an unrecovered goroutine panic exits the process) nor wedge the entry or the semaphore.
+func TestOverviewFactsPanicRecovered(t *testing.T) {
+	var reads atomic.Int32
+	stubOverviewFacts(t, func(session.Meta) ([]transcript.Turn, bool) {
+		if reads.Add(1) <= int32(cap(overviewFactsSem))+1 {
+			panic("parser bug")
+		}
+		return []transcript.Turn{{Role: "assistant", Text: "after"}}, true
+	})
+	m := session.Meta{Name: "pn", Kind: session.KindKiro}
+	// More panics than the semaphore has slots: a leaked slot would block the last read forever.
+	for i := 0; i <= cap(overviewFactsSem)+1; i++ {
+		overviewFactsFor(m, true)
+		waitOverviewFactsIdle(t)
+		overviewFactsMu.Lock()
+		overviewFactsCache["pn"].at = time.Now().Add(-overviewFactsRefresh)
+		overviewFactsMu.Unlock()
+	}
+	overviewFactsFor(m, true)
+	waitOverviewFactsIdle(t)
+	if f := overviewFactsFor(m, true); f.say != "after" {
+		t.Fatalf("say = %q after recovered panics, want the next read's", f.say)
+	}
+}
+
+// TestOverviewFactsRefreshWritesItsOwnEntry: a refresh that outlives a prune and a re-add must
+// not mark the new entry idle or overwrite it.
+func TestOverviewFactsRefreshWritesItsOwnEntry(t *testing.T) {
+	rel1, rel2, in1 := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var first atomic.Bool
+	first.Store(true)
+	stubOverviewFacts(t, func(session.Meta) ([]transcript.Turn, bool) {
+		if first.CompareAndSwap(true, false) {
+			close(in1)
+			<-rel1
+			return []transcript.Turn{{Role: "assistant", Text: "old"}}, true
+		}
+		<-rel2
+		return []transcript.Turn{{Role: "assistant", Text: "new"}}, true
+	})
+	m := session.Meta{Name: "re", Kind: session.KindCodex}
+	overviewFactsFor(m, true) // R1 starts and blocks
+	<-in1
+	overviewFactsMu.Lock()
+	e1 := overviewFactsCache["re"]
+	overviewFactsMu.Unlock()
+	pruneOverviewFacts(func(string) bool { return false })
+	overviewFactsFor(m, true) // a new entry; R2 starts and blocks
+	overviewFactsMu.Lock()
+	e2 := overviewFactsCache["re"]
+	overviewFactsMu.Unlock()
+	close(rel1)
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		overviewFactsMu.Lock()
+		done := !e1.busy
+		overviewFactsMu.Unlock()
+		if done {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("R1 never finished")
+		}
+	}
+	overviewFactsMu.Lock()
+	busy, say := e2.busy, e2.facts.say
+	overviewFactsMu.Unlock()
+	if say != "" || !busy {
+		t.Fatalf("successor entry = busy %v, say %q; the pruned entry's refresh wrote into it", busy, say)
+	}
+	close(rel2)
+	waitOverviewFactsIdle(t)
+	if f := overviewFactsFor(m, true); f.say != "new" {
+		t.Fatalf("say = %q, want the successor's own read", f.say)
+	}
+}
+
+// fakeLiveAgent answers WireLive with fixed facts, for the agent-fill-wins rule.
+type fakeLiveAgent struct {
+	agents.Agent
+	li agents.LiveInfo
+}
+
+func (f fakeLiveAgent) WireLive(session.Meta, bool) agents.LiveInfo { return f.li }
+
+// TestWireSessionAgentFactsWin: wireSession only fills what WireLive left empty — lcpp knows
+// its window exactly, and a derived one must not replace it.
+func TestWireSessionAgentFactsWin(t *testing.T) {
+	withTempHome(t)
+	own := &session.ContextUsage{Fresh: 7, Window: 4096, WindowSource: "recorded"}
+	withFakeAgent(t, session.KindLcpp, fakeLiveAgent{li: agents.LiveInfo{Context: own}})
+	stubOverviewFacts(t, func(session.Meta) ([]transcript.Turn, bool) {
+		return []transcript.Turn{{Role: "assistant", InTok: 99, OutTok: 1, Text: "derived"}}, true
+	})
+	m := session.Meta{Name: "lc", Kind: session.KindLcpp, Dir: t.TempDir()}
+	wireSession(m, false)
+	waitOverviewFactsIdle(t)
+	got := wireSession(m, false)
+	if got.Context != own {
+		t.Errorf("context = %+v, want the agent's own", got.Context)
+	}
+	if got.LastSay != "derived" || !reflect.DeepEqual(got.TokenSpends, []int{100}) {
+		t.Errorf("lastSay/tokenSpends = %q/%v, want the derived ones filling the gaps", got.LastSay, got.TokenSpends)
 	}
 }

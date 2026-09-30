@@ -7,6 +7,7 @@ package sessionx
 // rules below are what make it affordable on the 4 s list poll.
 
 import (
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +19,10 @@ import (
 
 // overviewFactsRefresh is how stale a live session's facts may get. The card is glanced at,
 // not read turn by turn, and Transcript() costs tens of milliseconds on a long opencode or
-// copilot conversation — paid per session, so the poll itself must not pay it.
+// copilot conversation — paid per session, so the poll itself must not pay it. It is still a
+// whole-conversation read every interval: codex's is incremental (rolloutcache.go) and
+// opencode's is an indexed query, but copilot, cursor and kiro re-parse their file, so a kind
+// whose logs grow large enough to matter wants a size/mtime guard on its own Transcript().
 const overviewFactsRefresh = 10 * time.Second
 
 // overviewFactsSkip lists the kinds this must not read. claude fills the fields itself from a
@@ -42,6 +46,7 @@ type overviewFactsEntry struct {
 	facts overviewFacts
 	at    time.Time // when facts were read; zero = never
 	alive bool      // liveness at that read
+	ok    bool      // that read succeeded; a failed one is retried after the interval, even when stopped
 	busy  bool      // a refresh is in flight
 }
 
@@ -62,7 +67,9 @@ var (
 // overviewFactsFor returns the last known facts for m and, when they are stale, starts one
 // background refresh. It never blocks on a transcript read: the first poll that sees a
 // session returns nothing and the next one carries the answer. A stopped session's
-// conversation does not change, so it is read once per stop rather than every interval.
+// conversation does not change, so it is read once per stop rather than every interval —
+// once per SUCCESSFUL read: a stop is exactly when a store is likeliest to be mid-write, and
+// a card whose only read failed would otherwise stay empty for good.
 func overviewFactsFor(m session.Meta, alive bool) overviewFacts {
 	if overviewFactsSkip[m.Kind] {
 		return overviewFacts{}
@@ -74,33 +81,43 @@ func overviewFactsFor(m session.Meta, alive bool) overviewFacts {
 		e = &overviewFactsEntry{}
 		overviewFactsCache[m.Name] = e
 	}
-	fresh := !e.at.IsZero() && e.alive == alive && (!alive || now.Sub(e.at) < overviewFactsRefresh)
+	fresh := !e.at.IsZero() && e.alive == alive && ((!alive && e.ok) || now.Sub(e.at) < overviewFactsRefresh)
 	if !fresh && !e.busy {
 		e.busy = true
-		go refreshOverviewFacts(m, alive)
+		go refreshOverviewFacts(e, m, alive)
 	}
 	f := e.facts
 	overviewFactsMu.Unlock()
 	return f
 }
 
-func refreshOverviewFacts(m session.Meta, alive bool) {
+// refreshOverviewFacts reads m's transcript into e. It writes into the entry it was started
+// for, not whatever the map holds by then: a prune and a re-add in between leave a new entry
+// with its own refresh in flight, which this one must neither mark idle nor overwrite.
+func refreshOverviewFacts(e *overviewFactsEntry, m session.Meta, alive bool) {
+	var turns []transcript.Turn
+	ok := false
+	defer func() {
+		// Transcript() runs outside any HTTP handler here, so nothing else would recover a
+		// panic in one kind's parser — and an unrecovered panic in a goroutine exits the whole
+		// Agent. It counts as a failed read.
+		if r := recover(); r != nil {
+			log.Printf("overview facts: %s (%s) transcript read panicked: %v", m.Name, m.Kind, r)
+			ok = false
+		}
+		overviewFactsMu.Lock()
+		defer overviewFactsMu.Unlock()
+		e.busy = false
+		e.at, e.alive, e.ok = time.Now(), alive, ok
+		// A failed read keeps what was known: it says nothing about the conversation, and a
+		// card that blanks on a transient error reads as a reset.
+		if ok {
+			e.facts = foldOverviewFacts(turns)
+		}
+	}()
 	overviewFactsSem <- struct{}{}
-	turns, ok := overviewFactsRead(m)
-	<-overviewFactsSem
-	overviewFactsMu.Lock()
-	defer overviewFactsMu.Unlock()
-	e := overviewFactsCache[m.Name]
-	if e == nil {
-		return
-	}
-	e.busy = false
-	e.at, e.alive = time.Now(), alive
-	// A failed read (an unreadable store) keeps what was known: it says nothing about the
-	// conversation, and a card that blanks on a transient error reads as a reset.
-	if ok {
-		e.facts = foldOverviewFacts(turns)
-	}
+	defer func() { <-overviewFactsSem }()
+	turns, ok = overviewFactsRead(m)
 }
 
 // pruneOverviewFacts drops the entries of sessions that no longer exist, so the cache cannot
@@ -116,7 +133,8 @@ func pruneOverviewFacts(exists func(name string) bool) {
 }
 
 // foldOverviewFacts reduces a normalized transcript to the card's three facts with the same
-// arithmetic as the mirror, so a card and its chat never draw different numbers:
+// arithmetic as the mirror, so a card and its chat draw the same numbers. It follows the
+// mirror's rules, not its every filter — a studio-signal-only user turn still ends a reply here:
 //
 //   - A reply is the run of assistant turns between two turns a person sent (the Console's
 //     groupTurns). Its spend is output SUMMED over the run plus the uncached input and
