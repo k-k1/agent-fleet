@@ -29,11 +29,8 @@ const dynSeg = "\x00"
 // TestConsoleAPIPathsHaveCPRoutes — a literal Console path with no matching CP route is a
 // relay allowlist miss: add the route to routes.go and regenerate testdata/routes.golden.
 func TestConsoleAPIPathsHaveCPRoutes(t *testing.T) {
-	// Switch on every env-conditional registration so the table is the widest one any
-	// deployment serves: registerMCPRoutes and the native-only registerUpdateRoutes.
-	t.Setenv("AF_MCP_ENABLED", "true")
-	t.Setenv("AF_SELF_LINK", filepath.Join(t.TempDir(), "af"))
-	_, mux := smokeEnv(t)
+	// Every routeSwitch on, so the table is the widest one any deployment serves.
+	_, mux := smokeEnvWith(t, allRouteSwitches(t)...)
 	var routes [][]string
 	for _, line := range muxRoutes(t, mux) {
 		_, path, _ := strings.Cut(line, " ")

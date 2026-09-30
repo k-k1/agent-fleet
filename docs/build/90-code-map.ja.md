@@ -31,9 +31,9 @@ updated: "2026-09"
 （たとえば CP の `registerEngineRoutes`、agent の `browserx.RegisterRoutes`）。だからメソッドと
 パス（たとえば `"GET /api/admin/engines"`）をモジュール全体で grep する。登録している行がハンドラ名を
 示し、ハンドラ名がファイルかパッケージを教えてくれる（`sessionx.HandleCreateSession` なら
-`internal/sessionx`）。`testdata/routes.golden` は `TestRouteTableGolden` がテスト用の構成で組んだ
-ルート表で、モジュールが何を提供しているかを手早く見るには向くが、全ルートではない: CP のエンジン
-ゲートウェイのルートはエンジンが設定されているときだけ登録され、golden には 1 つも無い。各ルートの用途は [05](05-api.ja.md)。
+`internal/sessionx`）。`testdata/routes.golden` は `TestRouteTableGolden` が組んだ
+ルート表である。CP では環境変数で切り替わる登録（MCP・native の自己更新・エンジンゲートウェイ）を
+すべて有効にして採っているので、一部の配備にしか無いものも含めて、配備が提供しうる全ルートが載っている。各ルートの用途は [05](05-api.ja.md)。
 
 **`internal/` 配下のパッケージは `package main` を import しない。** `main` から要るものは
 渡してもらう。継ぎ目の広いパッケージはその必要を自分の `deps.go` で宣言し、`main` が起動時に

@@ -34,10 +34,10 @@ elsewhere in the module (for example `registerEngineRoutes` in the CP,
 module, `"GET /api/admin/engines"` say: the line that registers it names the handler,
 and the handler's name tells you the file or package (`sessionx.HandleCreateSession` is
 in `internal/sessionx`). `testdata/routes.golden` is the route table as
-`TestRouteTableGolden` builds it in its test configuration. It is a quick way to see what
-a module serves, but not every route: in the CP, the engine gateway's routes are
-registered only when an engine is configured, and the golden has none of them. What each
-route is for is [05](05-api.md).
+`TestRouteTableGolden` builds it. In the CP it is taken with every env-conditional
+registration on (MCP, the native self-update, the engine gateway), so it lists every route
+a deployment can serve, including those only some deployments have. What each route is for
+is [05](05-api.md).
 
 **A package under `internal/` never imports `package main`.** What it needs from `main`
 is handed to it. The packages with the widest seams declare that need in their own

@@ -13,8 +13,9 @@ There are two boundaries: the **public** one (Console ↔ CP) and the **internal
 The CP registers about 550 routes and the agent about 320, spread over many files. The
 complete list is `testdata/routes.golden` in each module. `TestRouteTableGolden`
 regenerates it, and a diff there is the review signal for a route change. The CP's list
-is taken with `AF_MCP_ENABLED=true`. It leaves out the routes that exist only on some
-deployments: the engine gateway, and the native self-update. Enumerating every route
+is taken with every env-conditional registration switched on (MCP, the native self-update
+and the engine gateway), so it includes the routes that exist only on some deployments;
+`TestRouteTableConditionalRoutesAreKnown` pins which lines those are. Enumerating every route
 here would be unmaintainable, so this chapter is strictly a **map**: group → representative
 paths → who handles it → where the detail is.
 

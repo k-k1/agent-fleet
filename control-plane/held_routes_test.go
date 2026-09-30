@@ -147,6 +147,10 @@ func heldTestCP(t *testing.T, agentURL string) *httptest.Server {
 		defaultTenantID: tenant.ID,
 		conns:           newConnRegistry(),
 	}
+	// Same isolation as smokeEnv: the caller's environment must not add routes or leave
+	// auth exemptions behind for later tests.
+	setRouteSwitches(t)
+	restoreAuthExemptions(t)
 	cp := httptest.NewServer(buildMux(config{consoleDir: t.TempDir(), mgr: mgr, egressDedup: &egressAuditDedup{}}))
 	t.Cleanup(cp.Close)
 	return cp
