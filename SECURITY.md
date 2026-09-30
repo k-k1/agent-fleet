@@ -127,11 +127,14 @@ declare.
   Whoever administers the account can read every member's data.
 
 - **Give each deployment its own AWS account.** The CP task role (`CpTaskRole` in
-  `20-platform.yaml`) is not scoped to one deployment: several of its statements name
-  `Resource: "*"` with no condition, and the workspace parameters are one prefix for
-  the whole account. A compromised CP can therefore reach other deployments, and
-  other SSM-managed instances, in the same account
-  ([#1182](https://github.com/k-k1/agent-fleet/issues/1182)).
+  `20-platform.yaml`) is scoped to the account, not to one deployment: several of its
+  statements name `Resource: "*"` with no condition, and the workspace parameters are
+  one prefix for the whole account. A compromised CP can therefore reach other
+  deployments in the same account, and, because it may tag any instance, get past
+  the tag fence on its shell commands
+  ([#1182](https://github.com/k-k1/agent-fleet/issues/1182)). Which statements, and
+  what they reach, is
+  [07 §7.1](docs/build/07-security.md#71-threat-model-and-trust-boundary).
 
 - **Members share the deployment's infrastructure.** All members' workspaces run in
   one VPC and one ECS cluster (on `ecs-ec2`, on a pool of slot instances that pass

@@ -40,10 +40,18 @@ CLI 自身の設定経路まで塞いではいない。つまり承認確認は*
   SSM パラメータの書き込み、home ボリュームの付け替え、`ssm:SendCommand` によるスロット上での
   シェル実行、（エンジンのスタックがあれば）GPU インスタンスの購入を行える。`SendCommand` は
   `AWS-RunShellScript` ドキュメントで、このプールの `af-pool` と `af-role=slot` のタグを持つ
-  インスタンスに対してだけ許される。アカウント内のほかのインスタンス（エンジン機を含む）には届かない。
+  インスタンスに対してだけ許されるので、CP の不具合がアカウント内のほかのインスタンス（エンジン機を含む）に
+  届くことはない（[#1182](https://github.com/k-k1/agent-fleet/issues/1182)）。ただし侵害された CP に対しては
+  この柵は薄い。`Ec2SlotPool` が `ec2:CreateTags` を `Resource: "*"` で許しており、柵が読むのはそのタグだから。
 - どのターゲットでも CP が DEK を unwrap して平文で注入する（§7.6）。
 
 会社間は別デプロイゆえ波及しない——これが提供モデルの強み（[decisions/0001](../decisions/0001-self-host-vs-saas.ja.md)）。
+**`ecs` / `ecs-ec2` では、デプロイごとに AWS アカウントを分けている場合に限る。** `CpTaskRole` の範囲は
+デプロイではなくアカウントだ。`EcsDrive`・`Ec2SlotPool`・`EcsContainerInstances` は条件なしの
+`Resource: "*"` で、`SsmWorkspaceParams` の `parameter/af-ws/*` はアカウント全体で 1 つの接頭辞
+（パスにデプロイを含まない）。したがって侵害された CP は、同じアカウントの別デプロイのサービスを
+更新・削除し、そのインスタンスとボリュームを停止・終了・スナップショットし、その Workspace の
+`AGENT_TOKEN` と DEK を読み書きできる。
 緩和候補: rootless Docker / socket-proxy / CP ロールの絞り込み。
 
 ## 7.2 隔離コントロール
@@ -350,7 +358,7 @@ enforce へ切り替える。
 1. **承認確認スキップの既定運用** — Workspace の境界が唯一の砦なので §7.2 を厳格に。利用者は
    オフにできる（[decisions/0056](../decisions/0056-tool-permission-choice.ja.md)）が、隔離の代わり
    にはならない（§7.1）。
-2. **CP/ホスト侵害 = デプロイ内一括崩壊**（§7.1）。会社間非波及が緩和。CP の AWS ロールには
+2. **CP/ホスト侵害 = デプロイ内一括崩壊**（§7.1）。会社間非波及が緩和（AWS ではアカウントを分けた場合だけ）。CP の AWS ロールには
    まだ絞る余地がある（[#1182](https://github.com/k-k1/agent-fleet/issues/1182)）。
 3. **長期保持するエージェント資格情報の失効・ローテーション** — 枠組みはあるが、真の失効は
    Vault / KMS 待ち（§7.6）。
