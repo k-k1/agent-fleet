@@ -37,6 +37,8 @@ var modelsSafe []string             // the catalog's non-data-sharing ids, newes
 // common one: the catalog is the authenticated account's (`source: providerCatalog`), so
 // there is nothing to ask before a credential exists.
 func Models() []agents.ModelChoice {
+	var fetchErr error
+	defer logCatalogErr(&fetchErr) // registered first so it runs after the unlock
 	modelsMu.Lock()
 	defer modelsMu.Unlock()
 	if modelsList != nil && time.Since(modelsAt) < modelsTTL {
@@ -47,7 +49,7 @@ func Models() []agents.ModelChoice {
 		// Stale-if-error, the shape every other kind's catalog uses: a transient failure must
 		// not empty a picker that worked a minute ago. Logged, because the picker then reads
 		// "catalog_empty" whether the account has no models or the answer failed to decode.
-		log.Printf("muse: model/list: %v", err)
+		fetchErr = err
 		return modelsList
 	}
 	modelsList, modelsSafe, modelsAt = list, safe, time.Now()
@@ -92,6 +94,8 @@ func SafeDefaultModel(cl *msp.Client) (string, error) {
 // safeRows is the catalog's non-data-sharing ids, refreshed over cl when the cache is stale.
 // known=false means no catalog has ever been read (every fetch so far failed).
 func safeRows(cl *msp.Client) (ids []string, known bool) {
+	var fetchErr error
+	defer logCatalogErr(&fetchErr)
 	modelsMu.Lock()
 	defer modelsMu.Unlock()
 	if modelsList != nil && time.Since(modelsAt) < modelsTTL {
@@ -102,11 +106,19 @@ func safeRows(cl *msp.Client) (ids []string, known bool) {
 		// The catalog is not answerable right now. Returning the stale rows rather than none
 		// keeps a restart on the model the session already had; with no stale catalog at all
 		// the answer is "unknown", never "no safe row".
-		log.Printf("muse: model/list: %v", err)
+		fetchErr = err
 		return slices.Clone(modelsSafe), modelsList != nil
 	}
 	modelsList, modelsSafe, modelsAt = list, safe, time.Now()
 	return slices.Clone(modelsSafe), true
+}
+
+// logCatalogErr logs a failed model/list outside modelsMu, which every session start and the
+// picker wait on: a write to a stalled stderr must not hold them up.
+func logCatalogErr(err *error) {
+	if *err != nil {
+		log.Printf("muse: model/list: %v", *err)
+	}
 }
 
 func firstVisible(ids []string) (string, error) {

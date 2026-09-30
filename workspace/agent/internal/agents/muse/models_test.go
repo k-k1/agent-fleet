@@ -311,3 +311,15 @@ func TestSafeDefaultModelRefusesAnUnreadableCatalog(t *testing.T) {
 		t.Fatalf("SafeDefaultModel with a stale catalog = %q, %v; want the stale safe row", got, err)
 	}
 }
+
+// The other half of #1344's split, through SafeDefaultModel and its cache: a catalog that was
+// READ and has no safe row answers "" with no error — the host's choice — rather than refusing.
+// Refusing here too would leave an account whose every row shares unable to start at all.
+func TestSafeDefaultModelFallsThroughWhenTheReadCatalogHasNoSafeRow(t *testing.T) {
+	resetModelCatalogCache(t)
+	cl, _ := catalogHost(t, `{"providerId":"meta","source":"providerCatalog","models":[
+		{"modelId":"muse-spark-1.3-contributor","displayLabel":"a","providerId":"meta"}]}`)
+	if got, err := SafeDefaultModel(cl); err != nil || got != "" {
+		t.Fatalf("SafeDefaultModel = %q, %v; want \"\" and no error", got, err)
+	}
+}
