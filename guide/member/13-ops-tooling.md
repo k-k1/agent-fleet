@@ -9,7 +9,7 @@ English | [日本語](13-ops-tooling.ja.md)
 
 ## PagerDuty / Grafana / CloudWatch / AWS connect from the "Ops & monitoring" tab (recommended)
 
-**PagerDuty, Grafana, CloudWatch and AWS are already built into the product** (docs/25 Phase 1; requires an image rebuild). Use that first, rather than the manual PoC steps described later.
+**PagerDuty, Grafana, CloudWatch and AWS are already built into the product**. Use that first, rather than the manual PoC steps described later.
 
 1. Open the **Settings > Ops & monitoring** tab, enter the connection details on each card, and hit "Connect":
    - **PagerDuty**: an API key. A **read-only key** is recommended (choose "Read-only" under Integrations > API Access Keys in PagerDuty). For EU accounts, turn the toggle on.
@@ -24,17 +24,17 @@ English | [日本語](13-ops-tooling.ja.md)
 3. In chat, pick the **"SRE Assistant"** and start a new conversation. Ask things like "List the PagerDuty incidents currently open and summarize what happened", "Check this service's error rate for the last hour in Grafana", or "Analyze the ERROR entries in this log group with CloudWatch" — it will help you organize the situation, form hypotheses about the cause, and draft external reports while checking the real data (read-only; it does not ack/resolve).
 4. Connection changes take effect **from the next chat message** (and, for AWS in a session, **from the next session launch**). No workspace restart needed.
 
-Other tools such as Zabbix can be connected manually with the PoC steps below (they will be folded into the "Ops & monitoring" tab over time).
+For other tools such as Zabbix, register their MCP server under Settings > Connections > [MCP servers](12-settings.md#mcp-servers); the manual PoC steps below remain for experimenting from a Terminal (CLI) claude session.
 
 ---
 
 ## (PoC) Connecting other tools manually 🧪
 
-**These are experimental steps.** Manual steps for tools not yet in the "Ops & monitoring" tab (CloudWatch / Zabbix, etc.), or for when you want to connect a **Terminal (CLI) claude session** rather than chat.
+**These are experimental steps.** Manual steps for tools not in the "Ops & monitoring" tab (Zabbix, etc.), or for when you want to connect a **Terminal (CLI) claude session** rather than chat.
 
 - Scope: Terminal (CLI) claude sessions. **To give chat (an assistant) a tool, register the server under Settings > Connections > [MCP servers](12-settings.md#mcp-servers)** with assistants as a target, then pick it in the assistant's edit form under "MCP servers (optional)". Only assistants you created can be edited; the built-in ones (SRE Assistant, Fleet Operator, Agent Fleet Assistant) cannot. A server added by hand with `claude mcp add` is not a way to attach one: it never appears in that choice, and a claude-based assistant that has MCP servers or Agent Fleet tools attached runs with a strict MCP configuration that leaves it out.
 - Prerequisite: outbound connectivity from the workspace to each monitoring tool's endpoint. PyPI access is needed for `uvx`'s first fetch.
-- ⚠️ **Token handling (a PoC-only compromise)**: tokens passed via `claude mcp add -e` are **stored in plaintext** in `~/.claude.json`. Because it's inside the home volume it survives a container recreate, but never write tokens into a repository, and use **read-only, dedicated tokens only**. Fixing this plaintext problem (integrating into Connections) is the main goal of Phase 1.
+- ⚠️ **Token handling (a PoC-only compromise)**: tokens passed via `claude mcp add -e` are **stored in plaintext** in `~/.claude.json`. Because it's inside the home volume it survives a container recreate, but never write tokens into a repository, and use **read-only, dedicated tokens only**. To keep tokens encrypted, register the server under [MCP servers](12-settings.md#mcp-servers) instead: values entered there are stored encrypted and handed over only when the server starts.
 
 ## 0. Prep (one time only; survives a recreate)
 
@@ -144,7 +144,7 @@ Open a (claude) session and try it on a real incident:
 - "Analyze the ERROR patterns in that Lambda's logs in CloudWatch and give 3 hypotheses of what happened, in chronological order"
 - "Organize the investigation so far into timeline → impact scope → cause hypotheses → next actions, formatted for an external report"
 
-Points to evaluate (UC1/UC2 in docs/25): whether cross-tool situation assessment is fast / quality of hypotheses / how usable the external drafts are / token consumption and response speed.
+Points to evaluate: whether cross-tool situation assessment is fast / quality of hypotheses / how usable the external drafts are / token consumption and response speed.
 
 ## 6. Cleanup
 
@@ -156,9 +156,9 @@ claude mcp remove -s user cloudwatch
 
 Don't forget to revoke the tokens as well (delete the Grafana SA token and the PagerDuty User API Token).
 
-## Known limitations (= to be resolved in Phase 1 and later)
+## Limits of the manual route
 
-- Tokens sit in plaintext in `~/.claude.json` (→ moving to Connections + secrets.enc)
+- Tokens sit in plaintext in `~/.claude.json` (→ register the server in [MCP servers](12-settings.md#mcp-servers) to keep them encrypted)
 - Servers added with `claude mcp add` cannot be attached to chat / an assistant (→ register them in [MCP servers](12-settings.md#mcp-servers) instead, and attach them to an assistant you created)
 - Alert bodies and logs are **input an attacker can influence**. Do not break the read-only setup. If you experiment with writes, do it explicitly in a dedicated assistant/session
 - uvx-based servers fetch from PyPI on first launch (egress required). On a memory-constrained host, don't start too many at once
