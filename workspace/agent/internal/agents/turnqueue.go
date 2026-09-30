@@ -169,6 +169,9 @@ type TurnQueue struct {
 	stopPending bool
 	episode     bool
 	discards    []Discard
+	// recorded holds the ids Requeue put back after LedgerAtTake's Take had recorded them, so
+	// the next Take does not read them as resends and drop them.
+	recorded map[string]bool
 }
 
 // NewTurnQueue builds the queue of session name. ledger may be nil (no deduplication).
@@ -200,19 +203,31 @@ func (q *TurnQueue) Accept(in TurnInput) (id string, dup bool) {
 	return in.ClientMessageID, false
 }
 
-// AcceptRecorded queues input whose ledger entry the driver has already made (codex: a native
-// turn/steer that failed and falls back to the queue). The episode was already ended by
-// Accepted for it.
+// AcceptRecorded queues input AcceptOutside has already recorded (codex: a native turn/steer
+// that failed and falls back to the queue). The episode was already ended for it.
 func (q *TurnQueue) AcceptRecorded(in TurnInput) string {
 	in.ClientMessageID = NormalizeMsgID(in.ClientMessageID)
 	q.queue = append(q.queue, in)
 	return in.ClientMessageID
 }
 
-// Accepted records the acceptance of input the driver delivered without queueing it (codex's
-// native turn/steer into the running turn): new member input ends the episode however it is
-// delivered.
-func (q *TurnQueue) Accepted(in TurnInput) { q.noteAccepted(in) }
+// AcceptOutside accepts input the driver delivers without queueing it (codex's native
+// turn/steer into the running turn). It does Accept's resend check and ledger recording, so the
+// caller does neither: dup = a resend, deliver nothing. New member input ends the episode
+// however it is delivered; a resend does not.
+func (q *TurnQueue) AcceptOutside(in TurnInput) (id string, dup bool) {
+	in.ClientMessageID = NormalizeMsgID(in.ClientMessageID)
+	if q.holds(in.ClientMessageID) {
+		return in.ClientMessageID, true
+	}
+	// Recorded on either LedgerPoint: the input goes to the runtime now, which is the point
+	// LedgerAtTake records at too.
+	if q.ledger != nil && q.ledger.SeenOrRecord(q.name, in.ClientMessageID) {
+		return in.ClientMessageID, true
+	}
+	q.noteAccepted(in)
+	return in.ClientMessageID, false
+}
 
 func (q *TurnQueue) noteAccepted(in TurnInput) {
 	if in.Origin.IsMember() {
@@ -252,7 +267,9 @@ func (q *TurnQueue) Take() *Taken {
 	for len(q.queue) > 0 {
 		in := q.queue[0]
 		q.queue = q.queue[1:]
-		if q.at == LedgerAtTake && q.ledger != nil && q.ledger.SeenOrRecord(q.name, in.ClientMessageID) {
+		if q.recorded[in.ClientMessageID] {
+			delete(q.recorded, in.ClientMessageID)
+		} else if q.at == LedgerAtTake && q.ledger != nil && q.ledger.SeenOrRecord(q.name, in.ClientMessageID) {
 			continue
 		}
 		q.head = &Taken{In: in}
@@ -316,18 +333,33 @@ func (q *TurnQueue) Requeue(t *Taken) bool {
 		return false
 	}
 	q.queue = append([]TurnInput{t.In}, q.queue...)
+	if q.at == LedgerAtTake {
+		if q.recorded == nil {
+			q.recorded = map[string]bool{}
+		}
+		q.recorded[t.ID()] = true
+	}
 	return true
 }
 
 // Interrupt applies a stop to the queue (decisions 1-3). The driver then stops what it has to:
 // the head per Head, or — with HeadNone — a turn it is running that did not come from this
 // queue (a turn taken over after a restart).
-func (q *TurnQueue) Interrupt(opts InterruptOpts) InterruptOutcome {
+//
+// busy says whether any turn is running on the runtime right now, this driver's or another
+// client's. With nothing taken and nothing busy, the first queued entry is input whose start is
+// in flight — accepted, but the pump has not taken it yet — and a first stop stops it like a
+// taken one (decision 1): it is removed and not kept as a discard (HeadCancelled).
+func (q *TurnQueue) Interrupt(opts InterruptOpts, busy bool) InterruptOutcome {
 	second := opts.DiscardQueue || q.episode
 	var out InterruptOutcome
 	if !second {
 		out.Result.Stop = StopFirst
 		out.Head = q.stopHead(false)
+		if out.Head == HeadNone && !busy && len(q.queue) > 0 {
+			q.queue = q.queue[1:]
+			out.Head = HeadCancelled
+		}
 		q.episode = len(q.queue) > 0 || out.Head == HeadKept
 		return out
 	}

@@ -245,6 +245,14 @@ type ThreadHandle interface {
 	Snapshot() (ThreadSnapshot, error)
 }
 
+// LiveHandles is implemented by a Managed driver that can return a session's handle without
+// starting anything. The /turn queue edits (remove, dismiss_discard) use it: the queue and the
+// kept discards live with the handle, so a session whose runtime is down has none, and Resume
+// would start a daemon or a host only to answer "nothing there". nil, false = no live handle.
+type LiveHandles interface {
+	LiveHandle(m session.Meta) (ThreadHandle, bool)
+}
+
 // QueueingSender is implemented by a handle whose Send can hold input behind a running turn.
 // SendQueued is Send that also says which happened: queued = true when the input waits in the
 // driver's queue for the running turn to end, false when it went to the runtime as a turn of
