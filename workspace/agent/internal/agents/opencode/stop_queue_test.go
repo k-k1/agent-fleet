@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 func memberInput(prompt, id string) agents.TurnInput {
@@ -300,5 +301,66 @@ func TestDropHandleDiscardsTheQueue(t *testing.T) {
 	}
 	if got := fmt.Sprint(sentTurns(m)); got != "[long]" {
 		t.Fatalf("turns = %s, want nothing sent after the teardown", got)
+	}
+}
+
+// Input the pump has not taken yet is the turn being started only when serve runs nothing
+// (decision 1): then a first stop cancels it; behind another client's turn it is queued and
+// continues.
+func TestFirstStopOnInputNotYetTaken(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		foreign bool
+		left    int
+	}{
+		{"idle session: cancelled", false, 0},
+		{"behind another client's turn: kept", true, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, srv := newMockServe(t)
+			h := newTestHandle(t, srv)
+			m.mu.Lock()
+			m.busy = tc.foreign
+			m.mu.Unlock()
+			h.mu.Lock()
+			h.pumping = true // the pump goroutine accept starts has not run yet
+			h.mu.Unlock()
+			if err := h.Send(memberInput("about to start", "msg_soon")); err != nil {
+				t.Fatal(err)
+			}
+			res, err := h.Interrupt(agents.InterruptOpts{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Stop != agents.StopFirst || res.Discard != nil {
+				t.Fatalf("stop = %+v, want a first stop discarding nothing", res)
+			}
+			h.mu.Lock()
+			left, kept := h.tq().Len(), h.tq().Discards()
+			h.mu.Unlock()
+			if left != tc.left || len(kept) != 0 {
+				t.Fatalf("after the stop: %d queued, %d kept; want %d queued and nothing kept", left, len(kept), tc.left)
+			}
+			endForeignTurn(m)
+			h.pump()
+			if got := len(sentTurns(m)); got != tc.left {
+				t.Fatalf("%d turns sent, want %d", got, tc.left)
+			}
+		})
+	}
+}
+
+// LiveHandle answers from the registry and starts nothing.
+func TestLiveHandle(t *testing.T) {
+	_, srv := newMockServe(t)
+	h := newTestHandle(t, srv)
+	d := managedDriver{}
+	if _, ok := d.LiveHandle(session.Meta{Name: h.name}); ok {
+		t.Fatal("LiveHandle found a handle that was never registered")
+	}
+	registerTestHandle(t, h)
+	got, ok := d.LiveHandle(session.Meta{Name: h.name})
+	if !ok || got != agents.ThreadHandle(h) {
+		t.Fatal("LiveHandle did not return the registered handle")
 	}
 }

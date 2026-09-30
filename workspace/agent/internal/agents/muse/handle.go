@@ -856,13 +856,12 @@ func (h *threadHandle) accept(in agents.TurnInput, steer bool) (queued bool, err
 	}
 	running, turnID := h.running, h.turnID
 	if steer && running && turnID != "" {
-		// A native steer bypasses the queue: record the ledger here, and tell the queue, since
-		// new member input ends a stop episode however it is delivered.
-		if ledger.SeenOrRecord(h.name, agents.NormalizeMsgID(in.ClientMessageID)) {
+		// A native steer bypasses the queue, but not its resend check and ledger record, and new
+		// member input ends a stop episode however it is delivered.
+		if _, dup := h.tq().AcceptOutside(in); dup {
 			h.mu.Unlock()
 			return false, nil // a resend after a reconnect must not steer twice
 		}
-		h.tq().Accepted(in)
 		h.mu.Unlock()
 		return false, h.steerNow(in, turnID)
 	}
@@ -1166,13 +1165,23 @@ func (h *threadHandle) interrupt(opts agents.InterruptOpts, teardown bool) (agen
 	if teardown {
 		h.tq().DropAll()
 	}
-	out := h.tq().Interrupt(opts)
 	turnID, running := h.turnID, h.running
+	out := h.tq().Interrupt(opts, running)
 	pending := out.Head == agents.HeadStopPending
-	if running || pending {
+	cancelled := out.Head == agents.HeadCancelled && !running
+	switch {
+	case cancelled:
+		h.state = agents.TurnCancelled
+	case running || pending:
 		h.state = agents.TurnInterrupting
 	}
 	h.mu.Unlock()
+	if cancelled {
+		// Accepted into an idle host but not yet taken by the pump: the input was the turn being
+		// started, it never becomes one, and there is nothing on the host to interrupt.
+		h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnCancelled})
+		return out.Result, nil
+	}
 	if pending && !running {
 		// The head's turn/start is out and no turn exists yet: a bare turn/interrupt would find
 		// nothing to stop. turn/started delivers it.

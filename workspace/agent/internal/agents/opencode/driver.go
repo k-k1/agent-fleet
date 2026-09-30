@@ -173,6 +173,21 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	return h, nil
 }
 
+// LiveHandle returns the session's handle without starting anything (agents.LiveHandles): the
+// /turn queue edits must not bring a runtime up only to find nothing queued. The handle stays
+// registered from Resume to DropHandle, a runtime death in between included, and the queue and
+// the kept discards live on it for that whole time, so an entry the messages payload still
+// shows can be removed without a respawn.
+func (managedDriver) LiveHandle(m session.Meta) (agents.ThreadHandle, bool) {
+	h := handleFor(m.Name)
+	if h == nil {
+		return nil, false
+	}
+	return h, true
+}
+
+var _ agents.LiveHandles = managedDriver{}
+
 // --- handle registry ---------------------------------------------------------
 
 var handlesMu sync.Mutex
@@ -218,7 +233,7 @@ func DropHandle(name string) {
 	// Teardown discards the queue (ADR 0105 decision 8), the input the pump holds included. An
 	// input already committed is left a pending stop, so the pump does not send it.
 	h.tq().DropAll()
-	h.tq().Interrupt(agents.InterruptOpts{DiscardQueue: true})
+	h.tq().Interrupt(agents.InterruptOpts{DiscardQueue: true}, running)
 	if running {
 		h.abortAsked = true // stop / halt / archive: the abort below is ours
 	}
@@ -689,26 +704,39 @@ func (h *threadHandle) interruptAll() error {
 
 func (h *threadHandle) interrupt(opts agents.InterruptOpts, teardown bool) (agents.InterruptResult, error) {
 	h.mu.Lock()
+	addr, ses, dir, pumpRunning := h.addr, h.ses, h.dir, h.running
+	h.mu.Unlock()
+	// Input the pump has not taken yet is the turn being started only when serve runs nothing:
+	// behind another client's turn (an attached TUI's) it is queued, and a first stop lets it
+	// continue. Asked outside the lock because it is an HTTP call.
+	foreign := !pumpRunning && ses != "" && serveSessionBusy(addr, ses, dir)
+
+	h.mu.Lock()
 	if teardown {
 		h.tq().DropAll()
 	}
-	out := h.tq().Interrupt(opts)
-	addr, ses, dir := h.addr, h.ses, h.dir
 	// running covers the whole pump cycle, the wait behind another client's turn included. An
 	// input committed but not yet sent (HeadStopPending) has nothing on serve to abort: runTurn
 	// finds the stop before /message goes out. Every other case aborts what serve runs, as the
 	// stop always has: this input's turn, or the other client's turn it waits behind.
 	running := h.running
+	out := h.tq().Interrupt(opts, running || foreign)
 	abort := running && out.Head != agents.HeadStopPending
-	if running {
+	switch {
+	case running:
 		h.state = agents.TurnInterrupting
+	case out.Head == agents.HeadCancelled:
+		// Accepted into an idle session but not yet taken by the pump: the input was the turn
+		// being started, and it never becomes one.
+		h.state = agents.TurnCancelled
 	}
+	st := h.state
 	if abort {
 		h.abortAsked = true
 	}
 	h.mu.Unlock()
-	if running {
-		h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnInterrupting})
+	if running || out.Head == agents.HeadCancelled {
+		h.emit(agents.Event{Kind: "turn_state", TurnState: st})
 	}
 	if !abort {
 		return out.Result, nil

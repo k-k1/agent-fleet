@@ -381,6 +381,21 @@ func threadFork(cl *appClient, src, cwd, lastTurnID, slot string) (threadSnapsho
 	return parseThreadResult(res)
 }
 
+// LiveHandle returns the session's handle without starting anything (agents.LiveHandles): the
+// /turn queue edits must not bring a runtime up only to find nothing queued. The handle stays
+// registered from Resume to DropHandle, a runtime death in between included, and the queue and
+// the kept discards live on it for that whole time, so an entry the messages payload still
+// shows can be removed without a respawn.
+func (managedDriver) LiveHandle(m session.Meta) (agents.ThreadHandle, bool) {
+	h := handleFor(m.Name)
+	if h == nil {
+		return nil, false
+	}
+	return h, true
+}
+
+var _ agents.LiveHandles = managedDriver{}
+
 // --- handle registry ---------------------------------------------------------
 
 var handlesMu sync.Mutex
@@ -443,7 +458,7 @@ func DropHandle(name string) {
 	// Teardown discards the queue (ADR 0105 decision 8). An input whose turn/start is in flight
 	// is left a pending stop, so the turn it creates is interrupted when the answer names it.
 	h.tq().DropAll()
-	h.tq().Interrupt(agents.InterruptOpts{DiscardQueue: true})
+	h.tq().Interrupt(agents.InterruptOpts{DiscardQueue: true}, running || turnID != "")
 	h.mu.Unlock()
 	if cl == nil {
 		return
@@ -655,14 +670,14 @@ func (h *threadHandle) Steer(in agents.TurnInput) error {
 		_, err := h.accept(in)
 		return err
 	}
-	// A native steer bypasses the queue, so the driver records the ledger itself and tells the
-	// queue about the acceptance: new member input ends a stop episode however it arrives.
-	if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
+	// A native steer bypasses the queue, but not its resend check and ledger record, and new
+	// member input ends a stop episode however it arrives.
+	h.mu.Lock()
+	_, dup := h.tq().AcceptOutside(in)
+	h.mu.Unlock()
+	if dup {
 		return nil // resend: the ledger makes it idempotent (§4)
 	}
-	h.mu.Lock()
-	h.tq().Accepted(in)
-	h.mu.Unlock()
 	_, err := cl.call("turn/steer", map[string]any{
 		"threadId":            tid,
 		"expectedTurnId":      turnID,
@@ -892,15 +907,21 @@ func (h *threadHandle) interrupt(opts agents.InterruptOpts, teardown bool) (agen
 	if teardown {
 		h.tq().DropAll()
 	}
-	out := h.tq().Interrupt(opts)
 	cl, tid, turnID := h.client, h.tid, h.turnID
 	running := h.running || turnID != "" // turnID only: a running turn taken over after an agent restart
-	if running {
+	out := h.tq().Interrupt(opts, running)
+	switch {
+	case out.Head == agents.HeadCancelled:
+		// Accepted into an idle thread but not yet taken by the pump: the input was the turn
+		// being started, and it never becomes one.
+		h.state = agents.TurnCancelled
+	case running:
 		h.state = agents.TurnInterrupting
 	}
+	st := h.state
 	h.mu.Unlock()
-	if running {
-		h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnInterrupting})
+	if running || out.Head == agents.HeadCancelled {
+		h.emit(agents.Event{Kind: "turn_state", TurnState: st})
 	}
 	// HeadStopPending: turn/start is in flight and there is no id to name yet; runTurn delivers
 	// the stop when the answer names the turn. Every other case stops the turn that runs now,

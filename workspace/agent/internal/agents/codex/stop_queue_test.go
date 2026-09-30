@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 func memberInput(prompt, id string) agents.TurnInput {
@@ -352,5 +353,70 @@ func TestQuestionCancelIsAFirstStop(t *testing.T) {
 	waitPumpDone(t, h)
 	if got := fmt.Sprint(sentTurns(m)); got != "[long queued]" {
 		t.Fatalf("turns = %s, want the queued input to continue after the cancel", got)
+	}
+}
+
+// Input accepted into an idle thread that the pump has not taken yet is the turn being started
+// (decision 1): a first stop cancels it, and it is not kept as a discard.
+func TestFirstStopCancelsInputNotYetTaken(t *testing.T) {
+	m, cl := newMockCodexServer(t)
+	h := newCodexTestHandle(t, cl, "codex-not-taken")
+	registerCodexTestHandle(t, h)
+	h.mu.Lock()
+	h.pumping = true // the pump goroutine accept starts has not run yet
+	h.mu.Unlock()
+	if err := h.Send(memberInput("about to start", "af_soon")); err != nil {
+		t.Fatal(err)
+	}
+	res, err := h.Interrupt(agents.InterruptOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Stop != agents.StopFirst || res.Discard != nil {
+		t.Fatalf("stop = %+v, want a first stop discarding nothing", res)
+	}
+	h.mu.Lock()
+	left, kept, st := h.tq().Len(), h.tq().Discards(), h.state
+	h.pumping = false
+	h.mu.Unlock()
+	if left != 0 || len(kept) != 0 || st != agents.TurnCancelled {
+		t.Fatalf("after the stop: %d queued, %d kept, state %s; want the input cancelled", left, len(kept), st)
+	}
+	h.pump()
+	if got := m.callCount("turn/start"); got != 0 {
+		t.Fatalf("turn/start count = %d, want the cancelled input never sent", got)
+	}
+}
+
+// A resent native steer is not delivered twice: the queue's resend check covers it.
+func TestResentSteerIsDeliveredOnce(t *testing.T) {
+	m, cl := newMockCodexServer(t)
+	h := newCodexTestHandle(t, cl, "codex-steer-resend")
+	registerCodexTestHandle(t, h)
+	startLong(t, m, h)
+	for i := 0; i < 2; i++ {
+		if err := h.Steer(memberInput("also this", "af_steer")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := m.callCount("turn/steer"); got != 1 {
+		t.Fatalf("turn/steer count = %d, want 1", got)
+	}
+	m.complete("completed")
+	waitPumpDone(t, h)
+}
+
+// LiveHandle answers from the registry and starts nothing.
+func TestLiveHandle(t *testing.T) {
+	_, cl := newMockCodexServer(t)
+	h := newCodexTestHandle(t, cl, "codex-live")
+	d := managedDriver{}
+	if _, ok := d.LiveHandle(session.Meta{Name: h.name}); ok {
+		t.Fatal("LiveHandle found a handle that was never registered")
+	}
+	registerCodexTestHandle(t, h)
+	got, ok := d.LiveHandle(session.Meta{Name: h.name})
+	if !ok || got != agents.ThreadHandle(h) {
+		t.Fatal("LiveHandle did not return the registered handle")
 	}
 }

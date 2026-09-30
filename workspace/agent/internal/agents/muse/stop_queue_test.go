@@ -13,6 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp/msptest"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 func memberInput(prompt, id string) agents.TurnInput {
@@ -456,5 +457,92 @@ func TestDropHandleDiscardsTheQueue(t *testing.T) {
 	h.mu.Unlock()
 	if left != 0 || len(kept) != 0 {
 		t.Fatalf("after DropHandle: %d queued, %d discards kept; want neither", left, len(kept))
+	}
+}
+
+// Input a lost host left queued, which the respawned host's pump has not taken yet, is the turn
+// being started when nothing runs (decision 1): a first stop cancels it without keeping it,
+// and nothing is interrupted on the host.
+func TestFirstStopCancelsInputNotYetTaken(t *testing.T) {
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	starts := recordStarts(host)
+	runTurn(t, h, host, starts, "long")
+	if err := h.Send(memberInput("left behind", "cm-left")); err != nil {
+		t.Fatal(err)
+	}
+	cl := h.cl
+	host.Close()
+	h.hostLost(cl)
+
+	host2, cl2 := msptest.New(t, msp.Handler{OnNotification: h.onNotify, OnRequest: h.onRequest})
+	starts2 := recordStarts(host2)
+	acceptInterrupts(host2)
+	h.mu.Lock()
+	h.cl, h.alive = cl2, true // respawned; its pump has not run yet
+	h.mu.Unlock()
+	res, err := h.Interrupt(agents.InterruptOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Stop != agents.StopFirst || res.Discard != nil {
+		t.Fatalf("stop = %+v, want a first stop discarding nothing", res)
+	}
+	h.pump()
+	noStart(t, starts2, "the cancelled input")
+	if n := interrupts(host2); n != 0 {
+		t.Fatalf("%d turn/interrupt sent with nothing running", n)
+	}
+	if !settled(h) {
+		t.Fatal("the queue is not settled after the stop")
+	}
+}
+
+// A resent native steer is not delivered twice: the queue's resend check covers it.
+func TestResentSteerIsDeliveredOnce(t *testing.T) {
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	starts := recordStarts(host)
+	host.Handle(msp.MethodTurnSteer, func(m msptest.Message) (any, *msp.Error) {
+		return msp.CommandAcceptedResult{}, nil
+	})
+	runTurn(t, h, host, starts, "long")
+	for i := 0; i < 2; i++ {
+		if err := h.Steer(memberInput("also this", "cm-steer")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	host.WaitForMethod(msp.MethodTurnSteer)
+	time.Sleep(100 * time.Millisecond)
+	n := 0
+	for _, m := range host.Received() {
+		if m.Method == msp.MethodTurnSteer {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("turn/steer count = %d, want 1", n)
+	}
+}
+
+// LiveHandle answers from the registry and starts nothing.
+func TestLiveHandle(t *testing.T) {
+	h := &threadHandle{}
+	newTestHandle(t, h)
+	d := managedDriver{}
+	if _, ok := d.LiveHandle(session.Meta{Name: h.name}); ok {
+		t.Fatal("LiveHandle found a handle that was never registered")
+	}
+	handlesMu.Lock()
+	handles[h.name] = h
+	handlesMu.Unlock()
+	t.Cleanup(func() {
+		handlesMu.Lock()
+		delete(handles, h.name)
+		handlesMu.Unlock()
+	})
+	got, ok := d.LiveHandle(session.Meta{Name: h.name})
+	if !ok || got != agents.ThreadHandle(h) {
+		t.Fatal("LiveHandle did not return the registered handle")
 	}
 }

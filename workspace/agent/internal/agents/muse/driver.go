@@ -181,6 +181,21 @@ func liveHandles() []*threadHandle {
 	return out
 }
 
+// LiveHandle returns the session's handle without starting anything (agents.LiveHandles): the
+// /turn queue edits must not bring a runtime up only to find nothing queued. The handle stays
+// registered from Resume to DropHandle, a runtime death in between included, and the queue and
+// the kept discards live on it for that whole time, so an entry the messages payload still
+// shows can be removed without a respawn.
+func (managedDriver) LiveHandle(m session.Meta) (agents.ThreadHandle, bool) {
+	h := handleFor(m.Name)
+	if h == nil {
+		return nil, false
+	}
+	return h, true
+}
+
+var _ agents.LiveHandles = managedDriver{}
+
 // DropHandle detaches a managed session from its host (stop / halt / archive / recreate):
 // interrupt any running turn, close the child's stdin so it exits on its own terms, forget
 // the handle. The conversation stays in muse's own session.jsonl, and a later Resume reloads
