@@ -83,6 +83,10 @@ export function useMirrorScroll() {
   // (docs/log/24). Kept separate from anchoredIdxRef so the top-anchor and the answer-anchor each
   // fire exactly once per reply.
   const answerAnchoredRef = useRef<number | undefined>(undefined);
+  // Whether the reply being tracked was shown while it streamed (the "Writing…" block, #1250):
+  // then the reader has read the answer at the tail already, and the completion anchor above
+  // would take them away from it (#1396). Reset per reply.
+  const liveSeenRef = useRef(false);
   // False until the first content settle for a session. On open we land at the bottom (as
   // before) and mark the reply already present as "seen", so only replies that arrive while
   // the user is watching get anchored to the top — history isn't retro-scrolled.
@@ -305,6 +309,7 @@ export function useMirrorScroll() {
     groups,
     loaded,
     busy,
+    live = false,
     pending,
     pendingPlan,
     pendingPerm,
@@ -312,6 +317,8 @@ export function useMirrorScroll() {
     groups: Group[];
     loaded: boolean;
     busy: boolean;
+    /** The in-progress reply (LiveReplyCard) is on screen right now. */
+    live?: boolean;
     pending: unknown;
     pendingPlan: string | null;
     pendingPerm: string | null;
@@ -381,7 +388,9 @@ export function useMirrorScroll() {
       if (replyIdx !== anchoredIdxRef.current) {
         anchoredIdxRef.current = replyIdx;
         answerAnchoredRef.current = undefined; // this reply's final answer hasn't been anchored yet
+        liveSeenRef.current = false;
       }
+      if (live) liveSeenRef.current = true;
       // Still working, a background run (subagent/Workflow) is appending, or we're
       // bridging the idle→reply gap (finalizing) — follow the bottom so the streamed tail
       // (and the typing indicator) stay in view.
@@ -395,7 +404,16 @@ export function useMirrorScroll() {
       // re-anchor once to the FINAL ANSWER's first line at the viewport top, so the user reads
       // it from the start rather than the tail we followed to. Only when work was actually
       // folded; a reply with no foldable work already sits with its answer at the top.
+      //
+      // Not when the answer streamed into view (#1396): the reader followed it at the tail and has
+      // read it, so the fold's shrink is all that happens and the pin keeps them at the end. The
+      // anchor is what a reader who saw nothing until completion needs.
       if (answerAnchoredRef.current !== replyIdx) {
+        if (liveSeenRef.current) {
+          answerAnchoredRef.current = replyIdx;
+          toBottom();
+          return;
+        }
         const body = el.querySelector<HTMLElement>(`[data-turn-idx="${replyIdx}"] .mirror-turn-body`);
         const work = body?.querySelector<HTMLElement>(":scope > .mt-work");
         const answer = work?.nextElementSibling as HTMLElement | null;
@@ -449,6 +467,7 @@ export function useMirrorScroll() {
     setShowReplyTop(false); // nothing to jump to until the new session's reply is mounted
     anchoredIdxRef.current = undefined; // no reply anchored yet in the new session
     answerAnchoredRef.current = undefined; // …nor its final answer
+    liveSeenRef.current = false;
     didInitRef.current = false; // re-run the "land at bottom on open" settle for this session
   };
 

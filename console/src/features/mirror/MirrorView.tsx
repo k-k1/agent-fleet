@@ -805,7 +805,7 @@ export function MirrorView({
   // closure is fresh each time; leaving them out of the deps keeps unrelated re-renders (every
   // keystroke in the composer) from re-firing it.
   useLayoutEffect(() => {
-    scroll.applyFollow({ groups, loaded, busy, pending, pendingPlan, pendingPerm: pendingPerm || (pendingApproval ? pendingApproval.id : null) });
+    scroll.applyFollow({ groups, loaded, busy, live: !!liveText, pending, pendingPlan, pendingPerm: pendingPerm || (pendingApproval ? pendingApproval.id : null) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turns, pending, pendingPlan, pendingPerm, pendingApproval, status, bgBusy, finalizing, pendingSends, queuedPrompts, liveText]);
 

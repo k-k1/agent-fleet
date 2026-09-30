@@ -52,6 +52,12 @@ const WORKING = arg("working", "0") === "1";
 // more line per poll while the turn runs, absent on the idle round. Off by default, so every other
 // scenario's body is unchanged.
 const LIVE = arg("live", "0") === "1";
+// With --working, hold the live reply back from the opening fetch so it ARRIVES while the reader
+// is watching (poll 1), and then let it COMPLETE for good: idle from poll 2 on, parts frozen. A
+// reply already on screen at open is never completion-anchored (the mirror marks it seen at its
+// first settle), and the plain working scenario's idle lasts one round, so without this the
+// completion anchor is unreachable here.
+const LATE = arg("late", "0") === "1";
 const liveTextAt = (n) =>
   Array.from({ length: n + 2 }, (_, i) => `${i + 1}. 入力検証の規則を 1 つずつ見直しています（${i + 1} 行目）`).join("\n");
 const WORK_ROWS = Number(arg("workrows", 30)); // tool+text pairs in that live trace
@@ -189,7 +195,8 @@ function messages(session, q) {
   // transcript (awaitingReply is false).
   // "idle" spelled out, not "": the mirror only takes a status it was actually sent
   // (`if (d.status)`), so an empty string leaves the previous one standing.
-  const status = WORKING ? (n === 2 ? "idle" : "working") : "";
+  const status = WORKING ? ((LATE ? n >= 2 : n === 2) ? "idle" : "working") : "";
+  const partsAt = LATE ? Math.min(n, 2) : n; // a completed reply stops growing
   const body = {
     name: session, cursor: LINES, status, alive: true,
     mode: "Default", tasks: [], pendingQuestions: null,
@@ -204,12 +211,15 @@ function messages(session, q) {
   // reuse the previous one's anchored reply idx and mask a bug.
   const off = session === "sk4rq2f" ? 0 : 1000;
   const all = (off ? TURNS_BODY.map((t) => ({ ...t, idx: t.idx + off })) : TURNS_BODY).map((t) =>
-    WORKING && t.idx === off + LINES - 1 ? { ...t, parts: livePartsAt(n) } : t,
+    WORKING && t.idx === off + LINES - 1 ? { ...t, parts: livePartsAt(partsAt) } : t,
   );
+  // The turns a reader sees: with --late the opening fetch stops short of the live reply, whose
+  // prompt is then the newest thing; the reply itself comes with the first incremental poll.
+  const shown = LATE && WORKING && n === 0 ? all.slice(0, -1) : all;
   const window = (upto) => {
     // The tail `PAGE` lines below `upto` (a jsonl line number), as whole turns.
     const from = Math.max(0, upto - PAGE);
-    const out = all.filter((t) => t.idx - off >= from && t.idx - off < upto);
+    const out = shown.filter((t) => t.idx - off >= from && t.idx - off < upto);
     return { messages: out, firstLine: off + from, hasMore: from > 0 };
   };
   const before = q.get("before");
@@ -226,7 +236,7 @@ function messages(session, q) {
     return { ...body, messages, aggSig: AGG_SIG, files: FILES };
   }
   if (PAGING) return { ...body, ...window(LINES), reset: true, aggSig: AGG_SIG, files: FILES };
-  return { ...body, messages: all, reset: true, aggSig: AGG_SIG, files: FILES };
+  return { ...body, messages: shown, reset: true, aggSig: AGG_SIG, files: FILES };
 }
 
 // ---- API surface -------------------------------------------------------------------
