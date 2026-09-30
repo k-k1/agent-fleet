@@ -568,8 +568,8 @@ export async function sessionTurn(
     if (attachments?.length) body.attachments = attachments;
   } else if (op === "interrupt") {
     if (opts?.discardQueue) body.discard_queue = true;
-  } else {
-    body.id = opts?.id ?? "";
+  } else if (opts?.id) {
+    body.id = opts.id;
   }
   const r = await apiJSON(
     `api/sessions/${encodeURIComponent(session)}/turn`,

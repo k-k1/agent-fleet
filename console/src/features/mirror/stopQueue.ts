@@ -107,6 +107,7 @@ export function restoreStep(
   st: DiscardNoticeState,
   d: Discard,
 ): { item: QueueItem | null; next: DiscardNoticeState; dismiss: boolean } {
+  if (st.closed[d.id]) return { item: null, next: st, dismiss: false };
   const view = discardView(d);
   const cur = st.held[d.id]?.progress ?? { restored: 0, dismissed: false };
   const item = view.member[cur.restored] ?? null;
