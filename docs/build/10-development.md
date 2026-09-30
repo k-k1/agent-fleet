@@ -398,9 +398,13 @@ costs; which CLI it exercises is in the test name (`TestDriftCodex…`, `TestCon
 
 | Tag | Needs | Without it |
 |---|---|---|
-| `contract` | the real CLI on `PATH` (and tmux for the pane tests); a test that spends a real turn or a sign-in also checks its own opt-in (`CLAUDE_CONTRACT_LIVE`, `OPENCODE_CONTRACT_LIVE`, `AF_IMAGEGEN_LIVE`, …) | skips, or fails under `E2E_REQUIRE=1` |
+| `contract` | the real CLI on `PATH` (and tmux for the pane tests). Some tests that spend a turn also wait for their own opt-in (`CLAUDE_CONTRACT_LIVE`, `COPILOT_CONTRACT_LIVE`, `OPENCODE_CONTRACT_LIVE`, `AF_IMAGEGEN_LIVE`); the TUI probes (`TestClaudeTUIContractLive`, `TestClaudePlanApprovalContractLive`, `Test<Kind>TUIMirrorContract`) do not, and run a real turn wherever the CLI is signed in | skips, or fails under `E2E_REQUIRE=1` |
 | `contract_live` | real codex credentials; every test spends real turns (`codex-contract.yml`'s `live-drift`, dispatch only) | fails |
 | `contract_manual` | a person: an engine endpoint they provide (`AF_LCPP_LIVE_*`) or an interactive sign-in (`AF_AGY_LOGIN`); no workflow runs it | skips |
+
+On a machine where the CLIs are signed in, a bare `go test -tags contract ./...` therefore
+spends real turns on several vendors at once: narrow it with `-run` to one CLI, as the
+workflows do.
 
 `ci.yml` vets all three through `scripts/vet-build-tags.sh`, which also fails on any tag it
 does not know, so a new tag is added there or it goes red. The `e2e` module has its own
