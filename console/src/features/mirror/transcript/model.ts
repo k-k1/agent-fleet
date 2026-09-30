@@ -337,7 +337,11 @@ export function groupTurns(turns: Turn[]): Group[] {
       !last.bash &&
       !t.bash &&
       !last.cmd &&
-      !t.cmd
+      !t.cmd &&
+      // A queue entry is its own bubble: its actions act on one id, and folding two entries
+      // would put one entry's buttons on another's text.
+      !last.queueId &&
+      !t.queueId
     ) {
       last.parts.push(...parts);
       last.origins.push(...originsOf(t, parts));
@@ -390,6 +394,9 @@ export function groupTurns(turns: Turn[]): Group[] {
         folded: 1,
         pending: !!t.pending,
         queued: !!t.queued,
+        queueId: t.queueId,
+        queueActionable: !!t.queueActionable,
+        queueRestorable: !!t.queueRestorable,
         source: t.source,
         peerFrom: t.peerFrom,
       });

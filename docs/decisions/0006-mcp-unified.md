@@ -5,7 +5,7 @@ English | [日本語](0006-mcp-unified.ja.md)
 - Status: decided. Implemented = stage 1 (member/drive + PAT + `/mcp`) plus admin read/write, both live-E2E green (2026-07-01) / the dangerous stage remains (waiting on the groundwork for key rotation and idle detection)
   Status update (2026-09-24): the dangerous stage (`rotate_key` / `recreate_workspace` / `stop_all_idle`) is not planned. Nobody has asked for it, and letting an agent rotate keys or stop workspaces in bulk needs a decision of its own before anything is built.
   Status update (2026-09-30): the admin write tool that stops a member's session is `stop_user_session`, not `stop_session`. The member surface already had a `stop_session` of its own, and the server dispatches a call to the first tool of that name, so the admin one could never be reached ([#1188](https://github.com/k-k1/agent-fleet/issues/1188)). Tool names are unique across the member and admin sets, and a test holds them to it.
-- See also: [roadmap P3-6](../log/roadmap.md#p3-6-mcp-による-agent-fleet-制御（管理面--作業面を一体で）) / [history/p3-6-mcp](../log/p3-6-mcp.md) / [build/01 §1.4 Authentication is two layers](../build/01-architecture.md) (formerly architecture, "authentication scope") / [build/07 Security](../build/07-security.md) (formerly security)
+- See also: [roadmap P3-6](../log/roadmap.md#p3-6-mcp-による-agent-fleet-制御管理面--作業面を一体で) / [history/p3-6-mcp](../log/p3-6-mcp.md) / [build/01 §1.4 Authentication is two layers](../build/01-architecture.md) (formerly architecture, "authentication scope") / [build/07 Security](../build/07-security.md) (formerly security)
 
 ## Context
 

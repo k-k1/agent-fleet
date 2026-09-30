@@ -79,7 +79,7 @@ bind し、そのセキュリティグループはロードバランサのもの
 | プロビジョン / 権限 | `AF_PROVISION`（`auto`）・`SUPER_ADMIN_EMAILS` | 未知の identity をどう受け入れるか / 誰がデプロイ管理者か | [06](06-data.ja.md) |
 | at-rest 暗号 | `AF_MASTER_KEY` | 未設定 = 平文（開発専用）。**紛失 = crypto-shred** — データとは別の金庫に置く | [07 §7.6](07-security.ja.md) |
 | git プロバイダ OAuth | **env は無い** | テナント管理者が Console で登録する。`BITBUCKET_OAUTH_KEY/SECRET` はもう読まれず、`GITHUB_OAUTH_CLIENT_ID` はサインイン専用 | [decisions/0052](../decisions/0052-tenant-git-oauth.ja.md) |
-| scale-to-zero / showback | `AF_AUTOSTART`（on）・`AF_SESSION_IDLE_TIMEOUT`（1h）・`AF_INTERACTION_IDLE_TIMEOUT`（session の値）・`AF_WS_IDLE_TIMEOUT`（2h）・`AF_PRESENCE_IDLE_TIMEOUT`（30m）・`AF_IDLE_SWEEP_INTERVAL`（1m）・`AF_STOP_GRACE_SEC`（30・上限 120）・`AF_USAGE_SAMPLE_INTERVAL`（5m） | 自動起動・アイドル停止・停止猶予・利用量サンプリング。アイドルのタイムアウトと掃引は `0` で無効 | [03](03-control-plane.ja.md) |
+| scale-to-zero / showback | `AF_AUTOSTART`（on）・`AF_SESSION_IDLE_TIMEOUT`（1h）・`AF_INTERACTION_IDLE_TIMEOUT`（session の値）・`AF_WS_IDLE_TIMEOUT`（2h）・`AF_PRESENCE_IDLE_TIMEOUT`（30m）・`AF_IDLE_SWEEP_INTERVAL`（1m）・`AF_STOP_GRACE_SEC`（30・上限 120）・`AF_USAGE_SAMPLE_INTERVAL`（5m） | 自動起動・アイドル停止・停止猶予・利用量サンプリング。アイドルのタイムアウト・掃引・usage サンプラーは `0` で無効 | [03](03-control-plane.ja.md) |
 | MCP | `AF_MCP_ENABLED` | `/mcp` がそもそも存在するか。有効になるのは文字列がちょうど `true` のときだけ | [08](08-integrations.ja.md) |
 | egress | `AF_EGRESS_LISTEN`（`:3128`）・`AF_EGRESS_TOKEN`・`AF_EGRESS_{INGEST,POLICY}_URL`・`AF_EGRESS_PROXY_ADDR`・`AF_EGRESS_ENFORCE`・`AF_EGRESS_ALLOWLIST` | forward proxy サブコマンドと CP の集約。`AF_EGRESS_PROXY_ADDR` がプロキシ変数を注入するのは `docker` と `native` の Workspace だけ | [07 §7.8](07-security.ja.md) |
 | Postgres | `AF_DATABASE_URL`、または `AF_DB_{HOST,PORT,USER,PASSWORD,NAME,SSLMODE}`、それと**パスワードの真値が居る場所** `AF_DB_PASSWORD_SECRET_ARN` / `AF_DB_PASSWORD_SECRET_KEY` | Store が Postgres のときだけ。部品から DSN を組む。ARN は、ローテートされたパスワードを**タスクを作り直さずに**拾うためのもの（§9.9） | [06](06-data.ja.md) |
@@ -95,9 +95,10 @@ bind し、そのセキュリティグループはロードバランサのもの
 `exec env` ブロックで名指すが、あれはフィルタではない（export 済みの変数は全部 CP に届く）。
 また独自の既定（`CP_ADDR=:8099`・`WS_MEMORY=5g`）を置く。
 
-**`0` がどこでも「無効」になるわけではない。** アイドルのタイムアウトは `0` を無効と読むが、
-`envx.DurationOr` で読む期間（`AF_SESSION_TTL`・`AF_USAGE_SAMPLE_INTERVAL` …）は `0` を未設定と
-みなして既定を使う。
+**`0` がどこでも「無効」になるわけではない。** アイドルのタイムアウト・アイドル掃引と、止められると
+書いてある常駐ループ（`AF_USAGE_SAMPLE_INTERVAL`・`AF_CLOUD_COST_INTERVAL`・`AF_GIT_GC_INTERVAL`・
+`AF_SCHEDULER_INTERVAL`）は `intervalOff` で読み、`0` を無効と読む。それ以外に `envx.DurationOr` で読む
+期間（`AF_SESSION_TTL`・`AF_SCHEDULE_SETTLE` …）は `0` を未設定とみなして既定を使う。
 
 **JDK の提供はランタイムで異なる — `/usr/lib/jvm` が埋まっていると仮定しない。** `WS_JVM_DIR` を
 `/usr/lib/jvm` に読み取り専用で bind-mount するのは `docker` と、rootfs モードの `native` だけ。
@@ -143,9 +144,13 @@ runbook の「Stack decomposition」。
   - **デプロイがこれを選ぶ理由は I/O・本当に残る home・Fargate の上限を超える大きさで、起動時間
     ではない。** アダプタ経由の実測で warm 起動は 43〜110 秒、Fargate は ~105 秒。EBS の home は
     小さいファイルの書き込みが EFS の 8〜30 倍速い。
-- **Runtime 契約の `starting` 状態は実質 ECS 専用。** 収束待ちの間、呼び出し側は再 Start も
-  アイドル停止もしない。Docker アダプタは秒で上がるので報告しない。**Start は Agent を待たずに
-  返る**: `ecs` ではサービスの desired count を設定した時点で、`ecs-ec2` ではそれより前のことも
+- **Runtime 契約の `starting` 状態は、起動の収束待ちの間、全アダプタが報告する。** その間、呼び出し側は
+  再 Start もアイドル停止もしない。ローカルのアダプタ（`docker`・`native`）は、Start のマーカーが
+  立っていて Agent がまだ `/healthz` に答えていない間これを報告する。Start が Agent を待つのは猶予
+  （アダプタの既定値か `AF_AGENT_HEALTH_WAIT_SEC`）だけで、その後は返り、`State` は Agent が答えるか
+  マーカーの期限——Start がマーカーを立てた時点から `AgentBootBudget` と猶予の長い方——が過ぎるまで
+  `starting` を返し続ける（`runtime_health.go`）。**ECS では Start は Agent を待たずに返る**:
+  `ecs` ではサービスの desired count を設定した時点で、`ecs-ec2` ではそれより前のことも
   ある — スロットがまだ起動中・復帰中・登録中なら配置は背景（`finishStart`）で仕上がり、home に
   付けた claim が状態を `starting` に保つ。どちらでも収束は Console の `GET /api/workspace`
   ポーリングが拾う。同期待ちは戻せない: cold start はロードバランサの

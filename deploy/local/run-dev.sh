@@ -19,8 +19,12 @@
 #   - With no subcommand, env AF_RUNTIME decides (native|wsl -> containerless).
 #     Note: env AF_RUNTIME=wsl is, to the CP, an alias for "containerless" and is NOT
 #     the `wsl` subcommand (Docker preset). Easy to mix up — prefer the subcommand.
-#   - claude / opencode / codex / agy / rtk are baked into the image (pinned via
-#     Dockerfile ARGs). Version bump runbook: docs/build/10-development.md §10.2.1.
+#   - The image is lean by default (Dockerfile BAKE_AGENT_CLIS=0): the entrypoint
+#     boot-installs claude / opencode / codex / copilot / cursor / agy / rtk from the
+#     versions.json pins; kiro and muse are installed on demand. Set
+#     BAKE_AGENT_CLIS=1 to bake the CLIs in (pinned via Dockerfile ARGs; rtk also
+#     needs the default BAKE_RTK=1) for a faster first start.
+#     Version bump runbook: docs/build/10-development.md §10.2.1.
 #     Tracking latest is also possible via the settings modal's self-update opt-in
 #     (AF_AGENT_SELF_UPDATE), rtk included.
 #
@@ -222,7 +226,7 @@ fi
 . "$ROOT/deploy/local/go-build.sh"
 
 # ---- prepare the Workspace runtime (per mode) --------------------------------
-# rtk is always baked into the image (Dockerfile BAKE_RTK=1 default, ARG-pinned).
+# rtk is baked when BAKE_AGENT_CLIS=1 (with the default BAKE_RTK=1), boot-installed otherwise.
 # The old host vendoring (update-rtk.sh -> vendor/rtk) is gone.
 if [ "$MODE" != native ]; then
   # Provision the shared JDKs into WS_JVM_DIR (idempotent; first run is slow).

@@ -683,11 +683,9 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 			recordFleetGraphInstruct(meta.Name, src, reportTo, "", prompt)
 		}
 	}
-	// A peer message must survive a stop of the turn it waits behind: the person pressing stop
-	// did not write it, and its sender is not watching to send it again (ADR 0041, addendum
-	// 2026-09-30).
-	in := agents.TurnInput{Prompt: prompt, KeepOnInterrupt: peerFrom != "",
-		Origin: turnOrigin(badgeOriginOf(peerFrom, reportTo, source), peerFrom)}
+	// The origin is what the stop rules read (ADR 0105): only member input ends a stop episode,
+	// and a discard lists the rest by origin rather than putting it back in the input box.
+	in := agents.TurnInput{Prompt: prompt, Origin: turnOrigin(badgeOriginOf(peerFrom, reportTo, source), peerFrom)}
 	queued := false
 	if qs, ok := h.(agents.QueueingSender); ok {
 		queued, err = qs.SendQueued(in)

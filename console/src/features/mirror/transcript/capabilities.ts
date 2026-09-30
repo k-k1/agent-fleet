@@ -82,6 +82,12 @@ export interface TranscriptCaps {
   /** Branch from a past user turn (docs/log/55). Absent → no turn offers it. */
   forkAt?: (turn: Group) => void;
   /**
+   * Take a still-queued input back into the input box, or remove it (ADR 0105 decision 5).
+   * Absent → queued bubbles have no actions: a Terminal (CLI) session, whose queue lives in
+   * the CLI, an Agent that sends no queue ids, and every reader who is not the owner.
+   */
+  queue?: { restore: (id: string) => void; remove: (id: string) => void };
+  /**
    * Jump to Settings > Agents (「設定 > エージェント」) after an auth failure. Absent →
    * ErrorBlock shows the agent's own text without a fix-it link: a recipient cannot
    * re-authenticate somebody else's agent, so offering the route would be a dead end.

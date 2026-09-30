@@ -999,9 +999,10 @@ type gitConnReq struct {
 	Email    string `json:"email"` // optional git author email
 }
 
-// handlePutGitConn stores an HTTPS credential for a provider so git's `store`
-// helper authenticates clone/fetch/push transparently. The token→git binding
-// mirrors CodeLeaf (GitHub user "x-access-token"; Bitbucket user = email).
+// handlePutGitConn stores an HTTPS credential for a provider in the encrypted store,
+// where the `workspace-agent cred` helper answers git's clone/fetch/push prompts. The
+// token→git binding mirrors CodeLeaf (GitHub user "x-access-token"; Bitbucket user =
+// email).
 func handlePutGitConn(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
 	defUser, ok := gitHosts[host]

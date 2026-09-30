@@ -132,7 +132,13 @@ type mockServe struct {
 	// holdAbort answers /abort without releasing the turn, so a test can read the queue while
 	// the pump is still parked in the aborted turn — once the turn returns, the pump may
 	// already have taken what the interrupt left, and an empty queue proves nothing.
-	holdAbort bool
+	holdAbort   bool
+	statusPolls int // GET /session/status calls, so a test can tell the pump reached waitIdle
+	// statusGate, when set, holds every GET /session/status until it is closed, and
+	// statusEntered is signalled as each one arrives: the window of the pump's busy check.
+	statusGate    chan struct{}
+	statusEntered chan struct{}
+	aborts        int
 	// turnBody overrides the assistant message the blocking /message call answers with.
 	// opencode reports a provider-side failure INSIDE a 200 response (errors.go), so a
 	// failing turn is simulated by the body, not by the status code.
@@ -143,6 +149,19 @@ func newMockServe(t *testing.T) (*mockServe, *httptest.Server) {
 	m := &mockServe{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /session/status", func(w http.ResponseWriter, r *http.Request) {
+		m.mu.Lock()
+		m.statusPolls++
+		gate, entered := m.statusGate, m.statusEntered
+		m.mu.Unlock()
+		if entered != nil {
+			select {
+			case entered <- struct{}{}:
+			default:
+			}
+		}
+		if gate != nil {
+			<-gate
+		}
 		m.mu.Lock()
 		busy := m.busy
 		m.mu.Unlock()
@@ -190,6 +209,7 @@ func newMockServe(t *testing.T) (*mockServe, *httptest.Server) {
 	})
 	mux.HandleFunc("POST /session/ses_test/abort", func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
+		m.aborts++
 		if m.turnGate != nil && !m.holdAbort {
 			select {
 			case <-m.turnGate:
@@ -362,83 +382,6 @@ func TestSteerQueuesBehindRunningTurn(t *testing.T) {
 	}
 }
 
-func TestInterruptCancelsAndClearsQueue(t *testing.T) {
-	m, srv := newMockServe(t)
-	m.turnDelay = 5 * time.Second // a turn that does not return until abort arrives
-	h := newTestHandle(t, srv)
-	if err := h.Send(agents.TurnInput{Prompt: "long", ClientMessageID: "msg_long"}); err != nil {
-		t.Fatal(err)
-	}
-	waitState(t, h, agents.TurnRunning)
-	if err := h.Steer(agents.TurnInput{Prompt: "queued", ClientMessageID: "msg_q"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.Interrupt(); err != nil {
-		t.Fatal(err)
-	}
-	waitState(t, h, agents.TurnCancelled)
-	if got := h.queuedPrompts(); len(got) != 0 {
-		t.Errorf("interrupt must clear the queue, got %v", got)
-	}
-	time.Sleep(100 * time.Millisecond)
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if len(m.turns) != 1 {
-		t.Errorf("a queued steer must not run after interrupt - turns = %v", m.turns)
-	}
-}
-
-// A peer message queued behind a stuck turn is what the stop is pressed to free: it starts as
-// the next turn, while the user's own queued follow-up still goes with the stop.
-func TestInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
-	m, srv := newMockServe(t)
-	m.turnDelay = 5 * time.Second // a turn returns only when aborted
-	h := newTestHandle(t, srv)
-	queued, err := h.SendQueued(agents.TurnInput{Prompt: "stuck", ClientMessageID: "msg_stuck"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if queued {
-		t.Fatal("input to an idle session was reported as queued")
-	}
-	waitState(t, h, agents.TurnRunning)
-	queued, err = h.SendQueued(agents.TurnInput{Prompt: "from a peer", ClientMessageID: "msg_peer", KeepOnInterrupt: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !queued {
-		t.Fatal("input behind a running turn was not reported as queued")
-	}
-	if err := h.Steer(agents.TurnInput{Prompt: "own follow-up", ClientMessageID: "msg_own"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.Interrupt(); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		m.mu.Lock()
-		n := len(m.turns)
-		m.mu.Unlock()
-		if n >= 2 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	// The kept turn blocks in the mock, so the pump is parked in it: anything still queued now
-	// is something the stop failed to discard.
-	if got := h.queuedPrompts(); len(got) != 0 {
-		t.Errorf("queue after the kept turn started = %v, want the own follow-up discarded", got)
-	}
-	m.mu.Lock()
-	turns := append([]string(nil), m.turns...)
-	m.mu.Unlock()
-	if len(turns) != 2 || turns[1] != "from a peer" {
-		t.Errorf("turns = %q, want the peer message as the turn after the stop", turns)
-	}
-	_ = h.Interrupt() // release the kept turn so the pump drains before cleanup
-}
-
 // A turn this handle did not start (an attached TUI's, or one a previous Agent process left
 // running) holds the session too: the pump waits for it before the input goes out, so the input
 // is reported as queued, and it still runs once the session goes idle.
@@ -448,7 +391,7 @@ func TestSendQueuedCountsATurnThisHandleDidNotStart(t *testing.T) {
 	m.mu.Lock()
 	m.busy = true
 	m.mu.Unlock()
-	queued, err := h.SendQueued(agents.TurnInput{Prompt: "from a peer", ClientMessageID: "msg_peer", KeepOnInterrupt: true})
+	queued, err := h.SendQueued(peerInput("from a peer", "msg_peer"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,9 +409,9 @@ func TestSendQueuedCountsATurnThisHandleDidNotStart(t *testing.T) {
 	}
 }
 
-// Agent shutdown interrupts through the teardown path: a kept entry would otherwise be started
-// on the way down.
-func TestAbortManagedDiscardsKeptInput(t *testing.T) {
+// Agent shutdown interrupts through the teardown path: the whole queue goes, peer input
+// included, and nothing is kept for return (ADR 0105 decision 8).
+func TestAbortManagedDiscardsTheQueue(t *testing.T) {
 	m, srv := newMockServe(t)
 	m.turnDelay = 5 * time.Second
 	h := newTestHandle(t, srv)
@@ -477,7 +420,7 @@ func TestAbortManagedDiscardsKeptInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitState(t, h, agents.TurnRunning)
-	if err := h.Send(agents.TurnInput{Prompt: "from a peer", ClientMessageID: "msg_peer", KeepOnInterrupt: true}); err != nil {
+	if err := h.Send(peerInput("from a peer", "msg_peer")); err != nil {
 		t.Fatal(err)
 	}
 	m.mu.Lock()
@@ -486,6 +429,12 @@ func TestAbortManagedDiscardsKeptInput(t *testing.T) {
 	AbortManaged()
 	if got := h.queuedPrompts(); len(got) != 0 {
 		t.Errorf("queue after shutdown interrupt = %v", got)
+	}
+	h.mu.Lock()
+	kept := h.tq().Discards()
+	h.mu.Unlock()
+	if len(kept) != 0 {
+		t.Errorf("teardown kept %d discards for return, want none (decision 8)", len(kept))
 	}
 	m.mu.Lock()
 	m.holdAbort = false
@@ -583,7 +532,7 @@ func TestManagedEnrich(t *testing.T) {
 	h.mu.Lock()
 	h.inter = &agents.Interaction{ID: "que_9", Kind: "question",
 		Questions: []transcript.Question{{Question: "q1"}, {Question: "q2"}}}
-	h.queue = []agents.TurnInput{{Prompt: "queued one"}}
+	h.tq().Accept(memberInput("queued one", "msg_q1"))
 	h.settings.Mode = "plan"
 	h.mu.Unlock()
 
@@ -599,6 +548,9 @@ func TestManagedEnrich(t *testing.T) {
 	}
 	if len(td.Queued) != 2 || td.Queued[1] != "queued one" {
 		t.Errorf("Queued = %v, want store queued + driver queue", td.Queued)
+	}
+	if len(td.QueuedItems) != 1 || td.QueuedItems[0].ID != "msg_q1" || td.QueuedItems[0].State != agents.EntryQueued {
+		t.Errorf("QueuedItems = %+v, want the driver queue with ids", td.QueuedItems)
 	}
 	if td.Mode != "plan" {
 		t.Errorf("Mode = %q, want plan (driver settings win over the db value)", td.Mode)

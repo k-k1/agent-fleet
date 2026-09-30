@@ -533,7 +533,7 @@ func TestDriverInterruptCancelsRunningTurn(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	waitState(t, h, agents.TurnRunning)
-	if err := h.Interrupt(); err != nil {
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 		t.Fatalf("Interrupt: %v", err)
 	}
 	waitState(t, h, agents.TurnCancelled)
@@ -559,12 +559,13 @@ func queueLen(h agents.ThreadHandle) int {
 	th := h.(*threadHandle)
 	th.mu.Lock()
 	defer th.mu.Unlock()
-	return len(th.queue)
+	return th.q.Len()
 }
 
 // A peer message queued behind a stuck turn is what the stop is pressed to free: it starts as
-// the next turn, while the user's own queued follow-up still goes with the stop.
-func TestDriverInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
+// the next turn. The member's own queued follow-up continues too (ADR 0105 decision 1), and a
+// second stop discards it and hands it back (decisions 2 and 4).
+func TestDriverStopFreesPeerInputAndKeepsOwnForSecondStop(t *testing.T) {
 	testHome(t)
 	var mu sync.Mutex
 	var prompts []string
@@ -579,7 +580,7 @@ func TestDriverInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
 		t.Fatalf("Resume: %v", err)
 	}
 	qs := h.(agents.QueueingSender)
-	queued, err := qs.SendQueued(agents.TurnInput{Prompt: "stuck"})
+	queued, err := qs.SendQueued(member("m1", "stuck"))
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -587,28 +588,28 @@ func TestDriverInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
 		t.Fatal("input to an idle session was reported as queued")
 	}
 	<-started
-	queued, err = qs.SendQueued(agents.TurnInput{Prompt: "from a peer", KeepOnInterrupt: true})
+	queued, err = qs.SendQueued(peer("m2", "from a peer"))
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if !queued {
 		t.Fatal("input behind a running turn was not reported as queued")
 	}
-	if err := h.Steer(agents.TurnInput{Prompt: "own follow-up"}); err != nil {
+	if err := h.Steer(member("m3", "own follow-up")); err != nil {
 		t.Fatalf("Steer: %v", err)
 	}
-	if err := h.Interrupt(); err != nil {
-		t.Fatalf("Interrupt: %v", err)
+	if res, err := h.Interrupt(agents.InterruptOpts{}); err != nil || res.Stop != agents.StopFirst {
+		t.Fatalf("Interrupt = %+v, %v; want a first stop", res, err)
 	}
 	select {
 	case <-started:
-	case <-time.After(10 * time.Second):
+	case <-time.After(hangGuard):
 		t.Fatal("the peer message did not start a turn after the stop")
 	}
-	// The kept turn's round trip is parked in sendDelay: anything still queued now is something
-	// the stop failed to discard.
-	if n := queueLen(h); n != 0 {
-		t.Errorf("queue after the kept turn started holds %d entries, want the own follow-up discarded", n)
+	// The continued turn's round trip is parked in sendDelay: the own follow-up must still be
+	// queued behind it.
+	if n := queueLen(h); n != 1 {
+		t.Errorf("queue after the continued turn started holds %d entries, want the own follow-up still queued", n)
 	}
 	mu.Lock()
 	got := append([]string(nil), prompts...)
@@ -616,11 +617,22 @@ func TestDriverInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
 	if len(got) != 2 || got[1] != "from a peer" {
 		t.Errorf("prompts = %q, want the peer message as the turn after the stop", got)
 	}
+	res, err := h.Interrupt(agents.InterruptOpts{})
+	if err != nil || res.Stop != agents.StopSecond || res.Discard == nil ||
+		len(res.Discard.Items) != 1 || res.Discard.Items[0].Text != "own follow-up" {
+		t.Fatalf("second Interrupt = %+v, %v; want the own follow-up discarded and returned", res, err)
+	}
+	waitState(t, h, agents.TurnCancelled)
+	noStartOnceIdle(t, h, started, "the discarded follow-up started a turn")
+	td, ok := agentImpl{}.Transcript(m)
+	if !ok || len(td.Discards) != 1 || td.Discards[0].ID != res.Discard.ID {
+		t.Errorf("messages payload discards = %+v (ok %v), want the second stop's", td.Discards, ok)
+	}
 }
 
-// Agent shutdown interrupts through the teardown path: a kept entry would otherwise be started
+// Agent shutdown interrupts through the teardown path: anything queued would otherwise start
 // on the way down.
-func TestDriverAbortManagedDiscardsKeptInput(t *testing.T) {
+func TestDriverAbortManagedDiscardsQueuedInput(t *testing.T) {
 	testHome(t)
 	var mu sync.Mutex
 	var prompts []string
@@ -638,7 +650,7 @@ func TestDriverAbortManagedDiscardsKeptInput(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	<-started
-	if err := h.Send(agents.TurnInput{Prompt: "from a peer", KeepOnInterrupt: true}); err != nil {
+	if err := h.Send(peer("m2", "from a peer")); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	AbortManaged()
@@ -647,17 +659,13 @@ func TestDriverAbortManagedDiscardsKeptInput(t *testing.T) {
 	}
 	close(client.holdCancel)
 	waitState(t, h, agents.TurnCancelled)
-	select {
-	case <-started:
-		t.Error("a turn started after the shutdown interrupt")
-	case <-time.After(200 * time.Millisecond):
-	}
+	noStartOnceIdle(t, h, started, "a turn started after the shutdown interrupt")
 }
 
 // Dropping the handle (halt, archive) is teardown too, and here the pump checks neither
-// liveness nor a context: a kept entry would go on running on a handle already out of the map,
+// liveness nor a context: queued input would go on running on a handle already out of the map,
 // against a store about to be closed.
-func TestDriverDropHandleDiscardsKeptInput(t *testing.T) {
+func TestDriverDropHandleDiscardsQueuedInput(t *testing.T) {
 	testHome(t)
 	var mu sync.Mutex
 	var prompts []string
@@ -675,7 +683,7 @@ func TestDriverDropHandleDiscardsKeptInput(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	<-started
-	if err := h.Send(agents.TurnInput{Prompt: "from a peer", KeepOnInterrupt: true}); err != nil {
+	if err := h.Send(peer("m2", "from a peer")); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	done := dropHandle(m.Name)
@@ -688,11 +696,7 @@ func TestDriverDropHandleDiscardsKeptInput(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("handle was not released within 30s")
 	}
-	select {
-	case <-started:
-		t.Error("a turn started on a dropped handle")
-	case <-time.After(200 * time.Millisecond):
-	}
+	noStartOnceIdle(t, h, started, "a turn started on a dropped handle")
 }
 
 // TestDriverRestartSettleAborted is the positive control for §4.4's restart recovery: a store
@@ -875,5 +879,31 @@ func TestDriverSystemPromptCarriesProjectInstructions(t *testing.T) {
 	waitState(t, h, agents.TurnCompleted, agents.TurnFailed)
 	if !strings.Contains(gotSystem, "FROBNITZ") {
 		t.Fatalf("system prompt = %q, want it to carry the project's AGENTS.md", gotSystem)
+	}
+}
+
+// noStartOnceIdle waits for h's pump to go idle and then checks that no round trip started.
+// promptRecorder signals before the round trip blocks, and a round trip keeps the pump busy, so
+// once it is idle every start is in started.
+func noStartOnceIdle(t *testing.T, h agents.ThreadHandle, started <-chan struct{}, msg string) {
+	t.Helper()
+	th := h.(*threadHandle)
+	deadline := time.Now().Add(hangGuard)
+	for {
+		th.mu.Lock()
+		idle := !th.pumping && !th.running
+		th.mu.Unlock()
+		if idle {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the pump did not go idle")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	select {
+	case <-started:
+		t.Error(msg)
+	default:
 	}
 }

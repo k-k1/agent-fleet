@@ -57,6 +57,11 @@ export const errors: Record<keyof typeof jaErrors, string> = {
     "This branch is not fully merged, so it was not deleted. Merge or push it first.",
   "err.branch_not_in_head":
     "This branch's commits are not in this working copy's current history. Deleting it on the remote too would leave them with nowhere to live — bring them in first.",
+  // ADR 0105: the /turn queue ops (remove / dismiss_discard / interrupt with discard_queue).
+  "err.already_started": "It has already started, so it can't be taken back.",
+  "err.not_queued": "It is no longer in the queue.",
+  "err.not_managed": "Only a Managed session supports this.",
+  "err.missing_id": "No id was given.",
   "err.question_pending":
     "The agent is waiting for an answer to its question. Answer it from the question card before sending.",
   "err.plan_pending":

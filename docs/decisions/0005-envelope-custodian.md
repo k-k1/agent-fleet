@@ -3,7 +3,7 @@
 English | [日本語](0005-envelope-custodian.ja.md)
 
 - Status: decided (P3-3)
-- See also: [history/p3-3-envelope-crypto](../log/p3-3-envelope-crypto.md) / [build/07 §7.6 Secrets and envelope encryption](../build/07-security.md#76-secrets-and-envelope-encryption) (formerly security §4.4) / [Roadmap §12.3](../log/roadmap.md#123-tos-と分離の留意（自社ホスト前提）)
+- See also: [history/p3-3-envelope-crypto](../log/p3-3-envelope-crypto.md) / [build/07 §7.6 Secrets and envelope encryption](../build/07-security.md#76-secrets-and-envelope-encryption) (formerly security §4.4) / [Roadmap §12.3](../log/roadmap.md#123-tos-と分離の留意自社ホスト前提)
 
 ## Context
 

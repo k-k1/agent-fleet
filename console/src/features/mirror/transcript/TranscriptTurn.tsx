@@ -450,9 +450,33 @@ function TranscriptTurnImpl({
           </span>
         )}
         {turn.queued ? (
-          <span className="mt-pending mt-queued" title={tr("mirror.queued_title")}>
-            <Icon name="history" /> {tr("mirror.queued")}
-          </span>
+          <>
+            <span className="mt-pending mt-queued" title={tr("mirror.queued_title")}>
+              <Icon name="history" /> {tr("mirror.queued")}
+            </span>
+            {isUser && turn.queueId && turn.queueActionable && caps.queue && (
+              <span className="mt-queue-acts">
+                {turn.queueRestorable && (
+                  <button
+                    type="button"
+                    className="ghost mt-queue-act mt-queue-restore"
+                    title={tr("mirror.queued_restore_title")}
+                    onClick={() => caps.queue!.restore(turn.queueId!)}
+                  >
+                    <Icon name="edit" /> {tr("mirror.queued_restore")}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="ghost mt-queue-act mt-queue-remove"
+                  title={tr("mirror.queued_remove_title")}
+                  onClick={() => caps.queue!.remove(turn.queueId!)}
+                >
+                  <Icon name="close" /> {tr("mirror.queued_remove")}
+                </button>
+              </span>
+            )}
+          </>
         ) : (
           turn.pending && (
             <span className="mt-pending" title={tr("mirror.pending_title")}>

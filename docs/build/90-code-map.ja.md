@@ -15,7 +15,7 @@ updated: "2026-09"
 ## 90.1 トップレベル
 
 トップレベルの各ディレクトリの役割は
-[10 §10.1](10-development.ja.md#101-リポジトリ構成（責務のみ）)、どれが Go モジュールかは
+[10 §10.1](10-development.ja.md#101-リポジトリ構成責務のみ)、どれが Go モジュールかは
 [10 §10.4](10-development.ja.md#104-テスト) にある。本書はその一段下を扱う。それらの
 ディレクトリの外で知っておくとよいものが 2 つある。
 
@@ -65,7 +65,7 @@ updated: "2026-09"
 | 鍵 | `custodian.go`・`dek.go` |
 | 内部 git | `internal_git*.go`・`git_http.go`・`git_lfs*.go`・`git_gc.go`（[91](91-internal-git.ja.md)）|
 | egress | `egress*.go`（[03 §3.8](03-control-plane.ja.md#38-egress-統制の-cp-側)）|
-| agent が `/internal/` 配下で呼ぶ口 | `*_bridge.go`。たとえば docs・メモ・定時実行・AWS プロファイル（[05 §5.2](05-api.ja.md#52-内部面（cp-↔-agent）)）|
+| agent が `/internal/` 配下で呼ぶ口 | `*_bridge.go`。たとえば docs・メモ・定時実行・AWS プロファイル（[05 §5.2](05-api.ja.md#52-内部面cp--agent)）|
 | 監査・メトリクス・使用量・費用 | `audit.go`（読む側。書く側は `proxy.go` の `auditActionTarget`）・`claude_audit.go`・`metrics.go`・`usage*.go`・`cloudcost.go`・`cost_*.go` |
 | メモ・通知・定時実行 | `memo*.go`・`notification.go`・`schedule*.go`・`scheduler*.go`（[03 §3.6](03-control-plane.ja.md#36-memo-キュー)・[§3.7](03-control-plane.ja.md#37-バックグラウンドジョブ)）|
 | MCP | `internal/mcpsrv`（`/mcp` のツールサーバとテナントのサーバ配布）と `mcp_wiring.go`（[03 §3.5](03-control-plane.ja.md#35-mcp-サーバ)）|
@@ -103,7 +103,7 @@ updated: "2026-09"
 | 自前エンジン | `engines.go` |
 | フリート俯瞰図 | `internal/fleetgraph` |
 | ワークアイテム | `workitems*.go`・`connections_jira.go` |
-| 秘密情報 | `internal/secrets`（[04 §4.8](04-agent.ja.md#48-秘密情報（agent-の責務）)）|
+| 秘密情報 | `internal/secrets`（[04 §4.8](04-agent.ja.md#48-秘密情報agent-の責務)）|
 | 端末と preview | `terminal*.go`・`preview.go` |
 | 後片付け | `cleanup_*.go`・`leftovers.go`・`tool_caches.go`・`cli_version_prune.go` |
 

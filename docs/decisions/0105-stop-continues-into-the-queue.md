@@ -66,7 +66,15 @@ messages, and what claude and codex did in the measured runs.
 - An input whose start is in flight **while no other turn runs** is not queued: it is the turn being stopped. A
   first stop stops it, as muse (`stopStarting`) and codex (`stopStart`) already do once the runtime names the turn.
   If the start fails, no turn was made and there is nothing to stop. The failed start is shown as it is today (codex
-  adds a failed turn with the error).
+  adds a failed turn with the error). This includes input accepted while nothing runs that the pump has not taken
+  yet. A first stop that stops such input before it reaches the runtime keeps its text for return like a discard
+  (decision 4, reason `first_stop`): it is in neither the transcript nor the queue, and would otherwise vanish.
+  (Amended 2026-09-30, implementation review.)
+- Input sent while a turn runs is a **steer**. On codex and muse the runtime takes it into the running turn
+  (native `turn/steer`), so it is not queued: it is part of that turn, and a stop ends it with the turn. The next
+  turn still sees it in the conversation. The other drivers have no mid-turn injection and queue it, so there it
+  continues after a first stop. Queueing a codex or muse steer instead would delay a correction the runtime could
+  take at once; the difference is stated in the member guide. (Amended 2026-09-30, implementation review.)
 - An input that waits **behind a running turn** is queued, wherever it waits: in the driver's queue, held by the
   pump (opencode, behind another client's turn, not yet sent), or in muse's host-side queue (sent). A first stop lets
   it continue; a second stop stops or discards it. Only input that is still cancellable (decision 3) can be
@@ -142,7 +150,7 @@ it works without timing.
 
 ### Decision 4: what is discarded comes back, from the driver
 
-The driver keeps the entries a second stop (or decision 3) discarded, per session and **per discard id**, until the
+The driver keeps the entries a second stop (or decision 3, or a first stop under decision 1) discarded, per session and **per discard id**, until the
 member restores or dismisses that discard. A later discard does not replace an earlier one. The driver keeps at most
 the last 5 discards per session and drops the oldest beyond that. It exposes them next to `queuedPrompts` in the
 session's messages payload. The
@@ -243,7 +251,7 @@ restart instead is #1255's work.
   the removal op, the cancellable/committed state of taken entries and a side-effect-free ledger lookup. Every
   `TurnInput` constructor sets the origin, and the messages payload gains the ids and the discards.
   The Console gains the stop control's menu action (kept reachable while a question or approval is pending), the
-  notice and the bubble actions, and stops disabling Stop while a stop is pending. The member guide's sessions
-  chapter (en/ja) states the two stops.
+  notice and the bubble actions, and stops disabling Stop while a stop is pending. The member guide's chat
+  chapter (07, en/ja), where the Stop button is described, states the two stops.
 - The tests added in #1244 and #1258 that assert "own input is discarded by a stop" are inverted, not deleted: they
   become "own input continues after a first stop, and is discarded (and kept for return) by a second".

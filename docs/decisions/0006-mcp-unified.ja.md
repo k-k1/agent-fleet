@@ -5,7 +5,7 @@
 - 状態: 確定。実装 = 段1（member/drive + PAT + `/mcp`）+ admin read/write、ともにライブ E2E green（2026-07-01）/ dangerous 段残（鍵ローテ・idle 検出の土台待ち）
   状態の更新（2026-09-24）: dangerous 段（`rotate_key` / `recreate_workspace` / `stop_all_idle`）は予定しない。求める声が無く、エージェントに鍵のローテーションや Workspace の一括停止をさせてよいかは、作る前にそれ自体の決定が要る。
   状態の更新（2026-09-30）: メンバーのセッションを止める admin の書き込みツールは `stop_session` ではなく `stop_user_session` とする。member 側にすでに同名の `stop_session` があり、サーバーは呼び出しを同名の最初のツールへ振り分けるため、admin 版には一度も届かなかった（[#1188](https://github.com/k-k1/agent-fleet/issues/1188)）。ツール名は member と admin を通して一意とし、テストでそれを保つ。
-- 関連: [roadmap P3-6](../log/roadmap.md#p3-6-mcp-による-agent-fleet-制御（管理面--作業面を一体で）) / [history/p3-6-mcp](../log/p3-6-mcp.md) / [dev/01 §1.4 認証は 2 層](../build/01-architecture.ja.md)（旧 architecture §認証スコープ） / [dev/07 セキュリティ](../build/07-security.ja.md)（旧 security）
+- 関連: [roadmap P3-6](../log/roadmap.md#p3-6-mcp-による-agent-fleet-制御管理面--作業面を一体で) / [history/p3-6-mcp](../log/p3-6-mcp.md) / [dev/01 §1.4 認証は 2 層](../build/01-architecture.ja.md)（旧 architecture §認証スコープ） / [dev/07 セキュリティ](../build/07-security.ja.md)（旧 security）
 
 ## 背景
 

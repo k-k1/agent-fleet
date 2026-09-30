@@ -68,8 +68,14 @@ func (h *spawnFakeHandle) Send(in agents.TurnInput) error {
 	return nil
 }
 
-func (h *spawnFakeHandle) Steer(agents.TurnInput) error               { return nil }
-func (h *spawnFakeHandle) Interrupt() error                           { return nil }
+func (h *spawnFakeHandle) Steer(agents.TurnInput) error { return nil }
+func (h *spawnFakeHandle) Interrupt(agents.InterruptOpts) (agents.InterruptResult, error) {
+	return agents.InterruptResult{}, nil
+}
+func (h *spawnFakeHandle) RemoveQueued(string) (agents.QueueItem, error) {
+	return agents.QueueItem{}, nil
+}
+func (h *spawnFakeHandle) DismissDiscard(string) bool                 { return false }
 func (h *spawnFakeHandle) UpdateSettings(agents.ThreadSettings) error { return nil }
 func (h *spawnFakeHandle) Respond(agents.InteractionReply) error      { return nil }
 func (h *spawnFakeHandle) Events() <-chan agents.Event                { return nil }

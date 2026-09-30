@@ -6,6 +6,7 @@ import { PlanBlock } from "../transcript/blocks.tsx";
 import { PendingQuestions } from "../PendingQuestions.tsx";
 import { questionDraftKey } from "../questionDraft.ts";
 import { useQuestionTranslate } from "../questionTranslate.ts";
+import { StopControl } from "./StopControl.tsx";
 import type { TranscriptTranslateWiring } from "../useTranslate.ts";
 import type { InteractionAnswer } from "../../../core/api/client.ts";
 import type { PendingApproval, Question } from "../transcript/types.ts";
@@ -266,27 +267,37 @@ export function LiveReplyCard({
 
 export function TypingRow({
   agentName,
-  sending,
+  typing = true,
+  managed,
+  queuedCount,
   onStop,
+  onDiscard,
 }: {
   agentName: string;
-  sending: boolean;
+  /** false while a question or approval card waits on the member: the agent is not typing,
+   *  but a Managed session keeps its brake reachable (ADR 0105 decision 3). */
+  typing?: boolean;
+  managed: boolean;
+  queuedCount: number;
   onStop: () => void;
+  onDiscard: () => void;
 }) {
   return (
-    <div className="mirror-typing" aria-label={tr("mirror.typing", { name: agentName })}>
-      <span className="mt-who">{agentName}</span>
-      <span className="typing-dots">
-        <i />
-        <i />
-        <i />
-      </span>
+    <div className="mirror-typing" aria-label={typing ? tr("mirror.typing", { name: agentName }) : undefined}>
+      {typing && (
+        <>
+          <span className="mt-who">{agentName}</span>
+          <span className="typing-dots">
+            <i />
+            <i />
+            <i />
+          </span>
+        </>
+      )}
       {/* Stop the running turn (Escape) — lives with the typing indicator so it shows
           while working OR while a background run (subagent / workflow) lingers on an
           otherwise-idle session, and never shifts the composer. */}
-      <button type="button" className="ghost mirror-stop" disabled={sending} title={tr("mirror.stop_run")} onClick={onStop}>
-        <Icon name="debug-stop" /> {tr("chat.stop")}
-      </button>
+      <StopControl managed={managed} queuedCount={queuedCount} onStop={onStop} onDiscard={onDiscard} />
     </div>
   );
 }

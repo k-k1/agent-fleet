@@ -680,8 +680,17 @@ func TestMCPUnreachableServerDoesNotSlowDownLaterTurns(t *testing.T) {
 		return time.Since(start)
 	}
 
+	backoffOf := func() mcpFailure {
+		th := h.(*threadHandle)
+		th.mu.Lock()
+		defer th.mu.Unlock()
+		return th.mcpFailures["hangs"]
+	}
+
 	first := turnDuration("one")
-	second := turnDuration("two")
+	afterFirst := backoffOf()
+	turnDuration("two")
+	afterSecond := backoffOf()
 
 	// The first turn genuinely pays (close to) the shrunk handshake budget — a sanity check
 	// that this test is exercising the timeout path at all, not silently failing fast for an
@@ -690,12 +699,19 @@ func TestMCPUnreachableServerDoesNotSlowDownLaterTurns(t *testing.T) {
 		t.Fatalf("first turn = %v, expected it to pay close to the sync budget (%v) — is this test actually hitting the connect timeout?", first, mcpSyncBudget)
 	}
 	// ...and mcpSyncBudget actually CAPS that wait — without it, the first turn would instead
-	// pay mcpc's own uncapped defaultHandshakeTimeout (10s) against this same silent server.
-	if first > 10*mcpSyncBudget {
+	// pay mcpc's own uncapped defaultHandshakeTimeout (10s) against this same silent server. The
+	// bound is half of that, not a multiple of the budget: a loaded host stretches the turn's
+	// own work, and a tight wall-clock bound turned that into red runs.
+	if first > 5*time.Second {
 		t.Fatalf("first turn = %v, expected it capped near the sync budget (%v) — is syncMCPServers still wrapping Sync in a timeout?", first, mcpSyncBudget)
 	}
-	// The second turn must be backed off entirely — no connect attempt, so no handshake wait.
-	if second >= first/2 {
-		t.Fatalf("second turn (%v) was not meaningfully faster than the first (%v) — a still-broken server should have been skipped by backoff, not retried", second, first)
+	// The second turn must be backed off entirely — no connect attempt. Read from the backoff
+	// state, not from the turn's duration (comparing durations went red under load, go test
+	// -p 2): an attempt that failed again would have restamped the entry with a later retry time.
+	if afterFirst.next.IsZero() {
+		t.Fatalf("no backoff recorded for the unreachable server after the first turn: %+v", afterFirst)
+	}
+	if afterSecond != afterFirst {
+		t.Fatalf("backoff after the second turn = %+v, want %+v unchanged — a still-broken server should have been skipped by backoff, not retried", afterSecond, afterFirst)
 	}
 }

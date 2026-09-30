@@ -238,13 +238,11 @@ func TestQueuedTurnOnADyingHostGoesBackToTheHead(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		h.mu.Lock()
-		var left []string
-		for _, in := range h.queue {
-			left = append(left, in.Prompt)
-		}
+		left := h.tq().Texts()
 		starting := h.starting
+		head := h.tq().Head()
 		h.mu.Unlock()
-		if starting == "" && len(left) == 2 {
+		if starting == "" && head == nil && len(left) == 2 {
 			if left[0] != "second" || left[1] != "third" {
 				t.Fatalf("queue = %q, want [second third]", left)
 			}
@@ -258,51 +256,58 @@ func TestQueuedTurnOnADyingHostGoesBackToTheHead(t *testing.T) {
 }
 
 // A stop that arrives while the input's turn/start is in flight has no turn to interrupt yet;
-// it lands on the turn as soon as the host reports it started.
+// it lands on the turn as soon as the host reports it started, exactly once however many times
+// it was pressed in the gap.
 func TestStopInTheStartGapInterruptsTheTurnOnArrival(t *testing.T) {
 	h := &threadHandle{}
 	host := newTestHandle(t, h)
 	starts := recordStarts(host)
-	host.Handle(msp.MethodTurnInterrupt, func(m msptest.Message) (any, *msp.Error) {
-		return msp.CommandAcceptedResult{}, nil
-	})
-	if err := h.Send(agents.TurnInput{Prompt: "in flight"}); err != nil {
+	acceptInterrupts(host)
+	if err := h.Send(memberInput("in flight", "cm-flight")); err != nil {
 		t.Fatal(err)
 	}
 	p := nextStart(t, starts)
-	if err := h.Interrupt(); err != nil {
-		t.Fatal(err)
+	for i := 0; i < 2; i++ {
+		res, err := h.Interrupt(agents.InterruptOpts{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Stop != agents.StopFirst {
+			t.Fatalf("stop %d = %s, want first", i+1, res.Stop)
+		}
+	}
+	if n := interrupts(host); n != 0 {
+		t.Fatalf("%d turn/interrupt sent before the turn existed", n)
 	}
 	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{CommandID: p.CommandID, TurnID: p.CommandID, SessionID: h.sid})
-	m := host.WaitForMethod(msp.MethodTurnInterrupt)
+	m := waitSent(t, host, isMethod(msp.MethodTurnInterrupt))
 	var ip msp.TurnInterruptParams
 	json.Unmarshal(m.Params, &ip)
 	if ip.TurnID == nil || *ip.TurnID != p.CommandID {
 		t.Fatalf("turn/interrupt targeted %v, want %s", ip.TurnID, p.CommandID)
 	}
+	host.Notify(msp.NotificationTurnCompleted, msp.TurnCompletedParams{TurnID: p.CommandID, SessionID: h.sid, Terminal: msp.TurnTerminalCancelled})
+	waitEvent(t, h, agents.TurnCancelled)
+	time.Sleep(100 * time.Millisecond)
+	if n := interrupts(host); n != 1 {
+		t.Fatalf("%d turn/interrupt sent, want exactly 1", n)
+	}
 }
 
-// Peer input is kept by a stop (ADR 0041), and that holds while its turn/start is in flight too.
-func TestStopInTheStartGapSparesPeerInput(t *testing.T) {
+// Input in flight while no other turn runs is the turn being stopped (ADR 0105 decision 1),
+// whoever sent it: a peer message is stopped like the member's own.
+func TestStopInTheStartGapStopsPeerInputToo(t *testing.T) {
 	h := &threadHandle{}
 	host := newTestHandle(t, h)
 	starts := recordStarts(host)
-	host.Handle(msp.MethodTurnInterrupt, func(m msptest.Message) (any, *msp.Error) {
-		return msp.CommandAcceptedResult{}, nil
-	})
-	if err := h.Send(agents.TurnInput{Prompt: "from a peer", KeepOnInterrupt: true}); err != nil {
+	acceptInterrupts(host)
+	if err := h.Send(peerInput("from a peer", "cm-peer")); err != nil {
 		t.Fatal(err)
 	}
 	p := nextStart(t, starts)
-	if err := h.Interrupt(); err != nil {
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{CommandID: p.CommandID, TurnID: p.CommandID, SessionID: h.sid})
-	waitEvent(t, h, agents.TurnRunning)
-	time.Sleep(200 * time.Millisecond)
-	for _, m := range host.Received() {
-		if m.Method == msp.MethodTurnInterrupt {
-			t.Fatal("the stop interrupted the peer message's turn")
-		}
-	}
+	waitSent(t, host, isMethod(msp.MethodTurnInterrupt))
 }

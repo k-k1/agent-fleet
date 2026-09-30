@@ -135,7 +135,11 @@ There are two ways to hold a conversation id, and they fail differently.
   still in use — **which breaks silently the moment the CLI stops using it** (the
   claude case above).
   - claude and copilot (`--session-id`), cursor (`--resume`).
-- lcpp and muse are neither: their stores are keyed on the slot itself.
+- muse is imposed at start: AF mints a UUIDv7 and MSP's `session/start` takes it
+  verbatim. What AF records, though, is the id and path that reply returns
+  (`museSession` in `internal/agents/muse`), so the stored id is the host's answer
+  rather than an assumption. The store holding them is keyed on the slot.
+- lcpp is neither: its store is keyed on the slot itself.
 
 **When you add a kind that imposes an id, you must ship the recovery path with it.**
 
@@ -216,9 +220,11 @@ and each declares its process model in `Capabilities.ProcessModel`
 - **The "Managed by default" users see comes from the callers.** The Console's launch
   UI starts a kind whose registry entry has `managedDriver: true`
   (`console/src/agents/registry.ts`) as managed. The in-container MCP `create_session`
-  sends `managed` for codex, opencode, copilot, cursor and kiro (`mcpStdioCall`). A
-  bare `POST /sessions` with no driver gets `tui`.
-- A new kind with both drivers must be added to both callers.
+  sends `managed` for codex, opencode, copilot, cursor and kiro (`mcpStdioCall`), and
+  so do the CP's own callers: its MCP `create_session` (`control-plane/internal/mcpsrv/mcp.go`)
+  and the scheduler's `injectDriver` (`control-plane/scheduler_wake.go`). A bare
+  `POST /sessions` with no driver gets `tui`.
+- A new kind with both drivers must be added to all four callers.
 
 ### The surfaces a new kind fills
 

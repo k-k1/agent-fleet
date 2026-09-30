@@ -56,6 +56,11 @@ export const errors = {
     "このブランチはまだマージされていないため削除しませんでした。マージか push をしてから削除してください。",
   "err.branch_not_in_head":
     "このブランチのコミットは、この作業コピーの現在の履歴に入っていません。リモートまで消すとコミットの行き場が無くなるため、先に取り込んでください。",
+  // ADR 0105: the /turn queue ops (remove / dismiss_discard / interrupt with discard_queue).
+  "err.already_started": "すでに始まっているため、取り戻せません。",
+  "err.not_queued": "もうキューにありません。",
+  "err.not_managed": "この操作はマネージドのセッションでだけ使えます。",
+  "err.missing_id": "ID が指定されていません。",
   "err.question_pending":
     "エージェントが質問への回答を待っています。質問カードから回答してから送信してください。",
   "err.plan_pending":

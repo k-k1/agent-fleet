@@ -98,7 +98,8 @@ function afFsAllow() {
 // URLs must therefore be *relative*, so we set base:'./'. The app additionally
 // resolves API/WS URLs via document.baseURI (see src/api.js).
 //
-// Output goes to dist/, which the CP serves with Cache-Control: no-store. Run
+// Output goes to dist/, which the CP serves from registerStatic: files under assets/
+// as immutable, everything else (index.html, version.json, sw.js) no-store. Run
 // `npm run dev` (vite build --watch) during development: edits rebuild dist/ and a
 // browser reload reflects them — keeping the CP as the single origin so the
 // oauth2-proxy / tenant-header chain behaves exactly as in production.

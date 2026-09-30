@@ -1,5 +1,5 @@
 // README screenshot capture — drives the real Console bundle (served by server.mjs
-// against fixtures) with headless Chromium over raw CDP, and writes PNGs to docs/img/.
+// against fixtures) with headless Chromium over raw CDP, and writes WebP files to docs/img/.
 //
 //   node console/scripts/shots/capture.mjs [--locale ja|en] [--theme dark|light]
 //                                          [--only hero,mirror] [--out <dir>]
