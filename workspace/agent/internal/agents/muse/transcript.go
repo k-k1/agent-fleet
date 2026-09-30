@@ -50,6 +50,9 @@ type record struct {
 	// Images are the paths of the attachments AF sent as `image` parts, on a `userMessage`
 	// only. The wire echoes their metadata but never the path (handle.go's sentImages).
 	Images []string `json:"images,omitempty"`
+	// Order, on a line with no item, is the host's own item order as of a resume backfill
+	// (backfill.go). An older Agent skips the line as an item without an id.
+	Order []string `json:"order,omitempty"`
 }
 
 // store is one session's append-only item log.
@@ -148,10 +151,17 @@ func (s *store) itemsWithMeta() ([]msp.Item, map[string]itemMeta, error) {
 	// One item can carry a whole tool output, so the stock 64 KiB line limit would turn a
 	// large-but-legitimate record into a truncated conversation.
 	sc.Buffer(make([]byte, 0, 256*1024), 16*1024*1024)
+	var hostOrder []string
 	for sc.Scan() {
 		var r record
-		if json.Unmarshal(sc.Bytes(), &r) != nil || r.Item.ItemID == "" {
+		if json.Unmarshal(sc.Bytes(), &r) != nil {
 			continue // a torn last line after a crash must not lose the whole history
+		}
+		if r.Item.ItemID == "" {
+			if len(r.Order) > 0 {
+				hostOrder = r.Order // the latest backfill's fold covers every earlier one
+			}
+			continue
 		}
 		prev, seen := byID[r.Item.ItemID]
 		if !seen {
@@ -172,11 +182,57 @@ func (s *store) itemsWithMeta() ([]msp.Item, map[string]itemMeta, error) {
 		}
 		meta[r.Item.ItemID] = m
 	}
+	order = mergeOrder(order, hostOrder, byID)
 	items := make([]msp.Item, 0, len(order))
 	for _, id := range order {
 		items = append(items, byID[id])
 	}
 	return items, meta, sc.Err()
+}
+
+// mergeOrder puts the items in the host's order where the host has spoken, and keeps every
+// other item where AF saw it. First-seen order is the conversation's order only when nothing
+// was missed: an item backfilled after a failed mirror write or a lost notification is
+// first seen at the end, and turnsFromItems would fold a missed reply into the NEXT user
+// message's turn. So the host's order wins for the items it lists. An item it does not list
+// follows the latest-placed host item AF had seen before it: an item from before a
+// compaction anchor (seen before any) stays in front, a live item written after the fold
+// stays behind it.
+func mergeOrder(seen, host []string, byID map[string]msp.Item) []string {
+	if len(host) == 0 {
+		return seen
+	}
+	idx := make(map[string]int, len(host))
+	for i, id := range host {
+		if _, ok := byID[id]; ok {
+			if _, dup := idx[id]; !dup {
+				idx[id] = i
+			}
+		}
+	}
+	var front []string
+	after := make(map[int][]string)
+	last := -1
+	for _, id := range seen {
+		if i, ok := idx[id]; ok {
+			last = max(last, i)
+			continue
+		}
+		if last < 0 {
+			front = append(front, id)
+		} else {
+			after[last] = append(after[last], id)
+		}
+	}
+	out := make([]string, 0, len(seen))
+	out = append(out, front...)
+	for i, id := range host {
+		if j, ok := idx[id]; ok && j == i {
+			out = append(out, id)
+		}
+		out = append(out, after[i]...)
+	}
+	return out
 }
 
 // Remove drops the stored conversation (a slot whose identity is being discarded).

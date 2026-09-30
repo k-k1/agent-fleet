@@ -2,6 +2,7 @@ package muse
 
 import (
 	"log"
+	"slices"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
 )
@@ -48,9 +49,10 @@ func (h *threadHandle) resumeHistory(cl *msp.Client, sid string, hist msp.Sessio
 // backfillMirror appends every item of the host's history the mirror lacks: an item it never
 // saw, or a later revision than the one it holds (a tool call whose completion arrived while
 // nobody was listening). The store folds by revision on read, so an appended revision simply
-// wins, and a live revision racing this one cannot be undone by it. A missing item lands after
-// what the mirror already has, which is where a turn the Agent missed belongs; one missing from
-// the middle of what it saw would land late, which only a lost notification can cause.
+// wins, and a live revision racing this one cannot be undone by it. Appending puts a missing
+// item at the end, which is wrong for a gap in the middle (a mirror write that failed while
+// later ones succeeded), so the host's order is recorded beside it and the read follows it
+// (mergeOrder).
 //
 // Failure is logged and dropped, the rule every mirror write follows: the host owns the
 // conversation, and a gap in AF's copy is no reason to refuse the session.
@@ -64,7 +66,9 @@ func (h *threadHandle) backfillMirror(items []msp.Item) {
 	}
 }
 
-// backfill appends the items the store lacks (see backfillMirror) and returns how many.
+// backfill appends the items the store lacks (see backfillMirror) and returns how many. It
+// records the host's order only when the store's does not already match it, so a resume over
+// an intact mirror writes nothing.
 func (s *store) backfill(items []msp.Item) (int, error) {
 	have, _, err := s.itemsWithMeta()
 	if err != nil {
@@ -86,6 +90,31 @@ func (s *store) backfill(items []msp.Item) (int, error) {
 			return n, err
 		}
 		n++
+	}
+	host := make([]string, 0, len(items))
+	for _, it := range items {
+		if it.ItemID != "" {
+			host = append(host, it.ItemID)
+		}
+	}
+	now, _, err := s.itemsWithMeta()
+	if err != nil {
+		return n, err
+	}
+	in := make(map[string]bool, len(host))
+	for _, id := range host {
+		in[id] = true
+	}
+	var cur []string
+	for _, it := range now {
+		if in[it.ItemID] {
+			cur = append(cur, it.ItemID)
+		}
+	}
+	if !slices.Equal(cur, host) {
+		if err := s.appendRecord(record{Order: host}); err != nil {
+			return n, err
+		}
 	}
 	return n, nil
 }

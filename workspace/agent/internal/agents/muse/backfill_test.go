@@ -1,7 +1,10 @@
 package muse
 
 import (
+	"bytes"
 	"encoding/json"
+	"os"
+	"slices"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -196,5 +199,110 @@ func TestResumeBackfillFailureIsNotFatal(t *testing.T) {
 	got := mirrorState(t, h)
 	if len(got) != 2 || got["bash-1"].Revision != 1 {
 		t.Errorf("the mirror changed on a failed read: %+v", got)
+	}
+}
+
+// mirrorWith is a store holding exactly these items, in this order.
+func mirrorWith(t *testing.T, sid string, items ...msp.Item) *store {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	st := openStore(sid)
+	st.Remove()
+	for _, it := range items {
+		if err := st.appendRecord(record{Item: it}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return st
+}
+
+func storeOrder(t *testing.T, st *store) []string {
+	t.Helper()
+	items, err := st.Items()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, it := range items {
+		ids = append(ids, it.ItemID)
+	}
+	return ids
+}
+
+func wantOrder(t *testing.T, st *store, want ...string) {
+	t.Helper()
+	if got := storeOrder(t, st); !slices.Equal(got, want) {
+		t.Errorf("order = %v, want %v", got, want)
+	}
+}
+
+var (
+	u1 = textItem("u1", msp.ItemKindUserMessage, "first", 1)
+	a1 = textItem("a1", msp.ItemKindAgentMessage, "reply one", 1)
+	u2 = textItem("u2", msp.ItemKindUserMessage, "second", 1)
+	a2 = textItem("a2", msp.ItemKindAgentMessage, "reply two", 1)
+)
+
+// A gap in the MIDDLE: a1's mirror write failed (non-fatal) and the later ones succeeded.
+// Appended at the end, a1 would be folded into u2's turn as a second reply to the wrong
+// prompt; the host's order has to win.
+func TestBackfillPutsAMiddleGapInTheHostsOrder(t *testing.T) {
+	st := mirrorWith(t, "00000000-0000-5000-8000-0000000000e1", u1, u2, a2)
+	if _, err := st.backfill([]msp.Item{u1, a1, u2, a2}); err != nil {
+		t.Fatal(err)
+	}
+	wantOrder(t, st, "u1", "a1", "u2", "a2")
+	items, _ := st.Items()
+	turns := turnsFromItems(items)
+	var got []string
+	for _, tr := range turns {
+		got = append(got, tr.Role+":"+tr.Text)
+	}
+	want := []string{"user:first", "assistant:reply one", "user:second", "assistant:reply two"}
+	if !slices.Equal(got, want) {
+		t.Errorf("turns = %v, want %v", got, want)
+	}
+}
+
+// A live item the host sent after its fold stays after it, whether it reached the store
+// before the backfill ran or after.
+func TestBackfillKeepsLiveItemsAfterTheFold(t *testing.T) {
+	live := textItem("live-1", msp.ItemKindAgentMessage, "newer", 1)
+	st := mirrorWith(t, "00000000-0000-5000-8000-0000000000e2", u1, u2, a2, live)
+	if _, err := st.backfill([]msp.Item{u1, a1, u2, a2}); err != nil {
+		t.Fatal(err)
+	}
+	wantOrder(t, st, "u1", "a1", "u2", "a2", "live-1")
+
+	later := textItem("live-2", msp.ItemKindUserMessage, "after the backfill", 1)
+	if err := st.appendRecord(record{Item: later}); err != nil {
+		t.Fatal(err)
+	}
+	wantOrder(t, st, "u1", "a1", "u2", "a2", "live-1", "live-2")
+}
+
+// An anchored snapshot starts at a compaction anchor: what the mirror has from before it is not
+// in the host's list, and stays in front.
+func TestBackfillKeepsItemsBeforeTheAnchorInFront(t *testing.T) {
+	old := textItem("p0", msp.ItemKindUserMessage, "before the anchor", 1)
+	st := mirrorWith(t, "00000000-0000-5000-8000-0000000000e3", old, u1, u2, a2)
+	if _, err := st.backfill([]msp.Item{u1, a1, u2, a2}); err != nil {
+		t.Fatal(err)
+	}
+	wantOrder(t, st, "p0", "u1", "a1", "u2", "a2")
+}
+
+// A mirror that already matches the host gets no order line: a resume over an intact mirror
+// writes nothing at all.
+func TestBackfillWritesNothingOverAnIntactMirror(t *testing.T) {
+	st := mirrorWith(t, "00000000-0000-5000-8000-0000000000e4", u1, a1, u2, a2)
+	before, _ := os.ReadFile(st.Path())
+	n, err := st.backfill([]msp.Item{u1, a1, u2, a2})
+	if err != nil || n != 0 {
+		t.Fatalf("backfill = %d, %v", n, err)
+	}
+	after, _ := os.ReadFile(st.Path())
+	if !bytes.Equal(before, after) {
+		t.Errorf("an intact mirror was written to:\n%s", after[len(before):])
 	}
 }
