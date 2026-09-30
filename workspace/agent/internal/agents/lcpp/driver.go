@@ -654,25 +654,30 @@ func (h *threadHandle) failTurn(st *Store, msg string) {
 // cancellation would.
 func (h *threadHandle) Interrupt(opts agents.InterruptOpts) (agents.InterruptResult, error) {
 	h.mu.Lock()
-	out := h.q.Interrupt(opts, h.running)
+	// busy: every turn this driver runs comes from the queue, so with nothing taken nothing
+	// runs. h.running alone also covers the pump's tail after a taken entry was cancelled or
+	// removed, when the runtime has no turn.
+	out := h.q.Interrupt(opts, h.q.Head() != nil)
 	h.stopLocked(out.Head)
 	return out.Result, nil
 }
 
-// stopLocked delivers a stop to the turn in flight per head, and releases h.mu. HeadCancelled
-// on a taken entry needs nothing: the pump's Commit fails and lands the turn as cancelled.
+// stopLocked delivers a stop to the turn in flight per head, and releases h.mu.
 // HeadStopPending does not arise here, because runTurn commits and receives under one lock.
 func (h *threadHandle) stopLocked(head agents.HeadAction) {
 	cancel := h.cancel
-	if head == agents.HeadCancelled && !h.running {
-		// The input accepted while nothing ran, stopped before the pump took it: no runTurn will
-		// land a verdict, and accept left the state at queued.
+	if head == agents.HeadCancelled {
+		// Never run. A taken entry's Commit fails and runTurn lands the same verdict; input the
+		// pump had not taken yet has no runTurn at all, and accept left the state at queued.
 		h.state = agents.TurnCancelled
 		h.mu.Unlock()
 		h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnCancelled})
 		return
 	}
-	stop := head == agents.HeadStopNow || head == agents.HeadStopPending || (head == agents.HeadNone && h.running)
+	// HeadNone needs nothing: every turn runs from a taken entry, so with none there is no turn
+	// — only, at most, the pump's tail after a cancelled Commit, which must not be left
+	// interrupting.
+	stop := head == agents.HeadStopNow || head == agents.HeadStopPending
 	if stop {
 		h.stopping = true
 		h.state = agents.TurnInterrupting
@@ -708,7 +713,7 @@ func (h *threadHandle) DismissDiscard(id string) bool {
 func (h *threadHandle) interruptAll() error {
 	h.mu.Lock()
 	h.q.DropAll()
-	out := h.q.Interrupt(agents.InterruptOpts{}, h.running)
+	out := h.q.Interrupt(agents.InterruptOpts{}, h.q.Head() != nil)
 	h.stopLocked(out.Head)
 	return nil
 }

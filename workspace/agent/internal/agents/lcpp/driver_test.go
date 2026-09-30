@@ -565,7 +565,7 @@ func queueLen(h agents.ThreadHandle) int {
 // A peer message queued behind a stuck turn is what the stop is pressed to free: it starts as
 // the next turn. The member's own queued follow-up continues too (ADR 0105 decision 1), and a
 // second stop discards it and hands it back (decisions 2 and 4).
-func TestDriverInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
+func TestDriverStopFreesPeerInputAndKeepsOwnForSecondStop(t *testing.T) {
 	testHome(t)
 	var mu sync.Mutex
 	var prompts []string
@@ -606,10 +606,10 @@ func TestDriverInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the peer message did not start a turn after the stop")
 	}
-	// The kept turn's round trip is parked in sendDelay: the own follow-up must still be
+	// The continued turn's round trip is parked in sendDelay: the own follow-up must still be
 	// queued behind it.
 	if n := queueLen(h); n != 1 {
-		t.Errorf("queue after the kept turn started holds %d entries, want the own follow-up kept", n)
+		t.Errorf("queue after the continued turn started holds %d entries, want the own follow-up still queued", n)
 	}
 	mu.Lock()
 	got := append([]string(nil), prompts...)
@@ -634,9 +634,9 @@ func TestDriverInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
 	}
 }
 
-// Agent shutdown interrupts through the teardown path: a kept entry would otherwise be started
+// Agent shutdown interrupts through the teardown path: anything queued would otherwise start
 // on the way down.
-func TestDriverAbortManagedDiscardsKeptInput(t *testing.T) {
+func TestDriverAbortManagedDiscardsQueuedInput(t *testing.T) {
 	testHome(t)
 	var mu sync.Mutex
 	var prompts []string
@@ -671,9 +671,9 @@ func TestDriverAbortManagedDiscardsKeptInput(t *testing.T) {
 }
 
 // Dropping the handle (halt, archive) is teardown too, and here the pump checks neither
-// liveness nor a context: a kept entry would go on running on a handle already out of the map,
+// liveness nor a context: queued input would go on running on a handle already out of the map,
 // against a store about to be closed.
-func TestDriverDropHandleDiscardsKeptInput(t *testing.T) {
+func TestDriverDropHandleDiscardsQueuedInput(t *testing.T) {
 	testHome(t)
 	var mu sync.Mutex
 	var prompts []string
