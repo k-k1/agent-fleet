@@ -1,4 +1,5 @@
 import { t, type MsgKey } from "../../lib/i18n/index.ts";
+import { phaseKey } from "../../lib/bootPhase.ts";
 
 // Row headings for the notification center. Every kind wording() handles must appear here too: a
 // missing kind renders the raw identifier (`handoff-offer`) in the row instead of a translation,
@@ -25,6 +26,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "handoff-accepted": "noti.kind_handoff_accepted",
   "handoff-expired": "noti.kind_handoff_expired",
   "arch-residue": "noti.kind_arch_residue",
+  "start-deadline": "noti.kind_start_deadline",
   "aws-login-required": "noti.kind_aws_login_required",
   "terminal-notification": "noti.kind_terminal_notification",
 };
@@ -46,7 +48,7 @@ export function notificationRowSubtitle(n: NotificationWordingInput): string {
   // showing nothing but a timestamp — which is what a member saw. Clicking it opens nothing by
   // design (below), so the list of what has to be reinstalled has to be ON the row or it is
   // nowhere.
-  if (n.kind === "arch-residue") return notificationWording(n).body;
+  if (n.kind === "arch-residue" || n.kind === "start-deadline") return notificationWording(n).body;
   // The message is the point of a terminal notification; the kind label alone says nothing.
   if (n.kind === "terminal-notification") {
     const text = terminalNotificationText(n.payload);
@@ -231,6 +233,25 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
     const items = [...repos, ...bins];
     const body = items.length ? items.join(", ") : t("notif.arch_residue.body_generic");
     return { title: t("notif.arch_residue.title"), body, speech: t("notif.arch_residue.speech") };
+  }
+  if (n.kind === "start-deadline") {
+    // The Control Plane stopped a launch that stayed "starting" past its deadline
+    // (control-plane/start_deadline.go). The member saw only starting -> stopped, and the phase
+    // that named the cause (on ecs-ec2, why ECS cannot place the task) was cleared by the stop,
+    // so the phase is carried here. A phase the starting dialog knows is worded the way it
+    // words it, with the raw text kept beside it: for "blocked:" that raw ECS sentence is the
+    // actual cause. An unknown phase is shown as is. Clicking opens nothing: the workspace is
+    // the subject.
+    const minutes = Number(n.payload.limitMinutes) || 0;
+    const raw = typeof n.payload.phase === "string" ? n.payload.phase.trim() : "";
+    const key = raw ? phaseKey(raw) : "wsstart.generic";
+    const phase = key === "wsstart.generic" ? raw : `${t(key)} — ${raw}`;
+    const limit = minutes > 0 ? t("notif.start_deadline.body_limit", { minutes }) : t("notif.start_deadline.body_generic");
+    return {
+      title: t("notif.start_deadline.title"),
+      body: phase ? t("notif.start_deadline.body_phase", { limit, phase }) : limit,
+      speech: t("notif.start_deadline.speech"),
+    };
   }
   const rawSource = String(n.payload.source || n.displayName || "AI");
   const source = rawSource === "claude" ? "Claude" : rawSource === "codex" ? "Codex" : rawSource;

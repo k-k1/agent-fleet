@@ -394,6 +394,14 @@
   flex-wrap: wrap;
   gap: 2px;
 }
+/* A picture card is ~145px wide at a 1800px window, and .ui-btn never wraps its label, so a long
+   English verb ("Back to this picture's settings") ran across the next card. Let the label wrap
+   inside the card instead. */
+.igen-verbs > .ui-btn {
+  min-width: 0;
+  white-space: normal;
+  text-align: left;
+}
 
 .igen-memo {
   border: 1px solid var(--border);
