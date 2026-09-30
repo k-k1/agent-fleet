@@ -119,6 +119,7 @@ func TestBuildLaunchRefusesWhileTheAppServerHoldsTheThread(t *testing.T) {
 
 // A stop is what releases the thread: DropHandle unsubscribes the writer and has the observer
 // let go too, or the observer keeps the thread loaded and the Terminal route stays locked out.
+// It also clears a compaction mark the released observer can no longer end.
 func TestDropHandleReleasesTheObservedThread(t *testing.T) {
 	_, cl := newMockCodexServer(t)
 	h := newCodexTestHandle(t, cl, "codex-drop-release")
@@ -128,8 +129,16 @@ func TestDropHandleReleasesTheObservedThread(t *testing.T) {
 	ReleaseObservedThread = func(tid string) { released = append(released, tid) }
 	t.Cleanup(func() { ReleaseObservedThread = prev })
 
+	// Released, the observer never sees the interrupted turn end, which is what clears a
+	// compaction cut off without its item/completed.
+	SetCompacting("thr_test", true)
+	t.Cleanup(func() { SetCompacting("thr_test", false) })
+
 	DropHandle(h.name)
 	if len(released) != 1 || released[0] != "thr_test" {
 		t.Fatalf("released = %v, want [thr_test]", released)
+	}
+	if IsCompactingThread("thr_test") {
+		t.Fatal("a stopped thread still reads compacting")
 	}
 }

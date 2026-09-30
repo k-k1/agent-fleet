@@ -19,6 +19,10 @@ import type { Session } from "../../types/session.ts";
 
 /** One row of a bulk tidy: an AI session goes to the archive, a shell / ssm to the trash
  *  (stopped first if it runs). Both are restorable (ADR 0101). Never throws. */
+// The /driver refusals worded from the catalogue: codex must be stopped first, or is still letting
+// go of its conversation.
+const SWITCH_REFUSALS = new Set(["codex_stop_first", "codex_releasing"]);
+
 const tidyOne = (s: Session, op: "archive" | "delete") =>
   (op === "archive"
     ? raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" })
@@ -292,10 +296,12 @@ export function useSessionActions(): SessionActions {
     if (!res.ok) {
       const j = await res.json().catch(() => null);
       const code = j?.error?.code;
+      // Only the switch's own refusals are worded here: a generic code (runtime_failed, say)
+      // has a catalogue entry too, and would hide the server's message (the CLI's stderr tail).
       toast(
         code === "busy_switch"
           ? t("sess.switch_busy")
-          : (code && tMaybe("err." + code)) || j?.error?.message || t("sess.switch_failed"),
+          : (SWITCH_REFUSALS.has(code) && tMaybe("err." + code)) || j?.error?.message || t("sess.switch_failed"),
       );
       return;
     }

@@ -463,6 +463,10 @@ func DropHandle(name string) {
 	h.mu.Unlock()
 	if tid != "" {
 		ReleaseObservedThread(tid)
+		// The observer's turn/completed is what clears a compaction cut off without its
+		// item/completed; released, it never sees the interrupted turn end, and the thread would
+		// read "compacting" on its next Resume or Terminal launch.
+		SetCompacting(tid, false)
 	}
 	if cl == nil {
 		return
