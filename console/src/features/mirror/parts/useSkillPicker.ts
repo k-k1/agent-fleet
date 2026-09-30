@@ -65,7 +65,9 @@ export function useSkillPicker({
   const [skillBtnOpen, setSkillBtnOpen] = useState(false); // opened from the button (shows everything)
   const [skillSel, setSkillSel] = useState(0);
   const [cliOpen, setCliOpen] = useState(false); // the "show N more" row was taken (second tier unfolded)
-  const skillDismissRef = useRef<string | null>(null); // token at the time Esc/outside-click closed it (stays closed until it changes)
+  // Token at the time Esc/outside-click closed it (stays closed until it changes). State, not a
+  // ref: closing a typing-initiated list changes nothing else, so only this write re-renders it.
+  const [skillDismissed, setSkillDismissed] = useState<string | null>(null);
   const skillPopRef = useRef<HTMLDivElement>(null);
   const skillBtnRef = useRef<HTMLButtonElement>(null);
   const skillSelRef = useRef<HTMLButtonElement>(null);
@@ -80,7 +82,7 @@ export function useSkillPicker({
   // list stays up so the argument hint remains readable, but is narrowed to the single settled
   // item and does not capture the keyboard (Enter still sends - taking Enter here would make it
   // impossible to send while typing arguments).
-  const slashOpen = canSkills && !composerLocked && slashTok !== null && !slashTok.bare && skillDismissRef.current !== slashTok.token;
+  const slashOpen = canSkills && !composerLocked && slashTok !== null && !slashTok.bare && skillDismissed !== slashTok.token;
   const skillArgs = slashOpen && !!slashTok?.args;
   const skillsOpen = canSkills && !composerLocked && (skillBtnOpen || slashOpen);
   // "//" (the token itself starts with the trigger) is the show-all gesture: the second trigger
@@ -168,7 +170,7 @@ export function useSkillPicker({
     setDraft(next);
     setHistIdx(null);
     setSkillBtnOpen(false);
-    skillDismissRef.current = null;
+    setSkillDismissed(null);
     // Right after invoke the caret sits past the trailing space = the argument position, so this
     // becomes an args token: the list stays in passive display and the chosen skill's argument
     // hint stays readable while the arguments are written.
@@ -191,11 +193,15 @@ export function useSkillPicker({
   // it again.
   const closeSkillPicker = () => {
     setSkillBtnOpen(false);
-    skillDismissRef.current = slashTok?.token ?? null;
+    setSkillDismissed(slashTok?.token ?? null);
   };
   // Close on outside click. A click inside the textarea (caret move) is excluded: onSelect
   // re-tracks the token there and the list should stay alive, so inputRef is part of refs.
-  useDismiss([skillPopRef, skillBtnRef, inputRef], skillListVisible, closeSkillPicker);
+  // The passive argument hint is pass-through: once arguments are being typed, a tap on send,
+  // attach or history search means that control, and swallowing it made the first tap on send
+  // do nothing. The active list keeps the ordinary rule - it overlaps the transcript, so a tap
+  // meant to close it must not also open a link or approve something underneath.
+  useDismiss([skillPopRef, skillBtnRef, inputRef], skillListVisible, closeSkillPicker, { passThrough: skillArgs });
 
   // Open from the button, or close it if already open (the "/" button).
   const toggleFromButton = () => {
@@ -203,7 +209,7 @@ export function useSkillPicker({
       closeSkillPicker();
       return;
     }
-    skillDismissRef.current = null;
+    setSkillDismissed(null);
     setSkillBtnOpen(true);
     // Use a leading token that is already written as the query straight away (it opens already
     // filtered). With the caret in the second word or later this is null = everything.
@@ -218,7 +224,7 @@ export function useSkillPicker({
   const trackTyping = (value: string, caret: number) => {
     if (!canSkills) return;
     const tok = pickerTokenAt(value, caret, skillTrigger, skillBtnOpen);
-    if (!tok) skillDismissRef.current = null;
+    if (!tok) setSkillDismissed(null);
     setSlashTok(tok);
   };
   /** Re-track whether the token is alive on caret moves (click, arrow keys) too. */

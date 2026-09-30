@@ -12,6 +12,99 @@ sys.modules[spec.name] = check
 spec.loader.exec_module(check)
 
 
+class GithubSlugTests(unittest.TestCase):
+    """github_slug against ids GitHub actually rendered for docs/ headings."""
+
+    def test_rendered_ids(self):
+        for text, rendered in (
+            ("1.7 できていること・いないこと", "17-できていることいないこと"),
+            ("1.6 ポート&アダプタ（プラットフォーム依存の差し替え点）", "16-ポートアダプタプラットフォーム依存の差し替え点"),
+            ("7.3 L1 Console 認証（AUTH 3 モード）", "73-l1-console-認証auth-3-モード"),
+            ("5.1 公開面（Console ↔ CP）", "51-公開面console--cp"),
+            ("Commits & PRs", "commits--prs"),
+            ("snake_case — kept", "snake_case--kept"),
+            ("A ⓘ B", "a-ⓘ-b"),  # an Alphabetic symbol (So) is kept
+            ("🄰 ↔ Ⓩ 🅐 🆉 ⓪", "🄰--ⓩ-🅐-🆉-"),  # the kept ranges end where they should
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(check.github_slug(text), rendered)
+
+
+class DecisionAnchorTests(unittest.TestCase):
+    """Anchors in an ADR are checked, same-file ones included."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.adr = self.root / "docs/decisions/0001-x.md"
+        self.adr.parent.mkdir(parents=True)
+        self.addCleanup(patch.stopall)
+        patch.object(check, "ROOT", str(self.root)).start()
+        patch.object(check, "GUIDE", str(self.root / "guide")).start()
+
+    def errors(self, link):
+        self.adr.write_text(f"# 0001. X\n\n## Revision — 取り消し（2026-09-27）\n\nSee [it]({link}).\n")
+        check._cache.clear()
+        findings = check.Findings()
+        check.check_anchors([str(self.adr)], findings)
+        return "\n".join(findings.errors)
+
+    def test_same_file_anchor(self):
+        self.assertEqual(self.errors("#revision--取り消し2026-09-27"), "")
+        self.assertIn("anchor with no matching heading", self.errors("#revision--no-such-heading"))
+
+
+class IndexTests(unittest.TestCase):
+    """A living shelf's README links every file on the shelf, per language."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.shelf = self.root / "docs/build"
+        self.shelf.mkdir(parents=True)
+        for name in ("01-a.md", "01-a.ja.md", "lite.md", "lite.ja.md"):
+            (self.shelf / name).write_text("# x\n")
+        (self.shelf / "README.md").write_text("[1](01-a.md#top) and [lite](lite.md)\n")
+        (self.shelf / "README.ja.md").write_text("[1](01-a.ja.md) and [lite](lite.ja.md)\n")
+        self.addCleanup(patch.stopall)
+        patch.object(check, "ROOT", str(self.root)).start()
+
+    def errors(self):
+        check._cache.clear()
+        findings = check.Findings()
+        files = sorted(str(p) for p in self.shelf.glob("*.md"))
+        check.check_index(files, findings)
+        return "\n".join(findings.errors)
+
+    def test_complete_index_passes(self):
+        self.assertEqual(self.errors(), "")
+
+    def test_unlisted_chapter_is_an_error_per_language(self):
+        (self.shelf / "02-b.md").write_text("# x\n")
+        (self.shelf / "02-b.ja.md").write_text("# x\n")
+        (self.shelf / "README.ja.md").write_text("[1](01-a.ja.md) [lite](lite.ja.md) [2](02-b.md)\n")
+        errors = self.errors()
+        self.assertIn("docs/build/02-b.md: not linked from the shelf index docs/build/README.md", errors)
+        self.assertIn("docs/build/02-b.ja.md: not linked from the shelf index docs/build/README.ja.md", errors)
+
+    def test_missing_index_is_an_error(self):
+        for gone in (("README.ja.md",), ("README.md", "README.ja.md")):
+            with self.subTest(gone=gone):
+                self.setUp()
+                for name in gone:
+                    (self.shelf / name).unlink()
+                errors = self.errors()
+                for name in gone:
+                    self.assertIn(f"has no index docs/build/{name}", errors)
+                self.assertEqual(errors.count("has no index"), len(gone))
+
+    def test_link_inside_code_does_not_count(self):
+        (self.shelf / "README.md").write_text("`[1](01-a.md)` [lite](lite.md)\n")
+        self.assertIn("01-a.md: not linked", self.errors())
+
+
 class NotesTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -146,6 +239,48 @@ class CapsRowTests(unittest.TestCase):
         self.assertIn("ManagedOnly", fields)
         mapped = {field for _, field, _ in check.CAPS_ROWS} | set(check.CAPS_UNMAPPED)
         self.assertEqual(sorted(set(fields) - mapped), [])
+
+
+class AnchorTests(unittest.TestCase):
+    """#fragment links against the heading ids GitHub renders for docs/."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.shelf = self.root / "docs/build"
+        self.shelf.mkdir(parents=True)
+        self.addCleanup(patch.stopall)
+        patch.object(check, "ROOT", str(self.root)).start()
+        patch.object(check, "GUIDE", str(self.root / "guide")).start()
+
+    def errors(self, heading, link):
+        target = self.shelf / "02-target.md"
+        target.write_text(f"# Target\n\n{heading}\n\nBody\n")
+        source = self.shelf / "01-source.md"
+        source.write_text(f"See [it]({link}).\n")
+        check._cache.clear()
+        findings = check.Findings()
+        check.check_anchors([str(source), str(target)], findings)
+        return "\n".join(findings.errors)
+
+    def test_inline_code_in_a_heading_keeps_its_text(self):
+        heading = "## 2.2 Where things live (`console/src/`)"
+        self.assertEqual(self.errors(heading, "02-target.md#22-where-things-live-consolesrc"), "")
+        self.assertIn("anchor with no matching heading", self.errors(heading, "02-target.md#22-where-things-live-"))
+
+    def test_heading_inside_a_fence_is_not_a_heading(self):
+        for heading in ("```sh\n# not a heading\n```", "~~~markdown\n# `not a heading`\n~~~"):
+            with self.subTest(heading=heading):
+                self.assertIn("anchor with no matching heading", self.errors(heading, "02-target.md#not-a-heading"))
+
+    def test_triple_backtick_code_span_is_not_a_fence(self):
+        self.assertEqual(self.errors("## Syntax ```target```", "02-target.md#syntax-target"), "")
+
+    def test_code_span_content_is_literal(self):
+        heading = "## Syntax `[label](target)`"
+        self.assertEqual(self.errors(heading, "02-target.md#syntax-labeltarget"), "")
+        self.assertIn("anchor with no matching heading", self.errors(heading, "02-target.md#syntax-label"))
 
 
 if __name__ == "__main__":

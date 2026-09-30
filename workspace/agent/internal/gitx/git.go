@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -237,7 +238,7 @@ func gitProviderHost(remote string) (string, string) {
 	// The tenant's self-hosted git (docs/reference/internal-git-provider) has a
 	// deployment-specific host, so match it dynamically from the CP-injected env
 	// and badge it as "internal" rather than the bare host.
-	if ih := internalGitHost(); ih != "" && strings.EqualFold(host, ih) {
+	if ih := internalGitHostName(); ih != "" && strings.EqualFold(host, ih) {
 		return "internal", host
 	}
 	switch {
@@ -250,6 +251,17 @@ func gitProviderHost(remote string) (string, string) {
 	default:
 		return host, host
 	}
+}
+
+// internalGitHostName is the internal git host without its port. The injected value
+// carries the port (it is the credential key, matching git's `host=`), while
+// gitProviderHost reduces every remote to its bare host name.
+func internalGitHostName() string {
+	ih := internalGitHost()
+	if h, _, err := net.SplitHostPort(ih); err == nil {
+		return h
+	}
+	return ih
 }
 
 // RepoStatus mirrors docs/06 §6.4's status response shape.
@@ -1148,7 +1160,7 @@ func finishNewWorktree(dir, parentDir string) {
 	// first; the ensure below then only has to cover what the parent did not have.
 	seedSubmodulesFromParent(dir, parentDir)
 	gitSubmodulesEnsure(dir) // per-worktree submodule checkout; parent untouched (verified)
-	// A new worktree starts without node_modules/target/.venv, which is exactly when
+	// A new worktree starts without target/ or build/, which is exactly when
 	// relocating them is free. Only on creation: an existing worktree may already hold
 	// a populated tree on EFS, and moving that on a relaunch would stall the session.
 	scratchAutoRelocate(dir)

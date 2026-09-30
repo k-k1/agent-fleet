@@ -163,18 +163,21 @@ func agentContractFamilies() []contractFamily {
 			tsPath:  "../../console/src/features/mirror/transcript/types.ts",
 			tsName:  "Turn",
 			tsKeys: keySet("role", "text", "ts", "endTs", "idx", "anchorId", "pending",
-				"queued", "source", "peerFrom", "parts", "sidechain", "compact", "bash",
-				"cmd", "model", "effort", "ctxWindow", "branch", "cwd", "inTok", "outTok",
-				"cacheRead", "cacheCreate"),
+				"queued", "queueId", "queueActionable", "queueRestorable", "source", "peerFrom",
+				"parts", "sidechain", "compact", "bash", "cmd", "model", "effort", "ctxWindow",
+				"branch", "cwd", "inTok", "outTok", "cacheRead", "cacheCreate"),
 			tsOnly: map[string]string{
 				// None of the four is likely to be a gap: they look like values the Console
 				// builds for rendering (bash/cmd is the "! shell command" block,
 				// pending/queued are send states). The actual reads have not been traced, so
 				// this claims no more than that.
-				"bash":    "looks like a value the Console builds for rendering (the ! shell-command block). transcript.Turn does not emit it. Actual reads not investigated",
-				"cmd":     "likewise.",
-				"pending": "looks like a send state (not yet sent) the Console holds itself. transcript.Turn does not emit it. Actual reads not investigated",
-				"queued":  "likewise (waiting to be sent).",
+				"bash":            "looks like a value the Console builds for rendering (the ! shell-command block). transcript.Turn does not emit it. Actual reads not investigated",
+				"cmd":             "likewise.",
+				"pending":         "looks like a send state (not yet sent) the Console holds itself. transcript.Turn does not emit it. Actual reads not investigated",
+				"queued":          "likewise (waiting to be sent).",
+				"queueId":         "the Console builds it from messages.queuedItems for the queued bubble's actions (ADR 0105); transcript.Turn does not emit it",
+				"queueActionable": "likewise.",
+				"queueRestorable": "likewise.",
 			},
 			goOnly: map[string]string{},
 		},

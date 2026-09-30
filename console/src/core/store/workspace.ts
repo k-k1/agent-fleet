@@ -14,6 +14,33 @@ import { pushHealthy, pushStamp } from "../push/events.ts";
 import { t } from "../../lib/i18n/index.ts";
 import { confirmDirtyNavigation } from "../../features/editor/dirtyRegistry.ts";
 
+/** A destructive lifecycle call (recreate / clean home) that did not complete. `untouched` means
+ * the CP refused before it stopped anything, so every view still points at a live workspace and
+ * must not be reset. */
+export interface LifecycleFailure {
+  message: string;
+  untouched: boolean;
+}
+
+// The refusals the CP sends before it stops the workspace (control-plane/workspace_handlers.go):
+// not available on this deployment, a start still converging, another lifecycle operation
+// holding the lease, and a stop that failed while the workspace kept running.
+const UNTOUCHED_CODES = new Set([
+  "home_wipe_unsupported",
+  "home_wipe_while_starting",
+  "workspace_operation_in_progress",
+  "stop_failed",
+]);
+
+// lifecycleFailure turns a lifecycle POST's answer into the caller's failure, or null when it
+// succeeded. The code picks the localized wording (errText); a code with no catalog entry keeps
+// the server's message.
+function lifecycleFailure(res: any): LifecycleFailure | null {
+  if (!res || !res.error) return null;
+  const code = typeof res.error === "object" ? res.error.code : undefined;
+  return { message: errText(res.error), untouched: typeof code === "string" && UNTOUCHED_CODES.has(code) };
+}
+
 interface WorkspaceStore {
   state: string;
   /** Live boot-install phase surfaced by the CP during a native rootfs first
@@ -48,14 +75,14 @@ interface WorkspaceStore {
   restart(): Promise<void>;
   /** Tear the container down and start fresh from the current image. Logins +
    * connections persist; cloned repos and running sessions are wiped — the caller
-   * guards this behind a warning dialog (Settings > Environment) and resets the layout first.
-   * Returns the error message on failure (the caller toasts). */
-  recreate(skipDirtyGuard?: boolean): Promise<string | null>;
+   * guards this behind a warning dialog (Settings > Danger zone) and resets the layout
+   * afterwards. Returns the failure (the caller toasts), or null. */
+  recreate(skipDirtyGuard?: boolean): Promise<LifecycleFailure | null>;
   /** Deeper reset than recreate: wipe the whole home EXCEPT logins/connections
    * (repos, ~/.local, ~/.cache, dotfiles all go), then start fresh from the image.
-   * For when something under home outside ~/repos is wedged. Returns the error
-   * message on failure (the caller toasts). */
-  cleanHome(skipDirtyGuard?: boolean): Promise<string | null>;
+   * For when something under home outside ~/repos is wedged. Returns the failure
+   * (the caller toasts), or null. */
+  cleanHome(skipDirtyGuard?: boolean): Promise<LifecycleFailure | null>;
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
@@ -162,12 +189,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   async recreate(skipDirtyGuard = false) {
     if (!skipDirtyGuard && !(await confirmDirtyNavigation("workspace_lifecycle"))) return null;
     set({ state: "recreating…" });
-    let err: string | null = null;
+    let err: LifecycleFailure | null = null;
     try {
-      const res = await api("api/workspace/recreate", { method: "POST" });
-      if (res && res.error) err = res.error.message || String(res.error);
+      err = lifecycleFailure(await api("api/workspace/recreate", { method: "POST" }));
     } catch {
-      err = t("ui.recreate_failed");
+      err = { message: t("ui.recreate_failed"), untouched: false };
     }
     await get().refresh();
     return err;
@@ -176,12 +202,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   async cleanHome(skipDirtyGuard = false) {
     if (!skipDirtyGuard && !(await confirmDirtyNavigation("workspace_lifecycle"))) return null;
     set({ state: "recreating…" });
-    let err: string | null = null;
+    let err: LifecycleFailure | null = null;
     try {
-      const res = await api("api/workspace/clean-home", { method: "POST" });
-      if (res && res.error) err = res.error.message || String(res.error);
+      err = lifecycleFailure(await api("api/workspace/clean-home", { method: "POST" }));
     } catch {
-      err = t("ui.cleanup_failed");
+      err = { message: t("ui.cleanup_failed"), untouched: false };
     }
     await get().refresh();
     return err;

@@ -15,7 +15,8 @@
 #
 #  1. Order and capabilities. Each stack imports the previous one's exports, so the order
 #     is fixed. `10-data` declares `Transform: AWS::LanguageExtensions` and so needs
-#     CAPABILITY_AUTO_EXPAND; `20-platform` and `40-ec2-pool` create named IAM roles and
+#     CAPABILITY_AUTO_EXPAND, plus CAPABILITY_IAM for the EFS backup role it creates under
+#     Persistence=retain; `20-platform` and `40-ec2-pool` create named IAM roles and
 #     so need CAPABILITY_NAMED_IAM (without them the call is refused immediately).
 #  2. ECR starts empty. The ECR repositories are 20-platform resources with
 #     `EmptyOnDelete: true`, so a teardown took the images with them. Put them back with
@@ -57,6 +58,9 @@ usage: standup.sh --profile <p> --region <r> [--yes] [--image-tag <tag>] [--cp-a
                whatever --llm-from:LlmImageTag resolves to right now. Optional; leave unset
                and the copy is byte-for-byte what it always was — see PARAMETERS-60-engines.md
                "LlmImageTag" for why this exists and how to choose one.
+  --comfy-digest pin the ComfyUI copy to this digest of --from/comfyui (sha256:<64 hex>)
+               instead of whatever ImageComfyImageTag resolves to right now. Optional, same
+               contract as --llm-digest; only used when the image role is on
   --dry-run    print every write instead of making it
 EOF
 }
@@ -66,6 +70,7 @@ FROM="ghcr.io/k-k1/agent-fleet"
 TTS_ENGINE_FROM="docker.io/voicevox/voicevox_engine"
 LLM_ENGINE_FROM="ghcr.io/ggml-org/llama.cpp"
 LLM_ENGINE_DIGEST=""
+COMFY_DIGEST=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile)   PROFILE="${2:?--profile needs a value}"; shift ;;
@@ -78,6 +83,7 @@ while [ $# -gt 0 ]; do
     --tts-from)  TTS_ENGINE_FROM="${2:?--tts-from needs a value}"; shift ;;
     --llm-from)  LLM_ENGINE_FROM="${2:?--llm-from needs a value}"; shift ;;
     --llm-digest) LLM_ENGINE_DIGEST="${2:?--llm-digest needs a sha256:<64 hex> value}"; shift ;;
+    --comfy-digest) COMFY_DIGEST="${2:?--comfy-digest needs a sha256:<64 hex> value}"; shift ;;
     --dry-run)   AF_DRY=1 ;;
     -h|--help)   usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage; exit 2 ;;
@@ -87,6 +93,10 @@ done
 if [ -z "$PROFILE" ] || [ -z "$REGION" ]; then usage; exit 2; fi
 if [ -n "$LLM_ENGINE_DIGEST" ] && ! [[ "$LLM_ENGINE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
   echo "--llm-digest wants sha256:<64 lowercase hex characters> (got '$LLM_ENGINE_DIGEST')" >&2
+  exit 2
+fi
+if [ -n "$COMFY_DIGEST" ] && ! [[ "$COMFY_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  echo "--comfy-digest wants sha256:<64 lowercase hex characters> (got '$COMFY_DIGEST')" >&2
   exit 2
 fi
 export AF_YES AF_DRY
@@ -133,6 +143,15 @@ done
 [ -z "$AF_STACK_POOL" ] || [ -r "$(af_params_file 40-ec2-pool)" ] || say_missing "AF_STACK_POOL=$AF_STACK_POOL but there is no params/40-ec2-pool"
 [ -z "$AF_STACK_TTS" ] || [ -r "$(af_params_file 50-tts)" ] || say_missing "AF_STACK_TTS=$AF_STACK_TTS but there is no params/50-tts"
 [ -z "${AF_STACK_ENGINES:-}" ] || [ -r "$(af_params_file 60-engines)" ] || say_missing "AF_STACK_ENGINES=$AF_STACK_ENGINES but there is no params/60-engines"
+# 10-data's EFS backup vault is "<stack>-efs-<8 hex>" and AWS stops vault names at 50, so a
+# longer data stack name rolls 10-data back — and only under retain, so a delete trial run
+# passes with the same name. params/10-data is what the deploy passes, so it counts even
+# when the recorded AF_PERSISTENCE disagrees.
+data_retain=0
+[ "$AF_PERSISTENCE" = retain ] && data_retain=1
+grep -qx 'Persistence=retain' "$(af_params_file 10-data)" 2>/dev/null && data_retain=1
+[ "$data_retain" = 0 ] || [ "${#AF_STACK_DATA}" -le 37 ] \
+  || say_missing "data stack name $AF_STACK_DATA is ${#AF_STACK_DATA} characters; under Persistence=retain it must be at most 37 (its EFS backup vault name stops at 50)"
 
 # The ECS service-linked role. A new account does not have it, and creating the cluster
 # with a Service Connect default namespace then fails with "ECS Service Linked Role is not
@@ -319,7 +338,7 @@ deploy_stack() {  # deploy_stack <stack> <template> <slug> [capability...]
 }
 
 deploy_stack "$AF_STACK_NETWORK"  00-network.yaml  00-network
-deploy_stack "$AF_STACK_DATA"     10-data.yaml     10-data     CAPABILITY_AUTO_EXPAND
+deploy_stack "$AF_STACK_DATA"     10-data.yaml     10-data     CAPABILITY_AUTO_EXPAND CAPABILITY_IAM
 deploy_stack "$AF_STACK_PLATFORM" 20-platform.yaml 20-platform CAPABILITY_NAMED_IAM
 
 # --- 4) images (ECR starts out empty) ----------------------------------------
@@ -398,54 +417,9 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
     echo "    · crane copy $llm_src (about 2.5 GB)"
     af_run crane copy "$llm_src" "$ECR_HOST/af-llamacpp:$llm_tag"
   fi
-  # Record what is ACTUALLY in af-llamacpp:$llm_tag now, whichever branch above ran - a floating
-  # tag resolves to "whatever GHCR serves right now", so this is the only place that says, after
-  # the fact, which content a given stand-up is about to deploy. This has to run on the "already
-  # in ECR" branch too: a repeat stand-up (the common case, once the repository is no longer
-  # empty) never reaches the crane copy above at all, so a check placed only in that branch would
-  # verify nothing on every run after the first. Best-effort read - a failure here must not fail
-  # a copy that already succeeded.
-  if [ "$AF_DRY" != 1 ]; then
-    # Exit status, not string-matching the placeholder text, decides "could this be read at
-    # all" - a real digest could otherwise coincide with the placeholder by construction error.
-    if llm_landed_digest="$(crane digest "$ECR_HOST/af-llamacpp:$llm_tag" 2>/dev/null)"; then
-      echo "    · af-llamacpp:$llm_tag digest: $llm_landed_digest"
-    else
-      llm_landed_digest=""
-      echo "    · af-llamacpp:$llm_tag digest: (could not read back)"
-    fi
-    # A requested pin that does not match what is actually there is worse than no pin at all -
-    # it looks like it worked. This is exactly the case above: the tag was already in ECR (from
-    # an earlier, unpinned or differently-pinned copy) and this run's --llm-digest never touched
-    # it. Choosing to FAIL here (rather than silently accept it, or silently re-copy over
-    # somebody's possibly-running engine's image without being asked to) is deliberate: it is
-    # the only option that cannot deploy something other than what was asked for without saying
-    # so, and it leaves the fix to a human who can see whether retagging is safe right now.
-    #
-    # "Could not read the digest back" and "read it, and it does not match" are different
-    # failures and must say different things: the first is not evidence the pin is wrong (ECR
-    # auth can lapse, a read can time out), and telling someone to delete/retag ECR over a read
-    # that never happened sends them the wrong way.
-    if [ -n "$LLM_ENGINE_DIGEST" ] && [ "$llm_landed_digest" != "$LLM_ENGINE_DIGEST" ]; then
-      if [ -z "$llm_landed_digest" ]; then
-        echo "ERROR: --llm-digest $LLM_ENGINE_DIGEST was requested, but the digest of" >&2
-        echo "       af-llamacpp:$llm_tag in ECR could not be read back, so the pin cannot be" >&2
-        echo "       verified. This is NOT evidence the pin is wrong - check ECR auth (the" >&2
-        echo "       'crane auth login' above) and whether 'crane digest" >&2
-        echo "       $ECR_HOST/af-llamacpp:$llm_tag' works by hand before assuming the image" >&2
-        echo "       itself is the problem." >&2
-      else
-        echo "ERROR: --llm-digest $LLM_ENGINE_DIGEST was requested, but af-llamacpp:$llm_tag in ECR" >&2
-        echo "       is $llm_landed_digest — most likely copied before this pin was chosen (a" >&2
-        echo "       repeat stand-up does not re-copy an image already in ECR). A pin that" >&2
-        echo "       silently does nothing is worse than none." >&2
-        echo "       Fix: drop --llm-digest to accept what's already there, or delete/retag" >&2
-        echo "       af-llamacpp:$llm_tag in ECR so the copy above actually runs against the" >&2
-        echo "       requested digest." >&2
-      fi
-      exit 1
-    fi
-  fi
+  # Record what is ACTUALLY in af-llamacpp:$llm_tag now, whichever branch above ran, and refuse a
+  # --llm-digest that does not match it (af_ecr_pin_verify says why both halves are needed).
+  af_ecr_pin_verify --llm-digest "$ECR_HOST" af-llamacpp "$llm_tag" "$LLM_ENGINE_DIGEST" || exit 1
   # The ComfyUI image, for the `image` role (ADR 0072 decision 4, phase P2; the earlier
   # stable-diffusion.cpp engine was retired by ADR 0083 decision 1 — nothing runs `sdcpp`
   # anymore). Copied ONLY when that role exists, which since ADR 0072 phase P6 is what
@@ -473,9 +447,15 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
         --image-ids "imageTag=$comfy_tag" >/dev/null 2>&1; then
       echo "    · af-comfyui:$comfy_tag is already in ECR"
     else
-      echo "    · crane copy $FROM/comfyui:$comfy_tag"
-      af_run crane copy "$FROM/comfyui:$comfy_tag" "$ECR_HOST/af-comfyui:$comfy_tag"
+      # A version-looking tag is still a mutable one: re-dispatching comfyui-image.yml with the
+      # same tag overwrites it in GHCR. --comfy-digest pins which bytes this copy fetches, and
+      # only that — the destination tag, and so ImageComfyImageTag, stay what they were.
+      comfy_src="$FROM/comfyui:$comfy_tag"
+      [ -n "$COMFY_DIGEST" ] && comfy_src="$FROM/comfyui@$COMFY_DIGEST"
+      echo "    · crane copy $comfy_src"
+      af_run crane copy "$comfy_src" "$ECR_HOST/af-comfyui:$comfy_tag"
     fi
+    af_ecr_pin_verify --comfy-digest "$ECR_HOST" af-comfyui "$comfy_tag" "$COMFY_DIGEST" || exit 1
   fi
 fi
 

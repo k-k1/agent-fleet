@@ -4,13 +4,15 @@
 #   VERSION=0.1.0 deploy/release/publish-dist.sh [--dist-dir <d>] [--repo <o/r>] [--seed] [--dry-run]
 #
 # Publishes the artifacts in deploy/release/dist/ to the public dist repo's
-# GitHub Releases:
-#   - rootfs release `rootfs-<r>` … attaches R. If the tag exists, do nothing
-#     (<r> is a content hash = identical bits; image-immutable releases avoid
-#     re-downloads for users).
-#   - app release `v<v>`          … attaches A / C (+ -bundle) / SHA256SUMS.
-#                                     Images go to the registry, not here (ADR 0037).
-#     An existing tag fails (releases are immutable — redo by bumping the version).
+# GitHub Releases as ONE release `v<v>`: A, C (+ -bundle) and R for every
+# architecture present (amd64 is required, arm64 joins when built), plus a
+# SHA256SUMS that lists exactly the attached assets. Images go to the registry,
+# not here (ADR 0037). An existing tag fails (releases are immutable — redo by
+# bumping the version).
+# Older releases carried R in a separate `rootfs-<r>` release. Those stay
+# published forever — every C of those versions points at them — but no new one is
+# created (docs/log/35 §35.4.2). A C whose rootfs.json names an R in another release of this repo
+# (a --rootfs-json reuse build) is accepted once that release is confirmed to hold it.
 #     The body is rendered from deploy/release/notes/<v>.md (+ .ja.md) by
 #     notes-body.sh; a missing notes file is a hard error.
 # --seed pushes the dist repo contents (README.md / README.ja.md / CHANGELOG.md /
@@ -53,28 +55,64 @@ run() {
 # the air-gap path for B is file hand-off (§35.2), so warn and skip.
 GH_MAX_ASSET=2147483648
 
-ARCH=amd64
-C_NAME="agent-fleet-native-$VERSION-linux-$ARCH"
-C_TAR="$DIST/$C_NAME.tar.gz"
-[ -f "$C_TAR" ] || die "$C_TAR not found (run VERSION=$VERSION build.sh --native first)"
+# ---- native packages: one C per architecture, each naming its own R ----------------
+# amd64 is required: install.sh and `af update` on the common host fetch it, and a
+# release without it would strand them.
+[ -f "$DIST/agent-fleet-native-$VERSION-linux-amd64.tar.gz" ] \
+  || die "$DIST/agent-fleet-native-$VERSION-linux-amd64.tar.gz not found (run VERSION=$VERSION build.sh --native first)"
 [ -f "$DIST/SHA256SUMS" ] || die "$DIST/SHA256SUMS not found (build.sh generates it)"
 
-# ---- read rootfs.json inside C (same sed parser as the af launcher) ----------------
-MANIFEST="$(tar xzf "$C_TAR" -O "$C_NAME/rootfs.json")"
+URL_BASE="https://github.com/$REPO/releases/download"
+ARCHES=()        # architectures with a C, in a fixed order
+ROOTFS_LIST=()   # <arch>=<r>, for the release notes
+R_ASSETS=()      # R files attached to this release
 mget() { sed -n 's/.*"'"$1"'": *"\{0,1\}\([^",}]*\)"\{0,1\}.*/\1/p' <<<"$MANIFEST" | head -1; }
-R_VER="$(mget version)"
-R_SHA="$(mget sha256)"
-R_URL="$(mget url)"
-if [ -z "$R_VER" ] || [ -z "$R_SHA" ]; then die "cannot read rootfs.json inside C"; fi
-R_NAME="agent-fleet-rootfs-$R_VER-linux-$ARCH.tar.zst"
+for arch in amd64 arm64; do
+  C_NAME="agent-fleet-native-$VERSION-linux-$arch"
+  C_TAR="$DIST/$C_NAME.tar.gz"
+  [ -f "$C_TAR" ] || continue
+  ARCHES+=("$arch")
 
-# The rootfs URL referenced by C must point at this repo's Releases. Publishing a
-# C that disagrees would make users' `af start` hit a missing/foreign URL.
-WANT_URL="https://github.com/$REPO/releases/download/rootfs-$R_VER/$R_NAME"
-[ "$R_URL" = "$WANT_URL" ] || die "the rootfs URL in C does not match the publish target.
+  # read rootfs.json inside C (same sed parser as the af launcher)
+  MANIFEST="$(tar xzf "$C_TAR" -O "$C_NAME/rootfs.json")"
+  R_VER="$(mget version)"
+  R_SHA="$(mget sha256)"
+  R_URL="$(mget url)"
+  if [ -z "$R_VER" ] || [ -z "$R_SHA" ]; then die "cannot read rootfs.json inside $C_NAME"; fi
+  R_NAME="agent-fleet-rootfs-$R_VER-linux-$arch.tar.zst"
+  ROOTFS_LIST+=("$arch=$R_VER")
+
+  # The rootfs URL referenced by C must point at this repo's Releases. Publishing a
+  # C that disagrees would make users' `af start` hit a missing/foreign URL.
+  case "$R_URL" in
+    "$URL_BASE/v$VERSION/$R_NAME")
+      R_TAR="$DIST/$R_NAME"
+      [ -f "$R_TAR" ] || die "$C_NAME points at $R_NAME in this release, but it is not in $DIST"
+      echo "$R_SHA  $R_TAR" | sha256sum -c - >/dev/null \
+        || die "sha256 of R does not match rootfs.json inside $C_NAME: $R_TAR"
+      [ "$(stat -c%s "$R_TAR")" -lt "$GH_MAX_ASSET" ] \
+        || die "$R_NAME is over the 2GiB GitHub Releases asset limit; $C_NAME would point at nothing"
+      R_ASSETS+=("$R_TAR")
+      ;;
+    # `*` also spans a `/`; such a URL yields a tag that `gh release view` rejects.
+    "$URL_BASE/"*"/$R_NAME")
+      r_tag="${R_URL#"$URL_BASE/"}"; r_tag="${r_tag%%/*}"
+      # grep without -q reads to EOF: -q exits at the first match and, under
+      # pipefail, gh's SIGPIPE would fail a release that does hold the asset.
+      gh release view "$r_tag" -R "$REPO" --json assets -q '.assets[].name' 2>/dev/null \
+        | grep -xF "$R_NAME" >/dev/null \
+        || die "$C_NAME reuses $R_NAME from release $r_tag, which does not hold it
+  (a --rootfs-json reuse build is only valid against an already published <r>)"
+      echo "==> [publish] $arch rootfs $R_VER reused from $r_tag (no upload)"
+      ;;
+    *)
+      die "the rootfs URL in $C_NAME does not match the publish target.
   rootfs.json: $R_URL
-  expected:    $WANT_URL
+  expected:    $URL_BASE/v$VERSION/$R_NAME
   (a C built with a different ROOTFS_URL_BASE cannot be published to this repo)"
+      ;;
+  esac
+done
 
 # ---- --seed: dist repo contents (README.md / install.sh / install-compose.sh) -----
 if [ "$SEED" = 1 ]; then
@@ -137,42 +175,53 @@ if [ "$SEED" = 1 ]; then
   done
 fi
 
-# ---- rootfs release ----------------------------------------------------------------
-if gh release view "rootfs-$R_VER" -R "$REPO" >/dev/null 2>&1; then
-  echo "==> [publish] rootfs-$R_VER already exists — reusing (no upload)"
-else
-  R_TAR="$DIST/$R_NAME"
-  [ -f "$R_TAR" ] || die "tag rootfs-$R_VER does not exist and R is not available locally: $R_TAR
-  (a --rootfs-json reuse build is only valid against an already published <r>)"
-  echo "==> [publish] verify rootfs (sha256)"
-  echo "$R_SHA  $R_TAR" | sha256sum -c - >/dev/null \
-    || die "sha256 of R does not match rootfs.json inside C: $R_TAR"
-  echo "==> [publish] create release rootfs-$R_VER"
-  run gh release create "rootfs-$R_VER" -R "$REPO" \
-    --title "rootfs $R_VER (linux-$ARCH)" \
-    --notes "workspace rootfs (content hash $R_VER). Referenced by the app release's native tar; not for standalone use." \
-    "$R_TAR"
-fi
-
 # ---- app release -------------------------------------------------------------------
 if gh release view "v$VERSION" -R "$REPO" >/dev/null 2>&1; then
+  # gh creates a release with assets as a draft and publishes it after the last
+  # upload, so a draft here is an earlier run that died mid-upload — not a release
+  # anyone has, and bumping the version would be the wrong advice.
+  if [ "$(gh release view "v$VERSION" -R "$REPO" --json isDraft -q .isDraft 2>/dev/null)" = true ]; then
+    die "v$VERSION exists only as a draft: an earlier publish failed while uploading.
+  Delete it (gh release delete v$VERSION -R $REPO --yes) and rerun."
+  fi
   die "v$VERSION already exists (releases are immutable — bump the version and retry)"
 fi
 assets=()
 # ADR 0037: the images tar is no longer published — images go to the registry.
-for f in "agent-fleet-$VERSION.tar.gz" \
-         "$C_NAME.tar.gz" "$C_NAME-bundle.tar.gz"; do
+cands=("agent-fleet-$VERSION.tar.gz")
+for arch in "${ARCHES[@]}"; do
+  cands+=("agent-fleet-native-$VERSION-linux-$arch.tar.gz" "agent-fleet-native-$VERSION-linux-$arch-bundle.tar.gz")
+done
+for f in "${cands[@]}"; do
   p="$DIST/$f"
   [ -f "$p" ] || continue
   size="$(stat -c%s "$p")"
   if [ "$size" -ge "$GH_MAX_ASSET" ]; then
+    [ "$f" != "agent-fleet-native-$VERSION-linux-amd64.tar.gz" ] \
+      || die "$f is over the 2GiB GitHub Releases asset limit, and the release cannot go out without it"
     echo "WARN: $f is ${size} bytes, over the 2GiB GitHub Releases asset limit — skipping" >&2
     echo "      (hand the file over out of band — docs/log/35 §35.2)" >&2
     continue
   fi
   assets+=("$p")
 done
-assets+=("$DIST/SHA256SUMS")
+assets+=("${R_ASSETS[@]+"${R_ASSETS[@]}"}")
+
+# SHA256SUMS lists exactly what this release carries. build.sh sums everything in
+# the dist dir, which can include files that are not attached (an oversized bundle
+# skipped above, leftovers of an earlier build). Re-checking the lines against the
+# bytes also catches a file changed after the build.
+SUMS_DIR="$DIST/.publish"
+rm -rf "$SUMS_DIR"; mkdir -p "$SUMS_DIR"
+for p in "${assets[@]}"; do
+  n="$(basename "$p")"
+  line="$(awk -v n="$n" '$2 == n || $2 == "*" n' "$DIST/SHA256SUMS" | head -1)"
+  [ -n "$line" ] || die "$DIST/SHA256SUMS has no line for $n (rerun build.sh so it covers every asset)"
+  printf '%s\n' "$line" >> "$SUMS_DIR/SHA256SUMS"
+done
+(cd "$DIST" && sha256sum -c "$SUMS_DIR/SHA256SUMS" >/dev/null) \
+  || die "an asset no longer matches $DIST/SHA256SUMS"
+assets+=("$SUMS_DIR/SHA256SUMS")
 
 # Release notes come from deploy/release/notes/<v>.md (+ .ja.md) — see that dir's
 # README. Rendering is a hard requirement: a release with no notes is a bug, so a
@@ -180,7 +229,7 @@ assets+=("$DIST/SHA256SUMS")
 # body is written into the dist dir so it can be reviewed after the fact.
 NOTES_BODY="$DIST/RELEASE_NOTES-$VERSION.md"
 echo "==> [publish] render release notes"
-VERSION="$VERSION" ROOTFS="$R_VER" REPO="$REPO" ARCH="$ARCH" \
+VERSION="$VERSION" ROOTFS="${ROOTFS_LIST[*]}" REPO="$REPO" \
   "$HERE/notes-body.sh" > "$NOTES_BODY"
 
 echo "==> [publish] create release v$VERSION (${#assets[@]} assets)"
@@ -191,7 +240,6 @@ run gh release create "v$VERSION" -R "$REPO" \
 
 cat <<EOF
 ==> [publish] done
-  releases: https://github.com/$REPO/releases/tag/v$VERSION
-            https://github.com/$REPO/releases/tag/rootfs-$R_VER
+  release:  https://github.com/$REPO/releases/tag/v$VERSION (${ARCHES[*]})
   install:  curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | bash
 EOF

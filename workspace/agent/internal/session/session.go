@@ -213,7 +213,7 @@ type Session struct {
 	RemoteUrl  string `json:"remoteUrl"` // claude.ai Remote Control URL, when RC is bridged
 	State      string `json:"state"`     // claude live state: working | idle | question | ""
 	Alive      bool   `json:"alive"`     // true = live tmux session; false = stopped
-	Resumable  bool   `json:"resumable"` // false = stopped claude whose working dir is gone
+	Resumable  bool   `json:"resumable"` // false = stopped agent session whose working dir is gone (shell/ssm stay true)
 	// BackgroundBusy: state is idle (turn done) but a run_in_background task is still
 	// running under the pane. Lets the Console mark a session that is waiting for input
 	// as "still working in bg".
@@ -236,8 +236,8 @@ type Session struct {
 	// than this has already been re-authenticated, so the mirror stops offering a fix for
 	// something the user has already fixed (docs/log/47 §4-11).
 	AuthOkAt string `json:"authOkAt,omitempty"`
-	// Context: current context-window fill (newest assistant turn's prompt tokens),
-	// claude only, nil when none recorded yet. Drives the Console's ContextBar in
+	// Context: current context-window fill (newest assistant turn's prompt tokens), nil when
+	// none recorded yet or for a kind whose transcript carries no usage (agy, shell, ssm). Drives the Console's ContextBar in
 	// both the terminal and chat heads without a separate transcript poll.
 	Context *ContextUsage `json:"context,omitempty"`
 	// Branch is the session's start branch (Meta.Branch). CurrentBranch is the
@@ -307,8 +307,8 @@ type Session struct {
 	LastTurnEndAt string `json:"lastTurnEndAt,omitempty"`
 	// LastSay is the opening line of the agent's newest utterance — one line, whitespace
 	// collapsed, capped at 120 runes by the agent that produced it (ADR 0078 decision 12).
-	// Empty when the session has not spoken yet, and for every kind but claude, whose
-	// transcripts this is not yet read from (P1.1).
+	// Empty when the session has not spoken yet, and for agy, shell and ssm, which are not
+	// read for it (sessionx/overview_facts.go).
 	//
 	// The capping is deliberately on THIS side of the wire: a card shows one ellipsized line
 	// whatever arrives, so a whole answer relayed to the Console would be payload nobody
@@ -317,9 +317,9 @@ type Session struct {
 	LastSay string `json:"lastSay,omitempty"`
 	// TokenSpends is each recent REPLY's newly-consumed tokens (uncached input + newly-cached
 	// + output), oldest first, capped at the newest two dozen — the trend the overview card
-	// draws beside the context gauge (ADR 0078 decision 13). Empty for every kind but claude.
+	// draws beside the context gauge (ADR 0078 decision 13). Empty for agy, shell and ssm.
 	//
-	// One point per reply, not per transcript row: claude writes a reply's text and each of
+	// One point per reply, not per transcript row: an agent writes a reply's text and each of
 	// its tool calls as separate records, and the Console folds exactly that run into one
 	// block, so the two sides must fold it the same way or the card and the chat would draw
 	// different trends for one session. Display only.
@@ -374,12 +374,13 @@ func ExactTarget(tn string) string { return "=" + tn }
 
 // Meta records how to (re)launch a session. tmux destroys a session when
 // its program exits (e.g. the user quits claude), losing the kind/dir/model we
-// need to relaunch. We persist it in the home volume so the session stays listed
-// and clicking it re-runs claude --resume in the SAME session id (derived from
-// dir+name). Home survives Stop→Start, so a stopped session remains listed and
-// resumable across a Workspace restart (claude --resume reads the jsonl, also
-// persisted). The dir is denylisted in the file browser. "Recreate" wipes home,
-// intentionally clearing sessions too.
+// need to relaunch. We persist it in the home volume (MetaDir) so the session stays
+// listed and clicking it re-runs claude --resume in the SAME session id (derived from
+// dir+name). Home survives Stop→Start and Recreate (which deletes only ~/repos), so a
+// stopped session remains listed across both. After a Recreate an agent session's
+// working dir is usually gone, so it is listed as not resumable; shell and ssm sessions
+// stay resumable (shell falls back to home, ssm starts there). The dir is denylisted in the file
+// browser.
 type Meta struct {
 	Name string `json:"name"`
 	Dir  string `json:"dir"`

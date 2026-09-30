@@ -18,6 +18,7 @@ import (
 	"io"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
 )
@@ -64,6 +65,16 @@ func New(t *testing.T, h msp.Handler) (*Host, *msp.Client) {
 	t.Cleanup(func() {
 		host.Close()
 		<-host.done
+		// The client's read loop runs the caller's handlers, and a handler may still be
+		// writing under the test's HOME (muse's onItem appends to the transcript store). A
+		// test that returns on in-memory state would otherwise let that write race
+		// t.TempDir's RemoveAll and the restore of t.Setenv("HOME", …) that runs before it.
+		// Closed fires only once the loop has returned, so this waits out the last handler.
+		select {
+		case <-client.Closed():
+		case <-time.After(10 * time.Second):
+			t.Errorf("msptest: the client's read loop was still running a handler 10s after the host closed")
+		}
 	})
 	return host, client
 }

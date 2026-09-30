@@ -81,6 +81,8 @@
 1. `GET /sessions/{name}` で状態を確認し、**停止中なら `start` → ready 待ち → 投入**
 2. `POST /sessions/{name}/input` に `confirm: true` を付け、**ターンが実際に始まった証拠**まで
    ブロックする（打鍵 200 では満足しない。docs/38 の配達検証）
+   🔴 2026-09-30 訂正: 証拠を待つのは TUI の claude だけだった。Managed 宛ては、ドライバの `Send` が
+   実行中ターンの後ろに積んだ時点で 200 を返していた（コードで確認。docs/log/125 §2）。
 3. 飲まれた Enter は Agent 側が再送 / 再タイプで自己修復し、それでも未確認なら
    `delivery_unconfirmed` をツールエラーとして返す
 4. 状態確認と投入の間に落ちた場合（409 `not_running`）も resume 経路へ倒す
@@ -169,6 +171,8 @@ Agent  POST /sessions/sB/input  {prompt: 封筒+本文,       │
 返り値は `{delivered, resumed, session}`。`delivered` は §58.3 の配達検証の結果であって、
 **相手が読んだ / 対応したことの保証ではない**。ツール説明にその旨を明記する
 （モデルが「伝わった」と誤解して先へ進むのを防ぐ）。
+🔴 2026-09-30: 作業中の Managed 宛てで積まれただけのときは `delivered: false, queued: true` を返すように
+した（docs/log/125 §3）。
 
 ## 58.7 配送規則
 

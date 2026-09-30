@@ -1412,3 +1412,34 @@
   gap: 8px;
   flex: none;
 }
+
+/* Initialize Git Flow (GitflowInitModal). The five prefixes sit two to a row where there is
+   room and stack on a phone, where two inputs side by side would each be too narrow to read. */
+.gitflow-prefixes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px 12px;
+}
+.gitflow-prefixes .ui-field {
+  min-width: 0;
+}
+.gitflow-cmd,
+.gitflow-changes code {
+  overflow-wrap: anywhere;
+}
+.gitflow-cmd {
+  display: block;
+  margin-top: 4px;
+  user-select: all;
+}
+.gitflow-changes ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+.launch-gitflow-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}

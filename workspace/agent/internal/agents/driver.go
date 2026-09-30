@@ -27,6 +27,43 @@ type TurnInput struct {
 	// submission after a reconnect, idempotent. The ledger that backs it holds operational
 	// metadata only, never conversation content (§9.5).
 	ClientMessageID string
+	// Origin is who this input came from (ADR 0105 decision 1). Every constructor of a
+	// TurnInput sets it; the stop rules read it to tell the member's own input from the rest.
+	Origin Origin
+}
+
+// Origin kinds. The spelling is the mirror's injection-badge vocabulary (sessionx
+// TurnSource*), plus "member" for the input the badge leaves unmarked, so a driver, the
+// messages payload and the Console name an origin the same way.
+const (
+	OriginMember         = "member"
+	OriginPeer           = "peer"
+	OriginSpawn          = "spawn"
+	OriginOperator       = "operator"
+	OriginSchedule       = "schedule"
+	OriginScheduleManual = "schedule-manual"
+	OriginDiscord        = "discord"
+	OriginSlack          = "slack"
+	OriginAutoResume     = "auto-resume"
+)
+
+// Origin says where a TurnInput came from.
+type Origin struct {
+	Kind string `json:"kind"`
+	// From names the sending session for OriginPeer and the parent for OriginSpawn; empty
+	// otherwise.
+	From string `json:"from,omitempty"`
+}
+
+// IsMember reports whether the input is what a person typed as this session's user: the
+// Console's own composer and the chat bridge (ADR 0105 decision 1). An empty Kind is not
+// member input: a constructor that forgot to set it must not end a stop episode.
+func (o Origin) IsMember() bool {
+	switch o.Kind {
+	case OriginMember, OriginDiscord, OriginSlack:
+		return true
+	}
+	return false
 }
 
 // ThreadSettings is a dynamic settings update (§9.4-3: changing the model/effort of a
@@ -171,11 +208,37 @@ type ThreadSnapshot struct {
 type ThreadHandle interface {
 	Send(in TurnInput) error  // the turn/start equivalent
 	Steer(in TurnInput) error // the turn/steer equivalent (extra input into a running turn)
-	Interrupt() error         // the turn/interrupt equivalent
+	// Interrupt is the Console's stop (ADR 0105 decisions 1-3): a first stop ends the running
+	// turn and the queue continues; a stop inside the stop episode, or one with
+	// DiscardQueue, also discards everything still cancellable and reports it.
+	Interrupt(opts InterruptOpts) (InterruptResult, error)
+	// RemoveQueued takes one queued entry out by id while it is cancellable (decision 5):
+	// ErrAlreadyStarted once it is committed, ErrNotQueued for an id the queue does not hold.
+	RemoveQueued(id string) (QueueItem, error)
+	// DismissDiscard drops a kept discard once the member restored or dismissed it
+	// (decision 4). false when it is already gone.
+	DismissDiscard(id string) bool
 	UpdateSettings(s ThreadSettings) error
 	Respond(reply InteractionReply) error
 	Events() <-chan Event
 	Snapshot() (ThreadSnapshot, error)
+}
+
+// LiveHandles is implemented by a Managed driver that can return a session's handle without
+// starting anything. The /turn queue edits (remove, dismiss_discard) use it: the queue and the
+// kept discards live with the handle, so a session whose runtime is down has none, and Resume
+// would start a daemon or a host only to answer "nothing there". nil, false = no live handle.
+type LiveHandles interface {
+	LiveHandle(m session.Meta) (ThreadHandle, bool)
+}
+
+// QueueingSender is implemented by a handle whose Send can hold input behind a running turn.
+// SendQueued is Send that also says which happened: queued = true when the input waits in the
+// driver's queue for the running turn to end, false when it went to the runtime as a turn of
+// its own. A sender that is not watching (a peer session) needs the difference — a queued
+// message has not been seen yet, and a model that proceeds as if it had goes wrong.
+type QueueingSender interface {
+	SendQueued(in TurnInput) (queued bool, err error)
 }
 
 // Capabilities is the capability declaration Console renders from (§3.1). Console holds no

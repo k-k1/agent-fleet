@@ -190,11 +190,12 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		return agents.LaunchPlan{}, errors.New("発言時点からの分岐は managed のセッションでのみ利用できます")
 	}
 	resumeID := sids.Read(cxSid)
-	// A thread the shared app-server still holds (a managed session switched to Terminal)
-	// locks the direct TUI out until the daemon unloads it; release.go explains the wait.
-	awaitAddr := releaseForTUI(resumeID)
-	launchHandOver(m.Name, awaitAddr != "")
-	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, cxSid, resumeID, forkFrom, awaitAddr), Cwd: m.CWD()}, nil
+	// A thread the shared app-server still holds (a managed session just stopped) locks the
+	// direct TUI out until the daemon unloads it; release.go explains the refusal.
+	if threadHeld(resumeID) {
+		return agents.LaunchPlan{}, ErrThreadReleasing
+	}
+	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, cxSid, resumeID, forkFrom), Cwd: m.CWD()}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
@@ -211,16 +212,12 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		if hasStatus {
 			li.State = st.State
 		}
-		// A missed Stop hook otherwise leaves Codex "working" forever even after its
-		// TUI has returned to the composer. Heal it from the rollout's independent
-		// task_complete event, but only when it belongs to this working interval.
-		// (Managed is event-driven and should not need this, but shares it as a
-		// harmless safety net.)
-		if li.State == "working" {
-			workingSince, _ := time.Parse(time.RFC3339, st.TS)
-			if rolloutCompletedAfter(m, workingSince) {
-				li.State = "idle"
-			}
+		// A missed Stop hook (an Esc interrupt never fires one) otherwise leaves Codex
+		// "working" until the next prompt: the badge says in progress and the reaper
+		// counts the session busy. (Managed is event-driven and should not need this, but
+		// shares it as a harmless safety net.)
+		if li.State == "working" && MissedTurnEnd(m) {
+			li.State = "idle"
 		}
 		if isCompacting(m) {
 			li.State = "compacting"
@@ -252,6 +249,19 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		li.Resumable = false
 	}
 	return li
+}
+
+// MissedTurnEnd reports whether the status store says "working" for a turn the rollout
+// already records as ended (rolloutCompletedAfter). The sessions-list badge (WireLive) and
+// the chat chip (sessionx.DriveState) both read it, so the two cannot disagree about an
+// interrupted turn. It only answers: the stored state is left for the next hook to replace.
+func MissedTurnEnd(m session.Meta) bool {
+	st, ok := status.Read(session.UUID(m.Dir, m.Name))
+	if !ok || st.State != "working" {
+		return false
+	}
+	workingSince, _ := time.Parse(time.RFC3339, st.TS)
+	return rolloutCompletedAfter(m, workingSince)
 }
 
 func (agentImpl) ClearResume(sid string) { sids.Remove(sid) }

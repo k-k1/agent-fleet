@@ -27,7 +27,7 @@ jobs:
     env:
       AGY_CLI_DISABLE_AUTO_UPDATE: "true"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: guard signed-in composer credential
         env:
           TOKEN: ${{ secrets.E2E_AGY_OAUTH_TOKEN }}

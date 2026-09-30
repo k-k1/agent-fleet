@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -282,4 +283,20 @@ func commandSlashForm(text string) string {
 		out += " " + strings.TrimSpace(a[1])
 	}
 	return out
+}
+
+// turnOrigin is the TurnInput origin for an injection whose badge is badge (badgeOriginOf's
+// vocabulary; "" = unmarked, which is the member's own input). from names the sending session
+// of a peer message or the parent of a spawn. The two vocabularies are spelled alike on purpose
+// (TestTurnOriginMatchesBadgeVocabulary): the driver's origin and the mirror's badge must not
+// disagree about the same input.
+func turnOrigin(badge, from string) agents.Origin {
+	switch badge {
+	case "":
+		return agents.Origin{Kind: agents.OriginMember}
+	case turnSourcePeer, TurnSourceSpawn:
+		return agents.Origin{Kind: badge, From: from}
+	default:
+		return agents.Origin{Kind: badge}
+	}
 }

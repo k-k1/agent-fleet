@@ -48,13 +48,23 @@ type CP interface {
 	// has (main.go). nil means "not built yet" and is checked as such: setTenantLogin
 	// only refuses a provider when the set exists.
 	KnownProviderIDs() map[string]bool
+	// DeploymentWarnings lists deployment-level problems only a super_admin can fix, as codes
+	// the Console localises (plaintext_secrets: no master key outside dev). Never nil.
+	DeploymentWarnings() []string
 
 	// --- Resolution / lifecycle (manager's methods) -----------------------------
 	MembershipsFor(ctx context.Context, ident store.Identity) ([]store.MembershipView, *APIError)
 	CountRunningInTenant(ctx context.Context, tenantID string) (int, error)
 	WorkspaceStateByMembership(ctx context.Context, membershipID string) (container, state string)
 	StopWorkspaceByMembership(ctx context.Context, membershipID string) error
+	// CleanHomeByMembership returns runtime.ErrHomeWipeUnsupported, having stopped
+	// nothing, on a runtime that cannot reach the workspace home.
 	CleanHomeByMembership(ctx context.Context, membershipID string) error
+	// HomeBackupsByMembership / DeleteHomeBackupsByMembership reach the copies of a
+	// member's home that the runtime keeps outside it. supported=false on a runtime that
+	// keeps none, which is every runtime but the EC2 slot pool.
+	HomeBackupsByMembership(ctx context.Context, membershipID string) (b runtime.HomeBackups, supported bool, err error)
+	DeleteHomeBackupsByMembership(ctx context.Context, membershipID string) (deleted int, supported bool, err error)
 	// ResizeHomeByMembership pushes a member's just-saved disk request at the home
 	// they already have. Called after PutUserLimit, never instead of it: the row is
 	// the intent and is kept whatever the volume can do today (runtime.HomeResize
@@ -70,7 +80,8 @@ type CP interface {
 	// engine catalogue view moved (ADR 0084 decision 9) — the tenant-scoped counterpart
 	// of the deployment-wide push engine_usage.go already does for an operator-side
 	// engine change. Fire-and-forget, like that one: the caller does not wait on it.
-	PushEngineCatalogChanged(ctx context.Context, tenantID string)
+	// reason only labels the log line on the Agent side.
+	PushEngineCatalogChanged(ctx context.Context, tenantID, reason string)
 	// InvalidateTenantLogin drops the cached per-tenant login rules. Those rules ARE
 	// the entry gate, so every write that changes who may sign in calls it.
 	InvalidateTenantLogin()
@@ -81,6 +92,9 @@ type CP interface {
 	IdleForecastFor(wsID string) (any, bool)
 	PoolBudget(ctx context.Context, overrideTenantID string, overrideMax int) (runtime.PoolBudget, bool, error)
 	PoolStatus(ctx context.Context) (runtime.EC2PoolStatus, bool, error)
+	// HasSlotPool reports whether this runtime has a slot pool at all. It needs no database,
+	// so a poolless runtime can answer 404 before the audit intent is written.
+	HasSlotPool() bool
 	// TerminateQuarantinedSlot ends one quarantined slot and returns why it was
 	// quarantined, so the audit entry outlives the instance and its tags. ok=false
 	// where there is no pool, exactly as PoolStatus reports it.

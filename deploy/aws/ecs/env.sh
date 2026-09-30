@@ -265,14 +265,16 @@ af_stack_output() {
 # towards keeping the captured state from going stale.
 AF_GHCR_DEFAULT="${AF_DEV_GHCR:-ghcr.io/k-k1/agent-fleet}"
 
-# af_ghcr_has <repo> <tag> — is that tag in GHCR?
+# af_ghcr_has <repo> <tag|sha256:…> — is that tag (or that digest) in GHCR?
 #   0=yes / 1=no / 2=could not tell (no crane, etc.).
 # Do not fold 2 into 1 (no): "no tool, could not measure" and "measured, absent" are
 # different facts, and treating the former as the latter blocks a teardown by claiming
 # something that does exist is about to disappear.
 af_ghcr_has() {
   command -v crane >/dev/null 2>&1 || return 2
-  crane manifest "$AF_GHCR_DEFAULT/$1:$2" >/dev/null 2>&1 && return 0
+  local sep=":"
+  case "$2" in sha256:*) sep="@" ;; esac
+  crane manifest "$AF_GHCR_DEFAULT/$1$sep$2" >/dev/null 2>&1 && return 0
   return 1
 }
 
@@ -324,24 +326,82 @@ af_engine_tools_ensure() {
   af_engine_tools_copy "$host" "$tag"
 }
 
-# af_comfy_ensure <ecr-host> <tag> — make sure af-comfyui:<tag> is in ECR, for update.sh moving
-# a stack off a stale ImageComfyImageTag. Same answers as af_engine_tools_ensure; the image is
-# baked only by comfyui-image.yml, so 1 is something no script here can fix. 3 = the copy itself
-# failed: callers use `|| rc=$?`, which switches set -e off in here.
+# af_ecr_pin_verify <flag> <ecr-host> <repo> <tag> <pin> — print the digest <repo>:<tag> in ECR
+# actually holds, and when <pin> (a standup.sh --*-digest value) is set, return 1 unless it
+# matches. A no-op under AF_DRY.
+#
+# It runs whether or not this stand-up copied anything: a repeat stand-up (the common case, once
+# the repository is no longer empty) never reaches the copy, so a check placed only there would
+# verify nothing after the first run. The read is best-effort — without a pin, failing to read
+# must not fail a copy that already succeeded.
+#
+# A pin that does not match fails rather than being accepted or silently re-copied over an image
+# an engine may be running: a pin that silently does nothing is worse than none, and whether
+# retagging is safe right now is a human's call. "Could not read the digest back" and "read it,
+# and it differs" say different things, because the first is not evidence the pin is wrong (ECR
+# auth can lapse, a read can time out) and telling someone to delete/retag over a read that
+# never happened sends them the wrong way.
+af_ecr_pin_verify() {
+  local flag="$1" host="$2" repo="$3" tag="$4" pin="$5" landed
+  [ "${AF_DRY:-0}" = 1 ] && return 0
+  # Exit status, not the placeholder text, decides "could this be read at all".
+  if landed="$(crane digest "$host/$repo:$tag" 2>/dev/null)"; then
+    echo "    · $repo:$tag digest: $landed"
+  else
+    landed=""
+    echo "    · $repo:$tag digest: (could not read back)"
+  fi
+  if [ -z "$pin" ] || [ "$landed" = "$pin" ]; then return 0; fi
+  if [ -z "$landed" ]; then
+    echo "ERROR: $flag $pin was requested, but the digest of" >&2
+    echo "       $repo:$tag in ECR could not be read back, so the pin cannot be" >&2
+    echo "       verified. This is NOT evidence the pin is wrong - check ECR auth (the" >&2
+    echo "       'crane auth login' above) and whether 'crane digest" >&2
+    echo "       $host/$repo:$tag' works by hand before assuming the image" >&2
+    echo "       itself is the problem." >&2
+  else
+    echo "ERROR: $flag $pin was requested, but $repo:$tag in ECR" >&2
+    echo "       is $landed — most likely copied before this pin was chosen (a" >&2
+    echo "       repeat stand-up does not re-copy an image already in ECR). A pin that" >&2
+    echo "       silently does nothing is worse than none." >&2
+    echo "       Fix: drop $flag to accept what's already there, or delete/retag" >&2
+    echo "       $repo:$tag in ECR so the copy above actually runs against the" >&2
+    echo "       requested digest." >&2
+  fi
+  return 1
+}
+
+# af_comfy_ensure <ecr-host> <tag> [<pin>] — make sure af-comfyui:<tag> is in ECR, for update.sh
+# moving a stack off a stale ImageComfyImageTag. Same answers as af_engine_tools_ensure; the image
+# is baked only by comfyui-image.yml, so 1 is something no script here can fix. 3 = the copy itself
+# failed: callers use `|| rc=$?`, which switches set -e off in here. 4 = <pin> (update.sh
+# --comfy-digest) was set and af_ecr_pin_verify refused what is in ECR.
+#
+# The pin is the copy SOURCE (the tag in GHCR is mutable, a re-dispatch of comfyui-image.yml
+# overwrites it); the destination stays af-comfyui:<tag>, the name the stack will be given. The
+# read-back runs on both branches, for the reason af_ecr_pin_verify gives.
 af_comfy_ensure() {
-  local host="$1" tag="$2" ghcr
+  local host="$1" tag="$2" pin="${3:-}" src ghcr
   if af_ecr_has af-comfyui "$tag"; then
     echo "    · af-comfyui:$tag is already in ECR"
-    return 0
+    # The read-back goes through crane and needs ECR auth. No crane means nothing to read with,
+    # which af_ecr_pin_verify already reports; it must not turn a present image into an error.
+    if [ "${AF_DRY:-0}" != 1 ] && command -v crane >/dev/null 2>&1; then
+      "${AWS[@]}" ecr get-login-password | crane auth login "$host" -u AWS --password-stdin
+    fi
+  else
+    src="$AF_GHCR_DEFAULT/comfyui:$tag"
+    [ -n "$pin" ] && src="$AF_GHCR_DEFAULT/comfyui@$pin"
+    af_ghcr_has comfyui "${pin:-$tag}"; ghcr=$?
+    [ "$ghcr" = 2 ] && return 2
+    [ "$ghcr" = 0 ] || return 1
+    if [ "${AF_DRY:-0}" != 1 ]; then
+      "${AWS[@]}" ecr get-login-password | crane auth login "$host" -u AWS --password-stdin
+    fi
+    echo "    · crane copy $src"
+    af_run crane copy "$src" "$host/af-comfyui:$tag" || return 3
   fi
-  af_ghcr_has comfyui "$tag"; ghcr=$?
-  [ "$ghcr" = 2 ] && return 2
-  [ "$ghcr" = 0 ] || return 1
-  if [ "${AF_DRY:-0}" != 1 ]; then
-    "${AWS[@]}" ecr get-login-password | crane auth login "$host" -u AWS --password-stdin
-  fi
-  echo "    · crane copy $AF_GHCR_DEFAULT/comfyui:$tag"
-  af_run crane copy "$AF_GHCR_DEFAULT/comfyui:$tag" "$host/af-comfyui:$tag" || return 3
+  af_ecr_pin_verify --comfy-digest "$host" af-comfyui "$tag" "$pin" || return 4
 }
 
 # af_cfn_param_default <template> <key> — the `Default:` a template declares for a parameter.

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // Runtime is the port that abstracts where a Workspace container runs and how the
@@ -35,8 +36,12 @@ type Runtime interface {
 	//              (pinned boot-install, opt-in CLI self-update). Callers must NOT
 	//              re-Start (the adapter would force a new deployment / kill the boot)
 	//              and must NOT idle-stop it; read paths treat it like stopped (Agent
-	//              not reachable yet). Always time-boxed by the adapter — a "starting"
-	//              that never converges is a workspace nobody can operate.
+	//              not reachable yet). Always time-boxed — a "starting" that never
+	//              converges is a workspace nobody can operate. docker and native end
+	//              their own window (AgentBootBudget); ECS cannot tell a slow launch
+	//              from one that will never place, so the CP's start deadline
+	//              (start_deadline.go) Stops it instead. Stop must therefore work on
+	//              a "starting" workspace.
 	//   stopped  — exists but not running (docker: exited container; ECS: desired 0)
 	//   none     — no container / service
 	State(ctx context.Context) string // running | starting | stopped | none
@@ -90,6 +95,24 @@ type runtimeOperationFencer interface {
 type StartFencer interface {
 	AbortUncommittedStart(context.Context) error
 	CommitStart()
+}
+
+// LaunchBudgeter is implemented by an adapter whose Start hands part of the launch to
+// background work that Stop does not cancel. LaunchBudget is how long after Start that
+// work may still act — scale the service back up behind a Stop — so the CP's start
+// deadline never fires inside it: a Stop it issued there would be undone while the
+// database says "stopped".
+type LaunchBudgeter interface {
+	LaunchBudget() time.Duration
+}
+
+// TaskCounter is implemented by an adapter that can say directly how many workspace tasks
+// run while it reports `starting` (ECS: the service's runningCount, which stays up while a
+// rollout settles). The CP's start deadline takes that over probing the Agent: an Agent
+// that is slow to answer is no proof that nothing runs, and stopping on that guess would
+// take a working session down.
+type TaskCounter interface {
+	RunningTasks(ctx context.Context) (int, error)
 }
 
 func acquireRuntimeOperationFence(ctx context.Context, rt Runtime) (func(), error) {

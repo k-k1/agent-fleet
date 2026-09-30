@@ -55,7 +55,7 @@ export function CarriedBlock({
     setSending(true);
     const r = await sessionCarriedAnswer(session, body);
     setSending(false);
-    // Silence is indistinguishable from success (docs/build/92 §7), so always toast a failure.
+    // Silence is indistinguishable from success (docs/build/92 §92.3), so always toast a failure.
     if (!r.ok) {
       onError(r.message || tr("err.send_failed"));
       return false;

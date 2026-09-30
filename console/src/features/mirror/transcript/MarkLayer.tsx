@@ -52,8 +52,8 @@ interface Card {
 }
 
 /** The markable element containing both ends of the selection. null if either end is outside it
- * (a selection whose quote spans more than one root). */
-function rootOfSelection(): HTMLElement | null {
+ * (a selection whose quote spans more than one root), or if it lies outside `scope`. */
+function rootOfSelection(scope: Element | null): HTMLElement | null {
   const sel = window.getSelection();
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
   const range = sel.getRangeAt(0);
@@ -61,6 +61,7 @@ function rootOfSelection(): HTMLElement | null {
   const el = from.nodeType === Node.ELEMENT_NODE ? (from as Element) : from.parentElement;
   const root = el?.closest<HTMLElement>("[data-mark-root]") || null;
   if (!root || !root.contains(range.endContainer)) return null;
+  if (!scope || !scope.contains(root)) return null;
   return root;
 }
 
@@ -68,10 +69,16 @@ export function MarkLayer({ marks }: { marks: TranscriptMarksWiring }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [card, setCard] = useState<Card | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
+  // Selection and click are document-wide, but every open mirror mounts its own layer. Without
+  // this scope each one opened a pill over the same selection, the topmost (another pane's) took
+  // the click, activated that pane and painted into that session. The anchor renders in
+  // place, so its parent is this transcript's own container.
+  const anchorRef = useRef<HTMLSpanElement>(null);
+  const scope = () => anchorRef.current?.parentElement ?? null;
 
   const capture = useCallback(() => {
     if (!marks.canEdit) return;
-    const root = rootOfSelection();
+    const root = rootOfSelection(scope());
     if (!root) {
       setDraft(null);
       return;
@@ -105,7 +112,7 @@ export function MarkLayer({ marks }: { marks: TranscriptMarksWiring }) {
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       const el = (e.target as Element | null)?.closest?.<HTMLElement>("mark." + MARK_CLASS);
-      if (!el) return;
+      if (!el || !scope()?.contains(el)) return;
       const mark = marks.find(el.dataset.markId || "");
       if (!mark) return;
       const rect = el.getBoundingClientRect();
@@ -145,7 +152,7 @@ export function MarkLayer({ marks }: { marks: TranscriptMarksWiring }) {
     window.getSelection()?.removeAllRanges();
   };
 
-  return createPortal(
+  const layer = createPortal(
     <>
       {draft && (
         <SelectionFloat x={draft.x} y={draft.y} className="tmark-pill" role="group" aria-label={tr("mirror.mark.pill")}>
@@ -188,5 +195,11 @@ export function MarkLayer({ marks }: { marks: TranscriptMarksWiring }) {
       )}
     </>,
     document.body,
+  );
+  return (
+    <>
+      <span ref={anchorRef} hidden />
+      {layer}
+    </>
   );
 }

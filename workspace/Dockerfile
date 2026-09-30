@@ -65,18 +65,19 @@ RUN printf '[global]\nbreak-system-packages = true\n' > /etc/pip.conf
 RUN pip install --no-cache-dir uv \
     && uv --version && uvx --version
 
-# --- 配布ノブ（docs/log/35 §35.4.1・§35.7.1-5） ----------------------------------
-# BAKE_AGENT_CLIS=0  … エージェント CLI（claude/opencode/codex/copilot/cursor/agy/rtk）を
-#   焼かない lean variant（ライセンス理由: プロプライエタリ CLI は再配布不可扱い）。
-#   entrypoint の boot-install が versions.json のピン版を初回起動時に ~/.local へ導入。
-# BAKE_OPTIONAL_TOOLS=0 … chromium+CJK フォント・Go・awscli+SSM plugin・ops MCP 群を
-#   焼かない（サイズ理由・native rootfs 用。chromium の実行時ライブラリと
-#   fontconfig/DejaVu だけは残し、chromium 本体はオンデマンド DL — P2）。
-# 既定 BAKE_AGENT_CLIS=0 = プロプライエタリ CLI を焼かない安全既定。素の `docker build`
-#   でも再配布不可の CLI をイメージに含めないため、うっかり配布しても事故らない。CLI も
-#   焼いて初回起動を速くしたい自社デプロイは BAKE_AGENT_CLIS=1 を明示（run-dev.sh も対応）。
-# 既定 BAKE_OPTIONAL_TOOLS=1 = サイズ系ツール（chromium/CJK フォント・Go・awscli 等）は
-#   従来どおり焼き込み（ライセンス無関係・native lean rootfs だけが 0）。
+# --- Distribution knobs (docs/log/35 §35.4.1, §35.7.1-5) ---------------------------
+# BAKE_AGENT_CLIS=0 … do not bake the agent CLIs (claude/opencode/codex/copilot/cursor/
+#   agy/rtk): the lean variant, because the proprietary CLIs are treated as not
+#   redistributable. The entrypoint's boot-install puts the versions.json pins into
+#   ~/.local on first start.
+# BAKE_OPTIONAL_TOOLS=0 … do not bake chromium + CJK fonts, Go, awscli + SSM plugin or
+#   the ops MCP servers (size; for the native rootfs). The chromium runtime libraries
+#   and fontconfig/DejaVu stay; chromium itself is downloaded on demand.
+# BAKE_AGENT_CLIS defaults to 0 so that a plain `docker build` never puts a
+#   non-redistributable CLI into an image that might be shared by accident. Own
+#   deployments that want a faster first start pass BAKE_AGENT_CLIS=1 (run-dev.sh can).
+# BAKE_OPTIONAL_TOOLS defaults to 1: the size-only tools carry no licence concern, and
+#   only the native lean rootfs sets 0.
 ARG BAKE_AGENT_CLIS=0
 ARG BAKE_OPTIONAL_TOOLS=1
 
@@ -251,11 +252,11 @@ RUN set -eux; \
     rm -rf /tmp/gh.tgz "/tmp/gh_${GH_VERSION}_linux_${gharch}"; \
     /usr/local/libexec/gh --version
 
-# rtk (token-saving claude Bash hook): fetched pinned at build time, ALWAYS baked
-# by default — the former host-vendoring path (run-dev.sh copying a host binary into
-# vendor/) is gone, so every deployment gets the same pinned rtk like the other
-# CLIs. BAKE_RTK=0 remains as an escape hatch for airgapped builds (no build-time
-# GitHub fetch); the entrypoint seeds the hook only when `rtk` is on PATH.
+# rtk (token-saving claude Bash hook): fetched pinned at build time, but only when
+# both BAKE_RTK=1 and BAKE_AGENT_CLIS=1. In the default lean build (BAKE_AGENT_CLIS=0)
+# the entrypoint's boot-install puts the rtk pin from versions.json into ~/.local/bin
+# instead (docs/log/35 §35.4.1). BAKE_RTK=0 is the escape hatch for airgapped builds
+# (no build-time GitHub fetch); the entrypoint seeds the hook only when `rtk` is on PATH.
 # rtk-ai/rtk is public, so the asset + checksums download without auth.
 #
 # ⚠️ amd64 gets a STATIC musl binary. arm64 has no musl asset: upstream publishes only
@@ -276,8 +277,6 @@ RUN set -eux; \
 # reads it, and "absent with no reason" stays a failure).
 # Bump RTK_VERSION to upgrade (ARG change busts the cache; same idiom as GH_VERSION).
 # The AF_AGENT_SELF_UPDATE opt-in also updates rtk in place at start (entrypoint).
-# BAKE_AGENT_CLIS=0（lean 配布 variant）は rtk も焼かない — entrypoint の boot-install
-# が versions.json の rtk ピンで ~/.local/bin へ導入する（docs/log/35 §35.4.1）。
 ARG BAKE_RTK=1
 ARG RTK_VERSION=0.50.0
 RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
@@ -315,10 +314,10 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.283
-ARG OPENCODE_VERSION=1.18.32
-ARG CODEX_VERSION=0.157.1
-ARG COPILOT_VERSION=1.0.88
+ARG CLAUDE_CODE_VERSION=2.1.285
+ARG OPENCODE_VERSION=1.18.33
+ARG CODEX_VERSION=0.159.2
+ARG COPILOT_VERSION=1.0.89
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}" \
@@ -344,10 +343,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.2.11
-ARG AGY_RELEASE_BUILD=6016716732497920
-ARG AGY_SHA256_X64=c91c62c5e6fa954f5a7e1d7b9ad417d749db4aa60a4ba0b3d604dec1b645d190
-ARG AGY_SHA256_ARM64=01513bc61f9592353045ba801ebb407fbccb8984fcbfde591bc6b681b24e92bc
+ARG AGY_VERSION=1.2.13
+ARG AGY_RELEASE_BUILD=6662628811079680
+ARG AGY_SHA256_X64=b0f195d37973be7b08c3b705d7fbbcd948dacb4a3c2176ee52ca29f7159bdc21
+ARG AGY_SHA256_ARM64=43bf59be5895475f8a32d4f94f1241f665986ea41a3622579e03b74e1b63dcfb
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -391,9 +390,9 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 # setTimeout(...).unref() で走るが `disableAutoUpdate || channel==="static"` でスキップ）。
 # 焼き込みでは AF が起動フラグ `--disable-auto-update`（全経路）＋ entrypoint の
 # cli-config.json `channel:"static"` 再固定の二重で封じる（詳細 docs/log/40 Track B）。
-ARG CURSOR_VERSION=2026.09.26-dd393fe
-ARG CURSOR_SHA256_X64=8085fd120f5c71f4eae7fea26a043718e5644e3071e4fab3220a0e58c51f9593
-ARG CURSOR_SHA256_ARM64=ab1178d0d8c10b254e7e427d1d673533a389338424e75034be9ab9da02845bde
+ARG CURSOR_VERSION=2026.09.28-64d2043
+ARG CURSOR_SHA256_X64=6e4cd936a4866b8a77c50ff51a564460d715772fabc477a01aa0f0455d9559f0
+ARG CURSOR_SHA256_ARM64=c737599b27d3d8d6743c72b487204e335f3a8ea2fdbaf18302ee207a646ffd8d
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -433,9 +432,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.24.1
-ARG KIRO_SHA256_X64=89e26b61707a3a17bcf0d0dfa7043366d94b48bfe35e9605058bd5de4b7199ce
-ARG KIRO_SHA256_ARM64=95e149b0b5e2be3c6f56d4e5ed1bc5313d2596ef39255529a553027fd87abff5
+ARG KIRO_VERSION=2.26.0
+ARG KIRO_SHA256_X64=fad32095530facd3ed28d4210798804d2340373643b69f256492798f9befd479
+ARG KIRO_SHA256_ARM64=8715b1c199fdc3176d929d839398175cab48269db0644ffa6dad5813d64c9817
 # Muse Code（kind="muse"、ADR 0095 決定 8）。プロプライエタリなので **配布イメージには
 # 入らない**（BAKE_AGENT_CLIS=0 既定・理由は本ファイル冒頭と NOTICE）。既定の経路は
 # per-user のオンデマンド導入（workspace-agent install-muse）で、ここのピンは
@@ -450,12 +449,12 @@ ARG KIRO_SHA256_ARM64=95e149b0b5e2be3c6f56d4e5ed1bc5313d2596ef39255529a553027fd8
 #   curl -s 'https://api.meta.ai/muse-code/channels/muse-stable'      # version + manifest_url（匿名）
 #   curl -s "<manifest_url>" | jq .artifacts.x86_linux,.artifacts.aarch64_linux
 # sha256 は `artifacts.{x86_linux,aarch64_linux}.checksum` をそのまま写す（bump は
-# MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 347,850,968 B / 307,828,824 B（1.4.0-R4161.1）。
+# MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 362,440,920 B / 323,360,856 B（1.4.1-R4503.1）。
 # ⚠️ 版文字列は `Muse Code 1.3.0 (1.3.0-R3401.1)`＝**括弧内のビルド id** がピンと突合する値。
 # agy の `tr -dc '0-9.'` 流儀だと `-R3401.1` が落ちて毎回不一致になる（install_muse.go）。
-ARG MUSE_VERSION=1.4.0-R4161.1
-ARG MUSE_SHA256_X64=1b68bd4518d53a2aaff063915df4d141b0a205e6d79038299d04e3a14e85a5b9
-ARG MUSE_SHA256_ARM64=38a0e3b7f59825ffc60f7fae65ac9727cf9bbb47fe4e687cc29cede9deb8fabf
+ARG MUSE_VERSION=1.4.1-R4503.1
+ARG MUSE_SHA256_X64=8b53c9cdbc025bc2d9068bc7016e2c1e51c3a0c608821da17528ad23be900a12
+ARG MUSE_SHA256_ARM64=a6d46239975adac282aa829d2a5bd1cd3119334c18ecfa776d4377daebddb595
 # Postgres供給ピン（ADR 0086 P0 供給レーン）: Zonky embedded-postgres 17.11.0 jar のハッシュ。
 # sha256 は `curl -sfL <jar-url> | sha256sum` で確認した値。
 # 他メジャー（16/17/18）は install-postgres が Maven Central の .sha256 サイドカーで動的に取得する。

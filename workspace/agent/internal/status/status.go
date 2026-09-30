@@ -1,7 +1,7 @@
 // Package status is the per-sid file store for a session's live state
 // (working/idle/question/…) and its pending payloads (question, plan, permission,
 // streaming text, last tool). The claude hooks, the opencode plugin and the codex hooks
-// (wired in package main's session_status.go) write it; the sessions list and /messages
+// (wired in internal/sessionx/session_status.go) write it; the sessions list and /messages
 // read it. The on-disk layout (~/.local/state/agent-fleet/… — ADR 0087 decision 4 moved it
 // there from ~/.config, which is an EFS mount on ecs-ec2) and the JSON tags must stay
 // byte-identical (docs/log/23 remaining item 1 Wave A).

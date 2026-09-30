@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -41,7 +42,14 @@ func runCredHelper(args []string) {
 	if len(args) == 0 || args[0] != "get" {
 		return // store/erase: nothing to do
 	}
-	host := credHelperHost(os.Stdin)
+	credHelperGet(os.Stdin, os.Stdout)
+}
+
+// credHelperGet answers one `get` request read from r, writing the credential to w.
+// The store key is git's `host=` value verbatim, which carries the port whenever the
+// remote URL does.
+func credHelperGet(r io.Reader, w io.Writer) {
+	host := credHelperHost(r)
 	s, err := secrets.Load()
 	if err != nil {
 		return // emit nothing: git falls through / prompts
@@ -60,7 +68,7 @@ func runCredHelper(args []string) {
 				})
 			}
 		}
-		fmt.Printf("username=x-token-auth\npassword=%s\n", c.AccessToken)
+		fmt.Fprintf(w, "username=x-token-auth\npassword=%s\n", c.AccessToken)
 		return
 	}
 	if e, ok := s.Git[host]; ok {
@@ -75,7 +83,7 @@ func runCredHelper(args []string) {
 		if host == "bitbucket.org" && strings.Contains(user, "@") {
 			user = "x-bitbucket-api-token-auth"
 		}
-		fmt.Printf("username=%s\npassword=%s\n", user, e.Token)
+		fmt.Fprintf(w, "username=%s\npassword=%s\n", user, e.Token)
 	}
 }
 
@@ -98,7 +106,9 @@ func credHelperHost(r io.Reader) string {
 }
 
 // internalGitHost is the CP-injected host of the tenant's self-hosted git
-// (docs/reference/internal-git-provider). Empty when internal git is disabled.
+// (docs/reference/internal-git-provider): the clone URL's authority, port included,
+// because that is the `host=` git's credential protocol sends. Empty when internal
+// git is disabled.
 func internalGitHost() string { return strings.TrimSpace(os.Getenv("AF_INTERNAL_GIT_HOST")) }
 
 // seedInternalGit writes the CP-injected internal git credential into the store
@@ -116,10 +126,22 @@ func seedInternalGit() {
 		log.Printf("internal git: load secrets failed: %v", err)
 		return
 	}
-	if e, ok := s.Git[host]; ok && e.User == "x-access-token" && e.Token == token {
+	changed := false
+	// A CP that injected the host without its port left the same credential under
+	// the bare name, where git sends it to whatever answers on the default port.
+	if bare, _, err := net.SplitHostPort(host); err == nil {
+		if e, ok := s.Git[bare]; ok && e.User == "x-access-token" && e.Token == token {
+			delete(s.Git, bare)
+			changed = true
+		}
+	}
+	if e, ok := s.Git[host]; !ok || e.User != "x-access-token" || e.Token != token {
+		s.Git[host] = secrets.GitEntry{User: "x-access-token", Token: token}
+		changed = true
+	}
+	if !changed {
 		return // already current
 	}
-	s.Git[host] = secrets.GitEntry{User: "x-access-token", Token: token}
 	if err := s.Save(); err != nil {
 		log.Printf("internal git: save failed: %v", err)
 		return

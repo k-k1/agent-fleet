@@ -46,6 +46,22 @@ The "Limits — Workspace: X / Session: Y" shown under **Tenant › Limits & idl
 currently in effect. When you want it changed, ask your IT department / deployment administrator
 ([operator/README.md](../operate/README.md)).
 
+### Who may use the inference engines (you can set this)
+
+A role the tenant is allowed above ("Inference engine use") is open to every member by default.
+Under **Operations › Engine access** you choose, per role (Chat (llm) / Image generation (image)),
+**Every member** or **Granted members only**. With the latter, only the members ticked in the table
+may use that role. The same ticks also appear on the member detail page, which says whether that
+person can use each role right now (either place edits the same setting).
+
+- **Tenant admins are not granted automatically.** If you use it yourself, tick your own row too.
+- A role the deployment admin turned off for the whole tenant cannot be changed here (it is shown,
+  but its controls are disabled). A tick never overrides the tenant-wide "off".
+- Changes reach running workspaces at once. A member who loses a role no longer sees it in the
+  launch menu or the catalogue, and a session already running is refused on its next request.
+- Switching back to **Every member** keeps the ticks, so restricting again restores the same list.
+  Tick first and restrict afterwards, and nobody loses access in between.
+
 ### Per-member session limits (you can set these)
 
 What you can adjust is the per-member **session limit**. In the member detail, the
@@ -216,7 +232,8 @@ container stops. **The work (home) is not lost.** The member can start it again 
 It is strictly a "pause for now" operation, not destructive.
 
 Below it, ruled off under **"Cannot be undone"**, are exactly what the heading says: "Clean home",
-"Remove member", "Discard workspace" and "Delete member permanently". **All of them are yours to
+"Delete backups", "Remove member", "Destroy workspace" and "Delete member permanently" (a deployment
+shows only the ones it can perform). **All of them are yours to
 run** — the point is that an employee leaving should not become a ticket for IT. Read what each
 confirmation dialog says it keeps and deletes before you press it. **Situations that need heavier
 measures** — the container is broken and restarting doesn't fix it, host-side intervention is

@@ -1,5 +1,5 @@
 // Pins the fix for a card badged answered whose body was the decline boilerplate
-// (docs/build/92 §6): claude's own AskUserQuestion decline boilerplate (an Escape out of the
+// (docs/build/92 §92.1.3): claude's own AskUserQuestion decline boilerplate (an Escape out of the
 // modal — e.g. the preview free-text bug, where a free-text answer lands on the unnumbered
 // "Chat about this" row) used to render as an ordinary answered card with the raw rejection
 // prose dumped in as if it were the user's answer. A declined question must instead badge

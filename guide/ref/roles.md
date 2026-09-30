@@ -70,13 +70,10 @@ and in most organisations that is the same person as IT or SRE.
 
 ## Which documentation each role receives
 
-The shelves are the shipping unit: a container is handed only what its user's role may
-read, which is why the shelves are cut by reader in the first place.
+The same guide, whatever the role: every container receives [member/](../member/README.md),
+[admin/](../admin/README.md), [operate/](../operate/README.md) and [ref/](README.md).
+The shelves are cut by reader so that each reader knows where to start, not to hide
+anything — and a link inside the guide has to work for everyone who follows it.
 
-| Role | Shelves in the container |
-|---|---|
-| member | [use/](../member/README.md), [ref/](README.md) |
-| tenant administrator | + [admin/](../admin/README.md) |
-| deployment administrator | + [operate/](../operate/README.md), `docs/build/` |
-
-The decision records and the frozen work journals are shipped to nobody.
+The developer documentation (design notes, decision records, work journals) is shipped
+to nobody.

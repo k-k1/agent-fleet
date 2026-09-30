@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,11 +29,25 @@ func (a gitServerAPI) cloneURL(slug, name string) string {
 	return strings.TrimRight(a.publicBaseURL, "/") + "/git/" + slug + "/" + name + ".git"
 }
 
+// internalGitCredentialHost is the key the Agent seeds the internal git credential
+// under (AF_INTERNAL_GIT_HOST). It has to equal the `host=` line git's credential
+// protocol sends for cloneURL, and git sends the authority with its port whenever the
+// URL carries one — so this is u.Host, not u.Hostname(): a base such as
+// http://127.0.0.1:8080 otherwise leaves every clone and push without credentials.
+// Empty when the base is unset or unparsable (internal git disabled).
+func internalGitCredentialHost(publicBaseURL string) string {
+	u, err := url.Parse(strings.TrimSpace(publicBaseURL))
+	if err != nil {
+		return ""
+	}
+	return u.Host
+}
+
 // internalRepoWire is the wire shape of one internal git repository (the Console's
 // `InternalRepo`, console/src/features/settings/workspace/InternalReposTab.tsx).
 //
 // was: map[string]any{"name":…, "default_branch":…, "clone_url":…, "created_at":…, "provider":…}
-// All five keys are unconditional, so no omitempty: default_branch and created_at can be
+// All six keys are unconditional, so no omitempty: default_branch and created_at can be
 // empty strings, and omitempty would drop the key and change the wire.
 //
 // provider is always the constant "internal". The Console's `InternalRepo` neither
@@ -44,17 +59,35 @@ type internalRepoWire struct {
 	CloneURL      string `json:"clone_url"`
 	CreatedAt     string `json:"created_at"`
 	Provider      string `json:"provider"`
+	// CanManage says whether the caller may rename or delete this repository
+	// (canManageRepo), so the Console offers only the buttons that would succeed.
+	CanManage bool `json:"can_manage"`
 }
 
-func (a gitServerAPI) repoDTO(slug string, g store.GitRepo) internalRepoWire {
+func (a gitServerAPI) repoDTO(mv store.MembershipView, g store.GitRepo) internalRepoWire {
 	return internalRepoWire{
 		Name:          g.Name,
 		DefaultBranch: g.DefaultBranch,
-		CloneURL:      a.cloneURL(slug, g.Name),
+		CloneURL:      a.cloneURL(mv.TenantSlug, g.Name),
 		CreatedAt:     g.CreatedAt,
 		Provider:      "internal",
+		CanManage:     canManageRepo(mv, g),
 	}
 }
+
+// canManageRepo reports whether mv may rename or delete g: a role that may push, and
+// either the repository's creator or a tenant_admin. Deleting removes the bare and
+// its LFS objects for everyone in the tenant, so pushing to a repository is not enough.
+// created_by holds the creator's membership id; a row without one is the tenant_admin's.
+func canManageRepo(mv store.MembershipView, g store.GitRepo) bool {
+	if !canPush(mv.Role) {
+		return false
+	}
+	return mv.Role == "tenant_admin" || (g.CreatedBy != "" && g.CreatedBy == mv.MembershipID)
+}
+
+var errGitRepoManageForbidden = &apiError{http.StatusForbidden, errCodeGitRepoManageForbidden,
+	"only the repository's creator or a tenant administrator may rename or delete it"}
 
 // reposList (GET /api/internal-git/repos) lists the tenant's internal repos for
 // the RepoPicker/GitTab.
@@ -66,7 +99,7 @@ func (a gitServerAPI) reposList(w http.ResponseWriter, r *http.Request, _ store.
 	}
 	out := make([]internalRepoWire, 0, len(repos))
 	for _, g := range repos {
-		out = append(out, a.repoDTO(mv.TenantSlug, g))
+		out = append(out, a.repoDTO(mv, g))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"repos": out})
 }
@@ -77,6 +110,13 @@ func (a gitServerAPI) reposList(w http.ResponseWriter, r *http.Request, _ store.
 func (a gitServerAPI) repoCreate(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	if a.publicBaseURL == "" {
 		writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "not_configured", "internal git requires PUBLIC_BASE_URL"})
+		return
+	}
+	// The same gate as a push: a role that may not write to a repository may not bring
+	// one into existence either.
+	if !canPush(mv.Role) {
+		writeAPIErr(w, &apiError{http.StatusForbidden, errCodeGitRepoCreateForbidden,
+			"your role in this tenant may not create repositories"})
 		return
 	}
 	var body struct {
@@ -131,7 +171,7 @@ func (a gitServerAPI) repoCreate(w http.ResponseWriter, r *http.Request, ident s
 		return
 	}
 	a.auditGit(r.Context(), mv.TenantID, ident.ID, "internal_git.repo.create", name, "branch="+branch)
-	writeJSON(w, http.StatusOK, a.repoDTO(mv.TenantSlug, g))
+	writeJSON(w, http.StatusOK, a.repoDTO(mv, g))
 }
 
 // enforceGitRepoQuota returns a 409 apiError when the tenant is at or over its
@@ -156,8 +196,9 @@ func (a gitServerAPI) enforceGitRepoQuota(ctx context.Context, tenantID string) 
 	return nil
 }
 
-// auditGit records an internal-git mutation in the audit ledger. Best-effort:
-// a logging failure never blocks the operation.
+// auditGit records a reversible internal-git mutation (create) in the audit ledger.
+// Best-effort: a logging failure never blocks the operation. Delete and rename cannot be
+// undone and go through beginIrreversible instead.
 func (a gitServerAPI) auditGit(ctx context.Context, tenantID, actorID, action, target, detail string) {
 	_ = a.store.InsertAudit(ctx, store.AuditLog{
 		ID: store.NewID(), TenantID: tenantID, ActorKind: "user", ActorID: actorID,
@@ -173,23 +214,41 @@ func (a gitServerAPI) repoDelete(w http.ResponseWriter, r *http.Request, ident s
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_name", "invalid repo name"})
 		return
 	}
-	if _, exists, err := a.store.GetGitRepo(r.Context(), mv.TenantID, name); err != nil {
+	g, exists, err := a.store.GetGitRepo(r.Context(), mv.TenantID, name)
+	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
-	} else if !exists {
+	}
+	if !exists {
 		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "no such repo"})
 		return
 	}
-	if err := a.store.DeleteGitRepo(r.Context(), mv.TenantID, name); err != nil {
-		writeAPIErr(w, internalErr(err))
+	if !canManageRepo(mv, g) {
+		writeAPIErr(w, errGitRepoManageForbidden)
 		return
 	}
-	_ = os.RemoveAll(filepath.Join(a.dataRoot, "git", mv.TenantSlug, name+".git"))
-	// The bare (incl. its lfs/objects) is gone; drop the LFS ledger + lock rows so
-	// the tenant's capacity quota frees up and no stale locks linger.
-	_ = a.store.DeleteLFSObjectsByRepo(r.Context(), mv.TenantID, name)
-	_ = a.store.DeleteLFSLocksByRepo(r.Context(), mv.TenantID, name)
-	a.auditGit(r.Context(), mv.TenantID, ident.ID, "internal_git.repo.delete", name, "")
+	// The bare and its LFS objects cannot be restored, so who asked is on record before
+	// anything goes, and nothing goes when that record cannot be written.
+	in, ok := beginIrreversible(w, r, a.store, store.AuditLog{
+		TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID,
+		Action: "internal_git.repo.delete", Target: name,
+	})
+	if !ok {
+		return
+	}
+	// The repo row goes with its LFS ledger and lock rows in one transaction, before
+	// the disk: a failure leaves everything as it was and the request can be retried.
+	if err := a.store.DeleteGitRepo(r.Context(), mv.TenantID, name); err != nil {
+		refuseIrreversible(w, r, in, internalErr(err))
+		return
+	}
+	dir := filepath.Join(a.dataRoot, "git", mv.TenantSlug, name+".git")
+	outcome := ""
+	if err := os.RemoveAll(dir); err != nil {
+		log.Printf("internal git: delete %s: ledger rows removed but the bare remains: %v", dir, err)
+		outcome = "ledger rows removed but the bare remains: " + err.Error()
+	}
+	in.Done(r.Context(), outcome, http.StatusOK)
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": name})
 }
 
@@ -224,6 +283,10 @@ func (a gitServerAPI) repoRename(w http.ResponseWriter, r *http.Request, ident s
 		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "no such repo"})
 		return
 	}
+	if !canManageRepo(mv, g) {
+		writeAPIErr(w, errGitRepoManageForbidden)
+		return
+	}
 	if _, taken, err := a.store.GetGitRepo(r.Context(), mv.TenantID, newName); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -232,23 +295,31 @@ func (a gitServerAPI) repoRename(w http.ResponseWriter, r *http.Request, ident s
 		return
 	}
 
+	// A rename breaks every existing clone's origin URL and frees the old name for someone
+	// else's repository, so it is held to the same intent-first record as a delete.
+	in, ok := beginIrreversible(w, r, a.store, store.AuditLog{
+		TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID,
+		Action: "internal_git.repo.rename", Target: oldName, Detail: "to=" + newName,
+	})
+	if !ok {
+		return
+	}
 	oldDir := filepath.Join(a.dataRoot, "git", mv.TenantSlug, oldName+".git")
 	newDir := filepath.Join(a.dataRoot, "git", mv.TenantSlug, newName+".git")
 	if err := os.Rename(oldDir, newDir); err != nil {
-		writeAPIErr(w, &apiError{http.StatusInternalServerError, "rename_failed", err.Error()})
+		refuseIrreversible(w, r, in, &apiError{http.StatusInternalServerError, "rename_failed", err.Error()})
 		return
 	}
+	// RenameGitRepo repoints the LFS ledger and locks in the same transaction, matching
+	// the lfs/objects that just moved with the .git dir.
 	if err := a.store.RenameGitRepo(r.Context(), mv.TenantID, oldName, newName); err != nil {
 		_ = os.Rename(newDir, oldDir) // roll back the move so disk and ledger stay consistent
-		writeAPIErr(w, internalErr(err))
+		refuseIrreversible(w, r, in, internalErr(err))
 		return
 	}
-	// The on-disk lfs/objects moved with the .git dir; repoint the LFS ledger + locks.
-	_ = a.store.RenameLFSObjectsRepo(r.Context(), mv.TenantID, oldName, newName)
-	_ = a.store.RenameLFSLocksRepo(r.Context(), mv.TenantID, oldName, newName)
-	a.auditGit(r.Context(), mv.TenantID, ident.ID, "internal_git.repo.rename", oldName, "to="+newName)
+	in.Done(r.Context(), "to="+newName, http.StatusOK)
 	g.Name = newName
-	writeJSON(w, http.StatusOK, a.repoDTO(mv.TenantSlug, g))
+	writeJSON(w, http.StatusOK, a.repoDTO(mv, g))
 }
 
 // branches (GET /api/internal-git/repos/{name}/branches) reads the bare's refs

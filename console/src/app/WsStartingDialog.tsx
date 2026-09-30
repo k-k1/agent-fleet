@@ -42,9 +42,13 @@ export function phaseKey(phase: string): MsgKey {
   if (p.startsWith("home: restoring")) return "wsstart.home_restoring";
   if (p.startsWith("home: creating")) return "wsstart.home_creating";
   if (p.startsWith("home: attaching") || p.startsWith("home: mounting")) return "wsstart.home_attaching";
+  // A Recreate or Clean home on the pool removes the files here, after the mount, and a
+  // large home can take minutes (ADR 0045 decision 32).
+  if (p.startsWith("home: clearing")) return "wsstart.home_clearing";
   // Not a phase of a start that is progressing — a start that is NOT going to finish.
-  // The CP sets this when ECS says it cannot place the task (docs/log/70 §70.14.6), which
-  // has no timeout: it stays `starting` until somebody changes something. The raw ECS
+  // The CP sets this when ECS says it cannot place the task (docs/log/70 §70.14.6): it
+  // stays `starting` until somebody changes something or the CP's start deadline stops the
+  // workspace. The raw ECS
   // sentence printed below the headline is the useful half — it names the constraint.
   if (p.startsWith("blocked:")) return "wsstart.blocked";
   return "wsstart.generic";

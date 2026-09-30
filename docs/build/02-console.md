@@ -1,7 +1,7 @@
 ---
 audience: "someone changing the Console — the browser side"
 source_of_truth: "the code (this is a map and a statement of intent)"
-updated: "2026-07"
+updated: "2026-09"
 ---
 
 # 02. Console (React + Vite + zustand)
@@ -10,11 +10,20 @@ English | [日本語](02-console.ja.md)
 
 ## 2.1 Stack and design principles
 
-A React 19 + Vite 6 + TypeScript + zustand 5 SPA. The CP serves the built bundle
-statically ([05 §5.4](05-api.md)); it talks to the backend over REST, SSE, and two
-WebSockets (terminal and browser). A full rebuild at feature parity in 2026-07 removed
-the God-context structure — the reasoning is
-[decisions/0011](../decisions/0011-console-rebuild.md). The principles:
+A single-page app in React, Vite, TypeScript and zustand; the versions are the ones in
+`console/package.json`. The CP serves the built bundle (§2.7). The Console talks to the
+CP over:
+
+- REST under `api/`;
+- one SSE push stream, `api/events`, which carries the frequently changing state (§2.3);
+- SSE responses for the assistant chat's turns and for the routes that hold a request
+  open while a model answers (`fetchHeld` in `core/api/client.ts`);
+- three WebSockets: `ws/terminal` (the PTY), `ws/browser` (the browser pane) and
+  `ws/browser-attachments` (an attached Chromium view).
+
+The route table and the wire rules belong to [05](05-api.md). The structure dates from a
+rebuild at feature parity in 2026-07 that removed the God-context design; the reasoning
+is [decisions/0011](../decisions/0011-console-rebuild.md). The principles:
 
 - **A store per domain, subscribed by selector.** No single context, no `bump*()`
   counters, no ref mirrors (§2.3).
@@ -23,212 +32,340 @@ the God-context structure — the reasoning is
 - **Cohesion by feature**: endpoint calls, state, UI and CSS live together under
   `features/<x>/`. CSS is co-located plain CSS (no CSS Modules; collisions are avoided
   by a class-prefix convention).
-- **StrictMode-proof**: no module-level mutable singletons, no wired-once flags. Every
-  `wire*()` returns its unsubscribe.
-- **Every URL is relative to `document.baseURI`.** Absolute paths are forbidden — this
-  runs behind a path-stripping proxy.
+- **StrictMode-proof**: the app renders under `React.StrictMode`. The app-wide wiring
+  the shell starts at boot (the `wire*()` / `start*()` calls in `app/App.tsx`) returns its
+  cleanup and is called from an effect, so the double mount leaves exactly one
+  subscription. There are no wired-once flags.
+- **Every URL is relative to `document.baseURI`** (`rel()` in `core/api/client.ts`;
+  `base: "./"` in `vite.config.js`). Absolute paths are forbidden: the Console may run
+  behind a path-stripping proxy, and `index.html` sets a `<base>` so that relative URLs
+  resolve under the mount.
 
-## 2.2 Directory responsibilities (`console/src/`)
+## 2.2 Where things live (`console/src/`)
 
 | Directory | Responsibility |
 |---|---|
-| `app/` | The shell and the two top bars, plus the viewport. Owns the boot order (resolve tenant → restore that tenant's layout → UI preferences → start polling) and the wiring of history, drawer and notifications |
-| `core/api/` | `client.ts`, the single point that wraps `fetch` (§2.3). Each feature re-exports only its own slice |
-| `core/store/` | The foundation stores: tenant (selection, memberships) and workspace (state machine plus start/stop) |
-| `layout/` | The pure-function pane layout engine (types / ops / migrate) plus the layout store. Covered by vitest (§2.4) |
-| `terminal/` | `term.ts`, where all the xterm knowledge lives, plus `service.ts` — the only entry point to xterm |
-| `ui/` | Primitives: Button, Modal, Section, Icon, FileIcon, Toast, Confirm, EmptyState, Sparkline… |
-| `features/*` | The 19 features (below) |
-| `styles/` | `tokens.css`, the only home for theme variables, plus a reset |
-| `agents/` | `registry.ts`, the single source of truth for agent kinds (§2.4) |
-| `lib/` | Pure logic and small hooks: the commit-graph lane DAG, file icons and metadata, terminal colour, project grouping, settings sync. Where testable functions go |
-| `types/` | Cross-cutting domain types |
+| `app/` | `main.tsx` (the entry point), the shell (`App.tsx`), the top bar and the workspace bar, the working-set switcher, the viewport and the phone gestures. The shell owns the boot order: the wiring and the pollers start, then tenant → UI preferences → that tenant's layout |
+| `core/api/` | `client.ts`: the one place that wraps `fetch` (§2.3) |
+| `core/push/` | The push channel: `events.ts` is the transport, `wire.ts` applies each stream's frames to its store |
+| `core/store/` | The foundation stores: tenant (selection, memberships, whoami), workspace (state machine plus start/stop), the left rail, the stats feed |
+| `core/auth/` | Latches for "the login session expired" and "this tenant needs another sign-in method". They stay outside React so non-React code can trip them |
+| `layout/` | The pure pane-layout engine (`types` / `ops` / `migrate`), the layout store, history, pop-out tabs (§2.4) |
+| `terminal/` | `term.ts`, where all the xterm knowledge lives, and `service.ts`, the only entry point to it |
+| `agents/` | `registry.ts`, one descriptor per session kind (§2.4) |
+| `ui/` | Primitives, for example Button, Modal, Section, Icon, FileIcon, the toast and confirm providers, the model picker |
+| `features/*` | One directory per feature (below) |
+| `lib/` | Pure logic and small hooks, for example the commit-graph lanes, file icons and metadata, terminal tints, UI-preference sync (`settings.ts`), working sets. i18n lives in `lib/i18n/` (§2.8) |
+| `styles/` | `tokens.css`, the only home for theme variables, plus `base.css` (the reset) |
+| `types/` | Cross-cutting domain types, for example sessions, chat and memos |
+| `assets/` | Bundled SVGs: `brandicons/` (agent CLIs, services, model providers; resolved by `lib/brandicons.ts`) and `fileicons/` (one folder per file-icon set; resolved by `lib/fileicons.ts`). Each has an `ATTRIBUTION.md` with the sources and licences |
+| `marp-themes/` | Custom Marp themes, one CSS file each with a `/* @theme name */` header; `features/viewer/MarpView.tsx` registers them so a deck can pick one with `theme: <name>` |
+| `test/` | The dom test setup, and static checks over the whole source tree (for example no raw control characters, no duplicate sibling keys) |
 
-| Feature | Role |
-|---|---|
-| `panes` | The pane host (flat-absolute rendering, drag-swap, drop-to-split), the pane, and the layout map |
-| `terminal` | The terminal view (a resident PTY), the mobile key row, the onboarding card |
-| `browser` | The browser pane (canvas, toolbar, IME), its controller and registry keyed by pane id |
-| `sessions` | Session rows, the create / rename / archive modals, the action hooks, the 4-second polling store, browser notifications on state change |
-| `repos` | Clone / launch / branch modals, the repo and directory pickers, the repo store |
-| `project` | The left pane's working-copy tree: base clone plus worktrees grouped per project, with sessions and files nested underneath. Also the home for sessions that belong to no repository |
-| `files` | Shared file-tree state and its refresh signal |
-| `scm` | Source control, changes, commit detail, working diff, commit graph, git diff |
-| `viewer` | File, code, Markdown (with mermaid), Marp, image, diff and document viewers |
-| `editor` | CodeMirror-based editing: dirty tracking, following external changes, fetching and applying AI suggestions |
-| `mirror` | The chat mirror of a session's transcript, and the context bar |
-| `chat` | The assistant chat (a headless CLI conversation, streamed over SSE) and its left-pane section |
-| `memo` | The memo queue: its section, the AI organise modal, sending a selection |
-| `schedules` | The scheduled-run section and its detail modal |
-| `keys` | The keyboard system: a capture-phase dispatcher, the command palette, which-key and cheat sheet, rebinding |
-| `notifications` | The notification centre: unread state, the toast log, the sound toggle |
-| `usage` | The per-feature token usage dashboard |
-| `auth` | The re-login modal shown when the session expires |
-| `settings` | The settings dialog (three groups × 24 tabs, §2.5), the admin dialog, connection-state polling |
+**`features/`** holds one directory per feature: its components, usually a `store.ts`,
+often an `api.ts`, and its CSS. The list is `ls console/src/features`. What the product
+offers, screen by screen, is [guide/ref/features.md](../../guide/ref/features.md); neither
+is repeated here. To find your way in, the directories fall into a few kinds, for example:
+
+- **What a pane shows**: `scm`, `viewer`, `editor`, `mirror` (the chat mirror of a
+  session), `browser`, `overview` (the sessions overview,
+  [ADR 0078](../decisions/0078-sessions-overview-pane.md)), `fleetgraph` (the fleet session
+  graph, [ADR 0096](../decisions/0096-fleet-session-graph.md)), `gallery`
+  ([ADR 0080](../decisions/0080-image-gallery-pane.md)), `imagegen` (the image-generation
+  studio, [ADR 0081](../decisions/0081-image-generation-pane.md) and
+  [ADR 0100](../decisions/0100-image-generation-studio.md)).
+- **What the left pane shows**: `project` (the working-copy tree), `chat` (assistants),
+  `memo`, `workitems`, `schedules`, `sharing`.
+- **Bars, dialogs and cross-cutting systems**: `panes` (the pane host), `sessions`,
+  `repos`, `settings`, `notifications`, `keys` (the keyboard system and command palette),
+  `auth`, `engines` (the engine indicator), `usage`, `cost`.
+
+Two conventions recur in them:
+
+- **`open.ts` is apart from the view.** Several pane-backed features — `overview`,
+  `fleetgraph`, `gallery`, `imagegen` and `scm`, for example — export their `open*()` from
+  an `open.ts` of its own; follow it for a new one. The keyboard command table imports
+  the opener, and importing the view would drag its rendering and CSS into every bundle
+  that has a menu. Older kinds open from elsewhere (`features/viewer/openFile.ts`,
+  `features/browser/attachmentAction.ts`).
+- **`api.ts` builds on `core/api/client.ts`; shapes may sit in `wire.ts`.** `client.ts`
+  reads `localStorage` and replaces `window.fetch` when it is imported, so it does not
+  load in the node test project. A pure module that needs only the types imports
+  `wire.ts`.
 
 ## 2.3 State and server sync
 
 - The stores are split per domain, and **selector subscription is what structurally
-  prevents "a 4-second poll re-renders the whole screen"**. Code outside React reaches
+  prevents "every push frame re-renders the whole screen"**. Code outside React reaches
   them through `getState()` / `setState()`.
 - Stores talk to each other by subscription. For example the shell refreshes repos,
-  sessions, files and chat on the workspace's stopped ↔ running **transition edge**,
-  ignoring the indeterminate states in between.
-- `features/files/sessionRefresh.ts` is the same shape over the session list: on a
-  session's **busy → not-busy edge** (working/compacting or backgroundBusy clearing —
-  the end of a turn) it fires a *scoped* files refresh, `refreshUnder("repos/<copy>")`.
-  The tree re-reads only the directories on screen under that prefix, and the changes
-  view swaps its list without blanking it — this is what stops files an agent created
-  or deleted from staying invisible until someone finds the refresh button. The session
-  list arrives over push/poll anyway, so the trigger costs no extra traffic; firings
-  coalesce per working copy and keep a 3-second minimum gap. ★ A failed re-read (5xx,
-  dropped fetch) MUST be swallowed and the current rows kept: writing the failure back
-  as an empty listing would empty the tree at the end of every turn.
-- Events lead, intervals are the safety net (the timings live in
-  `features/files/refreshPolicy.ts`). Two cases the turn-end edge cannot reach get their
-  own trigger: **mid-turn**, the working copies of running sessions are re-read every
-  20 s (the timer stops entirely when nothing is running, and never fires on a hidden tab
-  or a stopped workspace); **on tab/window return**, what is on screen is revalidated at
-  most every 10 s (the same gate set as `editor/probe.ts` §7.2). The latter is also the
+  sessions, files and chat on the workspace's stopped ↔ running **transition edge**
+  (`wireWorkspaceRefresh` in `app/App.tsx`), ignoring the indeterminate states in between.
+- **Push first, polling as the fallback.** `core/push/events.ts` holds one `api/events`
+  stream per tab and hands each frame to its handlers; the streams are the
+  `PushStream` type there, and the wire format is [05 §5.1](05-api.md#51-the-public-surface).
+  The pollers for the same data stay running and skip their tick while `pushHealthy()` is
+  true, so a broken stream, or a CP without the route, loses nothing. The workspace and
+  session pollers also drop their own result when a push frame for the same stream landed
+  while they were in flight (`pushStamp`) — except that the workspace refresh settling an
+  optimistic `…` state always lands; the other refreshes (work items, engines, for
+  example) have no such guard. Every (re)connect re-reads whoami and the session list, because a frame
+  is sent only when something changes. Data outside the push streams is polled on its own
+  schedule (repos every 60 s, for example).
+- **Workspace state** is the CP's value (`running`, `starting`, `stopped`, `none`) or the
+  client's `unknown` when the read failed. A trailing `…` marks an optimistic in-flight
+  state, which both the buttons and the poller treat as busy and leave alone.
+- `features/files/sessionRefresh.ts` watches the session list: on a session's
+  **busy → not-busy edge** (working/compacting or backgroundBusy clearing — the end of a
+  turn) it fires a *scoped* files refresh, `refreshUnder("repos/<copy>")`. The tree
+  re-reads only the directories on screen under that prefix, and the changes view swaps
+  its list without blanking it. Without it, files an agent created or deleted stay
+  invisible until someone presses refresh. The session list arrives anyway, so the trigger
+  costs no extra traffic; firings coalesce per working copy and keep a minimum gap.
+  **A failed re-read (5xx, dropped fetch) must be swallowed and the current rows kept**:
+  writing the failure back as an empty listing would empty the tree at the end of every
+  turn.
+- Events lead and intervals are the safety net; the timings live in
+  `features/files/refreshPolicy.ts`. Two cases the turn-end edge cannot reach get their
+  own trigger: **mid-turn**, the working copies of running sessions are re-read on an
+  interval (the timer stops when nothing is running, and never fires on a hidden tab or a
+  stopped workspace); **on tab or window return**, what is on screen is revalidated,
+  rate-limited, under the same gates as `features/editor/probe.ts`. The latter is also the
   only trigger that covers a session with no state model (shell, SSM) or a change made
-  outside Agent Fleet. Rows an automatic re-read ADDED are highlighted for a few seconds
+  outside Agent Fleet. Rows an automatic re-read added are highlighted for a few seconds
   (`.fs-new`).
-- Polling: workspace every 4 s, sessions every 4 s, repos every 60 s, resource stats
-  every 4 s. A trailing `…` marks an optimistic in-flight state, which both the buttons
-  and the poller treat as busy and leave alone.
-- `core/api/client.ts` wraps `window.fetch` and injects the tenant header on every
-  request (WebSockets, new tabs and downloads fall back to a query parameter —
-  [05 §5.4](05-api.md)). A 401 redirects to the login landing exactly once. Error-code
-  translation and the SSE, multipart and download helpers are all here. Long operations
-  are run synchronously and polled; there is no job queue.
+- **`core/api/client.ts` is the only door to the network.** It replaces `window.fetch`, so
+  every request — including a bare `fetch` — carries the `X-AF-Tenant` header. WebSockets,
+  new tabs and downloads cannot, and pass `?tenant=` instead
+  ([05 §5.4](05-api.md#54-cross-cutting-rules)). The rules a caller relies on:
+  - `api()` **does not reject on an HTTP error**; it resolves with `{error: {code, …}}`.
+    Only a network failure rejects. Check `r.error`, or a failure passes as success.
+  - `api()` answers a `304` with the object it returned last time, so **treat its results
+    as immutable**.
+  - A `401` does not navigate away. It trips a latch (`core/auth/authExpired.ts`) and the
+    re-login dialog (`features/auth/AuthExpiredModal.tsx`) opens; running terminals keep
+    working. The terminal socket bypasses the wrapper, so on a drop it probes one API call
+    to find out whether the cause was the login.
+  - The user-facing text for an error code is `errText()`, from the `err.<code>` catalogue
+    keys (§2.8).
+- `lib/attention.ts` reports real interaction to the CP at most once a minute while the
+  tab is visible, so someone who is only reading does not look idle and get their
+  workspace stopped.
 
 ## 2.4 Panes, layout and the terminal service
 
-- A layout is at most 4 columns of 1–2 panes each. `Pane.content` is a discriminated
-  union. **`session` lives on the pane, not on the content**: switching views keeps the
-  PTY socket and the scrollback alive but hidden, so going back to the terminal shows
-  the same session.
-- **The pane-id contract is a hard invariant.** A pane's id *is* the terminal's
-  identity: the xterm instance, the WebSocket and the DOM node are keyed by it.
-  Swapping and drop-splitting move a pane **keeping the same id**; renumbering or
-  duplicating is forbidden, because a new id builds a new xterm and a new WebGL
-  context, and **the terminal you just moved comes up blank**. The pure functions in
-  `layout/ops.ts` and their tests enforce this.
+- **A layout separates geometry from runtime** (`layout/types.ts`, layout version 3).
+  A **Cell** is geometry: the React key, activation, the ordinal badge, the drop target.
+  A **View** is the runtime identity: the tab, the xterm and its WebSocket, the browser
+  controller, the dirty editor. `View.content` is a discriminated union of what the view
+  renders (terminal, file, scm, the sessions overview, the studio, …). **`session` lives
+  on the View, not on the content**: switching what a view shows keeps the PTY socket and
+  scrollback alive but hidden, so going back to the terminal shows the same session.
+- **Two layout profiles**, chosen by a device-local preference: `split`, up to 4 columns
+  of 1–2 cells with one view each; and `tabs`, up to 3 columns, where each cell holds tabs
+  (24 views in all). Each profile keeps its own saved layout, so switching loses neither
+  arrangement. After a switch the terminal service and the browser registry dispose the
+  runtimes whose View ids the loaded layout does not contain.
+- **The id contract is a hard invariant.** Swapping, drop-splitting and moving a tab
+  keep both the View id and the Cell id; renumbering or duplicating is forbidden. For a
+  view that shows a terminal, a new View id builds a new xterm instance (and its renderer),
+  and **the terminal you just moved comes up blank**. The pure functions in `layout/ops.ts` and their tests enforce this.
 - `layout/ops.ts` is `Layout in → Layout out`. A no-op returns the input by reference,
-  so the caller can skip the commit on `next === cur`. The layout store's `commit()` is
-  **the only path that mutates**, and it does the state-only history push (the URL never
-  changes) and the per-tenant persistence.
-- **Tab order is most-recently-used.** `lastUsedAt` is not only for LRU eviction; it
-  decides **what to show when the visible tab goes away**. Closing, moving or detaching
-  all select the remaining tab you looked at last — open a file from the mirror, close
-  it, and you are back in the mirror. Stamps are strictly monotonic within a page
-  session so two touches in the same millisecond cannot tie.
-- **The terminal service is the only entry point to xterm.** One subscription to the
-  layout store reconciles "dispose the terminal of a pane that left the layout". The
-  contents of `term.ts` are hard-won domain knowledge and should be treated as
-  untouchable: zombie-socket detection via a heartbeat (text frames are out-of-band
-  control, binary is PTY output), WebGL rendering with context-loss recovery, keyboard
-  lock while focused, clipboard integration that copies on drag-select, and soft-keyboard
-  fitting. The DOM container is resident — toggled hidden, never re-parented, which is
-  what the flat-absolute pane host requires.
-- The browser registry is keyed by pane id too and owns the page, socket and canvas.
-  **Only `{kind, port, path}` is persisted**; the ephemeral browser id is not. Hiding
-  sets visibility false, the page is destroyed after 60 seconds, and showing it again —
-  or a reload, or a workspace restart — rebuilds it from the port and path.
-- `agents/registry.ts` is the **single source of truth for the nine kinds**. Each has
-  one descriptor (display, an availability predicate, a capability set), and the UI
-  branches on capabilities. **Adding an agent means adding a descriptor.**
+  so the caller can skip the commit on `next === cur`. Layout actions go through
+  the layout store's guarded paths, `commit()` and `commitAction()`. They record the
+  layout in `history.state` — a push for a navigation, a replace for activation, tab
+  selection and divider drags; the URL never changes — and schedule persistence once the
+  store is hydrated. Loading a saved layout or a profile, seeding a pop-out and restoring
+  from history set the layout directly.
+- **Persistence is per user and tenant, per tab.** The key is built by `LKEY_NEW` in
+  `layout/migrate.ts`. A tab's own layout is in `sessionStorage`, so two tabs keep
+  different layouts; `localStorage` holds the last one written, to seed a new tab. What is
+  read back is untrusted JSON: `migrate.ts` validates it per content kind, and **an
+  unknown kind loads as a blank terminal**.
+- **Adding a content kind** touches, for example, the union in `layout/types.ts`, the
+  validator in `layout/migrate.ts`, `sameTarget` in `layout/ops.ts` (which decides when a
+  second open focuses the existing view), the render switch in `features/panes/Pane.tsx`,
+  the titles in `features/panes/paneTitle.ts`, and the function that opens it. Miss the
+  validator and the view vanishes on reload.
+- **Which tab takes over is most-recently-used.** The strip's order is the cell's
+  `views` array: a new tab is appended, and dragging reorders it. `lastUsedAt` decides
+  the eviction victim and **what to show when the visible tab goes away**. Closing, moving or detaching all
+  select the remaining tab you looked at last — open a file from the mirror, close it,
+  and you are back in the mirror. Stamps are strictly monotonic within a page session so
+  two touches in the same millisecond cannot tie.
+- **Pop-out**: a view can move to its own browser tab (`?pane=<nonce>`,
+  `layout/popout.ts`). A popped-out tab does not write the shared `localStorage` seed.
+- **The terminal service is the only entry point to xterm** (`terminal/service.ts`). One
+  subscription to the layout store disposes the terminal of a view that left the layout.
+  `term.ts` is hard-won domain knowledge, to be changed with care: zombie-socket
+  detection by a heartbeat on the data channel (text frames are out-of-band control,
+  binary frames are PTY output), WebGL rendering with context-loss recovery, the Keyboard
+  Lock while focused, copy-on-select clipboard integration, and soft-keyboard fitting.
+  All panes are flat, absolutely positioned children of one host
+  (`features/panes/PaneHost.tsx`). A terminal's container must hold exactly one `.xterm`
+  (`terminal/paneContainer.dom.test.tsx`); an off-screen terminal gives its WebGL context
+  back, because browsers cap live contexts per tab.
+- The browser registry (`features/browser/controller.ts`, wired in `service.ts`) is keyed
+  by view id too and owns the page, the socket and the canvas. **Only `{kind, port, path}`
+  is persisted**; the page id is not. A hidden page is destroyed after 60 seconds, and
+  showing it again — or a reload, or a workspace restart — rebuilds it from the port and
+  path. How the browser pane is meant to be used is
+  [guide/ref/browser-pane.md](../../guide/ref/browser-pane.md).
+- **`agents/registry.ts` has one descriptor per session kind** — the agents plus `shell`
+  and `ssm` (`SESSION_KINDS` in `types/session.ts`). A descriptor holds the display
+  names, an availability predicate and a capability set, and the UI branches on
+  capabilities rather than on kind names. Adding a kind starts with a descriptor; the
+  other places that name kinds include the colours (§2.6) and
+  [guide/ref/agents.md](../../guide/ref/agents.md), whose capability rows
+  `agents/guideTable.test.ts` checks against the descriptors.
 - **Display names come in three widths**, and the internal identifiers are immutable
   lowercase: a two-letter `short` for cramped badges, a compact `label` for pane headers
-  and session rows, and a full `displayName` for launch and settings cards. Write
-  display code through the helpers, never by reading a raw label or hard-coding a name.
+  and session rows, and a full `displayName` for launch and settings cards. Write display
+  code through the helpers in `lib/sessionkind.ts` (`kindShort`, `kindLabel`,
+  `kindDisplayName`), never by reading a raw label or hard-coding a name.
 
 ## 2.5 Information architecture
 
-- **Two bars.** The top one holds the app name, the tenant picker (hidden when you
-  belong to one), the appearance popover, the account menu, settings, and — for a
-  deployment administrator only — admin. Below it, the workspace bar holds state and
-  Start/Stop, the resource chip, port preview, the per-agent usage chips, and the split
-  controls.
-- **Left pane**: the layout map, three resident sections (assistants, memo queue,
-  project tree), and a catch-all for sessions outside any repository. The flat
-  Sessions / Repos / Files sections were folded into the project tree — a project-first
-  IA.
+The screens themselves are described for members in `guide/member/`; this section is the
+shape a change has to fit.
+
+- **Two bars.** The top bar holds, for example, the app name, the tenant picker (hidden
+  when you belong to one tenant), the notification centre, the engine indicator, the
+  appearance popover and the account menu (guides, settings, tenant settings, admin,
+  sign-out). Below it, the workspace bar holds state and Start/Stop, resource and usage
+  chips, port preview and the split controls.
+- **Left pane**: the layout map, the working-set switcher, then the resident sections in
+  the order `app/App.tsx` renders them (assistants, work items, the memo queue, the
+  project tree and more). The project tree is the centre — a project-first IA: working
+  copies grouped per project, with their sessions and files nested underneath. Sessions
+  outside any repository, shared sessions and a global file browser sit below it.
 - **Main area**: the pane host.
 - **History navigation** pushes the layout into `history.state` **without changing the
   URL** (a path-stripping proxy makes URL paths unusable). Back and forward restore the
-  layout and the mobile drawer. "Back closes the modal" belongs to the shared modal
-  layer, and drill-downs stack on it.
+  layout and the phone drawer. "Back closes the modal" belongs to the shared modal layer
+  (`ui/Modal` with `lib/backClose.ts`), and drill-downs stack on it. The URLs the
+  Console reads are entry points, for example `?session=` (a notification link), `?pane=`
+  (a pop-out), `?tenant=` (after a sign-in), `?share=` (the Web Share Target) and
+  `open/browser-attachment/{id}`.
 - **A horizontal swipe on a phone rotates through running sessions** when the drawer is
-  closed. The order is the sessions list as returned, filtered by the working set — so
-  it matches what the left pane shows. A swipe starting at the left edge yields to the
-  drawer. Swipes are skipped when they start on a surface that has its own horizontal
-  gesture.
-
-  > **This is where a subtle bug lived, and the fix is worth understanding.** The
-  > horizontal-scroll test cannot use the computed value of `overflow-x`: CSS resolves
-  > `visible` to `auto` when the other axis is not visible, so a purely vertical
-  > scroller reads as `auto` too. One unbreakable string in a transcript — a digest, a
-  > URL with a query — pushed the mirror body sideways and **killed swiping for that
-  > one session entirely**: the container is an ancestor, so every touch was rejected,
-  > and scrolling the offending line off screen did not shrink `scrollWidth`. The fix
-  > is two-sided: stop producing the overflow (`overflow-wrap: anywhere` in the
-  > transcript), and declare the surface as vertical-only, so horizontal overflow there
-  > is by definition an accident. **The test itself was not loosened**, so genuinely
-  > bidirectional surfaces like code and diff views are unaffected.
-
-- **The settings dialog** is a three-group rail × 24 tabs (the old single row of six did
-  not scale; mobile drills rail → content). **Two of them appear only where the capability
-  exists**: cloud cost on a deployment with an AWS bill, preview subdomains on one that
-  issues them — a tab whose every control would be inert is not shown at all. Admin
-  functions are **not** mixed in — they are a separate dialog, reachable only by a
-  deployment administrator.
-- **The admin and tenant-settings dialogs share one shell and one rail.** The admin
-  rail has two levels, and opening a tenant swaps the whole rail into that tenant.
-  **One tenant's surface is a single component both dialogs point at** — it is the same
-  tenant seen from two entrances, so the IA is not duplicated. Which one you get is
-  decided by a server-provided flag alone.
+  closed. The selection rule is `features/sessions/rotate.ts` and the gesture is
+  `app/swipeGestures.ts`. The order is the session list as returned, filtered by the
+  working set, so it matches what the left pane shows. A swipe starting at the left edge
+  yields to the drawer. Swipes are skipped on a surface with its own horizontal gesture
+  (`app/swipeGuard.ts`: the browser pane, inputs, horizontal scrollers,
+  `[data-no-swipe]`).
+  - **The horizontal-scroller test cannot use the computed `overflow-x`**: CSS computes
+    `visible` to `auto` when the other axis is not visible, so a purely vertical scroller
+    reads as `auto` too. One unbreakable string in a transcript used to push the whole
+    mirror sideways and kill swiping for that session. The fix is two-sided: the
+    transcript wraps (`overflow-wrap: anywhere`), and a vertically read surface declares
+    `[data-swipe-y]`, so horizontal overflow there is by definition an accident. **Do not
+    loosen the test itself**: code and diff views genuinely pan both ways.
+- **Three settings dialogs**: personal settings, tenant settings (a tenant
+  administrator's) and admin (the deployment administrator's). Which tabs exist and where
+  they sit is [guide/ref/settings.md](../../guide/ref/settings.md). The rules for a change:
+  - Personal settings is a grouped rail (`GROUPS` in
+    `features/settings/SettingsDialog.tsx`); a phone drills rail → content. Section keys
+    are deep-link ids (`openSettings(section)`), so keep them when the rail is
+    reorganised; `settingsRail.dom.test.tsx` pins which group a section sits in.
+  - A tab whose capability the deployment lacks is not shown at all — for example cloud
+    cost without an AWS bill, and preview subdomains where none are issued.
+  - Admin functions are a separate dialog, never mixed into personal settings.
+  - **The tenant settings and admin dialogs share one shell, and one tenant's surface is
+    one component** (`features/settings/tenant/tenantScope.tsx`). The admin rail has two
+    levels; opening a tenant swaps the whole rail into that tenant. It is the same tenant
+    seen from two entrances, so the IA is not duplicated.
+  - What a dialog shows or hides is guidance only. **The server decides permissions.**
 
 ## 2.6 The display system
 
-- **Theme**: `styles/tokens.css` is the only home for the variables. A helper writes
+- **Theme**: `styles/tokens.css` is the only home for the variables (`:root` is dark,
+  `[data-theme=light]` overrides). `applyTheme()` in `lib/settings.ts` writes
   `data-theme` and the region variables; surface colours are tinted per theme so a light
-  theme does not end up with unreadable dark bars. **Known limit: xterm has no light
-  theme** — the terminal stays dark even in light mode.
-- **Agent kind colours** come from `--kind-*` in `tokens.css`, which is the **only hue
-  source**. Consumers use `var(--kind-*)` and `color-mix(…)` for tints; **no CSS file
-  contains a colour literal for a kind.**
-- **Icons split by role**: chrome is monochrome and follows `currentColor`; file types
-  are coloured SVGs resolved by extension.
-- **UI preferences are stored per user on the server.** localStorage is the immediate
-  cache, a debounced PUT persists, and boot merges **server-wins** — so your settings
-  follow you to another browser or device, and still work if the fetch fails.
-- **Phones are for monitoring plus light operation.** Every branch is confined to one
-  media query so the desktop DOM and CSS are untouched.
+  theme does not end up with unreadable dark bars. highlight.js follows the theme through
+  `--hl-*` variables. **Known limit: the terminal has no light theme** — it stays dark in
+  light mode.
+- **Agent kind colours** come from `--kind-*` in `tokens.css`, for both themes. CSS uses
+  `var(--kind-*)`, and `color-mix(…)` for tints; **a CSS file does not repeat a kind's
+  colour literal**. The one copy outside `tokens.css` is `lib/termcolor.ts`, which mixes the
+  dark values into terminal backgrounds and has to change with them. A new kind's hue is
+  checked against the existing hues and the semantic colours in both themes
+  (`console/scripts/kindcolor/`).
+- **Icons split by role**: chrome is monochrome codicons following `currentColor`; file
+  types are coloured SVGs resolved by extension (`lib/fileicons.ts`, `ui/FileIcon.tsx`).
+- **UI preferences are stored per user on the server** (`GET/PUT /api/env/ui-prefs`,
+  `lib/settings.ts`). `localStorage` is the immediate cache and a debounced `PUT`
+  persists. At boot `hydrateUIPrefs()` merges with the server copy winning, except for a
+  local change not yet saved, which stands and goes out with the next save. A read that
+  failed is never taken for an empty server. Some keys are **device-local** and never leave
+  the browser — the theme, the surface colours, the layout profile and the read-aloud
+  switch, for example (`DEVICE_LOCAL`). When saving fails, the Console says so
+  (`PrefsSyncBanner`).
+- **Phones are for monitoring plus light operation.** The phone breakpoint is 760 px
+  (`MOBILE_QUERY` in `lib/device.ts`, repeated in the CSS media queries). Phone-only
+  behaviour stays inside those branches so the desktop DOM and CSS are untouched.
 
-## 2.7 Build, and the hard constraints
+## 2.7 Build, serving and the hard constraints
 
-- `vite build`; in development, `--watch` plus a browser reload — the CP does not need
-  restarting ([10](10-development.md)). Mermaid and Marp are heap-hungry, so the Node
-  heap is raised **per command**, not globally. Sourcemaps are off (generating them has
+- `npm run build` is `vite build`; `npm run dev` is `vite build --watch`, and a browser
+  reload picks up the change — the CP does not need restarting
+  ([10](10-development.md)). Mermaid and Marp are heap-hungry, so the scripts raise the
+  Node heap **per command**, not globally. Sourcemaps are off (generating them has
   overflowed the heap before).
-- Mermaid and Marp are **lazily imported chunks**, kept out of the main bundle.
+- The heavy renderers are **lazily imported chunks**, kept out of the main bundle — for
+  example Mermaid, Marp, pdf.js, the office-document converter (WASM) and the CodeMirror
+  language packs.
 - **A Marp trap worth knowing**: even with maths disabled it *statically* requires
   MathJax (~43 MB) and KaTeX, so an untreated production build hangs during minify. An
-  alias swaps in a stub to keep it out of the bundle. **This is a fixed constraint —
+  alias in `vite.config.js` swaps in `marp-math-stub.js`. **This is a fixed constraint —
   removing the alias kills the build.**
-- The CP serves the bundle with `Cache-Control: no-store`, so a deployment is live
-  immediately ([05 §5.4](05-api.md)).
-- **Tests** are vitest over pure logic only — layout operations, library functions,
-  store transitions — capped at two workers for a shared host's memory. DOM and visual
-  behaviour are verified by looking at a browser ([10](10-development.md)).
+- **Serving.** The CP serves the directory `CONSOLE_DIR` names — the build output
+  `console/dist` in development — from `registerStatic` in `control-plane/routes.go`.
+  Which paths are cached and how is [05 §5.4](05-api.md#54-cross-cutting-rules)'s; what
+  that asks of a change:
+  - **A file under `assets/` must change its name whenever its bytes change.** Vite's
+    content hashes do this; a copied directory puts a version in its path, as the pdf.js
+    character maps do (`assets/pdfjs/<version>/`, the `afPdfjsAssets` plugin).
+  - A deployment reaches a tab on its next load of the shell. A tab that stays open finds
+    out through `version.json`, which the build writes and `lib/useUpdateCheck.tsx` polls,
+    and offers a reload.
+  - The CP rewrites `index.html` and the manifest per request when the deployment is
+    branded (`control-plane/brand.go`).
+  - `public/sw.js` exists only for the Web Share Target. It caches no app shell and
+    intercepts nothing else; keep it that way, or the rules above stop holding.
 
-## 2.8 Known debt (no behavioural impact)
+## 2.8 Text and i18n
 
-[decisions/0011](../decisions/0011-console-rebuild.md) carries the live status. In
-short: the mirror view is still a faithful port and wants breaking up; the commit
-graph, git diff and viewers are verbatim; extracted CSS has unused selectors to prune;
-the legacy button compatibility shim wants folding into the UI primitive; the layout
-persistence key keeps its old name (the older one is still read for migration); and
-sending a launch prompt to a non-chat kind waits for the TUI to come alive, which is a
-stopgap.
+- The catalogue is `lib/i18n/locales/{ja,en}/<domain>.ts`. Japanese is the master: a key
+  is `keyof` the Japanese catalogue, and each English file is typed against its Japanese
+  counterpart, so the type check fails on a missing or extra key. The default locale is
+  `ja`. Details and the reasoning: [decisions/0016](../decisions/0016-i18n.md).
+- React code uses `useT()`; code outside React uses `t()`. Error codes map to
+  `err.<code>` keys in `errors.ts`.
+- Japanese belongs in the catalogue and in user-visible strings, never in a comment
+  (`AGENTS.md`). `npm run i18n:lint` fails on raw Japanese in JSX text or string literals.
+  Files listed in `scripts/i18n-lint-pending.json` are a backlog that only warns, and a
+  file leaves that list once it is clean; `// i18n-exempt` marks text that is never
+  translated.
+
+## 2.9 Tests and checks
+
+Run them from `console/` (`AGENTS.md` explains why the repository root gives a wrong
+result).
+
+- **vitest has two projects** (`console/vite.config.js`). `node`, the default, runs
+  `*.test.ts(x)`: pure logic — layout operations, parsers, stores — and components
+  rendered to static markup. `dom` runs `*.dom.test.tsx` under jsdom, with
+  `src/test/domSetup.ts`, for tests that mount components. The split exists because
+  standing up jsdom costs about 1.3 s per test file; running everything under jsdom was
+  measured at 10.8 s → 51.3 s. Workers are capped at two for the shared host's memory.
+- **Typecheck**: `npm run typecheck` (`scripts/typecheck.mjs`).
+- **Lint**: `npm run lint` is oxlint with one rule, `react/rules-of-hooks`
+  (`.oxlintrc.json`). A hook below an early return has taken the whole Console black.
+- **CI** (`.github/workflows/ci.yml`, job `console`) runs typecheck, lint, i18n lint,
+  vitest, two checks in real headless Chromium (`pdf:check`, `doc:check`) and the build.
+- The other scripts in `package.json` (screenshots, mirror and viewer scroll checks, the
+  contrast check and more) drive a real headless browser too, but they are run by hand and
+  are not in CI.
+- **End to end**: `console-e2e/` (Playwright), a real browser through the CP to a real
+  container ([10 §10.4](10-development.md#104-testing)).

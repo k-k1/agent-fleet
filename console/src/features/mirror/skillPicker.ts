@@ -133,9 +133,11 @@ export function exactSkills(skills: SessionSkill[], query: string): SessionSkill
 
 // originKind: the origin convention dir of a foreign skill -> the kind shown in the UI. ".agents"
 // is the cross-agent shared convention and belongs to no kind -> null (a neutral "shared" badge).
-export function originKind(origin: string | undefined): "claude" | "codex" | null {
+// ".muse" only ever names muse's user root (the Agent's appendUserForeignSkills).
+export function originKind(origin: string | undefined): "claude" | "codex" | "muse" | null {
   if (origin === ".claude") return "claude";
   if (origin === ".codex") return "codex";
+  if (origin === ".muse") return "muse";
   return null;
 }
 

@@ -237,10 +237,18 @@ replies.
 ## Logging in to another in-house host (SSM)
 
 You can log in to EC2 instances in your company's AWS via AWS SSM Session Manager. Configuration lives in
-**⚙ Settings → the "AWS SSM" tab**, split into **two layers**.
+**⚙ Settings → the "AWS profiles/SSM" tab**, split into **two layers**.
 
 - **Profile (shared settings)** — the access portal (IAM Identity Center) and account/role. A bundle of SSO settings reused across multiple hosts. Create one of these first.
 - **SSM host (individual)** — an alias for the login target → instance ID. For authentication you just pick a profile.
+
+Each profile row has **Log in**, which signs you in to IAM Identity Center for that profile without leaving the
+Console. It opens a login window; the sign-in code is created only when you press **Log in** there, and only that
+window shows it. The login serves SSM sessions and `af-aws-exec` for that profile. The button is off for a profile
+without both an account and a role, and for one whose name another label also maps to (see below).
+Beside the label, a badge shows the login state: **Signed in**, **Renews on use** (the access token has expired;
+while the portal session is open, the next use renews it) or **Not signed in**. It shows no time left: the
+workspace knows only the access token's expiry (about an hour), not when the portal session ends.
 
 **No AWS secrets are stored in Agent Fleet.** Login happens at session start via the device-code flow — you
 approve the **`aws sso login`** URL shown in the terminal in your browser — and short-lived credentials are held
@@ -277,7 +285,8 @@ friends) win over `AWS_PROFILE`, so it does not pin who a command runs as.
 - Changes arrive **within about five minutes**, at the next workspace start, or immediately when you run
   `af-aws-exec`.
 
-**Logging in from a terminal.** Plain `aws sso login` opens a callback on `127.0.0.1` inside the workspace, which
+**Logging in from a terminal.** The profile row's **Log in** (above) does this in the Console. In a terminal, plain
+`aws sso login` opens a callback on `127.0.0.1` inside the workspace, which
 your browser cannot reach. Use the device-code flow instead:
 
 ```sh
@@ -348,7 +357,8 @@ af-aws-exec --profile <name> -- npx cdk deploy
   as a script in a shell session) and continues once you approve; if it has given up by then, the agent runs it again. **Close** keeps the request: it stays in the Console on your other devices too, so on a device
   whose browser cannot sign in, close it and press **Log in** in the Console on another one. **Cancel the request**
   is for a login you do not want: it withdraws the request, and for about a minute that profile is not asked for
-  again. Closing the toast only hides it in that tab. This covers your Settings profiles; for a profile you defined
+  again. Closing the toast only hides it in that tab. **Log in** on the profile's row in Settings works at any time, also
+  during that minute. This covers your Settings profiles; for a profile you defined
   yourself, or with `--no-login`, the command exits with code 3 and the login command to run in a terminal.
 - The command gets an AWS config that defines **only the profile you chose** (it hands back the same short-lived
   credentials), no credentials file, and no `AWS_ENDPOINT_URL*` overrides. A tool that names that same profile
@@ -393,6 +403,11 @@ workspace again).
 In **⚙ Settings → the "Danger zone" tab** is **"Recreate the workspace"**. It discards the
 container and rebuilds it from the latest image; pressing **"Recreate"** shows a confirmation. What stays and
 what goes is as follows.
+
+Not every deployment offers this tab. Recreating and cleaning home remove files from the home
+itself, and on some deployments the home is out of the control plane's reach
+([ref/deploy-targets](../ref/deploy-targets.md)); there the tab is not shown. Stopping and starting
+the workspace from the workspace bar works everywhere.
 
 - **What is lost** — running sessions, and **cloned repositories (`~/repos`, including uncommitted changes)**.
   `~/repos` is the **only** thing deleted.

@@ -262,7 +262,9 @@ func HandleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if err := ensureSessionTmux(name, false); err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
+		if !writeCodexReleasingErr(w, err) {
+			httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
+		}
 		return
 	}
 	// The carried entry is dropped here: delivery is asynchronous (there is a CLI boot to
@@ -318,7 +320,7 @@ func promoteCarriedOther(m session.Meta) bool {
 	if SessionAlive(m) {
 		reason = "halt"
 	}
-	c := status.Carried{Kind: pm.Kind, Permission: strings.TrimSpace(pm.Detail), Text: strings.TrimSpace(pm.Text)}
+	c := status.Carried{Kind: pm.Kind, Permission: strings.TrimSpace(pm.Detail), Plan: strings.TrimSpace(pm.Plan), Text: strings.TrimSpace(pm.Text)}
 	if pm.Kind == "question" {
 		raw, err := json.Marshal(pm.Questions)
 		if err != nil {
@@ -339,5 +341,5 @@ func sendManagedPrompt(m session.Meta, prompt string) error {
 	if err != nil {
 		return err
 	}
-	return h.Send(agents.TurnInput{Prompt: prompt})
+	return h.Send(agents.TurnInput{Prompt: prompt, Origin: agents.Origin{Kind: agents.OriginMember}})
 }

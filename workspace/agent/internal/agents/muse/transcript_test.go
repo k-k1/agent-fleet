@@ -407,13 +407,24 @@ func TestCompletedItemDropsItsFragments(t *testing.T) {
 	done.Text = sp("partial answer")
 	host.Notify(msp.NotificationItemCompleted, msp.ItemCompletedParams{Item: done, SessionID: h.sid})
 
+	// Wait for the store, not for the fragments: onItem drops the fragment before it appends,
+	// so returning on an empty overlay leaves the append writing under this test's HOME.
 	deadline = time.After(5 * time.Second)
-	for len(h.streamingText()) > 0 {
+	for {
+		if items, _ := openStore("sid-drop").Items(); len(items) == 1 {
+			if got := items[0].Text; got == nil || *got != "partial answer" {
+				t.Errorf("stored text = %v", got)
+			}
+			break
+		}
 		select {
 		case <-deadline:
-			t.Fatalf("fragments survived the completed item: %v", h.streamingText())
+			t.Fatal("the completed item never reached the store")
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+	if f := h.streamingText(); len(f) > 0 {
+		t.Errorf("fragments survived the completed item: %v", f)
 	}
 }
 
@@ -466,7 +477,7 @@ func TestTranscriptOverlaysThePendingPromptAndTheQueue(t *testing.T) {
 
 	h.mu.Lock()
 	h.inter = &agents.Interaction{ID: "q", Questions: []transcript.Question{{ID: "q", Question: "which?"}}}
-	h.queue = []agents.TurnInput{{Prompt: "next please"}}
+	h.tq().Accept(memberInput("next please", "cm-next"))
 	h.mu.Unlock()
 
 	td, ok := New().Transcript(m)
@@ -475,6 +486,9 @@ func TestTranscriptOverlaysThePendingPromptAndTheQueue(t *testing.T) {
 	}
 	if len(td.Pending) != 1 || td.Pending[0].Question != "which?" {
 		t.Errorf("Pending = %+v", td.Pending)
+	}
+	if len(td.QueuedItems) != 1 || td.QueuedItems[0].ID != "cm-next" || td.QueuedItems[0].State != agents.EntryQueued {
+		t.Errorf("QueuedItems = %+v", td.QueuedItems)
 	}
 	if len(td.Queued) != 1 || td.Queued[0] != "next please" {
 		t.Errorf("Queued = %+v", td.Queued)
@@ -652,14 +666,63 @@ func TestAMidTurnSwitchKeepsTheTurnsModel(t *testing.T) {
 	late.Text = sp("a")
 	h.onItem(late)
 
-	_, models, err := openStore(slotSid(m)).itemsWithModels()
+	_, meta, err := openStore(slotSid(m)).itemsWithMeta()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if models["a1"] != "model-a" || models["a2"] != "model-a" {
-		t.Fatalf("a1=%q a2=%q, want model-a for both (the turn started on it)", models["a1"], models["a2"])
+	if meta["a1"].model != "model-a" || meta["a2"].model != "model-a" {
+		t.Fatalf("a1=%q a2=%q, want model-a for both (the turn started on it)", meta["a1"].model, meta["a2"].model)
 	}
 	if h.turnModel != "" || h.model != "model-b" {
 		t.Fatalf("after the turn: turnModel=%q model=%q, want \"\" and model-b", h.turnModel, h.model)
+	}
+}
+
+// A user turn with images shows their paths in place of the host's placeholders, which is
+// what the mirror reads thumbnails from; a fork keeps them.
+func TestTranscriptPutsImagePathsInTheUserTurn(t *testing.T) {
+	newStore(t)
+	m := metaFor(t, "muse-images")
+	st := openStore(slotSid(m))
+	u := item(msp.ItemKindUserMessage, "u1", 1)
+	u.Text = sp("make it sticky[Image #1][Image #2]")
+	p1, p2 := "/home/dev/.cache/agent-fleet/pasted/k/paste-1.png", "/home/dev/.cache/agent-fleet/pasted/k/paste-2.png"
+	if err := st.appendRecord(record{Item: u, Images: []string{p1, p2}}); err != nil {
+		t.Fatal(err)
+	}
+	plain := item(msp.ItemKindUserMessage, "u2", 1)
+	plain.Text = sp("typed [Image #1] with nothing attached")
+	if err := st.Append(plain); err != nil {
+		t.Fatal(err)
+	}
+
+	check := func(m session.Meta) {
+		t.Helper()
+		td, _ := New().Transcript(m)
+		want := "make it sticky " + p1 + " " + p2
+		if len(td.Turns) != 2 || td.Turns[0].Text != want || td.Turns[0].Parts[0].Text != want {
+			t.Fatalf("turns = %+v, want the first to read %q", td.Turns, want)
+		}
+		// No recorded images, no rewrite: the placeholder is all this turn has to say.
+		if td.Turns[1].Text != "typed [Image #1] with nothing attached" {
+			t.Errorf("a turn without recorded images was rewritten: %q", td.Turns[1].Text)
+		}
+	}
+	check(m)
+	fork := metaFor(t, "muse-images-fork")
+	if err := st.ForkAt(slotSid(fork), ""); err != nil {
+		t.Fatal(err)
+	}
+	check(fork)
+}
+
+// An image sent with no words at all: the text is nothing but the placeholder, and the turn
+// becomes the path alone rather than an empty bubble.
+func TestAnImageOnlyUserTurnBecomesItsPath(t *testing.T) {
+	tn := transcript.Turn{Role: "user", Text: "[Image #1]", Parts: []transcript.Part{{Kind: "text", Text: "[Image #1]"}}}
+	p := "/home/dev/.cache/agent-fleet/pasted/k/paste-1.png"
+	withImagePaths(&tn, []string{p})
+	if tn.Text != p || tn.Parts[0].Text != p {
+		t.Fatalf("turn = %+v, want the path alone", tn)
 	}
 }

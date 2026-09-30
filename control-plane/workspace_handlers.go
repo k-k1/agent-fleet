@@ -10,7 +10,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -136,6 +135,29 @@ func workspaceLifecycleLeaseError(err error) *apiError {
 	return internalErr(err)
 }
 
+// homeWipeUnsupportedErr refuses a member's Recreate or Clean home on a runtime that
+// cannot reach the workspace home (home_wipe.go). Nothing has been stopped when it is
+// sent, so the workspace is exactly as it was.
+func homeWipeUnsupportedErr(op string) *apiError {
+	return &apiError{http.StatusNotImplemented, errCodeHomeWipeUnsupported,
+		op + " is not available on this deployment: its runtime cannot reach the workspace home"}
+}
+
+// homeWipeBlockedErr asks the runtime whether a member's wipe may run now, before anything
+// is stopped (runtime.HomeWipeBlocked). Under the lifecycle lease no Start can begin, so
+// the answer holds until the wipe is recorded.
+func homeWipeBlockedErr(ctx context.Context, rt runtime.Runtime) *apiError {
+	err := runtime.HomeWipeBlocked(ctx, rt)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, runtime.ErrHomeWipeWhileStarting):
+		return &apiError{http.StatusConflict, errCodeHomeWipeWhileStarting, err.Error()}
+	default:
+		return internalErr(err)
+	}
+}
+
 func newWorkspaceAPI(m *manager, autostart bool) workspaceAPI {
 	return workspaceAPI{memberAuth{m}, newAgentProxyAPI(m), autostart}
 }
@@ -150,6 +172,7 @@ func newWorkspaceAPI(m *manager, autostart bool) workspaceAPI {
 // No resolution preamble (pure header echo), so it registers unwrapped.
 func (a workspaceAPI) whoami(w http.ResponseWriter, r *http.Request) {
 	email := r.Header.Get(a.mgr.emailHeader)
+	ops := a.mgr.homeOperations()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"auth_mode":          a.mgr.authMode,
 		"resolved_user":      a.mgr.resolveUser(r),
@@ -162,6 +185,14 @@ func (a workspaceAPI) whoami(w http.ResponseWriter, r *http.Request) {
 		// (AF_SCHEDULER_INTERVAL > 0). The Console hides the schedules rail section when
 		// it is off, since no schedule can ever fire on this deployment (docs/log/38).
 		"scheduler_enabled": schedulerRunning,
+		// Deployment capability flags for the operations that remove part of a home
+		// (internal/runtime/home_wipe.go). The Console offers a member's Recreate and
+		// Clean home, an administrator's Clean home, and the backup deletion only where
+		// they are true: on the other runtimes the CP refuses them, and a button whose
+		// every press is refused is worse than no button.
+		"home_wipe":    ops.Wipe,
+		"home_erase":   ops.Erase,
+		"home_backups": ops.Backups,
 	})
 }
 
@@ -210,7 +241,15 @@ func (a workspaceAPI) start(w http.ResponseWriter, r *http.Request, res *resolve
 // encrypted store under ~/.config) persist; the cloned working copies under
 // ~/repos are wiped (the user accepts losing them, incl. uncommitted work) and
 // running sessions are lost — so the Console guards this behind a warning dialog.
+//
+// The adapter removes ~/repos where the home actually is (home_wipe.go). A runtime that
+// cannot reach it is refused before anything is stopped, rather than restarted and told
+// its working copies are gone.
 func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *resolved) {
+	if !runtime.CanWipeHome(res.rt) {
+		writeAPIErr(w, homeWipeUnsupportedErr("recreate"))
+		return
+	}
 	// Stop + wipe + restart under the local start lock and distributed owner lease
 	// so neither another process nor another CP replica can enter mid-teardown.
 	lock := a.mgr.startLockFor(res.ws.ID)
@@ -232,6 +271,10 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
 	}
+	if aerr := homeWipeBlockedErr(lease.Context(), res.rt); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	// Stop tolerates "does not exist yet" and the like (best-effort), but abort when the
 	// workspace is still alive — deleting under a live bind-mount leaves it inconsistent.
 	// "starting" (container up, Agent not answering yet) counts as alive: it is running
@@ -247,7 +290,7 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 	}
 	// Clear the working copies while the container is down. Targeted: we keep the
 	// encrypted secrets store and everything else in home.
-	if err := runtime.RemoveAllContext(lease.Context(), filepath.Join(a.mgr.rootedDataDir(res.ws), "home", "repos")); err != nil {
+	if err := runtime.WipeHome(lease.Context(), res.rt, runtime.HomeWipeRepos); err != nil {
 		if leaseErr := lease.checkpoint(r.Context()); leaseErr != nil {
 			writeAPIErr(w, workspaceLifecycleLeaseError(leaseErr))
 		} else {
@@ -274,9 +317,15 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 // survive; everything else in home (repos, ~/.local, ~/.cache, ~/.gradle, dotfiles)
 // is wiped and re-seeded by the entrypoint on start. Same self-serve member action
 // as recreate — the Console guards it behind its own warning dialog. (The admin
-// "clean home" action uses the same cleanHome but leaves the container stopped; here we
-// start back up so the member lands in a working, freshly-seeded environment.)
+// "clean home" action removes the same set but leaves the container stopped — see
+// manager.cleanHomeByMembership; here we start back up so the member lands in a working,
+// freshly-seeded environment.) As with recreate, a runtime that cannot reach the home is
+// refused before anything is stopped.
 func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *resolved) {
+	if !runtime.CanWipeHome(res.rt) {
+		writeAPIErr(w, homeWipeUnsupportedErr("clean-home"))
+		return
+	}
 	lock := a.mgr.startLockFor(res.ws.ID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -296,6 +345,10 @@ func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *res
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
 	}
+	if aerr := homeWipeBlockedErr(lease.Context(), res.rt); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	// As in recreate: abort when Stop failed and the workspace is still alive, to avoid
 	// deleting under a live bind-mount.
 	if err := res.rt.Stop(lease.Context()); err != nil && runtime.WorkspaceAlive(res.rt.State(r.Context())) {
@@ -308,8 +361,8 @@ func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *res
 		return
 	}
 	// Wipe home (keep-list preserved) while the container is down — deleting under a
-	// live bind-mount risks inconsistency (see cleanHome's contract in runtime_docker.go).
-	if err := runtime.CleanHomeContext(lease.Context(), a.mgr.rootedDataDir(res.ws)); err != nil {
+	// live bind-mount risks inconsistency (see cleanHomeContext in runtime_docker.go).
+	if err := runtime.WipeHome(lease.Context(), res.rt, runtime.HomeWipeClean); err != nil {
 		if leaseErr := lease.checkpoint(r.Context()); leaseErr != nil {
 			writeAPIErr(w, workspaceLifecycleLeaseError(leaseErr))
 		} else {

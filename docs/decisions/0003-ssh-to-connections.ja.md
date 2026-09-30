@@ -3,7 +3,7 @@
 [English](0003-ssh-to-connections.md) | 日本語
 
 - 状態: 確定（Phase 2）。旧 `docs/08-bitbucket.md`（SSH 鍵モデル・陳腐化のため削除済み）を置換
-- 関連: [HANDOFF §6.6](../HANDOFF.md) / [dev/05 API 契約](../build/05-api.ja.md)（旧 api-agent §7.0 API 表面地図） / [dev/07 §7.6 シークレット管理と封筒暗号](../build/07-security.ja.md#76-シークレット管理と封筒暗号)（旧 security §4.4）
+- 関連: [dev/08 外部システム連携](../build/08-integrations.ja.md)（旧 HANDOFF §6.6） / [dev/05 API 契約](../build/05-api.ja.md)（旧 api-agent §7.0 API 表面地図） / [dev/07 §7.6 シークレット管理と封筒暗号](../build/07-security.ja.md#76-シークレット管理と封筒暗号)（旧 security §4.4）
 
 ## 背景
 
@@ -30,5 +30,5 @@ WebUI で認証し、得た資格情報を**暗号化してコンテナ home に
 
 - 旧 `/sshkey`・`/sshkey/rotate` エンドポイント、`SshKey` テーブル、known_hosts 配布は廃止。
 - clone/fetch/**push** が透過認証。private repo も統一 cred helper で通る。submodule の SSH URL は
-  clone 後に HTTPS へ best-effort 書換（[HANDOFF §6.10.5](../HANDOFF.md)）。
+  clone 後に HTTPS へ best-effort 書換（[dev/04 §4.6](../build/04-agent.ja.md)、旧 HANDOFF §6.10.5）。
 - CP は Bitbucket/GitHub のトークンを預からない（漏洩面が小さい）。責任範囲は各ユーザーに閉じる。

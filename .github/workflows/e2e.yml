@@ -10,11 +10,10 @@
 # input is set.
 #
 # Agent-CLI contract / drift detection does not live here (separate files, no image
-# build needed): claude-tui-contract.yml / codex-contract.yml / opencode-contract.yml.
+# build needed): the *-contract.yml workflows.
 # Version-drift monitoring itself is cli-drift.yml. Overall layout: docs/build/10-development.md.
-# Note: rtk is always baked in (BAKE_RTK=1 default, ARG-pinned), so CI-built images
-# also contain rtk and the L1 smoke verifies its inclusion (the old host vendor
-# path is gone).
+# Note: the image builds below pass BAKE_AGENT_CLIS=1, which bakes rtk too
+# (BAKE_RTK=1 default, ARG-pinned), so the L1 smoke verifies its inclusion.
 name: e2e
 
 # Least privilege for GITHUB_TOKEN. The repo default is already read-only, but this
@@ -59,8 +58,8 @@ jobs:
     env:
       WS_IMAGE: agent-fleet/workspace:dev
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: control-plane/go.mod
           cache-dependency-path: control-plane/go.sum
@@ -74,9 +73,9 @@ jobs:
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
             /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
           df -h /
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: build workspace image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: workspace
           tags: ${{ env.WS_IMAGE }}
@@ -101,12 +100,12 @@ jobs:
     env:
       WS_IMAGE: agent-fleet/workspace:dev
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: control-plane/go.mod
           cache-dependency-path: control-plane/go.sum
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -123,9 +122,9 @@ jobs:
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
             /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
           df -h /
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: build workspace image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: workspace
           tags: ${{ env.WS_IMAGE }}
@@ -150,7 +149,7 @@ jobs:
         run: npx playwright test
       - name: upload traces & CP log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ui-e2e-results
           path: console-e2e/test-results/
@@ -167,8 +166,8 @@ jobs:
     env:
       WS_IMAGE: agent-fleet/workspace:dev
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: control-plane/go.mod
           cache-dependency-path: control-plane/go.sum
@@ -182,9 +181,9 @@ jobs:
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
             /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
           df -h /
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: build workspace image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: workspace
           tags: ${{ env.WS_IMAGE }}

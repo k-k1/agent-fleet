@@ -1612,12 +1612,30 @@ func (a engineAdminAPI) deleteModel(w http.ResponseWriter, r *http.Request, iden
 			}
 		}
 	}
+	// Deleting the bytes cannot be undone, so the request is on record before the row goes,
+	// and refused when it cannot be (store.BeginIrreversible). Forgetting alone is not: the
+	// row can be registered again.
+	var purge *store.AuditIntent
+	if r.URL.Query().Get("purge") == "1" {
+		var ok bool
+		if purge, ok = beginIrreversible(w, r, a.mgr.store, store.AuditLog{
+			ActorKind: "admin", ActorID: ident.ID, Action: "engine." + key + ".model", Target: "purge " + id,
+		}); !ok {
+			return
+		}
+	}
 	found, err := a.mgr.store.DeleteEngineModel(r.Context(), key, id)
 	if err != nil {
+		if purge != nil {
+			purge.Done(r.Context(), "error: "+err.Error(), http.StatusInternalServerError)
+		}
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	if !found {
+		if purge != nil {
+			purge.Done(r.Context(), "no such model", http.StatusNotFound)
+		}
 		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineModelUnknown, "no model " + id + " for engine " + key})
 		return
 	}
@@ -1625,7 +1643,14 @@ func (a engineAdminAPI) deleteModel(w http.ResponseWriter, r *http.Request, iden
 	// getting one (ADR 0072 decision 7). The ingest task does it, in MODE=delete, because that
 	// task is the one principal in the deployment allowed to write in that bucket at all.
 	purged := ""
-	if r.URL.Query().Get("purge") == "1" && len(keys) > 0 {
+	switch {
+	case purge != nil && len(keys) == 0 && lerr != nil:
+		// No keys because the catalogue could not be read, not because the row had none.
+		purged = "the row is gone; whether it had files is unknown: the catalogue could not be read (" +
+			lerr.Error() + ")"
+	case purge != nil && len(keys) == 0:
+		purged = "the row held no file to delete"
+	case purge != nil:
 		// 🔴 A file may belong to more than one row, and decision 2 says so on purpose:
 		// `text_encoders/` is SHARED — SD3.5 and FLUX.1 read the same T5-XXL and CLIP-L, so one
 		// ingest is pointed at from both rows' `files[]`. Handing this row's keys straight to
@@ -1663,15 +1688,23 @@ func (a engineAdminAPI) deleteModel(w http.ResponseWriter, r *http.Request, iden
 				}
 			}
 		}
-		a.audit(r.Context(), ident, "engine."+key+".model", "purge "+id+": "+purged)
 	}
 	e.catalog.invalidate()
 	// A deleted row may have been enabled, so the box's active set really has changed.
 	if perr := e.publishActiveSet(r.Context()); perr != nil {
+		if purge != nil {
+			purge.Done(r.Context(), purged+"; the active set was not published: "+perr.Error(), http.StatusBadGateway)
+		}
 		writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeEnginePublishFailed, perr.Error()})
 		return
 	}
-	a.audit(r.Context(), ident, "engine."+key+".model", "forget "+id)
+	// A purge's outcome row is its whole record; a second "forget" row would make one request
+	// read as two.
+	if purge != nil {
+		purge.Done(r.Context(), purged, http.StatusOK)
+	} else {
+		a.audit(r.Context(), ident, "engine."+key+".model", "forget "+id)
+	}
 	go notifyEngineCatalogChanged(context.WithoutCancel(r.Context()), a.mgr, key)
 	row := a.row(r.Context(), e)
 	if purged != "" {

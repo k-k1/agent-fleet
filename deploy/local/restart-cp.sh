@@ -2,11 +2,12 @@
 # Rebuild ONLY the Control Plane (Go) + Console (Vite) and restart the running
 # `af-cp` host process in place — no Workspace image rebuild. Use this to reflect
 # changes under control-plane/ or console/ during dev. For Workspace/Agent changes
-# (workspace/), rebuild the image instead — see docs/HANDOFF.md §2 (the
-# "what-to-rebuild" quick reference).
+# (workspace/), rebuild the image instead — see docs/build/10-development.md
+# §10.2 (what each kind of change takes).
 #
-# Env is reproduced exactly as deploy/local/run-dev.sh would: oauth.env supplies
-# AUTH + secrets + CP_ADDR; the WS_* defaults below match run-dev.sh.
+# Env is reproduced exactly as deploy/local/run-dev.sh would: oauth.env, when present,
+# supplies AUTH + secrets + CP_ADDR (without it the CP starts with AUTH=dev, as a
+# plain run-dev.sh start does); the WS_* defaults below match run-dev.sh.
 #
 # Run from a shell that has the `docker` group (the launched CP shells out to
 # docker for Workspace start/stop) — on a non-login shell use `sg docker -c`.
@@ -18,7 +19,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 export PATH="$HOME/.local/go/bin:$HOME/go/bin:$PATH"
 
 # --- env (mirror run-dev.sh) -------------------------------------------------
-set -a; . "$ROOT/deploy/local/oauth.env"; set +a   # AUTH, CP_ADDR, AF_*, *_OAUTH_*
+OAUTH_ENV="$ROOT/deploy/local/oauth.env"
+if [ -f "$OAUTH_ENV" ]; then
+  # shellcheck disable=SC1090
+  set -a; . "$OAUTH_ENV"; set +a   # AUTH, CP_ADDR, AF_*, *_OAUTH_*
+fi
 export CONSOLE_DIR="$ROOT/console/dist"
 export WS_IMAGE="${WS_IMAGE:-agent-fleet/workspace:dev}"
 export WS_DATA="${WS_DATA:-$HOME/.local/share/agent-fleet}"

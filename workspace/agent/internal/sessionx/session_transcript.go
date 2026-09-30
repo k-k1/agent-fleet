@@ -271,6 +271,13 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 			resp["queuedPrompts"] = q
 		}
 	}
+	// The reply claude is still writing (#1250): what the MessageDisplay hook has flushed and
+	// the transcript does not show yet. See session_livetext.go.
+	if wantsLiveReply(r, alive, state) {
+		if txt := liveReplyText(sid, lines, time.Now()); txt != "" {
+			resp["liveText"] = txt
+		}
+	}
 	// Surface terminal-only states (startup resume menu / auto-compaction) the chat
 	// can't otherwise see, so the Console can prompt the user or show a compacting badge.
 	if alive {
@@ -436,6 +443,18 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	// queue only means anything while a turn runs, and this hides stale leftovers.
 	if alive && state == "working" && len(td.Queued) > 0 {
 		resp["queuedPrompts"] = td.Queued
+	}
+	// The same queue with ids, origins and states (ADR 0105 decision 5). queuedPrompts stays
+	// for older Consoles. Not gated on working: only a Managed driver fills QueuedItems, from
+	// its own queue, so there are no stale leftovers to hide — and a codex question raised with
+	// input queued behind it is exactly when the member needs to see that queue (decision 3).
+	if alive && len(td.QueuedItems) > 0 {
+		resp["queuedItems"] = td.QueuedItems
+	}
+	// What the last stops discarded and the driver keeps for return (decision 4). Not gated on
+	// the state: the notice is exactly what a member sees after the turn went idle.
+	if len(td.Discards) > 0 {
+		resp["discardedInputs"] = td.Discards
 	}
 	// Compaction in flight (opencode session.time_compacting): reuse the chat's claude
 	// compacting block (spinner-only — opencode reports no progress percentage).

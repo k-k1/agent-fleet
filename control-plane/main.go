@@ -137,6 +137,9 @@ func main() {
 		// implement the same interface for true per-tenant crypto-shred.
 		mgr.custodian = newLocalCustodian(mgr.master32)
 	}
+	if mgr.plaintextSecrets() {
+		log.Printf(plaintextSecretsLog, mgr.authMode)
+	}
 
 	// MetadataStore (P3-1, docs/13): SQLite is the source of truth for the
 	// tenant/user/workspace records. Migrate, ensure the default tenant, then
@@ -226,8 +229,8 @@ func main() {
 	// Internal git provider: the clone host workspaces authenticate against is the
 	// public base's host (Caddy TLS terminus). Recorded on the manager so each
 	// workspace start injects a token for it (docs/reference/internal-git-provider).
+	mgr.internalGitHost = internalGitCredentialHost(publicBaseURL)
 	if u, err := url.Parse(publicBaseURL); err == nil {
-		mgr.internalGitHost = u.Hostname()
 		wsAllowedOriginHost = u.Host // WS origin allowlist (checkWSOrigin)
 	}
 	// Full public base (scheme+host) for the in-container memo bridge (AF_CP_BASE_URL).
@@ -336,11 +339,16 @@ func main() {
 	// admin usage view can attribute infra occupancy per tenant/member. Non-
 	// destructive (DB writes only), so it is on by default; AF_USAGE_SAMPLE_INTERVAL=0
 	// disables it.
-	if iv := envx.DurationOr(os.Getenv("AF_USAGE_SAMPLE_INTERVAL"), 5*time.Minute); iv > 0 {
+	if iv := intervalOff(os.Getenv("AF_USAGE_SAMPLE_INTERVAL"), 5*time.Minute); iv > 0 {
 		// Recorded before the goroutine starts: the heatmap API divides by it, and a
 		// zero here would make every cell read as "ran the whole hour" (docs/log/83).
 		mgr.usageInterval = iv
-		go newUsageSampler(mgr, iv).run(context.Background())
+		sampler := newUsageSampler(mgr, iv)
+		// The ceiling on `starting` (start_deadline.go). 30 minutes is several times the
+		// slowest launch that does converge — a Fargate cold pull, an ecs-ec2 slot built
+		// from nothing — and only a launch that cannot converge reaches it. "0" = off.
+		sampler.deadline = newStartDeadline(mgr, intervalOff(os.Getenv("AF_WORKSPACE_START_DEADLINE"), 30*time.Minute))
+		go sampler.run(context.Background())
 	}
 
 	// Cloud cost (docs/log/67 + ADR 0048): the AWS invoice, attributed per member by cost
@@ -362,7 +370,7 @@ func main() {
 	// orphaned LFS objects, sequential — cheap on the shared host. Default 24h;
 	// AF_GIT_GC_INTERVAL=0 disables it. AF_LFS_GC_GRACE (default 14d) protects
 	// recently-uploaded LFS objects from pruning so GC never races an in-flight push.
-	if iv := envx.DurationOr(os.Getenv("AF_GIT_GC_INTERVAL"), 24*time.Hour); iv > 0 {
+	if iv := intervalOff(os.Getenv("AF_GIT_GC_INTERVAL"), 24*time.Hour); iv > 0 {
 		grace := envx.DurationOr(os.Getenv("AF_LFS_GC_GRACE"), 14*24*time.Hour)
 		go newGitGC(mgr.store, mgr.dataRoot, iv, grace).run(context.Background())
 	}
@@ -376,7 +384,7 @@ func main() {
 	// schedule wakes a stopped workspace and injects a session unattended; the P2 wake
 	// firer resolves the owner, applies the wake policy, holds a reaper keep-alive for
 	// AF_SCHEDULE_SETTLE, and injects via create_session.
-	if iv := envx.DurationOr(os.Getenv("AF_SCHEDULER_INTERVAL"), time.Minute); iv > 0 {
+	if iv := intervalOff(os.Getenv("AF_SCHEDULER_INTERVAL"), time.Minute); iv > 0 {
 		settle := envx.DurationOr(os.Getenv("AF_SCHEDULE_SETTLE"), 5*time.Minute)
 		// How long a fire waits for the woken Agent. Defaults to agentBootBudget — the
 		// SAME window the platform already grants a boot to say "starting" — because any

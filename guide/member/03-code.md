@@ -72,6 +72,8 @@ can copy the clone URL or **"Browse"** the contents (browsing without cloning). 
 prototypes and in-team sharing.
 
 - A repository can be **renamed**, and **deleted** when no longer needed (deletion cannot be undone).
+  Only **the person who created it or a tenant administrator** can do either; on other rows the two
+  buttons are not shown.
 - The tab talks to the control plane directly, so **it works while the workspace is stopped**.
 - It also serves as a home for code that must not leave the building. Clone it like any other
   repository — "Start" → "Clone a new repository…" — by pasting the URL you copied.
@@ -118,12 +120,44 @@ depending on state and location.
 
 - **Open commit graph** / **Open the folder** / **Commit changes**
 - **Switch branch** / **Copy the branch name** / **Fast-Forward** (on a worktree, **"Fast-forward from the parent"**)
+- **Initialize Git Flow** (a git repository's base copy only) — see [below](#initialize-git-flow)
 - **Project settings** — the MCP definitions committed in that repository, with per-agent status and warnings ([12](12-settings.md#mcp-servers))
 - **Share…** — share this working copy's (project's) sessions with another member ([02](02-sessions.md#sharing-a-conversation-shared-sessions))
 - **Assignment to a working set** ([02](02-sessions.md#narrowing-the-view-with-working-sets))
 - Per-kind session launch: claude, codex, opencode, shell, and so on
 - **Stop the sessions below** — stops every session running in that copy and in the copies nested under it, from one modal ([02](02-sessions.md#stopping-and-tidying-up-sessions))
 - **Delete the working copy** (only for working copies that can be deleted)
+
+### Initialize Git Flow
+
+git-flow keeps its settings in `.git/config`, which a clone does not copy, so a repository that
+runs git-flow usually declares nothing in the copy Agent Fleet made. **Initialize Git Flow** writes
+the settings `git flow init` would write, so that new branches for issues start from the
+development branch with git-flow's prefixes.
+
+- **Fields:** production branch, development branch, feature / release / hotfix prefix, version
+  tag prefix, and an optional bugfix prefix. They are filled in from the settings already present,
+  the repository's Bitbucket branching model when it declares something, and which of `develop`,
+  `main` and `master` exist.
+- **What it writes:** the `gitflow.branch.*` and `gitflow.prefix.*` keys, into the base copy's git
+  config. `support/` is added only when it is not set, and an empty bugfix prefix leaves that
+  setting as it is. Nothing is committed and nothing is checked out.
+- **Shared:** every worktree and session of the repository reads these settings at once. Settings
+  that already exist and would change are listed before you save, and the button reads
+  **Overwrite**. If someone changes them while the dialog is open, saving is refused and the
+  dialog reloads.
+- **Refused** when the production or development branch exists neither locally nor on `origin`.
+- **Only on origin:** the `git flow` command and Fork want the production and development branches
+  locally, so saving creates a local branch tracking the one on `origin` (like
+  `git branch --track develop origin/develop`). The dialog says so under the field, and the message
+  after saving names the branches it created. It never checks one out, and it never moves a local
+  branch that already exists, even when it differs from `origin`'s. If the branch is created but its
+  upstream cannot be set, saving again will not fix that; the dialog shows the
+  `git branch --set-upstream-to=…` command to run instead.
+- A committed `.agent-fleet/branches` or `.gitflow` takes precedence over these settings where the
+  two overlap, and the dialog says so.
+- When you start work from an issue in a repository whose `origin` has `develop` and that declares
+  nothing, the launch dialog offers **Initialize Git Flow…**. It never initializes by itself.
 
 ## Commit in the commit graph view
 

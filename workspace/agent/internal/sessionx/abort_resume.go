@@ -224,7 +224,7 @@ func abortResumeAttempt(m session.Meta, st abortResumeState, a claude.Abort, now
 	st.Attempts++
 	st.LastTry = now.Format(time.RFC3339)
 	_ = abortResumeStates.Write(m.Name, st)
-	if err := abortResumeInject(m.Name, prompt); err != nil {
+	if err := abortResumeInject(m.Name, prompt, agents.Origin{Kind: agents.OriginAutoResume}); err != nil {
 		st.Attempts--
 		st.DeliverTries++
 		if st.DeliverTries >= abortResumeMaxDeliverTries {

@@ -1,7 +1,7 @@
 ---
 audience: "Console（ブラウザ側）を変える人"
 source_of_truth: "コード（本書は地図と設計意図）"
-updated: "2026-07"
+updated: "2026-09"
 ---
 
 # 02. Console（React + Vite + zustand）
@@ -10,217 +10,310 @@ updated: "2026-07"
 
 ## 2.1 スタックと設計原則
 
-React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を静的配信し（[05 §5.4](05-api.ja.md)）、
-バックエンドとは `/api` REST・SSE・`/ws/terminal`・`/ws/browser` で会話する。2026-07 に機能パリティを保った全面リビルド
-（[decisions/0011](../decisions/0011-console-rebuild.ja.md)）で God-context 構造を廃した — 経緯と決定は
+React・Vite・TypeScript・zustand の SPA。版は `console/package.json` にあるもの。ビルド成果物は
+CP が配信する（§2.7）。Console と CP の会話は次のとおり。
+
+- `api/` 配下の REST
+- よく変わる状態を運ぶ SSE のプッシュストリーム `api/events` 1 本（§2.3）
+- アシスタントチャットのターンと、モデルが答えるまでリクエストを保持するルートの SSE 応答
+  （`core/api/client.ts` の `fetchHeld`）
+- WebSocket 3 本: `ws/terminal`（PTY）・`ws/browser`（ブラウザペイン）・`ws/browser-attachments`
+  （アタッチした Chromium の表示）
+
+ルート表とワイヤの規則は [05](05-api.ja.md) の持ち物。今の構造は、2026-07 に機能パリティを保った
+全面リビルドで God-context 構造を廃したときのもので、経緯は
 [decisions/0011](../decisions/0011-console-rebuild.ja.md)。設計原則:
 
-- **ドメイン別 zustand ストア + selector 購読**。単一 Context・`bump*()` カウンタ・ref ミラーは全廃（§2.3）。
-- **レイアウト演算は純関数**（`console/src/layout/`）。副作用（永続・履歴・xterm）はストアとサービスが所有（§2.4）。
-- **feature 単位の凝集**: endpoints 呼び出し・状態・UI・CSS を `features/<x>/` に同居。CSS は co-located プレーン CSS
-  （CSS Modules 不使用、クラス接頭辞規約で衝突回避）。
-- **StrictMode 耐性**: モジュールレベル可変シングルトン・wired-once フラグ禁止。`wire*()` は必ず unsubscribe を返す。
-- **全 URL は `document.baseURI` 相対**（`rel()`）。絶対パス禁止（path-strip プロキシ配下で動くため）。
+- **ドメイン別ストア + selector 購読**。単一 Context・`bump*()` カウンタ・ref ミラーは持たない（§2.3）。
+- **レイアウト演算は純関数**（`console/src/layout/`）。副作用（永続・履歴・xterm）はストアとサービスが
+  持つ（§2.4）。
+- **feature 単位の凝集**: エンドポイント呼び出し・状態・UI・CSS を `features/<x>/` に同居させる。CSS は
+  co-located のプレーン CSS（CSS Modules は使わず、クラス接頭辞の規約で衝突を避ける）。
+- **StrictMode 耐性**: アプリは `React.StrictMode` の下で描画する。シェルが起動時に始めるアプリ全体の
+  結線（`app/App.tsx` の `wire*()` / `start*()` 呼び出し）は後始末を返し、エフェクトから呼ばれるので、
+  二重マウントの後も購読は 1 本だけ残る。wired-once フラグは無い。
+- **全 URL は `document.baseURI` 相対**（`core/api/client.ts` の `rel()`、`vite.config.js` の
+  `base: "./"`）。絶対パスは禁止: Console は path-strip プロキシの配下で動くことがあり、
+  `index.html` が `<base>` を立てて相対 URL をマウント先の下に解決させている。
 
-## 2.2 ディレクトリ責務（console/src/）
+## 2.2 どこに何があるか（`console/src/`）
 
 | ディレクトリ | 責務 |
-|-------------|------|
-| `app/` | シェル（App）と 2 段バー（TopBar / WsBar）・viewport。boot 順（tenant 解決 → per-tenant レイアウト復元 → ui-prefs → ポーリング開始）、履歴・drawer・通知の一括結線を所有 |
-| `core/api/` | `client.ts` = fetch ラップの単一点（§2.3）。各 feature は `features/*/api.ts` で自分のスライスだけ再輸出 |
-| `core/store/` | 基盤ストア: tenant（選択・membership）と workspace（状態機械 + start/stop）|
-| `layout/` | ペインレイアウトの純関数エンジン（types / ops / migrate）+ layout ストア。vitest 対象（§2.4）|
-| `terminal/` | `term.ts`（xterm 実装知識の塊）+ `service.ts`（TermService = xterm への唯一の入口）|
-| `ui/` | プリミティブ: Button / Modal / Section / Icon / FileIcon / Toast / Confirm / EmptyState / Sparkline 等 |
-| `features/*` | 機能 19 個（下表）|
-| `styles/` | `tokens.css`（テーマ変数の唯一の置き場）+ `base.css`（リセット）|
-| `agents/` | `registry.ts` = エージェント kind の単一真実源（§2.4）|
-| `lib/` | 純ロジックと小 hook: gitgraph（レーン DAG）・fileicons/filemeta・termcolor・project グルーピング・settings（ui-prefs 同期）等。テスト可能な関数の置き場 |
-| `types/` | 横断ドメイン型（session / layout / chat / memo / assistant）|
+|---|---|
+| `app/` | `main.tsx`（入口）・シェル（`App.tsx`）・画面最上部のバーとワークスペースバー・作業グループの切替・viewport・スマホのジェスチャ。boot 順はシェルの持ち物: 結線とポーラーが始まり、テナント → UI 設定 → そのテナントのレイアウトの順に進む |
+| `core/api/` | `client.ts`: `fetch` をラップする唯一の場所（§2.3）|
+| `core/push/` | プッシュチャネル: `events.ts` が受信、`wire.ts` がストリームごとのフレームをストアへ適用 |
+| `core/store/` | 基盤ストア: テナント（選択・所属・whoami）・ワークスペース（状態機械 + start/stop）・左レール・統計フィード |
+| `core/auth/` | 「ログインセッションが切れた」「このテナントは別のサインイン方式が要る」のラッチ。React の外に置き、React 外のコードからも立てられるようにしている |
+| `layout/` | ペインレイアウトの純関数エンジン（`types` / `ops` / `migrate`）・layout ストア・履歴・ポップアウトタブ（§2.4）|
+| `terminal/` | xterm の知識を集めた `term.ts` と、そこへの唯一の入口 `service.ts` |
+| `agents/` | `registry.ts`: セッション種別ごとに記述子 1 つ（§2.4）|
+| `ui/` | プリミティブ。例: Button・Modal・Section・Icon・FileIcon・トーストと確認のプロバイダ・モデルピッカー |
+| `features/*` | 機能ごとに 1 ディレクトリ（下記）|
+| `lib/` | 純ロジックと小さな hook。例: コミットグラフのレーン・ファイルアイコンとメタデータ・端末の色味・UI 設定の同期（`settings.ts`）・作業グループ。i18n は `lib/i18n/`（§2.8）|
+| `styles/` | テーマ変数の唯一の置き場 `tokens.css` と、リセットの `base.css` |
+| `types/` | 横断のドメイン型。例: セッション・チャット・メモ |
+| `assets/` | 同梱の SVG: `brandicons/`（エージェント CLI・接続先サービス・モデル提供元。`lib/brandicons.ts` が引く）と `fileicons/`（ファイルアイコンのセットごとに 1 フォルダ。`lib/fileicons.ts` が引く）。それぞれ出典とライセンスを `ATTRIBUTION.md` に置く |
+| `marp-themes/` | 独自の Marp テーマ。`/* @theme name */` ヘッダ付きの CSS 1 ファイルが 1 テーマで、`features/viewer/MarpView.tsx` が登録し、デッキは `theme: <name>` で選ぶ |
+| `test/` | dom テストのセットアップと、ソース全体に掛ける静的検査（例: 生の制御文字が無い・兄弟要素の key が重複しない）|
 
-| feature | 役割（1 行）|
-|---------|------|
-| `panes` | PaneHost（flat-absolute 描画・drag swap・drop-to-split）・Pane・左上 LayoutMap |
-| `terminal` | TerminalView（PTY 常駐・未 attach ブランドアート）・モバイル TermKeys・OnboardingCard |
-| `browser` | BrowserPane（canvas/toolbar/IME）・paneId keyed BrowserController/Registry・wire v1変換 |
-| `sessions` | セッション行・作成/改名/アーカイブ等のモーダル群・アクション hook・4 秒ポーリングストア・状態変化のブラウザ通知 |
-| `repos` | clone/起動/ブランチ系モーダル・RepoPicker/DirPicker・repo ストア（60 秒ポーリング）|
-| `project` | 左ペインの working-copy ツリー: base clone + worktree をプロジェクト単位に束ね、ノード配下にセッションとファイルをネスト。repo 外セッションの受け皿も持つ |
-| `files` | ファイルツリーの共有状態と更新シグナル（実 UI は project 側の ProjectFiles）|
-| `scm` | SourceControl / Changes / CommitDetail / WorkingDiff / CommitGraph / GitDiff の各ビュー |
-| `viewer` | File / Code / Markdown（mermaid）/ Marp / Image / Diff / Doc ビューア |
-| `editor` | CodeMirror ベースのファイル編集: dirty 管理（DirtyGuardHost）・外部変更追従・AI 修正候補（suggest）の取得と適用 |
-| `mirror` | MirrorView（セッション transcript のチャットミラー）・ContextBar（コンテキスト残量警告）|
-| `chat` | アシスタントチャット（headless CLI 会話・SSE ストリーミング）と左ペインのセクション |
-| `memo` | メモキュー: セクション・AI 整理モーダル・選択テキスト送信 |
-| `schedules` | 定時実行の左ペインセクション + 詳細モーダル（一覧・有効切替・即時実行・実行履歴。作成/編集はオペレーター会話側）|
-| `keys` | キーボード操作体系: capture-phase dispatcher・コマンドパレット・WhichKey / CheatSheet・キー再割当ストア |
-| `notifications` | 通知センター: 未読/既読管理・トーストログ・音声通知トグル |
-| `usage` | 機能別トークン使用量ダッシュボード（UsageView。設定モーダルの「エージェント使用量」タブが薄いラッパとして表示）|
-| `auth` | ログインセッション切れ（401 / 端末ソケット断）検出時の再ログインモーダル（AuthExpiredModal）|
-| `settings` | SettingsDialog（3 グループ左レール × 24 タブ、§2.5）・AdminDialog・接続状態ポーリング |
+**`features/`** は機能ごとに 1 ディレクトリで、コンポーネント・たいてい `store.ts`・多くは `api.ts`・
+CSS を持つ。一覧は `ls console/src/features`。製品が画面ごとに何を提供するかは
+[guide/ref/features.ja.md](../../guide/ref/features.ja.md) で、どちらもここには繰り返さない。入口を
+探す手がかりとして、ディレクトリはいくつかの種類に分かれる。例:
+
+- **ペインが表示するもの**: `scm`・`viewer`・`editor`・`mirror`（セッションのチャットミラー）・
+  `browser`・`overview`（セッション一覧、[ADR 0078](../decisions/0078-sessions-overview-pane.ja.md)）・
+  `fleetgraph`（フリートのセッショングラフ、[ADR 0096](../decisions/0096-fleet-session-graph.ja.md)）・
+  `gallery`（[ADR 0080](../decisions/0080-image-gallery-pane.ja.md)）・`imagegen`（画像生成スタジオ、
+  [ADR 0081](../decisions/0081-image-generation-pane.ja.md) と
+  [ADR 0100](../decisions/0100-image-generation-studio.ja.md)）。
+- **左ペインが表示するもの**: `project`（作業コピーのツリー）・`chat`（アシスタント）・`memo`・
+  `workitems`・`schedules`・`sharing`。
+- **バー・ダイアログ・横断の仕組み**: `panes`（ペインホスト）・`sessions`・`repos`・`settings`・
+  `notifications`・`keys`（キーボード操作体系とコマンドパレット）・`auth`・`engines`（エンジン表示）・
+  `usage`・`cost`。
+
+これらに繰り返し出てくる規約が 2 つある。
+
+- **`open.ts` はビューと分ける。** ペインを持つ機能のいくつか — 例えば `overview`・`fleetgraph`・
+  `gallery`・`imagegen`・`scm` — は `open*()` を専用の `open.ts` から出す。新しく作るものはこれに
+  倣う。キーボードのコマンド表が開く関数を import するので、ビューを import すると描画と CSS が
+  メニューを持つ全バンドルに引き込まれる。古い種類は別の場所から開く（`features/viewer/openFile.ts`・
+  `features/browser/attachmentAction.ts`）。
+- **`api.ts` は `core/api/client.ts` の上に作り、形は `wire.ts` に置いてよい。** `client.ts` は
+  import された時点で `localStorage` を読み `window.fetch` を差し替えるので、node のテスト
+  プロジェクトでは読み込めない。型だけが要る純モジュールは `wire.ts` を import する。
 
 ## 2.3 状態管理とサーバ同期
 
-- ストア分割: tenant / workspace / layout / sessions / repos / files / chat / memo / settings(UI)。
-  selector 購読により「4 秒ポーリングで全画面再レンダー」を構造的に防ぐ。React 外
-  （TermService・fetch 層）からは `getState()/setState()` で連携する。
-- ストア間連携は subscribe ベース。例: シェルの wireWorkspaceRefresh が workspace の
-  stopped↔running **遷移エッジ**（starting 等の未確定状態は無視）で repos/sessions/files/chat を refresh。
-- 同じ形で `features/files/sessionRefresh.ts` が sessions を購読し、セッションの
-  **稼働 → 非稼働エッジ**（working/compacting または backgroundBusy が外れた＝ターンの終わり）で
-  files の**範囲つき**更新（`refreshUnder("repos/<作業コピー>")`）を撃つ。ツリーは範囲内で
-  画面に出ているディレクトリだけを読み直し、「変更」ビューは一覧を消さずに差し替える
-  （エージェントが作った/消したファイルが、更新ボタンを押すまで出てこない問題）。
-  一覧は push/poll でどのみち届くので追加の通信は無く、発火は作業コピー単位に合流させ
-  最短 3 秒空ける。★ 読み直しの失敗（5xx・切断）は**必ず握り潰して現状維持**にすること —
-  失敗を空一覧として書き戻すと、ターンの終わりごとにツリーが空になる。
-- 引き金はイベントが主で、間隔は保険（間合いは `features/files/refreshPolicy.ts` に集約）。
-  ターン終了で届かない場面だけを 2 つ埋める: **走行中**は稼働セッションの作業コピーだけを
-  20 秒間隔（走っているものが無くなればタイマーごと止まる・タブが裏／WS 停止では撃たない）、
-  **タブ／ウィンドウ復帰**は最短 10 秒間隔で画面に出ているぶんを再検証（editor/probe.ts の
-  §7.2 と同じゲート）。後者は state を持たないセッション（shell / SSM）や Agent Fleet の外での
-  変更を拾う唯一の道でもある。自動更新で**増えた行**は数秒だけ淡く光る（`.fs-new`）。
-- ポーリング周期: workspace 4 秒 / sessions 4 秒 / repos 60 秒 / ワークスペース操作バーのリソース統計 4 秒。
-  workspace の状態は CP の `running/starting/stopped/none` + `unknown`（fetch 失敗）で、
-  末尾 `…` は楽観的 in-flight の印（ボタンとポーラーは busy として手を出さない）。
-- `core/api/client.ts` が `window.fetch` をラップし、全リクエストに `X-AF-Tenant` を注入
-  （WS・新タブ・ダウンロードは `?tenant=` query fallback — [05 §5.4](05-api.ja.md)）。
-  401 は login ランディングへ 1 回だけリダイレクト。エラーコード→和文の `errText`、
-  SSE / multipart / download ヘルパもここに集約。非同期操作は同期 + ポーリングで運用（job キュー無し）。
+- ストアはドメイン別に分かれ、**selector 購読が「プッシュのフレームごとに全画面が再レンダーされる」
+  ことを構造的に防ぐ**。React の外のコードからは `getState()` / `setState()` で触る。
+- ストア同士は購読でつながる。例: シェルはワークスペースの stopped ↔ running の**遷移エッジ**で
+  repos・sessions・files・chat を読み直し（`app/App.tsx` の `wireWorkspaceRefresh`）、その間の
+  未確定状態は無視する。
+- **プッシュが先、ポーリングは保険。** `core/push/events.ts` がタブごとに `api/events` を 1 本持ち、
+  フレームを各ハンドラへ渡す。ストリームの種類はそこの `PushStream` 型で、ワイヤ形式は
+  [05 §5.1](05-api.ja.md#51-公開面console--cp)。同じデータのポーラーは動き続け、`pushHealthy()` が
+  真の間だけ番を飛ばすので、ストリームが切れても、ルートを持たない CP でも何も失わない。
+  ワークスペースとセッションのポーラーは、自分の取得中に同じストリームのフレームが届いていたら
+  自分の結果を捨てる（`pushStamp`）。ただし楽観的な `…` 状態を収めるワークスペースの読み直しは
+  必ず反映される。ほかの読み直し（例えば課題・エンジン）にはこの守りが無い。
+  (再)接続のたびに whoami とセッション一覧を読み直す。フレームは何かが変わったときにしか
+  送られないからである。プッシュストリームに載らないデータはそれぞれの周期でポーリングする
+  （例: repos は 60 秒ごと）。
+- **ワークスペースの状態**は CP の値（`running`・`starting`・`stopped`・`none`）か、読み取りに失敗した
+  ときのクライアント側の `unknown`。末尾の `…` は楽観的な処理中の印で、ボタンもポーラーも busy と
+  みなして手を出さない。
+- `features/files/sessionRefresh.ts` はセッション一覧を見張り、セッションの**稼働 → 非稼働エッジ**
+  （working/compacting または backgroundBusy が外れた＝ターンの終わり）で files の**範囲つき**更新
+  `refreshUnder("repos/<作業コピー>")` を撃つ。ツリーはその範囲で画面に出ているディレクトリだけを
+  読み直し、「変更」ビューは一覧を消さずに差し替える。これが無いと、エージェントが作った／消した
+  ファイルは誰かが更新を押すまで見えない。セッション一覧はどのみち届くので追加の通信は無く、発火は
+  作業コピー単位に合流させ、最短の間隔を空ける。**読み直しの失敗（5xx・切断）は握り潰して今の行を
+  残すこと**: 失敗を空の一覧として書き戻すと、ターンの終わりごとにツリーが空になる。
+- 引き金はイベントが主で、間隔は保険。間合いは `features/files/refreshPolicy.ts` にまとめてある。
+  ターン終了のエッジで届かない場面は 2 つあり、それぞれに引き金を持つ: **ターンの途中**は稼働中
+  セッションの作業コピーを一定間隔で読み直す（走っているものが無ければタイマーは止まり、タブが
+  裏にあるときやワークスペース停止中は撃たない）。**タブ／ウィンドウへの復帰**では画面に出ている
+  ぶんを間隔を制限して再検証する（`features/editor/probe.ts` と同じゲート）。後者は、状態を持たない
+  セッション（shell・SSM）や Agent Fleet の外での変更を拾う唯一の道でもある。自動の読み直しで
+  **増えた行**は数秒だけ強調される（`.fs-new`）。
+- **ネットワークへの扉は `core/api/client.ts` だけ。** これが `window.fetch` を差し替えるので、素の
+  `fetch` を含む全リクエストが `X-AF-Tenant` ヘッダを運ぶ。WebSocket・新しいタブ・ダウンロードは
+  ヘッダを運べないので `?tenant=` を付ける（[05 §5.4](05-api.ja.md#54-横断規約)）。呼び出し側が
+  頼ってよい規則:
+  - `api()` は **HTTP エラーで reject しない**。`{error: {code, …}}` で resolve する。reject するのは
+    ネットワーク障害だけ。`r.error` を確かめないと失敗が成功として通る。
+  - `api()` は `304` に前回返したオブジェクトで答えるので、**結果は不変として扱う**。
+  - `401` でページは移動しない。ラッチ（`core/auth/authExpired.ts`）が立ち、再ログインのダイアログ
+    （`features/auth/AuthExpiredModal.tsx`）が開く。走っている端末はそのまま動く。端末のソケットは
+    ラッパを通らないので、切断時に API を 1 回叩いて、原因がログインかどうかを確かめる。
+  - エラーコードの利用者向けの文言は `errText()` で、カタログの `err.<code>` キーから引く（§2.8）。
+- `lib/attention.ts` はタブが見えている間、実際の操作を最大で 1 分に 1 回 CP へ知らせる。読んでいる
+  だけの人がアイドル扱いされてワークスペースを止められないようにするため。
 
-## 2.4 Pane / レイアウトと TermService
+## 2.4 ペイン・レイアウト・端末サービス
 
-- Layout = 最大 4 カラム × 各 1–2 ペイン。`Pane.content` は判別 union
-  （terminal / browser / file / scm / changes / commit / wtdiff / doc / diff / chat）。`session` は content でなく
-  **ペインレベル**に持つ: ビューを切り替えても PTY ソケットとスクロールバックは hidden のまま温存され、
-  端末ビューへ戻すと同じセッションが現れる。
-- **paneId 契約（ハード不変条件）**: pane の id ＝ ターミナルの同一性。xterm インスタンス・WebSocket・
-  DOM ノードは paneId で keyed。swap / drop-split は同一 id のままペインを移動し、再採番・複製は禁止
-  （新 id は新しい xterm + WebGL コンテキストを作り、移動した端末が白紙になる）。`layout/ops.ts` の
-  純関数と vitest がこれを強制する。
-- `layout/ops.ts` は `Layout in → Layout out` の純関数（no-op は入力を参照のまま返し、呼び手が
-  `next === cur` で commit をスキップできる）。layout ストアの `commit()` が**唯一の変更経路**で、
-  state-only `pushState`（URL 不変）と per-tenant の localStorage 永続（旧形式は読み込み時 migration）を行う。
-- **タブの表示順は MRU**（タブ付きグリッド）: `View.lastUsedAt` は LRU 追い出し（`MAX_TABS`）だけでなく
-  **「表示中のタブが抜けたあと何を出すか」**の順序でもある。閉じる / 別マスへ移す / 切り離すのいずれでも、
-  残りのうち**最後に表示していたタブ**を選ぶ（ミラーからファイルを開いて閉じたら元のミラーへ戻る）。
-  隣のタブ（右→左）は、`lastUsedAt` を持たない古い永続レイアウトのフォールバックとしてだけ残る。
-  同一ミリ秒の 2 度の touch が同点にならないよう、スタンプはページセッション内で厳密単調に採る。
-- **TermService**（`terminal/service.ts`）が xterm への唯一の入口。layout ストア購読 1 本で
-  「レイアウトから消えた pane の端末を dispose」する reconcile を回す。`term.ts` の中身は実戦で獲得した
-  ドメイン知識の塊で不可侵: ハートビート（text フレーム＝帯域外制御、binary＝PTY 出力）によるゾンビ
-  ソケット検出、WebGL 描画と context-loss 復旧、フォーカス時 Keyboard Lock（全画面時にブラウザキーを
-  端末へ）、左ドラッグ選択で自動コピーするクリップボード統合、ソフトキーボード追従（visualViewport fit）。
-  DOM コンテナは常駐（hidden 切替のみ、re-parent しない = PaneHost の flat-absolute 戦略）。
-- **BrowserRegistry**（`features/browser/service.ts`）もpaneId keyedでPage/socket/canvasを所有する。
-  layoutに永続化するのは`{kind:"browser", port, path}`だけで、ephemeralなbrowserIdは保存しない。
-  非表示は`visibility=false`、60秒後にPageを破棄し、再表示・reload・Workspace再起動時はport/pathから再生成する。
-- `agents/registry.ts` = kind（claude / codex / cursor / agy / copilot / kiro / opencode / shell / ssm の 9 種）の**単一真実源**。
-  kind ごとに descriptor（表示・availability 述語・capability set: chat / transcript / model / fork /
-  planMode / ephemeral 等）を 1 個持ち、UI は capability を見て分岐する。エージェント追加 = descriptor 追加。
-- **表示名の 3 段体系**（`id`/`cssClass`/`short`/`icon` は内部識別子で不変・小文字）: `short`（2字 cc/cx/cu/ag/cp/ki/oc）＝
-  狭所バッジ / `label`（コンパクト proper 名 Claude・Codex・Cursor・Copilot・Kiro・OpenCode・Antigravity）＝pane ヘッダ・セッション行 /
-  `displayName`（フル製品名 **Claude Code**・**GitHub Copilot**・他は label と同値）＝起動カード・設定カード。表示コードは
-  `lib/sessionkind.ts` の `kindShort`/`kindLabel`/`kindDisplayName`（=`displayName || label`）経由で書き、生の label 直読み・
-  名称ハードコードは避ける（`BADGE_SHORT` も registry の `short` から導出）。
+- **レイアウトはジオメトリとランタイムを分ける**（`layout/types.ts`、レイアウトの版 3）。**Cell** は
+  ジオメトリ: React の key・アクティブ化・番号バッジ・ドロップ先。**View** はランタイムの同一性:
+  タブ・xterm とその WebSocket・ブラウザのコントローラ・未保存のエディタ。`View.content` は
+  ビューが描くもの（端末・ファイル・scm・セッション一覧・スタジオ…）の判別 union。**`session` は
+  content ではなく View に持つ**: ビューが表示するものを切り替えても PTY ソケットとスクロールバックは
+  隠れたまま生きていて、端末に戻すと同じセッションが出る。
+- **レイアウトのプロファイルは 2 つ**で、端末ローカルの設定で選ぶ: `split` は最大 4 カラム × 1〜2
+  セル、各セルにビュー 1 つ。`tabs` は最大 3 カラムで、各セルがタブを持つ（全体で 24 ビュー）。
+  プロファイルごとに保存レイアウトを持つので、切り替えてもどちらの配置も失われない。切り替えの
+  後、読み込んだレイアウトに View id が無いランタイムは、端末サービスとブラウザのレジストリが
+  破棄する。
+- **id の契約はハードな不変条件。** 入れ替え・ドロップ分割・タブの移動は View の id も Cell の id も
+  保つ。振り直しや複製は禁止。端末を表示するビューでは、新しい View id は新しい xterm のインスタンス
+  （とその描画器）を作り、
+  **動かしたばかりの端末が白紙で現れる**。`layout/ops.ts` の純関数とそのテストがこれを強制する。
+- `layout/ops.ts` は `Layout in → Layout out`。何もしない操作は入力を参照のまま返すので、呼び手は
+  `next === cur` で commit を省ける。レイアウトの操作は layout ストアの守られた経路
+  `commit()` と `commitAction()` を通る。これらはレイアウトを `history.state` に記録し — 移動なら
+  push、アクティブ化・タブの選択・仕切りのドラッグなら置き換え。URL は変えない — ストアが
+  hydrate 済みなら永続化を予約する。保存レイアウトやプロファイルの読み込み・ポップアウトの種まき・
+  履歴からの復元はレイアウトを直接置く。
+- **永続化は利用者・テナント単位、タブ単位。** キーは `layout/migrate.ts` の `LKEY_NEW` が作る。
+  タブ自身のレイアウトは `sessionStorage` にあるので、2 つのタブは別々のレイアウトを持てる。
+  `localStorage` は最後に書かれたものを持ち、新しいタブの種にする。読み戻すのは信用できない JSON
+  なので、`migrate.ts` が content の種類ごとに検証し、**知らない種類は空の端末として読み込む**。
+- **content の種類を足す**ときに触るのは、例えば `layout/types.ts` の union、`layout/migrate.ts` の
+  検証、`layout/ops.ts` の `sameTarget`（2 度目に開いたとき既存のビューへフォーカスするかを決める）、
+  `features/panes/Pane.tsx` の描画の分岐、`features/panes/paneTitle.ts` の題名、それを開く関数。検証を落とすとビューはリロードで消える。
+- **代わりに出るタブは最近使った順（MRU）。** タブ列の並びはセルの `views` 配列の順で、新しい
+  タブは末尾に足され、ドラッグで並べ替えられる。`lastUsedAt` は追い出す対象と、**表示中のタブが
+  抜けたあと何を出すか**を決める。閉じる・移す・切り離すのどれでも、残りのうち最後に見ていたタブを
+  選ぶ — ミラーからファイルを開いて閉じれば、ミラーに戻る。同じミリ秒の 2 度の touch が同点に
+  ならないよう、スタンプはページセッション内で厳密に単調増加させる。
+- **ポップアウト**: ビューは自分専用のブラウザタブへ移せる（`?pane=<nonce>`、`layout/popout.ts`）。
+  ポップアウトしたタブは共有の `localStorage` の種を書かない。
+- **端末サービスが xterm への唯一の入口**（`terminal/service.ts`）。layout ストアの購読 1 本で、
+  レイアウトから抜けたビューの端末を破棄する。`term.ts` は苦労して得たドメイン知識の塊で、慎重に
+  変えること: データチャネルのハートビートによるゾンビソケット検出（text フレームは帯域外の制御、
+  binary フレームは PTY 出力）、WebGL 描画とコンテキスト喪失からの復旧、フォーカス中の Keyboard
+  Lock、選択でコピーするクリップボード統合、ソフトキーボードへの追従。ペインはすべて 1 つのホスト
+  （`features/panes/PaneHost.tsx`）の下の平らな絶対配置の子。端末のコンテナには `.xterm` がちょうど
+  1 つだけ入っていなければならない（`terminal/paneContainer.dom.test.tsx`）。画面外の端末は WebGL
+  コンテキストを返す。ブラウザはタブあたりの生きたコンテキスト数に上限を持つからである。
+- ブラウザのレジストリ（`features/browser/controller.ts`、`service.ts` で結線）もビュー id で
+  引かれ、ページ・ソケット・キャンバスを持つ。**永続化するのは `{kind, port, path}` だけ**で、
+  ページ id は保存しない。隠れたページは 60 秒後に破棄され、再表示・リロード・ワークスペースの
+  再起動のときはポートとパスから作り直す。ブラウザペインの使い方は
+  [guide/ref/browser-pane.ja.md](../../guide/ref/browser-pane.ja.md)。
+- **`agents/registry.ts` はセッション種別ごとに記述子を 1 つ持つ** — エージェントに `shell` と `ssm`
+  を加えたもの（`types/session.ts` の `SESSION_KINDS`）。記述子は表示名・利用可否の述語・能力の集合を
+  持ち、UI は種別名ではなく能力で分岐する。種別を足すのは記述子から始まる。ほかに種別名が出てくる
+  場所には、色（§2.6）と [guide/ref/agents.ja.md](../../guide/ref/agents.ja.md) がある。後者の能力の
+  行は `agents/guideTable.test.ts` が記述子と突き合わせる。
+- **表示名は 3 つの幅**を持ち、内部の識別子は不変の小文字: 狭いバッジ用の 2 文字の `short`、
+  ペインのヘッダとセッション行用の短い `label`、起動カードと設定カード用の正式な `displayName`。
+  表示のコードは `lib/sessionkind.ts` のヘルパ（`kindShort`・`kindLabel`・`kindDisplayName`）経由で
+  書き、生の label を読んだり名前を直書きしたりしない。
 
-## 2.5 IA（情報設計）
+## 2.5 情報設計（IA）
 
-- **2 段バー**: 画面最上部（アプリ名・テナント picker〔単一所属時は非表示〕・外観ポップオーバー・アカウント
-  メニュー・設定・管理〔super_admin のみ〕）+ ワークスペース操作（workspace 状態と Start⇄Stop・リソースチップ +
-  Sparkline・ポートプレビュー〔`/preview/{port}` を新タブで〕・各エージェントの使用量チップ（claude/codex の
-  サブスク枠 5h/週次、copilot のアカウントクレジット残量、agy のクォータ残量%。各 popover にプランと利用アカウントも
-  表示）・分割操作）。
-- **左ペイン**: LayoutMap + 常駐 3 セクション（アシスタント / メモキュー / プロジェクトツリー）+
-  repo 外セッションの受け皿（無ければ非表示）。フラットな Sessions / Repos / Files セクションは
-  プロジェクトツリーに統合された（project-first IA）。
-- **メイン**: PaneHost。アクティブペインの content に応じて端末 / ビューア / SCM / チャットが切り替わる。
-- **履歴ナビ**: URL は変えず `history.state` にレイアウトを push（path-strip プロキシ配下で URL パスは
-  使えない）。戻る / 進むでレイアウト・スマホ drawer が復元される。モーダルの「戻るで閉じる」は
-  共有の `ui/Modal`（`useBackClose` の層）が持ち、管理モーダルのドリル（メンバー → テナント →
-  レール）もその層として積む（かつて管理モーダルだけが持っていた独自 history エントリは撤去）。スマホは左ペインを
-  オフキャンバス drawer 化し、`{drawer:true}` の履歴エントリで「戻る＝drawer を閉じる/再び開く」を実現
-  （端末の beforeunload ガードを誤爆させない）。エッジスワイプで開閉。
-- **スマホの横スワイプ＝稼働中セッションのローテート**: drawer が閉じている間の ← は次、→ は前の
-  稼働中（alive）セッションをアクティブペインに開く（`features/sessions/rotate.ts` が選択規則、
-  `open.ts` の `rotateRunningSession` が副作用）。順序は `GET /api/sessions` のまま（CreatedAt 降順）、
-  絞り込みは作業グループに従う＝左ペインで見えている集合と一致する。開き方は行クリックと同じ規則
-  （chat 可なら mirror）。**左端始まりの → は drawer が優先**（判定順で先に 50px の drawer 分岐が
-  確定し、ローテートの 70px には届かない）。drawer が開いていれば従来どおり「閉じる」が優先。起点が
-  横操作を持つ面（ブラウザペイン `.browser-stage` / 入力欄・contenteditable / 横スクロール域 /
-  `[data-no-swipe]`）なら見送る（`app/swipeGuard.ts`）。閾値はレール開閉の 50px に対し 70px。
-  ただし**横スクロール域の判定に overflow-x の計算値を使えない**: CSS は片方が visible なら
-  visible を auto に計算するので、`overflow-y: auto` だけの縦スクローラも "auto" と読める。
-  転写に折り返せない長い文字列（`sha256:…` / クエリ付き URL）が 1 つ混ざると `.mirror-body`
-  ごと横へはみ出し、**そのセッションだけスワイプが丸ごと効かなくなっていた**（祖先なので
-  どこを触っても弾かれ、その行が画面外へ流れても scrollWidth は戻らない）。対処は二段で、
-  はみ出しを作らない側が本文の `overflow-wrap: anywhere`（`mirror.css`）、面の側が
-  `[data-swipe-y]`＝「縦に送る面なので横のはみ出しは事故」の宣言（転写・共有ビュー・
-  アシスタントチャットの各スクロール容器）。コードビューや diff のように**横にも縦にも
-  本当に振る面**を巻き込まないよう、判定自体は緩めない。
-- **設定モーダル**: 3 グループの左レール × 24 タブ（旧 6 タブの単段バーはスケールせず再編。
-  モバイルはレール→内容の 2 段ドリルダウン）。**個人設定**＝表示 / アカウント / キー操作 / 読み上げ /
-  通知 / アシスタント / エージェントへの指示、**接続**＝エージェント（各 kind の接続・RTK 等）/
-  Gitホスティング / 運用・監視 / 課題管理 / チャット連携 / MCP サーバー / MCPトークン（PAT 発行・失効）、
-  **ワークスペース**＝エージェント使用量 / クラウド費用 / 稼働時間 / エージェントメモリ /
-  ツールチェーン / プレビュー用サブドメイン / AWS SSM / 内部リポジトリ /
-  書き出し・取り込み（[docs/79](../decisions/0060-settings-export-import.ja.md)）/
-  危険な操作（Workspace 作り直し等）。**うち 2 つは能力が在るときだけ出す** —— クラウド費用は
-  AWS の請求がある配備、プレビュー用サブドメインは発行される配備。
-  管理機能は SettingsDialog に混ぜず **AdminDialog に分離**（TopBar の shield から、super_admin のみ）。
-- **管理モーダル / テナント設定モーダル**: どちらも同じ器（`ui/Modal` + `settings-modal`）と同じ
-  左レール。管理は幅だけ広い（`.admin-modal` = 1100×900）。**管理のレールは 2 段**で、ルート＝
-  テナント{一覧・サインイン方法の登録簿} / デプロイ全体{通信・読み上げ・スロット} /
-  横断で見る{セッション・稼働時間・クラウド費用・監査・MCP 配布}、テナントを開くとレールごと
-  そのテナントへ入れ替わる（上限・自動停止 / ログイン{サインイン方式・規則・接続元} /
-  運用{メンバー・セッション・稼働時間・費用・監査・MCP}）。**テナント 1 つ分の面は
-  `settings/tenantScope.tsx` を両モーダルが差す**（同じテナントを別の入口から見るだけなので
-  IA を分けない）。出し分けはサーバ由来の `super_admin` フラグだけ。
-  メンバーは本文の中でもう 1 段ドリルする（レールを人数分伸ばさない）。
+画面そのものはメンバー向けに `guide/member/` が説明している。この節は、変更がはまるべき形である。
 
-## 2.6 表示システム
+- **2 段のバー。** 画面最上部のバーには、例えばアプリ名・テナントピッカー（所属が 1 つなら
+  隠れる）・通知センター・エンジン表示・外観のポップオーバー・アカウントメニュー（ガイド・設定・
+  テナント設定・管理・サインアウト）がある。その下のワークスペースバーには、状態と起動／停止・
+  リソースと使用量のチップ・ポートプレビュー・分割の操作がある。
+- **左ペイン**: レイアウトマップ・作業グループの切替、その下に `app/App.tsx` が描く順で常駐の
+  セクション（アシスタント・課題・メモキュー・プロジェクトツリーほか）。中心はプロジェクトツリーで、
+  project-first の IA: 作業コピーをプロジェクトごとに束ね、その下にセッションとファイルを入れ子に
+  する。リポジトリ外のセッション・共有されたセッション・全体のファイルブラウザはその下にある。
+- **メイン**: ペインホスト。
+- **履歴ナビゲーション**はレイアウトを `history.state` に push し、**URL は変えない**（path-strip
+  プロキシのせいで URL のパスは使えない）。戻る／進むでレイアウトとスマホのドロワーが戻る。
+  「戻るでモーダルを閉じる」は共有のモーダル層（`ui/Modal` と `lib/backClose.ts`）の持ち物で、
+  ドリルダウンはその上に積む。Console が読む URL は入口で、例えば `?session=`（通知のリンク）・
+  `?pane=`（ポップアウト）・`?tenant=`（サインインの後）・`?share=`（Web Share Target）・
+  `open/browser-attachment/{id}`。
+- **スマホの横スワイプは稼働中のセッションを順に回す**（ドロワーが閉じているとき）。選び方の規則は
+  `features/sessions/rotate.ts`、ジェスチャは `app/swipeGestures.ts`。順序は返ってきたセッション
+  一覧を作業グループで絞ったもので、左ペインに見えているものと一致する。左端から始まるスワイプは
+  ドロワーに譲る。自前の横操作を持つ面の上ではスワイプを見送る（`app/swipeGuard.ts`: ブラウザ
+  ペイン・入力欄・横スクロール域・`[data-no-swipe]`）。
+  - **横スクロール域の判定に `overflow-x` の計算値は使えない**: CSS はもう片方の軸が visible で
+    なければ `visible` を `auto` に計算するので、縦だけのスクローラも `auto` と読める。転写の中の
+    折り返せない文字列 1 つがミラー全体を横にはみ出させ、そのセッションだけスワイプが効かなく
+    なっていた。対処は両側から: 転写は折り返し（`overflow-wrap: anywhere`）、縦に読む面は
+    `[data-swipe-y]` を宣言して、そこでの横のはみ出しは定義上事故とする。**判定自体は緩めない
+    こと**: コードや diff のビューは本当に両方向へ動く。
+- **設定のダイアログは 3 つ**: 個人の設定・テナント設定（テナント管理者のもの）・管理（配備の
+  管理者のもの）。どのタブがあってどこにあるかは [guide/ref/settings.ja.md](../../guide/ref/settings.ja.md)。
+  変更するときの規則:
+  - 個人の設定はグループ分けしたレール（`features/settings/SettingsDialog.tsx` の `GROUPS`）。スマホ
+    ではレール → 内容とドリルする。セクションのキーはディープリンクの id（`openSettings(section)`）
+    なので、レールを組み替えても保つ。どのセクションがどのグループにあるかは
+    `settingsRail.dom.test.tsx` が固定している。
+  - 配備にその能力が無いタブは出さない — 例えば AWS の請求が無い配備のクラウド費用、発行されない
+    配備のプレビュー用サブドメイン。
+  - 管理機能は別のダイアログで、個人の設定には混ぜない。
+  - **テナント設定と管理のダイアログは器を共有し、テナント 1 つ分の面は 1 つのコンポーネント**
+    （`features/settings/tenant/tenantScope.tsx`）。管理のレールは 2 段で、テナントを開くとレールごと
+    そのテナントへ入れ替わる。同じテナントを別の入口から見ているだけなので、IA を二重にしない。
+  - ダイアログが何を出し何を隠すかは案内にすぎない。**権限を決めるのはサーバ。**
 
-- **テーマ**: `styles/tokens.css` が変数の唯一の置き場（`:root` dark 既定 + `[data-theme=light]` 上書き +
-  region 変数 `--topbar-bg` / `--leftpane-bg` 等）。`lib/settings.ts` の `applyTheme()` が
-  `<html data-theme>` と region 変数を書き込み、SURFACE_COLORS は per-theme tint（ライトで暗色バー＝
-  文字潰れを回避）。highlight.js は `--hl-*` 変数でテーマ追従。**既知の限界**: xterm はライトテーマ
-  未対応（ライト選択時も端末は暗いまま）。
-- **エージェント kind 色**: `tokens.css` の `--kind-*`（claude/codex/cursor/agy/copilot/kiro/opencode/shell/ssm、`:root`=dark・
-  `[data-theme=light]` で暗色版）が**唯一の hue 源**。使用側（kind-tag・sess-kic・LayoutMap・起動 seg アイコン・
-  設定バッジ）は `var(--kind-*)`＋tint は `color-mix(… N%, transparent)` で描画し、各 CSS に色 hex を直書きしない。
-  **opencode はライトスレートグレー（#aab4be / light #6e7781）** ＝copilot チャコール（#7d8590 / light #30363d）・
-  kiro 紫との分離のため（紫は copilot→kiro が継承。docs/43 §4-1）。
-- **アイコンの役割分担**: クローム＝codicon 単色（currentColor 追従）/ ファイル種別＝カラー SVG
-  （`lib/fileicons` の ext→typeKey 解決 + `ui/FileIcon`）。
-- **ui-prefs**: 表示設定（テーマ・フォント・アイコンセット等）は per-user でサーバー保存
-  （`GET/PUT /api/env/ui-prefs`）。localStorage を即時キャッシュにしつつ 600ms debounce で PUT、
-  boot 時に `hydrateUIPrefs()` が GET して **server-wins** でマージ（不達時は localStorage で動作）＝
-  別ブラウザ・別端末でも設定が追従する。
-- **スマホ対応**: 方針は「監視 + 軽操作」。全分岐を `@media (max-width:760px)` に閉じ込め、
-  デスクトップ側の DOM / CSS は不変に保つ。drawer・全画面モーダル・TermKeys（最小キー列、WS 直送で
-  IME を呼ばない）・safe-area 対応がこの中に閉じる。
+## 2.6 表示の仕組み
 
-## 2.7 ビルドとハード制約
+- **テーマ**: 変数の唯一の置き場は `styles/tokens.css`（`:root` がダーク、`[data-theme=light]` が
+  上書き）。`lib/settings.ts` の `applyTheme()` が `data-theme` と領域の変数を書き込む。面の色は
+  テーマごとに色味を変え、ライトテーマで暗いバーが読めなくならないようにしている。highlight.js は
+  `--hl-*` 変数でテーマに追従する。**既知の限界: 端末にはライトテーマが無い** — ライトモードでも
+  暗いまま。
+- **エージェント種別の色**は `tokens.css` の `--kind-*` から来る（両テーマ分）。CSS は
+  `var(--kind-*)` を使い、淡い色は `color-mix(…)` で作る。**CSS ファイルは種別の色の値を繰り返さ
+  ない**。`tokens.css` の外にある唯一の写しは `lib/termcolor.ts` で、ダークの値を端末の背景に混ぜて
+  いるので、一緒に変える必要がある。新しい種別の色は、既存の色と意味色に対して両テーマで確かめる
+  （`console/scripts/kindcolor/`）。
+- **アイコンは役割で分ける**: クロームは `currentColor` に従う単色の codicon、ファイル種別は拡張子で
+  引くカラー SVG（`lib/fileicons.ts`・`ui/FileIcon.tsx`）。
+- **UI 設定は利用者ごとにサーバへ保存する**（`GET/PUT /api/env/ui-prefs`、`lib/settings.ts`）。
+  `localStorage` を即時のキャッシュにし、debounce した `PUT` で永続化する。起動時に
+  `hydrateUIPrefs()` がサーバの写しを優先してマージする。ただしまだ保存していないローカルの変更は
+  残り、次の保存で送られる。読み取りの失敗を「サーバが空」と取り違えることはしない。いくつかの
+  キーは**端末ローカル**でブラウザの外へ出ない — 例えばテーマ・面の色・レイアウトのプロファイル・
+  読み上げのスイッチ（`DEVICE_LOCAL`）。保存に失敗すると Console がそう表示する（`PrefsSyncBanner`）。
+- **スマホは監視と軽い操作のため。** スマホの境目は 760 px（`lib/device.ts` の `MOBILE_QUERY`、CSS の
+  メディアクエリでも同じ値）。スマホだけの振る舞いはその分岐の中に留め、デスクトップの DOM と CSS
+  には触れない。
 
-- `vite build`（`npm run build` / dev は `vite build --watch` → リロード反映、CP 再起動不要。[10](10-development.ja.md)）。
-  mermaid / marp が heap を食うため `NODE_OPTIONS=--max-old-space-size` を**コマンド単位**で付与
-  （package.json scripts は 4096、`deploy/local/` の再ビルドは 3072）。sourcemap は無効（生成で heap 溢れの前科）。
-- mermaid / marp-core は**遅延 import チャンク**（メインバンドルから分離。開いた時に初めて読み込む）。
-- **marp-core の罠**: `math:false` で使っていても mathjax-full(~43MB) / katex を**静的 require**するため、
-  素のままだと本番ビルドが minify 段でハングする。`vite.config.js` の `resolve.alias` で
-  `marp-math-stub.js` に差し替えてバンドル除外している（据置のハード制約。剥がすとビルドが死ぬ）。
-- CP は `console/dist` を `Cache-Control: no-store` で配信＝デプロイ即反映（[05 §5.4](05-api.ja.md)）。
-  旧 `/agent-fleet` プレフィクスは廃止（ルート配信・互換リダイレクトのみ）。
-- **テスト**: vitest（node 環境・`maxWorkers=2` — 共有ホストのメモリ規律）で純ロジックのみ
-  （layout/ops・lib の純関数・ストア遷移）。DOM・ビジュアルはブラウザ目視が正（[10](10-development.ja.md)）。
+## 2.7 ビルド・配信・ハードな制約
 
-## 2.8 残債（動作影響なし・随時解消）
+- `npm run build` は `vite build`、`npm run dev` は `vite build --watch` で、ブラウザをリロードすれば
+  変更が入る — CP の再起動は要らない（[10](10-development.ja.md)）。Mermaid と Marp はヒープを食う
+  ので、スクリプトは Node のヒープを全体ではなく**コマンド単位**で上げる。sourcemap は切ってある
+  （生成でヒープを溢れさせた前科がある）。
+- 重い描画系は**遅延 import のチャンク**でメインバンドルの外にある — 例えば Mermaid・Marp・pdf.js・
+  オフィス文書の変換器（WASM）・CodeMirror の言語パック。
+- **知っておくべき Marp の罠**: 数式を切っていても MathJax（~43 MB）と KaTeX を*静的に* require する
+  ので、手当てをしない本番ビルドは minify でハングする。`vite.config.js` のエイリアスが
+  `marp-math-stub.js` に差し替えている。**これは固定の制約で、エイリアスを外すとビルドが死ぬ。**
+- **配信。** CP は `CONSOLE_DIR` が指すディレクトリ（開発ではビルド成果物の `console/dist`）を
+  `control-plane/routes.go` の `registerStatic` から配る。どのパスがどうキャッシュされるかは
+  [05 §5.4](05-api.ja.md#54-横断規約) の持ち物。変更に求められること:
+  - **`assets/` の下のファイルは、中身が変わるたびに名前も変わらなければならない。** Vite の
+    コンテンツハッシュがそうする。ディレクトリごと複製するものはパスに版を入れる。pdf.js の文字
+    マップがそれ（`assets/pdfjs/<版>/`、`afPdfjsAssets` プラグイン）。
+  - 配備がタブに届くのは、次にシェルを読み込んだとき。開いたままのタブは、ビルドが書き出し
+    `lib/useUpdateCheck.tsx` がポーリングする `version.json` で気づき、リロードを勧める。
+  - 配備がブランディングされていると、CP は `index.html` とマニフェストをリクエストごとに書き換える
+    （`control-plane/brand.go`）。
+  - `public/sw.js` は Web Share Target のためだけにある。アプリのシェルをキャッシュせず、それ以外は
+    何も横取りしない。そのままにしておくこと。さもないと上の規則が成り立たなくなる。
 
-[decisions/0011](../decisions/0011-console-rebuild.ja.md) のステータス欄が正。要点:
+## 2.8 文言と i18n
 
-- MirrorView 解体（transcript パーサ純関数化 + ブロック分解）— 忠実移植のまま。CommitGraph / GitDiff / ビュアー群も verbatim。
-- 抽出 CSS（viewer / mirror / chat / settings 等）の未使用セレクタ刈り。
-- legacy button compat（`:where` スコープ）の ui/Button 化。
-- レイアウト永続キーは `af.layout2.<slug>` のまま（旧キーは migration 読み取り元として残読）。
-- 非 chat 種の起動プロンプト送信は暫定実装（TUI 生存待ちの sendPromptWhenAlive）。
+- カタログは `lib/i18n/locales/{ja,en}/<ドメイン>.ts`。日本語が親: キーは日本語カタログの `keyof`
+  で、英語の各ファイルは対応する日本語ファイルに対して型付けされるので、キーの欠けも余りも型検査で
+  落ちる。既定のロケールは `ja`。詳細と理由は [decisions/0016](../decisions/0016-i18n.ja.md)。
+- React のコードは `useT()`、React の外のコードは `t()` を使う。エラーコードは `errors.ts` の
+  `err.<code>` キーに対応する。
+- 日本語はカタログと利用者に見える文字列に置き、コメントには書かない（`AGENTS.md`）。
+  `npm run i18n:lint` は JSX のテキストや文字列リテラルに生の日本語があると落ちる。
+  `scripts/i18n-lint-pending.json` に載ったファイルは警告だけの積み残しで、きれいになったファイルは
+  そこから外れる。`// i18n-exempt` は訳さない文言の印。
+
+## 2.9 テストと検査
+
+`console/` から実行する（リポジトリの直下からだと誤った結果になる理由は `AGENTS.md`）。
+
+- **vitest のプロジェクトは 2 つ**（`console/vite.config.js`）。既定の `node` は `*.test.ts(x)` を
+  走らせる: 純ロジック — レイアウト操作・パーサ・ストア — と、静的マークアップに描いたコンポーネント。
+  `dom` は `*.dom.test.tsx` を jsdom で `src/test/domSetup.ts` とともに走らせる。コンポーネントを
+  マウントするテスト用。分けているのは、jsdom の立ち上げにテストファイルあたり約 1.3 秒かかるから
+  で、全部を jsdom で走らせると 10.8 秒 → 51.3 秒と測られている。共有ホストのメモリのため、
+  ワーカーは 2 に制限している。
+- **型検査**: `npm run typecheck`（`scripts/typecheck.mjs`）。
+- **lint**: `npm run lint` は規則 1 つ `react/rules-of-hooks` だけの oxlint（`.oxlintrc.json`）。
+  早期 return の下に置いたフックが Console 全体を真っ黒にしたことがある。
+- **CI**（`.github/workflows/ci.yml` の `console` ジョブ）は型検査・lint・i18n lint・vitest・実物の
+  headless Chromium での検査 2 つ（`pdf:check`・`doc:check`）・ビルドを走らせる。
+- `package.json` のほかのスクリプト（スクリーンショット・ミラーやビューアのスクロール検査・コントラスト
+  検査など）も実物の headless ブラウザを動かすが、手で走らせるもので CI には入っていない。
+- **エンドツーエンド**: `console-e2e/`（Playwright）。実物のブラウザから CP を通って実物のコンテナまで
+  （[10 §10.4](10-development.ja.md#104-テスト)）。

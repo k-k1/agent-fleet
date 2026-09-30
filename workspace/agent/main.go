@@ -153,7 +153,7 @@ func serve() {
 	// Backgrounded: it is a few hundred KB over the network and nothing at boot waits on
 	// it, but the Console's user guide and every agent's environment answers need it.
 	go syncWorkspaceDocs("agent boot")
-	// Export the member's SSO profiles (Settings → SSM) into ~/.aws/config so a plain
+	// Export the member's SSO profiles (Settings → AWS profiles/SSM) into ~/.aws/config so a plain
 	// `aws --profile <name>`, an SDK or a build tool can select them (issue #998).
 	// Backgrounded and fail-open like the MCP pull.
 	awsx.StartSync()

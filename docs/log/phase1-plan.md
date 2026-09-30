@@ -1,6 +1,6 @@
 # 11. Phase 1 実装プラン（Workspace Agent + Console MVP / ローカル Docker）
 
-[ロードマップ Phase 1](../roadmap.md) の実装計画。
+[ロードマップ Phase 1](roadmap.md) の実装計画。
 ローカル Docker で「1 ユーザーが Web からターミナル操作 + Claude セッションの一覧/起動/停止」を成立させる。
 リポジトリ管理（clone 等）は Phase 2 のため**対象外**。セッションは既存ディレクトリに対して張る。
 
@@ -155,4 +155,4 @@ Workspace 起動/停止、セッション作成/一覧/停止、ターミナル�
 
 ### 次フェーズの入口
 per-user Workspace 化（CP が user→container を払い出し）、リポジトリ管理、SSH 鍵、settings.json 編集 UI、
-Claude 認証状態表示。→ [05 ロードマップ](../roadmap.md)。
+Claude 認証状態表示。→ [05 ロードマップ](roadmap.md)。

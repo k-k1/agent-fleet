@@ -343,11 +343,14 @@ agent never paints a batch on its own.
 **The draft changes as you talk**
 
 - The left column is the conversation (the same view as the mirror), the middle one the draft,
-  the right one results and history. A narrow pane folds them into **Conversation / Settings /
+  the right one results and history. A narrow pane folds them into **Chat / Settings /
   Results** tabs.
+- **On a phone**, while you type the head, tabs and suggestions step aside and the draft bar (the
+  draft's first line and **Trial**) stays above the keyboard. "N pictures are ready" stays under
+  the tabs until you look at the results or close it.
 - The agent can rewrite the prompt, the negative, steps / cfg / sampler / scheduler, the size,
   the LoRAs, the operation, the reference images and "how much to change the original". A field
-  it moved stays outlined until you next touch it.
+  it moved stays outlined until you edit that field or press trial or enqueue.
 - **Model, seed, count, output folder, label and mask image are yours alone.** Switching the
   model switches the family, and with it which fields are read, the sizes, and how long the first
   picture waits.

@@ -166,7 +166,7 @@ func TestSecondSendQueuesAndDrains(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 	h.mu.Lock()
-	queued := len(h.queue)
+	queued := h.tq().Len()
 	h.mu.Unlock()
 	if queued != 1 {
 		t.Errorf("%d turns queued, want 1", queued)
@@ -249,35 +249,222 @@ func TestResendWithTheSameClientMessageIDStartsOneTurn(t *testing.T) {
 	}
 }
 
-func TestInterruptCancelsTheQueueAndCallsTurnInterrupt(t *testing.T) {
+// A first stop interrupts the running turn and leaves the queue alone (ADR 0105 decision 1):
+// the queued input starts once the host reports the interrupted turn finished.
+func TestFirstStopInterruptsTheTurnAndKeepsTheQueue(t *testing.T) {
 	h := &threadHandle{}
 	host := newTestHandle(t, h)
-	host.Handle(msp.MethodTurnStart, func(m msptest.Message) (any, *msp.Error) {
-		return msp.CommandAcceptedResult{}, nil
-	})
-	host.Handle(msp.MethodTurnInterrupt, func(m msptest.Message) (any, *msp.Error) {
-		return msp.CommandAcceptedResult{}, nil
-	})
+	starts := recordStarts(host)
+	acceptInterrupts(host)
 	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{TurnID: "t-3", SessionID: h.sid})
 	waitEvent(t, h, agents.TurnRunning)
-	if err := h.Send(agents.TurnInput{Prompt: "queued"}); err != nil {
+	if err := h.Send(memberInput("queued", "cm-q")); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := h.Interrupt(); err != nil {
+	res, err := h.Interrupt(agents.InterruptOpts{})
+	if err != nil {
 		t.Fatalf("interrupt: %v", err)
 	}
-	m := host.WaitForMethod(msp.MethodTurnInterrupt)
+	if res.Stop != agents.StopFirst || res.Discard != nil {
+		t.Fatalf("stop = %+v, want a first stop discarding nothing", res)
+	}
+	m := waitSent(t, host, isMethod(msp.MethodTurnInterrupt))
 	var p msp.TurnInterruptParams
 	json.Unmarshal(m.Params, &p)
 	if p.TurnID == nil || *p.TurnID != "t-3" {
 		t.Errorf("turnId = %v, want t-3", p.TurnID)
 	}
 	h.mu.Lock()
-	queued := len(h.queue)
+	queued := h.tq().Len()
 	h.mu.Unlock()
-	if queued != 0 {
-		t.Errorf("%d turns still queued after an interrupt", queued)
+	if queued != 1 {
+		t.Errorf("%d turns queued after a first stop, want the follow-up kept", queued)
+	}
+	host.Notify(msp.NotificationTurnCompleted, msp.TurnCompletedParams{TurnID: "t-3", SessionID: h.sid, Terminal: msp.TurnTerminalCancelled})
+	if got := *nextStart(t, starts).Input[0].Text; got != "queued" {
+		t.Fatalf("started %q after the stop, want the queued follow-up", got)
+	}
+}
+
+// A second stop inside the episode interrupts the continued turn and discards the rest, the
+// peer message included; what it discarded is kept for return.
+func TestSecondStopDiscardsTheRestPeerIncluded(t *testing.T) {
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	starts := recordStarts(host)
+	acceptInterrupts(host)
+
+	queued, err := h.SendQueued(memberInput("stuck", "cm-stuck"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued {
+		t.Fatal("input to an idle session was reported as queued")
+	}
+	first := nextStart(t, starts)
+	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{CommandID: first.CommandID, TurnID: first.CommandID, SessionID: h.sid})
+	waitEvent(t, h, agents.TurnRunning)
+	queued, err = h.SendQueued(memberInput("own follow-up", "cm-own"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !queued {
+		t.Fatal("input behind a running turn was not reported as queued")
+	}
+	if err := h.Send(peerInput("from a peer", "cm-peer")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
+		t.Fatalf("first stop: %v", err)
+	}
+	host.Notify(msp.NotificationTurnCompleted, msp.TurnCompletedParams{TurnID: first.CommandID, SessionID: h.sid, Terminal: msp.TurnTerminalCancelled})
+	own := nextStart(t, starts)
+	if got := *own.Input[0].Text; got != "own follow-up" {
+		t.Fatalf("started %q after the first stop, want the own follow-up", got)
+	}
+	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{CommandID: own.CommandID, TurnID: own.CommandID, SessionID: h.sid})
+	waitEvent(t, h, agents.TurnRunning)
+
+	res, err := h.Interrupt(agents.InterruptOpts{})
+	if err != nil {
+		t.Fatalf("second stop: %v", err)
+	}
+	if res.Stop != agents.StopSecond || res.Discard == nil || len(res.Discard.Items) != 1 || res.Discard.Items[0].ID != "cm-peer" {
+		t.Fatalf("second stop = %+v, want the peer message discarded", res)
+	}
+	waitSent(t, host, func(m msptest.Message) bool {
+		var p msp.TurnInterruptParams
+		return m.Method == msp.MethodTurnInterrupt && json.Unmarshal(m.Params, &p) == nil && p.TurnID != nil && *p.TurnID == own.CommandID
+	})
+	host.Notify(msp.NotificationTurnCompleted, msp.TurnCompletedParams{TurnID: own.CommandID, SessionID: h.sid, Terminal: msp.TurnTerminalCancelled})
+	waitEvent(t, h, agents.TurnCancelled)
+	noStart(t, starts, "the discarded peer message")
+	h.mu.Lock()
+	kept, idle := h.tq().Discards(), h.tq().Head() == nil && h.tq().Len() == 0 && !h.tq().Episode()
+	h.mu.Unlock()
+	if len(kept) != 1 || kept[0].Items[0].Origin.Kind != agents.OriginPeer {
+		t.Fatalf("kept discards = %+v, want the peer message", kept)
+	}
+	if !idle {
+		t.Fatal("the queue is not settled after the second stop's turn ended")
+	}
+}
+
+// Between a turn/start and its turn/started the host has not yet said a turn is running, but
+// the handle counts the start as busy: a second send waits in the driver's queue, where the
+// Console shows it and a stop reaches it, instead of in the host's own queue.
+func TestSendInTheStartGapQueuesInTheDriver(t *testing.T) {
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	starts := make(chan msp.TurnStartParams, 4)
+	host.Handle(msp.MethodTurnStart, func(m msptest.Message) (any, *msp.Error) {
+		var p msp.TurnStartParams
+		json.Unmarshal(m.Params, &p)
+		starts <- p
+		return msp.TurnStartResult{Disposition: msp.TurnStartDispositionStarted, StartedNewTurn: true, TurnID: p.CommandID}, nil
+	})
+
+	queued, err := h.SendQueued(agents.TurnInput{Prompt: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued {
+		t.Fatal("a turn the host started was reported as queued")
+	}
+	first := <-starts
+	queued, err = h.SendQueued(peerInput("from a peer", "cm-peer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !queued {
+		t.Fatal("input sent before turn/started was reported as started")
+	}
+	select {
+	case p := <-starts:
+		t.Fatalf("the second input went to the host during the start gap: %q", *p.Input[0].Text)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{CommandID: first.CommandID, TurnID: first.CommandID, SessionID: h.sid})
+	waitEvent(t, h, agents.TurnRunning)
+	host.Notify(msp.NotificationTurnCompleted, msp.TurnCompletedParams{
+		TurnID: first.CommandID, SessionID: h.sid, Terminal: msp.TurnTerminalCompleted,
+	})
+	select {
+	case p := <-starts:
+		if *p.Input[0].Text != "from a peer" {
+			t.Errorf("drained %q, want the peer message", *p.Input[0].Text)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the queued input never started")
+	}
+}
+
+// A turn this handle did not start (another client's) can still be running on the host, and
+// then the host queues the input itself. Its disposition is the only thing that tells the sender
+// the message has not been read yet.
+func TestHostQueuedDispositionReportsQueued(t *testing.T) {
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	host.Handle(msp.MethodTurnStart, func(m msptest.Message) (any, *msp.Error) {
+		return msp.TurnStartResult{Disposition: msp.TurnStartDispositionQueued, TurnID: "t-2"}, nil
+	})
+	queued, err := h.SendQueued(peerInput("from a peer", "cm-peer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !queued {
+		t.Fatal("input the host queued was reported as started")
+	}
+}
+
+// Agent shutdown interrupts through the teardown path: the whole queue goes, peer input
+// included, and nothing is kept for return (ADR 0105 decision 8).
+func TestAbortManagedDiscardsTheQueue(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	handlesMu.Lock()
+	handles[h.name] = h
+	handlesMu.Unlock()
+	t.Cleanup(func() {
+		handlesMu.Lock()
+		delete(handles, h.name)
+		handlesMu.Unlock()
+	})
+	starts := make(chan string, 4)
+	host.Handle(msp.MethodTurnStart, func(m msptest.Message) (any, *msp.Error) {
+		var p msp.TurnStartParams
+		json.Unmarshal(m.Params, &p)
+		starts <- *p.Input[0].Text
+		return msp.CommandAcceptedResult{}, nil
+	})
+	host.Handle(msp.MethodTurnInterrupt, func(m msptest.Message) (any, *msp.Error) {
+		return msp.CommandAcceptedResult{}, nil
+	})
+	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{TurnID: "t-1", SessionID: h.sid})
+	waitEvent(t, h, agents.TurnRunning)
+	if err := h.Send(peerInput("from a peer", "cm-peer")); err != nil {
+		t.Fatal(err)
+	}
+
+	AbortManaged()
+	waitSent(t, host, isMethod(msp.MethodTurnInterrupt))
+	h.mu.Lock()
+	left, kept := h.tq().Len(), h.tq().Discards()
+	h.mu.Unlock()
+	if left != 0 || len(kept) != 0 {
+		t.Errorf("%d entries queued and %d discards kept after the shutdown interrupt, want none", left, len(kept))
+	}
+	host.Notify(msp.NotificationTurnCompleted, msp.TurnCompletedParams{
+		TurnID: "t-1", SessionID: h.sid, Terminal: msp.TurnTerminalCancelled,
+	})
+	select {
+	case s := <-starts:
+		t.Errorf("a turn started after the shutdown interrupt: %q", s)
+	case <-time.After(200 * time.Millisecond):
 	}
 }
 
@@ -394,7 +581,7 @@ func TestClearEffortLeavesTheNextTurnWithoutOne(t *testing.T) {
 
 	// The control first: with an effort held, the turn carries it. Without this arm a turn
 	// that never carried one would pass the assertion below.
-	if err := h.startTurn(agents.TurnInput{Prompt: "one"}); err != nil {
+	if _, err := h.startTurn(agents.TurnInput{Prompt: "one"}, msp.NewCommandID()); err != nil {
 		t.Fatalf("startTurn: %v", err)
 	}
 	if got := (<-turns)["reasoningEffort"]; got != "max" {
@@ -404,7 +591,7 @@ func TestClearEffortLeavesTheNextTurnWithoutOne(t *testing.T) {
 	if err := h.UpdateSettings(agents.ThreadSettings{ClearEffort: true}); err != nil {
 		t.Fatalf("UpdateSettings: %v", err)
 	}
-	if err := h.startTurn(agents.TurnInput{Prompt: "two"}); err != nil {
+	if _, err := h.startTurn(agents.TurnInput{Prompt: "two"}, msp.NewCommandID()); err != nil {
 		t.Fatalf("startTurn: %v", err)
 	}
 	if raw := <-turns; raw["reasoningEffort"] != nil {
@@ -445,10 +632,15 @@ func TestInputPartsSendsAnImageAndFallsBackToThePath(t *testing.T) {
 	f.Close()
 	missing := filepath.Join(dir, "gone.png")
 
-	parts := inputParts(agents.TurnInput{
+	parts, images := inputPartsImages(agents.TurnInput{
 		Prompt:      "look",
 		Attachments: []string{image, notImage, empty, huge, missing, "  "},
 	})
+	// Only the inlined image is reported: the fallbacks already carry their path in the text,
+	// and the transcript would show them twice.
+	if len(images) != 1 || images[0] != image {
+		t.Errorf("images = %q, want only %s", images, image)
+	}
 
 	if len(parts) != 6 {
 		t.Fatalf("parts = %d, want prompt + 5 attachments (the blank one is dropped): %+v", len(parts), parts)
@@ -507,4 +699,116 @@ func TestImageMediaTypeCoversWhatThePasteEndpointAccepts(t *testing.T) {
 			t.Errorf("imageMediaType(%q) = %q/%v, want %q", tc.name, got, ok, tc.want)
 		}
 	}
+}
+
+// The host's userMessage carries no path for an image, so the driver has to remember which
+// paths went out under which commandId — on turn/start and on turn/steer alike — and stamp them
+// on the item when it comes back. Without this the mirror has nothing to load a thumbnail from.
+func TestSentImagesAreStampedOnTheirUserMessage(t *testing.T) {
+	newStore(t)
+	dir := t.TempDir()
+	shot := filepath.Join(dir, "paste-1.png")
+	if err := os.WriteFile(shot, []byte{0x89, 'P', 'N', 'G'}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	starts := recordStarts(host)
+	host.Handle(msp.MethodTurnSteer, func(m msptest.Message) (any, *msp.Error) {
+		return msp.CommandAcceptedResult{}, nil
+	})
+
+	if err := h.Send(agents.TurnInput{Prompt: "look", Attachments: []string{shot}}); err != nil {
+		t.Fatal(err)
+	}
+	start := nextStart(t, starts)
+	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{CommandID: start.CommandID, TurnID: start.CommandID, SessionID: h.sid})
+	waitEvent(t, h, agents.TurnRunning)
+	if err := h.Steer(agents.TurnInput{Prompt: "and this", Attachments: []string{shot}}); err != nil {
+		t.Fatal(err)
+	}
+	var steer msp.TurnSteerParams
+	if err := json.Unmarshal(host.WaitForMethod(msp.MethodTurnSteer).Params, &steer); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct{ id, cmd string }{{"u-start", start.CommandID}, {"u-steer", steer.CommandID}} {
+		first := item(msp.ItemKindUserMessage, tc.id, 1)
+		first.Text, first.CommandID = sp("look[Image #1]"), sp(tc.cmd)
+		h.onItem(first)
+		again := first // a later revision of the same item arrives without a fresh stamp
+		again.Revision = 2
+		h.onItem(again)
+	}
+	other := item(msp.ItemKindUserMessage, "u-other", 1)
+	other.CommandID = sp("someone-else")
+	h.onItem(other)
+
+	_, meta, err := openStore(h.slotSid).itemsWithMeta()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"u-start", "u-steer"} {
+		if got := meta[id].images; len(got) != 1 || got[0] != shot {
+			t.Errorf("%s: images = %q, want [%s]", id, got, shot)
+		}
+	}
+	if got := meta["u-other"].images; got != nil {
+		t.Errorf("an unrelated user message got images %q", got)
+	}
+	if len(h.sentImages) != 0 {
+		t.Errorf("sentImages still holds %v after both messages arrived", h.sentImages)
+	}
+}
+
+// A send that never becomes a userMessage — a refused turn/start, a refused turn/steer, a host
+// that died — must not leave its images behind in sentImages: the handle lives as long as the
+// session, and nothing else would ever collect them.
+func TestSentImagesAreDroppedWhenNoUserMessageCanFollow(t *testing.T) {
+	newStore(t)
+	shot := filepath.Join(t.TempDir(), "paste-1.png")
+	if err := os.WriteFile(shot, []byte{0x89, 'P', 'N', 'G'}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pending := func(h *threadHandle) int {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.sentImages)
+	}
+	settled := func(h *threadHandle, why string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for pending(h) != 0 {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: sentImages still holds %d entries", why, pending(h))
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	refuse := func(m msptest.Message) (any, *msp.Error) {
+		return nil, &msp.Error{Code: -32602, Message: "invalid params"}
+	}
+
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	host.Handle(msp.MethodTurnStart, refuse)
+	_ = h.Send(agents.TurnInput{Prompt: "look", Attachments: []string{shot}})
+	host.WaitForMethod(msp.MethodTurnStart)
+	settled(h, "refused turn/start")
+
+	h2 := &threadHandle{}
+	host2 := newTestHandle(t, h2)
+	host2.Handle(msp.MethodTurnSteer, refuse)
+	host2.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{TurnID: "t-1", SessionID: h2.sid})
+	waitEvent(t, h2, agents.TurnRunning)
+	if err := h2.Steer(agents.TurnInput{Prompt: "and this", Attachments: []string{shot}}); err == nil {
+		t.Fatal("the refused steer reported success")
+	}
+	settled(h2, "refused turn/steer")
+
+	h3 := &threadHandle{}
+	newTestHandle(t, h3)
+	h3.noteImages("in-flight", []string{shot})
+	h3.hostLost(h3.cl)
+	settled(h3, "host lost")
 }

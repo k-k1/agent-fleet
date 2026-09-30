@@ -87,6 +87,11 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	}
 	sid := slotSid(m)
 	li.State = status.EffectiveModal(sid, status.LiveState(sid))
+	// The overview card's gauge and trend come from the live handle, never from Transcript():
+	// AF's item store carries no usage, so sessionx's transcript fold finds nothing for muse.
+	// Both are in-memory reads — no MSP round trip on the 4 s list poll.
+	li.Context = overviewContext(m.Name)
+	li.TokenSpends = ManagedSpends(m.Name)
 	return li
 }
 
@@ -111,7 +116,7 @@ func (agentImpl) ClearResume(sid string) {
 // at-rest file is not an option).
 func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	st := openStore(slotSid(m))
-	items, models, err := st.itemsWithModels()
+	items, meta, err := st.itemsWithMeta()
 	if err != nil {
 		return agents.TranscriptData{}, false
 	}
@@ -119,8 +124,12 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	// An assistant turn is labelled with the model of its first item. session/setModel takes
 	// effect at the next model call, so a turn that spans a switch shows the model it began on.
 	for i := range td.Turns {
+		im := meta[td.Turns[i].AnchorID]
 		if td.Turns[i].Role == "assistant" && td.Turns[i].Model == "" {
-			td.Turns[i].Model = models[td.Turns[i].AnchorID]
+			td.Turns[i].Model = im.model
+		}
+		if td.Turns[i].Role == "user" && len(im.images) > 0 {
+			withImagePaths(&td.Turns[i], im.images)
 		}
 	}
 
@@ -143,9 +152,9 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 			td.PendingApproval, td.PendingApprovalID = h.inter.Approval, h.inter.ID
 		}
 	}
-	for _, in := range h.queue {
-		td.Queued = append(td.Queued, in.Prompt)
-	}
+	td.Queued = append(td.Queued, h.tq().Texts()...)
+	td.QueuedItems = h.tq().Items()
+	td.Discards = h.tq().Discards()
 	h.mu.Unlock()
 	return td, true
 }

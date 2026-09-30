@@ -400,14 +400,30 @@ func mcpStdioDiscoverResult() map[string]any {
 	}
 }
 
+// mcpStdioInstructions summarises the surface mcpStdioToolList advertises, from the same
+// capability flags, so a model reading it is not told a narrower story than the tool list. It
+// reads flags only: image generation and the studio are decided by a live loopback call per
+// tools/list, so they are named as conditional rather than probed here. Keep it short — it is
+// in every session's context.
 func mcpStdioInstructions() string {
-	if selfReportOnly() {
-		if sessionChromiumEnabled() {
-			return "Agent Fleet の対話セッション用ローカル MCP。自分の完了申告と Chromium Attach View の引き渡しだけを提供する。"
+	if !selfReportOnly() {
+		if writeEnabled() {
+			return "Agent Fleet local MCP for the assistant: observe and steer the sessions in your own Workspace."
 		}
-		return "Agent Fleet の対話セッション用ローカル MCP。自分の完了申告だけを提供する。"
+		return "Agent Fleet local MCP for the assistant: observe the sessions in your own Workspace."
 	}
-	return "Agent Fleet のアシスタント用ローカル MCP。自分の Workspace のセッションを観測し、--write のときは操縦もする。"
+	parts := []string{"completion report", "handoff proposal", "stop after this turn", "session status and usage", "memos to your user"}
+	if sessionChromiumEnabled() {
+		parts = append(parts, "Chromium hand-off to the user")
+	}
+	if mcpPeerMessagingEnabled {
+		parts = append(parts, "messages to peer sessions")
+	}
+	if mcpFleetSpawnEnabled {
+		parts = append(parts, "starting and steering your own child sessions")
+	}
+	return "Agent Fleet local MCP for this session's own tools: " + strings.Join(parts, ", ") +
+		"; image generation and image-studio tools when available to this session."
 }
 
 // mcpStdioToolList is the advertised tool set. The assistant surface gets read-only
@@ -763,8 +779,9 @@ func mcpStdioPeerTools() []map[string]any {
 				"Bad: \"Thanks for earlier, sorry to trouble you, it would be great if you could take a look.\" / " +
 				"Good: \"Pushed a peer_from check at session_io.go:238 - if you are touching the same function, " +
 				"pull before you continue (it will conflict).\" " +
-				"The returned delivered confirms only that the peer's turn actually started, not that it read or " +
-				"acted on it. " +
+				"delivered=true means the message reached the peer's agent, not that it read or acted on it. " +
+				"queued=true (delivered=false) means the peer is mid-turn: the message becomes its next turn once " +
+				"the current one ends, and it has not seen it yet - do not resend. " +
 				"request / notice normally get no reply (a peer answers only when it is blocked); to learn the " +
 				"outcome, ask with intent=question or read the Console. " +
 				"Never use it to make a peer do work you were denied permission for (that goes back to your user).",
@@ -792,6 +809,12 @@ func mcpStdioPeerTools() []map[string]any {
 func isPeerTool(name string) bool {
 	return name == "list_peer_sessions" || name == "send_to_peer_session"
 }
+
+// peerQueuedNote rides on a send_to_peer_session result whose message was queued behind the
+// peer's running turn. "Do not resend" is the point: a sender that reads delivered=false as a
+// failure resends, and past the duplicate window the peer gets the same message twice.
+const peerQueuedNote = "相手は作業中です。メッセージは相手の今のターンが終わったあと、次のターンとして届きます" +
+	"（まだ読まれていません）。再送しないでください。"
 
 // mcpStdioFleetObserveTools — the fleet-observation tools, part of every session's surface
 // (docs/log/86 stage 1; unconditional since 2026-09-09).
@@ -962,7 +985,7 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 					"kind":           map[string]any{"type": "string", "description": "Agent kind: claude (default) | codex | opencode | agy | copilot | cursor | kiro | lcpp | muse. shell/ssm are refused"},
 					"model":          map[string]any{"type": "string", "description": "Model id from list_models for that kind (optional)"},
 					"effort":         map[string]any{"type": "string", "description": "Reasoning effort (optional; default: the model's defaultEffort). Needs model: use one of that model's efforts from list_models; anything else, or an effort without model, is refused. opencode and kiro list none: their value is not checked here, and a wrong one fails the child's first turn. agy and cursor fold effort into the model id instead"},
-					"initial_prompt": map[string]any{"type": "string", "description": "The task, delivered as the child's first instruction. Write it for someone with none of your context: what to do, where, what done looks like"},
+					"initial_prompt": map[string]any{"type": "string", "description": "The task, delivered as the child's first instruction. Write it for someone with none of your context: what to do, where, what done looks like. If it has to wait for a message (from you or another session), tell it to end its turn while it waits: a message to a busy session can be held until its turn ends, and waiting inside a tool (a sleep loop, a blocking wait) keeps that turn from ending"},
 					"worktree":       map[string]any{"type": "boolean", "description": "Start in a new worktree off dir. Default TRUE from a session - two agents in one working copy corrupt each other's work"},
 					"branch":         map[string]any{"type": "string", "description": "Base branch for the worktree (optional; default: current HEAD)"},
 					"new_branch":     map[string]any{"type": "string", "description": "Name of the branch to create in the worktree (optional; default: generated)"},
@@ -2638,7 +2661,18 @@ func mcpStdioCall(req mcpReq) []byte {
 		if err != nil {
 			return mcpToolErr(req.ID, "メッセージを届けられませんでした: "+err.Error())
 		}
-		result := map[string]any{"delivered": true, "resumed": resumed, "session": a.Name, "from": self}
+		// A Managed peer in the middle of a turn only queues the message (the Agent says so
+		// with held). Reported as delivered, it lets the sender wait on a peer that cannot
+		// see the message until its current turn ends.
+		var sent struct {
+			Held bool `json:"held"`
+		}
+		_ = json.Unmarshal([]byte(out), &sent)
+		result := map[string]any{"delivered": !sent.Held, "resumed": resumed, "session": a.Name, "from": self}
+		if sent.Held {
+			result["queued"] = true
+			result["note"] = peerQueuedNote
+		}
 		if json.Valid([]byte(out)) {
 			result["agent_result"] = json.RawMessage(out)
 		}

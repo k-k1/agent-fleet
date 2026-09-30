@@ -51,6 +51,9 @@ export interface BranchName {
   provisional: boolean;
   warnings: BranchWarning[];
   sources: Record<string, unknown>;
+  /** "suggest" lets a work-item launch offer Initialize Git Flow (decision 9). Absent from
+   * an Agent that predates it. */
+  gitflow?: string;
 }
 
 export interface BranchNameRequest {

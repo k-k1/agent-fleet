@@ -252,6 +252,18 @@ art as it serves it.
 
 ## Idle stop and force-stop
 
+- **A start that never finishes is stopped**: a Workspace that has been starting for
+  **30 minutes** with no task running — on ECS, typically a task the cluster refuses to
+  place — is stopped, so it no longer holds capacity and the user can press **Start** again
+  once the cause is fixed. The 30 minutes count from its last Start, or from when the
+  Control Plane first saw it starting if that is later (after a Control Plane restart, for
+  instance), and it is checked once per usage sample (5 minutes), so the stop comes up to
+  one sample late. The Control Plane log says so (`start-deadline: stopped …`, with the last
+  start phase). `AF_WORKSPACE_START_DEADLINE` changes the limit and `0` turns it off; on
+  `ecs-ec2` it is never shorter than the pool's own launch budget (`AF_ECS_EC2_CLAIM_TTL_SEC`,
+  `AF_ECS_EC2_WAIT_SEC`). It runs on the usage sampler, so `AF_USAGE_SAMPLE_INTERVAL=0` turns
+  it off too.
+
 - **Automatic idle stop (scale-to-zero)**: an idle claude session is halted after **1 hour**
   and a Workspace with nothing running is stopped after **2 hours**. That is the default;
   `AF_SESSION_IDLE_TIMEOUT` / `AF_INTERACTION_IDLE_TIMEOUT` (a session parked on a question or an approval) / `AF_WS_IDLE_TIMEOUT` / `AF_PRESENCE_IDLE_TIMEOUT` (how long a terminal with no typing still counts as someone being there; 30m) change it (per-tenant overrides are in the

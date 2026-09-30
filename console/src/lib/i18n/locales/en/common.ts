@@ -159,6 +159,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "wsstart.home_creating": "Creating your home disk… (first start only)",
   "wsstart.home_restoring": "Restoring your home from its saved copy…",
   "wsstart.home_attaching": "Attaching your home disk…",
+  "wsstart.home_clearing": "Removing what Recreate / Clean home deletes from your home…",
   "wsstart.hint": "Progress is also recorded in agent.log. Closing this dialog does not stop the start.",
 
   // === P2 TopBar (app/TopBar.tsx) ===
@@ -191,7 +192,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "topbar.host_version": "Agent Fleet v{v}",
   "topbar.update_ready": "Update available · restart to apply v{v}",
   "topbar.update_badge": "Update",
-  "topbar.settings_title": "Settings (Display / Workspace / Agents / Git / AWS SSM / MCP)",
+  "topbar.settings_title": "Settings (Display / Workspace / Agents / Git / AWS profiles/SSM / MCP)",
 
   // === P2 small shared words ===
   "common.list_sep": ", ",

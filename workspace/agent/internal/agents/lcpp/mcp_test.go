@@ -652,12 +652,17 @@ func TestMCPUnreachableServerDoesNotSlowDownLaterTurns(t *testing.T) {
 
 	oldBudget, oldBackoff := mcpSyncBudget, mcpSyncBackoff
 	mcpSyncBudget = 150 * time.Millisecond
-	mcpSyncBackoff = 10 * time.Second // long enough to still be cooling down for turn 2 below
+	// Far beyond anything a loaded host can stretch two turns to: turn 2 must land inside the
+	// window by construction, not by racing a clock.
+	mcpSyncBackoff = time.Hour
 	t.Cleanup(func() { mcpSyncBudget, mcpSyncBackoff = oldBudget, oldBackoff })
 
 	if _, err := mcpreg.Create(mcpreg.ServerDef{
 		Name: "hangs", Transport: mcpreg.TransportStdio, Command: sortBin,
-		Enabled: true, Targets: mcpreg.Targets{Session: true}, Kinds: []string{session.KindLcpp},
+		// The longest handshake a def may declare: without mcpSyncBudget the first turn would
+		// block this long, so waitState gives up on it (measured) before the cap below is read.
+		TimeoutMS: 120000,
+		Enabled:   true, Targets: mcpreg.Targets{Session: true}, Kinds: []string{session.KindLcpp},
 	}); err != nil {
 		t.Fatalf("mcpreg.Create: %v", err)
 	}
@@ -680,8 +685,17 @@ func TestMCPUnreachableServerDoesNotSlowDownLaterTurns(t *testing.T) {
 		return time.Since(start)
 	}
 
+	backoffOf := func() mcpFailure {
+		th := h.(*threadHandle)
+		th.mu.Lock()
+		defer th.mu.Unlock()
+		return th.mcpFailures["hangs"]
+	}
+
 	first := turnDuration("one")
-	second := turnDuration("two")
+	afterFirst := backoffOf()
+	turnDuration("two")
+	afterSecond := backoffOf()
 
 	// The first turn genuinely pays (close to) the shrunk handshake budget — a sanity check
 	// that this test is exercising the timeout path at all, not silently failing fast for an
@@ -690,12 +704,19 @@ func TestMCPUnreachableServerDoesNotSlowDownLaterTurns(t *testing.T) {
 		t.Fatalf("first turn = %v, expected it to pay close to the sync budget (%v) — is this test actually hitting the connect timeout?", first, mcpSyncBudget)
 	}
 	// ...and mcpSyncBudget actually CAPS that wait — without it, the first turn would instead
-	// pay mcpc's own uncapped defaultHandshakeTimeout (10s) against this same silent server.
-	if first > 10*mcpSyncBudget {
+	// pay the def's own 120 s handshake timeout against this same silent server. The bound sits
+	// far from both: a loaded host stretches the turn's own work (a 6 s engine round trip broke
+	// the former 5 s bound), and the uncapped wait is six times this one.
+	if first > 20*time.Second {
 		t.Fatalf("first turn = %v, expected it capped near the sync budget (%v) — is syncMCPServers still wrapping Sync in a timeout?", first, mcpSyncBudget)
 	}
-	// The second turn must be backed off entirely — no connect attempt, so no handshake wait.
-	if second >= first/2 {
-		t.Fatalf("second turn (%v) was not meaningfully faster than the first (%v) — a still-broken server should have been skipped by backoff, not retried", second, first)
+	// The second turn must be backed off entirely — no connect attempt. Read from the backoff
+	// state, not from the turn's duration (comparing durations went red under load, go test
+	// -p 2): an attempt that failed again would have restamped the entry with a later retry time.
+	if afterFirst.next.IsZero() {
+		t.Fatalf("no backoff recorded for the unreachable server after the first turn: %+v", afterFirst)
+	}
+	if afterSecond != afterFirst {
+		t.Fatalf("backoff after the second turn = %+v, want %+v unchanged — a still-broken server should have been skipped by backoff, not retried", afterSecond, afterFirst)
 	}
 }

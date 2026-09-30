@@ -20,7 +20,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
@@ -283,13 +285,6 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	if len(body.Keys) > maxInputSteps || len(body.Seq) > maxInputSteps {
 		httpx.WriteErr(w, http.StatusBadRequest, "too_many_steps",
 			fmt.Sprintf("keys/seq must have at most %d elements", maxInputSteps))
-		return
-	}
-	// Refused before anything records this prompt's origin (the mirror badge, the fleet
-	// graph, the peer rate limit): a refused send must leave no trace that a later identical
-	// user message could inherit. submitPromptTUI checks again at the moment of typing.
-	if body.Prompt != "" && !body.WhenReady && len(body.Keys) == 0 && len(body.Seq) == 0 &&
-		!codexHandOverGate(w, name) {
 		return
 	}
 	// Peer send (docs/log/58 / ADR 0041). Every invariant is satisfied here before the
@@ -681,7 +676,16 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 			recordFleetGraphInstruct(meta.Name, src, reportTo, "", prompt)
 		}
 	}
-	if err := h.Send(agents.TurnInput{Prompt: prompt}); err != nil {
+	// The origin is what the stop rules read (ADR 0105): only member input ends a stop episode,
+	// and a discard lists the rest by origin rather than putting it back in the input box.
+	in := agents.TurnInput{Prompt: prompt, Origin: turnOrigin(badgeOriginOf(peerFrom, reportTo, source), peerFrom)}
+	queued := false
+	if qs, ok := h.(agents.QueueingSender); ok {
+		queued, err = qs.SendQueued(in)
+	} else {
+		err = h.Send(in)
+	}
+	if err != nil {
 		if errors.Is(err, agents.ErrQuestionPending) {
 			httpx.WriteErr(w, http.StatusConflict, "question_pending",
 				"a question is awaiting an answer; answer it via the question card, not free text")
@@ -709,7 +713,15 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 		mirrorUserInputAsync(meta.Name, prompt) // docs/log/37 Fix ②: Console-input mirror
 		fleetgraph.RecordInstruct("user", meta.Name, "", prompt)
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": meta.Name})
+	// held: the prompt waits behind the running turn and nobody has read it yet. The managed
+	// path has no delivery confirmation to block on, so this is the only way a caller that is
+	// not watching (send_to_peer_session) can tell "started a turn" from "held". Not named
+	// "queued": this endpoint's when_ready answer already uses that key, for a session name.
+	resp := map[string]any{"sent": meta.Name}
+	if queued {
+		resp["held"] = true
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // submitPromptTUI is the shared {prompt}→TUI delivery behind /input's {prompt} path
@@ -724,9 +736,6 @@ func submitPromptTUI(w http.ResponseWriter, name, pane, prompt string) bool {
 	// (tui), /plan-respond (plan) or /respond (managed). See promptBlocker.
 	if st := promptBlocker(name); st != "" {
 		writeBlockedErr(w, st)
-		return false
-	}
-	if !codexHandOverGate(w, name) {
 		return false
 	}
 	// agy: the "Signing in..." boot screen eats typed text entirely (docs/log/32) — a
@@ -764,52 +773,6 @@ func submitPromptTUI(w http.ResponseWriter, name, pane, prompt string) bool {
 	}
 	return true
 }
-
-// codexHandOverGate guards a prompt to a codex session that is being handed from the shared
-// app-server to a Terminal pane (codex/release.go). It covers the whole hand-over:
-//
-//   - from the switch's first step to the waiter's exit (Awaiting): refused, on either
-//     driver. Until the pane is up the meta still says managed, and a managed send would
-//     Resume the thread on the app-server and lock the new pane out again.
-//   - after the wait (JustReleased, until a composer is seen): codex is starting, so the
-//     prompt holds until its composer footer is drawn — and is refused if it is not drawn
-//     within 15 s. A slow start or codex's own lock screen (whose r/f/q keys typed text would
-//     press) is not a composer. The first footer seen ends the hand-over.
-//
-// Outside a hand-over it costs one stat. On refusal the HTTP error is written and false is
-// returned.
-func codexHandOverGate(w http.ResponseWriter, name string) bool {
-	meta, ok := session.ReadMeta(name)
-	if !ok || meta.Kind != session.KindCodex {
-		return true
-	}
-	refuse := func() bool {
-		httpx.WriteErr(w, http.StatusConflict, "codex_releasing",
-			"managed 実行方式からこの会話を引き継いでいる途中です（通常 1 分ほど）。codex の入力欄が出てから送ってください")
-		return false
-	}
-	if codex.Awaiting(name) {
-		return refuse()
-	}
-	if meta.DriverKind() == session.DriverManaged || !codex.JustReleased(name) {
-		return true
-	}
-	tn := session.TmuxName(name)
-	for deadline := time.Now().Add(codexComposerWait); time.Now().Before(deadline); {
-		if PaneMode(meta.Kind, tn) != "" {
-			codex.ClearHandOver(name)
-			return true
-		}
-		if codex.Awaiting(name) {
-			return refuse()
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	return refuse()
-}
-
-// codexComposerWait bounds codexHandOverGate's hold after the wait; a variable for tests.
-var codexComposerWait = 15 * time.Second
 
 // slashCmdRe matches a single-token slash command like "/plan" or "/model foo" (but not a
 // path such as /home/dev/x, which has a second slash).
@@ -952,16 +915,10 @@ func typeInitialPrompt(name, prompt string) string {
 	if kind == session.KindShell {
 		ready = true
 	}
-	// A codex pane waiting for the app-server to release its thread (codex/release.go) has no
-	// composer for up to ThreadReleaseTimeout; the budget above starts once codex does.
-	releaseDeadline := time.Now().Add(codex.ThreadReleaseTimeout + 15*time.Second)
 	for i := 0; !ready && i < 60; i++ {
 		if PaneMode(kind, tn) != "" {
 			ready = true
 			break
-		}
-		if kind == session.KindCodex && codex.Awaiting(name) && time.Now().Before(releaseDeadline) {
-			i = 0
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
@@ -1106,27 +1063,8 @@ func promptBlocker(name string) string {
 	if !ok {
 		return ""
 	}
-	// agy has no status hooks — its pending interactive prompt is detected via the
-	// conversation-DB probe instead (pending.go). It reports ONLY the blocking states
-	// ("question" / "permission"), so an empty probe means "nothing pending".
-	if meta.Kind == session.KindAgy {
-		st, _ := agy.Probe(meta)
-		return st
-	}
-	// copilot: no hooks — an unfinished permission.requested in events.jsonl is the only
-	// source of "pending" (it catches the tui's permission menu and managed's Interaction
-	// in the same shape).
-	if meta.Kind == session.KindCopilot {
-		return blockingState(copilot.LiveState(meta))
-	}
-	// kiro: no hooks — "question" (awaiting approval, "shell requires approval") is only
-	// returned by DriveState and never written to the status store, so the generic
-	// fallback below (status.Read) is always false for kiro. That is a hole through which
-	// free text sent while the approval panel is up passes unchecked on the TUI path, so
-	// guard by reading the TUI text directly (same shape as copilot; managed is already
-	// guarded by ErrQuestionPending).
-	if meta.Kind == session.KindKiro {
-		return blockingState(kiro.LiveState(meta))
+	if probe, ok := kindModalProbes[meta.Kind]; ok {
+		return blockingState(probe(meta))
 	}
 	// claude: when the credentials have expired, refuse on that ground before any modal
 	// (docs/log/47 §4-8). The TUI accepts the characters and the Enter goes through, yet
@@ -1147,6 +1085,31 @@ func promptBlocker(name string) string {
 	// on screen (plan_pending, not permission_pending) and the operator is pointed at
 	// the surface that can actually decide it.
 	return blockingState(effectiveModal(sid, st.State))
+}
+
+// kindModalProbes reads, for every kind whose modals never reach the status store, the modal
+// it is showing now ("" when none) — from the same source its own live state is built on, so
+// the refusal and the Console's badge agree. Every kind with a Terminal route is here except
+// claude, whose hooks write its question / plan / permission into the status store, and
+// shell / ssm, which have no modal; a kind missing from both would fall through to a status
+// store nothing fills and never be refused (TestPromptBlockerCoversEveryTerminalKind).
+var kindModalProbes = map[string]func(session.Meta) string{
+	// The conversation DB's last step (pending.go). It reports ONLY the blocking states
+	// ("question" / "permission"), so an empty probe means "nothing pending".
+	session.KindAgy: func(m session.Meta) string { st, _ := agy.Probe(m); return st },
+	// An unfinished permission.requested in events.jsonl — the tui's permission menu and
+	// managed's Interaction in the same shape.
+	session.KindCopilot: copilot.LiveState,
+	// The approval panel's text in the pane ("shell requires approval"), reported as
+	// "question"; managed is also guarded by ErrQuestionPending.
+	session.KindKiro: kiro.LiveState,
+	// Their hooks and plugin report working/idle at most, so the question (codex's rollout,
+	// opencode's store) and cursor's approval and build menus (the pane) are read where they
+	// live. Terminal route only: their managed drivers refuse free text themselves
+	// (ErrQuestionPending).
+	session.KindCodex:    codex.TerminalModal,
+	session.KindOpencode: opencode.TerminalModal,
+	session.KindCursor:   cursor.TerminalModal,
 }
 
 // blockingState maps a live state to "" (free) or the state itself (blocking). An
@@ -1182,9 +1145,9 @@ func blockedErrMessage(state string) string {
 	case "question":
 		return "a question is awaiting an answer; answer it via the question card, not free text"
 	case "plan":
-		return "a plan is awaiting approval; decide it from the plan card (typed text would be swallowed by the dialog and the Enter would approve it)"
+		return "a plan is awaiting approval; decide it from the plan card, or in the terminal when there is none (typed text would be swallowed by the dialog and the Enter would approve it)"
 	case "permission":
-		return "a permission prompt is awaiting a decision; answer it from the permission card (typed text would be swallowed by the menu and the Enter would allow it)"
+		return "a permission prompt is awaiting a decision; answer it from the permission card, or in the terminal when there is none (typed text would be swallowed by the menu and the Enter would allow it)"
 	case agents.StateAuth:
 		return "the claude login for this workspace has expired; re-authenticate from 設定 > エージェント (a prompt sent now would be accepted by the TUI but never start a turn)"
 	}

@@ -5,7 +5,7 @@
 > 関連: [build/07-security.ja.md](../build/07-security.ja.md) §7.3（AUTH 3 モード＝現行契約） /
 > [build/06-data.ja.md](../build/06-data.ja.md)（`identity` / `membership`） /
 > [build/09-deploy.ja.md](../build/09-deploy.ja.md)（配布物の設定面） / [35-packaging.md](35-packaging.md)（4 ターゲットへ同じ設定を配る） /
-> [28-i18n.md](28-i18n.md)（CP 描画ページの言語選択） / [roadmap.md](../roadmap.md) §12.2（各社が握る設定項目）
+> [28-i18n.md](28-i18n.md)（CP 描画ページの言語選択） / [roadmap.md](roadmap.md) §12.2（各社が握る設定項目）
 > 対象: Control Plane（`oauth_*.go` / `main.go` / `routes.go` / migrations）/ Console（アカウント連携 UI・P1）/ `deploy/**`
 
 ## 61.1 目的
@@ -835,7 +835,7 @@ super_admin が毎日の運用に出てくるのは、部署テナントの新�
 > **§61.15**（P5）を読むこと。
 
 §61.9 は「1 社の中を部署で分ける・Entra テナントは 1 つ」という例で書いた。しかし
-**グループ各社**（[roadmap](../roadmap.md) §12.2 の本来の想定）や分社・M&A の途中では、
+**グループ各社**（[roadmap](roadmap.md) §12.2 の本来の想定）や分社・M&A の途中では、
 **テナントごとに Entra テナント自体が違う**（tenant guid が違う＝issuer が違う＝アプリ登録も
 client_id / secret も別）。「部署」と「別法人」の境目は運用上つながっている。
 

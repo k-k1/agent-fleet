@@ -136,7 +136,7 @@ type AllowlistEntry struct {
 }
 
 // UsageRow is one (membership, day) showback bucket enriched with human labels
-// for reporting (docs/roadmap.md P3-9). RunningSecs is accumulated workspace
+// for reporting (docs/log/roadmap.md P3-9). RunningSecs is accumulated workspace
 // occupancy in seconds. A member with no membership record still surfaces (its
 // workspace outlived the membership) with empty UserKey/Email.
 type UsageRow struct {
@@ -913,6 +913,7 @@ type Store interface {
 	SessionShareStore
 	TenantIdPStore
 	TenantGitOAuthStore
+	EngineAccessStore
 
 	// Ping backs GET /readyz. Not in a sub-interface: "is the database reachable"
 	// belongs to the store as a whole, not to a feature.
@@ -1332,7 +1333,8 @@ type PATStore interface {
 // GitRepoStore is the internal-git repository ledger (docs/reference/
 // internal-git-provider, ADR 0010). CreateGitRepo inserts the ledger row (the
 // bare is created on disk by the caller); the (tenant_id, name) uniqueness is
-// enforced by the schema.
+// enforced by the schema. RenameGitRepo and DeleteGitRepo carry the repo's LFS
+// ledger and lock rows with them in the same transaction.
 type GitRepoStore interface {
 	CreateGitRepo(ctx context.Context, g GitRepo) error
 	ListGitReposByTenant(ctx context.Context, tenantID string) ([]GitRepo, error)
@@ -1344,34 +1346,48 @@ type GitRepoStore interface {
 
 // LFSObjectStore is the Git LFS object ledger (P3). PutLFSObject records an
 // uploaded object (dedup on (tenant, repo, oid)); TenantLFSBytes sums a tenant's
-// stored bytes for the capacity quota; the repo-scoped ops keep the ledger in
-// step with repo delete/rename (the bytes on disk move with the .git dir).
+// stored bytes for the capacity quota. Repo delete/rename move the ledger through
+// GitRepoStore (the bytes on disk move with the .git dir).
 type LFSObjectStore interface {
+	// PutLFSObject records an upload. On a row that already exists it keeps the size and
+	// moves created_at to now, so a retry of a failed publish restarts the grace period GC
+	// gives a row whose file is absent (DeleteStaleLFSObject).
 	PutLFSObject(ctx context.Context, tenantID, repo, oid string, size int64) error
 	TenantLFSBytes(ctx context.Context, tenantID string) (int64, error)
-	DeleteLFSObjectsByRepo(ctx context.Context, tenantID, repo string) error
-	RenameLFSObjectsRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error
 	// DeleteLFSObject drops one object's ledger row (used by LFS GC when it prunes
 	// an orphaned object from disk, so the tenant's capacity quota frees up).
 	DeleteLFSObject(ctx context.Context, tenantID, repo, oid string) error
-	// ListLFSObjectOIDs returns the oids the ledger records for a repo — the set GC
-	// walks to reconcile against what git still references.
-	ListLFSObjectOIDs(ctx context.Context, tenantID, repo string) ([]string, error)
+	// LFSObjectSize returns the size an existing ledger row records for one object.
+	// A row can exist without its file (a failed publish keeps it), and a retry of that
+	// upload must not be charged for the same bytes twice.
+	LFSObjectSize(ctx context.Context, tenantID, repo, oid string) (int64, bool, error)
+	// ListLFSObjects returns the ledger rows of a repo — the set GC reconciles against
+	// the object files on disk.
+	ListLFSObjects(ctx context.Context, tenantID, repo string) ([]LFSObject, error)
+	// DeleteStaleLFSObject drops one row only if its created_at is at or before cutoff
+	// (RFC 3339 UTC, as NowTS writes it), and reports whether it did. The age test sits in
+	// the DELETE itself so an upload that refreshes the row after GC read it is not lost.
+	DeleteStaleLFSObject(ctx context.Context, tenantID, repo, oid, cutoff string) (bool, error)
+}
+
+// LFSObject is one lfs_object ledger row.
+type LFSObject struct {
+	OID       string
+	Size      int64
+	CreatedAt string
 }
 
 // LFSLockStore is the Git LFS file-lock ledger (P3). CreateLFSLock inserts a
 // lock (the (tenant, repo, path) UNIQUE makes a second lock on a path fail —
 // the caller pre-checks for the 409). ListLFSLocks paginates by an opaque
-// cursor (offset); a filter of "" matches all. The repo-scoped ops keep locks
-// in step with repo delete/rename.
+// cursor (offset); a filter of "" matches all. Repo delete/rename move the locks
+// through GitRepoStore.
 type LFSLockStore interface {
 	CreateLFSLock(ctx context.Context, l LFSLock) error
 	GetLFSLockByPath(ctx context.Context, tenantID, repo, path string) (LFSLock, bool, error)
 	GetLFSLock(ctx context.Context, tenantID, repo, id string) (LFSLock, bool, error)
 	ListLFSLocks(ctx context.Context, tenantID, repo, filterPath, filterID string, limit int, cursor string) ([]LFSLock, string, error)
 	DeleteLFSLock(ctx context.Context, tenantID, repo, id string) error
-	DeleteLFSLocksByRepo(ctx context.Context, tenantID, repo string) error
-	RenameLFSLocksRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error
 }
 
 // AuditStore is the audit log (docs/decisions/0006, P3-6; docs/log/20 M1).
@@ -1411,7 +1427,7 @@ type SettingsStore interface {
 	DeleteSetting(ctx context.Context, key string) error
 }
 
-// UsageStore is showback usage (docs/roadmap.md P3-9). AddUsage accumulates
+// UsageStore is showback usage (docs/log/roadmap.md P3-9). AddUsage accumulates
 // workspace running-seconds into the (membership, day) bucket; ListUsage
 // returns the per-day rows in [fromDay, toDay] (inclusive, YYYY-MM-DD), scoped
 // to one tenant or, when tenantID=="", every tenant (super_admin).

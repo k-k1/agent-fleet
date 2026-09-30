@@ -1,16 +1,12 @@
 package codex
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -48,7 +44,7 @@ func loadedListServer(t *testing.T, pages func(n int, cursor any) (data []string
 				data, next := pages(k, params["cursor"])
 				_ = c.WriteJSON(map[string]any{"id": m["id"], "result": map[string]any{"data": data, "nextCursor": next}})
 			default:
-				t.Errorf("the waiter sent %v: it must only read thread/loaded/list", m["method"])
+				t.Errorf("the probe sent %v: it must only read thread/loaded/list", m["method"])
 			}
 		}
 	}))
@@ -56,166 +52,114 @@ func loadedListServer(t *testing.T, pages func(n int, cursor any) (data []string
 	return "ws" + strings.TrimPrefix(srv.URL, "http"), func() int { mu.Lock(); defer mu.Unlock(); return n }
 }
 
-func TestAwaitThreadUnloadedWaitsForTheUnload(t *testing.T) {
-	// Pages: the thread sits on the second page while loaded, then disappears.
-	addr, calls := loadedListServer(t, func(n int, cursor any) ([]string, any) {
+// A Terminal launch that resumes a thread the shared app-server still has loaded is refused
+// (and the observer told to let go of it), not waited for; one that is free launches as usual.
+// Nothing is probed for a fresh launch.
+func TestBuildLaunchRefusesWhileTheAppServerHoldsTheThread(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var mu sync.Mutex
+	var released []string
+	prev := ReleaseObservedThread
+	ReleaseObservedThread = func(tid string) { mu.Lock(); released = append(released, tid); mu.Unlock() }
+	t.Cleanup(func() { ReleaseObservedThread = prev })
+	gotReleased := func() []string { mu.Lock(); defer mu.Unlock(); return append([]string(nil), released...) }
+
+	loaded := true
+	var lmu sync.Mutex
+	// The thread sits on the second page: a probe that read only the first would let it through.
+	addr, calls := loadedListServer(t, func(_ int, cursor any) ([]string, any) {
 		if cursor == nil {
 			return []string{"other"}, "c1"
 		}
-		if n < 6 {
-			return []string{"thr-1"}, nil
+		lmu.Lock()
+		defer lmu.Unlock()
+		if loaded {
+			return []string{"cx-own"}, nil
 		}
 		return []string{}, nil
 	})
-	if !AwaitThreadUnloaded(addr, "thr-1", 5*time.Second, 10*time.Millisecond) {
-		t.Fatal("reported a timeout although the thread was unloaded")
+	t.Setenv(appServerAddrEnv, addr)
+
+	m := session.Meta{Name: "release-probe", Kind: session.KindCodex, Dir: t.TempDir()}
+	if _, err := New().BuildLaunch(m, agents.LaunchOpts{}); err != nil {
+		t.Fatalf("fresh launch: %v", err)
 	}
-	if got := calls(); got < 6 {
-		t.Fatalf("returned after %d list calls - before the thread left the second page", got)
+	if n := calls(); n != 0 {
+		t.Fatalf("a fresh launch probed the app-server %d times: there is no thread to hold", n)
+	}
+
+	sids.Write(session.UUID(m.Dir, m.Name), "cx-own")
+	if _, err := New().BuildLaunch(m, agents.LaunchOpts{}); !errors.Is(err, ErrThreadReleasing) {
+		t.Fatalf("err = %v, want ErrThreadReleasing while the thread is loaded", err)
+	}
+	if got := gotReleased(); len(got) != 1 || got[0] != "cx-own" {
+		t.Fatalf("released = %v, want [cx-own]: a stop that never reached DropHandle must still let go", got)
+	}
+
+	lmu.Lock()
+	loaded = false
+	lmu.Unlock()
+	plan, err := New().BuildLaunch(m, agents.LaunchOpts{})
+	if err != nil {
+		t.Fatalf("launch after the unload: %v", err)
+	}
+	if !strings.HasPrefix(plan.Program, "codex resume 'cx-own'") {
+		t.Fatalf("expected a direct codex resume, got %q", plan.Program)
+	}
+	if got := gotReleased(); len(got) != 1 {
+		t.Fatalf("released = %v: a free thread was released again", got)
+	}
+
+	// No daemon holds nothing: the launch goes ahead.
+	t.Setenv(appServerAddrEnv, "ws://127.0.0.1:1")
+	if _, err := New().BuildLaunch(m, agents.LaunchOpts{}); err != nil {
+		t.Fatalf("launch with no daemon: %v", err)
 	}
 }
 
-func TestAwaitThreadUnloadedGivesUp(t *testing.T) {
-	addr, _ := loadedListServer(t, func(int, any) ([]string, any) { return []string{"thr-1"}, nil })
-	if AwaitThreadUnloaded(addr, "thr-1", 100*time.Millisecond, 10*time.Millisecond) {
-		t.Fatal("reported an unload for a thread that never left")
-	}
-}
-
-func TestAwaitThreadUnloadedWithoutDaemon(t *testing.T) {
-	if !AwaitThreadUnloaded("ws://127.0.0.1:1", "thr-1", time.Second, 10*time.Millisecond) {
-		t.Fatal("no daemon holds nothing: the wait must not block the launch")
-	}
-}
-
-// A Terminal launch that resumes a conversation while the shared app-server is up must release
-// the observer's hold and wait in the pane before codex starts; a fresh launch, or one with no
-// daemon, must do neither.
-func TestBuildLaunchWaitsForTheAppServerToReleaseTheThread(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+// A stop is what releases the thread: DropHandle unsubscribes the writer and has the observer
+// let go too, or the observer keeps the thread loaded and the Terminal route stays locked out.
+// It also clears a compaction mark the released observer can no longer end.
+func TestDropHandleReleasesTheObservedThread(t *testing.T) {
+	_, cl := newMockCodexServer(t)
+	h := newCodexTestHandle(t, cl, "codex-drop-release")
+	registerCodexTestHandle(t, h)
 	var released []string
 	prev := ReleaseObservedThread
 	ReleaseObservedThread = func(tid string) { released = append(released, tid) }
 	t.Cleanup(func() { ReleaseObservedThread = prev })
 
-	dir := t.TempDir()
-	m := session.Meta{Name: "await-release", Kind: session.KindCodex, Dir: dir}
-	launch := func() string {
-		t.Helper()
-		plan, err := New().BuildLaunch(m, agents.LaunchOpts{})
-		if err != nil {
-			t.Fatalf("BuildLaunch: %v", err)
-		}
-		return plan.Program
-	}
+	// Released, the observer never sees the interrupted turn end, which is what clears a
+	// compaction cut off without its item/completed.
+	SetCompacting("thr_test", true)
+	t.Cleanup(func() { SetCompacting("thr_test", false) })
 
-	t.Setenv(appServerAddrEnv, "ws://127.0.0.1:1")
-	if got := launch(); strings.Contains(got, "codex-await-thread") || len(released) != 0 {
-		t.Fatalf("fresh launch waited or released (released=%v): %q", released, got)
+	DropHandle(h.name)
+	if len(released) != 1 || released[0] != "thr_test" {
+		t.Fatalf("released = %v, want [thr_test]", released)
 	}
-
-	sids.Write(session.UUID(m.Dir, m.Name), "cx-own")
-	got := launch()
-	if want := " codex-await-thread 'ws://127.0.0.1:1' 'cx-own'; codex resume 'cx-own'"; !strings.Contains(got, want) {
-		t.Fatalf("expected %q in %q", want, got)
-	}
-	if len(released) != 1 || released[0] != "cx-own" {
-		t.Fatalf("released = %v, want [cx-own]", released)
-	}
-	if !Awaiting(m.Name) {
-		t.Fatal("the launch did not mark the pane as about to wait: a prompt could slip in before the waiter starts")
-	}
-
-	// A leftover hand-over and nothing to wait for (no daemon): the launch clears it, or
-	// prompts stay refused for its whole TTL.
-	t.Setenv(appServerAddrEnv, "")
-	writeAwaitMarker(m.Name, awaitPending)
-	released = nil
-	if got := launch(); strings.Contains(got, "codex-await-thread") || len(released) != 0 {
-		t.Fatalf("launch without a daemon waited or released (released=%v): %q", released, got)
-	}
-	if Awaiting(m.Name) {
-		t.Fatal("a launch with nothing to wait for left a pending mark in place")
-	}
-
-	// Mid-switch the mark belongs to the switch: the meta still says managed until the switch
-	// has written Terminal, so the launch must not end it — only EndSwitch does.
-	MarkSwitching(m.Name)
-	launch()
-	if !Awaiting(m.Name) {
-		t.Fatal("the launch ended the switch's mark while the meta may still say managed")
-	}
-	EndSwitch(m.Name)
-	if Awaiting(m.Name) {
-		t.Fatal("EndSwitch left a mark although this pane has nothing to wait for")
-	}
-	t.Setenv(appServerAddrEnv, "ws://127.0.0.1:1")
-	MarkSwitching(m.Name)
-	launch()
-	EndSwitch(m.Name)
-	if !Awaiting(m.Name) {
-		t.Fatal("EndSwitch dropped the guard although the pane is about to wait")
+	if IsCompactingThread("thr_test") {
+		t.Fatal("a stopped thread still reads compacting")
 	}
 }
 
-// The marker must track the waiter's life: present while it runs, gone after its cleanup, and
-// ignored once its process is dead (a killed pane never runs the cleanup).
-func TestAwaitingFollowsTheWaiter(t *testing.T) {
+// ReconcileManaged resumes from metas read before a switch to Terminal may have begun, so it
+// asks the switch guard first and skips a session the guard refuses (#1339 review).
+func TestReconcileManagedAsksTheSwitchClaim(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	done := MarkAwaiting("await-mark")
-	if !Awaiting("await-mark") {
-		t.Fatal("marker written but Awaiting is false")
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	const name = "reconcile-claim"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged})
+	var asked []string
+	prev := ReconcileClaim
+	ReconcileClaim = func(n string) (func(), bool) { asked = append(asked, n); return nil, false }
+	t.Cleanup(func() { ReconcileClaim = prev })
+
+	ReconcileManaged("test")
+	if len(asked) != 1 || asked[0] != name {
+		t.Fatalf("claims asked = %v, want [%s]", asked, name)
 	}
-	done()
-	if Awaiting("await-mark") {
-		t.Fatal("Awaiting still true after the waiter's cleanup")
-	}
-	if !JustReleased("await-mark") {
-		t.Fatal("the end of the wait is not reported: codex has no composer yet at that moment")
-	}
-	launchHandOver("await-mark", true)
-	if !Awaiting("await-mark") {
-		t.Fatal("a pending marker (pane not started yet) does not count as waiting")
-	}
-	MarkSwitching("await-mark")
-	if !Awaiting("await-mark") {
-		t.Fatal("a switch in progress does not count as waiting")
-	}
-	ClearHandOver("await-mark")
-	if Awaiting("await-mark") || JustReleased("await-mark") {
-		t.Fatal("ClearHandOver left the hand-over in place")
-	}
-	// "done" has no timeout: it lasts until a composer is seen, however long codex takes.
-	MarkAwaiting("await-mark")()
-	old := time.Now().Add(-time.Hour)
-	if err := os.Chtimes(awaitMarkerPath("await-mark"), old, old); err != nil {
-		t.Fatal(err)
-	}
-	if !JustReleased("await-mark") {
-		t.Fatal("the end of the wait expired by time, before any composer was seen")
-	}
-	// A live waiter's marker survives ClearHandOver.
-	MarkAwaiting("await-mark")
-	ClearHandOver("await-mark")
-	if !Awaiting("await-mark") {
-		t.Fatal("ClearHandOver removed a live waiter's marker")
-	}
-	if MarkAwaiting(""); Awaiting("") {
-		t.Fatal("a pane without AF_SESSION_NAME must not mark anything")
-	}
-	// A dead pid: spawn and reap a short process for a pid nobody holds any more.
-	cmd := exec.Command("true")
-	if err := cmd.Run(); err != nil {
-		t.Fatal(err)
-	}
-	p := awaitMarkerPath("await-stale")
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(p, []byte(strconv.Itoa(cmd.Process.Pid)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if Awaiting("await-stale") {
-		t.Fatal("a marker left by a dead waiter still blocks the session")
+	if handleFor(name) != nil {
+		t.Fatal("a refused claim still resumed the session")
 	}
 }

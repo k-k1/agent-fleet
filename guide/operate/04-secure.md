@@ -1,7 +1,7 @@
 ---
 audience: "someone responsible for the deployment's security posture"
 source_of_truth: "the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # 04. Security Operations
@@ -21,48 +21,51 @@ Inside a Workspace, CLI agents **execute arbitrary code** (operation that includ
 `--dangerously-skip-permissions` is the default). The boundaries are drawn under the assumption
 that "a user's session runs untrusted code," and what we protect is "other users' data, the
 CP/host infrastructure, secrets, and data exfiltration." The primary isolation boundary sits
-between the **Workspace container (low trust)** and the **CP/host infrastructure (high trust)**.
+between the **Workspace (low trust)** and the **CP and the infrastructure it runs on (high
+trust)** on the multi-user targets (`docker`, `ecs`, `ecs-ec2`). `native` has no such boundary:
+it is single-user, and its one user is the operator (`SECURITY.md` → "`docker` and `native`").
 
 Skipping every tool approval is the **default, not a fixed rule**: each user can turn approvals
 back on per agent kind (Settings > Agents) or for a single session at launch. That changes how
-much a mistake costs, **not where the boundary is** — the choice covers five kinds, the mode can
-be cycled back from inside the TUI, and the CLI's own settings are not locked down. Treat tool
-approval as a way to catch accidents, and keep treating the container boundary as the only real
-containment.
+much a mistake costs, **not where the boundary is** — only some agent kinds offer the choice,
+the mode can be cycled back from inside the TUI, and the CLI's own settings are not locked down. Treat tool
+approval as a way to catch accidents, and keep treating the workspace boundary as the only real
+containment on the multi-user targets.
 
-- **`docker.sock` = equivalent to host root.** The CP drives the host's daemon through the
-  mounted Docker socket and injects plaintext DEKs at Workspace startup. Consequently, **if the
-  CP or the host is compromised, isolation within that deployment collapses all at once**.
+- **The CP can reach every workspace in its deployment.** It starts them, hands each one its
+  DEK, and on `docker` drives the host's daemon through the mounted Docker socket. Consequently,
+  **if the CP or the infrastructure under it is compromised, isolation within that deployment
+  collapses all at once**.
 - **Companies are separated by separate deployments.** The impact above is **confined to the
   inside of that single deployment** and does not spread to other companies (= other
-  deployments). This is the core strength of the one-company = one-deployment delivery model.
+  deployments) — on AWS, only when each deployment has its own AWS account. This is the core
+  strength of the one-company = one-deployment delivery model.
 
-## The 4 residual risks (operators must understand these)
+## Residual risks: what to do about them
 
-Here we expand, from an operational standpoint, the 4 points that
-`SECURITY.md` lists. These are not undisclosed bugs; they are known
-properties inherent in the current architecture.
+The list of residual risks — what each one is and why — is `SECURITY.md` → "Known residual
+risks", grouped by deployment target (every target, `docker` and `native`, `ecs` /
+`ecs-ec2`). Read it for the risks themselves; this section keeps only the operational steps.
 
-1. **The CP holds privileges equivalent to host root.** As noted above, it can operate the host
-   via docker.sock. Operations: **minimize the set of people who can SSH into the host or run
-   sudo / docker there**. If you want to narrow the Docker API surface, a hardening option is to
-   put the socket behind a filtering proxy (e.g. `tecnativa/docker-socket-proxy`).
-
-2. **`AF_MASTER_KEY` is the root of credential encryption.** Every per-workspace DEK is wrapped
-   with a per-tenant KEK derived from this key. **Losing it means crypto-shred = the stored
-   credentials and every backup become permanently undecryptable**. Operations: **store it in a
-   vault separate from the DB and homes, and back it up independently**. Never place it in the
-   data area or in backup archives (by design it never goes in). For when it is generated and
-   how to store it, see [02 §2](02-install.md); for the identity requirement at restore time,
-   see [02](03-run.md).
-
-3. **Backups are sensitive.** The archive contains each user's home and **plaintext Claude
-   login state**. Operations: strictly control the permissions of the storage location (limit
-   who can access it) and enforce at-rest encryption.
-
-4. **Access to docker.sock = access to the host.** Anyone who can run the CP container, or who
-   can reach the Docker socket, can control the host. Operations: **restrict who can deploy /
-   operate**.
+- **Restrict administrative access to what the CP runs on.** On `docker`, **minimize the set
+  of people who can SSH into the host or run sudo / docker there**, and consider putting the
+  Docker socket behind a filtering proxy (e.g. `tecnativa/docker-socket-proxy`). On AWS,
+  **give each deployment its own AWS account** and limit who administers it.
+- **`AF_MASTER_KEY`**: **store it in a vault separate from the DB and homes, and back it up
+  independently**. Never place it in the data area or in backup archives (by design it never
+  goes in). For when it is generated and how to store it, see [02 §2](02-install.md); for the
+  identity requirement at restore time, see [03](03-run.md).
+  **Without it, members' stored credentials are kept unencrypted in their homes.** That is
+  only meant for `AUTH=dev`: under any other `AUTH` the Control Plane still starts, but logs a
+  `WARNING` at start-up and shows a warning banner in the administration screen. Setting the
+  key on a deployment that has been running without one is not transparent, so plan it with
+  your members, in this order: set the key and restart the Control Plane; **stop and start
+  every existing workspace** (one that keeps running still has no key and goes on writing
+  plaintext); then members reconnect the credentials they had stored. Finally delete the old
+  unencrypted file (`~/.config/agent-fleet/secrets.json` in each home), which is also in your
+  backups, and rotate the credentials it held.
+- **Backups**: strictly control who can access where they are stored, and enforce at-rest
+  encryption there.
 
 A caveat on limits: in the current localCustodian, the KEK is derived from the master key, so
 the effective strength is equivalent to the single `AF_MASTER_KEY`. **True per-tenant
@@ -146,9 +149,9 @@ into answers, logs or commits is part of the agent-side instructions as well.
   so the CP refuses to start there unless `AF_OIDC_<ID>_ALLOWED_TIDS` is set
   ([05 §4](05-signin.md) / `docs/build/07-security.md` §7.3).
 - **Audit log.** Only mutating / destructive operations are recorded in `audit_log` (reads are
-  off by default, and **raw terminal streams are never stored, due to the risk of secrets
-  leaking into them**). super_admins / tenant_admins view it from the Audit tab of the Admin
-  panel. The admin volume covers how to read it operationally.
+  not, except the export of a member's agent memory, and **raw terminal streams are never
+  stored, due to the risk of secrets leaking into them**). super_admins / tenant_admins view it
+  from the Audit tab of the Admin panel. The admin volume covers how to read it operationally.
 - **Some vendor features are deliberately left disabled.** Claude Code's own cross-session
   messaging (`/list-agents` / `SendMessage`) is one: **enabling it also brings back Claude's
   usage telemetry**, so it stays off as a self-hosted default. The same capability is provided by
@@ -184,9 +187,12 @@ default). What actually shuts the door is the per-request re-check above. So:
 Take the steps in this order — the first one is what revokes access, the rest are cleanup:
 
 1. **Remove the membership** (or take them off the allowlist).
-2. **Stop the workspace** (Admin panel → the member → "Force-stop workspace").
+2. **Stop the workspace** (Admin panel → the member → "Force-stop the workspace").
 3. **Clean the home** — only after they have pushed anything they still want. `~/repos` is not
-   recoverable afterwards.
+   recoverable afterwards. It keeps their logins and connections, and on deployments that take
+   backups of homes it keeps those too; "Delete backups" and destroying the workspace remove
+   them. Where the deployment does not offer Clean home, destroying the workspace is the step
+   ([ref/deploy-targets](../ref/deploy-targets.md)).
 
 Two asymmetries are worth knowing *before* somebody leaves rather than after:
 
@@ -234,8 +240,5 @@ whole deployment should be exactly the people who can edit the host's files.
 ## Reporting vulnerabilities
 
 If you find a vulnerability, **do not open a public issue** — report it privately. The
-preferred channel is GitHub's Security → "Report a vulnerability" (private advisory). The
-information to include in a report (affected version/commit, deployment form, reproduction
-steps, observed impact) and the response policy are in `SECURITY.md`.
-Because we are pre-1.0, fixes are made against the latest tag. Update to the latest version
-before reporting.
+channels, what to include in a report, and which versions receive fixes are in `SECURITY.md`
+→ "Reporting a vulnerability" and "Supported versions".

@@ -57,7 +57,7 @@ export interface Part {
   answer?: string;
   // declined marks kind=question only: the answer text is claude's own decline
   // boilerplate (an Escape out of the AskUserQuestion modal — e.g. the preview
-  // free-text bug, docs/build/92 §6), not a genuine pick — QuestionBlock must not render
+  // free-text bug, docs/build/92 §92.1.3), not a genuine pick — QuestionBlock must not render
   // it as an answered card.
   declined?: boolean;
   plan?: string;
@@ -83,6 +83,14 @@ export interface Turn {
   anchorId?: string;
   pending?: boolean; // optimistic local echo of a just-sent prompt, not yet in the jsonl
   queued?: boolean; // sitting in claude's mid-run queue (enqueued, awaiting injection)
+  // queueId: the queue entry's id when the Agent sent `queuedItems` (ADR 0105 decision 5), and
+  // queueActionable whether that entry can still be taken back or removed (state "queued").
+  queueId?: string;
+  queueActionable?: boolean;
+  // queueRestorable: it may also go back into the input box — the member's own input only
+  // (decision 4). Anything else can be removed but never put in the draft, where a send would
+  // pass a peer's envelope off as the member's words.
+  queueRestorable?: boolean;
   source?: string; // user turn origin: "operator" = fleet-operator injected (docs/log/30 ②), else own input
   // peerFrom: the SESSION that sent a source==="peer" turn, when the Agent could name it.
   // Empty for AF's own peer sends, whose envelope already names the sender in the body; it is
@@ -150,6 +158,9 @@ export interface Group {
   folded: number;
   pending?: boolean; // holds an optimistic local echo awaiting its real transcript turn
   queued?: boolean; // holds a prompt claude reports queued for the running turn
+  queueId?: string; // the one queue entry this block shows (Turn.queueId); never folded
+  queueActionable?: boolean;
+  queueRestorable?: boolean;
   source?: string; // user group origin: "operator" = fleet-operator injected (docs/log/30 ②)
   peerFrom?: string; // sender of a source==="peer" group when the Agent named it (Turn.peerFrom)
 }

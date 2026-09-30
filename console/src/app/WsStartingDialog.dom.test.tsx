@@ -20,6 +20,7 @@ describe("phaseKey", () => {
     expect(phaseKey("home: restoring")).toBe("wsstart.home_restoring");
     expect(phaseKey("home: attaching")).toBe("wsstart.home_attaching");
     expect(phaseKey("home: mounting")).toBe("wsstart.home_attaching");
+    expect(phaseKey("home: clearing")).toBe("wsstart.home_clearing");
   });
 
   it("still names the native rootfs boot-install waits", () => {

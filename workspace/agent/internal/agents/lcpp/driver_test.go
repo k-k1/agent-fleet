@@ -33,6 +33,10 @@ type scriptedClient struct {
 	tokIdx         int
 	onSend         func(messages []harness.Message, tools []harness.ToolDef)
 	sendDelay      time.Duration // simulate a slow/cancellable engine round trip
+	// holdCancel, when set, keeps a cancelled round trip from returning until it is closed, so
+	// a test can read the queue while the pump is still parked in the interrupted turn — once
+	// the turn returns, the pump may already have taken what the interrupt left.
+	holdCancel chan struct{}
 }
 
 func (c *scriptedClient) Send(ctx context.Context, messages []harness.Message, tools []harness.ToolDef) (harness.Turn, error) {
@@ -43,6 +47,9 @@ func (c *scriptedClient) Send(ctx context.Context, messages []harness.Message, t
 		select {
 		case <-time.After(c.sendDelay):
 		case <-ctx.Done():
+			if c.holdCancel != nil {
+				<-c.holdCancel
+			}
 			return harness.Turn{}, ctx.Err()
 		}
 	}
@@ -526,10 +533,170 @@ func TestDriverInterruptCancelsRunningTurn(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	waitState(t, h, agents.TurnRunning)
-	if err := h.Interrupt(); err != nil {
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 		t.Fatalf("Interrupt: %v", err)
 	}
 	waitState(t, h, agents.TurnCancelled)
+}
+
+// promptRecorder is a scriptedClient.onSend that records the prompt each engine round trip
+// answers (the newest user message) and signals on started as each one begins.
+func promptRecorder(prompts *[]string, mu *sync.Mutex, started chan<- struct{}) func([]harness.Message, []harness.ToolDef) {
+	return func(messages []harness.Message, _ []harness.ToolDef) {
+		for i := len(messages) - 1; i >= 0; i-- {
+			if messages[i].Role == harness.RoleUser {
+				mu.Lock()
+				*prompts = append(*prompts, messages[i].Content)
+				mu.Unlock()
+				break
+			}
+		}
+		started <- struct{}{}
+	}
+}
+
+func queueLen(h agents.ThreadHandle) int {
+	th := h.(*threadHandle)
+	th.mu.Lock()
+	defer th.mu.Unlock()
+	return th.q.Len()
+}
+
+// A peer message queued behind a stuck turn is what the stop is pressed to free: it starts as
+// the next turn. The member's own queued follow-up continues too (ADR 0105 decision 1), and a
+// second stop discards it and hands it back (decisions 2 and 4).
+func TestDriverStopFreesPeerInputAndKeepsOwnForSecondStop(t *testing.T) {
+	testHome(t)
+	var mu sync.Mutex
+	var prompts []string
+	started := make(chan struct{}, 8)
+	client := &scriptedClient{sendDelay: 30 * time.Second, turns: []harness.Turn{{Content: "too late"}}}
+	client.onSend = promptRecorder(&prompts, &mu, started)
+	wireEngine(t, client)
+
+	m := testMeta(t, "sess-interrupt-keep")
+	h, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	qs := h.(agents.QueueingSender)
+	queued, err := qs.SendQueued(member("m1", "stuck"))
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if queued {
+		t.Fatal("input to an idle session was reported as queued")
+	}
+	<-started
+	queued, err = qs.SendQueued(peer("m2", "from a peer"))
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if !queued {
+		t.Fatal("input behind a running turn was not reported as queued")
+	}
+	if err := h.Steer(member("m3", "own follow-up")); err != nil {
+		t.Fatalf("Steer: %v", err)
+	}
+	if res, err := h.Interrupt(agents.InterruptOpts{}); err != nil || res.Stop != agents.StopFirst {
+		t.Fatalf("Interrupt = %+v, %v; want a first stop", res, err)
+	}
+	select {
+	case <-started:
+	case <-time.After(hangGuard):
+		t.Fatal("the peer message did not start a turn after the stop")
+	}
+	// The continued turn's round trip is parked in sendDelay: the own follow-up must still be
+	// queued behind it.
+	if n := queueLen(h); n != 1 {
+		t.Errorf("queue after the continued turn started holds %d entries, want the own follow-up still queued", n)
+	}
+	mu.Lock()
+	got := append([]string(nil), prompts...)
+	mu.Unlock()
+	if len(got) != 2 || got[1] != "from a peer" {
+		t.Errorf("prompts = %q, want the peer message as the turn after the stop", got)
+	}
+	res, err := h.Interrupt(agents.InterruptOpts{})
+	if err != nil || res.Stop != agents.StopSecond || res.Discard == nil ||
+		len(res.Discard.Items) != 1 || res.Discard.Items[0].Text != "own follow-up" {
+		t.Fatalf("second Interrupt = %+v, %v; want the own follow-up discarded and returned", res, err)
+	}
+	waitState(t, h, agents.TurnCancelled)
+	noStartOnceIdle(t, h, started, "the discarded follow-up started a turn")
+	td, ok := agentImpl{}.Transcript(m)
+	if !ok || len(td.Discards) != 1 || td.Discards[0].ID != res.Discard.ID {
+		t.Errorf("messages payload discards = %+v (ok %v), want the second stop's", td.Discards, ok)
+	}
+}
+
+// Agent shutdown interrupts through the teardown path: anything queued would otherwise start
+// on the way down.
+func TestDriverAbortManagedDiscardsQueuedInput(t *testing.T) {
+	testHome(t)
+	var mu sync.Mutex
+	var prompts []string
+	started := make(chan struct{}, 8)
+	client := &scriptedClient{sendDelay: 30 * time.Second, holdCancel: make(chan struct{})}
+	client.onSend = promptRecorder(&prompts, &mu, started)
+	wireEngine(t, client)
+
+	m := testMeta(t, "sess-abort-kept")
+	h, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if err := h.Send(agents.TurnInput{Prompt: "long"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	<-started
+	if err := h.Send(peer("m2", "from a peer")); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	AbortManaged()
+	if n := queueLen(h); n != 0 {
+		t.Errorf("queue after shutdown interrupt holds %d entries, want none", n)
+	}
+	close(client.holdCancel)
+	waitState(t, h, agents.TurnCancelled)
+	noStartOnceIdle(t, h, started, "a turn started after the shutdown interrupt")
+}
+
+// Dropping the handle (halt, archive) is teardown too, and here the pump checks neither
+// liveness nor a context: queued input would go on running on a handle already out of the map,
+// against a store about to be closed.
+func TestDriverDropHandleDiscardsQueuedInput(t *testing.T) {
+	testHome(t)
+	var mu sync.Mutex
+	var prompts []string
+	started := make(chan struct{}, 8)
+	client := &scriptedClient{sendDelay: 30 * time.Second, holdCancel: make(chan struct{})}
+	client.onSend = promptRecorder(&prompts, &mu, started)
+	wireEngine(t, client)
+
+	m := testMeta(t, "sess-drop-kept")
+	h, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if err := h.Send(agents.TurnInput{Prompt: "long"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	<-started
+	if err := h.Send(peer("m2", "from a peer")); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	done := dropHandle(m.Name)
+	if n := queueLen(h); n != 0 {
+		t.Errorf("queue after dropHandle holds %d entries, want none", n)
+	}
+	close(client.holdCancel)
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("handle was not released within 30s")
+	}
+	noStartOnceIdle(t, h, started, "a turn started on a dropped handle")
 }
 
 // TestDriverRestartSettleAborted is the positive control for §4.4's restart recovery: a store
@@ -712,5 +879,31 @@ func TestDriverSystemPromptCarriesProjectInstructions(t *testing.T) {
 	waitState(t, h, agents.TurnCompleted, agents.TurnFailed)
 	if !strings.Contains(gotSystem, "FROBNITZ") {
 		t.Fatalf("system prompt = %q, want it to carry the project's AGENTS.md", gotSystem)
+	}
+}
+
+// noStartOnceIdle waits for h's pump to go idle and then checks that no round trip started.
+// promptRecorder signals before the round trip blocks, and a round trip keeps the pump busy, so
+// once it is idle every start is in started.
+func noStartOnceIdle(t *testing.T, h agents.ThreadHandle, started <-chan struct{}, msg string) {
+	t.Helper()
+	th := h.(*threadHandle)
+	deadline := time.Now().Add(hangGuard)
+	for {
+		th.mu.Lock()
+		idle := !th.pumping && !th.running
+		th.mu.Unlock()
+		if idle {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the pump did not go idle")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	select {
+	case <-started:
+		t.Error(msg)
+	default:
 	}
 }

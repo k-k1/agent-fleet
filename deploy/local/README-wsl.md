@@ -85,21 +85,13 @@ JDK extraction.
 
 ### GitHub integration (device flow)
 
-To let GitHub clone/push go through the OAuth device flow, provide
-`GITHUB_OAUTH_CLIENT_ID` (the client_id is **not a secret**; it is all the device flow
-needs).
+To let GitHub clone/push go through the OAuth device flow, register a GitHub OAuth
+App's client_id in the Console (the client_id is **not a secret**; it is all the device
+flow needs). No environment variable is involved.
 
 1. Create an OAuth App on GitHub (Settings → Developer settings → OAuth Apps) and turn
    **"Enable Device Flow" ON**.
-2. Copy the template and fill in the client_id (the file is git-ignored):
-   ```bash
-   cp deploy/local/oauth.env.example deploy/local/oauth.env
-   # edit deploy/local/oauth.env and set GITHUB_OAUTH_CLIENT_ID=<your-client-id>
-   ```
-3. Re-run `run-dev.sh wsl`. On startup it auto-sources `deploy/local/oauth.env` and
-   injects `GITHUB_OAUTH_CLIENT_ID` into workspaces via the CP (the startup log shows
-   `loaded .../oauth.env`).
-4. Register your GitHub OAuth App in the Console under **Tenant settings ->
+2. Register your GitHub OAuth App in the Console under **Tenant settings ->
    Integrations -> Git provider OAuth** (client_id only — the app needs "Enable Device
    Flow" ON). Then start the GitHub integration from a workspace: it walks you through
    a device code and verification URL. `gh auth login` is not needed (the

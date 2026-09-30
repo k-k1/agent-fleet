@@ -36,6 +36,7 @@ type spawnDelivery struct {
 	source    string
 	slotsHeld int
 	children  int
+	origin    agents.Origin
 }
 
 // spawnSlotsHeld reads the reservation counter under its own lock — publish has released it by
@@ -62,12 +63,19 @@ func (h *spawnFakeHandle) Send(in agents.TurnInput) error {
 		source:    injectionSourceOf(h.name, in.Prompt),
 		slotsHeld: spawnSlotsHeld(h.parent),
 		children:  countChildren(h.parent),
+		origin:    in.Origin,
 	}
 	return nil
 }
 
-func (h *spawnFakeHandle) Steer(agents.TurnInput) error               { return nil }
-func (h *spawnFakeHandle) Interrupt() error                           { return nil }
+func (h *spawnFakeHandle) Steer(agents.TurnInput) error { return nil }
+func (h *spawnFakeHandle) Interrupt(agents.InterruptOpts) (agents.InterruptResult, error) {
+	return agents.InterruptResult{}, nil
+}
+func (h *spawnFakeHandle) RemoveQueued(string) (agents.QueueItem, error) {
+	return agents.QueueItem{}, nil
+}
+func (h *spawnFakeHandle) DismissDiscard(string) bool                 { return false }
 func (h *spawnFakeHandle) UpdateSettings(agents.ThreadSettings) error { return nil }
 func (h *spawnFakeHandle) Respond(agents.InteractionReply) error      { return nil }
 func (h *spawnFakeHandle) Events() <-chan agents.Event                { return nil }
@@ -159,6 +167,10 @@ func TestCreateSessionSpawnWiringManaged(t *testing.T) {
 	// rather than only under a race — noteCreateOrigin has to run before h.Send.
 	if d.source != TurnSourceSpawn {
 		t.Fatalf("injection source at delivery = %q, want %q (recorded after delivery?)", d.source, TurnSourceSpawn)
+	}
+	// The driver reads the same origin off the input itself (ADR 0105 decision 1).
+	if want := (agents.Origin{Kind: agents.OriginSpawn, From: "parent1"}); d.origin != want {
+		t.Fatalf("TurnInput origin = %+v, want %+v", d.origin, want)
 	}
 	// Inside the launch window: the meta exists and the reservation is already gone, so the
 	// parent is charged for ONE child, not two. Releasing at the handler's return instead would

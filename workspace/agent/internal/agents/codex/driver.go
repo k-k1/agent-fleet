@@ -215,8 +215,8 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 		// across cli⇄managed) both ride on it.
 		sids.Write(slotSid, tid)
 	}
-	// A Terminal launch may have asked the observer to stay off this thread (release.go); the
-	// managed session owns it again now.
+	// A stop had the observer stay off this thread (release.go); the managed session owns it
+	// again now.
 	RestoreObservedThread(tid)
 	// After resume the policies can have fallen back to the config defaults (measured), so
 	// re-assert them. A failure is not fatal: the turn still runs, only on the readOnly side.
@@ -269,7 +269,7 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	// After a daemon death ends the pump, already-sent input can still sit in the queue
 	// (§31). Unless Resume restarts it here, submitted prompts stay stranded.
 	h.mu.Lock()
-	if len(h.queue) > 0 && !h.pumping && !h.running {
+	if h.tq().Len() > 0 && !h.pumping && !h.running {
 		h.pumping = true
 		go h.pump()
 	}
@@ -381,6 +381,21 @@ func threadFork(cl *appClient, src, cwd, lastTurnID, slot string) (threadSnapsho
 	return parseThreadResult(res)
 }
 
+// LiveHandle returns the session's handle without starting anything (agents.LiveHandles): the
+// /turn queue edits must not bring a runtime up only to find nothing queued. The handle stays
+// registered from Resume to DropHandle, a runtime death in between included, and the queue and
+// the kept discards live on it for that whole time, so an entry the messages payload still
+// shows can be removed without a respawn.
+func (managedDriver) LiveHandle(m session.Meta) (agents.ThreadHandle, bool) {
+	h := handleFor(m.Name)
+	if h == nil {
+		return nil, false
+	}
+	return h, true
+}
+
+var _ agents.LiveHandles = managedDriver{}
+
 // --- handle registry ---------------------------------------------------------
 
 var handlesMu sync.Mutex
@@ -427,8 +442,9 @@ func liveHandles() []*threadHandle {
 
 // DropHandle detaches a managed session from its runtime handle (stop / halt /
 // archive / exclusive switch): interrupt any running turn, unsubscribe the writer
-// connection from the thread, forget the handle. The conversation's source of truth
-// (the rollout) stays, and a later Resume (or the TUI's `codex resume`) reattaches.
+// connection from the thread, have the observer let go of it too (release.go), forget
+// the handle. The conversation's source of truth (the rollout) stays, and a later Resume
+// (or the TUI's `codex resume`, once the server has unloaded the thread) reattaches.
 func DropHandle(name string) {
 	handlesMu.Lock()
 	h := handles[name]
@@ -440,8 +456,28 @@ func DropHandle(name string) {
 	h.mu.Lock()
 	cl, tid, turnID, running := h.client, h.tid, h.turnID, h.running
 	h.alive = false
-	h.queue = nil
+	h.dropped = true
+	// Teardown discards the queue (ADR 0105 decision 8). An input whose turn/start is in flight
+	// is left a pending stop, so the turn it creates is interrupted when the answer names it.
+	h.tq().DropAll()
+	h.tq().Interrupt(agents.InterruptOpts{DiscardQueue: true}, running || turnID != "")
+	// The handle is out of the registry, so the turn/completed our turn/interrupt produces
+	// reaches nobody: end the pump's wait here, or it lives until the connection drops. A turn
+	// still starting reads it once turn/start answers, after delivering its pending stop.
+	if end := h.turnEnd; end != nil {
+		select {
+		case end <- agents.TurnCancelled:
+		default:
+		}
+	}
 	h.mu.Unlock()
+	if tid != "" {
+		ReleaseObservedThread(tid)
+		// The observer's turn/completed is what clears a compaction cut off without its
+		// item/completed; released, it never sees the interrupted turn end, and the thread would
+		// read "compacting" on its next Resume or Terminal launch.
+		SetCompacting(tid, false)
+	}
 	if cl == nil {
 		return
 	}
@@ -479,7 +515,7 @@ func ManagedBusy(name string) bool {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.running || h.turnID != "" || len(h.queue) > 0
+	return h.running || h.turnID != "" || h.tq().Len() > 0
 }
 
 // AbortManaged interrupts every running managed turn (the equivalent of graceful
@@ -490,7 +526,7 @@ func AbortManaged() {
 		running := h.running
 		h.mu.Unlock()
 		if running {
-			_ = h.Interrupt()
+			_ = h.interruptAll()
 		}
 	}
 }
@@ -508,11 +544,22 @@ func ReconcileManaged(reason string) {
 		if m.StoppedAt != "" && handleFor(m.Name) == nil {
 			continue // deliberately stopped — resume only on user action
 		}
+		release, ok := ReconcileClaim(m.Name)
+		if !ok {
+			continue // switching to Terminal, or already there: m was read before the switch
+		}
 		if _, err := d.Resume(m); err != nil {
 			log.Printf("codex managed: reconcile %s (%s): %v", m.Name, reason, err)
 		}
+		release()
 	}
 }
+
+// ReconcileClaim is the seam package sessionx fills with its switch guard: ReconcileManaged
+// resumes from a meta it read before a switch to Terminal may have begun, so it takes the same
+// claim as every other Managed Resume, or it would load the thread again behind Terminal
+// metadata. ok=false skips the session; release ends the claim.
+var ReconcileClaim = func(name string) (release func(), ok bool) { return func() {}, true }
 
 // reconcileAll is the supervisor-facing wrapper (serve.go, after a daemon death or restart).
 func reconcileAll(reason string) { ReconcileManaged(reason) }
@@ -530,17 +577,22 @@ type threadHandle struct {
 	// threads and orphan one (§32).
 	resumeMu sync.Mutex
 
-	mu       sync.Mutex
-	client   *appClient
-	gen      int
-	tid      string
-	alive    bool
-	state    agents.TurnState
-	running  bool // the runtime has an active turn (pump-driven, or taken over by resume)
-	pumping  bool
-	turnID   string // the active turn (the target of turn/steer and turn/interrupt)
-	turnEnd  chan agents.TurnState
-	queue    []agents.TurnInput
+	mu      sync.Mutex
+	client  *appClient
+	gen     int
+	tid     string
+	alive   bool
+	state   agents.TurnState
+	running bool // the runtime has an active turn (pump-driven, or taken over by resume)
+	pumping bool
+	turnID  string // the active turn (the target of turn/steer and turn/interrupt)
+	turnEnd chan agents.TurnState
+	// dropped is set by DropHandle. A pump that committed an input just before it installs
+	// turnEnd after the teardown, which could no longer end its wait; runTurn reads this instead.
+	dropped bool
+	// q is the input queue and the whole of ADR 0105's stop rules (agents.TurnQueue); every
+	// call holds mu. Read it through tq.
+	q        *agents.TurnQueue
 	settings agents.ThreadSettings
 	curModel string              // latest effective model (from settings/updated and thread responses; required as collaborationMode.settings.model on a mode switch)
 	inter    *agents.Interaction // pending question (the contents of waiting_interaction)
@@ -550,6 +602,14 @@ type threadHandle struct {
 	events   chan agents.Event
 	lastErr  *codexError // failure detail of the last turn (errors.go); managedEnrich appends
 	// it as a synthetic trailing error turn until clearLastError runs at the next turn start.
+}
+
+// tq returns the handle's queue, creating it on first use. Caller holds h.mu.
+func (h *threadHandle) tq() *agents.TurnQueue {
+	if h.q == nil {
+		h.q = agents.NewTurnQueue(h.name, ledger, agents.LedgerAtAccept)
+	}
+	return h.q
 }
 
 // setLastError / clearLastError / turnError manage the failure detail managedEnrich
@@ -611,7 +671,13 @@ func (h *threadHandle) runtimeLost() {
 // --- ThreadHandle interface ---------------------------------------------------
 
 // Send starts a turn (turn/start), queueing behind a running one.
-func (h *threadHandle) Send(in agents.TurnInput) error { return h.accept(in) }
+func (h *threadHandle) Send(in agents.TurnInput) error {
+	_, err := h.accept(in)
+	return err
+}
+
+// SendQueued is Send reporting whether the input was held behind a running turn.
+func (h *threadHandle) SendQueued(in agents.TurnInput) (bool, error) { return h.accept(in) }
 
 // Steer injects a follow-up into the RUNNING turn via native turn/steer (measured: keyed
 // on expectedTurnId, it joins the same turn). When no turn is running (a race just after
@@ -633,9 +699,15 @@ func (h *threadHandle) Steer(in agents.TurnInput) error {
 	cl, tid, turnID, running := h.client, h.tid, h.turnID, h.running
 	h.mu.Unlock()
 	if !running || turnID == "" {
-		return h.accept(in)
+		_, err := h.accept(in)
+		return err
 	}
-	if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
+	// A native steer bypasses the queue, but not its resend check and ledger record, and new
+	// member input ends a stop episode however it arrives.
+	h.mu.Lock()
+	_, dup := h.tq().AcceptOutside(in)
+	h.mu.Unlock()
+	if dup {
 		return nil // resend: the ledger makes it idempotent (§4)
 	}
 	_, err := cl.call("turn/steer", map[string]any{
@@ -647,7 +719,7 @@ func (h *threadHandle) Steer(in agents.TurnInput) error {
 	if err != nil {
 		// The turn just ended, or similar: keep the intent (the follow-up input) as the next turn.
 		h.mu.Lock()
-		h.queue = append(h.queue, in)
+		h.tq().AcceptRecorded(in)
 		start := !h.pumping
 		if start {
 			h.pumping = true
@@ -660,28 +732,29 @@ func (h *threadHandle) Steer(in agents.TurnInput) error {
 	return nil
 }
 
-func (h *threadHandle) accept(in agents.TurnInput) error {
+// accept queues the input and starts the pump when none runs. queued reports that the input
+// waits behind a running turn (or behind earlier queued input) rather than starting now.
+func (h *threadHandle) accept(in agents.TurnInput) (queued bool, err error) {
 	if strings.TrimSpace(in.Prompt) == "" && len(in.Attachments) == 0 {
-		return errors.New("empty prompt")
+		return false, errors.New("empty prompt")
 	}
 	in.ClientMessageID = agents.NormalizeMsgID(in.ClientMessageID)
 	h.mu.Lock()
 	if !h.alive {
 		h.mu.Unlock()
-		return errors.New("runtime が停止しています（再開してください）")
+		return false, errors.New("runtime が停止しています（再開してください）")
 	}
 	if h.inter != nil {
 		// Free text sent while a question is pending invites a wrong answer (the same
 		// judgement as /input's question_pending guard); steer to the structured
 		// answer (Respond).
 		h.mu.Unlock()
-		return agents.ErrQuestionPending
+		return false, agents.ErrQuestionPending
 	}
-	if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
+	if _, dup := h.tq().Accept(in); dup {
 		h.mu.Unlock()
-		return nil // resend: the ledger makes it idempotent (§4)
+		return false, nil // resend: the ledger makes it idempotent (§4)
 	}
-	h.queue = append(h.queue, in)
 	// An externally running turn taken over by Resume has no pump goroutine. In that case
 	// wait until the turn/completed dispatcher wakes the queue, so no second turn/start is
 	// issued.
@@ -689,14 +762,15 @@ func (h *threadHandle) accept(in agents.TurnInput) error {
 	if start {
 		h.pumping = true
 	}
-	if h.running || len(h.queue) > 1 {
+	queued = h.running || h.tq().Len() > 1
+	if queued {
 		h.state = agents.TurnQueued
 	}
 	h.mu.Unlock()
 	if start {
 		go h.pump()
 	}
-	return nil
+	return queued, nil
 }
 
 // pump processes the queue serially: run one turn/start, wait for its
@@ -704,7 +778,11 @@ func (h *threadHandle) accept(in agents.TurnInput) error {
 func (h *threadHandle) pump() {
 	for {
 		h.mu.Lock()
-		if len(h.queue) == 0 || !h.alive || h.running {
+		var t *agents.Taken
+		if h.alive && !h.running {
+			t = h.tq().Take()
+		}
+		if t == nil {
 			// Settle the stop inside the same lock accept takes. A gap between the empty
 			// check and a defer would strand input arriving in it: it sees pumping=true
 			// and never starts a pump.
@@ -712,15 +790,17 @@ func (h *threadHandle) pump() {
 			h.mu.Unlock()
 			return
 		}
-		in := h.queue[0]
-		h.queue = h.queue[1:]
+		// Nothing waits between taking and sending, so the entry is committed at once: from
+		// here a stop can only reach it through the turn it becomes (runTurn's Received).
+		h.tq().Commit(t)
 		h.running = true
 		gen := h.gen
 		h.mu.Unlock()
 
-		h.runTurn(in, gen)
+		h.runTurn(t, gen)
 
 		h.mu.Lock()
+		h.tq().Settle(t)
 		if h.gen == gen {
 			h.running = false
 		}
@@ -732,7 +812,8 @@ func (h *threadHandle) pump() {
 // terminal state. The dispatcher (turn/started, turn/completed) owns the status store
 // (the stand-in for hooks, read by WireLive's fallback and by anySessionWorking); here
 // only the optimistic working mark is written ahead of it.
-func (h *threadHandle) runTurn(in agents.TurnInput, gen int) {
+func (h *threadHandle) runTurn(t *agents.Taken, gen int) {
+	in := t.In
 	agents.MarkTurnStart(h.slotSid)
 	h.clearLastError() // a new turn starting means the previous turn's synthetic error is done
 	h.setState(agents.TurnStarting)
@@ -740,6 +821,11 @@ func (h *threadHandle) runTurn(in agents.TurnInput, gen int) {
 	cl, tid := h.client, h.tid
 	end := make(chan agents.TurnState, 1)
 	h.turnEnd = end
+	if h.dropped {
+		// DropHandle ran between the pump's commit and here. The committed input still goes out
+		// and its pending stop is delivered below; only the wait must not outlive the handle.
+		end <- agents.TurnCancelled
+	}
 	h.mu.Unlock()
 
 	res, err := cl.call("turn/start", map[string]any{
@@ -796,8 +882,18 @@ func (h *threadHandle) runTurn(in agents.TurnInput, gen int) {
 		return // do not let an old generation's response overwrite a new-generation handle
 	}
 	h.turnID = tr.Turn.ID
+	// The answer naming the turn is where the runtime holds this input (ADR 0105 decision 3):
+	// a stop that found it committed left the delivery to us.
+	stop := h.tq().Received(t) && tr.Turn.ID != ""
 	h.mu.Unlock()
-	h.setState(agents.TurnRunning)
+	if stop {
+		h.setState(agents.TurnInterrupting)
+		if _, err := cl.call("turn/interrupt", map[string]any{"threadId": tid, "turnId": tr.Turn.ID}, 15*time.Second); err != nil {
+			log.Printf("codex managed: turn/interrupt %s after a stop during turn/start: %v", h.name, err)
+		}
+	} else {
+		h.setState(agents.TurnRunning)
+	}
 
 	final := <-end // turn/completed (dispatcher) or runtimeLost always delivers one
 	h.mu.Lock()
@@ -815,23 +911,63 @@ func (h *threadHandle) runTurn(in agents.TurnInput, gen int) {
 	}
 }
 
-// Interrupt aborts the running turn and clears the queued follow-ups: the intent to stop
-// reaches the queue too.
-func (h *threadHandle) Interrupt() error {
+// Interrupt is the Console's stop (ADR 0105): the queue decides what the stop is and what
+// happens to the queued input; this delivers it to the turn. A first stop ends the running turn
+// and the queue continues; a second one (or DiscardQueue) also discards what is still queued.
+func (h *threadHandle) Interrupt(opts agents.InterruptOpts) (agents.InterruptResult, error) {
+	return h.interrupt(opts, false)
+}
+
+// RemoveQueued takes a queued entry out while it is cancellable (decision 5).
+func (h *threadHandle) RemoveQueued(id string) (agents.QueueItem, error) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.tq().Remove(id)
+}
+
+// DismissDiscard drops a kept discard once the member restored or dismissed it (decision 4).
+func (h *threadHandle) DismissDiscard(id string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.tq().DismissDiscard(id)
+}
+
+// interruptAll is the stop for teardown (Agent shutdown, daemon drain): the whole queue goes
+// and nothing is kept for return (decision 8), because there is no runtime left to run it on.
+func (h *threadHandle) interruptAll() error {
+	_, err := h.interrupt(agents.InterruptOpts{DiscardQueue: true}, true)
+	return err
+}
+
+func (h *threadHandle) interrupt(opts agents.InterruptOpts, teardown bool) (agents.InterruptResult, error) {
+	h.mu.Lock()
+	if teardown {
+		h.tq().DropAll()
+	}
 	cl, tid, turnID := h.client, h.tid, h.turnID
 	running := h.running || turnID != "" // turnID only: a running turn taken over after an agent restart
-	h.queue = nil
-	if running {
+	out := h.tq().Interrupt(opts, running)
+	switch {
+	case out.Head == agents.HeadCancelled:
+		// Accepted into an idle thread but not yet taken by the pump: the input was the turn
+		// being started, and it never becomes one.
+		h.state = agents.TurnCancelled
+	case running:
 		h.state = agents.TurnInterrupting
 	}
+	st := h.state
 	h.mu.Unlock()
-	if !running || turnID == "" {
-		return nil
+	if running || out.Head == agents.HeadCancelled {
+		h.emit(agents.Event{Kind: "turn_state", TurnState: st})
 	}
-	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnInterrupting})
+	// HeadStopPending: turn/start is in flight and there is no id to name yet; runTurn delivers
+	// the stop when the answer names the turn. Every other case stops the turn that runs now,
+	// whether it came from this queue or was taken over by Resume.
+	if out.Head == agents.HeadStopPending || !running || turnID == "" {
+		return out.Result, nil
+	}
 	_, err := cl.call("turn/interrupt", map[string]any{"threadId": tid, "turnId": turnID}, 15*time.Second)
-	return err
+	return out.Result, err
 }
 
 // UpdateSettings applies dynamic thread settings via thread/settings/update (§9.4-3:
@@ -924,7 +1060,8 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	}
 	switch reply.Decision {
 	case agents.DecisionCancel, agents.DecisionDeny:
-		return h.Interrupt()
+		_, err := h.Interrupt(agents.InterruptOpts{})
+		return err
 	case agents.DecisionAnswer, agents.DecisionAllow:
 		if len(reply.Answers) != len(inter.Questions) {
 			return fmt.Errorf("回答数が質問数と一致しません (%d != %d)", len(reply.Answers), len(inter.Questions))
@@ -983,8 +1120,8 @@ func (h *threadHandle) queuedPrompts() []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	var out []string
-	for _, in := range h.queue {
-		if t := strings.TrimSpace(in.Prompt); t != "" {
+	for _, p := range h.tq().Texts() {
+		if t := strings.TrimSpace(p); t != "" {
 			out = append(out, t)
 		}
 	}
@@ -1040,6 +1177,8 @@ func managedEnrich(m session.Meta, td *agents.TranscriptData) {
 	h.mu.Lock()
 	inter := h.inter
 	modeSet := h.settings.Mode
+	td.QueuedItems = h.tq().Items()
+	td.Discards = h.tq().Discards()
 	h.mu.Unlock()
 	if inter != nil {
 		qs := make([]transcript.Question, len(inter.Questions))
@@ -1226,7 +1365,7 @@ func dispatchNotification(msg rpcMsg) {
 			startQueued := false
 			if !pumpDriven {
 				h.running = false
-				startQueued = len(h.queue) > 0 && !h.pumping && h.alive
+				startQueued = h.tq().Len() > 0 && !h.pumping && h.alive
 				if startQueued {
 					h.pumping = true
 				}

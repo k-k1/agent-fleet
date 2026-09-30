@@ -85,7 +85,7 @@ that came from one ends with it. Older releases are not backfilled.
 - `SUMMARY*.md` lines carry the same links at the end, so "which release fixed #N?" is
   one search.
 
-Do **not** put the download links, asset names or the rootfs tag in these files:
+Do **not** put the download links, asset names or the rootfs file names in these files:
 `notes-body.sh` appends that footer, because the rootfs content hash is only known at
 build time.
 

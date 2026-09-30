@@ -8,8 +8,9 @@
 //
 // What ships is the guide/ tree and nothing else (ADR 0064). The developer tree —
 // docs/build, docs/decisions, docs/log, the writing conventions — is never baked into
-// the image in the first place (deploy/release/stage-docs.sh), so no container can
-// receive it and no request can ask for it.
+// the image in the first place (the Dockerfile's `docs` stage runs
+// deploy/release/stage-docs.sh, and .dockerignore keeps docs/ out of the build context),
+// so no container can receive it and no request can ask for it.
 //
 // This USED to be cut by the reader's role: a member got use/ + ref/, a tenant admin
 // added admin/, a deployment admin added operate/ + build/. That was dropped because it
@@ -32,7 +33,7 @@ import (
 	"path/filepath"
 )
 
-// bakedDocsDefault is where control-plane/Dockerfile bakes the repo's docs/ tree.
+// bakedDocsDefault is where control-plane/Dockerfile bakes the staged guide.
 const bakedDocsDefault = "/usr/local/share/agent-fleet/docs"
 
 // isDirPath reports whether p exists and is a directory.
@@ -42,8 +43,9 @@ func isDirPath(p string) bool {
 }
 
 // docsSrcDir is the CP-side docs source. Defaults to the baked path; AF_DOCS_DIR
-// overrides it for local dev where the CP runs outside its image (point it at the
-// repo's docs/). An absent/empty source disables the feature (best-effort).
+// overrides it for local dev where the CP runs outside its image (point it at a tree
+// deploy/release/stage-docs.sh built, as deploy/local/restart-cp.sh does). An
+// absent/empty source disables the feature (best-effort).
 func docsSrcDir() string {
 	if v := os.Getenv("AF_DOCS_DIR"); v != "" {
 		return v

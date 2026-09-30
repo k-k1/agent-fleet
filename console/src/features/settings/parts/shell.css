@@ -158,6 +158,9 @@
   color: var(--fg);
   font-size: 12.5px;
   cursor: pointer;
+  /* Break Japanese at phrase boundaries: a long label ("AWS profiles/SSM" in ja) otherwise
+     wraps mid-word. Browsers without it wrap as before. */
+  word-break: auto-phrase;
 }
 
 .settings-modal .settings-rail-item:hover:not(.active) {

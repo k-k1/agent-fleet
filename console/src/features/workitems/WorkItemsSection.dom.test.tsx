@@ -508,6 +508,67 @@ describe("WorkItemsSection", () => {
     expect(rows()).toBe(10);
   });
 
+  it("pins the section top to the scroller when collapsing the expanded list (#1348)", async () => {
+    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    await act(async () => {
+      root!.render(
+        <ToastProvider>
+          <ConfirmProvider>
+            <div className="app-rail-scroll">
+              <WorkItemsSection />
+            </div>
+          </ConfirmProvider>
+        </ToastProvider>,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
+    expect(rows()).toBe(41);
+    const scroller = host.querySelector(".app-rail-scroll") as HTMLElement;
+    const sec = host.querySelector(".ui-section") as HTMLElement;
+    // Scrolled deep into the expanded list: the section top sits above the scroller top.
+    scroller.scrollTop = 2500;
+    scroller.getBoundingClientRect = () => ({ top: 0 }) as unknown as DOMRect;
+    sec.getBoundingClientRect = () => ({ top: -2000 }) as unknown as DOMRect;
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
+    expect(rows()).toBe(10);
+    // The section top is pinned back to the scroller top instead of leaving scrollTop
+    // behind for the browser to clamp onto a later section.
+    expect(scroller.scrollTop).toBe(500);
+  });
+
+  it("leaves scrollTop alone when the section top is still visible on collapse", async () => {
+    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    await act(async () => {
+      root!.render(
+        <ToastProvider>
+          <ConfirmProvider>
+            <div className="app-rail-scroll">
+              <WorkItemsSection />
+            </div>
+          </ConfirmProvider>
+        </ToastProvider>,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
+    expect(rows()).toBe(41);
+    const scroller = host.querySelector(".app-rail-scroll") as HTMLElement;
+    const sec = host.querySelector(".ui-section") as HTMLElement;
+    // Everything fits on screen: the section top sits below the scroller top, so no rows
+    // above the viewport disappear and the browser keeps scrollTop on its own.
+    scroller.scrollTop = 0;
+    scroller.getBoundingClientRect = () => ({ top: 0 }) as unknown as DOMRect;
+    sec.getBoundingClientRect = () => ({ top: 80 }) as unknown as DOMRect;
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
+    expect(rows()).toBe(10);
+    expect(scroller.scrollTop).toBe(0);
+  });
+
   // docs/log/80 §80.20: reported from the real rail — the same JQL saved twice turned 41 items
   // into 82 rows.
   it("keeps one row when two queries return the same ticket, and the badge does not count the duplicate", async () => {
@@ -635,6 +696,54 @@ describe("WorkItemsSection", () => {
     await act(async () => clear().dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })));
     expect(input.value).toBe("");
     expect(document.activeElement).not.toBe(input);
+  });
+
+  it("hands focus to the opposite fold button only when the fold was toggled from the keyboard (#1360)", async () => {
+    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    await render();
+    const fold = () => host.querySelector<HTMLButtonElement>(".wi-more")!;
+    // jsdom never scrolls on focus, so the option is what proves the handoff leaves the
+    // collapse pin (#1348) alone.
+    const focusSpy = vi.spyOn(HTMLElement.prototype, "focus");
+    const press = async (detail: number) => {
+      fold().focus();
+      focusSpy.mockClear();
+      await act(async () => fold().dispatchEvent(new MouseEvent("click", { bubbles: true, detail })));
+      for (const call of focusSpy.mock.calls) expect(call).toEqual([{ preventScroll: true }]);
+    };
+
+    // Keyboard (detail 0): the pressed button unmounts, focus lands on the one that replaced it.
+    await press(0);
+    expect(fold().textContent).toBe(t("wi.show_less"));
+    expect(document.activeElement).toBe(fold());
+    await press(0);
+    expect(fold().textContent).toBe(t("wi.show_more", { n: 31 }));
+    expect(document.activeElement).toBe(fold());
+
+    // Pointer (detail >= 1): no focus jump in either direction.
+    await press(1);
+    expect(fold().textContent).toBe(t("wi.show_less"));
+    expect(document.activeElement).not.toBe(fold());
+    await press(1);
+    expect(fold().textContent).toBe(t("wi.show_more", { n: 31 }));
+    expect(document.activeElement).not.toBe(fold());
+    focusSpy.mockRestore();
+  });
+
+  it("falls back to the filter when a keyboard collapse leaves no show-more to land on", async () => {
+    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
+    const input = host.querySelector<HTMLInputElement>(".wi-filter input")!;
+    // One match: nothing is hidden once folded, so show-more will not render.
+    await act(async () => typeInto(input, "G3M-100"));
+    expect(rows()).toBe(1);
+    const less = host.querySelector<HTMLButtonElement>(".wi-more")!;
+    expect(less.textContent).toBe(t("wi.show_less"));
+    less.focus();
+    await act(async () => less.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 })));
+    expect(host.querySelector(".wi-more")).toBeNull();
+    expect(document.activeElement).toBe(input);
   });
 
   it("drops the error of a tracker search that was still in flight when the filter was cleared", async () => {

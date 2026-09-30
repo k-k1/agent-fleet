@@ -469,4 +469,53 @@ func TestPostgresStore(t *testing.T) {
 	if got, _, _ := st.GetIdentityByID(ctx, i2.ID); got.Role != "user" {
 		t.Fatalf("role after demotion = %q", got.Role)
 	}
+
+	// Git repo rename/delete carry the LFS ledger and locks in one transaction.
+	if err := st.CreateGitRepo(ctx, GitRepo{ID: NewID(), TenantID: tn.ID, Name: "r1", DefaultBranch: "main", CreatedAt: NowTS()}); err != nil {
+		t.Fatalf("create git repo: %v", err)
+	}
+	if err := st.PutLFSObject(ctx, tn.ID, "r1", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 10); err != nil {
+		t.Fatalf("put lfs: %v", err)
+	}
+	if n, ok, err := st.LFSObjectSize(ctx, tn.ID, "r1", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); err != nil || !ok || n != 10 {
+		t.Fatalf("lfs object size = (%d,%v,%v), want (10,true,nil)", n, ok, err)
+	}
+	if _, ok, err := st.LFSObjectSize(ctx, tn.ID, "r1", "missing"); err != nil || ok {
+		t.Fatalf("lfs object size of a missing row = (%v,%v), want (false,nil)", ok, err)
+	}
+	// A second Put refreshes created_at (ON CONFLICT DO UPDATE), and the stale delete
+	// honours its cutoff.
+	oidB := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	for range 2 {
+		if err := st.PutLFSObject(ctx, tn.ID, "r1", oidB, 5); err != nil {
+			t.Fatalf("put lfs object twice: %v", err)
+		}
+	}
+	if gone, err := st.DeleteStaleLFSObject(ctx, tn.ID, "r1", oidB, "2000-01-01T00:00:00Z"); err != nil || gone {
+		t.Fatalf("stale delete before the row's age = (%v,%v), want (false,nil)", gone, err)
+	}
+	if gone, err := st.DeleteStaleLFSObject(ctx, tn.ID, "r1", oidB, "9999-01-01T00:00:00Z"); err != nil || !gone {
+		t.Fatalf("stale delete after the row's age = (%v,%v), want (true,nil)", gone, err)
+	}
+	if err := st.CreateLFSLock(ctx, LFSLock{ID: NewID(), TenantID: tn.ID, RepoName: "r1", Path: "a.bin", OwnerID: "m", OwnerName: "o", LockedAt: NowTS()}); err != nil {
+		t.Fatalf("lfs lock: %v", err)
+	}
+	if err := st.RenameGitRepo(ctx, tn.ID, "r1", "r2"); err != nil {
+		t.Fatalf("rename git repo: %v", err)
+	}
+	if oids, _ := st.ListLFSObjects(ctx, tn.ID, "r2"); len(oids) != 1 {
+		t.Fatalf("lfs ledger did not follow the rename: %v", oids)
+	}
+	if _, ok, _ := st.GetLFSLockByPath(ctx, tn.ID, "r2", "a.bin"); !ok {
+		t.Fatal("lfs lock did not follow the rename")
+	}
+	if err := st.DeleteGitRepo(ctx, tn.ID, "r2"); err != nil {
+		t.Fatalf("delete git repo: %v", err)
+	}
+	if n, _ := st.TenantLFSBytes(ctx, tn.ID); n != 0 {
+		t.Fatalf("lfs bytes after repo delete = %d, want 0", n)
+	}
+	if _, ok, _ := st.GetLFSLockByPath(ctx, tn.ID, "r2", "a.bin"); ok {
+		t.Fatal("lfs lock survived the repo delete")
+	}
 }

@@ -37,6 +37,8 @@ var modelsSafe []string             // the catalog's non-data-sharing ids, newes
 // common one: the catalog is the authenticated account's (`source: providerCatalog`), so
 // there is nothing to ask before a credential exists.
 func Models() []agents.ModelChoice {
+	var fetchErr error
+	defer logCatalogErr(&fetchErr) // registered first so it runs after the unlock
 	modelsMu.Lock()
 	defer modelsMu.Unlock()
 	if modelsList != nil && time.Since(modelsAt) < modelsTTL {
@@ -45,7 +47,9 @@ func Models() []agents.ModelChoice {
 	list, safe, err := probeModels()
 	if err != nil {
 		// Stale-if-error, the shape every other kind's catalog uses: a transient failure must
-		// not empty a picker that worked a minute ago.
+		// not empty a picker that worked a minute ago. Logged, because the picker then reads
+		// "catalog_empty" whether the account has no models or the answer failed to decode.
+		fetchErr = err
 		return modelsList
 	}
 	modelsList, modelsSafe, modelsAt = list, safe, time.Now()
@@ -58,13 +62,19 @@ var ModelHidden = func(id string) bool { return false }
 
 // errSafeModelsHidden refuses a start that would otherwise run a model the member hid, or the
 // host's contributor default in its place.
+// errCatalogUnknown refuses a start with no model chosen while the catalog cannot be read: AF
+// cannot tell which rows are safe, and sending no modelId runs the host's contributor default.
+var errCatalogUnknown = errors.New("Muse Code: モデル一覧を取得できなかったため、製品改善に使われないモデルを選べません。モデルを明示して起動するか、しばらくしてから再度お試しください。")
+
 var errSafeModelsHidden = errors.New("Muse Code: 製品改善に使われないモデルがすべて設定「使わないモデル」で除外されています。モデルを選んで起動するか、設定 > エージェント > 動作設定 で除外を解除してください。")
 
 // SafeDefaultModel is the model id AF starts a session on when the member chose none, over a
 // connection the caller already holds: the newest safe row the member has not hidden. "" with
-// no error means "send no modelId" (the catalog has no safe row at all), which hands the choice
-// back to the host. When safe rows exist but every one is hidden it returns an error: the
-// caller must refuse rather than send no modelId, which would run the contributor default.
+// no error means "send no modelId" (the catalog was READ and has no safe row at all), which
+// hands the choice back to the host. It returns an error — and the caller must refuse rather
+// than send no modelId, which would run the contributor default — when safe rows exist but
+// every one is hidden, and when the catalog could not be read at all: "no safe row" and "no
+// idea" are different answers, and only the first may fall through to the host.
 //
 // 🔴 It exists because the host's own default is the one decision 6 clamp 8 is about. Measured
 // on 1.3.0-R3401.1, the catalog's `isDefault: true` row is `muse-spark-1.3-contributor`, whose
@@ -74,25 +84,41 @@ var errSafeModelsHidden = errors.New("Muse Code: 製品改善に使われない�
 // (the contributor variants stay in the picker, at the same price); what AF picks for them when
 // they have not made one is the other direction.
 func SafeDefaultModel(cl *msp.Client) (string, error) {
-	return firstVisible(safeRows(cl))
+	ids, known := safeRows(cl)
+	if !known {
+		return "", errCatalogUnknown
+	}
+	return firstVisible(ids)
 }
 
 // safeRows is the catalog's non-data-sharing ids, refreshed over cl when the cache is stale.
-func safeRows(cl *msp.Client) []string {
+// known=false means no catalog has ever been read (every fetch so far failed).
+func safeRows(cl *msp.Client) (ids []string, known bool) {
+	var fetchErr error
+	defer logCatalogErr(&fetchErr)
 	modelsMu.Lock()
 	defer modelsMu.Unlock()
 	if modelsList != nil && time.Since(modelsAt) < modelsTTL {
-		return slices.Clone(modelsSafe)
+		return slices.Clone(modelsSafe), true
 	}
 	list, safe, err := modelsFrom(cl)
 	if err != nil {
 		// The catalog is not answerable right now. Returning the stale rows rather than none
-		// keeps a restart on the model the session already had; none would silently fall back
-		// to the host's contributor default.
-		return slices.Clone(modelsSafe)
+		// keeps a restart on the model the session already had; with no stale catalog at all
+		// the answer is "unknown", never "no safe row".
+		fetchErr = err
+		return slices.Clone(modelsSafe), modelsList != nil
 	}
 	modelsList, modelsSafe, modelsAt = list, safe, time.Now()
-	return slices.Clone(modelsSafe)
+	return slices.Clone(modelsSafe), true
+}
+
+// logCatalogErr logs a failed model/list outside modelsMu, which every session start and the
+// picker wait on: a write to a stalled stderr must not hold them up.
+func logCatalogErr(err *error) {
+	if *err != nil {
+		log.Printf("muse: model/list: %v", *err)
+	}
 }
 
 func firstVisible(ids []string) (string, error) {

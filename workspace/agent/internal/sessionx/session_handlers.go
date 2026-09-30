@@ -263,6 +263,7 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		sessions = append(sessions, wireSession(m, false))
 	}
+	pruneOverviewFacts(func(name string) bool { _, ok := metas[name]; return ok })
 	// Surface ORPHAN sessions: a live claude_* tmux session with no meta. These are
 	// invisible to the meta-driven list above, so the auto-namer would reuse their
 	// name and HandleCreateSession then fails with "session already running" — a
@@ -1119,7 +1120,7 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		recordFleetGraphBirth(meta)
 		noteCreateOrigin(name, &req, spawnParent, origin)
 		if p := strings.TrimSpace(req.InitialPrompt); p != "" {
-			if err := h.Send(agents.TurnInput{Prompt: p}); err != nil {
+			if err := h.Send(agents.TurnInput{Prompt: p, Origin: createTurnOrigin(&req, spawnParent)}); err != nil {
 				log.Printf("managed initial prompt %s: %v", name, err)
 				meta.InitialPromptState = session.InitialPromptFailed
 			} else {
@@ -1167,6 +1168,22 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 // THEN deliver — is a requirement, not an incidental line order (ADR 0073 decision 14), and the
 // only way to observe it from a test is to be the delivery.
 var deliverInitialPromptFn = deliverInitialPrompt
+
+// createTurnOrigin is the TurnInput origin of create_session's initial prompt. It follows
+// noteCreateOrigin's branches, in the same order, so the driver and the mirror's badge name the
+// same origin for the launch task.
+func createTurnOrigin(req *CreateReq, spawnParent string) agents.Origin {
+	switch {
+	case req.ReportTo != "":
+		return turnOrigin(injectionSource(req.Source), "")
+	case scheduleInjectionSource(req.Source) != "":
+		return turnOrigin(scheduleInjectionSource(req.Source), "")
+	case spawnParent != "":
+		return turnOrigin(TurnSourceSpawn, spawnParent)
+	default:
+		return turnOrigin("", "")
+	}
+}
 
 func noteCreateOrigin(name string, req *CreateReq, spawnParent, origin string) {
 	hasPrompt := strings.TrimSpace(req.InitialPrompt) != ""

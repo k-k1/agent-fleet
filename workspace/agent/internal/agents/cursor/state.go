@@ -7,10 +7,10 @@ package cursor
 // the false-idle lesson). The managed (ACP) route writes no transcript, so its state comes
 // from the driver's runTurn boundaries (Track A2).
 //
-// Waiting for permission (the TUI's confirmation for a command outside the allowlist) leaves
-// no trace in the JSONL, so v1 reports no "question" — the turn is still open and is treated
-// as "working" (the mirror shows in-progress plus a stop button). Permission cards are
-// Track D (docs/log/40).
+// The TUI's modals — a command approval and a plan launch's build approval — leave no trace
+// in the JSONL while they wait: the turn simply stays open. So an open turn is checked
+// against the pane (modal.go), and one held by a modal reads "permission" or "plan" rather
+// than "working", the same answer the free-text gate gets.
 
 import (
 	"bufio"
@@ -39,7 +39,14 @@ func LiveState(m session.Meta) string {
 		return ""
 	}
 	path := transcriptPath(m.Dir, chatID)
-	return liveStateFromFile(path)
+	st := liveStateFromFile(path)
+	if st == "working" {
+		// Only an open turn can be waiting on a modal, so an idle poll never pays for the capture.
+		if modal := TerminalModal(m); modal != "" {
+			return modal
+		}
+	}
+	return st
 }
 
 func liveStateFromFile(path string) string {

@@ -36,10 +36,8 @@ import (
 // see rtkPrompt). Sections that have nothing to say are omitted rather than emitted empty.
 //
 // kind is the userinstr per-target name (userinstr.State.Body's map key / its Targets map).
-// "lcpp" is not one of userinstr's known kinds — it writes no file, so agent_instructions.go
-// never lists it as a distribution target (decision 5) — but that needs no special case here:
-// State.TargetOn defaults an unrecognised kind to on, exactly like a kind nobody has ever
-// bothered to turn off.
+// agent_instructions.go lists "lcpp" as a target with the "prompt" delivery, so the member's
+// per-kind switch in the Console is the TargetOn read here; an unset switch defaults to on.
 func SystemPrompt(cwd, kind string) string {
 	var parts []string
 	if fleet := strings.TrimSpace(userinstr.FleetNotes()); fleet != "" {
@@ -68,7 +66,7 @@ var projectInstructionFiles = []string{"AGENTS.md", "CLAUDE.md"}
 
 // projectInstructions reads a working copy's own instructions, walking from cwd UP to the
 // nearest git root and no further — the same boundary codex's own project-skill scope uses
-// (internal/sessionx's codexSkillDirs/gitRoot, session_skills.go:306-324: "codex resolves
+// (internal/sessionx's codexSkillDirs/gitRoot in session_skills.go: "codex resolves
 // project skills from the CWD up to the GIT ROOT and no further … with no .git above the CWD
 // it reads the CWD alone"). lcpp drives no CLI of its own to crib a boundary from, and
 // AGENTS.md is itself the codex/opencode convention, so this reuses codex's own choice rather
@@ -147,7 +145,7 @@ func gitRootAbove(p string) (string, bool) {
 // foreignSkillConvs are the SKILL.md tree conventions lcpp has no native way to discover (it
 // drives no CLI at all), advertised instead the same "read Path and follow its instructions"
 // way the Console already offers other kinds' foreign entries (docs/log/50 §8). The three
-// names are duplicated from internal/sessionx's own foreignConvs (session_skills.go:127-129)
+// names are duplicated from internal/sessionx's own foreignConvs (session_skills.go)
 // rather than imported: this ADR's own layering has P2's kind wiring import internal/harness
 // (the managed driver wraps this package), not the other way round, and importing sessionx
 // from here for a 3-string slice is not worth risking that cycle later.
@@ -161,50 +159,46 @@ type foreignSkill struct {
 	Path        string
 }
 
-// foreignSkills scans every foreignSkillConvs tree from cwd up to the git root (the same
-// boundary projectInstructions uses) for a SKILL.md, skipping any marked `user-invocable:
-// false` in its frontmatter — the same flag session_skills.go's appendForeignSkills honours.
+// foreignSkills scans every foreignSkillConvs tree in cwd for a SKILL.md, skipping any marked
+// `user-invocable: false` in its frontmatter — the same flag session_skills.go's
+// appendForeignSkills honours. cwd alone, not the chain up to the git root that
+// projectInstructions reads: the model has to open the file with the read tool, and that tool
+// refuses anything outside cwd (resolvePath), so a tree above it would be advertised and then
+// fail to open. For the same reason a SKILL.md that is a symlink out of cwd is skipped.
 func foreignSkills(cwd string) []foreignSkill {
 	if cwd == "" {
 		return nil
 	}
 	seen := map[string]bool{}
 	var out []foreignSkill
-	for _, dir := range chainUpToGitRoot(cwd) {
-		for _, conv := range foreignSkillConvs {
-			root := filepath.Join(dir, filepath.FromSlash(conv))
-			ents, err := os.ReadDir(root)
+	for _, conv := range foreignSkillConvs {
+		root := filepath.Join(cwd, filepath.FromSlash(conv))
+		ents, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, e := range ents {
+			if !e.IsDir() {
+				continue
+			}
+			b, err := os.ReadFile(filepath.Join(root, e.Name(), "SKILL.md"))
 			if err != nil {
 				continue
 			}
-			for _, e := range ents {
-				if !e.IsDir() {
-					continue
-				}
-				b, err := os.ReadFile(filepath.Join(root, e.Name(), "SKILL.md"))
-				if err != nil {
-					continue
-				}
-				fm := skillFrontmatter(string(b))
-				if isDisabledSkill(fm["user-invocable"]) {
-					continue
-				}
-				name := fm["name"]
-				if name == "" {
-					name = e.Name()
-				}
-				if name == "" || seen[name] {
-					continue
-				}
-				seen[name] = true
-				path := conv + "/" + e.Name() + "/SKILL.md"
-				if filepath.Clean(dir) != filepath.Clean(cwd) {
-					// A tree above cwd needs an absolute path: relative-to-cwd would resolve
-					// against the wrong directory once the read tool actually opens it.
-					path = filepath.Join(root, e.Name(), "SKILL.md")
-				}
-				out = append(out, foreignSkill{Name: name, Description: fm["description"], Path: path})
+			fm := skillFrontmatter(string(b))
+			if isDisabledSkill(fm["user-invocable"]) {
+				continue
 			}
+			name := fm["name"]
+			if name == "" {
+				name = e.Name()
+			}
+			path := conv + "/" + e.Name() + "/SKILL.md"
+			if name == "" || seen[name] || !Readable(cwd, path) {
+				continue
+			}
+			seen[name] = true
+			out = append(out, foreignSkill{Name: name, Description: fm["description"], Path: path})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

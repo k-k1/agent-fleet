@@ -26,11 +26,12 @@ af start            # first run only: fetch, verify, and extract the rootfs (~20
 # open http://localhost:8099 in a browser
 ```
 
-If you received the tar directly:
+If you received the tar directly (`<arch>` is `amd64` or `arm64`, matching `uname -m`
+`x86_64` / `aarch64`):
 
 ```bash
-tar xzf agent-fleet-native-<v>-linux-amd64.tar.gz
-cd agent-fleet-native-<v>-linux-amd64
+tar xzf agent-fleet-native-<v>-linux-<arch>.tar.gz
+cd agent-fleet-native-<v>-linux-<arch>
 ./af start          # first run only: fetch, verify, and extract the rootfs (~200MB)
 # open http://localhost:8099 in a browser
 ```
@@ -82,8 +83,8 @@ docker ⇄ native). From Windows Explorer it is reachable at
 ## Updating
 
 ```bash
-tar xzf agent-fleet-native-<v'>-linux-amd64.tar.gz   # extract the new version
-cd agent-fleet-native-<v'>-linux-amd64 && ./af start
+tar xzf agent-fleet-native-<v'>-linux-<arch>.tar.gz   # extract the new version
+cd agent-fleet-native-<v'>-linux-<arch> && ./af start
 ```
 
 - Data (`WS_DATA`) lives outside the package and is untouched. DB migrations run
@@ -391,7 +392,7 @@ WantedBy=default.target
 `%h` expands to your home directory. The `ExecStart` path above matches the
 **one-liner install** (which symlinks `~/.local/bin/af`). If you extracted the
 tar by hand instead, point it at that copy — e.g.
-`ExecStart=%h/agent-fleet-native-<v>-linux-amd64/af start` (use
+`ExecStart=%h/agent-fleet-native-<v>-linux-<arch>/af start` (use
 `readlink -f "$(command -v af)"` to find the real path).
 
 ```bash

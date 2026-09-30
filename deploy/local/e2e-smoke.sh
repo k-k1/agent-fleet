@@ -61,6 +61,15 @@ if [ "${1:-}" = "--inner" ]; then
     muse_got="$(printf '%s' "$muse_out" | sed -n 's/.*(\([^)]*\)).*/\1/p')"
     if [ "$muse_got" = "$EXPECT_MUSE" ]; then echo "ok  muse $muse_out"
     else echo "NG  muse: actual ${muse_got:-?} != pin $EXPECT_MUSE (from: ${muse_out:-?})"; fail=1; fi
+    # agy is a BoringCrypto (FIPS) build that dies with SIGABRT at start on an x86 host
+    # whose kernel withdrew RDRAND (decisions/0008), so ask it the way the Agent and the
+    # entrypoint do: through the OPENSSL_ia32cap mask there, bare on arm64 and on hosts
+    # with RDRAND. The mask goes on this one command; exported it would reach every probe.
+    if [ "$(uname -m)" = "aarch64" ] || grep -qw rdrand /proc/cpuinfo; then
+      check_ver agy "$EXPECT_AGY" agy --version
+    else
+      check_ver agy "$EXPECT_AGY" env OPENSSL_ia32cap='~0x4000000000000000' agy --version
+    fi
   else
     # Lean distribution variant (BAKE_AGENT_CLIS=0, docs/log/35 §35.7.1-7): verify the
     # agent CLIs really are absent (= we do not redistribute proprietary CLIs).
@@ -182,7 +191,7 @@ if [ "${1:-}" = "--inner" ]; then
   # covered by the absence check above.
   if [ "${EXPECT_AGENT_CLIS:-1}" = "1" ]; then
     if [ "${EXPECT_RTK:-1}" = "1" ]; then
-      if command -v rtk >/dev/null; then echo "ok  rtk $(rtk --version 2>/dev/null | semver)"
+      if command -v rtk >/dev/null; then check_ver rtk "$EXPECT_RTK_VER" rtk --version
       # ⚠️ Absent WITH a reason is a pass, absent without one is not. On arm64 upstream
       # ships no runnable binary for this base image (docs/log/70 §70.9.2), and the build
       # records that instead of shipping something that cannot start — but "rtk quietly
@@ -318,7 +327,9 @@ EXPECT_AGY="$(arg_pin AGY_VERSION)"
 EXPECT_AGY_BUILD="$(arg_pin AGY_RELEASE_BUILD)"
 EXPECT_AGY_SHA_X64="$(arg_pin AGY_SHA256_X64)"
 EXPECT_AGY_SHA_ARM64="$(arg_pin AGY_SHA256_ARM64)"
-EXPECT_RTK_VER="$(arg_pin RTK_VERSION)"
+# run-dev.sh can override the rtk pin with a build-arg; it passes the same value here so
+# the smoke checks the rtk it asked for rather than the Dockerfile default.
+EXPECT_RTK_VER="${EXPECT_RTK_VER:-$(arg_pin RTK_VERSION)}"
 EXPECT_GO="$(arg_pin GO_VERSION)"
 EXPECT_GH="$(arg_pin GH_VERSION)"
 EXPECT_CHROMIUM="$(arg_pin CHROMIUM_VERSION)"
@@ -336,7 +347,7 @@ EXPECT_RTK="${EXPECT_RTK:-1}" # default = always baked in; pass 0 only to verify
 EXPECT_AGENT_CLIS="${EXPECT_AGENT_CLIS:-1}"
 SMOKE_MEMORY="${WS_MEMORY:-1g}"
 
-echo "==> image smoke: $IMAGE (agent_clis=$EXPECT_AGENT_CLIS claude=$EXPECT_CLAUDE opencode=$EXPECT_OPENCODE codex=$EXPECT_CODEX copilot=$EXPECT_COPILOT cursor=$EXPECT_CURSOR go=$EXPECT_GO gh=$EXPECT_GH chromium=$EXPECT_CHROMIUM rtk=$EXPECT_RTK)"
+echo "==> image smoke: $IMAGE (agent_clis=$EXPECT_AGENT_CLIS claude=$EXPECT_CLAUDE opencode=$EXPECT_OPENCODE codex=$EXPECT_CODEX copilot=$EXPECT_COPILOT cursor=$EXPECT_CURSOR agy=$EXPECT_AGY rtk_ver=$EXPECT_RTK_VER go=$EXPECT_GO gh=$EXPECT_GH chromium=$EXPECT_CHROMIUM rtk=$EXPECT_RTK)"
 exec docker run --rm -i --init --network none --memory "$SMOKE_MEMORY" --cap-add=SYS_ADMIN \
   -e EXPECT_CLAUDE="$EXPECT_CLAUDE" \
   -e EXPECT_OPENCODE="$EXPECT_OPENCODE" \

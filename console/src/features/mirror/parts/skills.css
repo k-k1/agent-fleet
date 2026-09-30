@@ -43,10 +43,15 @@
   max-height: min(40vh, 320px);
   overflow-y: auto;
   padding: 4px;
-  background: var(--bg);
-  border: 1px solid var(--border);
+  /* A raised surface, not --bg: the transcript underneath sits on the chat surface colour, and
+     on --bg with a --border edge the list measured 1.06:1 against it in dark mode - it read as
+     part of the conversation. --skill-sub is the secondary text (hint, description, badges, the
+     "show more" row), lifted off --muted, which was 4.7:1 here and ~3.9:1 on the selected row. */
+  --skill-sub: color-mix(in srgb, var(--fg) 65%, var(--muted));
+  background: var(--btn);
+  border: 1px solid var(--btn-border);
   border-radius: 8px;
-  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.32);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
 }
 /* One item = two lines (line 1: invocation string + argument hint + source badge; line 2:
    description). Twice the lines, but the height only goes 25px -> 31px (measured headless):
@@ -77,13 +82,13 @@
   line-height: 1.15;
 }
 .mirror-skill-item.sel {
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+  background: color-mix(in srgb, var(--accent) 18%, var(--btn));
 }
 /* Passive display (while arguments are being typed): a list that only shows the argument hint.
    It has no keyboard selection, so there is no selection highlight — hover alone signals that
    the rows are clickable. */
 .mirror-skills.passive .mirror-skill-item:hover {
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+  background: color-mix(in srgb, var(--accent) 12%, var(--btn));
 }
 .mirror-skill-name {
   flex: none;
@@ -95,7 +100,7 @@
 .mirror-skill-hint {
   flex: 1;
   min-width: 0;
-  color: var(--muted);
+  color: var(--skill-sub);
   font-size: 11.5px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -112,7 +117,7 @@
 }
 .mirror-skill-desc {
   min-width: 0;
-  color: var(--muted);
+  color: var(--skill-sub);
   font-size: 11px;
   line-height: 1.15;
   overflow: hidden;
@@ -124,9 +129,9 @@
   align-items: center;
   gap: 3px;
   padding: 0 6px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--btn-border);
   border-radius: 999px;
-  color: var(--muted);
+  color: var(--skill-sub);
   font-size: 10.5px;
   line-height: 1.15; /* the default `normal` lets the badge push up the height of line 1 */
 }
@@ -143,6 +148,10 @@
   color: var(--kind-codex);
   border-color: color-mix(in srgb, var(--kind-codex) 55%, var(--border));
 }
+.mirror-skill-src.kind-muse {
+  color: var(--kind-muse);
+  border-color: color-mix(in srgb, var(--kind-muse) 55%, var(--border));
+}
 /* "Show N more" row (docs/log/50 §9): the fold that keeps the CLI-bundled tier below the user's
    own entries. One line, muted, selectable like an item (sel-index), with the "//" shortcut at
    the right edge in the same key style as the keyboard help. */
@@ -152,10 +161,10 @@
   gap: 8px;
   padding: 3px 8px;
   border: none;
-  border-top: 1px dashed var(--border);
+  border-top: 1px dashed var(--btn-border);
   border-radius: 0 0 6px 6px;
   background: none;
-  color: var(--muted);
+  color: var(--skill-sub);
   font-size: 12px;
   text-align: left;
   cursor: pointer;
@@ -163,13 +172,13 @@
 }
 .mirror-skill-more.sel,
 .mirror-skill-more:hover {
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+  background: color-mix(in srgb, var(--accent) 18%, var(--btn));
   color: var(--fg);
 }
 .mirror-skill-more-key {
   margin-left: auto;
   padding: 0 5px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--btn-border);
   border-radius: 4px;
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 10.5px;
@@ -180,6 +189,6 @@
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  color: var(--muted);
+  color: var(--skill-sub);
   font-size: 12px;
 }

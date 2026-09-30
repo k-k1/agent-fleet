@@ -1,4 +1,4 @@
--- Showback usage accounting (docs/roadmap.md P3-9, history/p3-9-showback.md).
+-- Showback usage accounting (docs/log/roadmap.md P3-9, docs/log/p3-9-showback.md).
 -- The infra cost being showed-back in the BYO model is workspace occupancy.
 -- Claude usage is each user's own subscription and not counted here. What costs
 -- the operator RAM/CPU (or Fargate hours on AWS) is how long each workspace runs.

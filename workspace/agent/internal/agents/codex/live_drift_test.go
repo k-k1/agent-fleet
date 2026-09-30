@@ -195,7 +195,7 @@ func buildAgentBin(t *testing.T) string {
 func prodArgs(t *testing.T, slot, agentBin string) []string {
 	t.Helper()
 	t.Setenv("AF_CODEX_APP_SERVER_ADDR", "") // CLI route
-	prog := buildProgram("", "", slot, "", "", "")
+	prog := buildProgram("", "", slot, "", "")
 	var args []string
 	args = append(args, bypassFlagsLive(prog)...)
 	for _, v := range configOverridesLive(prog) {
@@ -380,7 +380,7 @@ func TestLiveDriftCodexPendingQuestion(t *testing.T) {
 	liveHome(t)
 
 	work := t.TempDir()
-	m := session.Meta{Name: "live-drift-q", Dir: work, Kind: session.KindCodex}
+	m := session.Meta{Name: fmt.Sprintf("live-drift-q-%d", os.Getpid()), Dir: work, Kind: session.KindCodex}
 	slot := session.UUID(m.Dir, m.Name)
 
 	// Production's BuildLaunch pre-accepts codex's per-directory trust gate before it
@@ -399,18 +399,23 @@ func TestLiveDriftCodexPendingQuestion(t *testing.T) {
 	for _, a := range args {
 		quoted = append(quoted, session.ShellQuote(a))
 	}
-	tn := fmt.Sprintf("af-live-drift-q-%d", os.Getpid())
-	_ = exec.Command("tmux", "kill-session", "-t", tn).Run()
+	// A tmux server of its own, holding the pane under the name the Agent gives it:
+	// PendingQuestionID counts only a question asked since that pane's session was created,
+	// and asks the server AF_TMUX_SOCKET names.
+	sock := fmt.Sprintf("af-live-drift-q-%d", os.Getpid())
+	t.Setenv("AF_TMUX_SOCKET", sock)
+	tmux := func(args ...string) *exec.Cmd { return exec.Command("tmux", append([]string{"-L", sock}, args...)...) }
+	tn := session.TmuxName(m.Name)
 	launch := fmt.Sprintf("env HOME=%s %s %s %s", os.Getenv("HOME"), bin,
 		strings.Join(quoted, " "), session.ShellQuote(prompt))
-	if out, err := exec.Command("tmux", "new-session", "-d", "-s", tn,
+	if out, err := tmux("new-session", "-d", "-s", tn,
 		"-x", "200", "-y", "50", "-c", work, launch).CombinedOutput(); err != nil {
 		t.Fatalf("tmux new-session: %v: %s", err, out)
 	}
-	defer func() { _ = exec.Command("tmux", "kill-session", "-t", tn).Run() }()
+	defer func() { _ = tmux("kill-server").Run() }()
 
 	pane := func() string {
-		out, _ := exec.Command("tmux", "capture-pane", "-p", "-t", tn).Output()
+		out, _ := tmux("capture-pane", "-p", "-t", tn).Output()
 		return string(out)
 	}
 

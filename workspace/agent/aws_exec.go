@@ -20,8 +20,8 @@ const awsExecUsage = `usage: af-aws-exec --profile <name> [--account <id>] [--re
                    [--keep-aws-config] [-q] -- <command> [args...]
        af-aws-exec --list | --help | --version
 
-Runs <command> with short-lived credentials of one SSO profile (Settings > SSM, exported
-into ~/.aws/config). The credentials are passed to that one child process through its
+Runs <command> with short-lived credentials of one SSO profile (Settings > AWS
+profiles/SSM, exported into ~/.aws/config). The credentials are passed to that one child process through its
 environment only. The container's workload role is blocked for the child: a missing or
 expired SSO login fails instead of silently running as another principal.
 

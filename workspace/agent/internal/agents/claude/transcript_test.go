@@ -196,7 +196,7 @@ func TestCollectInteractionAnswers(t *testing.T) {
 }
 
 // TestCollectInteractionAnswers_Declined pins the fix for "the card reads as answered while
-// its content is the decline boilerplate" (docs/build/92 §6): an Escape/interrupt out of AskUserQuestion
+// its content is the decline boilerplate" (docs/build/92 §92.1.3): an Escape/interrupt out of AskUserQuestion
 // (e.g. the preview free-text bug — a free-text answer lands on the unnumbered "Chat
 // about this" row and Enter activates it) surfaces as an is_error tool_result carrying
 // claude's own "wants to clarify"/"(No answer provided)" boilerplate — real transcript

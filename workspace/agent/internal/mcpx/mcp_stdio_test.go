@@ -1017,3 +1017,120 @@ func TestGetSessionStatusTrimsOnlyForSessions(t *testing.T) {
 		t.Errorf("the operator lost the pending plan body it needs: %s", got)
 	}
 }
+
+// A Managed peer in the middle of a turn only queues the message. Called delivered, it sends the
+// sender on as if the peer had read it; the result says queued instead, and not to resend.
+func TestSendToPeerSessionReportsQueuedAsNotDelivered(t *testing.T) {
+	withFleetSpawn(t, false)
+	mcpPeerMessagingEnabled = true
+	answer := `{"sent":"child1","held":true}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sessions/child1/status":
+			_, _ = w.Write([]byte(`{"alive":true,"ready":true,"status":"working"}`))
+		case "/sessions/child1/input":
+			_, _ = w.Write([]byte(answer))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	send := func() map[string]any {
+		t.Helper()
+		args, _ := json.Marshal(map[string]any{"name": "child1", "intent": "notice", "message": "PR #1 is up"})
+		params, _ := json.Marshal(map[string]any{"name": "send_to_peer_session", "arguments": json.RawMessage(args)})
+		resp := mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params})
+		var parsed struct {
+			Result struct {
+				IsError bool `json:"isError"`
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(resp, &parsed); err != nil || parsed.Result.IsError || len(parsed.Result.Content) == 0 {
+			t.Fatalf("resp = %s err = %v", resp, err)
+		}
+		var out map[string]any
+		if err := json.Unmarshal([]byte(parsed.Result.Content[0].Text), &out); err != nil {
+			t.Fatalf("result not JSON: %v: %s", err, parsed.Result.Content[0].Text)
+		}
+		return out
+	}
+
+	got := send()
+	if got["delivered"] != false || got["queued"] != true {
+		t.Errorf("queued send = %v, want delivered=false queued=true", got)
+	}
+	if note, _ := got["note"].(string); note == "" {
+		t.Errorf("queued send carries no note: %v", got)
+	}
+
+	answer = `{"sent":"child1"}`
+	got = send()
+	if got["delivered"] != true {
+		t.Errorf("send that started a turn = %v, want delivered=true", got)
+	}
+	if _, ok := got["queued"]; ok {
+		t.Errorf("send that started a turn = %v, want no queued", got)
+	}
+}
+
+// The server instructions must name exactly the tool groups mcpStdioToolList advertises: a model
+// reads them before the tool list, and a group described but not advertised (or the reverse)
+// sends it looking for a tool it lacks. Every flag combination is checked against the real list,
+// so a condition wired to the wrong flag on either side fails.
+func TestMCPStdioInstructionsFollowSessionSurface(t *testing.T) {
+	withMCPFlags(t, false, true, false)
+	oldPeer, oldSpawn := mcpPeerMessagingEnabled, mcpFleetSpawnEnabled
+	t.Cleanup(func() { mcpPeerMessagingEnabled, mcpFleetSpawnEnabled = oldPeer, oldSpawn })
+
+	groups := []struct{ tool, phrase string }{
+		{"af_report", "completion report"},
+		{"propose_session_handoff", "handoff proposal"},
+		{"af_stop_after_turn", "stop after this turn"},
+		{"get_session_status", "session status"},
+		{"get_session_usage", "usage"},
+		{"add_memo", "memos"},
+		{"list_chromium_targets", "Chromium"},
+		{"send_to_peer_session", "peer sessions"},
+		{"create_session", "child sessions"},
+	}
+	for mask := 0; mask < 8; mask++ {
+		chromium, peer, spawn := mask&1 != 0, mask&2 != 0, mask&4 != 0
+		setSessionChromiumEnabled(chromium)
+		mcpPeerMessagingEnabled, mcpFleetSpawnEnabled = peer, spawn
+
+		advertised := map[string]bool{}
+		for _, tool := range mcpStdioToolList() {
+			advertised[tool["name"].(string)] = true
+		}
+		got := mcpStdioInstructions()
+		for _, g := range groups {
+			if advertised[g.tool] != strings.Contains(got, g.phrase) {
+				t.Errorf("chromium=%v peer=%v spawn=%v: %s advertised=%v but instructions mention %q=%v: %s",
+					chromium, peer, spawn, g.tool, advertised[g.tool], g.phrase, !advertised[g.tool], got)
+			}
+		}
+		if !strings.Contains(got, "image generation") {
+			t.Errorf("session instructions must name image generation as conditional: %s", got)
+		}
+		for _, r := range got {
+			if r > 0x7f {
+				t.Fatalf("instructions must be English ASCII: %s", got)
+			}
+		}
+	}
+
+	withMCPFlags(t, false, false, false)
+	if got := mcpStdioInstructions(); !strings.Contains(got, "assistant") || strings.Contains(got, "steer") {
+		t.Errorf("read-only assistant instructions = %s", got)
+	}
+	withMCPFlags(t, true, false, false)
+	if got := mcpStdioInstructions(); !strings.Contains(got, "steer") {
+		t.Errorf("--write assistant instructions = %s", got)
+	}
+}

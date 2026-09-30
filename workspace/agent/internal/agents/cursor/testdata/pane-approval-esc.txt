@@ -1,0 +1,45 @@
+Tip: You can start the Cursor CLI with `agent` (same as `cursor-agent`).
+
+
+  Cursor Agent
+  v2026.09.28-64d2043
+  Tip: Use /plan to plan execution and reach the right outcome faster.
+
+
+  Run exactly this shell command now and nothing else: echo probe1 > out1.txt
+
+
+  $ echo probe1 > out1.txt 34s
+
+  Done.
+
+
+  Using your file editing tool (not the shell), create a new file named out2.txt containing the single word probe2. Nothing else.
+
+
+    Edited out2.txt +1
+
+    ▎+ probe2
+
+  Done.
+
+
+  Run exactly this shell command now and nothing else: touch out3.txt
+
+
+  $ touch out3.txt Waiting for approval...
+
+
+ ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+ │ $  touch out3.txt in .                                                                                                                 │
+ └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+  → Tell the agent what to do instead (Enter to send, empty to skip, Esc to cancel)                                         ctrl+c to stop
+
+
+
+
+
+
+

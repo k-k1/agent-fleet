@@ -4,10 +4,13 @@
 # that is not a coincidence — it is the property ADR 0095 named as muse's unique advantage. Two
 # things can be verified against the real proprietary binary for free:
 #
-#   1. **The MSP schema fingerprint.** The release manifest publishes
-#      `msp_schema_fingerprint`, `muse schema` renders the same value offline, and the generated
-#      Go types in internal/msp carry it as a constant. A protocol change upstream therefore
-#      turns into a red build instead of a runtime surprise — no other kind has this.
+#   1. **The MSP schema.** `muse schema` exports the whole protocol offline, and the generated
+#      Go types in internal/msp are rendered from a checked-in copy of that export. The release's
+#      export must stay compatible with the copy (internal/msp/schemagen/compat.go): additions
+#      are notices, removals and changed shapes are red. A protocol change upstream therefore
+#      turns into a red build instead of a runtime surprise — no other kind has this. The
+#      fingerprint is not compared for equality: it moves on additive releases too, and that
+#      made every such release red until someone re-exported the bundle.
 #   2. **The shape of `muse --version`.** The pin is the parenthesised build id
 #      (`Muse Code 1.3.0 (1.3.0-R3401.1)`), and install_muse.go compares against it. A release
 #      that changes that line breaks the pin comparison everywhere — the installer would read
@@ -52,10 +55,16 @@ jobs:
   drift:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      version: ${{ steps.rel.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      # This job runs a downloaded binary, and the checksum it is verified against comes from
+      # the same vendor, so it keeps a read-only token and none in .git/config.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: workspace/agent/go.mod
           cache-dependency-path: workspace/agent/go.sum
@@ -116,34 +125,72 @@ jobs:
             exit 1
           fi
 
-      - name: the manifest fingerprint matches the generated types
+      # The release manifest and the binary's own export must name the same schema: otherwise
+      # the compatibility check below would judge a schema this release does not ship. Against
+      # the generated types a different fingerprint is informational only — the checked-in
+      # bundle is behind this release, and whether that matters is the next step's question.
+      - name: the manifest fingerprint against the binary and the generated types
         env:
           FP: ${{ steps.rel.outputs.fingerprint }}
         run: |
           set -euo pipefail
+          rm -rf /tmp/muse-schema
+          MUSE_NO_AUTO_UPDATE=1 /tmp/muse schema generate-json-schema --out /tmp/muse-schema
+          exported="$(jq -r .fingerprint /tmp/muse-schema/manifest.json)"
+          if [ "$exported" != "$FP" ]; then
+            echo "::error::the binary exports schema $exported, but the release manifest says $FP."
+            exit 1
+          fi
           have="$(sed -n 's/^const SchemaFingerprint = "\(.*\)"$/\1/p' workspace/agent/internal/msp/types_gen.go)"
           [ -n "$have" ] || { echo '::error::could not read msp.SchemaFingerprint'; exit 1; }
           if [ "$have" != "$FP" ]; then
-            echo "::error::MSP schema drift: the release manifest says $FP, the generated types were built from $have."
-            echo "::error::Re-render internal/msp from \`muse schema generate-json-schema\` for this release."
-            exit 1
+            echo "::notice::The MSP bundle is behind this release (manifest $FP, types rendered from $have). The next step decides whether it is still compatible."
           fi
 
-      # The third check of the drift lock, and the only one that needs a binary: the installed
-      # muse must EXPORT the same fingerprint itself. The first two compare files that could
-      # both have gone stale together.
+      # The third check of the drift lock, and the only one that needs a binary: the schema the
+      # installed muse EXPORTS must be one the generated types can speak.
       #
       # AF_MUSE_BIN is what the test resolves the binary from, and without it the test SKIPS —
       # so the grep below is load-bearing: a skip must never read as a pass in a workflow whose
       # whole purpose is this check.
-      - name: the binary exports the same fingerprint
+      - name: the binary's schema is compatible with the generated types
         run: |
           set -euo pipefail
           cd workspace/agent
+          status=0
           AF_MUSE_BIN=/tmp/muse go test ./internal/msp/ \
-            -run 'TestSchemaFingerprintMatchesTheBundle|TestInstalledBinaryExportsTheSameSchema' \
-            -count=1 -v 2>&1 | tee /tmp/fp.log
-          grep -q 'PASS: TestInstalledBinaryExportsTheSameSchema' /tmp/fp.log || {
-            echo '::error::the installed-binary fingerprint check did not run (it skips without AF_MUSE_BIN)'
+            -run 'TestSchemaFingerprintMatchesTheBundle|TestInstalledBinaryIsCompatibleWithTheBundle' \
+            -count=1 -v > /tmp/fp.log 2>&1 || status=$?
+          cat /tmp/fp.log
+          sed -n 's/.*msp-compat addition: /::notice::MSP addition (compatible): /p' /tmp/fp.log
+          [ "$status" -eq 0 ] || exit "$status"
+          grep -q 'PASS: TestInstalledBinaryIsCompatibleWithTheBundle' /tmp/fp.log || {
+            echo '::error::the installed-binary compatibility check did not run (it skips without AF_MUSE_BIN)'
             exit 1
           }
+
+  # The one write to the state issue, in a job that never runs muse: `issues: write` stays out
+  # of reach of the binary the drift job executes.
+  record:
+    needs: drift
+    # Only a passing `version=latest` run records (the watcher's dispatch, or a manual one): a
+    # pin run that recorded an older version would move `tested` backwards and dispatch the
+    # contract again the next day.
+    if: inputs.version == 'latest'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # Verbatim, build id and all: the watcher compares against the channel's
+      # `1.4.0-R4302.1`, and the digits-only extraction the other contracts use would leave
+      # that edge open forever.
+      - name: remember successfully tested latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VER: ${{ needs.drift.outputs.version }}
+        run: deploy/local/cli-release-state.sh set tested muse "$VER"

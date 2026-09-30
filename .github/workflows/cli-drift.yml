@@ -4,7 +4,7 @@
 # the live fleet runs**. The ARG pins in workspace/Dockerfile only apply at bake
 # time; a Workspace opted into self-update (AF_AGENT_SELF_UPDATE_ALLOWED=1 and
 # AF_AGENT_SELF_UPDATE=1) has entrypoint.sh install @latest on every boot. Meanwhile
-# e2e.yml passes no build-args and always verifies a pinned-version image = CI stays
+# e2e.yml passes no version build-args and always verifies a pinned-version image = CI stays
 # green even when a new release breaks things (which is why claude state detection
 # broke 3 times and was found by humans every time).
 #
@@ -43,7 +43,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TITLE: "CLI version drift: Dockerfile pins are behind public latest"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: check drift
         id: check
@@ -89,7 +89,9 @@ jobs:
           1. Inspect the corresponding `cli-release-watch` dispatch/result.
           2. For a CLI without an unattended contract, run its signed-in fleet TUI/mirror
              probe from the companion issue.
-          3. If all is well, bump the ARGs and their architecture checksums where applicable.
+          3. Kinds whose latest passed its contract are bumped by `cli-pin-bump.yml` in one
+             PR (`automation/cli-pin-bump`); cursor and kiro need their contract dispatched
+             by hand first, and rtk is bumped by hand.
 
           <sub>Auto-updated by cli-drift.yml. Closes automatically once the pins catch up
           to latest.</sub>
@@ -131,7 +133,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-agent-cli
         with:
           agent: claude

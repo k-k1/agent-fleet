@@ -47,3 +47,13 @@ func TestGitRemotePath(t *testing.T) {
 		}
 	}
 }
+
+// The injected internal host carries the port (it is the credential key), but a remote
+// on that host must still badge as "internal".
+func TestGitProviderHostInternalWithPort(t *testing.T) {
+	t.Setenv("AF_INTERNAL_GIT_HOST", "127.0.0.1:8080")
+	p, h := gitProviderHost("http://127.0.0.1:8080/git/acme/app.git")
+	if p != "internal" || h != "127.0.0.1" {
+		t.Fatalf("gitProviderHost = (%q,%q), want (internal, 127.0.0.1)", p, h)
+	}
+}

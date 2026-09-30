@@ -20,6 +20,7 @@ type p2Env struct {
 	g        gitServerAPI
 	st       *store.SQL
 	tenantID string
+	memberID string // the membership of u@x, the creator seedRepo records
 }
 
 func newP2Env(t *testing.T) *p2Env {
@@ -35,12 +36,14 @@ func newP2Env(t *testing.T) *p2Env {
 	}
 	dflt, _ := st.EnsureDefaultTenant(ctx)
 	ident, _ := st.UpsertIdentity(ctx, "u@x", "u-x", "")
-	if _, err := st.EnsureMembership(ctx, ident.ID, dflt.ID, "member"); err != nil {
+	mem, err := st.EnsureMembership(ctx, ident.ID, dflt.ID, "member")
+	if err != nil {
 		t.Fatalf("membership: %v", err)
 	}
 	return &p2Env{
 		st:       st,
 		tenantID: dflt.ID,
+		memberID: mem.ID,
 		g: newGitServerAPI(&manager{store: st, authMode: "proxy", emailHeader: "X-Forwarded-Email", dataRoot: t.TempDir()},
 			"https://fleet.example.com"),
 	}
@@ -70,7 +73,7 @@ func (e *p2Env) setLimits(t *testing.T, l tenantLimits) {
 func (e *p2Env) seedRepo(t *testing.T, name string) {
 	t.Helper()
 	if err := e.st.CreateGitRepo(context.Background(), store.GitRepo{
-		ID: store.NewID(), TenantID: e.tenantID, Name: name, DefaultBranch: "main", CreatedAt: store.NowTS(),
+		ID: store.NewID(), TenantID: e.tenantID, Name: name, DefaultBranch: "main", CreatedBy: e.memberID, CreatedAt: store.NowTS(),
 	}); err != nil {
 		t.Fatalf("seed repo: %v", err)
 	}
@@ -162,8 +165,9 @@ func TestGitGCSweep(t *testing.T) {
 		t.Fatalf("init bare: %v: %s", err, out)
 	}
 	// Sweeping a real bare completes without error (gc --auto is a no-op on a fresh
-	// repo, but the walk + exec path is exercised). No LFS dir → prune is skipped.
-	newGitGC(nil, dataRoot, 0, 0).sweep(context.Background())
+	// repo, but the walk + exec path is exercised). No LFS dir → prune is skipped, but the
+	// ledger reconcile still reads the store, so it needs one.
+	newGitGC(newP2Env(t).st, dataRoot, 0, 0).sweep(context.Background())
 	if _, err := os.Stat(bare); err != nil {
 		t.Fatalf("bare gone after gc: %v", err)
 	}

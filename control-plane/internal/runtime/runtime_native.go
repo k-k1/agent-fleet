@@ -39,7 +39,7 @@ import (
 // The layout under dataDir mirrors the docker adapter exactly — home/ is the
 // process HOME (the docker bind-mount source), claude-config/ is CLAUDE_CONFIG_DIR
 // — so a workspace's data is portable between the two local runtimes, and
-// cleanHome / stageWorkspaceDocs / dirDiskUsage work unchanged.
+// wipeLocalHome / stageWorkspaceDocs / dirDiskUsage work unchanged.
 //
 // Two launch modes (docs/log/35 §35.7.2):
 //   - traditional (AF_NATIVE_AGENT_BIN): the host-built agent runs directly with
@@ -603,7 +603,7 @@ func (n *nativeRuntime) rootfsEnv() ([]string, error) {
 
 // processEnv builds the agent process environment from scratch. Base runtime
 // vars first, then the workspace extraEnv (template + per-workspace) so a
-// deployment override (e.g. proxy env, GITHUB_OAUTH_CLIENT_ID) wins — flattened
+// deployment override (e.g. proxy env) wins — flattened
 // through a map so no key ever appears twice.
 func (n *nativeRuntime) processEnv(home, claudeCfg string) []string {
 	env := map[string]string{

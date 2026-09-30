@@ -167,7 +167,7 @@ export function PendingQuestions({
 
   // Every submit goes out through here: the draft is dropped as the answer leaves, and put
   // back if the send is refused. Answering is the one place where silence is
-  // indistinguishable from success (docs/build/92 §7) — a refusal keeps the card on screen,
+  // indistinguishable from success (docs/build/92 §92.3) — a refusal keeps the card on screen,
   // so its draft has to be there too, or the next tab switch loses what the user typed.
   const fire = (run: () => SubmitResult) => {
     clearDraft();
@@ -257,8 +257,8 @@ export function PendingQuestions({
       ))}
       <div className="mq-submit-row mq-footer">
         {onCancel && (
-          // Cancel the question without answering — dismiss the AUQ (Escape for TUI,
-          // Interrupt for managed) so the user can steer into a normal discussion instead
+          // Cancel the question without answering — dismiss the AUQ (Escape for TUI, a
+          // /respond cancel for managed) so the user can steer into a normal discussion instead
           // of being forced to pick an option first. Always available, even for forms we
           // can't drive from chat (the terminal-hint case).
           <button

@@ -420,6 +420,11 @@ export interface Settings {
   // whether always-expanded reads well depends on the backend — hence a Record keyed by kind
   // like hiddenModels (an unset kind is false).
   expandThinking: Record<string, boolean>;
+  // Show the reply the agent is still writing in the mirror, line by line (kind-scoped;
+  // Settings > Agents > each card > behaviour settings; #1250). Unlike expandThinking an unset
+  // kind is ON: off is the opt-out for those who would rather see a reply once it is complete.
+  // Only kinds whose Agent route sends the in-progress reply read it (claude).
+  streamReplies: Record<string, boolean>;
   // ON/OFF for the CHAT title suggestion (Settings > AI assist; the rename dialog's "ask AI for
   // a suggestion" (「AIに提案してもらう」) button — the assistant has no automatic banner). Split out of
   // autoTitleSuggest so sessions and chats gate independently; load()/hydrateUIPrefs
@@ -1138,6 +1143,7 @@ const DEFAULTS: Settings = {
   opencodeCatalog: "off",
   lcppEnabled: true, // opt-out (docs/log/105 §106.2) — an existing deployment launches lcpp today
   expandThinking: {},
+  streamReplies: {},
   assistantTitleSuggest: true,
   branchSuggestEnabled: true,
   editSuggestEnabled: true,
@@ -1522,6 +1528,13 @@ export function agentLaunchDefault(s: Settings, kind: string): AgentLaunchDefaul
 export function expandThinking(s: Settings, kind?: string | null): boolean {
   if (!kind) return false;
   return s.expandThinking?.[kind] === true;
+}
+
+// streamReplies is a kind's "stream replies in the chat view" setting. Unset, and a corrupt saved
+// value, mean on; only an explicit false turns it off.
+export function streamReplies(s: Settings, kind?: string | null): boolean {
+  if (!kind) return false;
+  return s.streamReplies?.[kind] !== false;
 }
 
 let state = load();

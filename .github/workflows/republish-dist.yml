@@ -52,13 +52,13 @@ jobs:
             || { echo "::error::rootfs is not a 12-hex content hash: $ROOTFS"; exit 1; }
 
       # sources of the version being restored
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: v${{ inputs.version }}
           path: src
 
       # current tooling: the forbidden-token gate and republish-dist.sh
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: gate
 

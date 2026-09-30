@@ -41,3 +41,12 @@ func resolvePath(cwd, p string) (string, error) {
 	}
 	return full, nil
 }
+
+// Readable reports whether p (relative to cwd, or absolute) is a path the builtin file tools
+// would accept. Anything that offers lcpp's model a path to read — the Console's skill picker,
+// the system prompt's skill list — asks this first, so it never hands out a path the read tool
+// then refuses.
+func Readable(cwd, p string) bool {
+	_, err := resolvePath(cwd, p)
+	return err == nil
+}

@@ -50,7 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: build release artifacts (A+D)
         run: VERSION=$VERSION deploy/release/build.sh --compose
@@ -102,15 +102,23 @@ jobs:
             test -f "$d/operate/runbooks/aws-ecs.md"
             # The release history is copied in too (ref/releases): every ledger version,
             # and not the notes of versions that were never published.
-            test -f "$d/ref/releases/SUMMARY.md" && test -f "$d/ref/releases/SUMMARY.ja.md"
+            test -f "$d/ref/releases/SUMMARY.md"
+            test -f "$d/ref/releases/SUMMARY.ja.md"
             test -f "$d/ref/releases/$LATEST.md"
-            test ! -e "$d/ref/releases/0.8.1.md" && test ! -e "$d/ref/releases/index.tsv"
+            test ! -e "$d/ref/releases/0.8.1.md"
+            test ! -e "$d/ref/releases/index.tsv"
             test ! -e "$d/ref/releases/README.md"
-            test ! -e "$d/log" && test ! -e "$d/decisions" && test ! -e "$d/build"
-            test ! -e "$d/use" && test ! -e "$d/guide" && test ! -e "$d/dev"
-            test ! -e "$d/CONVENTIONS.md" && test ! -e "$d/HANDOFF.md"
+            test ! -e "$d/log"
+            test ! -e "$d/decisions"
+            test ! -e "$d/build"
+            test ! -e "$d/use"
+            test ! -e "$d/guide"
+            test ! -e "$d/dev"
+            test ! -e "$d/CONVENTIONS.md"
+            test ! -e "$d/HANDOFF.md"
             test ! -e "$d/CHANGELOG-handoff.md"
-            test ! -e "$d/roadmap.md" && test ! -e "$d/img"'
+            test ! -e "$d/roadmap.md"
+            test ! -e "$d/img"'
           # version stamp: after boot, /api/version behind auth returns VERSION
           # (AUTH=dev has no gate). Booting with no mounts is intentional — the CP's
           # MkdirAll(dbPath parent) supports it, and this gate once caught an
@@ -180,13 +188,24 @@ jobs:
   # R (lean rootfs), then live-run on the runner = af start --rootfs → workspace
   # boots under bwrap → the rootfs entrypoint boot-installs the pins into the
   # virtual HOME. The end-to-end pass on plain WSL2 (no extra installs) remains
-  # the P4 real-machine gate.
+  # the P4 real-machine gate. Runs once per published architecture: publish-dist.yml
+  # ships an arm64 C+R built the same way on the same runner label.
   native-gate:
     if: "!contains(github.event.head_commit.message, '[ecs-only]') && !contains(github.event.head_commit.message, '[dist-only]')"
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    env:
+      ARCH: ${{ matrix.arch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: build native artifacts (C+R+D)
         run: VERSION=$VERSION deploy/release/build.sh --native
@@ -195,9 +214,9 @@ jobs:
         run: |
           set -eux
           cd deploy/release/dist
-          C="agent-fleet-native-$VERSION-linux-amd64"
+          C="agent-fleet-native-$VERSION-linux-$ARCH"
           test -f "$C.tar.gz"
-          R="$(ls agent-fleet-rootfs-*-linux-amd64.tar.zst)"
+          R="$(ls agent-fleet-rootfs-*-linux-"$ARCH".tar.zst)"
           sha256sum -c SHA256SUMS
           tar tzf "$C.tar.gz" | grep -q "^$C/af$"
           # bundled binaries must be truly static (fail if ldd says dynamic)
@@ -208,17 +227,26 @@ jobs:
           # the rootfs.json pin matches R (af verifies/extracts against this sha)
           sha="$(sed -n 's/.*"sha256": *"\([^"]*\)".*/\1/p' "$C/rootfs.json")"
           echo "$sha  $R" | sha256sum -c -
+          # ...and names it inside the app release, not a separate rootfs-<r> one
+          grep -qF "\"url\": \"https://github.com/k-k1/agent-fleet-dist/releases/download/v$VERSION/$R\"" "$C/rootfs.json"
           # console / docs (the user guide only) / LICENSE / NOTICE / VERSION are bundled
           test -f "$C/console/index.html"
           # ⚠️ This used to assert docs/log/35-packaging.md and docs/dev — paths from the
           # denylist era. build.sh has staged through the allowlist since docs/.distinclude
           # landed, so neither has been in the tar for a long time and this gate could only
           # fail. Assert what is actually shipped: the guide, and none of the developer tree.
-          test -d "$C/docs/member" && test -d "$C/docs/ref"
+          test -d "$C/docs/member"
+          test -d "$C/docs/ref"
           test -f "$C/docs/operate/runbooks/compose.md"
-          test ! -e "$C/docs/build" && test ! -e "$C/docs/decisions" && test ! -e "$C/docs/log"
-          test ! -e "$C/docs/HANDOFF.md" && test ! -e "$C/docs/talk" && test ! -e "$C/docs/history"
-          test -f "$C/NOTICE" && test -f "$C/README.md" && test -f "$C/LICENSE"
+          test ! -e "$C/docs/build"
+          test ! -e "$C/docs/decisions"
+          test ! -e "$C/docs/log"
+          test ! -e "$C/docs/HANDOFF.md"
+          test ! -e "$C/docs/talk"
+          test ! -e "$C/docs/history"
+          test -f "$C/NOTICE"
+          test -f "$C/README.md"
+          test -f "$C/LICENSE"
           grep -q "github.com/k-k1/agent-fleet-dist" "$C/NOTICE"
           test "$(cat "$C/VERSION")" = "$VERSION"
           # the image-env manifest is injected into the rootfs (CP rootfs mode
@@ -234,7 +262,7 @@ jobs:
         run: |
           set -eux
           DIST="$PWD/deploy/release/dist"
-          C="agent-fleet-native-$VERSION-linux-amd64"
+          C="agent-fleet-native-$VERSION-linux-$ARCH"
           # installer ↔ real artifact fit: feed the real C tar + SHA256SUMS via
           # file:// (not a fake layout), up to running the installed af.
           mkdir -p "/tmp/dist-layout/v$VERSION"
@@ -258,7 +286,7 @@ jobs:
         run: |
           set -eux
           DIST="$PWD/deploy/release/dist"
-          C="agent-fleet-native-$VERSION-linux-amd64"
+          C="agent-fleet-native-$VERSION-linux-$ARCH"
           R="$(ls "$DIST"/agent-fleet-rootfs-*.tar.zst)"
           RUN=/tmp/af-native; mkdir -p "$RUN"
           tar xzf "$DIST/$C.tar.gz" -C "$RUN"
@@ -326,7 +354,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # No --ignore-checks: a warning here is a template edit, not a flag. The step runs
       # under `bash -e`, so cfn-lint's exit 4 (warnings only) fails it too, which is the
@@ -379,7 +407,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: shellcheck + syntax
         run: |
@@ -473,14 +501,14 @@ jobs:
   # BAKE_AGENT_CLIS=1) and e2e-smoke pass unchanged. NOTE: the Dockerfile ARG
   # default is now lean-CLI (BAKE_AGENT_CLIS=0), so this gate bakes the CLIs in
   # explicitly to keep the baked self-host path covered; lean-CLI coverage lives
-  # in the dist/native gates. The CP also builds with the default DOCS_SRC
-  # (full docs tree).
+  # in the dist/native gates. The CP is built the way `docker compose up --build`
+  # builds it, with no arguments at all, and must still carry the user guide.
   default-image-gate:
     if: "!contains(github.event.head_commit.message, '[native-only]') && !contains(github.event.head_commit.message, '[ecs-only]') && !contains(github.event.head_commit.message, '[dist-only]')"
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: build workspace image (baked variant, explicit BAKE_AGENT_CLIS=1)
         run: docker build --build-arg BAKE_AGENT_CLIS=1 -t agent-fleet/workspace:ci-default workspace
@@ -488,11 +516,22 @@ jobs:
       - name: e2e-smoke (default)
         run: deploy/local/e2e-smoke.sh agent-fleet/workspace:ci-default
 
-      - name: build CP image (default DOCS_SRC = full docs tree)
+      - name: build CP image (no build arguments) and assert it carries the guide
         run: |
           set -eux
           docker build -f control-plane/Dockerfile -t agent-fleet/control-plane:ci-default .
-          # in-house builds keep the full tree (HANDOFF present = denylist applies
-          # to distribution only)
+          # The distribution gate above checks the staged tree in detail; this one pins
+          # that a plain build reaches the same staging: the guide's shelves and its
+          # entry page are there, and the developer docs/ (ADR 0064) is not.
           docker run --rm --entrypoint /bin/sh agent-fleet/control-plane:ci-default -c '
-            test -f /usr/local/share/agent-fleet/docs/HANDOFF.md'
+            set -e
+            d=/usr/local/share/agent-fleet/docs
+            for s in member admin operate ref assets; do test -d "$d/$s"; done
+            test -f "$d/README.md"
+            test -f "$d/README.ja.md"
+            test -f "$d/operate/runbooks/compose.md"
+            test -f "$d/ref/releases/SUMMARY.md"
+            test ! -e "$d/log"
+            test ! -e "$d/decisions"
+            test ! -e "$d/build"
+            test ! -e "$d/CONVENTIONS.md"'

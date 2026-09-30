@@ -81,6 +81,12 @@ func (a adminAPI) stopWorkspace(w http.ResponseWriter, r *http.Request) { a.srv(
 
 func (a adminAPI) cleanHome(w http.ResponseWriter, r *http.Request) { a.srv().CleanHome(w, r) }
 
+func (a adminAPI) homeBackups(w http.ResponseWriter, r *http.Request) { a.srv().HomeBackups(w, r) }
+
+func (a adminAPI) deleteHomeBackups(w http.ResponseWriter, r *http.Request) {
+	a.srv().DeleteHomeBackups(w, r)
+}
+
 func (a adminAPI) destroyWorkspace(w http.ResponseWriter, r *http.Request) {
 	a.srv().DestroyWorkspace(w, r)
 }
@@ -135,6 +141,18 @@ func (a adminAPI) setTenantSlotClass(w http.ResponseWriter, r *http.Request) {
 	a.srv().SetTenantSlotClass(w, r)
 }
 
+func (a adminAPI) tenantEngineAccess(w http.ResponseWriter, r *http.Request) {
+	a.srv().TenantEngineAccess(w, r)
+}
+
+func (a adminAPI) setTenantEngineAccess(w http.ResponseWriter, r *http.Request) {
+	a.srv().SetTenantEngineAccess(w, r)
+}
+
+func (a adminAPI) setMemberEngineAccess(w http.ResponseWriter, r *http.Request) {
+	a.srv().SetMemberEngineAccess(w, r)
+}
+
 // --- The seam adapter -----------------------------------------------------------------
 
 // cpTenant implements tenantsrv.CP over the CP manager. Every method is a one-liner
@@ -145,14 +163,15 @@ var _ tenantsrv.CP = cpTenant{}
 
 func (d cpTenant) Store() store.Store                { return d.m.store }
 func (d cpTenant) KnownProviderIDs() map[string]bool { return d.m.knownProviderIDs }
+func (d cpTenant) DeploymentWarnings() []string      { return d.m.deploymentWarnings() }
 func (d cpTenant) EvictMembershipCache(mid string)   { d.m.evictMembershipCache(mid) }
 func (d cpTenant) EvictTenantCache(tid string)       { d.m.evictTenantCache(tid) }
-func (d cpTenant) PushEngineCatalogChanged(ctx context.Context, tenantID string) {
+func (d cpTenant) PushEngineCatalogChanged(ctx context.Context, tenantID, reason string) {
 	// Gate 4's cache (engine_member.go) would otherwise hold the OLD grant for up to
 	// tenantEngineLimitsTTL after this save — drop it here so the events stream's very next
 	// tick sees the change, the same immediacy decision 9 asks for on the Agent side below.
 	invalidateTenantEngineLimits(tenantID)
-	go notifyEngineCatalogChangedForTenant(context.WithoutCancel(ctx), d.m, tenantID, "tenant limits changed")
+	go notifyEngineCatalogChangedForTenant(context.WithoutCancel(ctx), d.m, tenantID, reason)
 }
 func (d cpTenant) InvalidateTenantLogin() { d.m.tenantLogin.invalidate() }
 func (d cpTenant) IdleForecastFor(wsID string) (any, bool) {
@@ -204,6 +223,14 @@ func (d cpTenant) CleanHomeByMembership(ctx context.Context, mid string) error {
 	return d.m.cleanHomeByMembership(ctx, mid)
 }
 
+func (d cpTenant) HomeBackupsByMembership(ctx context.Context, mid string) (runtime.HomeBackups, bool, error) {
+	return d.m.homeBackupsByMembership(ctx, mid)
+}
+
+func (d cpTenant) DeleteHomeBackupsByMembership(ctx context.Context, mid string) (int, bool, error) {
+	return d.m.deleteHomeBackupsByMembership(ctx, mid)
+}
+
 func (d cpTenant) ResizeHomeByMembership(ctx context.Context, mid string) (runtime.HomeResize, error) {
 	return d.m.resizeHomeByMembership(ctx, mid)
 }
@@ -226,6 +253,10 @@ func (d cpTenant) PoolBudget(ctx context.Context, overrideTenantID string, overr
 
 func (d cpTenant) PoolStatus(ctx context.Context) (runtime.EC2PoolStatus, bool, error) {
 	return d.m.poolStatus(ctx)
+}
+
+func (d cpTenant) HasSlotPool() bool {
+	return d.m.hasSlotPool()
 }
 
 func (d cpTenant) TerminateQuarantinedSlot(ctx context.Context, instanceID string) (string, bool, error) {

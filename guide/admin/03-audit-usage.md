@@ -45,6 +45,17 @@ keep it in mind.
   not kept by default. And **raw terminal input/output (the very characters flowing across the
   screen) is not stored**. This is by design, to avoid the risk of passwords or tokens slipping in.
 
+### Operations that cannot be undone leave two rows
+
+Clean home, deleting a home's backups, destroying a workspace, removing a member, deleting a
+member for good, deleting a tenant, terminating a pool slot, purging an engine model's files, deleting a tenant's
+sign-in method and deleting or renaming an internal repository are recorded **before** they run, as `<action>.requested` (for example
+`workspace.destroy.requested`), and again when they finish, as `<action>` with the outcome in its
+detail: what was done, what could not be deleted, or the error. If the request cannot be written
+to the audit log, the operation is refused with "the audit log could not record who asked for it"
+and nothing is done; try again once the database is back. A `.requested` row with no outcome row
+after it means the outcome was lost, not that nothing happened — check the target.
+
 Therefore the audit log cannot trace "what exactly that member typed in the terminal". What it can
 trace is "when, who, against which file or session, made what kind of change". The design intent
 behind the recording scope is laid out in the developer documentation.
@@ -99,7 +110,8 @@ department / deployment administrator ("What the roles mean" in [01-members.md](
 
 **Q. I want to delete a member who has left the company.**
 You can. From "Operations" on the member detail: **Remove member → Force-stop the workspace →
-Clean home**, in that order ("Removing a member" in [01-members.md](01-members.md)).
+Clean home → Delete backups** (where offered), in that order ("Removing a member" in
+[01-members.md](01-members.md)).
 
 **Q. Where is egress (external traffic) control?**
 Egress (external traffic) control is super_admin only. When traffic control becomes necessary,

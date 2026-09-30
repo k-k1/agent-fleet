@@ -235,6 +235,9 @@ const re = [
       return { ...rest, status: body.status === "question" ? "idle" : body.status };
     },
   ],
+  // Initialize Git Flow's opening state (ADR 0103 decision 9): develop only on origin, so the
+  // dialog shows its origin-only note.
+  [/^\/api\/repos\/([^/]+)\/gitflow$/, () => fx.gitflow()],
   // The composer's skill picker (docs/log/50): the session's own skills plus the CLI-bundled
   // tier (source "cli", names only — the shape claude's init frame yields, §9).
   [/^\/api\/sessions\/([^/]+)\/skills$/, () => ({ skills: fx.sessionSkills(LOCALE) })],

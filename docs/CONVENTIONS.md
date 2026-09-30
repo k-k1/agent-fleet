@@ -19,8 +19,8 @@ text age at different speeds, and **they must never share a file**:
 |---|---|
 | Changes whenever the code changes — specs, procedures, capability tables | the shelves under `guide/`, and `docs/build/` |
 | Never changes again — a decision, a measurement, an incident, a retired option | `docs/decisions/`, or the frozen `docs/log/` |
-| Changes daily — what is running right now | `docs/HANDOFF.md` |
-| Open until someone closes it — follow-ups, residual work, unverified acceptance | GitHub issues (§10) |
+| Changes daily — what is running right now | nowhere in the repository. It is public, that state is stale within days, and the deployment itself is the answer |
+| Open until someone closes it — follow-ups, residual work, unverified acceptance, the plan ahead | GitHub issues (§10) |
 
 A file that mixes them cannot be reviewed for staleness, because there is no way to
 tell which sentences are supposed to still be true. If you catch yourself appending a
@@ -156,9 +156,49 @@ which one is stale.**
 
 `guide/ref/` tables whose axes exist in the code are checked against it: the agent columns
 must cover the `Kind*` constants in `workspace/agent/internal/session/session.go`, and
-the deployment rows must cover the profiles `newRuntimeFactory` accepts in
-`control-plane/runtime.go`. CI compares; it does not generate, so you keep control of
-the wording.
+the deployment rows must cover the profiles `NewFactory` accepts in
+`control-plane/internal/runtime/runtime.go`. CI compares; it does not generate, so you
+keep control of the wording.
+
+**The same applies to a fact no `ref/` table holds.** A fact written in two chapters
+drifts into two different wrong answers, and nothing checks it. The engine gateway
+token's scope was written in three chapters and was wrong in all three, differently.
+So put it where its own question lives, and link from the others: a boundary in
+`docs/build/07`, an outward contract in `08`, a responsibility in `03`. A chapter that
+needs the fact but does not own it writes the context its own reader needs and links
+that section — **it does not restate the fact**, not even word for word. A quotation is
+still a second copy, it does not follow the original when that is corrected, and the two
+language files cannot quote the same sentence anyway. If a value really has to appear
+twice, say in both places that it does, and name the other one.
+
+## 6a. Three ways a true sentence goes wrong
+
+These are the mistakes this tree actually accumulated, each found more than once.
+
+**A number carries what kind of number it is.** A decision record holds measurements,
+list-price estimates and thresholds that were never met, often in one paragraph, and the
+reader who quotes only the conclusion loses which is which. So say it: "measured on the
+production deployment", "estimated from list price × assumed hours", "a condition the
+move went ahead without meeting". A start time quoted as current fact turned out to have
+been corrected twice by later measurements in the same record.
+
+**Never generalise a contract from the kinds you happened to read.** "Every managed kind
+speaks the runtime's session API" and "the conversation always lives in the CLI's native
+store" were both written from claude, codex and opencode, and both break on an
+in-process kind and on one whose native log is not stable — **for different reasons
+each**, which is why one counter-example does not clear the claim. A sentence about
+every kind is checked against every registered kind: the `Kind*` constants, each one's
+`Driver` and `Capabilities`. Starting with the kind least like the others finds the
+mistake soonest, but it does not finish the check.
+
+**Do not claim a list is complete unless something checks it.** An exhaustive list is
+true on the day it is written and silently wrong afterwards — and **inverting it is
+still a claim about everything**: "reads are not counted" reads as a rule, and the
+preview routes count a `GET`. So either say "for example", or invert it *and* keep the
+hedge: what the code shows, bounded ("as a rule … for example … these are not a
+complete list"). A negative claim about the absence of something ("this is not backed
+up") is worth stating flatly, and then only bounded to where you looked: "the templates
+declare no backup", not "there is no backup".
 
 ## 7. Never link into `docs/log/`
 

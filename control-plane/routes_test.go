@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,8 +17,19 @@ import (
 // smokeEnv wires the real route table (buildMux) to a real SQLite store in dev
 // auth mode — no docker / agent involved. docs/log/23 P0-2: these are the regression
 // detectors for handler moves; they assert status + known JSON keys, not shapes.
+//
+// Every env-conditional registration is pinned off (routeSwitches), so the table does not
+// depend on the caller's environment; smokeEnvWith switches named ones on.
 func smokeEnv(t *testing.T) (config, *http.ServeMux) {
 	t.Helper()
+	return smokeEnvWith(t)
+}
+
+// smokeEnvWith is smokeEnv with the named routeSwitches turned on.
+func smokeEnvWith(t *testing.T, on ...string) (config, *http.ServeMux) {
+	t.Helper()
+	setRouteSwitches(t, on...)
+	restoreAuthExemptions(t)
 	ctx := context.Background()
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
@@ -43,6 +55,22 @@ func smokeEnv(t *testing.T) (config, *http.ServeMux) {
 	}
 	cfg := config{consoleDir: t.TempDir(), mgr: mgr, egressDedup: &egressAuditDedup{}}
 	return cfg, buildMux(cfg)
+}
+
+// restoreAuthExemptions puts the authGate exemption sets back when t ends. buildMux adds to
+// them process-wide and t.Setenv does not undo that: without this, a switch's exemption
+// (the engine gateway's /engine/) outlives the test and every later mux built with the
+// switch off would still treat those paths as exempt.
+func restoreAuthExemptions(t *testing.T) {
+	t.Helper()
+	authExemptMu.Lock()
+	exact, prefixes := maps.Clone(authExemptExact), maps.Clone(authExemptPrefixes)
+	authExemptMu.Unlock()
+	t.Cleanup(func() {
+		authExemptMu.Lock()
+		defer authExemptMu.Unlock()
+		authExemptExact, authExemptPrefixes = exact, prefixes
+	})
 }
 
 func smokeGet(t *testing.T, mux *http.ServeMux, method, path string) *httptest.ResponseRecorder {

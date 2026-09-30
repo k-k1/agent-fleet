@@ -10,20 +10,32 @@
 //	Size and limits   its own card, directly under the meters it explains. Editing a
 //	                  number is not an operation on anybody.
 //	Operations        force-stop, which is a pause and takes the work with it.
-//	  Cannot be undone   ruled off below it: clean home, remove, discard, delete.
+//	  Cannot be undone   ruled off below it: clean home, delete backups, remove, discard,
+//	                     delete.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { api, apiJSON, errText, type ApiError } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { kindLabel, kindClass, kindIcon } from "../../../lib/sessionkind.ts";
 import { MemberCostPanel } from "../../cost/CloudCostView.tsx";
 import { MemberUptimePanel } from "../../usage/UptimeHeatmap.tsx";
-import { useT } from "../../../lib/i18n/index.ts";
+import { tCount, useT } from "../../../lib/i18n/index.ts";
+import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
+import { useTenantStore } from "../../../core/store/tenant.ts";
 import { stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
 import type { HomeResize, Member, WsSizing, WsSlot } from "../parts/adminShared.ts";
 import { fmtG, fmtPct, fmtGbHint, ladderFor, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
 import { MemberIdleDetail, MemberSizeChips } from "./tenantMembers.tsx";
+import { MemberEngineAccessPanel } from "./tenantEngineAccess.tsx";
+
+// GET …/home-backups: the copies of a member's home kept outside it, and whether the home
+// itself still exists (control-plane runtime.HomeBackups).
+interface HomeBackupsView {
+  count: number;
+  newest?: string;
+  home_exists?: boolean;
+}
 
 export function MemberView({
   slug,
@@ -48,6 +60,18 @@ export function MemberView({
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [confirmDestroy, setConfirmDestroy] = useState(false);
   const [confirmPurgeRow, setConfirmPurgeRow] = useState(false);
+  const [confirmDeleteBackups, setConfirmDeleteBackups] = useState(false);
+  // What this deployment's runtime can do to a home (whoami, control-plane
+  // internal/runtime/home_wipe.go). Clean home is not offered where the CP would refuse it,
+  // and the backup copies exist only where the runtime keeps them (the EC2 slot pool).
+  const homeErase = useTenantStore((s) => s.whoami?.home_erase === true);
+  const homeBackups = useTenantStore((s) => s.whoami?.home_backups === true);
+  // The copies of this home kept outside it. Clean home leaves them on purpose, so they are
+  // shown — and deleted — on their own. null = not known (not loaded, or not kept here).
+  // home_exists comes from the same answer: while the home exists the backup schedule goes
+  // on copying it, and only the CP can say whether it does (`member` is a snapshot from
+  // when the row was clicked).
+  const [backups, setBackups] = useState<HomeBackupsView | null>(null);
   // Whether removal also destroys the workspace. Shown unchecked, so the current contract
   // (keep the home, and just re-invite if they come back) holds unless it is ticked.
   const [purge, setPurge] = useState(false);
@@ -96,6 +120,45 @@ export function MemberView({
 
   const key = member.user_key;
   const base = `api/admin/tenants/${encodeURIComponent(slug)}/members/${encodeURIComponent(key)}`;
+
+  // fetchBackups asks the CP and never throws: an answer, or why there is none.
+  const fetchBackups = useCallback(async (): Promise<{ backups?: HomeBackupsView; error?: ApiError }> => {
+    try {
+      const d = await api(`${base}/home-backups`);
+      if (d && !d.error) return { backups: { count: d.count ?? 0, newest: d.newest, home_exists: d.home_exists === true } };
+      return { error: d?.error ?? { code: "unknown" } };
+    } catch {
+      return { error: { code: "network" } };
+    }
+  }, [base]);
+  const loadBackups = useCallback(async () => {
+    if (!homeBackups) return;
+    const r = await fetchBackups();
+    if (r.backups) setBackups(r.backups);
+    // No answer keeps the last one; the button only appears when there is something to delete.
+    else if (r.error?.code !== "network") setBackups(null);
+  }, [fetchBackups, homeBackups]);
+  // The delete dialog opens only on a fresh answer: whether the home still exists — and so
+  // whether the schedule goes on copying it — may have changed since this view loaded, and
+  // a confirmation that leaves that warning out on a stale answer is worse than none.
+  const openDeleteBackups = async () => {
+    setBusy(true);
+    try {
+      const r = await fetchBackups();
+      if (!r.backups) {
+        toast(errText(r.error));
+        return;
+      }
+      setBackups(r.backups);
+      if (r.backups.count > 0) setConfirmDeleteBackups(true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  useEffect(() => {
+    setBackups(null); // another member's count must not linger while this one loads
+    void loadBackups();
+  }, [loadBackups]);
 
   const poll = useCallback(async () => {
     try {
@@ -213,10 +276,45 @@ export function MemberView({
   const cleanHome = async () => {
     setBusy(true);
     try {
-      await apiJSON("api/admin/clean-home", "POST", { tenant_slug: slug, user_key: key });
+      const res = await apiJSON("api/admin/clean-home", "POST", { tenant_slug: slug, user_key: key }).catch(
+        () => ({ error: { code: "network" } }),
+      );
+      // A refusal (not available here, another operation in progress) wiped nothing, and
+      // closing the dialog as if it had is how an offboarding gets recorded as done. A
+      // request that got no answer may have gone either way — the CP finishes an erase it
+      // has started — so the member's state is read again rather than guessed.
+      if (res?.error) {
+        toast(errText(res.error));
+        if (res.error.code === "network") {
+          poll();
+          onChanged();
+          void loadBackups();
+        }
+        return;
+      }
       setConfirmClean(false);
       poll();
       onChanged();
+      void loadBackups();
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Deleting the backup copies Clean home leaves: the step for a home that must not survive
+  // anywhere. Irreversible, audited by the CP.
+  const deleteBackups = async () => {
+    setBusy(true);
+    try {
+      const res = await apiJSON(`${base}/home-backups`, "DELETE", {}).catch(() => ({ error: { code: "network" } }));
+      if (res?.error) {
+        toast(errText(res.error));
+        // Some copies may be gone even so; show what is left rather than the old count.
+        void loadBackups();
+        return;
+      }
+      setConfirmDeleteBackups(false);
+      toast(tCount("admin.delete_backups_done", res?.deleted ?? 0));
+      void loadBackups();
     } finally {
       setBusy(false);
     }
@@ -540,6 +638,10 @@ export function MemberView({
         <HomeResizeNote resize={resize} />
       </section>
 
+      {/* Whether this person may use the self-hosted engines (#1215), next to the other
+          per-member limits. The same ticks as the tenant's engine access table. */}
+      <MemberEngineAccessPanel slug={slug} userKey={key} />
+
       {/* Cost over a period sits right after resources right now, in a separate card. Keeping
           them apart is ADR 0048 decision 2 (do not put time and dollars side by side): the
           tiles above are measured every 4 seconds, this is billing roughly 24 hours behind,
@@ -629,9 +731,16 @@ export function MemberView({
             {/* clean-home is a tenant_admin action now (docs/log/61 §61.10.6 / decision 26):
                 the department knows who left, so the whole offboarding sequence
                 belongs to it rather than half of it being a ticket to IT. */}
-            <button className="danger-btn" onClick={() => setConfirmClean(true)}>
-              <Icon name="trash" /> {tr("admin.clean_home")}
-            </button>
+            {homeErase && (
+              <button className="danger-btn" onClick={() => setConfirmClean(true)}>
+                <Icon name="trash" /> {tr("admin.clean_home")}
+              </button>
+            )}
+            {homeBackups && backups && backups.count > 0 && (
+              <button className="danger-btn" disabled={busy} onClick={() => void openDeleteBackups()}>
+                <Icon name="trash" /> {tCount("admin.delete_backups", backups.count)}
+              </button>
+            )}
             {member.status !== "removed" ? (
               <button className="danger-btn" disabled={busy} onClick={() => setConfirmRemove(true)}>
                 <Icon name="close" /> {tr("admin.remove_member")}
@@ -646,6 +755,7 @@ export function MemberView({
               </button>
             )}
           </div>
+          {!homeErase && <p className="muted">{tr("admin.clean_home_unavailable")}</p>}
         </div>
       </section>
 
@@ -671,6 +781,27 @@ export function MemberView({
           <p>{tr("admin.clean_body")}</p>
           <p className="muted">{tr("admin.clean_keep")}</p>
           <p className="muted">{tr("admin.clean_delete")}</p>
+          {homeBackups && backups && backups.count > 0 && (
+            <p className="muted">{tCount("admin.clean_backups_stay", backups.count)}</p>
+          )}
+        </ConfirmDialog>
+      )}
+      {confirmDeleteBackups && backups && (
+        <ConfirmDialog
+          title={tr("admin.delete_backups_title", { key })}
+          confirmLabel={tr("admin.delete_backups_confirm")}
+          busy={busy}
+          onCancel={() => setConfirmDeleteBackups(false)}
+          onConfirm={deleteBackups}
+        >
+          <p>
+            {tCount("admin.delete_backups_body", backups.count, {
+              newest: backups.newest ? fmtDateTime(backups.newest, DATETIME_FULL) : "—",
+            })}
+          </p>
+          {/* Deleting the copies does not stop the schedule: while the home exists, the next
+              backup takes a new copy of it. The offboarding order puts Clean home first. */}
+          {backups.home_exists && <p className="muted">{tr("admin.delete_backups_home_remains")}</p>}
         </ConfirmDialog>
       )}
       {confirmRemove && (

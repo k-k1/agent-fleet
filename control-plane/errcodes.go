@@ -7,6 +7,10 @@ package main
 const (
 	errCodeQuotaSessions = "quota_sessions"
 
+	// An irreversible admin action refused because its request could not be written to the
+	// audit log first (store.BeginIrreversible). internal/tenantsrv emits the same literal.
+	errCodeAuditUnavailable = "audit_unavailable"
+
 	// File editor API (docs/log/44 Phase 1). The CP validates the public envelope
 	// before proxying and preserves the Agent's matching stable codes.
 	errCodeFSBadPath            = "bad_path"
@@ -154,4 +158,19 @@ const (
 	errCodeCivitaiTokenEmpty       = "civitai_token_empty"
 	errCodeCivitaiTokenStoreFailed = "civitai_token_store_failed"
 	errCodeCivitaiTokenPutFailed   = "civitai_token_put_failed"
+
+	// A member's Recreate or Clean home on a deployment whose runtime cannot reach the
+	// workspace home (internal/runtime/home_wipe.go). Its own code because the answer is
+	// "not on this deployment": nothing was stopped, pressing again changes nothing, and the
+	// Console hides both buttons there, so a stale page is the usual way to meet it.
+	errCodeHomeWipeUnsupported = "home_wipe_unsupported"
+	// The same request while a Start of that workspace is still converging in the
+	// background (ecs-ec2). Nothing was stopped; pressing again once it has started works.
+	errCodeHomeWipeWhileStarting = "home_wipe_while_starting"
+
+	// Internal-git repository management refused by role. Create needs a role that
+	// may push; delete and rename also need to be the repository's creator or a
+	// tenant_admin, because deleting takes the bare and its LFS objects with it.
+	errCodeGitRepoCreateForbidden = "git_repo_create_forbidden"
+	errCodeGitRepoManageForbidden = "git_repo_manage_forbidden"
 )

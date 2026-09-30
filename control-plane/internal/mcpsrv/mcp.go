@@ -40,7 +40,7 @@ const mcpSessionOutputTailBytes = 32 << 10
 type API struct{ cp CP }
 
 // New builds the /mcp handler set over the CP seam. The CP's own wiring is
-// control-plane/alias_mcp.go.
+// control-plane/mcp_wiring.go.
 //
 // It refuses to build on a stale scope copy. scopeRead / scopeWrite below are the
 // VALUES of pat.go's ladder written out a second time, and nothing but this check ties
@@ -345,7 +345,7 @@ func memberTools() []mcpTool {
 			},
 		},
 		{
-			// Relays to /halt (resumable), matching the admin stop_session semantics; the
+			// Relays to /halt (resumable), matching the admin stop_user_session semantics; the
 			// destructive /stop (forget) is deliberately not exposed over MCP.
 			name: "stop_session", minScope: scopeWrite,
 			desc:   "Stop a running session in your Workspace. The session stays resumable (resume_session or the Console); its conversation and working directory are kept.",
@@ -957,7 +957,9 @@ func adminTools() []mcpTool {
 			},
 		},
 		{
-			name: "stop_session", minScope: scopeWrite, admin: true,
+			// Not "stop_session": that is the member tool, and mcpToolCall dispatches the
+			// first name match, so an admin tool of the same name is never reached.
+			name: "stop_user_session", minScope: scopeWrite, admin: true,
 			desc: "Stop a running session in a member's Workspace (admin). The session stays resumable.",
 			schema: userKeyArg(map[string]any{
 				"name": map[string]any{"type": "string", "description": "session name"},
@@ -1299,7 +1301,7 @@ func (a API) mcpStopSession(ctx context.Context, ac *adminCtx, userKey, name str
 	if err != nil {
 		return "", err
 	}
-	a.mcpAudit(ctx, ac, "stop_session", userKey+"/"+name, "tenant="+ac.tenant.Slug)
+	a.mcpAudit(ctx, ac, "stop_user_session", userKey+"/"+name, "tenant="+ac.tenant.Slug)
 	return text, nil
 }
 

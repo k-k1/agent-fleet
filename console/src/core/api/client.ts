@@ -209,44 +209,107 @@ export const api = (path: string, opts?: RequestInit): Promise<any> => {
       etagCache.set(url, cached);
       return cached.json;
     }
-    const text = await r.text();
-    if (text) {
-      try {
-        const parsed = JSON.parse(text);
-        // The active tenant accepts a different sign-in method than this session
-        // was minted with (docs/log/61 §61.9.4). Latch it so a dialog can offer the
-        // re-sign-in link — otherwise every request for that tenant just fails and
-        // the person is left with no way to reach it. Mirrors the 401 latch above.
-        if (parsed?.error?.code === "provider_required" && selectedTenant) {
-          signalProviderRequired({ tenant: selectedTenant, provider: "" });
-        }
-        // Keep the HTTP status with the payload: the code alone cannot say whether a
-        // failure is the backend's (retry) or the request's (stop) — see isTransientErr.
-        // Only error bodies are stamped, and those are never ETag-cached (2xx only).
-        if (!r.ok && parsed?.error && typeof parsed.error === "object") parsed.error.status = r.status;
-        if (method === "GET" && r.ok) {
-          const etag = r.headers.get("ETag");
-          if (etag) {
-            etagCache.delete(url);
-            etagCache.set(url, { etag, json: parsed });
-            if (etagCache.size > ETAG_CACHE_MAX) {
-              for (const oldest of etagCache.keys()) {
-                etagCache.delete(oldest);
-                break;
-              }
-            }
+    return apiResult(r.status, r.statusText, await r.text(), (parsed) => {
+      if (method !== "GET") return;
+      const etag = r.headers.get("ETag");
+      if (etag) {
+        etagCache.delete(url);
+        etagCache.set(url, { etag, json: parsed });
+        if (etagCache.size > ETAG_CACHE_MAX) {
+          for (const oldest of etagCache.keys()) {
+            etagCache.delete(oldest);
+            break;
           }
         }
-        return parsed;
-      } catch {
-        // Non-JSON body (plain-text proxy error, HTML error page): fall through
-        // and synthesize a result from the HTTP status.
       }
-    }
-    if (r.ok) return {};
-    return { error: { code: "http_" + r.status, message: text.trim() || r.status + " " + r.statusText } };
+    });
   });
 };
+
+// apiResult turns a finished answer — HTTP status and raw body — into what api() resolves
+// with. onParsedOK sees a parsed 2xx body, the only kind that may be cached.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function apiResult(status: number, statusText: string, text: string, onParsedOK?: (parsed: unknown) => void): any {
+  const ok = status >= 200 && status < 300;
+  if (text) {
+    try {
+      const parsed = JSON.parse(text);
+      // The active tenant accepts a different sign-in method than this session
+      // was minted with (docs/log/61 §61.9.4). Latch it so a dialog can offer the
+      // re-sign-in link — otherwise every request for that tenant just fails and
+      // the person is left with no way to reach it. Mirrors the 401 latch above.
+      if (parsed?.error?.code === "provider_required" && selectedTenant) {
+        signalProviderRequired({ tenant: selectedTenant, provider: "" });
+      }
+      // Keep the HTTP status with the payload: the code alone cannot say whether a
+      // failure is the backend's (retry) or the request's (stop) — see isTransientErr.
+      // Only error bodies are stamped, and those are never ETag-cached (2xx only).
+      if (!ok && parsed?.error && typeof parsed.error === "object") parsed.error.status = status;
+      if (ok) onParsedOK?.(parsed);
+      return parsed;
+    } catch {
+      // Non-JSON body (plain-text proxy error, HTML error page): fall through
+      // and synthesize a result from the HTTP status.
+    }
+  }
+  if (ok) return {};
+  return { error: { code: "http_" + status, message: text.trim() || status + " " + statusText } };
+}
+
+// HeldAnswer is the final status and raw body of a held route (see fetchHeld).
+export interface HeldAnswer {
+  status: number;
+  statusText: string;
+  text: string;
+}
+
+// fetchHeld calls a route the Agent holds open while a model answers (compaction, plan
+// refresh, ask, the edit suggestion — httpx.HeldOpen). Such an answer can take minutes, and
+// the ingress drops a connection that moves no byte for 60 s, so the request asks for an
+// event stream: the Agent then sends a keepalive comment every 20 s and one final
+// `data: {"status":…,"body":…}` frame carrying what it would have answered as plain JSON.
+// A plain JSON answer (errors the CP writes itself, an Agent from before the change) is
+// read as it is. A stream that ends without its final frame reads as a 502.
+export async function fetchHeld(path: string, init: RequestInit): Promise<HeldAnswer> {
+  const headers = new Headers(init.headers);
+  headers.set("Accept", "text/event-stream");
+  const r = await fetch(rel(path), { ...init, headers });
+  if (!(r.headers.get("Content-Type") ?? "").startsWith("text/event-stream") || !r.body) {
+    return { status: r.status, statusText: r.statusText, text: await r.text() };
+  }
+  const reader = r.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    buf += done ? dec.decode() : dec.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      const frame = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      if (!frame.startsWith("data:")) continue; // a ": keepalive" comment
+      try {
+        const final = JSON.parse(frame.slice(5)) as { status?: unknown; body?: unknown };
+        if (typeof final.status !== "number") continue;
+        void reader.cancel();
+        const text = final.body === undefined ? "" : JSON.stringify(final.body);
+        return { status: final.status, statusText: "", text };
+      } catch {
+        continue;
+      }
+    }
+    if (done) return { status: 502, statusText: "held answer ended without its final frame", text: "" };
+  }
+}
+
+// apiHeld is apiJSON for a held route: same body, same resolved shapes.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const apiHeld = (path: string, method: string, body?: unknown): Promise<any> =>
+  fetchHeld(path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).then((a) => apiResult(a.status, a.statusText, a.text));
 
 // apiJSON is a convenience for the common "POST/PUT JSON body" shape.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -364,14 +427,125 @@ export function uploadFiles(
 // managed = the turn/start, turn/steer, turn/interrupt RPCs (P2/P3). Returns ok.
 // Falls back to the legacy /input body when the Agent predates /turn — the lag in
 // rebuilding the fleet really does leave a new Console talking to an old Agent.
-export type TurnOp = "start" | "steer" | "interrupt";
+export type TurnOp = "start" | "steer" | "interrupt" | "remove" | "dismiss_discard";
+
+// --- two-stage stop (ADR 0105; wire frozen in workspace/agent/testdata/stop-queue-wire.json) ---
+
+/** Where a queued or discarded input came from, in the injection-badge vocabulary
+ *  (member / peer / spawn / operator / schedule / schedule-manual / discord / slack /
+ *  auto-resume). `from` names the sending session of a peer and the parent of a spawn. */
+export interface TurnOrigin {
+  kind: string;
+  from?: string;
+}
+
+/** One entry of a Managed session's queue. Only `queued` can still be removed or taken back;
+ *  `committed` is on its way to the runtime and `sent` is already held by it (decision 5). */
+export type QueueState = "queued" | "committed" | "sent";
+export interface QueueItem {
+  id: string;
+  text: string;
+  attachments?: string[];
+  origin?: TurnOrigin;
+  state?: QueueState;
+}
+
+/** What one second stop (or stop-and-discard) threw away, kept by the driver until a tab
+ *  restores or dismisses it (decision 4). `items` carry no state: all were still queued. */
+export interface Discard {
+  id: string;
+  at: string;
+  reason: string;
+  items: QueueItem[];
+}
+
+/** Which stop the driver took a plain or discarding interrupt for. Absent from a Terminal
+ *  (CLI) session's answer and from an Agent that predates ADR 0105. */
+export type StopKind = "first" | "second" | "discard";
+
+// The member's own input (decisions 2 and 4): what a person typed as this session's user.
+// An empty or unknown kind is not, so an input of unclear origin is never put into the draft.
+const MEMBER_ORIGINS = new Set(["member", "discord", "slack"]);
+export const isMemberOrigin = (o: TurnOrigin | undefined): boolean => !!o && MEMBER_ORIGINS.has(o.kind);
+
+const strOr = (v: unknown): string => (typeof v === "string" ? v : "");
+
+function parseOrigin(v: unknown): TurnOrigin | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const o = v as Record<string, unknown>;
+  const kind = strOr(o.kind);
+  if (!kind) return undefined;
+  const from = strOr(o.from);
+  return from ? { kind, from } : { kind };
+}
+
+function parseQueueItem(v: unknown): QueueItem | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  const id = strOr(o.id);
+  if (!id) return null; // an entry without an id cannot be acted on, nor keyed
+  const item: QueueItem = { id, text: strOr(o.text) };
+  if (Array.isArray(o.attachments)) {
+    const att = o.attachments.filter((a): a is string => typeof a === "string" && a !== "");
+    if (att.length) item.attachments = att;
+  }
+  const origin = parseOrigin(o.origin);
+  if (origin) item.origin = origin;
+  if (o.state === "queued" || o.state === "committed" || o.state === "sent") item.state = o.state;
+  return item;
+}
+
+/** parseQueueItems reads messages' `queuedItems`. null means the key was absent: a Terminal
+ *  (CLI) session, an idle one, or an Agent that predates ADR 0105 — the caller then falls
+ *  back to `queuedPrompts` and offers no queue actions. */
+export function parseQueueItems(v: unknown): QueueItem[] | null {
+  if (!Array.isArray(v)) return null;
+  return v.map(parseQueueItem).filter((x): x is QueueItem => x !== null);
+}
+
+export function parseDiscard(v: unknown): Discard | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  const id = strOr(o.id);
+  if (!id) return null;
+  const items = Array.isArray(o.items)
+    ? o.items.map(parseQueueItem).filter((x): x is QueueItem => x !== null).map((it) => {
+        delete it.state; // a discarded entry has no queue state left
+        return it;
+      })
+    : [];
+  return { id, at: strOr(o.at), reason: strOr(o.reason), items };
+}
+
+/** parseDiscards reads messages' `discardedInputs` (absent = nothing kept). */
+export function parseDiscards(v: unknown): Discard[] {
+  if (!Array.isArray(v)) return [];
+  return v.map(parseDiscard).filter((x): x is Discard => x !== null);
+}
+
 // TurnResult: when ok=false, `message` is a rejection reason fit to show the user
-// (question_pending and the like). Callers toast it and decide whether to restore the
-// optimistic echo / draft they cleared — swallowing a rejection makes the message look
-// sent and then silently gone.
+// (question_pending and the like) and `code` the Agent's stable code (already_started …).
+// Callers toast it and decide whether to restore the optimistic echo / draft they cleared —
+// swallowing a rejection makes the message look sent and then silently gone.
 export interface TurnResult {
   ok: boolean;
   message?: string;
+  code?: string;
+  /** interrupt: which stop it was. Absent on Terminal (CLI) and from an older Agent. */
+  stop?: StopKind;
+  /** interrupt: what a second stop or a discard threw away. The Console does not rely on it:
+   *  a lost answer is recovered from the poll's `discardedInputs` (decision 4). */
+  discard?: Discard | null;
+  /** remove: the entry taken out of the queue. */
+  removed?: QueueItem;
+  /** dismiss_discard: false when another tab (or a newer discard) got there first. */
+  dismissed?: boolean;
+}
+export interface TurnOpts {
+  /** interrupt: stop and discard everything still queued (decision 3). Managed only. */
+  discardQueue?: boolean;
+  /** remove / dismiss_discard: the queue entry or discard id. */
+  id?: string;
 }
 export async function sessionTurn(
   session: string,
@@ -381,19 +555,40 @@ export async function sessionTurn(
   // driver converts them into API attachments (a v1 file part for opencode; docs/log/27
   // §10.2-3). Not passed for tui, where the Console weaves the path into the prompt body.
   attachments?: string[],
+  opts?: TurnOpts,
 ): Promise<TurnResult> {
-  const fail = (e: unknown): TurnResult => ({ ok: false, message: errText(e as ApiError) || t("err.send_failed") });
-  const body: Record<string, unknown> = op === "interrupt" ? { op } : { op, prompt };
-  if (op !== "interrupt" && attachments?.length) body.attachments = attachments;
+  const fail = (e: unknown): TurnResult => {
+    const err = e as ApiError;
+    const code = typeof err?.code === "string" ? err.code : "";
+    return { ok: false, message: errText(err) || t("err.send_failed"), ...(code ? { code } : {}) };
+  };
+  const body: Record<string, unknown> = { op };
+  if (op === "start" || op === "steer") {
+    body.prompt = prompt;
+    if (attachments?.length) body.attachments = attachments;
+  } else if (op === "interrupt") {
+    if (opts?.discardQueue) body.discard_queue = true;
+  } else if (opts?.id) {
+    body.id = opts.id;
+  }
   const r = await apiJSON(
     `api/sessions/${encodeURIComponent(session)}/turn`,
     "POST",
     body,
   ).catch(() => ({ error: { message: t("err.network") } }));
   const err = r?.error as ApiError | undefined;
-  if (!err) return { ok: true };
+  if (!err) {
+    const out: TurnResult = { ok: true };
+    if (r?.stop === "first" || r?.stop === "second" || r?.stop === "discard") out.stop = r.stop;
+    if (r && "discard" in r) out.discard = parseDiscard(r.discard);
+    if (op === "remove") out.removed = parseQueueItem(r?.removed) ?? undefined;
+    if (typeof r?.dismissed === "boolean") out.dismissed = r.dismissed;
+    return out;
+  }
   const code = String(err.code || "");
-  if (code === "http_404" || code === "http_405") {
+  // The legacy /input body exists only for the three original ops: an Agent without /turn
+  // has no queue to edit and no discards to dismiss.
+  if ((code === "http_404" || code === "http_405") && (op === "start" || op === "steer" || op === "interrupt")) {
     const legacy = op === "interrupt" ? { keys: ["Escape"] } : { prompt };
     const r2 = await apiJSON(`api/sessions/${encodeURIComponent(session)}/input`, "POST", legacy).catch(
       () => ({ error: { message: t("err.network") } }),
@@ -402,6 +597,22 @@ export async function sessionTurn(
   }
   return fail(err);
 }
+
+/** sessionInterrupt is the chat's stop: a plain stop, or with discardQueue the emergency
+ *  brake that also throws away everything still queued (ADR 0105 decisions 2 and 3). */
+export const sessionInterrupt = (session: string, discardQueue = false): Promise<TurnResult> =>
+  sessionTurn(session, "interrupt", undefined, undefined, discardQueue ? { discardQueue } : undefined);
+
+/** sessionRemoveQueued takes one still-queued entry out of a Managed session's queue
+ *  (decision 5). code "already_started" means it was committed first; "not_queued" that it
+ *  is gone (run, removed or discarded by another tab). */
+export const sessionRemoveQueued = (session: string, id: string): Promise<TurnResult> =>
+  sessionTurn(session, "remove", undefined, undefined, { id });
+
+/** sessionDismissDiscard tells the driver to drop a kept discard, so other tabs stop offering
+ *  it at their next poll (decision 4). Idempotent. */
+export const sessionDismissDiscard = (session: string, id: string): Promise<TurnResult> =>
+  sessionTurn(session, "dismiss_discard", undefined, undefined, { id });
 
 // sessionPlanRespond decides a pending ExitPlanMode approval (claude TUI).
 //
@@ -521,6 +732,16 @@ export const sessionRespond = (
     decision: "answer",
     answers,
   }).then((r) => (r?.error ? { ok: false, message: errText(r.error as ApiError) } : { ok: true }));
+
+// sessionCancelInteraction declines a MANAGED session's pending question by id. It is the
+// question card's Cancel on Managed, never a stop: ADR 0105 decision 7 lets only codex follow
+// the stop rules there (its driver turns the cancel into an Interrupt); every other driver
+// answers with the runtime's own rejection, which leaves the queue alone. A /turn interrupt
+// here would instead be a second stop inside an episode and discard the queue.
+export const sessionCancelInteraction = (session: string, id: string): Promise<TurnResult> =>
+  apiJSON(`api/sessions/${encodeURIComponent(session)}/respond`, "POST", { id, decision: "cancel" }).then((r) =>
+    r?.error ? { ok: false, message: errText(r.error as ApiError) } : { ok: true },
+  );
 
 // sessionApprove answers a MANAGED session's pending tool approval by interaction id.
 // It is deliberately separate from sessionRespond: an approval takes allow/deny, not an
@@ -685,7 +906,7 @@ export const chatStop = (id: string): Promise<Response> =>
 // provider session, resets the resume handles, and carries only the summary into a fresh
 // session on the next turn. Returns the updated conversation (or {error}).
 export const chatCompact = (id: string): Promise<Conversation & { error?: ApiError }> =>
-  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/compact`, "POST");
+  apiHeld(`api/chat/conversations/${encodeURIComponent(id)}/compact`, "POST");
 // Work plan (docs/log/33 stage 5): a slot carried verbatim across compaction. `set` is a
 // manual edit (an empty string clears it); `refresh` re-derives the plan from the recent
 // conversation in a one-shot headless run — it does not use the conversation's provider
@@ -693,7 +914,7 @@ export const chatCompact = (id: string): Promise<Conversation & { error?: ApiErr
 export const chatSetPlan = (id: string, plan: string): Promise<Conversation & { error?: ApiError }> =>
   apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/plan`, "PUT", { plan });
 export const chatRefreshPlan = (id: string): Promise<Conversation & { error?: ApiError }> =>
-  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/plan/refresh`, "POST");
+  apiHeld(`api/chat/conversations/${encodeURIComponent(id)}/plan/refresh`, "POST");
 // Send returns the assistant message + the updated conversation, or {error} on failure.
 export const chatSend = (
   id: string,
@@ -896,8 +1117,8 @@ export interface SessionSkill {
   // Cross-skill injection (docs/log/50 §8): a skill from ANOTHER convention this kind's
   // CLI won't discover natively. The composer turns it into a "read {path} and follow
   // its instructions" prompt — plain text, so it works on any kind/driver.
-  path?: string; // repo-relative SKILL.md path
-  origin?: string; // convention dir (".claude" | ".codex" | ".agents") — shown as a badge
+  path?: string; // SKILL.md path: repo-relative, or absolute for a tree outside the CWD (a user root, an ancestor)
+  origin?: string; // convention dir (".claude" | ".codex" | ".agents" | ".muse") — shown as a badge
 }
 export const sessionSkills = (session: string): Promise<{ skills: SessionSkill[] }> =>
   api(`api/sessions/${encodeURIComponent(session)}/skills`);
@@ -968,7 +1189,7 @@ export const askAssistant = (
   prompt: string,
   assistant?: string,
 ): Promise<{ assistant?: string; reply?: string; error?: ApiError }> =>
-  apiJSON("api/chat/ask", "POST", { prompt, assistant });
+  apiHeld("api/chat/ask", "POST", { prompt, assistant });
 
 // Fleet session graph (ADR 0096 decision 7): the one Agent read, CP-allowlisted. `since`/
 // `until` are unix millis (the DTO's own units — never the ledger's RFC3339, which never

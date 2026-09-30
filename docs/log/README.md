@@ -29,6 +29,8 @@ grep して、**事実を現役の文書へ転記してください**。ここ�
 
 - `NN-*.md` — 機能ごとの作業日誌（20〜80）。番号は当時の連番で、意味はありません。
 - `phase0-poc.md` / `phase1-plan.md` / `p3-*.md` — 使い終わったフェーズの実装プラン。
+- `roadmap.md` — Phase 0〜3 の計画と P3-1〜P3-10 の詳細設計（旧 `docs/roadmap.md`、2026-09 に凍結）。
+- `changelog-handoff.md` — 2026-06〜07 の日付つき作業ログ（旧 `docs/CHANGELOG-handoff.md`）。
 - `console-redesign*.md` / `chat-opencode-codex.md` / `fork-from-chat.md` /
   `agent-cli-self-update.md` — 完了した実装ブリーフ。
 - `notification-center.md` — 廃止した `reference/` の唯一の実体。

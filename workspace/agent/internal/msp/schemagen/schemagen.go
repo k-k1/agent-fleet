@@ -3,9 +3,9 @@
 // Muse Session Protocol v1 is a published product surface, not a debug seam: the vendor
 // exports the whole schema offline (`muse schema generate-json-schema`) and stamps it with a
 // fingerprint. Hand-writing 234 types against that would rot silently on the next release, so
-// the types are generated and the fingerprint is carried into the generated file, where
-// msp's fingerprint_test.go compares it against the binary's own export (ADR 0095
-// consequences, "drift has a lock").
+// the types are generated, with the fingerprint carried into the generated file as the record
+// of which export they came from. msp's fingerprint_test.go holds the binary's own export to
+// Compare (compat.go) against the bundle (ADR 0095 consequences, "drift has a lock").
 //
 // It is a package rather than a bare `main` so the drift test can call Render directly: the
 // check that types_gen.go is what this generator produces today has to be hermetic, and
@@ -182,9 +182,9 @@ func render(b *schemaBundle, man *manifest) ([]byte, error) {
 
 func writeHeaderConsts(out *bytes.Buffer, man *manifest) {
 	fmt.Fprintf(out, "// SchemaFingerprint is the vendor's fingerprint of the schema model these types were\n")
-	fmt.Fprintf(out, "// rendered from. fingerprint_test.go asserts the installed binary still exports it; a\n")
-	fmt.Fprintf(out, "// mismatch means the wire moved under us, which is a red build rather than a silent\n")
-	fmt.Fprintf(out, "// decode failure at runtime.\n")
+	fmt.Fprintf(out, "// rendered from. A different fingerprint only says the bundle is behind the host;\n")
+	fmt.Fprintf(out, "// whether these types can still speak to it is schemagen.Compare's question, asked of\n")
+	fmt.Fprintf(out, "// the installed binary by fingerprint_test.go.\n")
 	fmt.Fprintf(out, "const SchemaFingerprint = %q\n\n", man.Fingerprint)
 	fmt.Fprintf(out, "// SchemaVersion is MSP's own version, carried in `initialize`.\n")
 	fmt.Fprintf(out, "const SchemaVersion = %d\n\n", man.SchemaVersion)
@@ -289,7 +289,18 @@ func writeDef(out *bytes.Buffer, b *schemaBundle, name string, n *node) error {
 		fmt.Fprintf(out, "type %s = json.RawMessage\n\n", name)
 		return nil
 	default:
-		fmt.Fprintf(out, "type %s %s\n\n", name, scalarType(n))
+		typ := scalarType(n)
+		if typ == "json.RawMessage" {
+			// An alias, never a defined type: `type X json.RawMessage` drops RawMessage's
+			// UnmarshalJSON, so X decodes as a plain []byte and any array or object in it fails
+			// the WHOLE enclosing message. Measured: Muse 1.4.0 fills
+			// ModelCatalogEntry.variants with an array of efforts, every model/list answer
+			// failed to decode, and a session started with no model fell back to the host's
+			// data-sharing default.
+			fmt.Fprintf(out, "type %s = json.RawMessage\n\n", name)
+			return nil
+		}
+		fmt.Fprintf(out, "type %s %s\n\n", name, typ)
 		return nil
 	}
 }

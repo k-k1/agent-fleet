@@ -95,7 +95,7 @@ explains them.
 | Agent memory management | member | Agent memory |
 | Git hosting connections | member | Git hosting |
 | Internal repositories | member | Internal repos |
-| AWS SSM | member | AWS SSM |
+| AWS profiles and SSM | member | AWS profiles/SSM |
 | Integration servers and tokens | member | MCP servers / MCP tokens |
 | Issue-tracker connections | member | Issue tracker |
 | Usage | member | Agent usage |
@@ -106,7 +106,7 @@ explains them.
 | Toolchains | member | Toolchains |
 | Databases (Postgres / MySQL — install, start, stop, reset) | member | Toolchains |
 | Preview-subdomain settings | member | Preview subdomains (only where they are issued) |
-| Destructive actions | member | Danger zone |
+| Destructive actions | member | Danger zone (Recreate, Clean home; only where the deployment can perform them — [deploy-targets.md](deploy-targets.md)) |
 
 ## Tenant administration
 
@@ -116,6 +116,7 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Feature | Who | Where | Details |
 |---|---|---|---|
 | Members | tenant admin | Members | [admin 01](../admin/01-members.md) |
+| Deleting a member's home backups (where the deployment keeps them) | tenant admin | Members → the member | [admin 01](../admin/01-members.md) |
 | Sessions across the tenant | tenant admin | Sessions | [admin 02](../admin/02-limits.md) |
 | Limits and idle auto-stop | tenant admin (read) | Limits & idle | [admin 02](../admin/02-limits.md) |
 | Whether this tenant may use the llm / image engines | deployment admin (super_admin) | Tenant settings → Limits | [admin 02](../admin/02-limits.md) |
@@ -148,7 +149,7 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Civitai Red (the NSFW sister domain) as a search source | deployment admin (super_admin), where the deployment was given it | Admin → API tokens | [admin 04](../admin/04-mcp-egress.md) |
 | Image generation on a ComfyUI of your own | deployment admin (super_admin) | a shell, then Admin → Inference engines | [operator 07](../operate/07-image-engine.md) |
 | Borrowing another deployment's llm / image engines | deployment admin (super_admin) | a shell, plus a membership on the far deployment | [operator 08](../operate/08-borrowed-engine.md) |
-| Role-scoped documentation in containers | — | automatic | [roles.md](roles.md) |
+| The user guide inside containers | — | automatic | [roles.md](roles.md) |
 
 ## Rows with no Details yet
 

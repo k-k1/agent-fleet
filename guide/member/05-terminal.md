@@ -1,6 +1,6 @@
 ---
 audience: "anyone using the terminal, panes, or a preview of a running app"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # 05. Terminal — working the black screen, copy & paste, shortcuts, phones
@@ -133,6 +133,8 @@ On phones, the left pane is hidden to make the most of the screen.
 - **Control key row** — below the terminal sits a row of keys that are hard to press on a soft keyboard: **`Esc` `Tab` `←` `↑` `↓` `→` `^C` `⏎`**. You can send these without bringing up the keyboard.
 - **Scrolling back through past output** — **swipe vertically with one finger** on the terminal to go back through past output (drag down for older lines, up for newer). In apps that use the whole terminal, like vim, this becomes that app's own scrolling.
 - **Stepping through the running sessions** — **swipe left** for the next running session and **swipe right** for the previous one, wrapping around at either end. Each switch briefly shows where you landed, as in "2/3 session name". While a working set is selected, the rotation stays inside that set. **A right swipe that starts at the very left edge** still pulls out the left pane, as before — start away from the edge when you mean to go back a session. A left swipe with the left pane open still closes it. Over a text field, the browser pane, or anything that scrolls sideways (a code block, say), that surface keeps the gesture and no switch happens.
+
+- **Notifications (toasts)** — on a phone they sit just below the bars at the top, never over the composer, and a tap outside dismisses them. Ones with a button, such as **Update** or an AWS login, close only with their ×.
 
 (Phones are for "checking progress and quick replies". For involved editing, a PC is recommended.)
 

@@ -26,6 +26,7 @@ vi.mock("../../../core/store/workspace.ts", () => ({
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 
 import { InstructionsTab } from "./InstructionsTab.tsx";
+import { t } from "../../../lib/i18n/index.ts";
 
 const payload = {
   text: "always speak Japanese\n",
@@ -137,6 +138,60 @@ describe("InstructionsTab", () => {
     expect(save.disabled).toBe(true);
     expect(document.querySelector(".instr-over")).not.toBeNull();
     expect(apiJSON).not.toHaveBeenCalled();
+  });
+
+  it("shows a row with no file without an empty path, and previews the prompt", async () => {
+    api.mockReset();
+    api.mockImplementation((url: string) =>
+      Promise.resolve(
+        url.startsWith("api/user-notes/preview")
+          ? { kind: "lcpp", path: "", exists: true, content: "PROMPTBODY" }
+          : {
+              ...payload,
+              targets: [
+                ...payload.targets,
+                { kind: "lcpp", supported: true, on: true, applied: true, delivery: "prompt" },
+              ],
+            },
+      ),
+    );
+    await mount();
+    const row = rows()[3];
+    expect(row.querySelector(".instr-where code")).toBeNull();
+    // The delivery reads as prose, never as the raw code.
+    expect(row.querySelector(".instr-delivery")?.textContent).not.toBe("prompt");
+    const view = row.querySelector<HTMLButtonElement>(".ui-btn")!;
+    await act(async () => {
+      view.click();
+    });
+    expect(api).toHaveBeenCalledWith("api/user-notes/preview?kind=lcpp");
+    expect(document.querySelector(".instr-peek-head code")).toBeNull();
+    expect(document.querySelector(".instr-peek-body")?.textContent).toBe("PROMPTBODY");
+  });
+
+  it("says a path-less row applies to running sessions too, and names an empty prompt as such", async () => {
+    api.mockReset();
+    api.mockImplementation((url: string) =>
+      Promise.resolve(
+        url.startsWith("api/user-notes/preview")
+          ? { kind: "lcpp", path: "", exists: true, content: "" }
+          : {
+              ...payload,
+              targets: [
+                { kind: "lcpp", supported: true, on: true, applied: true, delivery: "prompt" },
+              ],
+            },
+      ),
+    );
+    await mount();
+    const hints = Array.from(document.querySelectorAll(".ds-hint"), (e) => e.textContent);
+    expect(hints.some((h) => h?.includes("lcpp"))).toBe(true);
+    await act(async () => {
+      rows()[0].querySelector<HTMLButtonElement>(".ui-btn")!.click();
+    });
+    expect(document.querySelector(".instr-peek-body")?.textContent).toBe(
+      t("instr.peek_prompt_empty"),
+    );
   });
 
   it("PUTs the body on save", async () => {

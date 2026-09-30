@@ -17,6 +17,13 @@ vi.mock("../../../core/api/client.ts", () => ({
   rawJSON: () => Promise.resolve(new Response("")),
   errText: (e: { message?: string }) => e?.message || "",
   rel: (p: string) => p,
+  // MemberView reads the deployment's home operations from the tenant store's whoami, and
+  // that store reads these at import.
+  getTenant: () => "",
+  getUser: () => "",
+  setTenant: () => {},
+  setUser: () => {},
+  isTransientErr: () => false,
 }));
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 // The reading dictionary fetches on module initialisation, i.e. from the import alone. Only the
@@ -33,10 +40,10 @@ const TENANTS = [
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-function respond(superAdmin: boolean) {
+function respond(superAdmin: boolean, deploymentWarnings?: string[]) {
   api.mockImplementation((path: string) => {
     if (path === "api/admin/tenants") {
-      return Promise.resolve({ tenants: TENANTS, super_admin: superAdmin });
+      return Promise.resolve({ tenants: TENANTS, super_admin: superAdmin, deployment_warnings: deploymentWarnings });
     }
     if (path === "api/admin/ec2-pool") return Promise.resolve({ runtime: "other" });
     // A Control Plane from before ADR 0072 decision 11 has no engines route at all: it 404s,
@@ -209,5 +216,30 @@ describe("AdminTab / remembers where it was left", () => {
     await mount();
     expect(active()).toBe("テナント一覧");
     expect(host!.querySelectorAll(".tenant-card").length).toBe(2);
+  });
+});
+
+// #1080: a deployment without a master key stores members' credentials unencrypted. The CP says
+// so in the tenant list it answers a super_admin, and the modal shows it whatever section is
+// open — including inside a tenant.
+describe("AdminTab deployment warnings", () => {
+  it("shows the plaintext-secrets warning on every section", async () => {
+    respond(true, ["plaintext_secrets"]);
+    await mount();
+    const banner = () => host!.querySelector('.settings-content [role="alert"]');
+    expect(banner()?.textContent).toContain("AF_MASTER_KEY");
+    await click(byText(".settings-rail-item", "監査"));
+    expect(banner()?.textContent).toContain("AF_MASTER_KEY");
+  });
+
+  it("shows nothing when the deployment has a key, or the answer predates the field", async () => {
+    respond(true, []);
+    await mount();
+    expect(host!.querySelector('.settings-content [role="alert"]')).toBeNull();
+    act(() => root?.unmount());
+    host?.remove();
+    respond(true);
+    await mount();
+    expect(host!.querySelector('.settings-content [role="alert"]')).toBeNull();
   });
 });

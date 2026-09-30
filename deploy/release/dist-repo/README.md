@@ -1,6 +1,6 @@
 # agent-fleet-dist
 
-English | [日本語](README.ja.md)
+English | [日本語](README.ja.md) · [agent-fleet.org](https://agent-fleet.org)
 
 **Don't replace your coding agents. Operate them.**
 
@@ -188,7 +188,7 @@ Kiro is **not** available as an assistant chat (it has no headless chat mode).
 
 | Your situation | Edition | What you need |
 |---|---|---|
-| Personal use on WSL2 or a single-user Linux machine; no Docker | **Native** (below) | x86_64 Linux/WSL2 with unprivileged user namespaces (stock WSL2 works), `curl` or `wget`, ~1.5 GB disk |
+| Personal use on WSL2 or a single-user Linux machine; no Docker | **Native** (below) | x86_64 or arm64 Linux/WSL2 with unprivileged user namespaces (stock WSL2 works), `curl` or `wget`, ~1.5 GB disk. arm64 is built and started in CI; reports from real arm64 machines are welcome |
 | A team on your own Linux server | **Docker Compose** (below) | Docker Engine + `docker compose`, a public domain pointed at the host (auto-TLS; an internal-CA fallback exists), an IdP client for login (a Google OAuth 2.0 client or an OIDC app) |
 
 Common to all editions: outbound network is needed once per workspace to
@@ -325,11 +325,13 @@ rm -rf ~/.local/opt/agent-fleet
 
 | tag | assets | purpose |
 |---|---|---|
-| `v<version>` | `agent-fleet-<version>.tar.gz` (compose bundle) / `agent-fleet-native-<version>-linux-amd64.tar.gz` (native) / `SHA256SUMS` | the application release. Container images are on GHCR, not here |
-| `rootfs-<r>` | `agent-fleet-rootfs-<r>-linux-amd64.tar.zst` | workspace rootfs the native edition downloads on first start. **Not for standalone use** (`rootfs.json` inside the native tar pins its version and sha256) |
+| `v<version>` | `agent-fleet-<version>.tar.gz` (compose bundle) / `agent-fleet-native-<version>-linux-{amd64,arm64}.tar.gz` (native) / `agent-fleet-rootfs-<r>-linux-{amd64,arm64}.tar.zst` (workspace rootfs) / `SHA256SUMS` | the release. Container images are on GHCR, not here |
+| `rootfs-<r>` | `agent-fleet-rootfs-<r>-linux-amd64.tar.zst` | older releases only: their rootfs was published under its own tag, which they keep pointing at |
 
-`<r>` is a content hash: when the app version bumps but the rootfs is unchanged,
-the same tag is referenced and no re-download happens. Always verify downloads
+The rootfs is what the native edition downloads on first start; it is **not for
+standalone use** (`rootfs.json` inside the native tar pins its URL, version and
+sha256). `<r>` is a content hash, and an extracted rootfs is kept per `<r>`, so an
+update whose rootfs is unchanged downloads nothing more. Always verify downloads
 against `SHA256SUMS` / the sha256 in `rootfs.json` (install.sh and `af start` do
 this automatically).
 

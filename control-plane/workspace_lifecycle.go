@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
@@ -172,13 +173,31 @@ func (m *manager) stopWorkspaceByMembership(ctx context.Context, membershipID st
 	return m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
 }
 
+// homeEraseBudget bounds an administrator's Clean home once it no longer follows the
+// request (below). On ecs-ec2 the erase waits for the task to drain, unmounts over SSM and
+// detaches before it deletes, which is well under this; the bound is for a wait that never
+// ends, not for the ordinary case.
+const homeEraseBudget = 5 * time.Minute
+
 // cleanHomeByMembership wipes a member's workspace home except auth/connection state
-// (admin action). Stops the container first and leaves it stopped; the home is
-// recreated on the next start.
+// (admin action, the offboarding step). Stops the container first and leaves it stopped;
+// the home is recreated on the next start. The runtime erases the home where it actually
+// is (runtime.EraseHome); one that cannot is refused before anything is stopped, with
+// runtime.ErrHomeWipeUnsupported.
+//
+// The erase does not follow the administrator's request context. On ecs-ec2 it can outlast
+// the ingress idle timeout, and an erase cancelled halfway — slot released, volume not yet
+// deleted — would be reported as a failure while half of it had happened.
 func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), homeEraseBudget)
+	defer cancel()
 	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, membershipID)
 	if err != nil || !ok {
 		return err
+	}
+	rt := m.runtimeFor(ws, "")
+	if !runtime.CanEraseHome(rt) {
+		return runtime.ErrHomeWipeUnsupported
 	}
 	lock := m.startLockFor(ws.ID)
 	lock.Lock()
@@ -188,7 +207,6 @@ func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string
 		return err
 	}
 	defer lease.Close()
-	rt := m.runtimeFor(ws, "")
 	releaseFence, err := m.acquireWorkspaceOperationFence(lease.Context(), ws.ID, rt)
 	if err != nil {
 		return err
@@ -197,17 +215,63 @@ func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string
 	if err := lease.checkpoint(ctx); err != nil {
 		return err
 	}
-	_ = rt.Stop(lease.Context()) // best-effort
+	// As in the member's clean-home: a failed Stop is tolerated only when nothing is left
+	// running, because erasing under a live workspace leaves its home inconsistent.
+	if err := rt.Stop(lease.Context()); err != nil && runtime.WorkspaceAlive(rt.State(ctx)) {
+		return fmt.Errorf("stop %s: %w (still running; clean home aborted)", ws.ContainerName, err)
+	}
 	if err := lease.checkpoint(ctx); err != nil {
 		return err
 	}
-	if err := runtime.CleanHomeContext(lease.Context(), m.rootedDataDir(ws)); err != nil {
+	if err := runtime.EraseHome(lease.Context(), rt); err != nil {
 		return err
 	}
 	if err := lease.checkpoint(ctx); err != nil {
 		return err
 	}
 	return m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
+}
+
+// homeBackupsByMembership lists the copies the runtime keeps of a member's home outside
+// it, for the administrator deciding whether to delete them. ok=false on a runtime that
+// keeps none. A member with no workspace row has no copies: the runtime tags them by
+// membership, and Destroy — the only thing that removes the row — deletes them first.
+func (m *manager) homeBackupsByMembership(ctx context.Context, membershipID string) (runtime.HomeBackups, bool, error) {
+	ws, found, err := m.store.GetWorkspaceByMembership(ctx, membershipID)
+	if err != nil {
+		return runtime.HomeBackups{}, false, err
+	}
+	if !found {
+		return runtime.HomeBackups{}, m.homeOperations().Backups, nil
+	}
+	return runtime.HomeBackupsOf(ctx, m.runtimeFor(ws, ""))
+}
+
+// deleteHomeBackupsByMembership deletes those copies and returns how many went. It takes
+// no lifecycle lease: the copies are outside the home, so a start, a stop or a clean home
+// running at the same moment neither reads nor writes them. Like the erase, it does not
+// follow the administrator's request, so a deletion is never abandoned halfway.
+func (m *manager) deleteHomeBackupsByMembership(ctx context.Context, membershipID string) (int, bool, error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), homeEraseBudget)
+	defer cancel()
+	ws, found, err := m.store.GetWorkspaceByMembership(ctx, membershipID)
+	if err != nil {
+		return 0, false, err
+	}
+	if !found {
+		return 0, m.homeOperations().Backups, nil
+	}
+	return runtime.DeleteHomeBackups(ctx, m.runtimeFor(ws, ""))
+}
+
+// homeOperations says which home operations this deployment's runtime performs; the
+// Console reads it (whoami) before it offers the buttons. A manager built without a
+// factory — tests that never start a workspace — performs none.
+func (m *manager) homeOperations() runtime.HomeOperations {
+	if m.rtFactory == nil {
+		return runtime.HomeOperations{}
+	}
+	return runtime.HomeOperationsOf(m.rtFactory)
 }
 
 // workspaceExtraEnv derives per-workspace container env from the workspace's tenant
@@ -607,6 +671,12 @@ type runtimePoolStatuser interface {
 // one of them may be assumed from the other's presence.
 type runtimeSlotTerminator interface {
 	TerminateQuarantinedSlot(ctx context.Context, instanceID string) (reason string, err error)
+}
+
+// hasSlotPool reports whether terminateQuarantinedSlot has anything to drive.
+func (m *manager) hasSlotPool() bool {
+	_, ok := m.rtFactory.(runtimeSlotTerminator)
+	return ok
 }
 
 // terminateQuarantinedSlot removes one quarantined box on an operator's word, returning the

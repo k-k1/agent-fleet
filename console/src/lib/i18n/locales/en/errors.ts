@@ -57,18 +57,25 @@ export const errors: Record<keyof typeof jaErrors, string> = {
     "This branch is not fully merged, so it was not deleted. Merge or push it first.",
   "err.branch_not_in_head":
     "This branch's commits are not in this working copy's current history. Deleting it on the remote too would leave them with nowhere to live — bring them in first.",
+  // ADR 0105: the /turn queue ops (remove / dismiss_discard / interrupt with discard_queue).
+  "err.already_started": "It has already started, so it can't be taken back.",
+  "err.not_queued": "It is no longer in the queue.",
+  "err.not_managed": "Only a Managed session supports this.",
+  "err.missing_id": "No id was given.",
   "err.question_pending":
     "The agent is waiting for an answer to its question. Answer it from the question card before sending.",
   "err.plan_pending":
-    "The agent is waiting for a plan decision. Approve or reject it from the plan card before sending — typed text would be swallowed by the dialog and approve the plan.",
+    "The agent is waiting for a plan decision. Approve or reject it from the plan card (or in the terminal when there is none) before sending — typed text would be swallowed by the dialog and approve the plan.",
   "err.permission_pending":
-    "The agent is waiting for a permission decision. Allow or deny it from the permission card before sending — typed text would be swallowed by the menu and allow it.",
+    "The agent is waiting for a permission decision. Allow or deny it from the permission card (or in the terminal when there is none) before sending — typed text would be swallowed by the menu and allow it.",
   "err.interaction_pending":
     "The agent is showing an interactive prompt. Answer it from its card before sending.",
   "err.auth_expired":
     "This workspace's Claude login has expired. Re-authenticate from Settings > Agents before sending (sent now, the terminal would take the text but no turn would ever start).",
   "err.codex_releasing":
-    "This conversation is still being handed over from managed execution (usually about a minute). Send once the codex composer appears.",
+    "codex has not let go of this conversation yet (usually about a minute after the stop). Try again shortly.",
+  "err.driver_switching": "This session is switching its execution method. Try again once the switch is done.",
+  "err.codex_stop_first": "Stop this codex session first, then switch it to terminal execution (about a minute after the stop).",
   "err.not_running": "The session is stopped. Resume it before sending.",
   // The workspace is mid-boot (container up, Agent not answering yet) and something
   // that needs the Agent arrived. Not a failure — a "not yet", so it asks for a retry.
@@ -320,4 +327,10 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.not_found": "Not found.",
   "err.imagegen_no_provider": "No image engine can serve this request.",
   "err.imagegen_unknown_provider": "This deployment has no such image engine.",
+  "err.home_wipe_unsupported": "Not available on this deployment: its workspace homes are out of the control plane's reach, so nothing was stopped.",
+  "err.home_wipe_while_starting": "The workspace is still starting, so nothing was stopped. Try again once it has started.",
+  "err.home_backups_unsupported": "This deployment keeps no backups of workspace homes.",
+  "err.audit_unavailable": "Nothing was done: the audit log could not record who asked for it. Try again once the database is back.",
+  "err.git_repo_create_forbidden": "Your role in this tenant cannot create repositories.",
+  "err.git_repo_manage_forbidden": "Only the person who created a repository, or a tenant administrator, can rename or delete it.",
 };

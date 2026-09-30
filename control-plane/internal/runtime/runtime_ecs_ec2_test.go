@@ -63,6 +63,20 @@ type fakeEC2 struct {
 	modificationState ec2types.VolumeModificationState
 	// modifyErr forces ModifyVolume to fail, standing in for EBS's 6-hour cooldown.
 	modifyErr error
+	// snapshotHidden keeps a snapshot out of the next N DescribeSnapshots calls, the way
+	// the eventually consistent API can miss one that was created a moment ago.
+	snapshotHidden map[string]int
+	// snapshotGone makes DeleteSnapshot answer NotFound for a snapshot, standing in for
+	// one that something else deleted after it was listed.
+	snapshotGone map[string]bool
+	// deleteVolumeErr makes DeleteVolume fail without deleting.
+	deleteVolumeErr error
+	// createTagsErr makes CreateTags fail, without tagging anything, for a request that
+	// names this tag key.
+	createTagsErr map[string]error
+	// deleteTagsErr makes DeleteTags fail, without deleting anything, for a request that
+	// names this tag key.
+	deleteTagsErr map[string]error
 }
 
 func newFakeEC2() *fakeEC2 {
@@ -75,6 +89,9 @@ func newFakeEC2() *fakeEC2 {
 		runErr:    map[string]error{},
 
 		modifications: map[string]*ec2types.VolumeModification{},
+
+		snapshotHidden: map[string]int{},
+		snapshotGone:   map[string]bool{},
 	}
 }
 
@@ -357,6 +374,9 @@ func (f *fakeEC2) DeleteVolume(_ context.Context, in *ec2.DeleteVolumeInput, _ .
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.log("DeleteVolume %s", aws.ToString(in.VolumeId))
+	if f.deleteVolumeErr != nil {
+		return nil, f.deleteVolumeErr
+	}
 	delete(f.volumes, aws.ToString(in.VolumeId))
 	return &ec2.DeleteVolumeOutput{}, nil
 }
@@ -365,7 +385,11 @@ func (f *fakeEC2) DescribeSnapshots(_ context.Context, in *ec2.DescribeSnapshots
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := &ec2.DescribeSnapshotsOutput{}
-	for _, s := range f.snapshots {
+	for id, s := range f.snapshots {
+		if f.snapshotHidden[id] > 0 {
+			f.snapshotHidden[id]--
+			continue
+		}
 		if !filterMatch(in.Filters, func(name string) []string {
 			if strings.HasPrefix(name, "tag:") {
 				return []string{ec2TagValue(s.Tags, strings.TrimPrefix(name, "tag:"))}
@@ -414,6 +438,9 @@ func (f *fakeEC2) DeleteSnapshot(_ context.Context, in *ec2.DeleteSnapshotInput,
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.log("DeleteSnapshot %s", aws.ToString(in.SnapshotId))
+	if f.snapshotGone[aws.ToString(in.SnapshotId)] {
+		return nil, fmt.Errorf("InvalidSnapshot.NotFound: the snapshot '%s' does not exist", aws.ToString(in.SnapshotId))
+	}
 	delete(f.snapshots, aws.ToString(in.SnapshotId))
 	return &ec2.DeleteSnapshotOutput{}, nil
 }
@@ -464,6 +491,12 @@ func (f *fakeEC2) DetachVolume(_ context.Context, in *ec2.DetachVolumeInput, _ .
 func (f *fakeEC2) CreateTags(_ context.Context, in *ec2.CreateTagsInput, _ ...func(*ec2.Options)) (*ec2.CreateTagsOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	for _, t := range in.Tags {
+		if err := f.createTagsErr[aws.ToString(t.Key)]; err != nil {
+			f.log("CreateTags REFUSED %s", aws.ToString(t.Key))
+			return nil, err
+		}
+	}
 	for _, r := range in.Resources {
 		// Volumes AND instances: quarantining a slot re-stamps af-role on the INSTANCE
 		// (decision 20), and a fake that only knew about volumes reported "tag written" while
@@ -473,6 +506,8 @@ func (f *fakeEC2) CreateTags(_ context.Context, in *ec2.CreateTagsInput, _ ...fu
 			tags = &v.Tags
 		} else if i := f.instances[r]; i != nil {
 			tags = &i.Tags
+		} else if sn := f.snapshots[r]; sn != nil {
+			tags = &sn.Tags
 		} else {
 			continue
 		}
@@ -499,6 +534,12 @@ func (f *fakeEC2) CreateTags(_ context.Context, in *ec2.CreateTagsInput, _ ...fu
 func (f *fakeEC2) DeleteTags(_ context.Context, in *ec2.DeleteTagsInput, _ ...func(*ec2.Options)) (*ec2.DeleteTagsOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	for _, d := range in.Tags {
+		if err := f.deleteTagsErr[aws.ToString(d.Key)]; err != nil {
+			f.log("DeleteTags REFUSED %s", aws.ToString(d.Key))
+			return nil, err
+		}
+	}
 	for _, r := range in.Resources {
 		// Instances as well as volumes, for the same reason CreateTags above handles
 		// both: the slot's owner tags (af-membership / af-tenant, ADR 0048 decision 3) are
@@ -509,6 +550,8 @@ func (f *fakeEC2) DeleteTags(_ context.Context, in *ec2.DeleteTagsInput, _ ...fu
 			tags = &v.Tags
 		} else if i := f.instances[r]; i != nil {
 			tags = &i.Tags
+		} else if sn := f.snapshots[r]; sn != nil {
+			tags = &sn.Tags
 		} else {
 			continue
 		}
@@ -516,7 +559,10 @@ func (f *fakeEC2) DeleteTags(_ context.Context, in *ec2.DeleteTagsInput, _ ...fu
 		for _, t := range *tags {
 			drop := false
 			for _, d := range in.Tags {
-				if aws.ToString(d.Key) == aws.ToString(t.Key) {
+				// A Value in the request deletes the tag only while it still has that
+				// value, like the real API; a nil Value deletes it whatever it holds.
+				if aws.ToString(d.Key) == aws.ToString(t.Key) &&
+					(d.Value == nil || aws.ToString(d.Value) == aws.ToString(t.Value)) {
 					drop = true
 				}
 			}
@@ -607,6 +653,9 @@ type fakeSSMCmd struct {
 	// sink shares the EC2 fake's call log so a test can assert the ORDER of an SSM
 	// command against an EC2 call — "umount before detach" spans both.
 	sink *fakeEC2
+	// onSend, when set, is called with each command as it is sent, so a test can look at
+	// the rest of the fake world at that moment.
+	onSend func(cmd string)
 }
 
 func (f *fakeSSMCmd) SendCommand(_ context.Context, in *ssm.SendCommandInput, _ ...func(*ssm.Options)) (*ssm.SendCommandOutput, error) {
@@ -616,6 +665,9 @@ func (f *fakeSSMCmd) SendCommand(_ context.Context, in *ssm.SendCommandInput, _ 
 	f.commands = append(f.commands, cmd)
 	if f.sink != nil {
 		f.sink.log("SSM %s", cmd)
+	}
+	if f.onSend != nil {
+		f.onSend(cmd)
 	}
 	// The command id carries the command text so GetCommandInvocation can decide
 	// whether this particular step is the one the test wants to fail.
@@ -4585,6 +4637,137 @@ func TestECSPlacementBlockedIgnoresTheWaitItCausedItself(t *testing.T) {
 	repeated := svcWithEvents(1, 0, deploy, placeEvent(now, growing), old)
 	if got := ecsPlacementBlocked(repeated, now); !strings.Contains(got, "agent connected") {
 		t.Fatalf("a repeated event hid the aged original: %q", got)
+	}
+}
+
+// A task placed after the complaint makes it moot, however old it is. State() stays
+// `starting` until the rollout COMPLETES, and on the dev deployment that came 122 s after
+// the task started: the event aged past the grace in between, and the member was told
+// "Cannot start. Waiting will not help" about a workspace that was already up (#1271).
+func TestECSPlacementBlockedIgnoresAnEventATaskOutlived(t *testing.T) {
+	now := time.Now()
+	deploy := now.Add(-163 * time.Second)
+	complained := placeEvent(now.Add(-152*time.Second), unplaceable) // past the grace
+	started := placeEvent(now.Add(-122*time.Second), "(service af-ws-x) has started 1 tasks: (task abc).")
+	placed := func(running int32, events ...ecstypes.ServiceEvent) ecstypes.Service {
+		s := svcWithEvents(1, running, deploy, events...)
+		s.Deployments[0].RunningCount = running
+		s.Deployments[0].RolloutState = ecstypes.DeploymentRolloutStateInProgress
+		return s
+	}
+
+	if got := ecsPlacementBlocked(placed(1, started, complained), now); got != "" {
+		t.Fatalf("a running task, rollout still in progress, was called blocked: %q", got)
+	}
+
+	// The running count alone decides, so a change in ECS's wording cannot bring this back.
+	if got := ecsPlacementBlocked(placed(1, complained), now); got != "" {
+		t.Fatalf("a PRIMARY deployment with a running task was called blocked: %q", got)
+	}
+
+	// The task has since died and the count is back at 0: the complaint still predates a
+	// placement, so it explains nothing about why there is no task now.
+	if got := ecsPlacementBlocked(placed(0, started, complained), now); got != "" {
+		t.Fatalf("a complaint older than a started task was reported: %q", got)
+	}
+
+	// A wall that rises after the start is still named once it has stood.
+	again := placeEvent(now.Add(-placementBlockedGrace-time.Second), unplaceable)
+	if got := ecsPlacementBlocked(placed(0, again, started, complained), now); !strings.Contains(got, "missing an attribute") {
+		t.Fatalf("a wall newer than the started task was hidden: %q", got)
+	}
+
+	// Timestamps decide, not positions: the API does not promise newest first.
+	if got := ecsPlacementBlocked(placed(0, complained, started), now); got != "" {
+		t.Fatalf("an out-of-order complaint older than the start was reported: %q", got)
+	}
+	if got := ecsPlacementBlocked(placed(0, started, complained, again), now); !strings.Contains(got, "missing an attribute") {
+		t.Fatalf("an out-of-order start hid the newer wall: %q", got)
+	}
+}
+
+// The wall had already been named when the task was finally placed: the rollout keeps
+// State() at `starting`, and the phase has to go on that poll rather than when the rollout
+// completes, or the member reads "Waiting will not help" about a task that is running.
+func TestECSEC2BlockedPhaseClearsOnceTheTaskIsPlaced(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	defer h.rt.setPhase("")
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-hot", time.Now())
+	now := time.Now()
+	wedged := ecstypes.Service{
+		Status: aws.String("ACTIVE"), DesiredCount: 1,
+		Deployments: []ecstypes.Deployment{{
+			Status: aws.String("PRIMARY"), CreatedAt: aws.Time(now.Add(-10 * time.Minute)),
+			RolloutState: ecstypes.DeploymentRolloutStateInProgress,
+		}},
+		Events: []ecstypes.ServiceEvent{placeEvent(now.Add(-placementBlockedGrace-time.Minute), unplaceable)},
+	}
+	h.ecs.services["af-ws-acme-alice"] = wedged
+	if got := h.rt.State(ctx); got != "starting" {
+		t.Fatalf("State = %q, want starting", got)
+	}
+	if ph := h.rt.BootPhase(); !strings.HasPrefix(ph, blockedPhasePrefix) {
+		t.Fatalf("the wall was not named: %q", ph)
+	}
+
+	placed := wedged
+	placed.RunningCount = 1
+	placed.Deployments = []ecstypes.Deployment{wedged.Deployments[0]}
+	placed.Deployments[0].RunningCount = 1
+	h.ecs.services["af-ws-acme-alice"] = placed
+	if got := h.rt.State(ctx); got != "starting" {
+		t.Fatalf("State = %q, want starting while the rollout is in progress", got)
+	}
+	if ph := h.rt.BootPhase(); ph != "" {
+		t.Fatalf("the blocked phase outlived the task being placed: %q", ph)
+	}
+
+	// A Start's own progress is not the poll's to clear.
+	h.rt.setPhase("home: attaching")
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); ph != "home: attaching" {
+		t.Fatalf("a live Start's phase was wiped by a poll: %q", ph)
+	}
+}
+
+// Stopping a wedged launch — by hand, or by the CP's start deadline — must take the blocked
+// phase with it. State() only clears it on running/starting, and the Console keeps its start
+// dialog up while any phase is reported, so a stopped workspace would sit behind "Waiting
+// will not help" until the next Start.
+func TestECSEC2StopClearsTheBlockedPhase(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	defer h.rt.setPhase("")
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-hot", time.Now())
+	now := time.Now()
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{
+		Status: aws.String("ACTIVE"), DesiredCount: 1,
+		Deployments: []ecstypes.Deployment{{
+			Status: aws.String("PRIMARY"), CreatedAt: aws.Time(now.Add(-time.Hour)),
+			RolloutState: ecstypes.DeploymentRolloutStateInProgress,
+		}},
+		Events: []ecstypes.ServiceEvent{placeEvent(now.Add(-placementBlockedGrace-time.Minute), unplaceable)},
+	}
+	if got := h.rt.State(ctx); got != "starting" {
+		t.Fatalf("State = %q, want starting", got)
+	}
+	if ph := h.rt.BootPhase(); !strings.HasPrefix(ph, blockedPhasePrefix) {
+		t.Fatalf("the wall was not named: %q", ph)
+	}
+	if err := h.rt.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	if got := h.rt.State(ctx); got != "stopped" {
+		t.Fatalf("State after Stop = %q, want stopped", got)
+	}
+	if ph := h.rt.BootPhase(); ph != "" {
+		t.Fatalf("the blocked phase outlived the stop: %q", ph)
 	}
 }
 

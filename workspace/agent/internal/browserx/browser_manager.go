@@ -88,7 +88,12 @@ type browserPage struct {
 	castEpoch     atomic.Uint64 // monotonic source for castGen values
 	unreachable   bool
 	topRequestID  string
-	refreshing    atomic.Bool
+	// loaderID is the loader of the current top-level navigation, pending or
+	// committed. Only its load/networkIdle may mark the page ready: the initial
+	// about:blank and the previous document both go network-idle while the next
+	// document is still in flight (measured: ~1 s before a held response).
+	loaderID   string
+	refreshing atomic.Bool
 }
 
 func DefaultBrowserManagerConfig() browserManagerConfig {
@@ -187,12 +192,21 @@ func (m *browserManager) Create(req browserCreateRequest) (browserPageResponse, 
 	// Register ownership before navigation so Fetch.requestPaused can enforce the
 	// first document request. Network failures are a normal target-unreachable state.
 	var nav struct {
+		LoaderID  string `json:"loaderId"`
 		ErrorText string `json:"errorText"`
 	}
 	if err := m.call(cdp, p.sessionID, "Page.navigate", map[string]any{"url": target}, &nav); err != nil {
 		m.Delete(p.id)
 		return browserPageResponse{}, fmt.Errorf("%w: %v", errBrowserNavigate, err)
 	}
+	// Page.navigate answers only after the commit, by which time the event loop
+	// may already track a later navigation the document started itself; this
+	// is the fallback for a Chromium that emits no Page.frameStartedNavigating.
+	p.mu.Lock()
+	if p.loaderID == "" {
+		p.loaderID = nav.LoaderID
+	}
+	p.mu.Unlock()
 	if nav.ErrorText != "" {
 		p.mu.Lock()
 		p.unreachable = true
@@ -587,7 +601,10 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 	switch ev.Method {
 	case "Fetch.requestPaused":
 		m.handleRequestPaused(cdp, p, ev.Params)
-	case "Page.frameRequestedNavigation", "Page.frameStartedNavigating":
+	case "Page.frameRequestedNavigation":
+		m.handleRequestedNavigation(cdp, p, ev.Params)
+	case "Page.frameStartedNavigating":
+		p.trackStartedNavigation(ev.Params)
 		m.handleRequestedNavigation(cdp, p, ev.Params)
 	case "Page.screencastFrame":
 		var v struct {
@@ -602,12 +619,14 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 			Frame struct {
 				ID       string `json:"id"`
 				ParentID string `json:"parentId"`
+				LoaderID string `json:"loaderId"`
 				URL      string `json:"url"`
 			} `json:"frame"`
 		}
 		if json.Unmarshal(ev.Params, &v) == nil && v.Frame.ParentID == "" {
 			p.mu.Lock()
 			p.mainFrameID = v.Frame.ID
+			p.loaderID = v.Frame.LoaderID
 			if u, err := url.Parse(v.Frame.URL); err == nil && allowedTopLevelBrowserURL(u) {
 				p.url = normalizeLoopbackURL(u).String()
 				p.mu.Unlock()
@@ -648,17 +667,39 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 				p.setState("target-unreachable")
 			}
 		}
+	// Page.loadEventFired is not handled: it names no loader, so it cannot tell
+	// the current navigation's load from the previous document's.
 	case "Page.lifecycleEvent":
 		var v struct {
-			Name string `json:"name"`
+			Name     string `json:"name"`
+			LoaderID string `json:"loaderId"`
 		}
 		if json.Unmarshal(ev.Params, &v) == nil && (v.Name == "load" || v.Name == "networkIdle") {
-			p.markLoaded()
-			p.refreshNavigation()
+			p.mu.Lock()
+			current := v.LoaderID != "" && v.LoaderID == p.loaderID
+			p.mu.Unlock()
+			if current {
+				p.markLoaded()
+				p.refreshNavigation()
+			}
 		}
-	case "Page.loadEventFired":
-		p.markLoaded()
-		p.refreshNavigation()
+	case "Page.frameStoppedLoading":
+		// A navigation that ends without committing emits no lifecycle event of
+		// its own loader. Network.loadingFailed usually ends it first (measured:
+		// a 204, a denied download, window.stop()); for one that does not, the
+		// main frame stopping is the only sign the page is no longer loading.
+		var v struct {
+			FrameID string `json:"frameId"`
+		}
+		if json.Unmarshal(ev.Params, &v) == nil {
+			p.mu.Lock()
+			stalled := v.FrameID == p.mainFrameID && p.state == "loading"
+			p.mu.Unlock()
+			if stalled {
+				p.markLoaded()
+				p.refreshNavigation()
+			}
+		}
 	case "Inspector.targetCrashed", "Target.targetCrashed":
 		m.invalidatePage(p, "crashed", "page crashed")
 	case "Page.fileChooserOpened":
@@ -753,6 +794,26 @@ func (m *browserManager) handleRequestedNavigation(cdp browserCDP, p *browserPag
 	}
 	_ = m.call(cdp, p.sessionID, "Page.stopLoading", nil, nil)
 	p.notifyJSON(map[string]any{"type": "page-error", "text": "top-level navigation outside loopback was blocked"})
+}
+
+// trackStartedNavigation records the loader of a cross-document navigation of
+// the main frame as the one whose load/networkIdle counts from now on.
+func (p *browserPage) trackStartedNavigation(raw json.RawMessage) {
+	var v struct {
+		FrameID        string `json:"frameId"`
+		LoaderID       string `json:"loaderId"`
+		NavigationType string `json:"navigationType"`
+	}
+	// Same-document navigations (sameDocument, historySameDocument) keep the
+	// committed document and its loader.
+	if json.Unmarshal(raw, &v) != nil || v.LoaderID == "" || strings.Contains(strings.ToLower(v.NavigationType), "samedocument") {
+		return
+	}
+	p.mu.Lock()
+	if v.FrameID == p.mainFrameID {
+		p.loaderID = v.LoaderID
+	}
+	p.mu.Unlock()
 }
 
 func (p *browserPage) markLoaded() {

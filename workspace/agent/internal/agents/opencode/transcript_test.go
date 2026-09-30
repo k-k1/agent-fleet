@@ -173,7 +173,7 @@ func TestOpencodeQuestions(t *testing.T) {
 	}
 
 	// pending returns the running question.
-	pd := pending(db, ses)
+	pd, _ := pending(db, ses)
 	if len(pd) != 1 || pd[0].Question != "next?" || len(pd[0].Options) != 2 {
 		t.Fatalf("pending = %+v, want the running 'next?' question", pd)
 	}
@@ -376,6 +376,7 @@ func TestOpencodeLiveStateQuestion(t *testing.T) {
 	// there (like TestOpencodeSessionResumable) so the real path resolves.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	fakeTmuxSession(t, time.Time{}) // a Terminal meta asks tmux when its process started
 	dbDir := filepath.Join(home, ".local", "share", "opencode")
 	if err := os.MkdirAll(dbDir, 0o755); err != nil {
 		t.Fatal(err)

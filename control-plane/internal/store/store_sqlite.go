@@ -1214,6 +1214,7 @@ func membershipCascade(membershipID string) []struct {
 		args []any
 	}{
 		{`DELETE FROM user_limit WHERE membership_id=?`, id},
+		{`DELETE FROM engine_access_grant WHERE membership_id=?`, id},
 		{`DELETE FROM pat WHERE membership_id=?`, id},
 		{`DELETE FROM ssm_host WHERE membership_id=?`, id},
 		// sso_session was dropped by 0011 (ssm_profile replaced it). Deleting from a
@@ -1315,6 +1316,10 @@ func (s *SQL) DeleteTenant(ctx context.Context, tenantID string) error {
 		`DELETE FROM tenant_idp WHERE tenant_id=?`,
 		`DELETE FROM tenant_git_oauth WHERE tenant_id=?`,
 		`DELETE FROM egress_allowlist WHERE tenant_id=?`,
+		`DELETE FROM engine_access_policy WHERE tenant_id=?`,
+		// A grant written for a membership deleted between the roster check and the insert
+		// has no membership left to cascade from; the tenant id still reaches it.
+		`DELETE FROM engine_access_grant WHERE tenant_id=?`,
 		// The login rules and allowed_cidrs are columns on tenant, so this one
 		// statement takes them with it.
 		`DELETE FROM tenant WHERE id=?`,
@@ -1884,18 +1889,51 @@ func (s *SQL) CountGitReposByTenant(ctx context.Context, tenantID string) (int, 
 	return n, err
 }
 
-// RenameGitRepo renames one repo within a tenant. The (tenant_id, name) UNIQUE
-// constraint makes a collision with an existing name an error (surfaced as a 409
-// by the caller after a pre-check).
-func (s *SQL) RenameGitRepo(ctx context.Context, tenantID, oldName, newName string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE git_repo SET name=? WHERE tenant_id=? AND name=?`, newName, tenantID, oldName)
-	return err
+// gitRepoTables are the tables keyed by (tenant_id, repo name) that follow a repo
+// through rename and delete. Changing them together is what keeps the LFS quota and
+// the locks from drifting away from the repo on disk.
+var gitRepoTables = []struct{ table, col string }{
+	{"git_repo", "name"},
+	{"lfs_object", "repo_name"},
+	{"lfs_lock", "repo_name"},
 }
 
+// RenameGitRepo renames one repo within a tenant, together with its LFS ledger and
+// lock rows, in one transaction. The (tenant_id, name) UNIQUE constraint makes a
+// collision with an existing name an error (surfaced as a 409 by the caller after a
+// pre-check).
+func (s *SQL) RenameGitRepo(ctx context.Context, tenantID, oldName, newName string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, t := range gitRepoTables {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE `+t.table+` SET `+t.col+`=? WHERE tenant_id=? AND `+t.col+`=?`,
+			newName, tenantID, oldName); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// DeleteGitRepo deletes one repo's row with its LFS ledger and lock rows, in one
+// transaction: a stale ledger over-counts the tenant's LFS quota, and stale locks
+// would be inherited by a later repo of the same name.
 func (s *SQL) DeleteGitRepo(ctx context.Context, tenantID, name string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM git_repo WHERE tenant_id=? AND name=?`, tenantID, name)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, t := range gitRepoTables {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM `+t.table+` WHERE tenant_id=? AND `+t.col+`=?`, tenantID, name); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // --- Git LFS object ledger (docs/reference/internal-git-provider, P3) ---
@@ -1904,7 +1942,7 @@ func (s *SQL) PutLFSObject(ctx context.Context, tenantID, repo, oid string, size
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO lfs_object(tenant_id, repo_name, oid, size, created_at)
 		 VALUES(?, ?, ?, ?, ?)
-		 ON CONFLICT(tenant_id, repo_name, oid) DO NOTHING`,
+		 ON CONFLICT(tenant_id, repo_name, oid) DO UPDATE SET created_at=excluded.created_at`,
 		tenantID, repo, oid, size, NowTS())
 	return err
 }
@@ -1914,18 +1952,6 @@ func (s *SQL) TenantLFSBytes(ctx context.Context, tenantID string) (int64, error
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COALESCE(SUM(size), 0) FROM lfs_object WHERE tenant_id=?`, tenantID).Scan(&n)
 	return n, err
-}
-
-func (s *SQL) DeleteLFSObjectsByRepo(ctx context.Context, tenantID, repo string) error {
-	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM lfs_object WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
-	return err
-}
-
-func (s *SQL) RenameLFSObjectsRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE lfs_object SET repo_name=? WHERE tenant_id=? AND repo_name=?`, newRepo, tenantID, oldRepo)
-	return err
 }
 
 func (s *SQL) DeleteLFSObject(ctx context.Context, tenantID, repo, oid string) error {
@@ -2031,18 +2057,6 @@ func (s *SQL) DeleteLFSLock(ctx context.Context, tenantID, repo, id string) erro
 	return err
 }
 
-func (s *SQL) DeleteLFSLocksByRepo(ctx context.Context, tenantID, repo string) error {
-	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM lfs_lock WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
-	return err
-}
-
-func (s *SQL) RenameLFSLocksRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE lfs_lock SET repo_name=? WHERE tenant_id=? AND repo_name=?`, newRepo, tenantID, oldRepo)
-	return err
-}
-
 func (s *SQL) MembershipOwnerName(ctx context.Context, membershipID string) (string, error) {
 	var email, key string
 	err := s.db.QueryRowContext(ctx,
@@ -2060,22 +2074,43 @@ func (s *SQL) MembershipOwnerName(ctx context.Context, membershipID string) (str
 	return key, nil
 }
 
-func (s *SQL) ListLFSObjectOIDs(ctx context.Context, tenantID, repo string) ([]string, error) {
+func (s *SQL) LFSObjectSize(ctx context.Context, tenantID, repo, oid string) (int64, bool, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT size FROM lfs_object WHERE tenant_id=? AND repo_name=? AND oid=?`, tenantID, repo, oid).Scan(&n)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	return n, err == nil, err
+}
+
+func (s *SQL) ListLFSObjects(ctx context.Context, tenantID, repo string) ([]LFSObject, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT oid FROM lfs_object WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
+		`SELECT oid, size, created_at FROM lfs_object WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []string
+	var out []LFSObject
 	for rows.Next() {
-		var oid string
-		if err := rows.Scan(&oid); err != nil {
+		var o LFSObject
+		if err := rows.Scan(&o.OID, &o.Size, &o.CreatedAt); err != nil {
 			return nil, err
 		}
-		out = append(out, oid)
+		out = append(out, o)
 	}
 	return out, rows.Err()
+}
+
+func (s *SQL) DeleteStaleLFSObject(ctx context.Context, tenantID, repo, oid, cutoff string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM lfs_object WHERE tenant_id=? AND repo_name=? AND oid=? AND created_at<=?`,
+		tenantID, repo, oid, cutoff)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 func (s *SQL) InsertAudit(ctx context.Context, a AuditLog) error {
@@ -2270,7 +2305,7 @@ func (s *SQL) DeleteSetting(ctx context.Context, key string) error {
 }
 
 // AddUsage accumulates workspace running-seconds into the (membership, day)
-// showback bucket (docs/roadmap.md P3-9). Upsert += so repeated samples add up.
+// showback bucket (docs/log/roadmap.md P3-9). Upsert += so repeated samples add up.
 func (s *SQL) AddUsage(ctx context.Context, membershipID, tenantID, day string, secs int) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO usage_daily(membership_id, tenant_id, day, running_secs)

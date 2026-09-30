@@ -24,7 +24,7 @@
 //
 // Launching from the detail modal still just hands the existing launch stack (seed ->
 // useLaunchTarget -> LaunchModal), so worktree/branch/agent stay implemented in one place.
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { IconButton } from "../../ui/Button.tsx";
@@ -222,6 +222,24 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   const [detailOn, setDetailOn] = useState<WorkItem | null>(null);
   const [needle, setNeedle] = useState("");
   const [expanded, setExpanded] = useState(false);
+  // Collapsing removes most of the section's height at once; without compensation the
+  // rail's scroll clamp lands the viewport on a later section (#1348). The press captures
+  // the section and its scroller, and once the shrunken list has rendered the section top
+  // is pinned back to the scroller top when it had scrolled above it, so the eye stays
+  // on the section that shrank.
+  const collapseAnchor = useRef<{ sec: Element; scroller: Element } | null>(null);
+  useLayoutEffect(() => {
+    const anchor = collapseAnchor.current;
+    if (!anchor || expanded) return;
+    collapseAnchor.current = null;
+    if (!anchor.sec.isConnected || !anchor.scroller.isConnected) return;
+    const sc = anchor.scroller as HTMLElement;
+    // Only pull back up. When the section top is still visible (d >= 0) nothing above
+    // the viewport was removed, so the browser keeps scrollTop on its own and pinning
+    // the top would wrongly push the rail down.
+    const d = anchor.sec.getBoundingClientRect().top - anchor.scroller.getBoundingClientRect().top;
+    if (d < 0) sc.scrollTop += d;
+  }, [expanded]);
   // The tracker search answers the needle it was pressed for; typing on makes it stale, so it
   // is dropped rather than shown under a filter it no longer matches.
   const [remote, setRemote] = useState<{ needle: string; result: WorkItemSearchResult } | null>(null);
@@ -231,6 +249,21 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   // for a needle the user has already typed over or cleared.
   const searchGen = useRef(0);
   const filterInput = useRef<HTMLInputElement>(null);
+  // The two fold buttons render on opposite conditions, so the pressed one unmounts with the
+  // toggle and keyboard focus falls to <body>. A keyboard press hands focus to the opposite
+  // button; a tap leaves it alone, like the filter's clear button. Runs after the pin above,
+  // and never scrolls: the default focus() scroll would undo that pin.
+  const foldFocus = useRef(false);
+  const moreBtn = useRef<HTMLButtonElement>(null);
+  const lessBtn = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    if (!foldFocus.current) return;
+    foldFocus.current = false;
+    // A filter that leaves nothing hidden collapses with no show-more to land on; the filter
+    // input renders whenever show-less could have been pressed, so it is the fallback.
+    const to = (expanded ? lessBtn : moreBtn).current || filterInput.current;
+    to?.focus({ preventScroll: true });
+  }, [expanded]);
 
   // Switching tenant must not leave the previous tenant's rows behind (as in the other stores).
   useEffect(() => {
@@ -562,12 +595,33 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
           {/* Always name the remaining count. The section badge still counts everything, so this
               line is what explains that nothing is being hidden. */}
           {hidden > 0 && (
-            <button type="button" className="wi-more" onClick={() => setExpanded(true)}>
+            <button
+              ref={moreBtn}
+              type="button"
+              className="wi-more"
+              onClick={(e) => {
+                foldFocus.current = e.detail === 0;
+                setExpanded(true);
+              }}
+            >
               {tr("wi.show_more", { n: hidden })}
             </button>
           )}
           {expanded && crowded && (
-            <button type="button" className="wi-more" onClick={() => setExpanded(false)}>
+            <button
+              ref={lessBtn}
+              type="button"
+              className="wi-more"
+              onClick={(e) => {
+                foldFocus.current = e.detail === 0;
+                // Captured here because the button unmounts with the collapse: after the
+                // state flip it is detached and can no longer reach its ancestors.
+                const sec = e.currentTarget.closest(".ui-section");
+                const scroller = e.currentTarget.closest(".app-rail-scroll");
+                if (sec && scroller) collapseAnchor.current = { sec, scroller };
+                setExpanded(false);
+              }}
+            >
               {tr("wi.show_less")}
             </button>
           )}

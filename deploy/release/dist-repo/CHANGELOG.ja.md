@@ -3,6 +3,14 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.25.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.25.0) — 2026-09-29
+
+課題管理から始めたセッションのブランチ名が、リポジトリ自身の規則（git-flow の設定、
+`.agent-fleet/branches`、Bitbucket のブランチモデル）に従うようになりました。課題管理の開いている
+プルリクエストには CI の状態と衝突が出ます。`af-aws-exec` が AssumeRole と `credential_process` の
+プロファイルを扱えるようになり、設定 › AWS プロファイル/SSM ではプロファイルの行からログインできます。
+起動に失敗したマネージドのセッションは、CLI が出力した内容を示します。
+
 ## [0.24.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.24.0) — 2026-09-27
 
 設定の AWS のプロファイルがワークスペースの AWS CLI・SDK・ビルドツールから使えるようになり、

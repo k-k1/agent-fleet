@@ -82,12 +82,13 @@ trying (and failing) to launch a terminal.
 
 ¹⁰ lcpp drives no CLI to write your instructions into. Instead, the harness reads the
 same fleet/your-own/project instruction layers itself and folds them into the system
-prompt on every turn.
+prompt on every turn. Its row in ⚙Settings → "Agent instructions" is the switch for your own
+layer, and takes effect from the next turn, running sessions included.
 
 ## How to sign in
 
 | Kind | Sign-in |
-|---|:--:|---|
+|---|---|
 | claude | OAuth: approve in your browser, then paste the code back. Shows the account email and plan once connected. |
 | codex | A ChatGPT subscription via device code (turn on device-code authentication in ChatGPT's security settings first), or an OpenAI API key. |
 | opencode | Two controls. **"Use opencode"** (off by default; while off, stored keys and sign-ins are ignored) and **"opencode.ai billing"** (None (my own keys) / Free models only / Go (subscription) / Zen (metered)). The latter decides how opencode.ai is used only — the providers you connect yourself stay in the list on every choice. Keys are the API key of whichever LLM provider you want, stored as an environment variable (presets fill the name in; several at once). |
@@ -103,13 +104,19 @@ prompt on every turn.
 ## States shown in the mirror
 
 | Kind | States |
-|---|:--:|---|
+|---|---|
 | claude | Working / Question / Plan ready / Awaiting permission / Ready |
 | codex | Working / Question / Plan ready / Ready |
 | opencode | Working / Question / Ready |
 | copilot | Working / Awaiting permission / Ready |
-| cursor | Working / Ready |
+| cursor | Working / Awaiting permission / Plan ready / Ready |
 | kiro | Working / Awaiting permission / Ready |
+
+On a Terminal (CLI) session, cursor stops for a command approval only when **Tool
+permissions** asks for approval or the session started in plan mode, and for a build
+decision only in a plan launch. The mirror shows the state but draws no card for it:
+answer in the terminal. Text sent from anywhere while it waits is refused, because the
+menu would take its Enter as "run" or "build".
 
 `shell` and `ssm` have no conversation and therefore no state model and no
 notifications. agy's states are not separately documented — treat its mirror as

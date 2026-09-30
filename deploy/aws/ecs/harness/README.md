@@ -1,6 +1,6 @@
 # EC2 スロットプール（`AF_RUNTIME=ecs-ec2`）の実機ハーネス
 
-`control-plane/runtime_ecs_ec2_live_test.go` を **実 AWS** に対して回すための最小基盤。
+`control-plane/internal/runtime/runtime_ecs_ec2_live_test.go` を **実 AWS** に対して回すための最小基盤。
 docs/log/64 §64.16 の計測はこれで取った。
 
 ```bash

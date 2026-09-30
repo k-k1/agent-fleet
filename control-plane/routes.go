@@ -196,6 +196,10 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/admin/workspaces", adm.destroyWorkspace)  // irreversible; inactive members only (ADR 0045 decision 13)
 	mux.HandleFunc("POST /api/admin/stop-workspace", adm.stopWorkspace)
 	mux.HandleFunc("POST /api/admin/clean-home", adm.cleanHome) // wipe home (tenant_admin, docs/log/61 §61.10.6)
+	// The copies of a member's home the runtime keeps outside it (ecs-ec2 backups). Clean
+	// home leaves them on purpose; deleting them is this separate, audited step.
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/home-backups", adm.homeBackups)
+	mux.HandleFunc("DELETE /api/admin/tenants/{slug}/members/{key}/home-backups", adm.deleteHomeBackups)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/limits", adm.withSuperAdmin(adm.setTenantLimits))
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/login", adm.withSuperAdmin(adm.setTenantLogin)) // per-tenant login rules (docs/log/61 §61.9.7)
 	// The tenant's own source-network restriction (docs/log/66, ADR 0047). tenant_admin,
@@ -209,6 +213,12 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// can write (on the limits endpoint).
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/slot-class", adm.tenantSlotClass)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/slot-class", adm.setTenantSlotClass)
+	// Per-member grant of the self-hosted engine roles (#1215). tenant_admin, gated
+	// mid-handler: it can only narrow allow_engine_llm / allow_engine_image, which stay
+	// super_admin-only on the limits endpoint.
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/engine-access", adm.tenantEngineAccess)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/engine-access", adm.setTenantEngineAccess)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/engine-access/members", adm.setMemberEngineAccess)
 	// Tenant-defined sign-in methods (docs/log/61 §61.11). The rows are the tenant's, so
 	// these gate on tenant_admin mid-handler; ACTIVATION is checked inside setStatus,
 	// which is the one super_admin step (decision 30). The queue is deployment-wide.
@@ -399,6 +409,10 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/aws-login/{id}/start", awsLogin)
 	mux.HandleFunc("GET /api/aws-login/{id}/attempts/{attempt}", awsLogin)
 	mux.HandleFunc("POST /api/aws-login/{id}/cancel", rest)
+	// The Settings row's "Log in" (#1028): an attempt without a request, and each row's state.
+	mux.HandleFunc("GET /api/aws-login/profiles", rest)
+	mux.HandleFunc("POST /api/aws-login/profiles/{name}/start", awsLogin)
+	mux.HandleFunc("GET /api/aws-login/profiles/{name}/attempts/{attempt}", awsLogin)
 	mux.HandleFunc("POST /api/sessions/{name}/start", ws.withResolved(ws.sessionStart))
 	mux.HandleFunc("POST /api/ssm/instances", ws.withResolved(ws.ssmInstances))
 	// Structured transcript for the Console chat view (case-A).
@@ -420,6 +434,7 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/sessions/{name}/suggest-branch", rest)  // LLM branch-name suggestion (this session's convo)
 	mux.HandleFunc("POST /api/sessions/{name}/suggest-replies", rest) // LLM reply suggestion v2 (this session's convo)
 	mux.HandleFunc("GET /api/sessions/{name}/skills", rest)           // mirror skill picker (docs/log/50 / ADR0034)
+	mux.HandleFunc("GET /api/sessions/{name}/committed", rest)        // changed-files bar's "committed" verdict (docs/log/68 P2)
 	// Per-answer translation (docs/log/97) — the OWNER's route only, deliberately with no twin
 	// in registerSessionShareRoutes: pressing it runs a model in the owner's Workspace and
 	// spends the owner's tokens, so a recipient reading a shared session must not be able to
@@ -467,10 +482,13 @@ func registerSessionShareRoutes(mux *http.ServeMux, cfg config) {
 }
 
 // Assistant chat (docs/log/19) — headless-CLI LLM chat/translation, proxied to the
-// Agent verbatim (kind-agnostic; non-streaming, so the plain REST proxy suffices).
+// Agent verbatim (kind-agnostic). Routes that wait on a model for longer than the ingress idle
+// timeout go through the flushing stream proxy: the Agent holds them open with a heartbeat
+// (httpx.HeldOpen), and the buffered REST relay would sit on those bytes until the ALB cut in.
 func registerChatRoutes(mux *http.ServeMux, cfg config) {
 	proxy := newAgentProxyAPI(cfg.mgr)
 	rest := proxy.withResolved(proxy.rest)
+	held := proxy.withResolved(proxy.stream)
 	mux.HandleFunc("GET /api/chat/conversations", rest)
 	mux.HandleFunc("POST /api/chat/conversations", rest)
 	mux.HandleFunc("GET /api/chat/conversations/{id}", rest)
@@ -482,14 +500,14 @@ func registerChatRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/chat/conversations/{id}/messages", rest)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/stream", proxy.withResolved(proxy.stream)) // SSE (Phase B)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/stop", rest)                               // cancel a detached in-flight turn
-	mux.HandleFunc("POST /api/chat/conversations/{id}/compact", rest)                            // summary carry-forward (docs/log/33 stage 2)
+	mux.HandleFunc("POST /api/chat/conversations/{id}/compact", held)                            // summary carry-forward (docs/log/33 stage 2)
 	mux.HandleFunc("GET /api/chat/conversations/{id}/plan", rest)                                // read the work plan (docs/log/33 stage 5)
 	mux.HandleFunc("PUT /api/chat/conversations/{id}/plan", rest)                                // hand-edit the work plan (docs/log/33 stage 5)
-	mux.HandleFunc("POST /api/chat/conversations/{id}/plan/refresh", rest)                       // explicit work-plan refresh (same)
+	mux.HandleFunc("POST /api/chat/conversations/{id}/plan/refresh", held)                       // explicit work-plan refresh (same)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/paste-image", rest)
 	mux.HandleFunc("GET /api/chat/conversations/{id}/pasted/{file}", rest)
-	// One-shot advisory turn (docs/log/21 memo tidy-up) — stateless, tools off. Proxied verbatim.
-	mux.HandleFunc("POST /api/chat/ask", rest)
+	// One-shot advisory turn (docs/log/21 memo tidy-up) — stateless, tools off.
+	mux.HandleFunc("POST /api/chat/ask", held)
 }
 
 // Image generation (ADR 0081) — the pane that makes pictures without an LLM in the loop.
@@ -733,6 +751,8 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/repos/{name}/branch-rule", rest)
 	mux.HandleFunc("POST /api/repos/{name}/branch-name", rest)
 	mux.HandleFunc("POST /api/repos/{name}/branch-name/check", rest)
+	mux.HandleFunc("GET /api/repos/{name}/gitflow", rest)
+	mux.HandleFunc("POST /api/repos/{name}/gitflow/init", rest)
 	mux.HandleFunc("GET /api/branch-rules/user", rest)
 	mux.HandleFunc("PUT /api/branch-rules/user", rest)
 	mux.HandleFunc("POST /api/branch-rules/preview", rest)
@@ -745,6 +765,7 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/repos/{name}/diff", rest)
 	mux.HandleFunc("GET /api/repos/{name}/log", rest)
 	mux.HandleFunc("GET /api/repos/{name}/graph", rest)
+	mux.HandleFunc("GET /api/repos/{name}/submodules", rest)
 	mux.HandleFunc("GET /api/repos/{name}/show", rest)
 	mux.HandleFunc("POST /api/repos/{name}/stage", rest)
 	mux.HandleFunc("POST /api/repos/{name}/unstage", rest)
@@ -763,8 +784,9 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	// (workspace/agent/fs_resolve.go).
 	mux.HandleFunc("POST /api/fs/resolve", rest)
 	// The editor's AI edit suggestion (docs/log/44 Phase 4) — read-only generation, not
-	// audited.
-	mux.HandleFunc("POST /api/fs/suggest-edit", rest)
+	// audited. The Agent holds it open with a heartbeat (httpx.HeldOpen), which only the
+	// flushing stream proxy passes through before the ingress idle timeout.
+	mux.HandleFunc("POST /api/fs/suggest-edit", proxy.withResolved(proxy.stream))
 	mux.HandleFunc("GET /api/fs/download", rest)
 	mux.HandleFunc("POST /api/fs/upload", rest)
 	mux.HandleFunc("GET /api/fs/changes", rest)
@@ -1024,20 +1046,22 @@ func registerInternalGitRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/internal-git/repos/{name}/tree", g.withMembership(g.tree))
 	mux.HandleFunc("GET /api/internal-git/repos/{name}/blob", g.withMembership(g.blob))
 	mux.HandleFunc("GET /api/internal-git/repos/{name}/commits", g.withMembership(g.commits))
+	// Every /git/ route goes through requireBase: without PUBLIC_BASE_URL the provider
+	// is off, and a token seeded while it was on must not keep working.
 	// Git LFS face (docs/reference/internal-git-provider, P3). More specific than the
 	// smart-HTTP catch-all below, so these win for LFS paths; git-http-backend never
 	// sees them. Same Basic git-token auth (session-exempt under /git/).
-	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/objects/batch", g.lfsBatch)
-	mux.HandleFunc("PUT /git/{slug}/{repo}/info/lfs/objects/{oid}", g.lfsUpload)
-	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/objects/{oid}", g.lfsDownload)
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/objects/batch", g.requireBase(g.lfsBatch))
+	mux.HandleFunc("PUT /git/{slug}/{repo}/info/lfs/objects/{oid}", g.requireBase(g.lfsUpload))
+	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/objects/{oid}", g.requireBase(g.lfsDownload))
 	// LFS file locking API (create / list / verify / unlock).
-	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks", g.lfsLockCreate)
-	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/locks", g.lfsLocksList)
-	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/verify", g.lfsLocksVerify)
-	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/{id}/unlock", g.lfsUnlock)
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks", g.requireBase(g.lfsLockCreate))
+	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/locks", g.requireBase(g.lfsLocksList))
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/verify", g.requireBase(g.lfsLocksVerify))
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/{id}/unlock", g.requireBase(g.lfsUnlock))
 	// Smart-HTTP git face (clone/fetch/push). Self-authenticating via a Basic git
 	// token (session-exempt, like /mcp); handles every method.
-	mux.HandleFunc("/git/{slug}/{repo...}", g.gitHTTP)
+	mux.HandleFunc("/git/{slug}/{repo...}", g.requireBase(g.gitHTTP))
 }
 
 // Browser Page lifecycle + restricted rendering/input WebSocket (docs/log/31).

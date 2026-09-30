@@ -19,6 +19,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 )
@@ -181,6 +182,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /aws-login/{id}/start", awsx.HandleLoginStart)
 	mux.HandleFunc("GET /aws-login/{id}/attempts/{attempt}", awsx.HandleLoginAttempt)
 	mux.HandleFunc("POST /aws-login/{id}/cancel", awsx.HandleLoginCancel)
+	// The Settings row's "Log in" (#1028): the same attempts, without a request.
+	mux.HandleFunc("GET /aws-login/profiles", awsx.HandleProfileLoginStates)
+	mux.HandleFunc("POST /aws-login/profiles/{name}/start", awsx.HandleProfileLoginStart)
+	mux.HandleFunc("GET /aws-login/profiles/{name}/attempts/{attempt}", awsx.HandleProfileLoginAttempt)
 	mux.HandleFunc("POST /ssm/instances", handleSSMInstances)
 	mux.HandleFunc("POST /sessions/{name}/start", sessionx.HandleStartSession)
 	// Structured transcript (role + text + timestamp) for the Console chat view.
@@ -222,6 +227,7 @@ func buildMux() *http.ServeMux {
 	// The "committed" verdict for the changed-files bar (docs/log/68 P2). Separate from the
 	// transcript's own list: it returns only paths that appeared in a commit made since the
 	// session started.
+	// control-plane/routes.go needs the same path registered: the CP is an explicit allowlist.
 	mux.HandleFunc("GET /sessions/{name}/committed", sessionx.HandleSessionCommittedFiles)
 	mux.HandleFunc("POST /sessions/{name}/rename-branch", sessionx.HandleSessionRenameBranch)
 	mux.HandleFunc("GET /ws/pty", handlePTY)
@@ -241,18 +247,23 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /chat/conversations/{id}/suggest-replies", chatx.HandleChatSuggestReplies) // LLM reply suggestion v2 (preview only)
 	mux.HandleFunc("DELETE /chat/conversations/{id}", chatx.HandleChatDelete)
 	mux.HandleFunc("POST /chat/conversations/{id}/lock", sessionx.HandleChatLock) // deletion lock (docs/log/45)
+	// Not held open (httpx.HeldOpen): the Console sends turns through /stream below, and nothing
+	// else in the tree calls this route through the ingress.
 	mux.HandleFunc("POST /chat/conversations/{id}/messages", chatx.HandleChatSend)
-	mux.HandleFunc("POST /chat/conversations/{id}/stream", chatx.HandleChatStream)            // SSE (Phase B)
-	mux.HandleFunc("POST /chat/conversations/{id}/stop", chatx.HandleChatStop)                // cancel a detached in-flight turn
-	mux.HandleFunc("POST /chat/conversations/{id}/compact", chatx.HandleChatCompact)          // summary carry-forward (docs/log/33 stage 2)
-	mux.HandleFunc("GET /chat/conversations/{id}/plan", chatx.HandleChatPlanGet)              // read the work plan (docs/log/33 stage 5; the light face for MCP)
-	mux.HandleFunc("PUT /chat/conversations/{id}/plan", chatx.HandleChatPlanSet)              // hand-edit the work plan (docs/log/33 stage 5)
-	mux.HandleFunc("POST /chat/conversations/{id}/plan/refresh", chatx.HandleChatPlanRefresh) // explicit work-plan refresh (same)
+	mux.HandleFunc("POST /chat/conversations/{id}/stream", chatx.HandleChatStream) // SSE (Phase B)
+	mux.HandleFunc("POST /chat/conversations/{id}/stop", chatx.HandleChatStop)     // cancel a detached in-flight turn
+	// Compaction, plan refresh, ask and the edit suggestion wait on a model for longer than the
+	// ingress idle timeout, so the Console reaches them held open with a heartbeat (#1151).
+	mux.HandleFunc("POST /chat/conversations/{id}/compact", httpx.HeldOpen(chatx.HandleChatCompact))          // summary carry-forward (docs/log/33 stage 2)
+	mux.HandleFunc("GET /chat/conversations/{id}/plan", chatx.HandleChatPlanGet)                              // read the work plan (docs/log/33 stage 5; the light face for MCP)
+	mux.HandleFunc("PUT /chat/conversations/{id}/plan", chatx.HandleChatPlanSet)                              // hand-edit the work plan (docs/log/33 stage 5)
+	mux.HandleFunc("POST /chat/conversations/{id}/plan/refresh", httpx.HeldOpen(chatx.HandleChatPlanRefresh)) // explicit work-plan refresh (same)
 	mux.HandleFunc("POST /chat/conversations/{id}/paste-image", sessionx.HandleChatPasteImage)
 	mux.HandleFunc("GET /chat/conversations/{id}/pasted/{file}", sessionx.HandleChatPastedImage)
-	// Assistant-to-assistant consult (docs/log/19): af_write orchestrators' ask_assistant tool
-	// hits this via the local stdio MCP. Internal (Agent REST) only — not proxied by the CP.
-	mux.HandleFunc("POST /chat/ask", chatx.HandleChatAsk)
+	// Stateless advisory turn: af_write orchestrators' ask_assistant tool calls it directly
+	// through the local stdio MCP (plain JSON), and the Console's memo tidy and read-aloud
+	// summary reach it through the CP (held open).
+	mux.HandleFunc("POST /chat/ask", httpx.HeldOpen(chatx.HandleChatAsk))
 	// Assistant turn fired by a schedule (docs/log/38 session_mode=assistant): the CP
 	// scheduler runs one turn synchronously against a conversation (UUID/slug), delegating
 	// to runOperatorTurn (assistant_turn.go).
@@ -317,6 +328,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /repos/{name}/branch-rule", handleGetBranchRule)
 	mux.HandleFunc("POST /repos/{name}/branch-name", handleBranchName)
 	mux.HandleFunc("POST /repos/{name}/branch-name/check", handleBranchNameCheck)
+	// Initialize Git Flow (ADR 0103 decision 9): writes git-flow's keys into the clone's
+	// shared config on a person's press; never switches or creates a branch.
+	mux.HandleFunc("GET /repos/{name}/gitflow", handleGetGitflow)
+	mux.HandleFunc("POST /repos/{name}/gitflow/init", handleGitflowInit)
 	// The user layer of the branch rules. Its own store, not ui-prefs (ADR 0103 decision 2).
 	mux.HandleFunc("GET /branch-rules/user", handleGetUserBranchRules)
 	mux.HandleFunc("PUT /branch-rules/user", handlePutUserBranchRules)
@@ -356,7 +371,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /fs/resolve", handleFSResolve)
 	// The editor's AI edit suggestion (docs/log/44 Phase 4) — a read-only generation channel
 	// that never touches the fs.
-	mux.HandleFunc("POST /fs/suggest-edit", handleFSSuggestEdit)
+	mux.HandleFunc("POST /fs/suggest-edit", httpx.HeldOpen(handleFSSuggestEdit))
 	mux.HandleFunc("GET /fs/download", handleFSDownload)
 	mux.HandleFunc("POST /fs/upload", handleFSUpload)
 	mux.HandleFunc("GET /fs/changes", handleFSChanges)

@@ -35,7 +35,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
 	cetypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
-	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -105,15 +104,17 @@ func newCloudCostPoller(mgr *manager, ce costExplorerAPI, interval time.Duration
 // where the workspaces run. Pointing it at the deployment region returns nothing and
 // looks exactly like "no spend".
 //
-// No opt-out env. ADR 0044 decision 3 is the precedent: a feature shipped off by default
-// never fired once. The cost here is ~$1.2/month of Cost Explorer requests, and a
-// deployment that does not want the CP reading its bill withholds the IAM permission —
-// which the poller reports rather than hides.
+// On by default, and no switch of its own: ADR 0044 decision 3 is the precedent — a
+// feature shipped off by default never fired once. The cost here is ~$1.2/month of Cost
+// Explorer requests, and a deployment that does not want the CP reading its bill
+// withholds the IAM permission, which the poller reports rather than hides.
+// AF_CLOUD_COST_INTERVAL=0 still stops the loop, like every other CP interval that is
+// read with intervalOff.
 func startCloudCostPoller(ctx context.Context, mgr *manager) {
 	if !mgr.cloudCostProfile().Available {
 		return
 	}
-	iv := envx.DurationOr(os.Getenv("AF_CLOUD_COST_INTERVAL"), 6*time.Hour)
+	iv := intervalOff(os.Getenv("AF_CLOUD_COST_INTERVAL"), 6*time.Hour)
 	if iv <= 0 {
 		log.Printf("cloud cost: disabled (AF_CLOUD_COST_INTERVAL=0)")
 		return

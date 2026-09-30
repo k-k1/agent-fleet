@@ -37,15 +37,81 @@ var updateRoutesGolden = flag.Bool("update-routes-golden", false,
 
 const routesGoldenPath = "testdata/routes.golden"
 
-// TestRouteTableGolden — every route of buildMux must match testdata/routes.golden.
-//
-// AF_MCP_ENABLED gates the only env-conditional route in the CP (registerMCPRoutes), so the
-// golden is taken with it true in order to capture everything. That the difference when it
-// is off is exactly the one /mcp line is pinned separately by
-// TestRouteTableMCPIsTheOnlyOptIn.
+// routeSwitch is one env-conditional registration in buildMux: the variables that turn it on,
+// and the exact route lines it adds.
+type routeSwitch struct {
+	name   string
+	env    map[string]string
+	routes []string
+}
+
+// routeSwitches lists every env-conditional registration in buildMux. The golden is taken
+// with all of them on, so it is the widest table any deployment serves;
+// TestRouteTableConditionalRoutesAreKnown pins that nothing else moves with the environment.
+func routeSwitches(t *testing.T) []routeSwitch {
+	return []routeSwitch{
+		{name: "mcp", env: map[string]string{"AF_MCP_ENABLED": "true"},
+			routes: []string{"ANY /mcp"}},
+		// Native self-update (registerUpdateRoutes). Registration only checks that the variable
+		// is set; the link itself is read per request.
+		{name: "update", env: map[string]string{"AF_SELF_LINK": filepath.Join(t.TempDir(), "af")},
+			routes: []string{"POST /api/update/apply", "GET /api/update/status"}},
+		// The engine gateway (registerEngineRoutes), present only when newEngineRegistry returns
+		// a registry. AF_LLM_URL is the one way to get one that neither reaches AWS nor starts
+		// a poller: an external row gets no controller, and nothing is dialled at build time.
+		{name: "engine", env: map[string]string{"AF_LLM_URL": "http://127.0.0.1:9/v1"},
+			routes: []string{
+				"POST /internal/engine/token", "GET /internal/engine/catalog",
+				"GET /engine/{key}/props", "ANY /engine/{key}/v1/{path...}",
+			}},
+	}
+}
+
+// routeSwitchOffEnv is every variable that can turn a routeSwitch on, including the engine
+// sources the switch itself does not use: AF_ENGINES_SSM_PARAM in the caller's environment
+// would otherwise make each smokeEnv load an AWS config.
+var routeSwitchOffEnv = []string{
+	"AF_MCP_ENABLED",
+	"AF_SELF_LINK",
+	"AF_ENGINES_SSM_PARAM", "AF_ENGINES_JSON", "AF_COMFY_URL", "AF_LLM_URL",
+	"AF_REMOTE_ENGINE_URL", "AF_REMOTE_ENGINE_TOKEN",
+}
+
+// setRouteSwitches pins every routeSwitch off, then turns the named ones on.
+func setRouteSwitches(t *testing.T, on ...string) {
+	t.Helper()
+	for _, k := range routeSwitchOffEnv {
+		t.Setenv(k, "")
+	}
+	for _, name := range on {
+		found := false
+		for _, sw := range routeSwitches(t) {
+			if sw.name == name {
+				found = true
+				for k, v := range sw.env {
+					t.Setenv(k, v)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("no route switch named %q", name)
+		}
+	}
+}
+
+// allRouteSwitches names every routeSwitch, for the widest table.
+func allRouteSwitches(t *testing.T) []string {
+	var names []string
+	for _, sw := range routeSwitches(t) {
+		names = append(names, sw.name)
+	}
+	return names
+}
+
+// TestRouteTableGolden — every route of buildMux, with every routeSwitch on, must match
+// testdata/routes.golden.
 func TestRouteTableGolden(t *testing.T) {
-	t.Setenv("AF_MCP_ENABLED", "true")
-	_, mux := smokeEnv(t)
+	_, mux := smokeEnvWith(t, allRouteSwitches(t)...)
 	got := muxRoutes(t, mux)
 
 	if *updateRoutesGolden {
@@ -56,23 +122,60 @@ func TestRouteTableGolden(t *testing.T) {
 	assertGoldenLines(t, routesGoldenPath, got)
 }
 
-// TestRouteTableMCPIsTheOnlyOptIn — /mcp is the only route the env can change. Another
-// conditional registration would let the golden stay green while the production table
-// differs, so the arrival of a second conditional route is itself made red here.
-func TestRouteTableMCPIsTheOnlyOptIn(t *testing.T) {
-	t.Setenv("AF_MCP_ENABLED", "")
-	_, mux := smokeEnv(t)
-	off := muxRoutes(t, mux)
-
-	want := []string{}
-	for _, r := range readGoldenLines(t, routesGoldenPath) {
-		if r != "ANY /mcp" {
-			want = append(want, r)
+// TestRouteTableConditionalRoutesAreKnown — with every switch off the table is the golden
+// minus the switches' routes, and each switch alone adds exactly its own. A conditional
+// registration missing from routeSwitches would let the golden stay green while a deployment
+// serves a different table, so its arrival is made red here.
+//
+// The all-off half also pins what must exist with no engine: the engine admin and member
+// routes are registered outside registerEngineRoutes' `reg == nil` guard.
+func TestRouteTableConditionalRoutesAreKnown(t *testing.T) {
+	conditional := map[string]bool{}
+	for _, sw := range routeSwitches(t) {
+		for _, r := range sw.routes {
+			conditional[r] = true
 		}
 	}
-	if diff := lineDiff(want, off); diff != "" {
-		t.Errorf("with AF_MCP_ENABLED off, the route table does not match golden minus /mcp"+
-			" (did another env-conditional route appear?):\n%s", diff)
+	var base []string
+	for _, r := range readGoldenLines(t, routesGoldenPath) {
+		if !conditional[r] {
+			base = append(base, r)
+		}
+	}
+	if len(base)+len(conditional) != len(readGoldenLines(t, routesGoldenPath)) {
+		t.Errorf("routeSwitches lists a route that is not in %s; retake the golden", routesGoldenPath)
+	}
+
+	t.Run("off", func(t *testing.T) {
+		_, mux := smokeEnv(t)
+		if diff := lineDiff(base, muxRoutes(t, mux)); diff != "" {
+			t.Errorf("with every switch off, the route table does not match golden minus the"+
+				" conditional routes (did another env-conditional route appear?):\n%s", diff)
+		}
+	})
+	for _, sw := range routeSwitches(t) {
+		t.Run(sw.name, func(t *testing.T) {
+			_, mux := smokeEnvWith(t, sw.name)
+			want := append(append([]string{}, base...), sw.routes...)
+			if diff := lineDiff(want, muxRoutes(t, mux)); diff != "" {
+				t.Errorf("with only %q on, the route table is not the base plus its routes:\n%s", sw.name, diff)
+			}
+		})
+	}
+}
+
+// TestRouteSwitchExemptionsDoNotOutliveTheTest — a switch's authGate exemption must be gone
+// once the test that turned it on ends, or a later all-off mux still lets /engine/ through.
+func TestRouteSwitchExemptionsDoNotOutliveTheTest(t *testing.T) {
+	t.Run("engine on", func(t *testing.T) {
+		smokeEnvWith(t, "engine")
+		if !isAuthExempt("/engine/llm/v1/models") {
+			t.Fatal("the engine switch did not exempt /engine/: the check below proves nothing")
+		}
+	})
+	smokeEnv(t)
+	if isAuthExempt("/engine/llm/v1/models") {
+		t.Error("/engine/ is still auth-exempt after the engine switch's test ended")
 	}
 }
 
@@ -226,7 +329,7 @@ func writeRoutesGolden(t *testing.T, path string, lines []string) {
 	var b strings.Builder
 	b.WriteString("# Every (method, path) buildMux() registers. Generated - do not edit by hand.\n")
 	b.WriteString("# Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...\n")
-	b.WriteString("# ANY = registered without a method. Taken with AF_MCP_ENABLED=true.\n")
+	b.WriteString("# ANY = registered without a method. Taken with every routeSwitch on (routes_golden_test.go).\n")
 	fmt.Fprintf(&b, "# count: %d\n", len(lines))
 	for _, ln := range lines {
 		b.WriteString(ln)

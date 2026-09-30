@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: restore encrypted Cursor auth state
         env:
           AUTH: ${{ secrets.E2E_CURSOR_AUTH_JSON }}

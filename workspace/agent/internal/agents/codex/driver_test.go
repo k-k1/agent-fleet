@@ -33,14 +33,18 @@ type mockCodexServer struct {
 	wmu    sync.Mutex
 	mu     sync.Mutex
 
-	calls          []mockRPC
-	turns          []string
-	clientIDs      []string
-	activeTurn     string
-	nextTurn       int
-	autoComplete   bool
-	failNextSteer  bool
-	failNextStart  json.RawMessage // when set, turn/start answers with this JSON-RPC error instead of starting a turn
+	calls         []mockRPC
+	turns         []string
+	clientIDs     []string
+	activeTurn    string
+	nextTurn      int
+	autoComplete  bool
+	failNextSteer bool
+	failNextStart json.RawMessage // when set, turn/start answers with this JSON-RPC error instead of starting a turn
+	// holdInterrupt answers turn/interrupt without completing the turn, so a test can read the
+	// queue while the pump is still parked in the interrupted turn — after the completion the
+	// pump may already have taken what the interrupt left, and an empty queue proves nothing.
+	holdInterrupt  bool
 	experimental   bool
 	clientResponse chan rpcMsg
 	// callSignal is closed and replaced every time a call is recorded, so a waiter can BLOCK
@@ -49,6 +53,10 @@ type mockCodexServer struct {
 	// module compiles and runs beside this test, and the failure it produces
 	// ("state = running, want completed") reads like a driver defect in an unrelated PR.
 	callSignal chan struct{}
+
+	// holdStart, when set, keeps turn/start unanswered until it is closed: the window in which
+	// the client has sent the start but does not yet know the turn's id.
+	holdStart chan struct{}
 }
 
 func newMockCodexServer(t *testing.T) (*mockCodexServer, *appClient) {
@@ -113,7 +121,11 @@ func (m *mockCodexServer) serve(conn *websocket.Conn) {
 			m.mu.Lock()
 			failErr := m.failNextStart
 			m.failNextStart = nil
+			hold := m.holdStart
 			m.mu.Unlock()
+			if hold != nil {
+				<-hold
+			}
 			if failErr != nil {
 				m.write(map[string]any{"id": json.RawMessage(msg.ID), "error": json.RawMessage(failErr)})
 				continue
@@ -160,7 +172,12 @@ func (m *mockCodexServer) serve(conn *websocket.Conn) {
 			}
 		case "turn/interrupt":
 			m.result(msg.ID, map[string]any{})
-			m.complete("interrupted")
+			m.mu.Lock()
+			hold := m.holdInterrupt
+			m.mu.Unlock()
+			if !hold {
+				m.complete("interrupted")
+			}
 		default:
 			m.result(msg.ID, map[string]any{})
 		}
@@ -489,26 +506,36 @@ func TestResumedActiveTurnQueuesUntilCompletion(t *testing.T) {
 	waitCodexState(t, h, agents.TurnCompleted)
 }
 
-func TestInterruptCancelsTurnAndClearsQueue(t *testing.T) {
+// Agent shutdown interrupts through the teardown path: the whole queue goes, peer input
+// included, and nothing is kept for return (ADR 0105 decision 8).
+func TestAbortManagedDiscardsTheQueue(t *testing.T) {
 	m, cl := newMockCodexServer(t)
-	h := newCodexTestHandle(t, cl, "codex-interrupt")
+	h := newCodexTestHandle(t, cl, "codex-abort-kept")
 	registerCodexTestHandle(t, h)
 	if err := h.Send(agents.TurnInput{Prompt: "long", ClientMessageID: "af_long"}); err != nil {
 		t.Fatal(err)
 	}
 	waitCodexState(t, h, agents.TurnRunning)
-	h.mu.Lock()
-	h.queue = append(h.queue, agents.TurnInput{Prompt: "discard me"})
-	h.mu.Unlock()
-	if err := h.Interrupt(); err != nil {
+	if err := h.Send(peerInput("from a peer", "af_peer")); err != nil {
 		t.Fatal(err)
 	}
-	waitCodexState(t, h, agents.TurnCancelled)
+	m.mu.Lock()
+	m.holdInterrupt = true
+	m.mu.Unlock()
+	AbortManaged()
 	if got := h.queuedPrompts(); len(got) != 0 {
-		t.Fatalf("queue after interrupt = %v", got)
+		t.Fatalf("queue after shutdown interrupt = %v", got)
 	}
-	if got := m.callCount("turn/interrupt"); got != 1 {
-		t.Fatalf("turn/interrupt count = %d", got)
+	h.mu.Lock()
+	kept := h.tq().Discards()
+	h.mu.Unlock()
+	if len(kept) != 0 {
+		t.Fatalf("teardown kept %d discards for return, want none (decision 8)", len(kept))
+	}
+	m.complete("interrupted")
+	waitCodexState(t, h, agents.TurnCancelled)
+	if got := m.callCount("turn/start"); got != 1 {
+		t.Fatalf("turn/start count = %d, want no turn started after the shutdown interrupt", got)
 	}
 }
 
@@ -613,7 +640,7 @@ func TestManagedEnrich(t *testing.T) {
 	h.mu.Lock()
 	h.inter = &agents.Interaction{ID: "item_q9", Kind: "question",
 		Questions: []transcript.Question{{Question: "q1"}, {Question: "q2"}}}
-	h.queue = []agents.TurnInput{{Prompt: "queued one"}}
+	h.tq().Accept(agents.TurnInput{Prompt: "queued one", ClientMessageID: "af_q1", Origin: agents.Origin{Kind: agents.OriginMember}})
 	h.settings.Mode = "plan"
 	h.mu.Unlock()
 
@@ -625,6 +652,9 @@ func TestManagedEnrich(t *testing.T) {
 	}
 	if len(td.Queued) != 2 || td.Queued[1] != "queued one" || td.Mode != "plan" {
 		t.Fatalf("Queued=%v Mode=%q", td.Queued, td.Mode)
+	}
+	if len(td.QueuedItems) != 1 || td.QueuedItems[0].ID != "af_q1" || td.QueuedItems[0].State != agents.EntryQueued {
+		t.Fatalf("QueuedItems = %+v", td.QueuedItems)
 	}
 
 	td2 := agents.TranscriptData{Mode: "normal"}

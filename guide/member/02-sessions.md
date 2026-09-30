@@ -56,9 +56,11 @@ give the conversation a separate storage location or a separate working folder.
 New Codex / cursor / opencode / GitHub Copilot / Kiro sessions default to managed. lcpp / muse
 are Managed only, claude / agy use Terminal (CLI), and shell / SSM use only the terminal path.
 For kinds that support both methods, you can switch the execution method from the session's ⋯
-menu whenever the session is not stopped and the agent is not in the middle of processing. **The
-conversation carries over as is.** You can also open the chat view from Terminal (CLI), but
-managed execution has no terminal screen.
+menu whenever the agent is not in the middle of processing. **The conversation carries over as
+is.** A codex session goes from Managed to Terminal (CLI) only while it is stopped: stop it first,
+then switch. codex lets go of the conversation about a minute after the stop; until then the
+switch, and a resume on Terminal (CLI), is refused with a message to try again shortly. You can
+also open the chat view from Terminal (CLI), but managed execution has no terminal screen.
 
 A Terminal (CLI) screen is kept alive behind the scenes even if you close the browser. You
 never need to operate that keep-alive mechanism yourself.
@@ -148,12 +150,20 @@ synced in bulk.
   readable, but nothing here starts your workspace just to draw a list.
 - A long list **folds at 10 rows**, with "Show more (N left)" underneath — the count keeps counting
   all of them. Past ten rows you also get a **one-line filter**, which searches the rows already on
-  screen (key, title, assignee, labels, repository) and never asks the tracker for anything.
+  screen (key, title, assignee, labels, repository); **×** or Escape clears it. When it finds
+  nothing, or a query fetched only part of its matches, **Search the tracker** asks the tracker
+  with the words you typed.
+- An open GitHub pull request's row shows its **CI** (failing, running or passing) and a mark
+  when it **conflicts** with its base, as of the last fetch. When GitHub has no answer yet, nothing
+  is drawn.
 - A row carries **only what differs between rows**: when every row of a query has the same assignee
   or repository, that line is dropped. A relative time appears only on rows that have **not moved
   for a day or more** — for the rest, being near the top already says it.
 - **🔗** opens the item in its own tracker. A **dot badge** means somebody has already started this
   one, and clicking it opens that session — it is there to stop a second person *before* the launch.
+- The details list **Sessions already on this** by name. One that has since been archived can be
+  restored from there (it asks first; if its working folder is gone it restores but cannot resume),
+  and one that was deleted says so.
 
 ### From a row to a session
 
@@ -172,7 +182,8 @@ workspace is stopped.
   branch naming rules: by default the issue type or labels pick the prefix, then the number and
   the title, e.g. `feature/45-empty-list` or `fix/PROJ-123`. A repository that declares git-flow
   or a Bitbucket branching model gets its own prefixes and base, and the dialog says where the
-  base came from. A name outside the rules only gets a note; nothing is refused. The template is
+  base came from. A repository whose `origin` has `develop` but declares nothing gets an offer to
+  [initialize Git Flow](03-code.md#initialize-git-flow). A name outside the rules only gets a note; nothing is refused. The template is
   in the settings tab. A pull request launches on its own head branch instead (below).
 - Once work is under way, **Comment the work back** appears in the details. The draft holds the
   branch and the changed files, and **the sentence is yours**: it is posted exactly as written and
@@ -648,6 +659,9 @@ one ("tell the session next door what we just did").
 - **Messages cross agent kinds** — claude to codex, opencode to cursor, and so on.
 - **They reach a stopped session** — it is resumed first, then the message is delivered.
 - **Delivery is confirmed; being read or acted on is not.** A reply is not guaranteed either.
+  A **Managed** session that is in the middle of a turn gets the message as its next turn, once
+  the current one ends. Stopping that run does not throw the message away; stopping the session
+  or the workspace before then does.
 - **Only plain text travels.** No conversation history, no files. To pass the context itself,
   use the handoff or the branch above.
 - **Raw shell sessions (shell / ssm) can neither send nor receive**, because the text sent to
