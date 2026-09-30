@@ -686,7 +686,8 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	// A peer message must survive a stop of the turn it waits behind: the person pressing stop
 	// did not write it, and its sender is not watching to send it again (ADR 0041, addendum
 	// 2026-09-30).
-	in := agents.TurnInput{Prompt: prompt, KeepOnInterrupt: peerFrom != ""}
+	in := agents.TurnInput{Prompt: prompt, KeepOnInterrupt: peerFrom != "",
+		Origin: turnOrigin(badgeOriginOf(peerFrom, reportTo, source), peerFrom)}
 	queued := false
 	if qs, ok := h.(agents.QueueingSender); ok {
 		queued, err = qs.SendQueued(in)

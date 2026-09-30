@@ -339,5 +339,5 @@ func sendManagedPrompt(m session.Meta, prompt string) error {
 	if err != nil {
 		return err
 	}
-	return h.Send(agents.TurnInput{Prompt: prompt})
+	return h.Send(agents.TurnInput{Prompt: prompt, Origin: agents.Origin{Kind: agents.OriginMember}})
 }

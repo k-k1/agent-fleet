@@ -160,7 +160,8 @@ func handleManagedTurn(w http.ResponseWriter, meta session.Meta, req turnReq) {
 			httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt is required for start/steer")
 			return
 		}
-		in := agents.TurnInput{Prompt: req.Prompt, Attachments: req.Attachments, ClientMessageID: req.ClientMessageID}
+		in := agents.TurnInput{Prompt: req.Prompt, Attachments: req.Attachments, ClientMessageID: req.ClientMessageID,
+			Origin: agents.Origin{Kind: agents.OriginMember}}
 		if req.Op == "steer" {
 			err = h.Steer(in)
 		} else {

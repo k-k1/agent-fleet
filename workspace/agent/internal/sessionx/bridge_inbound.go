@@ -35,7 +35,7 @@ var (
 // pending interaction — typed text mis-answers an AUQ, and in the plan / permission
 // dialogs it is swallowed while the Enter confirms approve / allow (same guard as
 // submitPromptTUI); P2b will map such answers to buttons instead.
-func injectSessionPrompt(name, prompt string) error {
+func injectSessionPrompt(name, prompt string, origin agents.Origin) error {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return ErrInjectEmpty
@@ -50,7 +50,7 @@ func injectSessionPrompt(name, prompt string) error {
 		return errInjectDecisionPending
 	}
 	if meta, ok := session.ReadMeta(name); ok && meta.DriverKind() == session.DriverManaged {
-		return injectManagedPrompt(meta, prompt)
+		return injectManagedPrompt(meta, prompt, origin)
 	}
 	tn := session.TmuxName(name)
 	if !tmuxx.HasSession(tn) {
@@ -74,7 +74,7 @@ func injectSessionPrompt(name, prompt string) error {
 
 // injectManagedPrompt is the managed-session (no tmux pane) counterpart — the non-HTTP core
 // of handleManagedInputPrompt (session_io.go).
-func injectManagedPrompt(meta session.Meta, prompt string) error {
+func injectManagedPrompt(meta session.Meta, prompt string, origin agents.Origin) error {
 	d, ok := driverOf(meta)
 	if !ok {
 		return fmt.Errorf("managed driver unavailable for kind %s", meta.Kind)
@@ -83,7 +83,7 @@ func injectManagedPrompt(meta session.Meta, prompt string) error {
 	if err != nil {
 		return err
 	}
-	if err := h.Send(agents.TurnInput{Prompt: prompt}); err != nil {
+	if err := h.Send(agents.TurnInput{Prompt: prompt, Origin: origin}); err != nil {
 		return err
 	}
 	markSessionWorking(meta.Name)
@@ -97,7 +97,7 @@ func injectManagedPrompt(meta session.Meta, prompt string) error {
 func StartBridgeReceiver() {
 	bridge.StartReceiver(bridge.ReceiverDeps{
 		Inject: func(sessionName, text, source string) (string, error) {
-			if err := injectSessionPrompt(sessionName, text); err != nil {
+			if err := injectSessionPrompt(sessionName, text, turnOrigin(source, "")); err != nil {
 				return injectFailureReason(err), err
 			}
 			recordInjection(sessionName, text, source)

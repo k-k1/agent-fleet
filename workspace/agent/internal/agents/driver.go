@@ -35,6 +35,44 @@ type TurnInput struct {
 	// Teardown (DropHandle, AbortManaged, a daemon drain) still discards it: the runtime it would
 	// start on is going away.
 	KeepOnInterrupt bool
+
+	// Origin is who this input came from (ADR 0105 decision 1). Every constructor of a
+	// TurnInput sets it; the stop rules read it to tell the member's own input from the rest.
+	Origin Origin
+}
+
+// Origin kinds. The spelling is the mirror's injection-badge vocabulary (sessionx
+// TurnSource*), plus "member" for the input the badge leaves unmarked, so a driver, the
+// messages payload and the Console name an origin the same way.
+const (
+	OriginMember         = "member"
+	OriginPeer           = "peer"
+	OriginSpawn          = "spawn"
+	OriginOperator       = "operator"
+	OriginSchedule       = "schedule"
+	OriginScheduleManual = "schedule-manual"
+	OriginDiscord        = "discord"
+	OriginSlack          = "slack"
+	OriginAutoResume     = "auto-resume"
+)
+
+// Origin says where a TurnInput came from.
+type Origin struct {
+	Kind string `json:"kind"`
+	// From names the sending session for OriginPeer and the parent for OriginSpawn; empty
+	// otherwise.
+	From string `json:"from,omitempty"`
+}
+
+// IsMember reports whether the input is what a person typed as this session's user: the
+// Console's own composer and the chat bridge (ADR 0105 decision 1). An empty Kind is not
+// member input: a constructor that forgot to set it must not end a stop episode.
+func (o Origin) IsMember() bool {
+	switch o.Kind {
+	case OriginMember, OriginDiscord, OriginSlack:
+		return true
+	}
+	return false
 }
 
 // KeptOnInterrupt is what an Interrupt leaves in a driver's queue: the KeepOnInterrupt
