@@ -118,7 +118,10 @@ updated: "2026-09"
 - **押し付け型**: 我々が採番した id を渡し、以後はそれが使われている前提ですべてを引く。
   **CLI がその id を使わなくなった瞬間に、静かに壊れる**（上の claude の例）。
   - claude と copilot（`--session-id`）、cursor（`--resume`）。
-- lcpp と muse はどちらでもない。ストアのキーがスロットそのもの。
+- muse は開始時は押し付け型。AF が UUIDv7 を採番し、MSP の `session/start` がそれをそのまま採用する。
+  ただし AF が記録するのはその応答が返した id とパスで（`internal/agents/muse` の `museSession`）、
+  保存される id は前提ではなくホストの答えである。それを持つストアのキーはスロット。
+- lcpp はどちらでもない。ストアのキーがスロットそのもの。
 
 **id を押し付ける kind を足すときは、回収経路も必ず一緒に出すこと。**
 
@@ -187,8 +190,10 @@ managed driver は `managedDrivers`（`internal/sessionx/session_turn.go`）に�
 - **利用者が見る「既定は Managed」は呼び出し側が決めている**。Console の起動 UI は、registry の項目が
   `managedDriver: true` の kind（`console/src/agents/registry.ts`）を managed で起動する。コンテナ内
   MCP の `create_session` は codex・opencode・copilot・cursor・kiro に `managed` を送る（`mcpStdioCall`）。
+  CP 側の呼び出し元も同じで、CP の MCP の `create_session`（`control-plane/internal/mcpsrv/mcp.go`）と
+  スケジューラの `injectDriver`（`control-plane/scheduler_wake.go`）がこれらに `managed` を送る。
   driver 無しの素の `POST /sessions` は `tui` になる。
-- 両方の driver を持つ kind を足すときは、両方の呼び出し側に足すこと。
+- 両方の driver を持つ kind を足すときは、4 つの呼び出し側すべてに足すこと。
 
 ### 新しい kind が埋める面
 
