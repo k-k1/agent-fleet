@@ -50,7 +50,9 @@ func questionStore(t *testing.T, askedMs int64) session.Meta {
 	}
 	sids.Write(session.UUID(m.Dir, m.Name), ses)
 	insMsg(t, db, "m1", ses, int(askedMs)-2000, `{"role":"user","time":{"created":1}}`)
-	insMsg(t, db, "m2", ses, int(askedMs)-1000, `{"role":"assistant","time":{"created":1}}`)
+	// The asking message comes from the same opencode process as its question, so it must not
+	// predate a pane process that started just before the question.
+	insMsg(t, db, "m2", ses, int(askedMs)-50, `{"role":"assistant","time":{"created":1}}`)
 	insPart(t, db, "p1", "m2", ses, int(askedMs),
 		`{"type":"tool","tool":"question","state":{"status":"running","input":{"questions":[{"question":"Which animal?","options":[{"label":"いぬ1"},{"label":"ねこ2"}]}]}}}`)
 	return m
@@ -170,4 +172,70 @@ func startPaneProcess(t *testing.T) (int, time.Time) {
 		t.Skip("no /proc to read a process start from")
 	}
 	return cmd.Process.Pid, start
+}
+
+// A SIGKILL mid-turn leaves the conversation's newest message incomplete for good, and the
+// relaunch starts a fresh conversation while the slot's mapping still names this one until the
+// first prompt. That turn is not running: the badge, the chat chip and the reaper must not read
+// it as working (#1265). A turn the pane's own opencode started still is.
+func TestLiveStateIgnoresATurnOfADeadProcess(t *testing.T) {
+	sent := time.Date(2026, 9, 30, 2, 17, 18, 62e6, time.UTC)
+	db := newOpencodeLiveStore(t)
+	m := session.Meta{Dir: "/home/dev/repos/x", Name: "oc-dead", Kind: session.KindOpencode}
+	if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created) VALUES('ses_d',NULL,?,1)`, m.Dir); err != nil {
+		t.Fatal(err)
+	}
+	sids.Write(session.UUID(m.Dir, m.Name), "ses_d")
+	ms := sent.UnixMilli()
+	insMsg(t, db, "m1", "ses_d", int(ms), `{"role":"user","time":{"created":1}}`)
+	insMsg(t, db, "m2", "ses_d", int(ms)+1000, `{"role":"assistant","time":{"created":2}}`)
+
+	fakeTmuxSession(t, sent.Add(-time.Minute)) // the pane running the turn
+	if got := LiveState(m); got != "working" {
+		t.Errorf("turn of the live process: LiveState = %q, want working", got)
+	}
+
+	fakeTmuxSession(t, sent.Add(time.Minute)) // relaunched after a SIGKILL
+	if got := LiveState(m); got != "idle" {
+		t.Errorf("turn of a dead process: LiveState = %q, want idle", got)
+	}
+
+	managed := m
+	managed.Driver = session.DriverManaged // its turns run in the serve daemon, not a pane
+	if got := LiveState(managed); got != "working" {
+		t.Errorf("managed: LiveState = %q, want working", got)
+	}
+
+	// The relaunched process's own prompt in the same conversation is live again.
+	insMsg(t, db, "m3", "ses_d", int(sent.Add(2*time.Minute).UnixMilli()), `{"role":"user","time":{"created":3}}`)
+	if got := LiveState(m); got != "working" {
+		t.Errorf("prompt of the relaunched process: LiveState = %q, want working", got)
+	}
+}
+
+// With the pane's process readable, a turn its own opencode starts within tmux's second is
+// working, and one left from before it is not.
+func TestLiveStateIsSplitAtThePaneProcessStart(t *testing.T) {
+	pid, start := startPaneProcess(t)
+	for name, c := range map[string]struct {
+		sent time.Time
+		want string
+	}{
+		"sent to the pane's own opencode": {start.Add(100 * time.Millisecond), "working"},
+		"left from before it":             {start.Add(-100 * time.Millisecond), "idle"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			db := newOpencodeLiveStore(t)
+			m := session.Meta{Dir: "/home/dev/repos/x", Name: "oc-split", Kind: session.KindOpencode}
+			if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created) VALUES('ses_s',NULL,?,1)`, m.Dir); err != nil {
+				t.Fatal(err)
+			}
+			sids.Write(session.UUID(m.Dir, m.Name), "ses_s")
+			insMsg(t, db, "m1", "ses_s", int(c.sent.UnixMilli()), `{"role":"user","time":{"created":1}}`)
+			fakeTmuxSession(t, c.sent.Truncate(time.Second), pid)
+			if got := LiveState(m); got != c.want {
+				t.Errorf("LiveState = %q, want %q", got, c.want)
+			}
+		})
+	}
 }

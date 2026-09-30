@@ -143,7 +143,8 @@ func LiveState(m session.Meta) string {
 		return "idle" // no conversation yet — sitting at the composer
 	}
 	var data []byte
-	switch err := db.QueryRow(`SELECT data FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`, ses).Scan(&data); {
+	var touched int64 // the newest message's last write, in the store's epoch millis
+	switch err := db.QueryRow(`SELECT data, MAX(time_created, COALESCE(time_updated, 0)) FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`, ses).Scan(&data, &touched); {
 	case errors.Is(err, sql.ErrNoRows):
 		return "idle" // a conversation with no messages yet — genuinely at the composer
 	case err != nil:
@@ -159,6 +160,14 @@ func LiveState(m session.Meta) string {
 		return "" // message payload isn't the shape we parse — unknown, not idle
 	}
 	if md.Role == "assistant" && md.Time.Completed > 0 {
+		return "idle"
+	}
+	// A turn left incomplete by an earlier opencode process is not running: a SIGKILL leaves
+	// it that way for good, and the relaunch starts a fresh conversation while the slot's
+	// mapping still names this one until its first message. Bounded like openQuestion, so a
+	// completed conversation the relaunch resumed still reads idle above, and a turn the
+	// current process started or is still writing still reads working.
+	if since := terminalSince(m); !since.IsZero() && touched > 0 && touched < since.UnixMilli() {
 		return "idle"
 	}
 	if len(openQuestion(db, ses, m)) > 0 {

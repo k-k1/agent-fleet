@@ -153,7 +153,7 @@ func TestContractStoreSchema(t *testing.T) {
 
 	// (1) Columns our SQL names must still exist.
 	want := map[string][]string{
-		"message": {"id", "session_id", "time_created", "data"},
+		"message": {"id", "session_id", "time_created", "time_updated", "data"},
 		"part":    {"session_id", "time_created", "data"},
 		"session": {"id", "parent_id", "directory", "time_created", "time_compacting"},
 	}
