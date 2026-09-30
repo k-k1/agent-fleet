@@ -164,8 +164,9 @@ uv venv && uv pip install -r requirements.txt
 
 uv の Linux での既定はキャッシュからの hardlink なので、2 個目の worktree はディスクをあまり食わない
 ——キャッシュと `.venv` が同じファイルシステムにある場合に限る。ファイルシステムを跨ぐと uv はコピーに
-落ちる。これは uv のドキュメントの記述で、ここでの実測ではない。`ecs` で効いてくる: 作業ディスクが
-30 GiB 未満だと uv のキャッシュはホームに残り、退避された `.venv` は `/scratch` にある。
+落ちる。これは uv のドキュメントの記述で、ここでの実測ではない。`ecs` で効いてくるのは `.venv` を
+手で退避した（`af-scratch .venv`）ときだけ: 作業ディスクが 30 GiB 未満だと uv のキャッシュはホームに
+残り、その `.venv` は `/scratch` にある。手で退避しなければ両方ともホームにある。
 `af-scratch --auto` は `.venv` を先回りで作らない: `python3 -m venv .venv` は symlink だと失敗する
 （"Unable to create directory"・Python 3.13.5）。`uv venv` と `uv sync` は symlink 越しでも動く
 （2026-09-30 実測・uv 0.11.28）ので、uv を使うなら `af-scratch .venv` を手で打ってよい。

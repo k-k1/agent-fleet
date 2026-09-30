@@ -188,8 +188,9 @@ uv venv && uv pip install -r requirements.txt
 uv's documented default on Linux is to hardlink packages from its cache, so a second
 worktree costs little disk — when the cache and the `.venv` are on the same file system;
 across file systems uv falls back to copying. That is uv's documentation, not a
-measurement here. It matters on `ecs`: with a working disk under 30 GiB the uv cache
-stays in the home while a relocated `.venv` is on `/scratch`. `af-scratch --auto` does
+measurement here. It matters on `ecs` only when you relocate `.venv` by hand
+(`af-scratch .venv`): with a working disk under 30 GiB the uv cache stays in the home
+while that `.venv` is on `/scratch`. Otherwise both stay in the home. `af-scratch --auto` does
 not pre-create `.venv`: `python3 -m venv .venv` fails on a symlink ("Unable to create
 directory", Python 3.13.5). `uv venv` and `uv sync` work through one (uv 0.11.28, measured
 2026-09-30), so with uv `af-scratch .venv` by hand is fine.
