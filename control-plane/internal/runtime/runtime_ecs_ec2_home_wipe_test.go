@@ -496,38 +496,72 @@ func TestECSEC2AStartOnTheLiveHomeTakesBackAStalePendingErase(t *testing.T) {
 	}
 }
 
-// The record stays within a tag value by forgetting only volumes that no longer have a
-// copy; one that still has a copy is never forgotten, and the write fails instead.
-func TestECSEC2TheEraseRecordForgetsOnlyVolumesWithoutCopies(t *testing.T) {
+// No erased volume is forgotten to make room: a listing cannot prove its copies are gone,
+// even one that shows none. A record with no room for another erase refuses it before
+// anything is destroyed, and keeps every id it has.
+func TestECSEC2AFullEraseRecordRefusesTheErase(t *testing.T) {
 	ctx := context.Background()
 	h := eraseHarness(t, false)
-	rec := eraseRecord{}
-	for i := 0; i < 12; i++ {
-		rec.erased = append(rec.erased, fmt.Sprintf("vol-%017d", i))
+	var ids []string
+	for i := 0; i < 11; i++ {
+		ids = append(ids, fmt.Sprintf("vol-%017d", i)) // no copy of any of them is listed
 	}
-	kept := []ec2types.Snapshot{{VolumeId: aws.String(fmt.Sprintf("vol-%017d", 0))}}
-	if err := h.rt.writeEraseRecord(ctx, "fsap-keep", &rec, kept); err != nil {
-		t.Fatalf("writeEraseRecord: %v", err)
+	full := strings.Join(append(ids, "vol-12345678"), " ") // 254 characters: valid, and no room left
+	h.efs.aps[0].Tags = append(h.efs.aps[0].Tags, efstypes.Tag{Key: aws.String(efsTagErasedVolumes), Value: aws.String(full)})
+	if err := h.rt.EraseHome(ctx); err == nil {
+		t.Fatal("EraseHome succeeded although the record had no room for the erase")
 	}
-	got := strings.Fields(keepMark(t, h))
-	if len(strings.Join(got, " ")) > efsTagValueMax {
-		t.Errorf("record is %d characters; an EFS tag value holds %d", len(strings.Join(got, " ")), efsTagValueMax)
+	if _, ok := h.ec2.volumes["vol-1"]; !ok {
+		t.Error("the volume was deleted although the erase could not be recorded")
 	}
-	if got[0] != fmt.Sprintf("vol-%017d", 0) {
-		t.Errorf("the oldest volume still has a copy but was forgotten: %v", got)
+	if _, ok := h.ec2.snapshots["snap-hib"]; !ok {
+		t.Error("the hibernation snapshot was deleted although the erase could not be recorded")
 	}
-	if got[len(got)-1] != fmt.Sprintf("vol-%017d", 11) {
-		t.Errorf("the newest volume was forgotten: %v", got)
+	if mark := keepMark(t, h); mark != full {
+		t.Errorf("record = %q; no erased volume may be forgotten to make room", mark)
 	}
-	full := eraseRecord{}
-	var copies []ec2types.Snapshot
-	for i := 0; i < 12; i++ {
-		id := fmt.Sprintf("vol-%017d", i)
-		full.erased = append(full.erased, id)
-		copies = append(copies, ec2types.Snapshot{VolumeId: aws.String(id)})
+}
+
+// A failed Clean home that could not take its marks back leaves them pending on a live
+// volume, and the sweeper advances a hibernation without the lifecycle lease. Deleting the
+// volume then would leave the home nowhere — no copy is restored while a mark is pending —
+// so the volume stays until the owner's Start takes the marks back.
+func TestECSEC2HibernationKeepsAVolumeWhileAnEraseIsPending(t *testing.T) {
+	ctx := context.Background()
+	h := eraseHarness(t, false)
+	h.ec2.deleteVolumeErr = errors.New("RequestLimitExceeded")
+	h.efs.tagErrOn = func(call int) error {
+		if call >= 2 { // the mark is written; taking it back fails
+			return errors.New("ServiceUnavailable")
+		}
+		return nil
 	}
-	if err := h.rt.writeEraseRecord(ctx, "fsap-keep", &full, copies); err == nil {
-		t.Error("a record that cannot fit without forgetting a volume with a copy was written anyway")
+	if err := h.rt.EraseHome(ctx); err == nil {
+		t.Fatal("EraseHome succeeded although the volume is still there")
+	}
+	h.efs.tagErrOn, h.ec2.deleteVolumeErr = nil, nil
+	// The hibernation the reaper begins: the capture (completed at once by the fake), then
+	// the step that would delete the volume.
+	for step := 1; step <= 2; step++ {
+		if err := h.rt.hibernate(ctx); err != nil {
+			t.Fatalf("hibernate step %d: %v", step, err)
+		}
+	}
+	if _, ok := h.ec2.volumes["vol-1"]; !ok {
+		t.Fatal("the hibernation deleted a volume with an erase pending; no copy of it can be restored")
+	}
+	// The owner starts: the marks go, and the hibernation can finish.
+	if _, err := h.rt.prepare(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if err := h.rt.hibernate(ctx); err != nil {
+		t.Fatalf("hibernate after the Start: %v", err)
+	}
+	if _, ok := h.ec2.volumes["vol-1"]; ok {
+		t.Fatal("the hibernation did not finish once the marks were taken back")
+	}
+	if got, err := h.rt.restoreSnapshot(ctx); err != nil || got == "" {
+		t.Fatalf("restoreSnapshot = %q, %v; the home no erase reached must come back", got, err)
 	}
 }
 

@@ -223,7 +223,7 @@ func TestECSEC2LiveEraseHome(t *testing.T) {
 		// Once that volume is recorded as erased, the same copy is refused and deleted.
 		rec.markPending([]string{volID})
 		rec.confirmPending()
-		if err := rt.writeEraseRecord(ctx, keepAP, &rec, nil); err != nil {
+		if err := rt.writeEraseRecord(ctx, keepAP, rec); err != nil {
 			t.Fatalf("writeEraseRecord: %v", err)
 		}
 		if got, err := rt.restoreSnapshot(ctx); err != nil || got != "" {

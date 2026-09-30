@@ -1442,11 +1442,14 @@ on its EBS volume.
   marks back, and if that write fails too, the member's next Start takes back every pending mark once it finds
   its live home among them. A Start holds the lifecycle lease, so no erase is running then, and while a mark is
   pending no home can be created, so a live home that is itself marked means no pending erase destroyed anything
-  — not even the marks on older volumes a leftover copy came from. Both halves are needed:
+  — not even the marks on older volumes a leftover copy came from. Until then the pool sweeper, which finishes a
+  hibernation without the lease, keeps the volume: with a mark pending no copy would be restored, so deleting it
+  would leave the home nowhere. Both halves are needed:
   an id written only after the deletion is lost whenever that one write fails, and a mark left on a home that
-  survived would refuse its only legitimate hibernation copy. A tag value holds 256 characters, so the oldest ids
-  with no copy left drop off first; an id whose copy is still listed is never dropped — the write fails instead.
-  Measured on the sandbox account against the VolumeId EBS reports: a copy of an unrecorded volume is restored,
+  survived would refuse its only legitimate hibernation copy. No id is ever dropped to make room, since a
+  listing cannot prove that a copy of an erased volume is gone. A tag value holds 256 characters, about ten
+  volumes; a full record refuses the next erase before anything is destroyed, and Destroy is then the way to
+  remove that home. Measured on the sandbox account against the VolumeId EBS reports: a copy of an unrecorded volume is restored,
   the same copy is refused once its volume is recorded. The one thing it does not keep that docker keeps: a keep file a tool replaced since the last start
   (the entrypoint moves it to EFS at the next boot) goes with the volume.
 - **Backups stay, and deleting them is a separate action.** A backup outliving the home is what decision 17

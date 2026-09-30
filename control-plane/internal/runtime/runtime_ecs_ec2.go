@@ -4152,7 +4152,7 @@ func (e *ecsEC2Runtime) EraseHome(ctx context.Context) error {
 	// hand the home back; and if this cannot be written, nothing is destroyed.
 	added := rec.markPending(candidates)
 	if len(added) > 0 {
-		if err := e.writeEraseRecord(ctx, apID, &rec, snaps); err != nil {
+		if err := e.writeEraseRecord(ctx, apID, rec); err != nil {
 			return err
 		}
 	}
@@ -4162,7 +4162,7 @@ func (e *ecsEC2Runtime) EraseHome(ctx context.Context) error {
 		// otherwise its legitimate hibernation copies would stay blocked.
 		if still, lerr := e.homeVolume(ctx); lerr != nil || still != nil {
 			rec.unmarkPending(added)
-			if werr := e.writeEraseRecord(ctx, apID, &rec, snaps); werr != nil {
+			if werr := e.writeEraseRecord(ctx, apID, rec); werr != nil {
 				return fmt.Errorf("%w (and the pending erase could not be taken back, so this home cannot be restored from a hibernation until its owner starts it or Clean home runs again: %v)", err, werr)
 			}
 			return err
@@ -4171,7 +4171,7 @@ func (e *ecsEC2Runtime) EraseHome(ctx context.Context) error {
 	// The live volume is gone — a member has one — so every pending erase is now done:
 	// this call's, and any that an earlier attempt left.
 	rec.confirmPending()
-	recordErr := e.writeEraseRecord(ctx, apID, &rec, snaps)
+	recordErr := e.writeEraseRecord(ctx, apID, rec)
 	// No capture of the volume can start once it is gone. One that started just before —
 	// the pool sweeper advances a hibernation without the lifecycle lease this erase
 	// holds — can be missing from an eventually consistent listing, so look twice. The
@@ -4256,21 +4256,16 @@ func appendNew(list []string, v string) []string {
 // efsTagValueMax is the longest value an EFS tag may hold.
 const efsTagValueMax = 256
 
-// writeEraseRecord stores rec on the keep access point. When it does not fit, the oldest
-// erased ids whose volumes have no copy left in snaps go first; an id with a copy still
-// listed is never dropped, because that copy would become restorable. If it still does
-// not fit, the write fails rather than forget one. A transient refusal is retried within
-// the caller's budget.
-func (e *ecsEC2Runtime) writeEraseRecord(ctx context.Context, apID string, rec *eraseRecord, snaps []ec2types.Snapshot) error {
-	hasCopy := func(v string) bool {
-		return slices.ContainsFunc(snaps, func(s ec2types.Snapshot) bool { return aws.ToString(s.VolumeId) == v })
-	}
-	for len(rec.String()) > efsTagValueMax {
-		i := slices.IndexFunc(rec.erased, func(v string) bool { return !hasCopy(v) })
-		if i < 0 {
-			return fmt.Errorf("the erase record of %s is full and every volume in it still has a copy; delete those snapshots first", e.base.name)
-		}
-		rec.erased = slices.Delete(rec.erased, i, i+1)
+// writeEraseRecord stores rec on the keep access point. No id is ever dropped to make
+// room: that no copy of an erased volume is left cannot be told from an eventually
+// consistent listing, and a forgotten id makes such a copy restorable. A record that does
+// not fit fails the write instead — about ten volumes, and the pending mark is written
+// before anything is destroyed, so a full record refuses the erase. A transient refusal
+// is retried within the caller's budget.
+func (e *ecsEC2Runtime) writeEraseRecord(ctx context.Context, apID string, rec eraseRecord) error {
+	if n := len(rec.String()); n > efsTagValueMax {
+		return fmt.Errorf("the record of erased homes of %s is full (%d volumes need %d of %d characters) and never forgets one; Destroy removes this home together with the record",
+			e.base.name, len(rec.erased)+len(rec.pending), n, efsTagValueMax)
 	}
 	delay := 2 * time.Second
 	for attempt := 1; ; attempt++ {
@@ -4341,7 +4336,7 @@ func (e *ecsEC2Runtime) dropStalePendingErase(ctx context.Context, apID string, 
 	}
 	stale := strings.Join(rec.pending, ", ")
 	rec.pending = nil
-	if err := e.writeEraseRecord(ctx, apID, &rec, nil); err != nil {
+	if err := e.writeEraseRecord(ctx, apID, rec); err != nil {
 		log.Printf("ecs-ec2: %s still carries a pending erase (%s) although %s is its live home: %v", e.base.name, stale, aws.ToString(vol.VolumeId), err)
 		return
 	}
@@ -4501,6 +4496,20 @@ func (e *ecsEC2Runtime) hibernate(ctx context.Context) error {
 		}
 		switch s.State {
 		case ec2types.SnapshotStateCompleted:
+			// A Clean home that failed with this volume still here, and could not take its
+			// marks back, leaves them pending — and while any is, restoreSnapshot restores
+			// nothing, so deleting the volume would leave the home nowhere. It stays until
+			// the owner's Start takes the marks back or Clean home finishes. This step runs
+			// from the sweeper, without the lifecycle lease, which is why it asks here.
+			rec, err := e.eraseRecord(ctx)
+			if err != nil {
+				return err
+			}
+			if len(rec.pending) > 0 {
+				log.Printf("ecs-ec2 hibernate: %s has an unfinished Clean home (%s); keeping %s until it is resolved",
+					e.base.name, strings.Join(rec.pending, ", "), volumeID)
+				return nil
+			}
 			log.Printf("ecs-ec2 hibernate: %s captured in %s; deleting the volume",
 				e.base.name, aws.ToString(s.SnapshotId))
 			return e.deleteHomeVolume(ctx)
