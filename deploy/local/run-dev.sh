@@ -246,7 +246,8 @@ if [ "$MODE" != native ]; then
   # Image smoke test (verifies baked pins / lean absence; takes seconds).
   # Match the smoke's expectation to how we built (default lean). Skip with WS_SMOKE=0.
   if [ "${WS_SMOKE:-1}" = "1" ]; then
-    EXPECT_AGENT_CLIS="${BAKE_AGENT_CLIS:-0}" bash "$ROOT/deploy/local/e2e-smoke.sh" "$WS_IMAGE"
+    EXPECT_AGENT_CLIS="${BAKE_AGENT_CLIS:-0}" EXPECT_RTK_VER="$RTK_VERSION" \
+      bash "$ROOT/deploy/local/e2e-smoke.sh" "$WS_IMAGE"
   fi
 else
   # native: no image — build the workspace-agent for this host instead, and check

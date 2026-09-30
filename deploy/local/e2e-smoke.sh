@@ -327,7 +327,9 @@ EXPECT_AGY="$(arg_pin AGY_VERSION)"
 EXPECT_AGY_BUILD="$(arg_pin AGY_RELEASE_BUILD)"
 EXPECT_AGY_SHA_X64="$(arg_pin AGY_SHA256_X64)"
 EXPECT_AGY_SHA_ARM64="$(arg_pin AGY_SHA256_ARM64)"
-EXPECT_RTK_VER="$(arg_pin RTK_VERSION)"
+# run-dev.sh can override the rtk pin with a build-arg; it passes the same value here so
+# the smoke checks the rtk it asked for rather than the Dockerfile default.
+EXPECT_RTK_VER="${EXPECT_RTK_VER:-$(arg_pin RTK_VERSION)}"
 EXPECT_GO="$(arg_pin GO_VERSION)"
 EXPECT_GH="$(arg_pin GH_VERSION)"
 EXPECT_CHROMIUM="$(arg_pin CHROMIUM_VERSION)"
