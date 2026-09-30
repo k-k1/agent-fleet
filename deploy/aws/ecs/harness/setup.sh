@@ -211,18 +211,47 @@ aws iam put-role-policy --role-name $N-cp --policy-name cp-runtime --policy-docu
 # 80-minute E2E run then fails part way through with credential errors (with a profile the
 # SDK re-assumes role_arn by itself).
 CPROLE=arn:aws:iam::$ACCOUNT:role/$N-cp
-cat > aws-config <<CFG
+# The file is the current config plus the CP section, not the CP section alone: under
+# af-aws-exec, af-sandbox is defined only in the one-profile config AWS_CONFIG_FILE points
+# at, and a file without it leaves source_profile unresolvable. A CP section already in
+# the source (a re-run from a shell pointed at this file) is dropped so it appears once.
+SRC_CONFIG=${AWS_CONFIG_FILE:-$HOME/.aws/config}
+{
+  if [ -r "$SRC_CONFIG" ]; then
+    # Only the text between "[" and the first "]" names the section: a trailing comment
+    # or a CRLF's \r after it must not stop the old CP section from being dropped.
+    awk -v p="$N-cp" '
+      /^[ \t]*\[/ { h = $0; sub(/^[ \t]*\[/, "", h); sub(/\].*/, "", h); gsub(/[ \t"]/, "", h)
+                    skip = (h == "profile" p) }
+      !skip' "$SRC_CONFIG"
+    echo
+  fi
+  cat <<CFG
 [profile $N-cp]
 role_arn = $CPROLE
 source_profile = af-sandbox
 region = $AWS_REGION
 CFG
+} > aws-config.new
+mv aws-config.new aws-config
+# --profile, not AWS_PROFILE: the CLI prefers AWS_ACCESS_KEY_ID in the environment (which
+# af-aws-exec sets) over AWS_PROFILE, so the env-var form answers as the deployer and
+# the check passes without the role ever being assumed. Only the flag outranks them.
 echo "waiting for the CP role to become assumable (IAM is eventually consistent)"
+CPARN=
 for _ in $(seq 30); do
-  AWS_CONFIG_FILE=$PWD/aws-config AWS_PROFILE=$N-cp aws sts get-caller-identity >/dev/null 2>&1 && break
+  CPARN=$(AWS_CONFIG_FILE=$PWD/aws-config aws sts get-caller-identity --profile $N-cp \
+    --query Arn --output text 2>/dev/null) && break
+  CPARN=
   sleep 5
 done
-AWS_CONFIG_FILE=$PWD/aws-config AWS_PROFILE=$N-cp aws sts get-caller-identity --query Arn --output text
+case "$CPARN" in
+  "arn:aws:sts::$ACCOUNT:assumed-role/$N-cp/"*) echo "CP role assumed: $CPARN" ;;
+  *)
+    echo "profile $N-cp in $PWD/aws-config did not assume $CPROLE (got: ${CPARN:-no identity});" \
+      "E2E would run with someone else's permissions" >&2
+    exit 1 ;;
+esac
 
 aws logs create-log-group --log-group-name /$N >/dev/null 2>&1 || true
 
