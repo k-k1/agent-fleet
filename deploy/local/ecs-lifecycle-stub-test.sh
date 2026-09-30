@@ -997,6 +997,11 @@ has "ImageComfyImageTag=$COMFY_DEFAULT"
 order "$COMFY_GHCR" "cloudformation deploy --stack-name af-ecs-engines"
 grep -q "ImageComfyImageTag=$COMFY_DEFAULT ($COMFY_OLD was an earlier template default" "$WORK/out3i9a" \
   || fail "the repair did not say what it was repairing"
+# Unpinned, the digest that landed is still read back and printed, so the output says what the
+# stack is about to run.
+COMFY_ECR="123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/af-comfyui:$COMFY_DEFAULT"
+has "crane digest $COMFY_ECR"
+grep -q "af-comfyui:$COMFY_DEFAULT digest: sha256:" "$WORK/out3i9a" || fail "the landed ComfyUI digest was not printed"
 
 echo "   3i-9b: image role off — named, nothing copied"
 : > "$LOG"
@@ -1040,6 +1045,83 @@ hasnt "crane copy ghcr.io/k-k1/agent-fleet/comfyui"
 hasnt "ImageComfyImageTag="
 has "cloudformation deploy --stack-name af-ecs-engines"
 has "cloudformation deploy --stack-name t-ingress"
+
+echo "   3i-9f: --comfy-digest pins the copy source; the destination is still the tag"
+# comfyui-image.yml re-dispatched with an existing tag overwrites it in GHCR, so the tag alone
+# does not say which bytes this repair copies. Same contract as standup.sh --comfy-digest (3g-7).
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_COMFY_IN_ECR=0 STUB_ENGINES_LIVE=1 STUB_ENGINES_IMAGE_ON=1 \
+  STUB_COMFY_WANT="$COMFY_OLD" STUB_COMFY_DIGEST="$PIN_HEX" \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --comfy-digest "$PIN" \
+  > "$WORK/out3i9f" 2>&1 || { cat "$WORK/out3i9f"; fail "update.sh with a matching --comfy-digest failed"; }
+has "crane manifest ghcr.io/k-k1/agent-fleet/comfyui@$PIN"
+has "crane copy ghcr.io/k-k1/agent-fleet/comfyui@$PIN $COMFY_ECR"
+hasnt "crane copy ghcr.io/k-k1/agent-fleet/comfyui:"
+order "crane copy ghcr.io/k-k1/agent-fleet/comfyui@$PIN" "crane digest $COMFY_ECR"
+order "crane digest $COMFY_ECR" "cloudformation deploy --stack-name af-ecs-engines"
+has "ImageComfyImageTag=$COMFY_DEFAULT"
+
+echo "   3i-9g: 🔴 a pin that does not match what is already in ECR — tag kept, release goes on"
+# The repeat-run branch never reaches the copy, so the pin has to be checked there too. Naming the
+# tag anyway would point the image role at bytes nobody vouched for; the old tag still runs.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_COMFY_IN_ECR=1 STUB_ENGINES_LIVE=1 STUB_ENGINES_IMAGE_ON=1 \
+  STUB_COMFY_WANT="$COMFY_OLD" STUB_COMFY_DIGEST="${OTHER_DIGEST#sha256:}" \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --comfy-digest "$PIN" \
+  > "$WORK/out3i9g" 2>&1 || { cat "$WORK/out3i9g"; fail "update.sh stopped the release over a ComfyUI pin mismatch"; }
+hasnt "crane copy ghcr.io/k-k1/agent-fleet/comfyui"
+has "crane digest $COMFY_ECR"
+hasnt "ImageComfyImageTag="
+grep -q "most likely copied before this pin was chosen" "$WORK/out3i9g" || fail "the ComfyUI pin mismatch was not explained"
+grep -q "keeps ImageComfyImageTag=$COMFY_OLD" "$WORK/out3i9g" || fail "it did not say the stack keeps its tag"
+grep -q "comfyui@$PIN" "$WORK/out3i9g" || fail "the hand-run copy it suggests dropped the pin"
+has "cloudformation deploy --stack-name af-ecs-engines"
+has "cloudformation deploy --stack-name t-ingress"
+
+echo "   3i-9h: a pinned read-back that fails is explained as unreadable, and the tag is kept"
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_COMFY_IN_ECR=0 STUB_ENGINES_LIVE=1 STUB_ENGINES_IMAGE_ON=1 \
+  STUB_COMFY_WANT="$COMFY_OLD" STUB_COMFY_DIGEST_FAILS=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --comfy-digest "$PIN" \
+  > "$WORK/out3i9h" 2>&1 || { cat "$WORK/out3i9h"; fail "update.sh stopped the release over an unreadable ComfyUI digest"; }
+hasnt "ImageComfyImageTag="
+grep -q "could not be read back" "$WORK/out3i9h" || fail "an unreadable ComfyUI digest was not explained as unreadable"
+grep -q "most likely copied before this pin was chosen" "$WORK/out3i9h" \
+  && fail "an unreadable ComfyUI digest was explained with the real-mismatch wording"
+# Unpinned, the same failed read must not undo a copy that succeeded.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_COMFY_IN_ECR=0 STUB_ENGINES_LIVE=1 STUB_ENGINES_IMAGE_ON=1 \
+  STUB_COMFY_WANT="$COMFY_OLD" STUB_COMFY_DIGEST_FAILS=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3i9h2" 2>&1 \
+  || { cat "$WORK/out3i9h2"; fail "an unpinned update failed on an unreadable ComfyUI digest"; }
+has "ImageComfyImageTag=$COMFY_DEFAULT"
+
+echo "   3i-9i: a pinned digest GHCR has not got points at the pin, not at a re-bake"
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_COMFY_IN_ECR=0 STUB_COMFY_IN_GHCR=0 STUB_ENGINES_LIVE=1 \
+  STUB_ENGINES_IMAGE_ON=1 STUB_COMFY_WANT="$COMFY_OLD" \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --comfy-digest "$PIN" \
+  > "$WORK/out3i9i" 2>&1 || { cat "$WORK/out3i9i"; fail "update.sh stopped the release over a pin absent from GHCR"; }
+grep -q "check the --comfy-digest value" "$WORK/out3i9i" || fail "a pin absent from GHCR was not blamed on the pin"
+hasnt "crane copy ghcr.io/k-k1/agent-fleet/comfyui"
+hasnt "ImageComfyImageTag="
+
+echo "   3i-9j: a pin with nothing to pin is said to be ignored; a malformed one is refused"
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_COMFY_IN_ECR=0 STUB_ENGINES_LIVE=1 STUB_ENGINES_IMAGE_ON=1 \
+  STUB_COMFY_WANT="$COMFY_DEFAULT" \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --comfy-digest "$PIN" \
+  > "$WORK/out3i9j" 2>&1 || { cat "$WORK/out3i9j"; fail "update.sh failed with an unused --comfy-digest"; }
+grep -q -- "--comfy-digest is ignored" "$WORK/out3i9j" || fail "an unused --comfy-digest was dropped silently"
+hasnt "crane copy ghcr.io/k-k1/agent-fleet/comfyui"
+: > "$LOG"
+rc=0
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --comfy-digest not-a-digest \
+  >/dev/null 2>"$WORK/out3i9j.err" || rc=$?
+[ "$rc" = 2 ] || fail "a malformed --comfy-digest was not refused with exit 2 (got $rc)"
+grep -q -- "--comfy-digest wants" "$WORK/out3i9j.err" || fail "the malformed --comfy-digest was not explained"
+hasnt "cloudformation"
 
 echo "== case 3i-5: a 20-platform change set that REPLACES something is handed back =="
 # Replacing an ECR repository throws its images away and replacing a role breaks every task

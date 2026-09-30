@@ -265,14 +265,16 @@ af_stack_output() {
 # towards keeping the captured state from going stale.
 AF_GHCR_DEFAULT="${AF_DEV_GHCR:-ghcr.io/k-k1/agent-fleet}"
 
-# af_ghcr_has <repo> <tag> — is that tag in GHCR?
+# af_ghcr_has <repo> <tag|sha256:…> — is that tag (or that digest) in GHCR?
 #   0=yes / 1=no / 2=could not tell (no crane, etc.).
 # Do not fold 2 into 1 (no): "no tool, could not measure" and "measured, absent" are
 # different facts, and treating the former as the latter blocks a teardown by claiming
 # something that does exist is about to disappear.
 af_ghcr_has() {
   command -v crane >/dev/null 2>&1 || return 2
-  crane manifest "$AF_GHCR_DEFAULT/$1:$2" >/dev/null 2>&1 && return 0
+  local sep=":"
+  case "$2" in sha256:*) sep="@" ;; esac
+  crane manifest "$AF_GHCR_DEFAULT/$1$sep$2" >/dev/null 2>&1 && return 0
   return 1
 }
 
@@ -369,24 +371,37 @@ af_ecr_pin_verify() {
   return 1
 }
 
-# af_comfy_ensure <ecr-host> <tag> — make sure af-comfyui:<tag> is in ECR, for update.sh moving
-# a stack off a stale ImageComfyImageTag. Same answers as af_engine_tools_ensure; the image is
-# baked only by comfyui-image.yml, so 1 is something no script here can fix. 3 = the copy itself
-# failed: callers use `|| rc=$?`, which switches set -e off in here.
+# af_comfy_ensure <ecr-host> <tag> [<pin>] — make sure af-comfyui:<tag> is in ECR, for update.sh
+# moving a stack off a stale ImageComfyImageTag. Same answers as af_engine_tools_ensure; the image
+# is baked only by comfyui-image.yml, so 1 is something no script here can fix. 3 = the copy itself
+# failed: callers use `|| rc=$?`, which switches set -e off in here. 4 = <pin> (update.sh
+# --comfy-digest) was set and af_ecr_pin_verify refused what is in ECR.
+#
+# The pin is the copy SOURCE (the tag in GHCR is mutable, a re-dispatch of comfyui-image.yml
+# overwrites it); the destination stays af-comfyui:<tag>, the name the stack will be given. The
+# read-back runs on both branches, for the reason af_ecr_pin_verify gives.
 af_comfy_ensure() {
-  local host="$1" tag="$2" ghcr
+  local host="$1" tag="$2" pin="${3:-}" src ghcr
   if af_ecr_has af-comfyui "$tag"; then
     echo "    · af-comfyui:$tag is already in ECR"
-    return 0
+    # The read-back goes through crane and needs ECR auth. No crane means nothing to read with,
+    # which af_ecr_pin_verify already reports; it must not turn a present image into an error.
+    if [ "${AF_DRY:-0}" != 1 ] && command -v crane >/dev/null 2>&1; then
+      "${AWS[@]}" ecr get-login-password | crane auth login "$host" -u AWS --password-stdin
+    fi
+  else
+    src="$AF_GHCR_DEFAULT/comfyui:$tag"
+    [ -n "$pin" ] && src="$AF_GHCR_DEFAULT/comfyui@$pin"
+    af_ghcr_has comfyui "${pin:-$tag}"; ghcr=$?
+    [ "$ghcr" = 2 ] && return 2
+    [ "$ghcr" = 0 ] || return 1
+    if [ "${AF_DRY:-0}" != 1 ]; then
+      "${AWS[@]}" ecr get-login-password | crane auth login "$host" -u AWS --password-stdin
+    fi
+    echo "    · crane copy $src"
+    af_run crane copy "$src" "$host/af-comfyui:$tag" || return 3
   fi
-  af_ghcr_has comfyui "$tag"; ghcr=$?
-  [ "$ghcr" = 2 ] && return 2
-  [ "$ghcr" = 0 ] || return 1
-  if [ "${AF_DRY:-0}" != 1 ]; then
-    "${AWS[@]}" ecr get-login-password | crane auth login "$host" -u AWS --password-stdin
-  fi
-  echo "    · crane copy $AF_GHCR_DEFAULT/comfyui:$tag"
-  af_run crane copy "$AF_GHCR_DEFAULT/comfyui:$tag" "$host/af-comfyui:$tag" || return 3
+  af_ecr_pin_verify --comfy-digest "$host" af-comfyui "$tag" "$pin" || return 4
 }
 
 # af_cfn_param_default <template> <key> — the `Default:` a template declares for a parameter.
