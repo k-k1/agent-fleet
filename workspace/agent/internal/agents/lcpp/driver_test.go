@@ -533,7 +533,7 @@ func TestDriverInterruptCancelsRunningTurn(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	waitState(t, h, agents.TurnRunning)
-	if err := h.Interrupt(); err != nil {
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 		t.Fatalf("Interrupt: %v", err)
 	}
 	waitState(t, h, agents.TurnCancelled)
@@ -597,7 +597,7 @@ func TestDriverInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
 	if err := h.Steer(agents.TurnInput{Prompt: "own follow-up"}); err != nil {
 		t.Fatalf("Steer: %v", err)
 	}
-	if err := h.Interrupt(); err != nil {
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 		t.Fatalf("Interrupt: %v", err)
 	}
 	select {

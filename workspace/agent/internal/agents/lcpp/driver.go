@@ -610,7 +610,17 @@ func (h *threadHandle) failTurn(st *Store, msg string) {
 // approve()/askUser() (waitInteraction's own ctx.Done() case) unblocks the same way a
 // mid-Send/mid-tool cancellation would — Interrupt does not need to know which of the three
 // harness.Run was doing when it was called.
-func (h *threadHandle) Interrupt() error { return h.interrupt(true) }
+// Interrupt, RemoveQueued and DismissDiscard: the ADR 0105 contract. Stage-0 shims over the
+// old stop until this driver moves onto agents.TurnQueue (#1292).
+func (h *threadHandle) Interrupt(agents.InterruptOpts) (agents.InterruptResult, error) {
+	return agents.InterruptResult{Stop: agents.StopFirst}, h.interrupt(true)
+}
+
+func (h *threadHandle) RemoveQueued(string) (agents.QueueItem, error) {
+	return agents.QueueItem{}, agents.ErrNotQueued
+}
+
+func (h *threadHandle) DismissDiscard(string) bool { return false }
 
 // interruptAll is Interrupt for teardown (dropHandle, Agent shutdown): the whole queue goes.
 // The pump checks neither liveness nor a context, so a kept entry would still be run by a

@@ -373,7 +373,7 @@ func TestInterruptCancelsAndClearsQueue(t *testing.T) {
 	if err := h.Steer(agents.TurnInput{Prompt: "queued", ClientMessageID: "msg_q"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.Interrupt(); err != nil {
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	waitState(t, h, agents.TurnCancelled)
@@ -412,7 +412,7 @@ func TestInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
 	if err := h.Steer(agents.TurnInput{Prompt: "own follow-up", ClientMessageID: "msg_own"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.Interrupt(); err != nil {
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -436,7 +436,7 @@ func TestInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
 	if len(turns) != 2 || turns[1] != "from a peer" {
 		t.Errorf("turns = %q, want the peer message as the turn after the stop", turns)
 	}
-	_ = h.Interrupt() // release the kept turn so the pump drains before cleanup
+	_, _ = h.Interrupt(agents.InterruptOpts{}) // release the kept turn so the pump drains before cleanup
 }
 
 // A turn this handle did not start (an attached TUI's, or one a previous Agent process left

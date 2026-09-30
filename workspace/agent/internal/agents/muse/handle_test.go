@@ -264,7 +264,7 @@ func TestInterruptCancelsTheQueueAndCallsTurnInterrupt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := h.Interrupt(); err != nil {
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 		t.Fatalf("interrupt: %v", err)
 	}
 	m := host.WaitForMethod(msp.MethodTurnInterrupt)
@@ -320,7 +320,7 @@ func TestInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := h.Interrupt(); err != nil {
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 		t.Fatalf("interrupt: %v", err)
 	}
 	host.WaitForMethod(msp.MethodTurnInterrupt)

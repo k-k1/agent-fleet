@@ -729,7 +729,17 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 // Interrupt cancels the running turn and clears the queued follow-ups: an expressed intent to
 // stop reaches the queue too. KeepOnInterrupt input is the exception and starts as the next
 // turn — it is another session's message, not the user's own follow-up.
-func (h *threadHandle) Interrupt() error { return h.interrupt(true) }
+// Interrupt, RemoveQueued and DismissDiscard: the ADR 0105 contract. Stage-0 shims over the
+// old stop until this driver moves onto agents.TurnQueue (#1292).
+func (h *threadHandle) Interrupt(agents.InterruptOpts) (agents.InterruptResult, error) {
+	return agents.InterruptResult{Stop: agents.StopFirst}, h.interrupt(true)
+}
+
+func (h *threadHandle) RemoveQueued(string) (agents.QueueItem, error) {
+	return agents.QueueItem{}, agents.ErrNotQueued
+}
+
+func (h *threadHandle) DismissDiscard(string) bool { return false }
 
 // interruptAll is Interrupt for Agent shutdown: the whole queue goes, because a kept entry
 // would be started on the way down.

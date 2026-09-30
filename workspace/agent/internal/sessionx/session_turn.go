@@ -48,7 +48,7 @@ func driverOf(m session.Meta) (agents.Driver, bool) {
 
 // turnReq is the wire body of POST /sessions/{name}/turn.
 type turnReq struct {
-	Op     string `json:"op"` // "start" | "steer" | "interrupt"
+	Op     string `json:"op"` // "start" | "steer" | "interrupt" | "remove" | "dismiss_discard"
 	Prompt string `json:"prompt"`
 	// Attachments holds absolute paths of files to attach to this turn (docs/log/27 §10).
 	// Only a managed driver interprets them (TurnInput.Attachments → API attachment); for tui
@@ -57,6 +57,12 @@ type turnReq struct {
 	// ClientMessageID is an AF-assigned idempotency key (docs/log/27 §4) that lets a managed
 	// driver's ledger dedupe resends. Empty means the driver assigns one.
 	ClientMessageID string `json:"clientMessageID"`
+
+	// DiscardQueue is interrupt's emergency brake (ADR 0105 decision 3): stop and discard
+	// everything still cancellable, whatever the stop episode says. Managed only.
+	DiscardQueue bool `json:"discard_queue"`
+	// ID names the queue entry for remove and the kept discard for dismiss_discard.
+	ID string `json:"id"`
 }
 
 // HandleSessionTurn (POST /sessions/{name}/turn) applies a semantic turn operation
@@ -151,7 +157,7 @@ func handleManagedTurn(w http.ResponseWriter, meta session.Meta, req turnReq) {
 	}
 	switch req.Op {
 	case "interrupt":
-		if err := h.Interrupt(); err != nil {
+		if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 			writeRuntimeErr(w, err)
 			return
 		}

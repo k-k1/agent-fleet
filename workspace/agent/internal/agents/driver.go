@@ -229,7 +229,16 @@ type ThreadSnapshot struct {
 type ThreadHandle interface {
 	Send(in TurnInput) error  // the turn/start equivalent
 	Steer(in TurnInput) error // the turn/steer equivalent (extra input into a running turn)
-	Interrupt() error         // the turn/interrupt equivalent
+	// Interrupt is the Console's stop (ADR 0105 decisions 1-3): a first stop ends the running
+	// turn and the queue continues; a stop inside the stop episode, or one with
+	// DiscardQueue, also discards everything still cancellable and reports it.
+	Interrupt(opts InterruptOpts) (InterruptResult, error)
+	// RemoveQueued takes one queued entry out by id while it is cancellable (decision 5):
+	// ErrAlreadyStarted once it is committed, ErrNotQueued for an id the queue does not hold.
+	RemoveQueued(id string) (QueueItem, error)
+	// DismissDiscard drops a kept discard once the member restored or dismissed it
+	// (decision 4). false when it is already gone.
+	DismissDiscard(id string) bool
 	UpdateSettings(s ThreadSettings) error
 	Respond(reply InteractionReply) error
 	Events() <-chan Event

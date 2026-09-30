@@ -517,7 +517,7 @@ func TestInterruptCancelsTurnAndClearsQueue(t *testing.T) {
 	h.mu.Lock()
 	h.queue = append(h.queue, agents.TurnInput{Prompt: "discard me"})
 	h.mu.Unlock()
-	if err := h.Interrupt(); err != nil {
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	waitCodexState(t, h, agents.TurnCancelled)
@@ -554,7 +554,7 @@ func TestInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := h.Interrupt(); err != nil {
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	// The kept turn is left running (no autoComplete), so the pump is parked in it: anything

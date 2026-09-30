@@ -19,7 +19,7 @@ func TestStopDuringTurnStartInterruptsTheTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitCodexCalls(t, m, "turn/start", 1)
-	if err := h.Interrupt(); err != nil {
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := m.callCount("turn/interrupt"); got != 0 {
@@ -41,7 +41,7 @@ func TestStopDuringTurnStartSparesPeerInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitCodexCalls(t, m, "turn/start", 1)
-	if err := h.Interrupt(); err != nil {
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	close(hold)

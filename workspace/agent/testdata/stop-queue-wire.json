@@ -1,0 +1,152 @@
+{
+  "_about": "ADR 0105 wire contract (#1289). One fixture, read by the Go tests (sessionx) and the Console tests, so the two sides cannot drift. Compare bodies exactly, except error.message, which is prose. Frozen: change it only through the integration branch.",
+  "turn": {
+    "interrupt_first": {
+      "request": {"op": "interrupt"},
+      "status": 200,
+      "response": {"sent": "fixture-session", "op": "interrupt", "stop": "first", "discard": null}
+    },
+    "interrupt_second": {
+      "request": {"op": "interrupt"},
+      "status": 200,
+      "response": {
+        "sent": "fixture-session",
+        "op": "interrupt",
+        "stop": "second",
+        "discard": {
+          "id": "dsc_0001",
+          "at": "2026-09-30T12:00:00Z",
+          "reason": "second_stop",
+          "items": [
+            {"id": "cm_b", "text": "then deploy it", "origin": {"kind": "member"}},
+            {"id": "af_c", "text": "[agent-fleet:peer from=other-session] PR #1 is ready", "origin": {"kind": "peer", "from": "other-session"}}
+          ]
+        }
+      }
+    },
+    "interrupt_discard_queue": {
+      "request": {"op": "interrupt", "discard_queue": true},
+      "status": 200,
+      "response": {
+        "sent": "fixture-session",
+        "op": "interrupt",
+        "stop": "discard",
+        "discard": {
+          "id": "dsc_0002",
+          "at": "2026-09-30T12:01:00Z",
+          "reason": "discard_queue",
+          "items": [
+            {"id": "cm_d", "text": "look at this", "attachments": ["/work/shot.png"], "origin": {"kind": "member"}},
+            {"id": "af_e", "text": "nightly check", "origin": {"kind": "schedule"}}
+          ]
+        }
+      }
+    },
+    "interrupt_discard_queue_nothing_queued": {
+      "request": {"op": "interrupt", "discard_queue": true},
+      "status": 200,
+      "response": {"sent": "fixture-session", "op": "interrupt", "stop": "discard", "discard": null}
+    },
+    "interrupt_tui": {
+      "_note": "Terminal (CLI): a plain stop is an Esc to the CLI (decision 6). No stop kind, no discard.",
+      "request": {"op": "interrupt"},
+      "status": 200,
+      "response": {"sent": "fixture-session", "op": "interrupt"}
+    },
+    "interrupt_discard_queue_tui": {
+      "request": {"op": "interrupt", "discard_queue": true},
+      "status": 409,
+      "response": {"error": {"code": "not_managed", "message": "prose"}}
+    },
+    "remove": {
+      "request": {"op": "remove", "id": "cm_b"},
+      "status": 200,
+      "response": {
+        "sent": "fixture-session",
+        "op": "remove",
+        "removed": {"id": "cm_b", "text": "then deploy it", "origin": {"kind": "member"}}
+      }
+    },
+    "remove_already_started": {
+      "request": {"op": "remove", "id": "cm_a"},
+      "status": 409,
+      "response": {"error": {"code": "already_started", "message": "prose"}}
+    },
+    "remove_not_queued": {
+      "request": {"op": "remove", "id": "cm_gone"},
+      "status": 404,
+      "response": {"error": {"code": "not_queued", "message": "prose"}}
+    },
+    "remove_missing_id": {
+      "request": {"op": "remove"},
+      "status": 400,
+      "response": {"error": {"code": "missing_id", "message": "prose"}}
+    },
+    "remove_tui": {
+      "request": {"op": "remove", "id": "cm_b"},
+      "status": 409,
+      "response": {"error": {"code": "not_managed", "message": "prose"}}
+    },
+    "dismiss_discard": {
+      "request": {"op": "dismiss_discard", "id": "dsc_0001"},
+      "status": 200,
+      "response": {"sent": "fixture-session", "op": "dismiss_discard", "dismissed": true}
+    },
+    "dismiss_discard_gone": {
+      "_note": "Idempotent: another tab dismissed it first, or newer discards pushed it out.",
+      "request": {"op": "dismiss_discard", "id": "dsc_0000"},
+      "status": 200,
+      "response": {"sent": "fixture-session", "op": "dismiss_discard", "dismissed": false}
+    },
+    "dismiss_discard_tui": {
+      "request": {"op": "dismiss_discard", "id": "dsc_0001"},
+      "status": 409,
+      "response": {"error": {"code": "not_managed", "message": "prose"}}
+    }
+  },
+  "_messages_note": "The ADR 0105 keys of GET /sessions/{name}/messages on a Managed session. queuedPrompts stays for older Consoles and the claude TUI route; queuedItems and queuedPrompts appear only while the session is working, discardedInputs whenever the driver keeps any.",
+  "messages": {
+    "working": {
+      "queuedPrompts": ["no, do X instead", "[agent-fleet:peer from=other-session] PR #1 is ready", "then deploy it"],
+      "queuedItems": [
+        {"id": "cm_a", "text": "no, do X instead", "origin": {"kind": "member"}, "state": "committed"},
+        {"id": "af_c", "text": "[agent-fleet:peer from=other-session] PR #1 is ready", "origin": {"kind": "peer", "from": "other-session"}, "state": "queued"},
+        {"id": "cm_b", "text": "then deploy it", "attachments": ["/work/shot.png"], "origin": {"kind": "discord"}, "state": "queued"}
+      ],
+      "discardedInputs": [
+        {
+          "id": "dsc_0001",
+          "at": "2026-09-30T12:00:00Z",
+          "reason": "second_stop",
+          "items": [
+            {"id": "cm_x", "text": "old follow-up", "origin": {"kind": "member"}},
+            {"id": "af_y", "text": "launch task", "origin": {"kind": "spawn", "from": "parent-session"}}
+          ]
+        }
+      ]
+    },
+    "held_by_the_runtime": {
+      "queuedPrompts": ["behind the TUI's turn"],
+      "queuedItems": [
+        {"id": "cm_h", "text": "behind the TUI's turn", "origin": {"kind": "member"}, "state": "sent"}
+      ]
+    },
+    "idle_after_a_second_stop": {
+      "discardedInputs": [
+        {
+          "id": "dsc_0002",
+          "at": "2026-09-30T12:01:00Z",
+          "reason": "discard_queue",
+          "items": [
+            {"id": "cm_d", "text": "look at this", "attachments": ["/work/shot.png"], "origin": {"kind": "member"}},
+            {"id": "af_e", "text": "nightly check", "origin": {"kind": "schedule"}},
+            {"id": "af_f", "text": "report back", "origin": {"kind": "operator"}},
+            {"id": "af_g", "text": "continue", "origin": {"kind": "auto-resume"}},
+            {"id": "af_h", "text": "run now", "origin": {"kind": "schedule-manual"}},
+            {"id": "af_i", "text": "from slack", "origin": {"kind": "slack"}}
+          ]
+        }
+      ]
+    }
+  }
+}

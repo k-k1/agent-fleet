@@ -845,7 +845,17 @@ func (h *threadHandle) runTurn(in agents.TurnInput, gen int) {
 
 // Interrupt aborts the running turn and clears the queued follow-ups — the intent to stop
 // reaches the queue too — except KeepOnInterrupt input, which starts as the next turn.
-func (h *threadHandle) Interrupt() error { return h.interrupt(true) }
+// Interrupt, RemoveQueued and DismissDiscard: the ADR 0105 contract. Stage-0 shims over the
+// old stop until this driver moves onto agents.TurnQueue (#1292).
+func (h *threadHandle) Interrupt(agents.InterruptOpts) (agents.InterruptResult, error) {
+	return agents.InterruptResult{Stop: agents.StopFirst}, h.interrupt(true)
+}
+
+func (h *threadHandle) RemoveQueued(string) (agents.QueueItem, error) {
+	return agents.QueueItem{}, agents.ErrNotQueued
+}
+
+func (h *threadHandle) DismissDiscard(string) bool { return false }
 
 // interruptAll is Interrupt for teardown (Agent shutdown, daemon drain): the whole queue goes,
 // because a kept entry would be started on the runtime being shut down.
@@ -965,7 +975,8 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	}
 	switch reply.Decision {
 	case agents.DecisionCancel, agents.DecisionDeny:
-		return h.Interrupt()
+		_, err := h.Interrupt(agents.InterruptOpts{})
+		return err
 	case agents.DecisionAnswer, agents.DecisionAllow:
 		if len(reply.Answers) != len(inter.Questions) {
 			return fmt.Errorf("回答数が質問数と一致しません (%d != %d)", len(reply.Answers), len(inter.Questions))

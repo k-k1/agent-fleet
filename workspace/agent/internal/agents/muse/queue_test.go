@@ -270,7 +270,7 @@ func TestStopInTheStartGapInterruptsTheTurnOnArrival(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := nextStart(t, starts)
-	if err := h.Interrupt(); err != nil {
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{CommandID: p.CommandID, TurnID: p.CommandID, SessionID: h.sid})
@@ -294,7 +294,7 @@ func TestStopInTheStartGapSparesPeerInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := nextStart(t, starts)
-	if err := h.Interrupt(); err != nil {
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{CommandID: p.CommandID, TurnID: p.CommandID, SessionID: h.sid})

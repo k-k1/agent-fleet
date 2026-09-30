@@ -208,7 +208,7 @@ func TestInterruptCancels(t *testing.T) {
 	_ = h.Send(agents.TurnInput{Prompt: "loop", ClientMessageID: "m1"})
 	id := <-f.gotPrompt
 	waitState(t, h, agents.TurnRunning)
-	if err := h.Interrupt(); err != nil {
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	<-f.gotCancel
@@ -239,7 +239,7 @@ func TestInterruptKeepsPeerInputAsNextTurn(t *testing.T) {
 	if err := h.Steer(agents.TurnInput{Prompt: "own follow-up", ClientMessageID: "m3"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.Interrupt(); err != nil {
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	<-f.gotCancel

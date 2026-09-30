@@ -1052,7 +1052,17 @@ func imageMediaType(path string) (string, bool) {
 // Interrupt stops the running turn and clears the queued follow-ups, except KeepOnInterrupt
 // input (another session's message), which starts as the next turn once the host reports the
 // interrupted one finished.
-func (h *threadHandle) Interrupt() error { return h.interrupt(true) }
+// Interrupt, RemoveQueued and DismissDiscard: the ADR 0105 contract. Stage-0 shims over the
+// old stop until this driver moves onto agents.TurnQueue (#1292).
+func (h *threadHandle) Interrupt(agents.InterruptOpts) (agents.InterruptResult, error) {
+	return agents.InterruptResult{Stop: agents.StopFirst}, h.interrupt(true)
+}
+
+func (h *threadHandle) RemoveQueued(string) (agents.QueueItem, error) {
+	return agents.QueueItem{}, agents.ErrNotQueued
+}
+
+func (h *threadHandle) DismissDiscard(string) bool { return false }
 
 // interruptAll is Interrupt for teardown (DropHandle, Agent shutdown): the whole queue goes,
 // because a kept entry would be started on the host being shut down.

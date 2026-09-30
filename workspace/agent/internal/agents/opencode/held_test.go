@@ -45,7 +45,7 @@ func TestStopDiscardsInputHeldBehindAForeignTurn(t *testing.T) {
 	h := newTestHandle(t, srv)
 	heldBehindAForeignTurn(t, m, h, agents.TurnInput{Prompt: "own follow-up", ClientMessageID: "msg_own"})
 
-	if err := h.Interrupt(); err != nil {
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	m.mu.Lock()
@@ -65,7 +65,7 @@ func TestStopSparesPeerInputHeldBehindAForeignTurn(t *testing.T) {
 	h := newTestHandle(t, srv)
 	heldBehindAForeignTurn(t, m, h, agents.TurnInput{Prompt: "from a peer", ClientMessageID: "msg_peer", KeepOnInterrupt: true})
 
-	if err := h.Interrupt(); err != nil {
+	if _, err := h.Interrupt(agents.InterruptOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	m.mu.Lock()
