@@ -20,8 +20,8 @@
 # The gate is deliberately equality, never a version comparison (cursor's dates and
 # muse's build ids do not order like semver). The cost: when a kind publishes again
 # before its bump is merged, it drops out of the PR until its contract passes on the new
-# latest, which the watcher dispatches the same day. With nothing left to bump the job
-# does not touch an open PR, whose edit is still a tested version.
+# latest, which the watcher dispatches the same day. With nothing left to bump the
+# workflow closes an open bump PR rather than leave versions that are no longer latest.
 #
 # rtk is deliberately left out: it has a release source but no contract, so there is no
 # `tested` to gate on. It is listed as drifting and bumped by hand.
@@ -39,8 +39,10 @@
 #           downloaded and must hash to it.
 #   cursor  upstream publishes no checksum, so both tarballs are downloaded and hashed
 #           (trust on first use, exactly as the manual procedure was).
-# A mismatch, a manifest for another version, or an unreadable source leaves that kind
-# out; it never aborts the others.
+# A mismatch, a manifest for another version, or a value that is not a sha256 leaves that
+# kind out; it never aborts the others. A source that could not be READ is different: it
+# says nothing about the release, so the run reports `incomplete=true` and the workflow
+# leaves the branch and PR alone rather than dropping a kind over a network blip.
 #
 # ## Guarantees
 #
@@ -56,7 +58,7 @@
 #   DRIFT_CHECK    the latest-version source (default: cli-drift-check.sh)
 #   RELEASE_STATE  the `tested` source (default: cli-release-state.sh)
 #   BODY_FILE      where the PR body is written (default: none)
-#   GITHUB_OUTPUT  count=, bumped=, title=
+#   GITHUB_OUTPUT  count=, bumped=, title=, edit_id=, incomplete=
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -133,7 +135,7 @@ resolve_agy() { # resolve_agy <version>
       arm64) dir="linux-arm/cli_linux_arm64.tar.gz"; key=AGY_SHA256_ARM64 ;;
     esac
     fetch "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_$arch.json" "$WORK/agy-$arch.json" ||
-      { echo "the $arch manifest could not be read"; return 1; }
+      { echo "the $arch manifest could not be read"; return 2; }
     [ "$(jq -r '.version // empty' "$WORK/agy-$arch.json")" = "$v" ] ||
       { echo "the $arch manifest no longer names $v"; return 1; }
     url="$(jq -r '.url // empty' "$WORK/agy-$arch.json")"
@@ -142,7 +144,7 @@ resolve_agy() { # resolve_agy <version>
     [ -n "$b" ] || { echo "the $arch manifest URL is not the one the Dockerfile builds: $url"; return 1; }
     [ -z "$build" ] || [ "$build" = "$b" ] || { echo "the two manifests name different builds ($build, $b)"; return 1; }
     build="$b"
-    fetch "$url" "$WORK/agy-$arch.tgz" || { echo "the $arch archive could not be downloaded"; return 1; }
+    fetch "$url" "$WORK/agy-$arch.tgz" || { echo "the $arch archive could not be downloaded"; return 2; }
     got="$(sha512sum "$WORK/agy-$arch.tgz" | awk '{ print $1 }')"
     [ -n "$sha512" ] && [ "$got" = "$sha512" ] ||
       { echo "the $arch archive does not match the manifest's sha512"; return 1; }
@@ -157,7 +159,7 @@ resolve_cursor() {
   for arch in x64 arm64; do
     case "$arch" in x64) key=CURSOR_SHA256_X64 ;; arm64) key=CURSOR_SHA256_ARM64 ;; esac
     fetch "https://downloads.cursor.com/lab/$v/linux/$arch/agent-cli-package.tar.gz" "$WORK/cursor-$arch.tgz" ||
-      { echo "the $arch tarball could not be downloaded"; return 1; }
+      { echo "the $arch tarball could not be downloaded"; return 2; }
     NEW[$key]="$(sha256_of "$WORK/cursor-$arch.tgz")"
   done
   NEW[CURSOR_VERSION]="$v"
@@ -166,14 +168,14 @@ resolve_cursor() {
 resolve_kiro() {
   local v="$1" x64 arm64 got
   fetch "https://prod.download.cli.kiro.dev/stable/latest/manifest.json" "$WORK/kiro.json" ||
-    { echo "the manifest could not be read"; return 1; }
+    { echo "the manifest could not be read"; return 2; }
   [ "$(jq -r '.version // empty' "$WORK/kiro.json")" = "$v" ] ||
     { echo "the manifest no longer names $v"; return 1; }
   x64="$(jq -r --arg d "$v/kirocli-x86_64-linux.zip" '[.packages[]? | select(.download == $d) | .sha256] | first // empty' "$WORK/kiro.json")"
   arm64="$(jq -r --arg d "$v/kirocli-aarch64-linux-musl.zip" '[.packages[]? | select(.download == $d) | .sha256] | first // empty' "$WORK/kiro.json")"
   [ -n "$x64" ] && [ -n "$arm64" ] || { echo "the manifest lacks one of the two zips the Dockerfile fetches"; return 1; }
   fetch "https://prod.download.cli.kiro.dev/stable/$v/kirocli-x86_64-linux.zip" "$WORK/kiro-x64.zip" ||
-    { echo "the x86_64 zip could not be downloaded"; return 1; }
+    { echo "the x86_64 zip could not be downloaded"; return 2; }
   got="$(sha256_of "$WORK/kiro-x64.zip")"
   [ "$got" = "$x64" ] || { echo "the x86_64 zip hashes to $got, the manifest says $x64"; return 1; }
   NEW[KIRO_VERSION]="$v"; NEW[KIRO_SHA256_X64]="$x64"; NEW[KIRO_SHA256_ARM64]="$arm64"
@@ -182,16 +184,17 @@ resolve_kiro() {
 resolve_muse() {
   local v="$1" base x64 arm64 got
   base="https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=$v"
-  fetch "$base&file=manifest.json" "$WORK/muse.json" || { echo "the release manifest could not be read"; return 1; }
+  fetch "$base&file=manifest.json" "$WORK/muse.json" || { echo "the release manifest could not be read"; return 2; }
   x64="$(jq -r '.artifacts.x86_linux.checksum // empty' "$WORK/muse.json")"
   arm64="$(jq -r '.artifacts.aarch64_linux.checksum // empty' "$WORK/muse.json")"
   [ -n "$x64" ] && [ -n "$arm64" ] || { echo "the release manifest lacks a linux checksum"; return 1; }
-  fetch "$base&file=muse-x86-linux" "$WORK/muse-x86" || { echo "the x86 artifact could not be downloaded"; return 1; }
+  fetch "$base&file=muse-x86-linux" "$WORK/muse-x86" || { echo "the x86 artifact could not be downloaded"; return 2; }
   got="$(sha256_of "$WORK/muse-x86")"
   [ "$got" = "$x64" ] || { echo "the x86 artifact hashes to $got, the manifest says $x64"; return 1; }
   NEW[MUSE_VERSION]="$v"; NEW[MUSE_SHA256_X64]="$x64"; NEW[MUSE_SHA256_ARM64]="$arm64"
 }
 
+incomplete=false
 bumped=()    # kind
 evidence=()  # table rows
 left=()      # "kind|pin|latest|reason"
@@ -200,10 +203,11 @@ for row in "${KINDS[@]}"; do
   IFS='|' read -r kind arg workflow <<< "$row"
   pin="$(arg_value "$arg")" || die "ARG $arg must appear exactly once in $DOCKERFILE"
   latest="$(out_value "latest_$kind")"
-  case ",$FAILED," in
-    *",$kind,"*) left+=("$kind|$pin|?|its release source could not be read"); continue ;;
-  esac
-  [ -n "$latest" ] || { left+=("$kind|$pin|?|its release source could not be read"); continue; }
+  if [ -z "$latest" ] || case ",$FAILED," in *",$kind,"*) true ;; *) false ;; esac; then
+    left+=("$kind|$pin|?|its release source could not be read")
+    incomplete=true
+    continue
+  fi
   [ "$pin" != "$latest" ] || continue
   [[ "$latest" =~ $VALUE_RE ]] || { left+=("$kind|$pin|$latest|the published version has an unexpected shape"); continue; }
 
@@ -220,14 +224,33 @@ for row in "${KINDS[@]}"; do
   # Not in `$( )`: the resolvers fill NEW, which a subshell would throw away.
   if [ "$kind" = claude ] || [ "$kind" = codex ] || [ "$kind" = opencode ] || [ "$kind" = copilot ]; then
     resolve_npm "$arg" "$latest"
-  elif ! "resolve_$kind" "$latest" > "$WORK/reason" 2>&1; then
-    # A kind that failed half way (x64 resolved, arm64 refused) must leave nothing behind.
+  else
+    set +e
+    "resolve_$kind" "$latest" > "$WORK/reason" 2>&1
+    rrc=$?
+    set -e
+    # Every value is checked here, per kind, so one malformed manifest entry costs only
+    # its own kind; the global check before the edit is a backstop that aborts the run.
     prefix="${arg%VERSION}"
-    for k in "${!NEW[@]}"; do
-      case "$k" in "$prefix"*) unset "NEW[$k]" ;; esac
-    done
-    left+=("$kind|$pin|$latest|checksum refused: $(tr '\n' ' ' < "$WORK/reason" | sed 's/ *$//')")
-    continue
+    if [ "$rrc" = 0 ]; then
+      for k in "${!NEW[@]}"; do
+        case "$k" in "$prefix"*) ;; *) continue ;; esac
+        if ! [[ "${NEW[$k]}" =~ $VALUE_RE ]] ||
+           { [[ "$k" = *_SHA256_* ]] && ! [[ "${NEW[$k]}" =~ $SHA256_RE ]]; }; then
+          echo "$k would be \`${NEW[$k]}\`, not a sha256" > "$WORK/reason"
+          rrc=1
+        fi
+      done
+    fi
+    if [ "$rrc" != 0 ]; then
+      # A kind that failed half way (x64 resolved, arm64 refused) must leave nothing behind.
+      for k in "${!NEW[@]}"; do
+        case "$k" in "$prefix"*) unset "NEW[$k]" ;; esac
+      done
+      [ "$rrc" != 2 ] || incomplete=true
+      left+=("$kind|$pin|$latest|checksum refused: $(tr '\n' ' ' < "$WORK/reason" | sed 's/ *$//')")
+      continue
+    fi
   fi
   run="$("$RELEASE_STATE" evidence tested "$kind" "$latest" || true)"
   case "$kind" in
@@ -319,6 +342,7 @@ edit_id=""
 {
   printf 'count=%s\n' "${#bumped[@]}"
   printf 'edit_id=%s\n' "$edit_id"
+  printf 'incomplete=%s\n' "$incomplete"
   printf 'bumped=%s\n' "$(IFS=,; printf '%s' "${bumped[*]-}")"
   printf 'title=%s\n' "$title"
 } >> "$OUT"

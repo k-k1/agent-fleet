@@ -129,14 +129,20 @@ backstop, and on dispatch. The decision and the edit are `deploy/local/cli-pin-b
   kind that is left out is listed in the PR body with the reason. The gate is equality,
   not a version comparison, so a kind that publishes again before its bump is merged
   drops out of the PR until its contract passes on the new latest (the watcher dispatches
-  it the same day). When nothing is left to bump, an open PR is left as it is.
+  it the same day). When nothing is left to bump, an open bump PR is closed with the
+  reason. The state issue is public, so only markers written by a workflow
+  (`github-actions`) or by an owner, member or collaborator count, and only in the issue
+  the workflows opened; anyone else's `tested` comment is ignored.
 - **Checksums** come from the sources the Dockerfile comments name: agy's per-arch
   manifests (both archives are downloaded, checked against the manifest's sha512 and
   hashed to sha256; the release build id comes from the manifest URL); kiro's stable
   manifest and muse's versioned release manifest, where the x86_64 download must hash to
   the published value; cursor publishes none, so both tarballs are hashed as downloaded.
-  A mismatch, or a manifest that has moved on to another version, leaves that kind at
-  its pin. The npm kinds have no checksum.
+  A mismatch, a value that is not a sha256, or a manifest that has moved on to another
+  version leaves that kind at its pin. A source or download that could not be read is
+  different: the run then leaves the branch and the PR as they are until a complete
+  run, so a network blip never drops a kind or closes the PR. The npm kinds have no
+  checksum.
 - **The edit** touches only the bumped kinds' `ARG` lines, is checked line by line
   before it replaces the file, and a second run changes nothing.
 - **The PR** carries the evidence table — each kind's `pin → latest`, a link to the

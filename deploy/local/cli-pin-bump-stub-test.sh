@@ -77,13 +77,15 @@ cat > "$STUB/gh" <<'FAKE'
 jqf=""; prev=""
 for a in "$@"; do [ "$prev" = "--jq" ] && jqf="$a"; prev="$a"; done
 case "$*" in
-  *"issue list"*) echo 4 ;;
-  *"issue view"*) jq -r "$jqf" "$STUB_ISSUE" ;;
+  *"issue list"*) jq -r "$jqf" "$STUB_ISSUES" ;;
+  *"issue view 4 "*) jq -r "$jqf" "$STUB_ISSUE" ;;
+  *"issue view"*) echo "read an issue other than the workflows' own: $*" >&2; exit 1 ;;
   *"issue comment"*)
     prev=""; for a in "$@"; do
       if [ "$prev" = "--body" ]; then
         jq --arg b "$a" --arg u "https://github.com/k-k1/agent-fleet/issues/4#c$RANDOM" \
-          '.comments += [{body: $b, url: $u}]' "$STUB_ISSUE" > "$STUB_ISSUE.new"
+          '.comments += [{body: $b, url: $u, author: {login: "github-actions"}, authorAssociation: "NONE"}]' \
+          "$STUB_ISSUE" > "$STUB_ISSUE.new"
         mv "$STUB_ISSUE.new" "$STUB_ISSUE"
       fi
       prev="$a"
@@ -106,7 +108,12 @@ key="$(printf '%s' "$url" | sed 's|[^A-Za-z0-9._-]|_|g')"
 if [ -n "$out" ]; then cp "$STUB_WWW/$key" "$out"; else cat "$STUB_WWW/$key"; fi
 FAKE
 chmod +x "$STUB"/*
-export PATH="$STUB:$PATH" STUB_WWW="$WWW" STUB_ISSUE="$WORK/issue.json"
+export PATH="$STUB:$PATH" STUB_WWW="$WWW" STUB_ISSUE="$WORK/issue.json" STUB_ISSUES="$WORK/issues.json"
+# A same-title issue opened by someone else, listed first: it must never be read.
+cat > "$STUB_ISSUES" <<'JSON'
+[{"number": 9, "title": "CLI release watcher state", "author": {"login": "someone"}},
+ {"number": 4, "title": "CLI release watcher state", "author": {"login": "app/github-actions"}}]
+JSON
 export P_CLAUDE P_CODEX P_OPENCODE P_COPILOT P_AGY P_CURSOR P_KIRO P_MUSE P_RTK
 
 serve() { # serve <url> <file>
@@ -166,14 +173,21 @@ muse_serves() { serve "$muse_base&file=muse-x86-linux" "$WORK/art/$1"; }
 # contract passed only on its old pin. Two markers carry the run that recorded them.
 issue_with() { # issue_with <muse tested>
   jq -n --arg c "$L_CLAUDE" --arg x "$P_CODEX" --arg a "$L_AGY" --arg u "$L_CURSOR" \
-    --arg k "$L_KIRO" --arg m "$1" '{body: "state", comments: [
+    --arg k "$L_KIRO" --arg m "$1" '{body: "state", comments: ([
     {body: ("<!-- cli-release-state tested claude=2.1.1 -->"), url: "https://github.com/k-k1/agent-fleet/issues/4#c1"},
     {body: ("<!-- cli-release-state tested claude=" + $c + " -->\n\nRecorded by https://github.com/k-k1/agent-fleet/actions/runs/111"), url: "https://github.com/k-k1/agent-fleet/issues/4#c2"},
     {body: ("<!-- cli-release-state tested codex=" + $x + " -->"), url: "https://github.com/k-k1/agent-fleet/issues/4#c3"},
     {body: ("<!-- cli-release-state tested agy=" + $a + " -->"), url: "https://github.com/k-k1/agent-fleet/issues/4#c4"},
     {body: ("<!-- cli-release-state tested cursor=" + $u + " -->"), url: "https://github.com/k-k1/agent-fleet/issues/4#c5"},
     {body: ("<!-- cli-release-state tested kiro=" + $k + " -->\n\nRecorded by https://github.com/k-k1/agent-fleet/actions/runs/222"), url: "https://github.com/k-k1/agent-fleet/issues/4#c6"},
-    {body: ("<!-- cli-release-state tested muse=" + $m + " -->"), url: "https://github.com/k-k1/agent-fleet/issues/4#c7"}]}' > "$STUB_ISSUE"
+    {body: ("<!-- cli-release-state tested muse=" + $m + " -->"), url: "https://github.com/k-k1/agent-fleet/issues/4#c7"}]
+    | map(. + {author: {login: "github-actions"}, authorAssociation: "NONE"})
+    # The issue is public. A stranger claiming codex passed, and re-claiming claude with an
+    # invented run, must both be ignored.
+    + [{body: ("<!-- cli-release-state tested codex=0.999.0 -->\n\nRecorded by https://evil.example/run"),
+        url: "https://github.com/k-k1/agent-fleet/issues/4#c8", author: {login: "someone"}, authorAssociation: "NONE"},
+       {body: ("<!-- cli-release-state tested claude=" + $c + " -->\n\nRecorded by https://evil.example/run"),
+        url: "https://github.com/k-k1/agent-fleet/issues/4#c9", author: {login: "someone"}, authorAssociation: "CONTRIBUTOR"}])}' > "$STUB_ISSUE"
 }
 
 export STUB_LATEST_CLAUDE="$L_CLAUDE" STUB_LATEST_CODEX="$L_CODEX" STUB_LATEST_AGY="$L_AGY" \
@@ -239,6 +253,7 @@ expect_changed "${BUMP_OK[@]}"
 out_has "count=4"
 out_has "bumped=claude,agy,cursor,kiro"
 out_has "title=build(workspace): bump claude, agy, cursor and kiro CLI pins"
+out_has "incomplete=false"
 body_has "| claude | \`$P_CLAUDE\` → \`$L_CLAUDE\` | [\`claude-tui-contract.yml\` passed on $L_CLAUDE](https://github.com/k-k1/agent-fleet/actions/runs/111) | npm; no checksum pin |"
 body_has "[\`kiro-contract.yml\` passed on $L_KIRO](https://github.com/k-k1/agent-fleet/actions/runs/222) | sha256 from"
 # A marker recorded before runs were written down links its own comment instead.
@@ -317,6 +332,7 @@ STUB_FAIL=claude run_bump
 code_is 0
 expect_changed "${BUMP_OK[@]:1}" "${MUSE_OK[@]}"
 body_has "| claude | \`$P_CLAUDE\` | \`?\` | its release source could not be read |"
+out_has "incomplete=true"
 
 echo "== case 8: cursor and kiro without a passing run say how to get one =="
 cp "$ROOT/workspace/Dockerfile" "$DF"
@@ -327,6 +343,26 @@ expect_changed "${BUMP_OK[@]:0:5}" "${MUSE_OK[@]}"
 body_has "tested: none); its credential rotates, so dispatch \`cursor-contract.yml\` by hand with \`cli_version=latest\`"
 body_has "dispatch \`kiro-contract.yml\` by hand"
 issue_with "$L_MUSE"
+
+echo "== case 8b: a malformed arm64 checksum costs muse alone =="
+cp "$ROOT/workspace/Dockerfile" "$DF"
+jq '.artifacts.aarch64_linux.checksum = "unavailable"' "$WORK/muse.json" > "$WORK/muse-bad.json"
+serve "$muse_base&file=manifest.json" "$WORK/muse-bad.json"
+run_bump
+code_is 0
+expect_changed "${BUMP_OK[@]}"
+body_has "checksum refused: MUSE_SHA256_ARM64 would be \`unavailable\`, not a sha256"
+out_has "incomplete=false"
+serve "$muse_base&file=manifest.json" "$WORK/muse.json"
+
+echo "== case 8c: a download that fails is incomplete, not a refusal =="
+cp "$ROOT/workspace/Dockerfile" "$DF"
+rm "$WWW/$(printf '%s' "https://prod.download.cli.kiro.dev/stable/$L_KIRO/kirocli-x86_64-linux.zip" | sed 's|[^A-Za-z0-9._-]|_|g')"
+run_bump
+code_is 0
+out_has "incomplete=true"
+body_has "checksum refused: the x86_64 zip could not be downloaded"
+serve "https://prod.download.cli.kiro.dev/stable/$L_KIRO/kirocli-x86_64-linux.zip" "$WORK/art/kiro-x64"
 
 echo "== case 9: failures after the decision leave the Dockerfile untouched =="
 # A duplicated ARG makes "the pin" ambiguous: refuse the whole run.
@@ -359,5 +395,15 @@ got="$("$STATE" evidence tested codex "$L_CODEX")"
 # A version that was never recorded has no evidence, even when a later one does.
 got="$("$STATE" evidence tested codex 0.0.0)"
 [ -z "$got" ] || fail "evidence for an unrecorded version: got '$got'"
+
+echo "== case 11: POSITIVE CONTROL -- the stranger's codex marker is what the trust rule drops =="
+# Trust the stranger (as the pre-fix reader did) and codex must bump: otherwise case 1's
+# "codex stays" never depended on authorship at all.
+cp "$ROOT/workspace/Dockerfile" "$DF"
+jq '.comments |= map(.authorAssociation = "COLLABORATOR")' "$STUB_ISSUE" > "$WORK/i" && mv "$WORK/i" "$STUB_ISSUE"
+run_bump
+code_is 0
+out_has "bumped=claude,codex,agy,cursor,kiro,muse"
+body_has "(https://evil.example/run)"
 
 echo "OK: cli-pin-bump.sh bumps only tested kinds, refuses bad checksums, and is idempotent"

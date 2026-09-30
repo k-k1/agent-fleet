@@ -46,10 +46,15 @@ trap 'rm -f "$tmp_body"' EXIT
 
 # `first` inside jq, not `| head -1`: the pipe leaves gh to die of SIGPIPE, and under
 # `pipefail` that aborts this whole script (`set -e`) for a lookup that succeeded.
+# The issue is public, so anyone can comment on it, or open another with the same title.
+# A `tested` marker is what lets cli-pin-bump.sh open a bump PR, so only the issue the
+# workflows opened and only markers written by a workflow or a repository member count.
 issue_number() {
-  gh issue list --state open --search "in:title $title" --json number,title \
-    --jq "[.[] | select(.title == \"$title\") | .number] | first // empty"
+  gh issue list --state open --search "in:title $title" --json number,title,author \
+    --jq "[.[] | select(.title == \"$title\" and .author.login == \"app/github-actions\") | .number] | first // empty"
 }
+TRUSTED='def trusted: .author.login == "github-actions" or ([.authorAssociation] | inside(["OWNER", "MEMBER", "COLLABORATOR"]));'
+
 
 ensure_issue() {
   local num
@@ -78,7 +83,7 @@ case "$cmd" in
       exit 0
     fi
     gh issue view "$num" --json body,comments \
-      --jq '[.body, (.comments[].body)] | .[]' |
+      --jq "$TRUSTED"' [.body, (.comments[] | select(trusted) | .body)] | .[]' |
       sed -n "s/^<!-- cli-release-state $namespace $cli=\\([^ ]*\\) -->$/\\1/p" |
       tail -1
     ;;
@@ -127,7 +132,7 @@ case "$cmd" in
     num="$(issue_number)"
     [ -n "$num" ] || exit 0
     gh issue view "$num" --json comments --jq \
-      "[.comments[] | select(.body | startswith(\"<!-- cli-release-state $namespace $cli=$version -->\"))]
+      "$TRUSTED [.comments[] | select(trusted) | select(.body | startswith(\"<!-- cli-release-state $namespace $cli=$version -->\"))]
        | last // empty
        | ((.body | capture(\"Recorded by (?<u>https://[^ \\\\n]+)\") | .u) // .url)"
     ;;

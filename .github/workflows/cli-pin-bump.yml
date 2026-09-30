@@ -61,8 +61,16 @@ jobs:
           BODY_FILE: ${{ runner.temp }}/body.md
         run: deploy/local/cli-pin-bump.sh
 
+      # A release source or download that could not be read says nothing about the release;
+      # acting on it would drop a kind from the PR, or close it, over a network blip.
+      - name: skip an incomplete run
+        if: steps.bump.outputs.incomplete == 'true'
+        run: |
+          echo "::notice::A release source could not be read; the bump branch and PR are left as they are until a complete run."
+          cat "$RUNNER_TEMP/body.md" >> "$GITHUB_STEP_SUMMARY"
+
       - name: open or update the bump PR
-        if: steps.bump.outputs.count != '0'
+        if: steps.bump.outputs.incomplete != 'true' && steps.bump.outputs.count != '0'
         env:
           TOKEN: ${{ secrets.CLI_PIN_BUMP_TOKEN }}
           TITLE: ${{ steps.bump.outputs.title }}
@@ -120,7 +128,33 @@ jobs:
           fi
           cat "$BODY_FILE" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: nothing to bump
-        if: steps.bump.outputs.count == '0'
-        # An open bump PR is left as it is: its edit is still a version that passed.
-        run: echo "No drifting kind has passed its contract on latest; nothing to bump, and any open bump PR is left as it is." >> "$GITHUB_STEP_SUMMARY"
+      # Nothing is bumpable any more (a proposed kind published again before its PR was
+      # merged, and its contract has not passed on the new latest). An open PR would still
+      # offer versions that are no longer latest, so it is closed; the marker is replaced
+      # first so the closure is not read as a human declining that edit.
+      - name: close a bump PR that nothing supports any more
+        if: steps.bump.outputs.incomplete != 'true' && steps.bump.outputs.count == '0'
+        env:
+          TOKEN: ${{ secrets.CLI_PIN_BUMP_TOKEN }}
+          BODY_FILE: ${{ runner.temp }}/body.md
+        run: |
+          set -euo pipefail
+          echo "No drifting kind has passed its contract on latest; nothing to bump." >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$TOKEN" ]; then
+            echo "::warning::CLI_PIN_BUMP_TOKEN is not set, so an open bump PR (if any) was not checked."
+            exit 0
+          fi
+          export GH_TOKEN="$TOKEN"
+          num="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open \
+            --json number --jq 'first | .number // empty')"
+          [ -n "$num" ] || exit 0
+          gh pr view "$num" --repo "$GITHUB_REPOSITORY" --json body --jq .body |
+            sed 's/<!-- cli-pin-bump edit=[^ ]* -->/<!-- cli-pin-bump superseded -->/' > "$RUNNER_TEMP/old.md"
+          gh pr edit "$num" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/old.md"
+          {
+            echo "Closed by \`cli-pin-bump.yml\`: no kind in this PR still has \`tested == latest\`. A new PR opens once a contract passes on the current latest."
+            echo
+            cat "$BODY_FILE"
+          } > "$RUNNER_TEMP/close.md"
+          gh pr close "$num" --repo "$GITHUB_REPOSITORY" --comment "$(cat "$RUNNER_TEMP/close.md")"
+          echo "Closed PR #$num." >> "$GITHUB_STEP_SUMMARY"
