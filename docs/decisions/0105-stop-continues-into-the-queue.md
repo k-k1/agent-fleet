@@ -243,7 +243,7 @@ restart instead is #1255's work.
   the removal op, the cancellable/committed state of taken entries and a side-effect-free ledger lookup. Every
   `TurnInput` constructor sets the origin, and the messages payload gains the ids and the discards.
   The Console gains the stop control's menu action (kept reachable while a question or approval is pending), the
-  notice and the bubble actions, and stops disabling Stop while a stop is pending. The member guide's sessions
-  chapter (en/ja) states the two stops.
+  notice and the bubble actions, and stops disabling Stop while a stop is pending. The member guide's chat
+  chapter (07, en/ja), where the Stop button is described, states the two stops.
 - The tests added in #1244 and #1258 that assert "own input is discarded by a stop" are inverted, not deleted: they
   become "own input continues after a first stop, and is discarded (and kept for return) by a second".
