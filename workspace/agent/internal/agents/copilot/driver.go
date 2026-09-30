@@ -631,7 +631,12 @@ func (h *threadHandle) accept(in agents.TurnInput) (queued bool, err error) {
 	// The queue records the ledger when the pump takes the entry (LedgerAtTake): recording it
 	// here would make a resend after a crash that lost the queue count as "already seen" and be
 	// discarded silently.
-	h.q.Accept(in)
+	if _, dup := h.q.Accept(in); dup {
+		// A resend: it is queued or was taken already, so neither the state nor the pump has
+		// anything to learn, and "queued" would tell a peer its message still waits.
+		h.mu.Unlock()
+		return false, nil
+	}
 	start := !h.pumping
 	if start {
 		h.pumping = true

@@ -623,3 +623,45 @@ func TestLiveHandle(t *testing.T) {
 		t.Fatalf("LiveHandle = %v, %v, want the registered handle", got, ok)
 	}
 }
+
+// A resend is answered as accepted and nothing else: not queued, no state change, no turn —
+// whether the session is idle or another turn is running.
+func TestResendLeavesStateAndPumpAlone(t *testing.T) {
+	h, f := newTestHandle(t)
+	mustSend(t, h, peer("m1", "one"))
+	f.reply(expectPrompt(t, f, "one"), map[string]any{"stopReason": "end_turn"})
+	settled(t, h)
+
+	queued, err := h.SendQueued(peer("m1", "one")) // idle
+	if err != nil || queued {
+		t.Fatalf("idle resend: queued %v, err %v; want false, nil", queued, err)
+	}
+	expectNoPrompt(t, f)
+	settled(t, h)
+	if snap, _ := h.Snapshot(); snap.TurnState != agents.TurnCompleted {
+		t.Errorf("state after an idle resend = %s, want completed", snap.TurnState)
+	}
+
+	mustSend(t, h, member("m2", "two"))
+	second := expectPrompt(t, f, "two")
+	waitState(t, h, agents.TurnRunning)
+	queued, err = h.SendQueued(peer("m1", "one")) // a processed id, while another turn runs
+	if err != nil || queued {
+		t.Fatalf("resend during a turn: queued %v, err %v; want false, nil", queued, err)
+	}
+	if snap, _ := h.Snapshot(); snap.TurnState != agents.TurnRunning {
+		t.Errorf("state after a resend during a turn = %s, want running", snap.TurnState)
+	}
+	f.reply(second, map[string]any{"stopReason": "end_turn"})
+	expectNoPrompt(t, f)
+	items, _, _ := settled(t, h)
+	if len(items) != 0 {
+		t.Errorf("items %v", items)
+	}
+	if got := f.promptTexts(); !equal(got, []string{"one", "two"}) {
+		t.Errorf("prompts = %q, want one and two once each", got)
+	}
+	if snap, _ := h.Snapshot(); snap.TurnState != agents.TurnCompleted {
+		t.Errorf("state = %s, want completed", snap.TurnState)
+	}
+}
