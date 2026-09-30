@@ -46,6 +46,10 @@ const usageHourlyRetentionDays = 92
 type usageSampler struct {
 	mgr      *manager
 	interval time.Duration
+	// deadline rides this walk because it needs exactly what the walk already has — every
+	// tenant's workspaces and each one's State() — and a second ticker repeating it is the
+	// cost usage.go avoids for the hourly bucket too. nil = no deadline.
+	deadline *startDeadline
 }
 
 func newUsageSampler(mgr *manager, interval time.Duration) *usageSampler {
@@ -92,6 +96,8 @@ func (u *usageSampler) sample(ctx context.Context) {
 	// "unknown", so writing it after a partial walk would paint grey over workspaces
 	// this pass never reached — a confident answer produced by a failure.
 	complete := true
+	found := map[string]bool{}
+	var overdue []overdueStart
 	for _, t := range tenants {
 		wss, err := u.mgr.store.ListWorkspaces(ctx, t.ID)
 		if err != nil {
@@ -100,8 +106,14 @@ func (u *usageSampler) sample(ctx context.Context) {
 			continue
 		}
 		for _, ws := range wss {
+			found[ws.ID] = true
 			rt := u.mgr.runtimeFor(ws, "")
-			if rt.State(ctx) != "running" {
+			state := rt.State(ctx)
+			if u.deadline.observe(ws, rt, state, time.Now()) {
+				overdue = append(overdue, overdueStart{rt, ws})
+				continue
+			}
+			if state != "running" {
 				continue
 			}
 			if err := u.mgr.store.AddUsage(ctx, ws.MembershipID, ws.TenantID, day, secs); err != nil {
@@ -113,9 +125,11 @@ func (u *usageSampler) sample(ctx context.Context) {
 			}
 		}
 	}
+	u.deadline.dispatch(ctx, overdue)
 	if !complete {
 		return
 	}
+	u.deadline.retain(found)
 	if err := u.mgr.store.AddUsageHour(ctx, "", "", hour, store.UsageHourCounters{Samples: 1}); err != nil {
 		log.Printf("showback: heartbeat: %v", err)
 	}

@@ -289,7 +289,18 @@ disables.
 - **The usage sampler** — `AF_USAGE_SAMPLE_INTERVAL` (5 minutes) adds occupied seconds
   to daily and hourly buckets for each running workspace, which also feeds the uptime
   heatmap. With bring-your-own model credentials, **the operator's cost is occupancy,
-  not tokens** — which is what this measures. `0` turns it off.
+  not tokens** — which is what this measures. `0` turns it off. The same walk enforces the
+  ceiling on `starting` (`start_deadline.go`): a workspace still `starting`
+  `AF_WORKSPACE_START_DEADLINE` (30 minutes) after the later of its last Start and this CP's
+  first sighting, with no task running (the adapter's `runtime.TaskCounter`, or else the
+  agent answering), is stopped under the lifecycle fences, like an explicit stop. An adapter
+  with background launch work (`runtime.LaunchBudgeter`, ecs-ec2) raises the limit to its
+  own budget. The stops run off the walk, at most two at a time and each within two
+  minutes. Free workers go to the overdue workspaces whose last attempt that got past the
+  fences is oldest, so all of them are reached in turn; a busy fence does not count as an
+  attempt, and that workspace is first in line on the next sample. Only a launch that
+  cannot converge gets there — a task ECS refuses to place, for one. `0` in
+  `AF_WORKSPACE_START_DEADLINE` turns it off, and so does switching the sampler off.
 - **The cloud-cost poller** — where the runtime has a bill (the AWS targets), it reads
   Cost Explorer every `AF_CLOUD_COST_INTERVAL` (6 hours) over a trailing
   `AF_CLOUD_COST_WINDOW_DAYS` (7) and attributes spend per member by cost allocation
