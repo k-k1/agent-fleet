@@ -103,6 +103,7 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 			name:    m.Name,
 			dir:     m.CWD(), // Dir, or the subdir chosen at launch
 			slotSid: slotSid,
+			q:       agents.NewTurnQueue(m.Name, ledger, agents.LedgerAtTake),
 			events:  make(chan agents.Event, 64),
 		}
 		handles[m.Name] = h
@@ -185,7 +186,7 @@ func DropHandle(name string) {
 	}
 	h.mu.Lock()
 	h.alive = false
-	h.queue = nil
+	h.q.DropAll()
 	cmd, cl, sid, running := h.cmd, h.cl, h.sid, h.running
 	h.mu.Unlock()
 	if running && cl != nil && sid != "" {
@@ -218,7 +219,7 @@ func ManagedBusy(name string) bool {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.running || len(h.queue) > 0
+	return h.running || h.q.Len() > 0
 }
 
 // AbortManaged interrupts every running managed turn (the equivalent of graceful
@@ -308,21 +309,27 @@ type threadHandle struct {
 	// re-spawns the child.
 	bypass bool
 
-	mu       sync.Mutex
-	cmd      *exec.Cmd
-	cl       *acpClient
-	sid      string // cursor session UUID
-	model    string // ACP currentModelId (for the model badge; Auto comes back as default[])
-	alive    bool
-	state    agents.TurnState
-	running  bool
-	pumping  bool
-	queue    []agents.TurnInput
-	settings agents.ThreadSettings
-	inter    *agents.Interaction
-	permID   json.RawMessage // JSON-RPC id of the pending session/request_permission
-	permOpts []string        // Interaction option index -> ACP optionId
-	events   chan agents.Event
+	mu      sync.Mutex
+	cmd     *exec.Cmd
+	cl      *acpClient
+	sid     string // cursor session UUID
+	model   string // ACP currentModelId (for the model badge; Auto comes back as default[])
+	alive   bool
+	state   agents.TurnState
+	running bool
+	pumping bool
+	q       *agents.TurnQueue // every method under mu (agents.TurnQueue's contract)
+	// stopping marks the turn in flight as one a stop was aimed at, so it lands as cancelled.
+	// The displayed state cannot carry this: accept overwrites it with queued.
+	stopping bool
+	// beforeCommit, when set, runs between the pump's Take and its Commit with mu released: the
+	// window in which a stop or a removal can still cancel the taken entry. Tests only.
+	beforeCommit func()
+	settings     agents.ThreadSettings
+	inter        *agents.Interaction
+	permID       json.RawMessage // JSON-RPC id of the pending session/request_permission
+	permOpts     []string        // Interaction option index -> ACP optionId
+	events       chan agents.Event
 
 	buf transcriptBuf // transcript built from ACP session/update (guarded by its own lock)
 }
@@ -613,15 +620,15 @@ func (h *threadHandle) accept(in agents.TurnInput) (queued bool, err error) {
 		h.mu.Unlock()
 		return false, agents.ErrQuestionPending
 	}
-	// The ledger makes a re-send idempotent when pump starts executing it, not here:
-	// recording it persistently before it is queued would make a re-send after a crash that
-	// lost the queue look "already seen" and be dropped silently.
-	h.queue = append(h.queue, in)
+	// The queue records the ledger when the pump takes the entry (LedgerAtTake): recording it
+	// here would make a resend after a crash that lost the queue count as "already seen" and be
+	// discarded silently.
+	h.q.Accept(in)
 	start := !h.pumping
 	if start {
 		h.pumping = true
 	}
-	queued = h.running || len(h.queue) > 1
+	queued = h.running || h.q.Len() > 1
 	if queued {
 		h.state = agents.TurnQueued
 	}
@@ -632,30 +639,32 @@ func (h *threadHandle) accept(in agents.TurnInput) (queued bool, err error) {
 	return queued, nil
 }
 
-// pump processes the queue serially. The child is exclusive, so no waitIdle is needed.
+// pump processes the queue serially (the child is exclusive, so no waitIdle is needed).
 func (h *threadHandle) pump() {
 	for {
 		h.mu.Lock()
 		// A closed client counts as gone before watch marks the handle: the failed turn wakes
 		// this loop first, and the next input would be taken, recorded in the ledger and lost
-		// on a dead pipe. It stays queued for resumePump after the respawn.
-		if len(h.queue) == 0 || !h.alive || h.cl == nil || h.cl.dead() {
+		// on a dead pipe. So the check comes before Take, and the input stays queued for
+		// resumePump after the respawn.
+		if !h.alive || h.cl == nil || h.cl.dead() {
 			h.pumping = false
 			h.mu.Unlock()
 			return
 		}
-		in := h.queue[0]
-		h.queue = h.queue[1:]
-		if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
+		t := h.q.Take()
+		if t == nil {
+			h.pumping = false
 			h.mu.Unlock()
-			continue // re-send: the persistent, cross-process ledger dedupes it at execution time
+			return
 		}
 		h.running = true
 		h.mu.Unlock()
 
-		h.runTurn(in)
+		h.runTurn(t)
 
 		h.mu.Lock()
+		h.q.Settle(t)
 		h.running = false
 		h.mu.Unlock()
 	}
@@ -665,7 +674,7 @@ func (h *threadHandle) pump() {
 // on a dead child and leaves the queue in place.
 func (h *threadHandle) resumePump() {
 	h.mu.Lock()
-	start := !h.pumping && h.alive && len(h.queue) > 0
+	start := !h.pumping && h.alive && h.q.Len() > 0
 	if start {
 		h.pumping = true
 	}
@@ -676,38 +685,51 @@ func (h *threadHandle) resumePump() {
 }
 
 // runTurn executes ONE blocking session/prompt and lands the terminal state.
-// MarkTurnStart/End at the turn boundary drive the status store and the completion report
-// of docs/log/30.
-func (h *threadHandle) runTurn(in agents.TurnInput) {
+// The turn-boundary MarkTurnStart/End drive the status store and the docs/log/30 completion
+// report (the notify seam).
+func (h *threadHandle) runTurn(t *agents.Taken) {
 	agents.MarkTurnStart(h.slotSid)
 	defer func() { agents.MarkTurnEnd(h.slotSid, h.currentState()) }()
 	h.setState(agents.TurnStarting)
+	if h.beforeCommit != nil {
+		h.beforeCommit()
+	}
 	h.mu.Lock()
 	cl, sid := h.cl, h.sid
-	h.mu.Unlock()
 	if cl == nil || sid == "" {
+		h.mu.Unlock()
 		h.setState(agents.TurnFailed)
 		return
 	}
+	// The last act under the lock before the runtime sees the input (ADR 0105 decision 3): a
+	// stop or a removal that took the lock first has cancelled it, and it never starts.
+	if !h.q.Commit(t) {
+		h.mu.Unlock()
+		h.setState(agents.TurnCancelled)
+		return
+	}
+	h.stopping = false
+	h.state = agents.TurnRunning
+	h.mu.Unlock()
 	// ACP emits no user_message_chunk during a live turn (measured), so the user turn is
 	// committed to the transcript here — a separate path from the replay's
-	// user_message_chunk.
-	h.buf.addUserTurn(in.Prompt)
-	h.setState(agents.TurnRunning)
-	res, err := cl.call("session/prompt", map[string]any{
+	// user_message_chunk. Only after Commit: a cancelled entry never became a turn.
+	h.buf.addUserTurn(t.In.Prompt)
+	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
+	res, err := cl.callWritten("session/prompt", map[string]any{
 		"sessionId": sid,
-		"prompt":    []map[string]any{{"type": "text", "text": in.Prompt}},
-	}, 0) // no timeout — a turn runs as long as it runs
+		"prompt":    []map[string]any{{"type": "text", "text": t.In.Prompt}},
+	}, 0, func() { h.received(t, cl, sid) }) // no timeout — a turn runs as long as it runs
 	h.buf.flushAsst() // close the open assistant turn: ACP has no turn_ended notification
 	h.mu.Lock()
-	interrupted := h.state == agents.TurnInterrupting
-	h.inter, h.permID, h.permOpts = nil, nil, nil // the turn ended, so nothing is pending
+	interrupted := h.stopping
+	h.inter, h.permID, h.permOpts = nil, nil, nil // the turn ended = nothing is waiting
 	h.mu.Unlock()
 	if err != nil {
 		if interrupted {
 			h.setState(agents.TurnCancelled)
 		} else {
-			// A broken transport means the child is gone: fall back to unknown honestly.
+			// A broken transport = the child is lost: drop honestly to unknown and leave it to §6.
 			h.setState(agents.TurnUnknown)
 		}
 		return
@@ -726,43 +748,68 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	}
 }
 
-// Interrupt cancels the running turn and clears the queued follow-ups: an expressed intent to
-// stop reaches the queue too. KeepOnInterrupt input is the exception and starts as the next
-// turn — it is another session's message, not the user's own follow-up.
-// Interrupt, RemoveQueued and DismissDiscard: the ADR 0105 contract. Stage-0 shims over the
-// old stop until this driver moves onto agents.TurnQueue (#1292).
-func (h *threadHandle) Interrupt(agents.InterruptOpts) (agents.InterruptResult, error) {
-	return agents.InterruptResult{Stop: agents.StopFirst}, h.interrupt(true)
-}
-
-func (h *threadHandle) RemoveQueued(string) (agents.QueueItem, error) {
-	return agents.QueueItem{}, agents.ErrNotQueued
-}
-
-func (h *threadHandle) DismissDiscard(string) bool { return false }
-
-// interruptAll is Interrupt for Agent shutdown: the whole queue goes, because a kept entry
-// would be started on the way down.
-func (h *threadHandle) interruptAll() error { return h.interrupt(false) }
-
-func (h *threadHandle) interrupt(keep bool) error {
+// received is the moment the runtime counts as holding t: session/prompt is on the child's
+// stdin. A stop that found t committed but not yet written left its delivery to here. Whether
+// a session/cancel written right after the prompt reaches the turn is unmeasured, so this stop
+// is best effort (ADR 0105 decision 3).
+func (h *threadHandle) received(t *agents.Taken, cl *acpClient, sid string) {
 	h.mu.Lock()
-	cl, sid := h.cl, h.sid
-	running := h.running
-	if keep {
-		h.queue = agents.KeptOnInterrupt(h.queue)
-	} else {
-		h.queue = nil
+	stop := h.q.Received(t)
+	h.mu.Unlock()
+	if stop {
+		_ = cl.notifyPeer("session/cancel", map[string]any{"sessionId": sid})
 	}
-	if running {
+}
+
+// Interrupt is the Console's stop (ADR 0105 decisions 1-3). The queue decides what the stop
+// is; this delivers it to the entry in flight.
+func (h *threadHandle) Interrupt(opts agents.InterruptOpts) (agents.InterruptResult, error) {
+	h.mu.Lock()
+	out := h.q.Interrupt(opts)
+	return out.Result, h.stopLocked(out.Head)
+}
+
+// stopLocked delivers a stop to the turn in flight per head, and releases h.mu. HeadCancelled
+// needs nothing: the pump's Commit fails and lands the turn as cancelled.
+func (h *threadHandle) stopLocked(head agents.HeadAction) error {
+	cl, sid := h.cl, h.sid
+	cancelNow := head == agents.HeadStopNow || (head == agents.HeadNone && h.running)
+	if cancelNow || head == agents.HeadStopPending {
+		h.stopping = true
 		h.state = agents.TurnInterrupting
 	}
 	h.mu.Unlock()
-	if !running || cl == nil {
+	if !cancelNow && head != agents.HeadStopPending {
 		return nil
 	}
 	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnInterrupting})
+	if !cancelNow || cl == nil {
+		return nil // HeadStopPending: received delivers it once the prompt is written
+	}
 	return cl.notifyPeer("session/cancel", map[string]any{"sessionId": sid})
+}
+
+// RemoveQueued takes one entry out while it is cancellable (decision 5).
+func (h *threadHandle) RemoveQueued(id string) (agents.QueueItem, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.q.Remove(id)
+}
+
+// DismissDiscard drops a kept discard (decision 4).
+func (h *threadHandle) DismissDiscard(id string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.q.DismissDiscard(id)
+}
+
+// interruptAll is the stop for Agent shutdown (decision 8): the whole queue goes, nothing is
+// kept for return, and the turn in flight is stopped.
+func (h *threadHandle) interruptAll() error {
+	h.mu.Lock()
+	h.q.DropAll()
+	out := h.q.Interrupt(agents.InterruptOpts{})
+	return h.stopLocked(out.Head)
 }
 
 // UpdateSettings applies dynamic settings. Mode is native through session/set_mode
@@ -1123,13 +1170,15 @@ func managedLiveState(m session.Meta) string {
 func (h *threadHandle) queuedPrompts() []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	var out []string
-	for _, in := range h.queue {
-		if t := strings.TrimSpace(in.Prompt); t != "" {
-			out = append(out, t)
-		}
-	}
-	return out
+	return h.q.Texts()
+}
+
+// queueView is what the messages payload shows of the queue: its items (decision 5) and the
+// kept discards (decision 4).
+func (h *threadHandle) queueView() ([]agents.QueueItem, []agents.Discard) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.q.Items(), h.q.Discards()
 }
 
 // managedTranscript builds the read-layer TranscriptData for a managed cursor session
@@ -1163,6 +1212,7 @@ func managedTranscript(m session.Meta) agents.TranscriptData {
 		td.Pending = qs
 	}
 	td.Queued = append(td.Queued, h.queuedPrompts()...)
+	td.QueuedItems, td.Discards = h.queueView()
 	if modeSet != "" {
 		td.Mode = modeSet
 	}

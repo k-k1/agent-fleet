@@ -68,6 +68,7 @@ func TestLiveSpawnPromptResume(t *testing.T) {
 	h := &threadHandle{
 		name: "live1", dir: work, slotSid: "live-slot-1",
 		events: make(chan agents.Event, 64),
+		q:      agents.NewTurnQueue("live1", ledger, agents.LedgerAtTake),
 	}
 	if err := h.spawn(agents.ThreadSettings{}); err != nil {
 		t.Fatalf("spawn: %v", err)

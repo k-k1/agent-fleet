@@ -34,7 +34,8 @@ func TestSpawnFailureCarriesStderrTail(t *testing.T) {
 		tokenVal, tokenAt = prevVal, prevAt
 		tokenMu.Unlock()
 	})
-	h := &threadHandle{name: "t1", dir: t.TempDir(), slotSid: "slot-t1", events: make(chan agents.Event, 64)}
+	h := &threadHandle{name: "t1", dir: t.TempDir(), slotSid: "slot-t1", events: make(chan agents.Event, 64),
+		q: agents.NewTurnQueue("t1", ledger, agents.LedgerAtTake)}
 	err := h.spawn(agents.ThreadSettings{})
 	if err == nil {
 		t.Fatal("spawn succeeded against a CLI that exits at once")
