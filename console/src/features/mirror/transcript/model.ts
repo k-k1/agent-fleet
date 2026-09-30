@@ -305,6 +305,15 @@ function originsOf(t: Turn, parts: Part[]): string[] {
   return parts.map((p, i) => (key && MARKABLE_KINDS.has(p.kind || "") ? markRootKey(key, i) : ""));
 }
 
+// fromSession says whether a user row or block came from another session. The source tag
+// alone is not enough: a queued bubble on the claude TUI route and a pending echo carry none,
+// and there the envelope is the only mark.
+function fromSession(t: { source?: string; text?: string }): boolean {
+  if (t.source === "peer" || t.source === "spawn") return true;
+  const text = t.text || "";
+  return peerSenderOf(text) !== null || spawnParentOf(text) !== null;
+}
+
 // groupTurns folds consecutive same-role turns into one block (concatenating their
 // ordered parts, and their text for copy) and drops noise. A block breaks on a role
 // OR sidechain change so a subagent's turns stay separate from the main thread. It
@@ -341,7 +350,11 @@ export function groupTurns(turns: Turn[]): Group[] {
       // A queue entry is its own bubble: its actions act on one id, and folding two entries
       // would put one entry's buttons on another's text.
       !last.queueId &&
-      !t.queueId
+      !t.queueId &&
+      // A message from another session is its own bubble too: folded into the member's prompt,
+      // one badge would claim both texts, and the envelope readers (peerSenderOf / peerIntentOf)
+      // only look at the block's start.
+      !(t.role === "user" && (fromSession(last) || fromSession(t)))
     ) {
       last.parts.push(...parts);
       last.origins.push(...originsOf(t, parts));

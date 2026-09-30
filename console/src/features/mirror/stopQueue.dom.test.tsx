@@ -17,6 +17,7 @@ import {
   closeStep,
   discardView,
   emptyDiscardNotices,
+  inQueueOrder,
   queueEntries,
   restorable,
   restoreStep,
@@ -129,6 +130,20 @@ describe("queueEntries", () => {
       "cm_b",
     ]);
     expect(queueEntries(null, m.queuedPrompts).every((e) => !e.item)).toBe(true);
+  });
+});
+
+describe("inQueueOrder", () => {
+  it("draws each bubble at its entry's queue position, unqueued echoes last", () => {
+    // The claude TUI route: the member's prompt was queued first and matched its echo; the
+    // peer message queued after it is left over as a bubble of its own.
+    const queue = queueEntries(null, ["member", "peer"]);
+    const rows = [
+      { turn: "peer bubble", entry: queue[1] },
+      { turn: "not yet queued", entry: null },
+      { turn: "member echo", entry: queue[0] },
+    ];
+    expect(inQueueOrder(rows, queue)).toEqual(["member echo", "peer bubble", "not yet queued"]);
   });
 });
 

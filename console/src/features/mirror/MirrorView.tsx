@@ -119,6 +119,7 @@ import {
   closeStep,
   emptyDiscardNotices,
   injectionSource,
+  inQueueOrder,
   queueEntries,
   restorable,
   restoreStep,
@@ -1704,6 +1705,8 @@ export function MirrorView({
   // A queued prompt that matches a pending echo upgrades that echo's badge to "queued"
   // (no second bubble); whatever remains was typed straight into the terminal, so it gets
   // its own synthetic queued bubble. Multiset take: duplicate texts consume one entry each.
+  // The bubbles follow the queue's own order, so a peer message queued after the member's
+  // prompt is drawn after it.
   //
   // Memoized on the three states it reads: this walks every turn in the window and rebuilds every
   // block, and MirrorView re-renders for reasons that have nothing to do with the conversation —
@@ -1719,11 +1722,11 @@ export function MirrorView({
       if (i < 0) return null;
       return queuedLeft.splice(i, 1)[0];
     };
-    const echoTurns: Turn[] = pendingSends
+    const echoRows = pendingSends
       .filter((e) => !echoLanded(e, turns, isNoise)) // hide at render the instant the real turn lands
       .map((e) => {
         const q = takeQueued(e.text);
-        return {
+        const turn: Turn = {
           role: "user",
           text: e.text,
           idx: 1e9 + e.id,
@@ -1733,22 +1736,26 @@ export function MirrorView({
             ? { queueId: q.item.id, queueActionable: actionable(q.item), queueRestorable: restorable(q.item) }
             : {}),
         };
+        return { turn, entry: q };
       });
-    const queuedTurns: Turn[] = queuedLeft.map((q, i) => ({
-      role: "user",
-      text: q.text,
-      idx: 2e9 + i,
-      queued: true,
-      ...(q.item
-        ? {
-            queueId: q.item.id,
-            queueActionable: actionable(q.item),
-            queueRestorable: restorable(q.item),
-            ...injectionSource(q.item),
-          }
-        : {}),
-    }));
-    const extras = [...queuedTurns, ...echoTurns];
+    const queuedRows = queuedLeft.map((q, i) => {
+      const turn: Turn = {
+        role: "user",
+        text: q.text,
+        idx: 2e9 + i,
+        queued: true,
+        ...(q.item
+          ? {
+              queueId: q.item.id,
+              queueActionable: actionable(q.item),
+              queueRestorable: restorable(q.item),
+              ...injectionSource(q.item),
+            }
+          : {}),
+      };
+      return { turn, entry: q };
+    });
+    const extras = inQueueOrder([...queuedRows, ...echoRows], queueShown);
     const baseTurns = coalesceUserActions(turns);
     return groupTurns(extras.length ? [...baseTurns, ...extras] : baseTurns);
   }, [turns, pendingSends, queueShown]);

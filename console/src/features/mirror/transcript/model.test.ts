@@ -108,6 +108,25 @@ describe("groupTurns", () => {
     expect(groupTurns([asst("本文だけ")])[0].parts).toEqual([{ kind: "text", text: "本文だけ" }]);
   });
 
+  it("never folds a message from another session into the member's own prompt", () => {
+    const peer = "[agent-fleet:peer from=sf4m4dt intent=answer reply=none] PR opened";
+    // Absorbed mid-turn: claude injects both queued prompts as adjacent rows.
+    const absorbed = groupTurns([user("実装役に伝えて", { idx: 1 }), user(peer, { idx: 2, source: "peer" })]);
+    expect(absorbed.map((g) => [g.source, g.text])).toEqual([
+      [undefined, "実装役に伝えて"],
+      ["peer", peer],
+    ]);
+    // Still queued on the claude TUI route: neither row carries a source, only the envelope.
+    const queued = groupTurns([user("実装役に伝えて", { pending: true }), user(peer, { queued: true })]);
+    expect(queued.map((g) => g.text)).toEqual(["実装役に伝えて", peer]);
+    // A claude-native cross-session message has no envelope, only the tag; spawn is the same case.
+    for (const source of ["peer", "spawn"]) {
+      expect(groupTurns([user("本文", { source }), user("続き")])).toHaveLength(2);
+    }
+    // Two peer messages are two messages, each with its own envelope to read.
+    expect(groupTurns([user(peer), user(peer.replace("sf4m4dt", "abc123"))])).toHaveLength(2);
+  });
+
   it("keeps a source such as operator across a same-role merge", () => {
     const groups = groupTurns([user("一言目"), user("二言目", { source: "operator" })]);
     expect(groups[0].source).toBe("operator");

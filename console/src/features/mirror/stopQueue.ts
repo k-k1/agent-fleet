@@ -19,6 +19,18 @@ export function queueEntries(items: QueueItem[] | null, prompts: string[]): Queu
   return prompts.map((text) => ({ text }));
 }
 
+/** inQueueOrder lists the chat's extra user bubbles in the order the agent will take them:
+ *  each by its entry's position in `queue`, and a pending echo with no entry yet last. Without
+ *  it every leftover queued entry sat above every echo, so a peer message queued AFTER the
+ *  member's prompt was drawn before it. */
+export function inQueueOrder<T>(rows: { turn: T; entry: QueueEntry | null }[], queue: QueueEntry[]): T[] {
+  const at = (e: QueueEntry | null) => (e ? queue.indexOf(e) : Infinity);
+  return rows
+    .map((r, i) => ({ r, i, pos: at(r.entry) }))
+    .sort((a, b) => a.pos - b.pos || a.i - b.i)
+    .map((x) => x.r.turn);
+}
+
 /** actionable says whether a bubble may offer "back to the input box" and "remove": only an
  *  entry that is still cancellable (decision 5). Committed and sent entries are shown bare. */
 export const actionable = (item: QueueItem | undefined): item is QueueItem => !!item && item.state === "queued";
