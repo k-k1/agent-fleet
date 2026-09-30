@@ -106,6 +106,9 @@ type threadHandle struct {
 	// by path, so without this the member's own screenshots vanish from the bubble.
 	sentImages map[string][]string
 
+	// bg is the tool calls still running, by item id, for BackgroundWork (background.go).
+	bg map[string]bgEntry
+
 	// Live context fill (session/contextUsage). Separate lock from mu so onNotify
 	// can record context without contending with turn plumbing. Read by ManagedContext.
 	ctxMu       sync.Mutex
@@ -231,6 +234,7 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 			h.mu.Lock()
 			h.sid, h.path = prev.ID, prev.Path
 			h.setModelLocked(res.Session.ModelID)
+			h.rebuildBgLocked(res.History)
 			h.mu.Unlock()
 			return nil
 		}
@@ -240,6 +244,9 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 		log.Printf("muse: %s: stored session %s is gone; starting a fresh one", h.name, prev.ID)
 	}
 	h.resetUsage() // a different conversation from here on
+	h.mu.Lock()
+	h.bg = nil
+	h.mu.Unlock()
 
 	// A slot born from a fork opens by copying the source rather than starting empty. It is
 	// tried once, at birth: after this the slot has a stored session and takes the resume
@@ -368,6 +375,7 @@ func (h *threadHandle) hostLost(cl *msp.Client) {
 	h.alive, h.running, h.cl = false, false, nil
 	h.starting = ""
 	h.sentImages = nil // nothing this host was sent can be echoed any more
+	h.bg = nil         // its tasks went with it; a resume rebuilds from the next host's fold
 	h.mu.Unlock()
 	if wasRunning {
 		// A turn cut off by a dead host is aborted, not failed: a resend fixes it, and the
@@ -428,6 +436,19 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 		h.finishTurn(p)
 		h.mu.Lock()
 		h.turnModel = ""
+		h.mu.Unlock()
+
+	case msp.NotificationSessionClosed:
+		// An orderly unload: nothing of the session runs any more. It is broadcast to every
+		// connection, so it is checked against this handle's own session.
+		var p msp.SessionClosedParams
+		if json.Unmarshal(params, &p) != nil {
+			return
+		}
+		h.mu.Lock()
+		if p.SessionID == h.sid {
+			h.bg = nil
+		}
 		h.mu.Unlock()
 
 	case msp.NotificationSessionStatusChanged:
@@ -528,6 +549,7 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 func (h *threadHandle) onItem(it msp.Item) {
 	h.mu.Lock()
 	delete(h.streaming, it.ItemID)
+	h.trackBgLocked(it)
 	sid, model := h.slotSid, h.turnModel
 	if model == "" {
 		model = h.model
@@ -657,6 +679,7 @@ func (h *threadHandle) settleIdle(gen uint64) {
 	h.running, h.turnID, h.turnModel = false, "", ""
 	h.state = agents.TurnCompleted
 	h.settleHeadLocked()
+	h.dropResumedLocked()
 	h.mu.Unlock()
 	agents.MarkTurnEnd(h.slotSid, agents.TurnCompleted)
 	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnCompleted})
@@ -692,6 +715,7 @@ func (h *threadHandle) finishTurn(p msp.TurnCompletedParams) {
 		h.starting = "" // ended before it was ever reported started
 	}
 	h.settleHeadLocked()
+	h.dropResumedLocked()
 	h.running, h.state, h.turnID = false, st, ""
 	h.mu.Unlock()
 	agents.MarkTurnEndErr(h.slotSid, st, failure)

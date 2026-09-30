@@ -200,7 +200,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	// State comes from codex's -c-injected status hooks keyed by our sid (the status
-	// store; no idle-heal, no background-busy). Resumable unless the working dir is gone.
+	// store; no idle-heal). Resumable unless the working dir is gone.
 	// Under managed (docs/log/27 P3) there are no hooks; instead the driver writes the turn
 	// boundaries (turn/started, turn/completed notifications) to the same status store, so
 	// the reading side is almost entirely shared.
@@ -238,6 +238,11 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 			if li.State == "idle" && IsRateLimited(m.Name) {
 				li.State = agents.StateLimited
 			}
+			// A command an earlier turn left running is work behind the idle prompt. Managed
+			// only: it is the app-server connection that can ask (background.go).
+			if li.State == "idle" {
+				li.BackgroundBusy, li.BackgroundBusyReason = agentImpl{}.BackgroundWork(m)
+			}
 		} else if li.State == "working" && HasPendingQuestion(m) {
 			// The hooks report only working/idle — a request_user_input dialog keeps
 			// the turn "working" forever. Probe the rollout tail so the sessions list
@@ -249,6 +254,15 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		li.Resumable = false
 	}
 	return li
+}
+
+// BackgroundWork is the agents.BackgroundReporter read: a background terminal on a managed
+// session's thread (background.go). A Terminal session has no app-server connection to ask.
+func (agentImpl) BackgroundWork(m session.Meta) (bool, string) {
+	if m.DriverKind() != session.DriverManaged {
+		return false, ""
+	}
+	return BackgroundWork(m.Name)
 }
 
 // MissedTurnEnd reports whether the status store says "working" for a turn the rollout
