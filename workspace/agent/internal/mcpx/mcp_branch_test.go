@@ -174,6 +174,30 @@ func TestBranchNameErrors(t *testing.T) {
 		})
 	}
 
+	// "." and ".." survive url.PathEscape, and the Agent's ServeMux answers them with a redirect
+	// to a cleaned path that has no such route: followed, it reads as an Agent without the
+	// resolver. The server here is a real mux with the real pattern, so that path is exercised.
+	for _, repo := range []string{".", ".."} {
+		t.Run("dot repo "+repo, func(t *testing.T) {
+			branchTestEnv(t, 200, `{}`)
+			var hits []string
+			mux := http.NewServeMux()
+			mux.HandleFunc("POST /repos/{name}/branch-name", func(w http.ResponseWriter, r *http.Request) {
+				hits = append(hits, r.PathValue("name"))
+				_, _ = w.Write([]byte(`{"name":"x"}`))
+			})
+			srv := httptest.NewServer(mux)
+			t.Cleanup(srv.Close)
+			u, _ := url.Parse(srv.URL)
+			t.Setenv("AGENT_ADDR", u.Host)
+
+			got := callBranchName(t, map[string]any{"repo": repo})
+			if !got.IsError || !strings.Contains(got.Text, "~/repos 直下のフォルダ名として使えません") || len(hits) != 0 {
+				t.Fatalf("repo %q: result = %+v, resolver hits %q; want an invalid-name refusal", repo, got, hits)
+			}
+		})
+	}
+
 	t.Run("resolver unreachable", func(t *testing.T) {
 		branchTestEnv(t, 200, `{}`)
 		t.Setenv("AGENT_ADDR", "127.0.0.1:1")

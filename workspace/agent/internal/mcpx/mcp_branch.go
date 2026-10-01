@@ -55,6 +55,11 @@ func mcpBranchName(id json.RawMessage, raw json.RawMessage) []byte {
 		}
 		a.Repo = repo
 	}
+	// Checked here with the Agent's own rule: "." and ".." pass url.PathEscape, and the mux
+	// redirects them to a route-less path whose bare 404 would read as "no resolver".
+	if _, ok := gitx.ResolveRepoDir(a.Repo); !ok {
+		return mcpToolErr(id, badRepoMsg(a.Repo))
+	}
 
 	body, _ := json.Marshal(struct {
 		Item    *branchrule.Item `json:"item,omitempty"`
@@ -92,7 +97,7 @@ func branchNameErr(a branchNameArgs, err error) string {
 	}
 	switch code := he.code(); {
 	case code == "bad_repo":
-		return fmt.Sprintf("作業コピー %q は ~/repos 直下のフォルダ名として使えません", a.Repo)
+		return badRepoMsg(a.Repo)
 	case code == "not_git":
 		return fmt.Sprintf("~/repos に git の作業コピー %q がありません", a.Repo)
 	case code == "session_not_found":
@@ -102,4 +107,8 @@ func branchNameErr(a branchNameArgs, err error) string {
 	default:
 		return "ブランチ名の解決に失敗しました: " + he.Error()
 	}
+}
+
+func badRepoMsg(repo string) string {
+	return fmt.Sprintf("作業コピー %q は ~/repos 直下のフォルダ名として使えません", repo)
 }
