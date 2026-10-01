@@ -293,16 +293,19 @@ SSM セッションと共有されるので、1 回で両方に効きます。
 
 **コマンドを 1 つ、あなたとして実行する: `af-aws-exec`。** ワークスペースは自分自身の AWS の身元（**ワークロード
 ロール**）を持つことがあり、その下のマシンも身元を持つことがあります。コンテナのワークスペース（docker または
-AWS ECS）では、セッションとターミナルにはどちらも渡りません。Agent が起動するものすべてからワークスペースの
-資格情報の環境変数を外し、SDK のインスタンスメタデータ参照を止め（`AWS_EC2_METADATA_DISABLED=true`）、Agent
-Fleet が用意する EC2 ホストはワークスペースからのインスタンスメタデータを遮断します（あなた自身のマシンで直接
-動くワークスペースはそのままです。そこのインスタンスロールはあなたのマシンのもので、SDK は引き続きそれを
-見つけます）。そのため、プロファイルをまったく指定しないコマンド（素の `aws …`、SDK の既定の資格情報チェーン、
+AWS ECS、Agent Fleet 0.26.0 以降）では、セッションとターミナルにはどちらも渡りません。Agent が起動するもの
+すべてからワークスペースの資格情報の環境変数を外し、SDK のインスタンスメタデータ参照を止めます
+（`AWS_EC2_METADATA_DISABLED=true`）。この変数を無視するツールを止めるのはホスト側のネットワーク遮断で、
+管理者が 0.26.0 への移行を終えて初めて効きます（[運用ガイド 04](../operate/04-secure.ja.md)の「その他の運用上の統制」）。
+あなた自身のマシンで直接動くワークスペースはそのままです。そこのインスタンスロールはあなたのマシンのもので、SDK は
+引き続きそれを見つけます。そのため、プロファイルをまったく指定しないコマンド（素の `aws …`、SDK の既定の資格情報チェーン、
 プロファイル設定の無いビルドツール）は、ワークスペースの身元で動く代わりに「Unable to locate credentials」（または
 その SDK の言い回し）で止まります（プロファイルを指定していれば、名前の打ち間違いやログイン切れはそれぞれのエラーに
 なります）。管理者がワークスペース自身のタスクロール（AWS ECS）を再び使えるようにすることもでき、その場合
-そうしたコマンドはそのロールで、別のアカウントで黙って動きます。どちらの場合も、資格情報を別の所から探さないでください。デプロイ、あなたの
-アカウントの調べもの、その他あなたの権限で動かすべき操作は、資格情報を明示して渡してください。
+そうしたコマンドはそのロールで、別のアカウントで黙って動きます。どちらの場合も、「Unable to locate credentials」は
+「プロファイルを指定する」という意味で、「資格情報を設定する」という意味ではありません。`aws configure`、`aws login`（CLI 自身の案内）や
+`~/.aws` の `[default]` セクションのキーで対処せず、資格情報を別の所から探さないでください。デプロイ、書き込み、
+その他アカウントが重要な操作は、資格情報を明示して渡してください。
 
 ```sh
 af-aws-exec --profile <名前> -- ./gradlew deploy
@@ -323,6 +326,49 @@ af-aws-exec --profile <名前> --account <ID> --region <リージョン> -- ./gr
 プラグインはチェーンの最初に見る環境変数でプロファイルの短命な資格情報を見つけ、「running as」の行で誰が
 アップロードするかが分かります。ビルドスクリプト自身がプロファイルを指定している（`profileName = "prod"` など）
 ときは、下の「could not be found」を見てください。
+
+**読み取りだけの調べものは `aws --profile` で。** デプロイ、書き込み、ビルドツール、SDK のプログラム、スクリプトは
+引き続き `af-aws-exec` で実行します。アカウントを確かめ（`--account`）、SSO プロファイルを読めない SDK のツール
+（Gradle/Maven のプラグインに多い AWS SDK for Java v1 などの古い SDK）にも短命な資格情報を渡し、ログインが無ければ
+Console であなたに尋ね、ツールによって別の身元を指す名前を断り、`--region` でリージョンを固定し、エンドポイントの
+上書きを外すからです。AWS CLI そのものでのちょっとした調べもの（`describe-*`、`list-*`、`s3 ls`）は、設定画面の
+プロファイルを直接指定してかまいません。ただし、次の確認が `isolated` と出るシェルの中だけです。確認は 1 語だけを
+出力し、環境の中身もエラーの内容も出しません。
+
+```sh
+if err=$(env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true \
+           aws sts get-caller-identity 2>&1 >/dev/null); then st=0; else st=$?; fi
+err=${err#"${err%%[![:space:]]*}"}
+if [ "$st" = 253 ] && [ "$(printenv AWS_EC2_METADATA_DISABLED)" = true ] && [ "${AF_WS_WORKLOAD_AWS:-}" != 1 ] \
+   && [ -z "$(env | cut -d= -f1 | grep -E '^AWS_(CONTAINER_|CONFIG_FILE$|SHARED_CREDENTIALS_FILE$|ENDPOINT_URL)')" ] \
+   && case $err in "Unable to locate credentials"* | \
+        "aws: [ERROR]: An error occurred (NoCredentials): Unable to locate credentials"*) true ;; *) false ;; esac
+then echo isolated; else echo not-isolated; fi; unset err st
+```
+
+`isolated` は、`AWS_EC2_METADATA_DISABLED=true` が export されていて CLI がインスタンスメタデータに尋ねず、環境にワークロードの資格情報も AWS の設定ファイルや
+エンドポイントの上書きも無く、CLI の既定のチェーン（`AWS_PROFILE` を外し、設定済みのエンドポイントを無視して）が CLI 自身の「資格情報が無い」
+エラー（終了コード 253）で終わった、という意味です。そのため打ち間違えたプロファイルやログイン切れのプロファイルは、別のアカウントについて答える
+代わりに失敗します。それ以外（あなた自身の既定の資格情報、期限切れのセッション、失敗した `credential_process`、ネットワークのエラー）はすべて
+`not-isolated` で、あなた自身のマシンで動くワークスペース、タスクロールを戻している配備、アップグレード後にまだ
+起動し直していないワークスペースも、ふつうはそう出ます。この確認が見るのはこのシェルが CLI に渡すものだけで、
+実行方式やバージョン、ホストのネットワーク遮断までは保証しません。`not-isolated` なら調べものも `af-aws-exec` で
+実行してください。`isolated` でも、直接の調べものには次のすべてが要り、欠ければ `af-aws-exec` で実行します。
+
+- プロファイルは `af-aws-exec --list` が書き出し済みと示すもので、名前だけでなくアカウントとロールで選びます。
+  どのアカウントか分からなければ、先に確かめてください。`--list` が「from an earlier sync; not checked against
+  Settings now」と警告するときは何も確かめられていないので、`af-aws-exec` で。`--list` に出ないもの、書き出していないと示されるもの、
+  自分で定義したもの（`role_arn`、`credential_process`）は `af-aws-exec` で。
+- リージョンを指定し、設定済みのエンドポイントを無視させます:
+  `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true aws --profile <名前> --region <リージョン> ec2 describe-instances`
+  （`--endpoint-url` は付けません）。シェルに古い `AWS_REGION` が残っているとプロファイルのリージョンより優先され、
+  `~/.aws/config` の `endpoint_url`（エミュレーターの設定の残りなど）があると AWS 以外へ要求が送られます。
+- 確認したのと同じシェルで実行します。
+- SSO トークンのエラーはログインが無いという意味です。素の `aws --profile` は Console に尋ねないので、尋ねる
+  `af-aws-exec` で実行し直してください。
+- `af-aws-exec` が断ったプロファイルは、ここでも使えません。素の `--profile` は抜け道になりません。
+
+ワークスペースのエージェントも同じ決まりに従います。
 
 - プロファイルの**短命な**資格情報を、そのコマンド 1 つの環境変数にだけ渡します。`af-aws-exec` 自身は資格情報を
   どこにも書かず、表示するのは実行する身元（ARN）だけです（AWS CLI は従来どおり `~/.aws` に自分のログインと

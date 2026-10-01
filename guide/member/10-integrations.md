@@ -306,17 +306,20 @@ Open the URL it prints and approve the code — only a code you started yourself
 SSM sessions of the same profile, so logging in once covers both.
 
 **Running one command as you: `af-aws-exec`.** The workspace can have an AWS identity of its own (a *workload
-role*), and the machine underneath can have one too. In a container workspace (docker or AWS ECS) your sessions and
-terminals do not get either: the Agent keeps the workspace's credentials variables out of everything it starts, the
-SDKs' instance metadata lookup is switched off (`AWS_EC2_METADATA_DISABLED=true`), and EC2 hosts set up by Agent
-Fleet block instance metadata for workspaces. (A workspace that runs directly on your own machine is left as it is:
-an instance role there is your machine's, and the SDKs still find it.) So a
+role*), and the machine underneath can have one too. In a container workspace (docker or AWS ECS, Agent Fleet
+0.26.0 or later) your sessions and terminals do not get either: the Agent keeps the workspace's credentials variables
+out of everything it starts, and the SDKs' instance metadata lookup is switched off (`AWS_EC2_METADATA_DISABLED=true`).
+A tool that ignores that variable is stopped only by the host's network block, which holds once your administrator has
+finished the 0.26.0 migration ([operator guide 04](../operate/04-secure.md), "Other operational controls"). (A
+workspace that runs directly on your own machine is left as it is: an instance role there is your machine's, and the
+SDKs still find it.) So a
 command that names no profile at all — a bare `aws …`, an SDK's default credential chain, a build tool with no
 profile setting — fails with "Unable to locate credentials" (or its SDK's wording) instead of running as the
 workspace. (A named profile that is misspelled or logged out fails with its own error.) Your administrator can let
 the workspace use its own task role again (on AWS ECS); then such a command quietly runs as that role, in another
-account. Either way, do not look for credentials elsewhere: for deployments, lookups in your accounts and anything else that must
-use your authorization, pass your credentials explicitly:
+account. Either way, "Unable to locate credentials" means "name your profile", not "configure credentials": do not
+answer it with `aws configure`, `aws login` (the CLI's own hint) or keys in a `[default]` section of `~/.aws`, and do not look for credentials elsewhere.
+For deployments, writes and anything else whose account matters, pass your credentials explicitly:
 
 ```sh
 af-aws-exec --profile <name> -- ./gradlew deploy
@@ -336,6 +339,49 @@ af-aws-exec --profile <name> --account <id> --region <region> -- ./gradlew uploa
 The plugin then finds the profile's short-lived credentials in its environment, the first place the chain looks,
 and the "running as" line shows who uploads. If the build script names a profile itself (`profileName = "prod"`,
 say), see "could not be found" below.
+
+**A read-only lookup with `aws --profile`.** `af-aws-exec` stays the way to run deployments, writes, build tools,
+SDK programs and scripts: it checks the account (`--account`), hands short-lived credentials to tools whose SDK cannot
+read an SSO profile (older SDKs such as the AWS SDK for Java v1, common in Gradle/Maven plugins), asks you in the
+Console when a login is missing, refuses a profile name that means different identities to different tools, pins the
+region with `--region` and removes endpoint overrides. A quick look-up with the AWS CLI itself (`describe-*`,
+`list-*`, `s3 ls`) may name one of your Settings profiles directly, but only in a shell where this check prints
+`isolated`. It prints one word and nothing of the environment or of the error:
+
+```sh
+if err=$(env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true \
+           aws sts get-caller-identity 2>&1 >/dev/null); then st=0; else st=$?; fi
+err=${err#"${err%%[![:space:]]*}"}
+if [ "$st" = 253 ] && [ "$(printenv AWS_EC2_METADATA_DISABLED)" = true ] && [ "${AF_WS_WORKLOAD_AWS:-}" != 1 ] \
+   && [ -z "$(env | cut -d= -f1 | grep -E '^AWS_(CONTAINER_|CONFIG_FILE$|SHARED_CREDENTIALS_FILE$|ENDPOINT_URL)')" ] \
+   && case $err in "Unable to locate credentials"* | \
+        "aws: [ERROR]: An error occurred (NoCredentials): Unable to locate credentials"*) true ;; *) false ;; esac
+then echo isolated; else echo not-isolated; fi; unset err st
+```
+
+`isolated` means `AWS_EC2_METADATA_DISABLED=true` is exported, so the CLI does not ask instance metadata, the environment holds no workload credentials and no AWS
+config-file or endpoint overrides, and the CLI's default chain (with `AWS_PROFILE` set aside and configured endpoints
+ignored) ended in its own "no credentials" error (exit 253), so a misspelled or logged-out profile fails instead of answering for another account. Anything else — your
+own default credentials, an expired session, a failing `credential_process`, a network error — prints `not-isolated`, and so normally do a workspace
+on your own machine, a deployment that hands the task role back and a workspace not started again since the upgrade.
+The check reads what this shell would hand the CLI; it does not prove the runtime, the version or the host's network
+block. Where it prints `not-isolated`, run lookups through `af-aws-exec` too. Where it prints `isolated`, a direct
+lookup still needs all of these, or it goes through `af-aws-exec`:
+
+- The profile is one `af-aws-exec --list` shows as exported, chosen there by its account and role (not by the name
+  alone). If you do not know which account, find out first. When `--list` warns that its names come "from an earlier
+  sync; not checked against Settings now", nothing is verified: use `af-aws-exec`. A profile `--list` does not show, marks as not exported,
+  or one you defined yourself (`role_arn`, `credential_process`) → `af-aws-exec`.
+- Name the region and ignore configured endpoints:
+  `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true aws --profile <name> --region <region> ec2 describe-instances`, with no
+  `--endpoint-url`. A stale `AWS_REGION` in your shell beats the profile's region, and an `endpoint_url` in your
+  `~/.aws/config` (left by an emulator setup, say) would send the request somewhere other than AWS.
+- Run it in the same shell you checked.
+- An SSO token error means the login is missing; plain `aws --profile` does not ask the Console. Rerun with
+  `af-aws-exec`, which does.
+- A profile `af-aws-exec` refused is refused here too; plain `--profile` is no way around it.
+
+Agents in the workspace follow the same rule.
 
 - It passes the profile's **short-lived** credentials to that one command through its environment only —
   `af-aws-exec` itself writes them nowhere and prints nothing but the identity the command runs as. (The AWS CLI
