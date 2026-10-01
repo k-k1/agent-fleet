@@ -455,20 +455,59 @@ func HandleLoginCancel(w http.ResponseWriter, r *http.Request) {
 
 // allowedDeviceHosts lists the hosts a verification URL may have for sp: the device
 // authorization host of its SSO region, in that region's partition, and its start URL's.
+//
+// An issuer-form start URL (https://identitycenter.amazonaws.com/ssoins-<id>) gets its
+// instance's access portal back instead (measured: d-<id>.awsapps.com/start/#/device for
+// both start URL forms of one instance). For that form only, the instance's documented
+// portal endpoints are added. The classic d-<id> or alias label of an awsapps.com portal
+// cannot be derived from ssoins-<id>, so the entry ".awsapps.com" admits exactly one label
+// in front of it; the alternative IPv4 and dual-stack portals are derivable and compared
+// whole. China has no per-instance awsapps.cn host, only shared start hosts (AWS China's
+// IAM Identity Center allow lists).
 func allowedDeviceHosts(sp Profile) []string {
+	region := sp.SSORegion
+	china := strings.HasPrefix(region, "cn-")
 	suffix := "amazonaws.com"
-	if strings.HasPrefix(sp.SSORegion, "cn-") {
+	if china {
 		suffix = "amazonaws.com.cn"
 	}
-	hosts := []string{"device.sso." + sp.SSORegion + "." + suffix}
-	if u, err := url.Parse(sp.StartURL); err == nil && u.Hostname() != "" {
-		hosts = append(hosts, strings.ToLower(u.Hostname()))
+	hosts := []string{"device.sso." + region + "." + suffix}
+	u, err := url.Parse(sp.StartURL)
+	if err != nil || u.Hostname() == "" {
+		return hosts
+	}
+	host := strings.ToLower(u.Hostname())
+	hosts = append(hosts, host)
+	if host != "identitycenter."+suffix {
+		return hosts
+	}
+	id := strings.ToLower(strings.Trim(u.Path, "/"))
+	if !issuerIDRe.MatchString(id) {
+		id = ""
+	}
+	if china {
+		hosts = append(hosts, "start.home.awsapps.cn", "start."+region+".home.awsapps.cn")
+		if id != "" {
+			hosts = append(hosts, id+"."+region+".portal.amazonaws.com.cn",
+				id+".portal."+region+".app.amazonwebservices.com.cn")
+		}
+		return hosts
+	}
+	hosts = append(hosts, ".awsapps.com")
+	if id != "" {
+		hosts = append(hosts, id+"."+region+".portal.amazonaws.com", id+".portal."+region+".app.aws")
 	}
 	return hosts
 }
 
+// issuerIDRe is the path of an issuer-form start URL; it must be one DNS label so it
+// cannot smuggle a dot into the host built from it.
+var issuerIDRe = regexp.MustCompile(`^ssoins-[0-9a-z]+$`)
+
 // deviceURLAllowed compares the whole host name, never a part of it: the pattern that
-// finds the URL also matches inside device.sso.evil.example.
+// finds the URL also matches inside device.sso.evil.example. An entry starting with "."
+// admits exactly one label in front of it, so evil-awsapps.com and a.b.awsapps.com stay
+// out.
 func deviceURLAllowed(raw string, allowed []string) bool {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.User != nil {
@@ -476,6 +515,13 @@ func deviceURLAllowed(raw string, allowed []string) bool {
 	}
 	host := strings.ToLower(u.Hostname())
 	for _, h := range allowed {
+		if strings.HasPrefix(h, ".") {
+			label, ok := strings.CutSuffix(host, h)
+			if ok && label != "" && !strings.Contains(label, ".") {
+				return true
+			}
+			continue
+		}
 		if host == h {
 			return true
 		}
