@@ -112,16 +112,16 @@ async function reopen(extra: { repo?: string; initialPrompt?: string } = {}): Pr
 }
 
 const promptBox = () => must(document.querySelector<HTMLTextAreaElement>("textarea"), "first-prompt textarea");
-// Attachment chips (images waiting to be uploaded).
+// Attachment chips (files waiting to be uploaded).
 const chips = () => [...document.querySelectorAll(".mirror-attach .ma-chip")];
 
 // Paste an image from the clipboard. jsdom has no DataTransfer, so only the clipboardData the
 // handler reads is put on the raw event (React reads it from the native event).
-async function pasteImage(name: string): Promise<void> {
-  const file = new File(["PNGBYTES"], name, { type: "image/png" });
+async function pasteImage(name: string, type = "image/png"): Promise<void> {
+  const file = new File(["BYTES"], name, { type });
   const ev = new Event("paste", { bubbles: true, cancelable: true });
   Object.defineProperty(ev, "clipboardData", {
-    value: { items: [{ kind: "file", type: "image/png", getAsFile: () => file }] },
+    value: { items: [{ kind: "file", type, getAsFile: () => file }] },
   });
   await act(async () => {
     promptBox().dispatchEvent(ev);
@@ -363,6 +363,37 @@ describe("LaunchModal branch mode", () => {
     expect(launchedWith().images.map((f) => f.name)).toEqual(["shot.png"]);
     await reopen();
     expect(chips()).toHaveLength(0);
+  });
+
+  // The launch modal attaches what the mirror composer attaches: any file type, through paste,
+  // drop and the + picker. Images only was a gap users hit with PDFs and logs (#1447).
+  it("attaches non-image files by paste, drop and the + picker and hands them to the launch", async () => {
+    await render();
+    await pasteImage("spec.pdf", "application/pdf");
+    expect(chips()).toHaveLength(1);
+    expect(chips()[0].querySelector("img.ma-thumb")).toBeNull(); // icon + name, no thumbnail
+
+    const dropped = new File(["log"], "build.log", { type: "text/plain" });
+    const drop = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, "dataTransfer", { value: { types: ["Files"], files: [dropped] } });
+    await act(async () => {
+      promptBox().dispatchEvent(drop);
+    });
+    expect(drop.defaultPrevented).toBe(true);
+
+    const input = must(document.querySelector<HTMLInputElement>('input[type="file"]'), "file input");
+    expect(input.hasAttribute("accept")).toBe(false);
+    const picked = new File(["a,b"], "data.csv", { type: "text/csv" });
+    Object.defineProperty(input, "files", { value: [picked], configurable: true });
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await settle();
+    expect(chips()).toHaveLength(3);
+
+    await reopen(); // a not-yet-uploaded non-image keeps its bytes across a close
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().images.map((f) => f.name)).toEqual(["spec.pdf", "build.log", "data.csv"]);
   });
 
   // Coming back from a failed launch, the attachment is needed as much as the text.

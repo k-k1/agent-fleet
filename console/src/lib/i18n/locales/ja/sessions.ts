@@ -426,8 +426,8 @@ export const sessions = {
   "launch.template_insert_title": "テンプレートから最初のプロンプトを挿入",
   "launch.template_insert": "テンプレートから挿入…",
   "launch.first_prompt_note": "セッション起動後、準備でき次第この内容を1回だけ自動送信します（⌘/Ctrl+Enter で起動）。",
-  "launch.image_paste_note": "画像はここに貼り付け、または＋ボタンで添付できます（スマホは＋から）。",
-  "launch.attach_image": "画像を添付",
+  "launch.attach_note": "ファイルはここに貼り付け・ドロップ、または＋ボタンで添付できます（スマホは＋から）。",
+  "launch.attach_file": "ファイルを添付（貼り付け・ドロップも可）",
   "launch.start_worktree": "worktree で始める",
   // 折りたたみセクション（場所 / 詳細）の見出しと、畳んでいる間に出す要約。要約は
   // 「開かなくても実際に何が起きるか読み取れる」ことが役目なので、既定のままでも

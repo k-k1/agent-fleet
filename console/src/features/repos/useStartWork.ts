@@ -125,7 +125,7 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
     // the selected working set (docs/log/52 §1). A launch inside a repo inherits the repo's.
     if (!dir) autoAddToActiveWorkingSet("sessions", res.name);
     const chat = agentOf(kind).caps.chat;
-    // Now that the session exists, upload any pasted images to it and fold their
+    // Now that the session exists, upload any staged attachments to it and fold their
     // saved paths into the first prompt (claude opens them with its Read tool).
     let seed = prompt;
     if (withImages) {
