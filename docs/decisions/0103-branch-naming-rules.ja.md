@@ -205,7 +205,7 @@ Bug は `feature/…` になる。nvie/gitflow と Fork には bugfix が無い�
 | `{project}` | （空） | `PROJ` |
 | `{type}` | 種類（例: `bugfix`） | 同じ |
 | `{prefix}` | 種類の prefix（例: `fix/`） | 同じ |
-| `{slug}` | 題の ASCII スラグ | 同じ（非 ASCII の題では P2 まで空） |
+| `{slug}` | 題の ASCII スラグ | 同じ（非 ASCII の題では英語のスラグができてから。それまでは空） |
 
 - **`{key}` は意味を変えない。** 既存のテンプレートは以前と同じ名前を描く。Jira キーは、今と同じく書かれたままの
   大文字小文字を保つ。

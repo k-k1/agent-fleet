@@ -48,6 +48,8 @@ export interface BranchName {
   base: string;
   base_branch: string;
   kind: string;
+  /** The name carries the deterministic slug while the Agent makes an English one for a
+   * non-ASCII title; asking again later may answer the better name (`sources.slug` "ai"). */
   provisional: boolean;
   warnings: BranchWarning[];
   sources: Record<string, unknown>;

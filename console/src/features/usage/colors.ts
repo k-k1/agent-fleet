@@ -45,7 +45,8 @@ export const OTHER_KEY = "__other__";
  * - `assistant.ask` (one-shot advisory, non-persistent) is dwarfed by `assistant.chat`.
  * - `title.chat` / `suggest.chat` fire a few times per conversation, an order of magnitude less
  *   than `title.session` / `suggest.session`, which fire automatically per session.
- * - `branch.suggest` / `suggest.edit` / `translate.mirror` are manual only.
+ * - `suggest.edit` / `translate.mirror` are manual only, and `branch.suggest` is manual plus one
+ *   short call per non-English work-item title.
  *
  * The table is only acceptable because the folded part stays visible, which the UI guarantees
  * three ways: "other" always appears in the legend when anything folded (even for a single

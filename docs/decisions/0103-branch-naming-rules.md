@@ -223,7 +223,7 @@ User and tenant rules and the `gitflow.*` keys go through the same key and ref-n
 | `{project}` | (empty) | `PROJ` |
 | `{type}` | the kind, e.g. `bugfix` | same |
 | `{prefix}` | the kind's prefix, e.g. `fix/` | same |
-| `{slug}` | the title's ASCII slug | same (empty for a non-ASCII title until P2) |
+| `{slug}` | the title's ASCII slug | same (for a non-ASCII title, the English slug once made; empty until then) |
 
 - **`{key}` keeps its meaning** so that existing templates render as before. A Jira key keeps the case
   it was written in, as it does today.
