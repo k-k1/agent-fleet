@@ -349,27 +349,33 @@ region with `--region` and removes endpoint overrides. A quick look-up with the 
 `isolated`. It prints one word and nothing of the environment or of the error:
 
 ```sh
-err=$(env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE aws sts get-caller-identity 2>&1 >/dev/null)
-if [ "${AWS_EC2_METADATA_DISABLED:-}" = true ] && [ "${AF_WS_WORKLOAD_AWS:-}" != 1 ] \
+if err=$(env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true \
+           aws sts get-caller-identity 2>&1 >/dev/null); then st=0; else st=$?; fi
+err=${err#"${err%%[![:space:]]*}"}
+if [ "$st" = 253 ] && [ "${AWS_EC2_METADATA_DISABLED:-}" = true ] && [ "${AF_WS_WORKLOAD_AWS:-}" != 1 ] \
    && [ -z "$(env | cut -d= -f1 | grep -E '^AWS_(CONTAINER_|CONFIG_FILE$|SHARED_CREDENTIALS_FILE$|ENDPOINT_URL)')" ] \
-   && case $err in *"Unable to locate credentials"*) true ;; *) false ;; esac
-then echo isolated; else echo not-isolated; fi; unset err
+   && case $err in "Unable to locate credentials"* | \
+        "aws: [ERROR]: An error occurred (NoCredentials): Unable to locate credentials"*) true ;; *) false ;; esac
+then echo isolated; else echo not-isolated; fi; unset err st
 ```
 
 `isolated` means the CLI does not ask instance metadata, the environment holds no workload credentials and no AWS
-config-file or endpoint overrides, and the CLI's default chain (with `AWS_PROFILE` set aside) found no credentials
-at all, so a misspelled or logged-out profile fails instead of answering for another account. Anything else — your
-own default credentials, an expired session, a network error — prints `not-isolated`, and so normally do a workspace
+config-file or endpoint overrides, and the CLI's default chain (with `AWS_PROFILE` set aside and configured endpoints
+ignored) ended in its own "no credentials" error (exit 253), so a misspelled or logged-out profile fails instead of answering for another account. Anything else — your
+own default credentials, an expired session, a failing `credential_process`, a network error — prints `not-isolated`, and so normally do a workspace
 on your own machine, a deployment that hands the task role back and a workspace not started again since the upgrade.
 The check reads what this shell would hand the CLI; it does not prove the runtime, the version or the host's network
 block. Where it prints `not-isolated`, run lookups through `af-aws-exec` too. Where it prints `isolated`, a direct
 lookup still needs all of these, or it goes through `af-aws-exec`:
 
 - The profile is one `af-aws-exec --list` shows as exported, chosen there by its account and role (not by the name
-  alone). If you do not know which account, find out first. A profile `--list` does not show, marks as not exported,
+  alone). If you do not know which account, find out first. When `--list` warns that its names come "from an earlier
+  sync; not checked against Settings now", nothing is verified: use `af-aws-exec`. A profile `--list` does not show, marks as not exported,
   or one you defined yourself (`role_arn`, `credential_process`) → `af-aws-exec`.
-- Name the region: `aws --profile <name> --region <region> ec2 describe-instances`. A stale `AWS_REGION` in your shell
-  beats the profile's region.
+- Name the region and ignore configured endpoints:
+  `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true aws --profile <name> --region <region> ec2 describe-instances`, with no
+  `--endpoint-url`. A stale `AWS_REGION` in your shell beats the profile's region, and an `endpoint_url` in your
+  `~/.aws/config` (left by an emulator setup, say) would send the request somewhere other than AWS.
 - Run it in the same shell you checked.
 - An SSO token error means the login is missing; plain `aws --profile` does not ask the Console. Rerun with
   `af-aws-exec`, which does.

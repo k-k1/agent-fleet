@@ -62,17 +62,22 @@ SDK program, a build tool or a script) may instead name the profile directly, bu
 shell passes the check below. It prints one word and nothing of the environment or of the error:
 
 ```sh
-err=$(env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE aws sts get-caller-identity 2>&1 >/dev/null)
-if [ "${AWS_EC2_METADATA_DISABLED:-}" = true ] && [ "${AF_WS_WORKLOAD_AWS:-}" != 1 ] \
+if err=$(env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true \
+           aws sts get-caller-identity 2>&1 >/dev/null); then st=0; else st=$?; fi
+err=${err#"${err%%[![:space:]]*}"}
+if [ "$st" = 253 ] && [ "${AWS_EC2_METADATA_DISABLED:-}" = true ] && [ "${AF_WS_WORKLOAD_AWS:-}" != 1 ] \
    && [ -z "$(env | cut -d= -f1 | grep -E '^AWS_(CONTAINER_|CONFIG_FILE$|SHARED_CREDENTIALS_FILE$|ENDPOINT_URL)')" ] \
-   && case $err in *"Unable to locate credentials"*) true ;; *) false ;; esac
-then echo isolated; else echo not-isolated; fi; unset err
+   && case $err in "Unable to locate credentials"* | \
+        "aws: [ERROR]: An error occurred (NoCredentials): Unable to locate credentials"*) true ;; *) false ;; esac
+then echo isolated; else echo not-isolated; fi; unset err st
 ```
 
 `isolated` means: the CLI does not ask instance metadata, no workload credentials or file and
 endpoint overrides are in the environment, and the CLI's default chain (with `AWS_PROFILE` set
-aside) positively found no credentials at all. Any other outcome — default credentials that
-resolve, an expired session, a network or endpoint error — is `not-isolated`. It checks what the
+aside and configured endpoints ignored) ended in its own "no credentials" error, exit 253. Any
+other outcome — default credentials that resolve, an expired session, a failing
+`credential_process` (even one whose message says "Unable to locate credentials"), a network or
+endpoint error — is `not-isolated`. It works under `set -e` and `pipefail`. It checks what the
 CLI in this shell would inherit, not the runtime, the version or the host's network block: a shell
 where someone pre-set the variable can pass on the native runtime too. Treat `not-isolated` as the
 answer whenever you are unsure, and then every AWS command, reads included, goes through
@@ -81,13 +86,17 @@ answer whenever you are unsure, and then every AWS command, reads included, goes
 Even where it is `isolated`, all of these hold or you use `af-aws-exec`:
 
 - `<name>` is a Settings profile `af-aws-exec --list` shows as exported, chosen there by account and
-  role. The task does not say which account → ask the user. Not in `--list`, marked not exported, or
+  role. When `--list` warns that the names come "from an earlier sync; not checked against
+  Settings now", nothing is verified → `af-aws-exec`. The task does not say which account → ask the user. Not in `--list`, marked not exported, or
   a profile of the user's own (a `role_arn` / `credential_process` profile always needs
   `af-aws-exec --account`) → `af-aws-exec`.
 - Always pass `--region <region>`: a stale `AWS_REGION` / `AWS_DEFAULT_REGION` in the shell beats
   the profile's region.
-- `aws --profile <name> --region <region> <service> <read-only operation> …`, run in the same shell
-  you checked.
+- Run it as
+  `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true aws --profile <name> --region <region> <service> <read-only operation> …`,
+  with no `--endpoint-url`, in the same shell you checked. The variable keeps an `endpoint_url` in
+  the user's `~/.aws/config` (a `[default]` or `services` section an emulator set up, say) from
+  sending the request somewhere other than AWS.
 - An SSO token error means the login is missing: rerun the lookup with `af-aws-exec`, which asks the
   user in the Console. Do not run `aws sso login` yourself.
 - If `af-aws-exec` refused that profile, plain `--profile` is not a way around it.
