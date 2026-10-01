@@ -211,3 +211,81 @@ func TestRepointStatusHookCmd(t *testing.T) {
 		}
 	}
 }
+
+// pushEntries returns the PostToolUse entries on the PushNotification matcher, split
+// into ours (session-status push) and everyone else's.
+func pushEntries(t *testing.T, dir string) (ours, theirs int) {
+	t.Helper()
+	arr, _ := readHooks(t, dir)["PostToolUse"].([]any)
+	for _, e := range arr {
+		em, _ := e.(map[string]any)
+		if em["matcher"] != pushToolMatcher {
+			continue
+		}
+		if b, _ := json.Marshal(em["hooks"]); strings.Contains(string(b), "session-status push") {
+			ours++
+		} else {
+			theirs++
+		}
+	}
+	return ours, theirs
+}
+
+// PushNotification's local notification is only an OSC sequence, which is dropped for
+// claude panes; the PostToolUse forwarder is its one route to the notification center.
+func TestEnsureStatusHooksInstallsPushForwarderOnce(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+
+	EnsureStatusHooks()
+	EnsureStatusHooks()
+	if ours, _ := pushEntries(t, dir); ours != 1 {
+		t.Fatalf("PushNotification forwarder installed %d times, want 1", ours)
+	}
+	// The heartbeat is still the matcher-less entry next to it.
+	if !postToolUseHasAF(readHooks(t, dir)) {
+		t.Fatal("catch-all heartbeat missing next to the PushNotification forwarder")
+	}
+}
+
+// A user's own hook on the same matcher stays, and does not stand in for ours.
+func TestEnsureStatusHooksPushForwarderKeepsUserEntry(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	seed := map[string]any{"hooks": map[string]any{
+		"PostToolUse": []any{
+			map[string]any{"matcher": "PushNotification", "hooks": []any{map[string]any{"type": "command", "command": "/home/u/phone.sh"}}},
+		},
+	}}
+	b, _ := json.MarshalIndent(seed, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	EnsureStatusHooks()
+	EnsureStatusHooks()
+	if ours, theirs := pushEntries(t, dir); ours != 1 || theirs != 1 {
+		t.Fatalf("PushNotification entries: ours=%d theirs=%d, want 1 and 1", ours, theirs)
+	}
+}
+
+// Installing a missing heartbeat strips our PostToolUse entries first; the forwarder
+// must come back exactly once rather than vanish or double.
+func TestEnsureStatusHooksPushForwarderSurvivesHeartbeatInstall(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	seed := map[string]any{"hooks": map[string]any{
+		"PostToolUse": []any{
+			map[string]any{"matcher": "PushNotification", "hooks": []any{map[string]any{"type": "command", "command": statusHookCmd("push")}}},
+		},
+	}}
+	b, _ := json.MarshalIndent(seed, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	EnsureStatusHooks()
+	if ours, _ := pushEntries(t, dir); ours != 1 {
+		t.Fatalf("PushNotification forwarder present %d times after the heartbeat install, want 1", ours)
+	}
+}

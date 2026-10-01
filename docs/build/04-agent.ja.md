@@ -347,7 +347,22 @@ tmux 3.5a で実測: 素の OSC も tmux のパススルー包み（`ESC P tmux;
 | copilot、cursor、kiro | 見つからない | — |
 | shell | 利用者が動かすもの次第 | 一番の受益者。 |
 
-Follow-ups: #1069（claude の `PushNotification` ツール。OSC でしか通知しない）。
+**claude の `PushNotification` ツールは hook から受ける。** このツール（2.1.286。
+`tengu_kairos_push_notifications` フラグの裏で既定はオフ）は手元の通知を `preferredNotifChannel`
+経由でしか出さず（＝OSC。上のとおり捨てる）、claude の Notification hook もこれには発火しない。
+そこで `EnsureStatusHooks` が matcher `PushNotification` の `PostToolUse` に `session-status push`
+を足し、`tool_input.message` を `proto: "claude-push"` の `terminal-notification` として送信箱に
+入れる（`sessionx.recordPushNotification`）。cmux と同じやり方。
+
+- `tool_response.disabledReason` が `user_present` か `config_off` なら**送らない**。claude 自身が
+  何も通知せずに戻る場合だから。`no_transport` は*モバイル*プッシュが無いだけで手元の通知は出て
+  いるので、転送する。
+- **一度だけ届く。** OSC 経路は claude を捨てるので二経路が両方届けることはない。1 回の呼び出しで
+  hook が二度発火しても、`tool_use_id` を鍵にした `notice.PutOnce` が吸収する。
+- **想定外のペイロードでは何もしない**（文面が無ければイベントも無い）。形（`tool_input`
+  `{message, status}`、`tool_response` `{message, pushSent, localSent, disabledReason, sentAt}`）は
+  バイナリから読んだもので、実際の呼び出しを捕捉したものではない。
+- セッションの状態は変えない。同じツールにも、ほかのツールと同様に `PostToolUse` の心拍が発火する。
 
 ## 4.5 チャットとアシスタント（headless CLI）
 

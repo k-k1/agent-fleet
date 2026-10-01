@@ -250,7 +250,9 @@ arrives in the notification center as **"Terminal notification"**, with a browse
 too (not while that session is in the active pane, nor when the browser has not been allowed to notify).
 That lets a shell session tell you when a long build finishes. claude / codex / opencode already
 report the same moments through their own channel, so their terminal notifications are not used,
-to avoid duplicates.
+to avoid duplicates. The exception is claude's own notification tool (`PushNotification`, off by
+default in claude): when claude decides to notify you, that message arrives as a terminal
+notification too, unless claude held it back because you were active in that terminal.
 
 **A red dot on a session marks a notification you have not read yet.** It sits on the session's
 row in the left pane (on the corner of its icon) and on its tab, and rolls up onto a collapsed

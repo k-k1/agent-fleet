@@ -401,7 +401,24 @@ What each kind can emit, read from its binary (2026-09-27; no kind was captured 
 | copilot, cursor, kiro | none found | — |
 | shell | whatever the user runs | The main beneficiary. |
 
-Follow-ups: #1069 (claude's `PushNotification` tool, which only notifies over OSC).
+**claude's `PushNotification` tool comes through a hook instead.** The tool (2.1.286, behind
+the `tengu_kairos_push_notifications` flag, off by default) raises its local notification only
+through `preferredNotifChannel` — an OSC sequence, dropped above — and claude's Notification hook
+does not fire for it. `EnsureStatusHooks` therefore adds a `PostToolUse` entry on matcher
+`PushNotification` running `session-status push`, which puts `tool_input.message` in the outbox
+as a `terminal-notification` with `proto: "claude-push"` (`sessionx.recordPushNotification`).
+The same approach as cmux.
+
+- **Skipped** when `tool_response.disabledReason` is `user_present` or `config_off`: claude
+  returns before notifying anything. `no_transport` means no *mobile* push only — the local
+  notification went out — so it is forwarded.
+- **Delivered once.** The OSC route drops claude, so the two routes never both deliver; a hook
+  that fires twice for one call is absorbed by `notice.PutOnce` keyed on `tool_use_id`.
+- **Inert on an unexpected payload**: no message, no event. The payload shape (`tool_input`
+  `{message, status}`, `tool_response` `{message, pushSent, localSent, disabledReason, sentAt}`)
+  was read from the binary, not captured from a live call.
+- It never changes the session status; the catch-all `PostToolUse` heartbeat fires for the same
+  tool as for any other.
 
 ## 4.5 Chat and assistants (a headless CLI)
 

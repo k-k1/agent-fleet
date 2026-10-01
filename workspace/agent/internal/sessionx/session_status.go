@@ -107,6 +107,12 @@ func RunSessionStatusHook(args []string) {
 		applyPendingPayloads(sid, "idle", h)
 		return
 	}
+	// push: PostToolUse(PushNotification). A notification, never a status — the catch-all
+	// heartbeat fires for the same tool and keeps working.
+	if state == "push" {
+		recordPushNotification(sid, h)
+		return
+	}
 	// message: the MessageDisplay hook fires as the assistant's text streams (before
 	// the turn's tool_use — verified: the prose reaches the pending card). We accumulate
 	// the chunks so a pending AskUserQuestion can show the prose that preceded it, which
@@ -414,6 +420,11 @@ type hookInput struct {
 	// filePath is Write/Edit's target. Kept apart from toolDetail (which is prose for the
 	// permission card) because planFileOf has to compare it as a path.
 	filePath string
+	// PostToolUse(PushNotification): the message the tool raised, whether it went out
+	// (tool_response.disabledReason) and the call it came from.
+	pushMessage        string
+	pushDisabledReason string
+	toolUseID          string
 }
 
 func decodeHookStdin() hookInput {
@@ -437,7 +448,12 @@ func decodeHookStdin() hookInput {
 			NotebookPath string          `json:"notebook_path"`
 			Path         string          `json:"path"`
 			Command      string          `json:"command"` // Bash
+			Message      string          `json:"message"` // PushNotification
 		} `json:"tool_input"`
+		ToolResponse struct {
+			DisabledReason string `json:"disabledReason"` // PushNotification
+		} `json:"tool_response"`
+		ToolUseID string `json:"tool_use_id"` // PreToolUse, PostToolUse
 	}
 	_ = json.NewDecoder(os.Stdin).Decode(&in)
 	return hookInput{
@@ -457,6 +473,10 @@ func decodeHookStdin() hookInput {
 		agentID:    in.AgentID,
 		filePath:   in.ToolInput.FilePath,
 		toolDetail: permToolDetail(in.ToolName, in.ToolInput.FilePath, in.ToolInput.NotebookPath, in.ToolInput.Path, in.ToolInput.Command),
+
+		pushMessage:        in.ToolInput.Message,
+		pushDisabledReason: in.ToolResponse.DisabledReason,
+		toolUseID:          in.ToolUseID,
 	}
 }
 

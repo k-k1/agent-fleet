@@ -42,6 +42,7 @@ const permToolMatcher = "Write|Edit|MultiEdit|NotebookEdit|Bash"
 //	SessionStart     → boot      (fresh/resumed → idle; skips auto-compact)
 //	PreToolUse(AskUserQuestion)  → question (claude is asking the user)
 //	PostToolUse(*)   → working   (every completed tool re-asserts working — heartbeat)
+//	PostToolUse(PushNotification) → push (forward the tool's message; never a status)
 func EnsureStatusHooks() {
 	m := readSettings()
 	hooks := hooksMap(m)
@@ -97,6 +98,19 @@ func EnsureStatusHooks() {
 			map[string]any{"matcher": "", "hooks": []any{map[string]any{"type": "command", "command": statusHookCmd("working")}}})
 		changed = true
 	}
+	// PostToolUse(PushNotification) → push: the tool's local notification is only an OSC
+	// sequence (its Notification hook does not fire for it), and OSC from a claude pane is
+	// dropped because the other hooks already cover answer-ready / question / permission.
+	// This hook is the only route its message has to the notification center. Installed
+	// after the heartbeat because installing that one strips every entry of ours.
+	if !postToolUseHasPush(hooks) {
+		list, _ := hooks["PostToolUse"].([]any)
+		hooks["PostToolUse"] = append(list, map[string]any{
+			"matcher": pushToolMatcher,
+			"hooks":   []any{map[string]any{"type": "command", "command": statusHookCmd("push")}},
+		})
+		changed = true
+	}
 	// Notification → permission: fires when claude is blocked on a tool-permission
 	// prompt (notification_type=permission_prompt). The handler ignores other
 	// notification types, so this matcher-less hook is safe to always set.
@@ -127,6 +141,26 @@ func postToolUseHasAF(hooks map[string]any) bool {
 			continue
 		}
 		if b, _ := json.Marshal(em["hooks"]); strings.Contains(string(b), "session-status") {
+			return true
+		}
+	}
+	return false
+}
+
+// pushToolMatcher is the tool name of claude's PushNotification (2.1.286 binary: the
+// tool's `name`, which is what a hook matcher is compared with).
+const pushToolMatcher = "PushNotification"
+
+// postToolUseHasPush reports whether PostToolUse already carries OUR PushNotification
+// forwarder. A user's own entry on the same matcher does not count and is left alone.
+func postToolUseHasPush(hooks map[string]any) bool {
+	arr, _ := hooks["PostToolUse"].([]any)
+	for _, e := range arr {
+		em, _ := e.(map[string]any)
+		if em == nil || em["matcher"] != pushToolMatcher {
+			continue
+		}
+		if b, _ := json.Marshal(em["hooks"]); strings.Contains(string(b), "session-status push") {
 			return true
 		}
 	}
