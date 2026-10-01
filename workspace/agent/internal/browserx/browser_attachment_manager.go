@@ -28,6 +28,11 @@ type browserAttachmentManagerConfig struct {
 	JPEGQuality      int
 	Discover         func(int, time.Duration) (cdpDiscovery, error)
 	Dial             func(context.Context, int, string) (browserCDP, error)
+	// ViewerLeases is the viewer cap this manager draws from; nil means the
+	// Workspace-wide pool shared with Agent-owned Pages. Tests inject their own
+	// pool rather than swapping the package variable, because expiry timers
+	// left by earlier tests still read it after those tests have returned.
+	ViewerLeases *browserViewerLeasePool
 }
 
 type browserAttachmentManager struct {
@@ -147,6 +152,9 @@ func newBrowserAttachmentManager(config browserAttachmentManagerConfig) *browser
 	}
 	if config.Dial == nil {
 		config.Dial = dialWebSocketCDP
+	}
+	if config.ViewerLeases == nil {
+		config.ViewerLeases = workspaceBrowserViewerLeases
 	}
 	return &browserAttachmentManager{
 		config: config, attachments: make(map[string]*browserAttachment), targets: make(map[string]string),
@@ -535,7 +543,7 @@ func (m *browserAttachmentManager) Delete(id string) {
 	delete(m.attachments, id)
 	delete(m.targets, a.targetKey)
 	m.mu.Unlock()
-	workspaceBrowserViewerLeases.release(browserAttachmentViewerLease(a.id))
+	m.config.ViewerLeases.release(browserAttachmentViewerLease(a.id))
 
 	// Excludes a concurrent Retarget on the same attachment: whichever of the
 	// two gets here first runs to completion before the other proceeds (a
@@ -828,7 +836,7 @@ func (m *browserAttachmentManager) markTerminal(a *browserAttachment, state, rea
 	a.viewer, a.reserved, a.visible = nil, false, false
 	a.armExpiryLocked(m.config.ViewerGrace)
 	a.mu.Unlock()
-	workspaceBrowserViewerLeases.release(browserAttachmentViewerLease(a.id))
+	m.config.ViewerLeases.release(browserAttachmentViewerLease(a.id))
 	a.stopFrameLoop()
 	if v != nil {
 		v.enqueueTextAndClose(mustBrowserJSON(map[string]any{"type": "state", "state": state}), websocketCloseGoingAway, reason)
