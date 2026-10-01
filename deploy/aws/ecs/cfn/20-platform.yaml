@@ -355,10 +355,16 @@ Resources:
                       - CreateSnapshot
                     # Without this a compromised CP could plant a "slot" or a "home" into
                     # ANOTHER deployment's pool in the same account, which that CP would
-                    # then trust.
+                    # then trust. A case variant (AF-POOL=<other>) beside it plants
+                    # nothing: every CP finds its resources with EC2 tag filters, and those
+                    # match the key case-sensitively.
                     aws:RequestTag/af-pool: !Ref Cluster
               # Bookkeeping on pool resources: claim, idle and hibernation marks, owner and
               # tenant tags, home-wipe marks, bake marks. None of them is af-pool or af-role.
+              # Null=false: a DeleteTags that names no key deletes EVERY tag, af-pool and
+              # af-role included, and ForAllValues alone is true for an absent key.
+              # IgnoreCase: IAM matches tag-key condition names case-insensitively while EC2
+              # keeps AF-ROLE beside af-role, so a case variant must count as the key itself.
               - Sid: Ec2TagPoolResources
                 Effect: Allow
                 Action:
@@ -371,12 +377,16 @@ Resources:
                 Condition:
                   StringEquals:
                     ec2:ResourceTag/af-pool: !Ref Cluster
-                  ForAllValues:StringNotEquals:
+                  "Null":
+                    aws:TagKeys: "false"
+                  ForAllValues:StringNotEqualsIgnoreCase:
                     aws:TagKeys: [ af-pool, af-role ]
               # The only role changes the CP makes after creation, each on the one resource
               # type it applies to: a slot that failed is quarantined, a golden candidate is
               # published or rejected. Moving a box TO af-role=slot is never allowed - that
               # is the step that would hand an engine box (af-pool too) to SendCommand.
+              # The key lists are exact and case-sensitive (the RequestTag condition is not),
+              # so no case variant of af-pool or af-role can ride along.
               - Sid: Ec2TagQuarantineSlot
                 Effect: Allow
                 Action: ec2:CreateTags
@@ -385,8 +395,8 @@ Resources:
                   StringEquals:
                     ec2:ResourceTag/af-pool: !Ref Cluster
                     aws:RequestTag/af-role: quarantined
-                  ForAllValues:StringNotEquals:
-                    aws:TagKeys: [ af-pool ]
+                  ForAllValues:StringEquals:
+                    aws:TagKeys: [ af-role, af-quarantine-reason, af-quarantine-at ]
               - Sid: Ec2TagGoldenRole
                 Effect: Allow
                 Action: ec2:CreateTags
@@ -395,8 +405,8 @@ Resources:
                   StringEquals:
                     ec2:ResourceTag/af-pool: !Ref Cluster
                     aws:RequestTag/af-role: [ golden, golden-rejected ]
-                  ForAllValues:StringNotEquals:
-                    aws:TagKeys: [ af-pool ]
+                  ForAllValues:StringEquals:
+                    aws:TagKeys: [ af-role, Name, af-bake-reason ]
               - Sid: EcsContainerInstances
                 Effect: Allow
                 Action:

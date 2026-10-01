@@ -130,10 +130,11 @@ declare.
   `20-platform.yaml`) is scoped to the account, not to one deployment: several of its
   statements name `Resource: "*"` with no condition, and the workspace parameters are
   one prefix for the whole account. A compromised CP can therefore reach other
-  deployments in the same account: their services, parameters, instances and volumes,
-  including attaching another deployment's home volume to a slot of its own. Its
-  shell commands stay fenced to the slots it launched into its own pool, because its
-  tag writes are fenced too
+  deployments in the same account: their services, parameters, instances and volumes.
+  It can attach any volume read-write to a slot of its own, including another
+  instance's root volume after stopping that instance, and so run code there on its
+  next start. Only its direct shell (`ssm:SendCommand`) stays fenced to the slots it
+  launched into its own pool, because its tag writes are fenced too
   ([#1182](https://github.com/k-k1/agent-fleet/issues/1182),
   [#1419](https://github.com/k-k1/agent-fleet/issues/1419)). Which statements, and
   what they reach, is

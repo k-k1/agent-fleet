@@ -51,14 +51,17 @@ at once**:
   its own `RunInstances` / `CreateFleet` / `CreateVolume` / `CreateSnapshot` and only
   with this pool's `af-pool`; after creation only resources that already carry this
   pool's `af-pool`, never the `af-pool` key itself, and `af-role` only to `quarantined`
-  (instances) or `golden` / `golden-rejected` (snapshots), never to `slot`. So neither a
-  CP bug nor a compromised CP can get a shell on an instance it did not launch into its
-  own pool: other SSM-managed boxes in the account, another deployment's slots and this
-  deployment's engine boxes stay out of reach
-  ([#1419](https://github.com/k-k1/agent-fleet/issues/1419)). The fence covers
-  shell commands only. The rest of `Ec2SlotPool` (stop, terminate, detach, attach, …)
-  has none, so a compromised CP can still launch a slot of its own, attach any volume in
-  the account to it and read that volume there.
+  (instances) or `golden` / `golden-rejected` (snapshots), never to `slot`; a case
+  variant such as `AF-ROLE` counts as the key itself. So neither a CP bug nor a
+  compromised CP can aim `ssm:SendCommand` at an instance it did not launch into its own
+  pool: other SSM-managed boxes in the account, another deployment's slots and this
+  deployment's engine boxes are never its target
+  ([#1419](https://github.com/k-k1/agent-fleet/issues/1419)). That bounds the direct
+  shell only. The rest of `Ec2SlotPool` (stop, start, detach, attach, terminate, …) has
+  no fence, and an attached volume is read-write: a compromised CP can launch a slot of
+  its own, attach any volume in the account to it, and read or change it there. That
+  includes another instance's root volume, stopped and detached first, so it can plant
+  code that runs when that instance is started again, without touching a tag.
 - On every target it unwraps the DEKs and injects them in plaintext (§7.6).
 
 It does not spread between companies, because those are separate deployments — which is
@@ -69,8 +72,9 @@ account, not to the deployment: `EcsDrive`, `Ec2SlotPool` and `EcsContainerInsta
 name `Resource: "*"` with no condition, and `SsmWorkspaceParams` covers
 `parameter/af-ws/*`, one prefix for the whole account with no deployment in the path.
 A compromised CP can therefore update or delete another deployment's services, stop,
-terminate or snapshot its instances and volumes, attach its home volumes to a slot of
-its own, and read or overwrite its workspaces' `AGENT_TOKEN` and DEK. What it cannot do
+terminate or snapshot its instances and volumes, attach its volumes (homes and root
+volumes alike) read-write to a slot of its own, and read or overwrite its workspaces'
+`AGENT_TOKEN` and DEK. What it cannot do
 is retag that deployment's instances or plant a resource in its pool: tag writes are
 bound to the writer's own `af-pool`. Candidate mitigations: rootless Docker, a socket proxy, a
 narrower CP role.

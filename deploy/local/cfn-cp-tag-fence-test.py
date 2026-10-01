@@ -21,7 +21,10 @@ the subset of IAM the statements use, and this check fails when
   - one of the ATTACKS would be allowed.
 
 It is not the IAM policy simulator. It models only the operators the CP role uses, and
-fails on any other operator rather than guessing. The positive control at the end runs
+fails on any other operator rather than guessing. Tag-key condition names are matched
+case-insensitively, as IAM does; when a request holds case variants of one key (EC2 keeps
+both), the CP's own calls must pass under every reading and an attack fails if any
+reading allows it. The positive control at the end runs
 the attack against the unconditioned statement the fence replaced, to show the
 evaluator can say "allowed" at all.
 
@@ -112,54 +115,81 @@ def _glob(pattern, value):
     return fnmatch.fnmatchcase(value.lower(), pattern.lower())
 
 
-def _cond(op, key, want, ctx):
-    """One condition key. ctx values are str (single-valued) or list (multi-valued)."""
-    want = [str(w) for w in _list(want)]
-    have = ctx.get(key)
-    if op == "Null":
-        return (have is None) == (want[0] == "true")
-    if op.startswith("ForAllValues:"):
-        base = op.split(":", 1)[1]
-        return all(_cond(base, key, want, {key: h}) for h in (have or []))
-    if op.startswith("ForAnyValue:"):
-        base = op.split(":", 1)[1]
-        return any(_cond(base, key, want, {key: h}) for h in (have or []))
-    if_exists = op.endswith("IfExists")
-    base = op[:-len("IfExists")] if if_exists else op
-    if have is None:
-        # Absent key: positive operators fail, negated ones (and ...IfExists) succeed.
-        return if_exists or base.startswith("StringNot") or base.startswith("ArnNot")
-    if isinstance(have, list):
-        raise ValueError("multi-valued key %s under single-valued %s" % (key, op))
+def _candidates(ctx, key):
+    """The values IAM might bind `key` to. The tag-key part of a ResourceTag / RequestTag
+    name is matched case-insensitively by IAM, while EC2 keeps `AF-ROLE` beside `af-role`,
+    and which one IAM then reads is not specified - so every case variant is a candidate.
+    Returns None for an absent key, a list of candidates otherwise."""
+    if "Tag/" not in key:
+        return [ctx[key]] if key in ctx else None
+    hits = [v for k, v in ctx.items() if k.lower() == key.lower()]
+    return hits or None
+
+
+def _string(base, have, want):
     if base == "StringEquals":
         return have in want
     if base == "StringNotEquals":
         return have not in want
+    if base == "StringEqualsIgnoreCase":
+        return have.lower() in [w.lower() for w in want]
+    if base == "StringNotEqualsIgnoreCase":
+        return have.lower() not in [w.lower() for w in want]
     if base == "StringLike":
         return any(fnmatch.fnmatchcase(have, w) for w in want)
     if base == "ArnEquals":
         return have in want
-    raise ValueError("operator %s is not modelled; extend the evaluator" % op)
+    raise ValueError("operator %s is not modelled; extend the evaluator" % base)
 
 
-def _matches(stmt, action, resource, ctx):
+def _cond(op, key, want, ctx, pick):
+    """One condition key. ctx values are str (single-valued) or list (multi-valued).
+    `pick` is any or all: how to combine the case-variant candidates of one tag key. any
+    answers "could IAM allow this" (used for attacks), all "does IAM surely allow it"
+    (used for the CP's own calls)."""
+    want = [str(w) for w in _list(want)]
+    cands = _candidates(ctx, key)
+    if op == "Null":
+        # An empty multi-valued key counts as absent, as it does in IAM.
+        null = cands is None or all(c == [] for c in cands)
+        return null == (want[0] == "true")
+    if op.startswith("ForAllValues:") or op.startswith("ForAnyValue:"):
+        quant, base = op.split(":", 1)
+        values = [] if cands is None else [v for c in cands for v in c]
+        test = all if quant == "ForAllValues" else any
+        return test(_string(base, v, want) for v in values)
+    if_exists = op.endswith("IfExists")
+    base = op[:-len("IfExists")] if if_exists else op
+    if cands is None:
+        # Absent key: positive operators fail, negated ones (and ...IfExists) succeed.
+        _string(base, "", want)  # still refuse an operator that is not modelled
+        return if_exists or "Not" in base
+    if any(isinstance(c, list) for c in cands):
+        raise ValueError("multi-valued key %s under single-valued %s" % (key, op))
+    return pick(_string(base, c, want) for c in cands)
+
+
+def _matches(stmt, action, resource, ctx, pick):
     if not any(_glob(a, action) for a in _list(stmt.get("Action", []))):
         return False
     if not any(fnmatch.fnmatchcase(resource, r) for r in _list(stmt.get("Resource", []))):
         return False
     for op, keys in (stmt.get("Condition") or {}).items():
         for key, want in keys.items():
-            if not _cond(op, key, want, ctx):
+            if not _cond(op, key, want, ctx, pick):
                 return False
     return True
 
 
-def allowed(statements, action, resource, ctx):
-    hits = [s for s in statements if _matches(s, action, resource, ctx)]
-    if any(s["Effect"] == "Deny" for s in hits):
+def allowed(statements, action, resource, ctx, could=False):
+    """could=False: allowed under every reading of case-variant tag keys (the CP's own
+    calls must pass this). could=True: allowed under at least one (an attack fails if so)."""
+    pick, other = (any, all) if could else (all, any)
+    allows = [s.get("Sid", "?") for s in statements
+              if s["Effect"] == "Allow" and _matches(s, action, resource, ctx, pick)]
+    if any(s["Effect"] == "Deny" and _matches(s, action, resource, ctx, other) for s in statements):
         return False, []
-    sids = [s.get("Sid", "?") for s in hits if s["Effect"] == "Allow"]
-    return bool(sids), sids
+    return bool(allows), allows
 
 
 def arn(kind, rid):
@@ -177,8 +207,11 @@ def on_create(create_action, kind, tags):
 
 def on_existing(action, kind, has, tags):
     """CreateTags / DeleteTags on a resource that exists and carries `has`. DeleteTags gets
-    a key list (the CP never names a value when deleting)."""
+    a key list (the CP never names a value when deleting); tags=None is a DeleteTags with
+    no Tag.N at all, which deletes every tag on the resource."""
     ctx = {"ec2:ResourceTag/" + k: v for k, v in has.items()}
+    if tags is None:
+        return action, arn(kind, "existing"), ctx
     ctx["aws:TagKeys"] = list(tags)
     if action == "ec2:CreateTags":
         ctx.update({"aws:RequestTag/" + k: v for k, v in tags.items()})
@@ -304,6 +337,24 @@ ATTACKS = [
      on_create("RunInstances", "instance", dict(SLOT, **{"af-pool": "another-deployment"}))),
     ("plant a home into another deployment's pool",
      on_create("CreateVolume", "volume", dict(HOME, **{"af-pool": "another-deployment"}))),
+    ("DeleteTags naming no key (deletes every tag, af-pool included)",
+     on_existing("ec2:DeleteTags", "instance", SLOT, None)),
+    ("DeleteTags with an empty key list",
+     on_existing("ec2:DeleteTags", "volume", HOME, {})),
+    ("bookkeeping write carrying AF-ROLE=slot onto this pool's engine box",
+     on_existing("ec2:CreateTags", "instance", ENGINE, {"AF-ROLE": "slot", "af-claim": "i-1"})),
+    ("bookkeeping write carrying Af-Pool onto a pool volume",
+     on_existing("ec2:CreateTags", "volume", HOME, {"Af-Pool": "another-deployment"})),
+    ("delete a case variant of af-role",
+     on_existing("ec2:DeleteTags", "instance", SLOT, {"AF-ROLE": None})),
+    ("quarantine that also adds AF-POOL",
+     on_existing("ec2:CreateTags", "instance", SLOT, {"af-role": "quarantined", "AF-POOL": "another-deployment"})),
+    ("quarantine that also adds AF-ROLE=slot",
+     on_existing("ec2:CreateTags", "instance", SLOT, {"af-role": "quarantined", "AF-ROLE": "slot"})),
+    ("quarantine spelt AF-ROLE alongside a bookkeeping key",
+     on_existing("ec2:CreateTags", "instance", ENGINE, {"AF-ROLE": "quarantined", "af-claim": "i-1"})),
+    ("golden publish that also adds AF-POOL",
+     on_existing("ec2:CreateTags", "snapshot", CANDIDATE, {"af-role": "golden", "AF-POOL": "another-deployment"})),
     ("tag-on-create with no af-pool at all",
      on_create("RunInstances", "instance", {"af-role": "slot"})),
     ("tag-on-create through a create action the CP never calls",
@@ -371,18 +422,41 @@ def main():
                 else:
                     print("ok    allowed %-22s %-38s via %s" % (fn, action + " " + res.rsplit(":", 1)[1], ",".join(sids)))
         for what, (action, res, ctx) in ATTACKS:
-            ok, sids = allowed(stmts, action, res, ctx)
+            ok, sids = allowed(stmts, action, res, ctx, could=True)
             if ok:
                 failed += 1
                 print("FAIL  attack ALLOWED via %s: %s" % (",".join(sids), what))
             else:
                 print("ok    denied  %s" % what)
 
+        # The evaluator's own semantics the statements rely on: Null treats an absent and an
+        # empty key list alike, ForAllValues is vacuously true for both, and a tag-key
+        # condition name binds case variants.
+        null_false = [{"Effect": "Allow", "Action": "ec2:DeleteTags", "Resource": "*",
+                       "Condition": {"Null": {"aws:TagKeys": "false"}}}]
+        vacuous = [{"Effect": "Allow", "Action": "ec2:DeleteTags", "Resource": "*",
+                    "Condition": {"ForAllValues:StringNotEquals": {"aws:TagKeys": ["af-pool"]}}}]
+        role_is = [{"Effect": "Allow", "Action": "ec2:CreateTags", "Resource": "*",
+                    "Condition": {"StringEquals": {"aws:RequestTag/af-role": "slot"}}}]
+        checks = [
+            ("Null=false denies a missing key list", not allowed(null_false, *on_existing("ec2:DeleteTags", "instance", SLOT, None))[0]),
+            ("Null=false denies an empty key list", not allowed(null_false, *on_existing("ec2:DeleteTags", "instance", SLOT, {}))[0]),
+            ("Null=false allows a named key", allowed(null_false, *on_existing("ec2:DeleteTags", "instance", SLOT, {"af-claim": None}))[0]),
+            ("ForAllValues is vacuously true without keys", allowed(vacuous, *on_existing("ec2:DeleteTags", "instance", SLOT, None))[0]),
+            ("RequestTag/af-role binds AF-ROLE", allowed(role_is, *on_existing("ec2:CreateTags", "instance", FOREIGN, {"AF-ROLE": "slot"}))[0]),
+        ]
+        for what, ok in checks:
+            if not ok:
+                failed += 1
+                print("FAIL  evaluator control: %s" % what)
+            else:
+                print("ok    evaluator control: %s" % what)
+
         # Positive control: the evaluator must be able to say "allowed" to the attack when
         # the statement allows it, or every "denied" above proves nothing.
         old = [{"Effect": "Allow", "Action": ["ec2:CreateTags", "ec2:DeleteTags"], "Resource": "*"}]
         action, res, ctx = ATTACKS[0][1]
-        if not allowed(old, action, res, ctx)[0]:
+        if not allowed(old, action, res, ctx, could=True)[0]:
             failed += 1
             print("FAIL  positive control: the unconditioned statement did not allow the attack")
         else:
