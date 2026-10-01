@@ -85,6 +85,9 @@ func gracefulShutdown(budget time.Duration) {
 	// Attachments own neither Page nor Chromium. Closing them detaches AF's target
 	// sessions and WebSockets only; the external owner remains responsible for exit.
 	browserx.WorkspaceBrowserAttachmentManager.Close()
+	// A background English-slug one-shot (branch_slug_ai.go) is a CLI no request owns; cancel it
+	// rather than leave it running past the Agent's exit.
+	englishSlugs.shutdown(min(2*time.Second, time.Until(deadline)))
 	// Carry pending interactions over (docs/log/75 §75.6.3, trigger 2). It must run
 	// BEFORE the aborts and the kills, because for everything but claude this is the
 	// last chance: claude's pending state stays in the home volume as pending-*, so a

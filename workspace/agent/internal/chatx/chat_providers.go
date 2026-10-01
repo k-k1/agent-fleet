@@ -1830,6 +1830,23 @@ func ResolveOneShotModelCached(feature string, tier OneShotTier, kind string) (m
 	return resolveOneShotModel(feature, tier, kind)
 }
 
+// OneShotSettingsKey is every setting that decides which backend and model a feature's one-shot
+// runs on: the feature's agent pin, the priority order, and per runnable kind the model choice
+// and the operator's env override. It reads preferences and the environment only, never a CLI,
+// so a cache of one-shot answers can key on it on every request; a changed pin, model or order
+// then misses instead of answering from the old model. Which backends are logged in is not
+// part of it — that is the availability cache's question and costs a CLI call to ask.
+func OneShotSettingsKey(feature string, tier OneShotTier) string {
+	var b strings.Builder
+	b.WriteString(aiFeatureAgentPref(feature))
+	b.WriteString("|" + strings.Join(oneShotOrder(), ","))
+	for _, k := range oneShotKinds {
+		m, configured := resolveOneShotModel(feature, tier, k)
+		fmt.Fprintf(&b, "|%s=%q,%t,%q", k, m, configured, os.Getenv(oneShotEnvModels[k]))
+	}
+	return b.String()
+}
+
 // recommendedUtilityModel picks the cheap model shown as "recommended (currently: …)" for
 // the short tier. The OpenCode Go route is pinned only when the live account catalog
 // proves it is available; otherwise an empty result deliberately delegates to the

@@ -9,6 +9,7 @@ English | [日本語](0103-branch-naming-rules.ja.md)
   and rules being advisory only (decision 8). The user also chose `{ref}` for the Jira default and
   switching users with an empty template to the new default without a compatibility shim.
 - Amended 2026-09-30 (#1329): decision 9 may create a local branch tracking an origin branch.
+- Implementation note 2026-10-01 (#1129): how decision 4's English slug was built; see the note under decision 4.
 - Follow-ups: #1124, #1125, #1126 (P0) / #1127 (P1) / #1128, #1129 (P2)
 - Related: [0061](0061-work-item-inbox.md) decision 12 (the work-item default `feature/{key}`, replaced
   here) / [0031](0031-mcp-registry.md) (the tenant distribution this ADR's tenant layer copies)
@@ -223,7 +224,7 @@ User and tenant rules and the `gitflow.*` keys go through the same key and ref-n
 | `{project}` | (empty) | `PROJ` |
 | `{type}` | the kind, e.g. `bugfix` | same |
 | `{prefix}` | the kind's prefix, e.g. `fix/` | same |
-| `{slug}` | the title's ASCII slug | same (for a non-ASCII title, the English slug once made; empty until then) |
+| `{slug}` | the title's ASCII slug | same (empty for a non-ASCII title until P2) |
 
 - **`{key}` keeps its meaning** so that existing templates render as before. A Jira key keeps the case
   it was written in, as it does today.
@@ -252,6 +253,19 @@ User and tenant rules and the `gitflow.*` keys go through the same key and ref-n
 - **English slug (P2).** A non-ASCII title may get an English slug through the AI-assist one-shot. The
   resolver never waits for it: it answers with the deterministic slug and marks the name `provisional`,
   and the Console may ask again once. Without an AI assist the deterministic slug is final.
+
+#### Implementation note (2026-10-01, #1129): the English slug
+
+This records how P2 was built; the decision above is unchanged.
+
+- "Non-ASCII title" means any non-ASCII letter in it. A mixed title such as `ログイン fix` keeps its
+  deterministic slug (`fix`) in the provisional answer, and the English slug replaces it once made.
+- It is asked for only when the caller gave no `slug` and the template uses `{slug}`.
+- "An AI assist" is the branch-name suggestion feature (`branch.suggest`): its on/off, agent and model.
+  The one-shot gets the title as a quoted string it is told to translate and never obey.
+- The reply must be 2–5 lowercase ASCII words joined by hyphens, at most 32 bytes, and must not repeat
+  the instructions; anything else, or a failed call, makes the deterministic slug final for that title.
+- The answer is cached per title and per AI-assist setting; `sources.slug` is `ai` when it was used.
 
 ### Decision 5: base
 
