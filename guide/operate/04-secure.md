@@ -189,7 +189,26 @@ into answers, logs or commits is part of the agent-side instructions as well.
   - **ecs-ec2**: the slot user data sets `ECS_AWSVPC_BLOCK_IMDS=true`; retained slots have to
     be replaced (`deploy/aws/ecs/README.md`, "Moving retained slots onto new user data").
 
-  `AF_WS_WORKLOAD_AWS=1` on the Control Plane hands the workload identity back to workspaces.
+  `AF_WS_WORKLOAD_AWS=1` on the Control Plane hands the ECS task role back to workspaces and
+  stops suppressing the SDKs' metadata lookup. It removes none of the network protections above,
+  so a docker workspace still cannot reach the host's instance profile; giving it one needs a
+  credential path you permit separately. Keep the network protection as the default.
+
+  **Rolling it out.** A running docker workspace keeps the environment it was created with:
+  `docker compose up -d` and a Docker restart do not change it. After upgrading the Control
+  Plane and the workspace image (or changing `AF_WS_WORKLOAD_AWS`), have every workspace
+  **Stopped and Started** in the Console, which recreates its container, and apply the host
+  metadata settings above. Check from a session shell, without printing the environment. With
+  the opt-in off (the default):
+  `echo ${AWS_EC2_METADATA_DISABLED:-unset}` prints `true`; `aws sts get-caller-identity`
+  with no profile fails with "Unable to locate credentials"; and the IMDSv2 token request
+  (`curl -s -o /dev/null -m 3 -w '%{http_code}' -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token`)
+  does not print `200`. With `AF_WS_WORKLOAD_AWS=1` the first two are expected to differ (the
+  variable is unset on docker, and ECS resolves the task role); the token request must still
+  not print `200` wherever the host blocks metadata.
+
+  A workspace on the native runtime runs directly on the member's machine and is left alone:
+  an instance role there is that machine's own.
   Members run AWS commands as themselves with `af-aws-exec` ([member guide 10](../member/10-integrations.md)).
 
 ## Offboarding: how access is actually revoked

@@ -283,6 +283,13 @@ docker pull <WS_IMAGE>         # or rebuild: docker build -t <WS_IMAGE> ../../wo
 docker compose up -d
 ```
 
+**Running workspaces keep their old container** — `docker compose up -d` does not touch
+them, and a Docker restart keeps the environment they were created with. Have each one
+**Stopped and Started** in the Console after an upgrade (and after changing
+`AF_WS_WORKLOAD_AWS`), which recreates the container with the new image and environment. On
+a cloud VM, check the host-identity protection afterwards (`guide/operate/04-secure.md`,
+"Workspaces do not get the host's cloud identity").
+
 Schema migrations are embedded in the CP and applied automatically on start
 (forward-compatible). **Downgrades are not supported** — snapshot with `backup.sh`
 before upgrading. Read the release notes for any breaking changes.

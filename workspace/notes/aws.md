@@ -14,15 +14,18 @@ and build tools").
 ## The trap
 
 A command that names **no profile at all** — a bare `aws …`, an SDK's default credential chain, a
-build tool with no profile setting — is not the user. The workspace's own role and the host's are
-withheld from sessions and terminals (no `AWS_CONTAINER_CREDENTIALS_*`, `AWS_EC2_METADATA_DISABLED=true`,
-and EC2 hosts set up by Agent Fleet block instance metadata), so such a command normally stops with "Unable to locate
+build tool with no profile setting — is not the user. In a container workspace (docker or ECS) the
+workspace's own role and the host's are withheld from sessions and terminals (no
+`AWS_CONTAINER_CREDENTIALS_*`, `AWS_EC2_METADATA_DISABLED=true`, and EC2 hosts set up by Agent Fleet
+block instance metadata), so such a command normally stops with "Unable to locate
 credentials" / "Unable to load AWS credentials from any provider in the chain". That error means
 "name the user's profile", never "find credentials somewhere else": do not read them out of
 `/proc`, the metadata endpoints or another process, and do not unset `AWS_EC2_METADATA_DISABLED`.
 
-A deployment can hand the workload role back (`AF_WS_WORKLOAD_AWS=1`, visible as
-`AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` in your environment). Then the same command runs as that
+A deployment can hand the ECS task role back (`AF_WS_WORKLOAD_AWS=1`, visible as
+`AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` in your environment). A workspace running directly on the
+user's own machine (no `AWS_EC2_METADATA_DISABLED`, no container variables) may resolve that
+machine's instance role. Then the same command runs as that
 role instead of as the user, in a different account, with no error. That includes read-only
 lookups: "how many instances does prod have" answered by a bare `aws ec2 describe-instances` is an
 answer about the wrong account. (A named profile that is misspelled or logged out fails loudly

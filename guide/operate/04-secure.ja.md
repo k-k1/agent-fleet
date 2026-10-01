@@ -165,8 +165,27 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
   - **ecs-ec2**: スロットのユーザーデータが `ECS_AWSVPC_BLOCK_IMDS=true` を設定します。残っている
     スロットは入れ替えが要ります（`deploy/aws/ecs/README.md`「Moving retained slots onto new user data」）。
 
-  Control Plane の `AF_WS_WORKLOAD_AWS=1` で、ワークロードの身元をワークスペースに戻せます。メンバーは
-  `af-aws-exec` で自分として AWS コマンドを実行します（[メンバーガイド 10](../member/10-integrations.ja.md)）。
+  Control Plane の `AF_WS_WORKLOAD_AWS=1` は ECS のタスクロールをワークスペースに戻し、SDK のメタデータ参照の
+  抑止をやめます。上のネットワークの防護はどれも外さないので、docker のワークスペースがホストのインスタンス
+  プロファイルに届くことはありません。それを渡すには、別に許した資格情報の経路が要ります。既定ではネットワークの
+  防護を保ってください。
+
+  **適用の手順。** 動作中の docker のワークスペースは、作られたときの環境を保ちます。`docker compose up -d` や
+  Docker の再起動では変わりません。Control Plane とワークスペースのイメージを更新したら（`AF_WS_WORKLOAD_AWS` を
+  変えたときも）、すべてのワークスペースを Console で**停止して起動**し（コンテナが作り直されます）、上のホストの
+  メタデータ設定を適用してください。セッションのシェルから、環境を表示せずに確かめます。オプトインが
+  オフ（既定）なら:
+  `echo ${AWS_EC2_METADATA_DISABLED:-unset}` が `true` を表示すること、プロファイル無しの
+  `aws sts get-caller-identity` が「Unable to locate credentials」で失敗すること、IMDSv2 のトークン要求
+  （`curl -s -o /dev/null -m 3 -w '%{http_code}' -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token`）
+  が `200` を表示しないこと。`AF_WS_WORKLOAD_AWS=1` のときは最初の 2 つは違って当然です（docker では変数が
+  無く、ECS ではタスクロールが解決されます）。ホストがメタデータを遮断している所では、トークン要求はそのときも
+  `200` を表示してはいけません。
+
+  native ランタイムのワークスペースはメンバーのマシンで直接動くので、そのままにします。そこのインスタンスロールは
+  そのマシン自身のものです。
+
+  メンバーは `af-aws-exec` で自分として AWS コマンドを実行します（[メンバーガイド 10](../member/10-integrations.ja.md)）。
 
 ## オフボーディング — アクセスは実際どこで切れるか
 
