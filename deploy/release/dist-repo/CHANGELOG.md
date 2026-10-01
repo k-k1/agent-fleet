@@ -9,7 +9,9 @@ Each version is now one GitHub Release that carries the workspace rootfs too, an
 ships for arm64 Linux as well as amd64. Stop in a Managed session now takes two steps: the first ends
 the running turn and keeps what is queued, and a second also discards the queue. The mirror shows a
 claude reply while it is being written. On AWS, Recreate and Clean home used to report success and
-remove nothing; they now work on ecs-ec2 and are refused on ecs.
+remove nothing; they now work on ecs-ec2 and are refused on ecs. AWS credentials of the workspace or
+its host are no longer handed to agent sessions; operators of AWS and cloud Docker deployments have
+steps to take.
 
 ## [0.25.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.25.0) — 2026-09-29
 
