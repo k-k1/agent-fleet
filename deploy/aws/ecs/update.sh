@@ -93,6 +93,7 @@ AF_STACK_PLATFORM="$(af_stack_param "$STACK" PlatformStackName)"
 : "${AF_STACK_PLATFORM:=af-ecs-platform}"
 TTS_STACK="$(af_tts_stack || true)"
 ENGINES_STACK="$(af_engines_stack || true)"
+POOL_STACK="$(af_pool_stack || true)"
 ACCOUNT="$("${AWS[@]}" sts get-caller-identity --query Account --output text)"
 ECR_HOST="$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
 
@@ -164,6 +165,7 @@ fi
 echo "==> plan for $STACK (ImageTag=$VERSION):"
 echo "      1. $AF_STACK_PLATFORM (20-platform — it owns the ECR repositories)"
 [ "$PUSH" = 1 ] && echo "      2. release-ecr.sh (push af-control-plane / af-workspace :$VERSION)"
+[ -n "$POOL_STACK" ] && echo "      3. $POOL_STACK (40-ec2-pool)"
 [ -n "$TTS_STACK" ] && echo "      3. $TTS_STACK (50-tts)"
 if [ -n "$ENGINES_STACK" ]; then
   if [ "$COMFY_REPAIR" = 1 ] && [ "$COMFY_PULLED" = 1 ]; then
@@ -379,6 +381,24 @@ if [ -z "$CLUSTER" ] || [ "$CLUSTER" = "None" ] || [ -z "$CP_SERVICE" ]; then
   exit 1
 fi
 echo "==> stack=$STACK cluster=$CLUSTER cp-service=$CP_SERVICE"
+
+# --- 1d-2) the EC2 slot pool, when this deployment has one (ecs-ec2) ------------------
+# Kept in step for the same reason as 50-tts: the slot user data carries security settings
+# (ECS_AWSVPC_BLOCK_IMDS keeps workspace tasks off the slot's instance profile), and a pool
+# left on an old template launches every future slot without them. It only adds a launch
+# template version; the CP takes $Latest when it launches a slot, so running slots and
+# their homes are untouched, and slots launched before it keep the old user data until
+# they are replaced (README "Patching slots"). SlotAmiId resolves at this update, which is
+# how slots get patched anyway.
+if [ -n "$POOL_STACK" ]; then
+  echo "==> cloudformation deploy $POOL_STACK (40-ec2-pool, parameters unchanged)"
+  if [ "$DRY" = 1 ]; then
+    echo "DRY: aws cloudformation deploy --stack-name $POOL_STACK --template-file $HERE/cfn/40-ec2-pool.yaml --capabilities CAPABILITY_NAMED_IAM"
+  else
+    af_cfn_deploy "$POOL_STACK" "$HERE/cfn/40-ec2-pool.yaml" --no-fail-on-empty-changeset \
+      --capabilities CAPABILITY_NAMED_IAM
+  fi
+fi
 
 # --- 1e) the speech engine stack, when this deployment has one (ADR 0070) -------------
 # Kept in step with the repo the same way 30-ingress is: a release ships template fixes,

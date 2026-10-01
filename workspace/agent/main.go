@@ -35,6 +35,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/statemig"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // buildVersion is stamped by the release pipeline via
@@ -77,6 +78,7 @@ func serve() {
 	// First, before anything is spawned: every child inherits this process's environment,
 	// and the workload identity must not reach a session or terminal.
 	if removed := awsx.IsolateWorkloadChain(); len(removed) > 0 {
+		tmuxx.SetLaunchEnv(awsx.WorkloadChainVars(), []string{awsx.MetadataDisabled})
 		log.Printf("aws: workload credentials withheld from sessions (%s unset, IMDS disabled; %s=1 keeps them)",
 			strings.Join(removed, ", "), awsx.WorkloadOptIn)
 	}

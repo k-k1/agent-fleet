@@ -433,6 +433,10 @@ It does the things the hand-typed sequence gets wrong:
   "No changes to deploy" and the CP keeps running the old image forever. The
   script falls back to `ecs update-service --force-new-deployment` in that case
   (`--force` does it unconditionally), then waits for the service to stabilise.
+- **Redeploys the slot pool (`40-ec2-pool`) on ecs-ec2.** Its user data carries
+  security settings, and a pool left on an old template launches every future slot
+  without them. It only adds a launch template version; running and retained slots keep
+  the user data they were launched with (§Moving retained slots onto new user data).
 - **Lists the workspaces that are still on the old image**, because nothing moves
   them automatically. It never stops one: stopping kills that user's sessions, and
   when to take that is their call.
@@ -1553,15 +1557,45 @@ they survive, and keep billing. The response and the audit entry list what was l
   5m, but the image cache and container write layers are genuinely shared.
 - **Patching slots = updating this stack** (the AMI parameter resolves at update time)
   and letting the old slots go. That is the operational cost the EC2 launch type adds.
-  The same holds for the user data: `ECS_AWSVPC_BLOCK_IMDS=true` (a workspace task cannot
-  reach the slot's instance profile through IMDS) applies only to slots launched after the
-  update, so let the older ones go too.
+  The same holds for the user data (§Moving retained slots onto new user data).
 - **Credentials still live on EFS.** The auth/identity set (`homeKeep`: `.config`,
   `.ssh`, `.git-credentials`, `.gitconfig`, `.claude`, `.claude.json`, `.codex` — under
   100 MiB) is kept on an EFS access point and symlinked into home by the entrypoint, so
   losing one single-AZ volume does not take the user's logins with it.
 - **The working disk (`WsDiskGiB`) does not apply.** `AF_WS_SCRATCH` is not injected on
   this profile: home is already local EBS, so there is nothing to relocate off EFS.
+
+### Moving retained slots onto new user data
+
+`ECS_AWSVPC_BLOCK_IMDS=true` in the slot's `ecs.config` is what keeps a workspace task off the
+slot's instance profile (`SlotRole`) through IMDS; the launch template's hop limit does not,
+because an `awsvpc` task's ENI reaches IMDS directly. The ECS agent reads `ecs.config` when the
+slot is launched, so **a slot launched before the template carried it stays open until it is
+replaced**, and nothing replaces one by itself: a workspace **Stop → Start goes back to the
+same slot** (its home stays attached, see "A workspace keeps its slot while it is stopped" above), and `Ec2SlotTerminateAfterSec`
+defaults to off. Until then the Agent's own isolation still holds for every SDK that honours
+`AWS_EC2_METADATA_DISABLED`, but not for a tool that calls IMDS directly. To finish the move:
+
+1. **Update the pool stack.** `update.sh` does it (§One command). By hand:
+   `aws cloudformation deploy --stack-name <pool stack> --template-file cfn/40-ec2-pool.yaml
+   --capabilities CAPABILITY_NAMED_IAM` (parameters keep their previous values). The CP
+   launches slots from the template's `$Latest`, so only new slots change.
+2. **Let the retained slots go through the CP's own sweeper**, which is the path that keeps
+   homes safe: it detaches the home first (`releaseSlot`, which refuses while a task is
+   running) and only then terminates the instance; the home volume is never deleted. Set
+   `Ec2SlotTerminateAfterSec` on the ingress stack (14400 is the recommended value anyway; a
+   lower one finishes the move sooner). A slot is terminated once its workspace has been
+   stopped for that long, or, with no home, once it has been free that long. Do not
+   terminate slot instances by hand while a home is attached.
+3. **Users restart their workspaces** after their slot has gone (the Console's "restart
+   required" badge covers the image; the slot is replaced by the next Start). The next
+   Start builds a new slot from the current template and mounts the same home.
+4. **Verify from a shell session in a workspace on a new slot**: the IMDSv2 token request
+   `curl -s -o /dev/null -m 3 -w '%{http_code}' -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token`
+   must not answer `200` (it times out: `000`), also with a clean environment
+   (`env -i`), and `aws sts get-caller-identity` must fail with "Unable to locate
+   credentials". Check that slots still join the cluster and SSM still reaches them (the
+   Slots tab, a workspace Start, the home mount), and that the workspace's logs still arrive.
 
 ## Known behavior: a cold Start answers `starting`, not `running`
 

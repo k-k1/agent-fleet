@@ -7,61 +7,87 @@ import (
 	"testing"
 )
 
+// The four variables ECS can hand a task its role through, spelled out here rather than
+// read from workloadChainEnv: dropping one from the production list must turn a case red.
+var ecsCredentialVars = []string{
+	"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+	"AWS_CONTAINER_CREDENTIALS_FULL_URI",
+	"AWS_CONTAINER_AUTHORIZATION_TOKEN",
+	"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+}
+
 // clearWorkload makes the test independent of the machine it runs on (a CI runner or a
 // workspace on ECS has some of these set) and restores them afterwards.
 func clearWorkload(t *testing.T) {
 	t.Helper()
-	for _, k := range append([]string{WorkloadOptIn, "AWS_EC2_METADATA_DISABLED"}, workloadChainEnv...) {
+	for _, k := range append([]string{WorkloadOptIn, "AWS_EC2_METADATA_DISABLED"}, ecsCredentialVars...) {
 		t.Setenv(k, "")
 		os.Unsetenv(k)
 	}
 }
 
-// spawnedEnv is what a process the Agent spawns with the inherited environment sees — the
-// path every session, terminal and helper takes.
-func spawnedEnv(t *testing.T) string {
+// spawnedEnv reports, for the named variables only, what a process the Agent spawns with
+// the inherited environment sees — the path every session, terminal and helper takes. Only
+// these names are read back, so a failure cannot print anything else from the environment.
+func spawnedEnv(t *testing.T, names ...string) map[string]string {
 	t.Helper()
-	out, err := exec.Command("env").Output()
+	script := ""
+	for _, n := range names {
+		script += `if [ "${` + n + `+x}" ]; then printf '%s=%s\n' ` + n + ` "$` + n + `"; fi;`
+	}
+	out, err := exec.Command("sh", "-c", script).Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(out)
-}
-
-func TestIsolateWorkloadChainWithholdsTaskRoleFromChildren(t *testing.T) {
-	clearWorkload(t)
-	t.Setenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "/v2/credentials/x")
-	t.Setenv("AWS_CONTAINER_AUTHORIZATION_TOKEN", "tok")
-
-	removed := IsolateWorkloadChain()
-
-	if strings.Join(removed, ",") != "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI,AWS_CONTAINER_AUTHORIZATION_TOKEN" {
-		t.Errorf("removed = %v", removed)
-	}
-	env := spawnedEnv(t)
-	for _, k := range workloadChainEnv {
-		if strings.Contains(env, k+"=") {
-			t.Errorf("child still inherits %s", k)
+	got := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok {
+			got[k] = v
 		}
 	}
-	// IMDS is not a variable: on ecs-ec2 the slot's instance profile is the next link in
-	// the chain once the container variables are gone.
-	if !strings.Contains(env, "AWS_EC2_METADATA_DISABLED=true\n") {
-		t.Errorf("child may still fall back to IMDS:\n%s", env)
+	return got
+}
+
+func TestIsolateWorkloadChainWithholdsEachVariable(t *testing.T) {
+	for _, k := range ecsCredentialVars {
+		t.Run(k, func(t *testing.T) {
+			clearWorkload(t)
+			t.Setenv(k, "fake")
+
+			if removed := IsolateWorkloadChain(); len(removed) != 1 || removed[0] != k {
+				t.Errorf("removed = %v, want [%s]", removed, k)
+			}
+			env := spawnedEnv(t, k, "AWS_EC2_METADATA_DISABLED")
+			if _, ok := env[k]; ok {
+				t.Errorf("child still inherits %s", k)
+			}
+			// IMDS is not a variable: on ecs-ec2 the slot's instance profile is the next link
+			// in the chain once the container variables are gone.
+			if env["AWS_EC2_METADATA_DISABLED"] != "true" {
+				t.Errorf("child may still fall back to IMDS (AWS_EC2_METADATA_DISABLED=%q)", env["AWS_EC2_METADATA_DISABLED"])
+			}
+		})
 	}
 }
 
-func TestIsolateWorkloadChainOptIn(t *testing.T) {
-	clearWorkload(t)
-	t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", "http://169.254.170.23/v1/credentials")
-	t.Setenv(WorkloadOptIn, "1")
+func TestIsolateWorkloadChainOptInKeepsEachVariable(t *testing.T) {
+	for _, k := range ecsCredentialVars {
+		t.Run(k, func(t *testing.T) {
+			clearWorkload(t)
+			t.Setenv(k, "fake")
+			t.Setenv(WorkloadOptIn, "1")
 
-	if removed := IsolateWorkloadChain(); removed != nil {
-		t.Errorf("opt-in still removed %v", removed)
-	}
-	env := spawnedEnv(t)
-	if !strings.Contains(env, "AWS_CONTAINER_CREDENTIALS_FULL_URI=") || strings.Contains(env, "AWS_EC2_METADATA_DISABLED=") {
-		t.Errorf("opt-in did not keep the chain:\n%s", env)
+			if removed := IsolateWorkloadChain(); removed != nil {
+				t.Errorf("opt-in still removed %v", removed)
+			}
+			env := spawnedEnv(t, k, "AWS_EC2_METADATA_DISABLED")
+			if env[k] != "fake" {
+				t.Errorf("opt-in did not keep %s", k)
+			}
+			if _, ok := env["AWS_EC2_METADATA_DISABLED"]; ok {
+				t.Error("opt-in disabled IMDS")
+			}
+		})
 	}
 }
 

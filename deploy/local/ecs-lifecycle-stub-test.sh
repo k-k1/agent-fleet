@@ -794,6 +794,10 @@ echo "== case 3h: update.sh carries a pre-P6 role over instead of deleting it ==
 VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ENGINES_PRE_P6=1 \
   "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3h" 2>&1 \
   || { cat "$WORK/out3h"; fail "update.sh failed against a pre-P6 engine stack"; }
+# The slot pool rides every release too: its user data carries ECS_AWSVPC_BLOCK_IMDS, and a
+# pool left on an old template launches every future slot without it.
+grep -q "deploy --stack-name t-pool .*40-ec2-pool.yaml.*CAPABILITY_NAMED_IAM" "$LOG" \
+  || fail "update.sh did not redeploy the slot pool (new slots would miss the IMDS block)"
 grep -q "deploy --stack-name af-ecs-engines .*--parameter-overrides LlmEnabled=true ImageEnabled=true" "$LOG" \
   || fail "update.sh did not carry the roles over (this update would delete both engine services)"
 grep -q "LlmEnabled=true (it was implied by LlmModelS3Key" "$WORK/out3h" \
