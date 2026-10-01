@@ -10,6 +10,7 @@ English | [日本語](0103-branch-naming-rules.ja.md)
   switching users with an empty template to the new default without a compatibility shim.
 - Amended 2026-09-30 (#1329): decision 9 may create a local branch tracking an origin branch.
 - Implementation note 2026-10-01 (#1129): how decision 4's English slug was built; see the note under decision 4.
+- Implementation note 2026-10-01 (#1127): how decision 10's tenant layer was built; see the note under decision 10.
 - Follow-ups: #1124, #1125, #1126 (P0) / #1127 (P1) / #1128, #1129 (P2)
 - Related: [0061](0061-work-item-inbox.md) decision 12 (the work-item default `feature/{key}`, replaced
   here) / [0031](0031-mcp-registry.md) (the tenant distribution this ADR's tenant layer copies)
@@ -427,6 +428,24 @@ start` still refused after the keys were written, and a hint telling the person 
 - The Agent polls `GET /internal/branch-rules` every five minutes and keeps the last copy when the CP is
   unreachable, the same fail-open cache as tenant MCP servers (`mcp-tenant.json`).
 - There is no "enforce" flag (decision 8).
+
+#### Implementation note (2026-10-01, #1127): the tenant layer
+
+This records how P1 was built; the decision above is unchanged.
+
+- The CP keeps one row per tenant (`tenant_branch_rules`) holding the list as JSON in the Agent's rule
+  shape. A tenant admin replaces it whole through `GET/PUT /api/admin/tenants/{slug}/branch-rules`
+  (Tenant settings → Branch naming rules, a JSON editor); a save is audited as `tenant.branch_rules`.
+- The CP refuses a rule with the Agent's checks (decision 3), running the same `git check-ref-format`,
+  and refuses unknown fields. A tenant `*` rule may set `name`: the bare-`*` refusal guards the user's
+  template and has no meaning for the tenant. A case table shared by both modules' tests keeps the
+  two sets of checks in step, and the Agent still checks on receipt, dropping only the rules it refuses.
+- `/internal/branch-rules` is authenticated by its own per-membership token, `AF_BRANCH_RULES_TOKEN`,
+  like every other bridge; the tenant comes from the token's membership.
+- The Agent's copy is `branch-rules-tenant.json` next to the user store. An error, a non-200 answer or
+  a body without a `rules` list keeps it; a `rules: []` answer empties it. `sources` names a tenant
+  field `tenant: <match>` and carries `tenant_fetched_at`.
+- The work-items settings preview resolves over the user, tenant and built-in layers.
 
 ### Out of scope
 

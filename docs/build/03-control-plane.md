@@ -206,7 +206,7 @@ crypto-shredding — is [07 §7.6](07-security.md). Only the wiring is here:
 - **The bridge tokens** are injected at the same time (`workspaceExtraEnv`): one
   per-membership token per purpose — `AF_INTERNAL_GIT_TOKEN`, `AF_MEMO_TOKEN`,
   `AF_SCHEDULE_TOKEN`, `AF_MCP_TOKEN`, `AF_DOCS_TOKEN`, `AF_ENGINE_ISSUE_TOKEN`,
-  `AF_GIT_OAUTH_TOKEN` and `AF_AWS_PROFILES_TOKEN`, with `AF_CP_BASE_URL`. Each is
+  `AF_GIT_OAUTH_TOKEN`, `AF_AWS_PROFILES_TOKEN` and `AF_BRANCH_RULES_TOKEN`, with `AF_CP_BASE_URL`. Each is
   deterministic (an HMAC of the membership id under a key derived from the master key,
   or from a random key kept in `WS_DATA` when there is none), so re-injecting it on
   every start changes nothing, and **each opens its own endpoint only**: a leaked memo
