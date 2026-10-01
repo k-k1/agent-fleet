@@ -258,14 +258,16 @@ User and tenant rules and the `gitflow.*` keys go through the same key and ref-n
 
 This records how P2 was built; the decision above is unchanged.
 
-- "Non-ASCII title" means any non-ASCII letter in it. A mixed title such as `ログイン fix` keeps its
+- "Non-ASCII title" means any non-ASCII character in it (an emoji or a curly quote counts too). A mixed title such as `ログイン fix` keeps its
   deterministic slug (`fix`) in the provisional answer, and the English slug replaces it once made.
-- It is asked for only when the caller gave no `slug` and the template uses `{slug}`.
+- It is asked for only when the caller gave no `slug` and the slug reaches the name, through `{slug}`
+  in the template or the prefix-only fallback.
 - "An AI assist" is the branch-name suggestion feature (`branch.suggest`): its on/off, agent and model.
   The one-shot gets the title as a quoted string it is told to translate and never obey.
 - The reply must be 2–5 lowercase ASCII words joined by hyphens, at most 32 bytes, and must not repeat
   the instructions; anything else, or a failed call, makes the deterministic slug final for that title.
-- The answer is cached per title and per AI-assist setting; `sources.slug` is `ai` when it was used.
+- The answer is cached per title and per AI-assist setting; a reply whose settings changed while it was
+  being made is not cached. `sources.slug` is `ai` when it was used.
 
 ### Decision 5: base
 

@@ -95,7 +95,7 @@ var englishSlugs = newEnglishSlugCache()
 func englishSlugKey(generation, title string) string { return generation + "\x00" + title }
 
 // needsEnglishSlug is true for a title the deterministic slug cannot carry: any non-ASCII
-// letter is lost by TitleSlug, so "ログイン fix" would name the branch after "fix" alone.
+// character is lost by TitleSlug, so "ログイン fix" would name the branch after "fix" alone.
 func needsEnglishSlug(title string) bool {
 	for _, r := range title {
 		if r >= utf8.RuneSelf {
@@ -113,7 +113,8 @@ func (c *englishSlugCache) lookup(title string) (slug string, provisional bool) 
 	if !needsEnglishSlug(title) || !englishSlugEnabled() {
 		return "", false
 	}
-	key := englishSlugKey(englishSlugGeneration(), title)
+	gen := englishSlugGeneration()
+	key := englishSlugKey(gen, title)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
@@ -141,14 +142,19 @@ func (c *englishSlugCache) lookup(title string) (slug string, provisional bool) 
 	c.entries[key] = &englishSlugEntry{pending: true, at: time.Now()}
 	c.inFlight++
 	c.wg.Add(1)
-	go c.fill(key, title)
+	go c.fill(gen, title)
 	return "", true
 }
 
-// fill writes only the entry it was started for. A fill started under other settings lands on
-// that generation's key, so it can never overwrite the answer for the current one.
-func (c *englishSlugCache) fill(key, title string) {
+// fill writes only the entry it was started for, so one started under other settings can never
+// overwrite the current generation's answer. The one-shot resolves its agent and model again
+// itself, and OneShotHeadless takes no snapshot of them; so when the settings are not gen's
+// just before the call or just after it, the reply may come from other settings than the key
+// says, and the entry is dropped instead of cached either way. A change and its exact undo both
+// inside one call's run still slip through; the next change of settings moves the key again.
+func (c *englishSlugCache) fill(gen, title string) {
 	defer c.wg.Done()
+	key := englishSlugKey(gen, title)
 	ctx, cancel := context.WithTimeout(c.ctx, englishSlugTimeout)
 	defer cancel()
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureBranchSuggest, Trigger: usagex.TriggerAuto})
@@ -156,15 +162,23 @@ func (c *englishSlugCache) fill(key, title string) {
 	if r := []rune(prompt); len(r) > englishSlugTitleMax {
 		prompt = string(r[:englishSlugTitleMax])
 	}
-	slug := ""
-	if reply, err := englishSlugOneShot(ctx, prompt); err == nil {
-		slug = validEnglishSlug(reply)
+	slug, settled := "", false
+	if englishSlugGeneration() == gen {
+		if reply, err := englishSlugOneShot(ctx, prompt); err == nil {
+			slug = validEnglishSlug(reply)
+		}
+		settled = englishSlugGeneration() == gen
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.inFlight--
-	if e, ok := c.entries[key]; ok {
+	e, ok := c.entries[key]
+	switch {
+	case !ok:
+	case settled:
 		e.pending, e.slug, e.at = false, slug, time.Now()
+	default:
+		delete(c.entries, key)
 	}
 }
 

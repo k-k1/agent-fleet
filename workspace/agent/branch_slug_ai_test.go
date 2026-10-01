@@ -210,8 +210,70 @@ func TestEnglishSlugCacheGeneration(t *testing.T) {
 	genMu.Lock()
 	gen = "g1"
 	genMu.Unlock()
-	if slug, _ := c.lookup("ログイン"); slug != "old-model-slug" {
-		t.Errorf("under the old settings = %q", slug)
+	// The g1 fill finished after the switch, so its reply is not trusted for g1 either.
+	if slug, prov := c.lookup("ログイン"); slug != "" || !prov {
+		t.Errorf("under the old settings = %q, %v; want a fresh provisional ask", slug, prov)
+	}
+}
+
+// The one-shot resolves the agent and model itself, after lookup read the generation. A change
+// in that window must not cache another setting's reply under the old key: changed during the
+// call, the reply is dropped; changed before the call started, no call is made.
+func TestEnglishSlugCacheSettingsChangeDuringFill(t *testing.T) {
+	var genMu sync.Mutex
+	gen := "A"
+	setGen := func(g string) {
+		genMu.Lock()
+		gen = g
+		genMu.Unlock()
+	}
+	var calls atomic.Int32
+	c := fakeEnglishSlug(t, true, func(context.Context, string) (string, error) {
+		calls.Add(1)
+		setGen("B") // the settings change while the model is answering under B's agent
+		return "b-model-slug", nil
+	})
+	englishSlugGeneration = func() string {
+		genMu.Lock()
+		defer genMu.Unlock()
+		return gen
+	}
+	c.lookup("ログイン")
+	c.wg.Wait()
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("%d one-shots, want 1", n)
+	}
+	c.mu.Lock()
+	_, cachedA := c.entries[englishSlugKey("A", "ログイン")]
+	c.mu.Unlock()
+	if cachedA {
+		t.Error("a reply made after the settings changed was cached under the old settings' key")
+	}
+	setGen("A")
+	if slug, prov := c.lookup("ログイン"); slug != "" || !prov {
+		t.Errorf("back under A = %q, %v; want a fresh provisional ask, not B's slug", slug, prov)
+	}
+	c.wg.Wait()
+
+	// Changed between lookup and the fill's start: lookup reads A, everything after reads B.
+	c2 := fakeEnglishSlug(t, true, func(context.Context, string) (string, error) {
+		t.Error("a fill whose settings changed before it started still called the model")
+		return "x-y", nil
+	})
+	var reads atomic.Int32
+	englishSlugGeneration = func() string {
+		if reads.Add(1) == 1 {
+			return "A"
+		}
+		return "B"
+	}
+	c2.lookup("ログイン")
+	c2.wg.Wait()
+	c2.mu.Lock()
+	n := len(c2.entries)
+	c2.mu.Unlock()
+	if n != 0 {
+		t.Errorf("%d entries left; the stale fill must drop its entry", n)
 	}
 }
 
