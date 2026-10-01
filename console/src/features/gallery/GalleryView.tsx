@@ -33,6 +33,7 @@ import { isBusySession } from "../files/sessionRefresh.ts";
 import { REVALIDATE_GAP_MS, WORKING_TICK_MS } from "../files/refreshPolicy.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
+import { previewEdge } from "../viewer/previewEdge.ts";
 import { isContextMenuKey, synthContextMenu } from "../project/contextMenuKey.ts";
 import { openGeneratingSession, useGeneratingSession, type GeneratingSession } from "../imagegen/useGeneratingSession.ts";
 import { ViewHead } from "../../ui/ViewHead.tsx";
@@ -85,17 +86,6 @@ function thumbEdge(): number {
  *  gallery.css — the class is dropped when this elapses, so a longer animation is cut
  *  off mid-fade. Same value and reasoning as the files tree. */
 const FRESH_MS = 5000;
-
-/** The longest edge the lightbox asks for. Quantised to three steps rather than taken from the
- *  exact viewport: the Agent caches and decodes per edge, so every distinct window size would
- *  otherwise be its own decode. The smallest step is already past the pictures this exists for
- *  (832x1216), which is the case where `preview` re-encodes instead of downscaling. */
-const PREVIEW_STEPS = [1024, 1536, 2048];
-
-function previewEdge(): number {
-  const want = Math.max(window.innerWidth, window.innerHeight) * Math.min(window.devicePixelRatio || 1, 2);
-  return PREVIEW_STEPS.find((step) => step >= want) ?? PREVIEW_STEPS[PREVIEW_STEPS.length - 1];
-}
 
 /** How far outside the gallery's OWN scroll container (`.gal-body`, not the viewport — a pane
  *  can be narrower than the window and is often split) a card must come before its thumbnail is
