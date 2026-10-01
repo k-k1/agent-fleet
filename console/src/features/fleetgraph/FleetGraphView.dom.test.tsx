@@ -340,7 +340,7 @@ describe("FleetGraphView", () => {
     expect(host.querySelector('[data-testid="session-menu-host"]')).toBeTruthy();
   });
 
-  it("keeps Enter and Space inside the session menu and its dialogs away from the label", async () => {
+  it("keeps Enter and Space inside the session menu and its dialogs away from the label, but not Escape", async () => {
     await render();
     const label = [...host.querySelectorAll<HTMLElement>(".fgraph-label")].find((el) =>
       el.textContent?.includes("fleet-graph kickoff"),
@@ -357,6 +357,17 @@ describe("FleetGraphView", () => {
       expect(ev.defaultPrevented).toBe(false);
     }
     expect(openSessionFromList).not.toHaveBeenCalled();
+    // Escape must still reach the document, where the esc layers close the menu and its dialogs.
+    let escaped = false;
+    const onDocumentKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") escaped = true;
+    };
+    document.addEventListener("keydown", onDocumentKey);
+    await act(async () => {
+      inside.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    document.removeEventListener("keydown", onDocumentKey);
+    expect(escaped).toBe(true);
   });
 
   it("switching to the sessions overview swaps this pane, and Ctrl opens a new one", async () => {
