@@ -2,12 +2,12 @@
 
 [English](0106-kubernetes-runtime.md) | 日本語
 
-- 状態: **proposed**（2026-10-02）。まだ何も作っておらず、何も測っていない。以下の事実はコードと文書を読んで得たもので、
-  動かしていないものはその旨を書いている。
+- 状態: **proposed**（2026-10-02）。まだ何も作っておらず、何も測っていない。以下の事実はコード・文書・Kubernetes と
+  Google Cloud の資料を読んで得たもので、動かしていないものはその旨を書いている。
 - 追跡: #1092
 - 見直す決定: [docs/log/35](../log/35-packaging.md) §35.3-5 と `docs/log/roadmap.md` P3-10 の Kubernetes の棚上げ
-  （「Helm chart は需要が出るまで棚上げ。AWS の答えは ECS + CFN」、2026-07-21）。**Helm chart そのものは棚上げのまま**（決定 10）。
-- 関連: [0045](0045-ec2-persistent-workspace.ja.md)（ecs-ec2 と決定 10-1「新しい基盤は新しいプロファイル」）/
+  （「Helm chart は需要が出るまで棚上げ。AWS の答えは ECS + CFN」、2026-07-21）。**Helm chart そのものは棚上げのまま**（決定 12）。
+- 関連: [0045](0045-ec2-persistent-workspace.ja.md)（ecs-ec2、その keep 領域、決定 10-1「新しい基盤は新しいプロファイル」）/
   [0047](0047-tenant-network-restriction.ja.md)（プロキシの後ろでのクライアントアドレス）/
   [0087](0087-efs-metadata-io.ja.md)（ネットワークファイルシステムが home に課すコスト）/
   [0104](0104-long-lived-member-workspace.ja.md)（Workspace が永続 home を持つ理由）/
@@ -23,9 +23,10 @@ Google Cloud と Kubernetes を基盤にしている利用者から、対応し�
 
 ### すでに移植できているもの
 
-- **コアはどのクラウドにいるかを問わない。** 配備先ごとの違いはすべて `Runtime` ポート
-  （`control-plane/internal/runtime/runtime.go`）と [21 §21.3](../build/21-add-a-deploy-target.ja.md) の任意の能力の後ろにある。
-  Workspace イメージはどこでも同じ成果物（[21 §21.1](../build/21-add-a-deploy-target.ja.md)）。
+- **配備先ごとの意味のある違いは `Runtime` ポートの後ろにある**（`control-plane/internal/runtime/runtime.go` と
+  [21 §21.3](../build/21-add-a-deploy-target.ja.md) の任意の能力）。プロファイル名を比べている少数の箇所（native のセッション
+  上限、Console のスロットプール画面）は [21 §21.1](../build/21-add-a-deploy-target.ja.md) に挙がっており、ここで要るものは
+  無い。Workspace イメージはどこでも同じ成果物。
 - **CP は `AF_RUNTIME=docker` なら AWS の認証情報なしで起動する。** ストアは SQLite か素の Postgres で、RDS 固有なのは
   任意の Secrets Manager ローテーション読み取りだけ。ログインは汎用 OIDC で、Google はすでに一級のプロバイダ。
 - **ランタイム以外の AWS 依存はすべて環境変数かプロファイルで切られ**、compose と native では無効になる。Cost Explorer の
@@ -40,16 +41,23 @@ Google Cloud と Kubernetes を基盤にしている利用者から、対応し�
 ### docker プロファイルはすでに任意の Linux VM で動く
 
 `deploy/aws/ec2-single` は「1 台の VM で compose」に AWS 向けの構築スクリプトを付けたもの。docker アダプタは標準ライブラリと
-docker CLI しか使わない。同じ compose バンドルを GCE VM で動かすのにコードは要らず、要るのは手順書と、前に置くネットワークの
-Google Cloud 固有の事情だけ（決定 1）。
+docker CLI しか使わない。同じ compose バンドルを GCE VM で動かすのにアダプタのコードは要らず、要るのは手順書、egress の既定値
+1 つ、前に置くネットワークの Google Cloud 固有の事情だけ（決定 1）。
 
-### 新しい基盤が必ず満たすべき Workspace の 3 つの事実
+### 新しい基盤が満たすべきこと
 
 - **イメージに init プロセスが無い。** docker は `--init`、ECS は `initProcessEnabled` で与えている。無いと agent が PID 1 になり、
-  CLI や tmux が終わるたびに残るプロセスを誰も回収しない。Kubernetes にこのフラグは無く、イメージに tini を足すのは
-  [21 §21.1](../build/21-add-a-deploy-target.ja.md) で禁じられている。
+  CLI や tmux が終わるたびに残るプロセスを誰も回収しない。
 - **永続領域が 2 つある。** `/home/dev` の home と `/var/lib/af/claude` の Claude の状態。ファイルブラウザが後者に届かず、
   home を初期化してもログインが残るように分けてある（[21 §21.2](../build/21-add-a-deploy-target.ja.md)）。
+- **Recreate と Clean home は「home を消す」ではない。** Recreate は `~/repos` を消し、Clean home は `homeKeep` の 7 項目
+  （ログイン・接続・ID）以外をすべて消す（`internal/runtime/home_wipe.go`、`runtime_docker.go`）。ecs-ec2 はこの 7 項目を
+  home の外の keep 領域へ移しており（`AF_WS_KEEP`、`workspace/entrypoint.sh` が扱う）、だから home のボリュームを丸ごと消せる。
+- **起動ごとの環境は bearer トークンを運ぶ。** DEK と `AGENT_TOKEN` だけではない。`workspace_lifecycle.go` が内部 git・メモ・
+  スケジュール・MCP・docs・エンジン・OAuth のトークンを発行して入れる。ECS は今それらをタスク定義の素の環境変数で渡しており、
+  SSM を通すのは DEK と `AGENT_TOKEN` だけ。
+- **Workspace は CP を呼び返す。** 宛先は `AF_CP_BASE_URL` で、これは公開のベース URL
+  （`workspace_lifecycle.go`、`workspace/agent/docs_sync.go`）。egress プロキシを使うときも、それは CP の中で動く。
 - **クラウドの配備先では能力を足さない。** docker は Chromium のサンドボックスのために `SYS_ADMIN` を足すが、Fargate は何も
   足さない（[07 §7.2](../build/07-security.ja.md)）。能力の追加を禁じる基盤は Fargate と同じ水準であり、それより下ではない。
 
@@ -58,27 +66,28 @@ Google Cloud 固有の事情だけ（決定 1）。
 ### 1. Google Cloud には 2 段階で答え、最初は GCE VM 上の compose
 
 最初の答えは 1 台の GCE VM 上の docker プロファイルで、`deploy/aws/ec2-single` の対になるもの。`deploy/gcp/gce-single/` に
-手順書と `gcloud` だけで動く構築スクリプトを置き、前段は Caddy と Let's Encrypt。CP に手を入れずに出せるので、問い合わせた
-利用者は Kubernetes プロファイルを作っている間も自分の基盤で Agent Fleet を動かせる。ランタイムに依存しない Google Cloud 固有の
-事情もここで決着し、Kubernetes プロファイルはそれを引き継ぐ。
+手順書と `gcloud` だけで動く構築スクリプトを置く。アダプタのコードは要らないので、問い合わせた利用者は Kubernetes プロファイル
+を作っている間も自分の基盤で Agent Fleet を動かせる。コードの変更は egress の既定値 1 つだけ。
 
 - **egress の許可リスト**に `.googleapis.com` を足す。`.amazonaws.com` が AWS の道具のためにあるのと同じ
   （`control-plane/egress_policy.go`）。
-- **Google Cloud のロードバランサを前に置くと**、WebSocket の寿命がバックエンドサービスの `timeoutSec`（既定 30 秒）で切られ、
-  ターミナルがすべて落ちる。手順書でこれを延ばす。また、ロードバランサは `X-Forwarded-For` にクライアントと自分のアドレスの
-  両方を足すので、配備は 1 ではなく `AF_TRUSTED_PROXY_HOPS=2` にする。`clientip.go` はすでに右から数えるので、コードは変えない。
-- **固定の出口アドレス**は、予約した静的 IP を持つ Cloud NAT。保持している NAT EIP の対になるもの。
-- **プレビューのサブドメイン**にはワイルドカード証明書が要る。標準の `caddy:2-alpine` には DNS プラグインが無いので、
-  ロードバランサを前に置くときは Certificate Manager の DNS 認証を使い、Caddy のときはその制約を手順書に書く。
+
+手順書は前段を 2 通り定め、重ねる構成は対象にしない。
+
+| 前段 | `AF_TRUSTED_PROXY_HOPS` | 出口アドレス | 注記 |
+|---|---|---|---|
+| **VM 上の Caddy**（既定） | compose と同じ 1。標準の Caddy は受け取った `X-Forwarded-For` を、自分が見た相手で置き換える | VM の予約済み静的外部 IP。外部 IP を持つ VM の通信は Cloud NAT を通らないので、これが出口にもなる | プレビューのサブドメイン用のワイルドカード証明書には DNS-01 が要るが、`caddy:2-alpine` にはそれが無い。手順書にこの制約を書く |
+| **グローバル外部アプリケーションロードバランサ**（Caddy は外す） | 2。ロードバランサは `<client>, <load balancer>` を足し、`clientip.go` は右から数える | 予約した静的 IP を持つ Cloud NAT。VM は外部 IP を持たない | Certificate Manager の DNS 認証でワイルドカード証明書を得る。**通信中**の WebSocket は設定にかかわらず 24 時間で、**アイドル**のものはバックエンドサービスの `timeoutSec`（既定 30 秒）で閉じられるので、手順書でこれを延ばす |
+
+従来型のアプリケーションロードバランサは使わない。通信中の WebSocket まで `timeoutSec` で閉じるからだ。
 
 この段階で得られないのは compose がもともと与えないもの、つまり 1 台限り・スケールアウトなし・Workspace を止めても VM は
 課金され続ける、の 3 つ。
 
 ### 2. プロファイルは `gke` ではなく `kubernetes`
 
-新しいプロファイルは Kubernetes の標準 API だけを話す。`apps/v1` の StatefulSet、`v1` の Service・PersistentVolumeClaim・Secret、
-`networking.k8s.io/v1` の NetworkPolicy。Google Cloud の API は一つも呼ばない。GKE に固有のもの（ディスクの種類、ノードプール、
-Workload Identity、ロードバランサ）は、アダプタではなく StorageClass・IaC・手順書で選ぶ。
+新しいプロファイルは Kubernetes の標準 API だけを話し、Google Cloud の API は一つも呼ばない。GKE に固有のもの（ディスクの種類、
+ノードプール、Workload Identity、ロードバランサ）は、アダプタではなく StorageClass・IaC・手順書で選ぶ。
 
 問い合わせは Google Cloud と並べて Kubernetes を名指していた。Kubernetes を運用するチームはどこかでそれを運用しており、EKS・AKS・
 オンプレのクラスタも同じプロファイルで済む。`gke` プロファイルにすると、最初の段階では要らない Google Cloud API を直接使える
@@ -90,107 +99,219 @@ Workload Identity、ロードバランサ）は、アダプタではなく Stora
 ### 3. Workspace はレプリカ 0 か 1 の StatefulSet と、専用の Service
 
 各 Workspace は Workspace キーから決定的に名付けた StatefulSet で、0 と 1 の間でスケールする。ECS サービスの desired 0/1 と
-同じスケール・トゥ・ゼロの形。正は基盤側にある（[21 §21.2](../build/21-add-a-deploy-target.ja.md)）。`State` は StatefulSet の
-レプリカ数と Pod のフェーズ・準備状態から読むので、再起動した CP や 2 台目の CP も名前ですべて取り戻せる。
+同じスケール・トゥ・ゼロの形。素の Pod でも Deployment でもなく StatefulSet にするのは、コントローラが通常どおり動く限り
+**序数ごとに Pod を高々 1 つしか動かさない**からだ。古い Pod が消えるまで代わりを起動しない。ECS アダプタは、古いタスクが新しい
+タスクの後ろで抜けきるまで `starting` を返す。Service Connect が 1 人のクライアントの要求を 2 つの agent に振り分けうるからだ
+（`runtime_ecs.go` の `serviceRolledOut`）。ここではその重なりが起きない。
 
-素の Pod でも Deployment でもなく StatefulSet にするのは、**序数ごとに Pod が高々 1 つであることを保証する**から。ECS アダプタは、
-古いタスクが新しいタスクの後ろで抜けきるまで `starting` を返し続ける。Service Connect が 1 人のクライアントの要求を 2 つの
-agent に振り分けうるからだ（`runtime_ecs.go` の `serviceRolledOut`）。StatefulSet は古い Pod が消えるまで新しい Pod を動かさない
-ので、この窓が存在しない。代償は同じ保証の裏側で、応答しなくなったノード上の Pod は、ノードが消えたと判定されて Pod が削除される
-まで置き換わらない。CP の開始期限（`start_deadline.go`）が、ほかの居残る `starting` と同じくこれにも上限をかける。
+**Start** は Pod テンプレートと `replicas: 1` を 1 回の更新で書く。テンプレートには起動の世代を示す注釈と、ダイジェストで固定した
+イメージ（決定 9）を載せるので、他に何も変わらなくても起動のたびに新しいコントローラ revision ができる。
 
-起動のたびに Pod テンプレート（[21 §21.2](../build/21-add-a-deploy-target.ja.md) の起動ごとの環境は起動ごとに違いうる）と
-レプリカ数を 1 回の更新で書く。`Stop` はレプリカを 0 にし、`terminationGracePeriodSeconds` を `AF_STOP_GRACE_SEC` から決める。
-agent がすでに想定している 2 段階の停止と同じ。
+**Stop** は `replicas: 0` にし、`terminationGracePeriodSeconds` を `AF_STOP_GRACE_SEC` から決める。agent がすでに想定している
+2 段階の停止と同じ。
+
+**State** は呼ばれるたびに基盤から読むので、再起動した CP や 2 台目の CP も名前ですべて取り戻せる
+（[21 §21.2](../build/21-add-a-deploy-target.ja.md)）。
+
+| 状態 | 条件 |
+|---|---|
+| `none` | StatefulSet が無い |
+| `stopped` | `replicas` が 0 で、Pod が存在しない |
+| `starting` | `replicas` が 1 で、StatefulSet の `updateRevision` のもので、終了中でなく、Ready な Pod が無い。起動前からの古い Pod がまだ終了中か Ready のまま残っている場合、スケジュール・取得・起動中の場合、ロールアウト中の場合をすべて含む |
+| `running` | `updateRevision` の、`deletionTimestamp` の無い Pod が Ready |
+| （停止中。`starting` として返す） | `replicas` が 0 で、Pod がまだ存在する |
+
+readiness は agent 自身の `/healthz` を readiness probe にしたもので、Ready は他の配備先の `running` と同じ意味、つまり agent が
+応答することを指す。Stop の直後に Start しても、古い Pod が消えて新しい revision が応答するまでは `starting` であり、古い agent を
+新しいものとして返すことは無い。
+
+**応答しなくなったノード上の Pod は置き換わらない。** 高々 1 つという保証の代償である。CP の開始期限（`start_deadline.go`）は
+これを終わらせない。タスクがまだ動いていると数えられる Workspace は止めず、レプリカを 0 にしても届かないノード上の Pod は
+消えないからだ。CP は Pod を強制削除しない。プロセスが死んだ証拠なしに名前を空け、1 つの home に 2 つの agent を走らせうるからだ。
+復旧は運用者が、クラスタ自身の手順（ノードの削除、あるいは正常でないノード停止に対する out-of-service taint）で行い、手順書に
+書く。
 
 init プロセスは `shareProcessNamespace: true` で与える。Pod の pause コンテナが PID 1 になって孤児を回収し、docker 下の tini と
-同じ役をする。イメージは変えない。
+同じ役をする。この ADR では共有イメージに init を足さず、イメージを変えない方を選ぶ。
 
-各 Workspace は ClusterIP の Service を持ち、`Endpoint()` はそのクラスタ DNS 名。Service Connect の別名と違い、この名前は CP の
-起動後に作った Service でも引けるので、`agent_dial.go` の回避策に当たるものはここでは要らない。
+各 Workspace は ClusterIP の Service を持ち、`Endpoint()` はそのクラスタ DNS 名に対するクラスタ内の HTTP で、どの配備先とも同じく
+`AGENT_TOKEN` で守られる。Service Connect の別名と違い、この名前は CP の起動後に作った Service でも引けるので、`agent_dial.go` の
+回避策に当たるものはここでは要らない。
 
-### 4. home は CP が作る ReadWriteOnce ボリュームで、共有ファイルシステムではない
+### 4. CP が作る 2 つのボリューム: home と、home の初期化を越えて残る状態
 
-各 Workspace は永続領域ごとに 1 つ、計 2 つの PersistentVolumeClaim を持つ。StatefulSet の `volumeClaimTemplates` ではなく CP が
-決定的な名前で自分で作る。テンプレートのサイズは作成後に変えられず、そこから作られたクレームは StatefulSet より長生きし、
-CP から見える持ち主がいないからだ。StorageClass は配備の設定とし、GKE の手順書では `WaitForFirstConsumer` で拡張を許した
-`pd-balanced` のクラスを使う。
+各 Workspace は CP が決定的な名前で作る 2 つの PersistentVolumeClaim を持つ。
 
-ReadWriteMany（Filestore、NFS、EFS）ではなく ReadWriteOnce のブロックストレージにする。一日中 git を回す home にネットワーク
-ファイルシステムが課すコストは [0087](0087-efs-metadata-io.ja.md) で測ってあり、ecs-ec2 が存在するのも EBS の home が小さな
-ファイルの書き込みで 8〜30 倍速かったからだ（[09 §9.5](../build/09-deploy.ja.md)）。ReadWriteOnce のボリュームは 1 つの Pod に
-付いて回り、それはまさに home のあり方でもある。
+- **home**: `/home/dev` にマウントする。
+- **state**: `subPath` で 2 か所にマウントする。Claude の状態用に `/var/lib/af/claude` へ、もう 1 つは keep パスへ
+  （`AF_WS_KEEP` を設定）。これで `workspace/entrypoint.sh` が、ecs-ec2 とまったく同じく `homeKeep` の 7 項目を home の外へ移す。
 
-追加の作業なしで得られるもの: クレームの拡張による `ResizeHome`、停止中にクレームを消して作り直す `WipeHome` と `EraseHome`、
-StatefulSet・Service・両クレーム・Secret を消す `Destroy`。ボリュームはゾーンに閉じるので、Workspace はそのゾーンでしか起動
-せず、ゾーンを失うと戻るまで home に届かない。バックアップ（決定 9）が入る前の ecs-ec2 の home と同じ露出である。
+ログイン類が state ボリュームにあるので、Clean home が残すべきものは home に何も無くなり、home の操作は次のようになる。
+
+| 操作 | 方法 |
+|---|---|
+| `WipeHome(repos)`（Recreate） | CP は消去を世代番号付きの注釈として StatefulSet に記録して返る。次の Start は同じイメージの init コンテナを足し、agent が起動する前に `~/repos` を消して、実行した世代を home に書く。後で再起動した Pod はその世代を見つけて何も消さないので、注釈を消すためにテンプレートを変える（Pod がロールする）必要は無い。ecs-ec2 の「印を付け、Start が消す」と同じで、ingress のタイムアウトに十分収まって返る |
+| `WipeHome(clean)`（Clean home） | 同じ方法で、home の中をすべて消す |
+| `EraseHome()`（管理者の Clean home） | Workspace を止めた状態で home のクレームを消し、空のものを作る。state ボリュームと、そこにあるログイン類は残る |
+| `ResizeHome()` | home のクレームの要求量を上げる（決定 4、下記） |
+| `Destroy()` | 決定 5 |
+
+クレームを `volumeClaimTemplates` でなく CP が自分で作るのは、テンプレートのサイズは StatefulSet の作成後に変えられず、home は
+大きくできる必要があるからだ。明示的なクレームなら、そのライフサイクル（初回起動で作り、停止では残し、Destroy で消す）も保持
+ポリシーではなくアダプタのコードに置ける。
+
+**アクセスモードは、CSI ドライバが対応していれば `ReadWriteOncePod`**（GKE の Persistent Disk ドライバは対応している）、
+そうでなければ `ReadWriteOnce`。`ReadWriteOnce` はボリュームを 1 つのノードに限るだけで、1 つの Pod には限らない。決定 7 の分離は、
+各クレームを 1 つの StatefulSet だけが参照すること、そしてメンバーが Kubernetes API の権限を持たないことに依っており、
+`ReadWriteOncePod` は使える場合にストレージ自身の保証を足す。
+
+ReadWriteMany（Filestore、NFS、EFS）ではなくブロックストレージにする。一日中 git を回す home にネットワークファイルシステムが
+課すコストは [0087](0087-efs-metadata-io.ja.md) で測ってあり、ecs-ec2 が存在するのも EBS の home が小さなファイルの書き込みで
+8〜30 倍速かったからだ（[09 §9.5](../build/09-deploy.ja.md)）。
+
+StorageClass は配備の設定で、アダプタは次を求める。
+
+- **`volumeBindingMode: WaitForFirstConsumer`**。ボリュームは Pod がスケジュールされたゾーンに作られる。新しいクレームはそれまで
+  `Pending` のままで、それが正常である。Start はクレームと StatefulSet を一緒に作り、先に `Bound` を待つことはしない。
+- **`allowVolumeExpansion: true`**。クレームは縮められないので、サイズ設定は `DiskGrowOnly` を返す。`ResizeHome` は要求量を
+  上げ、クレームの status と condition から結果を返す。停止中の Workspace ではファイルシステムの拡張は次のマウントで行われる
+  ので、完了ではなく拡張中として返す。
+- **`reclaimPolicy: Delete`**。そうでないと Destroy がディスクを消せない（決定 5）。
+
+ボリュームはゾーンに閉じる。Workspace はそのゾーンでしか起動せず、ゾーンを失うと戻るまで home に届かない。バックアップの無い
+ecs-ec2 の home と同じ露出である。
 
 Pod はイメージの `dev` の uid で動き、`fsGroup` をその gid にするので、root で動く init コンテナ無しで新しいボリュームに書ける。
 
-### 5. 秘密は参照で渡し、Pod の spec には書かない
+### 5. Destroy はクレームを消し、確かめられなかったものを報告する
 
-DEK と `AGENT_TOKEN` は Workspace ごとの Secret に入れ、`secretKeyRef` でコンテナに届ける。namespace を読める誰からも見える
-Pod の spec には参照しか載らない。ECS の SSM SecureString 参照（[09 §9.5](../build/09-deploy.ja.md)）の対になるもの。etcd 上の
-Secret はクラスタが暗号化しない限り base64 にすぎないので、手順書ではアプリケーション層の Secret 暗号化（GKE なら Cloud KMS）を
-前提条件にする。
+Destroy は Workspace を止めて Pod が消えるのを待ち（クレームを使っている Pod は、クレーム保護の finalizer でクレームを押さえる）、
+StatefulSet・Service・Secret・両クレームを消し、クレームが消えるのを時間を区切って待つ。各段は冪等なので、途中で止まった
+Destroy はもう一度実行すれば完了する。
 
-### 6. 分離は 07 §7.2 の全行を満たす
+アダプタの namespace に閉じたロールでは PersistentVolume が見えないので、クレームの背後のディスクが消えたかは確かめられない。
+削除前に各クレームのボリューム名を記録し、時間内に消えなかったクレームと、StorageClass が `reclaimPolicy: Delete` だと
+確かめられなかったボリュームを、既知の残存物として返す（[21 §21.2](../build/21-add-a-deploy-target.ja.md)）。手順書は `Delete`
+を前提条件にする。`Retain` だとディスク・データ・課金が Destroy の後も残り、監査ログにそう記録される。
+
+### 6. 秘密は参照で渡し、Pod の spec には書かない
+
+ファクトリが受け取る起動ごとの環境すべて（DEK、`AGENT_TOKEN`、背景に挙げた発行済みトークン）を Workspace ごとに 1 つの Secret
+に入れ、起動のたびに書き直し、`envFrom` でコンテナに届ける。Pod テンプレートには静的で秘密でない設定だけを載せる。DEK と
+`AGENT_TOKEN` だけを SSM の後ろに置く ECS より厳しい。
+
+`secretKeyRef` は値を Pod の spec から隠すが、その namespace で Secret を読める者や Pod を作れる者からは隠さない。その権限を
+メンバーから遠ざけるのは決定 7 である。etcd 上の Secret はクラスタが暗号化しない限り base64 にすぎないので、手順書では
+アプリケーション層の Secret 暗号化（GKE なら Cloud KMS）を前提条件にする。
+
+### 7. 分離は 07 §7.2 の全行を満たす
+
+**Workspace の namespace は配備ごとに 1 つ。** テナントとメンバーは、他のどの配備先とも同じく namespace ではなく CP が分ける。
+メンバーには Workspace の namespace に対する Kubernetes API の権限を決して与えない。そこで Pod を作れる者は誰のクレームでも
+マウントでき、どの Secret も読めるので、その権限は CP とクラスタの管理者だけのものとする。運用者は namespace に ResourceQuota と
+LimitRange を設定し、停止中の Workspace のクレームと動いている Pod が合わせて取れる量に上限をかける。クォータで断られた起動は
+起動フェーズとして表に出る。
 
 | 観点 | `kubernetes` |
 |---|---|
-| 利用者間のファイル | Workspace ごとに 1 組のボリュームで、その Pod だけがマウントする |
+| 利用者間のファイル | Workspace ごとに 1 組のクレームで、その Workspace の StatefulSet だけが参照する。対応していれば `ReadWriteOncePod` |
 | プロセスとメモリ | Workspace ごとに 1 Pod。requests と limits は Workspace のサイズ設定から |
-| ネットワーク | Workspace は専用の namespace に置き、既定拒否の NetworkPolicy をかける。agent のポートへの流入は CP の Pod からだけ許し、ノードのメタデータアドレスへの流出は拒否する |
+| ネットワーク | 下のポリシー |
 | 権限 | 特権なし、`runAsNonRoot`、既定では能力の追加なし（Fargate の水準）。Chromium のサンドボックス用の `SYS_ADMIN` は、クラスタのポリシーが許す場合のオプトイン |
-| クラウドの ID | `automountServiceAccountToken: false`。Workspace のサービスアカウントはどのクラウド ID にも結び付けない。GKE では Workload Identity Federation を必須にし、メタデータサーバが Pod にノードの認証情報を渡さないようにする |
-| 機微な状態 | `/var/lib/af/claude` の 2 つ目のボリューム。全配備先と同じ |
+| クラウドの ID | `automountServiceAccountToken: false`。Workspace のサービスアカウントはどのクラウド ID にも結び付けない。GKE では Workspace を動かしうるすべてのノードプールで GKE メタデータサーバ（`GKE_METADATA`）を使い、Workspace はそのプールにだけスケジュールする。これでメタデータサーバが Pod にノードの認証情報を渡すことは無い。CP 自身の Workload Identity は別の結び付け（決定 8） |
+| 機微な状態 | `/var/lib/af/claude` と keep パスの state ボリューム。ecs-ec2 と同じ |
 
-NetworkPolicy は、それを実装する CNI（GKE なら Dataplane V2）があるときだけ効く。無いクラスタはポリシーを黙って受け入れ、何も
-強制しない。そのため手順書で前提条件として書き、CP は強制が無いと判別できる場合に起動時に警告を出す。
+**ネットワークポリシー。** NetworkPolicy は許可しかできない。拒否とは許可が無いことであり、同じ Pod を選ぶ別のポリシーは許可を
+足す。そのため Workspace の namespace にはちょうど次のものだけを置き、手順書でより広いものを足すことを禁じる。
 
-### 7. CP はクラスタ内で動き、namespace に閉じたロールを持つ
+| 送信元 → 宛先 | 許可 |
+|---|---|
+| 任意 → Workspace の agent ポート | CP の Pod からだけ |
+| Workspace → クラスタ DNS | 許可 |
+| Workspace → CP | 許可。CP の内部 Service へ（決定 8） |
+| Workspace → クラスタ外のすべて | 許可。`0.0.0.0/0` から、ノードのメタデータアドレスとクラスタの Pod・Service の範囲を除く |
 
-CP は自分の namespace に置く 1 レプリカの Deployment。サービスアカウントは Workspace の namespace に、決定 2 の種類だけを扱う
-Role を持ち、ClusterRole は持たない。ストアは配備が用意する任意の Postgres で、Google Cloud の手順書では Cloud SQL を使う。
+NetworkPolicy は、それを実装する CNI（GKE なら Dataplane V2）があるときだけ効く。無いクラスタはポリシーを受け入れ、何も
+強制しないので、手順書で前提条件として書く。外向きの通信は ECS と同じく開いている。テンプレート環境がセッションを egress
+プロキシに向けていても、プロキシ変数を無視するプロセスは迂回できる（[07 §7.8](../build/07-security.ja.md)）。
+
+### 8. CP はクラスタ内で動き、Workspace は内部アドレスで CP に届く
+
+CP は自分の namespace に置く 1 レプリカの Deployment で、内部 Service を持つ。サービスアカウントは Workspace の namespace に
+Role を持ち、ClusterRole は持たない。
+
+| 種類 | 動詞 |
+|---|---|
+| StatefulSet、Service、PersistentVolumeClaim、Secret | get、list、create、update、patch、delete |
+| Pod | get、list、watch。State・TaskCounter・BootPhase はコントローラが作った Pod を読む |
+| Event | get、list。Pod をスケジュール・取得できない理由を起動フェーズに出すため |
+| NetworkPolicy | なし。静的で、manifest と一緒に適用する |
+
+ストアは配備が用意する任意の Postgres で、Google Cloud の手順書では Cloud SQL を使い、CP のサービスアカウントだけに結び付けた
+Workload Identity で接続する。
+
+**Workspace から CP への戻り道。** `AF_CP_BASE_URL` は今は公開のベース URL で、クラスタの中からだと NAT で出てロードバランサ
+経由で戻ってくることになる。このプロファイルでは CP に内部 Service の URL も教え、アダプタはそれを `AF_CP_BASE_URL` として渡す。
+公開 URL はブラウザと OAuth が使うものとして残る。テンプレート環境が egress プロキシを設定する場合は、`NO_PROXY` に内部 Service
+名を足し、Workspace から CP への呼び出しがプロキシを通らないようにする。テンプレート環境（`Config.ExtraEnv`。今は docker と
+native だけが渡す）を Pod に届けるかは、アダプタと一緒に決める（[21 §21.2](../build/21-add-a-deploy-target.ja.md)）。
 
 クラスタの外で動かす案は採らなかった。到達できる API サーバ、それへの認証情報、各 Workspace の Service への経路が要り、
 クラスタ内ならそのすべてが無償で手に入るからだ。
 
-### 8. アダプタは client-go を使わず、素の HTTP で API サーバと話す
+### 9. イメージ: ノードが取得し、起動時に固定し、指紋で比べる
 
-アダプタは標準ライブラリの HTTP クライアントに、クラスタ内のサービスアカウントトークンと CA を使い、読み書きするフィールド
-だけを手書きの型にする。扱うのは 5 種類と 4 つの動詞にすぎない。client-go はその範囲に対して CP の残りより大きな依存を
-持ち込む。docker アダプタがすでに示しているとおり、ここでの流儀は標準ライブラリと基盤自身のインターフェースである。
+- **取得はノードの仕事。** GKE ではノードプールのサービスアカウントが Artifact Registry を読み、他のクラスタでは配備が
+  `imagePullSecrets` を指定する。Pod 自身の ID は関わらない。
+- **Start がダイジェストを固定する。** CP は起動のたびに設定されたタグをダイジェストに解決し、`image@sha256:…` をテンプレートに
+  書く。これでノードのキャッシュが同じタグで古いイメージを動かすことは無くなり、テンプレートがこの起動で何を動かしたかを
+  記録する。
+- **`Stale()`** は `runtime_ecs_stale.go` の冒頭の規則に従う。両側を同じ方法で指紋にし（マルチプラットフォームの index を
+  1 段ほどき、attestation の manifest を除く）、起動した指紋をテンプレートの注釈に記録し、レジストリの v2 API でタグの現在の
+  指紋と比べ、迷ったら false を返す。CP は自分の ID（GKE なら Workload Identity、他ではプルシークレット）でレジストリに認証し、
+  ノードのものとは分ける。
+
+### 10. アダプタは client-go を使わず、標準ライブラリの HTTPS で API サーバと話す
+
+アダプタは標準ライブラリの HTTP クライアントで、クラスタ内の API サーバに HTTPS で接続し、サービスアカウントの CA で検証する。
+読み書きするフィールドだけを手書きの型にする。サービスアカウントのトークンは kubelet が更新する projected トークンなので、
+起動時に覚えるのではなくファイルから読み直し、401 なら読み直して 1 回だけ再試行する。扱うのは決定 8 の種類だけで、client-go は
+その範囲に対して CP の残りより大きな依存を持ち込む。docker アダプタがすでに示しているとおり、ここでの流儀は標準ライブラリと
+基盤自身のインターフェースである。
 
 代償は型の正しさを自分で保つこと。テストは記録した API サーバの応答に対してアダプタを動かし、ecs-ec2 と同じく
-（`AF_ECS_EC2_LIVE=1`）ゲートした実機ハーネスで実クラスタに対して動かす。
+（`AF_ECS_EC2_LIVE=1`）ゲートした実機ハーネスで実クラスタに対して動かす。確かめるのは、Stop の直後の Start、`starting` 中の
+Stop、起動途中での CP の再起動、2 種類の home 消去、停止中の拡張、Destroy。
 
-### 9. 最初の版が名乗る能力
+### 11. 最初の版が名乗る能力
 
 | 能力（[21 §21.3](../build/21-add-a-deploy-target.ja.md)） | 最初の版 |
 |---|---|
 | `Runtime`、`runtimeDestroyer` | あり |
-| `SizingProfile()` | あり。CPU とメモリは requests と limits、ディスクはクレームのサイズ |
-| `Stale()` | あり。レジストリの v2 API からイメージのダイジェストを得る（Artifact Registry も話す） |
-| `BootPhase()` | あり。Pod の condition から（スケジュール、取得、起動） |
-| `TaskCounter` | あり。StatefulSet の ready なレプリカ数 |
+| `SizingProfile()` | あり。CPU とメモリは requests と limits、ディスクはクレームのサイズ、`DiskGrowOnly` |
+| `CostProfile()` | あり。`Runtime: "kubernetes"` で、使えるものは無しとする。こうしないと版情報が `local` に落ちる（`cost_profile.go`） |
+| `WorkspaceImage()` | あり。起動時の表示と版情報のための、設定されたイメージ |
+| `Stale()` | あり（決定 9） |
+| `BootPhase()` | あり。Pod の condition、コンテナの待機理由、namespace の event から（スケジュール、クォータ、取得、起動） |
+| `TaskCounter` | あり。Workspace のコンテナが動いている Pod の数で、**Ready かどうかは問わない**。応答しなくなった agent もタスクであり、開始期限がそれを止めてはならない。読めなかったときはエラーを返し、開始期限はそれを「動いている」として扱う |
 | `WipeHome()`、`EraseHome()`、`ResizeHome()` | あり（決定 4） |
 | `DocsMounter` | なし。ガイドは ECS と同じく `GET /internal/docs` から取る |
-| `CostProfile()` | なし。Google Cloud のコスト表示は課金エクスポートで、後の作業 |
 | `BeginHibernate()`、`BackupHome()`、`HomeBackups()` | なし。VolumeSnapshot が自然な手段で、後の作業 |
 | golden による初期化、スロットプール | なし |
 
 各行について、`capabilities_test.go` か `runtime_test.go` に両方向のアサーションを置く。
 
-### 10. 基盤は Google Cloud 側を Terraform、クラスタ内を素の manifest にし、Helm chart は棚上げのまま
+### 12. 基盤は Google Cloud 側を Terraform、クラスタ内を素の manifest にし、Helm chart は棚上げのまま
 
-- `deploy/kubernetes/` には kustomize の base を持つ素の manifest を置く。namespace、CP の Deployment・サービスアカウント・Role、
-  既定拒否のポリシー。どのクラスタにも適用できる。
-- `deploy/gcp/gke/` には GKE 配備がクラスタの周りに要るものの Terraform を置く。VPC、Dataplane V2・Workload Identity・Secret
-  暗号化を有効にしたクラスタ、Cloud SQL、静的アドレス付きの Cloud NAT、Cloud DNS、ロードバランサと Certificate Manager。
+- `deploy/kubernetes/` には kustomize の base を持つ素の manifest を置く。namespace、CP の Deployment・Service・サービス
+  アカウント・Role、決定 7 のネットワークポリシー、ResourceQuota の例。どのクラスタにも適用できる。
+- `deploy/gcp/gke/` には GKE 配備がクラスタの周りに要るものの Terraform を置く。VPC、Dataplane V2・Secret 暗号化・GKE
+  メタデータサーバを使う Workspace 用ノードプールを持つクラスタ、決定 4 の StorageClass、Cloud SQL、静的アドレス付きの
+  Cloud NAT、Cloud DNS、ロードバランサと Certificate Manager。
 
-Terraform にするのは、Google Cloud にはもう固有のテンプレート言語が無いからだ。Deployment Manager は廃止され、後継の
-Infrastructure Manager は Terraform を動かす。リポジトリで最初の Terraform であり、運用者にとっても新しい道具になる。
+Terraform にするのは、Google Cloud 自身のテンプレートサービスが終わりつつあるからだ。Deployment Manager は 2026-04-01 に
+サポートを終え、2026-06-30 から新規利用者を受け付けず、2027-06-30 の後に停止する。後継の Infrastructure Manager は Terraform を
+動かす。リポジトリで最初の Terraform であり、運用者にとっても新しい道具になる。
 
 AWS の配備先は CloudFormation のまま残す。移すと、7 つのスタック（約 3,600 行）、その上に建つ検査（`cfn-equiv.py`、
 `cfn-contract.py`、タグ柵のテスト）、standup・update・teardown のスクリプトを書き直すことになり、稼働中のすべての配備が
@@ -209,6 +330,7 @@ Helm chart は作らない。問い合わせは Kubernetes 対応を求めたの
 - **コスト表示**（Cloud Billing のエクスポートから BigQuery）、**Cloud Text-to-Speech**、**Google Cloud 上のマネージド GPU
   エンジン**。GCE の GPU VM を `external` のエンジン行として宣言する方法は今でも動く。
 - Workspace 内で使う**利用者向けの Google Cloud の道具**（`af-aws-exec` に当たる `gcloud` 版）。
+- **テナントごとの namespace。** 最初の版は配備ごとに Workspace の namespace を 1 つとする（決定 7）。
 
 ## 却下した案
 
@@ -219,18 +341,22 @@ Helm chart は作らない。問い合わせは Kubernetes 対応を求めたの
   建っている。GCE には SSM SendCommand に素直に対応するものが無く、プールが手で組んでいるスケジューリングとボリュームの
   アタッチは Kubernetes がすでに行う。
 - **Filestore 上の ReadWriteMany の home。** 決定 4 と [0087](0087-efs-metadata-io.ja.md) のとおり。
+- **Recreate と Clean home で home のクレームを消す案。** ログイン類まで一緒に消え、Recreate は `~/repos` 以外をすべて残す
+  ものである。決定 4 は代わりにログイン類を外へ移す。
 - **カスタムリソースを持つオペレーター。** CP を調整ループを持つコントローラにし、版を管理すべき CRD を抱えることになる。
   状態を持たず何でも名前で見つけるアダプタのモデルは、すでに 2 つのクラウド配備先で成り立っている。
-- **client-go。** 決定 8 のとおり。
-- **今すぐの Helm chart。** 決定 10 のとおり。
+- **client-go。** 決定 10 のとおり。
+- **今すぐの Helm chart。** 決定 12 のとおり。
 
 ## 結果
 
 - `Runtime` の契約に追随させ続けるアダプタが 5 つ目になり、docker プロファイルしか起動しない fleet E2E は何も検査しない。
   CI で kind クラスタを使う（ランナーには Docker がある）のがその穴を埋める方法で、ハーネスと一緒に決める。
+- CP は自分の 2 つ目のアドレスを知ることになる（決定 8）。設定するのはこのプロファイルだけ。
+- 応答しなくなったノードの Workspace は、運用者が手を打つまで `starting` のままになる。
 - Google Cloud の運用者は Terraform と kustomize を覚えることになる。AWS の運用者は AWS CLI だけで済む。
 - バックアップが入るまで、home は 1 つのゾーンに閉じる。
-- GCE の段階はコード変更なしで出るので、アダプタのコードが依存する前に決定 1 の Google Cloud 固有の事情が実証される。
+- GCE の段階はアダプタのコードなしで出るので、アダプタのコードが依存する前に決定 1 の Google Cloud 固有の事情が実証される。
 
 ## 未決事項（測ってから決める）
 
@@ -239,22 +365,21 @@ Helm chart は作らない。問い合わせは Kubernetes 対応を求めたの
 2. **起動の待ち時間。** Workspace イメージは数ギガバイトある。ノードのイメージキャッシュと、Autopilot ならノードの増設が、
    起動が CP の想定に収まるかを決める。[09 §9.5](../build/09-deploy.ja.md) が Fargate の起動を分解したのと同じやり方で、
    冷えた起動と温まった起動を測る。
-3. **ロードバランサの後ろでの WebSocket の寿命。** どの `timeoutSec` にするか、そしてそこに達したときに Console がターミナルを
-   透過的につなぎ直すか。
-4. **egress の強制。** 許可リストは CP のプロキシにある。テンプレート環境（`Config.ExtraEnv`。今は docker と native だけが渡す）
-   を Pod に届けるかは、アダプタと一緒に決める（[21 §21.2](../build/21-add-a-deploy-target.ja.md)）。
-5. **GKE Autopilot。** Fargate に近い選択肢。`SYS_ADMIN` を禁じ、ノードを需要に応じて増やす。Standard の後で検証する。
+3. **ロードバランサの後ろでの WebSocket。** アイドルのターミナルを覆う `timeoutSec` をいくつにするか、そして 24 時間での切断に
+   Console がターミナルを透過的につなぎ直すか。
+4. **GKE Autopilot。** Fargate に近い選択肢。`SYS_ADMIN` を禁じ、ノードを需要に応じて増やす。Standard の後で検証する。
 
 ## 段階
 
 | 段階 | 内容 | 完了の条件 |
 |---|---|---|
-| 0 | 決定 1: GCE の手順書とスクリプト、egress の既定値、ガイドのページ | GCE VM 上で、Caddy の後ろでも、ロードバランサの後ろでもセッションが動き、ターミナルが `timeoutSec` の既定値を越えて生き残る |
-| 1 | 決定 2〜9: アダプタ、`deploy/kubernetes/`、`deploy/gcp/gke/` | GKE Standard でメンバーの Workspace が起動・停止・拡張・初期化でき、決定 6 の分離の各行を Pod の中から確かめてある |
+| 0 | 決定 1: GCE の手順書とスクリプト、egress の既定値、ガイドのページ | GCE VM 上で、Caddy の後ろでも、グローバル外部アプリケーションロードバランサの後ろでもセッションが動き、アイドルのターミナルが既定の `timeoutSec` を越えて生き残り、切れた接続がつなぎ直される |
+| 1 | 決定 2〜12: アダプタ、`deploy/kubernetes/`、`deploy/gcp/gke/` | GKE Standard で決定 10 の実機ハーネスが通り、決定 7 の分離の各行とネットワークポリシーを Pod の中から確かめてある |
 | 2 | Autopilot と、「対象外」のうち求められたもの | それぞれ別の issue |
 
 ## 見直す条件
 
-- Helm そのものを必要とする利用者が現れたとき（決定 10）。
-- 標準 API では home に足りないクラスタ。たとえば ReadWriteOnce で拡張できる StorageClass が無いもの。
+- Helm そのものを必要とする利用者が現れたとき（決定 12）。
+- 標準 API では home に足りないクラスタ。たとえば拡張と `WaitForFirstConsumer` に対応した StorageClass が無いもの。
 - Kubernetes での起動の待ち時間が ECS から大きく離れていると測れたとき。温めたノードのプールを再び検討することになる。
+- テナントを CP ではなくクラスタで分けなければならないとき。テナントごとの namespace を再び検討することになる。
