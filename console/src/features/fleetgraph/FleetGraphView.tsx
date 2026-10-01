@@ -872,6 +872,10 @@ function LaneLabel({
           className="fgraph-menu-host"
           onClick={(e) => e.stopPropagation()}
           onAuxClick={(e) => e.stopPropagation()}
+          // React bubbles portal events through this tree, so an Enter or Space in the menu or a
+          // dialog it opened would otherwise reach the label's onKeyDown, which swallows the key
+          // and opens the session instead of submitting the form.
+          onKeyDown={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.stopPropagation()}
         >
           <SessionMenu

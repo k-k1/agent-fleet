@@ -340,6 +340,25 @@ describe("FleetGraphView", () => {
     expect(host.querySelector('[data-testid="session-menu-host"]')).toBeTruthy();
   });
 
+  it("keeps Enter and Space inside the session menu and its dialogs away from the label", async () => {
+    await render();
+    const label = [...host.querySelectorAll<HTMLElement>(".fgraph-label")].find((el) =>
+      el.textContent?.includes("fleet-graph kickoff"),
+    )!;
+    await act(async () => {
+      label.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }));
+    });
+    const inside = host.querySelector<HTMLElement>('[data-testid="session-menu-close"]')!;
+    for (const key of ["Enter", " "]) {
+      const ev = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      await act(async () => {
+        inside.dispatchEvent(ev);
+      });
+      expect(ev.defaultPrevented).toBe(false);
+    }
+    expect(openSessionFromList).not.toHaveBeenCalled();
+  });
+
   it("switching to the sessions overview swaps this pane, and Ctrl opens a new one", async () => {
     await render();
     const spy = vi.spyOn(layoutOps, "setPaneTarget");
