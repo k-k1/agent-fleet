@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/datalayout"
 )
 
 // Git LFS server for the internal git provider (docs/reference/internal-git-provider,
@@ -45,7 +47,7 @@ func validOID(oid string) bool {
 // lfsObjectPath is the on-disk location of an object, sharded by the oid prefix and
 // contained within the repo's .git tree (so delete/rename of the repo carries it).
 func (a gitServerAPI) lfsObjectPath(slug, repo, oid string) string {
-	return filepath.Join(a.dataRoot, "git", filepath.Base(slug), repo+".git",
+	return filepath.Join(a.dataRoot, datalayout.GitDir, filepath.Base(slug), repo+".git",
 		"lfs", "objects", oid[0:2], oid[2:4], oid)
 }
 

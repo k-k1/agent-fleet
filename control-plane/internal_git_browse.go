@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/datalayout"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -82,7 +83,7 @@ func (a gitServerAPI) browseCtx(w http.ResponseWriter, r *http.Request, mv store
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_path", "invalid path"})
 		return "", "", "", false
 	}
-	bareDir = filepath.Join(a.dataRoot, "git", mv.TenantSlug, name+".git")
+	bareDir = filepath.Join(a.dataRoot, datalayout.GitDir, mv.TenantSlug, name+".git")
 	return bareDir, ref, path, true
 }
 

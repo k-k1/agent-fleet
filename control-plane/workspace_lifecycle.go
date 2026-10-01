@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -84,6 +85,15 @@ func (m *manager) backfill(ctx context.Context) error {
 		return err
 	}
 	m.defaultTenantID = t.ID
+	// Names stored before the store refused collisions are reported, never rejected: the
+	// deployment has been running with them, and only an administrator can move them.
+	if cs, err := m.store.DataRootCollisions(ctx); err != nil {
+		log.Printf("WARNING: data root name check: %v", err)
+	} else {
+		for _, c := range cs {
+			log.Printf("WARNING: data root name collision under %s: %s (guide/operate/02-install.md §7)", m.dataRoot, c)
+		}
+	}
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -97,6 +107,12 @@ func (m *manager) backfill(ctx context.Context) error {
 			return err
 		}
 		mem, err := m.store.EnsureMembership(ctx, ident.ID, t.ID, "member")
+		if errors.Is(err, store.ErrDataRootNameReserved) || errors.Is(err, store.ErrDataRootNameTaken) {
+			// A directory with a home that is someone else's name (a tenant's, or one the
+			// CP reserves) is not adopted as a member; failing here would stop the boot.
+			log.Printf("WARNING: backfill: %s/home not adopted as a default-tenant member: %v", key, err)
+			continue
+		}
 		if err != nil {
 			return err
 		}

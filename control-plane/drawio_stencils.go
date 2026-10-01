@@ -39,6 +39,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/datalayout"
 )
 
 //go:embed assets/drawio-stencils.json
@@ -86,12 +88,12 @@ type drawioStencils struct {
 }
 
 func newDrawioStencils(cfg config) *drawioStencils {
-	root := "/tmp/af-data"
+	dataRoot := "/tmp/af-data"
 	if cfg.mgr != nil && cfg.mgr.dataRoot != "" {
-		root = cfg.mgr.dataRoot
+		dataRoot = cfg.mgr.dataRoot
 	}
 	return &drawioStencils{
-		cacheDir: filepath.Join(root, "drawio-stencils"),
+		cacheDir: filepath.Join(dataRoot, datalayout.DrawioStencilsDir),
 		loading:  map[string]*sync.Mutex{},
 	}
 }
