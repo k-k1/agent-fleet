@@ -1122,6 +1122,11 @@ export interface SessionSkill {
 }
 export const sessionSkills = (session: string): Promise<{ skills: SessionSkill[] }> =>
   api(`api/sessions/${encodeURIComponent(session)}/skills`);
+// The same list for a session not started yet (the launch modal): what `kind` would see in
+// the working copy, or in `subdir` beneath it. A worktree launch is answered from this
+// working copy's tree, since the worktree does not exist until the launch creates it.
+export const repoSkills = (repo: string, kind: string, subdir: string): Promise<{ skills: SessionSkill[] }> =>
+  api(`api/repos/${encodeURIComponent(repo)}/skills?${new URLSearchParams({ kind, subdir })}`);
 
 // --- memo queue (docs/log/21) ---
 // Per-membership notes accumulated across devices, then flushed to a session as one

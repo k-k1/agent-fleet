@@ -14,9 +14,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 const apiJSON = vi.fn();
+const pasteImage = vi.fn();
 vi.mock("../../core/api/client.ts", async (orig) => {
   const real = (await orig()) as Record<string, unknown>;
-  return { ...real, apiJSON: (...a: unknown[]) => apiJSON(...a), pasteImage: vi.fn() };
+  return { ...real, apiJSON: (...a: unknown[]) => apiJSON(...a), pasteImage: (...a: unknown[]) => pasteImage(...a) };
 });
 vi.mock("../sessions/open.ts", () => ({ openSessionChat: vi.fn(), openSessionTerminal: vi.fn() }));
 
@@ -37,6 +38,7 @@ const toasts = () => [...document.querySelectorAll(".ui-toast-msg")].map((n) => 
 
 beforeEach(async () => {
   apiJSON.mockReset();
+  pasteImage.mockReset();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -93,5 +95,38 @@ describe("起動失敗のトースト", () => {
     expect(shown).toContain("codex にログインしていないため app-server を起動しません");
     // The wait-and-retry wording must never be shown for a permanent cause.
     expect(shown).not.toContain(t("err.runtime_failed"));
+  });
+});
+
+// An attachment the Agent refuses (e.g. 413 paste_too_large over AF_UPLOAD_MAX) is gone once
+// the launch finished — the draft is cleared — so the toast must say WHICH file to resend.
+describe("attachment upload failure toast", () => {
+  const launchWith = async (images: File[]) => {
+    await act(async () => {
+      await start!(
+        { dir: "/repos/x", repo: "x" },
+        {
+          kind: "claude", driver: "", model: "", effort: "", startMode: "normal",
+          prompt: "look", title: "", images, subdir: "", base: "", newBranch: "", worktree: false,
+        },
+      );
+    });
+  };
+
+  it("names the file the Agent rejected and the one the network dropped", async () => {
+    apiJSON.mockResolvedValue({ name: "s1" });
+    pasteImage
+      .mockResolvedValueOnce({ status: 413, error: { code: "paste_too_large", message: "too large" } })
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce({ status: 200, path: "/p/ok.txt", name: "ok.txt" });
+    await launchWith([
+      new File(["x"], "huge.pdf", { type: "application/pdf" }),
+      new File(["y"], "build.log", { type: "text/plain" }),
+      new File(["z"], "ok.txt", { type: "text/plain" }),
+    ]);
+    const shown = toasts();
+    expect(shown.some((s) => s.includes("huge.pdf") && s.includes("too large"))).toBe(true);
+    expect(shown).toContain(t("rp.image_upload_failed_network", { name: "build.log" }));
+    expect(shown.some((s) => s.includes("ok.txt"))).toBe(false);
   });
 });
