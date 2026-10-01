@@ -7,13 +7,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
@@ -79,10 +78,13 @@ func Put(e Event) error {
 
 // PutOnce persists an event only once for a stable source key. The marker is
 // separate from the acked outbox file, so a still-open prompt is not re-enqueued
-// on every Control Plane poll. The marker is claimed with an exclusive create before
-// the Put: two processes racing on one key (claude runs hooks in parallel) would both
-// pass a stat-then-write check and both deliver. A failed Put releases the claim so
-// the next call can retry.
+// on every Control Plane poll.
+//
+// Check, Put and marker run under an exclusive flock: two processes racing on one key
+// (claude runs hooks in parallel) would otherwise both pass the check and both deliver.
+// The marker is written only after the Put, so a process killed in between leaves no
+// marker and the next call delivers — a duplicate at worst, never a lost event. The
+// kernel drops the lock with the process, so a kill cannot wedge later calls.
 func PutOnce(key string, e Event) error {
 	sum := sha256.Sum256([]byte(key))
 	markerDir := filepath.Join(paths.AgentStateDir(), "notification-markers")
@@ -90,21 +92,44 @@ func PutOnce(key string, e Event) error {
 		return err
 	}
 	pruneMarkers(markerDir)
-	marker := filepath.Join(markerDir, hex.EncodeToString(sum[:])+".seen")
-	f, err := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, fs.ErrExist) {
-		return nil
-	}
+	unlock, err := lockMarkers(markerDir)
 	if err != nil {
 		return err
 	}
-	_, _ = f.WriteString(e.CreatedAt)
-	_ = f.Close()
+	defer unlock()
+	marker := filepath.Join(markerDir, hex.EncodeToString(sum[:])+".seen")
+	if _, err := os.Stat(marker); err == nil {
+		return nil
+	}
+	if beforePutOnce != nil {
+		beforePutOnce()
+	}
 	if err := Put(e); err != nil {
-		_ = os.Remove(marker)
 		return err
 	}
-	return nil
+	return os.WriteFile(marker, []byte(e.CreatedAt), 0o600)
+}
+
+// beforePutOnce is a test seam: it runs after the marker check, before the Put.
+var beforePutOnce func()
+
+// lockMarkers takes the exclusive lock every PutOnce shares. One lock file for all
+// keys: the critical section is two small file writes, and a per-key lock file would
+// need pruning, which cannot be done safely — every caller must lock the same inode,
+// so the file is never removed.
+func lockMarkers(markerDir string) (func(), error) {
+	f, err := os.OpenFile(filepath.Join(markerDir, "putonce.lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
 }
 
 // Marker pruning: without it the markers grow monotonically (List() prunes only the

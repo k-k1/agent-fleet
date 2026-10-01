@@ -1,11 +1,14 @@
 package notice
 
 import (
+	"bufio"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestOutboxPersistsListsAndAcknowledges(t *testing.T) {
@@ -104,5 +107,50 @@ func TestPutOnceFailedPutReleasesKey(t *testing.T) {
 	}
 	if got := List(); len(got) != 1 {
 		t.Fatalf("%d events after the retry, want 1", len(got))
+	}
+}
+
+// A process killed inside PutOnce (SIGKILL, OOM, a Workspace stop) after it got past
+// the marker check but before the event reached the outbox must not suppress the
+// event: the next call for the key has to deliver it.
+func TestPutOnceKilledMidwayDoesNotSuppressKey(t *testing.T) {
+	if os.Getenv("NOTICE_PUTONCE_HELPER") == "1" {
+		beforePutOnce = func() {
+			os.Stdout.WriteString("inside\n")
+			time.Sleep(time.Minute)
+		}
+		_ = PutOnce("killed:k", New("answer-ready", "s1", "claude", "P"))
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cmd := exec.Command(os.Args[0], "-test.run=^TestPutOnceKilledMidwayDoesNotSuppressKey$")
+	cmd.Env = append(os.Environ(), "NOTICE_PUTONCE_HELPER=1")
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if line, err := bufio.NewReader(out).ReadString('\n'); err != nil || line != "inside\n" {
+		_ = cmd.Process.Kill()
+		t.Fatalf("helper never reached the Put: %q %v", line, err)
+	}
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+
+	done := make(chan error, 1)
+	go func() { done <- PutOnce("killed:k", New("answer-ready", "s1", "claude", "P")) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("PutOnce blocked on the dead process's lock")
+	}
+	if got := List(); len(got) != 1 {
+		t.Fatalf("%d events after the killed attempt, want 1", len(got))
 	}
 }

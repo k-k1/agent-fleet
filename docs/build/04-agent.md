@@ -415,7 +415,8 @@ The same approach as cmux.
   notification went out — so it is forwarded.
 - **Delivered once.** The OSC route drops claude, so the two routes never both deliver; a hook
   that fires twice for one call, even in parallel processes, is absorbed by `notice.PutOnce` keyed
-  on `tool_use_id` (its marker is claimed with an exclusive create).
+  on `tool_use_id` (check, Put and marker run under a file lock, and the marker is written
+  after the Put, so a process killed midway leaves a retry, not a lost event).
 - **A subcommand of its own, not a `session-status` state.** `settings.json` can point at an
   older agent (`paths.ConfigExePath` prefers the installed binary), and an older `session-status`
   persists any unknown word as the session's state — measured: `state:"push"`. An older
