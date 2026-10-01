@@ -23,8 +23,15 @@ vi.mock("../sessions/open.ts", () => ({
 // covered with the menu and action hooks themselves. Keeping this view test provider-free
 // makes the right-click regression focused on event ownership.
 vi.mock("../sessions/useSessionActions.tsx", () => ({ useSessionActions: () => ({}) }));
+// The stub stays rendered while closed, like the real menu that keeps its dialogs alive, and
+// exposes onClose so a test can close it the way an item does.
 vi.mock("../sessions/SessionMenu.tsx", () => ({
-  SessionMenu: ({ open }: { open: boolean }) => (open ? <div data-testid="session-menu" /> : null),
+  SessionMenu: ({ open, onClose }: { open: boolean; onClose: () => void }) => (
+    <div data-testid="session-menu-host">
+      {open && <div data-testid="session-menu" />}
+      <button type="button" data-testid="session-menu-close" onClick={onClose} />
+    </div>
+  ),
 }));
 
 let served: FleetGraphPage | { error: { code: string } } = { error: { code: "test" } };
@@ -315,6 +322,22 @@ describe("FleetGraphView", () => {
     expect(bubbled).toBe(false);
     expect(host.querySelector('[data-testid="session-menu"]')).toBeTruthy();
     expect(openSessionFromList).not.toHaveBeenCalled();
+  });
+
+  it("keeps the session menu mounted after it closes, so a dialog an item opened survives", async () => {
+    await render();
+    const label = [...host.querySelectorAll<HTMLElement>(".fgraph-label")].find((el) =>
+      el.textContent?.includes("fleet-graph kickoff"),
+    )!;
+    await act(async () => {
+      label.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }));
+    });
+    expect(host.querySelector('[data-testid="session-menu"]')).toBeTruthy();
+    await act(async () => {
+      host.querySelector<HTMLElement>('[data-testid="session-menu-close"]')!.click();
+    });
+    expect(host.querySelector('[data-testid="session-menu"]')).toBeNull();
+    expect(host.querySelector('[data-testid="session-menu-host"]')).toBeTruthy();
   });
 
   it("switching to the sessions overview swaps this pane, and Ctrl opens a new one", async () => {

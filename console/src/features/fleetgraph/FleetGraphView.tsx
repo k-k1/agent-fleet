@@ -796,7 +796,10 @@ function LaneLabel({
   onFold: (() => void) | undefined;
 }) {
   const tr = useT();
-  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
+  // Closing clears `open` but keeps SessionMenu mounted once it has been opened: it owns the
+  // dialogs its items open (handoff, share, worktree recreate), and unmounting on close would
+  // take them down in the same update that opens them.
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number; open: boolean } | null>(null);
   if (lane.erased) {
     return (
       <div className="fgraph-label erased" style={{ height: h }} title={tr("fgraph.erased_label", { id: lane.label })}>
@@ -829,7 +832,7 @@ function LaneLabel({
               // pane, where a contextmenu is a paste request; the session menu owns it here.
               e.preventDefault();
               e.stopPropagation();
-              setMenuAt({ x: e.clientX, y: e.clientY });
+              setMenuAt({ x: e.clientX, y: e.clientY, open: true });
             }
           : undefined
       }
@@ -875,9 +878,9 @@ function LaneLabel({
             s={session}
             actions={actions}
             running={running}
-            open
+            open={menuAt.open}
             place={(el) => placeFixed(el, menuAt.x, menuAt.y)}
-            onClose={() => setMenuAt(null)}
+            onClose={() => setMenuAt((m) => (m ? { ...m, open: false } : m))}
           />
         </span>
       )}
