@@ -342,10 +342,15 @@ func GitStatus(dir string) (RepoStatus, error) {
 // parent's HEAD. Both are resolved in parentDir and by object ID: linked worktrees
 // share refs but have separate HEADs, so "HEAD" or "@{upstream}" evaluated in the
 // worktree would name the worktree's own.
+//
+// Only a remote-tracking upstream counts. A branch tracking a local branch
+// (branch.<name>.remote = ".") would otherwise be labelled with a bare branch name
+// that reads exactly like the parent-HEAD fallback. Commits the parent has not
+// pushed are deliberately outside the comparison: they are not in the base yet.
 func worktreeIntegrationTarget(parentDir string) (oid, upstream string, err error) {
-	if name, err := Run(parentDir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"); err == nil && name != "" {
-		if oid, err := Run(parentDir, "rev-parse", "--verify", "--quiet", name+"^{commit}"); err == nil && oid != "" {
-			return oid, name, nil
+	if ref, err := Run(parentDir, "rev-parse", "--symbolic-full-name", "@{upstream}"); err == nil && strings.HasPrefix(ref, "refs/remotes/") {
+		if oid, err := Run(parentDir, "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err == nil && oid != "" {
+			return oid, strings.TrimPrefix(ref, "refs/remotes/"), nil
 		}
 	}
 	oid, err = Run(parentDir, "rev-parse", "--verify", "HEAD")
@@ -1532,7 +1537,11 @@ func HandleRepoFF(w http.ResponseWriter, r *http.Request) {
 func fastForwardWorktreeFromParent(parent, dir string) error {
 	integration, target := worktreeIntegration(parent, dir, "")
 	if integration.Relation != "contained" {
-		return fmt.Errorf("the worktree is not strictly behind its parent")
+		name := "the parent HEAD"
+		if integration.TargetUpstream {
+			name = integration.TargetBranch
+		}
+		return fmt.Errorf("the worktree is not strictly behind %s (relation: %s)", name, integration.Relation)
 	}
 	if out, err := Combined(dir, "merge", "--ff-only", target); err != nil {
 		return fmt.Errorf("%v: %s", err, out)

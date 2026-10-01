@@ -26,7 +26,7 @@ describe("parentSyncLabel", () => {
   it("names the upstream as the target in the tooltip, menu item and toasts", () => {
     const up = { name: "wt", worktree: true, integration: { relation: "contained" as const, targetBranch: "origin/develop", targetUpstream: true, targetUnique: 2, worktreeUnique: 0 } };
     expect(parentSyncLabel(up.integration)).toBe("親+2・FF可");
-    expect(parentSyncTitle(up.integration)).toMatch(/^比較先: origin\/develop\n/);
+    expect(parentSyncTitle(up.integration)).toBe("比較先: origin/develop\nWTのHEADはGit履歴上、比較先に含まれています（比較先固有 2コミット）。比較先から fast-forward で取り込めます");
     expect(parentFFMenuLabel(up)).toBe("origin/develop を Fast-Forward で取り込む");
     expect(parentFFSuccessText(up)).toBe("wt: origin/develop を fast-forward で取り込みました");
     expect(parentFFFailedText(up, "boom")).toBe("origin/develop の fast-forward 取り込みに失敗しました: boom");
@@ -40,5 +40,7 @@ describe("parentSyncLabel", () => {
     expect(parentFFMenuLabel(local)).toBe("親を Fast-Forward で取り込む");
     expect(parentFFSuccessText(local)).toBe("wt: 親の変更を fast-forward で取り込みました");
     expect(parentFFFailedText(local, "boom")).toBe("親の fast-forward 取り込みに失敗しました: boom");
+    const unnamed = { name: "wt", worktree: true, integration: { relation: "contained" as const, targetUpstream: true, targetUnique: 1, worktreeUnique: 0 } };
+    expect(parentFFMenuLabel(unnamed)).toBe("親を Fast-Forward で取り込む");
   });
 });
