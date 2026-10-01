@@ -1216,11 +1216,17 @@ func membershipCascade(membershipID string) []struct {
 		{`DELETE FROM user_limit WHERE membership_id=?`, id},
 		{`DELETE FROM engine_access_grant WHERE membership_id=?`, id},
 		{`DELETE FROM pat WHERE membership_id=?`, id},
-		{`DELETE FROM ssm_host WHERE membership_id=?`, id},
 		// sso_session was dropped by 0011 (ssm_profile replaced it). Deleting from a
 		// table that does not exist only fails at run time in SQLite, so list tables
 		// that really exist and nothing else.
+		//
+		// Profiles before hosts: a host write locks its profile and then the host
+		// (lockSSMProfile), so the other order deadlocks with an in-flight host PUT
+		// (measured on Postgres: SQLSTATE 40P01, cascade aborted). In this order a host
+		// write either commits before the profile DELETE takes its lock, and the host
+		// DELETE below sees the host, or waits and then finds its profile gone.
 		{`DELETE FROM ssm_profile WHERE membership_id=?`, id},
+		{`DELETE FROM ssm_host WHERE membership_id=?`, id},
 		{`DELETE FROM schedule_run WHERE membership_id=?`, id},
 		{`DELETE FROM schedule WHERE membership_id=?`, id},
 		{`DELETE FROM memo WHERE membership_id=?`, id},
@@ -2597,10 +2603,60 @@ func (s *SQL) UpdateSSMProfile(ctx context.Context, p SSMProfile) error {
 	return err
 }
 
+// lockSSMProfile takes the profile row's write lock for the rest of tx and reports whether
+// the member owns such a profile. The profile delete and every host write that names a
+// profile go through it, so on Postgres (READ COMMITTED, ten connections) a host saved
+// against a profile being deleted either commits first and is seen by the delete's host
+// query, or waits and then finds the profile gone. Without it the delete's "no hosts" read
+// and the host's "profile exists" read both pass and the host is stranded. SQLite has one
+// connection, so there the transaction alone serializes them.
+func lockSSMProfile(ctx context.Context, q sqlExecQuery, id, membershipID string) (bool, error) {
+	res, err := q.ExecContext(ctx, `UPDATE ssm_profile SET id=id WHERE id=? AND membership_id=?`, id, membershipID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// DeleteSSMProfile refuses with *SSMProfileInUseError while any host references the
+// profile: ssm_host.profile_id has no foreign key, so this is the only thing that keeps a
+// host from being left on a dead profile. Deleting a profile that is not there is a no-op.
 func (s *SQL) DeleteSSMProfile(ctx context.Context, id, membershipID string) error {
-	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM ssm_profile WHERE id=? AND membership_id=?`, id, membershipID)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	found, err := lockSSMProfile(ctx, tx, id, membershipID)
+	if err != nil || !found {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, ssmHostCols+` WHERE profile_id=? ORDER BY alias`, id)
+	if err != nil {
+		return err
+	}
+	var using []SSMHost
+	for rows.Next() {
+		h, err := scanSSMHost(rows)
+		if err != nil {
+			rows.Close()
+			return err
+		}
+		using = append(using, h)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(using) > 0 {
+		return &SSMProfileInUseError{Hosts: using}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM ssm_profile WHERE id=? AND membership_id=?`, id, membershipID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 const ssmHostCols = `SELECT id, membership_id, alias, profile_id, region, instance_id, document_name, created_at FROM ssm_host`
@@ -2637,20 +2693,39 @@ func (s *SQL) GetSSMHost(ctx context.Context, id string) (SSMHost, bool, error) 
 	return h, err == nil, err
 }
 
+// writeSSMHost runs one host write under the lock of the profile it names (lockSSMProfile),
+// and returns ErrSSMProfileNotFound instead when the member has no such profile.
+func (s *SQL) writeSSMHost(ctx context.Context, h SSMHost, q string, args ...any) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	found, err := lockSSMProfile(ctx, tx, h.ProfileID, h.MembershipID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ErrSSMProfileNotFound
+	}
+	if _, err := tx.ExecContext(ctx, q, args...); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *SQL) CreateSSMHost(ctx context.Context, h SSMHost) error {
-	_, err := s.db.ExecContext(ctx,
+	return s.writeSSMHost(ctx, h,
 		`INSERT INTO ssm_host(id, membership_id, alias, profile_id, region, instance_id, document_name, created_at)
 		 VALUES(?,?,?,?,?,?,?,?)`,
 		h.ID, h.MembershipID, h.Alias, h.ProfileID, h.Region, h.InstanceID, h.DocumentName, h.CreatedAt)
-	return err
 }
 
 func (s *SQL) UpdateSSMHost(ctx context.Context, h SSMHost) error {
-	_, err := s.db.ExecContext(ctx,
+	return s.writeSSMHost(ctx, h,
 		`UPDATE ssm_host SET alias=?, profile_id=?, region=?, instance_id=?, document_name=?
 		   WHERE id=? AND membership_id=?`,
 		h.Alias, h.ProfileID, h.Region, h.InstanceID, h.DocumentName, h.ID, h.MembershipID)
-	return err
 }
 
 func (s *SQL) DeleteSSMHost(ctx context.Context, id, membershipID string) error {
