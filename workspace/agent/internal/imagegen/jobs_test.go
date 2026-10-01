@@ -37,6 +37,20 @@ func withJobQueue(t *testing.T) *jobQueue {
 	return q
 }
 
+// processJobs is the queue the package starts with, which withJobQueue swaps out per test.
+var processJobs = jobs
+
+// stopTestJobWorkers closes the queue withJobQueue installed, waiting for its workers, and is a
+// no-op on the process queue. Cleanups run last-registered first, so a helper that swaps a
+// package variable a worker reads — and is called after withJobQueue — restores it BEFORE
+// withJobQueue's own Close, under a worker that may still be running. Such a helper calls this
+// first in its cleanup. Close is idempotent, so withJobQueue's later call is harmless.
+func stopTestJobWorkers() {
+	if q := jobs; q != processJobs {
+		q.Close()
+	}
+}
+
 // gateProvider is a fleet provider whose Generate can be held open, so a test can look at a
 // queue while something is running rather than racing a call that has already returned.
 type gateProvider struct {
@@ -73,14 +87,20 @@ func (p *gateProvider) Cancel(_ context.Context, upstream string) error {
 	return nil
 }
 
-func (p *gateProvider) Generate(_ context.Context, req Request) (Result, error) {
+func (p *gateProvider) Generate(ctx context.Context, req Request) (Result, error) {
 	p.mu.Lock()
 	p.seen = append(p.seen, req)
 	p.mu.Unlock()
 	req.reportUpstream(p.upstream)
 	req.reportPhase(PhaseRunning)
 	p.begun <- req.Prompt
-	<-p.release
+	// The queue's Close cancels ctx; without this a job the test never released would hold its
+	// worker, and so the Close waiting for it, forever.
+	select {
+	case <-p.release:
+	case <-ctx.Done():
+		return Result{}, ctx.Err()
+	}
 	seed := int64(0)
 	if req.Seed != nil {
 		seed = *req.Seed
