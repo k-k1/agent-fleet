@@ -133,14 +133,18 @@ client's requests to two agents (`serviceRolledOut` in `runtime_ecs.go`); here t
 not occur.
 
 **Stop** sets `replicas: 0`, with `terminationGracePeriodSeconds` from `AF_STOP_GRACE_SEC` — the
-same two-stage stop the agent already expects — and **returns only when the pod is gone**, as
-`docker stop` does. It waits the grace plus a short margin, which keeps Recreate's Stop, wipe and
-Start inside the ingress timeout, and returns an error if the pod is still there by then (a node
-that stopped answering, below). A Stop that returns success therefore leaves `stopped`, never a
-pod that is still terminating.
+same two-stage stop the agent already expects — and **returns only when the stop has settled**, as
+`docker stop` does. Settled means three things, checked in this order: the controller has observed
+the generation Stop wrote (`status.observedGeneration`), it reports no replicas
+(`status.replicas` is 0), and no pod of the workspace exists. The first two matter because a
+controller that read `replicas: 1` just before the Stop can still be creating a pod, which would
+then appear after a check that saw none. Stop waits the grace plus a short margin, which keeps
+Recreate's Stop, wipe and Start inside the ingress timeout, and returns an error if the stop has
+not settled by then (a node that stopped answering, below).
 
-**Start** first confirms that no pod exists and returns an error if one does. Then it writes the
-workspace's Secret (decision 6), and then the pod template and `replicas: 1` in one update. The
+**Start** first requires the same settled condition — or no StatefulSet at all — and returns an
+error otherwise. Then it writes the workspace's Secret (decision 6), and then the pod template and
+`replicas: 1` in one update. The
 template carries a start generation annotation and the image pinned by digest (decision 9), so
 every start produces a new controller revision even when nothing else changed. Because no pod
 exists when the Secret is rewritten, no container of an earlier start can read the new values. A
@@ -152,7 +156,6 @@ everything by name ([21 §21.2](../build/21-add-a-deploy-target.md)):
 | State | Condition |
 |---|---|
 | `none` | no StatefulSet |
-| `stopped` | `replicas` is 0 and no pod exists |
 | `running` | `replicas` is 1; `status.observedGeneration` has reached `metadata.generation`; and there is a pod that is of `status.updateRevision`, carries the template's current start generation, has no `deletionTimestamp`, and is Ready |
 | `starting` | `replicas` is 1 and the `running` condition does not hold — a pod being scheduled, pulling or booting, a controller that has not yet observed the latest template, a rollout in progress |
 | `stopped` | `replicas` is 0, whether or not a pod is still terminating |
@@ -166,7 +169,15 @@ generation and the pod's start generation closes that window whatever the contro
 `replicas: 0` with a pod still terminating reads as `stopped` rather than `starting`, so that a
 Start is never dropped by the handler's early return; Start's own check then refuses to launch
 over the old pod, and the member sees an error to retry instead of a start that silently did not
-happen. With Stop waiting for the pod, that state is only seen when a Stop failed.
+happen. With Stop waiting for the stop to settle, that state is only seen when a Stop failed.
+
+The price is that `stopped` no longer proves that nothing runs, and the CP's callers use the state
+as exactly that proof: after a failed Stop they go on to wipe a home unless
+`runtime.WorkspaceAlive(State())` says otherwise (`workspace_handlers.go`,
+`workspace_lifecycle.go`). So the adapter's own destructive operations do not trust the state.
+`WipeHome` only records a mark, and the wipe runs at the next Start, which itself requires a
+settled stop. `EraseHome` and `Destroy` check the settled condition themselves before touching a
+volume, and return an error when it does not hold.
 
 **A pod on a node that stops answering is not replaced** — the price of the at-most-one
 guarantee. The CP's start deadline (`start_deadline.go`) does not end that case: it does not stop
@@ -204,9 +215,16 @@ home whatever each one is, and the home operations become:
 |---|---|
 | `WipeHome(repos)` (Recreate) | the CP records the wipe, with a generation number, on the StatefulSet as an annotation and returns; the next Start adds an init container, from the same image, that removes `~/repos` before the agent starts and writes the generation it carried out into the home. A pod restarted later finds that generation and removes nothing, so the annotation never has to be cleared by a template change, which would roll the pod. This is ecs-ec2's "mark, and Start removes it" and returns well inside the ingress timeout |
 | `WipeHome(clean)` (Clean home) | the same, removing everything at the top of the home except the seven `homeKeep` names |
-| `EraseHome()` (an administrator's Clean home) | with the workspace stopped, the CP runs a one-shot pod from the same image that mounts the home claim, removes what `WipeHome(clean)` removes, and exits; the CP waits for it, which may take as long as Destroy does. The claim itself is kept |
+| `EraseHome()` (an administrator's Clean home) | after checking the settled stop itself, the CP runs a one-shot erase pod from the same image — a deterministic name and label, `restartPolicy: Never` — that mounts the home claim, removes what `WipeHome(clean)` removes, and exits. The CP waits for it, which may take as long as Destroy does, reads its result, and deletes it. The claim itself is kept |
 | `ResizeHome()` | raise the home claim's request (decision 4, below) |
 | `Destroy()` | decision 5 |
+
+A finished erase pod is not removed by anyone else, and while it exists it holds the home claim
+through the claim-protection finalizer. So the erase pod is found by its name whenever it matters:
+`EraseHome` waits for one still running and deletes one that finished (a CP that died halfway is
+resumed this way); `Start` refuses while one runs and deletes one that finished; `Destroy`
+deletes it before the claims. It is not a workspace pod: the settled-stop check and `State` look
+only at the StatefulSet's own pods.
 
 The CP creates the claims itself, rather than through `volumeClaimTemplates`, because a
 template's size cannot change after the StatefulSet is created and the home has to grow. Explicit
@@ -242,18 +260,28 @@ writable without an init container running as root.
 
 ### 5. Destroy removes the claims, and reports what it cannot confirm
 
-Destroy stops the workspace and waits for its pod to be gone (a pod still using a claim holds it
-through the claim-protection finalizer), then deletes the StatefulSet, the Service, the Secret and
-both claims, and waits a bounded time for the claims to disappear. Every step is idempotent, so a
-Destroy interrupted halfway is completed by running it again.
+Destroy stops the workspace and requires the settled stop of decision 3 (a pod still using a claim
+holds it through the claim-protection finalizer, and so does a leftover erase pod, which it
+deletes). Then:
 
-Before deleting each claim it records the volume bound to it. With the read-only cluster access
-of decision 8 it then confirms that the PersistentVolume object is gone — with
-`reclaimPolicy: Delete`, the volume object is removed only after the disk behind it is deleted —
-and returns as a known residue ([21 §21.2](../build/21-add-a-deploy-target.md)) every claim or
-volume that did not disappear in time, or that it could not read. The runbook makes `Delete` a
-precondition, and the CP checks the configured StorageClass at boot; with `Retain`, the disk, its
-data and its bill outlive Destroy, and the audit log says so.
+1. It writes an inventory onto the StatefulSet as an annotation: each claim's UID and the name of
+   the volume bound to it. The StatefulSet is the last thing Destroy deletes, so a CP that dies
+   anywhere after this step finds the inventory again — a volume name is generated by the
+   provisioner and cannot be listed back through the namespaced role.
+2. It deletes the Service, the Secret and both claims, and waits a bounded time for the claims to
+   disappear.
+3. With the read-only cluster access of decision 8 it confirms that each inventoried
+   PersistentVolume object is gone — with `reclaimPolicy: Delete`, the volume object is removed
+   only after the disk behind it is deleted — and returns as a known residue
+   ([21 §21.2](../build/21-add-a-deploy-target.md)) every claim or volume that did not disappear
+   in time, or that it could not read.
+4. It deletes the StatefulSet.
+
+The runbook makes `Delete` a precondition, and the CP checks the configured StorageClass at boot;
+with `Retain`, the disk, its data and its bill outlive Destroy, and the audit log says so.
+
+Every step is idempotent and starts from what the substrate shows, so a Destroy interrupted
+halfway is completed by running it again.
 
 ### 6. Secrets are referenced, never written into the pod spec
 
@@ -294,15 +322,18 @@ and the runbook forbids adding broader ones:
 | any → workspace agent port | from the CP's pods only |
 | workspace → cluster DNS | yes |
 | workspace → CP | yes, to the CP's internal Service (decision 8) |
-| workspace → the internet | yes, as `0.0.0.0/0` with every private and link-local range excepted: RFC 1918, `100.64.0.0/10`, `169.254.0.0/16` (the metadata address included). That excludes the nodes, the control-plane endpoint, the pod and service ranges, and the rest of the VPC — Cloud SQL's private address among them |
+| workspace → the internet | yes, as `0.0.0.0/0` with two sets of ranges excepted. The fixed special-use ranges: RFC 1918, `100.64.0.0/10`, `169.254.0.0/16` (the metadata address included). And the ranges this deployment actually uses, which the manifests take as parameters: the pod, service and node ranges and the control-plane endpoint. The fixed list alone is not enough — GKE Standard's default service range from 1.29 is `34.118.224.0/20`, and GKE can use privately used public ranges for pods and nodes |
 | workspace → a private address the deployment needs (a LAN engine, an internal git host) | only as an explicit, per-destination rule the operator adds |
 
 NetworkPolicy is enforced only by a CNI that implements it (Dataplane V2 on GKE). A cluster
 without one accepts the policies and enforces none of them, so the runbook states it as a
-precondition. NetworkPolicy also always lets a pod reach the node it runs on, so the node itself
+precondition. The control-plane endpoint is private, or limited by authorised networks that exclude the pod
+range; a public endpoint open to all is not supported. NetworkPolicy also always lets a pod reach
+the node it runs on, so the node itself
 must not offer an unauthenticated service to pods: the runbook requires the kubelet's read-only
 port to be off (GKE's default) and no `hostNetwork` service on workspace nodes, and the live
-harness probes the node, the control-plane endpoint and a VPC address from inside a pod. Outbound traffic is open, as on ECS: the egress proxy, when the template
+harness probes the node, the control-plane endpoint, a service address and a VPC address from
+inside a pod. Outbound traffic is open, as on ECS: the egress proxy, when the template
 environment points sessions at it, can be bypassed by a process that ignores the proxy variables
 ([07 §7.8](../build/07-security.md)).
 
@@ -314,7 +345,7 @@ account has a Role in the workspace namespace, and a ClusterRole that only reads
 | Kind | Verbs |
 |---|---|
 | StatefulSets, Services, PersistentVolumeClaims, Secrets | get, list, create, update, patch, delete |
-| Pods | get, list, watch — State, TaskCounter and BootPhase read the pod the controller made |
+| Pods | get, list, watch — State, TaskCounter and BootPhase read the pod the controller made. create, delete — only for the erase pod of decision 4; the CP never deletes a workspace pod (decision 3) |
 | Events | get, list — the reason a pod cannot be scheduled or pulled, for the boot phase |
 | NetworkPolicies | none: they are static, applied with the manifests |
 | StorageClasses (ClusterRole) | get, limited by `resourceNames` to the configured class — the boot check of decision 4 |
@@ -366,10 +397,11 @@ standard library and the substrate's own interface.
 
 The cost is that the types are ours to keep correct. Tests run the adapter against recorded API
 server responses, and a live harness, gated like the ecs-ec2 one (`AF_ECS_EC2_LIVE=1`), runs it
-against a real cluster: Stop then Start at once, a State read between Start's write and the
+against a real cluster: Stop then Start at once, a Stop while the controller is creating a pod
+(its create request held back), a State read between Start's write and the
 controller's next status update, a Stop while `starting`, a CP restart in the middle of a start,
-both home wipes with a keep file replaced by a plain file, `EraseHome`, a resize while stopped,
-and Destroy.
+both home wipes with a keep file replaced by a plain file, `EraseHome` with a CP restarted while the erase pod runs,
+a resize while stopped, and Destroy with a CP restarted after the claims are gone.
 
 ### 11. What the first version claims
 
@@ -456,7 +488,8 @@ reopened when someone asks to install Agent Fleet through Helm.
   which only this profile sets.
 - A Stop waits for the pod to be gone, so a node that stops answering turns Stop, Recreate and
   Clean home into errors until an operator acts.
-- A node that stops answering leaves its workspace `starting` until an operator acts.
+- A node that stops answering leaves its workspace `starting` while it should run, and after a
+  Stop `stopped` with a pod that blocks Start, `EraseHome` and Destroy — until an operator acts.
 - An operator on Google Cloud learns Terraform and kustomize, where an AWS operator needs only
   the AWS CLI.
 - A home lives in one zone until backup exists.

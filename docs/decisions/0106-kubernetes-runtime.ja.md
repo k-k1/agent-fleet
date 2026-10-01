@@ -110,11 +110,14 @@ docker CLI しか使わない。同じ compose バンドルを GCE VM で動か�
 （`runtime_ecs.go` の `serviceRolledOut`）。ここではその重なりが起きない。
 
 **Stop** は `replicas: 0` にし、`terminationGracePeriodSeconds` を `AF_STOP_GRACE_SEC` から決める。agent がすでに想定している
-2 段階の停止と同じで、`docker stop` と同じく **Pod が消えてから返る**。猶予に短い余裕を足した時間だけ待つので、Recreate の
-Stop・消去・Start は ingress のタイムアウトに収まる。その時点でも Pod が残っていればエラーを返す（下記の応答しなくなったノード）。
-成功を返した Stop の後は必ず `stopped` で、終了中の Pod は残らない。
+2 段階の停止と同じで、`docker stop` と同じく **停止が収束してから返る**。収束とは次の 3 つを、この順で確かめたものをいう。
+コントローラが Stop の書いた世代を観測したこと（`status.observedGeneration`）、レプリカが 0 と報告されていること
+（`status.replicas` が 0）、そして Workspace の Pod が存在しないこと。前の 2 つが要るのは、Stop の直前に `replicas: 1` を読んだ
+コントローラがまだ Pod を作成中でありえ、その Pod は「無い」と確かめた後に現れうるからだ。Stop は猶予に短い余裕を足した時間だけ
+待つので、Recreate の Stop・消去・Start は ingress のタイムアウトに収まる。その時点でも収束していなければエラーを返す（下記の
+応答しなくなったノード）。
 
-**Start** はまず Pod が存在しないことを確かめ、存在すればエラーを返す。次に Workspace の Secret（決定 6）を書き、それから Pod
+**Start** はまず同じ収束の条件（または StatefulSet が無いこと）を求め、満たさなければエラーを返す。次に Workspace の Secret（決定 6）を書き、それから Pod
 テンプレートと `replicas: 1` を 1 回の更新で書く。テンプレートには起動の世代を示す注釈と、ダイジェストで固定したイメージ（決定 9）
 を載せるので、他に何も変わらなくても起動のたびに新しいコントローラ revision ができる。Secret を書き直すときに Pod は存在しない
 ので、前の起動のコンテナが新しい値を読むことは無い。Secret を書いた後で失敗した Start は Pod を動かしておらず、次の Start が
@@ -137,7 +140,13 @@ readiness は agent 自身の `/healthz` を readiness probe にしたもので�
 
 終了中の Pod が残る `replicas: 0` を `starting` ではなく `stopped` と読むのは、ハンドラの早期 return で Start が捨てられないように
 するためだ。その場合 Start 自身の確認が古い Pod の上での起動を断り、メンバーには黙って起動しなかったのではなく、やり直せる
-エラーが見える。Stop が Pod を待つので、この状態が見えるのは Stop が失敗したときだけである。
+エラーが見える。Stop が収束を待つので、この状態が見えるのは Stop が失敗したときだけである。
+
+代償は、`stopped` がもはや何も動いていない証明にならないことだ。そして CP の呼び出し側は、状態をまさにその証明として使う。
+Stop が失敗しても、`runtime.WorkspaceAlive(State())` がそうでないと言わない限り home の消去に進む（`workspace_handlers.go`、
+`workspace_lifecycle.go`）。そのためアダプタ自身の破壊的な操作は状態を信用しない。`WipeHome` は印を記録するだけで、消去は次の
+Start で行われ、その Start 自身が停止の収束を求める。`EraseHome` と `Destroy` はボリュームに触れる前に自分で収束の条件を確かめ、
+成り立たなければエラーを返す。
 
 **応答しなくなったノード上の Pod は置き換わらない。** 高々 1 つという保証の代償である。CP の開始期限（`start_deadline.go`）は
 これを終わらせない。タスクがまだ動いていると数えられる Workspace は止めず、レプリカを 0 にしても届かないノード上の Pod は
@@ -169,9 +178,14 @@ home の操作は次のようになる。
 |---|---|
 | `WipeHome(repos)`（Recreate） | CP は消去を世代番号付きの注釈として StatefulSet に記録して返る。次の Start は同じイメージの init コンテナを足し、agent が起動する前に `~/repos` を消して、実行した世代を home に書く。後で再起動した Pod はその世代を見つけて何も消さないので、注釈を消すためにテンプレートを変える（Pod がロールする）必要は無い。ecs-ec2 の「印を付け、Start が消す」と同じで、ingress のタイムアウトに十分収まって返る |
 | `WipeHome(clean)`（Clean home） | 同じ方法で、home の最上位から `homeKeep` の 7 つの名前以外をすべて消す |
-| `EraseHome()`（管理者の Clean home） | Workspace を止めた状態で、CP が同じイメージから 1 回限りの Pod を動かす。その Pod は home のクレームをマウントし、`WipeHome(clean)` と同じものを消して終わる。CP はそれを待ち、Destroy と同じくらい時間がかかってもよい。クレームそのものは残す |
+| `EraseHome()`（管理者の Clean home） | 停止の収束を自分で確かめた後、CP が同じイメージから 1 回限りの消去用 Pod を動かす（決定的な名前とラベル、`restartPolicy: Never`）。その Pod は home のクレームをマウントし、`WipeHome(clean)` と同じものを消して終わる。CP はそれを待ち（Destroy と同じくらい時間がかかってもよい）、結果を読んでから Pod を消す。クレームそのものは残す |
 | `ResizeHome()` | home のクレームの要求量を上げる（決定 4、下記） |
 | `Destroy()` | 決定 5 |
+
+終わった消去用 Pod は誰も消してくれず、存在する間はクレーム保護の finalizer で home のクレームを押さえる。そのため消去用 Pod は、
+意味を持つ場面では必ず名前で探す。`EraseHome` は動いているものを待ち、終わったものを消す（途中で落ちた CP はこうして再開する）。
+`Start` は動いている間は断り、終わったものを消す。`Destroy` はクレームより先にそれを消す。これは Workspace の Pod ではなく、
+停止の収束の確認と `State` は StatefulSet 自身の Pod だけを見る。
 
 クレームを `volumeClaimTemplates` でなく CP が自分で作るのは、テンプレートのサイズは StatefulSet の作成後に変えられず、home は
 大きくできる必要があるからだ。明示的なクレームなら、そのライフサイクル（初回起動で作り、停止では残し、Destroy で消す）も保持
@@ -202,13 +216,20 @@ Pod はイメージの `dev` の uid で動き、`fsGroup` をその gid にす�
 
 ### 5. Destroy はクレームを消し、確かめられなかったものを報告する
 
-Destroy は Workspace を止めて Pod が消えるのを待ち（クレームを使っている Pod は、クレーム保護の finalizer でクレームを押さえる）、
-StatefulSet・Service・Secret・両クレームを消し、クレームが消えるのを時間を区切って待つ。各段は冪等なので、途中で止まった
-Destroy はもう一度実行すれば完了する。
+Destroy は Workspace を止め、決定 3 の停止の収束を求める（クレームを使っている Pod はクレーム保護の finalizer でクレームを
+押さえ、残った消去用 Pod も同じなので、それは消す）。その後、次の順に進む。
 
-削除前に各クレームに結び付いたボリュームを記録する。その後、決定 8 の読み取り専用のクラスタ権限で PersistentVolume の
-オブジェクトが消えたことを確かめる（`reclaimPolicy: Delete` では、ボリュームのオブジェクトは背後のディスクが消された後で消える）。
-時間内に消えなかったか読めなかったクレームとボリュームは、既知の残存物として返す（[21 §21.2](../build/21-add-a-deploy-target.ja.md)）。
+1. StatefulSet に注釈として目録を書く。各クレームの UID と、それに結び付いたボリュームの名前。StatefulSet は Destroy が最後に
+   消すものなので、この段より後のどこで CP が落ちても目録は再び見つかる。ボリューム名はプロビジョナが生成するもので、
+   namespace に閉じたロールでは一覧から引き戻せない。
+2. Service・Secret・両クレームを消し、クレームが消えるのを時間を区切って待つ。
+3. 決定 8 の読み取り専用のクラスタ権限で、目録にある各 PersistentVolume のオブジェクトが消えたことを確かめる
+   （`reclaimPolicy: Delete` では、ボリュームのオブジェクトは背後のディスクが消された後で消える）。時間内に消えなかったか
+   読めなかったクレームとボリュームは、既知の残存物として返す（[21 §21.2](../build/21-add-a-deploy-target.ja.md)）。
+4. StatefulSet を消す。
+
+各段は冪等で基盤に見えるものから始めるので、途中で止まった Destroy はもう一度実行すれば完了する。
+
 手順書は `Delete` を前提条件にし、CP は起動時に設定された StorageClass を確かめる。`Retain` だとディスク・データ・課金が
 Destroy の後も残り、監査ログにそう記録される。
 
@@ -247,14 +268,15 @@ LimitRange を設定し、停止中の Workspace のクレームと動いてい�
 | 任意 → Workspace の agent ポート | CP の Pod からだけ |
 | Workspace → クラスタ DNS | 許可 |
 | Workspace → CP | 許可。CP の内部 Service へ（決定 8） |
-| Workspace → インターネット | 許可。`0.0.0.0/0` から、プライベートとリンクローカルの範囲をすべて除く。RFC 1918、`100.64.0.0/10`、`169.254.0.0/16`（メタデータアドレスを含む）。これでノード、コントロールプレーンのエンドポイント、Pod・Service の範囲、VPC の残り（Cloud SQL のプライベートアドレスも）が除かれる |
+| Workspace → インターネット | 許可。`0.0.0.0/0` から 2 組の範囲を除く。固定の特殊用途の範囲（RFC 1918、`100.64.0.0/10`、`169.254.0.0/16`。メタデータアドレスを含む）と、この配備が実際に使う範囲（manifest がパラメータとして受け取る Pod・Service・ノードの範囲とコントロールプレーンのエンドポイント）。固定の一覧だけでは足りない。GKE Standard の 1.29 以降の既定の Service 範囲は `34.118.224.0/20` で、GKE は Pod とノードに privately used public の範囲も使える |
 | Workspace → 配備が必要とするプライベートアドレス（LAN のエンジン、内部の git ホスト） | 運用者が宛先ごとに明示的に足すルールとしてだけ |
 
 NetworkPolicy は、それを実装する CNI（GKE なら Dataplane V2）があるときだけ効く。無いクラスタはポリシーを受け入れ、何も
-強制しないので、手順書で前提条件として書く。また NetworkPolicy は、Pod が自分の載っているノードへ届くことを常に許す。そのため
+強制しないので、手順書で前提条件として書く。コントロールプレーンのエンドポイントはプライベートにするか、Pod の範囲を含まない
+承認済みネットワークで制限する。誰にでも開いた公開エンドポイントは対象外とする。また NetworkPolicy は、Pod が自分の載っているノードへ届くことを常に許す。そのため
 ノード自身が Pod に認証なしのサービスを出してはならない。手順書は kubelet の読み取り専用ポートを閉じること（GKE の既定）と、
 Workspace のノードに `hostNetwork` のサービスを置かないことを求め、実機ハーネスは Pod の中からノード・コントロールプレーンの
-エンドポイント・VPC 内のアドレスへの到達を試す。外向きの通信は ECS と同じく開いている。テンプレート環境がセッションを egress
+エンドポイント・Service のアドレス・VPC 内のアドレスへの到達を試す。外向きの通信は ECS と同じく開いている。テンプレート環境がセッションを egress
 プロキシに向けていても、プロキシ変数を無視するプロセスは迂回できる（[07 §7.8](../build/07-security.ja.md)）。
 
 ### 8. CP はクラスタ内で動き、Workspace は内部アドレスで CP に届く
@@ -265,7 +287,7 @@ Role を持ち、読み取りだけの ClusterRole を持つ。
 | 種類 | 動詞 |
 |---|---|
 | StatefulSet、Service、PersistentVolumeClaim、Secret | get、list、create、update、patch、delete |
-| Pod | get、list、watch。State・TaskCounter・BootPhase はコントローラが作った Pod を読む |
+| Pod | get、list、watch。State・TaskCounter・BootPhase はコントローラが作った Pod を読む。create、delete は決定 4 の消去用 Pod のためだけで、CP が Workspace の Pod を消すことは無い（決定 3） |
 | Event | get、list。Pod をスケジュール・取得できない理由を起動フェーズに出すため |
 | NetworkPolicy | なし。静的で、manifest と一緒に適用する |
 | StorageClass（ClusterRole） | get。`resourceNames` で設定されたクラスだけに限る。決定 4 の起動時の確認のため |
@@ -307,9 +329,11 @@ native だけが渡す）を Pod に届けるかは、アダプタと一緒に�
 基盤自身のインターフェースである。
 
 代償は型の正しさを自分で保つこと。テストは記録した API サーバの応答に対してアダプタを動かし、ecs-ec2 と同じく
-（`AF_ECS_EC2_LIVE=1`）ゲートした実機ハーネスで実クラスタに対して動かす。確かめるのは、Stop の直後の Start、Start の書き込みと
+（`AF_ECS_EC2_LIVE=1`）ゲートした実機ハーネスで実クラスタに対して動かす。確かめるのは、Stop の直後の Start、コントローラが Pod を作成中の
+Stop（作成要求を止めておく）、Start の書き込みと
 コントローラの次の status 更新の間での State の読み取り、`starting` 中の Stop、起動途中での CP の再起動、keep のファイルを普通の
-ファイルに置き換えた状態での 2 種類の home 消去、`EraseHome`、停止中の拡張、Destroy。
+ファイルに置き換えた状態での 2 種類の home 消去、消去用 Pod の実行中に CP を再起動した `EraseHome`、停止中の拡張、クレームが
+消えた後に CP を再起動した Destroy。
 
 ### 11. 最初の版が名乗る能力
 
@@ -382,7 +406,8 @@ Helm chart は作らない。問い合わせは Kubernetes 対応を求めたの
   CI で kind クラスタを使う（ランナーには Docker がある）のがその穴を埋める方法で、ハーネスと一緒に決める。
 - CP は自分の 2 つ目のアドレスを、agent はそのための 2 つ目の変数を知ることになる（決定 8）。設定するのはこのプロファイルだけ。
 - Stop は Pod が消えるのを待つので、応答しなくなったノードでは、運用者が手を打つまで Stop・Recreate・Clean home がエラーになる。
-- 応答しなくなったノードの Workspace は、運用者が手を打つまで `starting` のままになる。
+- 応答しなくなったノードの Workspace は、動かすべき間は `starting` のまま、Stop の後は `stopped` だが Pod が残って Start・
+  `EraseHome`・Destroy を妨げる。どちらも運用者が手を打つまで続く。
 - Google Cloud の運用者は Terraform と kustomize を覚えることになる。AWS の運用者は AWS CLI だけで済む。
 - バックアップが入るまで、home は 1 つのゾーンに閉じる。
 - GCE の段階はアダプタのコードなしで出るので、アダプタのコードが依存する前に決定 1 の Google Cloud 固有の事情が実証される。
