@@ -88,9 +88,24 @@ export function SsmTab() {
   // CTA (「プロファイルを追加」) can expand it (and scroll to it) when none exists yet.
   const [profileOpen, setProfileOpen] = useState(false);
 
+  // Why the last GET of each list failed ("" when it succeeded).
+  const [profilesErr, setProfilesErr] = useState("");
+  const [hostsErr, setHostsErr] = useState("");
+
+  // A failed GET keeps the last list that loaded (null if none ever did) and says so. Never
+  // replace it with []: the sections read a row missing from a new list as deleted and close
+  // its open form, so a transient failure would throw away an unsaved draft.
   const reload = useCallback(() => {
-    api("api/ssm/profiles").then((d) => setProfiles(Array.isArray(d) ? d : [])).catch(() => setProfiles([]));
-    api("api/ssm/hosts").then((d) => setHosts(Array.isArray(d) ? d : [])).catch(() => setHosts([]));
+    const load = (path: string, set: (d: any[]) => void, setErr: (e: string) => void) =>
+      api(path)
+        .then((d) => {
+          if (!Array.isArray(d)) throw new Error(d?.error?.message || "unexpected response");
+          set(d);
+          setErr("");
+        })
+        .catch((e: any) => setErr(String(e?.message || e)));
+    load("api/ssm/profiles", setProfiles, setProfilesErr);
+    load("api/ssm/hosts", setHosts, setHostsErr);
   }, []);
   useEffect(reload, [reload]);
 
@@ -110,13 +125,14 @@ export function SsmTab() {
       </p>
       <ProfileSection
         profiles={profiles}
+        loadErr={profilesErr}
         hosts={hosts}
         reload={reload}
         labelRef={profileLabelRef}
         open={profileOpen}
         setOpen={setProfileOpen}
       />
-      <HostSection hosts={hosts} profiles={profiles} reload={reload} onNeedProfile={focusProfile} />
+      <HostSection hosts={hosts} loadErr={hostsErr} profiles={profiles} reload={reload} onNeedProfile={focusProfile} />
     </div>
   );
 }
@@ -168,6 +184,7 @@ type FieldEvent = ChangeEvent<HTMLInputElement | HTMLSelectElement>;
 
 function ProfileSection({
   profiles,
+  loadErr,
   hosts,
   reload,
   labelRef,
@@ -175,6 +192,7 @@ function ProfileSection({
   setOpen,
 }: {
   profiles: any[] | null;
+  loadErr: string;
   hosts: any[] | null;
   reload: () => void;
   labelRef: RefObject<HTMLInputElement | null>;
@@ -379,8 +397,9 @@ function ProfileSection({
         <code>~/.aws</code>
         {tr("ssm.profile_help_2")}
       </div>
+      {loadErr && <p className="ssm-load-err">{tr(profiles === null ? "ssm.load_failed" : "ssm.refresh_failed", { msg: loadErr })}</p>}
       {profiles === null ? (
-        <p className="muted pad">{tr("common.loading")}</p>
+        !loadErr && <p className="muted pad">{tr("common.loading")}</p>
       ) : profiles.length === 0 ? (
         <p className="muted">{tr("ssm.profile_empty")}</p>
       ) : (
@@ -506,11 +525,13 @@ const emptyHost: Record<string, string> = { alias: "", profileId: "", instanceId
 
 function HostSection({
   hosts,
+  loadErr,
   profiles,
   reload,
   onNeedProfile,
 }: {
   hosts: any[] | null;
+  loadErr: string;
   profiles: any[] | null;
   reload: () => void;
   onNeedProfile: () => void;
@@ -644,8 +665,9 @@ function HostSection({
         <code>aws ssm start-session --target &lt;instance&gt; --document-name &lt;document&gt;</code>
         {tr("ssm.host_help_2")}
       </div>
+      {loadErr && <p className="ssm-load-err">{tr(hosts === null ? "ssm.load_failed" : "ssm.refresh_failed", { msg: loadErr })}</p>}
       {hosts === null ? (
-        <p className="muted pad">{tr("common.loading")}</p>
+        !loadErr && <p className="muted pad">{tr("common.loading")}</p>
       ) : hosts.length === 0 ? (
         <p className="muted">{tr("ssm.host_empty")}</p>
       ) : (

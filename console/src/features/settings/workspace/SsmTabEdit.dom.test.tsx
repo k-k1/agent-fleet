@@ -18,11 +18,14 @@ let states: Json[] = [];
 let hold: { release: () => void } | null = null;
 let profilesGate: Promise<void> | null = null;
 let delHold: { release: () => void } | null = null;
+// List GETs that reject (the paths).
+const failGet = new Set<string>();
 let delReply: { ok: boolean; status: number; body: unknown } = { ok: true, status: 204, body: null };
 
 vi.mock("../../../core/api/client.ts", () => ({
   api: vi.fn(async (path: string) => {
     gets.push(path);
+    if (failGet.has(path)) throw new Error("HTTP 502");
     if (path === "api/ssm/profiles") {
       if (profilesGate) await profilesGate;
       return profiles;
@@ -122,6 +125,7 @@ beforeEach(() => {
   hold = null;
   profilesGate = null;
   delHold = null;
+  failGet.clear();
   delReply = { ok: true, status: 204, body: null };
   resetReloginMarks();
   host = document.createElement("div");
@@ -436,6 +440,50 @@ describe("SsmTab delete while editing", () => {
     expect(toasts).toEqual([t("ssm.delete_failed_http", { status: 403, detail: "" })]);
     expect(input("admin@web-01").value).toBe("draft");
     expect(btn(sections()[1], t("common.cancel")).disabled).toBe(false);
+  });
+});
+
+describe("SsmTab list refresh failures", () => {
+  it("keeps a profile draft when the profile list fails to refresh after a host save", async () => {
+    await mount();
+    await click(btn(rows(0)[0], t("ssm.edit")));
+    await type(input("AdministratorAccess"), "Draft");
+    await click(btn(rows(1)[0], t("ssm.edit")));
+    failGet.add("api/ssm/profiles");
+    await click(btn(sections()[1], t("common.save")));
+    await settle();
+    expect(writes.map((w) => w.path)).toEqual(["api/ssm/hosts/h1"]);
+    expect(input("AdministratorAccess").value).toBe("Draft");
+    expect(rows(0).length).toBe(2);
+    expect(sections()[0].querySelector(".ssm-load-err")?.textContent).toBe(t("ssm.refresh_failed", { msg: "HTTP 502" }));
+    // The next good refresh clears the notice.
+    failGet.clear();
+    await click(btn(rows(0)[1], t("ssm.edit")));
+    await click(btn(sections()[0], t("common.save")));
+    await settle();
+    expect(sections()[0].querySelector(".ssm-load-err")).toBeNull();
+  });
+
+  it("keeps a host draft when the host list fails to refresh after a profile save", async () => {
+    await mount();
+    await click(btn(rows(1)[0], t("ssm.edit")));
+    await type(input("admin@web-01"), "draft");
+    await click(btn(rows(0)[1], t("ssm.edit")));
+    failGet.add("api/ssm/hosts");
+    await click(btn(sections()[0], t("common.save")));
+    await settle();
+    expect(input("admin@web-01").value).toBe("draft");
+    expect(sections()[1].querySelector(".ssm-load-err")?.textContent).toBe(t("ssm.refresh_failed", { msg: "HTTP 502" }));
+  });
+
+  it("tells a failed first load apart from an empty list", async () => {
+    failGet.add("api/ssm/profiles");
+    hosts = [];
+    await mount();
+    expect(sections()[0].querySelector(".ssm-load-err")?.textContent).toBe(t("ssm.load_failed", { msg: "HTTP 502" }));
+    expect(sections()[0].textContent).not.toContain(t("ssm.profile_empty"));
+    expect(sections()[1].textContent).toContain(t("ssm.host_empty"));
+    expect(sections()[1].querySelector(".ssm-load-err")).toBeNull();
   });
 });
 

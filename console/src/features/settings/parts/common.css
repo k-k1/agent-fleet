@@ -681,6 +681,13 @@
   color: var(--warn);
 }
 
+/* a list GET that failed: the section keeps the last list that loaded */
+.ssm-load-err {
+  color: var(--warn);
+  font-size: 12px;
+  margin: 6px 0;
+}
+
 /* a host whose profile id no longer exists */
 .ssm-missing {
   color: var(--warn);

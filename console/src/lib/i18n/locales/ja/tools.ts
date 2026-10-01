@@ -346,6 +346,8 @@ export const tools = {
   "ssm.save_failed_http": "保存に失敗: HTTP {status}{detail}",
   "ssm.save_failed_404": "（/api/ssm 未提供。CP の再起動が必要かもしれません）",
   "ssm.delete_failed_http": "削除に失敗: HTTP {status}{detail}",
+  "ssm.load_failed": "一覧を読み込めませんでした: {msg}",
+  "ssm.refresh_failed": "一覧を更新できませんでした。最後に読み込んだものを表示しています: {msg}",
   "ssm.intro_1": "af-aws-exec と SSM セッションがサインインに使う AWS プロファイルと、SSM Session Manager でログインする EC2 の設定です。ここには ",
   "ssm.intro_bold": "AWS の秘密情報は保存しません",
   "ssm.intro_2": "（短命の資格情報はログインのときに ",
