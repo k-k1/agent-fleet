@@ -578,6 +578,26 @@ func TestHandleRepoSkills(t *testing.T) {
 	if code, _ := get("kind=claude&subdir=../x"); code != http.StatusBadRequest {
 		t.Errorf("escaping subdir = %d", code)
 	}
+	// A symlink inside the repo that leads out of it is refused, not followed: the outside
+	// tree's skills must not be listed. One that stays inside, and a subdir that does not
+	// exist yet, are fine.
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(outside, ".claude", "skills", "secret", "SKILL.md"), "body")
+	if err := os.Symlink(outside, filepath.Join(dir, "out")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "web"), filepath.Join(dir, "in")); err != nil {
+		t.Fatal(err)
+	}
+	if code, sk := get("kind=claude&subdir=out"); code != http.StatusBadRequest {
+		t.Errorf("subdir through an escaping symlink = %d %#v", code, sk)
+	}
+	if code, sk := get("kind=claude&subdir=in"); code != http.StatusOK || names(sk)["lint"].Invoke != "/lint " {
+		t.Errorf("subdir through an inside symlink = %d %#v", code, sk)
+	}
+	if code, _ := get("kind=claude&subdir=not/yet"); code != http.StatusOK {
+		t.Errorf("missing subdir = %d", code)
+	}
 	req := httptest.NewRequest(http.MethodGet, "/repos/nope/skills?kind=claude", nil)
 	req.SetPathValue("name", "nope")
 	rec := httptest.NewRecorder()

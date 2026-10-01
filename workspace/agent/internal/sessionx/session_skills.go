@@ -14,6 +14,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/pathguard"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -92,6 +93,11 @@ func HandleRepoSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sub, ok := session.CleanSubdir(r.URL.Query().Get("subdir"))
+	// CleanSubdir is lexical: a symlink inside the repo pointing elsewhere would otherwise list
+	// that tree's skills. A subdir that does not exist yet still passes (CWD falls back to dir).
+	if ok && sub != "" {
+		_, ok = pathguard.ResolveUnder(filepath.Join(dir, filepath.FromSlash(sub)), dir)
+	}
 	if !ok {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_subdir", "subdir must be a relative path inside the working copy")
 		return

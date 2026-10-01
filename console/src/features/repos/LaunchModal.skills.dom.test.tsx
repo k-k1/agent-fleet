@@ -36,6 +36,7 @@ vi.mock("../../core/api/client.ts", () => ({
 
 const { LaunchModal } = await import("./LaunchModal.tsx");
 const { resetAttachDraftDB } = await import("../../lib/attachDraft.ts");
+const { setSettings } = await import("../../lib/settings.ts");
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
 
 type Launch = (o: LaunchOpts) => Promise<LaunchResult>;
@@ -115,6 +116,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setSettings({ mirrorSend: "mod-enter" });
   act(() => root?.unmount());
   root = null;
   host.remove();
@@ -168,5 +170,29 @@ describe("LaunchModal skill picker", () => {
     // Negative control: with the list closed, Esc is the dialog's again.
     await key("Escape");
     expect(onClose).toHaveBeenCalled();
+  });
+
+  // Send-on-Enter: an Enter typed while the list is still loading has no row to pick, and must
+  // not launch the half-typed "/sco" either. Once the list is closed, Enter is the send key again.
+  it("does not launch on a bare Enter while the list is still loading", async () => {
+    setSettings({ mirrorSend: "enter" });
+    let resolve: (v: { skills: Skill[] }) => void = () => {};
+    repoSkillsMock.mockImplementationOnce(() => new Promise((r) => (resolve = r)));
+    await render(["claude"]);
+    await type("/sco");
+    expect(document.querySelector(".mirror-skills-note")).not.toBeNull(); // the loading row
+    await key("Enter");
+    expect(onLaunch).not.toHaveBeenCalled();
+    expect(promptBox().value).toBe("/sco");
+
+    await act(async () => resolve({ skills: served.claude }));
+    await settle();
+    await key("Enter");
+    expect(promptBox().value).toBe("/scout ");
+    expect(onLaunch).not.toHaveBeenCalled();
+
+    await key("Escape");
+    await key("Enter");
+    expect(onLaunch.mock.calls[0][0].prompt).toBe("/scout");
   });
 });

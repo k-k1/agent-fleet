@@ -272,6 +272,12 @@ export function useSkillPicker({
         unfoldCli();
         return true;
       }
+      // Still loading: there is no row to pick yet, and letting a bare Enter through would send
+      // the half-typed "/sco" under the send-on-Enter setting. Ctrl/⌘/Shift+Enter still pass.
+      if (skills === null && e.key === "Enter") {
+        e.preventDefault();
+        return true;
+      }
     }
     if (e.key === "Escape") {
       e.preventDefault();
