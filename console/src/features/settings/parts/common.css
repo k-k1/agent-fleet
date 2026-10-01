@@ -644,6 +644,34 @@
   padding: 2px 9px;
 }
 
+/* row "Edit": the host row has no Log in to push it right, so it pushes itself */
+.ssm-edit {
+  font-size: 11.5px;
+  padding: 2px 9px;
+}
+
+.ssm-edit.push {
+  margin-left: auto;
+}
+
+/* what an edit changes outside the page (sign-in, ~/.aws/config, open sessions) */
+.ssm-edit-notes {
+  margin: 0;
+}
+
+.ssm-edit-notes p {
+  margin: 0 0 4px;
+}
+
+.ssm-edit-warn {
+  color: var(--warn);
+}
+
+/* a host whose profile id no longer exists */
+.ssm-missing {
+  color: var(--warn);
+}
+
 /* profile row login state (#1028), beside the label */
 .ssm-login-state {
   font-size: 11px;

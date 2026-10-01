@@ -94,6 +94,7 @@ export function SsmTab() {
       </p>
       <ProfileSection
         profiles={profiles}
+        hosts={hosts}
         reload={reload}
         labelRef={profileLabelRef}
         open={profileOpen}
@@ -116,16 +117,32 @@ const STATE_KEYS: Record<string, { label: MsgKey; title: MsgKey }> = {
 
 const emptyProfile: Record<string, string> = { label: "", startUrl: "", ssoRegion: "", accountId: "", roleName: "", region: "" };
 
+// awsProfileName mirrors the CP's ssmProfileName (control-plane/ssm.go): the ~/.aws profile
+// name a label becomes. The workspace keys a profile's sign-in by it (sso-session af-<name>),
+// so an edit that changes it leaves the profile signed out under its new name.
+export function awsProfileName(label: string): string {
+  return label.trim().replace(/[^A-Za-z0-9._@-]+/g, "-") || "ssm";
+}
+
+// pick copies a row's form fields as strings, so a field the CP left out edits as "".
+function pick(row: any, empty: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const k of Object.keys(empty)) out[k] = row?.[k] == null ? "" : String(row[k]);
+  return out;
+}
+
 type FieldEvent = ChangeEvent<HTMLInputElement | HTMLSelectElement>;
 
 function ProfileSection({
   profiles,
+  hosts,
   reload,
   labelRef,
   open,
   setOpen,
 }: {
   profiles: any[] | null;
+  hosts: any[] | null;
   reload: () => void;
   labelRef: RefObject<HTMLInputElement | null>;
   open: boolean;
@@ -136,9 +153,12 @@ function ProfileSection({
   const toast = useToast();
   const [f, setF] = useState<Record<string, string>>(emptyProfile);
   const [busy, setBusy] = useState(false);
+  // The row being edited; its form replaces the row's details. Never open together with
+  // the add form, which shares f.
+  const [editing, setEditing] = useState<any | null>(null);
   const [loginFor, setLoginFor] = useState<LoginProfile | null>(null);
   // Each row's login state, from the Agent (absent while the workspace is stopped). Asked on
-  // open and after the login modal closes; nothing polls.
+  // open, after the login modal closes and after an edit; nothing polls.
   const [states, setStates] = useState<Record<string, string>>({});
   const loadStates = useCallback(() => {
     api("api/aws-login/profiles")
@@ -164,30 +184,52 @@ function ProfileSection({
           ? tr("ssm.login_off_incomplete")
           : null;
 
-  const add = async () => {
+  const close = () => {
+    setOpen(false);
+    setEditing(null);
+    setF(emptyProfile);
+  };
+  const startAdd = () => {
+    setEditing(null);
+    setF(emptyProfile);
+    setOpen(true);
+  };
+  const startEdit = (p: any) => {
+    setOpen(false);
+    setF(pick(p, emptyProfile));
+    setEditing(p);
+  };
+  // An edit keeps the profile's id, so the hosts that use it follow; delete and re-add
+  // would leave them on an id that no longer exists (ssm_host.profile_id has no FK).
+  const save = async () => {
     if (!valid) return;
     setBusy(true);
     try {
-      const ok = await postJSON("api/ssm/profiles", "POST", {
+      const body = {
         label: f.label.trim(),
         startUrl: f.startUrl.trim(),
         ssoRegion: f.ssoRegion.trim(),
         accountId: f.accountId.trim(),
         roleName: f.roleName.trim(),
         region: f.region.trim(),
-      }, toast);
+      };
+      const ok = editing
+        ? await postJSON(`api/ssm/profiles/${encodeURIComponent(editing.id)}`, "PUT", body, toast)
+        : await postJSON("api/ssm/profiles", "POST", body, toast);
       if (!ok) return;
-      setF(emptyProfile);
-      setOpen(false);
+      const wasEdit = !!editing;
+      close();
       reload();
+      if (wasEdit) loadStates();
     } finally {
       setBusy(false);
     }
   };
   const remove = async (id: string) => {
+    const using = (hosts || []).filter((h) => h.profileId === id).length;
     const ok = await askConfirm({
       title: tr("ssm.profile_del_title"),
-      body: tr("ssm.profile_del_body"),
+      body: using > 0 ? tr("ssm.profile_del_body_hosts", { n: using }) : tr("ssm.profile_del_body"),
       confirmLabel: tr("common.delete_confirm"),
       danger: true,
     });
@@ -195,6 +237,87 @@ function ProfileSection({
     await raw(`api/ssm/profiles/${encodeURIComponent(id)}`, { method: "DELETE" });
     reload();
   };
+
+  // What an edit changes outside this page: the sign-in is cached per profile name, so a
+  // rename starts signed out, and a new portal under the same name would reuse a token
+  // issued by the old one.
+  const was = editing ? awsProfileName(String(editing.label || "")) : "";
+  const now = awsProfileName(f.label);
+  const portalChanged =
+    !!editing &&
+    (f.startUrl.trim() !== String(editing.startUrl || "") || f.ssoRegion.trim() !== String(editing.ssoRegion || ""));
+  const form = (
+    <div className={"ssm-frm" + (editing ? " ssm-frm-edit" : "")}>
+      <FieldGroup>
+        <Field label={tr("ssm.f_label")} req hint={tr("ssm.f_label_hint")}>
+          <input
+            ref={labelRef}
+            className="cinput"
+            placeholder="my-profile"
+            value={f.label}
+            onChange={set("label")}
+            autoFocus
+          />
+        </Field>
+        <Field label={tr("ssm.meta_sso_region")} req hint={tr("ssm.f_sso_region_hint")}>
+          <input className="cinput" placeholder="ap-northeast-1" value={f.ssoRegion} onChange={set("ssoRegion")} />
+        </Field>
+        <Field
+          label="start URL"
+          req
+          wide
+          hint={
+            <>
+              {tr("ssm.f_starturl_hint_1")}
+              <code>https://…awsapps.com/start</code>
+              {tr("ssm.f_starturl_hint_2")}
+            </>
+          }
+        >
+          <input
+            className="cinput"
+            placeholder="https://my-company.awsapps.com/start"
+            value={f.startUrl}
+            onChange={set("startUrl")}
+          />
+        </Field>
+        <Field label={tr("ssm.f_account_id")} hint={tr("ssm.f_optional_login_pick")}>
+          <input className="cinput" placeholder="123456789012" value={f.accountId} onChange={set("accountId")} />
+        </Field>
+        <Field label={tr("ssm.f_role_name")} hint={tr("ssm.f_optional_login_pick")}>
+          <input className="cinput" placeholder="AdministratorAccess" value={f.roleName} onChange={set("roleName")} />
+        </Field>
+        <Field label={tr("ssm.meta_default_region")} hint={tr("ssm.f_default_region_hint")}>
+          <input className="cinput" placeholder="ap-northeast-1" value={f.region} onChange={set("region")} />
+        </Field>
+      </FieldGroup>
+      {editing && (
+        <div className="field-help ssm-edit-notes">
+          {was !== now ? (
+            <p className="ssm-edit-warn">{tr("ssm.edit_rename_warn", { from: was, to: now })}</p>
+          ) : (
+            portalChanged && <p className="ssm-edit-warn">{tr("ssm.edit_portal_warn")}</p>
+          )}
+          <p>
+            {tr("ssm.edit_profile_note_1")}
+            <code>~/.aws/config</code>
+            {tr("ssm.edit_profile_note_2")}
+          </p>
+        </div>
+      )}
+      <div className="ssm-frm-foot">
+        <button className="primary" disabled={busy || !valid} onClick={save}>
+          {editing ? tr("common.save") : tr("ssm.add_profile")}
+        </button>
+        <button className="ghost" onClick={close}>
+          {tr("common.cancel")}
+        </button>
+        <span className="req-note">
+          <b>*</b> {tr("ssm.req_note")}
+        </span>
+      </div>
+    </div>
+  );
 
   return (
     <section className="ssm-section">
@@ -230,89 +353,40 @@ function ProfileSection({
                 >
                   {tr("ssm.login")}
                 </button>
+                <button
+                  className="ghost ssm-edit"
+                  title={tr("ssm.edit_profile_title")}
+                  disabled={editing?.id === p.id}
+                  onClick={() => startEdit(p)}
+                >
+                  {tr("ssm.edit")}
+                </button>
                 <button className="ghost danger ssm-del" title={tr("common.delete")} onClick={() => remove(p.id)}>
                   {tr("common.delete")}
                 </button>
               </div>
-              <div className="ssm-meta">
-                <Meta k={tr("ssm.meta_account")} v={p.accountId} />
-                <Meta k={tr("ssm.meta_role")} v={p.roleName} />
-                <Meta k={tr("ssm.meta_default_region")} v={p.region} />
-                <Meta k={tr("ssm.meta_sso_region")} v={p.ssoRegion} />
-                <Meta k="start URL" v={p.startUrl} wide />
-              </div>
+              {editing?.id === p.id ? (
+                form
+              ) : (
+                <div className="ssm-meta">
+                  <Meta k={tr("ssm.meta_account")} v={p.accountId} />
+                  <Meta k={tr("ssm.meta_role")} v={p.roleName} />
+                  <Meta k={tr("ssm.meta_default_region")} v={p.region} />
+                  <Meta k={tr("ssm.meta_sso_region")} v={p.ssoRegion} />
+                  <Meta k="start URL" v={p.startUrl} wide />
+                </div>
+              )}
             </li>
           ))}
         </ul>
       )}
-      {open ? (
-        <div className="ssm-frm">
-          <FieldGroup>
-            <Field label={tr("ssm.f_label")} req hint={tr("ssm.f_label_hint")}>
-              <input
-                ref={labelRef}
-                className="cinput"
-                placeholder="my-profile"
-                value={f.label}
-                onChange={set("label")}
-                autoFocus
-              />
-            </Field>
-            <Field label={tr("ssm.meta_sso_region")} req hint={tr("ssm.f_sso_region_hint")}>
-              <input className="cinput" placeholder="ap-northeast-1" value={f.ssoRegion} onChange={set("ssoRegion")} />
-            </Field>
-            <Field
-              label="start URL"
-              req
-              wide
-              hint={
-                <>
-                  {tr("ssm.f_starturl_hint_1")}
-                  <code>https://…awsapps.com/start</code>
-                  {tr("ssm.f_starturl_hint_2")}
-                </>
-              }
-            >
-              <input
-                className="cinput"
-                placeholder="https://my-company.awsapps.com/start"
-                value={f.startUrl}
-                onChange={set("startUrl")}
-              />
-            </Field>
-            <Field label={tr("ssm.f_account_id")} hint={tr("ssm.f_optional_login_pick")}>
-              <input className="cinput" placeholder="123456789012" value={f.accountId} onChange={set("accountId")} />
-            </Field>
-            <Field label={tr("ssm.f_role_name")} hint={tr("ssm.f_optional_login_pick")}>
-              <input className="cinput" placeholder="AdministratorAccess" value={f.roleName} onChange={set("roleName")} />
-            </Field>
-            <Field label={tr("ssm.meta_default_region")} hint={tr("ssm.f_default_region_hint")}>
-              <input className="cinput" placeholder="ap-northeast-1" value={f.region} onChange={set("region")} />
-            </Field>
-          </FieldGroup>
-          <div className="ssm-frm-foot">
-            <button className="primary" disabled={busy || !valid} onClick={add}>
-              {tr("ssm.add_profile")}
+      {open
+        ? form
+        : !editing && (
+            <button className="ghost ssm-add-toggle" onClick={startAdd}>
+              <Icon name="add" /> {tr("ssm.add_profile")}
             </button>
-            <button
-              className="ghost"
-              onClick={() => {
-                setOpen(false);
-                setF(emptyProfile);
-              }}
-            >
-              {tr("common.cancel")}
-            </button>
-            <span className="req-note">
-              <b>*</b> {tr("ssm.req_note")}
-            </span>
-          </div>
-        </div>
-      ) : (
-        <button className="ghost ssm-add-toggle" onClick={() => setOpen(true)}>
-          <Icon name="add" /> {tr("ssm.add_profile")}
-        </button>
-      )}
+          )}
       {loginFor && (
         <ProfileLoginModal
           profile={loginFor}
@@ -384,25 +458,48 @@ function HostSection({
   const [f, setF] = useState<Record<string, string>>(emptyHost);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
+  // The host being edited (its id); its form replaces the row's details.
+  const [editing, setEditing] = useState<string | null>(null);
   const set = (k: string) => (e: FieldEvent) => setF((p) => ({ ...p, [k]: e.target.value }));
-  const profileLabel = (id: string) => (profiles || []).find((p) => p.id === id)?.label || "?";
+  const profileOf = (id: string) => (profiles || []).find((p) => p.id === id);
   const noProfiles = profiles !== null && profiles.length === 0;
   const valid = f.alias.trim() && f.instanceId.trim() && f.profileId;
 
-  const add = async () => {
+  const close = () => {
+    setOpen(false);
+    setEditing(null);
+    setF(emptyHost);
+  };
+  const startAdd = () => {
+    setEditing(null);
+    setF(emptyHost);
+    setOpen(true);
+  };
+  const startEdit = (h: any) => {
+    const next = pick(h, emptyHost);
+    // A host whose profile was deleted points at an id no option carries: the select would
+    // show the placeholder while the save sent the dead id back. Start it unpicked instead.
+    if (profiles !== null && !profileOf(next.profileId)) next.profileId = "";
+    setOpen(false);
+    setF(next);
+    setEditing(h.id);
+  };
+  const save = async () => {
     if (!valid) return;
     setBusy(true);
     try {
-      const ok = await postJSON("api/ssm/hosts", "POST", {
+      const body = {
         alias: f.alias.trim(),
         profileId: f.profileId,
         instanceId: f.instanceId.trim(),
         documentName: f.documentName.trim(),
         region: f.region.trim(),
-      }, toast);
+      };
+      const ok = editing
+        ? await postJSON(`api/ssm/hosts/${encodeURIComponent(editing)}`, "PUT", body, toast)
+        : await postJSON("api/ssm/hosts", "POST", body, toast);
       if (!ok) return;
-      setF(emptyHost);
-      setOpen(false);
+      close();
       reload();
     } finally {
       setBusy(false);
@@ -420,6 +517,47 @@ function HostSection({
     reload();
   };
 
+  const form = (
+    <div className={"ssm-frm" + (editing ? " ssm-frm-edit" : "")}>
+      <FieldGroup>
+        <Field label={tr("ssm.f_use_profile")} req wide hint={tr("ssm.f_use_profile_hint")}>
+          <select className="cinput" value={f.profileId} onChange={set("profileId")} autoFocus>
+            <option value="">{tr("ssm.select_profile")}</option>
+            {(profiles || []).map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label={tr("ssm.f_alias")} req hint={tr("ssm.f_alias_hint")}>
+          <input className="cinput" placeholder="admin@web-01" value={f.alias} onChange={set("alias")} />
+        </Field>
+        <Field label={tr("ssm.f_instance_id")} req hint={<>{tr("ssm.f_instance_hint_1")}<code>aws ec2 describe-instances</code>{tr("ssm.f_instance_hint_2")}</>}>
+          <input className="cinput" placeholder="i-0123456789abcdef0" value={f.instanceId} onChange={set("instanceId")} />
+        </Field>
+        <Field label={tr("ssm.f_document")} hint={tr("ssm.f_document_hint")}>
+          <input className="cinput" placeholder="SSM-SessionManagerRunShell" value={f.documentName} onChange={set("documentName")} />
+        </Field>
+        <Field label={tr("ssm.meta_region")} hint={tr("ssm.f_region_hint")}>
+          <input className="cinput" placeholder={tr("ssm.f_region_placeholder")} value={f.region} onChange={set("region")} />
+        </Field>
+      </FieldGroup>
+      {editing && <p className="field-help ssm-edit-notes">{tr("ssm.edit_host_note")}</p>}
+      <div className="ssm-frm-foot">
+        <button className="primary" disabled={busy || !valid} onClick={save}>
+          {editing ? tr("common.save") : tr("ssm.add_host")}
+        </button>
+        <button className="ghost" onClick={close}>
+          {tr("common.cancel")}
+        </button>
+        <span className="req-note">
+          <b>*</b> {tr("ssm.req_note")}
+        </span>
+      </div>
+    </div>
+  );
+
   return (
     <section className="ssm-section">
       <div className="conn-cat">{tr("ssm.host_cat")}</div>
@@ -434,26 +572,47 @@ function HostSection({
         <p className="muted">{tr("ssm.host_empty")}</p>
       ) : (
         <ul className="ssm-list">
-          {hosts.map((h) => (
-            <li key={h.id} className="ssm-item">
-              <div className="ssm-item-head">
-                <span className="ssm-alias">{h.alias}</span>
-                <button className="ghost danger ssm-del" title={tr("common.delete")} onClick={() => remove(h.id)}>
-                  {tr("common.delete")}
-                </button>
-              </div>
-              <div className="ssm-meta">
-                <Meta k={tr("ssm.meta_instance")} v={h.instanceId} />
-                <Meta k={tr("ssm.meta_document")} v={h.documentName} />
-                <Meta k={tr("ssm.meta_region")} v={h.region} />
-                <Meta k={tr("ssm.meta_profile")} v={profileLabel(h.profileId)} mono={false} />
-              </div>
-              <HostColorPicker hostId={h.id} />
-            </li>
-          ))}
+          {hosts.map((h) => {
+            const prof = profileOf(h.profileId);
+            return (
+              <li key={h.id} className="ssm-item">
+                <div className="ssm-item-head">
+                  <span className="ssm-alias">{h.alias}</span>
+                  <button
+                    className="ghost ssm-edit push"
+                    title={tr("ssm.edit_host_title")}
+                    disabled={editing === h.id}
+                    onClick={() => startEdit(h)}
+                  >
+                    {tr("ssm.edit")}
+                  </button>
+                  <button className="ghost danger ssm-del" title={tr("common.delete")} onClick={() => remove(h.id)}>
+                    {tr("common.delete")}
+                  </button>
+                </div>
+                {editing === h.id ? (
+                  form
+                ) : (
+                  <>
+                    <div className="ssm-meta">
+                      <Meta k={tr("ssm.meta_instance")} v={h.instanceId} />
+                      <Meta k={tr("ssm.meta_document")} v={h.documentName} />
+                      <Meta k={tr("ssm.meta_region")} v={h.region} />
+                      <Meta
+                        k={tr("ssm.meta_profile")}
+                        v={prof ? prof.label : profiles === null ? "" : <span className="ssm-missing">{tr("ssm.profile_missing")}</span>}
+                        mono={false}
+                      />
+                    </div>
+                    <HostColorPicker hostId={h.id} />
+                  </>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
-      {noProfiles ? (
+      {noProfiles && !editing ? (
         <div className="ssm-dep">
           <span className="i">
             <Icon name="info" />
@@ -464,53 +623,13 @@ function HostSection({
           </button>
         </div>
       ) : open ? (
-        <div className="ssm-frm">
-          <FieldGroup>
-            <Field label={tr("ssm.f_use_profile")} req wide hint={tr("ssm.f_use_profile_hint")}>
-              <select className="cinput" value={f.profileId} onChange={set("profileId")} autoFocus>
-                <option value="">{tr("ssm.select_profile")}</option>
-                {(profiles || []).map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label={tr("ssm.f_alias")} req hint={tr("ssm.f_alias_hint")}>
-              <input className="cinput" placeholder="admin@web-01" value={f.alias} onChange={set("alias")} />
-            </Field>
-            <Field label={tr("ssm.f_instance_id")} req hint={<>{tr("ssm.f_instance_hint_1")}<code>aws ec2 describe-instances</code>{tr("ssm.f_instance_hint_2")}</>}>
-              <input className="cinput" placeholder="i-0123456789abcdef0" value={f.instanceId} onChange={set("instanceId")} />
-            </Field>
-            <Field label={tr("ssm.f_document")} hint={tr("ssm.f_document_hint")}>
-              <input className="cinput" placeholder="SSM-SessionManagerRunShell" value={f.documentName} onChange={set("documentName")} />
-            </Field>
-            <Field label={tr("ssm.meta_region")} hint={tr("ssm.f_region_hint")}>
-              <input className="cinput" placeholder={tr("ssm.f_region_placeholder")} value={f.region} onChange={set("region")} />
-            </Field>
-          </FieldGroup>
-          <div className="ssm-frm-foot">
-            <button className="primary" disabled={busy || !valid} onClick={add}>
-              {tr("ssm.add_host")}
-            </button>
-            <button
-              className="ghost"
-              onClick={() => {
-                setOpen(false);
-                setF(emptyHost);
-              }}
-            >
-              {tr("common.cancel")}
-            </button>
-            <span className="req-note">
-              <b>*</b> {tr("ssm.req_note")}
-            </span>
-          </div>
-        </div>
+        form
       ) : (
-        <button className="ghost ssm-add-toggle" onClick={() => setOpen(true)}>
-          <Icon name="add" /> {tr("ssm.add_host")}
-        </button>
+        !editing && (
+          <button className="ghost ssm-add-toggle" onClick={startAdd}>
+            <Icon name="add" /> {tr("ssm.add_host")}
+          </button>
+        )
       )}
     </section>
   );
