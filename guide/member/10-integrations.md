@@ -352,14 +352,14 @@ region with `--region` and removes endpoint overrides. A quick look-up with the 
 if err=$(env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true \
            aws sts get-caller-identity 2>&1 >/dev/null); then st=0; else st=$?; fi
 err=${err#"${err%%[![:space:]]*}"}
-if [ "$st" = 253 ] && [ "${AWS_EC2_METADATA_DISABLED:-}" = true ] && [ "${AF_WS_WORKLOAD_AWS:-}" != 1 ] \
+if [ "$st" = 253 ] && [ "$(printenv AWS_EC2_METADATA_DISABLED)" = true ] && [ "${AF_WS_WORKLOAD_AWS:-}" != 1 ] \
    && [ -z "$(env | cut -d= -f1 | grep -E '^AWS_(CONTAINER_|CONFIG_FILE$|SHARED_CREDENTIALS_FILE$|ENDPOINT_URL)')" ] \
    && case $err in "Unable to locate credentials"* | \
         "aws: [ERROR]: An error occurred (NoCredentials): Unable to locate credentials"*) true ;; *) false ;; esac
 then echo isolated; else echo not-isolated; fi; unset err st
 ```
 
-`isolated` means the CLI does not ask instance metadata, the environment holds no workload credentials and no AWS
+`isolated` means `AWS_EC2_METADATA_DISABLED=true` is exported, so the CLI does not ask instance metadata, the environment holds no workload credentials and no AWS
 config-file or endpoint overrides, and the CLI's default chain (with `AWS_PROFILE` set aside and configured endpoints
 ignored) ended in its own "no credentials" error (exit 253), so a misspelled or logged-out profile fails instead of answering for another account. Anything else — your
 own default credentials, an expired session, a failing `credential_process`, a network error — prints `not-isolated`, and so normally do a workspace

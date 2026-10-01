@@ -339,14 +339,14 @@ Console であなたに尋ね、ツールによって別の身元を指す名前
 if err=$(env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true \
            aws sts get-caller-identity 2>&1 >/dev/null); then st=0; else st=$?; fi
 err=${err#"${err%%[![:space:]]*}"}
-if [ "$st" = 253 ] && [ "${AWS_EC2_METADATA_DISABLED:-}" = true ] && [ "${AF_WS_WORKLOAD_AWS:-}" != 1 ] \
+if [ "$st" = 253 ] && [ "$(printenv AWS_EC2_METADATA_DISABLED)" = true ] && [ "${AF_WS_WORKLOAD_AWS:-}" != 1 ] \
    && [ -z "$(env | cut -d= -f1 | grep -E '^AWS_(CONTAINER_|CONFIG_FILE$|SHARED_CREDENTIALS_FILE$|ENDPOINT_URL)')" ] \
    && case $err in "Unable to locate credentials"* | \
         "aws: [ERROR]: An error occurred (NoCredentials): Unable to locate credentials"*) true ;; *) false ;; esac
 then echo isolated; else echo not-isolated; fi; unset err st
 ```
 
-`isolated` は、CLI がインスタンスメタデータに尋ねず、環境にワークロードの資格情報も AWS の設定ファイルや
+`isolated` は、`AWS_EC2_METADATA_DISABLED=true` が export されていて CLI がインスタンスメタデータに尋ねず、環境にワークロードの資格情報も AWS の設定ファイルや
 エンドポイントの上書きも無く、CLI の既定のチェーン（`AWS_PROFILE` を外し、設定済みのエンドポイントを無視して）が CLI 自身の「資格情報が無い」
 エラー（終了コード 253）で終わった、という意味です。そのため打ち間違えたプロファイルやログイン切れのプロファイルは、別のアカウントについて答える
 代わりに失敗します。それ以外（あなた自身の既定の資格情報、期限切れのセッション、失敗した `credential_process`、ネットワークのエラー）はすべて
