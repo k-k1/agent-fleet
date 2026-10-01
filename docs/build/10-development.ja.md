@@ -1,7 +1,7 @@
 ---
 audience: "はじめてこのリポジトリをビルドする人"
 source_of_truth: "コード + CI 定義"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # 10. 開発 — ビルド・反映・テスト・規約
@@ -225,6 +225,14 @@ af-db down    # 次の重いビルドの前に止める
   キャッシュの `ok` は何も証明しない。Workspace の外では、自分で立てた使い捨ての Postgres を
   `AF_TEST_DATABASE_URL` で指す。共有ホストでは unix socket にするとポートが衝突しない。
   trust 認証なら 3 PASS・1 SKIP になる。
+
+  テストは `public` に触れない。マイグレーションや行の書き込みをするテストはどれも
+  `pgtest.Schema`（`control-plane/internal/pgtest`）から一意な名前の新しいスキーマを受け取り、
+  その接続は `search_path` がそのスキーマだけに設定され、テストの終わりに削除される。だから
+  重なった実行——1 つのデータベースを共有する 2 セッションや、パッケージを並列に走らせる
+  `go test ./...`——が互いのテーブルを消すことはなく、スキーマが残ればテストが落ちる。
+  Postgres のテストを足すときは `AF_TEST_DATABASE_URL` を自分で読まずにこのヘルパーを通す。
+  URL に `search_path` を含めてはならない。
 
 - **Console**（リポジトリ直下から）:
 

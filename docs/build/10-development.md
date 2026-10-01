@@ -1,7 +1,7 @@
 ---
 audience: "someone building this repository for the first time"
 source_of_truth: "the code and the CI definitions"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # 10. Development — building, reflecting a change, testing, conventions
@@ -250,6 +250,14 @@ af-db down    # stop it before the next heavy build
   cached `ok` proves nothing. Outside a Workspace, point `AF_TEST_DATABASE_URL` at any
   disposable Postgres you run yourself. On a shared host, a unix socket avoids port
   collisions. With trust auth, expect 3 PASS and 1 SKIP.
+
+  The tests never touch `public`: every test that migrates or writes rows takes a fresh,
+  uniquely named schema from `pgtest.Schema` (`control-plane/internal/pgtest`), whose
+  connections have `search_path` set to it alone, and drops it when the test ends. So
+  overlapping runs — two sessions on one database, or `go test ./...` running packages in
+  parallel — cannot drop each other's tables, and a schema left behind fails the test. A new
+  Postgres test goes through that helper rather than reading `AF_TEST_DATABASE_URL` itself,
+  and the URL must not set `search_path`.
 
 - **Console**, from the repository root:
 

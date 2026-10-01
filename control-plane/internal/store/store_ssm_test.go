@@ -4,16 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
 )
 
-// ssmStores opens SQLite always and Postgres when AF_TEST_DATABASE_URL is set. Postgres
-// gets a schema of its own (search_path) rather than resetting public, so this can run
-// while another package's Postgres test is resetting public on the same database.
+// ssmStores opens SQLite always and Postgres, in a schema of its own, when
+// AF_TEST_DATABASE_URL is set.
 func ssmStores(t *testing.T) map[string]*SQL {
 	t.Helper()
 	ctx := context.Background()
@@ -26,25 +26,11 @@ func ssmStores(t *testing.T) map[string]*SQL {
 		t.Fatalf("migrate sqlite: %v", err)
 	}
 	out := map[string]*SQL{"sqlite": lite}
-	url := os.Getenv("AF_TEST_DATABASE_URL")
-	if url == "" {
+	url, ok := pgtest.Schema(t)
+	if !ok {
 		return out
 	}
-	schema := "t_ssm_" + strings.ToLower(NewID()[:8])
-	admin, err := OpenPostgres(url)
-	if err != nil {
-		t.Fatalf("open postgres: %v", err)
-	}
-	t.Cleanup(func() { admin.Close() })
-	if _, err := admin.db.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
-		t.Fatalf("create schema: %v", err)
-	}
-	t.Cleanup(func() { admin.db.ExecContext(context.Background(), `DROP SCHEMA `+schema+` CASCADE`) })
-	sep := "?"
-	if strings.Contains(url, "?") {
-		sep = "&"
-	}
-	pg, err := OpenPostgres(url + sep + "search_path=" + schema)
+	pg, err := OpenPostgres(url)
 	if err != nil {
 		t.Fatalf("open postgres schema: %v", err)
 	}

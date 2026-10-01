@@ -6,17 +6,16 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// ssmAPIStores opens SQLite always and Postgres when AF_TEST_DATABASE_URL is set, the
-// latter in a schema of its own so it does not collide with the store package's Postgres
-// tests, which reset public.
+// ssmAPIStores opens SQLite always and Postgres, in a schema of its own, when
+// AF_TEST_DATABASE_URL is set.
 func ssmAPIStores(t *testing.T) map[string]*store.SQL {
 	t.Helper()
 	ctx := context.Background()
@@ -26,22 +25,8 @@ func ssmAPIStores(t *testing.T) map[string]*store.SQL {
 	}
 	t.Cleanup(func() { lite.Close() })
 	out := map[string]*store.SQL{"sqlite": lite}
-	if url := os.Getenv("AF_TEST_DATABASE_URL"); url != "" {
-		schema := "t_ssmapi_" + strings.ToLower(store.NewID()[:8])
-		admin, err := store.OpenPostgres(url)
-		if err != nil {
-			t.Fatalf("open postgres: %v", err)
-		}
-		t.Cleanup(func() { admin.Close() })
-		if _, err := admin.DB().ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
-			t.Fatalf("create schema: %v", err)
-		}
-		t.Cleanup(func() { admin.DB().ExecContext(context.Background(), `DROP SCHEMA `+schema+` CASCADE`) })
-		sep := "?"
-		if strings.Contains(url, "?") {
-			sep = "&"
-		}
-		pg, err := store.OpenPostgres(url + sep + "search_path=" + schema)
+	if url, ok := pgtest.Schema(t); ok {
+		pg, err := store.OpenPostgres(url)
 		if err != nil {
 			t.Fatalf("open postgres schema: %v", err)
 		}
