@@ -112,6 +112,36 @@ deleted with the stack.
 Also delete the throwaway **login IdP client** (the Google Cloud Console OAuth
 client, or the Entra/Okta/… app registration) — its secret was used during testing.
 
+## Instance metadata (IMDS)
+
+The instance requires IMDSv2 with a hop limit of 1 (`MetadataOptions` in `cfn.yaml`). The
+template attaches no instance profile; the setting is there so that one attached later
+(Bedrock, the single-VM engines of ADR 0099) reaches the host-network Control Plane (one hop)
+and **not** the workspaces, which sit on docker bridges (two hops). Workspaces are also started
+with `AWS_EC2_METADATA_DISABLED=true`, unless the Control Plane has `AF_WS_WORKLOAD_AWS=1`;
+that opt-in does not lift the hop limit, so the instance profile stays out of reach either way.
+
+For a stack created before this setting, apply it to the running instance rather than by
+updating the stack: `LatestUbuntuAmi` resolves again on every update, and a newer AMI replaces
+the instance.
+
+```bash
+aws ec2 modify-instance-metadata-options --instance-id <id> \
+  --http-tokens required --http-put-response-hop-limit 1 --http-endpoint enabled
+```
+
+Workspaces that were already running keep their old container and environment until they are
+Stopped and Started in the Console (`docker compose up -d` does not recreate them); do that
+after the upgrade, then check from a workspace shell (with `AF_WS_WORKLOAD_AWS` off, the
+default) that `echo ${AWS_EC2_METADATA_DISABLED:-unset}`
+prints `true`, that `aws sts get-caller-identity` with no profile fails with "Unable to locate
+credentials", and that the token request below fails. With the opt-in on, the variable is
+unset by design, but the token request must still fail.
+
+Check the network block from a workspace shell: `curl -s -o /dev/null -m 3 -w '%{http_code}' -X PUT -H
+'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token` must not
+print `200`.
+
 ## Notes
 
 - `LatestUbuntuAmi` resolves via a Canonical-published SSM public parameter, so

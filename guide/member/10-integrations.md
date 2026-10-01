@@ -306,15 +306,36 @@ Open the URL it prints and approve the code — only a code you started yourself
 SSM sessions of the same profile, so logging in once covers both.
 
 **Running one command as you: `af-aws-exec`.** The workspace can have an AWS identity of its own (a *workload
-role*). A command that names no profile at all — a bare `aws …`, an SDK's default credential chain, a build tool
-with no profile setting — then quietly runs as that role instead of as you, in another account. (A named profile
-that is misspelled or logged out fails with an error instead.) For deployments, lookups in your accounts and
-anything else that must use your authorization, pass your credentials explicitly:
+role*), and the machine underneath can have one too. In a container workspace (docker or AWS ECS) your sessions and
+terminals do not get either: the Agent keeps the workspace's credentials variables out of everything it starts, the
+SDKs' instance metadata lookup is switched off (`AWS_EC2_METADATA_DISABLED=true`), and EC2 hosts set up by Agent
+Fleet block instance metadata for workspaces. (A workspace that runs directly on your own machine is left as it is:
+an instance role there is your machine's, and the SDKs still find it.) So a
+command that names no profile at all — a bare `aws …`, an SDK's default credential chain, a build tool with no
+profile setting — fails with "Unable to locate credentials" (or its SDK's wording) instead of running as the
+workspace. (A named profile that is misspelled or logged out fails with its own error.) Your administrator can let
+the workspace use its own task role again (on AWS ECS); then such a command quietly runs as that role, in another
+account. Either way, do not look for credentials elsewhere: for deployments, lookups in your accounts and anything else that must
+use your authorization, pass your credentials explicitly:
 
 ```sh
 af-aws-exec --profile <name> -- ./gradlew deploy
 af-aws-exec --profile <name> -- npx cdk deploy
 ```
+
+**Example: a build tool with an S3 upload plugin.** A Gradle deploy task built on an AWS plugin (an S3 upload
+task, for instance) with no profile in the build script asks the SDK's default chain: environment variables, JVM
+system properties, the `default` profile in `~/.aws`, then the container credentials and instance metadata. In a
+session, `./gradlew uploadArtifact` therefore stops with "Unable to load AWS credentials from any provider in the
+chain" rather than uploading the artifact as the workspace's role. Run it as you, naming the account:
+
+```sh
+af-aws-exec --profile <name> --account <id> --region <region> -- ./gradlew uploadArtifact
+```
+
+The plugin then finds the profile's short-lived credentials in its environment, the first place the chain looks,
+and the "running as" line shows who uploads. If the build script names a profile itself (`profileName = "prod"`,
+say), see "could not be found" below.
 
 - It passes the profile's **short-lived** credentials to that one command through its environment only —
   `af-aws-exec` itself writes them nowhere and prints nothing but the identity the command runs as. (The AWS CLI

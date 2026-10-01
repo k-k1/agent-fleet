@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
@@ -34,6 +35,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/statemig"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // buildVersion is stamped by the release pipeline via
@@ -72,6 +74,17 @@ func runAFDB(args []string) {
 
 func serve() {
 	addr := envOr("AGENT_ADDR", ":7700")
+
+	// First, before anything is spawned: every child inherits this process's environment,
+	// and the workload identity must not reach a session or terminal.
+	removed := awsx.IsolateWorkloadChain()
+	if awsx.IsolationActive() {
+		tmuxx.SetLaunchEnv(awsx.WorkloadChainVars(), []string{awsx.MetadataDisabled})
+	}
+	if len(removed) > 0 {
+		log.Printf("aws: workload credentials withheld from sessions (%s unset, IMDS disabled; %s=1 keeps them)",
+			strings.Join(removed, ", "), awsx.WorkloadOptIn)
+	}
 
 	// Take the listening socket BEFORE any of the boot work below, and die if it is busy.
 	// Every step from here to Serve mutates container-wide state — the credential store, the

@@ -120,6 +120,8 @@ Resources:
         # public IPv4: a task ENI that survives a stop makes the instance multi-ENI and
         # the address silently stops being assigned - measured as 11 minutes of a
         # disconnected agent (ADR 0045 decision 3-3).
+        # The hop limit does not protect an awsvpc task (its ENI reaches IMDS directly);
+        # ECS_AWSVPC_BLOCK_IMDS below is what keeps workspace tasks off SlotRole.
         MetadataOptions:
           HttpTokens: required
           HttpPutResponseHopLimit: 2
@@ -145,12 +147,16 @@ Resources:
               # slot fail to boot for the NEXT user.
               exec > /var/log/af-userdata.log 2>&1
               set -x
+              # ECS_AWSVPC_BLOCK_IMDS: a workspace task must not reach SlotRole through IMDS.
+              # Nothing in the task uses IMDS (the Agent reads SMBIOS, not IMDS); the ECS and
+              # SSM agents use the host network and keep it. Read at agent start = new slots only.
               cat >> /etc/ecs/ecs.config <<EOF
               ECS_CLUSTER=${Cluster}
               ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION=${Cleanup}
               ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION_JITTER=1m
               ECS_IMAGE_CLEANUP_INTERVAL=30m
               ECS_IMAGE_MINIMUM_CLEANUP_AGE=24h
+              ECS_AWSVPC_BLOCK_IMDS=true
               EOF
               cat > /usr/local/bin/af-mount <<'SH'
               #!/bin/bash
