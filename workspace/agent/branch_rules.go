@@ -152,7 +152,9 @@ type branchNameOut struct {
 	Base       string `json:"base"`
 	BaseBranch string `json:"base_branch"`
 	Kind       string `json:"kind"`
-	// Provisional is always false until the English slug (P2) exists.
+	// Provisional is true while an English slug for a non-ASCII title is still being made
+	// (decision 4): the name carries the deterministic slug, and asking again later may give a
+	// better one. sources.slug is "ai" once it does.
 	Provisional bool                 `json:"provisional"`
 	Warnings    []branchrule.Warning `json:"warnings"`
 	Sources     map[string]any       `json:"sources"`
@@ -212,15 +214,29 @@ func handleBranchName(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res := branchrule.Name(c.layers, c.id, branchrule.Request{Item: item, Kind: req.Kind, Slug: req.Slug})
+	breq := branchrule.Request{Item: item, Kind: req.Kind, Slug: req.Slug}
+	res := branchrule.Name(c.layers, c.id, breq)
+	// A slug the caller gave is theirs; only the title's own slug is replaced by an English one.
+	var provisional, aiSlug bool
+	if item != nil && strings.TrimSpace(req.Slug) == "" && res.SlugUsed {
+		var en string
+		if en, provisional = englishSlugs.lookup(item.Title); en != "" {
+			breq.Slug, aiSlug = en, true
+			res = branchrule.Name(c.layers, c.id, breq)
+		}
+	}
 	warns := append(append([]branchrule.Warning{}, c.repo.Warnings...), res.Warnings...)
 	base, branch, bw := branchrule.ResolveBase(c.dir, res.Base)
 	if bw != nil {
 		warns = append(warns, *bw)
 	}
+	sources := c.sources(res.Sources)
+	if aiSlug {
+		sources["slug"] = "ai"
+	}
 	httpx.WriteJSON(w, http.StatusOK, branchNameOut{
-		Name: res.Name, NameEmpty: res.NameEmpty, Base: base, BaseBranch: branch, Kind: res.Kind,
-		Warnings: warningsOrEmpty(warns), Sources: c.sources(res.Sources), Gitflow: c.repo.Gitflow,
+		Name: res.Name, NameEmpty: res.NameEmpty, Base: base, BaseBranch: branch, Kind: res.Kind, Provisional: provisional,
+		Warnings: warningsOrEmpty(warns), Sources: sources, Gitflow: c.repo.Gitflow,
 	})
 }
 

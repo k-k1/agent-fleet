@@ -9,6 +9,7 @@ English | [日本語](0103-branch-naming-rules.ja.md)
   and rules being advisory only (decision 8). The user also chose `{ref}` for the Jira default and
   switching users with an empty template to the new default without a compatibility shim.
 - Amended 2026-09-30 (#1329): decision 9 may create a local branch tracking an origin branch.
+- Implementation note 2026-10-01 (#1129): how decision 4's English slug was built; see the note under decision 4.
 - Follow-ups: #1124, #1125, #1126 (P0) / #1127 (P1) / #1128, #1129 (P2)
 - Related: [0061](0061-work-item-inbox.md) decision 12 (the work-item default `feature/{key}`, replaced
   here) / [0031](0031-mcp-registry.md) (the tenant distribution this ADR's tenant layer copies)
@@ -252,6 +253,21 @@ User and tenant rules and the `gitflow.*` keys go through the same key and ref-n
 - **English slug (P2).** A non-ASCII title may get an English slug through the AI-assist one-shot. The
   resolver never waits for it: it answers with the deterministic slug and marks the name `provisional`,
   and the Console may ask again once. Without an AI assist the deterministic slug is final.
+
+#### Implementation note (2026-10-01, #1129): the English slug
+
+This records how P2 was built; the decision above is unchanged.
+
+- "Non-ASCII title" means any non-ASCII character in it (an emoji or a curly quote counts too). A mixed title such as `ログイン fix` keeps its
+  deterministic slug (`fix`) in the provisional answer, and the English slug replaces it once made.
+- It is asked for only when the caller gave no `slug` and the slug reaches the name, through `{slug}`
+  in the template or the prefix-only fallback.
+- "An AI assist" is the branch-name suggestion feature (`branch.suggest`): its on/off, agent and model.
+  The one-shot gets the title as a quoted string it is told to translate and never obey.
+- The reply must be 2–5 lowercase ASCII words joined by hyphens, at most 32 bytes, and must not repeat
+  the instructions; anything else, or a failed call, makes the deterministic slug final for that title.
+- The answer is cached per title and per AI-assist setting; a reply whose settings changed while it was
+  being made is not cached. `sources.slug` is `ai` when it was used.
 
 ### Decision 5: base
 
