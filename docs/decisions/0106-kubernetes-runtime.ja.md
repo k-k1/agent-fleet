@@ -192,6 +192,11 @@ Role を持ち、ClusterRole は持たない。ストアは配備が用意する
 Terraform にするのは、Google Cloud にはもう固有のテンプレート言語が無いからだ。Deployment Manager は廃止され、後継の
 Infrastructure Manager は Terraform を動かす。リポジトリで最初の Terraform であり、運用者にとっても新しい道具になる。
 
+AWS の配備先は CloudFormation のまま残す。移すと、7 つのスタック（約 3,600 行）、その上に建つ検査（`cfn-equiv.py`、
+`cfn-contract.py`、タグ柵のテスト）、standup・update・teardown のスクリプトを書き直すことになり、稼働中のすべての配備が
+リソースを Terraform の state に取り込む必要がある。誰も求めていない移行である。IaC が 2 言語になるのは、各クラウドにその流儀で
+応える代償であり、共有するのは CP とイメージであってテンプレートではない。
+
 Helm chart は作らない。問い合わせは Kubernetes 対応を求めたのであって chart を求めたのではなく、kustomize の base で同じ
 クラスタに対応でき、足並みをそろえるべき 2 つ目のパッケージ形式を持たずに済む。Helm での導入を求められたら再開する。
 

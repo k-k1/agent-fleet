@@ -227,6 +227,13 @@ Terraform because Google Cloud has no native template language left: Deployment 
 retired and its successor, Infrastructure Manager, runs Terraform. It is the repository's first
 Terraform, and an operator's first new tool for it.
 
+The AWS targets stay on CloudFormation. Moving them would rewrite seven stacks (about 3,600
+lines), the checks built on them (`cfn-equiv.py`, `cfn-contract.py`, the tag-fence test) and the
+standup, update and teardown scripts, and every running deployment would have to import its
+resources into Terraform state — a migration with no user asking for it. Two IaC languages is
+the cost of meeting each cloud in its own; the shared part is the CP and the image, not the
+templates.
+
 The Helm chart is not built. The inquiry asked for Kubernetes support, not for a chart, and a
 kustomize base serves the same clusters without a second packaging format to keep in step. It is
 reopened when someone asks to install Agent Fleet through Helm.
