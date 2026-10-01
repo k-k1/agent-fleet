@@ -322,11 +322,12 @@ func TestProtoVarintFieldRejectsTruncatedInput(t *testing.T) {
 	if _, _, ok := protoVarintField([]byte{0x4a, 0x09, 'a'}, 3); ok {
 		t.Fatal("overlong length-delimited field accepted")
 	}
-	// Field number 0 and 2^29 are not legal tags, wherever they sit.
+	// Field number 0 and 2^29 are not legal tags, wherever they sit. Each carries a value, so
+	// only the field-number check can reject it.
 	for name, b := range map[string][]byte{
 		"zero tag":          {0x00, 0x00},
 		"zero tag after f3": {0x18, 0x00, 0x00, 0x00},
-		"field number 2^29": binary.AppendUvarint(nil, 1<<29<<3),
+		"field number 2^29": append(binary.AppendUvarint(nil, 1<<29<<3), 0x00),
 	} {
 		if _, _, ok := protoVarintField(b, 3); ok {
 			t.Fatalf("%s accepted", name)
