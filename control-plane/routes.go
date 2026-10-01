@@ -219,6 +219,12 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/engine-access", adm.tenantEngineAccess)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/engine-access", adm.setTenantEngineAccess)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/engine-access/members", adm.setMemberEngineAccess)
+	// The tenant layer of the branch naming rules (ADR 0103 decision 10). tenant_admin,
+	// gated mid-handler: the rules only advise this tenant's members and reach nothing
+	// outside it. The Agent's poll is the token-authenticated /internal/branch-rules.
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/branch-rules", adm.tenantBranchRules)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/branch-rules", adm.setTenantBranchRules)
+	mux.HandleFunc("GET /internal/branch-rules", branchRulesBridgeAPI{cfg.mgr}.list)
 	// Tenant-defined sign-in methods (docs/log/61 §61.11). The rows are the tenant's, so
 	// these gate on tenant_admin mid-handler; ACTIVATION is checked inside setStatus,
 	// which is the one super_admin step (decision 30). The queue is deployment-wide.
@@ -788,6 +794,9 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	// flushing stream proxy passes through before the ingress idle timeout.
 	mux.HandleFunc("POST /api/fs/suggest-edit", proxy.withResolved(proxy.stream))
 	mux.HandleFunc("GET /api/fs/download", rest)
+	// A picture's width and height from its header — read-only, a bounded header read per
+	// path (workspace/agent/fs_imagesize.go).
+	mux.HandleFunc("POST /api/fs/imagesize", rest)
 	mux.HandleFunc("POST /api/fs/upload", rest)
 	mux.HandleFunc("GET /api/fs/changes", rest)
 	mux.HandleFunc("GET /api/fs/linemarks", rest)

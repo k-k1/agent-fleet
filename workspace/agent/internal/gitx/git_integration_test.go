@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -102,5 +103,145 @@ func TestFastForwardWorktreeFromParent(t *testing.T) {
 	}
 	if err := fastForwardWorktreeFromParent(parent, worktree); err == nil {
 		t.Fatal("same worktree unexpectedly accepted for parent fast-forward")
+	}
+}
+
+// setupIntegrationUpstream gives the parent clone an origin (a bare repo) with main
+// tracking origin/main, and returns a second clone standing in for the forge, where
+// PRs get merged.
+func setupIntegrationUpstream(t *testing.T, parent string) (forge string) {
+	t.Helper()
+	bare := filepath.Join(t.TempDir(), "origin.git")
+	runIntegrationGit(t, parent, "init", "--bare", bare)
+	runIntegrationGit(t, parent, "remote", "add", "origin", bare)
+	runIntegrationGit(t, parent, "push", "-u", "origin", "main")
+	forge = filepath.Join(t.TempDir(), "forge")
+	runIntegrationGit(t, parent, "clone", "-q", "-b", "main", bare, forge)
+	return forge
+}
+
+func TestGitWorktreeIntegrationComparesParentUpstream(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	parent := filepath.Join(home, "repos", "app")
+	gitInit(t, parent)
+	forge := setupIntegrationUpstream(t, parent)
+	worktree, err := EnsureWorktree(parent, "main", "feature-up", "")
+	if err != nil {
+		t.Fatalf("ensureWorktree: %v", err)
+	}
+	commitIntegrationFile(t, worktree, "worktree-change")
+	runIntegrationGit(t, worktree, "push", "origin", "feature-up")
+
+	// The PR is merged on the forge; the parent clone fetches but is not fast-forwarded.
+	runIntegrationGit(t, forge, "fetch", "origin")
+	runIntegrationGit(t, forge, "merge", "--no-ff", "origin/feature-up", "-m", "merge PR")
+	runIntegrationGit(t, forge, "push", "origin", "main")
+	runIntegrationGit(t, parent, "fetch", "origin")
+
+	got := GitWorktreeIntegration(parent, worktree, "main")
+	if got.Relation != "contained" || got.TargetUnique != 1 || got.WorktreeUnique != 0 {
+		t.Fatalf("integration = %+v, want contained by origin/main (1 target-only merge commit)", got)
+	}
+	if !got.TargetUpstream || got.TargetBranch != "origin/main" {
+		t.Fatalf("target = %q upstream=%v, want origin/main upstream=true", got.TargetBranch, got.TargetUpstream)
+	}
+
+	want, err := Run(parent, "rev-parse", "origin/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentBefore, err := Run(parent, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fastForwardWorktreeFromParent(parent, worktree); err != nil {
+		t.Fatalf("fast-forward to upstream: %v", err)
+	}
+	if head, _ := Run(worktree, "rev-parse", "HEAD"); head != want {
+		t.Fatalf("worktree HEAD = %s, want origin/main %s", head, want)
+	}
+	if after, _ := Run(parent, "rev-parse", "HEAD"); after != parentBefore {
+		t.Fatalf("parent HEAD moved %s -> %s; the parent clone must never be touched", parentBefore, after)
+	}
+}
+
+func TestGitWorktreeIntegrationFallsBackWithoutUpstream(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	parent := filepath.Join(home, "repos", "app")
+	gitInit(t, parent)
+	setupIntegrationUpstream(t, parent)
+	worktree, err := EnsureWorktree(parent, "main", "feature-gone", "")
+	if err != nil {
+		t.Fatalf("ensureWorktree: %v", err)
+	}
+	// A configured upstream whose remote ref is gone (pruned) must not hide the parent.
+	runIntegrationGit(t, parent, "update-ref", "-d", "refs/remotes/origin/main")
+	commitIntegrationFile(t, parent, "parent-change")
+	got := GitWorktreeIntegration(parent, worktree, "main")
+	if got.Relation != "contained" || got.TargetUnique != 1 || got.TargetUpstream || got.TargetBranch != "main" {
+		t.Fatalf("integration = %+v, want contained by parent HEAD labelled main", got)
+	}
+}
+
+func TestGitWorktreeIntegrationUpstreamEdgeCases(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	parent := filepath.Join(home, "repos", "app")
+	gitInit(t, parent)
+	setupIntegrationUpstream(t, parent)
+	worktree, err := EnsureWorktree(parent, "main", "feature-edge", "")
+	if err != nil {
+		t.Fatalf("ensureWorktree: %v", err)
+	}
+
+	// Unpushed parent commits are not in the base: the chip ignores them and the
+	// fast-forward refuses rather than pulling them in.
+	commitIntegrationFile(t, parent, "unpushed")
+	got := GitWorktreeIntegration(parent, worktree, "main")
+	if got.Relation != "same" || got.TargetBranch != "origin/main" {
+		t.Fatalf("unpushed parent: integration = %+v, want same as origin/main", got)
+	}
+	if err := fastForwardWorktreeFromParent(parent, worktree); err == nil || !strings.Contains(err.Error(), "origin/main") {
+		t.Fatalf("unpushed parent: fast-forward err = %v, want a refusal naming origin/main", err)
+	}
+
+	// Diverged from the upstream: refused, nothing merged.
+	commitIntegrationFile(t, worktree, "wt-only")
+	runIntegrationGit(t, parent, "push", "origin", "main")
+	before, _ := Run(worktree, "rev-parse", "HEAD")
+	if got := GitWorktreeIntegration(parent, worktree, "main"); got.Relation != "diverged" {
+		t.Fatalf("diverged: integration = %+v", got)
+	}
+	if err := fastForwardWorktreeFromParent(parent, worktree); err == nil {
+		t.Fatal("diverged worktree unexpectedly accepted for fast-forward")
+	}
+	if after, _ := Run(worktree, "rev-parse", "HEAD"); after != before {
+		t.Fatalf("refused fast-forward moved the worktree %s -> %s", before, after)
+	}
+
+	// An upstream on remote "." (a local branch) is not an upstream for the chip:
+	// labelled by the parent's branch, compared with the parent HEAD.
+	runIntegrationGit(t, parent, "branch", "local-base", "HEAD~1")
+	runIntegrationGit(t, parent, "branch", "--set-upstream-to=local-base", "main")
+	got = GitWorktreeIntegration(parent, worktree, "main")
+	if got.TargetUpstream || got.TargetBranch != "main" {
+		t.Fatalf("local upstream: target = %q upstream=%v, want the parent-HEAD fallback", got.TargetBranch, got.TargetUpstream)
+	}
+
+	// A detached parent has no @{upstream}: parent-HEAD fallback.
+	runIntegrationGit(t, parent, "checkout", "-q", "--detach")
+	if got := GitWorktreeIntegration(parent, worktree, ""); got.TargetUpstream || got.Relation != "diverged" {
+		t.Fatalf("detached parent: integration = %+v, want parent-HEAD fallback", got)
 	}
 }

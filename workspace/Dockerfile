@@ -314,10 +314,10 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.285
-ARG OPENCODE_VERSION=1.18.33
-ARG CODEX_VERSION=0.159.2
-ARG COPILOT_VERSION=1.0.89
+ARG CLAUDE_CODE_VERSION=2.1.286
+ARG OPENCODE_VERSION=1.18.34
+ARG CODEX_VERSION=0.159.3
+ARG COPILOT_VERSION=1.0.90
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}" \
@@ -343,10 +343,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.2.13
-ARG AGY_RELEASE_BUILD=6662628811079680
-ARG AGY_SHA256_X64=b0f195d37973be7b08c3b705d7fbbcd948dacb4a3c2176ee52ca29f7159bdc21
-ARG AGY_SHA256_ARM64=43bf59be5895475f8a32d4f94f1241f665986ea41a3622579e03b74e1b63dcfb
+ARG AGY_VERSION=1.2.14
+ARG AGY_RELEASE_BUILD=4571742832820224
+ARG AGY_SHA256_X64=68cf4d221cb62e0289245439d3d37f599bdc8e0c4e1e3dae03f326463a0c26dc
+ARG AGY_SHA256_ARM64=3b40c3baab245b43a41007c1db64df51f5f162b6059fcc4a4504731f2689d301
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -432,9 +432,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.26.0
-ARG KIRO_SHA256_X64=fad32095530facd3ed28d4210798804d2340373643b69f256492798f9befd479
-ARG KIRO_SHA256_ARM64=8715b1c199fdc3176d929d839398175cab48269db0644ffa6dad5813d64c9817
+ARG KIRO_VERSION=2.26.1
+ARG KIRO_SHA256_X64=f8c5f1e26114875cf1a1188b3e7c6870d709dedad1d3a980549b74bd3e3d11b2
+ARG KIRO_SHA256_ARM64=b3a3a9c5c813889060dfaae51ca4bbc924da98bc31b40f34dc1d4a07422f6151
 # Muse Code（kind="muse"、ADR 0095 決定 8）。プロプライエタリなので **配布イメージには
 # 入らない**（BAKE_AGENT_CLIS=0 既定・理由は本ファイル冒頭と NOTICE）。既定の経路は
 # per-user のオンデマンド導入（workspace-agent install-muse）で、ここのピンは

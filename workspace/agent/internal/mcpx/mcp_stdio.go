@@ -412,7 +412,7 @@ func mcpStdioInstructions() string {
 		}
 		return "Agent Fleet local MCP for the assistant: observe the sessions in your own Workspace."
 	}
-	parts := []string{"completion report", "handoff proposal", "stop after this turn", "session status and usage", "memos to your user"}
+	parts := []string{"completion report", "handoff proposal", "stop after this turn", "session status and usage", "memos to your user", "branch names from your naming rules"}
 	if sessionChromiumEnabled() {
 		parts = append(parts, "Chromium hand-off to the user")
 	}
@@ -440,6 +440,7 @@ func mcpStdioToolList() []map[string]any {
 			tools = append(tools, mcpStdioPeerTools()...)
 		}
 		tools = append(tools, mcpStdioFleetObserveTools()...)
+		tools = append(tools, mcpStdioBranchTools()...)
 		if mcpFleetSpawnEnabled {
 			tools = append(tools, mcpStdioFleetSpawnTools()...)
 		}
@@ -922,6 +923,39 @@ func mcpStdioFleetObserveTools() []map[string]any {
 			},
 		},
 	}
+}
+
+// mcpStdioBranchTools is part of every session's surface: it only reads the rules, and a
+// session that cannot ask is the one that falls back to a hard-coded style.
+func mcpStdioBranchTools() []map[string]any {
+	return []map[string]any{{
+		"name": "branch_name",
+		"description": "Agent Fleet: resolve the branch name and base your user's naming rules give, for a working copy. " +
+			"Call it before creating or renaming a branch instead of making a name up. " +
+			"With no arguments it names the work your session was launched for, in your own working copy. " +
+			"Pass item, or kind and slug, to name other work. Warnings are advice; name_empty means no name could be made.",
+		"inputSchema": map[string]any{
+			"type": "object", "additionalProperties": false,
+			"properties": map[string]any{
+				"repo": map[string]any{"type": "string", "description": "Working copy folder directly under ~/repos (default: your own)"},
+				"item": map[string]any{
+					"type": "object", "additionalProperties": false,
+					"description": "The issue / ticket to name the branch for",
+					"properties": map[string]any{
+						"provider": map[string]any{"type": "string", "description": "github, jira, ..."},
+						"key":      map[string]any{"type": "string", "description": "Issue number or ticket key, e.g. 1128 or PROJ-12"},
+						"title":    map[string]any{"type": "string"},
+						"type":     map[string]any{"type": "string"},
+						"labels":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					},
+					"required": []string{"key"},
+				},
+				"session": map[string]any{"type": "string", "description": "Session whose launch work item to use when item is omitted (default: yours)"},
+				"kind":    map[string]any{"type": "string", "description": "feature, fix, docs, ... (default: from the item, else feature)"},
+				"slug":    map[string]any{"type": "string", "description": "Short English slug (default: from the item's title)"},
+			},
+		},
+	}}
 }
 
 // memoWriteAllowed authorizes the memo writers a session may reach: add_memo and update_memo.
@@ -2058,7 +2092,7 @@ var mcpStdioWriteTools = []map[string]any{
 	},
 	{
 		"name":        "list_models",
-		"description": "指定エージェントで現在選べるモデル一覧を返す。model 指定で create_session する前には必ず呼び、返った id を使うこと（一覧は利用者が「使わないモデル」で除外したものを除いてある — 記憶や過去の会話にあるモデル名を推測で渡さないこと。除外モデルを渡した create_session は拒否される）。claude は固定の最新ティア別名と、利用者がエージェント設定で登録した完全モデル ID を返す。Claude Code OAuth にはアカウント連動カタログがないため、登録モデルの可否は起動時に判定される。codex／opencode／agy／copilot／cursor／kiro は接続状態を反映したライブカタログ（copilot はプラン反映 — Free は Auto のみで空になる。cursor は effort をモデル id に畳んだアカウント連動カタログ。kiro は Free でも named 指定可・既定は auto。未指定は auto ルーティング）。lcpp はサインイン不要で、自前エンジンの目録に載っているモデルをそのまま返す（エンジンが無い配備では空になる）。muse はサインイン済みのアカウント連動カタログを返す（既定は「製品改善に使われうる」条項の付かない最新モデル）。利用者が terra のような略称で指定した場合も、一覧から対応する完全な id（例: gpt-5.6-terra）を選ぶ。opencode は同じモデルが 2 つの課金経路で並ぶことがある（opencode-go/… = Go サブスクの範囲内、opencode/… = Zen の従量課金）。同名が両方にある場合は先に並んでいる opencode-go/… を選ぶこと（一覧の並びは利用者の設定で整形済み）。利用者が Zen を明示した場合だけ opencode/… を使う。",
+		"description": "指定エージェントで現在選べるモデル一覧を返す。model 指定で create_session する前には必ず呼び、返った id を使うこと（一覧は利用者が「使わないモデル」で除外したものを除いてある — 記憶や過去の会話にあるモデル名を推測で渡さないこと。除外モデルを渡した create_session は拒否される）。claude は固定の最新ティア別名と、利用者がエージェント設定で登録した完全モデル ID を返す。Claude Code OAuth にはアカウント連動カタログがないため、登録モデルの可否は起動時に判定される。codex／opencode／agy／copilot／cursor／kiro は接続状態を反映したライブカタログ（copilot はプラン反映 — Free は Auto のみで空になる。cursor は effort をモデル id に畳んだアカウント連動カタログ。kiro は Free でも named 指定可・既定は auto。未指定は auto ルーティング）。lcpp はサインイン不要で、自前エンジンの目録に載っているモデルをそのまま返す（エンジンが無い配備では空になる）。muse はサインイン済みのアカウント連動カタログを返す（既定は「製品改善に使われうる」条項の付かない最新モデル）。利用者が terra のような略称で指定した場合も、一覧から対応する完全な id（例: gpt-5.6-terra）を選ぶ。opencode は同じモデルが 2 つの課金経路で並ぶことがある（opencode-go/… = Go サブスクの範囲内、opencode/… = Zen の従量課金）。同名が両方にある場合は先に並んでいる opencode-go/… を選ぶこと（一覧の並びは利用者の設定で整形済み）。利用者が Zen を明示した場合だけ opencode/… を使う。", // model-id-lint:allow an example id; it names no default.
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -2593,6 +2627,8 @@ func mcpStdioCall(req mcpReq) []byte {
 	switch p.Name {
 	case "get_image_studio", "set_image_draft", "run_image_trial", "add_image_knowledge":
 		return mcpStudioCall(req, p.Name, p.Args)
+	case mcpToolBranchName:
+		return mcpBranchName(req.ID, p.Args)
 	case mcpToolGenerateImage:
 		return mcpGenerateImage(req, imageGenArgs{
 			op: a.Op, provider: a.Provider, prompt: a.Prompt, size: a.Size,

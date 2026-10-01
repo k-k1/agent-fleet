@@ -1,0 +1,23 @@
+[
+  {"ok": true,  "rule": {"match": "*", "name": "{prefix}{key}"}},
+  {"ok": true,  "rule": {"match": "*", "base": "head"}},
+  {"ok": true,  "rule": {"match": "*", "base": "default"}},
+  {"ok": true,  "rule": {"match": "bitbucket.org/acme/*", "base": "develop"}},
+  {"ok": true,  "rule": {"match": "github.com/acme/web", "types": {"bugfix": {"prefix": "fix/", "base": "main", "from": ["Bug", "Defect"]}}}},
+  {"ok": true,  "rule": {"match": "*/*/*", "types": {"hotfix": {"prefix": ""}}}},
+  {"ok": true,  "rule": {"match": " * ", "base": "release/1.x"}},
+  {"ok": false, "rule": {"match": ""}},
+  {"ok": false, "rule": {"match": "github.com/a*/b"}},
+  {"ok": false, "rule": {"match": "github.com//b"}},
+  {"ok": false, "rule": {"match": "*", "base": "a..b"}},
+  {"ok": false, "rule": {"match": "*", "base": "-x"}},
+  {"ok": false, "rule": {"match": "*", "base": "@{-1}"}},
+  {"ok": false, "rule": {"match": "*", "base": "feature/"}},
+  {"ok": false, "rule": {"match": "*", "base": "a b"}},
+  {"ok": false, "rule": {"match": "*", "types": {"feat": {}}}},
+  {"ok": false, "rule": {"match": "*", "types": {"Feature": {}}}},
+  {"ok": false, "rule": {"match": "*", "types": {"bugfix": {"prefix": "-x/"}}}},
+  {"ok": false, "rule": {"match": "*", "types": {"bugfix": {"prefix": "fix//"}}}},
+  {"ok": false, "rule": {"match": "*", "types": {"bugfix": {"prefix": "fix~"}}}},
+  {"ok": false, "rule": {"match": "*", "types": {"hotfix": {"base": "x.lock"}}}}
+]

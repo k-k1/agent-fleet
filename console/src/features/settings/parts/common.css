@@ -644,6 +644,55 @@
   padding: 2px 9px;
 }
 
+/* a profile edited to a new name or portal: the Agent's badge would be stale (#1409) */
+.ssm-login-state.relogin {
+  color: var(--warn);
+  border-color: currentColor;
+}
+
+/* the form's inputs lock while its save is in flight; the fieldset itself draws nothing */
+.ssm-fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+/* row "Edit": the host row has no Log in to push it right, so it pushes itself */
+.ssm-edit {
+  font-size: 11.5px;
+  padding: 2px 9px;
+}
+
+.ssm-edit.push {
+  margin-left: auto;
+}
+
+/* what an edit changes outside the page (sign-in, ~/.aws/config, open sessions) */
+.ssm-edit-notes {
+  margin: 0;
+}
+
+.ssm-edit-notes p {
+  margin: 0 0 4px;
+}
+
+.ssm-edit-warn {
+  color: var(--warn);
+}
+
+/* a list GET that failed: the section keeps the last list that loaded */
+.ssm-load-err {
+  color: var(--warn);
+  font-size: 12px;
+  margin: 6px 0;
+}
+
+/* a host whose profile id no longer exists */
+.ssm-missing {
+  color: var(--warn);
+}
+
 /* profile row login state (#1028), beside the label */
 .ssm-login-state {
   font-size: 11px;

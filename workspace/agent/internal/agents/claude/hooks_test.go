@@ -199,6 +199,7 @@ func TestRepointStatusHookCmd(t *testing.T) {
 	}{
 		{"/tmp/af-agent session-status idle", want + " session-status idle", true},
 		{"/tmp/af-agent session-status working sid123 codex", want + " session-status working sid123 codex", true},
+		{"/tmp/af-agent session-push-notification", want + " session-push-notification", true},
 		{want + " session-status idle", "", false},           // already right
 		{live + " session-status idle", "", false},           // other path, still runnable
 		{"/tmp/notify.sh --loud", "", false},                 // not ours
@@ -209,5 +210,93 @@ func TestRepointStatusHookCmd(t *testing.T) {
 		if ok != c.ok || out != c.out {
 			t.Errorf("repointStatusHookCmd(%q) = (%q,%v) want (%q,%v)", c.cmd, out, ok, c.out, c.ok)
 		}
+	}
+}
+
+// pushEntries returns the PostToolUse entries on the PushNotification matcher, split
+// into ours (session-push-notification) and everyone else's.
+func pushEntries(t *testing.T, dir string) (ours, theirs int) {
+	t.Helper()
+	arr, _ := readHooks(t, dir)["PostToolUse"].([]any)
+	for _, e := range arr {
+		em, _ := e.(map[string]any)
+		if em["matcher"] != pushToolMatcher {
+			continue
+		}
+		if b, _ := json.Marshal(em["hooks"]); strings.Contains(string(b), PushHookSubcommand) {
+			ours++
+		} else {
+			theirs++
+		}
+	}
+	return ours, theirs
+}
+
+// PushNotification's local notification is only an OSC sequence, which is dropped for
+// claude panes; the PostToolUse forwarder is its one route to the notification center.
+func TestEnsureStatusHooksInstallsPushForwarderOnce(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+
+	EnsureStatusHooks()
+	EnsureStatusHooks()
+	if ours, _ := pushEntries(t, dir); ours != 1 {
+		t.Fatalf("PushNotification forwarder installed %d times, want 1", ours)
+	}
+	// The heartbeat is still the matcher-less entry next to it.
+	if !postToolUseHasAF(readHooks(t, dir)) {
+		t.Fatal("catch-all heartbeat missing next to the PushNotification forwarder")
+	}
+}
+
+// A user's own hook on the same matcher stays, and does not stand in for ours.
+func TestEnsureStatusHooksPushForwarderKeepsUserEntry(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	seed := map[string]any{"hooks": map[string]any{
+		"PostToolUse": []any{
+			map[string]any{"matcher": "PushNotification", "hooks": []any{map[string]any{"type": "command", "command": "/home/u/phone.sh"}}},
+		},
+	}}
+	b, _ := json.MarshalIndent(seed, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	EnsureStatusHooks()
+	EnsureStatusHooks()
+	if ours, theirs := pushEntries(t, dir); ours != 1 || theirs != 1 {
+		t.Fatalf("PushNotification entries: ours=%d theirs=%d, want 1 and 1", ours, theirs)
+	}
+}
+
+// Installing a missing heartbeat strips our session-status PostToolUse entries; the
+// forwarder must be there exactly once afterwards, neither dropped nor doubled.
+func TestEnsureStatusHooksPushForwarderSurvivesHeartbeatInstall(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	seed := map[string]any{"hooks": map[string]any{
+		"PostToolUse": []any{
+			map[string]any{"matcher": "PushNotification", "hooks": []any{map[string]any{"type": "command", "command": pushHookCmd()}}},
+		},
+	}}
+	b, _ := json.MarshalIndent(seed, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	EnsureStatusHooks()
+	if ours, _ := pushEntries(t, dir); ours != 1 {
+		t.Fatalf("PushNotification forwarder present %d times after the heartbeat install, want 1", ours)
+	}
+}
+
+// The forwarder must not be a session-status state: settings.json can point at an
+// older agent, whose session-status would persist any unknown word as the session's
+// status. A subcommand of its own is rejected by an older dispatcher instead.
+func TestPushHookIsNotASessionStatusState(t *testing.T) {
+	f := strings.Fields(pushHookCmd())
+	if len(f) != 2 || f[1] != PushHookSubcommand || f[1] == "session-status" {
+		t.Fatalf("pushHookCmd() = %q, want `<exe> %s` and nothing else", pushHookCmd(), PushHookSubcommand)
 	}
 }

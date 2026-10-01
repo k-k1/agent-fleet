@@ -75,6 +75,7 @@ var smallWindowClaudeRe = regexp.MustCompile(`haiku|claude-[123]|opus-4-[0125]|s
 func WindowGuess(model string, used int) int {
 	m := strings.ToLower(model)
 	switch {
+	// model-id-lint:allow a family match for the window guess, not a model choice.
 	case strings.Contains(m, "gpt-5"):
 		return 272_000
 	case smallWindowClaudeRe.MatchString(m):

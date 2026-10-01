@@ -86,3 +86,36 @@ func TestResolveOneShotEmptyFeatureUsesDefaultPath(t *testing.T) {
 		t.Fatalf("kind=%q source=%q, want codex/default for an untagged feature", kind, source)
 	}
 }
+
+// OneShotSettingsKey moves with every setting that changes which backend or model a feature's
+// one-shot runs on, and only with those: a cache of answers keyed on it must miss after a change.
+func TestOneShotSettingsKeyTracksSettings(t *testing.T) {
+	const f = "branch.suggest"
+	writeResolvePrefs(t, `{}`)
+	base := OneShotSettingsKey(f, OneShotShort)
+	if again := OneShotSettingsKey(f, OneShotShort); again != base {
+		t.Fatalf("the key is not stable: %q vs %q", base, again)
+	}
+	seen := map[string]string{base: "no prefs"}
+	for name, body := range map[string]string{
+		"agent pin":        `{"aiFeatureAgents":{"branch.suggest":"codex"}}`,
+		"feature model":    `{"aiFeatureModels":{"branch.suggest":{"claude":"sonnet"}}}`,
+		"short-tier model": `{"aiShortModels":{"claude":"opus"}}`,
+	} {
+		writeResolvePrefs(t, body)
+		k := OneShotSettingsKey(f, OneShotShort)
+		if prev, dup := seen[k]; dup {
+			t.Errorf("%s gives the same key as %s", name, prev)
+		}
+		seen[k] = name
+	}
+	writeResolvePrefs(t, `{"aiFeatureAgents":{"title.session":"codex"}}`)
+	if k := OneShotSettingsKey(f, OneShotShort); k != base {
+		t.Errorf("another feature's pin moved this feature's key")
+	}
+	writeResolvePrefs(t, `{}`)
+	t.Setenv("AF_TITLE_MODEL_CODEX", "gpt-x")
+	if k := OneShotSettingsKey(f, OneShotShort); k == base {
+		t.Error("the operator's env model did not move the key")
+	}
+}

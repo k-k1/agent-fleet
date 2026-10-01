@@ -20,6 +20,7 @@ import {
   sessionPlanRespond,
   sessionPlanFile,
   sessionSettings,
+  displayURL,
   downloadURL,
 } from "../../core/api/client.ts";
 import type {
@@ -72,6 +73,7 @@ import { useReplySuggest } from "./parts/useReplySuggest.ts";
 import { JumpPills } from "./parts/JumpPills.tsx";
 import { AttachChips } from "./parts/AttachChips.tsx";
 import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
+import { previewEdge } from "../viewer/previewEdge.ts";
 import { HistoryNav, HistorySearchButton } from "./parts/HistoryNav.tsx";
 import { HistorySearchBar } from "./parts/HistorySearchBar.tsx";
 import { useHistorySearch } from "./parts/useHistorySearch.ts";
@@ -1894,6 +1896,8 @@ export function MirrorView({
     fileURL: downloadURL,
     // 512 is twice the card's 240 px cap, so it still looks right on a HiDPI screen.
     thumbURL: (p: string) => downloadURL(p, 512),
+    // Read at the click, so the step follows the window as it is when somebody enlarges.
+    previewURL: (p: string) => displayURL(p, previewEdge()),
     openFile,
     openImage: (url, path) => setLightbox({ src: url, path }),
     openDiff,
@@ -1919,6 +1923,7 @@ export function MirrorView({
       loadPastedImage: (name) => actsRef.current.loadPastedImage!(name),
       fileURL: (p) => actsRef.current.fileURL!(p),
       thumbURL: (p) => actsRef.current.thumbURL!(p),
+      previewURL: (p) => actsRef.current.previewURL!(p),
       openFile: (p, line, column) => actsRef.current.openFile!(p, line, column),
       openImage: (url, path) => actsRef.current.openImage!(url, path),
       openDiff: (p) => actsRef.current.openDiff!(p),
@@ -2522,7 +2527,7 @@ export function MirrorView({
           <ImageLightbox
             src={lightbox.src}
             // The card's thumbnail is on screen already, so the enlarged view has something
-            // to show while the original (megabytes) downloads. A pasted image has no path
+            // to show while the screen-sized copy arrives. A pasted image has no path
             // and no thumbnail — it opens as it always did.
             placeholder={lightbox.path ? downloadURL(lightbox.path, 512) : undefined}
             // A pasted image has no path, so it gets no properties toggle either — the

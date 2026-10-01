@@ -177,6 +177,7 @@ export const imggen = {
   "imggen.props_family": "系統",
   "imggen.props_seed": "seed",
   "imggen.props_size": "大きさ",
+  "imggen.props_dims": "画像サイズ",
   "imggen.props_steps": "steps",
   "imggen.props_cfg": "cfg",
   "imggen.props_sampler": "sampler",

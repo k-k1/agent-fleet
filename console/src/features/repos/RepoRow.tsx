@@ -27,7 +27,7 @@ import { useMySharesStore } from "../sharing/store.ts";
 import { openRepoScm } from "../scm/open.ts";
 import { LaunchModal } from "./LaunchModal.tsx";
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
-import { canFastForwardFromParent, parentSyncLabel, parentSyncTitle } from "./parentSync.ts";
+import { canFastForwardFromParent, parentFFMenuLabel, parentSyncLabel, parentSyncTitle } from "./parentSync.ts";
 import type { Repo } from "./store.ts";
 import { useImagegenAvailable } from "../imagegen/available.ts";
 
@@ -65,7 +65,7 @@ export interface RepoRowProps {
   onOpenFolder?: () => void;
   onOpenChanges?: () => void;
   onFF?: () => void;
-  /** Advances this WT to the parent working copy's HEAD when it is a strict FF. */
+  /** Advances this WT to the parent branch's upstream (else the parent's HEAD) when it is a strict FF. */
   onParentFF?: () => void;
   onDelete?: () => void;
   /** Archive every stopped session (right-click menu). Only sessions directly under this
@@ -434,7 +434,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
             {!isSvn && onParentFF && canFastForwardFromParent(r) && (
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onParentFF(); }}>
-                  <Icon name="arrow-up" /> {tr("repo.ff_parent")}
+                  <Icon name="arrow-up" /> {parentFFMenuLabel(r)}
                 </button>
               </li>
             )}

@@ -2,8 +2,9 @@ package store
 
 import (
 	"context"
-	"os"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
 )
 
 // TestPostgresDeleteCascade runs the two irreversible deletes against a REAL Postgres.
@@ -16,8 +17,8 @@ import (
 //
 // Skipped unless AF_TEST_DATABASE_URL is set — see TestPostgresStore for the harness.
 func TestPostgresDeleteCascade(t *testing.T) {
-	url := os.Getenv("AF_TEST_DATABASE_URL")
-	if url == "" {
+	url, ok := pgtest.Schema(t)
+	if !ok {
 		t.Skip("set AF_TEST_DATABASE_URL to run the Postgres cascade test")
 	}
 	ctx := context.Background()
@@ -26,9 +27,6 @@ func TestPostgresDeleteCascade(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer st.Close()
-	if _, err := st.db.ExecContext(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
-		t.Fatalf("reset schema: %v", err)
-	}
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

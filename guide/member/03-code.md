@@ -94,9 +94,10 @@ The **▾** to the right of "Launch" lets you pick a kind (claude / codex / curs
 Rows also show status indicators. Learning to read them helps you catch things before pushing.
 
 - **Uncommitted** — there are changes that have not been committed.
-- Worktree **= parent** — same commit as the parent working copy.
+- On a worktree's chip, "parent" is the upstream of the parent working copy's branch (e.g. `origin/develop`). A PR merged on GitHub shows up after the next fetch (automatic, every 10 minutes) without fast-forwarding the parent working copy. With no upstream, the chip compares with the parent working copy's HEAD. The chip's tooltip names the target. Commits the parent working copy has not pushed are not compared and are not brought in by the fast-forward item (they reach the comparison target only once pushed).
+- Worktree **= parent** — same commit as the parent.
 - Worktree **unmerged N** — there are N commits unique to the worktree not yet in the parent.
-- Worktree **parent+N, FF ok** — the worktree's HEAD is contained in the parent, and **the parent is N commits ahead**. **"Fast-forward from the parent"** in the right-click menu brings those changes straight into this worktree (no merge commit).
+- Worktree **parent+N, FF ok** — the worktree's HEAD is contained in the parent, and **the parent is N commits ahead**. **"Fast-forward from origin/develop"** in the right-click menu (**"Fast-forward from parent"** without an upstream) brings those changes straight into this worktree (no merge commit).
 - Worktree **diverged N↕M, no FF** — both the worktree and the parent have unique commits; a merge or rebase is needed.
 - Worktree **n/a** — the relationship cannot be determined, e.g. detached HEAD or a repository with no commits.
 - **↑N** (ahead) — N commits ahead of origin (not pushed).
@@ -119,7 +120,7 @@ Right-clicking a repository or worktree row shows the following actions. Some it
 depending on state and location.
 
 - **Open commit graph** / **Open the folder** / **Commit changes**
-- **Switch branch** / **Copy the branch name** / **Fast-Forward** (on a worktree, **"Fast-forward from the parent"**)
+- **Switch branch** / **Copy the branch name** / **Fast-Forward** (on a worktree, **"Fast-forward from origin/develop"** or similar)
 - **Initialize Git Flow** (a git repository's base copy only) — see [below](#initialize-git-flow)
 - **Project settings** — the MCP definitions committed in that repository, with per-agent status and warnings ([12](12-settings.md#mcp-servers))
 - **Share…** — share this working copy's (project's) sessions with another member ([02](02-sessions.md#sharing-a-conversation-shared-sessions))

@@ -401,7 +401,31 @@ What each kind can emit, read from its binary (2026-09-27; no kind was captured 
 | copilot, cursor, kiro | none found | — |
 | shell | whatever the user runs | The main beneficiary. |
 
-Follow-ups: #1069 (claude's `PushNotification` tool, which only notifies over OSC).
+**claude's `PushNotification` tool comes through a hook instead.** The tool (2.1.286, behind
+the `tengu_kairos_push_notifications` flag, off by default) raises its local notification only
+through `preferredNotifChannel` — an OSC sequence, dropped above — and claude's Notification hook
+does not fire for it. `EnsureStatusHooks` therefore adds a `PostToolUse` entry on matcher
+`PushNotification` running `workspace-agent session-push-notification`, which puts
+`tool_input.message` in the outbox
+as a `terminal-notification` with `proto: "claude-push"` (`sessionx.recordPushNotification`).
+The same approach as cmux.
+
+- **Skipped** when `tool_response.disabledReason` is `user_present` or `config_off`: claude
+  returns before notifying anything. `no_transport` means no *mobile* push only — the local
+  notification went out — so it is forwarded.
+- **Delivered once.** The OSC route drops claude, so the two routes never both deliver; a hook
+  that fires twice for one call, even in parallel processes, is absorbed by `notice.PutOnce` keyed
+  on `tool_use_id` (check, Put and marker run under a file lock, and the marker is written
+  after the Put, so a process killed midway leaves a retry, not a lost event).
+- **A subcommand of its own, not a `session-status` state.** `settings.json` can point at an
+  older agent (`paths.ConfigExePath` prefers the installed binary), and an older `session-status`
+  persists any unknown word as the session's state — measured: `state:"push"`. An older
+  dispatcher rejects the unknown subcommand with exit 2 and writes nothing.
+- **Inert on an unexpected payload**: no message, no event. The payload shape (`tool_input`
+  `{message, status}`, `tool_response` `{message, pushSent, localSent, disabledReason, sentAt}`)
+  was read from the binary, not captured from a live call.
+- It never changes the session status; the catch-all `PostToolUse` heartbeat fires for the same
+  tool as for any other.
 
 ## 4.5 Chat and assistants (a headless CLI)
 
@@ -438,7 +462,9 @@ Follow-ups: #1069 (claude's `PushNotification` tool, which only notifies over OS
   - It always advertises the self-report tools: `af_report`, `af_stop_after_turn` and
     `propose_session_handoff`.
   - It also always advertises a small observation set: session status and usage, and
-    the memo tools. The seven Chromium attach tools come with `--chromium-attach`.
+    the memo tools, and `branch_name`, which asks the branch-name resolver
+    (`POST /repos/{name}/branch-name`) about the caller's own working copy unless told
+    another. The seven Chromium attach tools come with `--chromium-attach`.
   - The user's preferences add `--peer-messaging`, `--image-gen` and `--fleet-spawn`
     (`builtinRunArgsFor`).
   - Anything not advertised is refused on call too (`mcpAdvertised`).

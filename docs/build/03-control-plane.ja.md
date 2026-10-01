@@ -163,7 +163,7 @@ Workspace を起こさない。
   **Agent は暗号方式に無関心で、鍵の出自を知らない。**
 - **ブリッジトークン**も同時に注入する（`workspaceExtraEnv`）: 用途ごとに membership 単位のトークンが 1 つ —
   `AF_INTERNAL_GIT_TOKEN`・`AF_MEMO_TOKEN`・`AF_SCHEDULE_TOKEN`・`AF_MCP_TOKEN`・`AF_DOCS_TOKEN`・
-  `AF_ENGINE_ISSUE_TOKEN`・`AF_GIT_OAUTH_TOKEN`・`AF_AWS_PROFILES_TOKEN`、それに `AF_CP_BASE_URL`。
+  `AF_ENGINE_ISSUE_TOKEN`・`AF_GIT_OAUTH_TOKEN`・`AF_AWS_PROFILES_TOKEN`・`AF_BRANCH_RULES_TOKEN`、それに `AF_CP_BASE_URL`。
   どれも決定的（master 鍵から導いた鍵、無ければ `WS_DATA` に置いた乱数の鍵による membership id の
   HMAC）なので、起動のたびに注入し直しても何も変わらない。**それぞれ自分のエンドポイントしか開けない**:
   memo のトークンが漏れても、テナントの MCP の秘密は読めない。`PUBLIC_BASE_URL` が無ければどれも

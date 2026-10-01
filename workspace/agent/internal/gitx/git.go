@@ -94,8 +94,9 @@ type Repo struct {
 	// whose mtime churns) and when the stat fails.
 	CreatedAt string `json:"createdAt,omitempty"`
 	// Integration describes the linked worktree's commit relationship to the
-	// parent working copy's current HEAD. It is deliberately separate from
-	// Ahead/Behind above, which describe the branch's configured upstream.
+	// upstream of the parent working copy's branch (parent HEAD when it has none).
+	// It is deliberately separate from Ahead/Behind above, which describe this
+	// branch's own upstream.
 	Integration *RepoIntegration `json:"integration,omitempty"`
 	// Locked marks the working copy as pinned against deletion (docs/log/45, locks.go):
 	// DELETE /repos/{name} is refused even with force=true, and the automatic
@@ -177,10 +178,16 @@ func ReadWorkingCopyID(path string) string {
 }
 
 // RepoIntegration is a local-only comparison; it never fetches. TargetUnique is
-// the number of commits reachable only from the parent HEAD, while WorktreeUnique
-// is the number reachable only from the linked worktree HEAD.
+// the number of commits reachable only from the target, while WorktreeUnique is
+// the number reachable only from the linked worktree HEAD.
+//
+// The target is the upstream of the parent's branch (e.g. origin/develop) when it
+// resolves, because a merged PR advances origin while the parent clone stays put
+// until someone fast-forwards it — and the policy is never to fast-forward the
+// parent. TargetUpstream says which one was used; TargetBranch is then its name.
 type RepoIntegration struct {
 	TargetBranch   string `json:"targetBranch,omitempty"`
+	TargetUpstream bool   `json:"targetUpstream,omitempty"`
 	TargetUnique   int    `json:"targetUnique"`
 	WorktreeUnique int    `json:"worktreeUnique"`
 	Relation       string `json:"relation"` // same | contained | unmerged | diverged | unknown
@@ -330,34 +337,63 @@ func GitStatus(dir string) (RepoStatus, error) {
 	return s, nil
 }
 
-// GitWorktreeIntegration compares two worktree-local HEADs by object ID. A plain
-// "HEAD...HEAD" invocation from one directory would resolve both names to that
-// directory's HEAD, because linked worktrees share refs but have separate HEADs.
+// worktreeIntegrationTarget resolves the commit a linked worktree is compared
+// against and fast-forwarded to: the upstream of the parent's branch, else the
+// parent's HEAD. Both are resolved in parentDir and by object ID: linked worktrees
+// share refs but have separate HEADs, so "HEAD" or "@{upstream}" evaluated in the
+// worktree would name the worktree's own.
+//
+// Only a remote-tracking upstream counts. A branch tracking a local branch
+// (branch.<name>.remote = ".") would otherwise be labelled with a bare branch name
+// that reads exactly like the parent-HEAD fallback. Commits the parent has not
+// pushed are deliberately outside the comparison: they are not in the base yet.
+func worktreeIntegrationTarget(parentDir string) (oid, upstream string, err error) {
+	if ref, err := Run(parentDir, "rev-parse", "--symbolic-full-name", "@{upstream}"); err == nil && strings.HasPrefix(ref, "refs/remotes/") {
+		if oid, err := Run(parentDir, "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err == nil && oid != "" {
+			return oid, strings.TrimPrefix(ref, "refs/remotes/"), nil
+		}
+	}
+	oid, err = Run(parentDir, "rev-parse", "--verify", "HEAD")
+	return oid, "", err
+}
+
+// GitWorktreeIntegration compares the worktree's HEAD with worktreeIntegrationTarget.
+// targetBranch labels the parent-HEAD fallback; an upstream labels itself.
 func GitWorktreeIntegration(parentDir, worktreeDir, targetBranch string) RepoIntegration {
+	r, _ := worktreeIntegration(parentDir, worktreeDir, targetBranch)
+	return r
+}
+
+// worktreeIntegration also returns the target's object ID, so a fast-forward goes
+// exactly where the relation was measured even if a fetch moves the ref meanwhile.
+func worktreeIntegration(parentDir, worktreeDir, targetBranch string) (RepoIntegration, string) {
 	r := RepoIntegration{TargetBranch: targetBranch, Relation: "unknown"}
-	parentHead, err := Run(parentDir, "rev-parse", "--verify", "HEAD")
+	target, upstream, err := worktreeIntegrationTarget(parentDir)
 	if err != nil {
-		return r
+		return r, ""
+	}
+	if upstream != "" {
+		r.TargetBranch, r.TargetUpstream = upstream, true
 	}
 	worktreeHead, err := Run(worktreeDir, "rev-parse", "--verify", "HEAD")
 	if err != nil {
-		return r
+		return r, ""
 	}
-	out, err := Run(worktreeDir, "rev-list", "--left-right", "--count", parentHead+"..."+worktreeHead)
+	out, err := Run(worktreeDir, "rev-list", "--left-right", "--count", target+"..."+worktreeHead)
 	if err != nil {
-		return r
+		return r, ""
 	}
 	fields := strings.Fields(out)
 	if len(fields) != 2 {
-		return r
+		return r, ""
 	}
 	r.TargetUnique, err = strconv.Atoi(fields[0])
 	if err != nil {
-		return r
+		return r, ""
 	}
 	r.WorktreeUnique, err = strconv.Atoi(fields[1])
 	if err != nil {
-		return r
+		return r, ""
 	}
 	switch {
 	case r.TargetUnique == 0 && r.WorktreeUnique == 0:
@@ -369,7 +405,7 @@ func GitWorktreeIntegration(parentDir, worktreeDir, targetBranch string) RepoInt
 	default:
 		r.Relation = "diverged"
 	}
-	return r
+	return r, target
 }
 
 func HandleListRepos(w http.ResponseWriter, r *http.Request) {
@@ -1493,18 +1529,21 @@ func HandleRepoFF(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, st)
 }
 
-// fastForwardWorktreeFromParent brings a linked worktree up to its parent's HEAD.
-// It accepts only a strict ancestor relationship, so it can never create a merge
-// commit or resolve a divergence implicitly.
+// fastForwardWorktreeFromParent brings a linked worktree up to the same target its
+// sync chip compares against (worktreeIntegrationTarget), so the chip's "can
+// fast-forward" and this action never disagree. It accepts only a strict ancestor
+// relationship, so it can never create a merge commit or resolve a divergence
+// implicitly.
 func fastForwardWorktreeFromParent(parent, dir string) error {
-	if integration := GitWorktreeIntegration(parent, dir, ""); integration.Relation != "contained" {
-		return fmt.Errorf("the worktree is not strictly behind its parent")
+	integration, target := worktreeIntegration(parent, dir, "")
+	if integration.Relation != "contained" {
+		name := "the parent HEAD"
+		if integration.TargetUpstream {
+			name = integration.TargetBranch
+		}
+		return fmt.Errorf("the worktree is not strictly behind %s (relation: %s)", name, integration.Relation)
 	}
-	parentHead, err := Run(parent, "rev-parse", "--verify", "HEAD")
-	if err != nil {
-		return err
-	}
-	if out, err := Combined(dir, "merge", "--ff-only", strings.TrimSpace(parentHead)); err != nil {
+	if out, err := Combined(dir, "merge", "--ff-only", target); err != nil {
 		return fmt.Errorf("%v: %s", err, out)
 	}
 	gitSubmodulesUpdate(dir)
@@ -1512,7 +1551,7 @@ func fastForwardWorktreeFromParent(parent, dir string) error {
 }
 
 // HandleRepoParentFF is the local-only counterpart to HandleRepoFF: it brings a
-// linked worktree up to its parent, without fetching or consulting origin. The
+// linked worktree up to its parent's upstream (or parent HEAD), without fetching. The
 // relationship is re-checked server-side so an old Console row stays safe.
 func HandleRepoParentFF(w http.ResponseWriter, r *http.Request) {
 	dir, ok := RepoDirFromPath(w, r)

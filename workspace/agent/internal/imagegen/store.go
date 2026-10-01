@@ -21,9 +21,10 @@ import (
 )
 
 // WarmThumb, when the Agent has installed it, is called with the path of every image this
-// package writes, so the preview a gallery is about to ask for is already in the cache.
-// Nil in tests and in any build that has no thumbnail cache: warming is an optimisation, and
-// nothing here waits for it or reports on it.
+// package writes, so the thumbnail and preview somebody is about to ask for are already in the
+// cache. It must return at once (the Agent's only queues), because it runs on the generation's
+// own path. Nil in tests and in any build that has no thumbnail cache: warming is an
+// optimisation, and nothing here waits for it or reports on it.
 var WarmThumb func(path string)
 
 // GeneratedDir is one session's generated-image directory.
@@ -103,7 +104,7 @@ func storeImagesAt(dir string, images []Image, props *ImageProps) ([]StoredFile,
 		// images (N)" points straight at it. The seam is the Agent's, like EngineLookup:
 		// this package owns "make pixels", not "know how a preview is scaled".
 		if WarmThumb != nil {
-			go WarmThumb(path)
+			WarmThumb(path)
 		}
 		if props != nil {
 			one := *props

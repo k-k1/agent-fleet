@@ -228,6 +228,9 @@ type NameResult struct {
 	Kind      string
 	Warnings  []Warning
 	Sources   map[string]string
+	// SlugUsed is true when {slug} reaches the name, through the template or the prefix-only
+	// fallback. A caller fetching a better slug for the title has no reason to when it is false.
+	SlugUsed bool
 }
 
 // Name renders the branch name and picks the base for req.
@@ -250,12 +253,14 @@ func Name(layers []Layer, id string, req Request) NameResult {
 		vals["slug"] = TitleSlug(s)
 	}
 	raw, unknown := render(tmpl, vals)
+	res.SlugUsed = strings.Contains(tmpl, "{slug}")
 	for _, u := range unknown {
 		res.Warnings = append(res.Warnings, Warning{"unknown_placeholder", "placeholder {" + u + "} is not known; rendered empty"})
 	}
 	// Checked on the raw rendering: sanitising drops the empty last segment and would turn
 	// `feature/` into a bare `feature` that no longer looks like "only the prefix".
 	if stripSep(raw) == stripSep(prefix) {
+		res.SlugUsed = true
 		if vals["slug"] == "" {
 			res.NameEmpty = true
 			return res

@@ -195,12 +195,22 @@ type jobQueue struct {
 	// the process — but a test that installs a fresh one would otherwise leave a goroutine per
 	// provider blocked on a wake channel nobody will ever signal again.
 	closed chan struct{}
+	// stop is the context every Generate runs under, cancelled only by Close, so it is
+	// context.Background in effect for the production queue. workers counts the running worker
+	// goroutines so Close can wait for them: a worker still inside run reads package variables
+	// (Providers, the usage ledger's paths) that a test restores in its cleanup.
+	stop    context.Context
+	cancel  context.CancelFunc
+	workers sync.WaitGroup
 }
 
 var jobs = newJobQueue()
 
 func newJobQueue() *jobQueue {
+	stop, cancel := context.WithCancel(context.Background())
 	return &jobQueue{
+		stop:    stop,
+		cancel:  cancel,
 		running: map[string]*jobRec{},
 		byID:    map[string]*jobRec{},
 		groups:  map[string]*groupRec{},
@@ -210,15 +220,19 @@ func newJobQueue() *jobQueue {
 	}
 }
 
-// Close stops this queue's workers. Test-only, and the reason is stated on the field.
+// Close stops this queue's workers and returns once none is left: a running Generate has its
+// context cancelled, and the worker finishes that job before it exits. Test-only, and the
+// reason is stated on the field. Safe to call more than once.
 func (q *jobQueue) Close() {
 	q.mu.Lock()
-	defer q.mu.Unlock()
 	select {
 	case <-q.closed:
 	default:
 		close(q.closed)
 	}
+	q.mu.Unlock()
+	q.cancel()
+	q.workers.Wait()
 }
 
 // jobsNow is the clock, a var so a test can pin it. Everything that reaches the wire goes
@@ -420,9 +434,20 @@ func (q *jobQueue) positionLocked(id string) int {
 func (q *jobQueue) signalLocked(provider string) {
 	ch, ok := q.wake[provider]
 	if !ok {
+		select {
+		case <-q.closed:
+			// No worker after Close: Close's Wait may already be running, and an Add then
+			// would start one it never waits for.
+			return
+		default:
+		}
 		ch = make(chan struct{}, 1)
 		q.wake[provider] = ch
-		go q.work(provider, ch)
+		q.workers.Add(1)
+		go func() {
+			defer q.workers.Done()
+			q.work(provider, ch)
+		}()
 	}
 	select {
 	case ch <- struct{}{}:
@@ -432,6 +457,11 @@ func (q *jobQueue) signalLocked(provider string) {
 
 func (q *jobQueue) work(provider string, wake <-chan struct{}) {
 	for {
+		select {
+		case <-q.closed:
+			return
+		default:
+		}
 		j := q.take(provider)
 		if j == nil {
 			select {
@@ -513,7 +543,7 @@ func (q *jobQueue) run(j *jobRec) {
 	req.OnUpstream = func(id string) { q.setUpstream(j, id) }
 
 	started := jobsNow()
-	res, err := prov.Generate(context.Background(), req)
+	res, err := prov.Generate(q.stop, req)
 	ok := err == nil && len(res.Images) > 0
 	// The ledger row is written on every path, including the failed one: an attempt that spent
 	// GPU time and produced nothing still consumed what the deployment pays for (ADR 0029 §3).

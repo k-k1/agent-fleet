@@ -539,7 +539,11 @@ func withStubProvider(t *testing.T, ps ...Provider) {
 	Providers = func() []Provider { return ps }
 	providerOrder = order
 	ProviderOrderPref = nil
-	t.Cleanup(func() { Providers, providerOrder, ProviderOrderPref = oldProviders, oldOrder, oldPref })
+	t.Cleanup(func() {
+		// A job worker reads Providers through providerByID; it has to be gone first.
+		stopTestJobWorkers()
+		Providers, providerOrder, ProviderOrderPref = oldProviders, oldOrder, oldPref
+	})
 }
 
 // The case the whole ordering exists for: the first provider says it is ready and then fails

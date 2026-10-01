@@ -478,7 +478,10 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 			// AWS profiles bridge (issue #998): the agent pulls the member's SSO profiles
 			// into ~/.aws/config. Its own credential; a leak reads that non-secret list
 			// and nothing else.
-			"AF_AWS_PROFILES_TOKEN="+mintAWSProfilesToken(awsProfilesSignKey(m.tokenSignMaster()), ws.MembershipID))
+			"AF_AWS_PROFILES_TOKEN="+mintAWSProfilesToken(awsProfilesSignKey(m.tokenSignMaster()), ws.MembershipID),
+			// Branch rules bridge (ADR 0103 decision 10): the agent polls its tenant's branch
+			// naming rules. Its own credential; a leak reads those rules and nothing else.
+			"AF_BRANCH_RULES_TOKEN="+mintBranchRulesToken(branchRulesSignKey(m.tokenSignMaster()), ws.MembershipID))
 	}
 	return env
 }

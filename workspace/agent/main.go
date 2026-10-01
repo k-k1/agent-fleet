@@ -170,6 +170,9 @@ func serve() {
 	// `aws --profile <name>`, an SDK or a build tool can select them (issue #998).
 	// Backgrounded and fail-open like the MCP pull.
 	awsx.StartSync()
+	// Pull the tenant's branch naming rules (ADR 0103 decision 10). Backgrounded and
+	// fail-open like the MCP pull: an unreachable CP keeps the last copy.
+	startBranchRulesTenantSync()
 	awsx.LoginAWSBin = ensureAWSCLI
 	startTerminalHistoryJanitor()
 	// Route a managed driver's turn completion (it has no hooks) into the same

@@ -124,17 +124,38 @@ func thumbTranscodable(name string) bool {
 // type. ok=false means "serve the original" and is the answer to every problem here —
 // there is no error path a caller has to render.
 //
+// `ident` names the file in the cache key and must be its absolute path, root joined to relative: the
+// warm-up reaches files by that spelling, and a key spelled any other way is an entry no
+// request ever reads.
+//
 // src is left with its offset wherever the decode attempt stopped; a caller that falls
 // back needs no rewind, because http.ServeContent seeks for the size and back again.
-func thumbnail(src io.ReadSeeker, display string, size int64, modTime time.Time, edge int, mode thumbMode) (out []byte, contentType string, ok bool) {
-	if edge == 0 || !thumbDecodable(display) || size < thumbMinSourceBytes {
+func thumbnail(src io.ReadSeeker, ident string, size int64, modTime time.Time, edge int, mode thumbMode) (out []byte, contentType string, ok bool) {
+	if edge == 0 || !thumbDecodable(ident) || size < thumbMinSourceBytes {
 		return nil, "", false
 	}
 	// Keyed on the whole path, not the base name: two `shot.png` in different directories
 	// with the same size and mtime are not far-fetched among generated images, and the
 	// cache would hand one card the other's picture. The MODE is in the key too: the same
 	// file at the same edge answers differently for a card and for a lightbox.
-	key := thumbCacheKey(display, size, modTime, edge, mode)
+	//
+	// A card's entry is keyed on the edge, so a cache hit costs no read of the file at all.
+	// A preview's is keyed on the FACTOR the edge comes to, read from the header first: the
+	// lightbox asks for 1024, 1536 or 2048 depending on the screen, and for the pictures this
+	// exists for (832x1216) all three are the same factor-1 bytes. Keyed on the edge, each
+	// screen size would pay its own decode, and one warm-up could only ever cover one of them.
+	var cfg image.Config
+	key := thumbCacheKey(ident, size, modTime, edge, mode)
+	if mode == modePreview {
+		var err error
+		if _, err = src.Seek(0, io.SeekStart); err != nil {
+			return nil, "", false
+		}
+		if cfg, _, err = image.DecodeConfig(src); err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
+			return nil, "", false
+		}
+		key = thumbCacheKey(ident, size, modTime, previewFactor(longEdge(cfg.Width, cfg.Height), edge), mode)
+	}
 	if cached, ct, ok := readThumbCache(key); ok {
 		return cached, ct, true
 	}
@@ -142,12 +163,14 @@ func thumbnail(src io.ReadSeeker, display string, size int64, modTime time.Time,
 	thumbSem <- struct{}{}
 	defer func() { <-thumbSem }()
 
-	if _, err := src.Seek(0, io.SeekStart); err != nil {
-		return nil, "", false
-	}
-	cfg, _, err := image.DecodeConfig(src)
-	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
-		return nil, "", false
+	if mode != modePreview {
+		if _, err := src.Seek(0, io.SeekStart); err != nil {
+			return nil, "", false
+		}
+		var err error
+		if cfg, _, err = image.DecodeConfig(src); err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
+			return nil, "", false
+		}
 	}
 	if int64(cfg.Width)*int64(cfg.Height) > thumbMaxPixels {
 		return nil, "", false
@@ -157,21 +180,13 @@ func thumbnail(src io.ReadSeeker, display string, size int64, modTime time.Time,
 	long := longEdge(cfg.Width, cfg.Height)
 	factor := long / edge
 	if mode == modePreview {
-		// Rounded rather than truncated, which matters at both ends of preview's range: a
-		// 4000 px picture asked for at 2048 becomes 2000 (one step under the target) instead
-		// of staying 4000 and costing a megabyte, and an 1216 px one asked for at 1024 keeps
-		// its own size instead of being halved to 608. A preview may overshoot the asked edge
-		// by less than half a step; a card may not, which is why `thumb` still truncates.
-		factor = (long + edge/2) / edge
-		if factor < 1 {
-			factor = 1
-		}
+		factor = previewFactor(long, edge)
 	}
 	if factor < 2 {
 		// Re-encoding at the source's own size only pays for a picture that is opaque (a
 		// transparent one has to stay PNG, and a PNG of the same pixels saves nothing) and
 		// not already a JPEG (that trade is a second round of loss for a few KB).
-		if mode != modePreview || !thumbTranscodable(display) {
+		if mode != modePreview || !thumbTranscodable(ident) {
 			return nil, "", false
 		}
 		factor = 1
@@ -215,6 +230,18 @@ func thumbnail(src io.ReadSeeker, display string, size int64, modTime time.Time,
 	}
 	writeThumbCache(key, contentType, buf.Bytes())
 	return buf.Bytes(), contentType, true
+}
+
+// previewFactor is `preview`'s downscale factor: rounded rather than truncated, which matters
+// at both ends of preview's range. A 4000 px picture asked for at 2048 becomes 2000 (one step
+// under the target) instead of staying 4000 and costing a megabyte, and an 1216 px one asked
+// for at 1024 keeps its own size instead of being halved to 608. A preview may overshoot the
+// asked edge by less than half a step; a card may not, which is why `thumb` still truncates.
+func previewFactor(long, edge int) int {
+	if f := (long + edge/2) / edge; f > 1 {
+		return f
+	}
+	return 1
 }
 
 func longEdge(w, h int) int {
@@ -355,8 +382,10 @@ func pathWithin(p, dir string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-func thumbCacheKey(display string, size int64, modTime time.Time, edge int, mode thumbMode) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%d\x00%d\x00%d", display, size, modTime.UnixNano(), edge, mode)))
+// thumbCacheKey names one cache entry. scale is the asked edge for modeDownscale and the
+// downscale factor for modePreview (see thumbnail).
+func thumbCacheKey(ident string, size int64, modTime time.Time, scale int, mode thumbMode) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%d\x00%d\x00%d", ident, size, modTime.UnixNano(), scale, mode)))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -569,4 +598,117 @@ func warmThumbDir(full string, edge int) {
 	}
 	close(work)
 	wg.Wait()
+}
+
+// --- warming a picture that was just generated ----------------------------------------
+//
+// imagegen hands over every picture it writes (imagegen.WarmThumb, wired in engines.go), and
+// the two surfaces that open a new picture next are the card (`thumb`, warmCardEdges) and the lightbox
+// (`preview`). Both are filled here, off the generation's path: the hand-over only queues.
+//
+// The queue is bounded and drained by at most warmThumbWorkers goroutines that exit when it is
+// empty. A burst of pictures must not become a goroutine and a decode each — an unguarded
+// fan-out of this shape once spawned ~490 processes on this host — and a picture that does not
+// fit is simply not warmed: its first look pays the decode, as it did before warming existed.
+
+// previewSteps are the edges the Console's lightbox asks for (console/src/features/viewer/
+// previewEdge.ts). A preview is cached per factor, so for most pictures these collapse into a
+// single decode.
+var previewSteps = []int{1024, 1536, 2048}
+
+// warmCardEdges are the edges card surfaces ask for: 512 is the mirror's, the studio's, and
+// the gallery's medium tile on a high-DPI screen and large tile anywhere; 256 is the gallery's
+// medium tile on a 1x screen and its small tile anywhere (console gallery.ts, tileEdge). The
+// cache is keyed on the edge, so warming only 512 left the gallery's default tile on an
+// ordinary monitor decoding every new picture cold. The second edge is one more background
+// decode per picture (~40 ms on the two warm workers), not one more on anyone's wait.
+var warmCardEdges = []int{512, 256}
+
+// genWarmQueueCap bounds what may wait. One generation writes at most a handful of pictures;
+// 32 is several bursts deep and still only seconds of decode on two workers.
+const genWarmQueueCap = 32
+
+var genWarm = struct {
+	mu      sync.Mutex
+	pending []string
+	queued  map[string]bool // pending or being worked on: a second hand-over is a no-op
+	running int
+}{queued: map[string]bool{}}
+
+// genWarmWork is what a worker does with one path; a seam so a test can count and block it.
+var genWarmWork = warmGeneratedFile
+
+// warmGenerated queues one generated picture for warming and returns at once. Safe to call
+// from anywhere and for any file: a path no decoder can read is dropped before it takes a slot.
+func warmGenerated(full string) {
+	if !thumbDecodable(full) {
+		return
+	}
+	genWarm.mu.Lock()
+	defer genWarm.mu.Unlock()
+	if genWarm.queued[full] || len(genWarm.pending) >= genWarmQueueCap {
+		return
+	}
+	genWarm.queued[full] = true
+	genWarm.pending = append(genWarm.pending, full)
+	if genWarm.running < warmThumbWorkers {
+		genWarm.running++
+		go drainGenWarm()
+	}
+}
+
+func drainGenWarm() {
+	for {
+		genWarm.mu.Lock()
+		if len(genWarm.pending) == 0 {
+			genWarm.running--
+			genWarm.mu.Unlock()
+			return
+		}
+		p := genWarm.pending[0]
+		genWarm.pending = genWarm.pending[1:]
+		genWarm.mu.Unlock()
+
+		genWarmWork(p)
+
+		genWarm.mu.Lock()
+		delete(genWarm.queued, p)
+		genWarm.mu.Unlock()
+	}
+}
+
+// warmGeneratedFile fills the cards' entries and the lightbox's for one picture.
+func warmGeneratedFile(full string) {
+	for _, edge := range warmCardEdges {
+		warmThumbFile(full, edge)
+	}
+	warmPreviewFile(full)
+}
+
+// warmPreviewFile fills the `preview` entry of every distinct factor previewSteps come to for
+// this picture — one decode for a generated 832x1216, two for a 1024x1536.
+func warmPreviewFile(full string) {
+	f, err := os.Open(full)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || fi.IsDir() || inThumbCache(full) {
+		return
+	}
+	cfg, _, err := image.DecodeConfig(f)
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
+		return
+	}
+	long := longEdge(cfg.Width, cfg.Height)
+	seen := map[int]bool{}
+	for _, step := range previewSteps {
+		factor := previewFactor(long, step)
+		if seen[factor] {
+			continue
+		}
+		seen[factor] = true
+		thumbnail(f, full, fi.Size(), fi.ModTime(), step, modePreview)
+	}
 }

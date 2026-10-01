@@ -229,3 +229,16 @@ func TestRenderedNameIsAValidBranch(t *testing.T) {
 		t.Errorf("HEAD survives sanitising but is not a branch name: %+v", got)
 	}
 }
+
+// SlugUsed tells the resolver whether an English slug for the title would change the name.
+func TestNameReportsSlugUsed(t *testing.T) {
+	item := &Item{Provider: "github", Key: "acme/app#12", Title: "ログイン"}
+	user := func(tmpl string) []Layer {
+		return []Layer{UserLayer(nil, tmpl), Builtin()}
+	}
+	for tmpl, want := range map[string]bool{"": true, "{prefix}{ref}": false, "{prefix}": true, "{prefix}{slug}": true} {
+		if got := Name(user(tmpl), "", Request{Item: item}).SlugUsed; got != want {
+			t.Errorf("template %q: SlugUsed = %v, want %v", tmpl, got, want)
+		}
+	}
+}

@@ -250,6 +250,15 @@ Beside the label, a badge shows the login state: **Signed in**, **Renews on use*
 while the portal session is open, the next use renews it) or **Not signed in**. It shows no time left: the
 workspace knows only the access token's expiry (about an hour), not when the portal session ends.
 
+Every profile and host row has **Edit**, which opens the same form filled in and saves it in place. Edit rather
+than delete and re-add: a host refers to its profile by an internal ID, so a re-added profile is a new one.
+A profile that hosts still use cannot be deleted — the page names those hosts; edit them to pick another
+profile, or delete them, first. A host that was left without a profile before this rule (its row says so) is
+fixed the same way: edit it and pick a profile.
+A profile's workspace name comes from its label, and the login belongs to that name: changing the label, or the
+start URL / SSO region, means logging in again: the form warns you, and the row shows **Log in again** until you log in from it. The workspace's `~/.aws/config` picks up
+the change within 5 minutes, or at once when you press **Log in**; sessions already open keep the old settings.
+
 **No AWS secrets are stored in Agent Fleet.** Login happens at session start via the device-code flow — you
 approve the **`aws sso login`** URL shown in the terminal in your browser — and short-lived credentials are held
 only inside the workspace.

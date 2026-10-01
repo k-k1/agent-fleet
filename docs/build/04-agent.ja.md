@@ -347,7 +347,29 @@ tmux 3.5a で実測: 素の OSC も tmux のパススルー包み（`ESC P tmux;
 | copilot、cursor、kiro | 見つからない | — |
 | shell | 利用者が動かすもの次第 | 一番の受益者。 |
 
-Follow-ups: #1069（claude の `PushNotification` ツール。OSC でしか通知しない）。
+**claude の `PushNotification` ツールは hook から受ける。** このツール（2.1.286。
+`tengu_kairos_push_notifications` フラグの裏で既定はオフ）は手元の通知を `preferredNotifChannel`
+経由でしか出さず（＝OSC。上のとおり捨てる）、claude の Notification hook もこれには発火しない。
+そこで `EnsureStatusHooks` が matcher `PushNotification` の `PostToolUse` に
+`workspace-agent session-push-notification` を足し、`tool_input.message` を
+`proto: "claude-push"` の `terminal-notification` として送信箱に入れる
+（`sessionx.recordPushNotification`）。cmux と同じやり方。
+
+- `tool_response.disabledReason` が `user_present` か `config_off` なら**送らない**。claude 自身が
+  何も通知せずに戻る場合だから。`no_transport` は*モバイル*プッシュが無いだけで手元の通知は出て
+  いるので、転送する。
+- **一度だけ届く。** OSC 経路は claude を捨てるので二経路が両方届けることはない。1 回の呼び出しで
+  hook が二度発火しても（別プロセスで並行しても）、`tool_use_id` を鍵にした `notice.PutOnce` が
+  吸収する（確認・Put・印の書き込みをファイルロックの下で行い、印は Put の後に書く。途中で
+  殺されたプロセスは再送の余地を残し、通知を失わせない）。
+- **`session-status` の状態ではなく専用のサブコマンド。** `settings.json` が古い Agent を指すことが
+  ある（`paths.ConfigExePath` はインストール済みのバイナリを選ぶ）。古い `session-status` は知らない語も
+  そのまま状態として書く（実測: `state:"push"`）。古いディスパッチャは知らないサブコマンドを
+  exit 2 で断り、何も書かない。
+- **想定外のペイロードでは何もしない**（文面が無ければイベントも無い）。形（`tool_input`
+  `{message, status}`、`tool_response` `{message, pushSent, localSent, disabledReason, sentAt}`）は
+  バイナリから読んだもので、実際の呼び出しを捕捉したものではない。
+- セッションの状態は変えない。同じツールにも、ほかのツールと同様に `PostToolUse` の心拍が発火する。
 
 ## 4.5 チャットとアシスタント（headless CLI）
 
@@ -375,8 +397,9 @@ Follow-ups: #1069（claude の `PushNotification` ツール。OSC でしか通�
 - **対話 CLI には、もっと狭い 2 本目のサーバーを置く**。`mcpreg` の組み込み `af` で、
   `mcp-stdio --self-report --chromium-attach` を起動する。
   - 自己報告のツール（`af_report`・`af_stop_after_turn`・`propose_session_handoff`）は常に広告する。
-  - 小さな観測用のツール（セッションの状態と使用量、メモ）も常に広告する。Chromium アタッチの 7 本は
-    `--chromium-attach` で付く。
+  - 小さな観測用のツール（セッションの状態と使用量、メモ）も常に広告する。`branch_name` も常に
+    広告し、ブランチ名リゾルバー（`POST /repos/{name}/branch-name`）に、既定では呼び出し元自身の
+    作業コピーについて尋ねる。Chromium アタッチの 7 本は `--chromium-attach` で付く。
   - 利用者の設定で `--peer-messaging`・`--image-gen`・`--fleet-spawn` が加わる
     （`builtinRunArgsFor`）。
   - 広告していないツールは、呼ばれても断る（`mcpAdvertised`）。
