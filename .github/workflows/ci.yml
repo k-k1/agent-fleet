@@ -102,6 +102,33 @@ jobs:
           git archive --format=tar HEAD > /tmp/src.tar
           deploy/release/scan-forbidden.sh /tmp/src.tar
 
+  # Model-id-shaped literals in the product Go code outside the fallback registry
+  # (workspace/agent/internal/modelfallback, issue #1084). Its own module, like the release
+  # scanner, so it scans both product modules at once; its tests carry the positive and
+  # negative controls.
+  model-id-lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: scripts/model-id-lint
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: scripts/model-id-lint/go.mod
+          # No dependencies, so no go.sum and nothing to cache (see release-scan).
+          cache: false
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...
+      - name: lint the product modules
+        run: go run .
+
   control-plane:
     runs-on: ubuntu-latest
     defaults:
@@ -255,6 +282,10 @@ jobs:
         run: npm run lint
       - name: i18n-lint
         run: npm run i18n:lint
+      # Model ids outside src/lib/modelFallbacks.ts (issue #1084). The Go half runs in the
+      # model-id-lint job; both read scripts/model-id-lint/patterns.txt.
+      - name: model-id-lint
+        run: npm run models:lint
       - name: vitest
         run: npm test
       # Real-browser checks (docs/log/82). This is the only place that covers what jsdom

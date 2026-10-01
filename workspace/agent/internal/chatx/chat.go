@@ -24,6 +24,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/modelfallback"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
@@ -393,18 +394,18 @@ func ChatPersonaFor(lang string) string {
 // defaultChatModel is the model the assistant chat's claude runs on when the assistant
 // (or conversation) doesn't pin one — Sonnet keeps assistant chats fast/cheap. Override
 // deployment-wide with AF_CHAT_MODEL. An explicit per-assistant model still wins.
-const defaultChatModel = "claude-sonnet-5"
+const defaultChatModel = modelfallback.ChatClaude
 
 // defaultCodexChatModel favors the high-volume Luna tier for conversational
 // assistants. Assistants that need deeper coding/reasoning can still pin a Sol model
 // explicitly in their template. Only the fallback for when the live catalog cannot be read:
 // recommendedAssistantModel follows the newest "-luna" the catalog lists (Issue #972).
-const defaultCodexChatModel = "gpt-5.6-luna"
+const defaultCodexChatModel = modelfallback.ChatCodex
 
 // defaultOpencodeChatModel favors the capable general-purpose model in the
 // currently connected OpenCode catalog. An assistant can still pin a different
 // provider/model explicitly in its template.
-const defaultOpencodeChatModel = "opencode/nemotron-3-ultra-free"
+const defaultOpencodeChatModel = modelfallback.ChatOpencode
 
 // defaultAgyChatModel favors the fast Gemini Flash tier for conversational
 // assistants: chat is latency-sensitive, agy's distinctive value here is Gemini
@@ -413,7 +414,7 @@ const defaultOpencodeChatModel = "opencode/nemotron-3-ultra-free"
 // Track D). The value is `agy models` display-name syntax; a name the live
 // catalog no longer lists is dropped at send time (agyChatModel) so a rename
 // upstream degrades to agy's own default instead of a hard error.
-const defaultAgyChatModel = "Gemini 3.5 Flash (Medium)"
+const defaultAgyChatModel = modelfallback.ChatAgy
 
 const AssistantRecommendedModel = "recommended"
 
@@ -441,8 +442,7 @@ func recommendedAssistantModelV(v visibility, agent string) string {
 	case session.KindCodex:
 		return codexNewestLuna(v)
 	case session.KindOpencode:
-		const goModel = "opencode-go/glm-5.2"
-		return recommendedCatalogModel(v.ids(agent, opencode.Models()), goModel,
+		return recommendedCatalogModel(v.ids(agent, opencode.Models()), modelfallback.ChatOpencodeGo,
 			v.model(agent, defaultOpencodeChatModel))
 	case session.KindAgy:
 		return agyNamedModel(v, defaultAgyChatModel)

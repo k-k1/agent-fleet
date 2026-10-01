@@ -29,6 +29,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/modelfallback"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
@@ -1874,8 +1875,7 @@ func recommendedUtilityModelV(v visibility, kind string) string {
 		}
 		return cheapOneShotModel(ids)
 	case session.KindOpencode:
-		const goModel = "opencode-go/deepseek-v4-flash"
-		return recommendedCatalogModel(v.ids(kind, opencode.Models()), goModel, "")
+		return recommendedCatalogModel(v.ids(kind, opencode.Models()), modelfallback.OneShotOpencodeGo, "")
 	case session.KindAgy:
 		if m := cheapestListedModel(kind, agyRecommendIDs(v)); m != "" {
 			return m

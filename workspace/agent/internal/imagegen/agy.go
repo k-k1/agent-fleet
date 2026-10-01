@@ -56,6 +56,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/modelfallback"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -64,7 +65,7 @@ import (
 // own step store and not on any wire this package reads), so the cheapest capable driver is the
 // right default. Override deployment-wide with AF_IMAGEGEN_AGY_MODEL, because model ids move and
 // nothing here may depend on one staying valid.
-const defaultAgyModel = "gemini-3.8-flash-low"
+const defaultAgyModel = modelfallback.ImagegenAgyDriver
 
 // agyGenerateTimeout bounds one turn, for the same reason the Codex one does: it sits below the
 // 600 s tool_timeout_sec stamped on the af server, so a slow run is reported by us with a real
