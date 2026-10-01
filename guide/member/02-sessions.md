@@ -453,7 +453,7 @@ colour the whole card, so they can be spotted from across the room.
   and all. **Ctrl (⌘) + click and middle-click open another pane at any width.** In the tabbed
   layout a tap opens a new tab even on a phone, and the grid stays one tab away.
 - **What one card shows**: the state at the top right (Ready / Working… / stopped), the project
-  and branch on the line below with **the distance from the parent working copy** right of it
+  and branch on the line below with **the distance from the parent** right of it
   ("親+2・FF可", "3 unmerged" — the same chip as the repo row in the left pane), under that
   **how full the context is and a graph of the tokens each reply spent** (the same strip the
   chat view shows), and at the bottom **the model that answered last**, time since it started
