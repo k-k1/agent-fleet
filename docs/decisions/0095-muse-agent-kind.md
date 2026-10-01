@@ -3046,3 +3046,29 @@ export) breaking, with every removal named. The unit tests cover every rule on a
 bundle, plus the real bundle against itself. The fingerprint is still carried in `types_gen.go`,
 as the record of which export the types were rendered from; re-exporting is now done when the
 client wants something a release added.
+
+### P2-25: 1.4.2 and the one enum the client only tests for membership (2026-10-02)
+
+Muse 1.4.2-R4684.1 was additive except for one line the checker called breaking:
+`$defs.CapabilityName.enum` gained `feedback`, and `CapabilityName` reaches the client in the
+`initialize` result (`grantedCapabilities`) and in `ErrorData.capability`. The client never switches
+on it; `msp.Granted` only asks whether a name it already knows is in the list, so an unknown
+capability is ignored, never misread. `compat.go`'s `membershipEnums` now lists `CapabilityName`,
+and growth there is reported as an addition. Every other enum the client decodes keeps the strict
+rule (`TestCompareDecodedEnumGrowthStillBreaks` holds `SessionStatus` and `ItemKind` to it), and
+adding a `switch` on `CapabilityName` anywhere means removing the entry.
+
+A value the bundle does not list must also never fail a decode. Generated enums are bare `string`
+types with no decoder, and `TestEnumTypesDecodeAnyString` keeps every enum in `types_gen.go` that
+way (a hand-written `UnmarshalJSON` on one is red); `TestUnknownEnumValuesDecode` decodes the
+messages the driver reads with an unlisted capability, status, platform and effort.
+
+The bundle is not re-exported, per P2-24: re-exporting is for when the client needs something a
+release added, and nothing 1.4.2 added (`feedback/submit`, `session/delete`, `workspaceRoots`,
+session-list filters, cumulative cost and cache splits, described effort variants) is used yet.
+Re-exporting also has a cost the checker makes visible: everything the bundle declares and an
+older binary lacks reads as removed, so a 1.4.2 bundle is red against the 1.4.1 pin (18 breaks,
+measured) and against any older `muse` on PATH until the pin moves. Measured against the real
+binaries with the current bundle: 1.4.2 red with that single break before the change and green
+after it (two additions), the 1.4.1 pin green, and 1.4.2 red again when the checked-in bundle was
+mutated to drop `running` from `SessionStatus`.

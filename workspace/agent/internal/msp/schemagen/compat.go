@@ -323,7 +323,7 @@ func compareProperties(r *CompatReport, path string, om, nm map[string]any, f fl
 // vendor marks most enums "open" and says readers must handle unknown values, but this client
 // switches on known ones: an unknown ItemKind drops out of the transcript (transcript.go) and an
 // unknown SessionStatus leaves the turn state where it was (handle.go onStatus). So growth in
-// anything the client decodes is a break, open or not.
+// anything the client decodes is a break, open or not. The exceptions are membershipEnums.
 func compareEnum(r *CompatReport, path string, om, nm map[string]any, f flow) {
 	ov, nv := asSlice(om["enum"]), asSlice(nm["enum"])
 	if ov == nil || nv == nil {
@@ -345,12 +345,23 @@ func compareEnum(r *CompatReport, path string, om, nm map[string]any, f flow) {
 	for _, v := range sortedSet(nSet) {
 		switch {
 		case oSet[v]:
+		case f&toClient != 0 && membershipEnums[path]:
+			r.addf("%s.enum: new value %s (the client only tests membership)", path, v)
 		case f&toClient != 0:
 			r.breakf("%s.enum: new value %s in a type the client decodes", path, v)
 		default:
 			r.addf("%s.enum: new value %s (host to client never carries it)", path, v)
 		}
 	}
+}
+
+// membershipEnums are decoded enums the client never switches on: it only asks whether a value
+// it already knows is present (msp.Granted), so a value it has never heard of is one it ignores,
+// and growth is an addition. Each entry must stay true of every reader in the client — a
+// `switch` on CapabilityName anywhere puts it back under the strict rule. Without the entry,
+// every new grantable capability (1.4.2's `feedback`) is a red contract and a held pin.
+var membershipEnums = map[string]bool{
+	"$defs.CapabilityName": true,
 }
 
 // compareErrors keys the error table by code: a new code is one the client reports generically,
