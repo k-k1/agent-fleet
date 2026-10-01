@@ -417,6 +417,7 @@ picture out of it says most of what they wanted to know.
 - The neighbour prefetch moved to the same door — prefetching one URL and then displaying
   another wastes the whole prefetch. The mirror's shared-file lightbox is untouched so far
   (the same move applies to it).
+  - *Added 2026-10-01:* the mirror's lightbox made that move in decision 15.
 
 ### Decision 13 — make the downscale itself cheap (stop calling `src.At()`)
 
@@ -450,6 +451,32 @@ decode, not the scale).
   nothing that gets drawn.
 - **Read per render**, not frozen into a constant: a window dragged to another monitor changes
   it, and being wrong costs one re-request at the other size.
+
+### Decision 15 — the mirror's lightbox shows `preview` too, and a new picture is warmed for it (P2)
+
+- **The mirror's shared-file card enlarges `displayURL(path, previewEdge())`**, the gallery's
+  door and steps (`viewer/previewEdge.ts`, shared by both). It is a transcript capability,
+  `previewURL`, beside `thumbURL`; without it the card enlarges the original, as before. The
+  original stays one click away in the pane.
+- 🔥 **The warm-up never reached a request.** The cache key held the path as the REQUEST spelled
+  it (browse-root-relative, which is what the transcript and the gallery send), while imagegen
+  and `warm=` warm by the ABSOLUTE path. Every warmed entry was one no request read. The key is
+  now the absolute path (root joined to relative) on both sides; a test plants a sentinel in the
+  warmed entry and requires both spellings to return it.
+- **A preview is cached per factor, not per asked edge.** The lightbox asks for 1024, 1536 or
+  2048 by screen; for 832x1216 all three come to factor 1 and identical bytes, so keyed on the
+  edge one warm-up could cover only one screen size. The price is a header read
+  (`DecodeConfig`) before the cache lookup. Cards keep the edge key and read nothing on a hit.
+- **imagegen hands every picture to a bounded queue** (`warmGenerated`): at most 32 waiting, two
+  workers (under `thumbSem`'s four, so a person's cards always find a slot) that exit when it is
+  empty, the same path at most once in flight, and a file no decoder reads never queued. A
+  picture that does not fit is not warmed, and its first look pays the decode as before. The
+  hand-over is a mutex and an append (~0.5 µs), so the generation's own completion does not wait.
+- Measured (first `preview=2048` request through `handleFSDownload`, real generated pictures,
+  this shared host): **832x1216, n=15: median 213 ms cold → 0.52 ms warmed; 1024x1024, n=15:
+  222 ms → 0.67 ms.** The cold figure is above decision 12's ~140 ms because the host was loaded.
+- Not helped: a picture with transparency. `preview` serves it the original, writes no entry,
+  and so decodes again on every look.
 
 ## Options rejected
 
@@ -538,6 +565,7 @@ decode, not the scale).
   shared-file lightbox** (the same move as decision 12, not started); **warming `preview` at
   generation time** (only `thumb=512` is warmed today, so the first enlarge of a new picture
   pays ~110 ms to decode and ~30 ms to encode).
+  - *Added 2026-10-01:* both of those landed as decision 15.
 - **P3**: generalizing to "media" including video and PDF (whether it is wanted is open
   question 2).
 

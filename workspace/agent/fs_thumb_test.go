@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 )
@@ -161,7 +162,7 @@ func TestFSDownloadThumbServesTheCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := thumbCacheKey("shot.png", st.Size(), st.ModTime(), 64, modeDownscale)
+	key := thumbCacheKey(path, st.Size(), st.ModTime(), 64, modeDownscale)
 	cached, err := os.ReadFile(thumbCacheFile(key, "image/jpeg"))
 	if err != nil {
 		t.Fatalf("nothing cached under the file's identity: %v", err)
@@ -605,5 +606,162 @@ func TestInThumbCacheSeesThroughSymlinks(t *testing.T) {
 		if inThumbCache(p) {
 			t.Errorf("inThumbCache(%q) = true, want false", p)
 		}
+	}
+}
+
+// --- warming has to land where a request reads ------------------------------------------
+//
+// The warm-up only knows a file by its absolute path; a request names it relative to the
+// browse root (the transcript and the gallery both do) or absolutely. Each spelling must reach
+// the entry the warm-up wrote, or warming spends a decode on a file nobody will read.
+
+// plantSentinel overwrites a cache entry, so a request that returns these bytes provably read
+// the cache (identical output would prove nothing — the encoder is deterministic).
+func plantSentinel(t *testing.T, key string) []byte {
+	t.Helper()
+	sentinel := []byte("warmed-entry")
+	for _, ct := range []string{"image/jpeg", "image/png"} {
+		if _, err := os.Stat(thumbCacheFile(key, ct)); err == nil {
+			if err := os.WriteFile(thumbCacheFile(key, ct), sentinel, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return sentinel
+		}
+	}
+	t.Fatal("the warm-up wrote no entry under the key a request would read")
+	return nil
+}
+
+func TestWarmedThumbIsWhatARequestReads(t *testing.T) {
+	root := thumbRoots(t)
+	full := filepath.Join(root, "gen", "shot.png")
+	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	noisyPNG(t, full, 800, 600, false)
+	warmThumbFile(full, 64)
+	fi, _ := os.Stat(full)
+	sentinel := plantSentinel(t, thumbCacheKey(full, fi.Size(), fi.ModTime(), 64, modeDownscale))
+	for _, q := range []string{"path=gen/shot.png&thumb=64", "path=" + full + "&thumb=64"} {
+		if got := download(t, q).Body.Bytes(); !bytes.Equal(got, sentinel) {
+			t.Errorf("%s decoded again (%d bytes) instead of reading the warmed entry", q, len(got))
+		}
+	}
+}
+
+// One warm-up covers every edge the lightbox may ask for, because the three steps come to
+// the same factor for a generated picture.
+func TestWarmedPreviewServesEveryLightboxStep(t *testing.T) {
+	root := thumbRoots(t)
+	full := filepath.Join(root, "gen.png")
+	noisyPNG(t, full, 832, 1216, false)
+	warmPreviewFile(full)
+	fi, _ := os.Stat(full)
+	sentinel := plantSentinel(t, thumbCacheKey(full, fi.Size(), fi.ModTime(), 1, modePreview))
+	for _, step := range previewSteps {
+		q := "path=gen.png&preview=" + strconv.Itoa(step)
+		if got := download(t, q).Body.Bytes(); !bytes.Equal(got, sentinel) {
+			t.Errorf("%s decoded again (%d bytes) instead of reading the warmed entry", q, len(got))
+		}
+	}
+	if n := countThumbCache(t); n != 1 {
+		t.Errorf("cache holds %d entries, want 1: the three steps are one factor-1 picture", n)
+	}
+}
+
+// The factor key must not merge answers that differ: a 4000 px picture is halved at 2048
+// and quartered at 1024.
+func TestPreviewFactorsDoNotShareAnEntry(t *testing.T) {
+	root := thumbRoots(t)
+	noisyPNG(t, filepath.Join(root, "huge.png"), 4000, 3000, false)
+	a := download(t, "path=huge.png&preview=2048").Body.Bytes()
+	b := download(t, "path=huge.png&preview=1024").Body.Bytes()
+	ca, _, errA := image.DecodeConfig(bytes.NewReader(a))
+	cb, _, errB := image.DecodeConfig(bytes.NewReader(b))
+	if errA != nil || errB != nil {
+		t.Fatalf("decode: %v / %v", errA, errB)
+	}
+	if ca.Width != 2000 || cb.Width != 1000 {
+		t.Errorf("widths %d / %d, want 2000 / 1000", ca.Width, cb.Width)
+	}
+}
+
+// waitGenWarmIdle waits until the generated-picture queue has drained and its workers exited.
+func waitGenWarmIdle(t *testing.T) {
+	t.Helper()
+	for i := 0; i < 500; i++ {
+		genWarm.mu.Lock()
+		idle := genWarm.running == 0 && len(genWarm.pending) == 0
+		genWarm.mu.Unlock()
+		if idle {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("the generated-picture warm-up never went idle")
+}
+
+// The end-to-end path: a generated picture handed over is, shortly after, both a cached card
+// and a cached lightbox copy.
+func TestWarmGeneratedFillsCardAndPreview(t *testing.T) {
+	root := thumbRoots(t)
+	full := filepath.Join(root, "gen.png")
+	noisyPNG(t, full, 832, 1216, false)
+	warmGenerated(full)
+	waitGenWarmIdle(t)
+	fi, _ := os.Stat(full)
+	for _, k := range []struct {
+		scale int
+		mode  thumbMode
+	}{{warmCardEdge, modeDownscale}, {1, modePreview}} {
+		if _, _, ok := readThumbCache(thumbCacheKey(full, fi.Size(), fi.ModTime(), k.scale, k.mode)); !ok {
+			t.Errorf("no entry for scale %d mode %d after warming", k.scale, k.mode)
+		}
+	}
+}
+
+// A burst must not become a goroutine and a decode per picture: at most warmThumbWorkers run
+// at once, a full queue drops rather than grows, the same picture handed over twice is warmed
+// once, and a file no decoder reads never takes a slot.
+func TestWarmGeneratedIsBounded(t *testing.T) {
+	release := make(chan struct{})
+	var mu sync.Mutex
+	active, peak, done := 0, 0, map[string]int{}
+	old := genWarmWork
+	genWarmWork = func(p string) {
+		mu.Lock()
+		active++
+		peak = max(peak, active)
+		done[p]++
+		mu.Unlock()
+		<-release
+		mu.Lock()
+		active--
+		mu.Unlock()
+	}
+	t.Cleanup(func() { genWarmWork = old })
+
+	// Before the burst, while the queue still has room: otherwise the cap alone drops them.
+	warmGenerated("/gen/notes.txt")
+	warmGenerated("/gen/pic.webp") // no decoder in the standard library
+	const burst = 200
+	for i := 0; i < burst; i++ {
+		warmGenerated("/gen/" + strconv.Itoa(i) + ".png")
+	}
+	warmGenerated("/gen/0.png") // already in flight
+	close(release)
+	waitGenWarmIdle(t)
+
+	if peak > warmThumbWorkers {
+		t.Errorf("%d warm-ups ran at once, want at most %d", peak, warmThumbWorkers)
+	}
+	if len(done) > genWarmQueueCap+warmThumbWorkers {
+		t.Errorf("%d of a %d-picture burst were warmed, want at most %d (queue + workers)", len(done), burst, genWarmQueueCap+warmThumbWorkers)
+	}
+	if done["/gen/0.png"] != 1 {
+		t.Errorf("/gen/0.png warmed %d times, want once", done["/gen/0.png"])
+	}
+	if done["/gen/notes.txt"]+done["/gen/pic.webp"] != 0 {
+		t.Error("a file no decoder reads was queued for warming")
 	}
 }

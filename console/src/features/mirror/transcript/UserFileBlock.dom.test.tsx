@@ -40,6 +40,7 @@ const turnsWith = (...files: string[]): Turn[] => [
 // TranscriptView.dom.test.tsx.)
 const FULL = (p: string) => `https://cp.example/api/fs/download?path=${encodeURIComponent(p)}`;
 const THUMB = (p: string) => `${FULL(p)}&thumb=512`;
+const PREVIEW = (p: string) => `${FULL(p)}&preview=2048`;
 
 function ownerCaps(sink: { opened: string[]; zoomed: string[] }): TranscriptCaps {
   return {
@@ -85,14 +86,23 @@ describe("a shared image card", () => {
     expect(zoomed).toEqual([[FULL("out/shot.png"), "out/shot.png"]]);
   });
 
-  it("paints the downscaled copy but enlarges the real file", () => {
+  it("paints the downscaled copy and enlarges the screen-sized one", () => {
     // A shared render is megabytes; the card displays it at ~190x240 px. Painting the
     // original here is invisible in a screenshot and only shows up as a slow panel, so
-    // the source of the <img> is worth pinning. The lightbox must NOT be downscaled.
+    // the source of the <img> is worth pinning. The lightbox gets `preview` (ADR 0080
+    // decision 12): the original is ~9x the bytes for a picture nobody can tell apart.
+    const sink = { opened: [] as string[], zoomed: [] as string[] };
+    const el = render(turnsWith("out/shot.png"), { ...ownerCaps(sink), previewURL: PREVIEW });
+
+    expect(el.querySelector<HTMLImageElement>(".mt-file-thumb img")!.getAttribute("src")).toBe(THUMB("out/shot.png"));
+    click(el.querySelector(".mt-file-zoom"));
+    expect(sink.zoomed).toEqual([PREVIEW("out/shot.png")]);
+  });
+
+  it("enlarges the real file when no screen-sized copy is offered", () => {
     const sink = { opened: [] as string[], zoomed: [] as string[] };
     const el = render(turnsWith("out/shot.png"), ownerCaps(sink));
 
-    expect(el.querySelector<HTMLImageElement>(".mt-file-thumb img")!.getAttribute("src")).toBe(THUMB("out/shot.png"));
     click(el.querySelector(".mt-file-zoom"));
     expect(sink.zoomed).toEqual([FULL("out/shot.png")]);
   });

@@ -1248,25 +1248,27 @@ function FileCard({
   onOpen,
   fileURL,
   thumbURL,
+  previewURL,
   onZoom,
 }: {
   path: string;
   onOpen: (path: string) => void;
   fileURL?: (path: string) => string;
   thumbURL?: (path: string) => string;
+  previewURL?: (path: string) => string;
   onZoom?: (url: string, path?: string) => void;
 }) {
   const [thumbFailed, setThumbFailed] = useState(false);
   const full = fileURL && imageFormat(path) ? fileURL(path) : "";
-  // The card paints a downscaled copy; the lightbox always gets the real file. A shared
-  // render is megabytes, and letting the browser shrink it to 190x240 px would download
-  // every one of them before the panel could paint.
+  // The card paints a downscaled copy and the lightbox a screen-sized one. A shared render is
+  // megabytes, and letting the browser shrink it to 190x240 px would download every one of
+  // them before the panel could paint. The real bytes stay one click away in the pane.
   const src = full && thumbURL ? thumbURL(path) : full;
   const showThumb = !!src && !thumbFailed;
   // The path travels with the URL so the lightbox can offer this file's folder. A third
   // button on the card is not an option: the body enlarges and the corner opens the pane,
   // and a third target would make that split unreadable (ADR 0080 decision 5).
-  const zoom = showThumb && onZoom ? () => onZoom(full, path) : null;
+  const zoom = showThumb && onZoom ? () => onZoom(previewURL ? previewURL(path) : full, path) : null;
   const body = (
     <>
       {showThumb && <FileThumb path={path} src={src} onFail={() => setThumbFailed(true)} />}
@@ -1315,6 +1317,7 @@ export function UserFileBlock({
   onOpen,
   fileURL,
   thumbURL,
+  previewURL,
   onZoom,
 }: {
   files?: string[];
@@ -1322,6 +1325,7 @@ export function UserFileBlock({
   onOpen: (path: string) => void;
   fileURL?: (path: string) => string;
   thumbURL?: (path: string) => string;
+  previewURL?: (path: string) => string;
   onZoom?: (url: string, path?: string) => void;
 }) {
   const list = files || [];
@@ -1336,7 +1340,7 @@ export function UserFileBlock({
       {caption && <div className="mt-files-caption">{caption}</div>}
       <div className={"mt-files-list" + (list.length > 1 ? " grid" : "")}>
         {list.map((p, i) => (
-          <FileCard key={p + i} path={p} onOpen={onOpen} fileURL={fileURL} thumbURL={thumbURL} onZoom={onZoom} />
+          <FileCard key={p + i} path={p} onOpen={onOpen} fileURL={fileURL} thumbURL={thumbURL} previewURL={previewURL} onZoom={onZoom} />
         ))}
       </div>
     </div>

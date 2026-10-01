@@ -50,9 +50,15 @@ export interface TranscriptCaps {
   /**
    * The same bytes downscaled for a card-sized <img>. Absent → the card falls back to
    * fileURL, which is correct but pulls the original (a shared render is megabytes to
-   * paint 190x240 px). Never used for the lightbox: enlarging must show the real file.
+   * paint 190x240 px). Never used for the lightbox: a card's copy is too small to enlarge.
    */
   thumbURL?: (path: string) => string;
+  /**
+   * The screen-sized copy the lightbox shows (`displayURL`, ADR 0080 decision 12): for a
+   * generated 832x1216 PNG about a ninth of the original's bytes, and warmed by the Agent when
+   * the picture is made. Absent → the lightbox enlarges fileURL, the original.
+   */
+  previewURL?: (path: string) => string;
 
   // ── Navigation ────────────────────────────────────────────────────────────────
   /** Open a file in its own pane. Absent → UserFileBlock is not rendered. */
