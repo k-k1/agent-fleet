@@ -438,7 +438,9 @@ Follow-ups: #1069 (claude's `PushNotification` tool, which only notifies over OS
   - It always advertises the self-report tools: `af_report`, `af_stop_after_turn` and
     `propose_session_handoff`.
   - It also always advertises a small observation set: session status and usage, and
-    the memo tools. The seven Chromium attach tools come with `--chromium-attach`.
+    the memo tools, and `branch_name`, which asks the branch-name resolver
+    (`POST /repos/{name}/branch-name`) about the caller's own working copy unless told
+    another. The seven Chromium attach tools come with `--chromium-attach`.
   - The user's preferences add `--peer-messaging`, `--image-gen` and `--fleet-spawn`
     (`builtinRunArgsFor`).
   - Anything not advertised is refused on call too (`mcpAdvertised`).
