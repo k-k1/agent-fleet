@@ -340,6 +340,7 @@ export const sessions = {
   "srow.locked_hint": "削除ロック中です。先にロックを解除してください。",
   "srow.archive": "アーカイブする（一覧から消す）",
   "srow.recreate": "作り直す（今の会話はアーカイブへ）",
+  "srow.recreate_worktree": "作業コピー（worktree）を作り直す…",
 
   // === P2 起動フォーム 共通（StartModal / LaunchModal）===
   "launch.field.agent": "エージェント",
