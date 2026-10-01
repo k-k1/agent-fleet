@@ -178,19 +178,31 @@ func (l *Linter) scanFile(path string) ([]Finding, []error) {
 
 	var out []Finding
 	ast.Inspect(file, func(n ast.Node) bool {
-		lit, ok := n.(*ast.BasicLit)
-		if !ok || lit.Kind != token.STRING {
-			return true
-		}
-		val, err := strconv.Unquote(lit.Value)
-		if err != nil {
+		var val string
+		switch e := n.(type) {
+		case *ast.BasicLit:
+			v, ok := foldString(e)
+			if !ok {
+				return true
+			}
+			val = v
+		case *ast.BinaryExpr:
+			// A constant concatenation is judged as the string it builds — otherwise
+			// "gpt-" + "5.6-luna" pins an id with neither half matching. Its parts are not
+			// visited again, so a matching half is reported once, on the whole.
+			v, ok := foldString(e)
+			if !ok {
+				return true
+			}
+			val = v
+		default:
 			return true
 		}
 		m := l.Pattern.FindString(val)
 		if m == "" {
-			return true
+			return false
 		}
-		line := fset.Position(lit.Pos()).Line
+		line := fset.Position(n.Pos()).Line
 		f := Finding{Path: rel, Line: line, Literal: shorten(val, m), Match: m, Status: StatusViolation}
 		switch {
 		case l.Registry[rel]:
@@ -201,9 +213,35 @@ func (l *Linter) scanFile(path string) ([]Finding, []error) {
 			f.Status, f.Reason = StatusFile, fileReason
 		}
 		out = append(out, f)
-		return true
+		return false
 	})
 	return out, errs
+}
+
+// foldString evaluates e when it is built from string literals alone: a literal, or literals
+// joined by + (parentheses allowed). ok is false for anything that needs a value at run time.
+func foldString(e ast.Expr) (string, bool) {
+	switch e := e.(type) {
+	case *ast.BasicLit:
+		if e.Kind != token.STRING {
+			return "", false
+		}
+		v, err := strconv.Unquote(e.Value)
+		return v, err == nil
+	case *ast.ParenExpr:
+		return foldString(e.X)
+	case *ast.BinaryExpr:
+		if e.Op != token.ADD {
+			return "", false
+		}
+		x, ok := foldString(e.X)
+		if !ok {
+			return "", false
+		}
+		y, ok := foldString(e.Y)
+		return x + y, ok
+	}
+	return "", false
 }
 
 // directiveReason is the text after a directive, with the separators people naturally put

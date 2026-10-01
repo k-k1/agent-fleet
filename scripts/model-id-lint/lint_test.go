@@ -143,3 +143,33 @@ func TestRepositoryTreeIsClean(t *testing.T) {
 		t.Error("no registry findings: the scan did not reach workspace/agent/internal/modelfallback")
 	}
 }
+
+// A constant concatenation pins an id as surely as one literal does, and neither half has to
+// match on its own. A concatenation with a run-time value is not evaluated.
+func TestScanFoldsConstantConcatenation(t *testing.T) {
+	l := pattern(t)
+	write(t, l.Root, "mod/c.go", `package c
+
+const split = "gpt-" + "5.6-luna"
+
+const paren = ("claude-" + ("sonnet-" + "5"))
+
+var dynamic = "gpt-" + version
+
+var version = "x"
+`)
+	fs, errs := l.Scan("mod")
+	if len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	got := statuses(fs)
+	want := map[string]Status{"mod/c.go:gpt-5.6-luna": StatusViolation, "mod/c.go:claude-sonnet-5": StatusViolation}
+	if len(got) != len(want) {
+		t.Fatalf("findings = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s: status %q, want %q (all: %v)", k, got[k], v, got)
+		}
+	}
+}
