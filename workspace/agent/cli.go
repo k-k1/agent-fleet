@@ -170,6 +170,12 @@ var subcommands = []subcommand{
 		run:     sessionx.RunSessionStatusHook,
 	},
 	{
+		name:    claude.PushHookSubcommand,
+		summary: "claude hook: forward a PushNotification to the notification center",
+		hidden:  true,
+		run:     sessionx.RunPushNotificationHook,
+	},
+	{
 		// Appended after the agent CLI by startSessionTmux, so a crash / OOM is recorded.
 		name:    "record-exit",
 		summary: "record why a session's pane terminated",
