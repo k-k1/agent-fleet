@@ -69,6 +69,9 @@ export function useLaunchBranchName({ repo, item, name, setName, setBase }: Opti
     const it = itemRef.current;
     if (!it) return;
     const my = ++seq.current;
+    // An ask that replaces a pending schedule (a re-read, another item) owns the hint from here,
+    // even when it fails before it gets to schedule anything.
+    setReasking(false);
     const apply = (r: BranchName) => {
       setResolved(r);
       // A name the resolver cannot make (name_empty) falls back to the server-minted temp/<slug>
@@ -87,10 +90,10 @@ export function useLaunchBranchName({ repo, item, name, setName, setBase }: Opti
     if (!r.provisional || nameTouched.current) return;
     setReasking(true);
     try {
-      let waited = 0;
+      // The schedule counts from the first answer, so slow answers do not push the asks later.
+      const first = Date.now();
       for (const at of launchBranchTiming.reaskAtMs) {
-        const ms = Math.max(0, at - waited);
-        waited = at;
+        const ms = Math.max(0, first + at - Date.now());
         await new Promise((done) => (reaskTimer.current = setTimeout(done, ms)));
         if (my !== seq.current || nameTouched.current) return;
         const again = await fetchBranchName(repo, { item: it });

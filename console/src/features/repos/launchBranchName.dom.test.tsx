@@ -301,6 +301,39 @@ describe("work-item launch through the branch-name resolver", () => {
       expect(nameField().value).toBe("fix/46-another-one");
     });
 
+    it("asks at 8, 20 and 45 s after the first answer even when each answer is slow", async () => {
+      const at: number[] = [];
+      branchName = async () => {
+        at.push(Date.now() - start);
+        // The first answer is immediate; every re-ask takes 3 s to come back.
+        if (at.length > 1) await new Promise((r) => setTimeout(r, 3000));
+        return resolved({ name: "fix/45", provisional: true });
+      };
+      await render();
+      await advance(60_000);
+      expect(at).toEqual([0, 8000, 20000, 45000]);
+    });
+
+    it("a re-read whose ask fails ends the schedule and drops the hint", async () => {
+      branchName = async () => {
+        asks++;
+        return resolved({ name: "fix/45", provisional: true, sources: { bitbucket: "pending" } });
+      };
+      await render();
+      await click(secHead());
+      expect(hint()).not.toBeNull();
+      branchName = async () => {
+        asks++;
+        return { error: { code: "http_500", message: "boom" } };
+      };
+      await click(byText("Read Bitbucket's branch settings again"));
+      expect(asks).toBe(2);
+      await advance(300_000);
+      expect(asks).toBe(2);
+      expect(hint()).toBeNull();
+      expect(nameField().value).toBe("fix/45");
+    });
+
     it("after the last re-ask a provisional name stays, and no longer says it may change", async () => {
       branchName = async () => {
         asks++;
