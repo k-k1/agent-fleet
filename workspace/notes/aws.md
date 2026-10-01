@@ -13,13 +13,28 @@ and build tools").
 
 ## The trap
 
-The container can have an AWS identity of its own (a workload role). A command that names **no
-profile at all** — a bare `aws …`, an SDK's default credential chain, a build tool with no profile
-setting — runs as that role instead of as the user, in a different account, with no error. That
-includes read-only lookups: "how many instances does prod have" answered by a bare
-`aws ec2 describe-instances` is an answer about the wrong account. (A named profile that is
-misspelled or logged out fails loudly instead.) Anything about the user's accounts or resources,
-reads included, goes through `af-aws-exec`.
+A command that names **no profile at all** — a bare `aws …`, an SDK's default credential chain, a
+build tool with no profile setting — is not the user. On AWS the Agent withholds the workspace's own
+role from sessions and terminals (no `AWS_CONTAINER_CREDENTIALS_*`, `AWS_EC2_METADATA_DISABLED=true`,
+and EC2 slots block instance metadata), so such a command normally stops with "Unable to locate
+credentials" / "Unable to load AWS credentials from any provider in the chain". That error means
+"name the user's profile", never "find credentials somewhere else": do not read them out of
+`/proc`, the metadata endpoints or another process, and do not unset `AWS_EC2_METADATA_DISABLED`.
+
+A deployment can hand the workload role back (`AF_WS_WORKLOAD_AWS=1`, visible as
+`AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` in your environment). Then the same command runs as that
+role instead of as the user, in a different account, with no error. That includes read-only
+lookups: "how many instances does prod have" answered by a bare `aws ec2 describe-instances` is an
+answer about the wrong account. (A named profile that is misspelled or logged out fails loudly
+instead.) Either way, anything about the user's accounts or resources, reads included, goes through
+`af-aws-exec`.
+
+Worked example — a build tool with an S3/deploy plugin. `./gradlew uploadArtifact` (an S3 upload
+task with no profile in `build.gradle`) fails with "Unable to load AWS credentials from any provider
+in the chain". The fix is
+`af-aws-exec --profile <name> --account <id> --region <region> -- ./gradlew uploadArtifact`; the
+plugin's default chain picks the profile's credentials up from the environment. If the build script
+names a profile of its own, see "could not be found" below.
 
 ## Choose the profile
 

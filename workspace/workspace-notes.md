@@ -138,8 +138,10 @@ directory belongs to someone else.
   binary.
 - The clock is the workspace's local timezone (`date`), not UTC. Outbound network may be
   restricted; an unreachable host is not necessarily an error.
-- **AWS: the default credential chain may not be the user.** The container can have a workload
-  role that a bare `aws` / SDK / build-tool call silently falls back to, in another account. Any
+- **AWS: the default credential chain is not the user.** A bare `aws` / SDK / build-tool call
+  normally finds no credentials ("Unable to locate credentials"): the workspace's own role is
+  withheld from your shell. Where a deployment hands it back, the same call silently runs as that
+  role, in another account. Either way, never hunt for other credentials. Any
   AWS command about the user's accounts or resources — **reads included** — goes through
   `af-aws-exec --profile <name> --account <id> -- <command>`; never retry a refused run without
   it, and never add `--keep-aws-config` to get past an error. Procedure, exit codes and who fixes

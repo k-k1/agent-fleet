@@ -1553,6 +1553,9 @@ they survive, and keep billing. The response and the audit entry list what was l
   5m, but the image cache and container write layers are genuinely shared.
 - **Patching slots = updating this stack** (the AMI parameter resolves at update time)
   and letting the old slots go. That is the operational cost the EC2 launch type adds.
+  The same holds for the user data: `ECS_AWSVPC_BLOCK_IMDS=true` (a workspace task cannot
+  reach the slot's instance profile through IMDS) applies only to slots launched after the
+  update, so let the older ones go too.
 - **Credentials still live on EFS.** The auth/identity set (`homeKeep`: `.config`,
   `.ssh`, `.git-credentials`, `.gitconfig`, `.claude`, `.claude.json`, `.codex` — under
   100 MiB) is kept on an EFS access point and symlinked into home by the entrypoint, so
