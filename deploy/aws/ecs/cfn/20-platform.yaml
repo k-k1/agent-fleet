@@ -355,10 +355,36 @@ Resources:
                       - CreateSnapshot
                     # Without this a compromised CP could plant a "slot" or a "home" into
                     # ANOTHER deployment's pool in the same account, which that CP would
-                    # then trust. A case variant (AF-POOL=<other>) beside it plants
-                    # nothing: every CP finds its resources with EC2 tag filters, and those
-                    # match the key case-sensitively.
+                    # then trust.
                     aws:RequestTag/af-pool: !Ref Cluster
+                  # The exact, case-sensitive keys the CP's create calls and launch
+                  # templates write. IAM binds RequestTag/af-pool case-insensitively, so
+                  # without this list af-pool=<other> beside AF-POOL=<this pool> could
+                  # pass the condition above and still be found by the other CP's
+                  # (case-sensitive) tag:af-pool filter. A create call that adds a key
+                  # not listed here fails with AccessDenied; cfn-cp-tag-fence-test.py
+                  # holds the same list against its inventory. aws:* covers the tags EC2
+                  # adds itself (launch template, fleet id), which no caller can set.
+                  ForAllValues:StringLike:
+                    aws:TagKeys:
+                      - af-pool
+                      - af-role
+                      - Name
+                      - af-managed-by
+                      - af-slot-size
+                      - af-engine-offer
+                      - af-engine-buy
+                      - af-membership
+                      - af-workspace
+                      - af-tenant
+                      - af-home-wipe-repos
+                      - af-home-wipe-clean
+                      - af-backup-at
+                      - af-arch
+                      - af-bake-started
+                      - af-image
+                      - af-image-fp
+                      - "aws:*"
               # Bookkeeping on pool resources: claim, idle and hibernation marks, owner and
               # tenant tags, home-wipe marks, bake marks. None of them is af-pool or af-role.
               # Null=false: a DeleteTags that names no key deletes EVERY tag, af-pool and

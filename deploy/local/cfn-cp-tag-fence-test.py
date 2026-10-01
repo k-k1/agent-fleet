@@ -18,6 +18,8 @@ the subset of IAM the statements use, and this check fails when
   - a CP call site that writes EC2 tags is not in INVENTORY (a new one has to be added,
     with the tags the resource carries at that moment, before it ships);
   - an inventoried call would be denied by the template as it stands;
+  - a create call or launch template writes a tag key that Ec2TagOnCreate's exact key
+    list does not name (read from the Go source, not from INVENTORY);
   - one of the ATTACKS would be allowed.
 
 It is not the IAM policy simulator. It models only the operators the CP role uses, and
@@ -155,6 +157,7 @@ def _cond(op, key, want, ctx, pick):
         return null == (want[0] == "true")
     if op.startswith("ForAllValues:") or op.startswith("ForAnyValue:"):
         quant, base = op.split(":", 1)
+        _string(base, "", want)  # refuse an unmodelled operator even with no values
         values = [] if cands is None else [v for c in cands for v in c]
         test = all if quant == "ForAllValues" else any
         return test(_string(base, v, want) for v in values)
@@ -355,6 +358,16 @@ ATTACKS = [
      on_existing("ec2:CreateTags", "instance", ENGINE, {"AF-ROLE": "quarantined", "af-claim": "i-1"})),
     ("golden publish that also adds AF-POOL",
      on_existing("ec2:CreateTags", "snapshot", CANDIDATE, {"af-role": "golden", "AF-POOL": "another-deployment"})),
+    ("launch a slot tagged af-pool=<other> with AF-POOL=<this pool> beside it",
+     on_create("RunInstances", "instance", dict(SLOT, **{"af-pool": "another-deployment", "AF-POOL": POOL}))),
+    ("buy an engine box tagged af-pool=<other> with AF-POOL=<this pool> beside it",
+     on_create("CreateFleet", "instance", dict(ENGINE, **{"af-pool": "another-deployment", "AF-POOL": POOL}))),
+    ("create a home tagged af-pool=<other> with AF-POOL=<this pool> beside it",
+     on_create("CreateVolume", "volume", dict(HOME, **{"af-pool": "another-deployment", "AF-POOL": POOL}))),
+    ("snapshot tagged af-pool=<other> with Af-Pool=<this pool> beside it",
+     on_create("CreateSnapshot", "snapshot", dict(BACKUP, **{"af-pool": "another-deployment", "Af-Pool": POOL}))),
+    ("tag-on-create with a key no create call writes",
+     on_create("RunInstances", "instance", dict(SLOT, **{"af-claim": "i-1"}))),
     ("tag-on-create with no af-pool at all",
      on_create("RunInstances", "instance", {"af-role": "slot"})),
     ("tag-on-create through a create action the CP never calls",
@@ -390,6 +403,61 @@ def discover():
     return found
 
 
+# Where the keys of a create call come from: the call itself, the helpers it appends,
+# and the launch templates EC2 merges in.
+CREATE_KEY_FUNCS = {"runSlot", "tags", "createHomeVolume", "hibernate", "BackupHome",
+                    "SnapshotHome", "ownedTags", "stampTags"}
+KEY_RE = re.compile(r'Key:\s*aws\.String\(\s*([A-Za-z0-9_.]+|"[^"]*")\s*\)')
+CONST_RE = re.compile(r'^\s*([A-Za-z0-9_]+)\s+(?:[A-Za-z]+\s+)?=\s*"([^"]*)"', re.M)
+
+
+def create_keys_in_code():
+    """Every tag key the create calls can write, read from the Go source and the launch
+    templates, so a key added there fails here instead of at RunInstances."""
+    consts, keys = {}, set()
+    bodies = []
+    for dirpath, _, files in os.walk(CP):
+        for name in files:
+            if not name.endswith(".go") or name.endswith("_test.go"):
+                continue
+            with open(os.path.join(dirpath, name), encoding="utf-8") as fh:
+                src = fh.read()
+            consts.update(CONST_RE.findall(src))
+            func, body = None, []
+            for line in src.splitlines():
+                m = FUNC_RE.match(line)
+                if m:
+                    if func in CREATE_KEY_FUNCS:
+                        bodies.append((func, "\n".join(body)))
+                    func, body = m.group(1), []
+                body.append(line)
+            if func in CREATE_KEY_FUNCS:
+                bodies.append((func, "\n".join(body)))
+    if {f for f, _ in bodies} != CREATE_KEY_FUNCS:
+        raise ValueError("create-key functions not found: %s" % sorted(CREATE_KEY_FUNCS - {f for f, _ in bodies}))
+    for func, body in bodies:
+        for expr in KEY_RE.findall(body):
+            name = expr.split(".")[-1]
+            if expr.startswith('"'):
+                keys.add(expr.strip('"'))
+            elif name in consts:
+                keys.add(consts[name])
+            else:
+                raise ValueError("%s: cannot resolve tag key %s" % (func, expr))
+    # homeWipeTags copies af-home-wipe-<kind> for every HomeWipe kind.
+    prefix = consts["ec2TagHomeWipePrefix"]
+    keys |= {prefix + consts[c] for c in ("HomeWipeRepos", "HomeWipeClean")}
+    cfn = os.path.join(ROOT, "deploy", "aws", "ecs", "cfn")
+    for tpl in ("40-ec2-pool.yaml", "60-engines.yaml"):
+        with open(os.path.join(cfn, tpl), encoding="utf-8") as fh:
+            doc = yaml.load(fh, Loader=CfnLoader)
+        for res in doc["Resources"].values():
+            if res.get("Type") == "AWS::EC2::LaunchTemplate":
+                for spec in res["Properties"]["LaunchTemplateData"].get("TagSpecifications", []):
+                    keys |= {t["Key"] for t in spec["Tags"]}
+    return keys
+
+
 def main():
     try:
         stmts = cp_role_statements()
@@ -397,6 +465,18 @@ def main():
         print("cfn-cp-tag-fence-test: cannot read the templates: %s" % e)
         return 2
     failed = 0
+
+    try:
+        code_keys = create_keys_in_code()
+    except (OSError, KeyError, ValueError) as e:
+        print("cfn-cp-tag-fence-test: cannot read the create calls' keys: %s" % e)
+        return 2
+    for k in sorted(code_keys):
+        action, res, ctx = on_create("RunInstances", "instance", dict({k: "v"}, **{"af-pool": POOL}))
+        if not allowed(stmts, action, res, ctx)[0]:
+            failed += 1
+            print("FAIL  create calls write the tag key %r, which Ec2TagOnCreate does not list" % k)
+    print("ok    %d create-time keys found in code and launch templates" % len(code_keys))
 
     found = discover()
     if not found:
