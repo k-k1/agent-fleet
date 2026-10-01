@@ -160,6 +160,29 @@ func cpContractFamilies() []contractFamily {
 			tsOnly: map[string]string{},
 			goOnly: map[string]string{},
 		},
+
+		// Tenant branch naming rules (ADR 0103 decision 10): the admin answer and one rule,
+		// which the editor sends back as typed.
+		{
+			name:    "tenantBranchRulesWire",
+			goType:  reflect.TypeOf(tenantBranchRulesWire{}),
+			binding: map[string]string{"Tenant": "tenant", "Rules": "rules", "UpdatedBy": "updated_by", "UpdatedAt": "updated_at"},
+			tsPath:  "../console/src/features/settings/tenant/tenantBranchRules.tsx",
+			tsName:  "TenantBranchRules",
+			tsKeys:  keySet("tenant", "rules", "updated_by", "updated_at"),
+			tsOnly:  map[string]string{},
+			goOnly:  map[string]string{},
+		},
+		{
+			name:    "branchRuleWire",
+			goType:  reflect.TypeOf(branchRuleWire{}),
+			binding: map[string]string{"Match": "match", "Name": "name", "Base": "base", "Types": "types"},
+			tsPath:  "../console/src/features/settings/tenant/tenantBranchRules.tsx",
+			tsName:  "TenantBranchRule",
+			tsKeys:  keySet("match", "name", "base", "types"),
+			tsOnly:  map[string]string{},
+			goOnly:  map[string]string{},
+		},
 	}
 }
 
@@ -208,7 +231,7 @@ var gitOAuthBinding = map[string]string{
 func TestContractFamilies(t *testing.T) {
 	fams := cpContractFamilies()
 	// Watch the population: a family silently dropped from the table is noticed here.
-	if len(fams) != 7 {
+	if len(fams) != 9 {
 		t.Fatalf("only %d families = one has fallen out of the table (if you added one, fix the count too)", len(fams))
 	}
 	for _, f := range fams {
