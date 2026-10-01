@@ -1,9 +1,16 @@
 // The W×H loader's promise to the Agent (imageSize.ts): many asks become few requests, never
 // more than one in flight, and an answer is remembered per (path, mtime).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BATCH_MAX, clearImageSizeCache, imageSize, knownImageSize } from "./imageSize.ts";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { BATCH_MAX, clearImageSizeCache, imageSize, knownImageSize, useImageSize } from "./imageSize.ts";
+import { setTenant } from "../../core/api/client.ts";
 
 let bodies: string[][] = [];
+/** The X-AF-Tenant each request carried, in order. */
+let tenants: (string | undefined)[] = [];
+/** What a file measures; tenant "b" holds a different picture under the same path. */
+let dims = { w: 832, h: 1216 };
 let inFlight = 0;
 let peak = 0;
 let fail = false;
@@ -11,11 +18,14 @@ let latency = 5;
 /** Answer like the CP does while the agent restarts: a 503 with an error body. */
 let unavailable = false;
 
-const answer = (paths: string[]) => Object.fromEntries(paths.filter((p) => p.endsWith(".png")).map((p) => [p, { w: 832, h: 1216 }]));
+const answer = (paths: string[], tenant?: string) =>
+  Object.fromEntries(paths.filter((p) => p.endsWith(".png")).map((p) => [p, tenant === "b" ? { w: 100, h: 50 } : dims]));
 
 const fetchMock = vi.fn(async (_url: string, opts?: RequestInit) => {
   const paths = JSON.parse(String(opts?.body)).paths as string[];
+  const tenant = new Headers(opts?.headers).get("X-AF-Tenant") ?? undefined;
   bodies.push(paths);
+  tenants.push(tenant);
   inFlight++;
   peak = Math.max(peak, inFlight);
   await new Promise((r) => setTimeout(r, latency));
@@ -34,7 +44,7 @@ const fetchMock = vi.fn(async (_url: string, opts?: RequestInit) => {
     status: 200,
     statusText: "OK",
     headers: { get: () => null },
-    text: async () => JSON.stringify({ sizes: answer(paths) }),
+    text: async () => JSON.stringify({ sizes: answer(paths, tenant) }),
   } as unknown as Response;
 });
 
@@ -42,6 +52,9 @@ beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
   clearImageSizeCache();
   bodies = [];
+  tenants = [];
+  dims = { w: 832, h: 1216 };
+  setTenant("a");
   inFlight = 0;
   peak = 0;
   fail = false;
@@ -50,7 +63,10 @@ beforeEach(() => {
   fetchMock.mockClear();
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  setTenant("");
+  vi.unstubAllGlobals();
+});
 
 describe("画像の W×H をまとめて聞く", () => {
   it("同じ瞬間の問い合わせは 1 本の要求に相乗りする", async () => {
@@ -108,5 +124,65 @@ describe("画像の W×H をまとめて聞く", () => {
     const [a, b] = await Promise.all([imageSize("a.png"), imageSize("a.png")]);
     expect(a).toEqual(b);
     expect(bodies).toEqual([["a.png"]]);
+  });
+
+  it("テナントを切り替えたら前のテナントの答えを使わず、切り替え後の要求はそのテナントへ送る", async () => {
+    expect(await imageSize("pics/a.png", 1)).toEqual({ w: 832, h: 1216 });
+    setTenant("b");
+    expect(knownImageSize("pics/a.png", 1)).toBeUndefined();
+    expect(await imageSize("pics/a.png", 1)).toEqual({ w: 100, h: 50 });
+    expect(tenants).toEqual(["a", "b"]);
+  });
+
+  it("待ち窓の途中で切り替えても、A の問い合わせは A に、B のは B に別々の要求で送る", async () => {
+    const fromA = imageSize("pics/a.png", 1);
+    setTenant("b");
+    const fromB = imageSize("pics/a.png", 1);
+    expect(await fromA).toEqual({ w: 832, h: 1216 });
+    expect(await fromB).toEqual({ w: 100, h: 50 });
+    expect(tenants).toEqual(["a", "b"]);
+    expect(knownImageSize("pics/a.png", 1)).toEqual({ w: 100, h: 50 });
+    setTenant("a");
+    expect(knownImageSize("pics/a.png", 1)).toEqual({ w: 832, h: 1216 });
+  });
+
+  it("要求中に切り替えて遅れて返った答えは、切り替え後のテナントには入らない", async () => {
+    latency = 80;
+    const fromA = imageSize("pics/a.png", 1);
+    await new Promise((r) => setTimeout(r, 50)); // out, under tenant a
+    setTenant("b");
+    await fromA;
+    expect(knownImageSize("pics/a.png", 1)).toBeUndefined();
+  });
+
+  it("mtime の無い答えは覚えない（同じパスが上書きされても次に見たとき新しい寸法になる）", async () => {
+    expect(await imageSize("shared.png")).toEqual({ w: 832, h: 1216 });
+    expect(knownImageSize("shared.png")).toBeUndefined();
+    dims = { w: 640, h: 480 };
+    expect(await imageSize("shared.png")).toEqual({ w: 640, h: 480 });
+    expect(bodies.length).toBe(2);
+  });
+
+  it("mtime の無いフックは開き直すたびに聞き直す（ミラーの拡大の (i)）", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const Probe = () => {
+      const s = useImageSize("shared.png");
+      return <span>{s ? `${s.w}x${s.h}` : "-"}</span>;
+    };
+    const mountOnce = async () => {
+      const root = createRoot(host);
+      await act(async () => root.render(<Probe />));
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 60));
+      });
+      const text = host.textContent;
+      await act(async () => root.unmount());
+      return text;
+    };
+    expect(await mountOnce()).toBe("832x1216");
+    dims = { w: 640, h: 480 };
+    expect(await mountOnce()).toBe("640x480");
+    host.remove();
   });
 });

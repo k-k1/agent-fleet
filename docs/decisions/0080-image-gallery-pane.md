@@ -504,7 +504,10 @@ decode, not the scale).
     one allowlist line (read-only, not audited).
 - **A 500-image folder is not 500 requests.** A card asks only once it is armed (decision 4's
   `useArmed`), every ask in a 30 ms window rides one request, at most one request is in flight,
-  and answers are memoized per (path, mtime). Measured in headless Chromium against the 202-image
+  and answers are memoized per (user, tenant, path, mtime). The tenant switches without a reload
+  and the same relative path is another file there, so a batch never mixes tenants and names its
+  own in `X-AF-Tenant`. Without an mtime (the mirror's lightbox) a key names a path, not a
+  revision, so the answer is shared only while in flight and every new look asks again. Measured in headless Chromium against the 202-image
   folder (a throwaway copy of `scripts/gallery-perf`'s stub with a header-reading handler): the
   first screen made **one request for 34 paths**; switching to S added one for the 28 newly
   armed cards.
