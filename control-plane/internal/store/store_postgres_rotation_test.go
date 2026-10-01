@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
 )
 
 // TestPostgresPasswordRotation is the one that would have caught the 2026-09-01
@@ -37,7 +38,9 @@ import (
 //	AF_TEST_DATABASE_URL="postgres://postgres@/postgres?host=$D/sock&sslmode=disable" \
 //	  go test -run TestPostgresPasswordRotation -v
 func TestPostgresPasswordRotation(t *testing.T) {
-	adminURL := os.Getenv("AF_TEST_DATABASE_URL")
+	// The role is cluster-wide and the test creates no tables, so it takes the database
+	// itself rather than a pgtest.Schema.
+	adminURL := pgtest.URL()
 	if adminURL == "" {
 		t.Skip("set AF_TEST_DATABASE_URL to run the Postgres rotation test")
 	}
@@ -63,6 +66,24 @@ func TestPostgresPasswordRotation(t *testing.T) {
 	role := fmt.Sprintf("af_rot_test_%d_%s", os.Getpid(), hex.EncodeToString(suffix[:]))
 	quotedRole := pgx.Identifier{role}.Sanitize()
 	const pw1, pw2 = "rot-before-1", "rot-after-2"
+	// GRANT ... ON DATABASE and DROP OWNED both rewrite the database's one pg_database
+	// row, and two runs doing it at once fail with "tuple concurrently updated"
+	// (measured with two overlapping runs on one af-db database). The advisory lock is
+	// scoped to this database, which is exactly the row they contend for.
+	aclLocked := func(c context.Context, q string) error {
+		tx, err := admin.BeginTx(c, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err := tx.ExecContext(c, `SELECT pg_advisory_xact_lock(hashtext('af_rot_test_database_acl'))`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(c, q); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
 	exec := func(q string, args ...any) {
 		t.Helper()
 		if _, err := admin.ExecContext(ctx, q, args...); err != nil {
@@ -79,7 +100,7 @@ func TestPostgresPasswordRotation(t *testing.T) {
 		// DROP OWNED revokes the role's privileges in this database and on shared
 		// objects, the database ACL included; DROP ROLE refuses while any remain and
 		// names the database that still holds one, so neither error is swallowed.
-		if _, err := admin.ExecContext(c, `DROP OWNED BY `+quotedRole); err != nil {
+		if err := aclLocked(c, `DROP OWNED BY `+quotedRole); err != nil {
 			t.Errorf("cleanup: DROP OWNED BY %s: %v", role, err)
 		}
 		if _, err := admin.ExecContext(c, `DROP ROLE `+quotedRole); err != nil {
@@ -91,7 +112,10 @@ func TestPostgresPasswordRotation(t *testing.T) {
 			t.Errorf("cleanup: DROP ROLE %s: %v", role, err)
 		}
 	})
-	exec(fmt.Sprintf(`GRANT CONNECT ON DATABASE %s TO %s`, pgx.Identifier{dbName}.Sanitize(), quotedRole))
+	grant := fmt.Sprintf(`GRANT CONNECT ON DATABASE %s TO %s`, pgx.Identifier{dbName}.Sanitize(), quotedRole)
+	if err := aclLocked(ctx, grant); err != nil {
+		t.Fatalf("%s: %v", grant, err)
+	}
 
 	dsn := func(pw string) string {
 		u, err := url.Parse(adminURL)
