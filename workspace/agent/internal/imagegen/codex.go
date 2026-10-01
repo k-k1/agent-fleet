@@ -48,6 +48,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/modelfallback"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
@@ -55,7 +56,7 @@ import (
 // gpt-image-2 whatever runs the turn, so the cheapest capable tier is the right default.
 // Measured on 2026-09-06; override deployment-wide with AF_IMAGEGEN_CODEX_MODEL, because
 // model ids move and nothing here may depend on one staying valid.
-const defaultCodexModel = "gpt-5.4-mini"
+const defaultCodexModel = modelfallback.ImagegenCodexDriver
 
 // codexGenerateTimeout bounds one turn. It sits below the 600 s tool_timeout_sec the codex
 // materializer stamps on the af server, so a slow run is reported by us with a real reason

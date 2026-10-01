@@ -18,6 +18,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/modelfallback"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
@@ -138,6 +139,7 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	// so "the route hid everything" can be told from "there was nothing to hide". -1 for
 	// every other kind, which does no shaping of its own.
 	enumerated := -1
+	var opencodeIDs []string
 	switch r.PathValue("kind") {
 	case "claude":
 		list = claude.Models()
@@ -173,9 +175,9 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		// The shaping is reported alongside the list: when the selected route yields
 		// nothing the rescue quietly re-shapes with Zen, and the Console has to be able to
 		// say so rather than keep claiming the route the user chose (docs/log/103).
-		ids := opencode.Models()
-		enumerated = len(ids)
-		list, route = opencode.CatalogWithRoute(ids, catalogPref)
+		opencodeIDs = opencode.Models()
+		enumerated = len(opencodeIDs)
+		list, route = opencode.CatalogWithRoute(opencodeIDs, catalogPref)
 	case "agy":
 		list = agy.Models()
 	case "copilot":
@@ -205,6 +207,16 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	// plan" is a guess it prints for all of them). Counting the two narrowing steps is
 	// enough to name which one emptied it; see `reason` below.
 	offered := len(list)
+	// What the live catalog listed, for telling a recommendation it supplied from one that is a
+	// built-in fallback (recommendedFromFallback below). opencode's unshaped ids count too: the
+	// billing route narrows the menu, not what the account can run.
+	listed := make(map[string]bool, len(list)+len(opencodeIDs))
+	for _, m := range list {
+		listed[m.ID] = true
+	}
+	for _, id := range opencodeIDs {
+		listed[id] = true
+	}
 	// Drop the models the user hides (ui-prefs hiddenModels) last. This is where the
 	// Console picker and the MCP list_models meet, so one place covers both (the same
 	// shape as opencodeCatalog). An explicitly named hidden model is refused separately
@@ -228,10 +240,15 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	// re-deriving it. Only the kinds the assistant and AI assist can run; the rest have no
 	// "recommended" choice to explain.
 	if _, ok := chatx.ChatProviders[r.PathValue("kind")]; ok {
+		var rec chatx.RecommendedSet
 		if hiddenGiven {
-			out["recommended"] = chatx.RecommendedModelsWithHidden(r.PathValue("kind"), hiddenRaw, claudeCustom)
+			rec = chatx.RecommendedModelsWithHidden(r.PathValue("kind"), hiddenRaw, claudeCustom)
 		} else {
-			out["recommended"] = chatx.RecommendedModels(r.PathValue("kind"))
+			rec = chatx.RecommendedModels(r.PathValue("kind"))
+		}
+		out["recommended"] = rec
+		if tiers := recommendedFromFallback(rec, listed); len(tiers) > 0 {
+			out["recommendedFromFallback"] = tiers
 		}
 	}
 	if route != "" {
@@ -241,6 +258,21 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		out["reason"] = reason
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// recommendedFromFallback names the tiers of rec that are a pinned fallback
+// (internal/modelfallback) the live catalog did not list — typically codex's chat default when
+// its catalog cannot be read. Said in the answer so a caller of list_models knows that id was
+// not confirmed by the account, rather than finding out when the launch fails. Additive: the
+// key is absent when every tier came from the catalog (or names no model).
+func recommendedFromFallback(rec chatx.RecommendedSet, listed map[string]bool) []string {
+	var tiers []string
+	for _, t := range []struct{ name, id string }{{"chat", rec.Chat}, {"prose", rec.Prose}, {"short", rec.Short}} {
+		if t.id != "" && !listed[t.id] && modelfallback.Is(t.id) {
+			tiers = append(tiers, t.name)
+		}
+	}
+	return tiers
 }
 
 // requestHiddenModels reads ?hidden= — the Console's hiddenModels[kind] as a JSON array of

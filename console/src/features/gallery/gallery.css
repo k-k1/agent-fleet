@@ -14,7 +14,8 @@
   font-size: 11px;
   white-space: nowrap;
 }
-.gal-sort {
+.gal-sort,
+.gal-tile {
   display: inline-flex;
   gap: 2px;
 }
@@ -138,9 +139,24 @@
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 10px;
 }
+/* The tile sizes (ADR 0080 decision 16). The minimums are what tileEdge in gallery.ts sizes the
+   thumbnail for — widen one here and that table has to be re-checked, or the cards go soft. */
+.gal-grid.tile-s {
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 6px;
+}
+.gal-grid.tile-l {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
 @container paneview (max-width: 460px) {
   .gal-grid {
     grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  }
+  .gal-grid.tile-s {
+    grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  }
+  .gal-grid.tile-l {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   }
   /* Narrow panes lose the wording; the icons and their tooltips carry the sort. */
   .gal-count {
@@ -183,6 +199,7 @@
   border: 0;
 }
 .gal-thumb {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -195,6 +212,26 @@
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+}
+/* The picture's real W×H (fs/imagesize), over its bottom-left corner. Hover / focus only, like
+   the corner button: on every card at once it would be a grid of numbers over the pictures. */
+.gal-dims {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 16px;
+  color: #fff;
+  background: color-mix(in srgb, #000 60%, transparent);
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  pointer-events: none;
+}
+.gal-card:hover .gal-dims,
+.gal-card:focus-within .gal-dims {
+  opacity: 1;
 }
 .gal-thumb-none {
   color: var(--muted);

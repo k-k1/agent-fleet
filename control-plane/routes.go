@@ -794,6 +794,9 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	// flushing stream proxy passes through before the ingress idle timeout.
 	mux.HandleFunc("POST /api/fs/suggest-edit", proxy.withResolved(proxy.stream))
 	mux.HandleFunc("GET /api/fs/download", rest)
+	// A picture's width and height from its header — read-only, a bounded header read per
+	// path (workspace/agent/fs_imagesize.go).
+	mux.HandleFunc("POST /api/fs/imagesize", rest)
 	mux.HandleFunc("POST /api/fs/upload", rest)
 	mux.HandleFunc("GET /api/fs/changes", rest)
 	mux.HandleFunc("GET /api/fs/linemarks", rest)

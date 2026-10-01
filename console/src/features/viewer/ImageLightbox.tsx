@@ -55,6 +55,9 @@ interface Props {
    * path there is nothing to ask `GET api/imagegen/props` about.
    */
   path?: string;
+  /** The picture's mtime when the host has it (the gallery's listing). Only a memo key for its
+   *  W×H: the gallery has usually asked already, and the same key answers without a request. */
+  mtime?: number;
   /** Extra class on the overlay. `over-modal` lifts it above a ui/Modal (z-index 100), for a
    *  lightbox opened from inside a dialog; the base 60 would leave it behind the backdrop. */
   className?: string;
@@ -63,7 +66,7 @@ interface Props {
   actions?: ReactNode;
 }
 
-export function ImageLightbox({ src, onClose, placeholder, alt, onPrev, onNext, index, total, onOpenFolder, path, className, actions }: Props) {
+export function ImageLightbox({ src, onClose, placeholder, alt, onPrev, onNext, index, total, onOpenFolder, path, mtime, className, actions }: Props) {
   const tr = useT();
   const view = useRef<ImageViewHandle>(null);
   const [scale, setScale] = useState(1);
@@ -221,7 +224,7 @@ export function ImageLightbox({ src, onClose, placeholder, alt, onPrev, onNext, 
           <Icon name="close" />
         </button>
       </div>
-      {path && showProps && <ImageProps path={path} />}
+      {path && showProps && <ImageProps path={path} mtime={mtime} />}
       <ImageView ref={view} src={src} placeholder={placeholder} alt={alt || tr("mirror.pasted_image_zoom")} onZoom={setScale} />
       {actions && <div className="mirror-lightbox-actions">{actions}</div>}
     </div>

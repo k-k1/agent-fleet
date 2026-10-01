@@ -49,6 +49,32 @@ export interface GalleryFolder {
 
 export type GallerySort = "new" | "name";
 
+/** The card size the reader picked (ADR 0080 decision 16). Absent means "m". */
+export type GalleryTile = "s" | "m" | "l";
+export const GALLERY_TILES: readonly GalleryTile[] = ["s", "m", "l"];
+
+/**
+ * Longest edge asked of the thumbnail endpoint for a card of this size on a screen of this
+ * density — and, because they show the same pictures at the same size, for a folder's cover,
+ * the lightbox's placeholder and the listing's `warm=` too (decision 14).
+ *
+ * Only two answers, 256 and 512, and both are warmed when a picture is generated
+ * (workspace/agent fs_thumb.go, warmCardEdges). The cache is keyed on the edge, so a third
+ * value would be a third decode of every picture and one no warm-up fills.
+ *
+ *   - s (~110 CSS px): 256 at any density; 220 device px fit.
+ *   - m (~150 CSS px): 256 on a 1x screen, 512 above 1.5x — decision 14 unchanged.
+ *   - l (~260 CSS px): 512 at any density. Asking for more buys nothing for a generated
+ *     832x1216: `thumb` truncates its factor, so anything over 608 comes back as the 1.1 MB
+ *     original. A portrait shown in a 4:3 tile is height-bound (260 px wide is 195 tall, 390
+ *     device px at 2x), which the 608 px copy covers.
+ */
+export function tileEdge(tile: GalleryTile | undefined, dpr: number): number {
+  if (tile === "s") return 256;
+  if (tile === "l") return 512;
+  return (dpr || 1) > 1.5 ? 512 : 256;
+}
+
 /**
  * How many cards are drawn before "show more". Each one is a thumbnail request, so an
  * unbounded folder means hundreds of decodes (2 at a time, Agent-side) plus — on a

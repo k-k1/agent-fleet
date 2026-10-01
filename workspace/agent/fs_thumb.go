@@ -603,7 +603,7 @@ func warmThumbDir(full string, edge int) {
 // --- warming a picture that was just generated ----------------------------------------
 //
 // imagegen hands over every picture it writes (imagegen.WarmThumb, wired in engines.go), and
-// the two surfaces that open a new picture next are the card (`thumb=512`) and the lightbox
+// the two surfaces that open a new picture next are the card (`thumb`, warmCardEdges) and the lightbox
 // (`preview`). Both are filled here, off the generation's path: the hand-over only queues.
 //
 // The queue is bounded and drained by at most warmThumbWorkers goroutines that exit when it is
@@ -616,9 +616,13 @@ func warmThumbDir(full string, edge int) {
 // single decode.
 var previewSteps = []int{1024, 1536, 2048}
 
-// warmCardEdge is the edge every card surface asks for: the mirror's, the gallery's on a
-// high-DPI screen, the studio's.
-const warmCardEdge = 512
+// warmCardEdges are the edges card surfaces ask for: 512 is the mirror's, the studio's, and
+// the gallery's medium tile on a high-DPI screen and large tile anywhere; 256 is the gallery's
+// medium tile on a 1x screen and its small tile anywhere (console gallery.ts, tileEdge). The
+// cache is keyed on the edge, so warming only 512 left the gallery's default tile on an
+// ordinary monitor decoding every new picture cold. The second edge is one more background
+// decode per picture (~40 ms on the two warm workers), not one more on anyone's wait.
+var warmCardEdges = []int{512, 256}
 
 // genWarmQueueCap bounds what may wait. One generation writes at most a handful of pictures;
 // 32 is several bursts deep and still only seconds of decode on two workers.
@@ -673,9 +677,11 @@ func drainGenWarm() {
 	}
 }
 
-// warmGeneratedFile fills the card's entry and the lightbox's for one picture.
+// warmGeneratedFile fills the cards' entries and the lightbox's for one picture.
 func warmGeneratedFile(full string) {
-	warmThumbFile(full, warmCardEdge)
+	for _, edge := range warmCardEdges {
+		warmThumbFile(full, edge)
+	}
 	warmPreviewFile(full)
 }
 
