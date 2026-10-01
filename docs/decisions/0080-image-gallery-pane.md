@@ -415,8 +415,9 @@ picture out of it says most of what they wanted to know.
   download both serve the real bytes. The lightbox is a surface for LOOKING, and is the only
   place that gets a copy.
 - The neighbour prefetch moved to the same door — prefetching one URL and then displaying
-  another wastes the whole prefetch. The mirror's shared-file lightbox made the same move in
-  decision 15.
+  another wastes the whole prefetch. The mirror's shared-file lightbox is untouched so far
+  (the same move applies to it).
+  - *Added 2026-10-01:* the mirror's lightbox made that move in decision 15.
 
 ### Decision 13 — make the downscale itself cheap (stop calling `src.At()`)
 
@@ -560,8 +561,11 @@ decode, not the scale).
   (a folder's cover and count, `peek`); ✅ decision 12 (the lightbox's screen-sized copy,
   `preview`); ✅ decision 13 (the fast path in the downscale).
   ✅ decision 14 (a card's edge chosen by device pixel ratio).
-  ✅ decision 15 (the mirror's lightbox on `preview`, and `preview` warmed at generation time;
-  2026-10-01).
+  Still open: **using `preview` for the mirror's
+  shared-file lightbox** (the same move as decision 12, not started); **warming `preview` at
+  generation time** (only `thumb=512` is warmed today, so the first enlarge of a new picture
+  pays ~110 ms to decode and ~30 ms to encode).
+  - *Added 2026-10-01:* both of those landed as decision 15.
 - **P3**: generalizing to "media" including video and PDF (whether it is wanted is open
   question 2).
 
