@@ -90,7 +90,7 @@ gitの認証は接続後、すべてのgit操作に**透過的に効きます**�
 行には状態表示も出ます。読み方を覚えておくと、push 前に気づけます。
 
 - **未コミット** — コミットしていない変更があります。
-- worktree のバッジの「親」は、親 working copy のブランチの upstream（たとえば `origin/develop`）です。GitHub で PR をマージすると、親 working copy を fast-forward しなくても次の fetch（自動で 10 分ごと）で反映されます。upstream が無いときは親 working copy の HEAD と比べます。比較先はバッジのツールチップに出ます。親 working copy にある未 push のコミットは比較に入らず、「〜を Fast-Forward で取り込む」でも取り込まれません（base に入るのは push 後です）。
+- worktree のバッジの「親」は、親 working copy のブランチの upstream（たとえば `origin/develop`）です。GitHub で PR をマージすると、親 working copy を fast-forward しなくても次の fetch（自動で 10 分ごと）で反映されます。upstream が無いときは親 working copy の HEAD と比べます。比較先はバッジのツールチップに出ます。親 working copy にある未 push のコミットは比較に入らず、「〜を Fast-Forward で取り込む」でも取り込まれません（比較先に入るのは push 後です）。
 - worktree の **親=** — 親と同じコミットです。
 - worktree の **未取込 N** — 親にまだ含まれない固有コミットが N 件あります。
 - worktree の **親+N・FF可** — worktree の HEAD は親に含まれていて、**親のほうが N コミット進んでいます**。右クリックの **「origin/develop を Fast-Forward で取り込む」**（upstream が無いときは「親を Fast-Forward で取り込む」）で、親に入った変更をこの worktree へそのまま取り込めます（マージコミットは作られません）。

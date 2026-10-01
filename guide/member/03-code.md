@@ -94,7 +94,7 @@ The **▾** to the right of "Launch" lets you pick a kind (claude / codex / curs
 Rows also show status indicators. Learning to read them helps you catch things before pushing.
 
 - **Uncommitted** — there are changes that have not been committed.
-- On a worktree's chip, "parent" is the upstream of the parent working copy's branch (e.g. `origin/develop`). A PR merged on GitHub shows up after the next fetch (automatic, every 10 minutes) without fast-forwarding the parent working copy. With no upstream, the chip compares with the parent working copy's HEAD. The chip's tooltip names the target. Commits the parent working copy has not pushed are not compared and are not brought in by the fast-forward item (they reach the base only once pushed).
+- On a worktree's chip, "parent" is the upstream of the parent working copy's branch (e.g. `origin/develop`). A PR merged on GitHub shows up after the next fetch (automatic, every 10 minutes) without fast-forwarding the parent working copy. With no upstream, the chip compares with the parent working copy's HEAD. The chip's tooltip names the target. Commits the parent working copy has not pushed are not compared and are not brought in by the fast-forward item (they reach the comparison target only once pushed).
 - Worktree **= parent** — same commit as the parent.
 - Worktree **unmerged N** — there are N commits unique to the worktree not yet in the parent.
 - Worktree **parent+N, FF ok** — the worktree's HEAD is contained in the parent, and **the parent is N commits ahead**. **"Fast-forward from origin/develop"** in the right-click menu (**"Fast-forward from parent"** without an upstream) brings those changes straight into this worktree (no merge commit).
