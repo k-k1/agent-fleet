@@ -37,25 +37,39 @@ async function postJSON(path: string, method: string, body: unknown, toast: (msg
   return true;
 }
 
-// deleteRow DELETEs and, like postJSON, says why it failed. Callers clean up only on true:
-// a refused delete leaves the row, and its form and marks with it.
-async function deleteRow(path: string, toast: (msg: string) => void): Promise<boolean> {
+// deleteRow DELETEs and, like postJSON, says why it failed. Callers clean up only on "ok":
+// a refused delete leaves the row, and its form and marks with it. "in_use" is the server
+// refusing a profile that hosts still use (409 ssm_profile_in_use), which means this
+// page's host list is stale.
+async function deleteRow(path: string, toast: (msg: string) => void): Promise<"ok" | "in_use" | "failed"> {
   let res;
   try {
     res = await raw(path, { method: "DELETE" });
   } catch (e: any) {
     toast(t("ssm.comm_failed", { msg: String(e?.message || e) }));
-    return false;
+    return "failed";
   }
   if (!res.ok) {
-    toast(t("ssm.delete_failed_http", { status: res.status, detail: await failDetail(res) }));
-    return false;
+    const j = await res.json().catch(() => null);
+    if (j?.error?.code === "ssm_profile_in_use" && Array.isArray(j.hosts)) {
+      toast(profileInUse(j.hosts));
+      return "in_use";
+    }
+    toast(t("ssm.delete_failed_http", { status: res.status, detail: failDetailOf(res, j) }));
+    return "failed";
   }
-  return true;
+  return "ok";
+}
+
+function profileInUse(aliases: string[]): string {
+  return t("ssm.profile_in_use", { n: aliases.length, hosts: aliases.join(", ") });
 }
 
 async function failDetail(res: Response): Promise<string> {
-  const j = await res.json().catch(() => null);
+  return failDetailOf(res, await res.json().catch(() => null));
+}
+
+function failDetailOf(res: Response, j: any): string {
   return j?.error?.message ? " — " + j.error.message : res.status === 404 ? t("ssm.save_failed_404") : "";
 }
 
@@ -288,10 +302,16 @@ function ProfileSection({
     }
   };
   const remove = async (id: string) => {
-    const using = (hosts || []).filter((h) => h.profileId === id).length;
+    // The server refuses to delete a profile that hosts use, so say so up front instead of
+    // asking to confirm a delete that cannot happen.
+    const using = (hosts || []).filter((h) => h.profileId === id).map((h) => String(h.alias));
+    if (using.length > 0) {
+      toast(profileInUse(using));
+      return;
+    }
     const ok = await askConfirm({
       title: tr("ssm.profile_del_title"),
-      body: using > 0 ? tr("ssm.profile_del_body_hosts", { n: using }) : tr("ssm.profile_del_body"),
+      body: tr("ssm.profile_del_body"),
       confirmLabel: tr("common.delete_confirm"),
       danger: true,
     });
@@ -300,7 +320,10 @@ function ProfileSection({
     // started and then lost. The open form closes through the list effect, once the row is gone.
     setBusy(true);
     try {
-      if (!(await deleteRow(`api/ssm/profiles/${encodeURIComponent(id)}`, toast))) return;
+      const res = await deleteRow(`api/ssm/profiles/${encodeURIComponent(id)}`, toast);
+      // Refused for a host this page has not loaded yet: fetch it, so the list shows why.
+      if (res === "in_use") reload();
+      if (res !== "ok") return;
       reloginNeeded.delete(id);
       reload();
     } finally {
@@ -607,7 +630,7 @@ function HostSection({
     if (!ok) return;
     setBusy(true);
     try {
-      if (!(await deleteRow(`api/ssm/hosts/${encodeURIComponent(id)}`, toast))) return;
+      if ((await deleteRow(`api/ssm/hosts/${encodeURIComponent(id)}`, toast)) !== "ok") return;
       reload();
     } finally {
       setBusy(false);

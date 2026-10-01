@@ -214,14 +214,38 @@ describe("SsmTab profile Edit", () => {
     expect(warn()).toBe(t("ssm.edit_portal_warn"));
   });
 
-  it("names the hosts a delete would strand", async () => {
+  it("does not offer to delete a profile its hosts use, and names them", async () => {
+    hosts = [web, { ...web, id: "h2", alias: "db-01" }];
+    confirmAnswer = true;
+    const del = vi.mocked((await import("../../../core/api/client.ts")).raw);
+    del.mockClear();
     await mount();
     await click(btn(rows(0)[0], t("common.delete")));
+    expect(toasts).toEqual([t("ssm.profile_in_use", { n: 2, hosts: "web-01, db-01" })]);
+    expect(confirms).toEqual([]);
+    expect(del).not.toHaveBeenCalled();
+    expect(rows(0).length).toBe(2);
     await click(btn(rows(0)[1], t("common.delete")));
-    expect(confirms.map((c) => c.body)).toEqual([
-      t("ssm.profile_del_body_hosts", { n: 1 }),
-      t("ssm.profile_del_body"),
-    ]);
+    expect(confirms.map((c) => c.body)).toEqual([t("ssm.profile_del_body")]);
+  });
+
+  // The server is the one that decides: a host saved elsewhere since this page loaded holds
+  // the profile, and the 409 names it and makes the page fetch it.
+  it("shows the server's in-use refusal and fetches the host list it was missing", async () => {
+    confirmAnswer = true;
+    await mount();
+    delReply = {
+      ok: false,
+      status: 409,
+      body: { error: { code: "ssm_profile_in_use", message: "the profile is used by 1 host(s): new-01" }, hosts: ["new-01"] },
+    };
+    hosts = [web, { ...web, id: "h2", alias: "new-01", profileId: "p2" }];
+    gets.length = 0;
+    await click(btn(rows(0)[1], t("common.delete")));
+    expect(toasts).toEqual([t("ssm.profile_in_use", { n: 1, hosts: "new-01" })]);
+    expect(gets).toContain("api/ssm/hosts");
+    expect(rows(0).length).toBe(2);
+    expect(rows(1).map((r) => r.querySelector(".ssm-alias")?.textContent)).toEqual(["web-01", "new-01"]);
   });
 });
 
@@ -347,7 +371,9 @@ describe("SsmTab edit state stays consistent", () => {
     await mount();
     await click(btn(rows(1)[0], t("ssm.edit")));
     expect(host.querySelector<HTMLSelectElement>(".ssm-frm select")!.value).toBe("p1");
-    await click(btn(rows(0)[0], t("common.delete")));
+    // Picked in the open form only, so no saved host holds it and its delete goes through.
+    await type(host.querySelector<HTMLSelectElement>(".ssm-frm select")!, "p2");
+    await click(btn(rows(0)[1], t("common.delete")));
     await settle();
     expect(host.querySelector<HTMLSelectElement>(".ssm-frm select")!.value).toBe("");
     expect(btn(sections()[1], t("common.save")).disabled).toBe(true);
@@ -369,6 +395,7 @@ describe("SsmTab edit state stays consistent", () => {
 describe("SsmTab delete while editing", () => {
   it("holds the profile section still while a DELETE is out, then closes only the deleted row's form", async () => {
     confirmAnswer = true;
+    hosts = [];
     await mount();
     await click(btn(rows(0)[0], t("ssm.edit")));
     delHold = { release: () => {} };
@@ -412,6 +439,7 @@ describe("SsmTab delete while editing", () => {
 
   it("a refused profile DELETE keeps the row, its draft and its relogin mark, and says why", async () => {
     confirmAnswer = true;
+    hosts = [];
     await mount();
     await click(btn(rows(0)[0], t("ssm.edit")));
     await type(input("https://my-company.awsapps.com/start"), "https://other.awsapps.com/start");

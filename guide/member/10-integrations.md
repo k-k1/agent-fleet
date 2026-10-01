@@ -251,8 +251,10 @@ while the portal session is open, the next use renews it) or **Not signed in**. 
 workspace knows only the access token's expiry (about an hour), not when the portal session ends.
 
 Every profile and host row has **Edit**, which opens the same form filled in and saves it in place. Edit rather
-than delete and re-add: a host refers to its profile by an internal ID, so a re-added profile is a new one and
-the hosts that used the old one are left without a profile (the row then says so — edit the host to pick another).
+than delete and re-add: a host refers to its profile by an internal ID, so a re-added profile is a new one.
+A profile that hosts still use cannot be deleted — the page names those hosts; edit them to pick another
+profile, or delete them, first. A host that was left without a profile before this rule (its row says so) is
+fixed the same way: edit it and pick a profile.
 A profile's workspace name comes from its label, and the login belongs to that name: changing the label, or the
 start URL / SSO region, means logging in again: the form warns you, and the row shows **Log in again** until you log in from it. The workspace's `~/.aws/config` picks up
 the change within 5 minutes, or at once when you press **Log in**; sessions already open keep the old settings.
