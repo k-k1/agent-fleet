@@ -384,10 +384,11 @@ func (v *browserViewer) handleControl(data []byte) bool {
 		}
 		v.page.setState("loading")
 		var result struct {
+			LoaderID  string `json:"loaderId"`
 			ErrorText string `json:"errorText"`
 		}
-		if v.call("Page.navigate", map[string]any{"url": target}, &result) && result.ErrorText != "" {
-			v.page.setState("target-unreachable")
+		if v.call("Page.navigate", map[string]any{"url": target}, &result) {
+			v.page.settleNavigateError(result.LoaderID, result.ErrorText)
 		}
 	case "reload":
 		var msg struct {

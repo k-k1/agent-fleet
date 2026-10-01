@@ -88,6 +88,15 @@ type browserPage struct {
 	castEpoch     atomic.Uint64 // monotonic source for castGen values
 	unreachable   bool
 	topRequestID  string
+	// topRequestURL is topRequestID's URL. A failed request commits its error
+	// page only ~30-40 ms after Network.loadingFailed; until then p.url must
+	// already name the failed URL, or a pane navigate resolves against the
+	// document that is about to be replaced.
+	topRequestURL string
+	// blockedRequestURL is the off-loopback URL of a renderer-initiated
+	// navigation just blocked on Page.frameRequestedNavigation. Chromium may
+	// still report its start, which must not repeat the notice.
+	blockedRequestURL string
 	// loaderID is the loader of the current top-level navigation, pending or
 	// committed. Only its load/networkIdle may mark the page ready: the initial
 	// about:blank and the previous document both go network-idle while the next
@@ -212,31 +221,10 @@ func (m *browserManager) Create(req browserCreateRequest) (browserPageResponse, 
 		p.loaderID = nav.LoaderID
 	}
 	p.mu.Unlock()
-	if nav.ErrorText == "net::ERR_ABORTED" {
-		// Aborted without committing (a 204, a denied download): the tab is
-		// still on its about:blank, a live document, so it reads ready like any
-		// aborted navigation. p.url keeps the requested target so a reload
-		// retries it. Only while this navigation's loader is still the tracked
-		// one: any other belongs to a newer navigation, pending or already
-		// committed, whose own events end it. Network.loadingFailed may have
-		// restored the state first; then the loader is no longer this one.
-		p.mu.Lock()
-		restore := p.loaderID == nav.LoaderID
-		if restore {
-			p.topRequestID = ""
-			p.loaderID = p.committedLoaderID
-			p.unreachable = p.committedUnreachable
-		}
-		p.mu.Unlock()
-		if restore {
-			p.markLoaded()
-		}
-	} else if nav.ErrorText != "" {
-		p.mu.Lock()
-		p.unreachable = true
-		p.mu.Unlock()
-		p.setState("target-unreachable")
-	}
+	// An aborted initial navigation leaves the tab on its about:blank, a live
+	// document, so it reads ready; p.url keeps the requested target so a
+	// reload retries it.
+	p.settleNavigateError(nav.LoaderID, nav.ErrorText)
 	m.scheduleExpiry(p)
 	return browserPageResponse{ID: p.id, Port: p.port, URL: target, State: "starting"}, nil
 }
@@ -626,10 +614,10 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 	case "Fetch.requestPaused":
 		m.handleRequestPaused(cdp, p, ev.Params)
 	case "Page.frameRequestedNavigation":
-		m.handleRequestedNavigation(cdp, p, ev.Params)
+		m.handleRequestedNavigation(cdp, p, ev.Params, false)
 	case "Page.frameStartedNavigating":
 		p.trackStartedNavigation(ev.Params)
-		m.handleRequestedNavigation(cdp, p, ev.Params)
+		m.handleRequestedNavigation(cdp, p, ev.Params, true)
 	case "Page.screencastFrame":
 		var v struct {
 			Data      string `json:"data"`
@@ -716,6 +704,9 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 			}
 			if !v.Canceled {
 				p.unreachable = true
+				if p.topRequestURL != "" {
+					p.url = p.topRequestURL
+				}
 				p.mu.Unlock()
 				p.setState("target-unreachable")
 				return
@@ -833,6 +824,7 @@ func (m *browserManager) handleRequestPaused(cdp browserCDP, p *browserPage, raw
 			p.mu.Lock()
 			p.unreachable = false
 			p.topRequestID = v.NetworkID
+			p.topRequestURL = normalizeLoopbackURL(u).String()
 			p.mu.Unlock()
 			p.setState("loading")
 		}
@@ -848,7 +840,11 @@ func (m *browserManager) handleRequestPaused(cdp browserCDP, p *browserPage, raw
 	_ = m.call(cdp, p.sessionID, "Fetch.continueRequest", params, nil)
 }
 
-func (m *browserManager) handleRequestedNavigation(cdp browserCDP, p *browserPage, raw json.RawMessage) {
+// handleRequestedNavigation stops a main-frame navigation away from loopback.
+// A renderer-initiated one is reported twice, requested and then started
+// (measured: a link click and a location assignment both are), and the
+// notice is sent once per navigation.
+func (m *browserManager) handleRequestedNavigation(cdp browserCDP, p *browserPage, raw json.RawMessage, started bool) {
 	var v struct {
 		FrameID string `json:"frameId"`
 		URL     string `json:"url"`
@@ -858,12 +854,25 @@ func (m *browserManager) handleRequestedNavigation(cdp browserCDP, p *browserPag
 	}
 	p.mu.Lock()
 	mainFrameID := p.mainFrameID
+	repeated := false
+	if v.FrameID == mainFrameID && started {
+		repeated = p.blockedRequestURL != "" && p.blockedRequestURL == v.URL
+		p.blockedRequestURL = ""
+	}
 	p.mu.Unlock()
 	u, err := url.Parse(v.URL)
 	if v.FrameID != mainFrameID || (err == nil && allowedTopLevelBrowserURL(u)) {
 		return
 	}
 	_ = m.call(cdp, p.sessionID, "Page.stopLoading", nil, nil)
+	if repeated {
+		return
+	}
+	if !started {
+		p.mu.Lock()
+		p.blockedRequestURL = v.URL
+		p.mu.Unlock()
+	}
 	p.notifyJSON(map[string]any{"type": "page-error", "text": "top-level navigation outside loopback was blocked"})
 }
 
@@ -885,6 +894,48 @@ func (p *browserPage) trackStartedNavigation(raw json.RawMessage) {
 		p.loaderID = v.LoaderID
 	}
 	p.mu.Unlock()
+}
+
+// settleNavigateError applies the errorText Page.navigate answered with for
+// the navigation of loaderID, only while that loader is still the tracked one:
+// Page.navigate answers after the event loop may already track a newer
+// navigation, pending or committed, whose own events end it. net::ERR_ABORTED
+// (a 204, a denied download) ended without committing, so the committed
+// document is still live and reads as it did; Network.loadingFailed usually
+// restored it first, and then the loader is no longer this one. Any other
+// errorText is target-unreachable.
+//
+// The handler calls this off the event loop, so the loader check and the
+// state it decides are one critical section, the notice included: released in
+// between, the loop could start the newer navigation and this would then
+// overwrite its loading, or send a stale state after the loop's.
+func (p *browserPage) settleNavigateError(loaderID, errorText string) {
+	if errorText == "" {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.loaderID != loaderID {
+		return
+	}
+	if errorText == "net::ERR_ABORTED" {
+		p.topRequestID = ""
+		p.loaderID = p.committedLoaderID
+		p.unreachable = p.committedUnreachable
+	} else {
+		p.unreachable = true
+	}
+	state := "ready"
+	if p.unreachable {
+		state = "target-unreachable"
+	}
+	if p.state == state {
+		return
+	}
+	p.state = state
+	if p.viewer != nil {
+		p.viewer.enqueueText(mustBrowserJSON(map[string]any{"type": "state", "state": state}))
+	}
 }
 
 func (p *browserPage) markLoaded() {
