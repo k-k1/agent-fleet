@@ -21,6 +21,7 @@ import { TenantLoginRules, TenantLoginRulesView } from "./tenantLoginRules.tsx";
 import { TenantSignInMethods } from "./tenantSignInMethods.tsx";
 import { PoolBudgetHint, type PoolBudget } from "./ec2Pool.tsx";
 import { TenantNetworkView } from "./tenantNetwork.tsx";
+import { TenantBranchRulesView } from "./tenantBranchRules.tsx";
 import { TenantGitOAuthView } from "./tenantGitOAuth.tsx";
 import { TenantMachineView } from "./tenantMachine.tsx";
 import { TenantEngineAccessView } from "./tenantEngineAccess.tsx";
@@ -54,6 +55,9 @@ export function tenantScopeGroups(opts: { cost: boolean; engines?: boolean }): S
     ...(opts.cost ? ([["cost", "tenant.tab_cost"]] as [string, string][]) : []),
     ["audit", "tenant.tab_audit"],
     ["mcp", "tenant.tab_mcp"],
+    // Branch naming rules (ADR 0103 decision 10): like the MCP distribution above, a list the
+    // tenant admin keeps in the CP that every member's Agent pulls.
+    ["branch-rules", "tenant.tab_branch_rules"],
     // The reduced engine panel (ADR 0072 open question 11). Created only where the operator
     // granted this tenant `allow_engine_ingest` — like the cost item above, the item does not
     // exist rather than existing and being hidden, because the CP answers 403 without the
@@ -543,6 +547,7 @@ export function TenantScopeBody({
   if (section === "cost") return <CloudCostAdminView key={slug} tenants={one} isSuper={false} />;
   if (section === "audit") return <AuditView key={slug} tenants={one} isSuper={false} />;
   if (section === "mcp") return <McpAdminView key={slug} tenants={one} />;
+  if (section === "branch-rules") return <TenantBranchRulesView key={slug} slug={slug} />;
   // tenant is passed because this view carries two toggles, "accept" and "show as a button"
   // (docs/log/61 §61.17.5). Only a super_admin can flip them, and the rules PUT stays fixed at
   // withSuperAdmin (decision 19). onChanged reloads the four columns.

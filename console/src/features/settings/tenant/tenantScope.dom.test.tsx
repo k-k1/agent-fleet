@@ -27,7 +27,7 @@ vi.mock("../../../core/api/client.ts", () => ({
 }));
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 
-import { TenantScopeBody } from "./tenantScope.tsx";
+import { TenantScopeBody, tenantScopeGroups } from "./tenantScope.tsx";
 
 const TENANT = { slug: "sales", name: "営業部", users: 0, running: 0 };
 
@@ -105,5 +105,39 @@ describe("tenant deletion", () => {
     await act(async () => buttonWith("削除する")!.click());
 
     expect(onDeleted).not.toHaveBeenCalled();
+  });
+});
+
+// The branch naming rules (ADR 0103 decision 10) sit next to the MCP distribution, the other
+// tenant list every member's Agent pulls, and the section draws the editor for this tenant.
+describe("branch rules section", () => {
+  it("follows the MCP distribution in the rail and loads this tenant's rules", async () => {
+    const manage = tenantScopeGroups({ cost: false }).find((g) => g.key === "manage")!;
+    const keys = manage.items.map(([k]) => k);
+    expect(keys.indexOf("branch-rules")).toBe(keys.indexOf("mcp") + 1);
+
+    api.mockResolvedValue({ tenant: "sales", rules: [] });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <TenantScopeBody
+          slug="sales"
+          tenant={TENANT}
+          section="branch-rules"
+          isSuper={false}
+          member={null}
+          onOpenMember={() => {}}
+          onCloseMember={() => {}}
+          onChanged={() => {}}
+        />,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(api).toHaveBeenCalledWith("api/admin/tenants/sales/branch-rules");
+    expect(document.querySelector("textarea")).not.toBeNull();
   });
 });

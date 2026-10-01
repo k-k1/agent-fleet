@@ -734,3 +734,13 @@
   font-size: 12px;
   line-height: 1.7;
 }
+
+/* The tenant branch rules are edited as JSON (ADR 0103 decision 10): monospace so nesting
+   lines up, and full width because a rule's types object is the widest line. */
+.branch-rules-json {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--mono);
+  font-size: 12px;
+  resize: vertical;
+}
