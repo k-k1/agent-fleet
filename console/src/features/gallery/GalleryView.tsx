@@ -34,6 +34,7 @@ import { REVALIDATE_GAP_MS, WORKING_TICK_MS } from "../files/refreshPolicy.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
 import { previewEdge } from "../viewer/previewEdge.ts";
+import { formatImageSize, useImageSize } from "../viewer/imageSize.ts";
 import { isContextMenuKey, synthContextMenu } from "../project/contextMenuKey.ts";
 import { openGeneratingSession, useGeneratingSession, type GeneratingSession } from "../imagegen/useGeneratingSession.ts";
 import { ViewHead } from "../../ui/ViewHead.tsx";
@@ -43,6 +44,7 @@ import { IconButton } from "../../ui/Button.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import {
+  GALLERY_TILES,
   PAGE_SIZE,
   breadcrumb,
   effectiveSort,
@@ -53,10 +55,12 @@ import {
   galleryTotals,
   parentPath,
   sortImages,
+  tileEdge,
   visibleImages,
   type FsEntry,
   type GalleryImage,
   type GallerySort,
+  type GalleryTile,
 } from "./gallery.ts";
 import { openGallery } from "./open.ts";
 import { fetchGalleryListing, forgetGallery, prefetchGallery, readGallery, rememberGalleryView } from "./galleryCache.ts";
@@ -64,23 +68,15 @@ import "./gallery.css";
 
 /**
  * Longest edge asked of the thumbnail endpoint, for everything card-sized: the grid, a folder's
- * cover, and the lightbox's placeholder. All three deliberately share it — they show the same
- * pictures at the same size, and the Agent's cache is keyed by the edge.
- *
- * Chosen by device pixel ratio, which is a revision of decision 4's flat 512. A card is 150-200
- * CSS px wide at 4:3, so a 1x screen shows about 138x104 to 200x150 — measured on a real
- * generated picture, 512 costs 42 KB against 256's 15 KB for pixels that screen cannot show,
- * and the decode costs the Agent the same either way (57 vs 59 ms: the decode, not the scale,
- * is the work). Decision 4's reason for one number was that the mirror asks for 512 and a
- * second edge means a second decode of the same file — true, but the mirror looks at shared
- * files and the gallery at generated folders, which in practice are different pictures.
+ * cover, the lightbox's placeholder and the listing's `warm=`. All of them deliberately share
+ * it — they show the same pictures at the same size, and the Agent's cache is keyed by the edge.
+ * The rule is `tileEdge` (gallery.ts): by the tile size the reader picked and by device pixel
+ * ratio (decision 14).
  *
  * Read per render rather than once: a window dragged to a different monitor changes it, and the
  * cost of being wrong is one re-request at the other size.
  */
-function thumbEdge(): number {
-  return (window.devicePixelRatio || 1) > 1.5 ? 512 : 256;
-}
+const thumbEdge = (tile: GalleryTile | undefined): number => tileEdge(tile, window.devicePixelRatio);
 
 /** How long a newly-arrived card stays tinted. Must match the .gal-new animation in
  *  gallery.css — the class is dropped when this elapses, so a longer animation is cut
@@ -146,6 +142,8 @@ interface GalleryViewProps {
   paneId: string;
   path: string;
   sort?: GallerySort;
+  /** The card size (S/M/L), from the pane content like `sort`. Absent is M. */
+  tile?: GalleryTile;
   focus?: string;
   /** The session NAME (slug) from the content; the title is looked up from it here, so
    *  a rename shows through and no display text is frozen into the layout. */
@@ -153,7 +151,7 @@ interface GalleryViewProps {
   headerActions?: ReactNode;
 }
 
-export function GalleryView({ paneId, path, sort, focus, sessionName, headerActions }: GalleryViewProps) {
+export function GalleryView({ paneId, path, sort, tile, focus, sessionName, headerActions }: GalleryViewProps) {
   const tr = useT();
   const showToast = useToast();
   const askConfirm = useConfirm();
@@ -205,6 +203,10 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
   /** Which folder the state below belongs to. This view is NOT remounted when it walks into a
    *  folder — the pane keeps it and changes `path` — so the switch has to be made here. */
   const shownPath = useRef(path);
+  /** The tile size the refresh path reads. A ref, not a dependency of `load`: changing the
+   *  size must not re-run the mount effect as if the folder had changed. */
+  const tileRef = useRef(tile);
+  tileRef.current = tile;
 
   // Change of folder, done DURING the render rather than in an effect (React's "adjust state
   // when a prop changes"). An effect runs after the browser has painted, and that paint would
@@ -279,7 +281,7 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
       // `warm` asks the Agent to decode this folder's thumbnails into its cache while it
       // answers. A cold thumbnail is ~95 ms and a cached one ~44 µs (measured), so without
       // it the first look at a fresh folder trickles in card by card.
-      const r = await fetchGalleryListing(path, thumbEdge(), signal);
+      const r = await fetchGalleryListing(path, thumbEdge(tileRef.current), signal);
       if (signal.aborted) return true;
       if (!r.ok) {
         if (r.hard && initial) {
@@ -407,7 +409,13 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
     const at = focusIndex(images, focus);
     if (at >= 0) setZoomPath(images[at].path);
     setPaneTarget(paneId, {
-      content: { kind: "gallery", galleryPath: path, ...(sort ? { sort } : {}), ...(sessionName ? { gallerySession: sessionName } : {}) },
+      content: {
+        kind: "gallery",
+        galleryPath: path,
+        ...(sort ? { sort } : {}),
+        ...(tile ? { tile } : {}),
+        ...(sessionName ? { gallerySession: sessionName } : {}),
+      },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus, entries]);
@@ -523,6 +531,8 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
    * and carrying it into a different folder would leave the tab claiming a session whose
    * pictures are no longer on screen. `sort` is a preference for the pane, so it stays.
    *
+   * `tile` is the same kind of preference and stays too.
+   *
    * `push: true` is what makes the browser's own Back button retrace these steps: the layout
    * store already keeps one history entry per pushed commit (`layout/store.ts`) and restores
    * it on `popstate` — `setPaneTarget` just opts out of that by default (a sort toggle isn't a
@@ -531,7 +541,7 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
    * agree — pressing one and then the other is a no-op, never a surprise.
    */
   const navigate = (to: string) => {
-    setPaneTarget(paneId, { content: { kind: "gallery", galleryPath: to, ...(sort ? { sort } : {}) } }, true);
+    setPaneTarget(paneId, { content: { kind: "gallery", galleryPath: to, ...(sort ? { sort } : {}), ...(tile ? { tile } : {}) } }, true);
   };
 
   const setSort = (next: GallerySort) => {
@@ -540,6 +550,22 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
         kind: "gallery",
         galleryPath: path,
         sort: next,
+        ...(tile ? { tile } : {}),
+        ...(sessionName ? { gallerySession: sessionName } : {}),
+      },
+    });
+  };
+
+  // Written to the pane content beside `sort`, so it survives a tab switch, a reload and a walk
+  // into another folder. "m" is written as absent: it is the default, and a layout that never
+  // touched the toggle should read the same as one that went back to it.
+  const setTile = (next: GalleryTile) => {
+    setPaneTarget(paneId, {
+      content: {
+        kind: "gallery",
+        galleryPath: path,
+        ...(sort ? { sort } : {}),
+        ...(next !== "m" ? { tile: next } : {}),
         ...(sessionName ? { gallerySession: sessionName } : {}),
       },
     });
@@ -621,6 +647,21 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
             </button>
           ))}
         </span>
+        <span className="gal-tile" role="group" aria-label={tr("gallery.tile")}>
+          {GALLERY_TILES.map((s) => (
+            <button
+              key={s}
+              type="button"
+              className={"ui-btn ui-btn-ghost gal-sort-btn" + ((tile ?? "m") === s ? " on" : "")}
+              aria-pressed={(tile ?? "m") === s}
+              title={tr(`gallery.tile_${s}`)}
+              aria-label={tr(`gallery.tile_${s}`)}
+              onClick={() => setTile(s)}
+            >
+              {tr(`gallery.tile_${s}_short`)}
+            </button>
+          ))}
+        </span>
       </ViewHead>
       {/* The way back out, in its own row: the breadcrumb has nowhere to grow when it shares a
           row with the title, the count and the sort toggle, so a folder a few levels down had
@@ -696,13 +737,14 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
           // whole grid on every wheel notch.
           onScroll={(e) => rememberGalleryView(path, { scrollTop: e.currentTarget.scrollTop })}
         >
-          <div className="gal-grid" role="list">
+          <div className={"gal-grid tile-" + (tile ?? "m")} role="list">
             {parent !== null && (
               <FolderCard
                 label={tr("gallery.up")}
                 icon="arrow-up"
+                edge={thumbEdge(tile)}
                 title={tr("gallery.up")}
-                onPrefetch={() => prefetchGallery(parent, thumbEdge())}
+                onPrefetch={() => prefetchGallery(parent, thumbEdge(tile))}
                 onOpen={(newPane) => (newPane ? openGallery(parent, { newPane: true }) : navigate(parent))}
               />
             )}
@@ -721,10 +763,11 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
                       : undefined
                 }
                 cover={f.cover}
+                edge={thumbEdge(tile)}
                 icon="folder"
                 title={f.path}
                 fresh={fresh.has(f.name)}
-                onPrefetch={() => prefetchGallery(f.path, thumbEdge())}
+                onPrefetch={() => prefetchGallery(f.path, thumbEdge(tile))}
                 onOpen={(newPane) => (newPane ? openGallery(f.path, { newPane: true }) : navigate(f.path))}
                 onMenu={(x, y) => setMenu({ kind: "folder", name: f.name, path: f.path, x, y })}
               />
@@ -733,6 +776,7 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
               <GalleryCard
                 key={img.path}
                 img={img}
+                edge={thumbEdge(tile)}
                 fresh={fresh.has(img.name)}
                 broken={broken.has(img.path)}
                 onBroken={() => setBroken((b) => new Set(b).add(img.path))}
@@ -770,8 +814,9 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
             src={displayURL(current.path, previewEdge(), current.mtime)}
             // The card's thumbnail is already decoded in this tab, so the enlarged view
             // paints immediately and sharpens when the original lands.
-            placeholder={downloadURL(current.path, thumbEdge(), current.mtime)}
+            placeholder={downloadURL(current.path, thumbEdge(tile), current.mtime)}
             path={current.path}
+            mtime={current.mtime}
             alt={current.name}
             onClose={close}
             index={at + 1}
@@ -871,6 +916,7 @@ function FolderCard({
   label,
   meta,
   cover,
+  edge,
   icon,
   title,
   fresh,
@@ -883,6 +929,8 @@ function FolderCard({
   /** The newest picture inside, when the Agent described the folder. A folder named by a
    *  session UUID says nothing about what is in it; one picture says most of it. */
   cover?: GalleryImage;
+  /** The card edge the grid asks for (thumbEdge); the cover shares it. */
+  edge: number;
   icon: string;
   title: string;
   fresh?: boolean;
@@ -942,7 +990,7 @@ function FolderCard({
         <span className={"gal-thumb" + (cover && !coverFailed && armed ? " cover" : "")} ref={thumbRef}>
           {cover && !coverFailed && armed ? (
             <img
-              src={downloadURL(cover.path, thumbEdge(), cover.mtime)}
+              src={downloadURL(cover.path, edge, cover.mtime)}
               alt=""
               loading="lazy"
               decoding="async"
@@ -971,6 +1019,7 @@ function FolderCard({
  */
 function GalleryCard({
   img,
+  edge,
   fresh,
   broken,
   onBroken,
@@ -980,6 +1029,7 @@ function GalleryCard({
   showTime,
 }: {
   img: GalleryImage;
+  edge: number;
   fresh: boolean;
   broken: boolean;
   onBroken: () => void;
@@ -1007,6 +1057,9 @@ function GalleryCard({
   const meta = showTime && img.mtime ? relTime(img.mtime * 1000) : humanSize(img.size);
   const thumbRef = useRef<HTMLSpanElement | null>(null);
   const armed = useArmed(thumbRef);
+  // The picture's real size, asked once the card is near the viewport — the same gate as its
+  // thumbnail, so a 500-image folder asks for the few dozen in view, batched (imageSize.ts).
+  const size = useImageSize(img.path, img.mtime, armed && !broken);
   const body = (
     <>
       <span className="gal-thumb" ref={thumbRef}>
@@ -1014,7 +1067,7 @@ function GalleryCard({
           <Icon name="file-media" className="gal-thumb-none" />
         ) : armed ? (
           <img
-            src={downloadURL(img.path, thumbEdge(), img.mtime)}
+            src={downloadURL(img.path, edge, img.mtime)}
             alt={img.name}
             loading="lazy"
             decoding="async"
@@ -1022,8 +1075,11 @@ function GalleryCard({
             onError={onBroken}
           />
         ) : null}
+        {/* Over the picture, shown on hover and keyboard focus (gallery.css). Touch has no
+            hover; the lightbox's (i) panel shows the same number. */}
+        {size && <span className="gal-dims">{formatImageSize(size)}</span>}
       </span>
-      <span className="gal-name" title={img.path}>
+      <span className="gal-name" title={size ? `${img.path} · ${formatImageSize(size)}` : img.path}>
         {img.name}
       </span>
       <span className="gal-meta muted">{meta}</span>
