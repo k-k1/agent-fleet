@@ -25,6 +25,21 @@ func writeSSOCacheDoc(t *testing.T, doc map[string]string) {
 	}
 }
 
+// exportProd writes ~/.aws/config with the member's own text and the managed block for
+// Settings' prod; own can shadow it.
+func exportProd(t *testing.T, own string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(ConfigPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ConfigPath(), []byte(own), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(ConfigPath(), []Profile{prodSettings["prod"]}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func profileStates(t *testing.T) (profileLoginStateWire, string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -51,13 +66,14 @@ func TestReadSSOExpiryPicksTheEndTheCacheKnows(t *testing.T) {
 		{"no cache", nil, time.Time{}, false},
 		{"access token only", map[string]string{"accessToken": "secret-a", "expiresAt": rfc(access)}, access, true},
 		{"older CLI's UTC suffix", map[string]string{"accessToken": "secret-a", "expiresAt": access.Format("2006-01-02T15:04:05") + "UTC"}, access, true},
-		{"refresh-capable: the registration bounds it", map[string]string{"accessToken": "secret-a", "expiresAt": rfc(access),
-			"refreshToken": "secret-r", "clientId": "c", "clientSecret": "secret-c", "registrationExpiresAt": rfc(reg)}, reg, true},
+		// Renewed on use until the portal session ends, which the cache does not record.
+		{"renewable: no known end", map[string]string{"accessToken": "secret-a", "expiresAt": rfc(access),
+			"refreshToken": "secret-r", "clientId": "c", "clientSecret": "secret-c", "registrationExpiresAt": rfc(reg)}, time.Time{}, false},
 		// botocore does not refresh without the client registration.
 		{"refresh token but no registration", map[string]string{"accessToken": "secret-a", "expiresAt": rfc(access),
 			"refreshToken": "secret-r", "registrationExpiresAt": rfc(reg)}, access, true},
-		{"registration ends first", map[string]string{"accessToken": "secret-a", "expiresAt": rfc(access),
-			"refreshToken": "secret-r", "clientId": "c", "clientSecret": "secret-c", "registrationExpiresAt": rfc(now)}, access, true},
+		{"registration already expired", map[string]string{"accessToken": "secret-a", "expiresAt": rfc(access),
+			"refreshToken": "secret-r", "clientId": "c", "clientSecret": "secret-c", "registrationExpiresAt": rfc(now.Add(-time.Minute))}, access, true},
 		{"no access token", map[string]string{"expiresAt": rfc(access)}, time.Time{}, false},
 		{"unparseable time", map[string]string{"accessToken": "secret-a", "expiresAt": "tomorrow"}, time.Time{}, false},
 	} {
@@ -65,14 +81,14 @@ func TestReadSSOExpiryPicksTheEndTheCacheKnows(t *testing.T) {
 		if c.doc != nil {
 			writeSSOCacheDoc(t, c.doc)
 		}
-		got, ok := readSSOExpiry("af-prod")
+		got, ok := readSSOExpiry("af-prod", now)
 		if ok != c.ok || !got.Equal(c.want) {
 			t.Errorf("%s: got %v %v, want %v %v", c.name, got, ok, c.want, c.ok)
 		}
 	}
 	// A corrupt file is no expiry, not a failure.
 	os.WriteFile(ssoCachePath("af-prod"), []byte("{not json"), 0o600)
-	if _, ok := readSSOExpiry("af-prod"); ok {
+	if _, ok := readSSOExpiry("af-prod", now); ok {
 		t.Error("corrupt cache gave an expiry")
 	}
 }
@@ -80,6 +96,7 @@ func TestReadSSOExpiryPicksTheEndTheCacheKnows(t *testing.T) {
 func TestProfileStatesListAnExpiringLoginWithoutTokens(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	withSettingsCache(t)
+	exportProd(t, "")
 	end := time.Now().Add(10 * time.Minute).UTC().Truncate(time.Second)
 	writeSSOCacheDoc(t, map[string]string{"accessToken": "secret-access", "expiresAt": end.Format(time.RFC3339),
 		"clientSecret": "secret-client"})
@@ -100,18 +117,50 @@ func TestProfileStatesListAnExpiringLoginWithoutTokens(t *testing.T) {
 	if p, body := profileStates(t); p.Expiring {
 		t.Fatalf("ended: %s", body)
 	}
-	// A refresh token that can still renew for weeks: the hourly access token is no warning.
+	// Renewable: the hourly access token is no warning, and no end is claimed.
 	writeSSOCacheDoc(t, map[string]string{"accessToken": "secret-access", "expiresAt": end.Format(time.RFC3339),
 		"refreshToken": "secret-refresh", "clientId": "c", "clientSecret": "secret-client",
 		"registrationExpiresAt": time.Now().Add(30 * 24 * time.Hour).UTC().Format(time.RFC3339)})
-	if p, body := profileStates(t); p.Expiring {
+	if p, body := profileStates(t); p.Expiring || p.ExpiresAt != "" {
 		t.Fatalf("renewable: %s", body)
+	}
+}
+
+func TestOnlyAnExportedProfileIsExpiring(t *testing.T) {
+	for label, own := range map[string]string{
+		"own profile":     "[profile prod]\nregion = us-east-1\n",
+		"own sso-session": "[sso-session af-prod]\nsso_start_url = https://other.awsapps.com/start\nsso_region = us-east-1\n",
+		"[DEFAULT] clash": "[default]\nregion = us-east-1\n[DEFAULT]\nsso_session = mine\n",
+		"never written":   "-",
+	} {
+		t.Run(label, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			withSettingsCache(t)
+			if own != "-" {
+				exportProd(t, own)
+				if strings.Contains(strings.Join(ExportedIn(ConfigPath()), ","), "prod") {
+					t.Skipf("%s did not keep prod out of the block; the case proves nothing", label)
+				}
+			}
+			now := time.Now()
+			writeSSOCacheDoc(t, map[string]string{"accessToken": "secret-access", "expiresAt": now.Add(10 * time.Minute).UTC().Format(time.RFC3339)})
+			if p, body := profileStates(t); p.Expiring {
+				t.Fatalf("not exported, still expiring: %s", body)
+			}
+			warnExpiringSSO(now)
+			for _, ev := range notice.List() {
+				if ev.Kind == NoticeKindAWSExpiring {
+					t.Fatalf("not exported, still notified: %+v", ev)
+				}
+			}
+		})
 	}
 }
 
 func TestWarnExpiringSSOFilesOneNoticePerEnd(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	withSettingsCache(t)
+	exportProd(t, "")
 	count := func() (n int, profile any) {
 		for _, ev := range notice.List() {
 			if ev.Kind == NoticeKindAWSExpiring {

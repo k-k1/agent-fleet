@@ -32,7 +32,7 @@ function endTime(iso: string): string {
 
 function AwsExpiryToast({ p }: { p: AwsProfileExpiry }) {
   const tr = useT();
-  const open = useAwsLoginStore((s) => s.openProfile);
+  const open = useAwsLoginStore((s) => s.showProfile);
   return (
     <span className="update-toast">
       <span className="update-toast-txt">
@@ -41,7 +41,7 @@ function AwsExpiryToast({ p }: { p: AwsProfileExpiry }) {
           {tr("awslogin.toast_profile", { profile: p.label || p.name, account: p.accountId, role: p.roleName })}
         </span>
       </span>
-      <button type="button" className="update-toast-btn" onClick={() => open(p.name)}>
+      <button type="button" className="update-toast-btn" onClick={() => open(p)}>
         {tr("awslogin.toast_button")}
       </button>
     </span>
@@ -182,7 +182,8 @@ function AwsExpiryWarnings() {
     return () => clearInterval(t);
   }, [polling, refreshExpiry]);
 
-  // Only a profile the Agent lists as expiring opens: a notification for anything else shows nothing.
-  const target = profileModal ? expiring.find((p) => p.name === profileModal) : undefined;
-  return target ? <ProfileLoginModal key={target.name} profile={target} onClose={closeProfile} /> : null;
+  // Not tied to the warning list: a login in progress must survive the old end passing.
+  return profileModal ? (
+    <ProfileLoginModal key={profileModal.name} profile={profileModal} onClose={closeProfile} />
+  ) : null;
 }

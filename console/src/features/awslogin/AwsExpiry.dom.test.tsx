@@ -8,12 +8,14 @@ import { createRoot, type Root } from "react-dom/client";
 type Json = Record<string, unknown>;
 const calls: { path: string; method: string }[] = [];
 let profiles: Json[] = [];
+let attemptReply: Json = { phase: "starting" };
 
 vi.mock("../../core/api/client.ts", () => ({
   api: vi.fn(async (path: string) => {
     calls.push({ path, method: "GET" });
     if (path === "api/aws-login") return { requests: [] };
     if (path === "api/aws-login/profiles") return { profiles };
+    if (path.includes("/attempts/")) return attemptReply;
     return {};
   }),
   apiJSON: vi.fn(async (path: string, method: string) => {
@@ -60,12 +62,18 @@ async function tick(ms: number): Promise<void> {
 }
 
 const profileCalls = () => calls.filter((c) => c.path === "api/aws-login/profiles").length;
+function footButton(label: string): HTMLButtonElement {
+  const b = Array.from(document.querySelectorAll(".ui-modal-foot button")).find((x) => x.textContent?.trim() === label);
+  if (!b) throw new Error(`no "${label}" in the modal footer`);
+  return b as HTMLButtonElement;
+}
 const toasts = () => Array.from(document.querySelectorAll(".ui-toast"));
 
 beforeEach(() => {
   vi.useFakeTimers();
   calls.length = 0;
   profiles = [expiring];
+  attemptReply = { phase: "starting" };
   useAwsLoginStore.setState({ requests: [], hidden: {}, modal: null, expiring: [], hiddenExpiry: {}, profileModal: null });
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -121,6 +129,36 @@ describe("SSO expiry warning", () => {
     await act(async () => void useAwsLoginStore.getState().refreshExpiry());
     await tick(0);
     expect(toasts()).toHaveLength(1);
+  });
+
+  it("keeps the login in progress when the old end passes while the code waits", async () => {
+    await mount();
+    await act(async () => (toasts()[0].querySelector(".update-toast-btn") as HTMLButtonElement).click());
+    attemptReply = { phase: "authorize", url: "https://device.sso.ap-northeast-1.amazonaws.com/?user_code=ABCD-EFGH", code: "ABCD-EFGH" };
+    await act(async () => footButton("Log in").click());
+    await tick(400);
+    expect(document.body.textContent).toContain("ABCD-EFGH");
+    profiles = [{ ...expiring, state: "none", expiring: false }];
+    await tick(60_100);
+    expect(toasts()).toHaveLength(0);
+    expect(document.body.textContent).toContain("ABCD-EFGH");
+  });
+
+  it("does not reopen the modal by itself when the next end is near", async () => {
+    await mount();
+    await act(async () => (toasts()[0].querySelector(".update-toast-btn") as HTMLButtonElement).click());
+    expect(document.body.textContent).toContain("AWS login (Production)");
+    // Logged in: the warning goes, the open modal stays until the member closes it.
+    profiles = [];
+    await act(async () => void useAwsLoginStore.getState().refreshExpiry());
+    expect(document.body.textContent).toContain("AWS login (Production)");
+    await act(async () => footButton("Close").click());
+    expect(document.body.textContent).not.toContain("AWS login (Production)");
+    profiles = [{ ...expiring, expiresAt: "2026-10-02T11:00:00Z" }];
+    await act(async () => void useAwsLoginStore.getState().refreshExpiry());
+    await tick(0);
+    expect(toasts()).toHaveLength(1);
+    expect(document.body.textContent).not.toContain("AWS login (Production)");
   });
 
   it("opens the modal from the notification only for a profile the Agent lists as expiring", async () => {

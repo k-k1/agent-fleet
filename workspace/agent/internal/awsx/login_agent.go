@@ -344,8 +344,8 @@ func HandleProfileLoginStart(w http.ResponseWriter, r *http.Request) {
 // Login states of a Settings profile's token cache, for the row's badge. The badge shows no
 // "expires in": the cache holds only the access token's expiry (about an hour), which the
 // CLI renews with the refresh token until the portal session ends, and that end is written
-// nowhere the Agent can read. expiresAt is the upper bound readSSOExpiry knows, for the
-// expiry warning only.
+// nowhere the Agent can read. expiresAt is set only for a login that cannot renew
+// (readSSOExpiry), for the expiry warning.
 const (
 	loginStateSignedIn = "signed_in" // an access token that has not expired
 	loginStateRenew    = "renew"     // expired, but a refresh token may renew it on next use
@@ -387,12 +387,14 @@ func profileLoginState(ssoSession string, now time.Time) string {
 func HandleProfileLoginStates(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	out := []profileLoginStateWire{}
+	exported := ExportedIn(ConfigPath())
 	for name, sp := range loginSettings() {
 		p := profileLoginStateWire{Name: name, State: profileLoginState("af-"+name, now),
 			Label: sp.Label, AccountID: sp.AccountID, RoleName: sp.RoleName}
-		if end, ok := readSSOExpiry("af-" + name); ok {
+		if end, ok := readSSOExpiry("af-"+name, now); ok {
 			p.ExpiresAt = end.Format(time.RFC3339)
-			p.Expiring = expiringAt(end, now) && IncompleteReason(sp) == ""
+			// Only a profile in the managed block: the row's login refuses any other.
+			p.Expiring = expiringAt(end, now) && slices.Contains(exported, name)
 		}
 		out = append(out, p)
 	}

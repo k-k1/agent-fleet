@@ -48,15 +48,22 @@ interface AwsLoginState {
   expiring: AwsProfileExpiry[];
   /** Expiry warnings (expiryKey) the member closed in this tab. */
   hiddenExpiry: Record<string, true>;
-  /** The profile whose login modal an expiry warning opened, if any. */
-  profileModal: string | null;
+  /**
+   * The profile whose login modal an expiry warning opened, as the Agent listed it then. A
+   * snapshot: once open, the modal outlives the warning (the old token may run out while the
+   * device code waits), and only closing it clears this.
+   */
+  profileModal: AwsProfileExpiry | null;
   refreshExpiry(): Promise<void>;
   hideExpiry(key: string): void;
-  openProfile(name: string): void;
+  /** Opens the modal for a profile from the Agent's list (the toast). */
+  showProfile(p: AwsProfileExpiry): void;
+  /** Opens the modal for a name from a notification, only if the Agent lists it as expiring. */
+  openProfile(name: string): Promise<void>;
   closeProfile(): void;
 }
 
-export const useAwsLoginStore = create<AwsLoginState>((set) => ({
+export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
   requests: [],
   hidden: {},
   modal: null,
@@ -107,8 +114,13 @@ export const useAwsLoginStore = create<AwsLoginState>((set) => ({
   hideExpiry(key) {
     set((s) => ({ hiddenExpiry: { ...s.hiddenExpiry, [key]: true } }));
   },
-  openProfile(name) {
-    set({ profileModal: name });
+  showProfile(p) {
+    set({ profileModal: p });
+  },
+  async openProfile(name) {
+    await get().refreshExpiry();
+    const p = get().expiring.find((x) => x.name === name);
+    if (p) set({ profileModal: p });
   },
   closeProfile() {
     set({ profileModal: null });

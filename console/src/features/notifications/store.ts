@@ -174,9 +174,7 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
   // The SSO expiry warning (#1029): its destination is the profile's login modal. Only the
   // profile name is read, and the modal opens only if the Agent lists that profile as expiring.
   if (n.kind === "aws-sso-expiring" && typeof n.payload.profile === "string" && n.payload.profile) {
-    const aws = useAwsLoginStore.getState();
-    void aws.refreshExpiry();
-    aws.openProfile(n.payload.profile);
+    void useAwsLoginStore.getState().openProfile(n.payload.profile);
     return { opened: true };
   }
   if (n.kind === "handoff-offer" && typeof n.payload.catalogId === "string" && n.payload.catalogId) {
