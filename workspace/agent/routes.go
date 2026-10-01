@@ -373,6 +373,8 @@ func buildMux() *http.ServeMux {
 	// that never touches the fs.
 	mux.HandleFunc("POST /fs/suggest-edit", httpx.HeldOpen(handleFSSuggestEdit))
 	mux.HandleFunc("GET /fs/download", handleFSDownload)
+	// A picture's width and height from its header, many paths per request (fs_imagesize.go).
+	mux.HandleFunc("POST /fs/imagesize", handleFSImageSize)
 	mux.HandleFunc("POST /fs/upload", handleFSUpload)
 	mux.HandleFunc("GET /fs/changes", handleFSChanges)
 	mux.HandleFunc("GET /fs/linemarks", handleFSLineMarks)

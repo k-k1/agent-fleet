@@ -710,10 +710,12 @@ func TestWarmGeneratedFillsCardAndPreview(t *testing.T) {
 	warmGenerated(full)
 	waitGenWarmIdle(t)
 	fi, _ := os.Stat(full)
+	// Both card edges: 256 is what the gallery's default tile asks for on a 1x screen, and a
+	// warm-up that only filled 512 left that one cold.
 	for _, k := range []struct {
 		scale int
 		mode  thumbMode
-	}{{warmCardEdge, modeDownscale}, {1, modePreview}} {
+	}{{512, modeDownscale}, {256, modeDownscale}, {1, modePreview}} {
 		if _, _, ok := readThumbCache(thumbCacheKey(full, fi.Size(), fi.ModTime(), k.scale, k.mode)); !ok {
 			t.Errorf("no entry for scale %d mode %d after warming", k.scale, k.mode)
 		}

@@ -68,8 +68,8 @@ export type PaneContent =
    * in this union that names a DIRECTORY, which is the whole reason it is a kind of its
    * own rather than a mode of `file` — see the ADR's decision 1.
    *
-   * `sort` lives here rather than in React state for the same reason `showStopped` does:
-   * a tab switch unmounts the view. `galleryFocus` is the image to enlarge on open (a
+   * `sort` and `tile` (the card size, S/M/L) live here rather than in React state for the
+   * same reason `showStopped` does: a tab switch unmounts the view. `galleryFocus` is the image to enlarge on open (a
    * file name, or a browse-root-relative path — the view matches either). `gallerySession`
    * is the session's NAME (a slug), stored for the title alone: the generated-images folder
    * is a UUID, so the tab needs the session the pictures came from to read as anything. The
@@ -77,7 +77,14 @@ export type PaneContent =
    * instead would freeze a stale title into the layout (and the stored-layout validator,
    * which holds this field to the name's character set, would drop it entirely).
    */
-  | { kind: "gallery"; galleryPath: string; sort?: "new" | "name"; galleryFocus?: string; gallerySession?: string }
+  | {
+      kind: "gallery";
+      galleryPath: string;
+      sort?: "new" | "name";
+      tile?: "s" | "m" | "l";
+      galleryFocus?: string;
+      gallerySession?: string;
+    }
   /**
    * The image-generation studio (ADR 0081, ADR 0100 decision 10): a form, a queue and its
    * results, and — once an agent is attached — the studio it edits with the member. `studioId`
