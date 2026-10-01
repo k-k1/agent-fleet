@@ -375,8 +375,9 @@ Follow-ups: #1069（claude の `PushNotification` ツール。OSC でしか通�
 - **対話 CLI には、もっと狭い 2 本目のサーバーを置く**。`mcpreg` の組み込み `af` で、
   `mcp-stdio --self-report --chromium-attach` を起動する。
   - 自己報告のツール（`af_report`・`af_stop_after_turn`・`propose_session_handoff`）は常に広告する。
-  - 小さな観測用のツール（セッションの状態と使用量、メモ）も常に広告する。Chromium アタッチの 7 本は
-    `--chromium-attach` で付く。
+  - 小さな観測用のツール（セッションの状態と使用量、メモ）も常に広告する。`branch_name` も常に
+    広告し、ブランチ名リゾルバー（`POST /repos/{name}/branch-name`）に、既定では呼び出し元自身の
+    作業コピーについて尋ねる。Chromium アタッチの 7 本は `--chromium-attach` で付く。
   - 利用者の設定で `--peer-messaging`・`--image-gen`・`--fleet-spawn` が加わる
     （`builtinRunArgsFor`）。
   - 広告していないツールは、呼ばれても断る（`mcpAdvertised`）。

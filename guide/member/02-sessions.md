@@ -185,6 +185,8 @@ workspace is stopped.
   base came from. A repository whose `origin` has `develop` but declares nothing gets an offer to
   [initialize Git Flow](03-code.md#initialize-git-flow). A name outside the rules only gets a note; nothing is refused. The template is
   in the settings tab. A pull request launches on its own head branch instead (below).
+  An agent asks the same rules through the af tool `branch_name`, so a skill that creates
+  branches gets the name the dialog would show instead of inventing its own.
 - Once work is under way, **Comment the work back** appears in the details. The draft holds the
   branch and the changed files, and **the sentence is yours**: it is posted exactly as written and
   nothing is written for you. Bitbucket items have no such button — Agent Fleet only reads from

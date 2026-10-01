@@ -313,7 +313,7 @@ assembled in `mcpStdioToolList`:
 
 | Group | When |
 |---|---|
-| handoff, `af_report`, `af_stop_after_turn`; session status and usage; memos (list, add, update) | always |
+| handoff, `af_report`, `af_stop_after_turn`; session status and usage; memos (list, add, update); `branch_name` (the branch-name resolver, ADR 0103) | always |
 | the Chromium attach tools | started with `--chromium-attach`, which the built-in registration always passes (`mcp-stdio --self-report --chromium-attach`) |
 | `list_peer_sessions`, `send_to_peer_session` | the user's peer-messaging setting |
 | launching and steering sessions (`create_session` …); driving reaches only the caller's own children | the user's session-spawn setting |
