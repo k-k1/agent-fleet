@@ -673,7 +673,7 @@ func TestBrowserNavigationPolicyAtFetchBoundary(t *testing.T) {
 	if call, ok := cdp.last("Fetch.continueRequest"); !ok || call.Params["requestId"] != "r2" {
 		t.Fatalf("loopback subresource was not continued: %+v", call)
 	}
-	m.handleRequestedNavigation(cdp, p, json.RawMessage(`{"frameId":"frame-1","url":"data:text/html,escape"}`))
+	m.handleRequestedNavigation(cdp, p, json.RawMessage(`{"frameId":"frame-1","url":"data:text/html,escape"}`), false)
 	if _, ok := cdp.last("Page.stopLoading"); !ok {
 		t.Fatal("non-network external top navigation was not stopped")
 	}

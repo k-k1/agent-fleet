@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 type browserStateRecord struct {
 	state  string
 	served int64
+	url    string
 }
 
 // TestBrowserReadyWaitsForTheNavigationsOwnLoader holds every document response
@@ -95,10 +97,10 @@ func TestBrowserReadyWaitsForTheNavigationsOwnLoader(t *testing.T) {
 			if p == nil {
 				continue
 			}
-			if state := p.response().State; state != last {
-				last = state
+			if got := p.response(); got.State != last {
+				last = got.State
 				recMu.Lock()
-				records = append(records, browserStateRecord{state: state, served: served.Load()})
+				records = append(records, browserStateRecord{state: got.State, served: served.Load(), url: got.URL})
 				recMu.Unlock()
 			}
 		}
@@ -165,10 +167,10 @@ func TestBrowserReadyWaitsForTheNavigationsOwnLoader(t *testing.T) {
 
 	// A top-level navigation that is aborted without committing leaves the
 	// previous document live: it must end "ready", never "target-unreachable".
-	aborted := func(step, expr string) {
+	abortedBy := func(step string, trigger func()) {
 		t.Helper()
 		from := len(snapshot())
-		evaluate(expr)
+		trigger()
 		if !waitFor(10*time.Second, func() bool {
 			for _, r := range snapshot()[from:] {
 				if r.state == "loading" {
@@ -190,9 +192,55 @@ func TestBrowserReadyWaitsForTheNavigationsOwnLoader(t *testing.T) {
 			t.Errorf("%s: state %q, want ready", step, got)
 		}
 	}
+	aborted := func(step, expr string) {
+		t.Helper()
+		abortedBy(step, func() { evaluate(expr) })
+	}
 	aborted("204 No Content", `location.href = '/no-content'`)
 	aborted("denied download", `location.href = '/download'`)
 	aborted("window.stop()", `location.href = '/stalled'; setTimeout(() => window.stop(), 300)`)
+
+	// The pane's own address bar: Page.navigate answers net::ERR_ABORTED after
+	// Network.loadingFailed has already restored the state.
+	v := &browserViewer{page: p, control: make(chan browserOutbound, 256), done: make(chan struct{})}
+	p.mu.Lock()
+	p.viewer = v
+	p.mu.Unlock()
+	drain := func() []string {
+		var types []string
+		for len(v.control) > 0 {
+			var msg struct{ Type string }
+			_ = json.Unmarshal((<-v.control).data, &msg)
+			types = append(types, msg.Type)
+		}
+		return types
+	}
+	paneNavigate := func(path string) func() {
+		return func() { v.handleControl([]byte(`{"type":"navigate","path":"` + path + `"}`)) }
+	}
+	abortedBy("pane navigate to 204 No Content", paneNavigate("/no-content"))
+	abortedBy("pane navigate to a denied download", paneNavigate("/download"))
+	if got := p.response().URL; got != app.URL+"/pushed#h" {
+		t.Errorf("aborted pane navigations moved the page URL to %q, want the live document's", got)
+	}
+
+	// Chromium reports a blocked renderer-initiated navigation both as
+	// requested and as started; the viewer hears of it once.
+	drain()
+	evaluate(`location.href = 'http://example.com/'`)
+	time.Sleep(500 * time.Millisecond)
+	notices := 0
+	for _, typ := range drain() {
+		if typ == "page-error" {
+			notices++
+		}
+	}
+	if notices != 1 {
+		t.Errorf("one blocked navigation outside loopback sent %d page-error notices, want 1", notices)
+	}
+	if got := p.response().State; got != "ready" {
+		t.Errorf("blocked navigation left state %q, want ready", got)
+	}
 	from := len(snapshot())
 	evaluate(`document.querySelector('a').click()`)
 	next = expectReady("link click after the aborted navigations", from, served.Load()+1)
@@ -217,6 +265,15 @@ func TestBrowserReadyWaitsForTheNavigationsOwnLoader(t *testing.T) {
 	}
 	if !waitFor(10*time.Second, func() bool { return p.response().State != "loading" }) {
 		t.Fatalf("failed navigation left the page loading: %+v", snapshot()[next:])
+	}
+	// From the moment it reads target-unreachable, the page names the URL that
+	// failed, not the document its error page is about to replace: a pane
+	// navigate resolves a path against it.
+	deadURL := "http://127.0.0.1:" + strconv.Itoa(dead) + "/"
+	for _, r := range snapshot()[next:] {
+		if r.state == "target-unreachable" && r.url != deadURL {
+			t.Errorf("target-unreachable at %q, want %q", r.url, deadURL)
+		}
 	}
 	// The error page's commit and its load must both keep it.
 	time.Sleep(time.Second)
@@ -735,6 +792,130 @@ func TestBrowserInitialNavigationErrorText(t *testing.T) {
 			t.Errorf("%s: %+v, want %s at the requested URL", tc.errorText, got, tc.want)
 		}
 		m.Close()
+	}
+}
+
+// TestBrowserPaneNavigateErrorText applies the rule of
+// TestBrowserInitialNavigationErrorText to the pane's own navigate message,
+// with and without the events Chromium sends before Page.navigate answers
+// (measured: frameStartedNavigating, the paused document request and
+// Network.loadingFailed, canceled for an abort). An abort leaves the committed
+// document live, ready and at its URL, and never passes through
+// target-unreachable; any other failure is target-unreachable at the URL that
+// failed.
+func TestBrowserPaneNavigateErrorText(t *testing.T) {
+	for _, tc := range []struct {
+		name, errorText, want, wantURL string
+		failed                         string // Network.loadingFailed params; "" sends none
+	}{
+		{"aborted after loadingFailed", "net::ERR_ABORTED", "ready", "http://127.0.0.1:3000/", `"errorText":"net::ERR_ABORTED","canceled":true`},
+		{"aborted, no loadingFailed", "net::ERR_ABORTED", "ready", "http://127.0.0.1:3000/", ""},
+		{"refused after loadingFailed", "net::ERR_CONNECTION_REFUSED", "target-unreachable", "http://127.0.0.1:3000/down", `"errorText":"net::ERR_CONNECTION_REFUSED"`},
+		{"refused, no loadingFailed", "net::ERR_CONNECTION_REFUSED", "target-unreachable", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cdp := newFakeBrowserCDP()
+			m := fakeBrowserManager(cdp)
+			t.Cleanup(m.Close)
+			created, err := m.Create(browserCreateRequest{Port: 3000, Path: "/", Viewport: browserViewportRequest{Width: 900, Height: 600, DeviceScaleFactor: 1}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			m.mu.Lock()
+			p := m.pages[created.ID]
+			m.mu.Unlock()
+			event := func(method, params string) {
+				m.handleEvent(cdp, browserCDPEvent{Method: method, SessionID: p.sessionID, Params: json.RawMessage(params)})
+			}
+			event("Page.frameNavigated", `{"frame":{"id":"frame-1","loaderId":"L0","url":"http://127.0.0.1:3000/"}}`)
+			event("Page.lifecycleEvent", `{"frameId":"frame-1","loaderId":"L0","name":"load"}`)
+			if !waitFor(time.Second, func() bool { return p.response().State == "ready" && !p.refreshing.Load() }) {
+				t.Fatalf("committed document never settled: %+v", p.response())
+			}
+			v := &browserViewer{page: p, control: make(chan browserOutbound, 32), done: make(chan struct{})}
+			p.mu.Lock()
+			p.viewer = v
+			p.mu.Unlock()
+
+			cdp.navigateErrorText = tc.errorText
+			cdp.setOnCall("Page.navigate", func() {
+				event("Page.frameStartedNavigating", `{"frameId":"frame-1","loaderId":"L1","url":"http://127.0.0.1:3000/down","navigationType":"differentDocument"}`)
+				m.handleRequestPaused(cdp, p, json.RawMessage(`{"requestId":"r-L1","networkId":"L1","frameId":"frame-1","resourceType":"Document","request":{"url":"http://127.0.0.1:3000/down"}}`))
+				if tc.failed != "" {
+					event("Network.loadingFailed", `{"requestId":"L1","type":"Document",`+tc.failed+`}`)
+				}
+			})
+			v.handleControl([]byte(`{"type":"navigate","path":"/down"}`))
+			if !waitFor(time.Second, func() bool { return !p.refreshing.Load() }) {
+				t.Fatal("navigation refresh never finished")
+			}
+			got := p.response()
+			if got.State != tc.want || (tc.wantURL != "" && got.URL != tc.wantURL) {
+				t.Errorf("%+v, want %s at %q", got, tc.want, tc.wantURL)
+			}
+			var states []string
+			for len(v.control) > 0 {
+				var msg struct{ Type, State string }
+				_ = json.Unmarshal((<-v.control).data, &msg)
+				if msg.Type == "state" {
+					states = append(states, msg.State)
+				}
+			}
+			if tc.want == "ready" && slices.Contains(states, "target-unreachable") {
+				t.Errorf("states %v: reported target-unreachable although the document is still live", states)
+			}
+		})
+	}
+}
+
+// TestBrowserOffLoopbackNavigationNoticeOnce: Chromium reports a
+// renderer-initiated navigation twice, requested and then started; each
+// blocked navigation must notify the viewer once, and a start with no request
+// before it (browser-initiated) still notifies.
+func TestBrowserOffLoopbackNavigationNoticeOnce(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeBrowserManager(cdp)
+	t.Cleanup(m.Close)
+	created, err := m.Create(browserCreateRequest{Port: 3000, Path: "/", Viewport: browserViewportRequest{Width: 900, Height: 600, DeviceScaleFactor: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	p := m.pages[created.ID]
+	m.mu.Unlock()
+	v := &browserViewer{page: p, control: make(chan browserOutbound, 32), done: make(chan struct{})}
+	p.mu.Lock()
+	p.viewer = v
+	p.mu.Unlock()
+	event := func(method, params string) {
+		m.handleEvent(cdp, browserCDPEvent{Method: method, SessionID: p.sessionID, Params: json.RawMessage(params)})
+	}
+	notices := func() int {
+		n := 0
+		for len(v.control) > 0 {
+			var msg struct{ Type string }
+			_ = json.Unmarshal((<-v.control).data, &msg)
+			if msg.Type == "page-error" {
+				n++
+			}
+		}
+		return n
+	}
+	requestedThenStarted := func(url string) {
+		event("Page.frameRequestedNavigation", `{"frameId":"frame-1","reason":"anchorClick","url":"`+url+`","disposition":"currentTab"}`)
+		event("Page.frameStartedNavigating", `{"frameId":"frame-1","loaderId":"X","url":"`+url+`","navigationType":"differentDocument"}`)
+	}
+	requestedThenStarted("http://example.com/")
+	if n := notices(); n != 1 {
+		t.Fatalf("link click outside loopback: %d notices, want 1", n)
+	}
+	requestedThenStarted("http://example.com/")
+	if n := notices(); n != 1 {
+		t.Fatalf("the same link clicked again: %d notices, want 1", n)
+	}
+	event("Page.frameStartedNavigating", `{"frameId":"frame-1","loaderId":"Y","url":"http://example.com/","navigationType":"differentDocument"}`)
+	if n := notices(); n != 1 {
+		t.Fatalf("a start with no request before it: %d notices, want 1", n)
 	}
 }
 
