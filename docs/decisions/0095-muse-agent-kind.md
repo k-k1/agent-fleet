@@ -3070,5 +3070,5 @@ Re-exporting also has a cost the checker makes visible: everything the bundle de
 older binary lacks reads as removed, so a 1.4.2 bundle is red against the 1.4.1 pin (18 breaks,
 measured) and against any older `muse` on PATH until the pin moves. Measured against the real
 binaries with the current bundle: 1.4.2 red with that single break before the change and green
-after it (two additions), the 1.4.1 pin green, and 1.4.2 red again when the checked-in bundle was
+after it (25 additions, two of them `feedback`), the 1.4.1 pin green, and 1.4.2 red again when the checked-in bundle was
 mutated to drop `running` from `SessionStatus`.
