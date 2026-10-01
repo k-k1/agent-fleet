@@ -184,7 +184,8 @@ workspace is stopped.
   or a Bitbucket branching model gets its own prefixes and base, and the dialog says where the
   base came from. A repository whose `origin` has `develop` but declares nothing gets an offer to
   [initialize Git Flow](03-code.md#initialize-git-flow). A name outside the rules only gets a note; nothing is refused. The template is
-  in the settings tab. A pull request launches on its own head branch instead (below).
+  in the settings tab; your tenant administrator may also set team defaults, which a repository's
+  declaration and your own template override. A pull request launches on its own head branch instead (below).
   An agent asks the same rules through the af tool `branch_name`, so a skill that creates
   branches gets the name the dialog would show instead of inventing its own.
 - Once work is under way, **Comment the work back** appears in the details. The draft holds the

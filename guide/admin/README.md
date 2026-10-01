@@ -28,6 +28,7 @@ administrators are also working members: for everyday development read
 3. [Audit and usage](03-audit-usage.md) — who changed what, running time, cost
 4. [Distributing integrations](04-mcp-egress.md) — handing servers to the whole team
 5. [Who may sign in, and from where](05-access.md) — sign-in methods, login rules, allowed networks, your own OAuth apps
+6. [Branch naming rules](06-branch-rules.md) — the team's default branch names and where branches start
 
 ## Getting in
 
@@ -47,7 +48,7 @@ effect crosses tenants, or that could lock people out, sits upstream of you.
 | Matter | Owner |
 |---|---|
 | Adding and removing members, per-member session limits, force-stopping a workspace, reviewing audit and usage, **the whole offboarding sequence** | **you** |
-| Distributing a shared integration server to the team | **you** |
+| Distributing a shared integration server to the team, the team's default branch naming rules | **you** |
 | Registering a sign-in method, login rules you can read, restricting where members connect from, your tenant's own OAuth apps | **you** (a sign-in method still needs approval) |
 | Creating tenants, tenant-wide limits and idle auto-stop, granting admin rights, changing the login rules, approving a sign-in method | deployment administrator |
 | Egress control, the speech engine, the shared dictionary | deployment administrator |
