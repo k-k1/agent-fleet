@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/json"
+	"math"
 	"path/filepath"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (registers "sqlite"), as in opencode
@@ -45,11 +46,21 @@ type lastStepRow struct {
 	payload []byte
 	idx     int
 	// turnEnd is the step idx the newest executor_metadata row ended at, -1 when no turn has
-	// ended yet. hasTurnLog is false when the table is absent (builds before it existed),
-	// and only then may the last step's status alone decide idle.
-	turnEnd    int
-	hasTurnLog bool
+	// ended yet; meaningful only when turnLog is turnLogRead.
+	turnEnd int
+	turnLog turnLogState
 }
+
+// turnLogState says what executor_metadata could tell. Only turnLogAbsent (builds before the
+// table existed) may fall back to the last step's status: on a DB that has the table, that
+// status reads "done" mid-turn, so a failed read must stay "no opinion" rather than idle.
+type turnLogState int
+
+const (
+	turnLogAbsent turnLogState = iota
+	turnLogRead
+	turnLogUnreadable
+)
 
 // lastStep returns the newest step for the slot's conversation. ok=false when the
 // conversation isn't adopted yet or the DB is unreadable — callers treat that as "no
@@ -74,7 +85,7 @@ func lastStep(m session.Meta) (lastStepRow, bool) {
 		Scan(&r.idx, &r.status, &r.payload); err != nil {
 		return lastStepRow{}, false
 	}
-	r.turnEnd, r.hasTurnLog = turnEnd(db)
+	r.turnEnd, r.turnLog = turnEnd(db)
 	return r, true
 }
 
@@ -86,60 +97,74 @@ func lastStep(m session.Meta) (lastStepRow, bool) {
 // row only appears once its response is complete, so mid-turn the last row is regularly a
 // finished user, tool or background-task-notification step, and a text-only reply can still be
 // followed by more work when a background command finishes.
-func turnEnd(db *sql.DB) (int, bool) {
+func turnEnd(db *sql.DB) (int, turnLogState) {
+	var one int
+	switch err := db.QueryRow(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='executor_metadata'`).Scan(&one); {
+	case err == sql.ErrNoRows:
+		return -1, turnLogAbsent
+	case err != nil:
+		return -1, turnLogUnreadable
+	}
 	var data []byte
 	switch err := db.QueryRow(`SELECT data FROM executor_metadata ORDER BY idx DESC LIMIT 1`).Scan(&data); {
 	case err == sql.ErrNoRows:
-		return -1, true
-	case err != nil:
-		return -1, false
+		return -1, turnLogRead
+	case err != nil || len(data) == 0:
+		return -1, turnLogUnreadable
 	}
-	if v, ok := protoVarintField(data, 3); ok {
-		return int(v), true
+	v, found, ok := protoVarintField(data, 3)
+	if !ok || v > math.MaxInt32 {
+		return -1, turnLogUnreadable
 	}
-	return -1, true
+	// proto3 leaves a zero out of the wire, so a turn ending at step 0 (the first prompt
+	// canceled before any reply — measured) has no field 3 at all.
+	if !found {
+		v = 0
+	}
+	return int(v), turnLogRead
 }
 
 // protoVarintField returns the first top-level varint field num of a protobuf message,
-// walking the wire format just far enough to skip the other fields.
-func protoVarintField(b []byte, num uint64) (uint64, bool) {
+// walking the whole message so a malformed one is reported (ok=false) rather than read as
+// "field absent" (found=false).
+func protoVarintField(b []byte, num uint64) (v uint64, found, ok bool) {
 	for len(b) > 0 {
 		key, n := binary.Uvarint(b)
 		if n <= 0 {
-			return 0, false
+			return 0, false, false
 		}
 		b = b[n:]
 		switch key & 7 {
 		case 0:
-			v, n := binary.Uvarint(b)
+			x, n := binary.Uvarint(b)
 			if n <= 0 {
-				return 0, false
+				return 0, false, false
 			}
-			if key>>3 == num {
-				return v, true
+			if key>>3 == num && !found {
+				v, found = x, true
 			}
 			b = b[n:]
 		case 1:
 			if len(b) < 8 {
-				return 0, false
+				return 0, false, false
 			}
 			b = b[8:]
 		case 2:
 			l, n := binary.Uvarint(b)
 			if n <= 0 || uint64(len(b)-n) < l {
-				return 0, false
+				return 0, false, false
 			}
 			b = b[n+int(l):]
 		case 5:
 			if len(b) < 4 {
-				return 0, false
+				return 0, false, false
 			}
 			b = b[4:]
 		default:
-			return 0, false
+			return 0, false, false
 		}
 	}
-	return 0, false
+	return v, found, true
 }
 
 // LiveState is agy's session state derived from the conversation DB, mirroring
@@ -164,7 +189,10 @@ func LiveState(m session.Meta) string {
 	case stepStatusRunning, stepStatusStreaming:
 		return "working"
 	}
-	if r.hasTurnLog {
+	switch r.turnLog {
+	case turnLogUnreadable:
+		return ""
+	case turnLogRead:
 		// Reading a finished last step as idle put a session that was thinking after a tool
 		// call (or after the prompt itself) into waiting-for-input, and fired a completion
 		// report mid-turn.

@@ -308,15 +308,84 @@ func TestLiveStateFollowsTurnEndNotLastStepStatus(t *testing.T) {
 
 func TestProtoVarintFieldRejectsTruncatedInput(t *testing.T) {
 	row := executorRow(4, 300)
-	if v, ok := protoVarintField(row, 3); !ok || v != 300 {
-		t.Fatalf("got %d %v, want 300", v, ok)
+	if v, found, ok := protoVarintField(row, 3); !ok || !found || v != 300 {
+		t.Fatalf("got %d %v %v, want 300", v, found, ok)
+	}
+	if _, found, ok := protoVarintField(row, 7); !ok || found {
+		t.Fatalf("absent field: found=%v ok=%v, want found=false ok=true", found, ok)
 	}
 	// Cut inside field 3's two-byte varint, and inside a length-delimited field: neither may
-	// read past the end or invent a value.
-	if _, ok := protoVarintField(row[:6], 3); ok {
-		t.Fatal("truncated varint decoded")
+	// read past the end or pass for a well-formed message.
+	if _, _, ok := protoVarintField(row[:6], 3); ok {
+		t.Fatal("truncated varint accepted")
 	}
-	if _, ok := protoVarintField([]byte{0x4a, 0x09, 'a'}, 3); ok {
+	if _, _, ok := protoVarintField([]byte{0x4a, 0x09, 'a'}, 3); ok {
 		t.Fatal("overlong length-delimited field accepted")
+	}
+	// Malformed AFTER field 3 still fails: the value must not come from a broken message.
+	if _, _, ok := protoVarintField(append(append([]byte(nil), row...), 0x4a, 0x09), 3); ok {
+		t.Fatal("trailing garbage accepted")
+	}
+}
+
+// A DB that has executor_metadata must never fall back to the last step's status: mid-turn that
+// status is "done", so an unreadable turn log has to be "no opinion", not idle.
+func TestLiveStateTurnLogClassification(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := "/home/dev/repos/proj"
+	midTurn := [][3]any{{14, stepStatusDone, []byte("x")}, {15, stepStatusDone, []byte("x")}, {132, stepStatusDone, []byte("x")}}
+	for _, tc := range []struct {
+		name  string
+		rows  [][3]any
+		setup func(*sql.DB) error
+		want  string
+	}{
+		{"no table: legacy status rule", midTurn, nil, "idle"},
+		{"no rows yet", midTurn, func(db *sql.DB) error {
+			_, err := db.Exec(`CREATE TABLE executor_metadata (idx INTEGER, data BLOB)`)
+			return err
+		}, "working"},
+		{"table without data column", midTurn, func(db *sql.DB) error {
+			_, err := db.Exec(`CREATE TABLE executor_metadata (idx INTEGER, other BLOB)`)
+			return err
+		}, ""},
+		{"NULL data", midTurn, insertTurn(nil), ""},
+		{"malformed data", midTurn, insertTurn([]byte{0x4a, 0x09, 'a'}), ""},
+		{"idx beyond int32", midTurn, insertTurn(executorRow(4, 1<<40)), ""},
+		// Measured on v1.2.14: the first prompt canceled before any reply writes field 1=2,
+		// field 2=1 and no field 3, because proto3 omits the zero.
+		{"first prompt canceled: field 3 omitted", [][3]any{{14, stepStatusDone, []byte("x")}}, insertTurn([]byte{0x08, 0x02, 0x10, 0x01}), "idle"},
+		{"field 3 omitted but turn moved on", midTurn, insertTurn([]byte{0x08, 0x02, 0x10, 0x01}), "working"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			slot := "slot-tl-" + tc.name
+			conv := "conv-tl-" + strings.NewReplacer(" ", "-", ":", "").Replace(tc.name)
+			m := session.Meta{Dir: dir, Name: slot, Kind: session.KindAgy}
+			sids.Write(session.UUID(dir, slot), conv)
+			mkConvDB(t, conv, tc.rows)
+			if tc.setup != nil {
+				db, err := sql.Open("sqlite", conversationDBPath(conv))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := tc.setup(db); err != nil {
+					t.Fatal(err)
+				}
+				db.Close()
+			}
+			if got := LiveState(m); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func insertTurn(data []byte) func(*sql.DB) error {
+	return func(db *sql.DB) error {
+		if _, err := db.Exec(`CREATE TABLE executor_metadata (idx INTEGER, data BLOB)`); err != nil {
+			return err
+		}
+		_, err := db.Exec(`INSERT INTO executor_metadata (idx, data) VALUES (0, ?)`, data)
+		return err
 	}
 }
