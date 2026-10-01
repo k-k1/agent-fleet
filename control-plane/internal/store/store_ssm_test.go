@@ -215,6 +215,86 @@ func TestSSMProfileDeleteRacesHostWrites(t *testing.T) {
 	}
 }
 
+// Offboarding a member while their host writes are in flight neither deadlocks nor leaves
+// a host behind. A host write locks profile then host, so the membership cascade has to
+// take them in the same order. Measured on Postgres with hosts deleted before profiles:
+// SQLSTATE 40P01 and the cascade aborted.
+func TestDeleteMembershipRacesSSMHostWrites(t *testing.T) {
+	for name, st := range ssmStores(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			tn, err := st.CreateTenant(ctx, "t"+strings.ToLower(NewID()[:6]), "t")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for round := 0; round < 30; round++ {
+				ident, err := st.UpsertIdentity(ctx, fmt.Sprintf("u%d@example.com", round), fmt.Sprintf("u%d", round), "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				mem, err := st.EnsureMembership(ctx, ident.ID, tn.ID, "member")
+				if err != nil {
+					t.Fatal(err)
+				}
+				var profiles []SSMProfile
+				var hosts []SSMHost
+				for i := 0; i < 3; i++ {
+					p := SSMProfile{ID: NewID(), MembershipID: mem.ID, Label: fmt.Sprintf("p%d", i), CreatedAt: NowTS()}
+					if err := st.CreateSSMProfile(ctx, p); err != nil {
+						t.Fatal(err)
+					}
+					h := SSMHost{ID: NewID(), MembershipID: mem.ID, Alias: fmt.Sprintf("h%d", i), ProfileID: p.ID, InstanceID: "i-1", CreatedAt: NowTS()}
+					if err := st.CreateSSMHost(ctx, h); err != nil {
+						t.Fatal(err)
+					}
+					profiles, hosts = append(profiles, p), append(hosts, h)
+				}
+				var wg sync.WaitGroup
+				start := make(chan struct{})
+				for i, h := range hosts {
+					wg.Add(2)
+					go func(h SSMHost, to string) {
+						defer wg.Done()
+						<-start
+						h.ProfileID = to
+						if err := st.UpdateSSMHost(ctx, h); err != nil && !errors.Is(err, ErrSSMProfileNotFound) {
+							t.Errorf("update host: %v", err)
+						}
+					}(h, profiles[(i+1)%len(profiles)].ID)
+					go func(p SSMProfile, i int) {
+						defer wg.Done()
+						<-start
+						h := SSMHost{ID: NewID(), MembershipID: mem.ID, Alias: fmt.Sprintf("n%d", i), ProfileID: p.ID, InstanceID: "i-2", CreatedAt: NowTS()}
+						if err := st.CreateSSMHost(ctx, h); err != nil && !errors.Is(err, ErrSSMProfileNotFound) {
+							t.Errorf("create host: %v", err)
+						}
+					}(profiles[i], i)
+				}
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					<-start
+					if err := st.DeleteMembership(ctx, mem.ID); err != nil {
+						t.Errorf("delete membership: %v", err)
+					}
+				}()
+				close(start)
+				wg.Wait()
+				if t.Failed() {
+					return
+				}
+				left, err := st.ListSSMHosts(ctx, mem.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(left) > 0 {
+					t.Fatalf("round %d: %d host(s) survived offboarding", round, len(left))
+				}
+			}
+		})
+	}
+}
+
 func aliases(hs []SSMHost) string {
 	out := make([]string, 0, len(hs))
 	for _, h := range hs {

@@ -303,10 +303,13 @@ function ProfileSection({
   };
   const remove = async (id: string) => {
     // The server refuses to delete a profile that hosts use, so say so up front instead of
-    // asking to confirm a delete that cannot happen.
+    // asking to confirm a delete that cannot happen. This list may be stale (the hosts may
+    // have moved on in another tab), so refetch it: otherwise the refusal repeats forever and
+    // a profile nothing uses any more can never be deleted from this page.
     const using = (hosts || []).filter((h) => h.profileId === id).map((h) => String(h.alias));
     if (using.length > 0) {
       toast(profileInUse(using));
+      reload();
       return;
     }
     const ok = await askConfirm({

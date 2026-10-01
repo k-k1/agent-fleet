@@ -1216,11 +1216,17 @@ func membershipCascade(membershipID string) []struct {
 		{`DELETE FROM user_limit WHERE membership_id=?`, id},
 		{`DELETE FROM engine_access_grant WHERE membership_id=?`, id},
 		{`DELETE FROM pat WHERE membership_id=?`, id},
-		{`DELETE FROM ssm_host WHERE membership_id=?`, id},
 		// sso_session was dropped by 0011 (ssm_profile replaced it). Deleting from a
 		// table that does not exist only fails at run time in SQLite, so list tables
 		// that really exist and nothing else.
+		//
+		// Profiles before hosts: a host write locks its profile and then the host
+		// (lockSSMProfile), so the other order deadlocks with an in-flight host PUT
+		// (measured on Postgres: SQLSTATE 40P01, cascade aborted). In this order a host
+		// write either commits before the profile DELETE takes its lock, and the host
+		// DELETE below sees the host, or waits and then finds its profile gone.
 		{`DELETE FROM ssm_profile WHERE membership_id=?`, id},
+		{`DELETE FROM ssm_host WHERE membership_id=?`, id},
 		{`DELETE FROM schedule_run WHERE membership_id=?`, id},
 		{`DELETE FROM schedule WHERE membership_id=?`, id},
 		{`DELETE FROM memo WHERE membership_id=?`, id},

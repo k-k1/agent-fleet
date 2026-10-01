@@ -229,6 +229,26 @@ describe("SsmTab profile Edit", () => {
     expect(confirms.map((c) => c.body)).toEqual([t("ssm.profile_del_body")]);
   });
 
+  it("refetches the hosts when it refuses locally, so a profile freed elsewhere can then be deleted", async () => {
+    confirmAnswer = true;
+    const del = vi.mocked((await import("../../../core/api/client.ts")).raw);
+    del.mockClear();
+    await mount();
+    // Another tab moves web-01 off p1 after this page loaded.
+    hosts = [];
+    gets.length = 0;
+    await click(btn(rows(0)[0], t("common.delete")));
+    expect(toasts).toEqual([t("ssm.profile_in_use", { n: 1, hosts: "web-01" })]);
+    expect(del).not.toHaveBeenCalled();
+    expect(gets).toContain("api/ssm/hosts");
+    expect(rows(1).length).toBe(0);
+    await click(btn(rows(0)[0], t("common.delete")));
+    expect(confirms.map((c) => c.body)).toEqual([t("ssm.profile_del_body")]);
+    expect(del).toHaveBeenCalledWith("api/ssm/profiles/p1", { method: "DELETE" });
+    await settle();
+    expect(rows(0).map((r) => r.querySelector(".ssm-alias")?.textContent)).toEqual(["stg"]);
+  });
+
   // The server is the one that decides: a host saved elsewhere since this page loaded holds
   // the profile, and the 409 names it and makes the page fetch it.
   it("shows the server's in-use refusal and fetches the host list it was missing", async () => {
