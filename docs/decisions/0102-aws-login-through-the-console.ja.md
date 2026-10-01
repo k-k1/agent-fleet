@@ -136,7 +136,11 @@ Settings から描いた sso-session だけを持つ設定ファイル（`ssoOnl
 - **URL は表示する前に検査する。** ホストは、プロファイルの Settings から組み立てた固定の一覧のどれかと、
   部分一致や末尾一致ではなくホスト名全体として完全に一致しなければならない。一覧は、`sso_region` のデバイス認可
   ホスト（そのリージョンのパーティションのもの。`amazonaws.com`、中国なら `amazonaws.com.cn`）と、開始 URL の
-  ホストである。それ以外なら試行を失敗として終え、モーダルがその理由（「想定外のサインイン URL」）を伝える。
+  ホストである。**2026-10-01 改訂（#1408）:** issuer 形式の開始 URL（`https://identitycenter.amazonaws.com/ssoins-<id>`）
+  には、そのインスタンスのアクセスポータルが返る（実測: 同じインスタンスの両形式で `d-<id>.awsapps.com/start/#/device`）。
+  このホストは `ssoins-<id>` から導けないので、この形式に限り、`.awsapps.com`（中国は `.awsapps.cn`）の前にちょうど
+  1 ラベルだけ付くホスト（`evil-awsapps.com` や `a.b.awsapps.com` は不可）と、導出できるデュアルスタックのポータル
+  ホスト `ssoins-<id>.portal.<sso_region>.app.aws`（完全一致）も一覧に加える。それ以外なら試行を失敗として終え、モーダルがその理由（「想定外のサインイン URL」）を伝える。
   `parseSSMLogin` のパターンはどの https ホストでも受け入れ、`device\.sso\.` は `device.sso.evil.example` の中にも
   一致するので、検査はパターンとは別の段階で行う。
 - 試行が成功するのは、コマンドが exit 0 で終わり、そのあと決定 2 のトークンキャッシュに期限切れでないトークンが

@@ -65,3 +65,16 @@ func TestSSMLoginStatusJoinsWrappedURL(t *testing.T) {
 		t.Fatalf("url carries a newline: %q", got.URL)
 	}
 }
+
+// TestDeviceAuthorizationFindsThePortalURL: an issuer-form start URL gets the access
+// portal back, not device.sso, and the code-carrying URL is the one to pick.
+func TestDeviceAuthorizationFindsThePortalURL(t *testing.T) {
+	out := "Browser will not be automatically opened.\nPlease visit the following URL:\n\n" +
+		"https://d-0123456789.awsapps.com/start/#/device\n\nThen enter the code:\n\nABCD-EFGH\n\n" +
+		"Alternatively, you may visit the following URL which will autofill the code upon loading:\n" +
+		"https://d-0123456789.awsapps.com/start/#/device?user_code=ABCD-EFGH\n"
+	url, code := DeviceAuthorization(out)
+	if url != "https://d-0123456789.awsapps.com/start/#/device?user_code=ABCD-EFGH" || code != "ABCD-EFGH" {
+		t.Fatalf("url, code = %q, %q", url, code)
+	}
+}

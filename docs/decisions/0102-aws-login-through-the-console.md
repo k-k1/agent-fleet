@@ -148,7 +148,13 @@ The Agent reads the verification URL and the code from the command's output, wit
 - **The URL is checked before it is shown.** Its host must be exactly equal — as a whole host name, not a
   substring or a suffix — to one of a fixed list built from the profile's Settings: the
   device-authorization host of its `sso_region` in that region's partition (`amazonaws.com`, or
-  `amazonaws.com.cn` for China), or the host of its start URL. Anything else ends the attempt as failed,
+  `amazonaws.com.cn` for China), or the host of its start URL. **Amended 2026-10-01 (#1408):** an
+  issuer-form start URL (`https://identitycenter.amazonaws.com/ssoins-<id>`) gets its instance's access
+  portal back instead (measured: `d-<id>.awsapps.com/start/#/device` for both start URL forms of one
+  instance), and that host cannot be derived from `ssoins-<id>`. For that form only, the list also admits
+  exactly one DNS label in front of `.awsapps.com` (`.awsapps.cn` in China) — so `evil-awsapps.com` and
+  `a.b.awsapps.com` stay out — and the dual-stack portal host `ssoins-<id>.portal.<sso_region>.app.aws`,
+  whole, because it is derivable. Anything else ends the attempt as failed,
   and the modal says why ("unexpected sign-in URL"). `parseSSMLogin`'s patterns accept any https host, and
   `device\.sso\.` matches inside `device.sso.evil.example` too, so the check is a separate step and not the
   pattern.

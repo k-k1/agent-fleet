@@ -299,6 +299,43 @@ func TestDeviceURLHostIsComparedWhole(t *testing.T) {
 	}
 }
 
+func TestDeviceURLForIssuerStartURLAdmitsOnlyThePortal(t *testing.T) {
+	issuer := Profile{SSORegion: "ap-northeast-1", StartURL: "https://identitycenter.amazonaws.com/ssoins-0123456789abcdef"}
+	allowed := allowedDeviceHosts(issuer)
+	for url, want := range map[string]bool{
+		"https://d-0123456789.awsapps.com/start/#/device?user_code=ABCD-EFGH":                        true,
+		"https://my-alias.awsapps.com/start/#/device?user_code=ABCD-EFGH":                            true,
+		"https://ssoins-0123456789abcdef.portal.ap-northeast-1.app.aws/#/device?user_code=ABCD-EFGH": true,
+		"https://device.sso.ap-northeast-1.amazonaws.com/?user_code=ABCD-EFGH":                       true,
+		"https://evil-awsapps.com/start/#/device":                                                    false,
+		"https://awsapps.com/start/#/device":                                                         false,
+		"https://evil.example.awsapps.com/start/#/device":                                            false,
+		"https://d-0123456789.awsapps.com.evil.example/start/#/device":                               false,
+		"https://evil.example/d-0123456789.awsapps.com/start":                                        false,
+		"https://ssoins-other.portal.ap-northeast-1.app.aws/#/device":                                false,
+		"https://ssoins-0123456789abcdef.portal.us-east-1.app.aws/#/device":                          false,
+		"http://d-0123456789.awsapps.com/start/#/device":                                             false,
+	} {
+		if got := deviceURLAllowed(url, allowed); got != want {
+			t.Errorf("%s: allowed = %v, want %v", url, got, want)
+		}
+	}
+	// A portal-form start URL keeps the exact host: another instance's portal is refused.
+	portal := allowedDeviceHosts(prodSettings["prod"])
+	if deviceURLAllowed("https://d-0123456789.awsapps.com/start/#/device", portal) {
+		t.Fatalf("a portal start URL admitted another portal: %v", portal)
+	}
+	// A path that is not one label never reaches a host name.
+	odd := allowedDeviceHosts(Profile{SSORegion: "ap-northeast-1", StartURL: "https://identitycenter.amazonaws.com/ssoins-1.evil.example"})
+	if deviceURLAllowed("https://ssoins-1.evil.example.portal.ap-northeast-1.app.aws/", odd) || len(odd) != 3 {
+		t.Fatalf("hosts = %v", odd)
+	}
+	cn := allowedDeviceHosts(Profile{SSORegion: "cn-north-1", StartURL: "https://identitycenter.amazonaws.com.cn/ssoins-0123456789abcdef"})
+	if !deviceURLAllowed("https://d-0123456789.awsapps.cn/start/#/device", cn) || deviceURLAllowed("https://d-0123456789.awsapps.com/start/#/device", cn) {
+		t.Fatalf("cn hosts = %v", cn)
+	}
+}
+
 // startAttempt presses "Log in" for the pending request.
 func startAttempt(t *testing.T, id string) string {
 	t.Helper()
