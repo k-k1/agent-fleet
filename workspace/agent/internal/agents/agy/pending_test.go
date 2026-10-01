@@ -322,6 +322,16 @@ func TestProtoVarintFieldRejectsTruncatedInput(t *testing.T) {
 	if _, _, ok := protoVarintField([]byte{0x4a, 0x09, 'a'}, 3); ok {
 		t.Fatal("overlong length-delimited field accepted")
 	}
+	// Field number 0 and 2^29 are not legal tags, wherever they sit.
+	for name, b := range map[string][]byte{
+		"zero tag":          {0x00, 0x00},
+		"zero tag after f3": {0x18, 0x00, 0x00, 0x00},
+		"field number 2^29": binary.AppendUvarint(nil, 1<<29<<3),
+	} {
+		if _, _, ok := protoVarintField(b, 3); ok {
+			t.Fatalf("%s accepted", name)
+		}
+	}
 	// Malformed AFTER field 3 still fails: the value must not come from a broken message.
 	if _, _, ok := protoVarintField(append(append([]byte(nil), row...), 0x4a, 0x09), 3); ok {
 		t.Fatal("trailing garbage accepted")
@@ -352,6 +362,7 @@ func TestLiveStateTurnLogClassification(t *testing.T) {
 		{"NULL data", midTurn, insertTurn(nil), ""},
 		{"malformed data", midTurn, insertTurn([]byte{0x4a, 0x09, 'a'}), ""},
 		{"idx beyond int32", midTurn, insertTurn(executorRow(4, 1<<40)), ""},
+		{"illegal field number", [][3]any{{14, stepStatusDone, []byte("x")}}, insertTurn([]byte{0x00, 0x00}), ""},
 		// Measured on v1.2.14: the first prompt canceled before any reply writes field 1=2,
 		// field 2=1 and no field 3, because proto3 omits the zero.
 		{"first prompt canceled: field 3 omitted", [][3]any{{14, stepStatusDone, []byte("x")}}, insertTurn([]byte{0x08, 0x02, 0x10, 0x01}), "idle"},

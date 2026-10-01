@@ -130,7 +130,8 @@ func turnEnd(db *sql.DB) (int, turnLogState) {
 func protoVarintField(b []byte, num uint64) (v uint64, found, ok bool) {
 	for len(b) > 0 {
 		key, n := binary.Uvarint(b)
-		if n <= 0 {
+		// Field numbers run 1..2^29-1; a zero tag is how garbage most often decodes.
+		if n <= 0 || key>>3 == 0 || key>>3 > 1<<29-1 {
 			return 0, false, false
 		}
 		b = b[n:]
