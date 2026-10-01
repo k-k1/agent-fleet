@@ -37,7 +37,8 @@ usage() {
 usage: VERSION=<v> update.sh --profile <p> --region <r>
                              [--stack <af-ecs-ingress>] [--template <cfn/30-ingress.yaml>]
                              [--push] [--images-tar <B.tar.gz>] [--registry <prefix>]
-                             [--comfy-digest <sha256:…>] [--force] [--dry-run]
+                             [--comfy-digest <sha256:…>] [--pool-stack <name>]
+                             [--force] [--dry-run]
   --profile     aws cli profile (required)
   --region      region of the deployment (required)
   --stack       ingress stack name (default af-ecs-ingress) — the one with ImageTag
@@ -49,6 +50,8 @@ usage: VERSION=<v> update.sh --profile <p> --region <r>
                 earlier default to this digest of GHCR's comfyui (sha256:<64 hex>). Same
                 contract as standup.sh --comfy-digest; ignored (with a warning) when no
                 ComfyUI image is copied
+  --pool-stack  the 40-ec2-pool stack (ecs-ec2 only), when it cannot be found from the launch
+                template's export; it is checked to own that launch template
   --force       force a new CP deployment even when CloudFormation reports a change
   --dry-run     print what would happen; touch nothing
 EOF
@@ -56,7 +59,7 @@ EOF
 
 VERSION="${VERSION:?set VERSION=<tag> (the ImageTag both images are pushed under)}"
 PROFILE=""; REGION=""; STACK="af-ecs-ingress"; TEMPLATE=""
-PUSH=0; IMAGES_TAR=""; LOCAL_REGISTRY=""; FORCE=0; DRY=0; COMFY_DIGEST=""
+PUSH=0; IMAGES_TAR=""; LOCAL_REGISTRY=""; FORCE=0; DRY=0; COMFY_DIGEST=""; POOL_STACK_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile)    PROFILE="${2:?--profile needs a value}"; shift ;;
@@ -67,6 +70,7 @@ while [ $# -gt 0 ]; do
     --images-tar) IMAGES_TAR="${2:?--images-tar needs a path}"; shift ;;
     --registry)   LOCAL_REGISTRY="${2:?--registry needs a value}"; shift ;;
     --comfy-digest) COMFY_DIGEST="${2:?--comfy-digest needs a sha256:<64 hex> value}"; shift ;;
+    --pool-stack) POOL_STACK_ARG="${2:?--pool-stack needs a value}"; shift ;;
     --force)      FORCE=1 ;;
     --dry-run)    DRY=1 ;;
     -h|--help)    usage; exit 0 ;;
@@ -93,7 +97,53 @@ AF_STACK_PLATFORM="$(af_stack_param "$STACK" PlatformStackName)"
 : "${AF_STACK_PLATFORM:=af-ecs-platform}"
 TTS_STACK="$(af_tts_stack || true)"
 ENGINES_STACK="$(af_engines_stack || true)"
-POOL_STACK="$(af_pool_stack || true)"
+# The pool stack is not optional on ecs-ec2: its user data carries security settings
+# (ECS_AWSVPC_BLOCK_IMDS), so an update that cannot find it must stop rather than report
+# success while every future slot keeps the old template. af_pool_stack answers "none" for
+# a failed lookup too, which is right for env.sh's discovery and wrong here, so the reads
+# below do not swallow errors.
+stack_param_strict() {
+  local v
+  v="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$1" \
+    --query "Stacks[0].Parameters[?ParameterKey=='$2'].ParameterValue" --output text)" || return 1
+  case "$v" in None) v="" ;; esac
+  echo "$v"
+}
+pool_fail() {
+  echo "ERROR: $STACK runs WsRuntime=ecs-ec2, but its slot pool stack (40-ec2-pool) $1." >&2
+  echo "       This update must redeploy it: the slot user data blocks IMDS for workspace" >&2
+  echo "       tasks, and a pool left behind launches every new slot without that." >&2
+  echo "       Name it with --pool-stack <stack> (checked against the launch template)." >&2
+  exit 1
+}
+POOL_STACK=""
+WS_RUNTIME="$(stack_param_strict "$STACK" WsRuntime)" \
+  || { echo "ERROR: cannot read WsRuntime of $STACK" >&2; exit 1; }
+if [ "$WS_RUNTIME" = ecs-ec2 ]; then
+  pool_lt="$(stack_param_strict "$STACK" Ec2SlotLaunchTemplate)" \
+    || pool_fail "cannot be found (reading Ec2SlotLaunchTemplate failed)"
+  [ -n "$pool_lt" ] || pool_fail "cannot be found (Ec2SlotLaunchTemplate is empty)"
+  if [ -n "$POOL_STACK_ARG" ]; then
+    owned="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$POOL_STACK_ARG" \
+      --query "Stacks[0].Outputs[?OutputKey=='SlotLaunchTemplateId'].OutputValue" --output text)" \
+      || pool_fail "named with --pool-stack ($POOL_STACK_ARG) cannot be read"
+    [ "$owned" = "$pool_lt" ] \
+      || pool_fail "named with --pool-stack ($POOL_STACK_ARG) owns launch template '$owned', not '$pool_lt'"
+    POOL_STACK="$POOL_STACK_ARG"
+  else
+    exports="$("${AWS[@]}" cloudformation list-exports \
+      --query "Exports[?Value=='$pool_lt'&&ends_with(Name,'-SlotLaunchTemplateId')].Name" \
+      --output text)" || pool_fail "cannot be looked up (cloudformation list-exports failed)"
+    export_name="${exports%%[[:space:]]*}"
+    case "$export_name" in
+      ?*-SlotLaunchTemplateId) POOL_STACK="${export_name%-SlotLaunchTemplateId}" ;;
+      *) pool_fail "cannot be found (no export <stack>-SlotLaunchTemplateId holds $pool_lt)" ;;
+    esac
+  fi
+elif [ -n "$POOL_STACK_ARG" ]; then
+  echo "ERROR: --pool-stack given, but $STACK runs WsRuntime=${WS_RUNTIME:-ecs} (no slot pool)" >&2
+  exit 2
+fi
 ACCOUNT="$("${AWS[@]}" sts get-caller-identity --query Account --output text)"
 ECR_HOST="$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
 

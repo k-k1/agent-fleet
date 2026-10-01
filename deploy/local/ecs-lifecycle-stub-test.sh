@@ -102,7 +102,12 @@ echo "aws $*" >> "$STUB_LOG"
 args="$*"
 case "$args" in
   *"sts get-caller-identity"*) echo "123456789012" ;;
-  *"cloudformation list-exports"*"SlotLaunchTemplateId"*) echo "t-pool-SlotLaunchTemplateId" ;;
+  *"cloudformation list-exports"*"SlotLaunchTemplateId"*)
+    case "${STUB_POOL_EXPORT:-ok}" in
+      fail) echo "An error occurred (AccessDenied) when calling the ListExports operation" >&2; exit 254 ;;
+      none) echo "" ;;
+      *)    echo "t-pool-SlotLaunchTemplateId" ;;
+    esac ;;
   # How update.sh finds the engine stack: the ingress stack's EnginesSsmParam, then the export
   # that carries the same value. Answer the generic list-exports here and update.sh never sees
   # an engine stack at all, so the P6 gate below cannot be tested. Behind a flag because
@@ -114,7 +119,7 @@ case "$args" in
   *"--profile p2"*"describe-stack-resource"*) echo "t-db" ;;
   *"describe-stack-resource"*) echo "None" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EfsId']"*) echo "fs-1" ;;
-  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotLaunchTemplateId']"*) echo "lt-NEW" ;;
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotLaunchTemplateId']"*) echo "${STUB_POOL_LT_OUTPUT:-lt-NEW}" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='CfnTemplatesBucket']"*) echo "t-cfn-bucket" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotAmiIdArm64']"*) echo "None" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='Url']"*) echo "https://af.example.test" ;;
@@ -185,7 +190,7 @@ case "$args" in
   *"--profile p5"*"ParameterKey=='DataStackName'"*) echo "t-data-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ;;
   *"ParameterKey=='DataStackName'"*) echo "t-data" ;;
   *"ParameterKey=='PlatformStackName'"*) echo "t-platform" ;;
-  *"ParameterKey=='WsRuntime'"*) echo "ecs-ec2" ;;
+  *"ParameterKey=='WsRuntime'"*) echo "${STUB_WS_RUNTIME:-ecs-ec2}" ;;
   *"ParameterKey=='ImageTag'"*) echo "9.9.9-dev-test" ;;
   *"--profile p2"*"ParameterKey=='Persistence'"*) echo "retain" ;;
   *"ParameterKey=='Persistence'"*) echo "delete" ;;
@@ -833,6 +838,39 @@ VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ENGINES_PRE_P6=1 
 grep -q "DRY: aws cloudformation deploy --stack-name af-ecs-engines .*--parameter-overrides LlmEnabled=true ImageEnabled=true" "$WORK/out3h3" \
   || fail "--dry-run did not show the planned translation"
 hasnt "cloudformation deploy --stack-name af-ecs-engines --template-file"   # nothing was run
+
+echo "== case 3h-pool: update.sh never skips the slot pool on ecs-ec2 without saying so =="
+#
+# The pool's user data carries ECS_AWSVPC_BLOCK_IMDS. A lookup that fails (no
+# cloudformation:ListExports) or finds nothing must stop the update, not read as "no pool".
+for mode in fail none; do
+  : > "$LOG"
+  if VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_POOL_EXPORT=$mode \
+    "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3hp" 2>&1; then
+    cat "$WORK/out3hp"; fail "update.sh succeeded on ecs-ec2 with the pool lookup '$mode'"
+  fi
+  grep -q "slot pool stack (40-ec2-pool)" "$WORK/out3hp" || { cat "$WORK/out3hp"; fail "pool lookup '$mode': no explanation"; }
+  hasnt "deploy --stack-name t-ingress"
+done
+# The explicit override, checked against the launch template it must own.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_POOL_EXPORT=fail STUB_POOL_LT_OUTPUT=lt-OLD \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --pool-stack t-pool > "$WORK/out3hp" 2>&1 \
+  || { cat "$WORK/out3hp"; fail "update.sh --pool-stack failed"; }
+grep -q "deploy --stack-name t-pool .*40-ec2-pool.yaml" "$LOG" || fail "--pool-stack did not deploy the named pool"
+: > "$LOG"
+if VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_POOL_EXPORT=fail STUB_POOL_LT_OUTPUT=lt-OTHER \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --pool-stack t-pool > "$WORK/out3hp" 2>&1; then
+  fail "update.sh accepted a --pool-stack that owns another launch template"
+fi
+grep -q "owns launch template 'lt-OTHER'" "$WORK/out3hp" || { cat "$WORK/out3hp"; fail "wrong --pool-stack: no explanation"; }
+# Fargate has no pool: the same failing lookup is never made and the update goes through.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_POOL_EXPORT=fail STUB_WS_RUNTIME=ecs \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3hp" 2>&1 \
+  || { cat "$WORK/out3hp"; fail "update.sh failed on a Fargate deployment without a pool"; }
+hasnt "40-ec2-pool.yaml"
+grep -q "deploy --stack-name t-ingress" "$LOG" || fail "the Fargate update did not deploy 30-ingress"
 
 echo "== case 3h-2: update.sh repairs an OfferBudgetSec left on the OLD meaning's default =="
 #

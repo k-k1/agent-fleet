@@ -436,7 +436,11 @@ It does the things the hand-typed sequence gets wrong:
 - **Redeploys the slot pool (`40-ec2-pool`) on ecs-ec2.** Its user data carries
   security settings, and a pool left on an old template launches every future slot
   without them. It only adds a launch template version; running and retained slots keep
-  the user data they were launched with (§Moving retained slots onto new user data).
+  the user data they were launched with (§Moving retained slots onto new user data). On
+  `WsRuntime=ecs-ec2` it **stops** when it cannot find the pool stack (the lookup goes
+  through the `<stack>-SlotLaunchTemplateId` export, so it needs
+  `cloudformation:ListExports`); name it with `--pool-stack <stack>`, which is checked to
+  own the deployment's launch template.
 - **Lists the workspaces that are still on the old image**, because nothing moves
   them automatically. It never stops one: stopping kills that user's sessions, and
   when to take that is their call.
