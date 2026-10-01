@@ -3,6 +3,14 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.26.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.26.0) — 2026-10-01
+
+Each version is now one GitHub Release that carries the workspace rootfs too, and the native package
+ships for arm64 Linux as well as amd64. Stop in a Managed session now takes two steps: the first ends
+the running turn and keeps what is queued, and a second also discards the queue. The mirror shows a
+claude reply while it is being written. On AWS, Recreate and Clean home used to report success and
+remove nothing; they now work on ecs-ec2 and are refused on ecs.
+
 ## [0.25.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.25.0) — 2026-09-29
 
 Branch names for a session started from a work item now follow the repository's own rules — its
