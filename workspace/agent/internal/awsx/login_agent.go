@@ -458,27 +458,44 @@ func HandleLoginCancel(w http.ResponseWriter, r *http.Request) {
 //
 // An issuer-form start URL (https://identitycenter.amazonaws.com/ssoins-<id>) gets its
 // instance's access portal back instead (measured: d-<id>.awsapps.com/start/#/device for
-// both start URL forms of one instance), and the d-<id> or alias label cannot be derived
-// from ssoins-<id>. For that form only, an entry ".awsapps.com" admits exactly one label
-// in front of it, and the dual-stack portal host ssoins-<id>.portal.<region>.app.aws is
-// admitted whole because it is derivable.
+// both start URL forms of one instance). For that form only, the instance's documented
+// portal endpoints are added. The classic d-<id> or alias label of an awsapps.com portal
+// cannot be derived from ssoins-<id>, so the entry ".awsapps.com" admits exactly one label
+// in front of it; the alternative IPv4 and dual-stack portals are derivable and compared
+// whole. China has no per-instance awsapps.cn host, only shared start hosts (AWS China's
+// IAM Identity Center allow lists).
 func allowedDeviceHosts(sp Profile) []string {
-	suffix, portal := "amazonaws.com", "awsapps.com"
-	if strings.HasPrefix(sp.SSORegion, "cn-") {
-		suffix, portal = "amazonaws.com.cn", "awsapps.cn"
+	region := sp.SSORegion
+	china := strings.HasPrefix(region, "cn-")
+	suffix := "amazonaws.com"
+	if china {
+		suffix = "amazonaws.com.cn"
 	}
-	hosts := []string{"device.sso." + sp.SSORegion + "." + suffix}
+	hosts := []string{"device.sso." + region + "." + suffix}
 	u, err := url.Parse(sp.StartURL)
 	if err != nil || u.Hostname() == "" {
 		return hosts
 	}
 	host := strings.ToLower(u.Hostname())
 	hosts = append(hosts, host)
-	if host == "identitycenter."+suffix {
-		hosts = append(hosts, "."+portal)
-		if id := strings.ToLower(strings.Trim(u.Path, "/")); issuerIDRe.MatchString(id) {
-			hosts = append(hosts, id+".portal."+sp.SSORegion+".app.aws")
+	if host != "identitycenter."+suffix {
+		return hosts
+	}
+	id := strings.ToLower(strings.Trim(u.Path, "/"))
+	if !issuerIDRe.MatchString(id) {
+		id = ""
+	}
+	if china {
+		hosts = append(hosts, "start.home.awsapps.cn", "start."+region+".home.awsapps.cn")
+		if id != "" {
+			hosts = append(hosts, id+"."+region+".portal.amazonaws.com.cn",
+				id+".portal."+region+".app.amazonwebservices.com.cn")
 		}
+		return hosts
+	}
+	hosts = append(hosts, ".awsapps.com")
+	if id != "" {
+		hosts = append(hosts, id+"."+region+".portal.amazonaws.com", id+".portal."+region+".app.aws")
 	}
 	return hosts
 }

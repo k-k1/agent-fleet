@@ -138,9 +138,13 @@ Settings から描いた sso-session だけを持つ設定ファイル（`ssoOnl
   ホスト（そのリージョンのパーティションのもの。`amazonaws.com`、中国なら `amazonaws.com.cn`）と、開始 URL の
   ホストである。**2026-10-01 改訂（#1408）:** issuer 形式の開始 URL（`https://identitycenter.amazonaws.com/ssoins-<id>`）
   には、そのインスタンスのアクセスポータルが返る（実測: 同じインスタンスの両形式で `d-<id>.awsapps.com/start/#/device`）。
-  このホストは `ssoins-<id>` から導けないので、この形式に限り、`.awsapps.com`（中国は `.awsapps.cn`）の前にちょうど
-  1 ラベルだけ付くホスト（`evil-awsapps.com` や `a.b.awsapps.com` は不可）と、導出できるデュアルスタックのポータル
-  ホスト `ssoins-<id>.portal.<sso_region>.app.aws`（完全一致）も一覧に加える。それ以外なら試行を失敗として終え、モーダルがその理由（「想定外のサインイン URL」）を伝える。
+  そこでこの形式に限り、インスタンスの文書化されたポータルエンドポイントを一覧に加える。従来の `d-<id>` や別名の
+  ラベルは `ssoins-<id>` から導けないので、`.awsapps.com` の前にちょうど 1 ラベルだけ付くホストを認める
+  （`evil-awsapps.com` や `a.b.awsapps.com` は不可）。導出できる代替 IPv4 ポータル
+  `ssoins-<id>.<sso_region>.portal.amazonaws.com` とデュアルスタックポータル `ssoins-<id>.portal.<sso_region>.app.aws`
+  は完全一致で比べる。中国にはインスタンスごとの `awsapps.cn` ホストが無く、`start.home.awsapps.cn`、
+  `start.<sso_region>.home.awsapps.cn`、`ssoins-<id>.<sso_region>.portal.amazonaws.com.cn`、
+  `ssoins-<id>.portal.<sso_region>.app.amazonwebservices.com.cn` を完全一致で認める。それ以外なら試行を失敗として終え、モーダルがその理由（「想定外のサインイン URL」）を伝える。
   `parseSSMLogin` のパターンはどの https ホストでも受け入れ、`device\.sso\.` は `device.sso.evil.example` の中にも
   一致するので、検査はパターンとは別の段階で行う。
 - 試行が成功するのは、コマンドが exit 0 で終わり、そのあと決定 2 のトークンキャッシュに期限切れでないトークンが

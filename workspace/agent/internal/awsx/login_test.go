@@ -300,26 +300,51 @@ func TestDeviceURLHostIsComparedWhole(t *testing.T) {
 }
 
 func TestDeviceURLForIssuerStartURLAdmitsOnlyThePortal(t *testing.T) {
-	issuer := Profile{SSORegion: "ap-northeast-1", StartURL: "https://identitycenter.amazonaws.com/ssoins-0123456789abcdef"}
-	allowed := allowedDeviceHosts(issuer)
-	for url, want := range map[string]bool{
-		"https://d-0123456789.awsapps.com/start/#/device?user_code=ABCD-EFGH":                        true,
-		"https://my-alias.awsapps.com/start/#/device?user_code=ABCD-EFGH":                            true,
-		"https://ssoins-0123456789abcdef.portal.ap-northeast-1.app.aws/#/device?user_code=ABCD-EFGH": true,
-		"https://device.sso.ap-northeast-1.amazonaws.com/?user_code=ABCD-EFGH":                       true,
-		"https://evil-awsapps.com/start/#/device":                                                    false,
-		"https://awsapps.com/start/#/device":                                                         false,
-		"https://evil.example.awsapps.com/start/#/device":                                            false,
-		"https://d-0123456789.awsapps.com.evil.example/start/#/device":                               false,
-		"https://evil.example/d-0123456789.awsapps.com/start":                                        false,
-		"https://ssoins-other.portal.ap-northeast-1.app.aws/#/device":                                false,
-		"https://ssoins-0123456789abcdef.portal.us-east-1.app.aws/#/device":                          false,
-		"http://d-0123456789.awsapps.com/start/#/device":                                             false,
-	} {
-		if got := deviceURLAllowed(url, allowed); got != want {
-			t.Errorf("%s: allowed = %v, want %v", url, got, want)
+	const ins = "ssoins-0123456789abcdef"
+	check := func(sp Profile, cases map[string]bool) {
+		t.Helper()
+		allowed := allowedDeviceHosts(sp)
+		for url, want := range cases {
+			if got := deviceURLAllowed(url, allowed); got != want {
+				t.Errorf("%s: allowed = %v, want %v (hosts %v)", url, got, want, allowed)
+			}
 		}
 	}
+	check(Profile{SSORegion: "ap-northeast-1", StartURL: "https://identitycenter.amazonaws.com/" + ins}, map[string]bool{
+		"https://d-0123456789.awsapps.com/start/#/device?user_code=ABCD-EFGH":             true,
+		"https://my-alias.awsapps.com/start/#/device?user_code=ABCD-EFGH":                 true,
+		"https://" + ins + ".ap-northeast-1.portal.amazonaws.com/#/device?user_code=ABCD": true,
+		"https://" + ins + ".portal.ap-northeast-1.app.aws/#/device?user_code=ABCD-EFGH":  true,
+		"https://device.sso.ap-northeast-1.amazonaws.com/?user_code=ABCD-EFGH":            true,
+		"https://evil-awsapps.com/start/#/device":                                         false,
+		"https://awsapps.com/start/#/device":                                              false,
+		"https://evil.example.awsapps.com/start/#/device":                                 false,
+		"https://d-0123456789.awsapps.com.evil.example/start/#/device":                    false,
+		"https://evil.example/d-0123456789.awsapps.com/start":                             false,
+		"https://ssoins-other.portal.ap-northeast-1.app.aws/#/device":                     false,
+		"https://" + ins + ".portal.us-east-1.app.aws/#/device":                           false,
+		"https://ssoins-other.ap-northeast-1.portal.amazonaws.com/#/device":               false,
+		"https://" + ins + ".us-east-1.portal.amazonaws.com/#/device":                     false,
+		"https://" + ins + ".ap-northeast-1.portal.amazonaws.com.evil.example/#/device":   false,
+		"https://" + ins + ".ap-northeast-1.portal.amazonaws.com.cn/#/device":             false,
+		"https://start.home.awsapps.cn/directory/x":                                       false,
+		"http://d-0123456789.awsapps.com/start/#/device":                                  false,
+	})
+	check(Profile{SSORegion: "cn-north-1", StartURL: "https://identitycenter.amazonaws.com.cn/" + ins}, map[string]bool{
+		"https://start.home.awsapps.cn/directory/x/#/device?user_code=ABCD-EFGH":          true,
+		"https://start.cn-north-1.home.awsapps.cn/directory/x/#/device":                   true,
+		"https://" + ins + ".cn-north-1.portal.amazonaws.com.cn/#/device":                 true,
+		"https://" + ins + ".portal.cn-north-1.app.amazonwebservices.com.cn/#/device":     true,
+		"https://device.sso.cn-north-1.amazonaws.com.cn/?user_code=ABCD-EFGH":             true,
+		"https://d-0123456789.awsapps.cn/start/#/device":                                  false,
+		"https://d-0123456789.awsapps.com/start/#/device":                                 false,
+		"https://" + ins + ".portal.cn-north-1.app.aws/#/device":                          false,
+		"https://" + ins + ".cn-north-1.portal.amazonaws.com/#/device":                    false,
+		"https://start.cn-northwest-1.home.awsapps.cn/directory/x":                        false,
+		"https://ssoins-other.cn-north-1.portal.amazonaws.com.cn/#/device":                false,
+		"https://" + ins + ".portal.cn-northwest-1.app.amazonwebservices.com.cn/#/device": false,
+		"https://evil.start.home.awsapps.cn/":                                             false,
+	})
 	// A portal-form start URL keeps the exact host: another instance's portal is refused.
 	portal := allowedDeviceHosts(prodSettings["prod"])
 	if deviceURLAllowed("https://d-0123456789.awsapps.com/start/#/device", portal) {
@@ -329,10 +354,6 @@ func TestDeviceURLForIssuerStartURLAdmitsOnlyThePortal(t *testing.T) {
 	odd := allowedDeviceHosts(Profile{SSORegion: "ap-northeast-1", StartURL: "https://identitycenter.amazonaws.com/ssoins-1.evil.example"})
 	if deviceURLAllowed("https://ssoins-1.evil.example.portal.ap-northeast-1.app.aws/", odd) || len(odd) != 3 {
 		t.Fatalf("hosts = %v", odd)
-	}
-	cn := allowedDeviceHosts(Profile{SSORegion: "cn-north-1", StartURL: "https://identitycenter.amazonaws.com.cn/ssoins-0123456789abcdef"})
-	if !deviceURLAllowed("https://d-0123456789.awsapps.cn/start/#/device", cn) || deviceURLAllowed("https://d-0123456789.awsapps.com/start/#/device", cn) {
-		t.Fatalf("cn hosts = %v", cn)
 	}
 }
 

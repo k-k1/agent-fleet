@@ -151,10 +151,14 @@ The Agent reads the verification URL and the code from the command's output, wit
   `amazonaws.com.cn` for China), or the host of its start URL. **Amended 2026-10-01 (#1408):** an
   issuer-form start URL (`https://identitycenter.amazonaws.com/ssoins-<id>`) gets its instance's access
   portal back instead (measured: `d-<id>.awsapps.com/start/#/device` for both start URL forms of one
-  instance), and that host cannot be derived from `ssoins-<id>`. For that form only, the list also admits
-  exactly one DNS label in front of `.awsapps.com` (`.awsapps.cn` in China) — so `evil-awsapps.com` and
-  `a.b.awsapps.com` stay out — and the dual-stack portal host `ssoins-<id>.portal.<sso_region>.app.aws`,
-  whole, because it is derivable. Anything else ends the attempt as failed,
+  instance), so for that form only the instance's documented portal endpoints are added. The classic
+  `d-<id>` or alias label cannot be derived from `ssoins-<id>`, so exactly one DNS label in front of
+  `.awsapps.com` is admitted (`evil-awsapps.com` and `a.b.awsapps.com` stay out); the derivable
+  alternative IPv4 portal `ssoins-<id>.<sso_region>.portal.amazonaws.com` and dual-stack portal
+  `ssoins-<id>.portal.<sso_region>.app.aws` are compared whole. China has no per-instance `awsapps.cn`
+  host: there the exact hosts are `start.home.awsapps.cn`, `start.<sso_region>.home.awsapps.cn`,
+  `ssoins-<id>.<sso_region>.portal.amazonaws.com.cn` and
+  `ssoins-<id>.portal.<sso_region>.app.amazonwebservices.com.cn`. Anything else ends the attempt as failed,
   and the modal says why ("unexpected sign-in URL"). `parseSSMLogin`'s patterns accept any https host, and
   `device\.sso\.` matches inside `device.sso.evil.example` too, so the check is a separate step and not the
   pattern.
