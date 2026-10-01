@@ -315,8 +315,9 @@ command that names no profile at all — a bare `aws …`, an SDK's default cred
 profile setting — fails with "Unable to locate credentials" (or its SDK's wording) instead of running as the
 workspace. (A named profile that is misspelled or logged out fails with its own error.) Your administrator can let
 the workspace use its own task role again (on AWS ECS); then such a command quietly runs as that role, in another
-account. Either way, do not look for credentials elsewhere: for deployments, lookups in your accounts and anything else that must
-use your authorization, pass your credentials explicitly:
+account. Either way, "Unable to locate credentials" means "name your profile", not "configure credentials": do not
+answer it with `aws configure`, `aws login` (the CLI's own hint) or keys in a `[default]` section of `~/.aws`, and do not look for credentials elsewhere.
+For deployments, writes and anything else whose account matters, pass your credentials explicitly:
 
 ```sh
 af-aws-exec --profile <name> -- ./gradlew deploy
@@ -336,6 +337,28 @@ af-aws-exec --profile <name> --account <id> --region <region> -- ./gradlew uploa
 The plugin then finds the profile's short-lived credentials in its environment, the first place the chain looks,
 and the "running as" line shows who uploads. If the build script names a profile itself (`profileName = "prod"`,
 say), see "could not be found" below.
+
+**A read-only lookup with `aws --profile`.** `af-aws-exec` stays the way to run deployments, writes, build tools,
+SDK programs and scripts: it checks the account (`--account`), hands short-lived credentials to tools whose SDK cannot
+read an SSO profile (older SDKs such as the AWS SDK for Java v1, common in Gradle/Maven plugins), asks you in the
+Console when a login is missing, refuses a profile name that means different identities to different tools, pins the
+region with `--region` and removes endpoint overrides. A quick look-up with the AWS CLI (`describe-*`, `list-*`,
+`s3 ls`) may name one of your Settings profiles directly — `aws --profile <name> ec2 describe-instances` — but only
+where the isolation above is in effect: a docker or AWS ECS workspace on Agent Fleet 0.26.0 or later, with
+`AF_WS_WORKLOAD_AWS` off and `AWS_EC2_METADATA_DISABLED=true` in the shell. There a misspelled or logged-out profile
+fails instead of answering for another account. This check prints one word and nothing of the environment:
+
+```sh
+if [ "${AWS_EC2_METADATA_DISABLED:-}" = true ] && [ "${AF_WS_WORKLOAD_AWS:-}" != 1 ] \
+   && [ -z "${AWS_CONTAINER_CREDENTIALS_RELATIVE_URI:-}${AWS_CONTAINER_CREDENTIALS_FULL_URI:-}" ] \
+   && ! aws sts get-caller-identity >/dev/null 2>&1; then echo isolated; else echo not-isolated; fi
+```
+
+On a workspace that runs on your own machine, a deployment that hands the task role back, a workspace not started
+again since the upgrade, or with default credentials of your own in `~/.aws`, it prints `not-isolated`: there, run
+lookups through `af-aws-exec` too. Agents in the workspace follow the same rule. A plain `aws --profile` does not ask
+the Console for a missing login (it reports an SSO token error) and is no way around a profile `af-aws-exec`
+refused.
 
 - It passes the profile's **short-lived** credentials to that one command through its environment only —
   `af-aws-exec` itself writes them nowhere and prints nothing but the identity the command runs as. (The AWS CLI
