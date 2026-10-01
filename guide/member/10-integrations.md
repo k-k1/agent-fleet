@@ -297,9 +297,9 @@ Open the URL it prints and approve the code — only a code you started yourself
 SSM sessions of the same profile, so logging in once covers both.
 
 **Running one command as you: `af-aws-exec`.** The workspace can have an AWS identity of its own (a *workload
-role*), and on EC2 slots the machine underneath has one too. Your sessions and terminals do not get either: on AWS
-the Agent keeps the workspace's credentials variables out of everything it starts and switches the SDKs' instance
-metadata lookup off (`AWS_EC2_METADATA_DISABLED=true`), and EC2 slots block instance metadata for workspaces. So a
+role*), and the machine underneath can have one too. Your sessions and terminals do not get either: the Agent keeps
+the workspace's credentials variables out of everything it starts, the SDKs' instance metadata lookup is switched
+off (`AWS_EC2_METADATA_DISABLED=true`), and EC2 hosts set up by Agent Fleet block instance metadata for workspaces. So a
 command that names no profile at all — a bare `aws …`, an SDK's default credential chain, a build tool with no
 profile setting — fails with "Unable to locate credentials" (or its SDK's wording) instead of running as the
 workspace. (A named profile that is misspelled or logged out fails with its own error.) Your administrator can hand

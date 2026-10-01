@@ -17,13 +17,14 @@ func TestServeIsolatesWorkloadChainFirst(t *testing.T) {
 	src := string(b)
 	body := src[strings.Index(src, "func serve() {"):]
 	iso := strings.Index(body, "awsx.IsolateWorkloadChain()")
+	active := strings.Index(body, "if awsx.IsolationActive() {")
 	listen := strings.Index(body, "net.Listen(")
 	if iso < 0 || listen < 0 || iso > listen {
 		t.Fatalf("serve() must call awsx.IsolateWorkloadChain() before anything else (isolate at %d, listen at %d)", iso, listen)
 	}
 	// A pre-existing tmux server does not take the Agent's environment; the launch patch
 	// has to be armed in the same place.
-	if tm := strings.Index(body, "tmuxx.SetLaunchEnv(awsx.WorkloadChainVars(), []string{awsx.MetadataDisabled})"); tm < iso || tm > listen {
+	if tm := strings.Index(body, "tmuxx.SetLaunchEnv(awsx.WorkloadChainVars(), []string{awsx.MetadataDisabled})"); active < iso || tm < active || tm > listen {
 		t.Fatalf("serve() must arm tmuxx.SetLaunchEnv right after isolating (at %d)", tm)
 	}
 }

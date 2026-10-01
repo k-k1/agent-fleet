@@ -65,3 +65,14 @@ func IsolateWorkloadChain() []string {
 	}
 	return removed
 }
+
+// IsolationActive reports whether the Agent runs with the workload identity withheld: on ECS
+// after IsolateWorkloadChain, and on docker because the Control Plane started the container
+// with AWS_EC2_METADATA_DISABLED=true (there is no container variable to remove there, and
+// the Agent cannot tell a docker host from the native runtime, where IMDS may be the
+// member's own instance role; the Control Plane knows which runtime it started). What it
+// gates is keeping that setting in the children that do not inherit the Agent's
+// environment (tmux, MCP hosts).
+func IsolationActive() bool {
+	return os.Getenv(WorkloadOptIn) != "1" && os.Getenv("AWS_EC2_METADATA_DISABLED") == "true"
+}

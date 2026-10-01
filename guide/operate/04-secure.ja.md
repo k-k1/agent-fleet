@@ -147,6 +147,26 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
   「`/list-agents` が使えない」と上がってきたら、故障ではなくこの判断です。
 - **秘密をログに出さない設計。** CP は資格情報の平文を保持・解釈せず、ログにも出しません。統一
   cred helper が都度復号して渡すため、平文ファイルは作られません（`docs/build/07-security.ja.md` §7.6）。
+- **ワークスペースにホストのクラウドの身元を渡さない。** ワークスペースのコンテナは、それが動くマシンの
+  メタデータエンドポイント（`169.254.169.254`）に届き得ます。メンバーの資格情報を持たない AWS SDK はそこで
+  見つけたロールに黙って切り替わります——インスタンスプロファイルを持つ EC2 ホストなら、すべてのセッションで、
+  エラーも出さずにそのロールです。Control Plane はワークスペースを `AWS_EC2_METADATA_DISABLED=true` 付きで
+  起動し（docker）、またはタスクロールを外したうえでそれを立てる（ECS）ので、SDK は問い合わせなくなります。
+  ネットワークでの遮断はホストの役目です。
+  - **compose 用の EC2 ホスト**（`deploy/aws/ec2-single`）: IMDSv2 とホップ数 1（`HttpTokens: required`、
+    `HttpPutResponseHopLimit: 1`）。ホストネットワークの Control Plane は 1 ホップなのでインスタンス
+    プロファイルを使えますが、docker ブリッジ上のワークスペースは 2 ホップでトークンを得られません。既存の
+    インスタンスには `aws ec2 modify-instance-metadata-options --instance-id <id> --http-tokens required
+    --http-put-response-hop-limit 1` で適用してください——Ubuntu AMI のパラメータが進んでいると、スタック
+    更新はインスタンスを作り直すことがあります。
+  - **クラウド上のそれ以外の docker ホスト**: 同じメタデータ設定か、Docker の `DOCKER-USER` チェーンで
+    ワークスペースのブリッジからの `169.254.169.254` を拒否するホストのファイアウォール規則（ホストの root が
+    要ります。compose 自体に新しい権限は要りません）。
+  - **ecs-ec2**: スロットのユーザーデータが `ECS_AWSVPC_BLOCK_IMDS=true` を設定します。残っている
+    スロットは入れ替えが要ります（`deploy/aws/ecs/README.md`「Moving retained slots onto new user data」）。
+
+  Control Plane の `AF_WS_WORKLOAD_AWS=1` で、ワークロードの身元をワークスペースに戻せます。メンバーは
+  `af-aws-exec` で自分として AWS コマンドを実行します（[メンバーガイド 10](../member/10-integrations.ja.md)）。
 
 ## オフボーディング — アクセスは実際どこで切れるか
 

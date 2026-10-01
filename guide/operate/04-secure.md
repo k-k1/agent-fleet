@@ -170,6 +170,27 @@ into answers, logs or commits is part of the agent-side instructions as well.
   plaintext, and does not emit it into logs. The unified cred helper decrypts on demand and
   hands it over, so no plaintext files are ever created
   (`docs/build/07-security.md` §7.6).
+- **Workspaces do not get the host's cloud identity.** A workspace container can reach the
+  cloud metadata endpoint (`169.254.169.254`) of the machine it runs on, and an AWS SDK with no
+  member credentials falls back to whatever role it finds there — on an EC2 host with an
+  instance profile, that role, in every session, without an error. The Control Plane starts
+  every workspace with `AWS_EC2_METADATA_DISABLED=true` (docker) or withholds the task role
+  and sets it (ECS), which stops the SDKs from asking; the network block is the host's job:
+  - **EC2 host for compose** (`deploy/aws/ec2-single`): IMDSv2 with hop limit 1
+    (`HttpTokens: required`, `HttpPutResponseHopLimit: 1`). The host-network Control Plane is
+    one hop and can still use an instance profile; a workspace on a docker bridge is two and
+    gets no token. For an instance that already exists, apply it with
+    `aws ec2 modify-instance-metadata-options --instance-id <id> --http-tokens required
+    --http-put-response-hop-limit 1` — a stack update can replace the instance when the
+    Ubuntu AMI parameter has moved.
+  - **Any other docker host in a cloud**: the same metadata settings, or a host firewall rule
+    in Docker's `DOCKER-USER` chain that rejects `169.254.169.254` from the workspace bridges
+    (it needs root on the host; compose itself needs nothing new).
+  - **ecs-ec2**: the slot user data sets `ECS_AWSVPC_BLOCK_IMDS=true`; retained slots have to
+    be replaced (`deploy/aws/ecs/README.md`, "Moving retained slots onto new user data").
+
+  `AF_WS_WORKLOAD_AWS=1` on the Control Plane hands the workload identity back to workspaces.
+  Members run AWS commands as themselves with `af-aws-exec` ([member guide 10](../member/10-integrations.md)).
 
 ## Offboarding: how access is actually revoked
 

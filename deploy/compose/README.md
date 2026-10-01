@@ -361,6 +361,10 @@ encodes them, but if you customize it, keep them:
   deployment; a CP/host compromise breaks isolation for **this** deployment only
   (companies are separate deployments). Restrict who can operate the host. To
   narrow the Docker API surface, front the socket with a filtering proxy.
+- **Host cloud identity.** On a cloud VM, workspaces must not reach the host's instance
+  metadata: they are started with `AWS_EC2_METADATA_DISABLED=true`, and the host should
+  require IMDSv2 with hop limit 1 (or reject `169.254.169.254` in `DOCKER-USER`). See
+  `guide/operate/04-secure.md` ("Workspaces do not get the host's cloud identity").
 - **`AF_MASTER_KEY`** — separate vault, independent backup, never in the data dir.
 - See `../../SECURITY.md` for the full threat model and how to report issues.
 

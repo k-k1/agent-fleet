@@ -102,3 +102,35 @@ func TestIsolateWorkloadChainOffECSIsNoop(t *testing.T) {
 		t.Error("IMDS disabled on a machine ECS did not set up")
 	}
 }
+
+// On docker there is no container variable to remove; the Control Plane starts the
+// container with AWS_EC2_METADATA_DISABLED=true, and that alone has to arm the paths that
+// do not inherit the Agent's environment. Native (no such variable) and the opt-in do not.
+func TestIsolationActive(t *testing.T) {
+	cases := []struct {
+		name           string
+		imdsOff, optIn string
+		want           bool
+	}{
+		{"docker: set by the CP", "true", "", true},
+		{"native: nothing set", "", "", false},
+		{"opted in", "true", "1", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearWorkload(t)
+			if tc.imdsOff != "" {
+				t.Setenv("AWS_EC2_METADATA_DISABLED", tc.imdsOff)
+			}
+			if tc.optIn != "" {
+				t.Setenv(WorkloadOptIn, tc.optIn)
+			}
+			if removed := IsolateWorkloadChain(); removed != nil {
+				t.Fatalf("removed %v with no container variable", removed)
+			}
+			if got := IsolationActive(); got != tc.want {
+				t.Errorf("IsolationActive() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

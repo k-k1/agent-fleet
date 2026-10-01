@@ -77,8 +77,11 @@ func serve() {
 
 	// First, before anything is spawned: every child inherits this process's environment,
 	// and the workload identity must not reach a session or terminal.
-	if removed := awsx.IsolateWorkloadChain(); len(removed) > 0 {
+	removed := awsx.IsolateWorkloadChain()
+	if awsx.IsolationActive() {
 		tmuxx.SetLaunchEnv(awsx.WorkloadChainVars(), []string{awsx.MetadataDisabled})
+	}
+	if len(removed) > 0 {
 		log.Printf("aws: workload credentials withheld from sessions (%s unset, IMDS disabled; %s=1 keeps them)",
 			strings.Join(removed, ", "), awsx.WorkloadOptIn)
 	}
