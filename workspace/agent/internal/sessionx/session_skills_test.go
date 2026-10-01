@@ -309,24 +309,24 @@ func TestOpencodeSkills(t *testing.T) {
 // without it, fall back to the project's .cursor/commands + .cursor/skills.
 func TestCursorSkills(t *testing.T) {
 	dir := t.TempDir()
-	meta := session.Meta{Name: "sk_cursor_scan", Dir: dir, Kind: session.KindCursor}
+	name := "sk_cursor_scan"
 	writeFile(t, filepath.Join(dir, ".cursor", "commands", "probe.md"), "Say probe-ok.")
 	writeFile(t, filepath.Join(dir, ".cursor", "skills", "helper", "SKILL.md"),
 		"---\nname: helper\ndescription: 補助\n---\nbody")
 
 	// advertised list has not arrived: fall back to the filesystem
-	got := cursorSkills(meta)
+	got := cursorSkills(name, dir)
 	if len(got) != 2 || got[0].Name != "helper" || got[1].Name != "probe" {
 		t.Fatalf("fallback = %#v", got)
 	}
 
 	// once the advertised list arrives it is authoritative (bare names, on the assumption
 	// the publisher already stripped the leading slash)
-	agents.PublishCommands(meta.Name, []agents.AdvertisedCommand{
+	agents.PublishCommands(name, []agents.AdvertisedCommand{
 		{Name: "simplify", Description: "Find cleanups (global)"},
 		{Name: "probe", Description: "AF probe (project)"},
 	})
-	got = cursorSkills(meta)
+	got = cursorSkills(name, dir)
 	if len(got) != 2 {
 		t.Fatalf("advertised = %#v", got)
 	}
@@ -486,6 +486,124 @@ func TestHandleSessionSkills(t *testing.T) {
 	// unknown session: 404
 	if rec := get("sk_nope"); rec.Code != http.StatusNotFound {
 		t.Fatalf("missing session status = %d", rec.Code)
+	}
+}
+
+// The launch modal asks before any session exists: the list comes from the repository's
+// working copy (plus ?subdir=) for the ?kind= it is about to start, and nothing that needs a
+// running process is consulted — not even a session that happens to share the repo.
+func TestHandleRepoSkills(t *testing.T) {
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	orig := claudeBundledSkills
+	claudeBundledSkills = func() []string { return []string{"simplify"} }
+	t.Cleanup(func() { claudeBundledSkills = orig })
+	origMuse := museNativeSkills
+	museNativeSkills = func(string) []muse.Skill {
+		t.Error("a session-less list asked a muse host")
+		return nil
+	}
+	t.Cleanup(func() { museNativeSkills = origMuse })
+
+	dir := filepath.Join(home, "repos", "demo")
+	writeFile(t, filepath.Join(dir, ".claude", "skills", "scout", "SKILL.md"),
+		"---\nname: scout\ndescription: 調査\n---\nbody")
+	writeFile(t, filepath.Join(dir, "web", ".claude", "commands", "lint.md"), "lint it")
+	writeFile(t, filepath.Join(dir, ".agents", "skills", "importer", "SKILL.md"), "body")
+	writeFile(t, filepath.Join(dir, ".cursor", "commands", "probe.md"), "Say probe-ok.")
+
+	get := func(query string) (int, []sessionSkill) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/repos/demo/skills?"+query, nil)
+		req.SetPathValue("name", "demo")
+		rec := httptest.NewRecorder()
+		HandleRepoSkills(rec, req)
+		var resp struct{ Skills []sessionSkill }
+		if rec.Code == http.StatusOK {
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return rec.Code, resp.Skills
+	}
+	names := func(sk []sessionSkill) map[string]sessionSkill {
+		out := map[string]sessionSkill{}
+		for _, s := range sk {
+			out[s.Name] = s
+		}
+		return out
+	}
+
+	// claude at the root: native scout + bundled simplify, .agents/importer as foreign; the
+	// subdir's command is not visible from the root.
+	code, sk := get("kind=claude")
+	by := names(sk)
+	if code != http.StatusOK || len(sk) != 3 || by["scout"].Invoke != "/scout " || by["simplify"].Source != "cli" || by["importer"].Path != ".agents/skills/importer/SKILL.md" {
+		t.Fatalf("claude = %d %#v", code, sk)
+	}
+	// with ?subdir= the CWD moves down: the folder's own command appears, and a foreign tree
+	// that now sits above the CWD is addressed absolutely.
+	_, sk = get("kind=claude&subdir=web")
+	by = names(sk)
+	if by["lint"].Invoke != "/lint " || by["importer"].Path != filepath.Join(dir, ".agents", "skills", "importer", "SKILL.md") {
+		t.Fatalf("claude subdir = %#v", sk)
+	}
+	// codex: "$name" and .agents/skills is native.
+	_, sk = get("kind=codex")
+	by = names(sk)
+	if by["importer"].Invoke != "$importer " || by["scout"].Path == "" {
+		t.Fatalf("codex = %#v", sk)
+	}
+	// muse with no session: the file-based fallback, .agents/skills back as foreign.
+	_, sk = get("kind=muse")
+	by = names(sk)
+	if len(sk) != 2 || by["importer"].Path == "" || by["importer"].Invoke != "" {
+		t.Fatalf("muse = %#v", sk)
+	}
+	// cursor with no session: the project's own command files.
+	_, sk = get("kind=cursor")
+	if by = names(sk); by["probe"].Invoke != "/probe " {
+		t.Fatalf("cursor = %#v", sk)
+	}
+	// shell and a missing kind: empty, not an error.
+	for _, q := range []string{"kind=shell", ""} {
+		if code, sk := get(q); code != http.StatusOK || len(sk) != 0 {
+			t.Errorf("%q = %d %#v", q, code, sk)
+		}
+	}
+	// an escaping subdir and an unknown repo are refused.
+	if code, _ := get("kind=claude&subdir=../x"); code != http.StatusBadRequest {
+		t.Errorf("escaping subdir = %d", code)
+	}
+	// A symlink inside the repo that leads out of it is refused, not followed: the outside
+	// tree's skills must not be listed. One that stays inside, and a subdir that does not
+	// exist yet, are fine.
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(outside, ".claude", "skills", "secret", "SKILL.md"), "body")
+	if err := os.Symlink(outside, filepath.Join(dir, "out")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "web"), filepath.Join(dir, "in")); err != nil {
+		t.Fatal(err)
+	}
+	if code, sk := get("kind=claude&subdir=out"); code != http.StatusBadRequest {
+		t.Errorf("subdir through an escaping symlink = %d %#v", code, sk)
+	}
+	if code, sk := get("kind=claude&subdir=in"); code != http.StatusOK || names(sk)["lint"].Invoke != "/lint " {
+		t.Errorf("subdir through an inside symlink = %d %#v", code, sk)
+	}
+	if code, _ := get("kind=claude&subdir=not/yet"); code != http.StatusOK {
+		t.Errorf("missing subdir = %d", code)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/repos/nope/skills?kind=claude", nil)
+	req.SetPathValue("name", "nope")
+	rec := httptest.NewRecorder()
+	HandleRepoSkills(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("missing repo = %d", rec.Code)
 	}
 }
 

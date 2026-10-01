@@ -323,6 +323,9 @@ func buildMux() *http.ServeMux {
 	// Launch prompt templates (repo launch modal): .claude/commands, .claude/skills,
 	// .agent-fleet/launch-prompts.md — aggregated read-only from the working copy.
 	mux.HandleFunc("GET /repos/{name}/prompt-templates", handleRepoPromptTemplates)
+	// The launch modal's skill picker: the mirror's list for a session not started yet
+	// (?kind=, ?subdir=). Registered in control-plane/routes.go too.
+	mux.HandleFunc("GET /repos/{name}/skills", sessionx.HandleRepoSkills)
 	// Branch naming resolver (ADR 0103 decision 7): the effective rule, a name for an item or
 	// a session, and the advisory check of a typed name.
 	mux.HandleFunc("GET /repos/{name}/branch-rule", handleGetBranchRule)

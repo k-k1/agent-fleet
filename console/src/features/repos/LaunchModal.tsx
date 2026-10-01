@@ -34,7 +34,7 @@ import { makeAttachment, useAttachDraft } from "../../lib/attachDraft.ts";
 import { AttachChips } from "../mirror/parts/AttachChips.tsx";
 import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
 import { useBackClose } from "../../lib/backClose.ts";
-import { repoPromptTemplates } from "./api.ts";
+import { repoPromptTemplates, repoSkills } from "./api.ts";
 import type { PromptTemplateGroup } from "./api.ts";
 import { api } from "../../core/api/client.ts";
 import { BranchList } from "./BranchList.tsx";
@@ -45,6 +45,8 @@ import { SESSION_TITLE_MAX, clampSessionTitle } from "../../lib/sessionTitle.ts"
 import { coarsePointer } from "../../lib/device.ts";
 import { useLaunchBranchName } from "./useLaunchBranchName.ts";
 import { GitflowInitModal } from "./GitflowInitModal.tsx";
+import { useSkillPicker } from "../mirror/parts/useSkillPicker.ts";
+import { SkillButton, SkillList } from "../mirror/parts/SkillList.tsx";
 import { bitbucketPending, warningText } from "./branchRule.ts";
 import type { BranchItem } from "./branchRule.ts";
 
@@ -447,6 +449,20 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
     setTimeout(() => textRef.current?.focus(), 0);
   };
 
+  // The mirror's skill picker over the first prompt. No session exists yet, so the list is
+  // what this kind would see in this working copy (and subdir); a worktree launch is answered
+  // from this copy's tree, as the worktree is only created by the launch.
+  const skillPicker = useSkillPicker({
+    source: { key: [repo, kind, subdir].join("\u0000"), load: () => repoSkills(repo, kind, subdir) },
+    agent: agentOf(kind),
+    managed: driverManaged && !!agentOf(kind).managedDriver,
+    draft: prompt,
+    setDraft: setPrompt,
+    setHistIdx: () => {},
+    inputRef: textRef,
+    composerLocked: busy,
+  });
+
   // start fires the launch. `resolveCollision` is the conflict panel's re-run: the
   // typed name turned out to exist, so check THAT branch out instead of creating it.
   // Existing-branch mode arrives here already resolved, with a branch picked from the list.
@@ -501,6 +517,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
   // Follow the shared composer send-key setting: Ctrl/⌘+Enter (default), or
   // Enter with Shift+Enter reserved for a newline.
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (skillPicker.handleKeyDown(e)) return; // an open skill list takes ↑↓/Enter/Tab/Esc
     if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
     const mod = e.metaKey || e.ctrlKey;
     const submitWithKey = settings.mirrorSend !== "enter" ? mod : !e.shiftKey && !mod;
@@ -571,7 +588,23 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
         {/* First prompt (optional) — below agent/model. Initial focus is applied by the
             useEffect above (preventScroll instead of the autoFocus attribute, and never on a
             touch device). */}
-        <div className="ui-field">
+        <div className="ui-field launch-prompt-field">
+          {skillPicker.listVisible && (
+            <SkillList
+              popRef={skillPicker.popRef}
+              selRef={skillPicker.selRef}
+              passive={skillPicker.passive}
+              skills={skillPicker.skills}
+              items={skillPicker.items}
+              more={skillPicker.more}
+              trigger={skillPicker.trigger}
+              sel={skillPicker.sel}
+              query={skillPicker.query}
+              onHover={skillPicker.setSel}
+              onPick={skillPicker.pick}
+              onMore={skillPicker.unfold}
+            />
+          )}
           <span className="ui-field-label launch-prompt-label">
             <span>{tr("launch.first_prompt")}</span>
             <span className="launch-prompt-tools">
@@ -631,6 +664,15 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
                   })()}
                 </select>
               )}
+              {skillPicker.canSkills && (
+                <SkillButton
+                  btnRef={skillPicker.btnRef}
+                  open={skillPicker.listVisible}
+                  disabled={busy}
+                  trigger={skillPicker.trigger}
+                  onToggle={skillPicker.toggleFromButton}
+                />
+              )}
             </span>
           </span>
           <AttachChips attachments={images} pasting={false} onRemove={removeFile} onOpen={setZoom} />
@@ -641,7 +683,11 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
           <textarea
             ref={textRef}
             value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
+            onChange={(e) => {
+              setPrompt(e.target.value);
+              skillPicker.trackTyping(e.target.value, e.target.selectionStart ?? e.target.value.length);
+            }}
+            onSelect={(e) => skillPicker.trackCaret(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
             onKeyDown={onKey}
             onPaste={onPaste}
             onDragOver={onDragOver}
