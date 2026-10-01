@@ -130,13 +130,16 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
     let seed = prompt;
     if (withImages) {
       const paths: string[] = [];
+      // A failed file is dropped with the rest of the draft, so its toast names it: that is
+      // the user's only way to know what to resend. No client-side size check — the per-file
+      // cap is the Agent's AF_UPLOAD_MAX (413 paste_too_large), which the Console never sees.
       for (const f of images ?? []) {
         try {
           const up = await pasteImage(res.name, f);
           if (up.status < 300 && up.path) paths.push(up.path);
-          else toast(t("rp.image_upload_failed", { err: up.error ? errText(up.error) : "" }));
+          else toast(t("rp.image_upload_failed", { name: f.name, err: up.error ? errText(up.error) : "" }));
         } catch {
-          toast(t("rp.image_upload_failed_network"));
+          toast(t("rp.image_upload_failed_network", { name: f.name }));
         }
       }
       seed = buildImagePrompt(prompt, paths, kind);
