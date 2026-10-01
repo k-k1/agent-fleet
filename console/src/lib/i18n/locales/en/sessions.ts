@@ -393,6 +393,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.base_default": "default",
   "launch.base_origin_note": "If origin has a branch of the same name, the new branch starts at its tip (if this copy's local branch is ahead or has diverged, the local one is kept). The parent working copy is never moved.",
   "launch.base_source": "Base chosen by:",
+  "launch.branch_provisional": "A provisional name: it may still change to an English one while this dialog is open.",
   "launch.branch_reread": "Read Bitbucket's branch settings again",
   "launch.gitflow_suggest": "origin has a develop branch, but this repository declares no git-flow settings, so the branch starts from the current branch.",
   "launch.gitflow_open": "Initialize Git Flow…",

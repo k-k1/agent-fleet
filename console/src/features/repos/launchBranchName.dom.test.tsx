@@ -81,7 +81,15 @@ const baseField = () => field("Base branch");
 const warnings = () => [...document.querySelectorAll(".launch-branch-warns li")].map((l) => l.textContent?.trim());
 
 async function settle(): Promise<void> {
-  for (let i = 0; i < 5; i++) await act(async () => void (await new Promise((r) => setTimeout(r, 0))));
+  for (let i = 0; i < 5; i++) {
+    if (vi.isFakeTimers()) await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    else await act(async () => void (await new Promise((r) => setTimeout(r, 0))));
+  }
+}
+// Fake time only: moves the clock, running the re-ask timers and the answers they wait for.
+async function advance(ms: number): Promise<void> {
+  await act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
+  await settle();
 }
 // The check waits for typing to stop.
 async function afterCheck(): Promise<void> {
@@ -135,7 +143,7 @@ const resolved = (over: Json = {}): Json => ({
 });
 
 beforeEach(() => {
-  launchBranchTiming.reaskMs = 20;
+  launchBranchTiming.reaskAtMs = [20, 40, 60];
   localStorage.clear();
   globalThis.indexedDB = new IDBFactory();
   resetAttachDraftDB();
@@ -152,6 +160,7 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root?.unmount());
+  vi.useRealTimers();
   host.remove();
   root = null;
 });
@@ -192,11 +201,11 @@ describe("work-item launch through the branch-name resolver", () => {
     expect(document.querySelector(".launch-gitflow-suggest")).toBeNull();
   });
 
-  it("asks once more after a provisional answer and takes the English slug", async () => {
+  it("asks again after a provisional answer and takes the English slug", async () => {
     let asks = 0;
     branchName = async () =>
       ++asks === 1 ? resolved({ name: "fix/45", provisional: true }) : resolved({ sources: { slug: "ai" } });
-    launchBranchTiming.reaskMs = 300;
+    launchBranchTiming.reaskAtMs = [300];
     await render();
     await click(secHead());
     expect(nameField().value).toBe("fix/45");
@@ -207,16 +216,105 @@ describe("work-item launch through the branch-name resolver", () => {
     expect(asks).toBe(2);
   });
 
-  it("asks only once more, and keeps a name the person edited meanwhile", async () => {
-    let asks = 0;
-    branchName = async () => (++asks === 1 ? resolved({ name: "fix/45", provisional: true }) : resolved({ provisional: true }));
-    await render();
-    await click(secHead());
-    await typeInto(nameField(), "fix/45-mine");
-    await act(async () => void (await new Promise((r) => setTimeout(r, 100))));
-    await settle();
-    expect(nameField().value).toBe("fix/45-mine");
-    expect(asks).toBe(2);
+  describe("on the real back-off schedule (fake time)", () => {
+    let asks: number;
+    let start: number;
+    const hint = () => document.querySelector(".launch-branch-provisional");
+    beforeEach(() => {
+      launchBranchTiming.reaskAtMs = [8000, 20000, 45000];
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      start = Date.now();
+      asks = 0;
+      // The English slug arrives about 30 s after the first ask, as measured on a real Agent.
+      branchName = async () => {
+        asks++;
+        return Date.now() - start < 30_000 ? resolved({ name: "fix/45", provisional: true }) : resolved({ sources: { slug: "ai" } });
+      };
+    });
+
+    it("keeps asking with back-off, takes the English name once it is ready, then stops", async () => {
+      await render();
+      await click(secHead());
+      expect(nameField().value).toBe("fix/45");
+      expect(hint()?.textContent).toContain("provisional name");
+      await advance(8000);
+      await advance(12_000);
+      expect(asks).toBe(3);
+      expect(nameField().value).toBe("fix/45");
+      await advance(25_000);
+      expect(asks).toBe(4);
+      expect(nameField().value).toBe("fix/45-empty-list-after-login");
+      expect(hint()).toBeNull();
+      await advance(300_000);
+      expect(asks).toBe(4);
+    });
+
+    it("stops asking once the person edits the name, and the hint goes", async () => {
+      await render();
+      await click(secHead());
+      await advance(8000);
+      expect(asks).toBe(2);
+      await typeInto(nameField(), "fix/45-mine");
+      await settle();
+      expect(hint()).toBeNull();
+      await advance(300_000);
+      expect(asks).toBe(2);
+      expect(nameField().value).toBe("fix/45-mine");
+    });
+
+    it("stops asking when the modal closes, leaving no timer of its own behind", async () => {
+      // What the rest of the modal leaves behind on close, with no re-ask scheduled.
+      const provisional = branchName;
+      branchName = async () => resolved();
+      await render();
+      act(() => root!.unmount());
+      const baseline = vi.getTimerCount();
+      vi.clearAllTimers();
+      root = createRoot(host);
+      branchName = provisional;
+      asks = 0;
+      await render();
+      expect(asks).toBe(1);
+      act(() => root!.unmount());
+      root = null;
+      expect(vi.getTimerCount()).toBe(baseline);
+      await act(async () => void (await vi.advanceTimersByTimeAsync(300_000)));
+      expect(asks).toBe(1);
+    });
+
+    it("an answer for the last item never lands on the next one", async () => {
+      await render();
+      await advance(8000);
+      expect(asks).toBe(2);
+      // The next item's resolver answers a final name at once; the last item's schedule must
+      // not ask (or apply) anything for it afterwards.
+      const other = { ...item, key: "acme/web#46", title: "Another one" };
+      branchName = async (b) => {
+        asks++;
+        return (b.item as Json).key === "acme/web#46" ? resolved({ name: "fix/46-another-one" }) : resolved({ name: "fix/45-late" });
+      };
+      await render(true, "web", other);
+      await click(secHead());
+      expect(nameField().value).toBe("fix/46-another-one");
+      await advance(300_000);
+      expect(asks).toBe(3);
+      expect(nameField().value).toBe("fix/46-another-one");
+    });
+
+    it("after the last re-ask a provisional name stays, and no longer says it may change", async () => {
+      branchName = async () => {
+        asks++;
+        return resolved({ name: "fix/45", provisional: true });
+      };
+      await render();
+      await click(secHead());
+      await advance(45_000);
+      expect(asks).toBe(4);
+      expect(nameField().value).toBe("fix/45");
+      expect(hint()).toBeNull();
+      await advance(300_000);
+      expect(asks).toBe(4);
+    });
   });
 
   it("does not ask again after a final answer", async () => {

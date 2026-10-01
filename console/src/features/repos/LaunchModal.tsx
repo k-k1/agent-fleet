@@ -758,6 +758,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
                         }}
                         placeholder={tr("launch.branch_ph")}
                       />
+                      {naming.provisional && <span className="ui-field-hint launch-branch-provisional">{tr("launch.branch_provisional")}</span>}
                     </label>
                     {/* Advisory only (decision 8): nothing here stops the launch. */}
                     {naming.warnings.length > 0 && (

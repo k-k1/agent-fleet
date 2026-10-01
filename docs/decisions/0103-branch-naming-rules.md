@@ -10,6 +10,7 @@ English | [日本語](0103-branch-naming-rules.ja.md)
   switching users with an empty template to the new default without a compatibility shim.
 - Amended 2026-09-30 (#1329): decision 9 may create a local branch tracking an origin branch.
 - Implementation note 2026-10-01 (#1129): how decision 4's English slug was built; see the note under decision 4.
+- Amended 2026-10-02 (#1440): under decision 4 the launch modal asks a provisional name again a few times, not once.
 - Implementation note 2026-10-01 (#1127): how decision 10's tenant layer was built; see the note under decision 10.
 - Follow-ups: #1124, #1125, #1126 (P0) / #1127 (P1) / #1128, #1129 (P2)
 - Related: [0061](0061-work-item-inbox.md) decision 12 (the work-item default `feature/{key}`, replaced
@@ -269,6 +270,14 @@ This records how P2 was built; the decision above is unchanged.
   the instructions; anything else, or a failed call, makes the deterministic slug final for that title.
 - The answer is cached per title and per AI-assist setting; a reply whose settings changed while it was
   being made is not cached. `sources.slug` is `ai` when it was used.
+
+#### Amendment (2026-10-02, #1440): the launch modal asks again with back-off
+
+Decision 4 let the Console ask again once. Measured on a deployed Agent, the English slug arrived 20–80 s
+after the first ask, so one re-ask at 8 s almost always got the provisional name again. The launch modal
+now asks again 8, 20 and 45 s after the first answer and stops at the first final answer, when the
+person edits the name, or when the modal closes or moves to another item. A name still provisional after
+the last ask stays as it is. While asks remain, the field says the name may still change.
 
 ### Decision 5: base
 

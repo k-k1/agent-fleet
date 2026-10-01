@@ -403,6 +403,7 @@ export const sessions = {
   "launch.base_default": "既定",
   "launch.base_origin_note": "origin に同じ名前のブランチがあれば、その先端から切ります（このコピーのローカルが進んでいる／分岐しているときはローカルのまま。親の作業コピーは動かしません）。",
   "launch.base_source": "起点を決めた規則:",
+  "launch.branch_provisional": "仮の名前です。このダイアログを開いている間に英語の名前に変わることがあります。",
   "launch.branch_reread": "Bitbucket のブランチ設定を読み直す",
   "launch.gitflow_suggest": "origin に develop ブランチがありますが、このリポジトリには git-flow の設定がないため、今のブランチから分岐します。",
   "launch.gitflow_open": "Git Flow を初期化…",
