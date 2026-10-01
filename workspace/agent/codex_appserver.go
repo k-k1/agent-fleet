@@ -254,6 +254,12 @@ func connectCodexAppServer(addr string) (*websocket.Conn, error) {
 
 const codexObserverSweepInterval = 30 * time.Second
 
+// codexSweepMaxSkips is how many ticks a sweep still in flight is left to finish before a tick
+// supersedes it anyway. Superseding on every tick would never let a sweep slower than the
+// interval complete, and a sweep that completes is what ends the holds no notLoaded broadcast
+// reported; never superseding would let one lost reply stop sweeps for the connection's life.
+const codexSweepMaxSkips = 10
+
 // codexObserver owns one AF observer connection and keeps it attached to every
 // loaded thread (see the file comment: without an attach, thread-scoped
 // notifications are never delivered to this connection). Attach sources: the
@@ -269,6 +275,8 @@ type codexObserver struct {
 	requested map[string]bool // threads attached or with an in-flight resume
 	sweepGen  int             // the current sweep; pages tagged with an older one are dropped
 	swept     []string        // loaded threads collected over the current sweep's pages
+	sweeping  bool            // the current sweep still awaits a page
+	skipped   int             // ticks skipped while the current sweep was in flight
 }
 
 // codexSweepMark tags a thread/loaded/list request with its sweep's generation.
@@ -303,9 +311,30 @@ func (o *codexObserver) attach(threadID string) {
 func (o *codexObserver) sweep() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	o.sweepLocked()
+}
+
+func (o *codexObserver) sweepLocked() {
 	o.sweepGen++
 	o.swept = nil
+	o.sweeping = true
+	o.skipped = 0
 	o.sendLocked("thread/loaded/list", map[string]any{}, codexSweepMark+strconv.Itoa(o.sweepGen))
+}
+
+// tickSweep is the ticker's sweep: it leaves a sweep still in flight to finish, up to
+// codexSweepMaxSkips ticks, and only then supersedes it.
+func (o *codexObserver) tickSweep() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.sweeping {
+		if o.skipped < codexSweepMaxSkips {
+			o.skipped++
+			return
+		}
+		log.Printf("codex app-server: thread/loaded/list sweep %d unanswered for %d ticks; starting another", o.sweepGen, o.skipped)
+	}
+	o.sweepLocked()
 }
 
 func (o *codexObserver) forget(threadID string) {
@@ -435,7 +464,9 @@ func (o *codexObserver) sendLocked(method string, params map[string]any, threadI
 	o.pending[id] = threadID
 	if err := o.conn.WriteJSON(map[string]any{"id": id, "method": method, "params": params}); err != nil {
 		delete(o.pending, id)
-		if threadID != "" {
+		if strings.HasPrefix(threadID, codexSweepMark) {
+			o.sweeping = false // nothing will answer this page
+		} else if threadID != "" {
 			delete(o.requested, threadID) // let the next sweep retry
 		}
 	}
@@ -460,14 +491,18 @@ func (o *codexObserver) handleResponse(msg codexAppServerMessage) {
 		return
 	}
 	if strings.HasPrefix(threadID, codexSweepMark) { // thread/loaded/list
-		o.mu.Lock()
-		current := threadID == codexSweepMark+strconv.Itoa(o.sweepGen)
-		o.mu.Unlock()
 		var res struct {
 			Data       []string `json:"data"`
 			NextCursor *string  `json:"nextCursor"`
 		}
-		if !current || failed || json.Unmarshal(msg.Result, &res) != nil {
+		bad := failed || json.Unmarshal(msg.Result, &res) != nil
+		o.mu.Lock()
+		current := threadID == codexSweepMark+strconv.Itoa(o.sweepGen)
+		if current && bad {
+			o.sweeping = false // the next tick starts a fresh sweep
+		}
+		o.mu.Unlock()
+		if !current || bad {
 			return
 		}
 		for _, tid := range res.Data {
@@ -487,6 +522,7 @@ func (o *codexObserver) handleResponse(msg codexAppServerMessage) {
 		// Absence proves an unload only once every page is in.
 		all := o.swept
 		o.swept = nil
+		o.sweeping = false
 		o.mu.Unlock()
 		clearUnloadedCodexReleased(all)
 		return
@@ -615,7 +651,7 @@ func observeCodexAppServer(conn *websocket.Conn) {
 			case <-stop:
 				return
 			case <-t.C:
-				obs.sweep()
+				obs.tickSweep()
 			}
 		}
 	}()
