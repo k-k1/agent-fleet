@@ -107,12 +107,6 @@ func RunSessionStatusHook(args []string) {
 		applyPendingPayloads(sid, "idle", h)
 		return
 	}
-	// push: PostToolUse(PushNotification). A notification, never a status — the catch-all
-	// heartbeat fires for the same tool and keeps working.
-	if state == "push" {
-		recordPushNotification(sid, h)
-		return
-	}
 	// message: the MessageDisplay hook fires as the assistant's text streams (before
 	// the turn's tool_use — verified: the prose reaches the pending card). We accumulate
 	// the chunks so a pending AskUserQuestion can show the prose that preceded it, which

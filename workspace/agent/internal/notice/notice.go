@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -77,7 +79,10 @@ func Put(e Event) error {
 
 // PutOnce persists an event only once for a stable source key. The marker is
 // separate from the acked outbox file, so a still-open prompt is not re-enqueued
-// on every Control Plane poll.
+// on every Control Plane poll. The marker is claimed with an exclusive create before
+// the Put: two processes racing on one key (claude runs hooks in parallel) would both
+// pass a stat-then-write check and both deliver. A failed Put releases the claim so
+// the next call can retry.
 func PutOnce(key string, e Event) error {
 	sum := sha256.Sum256([]byte(key))
 	markerDir := filepath.Join(paths.AgentStateDir(), "notification-markers")
@@ -86,13 +91,20 @@ func PutOnce(key string, e Event) error {
 	}
 	pruneMarkers(markerDir)
 	marker := filepath.Join(markerDir, hex.EncodeToString(sum[:])+".seen")
-	if _, err := os.Stat(marker); err == nil {
+	f, err := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, fs.ErrExist) {
 		return nil
 	}
-	if err := Put(e); err != nil {
+	if err != nil {
 		return err
 	}
-	return os.WriteFile(marker, []byte(e.CreatedAt), 0o600)
+	_, _ = f.WriteString(e.CreatedAt)
+	_ = f.Close()
+	if err := Put(e); err != nil {
+		_ = os.Remove(marker)
+		return err
+	}
+	return nil
 }
 
 // Marker pruning: without it the markers grow monotonically (List() prunes only the

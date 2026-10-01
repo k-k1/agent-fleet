@@ -42,7 +42,7 @@ const permToolMatcher = "Write|Edit|MultiEdit|NotebookEdit|Bash"
 //	SessionStart     → boot      (fresh/resumed → idle; skips auto-compact)
 //	PreToolUse(AskUserQuestion)  → question (claude is asking the user)
 //	PostToolUse(*)   → working   (every completed tool re-asserts working — heartbeat)
-//	PostToolUse(PushNotification) → push (forward the tool's message; never a status)
+//	PostToolUse(PushNotification) → session-push-notification (forward the message)
 func EnsureStatusHooks() {
 	m := readSettings()
 	hooks := hooksMap(m)
@@ -101,13 +101,12 @@ func EnsureStatusHooks() {
 	// PostToolUse(PushNotification) → push: the tool's local notification is only an OSC
 	// sequence (its Notification hook does not fire for it), and OSC from a claude pane is
 	// dropped because the other hooks already cover answer-ready / question / permission.
-	// This hook is the only route its message has to the notification center. Installed
-	// after the heartbeat because installing that one strips every entry of ours.
+	// This hook is the only route its message has to the notification center.
 	if !postToolUseHasPush(hooks) {
 		list, _ := hooks["PostToolUse"].([]any)
 		hooks["PostToolUse"] = append(list, map[string]any{
 			"matcher": pushToolMatcher,
-			"hooks":   []any{map[string]any{"type": "command", "command": statusHookCmd("push")}},
+			"hooks":   []any{map[string]any{"type": "command", "command": pushHookCmd()}},
 		})
 		changed = true
 	}
@@ -147,6 +146,15 @@ func postToolUseHasAF(hooks map[string]any) bool {
 	return false
 }
 
+// PushHookSubcommand is the agent subcommand the PushNotification hook runs. It is NOT
+// a session-status state: settings.json can point at an older agent (ConfigExePath
+// prefers the installed binary), and an older session-status would persist an unknown
+// state word as the session's status. An older dispatcher rejects an unknown
+// subcommand instead (exit 2), writing nothing.
+const PushHookSubcommand = "session-push-notification"
+
+func pushHookCmd() string { return paths.ConfigExePath() + " " + PushHookSubcommand }
+
 // pushToolMatcher is the tool name of claude's PushNotification (2.1.286 binary: the
 // tool's `name`, which is what a hook matcher is compared with).
 const pushToolMatcher = "PushNotification"
@@ -160,7 +168,7 @@ func postToolUseHasPush(hooks map[string]any) bool {
 		if em == nil || em["matcher"] != pushToolMatcher {
 			continue
 		}
-		if b, _ := json.Marshal(em["hooks"]); strings.Contains(string(b), "session-status push") {
+		if b, _ := json.Marshal(em["hooks"]); strings.Contains(string(b), PushHookSubcommand) {
 			return true
 		}
 	}
@@ -174,7 +182,8 @@ func postToolUseHasPush(hooks map[string]any) bool {
 // stale path passes those checks forever, so a hook written by a build that has since
 // been removed would stay in settings.json and fail on every event (no working/idle,
 // no question — the session looks frozen in the Console). Reports whether it changed
-// anything. A user's own hooks are untouched: only `<exe> session-status <state>` matches.
+// anything. A user's own hooks are untouched: only `<exe> session-status <state>` and
+// `<exe> session-push-notification` match.
 func repairStatusHookExe(hooks map[string]any) bool {
 	want := paths.ConfigExePath()
 	changed := false
@@ -196,12 +205,13 @@ func repairStatusHookExe(hooks map[string]any) bool {
 	return changed
 }
 
-// repointStatusHookCmd rewrites `<exe> session-status <state>` onto want when the
+// repointStatusHookCmd rewrites `<exe> session-status <state>` (and the PushNotification
+// hook's `<exe> session-push-notification`) onto want when the
 // recorded exe is unusable. "" / false when the command isn't ours or is still fine
 // (a different but working path — e.g. a host install — is left alone).
 func repointStatusHookCmd(cmd, want string) (string, bool) {
 	f := strings.Fields(cmd)
-	if len(f) < 2 || f[1] != "session-status" || f[0] == want || !paths.ExeUnusable(f[0]) {
+	if len(f) < 2 || (f[1] != "session-status" && f[1] != PushHookSubcommand) || f[0] == want || !paths.ExeUnusable(f[0]) {
 		return "", false
 	}
 	f[0] = want

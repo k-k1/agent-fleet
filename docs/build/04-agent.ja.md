@@ -350,15 +350,21 @@ tmux 3.5a で実測: 素の OSC も tmux のパススルー包み（`ESC P tmux;
 **claude の `PushNotification` ツールは hook から受ける。** このツール（2.1.286。
 `tengu_kairos_push_notifications` フラグの裏で既定はオフ）は手元の通知を `preferredNotifChannel`
 経由でしか出さず（＝OSC。上のとおり捨てる）、claude の Notification hook もこれには発火しない。
-そこで `EnsureStatusHooks` が matcher `PushNotification` の `PostToolUse` に `session-status push`
-を足し、`tool_input.message` を `proto: "claude-push"` の `terminal-notification` として送信箱に
-入れる（`sessionx.recordPushNotification`）。cmux と同じやり方。
+そこで `EnsureStatusHooks` が matcher `PushNotification` の `PostToolUse` に
+`workspace-agent session-push-notification` を足し、`tool_input.message` を
+`proto: "claude-push"` の `terminal-notification` として送信箱に入れる
+（`sessionx.recordPushNotification`）。cmux と同じやり方。
 
 - `tool_response.disabledReason` が `user_present` か `config_off` なら**送らない**。claude 自身が
   何も通知せずに戻る場合だから。`no_transport` は*モバイル*プッシュが無いだけで手元の通知は出て
   いるので、転送する。
 - **一度だけ届く。** OSC 経路は claude を捨てるので二経路が両方届けることはない。1 回の呼び出しで
-  hook が二度発火しても、`tool_use_id` を鍵にした `notice.PutOnce` が吸収する。
+  hook が二度発火しても（別プロセスで並行しても）、`tool_use_id` を鍵にした `notice.PutOnce` が
+  吸収する（印は排他的な作成で確保する）。
+- **`session-status` の状態ではなく専用のサブコマンド。** `settings.json` が古い Agent を指すことが
+  ある（`paths.ConfigExePath` はインストール済みのバイナリを選ぶ）。古い `session-status` は知らない語も
+  そのまま状態として書く（実測: `state:"push"`）。古いディスパッチャは知らないサブコマンドを
+  exit 2 で断り、何も書かない。
 - **想定外のペイロードでは何もしない**（文面が無ければイベントも無い）。形（`tool_input`
   `{message, status}`、`tool_response` `{message, pushSent, localSent, disabledReason, sentAt}`）は
   バイナリから読んだもので、実際の呼び出しを捕捉したものではない。

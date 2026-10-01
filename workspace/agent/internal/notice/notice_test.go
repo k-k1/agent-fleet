@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -57,5 +58,51 @@ func TestPutCarriesBodyIntoBridgeQueue(t *testing.T) {
 	}
 	if q.Kind != "answer-ready" || q.Body != "final turn prose" {
 		t.Fatalf("queued entry=%+v, want body carried", q)
+	}
+}
+
+// Two processes racing on one key (claude runs hooks in parallel) must deliver once:
+// a stat-then-write marker lets both through.
+func TestPutOnceConcurrentSameKeyDeliversOnce(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_ = PutOnce("race:k", New("terminal-notification", "s1", "claude", "P"))
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if got := List(); len(got) != 1 {
+		t.Fatalf("%d events for one key, want 1", len(got))
+	}
+}
+
+// A Put that fails must not leave the key claimed, or the event is lost for good.
+func TestPutOnceFailedPutReleasesKey(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	outbox := dir()
+	if err := os.MkdirAll(filepath.Dir(outbox), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outbox, nil, 0o600); err != nil { // a file where the dir goes
+		t.Fatal(err)
+	}
+	if err := PutOnce("retry:k", New("question", "s1", "claude", "P")); err == nil {
+		t.Fatal("PutOnce succeeded with the outbox blocked")
+	}
+	if err := os.Remove(outbox); err != nil {
+		t.Fatal(err)
+	}
+	if err := PutOnce("retry:k", New("question", "s1", "claude", "P")); err != nil {
+		t.Fatal(err)
+	}
+	if got := List(); len(got) != 1 {
+		t.Fatalf("%d events after the retry, want 1", len(got))
 	}
 }

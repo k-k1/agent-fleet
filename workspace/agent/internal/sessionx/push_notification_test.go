@@ -2,6 +2,7 @@ package sessionx
 
 import (
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
@@ -9,6 +10,24 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
+
+// feedPushHook runs the PushNotification hook subcommand once with stdinJSON on stdin.
+func feedPushHook(t *testing.T, stdinJSON string) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	if _, err := w.WriteString(stdinJSON); err != nil {
+		t.Fatalf("write stdin: %v", err)
+	}
+	_ = w.Close()
+	orig := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = orig }()
+	RunPushNotificationHook(nil)
+	_ = r.Close()
+}
 
 // newPushSession writes a claude session's meta and returns it with its hook sid.
 func newPushSession(t *testing.T) (session.Meta, string) {
@@ -36,7 +55,7 @@ func TestPushNotificationHookPutsTerminalNotification(t *testing.T) {
 	m, sid := newPushSession(t)
 	status.Persist(sid, "working")
 
-	feedStatusHook(t, "push", pushHookJSON(sid, "toolu_1", "Build finished:\n42 tests green", "no_transport"))
+	feedPushHook(t, pushHookJSON(sid, "toolu_1", "Build finished:\n42 tests green", "no_transport"))
 
 	events := notice.List()
 	if len(events) != 1 {
@@ -62,7 +81,7 @@ func TestPushNotificationHookSkipsWhenClaudeDidNotSend(t *testing.T) {
 	for _, reason := range []string{"user_present", "config_off"} {
 		t.Run(reason, func(t *testing.T) {
 			_, sid := newPushSession(t)
-			feedStatusHook(t, "push", pushHookJSON(sid, "toolu_1", "hello", reason))
+			feedPushHook(t, pushHookJSON(sid, "toolu_1", "hello", reason))
 			if events := notice.List(); len(events) != 0 {
 				t.Fatalf("%s: got %d events, want 0: %+v", reason, len(events), events)
 			}
@@ -78,13 +97,13 @@ func TestPushNotificationHookInertWithoutMessage(t *testing.T) {
 		`{"session_id":"` + sid + `","tool_name":"PushNotification","tool_input":{"message":"  \u001b "}}`,
 		`not json`,
 	} {
-		feedStatusHook(t, "push", in)
+		feedPushHook(t, in)
 	}
 	if events := notice.List(); len(events) != 0 {
 		t.Fatalf("got %d events, want 0: %+v", len(events), events)
 	}
 	// An unknown tool_response shape (no disabledReason) still forwards the message.
-	feedStatusHook(t, "push", `{"session_id":"`+sid+`","tool_use_id":"toolu_2","tool_input":{"message":"hi"}}`)
+	feedPushHook(t, `{"session_id":"`+sid+`","tool_use_id":"toolu_2","tool_input":{"message":"hi"}}`)
 	if events := notice.List(); len(events) != 1 {
 		t.Fatalf("got %d events without tool_response, want 1", len(events))
 	}
@@ -96,15 +115,15 @@ func TestPushNotificationHookInertWithoutMessage(t *testing.T) {
 func TestPushNotificationNotDeliveredTwice(t *testing.T) {
 	m, sid := newPushSession(t)
 	in := pushHookJSON(sid, "toolu_1", "Deploy done", "no_transport")
-	feedStatusHook(t, "push", in)
-	feedStatusHook(t, "push", in)
+	feedPushHook(t, in)
+	feedPushHook(t, in)
 	(&TerminalNotifier{Name: m.Name}).Notify(oscnotify.Notification{Proto: "osc9", Body: "Deploy done"})
 
 	if events := notice.List(); len(events) != 1 {
 		t.Fatalf("got %d events, want 1: %+v", len(events), events)
 	}
 	// A second call with the same text is a second notification.
-	feedStatusHook(t, "push", pushHookJSON(sid, "toolu_2", "Deploy done", "no_transport"))
+	feedPushHook(t, pushHookJSON(sid, "toolu_2", "Deploy done", "no_transport"))
 	if events := notice.List(); len(events) != 2 {
 		t.Fatalf("got %d events after a second call, want 2", len(events))
 	}

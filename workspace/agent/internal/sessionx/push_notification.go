@@ -1,6 +1,7 @@
 package sessionx
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/oscnotify"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -17,6 +18,16 @@ const pushNotificationProto = "claude-push"
 // notification still went out, which is the one we stand in for — so it is forwarded.
 func pushNotSent(reason string) bool {
 	return reason == "config_off" || reason == "user_present"
+}
+
+// RunPushNotificationHook is `workspace-agent session-push-notification`, claude's
+// PostToolUse(PushNotification) hook. The session comes from the hook's stdin, as for
+// session-status.
+func RunPushNotificationHook([]string) {
+	in := decodeHookStdin()
+	if sid := claude.NormalizeHookSID(in.sessionID); sid != "" {
+		recordPushNotification(sid, in)
+	}
 }
 
 // recordPushNotification puts claude's PushNotification message in the outbox as a

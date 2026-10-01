@@ -405,7 +405,8 @@ What each kind can emit, read from its binary (2026-09-27; no kind was captured 
 the `tengu_kairos_push_notifications` flag, off by default) raises its local notification only
 through `preferredNotifChannel` — an OSC sequence, dropped above — and claude's Notification hook
 does not fire for it. `EnsureStatusHooks` therefore adds a `PostToolUse` entry on matcher
-`PushNotification` running `session-status push`, which puts `tool_input.message` in the outbox
+`PushNotification` running `workspace-agent session-push-notification`, which puts
+`tool_input.message` in the outbox
 as a `terminal-notification` with `proto: "claude-push"` (`sessionx.recordPushNotification`).
 The same approach as cmux.
 
@@ -413,7 +414,12 @@ The same approach as cmux.
   returns before notifying anything. `no_transport` means no *mobile* push only — the local
   notification went out — so it is forwarded.
 - **Delivered once.** The OSC route drops claude, so the two routes never both deliver; a hook
-  that fires twice for one call is absorbed by `notice.PutOnce` keyed on `tool_use_id`.
+  that fires twice for one call, even in parallel processes, is absorbed by `notice.PutOnce` keyed
+  on `tool_use_id` (its marker is claimed with an exclusive create).
+- **A subcommand of its own, not a `session-status` state.** `settings.json` can point at an
+  older agent (`paths.ConfigExePath` prefers the installed binary), and an older `session-status`
+  persists any unknown word as the session's state — measured: `state:"push"`. An older
+  dispatcher rejects the unknown subcommand with exit 2 and writes nothing.
 - **Inert on an unexpected payload**: no message, no event. The payload shape (`tool_input`
   `{message, status}`, `tool_response` `{message, pushSent, localSent, disabledReason, sentAt}`)
   was read from the binary, not captured from a live call.
