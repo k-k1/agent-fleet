@@ -2,8 +2,10 @@ package agy
 
 import (
 	"database/sql"
+	"encoding/binary"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -224,5 +226,97 @@ func TestWireLiveSurfacesWorkingAndIdle(t *testing.T) {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// executorRow builds an executor_metadata.data blob shaped like v1.2.14's: varint fields 1
+// (how the run ended) and 2 before the step idx in field 3, a length-delimited field after
+// it. Field 3 coming third makes the walker skip the others the way it must on real rows.
+func executorRow(reason, endIdx int) []byte {
+	b := []byte{0x08, byte(reason), 0x10, 0x01}
+	b = binary.AppendUvarint(append(b, 0x18), uint64(endIdx))
+	return append(append(b, 0x4a, 0x04), "uuid"...)
+}
+
+// mkConvDBWithTurns is mkConvDB plus the executor_metadata table, one row per finished turn.
+func mkConvDBWithTurns(t *testing.T, conv string, rows [][3]any, turns [][]byte) {
+	t.Helper()
+	mkConvDB(t, conv, rows)
+	db, err := sql.Open("sqlite", conversationDBPath(conv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE executor_metadata (idx INTEGER, data BLOB)`); err != nil {
+		t.Fatal(err)
+	}
+	for i, d := range turns {
+		if _, err := db.Exec(`INSERT INTO executor_metadata (idx, data) VALUES (?,?)`, i, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// The step sequences below were recorded on v1.2.14 by polling a live conversation DB. The
+// model's step row appears only once its response is complete, so mid-turn the last row is
+// routinely a finished user / tool / notification step; only an executor_metadata row that
+// has reached the last step ends the turn.
+func TestLiveStateFollowsTurnEndNotLastStepStatus(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := "/home/dev/repos/proj"
+	const (
+		user, model, tool, notice = 14, 15, 132, 101
+		completed, canceled       = 4, 2
+	)
+	done := func(types ...int) [][3]any {
+		var out [][3]any
+		for _, ty := range types {
+			out = append(out, [3]any{ty, stepStatusDone, []byte("x")})
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name  string
+		rows  [][3]any
+		turns [][]byte
+		want  string
+	}{
+		{"thinking after the prompt", done(user), nil, "working"},
+		{"thinking after a tool", done(user, model, tool), nil, "working"},
+		{"background task finished", done(user, model, tool, model, notice), nil, "working"},
+		{"text reply while a background task runs", done(user, model, tool, model), nil, "working"},
+		{"model streaming", append(done(user, model, tool), [3]any{model, stepStatusStreaming, []byte("x")}), nil, "working"},
+		{"turn completed", done(user, model, tool, model), [][]byte{executorRow(completed, 3)}, "idle"},
+		{"next prompt after a completed turn", done(user, model, user), [][]byte{executorRow(completed, 1)}, "working"},
+		{"Esc while thinking", done(user, model, user), [][]byte{executorRow(completed, 1), executorRow(canceled, 2)}, "idle"},
+		{"Esc during a tool", append(done(user, model), [3]any{tool, stepStatusCanceled, []byte("x")}), [][]byte{executorRow(canceled, 2)}, "idle"},
+		{"background task restarts an ended turn", done(user, model, tool, model, notice), [][]byte{executorRow(completed, 3)}, "working"},
+		{"permission still wins", append(done(user, model), [3]any{tool, stepStatusAwaitingUser, []byte("run_command")}), nil, "permission"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			slot := "slot-te-" + tc.name
+			conv := "conv-te-" + strings.ReplaceAll(tc.name, " ", "-")
+			m := session.Meta{Dir: dir, Name: slot, Kind: session.KindAgy}
+			sids.Write(session.UUID(dir, slot), conv)
+			mkConvDBWithTurns(t, conv, tc.rows, tc.turns)
+			if got := LiveState(m); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestProtoVarintFieldRejectsTruncatedInput(t *testing.T) {
+	row := executorRow(4, 300)
+	if v, ok := protoVarintField(row, 3); !ok || v != 300 {
+		t.Fatalf("got %d %v, want 300", v, ok)
+	}
+	// Cut inside field 3's two-byte varint, and inside a length-delimited field: neither may
+	// read past the end or invent a value.
+	if _, ok := protoVarintField(row[:6], 3); ok {
+		t.Fatal("truncated varint decoded")
+	}
+	if _, ok := protoVarintField([]byte{0x4a, 0x09, 'a'}, 3); ok {
+		t.Fatal("overlong length-delimited field accepted")
 	}
 }
