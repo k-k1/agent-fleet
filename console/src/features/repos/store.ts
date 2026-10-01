@@ -43,6 +43,8 @@ export interface Repo {
    * independent of ahead/behind above, which are relative to the upstream. */
   integration?: {
     targetBranch?: string;
+    /** targetBranch is the parent branch's upstream (e.g. origin/develop), not the parent's HEAD. */
+    targetUpstream?: boolean;
     targetUnique: number;
     worktreeUnique: number;
     relation: "same" | "contained" | "unmerged" | "diverged" | "unknown";

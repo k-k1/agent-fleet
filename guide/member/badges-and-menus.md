@@ -50,9 +50,9 @@ automatic tidying — [02](02-sessions.md#tidying-up-in-bulk-cleanup)).
 | Badge | Meaning |
 |---|---|
 | Uncommitted | There are uncommitted changes |
-| = parent | Same commit as the parent working copy |
+| = parent | Same commit as the parent ("parent" here is the upstream of the parent working copy's branch, e.g. `origin/develop`, or the parent working copy's HEAD when it has none; the chip's tooltip names it) |
 | unmerged N | There are N worktree-specific commits not contained in the parent |
-| parent+N, FF ok | The worktree's HEAD is contained in the parent, which is N commits ahead. **"Fast-forward from the parent"** in the menu brings them in ([04](03-code.md)) |
+| parent+N, FF ok | The worktree's HEAD is contained in the parent, which is N commits ahead. **"Fast-forward from origin/develop"** in the menu (**"Fast-forward from parent"** without an upstream) brings them in ([04](03-code.md)) |
 | diverged N↕M, no FF | Both the worktree and the parent have their own commits; a merge or rebase is needed |
 | n/a | The relation to the parent can't be determined (detached HEAD etc.) |
 | ↑N | N commits ahead of origin |
@@ -132,7 +132,7 @@ a new one in the same place. When there is no working folder, resume, handoff, a
 ### Repositories / worktrees
 
 You can open the commit graph, open the folder, commit changes, switch branches, copy the branch name,
-Fast-Forward (on a worktree, **"Fast-forward from the parent"**), project settings, **Share…**, **assignment to
+Fast-Forward (on a worktree, **"Fast-forward from origin/develop"** or similar), project settings, **Share…**, **assignment to
 a working set**, launch a session by kind, **stop the sessions below**, and delete the working copy. Stop
 opens a modal listing the sessions running in that row and in the copies nested under it
 ([02](02-sessions.md#stopping-and-tidying-up-sessions)); Delete opens a confirmation

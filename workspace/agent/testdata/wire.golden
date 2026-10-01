@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console and CP read. Generated - do not edit by hand.
 # Update: cd workspace/agent && go test -run TestWireShapeGolden -update-wire-golden .
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 103
+# count: 104
 Repo.ahead number
 Repo.behind number
 Repo.branch string
@@ -10,6 +10,7 @@ Repo.dirty bool
 Repo.integration.relation string
 Repo.integration.targetBranch string,omitempty
 Repo.integration.targetUnique number
+Repo.integration.targetUpstream bool,omitempty
 Repo.integration.worktreeUnique number
 Repo.locked bool,omitempty
 Repo.name string

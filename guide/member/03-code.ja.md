@@ -90,9 +90,10 @@ gitの認証は接続後、すべてのgit操作に**透過的に効きます**�
 行には状態表示も出ます。読み方を覚えておくと、push 前に気づけます。
 
 - **未コミット** — コミットしていない変更があります。
-- worktree の **親=** — 親 working copy と同じコミットです。
+- worktree のバッジの「親」は、親 working copy のブランチの upstream（たとえば `origin/develop`）です。GitHub で PR をマージすると、親 working copy を fast-forward しなくても次の fetch（自動で 10 分ごと）で反映されます。upstream が無いときは親 working copy の HEAD と比べます。比較先はバッジのツールチップに出ます。
+- worktree の **親=** — 親と同じコミットです。
 - worktree の **未取込 N** — 親にまだ含まれない固有コミットが N 件あります。
-- worktree の **親+N・FF可** — worktree の HEAD は親に含まれていて、**親のほうが N コミット進んでいます**。右クリックの **「親を Fast-Forward で取り込む」** で、親に入った変更をこの worktree へそのまま取り込めます（マージコミットは作られません）。
+- worktree の **親+N・FF可** — worktree の HEAD は親に含まれていて、**親のほうが N コミット進んでいます**。右クリックの **「origin/develop を Fast-Forward で取り込む」**（upstream が無いときは「親を Fast-Forward で取り込む」）で、親に入った変更をこの worktree へそのまま取り込めます（マージコミットは作られません）。
 - worktree の **分岐 N↕M・FF不可** — worktree と親の両方に固有コミットがあり、マージかリベースが必要です。
 - worktree の **比較不可** — detached HEAD やコミットのないリポジトリなどで関係を判定できません。
 - **↑N**（先行）— origin より N コミット進んでいます（未 push）。
@@ -114,7 +115,7 @@ worktree の状態表示は親の作業コピーにある現在のブランチ�
 表示されない項目もあります。
 
 - **コミットグラフを開く**／**フォルダを開く**／**変更をコミット**
-- **ブランチ切替**／**ブランチ名をコピー**／**Fast-Forward**（worktree では **「親を Fast-Forward で取り込む」**）
+- **ブランチ切替**／**ブランチ名をコピー**／**Fast-Forward**（worktree では **「origin/develop を Fast-Forward で取り込む」** など）
 - **Git Flow を初期化**（git リポジトリの元の作業コピーのみ）— [後述](#git-flow-を初期化)
 - **プロジェクト設定** — そのリポジトリにコミットされている MCP の定義を、エージェント別の効き方と警告つきで確認します（[12](12-settings.ja.md#mcp-サーバー)）
 - **共有する…** — この作業コピー（プロジェクト）のセッションを他のメンバーへ共有します（[02](02-sessions.ja.md#会話を共有する共有セッション)）
