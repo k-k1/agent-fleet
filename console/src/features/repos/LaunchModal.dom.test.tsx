@@ -112,21 +112,33 @@ async function reopen(extra: { repo?: string; initialPrompt?: string } = {}): Pr
 }
 
 const promptBox = () => must(document.querySelector<HTMLTextAreaElement>("textarea"), "first-prompt textarea");
-// Attachment chips (images waiting to be uploaded).
+// Attachment chips (files waiting to be uploaded).
 const chips = () => [...document.querySelectorAll(".mirror-attach .ma-chip")];
 
 // Paste an image from the clipboard. jsdom has no DataTransfer, so only the clipboardData the
 // handler reads is put on the raw event (React reads it from the native event).
-async function pasteImage(name: string): Promise<void> {
-  const file = new File(["PNGBYTES"], name, { type: "image/png" });
+async function pasteImage(name: string, type = "image/png"): Promise<void> {
+  const file = new File(["BYTES"], name, { type });
   const ev = new Event("paste", { bubbles: true, cancelable: true });
   Object.defineProperty(ev, "clipboardData", {
-    value: { items: [{ kind: "file", type: "image/png", getAsFile: () => file }] },
+    value: { items: [{ kind: "file", type, getAsFile: () => file }] },
   });
   await act(async () => {
     promptBox().dispatchEvent(ev);
   });
   await settle();
+}
+
+// Fire a drag event on the prompt field. jsdom has no DataTransfer either; browsers expose
+// types during dragover but an empty files list until the drop itself.
+async function drag(type: "dragover" | "drop", types: string[], files: File[] = []): Promise<Event> {
+  const ev = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "dataTransfer", { value: { types, files } });
+  await act(async () => {
+    promptBox().dispatchEvent(ev);
+  });
+  await settle();
+  return ev;
 }
 
 // Both IndexedDB and React finish their reads and writes a few microtasks later.
@@ -362,6 +374,58 @@ describe("LaunchModal branch mode", () => {
     await click(byText("Start in a worktree"));
     expect(launchedWith().images.map((f) => f.name)).toEqual(["shot.png"]);
     await reopen();
+    expect(chips()).toHaveLength(0);
+  });
+
+  // The launch modal attaches what the mirror composer attaches: any file type, through paste,
+  // drop and the + picker. Images only was a gap users hit with PDFs and logs (#1447).
+  it("attaches non-image files by paste, drop and the + picker and hands them to the launch", async () => {
+    await render();
+    await pasteImage("spec.pdf", "application/pdf");
+    expect(chips()).toHaveLength(1);
+    expect(chips()[0].querySelector("img.ma-thumb")).toBeNull(); // icon + name, no thumbnail
+
+    // dragover must be cancelled for the drop to land here at all; during it browsers report
+    // the types but no files yet.
+    expect((await drag("dragover", ["Files"])).defaultPrevented).toBe(true);
+    const dropped = new File(["log"], "build.log", { type: "text/plain" });
+    expect((await drag("drop", ["Files"], [dropped])).defaultPrevented).toBe(true);
+    expect(chips()).toHaveLength(2);
+
+    // Dragged text keeps the textarea's own drop (insert at the caret) and stages nothing.
+    expect((await drag("dragover", ["text/plain"])).defaultPrevented).toBe(false);
+    expect((await drag("drop", ["text/plain"])).defaultPrevented).toBe(false);
+    expect(chips()).toHaveLength(2);
+
+    const input = must(document.querySelector<HTMLInputElement>('input[type="file"]'), "file input");
+    expect(input.hasAttribute("accept")).toBe(false);
+    const picked = new File(["a,b"], "data.csv", { type: "text/csv" });
+    Object.defineProperty(input, "files", { value: [picked], configurable: true });
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await settle();
+    expect(chips()).toHaveLength(3);
+
+    await reopen(); // a not-yet-uploaded non-image keeps its bytes across a close
+    await click(byText("Start in a worktree"));
+    // The restored Files must carry their bytes, not just their names: a 0-byte File
+    // uploads "successfully" and hands the agent an empty file.
+    const launched = launchedWith().images;
+    expect(launched.map((f) => f.name)).toEqual(["spec.pdf", "build.log", "data.csv"]);
+    expect(launched.map((f) => f.type)).toEqual(["application/pdf", "text/plain", "text/csv"]);
+    expect(launched.map((f) => f.size)).toEqual([5, 3, 3]);
+    expect(await Promise.all(launched.map((f) => f.text()))).toEqual(["BYTES", "log", "a,b"]);
+  });
+
+  // An agent without attachment support (shell) has nowhere to put a file: the drop is left
+  // to the browser and nothing is staged.
+  it("does not take a file drop for an agent without attachments", async () => {
+    await render(["shell"]);
+    expect(document.querySelector('input[type="file"]')).toBeNull(); // no + picker either
+    expect((await drag("dragover", ["Files"])).defaultPrevented).toBe(false);
+    const f = new File(["x"], "a.txt", { type: "text/plain" });
+    expect((await drag("drop", ["Files"], [f])).defaultPrevented).toBe(false);
     expect(chips()).toHaveLength(0);
   });
 

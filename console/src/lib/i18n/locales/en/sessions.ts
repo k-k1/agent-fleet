@@ -416,8 +416,8 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.template_insert_title": "Insert a first prompt from a template",
   "launch.template_insert": "Insert from a template…",
   "launch.first_prompt_note": "Once the session is up, this is auto-sent exactly once (⌘/Ctrl+Enter to launch).",
-  "launch.image_paste_note": "Paste images here, or attach with the ＋ button (on a phone, use ＋).",
-  "launch.attach_image": "Attach an image",
+  "launch.attach_note": "Paste or drop files here, or attach with the ＋ button (on a phone, use ＋).",
+  "launch.attach_file": "Attach a file (paste or drop too)",
   "launch.start_worktree": "Start in a worktree",
   // Collapsed sections (Location / More) and the summary shown while folded. The
   // summary exists so the launch is readable without expanding: Location always
