@@ -361,6 +361,8 @@ export const tools = {
   "ssm.state_renew_title": "アクセストークンは期限切れです。ポータルのセッションが続いていれば、次に使うときに更新されます。セッションが終わっていれば、もう一度ログインしてください。",
   "ssm.state_none": "未ログイン",
   "ssm.state_none_title": "このプロファイルには、使えるログインも更新できるログインもありません。",
+  "ssm.state_relogin": "要再ログイン",
+  "ssm.state_relogin_title": "このプロファイルの名前かポータルを変えました。この行からログインするまで、ワークスペースのログイン状態は編集前のものです。",
   "ssm.login_title": "このプロファイルで IAM Identity Center にログインします",
   "ssm.login_off_collides": "別のプロファイルの表示名が同じ名前（{name}）になるため、どちらもワークスペースに届いていません。ここからログインするには、どちらかの名前を変えてください。",
   "ssm.login_off_incomplete": "ここからログインするには、アカウント ID とロール名の両方を設定してください。",

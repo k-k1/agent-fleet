@@ -12,19 +12,35 @@ const confirms: Json[] = [];
 let profiles: Json[] = [];
 let hosts: Json[] = [];
 let writeReply: { ok: boolean; status: number; body: unknown } = { ok: true, status: 200, body: {} };
+let confirmAnswer = false;
+let states: Json[] = [];
+// When set, the next write waits for release() before it answers.
+let hold: { release: () => void } | null = null;
+let profilesGate: Promise<void> | null = null;
 
 vi.mock("../../../core/api/client.ts", () => ({
   api: vi.fn(async (path: string) => {
     gets.push(path);
-    if (path === "api/ssm/profiles") return profiles;
+    if (path === "api/ssm/profiles") {
+      if (profilesGate) await profilesGate;
+      return profiles;
+    }
     if (path === "api/ssm/hosts") return hosts;
-    if (path === "api/aws-login/profiles") return { profiles: [] };
+    if (path === "api/aws-login/profiles") return { profiles: states };
+    if (path === "api/aws-login") return { requests: [] };
+    if (path.includes("/attempts/")) return { phase: "done" };
     return {};
   }),
-  apiJSON: vi.fn(),
-  raw: vi.fn(async () => ({ ok: true, status: 204 })),
+  apiJSON: vi.fn(async () => ({ attempt: "a1" })),
+  raw: vi.fn(async (path: string) => {
+    const id = decodeURIComponent(path.split("/").pop() || "");
+    if (path.startsWith("api/ssm/profiles/")) profiles = profiles.filter((p) => p.id !== id);
+    if (path.startsWith("api/ssm/hosts/")) hosts = hosts.filter((h) => h.id !== id);
+    return { ok: true, status: 204 };
+  }),
   rawJSON: vi.fn(async (path: string, method: string, body: Json) => {
     writes.push({ path, method, body });
+    if (hold) await new Promise<void>((r) => (hold!.release = r));
     return { ok: writeReply.ok, status: writeReply.status, json: async () => writeReply.body };
   }),
 }));
@@ -32,11 +48,11 @@ vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => (m: string) =>
 vi.mock("../../../ui/ConfirmProvider.tsx", () => ({
   useConfirm: () => (o: Json) => {
     confirms.push(o);
-    return Promise.resolve(false);
+    return Promise.resolve(confirmAnswer);
   },
 }));
 
-const { SsmTab, awsProfileName } = await import("./SsmTab.tsx");
+const { SsmTab, awsProfileName, resetReloginMarks } = await import("./SsmTab.tsx");
 const { t } = await import("../../../lib/i18n/index.ts");
 
 const prod: Json = {
@@ -97,6 +113,11 @@ beforeEach(() => {
   profiles = [prod, stg];
   hosts = [web];
   writeReply = { ok: true, status: 200, body: {} };
+  confirmAnswer = false;
+  states = [];
+  hold = null;
+  profilesGate = null;
+  resetReloginMarks();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -138,7 +159,6 @@ describe("SsmTab profile Edit", () => {
     ]);
     expect(host.querySelector(".ssm-frm")).toBeNull();
     expect(gets).toContain("api/ssm/profiles");
-    expect(gets).toContain("api/aws-login/profiles");
   });
 
   it("keeps Save off while a required field is invalid, and keeps the form when the CP refuses", async () => {
@@ -235,6 +255,154 @@ describe("SsmTab host Edit", () => {
     await click(btn(sections()[1], t("common.cancel")));
     expect(writes).toEqual([]);
     expect(rows(1)[0].textContent).toContain("web-01");
+  });
+});
+
+// Lets pending promises (a held write, a reload) settle inside act.
+async function settle(): Promise<void> {
+  for (let i = 0; i < 5; i++) await act(async () => {});
+}
+
+const disabled = (el: Element | null) => !!el && el.matches(":disabled");
+
+describe("SsmTab edit state stays consistent", () => {
+  it("deleting the profile being edited closes its form and brings Add back", async () => {
+    profiles = [prod];
+    hosts = [];
+    confirmAnswer = true;
+    await mount();
+    await click(btn(rows(0)[0], t("ssm.edit")));
+    await click(btn(rows(0)[0], t("common.delete")));
+    await settle();
+    expect(rows(0)).toEqual([]);
+    expect(host.querySelector(".ssm-frm")).toBeNull();
+    btn(sections()[0], t("ssm.add_profile"));
+  });
+
+  it("deleting the host being edited closes its form and brings Add back", async () => {
+    confirmAnswer = true;
+    await mount();
+    await click(btn(rows(1)[0], t("ssm.edit")));
+    await click(btn(rows(1)[0], t("common.delete")));
+    await settle();
+    expect(rows(1)).toEqual([]);
+    expect(host.querySelector(".ssm-frm")).toBeNull();
+    btn(sections()[1], t("ssm.add_host"));
+  });
+
+  it("locks the profile form and the other rows while a PUT is in flight", async () => {
+    await mount();
+    await click(btn(rows(0)[0], t("ssm.edit")));
+    await type(input("AdministratorAccess"), "Admin");
+    hold = { release: () => {} };
+    await click(btn(sections()[0], t("common.save")));
+    expect(writes.length).toBe(1);
+    expect(disabled(input("AdministratorAccess"))).toBe(true);
+    expect(btn(sections()[0], t("common.cancel")).disabled).toBe(true);
+    expect(btn(rows(0)[1], t("ssm.edit")).disabled).toBe(true);
+    expect(btn(rows(0)[1], t("common.delete")).disabled).toBe(true);
+    expect(btn(rows(0)[0], t("common.delete")).disabled).toBe(true);
+    // A click on a disabled control does nothing: no second form, no delete prompt.
+    await click(btn(rows(0)[1], t("ssm.edit")));
+    await click(btn(rows(0)[1], t("common.delete")));
+    expect(confirms).toEqual([]);
+    expect(input("AdministratorAccess").value).toBe("Admin");
+    hold.release();
+    await settle();
+    expect(host.querySelector(".ssm-frm")).toBeNull();
+    expect(btn(rows(0)[1], t("ssm.edit")).disabled).toBe(false);
+  });
+
+  it("locks the host form and the other rows while a PUT is in flight", async () => {
+    hosts = [web, { ...web, id: "h2", alias: "web-02" }];
+    await mount();
+    await click(btn(rows(1)[0], t("ssm.edit")));
+    hold = { release: () => {} };
+    await click(btn(sections()[1], t("common.save")));
+    expect(disabled(input("admin@web-01"))).toBe(true);
+    expect(disabled(host.querySelector(".ssm-frm select"))).toBe(true);
+    expect(btn(sections()[1], t("common.cancel")).disabled).toBe(true);
+    expect(btn(rows(1)[1], t("ssm.edit")).disabled).toBe(true);
+    expect(btn(rows(1)[1], t("common.delete")).disabled).toBe(true);
+    hold.release();
+    await settle();
+    expect(host.querySelector(".ssm-frm")).toBeNull();
+  });
+
+  it("drops a host's picked profile when that profile is deleted while the form is open", async () => {
+    confirmAnswer = true;
+    await mount();
+    await click(btn(rows(1)[0], t("ssm.edit")));
+    expect(host.querySelector<HTMLSelectElement>(".ssm-frm select")!.value).toBe("p1");
+    await click(btn(rows(0)[0], t("common.delete")));
+    await settle();
+    expect(host.querySelector<HTMLSelectElement>(".ssm-frm select")!.value).toBe("");
+    expect(btn(sections()[1], t("common.save")).disabled).toBe(true);
+  });
+
+  it("keeps a host's Save off until the profile list has loaded", async () => {
+    let open = () => {};
+    profilesGate = new Promise<void>((r) => (open = r));
+    await mount();
+    await click(btn(rows(1)[0], t("ssm.edit")));
+    expect(btn(sections()[1], t("common.save")).disabled).toBe(true);
+    open();
+    await settle();
+    expect(host.querySelector<HTMLSelectElement>(".ssm-frm select")!.value).toBe("p1");
+    expect(btn(sections()[1], t("common.save")).disabled).toBe(false);
+  });
+});
+
+describe("SsmTab login badge after an edit", () => {
+  const badge = (i: number) => rows(0)[i].querySelector(".ssm-login-state");
+
+  it("says to log in again after a rename, even while the Agent still reports the old name", async () => {
+    states = [{ name: "prod", state: "signed_in" }];
+    await mount();
+    await click(btn(rows(0)[0], t("ssm.edit")));
+    await type(input("my-profile"), "prod app");
+    profiles = [{ ...prod, label: "prod app", name: "prod-app" }, stg];
+    await click(btn(sections()[0], t("common.save")));
+    await settle();
+    expect(badge(0)?.textContent).toBe(t("ssm.state_relogin"));
+    // Closing and reopening Settings before the next poll keeps it.
+    await act(async () => root!.unmount());
+    root = createRoot(host);
+    await mount();
+    expect(badge(0)?.textContent).toBe(t("ssm.state_relogin"));
+  });
+
+  it("does not show the old portal's Signed in after a portal edit, until the row logs in", async () => {
+    states = [{ name: "prod", state: "signed_in" }];
+    await mount();
+    expect(badge(0)?.textContent).toBe(t("ssm.state_signed_in"));
+    await click(btn(rows(0)[0], t("ssm.edit")));
+    await type(input("https://my-company.awsapps.com/start"), "https://other.awsapps.com/start");
+    await click(btn(sections()[0], t("common.save")));
+    await settle();
+    expect(badge(0)?.textContent).toBe(t("ssm.state_relogin"));
+
+    await click(btn(rows(0)[0], t("ssm.login")));
+    const modal = document.body.querySelector<HTMLElement>(".ui-modal")!;
+    await click(btn(modal, t("awslogin.start")));
+    // The attempt's first poll is 300 ms after the start.
+    for (let i = 0; i < 20 && !modal.textContent?.includes(t("awslogin.profile_done")); i++) {
+      await act(async () => new Promise((r) => setTimeout(r, 100)));
+    }
+    expect(modal.textContent).toContain(t("awslogin.profile_done"));
+    await click(btn(modal, t("awslogin.close")));
+    await settle();
+    expect(badge(0)?.textContent).toBe(t("ssm.state_signed_in"));
+  });
+
+  it("an edit that keeps the name and portal leaves the badge alone", async () => {
+    states = [{ name: "prod", state: "signed_in" }];
+    await mount();
+    await click(btn(rows(0)[0], t("ssm.edit")));
+    await type(input("AdministratorAccess"), "Admin");
+    await click(btn(sections()[0], t("common.save")));
+    await settle();
+    expect(badge(0)?.textContent).toBe(t("ssm.state_signed_in"));
   });
 });
 

@@ -364,6 +364,8 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "ssm.state_renew_title": "The access token has expired. While the portal session is still open, the next use renews it; if it has ended, log in again.",
   "ssm.state_none": "Not signed in",
   "ssm.state_none_title": "This profile has no login that can be used or renewed.",
+  "ssm.state_relogin": "Log in again",
+  "ssm.state_relogin_title": "You changed this profile's name or portal. The workspace's sign-in state is from before that edit until you log in from this row.",
   "ssm.login_title": "Log in to IAM Identity Center with this profile",
   "ssm.login_off_collides": "Another profile's label maps to the same name ({name}), so neither reaches the workspace. Rename one to log in here.",
   "ssm.login_off_incomplete": "Set both an account ID and a role name to log in here.",

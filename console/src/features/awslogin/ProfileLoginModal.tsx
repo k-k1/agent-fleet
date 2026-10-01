@@ -24,12 +24,25 @@ const REFUSALS: Record<string, MsgKey> = {
   settings_unavailable: "awslogin.err_settings_unavailable",
 };
 
-export function ProfileLoginModal({ profile, onClose }: { profile: LoginProfile; onClose: () => void }) {
+// onLoggedIn fires when this modal's own attempt finishes signed in. The Agent re-reads Settings
+// before it starts one, so the login is for the row as saved, not for the last poll's copy.
+export function ProfileLoginModal({
+  profile,
+  onClose,
+  onLoggedIn,
+}: {
+  profile: LoginProfile;
+  onClose: () => void;
+  onLoggedIn?: () => void;
+}) {
   const tr = useT();
   const refresh = useAwsLoginStore((s) => s.refresh);
   const base = `api/aws-login/profiles/${encodeURIComponent(profile.name)}`;
   // A login here settles any request for the same profile, so its toast can go now.
-  const a = useLoginAttempt(`${base}/start`, (att) => `${base}/attempts/${encodeURIComponent(att)}`, () => void refresh());
+  const a = useLoginAttempt(`${base}/start`, (att) => `${base}/attempts/${encodeURIComponent(att)}`, () => {
+    void refresh();
+    onLoggedIn?.();
+  });
   const refusal = a.phase === "failed" ? REFUSALS[a.errorCode] : undefined;
   return (
     <Modal title={tr("awslogin.modal_title", { profile: profile.label || profile.name })} onClose={onClose}>

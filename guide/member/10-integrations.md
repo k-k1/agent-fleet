@@ -254,7 +254,7 @@ Every profile and host row has **Edit**, which opens the same form filled in and
 than delete and re-add: a host refers to its profile by an internal ID, so a re-added profile is a new one and
 the hosts that used the old one are left without a profile (the row then says so — edit the host to pick another).
 A profile's workspace name comes from its label, and the login belongs to that name: changing the label, or the
-start URL / SSO region, means logging in again, and the form warns you. The workspace's `~/.aws/config` picks up
+start URL / SSO region, means logging in again: the form warns you, and the row shows **Log in again** until you log in from it. The workspace's `~/.aws/config` picks up
 the change within 5 minutes, or at once when you press **Log in**; sessions already open keep the old settings.
 
 **No AWS secrets are stored in Agent Fleet.** Login happens at session start via the device-code flow — you
