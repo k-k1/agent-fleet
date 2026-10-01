@@ -27,6 +27,8 @@ import { openGallery } from "../gallery/open.ts";
 import { useSessionUI } from "./ui.ts";
 import { useSessionsStore } from "./store.ts";
 import { HandoffModal } from "./HandoffModal.tsx";
+import { RecreateWorktreeModal } from "./RecreateWorktreeModal.tsx";
+import { recreatableGroup } from "./ArchivedModal.tsx";
 import { ShareCreateModal } from "../sharing/ShareCreateModal.tsx";
 import type { SessionActions } from "./useSessionActions.tsx";
 import type { Session } from "../../types/session.ts";
@@ -54,6 +56,7 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
   const menuElRef = useRef<HTMLDivElement>(null);
   const [handoffOpen, setHandoffOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [recreateWtOpen, setRecreateWtOpen] = useState(false);
   useDismiss([menuElRef, ...(keepOpenRefs ?? [])], open, onClose);
   useMenuRoving(menuElRef, open);
   // The dropdown is position:fixed and re-placed every render — a row near the
@@ -109,6 +112,10 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
   };
 
   const dead = !s.alive && s.resumable === false; // dir gone → can't resume
+  // A dead session whose folder was a worktree can have the folder put back at the same path,
+  // after which the ordinary resume finds its conversation again (issue #1040). The Agent
+  // decides the rest — the parent still being there, the path still free.
+  const worktreeGone = dead && running && recreatableGroup(s.dir || "", [s]);
   // Working sets (docs/log/52): direct assignment is for repo-less sessions only —
   // a session living in a working copy inherits that repo's membership instead.
   const wsets = workingSetList(useSettings());
@@ -374,6 +381,19 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
                 <Icon name="archive" /> {tr("srow.archive")}
               </button>
             )}
+            {worktreeGone && (
+              <button
+                type="button"
+                className="ui-menu-item"
+                title={tr("arch.recreate_title")}
+                onClick={() => {
+                  onClose();
+                  setRecreateWtOpen(true);
+                }}
+              >
+                <Icon name="repo" /> {tr("srow.recreate_worktree")}
+              </button>
+            )}
             {!dead && (
               <button
                 type="button"
@@ -390,6 +410,16 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
           document.body,
         )}
       {handoffOpen && <HandoffModal session={s} actions={actions} onClose={() => setHandoffOpen(false)} />}
+      {recreateWtOpen && (
+        // This session is still on the active list, so there is nothing to restore: the modal
+        // closes once the folder exists, and the next list refresh makes the row resumable.
+        <RecreateWorktreeModal
+          dir={s.dir || ""}
+          sessions={[]}
+          onClose={() => setRecreateWtOpen(false)}
+          onChanged={() => void useSessionsStore.getState().refresh()}
+        />
+      )}
       {shareOpen && (
         <ShareCreateModal initialTarget={`session:${s.name}`} onClose={() => setShareOpen(false)} />
       )}

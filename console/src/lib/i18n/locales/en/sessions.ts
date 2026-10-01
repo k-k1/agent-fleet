@@ -332,6 +332,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "srow.locked_hint": "Locked against deletion. Unlock it first.",
   "srow.archive": "Archive (remove from the list)",
   "srow.recreate": "Recreate (current conversation goes to the archive)",
+  "srow.recreate_worktree": "Recreate working copy (worktree)…",
 
   // === P2 launch form shared (StartModal / LaunchModal) ===
   "launch.field.agent": "Agent",
