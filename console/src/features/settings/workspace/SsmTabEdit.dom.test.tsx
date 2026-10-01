@@ -17,6 +17,8 @@ let states: Json[] = [];
 // When set, the next write waits for release() before it answers.
 let hold: { release: () => void } | null = null;
 let profilesGate: Promise<void> | null = null;
+let delHold: { release: () => void } | null = null;
+let delReply: { ok: boolean; status: number; body: unknown } = { ok: true, status: 204, body: null };
 
 vi.mock("../../../core/api/client.ts", () => ({
   api: vi.fn(async (path: string) => {
@@ -33,6 +35,8 @@ vi.mock("../../../core/api/client.ts", () => ({
   }),
   apiJSON: vi.fn(async () => ({ attempt: "a1" })),
   raw: vi.fn(async (path: string) => {
+    if (delHold) await new Promise<void>((r) => (delHold!.release = r));
+    if (!delReply.ok) return { ok: false, status: delReply.status, json: async () => delReply.body };
     const id = decodeURIComponent(path.split("/").pop() || "");
     if (path.startsWith("api/ssm/profiles/")) profiles = profiles.filter((p) => p.id !== id);
     if (path.startsWith("api/ssm/hosts/")) hosts = hosts.filter((h) => h.id !== id);
@@ -117,6 +121,8 @@ beforeEach(() => {
   states = [];
   hold = null;
   profilesGate = null;
+  delHold = null;
+  delReply = { ok: true, status: 204, body: null };
   resetReloginMarks();
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -302,6 +308,9 @@ describe("SsmTab edit state stays consistent", () => {
     expect(btn(rows(0)[1], t("ssm.edit")).disabled).toBe(true);
     expect(btn(rows(0)[1], t("common.delete")).disabled).toBe(true);
     expect(btn(rows(0)[0], t("common.delete")).disabled).toBe(true);
+    // A login begun now would be for the portal the CP still holds.
+    expect(btn(rows(0)[0], t("ssm.login")).disabled).toBe(true);
+    expect(btn(rows(0)[1], t("ssm.login")).disabled).toBe(true);
     // A click on a disabled control does nothing: no second form, no delete prompt.
     await click(btn(rows(0)[1], t("ssm.edit")));
     await click(btn(rows(0)[1], t("common.delete")));
@@ -350,6 +359,83 @@ describe("SsmTab edit state stays consistent", () => {
     await settle();
     expect(host.querySelector<HTMLSelectElement>(".ssm-frm select")!.value).toBe("p1");
     expect(btn(sections()[1], t("common.save")).disabled).toBe(false);
+  });
+});
+
+describe("SsmTab delete while editing", () => {
+  it("holds the profile section still while a DELETE is out, then closes only the deleted row's form", async () => {
+    confirmAnswer = true;
+    await mount();
+    await click(btn(rows(0)[0], t("ssm.edit")));
+    delHold = { release: () => {} };
+    await click(btn(rows(0)[0], t("common.delete")));
+    expect(btn(rows(0)[1], t("ssm.edit")).disabled).toBe(true);
+    expect(btn(rows(0)[1], t("common.delete")).disabled).toBe(true);
+    expect(btn(rows(0)[1], t("ssm.login")).disabled).toBe(true);
+    expect(disabled(input("my-profile"))).toBe(true);
+    await click(btn(rows(0)[1], t("ssm.edit")));
+    expect(input("my-profile").value).toBe("prod");
+    delHold.release();
+    await settle();
+    expect(rows(0).map((r) => r.querySelector(".ssm-alias")?.textContent)).toEqual(["stg"]);
+    expect(host.querySelector(".ssm-frm")).toBeNull();
+    // Now B can be edited, and nothing from A's delete closes it.
+    await click(btn(rows(0)[0], t("ssm.edit")));
+    await type(input("AdministratorAccess"), "Draft");
+    await settle();
+    expect(input("AdministratorAccess").value).toBe("Draft");
+  });
+
+  it("holds the host section still while a DELETE is out", async () => {
+    confirmAnswer = true;
+    hosts = [web, { ...web, id: "h2", alias: "web-02" }];
+    await mount();
+    await click(btn(rows(1)[0], t("ssm.edit")));
+    delHold = { release: () => {} };
+    await click(btn(rows(1)[0], t("common.delete")));
+    expect(btn(rows(1)[1], t("ssm.edit")).disabled).toBe(true);
+    expect(btn(rows(1)[1], t("common.delete")).disabled).toBe(true);
+    expect(disabled(input("admin@web-01"))).toBe(true);
+    delHold.release();
+    await settle();
+    expect(rows(1).map((r) => r.querySelector(".ssm-alias")?.textContent)).toEqual(["web-02"]);
+    expect(host.querySelector(".ssm-frm")).toBeNull();
+    await click(btn(rows(1)[0], t("ssm.edit")));
+    await type(input("admin@web-01"), "draft");
+    await settle();
+    expect(input("admin@web-01").value).toBe("draft");
+  });
+
+  it("a refused profile DELETE keeps the row, its draft and its relogin mark, and says why", async () => {
+    confirmAnswer = true;
+    await mount();
+    await click(btn(rows(0)[0], t("ssm.edit")));
+    await type(input("https://my-company.awsapps.com/start"), "https://other.awsapps.com/start");
+    await click(btn(sections()[0], t("common.save")));
+    await settle();
+    expect(rows(0)[0].querySelector(".ssm-login-state")?.textContent).toBe(t("ssm.state_relogin"));
+    await click(btn(rows(0)[0], t("ssm.edit")));
+    await type(input("AdministratorAccess"), "Draft");
+    delReply = { ok: false, status: 500, body: { error: { code: "internal", message: "db down" } } };
+    await click(btn(rows(0)[0], t("common.delete")));
+    await settle();
+    expect(toasts).toEqual([t("ssm.delete_failed_http", { status: 500, detail: " — db down" })]);
+    expect(input("AdministratorAccess").value).toBe("Draft");
+    expect(disabled(input("AdministratorAccess"))).toBe(false);
+    expect(rows(0)[0].querySelector(".ssm-login-state")?.textContent).toBe(t("ssm.state_relogin"));
+  });
+
+  it("a refused host DELETE keeps the row and its draft, and says why", async () => {
+    confirmAnswer = true;
+    await mount();
+    await click(btn(rows(1)[0], t("ssm.edit")));
+    await type(input("admin@web-01"), "draft");
+    delReply = { ok: false, status: 403, body: null };
+    await click(btn(rows(1)[0], t("common.delete")));
+    await settle();
+    expect(toasts).toEqual([t("ssm.delete_failed_http", { status: 403, detail: "" })]);
+    expect(input("admin@web-01").value).toBe("draft");
+    expect(btn(sections()[1], t("common.cancel")).disabled).toBe(false);
   });
 });
 

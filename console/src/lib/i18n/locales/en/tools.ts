@@ -348,6 +348,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "ssm.comm_failed": "Communication failed: {msg}",
   "ssm.save_failed_http": "Failed to save: HTTP {status}{detail}",
   "ssm.save_failed_404": " (/api/ssm not available. The CP may need a restart.)",
+  "ssm.delete_failed_http": "Failed to delete: HTTP {status}{detail}",
   "ssm.intro_1": "Your AWS profiles, which af-aws-exec and SSM sessions sign in with, and the EC2 instances you log in to via SSM Session Manager. ",
   "ssm.intro_bold": "No AWS secrets are stored here",
   "ssm.intro_2": " (short-lived credentials are obtained via browser auth with ",

@@ -345,6 +345,7 @@ export const tools = {
   "ssm.comm_failed": "通信に失敗しました: {msg}",
   "ssm.save_failed_http": "保存に失敗: HTTP {status}{detail}",
   "ssm.save_failed_404": "（/api/ssm 未提供。CP の再起動が必要かもしれません）",
+  "ssm.delete_failed_http": "削除に失敗: HTTP {status}{detail}",
   "ssm.intro_1": "af-aws-exec と SSM セッションがサインインに使う AWS プロファイルと、SSM Session Manager でログインする EC2 の設定です。ここには ",
   "ssm.intro_bold": "AWS の秘密情報は保存しません",
   "ssm.intro_2": "（短命の資格情報はログインのときに ",

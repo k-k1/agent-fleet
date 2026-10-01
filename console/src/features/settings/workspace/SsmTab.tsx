@@ -31,16 +31,32 @@ async function postJSON(path: string, method: string, body: unknown, toast: (msg
     return false;
   }
   if (!res.ok) {
-    const j = await res.json().catch(() => null);
-    const detail = j?.error?.message
-      ? " — " + j.error.message
-      : res.status === 404
-        ? t("ssm.save_failed_404")
-        : "";
-    toast(t("ssm.save_failed_http", { status: res.status, detail }));
+    toast(t("ssm.save_failed_http", { status: res.status, detail: await failDetail(res) }));
     return false;
   }
   return true;
+}
+
+// deleteRow DELETEs and, like postJSON, says why it failed. Callers clean up only on true:
+// a refused delete leaves the row, and its form and marks with it.
+async function deleteRow(path: string, toast: (msg: string) => void): Promise<boolean> {
+  let res;
+  try {
+    res = await raw(path, { method: "DELETE" });
+  } catch (e: any) {
+    toast(t("ssm.comm_failed", { msg: String(e?.message || e) }));
+    return false;
+  }
+  if (!res.ok) {
+    toast(t("ssm.delete_failed_http", { status: res.status, detail: await failDetail(res) }));
+    return false;
+  }
+  return true;
+}
+
+async function failDetail(res: Response): Promise<string> {
+  const j = await res.json().catch(() => null);
+  return j?.error?.message ? " — " + j.error.message : res.status === 404 ? t("ssm.save_failed_404") : "";
 }
 
 // Meta / Field reuse the shared primitives from mcpForm.tsx (they were identical).
@@ -177,7 +193,7 @@ function ProfileSection({
   // Bumped when reloginNeeded changes, which React cannot see.
   const [, setMarks] = useState(0);
   // Each row's login state, from the Agent (absent while the workspace is stopped). Asked on
-  // open, after the login modal closes and after an edit; nothing polls.
+  // open and after the login modal closes; nothing polls.
   const [states, setStates] = useState<Record<string, string>>({});
   const loadStates = useCallback(() => {
     api("api/aws-login/profiles")
@@ -193,7 +209,9 @@ function ProfileSection({
   const valid = f.label.trim() && /^https:\/\//.test(f.startUrl.trim()) && f.ssoRegion.trim();
   // Why a row cannot log in from here (null when it can; "" when a CP too old to send the
   // name leaves nothing to say). The Agent refuses the same rows; saying so up front beats
-  // a failed press.
+  // a failed press. The button is also off while a save or delete is out: a login begun
+  // before the PUT lands signs in to the old portal, and its completion would clear the new
+  // relogin mark.
   const loginOff = (p: any): string | null =>
     !p.name
       ? ""
@@ -260,10 +278,16 @@ function ProfileSection({
       danger: true,
     });
     if (!ok) return;
-    await raw(`api/ssm/profiles/${encodeURIComponent(id)}`, { method: "DELETE" });
-    if (editing?.id === id) close();
-    reloginNeeded.delete(id);
-    reload();
+    // busy holds every row and the form still while the DELETE is out, so no later edit can be
+    // started and then lost. The open form closes through the list effect, once the row is gone.
+    setBusy(true);
+    try {
+      if (!(await deleteRow(`api/ssm/profiles/${encodeURIComponent(id)}`, toast))) return;
+      reloginNeeded.delete(id);
+      reload();
+    } finally {
+      setBusy(false);
+    }
   };
 
   // What an edit changes outside this page: the sign-in is cached per profile name, so a
@@ -383,7 +407,7 @@ function ProfileSection({
                 <button
                   className="ghost ssm-login"
                   title={loginOff(p) || tr("ssm.login_title")}
-                  disabled={loginOff(p) !== null}
+                  disabled={busy || loginOff(p) !== null}
                   onClick={() => setLoginFor({ id: p.id, name: p.name, label: p.label, accountId: p.accountId, roleName: p.roleName })}
                 >
                   {tr("ssm.login")}
@@ -560,9 +584,13 @@ function HostSection({
       danger: true,
     });
     if (!ok) return;
-    await raw(`api/ssm/hosts/${encodeURIComponent(id)}`, { method: "DELETE" });
-    if (editing === id) close();
-    reload();
+    setBusy(true);
+    try {
+      if (!(await deleteRow(`api/ssm/hosts/${encodeURIComponent(id)}`, toast))) return;
+      reload();
+    } finally {
+      setBusy(false);
+    }
   };
 
   const form = (
