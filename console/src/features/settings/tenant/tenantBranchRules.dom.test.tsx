@@ -3,16 +3,19 @@
 //   2. Text that is not a JSON list is stopped before the request, and a CP refusal is shown
 //      verbatim with the text kept as typed, so the admin can fix the rule it names.
 //   3. An empty box saves an empty list (removing every rule).
+//   4. A network failure is shown: a failed load offers a retry, a failed save keeps the text.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 const api = vi.fn();
 const apiJSON = vi.fn();
-vi.mock("../../../core/api/client.ts", () => ({
+// errText / errDetail are the real ones: the message an admin sees for a generic code such as
+// bad_request is decided there, and a mock returning the raw message would hide it.
+vi.mock("../../../core/api/client.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../core/api/client.ts")>()),
   api: (...args: unknown[]) => api(...args),
   apiJSON: (...args: unknown[]) => apiJSON(...args),
-  errText: (e: { message?: string }) => e?.message || "",
 }));
 
 import { TenantBranchRulesView } from "./tenantBranchRules.tsx";
@@ -145,5 +148,42 @@ describe("tenant branch rules", () => {
       "PUT",
       { rules: [] },
     );
+  });
+
+  it("keeps the decoder's words for a generic error code", async () => {
+    await mount();
+    apiJSON.mockResolvedValue({
+      error: { code: "bad_request", message: 'json: unknown field "prefixes"' },
+    });
+    await typeInto(
+      box(),
+      `[{"match":"*","types":{"bugfix":{"prefixes":"x/"}}}]`,
+    );
+    await click(saveButton());
+    expect(alertText()).toContain('unknown field "prefixes"');
+  });
+
+  it("shows a failed load and loads again on retry", async () => {
+    api.mockReset();
+    api.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    api.mockResolvedValue({ tenant: "acme", rules: stored });
+    await mount();
+    expect(alertText()).toContain("Failed to fetch");
+    const retry = Array.from(
+      document.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((b) => (b.textContent || "").includes("再試行"))!;
+    await click(retry);
+    expect(JSON.parse(box().value)).toEqual(stored);
+  });
+
+  it("shows a failed save and keeps the text", async () => {
+    await mount();
+    const typed = `[{"match":"*","base":"main"}]`;
+    apiJSON.mockRejectedValue(new TypeError("Failed to fetch"));
+    await typeInto(box(), typed);
+    await click(saveButton());
+    expect(alertText()).toContain("Failed to fetch");
+    expect(box().value).toBe(typed);
+    expect(saveButton().disabled).toBe(false);
   });
 });

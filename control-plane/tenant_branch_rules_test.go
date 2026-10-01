@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -204,5 +205,51 @@ func TestWorkspaceEnvCarriesTheBranchRulesBridgeToken(t *testing.T) {
 	}
 	if mid, ok := verifyBranchRulesToken(branchRulesSignKey(mgr.tokenSignMaster()), token); !ok || mid != mv.MembershipID {
 		t.Fatalf("injected token %q does not verify to this membership: (%q,%v)", token, mid, ok)
+	}
+}
+
+// The save replaces the whole list, so a body that is not exactly one object with a rules
+// array must leave the stored list alone; only an explicit [] removes every rule.
+func TestTenantBranchRulesSaveNeedsAnExplicitList(t *testing.T) {
+	st := p3Store(t)
+	mgr := p3Manager(t, st)
+	seedGitOAuthTenant(t, st, "sub", "admin@sub.co.jp")
+	if w := branchRulesCall(mgr, http.MethodPut, "sub", "admin@sub.co.jp", `{"rules":[{"match":"*","base":"develop"}]}`); w.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	kept := func(when string) {
+		t.Helper()
+		if w := branchRulesCall(mgr, http.MethodGet, "sub", "admin@sub.co.jp", ""); !strings.Contains(w.Body.String(), `"base":"develop"`) {
+			t.Errorf("%s emptied the rules: %s", when, w.Body.String())
+		}
+	}
+	for _, c := range []struct {
+		body string
+		code int
+	}{
+		{`{}`, http.StatusBadRequest},
+		{`null`, http.StatusBadRequest},
+		{`{"rules":null}`, http.StatusBadRequest},
+		{`{"rules":[]} {"unknown":true}`, http.StatusBadRequest},
+		{`{"rules":[]}x`, http.StatusBadRequest},
+		{`{"rules":[]}` + strings.Repeat(" ", branchRulesMaxBody), http.StatusRequestEntityTooLarge},
+	} {
+		w := branchRulesCall(mgr, http.MethodPut, "sub", "admin@sub.co.jp", c.body)
+		if w.Code != c.code {
+			t.Errorf("%.40q: %d %s, want %d", c.body, w.Code, w.Body.String(), c.code)
+		}
+		kept(fmt.Sprintf("%.40q", c.body))
+	}
+	// Whitespace after the object is fine, and a decode error names what is wrong under
+	// invalid_rule, so the editor can show it.
+	w := branchRulesCall(mgr, http.MethodPut, "sub", "admin@sub.co.jp", `{"rules":[{"match":"*","types":{"bugfix":{"prefixes":"x/"}}}]}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"code":"invalid_rule"`) || !strings.Contains(w.Body.String(), `prefixes`) {
+		t.Errorf("unknown field: %d %s", w.Code, w.Body.String())
+	}
+	if w := branchRulesCall(mgr, http.MethodPut, "sub", "admin@sub.co.jp", "{\"rules\":[]}\n  "); w.Code != http.StatusOK {
+		t.Fatalf("explicit []: %d %s", w.Code, w.Body.String())
+	}
+	if w := branchRulesCall(mgr, http.MethodGet, "sub", "admin@sub.co.jp", ""); !strings.Contains(w.Body.String(), `"rules":[]`) {
+		t.Errorf("explicit [] did not empty the rules: %s", w.Body.String())
 	}
 }

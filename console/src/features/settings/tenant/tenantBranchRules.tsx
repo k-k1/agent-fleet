@@ -6,7 +6,7 @@
 // screen shows that answer verbatim and keeps the text as typed. Rules advise and never refuse
 // (decision 8), which is why there is no enforce switch here.
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 
@@ -52,18 +52,33 @@ export function TenantBranchRulesView({ slug }: { slug: string }) {
   const [saved, setSaved] = useState(false);
   const path = `api/admin/tenants/${encodeURIComponent(slug)}/branch-rules`;
 
+  const [loadFailed, setLoadFailed] = useState(false);
+  const failText = (
+    key: "tenant.branch_rules_load_failed" | "tenant.branch_rules_save_failed",
+    e: unknown,
+  ) => tr(key, { error: e instanceof Error ? e.message : String(e) });
+
+  // A failed load says so and offers to retry: a panel stuck on "loading" gives the admin
+  // nothing to act on.
   const load = useCallback(async () => {
+    setLoadFailed(false);
     try {
       const d = await api(path);
       if (d && !d.error && Array.isArray(d.rules)) {
         setView(d);
         setText(pretty(d.rules));
-      } else if (d?.error) {
-        setError(errText(d.error));
+        setError("");
+        return;
       }
-    } catch {
-      /* transient; the panel stays on its last values */
+      setError(
+        d?.error
+          ? errDetail(d.error)
+          : tr("tenant.branch_rules_load_failed", { error: "" }),
+      );
+    } catch (e) {
+      setError(failText("tenant.branch_rules_load_failed", e));
     }
+    setLoadFailed(true);
   }, [path]);
   useEffect(() => {
     load();
@@ -92,22 +107,31 @@ export function TenantBranchRulesView({ slug }: { slug: string }) {
     try {
       const res = await apiJSON(path, "PUT", { rules });
       if (res?.error) {
-        // The server names the rule and the field ("rule 2: base "a..b" is not a branch name").
-        setError(errText(res.error));
+        // The server names the rule and the field ("rule 2: base "a..b" is not a branch name",
+        // `unknown field "prefixes"`); errDetail keeps that message after a generic code's text.
+        setError(errDetail(res.error));
         return;
       }
       setView(res);
       setText(pretty(res.rules || []));
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
+    } catch (e) {
+      // The text stays as typed, so pressing Save again retries it.
+      setError(failText("tenant.branch_rules_save_failed", e));
     } finally {
       setBusy(false);
     }
   };
 
   if (!view)
-    return error ? (
-      <p className="admin-hint warn pad">{error}</p>
+    return loadFailed ? (
+      <div className="pad">
+        <p className="admin-hint warn" role="alert">
+          {error}
+        </p>
+        <button onClick={load}>{tr("tenant.branch_rules_retry")}</button>
+      </div>
     ) : (
       <p className="muted pad">{tr("common.loading")}</p>
     );
