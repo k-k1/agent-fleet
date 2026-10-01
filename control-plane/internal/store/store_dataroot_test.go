@@ -83,6 +83,38 @@ func checkDataRootNames(t *testing.T, st *SQL) {
 		}
 	}
 
+	// The default tenant has no directory of its own, so the key "default" is safe.
+	dk, err := st.UpsertIdentity(ctx, "", "default", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.EnsureMembership(ctx, dk.ID, def.ID, "member"); err != nil {
+		t.Errorf("a default-tenant member keyed \"default\": %v", err)
+	}
+
+	// Case folding is Unicode-wide and identical on both dialects, in either order:
+	// U+212A KELVIN SIGN folds to k.
+	kelvin, err := st.UpsertIdentity(ctx, "", "\u212Aate", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.EnsureMembership(ctx, kelvin.ID, def.ID, "member"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateTenant(ctx, "kate", "x"); !errors.Is(err, ErrDataRootNameTaken) {
+		t.Errorf("CreateTenant(kate) over a member keyed \\u212Aate = %v, want ErrDataRootNameTaken", err)
+	}
+	if _, err := st.CreateTenant(ctx, "kim", "x"); err != nil {
+		t.Fatal(err)
+	}
+	kelvin2, err := st.UpsertIdentity(ctx, "", "\u212Aim", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.EnsureMembership(ctx, kelvin2.ID, def.ID, "member"); !errors.Is(err, ErrDataRootNameTaken) {
+		t.Errorf("member keyed \\u212Aim over tenant kim = %v, want ErrDataRootNameTaken", err)
+	}
+
 	// A row that predates the check is returned as it is, never refused: a running
 	// deployment keeps its member. DataRootCollisions reports it instead.
 	legacy, err := st.UpsertIdentity(ctx, "", "drawio-stencils", "")

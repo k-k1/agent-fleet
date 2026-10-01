@@ -23,14 +23,42 @@ var (
 // defaultTenantMemberKeyExists reports whether any default-tenant membership, active or
 // not, belongs to an identity whose user key equals name. An inactive membership still
 // counts: its home stays on disk until somebody destroys it.
+//
+// The comparison is strings.EqualFold in Go, not LOWER() in SQL: SQLite's LOWER folds
+// ASCII only while Postgres folds Unicode, so the same rows would collide on one dialect
+// and not on the other (measured with a stored key spelled with U+212A KELVIN SIGN).
 func (s *SQL) defaultTenantMemberKeyExists(ctx context.Context, name string) (bool, error) {
-	var n int
-	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM membership m
+	keys, err := s.defaultTenantMemberKeys(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, k := range keys {
+		if strings.EqualFold(k, name) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *SQL) defaultTenantMemberKeys(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT i.user_key FROM membership m
 		   JOIN identity i ON i.id = m.identity_id
 		   JOIN tenant t ON t.id = m.tenant_id
-		  WHERE t.slug = 'default' AND LOWER(i.user_key) = ?`, strings.ToLower(name)).Scan(&n)
-	return n > 0, err
+		  WHERE t.slug = 'default' ORDER BY i.user_key`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var keys []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return nil, err
+		}
+		keys = append(keys, k)
+	}
+	return keys, rows.Err()
 }
 
 // checkTenantSlugFree refuses a slug for a NEW tenant.
@@ -66,13 +94,16 @@ func (s *SQL) checkDefaultMemberKeyFree(ctx context.Context, identityID, tenantI
 	if datalayout.IsReserved(key) {
 		return fmt.Errorf("%w: user key %q", ErrDataRootNameReserved, key)
 	}
-	var n int
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM tenant WHERE LOWER(slug) = ?`, strings.ToLower(key)).Scan(&n); err != nil {
+	// The default tenant itself has no directory of its own (its homes are flat), so a
+	// member keyed "default" collides with nothing.
+	tenants, err := s.ListTenants(ctx)
+	if err != nil {
 		return err
 	}
-	if n > 0 {
-		return fmt.Errorf("%w: user key %q is a tenant's directory", ErrDataRootNameTaken, key)
+	for _, t := range tenants {
+		if t.Slug != "default" && strings.EqualFold(t.Slug, key) {
+			return fmt.Errorf("%w: user key %q is a tenant's directory", ErrDataRootNameTaken, key)
+		}
 	}
 	return nil
 }
@@ -88,6 +119,10 @@ func (s *SQL) DataRootCollisions(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	keys, err := s.defaultTenantMemberKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for _, t := range tenants {
 		if t.Slug == "default" {
 			continue
@@ -96,31 +131,16 @@ func (s *SQL) DataRootCollisions(ctx context.Context) ([]string, error) {
 			out = append(out, fmt.Sprintf("tenant %q uses a reserved name", t.Slug))
 			continue
 		}
-		taken, err := s.defaultTenantMemberKeyExists(ctx, t.Slug)
-		if err != nil {
-			return nil, err
-		}
-		if taken {
-			out = append(out, fmt.Sprintf("tenant %q has the same directory as the default-tenant member %q", t.Slug, t.Slug))
+		for _, k := range keys {
+			if strings.EqualFold(k, t.Slug) {
+				out = append(out, fmt.Sprintf("tenant %q has the same directory as the default-tenant member %q", t.Slug, k))
+			}
 		}
 	}
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT i.user_key FROM membership m
-		   JOIN identity i ON i.id = m.identity_id
-		   JOIN tenant t ON t.id = m.tenant_id
-		  WHERE t.slug = 'default' ORDER BY i.user_key`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var key string
-		if err := rows.Scan(&key); err != nil {
-			return nil, err
-		}
-		if datalayout.IsReserved(key) {
-			out = append(out, fmt.Sprintf("default-tenant member %q uses a reserved name", key))
+	for _, k := range keys {
+		if datalayout.IsReserved(k) {
+			out = append(out, fmt.Sprintf("default-tenant member %q uses a reserved name", k))
 		}
 	}
-	return out, rows.Err()
+	return out, nil
 }

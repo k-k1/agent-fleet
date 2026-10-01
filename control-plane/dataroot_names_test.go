@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -153,10 +154,25 @@ func TestBackfillSkipsDataRootNameCollisions(t *testing.T) {
 	}
 }
 
-// Every entry the CP code creates directly under the data root must be a datalayout
-// constant that is in Reserved; a string literal joined onto dataRoot is a new name the
-// slug check cannot know about.
-func TestDataRootJoinsUseReservedNames(t *testing.T) {
+// dataRootDynamicJoins are the only places allowed to join a non-constant name directly
+// onto the data root, keyed file:function:identifier. They are the homes and tenant
+// directories the slug/key check exists for; anything else must be a datalayout constant.
+var dataRootDynamicJoins = map[string]bool{
+	"manager.go:workspaceNames:key":       true,
+	"manager.go:workspaceNames:slug":      true,
+	"workspace_lifecycle.go:backfill:key": true,
+}
+
+// dataRootJoinViolations scans one file for filepath.Join calls whose first argument is
+// the data root (it mentions dataRoot or "WS_DATA"). The second argument must be a
+// datalayout constant that is in Reserved, or an allow-listed dynamic join; a literal, a
+// local or another package's constant, or any other expression is reported. It returns
+// the violations and the datalayout constants it saw.
+func dataRootJoinViolations(fset *token.FileSet, path string, src []byte) (bad []string, seen []string, err error) {
+	f, err := parser.ParseFile(fset, path, src, 0)
+	if err != nil {
+		return nil, nil, err
+	}
 	reserved := map[string]bool{}
 	for _, r := range datalayout.Reserved() {
 		reserved[r] = true
@@ -165,6 +181,58 @@ func TestDataRootJoinsUseReservedNames(t *testing.T) {
 		"GitDir": datalayout.GitDir, "DBFile": datalayout.DBFile,
 		"GitTokenMasterFile": datalayout.GitTokenMasterFile, "DrawioStencilsDir": datalayout.DrawioStencilsDir,
 	}
+	text := func(e ast.Expr) string {
+		return string(src[fset.Position(e.Pos()).Offset:fset.Position(e.End()).Offset])
+	}
+	for _, d := range f.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) < 2 || call.Ellipsis.IsValid() {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "Join" {
+				return true
+			}
+			if x, ok := sel.X.(*ast.Ident); !ok || x.Name != "filepath" {
+				return true
+			}
+			first := text(call.Args[0])
+			if !strings.Contains(first, "dataRoot") && !strings.Contains(first, `"WS_DATA"`) {
+				return true
+			}
+			at := fset.Position(call.Pos())
+			arg := call.Args[1]
+			if a, ok := arg.(*ast.SelectorExpr); ok {
+				if x, ok := a.X.(*ast.Ident); ok && x.Name == "datalayout" {
+					v, known := constVal[a.Sel.Name]
+					switch {
+					case !known:
+						bad = append(bad, fmt.Sprintf("%s: datalayout.%s is not checked here; add it to constVal", at, a.Sel.Name))
+					case !reserved[v]:
+						bad = append(bad, fmt.Sprintf("%s: datalayout.%s (%q) is not in Reserved()", at, a.Sel.Name, v))
+					}
+					seen = append(seen, a.Sel.Name)
+					return true
+				}
+			}
+			if id, ok := arg.(*ast.Ident); ok && dataRootDynamicJoins[filepath.Base(path)+":"+fn.Name.Name+":"+id.Name] {
+				return true
+			}
+			bad = append(bad, fmt.Sprintf("%s: %s joins %s onto the data root; name it in internal/datalayout (or allow-list a dynamic home/tenant join)", at, first, text(arg)))
+			return true
+		})
+	}
+	return bad, seen, nil
+}
+
+// Every entry the CP code creates directly under the data root must be a datalayout
+// constant that is in Reserved; any other name is one the slug check cannot know about.
+func TestDataRootJoinsUseReservedNames(t *testing.T) {
 	fset := token.NewFileSet()
 	seen := map[string]bool{}
 	err := filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
@@ -181,53 +249,74 @@ func TestDataRootJoinsUseReservedNames(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		f, err := parser.ParseFile(fset, path, src, 0)
+		bad, names, err := dataRootJoinViolations(fset, path, src)
 		if err != nil {
 			return err
 		}
-		ast.Inspect(f, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok || len(call.Args) < 2 || call.Ellipsis.IsValid() {
-				return true
-			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || sel.Sel.Name != "Join" {
-				return true
-			}
-			if x, ok := sel.X.(*ast.Ident); !ok || x.Name != "filepath" {
-				return true
-			}
-			first := string(src[fset.Position(call.Args[0].Pos()).Offset:fset.Position(call.Args[0].End()).Offset])
-			if !strings.Contains(first, "dataRoot") && !strings.Contains(first, `"WS_DATA"`) {
-				return true
-			}
-			at := fset.Position(call.Pos())
-			switch a := call.Args[1].(type) {
-			case *ast.BasicLit:
-				t.Errorf("%s: %s joins the literal %s onto the data root; name it in internal/datalayout", at, first, a.Value)
-			case *ast.SelectorExpr:
-				if x, ok := a.X.(*ast.Ident); ok && x.Name == "datalayout" {
-					v, known := constVal[a.Sel.Name]
-					if !known {
-						t.Errorf("%s: datalayout.%s is not checked here; add it to constVal", at, a.Sel.Name)
-					} else if !reserved[v] {
-						t.Errorf("%s: datalayout.%s (%q) is not in Reserved()", at, a.Sel.Name, v)
-					}
-					seen[a.Sel.Name] = true
-				}
-			}
-			return true
-		})
+		for _, b := range bad {
+			t.Error(b)
+		}
+		for _, n := range names {
+			seen[n] = true
+		}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Positive control: the walk must have found the writers that exist today.
-	for name := range constVal {
+	for _, name := range []string{"GitDir", "DBFile", "GitTokenMasterFile", "DrawioStencilsDir"} {
 		if !seen[name] {
 			t.Errorf("no filepath.Join(dataRoot, datalayout.%s) found; the scan has stopped seeing the writers", name)
 		}
+	}
+}
+
+// The scanner itself: each way of smuggling a new top-level name past the list is caught,
+// and only the allow-listed dynamic joins pass.
+func TestDataRootJoinViolationsScanner(t *testing.T) {
+	src := `package main
+
+import (
+	"path/filepath"
+	"other"
+	"github.com/k-k1/agent-fleet/control-plane/internal/datalayout"
+)
+
+const localName = "unreserved"
+
+func workspaceNames(slug, key string) {
+	_ = filepath.Join(m.dataRoot, key)
+	_ = filepath.Join(m.dataRoot, slug, key)
+}
+
+func elsewhere(key string) {
+	_ = filepath.Join(m.dataRoot, datalayout.GitDir)          // ok
+	_ = filepath.Join(m.dataRoot, "literal")                  // 1
+	_ = filepath.Join(m.dataRoot, localName)                  // 2
+	_ = filepath.Join(m.dataRoot, other.Name)                 // 3
+	_ = filepath.Join(m.dataRoot, key)                        // 4: not allow-listed here
+	_ = filepath.Join(m.dataRoot, "a"+"b")                    // 5
+	_ = filepath.Join(envx.Or("WS_DATA", "/x"), "drawio")      // 6
+	_ = filepath.Join(datalayout.Unknown)                     // not a data-root join
+	_ = filepath.Join(m.dataRoot, datalayout.Unknown)         // 7
+	_ = filepath.Join(somewhereElse, "literal")               // not the data root
+}
+`
+	bad, seen, err := dataRootJoinViolations(token.NewFileSet(), "manager.go", []byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bad) != 7 {
+		t.Errorf("violations = %d, want 7:\n%s", len(bad), strings.Join(bad, "\n"))
+	}
+	for _, want := range []string{`"literal"`, "localName", "other.Name", ":21:", `"a"+"b"`, `"drawio"`, "datalayout.Unknown"} {
+		if !strings.Contains(strings.Join(bad, "\n"), want) {
+			t.Errorf("no violation mentions %s:\n%s", want, strings.Join(bad, "\n"))
+		}
+	}
+	if len(seen) != 2 {
+		t.Errorf("seen = %v, want GitDir and Unknown", seen)
 	}
 }
 
