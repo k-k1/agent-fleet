@@ -292,8 +292,7 @@ Resources:
                   - ec2:DeleteVolume
                   - ec2:AttachVolume
                   - ec2:DetachVolume
-                  - ec2:CreateTags
-                  - ec2:DeleteTags
+                  # CreateTags / DeleteTags are NOT here: see the Ec2Tag* statements below.
                   - ec2:RunInstances
                   - ec2:StartInstances
                   - ec2:StopInstances
@@ -325,6 +324,79 @@ Resources:
                   - ec2:ModifyVolume
                   - ec2:DescribeVolumesModifications
                 Resource: "*"          # Describe* cannot be resource-scoped; tags are the fence
+              # --- Tag writes: the fence under the SendCommand fence ---
+              # SsmSlotCommandInstances trusts af-pool + af-role=slot, so whoever may write
+              # those two tags decides where this role gets a root shell. An unconditioned
+              # CreateTags would let it stamp them onto any SSM-managed box in the account
+              # and region. Tags are therefore writable in exactly two ways:
+              #   1. at creation, by this role's own create call, and only into this pool;
+              #   2. on a resource that ALREADY carries af-pool=<pool>, never touching af-pool,
+              #      and af-role only to the values the CP really moves things to.
+              # Every CP call site and the key it writes is inventoried in
+              # deploy/local/cfn-cp-tag-fence-test.py, which fails CI when a new one appears
+              # or one of them stops matching these statements. A new tag write on an
+              # existing resource that is outside the pool gets AccessDenied here, and the live
+              # E2E will not show it: it runs as the deployer, not as this role.
+              # The pool value is the same AF_ECS_EC2_POOL / Cluster as SsmSlotCommandInstances.
+              #
+              # CreateFleet is the engine boxes (60-engines). Both it and RunInstances get
+              # their launch template's tags merged into the request; af-pool comes from the
+              # call, so the RequestTag condition still holds.
+              - Sid: Ec2TagOnCreate
+                Effect: Allow
+                Action: ec2:CreateTags
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    ec2:CreateAction:
+                      - RunInstances
+                      - CreateFleet
+                      - CreateVolume
+                      - CreateSnapshot
+                    # Without this a compromised CP could plant a "slot" or a "home" into
+                    # ANOTHER deployment's pool in the same account, which that CP would
+                    # then trust.
+                    aws:RequestTag/af-pool: !Ref Cluster
+              # Bookkeeping on pool resources: claim, idle and hibernation marks, owner and
+              # tenant tags, home-wipe marks, bake marks. None of them is af-pool or af-role.
+              - Sid: Ec2TagPoolResources
+                Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                  - ec2:DeleteTags
+                Resource:
+                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
+                  - !Sub "arn:aws:ec2:${AWS::Region}::snapshot/*"
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/af-pool: !Ref Cluster
+                  ForAllValues:StringNotEquals:
+                    aws:TagKeys: [ af-pool, af-role ]
+              # The only role changes the CP makes after creation, each on the one resource
+              # type it applies to: a slot that failed is quarantined, a golden candidate is
+              # published or rejected. Moving a box TO af-role=slot is never allowed - that
+              # is the step that would hand an engine box (af-pool too) to SendCommand.
+              - Sid: Ec2TagQuarantineSlot
+                Effect: Allow
+                Action: ec2:CreateTags
+                Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/af-pool: !Ref Cluster
+                    aws:RequestTag/af-role: quarantined
+                  ForAllValues:StringNotEquals:
+                    aws:TagKeys: [ af-pool ]
+              - Sid: Ec2TagGoldenRole
+                Effect: Allow
+                Action: ec2:CreateTags
+                Resource: !Sub "arn:aws:ec2:${AWS::Region}::snapshot/*"
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/af-pool: !Ref Cluster
+                    aws:RequestTag/af-role: [ golden, golden-rejected ]
+                  ForAllValues:StringNotEquals:
+                    aws:TagKeys: [ af-pool ]
               - Sid: EcsContainerInstances
                 Effect: Allow
                 Action:
