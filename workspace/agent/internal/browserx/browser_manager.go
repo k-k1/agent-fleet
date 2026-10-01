@@ -897,30 +897,44 @@ func (p *browserPage) trackStartedNavigation(raw json.RawMessage) {
 }
 
 // settleNavigateError applies the errorText Page.navigate answered with for
-// the navigation of loaderID. net::ERR_ABORTED (a 204, a denied download)
-// ended without committing, so the committed document is still live and reads
-// as it did; only while that loader is still the tracked one, because any other
-// belongs to a newer navigation, pending or committed, whose own events end it.
-// Network.loadingFailed usually restored the state first, and then the loader
-// is no longer this one. Any other errorText is target-unreachable.
+// the navigation of loaderID, only while that loader is still the tracked one:
+// Page.navigate answers after the event loop may already track a newer
+// navigation, pending or committed, whose own events end it. net::ERR_ABORTED
+// (a 204, a denied download) ended without committing, so the committed
+// document is still live and reads as it did; Network.loadingFailed usually
+// restored it first, and then the loader is no longer this one. Any other
+// errorText is target-unreachable.
+//
+// The handler calls this off the event loop, so the loader check and the
+// state it decides are one critical section, the notice included: released in
+// between, the loop could start the newer navigation and this would then
+// overwrite its loading, or send a stale state after the loop's.
 func (p *browserPage) settleNavigateError(loaderID, errorText string) {
+	if errorText == "" {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.loaderID != loaderID {
+		return
+	}
 	if errorText == "net::ERR_ABORTED" {
-		p.mu.Lock()
-		restore := p.loaderID == loaderID
-		if restore {
-			p.topRequestID = ""
-			p.loaderID = p.committedLoaderID
-			p.unreachable = p.committedUnreachable
-		}
-		p.mu.Unlock()
-		if restore {
-			p.markLoaded()
-		}
-	} else if errorText != "" {
-		p.mu.Lock()
+		p.topRequestID = ""
+		p.loaderID = p.committedLoaderID
+		p.unreachable = p.committedUnreachable
+	} else {
 		p.unreachable = true
-		p.mu.Unlock()
-		p.setState("target-unreachable")
+	}
+	state := "ready"
+	if p.unreachable {
+		state = "target-unreachable"
+	}
+	if p.state == state {
+		return
+	}
+	p.state = state
+	if p.viewer != nil {
+		p.viewer.enqueueText(mustBrowserJSON(map[string]any{"type": "state", "state": state}))
 	}
 }
 

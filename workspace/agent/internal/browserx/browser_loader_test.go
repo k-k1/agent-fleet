@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -865,6 +866,63 @@ func TestBrowserPaneNavigateErrorText(t *testing.T) {
 				t.Errorf("states %v: reported target-unreachable although the document is still live", states)
 			}
 		})
+	}
+}
+
+// TestBrowserPaneNavigateStaleErrorText has the document start a newer
+// navigation, L2, before the pane's L1 Page.navigate answers. Whatever L1's
+// errorText, the late answer must not end L2, pending or committed: the page
+// stays loading on L2 until L2's own load.
+func TestBrowserPaneNavigateStaleErrorText(t *testing.T) {
+	for _, errorText := range []string{"net::ERR_ABORTED", "net::ERR_CONNECTION_REFUSED"} {
+		for _, committed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s committed=%v", errorText, committed), func(t *testing.T) {
+				cdp := newFakeBrowserCDP()
+				m := fakeBrowserManager(cdp)
+				t.Cleanup(m.Close)
+				created, err := m.Create(browserCreateRequest{Port: 3000, Path: "/", Viewport: browserViewportRequest{Width: 900, Height: 600, DeviceScaleFactor: 1}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				m.mu.Lock()
+				p := m.pages[created.ID]
+				m.mu.Unlock()
+				event := func(method, params string) {
+					m.handleEvent(cdp, browserCDPEvent{Method: method, SessionID: p.sessionID, Params: json.RawMessage(params)})
+				}
+				event("Page.frameNavigated", `{"frame":{"id":"frame-1","loaderId":"L0","url":"http://127.0.0.1:3000/"}}`)
+				event("Page.lifecycleEvent", `{"frameId":"frame-1","loaderId":"L0","name":"load"}`)
+				if !waitFor(time.Second, func() bool { return p.response().State == "ready" && !p.refreshing.Load() }) {
+					t.Fatalf("committed document never settled: %+v", p.response())
+				}
+				v := &browserViewer{page: p, control: make(chan browserOutbound, 32), done: make(chan struct{})}
+				p.mu.Lock()
+				p.viewer = v
+				p.mu.Unlock()
+
+				cdp.navigateErrorText = errorText
+				cdp.setOnCall("Page.navigate", func() {
+					event("Page.frameStartedNavigating", `{"frameId":"frame-1","loaderId":"L1","url":"http://127.0.0.1:3000/down","navigationType":"differentDocument"}`)
+					m.handleRequestPaused(cdp, p, json.RawMessage(`{"requestId":"r-L1","networkId":"L1","frameId":"frame-1","resourceType":"Document","request":{"url":"http://127.0.0.1:3000/down"}}`))
+					event("Page.frameStartedNavigating", `{"frameId":"frame-1","loaderId":"L2","url":"http://127.0.0.1:3000/next","navigationType":"differentDocument"}`)
+					m.handleRequestPaused(cdp, p, json.RawMessage(`{"requestId":"r-L2","networkId":"L2","frameId":"frame-1","resourceType":"Document","request":{"url":"http://127.0.0.1:3000/next"}}`))
+					if committed {
+						event("Page.frameNavigated", `{"frame":{"id":"frame-1","loaderId":"L2","url":"http://127.0.0.1:3000/next"}}`)
+					}
+				})
+				v.handleControl([]byte(`{"type":"navigate","path":"/down"}`))
+				p.mu.Lock()
+				state, loader, top, unreachable := p.state, p.loaderID, p.topRequestID, p.unreachable
+				p.mu.Unlock()
+				if state != "loading" || loader != "L2" || top != "L2" || unreachable {
+					t.Fatalf("after L1's late answer: state=%q loader=%q topRequest=%q unreachable=%v, want loading on L2", state, loader, top, unreachable)
+				}
+				event("Page.lifecycleEvent", `{"frameId":"frame-1","loaderId":"L2","name":"load"}`)
+				if got := p.response().State; got != "ready" {
+					t.Fatalf("L2's load: state %q, want ready", got)
+				}
+			})
+		}
 	}
 }
 
