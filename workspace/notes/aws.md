@@ -15,21 +15,27 @@ exited 3. The member-side explanation is `member/10-integrations.md` in the user
 
 A command that names **no profile at all** — a bare `aws …`, an SDK's default credential chain, a
 build tool with no profile setting — is not the user. In a container workspace (docker or ECS,
-Agent Fleet 0.26.0 or later) the workspace's own role and the host's are withheld from sessions
-and terminals (no `AWS_CONTAINER_CREDENTIALS_*`, `AWS_EC2_METADATA_DISABLED=true`, and EC2 hosts set
-up by Agent Fleet block instance metadata), so such a command stops with "Unable to locate
-credentials" / "Unable to load AWS credentials from any provider in the chain". That error means
-"run it as the user with `af-aws-exec`", never "configure credentials": do not run
-`aws configure` or `aws login` (the CLI's own hint), do not reach for keys in the user's `~/.aws` (a `[default]` section included),
-do not read credentials out of `/proc`, the metadata endpoints or another process, and do not
-unset `AWS_EC2_METADATA_DISABLED`.
+Agent Fleet 0.26.0 or later) the Agent and the Control Plane keep the workspace's own role out of
+sessions and terminals: no `AWS_CONTAINER_CREDENTIALS_*`, and `AWS_EC2_METADATA_DISABLED=true` so
+the CLI and the SDKs do not ask the host's instance metadata. Such a command normally stops with
+"Unable to locate credentials" / "Unable to load AWS credentials from any provider in the chain".
+That error means "run it as the user with `af-aws-exec`", never "configure credentials": do not run
+`aws configure` or `aws login` (the CLI's own hint), do not reach for keys in the user's `~/.aws` (a
+`[default]` section included), do not read credentials out of `/proc`, the metadata endpoints or
+another process, and do not unset `AWS_EC2_METADATA_DISABLED`.
+
+The variable only stops tools that honour it. The network block behind it is the operator's: it
+holds once they have finished the 0.26.0 migration (retained ecs-ec2 slots replaced, existing
+ec2-single instances moved to hop limit 1 — `operate/04-secure.md`, "Other operational controls",
+in the user guide). Until then, a tool that ignores the variable can still reach the host's
+instance role, so nothing you see in the shell proves the boundary.
 
 That isolation is not everywhere. A deployment can hand the ECS task role back
-(`AF_WS_WORKLOAD_AWS=1`, which also leaves `AWS_EC2_METADATA_DISABLED` unset); a workspace running
+(`AF_WS_WORKLOAD_AWS=1`, with which nothing sets `AWS_EC2_METADATA_DISABLED`); a workspace running
 directly on the user's own machine (the native runtime) keeps that machine's credentials and
-instance role; a workspace started before its deployment moved to 0.26.0 has neither setting. There
-the same command runs as that role instead of as the user, in a different account, with no error —
-reads included: "how many instances does prod have" answered by a bare
+instance role; a workspace not started again since its deployment moved to 0.26.0 has neither
+setting. There the same command runs as that role instead of as the user, in a different account,
+with no error — reads included: "how many instances does prod have" answered by a bare
 `aws ec2 describe-instances` is an answer about the wrong account. (A named profile that is
 misspelled or logged out fails loudly instead.)
 
@@ -51,29 +57,39 @@ plain `--profile` cannot:
 - `--region` pins the region against a stale `AWS_REGION` in the shell, and `AWS_ENDPOINT_URL*`
   overrides are removed.
 
-A **read-only lookup** with the AWS CLI (`describe-*`, `list-*`, `get-*`, `s3 ls`) may instead
-name the profile directly — `aws --profile <name> …` — but only where the isolation above is in
-effect. Check it once per shell; this prints one word and nothing of the environment:
+A **read-only lookup** with the AWS CLI itself (`describe-*`, `list-*`, `get-*`, `s3 ls`; not an
+SDK program, a build tool or a script) may instead name the profile directly, but only where this
+shell passes the check below. It prints one word and nothing of the environment or of the error:
 
 ```sh
+err=$(env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE aws sts get-caller-identity 2>&1 >/dev/null)
 if [ "${AWS_EC2_METADATA_DISABLED:-}" = true ] && [ "${AF_WS_WORKLOAD_AWS:-}" != 1 ] \
-   && [ -z "${AWS_CONTAINER_CREDENTIALS_RELATIVE_URI:-}${AWS_CONTAINER_CREDENTIALS_FULL_URI:-}" ] \
-   && ! aws sts get-caller-identity >/dev/null 2>&1; then echo isolated; else echo not-isolated; fi
+   && [ -z "$(env | cut -d= -f1 | grep -E '^AWS_(CONTAINER_|CONFIG_FILE$|SHARED_CREDENTIALS_FILE$|ENDPOINT_URL)')" ] \
+   && case $err in *"Unable to locate credentials"*) true ;; *) false ;; esac
+then echo isolated; else echo not-isolated; fi; unset err
 ```
 
-`isolated` means a no-profile call has nothing to fall back to, so a misspelled or logged-out
-profile fails instead of silently answering for another account. `not-isolated` (an opt-in
-deployment, the native runtime, a workspace from before 0.26.0, or default credentials such as
-`[default]` keys in `~/.aws`) means every AWS command, reads included, goes through `af-aws-exec`.
+`isolated` means: the CLI does not ask instance metadata, no workload credentials or file and
+endpoint overrides are in the environment, and the CLI's default chain (with `AWS_PROFILE` set
+aside) positively found no credentials at all. Any other outcome — default credentials that
+resolve, an expired session, a network or endpoint error — is `not-isolated`. It checks what the
+CLI in this shell would inherit, not the runtime, the version or the host's network block: a shell
+where someone pre-set the variable can pass on the native runtime too. Treat `not-isolated` as the
+answer whenever you are unsure, and then every AWS command, reads included, goes through
+`af-aws-exec`.
 
-Even where it is `isolated`:
+Even where it is `isolated`, all of these hold or you use `af-aws-exec`:
 
-- `<name>` is a Settings profile chosen with `af-aws-exec --list` by account and role, never one
-  `--list` marks as not exported and never a profile of the user's own (a `role_arn` /
-  `credential_process` profile always needs `af-aws-exec --account`).
-- Pass `--region` unless the profile's region is the one you mean.
-- If the CLI reports an SSO token error, the login is missing: rerun the lookup with `af-aws-exec`,
-  which asks the user in the Console. Do not run `aws sso login` yourself.
+- `<name>` is a Settings profile `af-aws-exec --list` shows as exported, chosen there by account and
+  role. The task does not say which account → ask the user. Not in `--list`, marked not exported, or
+  a profile of the user's own (a `role_arn` / `credential_process` profile always needs
+  `af-aws-exec --account`) → `af-aws-exec`.
+- Always pass `--region <region>`: a stale `AWS_REGION` / `AWS_DEFAULT_REGION` in the shell beats
+  the profile's region.
+- `aws --profile <name> --region <region> <service> <read-only operation> …`, run in the same shell
+  you checked.
+- An SSO token error means the login is missing: rerun the lookup with `af-aws-exec`, which asks the
+  user in the Console. Do not run `aws sso login` yourself.
 - If `af-aws-exec` refused that profile, plain `--profile` is not a way around it.
 
 Worked example — a build tool with an S3/deploy plugin. `./gradlew uploadArtifact` (an S3 upload
@@ -167,8 +183,8 @@ for an approval nobody sees, and a code from you is exactly what the user is tol
 
 - Run a user-identity action with bare `aws` / an SDK / a build tool outside `af-aws-exec`, or retry
   that way after `af-aws-exec` refused — also not for a profile that is not SSO: `af-aws-exec`
-  runs those with `--account`. The one exception is a read-only `aws --profile <Settings profile>`
-  lookup where the check above says `isolated`.
+  runs those with `--account`. The one exception is a read-only
+  `aws --profile <Settings profile> --region <region>` lookup, under every condition above.
 - Answer "Unable to locate credentials" by configuring credentials (`aws configure`, `aws login`, the user's
   `[default]` keys, `AWS_ACCESS_KEY_ID` in the shell): name the user's profile with `af-aws-exec`.
 - Use `--keep-aws-config` as a workaround. It exists for tools that genuinely need other settings
