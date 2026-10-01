@@ -1,0 +1,21 @@
+# What counts as a model-id-shaped literal. One alternative per line; blank lines and lines
+# starting with # are ignored. Both linters read this file (main.go for Go, and
+# console/scripts/model-id-lint.mjs for the Console), joined as \b(?:a|b|…), so every line
+# must mean the same thing in RE2 and in ECMAScript: plain classes and (?:…) groups only.
+#
+# Each line is a vendor prefix followed by a version digit, taken from the ids that were
+# actually in the tree (issue #1084). The digit is what keeps the false positives down: tier
+# aliases ("sonnet", "haiku"), architecture and family keys ("gpt-oss", "qwen-image-2.1",
+# "flux1") and file names ("qwen3vl_4b_….safetensors") do not match, and they are not model
+# ids a fallback could pin.
+claude-(?:opus|sonnet|haiku|fable|mythos)-[0-9]
+claude-[0-9]
+gpt-[0-9]
+gemini-[0-9]
+glm-[0-9]
+nemotron-[0-9]
+deepseek-[vr]?[0-9]
+kimi-k[0-9]
+qwen[0-9][0-9.]*-
+muse-spark-[0-9]
+llama-[0-9]

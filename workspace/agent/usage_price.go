@@ -74,6 +74,7 @@ const (
 //
 // A raw versioned id (claude-haiku-4-5-20251001) or a provider-prefixed one
 // (anthropic/claude-sonnet-5) is folded by usageNormalizeModel before it reaches this table.
+// model-id-lint:allow-file the price table is keyed by the ids it prices; it picks no model.
 var usagePrices = map[string]usagePrice{
 	// Current generation.
 	// fable 5.1 costs the same as 5 ($10/$50) except for its cache read, $0.25/MTok rather

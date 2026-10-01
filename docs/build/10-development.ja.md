@@ -19,7 +19,7 @@ updated: "2026-10"
 | `e2e/` | フリート E2E（独立 Go モジュール・stdlib のみ）。CP + 実コンテナの疎通検証（§10.4）|
 | `console-e2e/` | Console UI E2E（Playwright）。ブラウザ → CP → 実コンテナの縦串検証（§10.4）|
 | `guide/` ・ `docs/` | 全コンテナに同梱される利用ガイドと、開発者向けドキュメント。両方の規範は [CONVENTIONS](../CONVENTIONS.ja.md) |
-| `scripts/` | リポジトリの検査: `docs-check.py`（リンク・front matter・`guide/ref` の表）と `vet-build-tags.sh` |
+| `scripts/` | リポジトリの検査: `docs-check.py`（リンク・front matter・`guide/ref` の表）、`vet-build-tags.sh`、`model-id-lint/`（フォールバック登録簿の外のモデル ID） |
 
 ファイル単位の地図は [90-code-map](90-code-map.ja.md)。
 
@@ -255,10 +255,11 @@ npm --prefix console run build
   | ジョブ | 見るもの |
   |---|---|
   | `control-plane`・`workspace-agent` | `gofmt -l`・`go vet`・`go build`（arm64 へのクロスコンパイルも）・`go test`、build tag 付きファイルの `go vet`。Agent 側は `entrypoint.sh` の構文も検査する |
-  | `console` | 型検査・lint・i18n lint・vitest・実ブラウザの検査 2 つ（`pdf:check`・`doc:check`）・本番ビルド |
+  | `console` | 型検査・lint・i18n lint・モデル ID lint・vitest・実ブラウザの検査 2 つ（`pdf:check`・`doc:check`）・本番ビルド |
   | `deploy-scripts` | デプロイ用スクリプトとリリース監視の判断を、スタブの `aws` / `npm` / `curl` / `gh` に当てて検査。CloudFormation テンプレートが ASCII のみであることも |
   | `secret-scan` | 全履歴に対する資格情報の混入検知（後述）|
   | `release-scan` | 追跡ツリーに対する禁止トークンのゲート——pre-commit フックがステージ内容にかけるのと同じスキャナ |
+  | `model-id-lint` | 両 Go モジュールで `workspace/agent/internal/modelfallback` の外にモデル ID の形の文字列リテラルが無いこと。モデルを選ばないものは `// model-id-lint:allow <理由>` で印を付ける |
 
   `docs.yml` が同じトリガで `scripts/docs-check.py` を回す。E2E ワークフローはイメージの
   build が重いので分けてある。上流 CLI の破壊検知は第 3 の系統（後述）。イメージを焼く

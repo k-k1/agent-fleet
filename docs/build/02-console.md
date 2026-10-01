@@ -347,6 +347,11 @@ shape a change has to fit.
   Files listed in `scripts/i18n-lint-pending.json` are a backlog that only warns, and a
   file leaves that list once it is clean; `// i18n-exempt` marks text that is never
   translated.
+- A concrete model id lives only in `src/lib/modelFallbacks.ts`, with its owner, its
+  source and why the live catalog cannot supply it. `npm run models:lint` fails on a
+  model-id-shaped literal anywhere else in `src/`; `// model-id-lint:allow <reason>` marks
+  one that chooses no model. The Agent's counterpart is
+  `workspace/agent/internal/modelfallback`.
 
 ## 2.9 Tests and checks
 
