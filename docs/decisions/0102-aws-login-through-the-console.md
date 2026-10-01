@@ -363,3 +363,23 @@ cancel, the member's only way was the terminal command.
    holds only the access token's expiry, about an hour, and the CLI renews that token until the portal session
    ends, which the cache does not record. "40 minutes left" would be wrong by hours. Knowing when the session
    really ends is what #1029 has to measure first. The route returns names and states only, never a token.
+
+## Note — warning before a login ends (2026-10-02)
+
+Issue #1029. Nothing above is changed; this records which expiry the warning uses.
+
+1. **The Agent decides, on its own clock.** `GET /api/aws-login/profiles` now also returns, per Settings profile,
+   `expiresAt` (RFC 3339 UTC) and `expiring` (the end is no more than 15 minutes ahead), plus Settings' label,
+   account and role so the Console can open the row's login modal. Still never a token.
+2. **Which end.** The cache file of `af-<name>` (SHA-1 of the sso-session name; Settings profiles never use the
+   start-URL key) holds the access token's `expiresAt`. When it also holds a refresh token, client id, client
+   secret and `registrationExpiresAt`, the CLI renews on use until the registration expires, so the end used is
+   the later of the two. The portal session's end is still not in the cache (revision 2026-09-29 §6): a session the
+   portal ends earlier gets no warning, and af-aws-exec's request (decision 1) covers it. An already-ended login is
+   not "expiring" either. A missing or unreadable cache is no expiry, not an error. `expiresAt` in the older
+   `…UTC` form is read as UTC.
+3. **Delivery.** After each five-minute Settings poll the Agent files an `aws-sso-expiring` notification once per
+   profile and end (the key holds the end, so a re-login can warn again); its payload names the profile only. The
+   Console asks the list on start and on that notification, shows one toast per profile and end with **Log in**
+   (the row's modal, nothing started until the press), and polls once a minute only while such a toast is up. A
+   notification for a profile the list does not show as expiring opens nothing. No CP change.

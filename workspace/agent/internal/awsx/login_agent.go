@@ -341,19 +341,27 @@ func HandleProfileLoginStart(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, loginStartWire{Attempt: a.id})
 }
 
-// Login states of a Settings profile's token cache, for the row's badge. There is no
+// Login states of a Settings profile's token cache, for the row's badge. The badge shows no
 // "expires in": the cache holds only the access token's expiry (about an hour), which the
 // CLI renews with the refresh token until the portal session ends, and that end is written
-// nowhere the Agent can read (#1029).
+// nowhere the Agent can read. expiresAt is the upper bound readSSOExpiry knows, for the
+// expiry warning only.
 const (
 	loginStateSignedIn = "signed_in" // an access token that has not expired
 	loginStateRenew    = "renew"     // expired, but a refresh token may renew it on next use
 	loginStateNone     = "none"      // no cache, or nothing that can be renewed
 )
 
+// profileLoginStateWire carries Settings' account, role and label so the Console can open
+// the login modal from an expiry warning without a second list. No token is ever here.
 type profileLoginStateWire struct {
-	Name  string `json:"name"`
-	State string `json:"state"`
+	Name      string `json:"name"`
+	State     string `json:"state"`
+	Label     string `json:"label,omitempty"`
+	AccountID string `json:"accountId,omitempty"`
+	RoleName  string `json:"roleName,omitempty"`
+	ExpiresAt string `json:"expiresAt,omitempty"`
+	Expiring  bool   `json:"expiring,omitempty"`
 }
 
 type profileLoginStatesWire struct {
@@ -379,8 +387,14 @@ func profileLoginState(ssoSession string, now time.Time) string {
 func HandleProfileLoginStates(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	out := []profileLoginStateWire{}
-	for name := range loginSettings() {
-		out = append(out, profileLoginStateWire{Name: name, State: profileLoginState("af-"+name, now)})
+	for name, sp := range loginSettings() {
+		p := profileLoginStateWire{Name: name, State: profileLoginState("af-"+name, now),
+			Label: sp.Label, AccountID: sp.AccountID, RoleName: sp.RoleName}
+		if end, ok := readSSOExpiry("af-" + name); ok {
+			p.ExpiresAt = end.Format(time.RFC3339)
+			p.Expiring = expiringAt(end, now) && IncompleteReason(sp) == ""
+		}
+		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	httpx.WriteJSON(w, http.StatusOK, profileLoginStatesWire{Profiles: out})
