@@ -175,6 +175,7 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.props_family": "Family",
   "imggen.props_seed": "Seed",
   "imggen.props_size": "Size",
+  "imggen.props_dims": "Dimensions",
   "imggen.props_steps": "Steps",
   "imggen.props_cfg": "cfg",
   "imggen.props_sampler": "Sampler",

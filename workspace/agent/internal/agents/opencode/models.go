@@ -239,8 +239,10 @@ var awsChainEnv = []string{
 // deployment that wired credentials up some other way — the same escape hatch keepInMenu has,
 // and it has to be honoured HERE too, or the flag would show a menu this function emptied.
 //
-// ⚠️ Scope is this one subprocess. Launched sessions build their environment elsewhere, so a
-// member's own AWS tooling inside the workspace is untouched.
+// Scope is this one subprocess. The Agent normally withholds the container variables from
+// everything it starts (awsx.IsolateWorkloadChain); this still matters where a deployment
+// opted back in with AF_WS_WORKLOAD_AWS=1, which is also what Bedrock through the task role
+// needs on top of AF_OPENCODE_SHOW_BEDROCK.
 func withoutAWSCredentialChain(env []string) []string {
 	if envOr("AF_OPENCODE_SHOW_BEDROCK", "") == "1" {
 		return env

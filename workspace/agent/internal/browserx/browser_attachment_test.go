@@ -756,11 +756,10 @@ func TestBrowserAttachmentTargetCloseAndTTL(t *testing.T) {
 }
 
 func TestBrowserAttachmentViewerUsesWorkspaceWideLeaseLimit(t *testing.T) {
-	previous := workspaceBrowserViewerLeases
-	workspaceBrowserViewerLeases = &browserViewerLeasePool{limit: 1, owners: make(map[string]struct{})}
-	t.Cleanup(func() { workspaceBrowserViewerLeases = previous })
+	leases := &browserViewerLeasePool{limit: 1, owners: make(map[string]struct{})}
 	m1 := fakeAttachmentManager(newFakeBrowserCDP(), 0)
 	m2 := fakeAttachmentManager(newFakeBrowserCDP(), 0)
+	m1.config.ViewerLeases, m2.config.ViewerLeases = leases, leases
 	r1 := createFakeAttachment(t, m1)
 	r2 := createFakeAttachment(t, m2)
 	a1, err := m1.reserveViewer(r1.ID)

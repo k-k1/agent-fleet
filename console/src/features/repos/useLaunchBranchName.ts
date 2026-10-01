@@ -6,6 +6,12 @@ import type { BranchItem, BranchName, BranchWarning } from "./branchRule.ts";
 
 const CHECK_DELAY_MS = 400;
 
+/** How long a provisional answer waits before the one re-ask (ADR 0103 decision 4). The Agent
+ * makes the English slug for a non-ASCII title in the background, a short-tier one-shot of a
+ * few seconds; it never waits for it, so asking again sooner mostly gets the same answer.
+ * Mutable so the tests need not wait for it. */
+export const launchBranchTiming = { reaskMs: 8000 };
+
 interface Options {
   repo: string;
   /** The work item the launch came from; absent for every other launch, which keeps the
@@ -52,13 +58,24 @@ export function useLaunchBranchName({ repo, item, name, setName, setBase }: Opti
     const it = itemRef.current;
     if (!it) return;
     const my = ++seq.current;
+    const apply = (r: BranchName) => {
+      setResolved(r);
+      // A name the resolver cannot make (name_empty) falls back to the server-minted temp/<slug>
+      // at launch (decision 4), which is what an empty field asks for.
+      if (!nameTouched.current) setNameRef.current(r.name_empty ? "" : r.name);
+      if (!baseTouched.current && r.base_branch) setBaseRef.current(r.base_branch);
+    };
     const r = await fetchBranchName(repo, { item: it });
     if (my !== seq.current || !r) return;
-    setResolved(r);
-    // A name the resolver cannot make (name_empty) falls back to the server-minted temp/<slug>
-    // at launch (decision 4), which is what an empty field asks for.
-    if (!nameTouched.current) setNameRef.current(r.name_empty ? "" : r.name);
-    if (!baseTouched.current && r.base_branch) setBaseRef.current(r.base_branch);
+    apply(r);
+    // A provisional name carries the deterministic slug while the English one is being made.
+    // Asked once more, not polled: a second provisional answer is kept as it is.
+    if (!r.provisional) return;
+    await new Promise((done) => setTimeout(done, launchBranchTiming.reaskMs));
+    if (my !== seq.current) return;
+    const again = await fetchBranchName(repo, { item: it });
+    if (my !== seq.current || !again) return;
+    apply(again);
   }, [repo]);
 
   const itemKey = item?.key ?? "";

@@ -2,9 +2,10 @@ package store
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
 )
 
 // TestPostgresStore runs a broad round-trip against a real Postgres to validate the
@@ -16,8 +17,8 @@ import (
 //	AF_TEST_DATABASE_URL='postgres://postgres:pw@localhost:5433/postgres?sslmode=disable' \
 //	  go test -run TestPostgresStore -v
 func TestPostgresStore(t *testing.T) {
-	url := os.Getenv("AF_TEST_DATABASE_URL")
-	if url == "" {
+	url, ok := pgtest.Schema(t)
+	if !ok {
 		t.Skip("set AF_TEST_DATABASE_URL to run the Postgres conformance test")
 	}
 	ctx := context.Background()
@@ -26,10 +27,6 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer st.Close()
-	// Clean slate so the test is repeatable against a persistent DB.
-	if _, err := st.db.ExecContext(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
-		t.Fatalf("reset schema: %v", err)
-	}
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

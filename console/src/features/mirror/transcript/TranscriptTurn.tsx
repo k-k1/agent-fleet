@@ -257,6 +257,7 @@ function TranscriptTurnImpl({
         onOpen={caps.openFile}
         fileURL={caps.fileURL}
         thumbURL={caps.thumbURL}
+        previewURL={caps.previewURL}
         onZoom={caps.openImage}
       />
     ) : null;

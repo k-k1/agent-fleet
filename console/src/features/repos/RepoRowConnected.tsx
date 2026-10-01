@@ -19,6 +19,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { useSessionUI } from "../sessions/ui.ts";
 import { openSessionTerminal, openSessionTerminalSplit, openSessionChat, openSessionChatSplit } from "../sessions/open.ts";
 import { RepoRow } from "./RepoRow.tsx";
+import { parentFFFailedText, parentFFSuccessText } from "./parentSync.ts";
 import { useStartWork } from "./useStartWork.ts";
 import { SvnAuthModal } from "./SvnAuthModal.tsx";
 import { GitflowInitModal } from "./GitflowInitModal.tsx";
@@ -129,11 +130,11 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, unread, onArchi
       onParentFF={r.worktree && r.integration?.relation === "contained" ? async () => {
         const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/parent-ff`, "POST", {});
         if (res && res.error) {
-          toast(tr("rp.parent_ff_failed", { err: errText(res.error) }));
+          toast(parentFFFailedText(r, errText(res.error)));
           return;
         }
         void refreshRepos();
-        toast(tr("rp.parent_ff_success", { name: r.name }), { kind: "success" });
+        toast(parentFFSuccessText(r), { kind: "success" });
       } : undefined}
       // SVN (docs/log/41): update to the latest revision (auto-heals a wedged lock server-side).
       onUpdate={r.vcs === "svn" ? () => void svnUpdate() : undefined}

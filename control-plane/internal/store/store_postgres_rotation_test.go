@@ -2,12 +2,19 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
 )
 
 // TestPostgresPasswordRotation is the one that would have caught the 2026-09-01
@@ -26,12 +33,14 @@ import (
 // demand a password before the trust line and reload:
 //
 //	D=$HOME/.local/share/af-pgtest
-//	sed -i '1i local all af_rot_test scram-sha-256' "$D/data/pg_hba.conf"
+//	sed -i '1i local all /^af_rot_test_ scram-sha-256' "$D/data/pg_hba.conf"
 //	"$D/dist/bin/pg_ctl" -D "$D/data" reload
 //	AF_TEST_DATABASE_URL="postgres://postgres@/postgres?host=$D/sock&sslmode=disable" \
 //	  go test -run TestPostgresPasswordRotation -v
 func TestPostgresPasswordRotation(t *testing.T) {
-	adminURL := os.Getenv("AF_TEST_DATABASE_URL")
+	// The role is cluster-wide and the test creates no tables, so it takes the database
+	// itself rather than a pgtest.Schema.
+	adminURL := pgtest.URL()
 	if adminURL == "" {
 		t.Skip("set AF_TEST_DATABASE_URL to run the Postgres rotation test")
 	}
@@ -41,13 +50,40 @@ func TestPostgresPasswordRotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open admin: %v", err)
 	}
-	defer admin.Close()
+	// A Cleanup, not a defer: defers run before Cleanups, and the role is dropped
+	// through this pool in a Cleanup registered below.
+	t.Cleanup(func() { admin.Close() })
 	if err := admin.PingContext(ctx); err != nil {
 		t.Fatalf("ping admin: %v", err)
 	}
 
-	const role = "af_rot_test"
+	// Roles are cluster-wide, so a fixed name collides with an overlapping run and with
+	// any role an interrupted run left behind on a persistent server (af-db).
+	var suffix [4]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		t.Fatalf("random role suffix: %v", err)
+	}
+	role := fmt.Sprintf("af_rot_test_%d_%s", os.Getpid(), hex.EncodeToString(suffix[:]))
+	quotedRole := pgx.Identifier{role}.Sanitize()
 	const pw1, pw2 = "rot-before-1", "rot-after-2"
+	// GRANT ... ON DATABASE and DROP OWNED both rewrite the database's one pg_database
+	// row, and two runs doing it at once fail with "tuple concurrently updated"
+	// (measured with two overlapping runs on one af-db database). The advisory lock is
+	// scoped to this database, which is exactly the row they contend for.
+	aclLocked := func(c context.Context, q string) error {
+		tx, err := admin.BeginTx(c, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err := tx.ExecContext(c, `SELECT pg_advisory_xact_lock(hashtext('af_rot_test_database_acl'))`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(c, q); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
 	exec := func(q string, args ...any) {
 		t.Helper()
 		if _, err := admin.ExecContext(ctx, q, args...); err != nil {
@@ -58,17 +94,28 @@ func TestPostgresPasswordRotation(t *testing.T) {
 	if err := admin.QueryRowContext(ctx, `SELECT current_database()`).Scan(&dbName); err != nil {
 		t.Fatalf("current_database: %v", err)
 	}
-	// A plain DROP ROLE fails while the GRANT below still references it, which on a
-	// persistent server leaves the role behind and makes the NEXT run fail at CREATE.
-	dropRole := func() {
+	exec(fmt.Sprintf("CREATE ROLE %s LOGIN PASSWORD '%s'", quotedRole, pw1))
+	t.Cleanup(func() {
 		c := context.Background()
-		admin.ExecContext(c, fmt.Sprintf(`REVOKE ALL ON DATABASE %q FROM %s`, dbName, role))
-		admin.ExecContext(c, `DROP ROLE IF EXISTS `+role)
+		// DROP OWNED revokes the role's privileges in this database and on shared
+		// objects, the database ACL included; DROP ROLE refuses while any remain and
+		// names the database that still holds one, so neither error is swallowed.
+		if err := aclLocked(c, `DROP OWNED BY `+quotedRole); err != nil {
+			t.Errorf("cleanup: DROP OWNED BY %s: %v", role, err)
+		}
+		if _, err := admin.ExecContext(c, `DROP ROLE `+quotedRole); err != nil {
+			// The dependency list is in the error's DETAIL, which err.Error() omits.
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Detail != "" {
+				err = fmt.Errorf("%w; %s", err, pgErr.Detail)
+			}
+			t.Errorf("cleanup: DROP ROLE %s: %v", role, err)
+		}
+	})
+	grant := fmt.Sprintf(`GRANT CONNECT ON DATABASE %s TO %s`, pgx.Identifier{dbName}.Sanitize(), quotedRole)
+	if err := aclLocked(ctx, grant); err != nil {
+		t.Fatalf("%s: %v", grant, err)
 	}
-	dropRole() // best effort; a previous run may have left it
-	exec(fmt.Sprintf("CREATE ROLE %s LOGIN PASSWORD '%s'", role, pw1))
-	t.Cleanup(dropRole)
-	exec(fmt.Sprintf(`GRANT CONNECT ON DATABASE %q TO %s`, dbName, role))
 
 	dsn := func(pw string) string {
 		u, err := url.Parse(adminURL)
@@ -128,7 +175,7 @@ func TestPostgresPasswordRotation(t *testing.T) {
 	}
 
 	// --- rotate, exactly as Secrets Manager does: the database first, the label after
-	exec(fmt.Sprintf("ALTER ROLE %s PASSWORD '%s'", role, pw2))
+	exec(fmt.Sprintf("ALTER ROLE %s PASSWORD '%s'", quotedRole, pw2))
 
 	// setSecret has run, finishSecret has not: AWSCURRENT is still the old value.
 	// The pool cannot recover yet, and must fail cleanly rather than hang or spin.

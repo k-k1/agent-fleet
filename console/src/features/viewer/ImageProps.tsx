@@ -22,6 +22,7 @@ import { folderOf } from "../imagegen/generatedBy.ts";
 import { openGeneratingSession, useGeneratingSession } from "../imagegen/useGeneratingSession.ts";
 import { openImagegen } from "../imagegen/open.ts";
 import { draftFromProperties, emptyDraft } from "../imagegen/draft.ts";
+import { formatImageSize, useImageSize } from "./imageSize.ts";
 
 interface Row {
   key: string;
@@ -56,11 +57,14 @@ function rowsOf(p: ImageProperties, tr: (k: string, v?: Record<string, unknown>)
   return out;
 }
 
-export function ImageProps({ path }: { path: string }) {
+export function ImageProps({ path, mtime }: { path: string; mtime?: number }) {
   const tr = useT();
   const [props, setProps] = useState<ImageProperties | null>(null);
   const [err, setErr] = useState("");
   const madeBy = useGeneratingSession(folderOf(path));
+  // The file's own W×H, from its header (ADR 0080 decision 16). Not `naturalWidth`: what the
+  // lightbox shows is a `preview` copy, downscaled for a large picture.
+  const dims = useImageSize(path, mtime);
 
   useEffect(() => {
     let alive = true;
@@ -100,7 +104,7 @@ export function ImageProps({ path }: { path: string }) {
   // so it is drawn in every branch below, including the ones where the record is missing or
   // unreadable. A vendor-route PNG carries no chunk at all, and "which conversation made this"
   // is exactly the question left when the settings cannot be recovered.
-  const head = madeBy && (
+  const sessionLine = madeBy && (
     <div className="imgprops-madeby">
       <span className="imgprops-madeby-label">{tr("imggen.props_session")}</span>
       <button
@@ -114,6 +118,18 @@ export function ImageProps({ path }: { path: string }) {
         <Icon name="comment-discussion" /> {madeBy.label}
       </button>
     </div>
+  );
+  // The size is the file's own too, not the record's, so it is drawn in every branch as well.
+  const head = (
+    <>
+      {dims && (
+        <div className="imgprops-madeby imgprops-dims">
+          <span className="imgprops-madeby-label">{tr("imggen.props_dims")}</span>
+          <span>{formatImageSize(dims)}</span>
+        </div>
+      )}
+      {sessionLine}
+    </>
   );
 
   if (err)

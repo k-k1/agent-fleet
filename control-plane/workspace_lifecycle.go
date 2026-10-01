@@ -423,6 +423,12 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 			"AF_PREVIEW_SLUG="+ws.PreviewSlug,
 			"AF_PREVIEW_PORTS="+strings.Join(strs, ","))
 	}
+	// The Agent withholds the workspace task's AWS identity from sessions unless told
+	// otherwise (awsx.IsolateWorkloadChain). The ECS runtimes do not pass WS_ENV on, so
+	// the deployment's opt-in has to travel from here to reach them.
+	if os.Getenv("AF_WS_WORKLOAD_AWS") == "1" {
+		env = append(env, "AF_WS_WORKLOAD_AWS=1")
+	}
 	// Internal git provider: inject the host + this membership's deterministic git
 	// token so the Agent seeds its cred store (secrets.go seedInternalGit) and
 	// clone/push authenticate transparently. Deterministic, so re-injection on
@@ -472,7 +478,10 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 			// AWS profiles bridge (issue #998): the agent pulls the member's SSO profiles
 			// into ~/.aws/config. Its own credential; a leak reads that non-secret list
 			// and nothing else.
-			"AF_AWS_PROFILES_TOKEN="+mintAWSProfilesToken(awsProfilesSignKey(m.tokenSignMaster()), ws.MembershipID))
+			"AF_AWS_PROFILES_TOKEN="+mintAWSProfilesToken(awsProfilesSignKey(m.tokenSignMaster()), ws.MembershipID),
+			// Branch rules bridge (ADR 0103 decision 10): the agent polls its tenant's branch
+			// naming rules. Its own credential; a leak reads those rules and nothing else.
+			"AF_BRANCH_RULES_TOKEN="+mintBranchRulesToken(branchRulesSignKey(m.tokenSignMaster()), ws.MembershipID))
 	}
 	return env
 }

@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 )
 
@@ -942,6 +944,7 @@ type Store interface {
 	TenantIdPStore
 	TenantGitOAuthStore
 	EngineAccessStore
+	TenantBranchRulesStore
 
 	// Ping backs GET /readyz. Not in a sub-interface: "is the database reachable"
 	// belongs to the store as a whole, not to a feature.
@@ -1558,6 +1561,18 @@ type CloudCostStore interface {
 	// tenant or membership parameter on purpose: every row here is shared, which is
 	// super_admin-only information (ADR 0048 decision 4).
 	ListCloudCostByRole(ctx context.Context, fromDay, toDay string) ([]CloudCostRoleRow, error)
+}
+
+// ErrSSMProfileNotFound is CreateSSMHost / UpdateSSMHost refusing a host whose profile the
+// member does not have.
+var ErrSSMProfileNotFound = errors.New("ssm profile not found")
+
+// SSMProfileInUseError is DeleteSSMProfile refusing a profile that hosts still reference.
+// Hosts lists them, ordered by alias, so the caller can name them.
+type SSMProfileInUseError struct{ Hosts []SSMHost }
+
+func (e *SSMProfileInUseError) Error() string {
+	return fmt.Sprintf("ssm profile is used by %d host(s)", len(e.Hosts))
 }
 
 // SSMStore is the SSM login config (docs/log/p3-ssm-session.md), personal

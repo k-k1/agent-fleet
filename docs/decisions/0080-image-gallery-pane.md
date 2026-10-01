@@ -417,6 +417,7 @@ picture out of it says most of what they wanted to know.
 - The neighbour prefetch moved to the same door — prefetching one URL and then displaying
   another wastes the whole prefetch. The mirror's shared-file lightbox is untouched so far
   (the same move applies to it).
+  - *Added 2026-10-01:* the mirror's lightbox made that move in decision 15.
 
 ### Decision 13 — make the downscale itself cheap (stop calling `src.At()`)
 
@@ -451,6 +452,69 @@ decode, not the scale).
 - **Read per render**, not frozen into a constant: a window dragged to another monitor changes
   it, and being wrong costs one re-request at the other size.
 
+### Decision 15 — the mirror's lightbox shows `preview` too, and a new picture is warmed for it (P2)
+
+- **The mirror's shared-file card enlarges `displayURL(path, previewEdge())`**, the gallery's
+  door and steps (`viewer/previewEdge.ts`, shared by both). It is a transcript capability,
+  `previewURL`, beside `thumbURL`; without it the card enlarges the original, as before. The
+  original stays one click away in the pane.
+- 🔥 **The warm-up never reached a request.** The cache key held the path as the REQUEST spelled
+  it (browse-root-relative, which is what the transcript and the gallery send), while imagegen
+  and `warm=` warm by the ABSOLUTE path. Every warmed entry was one no request read. The key is
+  now the absolute path (root joined to relative) on both sides; a test plants a sentinel in the
+  warmed entry and requires both spellings to return it.
+- **A preview is cached per factor, not per asked edge.** The lightbox asks for 1024, 1536 or
+  2048 by screen; for 832x1216 all three come to factor 1 and identical bytes, so keyed on the
+  edge one warm-up could cover only one screen size. The price is a header read
+  (`DecodeConfig`) before the cache lookup. Cards keep the edge key and read nothing on a hit.
+- **imagegen hands every picture to a bounded queue** (`warmGenerated`): at most 32 waiting, two
+  workers (under `thumbSem`'s four, so a person's cards always find a slot) that exit when it is
+  empty, the same path at most once in flight, and a file no decoder reads never queued. A
+  picture that does not fit is not warmed, and its first look pays the decode as before. The
+  hand-over is a mutex and an append (~0.5 µs), so the generation's own completion does not wait.
+- Measured (first `preview=2048` request through `handleFSDownload`, real generated pictures,
+  this shared host): **832x1216, n=15: median 213 ms cold → 0.52 ms warmed; 1024x1024, n=15:
+  222 ms → 0.67 ms.** The cold figure is above decision 12's ~140 ms because the host was loaded.
+- Not helped: a picture with transparency. `preview` serves it the original, writes no entry,
+  and so decodes again on every look.
+
+### Decision 16 — tile sizes S/M/L on two edges, and W x H from the file's header (P1)
+
+- **The tile size is pane content** (`tile: "s" | "m" | "l"`, absent = M), beside `sort` and for
+  the same reason: a tab switch unmounts the view. A walk into another folder keeps it, as it
+  keeps `sort`. The stored-layout validator drops any other value.
+- **Three sizes, two edges.** Each size's minimum card width (110 / 150 / 260 CSS px) maps to a
+  `thumb` edge in `tileEdge` (`gallery.ts`): S asks 256 everywhere, M keeps decision 14 (256 at
+  1x, 512 above 1.5x), L asks 512 everywhere. Nothing larger: `thumb` truncates its factor, so
+  for a generated 832x1216 any edge over 608 is the 1.1 MB original, and in a 4:3 tile a
+  portrait is height-bound (an L tile at 2x shows 390 device px of height, which the 608 px copy
+  covers).
+- 🔥 **Generation warmed the wrong edge for the common case.** Decision 15 warms `thumb=512`, but
+  the default tile on a 1x screen asks for 256 (decision 14), so every new picture's first card
+  there decoded cold. Generation now warms both card edges (`warmCardEdges`): one more decode per
+  picture on the two background workers, none on anyone's wait. With only two edges in use, every
+  tile size on every screen reads a warmed entry.
+- **W x H comes from the header, never from a thumbnail** (the reason in "options rejected" still
+  holds, and since decision 12 the lightbox shows a `preview`, which is downscaled for a large
+  picture). `POST /fs/imagesize {paths}` answers `{sizes: {path: {w, h}}}`:
+  - every path goes through `/fs/download`'s own gate (`resolveFDReadPath` + `openFDFile`), and a
+    path that fails it, or whose header cannot be read, is simply absent;
+  - `image.DecodeConfig` over a reader capped at 256 KiB, for PNG/JPEG/GIF/WebP by extension;
+  - at most 100 paths per request. A new route, so both `routes.golden` move and the CP gains
+    one allowlist line (read-only, not audited).
+- **A 500-image folder is not 500 requests.** A card asks only once it is armed (decision 4's
+  `useArmed`), every ask in a 30 ms window rides one request, at most one request is in flight,
+  and answers are memoized per (user, tenant, path, mtime). The tenant switches without a reload
+  and the same relative path is another file there, so a batch never mixes tenants and names its
+  own in `X-AF-Tenant`. Without an mtime (the mirror's lightbox) a key names a path, not a
+  revision, so the answer is shared only while in flight and every new look asks again. Measured in headless Chromium against the 202-image
+  folder (a throwaway copy of `scripts/gallery-perf`'s stub with a header-reading handler): the
+  first screen made **one request for 34 paths**; switching to S added one for the 28 newly
+  armed cards.
+- Shown on the card as a badge over the picture on hover / keyboard focus (on every card at once
+  it would be a grid of numbers), in the card name's tooltip, and as the first line of the
+  lightbox's (i) panel, which touch devices reach without hover.
+
 ## Options rejected
 
 - **A modal gallery** (like cleanup / archive): cheap, but it throws away everything a pane gets
@@ -469,8 +533,10 @@ decode, not the scale).
   original, it is **sometimes right**, which is worse than always wrong. The enlarged view and the
   file pane, which read the original, still show it. Putting it on the card needs an endpoint that
   reads headers via `DecodeConfig`; that is P1.
+  - *Added 2026-10-01:* that endpoint is decision 16.
 - **Asking for `thumb=256`**: less bandwidth, but the same image is decoded twice, once for the
   mirror and once here (decision 4).
+  - *Added 2026-10-01:* decision 14 asks for it on a 1x screen; decision 16 warms both edges.
 - **Resolving on click to decide whether to show the session item**: the item grows in late
   (decision 8).
 - **Deriving the session UUID in the Console**: the input to `uuidV5` (`dir + "|" + name`) is the
@@ -530,6 +596,7 @@ decode, not the scale).
   Still open: a card's right-click menu (open in a pane, download, copy path, delete); "send" to a
   session or an assistant; W x H (the header-reading endpoint); an endpoint that flattens several
   levels into one grid; tile size (S/M/L) and the matching `thumb`.
+  - *Added 2026-10-01:* W x H and the tile sizes landed as decision 16.
 - **P2 (landed 2026-09-15)**: ✅ decision 10 (a folder walked into is remembered); ✅ decision 11
   (a folder's cover and count, `peek`); ✅ decision 12 (the lightbox's screen-sized copy,
   `preview`); ✅ decision 13 (the fast path in the downscale).
@@ -538,6 +605,7 @@ decode, not the scale).
   shared-file lightbox** (the same move as decision 12, not started); **warming `preview` at
   generation time** (only `thumb=512` is warmed today, so the first enlarge of a new picture
   pays ~110 ms to decode and ~30 ms to encode).
+  - *Added 2026-10-01:* both of those landed as decision 15.
 - **P3**: generalizing to "media" including video and PDF (whether it is wanted is open
   question 2).
 

@@ -27,6 +27,7 @@ package mcpreg
 import (
 	"fmt"
 	"hash/fnv"
+	"os"
 	"sort"
 	"strings"
 )
@@ -222,7 +223,23 @@ func CodexOverrides(defs []ServerDef, opts CodexOpts) (args []string, env []stri
 // the muse driver reads these names and sends their VALUES (ADR 0095 P2-14). Two copies of
 // "what the af server needs to reach the Agent" is how a 401 with no symptom but a missing
 // report gets shipped.
+//
+// Every stdio server, a member's own included, also gets AWS_EC2_METADATA_DISABLED when the
+// Agent runs with it (awsx.IsolateWorkloadChain): a host that rebuilds the environment would
+// otherwise drop it, and an AWS SDK server with no profile would fall back to the slot's
+// instance profile on a slot that does not block IMDS at the network.
 func extraEnvVars(d ServerDef) []string {
+	return append(builtinEnvVars(d), isolationEnvVars()...)
+}
+
+func isolationEnvVars() []string {
+	if os.Getenv("AWS_EC2_METADATA_DISABLED") == "" {
+		return nil
+	}
+	return []string{"AWS_EC2_METADATA_DISABLED"}
+}
+
+func builtinEnvVars(d ServerDef) []string {
 	if d.Origin != OriginBuiltin {
 		return nil
 	}

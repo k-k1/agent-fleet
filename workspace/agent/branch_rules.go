@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -60,6 +61,40 @@ func branchRulesUserPath() string {
 	return filepath.Join(paths.AgentConfigDir(), "branch-rules-user.json")
 }
 
+// branchRulesTenantPath is the last copy of the tenant layer (decision 10).
+func branchRulesTenantPath() string {
+	return filepath.Join(paths.AgentConfigDir(), "branch-rules-tenant.json")
+}
+
+// startBranchRulesTenantSync pulls the tenant rules at boot and every five minutes. The first
+// pull is in the goroutine too: boot must not wait on the CP.
+func startBranchRulesTenantSync() {
+	go func() {
+		syncBranchRulesTenant("agent boot")
+		for range time.Tick(branchrule.TenantPollInterval) {
+			syncBranchRulesTenant("poll")
+		}
+	}()
+}
+
+// syncBranchRulesTenant pulls once. A failure keeps the cached copy (fail-open) and says so,
+// because a member whose tenant names went back to the built-in ones needs this line.
+func syncBranchRulesTenant(why string) {
+	res, err := branchrule.FetchTenant(context.Background(), branchRulesTenantPath())
+	switch {
+	case errors.Is(err, branchrule.ErrTenantBridgeOff):
+	case err != nil:
+		log.Printf("branch rules tenant sync (%s): %v (keeping cached rules)", why, err)
+	default:
+		if res.Dropped > 0 {
+			log.Printf("branch rules tenant sync (%s): dropped %d rule(s) refused by local validation", why, res.Dropped)
+		}
+		if res.Changed {
+			log.Printf("branch rules tenant sync (%s): %d rule(s)", why, res.Rules)
+		}
+	}
+}
+
 // branchTemplate is the user's default template. It has one home, ui-prefs
 // workItemBranchTemplate, which an older Console keeps rendering itself.
 func branchTemplate() string {
@@ -72,6 +107,9 @@ type branchContext struct {
 	id     string
 	repo   branchrule.Repo
 	layers []branchrule.Layer
+	// tenantFetchedAt is when the CP last confirmed the tenant layer, 0 when the cache holds
+	// no rules. A fail-open copy can be old, and sources says how old.
+	tenantFetchedAt int64
 }
 
 func loadBranchContext(w http.ResponseWriter, r *http.Request, refresh bool) (*branchContext, bool) {
@@ -91,15 +129,21 @@ func newBranchContext(ctx context.Context, dir string, refresh bool) *branchCont
 	origin, _ := gitx.GitOriginURL(dir)
 	id := branchrule.RepoID(origin)
 	repo := branchrule.ReadRepo(ctx, dir, branchrule.ReadOptions{ID: id, Bitbucket: branchBitbucket, Refresh: refresh})
+	tenant := branchrule.ReadTenant(branchRulesTenantPath())
 	layers := []branchrule.Layer{repo.Layer}
-	layers = append(layers, userBranchLayers(branchTemplate())...)
-	return &branchContext{dir: dir, id: id, repo: repo, layers: layers}
+	layers = append(layers, belowRepoLayers(branchTemplate(), tenant)...)
+	c := &branchContext{dir: dir, id: id, repo: repo, layers: layers}
+	if len(tenant.Rules) > 0 {
+		c.tenantFetchedAt = tenant.FetchedAt
+	}
+	return c
 }
 
-// userBranchLayers are the layers below the repository: the user's, then the built-in.
-func userBranchLayers(template string) []branchrule.Layer {
+// belowRepoLayers are the layers below the repository, strongest first: the user's, the
+// tenant's, then the built-in (decision 2).
+func belowRepoLayers(template string, tenant branchrule.TenantRules) []branchrule.Layer {
 	user := branchrule.ReadUser(branchRulesUserPath())
-	return []branchrule.Layer{branchrule.UserLayer(user.Rules, template), branchrule.Builtin()}
+	return []branchrule.Layer{branchrule.UserLayer(user.Rules, template), branchrule.TenantLayer(tenant), branchrule.Builtin()}
 }
 
 // resolvedKindNames is sessionx.BranchKinds: the kinds the AI branch suggestion may pick from.
@@ -122,6 +166,9 @@ func (c *branchContext) sources(fields map[string]string) map[string]any {
 		if c.repo.BitbucketFetchedAt != 0 {
 			out["bitbucket_fetched_at"] = c.repo.BitbucketFetchedAt
 		}
+	}
+	if c.tenantFetchedAt != 0 {
+		out["tenant_fetched_at"] = c.tenantFetchedAt
 	}
 	return out
 }
@@ -152,7 +199,9 @@ type branchNameOut struct {
 	Base       string `json:"base"`
 	BaseBranch string `json:"base_branch"`
 	Kind       string `json:"kind"`
-	// Provisional is always false until the English slug (P2) exists.
+	// Provisional is true while an English slug for a non-ASCII title is still being made
+	// (decision 4): the name carries the deterministic slug, and asking again later may give a
+	// better one. sources.slug is "ai" once it does.
 	Provisional bool                 `json:"provisional"`
 	Warnings    []branchrule.Warning `json:"warnings"`
 	Sources     map[string]any       `json:"sources"`
@@ -212,15 +261,29 @@ func handleBranchName(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res := branchrule.Name(c.layers, c.id, branchrule.Request{Item: item, Kind: req.Kind, Slug: req.Slug})
+	breq := branchrule.Request{Item: item, Kind: req.Kind, Slug: req.Slug}
+	res := branchrule.Name(c.layers, c.id, breq)
+	// A slug the caller gave is theirs; only the title's own slug is replaced by an English one.
+	var provisional, aiSlug bool
+	if item != nil && strings.TrimSpace(req.Slug) == "" && res.SlugUsed {
+		var en string
+		if en, provisional = englishSlugs.lookup(item.Title); en != "" {
+			breq.Slug, aiSlug = en, true
+			res = branchrule.Name(c.layers, c.id, breq)
+		}
+	}
 	warns := append(append([]branchrule.Warning{}, c.repo.Warnings...), res.Warnings...)
 	base, branch, bw := branchrule.ResolveBase(c.dir, res.Base)
 	if bw != nil {
 		warns = append(warns, *bw)
 	}
+	sources := c.sources(res.Sources)
+	if aiSlug {
+		sources["slug"] = "ai"
+	}
 	httpx.WriteJSON(w, http.StatusOK, branchNameOut{
-		Name: res.Name, NameEmpty: res.NameEmpty, Base: base, BaseBranch: branch, Kind: res.Kind,
-		Warnings: warningsOrEmpty(warns), Sources: c.sources(res.Sources), Gitflow: c.repo.Gitflow,
+		Name: res.Name, NameEmpty: res.NameEmpty, Base: base, BaseBranch: branch, Kind: res.Kind, Provisional: provisional,
+		Warnings: warningsOrEmpty(warns), Sources: sources, Gitflow: c.repo.Gitflow,
 	})
 }
 
@@ -292,8 +355,8 @@ type branchPreviewName struct {
 }
 
 // POST /branch-rules/preview renders the user's template for the work-items settings, which
-// belong to no working copy. It therefore resolves over the user and built-in layers only; a
-// repository's own declaration can still change the name at launch.
+// belong to no working copy. It therefore resolves over the user, tenant and built-in layers
+// only; a repository's own declaration can still change the name at launch.
 func handleBranchRulesPreview(w http.ResponseWriter, r *http.Request) {
 	// Bounded: every item is rendered with regular expressions and checked by running git, so
 	// the body, the item count and each field are capped.
@@ -316,7 +379,7 @@ func handleBranchRulesPreview(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	layers := userBranchLayers(strings.TrimSpace(req.Template))
+	layers := belowRepoLayers(strings.TrimSpace(req.Template), branchrule.ReadTenant(branchRulesTenantPath()))
 	out := make([]branchPreviewName, 0, len(req.Items))
 	for i := range req.Items {
 		res := branchrule.Name(layers, "", branchrule.Request{Item: &req.Items[i]})

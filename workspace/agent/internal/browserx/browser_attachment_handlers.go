@@ -248,7 +248,7 @@ func (m *browserAttachmentManager) reserveViewer(id string) (*browserAttachment,
 	if a.reserved || a.viewer != nil {
 		return nil, attachmentError(http.StatusConflict, "browser_already_attached", "browser attachment already has a viewer", nil)
 	}
-	if !workspaceBrowserViewerLeases.acquire(browserAttachmentViewerLease(a.id)) {
+	if !m.config.ViewerLeases.acquire(browserAttachmentViewerLease(a.id)) {
 		return nil, attachmentError(http.StatusConflict, "browser_already_attached", "workspace browser viewer limit reached", nil)
 	}
 	a.reserved = true
@@ -267,7 +267,7 @@ func (m *browserAttachmentManager) releaseViewerReservation(a *browserAttachment
 		a.armExpiryLocked(m.config.ViewerGrace)
 	}
 	a.mu.Unlock()
-	workspaceBrowserViewerLeases.release(browserAttachmentViewerLease(a.id))
+	m.config.ViewerLeases.release(browserAttachmentViewerLease(a.id))
 }
 
 func (m *browserAttachmentManager) attachViewer(a *browserAttachment, v *browserAttachmentViewer) bool {
@@ -278,7 +278,7 @@ func (m *browserAttachmentManager) attachViewer(a *browserAttachment, v *browser
 	defer a.mu.Unlock()
 	if a.terminal || !a.reserved || a.viewer != nil {
 		a.reserved = false
-		workspaceBrowserViewerLeases.release(browserAttachmentViewerLease(a.id))
+		m.config.ViewerLeases.release(browserAttachmentViewerLease(a.id))
 		return false
 	}
 	a.reserved = false
@@ -309,7 +309,7 @@ func (m *browserAttachmentManager) detachViewer(a *browserAttachment, v *browser
 		a.armExpiryLocked(ttl)
 	}
 	a.mu.Unlock()
-	workspaceBrowserViewerLeases.release(browserAttachmentViewerLease(a.id))
+	m.config.ViewerLeases.release(browserAttachmentViewerLease(a.id))
 	a.stopScreencast()
 }
 

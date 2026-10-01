@@ -845,6 +845,7 @@ function PopulatedPane({
           paneId={pane.id}
           path={pane.content.galleryPath}
           sort={pane.content.sort}
+          tile={pane.content.tile}
           focus={pane.content.galleryFocus}
           sessionName={pane.content.gallerySession}
           headerActions={tabHeaderActions}

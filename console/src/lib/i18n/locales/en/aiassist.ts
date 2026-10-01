@@ -25,7 +25,7 @@ export const aiassist: Record<keyof typeof jaAiassist, string> = {
   "aiassist.note_chat_title":
     "Enables/disables the \"Ask AI\" button in the assistant chat's rename dialog. Unlike sessions, a chat has no banner that proposes a title on its own — it generates only when you press the button.",
   "aiassist.note_branch_name":
-    "When creating a worktree or renaming a branch, suggests a short git-safe branch name from the conversation. It used to be silently gated by \"Session title suggestion\" — which no label ever said.",
+    "When creating a worktree or renaming a branch, suggests a short git-safe branch name from the conversation. A work-item launch whose title is not in English also gets an English slug for its branch name, once per title. It used to be silently gated by \"Session title suggestion\" — which no label ever said.",
   "aiassist.note_reply_suggest_session":
     "Shows a ✨ button on the session mirror's composer that drafts replies from the recent exchange. Tokens are spent only when you press it. Quick replies learned from your own input history (Settings > Keys) use no LLM and are a separate feature, not covered here.",
   "aiassist.note_reply_suggest_chat":

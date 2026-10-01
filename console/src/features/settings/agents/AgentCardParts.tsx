@@ -6,6 +6,7 @@ import { useT } from "../../../lib/i18n/index.ts";
 import { agentLaunchDefault, useSettings, setSettings, streamReplies, ASSISTANT_RECOMMENDED_MODEL, CLAUDE_MODELS, type StreamRepliesMode } from "../../../lib/settings.ts";
 import { useAutoConcreteModel, useEffortOptions, useModelOptions, type ModelOption } from "../../../lib/agentModels.ts";
 import { modelMatchesHidden } from "../../../lib/modelDeny.ts";
+import { CLAUDE_CUSTOM_MODEL_PLACEHOLDER } from "../../../lib/modelFallbacks.ts";
 import { forgetHiddenRepoModels } from "../../../lib/repoLast.ts";
 import { agentOf, nonPlanModeLabel } from "../../../agents/registry.ts";
 import { Choice, OnOff, Select } from "../parts/controls.tsx";
@@ -237,7 +238,7 @@ function ClaudeCustomModelsRow() {
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }}
-            placeholder="claude-opus-4-8"
+            placeholder={CLAUDE_CUSTOM_MODEL_PLACEHOLDER}
             aria-label={tr("agents.claude_custom_models_input")}
             spellCheck={false}
           />

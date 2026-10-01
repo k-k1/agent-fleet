@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -186,11 +188,56 @@ func (a ssmConfigAPI) updateProfile(w http.ResponseWriter, r *http.Request, _ st
 }
 
 func (a ssmConfigAPI) deleteProfile(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
-	if err := a.store.DeleteSSMProfile(r.Context(), r.PathValue("id"), mv.MembershipID); err != nil {
+	err := a.store.DeleteSSMProfile(r.Context(), r.PathValue("id"), mv.MembershipID)
+	var inUse *store.SSMProfileInUseError
+	if errors.As(err, &inUse) {
+		writeJSON(w, http.StatusConflict, profileInUseBody(inUse.Hosts))
+		return
+	}
+	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ssmProfileInUseResp is the 409 for deleting a profile that hosts still use. Written by
+// hand rather than through writeAPIErr because the Console names the hosts, and only the
+// server knows them at the moment of the refusal: its own list may be stale. `error` keeps
+// the shared {code, message} shape, so a caller that reads only that still gets a sentence.
+type ssmProfileInUseResp struct {
+	Error apiErrorBody `json:"error"`
+	// Hosts are the aliases of the hosts that reference the profile, ordered by alias.
+	Hosts []string `json:"hosts"`
+}
+
+type apiErrorBody struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+func profileInUseBody(hosts []store.SSMHost) ssmProfileInUseResp {
+	aliases := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		aliases = append(aliases, h.Alias)
+	}
+	return ssmProfileInUseResp{
+		Error: apiErrorBody{
+			Code: "ssm_profile_in_use",
+			Message: fmt.Sprintf("the profile is used by %d host(s): %s; point them at another profile or delete them first",
+				len(aliases), strings.Join(aliases, ", ")),
+		},
+		Hosts: aliases,
+	}
+}
+
+// hostWriteErr maps a store error from CreateSSMHost / UpdateSSMHost, where a profile the
+// member does not have (never had, or just deleted) is refused.
+func hostWriteErr(err error) *apiError {
+	if errors.Is(err, store.ErrSSMProfileNotFound) {
+		return &apiError{http.StatusBadRequest, "bad_profile", "unknown profileId"}
+	}
+	return internalErr(err)
 }
 
 // --- SSM hosts -------------------------------------------------------------------
@@ -208,9 +255,10 @@ func (a ssmConfigAPI) listHosts(w http.ResponseWriter, r *http.Request, _ store.
 	writeJSON(w, http.StatusOK, out)
 }
 
-// validateHost trims and checks a host DTO, and verifies the referenced profile
-// belongs to the caller. Returns a normalized SSMHost (id/created_at unset).
-func (a ssmConfigAPI) validateHost(ctx context.Context, mv store.MembershipView, in ssmHostDTO) (store.SSMHost, *apiError) {
+// validateHost trims and checks a host DTO. Returns a normalized SSMHost (id/created_at
+// unset). Whether the profile exists and is the caller's is the store's call, made in the
+// same transaction as the write (hostWriteErr).
+func (a ssmConfigAPI) validateHost(mv store.MembershipView, in ssmHostDTO) (store.SSMHost, *apiError) {
 	h := store.SSMHost{
 		MembershipID: mv.MembershipID,
 		Alias:        strings.TrimSpace(in.Alias),
@@ -228,13 +276,6 @@ func (a ssmConfigAPI) validateHost(ctx context.Context, mv store.MembershipView,
 	if h.ProfileID == "" {
 		return store.SSMHost{}, &apiError{http.StatusBadRequest, "bad_profile", "profileId is required"}
 	}
-	p, found, err := a.store.GetSSMProfile(ctx, h.ProfileID)
-	if err != nil {
-		return store.SSMHost{}, internalErr(err)
-	}
-	if !found || p.MembershipID != mv.MembershipID {
-		return store.SSMHost{}, &apiError{http.StatusBadRequest, "bad_profile", "unknown profileId"}
-	}
 	return h, nil
 }
 
@@ -244,7 +285,7 @@ func (a ssmConfigAPI) createHost(w http.ResponseWriter, r *http.Request, _ store
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
 		return
 	}
-	h, aerr := a.validateHost(r.Context(), mv, in)
+	h, aerr := a.validateHost(mv, in)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
@@ -252,7 +293,7 @@ func (a ssmConfigAPI) createHost(w http.ResponseWriter, r *http.Request, _ store
 	h.ID = store.NewID()
 	h.CreatedAt = store.NowTS()
 	if err := a.store.CreateSSMHost(r.Context(), h); err != nil {
-		writeAPIErr(w, internalErr(err))
+		writeAPIErr(w, hostWriteErr(err))
 		return
 	}
 	writeJSON(w, http.StatusCreated, hostToDTO(h))
@@ -274,7 +315,7 @@ func (a ssmConfigAPI) updateHost(w http.ResponseWriter, r *http.Request, _ store
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
 		return
 	}
-	h, aerr := a.validateHost(r.Context(), mv, in)
+	h, aerr := a.validateHost(mv, in)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
@@ -282,7 +323,7 @@ func (a ssmConfigAPI) updateHost(w http.ResponseWriter, r *http.Request, _ store
 	h.ID = cur.ID
 	h.CreatedAt = cur.CreatedAt
 	if err := a.store.UpdateSSMHost(r.Context(), h); err != nil {
-		writeAPIErr(w, internalErr(err))
+		writeAPIErr(w, hostWriteErr(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, hostToDTO(h))

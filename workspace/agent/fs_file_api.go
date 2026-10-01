@@ -321,13 +321,17 @@ func handleFSDownload(w http.ResponseWriter, r *http.Request) {
 			edge, mode = e, modePreview
 		}
 	}
+	// The cache knows a file by its absolute path, never by the spelling the request used: the
+	// warm-up (imagegen, `warm=`) only has the absolute one, and a relative key would make
+	// every entry it writes one that no request reads.
+	full := filepath.Join(path.root, path.relative)
 	// Files in the thumbnail cache are served as they are (inThumbCache): thumbnailing them
 	// is what makes a gallery on that folder fill it without end.
-	if edge > 0 && inThumbCache(filepath.Join(path.root, path.relative)) {
+	if edge > 0 && inThumbCache(full) {
 		edge = 0
 	}
 	if edge > 0 {
-		if data, ct, ok := thumbnail(opened.file, path.display, fi.Size(), fi.ModTime(), edge, mode); ok {
+		if data, ct, ok := thumbnail(opened.file, full, fi.Size(), fi.ModTime(), edge, mode); ok {
 			w.Header().Set("Content-Type", ct)
 			w.Header().Set("Content-Disposition", "inline; filename*=UTF-8''"+url.PathEscape(name))
 			setVersionedCache(w, r, fi.ModTime())

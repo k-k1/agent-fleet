@@ -250,6 +250,15 @@ Beside the label, a badge shows the login state: **Signed in**, **Renews on use*
 while the portal session is open, the next use renews it) or **Not signed in**. It shows no time left: the
 workspace knows only the access token's expiry (about an hour), not when the portal session ends.
 
+Every profile and host row has **Edit**, which opens the same form filled in and saves it in place. Edit rather
+than delete and re-add: a host refers to its profile by an internal ID, so a re-added profile is a new one.
+A profile that hosts still use cannot be deleted — the page names those hosts; edit them to pick another
+profile, or delete them, first. A host that was left without a profile before this rule (its row says so) is
+fixed the same way: edit it and pick a profile.
+A profile's workspace name comes from its label, and the login belongs to that name: changing the label, or the
+start URL / SSO region, means logging in again: the form warns you, and the row shows **Log in again** until you log in from it. The workspace's `~/.aws/config` picks up
+the change within 5 minutes, or at once when you press **Log in**; sessions already open keep the old settings.
+
 **No AWS secrets are stored in Agent Fleet.** Login happens at session start via the device-code flow — you
 approve the **`aws sso login`** URL shown in the terminal in your browser — and short-lived credentials are held
 only inside the workspace.
@@ -297,15 +306,36 @@ Open the URL it prints and approve the code — only a code you started yourself
 SSM sessions of the same profile, so logging in once covers both.
 
 **Running one command as you: `af-aws-exec`.** The workspace can have an AWS identity of its own (a *workload
-role*). A command that names no profile at all — a bare `aws …`, an SDK's default credential chain, a build tool
-with no profile setting — then quietly runs as that role instead of as you, in another account. (A named profile
-that is misspelled or logged out fails with an error instead.) For deployments, lookups in your accounts and
-anything else that must use your authorization, pass your credentials explicitly:
+role*), and the machine underneath can have one too. In a container workspace (docker or AWS ECS) your sessions and
+terminals do not get either: the Agent keeps the workspace's credentials variables out of everything it starts, the
+SDKs' instance metadata lookup is switched off (`AWS_EC2_METADATA_DISABLED=true`), and EC2 hosts set up by Agent
+Fleet block instance metadata for workspaces. (A workspace that runs directly on your own machine is left as it is:
+an instance role there is your machine's, and the SDKs still find it.) So a
+command that names no profile at all — a bare `aws …`, an SDK's default credential chain, a build tool with no
+profile setting — fails with "Unable to locate credentials" (or its SDK's wording) instead of running as the
+workspace. (A named profile that is misspelled or logged out fails with its own error.) Your administrator can let
+the workspace use its own task role again (on AWS ECS); then such a command quietly runs as that role, in another
+account. Either way, do not look for credentials elsewhere: for deployments, lookups in your accounts and anything else that must
+use your authorization, pass your credentials explicitly:
 
 ```sh
 af-aws-exec --profile <name> -- ./gradlew deploy
 af-aws-exec --profile <name> -- npx cdk deploy
 ```
+
+**Example: a build tool with an S3 upload plugin.** A Gradle deploy task built on an AWS plugin (an S3 upload
+task, for instance) with no profile in the build script asks the SDK's default chain: environment variables, JVM
+system properties, the `default` profile in `~/.aws`, then the container credentials and instance metadata. In a
+session, `./gradlew uploadArtifact` therefore stops with "Unable to load AWS credentials from any provider in the
+chain" rather than uploading the artifact as the workspace's role. Run it as you, naming the account:
+
+```sh
+af-aws-exec --profile <name> --account <id> --region <region> -- ./gradlew uploadArtifact
+```
+
+The plugin then finds the profile's short-lived credentials in its environment, the first place the chain looks,
+and the "running as" line shows who uploads. If the build script names a profile itself (`profileName = "prod"`,
+say), see "could not be found" below.
 
 - It passes the profile's **short-lived** credentials to that one command through its environment only —
   `af-aws-exec` itself writes them nowhere and prints nothing but the identity the command runs as. (The AWS CLI

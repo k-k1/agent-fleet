@@ -47,6 +47,7 @@ vi.mock("../../core/api/client.ts", () => ({
 }));
 
 const { LaunchModal } = await import("./LaunchModal.tsx");
+const { launchBranchTiming } = await import("./useLaunchBranchName.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { resetAttachDraftDB } = await import("../../lib/attachDraft.ts");
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
@@ -134,6 +135,7 @@ const resolved = (over: Json = {}): Json => ({
 });
 
 beforeEach(() => {
+  launchBranchTiming.reaskMs = 20;
   localStorage.clear();
   globalThis.indexedDB = new IDBFactory();
   resetAttachDraftDB();
@@ -188,6 +190,40 @@ describe("work-item launch through the branch-name resolver", () => {
     // Nothing initialises by itself: the write came from the press, and the base follows it.
     expect(baseField().value).toBe("develop");
     expect(document.querySelector(".launch-gitflow-suggest")).toBeNull();
+  });
+
+  it("asks once more after a provisional answer and takes the English slug", async () => {
+    let asks = 0;
+    branchName = async () =>
+      ++asks === 1 ? resolved({ name: "fix/45", provisional: true }) : resolved({ sources: { slug: "ai" } });
+    launchBranchTiming.reaskMs = 300;
+    await render();
+    await click(secHead());
+    expect(nameField().value).toBe("fix/45");
+    expect(asks).toBe(1);
+    await act(async () => void (await new Promise((r) => setTimeout(r, 350))));
+    await settle();
+    expect(nameField().value).toBe("fix/45-empty-list-after-login");
+    expect(asks).toBe(2);
+  });
+
+  it("asks only once more, and keeps a name the person edited meanwhile", async () => {
+    let asks = 0;
+    branchName = async () => (++asks === 1 ? resolved({ name: "fix/45", provisional: true }) : resolved({ provisional: true }));
+    await render();
+    await click(secHead());
+    await typeInto(nameField(), "fix/45-mine");
+    await act(async () => void (await new Promise((r) => setTimeout(r, 100))));
+    await settle();
+    expect(nameField().value).toBe("fix/45-mine");
+    expect(asks).toBe(2);
+  });
+
+  it("does not ask again after a final answer", async () => {
+    await render();
+    await act(async () => void (await new Promise((r) => setTimeout(r, 40))));
+    await settle();
+    expect(apiJSONMock.mock.calls.filter((c) => c[0] === "api/repos/web/branch-name")).toHaveLength(1);
   });
 
   it("keeps the Console's own suggestion when the Agent has no resolver", async () => {

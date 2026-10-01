@@ -89,7 +89,8 @@ func mcpServerConfig(d mcpreg.ServerDef, owner string) msp.SessionMCPServerConfi
 	//
 	// It is the builtins that need this, which is the same rule mcpreg applies for codex
 	// (ForwardEnvNames): a user-registered server declares whatever environment it needs in the
-	// definition, and that is already copied above.
+	// definition, and that is already copied above. The one name every server gets is
+	// AWS_EC2_METADATA_DISABLED while the Agent withholds the workload role.
 	//
 	// The secrets do not reach disk: measured against the real host (live_test.go), a value
 	// passed in this map does not appear anywhere under muse's own store. It does reach the

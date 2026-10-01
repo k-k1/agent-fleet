@@ -284,6 +284,17 @@ func TestFSResolveProxyRouteRegistered(t *testing.T) {
 	}
 }
 
+// The gallery's W x H (workspace/agent/fs_imagesize.go): same allow-list, and a missing
+// registration is silent — every card would simply have no size to show.
+func TestFSImageSizeProxyRouteRegistered(t *testing.T) {
+	_, mux := smokeEnv(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/fs/imagesize", nil)
+	_, pattern := mux.Handler(req)
+	if pattern != "POST /api/fs/imagesize" {
+		t.Fatalf("route pattern=%q", pattern)
+	}
+}
+
 // Editor AI edit suggestions (docs/log/44 Phase 4): the CP is an explicit allow-list, so
 // a missing /api/fs/suggest-edit registration against the Agent's route is caught here.
 func TestFSSuggestEditProxyRouteRegistered(t *testing.T) {

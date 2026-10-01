@@ -519,6 +519,7 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "list_models", minScope: scopeRead,
+			// model-id-lint:allow an example id in the tool description; it names no default.
 			desc: "List the launch-time models for `kind`. claude returns its fixed tier aliases; codex, opencode, agy, copilot, cursor and kiro return the live catalog reflecting the user's connected providers; copilot's reflects the account's Copilot plan (empty on Free = Auto only; omit model for auto routing); cursor's is an account-linked catalog with effort folded into the model id; kiro's is account-linked and allows named models even on Free (default auto); lcpp needs no sign-in and returns the models in the deployment's own engine catalog (empty on a deployment with no engine); muse returns its signed-in account catalog. Before creating a session with a model override, call this and use a returned id. Resolve a user shorthand such as `terra` to its matching returned full id (for example `gpt-5.6-terra`). The list already excludes models the user turned off in settings — never pass a model name from memory or an earlier conversation; a create_session naming an excluded model is rejected.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{
 				"kind": map[string]any{"type": "string", "description": "claude | codex | opencode | agy | copilot | cursor | kiro | lcpp | muse"},
