@@ -102,6 +102,12 @@ echo "aws $*" >> "$STUB_LOG"
 args="$*"
 case "$args" in
   *"sts get-caller-identity"*) echo "123456789012" ;;
+  # STUB_POOL_DEPLOY_FAIL=1: the slot pool's stack update fails (a rollback, a refused
+  # capability). update.sh must then leave 20-platform untouched.
+  *"cloudformation deploy --stack-name t-pool"*)
+    if [ "${STUB_POOL_DEPLOY_FAIL:-0}" = 1 ]; then
+      echo "Failed to create/update the stack. Status: UPDATE_ROLLBACK_COMPLETE" >&2; exit 255
+    fi ;;
   *"cloudformation list-exports"*"SlotLaunchTemplateId"*)
     case "${STUB_POOL_EXPORT:-ok}" in
       fail) echo "An error occurred (AccessDenied) when calling the ListExports operation" >&2; exit 254 ;;
@@ -953,6 +959,39 @@ order "$ET_GHCR" "cloudformation deploy --stack-name af-ecs-engines"
 # owns the repositories, the cluster and the task roles is not something a release does.
 grep -q "· Add EcrEngineTools" "$WORK/out3i" || fail "the 20-platform change set was executed without showing it"
 order "cloudformation describe-change-set" "cloudformation execute-change-set"
+
+echo "== case 3i-pool: the slot pool goes in BEFORE 20-platform, and its failure stops the update =="
+#
+# 40-ec2-pool carries the CP's iam:PassRole for the slot role; 20-platform's template no longer
+# grants any. 20-platform first would leave every slot grow on AccessDenied whenever the
+# update stops between the two (a missing image, a refused change set, a pool rollback).
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3ip" 2>&1 \
+  || { cat "$WORK/out3ip"; fail "update.sh failed on the ordinary ecs-ec2 path"; }
+order "cloudformation deploy --stack-name t-pool" "cloudformation deploy --stack-name t-platform"
+order "cloudformation deploy --stack-name t-pool" "cloudformation execute-change-set"
+# The pool's deploy failing: 20-platform is neither change-setted nor executed, and nothing
+# after it runs, so the live 20-platform keeps whatever PassRole it had.
+: > "$LOG"
+rc=0
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_POOL_DEPLOY_FAIL=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3ip2" 2>&1 || rc=$?
+[ "$rc" != 0 ] || { cat "$WORK/out3ip2"; fail "update.sh carried on after the slot pool's deploy failed"; }
+has "cloudformation deploy --stack-name t-pool"
+hasnt "cloudformation deploy --stack-name t-platform"
+hasnt "cloudformation execute-change-set"
+hasnt "cloudformation deploy --stack-name t-ingress"
+# A missing release image stops the update after the pool and 20-platform: the pool's grant is
+# already in place by then (the order above), so the slot grow survives that stop too.
+: > "$LOG"
+rc=0
+VERSION=9.9.9-dev-test STUB_ECR_HAS=0 STUB_ENGINES_LIVE=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3ip3" 2>&1 || rc=$?
+[ "$rc" != 0 ] || { cat "$WORK/out3ip3"; fail "update.sh carried on with the release image missing"; }
+grep -q "not in ECR" "$WORK/out3ip3" || { cat "$WORK/out3ip3"; fail "the missing image was not the stop"; }
+has "cloudformation deploy --stack-name t-pool"
+hasnt "cloudformation deploy --stack-name t-ingress"
 
 echo "== case 3i-2: a tag that is already in ECR is not copied again =="
 # The control for the case above. A step that copies on every run passes 3i and is still wrong:

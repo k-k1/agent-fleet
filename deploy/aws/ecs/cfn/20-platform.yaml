@@ -324,9 +324,11 @@ Resources:
               # allowed: AttachVolume / DetachVolume name the instance and the volume,
               # CreateSnapshot the source volume and the new snapshot, CreateVolume the new
               # volume and, when restoring, the source snapshot. The create statements below
-              # are one action and one resource type each on purpose: aws:RequestTag is a
-              # property of the request, so a CreateVolume statement that also listed
-              # snapshot/* would let any snapshot in the account be restored into this pool.
+              # are one action and one resource type each on purpose: if AWS presented the
+              # request's tags when it evaluates the source too (the Service Authorization
+              # Reference does not list aws:RequestTag there, so it probably does not), a
+              # CreateVolume statement that also listed snapshot/* would let any snapshot in
+              # the account be restored into this pool. One type each holds either way.
               #
               # Every resource the CP mutates is found through af-pool, or through
               # af-membership, which only ever lands together with af-pool; the inventory is
@@ -420,10 +422,14 @@ Resources:
               # snapshot in a block device mapping, so a compromised CP can boot a slot of its
               # own from a copy of another volume and read it there (#1522). The image the
               # launch template names is Amazon's and carries no tag to test.
+              # The excluded ARN is every instance in every region and account, not this
+              # region's: NotResource matches everything it does not name, so excluding only
+              # this region's instances would let a launch in another region create an
+              # untagged instance through this statement alone.
               - Sid: Ec2LaunchSupport
                 Effect: Allow
                 Action: ec2:RunInstances
-                NotResource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+                NotResource: "arn:aws:ec2:*:*:instance/*"
               # --- Tag writes: the fence under the SendCommand fence ---
               # SsmSlotCommandInstances trusts af-pool + af-role=slot, so whoever may write
               # those two tags decides where this role gets a root shell. An unconditioned

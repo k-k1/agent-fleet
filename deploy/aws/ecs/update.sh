@@ -213,9 +213,9 @@ if [ -n "$ENGINES_STACK" ]; then
   [ "$comfy_on" = true ] && COMFY_PULLED=1
 fi
 echo "==> plan for $STACK (ImageTag=$VERSION):"
+[ -n "$POOL_STACK" ] && echo "      0. $POOL_STACK (40-ec2-pool — before 20-platform: it carries the CP's slot PassRole)"
 echo "      1. $AF_STACK_PLATFORM (20-platform — it owns the ECR repositories)"
 [ "$PUSH" = 1 ] && echo "      2. release-ecr.sh (push af-control-plane / af-workspace :$VERSION)"
-[ -n "$POOL_STACK" ] && echo "      3. $POOL_STACK (40-ec2-pool)"
 [ -n "$TTS_STACK" ] && echo "      3. $TTS_STACK (50-tts)"
 if [ -n "$ENGINES_STACK" ]; then
   if [ "$COMFY_REPAIR" = 1 ] && [ "$COMFY_PULLED" = 1 ]; then
@@ -258,6 +258,32 @@ ERROR: $ENGINES_STACK still imports $sdcpp_export (ADR 0083 retired it from 20-p
        Deploying 20-platform first would try to delete an export still in use and roll back.
 EOF
     exit 1
+  fi
+fi
+
+# --- 1a-0) the EC2 slot pool, when this deployment has one (ecs-ec2) ------------------
+# Kept in step for the same reason as 50-tts: the slot user data carries security settings
+# (ECS_AWSVPC_BLOCK_IMDS keeps workspace tasks off the slot's instance profile), and a pool
+# left on an old template launches every future slot without them. It only adds a launch
+# template version; the CP takes $Latest when it launches a slot, so running slots and
+# their homes are untouched, and slots launched before it keep the old user data until
+# they are replaced (README "Patching slots"). SlotAmiId resolves at this update, which is
+# how slots get patched anyway.
+#
+# BEFORE 20-platform, the reverse of this script's usual order: this stack carries the CP's
+# iam:PassRole for its slot role (CpPassSlotRolePolicy), and the 20-platform template no
+# longer grants any. Deployed second, any stop in between - a failed image check, a refused
+# change set, this deploy rolling back - leaves a CP that cannot grow a slot (AccessDenied
+# on PassRole) until somebody notices. Deployed first, a failure here leaves 20-platform
+# untouched, and a failure after it leaves both grants in place. It needs nothing new from
+# 20-platform: CpTaskRoleArn and the other imports are exports every 20-platform has.
+if [ -n "$POOL_STACK" ]; then
+  echo "==> cloudformation deploy $POOL_STACK (40-ec2-pool, parameters unchanged)"
+  if [ "$DRY" = 1 ]; then
+    echo "DRY: aws cloudformation deploy --stack-name $POOL_STACK --template-file $HERE/cfn/40-ec2-pool.yaml --capabilities CAPABILITY_NAMED_IAM"
+  else
+    af_cfn_deploy "$POOL_STACK" "$HERE/cfn/40-ec2-pool.yaml" --no-fail-on-empty-changeset \
+      --capabilities CAPABILITY_NAMED_IAM
   fi
 fi
 
@@ -431,28 +457,6 @@ if [ -z "$CLUSTER" ] || [ "$CLUSTER" = "None" ] || [ -z "$CP_SERVICE" ]; then
   exit 1
 fi
 echo "==> stack=$STACK cluster=$CLUSTER cp-service=$CP_SERVICE"
-
-# --- 1d-2) the EC2 slot pool, when this deployment has one (ecs-ec2) ------------------
-# Kept in step for the same reason as 50-tts: the slot user data carries security settings
-# (ECS_AWSVPC_BLOCK_IMDS keeps workspace tasks off the slot's instance profile), and a pool
-# left on an old template launches every future slot without them. It only adds a launch
-# template version; the CP takes $Latest when it launches a slot, so running slots and
-# their homes are untouched, and slots launched before it keep the old user data until
-# they are replaced (README "Patching slots"). SlotAmiId resolves at this update, which is
-# how slots get patched anyway.
-# It also carries the CP's iam:PassRole for the slot role (CpPassSlotRolePolicy); 20-platform
-# no longer grants it. A deployment whose 20-platform is newer than its pool stack - between
-# the two deploys, or when this one fails - cannot grow a slot (AccessDenied on PassRole);
-# running slots, wakes and homes are unaffected.
-if [ -n "$POOL_STACK" ]; then
-  echo "==> cloudformation deploy $POOL_STACK (40-ec2-pool, parameters unchanged)"
-  if [ "$DRY" = 1 ]; then
-    echo "DRY: aws cloudformation deploy --stack-name $POOL_STACK --template-file $HERE/cfn/40-ec2-pool.yaml --capabilities CAPABILITY_NAMED_IAM"
-  else
-    af_cfn_deploy "$POOL_STACK" "$HERE/cfn/40-ec2-pool.yaml" --no-fail-on-empty-changeset \
-      --capabilities CAPABILITY_NAMED_IAM
-  fi
-fi
 
 # --- 1e) the speech engine stack, when this deployment has one (ADR 0070) -------------
 # Kept in step with the repo the same way 30-ingress is: a release ships template fixes,

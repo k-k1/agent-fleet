@@ -24,9 +24,13 @@ So the inventory lives here, with the resources each call names, and this check 
   - one of the ATTACKS would be allowed.
 
 A request is allowed only when EVERY resource it names is allowed by some statement, as
-IAM authorizes EC2 actions. aws:RequestTag is a property of the request, so it is present
-on each of those resources, the source volume or snapshot included - which is the reason
-the create statements must name one resource type each.
+IAM authorizes EC2 actions. aws:RequestTag / aws:TagKeys are copied onto every one of those
+resources, the source volume or snapshot included. That is an assumption, and the
+conservative one: the Service Authorization Reference does not list aws:RequestTag for the
+snapshot of CreateVolume or the volume of CreateSnapshot, so AWS may well never present it
+there. Modelled this way, a statement that would admit a foreign source IF AWS did present
+it fails here - which is why the create statements name one resource type each. It proves
+nothing about what AWS presents.
 
 It is not the IAM policy simulator, and it does not prove which resources AWS evaluates for
 a given call: that list (per the Service Authorization Reference) is written down here,
@@ -71,7 +75,8 @@ def plain(arn):
 
 def request(action, resources, request_tags=None, extra=None):
     """An EC2 request: the action, every resource it names, and the tags it carries.
-    RequestTag / TagKeys are request-wide, so they are added to every resource."""
+    RequestTag / TagKeys are added to every resource (the conservative reading; see the
+    module docstring)."""
     rt = {}
     if request_tags:
         rt["aws:TagKeys"] = list(request_tags)
@@ -98,6 +103,12 @@ SPOT = plain("arn:aws:ec2:%s:%s:spot-instances-request/sir-new" % (REGION, ACCOU
 
 def run(tags, extra_resources=()):
     return request("ec2:RunInstances", [new("instance")] + LAUNCH_SUPPORT + list(extra_resources), tags)
+
+
+def elsewhere(req, region="us-west-2"):
+    """The same request sent to another region's endpoint: every ARN names that region."""
+    action, resources = req
+    return action, [(arn.replace(":%s:" % REGION, ":%s:" % region), ctx) for arn, ctx in resources]
 
 
 def pass_role(role_arn, service="ec2.amazonaws.com"):
@@ -253,6 +264,12 @@ ATTACKS = [
      run(None)),
     ("launch an instance into another pool",
      run(dict(SLOT, **{"af-pool": "another-deployment"}))),
+    ("launch an untagged instance in another region",
+     elsewhere(run(None))),
+    ("launch an instance tagged into another pool in another region",
+     elsewhere(run(dict(SLOT, **{"af-pool": "another-deployment"})))),
+    ("launch a pool-tagged instance in another region",
+     elsewhere(run(SLOT))),
     ("pass another deployment's slot role",
      pass_role("arn:aws:iam::%s:role/af-other-pool-slot" % ACCOUNT)),
     ("pass this stack's slot role to a service other than EC2",
@@ -461,9 +478,9 @@ def main():
         action, resources = request("ec2:CreateVolume", [new("volume"), ec2("snapshot", "snap-x", FOREIGN)], HOME)
         if not allowed_request(wide, action, resources, could=True)[0]:
             failed += 1
-            print("FAIL  evaluator control: RequestTag is not modelled as request-wide")
+            print("FAIL  evaluator control: RequestTag is not copied onto the source resource")
         else:
-            print("ok    evaluator control: a RequestTag statement over both types admits a foreign snapshot")
+            print("ok    evaluator control: a RequestTag statement over both types would admit a foreign snapshot")
     except ValueError as e:
         print("cfn-cp-ec2-scope-test: %s" % e)
         return 2
