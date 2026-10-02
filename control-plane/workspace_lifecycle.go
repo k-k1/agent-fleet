@@ -495,6 +495,9 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 			// into ~/.aws/config. Its own credential; a leak reads that non-secret list
 			// and nothing else.
 			"AF_AWS_PROFILES_TOKEN="+mintAWSProfilesToken(awsProfilesSignKey(m.tokenSignMaster()), ws.MembershipID),
+			// Google Cloud profiles bridge (ADR 0107 decision 1): the same pull for Settings →
+			// Google Cloud, under a token of its own so neither bridge opens the other's list.
+			"AF_GCP_PROFILES_TOKEN="+mintGCPProfilesToken(gcpProfilesSignKey(m.tokenSignMaster()), ws.MembershipID),
 			// Branch rules bridge (ADR 0103 decision 10): the agent polls its tenant's branch
 			// naming rules. Its own credential; a leak reads those rules and nothing else.
 			"AF_BRANCH_RULES_TOKEN="+mintBranchRulesToken(branchRulesSignKey(m.tokenSignMaster()), ws.MembershipID))

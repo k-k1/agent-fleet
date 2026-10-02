@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 224
+# count: 249
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -47,6 +47,31 @@ engineObjectRow.placement string
 engineObjectRow.role_dir string
 engineObjectRow.source string,omitempty
 engineObjectRow.state string
+gcpProfileDTO.account string
+gcpProfileDTO.conflict.labels [string]
+gcpProfileDTO.conflict.reason string
+gcpProfileDTO.id string
+gcpProfileDTO.impersonateServiceAccount string
+gcpProfileDTO.label string
+gcpProfileDTO.loginMethod string
+gcpProfileDTO.name string
+gcpProfileDTO.project string
+gcpProfileDTO.quotaProject string
+gcpProfileDTO.region string
+gcpProfileDTO.zone string
+gcpProfilesResponse.conflicts[].labels [string]
+gcpProfilesResponse.conflicts[].name string
+gcpProfilesResponse.profiles[].account string
+gcpProfilesResponse.profiles[].id string
+gcpProfilesResponse.profiles[].impersonateServiceAccount string
+gcpProfilesResponse.profiles[].label string
+gcpProfilesResponse.profiles[].loginMethod string
+gcpProfilesResponse.profiles[].name string
+gcpProfilesResponse.profiles[].project string
+gcpProfilesResponse.profiles[].quotaProject string
+gcpProfilesResponse.profiles[].region string
+gcpProfilesResponse.profiles[].updatedAt string
+gcpProfilesResponse.profiles[].zone string
 imageInfo.digest string,omitempty
 imageInfo.repo string
 imageInfo.tag string,omitempty

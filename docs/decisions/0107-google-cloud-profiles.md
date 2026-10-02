@@ -307,3 +307,25 @@ start, and GKE pulls per node — for a tool a fraction of members use.
 | 1 | Decisions 1, 2, 4 and the phase-1 notes; the login from a terminal | a member runs `gcloud`, `terraform plan` (with an API that needs a quota project) and `kubectl` against a GKE cluster through the wrapper; a project mismatch is refused; open question 1 is answered |
 | 2 | Decision 3 | an agent's `af-gcloud-exec` is finished from the Console without a terminal; a code submitted to any other attempt is refused; a synthetic code, token and URL appear in no CP, Agent or gcloud log |
 | 3 | The badge, the guide, open questions 2–4 | the notes list the measured tools |
+
+## Note — what `install-gcloud` installs, measured (2026-10-02)
+
+Issue #1495. Nothing above is changed; this records the phase-1 installer's measurements for open
+question 4, on 587.0.0 in a workspace.
+
+- **Size.** The x86_64 archive is 84 MiB (arm: 51 MiB) and unpacks to 486 MB. After `install.sh` with
+  `gke-gcloud-auth-plugin` the tree is **832 MB**: about 170 MB of it is `__pycache__` that `install.sh`
+  compiles, 122 MB the bundled Python, 82 MB `gsutil` and 22 MB `bq`. Leaving any of them out is not
+  attempted yet; the question stays open.
+- **The plugin is pinned too.** It is not in the archive. With
+  `CLOUDSDK_COMPONENT_MANAGER_FIXED_SDK_VERSION=<pin>`, `install.sh` reports "Installing components from
+  version: 587.0.0", so the component comes from that version's snapshot (checked against its checksums)
+  and not from whatever is current. The archive itself is checked against the sha256 in `versions.json`;
+  Google publishes checksums only for the current release, so the pinned sums are computed from the
+  downloaded archives.
+- **`gcloud --version` is not harmless.** Run without `CLOUDSDK_CONFIG` it creates `~/.config/gcloud`,
+  writes a log file there and records a metadata-server probe (`gce`). The installer therefore runs with a
+  throwaway config root and the caller's `CLOUDSDK_*`, `GOOGLE_*`, `GCLOUD_*` and `GCE_METADATA_*`
+  variables removed, and the Toolchain tab reads the SDK's `VERSION` file instead of running gcloud.
+- **The tree is relocatable.** It is installed in a staging directory and renamed into place; gcloud and
+  the plugin run from the new path and through the `~/.local/bin` links.

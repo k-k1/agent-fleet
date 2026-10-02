@@ -87,6 +87,10 @@ func wireGoldenTypes() []struct {
 		// — and the row it feeds is the one that answers "is `tested` old because upstream
 		// is quiet, or because the watcher fell over?".
 		{"cliReleaseWire", reflect.TypeOf(cliReleaseWire{})},
+		// Google Cloud profiles (ADR 0107): a shared contract between parallel lanes — the
+		// Settings row the Console draws and the bridge body the Agent pulls.
+		{"gcpProfileDTO", reflect.TypeOf(gcpProfileDTO{})},
+		{"gcpProfilesResponse", reflect.TypeOf(gcpProfilesResponse{})},
 	}
 }
 

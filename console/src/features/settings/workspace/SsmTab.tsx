@@ -23,7 +23,7 @@ import { useProfileLogout } from "../../awslogin/useProfileLogout.ts";
 
 // postJSON POSTs/PUTs and surfaces failures loudly (a stale CP without the routes
 // returns 404 non-JSON, which would otherwise be swallowed). Returns true on success.
-async function postJSON(path: string, method: string, body: unknown, toast: (msg: string) => void): Promise<boolean> {
+export async function postJSON(path: string, method: string, body: unknown, toast: (msg: string) => void): Promise<boolean> {
   let res;
   try {
     res = await rawJSON(path, method, body);
@@ -42,7 +42,7 @@ async function postJSON(path: string, method: string, body: unknown, toast: (msg
 // a refused delete leaves the row, and its form and marks with it. "in_use" is the server
 // refusing a profile that hosts still use (409 ssm_profile_in_use), which means this
 // page's host list is stale.
-async function deleteRow(path: string, toast: (msg: string) => void): Promise<"ok" | "in_use" | "failed"> {
+export async function deleteRow(path: string, toast: (msg: string) => void): Promise<"ok" | "in_use" | "failed"> {
   let res;
   try {
     res = await raw(path, { method: "DELETE" });
@@ -80,7 +80,7 @@ function failDetailOf(res: Response, j: any): string {
 // from and its format). Required vs optional is conveyed per-field (the * marker + hint),
 // so one group suffices — no separate required / advanced boxes. `title` is optional
 // (omitted for the single merged group).
-function FieldGroup({ title, optional, children }: { title?: ReactNode; optional?: ReactNode; children: ReactNode }) {
+export function FieldGroup({ title, optional, children }: { title?: ReactNode; optional?: ReactNode; children: ReactNode }) {
   return (
     <div className="ssm-fgroup">
       {title && (
@@ -184,7 +184,7 @@ export function resetReloginMarks(): void {
 }
 
 // pick copies a row's form fields as strings, so a field the CP left out edits as "".
-function pick(row: any, empty: Record<string, string>): Record<string, string> {
+export function pick(row: any, empty: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const k of Object.keys(empty)) out[k] = row?.[k] == null ? "" : String(row[k]);
   return out;

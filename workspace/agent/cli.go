@@ -100,6 +100,13 @@ var subcommands = []subcommand{
 		run:     runInstallAWSCLI,
 	},
 	{
+		// The Google Cloud SDK (~0.5 GB unpacked) is installed on demand, never baked
+		// (ADR 0107 decision 4).
+		name:    "install-gcloud",
+		summary: "download the pinned Google Cloud SDK (core + gke-gcloud-auth-plugin)",
+		run:     runInstallGCloud,
+	},
+	{
 		// kiro is ~855MB extracted, so unlike the other agent CLIs it is not baked for
 		// everyone: the launch program and the connection card run this on demand.
 		name:    "install-kiro",

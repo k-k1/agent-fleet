@@ -1,9 +1,9 @@
 // BackupTab — settings export / import (docs/log/79 / ADR 0060).
 //
 // Carries one person's settings out as a single JSON file so they can be read back on
-// another deployment, another tenant or a new account. Only three secret-free layers are
-// carried: personal settings (what ui-prefs sync covers), AWS SSM (profiles and hosts) and
-// the user instructions. Connection tokens are deliberately excluded: the file is plaintext
+// another deployment, another tenant or a new account. Only secret-free layers are carried:
+// personal settings (what ui-prefs sync covers), AWS SSM (profiles and hosts), Google Cloud
+// profiles and the user instructions. Connection tokens are deliberately excluded: the file is plaintext
 // and meant to be shared casually as "just a settings file", and a single secret in it would
 // make the whole artefact something that has to be handled carefully.
 //
@@ -33,10 +33,12 @@ import {
   exportablePrefs,
   mergeImportedPrefs,
   parseBundle,
+  planGcpImport,
   planSsmImport,
   profileIdByLabel,
   sanitizeImportedPrefs,
   summarizeBundle,
+  toGcpSection,
   toInstructionsSection,
   toSsmSection,
   utf8Bytes,
@@ -53,6 +55,7 @@ type Picked = Record<SectionKey, boolean>;
 interface Loaded {
   profiles: any[];
   hosts: any[];
+  gcpProfiles: any[];
   instructions: any | null;
 }
 
@@ -63,15 +66,19 @@ export function BackupTab() {
   const running = useWorkspaceStore((s) => s.state) === "running";
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const [loaded, setLoaded] = useState<Loaded>({ profiles: [], hosts: [], instructions: null });
+  const [loaded, setLoaded] = useState<Loaded>({ profiles: [], hosts: [], gcpProfiles: [], instructions: null });
   const [busy, setBusy] = useState(false);
-  const [exportPick, setExportPick] = useState<Picked>({ prefs: true, ssm: true, instructions: true });
+  const [exportPick, setExportPick] = useState<Picked>({ prefs: true, ssm: true, gcpProfiles: true, instructions: true });
   const [bundle, setBundle] = useState<SettingsBundle | null>(null);
-  const [importPick, setImportPick] = useState<Picked>({ prefs: true, ssm: true, instructions: true });
+  const [importPick, setImportPick] = useState<Picked>({ prefs: true, ssm: true, gcpProfiles: true, instructions: true });
   const [result, setResult] = useState<string[] | null>(null);
 
   const reload = useCallback(async () => {
-    const [profiles, hosts] = await Promise.all([api("api/ssm/profiles"), api("api/ssm/hosts")]);
+    const [profiles, hosts, gcpProfiles] = await Promise.all([
+      api("api/ssm/profiles"),
+      api("api/ssm/hosts"),
+      api("api/gcp/profiles"),
+    ]);
     // The user instructions live in the Agent, so they are readable only while the workspace
     // is running. When it is stopped, drop the whole category so the UI can show it is absent
     // rather than silently exporting it as empty.
@@ -79,6 +86,7 @@ export function BackupTab() {
     setLoaded({
       profiles: Array.isArray(profiles) ? profiles : [],
       hosts: Array.isArray(hosts) ? hosts : [],
+      gcpProfiles: Array.isArray(gcpProfiles) ? gcpProfiles : [],
       instructions: instructions && !instructions.error ? instructions : null,
     });
   }, [running]);
@@ -88,12 +96,14 @@ export function BackupTab() {
 
   const prefsCount = Object.keys(exportablePrefs(getSettings() as any, settingsDefaults() as any)).length;
   const instrBytes = utf8Bytes(loaded.instructions?.text ?? "");
-  const canExport = exportPick.prefs || exportPick.ssm || (exportPick.instructions && !!loaded.instructions);
+  const canExport =
+    exportPick.prefs || exportPick.ssm || exportPick.gcpProfiles || (exportPick.instructions && !!loaded.instructions);
 
   const doExport = () => {
     const sections: BundleSections = {};
     if (exportPick.prefs) sections.prefs = exportablePrefs(getSettings() as any, settingsDefaults() as any);
     if (exportPick.ssm) sections.ssm = toSsmSection(loaded.profiles, loaded.hosts);
+    if (exportPick.gcpProfiles) sections.gcpProfiles = toGcpSection(loaded.gcpProfiles);
     if (exportPick.instructions && loaded.instructions) {
       sections.instructions = toInstructionsSection(loaded.instructions);
     }
@@ -119,7 +129,7 @@ export function BackupTab() {
       return;
     }
     const s = parsed.bundle.sections;
-    setImportPick({ prefs: !!s.prefs, ssm: !!s.ssm, instructions: !!s.instructions });
+    setImportPick({ prefs: !!s.prefs, ssm: !!s.ssm, gcpProfiles: !!s.gcpProfiles, instructions: !!s.instructions });
     setBundle(parsed.bundle);
     if (fileRef.current) fileRef.current.value = ""; // so the same file can be picked again
   };
@@ -129,8 +139,9 @@ export function BackupTab() {
     const s = bundle.sections;
     const wantPrefs = importPick.prefs && !!s.prefs;
     const wantSsm = importPick.ssm && !!s.ssm;
+    const wantGcp = importPick.gcpProfiles && !!s.gcpProfiles;
     const wantInstr = importPick.instructions && !!s.instructions;
-    if (!wantPrefs && !wantSsm && !wantInstr) return;
+    if (!wantPrefs && !wantSsm && !wantGcp && !wantInstr) return;
     const ok = await askConfirm({
       title: tr("backup.confirm_title"),
       body: (
@@ -158,6 +169,9 @@ export function BackupTab() {
       }
       if (wantSsm && s.ssm) {
         lines.push(...(await importSsm(s.ssm, tr)));
+      }
+      if (wantGcp && s.gcpProfiles) {
+        lines.push(...(await importGcp(s.gcpProfiles, tr)));
       }
       if (wantInstr && s.instructions) {
         const res = await rawJSON("api/user-notes", "PUT", {
@@ -202,6 +216,12 @@ export function BackupTab() {
             onChange={(v) => setExportPick((p) => ({ ...p, ssm: v }))}
             label={tr("backup.cat_ssm")}
             note={tr("backup.n_ssm", { profiles: loaded.profiles.length, hosts: loaded.hosts.length })}
+          />
+          <Pick
+            on={exportPick.gcpProfiles}
+            onChange={(v) => setExportPick((p) => ({ ...p, gcpProfiles: v }))}
+            label={tr("backup.cat_gcp")}
+            note={tr("backup.n_gcp", { profiles: loaded.gcpProfiles.length })}
           />
           <Pick
             on={exportPick.instructions && !!loaded.instructions}
@@ -253,6 +273,14 @@ export function BackupTab() {
                   onChange={(v) => setImportPick((p) => ({ ...p, ssm: v }))}
                   label={tr("backup.cat_ssm")}
                   note={tr("backup.n_ssm", { profiles: summary.profiles, hosts: summary.hosts })}
+                />
+              )}
+              {bundle.sections.gcpProfiles && (
+                <Pick
+                  on={importPick.gcpProfiles}
+                  onChange={(v) => setImportPick((p) => ({ ...p, gcpProfiles: v }))}
+                  label={tr("backup.cat_gcp")}
+                  note={tr("backup.n_gcp", { profiles: summary.gcpProfiles })}
                 />
               )}
               {bundle.sections.instructions && (
@@ -362,5 +390,25 @@ async function importSsm(
     tr("backup.res_ssm", { profiles: addedProfiles, hosts: addedHosts, skipped }),
   ];
   if (failed > 0) lines.push(tr("backup.res_ssm_failed", { n: failed }));
+  return lines;
+}
+
+// importGcp adds the Google Cloud profiles one by one; each POST is answered on its own, so a
+// refused entry is counted rather than aborting the rest.
+async function importGcp(
+  section: NonNullable<BundleSections["gcpProfiles"]>,
+  tr: (k: any, v?: any) => string,
+): Promise<string[]> {
+  const cur = await api("api/gcp/profiles");
+  const plan = planGcpImport(section, Array.isArray(cur) ? cur : []);
+  let added = 0;
+  let failed = 0;
+  for (const p of plan.profiles) {
+    const res = await rawJSON("api/gcp/profiles", "POST", p);
+    if (res.ok) added++;
+    else failed++;
+  }
+  const lines = [tr("backup.res_gcp", { profiles: added, skipped: plan.skipped.length })];
+  if (failed > 0) lines.push(tr("backup.res_gcp_failed", { n: failed }));
   return lines;
 }

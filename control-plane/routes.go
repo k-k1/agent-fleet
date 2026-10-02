@@ -36,6 +36,7 @@ func buildMux(cfg config) *http.ServeMux {
 	registerAssistantRoutes(mux, cfg)
 	registerTTSRoutes(mux, cfg)
 	registerSSMRoutes(mux, cfg)
+	registerGCPRoutes(mux, cfg)
 	registerMemoRoutes(mux, cfg)
 	registerWorkItemRoutes(mux, cfg)
 	registerScheduleRoutes(mux, cfg)
@@ -586,6 +587,19 @@ func registerSSMRoutes(mux *http.ServeMux, cfg config) {
 	exemptPrefix("/internal/")
 	awsp := newAWSProfilesBridgeAPI(cfg.mgr)
 	mux.HandleFunc("GET /internal/aws-profiles", awsp.list)
+}
+
+// Google Cloud profiles (ADR 0107 decision 1) — per-member Settings rows, no secrets, and
+// the Agent's pull of them (gcp_profiles_bridge.go), authenticated by AF_GCP_PROFILES_TOKEN.
+func registerGCPRoutes(mux *http.ServeMux, cfg config) {
+	gcp := newGCPConfigAPI(cfg.mgr)
+	mux.HandleFunc("GET /api/gcp/profiles", gcp.withMembership(gcp.listProfiles))
+	mux.HandleFunc("POST /api/gcp/profiles", gcp.withMembership(gcp.createProfile))
+	mux.HandleFunc("PUT /api/gcp/profiles/{id}", gcp.withMembership(gcp.updateProfile))
+	mux.HandleFunc("DELETE /api/gcp/profiles/{id}", gcp.withMembership(gcp.deleteProfile))
+	exemptPrefix("/internal/")
+	bridge := newGCPProfilesBridgeAPI(cfg.mgr)
+	mux.HandleFunc("GET /internal/gcp-profiles", bridge.list)
 }
 
 // Work item inbox (docs/log/80) — external tickets in the left rail. The list and the refresh

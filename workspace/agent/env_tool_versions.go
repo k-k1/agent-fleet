@@ -68,6 +68,11 @@ type toolSpec struct {
 	//     because it looks at the first line only.
 	// So read it from the dist-info directory name in uv's venv instead (uvToolVersion).
 	PyDist string
+	// VerFile is a file, relative to the directory of the binary's resolved path, that
+	// holds the version; the binary is then never run. Only gcloud sets it: `gcloud
+	// --version` creates ~/.config/gcloud, writes a log there and probes the metadata
+	// server (measured on 587.0.0), and the member's gcloud directory is not ours to touch.
+	VerFile string
 }
 
 var toolSpecs = []toolSpec{
@@ -122,6 +127,8 @@ var toolSpecs = []toolSpec{
 	// baked and the versions.json pin is the only clue left. Without these rows there is no
 	// way to check from the Console that an MCP server is old or missing.
 	{Name: "awscli", Cmd: "aws", Baked: "/usr/local/bin/aws", Pin: "awscli"},
+	// gcloud is never baked (ADR 0107 decision 4): `install-gcloud` links it into ~/.local/bin.
+	{Name: "gcloud", Cmd: "gcloud", Baked: "", Pin: "gcloud", VerFile: "../VERSION"},
 	{Name: "mcp-grafana", Cmd: "mcp-grafana", Baked: "/usr/local/bin/mcp-grafana", Pin: "mcp_grafana"},
 	{Name: "cloudwatch-mcp", Cmd: "awslabs.cloudwatch-mcp-server", Baked: "/usr/local/bin/awslabs.cloudwatch-mcp-server",
 		Pin: "cloudwatch_mcp", PyDist: "awslabs-cloudwatch-mcp-server"},
@@ -254,6 +261,24 @@ func uvToolVersion(exePath, dist, home string) *toolBin {
 	return &toolBin{Path: exePath, Raw: "(版不明)"}
 }
 
+// fileToolVersion reads a version from a file beside the binary instead of running it
+// (toolSpec.VerFile). nil when there is no binary.
+func fileToolVersion(exePath, rel string) *toolBin {
+	if fi, err := os.Stat(exePath); err != nil || fi.IsDir() {
+		return nil
+	}
+	real := exePath
+	if abs, err := filepath.EvalSymlinks(exePath); err == nil {
+		real = abs
+	}
+	b, err := os.ReadFile(filepath.Join(filepath.Dir(real), rel))
+	if err != nil {
+		return &toolBin{Path: exePath, Raw: "(版不明)"}
+	}
+	v := strings.TrimSpace(string(b))
+	return &toolBin{Path: exePath, Version: extractVer(v), Raw: v}
+}
+
 func globSorted(pattern string) []string {
 	m, _ := filepath.Glob(pattern)
 	sort.Strings(m)
@@ -264,6 +289,9 @@ func globSorted(pattern string) []string {
 func probeTool(ctx context.Context, spec toolSpec, path, home string) *toolBin {
 	if spec.PyDist != "" {
 		return uvToolVersion(path, spec.PyDist, home)
+	}
+	if spec.VerFile != "" {
+		return fileToolVersion(path, spec.VerFile)
 	}
 	b := probeVersion(ctx, path, spec.Args, spec.Env)
 	// Re-extract from the raw line for a tool whose pin is not bare semver. Raw is left alone
