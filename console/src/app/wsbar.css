@@ -808,30 +808,18 @@ button.wu-manage {
   color: var(--muted);
 }
 
-/* AWS profiles chip (#1477). A tag like the usage chips beside it, tinted by state rather
-   than by brand: ok = something is signed in (the "Signed in" pill's colour), warn = a login
-   ends soon, muted = none signed in. Not AWS orange: it sits next to --warn and would say
-   nothing about the state. Written against the element so it beats `.wsbar button`. */
+/* AWS profiles chip (#1477). It carries the usage chips' own classes (kind-tag +
+   ws-usage-btn), so its font, padding and height are theirs by construction rather than a
+   copy that drifts; only the colour is its own. Tinted by state rather than by brand:
+   ok = something is signed in (the "Signed in" pill's colour), warn = a login ends soon,
+   muted = none signed in. Not AWS orange: it sits next to --warn and would say nothing about
+   the state. */
 button.ws-aws-btn {
   --aws-tone: var(--muted);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin: 0;
-  padding: 0 6px;
   border: 1px solid color-mix(in srgb, var(--aws-tone) 45%, transparent);
-  border-radius: 3px;
   background: color-mix(in srgb, var(--aws-tone) 14%, transparent);
   color: var(--aws-tone);
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1.5;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  cursor: pointer;
-}
-button.ws-aws-btn:hover {
-  filter: brightness(1.12);
 }
 button.ws-aws-btn.ok {
   --aws-tone: var(--ok);
@@ -851,10 +839,11 @@ button.ws-aws-btn.muted {
   background: color-mix(in srgb, var(--aws-tone) 10%, var(--bg));
   border-color: color-mix(in srgb, var(--aws-tone) 55%, transparent);
 }
-/* The AWS mark is a wide wordmark: at the size of the other glyphs it is an unreadable smudge.
-   line-height 1 keeps it from making this tag taller than its neighbours. */
-.ws-aws-btn .codicon {
-  font-size: 16px;
+/* The AWS mark is a wide wordmark: at kind-tag's 0.85em glyph size it is an unreadable smudge.
+   15px with line-height 1 is the largest that keeps the tag at its neighbours' height; the
+   element in the selector is what outranks `.kind-tag .codicon`. */
+button.ws-aws-btn .codicon:not(.codicon-chevron-down) {
+  font-size: 15px;
   line-height: 1;
 }
 .ws-aws-btn .codicon-chevron-down {
