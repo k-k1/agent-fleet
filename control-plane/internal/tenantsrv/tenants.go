@@ -696,17 +696,19 @@ func (a Admin) userKeyErr(key string) *APIError {
 	return &APIError{http.StatusBadRequest, "bad_request", msg}
 }
 
-// isMemberKey reports whether key already holds a membership of t. Re-inviting such a
-// member creates neither a membership nor a home, so a key stored before userKeyErr
-// existed stays usable there. Any other tenant is refused: a new home would be made
-// from it. A lookup error answers false.
-func (a Admin) isMemberKey(r *http.Request, t store.Tenant, key string) bool {
+// memberIdentity returns key's identity when it already holds a membership of t. Only
+// that re-invite may use a key outside userKeyErr's forms: it reuses the stored identity
+// and membership, so no new home is made from the key. Any other tenant is refused. A
+// lookup error answers false.
+func (a Admin) memberIdentity(r *http.Request, t store.Tenant, key string) (store.Identity, bool) {
 	ident, ok, err := a.cp.Store().GetIdentityByUserKey(r.Context(), key)
 	if err != nil || !ok {
-		return false
+		return store.Identity{}, false
 	}
-	_, ok, err = a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)
-	return err == nil && ok
+	if _, ok, err = a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID); err != nil || !ok {
+		return store.Identity{}, false
+	}
+	return ident, true
 }
 
 // dataRootNameErr maps the store's data-root name refusals (store_dataroot.go) to API
@@ -740,10 +742,24 @@ func (a Admin) AddMembership(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := body.UserKey
+	// reinvite is set when key is outside the minted forms but already a member of t; the
+	// stored identity is then used as is, never passed through UpsertIdentity.
+	var reinvite *store.Identity
 	if key != "" {
-		if aerr := a.userKeyErr(key); aerr != nil && !a.isMemberKey(r, t, key) {
-			writeAPIErr(w, aerr)
-			return
+		if aerr := a.userKeyErr(key); aerr != nil {
+			ident, ok := a.memberIdentity(r, t, key)
+			if !ok {
+				writeAPIErr(w, aerr)
+				return
+			}
+			// A different address would send UpsertIdentity's disambiguation to mint
+			// "<key>-<hash>", a new identity on the very key this branch exempts.
+			if body.Email != "" && !strings.EqualFold(strings.TrimSpace(body.Email), ident.Email) {
+				writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request",
+					"this user_key can only be re-invited without an email or with its stored one"})
+				return
+			}
+			reinvite = &ident
 		}
 	} else {
 		key = a.cp.SanitizeUser(body.Email)
@@ -767,10 +783,15 @@ func (a Admin) AddMembership(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
-	ident, err := a.cp.Store().UpsertIdentity(r.Context(), body.Email, key, "")
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
+	var ident store.Identity
+	if reinvite != nil {
+		ident = *reinvite
+	} else {
+		var err error
+		if ident, err = a.cp.Store().UpsertIdentity(r.Context(), body.Email, key, ""); err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
 	}
 	mem, err := a.cp.Store().EnsureMembership(r.Context(), ident.ID, t.ID, role)
 	if err != nil {

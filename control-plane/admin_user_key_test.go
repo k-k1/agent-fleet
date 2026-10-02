@@ -206,3 +206,59 @@ func TestRemoveMembershipStillReachesALegacyUnsanitizedKey(t *testing.T) {
 		t.Fatalf("remove legacy key = %d %s, want 200", w.Code, w.Body.String())
 	}
 }
+
+// The re-invite exemption must reuse the stored identity: a different address would make
+// UpsertIdentity mint "<key>-<hash>", a new unsafe key with a new membership and home.
+func TestReinviteOfAnUnsafeKeyReusesTheStoredMembership(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, tn := userKeyFixture(t)
+	adm := newAdminAPI(mgr)
+	legacy, err := st.UpsertIdentity(ctx, "legacy@example.com", "../escape", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mem, err := st.EnsureMembership(ctx, legacy.ID, tn.ID, "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	countRows := func() (idents, mems int) {
+		_ = st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM identity`).Scan(&idents)
+		_ = st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM membership`).Scan(&mems)
+		return
+	}
+	idents0, mems0 := countRows()
+	add := func(body string) *httptest.ResponseRecorder {
+		return callAdmin(adm.addMembership, http.MethodPost, "/api/admin/memberships", body)
+	}
+
+	if err := st.SetMembershipStatus(ctx, mem.ID, "inactive"); err != nil {
+		t.Fatal(err)
+	}
+	w := add(`{"tenant_slug":"sales","user_key":"../escape","email":"different@example.com"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("re-invite with another email = %d %s, want 400", w.Code, w.Body.String())
+	}
+	if i, m := countRows(); i != idents0 || m != mems0 {
+		t.Errorf("refused re-invite left rows behind: identities %d→%d, memberships %d→%d", idents0, i, mems0, m)
+	}
+
+	for _, body := range []string{
+		`{"tenant_slug":"sales","user_key":"../escape"}`,
+		`{"tenant_slug":"sales","user_key":"../escape","email":"Legacy@Example.com"}`,
+	} {
+		if err := st.SetMembershipStatus(ctx, mem.ID, "inactive"); err != nil {
+			t.Fatal(err)
+		}
+		w := add(body)
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"user_key":"../escape"`) {
+			t.Errorf("re-invite %s = %d %s, want 200 on the stored key", body, w.Code, w.Body.String())
+		}
+		got, ok, _ := st.GetMembership(ctx, legacy.ID, tn.ID)
+		if !ok || got.ID != mem.ID || got.Status != "active" {
+			t.Errorf("re-invite %s: membership = %+v, want %s reactivated", body, got, mem.ID)
+		}
+		if i, m := countRows(); i != idents0 || m != mems0 {
+			t.Errorf("re-invite %s added rows: identities %d→%d, memberships %d→%d", body, idents0, i, mems0, m)
+		}
+	}
+}
