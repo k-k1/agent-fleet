@@ -56,27 +56,35 @@ at once**:
   compromised CP can aim `ssm:SendCommand` at an instance it did not launch into its own
   pool: other SSM-managed boxes in the account, another deployment's slots and this
   deployment's engine boxes are never its target
-  ([#1419](https://github.com/k-k1/agent-fleet/issues/1419)). That bounds the direct
-  shell only. The rest of `Ec2SlotPool` (stop, start, detach, attach, terminate, …) has
-  no fence, and an attached volume is read-write: a compromised CP can launch a slot of
-  its own, attach any volume in the account to it, and read or change it there. That
-  includes another instance's root volume, stopped and detached first, so it can plant
-  code that runs when that instance is started again, without touching a tag.
+  ([#1419](https://github.com/k-k1/agent-fleet/issues/1419)). Its other EC2 writes are
+  fenced the same way ([#1423](https://github.com/k-k1/agent-fleet/issues/1423)): start,
+  stop, terminate, attach, detach, resize and delete apply only to instances, volumes and
+  snapshots that carry this pool's `af-pool`, and on both sides of a two-resource call,
+  so it can neither detach a volume from someone else's instance nor attach a foreign
+  volume to its own slot. What it creates must carry this pool's `af-pool`
+  (`aws:RequestTag`), and the source of a copy must already be in the pool: it cannot
+  snapshot a foreign volume or restore a foreign snapshot. `iam:PassRole` names only the
+  slot role of its own `40-ec2-pool` stack. One path stays open: `RunInstances` is fenced
+  on the instance alone, so a compromised CP can boot a slot of its own from any image,
+  or with a block device mapping from any snapshot, it can see in the account, and read
+  that copy there ([#1522](https://github.com/k-k1/agent-fleet/issues/1522)).
 - On every target it unwraps the DEKs and injects them in plaintext (§7.6).
 
 It does not spread between companies, because those are separate deployments — which is
 the strength of the delivery model
 ([decisions/0001](../decisions/0001-self-host-vs-saas.md)). **On `ecs` / `ecs-ec2` that
 holds only when each deployment has its own AWS account.** `CpTaskRole` is scoped to the
-account, not to the deployment: `EcsDrive`, `Ec2SlotPool` and `EcsContainerInstances`
-name `Resource: "*"` with no condition, and `SsmWorkspaceParams` covers
-`parameter/af-ws/*`, one prefix for the whole account with no deployment in the path.
-A compromised CP can therefore update or delete another deployment's services, stop,
-terminate or snapshot its instances and volumes, attach its volumes (homes and root
-volumes alike) read-write to a slot of its own, and read or overwrite its workspaces'
-`AGENT_TOKEN` and DEK. What it cannot do
-is retag that deployment's instances or plant a resource in its pool: tag writes are
-bound to the writer's own `af-pool`. Candidate mitigations: rootless Docker, a socket proxy, a
+account, not to the deployment: `EcsDrive` and `EcsContainerInstances` name
+`Resource: "*"` with no condition, and `SsmWorkspaceParams` covers `parameter/af-ws/*`,
+one prefix for the whole account with no deployment in the path. A compromised CP can
+therefore update or delete another deployment's services, and read or overwrite its
+workspaces' `AGENT_TOKEN` and DEK. It can also boot a slot of its own from a snapshot of
+that deployment's homes (the `RunInstances` path above). What it cannot do is retag that
+deployment's instances, plant a resource in its pool, or stop, terminate, attach, detach,
+snapshot or delete its instances, volumes and snapshots: EC2 writes are bound to the
+writer's own `af-pool`. The ECS and EFS tag writes are bounded to this cluster's services
+and to the keys the CP writes, but EFS access points carry no `af-pool`, so that bound is
+by key, not by deployment. Candidate mitigations: rootless Docker, a socket proxy, a
 narrower CP role.
 
 ## 7.2 Isolation controls

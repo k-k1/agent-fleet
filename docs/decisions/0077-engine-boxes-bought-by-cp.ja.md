@@ -2183,3 +2183,13 @@ Control Plane 側（CloudFormation 側は使い捨てスタックで実測済み
 未測: 実機で llm 役の Spot を起こしていない。受け入れの経路（設定・API・候補の絞り込み）は
 単体試験と陽性対照で閉じているが、**会話の途中で取り上げられたときに何が見えるか**は
 image 役の実測（ADR 0077 P2）からの類推である。
+
+## 注記 — CP の EC2 権限を `af-pool` で囲った（2026-10-03・#1423）
+
+上の決定はそのまま。名指している statement の形が変わった。エンジンの購入は今も `RunInstances` と
+`TerminateInstances` を 20-platform に頼るが、`Ec2SlotPool` はもうそれを `*` には与えない。
+`RunInstances` はリクエストがこの配備の `af-pool` をインスタンスに付けるときだけ（`Ec2RunInPool`）、
+`TerminateInstances` はそれを持つインスタンスにだけ許される。エンジン機は `CreateFleet` の
+`TagSpecifications`（`engine_fleet.go` の `tags`）で両方を満たす。`PassSlotRole` は 40-ec2-pool へ
+移り、そのスタック自身のスロットロールを名指す。instant フリートの起動がフリートのタグで認可されるかは
+文書に無く、#1423 が挙げる実機確認の 1 つである。

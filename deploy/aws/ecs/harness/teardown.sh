@@ -56,7 +56,7 @@ say ssm-params
 for p in $(aws ssm describe-parameters --query "Parameters[?starts_with(Name,'/af-ws/$N')].Name" --output text); do
   aws ssm delete-parameter --name "$p" >/dev/null 2>&1 && echo "param $p"
 done
-# ORDER, not a list. -plat / -net exist only to publish the two exports -pool imports,
+# ORDER, not a list. -plat / -net exist only to publish the exports -pool imports,
 # and CloudFormation CANCELS the delete of an exporting stack while an importer is still
 # there ("Cannot delete export ... as it is in use by af-ec2c-pool" — measured; the three
 # deletes were issued together and the last two silently did nothing, leaving both stacks

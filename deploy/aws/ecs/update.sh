@@ -440,6 +440,10 @@ echo "==> stack=$STACK cluster=$CLUSTER cp-service=$CP_SERVICE"
 # their homes are untouched, and slots launched before it keep the old user data until
 # they are replaced (README "Patching slots"). SlotAmiId resolves at this update, which is
 # how slots get patched anyway.
+# It also carries the CP's iam:PassRole for the slot role (CpPassSlotRolePolicy); 20-platform
+# no longer grants it. A deployment whose 20-platform is newer than its pool stack - between
+# the two deploys, or when this one fails - cannot grow a slot (AccessDenied on PassRole);
+# running slots, wakes and homes are unaffected.
 if [ -n "$POOL_STACK" ]; then
   echo "==> cloudformation deploy $POOL_STACK (40-ec2-pool, parameters unchanged)"
   if [ "$DRY" = 1 ]; then

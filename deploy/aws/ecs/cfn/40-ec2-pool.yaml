@@ -94,6 +94,32 @@ Resources:
     Properties:
       Roles: [ !Ref SlotRole ]
 
+  # --- The Control Plane may pass THIS stack's slot role, and no other ---
+  # The launch template carries the slot instance profile, so the CP's RunInstances has
+  # to pass SlotRole. The grant lives here, attached to the CP task role the way
+  # 60-engines attaches CpIngestPolicy, because only this stack knows the role's ARN:
+  # 20-platform cannot import from a stack that imports from it, and the pattern it used
+  # to hold (role/af-*-slot) matched every deployment's slot role in the account.
+  # A deployment that has no pool stack has no slot role to pass, and no grant.
+  # !! The live E2E runs as the deployer: losing this policy shows up only as every slot
+  # grow failing with AccessDenied on iam:PassRole, under the real CP role.
+  CpPassSlotRolePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "af-${AWS::StackName}-cp-pass-slot"
+      Roles:
+        - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-CpTaskRoleArn" } ] ]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PassSlotRole
+            Effect: Allow
+            Action: iam:PassRole
+            Resource: !GetAtt SlotRole.Arn
+            Condition:
+              StringEquals:
+                iam:PassedToService: ec2.amazonaws.com
+
   # --- SG for the instance itself. No ingress at all: the workspace task has its own
   # ENI and the ws SG (awsvpc), so nothing needs to reach the host. Egress covers the
   # image pull, SSM and the agent's control channel. ---

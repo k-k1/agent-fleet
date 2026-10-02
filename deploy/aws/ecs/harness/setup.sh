@@ -179,7 +179,8 @@ refs = {"Cluster": cluster}
 def resolve(x, path):
     if isinstance(x, dict):
         if list(x) == ["Fn::Sub"] and isinstance(x["Fn::Sub"], str):
-            s = x["Fn::Sub"].replace("${AWS::AccountId}", account).replace("${AWS::Region}", region)
+            s = x["Fn::Sub"].replace("${AWS::AccountId}", account).replace("${AWS::Region}", region) \
+                .replace("${Cluster}", cluster)
             if "${" in s:
                 sys.exit("unresolved !Sub at %s: %r — teach the harness this substitution" % (path, s))
             return s
@@ -256,12 +257,16 @@ esac
 aws logs create-log-group --log-group-name /$N >/dev/null 2>&1 || true
 
 # --- supply the exports 40-ec2-pool.yaml imports from dummy stacks ---
+# CpTaskRoleArn is the harness's copy of the CP role: 40-ec2-pool attaches the slot role's
+# PassRole to it (CpPassSlotRolePolicy), exactly as on a real deployment. Without it the
+# copy would lack PassRole and every slot grow in E2E would fail.
 cat > exports.yaml <<'YAML'
 AWSTemplateFormatVersion: "2010-09-09"
-Description: af-ec2c harness — supplies only the two exports 40-ec2-pool.yaml imports.
+Description: af-ec2c harness — supplies only the exports 40-ec2-pool.yaml imports.
 Parameters:
   VpcId: { Type: String }
   ClusterName: { Type: String }
+  CpTaskRoleArn: { Type: String }
 Resources:
   Noop: { Type: AWS::CloudFormation::WaitConditionHandle }
 Outputs:
@@ -271,11 +276,14 @@ Outputs:
   ClusterName:
     Value: !Ref ClusterName
     Export: { Name: !Sub "${AWS::StackName}-ClusterName" }
+  CpTaskRoleArn:
+    Value: !Ref CpTaskRoleArn
+    Export: { Name: !Sub "${AWS::StackName}-CpTaskRoleArn" }
 YAML
 aws cloudformation deploy --stack-name $N-net --template-file exports.yaml \
-  --parameter-overrides VpcId="$VPC" ClusterName=$N
+  --parameter-overrides VpcId="$VPC" ClusterName=$N CpTaskRoleArn=$CPROLE
 aws cloudformation deploy --stack-name $N-plat --template-file exports.yaml \
-  --parameter-overrides VpcId="$VPC" ClusterName=$N
+  --parameter-overrides VpcId="$VPC" ClusterName=$N CpTaskRoleArn=$CPROLE
 
 # --- the real thing: stand up the repository's 40-ec2-pool.yaml as it is ---
 aws cloudformation deploy --stack-name $N-pool \
