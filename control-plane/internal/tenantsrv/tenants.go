@@ -369,6 +369,14 @@ func (a Admin) StopWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if body.UserKey == "" {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "user_key required"})
+		return
+	}
+	if aerr := a.userKeyErr(body.UserKey); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	ident, err := a.cp.Store().UpsertIdentity(r.Context(), "", body.UserKey, "")
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -423,6 +431,14 @@ func (a Admin) CleanHome(w http.ResponseWriter, r *http.Request) {
 	}
 	caller, t, ok := a.cp.TenantAdminFor(w, r, body.TenantSlug)
 	if !ok {
+		return
+	}
+	if body.UserKey == "" {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "user_key required"})
+		return
+	}
+	if aerr := a.userKeyErr(body.UserKey); aerr != nil {
+		writeAPIErr(w, aerr)
 		return
 	}
 	ident, err := a.cp.Store().UpsertIdentity(r.Context(), "", body.UserKey, "")
@@ -659,6 +675,23 @@ func (a Admin) CreateTenant(w http.ResponseWriter, r *http.Request, _ store.Iden
 	writeJSON(w, http.StatusOK, map[string]any{"slug": t.Slug, "name": t.Name})
 }
 
+// userKeyErr refuses a client-supplied user_key that sanitizeUser would change. The key
+// is the home directory name (workspaceNames joins it under the data root), and only the
+// docker runtime refuses `/`, `..` or upper case on its own; the native runtime would let
+// such a key leave <WS_DATA>/<slug>/. Every handler that can mint an identity from the key
+// (UpsertIdentity) calls this first. Read-only lookups (GetIdentityByUserKey) do not: they
+// never create a key, and an identity stored before this check must stay removable.
+func (a Admin) userKeyErr(key string) *APIError {
+	if key == a.cp.SanitizeUser(key) {
+		return nil
+	}
+	msg := "invalid user_key: use lowercase letters and digits, separated by single hyphens, at most 40 characters"
+	if s := a.cp.SanitizeUser(key); s != "" {
+		msg += " (for example " + strconv.Quote(s) + ")"
+	}
+	return &APIError{http.StatusBadRequest, "bad_request", msg}
+}
+
 // dataRootNameErr maps the store's data-root name refusals (store_dataroot.go) to API
 // errors; a name another party already holds is always a conflict. Anything else stays
 // internal.
@@ -690,7 +723,12 @@ func (a Admin) AddMembership(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := body.UserKey
-	if key == "" {
+	if key != "" {
+		if aerr := a.userKeyErr(key); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+	} else {
 		key = a.cp.SanitizeUser(body.Email)
 	}
 	if key == "" {
@@ -1260,7 +1298,12 @@ func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := body.UserKey
-	if key == "" {
+	if key != "" {
+		if aerr := a.userKeyErr(key); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+	} else {
 		key = a.cp.SanitizeUser(body.Email)
 	}
 	if key == "" {
@@ -1344,6 +1387,14 @@ func (a Admin) SetMembershipRole(w http.ResponseWriter, r *http.Request, _ store
 	}
 	if !ok {
 		writeAPIErr(w, &APIError{http.StatusNotFound, "no_tenant", "unknown tenant"})
+		return
+	}
+	if body.UserKey == "" {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "user_key required"})
+		return
+	}
+	if aerr := a.userKeyErr(body.UserKey); aerr != nil {
+		writeAPIErr(w, aerr)
 		return
 	}
 	ident, err := a.cp.Store().UpsertIdentity(r.Context(), "", body.UserKey, "")
