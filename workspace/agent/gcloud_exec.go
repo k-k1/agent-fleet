@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudexec"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudlogin"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gcpx"
 )
 
@@ -82,6 +83,13 @@ func runGCloudExec(args []string) {
 		gcloudExec.Fail(cloudexec.ExitRefused, err.Error())
 	}
 	o.Interactive = cloudexec.IsTerminal(os.Stdin) && cloudexec.IsTerminal(os.Stderr)
+	// Inside a workspace the Agent can finish the login in the Console (ADR 0107 decision 3),
+	// with the same per-kind wait as af-aws-exec's.
+	if os.Getenv("AF_CP_BASE_URL") != "" {
+		name := os.Getenv("AF_SESSION_NAME")
+		o.ConsoleLogin, o.ConsoleWait = true, consoleLoginWait(name)
+		o.Waiter = cloudlogin.Waiter{Session: name, Command: filepath.Base(o.Argv[0])}
+	}
 	prog, argv, env, err := gcpx.PlanExec(gcloudBin, os.Environ(), o)
 	if err != nil {
 		gcloudExec.FailPlan(err, gcpx.ErrLoginRequired)

@@ -29,6 +29,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "start-deadline": "noti.kind_start_deadline",
   "aws-login-required": "noti.kind_aws_login_required",
   "aws-sso-expiring": "noti.kind_aws_sso_expiring",
+  "gcp-login-required": "noti.kind_gcp_login_required",
   "terminal-notification": "noti.kind_terminal_notification",
 };
 
@@ -224,6 +225,10 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
     // Fixed text only: the payload is written by whoever filed the request, so nothing from it
     // is shown. The profile, account and role are in the toast and the modal, from the Agent.
     return { title: t("notif.aws_login.title"), body: t("notif.aws_login.body"), speech: t("notif.aws_login.speech") };
+  }
+  if (n.kind === "gcp-login-required") {
+    // Fixed text, as for AWS: the profile and project come from the Agent's list, never the payload.
+    return { title: t("notif.gcp_login.title"), body: t("notif.gcp_login.body"), speech: t("notif.gcp_login.speech") };
   }
   if (n.kind === "aws-sso-expiring") {
     // Fixed text for the same reason: the profile, account and role come from the Agent's list.

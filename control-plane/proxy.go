@@ -92,6 +92,9 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			return "aws.login.start", awsLoginAuditTarget(p, q), true
 		case strings.HasPrefix(p, "/api/aws-login/") && strings.HasSuffix(p, "/cancel"):
 			return "aws.login.cancel", awsLoginAuditTarget(p, q), true
+		case strings.HasPrefix(p, "/api/gcp-login/"):
+			// ADR 0107 decision 3: the press, the cancel and the code, never the code itself.
+			return gcpLoginAudit(r, p, q)
 		case p == "/api/sessions":
 			return "session.create", "", true
 		case name != "" && strings.HasSuffix(p, "/fork"):
@@ -219,7 +222,7 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 		// underlying error distinguishes r.Context() cancellation (browser/ALB
 		// gave up) from a genuine transport failure (connection reset, i/o
 		// timeout) instead of collapsing both into one opaque message.
-		log.Printf("agent proxy: %s %s: %v (ctx err=%v)", r.Method, r.URL.Path, err, r.Context().Err())
+		log.Printf("agent proxy: %s %s: %v (ctx err=%v)", r.Method, relayLogPath(r.URL.Path), relayLogErr(r.URL.Path, err), r.Context().Err())
 		http.Error(w, "workspace agent unreachable (is the workspace running?)", http.StatusBadGateway)
 		return
 	}
@@ -253,6 +256,10 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 		detail := ""
 		if fsPutOutcome == errCodeFSWriteStateUnknown {
 			detail = "write_state_unknown"
+		} else if strings.HasPrefix(action, "gcp.login.") {
+			// ADR 0107 decision 3: the audit says the call came through the relay; the
+			// Agent's log has the same hint (X-AF-Relay), which an agent could also set.
+			detail = "via relay"
 		}
 		_ = a.mgr.store.InsertAudit(context.Background(), store.AuditLog{
 			ID: store.NewID(), TenantID: res.ws.TenantID, ActorKind: "user", ActorID: res.ident.ID,

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -133,6 +134,31 @@ func TestParseErrorEndsTheAttempt(t *testing.T) {
 	}
 	if v := waitFor(t, a, PhaseFailed); v.URL != "" || v.Message != "unexpected sign-in URL" {
 		t.Fatalf("view = %+v", v)
+	}
+}
+
+// Exited runs before Cleanup: a backend that holds a lock from the start lets go of it in
+// Cleanup, and its Exited still needs it (gcpx records the finished login under it).
+func TestExitedRunsBeforeCleanup(t *testing.T) {
+	s := newStore(t)
+	var mu sync.Mutex
+	var order []string
+	note := func(s string) { mu.Lock(); order = append(order, s); mu.Unlock() }
+	a, err := s.Start("k", "", "prod", Process{
+		Name: "test login", Path: "/bin/sh", Args: []string{"-c", "true"}, Timeout: 10 * time.Second,
+		Parse:   func(string) (string, string, error) { return "", "", nil },
+		Exited:  func(error) (bool, string) { note("exited"); return true, "" },
+		Cleanup: func() { note("cleanup") },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, a, PhaseDone)
+	<-a.Exited()
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(order, ",") != "exited,cleanup" {
+		t.Fatalf("order = %v", order)
 	}
 }
 

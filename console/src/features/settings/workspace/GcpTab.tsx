@@ -17,6 +17,7 @@ import { GCP_REGION_CODES, gcpZonesOf } from "../../../lib/gcpRegions.ts";
 import { Field, Meta } from "../parts/mcpForm.tsx";
 import { RegionSelect } from "../parts/RegionSelect.tsx";
 import { FieldGroup, deleteRow, pick, postJSON } from "./SsmTab.tsx";
+import { GcpProfileLoginModal, type GcpLoginProfile } from "../../gcplogin/GcpProfileLoginModal.tsx";
 
 /** One row of GET /api/gcp/profiles. */
 export interface GcpProfile {
@@ -55,6 +56,23 @@ export function GcpTab() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<GcpProfile | null>(null);
   const [busy, setBusy] = useState(false);
+  // "Log in" / "Log in again" (ADR 0107 decision 3): the row's modal, and each row's login
+  // state from the Agent (absent while the workspace is stopped), asked on open and after the
+  // modal closes; nothing polls.
+  const [loginFor, setLoginFor] = useState<{ profile: GcpLoginProfile; force: boolean } | null>(null);
+  const [states, setStates] = useState<Record<string, { state: string; account: string }>>({});
+  const loadStates = useCallback(() => {
+    api("api/gcp-login/profiles")
+      .then((d) => {
+        // No prototype: a profile named "__proto__" would otherwise set it instead of a key.
+        const m: Record<string, { state: string; account: string }> = Object.create(null);
+        for (const p of Array.isArray(d?.profiles) ? d.profiles : [])
+          m[String(p.name)] = { state: String(p.state ?? ""), account: String(p.account ?? "") };
+        setStates(m);
+      })
+      .catch(() => setStates({}));
+  }, []);
+  useEffect(loadStates, [loadStates]);
 
   // A failed GET keeps the last list (null if none ever loaded) and says so, as SsmTab does:
   // replacing it with [] would close an open edit form as if its row had been deleted.
@@ -231,6 +249,28 @@ export function GcpTab() {
                       {p.name}
                     </code>
                   )}
+                  {p.name && !p.conflict && (
+                    <>
+                      {states[p.name]?.state === "signed_in" && (
+                        <span className="muted gcp-login-state">
+                          {tr("gcplogin.signed_in_as", { account: states[p.name].account })}
+                        </span>
+                      )}
+                      <button
+                        className="ghost gcp-login"
+                        title={tr(states[p.name]?.state === "signed_in" ? "gcplogin.login_again_title" : "gcplogin.login_title")}
+                        disabled={busy}
+                        onClick={() =>
+                          setLoginFor({
+                            profile: { name: p.name, label: p.label, project: p.project, account: p.account },
+                            force: states[p.name]?.state === "signed_in",
+                          })
+                        }
+                      >
+                        {tr(states[p.name]?.state === "signed_in" ? "gcplogin.login_again" : "gcplogin.login")}
+                      </button>
+                    </>
+                  )}
                   <button
                     className="ghost ssm-edit push"
                     title={tr("gcp.edit_title")}
@@ -272,6 +312,17 @@ export function GcpTab() {
               </button>
             )}
       </section>
+      {loginFor && (
+        <GcpProfileLoginModal
+          key={loginFor.profile.name}
+          profile={loginFor.profile}
+          force={loginFor.force}
+          onClose={() => {
+            setLoginFor(null);
+            loadStates();
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -48,6 +49,16 @@ func TestAuditActionTarget(t *testing.T) {
 		{"POST", "/api/aws-login/profiles/prod/logout", "prod", "aws.logout", "profile: prod", true},
 		{"GET", "/api/aws-login/profiles", "", "", "", false},
 		{"GET", "/api/aws-login", "", "", "", false},
+		// ADR 0107 decision 3: the presses, the cancel and the code; the code route names the
+		// attempt by its reference only. Polls and lists are reads.
+		{"POST", "/api/gcp-login/0123456789abcdef01234567/start?profile=prod", "", "gcp.login.start", "0123456789abcdef01234567 (profile hint: prod)", true},
+		{"POST", "/api/gcp-login/0123456789abcdef01234567/cancel?profile=prod", "", "gcp.login.cancel", "0123456789abcdef01234567 (profile hint: prod)", true},
+		{"POST", "/api/gcp-login/profiles/prod/start", "prod", "gcp.login.start", "profile: prod", true},
+		{"POST", "/api/gcp-login/profiles/prod/start?force=1", "prod", "gcp.login.start", "profile: prod (log in again)", true},
+		{"POST", "/api/gcp-login/profiles/prod/attempts/abc/code", "prod", "gcp.login.code", "profile: prod, attempt: " + gcpAttemptRef("abc"), true},
+		{"GET", "/api/gcp-login/profiles/prod/attempts/abc", "prod", "", "", false},
+		{"GET", "/api/gcp-login/profiles", "", "", "", false},
+		{"GET", "/api/gcp-login", "", "", "", false},
 		// Not auditable (reads, non-change mutations, unlisted ops):
 		{"GET", "/api/fs/file?path=a", "", "", "", false},
 		{"GET", "/api/fs/tree", "", "", "", false},
@@ -60,6 +71,9 @@ func TestAuditActionTarget(t *testing.T) {
 		r := httptest.NewRequest(c.method, c.target, nil)
 		if c.name != "" {
 			r.SetPathValue("name", c.name)
+		}
+		if strings.Contains(c.target, "/attempts/abc") {
+			r.SetPathValue("attempt", "abc")
 		}
 		a, tg, ok := auditActionTarget(r)
 		if a != c.wantAction || tg != c.wantTgt || ok != c.wantOK {

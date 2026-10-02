@@ -106,10 +106,15 @@ func Sync() (SyncResult, error) { return SyncNotify(nil) }
 // (a terminal login holds it for as long as the person takes): the wrapper's own sync says
 // why it does not start, while the background poll stays silent.
 func SyncNotify(waiting func()) (SyncResult, error) {
+	return syncLocking(func() (string, func(), error) { return lockRootNotify(waiting) })
+}
+
+// syncLocking is Sync with lock as the way to take the root's lock.
+func syncLocking(lock func() (string, func(), error)) (SyncResult, error) {
 	var res SyncResult
 	root := ""
 	p, err := bridge.Pull(func() (func(), error) {
-		r, unlock, lerr := lockRootNotify(waiting)
+		r, unlock, lerr := lock()
 		root = r
 		return unlock, lerr
 	}, func(l cloudbridge.List[Profile]) error {
@@ -129,11 +134,7 @@ func lockRoot() (string, func(), error) { return lockRootNotify(nil) }
 // (a terminal login holds it for as long as the person takes), so a wrapper can say why it
 // does not start.
 func lockRootNotify(waiting func()) (string, func(), error) {
-	root, err := cloudexec.PrivateDir(ConfigRoot())
-	if err != nil {
-		return "", nil, err
-	}
-	f, err := os.OpenFile(filepath.Join(root, lockFile), os.O_CREATE|os.O_RDWR, 0o600)
+	root, f, err := openRootLock()
 	if err != nil {
 		return "", nil, err
 	}
@@ -150,6 +151,20 @@ func lockRootNotify(waiting func()) (string, func(), error) {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		f.Close()
 	}, nil
+}
+
+// openRootLock makes the Agent's root private and opens its lock file (close-on-exec, so no
+// gcloud the Agent starts inherits the lock).
+func openRootLock() (string, *os.File, error) {
+	root, err := cloudexec.PrivateDir(ConfigRoot())
+	if err != nil {
+		return "", nil, err
+	}
+	f, err := os.OpenFile(filepath.Join(root, lockFile), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return "", nil, err
+	}
+	return root, f, nil
 }
 
 // Apply writes ps into the Agent's root under its lock. Sync is the normal entry; this is

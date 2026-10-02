@@ -121,8 +121,16 @@ func TestGCloudExecProcess(t *testing.T) {
 	if code, _, msg := run("--profile", "prod", "--project", "other-project", "--", "true"); code != 1 || !strings.Contains(msg, "prod-project") {
 		t.Errorf("project mismatch: exit %d %q", code, msg)
 	}
-	if code, _, msg := run("--profile", "fresh", "--project", "fresh-project", "--", "true"); code != 3 || !strings.Contains(msg, "--login") {
+	// Inside a workspace with no terminal, the login is asked of the Console (ADR 0107
+	// decision 3): the run says so, waits, and exits 3 while the request is pending.
+	if code, _, msg := run("--profile", "fresh", "--project", "fresh-project", "--", "true"); code != 3 ||
+		!strings.Contains(msg, "requested in the Agent Fleet Console") || !strings.Contains(msg, "waiting for the member to finish it there") {
 		t.Errorf("no account: exit %d %q", code, msg)
+	}
+	// --no-login never asks the Console; it names the terminal login instead.
+	if code, _, msg := run("--profile", "fresh", "--project", "fresh-project", "--no-login", "--", "true"); code != 3 || !strings.Contains(msg, "--login") ||
+		strings.Contains(msg, "Agent Fleet Console") {
+		t.Errorf("no account, --no-login: exit %d %q", code, msg)
 	}
 	if code, out, _ := run("--list"); code != 0 || !strings.Contains(out, "prod\tprod-project\tdev@example.com") ||
 		!strings.Contains(out, "fresh\tfresh-project\t(chosen at the first login)") {

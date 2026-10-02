@@ -20,6 +20,7 @@ import { destinationShown, opensConversation, unseenConversationEventIDs, unseen
 import { notificationWording } from "./wording.ts";
 import { childIdleMuted } from "./childIdle.ts";
 import { useAwsLoginStore } from "../awslogin/store.ts";
+import { useGcpLoginStore } from "../gcplogin/store.ts";
 
 export type NotificationSourceState = "unknown" | "ready" | "offline" | "unsupported";
 export interface FleetNotification {
@@ -169,6 +170,14 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
     const aws = useAwsLoginStore.getState();
     void aws.refresh();
     aws.open(n.payload.requestId);
+    return { opened: true };
+  }
+  // af-gcloud-exec's login request (ADR 0107 decision 3): the same as AWS's. Only the id is
+  // read, and the modal it opens shows no sign-in link or code field until its own press.
+  if (n.kind === "gcp-login-required" && typeof n.payload.requestId === "string" && n.payload.requestId) {
+    const gcp = useGcpLoginStore.getState();
+    void gcp.refresh();
+    gcp.open(n.payload.requestId);
     return { opened: true };
   }
   // The SSO expiry warning (#1029): its destination is the profile's login modal. Only the

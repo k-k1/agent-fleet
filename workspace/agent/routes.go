@@ -18,6 +18,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/awsx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
@@ -187,6 +188,16 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /aws-login/profiles/{name}/start", awsx.HandleProfileLoginStart)
 	mux.HandleFunc("POST /aws-login/profiles/{name}/logout", awsx.HandleProfileLogout)
 	mux.HandleFunc("GET /aws-login/profiles/{name}/attempts/{attempt}", awsx.HandleProfileLoginAttempt)
+	// af-gcloud-exec's Console login (ADR 0107 decision 3): the same lifecycle; every attempt
+	// is read and given its code through its profile's routes. CP allowlist:
+	// registerSessionRoutes.
+	mux.HandleFunc("GET /gcp-login", gcpx.HandleLoginList)
+	mux.HandleFunc("POST /gcp-login/{id}/start", gcpx.HandleLoginStart)
+	mux.HandleFunc("POST /gcp-login/{id}/cancel", gcpx.HandleLoginCancel)
+	mux.HandleFunc("GET /gcp-login/profiles", gcpx.HandleProfileLoginStates)
+	mux.HandleFunc("POST /gcp-login/profiles/{name}/start", gcpx.HandleProfileLoginStart)
+	mux.HandleFunc("GET /gcp-login/profiles/{name}/attempts/{attempt}", gcpx.HandleProfileLoginAttempt)
+	mux.HandleFunc("POST /gcp-login/profiles/{name}/attempts/{attempt}/code", gcpx.HandleProfileLoginCode)
 	mux.HandleFunc("POST /ssm/instances", handleSSMInstances)
 	mux.HandleFunc("POST /sessions/{name}/start", sessionx.HandleStartSession)
 	// Structured transcript (role + text + timestamp) for the Console chat view.

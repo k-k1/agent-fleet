@@ -48,8 +48,9 @@ af-gcloud-exec --profile <name> --project <id> -- <command> [args...]
 - A Google login can end before its token does, when the user's organisation requires
   reauthentication after a set time. Nothing in the workspace records when that is, so there is no
   warning: runs keep working while the cached token has more than ten minutes left, and the first
-  run that needs a fresh one exits 3 ("Reauthentication failed. cannot prompt during
-  non-interactive execution"). Hand the user the login command as below.
+  run that needs a fresh one needs a new login (gcloud says "Reauthentication failed. cannot prompt
+  during non-interactive execution"). That is handled like any login: the run asks the Console and
+  waits (below), and the user signs in again there.
 
 What the command gets: the token in `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE` and
 `GOOGLE_OAUTH_ACCESS_TOKEN`, an empty private `CLOUDSDK_CONFIG`, the profile's project, quota project,
@@ -91,15 +92,39 @@ Which tools the token reaches (measured on SDK 587.0.0 against a local mock that
     **from the same `google-auth-library` the client library depends on** (8.2.0 bundles 9.x). One from
     another major version (11.x) was accepted without an error and sent **no** credential at all.
 
+## The login: the user finishes it in the Console
+
+When a profile needs a login and the run has no terminal (any agent's shell tool), `af-gcloud-exec`
+asks the Agent Fleet Console instead: stderr says "Google Cloud login for profile … requested in the
+Agent Fleet Console; waiting up to …", the user sees a toast, presses **Log in**, signs in to Google
+in their browser and pastes the verification code into that same Console window. The run waits, and
+continues with the token if the login finishes within the wait. If not, it exits 3 saying the login
+is waiting in the Console: tell the user, and rerun once they say it is done. One request per
+profile; a second run joins it. The user can also log a profile in (or "Log in again", for a login
+they know was revoked) from Settings > Google Cloud.
+
+**The paste rule — tell the user if they ask: paste a code only into a login you started yourself.**
+A Google verification code is redeemable only by the gcloud whose sign-in URL produced it (PKCE), and
+the Console shows the URL and the code field only in the window where the user pressed **Log in**.
+Nothing proves who started a login, though: any process in the workspace can start one. So a code is
+pasted only into the Console window where the user just pressed **Log in** themselves — never into a
+field, a terminal or a chat message someone else (you included) put in front of them.
+
+On a Compute Engine VM running the `native` runtime, gcloud first asks whether to use a personal
+account on that VM; the Console login does not answer it, and the attempt ends telling the user to
+log in from a terminal (`af-gcloud-exec --profile … --project … --login -- true`).
+
 ## When it stops
 
 | What you see | Meaning | What to do |
 |---|---|---|
-| exit 3, "Google Cloud login required … log in from a terminal with: af-gcloud-exec --profile … --project … --login -- true" | The profile has no login yet, it expired, or Google asks for reauthentication. Exit 3 is only ever a login. | You cannot log in for the user. Give them that exact command to run in their own terminal (in Claude Code: `!` at the prompt). It prints a Google sign-in URL; they sign in in their browser and paste the code back into **that** terminal. Rerun once they say it is done. |
+| exit 3, "… the login was requested in the Agent Fleet Console and is waiting for the member to finish it there" | The profile has no login yet, it expired, or Google asks for reauthentication; the request is in the Console. Exit 3 is only ever a login. | Tell the user a Google Cloud login is waiting in the Console (the toast, or Settings > Google Cloud). Rerun once they say it is done; do not loop on reruns meanwhile. |
+| exit 3, "… cancelled in the Agent Fleet Console" | The user cancelled the request. New runs do not file another for about a minute. | Ask the user whether they want the login; do not rerun at once. |
+| exit 3, "Google Cloud login required … log in from a terminal with: af-gcloud-exec --profile … --project … --login -- true" | A login is needed and the Console could not be asked (outside a workspace, or `--no-login`). | You cannot log in for the user. Give them that exact command to run in their own terminal (in Claude Code: `!` at the prompt). It prints a Google sign-in URL; they sign in in their browser and paste the code back into **that** terminal. Rerun once they say it is done. |
 | exit 1, "is for project X, not Y; --project must be the profile's project" | Wrong profile for this project. | Recheck `--list`. Ask the user; do not switch `--project` to match. |
 | exit 1, "no Google Cloud profile …" / "not exported: …" | The name is not one of the user's exported profiles. | Report it; the user adds or fixes the profile in Settings > Google Cloud. |
 | exit 1, "holds a … credential …, not a user login" | Something other than a user login is stored for that account in the Agent's store. | Report it to the user; do not try to fix the store. |
-| exit 1, "gcloud could not mint a token: …" | Not a login problem: permission denied (including on impersonation), a disabled API, the network. | Report the error as it is; do not ask the user to log in. |
+| exit 1, "gcloud could not mint a token: …" | Not a login problem: permission denied (including on impersonation), a disabled API, the network. A run that was waiting for a Console login ends this way too when the login landed but the mint still fails for such a reason. | Report the error as it is; do not ask the user to log in. |
 | exit 1, "the token gcloud minted is valid for only …" | gcloud could not mint a token with ten minutes left. | Rerun in a minute; if it repeats, report it. |
 | exit 1, "this deployment does not export Google Cloud profiles" | No profiles in this workspace. | Tell the user; there is no other route. |
 | exit 1, "the login finished but still gave no usable credential: …" | The user signed in, and the credential still does not work. | Report the message; do not start another login yourself. |
@@ -113,8 +138,9 @@ Which tools the token reaches (measured on SDK 587.0.0 against a local mock that
 - Run `gcloud auth login`, `gcloud auth application-default login`, `gcloud config set` or any gcloud
   command with `CLOUDSDK_CONFIG` pointed at the Agent's store (`~/.local/state/agent-fleet/gcloud`),
   or edit files there. Settings owns those configurations and the user owns the logins.
-- Run `af-gcloud-exec --login` in your own shell, or pass a sign-in URL or code to the user: only a
-  sign-in the user started themselves in their own terminal is safe to complete.
+- Run `af-gcloud-exec --login` in your own shell, call the Agent's `/gcp-login` routes, or pass a
+  sign-in URL or code to the user: only a sign-in the user started themselves (their own terminal, or
+  their own press of **Log in** in the Console) is safe to complete.
 - Use the user's own `~/.config/gcloud` (their logins and application default credentials), or the
   machine's service account, instead.
 - Print, write or paste the token (`GOOGLE_OAUTH_ACCESS_TOKEN`, the token file), or `env` output.
