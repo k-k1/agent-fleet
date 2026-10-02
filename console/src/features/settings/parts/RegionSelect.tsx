@@ -13,7 +13,9 @@ type MsgPrefix = "ssm.region" | "gcp.region" | "gcp.zone";
 // that reveals a text input for codes the list lacks (GovCloud, China, regions newer than the
 // list). A stored value outside the list opens in Other with the value shown, so editing a row
 // never replaces or drops it. emptyLabel names the "" choice (unset / profile default /
-// "select"). `named` options read "<code> — <name>"; unnamed ones (zones) show the code alone.
+// "select"). onChange also says where the value came from — the dropdown ("list") or the
+// Other input ("other") — for a caller whose rule depends on it. `named` options read
+// "<code> — <name>"; unnamed ones (zones) show the code alone.
 export function RegionSelect({
   value,
   onChange,
@@ -24,7 +26,7 @@ export function RegionSelect({
   named = true,
 }: {
   value: string;
-  onChange: (v: string) => void;
+  onChange: (v: string, from: "list" | "other") => void;
   emptyLabel: string;
   className?: string;
   options?: readonly string[];
@@ -52,9 +54,9 @@ export function RegionSelect({
     shown.current = options;
     if (unlisted(value)) setOther(true);
   }, [options]);
-  const emit = (v: string) => {
+  const emit = (v: string, from: "list" | "other") => {
     emitted.current = v;
-    onChange(v);
+    onChange(v, from);
   };
 
   return (
@@ -68,7 +70,7 @@ export function RegionSelect({
             return;
           }
           setOther(false);
-          emit(e.target.value);
+          emit(e.target.value, "list");
         }}
       >
         <option value="">{emptyLabel}</option>
@@ -84,7 +86,7 @@ export function RegionSelect({
           className={className}
           placeholder={tr(`${msgPrefix}_other_placeholder`)}
           value={value}
-          onChange={(e) => emit(e.target.value)}
+          onChange={(e) => emit(e.target.value, "other")}
           autoFocus={!unlisted(value)}
         />
       )}

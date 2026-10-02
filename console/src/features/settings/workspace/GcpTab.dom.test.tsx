@@ -257,4 +257,25 @@ describe("GcpTab", () => {
     await save();
     expect(lastBody()).toMatchObject({ region: "europe-west1", zone: "europe-west1-d" });
   });
+
+  it("saves an empty zone right after a region change cleared a list-picked one", async () => {
+    await mount();
+    await edit(0);
+    await choose(pickers()[1], "asia-northeast1-b");
+    await choose(pickers()[0], "us-central1");
+    expect(pickers()[1].value).toBe("");
+    await save();
+    expect(lastBody()).toMatchObject({ region: "us-central1", zone: "" });
+  });
+
+  it("keeps a zone typed into Other across a region change, even a listed one", async () => {
+    await mount();
+    await edit(0);
+    await choose(pickers()[1], "*other*");
+    await type(otherInputs()[0], "asia-northeast1-b");
+    await choose(pickers()[0], "us-central1");
+    expect(otherInputs().map((i) => i.value)).toEqual(["asia-northeast1-b"]);
+    await save();
+    expect(lastBody()).toMatchObject({ region: "us-central1", zone: "asia-northeast1-b" });
+  });
 });

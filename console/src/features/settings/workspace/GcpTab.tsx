@@ -70,6 +70,7 @@ export function GcpTab() {
   useEffect(reload, [reload]);
 
   const close = () => {
+    setZoneFromList(false);
     setOpen(false);
     setEditing(null);
     setF(emptyProfile);
@@ -79,25 +80,29 @@ export function GcpTab() {
   }, [profiles, editing]);
 
   const set = (k: string) => (e: FieldEvent) => setF((p) => ({ ...p, [k]: e.target.value }));
-  // A region change drops a zone the list offered under the old region and not the new one:
-  // that zone came from this edit's own pick. The zone the row was stored with is never
-  // dropped, nor one typed into Other, so a save without touching it keeps it byte-identical.
-  const setRegion = (region: string) =>
-    setF((p) => {
-      const stored = editing?.zone ?? "";
-      const picked = p.zone !== stored && gcpZonesOf(p.region).includes(p.zone);
-      const fits = gcpZonesOf(region).includes(p.zone);
-      return { ...p, region, zone: picked && !fits ? "" : p.zone };
-    });
-  const setZone = (zone: string) => setF((p) => ({ ...p, zone }));
+  // A region change drops a zone picked from the list in this edit once the new region does
+  // not offer it. The stored zone and one typed into Other are never dropped, so a save
+  // without touching the zone keeps it byte-identical.
+  const [zoneFromList, setZoneFromList] = useState(false);
+  const setRegion = (region: string) => {
+    const drop = zoneFromList && !gcpZonesOf(region).includes(f.zone);
+    if (drop) setZoneFromList(false);
+    setF((p) => ({ ...p, region, zone: drop ? "" : p.zone }));
+  };
+  const setZone = (zone: string, from: "list" | "other") => {
+    setZoneFromList(from === "list");
+    setF((p) => ({ ...p, zone }));
+  };
   const valid = !!f.label.trim() && !!f.project.trim();
 
   const startAdd = () => {
+    setZoneFromList(false);
     setEditing(null);
     setF(emptyProfile);
     setOpen(true);
   };
   const startEdit = (p: GcpProfile) => {
+    setZoneFromList(false);
     setOpen(false);
     setF(pick(p, emptyProfile));
     setEditing(p);
