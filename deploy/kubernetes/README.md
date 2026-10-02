@@ -329,13 +329,22 @@ Both the rehearsal and the rollback below turn a snapshot into a disk and hand i
 as a pre-created volume. Such a volume carries no zone of its own, unlike the ones the
 StorageClass provisions, so the PersistentVolume must name it: without `nodeAffinity` the pod
 can be scheduled into another zone of the system pool, where the disk cannot attach, and it
-never starts. Set `NAME` (the new disk and volume), `CLAIM` (the claim it is for) and `SNAP`
-(the snapshot), with `ZONE` from above:
+never starts. Set `NAME` (the new disk and volume, **unique per restore** — a fixed name collides
+with the disk a previous restore put into service), `CLAIM` (the claim it is for) and `SNAP` (the
+snapshot), with `ZONE` from above. It comes in two parts, so a procedure can make the disk before
+it changes anything else.
+
+The disk:
 
 ```bash
 gcloud compute disks create "$NAME" --zone "$ZONE" --project "$PROJECT" \
   --source-snapshot "$SNAP" --type pd-balanced
 SIZE="$(gcloud compute disks describe "$NAME" --zone "$ZONE" --project "$PROJECT" --format='value(sizeGb)')"
+```
+
+The volume, for the claim `$CLAIM`:
+
+```bash
 kubectl apply -f - <<YAML
 apiVersion: v1
 kind: PersistentVolume
@@ -389,12 +398,17 @@ gcloud sql instances delete "$PREFIX-pg-rehearsal" --project "$PROJECT"
 
 Rehearse the disk the same way: restore a snapshot beside the live one, **read it**, and remove
 it. Creating a disk proves nothing about what is on it. Before taking the snapshot, push a
-sentinel commit to a test repository through the internal git provider (with an LFS file if you
-use LFS) and note its commit id. Then, with the live claim untouched:
+sentinel commit to a test repository through the internal git provider and note its commit id;
+if you use LFS, track one file with LFS in that commit and note its oid and size (`git lfs
+ls-files -l` shows the oid, `wc -c` the size). Checking every LFS object present is not enough
+on its own: a snapshot with no LFS objects at all passes it. Then, with the live claim untouched:
 
 ```bash
-NAME="$PREFIX-cp-data-rehearsal" CLAIM=af-cp-data-rehearsal SNAP=<snapshot>
-# ... the block of "A disk from a snapshot, as a volume" ...
+NAME="$PREFIX-cp-data-rehearsal-$(date +%Y%m%d%H%M)" CLAIM=af-cp-data-rehearsal SNAP=<snapshot>
+SENT_REPO="git/<tenant slug>/<test repo>.git" SENT_REF=refs/heads/<branch> SENT_COMMIT=<commit id>
+LFS_OID=<oid, or empty without LFS> LFS_SIZE=<bytes, or empty>
+LFS_PATH=""; [ -n "$LFS_OID" ] && LFS_PATH="$SENT_REPO/lfs/objects/${LFS_OID:0:2}/${LFS_OID:2:2}/$LFS_OID"
+# ... both parts of "A disk from a snapshot, as a volume" ...
 IMAGE="$(kubectl -n "$PREFIX-cp" get deployment af-cp -o jsonpath='{.spec.template.spec.containers[?(@.name=="cp")].image}')"
 kubectl apply -f - <<YAML
 apiVersion: v1
@@ -426,11 +440,21 @@ spec:
           set -e; cd /data; ls -la
           test -d git || { echo "FAIL: no git/"; exit 1; }
           for r in git/*/*.git; do git --git-dir="\$r" fsck --no-dangling >/dev/null; echo "fsck ok \$r"; done
-          find git -path '*/lfs/objects/*' -type f | while read -r f; do
-            [ "\$(sha256sum "\$f" | cut -c1-64)" = "\$(basename "\$f")" ] || { echo "FAIL: \$f"; exit 1; }
-          done
-          echo "lfs objects ok"
-          git --git-dir=git/<tenant>/<test repo>.git rev-parse refs/heads/<branch>   # the sentinel
+          test "\$(git --git-dir="$SENT_REPO" rev-parse "$SENT_REF")" = "$SENT_COMMIT" \
+            || { echo "FAIL: sentinel commit"; exit 1; }
+          echo "sentinel commit ok"
+          if [ -n "$LFS_PATH" ]; then
+            test -f "$LFS_PATH" || { echo "FAIL: sentinel LFS object missing"; exit 1; }
+            test "\$(wc -c < "$LFS_PATH")" -eq "$LFS_SIZE" || { echo "FAIL: sentinel LFS size"; exit 1; }
+            test "\$(sha256sum "$LFS_PATH" | cut -c1-64)" = "$LFS_OID" || { echo "FAIL: sentinel LFS hash"; exit 1; }
+            echo "sentinel lfs ok"
+          fi
+          find git -path '*/lfs/objects/*' -type f > /tmp/lfs; n=0
+          while read -r f; do
+            test "\$(sha256sum "\$f" | cut -c1-64)" = "\$(basename "\$f")" || { echo "FAIL: \$f"; exit 1; }
+            n=\$((n + 1))
+          done < /tmp/lfs
+          echo "lfs objects present and intact: \$n"
       env: [{ name: HOME, value: /tmp }]
       securityContext:
         allowPrivilegeEscalation: false
@@ -447,13 +471,18 @@ spec:
 YAML
 kubectl -n "$PREFIX-cp" get pvc "$CLAIM"                 # Bound, to $NAME
 kubectl -n "$PREFIX-cp" wait --for=jsonpath='{.status.phase}'=Succeeded pod/af-cp-data-rehearsal --timeout=600s
-kubectl -n "$PREFIX-cp" logs af-cp-data-rehearsal       # every repo "fsck ok", "lfs objects ok", the sentinel's id
+kubectl -n "$PREFIX-cp" logs af-cp-data-rehearsal       # "fsck ok" per repo, "sentinel commit ok", "sentinel lfs ok"
 kubectl -n "$PREFIX-cp" get pod af-cp-data-rehearsal -o wide   # its node is in $ZONE
 ```
 
-The check passes only when the claim bound, the pod ran in the disk's zone as uid 1000, every
-repository passed `fsck`, every LFS object matched its name, and the sentinel's commit id is the
-one you noted. Then remove all of it — the volume is `Retain`, so the disk stays until deleted:
+The check passes only when the claim bound, the pod ran in the disk's zone as uid 1000 and ended
+`Succeeded`, every repository passed `fsck`, the sentinel commit is the one you noted, and — with
+LFS — the sentinel's object is at its path with the size and hash you noted, besides every other
+object matching its name. The first time, prove the check can fail: delete the pod and apply it
+again with one character of `SENT_COMMIT` changed, then with one character of `LFS_OID` changed
+(the object is then missing), then with a wrong `LFS_SIZE`; each run must end `Failed` with its
+`FAIL:` line. Then remove all of it —
+the volume is `Retain`, so the disk stays until deleted:
 
 ```bash
 kubectl -n "$PREFIX-cp" delete pod af-cp-data-rehearsal
@@ -498,18 +527,23 @@ previous image on the migrated database is not a rollback:
    gcloud sql backups restore <backup-id> --restore-instance "$PREFIX-pg" --project "$PROJECT"
    ```
 3. The disk, only if the internal git provider was used since the snapshot: keep the current
-   disk, make a new one from the snapshot, and point the claim at it.
+   disk, make a new one from the snapshot, and only then point the claim at it. If the new disk
+   cannot be made, nothing has changed yet.
    ```bash
    OLD_PV="$PV" OLD_DISK="$DISK"                      # from "What has to survive"
+   NAME="$PREFIX-cp-data-restore-$(date +%Y%m%d%H%M)" CLAIM=af-cp-data SNAP="$PREFIX-cp-data-before-<version>"
+   # ... the disk part of "A disk from a snapshot, as a volume" ...
    kubectl patch pv "$OLD_PV" -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'   # keep the old disk
    kubectl -n "$PREFIX-cp" delete pvc af-cp-data
-   NAME="$PREFIX-cp-data-restored" CLAIM=af-cp-data SNAP="$PREFIX-cp-data-before-<version>"
-   # ... the block of "A disk from a snapshot, as a volume" ...
+   # ... the volume part of "A disk from a snapshot, as a volume" ...
    ```
+   To back out before step 4: delete the new volume, then recreate the claim bound to the old
+   one (`kubectl patch pv "$OLD_PV" -p '{"spec":{"claimRef":null}}'`, then a claim
+   `af-cp-data` with `volumeName: $OLD_PV`).
 4. Set the previous tag in the overlay and `kubectl apply -k` it. The claim is recreated and
    binds to the restored volume; check that, and that the CP runs in the disk's zone:
    ```bash
-   kubectl -n "$PREFIX-cp" get pvc af-cp-data          # Bound, VOLUME = $PREFIX-cp-data-restored
+   kubectl -n "$PREFIX-cp" get pvc af-cp-data          # Bound, VOLUME = $NAME
    kubectl -n "$PREFIX-cp" rollout status deployment/af-cp
    kubectl -n "$PREFIX-cp" get pods -o wide -l app.kubernetes.io/name=af-cp   # a node in $ZONE
    ```
@@ -520,7 +554,7 @@ previous image on the migrated database is not a rollback:
    ```bash
    kubectl delete pv "$OLD_PV"
    gcloud compute disks delete "$OLD_DISK" --zone "$ZONE" --project "$PROJECT"
-   kubectl patch pv "$PREFIX-cp-data-restored" -p '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}'
+   kubectl patch pv "$NAME" -p '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}'
    # re-read PV, HANDLE, ZONE and DISK with the block of "What has to survive", then:
    gcloud compute disks add-resource-policies "$DISK" --zone "$ZONE" --project "$PROJECT" \
      --resource-policies "$PREFIX-cp-data"
