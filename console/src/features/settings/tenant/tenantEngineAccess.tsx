@@ -114,7 +114,7 @@ export function TenantEngineAccessView({ slug }: { slug: string }) {
       <p className="admin-hint">{tr("tenant.engine_access_note")}</p>
       {view.roles.map((r) => (
         <div key={r.role} className="admin-fgroup" data-role={r.role}>
-          <h4>{tr(ROLE_LABEL[r.role])}</h4>
+          <h5 className="admin-subhead">{tr(ROLE_LABEL[r.role])}</h5>
           {!r.tenant_allowed && <p className="admin-hint warn">{tr("tenant.engine_access_tenant_denied")}</p>}
           {/* The same segmented toggle as the other admin mode switches (egress log-only /
               enforce, the TTS mode), whose selected look is global in ui.css. */}

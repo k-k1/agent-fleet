@@ -158,3 +158,21 @@ describe("member detail engine access", () => {
     expect(panel()).toBeNull();
   });
 });
+
+// #1491: the per-role headings were a second <h4> styled exactly like the panel title, so the
+// panel and its role groups read as the same level. The panel keeps the one h4; each role is
+// a sub-heading.
+describe("tenant engine access — heading levels", () => {
+  it("has one panel title and a sub-heading per role", async () => {
+    await mount();
+    const panel = document.querySelector<HTMLElement>(".engine-access")!;
+    expect(panel.querySelectorAll("h4").length).toBe(1);
+    expect(group("llm").querySelector("h5.admin-subhead")).not.toBeNull();
+    expect(group("image").querySelector("h5.admin-subhead")).not.toBeNull();
+  });
+
+  it("styles the matrix as a shared admin table", async () => {
+    await mount();
+    expect(document.querySelector(".engine-access table")?.classList.contains("admin-table")).toBe(true);
+  });
+});

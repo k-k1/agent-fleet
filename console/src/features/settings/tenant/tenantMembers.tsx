@@ -302,7 +302,7 @@ function AddMember({ slug, isSuper, onAdded }: { slug: string; isSuper: boolean;
   };
   return (
     <form className="form add-member" onSubmit={submit}>
-      <div className="sub-head">{tr("admin.add_member")}</div>
+      <h5 className="admin-subhead">{tr("admin.add_member")}</h5>
       <div className="form-row">
         <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email" />
         <input value={key} onChange={(e) => setKey(e.target.value)} placeholder={tr("admin.or_user_key")} />

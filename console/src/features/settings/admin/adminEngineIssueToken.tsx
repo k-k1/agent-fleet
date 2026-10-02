@@ -156,7 +156,7 @@ export function EngineIssueTokenPanel() {
           />
         </label>
         <div className="engines-model-add-actions">
-          <button type="submit" className="btn-secondary" disabled={busy || !slug.trim() || !userKey.trim()}>
+          <button type="submit" disabled={busy || !slug.trim() || !userKey.trim()}>
             {busy ? tr("admin.engines_issue_working") : tr("admin.engines_issue_submit")}
           </button>
         </div>

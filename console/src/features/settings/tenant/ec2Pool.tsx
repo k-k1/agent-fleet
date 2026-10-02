@@ -270,7 +270,7 @@ export function PoolView() {
         {slots.length === 0 ? (
           <p className="muted">{tr("pool.no_slots")}</p>
         ) : (
-          <table className="admin-table pool-table">
+          <table className="admin-table">
             <thead>
               <tr>
                 <th>{tr("pool.col_instance")}</th>
@@ -329,7 +329,7 @@ export function PoolView() {
         {homes.length === 0 ? (
           <p className="muted">{tr("pool.no_homes")}</p>
         ) : (
-          <table className="admin-table pool-table">
+          <table className="admin-table">
             <thead>
               <tr>
                 <th>{tr("pool.col_workspace")}</th>

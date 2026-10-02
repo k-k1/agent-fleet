@@ -612,15 +612,17 @@
   flex: none;
 }
 
-/* EC2 slot pool (ecs-ec2 only; features/settings/ec2Pool.tsx) */
-.pool-table {
+/* Data tables in the tenant dialog: the EC2 slot pool (ec2Pool.tsx) and the engine-access
+   matrix (tenantEngineAccess.tsx). Both carry .admin-table; the matrix had no table rule of
+   its own and rendered as a bare browser table. */
+.admin-table {
   width: 100%;
   border-collapse: collapse;
   margin-top: 10px;
   font-size: 12px;
 }
 
-.pool-table th {
+.admin-table th {
   text-align: left;
   font-weight: 500;
   color: var(--muted);
@@ -629,13 +631,13 @@
   white-space: nowrap;
 }
 
-.pool-table td {
+.admin-table td {
   padding: 6px 8px;
   border-bottom: 1px solid var(--border2);
   vertical-align: middle;
 }
 
-.pool-table tr:last-child td {
+.admin-table tr:last-child td {
   border-bottom: none;
 }
 
@@ -743,4 +745,10 @@
   font-family: var(--mono);
   font-size: 12px;
   resize: vertical;
+}
+
+/* Intro line of the tenant usage panel: the toolbar under it needs the gap a heading would
+   give, which an inline style used to supply. */
+.usage-intro {
+  margin: 0 0 12px;
 }
