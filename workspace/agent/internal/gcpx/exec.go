@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudexec"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudlogin"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	_ "modernc.org/sqlite"
 )
@@ -52,6 +53,11 @@ type ExecOptions struct {
 
 	Stderr      io.Writer
 	Interactive bool // stdin and stderr are terminals
+	// ConsoleLogin lets a run with nobody at a terminal ask the Console for the login and
+	// wait up to ConsoleWait (decision 3); Waiter says who asks.
+	ConsoleLogin bool
+	ConsoleWait  time.Duration
+	Waiter       cloudlogin.Waiter
 	// Now is the clock for the remaining-life check (time.Now when nil).
 	Now func() time.Time
 }
@@ -124,12 +130,20 @@ func PlanExec(gcloudBin string, environ []string, o ExecOptions) (string, []stri
 	agentEnv := AgentEnv(environ, ConfigRoot())
 
 	waiting := func() { fmt.Fprintln(stderr, WaitingMessage) }
+	// The state the mint is made against, read first: a login that lands between the two
+	// then shows as a change, and the Console wait checks again instead of filing.
+	snap := readLoginState(p.Name)
 	tok, account, err := mintLocked(gcloudBin, agentEnv, p, waiting)
 	if errors.Is(err, ErrLoginRequired) {
 		hint := fmt.Sprintf("af-gcloud-exec --profile %s --project %s --login -- true", session.ShellQuote(p.Name), session.ShellQuote(p.Project))
 		switch {
 		case o.Login == "always" || (o.Login != "never" && o.Interactive):
 			tok, account, err = loginAndMint(gcloudBin, agentEnv, p, stderr, waiting, errors.Is(err, errCredentialRejected))
+		case consoleEligible(o):
+			tok, account, err = consoleLogin(gcloudBin, agentEnv, p, snap, o, err, hint)
+			if err != nil {
+				return "", nil, nil, fmt.Errorf("profile %q: %w", p.Name, err)
+			}
 		default:
 			return "", nil, nil, fmt.Errorf("profile %q: %w\nlog in from a terminal with: %s", p.Name, err, hint)
 		}
@@ -260,6 +274,10 @@ func loginAndMint(gcloudBin string, env []string, p Profile, stderr io.Writer, w
 		return Token{}, "", fmt.Errorf("the login finished but still gave no usable credential: %s", err.Error())
 	} else if err != nil {
 		return Token{}, "", fmt.Errorf("after the login: %w", err)
+	}
+	// A completed login is what settles a Console request filed for a rejected credential.
+	if err := recordLogin(root, account); err != nil {
+		fmt.Fprintf(stderr, "af-gcloud-exec: could not record the login (%v); a pending Console request may stay up until it expires\n", err)
 	}
 	return tok, account, nil
 }

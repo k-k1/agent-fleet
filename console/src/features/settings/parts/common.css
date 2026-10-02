@@ -703,6 +703,11 @@
   color: var(--muted2);
 }
 
+/* The row's Google login state (GcpTab, ADR 0107 decision 3). */
+.gcp-login-state {
+  font-size: 12px;
+}
+
 .gcp-conflict {
   font-size: 12px;
   margin: 4px 0 0;

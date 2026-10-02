@@ -25,6 +25,7 @@ import { useSessionsStore, startSessionsPolling } from "../features/sessions/sto
 import { wireSessionPaneReconcile } from "../features/sessions/paneReconcile.ts";
 import { SessionModals } from "../features/sessions/SessionModals.tsx";
 import { AwsLoginHost } from "../features/awslogin/AwsLoginHost.tsx";
+import { GcpLoginHost } from "../features/gcplogin/GcpLoginHost.tsx";
 import { AuthExpiredModal } from "../features/auth/AuthExpiredModal.tsx";
 import { ProviderRequiredModal } from "../features/auth/ProviderRequiredModal.tsx";
 import { NotProvisioned } from "../features/auth/NotProvisioned.tsx";
@@ -558,6 +559,7 @@ export function App() {
       <StartHost />
       <SessionModals />
       <AwsLoginHost />
+      <GcpLoginHost />
       <WsStartingDialog />
       <AuthExpiredModal />
       <ProviderRequiredModal />

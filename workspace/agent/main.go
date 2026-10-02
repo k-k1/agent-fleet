@@ -181,6 +181,7 @@ func serve() {
 	// fail-open like the MCP pull: an unreachable CP keeps the last copy.
 	startBranchRulesTenantSync()
 	awsx.LoginAWSBin = ensureAWSCLI
+	gcpx.LoginGCloudBin = ensureGCloud
 	startTerminalHistoryJanitor()
 	// Route a managed driver's turn completion (it has no hooks) into the same
 	// notification/report path the hook route uses (the "answered" notice plus the

@@ -184,7 +184,8 @@ type Process struct {
 	// Exited reads how the process ended (err from Wait) and says whether the login is
 	// done, or the message the failed attempt shows.
 	Exited func(err error) (done bool, message string)
-	// Cleanup, when set, runs once the process is gone or could not be started.
+	// Cleanup, when set, runs once the process is gone (after Exited) or could not be
+	// started.
 	Cleanup func()
 }
 
@@ -245,8 +246,12 @@ func (s *Store[S]) Start(key, requestID, profile string, p Process) (*Attempt, e
 		defer close(done)
 		err := cmd.Wait()
 		pr.Close()
+		// Exited before Cleanup: a backend may hold a lock from the process's start that its
+		// Exited still needs (gcpx records a finished login under the gcloud root's lock),
+		// and Cleanup is where it lets go.
+		ok, msg := p.Exited(err)
 		cleanup()
-		if done, msg := p.Exited(err); done {
+		if ok {
 			a.End(PhaseDone, "")
 		} else {
 			a.End(PhaseFailed, msg)

@@ -20,6 +20,10 @@ import (
 // TestMain clears AF_CP_INTERNAL_URL: a workspace that runs these tests may itself carry
 // it, and cpurl.Request would then send the tests' requests past their fake CP.
 func TestMain(m *testing.M) {
+	// The test binary doubles as the fake gcloud of the Console login (login_test.go).
+	if dir := os.Getenv(fakeLoginDirEnv); dir != "" {
+		os.Exit(fakeGcloudLogin(dir, os.Args[1:]))
+	}
 	_ = os.Unsetenv("AF_CP_INTERNAL_URL")
 	os.Exit(m.Run())
 }
@@ -176,7 +180,7 @@ func addCredential(t *testing.T, account, kind string) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(root, "credentials.db"))
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(root, "credentials.db")+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatal(err)
 	}

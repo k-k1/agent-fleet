@@ -409,6 +409,29 @@
   font-family: var(--mono);
   overflow-wrap: anywhere;
 }
+/* af-gcloud-exec's login modal (ADR 0107): the checked sign-in URL, shown in full so the member
+   can see the host before opening it, and the one code field. */
+.gcp-login-authorize {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gcp-login-url {
+  margin: 0;
+  font-size: 12px;
+  max-height: 4.5em;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.gcp-login-code {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.gcp-login-code .cinput {
+  flex: 1;
+  font-family: var(--mono);
+}
 .ssm-code-row {
   display: flex;
   align-items: center;

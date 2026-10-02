@@ -395,3 +395,51 @@ implementation choices.
   has no usable credential exits 1, not 3.
 - **`GCE_METADATA_*` is removed for the child too**, beside `CLOUDSDK_*`, `GOOGLE_*` and `GCLOUD_*`:
   a caller's metadata host must not steer a library that does reach for the metadata server.
+
+## Note — the Console login as built, and the Compute Engine prompt (2026-10-02)
+
+Issue #1497. The decisions above are not changed. This note settles the question decision 2 left
+to phase 2 and records how decision 3 was built. No real Google sign-in was run: gcloud's side was
+read in SDK 587.0.0's source and played by a fake in the tests.
+
+- **The "personal account on a Compute Engine VM?" prompt is not answered by the Console login;
+  `native` on GCE is left to the terminal login.** gcloud asks it (`PromptContinue`, default yes)
+  before it prints the URL whenever `c_gce.Metadata().connected` holds
+  (`surface/auth/login.py`). That check is the GCE residency probe of `gce_cache.py`, which
+  `CLOUDSDK_CORE_CHECK_GCE_METADATA=false` does not gate; the property gates only the credential
+  fallback in `credentials/store.py`. Answering would be the Agent accepting, on the member's
+  behalf, gcloud's warning that the credential may be visible to others on that VM, and the only
+  line the Console ever writes to gcloud's stdin is the code. So any yes/no question before the URL
+  ends the attempt, and the Console tells the member to log in with
+  `af-gcloud-exec --profile … --project … --login -- true` in a terminal. Where ADR 0106 blocks the
+  metadata server (ECS, GKE) the probe fails and the prompt does not come up; that is not measured
+  on a live VM or node.
+- **After the code, gcloud asks once more** ("overwrite existing credentials?", default yes) when a
+  credential for the account is already stored. The Agent closes stdin after the code's line, so
+  that question reads end-of-file and takes its default; nothing else is ever written.
+- **The root's lock during a Console login.** The terminal login holds it for its whole run. A
+  Console login waits on a person for minutes, and holding the lock that long would stall every
+  `af-gcloud-exec` run of every profile. gcloud writes the configuration only before the URL (when
+  a stored credential lets it finish at once) and after the code, so an attempt holds the lock from
+  its start until the URL is out, and again from the code's submit until its process has exited and
+  the login is recorded. The start and the submit check, under the lock, that the configuration is
+  still the version of the profile the press read; a submit for a changed profile ends the attempt.
+  An attempt that prints no URL within a minute ends, so a gcloud stuck before its URL cannot
+  hold the lock for the attempt's whole fifteen minutes. A route waits for the lock at most ten
+  seconds and otherwise answers "busy".
+- **"Resolved" (step 5) as built.** The Agent records a mark per account each time a login
+  completes through it (Console or terminal) in `gcloud/.agent-fleet-logins.json`. A request
+  records the profile's version (id, login method, Settings account — decision 1's reset triple),
+  the selected account, whether a user credential is stored for it, and that mark. A request filed
+  while a user credential was selected was filed because Google rejected it: it starts with
+  `--force` and is resolved only by a newer mark. Any other request is resolved once an account with
+  a user credential is selected. A request whose profile version changed is dropped.
+  "`print-access-token` succeeds" is checked by the waiting run itself (its mint), not by the
+  Agent's sweep: the sweep runs on every list and poll and a gcloud start costs about a second, so
+  it stops at the local facts that precede the mint; a run whose mint still fails files again.
+- **What is logged and audited.** The Agent's log and the CP's audit name the profile and an
+  attempt reference (the first 8 hex digits of the id's SHA-256), never the attempt id — whoever
+  holds it can read the sign-in URL — and never the URL or the code. The audit row's detail says
+  `via relay`. The code route's body is bounded to 4 KiB at the CP and at the Agent, and a code must
+  be one line of the characters a Google code uses. The CP's error log replaces a gcp-login attempt
+  id in a relayed path by its reference and drops the Agent URL from a transport error.

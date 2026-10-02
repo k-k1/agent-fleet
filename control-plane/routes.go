@@ -422,6 +422,16 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// "Log out" of one profile: a plain request, nothing lives on in the Agent's memory.
 	mux.HandleFunc("POST /api/aws-login/profiles/{name}/logout", rest)
 	mux.HandleFunc("GET /api/aws-login/profiles/{name}/attempts/{attempt}", awsLogin)
+	// af-gcloud-exec's Console login (ADR 0107 decision 3): the same shape, every attempt
+	// read through its profile, and the code posted (bounded, audited, never logged) to it.
+	gcpLogin := proxy.withResolved(proxy.restLoginFlow)
+	mux.HandleFunc("GET /api/gcp-login", rest)
+	mux.HandleFunc("POST /api/gcp-login/{id}/start", gcpLogin)
+	mux.HandleFunc("POST /api/gcp-login/{id}/cancel", rest)
+	mux.HandleFunc("GET /api/gcp-login/profiles", rest)
+	mux.HandleFunc("POST /api/gcp-login/profiles/{name}/start", gcpLogin)
+	mux.HandleFunc("GET /api/gcp-login/profiles/{name}/attempts/{attempt}", gcpLogin)
+	mux.HandleFunc("POST /api/gcp-login/profiles/{name}/attempts/{attempt}/code", proxy.withResolved(proxy.gcpLoginCode))
 	mux.HandleFunc("POST /api/sessions/{name}/start", ws.withResolved(ws.sessionStart))
 	mux.HandleFunc("POST /api/ssm/instances", ws.withResolved(ws.ssmInstances))
 	// Structured transcript for the Console chat view (case-A).
