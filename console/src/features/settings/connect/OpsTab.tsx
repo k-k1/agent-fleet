@@ -50,12 +50,12 @@ export function OpsTab() {
       ) : (
         <>
           <p className="muted ds-note">{tr("ops.intro")}</p>
-          <div className="conn-cat">{tr("ops.cat_incident")}</div>
+          <div className="ds-title">{tr("ops.cat_incident")}</div>
           <PagerDutyCard st={conns.pagerduty} reload={reload} />
-          <div className="conn-cat">{tr("ops.cat_monitoring")}</div>
+          <div className="ds-title">{tr("ops.cat_monitoring")}</div>
           <GrafanaCard st={conns.grafana} reload={reload} />
           <CloudWatchCard st={conns.cloudwatch} reload={reload} />
-          <div className="conn-cat">{tr("ops.cat_cloud")}</div>
+          <div className="ds-title">{tr("ops.cat_cloud")}</div>
           <AWSCard st={conns.aws} reload={reload} />
         </>
       )}

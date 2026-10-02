@@ -25,6 +25,7 @@ export const BADGE_SHORT: Record<string, string> = {
   cloudwatch: "cw",
   aws: "aw",
   svn: "sv",
+  internal: "ig",
 };
 
 // …except where the provider has a mark of its own, which is most of them (lib/brandicons).

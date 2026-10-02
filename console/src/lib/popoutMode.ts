@@ -45,3 +45,9 @@ export function setPopoutMode(m: PopoutMode): void {
 export function usePopoutMode(): PopoutMode {
   return useSyncExternalStore(subscribe, popoutMode);
 }
+
+/** The layout mode this tab runs in. A minimal pop-out stays "split" whatever the preference:
+ * its one-pane rules (replace in place, no split actions) are written against the split
+ * layout, and in a tabbed one links add tabs and tab drags split the pane. */
+export const layoutModeFor = (m: PopoutMode, preferred: "split" | "tabs"): "split" | "tabs" =>
+  m === "popout" ? "split" : preferred;

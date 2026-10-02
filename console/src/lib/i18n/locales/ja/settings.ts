@@ -190,6 +190,7 @@ export const settings = {
   "agents.note_apply": "接続の変更は即時です。動作設定の反映タイミングは、各項目の説明を確認してください。",
   "agents.rtk_unsupported":
     "このワークスペースのイメージはエージェント設定 API（rtk）に未対応です。イメージを再ビルドして「作り直す」と有効になります。",
+  "agents.default_model_none": "選べるモデルがありません",
   "agents.default_model": "既定モデル",
   "agents.default_effort": "既定 effort",
   "agents.start_mode": "開始モード",

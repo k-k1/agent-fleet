@@ -35,7 +35,7 @@ import { startRepoJobsPolling } from "../features/repos/jobs.ts";
 import { useFilesStore } from "../features/files/store.ts";
 import { wireFilesSessionRefresh } from "../features/files/sessionRefresh.ts";
 import { useChatStore, startChatPolling } from "../features/chat/store.ts";
-import { hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setPrefsOwnerSource, setSetting, useSettings } from "../lib/settings.ts";
+import { getSettings, hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setPrefsOwnerSource, useSettings } from "../lib/settings.ts";
 import { getTenant, getUser } from "../core/api/client.ts";
 import { MOBILE_QUERY, coarsePointer } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
@@ -65,13 +65,14 @@ import { CommandPalette } from "../features/keys/CommandPalette.tsx";
 import { CheatSheet } from "../features/keys/CheatSheet.tsx";
 import { useUpdateCheck } from "../lib/useUpdateCheck.tsx";
 import { consumeSessionDeepLink } from "../lib/sessionDeepLink.ts";
-import { popoutMode, usePopoutMode } from "../lib/popoutMode.ts";
+import { layoutModeFor, popoutMode, usePopoutMode } from "../lib/popoutMode.ts";
 import { installSwipeGestures } from "./swipeGestures.ts";
 import { rotateRunningSession } from "../features/sessions/open.ts";
 import { displayName } from "../lib/sessionview.ts";
 import { takePendingPopout, takeStalePopoutLink } from "../features/panes/popout.ts";
 import type { PopoutDescriptor } from "../layout/popout.ts";
 import { confirmDirtyNavigation } from "../features/editor/dirtyRegistry.ts";
+import { usePaneLayoutSync } from "./usePaneLayoutSync.ts";
 import { PopoutTitleBar } from "../features/panes/PopoutTitleBar.tsx";
 import { toast } from "../ui/toast.ts";
 import { t } from "../lib/i18n/index.ts";
@@ -384,9 +385,9 @@ export function App() {
     const popped = takePendingPopout();
     if (popped) {
       popoutSeedRef.current = popped;
-      useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap);
+      useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap, layoutModeFor(popoutMode(), getSettings().paneLayout));
     } else {
-      useLayoutStore.getState().load(tenant);
+      useLayoutStore.getState().loadMode(tenant, layoutModeFor(popoutMode(), getSettings().paneLayout));
     }
     // This run loaded under the CURRENT identity — mark its rev as handled so the
     // identity-reload effect doesn't double-load right after boot.
@@ -396,15 +397,7 @@ export function App() {
     void useSessionsStore.getState().refresh();
   }, [booted, tenant]);
 
-  // The preference chooses a profile, not a conversion: each profile retains
-  // its own tab-local layout so switching never destroys terminals or drafts.
-  useEffect(() => {
-    if (!booted || layout.mode === paneLayout) return;
-    void confirmDirtyNavigation("layout").then((proceed) => {
-      if (proceed) useLayoutStore.getState().loadMode(tenant, paneLayout);
-      else setSetting("paneLayout", layout.mode === "tabs" ? "tabs" : "split");
-    });
-  }, [booted, tenant, paneLayout, layout.mode]);
+  usePaneLayoutSync(booted, tenant, paneLayout, popout);
 
   // A Chromium attachment changes layout only after the user has followed its
   // action URL. MCP/server activity alone never reaches this effect. It runs
@@ -436,8 +429,8 @@ export function App() {
     void confirmDirtyNavigation("layout").then((proceed) => {
       if (!proceed) return; // keep the shared-key layout rather than drop unsaved buffers
       const popped = popoutSeedRef.current;
-      if (popped) useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap);
-      else useLayoutStore.getState().load(tenant);
+      if (popped) useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap, layoutModeFor(popoutMode(), getSettings().paneLayout));
+      else useLayoutStore.getState().loadMode(tenant, layoutModeFor(popoutMode(), getSettings().paneLayout));
     });
   }, [booted, tenant, identityRev]);
 

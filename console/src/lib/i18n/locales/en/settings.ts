@@ -192,6 +192,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.note_apply": "Connection changes are immediate. See each behavior setting for when it takes effect.",
   "agents.rtk_unsupported":
     "This workspace's image doesn't support the agent-settings API (rtk). Rebuild the image and “Recreate” to enable it.",
+  "agents.default_model_none": "No models available",
   "agents.default_model": "Default model",
   "agents.default_effort": "Default effort",
   "agents.start_mode": "Start mode",

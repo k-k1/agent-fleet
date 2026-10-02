@@ -172,7 +172,7 @@ function JiraCard({ st, reload, oauthAvailable }: { st: any; reload: () => void;
     >
       {st?.connected ? (
         <div className="p-body">
-          <div className="p-who">
+          <div className="p-who p-who-flush">
             <span className="p-em">{st.account || st.email}</span>
             <span className="p-pl">{st.authKind === "oauth" ? tr("tracker.jira_via_oauth") : tr("tracker.jira_via_token")}</span>
             {st.site && <span className="p-pl">{String(st.site).replace(/^https:\/\//, "")}</span>}

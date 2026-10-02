@@ -122,8 +122,11 @@
   gap: 12px;
 }
 
+/* Sits inside the section heading (so the heading's underline spans the row), and must not
+   take the heading's weight. */
 .kb-reset-all {
   font-size: 12px;
+  font-weight: normal;
   white-space: nowrap;
 }
 
@@ -442,4 +445,14 @@
   font-size: 11px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* AI assist: one box per feature (title suggestion, branch name, …). Each holds its own on/off,
+   agent and model rows, and without a boundary the eight ran together as one list where the
+   feature name read as just another row label. */
+.ai-feature-card {
+  margin-top: 12px;
+  padding: 6px 12px 4px;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
 }

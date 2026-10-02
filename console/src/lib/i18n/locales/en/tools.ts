@@ -180,6 +180,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.preview_public_note": "Anyone with the URL can open it. Always returns to off when the workspace stops or restarts (and the URL changes).",
   "env.preview_share_label": "Show it to your tenant",
   "env.preview_share_note": "Members of the same tenant can open it after signing in (nobody outside the tenant can). Unlike public mode this stays on across stops and restarts. ⚠️ While someone has it open your workspace will not idle-stop, and that running time is billed to you.",
+  "env.toolchains_title": "Runtimes and time zone",
   "env.agent_update_title": "Agent CLI updates",
   "env.agent_update_label": "Update the agent CLIs and rtk to the latest on start",
   "env.agent_update_note":
@@ -600,7 +601,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "git.svn_trust": "Trust this server's certificate (self-signed / unknown CA)",
   "git.svn_hint":
     "The URL of a repository or a whole server (e.g. https://svn.example.com/proj). Matched by longest prefix, so an entry for one repository overrides a broader one for the whole server. Used by checkout and update, and by the `svn` you run yourself in a session.",
-  "git.global_identity_cat": "Default commit identity (all git)",
+  "git.global_identity_cat": "Default commit identity (all Git)",
   "git.global_identity_saved": "Saved the default identity",
   "git.global_identity_help":
     "The ~/.gitconfig default used for repositories tied to no provider (no remote, etc.). Resolution order: repo override > provider > this default.",

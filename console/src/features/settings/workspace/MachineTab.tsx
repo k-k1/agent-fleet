@@ -144,12 +144,12 @@ export function MachineView({ d }: { d: WsMachine }) {
           </Row>
         )}
         {next.changed && (
-          <p className="muted ds-sub mv-drift">
+          <p className="muted ds-note mv-drift">
             {next.box ? tr("machine.next_start_box", { type: next.box }) : tr("machine.next_start_size")}
           </p>
         )}
-        <p className="muted ds-sub">{own ? tr("machine.note_own_box") : tr("machine.note_shared_host")}</p>
-        <p className="muted ds-sub">{tr("machine.note_who_changes")}</p>
+        <p className="muted ds-note">{own ? tr("machine.note_own_box") : tr("machine.note_shared_host")}</p>
+        <p className="muted ds-note">{tr("machine.note_who_changes")}</p>
       </section>
       {d.running && <UsageSection memMax={memLimit.value} vcpu={vcpu.value} own={own} />}
       {d.running && <DiskSection />}
@@ -243,7 +243,7 @@ function UsageSection({ memMax, vcpu, own }: { memMax: number; vcpu: number; own
           </div>
         </div>
       )}
-      <p className="muted ds-sub">{tr("machine.usage_note")}</p>
+      <p className="muted ds-note">{tr("machine.usage_note")}</p>
     </section>
   );
 }
@@ -356,9 +356,9 @@ function DiskSection() {
     <section className="ds-group">
       <h4 className="ds-title">{tr("machine.disk_title")}</h4>
       {err ? (
-        <p className="muted ds-sub">{tr("machine.disk_failed")}</p>
+        <p className="muted ds-note">{tr("machine.disk_failed")}</p>
       ) : !u || !u.cache ? (
-        <p className="muted ds-sub">{tr("common.loading")}</p>
+        <p className="muted ds-note">{tr("common.loading")}</p>
       ) : (
         <>
           <Row label={tr("machine.disk_cache")}>
@@ -394,11 +394,11 @@ function DiskSection() {
               {tr("machine.disk_open_cleanup")}
             </Button>
           </div>
-          {u.truncated && <p className="muted ds-sub">{tr("machine.disk_truncated")}</p>}
+          {u.truncated && <p className="muted ds-note">{tr("machine.disk_truncated")}</p>}
           {/* Its own note: not "too many files" — the session folders were not judged at all
               because the session store is missing, so the figure above is the chats' only. */}
-          {!!u.orphans?.unjudged && <p className="muted ds-sub">{tr("machine.disk_orphans_unjudged")}</p>}
-          <p className="muted ds-sub">{tr("machine.disk_note")}</p>
+          {!!u.orphans?.unjudged && <p className="muted ds-note">{tr("machine.disk_orphans_unjudged")}</p>}
+          <p className="muted ds-note">{tr("machine.disk_note")}</p>
         </>
       )}
     </section>
@@ -464,8 +464,8 @@ function ToolCacheSection() {
   return (
     <section className="ds-group">
       <h4 className="ds-title">{tr("machine.tool_title")}</h4>
-      {err && <p className="muted ds-sub">{tr("machine.tool_failed")}</p>}
-      {rows && rows.length === 0 && <p className="muted ds-sub">{tr("machine.tool_none")}</p>}
+      {err && <p className="muted ds-note">{tr("machine.tool_failed")}</p>}
+      {rows && rows.length === 0 && <p className="muted ds-note">{tr("machine.tool_none")}</p>}
       {rows?.map((r) => (
         <Row key={r.name} label={r.name}>
           <span className="mv-val mv-size">{humanSize(r.bytes)}</span>
@@ -486,9 +486,9 @@ function ToolCacheSection() {
           {measuring ? tr("machine.tool_measuring") : tr("machine.tool_measure")}
         </Button>
       </div>
-      {msg && <p className="ds-sub">{msg}</p>}
-      {truncated && <p className="muted ds-sub">{tr("machine.disk_truncated")}</p>}
-      <p className="muted ds-sub">{tr("machine.tool_note")}</p>
+      {msg && <p className="ds-note">{msg}</p>}
+      {truncated && <p className="muted ds-note">{tr("machine.disk_truncated")}</p>}
+      <p className="muted ds-note">{tr("machine.tool_note")}</p>
       {confirm && (
         <ConfirmDialog
           title={tr("machine.tool_confirm_title", { name: confirm.name })}
@@ -573,7 +573,7 @@ function LeftoverSection() {
   return (
     <section className="ds-group">
       <h4 className="ds-title">{tr("machine.left_title")}</h4>
-      {err && <p className="muted ds-sub">{tr("machine.left_failed")}</p>}
+      {err && <p className="muted ds-note">{tr("machine.left_failed")}</p>}
       {rows?.map((r) => (
         <Row key={r.kind} label={leftoverLabel(r.kind)}>
           <span className="mv-val mv-size">
@@ -592,9 +592,9 @@ function LeftoverSection() {
           {measuring ? tr("machine.tool_measuring") : tr("machine.tool_measure")}
         </Button>
       </div>
-      {msg && <p className="ds-sub">{msg}</p>}
-      {truncated && <p className="muted ds-sub">{tr("machine.disk_truncated")}</p>}
-      <p className="muted ds-sub">{tr("machine.left_note")}</p>
+      {msg && <p className="ds-note">{msg}</p>}
+      {truncated && <p className="muted ds-note">{tr("machine.disk_truncated")}</p>}
+      <p className="muted ds-note">{tr("machine.left_note")}</p>
     </section>
   );
 }

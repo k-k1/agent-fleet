@@ -37,8 +37,9 @@
   font-weight: 600;
 }
 
-/* Actions pushed to the right edge (take snapshot / jump to timestamp). */
-.mem-head > :last-child {
+/* Actions pushed to the right edge (take snapshot / jump to timestamp). A head that holds
+   only its heading (the transfer section) must not push the heading itself to the right. */
+.mem-head > :last-child:not(:first-child) {
   margin-left: auto;
 }
 

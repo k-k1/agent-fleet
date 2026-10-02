@@ -10,37 +10,15 @@ import { CLAUDE_CUSTOM_MODEL_PLACEHOLDER } from "../../../lib/modelFallbacks.ts"
 import { forgetHiddenRepoModels } from "../../../lib/repoLast.ts";
 import { agentOf, nonPlanModeLabel } from "../../../agents/registry.ts";
 import { Choice, OnOff, Select } from "../parts/controls.tsx";
+import { SettingRow, SettingsDisclosure } from "../parts/cardSettings.tsx";
 
-// A labeled settings row inside a card's behavior-settings group.
-export function SettingRow({ label, sub, children }: { label: ReactNode; sub?: ReactNode; children?: ReactNode }) {
-  return (
-    <div className="ps-row">
-      <span className="ps-label">
-        {label}
-        {sub && <span className="sub">{sub}</span>}
-      </span>
-      {children}
-    </div>
-  );
-}
+export { SettingRow };
 
-// CardSettings: the per-agent behavior-settings disclosure — collapsed by default so the card
-// reads as "connect" first, with behavior a deliberate second level. Its body is the
-// client launch defaults (always usable) + any container-backed toggles the card passes.
+// CardSettings: the per-agent behavior-settings disclosure. Its body is the client launch
+// defaults (always usable) + any container-backed toggles the card passes.
 export function CardSettings({ children }: { children?: ReactNode }) {
   const tr = useT();
-  const [open, setOpen] = useState(false);
-  return (
-    <div className={"p-settings" + (open ? " open" : "")}>
-      <button type="button" className="ps-disclosure" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        <span className="ps-caret" aria-hidden="true">
-          {open ? "▾" : "▸"}
-        </span>
-        {tr("agents.behavior")}
-      </button>
-      {open && <div className="ps-body">{children}</div>}
-    </div>
-  );
+  return <SettingsDisclosure label={tr("agents.behavior")}>{children}</SettingsDisclosure>;
 }
 
 // ThinkingRow: "expand thinking" (kind-scoped, off by default). The mirror renders its thinking
@@ -146,6 +124,10 @@ export function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" |
             segmented control (tooWideForSegments). */}
         {kind === "claude" ? (
           <ModelPicker kind={kind} model={row.model} onChange={(model) => update({ model, effort: "" })} />
+        ) : models.length === 0 ? (
+          // An empty catalog (lcpp with no reachable engine) would draw a segmented control
+          // with no segments: a bare frame that reads as a rendering bug.
+          <span className="muted">{tr("agents.default_model_none")}</span>
         ) : tooWideForSegments(models) ? (
           <Select value={row.model} options={models} onChange={(model) => update({ model, effort: "" })} />
         ) : (

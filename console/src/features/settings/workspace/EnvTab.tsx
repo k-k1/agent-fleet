@@ -163,10 +163,10 @@ function HostUpdateSection() {
               {busy ? tr("env.update_applying") : tr("env.update_apply_cta")}
             </button>
           </Row>
-          <p className="muted ds-sub">{tr("env.update_apply_note")}</p>
+          <p className="muted ds-note">{tr("env.update_apply_note")}</p>
         </>
       ) : (
-        <p className="muted ds-sub">{tr("env.update_uptodate")}</p>
+        <p className="muted ds-note">{tr("env.update_uptodate")}</p>
       )}
     </section>
   );
@@ -227,9 +227,9 @@ function ToolVersions({ running, cliRelease }: { running: boolean; cliRelease?: 
         )}
       </h4>
       {!running ? (
-        <p className="muted ds-sub">{tr("env.tv_ws_stopped")}</p>
+        <p className="muted ds-note">{tr("env.tv_ws_stopped")}</p>
       ) : !tv ? (
-        <p className="muted ds-sub">{busy ? tr("common.loading") : tr("env.fetch_failed")}</p>
+        <p className="muted ds-note">{busy ? tr("common.loading") : tr("env.fetch_failed")}</p>
       ) : (
         <table className="tool-ver">
           <thead>
@@ -280,7 +280,7 @@ function ToolVersions({ running, cliRelease }: { running: boolean; cliRelease?: 
           </tbody>
         </table>
       )}
-      <p className="muted ds-sub">{tr("env.tv_note")}</p>
+      <p className="muted ds-note">{tr("env.tv_note")}</p>
       <WatcherRow cr={cliRelease} />
     </section>
   );
@@ -300,7 +300,7 @@ function WatcherRow({ cr }: { cr?: CLIRelease | null }) {
   if (h.kind === "unknown") return null;
   const last = isNaN(h.okAt) ? tr("env.watch_never") : relTime(h.okAt);
   return (
-    <p className="muted ds-sub cli-watch-row">
+    <p className="muted ds-note cli-watch-row">
       {tr("env.watch_line", { when: last })}
       {h.kind !== "ok" && (
         <span className="cli-watch-warn">
@@ -330,7 +330,8 @@ function Toolchains({
   const tzList = tzOpts.includes(tz) ? tzOpts : [tz, ...tzOpts];
 
   return (
-    <>
+    <section className="ds-group">
+      <h4 className="ds-title">{tr("env.toolchains_title")}</h4>
       <p className="muted ds-note">
         {tr("env.tc_note_1")}
         <strong>{tr("env.tc_note_strong")}</strong>
@@ -357,7 +358,7 @@ function Toolchains({
         </select>
       </Row>
       <JavaRow d={d} update={update} running={running} reload={reload} />
-    </>
+    </section>
   );
 }
 
@@ -459,7 +460,7 @@ function JavaRow({
           </span>
         )}
       </Row>
-      {needsInstall && <p className="muted ds-sub">{tr("env.java_install_note", { v: selected })}</p>}
+      {needsInstall && <p className="muted ds-note">{tr("env.java_install_note", { v: selected })}</p>}
     </>
   );
 }
@@ -563,7 +564,7 @@ function NodeRow({
           )}
         </span>
       </Row>
-      {needsInstall && <p className="muted ds-sub">{tr("env.node_install_note", { v: selected })}</p>}
+      {needsInstall && <p className="muted ds-note">{tr("env.node_install_note", { v: selected })}</p>}
     </>
   );
 }
@@ -581,7 +582,7 @@ function AgentUpdateRow({ au, onChange }: { au: any; onChange: (on: boolean) => 
       <Row label={tr("env.agent_update_label")}>
         <OnOff value={!!au.agentUpdate} onChange={onChange} />
       </Row>
-      <p className="muted ds-sub">{tr("env.agent_update_note")}</p>
+      <p className="muted ds-note">{tr("env.agent_update_note")}</p>
     </section>
   );
 }

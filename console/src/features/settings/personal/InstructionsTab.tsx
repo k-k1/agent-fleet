@@ -153,7 +153,7 @@ export function InstructionsTab() {
   return (
     <div className="instr-tab">
       <p className="ds-hint">{tr("instr.intro")}</p>
-      {err && <div className="ds-error">{err}</div>}
+      {err && <div className="form-err">{err}</div>}
 
       <Row label={tr("instr.enabled")}>
         <OnOff
@@ -180,7 +180,7 @@ export function InstructionsTab() {
         </span>
         {/* The limit exists for cost, not truncation: say that it is a fixed cost added to
             every session. */}
-        <span className="ds-hint">{tr("instr.cost_hint")}</span>
+        <span>{tr("instr.cost_hint")}</span>
         <span className="instr-actions">
           <Button disabled={!dirty || over || busy} onClick={() => void save()}>
             {tr("common.save")}
@@ -194,9 +194,9 @@ export function InstructionsTab() {
           </Button>
         </span>
       </div>
-      {over && <div className="ds-error">{tr("instr.too_large")}</div>}
+      {over && <div className="form-err">{tr("instr.too_large")}</div>}
 
-      <h4 className="ds-subhead">{tr("instr.targets_head")}</h4>
+      <h4 className="ds-title">{tr("instr.targets_head")}</h4>
       <p className="ds-hint">{tr("instr.new_sessions_only")}</p>
       <table className="instr-targets">
         <tbody>
@@ -257,7 +257,7 @@ export function InstructionsTab() {
         </tbody>
       </table>
 
-      <h4 className="ds-subhead">{tr("instr.fleet_head")}</h4>
+      <h4 className="ds-title">{tr("instr.fleet_head")}</h4>
       <p className="ds-hint">{tr("instr.fleet_hint")}</p>
       <Button variant="ghost" onClick={() => void openPeek("fleet")}>
         {tr("instr.fleet_view")}

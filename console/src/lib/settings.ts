@@ -1116,7 +1116,7 @@ const DEFAULTS: Settings = {
   markdownCodeWrap: true,
   iconSet: "vscode",
   theme: "dark",
-  paneLayout: "split",
+  paneLayout: "tabs",
   locale: detectLocale(),
   mirrorTheme: "inherit",
   sharedTheme: "inherit",

@@ -75,13 +75,13 @@ export function GitTab() {
         <p className="muted pad">{tr("common.loading")}</p>
       ) : (
         <>
-          <div className="conn-cat">{tr("git.cat_hosting")}</div>
+          <div className="ds-title">{tr("git.cat_hosting")}</div>
           {/* While the availability is still unknown (null), fall on the side of showing it.
               Hiding the control merely because the fetch failed produces an unfixable screen:
               the app is registered, yet there is no button. */}
           <GithubRow st={conns.github} reload={reload} oauthAvailable={oauth?.github?.configured !== false} />
           <BitbucketRow st={conns.bitbucket} reload={reload} oauthAvailable={oauth?.bitbucket?.configured !== false} />
-          <div className="conn-cat">{tr("git.cat_svn")}</div>
+          <div className="ds-title">{tr("git.cat_svn")}</div>
           <SvnCard servers={svnServers(conns)} reload={reload} />
           <GlobalIdentity />
         </>
@@ -174,31 +174,33 @@ function SvnCard({ servers, reload }: { servers: SvnServer[]; reload: () => void
           <DisconnectButton onClick={() => void forget(s.urlPrefix)} />
         </div>
       ))}
-      <div className="gi-row">
-        <input
-          className="cinput"
-          placeholder={tr("git.svn_prefix_ph")}
-          value={prefix}
-          onChange={(e) => setPrefix(e.target.value)}
-        />
-        <input className="cinput" placeholder={tr("git.svn_user_ph")} value={user} onChange={(e) => setUser(e.target.value)} />
-        <input
-          className="cinput"
-          type="password"
-          placeholder={tr("git.svn_pass_ph")}
-          value={pass}
-          onChange={(e) => setPass(e.target.value)}
-          autoComplete="off"
-        />
-        <button disabled={busy || !prefix.trim()} onClick={save}>
-          {tr("common.save")}
-        </button>
+      <div className="p-body">
+        <div className="gi-row">
+          <input
+            className="cinput"
+            placeholder={tr("git.svn_prefix_ph")}
+            value={prefix}
+            onChange={(e) => setPrefix(e.target.value)}
+          />
+          <input className="cinput" placeholder={tr("git.svn_user_ph")} value={user} onChange={(e) => setUser(e.target.value)} />
+          <input
+            className="cinput"
+            type="password"
+            placeholder={tr("git.svn_pass_ph")}
+            value={pass}
+            onChange={(e) => setPass(e.target.value)}
+            autoComplete="off"
+          />
+          <button disabled={busy || !prefix.trim()} onClick={save}>
+            {tr("common.save")}
+          </button>
+        </div>
+        <label className="pmcp-secrets-toggle">
+          <input type="checkbox" checked={trust} onChange={(e) => setTrust(e.target.checked)} />
+          {tr("git.svn_trust")}
+        </label>
+        <Hint>{tr("git.svn_hint")}</Hint>
       </div>
-      <label className="pmcp-secrets-toggle">
-        <input type="checkbox" checked={trust} onChange={(e) => setTrust(e.target.checked)} />
-        {tr("git.svn_trust")}
-      </label>
-      <Hint>{tr("git.svn_hint")}</Hint>
     </ProviderCard>
   );
 }
@@ -281,7 +283,7 @@ function GlobalIdentity() {
   };
   return (
     <>
-      <div className="conn-cat">{tr("git.global_identity_cat")}</div>
+      <div className="ds-title">{tr("git.global_identity_cat")}</div>
       <div className="git-identity solo">
         <div className="gi-row">
           <input className="cinput" placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
