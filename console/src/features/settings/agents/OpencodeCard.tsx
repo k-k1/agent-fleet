@@ -213,7 +213,7 @@ function OpencodeWorkspaceRow({ st, reload }: { st: any; reload: () => void }) {
     <div className="p-body">
       {id && url ? (
         <>
-          <div className="p-who">
+          <div className="p-who p-who-flush">
             <a href={url} target="_blank" rel="noopener" className="flow-link">
               {tr("agents.oc_ws_open")}
             </a>
@@ -421,7 +421,7 @@ export function OpencodeCard({
             {accountOff ? (
               <div className="p-desc">{tr("agents.oc_account_disabled")}</div>
             ) : account ? (
-              <div className="p-who">
+              <div className="p-who p-who-flush">
                 <span className="p-em" title={st?.oauth_label || ""}>
                   {st?.oauth_label || tr("agents.oc_account_connected")}
                 </span>

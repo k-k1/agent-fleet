@@ -330,7 +330,8 @@ function Toolchains({
   const tzList = tzOpts.includes(tz) ? tzOpts : [tz, ...tzOpts];
 
   return (
-    <>
+    <section className="ds-group">
+      <h4 className="ds-title">{tr("env.toolchains_title")}</h4>
       <p className="muted ds-note">
         {tr("env.tc_note_1")}
         <strong>{tr("env.tc_note_strong")}</strong>
@@ -357,7 +358,7 @@ function Toolchains({
         </select>
       </Row>
       <JavaRow d={d} update={update} running={running} reload={reload} />
-    </>
+    </section>
   );
 }
 

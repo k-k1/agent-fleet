@@ -238,8 +238,8 @@ export function KeysTab() {
       </section>
 
       <section className="ds-group">
-        <div className="kb-head">
-          <h4 className="ds-title">{t("keys.kt.assignTitle")}</h4>
+        <h4 className="ds-title kb-head">
+          {t("keys.kt.assignTitle")}
           <button
             type="button"
             className="btn-ghost kb-reset-all"
@@ -251,7 +251,7 @@ export function KeysTab() {
           >
             {t("keys.kt.resetAll")}
           </button>
-        </div>
+        </h4>
         <p className="muted ds-note">{t("keys.kt.assignNote")}</p>
 
         {sections.map((sec) => (

@@ -177,6 +177,7 @@ export const tools = {
   "env.preview_public_note": "URL を知っていれば誰でも開けるようになります。停止・再起動すると必ずオフに戻ります（URL も変わります）。",
   "env.preview_share_label": "同じテナントのメンバーに見せる",
   "env.preview_share_note": "同じテナントのメンバーなら、ログインしたうえで開けるようになります（テナント外の人には見えません）。停止・再起動してもオフには戻りません。⚠️ 相手が開いている間はワークスペースが止まらないため、その稼働ぶんの費用はあなたに付きます。",
+  "env.toolchains_title": "言語ランタイムとタイムゾーン",
   "env.agent_update_title": "エージェント CLI の更新",
   "env.agent_update_label": "起動時にエージェント CLI と rtk を最新へ更新する",
   "env.agent_update_note":
