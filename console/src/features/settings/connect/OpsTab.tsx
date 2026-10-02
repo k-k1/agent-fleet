@@ -300,7 +300,9 @@ function AWSProfileFields({ p }: { p: ReturnType<typeof useAWSProfile> }) {
           onChange={(e) => p.setManualProfile(e.target.value)}
         />
       )}
-      <RegionSelect value={p.region} onChange={p.setRegion} emptyLabel={tr("ops.cw_region_placeholder")} />
+      {/* Keyed by the pick: a profile whose region equals the current value leaves the value
+          unchanged, which RegionSelect cannot see, so "Other" would stay open without it. */}
+      <RegionSelect key={p.sel} value={p.region} onChange={p.setRegion} emptyLabel={tr("ops.cw_region_placeholder")} />
     </>
   );
 }
