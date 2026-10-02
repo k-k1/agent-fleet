@@ -546,3 +546,13 @@ Helm chart は作らない。問い合わせは Kubernetes 対応を求めたの
 - 標準 API では home に足りないクラスタ。たとえば拡張と `WaitForFirstConsumer` に対応した StorageClass が無いもの。
 - Kubernetes での起動の待ち時間が ECS から大きく離れていると測れたとき。温めたノードのプールを再び検討することになる。
 - テナントを CP ではなくクラスタで分けなければならないとき。テナントごとの namespace を再び検討することになる。
+
+## 追記（2026-10-02）— 決定が選択の余地を残した点でコアアダプタが選んだこと
+
+コアアダプタ（#1465、`control-plane/internal/runtime/runtime_kubernetes*.go`）とともに書いた。決定そのものは変わらない。以下は決定が開けておいた選択で、どれも実機受け入れ（#1468）で見直せる。
+
+- **claim のアクセスモードは当面 `ReadWriteOnce`。** 決定 4 は CSI ドライバが対応する場所では `ReadWriteOncePod` を望むが、GKE での対応は未確認である。ドライバが持たないアクセスモードの claim は `Pending` のまま残り、すべての起動が期限まで `starting` になるため、安全な方を先に出す。
+- **テンプレート環境変数は pod に届く**（決定 8 の未決事項）。`Config.ExtraEnv`（`WS_ENV` と egress プロキシの変数）は起動ごとの環境変数と一緒にワークスペースの Secret に入る。運用者の `WS_ENV` が資格情報を含みうるからである。テンプレート自身の `env` には `CLAUDE_CONFIG_DIR`、`AF_WS_KEEP`、`AGENT_STOP_GRACE_SEC` を残し、`env` は `envFrom` に優先する。この環境変数が egress プロキシを設定し、`AF_CP_INTERNAL_URL` もあるときは、その URL のホストを `NO_PROXY` と `no_proxy` に追記し、CP の内部リスナーへの呼び出しがプロキシを通らないようにする。
+- **すでに replicas 1 の StatefulSet への Start は何もせず成功する。** どのアダプタも `running` と `starting` でそうしている。読みうる pod の下で Secret を書き換えない。決定 3 の「停止の確定」の要件は replicas 0 の StatefulSet に対して適用する。
+- **digest の固定は CP としてレジストリを読む。** レジストリのホストに対応する pull secret のエントリ、なければ Artifact Registry と Container Registry のホストに限って pod の Workload Identity トークン、なければ匿名。解決できないタグは Start を失敗させる。すでに digest を持つ参照はそのまま使う。CP が読めないレジストリへの運用者の回避策である。
+- **オブジェクト名**: 40 文字を超える CP のワークスペース名は接頭辞を残して全体のハッシュを付け、pod 名と `controller-revision-hash` ラベルを 63 文字以内に収める。

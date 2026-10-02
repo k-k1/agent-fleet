@@ -6,7 +6,11 @@
 // same package as the implementation.
 package runtime
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"time"
+)
 
 // Which adapters stage <dataDir>/docs is a fact the start path reads off the type. If an
 // ECS adapter ever claimed the marker it would copy megabytes onto the CP's disk that no
@@ -72,3 +76,47 @@ func TestHomePortsAreClaimedOnlyWhereTheHomeIsReachable(t *testing.T) {
 		}
 	}
 }
+
+// The kubernetes profile's claims, both directions (ADR 0106 decision 11). The home
+// ports and Stale arrive with #1466; until then claiming them would be the defect the
+// home-port test above describes, a success that removed nothing.
+func TestKubernetesCapabilities(t *testing.T) {
+	rt := any((*kubeRuntime)(nil))
+	f := any((*kubeFactory)(nil))
+	for name, ok := range map[string]bool{
+		"TaskCounter":    implements[TaskCounter](rt),
+		"BootPhase":      implements[interface{ BootPhase() string }](rt),
+		"SizingProfile":  implements[interface{ SizingProfile() WorkspaceSizing }](f),
+		"CostProfile":    implements[interface{ CostProfile() CostProfile }](f),
+		"WorkspaceImage": implements[interface{ WorkspaceImage() string }](f),
+	} {
+		if !ok {
+			t.Errorf("the kubernetes adapter does not claim %s", name)
+		}
+	}
+	for name, ok := range map[string]bool{
+		"DocsMounter":           implements[DocsMounter](rt),
+		"MachineProfile":        implements[interface{ MachineProfile() WorkspaceMachine }](rt),
+		"AcquireOperationFence": implements[runtimeOperationFencer](rt),
+		"StartFencer":           implements[StartFencer](rt),
+		"LaunchBudgeter":        implements[LaunchBudgeter](rt),
+		"BeginHibernate":        implements[interface{ BeginHibernate(context.Context) error }](rt),
+		"BackupHome": implements[interface {
+			BackupHome(context.Context, time.Duration) error
+		}](rt),
+		"homeBackupKeeper":  implements[homeBackupKeeper](rt),
+		"GoldenBakePool":    implements[GoldenBakePool](f),
+		"WipeHome (#1466)":  implements[homeWiper](rt),
+		"EraseHome (#1466)": implements[homeEraser](rt),
+		"ResizeHome (#1466)": implements[interface {
+			ResizeHome(context.Context) (HomeResize, error)
+		}](rt),
+		"Stale (#1466)": implements[interface{ Stale(context.Context) bool }](rt),
+	} {
+		if ok {
+			t.Errorf("the kubernetes adapter claims %s", name)
+		}
+	}
+}
+
+func implements[T any](v any) bool { _, ok := v.(T); return ok }

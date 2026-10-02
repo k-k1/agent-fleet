@@ -675,3 +675,30 @@ the procedures, and this ADR fixes what they must cover:
   of pre-warmed nodes back on the table.
 - Tenants that must be separated by the cluster rather than by the CP, which would bring a
   namespace per tenant back.
+
+## Addendum (2026-10-02) — what the core adapter settled where the decisions left a choice
+
+Written with the core adapter (#1465, `control-plane/internal/runtime/runtime_kubernetes*.go`).
+The decisions do not change; these are the choices they left open, and each can be revisited in
+the live acceptance (#1468).
+
+- **Claim access mode is `ReadWriteOnce` for now.** Decision 4 prefers `ReadWriteOncePod` where
+  the CSI driver supports it, and that is to be confirmed on GKE. A claim with an access mode the
+  driver lacks stays `Pending`, which would make every start `starting` until the deadline, so the
+  safer mode ships first.
+- **The template environment reaches the pod** (decision 8's open question): `Config.ExtraEnv` —
+  `WS_ENV` and the egress proxy variables — goes into the workspace's Secret with the per-start
+  environment, since an operator's `WS_ENV` may hold a credential. The template's own `env` keeps
+  `CLAUDE_CONFIG_DIR`, `AF_WS_KEEP` and `AGENT_STOP_GRACE_SEC`, and `env` wins over `envFrom`.
+  When that environment sets the egress proxy and `AF_CP_INTERNAL_URL` is set, the URL's host is
+  appended to `NO_PROXY` and `no_proxy`, so calls to the CP's internal listener bypass the proxy.
+- **Start on a StatefulSet already at replicas 1 does nothing and succeeds**, as every adapter does
+  for `running` and `starting`; the Secret is not rewritten under a pod that may read it. The
+  settled-stop requirement of decision 3 applies to a StatefulSet at replicas 0.
+- **Digest pinning reads the registry as the CP**: the pull secret's entry for the registry host,
+  else the pod's Workload Identity token for Artifact Registry and Container Registry hosts only,
+  else anonymously. A tag that cannot be resolved fails the Start; a reference that already
+  carries a digest is used as written, which is the operator's way around a registry the CP
+  cannot read.
+- **Object names**: a CP workspace name longer than 40 characters keeps a prefix and gains a hash
+  of the whole, so the pod name and the `controller-revision-hash` label stay within 63.
