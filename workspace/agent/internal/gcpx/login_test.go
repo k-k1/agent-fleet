@@ -473,13 +473,23 @@ func TestConsoleLoginEndToEnd(t *testing.T) {
 		err error
 	}
 	done := make(chan result, 1)
+	environ := hostile(t)
+	finished := make(chan struct{})
 	go func() {
-		_, _, env, err := PlanExec(l.gcloud, hostile(t), o)
+		defer close(finished)
+		_, _, env, err := PlanExec(l.gcloud, environ, o)
 		done <- result{env, err}
 	}()
+	// Joined (ConsoleWait bounds it) before HOME and LoginGCloudBin are restored: a run
+	// left waiting would write the real gcloud state and notice outbox.
+	t.Cleanup(func() { <-finished })
 	waitForFile(t, logins.RequestPath(ConfigName("prod")))
 
+	// The request file is written before its notice is put; wait for the notice too.
 	evs := notice.List()
+	for deadline := time.Now().Add(5 * time.Second); len(evs) == 0 && time.Now().Before(deadline); evs = notice.List() {
+		time.Sleep(5 * time.Millisecond)
+	}
 	if len(evs) != 1 || evs[0].Kind != NoticeKindGCPLogin || len(evs[0].Payload) != 1 || evs[0].Payload["requestId"] == "" {
 		t.Fatalf("notifications = %+v", evs)
 	}
@@ -783,10 +793,15 @@ func TestWaitEndsWithTheReasonWhenALoginCannotHelp(t *testing.T) {
 	o := execOpts(l.env, prod())
 	o.Login, o.ConsoleLogin, o.ConsoleWait = "auto", true, 10*time.Second
 	done := make(chan error, 1)
+	environ := hostile(t)
+	finished := make(chan struct{})
 	go func() {
-		_, _, _, err := PlanExec(l.gcloud, hostile(t), o)
+		defer close(finished)
+		_, _, _, err := PlanExec(l.gcloud, environ, o)
 		done <- err
 	}()
+	// Joined (ConsoleWait bounds it) before HOME and LoginGCloudBin are restored.
+	t.Cleanup(func() { <-finished })
 	waitForFile(t, logins.RequestPath(ConfigName("prod")))
 	l.write(t, "fail", "ERROR: (gcloud.config.config-helper) PERMISSION_DENIED: Permission 'iam.serviceAccounts.getAccessToken' denied")
 	addCredential(t, "dev@example.com", "authorized_user")

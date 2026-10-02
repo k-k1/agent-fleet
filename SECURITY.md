@@ -127,16 +127,19 @@ declare.
   Whoever administers the account can read every member's data.
 
 - **Give each deployment its own AWS account.** The CP task role (`CpTaskRole` in
-  `20-platform.yaml`) is scoped to the account, not to one deployment: several of its
+  `20-platform.yaml`) is scoped to the account, not to one deployment: its ECS
   statements name `Resource: "*"` with no condition, and the workspace parameters are
   one prefix for the whole account. A compromised CP can therefore reach other
-  deployments in the same account: their services, parameters, instances and volumes.
-  It can attach any volume read-write to a slot of its own, including another
-  instance's root volume after stopping that instance, and so run code there on its
-  next start. Only its direct shell (`ssm:SendCommand`) stays fenced to the slots it
-  launched into its own pool, because its tag writes are fenced too
+  deployments in the same account: their services and parameters. It can also boot a
+  slot of its own from any image or snapshot it can see, another deployment's home
+  snapshots included, and read that copy there
+  ([#1522](https://github.com/k-k1/agent-fleet/issues/1522)). Its direct shell
+  (`ssm:SendCommand`), its tag writes and its other EC2 writes (start, stop, terminate,
+  attach, detach, snapshot, delete) are fenced to resources in its own pool, and it may
+  pass only its own slot role
   ([#1182](https://github.com/k-k1/agent-fleet/issues/1182),
-  [#1419](https://github.com/k-k1/agent-fleet/issues/1419)). Which statements, and
+  [#1419](https://github.com/k-k1/agent-fleet/issues/1419),
+  [#1423](https://github.com/k-k1/agent-fleet/issues/1423)). Which statements, and
   what they reach, is
   [07 §7.1](docs/build/07-security.md#71-threat-model-and-trust-boundary).
 

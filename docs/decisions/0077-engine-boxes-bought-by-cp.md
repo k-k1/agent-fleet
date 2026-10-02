@@ -2412,3 +2412,14 @@ it is being asked about.
 Unmeasured: no llm Spot instance has been raised on hardware. The acceptance path (setting, API,
 candidate filtering) is closed by unit tests with positive controls, but **what an interruption
 mid-conversation looks like** is inferred from the image role's hardware run (ADR 0077 P2).
+
+## Note — the CP's EC2 grants are fenced to `af-pool` (2026-10-03, #1423)
+
+The decisions above stand; the statements they name changed shape. The engine purchase still
+leans on 20-platform for `RunInstances` and `TerminateInstances`, but `Ec2SlotPool` no longer
+grants them on `*`: `RunInstances` is allowed on an instance only when the request tags it with
+this deployment's `af-pool` (`Ec2RunInPool`), and `TerminateInstances` only on an instance that
+carries it. The engine boxes satisfy both through `CreateFleet`'s `TagSpecifications`
+(`engine_fleet.go` `tags`). `PassSlotRole` moved to 40-ec2-pool and names that stack's own slot
+role. Whether an instant fleet's launch is authorized against the fleet's tags is not documented;
+it is one of the live checks #1423 lists.

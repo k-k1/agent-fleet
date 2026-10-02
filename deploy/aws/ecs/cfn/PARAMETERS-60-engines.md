@@ -1823,14 +1823,18 @@ stack so that a deployment which does not adopt 60-engines gains nothing:
 | `logs:GetLogEvents` / `DescribeLogStreams` | this stack's log group | WHY a job failed |
 | `secretsmanager:PutSecretValue` | `HfTokenSecret` and `CivitaiTokenSecret` only | carrying a registered token to the ingest task |
 | `ec2:CreateFleet` / `DescribeFleets` / `DeleteFleets` | `*` | buying the engine box (ADR 0077 decision 10). A fleet has no ARN to scope to; the fence is the launch template the call may name and the `iam:PassRole` below |
-| `iam:PassRole` | `EngineInstanceRole` only, `PassedToService: ec2.amazonaws.com` | the launch template carries the instance profile, so the purchase passes that role — the shape of 20-platform's `PassSlotRole` |
+| `iam:PassRole` | `EngineInstanceRole` only, `PassedToService: ec2.amazonaws.com` | the launch template carries the instance profile, so the purchase passes that role — the shape of 40-ec2-pool's `PassSlotRole` |
 | `iam:CreateServiceLinkedRole` | `iam:AWSServiceName` in `[spot.amazonaws.com, ec2fleet.amazonaws.com]` | the CP's own way out on an account where `standup.sh` never ran |
 
 **What left this policy in ADR 0077**: `ecs:DescribeCapacityProviders`, `ecs:UpdateCapacityProvider`,
 the cluster-scoped `ecs:PutClusterCapacityProviders`, and `iam:PassRole` on the Managed Instances
 `InfraRole` / `InstanceRole`. `ec2:RunInstances` / `TerminateInstances` / `DescribeInstances` /
 `CreateTags` and the three container-instance actions are **not repeated here**: 20-platform
-grants them unconditionally, on every flavour (Sids `Ec2SlotPool` and `EcsContainerInstances`).
+grants them on every flavour (Sids `Ec2RunInPool` / `Ec2LaunchSupport`, `Ec2SlotPool`,
+`Ec2TagOnCreate`, `Ec2SlotPoolRead` and `EcsContainerInstances`). The EC2 writes are fenced to
+`af-pool` = this deployment's cluster, which the engine boxes carry from `CreateFleet`'s
+`TagSpecifications` (`engine_fleet.go` `tags`); a box bought without it could be neither launched
+nor terminated by the CP.
 
 🔴 **`ssm:GetParameters` on `arn:aws:ssm:<region>::parameter/aws/service/ecs/optimized-ami/*` is
 required of the CALLER**, and it is in the policy unconditionally. Measured 2026-09-12 (ADR 0077

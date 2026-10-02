@@ -248,7 +248,11 @@ func TestEnsureClampsWaitsForAndReleasesTheLock(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- EnsureClamps() }()
+	finished := make(chan struct{})
+	go func() { defer close(finished); done <- EnsureClamps() }()
+	// Joined before HOME is restored: a call left waiting on the lock would rewrite the
+	// real muse settings once it got it.
+	t.Cleanup(func() { <-finished })
 
 	select {
 	case err := <-done:
