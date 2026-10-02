@@ -567,7 +567,7 @@ export const tools = {
   // --- Git 接続（features/settings/GitTab.tsx）---
   "git.ws_required_title": "外部 Git 接続はワークスペース内で実行されます",
   "git.ws_required_hint": "外部プロバイダの認証はコンテナ内の Agent を経由するため、ワークスペースの起動が必要です。",
-  "git.cat_hosting": "git ホスティング",
+  "git.cat_hosting": "Git ホスティング",
   "git.cat_internal": "内部リポジトリ（フリート内）",
   "git.internal_name": "内部 Git",
   "git.count": "{count} 個",
@@ -602,7 +602,7 @@ export const tools = {
   "git.svn_trust": "このサーバーの証明書を信頼する（自己署名・不明な CA）",
   "git.svn_hint":
     "リポジトリまたはサーバー全体の URL（例: https://svn.example.com/proj）。最長プレフィックス一致で選ばれるので、リポジトリ単位の登録がサーバー全体の登録より優先されます。チェックアウトと更新のほか、セッションで自分が叩く `svn` でも使われます。",
-  "git.global_identity_cat": "既定のコミット identity（すべての git）",
+  "git.global_identity_cat": "既定のコミット identity（すべての Git）",
   "git.global_identity_saved": "既定 identity を保存しました",
   "git.global_identity_help":
     "どのプロバイダにも紐づかないリポジトリ（remote 無し等）で使う ~/.gitconfig の既定値。解決順は「リポ上書き ＞ プロバイダ ＞ この既定」。",

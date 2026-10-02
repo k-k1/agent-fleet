@@ -5,7 +5,6 @@ import { EmptyState } from "../../../ui/EmptyState.tsx";
 import { Button } from "../../../ui/Button.tsx";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
-import { Hint } from "../parts/providerCard.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 // The wire contract (types, masked-secret round-trip, form↔definition mapping)
 // lives beside this file so its rules are unit-tested — see mcpWire.test.ts.
@@ -180,11 +179,11 @@ export function McpTab() {
   const hasTenant = reg.servers.some((s) => s.origin === "tenant") || !!reg.tenantFetchedAt;
   return (
     <div className="mcp-tab">
-      <Hint>{tr("mcp.intro")}</Hint>
+      <p className="muted ds-note">{tr("mcp.intro")}</p>
       {/* Project scope (a repository's .mcp.json and friends) is a separate axis (docs/log/56
           P0); this tab covers only the effective registry (user/tenant/builtin). One line of
           signposting so the tab is not a dead end (docs/log/57 §3). */}
-      <p className="ps-note">{tr("mcp.project_scope_note")}</p>
+      <p className="muted ds-note">{tr("mcp.project_scope_note")}</p>
       {shadowed.length > 0 && (
         <p className="ps-note ps-note-warn">{tr("mcp.shadowed", { names: shadowed.join(", ") })}</p>
       )}

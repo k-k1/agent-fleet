@@ -17,6 +17,14 @@
   margin-bottom: 28px;
 }
 
+/* A group right after a tab's intro paragraph (AWS profiles/SSM, export/import) would
+   otherwise start its heading at the paragraph's own 10px bottom margin, closer than any two
+   groups are. Scoped to the intro class: a bare `:not(.ds-group) +` also matched the hidden
+   mobile breadcrumb and pushed the first group of fragment-rendered tabs down. */
+.field-help + .ds-group {
+  margin-top: 18px;
+}
+
 /* Reset section (TTS tab bottom): a separator above the lone reset button so it
    reads as a distinct, less-prominent action rather than another settings row. */
 .ds-reset {
@@ -314,19 +322,6 @@
   gap: 4px;
 }
 
-.conn-cat {
-  margin-top: 10px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-}
-
-.conn-cat:first-child {
-  margin-top: 0;
-}
-
 .p-desc {
   padding: 0 13px 11px;
   color: var(--muted);
@@ -342,6 +337,17 @@
 /* stack body children (hint / key list / flow / steps) with breathing room */
 .p-body > * + * {
   margin-top: 10px;
+}
+
+/* .p-desc carries the card's 13px inset and no top padding, both meant for a description right
+   under the card head. Inside .p-body the inset is already there (OpenCode's workspace and
+   account blocks doubled it to 26px); after a .p-body the text sat on the tinted body's edge. */
+.p-body > .p-desc {
+  padding: 0;
+}
+
+.p-body + .p-desc {
+  padding-top: 11px;
 }
 
 /* Repo commit-identity line under the commit box (SourceControlView). */
@@ -555,7 +561,6 @@
   flex-wrap: wrap;
   gap: 8px;
   flex-basis: 100%;
-  padding-left: 18px;
 }
 
 /* Inline text button that reads as a link (used in help text). */

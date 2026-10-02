@@ -401,15 +401,15 @@ export function DatabaseTab() {
     <div className="display-settings">
       <section className="ds-group">
         <h4 className="ds-title">{tr("env.db_title")}</h4>
-        <p className="muted ds-sub">{tr("env.db_intro")}</p>
+        <p className="muted ds-note">{tr("env.db_intro")}</p>
       </section>
       <section className="ds-group">
       {!running ? (
-        <p className="muted ds-sub">{tr("env.db_ws_stopped")}</p>
+        <p className="muted ds-note">{tr("env.db_ws_stopped")}</p>
       ) : err ? (
-        <p className="muted ds-sub">{err}</p>
+        <p className="muted ds-note">{err}</p>
       ) : !data ? (
-        <p className="muted ds-sub">{tr("common.loading")}</p>
+        <p className="muted ds-note">{tr("common.loading")}</p>
       ) : (
         <div className="db-engine-list">
           {(data.engines || []).map((eng) => (

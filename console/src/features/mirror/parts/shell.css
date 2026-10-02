@@ -116,11 +116,6 @@ and "load older history" states
     display: none;
   }
 }
-/* .ds-sub is used by the EnvTab note. */
-.ds-sub {
-  margin: 4px 0 0;
-  font-size: 12px;
-}
 /* Flat transcript (not cards): a scrolling column of full-width turns separated by
    a hairline, each with a small speaker header. block layout (not flex) so a turn
    takes its natural height and the column scrolls — a flex column shrinks children

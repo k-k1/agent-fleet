@@ -75,13 +75,13 @@ export function GitTab() {
         <p className="muted pad">{tr("common.loading")}</p>
       ) : (
         <>
-          <div className="conn-cat">{tr("git.cat_hosting")}</div>
+          <div className="ds-title">{tr("git.cat_hosting")}</div>
           {/* While the availability is still unknown (null), fall on the side of showing it.
               Hiding the control merely because the fetch failed produces an unfixable screen:
               the app is registered, yet there is no button. */}
           <GithubRow st={conns.github} reload={reload} oauthAvailable={oauth?.github?.configured !== false} />
           <BitbucketRow st={conns.bitbucket} reload={reload} oauthAvailable={oauth?.bitbucket?.configured !== false} />
-          <div className="conn-cat">{tr("git.cat_svn")}</div>
+          <div className="ds-title">{tr("git.cat_svn")}</div>
           <SvnCard servers={svnServers(conns)} reload={reload} />
           <GlobalIdentity />
         </>
@@ -283,7 +283,7 @@ function GlobalIdentity() {
   };
   return (
     <>
-      <div className="conn-cat">{tr("git.global_identity_cat")}</div>
+      <div className="ds-title">{tr("git.global_identity_cat")}</div>
       <div className="git-identity solo">
         <div className="gi-row">
           <input className="cinput" placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
