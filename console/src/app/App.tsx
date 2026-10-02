@@ -12,6 +12,7 @@ import { startPushChannel, restartPush } from "../core/push/events.ts";
 import { wirePushApply } from "../core/push/wire.ts";
 import { useWorkspaceStore, startWorkspacePolling } from "../core/store/workspace.ts";
 import { useLayoutStore, wireLayoutHistory } from "../layout/store.ts";
+import { relabelSingleCell } from "../layout/ops.ts";
 import { wireKeys } from "../features/keys/dispatcher.ts";
 import { useLeftRail } from "../core/store/leftRail.ts";
 import { wireTerminalReconcile } from "../terminal/service.ts";
@@ -398,20 +399,17 @@ export function App() {
 
   // The preference chooses a profile, not a conversion: each profile retains
   // its own tab-local layout so switching never destroys terminals or drafts.
-  const prevPopoutRef = useRef(popout);
   useEffect(() => {
     const wanted = layoutModeFor(popout, paneLayout);
-    const expanded = prevPopoutRef.current === "popout" && popout !== "popout";
-    prevPopoutRef.current = popout;
     // Read the store, not the render's snapshot: the boot effect above has already loaded the
     // preferred mode in this same commit, and a stale `layout.mode` would load it a second time.
     const current = () => useLayoutStore.getState().layout.mode;
     if (!booted || current() === wanted) return;
-    // Expanding a minimal pop-out keeps its pane: a one-cell split layout is a valid tabbed
-    // one, whereas loading the profile would replace the pane the user popped out.
-    const l = useLayoutStore.getState().layout;
-    if (expanded && l.cols.length === 1 && l.cols[0].cells.length === 1) {
-      useLayoutStore.getState().commit({ ...l, mode: wanted }, false);
+    // A pop-out tab converts its one pane in place — on Expand, and when Back restores an entry
+    // recorded before it — instead of loading the profile, which would replace that pane.
+    const relabelled = popout ? relabelSingleCell(useLayoutStore.getState().layout, wanted) : null;
+    if (relabelled) {
+      useLayoutStore.getState().commit(relabelled, false);
       return;
     }
     void confirmDirtyNavigation("layout").then((proceed) => {

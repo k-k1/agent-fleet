@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getTenant } from "../core/api/client.ts";
 import { layoutModeFor, setPopoutMode } from "../lib/popoutMode.ts";
-import { activePane, allCells, allViews } from "./ops.ts";
+import { activePane, allCells, allViews, relabelSingleCell } from "./ops.ts";
 import { useLayoutStore } from "./store.ts";
 
 describe("pop-out seed", () => {
@@ -44,5 +44,31 @@ describe("pop-out seed", () => {
     expect(allCells(l)).toHaveLength(1);
     expect(allViews(l)).toHaveLength(1);
     expect(activePane(l)!.content).toEqual({ kind: "file", filePath: "/repo/a.ts" });
+  });
+
+  it("re-labels only a one-cell layout", () => {
+    useLayoutStore.getState().initSinglePane({ kind: "terminal", chat: true }, "sess-a", null, "split");
+    const one = useLayoutStore.getState().layout;
+    expect(relabelSingleCell(one, "tabs")).toEqual({ ...one, mode: "tabs" });
+    useLayoutStore.getState().splitRight();
+    expect(relabelSingleCell(useLayoutStore.getState().layout, "tabs")).toBeNull();
+  });
+
+  // Minimal pop-out → open a link (replaces in place, pushes history) → Expand → Back: the entry
+  // Back restores was recorded in split, and re-labelling it must bring the session back.
+  it("brings the session back when Back restores a pre-expand entry", () => {
+    setPopoutMode("popout");
+    useLayoutStore.getState().initSinglePane({ kind: "terminal", chat: true }, "sess-a", null, "split");
+    const beforeLink = useLayoutStore.getState().layout;
+    useLayoutStore.getState().openTargetInNew({ content: { kind: "file", filePath: "/repo/a.ts" } });
+    setPopoutMode("full");
+    useLayoutStore.getState().commit(relabelSingleCell(useLayoutStore.getState().layout, "tabs")!, false);
+
+    useLayoutStore.getState().setFromHistory(beforeLink);
+    const back = relabelSingleCell(useLayoutStore.getState().layout, "tabs")!;
+    useLayoutStore.getState().commit(back, false);
+    const l = useLayoutStore.getState().layout;
+    expect(l.mode).toBe("tabs");
+    expect(activePane(l)!.session).toBe("sess-a");
   });
 });
