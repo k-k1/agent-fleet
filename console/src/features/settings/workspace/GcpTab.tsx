@@ -18,6 +18,7 @@ import { Field, Meta } from "../parts/mcpForm.tsx";
 import { RegionSelect } from "../parts/RegionSelect.tsx";
 import { FieldGroup, deleteRow, pick, postJSON } from "./SsmTab.tsx";
 import { GcpProfileLoginModal, type GcpLoginProfile } from "../../gcplogin/GcpProfileLoginModal.tsx";
+import { useGcpLoginStore } from "../../gcplogin/store.ts";
 
 /** One row of GET /api/gcp/profiles. */
 export interface GcpProfile {
@@ -137,6 +138,8 @@ export function GcpTab() {
       if (!ok) return;
       close();
       reload();
+      // The WS bar badge reads the Agent's list, which lags Settings by up to one pull.
+      useGcpLoginStore.getState().settingsChanged();
     } finally {
       setBusy(false);
     }
@@ -153,6 +156,7 @@ export function GcpTab() {
     try {
       if ((await deleteRow(`api/gcp/profiles/${encodeURIComponent(id)}`, toast)) !== "ok") return;
       reload();
+      useGcpLoginStore.getState().settingsChanged();
     } finally {
       setBusy(false);
     }

@@ -13,7 +13,10 @@
 // GcpLoginHost); the badge only opens it and never sees an attempt id.
 //
 // No interval poll: it asks when the workspace comes up, when the popover opens, when the
-// list of pending requests changes (a login from a toast settles one) and after a login.
+// list of pending requests changes (a login from a toast settles one), after a login, when
+// the tab comes back into view, and after a Settings change (now and once the Agent's next
+// Settings pull is due: the badge is hidden while the list is empty, so nothing on it could
+// ask).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSettingsUI } from "../settings/store.ts";
@@ -54,6 +57,27 @@ export function GcpProfilesChip() {
   useEffect(() => {
     if (running) void refresh();
   }, [running, refresh, requestIds]);
+
+  // Coming back to the tab asks once: a login finished in another tab or device, or a
+  // Settings change made there, notifies nothing here.
+  const refreshRequests = useGcpLoginStore((s) => s.refresh);
+  useEffect(() => {
+    if (!running) return;
+    let last = 0;
+    const again = () => {
+      // A tab switch fires both events; one pair of asks is enough.
+      if (document.visibilityState === "hidden" || Date.now() - last < 2000) return;
+      last = Date.now();
+      void refreshRequests();
+      void refresh();
+    };
+    window.addEventListener("focus", again);
+    document.addEventListener("visibilitychange", again);
+    return () => {
+      window.removeEventListener("focus", again);
+      document.removeEventListener("visibilitychange", again);
+    };
+  }, [running, refresh, refreshRequests]);
 
   // Profiles with a pending request. A Set, not an object: a profile named "constructor"
   // would read Object.prototype's.

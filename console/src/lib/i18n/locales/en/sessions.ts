@@ -147,7 +147,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "wsbar.gcp.chip_waiting": "Google Cloud profiles: an agent is waiting for a login",
   "wsbar.gcp.no_default": "Every logged-in profile can be used at the same time; none is the default. Each command picks one with",
   "wsbar.gcp.state_signed_in": "Logged in",
-  "wsbar.gcp.state_signed_in_title": "The workspace holds a Google login for this profile's account. Whether Google still accepts it shows only when a command uses it; if it was revoked, log in again.",
+  "wsbar.gcp.state_signed_in_title": "A Google login for this profile's account is stored in the workspace. It is not checked with Google and stays here even after Google refuses it: if a command was refused, log in again.",
   "wsbar.gcp.state_none": "Not logged in",
   "wsbar.gcp.state_none_title": "The workspace holds no Google login for this profile. The next af-gcloud-exec command for it asks for one.",
   "wsbar.gcp.waiting": "An agent is waiting for this login",

@@ -153,7 +153,7 @@ export const sessions = {
   "wsbar.gcp.chip_waiting": "Google Cloud プロファイル: ログインを待っているエージェントがあります",
   "wsbar.gcp.no_default": "ログイン済みのプロファイルはどれも同時に使えます。既定のプロファイルはなく、コマンドごとに次の形で選びます:",
   "wsbar.gcp.state_signed_in": "ログイン済み",
-  "wsbar.gcp.state_signed_in_title": "このプロファイルのアカウントの Google ログインをワークスペースが持っています。Google がまだ受け付けるかは、コマンドが使ったときに分かります。取り消されていたら再ログインしてください。",
+  "wsbar.gcp.state_signed_in_title": "このプロファイルのアカウントの Google ログインがワークスペースに保存されています。Google には確かめておらず、Google に断られても残ります。コマンドが断られたら再ログインしてください。",
   "wsbar.gcp.state_none": "未ログイン",
   "wsbar.gcp.state_none_title": "このプロファイルの Google ログインをワークスペースは持っていません。このプロファイルで次に af-gcloud-exec を実行するとログインを求めます。",
   "wsbar.gcp.waiting": "このログインを待っているエージェントがあります",

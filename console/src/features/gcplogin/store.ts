@@ -57,6 +57,12 @@ interface GcpLoginState {
   profiles: GcpProfileState[] | null;
   /** Asks the Agent for the profiles' login states; a failed ask keeps the old list. */
   refreshProfiles(): Promise<void>;
+  /**
+   * Settings changed a profile. The Agent reads Settings on its own pull, every five minutes
+   * (cloudbridge.PollInterval), and its profile list is that pull's, so this asks now and
+   * once more after the next pull is due; a later change re-arms the one wait.
+   */
+  settingsChanged(): void;
   profileModal: GcpProfileModal | null;
   showProfile(m: GcpProfileModal): void;
   closeProfile(): void;
@@ -78,7 +84,11 @@ function asRequest(raw: unknown): GcpLoginRequest | null {
   };
 }
 
-export const useGcpLoginStore = create<GcpLoginState>((set) => ({
+// The Agent's Settings pull interval plus slack for the pull itself.
+export const SETTINGS_SYNC_MS = 5 * 60_000 + 15_000;
+let syncTimer: ReturnType<typeof setTimeout> | undefined;
+
+export const useGcpLoginStore = create<GcpLoginState>((set, get) => ({
   requests: [],
   hidden: {},
   modal: null,
@@ -123,6 +133,11 @@ export const useGcpLoginStore = create<GcpLoginState>((set) => ({
       });
     }
     set({ profiles });
+  },
+  settingsChanged() {
+    void get().refreshProfiles();
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => void get().refreshProfiles(), SETTINGS_SYNC_MS);
   },
   profileModal: null,
   showProfile(m) {

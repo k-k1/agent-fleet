@@ -628,10 +628,14 @@ is waiting for, and **Log in** / **Log in again**, which open the login window a
 every logged-in profile can be used at the same time, and each command picks one with
 `af-gcloud-exec --profile <name>`. **Google Cloud settings** at the bottom opens the Settings tab.
 
-"Logged in" means the workspace holds a Google login for the profile's account. Whether Google still accepts it
-shows only when a command uses it, so a revoked login still reads **Logged in** until then; **Log in again** is
-the way out. The badge does not poll: it asks the workspace when it comes up, when you open the list, when a
-login request comes or goes, and after a login.
+**Logged in** means only that a Google login for the profile's account is stored in the workspace. The workspace
+does not check it with Google, and keeps it when Google refuses it, so a revoked login stays **Logged in** — also
+after a command has found out. While that command's login request waits, the badge is amber; once the request is
+cancelled or expires (after 15 minutes), the badge is green again although the login no longer works.
+**Log in again** signs in afresh and fixes it. The badge does not poll: it asks the workspace when it comes up,
+when you open the list, when a login request comes or goes, after a login, when you come back to the tab, and
+after you change a profile in Settings. A profile you add or delete shows there once the workspace has picked up
+the change, within about five minutes.
 
 ### When it stops
 
