@@ -62,6 +62,9 @@ export function AssistantTab() {
           />
         </Row>
         <p className="muted ds-note">{tr("assistant.note_agent_order")}</p>
+      </section>
+
+      <section className="ds-group">
         <h4 className="ds-title">{tr("assistant.models")}</h4>
         <p className="muted ds-note">{tr("assistant.note_models")}</p>
         {ASSISTANT_AGENT_KINDS.map((kind) => (
@@ -73,6 +76,10 @@ export function AssistantTab() {
             onChange={(model) => setSetting("assistantModels", { ...s.assistantModels, [kind]: model })}
           />
         ))}
+      </section>
+
+      <section className="ds-group">
+        <h4 className="ds-title">{tr("assistant.section_automation")}</h4>
         <Row label={tr("assistant.auto_turn")}>
           <OnOff value={s.assistantAutoTurn} onChange={(v) => setSetting("assistantAutoTurn", v)} />
         </Row>
@@ -118,6 +125,10 @@ export function AssistantTab() {
           <OnOff value={s.assistantAutoResume} onChange={(v) => setSetting("assistantAutoResume", v)} />
         </Row>
         <p className="muted ds-note">{tr("assistant.note_auto_resume")}</p>
+      </section>
+
+      <section className="ds-group">
+        <h4 className="ds-title">{tr("assistant.section_context")}</h4>
         <Row label={tr("assistant.auto_compact")}>
           <OnOff value={s.assistantAutoCompact} onChange={(v) => setSetting("assistantAutoCompact", v)} />
         </Row>

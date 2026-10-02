@@ -190,8 +190,8 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
           </div>
           {/* Which credential, and what it costs. Only said when it is NOT the subscription: a
               plain account sign-in needs no note, and a note on every card teaches nothing. */}
-          {st.metered && <p className="ps-note ps-note-warn">{tr("agents.muse_metered")}</p>}
-          {st.env_key && <p className="ps-note ps-note-warn">{tr("agents.muse_env_key")}</p>}
+          {st.metered && <p className="ps-note ps-note-warn p-card-note">{tr("agents.muse_metered")}</p>}
+          {st.env_key && <p className="ps-note ps-note-warn p-card-note">{tr("agents.muse_env_key")}</p>}
         </>
       ) : unsupported ? (
         <>

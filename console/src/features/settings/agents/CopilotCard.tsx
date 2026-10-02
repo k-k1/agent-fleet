@@ -46,7 +46,7 @@ export function CopilotCard({
         <>
           <div className="p-desc">{tr("agents.copilot_desc")}</div>
           {!st?.connected && (
-            <p className="ps-note">
+            <p className="ps-note p-card-note">
               {tr("agents.copilot_not_connected")}{" "}
               {/* Copilot rides GitHub auth — jump straight to the Git hosting tab. */}
               <button type="button" className="linklike" onClick={() => useSettingsUI.getState().openSettings("git")}>

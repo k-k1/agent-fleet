@@ -174,31 +174,33 @@ function SvnCard({ servers, reload }: { servers: SvnServer[]; reload: () => void
           <DisconnectButton onClick={() => void forget(s.urlPrefix)} />
         </div>
       ))}
-      <div className="gi-row">
-        <input
-          className="cinput"
-          placeholder={tr("git.svn_prefix_ph")}
-          value={prefix}
-          onChange={(e) => setPrefix(e.target.value)}
-        />
-        <input className="cinput" placeholder={tr("git.svn_user_ph")} value={user} onChange={(e) => setUser(e.target.value)} />
-        <input
-          className="cinput"
-          type="password"
-          placeholder={tr("git.svn_pass_ph")}
-          value={pass}
-          onChange={(e) => setPass(e.target.value)}
-          autoComplete="off"
-        />
-        <button disabled={busy || !prefix.trim()} onClick={save}>
-          {tr("common.save")}
-        </button>
+      <div className="p-body">
+        <div className="gi-row">
+          <input
+            className="cinput"
+            placeholder={tr("git.svn_prefix_ph")}
+            value={prefix}
+            onChange={(e) => setPrefix(e.target.value)}
+          />
+          <input className="cinput" placeholder={tr("git.svn_user_ph")} value={user} onChange={(e) => setUser(e.target.value)} />
+          <input
+            className="cinput"
+            type="password"
+            placeholder={tr("git.svn_pass_ph")}
+            value={pass}
+            onChange={(e) => setPass(e.target.value)}
+            autoComplete="off"
+          />
+          <button disabled={busy || !prefix.trim()} onClick={save}>
+            {tr("common.save")}
+          </button>
+        </div>
+        <label className="pmcp-secrets-toggle">
+          <input type="checkbox" checked={trust} onChange={(e) => setTrust(e.target.checked)} />
+          {tr("git.svn_trust")}
+        </label>
+        <Hint>{tr("git.svn_hint")}</Hint>
       </div>
-      <label className="pmcp-secrets-toggle">
-        <input type="checkbox" checked={trust} onChange={(e) => setTrust(e.target.checked)} />
-        {tr("git.svn_trust")}
-      </label>
-      <Hint>{tr("git.svn_hint")}</Hint>
     </ProviderCard>
   );
 }

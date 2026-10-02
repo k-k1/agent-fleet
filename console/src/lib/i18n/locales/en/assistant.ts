@@ -63,6 +63,8 @@ export const assistant: Record<keyof typeof jaAssistant, string> = {
   "assistant.output_tail": "Session output fetch limit",
   "assistant.note_output_tail":
     "How much the operator reads when checking a session's output (get_session_output), taken from the end. What it reads accumulates in the conversation and is re-read on every later turn, so a larger limit costs more tokens. The full output is always available in the mirror. Default 32 KiB.",
+  "assistant.section_automation": "Automatic turns",
+  "assistant.section_context": "Context and output",
   "assistant.appearance": "Appearance",
   "assistant.note_appearance":
     "“Inherit” follows the app theme. Theme and background color are saved on this device only (not synced to others).",

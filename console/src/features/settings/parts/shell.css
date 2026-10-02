@@ -328,9 +328,10 @@
   max-width: 9em;
 }
 
+/* A standalone paragraph (Instructions, Memory). It once sat under a wrapped row, indented to
+   the control column; as a paragraph that indent left a blank 132px column beside it. */
 .ds-hint {
-  flex-basis: 100%;
-  margin-left: 132px;
+  margin: 6px 0 10px;
   font-size: 11px;
   line-height: 1.4;
   color: var(--muted);
