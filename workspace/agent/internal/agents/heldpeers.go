@@ -199,26 +199,30 @@ func DropHeld(name, reason string) {
 // the entry was refused before it was queued or was committed (it may have reached the runtime,
 // or another Resume may have delivered it). So the file decides what follows. Still there: the
 // send was refused before the queue took it (a question pending, the runtime gone), and the
-// rest stay behind it for the next Resume. The caller's own input meets the same refusal, so it
-// cannot overtake them. Gone: the start failed after its commit, and is reported as a failed
+// rest stay on disk; the next input the queue accepts adopts them ahead of itself
+// (TurnQueue.adoptHeld), so they are not overtaken even if the guard lifts in between. Gone: the start failed after its commit, and is reported as a failed
 // turn like any failed start; the rest carry on, ahead of the caller's input.
 func DeliverHeld(name string, h ThreadHandle) {
 	for _, hp := range loadHeld(name) {
-		in := TurnInput{
-			Prompt:          MarkHeldEnvelope(hp.Prompt, hp.QueuedAt),
-			Attachments:     hp.Attachments,
-			ClientMessageID: hp.ID,
-			Origin:          Origin{Kind: OriginPeer, From: hp.From},
-			queuedAt:        hp.QueuedAt,
-			restored:        true,
-		}
-		if err := h.Send(in); err != nil {
+		if err := h.Send(restoredInput(hp)); err != nil {
 			if heldExists(name, hp.ID) {
 				log.Printf("held peer message: %s: deliver %s: %v (kept for the next start)", name, hp.ID, err)
 				return
 			}
 			log.Printf("held peer message: %s: deliver %s: %v (its start failed)", name, hp.ID, err)
 		}
+	}
+}
+
+// restoredInput is the TurnInput a held message is sent again as.
+func restoredInput(hp heldPeer) TurnInput {
+	return TurnInput{
+		Prompt:          MarkHeldEnvelope(hp.Prompt, hp.QueuedAt),
+		Attachments:     hp.Attachments,
+		ClientMessageID: hp.ID,
+		Origin:          Origin{Kind: OriginPeer, From: hp.From},
+		queuedAt:        hp.QueuedAt,
+		restored:        true,
 	}
 }
 

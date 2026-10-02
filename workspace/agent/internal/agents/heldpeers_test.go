@@ -439,3 +439,29 @@ func TestSweepHeldDropsOrphans(t *testing.T) {
 		t.Fatal("a temp file young enough to be a write in flight was removed")
 	}
 }
+
+// Review round 2: DeliverHeld's send is refused before the queue takes it (a question pending
+// after the restart), the member answers the question, and the caller of Resume then sends.
+// The held message must still run first, and the caller's input queue behind it.
+func TestRefusedHeldIsAdoptedAheadOfTheNextInput(t *testing.T) {
+	q := newQ(t, LedgerAtAccept)
+	q.Accept(member("m0"))
+	running(t, q)
+	q.Accept(peer("p1"))
+	q.Accept(peer("p2"))
+	h := &queueHandle{q: NewTurnQueue("tq", q.ledger, LedgerAtAccept), fail: ErrQuestionPending}
+	DeliverHeld("tq", h)
+	h.fail = nil // the answer lifts the guard
+	if err := h.Send(member("caller")); err != nil {
+		t.Fatal(err)
+	}
+	sameIDs(t, "queue after the answer", h.q.Items(), "p1", "p2", "caller")
+	for _, txt := range texts(h.q.Items())[:2] {
+		if !strings.Contains(txt, "peer ") {
+			t.Fatalf("adopted prompt lost: %q", txt)
+		}
+	}
+	// A later Resume does not queue them twice.
+	DeliverHeld("tq", h)
+	sameIDs(t, "queue after another Resume", h.q.Items(), "p1", "p2", "caller")
+}

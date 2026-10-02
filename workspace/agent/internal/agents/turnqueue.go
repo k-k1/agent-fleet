@@ -198,6 +198,7 @@ func (q *TurnQueue) Accept(in TurnInput) (id string, dup bool) {
 	if in.restored {
 		return q.acceptRestored(in)
 	}
+	q.adoptHeld()
 	switch q.at {
 	case LedgerAtAccept:
 		if q.ledger != nil && q.ledger.SeenOrRecord(q.name, in.ClientMessageID) {
@@ -236,6 +237,18 @@ func (q *TurnQueue) acceptRestored(in TurnInput) (string, bool) {
 	return id, false
 }
 
+// adoptHeld queues the session's held peer messages this queue does not hold yet, ahead of the
+// input being accepted. DeliverHeld alone cannot promise that order: a send it made can be
+// refused (a question pending), and the guard can lift (an answer) before the caller of Resume
+// sends, which would then start first while the held message waits on disk for a Resume that
+// may never come. Doing it here, under the lock the caller's input is accepted under, ties the
+// order to the queue rather than to how long a guard lasts.
+func (q *TurnQueue) adoptHeld() {
+	for _, hp := range loadHeld(q.name) {
+		q.acceptRestored(restoredInput(hp))
+	}
+}
+
 // holdPeer writes a newly queued peer message through to disk (heldpeers.go). Written at
 // accept rather than at teardown, so a crash that runs no teardown does not lose it.
 func (q *TurnQueue) holdPeer(in *TurnInput) {
@@ -271,6 +284,7 @@ func (q *TurnQueue) AcceptRecorded(in TurnInput) string {
 // however it is delivered; a resend does not.
 func (q *TurnQueue) AcceptOutside(in TurnInput) (id string, dup bool) {
 	in.ClientMessageID = NormalizeMsgID(in.ClientMessageID)
+	q.adoptHeld()
 	if q.holds(in.ClientMessageID) {
 		return in.ClientMessageID, true
 	}
