@@ -290,8 +290,12 @@ state volume is mounted through `subPath`, and the kubelet creates a `subPath` d
 The live harness checks that `dev` can write to every mount of a new workspace, the keep links
 included. Running anything as root is not a fallback: the `restricted` level of decision 7 forbids
 it in init containers too, and the level is not lowered to make room. If the `subPath` layout fails
-that check, the layout changes instead — the state volume mounted once, at a path of its own, with
-the Claude state and the keep area as directories the entrypoint creates under it as `dev`.
+that check, the layout changes instead: the state volume is mounted once, at a path of its own,
+with `CLAUDE_CONFIG_DIR` and `AF_WS_KEEP` pointed at two directories under it. The entrypoint only
+moves the keep entries when `AF_WS_KEEP` already exists as a writable directory
+(`workspace/entrypoint.sh`), so an init container from the same image, running as `dev`, creates
+both directories first. The harness then starts that layout from an empty state volume and checks
+that all seven keep entries end up as links into it.
 
 ### 5. Destroy removes the claims, and reports what it cannot confirm
 
@@ -493,7 +497,11 @@ both home wipes with a keep file replaced by a plain file, `EraseHome` with a CP
 a resize while stopped, and Destroy with a CP restarted after the claims are gone, and again with a volume left behind,
 across the boundary between Destroy returning and the CP recording the residue. It also covers a
 node made unreachable — Stop returns an error, the runbook's recovery is followed, and the
-workspace starts again — and a new workspace whose every mount `dev` can write (decision 4).
+workspace starts again — a running workspace's pod deleted behind the CP's back, as an unplanned
+drain does, which must return through `starting` to `running` on the same start generation without
+any CP action and without the start deadline, the reaper or a Start interfering; and a new
+workspace whose every mount `dev` can write (decision 4); and a planned upgrade, where a Start
+issued while the node is cordoned lands elsewhere.
 
 ### 11. What the first version claims
 
@@ -570,8 +578,11 @@ the procedures, and this ADR fixes what they must cover:
   running session to shrink the pool; the pool shrinks as workspaces stop. A drain is not a Stop:
   it deletes the pod but leaves `replicas: 1`, so the StatefulSet recreates the pod on another
   node at once — the session is cut, the workspace comes back by itself, and its capacity keeps
-  billing. So a planned node upgrade stops the node's workspaces through the CP first, waits for
-  the settled stop, and only then drains; the members start them again on their next use. An
+  billing. So a planned node upgrade first cordons the node, so nothing new is placed on it, then
+  stops the node's workspaces through the CP — those starting included — and waits for each
+  settled stop, and only then drains; the node is uncordoned when it returns, and the members
+  start their workspaces again on their next use. The CP needs no right over Nodes for this; the
+  operator runs the cordon. An
   unplanned drain (an automatic upgrade outside the window, a node repair) gives the cut and the
   restart, which the runbook says, and the harness checks both.
 - **Node disk.** Workspace nodes keep free-space headroom, container logs are capped and rotated,
