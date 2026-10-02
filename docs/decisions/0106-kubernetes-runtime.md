@@ -675,3 +675,29 @@ the procedures, and this ADR fixes what they must cover:
   of pre-warmed nodes back on the table.
 - Tenants that must be separated by the cluster rather than by the CP, which would bring a
   namespace per tenant back.
+
+## Note — the deploy trees (2026-10-02)
+
+Issue #1467. Nothing above is changed; this records how `deploy/kubernetes/` and
+`deploy/gcp/gke/` carry decisions 7, 8, 12 and 13 where the decisions leave a choice.
+
+1. **The load balancer is split along the cluster's edge.** Terraform holds what lives outside
+   the cluster — the global address, the Certificate Manager certificate (DNS-authorised, so the
+   preview wildcard is covered) and its map, the DNS records. The load balancer itself is built by
+   GKE's Gateway controller from `components/gke` (class `gke-l7-global-external-managed`, the
+   non-classic one decision 1 requires), with a `GCPBackendPolicy` raising `timeoutSec` to 3600 as
+   the starting point for open question 3, and a `HealthCheckPolicy` on `/healthz`. A Terraform
+   backend service would need the NEGs the cluster creates, so it could not be built in one
+   apply.
+2. **Ports.** The CP's main port is 8099, the workspace-only listener `AF_CP_INTERNAL_LISTEN=:8098`,
+   and the agent port 7700 (as on ECS). The workspace policies admit 7700 from the CP's pods and
+   allow 8098 to them.
+3. **The CP namespace has an ingress policy on GKE** that admits Google's front-end ranges to 8099
+   and workspace pods to 8098. Decision 7's table governs the workspace namespace and is
+   unchanged; this one keeps other workloads on a shared cluster off the port that trusts
+   forwarding headers ([09 §9.3](../build/09-deploy.md)).
+4. **IAM.** Cloud SQL client and instance user exist only at project level, so their grants carry an
+   IAM condition naming the instance. Log and metric writer have no narrower resource than the
+   project.
+5. **The StorageClass is Terraform's** (through the Kubernetes provider), as decision 12 lists it;
+   so `terraform apply` must reach the control-plane endpoint.

@@ -1,7 +1,7 @@
 ---
 audience: "誰でも最初に読む章。全体の形を掴みたい人"
 source_of_truth: "コード（本書は地図と設計意図）"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # 01. 全体アーキテクチャ
@@ -177,15 +177,15 @@ Console: Repos → URL 入力 → CP /api/repos → Agent: git clone
 差し替わるのは CP 内の interface seam のみ。対応表と選定は [09](09-deploy.ja.md)、ターゲットごとに
 できること・できないことは [ref/deploy-targets](../../guide/ref/deploy-targets.ja.md)。
 
-| ポート | interface | 単一ホスト（`docker` が既定・`native`）| AWS（`ecs`・`ecs-ec2`）|
-|--------|-----------|---------------|-----|
-| Workspace の実行 | `RuntimeFactory`（`AF_RUNTIME` で選ぶ）| Docker Engine / サンドボックス化したホストのプロセス | Fargate の ECS タスク / プールの EC2 スロット上の ECS タスク |
-| 永続ホーム | Runtime 内 | bind mount したディレクトリ / ホストのディレクトリ | EFS アクセスポイント / 利用者ごとの EBS ボリューム |
-| L1 認証 | `AUTH` env 分岐 | `oauth`・`proxy`・`dev` / `dev` のみ | `oauth`（テンプレートは `dev` も受け付ける）|
-| メタデータ | `Store` | SQLite（既定・pure-Go）| Postgres（RDS）|
-| at-rest 鍵 | `KeyCustodian` | localCustodian（master 由来 KEK）| 同じ。KMS custodian は seam のみ（[decisions/0005](../decisions/0005-envelope-custodian.ja.md)・#969）|
-| 入口/TLS | （CP 外）| Caddy / Funnel | ALB + ACM |
-| エンジン | エンジン表 | ネットワーク上ですでに動いているものを URL で | CP がオンデマンドで起動（GPU のものは `ecs-ec2` のみ）|
+| ポート | interface | 単一ホスト（`docker` が既定・`native`）| AWS（`ecs`・`ecs-ec2`）| Kubernetes（`kubernetes`） |
+|--------|-----------|---------------|-----|---|
+| Workspace の実行 | `RuntimeFactory`（`AF_RUNTIME` で選ぶ）| Docker Engine / サンドボックス化したホストのプロセス | Fargate の ECS タスク / プールの EC2 スロット上の ECS タスク | Workspace 専用の StatefulSet（0 か 1 レプリカ）の Pod |
+| 永続ホーム | Runtime 内 | bind mount したディレクトリ / ホストのディレクトリ | EFS アクセスポイント / 利用者ごとの EBS ボリューム | Workspace ごとに PersistentVolumeClaim 2 本: ホームと、ホームの掃除でも残る状態 |
+| L1 認証 | `AUTH` env 分岐 | `oauth`・`proxy`・`dev` / `dev` のみ | `oauth`（テンプレートは `dev` も受け付ける）| `oauth`（マニフェストの例） |
+| メタデータ | `Store` | SQLite（既定・pure-Go）| Postgres（RDS）| Postgres（GKE では Auth Proxy サイドカー経由の Cloud SQL） |
+| at-rest 鍵 | `KeyCustodian` | localCustodian（master 由来 KEK）| 同じ。KMS custodian は seam のみ（[decisions/0005](../decisions/0005-envelope-custodian.ja.md)・#969）| 同じ |
+| 入口/TLS | （CP 外）| Caddy / Funnel | ALB + ACM | クラスタの入口。GKE ではグローバル外部アプリケーションロードバランサ + Certificate Manager |
+| エンジン | エンジン表 | ネットワーク上ですでに動いているものを URL で | CP がオンデマンドで起動（GPU のものは `ecs-ec2` のみ）| ネットワーク上ですでに動いているものを URL で |
 
 ## 1.7 できていること・いないこと
 
@@ -195,6 +195,7 @@ Console: Repos → URL 入力 → CP /api/repos → Agent: git clone
 | 領域 | 状態 |
 |------|------|
 | デプロイターゲット（`docker`・`native`・`ecs`・`ecs-ec2`、VM 1 台の compose）| ✅ 本番配備は `ecs-ec2` で動いている（[09](09-deploy.ja.md)）|
+| `kubernetes` ターゲット（[decisions/0106](../decisions/0106-kubernetes-runtime.ja.md)）| ◐ アダプタ・マニフェスト・GKE の Terraform はできている。GKE Standard での受け入れは #1468 |
 | マルチテナント（identity↔tenant 多対多・クォータ・監査・showback）| ✅ |
 | 内部 git プロバイダ（bare + smart-HTTP + LFS）| ✅（[91](91-internal-git.ja.md)）|
 | MCP（CP `/mcp` + コンテナ内 stdio サーバ）| ✅ admin の dangerous ツールは予定しない（[decisions/0006](../decisions/0006-mcp-unified.ja.md)）|

@@ -1,0 +1,35 @@
+# The CP's main port trusts identity and forwarding headers from the ingress (09 §9.3),
+# so on a cluster that also runs other workloads only the load balancer may reach it.
+# The load balancer reaches the pod directly (container-native load balancing) from
+# Google's front-end and health-check ranges. Workspaces reach the internal listener
+# only; the API server and the kubelet's probes are not affected by this policy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cp-ingress
+  namespace: af-placeholder-cp
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: af-cp
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 35.191.0.0/16
+        - ipBlock:
+            cidr: 130.211.0.0/22
+      ports:
+        - protocol: TCP
+          port: 8099
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: af-placeholder-ws
+          podSelector:
+            matchExpressions:
+              - key: agent-fleet.io/workspace
+                operator: Exists
+      ports:
+        - protocol: TCP
+          port: 8098

@@ -1,7 +1,7 @@
 ---
 audience: "someone deciding how and where to run a deployment"
 source_of_truth: "ref/deploy-targets.md for what each target supports; this page for how to choose between them"
-updated: "2026-08"
+updated: "2026-10"
 ---
 
 # 01. Choosing a deployment target
@@ -30,6 +30,7 @@ Reasons to choose something else:
 | You want it on AWS, small team, cost matters | **ec2-single** | It *is* compose, on a VM. Not a separate runtime |
 | You need task-level isolation, per-user fault isolation, rolling image replacement | **ecs** | You are buying isolation, not saving money |
 | You need the above, plus fast starts and disk performance | **ecs-ec2** | A pool of instances with a persistent per-user disk |
+| Your platform is Kubernetes, or Google Cloud, and you want workspaces that scale to zero | **kubernetes** | A workspace is a pod with a persistent per-user volume on a cluster you run; GKE Standard first |
 
 ## What ECS actually costs you
 
@@ -54,6 +55,19 @@ So:
 - **Isolation or per-user availability requirements → ECS**, accepting the floor cost
   and the fact that idle auto-stop has to actually work for the numbers above to hold.
 
+## When Kubernetes, and when not
+
+Choose **kubernetes** when a Kubernetes cluster is already how your organisation runs things,
+or when you are on Google Cloud and want what ECS gives on AWS: a pod per workspace, isolated by
+the cluster, with capacity only while it runs. It brings what a cluster brings: Terraform and
+kustomize to learn if you do not use them yet, a node pool, a managed database, a load
+balancer — the same kind of floor as ECS's — and a list of preconditions the cluster must meet
+for workspaces to be isolated, which the runbook checks off one by one.
+
+Do not choose it to save money on a small team (one VM is cheaper on any cloud), on a cluster
+you cannot dedicate a namespace and a node pool to, or on a cluster whose network plugin does
+not enforce NetworkPolicy. A home lives in one zone and is not backed up in this version.
+
 ## Where the procedure is
 
 The commands live next to the thing they operate, and they ship inside the release
@@ -66,6 +80,7 @@ bundle, so a customer with the tarball and no repository still has them:
 | a personal WSL2 machine | [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
 | ecs / ecs-ec2 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
 | ec2-single | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
+| kubernetes | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 Inside a workspace, the same files are staged under `operate/runbooks/` beside this
 shelf.

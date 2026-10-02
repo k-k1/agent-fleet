@@ -1,0 +1,113 @@
+# The Control Plane: one replica, in its own namespace (ADR 0106 decision 8).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: af-cp
+  namespace: af-placeholder-cp
+spec:
+  replicas: 1
+  # Recreate, never RollingUpdate: the CP migrates its database at start and cannot be
+  # downgraded, so two CPs must never run against one database during a rollout
+  # (decision 13).
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: af-cp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: af-cp
+    spec:
+      serviceAccountName: af-cp
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      # Longer than the workspace's stop grace, so a CP stopping mid-request can finish
+      # the Stop it is waiting for.
+      terminationGracePeriodSeconds: 150
+      containers:
+        - name: cp
+          image: ghcr.io/k-k1/agent-fleet/control-plane:VERSION
+          ports:
+            - name: http
+              containerPort: 8099
+            - name: internal
+              containerPort: 8098
+          envFrom:
+            # Deployment-specific settings (PUBLIC_BASE_URL, AUTH, the OAuth client ids,
+            # AF_TRUSTED_PROXY_HOPS ...), from the overlay's cp.env.
+            - configMapRef:
+                name: af-cp-env
+            # Created by the operator, never committed: AF_MASTER_KEY, AF_COOKIE_SECRET,
+            # the OAuth client secrets, and AF_DATABASE_URL where the store is not
+            # reached through a sidecar. See the runbook, "Secrets".
+            - secretRef:
+                name: af-cp-secrets
+          env:
+            # Inside the pod the CP binds every interface; who reaches which port is
+            # decided by the Services and the NetworkPolicies, as the security group
+            # decides it on ECS.
+            - name: CP_ADDR
+              value: "0.0.0.0:8099"
+            # The workspace-only listener. The internal Service targets this port alone
+            # (decision 8, and the exception to 09 §9.3).
+            - name: AF_CP_INTERNAL_LISTEN
+              value: ":8098"
+            - name: AF_CP_INTERNAL_URL
+              value: "http://af-cp-internal.af-placeholder-cp.svc:8098"
+            - name: AF_RUNTIME
+              value: kubernetes
+            - name: AF_K8S_NAMESPACE
+              value: af-placeholder-ws
+            - name: AF_K8S_STORAGE_CLASS
+              value: af-placeholder-storageclass
+            - name: AF_K8S_SERVICE_ACCOUNT
+              value: af-workspace
+            - name: AF_K8S_WORKSPACE_IMAGE
+              value: ghcr.io/k-k1/agent-fleet/workspace:VERSION
+            # The store is Postgres; nothing of the CP's state is on its own disk.
+            - name: WS_DATA
+              value: /tmp
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            failureThreshold: 6
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            # Migrations run before the CP listens.
+            failureThreshold: 60
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        # HOME=/tmp in the image, and WS_DATA above.
+        - name: tmp
+          emptyDir:
+            sizeLimit: 2Gi

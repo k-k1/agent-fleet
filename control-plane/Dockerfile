@@ -83,6 +83,7 @@ COPY deploy/native/README.md            deploy/native/
 COPY deploy/local/README-wsl.md         deploy/local/
 COPY deploy/aws/ecs/README.md           deploy/aws/ecs/
 COPY deploy/aws/ec2-single/README.md    deploy/aws/ec2-single/
+COPY deploy/kubernetes/README.md        deploy/kubernetes/
 RUN bash deploy/release/stage-docs.sh /out/docs
 
 # --- 4. runtime --------------------------------------------------------------
