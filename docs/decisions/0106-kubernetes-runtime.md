@@ -275,7 +275,13 @@ deletes). Then:
    only after the disk behind it is deleted — and returns as a known residue
    ([21 §21.2](../build/21-add-a-deploy-target.md)) every claim or volume that did not disappear
    in time, or that it could not read.
-4. It deletes the StatefulSet.
+4. It deletes the StatefulSet **only when every claim and volume of the inventory is confirmed
+   gone**. Otherwise it leaves the StatefulSet, inventory and all, and returns it as a residue too.
+   The CP records the residue only after Destroy returns (`workspace_lifecycle.go` deletes the
+   workspace row and hands the list back afterwards), so deleting the only record of a volume
+   still on disk before then would let a crash lose track of it for good. A re-run reads the
+   existing inventory and adds to it, never replacing it with one rebuilt from claims that are
+   already gone.
 
 The runbook makes `Delete` a precondition, and the CP checks the configured StorageClass at boot;
 with `Retain`, the disk, its data and its bill outlive Destroy, and the audit log says so.
@@ -401,7 +407,8 @@ against a real cluster: Stop then Start at once, a Stop while the controller is 
 (its create request held back), a State read between Start's write and the
 controller's next status update, a Stop while `starting`, a CP restart in the middle of a start,
 both home wipes with a keep file replaced by a plain file, `EraseHome` with a CP restarted while the erase pod runs,
-a resize while stopped, and Destroy with a CP restarted after the claims are gone.
+a resize while stopped, and Destroy with a CP restarted after the claims are gone, and again with a volume left behind,
+across the boundary between Destroy returning and the CP recording the residue.
 
 ### 11. What the first version claims
 
