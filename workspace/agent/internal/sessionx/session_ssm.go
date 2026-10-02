@@ -242,6 +242,25 @@ func RenderSSMConfig(s session.SSMMeta) (string, error) {
 	return b.String(), nil
 }
 
+// ssmForgetLogin drops the cached login of the profile the pane is about to use, so the
+// `aws sso login` after it has to run the device-code flow again. `aws sso logout` cannot do
+// this: it revokes and deletes every token in ~/.aws/sso/cache and every SSO role credential
+// in ~/.aws/cli/cache, with or without --profile, so it signed the member out of every
+// profile. Only this profile's two files go: the token, keyed by the SHA-1 of its
+// sso_session (or of sso_start_url for a legacy profile), and the role credentials, keyed by
+// the SHA-1 of botocore's sorted JSON of account, role and that session name or start URL
+// (both measured with aws-cli 2.36.46). A key that does not resolve deletes nothing.
+const ssmForgetLogin = `afs=$(aws configure get sso_session 2>/dev/null); ` +
+	`afu=$(aws configure get sso_start_url 2>/dev/null); ` +
+	`afa=$(aws configure get sso_account_id 2>/dev/null); ` +
+	`afr=$(aws configure get sso_role_name 2>/dev/null); ` +
+	`if [ -n "$afs" ]; then afk=$afs; afj="\"sessionName\":\"$afs\""; else afk=$afu; afj="\"startUrl\":\"$afu\""; fi; ` +
+	`if [ -n "$afk" ]; then ` +
+	`rm -f "$HOME/.aws/sso/cache/$(printf '%s' "$afk" | sha1sum | cut -d' ' -f1).json"; ` +
+	`if [ -n "$afa" ] && [ -n "$afr" ]; then ` +
+	`rm -f "$HOME/.aws/cli/cache/$(printf '{"accountId":"%s","roleName":"%s",%s}' "$afa" "$afr" "$afj" | sha1sum | cut -d' ' -f1).json"; ` +
+	`fi; fi; `
+
 // buildSSMProgram assembles the pane command for an SSM session: refresh SSO creds
 // only when the cached token is missing/expired (surfacing the login URL in the
 // terminal), then exec start-session. When StartURL is set an isolated aws config is
@@ -274,7 +293,7 @@ func buildSSMProgram(name string, s session.SSMMeta, force bool) (string, error)
 	// cached-token short-circuit (logout+login) so the user can re-authenticate on demand.
 	if force {
 		b.WriteString("echo '[Agent Fleet] 再ログインします（自分で開始したこのログインのみ承認してください）'; " +
-			"aws sso logout >/dev/null 2>&1; aws sso login --use-device-code --no-browser; ")
+			ssmForgetLogin + "aws sso login --use-device-code --no-browser; ")
 	} else {
 		b.WriteString("aws sts get-caller-identity >/dev/null 2>&1 || { " +
 			"echo '[Agent Fleet] 自分で開始したこのログインのみ承認してください（身に覚えのないコード/URL は入力しない）'; " +

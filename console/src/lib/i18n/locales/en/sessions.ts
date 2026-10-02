@@ -490,7 +490,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "start.ssm_acct": "acct {id}",
   "start.frequent_hosts": "Frequently used",
   "start.no_matching_hosts": "No matching registered hosts.",
-  "start.force_relogin": "Force re-login (aws sso logout → login even if cached)",
+  "start.force_relogin": "Force re-login (discard this profile's cached login, then log in)",
   "start.ssm_auth_note":
     "After connecting, if authentication is needed the modal shows an <0>aws sso login</0> URL. Approve it in another tab to connect (no AWS secrets are stored in Agent Fleet).",
   "start.ssm_auth_warn": "⚠ <0>Approve only a login you started yourself</0> (never enter a code/URL you don't recognize).",
