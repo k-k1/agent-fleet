@@ -540,6 +540,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "awslogin.toast_profile": "{profile} — account {account}, role {role}",
   "awslogin.toast_who": "Asked by {who}",
   "awslogin.toast_button": "Log in",
+  "awslogin.expiry_title": "Your AWS login ends at {time}",
   "awslogin.modal_title": "AWS login ({profile})",
   "awslogin.modal_title_generic": "AWS login",
   "awslogin.field_profile": "Profile",

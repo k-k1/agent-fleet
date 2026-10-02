@@ -37,10 +37,13 @@ export function ProfileLoginModal({
 }) {
   const tr = useT();
   const refresh = useAwsLoginStore((s) => s.refresh);
+  const refreshExpiry = useAwsLoginStore((s) => s.refreshExpiry);
   const base = `api/aws-login/profiles/${encodeURIComponent(profile.name)}`;
-  // A login here settles any request for the same profile, so its toast can go now.
+  // A login here settles any request for the same profile and moves its end, so both
+  // toasts can go now.
   const a = useLoginAttempt(`${base}/start`, (att) => `${base}/attempts/${encodeURIComponent(att)}`, () => {
     void refresh();
+    void refreshExpiry();
     onLoggedIn?.();
   });
   const refusal = a.phase === "failed" ? REFUSALS[a.errorCode] : undefined;

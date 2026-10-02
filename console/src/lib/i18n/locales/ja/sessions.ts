@@ -550,6 +550,7 @@ export const sessions = {
   "awslogin.toast_profile": "{profile} — アカウント {account}、ロール {role}",
   "awslogin.toast_who": "依頼元: {who}",
   "awslogin.toast_button": "ログイン",
+  "awslogin.expiry_title": "AWS のログインが {time} に切れます",
   "awslogin.modal_title": "AWS ログイン（{profile}）",
   "awslogin.modal_title_generic": "AWS ログイン",
   "awslogin.field_profile": "プロファイル",

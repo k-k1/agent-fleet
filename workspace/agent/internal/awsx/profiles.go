@@ -545,8 +545,10 @@ func credentialsNames(s string) map[string]bool {
 func StartSync() {
 	go func() {
 		syncAndLog("agent boot")
+		warnExpiringSSO(time.Now())
 		for range time.Tick(PollInterval) {
 			syncAndLog("poll")
+			warnExpiringSSO(time.Now())
 		}
 	}()
 }
