@@ -317,7 +317,7 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 ARG CLAUDE_CODE_VERSION=2.1.287
 ARG OPENCODE_VERSION=1.18.34
 ARG CODEX_VERSION=0.160.0
-ARG COPILOT_VERSION=1.0.90
+ARG COPILOT_VERSION=1.0.91
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}" \
