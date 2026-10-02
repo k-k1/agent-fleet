@@ -90,8 +90,11 @@ Settings gains a **Google Cloud** section beside AWS, member-scoped like it. A p
 
 **The name.** The profile's name is derived from the label by lowercasing and replacing every run of
 characters outside `a-z0-9` with `-` (leading and trailing `-` dropped, a leading digit prefixed with
-`p`), and is shown next to the label. Labels whose names collide (`Prod` and `prod`, `prod_app` and
-`prod.app`) are exported for neither, as AWS does, and Settings and `--list` say why.
+`p`), and is shown next to the label. A label that normalises to nothing — `本番`, `開発`, `---` — gets
+`p-` and a short stable hash of the row's id instead, so a Japanese label still yields a usable name.
+Labels whose names collide (`Prod` and `prod`, `prod_app` and `prod.app`) are exported for neither, as
+AWS does, and Settings and `--list` say why. Settings, the bridge and `--list` share one implementation
+of the normalisation, the empty-name rule and the collision rule.
 
 No secret is stored in the CP. Service-account JSON keys are not accepted anywhere: they are long-lived
 secrets, many organisations forbid them, and impersonation covers the need.
@@ -109,8 +112,23 @@ project. In that root each profile becomes a named configuration `af-<name>`, cr
 
 Inside a configuration, **Settings owns** the project, quota project, region, zone and impersonation;
 **the login owns** `core/account` when the profile names no account. A sync rewrites the first set and
-keeps the second; when the profile's account, login method or name changes, or the profile is
-recreated, the login-owned account is cleared and the next run asks for a login again.
+keeps the second. When the profile's account, login method or name changes, or the profile is
+recreated, its selection is reset and its pending requests are dropped: a login-owned account is
+cleared, so the next run asks which account to use. That is not a fresh authentication — the store is
+per account, so a configuration that names an account another profile is already logged in as can use
+that credential at once.
+
+**Settings for the Agent's own gcloud runs**, kept apart from the profile properties above and applied
+after the caller's variables are removed (decision 2), so nothing a caller sets can undo them:
+
+- `CLOUDSDK_CORE_DISABLE_FILE_LOGGING=true`. gcloud otherwise writes a log file per run under the config
+  root at DEBUG level — including what `print-access-token` printed, the login URL and, inside the code
+  exchange, the request and response bodies (measured: the token appears in the log; with the setting,
+  no log file is written).
+- `CLOUDSDK_CORE_CHECK_GCE_METADATA=false`, and no `GCE_METADATA_*` variable from the caller. Otherwise a
+  configuration with no account selected falls back to the VM's service account on GCE (measured against
+  a metadata mock: `print-access-token` returned the VM's token for a configuration that had never been
+  logged in). This is a gcloud property, not a switch for Google's libraries.
 
 ### 2. `af-gcloud-exec --profile <name> --project <id> -- <command>` runs a command with one profile's token
 
@@ -118,6 +136,10 @@ recreated, the login-owned account is cleared and the next run asks for a login 
   credentials belong to. A Google user token is not bound to a project, so this is weaker and the
   usage text says so: it checks that the caller and the profile agree on where the command is pointed by
   default. A command's own `--project`, or a project written in a Terraform configuration, still wins.
+- **A token is minted only for a selected account.** The configuration must have an account — from
+  Settings, or from a completed login — whose credential is a user credential in the Agent's store;
+  otherwise the wrapper files a login request instead of minting. The VM's or node's identity is never
+  a fallback.
 - **The token is minted in a clean environment.** The wrapper runs
   `gcloud auth print-access-token --configuration af-<name>` (with `--impersonate-service-account` when
   the profile sets it) against the Agent's config root, with every `CLOUDSDK_*`, `GOOGLE_*` and
@@ -129,6 +151,8 @@ recreated, the login-owned account is cleared and the next run asks for a login 
 - **The command receives the token and nothing else of the member's.** Its environment is the caller's
   with every `CLOUDSDK_*`, `GOOGLE_*` and `GCLOUD_*` variable removed, then:
   - `CLOUDSDK_CONFIG` → an empty private directory; `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE` → the token file;
+    `CLOUDSDK_CORE_DISABLE_FILE_LOGGING=true`, so the child's gcloud and the GKE plugin's
+    `config-helper` do not copy the token into a log by default;
   - `GOOGLE_OAUTH_ACCESS_TOKEN` → the token (Terraform's Google provider);
   - `CLOUDSDK_CORE_PROJECT`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_PROJECT` → the project;
   - `CLOUDSDK_BILLING_QUOTA_PROJECT`, `GOOGLE_BILLING_PROJECT` and `USER_PROJECT_OVERRIDE=true` → the
@@ -154,7 +178,9 @@ What the wrapper does not guarantee: a command runs as the member's uid and can 
 including the member's own gcloud directory. The wrapper keeps the standard credential search from
 finding anything but the token it hands over; it does not make the home unreadable. On a host where the
 metadata server is reachable and nothing stops it — `native` on a GCE VM, which ADR 0106 does not cover —
-a library that bypasses `GOOGLE_APPLICATION_CREDENTIALS` could still reach it; the notes say so.
+a library that bypasses `GOOGLE_APPLICATION_CREDENTIALS` could still reach it; the notes say so. On such
+a host gcloud's login also asks first whether to use a personal account on a GCE VM; whether the Console
+login can answer that, or `native` on GCE is left to the terminal login, is settled in phase 2.
 
 ### 3. The Console finishes the login; the member pastes the code into the attempt they started
 
@@ -167,7 +193,9 @@ and 6, one request per profile). What changes is the start, the submit and the b
    config root, in a clean environment (decision 2), in its own process group, one attempt per profile.
    When the profile names an account it is always passed, and gcloud refuses a different sign-in before
    storing it; the Agent never revokes anything to undo a login.
-2. If gcloud succeeds at once with a stored credential, the attempt ends as done without a URL.
+2. If gcloud succeeds at once with a stored credential, the attempt ends as done without a URL — except
+   for a request filed because the credential was rejected (step 5), which starts with `--force` so the
+   member really re-authenticates instead of reusing the credential that failed.
    Otherwise the Agent parses the URL once and shows it only if the scheme is `https`, the host is
    exactly `accounts.google.com`, there is exactly one `redirect_uri` and it is exactly
    `https://sdk.cloud.google.com/authcode.html`, and there is no userinfo, port or fragment. Anything
@@ -181,8 +209,13 @@ and 6, one request per profile). What changes is the start, the submit and the b
    refused. Neither the CP, the Agent nor the notice records the code or the URL: audit and logs carry
    the profile, the attempt and whether the call came through the relay.
 5. **Whether a request is resolved** is decided by the Google Cloud backend, not by 0102's file
-   snapshot: the request is resolved when `print-access-token` succeeds for its configuration in the clean
-   environment. Errors are classified: no or revoked credentials, `invalid_grant` and reauthentication
+   snapshot. For a request filed because no credential was found, it is resolved when
+   `print-access-token` succeeds for its configuration in the clean environment. That only shows a local
+   credential exists: gcloud returns a cached token without asking Google. So a request filed because an
+   API **rejected** the token is resolved only by a login completed after it, never by the same cached
+   credential succeeding again, and Settings offers **Log in again** (`--force`) for when a member knows
+   their login was revoked. Until something rejects the token, a revocation on Google's side is not
+   detected locally. Errors are classified: no or revoked credentials, `invalid_grant` and reauthentication
    prompts mean "log in"; permission denied (including on impersonation), a disabled API or a network
    failure do not, and end the request with the reason instead of asking for a login that cannot help.
    A request whose profile changed in Settings since it was filed is dropped.
@@ -262,7 +295,9 @@ start, and GKE pulls per node — for a tool a fraction of members use.
 2. Which tools honour the token variables beyond gcloud, Terraform and the GKE plugin: `gcloud storage`,
    `bq`, client libraries.
 3. How an organisation's reauthentication policy (session length for Google Cloud) surfaces, and whether
-   the Agent can warn before it. AWS's expiry warning reads a refreshable SSO cache and does not transfer.
+   the Agent can warn before it. AWS warns only for an SSO login that cannot renew, whose end the cache
+   records; it does not guess when a renewable login's portal session ends. Google's access-token life and
+   an organisation's reauthentication deadline are separate and both need measuring.
 4. Whether `install-gcloud` can leave out `bq` and the bundled extras to shrink below 486 MB.
 
 ## Phases
@@ -270,5 +305,5 @@ start, and GKE pulls per node — for a tool a fraction of members use.
 | Phase | What | Done when |
 |---|---|---|
 | 1 | Decisions 1, 2, 4 and the phase-1 notes; the login from a terminal | a member runs `gcloud`, `terraform plan` (with an API that needs a quota project) and `kubectl` against a GKE cluster through the wrapper; a project mismatch is refused; open question 1 is answered |
-| 2 | Decision 3 | an agent's `af-gcloud-exec` is finished from the Console without a terminal, and a code submitted to any other attempt is refused |
+| 2 | Decision 3 | an agent's `af-gcloud-exec` is finished from the Console without a terminal; a code submitted to any other attempt is refused; a synthetic code, token and URL appear in no CP, Agent or gcloud log |
 | 3 | The badge, the guide, open questions 2–4 | the notes list the measured tools |
