@@ -31,6 +31,27 @@ export interface AwsProfileExpiry {
   expiresAt: string;
 }
 
+/** A Settings profile and its login, as GET /api/aws-login/profiles lists it (#1477). */
+export interface AwsProfileState {
+  name: string;
+  label: string;
+  accountId: string;
+  roleName: string;
+  /** "signed_in" | "renew" | "none" — the Agent's reading of the profile's token cache. */
+  state: string;
+  /** The login's end when it cannot renew, RFC 3339 UTC; "" when no end is known. */
+  expiresAt: string;
+  expiring: boolean;
+}
+
+/** What a profile's login modal needs; a subset of both lists, so either can open it. */
+export interface AwsLoginTarget {
+  name: string;
+  label: string;
+  accountId: string;
+  roleName: string;
+}
+
 /** One warning per profile and end: a re-login moves the end, so it can warn again. */
 export const expiryKey = (p: AwsProfileExpiry) => p.name + "|" + p.expiresAt;
 
@@ -44,6 +65,8 @@ interface AwsLoginState {
   hide(id: string): void;
   open(id: string): void;
   close(): void;
+  /** Every Settings profile the Agent last listed; null until it has answered once. */
+  profiles: AwsProfileState[] | null;
   /** Profiles the Agent lists as expiring. */
   expiring: AwsProfileExpiry[];
   /** Expiry warnings (expiryKey) the member closed in this tab. */
@@ -53,12 +76,12 @@ interface AwsLoginState {
    * snapshot: once open, the modal outlives the warning (the old token may run out while the
    * device code waits), and only closing it clears this.
    */
-  profileModal: AwsProfileExpiry | null;
+  profileModal: AwsLoginTarget | null;
   /** Returns the fresh list, or null when the Agent could not be asked (the old list stays). */
   refreshExpiry(): Promise<AwsProfileExpiry[] | null>;
   hideExpiry(key: string): void;
-  /** Opens the modal for a profile from the Agent's list (the toast). */
-  showProfile(p: AwsProfileExpiry): void;
+  /** Opens the modal for a profile from the Agent's list (the toast, the WS bar chip). */
+  showProfile(p: AwsLoginTarget): void;
   /** Opens the modal for a name from a notification, only if the Agent lists it as expiring. */
   openProfile(name: string): Promise<void>;
   closeProfile(): void;
@@ -87,6 +110,7 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
   close() {
     set({ modal: null });
   },
+  profiles: null,
   expiring: [],
   hiddenExpiry: {},
   profileModal: null,
@@ -98,19 +122,24 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
       return null;
     }
     if (!d || d.error || !Array.isArray(d.profiles)) return null;
-    const expiring: AwsProfileExpiry[] = [];
+    const profiles: AwsProfileState[] = [];
     for (const raw of d.profiles) {
       const p = raw as Record<string, unknown>;
-      if (p?.expiring !== true || typeof p.name !== "string" || !p.name || typeof p.expiresAt !== "string") continue;
-      expiring.push({
+      if (typeof p?.name !== "string" || !p.name) continue;
+      profiles.push({
         name: p.name,
         label: String(p.label ?? ""),
         accountId: String(p.accountId ?? ""),
         roleName: String(p.roleName ?? ""),
-        expiresAt: p.expiresAt,
+        state: String(p.state ?? ""),
+        expiresAt: typeof p.expiresAt === "string" ? p.expiresAt : "",
+        expiring: p.expiring === true,
       });
     }
-    set({ expiring });
+    const expiring: AwsProfileExpiry[] = profiles
+      .filter((p) => p.expiring && p.expiresAt)
+      .map(({ name, label, accountId, roleName, expiresAt }) => ({ name, label, accountId, roleName, expiresAt }));
+    set({ profiles, expiring });
     return expiring;
   },
   hideExpiry(key) {

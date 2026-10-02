@@ -807,3 +807,99 @@ button.wu-manage {
   font-size: 12px;
   color: var(--muted);
 }
+
+/* AWS profiles chip (#1477). Neutral like the resources chip: it is a workspace fact, not an
+   agent, so it takes no kind colour. warn = a login ends soon; muted = none signed in. */
+.ws-aws-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* The AWS mark is a wide wordmark: at the 12px of the other glyphs it is an unreadable smudge. */
+.ws-aws-btn .codicon {
+  font-size: 17px;
+}
+.ws-aws-btn .codicon-chevron-down {
+  font-size: 9px;
+  opacity: 0.7;
+}
+.ws-aws-label {
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-aws-btn.warn .ws-aws-label {
+  color: var(--warn);
+  font-weight: 600;
+}
+.ws-aws-btn.muted .ws-aws-label {
+  color: var(--muted);
+}
+.ws-aws-pop {
+  width: min(88vw, 320px);
+}
+.ws-aws-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ws-aws-row + .ws-aws-row {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border2, var(--border));
+}
+.ws-aws-head,
+.ws-aws-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+.ws-aws-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.ws-aws-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.ws-aws-foot {
+  margin-top: 4px;
+  font-size: 11px;
+}
+.ws-aws-foot .warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+.ws-aws-state {
+  flex: none;
+  font-size: 10.5px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.ws-aws-state.signed_in {
+  color: var(--ok);
+  border-color: currentColor;
+}
+/* The command is one token to copy; a break inside "--profile" reads as two flags. */
+.ws-aws-cmd {
+  display: inline-block;
+  margin-top: 2px;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+button.ws-aws-login {
+  font-size: 11px;
+  padding: 1px 8px;
+}
