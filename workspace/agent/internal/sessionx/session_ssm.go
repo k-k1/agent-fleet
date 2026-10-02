@@ -247,15 +247,26 @@ func RenderSSMConfig(s session.SSMMeta) (string, error) {
 // this: it revokes and deletes every SSO token in ~/.aws/sso/cache whatever --profile says,
 // which would sign the member out of every other profile too.
 //
-// Only this profile's token goes: its key is the SHA-1 of the profile's sso_session (or of
-// sso_start_url for a legacy profile). Role credentials are dropped for every SSO profile
-// (ProviderType "sso" in ~/.aws/cli/cache) instead of this one's alone: botocore keys them by
-// a JSON digest whose inputs can come from the sso-session section and whose escaping a shell
-// cannot reproduce, and a stale entry left behind would keep serving the old identity. The
-// other profiles still hold their tokens, so they fetch new role credentials without a login.
-const ssmForgetLogin = `afk=$(aws configure get sso_session 2>/dev/null) || afk=$(aws configure get sso_start_url 2>/dev/null) || afk=; ` +
-	`[ -z "$afk" ] || rm -f "$HOME/.aws/sso/cache/$(printf '%s' "$afk" | sha1sum | cut -d' ' -f1).json"; ` +
-	`for f in "$HOME"/.aws/cli/cache/*.json; do grep -qs '"ProviderType": *"sso"' "$f" && rm -f "$f"; done; `
+// The token's key is the SHA-1 of the profile's sso_session (or of sso_start_url for a legacy
+// profile). The role credentials' key is the SHA-1 of botocore's sorted, compact JSON of
+// account, role and that session name or start URL; account and role may be set on the
+// sso-session section only, hence the --sso-session fallback. Other profiles' role
+// credentials must stay: a legacy profile whose token has expired still works from them
+// until they expire. Only when a value holds a character the JSON would escape (non-ASCII,
+// quotes, spaces...) and the shell cannot reproduce the key are every SSO role credential
+// dropped instead, so the old identity is never left behind. Keys measured with aws-cli
+// 2.36.46.
+const ssmForgetLogin = `afs=$(aws configure get sso_session 2>/dev/null) || afs=; ` +
+	`if [ -n "$afs" ]; then afk=$afs; afj="\"sessionName\":\"$afs\""; ` +
+	`else afk=$(aws configure get sso_start_url 2>/dev/null) || afk=; afj="\"startUrl\":\"$afk\""; fi; ` +
+	`afa=$(aws configure get sso_account_id 2>/dev/null) || { [ -n "$afs" ] && afa=$(aws configure get sso_account_id --sso-session "$afs" 2>/dev/null); } || afa=; ` +
+	`afr=$(aws configure get sso_role_name 2>/dev/null) || { [ -n "$afs" ] && afr=$(aws configure get sso_role_name --sso-session "$afs" 2>/dev/null); } || afr=; ` +
+	`if [ -n "$afk" ]; then ` +
+	`rm -f "$HOME/.aws/sso/cache/$(printf '%s' "$afk" | sha1sum | cut -d' ' -f1).json"; ` +
+	`case "$afk$afa$afr" in ` +
+	`*[!A-Za-z0-9._:/@+=,~%?#-]*) for f in "$HOME"/.aws/cli/cache/*.json; do grep -qs '"ProviderType": *"sso"' "$f" && rm -f "$f" || :; done ;; ` +
+	`*) [ -z "$afa" ] || [ -z "$afr" ] || rm -f "$HOME/.aws/cli/cache/$(printf '{"accountId":"%s","roleName":"%s",%s}' "$afa" "$afr" "$afj" | sha1sum | cut -d' ' -f1).json" ;; ` +
+	`esac; fi; `
 
 // buildSSMProgram assembles the pane command for an SSM session: refresh SSO creds
 // only when the cached token is missing/expired (surfacing the login URL in the
