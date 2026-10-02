@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -511,18 +512,23 @@ func TestOfflineSyncReadsTheCacheUnderTheLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan SyncResult)
+	release := sync.OnceFunc(unlock)
+	done := make(chan SyncResult, 1)
+	finished := make(chan struct{})
 	go func() {
+		defer close(finished)
 		res, _ := Sync()
 		done <- res
 	}()
+	// Released and joined before HOME is restored, whichever check fails first.
+	t.Cleanup(func() { release(); <-finished })
 	time.Sleep(200 * time.Millisecond) // let it reach the lock
 	newer := prof("prod")
 	newer.AccountID = "222222222222"
 	if err := saveSettingsCache([]Profile{newer}, nil); err != nil {
 		t.Fatal(err)
 	}
-	unlock()
+	release()
 	res := <-done
 	if res.Settings["prod"].AccountID != "222222222222" {
 		t.Fatalf("the offline run applied the list it saw before the lock: %+v", res.Settings)
@@ -597,17 +603,20 @@ func TestSyncFetchesUnderTheLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	release := sync.OnceFunc(unlock)
 	done := make(chan struct{})
 	go func() {
 		_, _ = Sync()
 		close(done)
 	}()
+	// Joined before HOME and the CP env are restored: a Sync left running would rewrite
+	// the real ~/.aws/config.
+	t.Cleanup(func() { release(); <-done })
 	time.Sleep(200 * time.Millisecond)
 	if n := hits.Load(); n != 0 {
-		unlock()
 		t.Fatalf("the CP was asked %d time(s) before the lock was free", n)
 	}
-	unlock()
+	release()
 	<-done
 	if hits.Load() != 1 {
 		t.Fatalf("hits = %d after the lock was released", hits.Load())

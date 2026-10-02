@@ -382,6 +382,9 @@ func TestCacheOrphansMetaNameMismatch(t *testing.T) {
 func TestCacheCleanupLock(t *testing.T) {
 	newCacheFixture(t)
 	done := make(chan struct{})
+	// Joined before the fixture's HOME is restored: a delete left running would scan and
+	// remove under the real cache root.
+	t.Cleanup(func() { <-done })
 	WithCleanupLock(func() {
 		go func() {
 			_, _ = RemoveCacheOrphans(CacheFeaturePasted, time.Now())

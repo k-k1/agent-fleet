@@ -34,24 +34,36 @@ func fastPoll(t *testing.T) {
 // writeSSOCache writes the token cache of sso-session af-prod the way botocore does.
 func writeSSOCache(t *testing.T, token string, expires time.Time) {
 	t.Helper()
-	path := ssoCachePath("af-prod")
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	b, _ := json.Marshal(map[string]string{"accessToken": token, "expiresAt": expires.UTC().Format(time.RFC3339)})
-	if err := os.WriteFile(path, b, 0o600); err != nil {
+	if err := putSSOCache(token, expires); err != nil {
 		t.Fatal(err)
 	}
 }
 
+// putSSOCache is writeSSOCache for a helper goroutine, which may not call t.Fatal.
+func putSSOCache(token string, expires time.Time) error {
+	path := ssoCachePath("af-prod")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	b, _ := json.Marshal(map[string]string{"accessToken": token, "expiresAt": expires.UTC().Format(time.RFC3339)})
+	return os.WriteFile(path, b, 0o600)
+}
+
 func waitForFile(t *testing.T, path string) {
 	t.Helper()
+	if !fileAppears(path) {
+		t.Fatalf("%s never appeared", path)
+	}
+}
+
+// fileAppears is waitForFile for a helper goroutine, which may not call t.Fatal.
+func fileAppears(path string) bool {
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
 		if _, err := os.Stat(path); err == nil {
-			return
+			return true
 		}
 	}
-	t.Fatalf("%s never appeared", path)
+	return false
 }
 
 func onlyRequest(t *testing.T) LoginRequest {
@@ -66,12 +78,22 @@ func onlyRequest(t *testing.T) LoginRequest {
 func TestConsoleLoginWaitsForTheMembersApproval(t *testing.T) {
 	bin, state := fakeAWS(t, ssoProfile)
 	fastPoll(t)
+	helper := make(chan struct{})
 	go func() {
-		waitForFile(t, logins.RequestPath("af-prod"))
+		defer close(helper)
+		if path := logins.RequestPath("af-prod"); !fileAppears(path) {
+			t.Errorf("%s never appeared", path)
+			return
+		}
 		// The member approves in the Console: the token lands and the CLI accepts it.
-		writeSSOCache(t, "fresh", time.Now().Add(time.Hour))
+		if err := putSSOCache("fresh", time.Now().Add(time.Hour)); err != nil {
+			t.Errorf("writing the SSO cache: %v", err)
+			return
+		}
 		os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600)
 	}()
+	// Joined before HOME is restored: the helper writes the SSO cache from HOME.
+	t.Cleanup(func() { <-helper })
 	var stderr bytes.Buffer
 	_, _, env, err := PlanExec(bin, workloadEnv, consoleOpts(&stderr, 5*time.Second))
 	if err != nil {
@@ -142,14 +164,21 @@ func TestConsoleLoginOnlyForASettingsProfileRunUnattended(t *testing.T) {
 func TestConsoleLoginCancelEndsTheWaitAndHoldsNewRuns(t *testing.T) {
 	bin, _ := fakeAWS(t, ssoProfile)
 	fastPoll(t)
+	helper := make(chan struct{})
 	go func() {
-		waitForFile(t, logins.RequestPath("af-prod"))
+		defer close(helper)
+		if path := logins.RequestPath("af-prod"); !fileAppears(path) {
+			t.Errorf("%s never appeared", path)
+			return
+		}
 		r, _ := logins.Read("af-prod")
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/aws-login/"+r.ID+"/cancel", nil)
 		req.SetPathValue("id", r.ID)
 		HandleLoginCancel(rec, req)
 	}()
+	// Joined before HOME is restored: the cancel resolves its paths from HOME.
+	t.Cleanup(func() { <-helper })
 	var stderr bytes.Buffer
 	withSettingsCache(t)
 	start := time.Now()

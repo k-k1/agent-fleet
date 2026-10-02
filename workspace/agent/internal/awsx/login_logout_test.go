@@ -2,6 +2,7 @@ package awsx
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -65,6 +66,16 @@ func (p *portal) seen() []string {
 
 func profileLogout(t *testing.T, name string) (*httptest.ResponseRecorder, profileLogoutWire) {
 	t.Helper()
+	rec, out, err := postProfileLogout(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rec, out
+}
+
+// postProfileLogout is profileLogout for a goroutine, which may not call t.Fatal: a 200
+// whose body does not decode is returned as an error.
+func postProfileLogout(name string) (*httptest.ResponseRecorder, profileLogoutWire, error) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/aws-login/profiles/"+name+"/logout", nil)
 	req.SetPathValue("name", name)
@@ -72,10 +83,10 @@ func profileLogout(t *testing.T, name string) (*httptest.ResponseRecorder, profi
 	var out profileLogoutWire
 	if rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-			t.Fatalf("logout body = %s", rec.Body.String())
+			return rec, out, fmt.Errorf("logout body = %s", rec.Body.String())
 		}
 	}
-	return rec, out
+	return rec, out, nil
 }
 
 // logoutFixture signs prod in and puts other profiles' caches beside it. It returns prod's
@@ -245,14 +256,19 @@ func TestProfileLogoutWaitsForARunReadingTheCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	release := sync.OnceFunc(unlock)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		profileLogout(t, "prod")
+		if _, _, err := postProfileLogout("prod"); err != nil {
+			t.Error(err)
+		}
 	}()
+	// Joined before HOME is restored: a logout left running would delete the real token.
+	t.Cleanup(func() { release(); <-done })
 	time.Sleep(100 * time.Millisecond)
 	os.WriteFile(mine[1], []byte(`{"ProviderType": "sso"}`), 0o600)
-	unlock()
+	release()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -387,17 +403,21 @@ func TestProfileLogoutKeepsALoginThatLandsDuringTheRevoke(t *testing.T) {
 	ssoPortalURL = func(string) string { return srv.URL }
 	t.Cleanup(func() { ssoPortalURL = old })
 
-	done := make(chan profileLogoutWire, 1)
+	type result struct {
+		out profileLogoutWire
+		err error
+	}
+	done := make(chan result, 1)
 	go func() {
-		_, out := profileLogout(t, "prod")
-		done <- out
+		_, out, err := postProfileLogout("prod")
+		done <- result{out, err}
 	}()
 	<-called
 	fresh := []byte(`{"accessToken":"new-login"}`)
 	os.WriteFile(mine[0], fresh, 0o600)
 	close(release)
-	if out := <-done; !out.Revoked {
-		t.Fatalf("logout = %+v", out)
+	if res := <-done; res.err != nil || !res.out.Revoked {
+		t.Fatalf("logout = %+v %v", res.out, res.err)
 	}
 	if b, _ := os.ReadFile(mine[0]); string(b) != string(fresh) {
 		t.Fatalf("the new login's token is %q", b)
@@ -456,26 +476,33 @@ func TestALoginDoesNotStartWhileALogoutTakesTheTokenOff(t *testing.T) {
 
 	g := logins.Gate("af-prod")
 	g.Lock()
+	release := sync.OnceFunc(g.Unlock)
 	done := make(chan *httptest.ResponseRecorder, 1)
-	go func() { done <- profileStart("prod") }()
+	finished := make(chan struct{})
+	go func() { defer close(finished); done <- profileStart("prod") }()
+	// Joined, and its login ended, before HOME and LoginAWSBin are restored, whichever
+	// check fails first.
+	t.Cleanup(func() {
+		release()
+		<-finished
+		if cur := logins.Current("af-prod"); cur != nil {
+			cur.End(cloudlogin.PhaseFailed, "")
+			<-cur.Exited()
+		}
+	})
 	select {
 	case <-done:
-		g.Unlock()
 		t.Fatal("a login started while a logout held the gate")
 	case <-time.After(150 * time.Millisecond):
 	}
 	if n := cliCalls(state); n != 0 {
-		g.Unlock()
 		t.Fatalf("aws was started %d times", n)
 	}
-	g.Unlock()
+	release()
 	rec := <-done
 	if rec.Code != http.StatusOK {
 		t.Fatalf("start = %d %s", rec.Code, rec.Body.String())
 	}
-	cur := logins.Current("af-prod")
-	cur.End(cloudlogin.PhaseFailed, "")
-	<-cur.Exited()
 }
 
 // The logout holds the gate until the old token is off disk, and not while AWS answers.
@@ -497,17 +524,22 @@ func TestProfileLogoutHoldsTheGateOnlyUntilTheTokenIsOff(t *testing.T) {
 
 	g := logins.Gate("af-prod")
 	g.Lock()
+	release := sync.OnceFunc(g.Unlock)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		profileLogout(t, "prod")
+		if _, _, err := postProfileLogout("prod"); err != nil {
+			t.Error(err)
+		}
 	}()
+	// Joined before HOME and ssoPortalURL are restored: a logout left running would delete
+	// the real token and revoke it at the real portal.
+	t.Cleanup(func() { release(); <-done })
 	time.Sleep(150 * time.Millisecond)
 	if _, err := os.Stat(mine[0]); err != nil {
-		g.Unlock()
 		t.Fatal("the token was taken off without the gate")
 	}
-	g.Unlock()
+	release()
 	<-done
 	if !<-gateFree {
 		t.Fatal("the gate was held during the revoke")
