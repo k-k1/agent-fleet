@@ -1,0 +1,123 @@
+# Exactly the table of ADR 0106 decision 7. NetworkPolicy only allows: a deny is the
+# absence of an allow, and any other policy selecting these pods adds to it. So this
+# namespace holds these and nothing broader; a private destination a deployment needs
+# (a LAN engine, an internal git host) is one extra, per-destination policy.
+#
+# Enforced only by a CNI that implements NetworkPolicy (Dataplane V2 on GKE). Without
+# one these are accepted and enforce nothing.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: af-placeholder-ws
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+# any -> workspace agent port: from the CP's pods only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-from-cp
+  namespace: af-placeholder-ws
+spec:
+  podSelector:
+    matchExpressions:
+      - key: agent-fleet.io/workspace
+        operator: Exists
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: af-placeholder-cp
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: af-cp
+      ports:
+        - protocol: TCP
+          port: 7700
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-dns
+  namespace: af-placeholder-ws
+spec:
+  podSelector:
+    matchExpressions:
+      - key: agent-fleet.io/workspace
+        operator: Exists
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# workspace -> CP: the internal listener only. The policy matches the pod's port, so the
+# main port (8099) stays closed even though both are on the same pod.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-cp-internal
+  namespace: af-placeholder-ws
+spec:
+  podSelector:
+    matchExpressions:
+      - key: agent-fleet.io/workspace
+        operator: Exists
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: af-placeholder-cp
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: af-cp
+      ports:
+        - protocol: TCP
+          port: 8098
+---
+# workspace -> the internet: everything except the special-use ranges and this
+# deployment's own ranges. The fixed list alone is not enough: GKE Standard's default
+# service range is 34.118.224.0/20, and pods and nodes can use privately used public
+# ranges. The four deployment ranges are set from the overlay's deployment.yaml (an
+# overlay with more than one pod range adds them to this list). IPv4 only: with no
+# `::/0` allow, IPv6 egress stays denied.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-internet
+  namespace: af-placeholder-ws
+spec:
+  podSelector:
+    matchExpressions:
+      - key: agent-fleet.io/workspace
+        operator: Exists
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              # Link-local, the metadata server's 169.254.169.254 included.
+              - 169.254.0.0/16
+              # pod range, service range, node range, control-plane endpoint range
+              - 198.18.0.0/32
+              - 198.18.0.1/32
+              - 198.18.0.2/32
+              - 198.18.0.3/32
