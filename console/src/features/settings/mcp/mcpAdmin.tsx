@@ -134,7 +134,7 @@ export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
       </section>
 
       <section className="admin-panel">
-        <h4 className="egress-h">{tr("admin.mcp_distributed")}</h4>
+        <h4>{tr("admin.mcp_distributed")}</h4>
         {rows === null ? (
           <p className="muted">{tr("common.loading")}</p>
         ) : rows.length === 0 ? (

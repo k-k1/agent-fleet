@@ -578,7 +578,6 @@ function EngineNegative({
       <div className="engines-model-add-actions">
         <button
           type="button"
-          className="btn-secondary"
           disabled={busy || tooLong || draft === saved}
           onClick={() => onSave(draft.trim())}
         >
