@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -138,8 +139,8 @@ func TestOnlyAnExportedProfileIsExpiring(t *testing.T) {
 			withSettingsCache(t)
 			if own != "-" {
 				exportProd(t, own)
-				if strings.Contains(strings.Join(ExportedIn(ConfigPath()), ","), "prod") {
-					t.Skipf("%s did not keep prod out of the block; the case proves nothing", label)
+				if slices.Contains(ExportedIn(ConfigPath()), "prod") {
+					t.Fatalf("%s did not keep prod out of the managed block", label)
 				}
 			}
 			now := time.Now()

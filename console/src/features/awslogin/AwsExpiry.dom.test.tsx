@@ -9,12 +9,17 @@ type Json = Record<string, unknown>;
 const calls: { path: string; method: string }[] = [];
 let profiles: Json[] = [];
 let attemptReply: Json = { phase: "starting" };
+let profilesFail: "" | "throw" | "error" = "";
 
 vi.mock("../../core/api/client.ts", () => ({
   api: vi.fn(async (path: string) => {
     calls.push({ path, method: "GET" });
     if (path === "api/aws-login") return { requests: [] };
-    if (path === "api/aws-login/profiles") return { profiles };
+    if (path === "api/aws-login/profiles") {
+      if (profilesFail === "throw") throw new Error("offline");
+      if (profilesFail === "error") return { error: { code: "workspace_stopped" } };
+      return { profiles };
+    }
     if (path.includes("/attempts/")) return attemptReply;
     return {};
   }),
@@ -74,6 +79,7 @@ beforeEach(() => {
   calls.length = 0;
   profiles = [expiring];
   attemptReply = { phase: "starting" };
+  profilesFail = "";
   useAwsLoginStore.setState({ requests: [], hidden: {}, modal: null, expiring: [], hiddenExpiry: {}, profileModal: null });
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -172,4 +178,17 @@ describe("SSO expiry warning", () => {
     await tick(0);
     expect(document.body.textContent).toContain("AWS login (Production)");
   });
+
+  for (const fail of ["throw", "error"] as const) {
+    it(`opens nothing from a notification when the check fails (${fail}), even with an old list`, async () => {
+      await mount();
+      await act(async () => (document.querySelector(".ui-toast-x") as HTMLButtonElement).click());
+      expect(useAwsLoginStore.getState().expiring).toHaveLength(1);
+      profilesFail = fail;
+      const n = { kind: "aws-sso-expiring", payload: { profile: "prod" }, target: { type: "workspace", id: "" } } as never;
+      await act(async () => void openNotificationTarget(n, false));
+      await tick(0);
+      expect(document.body.textContent).not.toContain("AWS login (");
+    });
+  }
 });

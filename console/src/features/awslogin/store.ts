@@ -54,7 +54,8 @@ interface AwsLoginState {
    * device code waits), and only closing it clears this.
    */
   profileModal: AwsProfileExpiry | null;
-  refreshExpiry(): Promise<void>;
+  /** Returns the fresh list, or null when the Agent could not be asked (the old list stays). */
+  refreshExpiry(): Promise<AwsProfileExpiry[] | null>;
   hideExpiry(key: string): void;
   /** Opens the modal for a profile from the Agent's list (the toast). */
   showProfile(p: AwsProfileExpiry): void;
@@ -94,9 +95,9 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
     try {
       d = await api("api/aws-login/profiles");
     } catch {
-      return;
+      return null;
     }
-    if (!d || d.error || !Array.isArray(d.profiles)) return;
+    if (!d || d.error || !Array.isArray(d.profiles)) return null;
     const expiring: AwsProfileExpiry[] = [];
     for (const raw of d.profiles) {
       const p = raw as Record<string, unknown>;
@@ -110,6 +111,7 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
       });
     }
     set({ expiring });
+    return expiring;
   },
   hideExpiry(key) {
     set((s) => ({ hiddenExpiry: { ...s.hiddenExpiry, [key]: true } }));
@@ -118,8 +120,10 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
     set({ profileModal: p });
   },
   async openProfile(name) {
-    await get().refreshExpiry();
-    const p = get().expiring.find((x) => x.name === name);
+    // Only this answer counts: a failed ask leaves the old list, which may name a profile that
+    // has since been logged in again or ended.
+    const fresh = await get().refreshExpiry();
+    const p = fresh?.find((x) => x.name === name);
     if (p) set({ profileModal: p });
   },
   closeProfile() {
