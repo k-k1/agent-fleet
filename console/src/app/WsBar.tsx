@@ -38,6 +38,7 @@ import { AUTO_INLINE, noteSessionKinds, planUsageChips, readKindStamps, type Kin
 import { setSettings, useSettings } from "../lib/settings.ts";
 import { useSettingsUI } from "../features/settings/store.ts";
 import { browserTarget } from "../features/browser/target.ts";
+import { AwsProfilesChip } from "../features/awslogin/AwsProfilesChip.tsx";
 
 const HIST_N = 60; // sparkline ring buffer: ~4 min at the 4s poll cadence
 
@@ -1479,6 +1480,7 @@ export function WsBar() {
           the block's padding, and an unconditional link would defeat it. */}
       {graphs && <MachineDetailsLink onNavigate={() => setMoreOpen(false)} />}
       {usageChips}
+      <AwsProfilesChip />
     </>
   );
 
@@ -1831,6 +1833,8 @@ export function WsBar() {
           {/* Desktop only: on a phone these already sit in the ⋯ overflow, a vertical list
               with room for all of them — folding a list into a list would only bury them. */}
           <UsageChipFold>{usageChips}</UsageChipFold>
+          {/* Outside the fold: that group ranks agents by use, and this is not an agent. */}
+          <AwsProfilesChip />
           {resourcesEl}
           <div className="ws-preview" ref={pvRef}>
             <button
