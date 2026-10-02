@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -158,12 +159,23 @@ func lockSSOCache(ssoSession string, how int) (func(), error) {
 }
 
 // exportSSOCreds is exportCreds for the SSO-only profile, under the session's shared cache
-// lock. A lock that cannot be taken does not fail the run: it only reopens the race above.
+// lock.
 func exportSSOCreds(aws awsRunner, ssoSession string) (processCreds, error) {
-	if unlock, err := lockSSOCache(ssoSession, syscall.LOCK_SH); err == nil {
+	return exportLocked(aws, ssoOnlyProfile, ssoSession)
+}
+
+// exportLocked is exportCreds for profile, whose credentials come from ssoSession's cached
+// login ("" when they come from no sso-session), under that session's shared cache lock. A
+// lock that cannot be taken fails the run: going on would reopen the race above unseen.
+func exportLocked(aws awsRunner, profile, ssoSession string) (processCreds, error) {
+	if ssoSession != "" {
+		unlock, err := lockSSOCache(ssoSession, syscall.LOCK_SH)
+		if err != nil {
+			return processCreds{}, fmt.Errorf("could not lock the cached login of sso-session %s: %w", ssoSession, err)
+		}
 		defer unlock()
 	}
-	return exportCreds(aws, ssoOnlyProfile)
+	return exportCreds(aws, profile)
 }
 
 func lockLogin() (func(), error) {

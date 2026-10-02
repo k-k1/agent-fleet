@@ -1,9 +1,12 @@
 package awsx
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -56,16 +59,16 @@ var ssoPortalURL = func(region string) string {
 	return "https://" + host
 }
 
-// revokeSSOToken asks AWS to end the session the cached token at cachePath belongs to
-// (the SSO portal's Logout: POST /logout with the access token in x-amz-sso_bearer_token).
+// revokeSSOToken asks AWS to end the session the cached login doc belongs to (the SSO
+// portal's Logout: POST /logout with the access token in x-amz-sso_bearer_token).
 // fallbackRegion is used when the cache records none. The token never leaves this function
 // except in that header.
-func revokeSSOToken(cachePath, fallbackRegion string) error {
+func revokeSSOToken(cached []byte, fallbackRegion string) error {
 	var doc struct {
 		AccessToken string `json:"accessToken"`
 		Region      string `json:"region"`
 	}
-	if !readJSON(cachePath, &doc) || doc.AccessToken == "" {
+	if json.Unmarshal(cached, &doc) != nil || doc.AccessToken == "" {
 		return fmt.Errorf("the cached login holds no access token")
 	}
 	region := doc.Region
@@ -180,6 +183,25 @@ func endLoginFor(ssoSession string) {
 	}
 }
 
+// takeOffToken deletes the token file at path if it still holds snap. A login that landed
+// since snap was read wrote a newer token, which is put back.
+func takeOffToken(path string, snap []byte) error {
+	tmp := path + ".af-logout"
+	if err := os.Rename(path, tmp); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	b, err := os.ReadFile(tmp)
+	if err == nil && !bytes.Equal(b, snap) {
+		if _, serr := os.Stat(path); os.IsNotExist(serr) {
+			return os.Rename(tmp, path)
+		}
+	}
+	return os.Remove(tmp)
+}
+
 // HandleProfileLogout is POST /aws-login/profiles/{name}/logout: the "Log out" of a Settings
 // profile. It ends a running login for the profile, revokes the cached token with AWS, and
 // deletes the token and the role credentials cached for it. Other profiles' caches are not
@@ -199,27 +221,44 @@ func HandleProfileLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	ssoSession := "af-" + sp.Name
 	endLoginFor(ssoSession)
-	// Held across the revoke and the deletes: an af-aws-exec run already turning the token
-	// into role credentials finishes first, and the next one finds nothing.
-	if unlock, err := lockSSOCache(ssoSession, syscall.LOCK_EX); err == nil {
-		defer unlock()
-	} else {
-		log.Printf("aws-login: logout profile=%s: cache lock: %v", sp.Name, err)
+	// Held across the deletes and the revoke: an af-aws-exec run already turning the token
+	// into role credentials finishes first, and the next one finds nothing. Without the lock
+	// that race is open again, so no lock means no logout.
+	unlock, err := lockSSOCache(ssoSession, syscall.LOCK_EX)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "lock_failed", err.Error())
+		return
 	}
+	defer unlock()
 
 	var out profileLogoutWire
 	token := ssoCachePath(ssoSession)
-	if _, err := os.Stat(token); err != nil {
+	// The login is read once, taken off disk, and only then revoked from memory: the revoke
+	// can take seconds, and a login the member starts meanwhile is a new one whose token
+	// must survive.
+	snap, err := os.ReadFile(token)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
 		out.NoToken = true
-	} else if err := revokeSSOToken(token, sp.SSORegion); err != nil {
-		out.Message = err.Error()
-	} else {
-		out.Revoked = true
+	case err != nil:
+		httpx.WriteErr(w, http.StatusInternalServerError, "remove_failed", err.Error())
+		return
 	}
-	for _, p := range append([]string{token}, roleCachePaths(sp, ssoSession)...) {
+	for _, p := range roleCachePaths(sp, ssoSession) {
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "remove_failed", err.Error())
 			return
+		}
+	}
+	if !out.NoToken {
+		if err := takeOffToken(token, snap); err != nil {
+			httpx.WriteErr(w, http.StatusInternalServerError, "remove_failed", err.Error())
+			return
+		}
+		if err := revokeSSOToken(snap, sp.SSORegion); err != nil {
+			out.Message = err.Error()
+		} else {
+			out.Revoked = true
 		}
 	}
 	log.Printf("aws-login: logout profile=%s revoked=%t no_token=%t relayed=%t", sp.Name, out.Revoked, out.NoToken, relayedByCP(r))
