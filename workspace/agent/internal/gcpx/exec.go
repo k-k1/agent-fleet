@@ -113,17 +113,15 @@ func PlanExec(gcloudBin string, environ []string, o ExecOptions) (string, []stri
 	}
 	agentEnv := AgentEnv(environ, ConfigRoot())
 
-	tok, account, err := mintLocked(gcloudBin, agentEnv, p)
+	waiting := func() {
+		fmt.Fprintln(stderr, "af-gcloud-exec: waiting for another af-gcloud-exec or a profile sync (a Google Cloud login in a terminal holds it) ...")
+	}
+	tok, account, err := mintLocked(gcloudBin, agentEnv, p, waiting)
 	if errors.Is(err, ErrLoginRequired) {
 		hint := fmt.Sprintf("af-gcloud-exec --profile %s --project %s --login -- true", session.ShellQuote(p.Name), session.ShellQuote(p.Project))
 		switch {
 		case o.Login == "always" || (o.Login != "never" && o.Interactive):
-			if lerr := terminalLogin(gcloudBin, agentEnv, p, stderr); lerr != nil {
-				return "", nil, nil, fmt.Errorf("gcloud auth login for profile %s: %w", p.Name, lerr)
-			}
-			if tok, account, err = mintLocked(gcloudBin, agentEnv, p); err != nil {
-				return "", nil, nil, fmt.Errorf("profile %q after login: %w", p.Name, err)
-			}
+			tok, account, err = loginAndMint(gcloudBin, agentEnv, p, stderr, waiting)
 		default:
 			return "", nil, nil, fmt.Errorf("profile %q: %w\nlog in from a terminal with: %s", p.Name, err, hint)
 		}
@@ -186,25 +184,28 @@ func pickProfile(o ExecOptions) (Profile, error) {
 	return p, nil
 }
 
-// mintLocked mints under the root's lock, so a sync cannot rewrite the configuration
-// between the account check and the mint.
-func mintLocked(gcloudBin string, env []string, p Profile) (Token, string, error) {
-	root, unlock, err := lockRoot()
+// mintLocked mints under the root's lock, so a sync or a login cannot change the
+// configuration between the checks and the mint.
+func mintLocked(gcloudBin string, env []string, p Profile, waiting func()) (Token, string, error) {
+	root, unlock, err := lockRootNotify(waiting)
 	if err != nil {
 		return Token{}, "", err
 	}
 	defer unlock()
+	return mintHeld(gcloudBin, env, root, p)
+}
+
+// mintHeld mints for a caller that holds the root's lock (root is resolved). The
+// configuration must be exactly the version of p this run read from Settings (syncedAs), so
+// the account checked, the impersonation passed and what is printed are the ones gcloud uses.
+func mintHeld(gcloudBin string, env []string, root string, p Profile) (Token, string, error) {
 	env = cloudexec.SetEnv(env, "CLOUDSDK_CONFIG="+root)
-	cfg := filepath.Join(root, "configurations", "config_"+ConfigName(p.Name))
-	if _, err := os.Stat(cfg); err != nil {
-		return Token{}, "", fmt.Errorf("its gcloud configuration %s is missing (the last sync did not write it)", ConfigName(p.Name))
+	account, err := syncedAs(root, p)
+	if err != nil {
+		return Token{}, "", err
 	}
-	account := readProperty(cfg, "core", "account")
 	if account == "" {
 		return Token{}, "", fmt.Errorf("%w: no account is selected for it yet", ErrLoginRequired)
-	}
-	if p.Account != "" && account != p.Account {
-		return Token{}, "", fmt.Errorf("its configuration selects %s, but Settings names %s; wait for the next sync and run again", account, p.Account)
 	}
 	// Only a user credential is minted from; the VM's or node's identity, a service-account
 	// key or an external account activated into this root by hand never is (decision 2).
@@ -222,6 +223,32 @@ func mintLocked(gcloudBin string, env []string, p Profile) (Token, string, error
 	}
 	tok, err := mint(gcloudBin, env, p)
 	return tok, account, err
+}
+
+// loginAndMint runs the terminal login and then mints, holding the root's lock from before
+// the login until after the mint. gcloud writes the login's core/account into the
+// configuration itself, so while it runs nothing else may read or rewrite that
+// configuration: a mint would take the half-finished selection, and a sync would either
+// lose it or keep an account chosen for a version of the profile Settings has since reset.
+// A Settings change made during the login is applied by the first sync after it, which then
+// resets the selection as decision 1 says. Other runs wait (and say so) meanwhile.
+func loginAndMint(gcloudBin string, env []string, p Profile, stderr io.Writer, waiting func()) (Token, string, error) {
+	root, unlock, err := lockRootNotify(waiting)
+	if err != nil {
+		return Token{}, "", err
+	}
+	defer unlock()
+	if _, err := syncedAs(root, p); err != nil {
+		return Token{}, "", err
+	}
+	if err := terminalLogin(gcloudBin, cloudexec.SetEnv(env, "CLOUDSDK_CONFIG="+root), p, stderr); err != nil {
+		return Token{}, "", fmt.Errorf("gcloud auth login: %w", err)
+	}
+	tok, account, err := mintHeld(gcloudBin, env, root, p)
+	if err != nil {
+		return Token{}, "", fmt.Errorf("after the login: %w", err)
+	}
+	return tok, account, nil
 }
 
 // credentialType is the "type" of account's credential in gcloud's credentials.db ("" when
@@ -293,17 +320,35 @@ func mint(gcloudBin string, env []string, p Profile) (Token, error) {
 }
 
 // loginNeeded says whether gcloud's error means "log in" rather than a refusal a login
-// cannot fix (permission denied, a disabled API, the network).
+// cannot fix. gcloud wraps every failed refresh in the same "There was a problem
+// refreshing your current auth tokens … Please run: gcloud auth login" text, a temporary
+// outage of Google's token endpoint included (measured on 587.0.0 with a local token
+// endpoint answering temporarily_unavailable), so that text decides nothing: the
+// underlying error does. An outage, a permission or API error or the network is never a
+// login; only an explicit grant or reauthentication failure, or no account at all, is.
+// Anything unrecognised is a refusal (exit 1), which reports gcloud's message, rather than
+// a login prompt that cannot help.
 func loginNeeded(stderr string) bool {
 	s := strings.ToLower(stderr)
 	for _, m := range []string{
-		"you do not currently have an active account selected",
+		"temporarily_unavailable", "server_error", "internal_failure", "backenderror",
+		"permission_denied", "permission denied", "iam_permission_denied", "forbidden",
+		"service_disabled", "has not been used in project", "is disabled",
+		"unable to find the server", "failed to establish a new connection", "connection refused",
+		"connection reset", "timed out", "name or service not known", "temporary failure in name resolution",
+		"network is unreachable", "ssl", "proxy",
+	} {
+		if strings.Contains(s, m) {
+			return false
+		}
+	}
+	for _, m := range []string{
 		"invalid_grant",
+		"invalid_rapt",
 		"reauthentication",
 		"reauth related error",
-		"please run:\n\n  $ gcloud auth login",
-		"there was a problem refreshing your current auth tokens",
-		"your current authentication information is invalid",
+		"token has been expired or revoked",
+		"you do not currently have an active account selected",
 	} {
 		if strings.Contains(s, m) {
 			return true
@@ -313,9 +358,10 @@ func loginNeeded(stderr string) bool {
 }
 
 // tokenLike matches an OAuth access token (ya29.…) and any long unbroken run of token
-// characters, so a message built from gcloud's stderr cannot carry one even if a future
-// gcloud put it there.
-var tokenLike = regexp.MustCompile(`ya29\.[A-Za-z0-9_.+/=-]+|[A-Za-z0-9_.+=-]{40,}`)
+// characters (base64 with '/' and '+', base64url, a JWT's dots), so a message built from
+// gcloud's stderr cannot carry an opaque token or an id_token even if a future gcloud put
+// one there. A long path is redacted too; that is the price.
+var tokenLike = regexp.MustCompile(`ya29\.[A-Za-z0-9_.+/=-]+|[A-Za-z0-9_.+/=-]{40,}`)
 
 // gcloudError keeps gcloud's ERROR lines (falling back to its last line), bounded and with
 // anything token-shaped removed, for a message.
@@ -341,18 +387,15 @@ func gcloudError(stderr string) string {
 	return s
 }
 
-// terminalLogin runs gcloud's login with the person's terminal attached, against the
-// Agent's root in the clean environment. When the profile names an account it is passed,
-// so gcloud refuses any other sign-in before storing it. Its stdout goes to stderr so the
-// wrapped command's stdout stays clean for pipes.
+// terminalLogin runs gcloud's login with the person's terminal attached, in env (the clean
+// environment, pointed at the Agent's root), for a caller that holds the root's lock. When
+// the profile names an account it is passed, so gcloud refuses any other sign-in before
+// storing it. Its stdout goes to stderr so the wrapped command's stdout stays clean for
+// pipes.
 func terminalLogin(gcloudBin string, env []string, p Profile, stderr io.Writer) error {
-	root, err := cloudexec.PrivateDir(ConfigRoot())
-	if err != nil {
-		return err
-	}
 	fmt.Fprintln(stderr, "af-gcloud-exec: Google Cloud login needed for profile "+p.Name+". Paste back only a code from a sign-in you started yourself just now.")
 	cmd := exec.Command(gcloudBin, LoginArgs(p)...)
-	cmd.Env = cloudexec.SetEnv(env, "CLOUDSDK_CONFIG="+root)
+	cmd.Env = env
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, stderr, stderr
 	return cmd.Run()
 }

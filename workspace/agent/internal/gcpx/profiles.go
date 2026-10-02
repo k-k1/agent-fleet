@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -117,7 +118,12 @@ func Sync() (SyncResult, error) {
 }
 
 // lockRoot makes the Agent's root private and takes its lock; it returns the resolved root.
-func lockRoot() (string, func(), error) {
+func lockRoot() (string, func(), error) { return lockRootNotify(nil) }
+
+// lockRootNotify is lockRoot that calls waiting first when another process holds the lock
+// (a terminal login holds it for as long as the person takes), so a wrapper can say why it
+// does not start.
+func lockRootNotify(waiting func()) (string, func(), error) {
 	root, err := cloudexec.PrivateDir(ConfigRoot())
 	if err != nil {
 		return "", nil, err
@@ -126,9 +132,14 @@ func lockRoot() (string, func(), error) {
 	if err != nil {
 		return "", nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		f.Close()
-		return "", nil, err
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if waiting != nil {
+			waiting()
+		}
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+			f.Close()
+			return "", nil, err
+		}
 	}
 	return root, func() {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
@@ -162,7 +173,7 @@ var (
 	// holds anything outside a-z, 0-9 and '-' (measured on 587.0.0: af-Prod, af-prod_app,
 	// af-prod.app are refused). The CP's name rule already produces this shape; it is
 	// checked again because the configuration file name is built from it.
-	nameRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+	nameRe = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 	// A project id, or a legacy domain-scoped one (example.com:proj).
 	projectRe = regexp.MustCompile(`^([a-z0-9][a-z0-9.-]{0,252}:)?[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
 	emailRe   = regexp.MustCompile(`^[A-Za-z0-9._+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$`)
@@ -216,7 +227,7 @@ func applyLocked(root string, ps []Profile) (SyncResult, error) {
 			res.Invalid[p.Name] = why
 			continue
 		}
-		cfg := filepath.Join(dir, "config_"+ConfigName(p.Name))
+		cfg := configPath(root, p.Name)
 		account := p.Account
 		if account == "" {
 			// The login owns core/account only while nothing that selected it changed: the
@@ -261,41 +272,59 @@ func applyLocked(root string, ps []Profile) (SyncResult, error) {
 	return res, nil
 }
 
+// configProps is every property a configuration of p holds, as section/key: Settings'
+// own and the account.
+func configProps(p Profile, account string) map[string]string {
+	m := map[string]string{"core/project": p.Project, "billing/quota_project": p.QuotaProject}
+	if p.QuotaProject == "" {
+		m["billing/quota_project"] = p.Project
+	}
+	for k, v := range map[string]string{"core/account": account, "compute/region": p.Region, "compute/zone": p.Zone,
+		"auth/impersonate_service_account": p.ImpersonateServiceAccount} {
+		if v != "" {
+			m[k] = v
+		}
+	}
+	return m
+}
+
 // renderConfig is the whole configuration file: Settings' properties and the account.
 func renderConfig(p Profile, account string) string {
+	props := configProps(p, account)
 	var b strings.Builder
 	b.WriteString("# Written by the agent-fleet Agent from Settings > Google Cloud; rewritten on every sync.\n")
-	b.WriteString("[core]\n")
-	if account != "" {
-		b.WriteString("account = " + account + "\n")
-	}
-	b.WriteString("project = " + p.Project + "\n")
-	quota := p.QuotaProject
-	if quota == "" {
-		quota = p.Project
-	}
-	b.WriteString("\n[billing]\nquota_project = " + quota + "\n")
-	if p.Region != "" || p.Zone != "" {
-		b.WriteString("\n[compute]\n")
-		if p.Region != "" {
-			b.WriteString("region = " + p.Region + "\n")
+	for i, section := range []string{"core", "billing", "compute", "auth"} {
+		keys := []string{}
+		for k := range props {
+			if sec, key, _ := strings.Cut(k, "/"); sec == section {
+				keys = append(keys, key)
+			}
 		}
-		if p.Zone != "" {
-			b.WriteString("zone = " + p.Zone + "\n")
+		if len(keys) == 0 {
+			continue
 		}
-	}
-	if p.ImpersonateServiceAccount != "" {
-		b.WriteString("\n[auth]\nimpersonate_service_account = " + p.ImpersonateServiceAccount + "\n")
+		sort.Strings(keys)
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("[" + section + "]\n")
+		for _, k := range keys {
+			b.WriteString(k + " = " + props[section+"/"+k] + "\n")
+		}
 	}
 	return b.String()
 }
 
-// readProperty reads one property of a gcloud configuration file ("" when absent).
-func readProperty(path, section, key string) string {
+// readProps reads every property of a gcloud configuration file as section/key. gcloud
+// rewrites the file in its own layout when it sets a property (the login's core/account:
+// measured on 587.0.0, the comment line goes and the key order changes), so files are
+// compared by their properties, never byte for byte.
+func readProps(path string) (map[string]string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return ""
+		return nil, err
 	}
+	out := map[string]string{}
 	cur := ""
 	for _, line := range strings.Split(string(b), "\n") {
 		line = strings.TrimSpace(line)
@@ -303,17 +332,26 @@ func readProperty(path, section, key string) string {
 		case line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";"):
 		case strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]"):
 			cur = strings.TrimSpace(line[1 : len(line)-1])
-		case cur == section:
+		default:
 			k, v, ok := strings.Cut(line, "=")
 			if !ok {
 				k, v, ok = strings.Cut(line, ":")
 			}
-			if ok && strings.TrimSpace(k) == key {
-				return strings.TrimSpace(v)
+			if !ok {
+				// A line that is no property (a continuation, say) makes the file one this
+				// package does not understand; report it as a property nobody owns.
+				k, v = line, ""
 			}
+			out[cur+"/"+strings.TrimSpace(k)] = strings.TrimSpace(v)
 		}
 	}
-	return ""
+	return out, nil
+}
+
+// readProperty reads one property of a gcloud configuration file ("" when absent).
+func readProperty(path, section, key string) string {
+	m, _ := readProps(path)
+	return m[section+"/"+key]
 }
 
 func readState(root string) map[string]syncedProfile {
@@ -358,9 +396,42 @@ func writeIfChanged(path, content string) (bool, error) {
 	return true, os.Rename(tmp.Name(), path)
 }
 
+// ErrSettingsChanged means the profile a run read from Settings is no longer what the
+// Agent's root holds: a sync between the run's own sync and its mint applied another
+// version. Minting or logging in anyway would mix the run's snapshot (what it checks and
+// prints) with another version's configuration (what gcloud uses).
+var ErrSettingsChanged = errors.New("the profile changed in Settings while this run started; run it again")
+
+// configPath is the configuration file of the profile called name under root.
+func configPath(root, name string) string {
+	return filepath.Join(root, "configurations", "config_"+ConfigName(name))
+}
+
+// syncedAs returns the account p's configuration selects, after checking, under the root's
+// lock, that the configuration and the sync record are exactly what a sync of p wrote: the
+// same id, login method and Settings account, and a file that holds p's properties and
+// nothing else. Anything else is ErrSettingsChanged.
+func syncedAs(root string, p Profile) (string, error) {
+	cfg := configPath(root, p.Name)
+	props, err := readProps(cfg)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("%w (its gcloud configuration %s is gone)", ErrSettingsChanged, ConfigName(p.Name))
+	} else if err != nil {
+		return "", err
+	}
+	account := props["core/account"]
+	st, ok := readState(root)[p.Name]
+	if !ok || st != (syncedProfile{ID: p.ID, LoginMethod: p.LoginMethod, Account: p.Account}) ||
+		!maps.Equal(props, configProps(p, account)) || (p.Account != "" && account != p.Account) ||
+		(account != "" && !emailRe.MatchString(account)) {
+		return "", ErrSettingsChanged
+	}
+	return account, nil
+}
+
 // ConfiguredAccount is the account the profile's configuration selects ("" for none).
 func ConfiguredAccount(name string) string {
-	return readProperty(filepath.Join(ConfigRoot(), "configurations", "config_"+ConfigName(name)), "core", "account")
+	return readProperty(configPath(ConfigRoot(), name), "core", "account")
 }
 
 // CachedSettings returns the last list the CP gave, for when it cannot be asked now; ok is

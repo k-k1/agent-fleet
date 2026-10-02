@@ -65,6 +65,7 @@ func TestGCloudExecProcess(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(sdk, "bin", "gcloud"), []byte(strings.ReplaceAll(fakeGcloudMain, "__DIR__", fake)), 0o755)
 	_ = os.WriteFile(filepath.Join(sdk, "bin", "gke-gcloud-auth-plugin"), []byte("#!/bin/sh\n"), 0o755)
 	_ = os.WriteFile(filepath.Join(sdk, "VERSION"), []byte("587.0.0\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(sdk, gcloudInstallMarker), []byte(gcloudInstallIdentity("587.0.0", "x")), 0o644)
 	pins := filepath.Join(fake, "versions.json")
 	_ = os.WriteFile(pins, []byte(`{"gcloud":"587.0.0","gcloud_sha256":"x"}`), 0o644)
 
@@ -138,5 +139,58 @@ func TestGCloudExecProcess(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".config", "gcloud")); err == nil {
 		t.Error("the wrapper created ~/.config/gcloud")
+	}
+}
+
+// ensureGCloud reuses a tree only when it is exactly the pin for this architecture; any
+// other tree is reinstalled, and an install that still leaves something else is refused.
+func TestEnsureGCloudChecksTheWholePin(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	pins := filepath.Join(t.TempDir(), "versions.json")
+	_ = os.WriteFile(pins, []byte(`{"gcloud":"587.0.0","gcloud_sha256":"abc"}`), 0o644)
+	oldPins, oldRun := buildPinsPath, gcloudInstallRun
+	t.Cleanup(func() { buildPinsPath, gcloudInstallRun = oldPins, oldRun })
+	buildPinsPath = pins
+	sdk := gcloudSDKRoot()
+	tree := func(marker string) {
+		_ = os.RemoveAll(sdk)
+		_ = os.MkdirAll(filepath.Join(sdk, "bin"), 0o755)
+		for _, b := range gcloudLinkedBins {
+			_ = os.WriteFile(filepath.Join(sdk, "bin", b), []byte("#!/bin/sh\n"), 0o755)
+		}
+		_ = os.WriteFile(filepath.Join(sdk, "VERSION"), []byte("587.0.0\n"), 0o644)
+		if marker != "" {
+			_ = os.WriteFile(filepath.Join(sdk, gcloudInstallMarker), []byte(marker), 0o644)
+		}
+	}
+	other := "arm64"
+	if gcloudGOARCH == "arm64" {
+		other = "amd64"
+	}
+	for name, marker := range map[string]string{
+		"wrong arch": "version=587.0.0 arch=" + other + " sha256=abc\n",
+		"other sha":  gcloudInstallIdentity("587.0.0", "def"),
+		"unmarked":   "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			tree(marker)
+			ran := 0
+			gcloudInstallRun = func() error { ran++; tree(gcloudInstallIdentity("587.0.0", "abc")); return nil }
+			if _, err := ensureGCloud(); err != nil || ran != 1 {
+				t.Fatalf("err %v, installs %d (want 1)", err, ran)
+			}
+			// An install that leaves the wrong tree is refused.
+			tree(marker)
+			gcloudInstallRun = func() error { return nil }
+			if _, err := ensureGCloud(); err == nil {
+				t.Fatal("a tree that is still not the pin was used")
+			}
+		})
+	}
+	tree(gcloudInstallIdentity("587.0.0", "abc"))
+	gcloudInstallRun = func() error { t.Fatal("installed over the pinned tree"); return nil }
+	if bin, err := ensureGCloud(); err != nil || bin != filepath.Join(sdk, "bin", "gcloud") {
+		t.Fatalf("pinned tree: %s %v", bin, err)
 	}
 }

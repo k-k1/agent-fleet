@@ -381,5 +381,12 @@ implementation choices.
   files also means the five-minute poll needs no gcloud installed and pays for no gcloud starts, at
   about 1 s each. Which `core/account` the login owns is decided from a small record of the last sync
   (`gcloud/.agent-fleet-profiles.json`: id, login method, Settings account per name).
+  A run mints and logs in only while that record and the file's properties are exactly the
+  version of the profile it read from Settings; otherwise it refuses and asks for a rerun. The
+  properties are compared, not the bytes: gcloud rewrites the file in its own layout when the login
+  sets `core/account` (measured: the comment line goes and the keys move). The terminal login holds
+  the root's lock from that check through the mint, so no sync or other run reads or rewrites the
+  configuration while gcloud writes it. A Settings change made during the login is applied by the
+  next sync, which resets the selection.
 - **`GCE_METADATA_*` is removed for the child too**, beside `CLOUDSDK_*`, `GOOGLE_*` and `GCLOUD_*`:
   a caller's metadata host must not steer a library that does reach for the metadata server.

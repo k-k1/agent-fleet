@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -59,9 +60,14 @@ case "$1 $2" in
   printf '{"credential":{"access_token":"%s","token_expiry":"%s"}}\n' "$tok" "$(cat "$D/expiry")"
   ;;
 "auth login")
+  # Whether the wrapper holds the root's lock while gcloud writes the configuration.
+  if command -v flock >/dev/null 2>&1; then
+    if flock -n "$CLOUDSDK_CONFIG/.agent-fleet.lock" true; then echo unlocked > "$D/lockstate"; else echo locked > "$D/lockstate"; fi
+  fi
   case "$3" in --*) acct=$(cat "$D/login-account");; *) acct=$3;; esac
   echo "You are now logged in as [$acct]." >&2
-  sed -i "s/^\[core\]\$/[core]\naccount = $acct/" "$CLOUDSDK_CONFIG/configurations/config_$last"
+  # gcloud rewrites the file in its own layout: the comment goes, keys move (measured).
+  sed -i -e '/^#/d' -e "s/^\[core\]\$/[core]\naccount = $acct/" "$CLOUDSDK_CONFIG/configurations/config_$last"
   rm -f "$D/fail"
   ;;
 *) echo "fake gcloud: unexpected $*" >&2; exit 9;;
@@ -528,7 +534,15 @@ func TestTokenNeverPrinted(t *testing.T) {
 	p := prod()
 	mustApply(t, p)
 	addCredential(t, p.Account, "authorized_user")
-	marker := e.token
+	b64 := strings.Repeat(randHex(t, 15)+"/+", 4) + "=="
+	jwt := "eyJ" + randHex(t, 12) + "." + "eyJ" + randHex(t, 20) + "." + randHex(t, 16) + "_-"
+	for _, marker := range []string{e.token, b64, jwt} {
+		e.write(t, "token", marker)
+		t.Run(marker[:4], func(t *testing.T) { tokenNeverPrinted(t, e, p, marker) })
+	}
+}
+
+func tokenNeverPrinted(t *testing.T, e *env, p Profile, marker string) {
 	cases := map[string]func(){
 		"ok":        func() {},
 		"short":     func() { e.write(t, "expiry", time.Now().Add(4*time.Minute).UTC().Format(time.RFC3339)) },
@@ -559,7 +573,8 @@ func TestTokenNeverPrinted(t *testing.T) {
 			if err != nil {
 				out += err.Error()
 			}
-			if strings.Contains(out, marker) || strings.Contains(out, strings.TrimPrefix(marker, "ya29.")) {
+			if strings.Contains(out, marker) || strings.Contains(out, strings.TrimPrefix(marker, "ya29.")) ||
+				strings.Contains(out, marker[len(marker)/2:]) {
 				t.Fatalf("the token reached the output: %q", out)
 			}
 			if name == "error reauth" && !errors.Is(err, ErrLoginRequired) {
@@ -615,6 +630,115 @@ func TestSweepRuns(t *testing.T) {
 	for name, want := range map[string]bool{"run-old": false, "run-new": true, "keep": true} {
 		if _, err := os.Stat(filepath.Join(dir, name)); (err == nil) != want {
 			t.Errorf("%s present=%v", name, err == nil)
+		}
+	}
+}
+
+// A run reads its profile from the sync before its mint; when another sync applies a newer
+// version in between, the run must not mint from the newer configuration under the older
+// snapshot's checks and messages.
+func TestMintRefusesAnotherVersionOfTheProfile(t *testing.T) {
+	e := setup(t)
+	old := prod()
+	old.Account = ""
+	addCredential(t, "new@example.com", "authorized_user")
+	newer := map[string]func(Profile) Profile{
+		"account and impersonation": func(p Profile) Profile {
+			p.Account, p.ImpersonateServiceAccount = "new@example.com", "new@prod-project.iam.gserviceaccount.com"
+			return p
+		},
+		"recreated": func(p Profile) Profile { p.ID = "id-9"; return p },
+		"project":   func(p Profile) Profile { p.Project = "prod-project-2"; return p },
+	}
+	for name, change := range newer {
+		t.Run(name, func(t *testing.T) {
+			_ = os.Remove(filepath.Join(e.fakeDir, "calls"))
+			mustApply(t, old)
+			// A login selected an account under the old version.
+			cfg := filepath.Join(ConfigRoot(), "configurations", "config_af-prod")
+			_ = os.WriteFile(cfg, []byte(strings.Replace(configText(t, "prod"), "[core]\n", "[core]\naccount = new@example.com\n", 1)), 0o600)
+			mustApply(t, change(old))
+			o := execOpts(e, old)
+			o.Login = "always"
+			_, _, _, err := PlanExec(e.gcloud, hostile(t), o)
+			if !errors.Is(err, ErrSettingsChanged) {
+				t.Fatalf("err = %v, want ErrSettingsChanged", err)
+			}
+			if c := e.calls(t); len(c) != 0 {
+				t.Fatalf("gcloud ran: %+v", c)
+			}
+		})
+	}
+}
+
+func TestLoginHoldsTheLockAndYieldsToALaterReset(t *testing.T) {
+	e := setup(t)
+	p := prod()
+	p.Account = ""
+	mustApply(t, p)
+	addCredential(t, "picked@example.com", "authorized_user")
+	e.write(t, "login-account", "picked@example.com")
+	o := execOpts(e, p)
+	o.Login = "always"
+	if _, _, _, err := PlanExec(e.gcloud, hostile(t), o); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := exec.LookPath("flock"); err == nil {
+		if b, _ := os.ReadFile(filepath.Join(e.fakeDir, "lockstate")); strings.TrimSpace(string(b)) != "locked" {
+			t.Errorf("gcloud's login ran without the root's lock (%q)", b)
+		}
+	}
+	// gcloud rewrote the file in its own layout; the selection is still the login's.
+	if ConfiguredAccount("prod") != "picked@example.com" {
+		t.Fatalf("login account: %q", configText(t, "prod"))
+	}
+	// The profile was recreated in Settings while the person logged in: the first sync after
+	// the login resets the selection.
+	q := p
+	q.ID = "id-9"
+	mustApply(t, q)
+	if ConfiguredAccount("prod") != "" {
+		t.Fatal("a login for the old version stayed selected after the reset")
+	}
+	// A login is never started for a version the root no longer holds.
+	_ = os.Remove(filepath.Join(e.fakeDir, "calls"))
+	if _, _, _, err := PlanExec(e.gcloud, hostile(t), o); !errors.Is(err, ErrSettingsChanged) || len(e.calls(t)) != 0 {
+		t.Fatalf("stale login: %v, calls %d", err, len(e.calls(t)))
+	}
+}
+
+// The CP's name rule has no length limit (labels go up to 100 characters), and neither has
+// gcloud's configuration name rule.
+func TestLongNamesAreExported(t *testing.T) {
+	setup(t)
+	p := prod()
+	p.Name = "p" + strings.Repeat("a1-", 33) + "z"
+	if res := mustApply(t, p); res.Exported[p.Name].Name == "" {
+		t.Fatalf("a %d-character name was refused: %v", len(p.Name), res.Invalid)
+	}
+}
+
+// Fixtures are gcloud 587.0.0's own stderr against a local token endpoint answering each
+// OAuth error.
+func TestLoginNeededFollowsTheUnderlyingError(t *testing.T) {
+	gcloudSays := func(code string) string {
+		return "ERROR: (gcloud.config.config-helper) There was a problem refreshing your current auth tokens: ('" + code +
+			": synthetic " + code + "', {'error': '" + code + "', 'error_description': 'synthetic " + code + "'})\n" +
+			"Please run:\n\n  $ gcloud auth login\n\nto obtain new credentials.\n\n" +
+			"If you have already logged in with a different account, run:\n\n  $ gcloud config set account ACCOUNT\n\n" +
+			"to select an already authenticated account to use.\n"
+	}
+	for in, want := range map[string]bool{
+		gcloudSays("invalid_grant"):           true,
+		gcloudSays("temporarily_unavailable"): false,
+		gcloudSays("server_error"):            false,
+		"ERROR: (gcloud.config.config-helper) You do not currently have an active account selected.\nPlease run:\n\n  $ gcloud auth login\n": true,
+		"ERROR: (gcloud.config.config-helper) Reauthentication failed. cannot prompt during non-interactive execution.\n":                    true,
+		"ERROR: (gcloud.config.config-helper) PERMISSION_DENIED: Permission 'iam.serviceAccounts.getAccessToken' denied\n":                   false,
+		"ERROR: (gcloud.config.config-helper) something nobody has seen\n":                                                                   false,
+	} {
+		if got := loginNeeded(in); got != want {
+			t.Errorf("loginNeeded(%.90q) = %v, want %v", in, got, want)
 		}
 	}
 }

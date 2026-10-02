@@ -146,26 +146,40 @@ func parseGCloudExecArgs(args []string) (gcpx.ExecOptions, bool) {
 }
 
 // ensureGCloud returns the pinned SDK's gcloud, running `workspace-agent install-gcloud`
-// first when it is missing or another version than the pin (decision 4: installed on first
-// use, never baked). A gcloud elsewhere on PATH is not used: the wrapper mints with the
-// one it installed.
+// first unless the tree is a complete install of exactly the pin for this architecture
+// (gcloudInstalled: version, arch and archive sha256 from its install marker). VERSION
+// alone is not enough: a home moved from amd64 to arm64 keeps a tree of the right version
+// whose bundled Python and plugin fail with "Exec format error". Decision 4: installed on
+// first use, never baked. A gcloud elsewhere on PATH is not used: the wrapper mints with
+// the one it installed.
 func ensureGCloud() (string, error) {
 	root := gcloudSDKRoot()
 	bin := filepath.Join(root, "bin", "gcloud")
-	if want := readBuildPins()["gcloud"]; want != "" && gcloudSDKVersion(root) == want {
+	pins := readBuildPins()
+	ver, sum := pins["gcloud"], pins["gcloud_sha256"]
+	if ver == "" || sum == "" {
+		return "", errors.New("no gcloud / gcloud_sha256 pin in versions.json; this image pre-dates the Google Cloud SDK pin")
+	}
+	if gcloudInstalled(root, ver, sum) {
 		return bin, nil
 	}
+	if err := gcloudInstallRun(); err != nil {
+		return "", fmt.Errorf("the Google Cloud SDK is not installed and `workspace-agent install-gcloud` failed: %v", err)
+	}
+	if !gcloudInstalled(root, ver, sum) {
+		return "", errors.New("`workspace-agent install-gcloud` did not leave the pinned Google Cloud SDK at " + root)
+	}
+	return bin, nil
+}
+
+// gcloudInstallRun runs `workspace-agent install-gcloud` with its output on stderr. A var
+// so tests never start the real installer.
+var gcloudInstallRun = func() error {
 	self, err := os.Executable()
 	if err != nil {
-		return "", err
+		return err
 	}
 	cmd := exec.Command(self, "install-gcloud")
 	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("the Google Cloud SDK is not installed and `workspace-agent install-gcloud` failed: %v", err)
-	}
-	if gcloudSDKVersion(root) == "" {
-		return "", errors.New("`workspace-agent install-gcloud` left no gcloud at " + bin)
-	}
-	return bin, nil
+	return cmd.Run()
 }
