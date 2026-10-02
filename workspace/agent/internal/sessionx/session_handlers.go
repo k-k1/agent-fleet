@@ -439,7 +439,7 @@ type CreateReq struct {
 	SSORegion    string `json:"sso_region"`
 	SSOAccountID string `json:"sso_account_id"`
 	SSORoleName  string `json:"sso_role_name"`
-	// SSMForceLogin: run `aws sso logout` + `aws sso login` unconditionally at launch
+	// SSMForceLogin: drop this profile's cached login and run `aws sso login` at launch
 	// (skip the cached-token short-circuit) so the user re-authenticates. One-shot.
 	SSMForceLogin bool `json:"ssm_force_login"`
 	// Studio binds the new session to an image studio (ADR 0100 decision 2): written onto the

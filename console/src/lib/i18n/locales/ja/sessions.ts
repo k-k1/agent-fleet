@@ -500,7 +500,7 @@ export const sessions = {
   "start.ssm_acct": "アカウント {id}",
   "start.frequent_hosts": "よく使うホスト",
   "start.no_matching_hosts": "該当する登録済みホストはありません。",
-  "start.force_relogin": "強制的に再ログイン（キャッシュ済みでも aws sso logout → login）",
+  "start.force_relogin": "強制的に再ログイン（このプロファイルのログインのキャッシュを捨ててからログイン）",
   "start.ssm_auth_note":
     "接続後、認証が必要ならモーダルに <0>aws sso login</0> の URL が出ます。別タブで承認すると接続します（AWS の秘密情報は Agent Fleet に保存されません）。",
   "start.ssm_auth_warn": "⚠ <0>自分で開始したこのログインのみ承認してください</0>（身に覚えのないコード/URL は入力しない）。",
