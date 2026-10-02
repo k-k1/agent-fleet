@@ -46,6 +46,16 @@ type Attempt struct {
 	stop      func()
 	stdin     io.WriteCloser
 	submitted bool
+	// done is closed once the process has exited and its cleanup has run, so nothing it
+	// writes can land later. nil for an attempt Start did not run a process for.
+	done chan struct{}
+}
+
+// Exited is closed once the attempt's process has exited; nil when it had none.
+func (a *Attempt) Exited() <-chan struct{} {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.done
 }
 
 // Live reports whether the attempt has not ended.
@@ -184,6 +194,9 @@ type Process struct {
 // started, and dies with the Agent, whose restart loses the attempt anyway (ADR 0102
 // decision 3).
 func (s *Store[S]) Start(key, requestID, profile string, p Process) (*Attempt, error) {
+	g := s.Gate(key)
+	g.Lock()
+	defer g.Unlock()
 	cleanup := func() {
 		if p.Cleanup != nil {
 			p.Cleanup()
@@ -213,8 +226,9 @@ func (s *Store[S]) Start(key, requestID, profile string, p Process) (*Attempt, e
 	cmd.Stdout, cmd.Stderr = pw, pw
 
 	a := s.Begin(key, requestID, profile, stop)
+	done := make(chan struct{})
 	a.mu.Lock()
-	a.stdin = stdin
+	a.stdin, a.done = stdin, done
 	a.mu.Unlock()
 
 	if err := cmd.Start(); err != nil {
@@ -222,11 +236,13 @@ func (s *Store[S]) Start(key, requestID, profile string, p Process) (*Attempt, e
 		pw.Close()
 		cleanup()
 		a.End(PhaseFailed, "could not start "+p.Name+": "+err.Error())
+		close(done)
 		return a, nil
 	}
 	pw.Close()
 	go watchOutput(a, pr, p.Parse)
 	go func() {
+		defer close(done)
 		err := cmd.Wait()
 		pr.Close()
 		cleanup()

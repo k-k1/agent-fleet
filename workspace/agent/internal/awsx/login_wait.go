@@ -35,7 +35,7 @@ func consoleLogin(aws awsRunner, sso ssoInfo, snap CacheState, o ExecOptions, fi
 	creds, err := cloudlogin.Wait(logins, snap, cloudlogin.WaitSpec[processCreds]{
 		Profile: o.Profile, Key: sso.Session, Waiter: o.Waiter,
 		Wait: o.ConsoleWait, Poll: loginPollInterval,
-		Check:       func() (processCreds, error) { return exportCreds(aws, ssoOnlyProfile) },
+		Check:       func() (processCreds, error) { return exportSSOCreds(aws, sso.Session) },
 		LoginNeeded: func(err error) bool { return loginNeeded(err.Error()) },
 		Filed: func() {
 			fmt.Fprintf(stderr, "af-aws-exec: SSO login for profile %q requested in the Agent Fleet Console; "+

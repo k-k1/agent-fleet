@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -98,4 +99,27 @@ var logins = &cloudlogin.Store[CacheState]{Dir: "aws-login", NoticeKind: NoticeK
 func readJSON(path string, v any) bool {
 	b, err := os.ReadFile(path)
 	return err == nil && json.Unmarshal(b, v) == nil
+}
+
+// exportSSOCreds is exportCreds for the SSO-only profile of ssoSession, under that session's
+// shared credential lock (cloudlogin's LockKey).
+func exportSSOCreds(aws awsRunner, ssoSession string) (processCreds, error) {
+	return exportLocked(aws, ssoOnlyProfile, ssoSession)
+}
+
+// exportLocked is exportCreds for profile, whose credentials come from ssoSession's cached
+// login ("" when they come from no sso-session), under that session's shared credential
+// lock, so a logout cannot delete the login while this run turns it into role credentials
+// and writes them back. A lock that cannot be taken fails the run: going on would reopen
+// that race unseen. The member's own `aws` calls do not take it; the revoke at AWS is what
+// stops those.
+func exportLocked(aws awsRunner, profile, ssoSession string) (processCreds, error) {
+	if ssoSession != "" {
+		unlock, err := logins.LockKey(ssoSession, true)
+		if err != nil {
+			return processCreds{}, fmt.Errorf("could not lock the cached login of sso-session %s: %w", ssoSession, err)
+		}
+		defer unlock()
+	}
+	return exportCreds(aws, profile)
 }

@@ -11,11 +11,15 @@ let profiles: Json[] = [];
 let startReply: Json = { attempt: "att1" };
 let attemptReplies: Json[] = [];
 let states: Json[] = [];
+let logoutGate: Promise<void> = Promise.resolve();
 
 vi.mock("../../../core/api/client.ts", () => ({
   api: vi.fn(async (path: string, opts?: RequestInit) => {
     calls.push({ path, method: opts?.method ?? "GET" });
-    if (path.endsWith("/logout")) return { revoked: true };
+    if (path.endsWith("/logout")) {
+      await logoutGate;
+      return { revoked: true };
+    }
     if (path === "api/ssm/profiles") return profiles;
     if (path === "api/ssm/hosts") return [];
     if (path === "api/aws-login") return { requests: [] };
@@ -85,6 +89,7 @@ beforeEach(() => {
   startReply = { attempt: "att1" };
   attemptReplies = [{ phase: "starting" }];
   states = [];
+  logoutGate = Promise.resolve();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -203,5 +208,21 @@ describe("SsmTab profile row Log out", () => {
     expect(calls).toContainEqual({ path: "api/aws-login/profiles/prod-app/logout", method: "POST" });
     expect(calls.filter((c) => c.path === "api/aws-login/profiles").length).toBeGreaterThan(asked);
     expect(logouts()).toHaveLength(1);
+  });
+  it("keeps the button off while its logout runs, so a second press sends nothing", async () => {
+    states = [{ name: "prod-app", state: "signed_in" }];
+    let open!: () => void;
+    logoutGate = new Promise((r) => (open = r));
+    await mount();
+    const btn = () => host.querySelector<HTMLButtonElement>("button.ssm-logout")!;
+    await act(async () => btn().click());
+    await tick();
+    expect(btn().disabled).toBe(true);
+    await act(async () => btn().click());
+    await tick();
+    expect(calls.filter((c) => c.path.endsWith("/logout"))).toHaveLength(1);
+    await act(async () => open());
+    await tick();
+    expect(calls.filter((c) => c.path.endsWith("/logout"))).toHaveLength(1);
   });
 });
