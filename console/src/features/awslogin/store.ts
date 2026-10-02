@@ -172,7 +172,8 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
   },
   loggingOut: {},
   async logoutProfile(name) {
-    if (get().loggingOut[name]) return { ok: false, code: "busy", message: "" };
+    // === true, not truthiness: a profile named "constructor" would read Object.prototype's.
+    if (get().loggingOut[name] === true) return { ok: false, code: "busy", message: "" };
     set((s) => ({ loggingOut: { ...s.loggingOut, [name]: true } }));
     let d: { revoked?: unknown; noToken?: unknown; message?: unknown; error?: { code?: string; message?: string } } | null;
     try {

@@ -225,4 +225,25 @@ describe("SsmTab profile row Log out", () => {
     await tick();
     expect(calls.filter((c) => c.path.endsWith("/logout"))).toHaveLength(1);
   });
+  it("logs out a profile whose name is an Object.prototype key", async () => {
+    profiles = [
+      { ...prod, id: "p1", name: "constructor", label: "constructor" },
+      { ...prod, id: "p2", name: "__proto__", label: "__proto__" },
+    ];
+    states = [
+      { name: "constructor", state: "signed_in" },
+      { name: "__proto__", state: "signed_in" },
+    ];
+    await mount();
+    const logouts = () => Array.from(host.querySelectorAll<HTMLButtonElement>("button.ssm-logout"));
+    expect(logouts().map((b) => b.disabled)).toEqual([false, false]);
+    await act(async () => logouts()[0].click());
+    await tick();
+    await act(async () => logouts()[1].click());
+    await tick();
+    expect(calls.filter((c) => c.path.endsWith("/logout")).map((c) => c.path)).toEqual([
+      "api/aws-login/profiles/constructor/logout",
+      "api/aws-login/profiles/__proto__/logout",
+    ]);
+  });
 });

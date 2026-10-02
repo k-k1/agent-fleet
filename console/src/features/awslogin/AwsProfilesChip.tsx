@@ -158,7 +158,7 @@ export function AwsProfilesChip() {
                             type="button"
                             className="ghost ws-aws-logout"
                             title={tr("awslogin.logout_title")}
-                            disabled={!!loggingOut[p.name]}
+                            disabled={loggingOut[p.name] === true}
                             onClick={() => {
                               // The confirm dialog sits outside the popover, whose dismiss
                               // layer would close it on the first press there.

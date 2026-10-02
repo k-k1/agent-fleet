@@ -234,7 +234,8 @@ function ProfileSection({
   const loadStates = useCallback(() => {
     api("api/aws-login/profiles")
       .then((d) => {
-        const m: Record<string, string> = {};
+        // No prototype: a profile named "__proto__" would otherwise set it instead of a key.
+        const m: Record<string, string> = Object.create(null);
         for (const p of Array.isArray(d?.profiles) ? d.profiles : []) m[String(p.name)] = String(p.state);
         setStates(m);
       })
@@ -465,7 +466,7 @@ function ProfileSection({
                   <button
                     className="ghost ssm-logout"
                     title={tr("awslogin.logout_title")}
-                    disabled={busy || !!loggingOut[p.name]}
+                    disabled={busy || loggingOut[p.name] === true}
                     onClick={() => void logout(p).then((done) => done && loadStates())}
                   >
                     {tr("awslogin.logout")}
