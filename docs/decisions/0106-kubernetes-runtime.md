@@ -111,8 +111,11 @@ any process that can reach `169.254.169.254` with `Metadata-Flavor: Google` gets
 account's token. So the provisioning script does two things. The VM runs with no service account,
 or one holding no roles — the DNS record and the certificate need none on the VM, since Caddy uses
 HTTP-01 and the operator creates the record with their own credentials. And a host firewall rule,
-installed at every boot, drops traffic from every Docker bridge to `169.254.169.254`. Phase 0 is
-not done until a request from inside a workspace to the metadata server fails.
+installed at every boot, drops traffic from every Docker bridge to every metadata address the VM
+has: `169.254.169.254`, and `fd20:ce::254` where the VM has IPv6. A service account removed does
+not make the instance's and the project's custom metadata private, so the rule is what keeps
+workspaces away from it. Phase 0 is not done until a request from inside a workspace to each of
+those addresses fails.
 
 What this step does not give is what compose never gives: one host, no scale-out, and a VM that
 bills while its workspaces are stopped.
@@ -285,8 +288,10 @@ The pod runs as the image's `dev` uid with `fsGroup` set to its gid, which shoul
 volume writable without an init container running as root. That is expected, not measured: the
 state volume is mounted through `subPath`, and the kubelet creates a `subPath` directory itself.
 The live harness checks that `dev` can write to every mount of a new workspace, the keep links
-included; if it cannot, the fallback is one init container that changes the owner once, as root,
-before anything else runs.
+included. Running anything as root is not a fallback: the `restricted` level of decision 7 forbids
+it in init containers too, and the level is not lowered to make room. If the `subPath` layout fails
+that check, the layout changes instead — the state volume mounted once, at a path of its own, with
+the Claude state and the keep area as directories the entrypoint creates under it as `dev`.
 
 ### 5. Destroy removes the claims, and reports what it cannot confirm
 
@@ -365,7 +370,7 @@ with other workloads, the Pod Security label and the namespaced role are what ke
 | Concern | `kubernetes` |
 |---|---|
 | Files between users | one pair of claims per workspace, referenced by that workspace's StatefulSet alone, `ReadWriteOncePod` where supported |
-| Process and memory | one pod per workspace, with CPU and memory requests and limits from the workspace sizing, and an `ephemeral-storage` request and limit so that one member filling the node's disk is evicted alone instead of putting the node under disk pressure. `/tmp` is an `emptyDir` with a `sizeLimit`, as ecs-ec2 makes it a tmpfs |
+| Process and memory | one pod per workspace, with CPU and memory requests and limits from the workspace sizing, and an `ephemeral-storage` request and limit. That limit mitigates, it does not isolate: the kubelet measures use periodically and evicts afterwards, so a fast writer can still press the node's disk before it is caught, and other workspaces on the node can see write failures or evictions. Decision 13 adds the rest: free-space headroom on workspace nodes, container log limits, and a disk-pressure alert. `/tmp` is an `emptyDir` on the node's disk with a `sizeLimit`; it goes with the pod, which is the reason ecs-ec2 needs a tmpfs, so a tmpfs is not needed here |
 | Network | the policies below |
 | Privileges | what `restricted` allows and nothing more: not privileged, `runAsNonRoot`, no added capabilities, no `hostNetwork`, `hostPID` or `hostPath` — Fargate's level. The first version offers no `SYS_ADMIN` opt-in for Chromium's sandbox, since `restricted` forbids it (open question 1) |
 | Cloud identity | `automountServiceAccountToken: false`; the workspace's service account is bound to no cloud identity. On GKE every node pool that can run a workspace uses the GKE metadata server (`GKE_METADATA`), and workspaces are scheduled only onto such pools, so the metadata server never hands a pod that is not on the host network the node's credentials — and `restricted` keeps every workspace pod off it. No IAM grant may name the workspace namespace or its service account as a principal, directly or through a `principalSet`; and since Workload Identity treats the same namespace and service account names in any cluster of a project as one identity, the namespace names carry a per-deployment prefix. The CP's own Workload Identity is a separate binding (decision 8) |
@@ -433,7 +438,13 @@ connection's own address as the client. Phase 1 tests that a forged identity hea
 
 The variable has two uses, too: API calls, and the links in notifications, which a browser opens.
 So the adapter passes the internal URL as a second variable, `AF_CP_INTERNAL_URL`, next to an
-unchanged `AF_CP_BASE_URL`. About fifteen places in the agent read `AF_CP_BASE_URL` today (the credential
+unchanged `AF_CP_BASE_URL`. The CP reads that URL from its own environment, where the manifests
+of decision 12 set it from the internal Service's name and port, as `PUBLIC_BASE_URL` is set
+today.
+
+This is an exception to the invariant of [09 §9.3](../build/09-deploy.md) — the CP is reachable
+only through the ingress — and the exception is exactly the second listener: nothing a browser or
+an administrator uses is reachable another way. About fifteen places in the agent read `AF_CP_BASE_URL` today (the credential
 helper, the docs sync, engines, MCP, chat, browser, AWS and branch rules among them). Each one
 that sends a request prefers the internal URL when it is set; each one that builds a link for a
 person keeps the public one. Two kinds fit neither and are part of the same work: the explicit
@@ -556,9 +567,15 @@ the procedures, and this ADR fixes what they must cover:
   quota refusals, Destroy residues in the audit log and certificate expiry.
 - **Nodes under live sessions.** A workspace pod carries
   `cluster-autoscaler.kubernetes.io/safe-to-evict: "false"`, so the autoscaler does not evict a
-  running session to shrink the pool; the pool shrinks as workspaces stop. Node upgrades run in a
-  maintenance window and drain; a drained workspace stops like any other and starts again on its
-  next use, which the harness checks.
+  running session to shrink the pool; the pool shrinks as workspaces stop. A drain is not a Stop:
+  it deletes the pod but leaves `replicas: 1`, so the StatefulSet recreates the pod on another
+  node at once — the session is cut, the workspace comes back by itself, and its capacity keeps
+  billing. So a planned node upgrade stops the node's workspaces through the CP first, waits for
+  the settled stop, and only then drains; the members start them again on their next use. An
+  unplanned drain (an automatic upgrade outside the window, a node repair) gives the cut and the
+  restart, which the runbook says, and the harness checks both.
+- **Node disk.** Workspace nodes keep free-space headroom, container logs are capped and rotated,
+  and disk pressure on a workspace node raises an alert (decision 7).
 - **The bill.** Its shape follows [09 §9.8](../build/09-deploy.md): a floor (the cluster, the CP's
   node, Cloud SQL, Cloud NAT, the load balancer), per-workspace capacity while running, and two
   persistent disks per workspace that bill while stopped, as an EBS home does. A cluster the user
@@ -635,7 +652,7 @@ the procedures, and this ADR fixes what they must cover:
 | Phase | What | Done when |
 |---|---|---|
 | 0 | Decision 1: the GCE runbook and script, the egress default, the guide pages | a session runs on a GCE VM behind Caddy, and behind a global external Application Load Balancer, where an idle terminal outlives the default `timeoutSec` and a cut connection reconnects; a request from a workspace to the metadata server fails; the documents of [21 §21.5](../build/21-add-a-deploy-target.md) list the runbook |
-| 1 | Decisions 2–13: the adapter, the CP's internal listener, the agent's URL split, `deploy/kubernetes/`, `deploy/gcp/gke/` | on GKE Standard the live harness of decision 10 passes; the isolation rows and network policies of decision 7 are checked from inside a pod, including the node, the control-plane endpoint and a VPC address; the runbook covers decision 13, with a rehearsed restore and the cost table; and the finishing list of [21 §21.8](../build/21-add-a-deploy-target.md) is done |
+| 1 | Decisions 2–13: the adapter, the CP's internal listener, the agent's URL split, `deploy/kubernetes/`, `deploy/gcp/gke/` | on GKE Standard the live harness of decision 10 passes; the isolation rows and network policies of decision 7 are checked from inside a pod, including the node, the control-plane endpoint and a VPC address; the runbook covers decision 13, with a rehearsed restore and the cost table; the finishing list of [21 §21.8](../build/21-add-a-deploy-target.md) is done, and [09 §9.3](../build/09-deploy.md) states the second listener's exception |
 | 2 | Autopilot, and whatever of "Out of scope" is asked for | each its own issue |
 
 ## What would make us revisit it

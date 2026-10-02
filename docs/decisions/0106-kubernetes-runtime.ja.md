@@ -91,8 +91,10 @@ docker CLI しか使わない。同じ compose バンドルを GCE VM で動か�
 SDK 共通の無効化スイッチも無く、`Metadata-Flavor: Google` を付けて `169.254.169.254` に届くプロセスは誰でも VM のサービス
 アカウントのトークンを得る。そのため構築スクリプトは 2 つのことをする。VM はサービスアカウント無しか、ロールを何も持たない
 ものにする。Caddy は HTTP-01 を使い、DNS レコードは運用者が自分の認証情報で作るので、VM に権限は要らない。そして起動のたびに
-入れるホストのファイアウォール規則で、すべての Docker ブリッジから `169.254.169.254` への通信を落とす。段階 0 は、Workspace の
-中からメタデータサーバへの要求が失敗するまで完了としない。
+入れるホストのファイアウォール規則で、すべての Docker ブリッジから、VM が持つすべてのメタデータアドレスへの通信を落とす。
+`169.254.169.254` と、VM が IPv6 を持つなら `fd20:ce::254`。サービスアカウントを外しても、インスタンスとプロジェクトのカスタム
+メタデータは非公開にならないので、Workspace をそこから遠ざけるのはこの規則である。段階 0 は、Workspace の中からそれぞれの
+アドレスへの要求が失敗するまで完了としない。
 
 この段階で得られないのは compose がもともと与えないもの、つまり 1 台限り・スケールアウトなし・Workspace を止めても VM は
 課金され続ける、の 3 つ。
@@ -234,8 +236,9 @@ ecs-ec2 の home と同じ露出である。
 
 Pod はイメージの `dev` の uid で動き、`fsGroup` をその gid にする。これで root で動く init コンテナ無しに新しいボリュームへ
 書けるはずだが、見込みであって測ってはいない。state ボリュームは `subPath` でマウントし、`subPath` のディレクトリは kubelet
-自身が作る。実機ハーネスは新しい Workspace のすべてのマウント（keep のリンクを含む）に `dev` が書けることを確かめる。書けなければ、
-ほかの何より先に root で一度だけ所有者を変える init コンテナを 1 つ置くのが代わりの手である。
+自身が作る。実機ハーネスは新しい Workspace のすべてのマウント（keep のリンクを含む）に `dev` が書けることを確かめる。root で何かを動かすことは代わりの手にならない。決定 7 の `restricted` は init コンテナでもそれを禁じ、その余地を作るために
+水準を下げることはしない。`subPath` の構成がこの確認に通らなければ、構成の方を変える。state ボリュームを自分のパスに 1 回だけ
+マウントし、Claude の状態と keep 領域は entrypoint が `dev` としてその下に作るディレクトリにする。
 
 ### 5. Destroy はクレームを消し、確かめられなかったものを報告する
 
@@ -296,7 +299,7 @@ LimitRange を設定し、停止中の Workspace のクレームと動いてい�
 | 観点 | `kubernetes` |
 |---|---|
 | 利用者間のファイル | Workspace ごとに 1 組のクレームで、その Workspace の StatefulSet だけが参照する。対応していれば `ReadWriteOncePod` |
-| プロセスとメモリ | Workspace ごとに 1 Pod。CPU とメモリの requests と limits は Workspace のサイズ設定から。`ephemeral-storage` にも requests と limits を付け、1 人がノードのディスクを埋めても、ノードをディスク圧迫に陥らせずその人だけが追い出されるようにする。`/tmp` は `sizeLimit` 付きの `emptyDir` で、ecs-ec2 が tmpfs にしているのと同じ |
+| プロセスとメモリ | Workspace ごとに 1 Pod。CPU とメモリの requests と limits は Workspace のサイズ設定から。`ephemeral-storage` にも requests と limits を付ける。この上限は緩和であって隔離ではない。kubelet は使用量を定期的に測ってから追い出すので、速く書くものは捕まる前にノードのディスクを圧迫しえ、同じノードの他の Workspace に書き込みの失敗や追い出しが起きうる。残りは決定 13 が足す。Workspace のノードの空き容量の余裕、コンテナログの上限、ディスク圧迫の通知。`/tmp` はノードのディスク上の `sizeLimit` 付き `emptyDir` とする。Pod と一緒に消えるので、ecs-ec2 が tmpfs を要する理由はここには無く、tmpfs にはしない |
 | ネットワーク | 下のポリシー |
 | 権限 | `restricted` が許す範囲だけ。特権なし、`runAsNonRoot`、能力の追加なし、`hostNetwork`・`hostPID`・`hostPath` なし（Fargate の水準）。`restricted` が禁じるので、最初の版では Chromium のサンドボックス用の `SYS_ADMIN` のオプトインを用意しない（未決事項 1） |
 | クラウドの ID | `automountServiceAccountToken: false`。Workspace のサービスアカウントはどのクラウド ID にも結び付けない。GKE では Workspace を動かしうるすべてのノードプールで GKE メタデータサーバ（`GKE_METADATA`）を使い、Workspace はそのプールにだけスケジュールする。これでメタデータサーバがホストネットワーク上にない Pod にノードの認証情報を渡すことは無く、`restricted` がどの Workspace の Pod もホストネットワークに載せない。Workspace の namespace やそのサービスアカウントを、直接にも `principalSet` 経由でも主体として名指す IAM 付与は置かない。Workload Identity はプロジェクト内のどのクラスタでも同じ namespace とサービスアカウントの名前を同じ ID として扱うので、namespace 名には配備ごとの接頭辞を付ける。CP 自身の Workload Identity は別の結び付け（決定 8） |
@@ -353,7 +356,11 @@ agent が呼ぶ経路だけで、どれもそれ自身の bearer トークンで
 Console の経路がそこでは 404 を返すことをテストする。
 
 変数にも用途が 2 つある。API の呼び出しと、ブラウザで開く通知のリンクだ。そこでアダプタは内部 URL を 2 つ目の変数
-`AF_CP_INTERNAL_URL` として、変えない `AF_CP_BASE_URL` と並べて渡す。agent で今 `AF_CP_BASE_URL` を読む箇所は 15 ほどある
+`AF_CP_INTERNAL_URL` として、変えない `AF_CP_BASE_URL` と並べて渡す。CP はその URL を自分の環境から読み、決定 12 の manifest が
+今 `PUBLIC_BASE_URL` を設定するのと同じく、内部 Service の名前とポートからそれを設定する。
+
+これは [09 §9.3](../build/09-deploy.ja.md) の不変条件（CP には ingress を通ってしか届かない）への例外であり、例外はちょうど 2 つ目の
+listener だけである。ブラウザや管理者が使うものは、ほかの経路では届かない。agent で今 `AF_CP_BASE_URL` を読む箇所は 15 ほどある
 （認証ヘルパー、docs の同期、エンジン、MCP、チャット、ブラウザ、AWS、ブランチ規則など）。要求を送る箇所は設定されていれば内部 URL
 を優先し、人のためにリンクを組み立てる箇所は公開 URL のままにする。どちらにも当たらない 2 種類も同じ作業に含む。codex が stdio の
 MCP の子に適用する環境変数の明示的な許可リスト（`internal/mcpreg/attach.go`、`internal/chatx/chat_providers.go`）は新しい変数を
@@ -454,9 +461,13 @@ Helm chart は作らない。問い合わせは Kubernetes 対応を求めたの
 - **通知。** ログはクラスタのロギング（GKE なら Cloud Logging）へ送る。CP の `/readyz` は readiness probe であり、データベースの
   警報でもある。手順書は、長く `Pending` の Pod、クォータでの拒否、監査ログに出た Destroy の残存物、証明書の期限切れへの通知を足す。
 - **動いているセッションの下のノード。** Workspace の Pod には `cluster-autoscaler.kubernetes.io/safe-to-evict: "false"` を付け、
-  autoscaler がプールを縮めるために動いているセッションを追い出さないようにする。プールは Workspace が止まるにつれて縮む。ノードの
-  更新はメンテナンスウィンドウで行い drain する。drain された Workspace は他と同じように止まり、次に使うときに再び起動する。これは
-  ハーネスで確かめる。
+  autoscaler がプールを縮めるために動いているセッションを追い出さないようにする。プールは Workspace が止まるにつれて縮む。drain は Stop では
+  ない。Pod は消すが `replicas: 1` は残すので、StatefulSet はすぐに別のノードで Pod を作り直す。セッションは切れ、Workspace は
+  ひとりでに戻り、その容量は課金され続ける。そのため計画したノードの更新では、まず CP を通してそのノードの Workspace を止め、停止の
+  収束を待ってから drain する。メンバーは次に使うときにまた起動する。計画外の drain（ウィンドウ外の自動更新、ノードの修復）では
+  切断と再起動が起き、手順書はそう書く。ハーネスは両方を確かめる。
+- **ノードのディスク。** Workspace のノードは空き容量に余裕を持たせ、コンテナログに上限とローテーションを設け、Workspace のノードの
+  ディスク圧迫で通知する（決定 7）。
 - **請求。** その形は [09 §9.8](../build/09-deploy.ja.md) に倣う。床（クラスタ、CP のノード、Cloud SQL、Cloud NAT、ロードバランサ）、
   動いている間の Workspace ごとの容量、そして止まっている間も課金される Workspace ごとの 2 つの永続ディスク（EBS の home と同じ）。
   利用者がすでに運用しているクラスタなら、床からクラスタが消える。数字は段階 1 で、09 §9.8 が AWS についてするのと同じく、
@@ -520,7 +531,7 @@ Helm chart は作らない。問い合わせは Kubernetes 対応を求めたの
 | 段階 | 内容 | 完了の条件 |
 |---|---|---|
 | 0 | 決定 1: GCE の手順書とスクリプト、egress の既定値、ガイドのページ | GCE VM 上で、Caddy の後ろでも、グローバル外部アプリケーションロードバランサの後ろでもセッションが動き、アイドルのターミナルが既定の `timeoutSec` を越えて生き残り、切れた接続がつなぎ直される。Workspace からメタデータサーバへの要求が失敗する。[21 §21.5](../build/21-add-a-deploy-target.ja.md) の文書が手順書を載せている |
-| 1 | 決定 2〜13: アダプタ、CP の内部用 listener、agent の URL の分離、`deploy/kubernetes/`、`deploy/gcp/gke/` | GKE Standard で決定 10 の実機ハーネスが通る。決定 7 の分離の各行とネットワークポリシーを Pod の中から（ノード・コントロールプレーンのエンドポイント・VPC 内のアドレスへの到達を含めて）確かめてある。手順書が決定 13 を、練習済みの復元と費用の表とともに覆う。[21 §21.8](../build/21-add-a-deploy-target.ja.md) の仕上げの一覧が済んでいる |
+| 1 | 決定 2〜13: アダプタ、CP の内部用 listener、agent の URL の分離、`deploy/kubernetes/`、`deploy/gcp/gke/` | GKE Standard で決定 10 の実機ハーネスが通る。決定 7 の分離の各行とネットワークポリシーを Pod の中から（ノード・コントロールプレーンのエンドポイント・VPC 内のアドレスへの到達を含めて）確かめてある。手順書が決定 13 を、練習済みの復元と費用の表とともに覆う。[21 §21.8](../build/21-add-a-deploy-target.ja.md) の仕上げの一覧が済み、[09 §9.3](../build/09-deploy.ja.md) が 2 つ目の listener の例外を書いている |
 | 2 | Autopilot と、「対象外」のうち求められたもの | それぞれ別の issue |
 
 ## 見直す条件
