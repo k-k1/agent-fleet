@@ -315,7 +315,7 @@ A backup taken **with the CP stopped** is consistent across the first two; a sch
 not (the disk's snapshot and the database's backup run at different moments, so a repository
 pushed in between can be in one and not the other).
 
-To find the CP's disk:
+To find the CP's disk — and to find it **again after a restore**, which replaces it:
 
 ```bash
 PV="$(kubectl -n "$PREFIX-cp" get pvc af-cp-data -o jsonpath='{.spec.volumeName}')"
@@ -323,15 +323,52 @@ HANDLE="$(kubectl get pv "$PV" -o jsonpath='{.spec.csi.volumeHandle}')"   # proj
 ZONE="$(echo "$HANDLE" | cut -d/ -f4)"; DISK="${HANDLE##*/}"
 ```
 
+### A disk from a snapshot, as a volume
+
+Both the rehearsal and the rollback below turn a snapshot into a disk and hand it to Kubernetes
+as a pre-created volume. Such a volume carries no zone of its own, unlike the ones the
+StorageClass provisions, so the PersistentVolume must name it: without `nodeAffinity` the pod
+can be scheduled into another zone of the system pool, where the disk cannot attach, and it
+never starts. Set `NAME` (the new disk and volume), `CLAIM` (the claim it is for) and `SNAP`
+(the snapshot), with `ZONE` from above:
+
+```bash
+gcloud compute disks create "$NAME" --zone "$ZONE" --project "$PROJECT" \
+  --source-snapshot "$SNAP" --type pd-balanced
+SIZE="$(gcloud compute disks describe "$NAME" --zone "$ZONE" --project "$PROJECT" --format='value(sizeGb)')"
+kubectl apply -f - <<YAML
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: $NAME
+spec:
+  capacity: { storage: ${SIZE}Gi }
+  accessModes: ["ReadWriteOnce"]
+  persistentVolumeReclaimPolicy: Retain      # until it is confirmed; see each procedure
+  storageClassName: $PREFIX-workspace
+  claimRef: { namespace: $PREFIX-cp, name: $CLAIM }
+  csi:
+    driver: pd.csi.storage.gke.io
+    volumeHandle: projects/$PROJECT/zones/$ZONE/disks/$NAME
+    fsType: ext4
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: topology.gke.io/zone, operator: In, values: ["$ZONE"] }
+YAML
+```
+
 ### Backups, point-in-time recovery and the restore rehearsal
 
 Terraform turns on the database's automated backups and point-in-time recovery
 (`sql_backup_retention_days`). Give the CP's disk a snapshot schedule once, after the first
-start, with the retention you want:
+start, and again whenever a restore replaced the disk (the schedule belongs to the disk, not to
+the claim):
 
 ```bash
 gcloud compute resource-policies create snapshot-schedule "$PREFIX-cp-data" --project "$PROJECT" \
-  --region "$REGION" --daily-schedule --start-time 02:30 --max-retention-days 14
+  --region "$REGION" --daily-schedule --start-time 02:30 --max-retention-days 14   # once
 gcloud compute disks add-resource-policies "$DISK" --zone "$ZONE" --project "$PROJECT" \
   --resource-policies "$PREFIX-cp-data"
 ```
@@ -350,9 +387,82 @@ gcloud sql instances clone "$PREFIX-pg" "$PREFIX-pg-rehearsal" --project "$PROJE
 gcloud sql instances delete "$PREFIX-pg-rehearsal" --project "$PROJECT"
 ```
 
-Rehearse the disk too: `gcloud compute disks create "$PREFIX-cp-data-rehearsal" --zone "$ZONE"
---source-snapshot <snapshot> --project "$PROJECT"`, then delete it. Record the dates and how long
-each took; that is your recovery time.
+Rehearse the disk the same way: restore a snapshot beside the live one, **read it**, and remove
+it. Creating a disk proves nothing about what is on it. Before taking the snapshot, push a
+sentinel commit to a test repository through the internal git provider (with an LFS file if you
+use LFS) and note its commit id. Then, with the live claim untouched:
+
+```bash
+NAME="$PREFIX-cp-data-rehearsal" CLAIM=af-cp-data-rehearsal SNAP=<snapshot>
+# ... the block of "A disk from a snapshot, as a volume" ...
+IMAGE="$(kubectl -n "$PREFIX-cp" get deployment af-cp -o jsonpath='{.spec.template.spec.containers[?(@.name=="cp")].image}')"
+kubectl apply -f - <<YAML
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: $CLAIM, namespace: $PREFIX-cp }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: $PREFIX-workspace
+  volumeName: $NAME
+  resources: { requests: { storage: ${SIZE}Gi } }
+---
+apiVersion: v1
+kind: Pod
+metadata: { name: af-cp-data-rehearsal, namespace: $PREFIX-cp }
+spec:
+  restartPolicy: Never
+  nodeSelector: { agent-fleet.io/pool: system }
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    seccompProfile: { type: RuntimeDefault }
+  containers:
+    - name: check
+      image: $IMAGE
+      command: ["sh", "-c"]
+      args:
+        - |
+          set -e; cd /data; ls -la
+          test -d git || { echo "FAIL: no git/"; exit 1; }
+          for r in git/*/*.git; do git --git-dir="\$r" fsck --no-dangling >/dev/null; echo "fsck ok \$r"; done
+          find git -path '*/lfs/objects/*' -type f | while read -r f; do
+            [ "\$(sha256sum "\$f" | cut -c1-64)" = "\$(basename "\$f")" ] || { echo "FAIL: \$f"; exit 1; }
+          done
+          echo "lfs objects ok"
+          git --git-dir=git/<tenant>/<test repo>.git rev-parse refs/heads/<branch>   # the sentinel
+      env: [{ name: HOME, value: /tmp }]
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: { drop: ["ALL"] }
+      volumeMounts:
+        - { name: data, mountPath: /data, readOnly: true }
+        - { name: tmp, mountPath: /tmp }
+  volumes:
+    - name: data
+      persistentVolumeClaim: { claimName: $CLAIM, readOnly: true }
+    - name: tmp
+      emptyDir: {}
+YAML
+kubectl -n "$PREFIX-cp" get pvc "$CLAIM"                 # Bound, to $NAME
+kubectl -n "$PREFIX-cp" wait --for=jsonpath='{.status.phase}'=Succeeded pod/af-cp-data-rehearsal --timeout=600s
+kubectl -n "$PREFIX-cp" logs af-cp-data-rehearsal       # every repo "fsck ok", "lfs objects ok", the sentinel's id
+kubectl -n "$PREFIX-cp" get pod af-cp-data-rehearsal -o wide   # its node is in $ZONE
+```
+
+The check passes only when the claim bound, the pod ran in the disk's zone as uid 1000, every
+repository passed `fsck`, every LFS object matched its name, and the sentinel's commit id is the
+one you noted. Then remove all of it — the volume is `Retain`, so the disk stays until deleted:
+
+```bash
+kubectl -n "$PREFIX-cp" delete pod af-cp-data-rehearsal
+kubectl -n "$PREFIX-cp" delete pvc "$CLAIM"
+kubectl delete pv "$NAME"
+gcloud compute disks delete "$NAME" --zone "$ZONE" --project "$PROJECT"
+```
+
+Record the dates and how long each restore took; that is your recovery time.
 
 ### Upgrading the CP
 
@@ -387,33 +497,34 @@ previous image on the migrated database is not a rollback:
    gcloud sql backups list --instance "$PREFIX-pg" --project "$PROJECT"
    gcloud sql backups restore <backup-id> --restore-instance "$PREFIX-pg" --project "$PROJECT"
    ```
-3. The disk, only if the internal git provider was used since the snapshot: create a disk from
-   it, keep the current one, and point the claim at the new one.
+3. The disk, only if the internal git provider was used since the snapshot: keep the current
+   disk, make a new one from the snapshot, and point the claim at it.
    ```bash
-   gcloud compute disks create "$PREFIX-cp-data-restored" --zone "$ZONE" --project "$PROJECT" \
-     --source-snapshot "$PREFIX-cp-data-before-<version>" --type pd-balanced
-   kubectl patch pv "$PV" -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'   # keep the old disk
+   OLD_PV="$PV" OLD_DISK="$DISK"                      # from "What has to survive"
+   kubectl patch pv "$OLD_PV" -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'   # keep the old disk
    kubectl -n "$PREFIX-cp" delete pvc af-cp-data
-   kubectl apply -f - <<YAML
-   apiVersion: v1
-   kind: PersistentVolume
-   metadata:
-     name: $PREFIX-cp-data-restored
-   spec:
-     capacity: { storage: 20Gi }        # the snapshot's size or more
-     accessModes: ["ReadWriteOnce"]
-     persistentVolumeReclaimPolicy: Retain
-     storageClassName: $PREFIX-workspace
-     claimRef: { namespace: $PREFIX-cp, name: af-cp-data }
-     csi:
-       driver: pd.csi.storage.gke.io
-       volumeHandle: projects/$PROJECT/zones/$ZONE/disks/$PREFIX-cp-data-restored
-       fsType: ext4
-   YAML
+   NAME="$PREFIX-cp-data-restored" CLAIM=af-cp-data SNAP="$PREFIX-cp-data-before-<version>"
+   # ... the block of "A disk from a snapshot, as a volume" ...
    ```
-   Delete the old disk once the restored deployment is confirmed.
-4. Set the previous tag in the overlay and `kubectl apply -k` it; the claim is recreated and
-   binds to the restored volume.
+4. Set the previous tag in the overlay and `kubectl apply -k` it. The claim is recreated and
+   binds to the restored volume; check that, and that the CP runs in the disk's zone:
+   ```bash
+   kubectl -n "$PREFIX-cp" get pvc af-cp-data          # Bound, VOLUME = $PREFIX-cp-data-restored
+   kubectl -n "$PREFIX-cp" rollout status deployment/af-cp
+   kubectl -n "$PREFIX-cp" get pods -o wide -l app.kubernetes.io/name=af-cp   # a node in $ZONE
+   ```
+5. Once the restored deployment is confirmed (sign in, clone a repository), put the disks back in
+   order: remove the old one, give the restored volume the StorageClass's `Delete` again (so
+   Destroy and teardown remove it as they remove any other), and move the snapshot schedule to
+   the new disk:
+   ```bash
+   kubectl delete pv "$OLD_PV"
+   gcloud compute disks delete "$OLD_DISK" --zone "$ZONE" --project "$PROJECT"
+   kubectl patch pv "$PREFIX-cp-data-restored" -p '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}'
+   # re-read PV, HANDLE, ZONE and DISK with the block of "What has to survive", then:
+   gcloud compute disks add-resource-policies "$DISK" --zone "$ZONE" --project "$PROJECT" \
+     --resource-policies "$PREFIX-cp-data"
+   ```
 
 The workspace image follows `workspaceImage` in `deployment.yaml`. A running workspace keeps the
 image it started with; the next start pins the tag's current digest, and the Console marks the
@@ -540,7 +651,11 @@ deployment:
 1. Destroy every member's workspace in the Console first, so the disks go with their claims.
 2. Take the backups of "Upgrading the CP" step 2 if anything may be wanted later: deleting the
    overlay deletes the claim `af-cp-data`, and with `reclaimPolicy: Delete` its disk.
-3. `kubectl delete -k "deploy/kubernetes/overlays/$PREFIX"`.
+3. `kubectl delete -k "deploy/kubernetes/overlays/$PREFIX"`, then check that no volume of the
+   deployment is left behind (a `Retain` volume from an unfinished restore keeps its disk):
+   `kubectl get pv | grep "$PREFIX-cp"` and
+   `gcloud compute disks list --project "$PROJECT" --filter="name~$PREFIX-cp-data"` — delete any
+   that remain.
 4. Lift every protection Terraform set, then apply: on the cluster `deletion_protection = false`;
    on the Cloud SQL instance **both** `deletion_protection = false` (Terraform's own guard) and
    `settings.deletion_protection_enabled = false` (the Cloud SQL API's, which refuses the delete
