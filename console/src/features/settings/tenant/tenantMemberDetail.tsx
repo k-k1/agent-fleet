@@ -293,6 +293,9 @@ export function MemberView({
         return;
       }
       setConfirmClean(false);
+      // On Fargate the erase is a task that takes minutes: the CP answers once the workspace
+      // is stopped and records the outcome in the audit log, so say that rather than "done".
+      if (res?.pending) toast(tr("admin.clean_home_started"));
       poll();
       onChanged();
       void loadBackups();
@@ -361,6 +364,7 @@ export function MemberView({
         return;
       }
       setConfirmRemove(false);
+      if (res?.pending) toast(tr("admin.remove_purge_started"));
       onRemoved();
     } finally {
       setBusy(false);
@@ -381,6 +385,8 @@ export function MemberView({
         return;
       }
       setConfirmDestroy(false);
+      // pending: removing the EFS home is a Fargate task; the outcome goes to the audit log.
+      if (res?.pending) toast(tr("admin.destroy_started"));
       if (res?.leftovers?.length) toast(tr("admin.destroy_leftovers", { list: res.leftovers.join(", ") }));
       onChanged();
       poll();

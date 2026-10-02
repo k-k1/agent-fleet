@@ -174,6 +174,10 @@ const (
 	// The same request while a Start of that workspace is still converging in the
 	// background (ecs-ec2). Nothing was stopped; pressing again once it has started works.
 	errCodeHomeWipeWhileStarting = "home_wipe_while_starting"
+	// A start, a Recreate, a Clean home or a Destroy while a task operating on the same
+	// home is still running (ecs, internal/runtime/runtime_ecs_home_task.go). Nothing was
+	// stopped; it is over in minutes.
+	errCodeHomeOperationInProgress = "home_operation_in_progress"
 
 	// Internal-git repository management refused by role. Create needs a role that
 	// may push; delete and rename also need to be the repository's creator or a

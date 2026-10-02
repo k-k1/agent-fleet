@@ -23,11 +23,13 @@ export interface LifecycleFailure {
 }
 
 // The refusals the CP sends before it stops the workspace (control-plane/workspace_handlers.go):
-// not available on this deployment, a start still converging, another lifecycle operation
-// holding the lease, and a stop that failed while the workspace kept running.
+// not available on this deployment, a start still converging, a task still operating on the
+// home (ecs), another lifecycle operation holding the lease, and a stop that failed while the
+// workspace kept running.
 const UNTOUCHED_CODES = new Set([
   "home_wipe_unsupported",
   "home_wipe_while_starting",
+  "home_operation_in_progress",
   "workspace_operation_in_progress",
   "stop_failed",
 ]);
@@ -61,12 +63,16 @@ interface WorkspaceStore {
    * NotProvisioned instead, so only the person creating the first tenant gets here). Keeping
    * the code lets the bar show the real reason. */
   reason: string;
+  /** Why a Recreate / Clean home that finished in the background (ecs: minutes, after the
+   * POST was answered `starting`) left the workspace stopped. The CP carries it on the
+   * workspace payload until the next start; "" = none. */
+  homeWipeFailed: string;
   refresh(): Promise<void>;
   /** Apply a pushed workspace payload (api/events). Poll parity: an optimistic
    * "…" transition is never clobbered — while busy only bootPhase updates (the
    * same thing start()'s transient 2s poll does); the settle refresh() after the
    * POST is what clears the busy state. */
-  applyPush(w: { state?: string; bootPhase?: string; stale?: boolean }): void;
+  applyPush(w: { state?: string; bootPhase?: string; stale?: boolean; homeWipeFailed?: string }): void;
   start(): Promise<void>;
   stop(): Promise<void>;
   /** Stop then start, keeping everything on disk — how a backend update is applied
@@ -90,6 +96,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   bootPhase: "",
   stale: false,
   reason: "",
+  homeWipeFailed: "",
 
   async refresh() {
     const stamp = pushStamp("workspace");
@@ -111,7 +118,14 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         set({ state: "unknown", bootPhase: "", stale: false, reason: String(w.error.code || "") });
         return;
       }
-      set({ state: w.state || "unknown", bootPhase: w.bootPhase || "", stale: !!w.stale, reason: "" });
+      noteHomeWipeFailed(get().homeWipeFailed, w.homeWipeFailed);
+      set({
+        state: w.state || "unknown",
+        bootPhase: w.bootPhase || "",
+        stale: !!w.stale,
+        reason: "",
+        homeWipeFailed: w.homeWipeFailed || "",
+      });
     } catch {
       set({ state: "unknown" }); // network drop: keep the previous reason; the next poll settles it
     }
@@ -123,7 +137,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       if (cur === "starting…" || cur === "recreating…") set({ bootPhase: w.bootPhase || "" });
       return;
     }
-    set({ state: w.state || "unknown", bootPhase: w.bootPhase || "", stale: !!w.stale });
+    noteHomeWipeFailed(get().homeWipeFailed, w.homeWipeFailed);
+    set({ state: w.state || "unknown", bootPhase: w.bootPhase || "", stale: !!w.stale, homeWipeFailed: w.homeWipeFailed || "" });
   },
 
   async start() {
@@ -212,6 +227,13 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     return err;
   },
 }));
+
+// The background wipe's failure reaches the member through the workspace payload alone, and
+// that payload arrives every few seconds: toast it when it first appears (or changes), not
+// on every frame that still carries it.
+function noteHomeWipeFailed(prev: string, next: string | undefined): void {
+  if (next && next !== prev) toast(t("ws.home_wipe_failed", { reason: next }), { kind: "error" });
+}
 
 /** True while a start/stop transition is in flight (or state not yet fetched). */
 export const wsBusy = (state: string): boolean => state.endsWith("…");

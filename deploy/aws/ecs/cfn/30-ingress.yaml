@@ -668,8 +668,94 @@ Resources:
       LogGroupName: !Sub "/af/${AWS::StackName}/ws"
       RetentionInDays: 7
 
+  # --- The home task: Recreate, Clean home and Destroy on an EFS home (ecs; #1260) ---
+  # The CP cannot mount EFS (the EFS SG admits only the workspace SG), so these run as a
+  # one-shot task the CP starts with RunTask: `af-cp efs-home-op`, from the CP's own image so
+  # the keep-list is the CP's (control-plane/internal/runtime/home_task.go). The operation
+  # and the membership arrive as environment overrides; the CP reads the exit code back
+  # with DescribeTasks.
+  #
+  # !! The file system ROOT, as uid 0, not the member's access point. A task definition's
+  # volumes cannot be overridden per RunTask, so one declared here cannot name a member's
+  # access point, and registering one per run would put RegisterTaskDefinition on this
+  # path and leave the RunTask grant below fencing nothing. The access point would also be
+  # too little: it pins uid 1000, which cannot remove the read-only trees toolchains leave
+  # (Go's module cache is 0555), and Destroy has to remove the access point's own root
+  # directory. The confinement is in the command instead: it refuses a membership id that
+  # is not one path element, refuses unless /mnt/efs is a mount, and only ever removes under
+  # /home/<id> and /claude-config/<id>.
+  #
+  # No task role: the command calls no AWS API. The execution role pulls the image and
+  # writes the log; the CP may already pass it (PassTaskRoles, 20-platform).
+  HomeOpsTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "af-${AWS::StackName}-home-ops"
+      RequiresCompatibilities: [ FARGATE ]
+      NetworkMode: awsvpc
+      Cpu: "256"
+      Memory: "512"
+      # The CP image, so the CP's architecture (see TaskDef below).
+      RuntimePlatform:
+        CpuArchitecture: !If [ CpArm, ARM64, X86_64 ]
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn:
+        Fn::ImportValue: !Sub "${PlatformStackName}-ExecRoleArn"
+      Volumes:
+        - Name: efs
+          EFSVolumeConfiguration:
+            FilesystemId: !ImportValue { "Fn::Sub": "${DataStackName}-EfsId" }
+            RootDirectory: /
+            TransitEncryption: ENABLED
+      ContainerDefinitions:
+        - Name: home-ops
+          Essential: true
+          Image: !Sub
+            - "${Uri}:${Tag}"
+            - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrControlPlaneUri" }
+              Tag: !Ref ImageTag
+          User: "0"
+          Command: [ efs-home-op ]
+          # Placeholders; the CP overrides both on every RunTask. Empty is refused (exit 2).
+          Environment:
+            - { Name: AF_HOME_OP, Value: "" }
+            - { Name: AF_HOME_MEMBERSHIP, Value: "" }
+          MountPoints: [ { SourceVolume: efs, ContainerPath: /mnt/efs } ]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref WsLogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: home-ops
+
+  # The CP's grant for the task above, in this stack because only this stack can name the
+  # family. RunTask is fenced to that family (any revision: a stack update deregisters the
+  # old one, and the CP runs the family by name) in this deployment's cluster. The task's
+  # roles need no new PassRole: it names only the execution role, which PassTaskRoles in
+  # 20-platform already lets the CP pass to ecs-tasks. ListTasks (is a home task still
+  # running) and DescribeTasks (its exit code) are EcsDrive's, unscoped there already.
+  # deploy/local/cfn-cp-ec2-scope-test.py holds the allowed call and the denied ones.
+  CpHomeOpsPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "af-${AWS::StackName}-cp-home-ops"
+      Roles:
+        - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-CpTaskRoleArn" } ] ]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: RunHomeOpsTask
+            Effect: Allow
+            Action: [ ecs:RunTask ]
+            Resource: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/af-${AWS::StackName}-home-ops:*"
+            Condition:
+              ArnEquals: { "ecs:cluster": !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" } }
+
   TaskDef:
     Type: AWS::ECS::TaskDefinition
+    # AF_ECS_HOME_TASK names the family as a string, which CloudFormation does not order by:
+    # without this a fresh CP could offer Recreate before the family or its grant exists.
+    DependsOn: [ HomeOpsTaskDef, CpHomeOpsPolicy ]
     Properties:
       Family: !Sub "af-${AWS::StackName}-cp"
       RequiresCompatibilities: [ FARGATE ]
@@ -787,6 +873,8 @@ Resources:
             - { Name: AF_ECS_TASK_CPU, Value: !Ref WsTaskCpu }
             - { Name: AF_ECS_TASK_MEMORY, Value: !Ref WsTaskMemory }
             - { Name: AF_ECS_WS_DISK_GB, Value: !Ref WsDiskGiB }
+            # The home task above, by FAMILY: a revision would go inactive at the next update.
+            - { Name: AF_ECS_HOME_TASK, Value: !Sub "af-${AWS::StackName}-home-ops" }
             # --- EC2 slot pool (only read when WsRuntime=ecs-ec2) ---
             - { Name: AF_ECS_EC2_LAUNCH_TEMPLATE, Value: !Ref Ec2SlotLaunchTemplate }
             - { Name: AF_ECS_EC2_SLOT_TYPES, Value: !Ref Ec2SlotTypes }

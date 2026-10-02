@@ -195,6 +195,11 @@ func (m *manager) stopWorkspaceByMembership(ctx context.Context, membershipID st
 // ends, not for the ordinary case.
 const homeEraseBudget = 5 * time.Minute
 
+// homeTaskBudget bounds an operation that runs a Fargate task on the home (ecs,
+// runtime.HomeWipeInBackground): the workspace's own task draining, a cold pull of the
+// task's image and a removal over NFS, which for a large home is minutes on its own.
+const homeTaskBudget = 30 * time.Minute
+
 // cleanHomeByMembership wipes a member's workspace home except auth/connection state
 // (admin action, the offboarding step). Stops the container first and leaves it stopped;
 // the home is recreated on the next start. The runtime erases the home where it actually
@@ -207,45 +212,103 @@ const homeEraseBudget = 5 * time.Minute
 func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), homeEraseBudget)
 	defer cancel()
+	finish, err := m.beginCleanHome(ctx, membershipID, false)
+	if err != nil {
+		return err
+	}
+	return finish()
+}
+
+// startCleanHomeByMembership is cleanHomeByMembership where the erase takes minutes
+// (runtime.HomeWipeInBackground): everything up to the stop happens now, so a refusal is
+// still the request's answer, and the erase runs after it. done is called once, with the
+// erase's outcome; the lifecycle lease is held until then, so no start or second operation
+// can come in between.
+func (m *manager) startCleanHomeByMembership(ctx context.Context, membershipID string, done func(error)) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), homeTaskBudget)
+	finish, err := m.beginCleanHome(ctx, membershipID, true)
+	if err != nil {
+		cancel()
+		return err
+	}
+	go func() {
+		defer cancel()
+		done(finish())
+	}()
+	return nil
+}
+
+// beginCleanHome is the part of an administrator's Clean home that answers the request:
+// every refusal, then the stop. finish erases and releases what begin took. In the
+// background the local start lock is released when begin returns; the lease alone keeps
+// other operations out, and they are refused rather than left waiting on the lock.
+func (m *manager) beginCleanHome(ctx context.Context, membershipID string, background bool) (finish func() error, err error) {
 	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, membershipID)
 	if err != nil || !ok {
-		return err
+		return func() error { return nil }, err
 	}
 	rt := m.runtimeFor(ws, "")
 	if !runtime.CanEraseHome(rt) {
-		return runtime.ErrHomeWipeUnsupported
+		return nil, runtime.ErrHomeWipeUnsupported
 	}
 	lock := m.startLockFor(ws.ID)
 	lock.Lock()
-	defer lock.Unlock()
 	lease, err := acquireWorkspaceLifecycleLease(ctx, m.store, membershipID)
 	if err != nil {
-		return err
+		lock.Unlock()
+		return nil, err
 	}
-	defer lease.Close()
 	releaseFence, err := m.acquireWorkspaceOperationFence(lease.Context(), ws.ID, rt)
 	if err != nil {
-		return err
+		lease.Close()
+		lock.Unlock()
+		return nil, err
 	}
-	defer releaseFence()
+	locked := true
+	release := func() {
+		releaseFence()
+		lease.Close()
+		if locked {
+			lock.Unlock()
+		}
+	}
+	if err := m.cleanHomePreamble(ctx, ws, rt, lease, background); err != nil {
+		release()
+		return nil, err
+	}
+	if background {
+		lock.Unlock()
+		locked = false
+	}
+	return func() error {
+		defer release()
+		if err := runtime.EraseHome(lease.Context(), rt); err != nil {
+			return err
+		}
+		if err := lease.checkpoint(ctx); err != nil {
+			return err
+		}
+		return m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
+	}, nil
+}
+
+func (m *manager) cleanHomePreamble(ctx context.Context, ws store.Workspace, rt runtime.Runtime, lease *workspaceLifecycleLeaseGuard, background bool) error {
 	if err := lease.checkpoint(ctx); err != nil {
 		return err
+	}
+	// A home task still running on this home (ecs) — refused now, while the answer can
+	// still reach the administrator, rather than in the background.
+	if background {
+		if err := runtime.HomeWipeBlocked(lease.Context(), rt); err != nil {
+			return err
+		}
 	}
 	// As in the member's clean-home: a failed Stop is tolerated only when nothing is left
 	// running, because erasing under a live workspace leaves its home inconsistent.
 	if err := rt.Stop(lease.Context()); err != nil && runtime.WorkspaceAlive(rt.State(ctx)) {
 		return fmt.Errorf("stop %s: %w (still running; clean home aborted)", ws.ContainerName, err)
 	}
-	if err := lease.checkpoint(ctx); err != nil {
-		return err
-	}
-	if err := runtime.EraseHome(lease.Context(), rt); err != nil {
-		return err
-	}
-	if err := lease.checkpoint(ctx); err != nil {
-		return err
-	}
-	return m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
+	return lease.checkpoint(ctx)
 }
 
 // homeBackupsByMembership lists the copies the runtime keeps of a member's home outside
@@ -658,39 +721,85 @@ func (m *manager) resolveWorkspaceMemBytes(ctx context.Context, ws store.Workspa
 // this operation exists to close. Every adapter's Destroy is idempotent, so the retry
 // after a partial failure is safe.
 func (m *manager) destroyWorkspaceByMembership(ctx context.Context, membershipID string) ([]string, error) {
+	finish, err := m.beginDestroyWorkspace(ctx, membershipID, false)
+	if err != nil {
+		return nil, err
+	}
+	return finish()
+}
+
+// startDestroyWorkspaceByMembership is destroyWorkspaceByMembership where the runtime's
+// Destroy runs a task on the home and takes minutes (runtime.HomeWipeInBackground). The
+// refusals answer the request; the teardown runs after it under the lease, and done gets
+// its outcome once.
+func (m *manager) startDestroyWorkspaceByMembership(ctx context.Context, membershipID string, done func([]string, error)) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), homeTaskBudget)
+	finish, err := m.beginDestroyWorkspace(ctx, membershipID, true)
+	if err != nil {
+		cancel()
+		return err
+	}
+	go func() {
+		defer cancel()
+		done(finish())
+	}()
+	return nil
+}
+
+func (m *manager) beginDestroyWorkspace(ctx context.Context, membershipID string, background bool) (finish func() ([]string, error), err error) {
 	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, membershipID)
 	if err != nil || !ok {
-		return nil, err
+		return func() ([]string, error) { return nil, nil }, err
 	}
 	lock := m.startLockFor(ws.ID)
 	lock.Lock()
-	defer lock.Unlock()
 	lease, err := acquireWorkspaceLifecycleLease(ctx, m.store, membershipID)
 	if err != nil {
+		lock.Unlock()
 		return nil, err
 	}
-	defer lease.Close()
 	rt := m.runtimeFor(ws, "")
 	releaseFence, err := m.acquireWorkspaceOperationFence(lease.Context(), ws.ID, rt)
 	if err != nil {
+		lease.Close()
+		lock.Unlock()
 		return nil, err
 	}
-	defer releaseFence()
+	locked := true
+	release := func() {
+		releaseFence()
+		lease.Close()
+		if locked {
+			lock.Unlock()
+		}
+	}
 	if err := lease.checkpoint(ctx); err != nil {
+		release()
 		return nil, err
 	}
-	leftovers, err := runtime.DestroyRuntime(lease.Context(), rt)
-	if err != nil {
-		return nil, err
+	if background {
+		if err := runtime.HomeWipeBlocked(lease.Context(), rt); err != nil {
+			release()
+			return nil, err
+		}
+		lock.Unlock()
+		locked = false
 	}
-	if err := lease.checkpoint(ctx); err != nil {
-		return leftovers, err
-	}
-	if err := m.store.DeleteWorkspace(ctx, ws.ID); err != nil {
-		return leftovers, err
-	}
-	m.evictMembershipCache(membershipID)
-	return leftovers, nil
+	return func() ([]string, error) {
+		defer release()
+		leftovers, err := runtime.DestroyRuntime(lease.Context(), rt)
+		if err != nil {
+			return nil, err
+		}
+		if err := lease.checkpoint(ctx); err != nil {
+			return leftovers, err
+		}
+		if err := m.store.DeleteWorkspace(ctx, ws.ID); err != nil {
+			return leftovers, err
+		}
+		m.evictMembershipCache(membershipID)
+		return leftovers, nil
+	}, nil
 }
 
 // runtimePoolStatuser is implemented by the one adapter that has a POOL to report on.

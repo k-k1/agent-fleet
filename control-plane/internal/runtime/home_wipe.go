@@ -10,6 +10,10 @@
 // stops anything, and the Console does not offer the button (runtime.go: a button that
 // works on one deployment profile and silently does nothing on another is worse than no
 // button).
+//
+// ecs reaches its EFS home through a one-shot task its stack declares
+// (runtime_ecs_home_task.go). It claims the ports by type but answers homePortsReady only
+// when the stack declares that task, so an older stack keeps refusing.
 package runtime
 
 import (
@@ -89,7 +93,57 @@ var (
 	_ homeWiper        = (*kubeRuntime)(nil)
 	_ homeEraser       = (*kubeRuntime)(nil)
 	_ homeBackupKeeper = (*ecsEC2Runtime)(nil)
+	_ homeWiper        = (*ecsRuntime)(nil)
+	_ homeEraser       = (*ecsRuntime)(nil)
+	_ homePortsGate    = (*ecsRuntime)(nil)
+	_ homeWipeGate     = (*ecsRuntime)(nil)
+	_ backgroundWiper  = (*ecsRuntime)(nil)
 )
+
+// homePortsGate is claimed by an adapter whose home ports depend on the deployment, not
+// on its type: ecs reaches the home only through the task its stack declares. Without the
+// gate a CP on an older stack would offer the buttons and fail every press.
+type homePortsGate interface {
+	homePortsReady() bool
+}
+
+// portsReady is false only where rt's gate says the ports cannot be used here.
+func portsReady(rt Runtime) bool {
+	g, ok := rt.(homePortsGate)
+	return !ok || g.homePortsReady()
+}
+
+// backgroundWiper is claimed by an adapter whose member wipe takes minutes (ecs: a Fargate
+// task, from cold). The CP cannot hold the member's request for that, behind a 60 s
+// ingress idle timeout, so it answers `starting` and finishes stop → wipe → start in the
+// background. MarkHomeClearing makes State report `starting` and BootPhase "home: clearing"
+// from before the stop until release is called after the start, so the Console never sees
+// the stopped workspace in between and offers Start on it.
+type backgroundWiper interface {
+	MarkHomeClearing() (release func())
+}
+
+// HomeWipeInBackground reports whether a member's Recreate and Clean home on rt, and an
+// administrator's Clean home and Destroy, run for minutes and so are finished after the
+// request has been answered.
+func HomeWipeInBackground(rt Runtime) bool {
+	_, ok := rt.(backgroundWiper)
+	return ok && portsReady(rt)
+}
+
+// QueueHomeWipe marks rt as clearing its home until release is called. A no-op on an
+// adapter whose wipe fits in the request.
+func QueueHomeWipe(rt Runtime) (release func()) {
+	if b, ok := rt.(backgroundWiper); ok {
+		return b.MarkHomeClearing()
+	}
+	return func() {}
+}
+
+// ErrHomeTaskInFlight refuses a start or another home operation while a task operating on
+// this member's home is still running (ecs). It can be one this CP has lost track of — a
+// restart, another replica — which is why it is asked of ECS rather than of memory.
+var ErrHomeTaskInFlight = errors.New("an operation on this workspace's home is still running; try again once it has finished")
 
 // ErrHomeWipeUnsupported is returned for an adapter that does not claim the port asked
 // for. The CP checks CanWipeHome / CanEraseHome before it stops anything, so reaching this
@@ -118,14 +172,14 @@ func HomeWipeBlocked(ctx context.Context, rt Runtime) error {
 // CanWipeHome reports whether a member's Recreate and Clean home can run on rt.
 func CanWipeHome(rt Runtime) bool {
 	_, ok := rt.(homeWiper)
-	return ok
+	return ok && portsReady(rt)
 }
 
 // WipeHome removes what from a stopped workspace's home, for a member's Recreate or Clean
 // home.
 func WipeHome(ctx context.Context, rt Runtime, what HomeWipe) error {
 	w, ok := rt.(homeWiper)
-	if !ok {
+	if !ok || !portsReady(rt) {
 		return ErrHomeWipeUnsupported
 	}
 	return w.WipeHome(ctx, what)
@@ -134,14 +188,14 @@ func WipeHome(ctx context.Context, rt Runtime, what HomeWipe) error {
 // CanEraseHome reports whether an administrator's Clean home can run on rt.
 func CanEraseHome(rt Runtime) bool {
 	_, ok := rt.(homeEraser)
-	return ok
+	return ok && portsReady(rt)
 }
 
 // EraseHome removes everything but homeKeep from a stopped workspace's home, for an
 // administrator's Clean home.
 func EraseHome(ctx context.Context, rt Runtime) error {
 	e, ok := rt.(homeEraser)
-	if !ok {
+	if !ok || !portsReady(rt) {
 		return ErrHomeWipeUnsupported
 	}
 	return e.EraseHome(ctx)
@@ -175,6 +229,9 @@ type HomeOperations struct {
 	Wipe    bool // a member's Recreate and Clean home
 	Erase   bool // an administrator's Clean home
 	Backups bool // listing and deleting a member's backup copies
+	// Background: Wipe, Erase and Destroy take minutes and finish after the request is
+	// answered (HomeWipeInBackground).
+	Background bool
 }
 
 // HomeOperationsOf answers HomeOperations from a runtime the factory builds for an empty
@@ -182,10 +239,9 @@ type HomeOperations struct {
 // them talks to Docker or AWS.
 func HomeOperationsOf(f RuntimeFactory) HomeOperations {
 	rt := f.New(Workspace{}, "", nil)
-	_, wipe := rt.(homeWiper)
-	_, erase := rt.(homeEraser)
 	_, backups := rt.(homeBackupKeeper)
-	return HomeOperations{Wipe: wipe, Erase: erase, Backups: backups}
+	return HomeOperations{Wipe: CanWipeHome(rt), Erase: CanEraseHome(rt), Backups: backups,
+		Background: HomeWipeInBackground(rt)}
 }
 
 // wipeLocalHome is the docker and native wipe: both keep the home at <dataDir>/home, the

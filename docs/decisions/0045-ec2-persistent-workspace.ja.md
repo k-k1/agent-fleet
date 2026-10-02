@@ -1359,6 +1359,20 @@ native ではそれがホームだが、AWS では CP タスクの空の `/tmp` 
 `control-plane/internal/tenantsrv/tenants.go`・`console/src/features/settings/workspace/DangerTab.tsx`・
 `console/src/features/settings/tenant/tenantMemberDetail.tsx`。
 
+**追記（2026-10-03・#1260）: Fargate にも削除を走らせる場所ができた。** スタックが単発のタスク（`30-ingress` の
+`HomeOpsTaskDef`）を宣言し、EFS のルートを uid 0 でマウントして CP のイメージの `af-cp efs-home-op` を走らせる。
+`homeKeep` の定義は 1 つのまま。CP は `ecs:RunTask`（このクラスタのこのファミリーだけに許す `CpHomeOpsPolicy`）で
+起動し、終了コードを `DescribeTasks` で読む。`startedBy=af-home/<membership>` によって ECS 自体が実行中のタスクの
+記録になり、CP が再起動しても、実行中は Start も 2 つ目の操作も断る。メンバーのアクセスポイントではなくルートを
+使うのは、タスク定義のボリュームは実行ごとに差し替えられず、uid 1000 では読み取り専用のツールチェーンの木を消せず、
+破棄ではアクセスポイント自身のルートを消すからだ。閉じ込めはコマンド側で行う（1 要素のメンバーシップ ID・本物の
+マウント・`/home/<id>` と `/claude-config/<id>` の下だけ）。タスクは数分かかるので、メンバーの作り直しとホームの
+掃除は `starting` で応答し、停止 → タスク → 起動をライフサイクルのリースの下で後から行う。管理者のホームの掃除と
+破棄は 202 で応答し、タスクが終わった時点で監査の結果を書く。破棄は EFS の 2 つのディレクトリを消すようになり、
+消せなかったものとして返さない。タスクが失敗したら行を残し、やり直しでもう一度走らせる。タスクの無いスタックは
+これまでどおり断る。コード: `control-plane/internal/runtime/runtime_ecs_home_task.go`・`home_task.go`・
+`control-plane/workspace_handlers.go`（`memberHomeWipe`）・`control-plane/workspace_lifecycle.go`。
+
 ## 決定 32 — メンバーの作り直しとホームの掃除は、ホームに印を付けて次の Start で消す（2026-09-30）
 
 決定 31 の「メンバーの作り直しとホームの掃除は、この形態ではまだ出さない」を置き換える。そこで挙げた

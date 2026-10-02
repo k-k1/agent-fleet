@@ -40,8 +40,8 @@ value instead of reverting code.
 | Cost attribution per member | — | — | ✓ | ✓ | — |
 | An image engine the deployment provides | ✓⁴ | ✓⁴ | — | ✓⁵ | ✓⁴ |
 | A chat engine the deployment provides | ✓⁶ | ✓⁶ | — | ✓⁶ | ✓⁶ |
-| A member's Recreate and Clean home (Danger zone) | ✓ | ✓ | —⁷ | ✓¹⁰ | ✓¹³ |
-| Clean home by an administrator (offboarding) | ✓ | ✓ | —⁷ | ✓⁸ | ✓¹³ |
+| A member's Recreate and Clean home (Danger zone) | ✓ | ✓ | ✓⁷ | ✓¹⁰ | ✓¹³ |
+| Clean home by an administrator (offboarding) | ✓ | ✓ | ✓⁷ | ✓⁸ | ✓¹³ |
 | Deleting the backup copies of a member's home | — | — | — | ✓⁹ | — |
 
 ¹ Staged on the host and bind-mounted at start.
@@ -65,10 +65,15 @@ plan** (Codex / Antigravity); this row is about an engine the deployment provide
 **already running on your own network**, pointed at with one environment variable
 ([operate/09](../operate/09-llm-lan.md)).
 
-⁷ Removing part of a home needs the home mounted, and on `ecs` nothing the Control Plane
-runs can mount the member's EFS home. The Console does not show these buttons where the
-deployment cannot perform them, and the Control Plane refuses them before it stops
-anything.
+⁷ The Control Plane cannot mount the member's EFS home itself, so it starts a short task the
+stack declares (`HomeOpsTaskDef` in `30-ingress`) that mounts the file system and removes the
+files. A Fargate task takes a few minutes to start, so these finish after the button has been
+answered. A member's Recreate and Clean home show the starting dialog ("removing what Recreate /
+Clean home deletes") until the workspace is up again; if the removal fails the workspace stays
+stopped and the reason is shown. An administrator's Clean home and **Destroy workspace** answer
+straight away, and their outcome is written to the audit log when the task has finished. Destroy
+now removes the member's EFS directories as well, instead of listing them as left over. A stack
+from before this task (no `AF_ECS_HOME_TASK`) does not offer these buttons, as before.
 
 ⁸ Deletes the member's home volume and its hibernation copies; the next start builds a
 fresh home, as for a new member. On this target the logins, connections and Claude state

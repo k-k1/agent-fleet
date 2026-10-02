@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -420,6 +421,10 @@ func (a Admin) StopWorkspace(w http.ResponseWriter, r *http.Request) {
 //
 // A runtime that cannot reach the home is refused with home_wipe_unsupported before
 // anything is stopped; its outcome entry says so.
+//
+// Where the erase is a Fargate task (ecs, HomeOpsInBackground) it takes minutes: the
+// request is answered 202 {pending: true} once the workspace is stopped, and the outcome
+// entry is written when the task has finished.
 func (a Admin) CleanHome(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UserKey    string `json:"user_key"`
@@ -463,21 +468,42 @@ func (a Admin) CleanHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := context.WithoutCancel(r.Context())
+	if a.cp.HomeOpsInBackground() {
+		err := a.cp.StartCleanHomeByMembership(ctx, mem.ID, func(err error) {
+			if err != nil {
+				log.Printf("admin clean-home of %s in %s failed in the background: %v", ident.UserKey, t.Slug, err)
+				in.Done(ctx, "error: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			in.Done(ctx, "home erased", http.StatusOK)
+		})
+		if err != nil {
+			refuseIrreversible(w, r, in, a.homeOpRefusal(err, "clean home"))
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"cleaned": body.UserKey, "tenant": t.Slug, "pending": true})
+		return
+	}
 	if err := a.cp.CleanHomeByMembership(ctx, mem.ID); err != nil {
-		if errors.Is(err, store.ErrSessionShareOwnerBusy) {
-			refuseIrreversible(w, r, in, a.cp.WorkspaceLifecycleLeaseError(err))
-			return
-		}
-		if errors.Is(err, runtime.ErrHomeWipeUnsupported) {
-			refuseIrreversible(w, r, in, &APIError{http.StatusNotImplemented, "home_wipe_unsupported",
-				"clean home is not available on this deployment: its runtime cannot reach the workspace home"})
-			return
-		}
-		refuseIrreversible(w, r, in, internalErr(err))
+		refuseIrreversible(w, r, in, a.homeOpRefusal(err, "clean home"))
 		return
 	}
 	in.Done(ctx, "home erased", http.StatusOK)
 	writeJSON(w, http.StatusOK, map[string]any{"cleaned": body.UserKey, "tenant": t.Slug})
+}
+
+// homeOpRefusal maps what refused a Clean home or a Destroy to its answer.
+func (a Admin) homeOpRefusal(err error, op string) *APIError {
+	switch {
+	case errors.Is(err, store.ErrSessionShareOwnerBusy):
+		return a.cp.WorkspaceLifecycleLeaseError(err)
+	case errors.Is(err, runtime.ErrHomeWipeUnsupported):
+		return &APIError{http.StatusNotImplemented, "home_wipe_unsupported",
+			op + " is not available on this deployment: its runtime cannot reach the workspace home"}
+	case errors.Is(err, runtime.ErrHomeTaskInFlight):
+		return &APIError{http.StatusConflict, "home_operation_in_progress", err.Error()}
+	}
+	return internalErr(err)
 }
 
 // HomeBackups (GET /api/admin/tenants/{slug}/members/{key}/home-backups) counts the copies
@@ -572,6 +598,9 @@ func homeBackupsUnsupported() *APIError {
 //
 // tenant_admin (their own tenant) or super_admin — the same gate as clean-home, which is
 // already "destroy this person's work" in every sense except the billing.
+//
+// On ecs with the home task (HomeOpsInBackground) removing the EFS home takes minutes:
+// answered 202 {pending: true}, the outcome entry written when it has finished.
 func (a Admin) DestroyWorkspace(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UserKey    string `json:"user_key"`
@@ -615,13 +644,26 @@ func (a Admin) DestroyWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	leftovers, err := a.cp.DestroyWorkspaceByMembership(r.Context(), mem.ID)
-	if err != nil {
-		if errors.Is(err, store.ErrSessionShareOwnerBusy) {
-			refuseIrreversible(w, r, in, a.cp.WorkspaceLifecycleLeaseError(err))
+	if a.cp.HomeOpsInBackground() {
+		ctx := context.WithoutCancel(r.Context())
+		err := a.cp.StartDestroyWorkspaceByMembership(ctx, mem.ID, func(leftovers []string, err error) {
+			if err != nil {
+				log.Printf("destroy of %s's workspace in %s failed in the background: %v", ident.UserKey, t.Slug, err)
+				in.Done(ctx, "error: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			in.Done(ctx, destroyedDetail("workspace destroyed (home and runtime resources deleted)", leftovers), http.StatusOK)
+		})
+		if err != nil {
+			refuseIrreversible(w, r, in, a.homeOpRefusal(err, "destroy"))
 			return
 		}
-		refuseIrreversible(w, r, in, internalErr(err))
+		writeJSON(w, http.StatusAccepted, map[string]any{"destroyed": ident.UserKey, "tenant": t.Slug, "pending": true})
+		return
+	}
+	leftovers, err := a.cp.DestroyWorkspaceByMembership(r.Context(), mem.ID)
+	if err != nil {
+		refuseIrreversible(w, r, in, a.homeOpRefusal(err, "destroy"))
 		return
 	}
 	in.Done(r.Context(), destroyedDetail("workspace destroyed (home and runtime resources deleted)", leftovers), http.StatusOK)
@@ -944,6 +986,29 @@ func (a Admin) RemoveMembership(w http.ResponseWriter, r *http.Request) {
 	a.cp.InvalidateTenantLogin()
 	detail := "status=inactive (workspace and home kept)"
 	var leftovers []string
+	if body.Purge && a.cp.HomeOpsInBackground() {
+		// The membership is inactive now; destroying its workspace takes minutes here, so
+		// the outcome entry waits for it.
+		ctx := context.WithoutCancel(r.Context())
+		err := a.cp.StartDestroyWorkspaceByMembership(ctx, mem.ID, func(leftovers []string, err error) {
+			if err != nil {
+				log.Printf("purge of %s's workspace in %s failed in the background: %v", ident.UserKey, t.Slug, err)
+				in.Done(ctx, "status=inactive; purge FAILED: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			in.Done(ctx, destroyedDetail("status=inactive; workspace destroyed (purge)", leftovers), http.StatusOK)
+		})
+		if err != nil {
+			in.Done(r.Context(), "status=inactive; purge FAILED: "+err.Error(), http.StatusInternalServerError)
+			writeAPIErr(w, &APIError{http.StatusInternalServerError, "purge_failed",
+				"the membership was deactivated but the workspace could not be destroyed: " + err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"removed": ident.UserKey, "tenant": t.Slug, "purged": true, "pending": true,
+		})
+		return
+	}
 	if body.Purge {
 		leftovers, err = a.cp.DestroyWorkspaceByMembership(r.Context(), mem.ID)
 		if err != nil {

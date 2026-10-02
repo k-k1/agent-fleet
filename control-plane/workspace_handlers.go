@@ -153,6 +153,8 @@ func homeWipeBlockedErr(ctx context.Context, rt runtime.Runtime) *apiError {
 		return nil
 	case errors.Is(err, runtime.ErrHomeWipeWhileStarting):
 		return &apiError{http.StatusConflict, errCodeHomeWipeWhileStarting, err.Error()}
+	case errors.Is(err, runtime.ErrHomeTaskInFlight):
+		return &apiError{http.StatusConflict, errCodeHomeOperationInProgress, err.Error()}
 	default:
 		return internalErr(err)
 	}
@@ -223,6 +225,15 @@ func (a workspaceAPI) workspacePayload(ctx context.Context, res *resolved, state
 	if m["state"] == "running" && workspaceStale(ctx, rt) {
 		m["stale"] = true
 	}
+	// Why a background Recreate or Clean home left this workspace stopped (memberHomeWipe):
+	// the member's request was answered `starting` minutes ago, so this is the only place
+	// the failure can still reach them.
+	if a.mgr == nil {
+		return m
+	}
+	if v, ok := a.mgr.homeWipeFailures.Load(res.ws.ID); ok && m["state"] != "running" {
+		m["homeWipeFailed"] = v
+	}
 	return m
 }
 
@@ -246,67 +257,7 @@ func (a workspaceAPI) start(w http.ResponseWriter, r *http.Request, res *resolve
 // cannot reach it is refused before anything is stopped, rather than restarted and told
 // its working copies are gone.
 func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *resolved) {
-	if !runtime.CanWipeHome(res.rt) {
-		writeAPIErr(w, homeWipeUnsupportedErr("recreate"))
-		return
-	}
-	// Stop + wipe + restart under the local start lock and distributed owner lease
-	// so neither another process nor another CP replica can enter mid-teardown.
-	lock := a.mgr.startLockFor(res.ws.ID)
-	lock.Lock()
-	defer lock.Unlock()
-	lease, err := acquireWorkspaceLifecycleLease(r.Context(), a.mgr.store, res.mv.MembershipID)
-	if err != nil {
-		writeAPIErr(w, workspaceLifecycleLeaseError(err))
-		return
-	}
-	defer lease.Close()
-	releaseFence, err := a.mgr.acquireWorkspaceOperationFence(lease.Context(), res.ws.ID, res.rt)
-	if err != nil {
-		writeAPIErr(w, workspaceLifecycleLeaseError(err))
-		return
-	}
-	defer releaseFence()
-	if err := lease.checkpoint(r.Context()); err != nil {
-		writeAPIErr(w, workspaceLifecycleLeaseError(err))
-		return
-	}
-	if aerr := homeWipeBlockedErr(lease.Context(), res.rt); aerr != nil {
-		writeAPIErr(w, aerr)
-		return
-	}
-	// Stop tolerates "does not exist yet" and the like (best-effort), but abort when the
-	// workspace is still alive — deleting under a live bind-mount leaves it inconsistent.
-	// "starting" (container up, Agent not answering yet) counts as alive: it is running
-	// and can write to home.
-	if err := res.rt.Stop(lease.Context()); err != nil && runtime.WorkspaceAlive(res.rt.State(r.Context())) {
-		log.Printf("recreate: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
-		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; recreate aborted"})
-		return
-	}
-	if err := lease.checkpoint(r.Context()); err != nil {
-		writeAPIErr(w, workspaceLifecycleLeaseError(err))
-		return
-	}
-	// Clear the working copies while the container is down. Targeted: we keep the
-	// encrypted secrets store and everything else in home.
-	if err := runtime.WipeHome(lease.Context(), res.rt, runtime.HomeWipeRepos); err != nil {
-		if leaseErr := lease.checkpoint(r.Context()); leaseErr != nil {
-			writeAPIErr(w, workspaceLifecycleLeaseError(leaseErr))
-		} else {
-			writeAPIErr(w, internalErr(err))
-		}
-		return
-	}
-	if err := lease.checkpoint(r.Context()); err != nil {
-		writeAPIErr(w, workspaceLifecycleLeaseError(err))
-		return
-	}
-	if aerr := a.ensureWorkspaceStartedRTLocked(lease.Context(), res, res.rt, lease); aerr != nil {
-		writeAPIErr(w, aerr)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.Name(), "state": res.rt.State(r.Context())})
+	a.memberHomeWipe(w, r, res, "recreate", runtime.HomeWipeRepos)
 }
 
 // cleanHome tears the container down, wipes the whole home EXCEPT auth/connection
@@ -322,63 +273,143 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 // freshly-seeded environment.) As with recreate, a runtime that cannot reach the home is
 // refused before anything is stopped.
 func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *resolved) {
+	a.memberHomeWipe(w, r, res, "clean-home", runtime.HomeWipeClean)
+}
+
+// memberHomeWipe is the body of both: stop, remove what, start. Everything runs under the
+// local start lock, the lifecycle lease and the operation fence, so neither another
+// process nor another CP replica can enter mid-teardown.
+//
+// Where the wipe is a Fargate task (ecs, runtime.HomeWipeInBackground) it takes minutes:
+// the refusals and the stop answer the request, which then reports `starting`, and the
+// wipe and the start follow in the background under the same lease. The Console keeps
+// polling and sees `starting` with the "home: clearing" phase until the workspace is up.
+// A failure there leaves the workspace stopped, with the reason in the next workspace
+// payload (homeWipeFailed) because no request is left to carry it.
+func (a workspaceAPI) memberHomeWipe(w http.ResponseWriter, r *http.Request, res *resolved, op string, what runtime.HomeWipe) {
 	if !runtime.CanWipeHome(res.rt) {
-		writeAPIErr(w, homeWipeUnsupportedErr("clean-home"))
+		writeAPIErr(w, homeWipeUnsupportedErr(op))
 		return
+	}
+	background := runtime.HomeWipeInBackground(res.rt)
+	leaseCtx, cancel := r.Context(), context.CancelFunc(func() {})
+	if background {
+		// The lease has to outlive this request: it is what keeps a start or another
+		// operation out until the background half has finished.
+		leaseCtx, cancel = context.WithTimeout(context.WithoutCancel(r.Context()), homeTaskBudget)
 	}
 	lock := a.mgr.startLockFor(res.ws.ID)
 	lock.Lock()
-	defer lock.Unlock()
-	lease, err := acquireWorkspaceLifecycleLease(r.Context(), a.mgr.store, res.mv.MembershipID)
+	lease, err := acquireWorkspaceLifecycleLease(leaseCtx, a.mgr.store, res.mv.MembershipID)
 	if err != nil {
+		lock.Unlock()
+		cancel()
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
 	}
-	defer lease.Close()
 	releaseFence, err := a.mgr.acquireWorkspaceOperationFence(lease.Context(), res.ws.ID, res.rt)
 	if err != nil {
+		lease.Close()
+		lock.Unlock()
+		cancel()
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
 	}
-	defer releaseFence()
-	if err := lease.checkpoint(r.Context()); err != nil {
-		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+	unqueue := func() {}
+	release := func() {
+		unqueue()
+		releaseFence()
+		lease.Close()
+		cancel()
+	}
+	if aerr := a.memberHomeWipeStop(r, res, lease, op, background, &unqueue); aerr != nil {
+		release()
+		lock.Unlock()
+		writeAPIErr(w, aerr)
 		return
+	}
+	if !background {
+		defer lock.Unlock()
+		defer release()
+		if aerr := a.memberHomeWipeFinish(r.Context(), res, lease, what, unqueue); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.Name(), "state": res.rt.State(r.Context())})
+		return
+	}
+	// The local lock is not held across minutes: a start or a stop that comes in meanwhile
+	// takes it, finds the lease held and is refused, instead of hanging until the end.
+	lock.Unlock()
+	a.mgr.homeWipeFailures.Delete(res.ws.ID)
+	go func() {
+		defer release()
+		aerr := a.memberHomeWipeFinish(lease.Context(), res, lease, what, unqueue, lock)
+		if aerr != nil {
+			log.Printf("%s: background wipe of ws %s failed: %s", op, res.ws.ID, aerr.message)
+			a.mgr.homeWipeFailures.Store(res.ws.ID, aerr.message)
+		}
+	}()
+	writeJSON(w, http.StatusAccepted, map[string]any{"name": res.rt.Name(), "state": "starting"})
+}
+
+// memberHomeWipeStop is everything that can still refuse: the lease, the runtime's gate,
+// and the stop. In the background the workspace is marked as clearing BEFORE the stop, so
+// the Console never reads `stopped` in between and offers Start.
+func (a workspaceAPI) memberHomeWipeStop(r *http.Request, res *resolved, lease *workspaceLifecycleLeaseGuard, op string, background bool, unqueue *func()) *apiError {
+	if err := lease.checkpoint(r.Context()); err != nil {
+		return workspaceLifecycleLeaseError(err)
 	}
 	if aerr := homeWipeBlockedErr(lease.Context(), res.rt); aerr != nil {
-		writeAPIErr(w, aerr)
-		return
+		return aerr
 	}
-	// As in recreate: abort when Stop failed and the workspace is still alive, to avoid
-	// deleting under a live bind-mount.
-	if err := res.rt.Stop(lease.Context()); err != nil && runtime.WorkspaceAlive(res.rt.State(r.Context())) {
-		log.Printf("clean-home: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
-		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; clean-home aborted"})
-		return
+	if background {
+		*unqueue = runtime.QueueHomeWipe(res.rt)
 	}
-	if err := lease.checkpoint(r.Context()); err != nil {
-		writeAPIErr(w, workspaceLifecycleLeaseError(err))
-		return
-	}
-	// Wipe home (keep-list preserved) while the container is down — deleting under a
-	// live bind-mount risks inconsistency (see cleanHomeContext in runtime_docker.go).
-	if err := runtime.WipeHome(lease.Context(), res.rt, runtime.HomeWipeClean); err != nil {
-		if leaseErr := lease.checkpoint(r.Context()); leaseErr != nil {
-			writeAPIErr(w, workspaceLifecycleLeaseError(leaseErr))
-		} else {
-			writeAPIErr(w, internalErr(err))
+	// Stop tolerates "does not exist yet" and the like (best-effort), but abort when the
+	// workspace is still alive — deleting under a live bind-mount leaves it inconsistent.
+	// "starting" (container up, Agent not answering yet) counts as alive: it is running
+	// and can write to home. The clearing mark is dropped first, or it would read as
+	// "starting" itself.
+	if err := res.rt.Stop(lease.Context()); err != nil {
+		(*unqueue)()
+		if runtime.WorkspaceAlive(res.rt.State(r.Context())) {
+			log.Printf("%s: stop failed for ws %s (still running, aborting wipe): %v", op, res.ws.ID, err)
+			return &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; " + op + " aborted"}
 		}
-		return
+		if background {
+			*unqueue = runtime.QueueHomeWipe(res.rt)
+		}
 	}
 	if err := lease.checkpoint(r.Context()); err != nil {
-		writeAPIErr(w, workspaceLifecycleLeaseError(err))
-		return
+		return workspaceLifecycleLeaseError(err)
 	}
-	if aerr := a.ensureWorkspaceStartedRTLocked(lease.Context(), res, res.rt, lease); aerr != nil {
-		writeAPIErr(w, aerr)
-		return
+	return nil
+}
+
+// memberHomeWipeFinish removes what from the stopped workspace's home and starts it again.
+// lock, when given, is taken for the start: the background half no longer holds it.
+func (a workspaceAPI) memberHomeWipeFinish(ctx context.Context, res *resolved, lease *workspaceLifecycleLeaseGuard, what runtime.HomeWipe, unqueue func(), lock ...*sync.Mutex) *apiError {
+	if err := runtime.WipeHome(lease.Context(), res.rt, what); err != nil {
+		if leaseErr := lease.checkpoint(ctx); leaseErr != nil {
+			return workspaceLifecycleLeaseError(leaseErr)
+		}
+		if errors.Is(err, runtime.ErrHomeTaskInFlight) {
+			return &apiError{http.StatusConflict, errCodeHomeOperationInProgress, err.Error()}
+		}
+		return internalErr(err)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.Name(), "state": res.rt.State(r.Context())})
+	if err := lease.checkpoint(ctx); err != nil {
+		return workspaceLifecycleLeaseError(err)
+	}
+	// The clearing mark reads as `starting`, which Start takes for a launch already under
+	// way; it goes before the start, and the start replaces it with the real one.
+	unqueue()
+	for _, l := range lock {
+		l.Lock()
+		defer l.Unlock()
+	}
+	return a.ensureWorkspaceStartedRTLocked(lease.Context(), res, res.rt, lease)
 }
 
 // ensureWorkspaceStarted brings a stopped workspace up, enforcing the same
@@ -530,8 +561,12 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 		log.Printf("clear auto-stop (ws=%s): %v", res.ws.ID, err)
 	}
 	if err := rt.Start(ctx); err != nil {
+		if errors.Is(err, runtime.ErrHomeTaskInFlight) {
+			return &apiError{http.StatusConflict, errCodeHomeOperationInProgress, err.Error()}
+		}
 		return internalErr(err)
 	}
+	a.mgr.homeWipeFailures.Delete(res.ws.ID)
 	if err := lease.checkpoint(ctx); err != nil {
 		if f, ok := rt.(runtime.StartFencer); ok {
 			abortCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

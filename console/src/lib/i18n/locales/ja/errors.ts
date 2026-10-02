@@ -331,6 +331,7 @@ export const errors = {
   "err.imagegen_unknown_provider": "その画像エンジンはこの配備にありません。",
   "err.home_wipe_unsupported": "この配備では使えない操作です。ホームが Control Plane から届かない場所にあるため、何も停止せずに断りました。",
   "err.home_wipe_while_starting": "ワークスペースがまだ起動中です。何も停止していません。起動し終わってからもう一度実行してください。",
+  "err.home_operation_in_progress": "このワークスペースの home に対する前の操作がまだ実行中です。何も停止していません。数分後にもう一度実行してください。",
   "err.home_backups_unsupported": "この配備はホームのバックアップを取っていません。",
   "err.audit_unavailable": "何もしませんでした。誰が依頼したかを監査ログに記録できなかったためです。データベースが復旧してから再度お試しください。",
   "err.git_repo_create_forbidden": "このテナントでのあなたの役割では、リポジトリを作成できません。",

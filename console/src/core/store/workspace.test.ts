@@ -13,6 +13,8 @@ vi.stubGlobal("localStorage", {
   removeItem: (key: string) => values.delete(key),
 });
 vi.stubGlobal("document", { baseURI: "http://localhost/", hidden: false });
+const toastMock = vi.fn();
+vi.mock("../../ui/toast.ts", () => ({ toast: (...args: unknown[]) => toastMock(...args) }));
 const fetchMock = vi.fn<() => Promise<Response>>();
 vi.stubGlobal("window", { fetch: fetchMock });
 vi.stubGlobal("fetch", fetchMock);
@@ -51,6 +53,21 @@ describe("workspace store applyPush", () => {
   it("folds a missing pushed state to unknown (poll parity)", () => {
     useWorkspaceStore.getState().applyPush({});
     expect(useWorkspaceStore.getState().state).toBe("unknown");
+  });
+
+  // A Recreate / Clean home that ran in the background (ecs) and failed: the POST was
+  // answered long ago, so the payload is the only carrier. Toasted once when it appears, not
+  // on every frame that still holds it, and dropped when the CP drops it.
+  it("toasts a background home wipe failure once and clears it with the CP", () => {
+    toastMock.mockReset();
+    useWorkspaceStore.setState({ state: "starting", homeWipeFailed: "" });
+    useWorkspaceStore.getState().applyPush({ state: "stopped", homeWipeFailed: "exit 1" });
+    useWorkspaceStore.getState().applyPush({ state: "stopped", homeWipeFailed: "exit 1" });
+    expect(toastMock).toHaveBeenCalledTimes(1);
+    expect(String(toastMock.mock.calls[0][0])).toContain("exit 1");
+    expect(useWorkspaceStore.getState().homeWipeFailed).toBe("exit 1");
+    useWorkspaceStore.getState().applyPush({ state: "running" });
+    expect(useWorkspaceStore.getState().homeWipeFailed).toBe("");
   });
 
   // stale (a backend update not yet picked up) is decided by the CP alone. Hold whatever is
@@ -148,6 +165,13 @@ describe("workspace store recreate / cleanHome failures", () => {
       serve(answer(500, { error: { code: "internal", message: "remove home/repos: permission denied" } }));
       const fail = await useWorkspaceStore.getState()[op](true);
       expect(fail).toEqual({ message: "remove home/repos: permission denied", untouched: false });
+    });
+
+    // ecs: the wipe is a task still running elsewhere; nothing was stopped.
+    it(`${op}: a home task still running is untouched`, async () => {
+      serve(answer(409, { error: { code: "home_operation_in_progress", message: "still running" } }));
+      const fail = await useWorkspaceStore.getState()[op](true);
+      expect(fail?.untouched).toBe(true);
     });
 
     it(`${op}: success is null`, async () => {

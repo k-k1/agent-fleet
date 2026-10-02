@@ -223,6 +223,16 @@ func (d cpTenant) CleanHomeByMembership(ctx context.Context, mid string) error {
 	return d.m.cleanHomeByMembership(ctx, mid)
 }
 
+func (d cpTenant) HomeOpsInBackground() bool { return d.m.homeOperations().Background }
+
+func (d cpTenant) StartCleanHomeByMembership(ctx context.Context, mid string, done func(error)) error {
+	return d.m.startCleanHomeByMembership(ctx, mid, done)
+}
+
+func (d cpTenant) StartDestroyWorkspaceByMembership(ctx context.Context, mid string, done func([]string, error)) error {
+	return d.m.startDestroyWorkspaceByMembership(ctx, mid, done)
+}
+
 func (d cpTenant) HomeBackupsByMembership(ctx context.Context, mid string) (runtime.HomeBackups, bool, error) {
 	return d.m.homeBackupsByMembership(ctx, mid)
 }
