@@ -46,6 +46,7 @@ export function AwsProfilesChip() {
   const refresh = useAwsLoginStore((s) => s.refreshExpiry);
   const showProfile = useAwsLoginStore((s) => s.showProfile);
   const logout = useProfileLogout();
+  const loggingOut = useAwsLoginStore((s) => s.loggingOut);
   const openSettings = useSettingsUI((s) => s.openSettings);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -157,6 +158,7 @@ export function AwsProfilesChip() {
                             type="button"
                             className="ghost ws-aws-logout"
                             title={tr("awslogin.logout_title")}
+                            disabled={loggingOut[p.name] === true}
                             onClick={() => {
                               // The confirm dialog sits outside the popover, whose dismiss
                               // layer would close it on the first press there.

@@ -10,6 +10,7 @@ import { useT, t, type MsgKey } from "../../../lib/i18n/index.ts";
 import { Field, Meta } from "../parts/mcpForm.tsx";
 import { ProfileLoginModal, type LoginProfile } from "../../awslogin/ProfileLoginModal.tsx";
 import { useProfileLogout } from "../../awslogin/useProfileLogout.ts";
+import { useAwsLoginStore } from "../../awslogin/store.ts";
 
 // SsmTab manages the member's own AWS profiles and SSM hosts (docs/log/p3-ssm-session.md)
 // in two tiers so the form isn't cluttered:
@@ -224,6 +225,7 @@ function ProfileSection({
   const [editing, setEditing] = useState<any | null>(null);
   const [loginFor, setLoginFor] = useState<(LoginProfile & { id: string }) | null>(null);
   const logout = useProfileLogout();
+  const loggingOut = useAwsLoginStore((st) => st.loggingOut);
   // Bumped when reloginNeeded changes, which React cannot see.
   const [, setMarks] = useState(0);
   // Each row's login state, from the Agent (absent while the workspace is stopped). Asked on
@@ -232,7 +234,8 @@ function ProfileSection({
   const loadStates = useCallback(() => {
     api("api/aws-login/profiles")
       .then((d) => {
-        const m: Record<string, string> = {};
+        // No prototype: a profile named "__proto__" would otherwise set it instead of a key.
+        const m: Record<string, string> = Object.create(null);
         for (const p of Array.isArray(d?.profiles) ? d.profiles : []) m[String(p.name)] = String(p.state);
         setStates(m);
       })
@@ -463,7 +466,7 @@ function ProfileSection({
                   <button
                     className="ghost ssm-logout"
                     title={tr("awslogin.logout_title")}
-                    disabled={busy}
+                    disabled={busy || loggingOut[p.name] === true}
                     onClick={() => void logout(p).then((done) => done && loadStates())}
                   >
                     {tr("awslogin.logout")}

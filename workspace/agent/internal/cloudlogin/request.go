@@ -55,6 +55,7 @@ type Store[S comparable] struct {
 	Backend   Backend[S]
 
 	attempts registry
+	gates    gateSet
 }
 
 // Waiter is one run waiting on a request. Both fields are text an agent wrote, so they
@@ -368,6 +369,62 @@ func (s *Store[S]) Cancel(id string) (Request[S], error) {
 		_ = os.Remove(s.RequestPath(req.Key))
 	}
 	return req, nil
+}
+
+// gateSet holds one mutex per request key; see Store.Gate.
+type gateSet struct {
+	mu sync.Mutex
+	m  map[string]*sync.Mutex
+}
+
+// Gate is key's gate. Start holds it from making the attempt until the process has started,
+// so a backend that rewrites the key's credential files (a logout taking a token off disk)
+// can hold it to keep a login process from opening those files meanwhile: a process that
+// opened one first and rewrites it in place would write into the deleted file. Never hold
+// it across a network call.
+func (s *Store[S]) Gate(key string) *sync.Mutex {
+	s.gates.mu.Lock()
+	defer s.gates.mu.Unlock()
+	if s.gates.m == nil {
+		s.gates.m = map[string]*sync.Mutex{}
+	}
+	g := s.gates.m[key]
+	if g == nil {
+		g = &sync.Mutex{}
+		s.gates.m[key] = g
+	}
+	return g
+}
+
+// LockKey takes key's credential lock, across processes: shared by a wrapper run while it
+// turns the cached login into credentials, exclusive by a logout while it deletes them. A run
+// that read the login just before a logout would otherwise write fresh credentials back after
+// the logout deleted them.
+func (s *Store[S]) LockKey(key string, shared bool) (func(), error) {
+	if err := os.MkdirAll(s.dir(), 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(s.LockKeyPath(key), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	how := syscall.LOCK_EX
+	if shared {
+		how = syscall.LOCK_SH
+	}
+	if err := syscall.Flock(int(f.Fd()), how); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+	}, nil
+}
+
+// LockKeyPath is the file LockKey locks, for tests that need it unlockable.
+func (s *Store[S]) LockKeyPath(key string) string {
+	return filepath.Join(s.dir(), fileKey(key)+".cache.lock")
 }
 
 // registry holds the attempts of one Store. Attempts live in memory only: an Agent

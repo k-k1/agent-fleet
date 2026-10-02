@@ -18,6 +18,10 @@
 //     attempt for the key replaces the running one.
 //   - Wait: the wrapper's wait for the member, ending in credentials or in an error the
 //     wrapper turns into exit 3.
+//   - Per-key exclusion for a logout: Gate keeps a login process from starting while a
+//     backend rewrites the key's credential files, and LockKey is the cross-process lock a
+//     wrapper run holds shared while it reads them and a logout holds exclusively while it
+//     deletes them.
 //
 // What a backend (internal/awsx today, internal/gcpx for ADR 0107) supplies, and what
 // this package must keep able to express:

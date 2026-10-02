@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,30 +30,37 @@ func TestSSORoleCachePathMatchesBotocore(t *testing.T) {
 	}
 }
 
-// fakeLogoutAWS stands in for the CLI's `sso logout`: it records the HOME it ran with, the
-// token files that HOME held and its AWS_* environment, then sources onLogout if present.
-func fakeLogoutAWS(t *testing.T) (state string) {
+// portal stands in for the SSO portal's Logout API and records every call.
+type portal struct {
+	mu     sync.Mutex
+	calls  []string // "<method> <path> <region> <token>"
+	status int
+}
+
+func fakePortal(t *testing.T) *portal {
 	t.Helper()
-	dir := t.TempDir()
-	state = filepath.Join(dir, "state")
-	os.MkdirAll(state, 0o700)
-	script := `#!/bin/sh
-S="` + state + `"
-[ "$1 $2" = "sso logout" ] || exit 1
-echo "$HOME" > "$S/home"
-ls "$HOME/.aws/sso/cache" > "$S/tokens"
-env | grep -E '^AWS_' | sort > "$S/env"
-[ -f "$S/onLogout" ] && . "$S/onLogout"
-exit 0
-`
-	bin := filepath.Join(dir, "aws")
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	old := LoginAWSBin
-	LoginAWSBin = func() (string, error) { return bin, nil }
-	t.Cleanup(func() { LoginAWSBin = old })
-	return state
+	p := &portal{status: http.StatusOK}
+	var region string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		p.calls = append(p.calls, r.Method+" "+r.URL.Path+" "+region+" "+r.Header.Get("x-amz-sso_bearer_token"))
+		w.WriteHeader(p.status)
+		if p.status != http.StatusOK {
+			w.Write([]byte(`{"message":"Too many requests"}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	old := ssoPortalURL
+	ssoPortalURL = func(r string) string { region = r; return srv.URL }
+	t.Cleanup(func() { ssoPortalURL = old })
+	return p
+}
+
+func (p *portal) seen() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.calls...)
 }
 
 func profileLogout(t *testing.T, name string) (*httptest.ResponseRecorder, profileLogoutWire) {
@@ -112,10 +120,8 @@ func assertGone(t *testing.T, gone, kept []string) {
 }
 
 func TestProfileLogoutRevokesAndRemovesOnlyThisProfile(t *testing.T) {
-	state := fakeLogoutAWS(t)
+	p := fakePortal(t)
 	mine, others := logoutFixture(t)
-	t.Setenv("AWS_ENDPOINT_URL", "http://127.0.0.1:1")
-	t.Setenv("AWS_PROFILE", "something-else")
 
 	rec, out := profileLogout(t, "prod")
 	if rec.Code != http.StatusOK || !out.Revoked || out.NoToken || out.Message != "" {
@@ -124,43 +130,43 @@ func TestProfileLogoutRevokesAndRemovesOnlyThisProfile(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "secret-") {
 		t.Fatalf("a token left the Agent: %s", rec.Body.String())
 	}
-	// The CLI revokes every token its HOME holds, so that HOME must hold prod's alone.
-	seen, _ := os.ReadFile(filepath.Join(state, "tokens"))
-	if got := strings.TrimSpace(string(seen)); got != filepath.Base(ssoCachePath("af-prod")) {
-		t.Fatalf("the CLI's HOME held %q", got)
-	}
-	home, _ := os.ReadFile(filepath.Join(state, "home"))
-	tmpHome := strings.TrimSpace(string(home))
-	if tmpHome == os.Getenv("HOME") || tmpHome == "" {
-		t.Fatalf("the CLI ran with the member's HOME %q", tmpHome)
-	}
-	if _, err := os.Stat(tmpHome); !os.IsNotExist(err) {
-		t.Errorf("the throwaway HOME %s was left behind", tmpHome)
-	}
-	env, _ := os.ReadFile(filepath.Join(state, "env"))
-	for _, bad := range []string{"AWS_ENDPOINT_URL=", "AWS_PROFILE="} {
-		if strings.Contains(string(env), bad) {
-			t.Errorf("%s reached the logout: %s", bad, env)
-		}
+	// The token carries no region, so the profile's SSO region is used.
+	if got := p.seen(); len(got) != 1 || got[0] != "POST /logout ap-northeast-1 secret-access" {
+		t.Fatalf("portal calls = %q", got)
 	}
 	assertGone(t, mine, others)
 }
 
-func TestProfileLogoutSignsOutHereWhenTheRevokeFails(t *testing.T) {
-	state := fakeLogoutAWS(t)
+func TestProfileLogoutSignsOutHereWhenAWSRefuses(t *testing.T) {
+	p := fakePortal(t)
+	p.status = http.StatusTooManyRequests
 	mine, others := logoutFixture(t)
-	os.WriteFile(filepath.Join(state, "onLogout"), []byte(`echo 'Could not connect to the endpoint URL' >&2; exit 255
-`), 0o600)
 
 	rec, out := profileLogout(t, "prod")
-	if rec.Code != http.StatusOK || out.Revoked || !strings.Contains(out.Message, "Could not connect") {
+	if rec.Code != http.StatusOK || out.Revoked || !strings.Contains(out.Message, "429") {
 		t.Fatalf("logout = %d %s", rec.Code, rec.Body.String())
 	}
 	assertGone(t, mine, others)
 }
 
+func TestProfileLogoutSendsTheTokenOnlyToAPortalHost(t *testing.T) {
+	p := fakePortal(t)
+	mine, others := logoutFixture(t)
+	writeSSOCacheDoc(t, map[string]string{"accessToken": "secret-access", "expiresAt": "2099-01-01T00:00:00Z",
+		"region": "evil.example/x"})
+
+	rec, out := profileLogout(t, "prod")
+	if rec.Code != http.StatusOK || out.Revoked || !strings.Contains(out.Message, "region") {
+		t.Fatalf("logout = %d %s", rec.Code, rec.Body.String())
+	}
+	if got := p.seen(); len(got) != 0 {
+		t.Fatalf("the token was sent: %q", got)
+	}
+	assertGone(t, mine, others)
+}
+
 func TestProfileLogoutWithoutATokenRevokesNothing(t *testing.T) {
-	state := fakeLogoutAWS(t)
+	p := fakePortal(t)
 	mine, others := logoutFixture(t)
 	os.Remove(mine[0])
 
@@ -168,30 +174,95 @@ func TestProfileLogoutWithoutATokenRevokesNothing(t *testing.T) {
 	if rec.Code != http.StatusOK || out.Revoked || !out.NoToken {
 		t.Fatalf("logout = %d %s", rec.Code, rec.Body.String())
 	}
-	if _, err := os.Stat(filepath.Join(state, "home")); !os.IsNotExist(err) {
-		t.Fatal("the CLI was run with no token to revoke")
+	if got := p.seen(); len(got) != 0 {
+		t.Fatalf("revoked with no token: %q", got)
 	}
 	// Role credentials outlive the token, so they still go.
 	assertGone(t, mine, others)
 }
 
-func TestProfileLogoutEndsARunningLogin(t *testing.T) {
-	fakeLogoutAWS(t)
-	logoutFixture(t)
-	stopped := false
-	// That an ended attempt drops its URL and code is cloudlogin's (TestEndClearsTheURLAndCode).
-	a := logins.Begin("af-prod", "", "prod", func() { stopped = true })
+// Settings is cached before the managed block is rewritten, so for a while (or after a
+// failed write) the CLI keys the role cache by the block's account and role, not Settings'.
+func TestProfileLogoutRemovesTheRoleCacheOfTheManagedBlockToo(t *testing.T) {
+	fakePortal(t)
+	mine, others := logoutFixture(t)
+	moved := prodSettings["prod"]
+	moved.RoleName = "Admin"
+	if err := saveSettingsCache([]Profile{moved}, nil); err != nil {
+		t.Fatal(err)
+	}
+	newer := ssoRoleCachePath(moved.AccountID, moved.RoleName, "af-prod")
+	os.WriteFile(newer, []byte("{}"), 0o600)
 
 	if rec, _ := profileLogout(t, "prod"); rec.Code != http.StatusOK {
 		t.Fatalf("logout = %d %s", rec.Code, rec.Body.String())
 	}
-	if v := a.View(); v.Phase != cloudlogin.PhaseCancelled || !stopped {
-		t.Fatalf("the running login was not ended: phase=%s stopped=%t", v.Phase, stopped)
+	assertGone(t, append(mine, newer), others)
+}
+
+func TestProfileLogoutEndsARunningLoginAndWaitsForIt(t *testing.T) {
+	fakePortal(t)
+	mine, _ := logoutFixture(t)
+	os.Remove(mine[0])
+	// The CLI is killed, but what it was writing may still land while it goes; the cleanup
+	// stands in for that late write.
+	wrote := make(chan struct{})
+	a, err := logins.Start("af-prod", "", "prod", cloudlogin.Process{
+		Name: "fake login", Path: "sleep", Args: []string{"5"}, Env: os.Environ(), Timeout: time.Minute,
+		Parse:  func(string) (string, string, error) { return "", "", nil },
+		Exited: func(error) (bool, string) { return false, "" },
+		Cleanup: func() {
+			time.Sleep(100 * time.Millisecond)
+			os.WriteFile(mine[0], []byte(`{"accessToken":"late"}`), 0o600)
+			close(wrote)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
+
+	if rec, _ := profileLogout(t, "prod"); rec.Code != http.StatusOK {
+		t.Fatalf("logout = %d %s", rec.Code, rec.Body.String())
+	}
+	if v := a.View(); v.Phase != cloudlogin.PhaseCancelled {
+		t.Fatalf("the running login was not ended: phase=%s", v.Phase)
+	}
+	// Whatever the CLI wrote before it exited must be gone.
+	select {
+	case <-wrote:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the login never exited")
+	}
+	assertGone(t, mine, nil)
+}
+
+// An af-aws-exec run that read the token before the logout writes role credentials back
+// after it; the logout must wait for it, not delete under it.
+func TestProfileLogoutWaitsForARunReadingTheCache(t *testing.T) {
+	fakePortal(t)
+	mine, others := logoutFixture(t)
+	unlock, err := logins.LockKey("af-prod", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		profileLogout(t, "prod")
+	}()
+	time.Sleep(100 * time.Millisecond)
+	os.WriteFile(mine[1], []byte(`{"ProviderType": "sso"}`), 0o600)
+	unlock()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the logout never finished")
+	}
+	assertGone(t, mine, others)
 }
 
 func TestProfileLogoutRefusesWhatItDoesNotOwn(t *testing.T) {
-	state := fakeLogoutAWS(t)
+	p := fakePortal(t)
 	mine, others := logoutFixture(t)
 	// The member's own config defines the profile: af-prod's token is theirs, not ours.
 	if err := os.WriteFile(ConfigPath(), []byte("[profile prod]\nregion = us-east-1\n"), 0o600); err != nil {
@@ -203,8 +274,243 @@ func TestProfileLogoutRefusesWhatItDoesNotOwn(t *testing.T) {
 			t.Errorf("logout %s = %d %s, want %s", name, rec.Code, rec.Body.String(), want)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(state, "home")); !os.IsNotExist(err) {
-		t.Fatal("a refused logout ran the CLI")
+	if got := p.seen(); len(got) != 0 {
+		t.Fatalf("a refused logout called AWS: %q", got)
 	}
 	assertGone(t, nil, append(mine, others...))
+}
+
+// The other half of the lock: an af-aws-exec run does not read the cache while a logout
+// holds it.
+func TestExportSSOCredsWaitsForALogout(t *testing.T) {
+	bin, state := fakeAWS(t, ssoProfile)
+	os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600)
+	unlock, err := logins.LockKey("af-prod", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := exportSSOCreds(awsRunner{bin: bin, env: os.Environ()}, "af-prod")
+		done <- err
+	}()
+	select {
+	case <-done:
+		t.Fatal("read the cache while a logout held it")
+	case <-time.After(150 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("never read the cache after the logout")
+	}
+}
+
+// A role profile whose source_profile chain ends in a Settings SSO profile reads the same
+// cached login, so it waits for a logout of that session too.
+func TestPlanExecThroughAnSSOSourceWaitsForALogout(t *testing.T) {
+	src := "[profile src]\nsso_session = af-prod\nsso_account_id = 123456789012\nsso_role_name = Dev\n"
+	bin, _ := fakeDeploy(t, deployProfile, src, "", deployARN)
+	unlock, err := logins.LockKey("af-prod", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Account: deployAccount, Login: "never",
+			Argv: []string{"true"}, Quiet: true})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("ran while a logout held the source's login (err = %v)", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("never ran after the logout")
+	}
+}
+
+// blockCacheLock makes af-prod's cache lock impossible to take.
+func blockCacheLock(t *testing.T) {
+	t.Helper()
+	if err := os.MkdirAll(logins.LockKeyPath("af-prod"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNoLockMeansNoLogoutAndNoRun(t *testing.T) {
+	p := fakePortal(t)
+	mine, others := logoutFixture(t)
+	blockCacheLock(t)
+	rec, _ := profileLogout(t, "prod")
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), `"lock_failed"`) {
+		t.Fatalf("logout = %d %s", rec.Code, rec.Body.String())
+	}
+	if got := p.seen(); len(got) != 0 {
+		t.Fatalf("called AWS without the lock: %q", got)
+	}
+	assertGone(t, nil, append(mine, others...))
+
+	bin, state := fakeAWS(t, ssoProfile)
+	os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600)
+	blockCacheLock(t)
+	if _, err := exportSSOCreds(awsRunner{bin: bin, env: os.Environ()}, "af-prod"); err == nil {
+		t.Fatal("read the cache without the lock")
+	}
+	if n := cliCalls(state); n != 0 {
+		t.Fatalf("aws was started %d times without the lock", n)
+	}
+}
+
+// The revoke can take seconds; a login the member finishes meanwhile is a new one, and its
+// token stays.
+func TestProfileLogoutKeepsALoginThatLandsDuringTheRevoke(t *testing.T) {
+	mine, others := logoutFixture(t)
+	called, release := make(chan struct{}), make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(called)
+		<-release
+	}))
+	t.Cleanup(srv.Close)
+	old := ssoPortalURL
+	ssoPortalURL = func(string) string { return srv.URL }
+	t.Cleanup(func() { ssoPortalURL = old })
+
+	done := make(chan profileLogoutWire, 1)
+	go func() {
+		_, out := profileLogout(t, "prod")
+		done <- out
+	}()
+	<-called
+	fresh := []byte(`{"accessToken":"new-login"}`)
+	os.WriteFile(mine[0], fresh, 0o600)
+	close(release)
+	if out := <-done; !out.Revoked {
+		t.Fatalf("logout = %+v", out)
+	}
+	if b, _ := os.ReadFile(mine[0]); string(b) != string(fresh) {
+		t.Fatalf("the new login's token is %q", b)
+	}
+	assertGone(t, mine[1:], others)
+}
+
+func TestTakeOffTokenPutsBackANewerLogin(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token.json")
+	os.WriteFile(path, []byte("old"), 0o600)
+	if err := takeOffToken(path, []byte("old")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("the logged-out token stayed")
+	}
+	os.WriteFile(path, []byte("newer"), 0o600)
+	if err := takeOffToken(path, []byte("old")); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != "newer" {
+		t.Fatalf("a newer login was taken off: %q", b)
+	}
+	if _, err := os.Stat(path + ".af-logout"); !os.IsNotExist(err) {
+		t.Fatal("the side file stayed")
+	}
+}
+
+// A still newer login written while the put-back is decided must not be replaced by it.
+func TestTakeOffTokenNeverReplacesAStillNewerLogin(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token.json")
+	os.WriteFile(path, []byte("newer"), 0o600)
+	beforePutBack = func() { os.WriteFile(path, []byte("newest"), 0o600) }
+	t.Cleanup(func() { beforePutBack = func() {} })
+	if err := takeOffToken(path, []byte("old")); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != "newest" {
+		t.Fatalf("the newest login was replaced: %q", b)
+	}
+	if _, err := os.Stat(path + ".af-logout"); !os.IsNotExist(err) {
+		t.Fatal("the side file stayed")
+	}
+}
+
+// botocore rewrites the token file in place (open, truncate, write), so a login CLI that
+// opened it before the logout took it off would write into the deleted file. No login CLI
+// starts while a logout holds the gate.
+func TestALoginDoesNotStartWhileALogoutTakesTheTokenOff(t *testing.T) {
+	bin, state := fakeAWS(t, ssoProfile)
+	exportedProd(t)
+	old := LoginAWSBin
+	LoginAWSBin = func() (string, error) { return bin, nil }
+	t.Cleanup(func() { LoginAWSBin = old })
+	os.WriteFile(filepath.Join(state, "onLogin"), []byte("sleep 5\n"), 0o600)
+
+	g := logins.Gate("af-prod")
+	g.Lock()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- profileStart("prod") }()
+	select {
+	case <-done:
+		g.Unlock()
+		t.Fatal("a login started while a logout held the gate")
+	case <-time.After(150 * time.Millisecond):
+	}
+	if n := cliCalls(state); n != 0 {
+		g.Unlock()
+		t.Fatalf("aws was started %d times", n)
+	}
+	g.Unlock()
+	rec := <-done
+	if rec.Code != http.StatusOK {
+		t.Fatalf("start = %d %s", rec.Code, rec.Body.String())
+	}
+	cur := logins.Current("af-prod")
+	cur.End(cloudlogin.PhaseFailed, "")
+	<-cur.Exited()
+}
+
+// The logout holds the gate until the old token is off disk, and not while AWS answers.
+func TestProfileLogoutHoldsTheGateOnlyUntilTheTokenIsOff(t *testing.T) {
+	mine, _ := logoutFixture(t)
+	gateFree := make(chan bool, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		g := logins.Gate("af-prod")
+		free := g.TryLock()
+		if free {
+			g.Unlock()
+		}
+		gateFree <- free
+	}))
+	t.Cleanup(srv.Close)
+	old := ssoPortalURL
+	ssoPortalURL = func(string) string { return srv.URL }
+	t.Cleanup(func() { ssoPortalURL = old })
+
+	g := logins.Gate("af-prod")
+	g.Lock()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		profileLogout(t, "prod")
+	}()
+	time.Sleep(150 * time.Millisecond)
+	if _, err := os.Stat(mine[0]); err != nil {
+		g.Unlock()
+		t.Fatal("the token was taken off without the gate")
+	}
+	g.Unlock()
+	<-done
+	if !<-gateFree {
+		t.Fatal("the gate was held during the revoke")
+	}
+	assertGone(t, mine, nil)
 }

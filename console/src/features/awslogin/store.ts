@@ -85,7 +85,9 @@ interface AwsLoginState {
   /** Opens the modal for a name from a notification, only if the Agent lists it as expiring. */
   openProfile(name: string): Promise<void>;
   closeProfile(): void;
-  /** Logs the workspace out of one profile, then re-reads the list. */
+  /** Profiles a logout is running for; their buttons stay off until it answers. */
+  loggingOut: Record<string, true>;
+  /** Logs the workspace out of one profile, then re-reads the list. A second call while one runs is refused. */
   logoutProfile(name: string): Promise<AwsLogoutResult>;
 }
 
@@ -168,12 +170,21 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
   closeProfile() {
     set({ profileModal: null });
   },
+  loggingOut: {},
   async logoutProfile(name) {
+    // === true, not truthiness: a profile named "constructor" would read Object.prototype's.
+    if (get().loggingOut[name] === true) return { ok: false, code: "busy", message: "" };
+    set((s) => ({ loggingOut: { ...s.loggingOut, [name]: true } }));
     let d: { revoked?: unknown; noToken?: unknown; message?: unknown; error?: { code?: string; message?: string } } | null;
     try {
       d = await api(`api/aws-login/profiles/${encodeURIComponent(name)}/logout`, { method: "POST" });
     } catch (e) {
       return { ok: false, code: "", message: String((e as Error)?.message || e) };
+    } finally {
+      set((s) => {
+        const { [name]: _, ...rest } = s.loggingOut;
+        return { loggingOut: rest };
+      });
     }
     // Whatever the answer, the cache may have changed under the list.
     void get().refreshExpiry();

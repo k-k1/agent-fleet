@@ -44,7 +44,7 @@ const maxSourceChain = 16
 // (keys beside a credential_process, keys on a role hop, login_session, an incomplete
 // SSO profile falling through to a process); other SDKs order them differently again.
 // The one exception is botocore's documented self-source shape (below).
-func checkSourceChain(env []string, profile string, keys, origin map[string]string) (ssoRoot string, err error) {
+func checkSourceChain(env []string, profile string, keys, origin map[string]string) (ssoRoot, rootSession string, err error) {
 	cur, seen := profile, map[string]bool{profile: true}
 	for hop := 0; ; hop++ {
 		in := fmt.Sprintf("profile %q", cur)
@@ -55,46 +55,46 @@ func checkSourceChain(env []string, profile string, keys, origin map[string]stri
 		// (EcsContainer, Ec2InstanceMetadata, Environment): the workload role this tool
 		// keeps away from the member's commands.
 		if _, set := keys["credential_source"]; set {
-			return "", fmt.Errorf("%s sets credential_source (%s), which takes the workspace's own credentials, not yours; "+
+			return "", "", fmt.Errorf("%s sets credential_source (%s), which takes the workspace's own credentials, not yours; "+
 				"af-aws-exec refuses it", in, where(origin["credential_source"]))
 		}
 		for _, k := range []string{"web_identity_token_file", "login_session"} {
 			if _, set := keys[k]; set {
-				return "", fmt.Errorf("%s sets %s (%s); af-aws-exec does not run that kind of profile", in, k, where(origin[k]))
+				return "", "", fmt.Errorf("%s sets %s (%s); af-aws-exec does not run that kind of profile", in, k, where(origin[k]))
 			}
 		}
 		// The CLI would prompt for the code on a terminal the command does not have when an
 		// agent runs it, and wait there.
 		if _, set := keys["mfa_serial"]; set {
-			return "", fmt.Errorf("%s sets mfa_serial (%s); af-aws-exec cannot answer an MFA prompt, so it refuses the profile",
+			return "", "", fmt.Errorf("%s sets mfa_serial (%s); af-aws-exec cannot answer an MFA prompt, so it refuses the profile",
 				in, where(origin["mfa_serial"]))
 		}
 		sources := credentialSources(keys)
 		role, hasRole := keys["role_arn"]
 		if !hasRole {
 			if len(sources) != 1 {
-				return "", oneSourceError(in, sources, origin)
+				return "", "", oneSourceError(in, sources, origin)
 			}
 			if sources[0] != "sso" {
-				return "", nil
+				return "", "", nil
 			}
 			// An SSO profile the SSO provider does not claim falls through to whatever
 			// else the chain finds; only a complete one is an SSO root.
 			sso, err := resolveSSO(env, keys, origin)
 			if err != nil {
-				return "", fmt.Errorf("%s: %w", in, err)
+				return "", "", fmt.Errorf("%s: %w", in, err)
 			}
 			if sso.Account == "" || sso.Role == "" || sso.StartURL == "" || sso.Region == "" {
-				return "", fmt.Errorf("%s has incomplete SSO settings (it needs a portal, SSO region, account and role)", in)
+				return "", "", fmt.Errorf("%s has incomplete SSO settings (it needs a portal, SSO region, account and role)", in)
 			}
-			return cur, nil
+			return cur, sso.Session, nil
 		}
 		if scalar(role) == "" {
-			return "", fmt.Errorf("%s has an empty or multi-line role_arn (%s)", in, where(origin["role_arn"]))
+			return "", "", fmt.Errorf("%s has an empty or multi-line role_arn (%s)", in, where(origin["role_arn"]))
 		}
 		src := scalar(keys["source_profile"])
 		if src == "" {
-			return "", fmt.Errorf("%s sets role_arn without a source_profile; af-aws-exec only runs a role assumed from a source profile", in)
+			return "", "", fmt.Errorf("%s sets role_arn without a source_profile; af-aws-exec only runs a role assumed from a source profile", in)
 		}
 		// botocore lets the named profile be its own source when it holds static keys: the
 		// keys assume the role. On a source further down the same keys are that hop's
@@ -102,25 +102,25 @@ func checkSourceChain(env []string, profile string, keys, origin map[string]stri
 		// only on the named profile.
 		if src == cur {
 			if cur == profile && len(sources) == 2 && sources[1] == "keys" {
-				return "", nil
+				return "", "", nil
 			}
 			if cur == profile && len(sources) == 1 {
-				return "", fmt.Errorf("%s names itself as source_profile but has no keys of its own", in)
+				return "", "", fmt.Errorf("%s names itself as source_profile but has no keys of its own", in)
 			}
-			return "", oneSourceError(in, sources, origin)
+			return "", "", oneSourceError(in, sources, origin)
 		}
 		if len(sources) != 1 {
-			return "", oneSourceError(in, sources, origin)
+			return "", "", oneSourceError(in, sources, origin)
 		}
 		if seen[src] || hop >= maxSourceChain {
-			return "", fmt.Errorf("the source_profile chain from profile %q loops back to %q", profile, src)
+			return "", "", fmt.Errorf("the source_profile chain from profile %q loops back to %q", profile, src)
 		}
 		seen[src] = true
 		if keys, origin, err = profileKeysFrom(env, src); err != nil {
-			return "", err
+			return "", "", err
 		}
 		if len(keys) == 0 {
-			return "", fmt.Errorf("%s names source_profile %q, which is not defined", in, src)
+			return "", "", fmt.Errorf("%s names source_profile %q, which is not defined", in, src)
 		}
 		cur = src
 	}
@@ -230,7 +230,7 @@ func planNonSSO(awsBin string, env []string, keys, origin map[string]string, ste
 	if isRole && roleAcct != o.Account {
 		return "", nil, nil, fmt.Errorf("profile %q assumes a role in account %s, not the %s given with --account", o.Profile, roleAcct, o.Account)
 	}
-	ssoRoot, err := checkSourceChain(env, o.Profile, keys, origin)
+	ssoRoot, rootSession, err := checkSourceChain(env, o.Profile, keys, origin)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -239,7 +239,7 @@ func planNonSSO(awsBin string, env []string, keys, origin map[string]string, ste
 	}
 
 	aws := awsRunner{bin: awsBin, env: ownFilesEnv(env)}
-	creds, err := exportCreds(aws, o.Profile)
+	creds, err := exportLocked(aws, o.Profile, rootSession)
 	err = withheldProcessOutput(err, o.Profile)
 	if err != nil && ssoRoot != "" && loginNeeded(err.Error()) {
 		// The Console login (ADR 0102) is for Settings profiles run by name; here the
@@ -256,7 +256,7 @@ func planNonSSO(awsBin string, env []string, keys, origin map[string]string, ste
 		if lerr := deviceLogin(awsBin, aws.env, ssoRoot, o.Stderr); lerr != nil {
 			return "", nil, nil, fmt.Errorf("aws sso login for profile %s: %w", ssoRoot, lerr)
 		}
-		creds, err = exportCreds(aws, o.Profile)
+		creds, err = exportLocked(aws, o.Profile, rootSession)
 		err = withheldProcessOutput(err, o.Profile)
 	}
 	if errors.Is(err, errNoSessionToken) {
