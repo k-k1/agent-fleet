@@ -81,7 +81,7 @@ function OpencodeUsageRows() {
       <p className="ps-note">{tr(off ? "agents.oc_enabled_note_off" : "agents.oc_enabled_note_on")}</p>
       {!off && (
         <>
-          <SettingRow label={tr("agents.oc_usage")} />
+          <p className="ps-title">{tr("agents.oc_usage")}</p>
           <div className="p-opts p-opts-col" role="radiogroup" aria-label={tr("agents.oc_usage")}>
             {OC_ROUTES.map((v) => (
               <button

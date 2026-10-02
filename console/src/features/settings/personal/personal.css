@@ -456,14 +456,3 @@
   border: 1px solid var(--border2);
   border-radius: 8px;
 }
-
-/* .ds-row does not stack on narrow screens: label 120 + gap 12 + a 200px select already fill
-   a 400px viewport, so the box's side inset pushed the select out of the card (measured:
-   scrollWidth 332 -> 345). There the box collapses to a top rule. */
-@media (max-width: 520px) {
-  .ai-feature-card {
-    padding: 6px 0 4px;
-    border-width: 1px 0 0;
-    border-radius: 0;
-  }
-}

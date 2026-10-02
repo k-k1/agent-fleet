@@ -416,8 +416,8 @@ function ProfileSection({
   );
 
   return (
-    <section className="ssm-section">
-      <div className="conn-cat">{tr("ssm.profile_cat")}</div>
+    <section className="ds-group">
+      <div className="ds-title">{tr("ssm.profile_cat")}</div>
       <div className="field-help">
         {tr("ssm.profile_help_1")}
         <code>~/.aws</code>
@@ -684,8 +684,8 @@ function HostSection({
   );
 
   return (
-    <section className="ssm-section">
-      <div className="conn-cat">{tr("ssm.host_cat")}</div>
+    <section className="ds-group">
+      <div className="ds-title">{tr("ssm.host_cat")}</div>
       <div className="field-help">
         {tr("ssm.host_help_1")}
         <code>aws ssm start-session --target &lt;instance&gt; --document-name &lt;document&gt;</code>

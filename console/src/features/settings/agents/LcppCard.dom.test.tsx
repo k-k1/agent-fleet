@@ -236,3 +236,26 @@ describe("LcppCard — layout", () => {
     expect(host!.querySelector(".p-body > .p-who.p-who-flush")).not.toBeNull();
   });
 });
+
+// An empty catalog (no engine reachable) used to draw a segmented control with no segments —
+// a bare frame next to "Default model". It must say there is nothing to choose instead.
+describe("LcppCard — default-model row with an empty catalog", () => {
+  it("shows a note instead of an empty control", async () => {
+    lcppModels = [];
+    const { t } = await import("../../../lib/i18n/index.ts");
+    await mount(undefined);
+    const disclosure = [...(host?.querySelectorAll("button") ?? [])].find((b) => /behavior/i.test(b.textContent || ""));
+    await act(async () => {
+      disclosure!.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const row = [...host!.querySelectorAll(".p-settings .ps-row")].find((r) =>
+      r.querySelector(".ps-label")?.textContent?.startsWith(t("agents.default_model")),
+    )!;
+    expect(row.textContent).toContain(t("agents.default_model_none"));
+    expect(row.querySelector(".choice-seg")).toBeNull();
+  });
+});

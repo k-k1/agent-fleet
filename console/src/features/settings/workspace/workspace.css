@@ -37,6 +37,14 @@
   border-top: 1px solid var(--border);
 }
 
+/* The rule separates the zone from settings above it; as the first thing in the tab there is
+   nothing to separate it from. */
+.danger-zone:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
 .danger-zone-title {
   display: flex;
   align-items: center;
@@ -219,10 +227,6 @@
   overflow: auto;
 }
 
-/* SSM login settings (SsmTab) — SSO sessions + host bookmarks. */
-.ssm-section {
-  margin-bottom: 18px;
-}
 
 /* Per-host terminal color picker (swatches of the vivid hue + a terminal preview). */
 .ssm-host-color {

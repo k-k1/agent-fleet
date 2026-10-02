@@ -83,7 +83,7 @@ async function mount(): Promise<void> {
   await act(async () => {});
 }
 
-const sections = () => Array.from(host.querySelectorAll<HTMLElement>("section.ssm-section"));
+const sections = () => Array.from(host.querySelectorAll<HTMLElement>("section.ds-group"));
 const rows = (sec: number) => Array.from(sections()[sec].querySelectorAll<HTMLElement>("li.ssm-item"));
 
 function btn(scope: HTMLElement, label: string): HTMLButtonElement {
