@@ -42,7 +42,7 @@ const SETS: BrandSet[] = [
     // monogram at least does (compared at 1:1 in headless Chromium).
     dir: "services",
     cls: "bi-service-",
-    keys: ["aws", "bitbucket", "cloudwatch", "discord", "github", "grafana", "jira", "pagerduty", "slack"],
+    keys: ["aws", "bitbucket", "cloudwatch", "discord", "gcp", "github", "grafana", "jira", "pagerduty", "slack"],
   },
   {
     // The company that MADE a model, as resolved by the Agent (workspace/agent/model_provider.go)

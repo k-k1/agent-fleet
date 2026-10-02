@@ -9,6 +9,7 @@ import { dismissToast, toast } from "../../ui/toast.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useNotificationStore } from "../notifications/store.ts";
 import { GcpLoginModal } from "./GcpLoginModal.tsx";
+import { GcpProfileLoginModal } from "./GcpProfileLoginModal.tsx";
 import { gcpWaitersLine, useGcpLoginStore, type GcpLoginRequest } from "./store.ts";
 
 export const GCP_LOGIN_NOTICE = "gcp-login-required";
@@ -41,6 +42,9 @@ export function GcpLoginHost() {
   const modal = useGcpLoginStore((s) => s.modal);
   const refresh = useGcpLoginStore((s) => s.refresh);
   const hide = useGcpLoginStore((s) => s.hide);
+  const profileModal = useGcpLoginStore((s) => s.profileModal);
+  const closeProfile = useGcpLoginStore((s) => s.closeProfile);
+  const refreshProfiles = useGcpLoginStore((s) => s.refreshProfiles);
   const lastNoticeSeq = useRef(0);
 
   useEffect(() => {
@@ -85,6 +89,22 @@ export function GcpLoginHost() {
   }, [polling, refresh]);
 
   // Keyed by the request: a notification for another request can switch the open modal, and
-  // the new one must not inherit the old attempt, its link or its code field.
-  return modal ? <GcpLoginModal key={modal} id={modal} /> : null;
+  // the new one must not inherit the old attempt, its link or its code field. The profile
+  // modal (the WS bar badge's) is keyed by profile for the same reason.
+  return (
+    <>
+      {modal && <GcpLoginModal key={modal} id={modal} />}
+      {profileModal && (
+        <GcpProfileLoginModal
+          key={profileModal.profile.name}
+          profile={profileModal.profile}
+          force={profileModal.force}
+          onClose={() => {
+            closeProfile();
+            void refreshProfiles();
+          }}
+        />
+      )}
+    </>
+  );
 }

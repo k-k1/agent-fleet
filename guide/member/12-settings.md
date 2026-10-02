@@ -326,8 +326,11 @@ Your Google Cloud profiles, which `af-gcloud-exec` runs commands with: a label (
 it and shown beside it), the project, and optionally a quota project, the Google account to sign in as, a
 service account to impersonate, a region and a zone. No Google credentials are stored here, and
 service-account keys are not accepted. Two labels that make the same name are not available in the workspace
-until you rename one; the row says so. The login itself happens in a terminal in the workspace the first time a
-profile is used.
+until you rename one; the row says so. Each available row has **Log in** to sign the workspace in to Google for
+that profile from the Console: it opens a login window, the sign-in starts only when you press **Log in** there, and
+you paste the verification code Google shows into that same window — and only into a login you started yourself.
+A logged-in row says **"Logged in as <account>"** and offers **Log in again**, which signs in afresh for a login you
+know was revoked. The WS bar's Google Cloud badge lists the same logins.
 → [10 Going further](10-integrations.md#running-commands-in-google-cloud-as-you-af-gcloud-exec)
 
 ---

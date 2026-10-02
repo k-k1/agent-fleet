@@ -846,6 +846,12 @@ button.ws-aws-btn .codicon:not(.codicon-chevron-down) {
   font-size: 15px;
   line-height: 1;
 }
+/* The Google Cloud chip (gcplogin/GcpProfilesChip) wears these same ws-aws-* classes so the
+   two badges cannot drift apart; only what differs is ws-gcp-*. The Google Cloud mark fills a
+   square, not a wordmark's strip: at 15px it outweighs the label beside it. */
+button.ws-aws-btn.ws-gcp-btn .codicon:not(.codicon-chevron-down) {
+  font-size: 13px;
+}
 .ws-aws-btn .codicon-chevron-down {
   font-size: 9px;
   opacity: 0.7;
