@@ -560,21 +560,55 @@ your code that way.
 
 ### Logging in
 
-At a terminal, `af-gcloud-exec` starts the Google sign-in itself when the profile has no usable login. It prints
-a URL: open it in your browser, sign in (as the profile's account, if it names one), and paste the
-**verification code** the page shows back into **that** terminal. Paste only a code from a sign-in you started
-yourself just now.
+**In the Console.** Each profile row in **⚙ Settings → Google Cloud** has **Log in**; once the workspace holds a
+login for the profile, the row says **"Logged in as <account>"** and the button becomes **Log in again**. The WS
+bar's Google Cloud badge has the same buttons ([below](#the-google-cloud-badge-in-the-ws-bar)). The button opens a
+login window that shows the profile, its project and its account and starts nothing yet: the sign-in starts only
+when you press **Log in** (or **Log in again**) in that window, and only that window then shows the sign-in.
 
-An agent's command cannot sign in for you. It exits with code 3 and the message "Google Cloud login required …
-log in from a terminal with:" followed by the command to run, which looks like this:
+1. Press **Open Google sign-in**. Google's sign-in page opens in a new tab (the window also shows its address,
+   which is always on `accounts.google.com`: the workspace refuses to show any other). Sign in — as the profile's
+   account, if it names one; a sign-in as anyone else is refused.
+2. Google shows a **verification code**. Paste it into **Verification code** in the same login window and press
+   **Submit code**. The window says "Logged in" once the workspace has checked that the login gives a token.
+
+**Paste a code only into a login you started yourself, here, just now.** A code works only for the sign-in whose
+page produced it, and the Console shows the code field only in the window where you pressed **Log in** — but
+nothing proves who started a sign-in: any program in your workspace, an agent included, can start one. So never
+paste a code into a field, a terminal or a chat message someone else put in front of you.
+
+If the workspace already holds a usable login for the account, **Log in** finishes at once without a sign-in page.
+**Log in again** always signs you in afresh instead of reusing what is stored; use it when you know the login was
+revoked (the workspace cannot see that until a command is refused). If you press **Log in** again in another
+window or device, the first sign-in stops and its code no longer works. A sign-in that is not finished within
+15 minutes ends; **Start again** begins a new one.
+
+**When an agent's command needs the login**, it asks you in the Console: `af-gcloud-exec` prints "Google Cloud
+login for profile … requested in the Agent Fleet Console", and a toast at the bottom of the screen says **"An agent
+is waiting for a Google Cloud login"**, with the profile, its project and which session and command ask. Press
+**Log in** on the toast to open the login window and continue as above. When Google refused the stored login, the
+window says so, and the sign-in starts afresh. The agent's command waits about a minute and a half (a few seconds
+when it is not run by an agent session, such as a script in a shell session) and continues once you are logged in;
+if it has given up by then, it exits with code 3 saying the login is waiting in the Console, and the agent runs it
+again after you tell it you are done. **Close** keeps the request: it stays in the Console on your other devices
+too. **Cancel the request** is for a login you do not want: it withdraws the request, the command exits with
+code 3, and for about a minute that profile is not asked for again. Closing the toast only hides it in that tab.
+**Log in** on the profile's row in Settings, or in the badge, works at any time; a sign-in there settles the
+request too.
+
+**At a terminal**, `af-gcloud-exec` starts the Google sign-in itself when the profile has no usable login. It prints
+a URL: open it in your browser, sign in, and paste the verification code the page shows back into **that**
+terminal. The same rule holds: paste only a code from a sign-in you started yourself just now. A command that
+cannot ask the Console (with `--no-login`, or outside a workspace) exits with code 3 and prints the command to run
+in a terminal of your own — a shell session, or in Claude Code type it after `!` at the prompt:
 
 ```sh
 af-gcloud-exec --profile <name> --project <project-id> --login -- true
 ```
 
-Run it in a terminal of your own — a shell session, or in Claude Code type it after `!` at the prompt — then tell
-the agent to run its command again. `--no-login` makes `af-gcloud-exec` exit with code 3 instead of prompting,
-even at a terminal.
+**On a Compute Engine VM.** On a workspace that runs directly on a Google Cloud VM (the `native` runtime), gcloud
+first asks whether to use a personal account on that VM. The Console login does not answer that question for you:
+the login window ends saying so, and you log in with the terminal command above instead.
 
 **When a login ends.** Google can refuse a stored login: it was revoked, or your organisation requires you to
 sign in again after a set time (session length). The next run that needs a fresh token then asks for a login as
@@ -583,11 +617,29 @@ you before** such an end: the time is not recorded anywhere it can read. Until t
 less than ten minutes left, runs keep working, so the request for a login can come up to about 50 minutes after
 the end.
 
+### The Google Cloud badge in the WS bar
+
+While the workspace is running and you have at least one Google Cloud profile, the WS bar shows a badge with the
+Google mark beside the AWS one. It names your logged-in profile when there is exactly one, and otherwise counts
+them ("1/3" — one of three logged in). It is green when something is logged in, plain when nothing is, and amber
+while an agent's command is waiting for a profile's login. Press it for the list: each profile with **Logged in**
+or **Not logged in**, its name, project and account, **"An agent is waiting for this login"** on the row an agent
+is waiting for, and **Log in** / **Log in again**, which open the login window above. There is no default profile:
+every logged-in profile can be used at the same time, and each command picks one with
+`af-gcloud-exec --profile <name>`. **Google Cloud settings** at the bottom opens the Settings tab.
+
+"Logged in" means the workspace holds a Google login for the profile's account. Whether Google still accepts it
+shows only when a command uses it, so a revoked login still reads **Logged in** until then; **Log in again** is
+the way out. The badge does not poll: it asks the workspace when it comes up, when you open the list, when a
+login request comes or goes, and after a login.
+
 ### When it stops
 
 | What you see | What it means |
 |---|---|
-| exit code 3, "Google Cloud login required" | The profile has no login yet, or Google refused the stored one. Log in as above. Exit 3 always means a login. |
+| exit code 3, "the login was requested in the Agent Fleet Console and is waiting …" | The profile has no login yet, or Google refused the stored one, and the command stopped waiting. Log in from the toast or Settings, then have the command run again. Exit 3 always means a login. |
+| exit code 3, "the login request was cancelled in the Agent Fleet Console" | You cancelled the request. Log in from Settings if you do want it. |
+| exit code 3, "Google Cloud login required … log in from a terminal with:" | The Console could not be asked (`--no-login`, or outside a workspace). Run the printed command in a terminal. |
 | "is for project X, not Y; --project must be the profile's project" | The wrong profile for this project. Check `--list`. |
 | "no Google Cloud profile …" or "not exported: …" | The name is not one of your available profiles: add or fix it in Settings. |
 | "gcloud could not mint a token: …" | Not a login problem: no permission (also on the service account to impersonate), an API not enabled, or the network. The message says which. |
