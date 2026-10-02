@@ -915,7 +915,10 @@ def source_setting_tabs(locale: str) -> tuple[dict[str, str], list[str]]:
             ):
                 continue
             vkind, value, voff = toks[k + 2]
-            if vkind == "str":
+            # The literal must be the whole value: `"A" + "B"` or `"A" ? "B" : "C"` start
+            # with a string too, and taking "A" would pass a row the screen never shows.
+            end = toks[k + 3][:2] if k + 3 < len(toks) else None
+            if vkind == "str" and end in (("punct", ","), ("punct", "}")):
                 out[key] = value
             else:
                 line = text.count("\n", 0, voff) + 1

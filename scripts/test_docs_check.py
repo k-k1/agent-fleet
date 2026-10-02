@@ -357,12 +357,22 @@ class SettingTabsTests(unittest.TestCase):
             '  "tenant.tab_engine_access": `Engine ${x}`,\n'
             '  "tenant.tab_cost": COST_LABEL,\n'
             '  "tenant.note": `fine ${x}`,\n'
-            "};\n"
+            '  "tenant.tab_members": "Members" + " list",\n'
+            '  "tenant.tab_audit": "Audit" ? "Actual" : "Other",\n'
+            '  "tenant.tab_usage": "Usage"}\n'
         )
         out = self.errors()
         self.assertIn("locales/en/admin.ts:2: 'tenant.tab_engine_access' is not a plain string", out)
         self.assertIn("locales/en/admin.ts:3: 'tenant.tab_cost' is not a plain string", out)
+        self.assertIn("locales/en/admin.ts:5: 'tenant.tab_members' is not a plain string", out)
+        self.assertIn("locales/en/admin.ts:6: 'tenant.tab_audit' is not a plain string", out)
         self.assertNotIn("tenant.note", out)
+        check._cache.clear()
+        tabs, _ = check.source_setting_tabs("en")
+        self.assertNotIn("tenant.tab_members", tabs)
+        self.assertNotIn("tenant.tab_audit", tabs)
+        # A literal closed by `}` with no trailing comma is still a plain value.
+        self.assertEqual(tabs["tenant.tab_usage"], "Usage")
 
     def test_missing_row_is_an_error(self):
         self.write_rows(self.ROWS[:-1])
