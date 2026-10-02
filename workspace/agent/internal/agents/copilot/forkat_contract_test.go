@@ -11,8 +11,9 @@
 //
 //	COPILOT_CONTRACT_LIVE=1 go test -tags contract -run TestContractLiveCopilotForkAt ./internal/agents/copilot/
 //
-// Cost: 3 real turns (one-line replies). COPILOT_HOME is isolated, so the real ~/.copilot is
-// never touched (authentication uses the environment's GitHub token / saved credential).
+// Cost: 3 real turns (one-line replies), 4 when the branch echoes the earlier "OK" format.
+// COPILOT_HOME is isolated, so the real ~/.copilot is never touched (authentication uses the
+// environment's GitHub token / saved credential).
 package copilot
 
 import (
@@ -106,33 +107,51 @@ func TestContractLiveCopilotForkAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveForkAt: %v", err)
 	}
-	dst := copilotUUID(t)
-	if err := MaterializeForkAt(src, dst, resolved); err != nil {
-		t.Fatalf("MaterializeForkAt against a REAL session failed: %v", err)
-	}
-	// Everything the source had was carried over, i.e. the copy is complete. Never assert
-	// on individual file names: by 1.0.81 copilot had dropped the per-session `session.db`
-	// and moved the state to a global `session-store.db` directly under COPILOT_HOME
-	// (measured 2026-08-28; sessions created before that still have session.db). Names
-	// here would misreport "the copy broke" on every such relocation. The claim of this
-	// test is that even when the carried state contains both turns, the truncated
-	// events.jsonl wins.
-	srcEntries, err := os.ReadDir(filepath.Join(home, "session-state", src))
-	if err != nil {
-		t.Fatalf("cannot read the source session-state: %v", err)
-	}
-	for _, e := range srcEntries {
-		if _, err := os.Stat(filepath.Join(home, "session-state", dst, e.Name())); err != nil {
-			t.Fatalf("branch is missing %q from the source session-state (the copy is incomplete): %v", e.Name(), err)
+	// fork materializes a fresh, never-resumed branch: the contract is about the FIRST
+	// restore from a truncated events.jsonl, and a resume rewrites the session state.
+	fork := func() string {
+		t.Helper()
+		dst := copilotUUID(t)
+		if err := MaterializeForkAt(src, dst, resolved); err != nil {
+			t.Fatalf("MaterializeForkAt against a REAL session failed: %v", err)
 		}
+		// Everything the source had was carried over, i.e. the copy is complete. Never assert
+		// on individual file names: by 1.0.81 copilot had dropped the per-session `session.db`
+		// and moved the state to a global `session-store.db` directly under COPILOT_HOME
+		// (measured 2026-08-28; sessions created before that still have session.db). Names
+		// here would misreport "the copy broke" on every such relocation. The claim of this
+		// test is that even when the carried state contains both turns, the truncated
+		// events.jsonl wins.
+		srcEntries, err := os.ReadDir(filepath.Join(home, "session-state", src))
+		if err != nil {
+			t.Fatalf("cannot read the source session-state: %v", err)
+		}
+		for _, e := range srcEntries {
+			if _, err := os.Stat(filepath.Join(home, "session-state", dst, e.Name())); err != nil {
+				t.Fatalf("branch is missing %q from the source session-state (the copy is incomplete): %v", e.Name(), err)
+			}
+		}
+		return dst
 	}
 
-	out := copilotPrompt(t, home, work, dst, "What is the codeword? Answer with one word.")
-	up := strings.ToUpper(out)
-	switch {
-	case strings.Contains(up, "ALPHA"):
+	// The two earlier prompts end in "Reply exactly: OK", and the branch sometimes keeps that
+	// format, so the question has to override it explicitly.
+	const ask = "Ignore the earlier reply format. What is the codeword? Answer with that one word."
+	out := copilotPrompt(t, home, work, fork(), ask)
+	verdict := classifyForkAnswer(out)
+	if verdict == forkAnswerFormatEcho {
+		// A bare "OK" says nothing about the restore either way. Ask once only: a retry loop
+		// would turn a branch that really cannot answer into a pass by attrition. Ask a new
+		// fork, not the one that already answered, or a second resume could recover what the
+		// first restore got wrong.
+		t.Logf("the branch echoed the earlier reply format; asking a fresh branch once more:\n%s", out)
+		out = copilotPrompt(t, home, work, fork(), ask)
+		verdict = classifyForkAnswer(out)
+	}
+	switch verdict {
+	case forkAnswerCarried:
 		// As contracted: events.jsonl is what the restore reads from.
-	case strings.Contains(up, "BETA"):
+	case forkAnswerLeaked:
 		t.Fatalf("the branch remembered the turn we cut away — copilot no longer restores from "+
 			"events.jsonl (session.db, which we copy verbatim, now wins). Every point fork would "+
 			"silently carry history the mirror shows as removed.\n%s", out)
