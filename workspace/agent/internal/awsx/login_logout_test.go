@@ -2,6 +2,7 @@ package awsx
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -65,24 +66,27 @@ func (p *portal) seen() []string {
 
 func profileLogout(t *testing.T, name string) (*httptest.ResponseRecorder, profileLogoutWire) {
 	t.Helper()
-	rec := postProfileLogout(name)
-	var out profileLogoutWire
-	if rec.Code == http.StatusOK {
-		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-			t.Fatalf("logout body = %s", rec.Body.String())
-		}
+	rec, out, err := postProfileLogout(name)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return rec, out
 }
 
-// postProfileLogout is profileLogout without the body check, for a goroutine, which may not
-// call t.Fatal.
-func postProfileLogout(name string) *httptest.ResponseRecorder {
+// postProfileLogout is profileLogout for a goroutine, which may not call t.Fatal: a 200
+// whose body does not decode is returned as an error.
+func postProfileLogout(name string) (*httptest.ResponseRecorder, profileLogoutWire, error) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/aws-login/profiles/"+name+"/logout", nil)
 	req.SetPathValue("name", name)
 	HandleProfileLogout(rec, req)
-	return rec
+	var out profileLogoutWire
+	if rec.Code == http.StatusOK {
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			return rec, out, fmt.Errorf("logout body = %s", rec.Body.String())
+		}
+	}
+	return rec, out, nil
 }
 
 // logoutFixture signs prod in and puts other profiles' caches beside it. It returns prod's
@@ -256,7 +260,9 @@ func TestProfileLogoutWaitsForARunReadingTheCache(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		postProfileLogout("prod")
+		if _, _, err := postProfileLogout("prod"); err != nil {
+			t.Error(err)
+		}
 	}()
 	// Joined before HOME is restored: a logout left running would delete the real token.
 	t.Cleanup(func() { release(); <-done })
@@ -397,16 +403,21 @@ func TestProfileLogoutKeepsALoginThatLandsDuringTheRevoke(t *testing.T) {
 	ssoPortalURL = func(string) string { return srv.URL }
 	t.Cleanup(func() { ssoPortalURL = old })
 
-	done := make(chan *httptest.ResponseRecorder, 1)
-	go func() { done <- postProfileLogout("prod") }()
+	type result struct {
+		out profileLogoutWire
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		_, out, err := postProfileLogout("prod")
+		done <- result{out, err}
+	}()
 	<-called
 	fresh := []byte(`{"accessToken":"new-login"}`)
 	os.WriteFile(mine[0], fresh, 0o600)
 	close(release)
-	rec := <-done
-	var out profileLogoutWire
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || !out.Revoked {
-		t.Fatalf("logout = %d %s", rec.Code, rec.Body.String())
+	if res := <-done; res.err != nil || !res.out.Revoked {
+		t.Fatalf("logout = %+v %v", res.out, res.err)
 	}
 	if b, _ := os.ReadFile(mine[0]); string(b) != string(fresh) {
 		t.Fatalf("the new login's token is %q", b)
@@ -517,7 +528,9 @@ func TestProfileLogoutHoldsTheGateOnlyUntilTheTokenIsOff(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		postProfileLogout("prod")
+		if _, _, err := postProfileLogout("prod"); err != nil {
+			t.Error(err)
+		}
 	}()
 	// Joined before HOME and ssoPortalURL are restored: a logout left running would delete
 	// the real token and revoke it at the real portal.
