@@ -54,6 +54,15 @@ describe("pop-out seed", () => {
     expect(relabelSingleCell(useLayoutStore.getState().layout, "tabs")).toBeNull();
   });
 
+  it("never turns a cell with several tabs into split", () => {
+    useLayoutStore.getState().initSinglePane({ kind: "terminal", chat: true }, "sess-a", null, "tabs");
+    useLayoutStore.getState().openTarget({ content: { kind: "file", filePath: "/repo/a.ts" } });
+    const l = useLayoutStore.getState().layout;
+    expect(allViews(l)).toHaveLength(2);
+    expect(relabelSingleCell(l, "split")).toBeNull();
+    expect(relabelSingleCell(l, "tabs")).toEqual(l);
+  });
+
   // Minimal pop-out → open a link (replaces in place, pushes history) → Expand → Back: the entry
   // Back restores was recorded in split, and re-labelling it must bring the session back.
   it("brings the session back when Back restores a pre-expand entry", () => {

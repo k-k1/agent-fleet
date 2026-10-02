@@ -12,7 +12,6 @@ import { startPushChannel, restartPush } from "../core/push/events.ts";
 import { wirePushApply } from "../core/push/wire.ts";
 import { useWorkspaceStore, startWorkspacePolling } from "../core/store/workspace.ts";
 import { useLayoutStore, wireLayoutHistory } from "../layout/store.ts";
-import { relabelSingleCell } from "../layout/ops.ts";
 import { wireKeys } from "../features/keys/dispatcher.ts";
 import { useLeftRail } from "../core/store/leftRail.ts";
 import { wireTerminalReconcile } from "../terminal/service.ts";
@@ -36,7 +35,7 @@ import { startRepoJobsPolling } from "../features/repos/jobs.ts";
 import { useFilesStore } from "../features/files/store.ts";
 import { wireFilesSessionRefresh } from "../features/files/sessionRefresh.ts";
 import { useChatStore, startChatPolling } from "../features/chat/store.ts";
-import { getSettings, hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setPrefsOwnerSource, setSetting, useSettings } from "../lib/settings.ts";
+import { getSettings, hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setPrefsOwnerSource, useSettings } from "../lib/settings.ts";
 import { getTenant, getUser } from "../core/api/client.ts";
 import { MOBILE_QUERY, coarsePointer } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
@@ -73,6 +72,7 @@ import { displayName } from "../lib/sessionview.ts";
 import { takePendingPopout, takeStalePopoutLink } from "../features/panes/popout.ts";
 import type { PopoutDescriptor } from "../layout/popout.ts";
 import { confirmDirtyNavigation } from "../features/editor/dirtyRegistry.ts";
+import { usePaneLayoutSync } from "./usePaneLayoutSync.ts";
 import { PopoutTitleBar } from "../features/panes/PopoutTitleBar.tsx";
 import { toast } from "../ui/toast.ts";
 import { t } from "../lib/i18n/index.ts";
@@ -397,27 +397,7 @@ export function App() {
     void useSessionsStore.getState().refresh();
   }, [booted, tenant]);
 
-  // The preference chooses a profile, not a conversion: each profile retains
-  // its own tab-local layout so switching never destroys terminals or drafts.
-  useEffect(() => {
-    const wanted = layoutModeFor(popout, paneLayout);
-    // Read the store, not the render's snapshot: the boot effect above has already loaded the
-    // preferred mode in this same commit, and a stale `layout.mode` would load it a second time.
-    const current = () => useLayoutStore.getState().layout.mode;
-    if (!booted || current() === wanted) return;
-    // A pop-out tab converts its one pane in place — on Expand, and when Back restores an entry
-    // recorded before it — instead of loading the profile, which would replace that pane.
-    const relabelled = popout ? relabelSingleCell(useLayoutStore.getState().layout, wanted) : null;
-    if (relabelled) {
-      useLayoutStore.getState().commit(relabelled, false);
-      return;
-    }
-    void confirmDirtyNavigation("layout").then((proceed) => {
-      if (current() === wanted) return;
-      if (proceed) useLayoutStore.getState().loadMode(tenant, wanted);
-      else setSetting("paneLayout", current() === "tabs" ? "tabs" : "split");
-    });
-  }, [booted, tenant, paneLayout, popout, layout.mode]);
+  usePaneLayoutSync(booted, tenant, paneLayout, popout);
 
   // A Chromium attachment changes layout only after the user has followed its
   // action URL. MCP/server activity alone never reaches this effect. It runs
