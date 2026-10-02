@@ -86,6 +86,7 @@ describe("AWS profiles chip", () => {
     await mount();
     expect(chip()!.textContent).toContain("2/3");
     expect(chip()!.title).toBe("AWS profiles: 2 of 3 signed in");
+    expect(chip()!.className).toContain("ok");
     expect(chip()!.className).not.toMatch(/warn|muted/);
   });
 
@@ -100,6 +101,7 @@ describe("AWS profiles chip", () => {
     await mount();
     expect(chip()!.textContent).toContain("0/1");
     expect(chip()!.className).toContain("muted");
+    expect(chip()!.className).not.toMatch(/\bok\b/);
   });
 
   it("renders nothing without Settings profiles or while the workspace is not running", async () => {
@@ -136,6 +138,7 @@ describe("AWS profiles chip", () => {
     profiles = [{ ...prod, expiresAt: "2026-10-02T03:10:00Z", expiring: true }, dev];
     await mount();
     expect(chip()!.className).toContain("warn");
+    expect(chip()!.className).not.toMatch(/\bok\b/);
     expect(chip()!.title).toBe("AWS profiles: a login ends soon");
     await openPop();
     const row = rows()[0];
