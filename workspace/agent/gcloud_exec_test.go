@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"database/sql"
@@ -13,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -45,7 +47,9 @@ func TestGCloudExecHelper(t *testing.T) {
 const fakeGcloudMain = `#!/bin/sh
 case "$1 $2" in
 "config config-helper")
+  if [ -f __DIR__/fail ]; then cat __DIR__/fail >&2; exit 1; fi
   printf '{"credential":{"access_token":"%s","token_expiry":"%s"}}\n' "$(cat __DIR__/token)" "$(cat __DIR__/expiry)";;
+"auth login") echo "Re-using locally stored credentials." >&2;;
 *) echo "fake gcloud: unexpected $*" >&2; exit 9;;
 esac
 `
@@ -83,14 +87,18 @@ func TestGCloudExecProcess(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	run := func(args ...string) (int, string, string) {
-		t.Helper()
+	command := func(args ...string) *exec.Cmd {
 		a, _ := json.Marshal(args)
 		cmd := exec.Command(os.Args[0], "-test.run=^TestGCloudExecHelper$")
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "AF_TEST_GCLOUD_EXEC_HELPER=1",
 			"AF_TEST_PINS=" + pins, "AF_TEST_ARGS=" + string(a),
 			"AF_CP_BASE_URL=" + srv.URL, "AF_GCP_PROFILES_TOKEN=" + bridgeTok,
 			"CLOUDSDK_AUTH_ACCESS_TOKEN_FILE=/nonexistent"}
+		return cmd
+	}
+	run := func(args ...string) (int, string, string) {
+		t.Helper()
+		cmd := command(args...)
 		var out, errb bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &errb
 		err := cmd.Run()
@@ -137,6 +145,69 @@ func TestGCloudExecProcess(t *testing.T) {
 	if code != 0 || out != "ran\n" || !strings.Contains(msg, "runs as dev@example.com") {
 		t.Errorf("run: exit %d out %q err %q", code, out, msg)
 	}
+	// A login that ran and still left no usable credential is exit 1, not 3.
+	_ = os.WriteFile(filepath.Join(fake, "fail"), []byte("ERROR: (gcloud.config.config-helper) There was a problem refreshing "+
+		"your current auth tokens: ('invalid_grant: Bad Request', {'error': 'invalid_grant'})\n"), 0o600)
+	if code, _, msg := run("--profile", "prod", "--project", "prod-project", "--login", "--", "true"); code != 1 ||
+		!strings.Contains(msg, "the login finished but still gave no usable credential") {
+		t.Errorf("after a login: exit %d %q", code, msg)
+	}
+	if code, _, _ := run("--profile", "prod", "--project", "prod-project", "--no-login", "--", "true"); code != 3 {
+		t.Errorf("rejected credential without a login: exit %d, want 3", code)
+	}
+	_ = os.Remove(filepath.Join(fake, "fail"))
+
+	// Another process holds the root (a terminal login): the run says it waits, from its
+	// very first sync, and finishes once the lock is released.
+	lock, err := os.OpenFile(filepath.Join(home, ".local", "state", "agent-fleet", "gcloud", ".agent-fleet.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	cmd := command("--list")
+	stderrR, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listOut bytes.Buffer
+	cmd.Stdout = &listOut
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	lines := make(chan string, 16)
+	go func() {
+		sc := bufio.NewScanner(stderrR)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		close(lines)
+		done <- cmd.Wait()
+	}()
+	// Whatever happens below, the child is gone before the test returns.
+	defer func() {
+		_ = cmd.Process.Kill()
+		<-done
+	}()
+	select {
+	case l := <-lines:
+		if l != gcpx.WaitingMessage {
+			t.Fatalf("first stderr line %q, want the waiting notice", l)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("no waiting notice while the root was locked")
+	}
+	_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	for range lines {
+	}
+	if err := <-done; err != nil || !strings.Contains(listOut.String(), "prod\tprod-project") {
+		t.Fatalf("--list after the release: %v %q", err, listOut.String())
+	}
+	done <- nil
+
 	if _, err := os.Stat(filepath.Join(home, ".config", "gcloud")); err == nil {
 		t.Error("the wrapper created ~/.config/gcloud")
 	}

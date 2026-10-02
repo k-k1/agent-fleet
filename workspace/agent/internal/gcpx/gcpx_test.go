@@ -53,6 +53,7 @@ for a; do last=$a; done
 case "$1 $2" in
 "config config-helper")
   if [ -f "$D/fail" ]; then cat "$D/fail" >&2; exit 1; fi
+  if [ -f "$D/fail-sticky" ]; then cat "$D/fail-sticky" >&2; exit 1; fi
   if [ -f "$D/stdout" ]; then cat "$D/stdout"; exit 0; fi
   tok=$(cat "$D/token")
   # An access-token override beats the configuration in real gcloud.
@@ -68,7 +69,9 @@ case "$1 $2" in
   echo "You are now logged in as [$acct]." >&2
   # gcloud rewrites the file in its own layout: the comment goes, keys move (measured).
   sed -i -e '/^#/d' -e "s/^\[core\]\$/[core]\naccount = $acct/" "$CLOUDSDK_CONFIG/configurations/config_$last"
-  rm -f "$D/fail"
+  # Like gcloud 587.0.0: without --force a login for an account whose cached access token
+  # still has time left reuses it and signs nobody in, so a rejected refresh stays rejected.
+  case " $* " in *" --force "*) rm -f "$D/fail";; esac
   ;;
 *) echo "fake gcloud: unexpected $*" >&2; exit 9;;
 esac
@@ -612,7 +615,7 @@ func TestTerminalLoginRunsAgainstTheAgentsRoot(t *testing.T) {
 		t.Fatalf("login account lost: %q", configText(t, "prod"))
 	}
 	// With an account in Settings, the login names it.
-	if got := strings.Join(LoginArgs(prod()), " "); got != "auth login dev@example.com --no-launch-browser --configuration af-prod" {
+	if got := strings.Join(LoginArgs(prod(), false), " "); got != "auth login dev@example.com --no-launch-browser --configuration af-prod" {
 		t.Errorf("login args %s", got)
 	}
 }
@@ -740,5 +743,62 @@ func TestLoginNeededFollowsTheUnderlyingError(t *testing.T) {
 		if got := loginNeeded(in); got != want {
 			t.Errorf("loginNeeded(%.90q) = %v, want %v", in, got, want)
 		}
+	}
+}
+
+// Google rejected the stored credential: the login has to be forced, or gcloud reuses the
+// cached access token, starts no sign-in, and the same refresh fails again.
+func TestRejectedCredentialForcesTheLogin(t *testing.T) {
+	e := setup(t)
+	p := prod()
+	mustApply(t, p)
+	addCredential(t, p.Account, "authorized_user")
+	e.write(t, "fail", "ERROR: (gcloud.config.config-helper) There was a problem refreshing your current auth tokens: "+
+		"('invalid_grant: Bad Request', {'error': 'invalid_grant', 'error_description': 'Bad Request'})\n")
+	o := execOpts(e, p)
+	o.Login = "always"
+	if _, _, _, err := PlanExec(e.gcloud, hostile(t), o); err != nil {
+		t.Fatal(err)
+	}
+	calls := e.calls(t)
+	if len(calls) != 3 || calls[1].args != "auth login dev@example.com --no-launch-browser --configuration af-prod --force" {
+		t.Fatalf("calls: %+v", calls)
+	}
+	// No account or no credential at all: nothing to reuse, so no --force.
+	_ = os.Remove(filepath.Join(e.fakeDir, "calls"))
+	addCredential(t, "picked@example.com", "authorized_user")
+	e.write(t, "login-account", "picked@example.com")
+	q := p
+	q.Account = ""
+	mustApply(t, q)
+	if _, _, _, err := PlanExec(e.gcloud, hostile(t), execOptsLogin(e, q)); err != nil {
+		t.Fatal(err)
+	}
+	if c := e.calls(t); len(c) != 2 || strings.Contains(c[0].args, "--force") {
+		t.Fatalf("calls: %+v", c)
+	}
+}
+
+func execOptsLogin(e *env, p Profile) ExecOptions {
+	o := execOpts(e, p)
+	o.Login = "always"
+	return o
+}
+
+// A login that ran but left no usable credential is a failure (exit 1), not "login needed
+// and not started" (exit 3).
+func TestFailureAfterTheLoginIsNotLoginRequired(t *testing.T) {
+	e := setup(t)
+	p := prod()
+	mustApply(t, p)
+	addCredential(t, p.Account, "authorized_user")
+	e.write(t, "fail-sticky", "ERROR: (gcloud.config.config-helper) There was a problem refreshing your current auth tokens: "+
+		"('invalid_grant: Bad Request', {'error': 'invalid_grant'})\n")
+	_, _, _, err := PlanExec(e.gcloud, hostile(t), execOptsLogin(e, p))
+	if err == nil || errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "invalid_grant") {
+		t.Fatalf("err = %v", err)
+	}
+	if c := e.calls(t); len(c) != 3 {
+		t.Fatalf("calls: %+v", c)
 	}
 }

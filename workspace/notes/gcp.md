@@ -75,6 +75,7 @@ Which tools the token reaches:
 | exit 1, "gcloud could not mint a token: …" | Not a login problem: permission denied (including on impersonation), a disabled API, the network. | Report the error as it is; do not ask the user to log in. |
 | exit 1, "the token gcloud minted is valid for only …" | gcloud could not mint a token with ten minutes left. | Rerun in a minute; if it repeats, report it. |
 | exit 1, "this deployment does not export Google Cloud profiles" | No profiles in this workspace. | Tell the user; there is no other route. |
+| exit 1, "the login finished but still gave no usable credential: …" | The user signed in, and the credential still does not work. | Report the message; do not start another login yourself. |
 | exit 1, "the profile changed in Settings while this run started; run it again" | Settings changed the profile between the run's check and its mint. | Rerun once; recheck `--list` if the account or project now differs from what you expected. |
 | "waiting for another af-gcloud-exec or a profile sync …" (stderr) | A login in a terminal, or another run, holds the Agent's store. | Nothing; the run continues when it is released. |
 

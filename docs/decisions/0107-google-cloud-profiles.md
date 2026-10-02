@@ -388,5 +388,10 @@ implementation choices.
   the root's lock from that check through the mint, so no sync or other run reads or rewrites the
   configuration while gcloud writes it. A Settings change made during the login is applied by the
   next sync, which resets the selection.
+  When Google rejected the stored credential (`invalid_grant`, reauthentication), the terminal login
+  runs with `--force`, as decision 3 has the Console login do. Without it, `gcloud auth login
+  <account>` reuses a cached access token with more than about five minutes left
+  (`ShouldUseCachedCredentials`, 587.0.0) and signs nobody in. A run whose login finished but still
+  has no usable credential exits 1, not 3.
 - **`GCE_METADATA_*` is removed for the child too**, beside `CLOUDSDK_*`, `GOOGLE_*` and `GCLOUD_*`:
   a caller's metadata host must not steer a library that does reach for the metadata server.

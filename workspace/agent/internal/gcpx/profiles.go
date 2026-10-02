@@ -100,11 +100,16 @@ type SyncResult struct {
 // Sync pulls the profiles and applies them to the Agent's root, under the root's lock
 // (cloudbridge.Pull says why the lock spans the fetch). Without the CP it applies the
 // cached list; without either the root is left as it is.
-func Sync() (SyncResult, error) {
+func Sync() (SyncResult, error) { return SyncNotify(nil) }
+
+// SyncNotify is Sync that calls waiting first when another process holds the root's lock
+// (a terminal login holds it for as long as the person takes): the wrapper's own sync says
+// why it does not start, while the background poll stays silent.
+func SyncNotify(waiting func()) (SyncResult, error) {
 	var res SyncResult
 	root := ""
 	p, err := bridge.Pull(func() (func(), error) {
-		r, unlock, lerr := lockRoot()
+		r, unlock, lerr := lockRootNotify(waiting)
 		root = r
 		return unlock, lerr
 	}, func(l cloudbridge.List[Profile]) error {

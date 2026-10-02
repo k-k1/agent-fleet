@@ -51,7 +51,7 @@ var gcloudExec = cloudexec.Wrapper{Name: "af-gcloud-exec", Usage: gcloudExecUsag
 func runGCloudExec(args []string) {
 	o, list := parseGCloudExecArgs(args)
 
-	res, serr := gcpx.Sync()
+	res, serr := gcpx.SyncNotify(func() { fmt.Fprintln(os.Stderr, gcpx.WaitingMessage) })
 	settings, conflicts := res.Exported, res.Conflicts
 	switch {
 	case errors.Is(serr, gcpx.ErrBridgeOff):

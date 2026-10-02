@@ -23,6 +23,13 @@ import (
 // ErrLoginRequired means the profile has no usable login and none was started.
 var ErrLoginRequired = errors.New("Google Cloud login required")
 
+// errCredentialRejected marks an ErrLoginRequired where a stored credential exists but
+// Google refused it (invalid_grant, reauthentication). A login for it must be forced:
+// without --force, `gcloud auth login <account>` reuses a cached access token with more than
+// about five minutes left (SDK 587.0.0, ShouldUseCachedCredentials) and starts no sign-in,
+// so the refresh that failed fails again after it.
+var errCredentialRejected = errors.New("the stored credential was rejected")
+
 // MinRemaining is the shortest token life a command is started with (decision 2): the
 // wrapper does not refresh during the command, so less would hand over a token about to end.
 const MinRemaining = 10 * time.Minute
@@ -48,6 +55,9 @@ type ExecOptions struct {
 	// Now is the clock for the remaining-life check (time.Now when nil).
 	Now func() time.Time
 }
+
+// WaitingMessage is what a run prints when another process holds the Agent's gcloud root.
+const WaitingMessage = "af-gcloud-exec: waiting for another af-gcloud-exec or a profile sync (a Google Cloud login in a terminal holds it) ..."
 
 // ExecDir holds the private per-run directories of af-gcloud-exec's children.
 func ExecDir() string { return cloudexec.StateDir("gcp-exec") }
@@ -113,15 +123,13 @@ func PlanExec(gcloudBin string, environ []string, o ExecOptions) (string, []stri
 	}
 	agentEnv := AgentEnv(environ, ConfigRoot())
 
-	waiting := func() {
-		fmt.Fprintln(stderr, "af-gcloud-exec: waiting for another af-gcloud-exec or a profile sync (a Google Cloud login in a terminal holds it) ...")
-	}
+	waiting := func() { fmt.Fprintln(stderr, WaitingMessage) }
 	tok, account, err := mintLocked(gcloudBin, agentEnv, p, waiting)
 	if errors.Is(err, ErrLoginRequired) {
 		hint := fmt.Sprintf("af-gcloud-exec --profile %s --project %s --login -- true", session.ShellQuote(p.Name), session.ShellQuote(p.Project))
 		switch {
 		case o.Login == "always" || (o.Login != "never" && o.Interactive):
-			tok, account, err = loginAndMint(gcloudBin, agentEnv, p, stderr, waiting)
+			tok, account, err = loginAndMint(gcloudBin, agentEnv, p, stderr, waiting, errors.Is(err, errCredentialRejected))
 		default:
 			return "", nil, nil, fmt.Errorf("profile %q: %w\nlog in from a terminal with: %s", p.Name, err, hint)
 		}
@@ -232,7 +240,10 @@ func mintHeld(gcloudBin string, env []string, root string, p Profile) (Token, st
 // lose it or keep an account chosen for a version of the profile Settings has since reset.
 // A Settings change made during the login is applied by the first sync after it, which then
 // resets the selection as decision 1 says. Other runs wait (and say so) meanwhile.
-func loginAndMint(gcloudBin string, env []string, p Profile, stderr io.Writer, waiting func()) (Token, string, error) {
+//
+// Once the login has started, a run that still has no usable credential is a failure (exit
+// 1), not ErrLoginRequired: exit 3 means a login is needed and was not started.
+func loginAndMint(gcloudBin string, env []string, p Profile, stderr io.Writer, waiting func(), force bool) (Token, string, error) {
 	root, unlock, err := lockRootNotify(waiting)
 	if err != nil {
 		return Token{}, "", err
@@ -241,11 +252,13 @@ func loginAndMint(gcloudBin string, env []string, p Profile, stderr io.Writer, w
 	if _, err := syncedAs(root, p); err != nil {
 		return Token{}, "", err
 	}
-	if err := terminalLogin(gcloudBin, cloudexec.SetEnv(env, "CLOUDSDK_CONFIG="+root), p, stderr); err != nil {
+	if err := terminalLogin(gcloudBin, cloudexec.SetEnv(env, "CLOUDSDK_CONFIG="+root), p, stderr, force); err != nil {
 		return Token{}, "", fmt.Errorf("gcloud auth login: %w", err)
 	}
 	tok, account, err := mintHeld(gcloudBin, env, root, p)
-	if err != nil {
+	if errors.Is(err, ErrLoginRequired) {
+		return Token{}, "", fmt.Errorf("the login finished but still gave no usable credential: %s", err.Error())
+	} else if err != nil {
 		return Token{}, "", fmt.Errorf("after the login: %w", err)
 	}
 	return tok, account, nil
@@ -299,7 +312,7 @@ func mint(gcloudBin string, env []string, p Profile) (Token, error) {
 	if err := cmd.Run(); err != nil {
 		msg := gcloudError(errb.String())
 		if loginNeeded(errb.String()) {
-			return Token{}, fmt.Errorf("%w: %s", ErrLoginRequired, msg)
+			return Token{}, fmt.Errorf("%w: %w: %s", ErrLoginRequired, errCredentialRejected, msg)
 		}
 		return Token{}, fmt.Errorf("gcloud could not mint a token: %s", msg)
 	}
@@ -392,21 +405,26 @@ func gcloudError(stderr string) string {
 // the profile names an account it is passed, so gcloud refuses any other sign-in before
 // storing it. Its stdout goes to stderr so the wrapped command's stdout stays clean for
 // pipes.
-func terminalLogin(gcloudBin string, env []string, p Profile, stderr io.Writer) error {
+func terminalLogin(gcloudBin string, env []string, p Profile, stderr io.Writer, force bool) error {
 	fmt.Fprintln(stderr, "af-gcloud-exec: Google Cloud login needed for profile "+p.Name+". Paste back only a code from a sign-in you started yourself just now.")
-	cmd := exec.Command(gcloudBin, LoginArgs(p)...)
+	cmd := exec.Command(gcloudBin, LoginArgs(p, force)...)
 	cmd.Env = env
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, stderr, stderr
 	return cmd.Run()
 }
 
-// LoginArgs is `gcloud auth login [<account>] --no-launch-browser --configuration af-<name>`.
-func LoginArgs(p Profile) []string {
+// LoginArgs is `gcloud auth login [<account>] --no-launch-browser --configuration af-<name>`,
+// with --force when Google rejected the stored credential (errCredentialRejected).
+func LoginArgs(p Profile, force bool) []string {
 	args := []string{"auth", "login"}
 	if p.Account != "" {
 		args = append(args, p.Account)
 	}
-	return append(args, "--no-launch-browser", "--configuration", ConfigName(p.Name))
+	args = append(args, "--no-launch-browser", "--configuration", ConfigName(p.Name))
+	if force {
+		args = append(args, "--force")
+	}
+	return args
 }
 
 // noCredentials is the GOOGLE_APPLICATION_CREDENTIALS of the child: a path in its private
