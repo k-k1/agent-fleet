@@ -1,0 +1,47 @@
+# What a GKE deployment adds to the base (ADR 0106 decisions 8 and 12): the Cloud SQL
+# Auth Proxy beside the CP, Workload Identity for the CP's account, the workspace node
+# pool, the global external Application Load Balancer through the Gateway API, and the
+# CP namespace's own ingress policy. The values come from deployment.yaml through
+# components/params, which an overlay lists after this one.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - gateway.yaml
+  - cp-networkpolicy.yaml
+
+patches:
+  - path: cp-deployment-patch.yaml
+  - path: cp-serviceaccount-patch.yaml
+
+replacements:
+  - source: { kind: ConfigMap, name: af-deployment, fieldPath: data.cpGoogleServiceAccount }
+    targets:
+      - select: { kind: ServiceAccount, name: af-cp }
+        fieldPaths:
+          - metadata.annotations.[iam.gke.io/gcp-service-account]
+  - source: { kind: ConfigMap, name: af-deployment, fieldPath: data.cloudSqlInstance }
+    targets:
+      - select: { kind: Deployment, name: af-cp }
+        fieldPaths:
+          - spec.template.spec.initContainers.[name=cloud-sql-proxy].args.6
+  - source: { kind: ConfigMap, name: af-deployment, fieldPath: data.cloudSqlUser }
+    targets:
+      - select: { kind: Deployment, name: af-cp }
+        fieldPaths:
+          - spec.template.spec.containers.[name=cp].env.[name=AF_DB_USER].value
+  - source: { kind: ConfigMap, name: af-deployment, fieldPath: data.gatewayAddressName }
+    targets:
+      - select: { kind: Gateway, name: af-cp }
+        fieldPaths:
+          - spec.addresses.0.value
+  - source: { kind: ConfigMap, name: af-deployment, fieldPath: data.certificateMapName }
+    targets:
+      - select: { kind: Gateway, name: af-cp }
+        fieldPaths:
+          - metadata.annotations.[networking.gke.io/certmap]
+  - source: { kind: ConfigMap, name: af-deployment, fieldPath: data.wsNamespace }
+    targets:
+      - select: { kind: NetworkPolicy, name: cp-ingress }
+        fieldPaths:
+          - spec.ingress.1.from.0.namespaceSelector.matchLabels.[kubernetes.io/metadata.name]

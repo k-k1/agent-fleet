@@ -1,7 +1,7 @@
 ---
 audience: "配備をどこで・どう動かすか決める人"
 source_of_truth: "各形態が何に対応しているかは ref/deploy-targets.md、選び方はこのページ"
-updated: "2026-08"
+updated: "2026-10"
 ---
 
 # 01. デプロイ形態を選ぶ
@@ -28,6 +28,7 @@ updated: "2026-08"
 | AWS に置きたい・少人数・費用が効く | **ec2-single** | 実体は **VM 上の compose**。別の runtime ではない |
 | タスク単位の隔離・ユーザー単位の障害分離・イメージの順次入替が要る | **ecs** | 買っているのは隔離であって、節約ではない |
 | 上に加えて、起動の速さとディスク性能が要る | **ecs-ec2** | インスタンスのプール ＋ ユーザー毎の永続ディスク |
+| 基盤が Kubernetes か Google Cloud で、使わないときは 0 台に縮むワークスペースが欲しい | **kubernetes** | 自分のクラスタ上で、ワークスペースはユーザー毎の永続ボリュームを持つ Pod。最初は GKE Standard |
 
 ## ECS が実際にいくら「かかる」か
 
@@ -51,6 +52,19 @@ updated: "2026-08"
 - **隔離要件やユーザー単位の可用性が要る → ECS。**ただし**床 $110** と、
   上の数字が成り立つには**アイドル自動停止が実際に効いていること**が前提だと引き受けた上で。
 
+## Kubernetes を選ぶとき、選ばないとき
+
+**kubernetes** を選ぶのは、組織がすでに Kubernetes クラスタでものを動かしているとき、または
+Google Cloud で、AWS の ECS がくれるもの——ワークスペース毎の Pod、クラスタによる隔離、動いている
+間だけの容量——が欲しいときです。代わりにクラスタが持ち込むものも引き受けます。まだ使っていなければ
+Terraform と kustomize を覚えること、ノードプール・マネージドなデータベース・ロードバランサという
+ECS と同じ種類の床の費用、そしてワークスペースを隔離するためにクラスタが満たすべき前提条件の一覧
+（runbook で 1 つずつ確かめます）です。
+
+少人数で費用を抑えたいとき（どのクラウドでも VM 1 台の方が安い）、名前空間とノードプールを専用に
+割けないクラスタ、NetworkPolicy を強制しないネットワークプラグインのクラスタでは選ばないでください。
+ホームは 1 つのゾーンに置かれ、この版ではバックアップされません。
+
 ## 手順の在り処
 
 コマンドは**操作する対象の隣**にあり、**リリースバンドルの中にも入ります**。
@@ -63,6 +77,7 @@ tarball だけ持っていてリポジトリを持たない顧客の手元にも
 | 個人の WSL2 | [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
 | ecs / ecs-ec2 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
 | ec2-single | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
+| kubernetes | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 ワークスペースの中では、同じファイルがこのセクションと並んで `operate/runbooks/` に置かれます。
 

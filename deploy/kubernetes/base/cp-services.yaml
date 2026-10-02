@@ -1,0 +1,33 @@
+# The ingress's way in: the main port only. Not reachable from workspaces, whose egress
+# policy excludes the pod and service ranges (workspace-networkpolicies.yaml).
+apiVersion: v1
+kind: Service
+metadata:
+  name: af-cp
+  namespace: af-placeholder-cp
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: af-cp
+  ports:
+    - name: http
+      port: 8099
+      targetPort: http
+---
+# The workspaces' way back (AF_CP_INTERNAL_URL). It targets the internal listener and
+# nothing else: that listener serves only the routes the agent calls and ignores identity
+# and forwarding headers, which the main port trusts from the ingress (ADR 0106
+# decision 8). Adding the main port here would let a workspace name any user.
+apiVersion: v1
+kind: Service
+metadata:
+  name: af-cp-internal
+  namespace: af-placeholder-cp
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: af-cp
+  ports:
+    - name: internal
+      port: 8098
+      targetPort: internal

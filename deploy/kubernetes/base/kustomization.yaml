@@ -1,0 +1,21 @@
+# The cluster-agnostic manifests of the `kubernetes` runtime profile (ADR 0106 decision 12).
+# Build an overlay, not this directory: the namespaces, address ranges and StorageClass
+# below are placeholders that an overlay's deployment.yaml replaces (components/params).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: agent-fleet
+    includeSelectors: false
+
+resources:
+  - namespaces.yaml
+  - cp-serviceaccount.yaml
+  - cp-rbac.yaml
+  - cp-data.yaml
+  - cp-deployment.yaml
+  - cp-services.yaml
+  - workspace-serviceaccount.yaml
+  - workspace-networkpolicies.yaml
+  - workspace-quota.yaml

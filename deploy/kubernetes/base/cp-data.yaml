@@ -1,0 +1,16 @@
+# The CP's own disk (WS_DATA): the internal git provider's repositories and LFS objects, and
+# the git token key. The database rows that list those repositories are worth nothing
+# without it, so it is backed up together with the database (README, "Backups").
+# ReadWriteOnce is enough: the Deployment runs one pod and uses Recreate. With the
+# StorageClass's reclaimPolicy Delete, deleting this claim deletes the disk.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: af-cp-data
+  namespace: af-placeholder-cp
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: af-placeholder-storageclass
+  resources:
+    requests:
+      storage: 20Gi

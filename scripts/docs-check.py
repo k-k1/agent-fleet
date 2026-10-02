@@ -386,6 +386,7 @@ CLOSURE_EXEMPT: dict[str, str] = {
     "deploy/local/README-wsl.md": _RUNBOOK_REASON,
     "deploy/aws/ecs/README.md": _RUNBOOK_REASON,
     "deploy/aws/ec2-single/README.md": _RUNBOOK_REASON,
+    "deploy/kubernetes/README.md": _RUNBOOK_REASON,
     "deploy/release/notes/SUMMARY.md": _RELEASES_REASON,
     "deploy/release/notes/SUMMARY.ja.md": _RELEASES_REASON,
 }
