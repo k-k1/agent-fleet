@@ -114,6 +114,30 @@ of stopped sessions. When a repository is collapsed, this includes sessions of i
 colored number is the pane number showing that repository's commit graph. See
 [Icons, badges, and menus](badges-and-menus.md) for details.
 
+### First-prompt templates
+
+The **"Templates"** button above the first prompt opens a searchable list of three kinds of
+starting text:
+
+- **My templates** — your own. **"New template"** creates one (name, prompt, and where it shows:
+  every repository, or only this one). Pick one and use **"Edit"** to change or rename it, or
+  **"Delete"** to remove it.
+- **This repository** — the entries of `.agent-fleet/launch-prompts.md` committed in the
+  repository (one per `## heading`), shared with everyone who clones it. Read-only here.
+- **History** — the first prompts you launched in this repository recently (8 at most), shown by
+  their first line. **"Delete"** forgets one; **"Save as template"** keeps it as one of yours.
+
+Type to filter, **↑ / ↓** to move, **Enter** to insert, **Esc** to close. The highlighted entry's
+full text shows in the preview beside the list (on a phone, the first tap previews and
+**"Insert"** inserts). `{{repo}}`, `{{branch}}` and `{{path}}` are filled in for the row you
+launch from. If the first prompt already has text, you are asked whether to **insert at the
+cursor** or **replace all** — typed text is never dropped silently.
+
+Your templates and history are saved with your settings, so they follow you to every browser and
+device. They have a size budget (40 templates, 16 KB in total, 8 KB each); a prompt larger than
+3 KB is kept in history on that device only. To invoke a repository's `.claude` commands or
+skills, use the skill button (**/**) next to "Templates" instead — they are no longer listed here.
+
 ### What you can do with right-click
 
 Right-clicking a repository or worktree row shows the following actions. Some items are hidden

@@ -3,6 +3,8 @@ import { api, apiJSON } from "../core/api/client.ts";
 import { setLocale } from "./i18n/index.ts";
 import type { MsgKey } from "./i18n/index.ts";
 import type { WorkingSet } from "./workingSets.ts";
+import type { LaunchTemplate } from "./launchTemplates.ts";
+import type { PromptHistoryEntry } from "./promptHistory.ts";
 
 // Display settings (theme / fonts / file-viewer options / icon set). Persisted in
 // localStorage for instant load + offline, AND mirrored to the server per-user
@@ -785,6 +787,13 @@ export interface Settings {
   // (previous history) and the rest reach xterm/PTY unchanged: a pure terminal. Only shell/ssm
   // are affected; agent terminals behave as before. Default OFF. Click elsewhere to leave it.
   shellTermPassthrough: boolean;
+  // The launch modal's personal first-prompt templates (#1469): every repository, or one base
+  // repository when `repo` is set. Synced so they follow the user across devices; size-capped by
+  // lib/launchTemplates.ts, because one PUT over the Agent's 64 KiB limit fails every key's sync.
+  launchTemplates: LaunchTemplate[];
+  // The launch modal's recent first prompts, newest first, keyed by base repository. Capped by
+  // lib/promptHistory.ts for the same reason.
+  launchHistory: PromptHistoryEntry[];
 }
 
 // The pinned fallback model. Used as the seeded global default and as resolveModel's
@@ -1253,6 +1262,8 @@ const DEFAULTS: Settings = {
   workItemBranchTemplate: "",
   workingSets: [],
   workingSetActive: "",
+  launchTemplates: [],
+  launchHistory: [],
 };
 
 // VOICEVOX Zundamon styles (speaker number → label), used by the speaker picker in the settings UI.
@@ -1867,6 +1878,8 @@ const ACCUMULATED = new Set<keyof Settings>([
   "workingSets",
   "ttsVoicePool",
   "ttsUserDict",
+  "launchTemplates",
+  "launchHistory",
 ]);
 
 /** Exported as a policy seam so tests can pin which preferences must never be

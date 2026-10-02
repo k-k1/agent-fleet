@@ -70,3 +70,16 @@ func TestShrunkPrefKeys(t *testing.T) {
 		t.Fatalf("boolean flips must not be counted as accumulated loss: %v", got)
 	}
 }
+
+// The launch modal's personal templates and prompt history (#1469) are typed in by hand and
+// cannot be recreated either, so a PUT that empties them parks the previous version too.
+func TestShrunkPrefKeysLaunchPrompts(t *testing.T) {
+	before := map[string]any{
+		"launchTemplates": []any{map[string]any{"id": "a", "name": "Triage", "body": "triage", "repo": ""}},
+		"launchHistory":   []any{map[string]any{"repo": "app", "text": "fix it", "at": float64(1)}},
+	}
+	got := ShrunkKeys(before, map[string]any{"launchTemplates": []any{}})
+	if len(got) != 2 || got[0] != "launchTemplates" || got[1] != "launchHistory" {
+		t.Fatalf("shrunk = %v, want [launchTemplates launchHistory]", got)
+	}
+}
