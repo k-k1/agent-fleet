@@ -39,6 +39,26 @@ type kubeInventory struct {
 type kubeInvClaim struct {
 	UID    string `json:"uid"`
 	Volume string `json:"volume,omitempty"`
+	// Provisioning: unbound when recorded, but a provisioner may have been creating its
+	// volume (claimMayBeProvisioned), so its having no volume is not known.
+	Provisioning bool `json:"provisioning,omitempty"`
+}
+
+// claimMayBeProvisioned reports an unbound claim a provisioner may already be working
+// on: the scheduler has picked a node for it (WaitForFirstConsumer), or the PV controller
+// has handed it to a provisioner (an Immediate class). Without either nothing creates a
+// volume for it, since no pod of the workspace exists once the stop has settled.
+func claimMayBeProvisioned(p *kPVC) bool {
+	for _, a := range []string{
+		"volume.kubernetes.io/selected-node",
+		"volume.kubernetes.io/storage-provisioner",
+		"volume.beta.kubernetes.io/storage-provisioner",
+	} {
+		if p.Metadata.Annotations[a] != "" {
+			return true
+		}
+	}
+	return false
 }
 
 type kubeInvVolume struct {
@@ -95,45 +115,68 @@ func (k *kubeRuntime) Destroy(ctx context.Context) ([]string, error) {
 	inv, readable := readInventory(s)
 	claimPath := k.nsPath("") + "/persistentvolumeclaims/"
 	claims := []string{k.homeClaim(), k.stateClaim()}
-	var present []string
-	for _, name := range claims {
-		var pvc kPVC
-		err := k.c.get(ctx, claimPath+name, &pvc)
-		if isKubeNotFound(err) {
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("kubernetes destroy %s: claim %s: %w", k.base, name, err)
-		}
-		present = append(present, name)
-		inv.Claims[name] = kubeInvClaim{UID: pvc.Metadata.UID, Volume: pvc.Spec.VolumeName}
-		if v := pvc.Spec.VolumeName; v != "" {
-			if _, seen := inv.Volumes[v]; !seen {
-				inv.Volumes[v] = kubeInvVolume{Protected: k.volumeProtected(ctx, v)}
-			}
-		}
-	}
-	if s != nil && readable {
-		raw, _ := json.Marshal(inv)
-		if err := k.c.mergePatch(ctx, k.stsPath(), map[string]any{
-			"metadata": map[string]any{"annotations": map[string]string{kubeAnnInventory: string(raw)}},
-		}, nil); err != nil {
-			return nil, fmt.Errorf("kubernetes destroy %s: record the inventory: %w", k.base, err)
-		}
-	}
 	if err := k.c.delete(ctx, k.nsPath("")+"/services/"+k.base); err != nil {
 		return nil, fmt.Errorf("kubernetes destroy %s: delete service: %w", k.base, err)
 	}
 	if err := k.c.delete(ctx, k.nsPath("")+"/secrets/"+k.secretName()); err != nil {
 		return nil, fmt.Errorf("kubernetes destroy %s: delete secret: %w", k.base, err)
 	}
-	// From here on nothing returns an error: the claims are being deleted, and what does
-	// not go must reach the audit log as a residue.
-	for _, name := range present {
-		if err := k.c.delete(ctx, claimPath+name); err != nil {
-			log.Printf("kubernetes destroy %s: delete claim %s: %v", k.base, name, err)
+	// Each claim is read, recorded, then deleted on the condition that it is still the
+	// version recorded. A claim bound (or replaced) after the read fails that condition and
+	// goes round again, so no claim is deleted whose volume the record does not name.
+	var present []string
+	for attempt := 0; attempt < 5; attempt++ {
+		type seen struct{ uid, rv string }
+		read := map[string]seen{}
+		for _, name := range claims {
+			var pvc kPVC
+			err := k.c.get(ctx, claimPath+name, &pvc)
+			if isKubeNotFound(err) {
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("kubernetes destroy %s: claim %s: %w", k.base, name, err)
+			}
+			read[name] = seen{pvc.Metadata.UID, pvc.Metadata.ResourceVersion}
+			if !slices.Contains(present, name) {
+				present = append(present, name)
+			}
+			inv.Claims[name] = kubeInvClaim{UID: pvc.Metadata.UID, Volume: pvc.Spec.VolumeName,
+				Provisioning: pvc.Spec.VolumeName == "" && claimMayBeProvisioned(&pvc)}
+			if v := pvc.Spec.VolumeName; v != "" {
+				if _, ok := inv.Volumes[v]; !ok {
+					inv.Volumes[v] = kubeInvVolume{Protected: k.volumeProtected(ctx, v)}
+				}
+			}
+		}
+		if len(read) == 0 {
+			break
+		}
+		if s != nil && readable {
+			raw, _ := json.Marshal(inv)
+			if err := k.c.mergePatch(ctx, k.stsPath(), map[string]any{
+				"metadata": map[string]any{"annotations": map[string]string{kubeAnnInventory: string(raw)}},
+			}, nil); err != nil {
+				return nil, fmt.Errorf("kubernetes destroy %s: record the inventory: %w", k.base, err)
+			}
+		}
+		changed := false
+		for name, v := range read {
+			err := k.c.deleteIfUnchanged(ctx, claimPath+name, v.uid, v.rv)
+			if isKubeConflict(err) {
+				changed = true
+				continue
+			}
+			if err != nil {
+				log.Printf("kubernetes destroy %s: delete claim %s: %v", k.base, name, err)
+			}
+		}
+		if !changed {
+			break
 		}
 	}
+	// From here on nothing returns an error: what does not go must reach the audit log as
+	// a residue.
 	ns := k.cfg.namespace
 	pending := map[string]string{} // residue -> object path
 	for _, name := range present {
@@ -172,10 +215,13 @@ func (k *kubeRuntime) Destroy(ctx context.Context) ([]string, error) {
 		}
 	}
 	// Start creates both claims before the StatefulSet, so a claim missing now and absent
-	// from the inventory was removed by something that did not record its volume.
+	// from the inventory was removed by something that did not record its volume. A claim
+	// recorded unbound while a provisioner may have been creating its volume is unknown
+	// too: the volume may exist without the claim ever having named it to us.
 	known := readable
 	for _, name := range claims {
-		if _, ok := inv.Claims[name]; !ok && s != nil {
+		c, ok := inv.Claims[name]
+		if (!ok && s != nil) || (ok && c.Volume == "" && c.Provisioning) {
 			known = false
 		}
 	}

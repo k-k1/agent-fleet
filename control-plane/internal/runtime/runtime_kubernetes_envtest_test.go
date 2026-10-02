@@ -992,8 +992,13 @@ func TestKubernetesEnvStartRefusesAStatefulSetChangedUnderIt(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := rt.Start(ctx); err == nil {
+	err := rt.Start(ctx)
+	if err == nil {
 		t.Fatal("Start wrote over a StatefulSet whose spec changed after it checked")
+	}
+	// The code a failed JSON Patch test gets, which ResizeHome reads as "decide again".
+	if c := kubeErrCode(err); c != 409 && c != 422 {
+		t.Fatalf("a failed patch test answered %d (%v), want 409 or 422", c, err)
 	}
 	var s kStatefulSet
 	if err := e.admin.get(ctx, stsPath, &s); err != nil {

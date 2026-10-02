@@ -28,6 +28,18 @@ type destroyCluster struct {
 	retain  map[string]bool // volumes that outlive their claim
 	writes  []string
 	pvReads int
+	// onInventory runs when the inventory is written: the moment a late bind can land
+	// between Destroy's read of a claim and its delete.
+	onInventory func(c *destroyCluster)
+	rv          int
+}
+
+// touch gives a claim a new resource version, as any write to it does.
+func (c *destroyCluster) touch(name string) {
+	c.rv++
+	pvc := c.claims[name]
+	pvc.Metadata.ResourceVersion = "rv" + itoa(c.rv)
+	c.claims[name] = pvc
 }
 
 func newDestroyCluster() *destroyCluster {
@@ -52,6 +64,13 @@ func (c *destroyCluster) bind(claim, volume string, protected bool) {
 		pv.Metadata.Finalizers = append(pv.Metadata.Finalizers, "external-provisioner.volume.kubernetes.io/finalizer")
 	}
 	c.pvs[volume] = pv
+	c.touch(claim)
+}
+
+// unbound adds a claim with no volume; annotations as the scheduler or PV controller left them.
+func (c *destroyCluster) unbound(claim string, annotations map[string]string) {
+	c.claims[claim] = kPVC{Metadata: kObjectMeta{Name: claim, UID: "uid-" + claim, Annotations: annotations}}
+	c.touch(claim)
 }
 
 func (c *destroyCluster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -90,6 +109,11 @@ func (c *destroyCluster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			for k, v := range p.Metadata.Annotations {
 				c.sts.Metadata.Annotations[k] = v
 			}
+			if _, ok := p.Metadata.Annotations[kubeAnnInventory]; ok && c.onInventory != nil {
+				f := c.onInventory
+				c.onInventory = nil
+				f(c)
+			}
 			reply(c.sts)
 		case http.MethodDelete:
 			c.sts = nil
@@ -107,6 +131,20 @@ func (c *destroyCluster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if r.Method == http.MethodDelete {
+			var opts struct {
+				Preconditions struct {
+					UID             string `json:"uid"`
+					ResourceVersion string `json:"resourceVersion"`
+				} `json:"preconditions"`
+			}
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &opts)
+			pc := opts.Preconditions
+			if (pc.UID != "" && pc.UID != pvc.Metadata.UID) || (pc.ResourceVersion != "" && pc.ResourceVersion != pvc.Metadata.ResourceVersion) {
+				w.WriteHeader(409)
+				_, _ = w.Write([]byte(`{"kind":"Status","reason":"Conflict","message":"Precondition failed","code":409}`))
+				return
+			}
 			delete(c.claims, name)
 			if v := pvc.Spec.VolumeName; v != "" && !c.retain[v] {
 				delete(c.pvs, v)
@@ -256,5 +294,57 @@ func TestKubeDestroyKeepsAnUnreadableInventory(t *testing.T) {
 	}
 	if c.sts.Metadata.Annotations[kubeAnnInventory] != "{not json" {
 		t.Fatal("the unreadable inventory was overwritten")
+	}
+}
+
+// A claim bound after Destroy read it unbound (a provisioner finishing late): the delete
+// is conditional on the version read, so it is refused, the claim is read again, and the
+// late volume enters the inventory before the claim goes — and stays a residue when its
+// disk outlives the claim.
+func TestKubeDestroyRecordsAVolumeBoundLate(t *testing.T) {
+	shortDestroyBudget(t)
+	c := newDestroyCluster()
+	c.unbound("af-ws-x-home", nil)
+	c.bind("af-ws-x-state", "pv-state", true)
+	c.onInventory = func(c *destroyCluster) {
+		pvc := c.claims["af-ws-x-home"]
+		pvc.Spec.VolumeName = "pv-late-home"
+		c.claims["af-ws-x-home"] = pvc
+		c.touch("af-ws-x-home")
+		c.pvs["pv-late-home"] = kPV{Metadata: kObjectMeta{Name: "pv-late-home",
+			Finalizers: []string{"external-provisioner.volume.kubernetes.io/finalizer"}}}
+		c.retain["pv-late-home"] = true
+	}
+	rt := destroyRuntime(t, c)
+	res, err := rt.Destroy(context.Background())
+	if want := []string{"pv:pv-late-home", "statefulset:ns/af-ws-x"}; err != nil || !reflect.DeepEqual(res, want) {
+		t.Fatalf("Destroy = %v, %v; want %v", res, err, want)
+	}
+	if c.sts == nil || !strings.Contains(c.sts.Metadata.Annotations[kubeAnnInventory], "pv-late-home") {
+		t.Fatal("the late volume is not in the inventory the StatefulSet keeps")
+	}
+}
+
+// An unbound claim a provisioner may be working on (the scheduler picked a node) cannot
+// be shown never to have had a volume: the StatefulSet stays, on this run and on a
+// re-run that finds the claim gone. An unbound claim nothing was provisioning is known.
+func TestKubeDestroyUnboundClaims(t *testing.T) {
+	shortDestroyBudget(t)
+	c := newDestroyCluster()
+	c.unbound("af-ws-x-home", map[string]string{"volume.kubernetes.io/selected-node": "node-a"})
+	c.bind("af-ws-x-state", "pv-state", true)
+	rt := destroyRuntime(t, c)
+	for run := 1; run <= 2; run++ {
+		res, _ := rt.Destroy(context.Background())
+		if want := []string{"statefulset:ns/af-ws-x"}; !reflect.DeepEqual(res, want) {
+			t.Fatalf("run %d: residue = %v, want %v", run, res, want)
+		}
+	}
+	c2 := newDestroyCluster()
+	c2.unbound("af-ws-x-home", nil)
+	c2.bind("af-ws-x-state", "pv-state", true)
+	res, err := destroyRuntime(t, c2).Destroy(context.Background())
+	if err != nil || len(res) != 0 || c2.sts != nil {
+		t.Fatalf("never-provisioned claim: %v, %v, StatefulSet left %v", res, err, c2.sts != nil)
 	}
 }

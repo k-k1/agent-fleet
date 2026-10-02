@@ -96,6 +96,27 @@ func (n kubeNode) finishPod(name string, ok bool, message string) {
 	}
 }
 
+// evictPod writes what an eviction writes first: phase Failed, with the container still
+// running until the kubelet gets to kill it.
+func (n kubeNode) evictPod(name string) {
+	n.t.Helper()
+	ctx := context.Background()
+	var raw map[string]any
+	if err := n.e.admin.get(ctx, n.podsPath()+"/"+name, &raw); err != nil {
+		n.t.Fatal(err)
+	}
+	raw["status"] = map[string]any{
+		"phase": "Failed", "reason": "Evicted",
+		"containerStatuses": []any{map[string]any{
+			"name": kubeRoleErase, "ready": false, "restartCount": 0, "image": "i", "imageID": "",
+			"state": map[string]any{"running": map[string]any{"startedAt": time.Now().UTC().Format(time.RFC3339)}},
+		}},
+	}
+	if err := n.e.admin.replace(ctx, n.podsPath()+"/"+name+"/status", raw, nil); err != nil {
+		n.t.Fatal(err)
+	}
+}
+
 func (n kubeNode) waitErasePod(rt *kubeRuntime) kPod {
 	n.t.Helper()
 	var p kPod
@@ -171,11 +192,18 @@ func TestKubernetesEnvEraseHome(t *testing.T) {
 		t.Fatalf("EraseHome with the pod failed = %v", err)
 	}
 
-	// A finished erase pod nobody removed (the CP died first) is removed by Start.
+	// A finished erase pod nobody removed (the CP died first) is removed by Start — but
+	// not while it is evicted with its container still running: the phase is written
+	// before the kubelet kills the container.
 	short, cancel = context.WithTimeout(ctx, time.Second)
 	_ = rt.EraseHome(short)
 	cancel()
-	node.finishPod(node.waitErasePod(rt).Metadata.Name, true, "")
+	p = node.waitErasePod(rt)
+	node.evictPod(p.Metadata.Name)
+	if err := rt.Start(ctx); err == nil || !strings.Contains(err.Error(), "still running") {
+		t.Fatalf("Start beside an evicted erase pod still running = %v", err)
+	}
+	node.finishPod(p.Metadata.Name, true, "")
 	if err := rt.Start(ctx); err != nil {
 		t.Fatalf("Start with a finished erase pod left over: %v", err)
 	}

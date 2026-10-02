@@ -252,6 +252,19 @@ func (c *kubeClient) delete(ctx context.Context, path string) error {
 	return err
 }
 
+// deleteIfUnchanged deletes an object only if it still has the UID and resource version
+// the caller read; a changed object answers 409. Gone already is success.
+func (c *kubeClient) deleteIfUnchanged(ctx context.Context, path, uid, resourceVersion string) error {
+	err := c.do(ctx, http.MethodDelete, path, nil, kubeJSON, map[string]any{
+		"kind": "DeleteOptions", "apiVersion": "v1", "propagationPolicy": "Background",
+		"preconditions": map[string]string{"uid": uid, "resourceVersion": resourceVersion},
+	}, nil)
+	if isKubeNotFound(err) {
+		return nil
+	}
+	return err
+}
+
 // kubePatchOp is one RFC 6902 operation.
 type kubePatchOp struct {
 	Op    string `json:"op"`

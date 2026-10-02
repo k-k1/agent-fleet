@@ -131,38 +131,54 @@ func homeCleanCommand(home string) string {
 		shellQuote(home), strings.Join(not, " "))
 }
 
+// homeRecordFuncs are the shell functions both scripts read and write the wipe record
+// with. A record is either absent — never carried out, 0 — or a regular file holding a
+// number of at most 18 digits, which every sh compares without overflow. Anything else
+// (a directory, a symbolic link, an empty or unreadable file, a longer number) is an
+// error, never a 0: a record read as 0 repeats a Clean home at every pod restart, and a
+// comparison that fails inside an `if` is just "false" to set -e, which would skip one
+// wipe and run the other. The record directory itself must be a real directory.
+func homeRecordFuncs(record string) []string {
+	return []string{
+		"R=" + shellQuote(record),
+		`fail() { echo "home wipe: $*" >&2; exit 1; }`,
+		`[ -d "$R" ] && [ ! -L "$R" ] || fail "the record directory $R is missing or not a directory"`,
+		`num() { case "$1" in ''|*[!0-9]*) fail "$2 is not a number: '$1'";; esac; [ ${#1} -le 18 ] || fail "$2 is out of range: '$1'"; }`,
+		`done_of() { f="$R/$1"; if [ -L "$f" ]; then fail "$f is a symbolic link"; elif [ -e "$f" ]; then [ -f "$f" ] || fail "$f is not a regular file"; cat -- "$f" || fail "cannot read $f"; else echo 0; fi; }`,
+		`record() { [ -L "$R/$1.tmp" ] && fail "$R/$1.tmp is a symbolic link"; echo "$2" > "$R/$1.tmp" && mv -fT -- "$R/$1.tmp" "$R/$1"; }`,
+	}
+}
+
 // homeWipeScript is the init container's command. It compares each requested generation
 // with the one recorded as carried out and removes only what is newer; the record is
 // written after the removal, so a wipe interrupted halfway is repeated, never skipped.
-// Every number is checked before anything is removed, and anything unexpected stops the
-// pod rather than guessing. The check cannot be left to `-gt` failing on a non-number:
-// inside an `if` that failure is just "false", set -e does not fire, and a corrupt Clean
-// home record would skip the Clean home and still run the Recreate.
+// Every record and request is checked before anything is removed (homeRecordFuncs).
 func homeWipeScript(home, record string) string {
-	return strings.Join([]string{
-		"set -eu",
-		"R=" + shellQuote(record),
-		`num() { case "$1" in ''|*[!0-9]*) echo "home wipe: $2 is not a number: '$1'" >&2; exit 1;; esac; }`,
-		`done_of() { if [ -f "$R/$1" ]; then cat "$R/$1"; else echo 0; fi; }`,
-		`record() { echo "$2" > "$R/$1.tmp" && mv "$R/$1.tmp" "$R/$1"; }`,
-		`dc=$(done_of clean); dr=$(done_of repos)`,
+	return strings.Join(append(append([]string{"set -eu"}, homeRecordFuncs(record)...),
+		`dc=$(done_of clean)`,
+		`dr=$(done_of repos)`,
 		`num "$dc" "the clean record"; num "$dr" "the repos record"; num "$AF_WIPE_CLEAN" AF_WIPE_CLEAN; num "$AF_WIPE_REPOS" AF_WIPE_REPOS`,
-		`if [ "$AF_WIPE_CLEAN" -gt "$dc" ]; then ` + homeCleanCommand(home) + `; record clean "$AF_WIPE_CLEAN"; fi`,
-		`if [ "$AF_WIPE_REPOS" -gt "$dr" ]; then rm -rf --one-file-system -- ` + shellQuote(home+"/repos") + `; record repos "$AF_WIPE_REPOS"; fi`,
-	}, "\n")
+		`if [ "$AF_WIPE_CLEAN" -gt "$dc" ]; then `+homeCleanCommand(home)+`; record clean "$AF_WIPE_CLEAN"; fi`,
+		`if [ "$AF_WIPE_REPOS" -gt "$dr" ]; then rm -rf --one-file-system -- `+shellQuote(home+"/repos")+`; record repos "$AF_WIPE_REPOS"; fi`,
+	), "\n")
 }
 
 // homeEraseScript is the erase pod's command: the Clean home removal, unconditionally,
 // and then every pending member wipe recorded as done — the erase removed all of it. The
-// record directory exists only when the state claim does.
+// record directory exists only when the state claim does; when it does, its records are
+// checked before the removal like the init container's.
 func homeEraseScript(home, record string) string {
 	return strings.Join([]string{
 		"set -eu",
-		"R=" + shellQuote(record),
-		`record() { if [ -d "$R" ] && [ "$2" -gt 0 ]; then echo "$2" > "$R/$1.tmp" && mv "$R/$1.tmp" "$R/$1"; fi; }`,
+		"if [ -e " + shellQuote(record) + " ] || [ -L " + shellQuote(record) + " ]; then",
+		strings.Join(homeRecordFuncs(record), "\n"),
+		`ec=$(done_of clean)`,
+		`er=$(done_of repos)`,
+		`num "$ec" "the clean record"; num "$er" "the repos record"`,
+		`num "$AF_WIPE_CLEAN" AF_WIPE_CLEAN; num "$AF_WIPE_REPOS" AF_WIPE_REPOS; have_record=1`,
+		"else have_record=0; fi",
 		homeCleanCommand(home),
-		`record clean "$AF_WIPE_CLEAN"`,
-		`record repos "$AF_WIPE_REPOS"`,
+		`if [ "$have_record" = 1 ]; then [ "$AF_WIPE_CLEAN" -gt 0 ] && record clean "$AF_WIPE_CLEAN"; [ "$AF_WIPE_REPOS" -gt 0 ] && record repos "$AF_WIPE_REPOS"; fi; true`,
 	}, "\n")
 }
 
@@ -264,7 +280,24 @@ func (k *kubeRuntime) getErasePod(ctx context.Context) (*kPod, error) {
 	return &p, nil
 }
 
-func podFinished(p *kPod) bool { return p.Status.Phase == "Succeeded" || p.Status.Phase == "Failed" }
+// podFinished reports a one-shot pod whose containers have stopped. The phase alone is
+// not that: an eviction writes phase Failed before the kubelet kills the containers
+// (kubelet SyncTerminatingPod sets the status first), so every container must also report
+// terminated. Anything else — running, waiting, no status at all — is not finished.
+func podFinished(p *kPod) bool {
+	if p.Status.Phase != "Succeeded" && p.Status.Phase != "Failed" {
+		return false
+	}
+	if len(p.Status.ContainerStatuses) == 0 {
+		return false
+	}
+	for _, cs := range p.Status.ContainerStatuses {
+		if cs.State.Terminated == nil || cs.State.Running != nil || cs.State.Waiting != nil {
+			return false
+		}
+	}
+	return true
+}
 
 func podTerminationMessage(p *kPod) string {
 	for _, cs := range p.Status.ContainerStatuses {
@@ -296,18 +329,33 @@ func (k *kubeRuntime) waitErasePodGone(ctx context.Context) error {
 	}
 }
 
+// kubeErasePodGoneBudget bounds Start's wait for a finished erase pod to disappear. A
+// variable so a test can shorten it.
+var kubeErasePodGoneBudget = 30 * time.Second
+
 // clearFinishedErasePod is Start's half of the erase pod's lifecycle: a running one means
 // an administrator's Clean home is under way and the workspace must not start over it;
-// a finished one is removed so it stops holding the home claim.
+// a finished one is deleted, and Start goes on only once the pod is gone. A pod object
+// bound to a node is removed only after its kubelet has confirmed the containers are
+// gone, so its absence is the proof that no rm can still run on the home, which
+// ReadWriteOnce does not give: it keeps a claim on one node, not to one pod.
 func (k *kubeRuntime) clearFinishedErasePod(ctx context.Context) error {
 	p, err := k.getErasePod(ctx)
 	if err != nil || p == nil {
 		return err
 	}
-	if !podFinished(p) {
+	if !podFinished(p) && p.Metadata.DeletionTimestamp == nil {
 		return errors.New("an administrator's Clean home is still running on this workspace; start again once it has finished")
 	}
-	return k.c.delete(ctx, k.podPath(p.Metadata.Name))
+	if err := k.c.delete(ctx, k.podPath(p.Metadata.Name)); err != nil {
+		return err
+	}
+	wait, cancel := context.WithTimeout(ctx, kubeErasePodGoneBudget)
+	defer cancel()
+	if err := k.waitErasePodGone(wait); err != nil {
+		return fmt.Errorf("the finished erase pod %s has not gone yet; start again once it has: %w", p.Metadata.Name, err)
+	}
+	return nil
 }
 
 // erasePod is the one-shot pod: the workspace pod's identity and security settings,
@@ -380,40 +428,53 @@ var _ interface {
 func (k *kubeRuntime) ResizeHome(ctx context.Context) (HomeResize, error) {
 	path := k.nsPath("") + "/persistentvolumeclaims/" + k.homeClaim()
 	want := int32(k.homeGiB)
-	var pvc kPVC
-	if err := k.c.get(ctx, path, &pvc); err != nil {
-		if isKubeNotFound(err) {
-			return HomeResize{Outcome: HomeResizeNoHome, ToGiB: want}, nil
-		}
-		return HomeResize{}, err
-	}
-	have, ok := quantityBytes(pvc.Spec.Resources.Requests["storage"])
-	if !ok {
-		return HomeResize{Outcome: HomeResizeFailed, ToGiB: want,
-			Detail: "unreadable claim size " + pvc.Spec.Resources.Requests["storage"]}, nil
-	}
-	haveGiB := int32(have / gib)
 	wantBytes := int64(want) * gib
-	switch {
-	case wantBytes < have:
-		return HomeResize{Outcome: HomeResizeShrink, FromGiB: haveGiB, ToGiB: want}, nil
-	case wantBytes == have:
-		capacity, _ := quantityBytes(pvc.Status.Capacity["storage"])
-		if capacity < have || claimResizing(&pvc) {
-			return HomeResize{Outcome: HomeResizeGrowing, FromGiB: int32(capacity / gib), ToGiB: want}, nil
+	var last error
+	var haveGiB int32
+	// The write is conditional on the request it read: two saves can race here (the caller
+	// holds no lifecycle lease), and with RecoverVolumeExpansionFailure the API server lets
+	// a request go down as long as it stays above the capacity, so an unconditional write
+	// could take a larger request another save had just made back to a smaller one. A
+	// refused write is decided again from what the claim says now.
+	for attempt := 0; attempt < 3; attempt++ {
+		var pvc kPVC
+		if err := k.c.get(ctx, path, &pvc); err != nil {
+			if isKubeNotFound(err) {
+				return HomeResize{Outcome: HomeResizeNoHome, ToGiB: want}, nil
+			}
+			return HomeResize{}, err
 		}
-		return HomeResize{Outcome: HomeResizeSame, FromGiB: haveGiB, ToGiB: want}, nil
+		raw := pvc.Spec.Resources.Requests["storage"]
+		have, ok := quantityBytes(raw)
+		if !ok {
+			return HomeResize{Outcome: HomeResizeFailed, ToGiB: want, Detail: "unreadable claim size " + raw}, nil
+		}
+		haveGiB = int32(have / gib)
+		switch {
+		case wantBytes < have:
+			return HomeResize{Outcome: HomeResizeShrink, FromGiB: haveGiB, ToGiB: want}, nil
+		case wantBytes == have:
+			capacity, _ := quantityBytes(pvc.Status.Capacity["storage"])
+			if capacity < have || claimResizing(&pvc) {
+				return HomeResize{Outcome: HomeResizeGrowing, FromGiB: int32(capacity / gib), ToGiB: want}, nil
+			}
+			return HomeResize{Outcome: HomeResizeSame, FromGiB: haveGiB, ToGiB: want}, nil
+		}
+		last = k.c.jsonPatch(ctx, path, []kubePatchOp{
+			{Op: "test", Path: "/spec/resources/requests/storage", Value: raw},
+			{Op: "replace", Path: "/spec/resources/requests/storage", Value: strconv.Itoa(int(want)) + "Gi"},
+		}, nil)
+		if last == nil {
+			return HomeResize{Outcome: HomeResizeGrowing, FromGiB: haveGiB, ToGiB: want}, nil
+		}
+		if code := kubeErrCode(last); code != 409 && code != 422 {
+			break
+		}
 	}
-	err := k.c.jsonPatch(ctx, path, []kubePatchOp{
-		{Op: "replace", Path: "/spec/resources/requests/storage", Value: strconv.Itoa(int(want)) + "Gi"},
-	}, nil)
-	if err != nil {
-		// Reported, not returned, as on ecs-ec2: the quota row is written, and the usual
-		// refusals (a class without allowVolumeExpansion, a quota) are fixed elsewhere.
-		log.Printf("kubernetes resize %s: %d -> %d GiB: %v", k.base, haveGiB, want, err)
-		return HomeResize{Outcome: HomeResizeFailed, FromGiB: haveGiB, ToGiB: want, Detail: err.Error()}, nil
-	}
-	return HomeResize{Outcome: HomeResizeGrowing, FromGiB: haveGiB, ToGiB: want}, nil
+	// Reported, not returned, as on ecs-ec2: the quota row is written, and the usual
+	// refusals (a class without allowVolumeExpansion, a quota) are fixed elsewhere.
+	log.Printf("kubernetes resize %s: %d -> %d GiB: %v", k.base, haveGiB, want, last)
+	return HomeResize{Outcome: HomeResizeFailed, FromGiB: haveGiB, ToGiB: want, Detail: last.Error()}, nil
 }
 
 func claimResizing(p *kPVC) bool {

@@ -124,6 +124,52 @@ func TestHomeWipeScriptFailsClosedOnABadRecord(t *testing.T) {
 	}
 }
 
+// Every record that is not a plain number fails both scripts before anything is removed:
+// a number too long to compare, a directory, a symbolic link, an empty file, a missing
+// record directory.
+func TestHomeScriptsFailClosedOnEveryBadRecord(t *testing.T) {
+	for name, spoil := range map[string]func(t *testing.T, record string){
+		"huge clean number": func(t *testing.T, r string) {
+			_ = os.WriteFile(filepath.Join(r, "clean"), []byte("9999999999999999999999999999999999999999"), 0o644)
+		},
+		"clean is a directory": func(t *testing.T, r string) { _ = os.MkdirAll(filepath.Join(r, "clean"), 0o755) },
+		"repos is a symlink": func(t *testing.T, r string) {
+			_ = os.WriteFile(filepath.Join(r, "target"), []byte("1"), 0o644)
+			_ = os.Symlink(filepath.Join(r, "target"), filepath.Join(r, "repos"))
+		},
+		"dangling symlink":    func(t *testing.T, r string) { _ = os.Symlink(filepath.Join(r, "nowhere"), filepath.Join(r, "clean")) },
+		"empty record":        func(t *testing.T, r string) { _ = os.WriteFile(filepath.Join(r, "repos"), nil, 0o644) },
+		"no record directory": func(t *testing.T, r string) { _ = os.RemoveAll(r) },
+	} {
+		for _, script := range []string{"wipe", "erase"} {
+			if script == "erase" && name == "no record directory" {
+				continue // the erase runs without a state claim, so that one is allowed
+			}
+			t.Run(script+"/"+name, func(t *testing.T) {
+				home, record := homeFixture(t)
+				spoil(t, record)
+				sh := homeWipeScript(home, record)
+				if script == "erase" {
+					sh = homeEraseScript(home, record)
+				}
+				if err := runScript(t, sh, "AF_WIPE_CLEAN=5", "AF_WIPE_REPOS=6"); err == nil {
+					t.Fatal("the script accepted the record")
+				}
+				for _, p := range []string{"notes.txt", "repos/app"} {
+					if _, err := os.Stat(filepath.Join(home, p)); err != nil {
+						t.Fatalf("%s was removed before the script failed", p)
+					}
+				}
+			})
+		}
+	}
+	// A request out of range fails as well.
+	home, record := homeFixture(t)
+	if err := runScript(t, homeWipeScript(home, record), "AF_WIPE_CLEAN=99999999999999999999", "AF_WIPE_REPOS=1"); err == nil {
+		t.Fatal("an out-of-range request was accepted")
+	}
+}
+
 // The erase removes what Clean home removes, and records the pending marks as done.
 func TestHomeEraseScript(t *testing.T) {
 	home, record := homeFixture(t)
@@ -344,5 +390,137 @@ func TestCheckStorageClass(t *testing.T) {
 	}
 	if p := checkStorageClass(context.Background(), c, "missing"); len(p) != 1 || !strings.Contains(p[0], "cannot read") {
 		t.Fatalf("missing class: %v", p)
+	}
+}
+
+// Two saves racing: this one read 10Gi and wants 20Gi, while another has meanwhile set
+// 30Gi. The write is conditional on the 10Gi it read, so the API server refuses it, and
+// the re-read sees 30Gi and reports a shrink instead of taking the claim back to 20Gi.
+func TestKubeResizeHomeDoesNotUndoAConcurrentResize(t *testing.T) {
+	rt, f := fakeKubeRuntime(t)
+	rt.homeGiB = 20
+	const get = "GET /api/v1/namespaces/ns/persistentvolumeclaims/af-ws-x-home"
+	const patch = "PATCH /api/v1/namespaces/ns/persistentvolumeclaims/af-ws-x-home"
+	claim := func(req string) string {
+		return `{"metadata":{"name":"af-ws-x-home"},"spec":{"resources":{"requests":{"storage":"` + req + `"}}},"status":{"capacity":{"storage":"10Gi"}}}`
+	}
+	f.set(get, 200, claim("10Gi"))
+	f.set(patch, 422, `{"kind":"Status","reason":"Invalid","message":"the server rejected our request due to an error in our request","code":422}`)
+	var bodies []string
+	rt.c.hc.Transport = roundTripHook{rt.c.hc.Transport, func(r *http.Request) {
+		if r.Method == http.MethodPatch {
+			b, _ := r.GetBody()
+			raw := make([]byte, 4096)
+			n, _ := b.Read(raw)
+			bodies = append(bodies, string(raw[:n]))
+			f.set(get, 200, claim("30Gi")) // the other save landed first
+		}
+	}}
+	hr, err := rt.ResizeHome(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hr.Outcome != HomeResizeShrink || hr.FromGiB != 30 {
+		t.Fatalf("ResizeHome = %+v, want shrink from 30 (the concurrent request kept)", hr)
+	}
+	if len(bodies) != 1 || !strings.Contains(bodies[0], `"op":"test","path":"/spec/resources/requests/storage","value":"10Gi"`) {
+		t.Fatalf("patches = %v, want one, conditional on the 10Gi read", bodies)
+	}
+}
+
+// erasePodJSON is the erase pod as the API server returns it: phase and the erase
+// container's state as given.
+func erasePodJSON(phase, state string) string {
+	return `{"metadata":{"name":"af-ws-x-erase","labels":{"agent-fleet.io/workspace":"af-ws-x","agent-fleet.io/role":"erase"}},` +
+		`"spec":{"restartPolicy":"Never","containers":[{"name":"erase","image":"i"}]},` +
+		`"status":{"phase":"` + phase + `","containerStatuses":[{"name":"erase","ready":false,"restartCount":0,"state":` + state + `}]}}`
+}
+
+const (
+	erasePodPath     = "/api/v1/namespaces/ns/pods/af-ws-x-erase"
+	eraseRunning     = `{"running":{"startedAt":"2026-10-02T03:00:00Z"}}`
+	eraseTerminated  = `{"terminated":{"exitCode":0,"reason":"Completed"}}`
+	homeClaimGetPath = "GET /api/v1/namespaces/ns/persistentvolumeclaims/af-ws-x-home"
+)
+
+func TestPodFinished(t *testing.T) {
+	for _, c := range []struct {
+		phase, state string
+		want         bool
+	}{
+		{"Succeeded", eraseTerminated, true},
+		{"Failed", `{"terminated":{"exitCode":1}}`, true},
+		{"Failed", eraseRunning, false}, // evicted: the status is written before the kill
+		{"Failed", `{"waiting":{"reason":"ContainerCreating"}}`, false},
+		{"Running", eraseTerminated, false},
+	} {
+		var p kPod
+		if err := json.Unmarshal([]byte(erasePodJSON(c.phase, c.state)), &p); err != nil {
+			t.Fatal(err)
+		}
+		if got := podFinished(&p); got != c.want {
+			t.Errorf("podFinished(%s, %s) = %v, want %v", c.phase, c.state, got, c.want)
+		}
+	}
+	if podFinished(&kPod{Status: kPodStatus{Phase: "Failed"}}) {
+		t.Error("a Failed pod with no container status counts as finished")
+	}
+}
+
+// Start does not launch next to an erase pod whose containers may still run, nor next to
+// a finished one that has not gone yet: only the pod's absence proves no rm runs on the
+// home, which ReadWriteOnce does not exclude on one node.
+func TestKubeStartWaitsForTheErasePodToBeGone(t *testing.T) {
+	defer func(d time.Duration) { kubeErasePodGoneBudget = d }(kubeErasePodGoneBudget)
+	kubeErasePodGoneBudget = 200 * time.Millisecond
+	defer func(d time.Duration) { kubeErasePoll = d }(kubeErasePoll)
+	kubeErasePoll = 20 * time.Millisecond
+	for _, c := range []struct {
+		name, phase, state string
+		wantErr            string
+	}{
+		{"evicted, container still running", "Failed", eraseRunning, "still running"},
+		{"finished but not gone", "Succeeded", eraseTerminated, "has not gone"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rt, f := fakeKubeRuntime(t)
+			f.set(stsPathX, 200, stsJSON(0, 6, 6, 0, "r", "2"))
+			f.set(podsPathX, 200, podListJSON())
+			f.set("GET "+erasePodPath, 200, erasePodJSON(c.phase, c.state))
+			f.set("DELETE "+erasePodPath, 200, erasePodJSON(c.phase, c.state)) // accepted; the pod stays
+			err := rt.Start(context.Background())
+			if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+				t.Fatalf("Start = %v, want %q", err, c.wantErr)
+			}
+			for _, s := range f.seen {
+				if strings.HasPrefix(s, "PATCH /apis") || strings.HasPrefix(s, "POST /apis") {
+					t.Fatalf("Start wrote the StatefulSet: %v", f.seen)
+				}
+			}
+			if c.phase == "Failed" && f.saw("DELETE "+erasePodPath) {
+				t.Fatal("Start deleted an erase pod that may still be running")
+			}
+		})
+	}
+}
+
+// EraseHome treats an evicted erase pod whose container still runs as still running: it
+// waits, and does not report a result or delete it.
+func TestKubeEraseHomeWaitsForAnEvictedPodToStop(t *testing.T) {
+	defer func(d time.Duration) { kubeErasePoll = d }(kubeErasePoll)
+	kubeErasePoll = 20 * time.Millisecond
+	rt, f := fakeKubeRuntime(t)
+	f.set(stsPathX, 200, stsJSON(0, 6, 6, 0, "r", "2"))
+	f.set(podsPathX, 200, podListJSON())
+	f.set(homeClaimGetPath, 200, `{"metadata":{"name":"af-ws-x-home"},"spec":{"resources":{}}}`)
+	f.set("GET "+erasePodPath, 200, erasePodJSON("Failed", eraseRunning))
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	err := rt.EraseHome(ctx)
+	if err == nil || !strings.Contains(err.Error(), "still running") {
+		t.Fatalf("EraseHome = %v, want still running", err)
+	}
+	if f.saw("DELETE "+erasePodPath) || f.saw("POST /api/v1/namespaces/ns/pods") {
+		t.Fatalf("EraseHome deleted or replaced a pod that may still run: %v", f.seen)
 	}
 }

@@ -761,4 +761,14 @@ Written with #1466 (`runtime_kubernetes_home.go`, `runtime_kubernetes_destroy.go
   is often RBAC applied after the CP, and each requirement it misses already shows where it bites:
   a claim that stays `Pending`, a refused resize, a Destroy residue.
 - **`ResizeHome` reports `same` only when the claim's capacity has reached its request** and no
-  `Resizing` / `FileSystemResizePending` condition is set; until then it reports `growing`.
+  `Resizing` / `FileSystemResizePending` condition is set; until then it reports `growing`. Its
+  write is conditional on the request it read, since the API server lets a request go down while
+  it stays above the capacity, and two saves may race.
+- **An erase pod is finished only when every container reports terminated**, not when its phase
+  says so: an eviction writes phase `Failed` before the kubelet kills the container. Start goes on
+  past a finished one only once the pod object is gone, which is the kubelet's confirmation —
+  `ReadWriteOnce` keeps a claim on one node, not to one pod.
+- **Destroy deletes each claim on the condition that it is the version it recorded**, so a claim
+  bound after the read is recorded before it goes. An unbound claim that a provisioner may already
+  be working on (a selected node, or a provisioner annotation) counts as unknown, and keeps the
+  StatefulSet.

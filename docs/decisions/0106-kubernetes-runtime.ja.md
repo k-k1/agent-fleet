@@ -596,4 +596,6 @@ Issue #1467。上の決定は何も変えない。決定 7・8・12・13 に選�
 - **`EraseHome` が見つけた終了済みの消去 pod は削除して消去をやり直す。** その結果はすでに戻った呼び出しのものだからである。実行中のものは待つ。消去 pod はワークスペースの直近の起動のイメージ、なければ設定されたイメージをその時点で固定して使う。
 - **Destroy の目録**は各 claim の UID とボリューム、そのボリュームが削除保護の finalizer（`external-provisioner.volume.kubernetes.io/finalizer` または in-tree の `kubernetes.io/pv-controller`）を持っていたかを記録する。持たないボリュームは、オブジェクトが消えても残留物として報告する。解析できない目録は信用も上書きもせず、StatefulSet を残す。見当たらず目録にも無い claim があるときも同じである。
 - **StorageClass の起動時チェックは警告し、起動は拒まない。** CP が読めない class は CP の後に RBAC を適用した場合が多く、満たさない要件はそれぞれ現れる場所がある。`Pending` のままの claim、拒否されたリサイズ、Destroy の残留物である。
-- **`ResizeHome` が `same` を返すのは、claim の容量が要求に達し、`Resizing` / `FileSystemResizePending` の条件が無いときだけ**で、それまでは `growing` を返す。
+- **`ResizeHome` が `same` を返すのは、claim の容量が要求に達し、`Resizing` / `FileSystemResizePending` の条件が無いときだけ**で、それまでは `growing` を返す。書き込みは読んだ要求を条件にする。API サーバは要求が容量より大きいあいだは引き下げを許し、2 つの保存が競合しうるからである。
+- **消去 pod の終了は、フェーズではなく全コンテナが terminated を報告したことで判断する。** 退避はコンテナを kill する前にフェーズ `Failed` を書く。Start は終了した消去 pod が pod オブジェクトごと消えてから先へ進む。それが kubelet による確認であり、`ReadWriteOnce` が claim を縛るのはノードであって pod ではない。
+- **Destroy は各 claim を、記録した版であることを条件に削除する。** 読んだ後に bind された claim は消える前に記録される。プロビジョナがすでに手を付けているかもしれない未 bind の claim（選択済みノード、またはプロビジョナの注釈がある）は不明として扱い、StatefulSet を残す。
