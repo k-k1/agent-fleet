@@ -27,6 +27,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
@@ -106,7 +107,7 @@ func ConfigPath() string { return filepath.Join(paths.HomeDir(), ".aws", "config
 // Fetch pulls the member's profiles from the CP, with the names it left out because
 // two labels collide.
 func Fetch() ([]Profile, []Conflict, error) {
-	base := strings.TrimRight(os.Getenv("AF_CP_BASE_URL"), "/")
+	base := cpurl.Request()
 	token := os.Getenv("AF_AWS_PROFILES_TOKEN")
 	if base == "" || token == "" {
 		return nil, nil, ErrBridgeOff

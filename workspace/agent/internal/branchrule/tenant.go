@@ -26,6 +26,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
 )
 
 // TenantPollInterval is how often the Agent pulls the tenant rules.
@@ -92,7 +94,7 @@ func AcceptTenant(in []Rule) (kept []Rule, dropped int) {
 // when the CP could not be asked or did not answer properly; the cache is then untouched.
 // An answer with no rules is a real answer and empties it.
 func FetchTenant(ctx context.Context, path string) (TenantFetchResult, error) {
-	base := strings.TrimRight(os.Getenv("AF_CP_BASE_URL"), "/")
+	base := cpurl.Request()
 	token := os.Getenv("AF_BRANCH_RULES_TOKEN")
 	if base == "" || token == "" {
 		return TenantFetchResult{}, ErrTenantBridgeOff

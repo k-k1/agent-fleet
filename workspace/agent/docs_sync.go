@@ -39,6 +39,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
 )
 
 const (
@@ -93,7 +95,7 @@ func docsRootPopulated(root string) bool {
 
 // fetchWorkspaceDocs pulls the tar.gz from the CP and installs it under root.
 func fetchWorkspaceDocs(root string) (int, error) {
-	base := strings.TrimRight(os.Getenv("AF_CP_BASE_URL"), "/")
+	base := cpurl.Request()
 	token := os.Getenv("AF_DOCS_TOKEN")
 	if base == "" || token == "" {
 		return 0, errDocsBridgeOff

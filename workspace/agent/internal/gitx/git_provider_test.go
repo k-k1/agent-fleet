@@ -57,3 +57,19 @@ func TestGitProviderHostInternalWithPort(t *testing.T) {
 		t.Fatalf("gitProviderHost = (%q,%q), want (internal, 127.0.0.1)", p, h)
 	}
 }
+
+// Where the Agent rewrites internal git onto the CP's workspace listener, `git remote
+// get-url` reports the listener's host; that remote is still the internal provider.
+func TestGitProviderHostInternalThroughWorkspaceListener(t *testing.T) {
+	t.Setenv("AF_INTERNAL_GIT_HOST", "af.example")
+	t.Setenv("AF_CP_INTERNAL_URL", "http://af-cp-internal.ns.svc:8098")
+	for _, remote := range []string{"https://af.example/git/acme/app.git", "http://af-cp-internal.ns.svc:8098/git/acme/app.git"} {
+		if p, _ := gitProviderHost(remote); p != "internal" {
+			t.Errorf("gitProviderHost(%q) provider = %q, want internal", remote, p)
+		}
+	}
+	t.Setenv("AF_INTERNAL_GIT_HOST", "")
+	if p, _ := gitProviderHost("http://af-cp-internal.ns.svc:8098/git/acme/app.git"); p == "internal" {
+		t.Error("the listener's host badges as internal with internal git off")
+	}
+}

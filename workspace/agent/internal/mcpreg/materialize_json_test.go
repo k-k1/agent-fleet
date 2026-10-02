@@ -314,7 +314,7 @@ func TestCursorBuiltinsReferenceTheirEnv(t *testing.T) {
 	})
 	af, _ := got["af"].(map[string]any)
 	env, _ := af["env"].(map[string]any)
-	for _, name := range []string{"AGENT_TOKEN", "AGENT_ADDR", "AF_SESSION_NAME", "AF_CP_BASE_URL", "AF_MEMO_TOKEN"} {
+	for _, name := range []string{"AGENT_TOKEN", "AGENT_ADDR", "AF_SESSION_NAME", "AF_CP_BASE_URL", "AF_CP_INTERNAL_URL", "AF_MEMO_TOKEN"} {
 		if env[name] != "${env:"+name+"}" {
 			t.Errorf("af env[%s] = %#v, want a ${env:} reference", name, env[name])
 		}
