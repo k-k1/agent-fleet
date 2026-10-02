@@ -254,8 +254,8 @@ func connectCodexAppServer(addr string) (*websocket.Conn, error) {
 
 const codexObserverSweepInterval = 30 * time.Second
 
-// codexSweepMaxSkips is how many ticks a sweep still in flight is left to finish before a tick
-// supersedes it anyway. Superseding on every tick would never let a sweep slower than the
+// codexSweepMaxSkips is how many ticks a sweep may go without a page before a tick supersedes
+// it anyway; every page resets the count, so a long listing that keeps answering is not cut. Superseding on every tick would never let a sweep slower than the
 // interval complete, and a sweep that completes is what ends the holds no notLoaded broadcast
 // reported; never superseding would let one lost reply stop sweeps for the connection's life.
 const codexSweepMaxSkips = 10
@@ -322,8 +322,22 @@ func (o *codexObserver) sweepLocked() {
 	o.sendLocked("thread/loaded/list", map[string]any{}, codexSweepMark+strconv.Itoa(o.sweepGen))
 }
 
-// tickSweep is the ticker's sweep: it leaves a sweep still in flight to finish, up to
-// codexSweepMaxSkips ticks, and only then supersedes it.
+// sweepLoop sweeps once for the threads loaded before this connection existed, then on every
+// tick until stop closes.
+func (o *codexObserver) sweepLoop(ticks <-chan time.Time, stop <-chan struct{}) {
+	o.sweep()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticks:
+			o.tickSweep()
+		}
+	}
+}
+
+// tickSweep is the ticker's sweep: it leaves a sweep still in flight to finish, and supersedes
+// it only after codexSweepMaxSkips ticks without a page.
 func (o *codexObserver) tickSweep() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -332,7 +346,7 @@ func (o *codexObserver) tickSweep() {
 			o.skipped++
 			return
 		}
-		log.Printf("codex app-server: thread/loaded/list sweep %d unanswered for %d ticks; starting another", o.sweepGen, o.skipped)
+		log.Printf("codex app-server: thread/loaded/list sweep %d without a page for %d ticks; starting another", o.sweepGen, o.skipped)
 	}
 	o.sweepLocked()
 }
@@ -514,6 +528,7 @@ func (o *codexObserver) handleResponse(msg codexAppServerMessage) {
 			return
 		}
 		o.swept = append(o.swept, res.Data...)
+		o.skipped = 0 // progress: the cap counts ticks since the last page
 		if res.NextCursor != nil && *res.NextCursor != "" {
 			o.sendLocked("thread/loaded/list", map[string]any{"cursor": *res.NextCursor}, threadID)
 			o.mu.Unlock()
@@ -643,17 +658,9 @@ func observeCodexAppServer(conn *websocket.Conn) {
 	stop := make(chan struct{})
 	defer close(stop)
 	go func() {
-		obs.sweep() // threads loaded before this connection existed
 		t := time.NewTicker(codexObserverSweepInterval)
 		defer t.Stop()
-		for {
-			select {
-			case <-stop:
-				return
-			case <-t.C:
-				obs.tickSweep()
-			}
-		}
+		obs.sweepLoop(t.C, stop)
 	}()
 	for {
 		_, raw, err := conn.ReadMessage()
