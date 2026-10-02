@@ -138,6 +138,10 @@ func isKubeConflict(err error) bool { return kubeErrCode(err) == http.StatusConf
 const (
 	kubeJSON      = "application/json"
 	kubeJSONPatch = "application/json-patch+json"
+	// kubeMergePatch is for annotations only: a map whose keys the adapter owns, where a
+	// merge is exactly what is meant, and metadata.resourceVersion in the body makes the
+	// write conditional (409 on a mismatch).
+	kubeMergePatch = "application/merge-patch+json"
 )
 
 // do sends one request. body is marshalled once so the 401 retry sends the same bytes;
@@ -231,6 +235,10 @@ func (c *kubeClient) replace(ctx context.Context, path string, obj, out any) err
 
 func (c *kubeClient) jsonPatch(ctx context.Context, path string, ops []kubePatchOp, out any) error {
 	return c.do(ctx, http.MethodPatch, path, nil, kubeJSONPatch, ops, out)
+}
+
+func (c *kubeClient) mergePatch(ctx context.Context, path string, patch, out any) error {
+	return c.do(ctx, http.MethodPatch, path, nil, kubeMergePatch, patch, out)
 }
 
 // delete removes one object. An object already gone is success: every caller is a

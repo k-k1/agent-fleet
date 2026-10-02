@@ -702,3 +702,32 @@ the live acceptance (#1468).
   cannot read.
 - **Object names**: a CP workspace name longer than 40 characters keeps a prefix and gains a hash
   of the whole, so the pod name and the `controller-revision-hash` label stay within 63.
+
+## Addendum (2026-10-02) — what the home operations and Destroy settled
+
+Written with #1466 (`runtime_kubernetes_home.go`, `runtime_kubernetes_destroy.go`,
+`runtime_kubernetes_stale.go`). The decisions do not change, with one exception, flagged first.
+
+- **The wipe record lives on the state claim, not in the home** (decision 4 says the init
+  container "writes the generation it carried out into the home"). A record in the home is a
+  file the member can delete or edit, and a pod restarted after that — a drain, a node repair —
+  would remove their work again. The record is a `wipe` subPath of the state claim that only the
+  init container and the erase pod mount; the workspace container cannot reach it. The behaviour
+  decision 4 asks for is unchanged: a restarted pod finds the generation and removes nothing.
+- **The marks are one annotation per kind** (`agent-fleet.io/home-wipe-repos`, `…-clean`) holding
+  the generation of the latest request of that kind, plus a counter. A Recreate requested after a
+  Clean home therefore cannot overwrite the pending Clean home. The init container checks every
+  number before it removes anything, and stops the pod on a record it cannot read.
+- **A finished erase pod found by `EraseHome` is deleted and the erase is run again**, since its
+  result belongs to a call that has already returned. A running one is waited for. The erase pod
+  runs the image of the workspace's last start, or the configured one pinned at the time.
+- **Destroy's inventory** records each claim's UID and volume, and whether the volume carried a
+  deletion-protection finalizer (`external-provisioner.volume.kubernetes.io/finalizer`, or the
+  in-tree `kubernetes.io/pv-controller`). A volume without one is reported as a residue even once
+  its object is gone. An inventory that cannot be parsed is neither trusted nor overwritten, and
+  the StatefulSet stays. So does a claim that is missing and not in the inventory.
+- **The StorageClass boot check warns and does not refuse to start.** A class the CP cannot read
+  is often RBAC applied after the CP, and each requirement it misses already shows where it bites:
+  a claim that stays `Pending`, a refused resize, a Destroy residue.
+- **`ResizeHome` reports `same` only when the claim's capacity has reached its request** and no
+  `Resizing` / `FileSystemResizePending` condition is set; until then it reports `growing`.

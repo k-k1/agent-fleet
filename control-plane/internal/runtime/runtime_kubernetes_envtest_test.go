@@ -256,7 +256,7 @@ current-context: t
 		return fail(err)
 	}
 	if e.kcm, err = run("kube-controller-manager", "--kubeconfig="+kc,
-		"--controllers=statefulset,serviceaccount,garbagecollector,pvc-protection,pv-protection",
+		"--controllers=statefulset,serviceaccount,garbagecollector,pvc-protection,pv-protection,persistentvolume-binder",
 		"--leader-elect=false", "--secure-port=0", "--concurrent-statefulset-syncs=2", "--v=0"); err != nil {
 		return fail(err)
 	}
@@ -391,10 +391,16 @@ func (e *kubeTestEnv) factory(t *testing.T, ns string) *kubeFactory {
 	}
 }
 
-type fakePinner struct{}
+// fakePinner resolves every image to a fixed digest; fingerprint, when set, is what the
+// registry says the tag's content is now (Stale's "now" side).
+type fakePinner struct{ fingerprint *string }
 
-func (fakePinner) pin(_ context.Context, image string) (string, error) {
-	return image + "@sha256:" + strings.Repeat("ab", 32), nil
+func (f fakePinner) resolve(_ context.Context, image string) (resolvedImage, error) {
+	fp := "linux/amd64=sha256:" + strings.Repeat("ab", 32)
+	if f.fingerprint != nil {
+		fp = *f.fingerprint
+	}
+	return resolvedImage{pinned: image + "@sha256:" + strings.Repeat("ab", 32), fingerprint: fp}, nil
 }
 
 func eventually(t *testing.T, within time.Duration, what string, ok func() bool) {

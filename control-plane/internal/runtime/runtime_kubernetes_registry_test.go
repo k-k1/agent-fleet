@@ -110,35 +110,35 @@ func manifestDigestOf(s string) string {
 }
 
 // Start pins the tag's own digest: through the Bearer challenge, from the
-// Docker-Content-Digest header of a HEAD, and from the body's hash when the registry
-// sends no header.
+// Docker-Content-Digest header, and from the body's hash when the registry sends no
+// header.
 func TestRegistryPinsTheTagDigest(t *testing.T) {
 	fr := newFakeRegistry(t)
 	ref := fr.host() + "/team/ws:1.0"
 	want := ref + "@" + manifestDigestOf(fr.manifest)
-	got, err := fr.client(nil).pin(context.Background(), ref)
+	got, err := fr.client(nil).pinned(context.Background(), ref)
 	if err != nil || got != want {
 		t.Fatalf("pin = %q, %v; want %q", got, err, want)
 	}
-	if fr.manifestReq[len(fr.manifestReq)-1] != "HEAD Bearer reg-token" {
-		t.Fatalf("requests = %v; want the digest from a HEAD", fr.manifestReq)
+	if fr.manifestReq[len(fr.manifestReq)-1] != "GET Bearer reg-token" {
+		t.Fatalf("requests = %v; want one authenticated GET (its body is the fingerprint)", fr.manifestReq)
 	}
 	fr.sendDigest = false
-	got, err = fr.client(nil).pin(context.Background(), ref)
+	got, err = fr.client(nil).pinned(context.Background(), ref)
 	if err != nil || got != want {
 		t.Fatalf("pin without the header = %q, %v; want %q", got, err, want)
 	}
 	// A reference that already carries a digest is used as written, with no request.
 	before := len(fr.manifestReq)
 	pinned := fr.host() + "/team/ws@sha256:" + strings.Repeat("c", 64)
-	if got, err := fr.client(nil).pin(context.Background(), pinned); err != nil || got != pinned {
+	if got, err := fr.client(nil).pinned(context.Background(), pinned); err != nil || got != pinned {
 		t.Fatalf("pin(digest) = %q, %v", got, err)
 	}
 	if len(fr.manifestReq) != before {
 		t.Fatal("a pinned reference went to the registry")
 	}
 	// A registry that cannot be read is a Start error naming the escape hatch.
-	_, err = fr.client(nil).pin(context.Background(), fr.host()+"/team/ws:missing")
+	_, err = fr.client(nil).pinned(context.Background(), fr.host()+"/team/ws:missing")
 	if err == nil || !strings.Contains(err.Error(), "@sha256") {
 		t.Fatalf("unreadable tag = %v", err)
 	}
@@ -154,14 +154,14 @@ func TestRegistryUsesThePullSecret(t *testing.T) {
 		}
 		return "", "", false
 	}
-	if _, err := fr.client(creds).pin(context.Background(), fr.host()+"/team/ws:1.0"); err != nil {
+	if _, err := fr.client(creds).pinned(context.Background(), fr.host()+"/team/ws:1.0"); err != nil {
 		t.Fatal(err)
 	}
 	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("robot:pw"))
 	if fr.tokenAuth[len(fr.tokenAuth)-1] != want {
 		t.Fatalf("token request auth = %v", fr.tokenAuth)
 	}
-	if _, err := fr.client(nil).pin(context.Background(), fr.host()+"/team/ws:1.0"); err == nil {
+	if _, err := fr.client(nil).pinned(context.Background(), fr.host()+"/team/ws:1.0"); err == nil {
 		t.Fatal("pinned without the credentials the registry requires")
 	}
 }
@@ -285,7 +285,7 @@ func TestRegistrySiblingRealmGetsNoCredentials(t *testing.T) {
 	rc := newRegistryClient(func(context.Context, string) (string, string, bool) { return "robot", "pull-secret", true })
 	rc.hc.Transport = ht
 	rc.metadataToken = nil
-	if _, err := rc.pin(context.Background(), "reg.corp.example/team/ws:1"); err != nil {
+	if _, err := rc.pinned(context.Background(), "reg.corp.example/team/ws:1"); err != nil {
 		t.Fatal(err)
 	}
 	if auth, ok := ht.authAt("https://evil.corp.example/token"); !ok || auth != "" {
@@ -341,7 +341,7 @@ func TestRegistryRedirectsKeepCredentialsHome(t *testing.T) {
 				rc := newRegistryClient(func(context.Context, string) (string, string, bool) { return "robot", "pull-secret", true })
 				rc.hc.Transport = ht
 				rc.metadataToken = nil
-				_, err := rc.pin(context.Background(), "reg.example/team/ws:1")
+				_, err := rc.pinned(context.Background(), "reg.example/team/ws:1")
 				auth, reached := ht.authAt(target.String())
 				if reached != c.reached {
 					t.Fatalf("target requested = %v, want %v (err %v, seen %v)", reached, c.reached, err, ht.seen)
@@ -358,4 +358,10 @@ func TestRegistryRedirectsKeepCredentialsHome(t *testing.T) {
 			})
 		}
 	}
+}
+
+// pinned is resolve's pinned reference, for the tests that only look at the pin.
+func (rc *registryClient) pinned(ctx context.Context, image string) (string, error) {
+	r, err := rc.resolve(ctx, image)
+	return r.pinned, err
 }

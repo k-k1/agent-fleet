@@ -15,6 +15,7 @@ type kObjectMeta struct {
 	Generation        int64             `json:"generation,omitempty"`
 	CreationTimestamp string            `json:"creationTimestamp,omitempty"`
 	DeletionTimestamp *string           `json:"deletionTimestamp,omitempty"`
+	Finalizers        []string          `json:"finalizers,omitempty"`
 }
 
 type kLabelSelector struct {
@@ -75,6 +76,7 @@ type kPodSpec struct {
 	NodeSelector                  map[string]string    `json:"nodeSelector,omitempty"`
 	NodeName                      string               `json:"nodeName,omitempty"`
 	RestartPolicy                 string               `json:"restartPolicy,omitempty"`
+	InitContainers                []kContainer         `json:"initContainers,omitempty"`
 	Containers                    []kContainer         `json:"containers"`
 	Volumes                       []kVolume            `json:"volumes,omitempty"`
 }
@@ -100,6 +102,7 @@ type kContainer struct {
 	Name            string                     `json:"name"`
 	Image           string                     `json:"image"`
 	ImagePullPolicy string                     `json:"imagePullPolicy,omitempty"`
+	Command         []string                   `json:"command,omitempty"`
 	Ports           []kContainerPort           `json:"ports,omitempty"`
 	Env             []kEnvVar                  `json:"env,omitempty"`
 	EnvFrom         []kEnvFromSource           `json:"envFrom,omitempty"`
@@ -107,6 +110,9 @@ type kContainer struct {
 	VolumeMounts    []kVolumeMount             `json:"volumeMounts,omitempty"`
 	ReadinessProbe  *kProbe                    `json:"readinessProbe,omitempty"`
 	SecurityContext *kContainerSecurityContext `json:"securityContext,omitempty"`
+	// TerminationMessagePolicy FallbackToLogsOnError lets a one-shot pod's failure carry
+	// the end of its output, which is what EraseHome reports.
+	TerminationMessagePolicy string `json:"terminationMessagePolicy,omitempty"`
 }
 
 type kContainerPort struct {
@@ -266,7 +272,17 @@ type kPVCSpec struct {
 }
 
 type kPVCStatus struct {
-	Phase string `json:"phase,omitempty"`
+	Phase      string            `json:"phase,omitempty"`
+	Capacity   map[string]string `json:"capacity,omitempty"`
+	Conditions []kPodCondition   `json:"conditions,omitempty"`
+}
+
+type kStorageClass struct {
+	Metadata             kObjectMeta `json:"metadata"`
+	Provisioner          string      `json:"provisioner"`
+	ReclaimPolicy        string      `json:"reclaimPolicy,omitempty"`
+	VolumeBindingMode    string      `json:"volumeBindingMode,omitempty"`
+	AllowVolumeExpansion *bool       `json:"allowVolumeExpansion,omitempty"`
 }
 
 type kPV struct {

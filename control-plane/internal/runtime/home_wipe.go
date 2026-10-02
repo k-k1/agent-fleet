@@ -86,6 +86,8 @@ var (
 	_ homeEraser       = (*dockerRuntime)(nil)
 	_ homeEraser       = (*nativeRuntime)(nil)
 	_ homeEraser       = (*ecsEC2Runtime)(nil)
+	_ homeWiper        = (*kubeRuntime)(nil)
+	_ homeEraser       = (*kubeRuntime)(nil)
 	_ homeBackupKeeper = (*ecsEC2Runtime)(nil)
 )
 
