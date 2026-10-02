@@ -1,0 +1,441 @@
+package gcpx
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudexec"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	_ "modernc.org/sqlite"
+)
+
+// ErrLoginRequired means the profile has no usable login and none was started.
+var ErrLoginRequired = errors.New("Google Cloud login required")
+
+// MinRemaining is the shortest token life a command is started with (decision 2): the
+// wrapper does not refresh during the command, so less would hand over a token about to end.
+const MinRemaining = 10 * time.Minute
+
+// ExecOptions is one `af-gcloud-exec` invocation.
+type ExecOptions struct {
+	Profile string
+	// Project must equal the profile's project (decision 2).
+	Project string
+	// Login: "auto" logs in only when a person is at a terminal, "always" whenever the
+	// profile has no usable login, "never" exits 3 with the command to run instead.
+	Login string
+	Quiet bool
+	Argv  []string
+	// Settings and Conflicts come from the sync that preceded the run (nil when neither the
+	// CP nor the cache could say).
+	Settings  map[string]Profile
+	Conflicts []Conflict
+	Invalid   map[string]string
+
+	Stderr      io.Writer
+	Interactive bool // stdin and stderr are terminals
+	// Now is the clock for the remaining-life check (time.Now when nil).
+	Now func() time.Time
+}
+
+// ExecDir holds the private per-run directories of af-gcloud-exec's children.
+func ExecDir() string { return cloudexec.StateDir("gcp-exec") }
+
+// dropGoogle says which caller variables never reach a gcloud the Agent runs nor the
+// child: anything that could select another config root, token, account, credential file
+// or metadata server. An inherited CLOUDSDK_AUTH_ACCESS_TOKEN_FILE would otherwise replace
+// the profile's identity before the profile is consulted.
+var dropGoogle = cloudexec.DropPrefixes("CLOUDSDK_", "GOOGLE_", "GCLOUD_", "GCE_METADATA_")
+
+// AgentEnv is the environment of the Agent's own gcloud runs against its root: the
+// caller's minus dropGoogle, then the root and the settings of decision 1, appended after
+// the removal so nothing a caller sets can undo them. File logging off keeps the token, the
+// login URL and the code exchange out of the root's logs/; the metadata check off keeps a
+// configuration without an account from falling back to the VM's or node's identity.
+func AgentEnv(environ []string, root string) []string {
+	return cloudexec.SetEnv(cloudexec.Scrub(environ, dropGoogle),
+		"CLOUDSDK_CONFIG="+root,
+		"CLOUDSDK_CORE_DISABLE_FILE_LOGGING=true",
+		"CLOUDSDK_CORE_CHECK_GCE_METADATA=false",
+		"CLOUDSDK_CORE_DISABLE_USAGE_REPORTING=true",
+		"CLOUDSDK_COMPONENT_MANAGER_DISABLE_UPDATE_CHECK=true",
+	)
+}
+
+// Token is one minted access token. Value is never printed.
+type Token struct {
+	Value  string
+	Expiry time.Time
+}
+
+// PlanExec mints a token for o.Profile and returns the program, argv and environment to
+// exec. The token leaves this process only in the returned environment and the run's
+// private token file; nothing here prints or logs it.
+func PlanExec(gcloudBin string, environ []string, o ExecOptions) (string, []string, []string, error) {
+	if o.Profile == "" {
+		return "", nil, nil, errors.New("--profile is required")
+	}
+	if o.Project == "" {
+		return "", nil, nil, errors.New("--project is required")
+	}
+	if len(o.Argv) == 0 {
+		return "", nil, nil, errors.New("no command given after --")
+	}
+	p, err := pickProfile(o)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	// A Google user token is not bound to a project, so this checks that the caller and
+	// the profile agree on where the command points by default, not what the token can
+	// reach (decision 2).
+	if o.Project != p.Project {
+		return "", nil, nil, fmt.Errorf("profile %q is for project %q, not %q; --project must be the profile's project "+
+			"(see `af-gcloud-exec --list`)", p.Name, p.Project, o.Project)
+	}
+	stderr := o.Stderr
+	if stderr == nil {
+		stderr = os.Stderr
+	}
+	now := time.Now
+	if o.Now != nil {
+		now = o.Now
+	}
+	agentEnv := AgentEnv(environ, ConfigRoot())
+
+	tok, account, err := mintLocked(gcloudBin, agentEnv, p)
+	if errors.Is(err, ErrLoginRequired) {
+		hint := fmt.Sprintf("af-gcloud-exec --profile %s --project %s --login -- true", session.ShellQuote(p.Name), session.ShellQuote(p.Project))
+		switch {
+		case o.Login == "always" || (o.Login != "never" && o.Interactive):
+			if lerr := terminalLogin(gcloudBin, agentEnv, p, stderr); lerr != nil {
+				return "", nil, nil, fmt.Errorf("gcloud auth login for profile %s: %w", p.Name, lerr)
+			}
+			if tok, account, err = mintLocked(gcloudBin, agentEnv, p); err != nil {
+				return "", nil, nil, fmt.Errorf("profile %q after login: %w", p.Name, err)
+			}
+		default:
+			return "", nil, nil, fmt.Errorf("profile %q: %w\nlog in from a terminal with: %s", p.Name, err, hint)
+		}
+	}
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("profile %q: %w", p.Name, err)
+	}
+	left := tok.Expiry.Sub(now())
+	if left < MinRemaining {
+		return "", nil, nil, fmt.Errorf("profile %q: the token gcloud minted is valid for only %s, under the %s a command is started with; "+
+			"try again in a minute", p.Name, left.Round(time.Second), MinRemaining)
+	}
+	if !o.Quiet {
+		as := account
+		if p.ImpersonateServiceAccount != "" {
+			as = p.ImpersonateServiceAccount + " (impersonated by " + account + ")"
+		}
+		fmt.Fprintf(stderr, "af-gcloud-exec: profile %s runs as %s in project %s; the token is valid for %d more minutes\n",
+			p.Name, as, p.Project, int(left/time.Minute))
+	}
+
+	prog, err := exec.LookPath(o.Argv[0])
+	if err != nil {
+		return "", nil, nil, err
+	}
+	run, err := cloudexec.RunDir(ExecDir(), "run-")
+	if err != nil {
+		return "", nil, nil, err
+	}
+	sweepRuns(filepath.Dir(run), run, now())
+	env, err := ChildEnv(environ, run, p, tok.Value)
+	if err != nil {
+		_ = os.RemoveAll(run)
+		return "", nil, nil, err
+	}
+	return prog, o.Argv, env, nil
+}
+
+// pickProfile finds o.Profile among the Settings profiles, or says why it cannot run.
+func pickProfile(o ExecOptions) (Profile, error) {
+	for _, c := range o.Conflicts {
+		if c.Name == o.Profile {
+			return Profile{}, fmt.Errorf("profile %q is not exported: Settings labels %s all map to this name; rename all but one",
+				o.Profile, strings.Join(c.Labels, " / "))
+		}
+	}
+	if why, ok := o.Invalid[o.Profile]; ok {
+		return Profile{}, fmt.Errorf("profile %q is not exported: %s (Settings > Google Cloud)", o.Profile, why)
+	}
+	p, ok := o.Settings[o.Profile]
+	if !ok {
+		if o.Settings == nil {
+			return Profile{}, fmt.Errorf("profile %q: the Google Cloud profiles could not be read from Settings, and there is no earlier copy", o.Profile)
+		}
+		return Profile{}, fmt.Errorf("no Google Cloud profile %q in Settings (see `af-gcloud-exec --list`)", o.Profile)
+	}
+	if why := InvalidReason(p); why != "" {
+		return Profile{}, fmt.Errorf("profile %q is not exported: %s (Settings > Google Cloud)", o.Profile, why)
+	}
+	return p, nil
+}
+
+// mintLocked mints under the root's lock, so a sync cannot rewrite the configuration
+// between the account check and the mint.
+func mintLocked(gcloudBin string, env []string, p Profile) (Token, string, error) {
+	root, unlock, err := lockRoot()
+	if err != nil {
+		return Token{}, "", err
+	}
+	defer unlock()
+	env = cloudexec.SetEnv(env, "CLOUDSDK_CONFIG="+root)
+	cfg := filepath.Join(root, "configurations", "config_"+ConfigName(p.Name))
+	if _, err := os.Stat(cfg); err != nil {
+		return Token{}, "", fmt.Errorf("its gcloud configuration %s is missing (the last sync did not write it)", ConfigName(p.Name))
+	}
+	account := readProperty(cfg, "core", "account")
+	if account == "" {
+		return Token{}, "", fmt.Errorf("%w: no account is selected for it yet", ErrLoginRequired)
+	}
+	if p.Account != "" && account != p.Account {
+		return Token{}, "", fmt.Errorf("its configuration selects %s, but Settings names %s; wait for the next sync and run again", account, p.Account)
+	}
+	// Only a user credential is minted from; the VM's or node's identity, a service-account
+	// key or an external account activated into this root by hand never is (decision 2).
+	kind, err := credentialType(root, account)
+	if err != nil {
+		return Token{}, "", err
+	}
+	switch kind {
+	case "":
+		return Token{}, "", fmt.Errorf("%w: %s has no credential in the Agent's gcloud store", ErrLoginRequired, account)
+	case "authorized_user":
+	default:
+		return Token{}, "", fmt.Errorf("%s holds a %q credential in the Agent's gcloud store, not a user login; af-gcloud-exec only mints "+
+			"from a user login", account, kind)
+	}
+	tok, err := mint(gcloudBin, env, p)
+	return tok, account, err
+}
+
+// credentialType is the "type" of account's credential in gcloud's credentials.db ("" when
+// there is none). Only the type is selected, so the refresh token never enters this process.
+func credentialType(root, account string) (string, error) {
+	path := filepath.Join(root, "credentials.db")
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(3000)")
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	var kind sql.NullString
+	err = db.QueryRow(`SELECT json_extract(value, '$.type') FROM credentials WHERE account_id = ?`, account).Scan(&kind)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return "", nil
+	case err != nil:
+		return "", fmt.Errorf("reading the Agent's gcloud credential store: %w", err)
+	}
+	if !kind.Valid || kind.String == "" {
+		return "unknown", nil
+	}
+	return kind.String, nil
+}
+
+// mint asks gcloud for the profile's token. `config config-helper` rather than `auth
+// print-access-token`: it returns the expiry with the token, also for an impersonated one,
+// and --min-expiry makes gcloud refresh a cached token with less than that left, which
+// print-access-token does only inside its own ~5 minute window (measured on 587.0.0; ADR
+// 0107 note of 2026-10-02).
+func mint(gcloudBin string, env []string, p Profile) (Token, error) {
+	args := []string{"config", "config-helper", "--configuration", ConfigName(p.Name),
+		"--min-expiry", fmt.Sprintf("%dm", int(MinRemaining/time.Minute)),
+		"--format", "json(credential.access_token,credential.token_expiry)", "--quiet"}
+	if p.ImpersonateServiceAccount != "" {
+		args = append(args, "--impersonate-service-account", p.ImpersonateServiceAccount)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, gcloudBin, args...)
+	cmd.Env = env
+	cmd.Stdin = nil
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	if err := cmd.Run(); err != nil {
+		msg := gcloudError(errb.String())
+		if loginNeeded(errb.String()) {
+			return Token{}, fmt.Errorf("%w: %s", ErrLoginRequired, msg)
+		}
+		return Token{}, fmt.Errorf("gcloud could not mint a token: %s", msg)
+	}
+	var doc struct {
+		Credential struct {
+			AccessToken string `json:"access_token"`
+			TokenExpiry string `json:"token_expiry"`
+		} `json:"credential"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil || doc.Credential.AccessToken == "" {
+		return Token{}, errors.New("gcloud returned no access token")
+	}
+	exp, err := time.Parse(time.RFC3339, doc.Credential.TokenExpiry)
+	if err != nil {
+		return Token{}, errors.New("gcloud returned no usable token expiry, so how long the token lasts is unknown")
+	}
+	return Token{Value: doc.Credential.AccessToken, Expiry: exp}, nil
+}
+
+// loginNeeded says whether gcloud's error means "log in" rather than a refusal a login
+// cannot fix (permission denied, a disabled API, the network).
+func loginNeeded(stderr string) bool {
+	s := strings.ToLower(stderr)
+	for _, m := range []string{
+		"you do not currently have an active account selected",
+		"invalid_grant",
+		"reauthentication",
+		"reauth related error",
+		"please run:\n\n  $ gcloud auth login",
+		"there was a problem refreshing your current auth tokens",
+		"your current authentication information is invalid",
+	} {
+		if strings.Contains(s, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// tokenLike matches an OAuth access token (ya29.…) and any long unbroken run of token
+// characters, so a message built from gcloud's stderr cannot carry one even if a future
+// gcloud put it there.
+var tokenLike = regexp.MustCompile(`ya29\.[A-Za-z0-9_.+/=-]+|[A-Za-z0-9_.+=-]{40,}`)
+
+// gcloudError keeps gcloud's ERROR lines (falling back to its last line), bounded and with
+// anything token-shaped removed, for a message.
+func gcloudError(stderr string) string {
+	stderr = tokenLike.ReplaceAllString(stderr, "<redacted>")
+	var keep []string
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	for _, l := range lines {
+		if strings.HasPrefix(l, "ERROR:") {
+			keep = append(keep, strings.TrimSpace(l))
+		}
+	}
+	if len(keep) == 0 && len(lines) > 0 {
+		keep = lines[len(lines)-1:]
+	}
+	s := strings.Join(keep, " ")
+	if len(s) > 600 {
+		s = s[:600] + "…"
+	}
+	if s == "" {
+		s = "(no message)"
+	}
+	return s
+}
+
+// terminalLogin runs gcloud's login with the person's terminal attached, against the
+// Agent's root in the clean environment. When the profile names an account it is passed,
+// so gcloud refuses any other sign-in before storing it. Its stdout goes to stderr so the
+// wrapped command's stdout stays clean for pipes.
+func terminalLogin(gcloudBin string, env []string, p Profile, stderr io.Writer) error {
+	root, err := cloudexec.PrivateDir(ConfigRoot())
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(stderr, "af-gcloud-exec: Google Cloud login needed for profile "+p.Name+". Paste back only a code from a sign-in you started yourself just now.")
+	cmd := exec.Command(gcloudBin, LoginArgs(p)...)
+	cmd.Env = cloudexec.SetEnv(env, "CLOUDSDK_CONFIG="+root)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, stderr, stderr
+	return cmd.Run()
+}
+
+// LoginArgs is `gcloud auth login [<account>] --no-launch-browser --configuration af-<name>`.
+func LoginArgs(p Profile) []string {
+	args := []string{"auth", "login"}
+	if p.Account != "" {
+		args = append(args, p.Account)
+	}
+	return append(args, "--no-launch-browser", "--configuration", ConfigName(p.Name))
+}
+
+// noCredentials is the GOOGLE_APPLICATION_CREDENTIALS of the child: a path in its private
+// directory that is never created. Go's oauth2/google and auth, Python's google-auth and
+// Node's google-auth-library all stop there with an error, without reading the member's
+// well-known ADC file or asking the metadata server (ADR 0107 note of 2026-10-02).
+const noCredentials = "no-application-default-credentials.json"
+
+// ChildEnv is the command's environment (decision 2): the caller's with every
+// CLOUDSDK_*, GOOGLE_*, GCLOUD_* (and GCE_METADATA_*) variable removed, then the token,
+// the profile's project, quota project, region and zone, and an application-default
+// credential path that holds nothing. run is the private directory of this run; the token
+// file and the child's empty config root are written there.
+func ChildEnv(environ []string, run string, p Profile, token string) ([]string, error) {
+	cfg := filepath.Join(run, "config")
+	if err := os.Mkdir(cfg, 0o700); err != nil {
+		return nil, err
+	}
+	tokFile := filepath.Join(run, "token")
+	if err := os.WriteFile(tokFile, []byte(token), 0o600); err != nil {
+		return nil, err
+	}
+	quota := p.QuotaProject
+	if quota == "" {
+		quota = p.Project
+	}
+	kvs := []string{
+		"CLOUDSDK_CONFIG=" + cfg,
+		"CLOUDSDK_AUTH_ACCESS_TOKEN_FILE=" + tokFile,
+		"CLOUDSDK_CORE_DISABLE_FILE_LOGGING=true",
+		"GOOGLE_OAUTH_ACCESS_TOKEN=" + token,
+		"CLOUDSDK_CORE_PROJECT=" + p.Project,
+		"GOOGLE_CLOUD_PROJECT=" + p.Project,
+		"GOOGLE_PROJECT=" + p.Project,
+		"CLOUDSDK_BILLING_QUOTA_PROJECT=" + quota,
+		"GOOGLE_BILLING_PROJECT=" + quota,
+		"USER_PROJECT_OVERRIDE=true",
+		"GOOGLE_APPLICATION_CREDENTIALS=" + filepath.Join(run, noCredentials),
+	}
+	if p.Region != "" {
+		kvs = append(kvs, "CLOUDSDK_COMPUTE_REGION="+p.Region, "GOOGLE_REGION="+p.Region)
+	}
+	if p.Zone != "" {
+		kvs = append(kvs, "CLOUDSDK_COMPUTE_ZONE="+p.Zone, "GOOGLE_ZONE="+p.Zone)
+	}
+	return cloudexec.SetEnv(cloudexec.Scrub(environ, dropGoogle), kvs...), nil
+}
+
+// runKeep is how long a run's directory outlives its start. The wrapper execs into the
+// command, so nothing removes the directory when the command ends; a later run sweeps it.
+// The token in it lasts at most an hour (no --lifetime is asked for), so after this the
+// directory holds nothing usable, while a command still running keeps its config root.
+const runKeep = 12 * time.Hour
+
+// sweepRuns removes the run directories under dir older than runKeep, except keep.
+func sweepRuns(dir, keep string, now time.Time) {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range ents {
+		path := filepath.Join(dir, e.Name())
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "run-") || path == keep {
+			continue
+		}
+		if fi, err := os.Stat(filepath.Join(path, "token")); err == nil && now.Sub(fi.ModTime()) < runKeep {
+			continue
+		} else if err != nil {
+			if di, derr := e.Info(); derr != nil || now.Sub(di.ModTime()) < runKeep {
+				continue
+			}
+		}
+		_ = os.RemoveAll(path)
+	}
+}

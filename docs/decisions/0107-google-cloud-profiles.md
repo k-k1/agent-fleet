@@ -329,3 +329,57 @@ question 4, on 587.0.0 in a workspace.
   variables removed, and the Toolchain tab reads the SDK's `VERSION` file instead of running gcloud.
 - **The tree is relocatable.** It is installed in a staging directory and renamed into place; gcloud and
   the plugin run from the new path and through the `~/.local/bin` links.
+
+## Note — the child's credential-free path, the mint and the configurations, measured (2026-10-02)
+
+Issue #1496. The decisions above are not changed. This note records the phase-1 Agent side's
+measurements for open question 1 and decision 2's "how exactly is measured in phase 1", and two
+implementation choices.
+
+- **Open question 1: answered, fails closed.** Each library ran with a synthetic `authorized_user`
+  ADC file in a scratch `$HOME/.config/gcloud` and a local metadata mock reached through
+  `GCE_METADATA_HOST` / `GCE_METADATA_IP` / `GCE_METADATA_ROOT`. Versions: Go 1.26.8 with
+  `golang.org/x/oauth2` 0.37.0 and `cloud.google.com/go/auth` 0.24.0, Python 3.13.5 with `google-auth`
+  2.59.1, and Node 22.23.3 with `google-auth-library` 11.1.0. Two positive controls passed first: with
+  no `GOOGLE_APPLICATION_CREDENTIALS`, all four found the ADC file; with no ADC file either, all four
+  took the mock's token. Then `GOOGLE_APPLICATION_CREDENTIALS` pointed at nothing usable. Every one of
+  the four code paths returned an error, sent no request to the mock and did not read the ADC file.
+  "Nothing usable" was measured four ways:
+  - a missing file in an empty private directory (the wrapper's choice);
+  - an empty file;
+  - a directory;
+  - a missing file with `CLOUDSDK_CONFIG` pointing at an empty directory.
+
+  The variable is what does it, not `CLOUDSDK_CONFIG`. With only `CLOUDSDK_CONFIG` set, Python and
+  Node skip the home ADC file but go to the metadata server, and both Go libraries still load
+  `$HOME/.config/gcloud/application_default_credentials.json`. Neither library mentions
+  `CLOUDSDK_CONFIG`. Not measured: a token refresh against Google, and runs with gcloud on `PATH`.
+- **The mint uses `gcloud config config-helper`, not `gcloud auth print-access-token`.** The full call is
+  `gcloud config config-helper --configuration af-<name> --min-expiry 10m --format json(credential.access_token,credential.token_expiry)`,
+  plus `--impersonate-service-account` when the profile sets one. It runs in the same clean environment
+  against the Agent's root. Measured on 587.0.0 with a synthetic refresh token and a local token and
+  `iamcredentials` mock:
+  - `print-access-token` prints the token and no expiry, so the remaining minutes cannot be told from
+    it. For an impersonated token nothing records an expiry at all: every impersonated call mints a
+    new service-account token, and `access_tokens.db` holds only the user's.
+  - `print-access-token` refreshes a cached user token only in its own window of about five minutes
+    (the threshold lies between 240 s and 320 s). Tokens with 320, 400 and 600 s left came back
+    unchanged, so the ten-minute rule needs something else.
+  - `config-helper` returns the token and an RFC 3339 `token_expiry` in one call, for an impersonated
+    token too. `--min-expiry 10m` refreshes a cached token with less than ten minutes left: tokens with
+    320, 400 and 600 s left were refreshed, and one with 900 s left was kept. `--min-expiry` refuses
+    values over 1h. `--force-auth-refresh` is the unconditional alternative.
+
+  So "force a fresh mint" is `--min-expiry 10m`, with no write to gcloud's store. A token that still
+  has under ten minutes left, or a missing or unparsable `token_expiry`, is refused. The JSON is read
+  only in memory: the format projection leaves out `id_token`, and an error never quotes the output.
+  The user approved this on 2026-10-02 (via the parent session).
+- **The configurations are written as files.** The Agent writes `configurations/config_af-<name>`
+  directly instead of running `gcloud config configurations create --no-activate` and
+  `gcloud config set`. gcloud reads a hand-written file like its own (measured: `configurations list`
+  and `config get`). `active_config` is never touched, which is what `--no-activate` is for. Writing
+  files also means the five-minute poll needs no gcloud installed and pays for no gcloud starts, at
+  about 1 s each. Which `core/account` the login owns is decided from a small record of the last sync
+  (`gcloud/.agent-fleet-profiles.json`: id, login method, Settings account per name).
+- **`GCE_METADATA_*` is removed for the child too**, beside `CLOUDSDK_*`, `GOOGLE_*` and `GCLOUD_*`:
+  a caller's metadata host must not steer a library that does reach for the metadata server.

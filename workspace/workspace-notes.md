@@ -148,6 +148,13 @@ directory belongs to someone else.
   lookup is allowed only after the isolation self-check in `notes/aws.md` says so. Never retry a
   refused run without it, and never add `--keep-aws-config` to get past an error. Procedure, exit
   codes and who fixes what: `notes/aws.md`.
+- **Google Cloud: the default credentials are not the user either.** A bare `gcloud`, client
+  library or Terraform call finds no login of the user's, or the VM's / node's identity. Anything
+  about their projects goes through
+  `af-gcloud-exec --profile <name> --project <id> -- <command>` (`af-gcloud-exec --list` names the
+  profiles). Never run `gcloud auth login`, `gcloud config set` or anything else against the
+  Agent's gcloud store yourself, never print a token, and exit 3 means the user has to log in:
+  hand them the command it printed. Which tools the token reaches: `notes/gcp.md`.
 
 ## Answering questions about this Workspace
 The user guide is at `/usr/local/share/agent-fleet/docs` (`member/` for people running agents,
@@ -167,6 +174,7 @@ All under `/usr/local/share/agent-fleet/notes/`:
 | run a JVM or Node build/test, need a JDK or `JAVA_HOME`, or a build died with 137 | `/usr/local/share/agent-fleet/notes/build.md` |
 | screenshot or verify a UI, hand a Chromium page to the user, explain the browser pane | `/usr/local/share/agent-fleet/notes/browser.md` |
 | run any AWS command about the user's accounts or resources (reads included), or an AWS command failed with "Unable to locate credentials", an SSO/token error, "could not be found" or `af-aws-exec` exit 3 | `/usr/local/share/agent-fleet/notes/aws.md` |
+| run any Google Cloud command about the user's projects (`gcloud`, Terraform's Google provider, `kubectl` against GKE, a client library), or one failed with no credentials, a reauthentication error, or `af-gcloud-exec` exit 3 | `/usr/local/share/agent-fleet/notes/gcp.md` |
 | act on an `[agent-fleet…]` note or peer envelope, hand off, message a peer, generate an image, add MCP or change agent configuration | `/usr/local/share/agent-fleet/notes/agent-fleet.md` |
 
 Any guide path named here or in a topic file has to exist in the shipped guide, and any topic file

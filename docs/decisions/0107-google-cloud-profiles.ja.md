@@ -273,3 +273,48 @@ Issue #1495。上の内容は何も変えない。段階 1 のインストーラ
   `GOOGLE_*`・`GCLOUD_*`・`GCE_METADATA_*` を外して走り、ツールチェーンのタブは gcloud を走らせず SDK の `VERSION` ファイルを読む。
 - **ツリーは移動できる。** 作業用ディレクトリに入れてから所定の場所へ rename する。gcloud とプラグインは新しいパスからも、
   `~/.local/bin` のリンク経由でも動く。
+
+## 注記 — 子の認証情報の無いパス、発行、構成（実測、2026-10-02）
+
+Issue #1496。上の決定は何も変えない。段階 1 の Agent 側の実測を記録する。対象は未決事項 1 と、決定 2 の「どうやるかは段階 1 で
+測る」である。あわせて実装上の選択を 2 つ記録する。
+
+- **未決事項 1: 答えは「閉じて失敗する」。** 各ライブラリは、一時的な `$HOME/.config/gcloud` に合成した `authorized_user` の
+  ADC ファイルを置き、`GCE_METADATA_HOST` / `GCE_METADATA_IP` / `GCE_METADATA_ROOT` で手元のメタデータのモックを指して走らせた。
+  版は次のとおり。Go 1.26.8 と `golang.org/x/oauth2` 0.37.0・`cloud.google.com/go/auth` 0.24.0、Python 3.13.5 と
+  `google-auth` 2.59.1、Node 22.23.3 と `google-auth-library` 11.1.0。
+  先に陽性対照を 2 つ確かめた。`GOOGLE_APPLICATION_CREDENTIALS` が無ければ 4 つとも ADC ファイルを見つけ、ADC ファイルも
+  無ければ 4 つともモックのトークンを取った。そのうえで `GOOGLE_APPLICATION_CREDENTIALS` を使える物の無いところへ向けた。
+  4 つのコード経路はどれも、エラーを返し、モックへ要求を送らず、ADC ファイルを読まなかった。「使える物が無い」は 4 通り測った。
+  - 空のプライベートなディレクトリの中の、存在しないファイル（ラッパーはこれを使う）
+  - 空のファイル
+  - ディレクトリ
+  - 存在しないファイルに、空のディレクトリを指す `CLOUDSDK_CONFIG` を足したもの
+
+  止めているのはこの変数で、`CLOUDSDK_CONFIG` ではない。`CLOUDSDK_CONFIG` だけを設定すると、Python と Node はホームの ADC
+  ファイルを飛ばすがメタデータサーバーへ行く。Go の 2 つのライブラリは `$HOME/.config/gcloud/application_default_credentials.json`
+  を読み続ける。どちらのライブラリも `CLOUDSDK_CONFIG` に触れていない。測っていないのは、Google へのトークン更新と、
+  `PATH` に gcloud がある場合である。
+- **発行には `gcloud auth print-access-token` ではなく `gcloud config config-helper` を使う。** 呼び出しの全体は
+  `gcloud config config-helper --configuration af-<name> --min-expiry 10m --format json(credential.access_token,credential.token_expiry)`
+  で、プロファイルが成り代わりを設定していれば `--impersonate-service-account` を足す。同じクリーンな環境で、Agent のルートに
+  対して走らせる。587.0.0 で、合成したリフレッシュトークンと、手元のトークン・`iamcredentials` のモックを使って測った。
+  - `print-access-token` はトークンだけを出して期限を出さないので、残り分数が分からない。成り代わりのトークンには、
+    期限を記録する場所がそもそも無い。成り代わりの呼び出しは毎回新しいサービスアカウントのトークンを発行し、
+    `access_tokens.db` に入るのは利用者のトークンだけである。
+  - `print-access-token` がキャッシュ済みの利用者トークンを更新するのは、自前の約 5 分の窓の中だけである（閾値は 240〜320 秒の間）。
+    残り 320・400・600 秒のトークンはそのまま返ってきたので、10 分の規則には別の手段が要る。
+  - `config-helper` は 1 回の呼び出しでトークンと RFC 3339 の `token_expiry` を返し、成り代わりのトークンでも同じである。
+    `--min-expiry 10m` は残り 10 分未満のキャッシュを更新する。残り 320・400・600 秒は更新され、900 秒は保たれた。
+    `--min-expiry` は 1h を超える値を断る。無条件に更新するなら `--force-auth-refresh` がある。
+
+  したがって「新しく発行させる」は `--min-expiry 10m` であり、gcloud のストアには書かない。発行後もなお残り 10 分未満のトークンや、
+  `token_expiry` が無いか読めない出力は断る。JSON はメモリ上でだけ読む。書式の射影で `id_token` は落とし、エラーが出力を引用する
+  ことは無い。2026-10-02 に利用者が承認した（親セッション経由）。
+- **構成はファイルとして書く。** Agent は `gcloud config configurations create --no-activate` と `gcloud config set` を走らせず、
+  `configurations/config_af-<name>` を直接書く。gcloud は手で書いたファイルを自分のものと同じに読む（`configurations list` と
+  `config get` で実測）。`active_config` には触れない。これが `--no-activate` の目的にあたる。ファイルで書くので、5 分ごとの
+  取り込みに gcloud のインストールは要らず、1 回約 1 秒の gcloud の起動もかからない。どの `core/account` がログインの持ち物かは、
+  前回の同期の小さな記録（`gcloud/.agent-fleet-profiles.json`。名前ごとに id・ログイン方式・Settings のアカウント）から決める。
+- **子からは `GCE_METADATA_*` も外す。** `CLOUDSDK_*`・`GOOGLE_*`・`GCLOUD_*` に加えて外す。メタデータサーバーを探しに行く
+  ライブラリを、呼び出し元のメタデータのホストが操れないようにするためである。

@@ -1,0 +1,142 @@
+package main
+
+import (
+	"bytes"
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gcpx"
+)
+
+func TestParseGCloudExecArgs(t *testing.T) {
+	o, list := parseGCloudExecArgs([]string{"--profile=prod", "--project", "prod-project", "-q", "--no-login",
+		"--", "terraform", "plan", "--project", "other"})
+	if list || o.Profile != "prod" || o.Project != "prod-project" || !o.Quiet || o.Login != "never" ||
+		strings.Join(o.Argv, " ") != "terraform plan --project other" {
+		t.Fatalf("parsed %+v list=%v", o, list)
+	}
+	if o, list := parseGCloudExecArgs([]string{"--list"}); !list || o.Login != "auto" {
+		t.Fatalf("--list: %+v %v", o, list)
+	}
+}
+
+// TestGCloudExecHelper is the wrapper run as its own process by TestGCloudExecProcess.
+func TestGCloudExecHelper(t *testing.T) {
+	if os.Getenv("AF_TEST_GCLOUD_EXEC_HELPER") != "1" {
+		t.Skip("helper process only")
+	}
+	buildPinsPath = os.Getenv("AF_TEST_PINS")
+	var args []string
+	_ = json.Unmarshal([]byte(os.Getenv("AF_TEST_ARGS")), &args)
+	runGCloudExec(args)
+}
+
+const fakeGcloudMain = `#!/bin/sh
+case "$1 $2" in
+"config config-helper")
+  printf '{"credential":{"access_token":"%s","token_expiry":"%s"}}\n' "$(cat __DIR__/token)" "$(cat __DIR__/expiry)";;
+*) echo "fake gcloud: unexpected $*" >&2; exit 9;;
+esac
+`
+
+// The wrapper end to end: its exit codes, and that neither its stdout nor its stderr ever
+// carries the token. Every process it starts is waited for before the test returns.
+func TestGCloudExecProcess(t *testing.T) {
+	home, fake := t.TempDir(), t.TempDir()
+	b := make([]byte, 24)
+	_, _ = rand.Read(b)
+	token := "ya" + "29." + hex.EncodeToString(b)
+	_ = os.WriteFile(filepath.Join(fake, "token"), []byte(token), 0o600)
+	_ = os.WriteFile(filepath.Join(fake, "expiry"), []byte(time.Now().Add(50*time.Minute).UTC().Format(time.RFC3339)), 0o600)
+	// A pinned SDK already in place, so first use installs nothing.
+	sdk := filepath.Join(home, ".local", "share", "agent-fleet", "google-cloud-sdk")
+	_ = os.MkdirAll(filepath.Join(sdk, "bin"), 0o755)
+	_ = os.WriteFile(filepath.Join(sdk, "bin", "gcloud"), []byte(strings.ReplaceAll(fakeGcloudMain, "__DIR__", fake)), 0o755)
+	_ = os.WriteFile(filepath.Join(sdk, "bin", "gke-gcloud-auth-plugin"), []byte("#!/bin/sh\n"), 0o755)
+	_ = os.WriteFile(filepath.Join(sdk, "VERSION"), []byte("587.0.0\n"), 0o644)
+	pins := filepath.Join(fake, "versions.json")
+	_ = os.WriteFile(pins, []byte(`{"gcloud":"587.0.0","gcloud_sha256":"x"}`), 0o644)
+
+	bridgeTok := "afg_" + hex.EncodeToString(b[:6])
+	profiles := []gcpx.Profile{
+		{ID: "1", Name: "prod", Label: "Prod", LoginMethod: "google", Project: "prod-project", Account: "dev@example.com"},
+		{ID: "2", Name: "fresh", Label: "Fresh", LoginMethod: "google", Project: "fresh-project"},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+bridgeTok {
+			http.Error(w, "no", http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"profiles": profiles})
+	}))
+	t.Cleanup(srv.Close)
+
+	run := func(args ...string) (int, string, string) {
+		t.Helper()
+		a, _ := json.Marshal(args)
+		cmd := exec.Command(os.Args[0], "-test.run=^TestGCloudExecHelper$")
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "AF_TEST_GCLOUD_EXEC_HELPER=1",
+			"AF_TEST_PINS=" + pins, "AF_TEST_ARGS=" + string(a),
+			"AF_CP_BASE_URL=" + srv.URL, "AF_GCP_PROFILES_TOKEN=" + bridgeTok,
+			"CLOUDSDK_AUTH_ACCESS_TOKEN_FILE=/nonexistent"}
+		var out, errb bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &errb
+		err := cmd.Run()
+		code := 0
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			code = ee.ExitCode()
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out.String()+errb.String(), token) {
+			t.Fatalf("%v: the token reached the output", args)
+		}
+		return code, out.String(), errb.String()
+	}
+
+	if code, _, _ := run("--profile", "prod", "--", "true"); code != 2 {
+		t.Errorf("no --project: exit %d, want 2", code)
+	}
+	if code, _, msg := run("--profile", "prod", "--project", "other-project", "--", "true"); code != 1 || !strings.Contains(msg, "prod-project") {
+		t.Errorf("project mismatch: exit %d %q", code, msg)
+	}
+	if code, _, msg := run("--profile", "fresh", "--project", "fresh-project", "--", "true"); code != 3 || !strings.Contains(msg, "--login") {
+		t.Errorf("no account: exit %d %q", code, msg)
+	}
+	if code, out, _ := run("--list"); code != 0 || !strings.Contains(out, "prod\tprod-project\tdev@example.com") ||
+		!strings.Contains(out, "fresh\tfresh-project\t(chosen at the first login)") {
+		t.Errorf("--list: exit %d %q", code, out)
+	}
+	// A logged-in profile: the wrapper execs the command, whose output it does not add to.
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(home, ".local", "state", "agent-fleet", "gcloud", "credentials.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE credentials (account_id TEXT PRIMARY KEY, value BLOB)`)
+	if err == nil {
+		_, err = db.Exec(`INSERT INTO credentials VALUES ('dev@example.com', '{"type":"authorized_user"}')`)
+	}
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, out, msg := run("--profile", "prod", "--project", "prod-project", "--", "sh", "-c", `test -s "$CLOUDSDK_AUTH_ACCESS_TOKEN_FILE" && echo ran`)
+	if code != 0 || out != "ran\n" || !strings.Contains(msg, "runs as dev@example.com") {
+		t.Errorf("run: exit %d out %q err %q", code, out, msg)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "gcloud")); err == nil {
+		t.Error("the wrapper created ~/.config/gcloud")
+	}
+}

@@ -27,6 +27,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
@@ -173,6 +174,9 @@ func serve() {
 	// `aws --profile <name>`, an SDK or a build tool can select them (issue #998).
 	// Backgrounded and fail-open like the MCP pull.
 	awsx.StartSync()
+	// The member's Google Cloud profiles become configurations in the Agent's own gcloud
+	// root (ADR 0107 decision 1). Backgrounded and fail-open like the AWS pull.
+	gcpx.StartSync()
 	// Pull the tenant's branch naming rules (ADR 0103 decision 10). Backgrounded and
 	// fail-open like the MCP pull: an unreachable CP keeps the last copy.
 	startBranchRulesTenantSync()
