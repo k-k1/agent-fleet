@@ -80,6 +80,9 @@ func TestECSEC2ReservedSlotIsReplacedOnTheNextStart(t *testing.T) {
 			if got := attachedInstance(h.ec2.volumes["vol-1"]); got != "i-new1" {
 				t.Fatalf("home attached to %q, want i-new1", got)
 			}
+			if got := ec2TagValue(h.ec2.instances["i-new1"].Tags, ec2TagReplacesHome); got != "" {
+				t.Fatalf("%s = %q after the home moved in, want it cleared", ec2TagReplacesHome, got)
+			}
 		})
 	}
 }
@@ -446,6 +449,9 @@ func TestECSEC2ReplacementAdoptsTheSlotAnEarlierAttemptLaunched(t *testing.T) {
 	ctx := context.Background()
 	h := reservedSlotHarness(t, false)
 	h.ec2.addSlot("i-spare", "ap-northeast-1a", "m7i.large", false, false)
+	// Launched from the current $Latest, so it is what a launch now would give.
+	h.ec2.setInstanceTag("i-spare", ec2TagLaunchTemplateID, "lt-1")
+	h.ec2.setInstanceTag("i-spare", ec2TagLaunchTemplateVersion, "5")
 	h.ec2.setTag("vol-1", EC2TagClaim, "i-spare")
 	h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)) // expired
 
@@ -613,5 +619,122 @@ func TestECSEC2ReplacementLaunchedBeforeACrashIsFoundByItsTag(t *testing.T) {
 	}
 	if n := liveSlots(h); n != 1 {
 		t.Fatalf("%d live slots, want 1", n)
+	}
+}
+
+// seedCrashedReplacement leaves exactly what an attempt that died right after RunInstances
+// leaves: a running slot tagged for vol-1, launched from version `ver`, and no claim.
+func seedCrashedReplacement(t *testing.T, h *ec2Harness, ver int64) {
+	t.Helper()
+	h.ec2.ltLatest = ver
+	if _, err := h.rt.runSlot(context.Background(), "ap-northeast-1a", h.rt.pool.maxSlots+1, "vol-1"); err != nil {
+		t.Fatalf("seed launch: %v", err)
+	}
+	h.ec2.instances["i-new1"].State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameRunning}
+	h.ci.registered["i-new1"] = true
+}
+
+// Review #1526 round 3, item 1: a replacement launched for Alice's home is hers while it is
+// pending — with no claim written, or with the claim expired — so Bob's Start cannot take it
+// and leave Alice's retry facing a full pool for good.
+func TestECSEC2PendingReplacementIsNotPlacedOnForAnotherMember(t *testing.T) {
+	for _, claim := range []string{"no claim", "expired claim"} {
+		t.Run(claim, func(t *testing.T) {
+			ctx := context.Background()
+			h := reservedSlotHarness(t, false)
+			h.rt.pool.maxSlots = 1
+			h.rt.pool.slotSleepAfter, h.rt.pool.slotTerminateAfter = 0, 0
+			seedCrashedReplacement(t, h, 5)
+			if claim == "expired claim" {
+				h.ec2.setTag("vol-1", EC2TagClaim, "i-new1")
+				expireClaim(h, "vol-1")
+			}
+			bob := h.rt.siblingFor(h.ec2.addHomeVolume("vol-bob", "M-2", "af-ws-acme-bob", "ap-northeast-1a"))
+
+			if p, err := bob.placeHome(ctx); err == nil && p.instanceID == "i-new1" {
+				t.Fatal("Bob was placed on Alice's pending replacement i-new1")
+			}
+			if got := attachedInstance(h.ec2.volumes["vol-bob"]); got == "i-new1" {
+				t.Fatal("Bob's home is attached to i-new1")
+			}
+			if err := h.rt.Start(ctx); err != nil {
+				t.Fatalf("Alice's retry: %v", err)
+			}
+			if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-new1" {
+				t.Fatalf("Alice's claim = %q, want her replacement i-new1", got)
+			}
+		})
+	}
+}
+
+// The ownership expires by itself: a slot whose home has moved away (or no longer exists) is
+// an ordinary slot again, so a stale tag can never hold a box out of the pool.
+func TestECSEC2StaleReplacementLinkDoesNotHoldASlot(t *testing.T) {
+	for _, home := range []string{"home detached", "home gone"} {
+		t.Run(home, func(t *testing.T) {
+			ctx := context.Background()
+			h := newEC2Harness(t)
+			h.ec2.addSlot("i-was-new", "ap-northeast-1a", "m7i.large", true, false)
+			h.ci.registered["i-was-new"] = true
+			h.ec2.setInstanceTag("i-was-new", ec2TagReplacesHome, "vol-carol")
+			if home == "home detached" {
+				h.ec2.addHomeVolume("vol-carol", "M-3", "af-ws-acme-carol", "ap-northeast-1a")
+			}
+			h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+
+			p, err := h.rt.placeHome(ctx)
+			if err != nil {
+				t.Fatalf("placeHome: %v", err)
+			}
+			if p.instanceID != "i-was-new" {
+				t.Fatalf("placed on %q, want the free slot whose replacement link has expired", p.instanceID)
+			}
+		})
+	}
+}
+
+// Review #1526 round 3, item 2: an earlier replacement is reused only if it is from the
+// template's current $Latest. One from before a template change is retired, giving its place
+// back, and a new slot is launched from $Latest; one that cannot be judged is left alone.
+func TestECSEC2EarlierReplacementFromAnOlderTemplateIsRetiredNotAdopted(t *testing.T) {
+	ctx := context.Background()
+	h := reservedSlotHarness(t, false)
+	h.rt.pool.maxSlots = 1
+	h.rt.pool.slotSleepAfter, h.rt.pool.slotTerminateAfter = 0, 0
+	seedCrashedReplacement(t, h, 4)
+	h.ec2.ltLatest = 5 // the template moved on before the retry
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if h.ec2.instances["i-new1"].State.Name != ec2types.InstanceStateNameTerminated {
+		t.Fatalf("the version-4 replacement is %s, want terminated", h.ec2.instances["i-new1"].State.Name)
+	}
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-new2" {
+		t.Fatalf("claim = %q, want the new $Latest slot i-new2", got)
+	}
+	if got := ec2TagValue(h.ec2.instances["i-new2"].Tags, ec2TagLaunchTemplateVersion); got != "5" {
+		t.Fatalf("i-new2 version = %q, want 5", got)
+	}
+}
+
+func TestECSEC2EarlierReplacementIsLeftAloneWhenTheTemplateCannotBeRead(t *testing.T) {
+	ctx := context.Background()
+	h := reservedSlotHarness(t, false)
+	h.rt.pool.maxSlots = 1
+	seedCrashedReplacement(t, h, 5)
+	h.ec2.ltLatest = 0 // DescribeLaunchTemplates now fails
+
+	if err := h.rt.Start(ctx); err == nil {
+		t.Fatal("Start adopted or launched with the template unreadable and the pool full")
+	}
+	if got := h.ec2.instances["i-new1"].State.Name; got == ec2types.InstanceStateNameTerminated {
+		t.Fatal("an earlier replacement was destroyed on a guess")
+	}
+	if got := attachedInstance(h.ec2.volumes["vol-1"]); got != "i-old" {
+		t.Fatalf("home on %q, want it still on i-old", got)
+	}
+	if ec2TagValue(h.ec2.instances["i-old"].Tags, ec2TagSlotReplace) == "" {
+		t.Fatal("the reservation was dropped")
 	}
 }

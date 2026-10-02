@@ -1566,7 +1566,12 @@ migration tool: every stopped workspace then pays a new slot and loses the slot'
   (the workspace reads `starting` until the claim expires), because it is the link the next Start follows.
   The new slot also carries `af-replaces-home=<volume>` from `RunInstances` itself, so a slot whose launch
   answered — or was accepted with the answer lost — before the claim was written is still found and reused,
-  never launched again over the cap.
+  never launched again over the cap. While that home is still on its reserved slot, the tagged slot is **kept
+  out of every other placement** (`slotsOfMyType`, `makeRoom`), claim or no claim; once the home has moved,
+  detached or gone, the link means nothing and the slot is ordinary again, so a stale tag cannot hold a box out
+  of the pool (a successful launch also clears it). An earlier replacement is reused only if it is from the
+  template's current `$Latest`, read authoritatively on every attempt: one from before a template change is
+  terminated to give its place back, and one whose version cannot be judged is left alone.
 - **A reserved slot takes nobody new.** `slotsOfMyType` drops it, so neither a free-slot placement nor an
   eviction picks it; `makeRoom` treats a reserved slot of the right size like one of the wrong size; and the
   sweeper terminates a free reserved slot with no grace, behind its usual fences (fresh occupancy, ECS tasks,

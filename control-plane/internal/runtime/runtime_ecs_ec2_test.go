@@ -260,6 +260,9 @@ func (f *fakeEC2) DescribeVolumes(_ context.Context, in *ec2.DescribeVolumesInpu
 			if strings.HasPrefix(name, "tag:") {
 				return []string{ec2TagValue(v.Tags, strings.TrimPrefix(name, "tag:"))}
 			}
+			if name == "volume-id" {
+				return []string{id}
+			}
 			return nil
 		}) {
 			continue

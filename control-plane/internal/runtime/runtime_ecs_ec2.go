@@ -1553,6 +1553,9 @@ type ec2Placement struct {
 	// invisible: State() does not say `starting`, and a member's wipe (HomeWipeBlocked)
 	// would be let through while that half goes on to scale up past the mark.
 	claimErr error
+	// replacement marks a slot launched or adopted to replace a reserved one; a successful
+	// launch clears its af-replaces-home link (clearReplacesHome).
+	replacement bool
 }
 
 // placeHome resolves the volume and the slot, attaching the two together when it can.
@@ -1989,6 +1992,9 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 // now, so drop the claim and make sure the home is not counted as dormant while its task
 // runs.
 func (e *ecsEC2Runtime) finishLaunch(ctx context.Context, p ec2Placement) {
+	if p.replacement {
+		e.clearReplacesHome(ctx, p.instanceID)
+	}
 	e.unclaim(ctx, p.volumeID)
 	e.clearDormancy(ctx, p.volumeID)
 	e.base.watchReady(ctx)
@@ -2656,8 +2662,10 @@ func (e *ecsEC2Runtime) slotsOfMyType(ctx context.Context, az string) (*ec2.Desc
 	}
 	// A slot reserved for replacement takes nobody new: its next tenant would run on the
 	// very box the operator wants gone. EC2 cannot filter on a tag being absent, so it is
-	// dropped here, the one place both placement paths read.
-	return withoutReservedSlots(out), nil
+	// dropped here, the one place both placement paths read. So is a replacement launched
+	// for somebody else's home that has not moved onto it yet (pendingReplacementsForOthers).
+	out = withoutReservedSlots(out)
+	return withoutSlots(out, e.pendingReplacementsForOthers(ctx, out)), nil
 }
 
 // freeSlots lists the pool's slots that nobody's home is on, hot ones first (22–27s to
@@ -3182,6 +3190,7 @@ func (e *ecsEC2Runtime) makeRoom(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	pending := e.pendingReplacementsForOthers(ctx, out)
 	now := e.now()
 	type occupant struct {
 		vol     *ec2types.Volume
@@ -3226,6 +3235,10 @@ func (e *ecsEC2Runtime) makeRoom(ctx context.Context) (bool, error) {
 			// for replacement, which no placement may reuse and so blocks the cap exactly as
 			// a box of the wrong size does.
 			if string(inst.InstanceType) == e.instanceType && !slotReserved(inst) {
+				continue
+			}
+			// Another home's pending replacement is spoken for, whatever its size.
+			if pending[id] {
 				continue
 			}
 			if claimed[id] || tasks[id] > 0 {

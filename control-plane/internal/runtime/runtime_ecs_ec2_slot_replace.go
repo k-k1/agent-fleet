@@ -103,11 +103,25 @@ func (e *ecsEC2Runtime) replaceReservedSlot(ctx context.Context, vol *ec2types.V
 		oldID, e.base.name, e.instanceType)
 	e.setPhase(ec2PhaseSlotRenewing)
 	newID, wake := "", false
+	// An earlier replacement is only worth reusing if it is still what a launch now would
+	// give: the reservation's usual reason is a template change, and a box from the version
+	// before it would defeat that. lt is read here, authoritatively, every time.
+	lt, ltErr := describeLaunchTemplate(ctx, e.ec2, e.pool.launchTemplate)
+	if ltErr != nil {
+		log.Printf("ecs-ec2: reading the slot launch template before reusing a replacement: %v", ltErr)
+	}
 	for _, prev := range e.earlierReplacements(ctx, vol, oldID) {
-		if running, ok := e.adoptableReplacement(ctx, prev, az, volID); ok {
-			log.Printf("ecs-ec2: reusing %s, the replacement an earlier start of %s launched", prev, e.base.name)
-			newID, wake = prev, !running
-			break
+		running, verdict := e.adoptableReplacement(ctx, prev, az, volID, lt)
+		switch verdict {
+		case replacementAdopt:
+			if newID == "" {
+				log.Printf("ecs-ec2: reusing %s, the replacement an earlier start of %s launched", prev, e.base.name)
+				newID, wake = prev, !running
+			}
+		case replacementRetire:
+			// Launched from an older template and never used: give its place under the cap
+			// back so the launch below can have it.
+			_ = e.terminateSlot(ctx, prev, "unused replacement for "+e.base.name+" from an older launch template")
 		}
 	}
 	if newID == "" {
@@ -135,7 +149,8 @@ func (e *ecsEC2Runtime) replaceReservedSlot(ctx context.Context, vol *ec2types.V
 	}
 	e.clearDormancy(ctx, volID)
 	slotReplaceSeen.set(e.base.name, "")
-	return ec2Placement{volumeID: volID, instanceID: newID, az: az, deferred: true, claimed: true, wake: wake, wipe: homeWipeOf(vol)}, nil
+	return ec2Placement{volumeID: volID, instanceID: newID, az: az, deferred: true, claimed: true, wake: wake,
+		wipe: homeWipeOf(vol), replacement: true}, nil
 }
 
 // moveHomeOff releases this workspace's home from oldID and confirms it is detached.
@@ -228,33 +243,170 @@ func (e *ecsEC2Runtime) earlierReplacements(ctx context.Context, vol *ec2types.V
 	return ids
 }
 
-// adoptableReplacement reports whether id — the slot this home's last claim named — is a
-// replacement an earlier start launched and never used: a slot of this pool and class in
-// the home's AZ, not reserved, and holding nobody's home or claim but this one's.
-func (e *ecsEC2Runtime) adoptableReplacement(ctx context.Context, id, az, volID string) (running, ok bool) {
+type replacementVerdict int
+
+const (
+	replacementSkip   replacementVerdict = iota // not ours to touch, or cannot be judged
+	replacementAdopt                            // reuse it
+	replacementRetire                           // ours and unused, but from an older template
+)
+
+// adoptableReplacement judges id — a slot an earlier attempt for this home may have
+// launched. It is reused only if it is a slot of this pool and class in the home's AZ, not
+// reserved, holding nobody's home or claim but this one's, AND launched from the template's
+// current $Latest (slotTemplateOutdated against lt, read by the caller). A slot that passes
+// everything but the template is retired instead; one whose version cannot be judged is
+// left alone — it is neither reused nor destroyed on a guess.
+func (e *ecsEC2Runtime) adoptableReplacement(ctx context.Context, id, az, volID string, lt ec2LaunchTemplate) (running bool, verdict replacementVerdict) {
 	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{id}})
 	if err != nil {
-		return false, false
+		return false, replacementSkip
 	}
 	for _, r := range out.Reservations {
 		for _, inst := range r.Instances {
 			if ec2TagValue(inst.Tags, EC2TagPool) != e.pool.pool || ec2TagValue(inst.Tags, EC2TagRole) != ec2RoleSlot ||
 				slotReserved(inst) || string(inst.InstanceType) != e.instanceType || inst.State == nil ||
 				inst.Placement == nil || aws.ToString(inst.Placement.AvailabilityZone) != az {
-				return false, false
+				return false, replacementSkip
 			}
 			switch inst.State.Name {
 			case ec2types.InstanceStateNamePending, ec2types.InstanceStateNameRunning, ec2types.InstanceStateNameStopped:
 			default:
-				return false, false
+				return false, replacementSkip
 			}
 			if holder, err := e.slotHolder(ctx, id, volID); err != nil || holder != "" {
-				return false, false
+				return false, replacementSkip
 			}
-			return inst.State.Name != ec2types.InstanceStateNameStopped, true
+			_, outdated, known := slotTemplateOutdated(inst.Tags, lt)
+			switch {
+			case !known:
+				return false, replacementSkip
+			case outdated:
+				return false, replacementRetire
+			}
+			return inst.State.Name != ec2types.InstanceStateNameStopped, replacementAdopt
 		}
 	}
-	return false, false
+	return false, replacementSkip
+}
+
+// pendingReplacementsForOthers names the slots in out that were launched to replace a
+// reserved slot for ANOTHER workspace's home and are still waiting for it: the home exists
+// and is still attached to a reserved slot elsewhere. Those are spoken for even when the
+// home's claim was never written or has expired — otherwise another member takes the box
+// and the owner's retry finds the pool full for good.
+//
+// The link expires by itself: once that home has moved (onto this slot or anywhere else),
+// is detached, or is gone, the slot is an ordinary one again, so a stale tag can never hold
+// a box out of the pool. Unreadable answers count as pending: the cost is a slot skipped.
+func (e *ecsEC2Runtime) pendingReplacementsForOthers(ctx context.Context, out *ec2.DescribeInstancesOutput) map[string]bool {
+	pending := map[string]bool{}
+	byHome := map[string][]string{}
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			if v := ec2TagValue(inst.Tags, ec2TagReplacesHome); v != "" {
+				byHome[v] = append(byHome[v], aws.ToString(inst.InstanceId))
+			}
+		}
+	}
+	if len(byHome) == 0 {
+		return pending
+	}
+	all := func() map[string]bool {
+		for _, ids := range byHome {
+			for _, id := range ids {
+				pending[id] = true
+			}
+		}
+		return pending
+	}
+	homes := make([]string, 0, len(byHome))
+	for v := range byHome {
+		homes = append(homes, v)
+	}
+	vols, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(EC2TagPool, e.pool.pool),
+			{Name: aws.String("volume-id"), Values: homes},
+		},
+	})
+	if err != nil {
+		return all()
+	}
+	// home volume id → the slot it is still on, for homes of other workspaces only.
+	on := map[string]string{}
+	for i := range vols.Volumes {
+		v := &vols.Volumes[i]
+		if ec2TagValue(v.Tags, EC2TagWorkspace) == e.base.name {
+			continue
+		}
+		if inst := attachedInstance(v); inst != "" {
+			on[aws.ToString(v.VolumeId)] = inst
+		}
+	}
+	if len(on) == 0 {
+		return pending
+	}
+	olds := make([]string, 0, len(on))
+	for _, inst := range on {
+		olds = append(olds, inst)
+	}
+	insts, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: olds})
+	if err != nil {
+		return all()
+	}
+	reserved := map[string]bool{}
+	for _, r := range insts.Reservations {
+		for _, inst := range r.Instances {
+			if slotReserved(inst) {
+				reserved[aws.ToString(inst.InstanceId)] = true
+			}
+		}
+	}
+	for v, ids := range byHome {
+		old, ok := on[v]
+		if !ok || !reserved[old] {
+			continue
+		}
+		for _, id := range ids {
+			if id != old {
+				pending[id] = true
+			}
+		}
+	}
+	return pending
+}
+
+// withoutSlots drops the named instances from a DescribeInstances answer.
+func withoutSlots(out *ec2.DescribeInstancesOutput, drop map[string]bool) *ec2.DescribeInstancesOutput {
+	if len(drop) == 0 {
+		return out
+	}
+	kept := &ec2.DescribeInstancesOutput{}
+	for _, r := range out.Reservations {
+		var insts []ec2types.Instance
+		for _, inst := range r.Instances {
+			if !drop[aws.ToString(inst.InstanceId)] {
+				insts = append(insts, inst)
+			}
+		}
+		if len(insts) > 0 {
+			r.Instances = insts
+			kept.Reservations = append(kept.Reservations, r)
+		}
+	}
+	return kept
+}
+
+// clearReplacesHome drops a replacement's af-replaces-home link once the home is running on
+// it. Best-effort: a stale link expires by itself (pendingReplacementsForOthers).
+func (e *ecsEC2Runtime) clearReplacesHome(ctx context.Context, instanceID string) {
+	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
+		Resources: []string{instanceID},
+		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagReplacesHome)}},
+	}); err != nil {
+		log.Printf("ecs-ec2: clearing the replacement link on %s failed (it expires by itself): %v", instanceID, err)
+	}
 }
 
 // slotNowReserved re-reads a placement candidate's reservation immediately before and after
@@ -365,19 +517,24 @@ type ec2LaunchTemplate struct {
 }
 
 func (f *ecsEC2Factory) launchTemplateLatest(ctx context.Context) (ec2LaunchTemplate, error) {
+	return describeLaunchTemplate(ctx, f.ec2, f.pool.launchTemplate)
+}
+
+// describeLaunchTemplate reads the slot launch template ref (an id or a name) and its $Latest.
+func describeLaunchTemplate(ctx context.Context, api ec2API, ref string) (ec2LaunchTemplate, error) {
 	in := &ec2.DescribeLaunchTemplatesInput{}
-	spec := launchTemplateSpec(f.pool.launchTemplate)
+	spec := launchTemplateSpec(ref)
 	if spec.LaunchTemplateId != nil {
 		in.LaunchTemplateIds = []string{aws.ToString(spec.LaunchTemplateId)}
 	} else {
 		in.LaunchTemplateNames = []string{aws.ToString(spec.LaunchTemplateName)}
 	}
-	out, err := f.ec2.DescribeLaunchTemplates(ctx, in)
+	out, err := api.DescribeLaunchTemplates(ctx, in)
 	if err != nil {
 		return ec2LaunchTemplate{}, err
 	}
 	if len(out.LaunchTemplates) == 0 {
-		return ec2LaunchTemplate{}, fmt.Errorf("launch template %s not found", f.pool.launchTemplate)
+		return ec2LaunchTemplate{}, fmt.Errorf("launch template %s not found", ref)
 	}
 	lt := out.LaunchTemplates[0]
 	return ec2LaunchTemplate{id: aws.ToString(lt.LaunchTemplateId), latest: aws.ToInt64(lt.LatestVersionNumber)}, nil
