@@ -1,0 +1,64 @@
+# Exactly the table of ADR 0106 decision 8. Widening it widens what a compromised CP
+# reaches; NetworkPolicies are deliberately absent (they are static, applied here).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: af-cp
+  namespace: af-placeholder-ws
+rules:
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "persistentvolumeclaims", "secrets"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  # create and delete are for the one-shot erase pod only; the CP never deletes a
+  # workspace pod (decision 3), but RBAC cannot tell the two apart.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: af-cp
+  namespace: af-placeholder-ws
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: af-cp
+subjects:
+  - kind: ServiceAccount
+    name: af-cp
+    namespace: af-placeholder-cp
+---
+# Read-only, cluster-scoped: the boot check of the configured StorageClass (decision 4)
+# and Destroy's confirmation that a volume is gone (decision 5).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agent-fleet:af-placeholder-cp
+rules:
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    resourceNames: ["af-placeholder-storageclass"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agent-fleet:af-placeholder-cp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: agent-fleet:af-placeholder-cp
+subjects:
+  - kind: ServiceAccount
+    name: af-cp
+    namespace: af-placeholder-cp

@@ -1,0 +1,90 @@
+# The global external Application Load Balancer, built by GKE's Gateway controller. The
+# `-managed` class matters: the classic load balancer (gke-l7-gxlb) closes even an active
+# WebSocket at the backend timeout. The address and the certificate map are created by
+# deploy/gcp/gke (lb.tf) and named here.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: af-cp
+  namespace: af-placeholder-cp
+  annotations:
+    networking.gke.io/certmap: af-placeholder-certmap
+spec:
+  gatewayClassName: gke-l7-global-external-managed
+  addresses:
+    - type: NamedAddress
+      value: af-placeholder-address
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+    - name: http
+      protocol: HTTP
+      port: 80
+---
+# No hostnames: the Console and every preview subdomain (AF_PREVIEW_DOMAIN) reach the
+# same Service, and the CP routes by Host itself.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: af-cp
+  namespace: af-placeholder-cp
+spec:
+  parentRefs:
+    - name: af-cp
+      sectionName: https
+  rules:
+    - backendRefs:
+        - name: af-cp
+          port: 8099
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: af-cp-redirect
+  namespace: af-placeholder-cp
+spec:
+  parentRefs:
+    - name: af-cp
+      sectionName: http
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+---
+# An idle WebSocket (a quiet terminal) is closed after the backend timeout, 30 s by
+# default; an active one after 24 hours whatever this says. 3600 is the starting value
+# ADR 0106 open question 3 measures.
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: af-cp
+  namespace: af-placeholder-cp
+spec:
+  default:
+    timeoutSec: 3600
+  targetRef:
+    group: ""
+    kind: Service
+    name: af-cp
+---
+# The default probe is GET / on the serving port, which the CP answers with a redirect
+# to the login page.
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: af-cp
+  namespace: af-placeholder-cp
+spec:
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        port: 8099
+        requestPath: /healthz
+  targetRef:
+    group: ""
+    kind: Service
+    name: af-cp

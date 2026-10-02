@@ -1,7 +1,7 @@
 ---
 audience: "anyone touching authentication, crypto, isolation, audit or egress"
 source_of_truth: "the code (this is the boundaries and the intent)"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # 07. Security — threat model, authentication, crypto, audit
@@ -84,14 +84,21 @@ narrower CP role.
 What a workspace *is* on each target is [ref/deploy-targets](../../guide/ref/deploy-targets.md).
 This table is what separates one member's workspace from another's, and from the CP.
 
-| Concern | docker (the default) | ecs (Fargate) | ecs-ec2 (production) |
-|---|---|---|---|
-| Files between users | the member's home, bind-mounted from `<WS_DATA>/[<slug>/]<key>/home`. **No other user's home is mounted at all** | EFS access points per membership (`/home/<membership>`, `/claude-config/<membership>`) fixing the root directory; one uid/gid for everyone (`AF_ECS_POSIX_UID` / `_GID`) | the member's own EBS volume, attached to a slot that serves **one member at a time** ([decisions/0045](../decisions/0045-ec2-persistent-workspace.md) decision 8) and mounted by the CP over SSM. The Claude state and the kept dotfiles stay on EFS access points |
-| Process and memory | one membership, one container: `--memory` (`WS_MEMORY`, default `1g`, overridable per workspace), `--cpus` when set | one task; Fargate shares no kernel between tasks | one task per slot, memory capped below the slot's size (`AF_ECS_EC2_HOST_RESERVE_MB`). `/tmp` is a tmpfs, because the slot's root volume outlives its previous member |
-| Network | a network per workspace (`af-net-…`), so containers cannot reach each other; the agent is published on the host's loopback only | `awsvpc`: each task has its own ENI in the workspace security group, which admits the agent port from the CP's security group only — never from another workspace — and assigns no public IP. Outbound is open (§7.8) | the same as ecs. The slot's own security group has no ingress |
-| Privileges | not privileged; runs as `dev`. **`SYS_ADMIN` is added to the bounding set** so Chromium's setuid sandbox can create namespaces; the image build fails if any other setuid/setgid binary remains, so `dev` itself holds no effective capability | no privileged mode, no added capabilities | the same as ecs |
-| Cloud identity | none | the task role `WsTaskRole` has **no policy at all**; `AGENT_TOKEN` and the DEK arrive through the task definition's `secrets` (SSM, read by the execution role) | the same task role. The slot's instance role carries ECS registration, SSM management, image pull and logs only |
-| Sensitive state | the agent's plaintext state is moved to a second mount (`CLAUDE_CONFIG_DIR=/var/lib/af/claude`) **outside the file browser's reach**; the encrypted store stays in the home behind the agent's denylist (`fsDeny`) | the same — the image and the agent are common | the same |
+| Concern | docker (the default) | ecs (Fargate) | ecs-ec2 (production) | kubernetes |
+|---|---|---|---|---|
+| Files between users | the member's home, bind-mounted from `<WS_DATA>/[<slug>/]<key>/home`. **No other user's home is mounted at all** | EFS access points per membership (`/home/<membership>`, `/claude-config/<membership>`) fixing the root directory; one uid/gid for everyone (`AF_ECS_POSIX_UID` / `_GID`) | the member's own EBS volume, attached to a slot that serves **one member at a time** ([decisions/0045](../decisions/0045-ec2-persistent-workspace.md) decision 8) and mounted by the CP over SSM. The Claude state and the kept dotfiles stay on EFS access points | one pair of claims per workspace, referenced by that workspace's StatefulSet alone, `ReadWriteOncePod` where the storage driver supports it. Members have no Kubernetes API access to the workspace namespace: whoever can create pods there can mount any claim |
+| Process and memory | one membership, one container: `--memory` (`WS_MEMORY`, default `1g`, overridable per workspace), `--cpus` when set | one task; Fargate shares no kernel between tasks | one task per slot, memory capped below the slot's size (`AF_ECS_EC2_HOST_RESERVE_MB`). `/tmp` is a tmpfs, because the slot's root volume outlives its previous member | one pod per workspace, with CPU, memory and ephemeral-storage requests and limits from the workspace sizing. `/tmp` is an `emptyDir` with a size limit. The ephemeral-storage limit is enforced by eviction after the fact, so node disk headroom and a disk-pressure alert do the rest |
+| Network | a network per workspace (`af-net-…`), so containers cannot reach each other; the agent is published on the host's loopback only | `awsvpc`: each task has its own ENI in the workspace security group, which admits the agent port from the CP's security group only — never from another workspace — and assigns no public IP. Outbound is open (§7.8) | the same as ecs. The slot's own security group has no ingress | NetworkPolicies, enforced only by a CNI that implements them: the agent port admits the CP's pods only; egress to cluster DNS, to the CP's workspace-only listener, and to the internet minus private, link-local and the cluster's own ranges. Outbound is open otherwise (§7.8) |
+| Privileges | not privileged; runs as `dev`. **`SYS_ADMIN` is added to the bounding set** so Chromium's setuid sandbox can create namespaces; the image build fails if any other setuid/setgid binary remains, so `dev` itself holds no effective capability | no privileged mode, no added capabilities | the same as ecs | the `restricted` Pod Security Standard, enforced on the namespace by a label the CP cannot change: not privileged, non-root, no added capabilities, no host namespaces, no `hostPath` — Fargate's level, so no `SYS_ADMIN` for Chromium |
+| Cloud identity | none | the task role `WsTaskRole` has **no policy at all**; `AGENT_TOKEN` and the DEK arrive through the task definition's `secrets` (SSM, read by the execution role) | the same task role. The slot's instance role carries ECS registration, SSM management, image pull and logs only | none: no service account token is mounted, and no IAM grant names the namespace or its service account. On GKE every workspace pool serves the GKE metadata server and egress to `169.254.0.0/16` is denied. `AGENT_TOKEN`, the DEK and the minted tokens arrive in a per-workspace Secret through `envFrom`; Secrets are encrypted in etcd (Cloud KMS on GKE) |
+| Sensitive state | the agent's plaintext state is moved to a second mount (`CLAUDE_CONFIG_DIR=/var/lib/af/claude`) **outside the file browser's reach**; the encrypted store stays in the home behind the agent's denylist (`fsDeny`) | the same — the image and the agent are common | the same | the same, on the second claim |
+
+**On `kubernetes` the column holds only on a cluster that meets the runbook's preconditions**
+(a NetworkPolicy-enforcing CNI, Secrets encryption, a private or authorised-network control
+plane, the kubelet's read-only port off), which the CP cannot see
+([deploy/kubernetes/README.md](../../deploy/kubernetes/README.md), [decisions/0106](../decisions/0106-kubernetes-runtime.md) decision 7).
+A compromised CP there reaches the workspace namespace — every workspace's Secret, and pods it
+can create but not make privileged — and, through its read-only cluster role, nothing else.
 
 **`native` has none of this.** It runs the agent as sandboxed host processes with no
 container boundary and no memory limit, so it is **single-user only**: the CP refuses to
