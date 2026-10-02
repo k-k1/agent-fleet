@@ -384,7 +384,7 @@ export function App() {
     const popped = takePendingPopout();
     if (popped) {
       popoutSeedRef.current = popped;
-      useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap);
+      useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap, getSettings().paneLayout);
     } else {
       useLayoutStore.getState().loadMode(tenant, getSettings().paneLayout);
     }
@@ -399,10 +399,14 @@ export function App() {
   // The preference chooses a profile, not a conversion: each profile retains
   // its own tab-local layout so switching never destroys terminals or drafts.
   useEffect(() => {
-    if (!booted || layout.mode === paneLayout) return;
+    // Read the store, not the render's snapshot: the boot effect above has already loaded the
+    // preferred mode in this same commit, and a stale `layout.mode` would load it a second time.
+    const current = () => useLayoutStore.getState().layout.mode;
+    if (!booted || current() === paneLayout) return;
     void confirmDirtyNavigation("layout").then((proceed) => {
+      if (current() === paneLayout) return;
       if (proceed) useLayoutStore.getState().loadMode(tenant, paneLayout);
-      else setSetting("paneLayout", layout.mode === "tabs" ? "tabs" : "split");
+      else setSetting("paneLayout", current() === "tabs" ? "tabs" : "split");
     });
   }, [booted, tenant, paneLayout, layout.mode]);
 
@@ -436,7 +440,7 @@ export function App() {
     void confirmDirtyNavigation("layout").then((proceed) => {
       if (!proceed) return; // keep the shared-key layout rather than drop unsaved buffers
       const popped = popoutSeedRef.current;
-      if (popped) useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap);
+      if (popped) useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap, getSettings().paneLayout);
       else useLayoutStore.getState().loadMode(tenant, getSettings().paneLayout);
     });
   }, [booted, tenant, identityRev]);

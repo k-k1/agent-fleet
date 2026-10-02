@@ -21,9 +21,10 @@ export const singlePaneLayout = (
   content: PaneContent,
   session: string | null,
   wrap: boolean | null = null,
+  mode: "split" | "tabs" = "split",
 ): Layout => ({
   version: 3,
-  mode: "split",
+  mode,
   cols: [{ id: "c0", rowRatio: 0.5, cells: [{ id: "g0", selectedViewId: "p0", views: [{ id: "p0", session, content, wrap }] }] }],
   colRatios: [1],
   activeCellId: "g0",
