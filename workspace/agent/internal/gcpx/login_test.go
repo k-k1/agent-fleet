@@ -61,7 +61,29 @@ func fakeGcloudLogin(dir string, args []string) int {
 	}
 	// The verification mint after a login (finishLogin): config-helper with the token.
 	if len(args) >= 2 && args[0] == "config" && args[1] == "config-helper" {
-		appendTo(filepath.Join(dir, "mints"), strings.Join(args, " "))
+		// Like gcloud, the configuration's auth/impersonate_service_account applies unless
+		// the flag or the environment variable (even empty) overrides it.
+		imp, envSet := os.LookupEnv("CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT")
+		if !envSet {
+			name := ""
+			for i, a := range args {
+				if a == "--configuration" && i+1 < len(args) {
+					name = args[i+1]
+				}
+			}
+			props, _ := readProps(filepath.Join(cfg, "configurations", "config_"+name))
+			imp = props["auth/impersonate_service_account"]
+		}
+		for i, a := range args {
+			if a == "--impersonate-service-account" && i+1 < len(args) {
+				imp = args[i+1]
+			}
+		}
+		appendTo(filepath.Join(dir, "mints"), strings.Join(args, " ")+" impersonating="+imp)
+		if imp != "" && has("impersonate-denied") {
+			fmt.Fprintln(os.Stderr, "ERROR: (gcloud.config.config-helper) PERMISSION_DENIED: Permission 'iam.serviceAccounts.getAccessToken' denied on "+imp)
+			return 1
+		}
 		if f := rd("mint-fail"); f != "" {
 			fmt.Fprintln(os.Stderr, f)
 			return 1
@@ -879,7 +901,7 @@ func TestOnlyAVerifiedLoginSettlesARequest(t *testing.T) {
 		t.Fatalf("the verified login left the request: %+v", pending)
 	}
 	if mints, _ := os.ReadFile(filepath.Join(l.dir, "mints")); strings.Count(string(mints), "\n") != 2 ||
-		strings.Contains(string(mints), "impersonate") || !strings.Contains(string(mints), "--configuration af-prod") {
+		strings.Contains(string(mints), "--impersonate") || !strings.Contains(string(mints), "--configuration af-prod") {
 		t.Fatalf("verification mints: %s", mints)
 	}
 	l.noSecretAnywhere(t)
@@ -943,4 +965,71 @@ func TestReuseDoesNotSettleARejectedRequest(t *testing.T) {
 	if pending := logins.Sweep(time.Now()); len(pending) != 1 {
 		t.Fatal("reusing the rejected credential settled the request")
 	}
+}
+
+// TestVerificationMintUsesTheUsersCredentialOnly: the profile impersonates a service account
+// the user may not (yet) be allowed to; the login is still verified and done, because the
+// verification mint overrides the configuration's impersonation property too.
+func TestVerificationMintUsesTheUsersCredentialOnly(t *testing.T) {
+	p := prod()
+	p.ImpersonateServiceAccount = "deployer@prod-project.iam.gserviceaccount.com"
+	l := setupLogin(t, p)
+	l.put(t, "impersonate-denied", "")
+	if !strings.Contains(configText(t, "prod"), "impersonate_service_account = "+p.ImpersonateServiceAccount) {
+		t.Fatalf("the configuration holds no impersonation:\n%s", configText(t, "prod"))
+	}
+	id := l.start(t, "/gcp-login/profiles/prod/start")
+	l.waitPhase(t, "prod", id, cloudlogin.PhaseAuthorize)
+	if c, _ := l.submit(t, "prod", id, l.code); c != http.StatusOK {
+		t.Fatalf("submit: %d", c)
+	}
+	l.waitPhase(t, "prod", id, cloudlogin.PhaseDone)
+	mints, _ := os.ReadFile(filepath.Join(l.dir, "mints"))
+	if strings.TrimSpace(string(mints)) == "" || !strings.HasSuffix(strings.TrimSpace(string(mints)), "impersonating=") {
+		t.Fatalf("verification mints: %s", mints)
+	}
+	if readLogins(ConfigRoot())["dev@example.com"] == "" {
+		t.Fatal("the verified login was not recorded")
+	}
+}
+
+// TestCodeThenFastExit: gcloud may redeem the code and exit before the submit route has
+// returned. The attempt owns the lock and the exchange before the code is written, so the
+// exit finds both: a good code ends done and recorded, a bad one fails with gcloud's reason
+// (not "busy"), and the lock is free afterwards.
+func TestCodeThenFastExit(t *testing.T) {
+	old := afterSubmit
+	afterSubmit = func() { time.Sleep(300 * time.Millisecond) }
+	t.Cleanup(func() { afterSubmit = old })
+	oldWait := rootBusyWait
+	rootBusyWait = time.Second
+	t.Cleanup(func() { rootBusyWait = oldWait })
+	l := setupLogin(t, prod())
+
+	id := l.start(t, "/gcp-login/profiles/prod/start")
+	l.waitPhase(t, "prod", id, cloudlogin.PhaseAuthorize)
+	if c, _ := l.submit(t, "prod", id, l.code); c != http.StatusOK {
+		t.Fatalf("submit: %d", c)
+	}
+	l.waitPhase(t, "prod", id, cloudlogin.PhaseDone)
+	if readLogins(ConfigRoot())["dev@example.com"] == "" {
+		t.Fatal("the login was not recorded")
+	}
+	waitExited(t, logins.Attempt(id))
+
+	id = l.start(t, "/gcp-login/profiles/prod/start")
+	l.waitPhase(t, "prod", id, cloudlogin.PhaseAuthorize)
+	if c, _ := l.submit(t, "prod", id, "4/0wrong"+randHex(t, 8)); c != http.StatusOK {
+		t.Fatalf("submit: %d", c)
+	}
+	out := l.waitPhase(t, "prod", id, cloudlogin.PhaseFailed)
+	if msg, _ := out["message"].(string); !strings.Contains(msg, "invalid_grant") || strings.Contains(msg, "busy") {
+		t.Fatalf("view: %v", out)
+	}
+	waitExited(t, logins.Attempt(id))
+	_, unlock, err := lockRootNonBlocking()
+	if err != nil {
+		t.Fatalf("the lock outlived the attempt: %v", err)
+	}
+	unlock()
 }

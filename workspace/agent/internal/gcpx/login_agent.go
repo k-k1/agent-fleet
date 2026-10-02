@@ -13,9 +13,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudexec"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudlogin"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
@@ -162,9 +162,19 @@ type consoleAttempt struct {
 	// gone is set (under attemptsMu) once the process is gone, so an attempt whose process
 	// ended before Start returned is never registered.
 	gone bool
+	// mu orders the code's submit against the process's exit: the submit route holds it
+	// from handing the root's lock to the attempt until the code is written and exchanged is
+	// set, and Exited reads exchanged under it. A gcloud that exits the moment it has the
+	// code then finds both settled, instead of a lock still in the route's hand and a flag
+	// not yet set.
+	mu sync.Mutex
 	// exchanged is set once gcloud took a code: only such a login is a new sign-in.
-	exchanged atomic.Bool
+	exchanged bool
 }
+
+// afterSubmit runs right after a code is written, inside the submit's ordering. A var so a
+// test can stretch the moment a fast gcloud exits in.
+var afterSubmit = func() {}
 
 var (
 	attemptsMu sync.Mutex
@@ -219,7 +229,10 @@ func startLoginAttempt(bin, requestID string, p Profile, force bool) (*cloudlogi
 			outMu.Lock()
 			out := lastOut
 			outMu.Unlock()
-			return finishLogin(bin, p, hold, err, out, ca.exchanged.Load())
+			ca.mu.Lock()
+			exchanged := ca.exchanged
+			ca.mu.Unlock()
+			return finishLogin(bin, p, hold, err, out, exchanged)
 		},
 		Cleanup: func() {
 			hold.close()
@@ -293,9 +306,13 @@ func finishLogin(bin string, p Profile, hold *rootHold, err error, out string, e
 	// The user's own credential, without the profile's impersonation: whether the login
 	// works is the question here; a permission the account lacks on the service account is
 	// the waiting run's to report, with its reason.
+	// The configuration holds auth/impersonate_service_account too, and config-helper reads
+	// it; an environment variable set even to "" overrides a configuration property (SDK
+	// 587.0.0 properties.py), so the verification mint uses the user's credential alone.
 	user := p
 	user.ImpersonateServiceAccount = ""
-	if _, err := mint(bin, AgentEnv(os.Environ(), root), user); err != nil {
+	verifyEnv := cloudexec.SetEnv(AgentEnv(os.Environ(), root), "CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT=")
+	if _, err := mint(bin, verifyEnv, user); err != nil {
 		if errors.Is(err, ErrLoginRequired) {
 			return false, "the login finished but Google refused the credential: " + anyURL.ReplaceAllString(err.Error(), "<url>")
 		}
@@ -520,20 +537,27 @@ func HandleProfileLoginCode(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "profile_changed", msgProfileMoved)
 		return
 	}
-	if err := a.Submit(code); err != nil {
-		unlock()
-		if errors.Is(err, cloudlogin.ErrNotAwaitingCode) {
-			httpx.WriteErr(w, http.StatusConflict, "not_awaiting_code", err.Error())
-			return
-		}
+	// The attempt owns the lock before gcloud can have the code: gcloud may redeem it and exit
+	// before Submit returns, and its Exited must find the lock held and the exchange recorded.
+	ca.mu.Lock()
+	ca.hold.take(unlock)
+	err = a.Submit(code)
+	if err == nil {
+		ca.exchanged = true
+		afterSubmit()
+	} else {
+		// No code reached gcloud: the lock goes back, and nothing about the exchange changed.
+		ca.hold.release()
+	}
+	ca.mu.Unlock()
+	if errors.Is(err, cloudlogin.ErrNotAwaitingCode) {
+		httpx.WriteErr(w, http.StatusConflict, "not_awaiting_code", err.Error())
+		return
+	} else if err != nil {
 		// The write failed: the process is gone or going; its exit ends the attempt.
 		httpx.WriteErr(w, http.StatusConflict, "not_awaiting_code", "the login process did not take the code")
 		return
 	}
-	// From here gcloud redeems the code and writes the configuration: the attempt keeps the
-	// lock until its process has exited.
-	ca.exchanged.Store(true)
-	ca.hold.take(unlock)
 	log.Printf("gcp-login: code profile=%s attempt=%s relayed=%t", name, AttemptRef(id), cloudlogin.RelayedByCP(r))
 	httpx.WriteJSON(w, http.StatusOK, struct {
 		OK bool `json:"ok"`

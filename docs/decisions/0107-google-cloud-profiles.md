@@ -422,7 +422,9 @@ read in SDK 587.0.0's source and played by a fake in the tests.
   `af-gcloud-exec` run of every profile. gcloud writes the configuration only before the URL (when
   a stored credential lets it finish at once) and after the code, so an attempt holds the lock from
   its start until the URL is out, and again from the code's submit until its process has exited and
-  the login is recorded. The start and the submit check, under the lock, that the configuration is
+  the login is recorded. The submit hands the lock to the attempt, and records that a code was
+  exchanged, before the code is written, under one mutex the process's exit handler also takes:
+  a gcloud that exits the moment it has the code finds both settled. The start and the submit check, under the lock, that the configuration is
   still the version of the profile the press read; a submit for a changed profile ends the attempt.
   An attempt that prints no URL within a minute ends, so a gcloud stuck before its URL cannot
   hold the lock for the attempt's whole fifteen minutes. A route waits for the lock at most ten
@@ -430,7 +432,9 @@ read in SDK 587.0.0's source and played by a fake in the tests.
 - **"Resolved" (step 5) as built.** The Agent records a mark per account in
   `gcloud/.agent-fleet-logins.json` for a login that exchanged a code — a Console attempt that
   took one, or a terminal login — and only after a token was minted from the user's credential
-  in the clean environment (`config config-helper`, without the profile's impersonation). That
+  in the clean environment (`config config-helper` without the profile's impersonation: no flag,
+  and `CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT` set empty, which gcloud ranks above the
+  configuration's property). That
   mint is step 5's "`print-access-token` succeeds", run once per login instead of on every sweep
   (a sweep runs on every list and poll, and a gcloud start costs about a second). A request
   records the profile's version (id, login method, Settings account — decision 1's reset
