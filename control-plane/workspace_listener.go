@@ -24,7 +24,7 @@ import (
 // neither the session cookie, the identity header nor the client address.
 //
 // Adding an Agent → CP call means adding its pattern here and its request to
-// TestWorkspaceListenerServesEveryAgentCall: a call left off works everywhere except on a
+// TestWorkspaceListenerServesKnownAgentCalls: a call left off works everywhere except on a
 // deployment that sets AF_CP_INTERNAL_LISTEN.
 var workspaceRoutes = map[string]bool{
 	// Docs pull (AF_DOCS_TOKEN).
@@ -109,9 +109,18 @@ func workspaceEdge(next http.Handler, identityHeader string) http.Handler {
 		if identityHeader != "" {
 			r.Header.Del(identityHeader)
 		}
-		info := resolveClientIP(r, 0)
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), clientIPKey{}, info)))
+		ctx := context.WithValue(r.Context(), clientIPKey{}, resolveClientIP(r, 0))
+		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, workspaceListenerKey{}, true)))
 	})
+}
+
+type workspaceListenerKey struct{}
+
+// viaWorkspaceListener reports whether the request arrived on the workspace listener. Only
+// workspaceEdge sets it, so no header a caller sends can.
+func viaWorkspaceListener(ctx context.Context) bool {
+	v, _ := ctx.Value(workspaceListenerKey{}).(bool)
+	return v
 }
 
 // workspaceListenerHandler is the whole handler of the workspace listener: no auth gate

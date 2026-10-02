@@ -1,9 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -190,14 +198,14 @@ func TestWorkspaceEnvWithoutInternalURLIsUnchanged(t *testing.T) {
 	}
 }
 
-// AF_CP_INTERNAL_URL set: injected next to an unchanged public base, and the git remote,
-// its credential host and the LFS transfer URLs all move to the internal address.
+// AF_CP_INTERNAL_URL set: injected next to an unchanged public base. The git host and
+// clone URL stay public — the Agent maps them onto the internal URL for its own git.
 func TestWorkspaceEnvCarriesInternalURL(t *testing.T) {
 	_, mgr, mv := bridgeEnv(t)
 	mgr.dataRoot = t.TempDir()
 	mgr.publicBaseURL = "https://af.example"
 	mgr.internalBaseURL = "http://af-cp-internal.af.svc:8098"
-	mgr.internalGitHost = internalGitCredentialHost(mgr.internalBaseURL)
+	mgr.internalGitHost = internalGitCredentialHost(mgr.publicBaseURL)
 	env := mgr.workspaceExtraEnv(t.Context(), store.Workspace{ID: "ws1", TenantID: mv.TenantID, MembershipID: mv.MembershipID})
 	if v, _ := extraEnvValue(env, "AF_CP_INTERNAL_URL"); v != "http://af-cp-internal.af.svc:8098" {
 		t.Errorf("AF_CP_INTERNAL_URL = %q", v)
@@ -206,24 +214,22 @@ func TestWorkspaceEnvCarriesInternalURL(t *testing.T) {
 		t.Errorf("AF_CP_BASE_URL = %q, want the public base unchanged", v)
 	}
 	host, _ := extraEnvValue(env, "AF_INTERNAL_GIT_HOST")
-	g := newGitServerAPI(mgr, mgr.publicBaseURL)
-	clone := g.cloneURL("t", "r")
-	if clone != "http://af-cp-internal.af.svc:8098/git/t/r.git" {
-		t.Errorf("clone URL = %q", clone)
+	clone := newGitServerAPI(mgr, mgr.publicBaseURL).cloneURL("t", "r")
+	if clone != "https://af.example/git/t/r.git" {
+		t.Errorf("clone URL = %q, want the public one", clone)
 	}
 	if u, err := url.Parse(clone); err != nil || u.Host != host {
 		t.Errorf("AF_INTERNAL_GIT_HOST = %q, want the clone URL's authority (%q)", host, clone)
 	}
-	if got := g.lfsHref("t", "r", "abc"); !strings.HasPrefix(got, "http://af-cp-internal.af.svc:8098/git/t/r.git/") {
-		t.Errorf("LFS href = %q", got)
-	}
 }
 
-// Every request the Agent sends to the CP (workspace/agent: docs_sync, branchrule, mcpreg,
-// awsx, mcpx memo/schedule, gitx git-oauth, engines, git and git-lfs) must reach its handler
-// on the workspace listener. Dropping one from workspaceRoutes breaks that feature only
-// where AF_CP_INTERNAL_LISTEN is set, which no other test would notice.
-func TestWorkspaceListenerServesEveryAgentCall(t *testing.T) {
+// Every KNOWN request the Agent sends to the CP (workspace/agent: docs_sync, branchrule,
+// mcpreg, awsx, mcpx memo/schedule, gitx git-oauth, engines, git and git-lfs) must reach its
+// handler on the workspace listener. Dropping one from workspaceRoutes breaks that feature
+// only where AF_CP_INTERNAL_LISTEN is set, which no other test would notice. The list is
+// written by hand — the Agent is another Go module — so a NEW Agent → CP call has to be
+// added here and to workspaceRoutes together; nothing detects one that was not.
+func TestWorkspaceListenerServesKnownAgentCalls(t *testing.T) {
 	cfg, mux := smokeEnvWith(t, allRouteSwitches(t)...)
 	h := workspaceListenerHandler(mux, cfg.mgr.emailHeader)
 	calls := []struct{ method, path string }{
@@ -273,5 +279,115 @@ func TestWorkspaceListenerServesEveryAgentCall(t *testing.T) {
 		if w.Code == http.StatusNotFound && strings.HasPrefix(w.Body.String(), "404 page not found") {
 			t.Errorf("%s %s: the listener's 404", c.method, c.path)
 		}
+	}
+}
+
+// The same LFS batch answers each listener with hrefs on that listener: a person's clone
+// outside the cluster must get the public base, a workspace on the workspace listener the
+// internal one — and each href must actually transfer the object.
+func TestLFSHrefsFollowTheListener(t *testing.T) {
+	ctx := t.Context()
+	tmp := t.TempDir()
+	dataRoot := filepath.Join(tmp, "data")
+	st, err := store.OpenSQLite(filepath.Join(tmp, "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	dflt, _ := st.EnsureDefaultTenant(ctx)
+	ident, _ := st.UpsertIdentity(ctx, "u@x", "u-x", "")
+	mem, _ := st.EnsureMembership(ctx, ident.ID, dflt.ID, "member")
+	if err := os.MkdirAll(filepath.Join(dataRoot, "git", "default", "shared.git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateGitRepo(ctx, store.GitRepo{ID: store.NewID(), TenantID: dflt.ID, Name: "shared", DefaultBranch: "main", CreatedAt: store.NowTS()}); err != nil {
+		t.Fatal(err)
+	}
+	master := []byte("master-key-lfs-listener-000000000000")
+	token := mintGitToken(gitSignKey(master), mem.ID)
+
+	pub, internal := httptest.NewUnstartedServer(nil), httptest.NewUnstartedServer(nil)
+	defer pub.Close()
+	defer internal.Close()
+	pubURL, internalURL := "http://"+pub.Listener.Addr().String(), "http://"+internal.Listener.Addr().String()
+	mgr := &manager{store: st, master32: master, dataRoot: dataRoot, internalBaseURL: internalURL}
+	g := newGitServerAPI(mgr, pubURL)
+	pub.Config.Handler = g.gitMux()
+	internal.Config.Handler = workspaceEdge(g.gitMux(), "")
+	pub.Start()
+	internal.Start()
+
+	do := func(method, u string, body []byte) *http.Response {
+		t.Helper()
+		req, _ := http.NewRequest(method, u, bytes.NewReader(body))
+		req.SetBasicAuth("x-access-token", token)
+		req.Header.Set("Content-Type", "application/vnd.git-lfs+json")
+		req.Header.Set("Accept", "application/vnd.git-lfs+json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, u, err)
+		}
+		return resp
+	}
+	batch := func(base, op, oid string, size int) string {
+		t.Helper()
+		body := fmt.Sprintf(`{"operation":%q,"transfers":["basic"],"objects":[{"oid":%q,"size":%d}]}`, op, oid, size)
+		resp := do("POST", base+"/git/default/shared.git/info/lfs/objects/batch", []byte(body))
+		defer resp.Body.Close()
+		var out struct {
+			Objects []struct {
+				Actions map[string]struct {
+					Href string `json:"href"`
+				} `json:"actions"`
+			} `json:"objects"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || resp.StatusCode != http.StatusOK || len(out.Objects) != 1 {
+			t.Fatalf("%s batch on %s: %d %v %+v", op, base, resp.StatusCode, err, out)
+		}
+		return out.Objects[0].Actions[op].Href
+	}
+
+	for _, c := range []struct {
+		name, base, other string
+		payload           []byte
+	}{
+		{"public listener", pubURL, internalURL, []byte("public-listener-object")},
+		{"workspace listener", internalURL, pubURL, []byte("workspace-listener-object")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			sum := sha256.Sum256(c.payload)
+			oid := hex.EncodeToString(sum[:])
+			up := batch(c.base, "upload", oid, len(c.payload))
+			if !strings.HasPrefix(up, c.base+"/git/") {
+				t.Fatalf("upload href = %q, want one on %s (not %s)", up, c.base, c.other)
+			}
+			if resp := do("PUT", up, c.payload); resp.StatusCode/100 != 2 {
+				t.Fatalf("upload to %s: %d", up, resp.StatusCode)
+			}
+			down := batch(c.base, "download", oid, len(c.payload))
+			if !strings.HasPrefix(down, c.base+"/git/") {
+				t.Fatalf("download href = %q, want one on %s", down, c.base)
+			}
+			resp := do("GET", down, nil)
+			got, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK || !bytes.Equal(got, c.payload) {
+				t.Fatalf("download from %s: %d %q", down, resp.StatusCode, got)
+			}
+		})
+	}
+}
+
+// The clone URL the Console's repository API returns (list, create and rename all build it
+// with repoDTO) stays public even where the CP has an internal URL: people clone from
+// outside the cluster.
+func TestRepoDTOCloneURLStaysPublicWithInternalURL(t *testing.T) {
+	g := gitServerAPI{publicBaseURL: "https://af.example", internalBaseURL: "http://af-cp-internal.af.svc:8098"}
+	dto := g.repoDTO(store.MembershipView{TenantSlug: "t"}, store.GitRepo{Name: "r"})
+	if dto.CloneURL != "https://af.example/git/t/r.git" {
+		t.Errorf("clone_url = %q, want the public one", dto.CloneURL)
 	}
 }

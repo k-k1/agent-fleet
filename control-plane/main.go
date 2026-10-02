@@ -231,12 +231,8 @@ func main() {
 	// public base's host (Caddy TLS terminus). Recorded on the manager so each
 	// workspace start injects a token for it (docs/reference/internal-git-provider).
 	mgr.internalGitHost = internalGitCredentialHost(publicBaseURL)
-	// Where workspaces reach the CP by an internal address instead (ADR 0106 decision 8),
-	// their git remotes and credential use that address too.
+	// Where workspaces reach the CP by an internal address instead (ADR 0106 decision 8).
 	mgr.internalBaseURL = strings.TrimRight(strings.TrimSpace(os.Getenv("AF_CP_INTERNAL_URL")), "/")
-	if publicBaseURL != "" && mgr.internalBaseURL != "" {
-		mgr.internalGitHost = internalGitCredentialHost(mgr.internalBaseURL)
-	}
 	if u, err := url.Parse(publicBaseURL); err == nil {
 		wsAllowedOriginHost = u.Host // WS origin allowlist (checkWSOrigin)
 	}

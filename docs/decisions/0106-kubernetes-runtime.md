@@ -683,7 +683,9 @@ docs, branch-rules, MCP-registry and AWS-profiles pulls, the memo and schedule r
 calls (not `/internal/memo-categories`, which no agent code calls), the two git-OAuth refreshes,
 the engine token, catalogue, props and gateway, and internal git with LFS. The listener
 dispatches through the main listener's mux and refuses any pattern not on the list, so the
-handlers are registered once. Two consequences of `AF_CP_INTERNAL_URL` beyond the agent: the
-internal git clone URL, the LFS transfer URLs and `AF_INTERNAL_GIT_HOST` use it, and it is
-injected only alongside `AF_CP_BASE_URL`, because the bridge tokens come with that. The
+handlers are registered once. `AF_CP_INTERNAL_URL` is injected only alongside `AF_CP_BASE_URL`,
+because the bridge tokens come with that. Internal git keeps its public clone URL (people clone
+it from outside the cluster): the agent rewrites the workspace's git onto the internal URL with
+`url.<internal>/git/.insteadOf` and stores the git token under both hosts, and an LFS batch
+answered on the workspace listener returns transfer URLs on it. The
 `NO_PROXY` entry for the internal Service is left to the adapter.

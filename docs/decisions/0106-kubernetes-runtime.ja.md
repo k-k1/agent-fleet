@@ -553,7 +553,8 @@ Helm chart は作らない。問い合わせは Kubernetes 対応を求めたの
 docs・ブランチ規則・MCP レジストリ・AWS プロファイルの取得、Agent が呼ぶメモと定時実行の経路
 （Agent のコードが呼ばない `/internal/memo-categories` は含めない）、git OAuth の 2 つの refresh、
 エンジンのトークン・カタログ・props・ゲートウェイ、LFS を含む内部 git。リスナーは本来のリスナーの
-mux を通して振り分け、一覧に無いパターンは断るので、ハンドラの登録は 1 回で済む。Agent 以外への
-`AF_CP_INTERNAL_URL` の効果は 2 つ: 内部 git の clone URL・LFS の転送 URL・`AF_INTERNAL_GIT_HOST`
-がこれを使うこと、そしてブリッジのトークンが `AF_CP_BASE_URL` と一緒に来るため、注入はそれと
-並ぶときだけであること。内部 Service を `NO_PROXY` に入れるのはアダプタに残す。
+mux を通して振り分け、一覧に無いパターンは断るので、ハンドラの登録は 1 回で済む。
+`AF_CP_INTERNAL_URL` の注入は、ブリッジのトークンが `AF_CP_BASE_URL` と一緒に来るため、それと
+並ぶときだけ。内部 git の clone URL は公開のまま（人がクラスタの外から clone する）で、Agent が
+`url.<internal>/git/.insteadOf` で Workspace の git を内部 URL へ書き換え、git のトークンを両方の
+ホストに保存する。Workspace 専用リスナーで答えた LFS の batch は、転送先もそのリスナーを指す。内部 Service を `NO_PROXY` に入れるのはアダプタに残す。

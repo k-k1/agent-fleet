@@ -36,20 +36,22 @@ type gitServerAPI struct {
 	memberAuth
 	dataRoot      string
 	signKey       []byte // git-token signing key, derived from the deployment master
-	publicBaseURL string // external base; "" = internal git not configured
-	// internalBaseURL is AF_CP_INTERNAL_URL (ADR 0106 decision 8): when set, the base of
-	// the clone and LFS URLs, which only a workspace ever uses.
+	publicBaseURL string // external base for clone/LFS hrefs ("" = not configured)
+	// internalBaseURL is AF_CP_INTERNAL_URL (ADR 0106 decision 8): the base of the LFS
+	// hrefs answered on the workspace listener. The clone URL stays public — the Console
+	// shows it to people — and the Agent rewrites it for the workspace's own git.
 	internalBaseURL string
 	store           gitServerStore
 }
 
-// workspaceBaseURL is the base of the URLs handed to a workspace's git: the internal one
-// where the CP has it, else the public one. "" while internal git is not configured.
-func (a gitServerAPI) workspaceBaseURL() string {
-	if a.publicBaseURL == "" || a.internalBaseURL == "" {
-		return a.publicBaseURL
+// baseURLFor is the base of URLs answered to r: the internal one when r came in on the
+// workspace listener (where the public base may be unreachable), else the public one.
+// The listener's context marker decides, never a Host or forwarding header a caller sets.
+func (a gitServerAPI) baseURLFor(r *http.Request) string {
+	if a.publicBaseURL != "" && a.internalBaseURL != "" && viaWorkspaceListener(r.Context()) {
+		return a.internalBaseURL
 	}
-	return a.internalBaseURL
+	return a.publicBaseURL
 }
 
 // gitServerStore is the internal-git server's store view: the repo ledger, the
