@@ -351,7 +351,7 @@ func TestKubeDestroyUnboundClaimsAreUnknown(t *testing.T) {
 	}
 }
 
-// The review's half-bound case: the volume already names the claim, the claim does not
+// A half-bound volume: the volume already names the claim, the claim does not
 // name the volume yet, and the volume outlives the claim.
 func TestKubeDestroyHalfBoundStaticVolume(t *testing.T) {
 	shortDestroyBudget(t)
