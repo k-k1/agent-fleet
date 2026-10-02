@@ -64,6 +64,16 @@ bind し、そのセキュリティグループはロードバランサのもの
   を信じる）。compose の例示 env と AWS テンプレートは 1 を設定し、ALB の前に CDN を置けば 2。
   テナントのネットワーク制限が見る送信元アドレスはこれで決まる（[07 §7.3](07-security.ja.md)）。
 
+**唯一の例外: Workspace 専用リスナー**（[decisions/0106](../decisions/0106-kubernetes-runtime.ja.md)
+決定 8）。Workspace が入口経由で CP に届かない構成（Kubernetes）では、CP は Workspace 専用の
+2 本目のポート `AF_CP_INTERNAL_LISTEN` を開き、そのアドレスを `AF_CP_INTERNAL_URL` として
+変更しない `AF_CP_BASE_URL` と並べて注入する。このポートが配るのは Agent が呼ぶ経路だけで
+（それぞれがメンバーシップ単位の専用トークンで認証する。`control-plane/workspace_listener.go`
+の `workspaceRoutes`）、それ以外——Console・管理 API・ログイン経路・egress プロキシの
+`/internal/egress*`——は 404 を返す。認証ゲートは無く、識別ヘッダと転送ヘッダをすべて捨て、
+`AF_TRUSTED_PROXY_HOPS` にかかわらず接続そのもののアドレスを送信元とする。ブラウザや管理者が
+使うものはこの経路からは届かない。未設定なら 2 本目のポートは無く、何も変わらない。
+
 ## 9.4 環境変数リファレンス（索引）
 
 **値・生成手順・注釈の正は例示 env ファイル**（[compose](../../deploy/compose/.env.example)・
@@ -74,6 +84,7 @@ bind し、そのセキュリティグループはロードバランサのもの
 | グループ | 変数 | 役割 | 詳細 |
 |----------|------|------|------|
 | CP コア | `CP_ADDR`（`:8080`）・`CONSOLE_DIR`・`AF_RUNTIME`（`local`）・`AF_DB`（`<WS_DATA>/control-plane.db`）・`PUBLIC_BASE_URL`・`AF_PREVIEW_DOMAIN`・`AF_TRUSTED_PROXY_HOPS`（0） | bind 先・配る Console・アダプタの選択・外部 URL・プレビューのサブドメイン・送信元アドレス | 本章 |
+| Workspace 専用リスナー | `AF_CP_INTERNAL_LISTEN`（未設定 = 無し）・`AF_CP_INTERNAL_URL`（未設定 = Workspace は `AF_CP_BASE_URL` を使う） | Workspace 専用のポートと、Workspace がそこへ届く URL。URL は内部 git の clone URL と `AF_INTERNAL_GIT_HOST` の基点にもなる。`PUBLIC_BASE_URL` があるときだけ効き、反映は次の Workspace 起動から | §9.3 / [decisions/0106](../decisions/0106-kubernetes-runtime.ja.md) |
 | Workspace 起動テンプレ | `WS_IMAGE`・`WS_DATA`（`/tmp/af-data`）・`WS_MEMORY`（`1g`）・`AF_MAX_WORKSPACE_MEM`・`WS_AGENT_PORT`（7700・Workspace ごとのポートの起点）・`WS_AGENT_HOST`（`127.0.0.1`）・`WS_JVM_DIR`・`WS_ENV`・`WS_SESSION_CMD` | CP が Workspace を起動するときに流し込む共通テンプレ。`WS_ENV` が届くのは `docker` と `native` の Workspace だけで、ECS 系ランタイムは渡さない | [04](04-agent.ja.md) |
 | L1 認証 | `AUTH`（`dev`）・`DEV_USER`（`dev`）・`AUTH_EMAIL_HEADER`（`X-Forwarded-Email`）・`GOOGLE_OAUTH_CLIENT_ID/SECRET`・`AF_GITHUB_LOGIN_CLIENT_ID/SECRET`（または `GITHUB_OAUTH_CLIENT_ID/SECRET`）と `AF_GITHUB_ALLOWED_ORGS` ほか `AF_GITHUB_*`・`AF_OIDC_PROVIDERS` ＋ `AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST,LABEL_JA,LABEL_EN,SCOPES,PROMPT,LINK_CLAIM,ALLOWED_EMAILS,ALLOWED_DOMAINS,ALLOWED_TIDS}`・`AF_COOKIE_SECRET`・`AF_SESSION_TTL`（168h）・`AF_OAUTH_ALLOWED_{EMAILS,DOMAINS,EMAILS_FILE}` | Console ログイン。`AUTH=oauth` は有効な provider が無いと起動しない。OIDC の provider は `TRUST` の宣言が、GitHub は `AF_GITHUB_ALLOWED_ORGS` が必要で、無ければその provider は無効になる。**どの入口も受け入れないサインインは拒否される**: 入口はこれらの許可リスト・テナントの名簿・テナントの auto-join ドメイン・承認済みのテナント IdP。どれも無ければ全ログインが拒否される | [07 §7.3](07-security.ja.md) / [decisions/0043](../decisions/0043-login-idp.ja.md) |
 | プロビジョン / 権限 | `AF_PROVISION`（`auto`）・`SUPER_ADMIN_EMAILS` | 未知の identity をどう受け入れるか / 誰がデプロイ管理者か | [06](06-data.ja.md) |
@@ -89,7 +100,7 @@ bind し、そのセキュリティグループはロードバランサのもの
 | エンジン | `AF_ENGINES_SSM_PARAM` / `AF_ENGINES_JSON`・`AF_LLM_URL`・`AF_COMFY_URL` / `AF_COMFY_API_KEY`・`AF_ENGINE_API_KEY_<KEY>`・`AF_ENGINE_<KEY>_{CONTROL_INTERVAL_SEC,WINDOW_SEC,IDLE_SEC,START_DEADLINE_SEC,FAIL_COOLDOWN_SEC}`・`AF_ENGINE_ECS_CLUSTER`・`AF_ENGINE_WAKE_TIMEOUT`（900 秒）・`AF_ENGINE_PLAIN_HOLD`・`AF_REMOTE_ENGINE_{URL,TOKEN,KEYS}` | エンジン表・エンジンの制御器・冷えたエンジンに対するゲートウェイの保留・別デプロイのエンジンの借用 | [decisions/0071](../decisions/0071-self-hosted-inference-engines.ja.md) / [0076](../decisions/0076-external-image-engine-on-lan.ja.md) / [0077](../decisions/0077-engine-boxes-bought-by-cp.ja.md) / [0079](../decisions/0079-remote-engine-from-another-deployment.ja.md) |
 | 音声 | `AF_VOICEVOX_URL`（`http://127.0.0.1:50021`）・`AF_TTS_ECS_SERVICE` ほか `AF_TTS_ECS_*`・`AF_TTS_MAX_CHARS`（300）・`AF_POLLY_{REGION,ENGINE}` | URL で指す VOICEVOX、または CP がゼロから起こす ECS 上の VOICEVOX。Amazon Polly | [decisions/0070](../decisions/0070-tts-ondemand-engine.ja.md) |
 | コンテナレスアダプタ | `AF_NATIVE_AGENT_BIN`（`PATH` 上の `workspace-agent`）・`AF_NATIVE_ROOTFS`・`AF_NATIVE_BWRAP` | Agent バイナリの所在・bubblewrap サンドボックスを有効にする rootfs | [native runbook](../../deploy/native/README.md) |
-| Workspace 内（CP が注入・**運用者は設定しない**） | `AGENT_TOKEN`・`AF_SECRET_KEY`・`AGENT_STOP_GRACE_SEC`・`AGENT_SESSION_CMD`・`CLAUDE_CONFIG_DIR`・`AF_AGENT_SELF_UPDATE_ALLOWED`・`AF_CP_BASE_URL` と機能ごとのトークン（`AF_DOCS_TOKEN`・`AF_MCP_TOKEN`・`AF_MEMO_TOKEN` …）・`native` ではさらに `AGENT_ADDR`・`AF_TMUX_SOCKET`・`AGENT_DOCS_DIR` | CP↔Agent 認証・DEK・停止猶予・Agent から CP への経路（`manager.workspaceExtraEnv`）。トークンと DEK は `docker` では 0600 の env ファイル、ECS では SSM SecureString のタスクシークレットで渡る | [04](04-agent.ja.md) / [07 §7.5](07-security.ja.md) |
+| Workspace 内（CP が注入・**運用者は設定しない**） | `AGENT_TOKEN`・`AF_SECRET_KEY`・`AGENT_STOP_GRACE_SEC`・`AGENT_SESSION_CMD`・`CLAUDE_CONFIG_DIR`・`AF_AGENT_SELF_UPDATE_ALLOWED`・`AF_CP_BASE_URL` と機能ごとのトークン（`AF_DOCS_TOKEN`・`AF_MCP_TOKEN`・`AF_MEMO_TOKEN` …）、設定時は `AF_CP_INTERNAL_URL`（Agent の要求はそちらへ、人が開くリンクは `AF_CP_BASE_URL` のまま）・`native` ではさらに `AGENT_ADDR`・`AF_TMUX_SOCKET`・`AGENT_DOCS_DIR` | CP↔Agent 認証・DEK・停止猶予・Agent から CP への経路（`manager.workspaceExtraEnv`）。トークンと DEK は `docker` では 0600 の env ファイル、ECS では SSM SecureString のタスクシークレットで渡る | [04](04-agent.ja.md) / [07 §7.5](07-security.ja.md) |
 
 網羅性の確認方法: **変数名そのものが grep アンカー。** CP の読み値（`envx.Or`・`envx.DurationOr`・
 `runtime.EnvInt`・`os.Getenv`）と例示 env ファイルを突き合わせる。`run-dev.sh` は渡すものを

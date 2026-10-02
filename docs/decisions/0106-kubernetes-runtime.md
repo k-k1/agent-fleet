@@ -675,3 +675,15 @@ the procedures, and this ADR fixes what they must cover:
   of pre-warmed nodes back on the table.
 - Tenants that must be separated by the cluster rather than by the CP, which would bring a
   namespace per tenant back.
+
+## Amendment (2026-10-02) — the workspace listener's route list (#1464)
+
+Decision 8's list is fixed as `workspaceRoutes` in `control-plane/workspace_listener.go`: the
+docs, branch-rules, MCP-registry and AWS-profiles pulls, the memo and schedule routes the agent
+calls (not `/internal/memo-categories`, which no agent code calls), the two git-OAuth refreshes,
+the engine token, catalogue, props and gateway, and internal git with LFS. The listener
+dispatches through the main listener's mux and refuses any pattern not on the list, so the
+handlers are registered once. Two consequences of `AF_CP_INTERNAL_URL` beyond the agent: the
+internal git clone URL, the LFS transfer URLs and `AF_INTERNAL_GIT_HOST` use it, and it is
+injected only alongside `AF_CP_BASE_URL`, because the bridge tokens come with that. The
+`NO_PROXY` entry for the internal Service is left to the adapter.

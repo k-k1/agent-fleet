@@ -69,7 +69,7 @@ func TestCodexThreadServersForwardsCredentialsByName(t *testing.T) {
 	got, _ := CodexThreadServers([]ServerDef{threadAFDef()}, CodexThreadOpts{SessionName: "slot01"})
 	af, _ := got[BuiltinAF].(map[string]any)
 
-	want := []any{"AF_CP_BASE_URL", "AF_MEMO_TOKEN", "AGENT_ADDR", "AGENT_TOKEN"}
+	want := []any{"AF_CP_BASE_URL", "AF_CP_INTERNAL_URL", "AF_MEMO_TOKEN", "AGENT_ADDR", "AGENT_TOKEN"}
 	if !reflect.DeepEqual(af["env_vars"], want) {
 		t.Fatalf("af env_vars = %v, want %v", af["env_vars"], want)
 	}

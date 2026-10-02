@@ -11,5 +11,8 @@ import (
 // tests about that variable set it themselves.
 func TestMain(m *testing.M) {
 	os.Unsetenv("AWS_EC2_METADATA_DISABLED")
+	// A workspace that runs these tests may itself carry AF_CP_INTERNAL_URL, which would send
+	// the tests' requests past their fake CP (cpurl.Request).
+	os.Unsetenv("AF_CP_INTERNAL_URL")
 	os.Exit(m.Run())
 }

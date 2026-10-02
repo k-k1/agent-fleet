@@ -52,10 +52,10 @@ func (a gitServerAPI) lfsObjectPath(slug, repo, oid string) string {
 }
 
 // lfsHref is the absolute transfer URL returned in a batch action; it points back
-// to the CP (public base = Caddy TLS terminus), which the LFS client reaches with
+// to the CP (the same base as cloneURL), which the LFS client reaches with
 // the same Basic git token via the cred helper.
 func (a gitServerAPI) lfsHref(slug, repo, oid string) string {
-	return strings.TrimRight(a.publicBaseURL, "/") + "/git/" + slug + "/" + repo + ".git/info/lfs/objects/" + oid
+	return strings.TrimRight(a.workspaceBaseURL(), "/") + "/git/" + slug + "/" + repo + ".git/info/lfs/objects/" + oid
 }
 
 func fileExists(p string) bool {

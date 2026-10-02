@@ -546,3 +546,14 @@ Helm chart は作らない。問い合わせは Kubernetes 対応を求めたの
 - 標準 API では home に足りないクラスタ。たとえば拡張と `WaitForFirstConsumer` に対応した StorageClass が無いもの。
 - Kubernetes での起動の待ち時間が ECS から大きく離れていると測れたとき。温めたノードのプールを再び検討することになる。
 - テナントを CP ではなくクラスタで分けなければならないとき。テナントごとの namespace を再び検討することになる。
+
+## 追記（2026-10-02）— Workspace 専用リスナーの経路一覧（#1464）
+
+決定 8 の一覧は `control-plane/workspace_listener.go` の `workspaceRoutes` として確定した:
+docs・ブランチ規則・MCP レジストリ・AWS プロファイルの取得、Agent が呼ぶメモと定時実行の経路
+（Agent のコードが呼ばない `/internal/memo-categories` は含めない）、git OAuth の 2 つの refresh、
+エンジンのトークン・カタログ・props・ゲートウェイ、LFS を含む内部 git。リスナーは本来のリスナーの
+mux を通して振り分け、一覧に無いパターンは断るので、ハンドラの登録は 1 回で済む。Agent 以外への
+`AF_CP_INTERNAL_URL` の効果は 2 つ: 内部 git の clone URL・LFS の転送 URL・`AF_INTERNAL_GIT_HOST`
+がこれを使うこと、そしてブリッジのトークンが `AF_CP_BASE_URL` と一緒に来るため、注入はそれと
+並ぶときだけであること。内部 Service を `NO_PROXY` に入れるのはアダプタに残す。

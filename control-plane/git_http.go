@@ -36,8 +36,20 @@ type gitServerAPI struct {
 	memberAuth
 	dataRoot      string
 	signKey       []byte // git-token signing key, derived from the deployment master
-	publicBaseURL string // external base for clone/LFS hrefs ("" = not configured)
-	store         gitServerStore
+	publicBaseURL string // external base; "" = internal git not configured
+	// internalBaseURL is AF_CP_INTERNAL_URL (ADR 0106 decision 8): when set, the base of
+	// the clone and LFS URLs, which only a workspace ever uses.
+	internalBaseURL string
+	store           gitServerStore
+}
+
+// workspaceBaseURL is the base of the URLs handed to a workspace's git: the internal one
+// where the CP has it, else the public one. "" while internal git is not configured.
+func (a gitServerAPI) workspaceBaseURL() string {
+	if a.publicBaseURL == "" || a.internalBaseURL == "" {
+		return a.publicBaseURL
+	}
+	return a.internalBaseURL
 }
 
 // gitServerStore is the internal-git server's store view: the repo ledger, the
@@ -53,7 +65,7 @@ type gitServerStore interface {
 }
 
 func newGitServerAPI(m *manager, publicBaseURL string) gitServerAPI {
-	return gitServerAPI{memberAuth{m}, m.dataRoot, gitSignKey(m.tokenSignMaster()), publicBaseURL, m.store}
+	return gitServerAPI{memberAuth{m}, m.dataRoot, gitSignKey(m.tokenSignMaster()), publicBaseURL, m.internalBaseURL, m.store}
 }
 
 // gitBackendPath is the git-http-backend CGI. Debian ships it under git-core;

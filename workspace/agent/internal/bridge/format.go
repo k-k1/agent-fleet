@@ -23,6 +23,7 @@ func (m Message) Text(lang string) string {
 			b.WriteString("\n「" + m.DisplayName + "」（" + kindLabel(m.SessionKind) + "）")
 		}
 	}
+	// The public base, never AF_CP_INTERNAL_URL: a person's browser opens this link.
 	if base := os.Getenv("AF_CP_BASE_URL"); base != "" && m.SessionName != "" {
 		// <…> suppresses Discord's link-preview embed (keeps the message compact).
 		b.WriteString("\n<" + strings.TrimRight(base, "/") + "/?session=" + m.SessionName + ">")

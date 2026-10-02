@@ -313,6 +313,11 @@ data from a place they should not**.
 - **The surfaces a workspace calls are exempt** — `/mcp`, `/git/`, `/engine/` and
   `/internal/`. Their source is the user's own workspace, which says nothing about where
   the person is. Including them would block every call from your own workspace.
+- **The workspace listener reads no forwarding header at all** (`AF_CP_INTERNAL_LISTEN`,
+  [09 §9.3](09-deploy.md)). Its client is the connection's own address whatever the hop
+  count says, and it removes the identity header and every forwarded-for/-host/-proto
+  header before a handler runs — a workspace that connects to it can name neither a user
+  nor a source address. It serves only the token-authenticated routes listed above.
 - **Escape hatches against locking yourself out**: a deployment administrator is exempt;
   a save that would shut out the editor's current address is refused
   (`would_lock_out`); and so is a save when the forwarded-for header arrives while no

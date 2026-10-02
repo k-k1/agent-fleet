@@ -68,6 +68,18 @@ itself; only with `AUTH=proxy` does the ingress inject the identity header.
   front of the ALB makes it 2. The client address that tenant network restrictions see
   depends on it ([07 §7.3](07-security.md)).
 
+**The one exception: the workspace listener** ([decisions/0106](../decisions/0106-kubernetes-runtime.md)
+decision 8). Where workspaces cannot reach the CP through the ingress (Kubernetes), the
+CP serves a second port, `AF_CP_INTERNAL_LISTEN`, for workspaces only, and the CP
+injects its address as `AF_CP_INTERNAL_URL` next to an unchanged `AF_CP_BASE_URL`. That
+port carries only the routes the Agent calls — each authenticated by its own
+per-membership token (`workspaceRoutes` in `control-plane/workspace_listener.go`) — and
+answers 404 for everything else: the Console, the admin API, the login routes and the
+egress proxy's `/internal/egress*`. It has no auth gate, drops the identity header and
+every forwarding header, and takes the connection's own address as the client whatever
+`AF_TRUSTED_PROXY_HOPS` says. Nothing a browser or an administrator uses is reachable
+through it. Unset, there is no second port and nothing changes.
+
 ## 9.4 Environment variable index
 
 **The values, how to generate them and the caveats live in the annotated example env
@@ -79,6 +91,7 @@ an index. The value in parentheses is the code's default when the variable is un
 | Group | Variables | Role | Detail |
 |---|---|---|---|
 | CP core | `CP_ADDR` (`:8080`) · `CONSOLE_DIR` · `AF_RUNTIME` (`local`) · `AF_DB` (`<WS_DATA>/control-plane.db`) · `PUBLIC_BASE_URL` · `AF_PREVIEW_DOMAIN` · `AF_TRUSTED_PROXY_HOPS` (0) | where it listens, what it serves, which adapter, the public URL, preview subdomains, the client address | this chapter |
+| Workspace listener | `AF_CP_INTERNAL_LISTEN` (unset = none) · `AF_CP_INTERNAL_URL` (unset = workspaces use `AF_CP_BASE_URL`) | the workspace-only port and the URL workspaces reach it by. The URL is also the base of the internal git clone URL and of `AF_INTERNAL_GIT_HOST`; it takes effect only with `PUBLIC_BASE_URL` set, and from the next workspace Start | §9.3 / [decisions/0106](../decisions/0106-kubernetes-runtime.md) |
 | Workspace template | `WS_IMAGE` · `WS_DATA` (`/tmp/af-data`) · `WS_MEMORY` (`1g`) · `AF_MAX_WORKSPACE_MEM` · `WS_AGENT_PORT` (7700, the base of the per-workspace ports) · `WS_AGENT_HOST` (`127.0.0.1`) · `WS_JVM_DIR` · `WS_ENV` · `WS_SESSION_CMD` | the common template the CP fills in when starting a workspace. `WS_ENV` reaches `docker` and `native` workspaces only; the ECS runtimes do not pass it on | [04](04-agent.md) |
 | L1 auth | `AUTH` (`dev`) · `DEV_USER` (`dev`) · `AUTH_EMAIL_HEADER` (`X-Forwarded-Email`) · `GOOGLE_OAUTH_CLIENT_ID/SECRET` · `AF_GITHUB_LOGIN_CLIENT_ID/SECRET` (or `GITHUB_OAUTH_CLIENT_ID/SECRET`) with `AF_GITHUB_ALLOWED_ORGS` and the other `AF_GITHUB_*` · `AF_OIDC_PROVIDERS` + `AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST,LABEL_JA,LABEL_EN,SCOPES,PROMPT,LINK_CLAIM,ALLOWED_EMAILS,ALLOWED_DOMAINS,ALLOWED_TIDS}` · `AF_COOKIE_SECRET` · `AF_SESSION_TTL` (168h) · `AF_OAUTH_ALLOWED_{EMAILS,DOMAINS,EMAILS_FILE}` | Console login, with `AUTH=oauth` refusing to boot without a working provider. An OIDC provider must declare `TRUST`, and GitHub needs `AF_GITHUB_ALLOWED_ORGS`; either is disabled otherwise. **A sign-in is refused unless some way in admits it**: these allowlists, a tenant's roster, a tenant's auto-join domains or an approved tenant IdP. With none of them, every login is denied | [07 §7.3](07-security.md) / [decisions/0043](../decisions/0043-login-idp.md) |
 | Provisioning and roles | `AF_PROVISION` (`auto`) · `SUPER_ADMIN_EMAILS` | how an unknown identity is admitted; who is a deployment administrator | [06](06-data.md) |
@@ -94,7 +107,7 @@ an index. The value in parentheses is the code's default when the variable is un
 | Engines | `AF_ENGINES_SSM_PARAM` / `AF_ENGINES_JSON` · `AF_LLM_URL` · `AF_COMFY_URL` / `AF_COMFY_API_KEY` · `AF_ENGINE_API_KEY_<KEY>` · `AF_ENGINE_<KEY>_{CONTROL_INTERVAL_SEC,WINDOW_SEC,IDLE_SEC,START_DEADLINE_SEC,FAIL_COOLDOWN_SEC}` · `AF_ENGINE_ECS_CLUSTER` · `AF_ENGINE_WAKE_TIMEOUT` (900 s) · `AF_ENGINE_PLAIN_HOLD` · `AF_REMOTE_ENGINE_{URL,TOKEN,KEYS}` | the engine table, the engine controller, the gateway's hold on a cold engine, and borrowing another deployment's engines | [decisions/0071](../decisions/0071-self-hosted-inference-engines.md) / [0076](../decisions/0076-external-image-engine-on-lan.md) / [0077](../decisions/0077-engine-boxes-bought-by-cp.md) / [0079](../decisions/0079-remote-engine-from-another-deployment.md) |
 | Speech | `AF_VOICEVOX_URL` (`http://127.0.0.1:50021`) · `AF_TTS_ECS_SERVICE` and the other `AF_TTS_ECS_*` · `AF_TTS_MAX_CHARS` (300) · `AF_POLLY_{REGION,ENGINE}` | a VOICEVOX by URL, or the one on ECS that the CP scales from zero; Amazon Polly | [decisions/0070](../decisions/0070-tts-ondemand-engine.md) |
 | Containerless adapter | `AF_NATIVE_AGENT_BIN` (`workspace-agent` on `PATH`) · `AF_NATIVE_ROOTFS` · `AF_NATIVE_BWRAP` | where the agent binary lives; the rootfs that switches on the bubblewrap sandbox | [native runbook](../../deploy/native/README.md) |
-| Inside the workspace (injected by the CP; **an operator never sets these**) | `AGENT_TOKEN` · `AF_SECRET_KEY` · `AGENT_STOP_GRACE_SEC` · `AGENT_SESSION_CMD` · `CLAUDE_CONFIG_DIR` · `AF_AGENT_SELF_UPDATE_ALLOWED` · `AF_CP_BASE_URL` with the per-feature tokens (`AF_DOCS_TOKEN`, `AF_MCP_TOKEN`, `AF_MEMO_TOKEN` …) · on `native` also `AGENT_ADDR`, `AF_TMUX_SOCKET` and `AGENT_DOCS_DIR` | CP ↔ agent authentication, the DEK, the grace period, the agent's routes back to the CP (`manager.workspaceExtraEnv`). The token and the DEK travel as a 0600 env file on `docker` and as SSM SecureString task secrets on ECS | [04](04-agent.md) / [07 §7.5](07-security.md) |
+| Inside the workspace (injected by the CP; **an operator never sets these**) | `AGENT_TOKEN` · `AF_SECRET_KEY` · `AGENT_STOP_GRACE_SEC` · `AGENT_SESSION_CMD` · `CLAUDE_CONFIG_DIR` · `AF_AGENT_SELF_UPDATE_ALLOWED` · `AF_CP_BASE_URL` with the per-feature tokens (`AF_DOCS_TOKEN`, `AF_MCP_TOKEN`, `AF_MEMO_TOKEN` …) and, where set, `AF_CP_INTERNAL_URL` (the Agent's requests go there; links for a person keep `AF_CP_BASE_URL`) · on `native` also `AGENT_ADDR`, `AF_TMUX_SOCKET` and `AGENT_DOCS_DIR` | CP ↔ agent authentication, the DEK, the grace period, the agent's routes back to the CP (`manager.workspaceExtraEnv`). The token and the DEK travel as a 0600 env file on `docker` and as SSM SecureString task secrets on ECS | [04](04-agent.md) / [07 §7.5](07-security.md) |
 
 How to check this index is complete: **the variable names are their own grep anchors.**
 Cross-check what the CP reads (`envx.Or`, `envx.DurationOr`, `runtime.EnvInt`,

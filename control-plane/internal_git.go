@@ -24,10 +24,11 @@ import (
 // are gitServerAPI methods (struct in git_http.go, docs/log/23 remainder 3).
 
 // cloneURL builds the clone URL a workspace container uses. It is the public
-// base (Caddy TLS terminus, reachable from the container via hairpin NAT) so the
-// unified cred helper's token injection authenticates it transparently.
+// base (Caddy TLS terminus, reachable from the container via hairpin NAT), or the
+// internal one where the CP has it, so the unified cred helper's token injection
+// (keyed by AF_INTERNAL_GIT_HOST, the same base's host) authenticates it transparently.
 func (a gitServerAPI) cloneURL(slug, name string) string {
-	return strings.TrimRight(a.publicBaseURL, "/") + "/git/" + slug + "/" + name + ".git"
+	return strings.TrimRight(a.workspaceBaseURL(), "/") + "/git/" + slug + "/" + name + ".git"
 }
 
 // internalGitCredentialHost is the key the Agent seeds the internal git credential

@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -162,7 +163,7 @@ func seedInternalGit() {
 // otherwise a deployment that removed PUBLIC_BASE_URL would keep a workspace pointing at
 // an endpoint that no longer answers.
 func seedGitOAuthBridge() {
-	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AF_CP_BASE_URL")), "/")
+	base := cpurl.Request()
 	token := strings.TrimSpace(os.Getenv("AF_GIT_OAUTH_TOKEN"))
 	var want *secrets.CPBridge
 	if base != "" && token != "" {

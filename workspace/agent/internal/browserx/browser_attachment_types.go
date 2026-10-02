@@ -7,11 +7,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
 )
 
 const (
@@ -166,13 +167,24 @@ func validateCDPPort(port int) error {
 }
 
 func reservedControlPlanePort(port int) bool {
-	u, err := url.Parse(os.Getenv("AF_CP_BASE_URL"))
+	for _, b := range cpurl.All() {
+		if p := controlPlaneLoopbackPort(b); p != 0 && p == port {
+			return true
+		}
+	}
+	return false
+}
+
+// controlPlaneLoopbackPort is the port of base when base names this machine's loopback,
+// else 0.
+func controlPlaneLoopbackPort(base string) int {
+	u, err := url.Parse(base)
 	if err != nil || u.Hostname() == "" {
-		return false
+		return 0
 	}
 	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
 	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
-		return false
+		return 0
 	}
 	p := u.Port()
 	if p == "" {
@@ -183,7 +195,10 @@ func reservedControlPlanePort(port int) bool {
 		}
 	}
 	configured, err := strconv.Atoi(p)
-	return err == nil && configured == port
+	if err != nil {
+		return 0
+	}
+	return configured
 }
 
 func normalizeAttachmentViewport(v browserViewportRequest) (browserViewport, error) {

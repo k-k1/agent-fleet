@@ -28,7 +28,7 @@ func TestCodexMCPArgsPreApproveHeadlessTools(t *testing.T) {
 
 func TestCodexMCPArgsForwardAgentAndMemoCredentials(t *testing.T) {
 	got, _ := codexMCPArgs(afWriteConv())
-	want := `mcp_servers.af.env_vars=["AGENT_TOKEN","AGENT_ADDR","AF_CP_BASE_URL","AF_MEMO_TOKEN","AF_SCHEDULE_TOKEN"]`
+	want := `mcp_servers.af.env_vars=["AGENT_TOKEN","AGENT_ADDR","AF_CP_BASE_URL","AF_CP_INTERNAL_URL","AF_MEMO_TOKEN","AF_SCHEDULE_TOKEN"]`
 	if !containsString(got, want) {
 		t.Fatalf("codex MCP args = %q, missing %q", got, want)
 	}

@@ -33,6 +33,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
@@ -131,7 +132,7 @@ type engineCatalogRow struct {
 	Key      string   `json:"key"`
 	API      string   `json:"api"`
 	Provider string   `json:"provider"`
-	BaseURL  string   `json:"base_url"` // relative to AF_CP_BASE_URL
+	BaseURL  string   `json:"base_url"` // relative to the CP request base (cpurl.Request)
 	Models   []string `json:"models"`
 	// The window the engine was STARTED with, and the output cap declared alongside it. Both
 	// absent (0) on a deployment whose engine stack predates them, which is why they are
@@ -270,7 +271,7 @@ func engineCatalogRows(ctx context.Context) []engineCatalogRow {
 // and out. Returns ok=false with no error logged for "this deployment has no engines" (404)
 // and for "there is no CP to ask" (a dev agent with no AF_CP_BASE_URL).
 func engineCPCall(ctx context.Context, method, path string, in, out any) bool {
-	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AF_CP_BASE_URL")), "/")
+	base := cpurl.Request()
 	token := strings.TrimSpace(os.Getenv("AF_ENGINE_ISSUE_TOKEN"))
 	if base == "" || token == "" {
 		return false
@@ -317,7 +318,7 @@ func syncEngineProviders() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	rows := engineCatalogRows(ctx)
-	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AF_CP_BASE_URL")), "/")
+	base := cpurl.Request()
 	providers := make([]opencode.EngineProvider, 0, len(rows))
 	for _, e := range rows {
 		// CHAT engines only. An image engine declared here would put `sdcpp/sdxl-base-1.0`
@@ -536,7 +537,7 @@ type enginePropsProbe struct {
 // WORKSPACE-scoped (the same trade engineImageConn makes, and for the same reason): this runs
 // once at boot and again on every catalogue push, never per session.
 func enginePropsWindow(ctx context.Context, key string) enginePropsProbe {
-	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AF_CP_BASE_URL")), "/")
+	base := cpurl.Request()
 	if base == "" {
 		return enginePropsProbe{}
 	}
@@ -733,7 +734,7 @@ func engineImageProviderRows(ctx context.Context) []imagegen.EngineImageRow {
 // images the row is written here instead (feature tool.imagegen, with the session as its ref),
 // so a session-scoped token would buy nothing and cost one credential per session.
 func engineImageConn(ctx context.Context, key string) (imagegen.EngineConn, bool) {
-	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AF_CP_BASE_URL")), "/")
+	base := cpurl.Request()
 	if base == "" {
 		return imagegen.EngineConn{}, false
 	}
@@ -1288,7 +1289,7 @@ func harnessEngineToken(ctx context.Context, key, session string) (harness.Engin
 			return harness.EngineConn{BaseURL: lcppMemberBase(conn.URL) + "/v1", Token: conn.APIKey}, true
 		}
 	}
-	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AF_CP_BASE_URL")), "/")
+	base := cpurl.Request()
 	if base == "" {
 		return harness.EngineConn{}, false
 	}
