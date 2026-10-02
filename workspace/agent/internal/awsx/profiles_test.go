@@ -512,18 +512,23 @@ func TestOfflineSyncReadsTheCacheUnderTheLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan SyncResult)
+	release := sync.OnceFunc(unlock)
+	done := make(chan SyncResult, 1)
+	finished := make(chan struct{})
 	go func() {
+		defer close(finished)
 		res, _ := Sync()
 		done <- res
 	}()
+	// Released and joined before HOME is restored, whichever check fails first.
+	t.Cleanup(func() { release(); <-finished })
 	time.Sleep(200 * time.Millisecond) // let it reach the lock
 	newer := prof("prod")
 	newer.AccountID = "222222222222"
 	if err := saveSettingsCache([]Profile{newer}, nil); err != nil {
 		t.Fatal(err)
 	}
-	unlock()
+	release()
 	res := <-done
 	if res.Settings["prod"].AccountID != "222222222222" {
 		t.Fatalf("the offline run applied the list it saw before the lock: %+v", res.Settings)

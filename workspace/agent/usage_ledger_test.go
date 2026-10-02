@@ -64,6 +64,9 @@ func useIsolatedUsageDir(t *testing.T) string {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("AF_USAGE_CATALOG", "")
 	resetUsageCatalogCache(t)
+	// useTempUsageDir's wait runs after the swaps above are undone (LIFO): a fold still running
+	// then would read the real HOME's sessions into this ledger. Collect it before that too.
+	t.Cleanup(func() { waitUsageFoldIdle(t) })
 	return dir
 }
 
