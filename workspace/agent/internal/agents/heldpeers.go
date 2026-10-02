@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // heldBase is the state root the held files live under; a variable so tests keep them out of
@@ -53,6 +54,11 @@ type heldPeer struct {
 
 func heldDir(name string) string { return filepath.Join(heldBase(), heldSubdir, name) }
 
+// heldName reports whether name may be a held directory: a valid session name is one path
+// segment. ReadMeta does not check the name inside a meta file, and DropHeld removes a whole
+// directory, so a name such as ".." would otherwise reach the state root.
+func heldName(name string) bool { return session.ValidName(name) }
+
 // heldFile names the file after a hash of the id: the id comes off the wire and is not a safe
 // file name, and the same id always maps to the same file.
 func heldFile(name, id string) string {
@@ -64,7 +70,7 @@ func isHeldPeer(in TurnInput) bool { return in.Origin.Kind == OriginPeer }
 
 // putHeld writes in's file. Caller holds the driver's handle lock.
 func putHeld(name string, in TurnInput) {
-	if name == "" || in.ClientMessageID == "" {
+	if !heldName(name) || in.ClientMessageID == "" {
 		return
 	}
 	b, err := json.Marshal(heldPeer{
@@ -107,7 +113,7 @@ func writeFileAtomic(path string, b []byte) error {
 }
 
 func releaseHeld(name, id string) {
-	if name == "" || id == "" {
+	if !heldName(name) || id == "" {
 		return
 	}
 	if err := os.Remove(heldFile(name, id)); err != nil && !os.IsNotExist(err) {
@@ -116,6 +122,9 @@ func releaseHeld(name, id string) {
 }
 
 func heldExists(name, id string) bool {
+	if !heldName(name) {
+		return false
+	}
 	_, err := os.Stat(heldFile(name, id))
 	return err == nil
 }
@@ -123,6 +132,9 @@ func heldExists(name, id string) bool {
 // loadHeld returns name's held messages, oldest first. A file that does not decode is removed:
 // it would otherwise be retried on every start and never deliver.
 func loadHeld(name string) []heldPeer {
+	if !heldName(name) {
+		return nil
+	}
 	dir := heldDir(name)
 	ents, err := os.ReadDir(dir)
 	if err != nil {
@@ -164,7 +176,7 @@ func HeldCount(name string) int { return len(loadHeld(name)) }
 // DropHeld discards session name's held peer messages (archive, trash, a switch to Terminal),
 // logging what went and why: nobody else is told.
 func DropHeld(name, reason string) {
-	if name == "" {
+	if !heldName(name) {
 		return
 	}
 	for _, hp := range loadHeld(name) {
@@ -181,9 +193,15 @@ func DropHeld(name, reason string) {
 // start and run ahead of whatever the caller of Resume sends next.
 //
 // Calling it on a handle that already holds them is harmless: the queue drops an entry it
-// holds, and one whose file is gone (it was handed to the runtime meanwhile). It stops at the
-// first refusal (a question pending, the runtime gone) to keep the order; the next Resume
-// retries.
+// holds, and one whose file is gone (it was handed to the runtime meanwhile).
+//
+// A failed Send never writes a file back: only the queue, under the handle lock, knows whether
+// the entry was refused before it was queued or was committed (it may have reached the runtime,
+// or another Resume may have delivered it). So the file decides what follows. Still there: the
+// send was refused before the queue took it (a question pending, the runtime gone), and the
+// rest stay behind it for the next Resume. The caller's own input meets the same refusal, so it
+// cannot overtake them. Gone: the start failed after its commit, and is reported as a failed
+// turn like any failed start; the rest carry on, ahead of the caller's input.
 func DeliverHeld(name string, h ThreadHandle) {
 	for _, hp := range loadHeld(name) {
 		in := TurnInput{
@@ -195,13 +213,11 @@ func DeliverHeld(name string, h ThreadHandle) {
 			restored:        true,
 		}
 		if err := h.Send(in); err != nil {
-			// A start that failed after its commit released the file (muse starts at once
-			// and does not keep a failed start): write it back so the next start retries.
-			if !heldExists(name, hp.ID) {
-				putHeld(name, in)
+			if heldExists(name, hp.ID) {
+				log.Printf("held peer message: %s: deliver %s: %v (kept for the next start)", name, hp.ID, err)
+				return
 			}
-			log.Printf("held peer message: %s: deliver %s: %v (kept for the next start)", name, hp.ID, err)
-			return
+			log.Printf("held peer message: %s: deliver %s: %v (its start failed)", name, hp.ID, err)
 		}
 	}
 }
@@ -220,4 +236,49 @@ func MarkHeldEnvelope(prompt string, at time.Time) string {
 		return prompt
 	}
 	return prompt[:end] + " queued=" + at.Local().Format(time.RFC3339) + prompt[end:]
+}
+
+// heldTmpGrace is how old a temp file must be before SweepHeld removes it: a younger one may be
+// a write still in flight.
+const heldTmpGrace = time.Minute
+
+// SweepHeld removes held messages nobody will deliver, at Agent boot: a crash can land between
+// the trash removing a session's meta and DropHeld, and a send racing an archive can write after
+// it. Boot reconciliation walks metas only, so without this such a directory stays forever. It
+// drops the directories of sessions with no meta, archived ones and Terminal ones (only a Managed
+// start delivers), and temp files a crash left behind. A directory whose name is not a session
+// name is left alone: nothing here wrote it.
+func SweepHeld() {
+	root := filepath.Join(heldBase(), heldSubdir)
+	ents, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, e := range ents {
+		name := e.Name()
+		if !e.IsDir() || !heldName(name) {
+			continue
+		}
+		m, ok := session.ReadMeta(name)
+		switch {
+		case !ok:
+			DropHeld(name, "the session no longer exists")
+			continue
+		case m.Archived:
+			DropHeld(name, "the session is archived")
+			continue
+		case m.DriverKind() != session.DriverManaged:
+			DropHeld(name, "the session runs on Terminal (CLI)")
+			continue
+		}
+		files, _ := os.ReadDir(filepath.Join(root, name))
+		for _, f := range files {
+			if !strings.HasPrefix(f.Name(), ".tmp-") {
+				continue
+			}
+			if fi, err := f.Info(); err == nil && time.Since(fi.ModTime()) > heldTmpGrace {
+				os.Remove(filepath.Join(root, name, f.Name()))
+			}
+		}
+	}
 }

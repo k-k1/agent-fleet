@@ -258,5 +258,5 @@ peer からのメッセージを待てと指示された codex Managed の子 2 
 キューから取り除いたときに消える。片付け（`DropHandle`・`AbortManaged`・codex の drain）はメモリ上のキューを
 空にするがファイルは残し、各 Managed ドライバの `Resume` が古い順に、ほかの入力より先に送り直す。封筒には
 `queued=<時刻>` を足し、受け手が古さを判断できるようにする。アーカイブ・ごみ箱・ターミナル（CLI）への切り替えでは
-捨て、1 通ずつログに残す。送信側への応答（`delivered` / `queued`）は変えていない。operator とスケジュール実行の
+捨て、1 通ずつログに残す。削除・アーカイブ済み・ターミナルのセッションにクラッシュで残ったものは Agent の起動時に掃除する。送信側への応答（`delivered` / `queued`）は変えていない。operator とスケジュール実行の
 プロンプトは保持しない（#1257）。実装は `workspace/agent/internal/agents/heldpeers.go`。

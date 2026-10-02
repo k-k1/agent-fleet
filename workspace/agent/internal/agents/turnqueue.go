@@ -323,6 +323,11 @@ func (q *TurnQueue) Take() *Taken {
 		q.queue = q.queue[1:]
 		if q.recorded[in.ClientMessageID] {
 			delete(q.recorded, in.ClientMessageID)
+			// Recorded either way: a restored entry may never have been taken before, and the
+			// ledger must know it once it runs, or a resend under its id would run again.
+			if q.ledger != nil {
+				q.ledger.SeenOrRecord(q.name, in.ClientMessageID)
+			}
 		} else if q.at == LedgerAtTake && q.ledger != nil && q.ledger.SeenOrRecord(q.name, in.ClientMessageID) {
 			q.releasePeer(in)
 			continue

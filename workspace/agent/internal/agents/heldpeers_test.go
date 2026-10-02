@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // queueHandle is a ThreadHandle whose Send is the driver's accept reduced to the queue: what
@@ -282,5 +284,158 @@ func TestRestoredPeerAfterItRanIsRefused(t *testing.T) {
 		Origin: Origin{Kind: OriginPeer, From: stale[0].From}, queuedAt: stale[0].QueuedAt, restored: true}
 	if _, dup := h.q.Accept(late); !dup {
 		t.Fatal("a held message that already ran was queued again")
+	}
+}
+
+// Finding 1 (review): another Resume delivered and committed p1 after this one read the files,
+// and this Send is refused (a question pending on the turn p1 became). The file must not come
+// back: the next start would run p1 a second time.
+func TestFailedDeliveryDoesNotResurrectACommittedMessage(t *testing.T) {
+	q := newQ(t, LedgerAtAccept)
+	q.Accept(member("m0"))
+	running(t, q)
+	q.Accept(peer("p1"))
+	q.Accept(peer("p2"))
+	h := &raceHandle{name: "tq"}
+	DeliverHeld("tq", h)
+	if heldExists("tq", "p1") {
+		t.Fatal("a message another Resume committed was written back")
+	}
+	// The start that failed after its commit is reported like any failed start, and the rest
+	// carry on ahead of the caller's input.
+	if len(h.accepted) != 1 || h.accepted[0] != "p2" {
+		t.Fatalf("delivered after the failure = %v, want [p2]", h.accepted)
+	}
+}
+
+// raceHandle's first Send models the other Resume winning: p1's file is released (committed
+// there) and this Send is refused. Later Sends are accepted.
+type raceHandle struct {
+	ThreadHandle
+	name     string
+	sent     int
+	accepted []string
+}
+
+func (h *raceHandle) Send(in TurnInput) error {
+	h.sent++
+	if h.sent == 1 {
+		releaseHeld(h.name, in.ClientMessageID)
+		return ErrQuestionPending
+	}
+	h.accepted = append(h.accepted, in.ClientMessageID)
+	return nil
+}
+
+// Finding 2 (review): on LedgerAtTake a restored message the old process never took is not in
+// the ledger. Once it runs it must be, or a resend under its id runs again. Covers both a
+// message taken before the restart and one that was not.
+func TestRestoredPeerIsRecordedInTheLedgerOnceItRuns(t *testing.T) {
+	for _, takenBefore := range []bool{false, true} {
+		q := newQ(t, LedgerAtTake)
+		q.Accept(peer("p1"))
+		if takenBefore {
+			q.Take()
+		}
+		q.DropAll()
+		h := &queueHandle{q: NewTurnQueue("tq", q.ledger, LedgerAtTake)}
+		DeliverHeld("tq", h)
+		tk := h.q.Take()
+		if tk == nil || tk.ID() != "p1" {
+			t.Fatalf("takenBefore=%v: restored entry not taken: %+v", takenBefore, tk)
+		}
+		h.q.Commit(tk)
+		h.q.Settle(tk)
+		if !q.ledger.Seen("tq", "p1") {
+			t.Fatalf("takenBefore=%v: p1 ran but the ledger does not know it", takenBefore)
+		}
+		if _, dup := h.q.Accept(peer("p1")); !dup {
+			t.Fatalf("takenBefore=%v: a resend of p1 was accepted after it ran", takenBefore)
+		}
+	}
+}
+
+// Finding 4 (review): a name that is not one valid session segment never reaches the disk.
+func TestHeldRejectsNamesOutsideOneSegment(t *testing.T) {
+	newQ(t, LedgerAtAccept)
+	state := heldBase()
+	canary := filepath.Join(state, "canary")
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(canary, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	other := NewTurnQueue("other", nil, LedgerAtAccept)
+	other.Accept(member("x"))
+	other.Take()
+	other.Accept(peer("p9"))
+	for _, name := range []string{"", ".", "..", "../other", "a/b", "/abs", state} {
+		DropHeld(name, "test")
+		q := NewTurnQueue(name, nil, LedgerAtAccept)
+		q.Accept(member("x"))
+		q.Take()
+		q.Accept(peer("p1"))
+		if loadHeld(name) != nil || heldExists(name, "p1") {
+			t.Fatalf("%q: held state was written or read", name)
+		}
+	}
+	if _, err := os.Stat(canary); err != nil {
+		t.Fatalf("state root damaged: %v", err)
+	}
+	if got := len(heldFiles(t, "other")); got != 1 {
+		t.Fatalf("another session's held files = %d, want 1", got)
+	}
+	ents, _ := os.ReadDir(filepath.Join(state, heldSubdir))
+	for _, e := range ents {
+		if e.Name() != "other" {
+			t.Fatalf("unexpected held entry %q", e.Name())
+		}
+	}
+}
+
+// Finding 5 (review): SweepHeld drops the directories no start will deliver and stale temp
+// files, and leaves a live Managed session's messages alone.
+func TestSweepHeldDropsOrphans(t *testing.T) {
+	newQ(t, LedgerAtAccept)
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	hold := func(name string) {
+		q := NewTurnQueue(name, nil, LedgerAtAccept)
+		q.Accept(member("x"))
+		q.Take()
+		q.Accept(peer("p1"))
+	}
+	session.WriteMeta(session.Meta{Name: "live", Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged})
+	session.WriteMeta(session.Meta{Name: "archived", Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged, Archived: true})
+	session.WriteMeta(session.Meta{Name: "terminal", Dir: t.TempDir(), Kind: session.KindCodex})
+	for _, n := range []string{"live", "archived", "terminal", "gone"} {
+		hold(n)
+	}
+	stale := filepath.Join(heldDir("live"), ".tmp-stale")
+	fresh := filepath.Join(heldDir("live"), ".tmp-fresh")
+	for _, p := range []string{stale, fresh} {
+		if err := os.WriteFile(p, []byte("{"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-2 * heldTmpGrace)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	SweepHeld()
+	if HeldCount("live") != 1 {
+		t.Fatal("a live Managed session's held message was swept")
+	}
+	for _, n := range []string{"archived", "terminal", "gone"} {
+		if _, err := os.Stat(heldDir(n)); !os.IsNotExist(err) {
+			t.Fatalf("%s: held directory survived the sweep (%v)", n, err)
+		}
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatal("a stale temp file survived the sweep")
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Fatal("a temp file young enough to be a write in flight was removed")
 	}
 }

@@ -283,6 +283,6 @@ when the message is handed to the runtime, when a stop discards it (ADR 0105) an
 removed from the queue. Teardown (`DropHandle`, `AbortManaged`, codex's drain) still empties the
 in-memory queue but leaves the files, and every Managed driver's `Resume` sends them again, oldest
 first, before anything else, with `queued=<time>` added to the envelope so the receiver can judge
-staleness. Archive, the trash and a switch to Terminal (CLI) drop them, with a log line naming each.
+staleness. Archive, the trash and a switch to Terminal (CLI) drop them, with a log line naming each, and Agent boot sweeps what a crash left behind a deleted, archived or Terminal session.
 The sender's answer (`delivered` / `queued`) is unchanged. Operator and scheduled prompts are not
 held (#1257). Implementation: `workspace/agent/internal/agents/heldpeers.go`.
