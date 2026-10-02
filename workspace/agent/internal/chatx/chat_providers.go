@@ -724,7 +724,7 @@ func codexMCPArgs(c *ChatConversation) (args, env []string) {
 			// Codex only forwards explicitly allowlisted variables to stdio MCP children.
 			// Without these, the isolated chat process starts the Agent Fleet server but
 			// every Agent call is unauthenticated and memo calls lose their CP bridge.
-			"-c", `mcp_servers.af.env_vars=["AGENT_TOKEN","AGENT_ADDR","AF_CP_BASE_URL","AF_MEMO_TOKEN","AF_SCHEDULE_TOKEN"]`,
+			"-c", `mcp_servers.af.env_vars=["AGENT_TOKEN","AGENT_ADDR","AF_CP_BASE_URL","AF_CP_INTERNAL_URL","AF_MEMO_TOKEN","AF_SCHEDULE_TOKEN"]`,
 			// Codex has a distinct MCP approval layer. Headless exec has no UI to answer
 			// it, so the default policy reports "user cancelled MCP tool call" unless the
 			// explicitly granted Agent Fleet server is pre-approved.

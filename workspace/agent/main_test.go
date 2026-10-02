@@ -16,6 +16,9 @@ import (
 // The tests that exercise the English slug install their own fake.
 func TestMain(m *testing.M) {
 	_ = os.Unsetenv("AF_CODEX_APP_SERVER_ADDR")
+	// A workspace that runs these tests may itself carry AF_CP_INTERNAL_URL, which would send
+	// the tests' requests past their fake CP (cpurl.Request).
+	_ = os.Unsetenv("AF_CP_INTERNAL_URL")
 	englishSlugOneShot = func(context.Context, string) (string, error) {
 		return "", errors.New("no real AI one-shot in tests")
 	}

@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -135,9 +136,16 @@ func seedInternalGit() {
 			changed = true
 		}
 	}
-	if e, ok := s.Git[host]; !ok || e.User != "x-access-token" || e.Token != token {
-		s.Git[host] = secrets.GitEntry{User: "x-access-token", Token: token}
-		changed = true
+	// Under the internal authority too where the workspace's git is rewritten onto the
+	// CP's workspace listener (syncInternalGitRewrite): git asks for the URL it connects to.
+	for _, h := range []string{host, internalGitRewriteHost()} {
+		if h == "" {
+			continue
+		}
+		if e, ok := s.Git[h]; !ok || e.User != "x-access-token" || e.Token != token {
+			s.Git[h] = secrets.GitEntry{User: "x-access-token", Token: token}
+			changed = true
+		}
 	}
 	if !changed {
 		return // already current
@@ -162,7 +170,7 @@ func seedInternalGit() {
 // otherwise a deployment that removed PUBLIC_BASE_URL would keep a workspace pointing at
 // an endpoint that no longer answers.
 func seedGitOAuthBridge() {
-	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AF_CP_BASE_URL")), "/")
+	base := cpurl.Request()
 	token := strings.TrimSpace(os.Getenv("AF_GIT_OAUTH_TOKEN"))
 	var want *secrets.CPBridge
 	if base != "" && token != "" {

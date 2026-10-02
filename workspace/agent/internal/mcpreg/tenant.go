@@ -35,6 +35,8 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
 )
 
 // TenantPollInterval is how often the agent re-pulls the distributed set. Five minutes
@@ -65,7 +67,7 @@ type TenantFetchResult struct {
 // error only for a real failure to talk to the CP; a successful fetch of zero servers is
 // a legitimate result (the tenant distributes nothing) and clears the cache.
 func FetchTenant() (TenantFetchResult, error) {
-	base := strings.TrimRight(os.Getenv("AF_CP_BASE_URL"), "/")
+	base := cpurl.Request()
 	token := os.Getenv("AF_MCP_TOKEN")
 	if base == "" || token == "" {
 		return TenantFetchResult{}, ErrTenantBridgeOff

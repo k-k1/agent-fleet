@@ -860,3 +860,19 @@ func waitFor(timeout time.Duration, fn func() bool) bool {
 	}
 	return fn()
 }
+
+// Where the CP injected its workspace listener's address (ADR 0106 decision 8), the browser
+// may be pointed at neither of the CP's addresses.
+func TestBrowserForbidsBothControlPlaneURLs(t *testing.T) {
+	t.Setenv("AF_CP_BASE_URL", "https://cp.example")
+	t.Setenv("AF_CP_INTERNAL_URL", "")
+	if forbiddenBrowserResource("http://af-cp-internal.ns.svc:8098/internal/docs") {
+		t.Fatal("blocked the internal address before it was configured: the check below proves nothing")
+	}
+	t.Setenv("AF_CP_INTERNAL_URL", "http://af-cp-internal.ns.svc:8098")
+	for _, raw := range []string{"https://cp.example/api", "http://af-cp-internal.ns.svc:8098/internal/docs"} {
+		if !forbiddenBrowserResource(raw) {
+			t.Errorf("resource %q was not blocked", raw)
+		}
+	}
+}

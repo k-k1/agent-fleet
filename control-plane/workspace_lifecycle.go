@@ -498,6 +498,13 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 			// Branch rules bridge (ADR 0103 decision 10): the agent polls its tenant's branch
 			// naming rules. Its own credential; a leak reads those rules and nothing else.
 			"AF_BRANCH_RULES_TOKEN="+mintBranchRulesToken(branchRulesSignKey(m.tokenSignMaster()), ws.MembershipID))
+		// Where the workspace reaches the CP by an internal address (ADR 0106 decision 8),
+		// the Agent sends its requests there and keeps AF_CP_BASE_URL for links a person
+		// opens. Only alongside the public base: the bridge tokens above are what make it
+		// usable.
+		if m.internalBaseURL != "" {
+			env = append(env, "AF_CP_INTERNAL_URL="+m.internalBaseURL)
+		}
 	}
 	return env
 }
