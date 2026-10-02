@@ -1,7 +1,7 @@
 ---
 audience: "someone adding a way to run workspaces"
 source_of_truth: "`control-plane/internal/runtime/` — the `Runtime` port and `NewFactory` in `runtime.go`, the optional capabilities the CP probes for, and the adapters themselves (`runtime_*.go`)"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # 21. Adding a deployment target
@@ -11,7 +11,7 @@ English | [日本語](21-add-a-deploy-target.ja.md)
 A deployment target is a profile value that `runtime.NewFactory`
 (`control-plane/internal/runtime/runtime.go`) accepts, with an adapter behind it. Today
 the switch knows `docker` (also `local` and the empty value), `native` (`wsl`), `ecs`
-(`aws`) and `ecs-ec2`. What each one is and how it is run is [09](09-deploy.md) and
+(`aws`), `ecs-ec2` and `kubernetes` (`k8s`). What each one is and how it is run is [09](09-deploy.md) and
 [01 §1.6](01-architecture.md); what each one supports is
 [ref/deploy-targets](../../guide/ref/deploy-targets.md); the operator's choice is
 [operate/01](../../guide/operate/01-choose.md). This chapter covers what a new adapter
@@ -138,6 +138,9 @@ add an assertion or a test case that fails if that changes.
   (`--compose`) and the native tarball and rootfs (`--native`); the AWS form publishes
   images with `deploy/aws/ecs/release-ecr.sh`. A target that needs a new artefact adds it
   there rather than growing a script of its own.
+- **Infrastructure as code lives in the target's own tree, in the provider's own language.** The
+  AWS targets are CloudFormation; `deploy/gcp/gke/` is Terraform, next to the plain manifests of
+  `deploy/kubernetes/` ([decisions/0106](../decisions/0106-kubernetes-runtime.md) decision 12).
 - **New environment variables** go into [09 §9.4](09-deploy.md).
 
 ## 21.6 Cost and latency are part of the design

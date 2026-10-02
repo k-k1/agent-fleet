@@ -1,7 +1,7 @@
 ---
 audience: "everyone; decisive for operate/"
 source_of_truth: "this table; the rows are checked against the runtime profiles the Control Plane accepts"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # Deployment targets — what exists where
@@ -18,8 +18,9 @@ deployment" is the most expensive kind of documentation error here.
 | native | sandboxed host processes, no Docker at all | a directory on the host | Docker cannot be installed (a plain WSL2 machine). **Single user only** — without container isolation it refuses to run in a shared mode |
 | ecs | a task on AWS ECS / Fargate | EFS | AWS, without managing instances |
 | ecs-ec2 | a task on an EC2 slot taken from a pool | a per-user EBS volume | AWS, when start latency and disk performance matter enough to manage instances |
+| kubernetes | a pod of its own StatefulSet on a Kubernetes cluster | a per-user persistent volume (block storage), plus a second one for logins and Claude's state | you already run Kubernetes, or want Agent Fleet on Google Cloud with workspaces that scale to zero. GKE Standard is the first cluster it is verified on |
 
-`docker` also answers to `local`, `ecs` to `aws`, and `native` to `wsl`. Anything else
+`docker` also answers to `local`, `ecs` to `aws`, `native` to `wsl`, and `kubernetes` to `k8s`. Anything else
 is rejected at boot rather than quietly defaulting. `ecs` and `ecs-ec2` are separate
 profiles on purpose, not a flag: the EC2 pool trades a proven two-resource workspace
 for a six-resource one, so a deployment opts in and can fall back by changing this one
@@ -27,21 +28,21 @@ value instead of reverting code.
 
 ## Capability differences
 
-| Capability | docker | native | ecs | ecs-ec2 |
-|---|:--:|:--:|:--:|:--:|
-| Several users, mutually invisible | ✓ | — | ✓ | ✓ |
-| Per-user CPU / memory limits | ✓ | — | ✓ | ✓ |
-| Per-user disk sizing | — | — | ✓ | ✓ |
-| Idle auto-stop | ✓ | ✓ | ✓ | ✓ |
-| Stop / start preserving home | ✓ | ✓ | ✓ | ✓ |
-| The user guide inside the container | ✓¹ | ✓¹ | ✓² | ✓² |
-| Browser pane | ✓ | ✓³ | ✓ | ✓ |
-| Cost attribution per member | — | — | ✓ | ✓ |
-| An image engine the deployment provides | ✓⁴ | ✓⁴ | — | ✓⁵ |
-| A chat engine the deployment provides | ✓⁶ | ✓⁶ | — | ✓⁶ |
-| A member's Recreate and Clean home (Danger zone) | ✓ | ✓ | —⁷ | ✓¹⁰ |
-| Clean home by an administrator (offboarding) | ✓ | ✓ | —⁷ | ✓⁸ |
-| Deleting the backup copies of a member's home | — | — | — | ✓⁹ |
+| Capability | docker | native | ecs | ecs-ec2 | kubernetes |
+|---|:--:|:--:|:--:|:--:|:--:|
+| Several users, mutually invisible | ✓ | — | ✓ | ✓ | ✓ |
+| Per-user CPU / memory limits | ✓ | — | ✓ | ✓ | ✓ |
+| Per-user disk sizing | — | — | ✓ | ✓ | ✓¹¹ |
+| Idle auto-stop | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Stop / start preserving home | ✓ | ✓ | ✓ | ✓ | ✓ |
+| The user guide inside the container | ✓¹ | ✓¹ | ✓² | ✓² | ✓² |
+| Browser pane | ✓ | ✓³ | ✓ | ✓ | ✓¹² |
+| Cost attribution per member | — | — | ✓ | ✓ | — |
+| An image engine the deployment provides | ✓⁴ | ✓⁴ | — | ✓⁵ | ✓⁴ |
+| A chat engine the deployment provides | ✓⁶ | ✓⁶ | — | ✓⁶ | ✓⁶ |
+| A member's Recreate and Clean home (Danger zone) | ✓ | ✓ | —⁷ | ✓¹⁰ | ✓¹³ |
+| Clean home by an administrator (offboarding) | ✓ | ✓ | —⁷ | ✓⁸ | ✓¹³ |
+| Deleting the backup copies of a member's home | — | — | — | ✓⁹ | — |
 
 ¹ Staged on the host and bind-mounted at start.
 
@@ -60,8 +61,8 @@ OpenAI-compatible server ([operate/07](../operate/07-image-engine.md)).
 Fargate. On every target a session can also generate images on **the member's own CLI
 plan** (Codex / Antigravity); this row is about an engine the deployment provides.
 
-⁶ On `ecs-ec2`, the fleet's own GPU. On `docker` and `native`, a llama.cpp **already running
-on your own network**, pointed at with one environment variable
+⁶ On `ecs-ec2`, the fleet's own GPU. On `docker`, `native` and `kubernetes`, a llama.cpp
+**already running on your own network**, pointed at with one environment variable
 ([operate/09](../operate/09-llm-lan.md)).
 
 ⁷ Removing part of a home needs the home mounted, and on `ecs` nothing the Control Plane
@@ -89,6 +90,16 @@ progress both are refused without stopping anything; press again once it has sta
 Clean home keeps the logins and connections by name, including one a tool replaced since
 the last start. After Clean home the first start reinstalls the agent CLIs, as on `docker`.
 
+¹¹ The size of the home volume. It can grow, never shrink.
+
+¹² As on `ecs`, without the extra privilege `docker` grants Chromium's sandbox; whether the pane
+behaves the same on every cluster is still being measured.
+
+¹³ A member's Recreate and Clean home mark the home and return; the next start removes the files
+before the workspace runs, as on `ecs-ec2`. An administrator's Clean home removes them at once,
+with the workspace stopped. Both keep the logins, connections and Claude's state, which live on a
+second volume of their own. The home volume itself is kept.
+
 ## Where the procedure lives
 
 Until [operate/](../operate/README.md) is written, the runbooks are still in the
@@ -100,6 +111,7 @@ repository next to what they operate:
 | native | [deploy/native/README.md](../../deploy/native/README.md), and [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) for a personal WSL2 machine |
 | ecs / ecs-ec2 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
 | a single EC2 VM running compose | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
+| kubernetes (GKE, and other clusters) | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 `ec2-single` is not a separate runtime profile — it is `docker` on a VM, and it exists
 because "AWS" and "manage instances yourself" are independent choices.

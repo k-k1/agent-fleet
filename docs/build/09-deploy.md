@@ -1,7 +1,7 @@
 ---
 audience: "someone adding a deployment target or an adapter"
 source_of_truth: "the code plus each runbook (`deploy/*/README.md`)"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # 09. Deployment — the forms, the adapters, the environment index
@@ -24,8 +24,12 @@ target can and cannot do (several users, per-user limits, engines, cost attribut
 | **compose** | The self-hosting mainline: a CP container plus Caddy for automatic TLS. The CP binds loopback, and **the compose definition contains the three constraints** of driving the host's Docker daemon from a container: the host network, `DATA_DIR` mounted at the same absolute path, and the docker group id | ✅ | [deploy/compose/README.md](../../deploy/compose/README.md) |
 | **aws — ECS** | Static infrastructure from CloudFormation, per-workspace resources from the CP's own ECS adapter. A workspace is a task on Fargate (`ecs`, the template default) or on an EC2 slot taken from a pool (`ecs-ec2`) | ✅ `ecs-ec2` runs the production deployment; `ecs` has been proven in a sandbox from deploy through end-to-end to teardown | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
 | **aws — ec2-single** | compose on one EC2 VM | ✅ the host of the "start from the release bundle on a clean host" gate | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
+| **kubernetes** | The CP as a Deployment in the cluster; each workspace a StatefulSet at 0 or 1 replicas with two PersistentVolumeClaims, created by the CP's own `kubernetes` adapter over the standard API. Plain manifests with a kustomize base (`deploy/kubernetes/`), and Terraform for what a GKE deployment needs around the cluster (`deploy/gcp/gke/`) | ◐ built, not yet run on a live cluster; the acceptance run on GKE Standard is #1468 | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 - **ec2-single is compose on a VM** — the `docker` runtime, not a separate profile.
+- **kubernetes is one profile for every cluster.** It names no cloud API; what is GKE's — the
+  disk type, the node pools, Workload Identity, the load balancer — is chosen by the StorageClass,
+  the Terraform and the GKE overlay ([decisions/0106](../decisions/0106-kubernetes-runtime.md) decision 2).
 - The authentication modes are [07 §7.3](07-security.md) and are not repeated here.
 
 ## 9.2 Ports and adapters — which knob swaps what
@@ -35,12 +39,12 @@ change (the seam list is [01 §1.6](01-architecture.md)). This section is the kn
 
 | Seam | Knob | Choices |
 |---|---|---|
-| `Runtime` / `RuntimeFactory` | `AF_RUNTIME` | empty, `local`, `docker` = Docker Engine (the default) / `ecs`, `aws` = ECS on Fargate / `ecs-ec2` = ECS on EC2 slots from a pool (no alias) / `native`, `wsl` = sandboxed host processes, **which requires `AUTH=dev`**. **An unknown value fails fast at boot** (`unknown AF_RUNTIME profile`; `runtime.NewFactory`) |
+| `Runtime` / `RuntimeFactory` | `AF_RUNTIME` | empty, `local`, `docker` = Docker Engine (the default) / `ecs`, `aws` = ECS on Fargate / `ecs-ec2` = ECS on EC2 slots from a pool (no alias) / `native`, `wsl` = sandboxed host processes, **which requires `AUTH=dev`** / `kubernetes`, `k8s` = a StatefulSet per workspace on a Kubernetes cluster. **An unknown value fails fast at boot** (`unknown AF_RUNTIME profile`; `runtime.NewFactory`) |
 | `Store` | `AF_DB` (the SQLite path) / `AF_DATABASE_URL`, or `AF_DB_HOST` and the other `AF_DB_*` | SQLite (default, pure Go) or Postgres |
 | `KeyCustodian` | whether `AF_MASTER_KEY` is set | set = the local custodian; unset = no encryption, development only. KMS / Vault is 📋 ([decisions/0005](../decisions/0005-envelope-custodian.md), #969) |
 | `AuthGateway` | `AUTH` | `dev` (the default when unset) / `oauth` (what the compose and AWS templates set) / `proxy` ([07 §7.3](07-security.md)) |
 | Engines | the engine table: `AF_ENGINES_SSM_PARAM` or `AF_ENGINES_JSON`, plus a row per role from `AF_LLM_URL` / `AF_COMFY_URL` | on AWS, engines the CP starts on demand; anywhere, a server already running on the network, named by URL |
-| Ingress / TLS | outside the CP | Caddy (compose) / Tailscale Funnel (local) / ALB + ACM (aws) |
+| Ingress / TLS | outside the CP | Caddy (compose) / Tailscale Funnel (local) / ALB + ACM (aws) / the cluster's ingress, on GKE a global external Application Load Balancer through the Gateway API + Certificate Manager (kubernetes) |
 
 ## 9.3 Ingress, and the one-way-in invariant
 
@@ -49,7 +53,22 @@ binds loopback — the image and compose set `CP_ADDR=127.0.0.1:8099`. The code'
 (`:8080`) and `run-dev.sh`'s (`:8099`) bind every interface, which is fine for one
 person on a development host and wrong for anything shared. On AWS the CP task binds
 `0.0.0.0` inside its own network interface, and its security group admits only the
-load balancer's.
+load balancer's. On `kubernetes` the CP pod binds every interface too, and the main Service
+is what the load balancer reaches; on GKE a NetworkPolicy admits only the load balancer to that
+port.
+
+**The one exception is the workspace-only listener** ([decisions/0106](../decisions/0106-kubernetes-runtime.md) decision 8).
+Where workspaces cannot reach the CP through the ingress — on `kubernetes` they call it back by an
+address inside the cluster — the CP serves them on a second port, `AF_CP_INTERNAL_LISTEN` (`:8098`
+in `deploy/kubernetes/`), and the internal Service (`af-cp-internal`) targets that port alone; the
+CP injects its address as `AF_CP_INTERNAL_URL` next to an unchanged `AF_CP_BASE_URL`. It carries
+only the routes the agent calls, each authenticated by its own per-membership bearer token
+(`workspaceRoutes` in `control-plane/workspace_listener.go`), and answers 404 for everything
+else: the Console, the admin API, the login routes and the egress proxy's `/internal/egress*`.
+It has no auth gate, drops the identity header and every forwarding header, and takes the
+connection's own address as the client whatever `AF_TRUSTED_PROXY_HOPS` says. Nothing a browser
+or an administrator uses is reachable another way. Unset, there is no second port and nothing
+changes.
 
 The ingress terminates TLS and forwards. With `AUTH=oauth` the CP authenticates for
 itself; only with `AUTH=proxy` does the ingress inject the identity header.
@@ -59,6 +78,7 @@ itself; only with `AUTH=proxy` does the ingress inject the identity header.
 | **Caddy** | the compose default | point the DNS for `PUBLIC_DOMAIN` at it and certificates are obtained and renewed automatically, WebSockets included. Caddy and the CP both use the host network, so it reaches the CP's loopback port. A site with its own proxy can drop it (the second alternative in the `Caddyfile`) |
 | **Tailscale Funnel** | one local form | Funnel → `127.0.0.1:8099` directly |
 | **ALB + ACM** | aws | TLS only — authentication stays in the CP. `30-ingress.yaml`'s `AuthMode` allows `oauth` (the default) or `dev`; the templates configure no load-balancer OIDC |
+| **Global external Application Load Balancer + Certificate Manager** | kubernetes on GKE | built by GKE's Gateway controller (class `gke-l7-global-external-managed`; the classic one closes even an active WebSocket at the backend timeout), with the address, certificate and DNS from `deploy/gcp/gke`. Two hops in `AF_TRUSTED_PROXY_HOPS`: it appends `<client>, <load balancer>`. The backend timeout is raised so an idle terminal is not cut at 30 s |
 
 - **Whenever the ingress changes, `PUBLIC_BASE_URL` must change with it** — it is what
   the OAuth redirect is built from, and the `https` prefix is what makes a Secure cookie
@@ -67,18 +87,6 @@ itself; only with `AUTH=proxy` does the ingress inject the identity header.
   trust `RemoteAddr`). The compose example env and the AWS template set 1; a CDN in
   front of the ALB makes it 2. The client address that tenant network restrictions see
   depends on it ([07 §7.3](07-security.md)).
-
-**The one exception: the workspace listener** ([decisions/0106](../decisions/0106-kubernetes-runtime.md)
-decision 8). Where workspaces cannot reach the CP through the ingress (Kubernetes), the
-CP serves a second port, `AF_CP_INTERNAL_LISTEN`, for workspaces only, and the CP
-injects its address as `AF_CP_INTERNAL_URL` next to an unchanged `AF_CP_BASE_URL`. That
-port carries only the routes the Agent calls — each authenticated by its own
-per-membership token (`workspaceRoutes` in `control-plane/workspace_listener.go`) — and
-answers 404 for everything else: the Console, the admin API, the login routes and the
-egress proxy's `/internal/egress*`. It has no auth gate, drops the identity header and
-every forwarding header, and takes the connection's own address as the client whatever
-`AF_TRUSTED_PROXY_HOPS` says. Nothing a browser or an administrator uses is reachable
-through it. Unset, there is no second port and nothing changes.
 
 ## 9.4 Environment variable index
 
@@ -91,7 +99,7 @@ an index. The value in parentheses is the code's default when the variable is un
 | Group | Variables | Role | Detail |
 |---|---|---|---|
 | CP core | `CP_ADDR` (`:8080`) · `CONSOLE_DIR` · `AF_RUNTIME` (`local`) · `AF_DB` (`<WS_DATA>/control-plane.db`) · `PUBLIC_BASE_URL` · `AF_PREVIEW_DOMAIN` · `AF_TRUSTED_PROXY_HOPS` (0) | where it listens, what it serves, which adapter, the public URL, preview subdomains, the client address | this chapter |
-| Workspace listener | `AF_CP_INTERNAL_LISTEN` (unset = none) · `AF_CP_INTERNAL_URL` (unset = workspaces use `AF_CP_BASE_URL`) | the workspace-only port and the URL workspaces reach it by. The clone URLs stay public; the Agent rewrites the workspace's git onto the URL (`url.<internal>/git/.insteadOf`), and LFS answers on the workspace listener point back at it. It takes effect only with `PUBLIC_BASE_URL` set, and from the next workspace Start | §9.3 / [decisions/0106](../decisions/0106-kubernetes-runtime.md) |
+| Workspace listener | `AF_CP_INTERNAL_LISTEN` (unset = none) · `AF_CP_INTERNAL_URL` (unset = workspaces use `AF_CP_BASE_URL`) | the workspace-only port and the URL workspaces reach it by (`deploy/kubernetes/`: `:8098` and `http://af-cp-internal.<cp-ns>.svc:8098`). The clone URLs and `AF_INTERNAL_GIT_HOST` stay public; the Agent rewrites the workspace's git onto the URL (`url.<internal>/git/.insteadOf`) with the git credential stored for both hosts, and LFS answers on the workspace listener point back at it. It takes effect only with `PUBLIC_BASE_URL` set, and from the next workspace Start | §9.3 / [decisions/0106](../decisions/0106-kubernetes-runtime.md) |
 | Workspace template | `WS_IMAGE` · `WS_DATA` (`/tmp/af-data`) · `WS_MEMORY` (`1g`) · `AF_MAX_WORKSPACE_MEM` · `WS_AGENT_PORT` (7700, the base of the per-workspace ports) · `WS_AGENT_HOST` (`127.0.0.1`) · `WS_JVM_DIR` · `WS_ENV` · `WS_SESSION_CMD` | the common template the CP fills in when starting a workspace. `WS_ENV` reaches `docker` and `native` workspaces only; the ECS runtimes do not pass it on | [04](04-agent.md) |
 | L1 auth | `AUTH` (`dev`) · `DEV_USER` (`dev`) · `AUTH_EMAIL_HEADER` (`X-Forwarded-Email`) · `GOOGLE_OAUTH_CLIENT_ID/SECRET` · `AF_GITHUB_LOGIN_CLIENT_ID/SECRET` (or `GITHUB_OAUTH_CLIENT_ID/SECRET`) with `AF_GITHUB_ALLOWED_ORGS` and the other `AF_GITHUB_*` · `AF_OIDC_PROVIDERS` + `AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST,LABEL_JA,LABEL_EN,SCOPES,PROMPT,LINK_CLAIM,ALLOWED_EMAILS,ALLOWED_DOMAINS,ALLOWED_TIDS}` · `AF_COOKIE_SECRET` · `AF_SESSION_TTL` (168h) · `AF_OAUTH_ALLOWED_{EMAILS,DOMAINS,EMAILS_FILE}` | Console login, with `AUTH=oauth` refusing to boot without a working provider. An OIDC provider must declare `TRUST`, and GitHub needs `AF_GITHUB_ALLOWED_ORGS`; either is disabled otherwise. **A sign-in is refused unless some way in admits it**: these allowlists, a tenant's roster, a tenant's auto-join domains or an approved tenant IdP. With none of them, every login is denied | [07 §7.3](07-security.md) / [decisions/0043](../decisions/0043-login-idp.md) |
 | Provisioning and roles | `AF_PROVISION` (`auto`) · `SUPER_ADMIN_EMAILS` | how an unknown identity is admitted; who is a deployment administrator | [06](06-data.md) |
@@ -107,7 +115,8 @@ an index. The value in parentheses is the code's default when the variable is un
 | Engines | `AF_ENGINES_SSM_PARAM` / `AF_ENGINES_JSON` · `AF_LLM_URL` · `AF_COMFY_URL` / `AF_COMFY_API_KEY` · `AF_ENGINE_API_KEY_<KEY>` · `AF_ENGINE_<KEY>_{CONTROL_INTERVAL_SEC,WINDOW_SEC,IDLE_SEC,START_DEADLINE_SEC,FAIL_COOLDOWN_SEC}` · `AF_ENGINE_ECS_CLUSTER` · `AF_ENGINE_WAKE_TIMEOUT` (900 s) · `AF_ENGINE_PLAIN_HOLD` · `AF_REMOTE_ENGINE_{URL,TOKEN,KEYS}` | the engine table, the engine controller, the gateway's hold on a cold engine, and borrowing another deployment's engines | [decisions/0071](../decisions/0071-self-hosted-inference-engines.md) / [0076](../decisions/0076-external-image-engine-on-lan.md) / [0077](../decisions/0077-engine-boxes-bought-by-cp.md) / [0079](../decisions/0079-remote-engine-from-another-deployment.md) |
 | Speech | `AF_VOICEVOX_URL` (`http://127.0.0.1:50021`) · `AF_TTS_ECS_SERVICE` and the other `AF_TTS_ECS_*` · `AF_TTS_MAX_CHARS` (300) · `AF_POLLY_{REGION,ENGINE}` | a VOICEVOX by URL, or the one on ECS that the CP scales from zero; Amazon Polly | [decisions/0070](../decisions/0070-tts-ondemand-engine.md) |
 | Containerless adapter | `AF_NATIVE_AGENT_BIN` (`workspace-agent` on `PATH`) · `AF_NATIVE_ROOTFS` · `AF_NATIVE_BWRAP` | where the agent binary lives; the rootfs that switches on the bubblewrap sandbox | [native runbook](../../deploy/native/README.md) |
-| Inside the workspace (injected by the CP; **an operator never sets these**) | `AGENT_TOKEN` · `AF_SECRET_KEY` · `AGENT_STOP_GRACE_SEC` · `AGENT_SESSION_CMD` · `CLAUDE_CONFIG_DIR` · `AF_AGENT_SELF_UPDATE_ALLOWED` · `AF_CP_BASE_URL` with the per-feature tokens (`AF_DOCS_TOKEN`, `AF_MCP_TOKEN`, `AF_MEMO_TOKEN` …) and, where set, `AF_CP_INTERNAL_URL` (the Agent's requests go there; links for a person keep `AF_CP_BASE_URL`) · on `native` also `AGENT_ADDR`, `AF_TMUX_SOCKET` and `AGENT_DOCS_DIR` | CP ↔ agent authentication, the DEK, the grace period, the agent's routes back to the CP (`manager.workspaceExtraEnv`). The token and the DEK travel as a 0600 env file on `docker` and as SSM SecureString task secrets on ECS | [04](04-agent.md) / [07 §7.5](07-security.md) |
+| Kubernetes adapter | `AF_K8S_NAMESPACE` · `AF_K8S_WORKSPACE_IMAGE` · `AF_K8S_STORAGE_CLASS` · `AF_K8S_HOME_GIB` · `AF_K8S_STATE_GIB` · `AF_K8S_IMAGE_PULL_SECRET` · `AF_K8S_NODE_SELECTOR` · `AF_K8S_SERVICE_ACCOUNT` (`default`) | `kubernetes` only: the workspace namespace, image and StorageClass, the claims' default sizes, the node pool, and the workspaces' way back to the CP (the workspace listener row, §9.3) | [kubernetes runbook](../../deploy/kubernetes/README.md) / [decisions/0106](../decisions/0106-kubernetes-runtime.md) |
+| Inside the workspace (injected by the CP; **an operator never sets these**) | `AGENT_TOKEN` · `AF_SECRET_KEY` · `AGENT_STOP_GRACE_SEC` · `AGENT_SESSION_CMD` · `CLAUDE_CONFIG_DIR` · `AF_AGENT_SELF_UPDATE_ALLOWED` · `AF_CP_BASE_URL` with the per-feature tokens (`AF_DOCS_TOKEN`, `AF_MCP_TOKEN`, `AF_MEMO_TOKEN` …) · on `native` also `AGENT_ADDR`, `AF_TMUX_SOCKET` and `AGENT_DOCS_DIR` · where set (on `kubernetes`) also `AF_CP_INTERNAL_URL`, which requests prefer over `AF_CP_BASE_URL` while links for people keep the public one | CP ↔ agent authentication, the DEK, the grace period, the agent's routes back to the CP (`manager.workspaceExtraEnv`). The token and the DEK travel as a 0600 env file on `docker`, as SSM SecureString task secrets on ECS, and as a per-workspace Secret on `kubernetes` | [04](04-agent.md) / [07 §7.5](07-security.md) |
 
 How to check this index is complete: **the variable names are their own grep anchors.**
 Cross-check what the CP reads (`envx.Or`, `envx.DurationOr`, `runtime.EnvInt`,
@@ -203,13 +212,13 @@ point of the split. The capability matrix is
 [ref/deploy-targets](../../guide/ref/deploy-targets.md); what follows is the
 substrate underneath it.
 
-| Aspect | docker / compose | native | ecs (Fargate) | ecs-ec2 |
-|---|---|---|---|---|
-| Scale-to-zero | stop / start the container | stop / start the processes | desired 0/1 | desired 0/1, then the idle tiers of §9.5 |
-| Isolation | the container boundary, sharing a kernel | a bubblewrap sandbox; one user | a task with no shared host | a task on an instance no one else uses at the same time |
-| Egress | the container network, optionally the forward proxy ([07 §7.8](07-security.md)) | the host's | security groups | security groups |
-| Home storage | a local directory, fast | a local directory | EFS: **metadata-heavy work such as git is slow** | EBS; credentials on EFS |
-| Infrastructure privilege | the Docker socket is host-root equivalent ([07 §7.1](07-security.md)) | the user's own account | a minimal task role, no instance metadata | a minimal task role |
+| Aspect | docker / compose | native | ecs (Fargate) | ecs-ec2 | kubernetes |
+|---|---|---|---|---|---|
+| Scale-to-zero | stop / start the container | stop / start the processes | desired 0/1 | desired 0/1, then the idle tiers of §9.5 | replicas 0/1 |
+| Isolation | the container boundary, sharing a kernel | a bubblewrap sandbox; one user | a task with no shared host | a task on an instance no one else uses at the same time | a pod under the `restricted` Pod Security Standard, sharing a node's kernel with other workspaces |
+| Egress | the container network, optionally the forward proxy ([07 §7.8](07-security.md)) | the host's | security groups | security groups | NetworkPolicies, then the cluster's NAT (Cloud NAT on GKE) |
+| Home storage | a local directory, fast | a local directory | EFS: **metadata-heavy work such as git is slow** | EBS; credentials on EFS | a block-storage volume per workspace, zonal; logins and Claude's state on a second one |
+| Infrastructure privilege | the Docker socket is host-root equivalent ([07 §7.1](07-security.md)) | the user's own account | a minimal task role, no instance metadata | a minimal task role | a Role in the workspace namespace and a read-only ClusterRole; no cloud identity for workspaces |
 
 **The idle logic is common**; each Runtime absorbs how "stopped" is implemented.
 

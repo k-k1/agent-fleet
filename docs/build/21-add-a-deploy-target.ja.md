@@ -1,7 +1,7 @@
 ---
 audience: "ワークスペースを動かす場所を足す人"
 source_of_truth: "`control-plane/internal/runtime/`——`runtime.go` の `Runtime` ポートと `NewFactory`、CP が問い合わせる任意の能力、そしてアダプタ本体（`runtime_*.go`）"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # 21. デプロイ形態を足す
@@ -10,7 +10,7 @@ updated: "2026-09"
 
 デプロイ形態とは、`runtime.NewFactory`（`control-plane/internal/runtime/runtime.go`）が
 受け付けるプロファイルの値と、その背後のアダプタのことです。現在のスイッチが知っているのは
-`docker`（`local` と空値も同じ）、`native`（`wsl`）、`ecs`（`aws`）、`ecs-ec2` です。
+`docker`（`local` と空値も同じ）、`native`（`wsl`）、`ecs`（`aws`）、`ecs-ec2`、`kubernetes`（`k8s`）です。
 それぞれが何で、どう運用するかは [09](09-deploy.ja.md) と [01 §1.6](01-architecture.ja.md)、
 それぞれが何に対応するかは [ref/deploy-targets](../../guide/ref/deploy-targets.ja.md)、
 運用者の選び方は [operate/01](../../guide/operate/01-choose.ja.md) にあります。この章は、
@@ -126,6 +126,9 @@ CP は形態ごとの振る舞いの多くを型アサーション（Runtime な
 - **出荷**。`deploy/release/build.sh` が compose のバンドルとイメージ（`--compose`）、native の
   tar と rootfs（`--native`）を作り、AWS 形態は `deploy/aws/ecs/release-ecr.sh` でイメージを
   公開します。新しい成果物が要る形態は、自前のスクリプトを育てずにそこへ足します。
+- **インフラのコードは、その形態の木に、そのクラウドの流儀の言語で置きます**。AWS の形態は
+  CloudFormation、`deploy/gcp/gke/` は Terraform で、`deploy/kubernetes/` の素のマニフェストの隣に
+  あります（[decisions/0106](../decisions/0106-kubernetes-runtime.ja.md) 決定 12）。
 - **新しい環境変数**は [09 §9.4](09-deploy.ja.md) へ。
 
 ## 21.6 費用とレイテンシは設計の一部

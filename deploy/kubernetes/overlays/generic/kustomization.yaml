@@ -1,0 +1,21 @@
+# Any cluster with a NetworkPolicy-enforcing CNI and a suitable StorageClass. Copy this
+# directory, edit deployment.yaml and cp.env, and put the ingress of your cluster in
+# front of the Service af-cp (README, "Other clusters").
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - deployment.yaml
+
+configMapGenerator:
+  - name: af-cp-env
+    namespace: af-placeholder-cp
+    envs: [cp.env]
+
+images:
+  - name: ghcr.io/k-k1/agent-fleet/control-plane
+    newTag: VERSION
+
+components:
+  - ../../components/params

@@ -547,6 +547,36 @@ Helm chart は作らない。問い合わせは Kubernetes 対応を求めたの
 - Kubernetes での起動の待ち時間が ECS から大きく離れていると測れたとき。温めたノードのプールを再び検討することになる。
 - テナントを CP ではなくクラスタで分けなければならないとき。テナントごとの namespace を再び検討することになる。
 
+## 注記 — deploy の木（2026-10-02）
+
+Issue #1467。上の決定は何も変えない。決定 7・8・12・13 に選択の余地があったところを、
+`deploy/kubernetes/` と `deploy/gcp/gke/` がどう埋めたかの記録。
+
+1. **ロードバランサはクラスタの境目で分ける。** クラスタの外にあるもの——グローバルアドレス、
+   Certificate Manager の証明書（DNS 認可なのでプレビューのワイルドカードも含む）とそのマップ、
+   DNS レコード——は Terraform が持つ。ロードバランサ本体は `components/gke` から GKE の Gateway
+   コントローラが作る（クラス `gke-l7-global-external-managed`。決定 1 が求める従来型でない方）。
+   `GCPBackendPolicy` で `timeoutSec` を、未決事項 3 の出発点として 3600 に上げ、`HealthCheckPolicy`
+   は `/healthz` を見る。Terraform でバックエンドサービスを作ると、クラスタが作る NEG が要るので
+   1 回の apply では作れない。
+2. **ポート。** CP のメインのポートは 8099、Workspace 専用リスナは `AF_CP_INTERNAL_LISTEN=:8098`、
+   Agent のポートは 7700（ECS と同じ）。Workspace のポリシーは CP の Pod からの 7700 を通し、
+   CP の 8098 への通信を許す。
+3. **GKE では CP の名前空間にも ingress のポリシーを置く。** Google のフロントエンドのレンジから
+   8099 へ、Workspace の Pod から 8098 へだけを通す。決定 7 の表は Workspace の名前空間についてで、
+   変えていない。これは共有クラスタで、ほかのワークロードを転送ヘッダを信じるポートから遠ざける
+   ためのもの（[09 §9.3](../build/09-deploy.ja.md)）。
+4. **IAM。** Cloud SQL のクライアントとインスタンスユーザーはプロジェクト単位にしか無いので、
+   インスタンスを名指す IAM 条件を付けて付与する。ノードのサービスアカウントには、ログと
+   メトリクスの書き込みの代わりに最小のノードロール（`roles/container.defaultNodeServiceAccount`）
+   を与える。1.33 からノードには `autoscaling.sites.writeMetrics` も要り、その 2 つには無いため。
+   プロジェクトより狭いリソースは無い。
+5. **StorageClass は Terraform が作る**（Kubernetes プロバイダ経由）。決定 12 の挙げるとおり。
+   そのため `terraform apply` は control plane のエンドポイントに届く場所から走らせる。
+6. **CP は自分のディスクを持つ。** `WS_DATA` には内蔵 Git プロバイダのリポジトリ・LFS オブジェクト・
+   git トークンの鍵が置かれるので、一時領域ではなく PersistentVolumeClaim（`af-cp-data`）とし、
+   データベースと一緒にバックアップする。
+
 ## 追記（2026-10-02）— Workspace 専用リスナーの経路一覧（#1464）
 
 決定 8 の一覧は `control-plane/workspace_listener.go` の `workspaceRoutes` として確定した:
