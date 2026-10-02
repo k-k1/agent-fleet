@@ -62,6 +62,14 @@ var subcommands = []subcommand{
 		run:      runAWSExec,
 	},
 	{
+		// Behind the af-gcloud-exec PATH shim (ADR 0107 decision 2): one command with one
+		// Google Cloud profile's access token, never the VM's or node's identity.
+		name:     "gcloud-exec",
+		operands: "--profile <name> --project <id> -- <command>",
+		summary:  "run a command with one Google Cloud profile's access token",
+		run:      runGCloudExec,
+	},
+	{
 		// credential_process of the one-profile config af-aws-exec writes for its child.
 		name:    "aws-env-credentials",
 		summary: "print the af-aws-exec credentials in this environment as credential_process JSON",

@@ -699,7 +699,10 @@ COPY af-arch-repair.sh /usr/local/bin/af-arch-repair
 # Runs one command under one SSO profile's short-lived credentials, never the workload
 # role (issue #998). Same shape as af-db: the implementation is `workspace-agent aws-exec`.
 COPY af-aws-exec.sh /usr/local/bin/af-aws-exec
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/svn /usr/local/bin/af-scratch /usr/local/bin/af-db /usr/local/bin/af-arch-repair /usr/local/bin/af-aws-exec
+# Runs one command with one Google Cloud profile's access token from the Agent's own gcloud
+# store, never the VM's or node's identity (ADR 0107 decision 2): `workspace-agent gcloud-exec`.
+COPY af-gcloud-exec.sh /usr/local/bin/af-gcloud-exec
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/svn /usr/local/bin/af-scratch /usr/local/bin/af-db /usr/local/bin/af-arch-repair /usr/local/bin/af-aws-exec /usr/local/bin/af-gcloud-exec
 # opencode plugins source (seeded into ~/.config/opencode/plugin at runtime):
 # agent-fleet-status.js (session working/idle bridge — seeded by the entrypoint) +
 # agent-fleet-caller.js (stamps the calling opencode session on af's MCP tools so a
