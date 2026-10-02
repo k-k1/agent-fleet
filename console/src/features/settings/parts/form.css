@@ -103,6 +103,23 @@
   min-width: 0;
 }
 
+/* RegionSelect: the dropdown, plus the code input when "Other" is picked. Stacked inside a
+   form field; side by side in a .flow row, where the long region names need a cap. */
+.region-select {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.ssm-fld .region-select {
+  flex-direction: column;
+}
+
+.flow .region-select .cinput {
+  max-width: 22em;
+}
+
 .ssm-fld .hint {
   font-size: 11px;
   color: var(--faint, var(--muted));

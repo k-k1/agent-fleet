@@ -598,3 +598,73 @@ describe("awsProfileName", () => {
     expect(awsProfileName("   ")).toBe("ssm");
   });
 });
+
+// Regions are picked from a list (#1506); a code the list lacks goes through "Other" and is
+// never rewritten by opening and saving the row.
+describe("SsmTab region pickers", () => {
+  const regionSelects = () => Array.from(host.querySelectorAll<HTMLSelectElement>(".ssm-frm .region-select select"));
+  const otherInput = (i: number) => host.querySelectorAll(".ssm-frm .region-select")[i].querySelector<HTMLInputElement>("input");
+
+  it("opens a listed region selected, an empty one on (not set), and saves the picked code", async () => {
+    await mount();
+    await click(btn(rows(0)[0], t("ssm.edit")));
+    const [sso, def] = regionSelects();
+    expect(sso.value).toBe("ap-northeast-1");
+    expect(def.value).toBe("");
+    expect(def.selectedOptions[0].textContent).toBe(t("ssm.region_unset"));
+    expect(otherInput(0)).toBeNull();
+    await type(def, "us-west-2");
+    await click(btn(sections()[0], t("common.save")));
+    expect(writes[0].body).toMatchObject({ ssoRegion: "ap-northeast-1", region: "us-west-2" });
+  });
+
+  it("opens an unlisted region in Other with the value kept, and saves it unchanged", async () => {
+    profiles = [{ ...prod, ssoRegion: "us-gov-west-1", region: "cn-north-1" }, stg];
+    await mount();
+    await click(btn(rows(0)[0], t("ssm.edit")));
+    const [sso, def] = regionSelects();
+    expect(sso.selectedOptions[0].textContent).toBe(t("ssm.region_other"));
+    expect(def.selectedOptions[0].textContent).toBe(t("ssm.region_other"));
+    expect(otherInput(0)!.value).toBe("us-gov-west-1");
+    expect(otherInput(1)!.value).toBe("cn-north-1");
+    await click(btn(sections()[0], t("common.save")));
+    expect(writes[0].body).toMatchObject({ ssoRegion: "us-gov-west-1", region: "cn-north-1" });
+  });
+
+  it("keeps Save off on a new profile until an SSO region is picked, and Other takes a typed code", async () => {
+    profiles = [];
+    hosts = [];
+    await mount();
+    await click(btn(sections()[0], t("ssm.add_profile")));
+    await type(input("my-profile"), "gov");
+    await type(input("https://my-company.awsapps.com/start"), "https://example.awsapps.com/start");
+    const save = () => btn(host.querySelector<HTMLElement>(".ssm-frm-foot")!, t("ssm.add_profile"));
+    const [sso] = regionSelects();
+    expect(sso.value).toBe("");
+    expect(sso.selectedOptions[0].textContent).toBe(t("ssm.region_select"));
+    expect(save().disabled).toBe(true);
+    await type(sso, sso.options[sso.options.length - 1].value);
+    expect(otherInput(0)).not.toBeNull();
+    expect(save().disabled).toBe(true);
+    // Typing a listed code into Other keeps the input in place.
+    await type(otherInput(0)!, "us-east-1");
+    expect(otherInput(0)!.value).toBe("us-east-1");
+    await type(otherInput(0)!, "us-gov-east-1");
+    expect(save().disabled).toBe(false);
+    await click(save());
+    expect(writes[0]).toMatchObject({ method: "POST", body: { ssoRegion: "us-gov-east-1", region: "" } });
+  });
+
+  it("names the profile's default region on the host's empty choice and keeps an override", async () => {
+    profiles = [{ ...prod, region: "eu-west-1" }, stg];
+    hosts = [{ ...web, region: "us-east-2" }];
+    await mount();
+    await click(btn(rows(1)[0], t("ssm.edit")));
+    const [hr] = regionSelects();
+    expect(hr.value).toBe("us-east-2");
+    expect(hr.options[0].textContent).toBe(t("ssm.region_profile_default", { region: "eu-west-1" }));
+    await type(hr, "");
+    await click(btn(sections()[1], t("common.save")));
+    expect(writes[0].body.region).toBe("");
+  });
+});
