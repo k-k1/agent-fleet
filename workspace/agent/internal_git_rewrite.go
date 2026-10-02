@@ -37,36 +37,56 @@ func internalGitRewriteHost() string {
 	return u.Host
 }
 
-// syncInternalGitRewrite makes the global git config match internalGitRewriteWant, and
-// removes a rewrite of the public git base left by an earlier start whose internal URL
-// has since changed or gone — otherwise a workspace would keep sending its git to an
-// address the CP no longer serves.
+// internalGitRewriteOwner is the global git config key that records the rewrite entries
+// the Agent itself added, one "<key> <value>" per value. Only those are ever changed or
+// removed: a url.*.insteadOf the person wrote — even one identical to the Agent's — is
+// theirs, and survives every start, with or without an internal URL.
+const internalGitRewriteOwner = "agent-fleet.internalGitRewrite"
+
+// syncInternalGitRewrite makes the global git config match internalGitRewriteWant. It
+// removes the entries it added on an earlier start whose internal or public URL has since
+// changed or gone — otherwise a workspace would keep sending its git to an address the CP
+// no longer serves — and leaves every other entry alone.
 func syncInternalGitRewrite() {
 	want, from := internalGitRewriteWant()
-	pub := cpurl.Public()
-	if pub == "" {
-		return
+	wantRec := ""
+	if want != "" {
+		wantRec = want + " " + from
 	}
-	stale := pub + "/git/"
+	owned, _ := gitx.Run("", "config", "--global", "--get-all", internalGitRewriteOwner)
 	have := false
-	out, _ := gitx.Run("", "config", "--global", "--get-regexp", `^url\..*\.insteadof$`)
-	for _, line := range strings.Split(out, "\n") {
-		key, val, ok := strings.Cut(line, " ")
-		if !ok || val != stale {
+	for _, rec := range strings.Split(owned, "\n") {
+		if rec == "" {
 			continue
 		}
-		if want != "" && strings.EqualFold(key, want) {
-			have = true
-			continue
+		if rec == wantRec {
+			key, val, _ := strings.Cut(rec, " ")
+			if gitx.Cmd("", "config", "--global", "--fixed-value", "--get", key, val).Run() == nil {
+				have = true
+				continue
+			}
+			// The entry was deleted by hand: forget it below and add it afresh.
 		}
-		if o, err := gitx.Combined("", "config", "--global", "--fixed-value", "--unset-all", key, stale); err != nil {
-			log.Printf("internal git: removing stale rewrite %s: %v: %s", key, err, o)
+		key, val, ok := strings.Cut(rec, " ")
+		if ok {
+			_ = gitx.Cmd("", "config", "--global", "--fixed-value", "--unset", key, val).Run()
+		}
+		if o, err := gitx.Combined("", "config", "--global", "--fixed-value", "--unset-all", internalGitRewriteOwner, rec); err != nil {
+			log.Printf("internal git: forgetting rewrite %q: %v: %s", rec, err, o)
 		}
 	}
 	if want == "" || have {
 		return
 	}
+	// The same entry already there was put there by somebody else: use it, never own it.
+	if gitx.Cmd("", "config", "--global", "--fixed-value", "--get", want, from).Run() == nil {
+		return
+	}
 	if o, err := gitx.Combined("", "config", "--global", "--add", want, from); err != nil {
 		log.Printf("internal git: setting %s: %v: %s", want, err, o)
+		return
+	}
+	if o, err := gitx.Combined("", "config", "--global", "--add", internalGitRewriteOwner, wantRec); err != nil {
+		log.Printf("internal git: recording %s: %v: %s", want, err, o)
 	}
 }

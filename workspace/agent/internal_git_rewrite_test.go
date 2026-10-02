@@ -77,3 +77,78 @@ func TestInternalGitRewriteFollowsTheInternalURL(t *testing.T) {
 		t.Errorf("after unset, rewrites = %q, want none", got)
 	}
 }
+
+// Only what the Agent added is ever touched: a person's own rewrite of the same public git
+// base, and an entry identical to the Agent's that existed before it, survive the first start
+// without an internal URL, enabling, changing and unsetting it.
+func TestInternalGitRewriteLeavesThePersonsEntries(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	withAgentHome(t)
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "gitconfig"))
+	t.Setenv("AF_CP_BASE_URL", "https://af.invalid")
+	t.Setenv("AF_INTERNAL_GIT_HOST", "af.invalid")
+	t.Setenv("AF_CP_INTERNAL_URL", "")
+	set := func(key, val string) {
+		t.Helper()
+		if out, err := gitx.Combined("", "config", "--global", "--add", key, val); err != nil {
+			t.Fatalf("git config %s: %v: %s", key, err, out)
+		}
+	}
+	mine := "url.https://git-route.invalid/.insteadof https://af.invalid/git/"
+	preexisting := "url.http://af-cp-internal.ns.svc:8098/git/.insteadof https://af.invalid/git/"
+	set("url.https://git-route.invalid/.insteadOf", "https://af.invalid/git/")
+	set("url.http://af-cp-internal.ns.svc:8098/git/.insteadOf", "https://af.invalid/git/")
+	// Lines, not a set: a second copy of an entry is exactly what borrowing must not add.
+	entries := func() map[string]int {
+		out, _ := gitx.Run("", "config", "--global", "--get-regexp", `^url\..*\.insteadof$`)
+		m := map[string]int{}
+		for _, l := range strings.Split(out, "\n") {
+			if l != "" {
+				m[l]++
+			}
+		}
+		return m
+	}
+	check := func(stage string, extra ...string) {
+		t.Helper()
+		got := entries()
+		want := map[string]bool{mine: true, preexisting: true}
+		for _, e := range extra {
+			want[e] = true
+		}
+		if len(got) != len(want) {
+			t.Errorf("%s: entries = %v, want %v", stage, got, want)
+		}
+		for e := range want {
+			if got[e] != 1 {
+				t.Errorf("%s: %q appears %d times, want once (entries %v)", stage, e, got[e], got)
+			}
+		}
+	}
+
+	syncInternalGitRewrite()
+	check("first start without an internal URL")
+
+	// Enabled with the same URL the person already rewrites to: borrowed, not owned.
+	t.Setenv("AF_CP_INTERNAL_URL", "http://af-cp-internal.ns.svc:8098")
+	syncInternalGitRewrite()
+	check("enabled onto the existing entry")
+
+	t.Setenv("AF_CP_INTERNAL_URL", "http://af-cp-internal2.ns.svc:8098")
+	syncInternalGitRewrite()
+	check("changed", "url.http://af-cp-internal2.ns.svc:8098/git/.insteadof https://af.invalid/git/")
+
+	t.Setenv("AF_CP_INTERNAL_URL", "")
+	syncInternalGitRewrite()
+	check("unset")
+
+	// The public base going away still clears what the Agent owned.
+	t.Setenv("AF_CP_INTERNAL_URL", "http://af-cp-internal3.ns.svc:8098")
+	syncInternalGitRewrite()
+	check("re-enabled", "url.http://af-cp-internal3.ns.svc:8098/git/.insteadof https://af.invalid/git/")
+	t.Setenv("AF_CP_BASE_URL", "")
+	syncInternalGitRewrite()
+	check("public base removed")
+}
