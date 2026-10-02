@@ -17,6 +17,7 @@ import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { BranchModal } from "../repos/BranchModal.tsx";
 import { wtFolder } from "../repos/BranchList.tsx";
+import { AheadBehind } from "../repos/AheadBehind.tsx";
 import type { Branch } from "../repos/BranchList.tsx";
 import { CommitGraph } from "./CommitGraph.tsx";
 import { openCommit, openCommitSplit, openChanges, openRepoScm } from "./open.ts";
@@ -295,9 +296,7 @@ export function SourceControlView({ repo, path = "", headerActions }: { repo: st
         </button>
         {status && (status.ahead || status.behind) ? (
           <span className="repo-chip ab" title={tr("scm.ahead_behind", { ahead: status.ahead ?? 0, behind: status.behind ?? 0 })}>
-            {status.ahead ? `↑${status.ahead}` : ""}
-            {status.ahead && status.behind ? " " : ""}
-            {status.behind ? `↓${status.behind}` : ""}
+            <AheadBehind ahead={status.ahead} behind={status.behind} />
           </span>
         ) : null}
         <span className="view-spacer" />
