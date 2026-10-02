@@ -162,4 +162,39 @@ describe("AWS profiles chip", () => {
     expect(asks()).toBe(after + 1);
     expect(chip()!.textContent).toContain("0/1");
   });
+
+  it("keeps the refresh due at a known end through a render after that end", async () => {
+    profiles = [{ ...prod, expiresAt: "2026-10-02T03:10:00Z" }];
+    await mount();
+    const before = asks();
+    profiles = [{ ...prod, state: "none" }];
+    await tick(10 * 60_000 + 1000);
+    await act(async () => root!.render(<AwsProfilesChip />));
+    expect(asks()).toBe(before);
+    await tick(2000);
+    expect(asks()).toBe(before + 1);
+    expect(chip()!.textContent).toContain("0/1");
+  });
+
+  it("does not ask again for an end that had already passed when the Agent answered", async () => {
+    profiles = [{ ...prod, state: "none", expiresAt: "2026-10-02T02:00:00Z" }];
+    await mount();
+    // The one ask is the workspace-running one; a timer for the past end would add another.
+    expect(asks()).toBe(1);
+    await tick(60 * 60_000);
+    expect(asks()).toBe(1);
+  });
+
+  it("drops the open popover's dismiss layer when the chip goes away", async () => {
+    await mount();
+    await openPop();
+    await act(async () => useWorkspaceStore.setState({ state: "stopped" }));
+    expect(chip()).toBeNull();
+    const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 });
+    document.body.dispatchEvent(press);
+    expect(press.defaultPrevented).toBe(false);
+    await act(async () => useWorkspaceStore.setState({ state: "running" }));
+    await tick(0);
+    expect(host.querySelector(".ws-aws-pop")).toBeNull();
+  });
 });

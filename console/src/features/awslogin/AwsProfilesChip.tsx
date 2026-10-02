@@ -7,7 +7,7 @@
 // No interval poll: the bar is always on screen. It asks when the workspace comes up, when the
 // popover opens, and once when a known end passes; the expiry notification and the login
 // modal refresh the same store (AwsLoginHost, ProfileLoginModal).
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSettingsUI } from "../settings/store.ts";
 import { fmtDateTime, TIME_HM } from "../../lib/intl.ts";
@@ -47,7 +47,13 @@ export function AwsProfilesChip() {
   const openSettings = useSettingsUI((s) => s.openSettings);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  useDismiss(ref, open, () => setOpen(false));
+  const shown = running && !!profiles && profiles.length > 0;
+  // A popover that vanished with the chip must not keep its dismiss layer: that layer would
+  // swallow the next press anywhere on the page.
+  useDismiss(ref, open && shown, () => setOpen(false));
+  useEffect(() => {
+    if (!shown) setOpen(false);
+  }, [shown]);
 
   // The App-level ask may have run while the workspace was still stopped, which leaves the
   // list empty until something else asks.
@@ -56,17 +62,23 @@ export function AwsProfilesChip() {
   }, [running, refresh]);
 
   // A login with a known end turns "not signed in" at that end and nothing notifies then.
-  const nextEnd = (profiles || [])
-    .map((p) => Date.parse(p.expiresAt))
-    .filter((t) => Number.isFinite(t) && t > Date.now())
-    .reduce((m, t) => Math.min(m, t), Infinity);
+  // Picked once per answer, not per render: a render between the end and the refresh would
+  // otherwise drop that end from the pick and cancel the refresh. An end already past when
+  // the answer came is left out, or the refresh would fire again on every answer.
+  const nextEnd = useMemo(() => {
+    const now = Date.now();
+    return (profiles || [])
+      .map((p) => Date.parse(p.expiresAt))
+      .filter((t) => Number.isFinite(t) && t > now)
+      .reduce((m, t) => Math.min(m, t), Infinity);
+  }, [profiles]);
   useEffect(() => {
     if (!running || !Number.isFinite(nextEnd)) return;
     const t = window.setTimeout(() => void refresh(), Math.min(nextEnd - Date.now() + 2000, MAX_WAIT_MS));
     return () => clearTimeout(t);
   }, [running, nextEnd, refresh]);
 
-  if (!running || !profiles || profiles.length === 0) return null;
+  if (!shown || !profiles) return null;
 
   const active = profiles.filter(isActive);
   const expiring = profiles.some((p) => p.expiring);

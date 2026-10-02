@@ -22,7 +22,12 @@ export function AwsLoginModal({ id }: { id: string }) {
   const r = shown.current;
   const hint = r ? `?profile=${encodeURIComponent(r.profile)}` : "";
   const base = `api/aws-login/${encodeURIComponent(id)}`;
-  const a = useLoginAttempt(`${base}/start${hint}`, (att) => `${base}/attempts/${encodeURIComponent(att)}`, () => void refresh());
+  const refreshExpiry = useAwsLoginStore((s) => s.refreshExpiry);
+  // The login also changes the profile's state, which the WS bar chip reads from the other list.
+  const a = useLoginAttempt(`${base}/start${hint}`, (att) => `${base}/attempts/${encodeURIComponent(att)}`, () => {
+    void refresh();
+    void refreshExpiry();
+  });
   const { phase, running } = a;
 
   const cancelRequest = async () => {
