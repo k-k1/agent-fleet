@@ -62,6 +62,9 @@
 .bi-service-discord {
   mask-image: url("../assets/brandicons/services/discord.svg");
 }
+.bi-service-gcp {
+  mask-image: url("../assets/brandicons/services/gcp.svg");
+}
 .bi-service-github {
   mask-image: url("../assets/brandicons/services/github.svg");
 }
