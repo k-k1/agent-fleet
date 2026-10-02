@@ -59,7 +59,7 @@ trap 'rm -rf "$TMP"' EXIT
 for b in kube-apiserver kube-controller-manager; do
   if [ -x "$DEST/$b" ]; then continue; fi
   echo "==> $b $K8S_VERSION ($ARCH)"
-  curl -fsSL -o "$TMP/$b" "https://dl.k8s.io/release/$K8S_VERSION/bin/linux/$ARCH/$b"
+  curl -fsSL --retry 4 --retry-all-errors -o "$TMP/$b" "https://dl.k8s.io/release/$K8S_VERSION/bin/linux/$ARCH/$b"
   check "$TMP/$b" "$b"
   chmod 0755 "$TMP/$b"
   mv "$TMP/$b" "$DEST/$b"
@@ -68,7 +68,7 @@ done
 if [ ! -x "$DEST/etcd" ]; then
   echo "==> etcd $ETCD_VERSION ($ARCH)"
   tgz="etcd-$ETCD_VERSION-linux-$ARCH.tar.gz"
-  curl -fsSL -o "$TMP/$tgz" "https://github.com/etcd-io/etcd/releases/download/$ETCD_VERSION/$tgz"
+  curl -fsSL --retry 4 --retry-all-errors -o "$TMP/$tgz" "https://github.com/etcd-io/etcd/releases/download/$ETCD_VERSION/$tgz"
   check "$TMP/$tgz" etcd
   tar -xzf "$TMP/$tgz" -C "$TMP" "etcd-$ETCD_VERSION-linux-$ARCH/etcd"
   mv "$TMP/etcd-$ETCD_VERSION-linux-$ARCH/etcd" "$DEST/etcd"

@@ -2,7 +2,8 @@
 // (deploy/local/k8s-test-binaries.sh installs them). There is no kubelet and no
 // scheduler: the real StatefulSet controller creates and deletes the pods, and these
 // tests play the node — they bind a pod, write the status a kubelet would, and finish a
-// graceful deletion. The tests skip when the binaries are absent.
+// graceful deletion. The tests skip when the binaries are absent, unless
+// AF_K8S_TEST_REQUIRED=1 (ci.yml's control-plane job), where that is a failure.
 //
 // The adapter runs as its own identity with the Role and ClusterRole of ADR 0106
 // decision 8, not as an administrator, in a namespace that enforces the `restricted`
@@ -91,6 +92,11 @@ func needKubeEnv(t *testing.T) (*kubeTestEnv, string) {
 		kubeEnv, kubeEnvErr = startKubeTestEnv(bin)
 	})
 	if kubeEnvSkip != "" {
+		// CI sets AF_K8S_TEST_REQUIRED after installing the binaries, so a missing one is
+		// a failure there instead of a quietly green skip.
+		if os.Getenv("AF_K8S_TEST_REQUIRED") == "1" {
+			t.Fatal(kubeEnvSkip)
+		}
 		t.Skip(kubeEnvSkip)
 	}
 	if kubeEnvErr != nil {
@@ -955,5 +961,51 @@ func TestKubernetesEnvBootPhaseFollowsThePod(t *testing.T) {
 	node.status(p.Metadata.Name, true, true, "")
 	if got := rt.State(ctx); got != "running" || rt.BootPhase() != "" {
 		t.Fatalf("State = %q, BootPhase = %q; want running and no phase", got, rt.BootPhase())
+	}
+}
+
+// Start's write is conditional on the StatefulSet it checked. A spec change between its
+// read and its write (here an operator's, made from inside the window) makes the real
+// API server refuse the JSON Patch test, and Start returns the error with neither the
+// template nor the replicas overwritten.
+func TestKubernetesEnvStartRefusesAStatefulSetChangedUnderIt(t *testing.T) {
+	e, ns := needKubeEnv(t)
+	t.Setenv("AF_STOP_GRACE_SEC", "5")
+	rt := newKubeTestRuntime(e.factory(t, ns), "af-ws-judy")
+	node := kubeNode{t, e, ns}
+	ctx := context.Background()
+	node.run(rt)
+	stopNode := node.serveDeletions(rt.base)
+	defer stopNode()
+	if err := rt.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	stsPath := "/apis/apps/v1/namespaces/" + ns + "/statefulsets/" + rt.base
+	rt.editTemplate = func(*kPodTemplateSpec) {
+		if err := e.admin.jsonPatch(ctx, stsPath, []kubePatchOp{{Op: "add", Path: "/spec/minReadySeconds", Value: 1}}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := rt.Start(ctx); err == nil {
+		t.Fatal("Start wrote over a StatefulSet whose spec changed after it checked")
+	}
+	var s kStatefulSet
+	if err := e.admin.get(ctx, stsPath, &s); err != nil {
+		t.Fatal(err)
+	}
+	if stsReplicas(&s) != 0 || s.Spec.Template.Metadata.Annotations[kubeAnnStartGen] != "1" {
+		t.Fatalf("after the refused Start: replicas %d, start generation %q; want 0 and the first start's 1",
+			stsReplicas(&s), s.Spec.Template.Metadata.Annotations[kubeAnnStartGen])
+	}
+	// Once the controller has observed the change the stop is settled again, and the next
+	// Start reads the new generation and goes through. Until then it refuses, correctly.
+	rt.editTemplate = nil
+	var lastErr error
+	eventually(t, 30*time.Second, "a Start after the change", func() bool {
+		lastErr = rt.Start(ctx)
+		return lastErr == nil
+	})
+	if p := node.waitPod(rt.base); p.Metadata.Annotations[kubeAnnStartGen] != "2" {
+		t.Fatalf("generation %q, want 2", p.Metadata.Annotations[kubeAnnStartGen])
 	}
 }

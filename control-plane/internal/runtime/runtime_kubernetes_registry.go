@@ -109,7 +109,7 @@ type registryClient struct {
 
 func newRegistryClient(creds registryCreds) *registryClient {
 	return &registryClient{
-		hc:            &http.Client{Timeout: 20 * time.Second},
+		hc:            &http.Client{Timeout: 20 * time.Second, CheckRedirect: registryRedirectPolicy},
 		creds:         creds,
 		metadataToken: gkeMetadataToken,
 	}
@@ -216,9 +216,9 @@ func (rc *registryClient) credentialsFor(ctx context.Context, host string) (stri
 }
 
 // bearerToken runs the token exchange of the registry's Bearer challenge. Credentials
-// go to the realm only when it is on the registry's own host or a subdomain of the
-// registry's parent domain (Docker Hub's auth.docker.io for registry-1.docker.io): a
-// challenge naming some other host gets an anonymous request.
+// go to the realm only when it is the registry's own origin or one of
+// registryTokenRealms: a challenge naming any other host, a sibling under the same
+// parent domain included, gets an anonymous request.
 func (rc *registryClient) bearerToken(ctx context.Context, params map[string]string, host, user, pass string, haveCreds bool) (string, error) {
 	realm := params["realm"]
 	ru, err := url.Parse(realm)
@@ -237,7 +237,7 @@ func (rc *registryClient) bearerToken(ctx context.Context, params map[string]str
 	if err != nil {
 		return "", err
 	}
-	if haveCreds && sameRegistrySite(ru.Hostname(), host) {
+	if haveCreds && trustedTokenRealm(ru, host) {
 		req.SetBasicAuth(user, pass)
 	}
 	resp, err := rc.hc.Do(req)
@@ -264,18 +264,50 @@ func (rc *registryClient) bearerToken(ctx context.Context, params map[string]str
 	return "", fmt.Errorf("registry token %s: empty token", ru.Host)
 }
 
-// sameRegistrySite reports whether a token realm on realmHost may receive the
-// credentials meant for registryHost.
-func sameRegistrySite(realmHost, registryHost string) bool {
-	registryHost = strings.Split(registryHost, ":")[0]
-	if realmHost == registryHost {
-		return true
+// registryTokenRealms are the token services that live on another origin than their
+// registry and may still receive its credentials. Anything else must be same-origin.
+var registryTokenRealms = map[string]string{
+	"registry-1.docker.io:443": "auth.docker.io:443",
+}
+
+// originOf is host:port with the scheme's default port filled in, so that
+// reg.example and reg.example:443 compare equal and reg.example:5000 does not.
+func originOf(u *url.URL) string {
+	port := u.Port()
+	if port == "" {
+		port = map[string]string{"https": "443", "http": "80"}[u.Scheme]
 	}
-	parent := registryHost
-	if i := strings.Index(registryHost, "."); i >= 0 && strings.Count(registryHost, ".") >= 2 {
-		parent = registryHost[i+1:]
+	return strings.ToLower(u.Hostname()) + ":" + port
+}
+
+// trustedTokenRealm reports whether a token realm may receive the credentials meant
+// for registryHost (host or host:port, reached over https).
+func trustedTokenRealm(realm *url.URL, registryHost string) bool {
+	if realm.Scheme != "https" {
+		return false
 	}
-	return strings.HasSuffix(realmHost, "."+parent)
+	reg := originOf(&url.URL{Scheme: "https", Host: registryHost})
+	got := originOf(realm)
+	return got == reg || registryTokenRealms[reg] == got
+}
+
+// registryRedirectPolicy keeps a redirect from carrying credentials anywhere else.
+// Go's own policy keeps the Authorization header for a subdomain of the first host,
+// and follows https to http; here a hop off https is refused outright, and a hop to
+// any other origin than the request's first one goes without the header. Registries
+// do redirect, to blob stores and CDNs, so a cross-origin hop itself is allowed.
+func registryRedirectPolicy(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return errors.New("registry: too many redirects")
+	}
+	if req.URL.Scheme != "https" {
+		return fmt.Errorf("registry: refusing a redirect off https to %s", req.URL.Redacted())
+	}
+	if originOf(req.URL) != originOf(via[0].URL) {
+		req.Header.Del("Authorization")
+		req.URL.User = nil
+	}
+	return nil
 }
 
 // parseAuthChallenge reads `Bearer realm="…",service="…",scope="…"`.

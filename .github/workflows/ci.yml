@@ -159,6 +159,17 @@ jobs:
         run: go build ./...
       - name: go test
         run: go test ./...
+      # The kubernetes adapter's envtest cases skip without kube-apiserver, etcd and
+      # kube-controller-manager, so the step above does not run them. This one installs the
+      # pinned binaries and makes their absence a failure: without it the controller timing,
+      # the `restricted` admission and the CP's RBAC would never be checked in CI.
+      - name: go test (kubernetes adapter against a real control plane)
+        env:
+          AF_K8S_TEST_REQUIRED: "1"
+          AF_K8S_TEST_BIN_DIR: ${{ runner.temp }}/af-k8s-test
+        run: |
+          ../deploy/local/k8s-test-binaries.sh
+          go test -count=1 -v -run 'TestKubernetesEnv' ./internal/runtime/
       # control-plane currently has no build-tagged files. Passing no argument declares
       # "there should be none", so this goes red as soon as a single tag appears — which is
       # how anyone notices. Do not turn it into "add the tag when one shows up": who

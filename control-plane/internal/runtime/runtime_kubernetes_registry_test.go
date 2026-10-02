@@ -5,9 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -95,7 +99,7 @@ func (fr *fakeRegistry) host() string { return strings.TrimPrefix(fr.srv.URL, "h
 
 func (fr *fakeRegistry) client(creds registryCreds) *registryClient {
 	rc := newRegistryClient(creds)
-	rc.hc = fr.srv.Client()
+	rc.hc.Transport = fr.srv.Client().Transport // the redirect policy stays the product's
 	rc.metadataToken = nil
 	return rc
 }
@@ -167,14 +171,21 @@ func TestRegistryCredentialsStayWithTheirHost(t *testing.T) {
 		realm, registry string
 		ok              bool
 	}{
-		{"us-docker.pkg.dev", "us-docker.pkg.dev", true},
-		{"auth.docker.io", "registry-1.docker.io", true},
-		{"reg.example", "reg.example:5000", true},
-		{"evil.example", "reg.corp.example", false},
-		{"auth.attacker.io", "registry-1.docker.io", false},
+		{"https://us-docker.pkg.dev/v2/token", "us-docker.pkg.dev", true},
+		{"https://auth.docker.io/token", "registry-1.docker.io", true},
+		{"https://reg.example:443/token", "reg.example", true},
+		{"https://reg.example:5000/token", "reg.example:5000", true},
+		{"https://evil.corp.example/token", "reg.corp.example", false}, // a sibling
+		{"https://corp.example/token", "reg.corp.example", false},      // the parent
+		{"https://reg.example:5001/token", "reg.example:5000", false},  // another port
+		{"https://reg.example/token", "reg.example:5000", false},
+		{"http://reg.example/token", "reg.example", false}, // not https
+		{"https://auth.attacker.io/token", "registry-1.docker.io", false},
+		{"https://auth.docker.io/token", "reg.example", false}, // the exception is Docker Hub's only
 	} {
-		if got := sameRegistrySite(c.realm, c.registry); got != c.ok {
-			t.Errorf("sameRegistrySite(%s, %s) = %v, want %v", c.realm, c.registry, got, c.ok)
+		u, _ := url.Parse(c.realm)
+		if got := trustedTokenRealm(u, c.registry); got != c.ok {
+			t.Errorf("trustedTokenRealm(%s, %s) = %v, want %v", c.realm, c.registry, got, c.ok)
 		}
 	}
 	// The Workload Identity token is only for Google's registries.
@@ -209,5 +220,141 @@ func TestParseAuthChallenge(t *testing.T) {
 	}
 	if s, _ := parseAuthChallenge(`Basic realm="x"`); s != "basic" {
 		t.Fatal(s)
+	}
+}
+
+// hostTransport answers requests by host and path without a network, and records
+// what each one carried, so the tests can name any host — a sibling, a subdomain, a
+// third party — and see exactly what reached it.
+type hostTransport struct {
+	mu     sync.Mutex
+	seen   []string // "scheme://host/path auth"
+	handle func(r *http.Request) *http.Response
+}
+
+func (h *hostTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	h.mu.Lock()
+	h.seen = append(h.seen, r.URL.Scheme+"://"+r.URL.Host+r.URL.Path+" "+r.Header.Get("Authorization"))
+	h.mu.Unlock()
+	resp := h.handle(r)
+	if resp == nil {
+		return nil, errors.New("no route")
+	}
+	if resp.Body == nil {
+		resp.Body = io.NopCloser(strings.NewReader(""))
+	}
+	resp.Request = r
+	return resp, nil
+}
+
+func (h *hostTransport) authAt(prefix string) (string, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, s := range h.seen {
+		if strings.HasPrefix(s, prefix+" ") {
+			return strings.TrimPrefix(s, prefix+" "), true
+		}
+	}
+	return "", false
+}
+
+func reply(code int, hdr map[string]string, body string) *http.Response {
+	h := http.Header{}
+	for k, v := range hdr {
+		h.Set(k, v)
+	}
+	return &http.Response{StatusCode: code, Header: h, Body: io.NopCloser(strings.NewReader(body))}
+}
+
+// A Bearer challenge naming a sibling host under the registry's parent domain gets no
+// credentials (the review's reproduction: reg.corp.example → evil.corp.example).
+func TestRegistrySiblingRealmGetsNoCredentials(t *testing.T) {
+	ht := &hostTransport{handle: func(r *http.Request) *http.Response {
+		switch r.URL.Host {
+		case "reg.corp.example":
+			if r.Header.Get("Authorization") == "Bearer t" {
+				return reply(200, map[string]string{"Docker-Content-Digest": "sha256:" + strings.Repeat("d", 64)}, "")
+			}
+			return reply(401, map[string]string{"WWW-Authenticate": `Bearer realm="https://evil.corp.example/token",service="s"`}, "")
+		case "evil.corp.example":
+			return reply(200, nil, `{"token":"t"}`)
+		}
+		return nil
+	}}
+	rc := newRegistryClient(func(context.Context, string) (string, string, bool) { return "robot", "pull-secret", true })
+	rc.hc.Transport = ht
+	rc.metadataToken = nil
+	if _, err := rc.pin(context.Background(), "reg.corp.example/team/ws:1"); err != nil {
+		t.Fatal(err)
+	}
+	if auth, ok := ht.authAt("https://evil.corp.example/token"); !ok || auth != "" {
+		t.Fatalf("the sibling realm received %q (seen %v)", auth, ht.seen)
+	}
+}
+
+// A redirect never carries the credentials to another origin, and never leaves https:
+// for the manifest request and for the token exchange alike. The same-origin hop is the
+// positive control — it keeps them.
+func TestRegistryRedirectsKeepCredentialsHome(t *testing.T) {
+	digest := map[string]string{"Docker-Content-Digest": "sha256:" + strings.Repeat("e", 64)}
+	for _, stage := range []string{"manifest", "token"} {
+		for _, c := range []struct {
+			to       string
+			reached  bool // the target is requested at all
+			keepAuth bool
+		}{
+			{"https://reg.example/elsewhere", true, true},
+			{"https://sub.reg.example/leak", true, false},
+			{"https://reg.example:8443/leak", true, false},
+			{"https://third.example/leak", true, false},
+			{"http://reg.example/leak", false, false},
+		} {
+			t.Run(stage+" to "+c.to, func(t *testing.T) {
+				target, _ := url.Parse(c.to)
+				ht := &hostTransport{}
+				ht.handle = func(r *http.Request) *http.Response {
+					at := r.URL.Scheme + "://" + r.URL.Host + r.URL.Path
+					auth := r.Header.Get("Authorization")
+					switch {
+					case at == target.String():
+						if stage == "token" {
+							return reply(200, nil, `{"token":"t"}`)
+						}
+						return reply(200, digest, "")
+					case at == "https://reg.example/token":
+						if stage == "token" && auth != "" {
+							return reply(307, map[string]string{"Location": c.to}, "")
+						}
+						return reply(200, nil, `{"token":"t"}`)
+					case at == "https://reg.example/v2/team/ws/manifests/1":
+						if auth == "" {
+							return reply(401, map[string]string{"WWW-Authenticate": `Bearer realm="https://reg.example/token"`}, "")
+						}
+						if stage == "manifest" {
+							return reply(307, map[string]string{"Location": c.to}, "")
+						}
+						return reply(200, digest, "")
+					}
+					return nil
+				}
+				rc := newRegistryClient(func(context.Context, string) (string, string, bool) { return "robot", "pull-secret", true })
+				rc.hc.Transport = ht
+				rc.metadataToken = nil
+				_, err := rc.pin(context.Background(), "reg.example/team/ws:1")
+				auth, reached := ht.authAt(target.String())
+				if reached != c.reached {
+					t.Fatalf("target requested = %v, want %v (err %v, seen %v)", reached, c.reached, err, ht.seen)
+				}
+				if !c.reached {
+					if err == nil {
+						t.Fatal("a redirect off https did not fail the pin")
+					}
+					return
+				}
+				if (auth != "") != c.keepAuth {
+					t.Fatalf("Authorization at %s = %q, want kept=%v", c.to, auth, c.keepAuth)
+				}
+			})
+		}
 	}
 }

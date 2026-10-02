@@ -293,6 +293,11 @@ func TestKubeStateTable(t *testing.T) {
 		{"generation not observed", stsJSON(1, 5, 4, 1, oldRev, "3"), []string{podJSON(oldRev, "2", true, true, false)}, "starting"},
 		{"pod of the old revision", stsJSON(1, 5, 5, 1, newRev, "3"), []string{podJSON(oldRev, "2", true, true, false)}, "starting"},
 		{"pod of an older start generation", stsJSON(1, 5, 5, 1, newRev, "3"), []string{podJSON(newRev, "2", true, true, false)}, "starting"},
+		// Each guard alone: the others hold, so only that guard makes it `starting`.
+		{"only the generation not observed", stsJSON(1, 5, 4, 1, newRev, "3"), []string{podJSON(newRev, "3", true, true, false)}, "starting"},
+		{"only the revision is old", stsJSON(1, 5, 5, 1, newRev, "3"), []string{podJSON(oldRev, "3", true, true, false)}, "starting"},
+		{"only the start generation is old", stsJSON(1, 5, 5, 1, newRev, "3"), []string{podJSON(newRev, "2", true, true, false)}, "starting"},
+		{"no updateRevision reported yet", stsJSON(1, 5, 5, 1, "", "3"), []string{podJSON("", "3", true, true, false)}, "starting"},
 		{"Ready pod being deleted", stsJSON(1, 4, 4, 1, newRev, "2"), []string{podJSON(newRev, "2", true, true, true)}, "starting"},
 		{"stopped", stsJSON(0, 6, 6, 0, newRev, "2"), nil, "stopped"},
 		// A stop in progress must never read as starting (workspace_handlers.go would drop
@@ -602,5 +607,73 @@ func TestKubeSecretEnvBypassesTheProxyForTheCP(t *testing.T) {
 	rt = f.New(Workspace{ContainerName: "af-ws-x"}, "", []string{"AF_CP_INTERNAL_URL=http://af-cp-internal.af-cp.svc:8098"}).(*kubeRuntime)
 	if env := rt.secretEnv(); env["NO_PROXY"] != "af-cp-internal.af-cp.svc" {
 		t.Errorf("NO_PROXY = %q", env["NO_PROXY"])
+	}
+}
+
+// A re-run after a Destroy that removed only one claim: the other claim and its volume
+// go now, but the first claim's volume was never confirmed, so the StatefulSet stays.
+func TestKubeDestroyRerunWithOneClaimGoneKeepsTheStatefulSet(t *testing.T) {
+	defer func(d time.Duration) { kubeDestroyClaimBudget = d }(kubeDestroyClaimBudget)
+	kubeDestroyClaimBudget = 200 * time.Millisecond
+	rt, f := fakeKubeRuntime(t)
+	f.set(stsPathX, 200, stsJSON(0, 6, 6, 0, "r", "2"))
+	f.set(podsPathX, 200, podListJSON())
+	f.set("DELETE /api/v1/namespaces/ns/services/af-ws-x", 200, `{}`)
+	f.set("DELETE /api/v1/namespaces/ns/secrets/af-ws-x-env", 200, `{}`)
+	// The home claim is already gone (its volume may well still exist); the state claim
+	// is still there and is deleted cleanly, volume and all.
+	f.set("GET /api/v1/namespaces/ns/persistentvolumeclaims/af-ws-x-state", 200,
+		`{"metadata":{"name":"af-ws-x-state"},"spec":{"resources":{},"volumeName":"pvc-2222"}}`)
+	f.set("DELETE /api/v1/namespaces/ns/persistentvolumeclaims/af-ws-x-state", 200, `{}`)
+	f.set("DELETE /apis/apps/v1/namespaces/ns/statefulsets/af-ws-x", 200, `{}`)
+	rt.c.hc.Transport = roundTripHook{rt.c.hc.Transport, func(r *http.Request) {
+		if r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/af-ws-x-state") {
+			f.mu.Lock()
+			delete(f.replies, "GET /api/v1/namespaces/ns/persistentvolumeclaims/af-ws-x-state")
+			f.mu.Unlock()
+		}
+	}}
+	res, err := rt.Destroy(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"statefulset:ns/af-ws-x"}; !reflect.DeepEqual(res, want) {
+		t.Fatalf("residue = %v, want %v", res, want)
+	}
+	if f.saw("DELETE /apis/apps/v1/namespaces/ns/statefulsets/af-ws-x") {
+		t.Fatal("the StatefulSet was deleted while the home claim's volume was never confirmed")
+	}
+	if !f.saw("DELETE /api/v1/namespaces/ns/persistentvolumeclaims/af-ws-x-state") {
+		t.Fatal("the remaining claim was not deleted")
+	}
+}
+
+// A Start whose conditional write is refused (the generation or replicas moved since it
+// checked: 422 from a failed JSON Patch test, or 409) returns the error and writes
+// nothing else to the StatefulSet.
+func TestKubeStartRefusedWriteIsAnError(t *testing.T) {
+	for _, code := range []int{422, 409} {
+		rt, f := fakeKubeRuntime(t)
+		f.set(stsPathX, 200, stsJSON(0, 6, 6, 0, "r", "2"))
+		f.set(podsPathX, 200, podListJSON())
+		f.set("GET /api/v1/namespaces/ns/persistentvolumeclaims/af-ws-x-home", 200, `{"metadata":{"name":"af-ws-x-home"},"spec":{"resources":{}}}`)
+		f.set("GET /api/v1/namespaces/ns/persistentvolumeclaims/af-ws-x-state", 200, `{"metadata":{"name":"af-ws-x-state"},"spec":{"resources":{}}}`)
+		f.set("GET /api/v1/namespaces/ns/services/af-ws-x", 200, `{"metadata":{"name":"af-ws-x"},"spec":{}}`)
+		f.set("PUT /api/v1/namespaces/ns/secrets/af-ws-x-env", 200, `{}`)
+		f.set("PATCH /apis/apps/v1/namespaces/ns/statefulsets/af-ws-x", code,
+			`{"kind":"Status","status":"Failure","message":"the server rejected our request due to an error in our request","reason":"Invalid","code":`+itoa(code)+`}`)
+		err := rt.Start(context.Background())
+		if kubeErrCode(err) != code {
+			t.Fatalf("Start with the write refused (%d) = %v, want that error", code, err)
+		}
+		n := 0
+		for _, s := range f.seen {
+			if strings.HasPrefix(s, "PATCH ") || strings.HasPrefix(s, "PUT /apis") || strings.HasPrefix(s, "POST /apis") {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Fatalf("Start sent %d writes to the StatefulSet, want the one refused patch: %v", n, f.seen)
+		}
 	}
 }

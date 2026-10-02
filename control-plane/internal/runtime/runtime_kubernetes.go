@@ -905,8 +905,9 @@ func (k *kubeRuntime) podTemplate(image string, gen int64, now time.Time) kPodTe
 // are `statefulset:<ns>/<name>`, `pvc:<ns>/<name>` and `pv:<name>` (ADR 0106 decision 5).
 //
 // The inventory that lets a re-run confirm volumes whose claims are already gone is
-// #1466. Until then a re-run that finds the claims gone and the StatefulSet still there
-// cannot tell which volumes the first run left, and says so by keeping the StatefulSet.
+// #1466. Until then a re-run that finds either claim gone and the StatefulSet still
+// there cannot tell which volumes the first run left, and says so by keeping the
+// StatefulSet.
 func (k *kubeRuntime) Destroy(ctx context.Context) ([]string, error) {
 	if err := k.Stop(ctx); err != nil {
 		return nil, err
@@ -983,9 +984,10 @@ func (k *kubeRuntime) Destroy(ctx context.Context) ([]string, error) {
 		k.setPhase("")
 		return residues, nil
 	}
-	if found == 0 {
-		// The claims were gone before this run: an earlier Destroy deleted them, and the
-		// volumes they were bound to are not known here.
+	if found < 2 {
+		// Start creates both claims before the StatefulSet, so a claim missing here was
+		// deleted by an earlier Destroy, and the volume it was bound to is not known to
+		// this run. Confirming the other claim's volume says nothing about that one.
 		residues = append(residues, "statefulset:"+ns+"/"+k.base)
 		return residues, nil
 	}
