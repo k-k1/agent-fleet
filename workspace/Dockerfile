@@ -542,16 +542,27 @@ RUN chown 1000:1000 /var/lib/af/claude /var/lib/af/keep /usr/local/share/agent-f
 # 無いので所有者を渡しておく。docker / native では CP が AF_WS_SCRATCH を注入しない
 # ので空のまま使われない。
 RUN mkdir -p /scratch && chown 1000:1000 /scratch
+# Google Cloud SDK pin (ADR 0107 decision 4). Never baked: it unpacks to ~486 MB, which every
+# cold image pull would pay for a tool a fraction of members use. `workspace-agent
+# install-gcloud` installs this version into ~/.local on demand and refuses an archive whose
+# sha256 differs from the one recorded for the build arch. Google publishes checksums only for
+# the current release, so a bump downloads both archives
+# (dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-<ver>-linux-{x86_64,arm}.tar.gz)
+# and records `sha256sum` of each here.
+ARG GCLOUD_VERSION=587.0.0
+ARG GCLOUD_SHA256_X64=57df2448d259c654796a3703af8e5b53a02d439715b2034d6bb811efc2d6dd7b
+ARG GCLOUD_SHA256_ARM64=8349b151da42f07136294da0908624fe8ea16fea200cb2f4412ad081a86e890c
 RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in \
-      amd64) agy_sha="${AGY_SHA256_X64}"; cursor_sha="${CURSOR_SHA256_X64}"; kiro_sha="${KIRO_SHA256_X64}"; muse_sha="${MUSE_SHA256_X64}"; pg_sha="${POSTGRES_SHA256_X64}"; mysql_sha="${MYSQL_SHA256_X64}" ;; \
-      arm64) agy_sha="${AGY_SHA256_ARM64}"; cursor_sha="${CURSOR_SHA256_ARM64}"; kiro_sha="${KIRO_SHA256_ARM64}"; muse_sha="${MUSE_SHA256_ARM64}"; pg_sha="${POSTGRES_SHA256_ARM64}"; mysql_sha="${MYSQL_SHA256_ARM64}" ;; \
-      *) agy_sha=""; cursor_sha=""; kiro_sha=""; muse_sha=""; pg_sha=""; mysql_sha="" ;; \
+      amd64) agy_sha="${AGY_SHA256_X64}"; cursor_sha="${CURSOR_SHA256_X64}"; kiro_sha="${KIRO_SHA256_X64}"; muse_sha="${MUSE_SHA256_X64}"; pg_sha="${POSTGRES_SHA256_X64}"; mysql_sha="${MYSQL_SHA256_X64}"; gcloud_sha="${GCLOUD_SHA256_X64}" ;; \
+      arm64) agy_sha="${AGY_SHA256_ARM64}"; cursor_sha="${CURSOR_SHA256_ARM64}"; kiro_sha="${KIRO_SHA256_ARM64}"; muse_sha="${MUSE_SHA256_ARM64}"; pg_sha="${POSTGRES_SHA256_ARM64}"; mysql_sha="${MYSQL_SHA256_ARM64}"; gcloud_sha="${GCLOUD_SHA256_ARM64}" ;; \
+      *) agy_sha=""; cursor_sha=""; kiro_sha=""; muse_sha=""; pg_sha=""; mysql_sha=""; gcloud_sha="" ;; \
     esac; \
-    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_build":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","muse":"%s","muse_sha256":"%s","postgres":"%s","postgres_sha256":"%s","mysql":"%s","mysql_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","aws_mcp_proxy":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
+    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_build":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","muse":"%s","muse_sha256":"%s","postgres":"%s","postgres_sha256":"%s","mysql":"%s","mysql_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","aws_mcp_proxy":"%s","awscli":"%s","session_manager_plugin":"%s","gcloud":"%s","gcloud_sha256":"%s"}\n' \
       "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$AGY_RELEASE_BUILD" "$agy_sha" "$COPILOT_VERSION" "$CURSOR_VERSION" "$cursor_sha" "$KIRO_VERSION" "$kiro_sha" "$MUSE_VERSION" "$muse_sha" "$POSTGRES_VERSION" "$pg_sha" "$MYSQL_VERSION" "$mysql_sha" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
       "$CHROMIUM_CFT_VERSION" "$CHROMIUM_DL_VERSION" "$NOTO_CJK_VERSION" "$MCP_GRAFANA_VERSION" "$CLOUDWATCH_MCP_VERSION" "$AWS_MCP_PROXY_VERSION" "$AWSCLI_VERSION" "$SESSION_MANAGER_PLUGIN_VERSION" \
+      "$GCLOUD_VERSION" "$gcloud_sha" \
       > /usr/local/share/agent-fleet/versions.json
 
 # The baked claude is a root-owned npm-global install run as the non-root `dev`

@@ -129,7 +129,7 @@ func TestWorkspaceListenerIgnoresForgedIdentity(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Errorf("whoami on the workspace listener: %d, want 404", w.Code)
 	}
-	for _, path := range []string{"/internal/memos", "/internal/docs", "/internal/mcp-servers", "/internal/branch-rules", "/internal/aws-profiles", "/internal/schedules"} {
+	for _, path := range []string{"/internal/memos", "/internal/docs", "/internal/mcp-servers", "/internal/branch-rules", "/internal/aws-profiles", "/internal/gcp-profiles", "/internal/schedules"} {
 		w = httptest.NewRecorder()
 		h.ServeHTTP(w, forged("GET", path))
 		if w.Code != http.StatusUnauthorized {
@@ -237,6 +237,7 @@ func TestWorkspaceListenerServesKnownAgentCalls(t *testing.T) {
 		{"GET", "/internal/branch-rules"},
 		{"GET", "/internal/mcp-servers"},
 		{"GET", "/internal/aws-profiles"},
+		{"GET", "/internal/gcp-profiles"},
 		{"GET", "/internal/memos"},
 		{"POST", "/internal/memos"},
 		{"POST", "/internal/memos/flush"},

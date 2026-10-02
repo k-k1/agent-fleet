@@ -35,6 +35,8 @@ var workspaceRoutes = map[string]bool{
 	"GET /internal/mcp-servers": true,
 	// AWS profiles (AF_AWS_PROFILES_TOKEN).
 	"GET /internal/aws-profiles": true,
+	// Google Cloud profiles (AF_GCP_PROFILES_TOKEN).
+	"GET /internal/gcp-profiles": true,
 	// Memo queue (AF_MEMO_TOKEN). The /internal/memo-categories face is not listed: no
 	// Agent code calls it.
 	"GET /internal/memos":         true,

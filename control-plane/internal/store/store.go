@@ -935,6 +935,7 @@ type Store interface {
 	EngineUsageAttributionStore
 	CloudCostStore
 	SSMStore
+	GCPProfileStore
 	MemoStore
 	WorkItemStore
 	NotificationStore

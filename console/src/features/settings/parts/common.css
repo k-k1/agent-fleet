@@ -697,6 +697,17 @@
   color: var(--warn);
 }
 
+/* The CP-computed profile name next to a Google Cloud profile's label (GcpTab). */
+.gcp-name {
+  font-size: 12px;
+  color: var(--muted2);
+}
+
+.gcp-conflict {
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+
 /* a list GET that failed: the section keeps the last list that loaded */
 .ssm-load-err {
   color: var(--warn);

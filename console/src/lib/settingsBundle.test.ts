@@ -7,10 +7,12 @@ import {
   exportablePrefs,
   mergeImportedPrefs,
   parseBundle,
+  planGcpImport,
   planSsmImport,
   profileIdByLabel,
   sanitizeImportedPrefs,
   summarizeBundle,
+  toGcpSection,
   toInstructionsSection,
   toSsmSection,
 } from "./settingsBundle.ts";
@@ -199,10 +201,47 @@ describe("summarizeBundle / bundleFileName", () => {
       },
       "2026-08-26T00:00:00.000Z",
     );
-    expect(summarizeBundle(b)).toEqual({ prefs: 2, profiles: 1, hosts: 0, instructionBytes: 3, instructions: true });
+    expect(summarizeBundle(b)).toEqual({ prefs: 2, profiles: 1, hosts: 0, gcpProfiles: 0, instructionBytes: 3, instructions: true });
   });
 
   it("names the file after the local date and time", () => {
     expect(bundleFileName(new Date(2026, 7, 26, 9, 5))).toBe("af-settings-20260826-0905.json");
+  });
+});
+
+describe("Google Cloud profiles (ADR 0107)", () => {
+  it("exports only what a person entered: no id, name or conflict", () => {
+    const s = toGcpSection([
+      { id: "g1", name: "prod", conflict: { reason: "collision", labels: [] }, label: " Prod ", project: "my-prod-1", account: "a@b.co" },
+    ]);
+    expect(s).toEqual([
+      { label: "Prod", loginMethod: "google", project: "my-prod-1", quotaProject: "", account: "a@b.co", region: "", zone: "", impersonateServiceAccount: "" },
+    ]);
+  });
+
+  it("parses a bundle that carries only Google Cloud profiles", () => {
+    const r = parseBundle(JSON.stringify(buildBundle({ gcpProfiles: [{ label: "x" } as any] }, "t")));
+    expect("bundle" in r && r.bundle.sections.gcpProfiles).toHaveLength(1);
+    expect("bundle" in r && summarizeBundle(r.bundle).gcpProfiles).toBe(1);
+  });
+
+  it("adds only new, complete Google-login profiles", () => {
+    const plan = planGcpImport(
+      [
+        { label: "KEPT", project: "p-kept-1" },
+        { label: "dev", project: "my-dev-1" },
+        { label: "dev", project: "my-dev-2" },
+        { label: "wf", project: "my-wf-1", loginMethod: "workforce" },
+        { label: "no-project" },
+      ] as any,
+      [{ id: "g", label: "kept" }],
+    );
+    expect(plan.profiles.map((p) => p.project)).toEqual(["my-dev-1"]);
+    expect(plan.skipped).toEqual([
+      { label: "KEPT", reason: "exists" },
+      { label: "dev", reason: "exists" },
+      { label: "wf", reason: "invalid" },
+      { label: "no-project", reason: "invalid" },
+    ]);
   });
 });

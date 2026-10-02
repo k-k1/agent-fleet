@@ -42,6 +42,7 @@ import { InstructionsTab } from "./personal/InstructionsTab.tsx";
 import { TtsTab } from "./personal/TtsTab.tsx";
 import { GitTab } from "./connect/GitTab.tsx";
 import { SsmTab } from "./workspace/SsmTab.tsx";
+import { GcpTab } from "./workspace/GcpTab.tsx";
 import { OpsTab } from "./connect/OpsTab.tsx";
 import { TrackerTab } from "./connect/TrackerTab.tsx";
 import { ChatTab } from "./chat/ChatTab.tsx";
@@ -102,6 +103,8 @@ export const GROUPS: { key: string; label: string; items: [string, string][] }[]
       // AWS SSM registers an SSO profile and the hosts to log into — an external
       // connection like the ones above it, not a property of the workspace.
       ["ssm", "set.tab_ssm"],
+      // Google Cloud profiles (ADR 0107) sit beside the AWS ones: the same kind of connection.
+      ["gcp", "set.tab_gcp"],
     ],
   },
   {
@@ -249,6 +252,7 @@ export function SettingsDialog() {
                 the capability check is not repeated here — unlike cost, it never goes blank. */}
             {section === "preview" && <PreviewTab />}
             {section === "ssm" && <SsmTab />}
+            {section === "gcp" && <GcpTab />}
             {section === "ops" && <OpsTab />}
             {section === "tracker" && <TrackerTab />}
             {section === "chat" && <ChatTab />}
