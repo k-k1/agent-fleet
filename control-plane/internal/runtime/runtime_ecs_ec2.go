@@ -1710,6 +1710,10 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	// surface — move to the next one.
 	for _, s := range slots {
 		volID := aws.ToString(vol.VolumeId)
+		// The candidate list was read before; a reservation may have landed since.
+		if e.slotNowReserved(ctx, s.id) {
+			continue
+		}
 		if err := e.waitVolumeAttachable(ctx, volID); err != nil {
 			return ec2Placement{}, err
 		}
@@ -1722,6 +1726,14 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 		claimErr := e.claim(ctx, volID, s.id)
 		if claimErr != nil {
 			log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, claimErr)
+		}
+		if e.slotNowReserved(ctx, s.id) {
+			// Reserved between the check above and the attach. Nothing is mounted yet, so
+			// stepping off is safe; see slotNowReserved for why the second check closes it.
+			if err := e.backOffReservedSlot(ctx, volID, s.id); err != nil {
+				return ec2Placement{}, err
+			}
+			continue
 		}
 		// A hot, already-registered slot is the only case that can finish inline.
 		return ec2Placement{
@@ -1761,6 +1773,13 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 				}
 			}
 			volID := aws.ToString(vol.VolumeId)
+			// The victim was picked from a list read before its release; a reservation may
+			// have landed since. The freed box is then free and reserved, and the sweeper
+			// retires it; this Start fails rather than run on it, and the next one has room.
+			errReserved := fmt.Errorf("the reclaimed slot %s was reserved for replacement during this start; start again", victim)
+			if e.slotNowReserved(ctx, victim) {
+				return ec2Placement{}, errReserved
+			}
 			if err := e.waitVolumeAttachable(ctx, volID); err != nil {
 				return ec2Placement{}, err
 			}
@@ -1770,6 +1789,12 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 			claimErr := e.claim(ctx, volID, victim)
 			if claimErr != nil {
 				log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, claimErr)
+			}
+			if e.slotNowReserved(ctx, victim) {
+				if err := e.backOffReservedSlot(ctx, volID, victim); err != nil {
+					return ec2Placement{}, err
+				}
+				return ec2Placement{}, errReserved
 			}
 			e.clearDormancy(ctx, volID)
 			running, err := e.instanceRunning(ctx, victim)
@@ -2823,7 +2848,7 @@ func (e *ecsEC2Runtime) listContainerInstanceARNs(ctx context.Context) ([]string
 // docs/log/64 §64.20.4.
 func (e *ecsEC2Runtime) growPool(ctx context.Context, az string) (string, string, error) {
 	if az != "" {
-		id, err := e.runSlot(ctx, az)
+		id, err := e.runSlot(ctx, az, e.pool.maxSlots)
 		return id, az, err
 	}
 	azs, err := e.spreadAZs(ctx)
@@ -2835,7 +2860,7 @@ func (e *ecsEC2Runtime) growPool(ctx context.Context, az string) (string, string
 	}
 	var lastErr error
 	for _, candidate := range azs {
-		id, err := e.runSlot(ctx, candidate)
+		id, err := e.runSlot(ctx, candidate, e.pool.maxSlots)
 		if err == nil {
 			return id, candidate, nil
 		}
@@ -2939,14 +2964,10 @@ func describeSlotClasses(cs []ec2SlotClass) string {
 	return strings.Join(parts, " ")
 }
 
-func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string) (string, error) {
-	return e.runSlotUnder(ctx, az, e.pool.maxSlots)
-}
-
-// runSlotUnder is runSlot against an explicit cap. Only the replacement of a reserved slot
-// passes anything but maxSlots: it launches the new box before the old one is gone, so the
-// old one must not count against the place it is about to give back.
-func (e *ecsEC2Runtime) runSlotUnder(ctx context.Context, az string, limit int) (string, error) {
+// runSlot launches one slot under the cap limit. Every caller but one passes maxSlots; the
+// replacement of a reserved slot passes one more, because it launches the new box before the
+// old one is gone and the old one must not count against the place it is about to give back.
+func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string, limit int) (string, error) {
 	total, err := e.poolSize(ctx)
 	if err != nil {
 		return "", err

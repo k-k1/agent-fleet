@@ -234,6 +234,11 @@ func TestSlotTemplateOutdated(t *testing.T) {
 		{"single digit below two-digit $Latest", tags("lt-1", "9"), ec2LaunchTemplate{id: "lt-1", latest: 10}, true, true},
 		{"another template", tags("lt-0", "7"), lt, true, true},
 		{"no stamp", tags("", ""), lt, false, false},
+		// Review #1526-4: half a stamp, or a version that is not a positive integer, is unknown.
+		{"version without template id", tags("", "1"), lt, false, false},
+		{"another template with a garbage version", tags("lt-0", "garbage"), lt, false, false},
+		{"version zero", tags("lt-1", "0"), lt, false, false},
+		{"negative version", tags("lt-1", "-3"), lt, false, false},
 		{"unreadable stamp", tags("lt-1", "$Latest"), lt, false, false},
 		{"template unknown", tags("lt-1", "1"), ec2LaunchTemplate{}, false, false},
 	} {
@@ -340,5 +345,155 @@ func TestECSEC2PoolStatusReportsTemplateVersionsAndReservations(t *testing.T) {
 	}
 	if b := got["i-b"]; b.TemplateVersion != "5" || b.TemplateOutdated || b.ReplaceReserved {
 		t.Fatalf("i-b = %+v, want version 5, current, not reserved", b)
+	}
+}
+
+// liveSlots counts the pool's slots that still exist, i.e. what the cap is checked against.
+func liveSlots(h *ec2Harness) int {
+	n := 0
+	for _, i := range h.ec2.instances {
+		if ec2TagValue(i.Tags, EC2TagPool) == "clu" && i.State.Name != ec2types.InstanceStateNameTerminated {
+			n++
+		}
+	}
+	return n
+}
+
+// Review #1526-1: a release that fails after the new slot was launched must not leave that
+// slot behind. In a full pool it would hold the one place the retry needs, and with both
+// timers off nothing would ever collect it — every later Start would fail at the cap.
+func TestECSEC2FailedReleaseRetiresTheNewSlotAndTheRetrySucceeds(t *testing.T) {
+	ctx := context.Background()
+	h := reservedSlotHarness(t, true)
+	h.rt.pool.maxSlots = 1
+	h.rt.pool.slotSleepAfter, h.rt.pool.slotTerminateAfter = 0, 0
+	h.ssmc.fail["af-umount"] = true
+
+	if err := h.rt.Start(ctx); err == nil || !strings.Contains(err.Error(), "reservation stays") {
+		t.Fatalf("Start with a failing umount = %v, want the release failure", err)
+	}
+	if h.ec2.instances["i-new1"].State.Name != ec2types.InstanceStateNameTerminated {
+		t.Fatalf("the unused replacement i-new1 is %s, want terminated", h.ec2.instances["i-new1"].State.Name)
+	}
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "" {
+		t.Fatalf("claim %q left behind — the workspace would read `starting` until it expires", got)
+	}
+	if got := attachedInstance(h.ec2.volumes["vol-1"]); got != "i-old" {
+		t.Fatalf("home on %q, want it still on i-old", got)
+	}
+	if ec2TagValue(h.ec2.instances["i-old"].Tags, ec2TagSlotReplace) == "" {
+		t.Fatal("the reservation was dropped by a failed release")
+	}
+	if n := liveSlots(h); n != 1 {
+		t.Fatalf("%d live slots after the failure, want the pool back at its cap of 1", n)
+	}
+
+	// The cause goes away; the retry must not find the pool full.
+	delete(h.ssmc.fail, "af-umount")
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("retry after the cause was fixed: %v", err)
+	}
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-new2" {
+		t.Fatalf("claim = %q, want the retry's new slot i-new2", got)
+	}
+	if h.ec2.instances["i-old"].State.Name != ec2types.InstanceStateNameTerminated {
+		t.Fatal("the reserved slot was not retired by the successful retry")
+	}
+}
+
+// Review #1526-2: the new slot is claimed from the moment it exists, so another member's Start
+// running while this one waits for the old home's umount cannot attach to it.
+func TestECSEC2ReplacementSlotIsProtectedWhileTheOldHomeIsReleased(t *testing.T) {
+	ctx := context.Background()
+	h := reservedSlotHarness(t, true)
+	bobVol := h.ec2.addHomeVolume("vol-bob", "M-2", "af-ws-acme-bob", "ap-northeast-1a")
+	bob := h.rt.siblingFor(bobVol)
+	var bobOn string
+	h.ssmc.onSend = func(cmd string) {
+		if !strings.Contains(cmd, "af-umount") || bobOn != "" {
+			return
+		}
+		// The replacement has booted by now and is a registered, running box.
+		h.ec2.mu.Lock()
+		h.ec2.instances["i-new1"].State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameRunning}
+		h.ec2.mu.Unlock()
+		h.ci.registered["i-new1"] = true
+		p, err := bob.placeHome(ctx)
+		if err != nil {
+			t.Errorf("Bob's placeHome: %v", err)
+			return
+		}
+		bobOn = p.instanceID
+	}
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if bobOn == "" || bobOn == "i-new1" {
+		t.Fatalf("Bob was placed on %q, want anything but Alice's replacement i-new1", bobOn)
+	}
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-new1" {
+		t.Fatalf("Alice's claim = %q, want i-new1", got)
+	}
+}
+
+// A replacement an earlier attempt launched and never used (a CP that died mid-way) is
+// reused rather than launching yet another box over the cap.
+func TestECSEC2ReplacementAdoptsTheSlotAnEarlierAttemptLaunched(t *testing.T) {
+	ctx := context.Background()
+	h := reservedSlotHarness(t, false)
+	h.ec2.addSlot("i-spare", "ap-northeast-1a", "m7i.large", false, false)
+	h.ec2.setTag("vol-1", EC2TagClaim, "i-spare")
+	h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)) // expired
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if callIndex(h, "RunInstances") >= 0 {
+		t.Fatalf("launched another slot instead of reusing i-spare: %v", h.ec2.calls)
+	}
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-spare" {
+		t.Fatalf("claim = %q, want i-spare", got)
+	}
+}
+
+// Review #1526-3: a reservation that lands after the candidate list was read still keeps the
+// home off that slot — whether it lands before the attach or between the attach and the claim.
+func TestECSEC2ReservationDuringPlacementIsHonoured(t *testing.T) {
+	for _, when := range []string{"before the attach", "after the attach"} {
+		t.Run(when, func(t *testing.T) {
+			ctx := context.Background()
+			h := newEC2Harness(t)
+			h.ec2.addSlot("i-a", "ap-northeast-1a", "m7i.large", true, false)
+			h.ec2.addSlot("i-b", "ap-northeast-1a", "m7i.large", true, false)
+			h.ci.registered["i-a"], h.ci.registered["i-b"] = true, true
+			h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+			reserve := func() {
+				h.ec2.mu.Lock()
+				h.ec2.setInstanceTag("i-a", ec2TagSlotReplace, "2026-10-03T00:00:00Z")
+				h.ec2.mu.Unlock()
+			}
+			if when == "before the attach" {
+				// occupiedInstances' read comes after the candidate list was taken.
+				h.ec2.afterDescribeVolumes = func() { h.ec2.afterDescribeVolumes = nil; reserve() }
+			} else {
+				h.ec2.onAttach = func(id string) {
+					if id == "i-a" {
+						reserve()
+					}
+				}
+			}
+
+			p, err := h.rt.placeHome(ctx)
+			if err != nil {
+				t.Fatalf("placeHome: %v", err)
+			}
+			if p.instanceID != "i-b" {
+				t.Fatalf("placed on %q, want i-b — i-a was reserved during the placement", p.instanceID)
+			}
+			if got := attachedInstance(h.ec2.volumes["vol-1"]); got != "i-b" {
+				t.Fatalf("home attached to %q, want i-b", got)
+			}
+		})
 	}
 }

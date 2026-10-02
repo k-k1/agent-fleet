@@ -244,7 +244,7 @@ T = "2026-01-01T00:00:00Z"
 # requests those calls make. "TagSpecifications" is tag-on-create.
 INVENTORY = [
     # --- tag-on-create ---
-    ("internal/runtime/runtime_ecs_ec2.go", "runSlotUnder", "TagSpecifications", 1, [
+    ("internal/runtime/runtime_ecs_ec2.go", "runSlot", "TagSpecifications", 1, [
         on_create("RunInstances", "instance", SLOT)]),
     ("engine_fleet.go", "request", "TagSpecifications", 1, [
         on_create("CreateFleet", "instance", ENGINE)]),
@@ -293,6 +293,8 @@ INVENTORY = [
         on_existing("ec2:CreateTags", "instance", SLOT, {"af-slot-replace": T})]),
     ("internal/runtime/runtime_ecs_ec2_slot_replace.go", "ReserveSlotReplacement", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "instance", SLOT, {"af-slot-replace": None})]),
+    ("internal/runtime/runtime_ecs_ec2_slot_replace.go", "retireUnusedReplacement", "CreateTags", 1, [
+        on_existing("ec2:CreateTags", "instance", SLOT, {"af-slot-replace": T})]),
     ("internal/runtime/runtime_ecs_ec2.go", "sweepSlotOwnerTags", "DeleteTags", 2, [
         on_existing("ec2:DeleteTags", "instance", SLOT, {"af-membership": None, "af-tenant": None}),
         on_existing("ec2:DeleteTags", "instance", QUARANTINED, {"af-tenant": None})]),
@@ -409,7 +411,7 @@ def discover():
 
 # Where the keys of a create call come from: the call itself, the helpers it appends,
 # and the launch templates EC2 merges in.
-CREATE_KEY_FUNCS = {"runSlotUnder", "tags", "createHomeVolume", "hibernate", "BackupHome",
+CREATE_KEY_FUNCS = {"runSlot", "tags", "createHomeVolume", "hibernate", "BackupHome",
                     "SnapshotHome", "ownedTags", "stampTags"}
 KEY_RE = re.compile(r'Key:\s*aws\.String\(\s*([A-Za-z0-9_.]+|"[^"]*")\s*\)')
 CONST_RE = re.compile(r'^\s*([A-Za-z0-9_]+)\s+(?:[A-Za-z]+\s+)?=\s*"([^"]*)"', re.M)

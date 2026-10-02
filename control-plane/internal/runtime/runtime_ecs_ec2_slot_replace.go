@@ -71,18 +71,23 @@ func withoutReservedSlots(out *ec2.DescribeInstancesOutput) *ec2.DescribeInstanc
 //
 // ⚠️ The ORDER is the safety argument:
 //
-//  1. Launch the new slot FIRST. Capacity and quota are the likely failures, and at this
-//     point nothing has been touched: the Start fails with the reason, the home stays on the
+//  1. Get the new slot FIRST. Capacity and quota are the likely failures, and at this point
+//     nothing has been touched: the Start fails with the reason, the home stays on the
 //     reserved slot and the reservation stays. Falling back to the reserved slot instead
 //     would defeat the reservation, whose usual reason is security.
-//  2. Release the home with releaseSlot — the umount-before-detach and the Start-generation
-//     fence every other release uses. If it fails, the new slot is simply a free slot of the
-//     pool; the home is still on the reserved one (detach is the last step of the release),
-//     and the next Start tries again.
-//  3. Terminate the old box, but only after re-reading that no home is attached to it and no
-//     claim points at it. A failure here costs money, not data: the box is free and still
-//     reserved, so nobody is placed on it and the sweeper retires it.
-//  4. Claim the home for the new slot; the background half attaches and mounts it.
+//  2. Claim the home for the new slot AT ONCE. The claim is what makes occupiedInstances
+//     count the new box as taken, so no other Start attaches to it while this one waits
+//     for the old home's release — without it another member's home could land there and
+//     this one would be left with no slot at all. It also records the new box on the home,
+//     which is how a retry after a CP crash finds it again (adoptableReplacement).
+//  3. Release the home from the old slot with releaseSlot — umount before detach, refused
+//     while a task runs, fenced on the Start generation — and confirm it really is off.
+//     If that fails, the new box is terminated (it holds nothing but this claim) and the
+//     claim dropped, so the pool is back to where it was, under its cap, and the next Start
+//     simply tries again.
+//  4. Terminate the old box, but only after re-reading that nothing holds it. A failure here
+//     costs money, not data: the box is free and still reserved, so nobody is placed on it
+//     and the sweeper retires it.
 //
 // The pool cap is checked with the reserved box not counted, since it is on its way out:
 // otherwise a full pool could never replace anything.
@@ -92,34 +97,148 @@ func (e *ecsEC2Runtime) replaceReservedSlot(ctx context.Context, vol *ec2types.V
 	log.Printf("ecs-ec2: slot %s under %s is reserved for replacement; moving the home to a new %s",
 		oldID, e.base.name, e.instanceType)
 	e.setPhase(ec2PhaseSlotRenewing)
-	// An EBS volume never leaves its AZ, so the new slot has to be in the home's.
-	newID, err := e.runSlotUnder(ctx, az, e.pool.maxSlots+1)
-	if err != nil {
-		return ec2Placement{}, fmt.Errorf("slot %s is reserved for replacement and no new slot could be launched "+
-			"(the reservation stays; the old slot is not reused): %w", oldID, err)
+	newID, wake := "", false
+	if prev := ec2TagValue(vol.Tags, EC2TagClaim); prev != "" && prev != oldID {
+		if running, ok := e.adoptableReplacement(ctx, prev, az, volID); ok {
+			log.Printf("ecs-ec2: reusing %s, the replacement an earlier start of %s launched", prev, e.base.name)
+			newID, wake = prev, !running
+		}
 	}
-	if err := e.releaseSlot(ctx); err != nil {
-		return ec2Placement{}, fmt.Errorf("move the home off the reserved slot %s (new slot %s stays in the pool): %w",
-			oldID, newID, err)
+	if newID == "" {
+		// An EBS volume never leaves its AZ, so the new slot has to be in the home's.
+		id, err := e.runSlot(ctx, az, e.pool.maxSlots+1)
+		if err != nil {
+			return ec2Placement{}, fmt.Errorf("slot %s is reserved for replacement and no new slot could be launched "+
+				"(the reservation stays; the old slot is not reused): %w", oldID, err)
+		}
+		newID = id
 	}
-	if holder, err := e.slotHolder(ctx, oldID); err != nil || holder != "" {
+	if err := e.claim(ctx, volID, newID); err != nil {
+		e.retireUnusedReplacement(ctx, newID, volID)
+		return ec2Placement{}, fmt.Errorf("claim %s for the replacement slot %s: %w", volID, newID, err)
+	}
+	if err := e.moveHomeOff(ctx, oldID); err != nil {
+		e.retireUnusedReplacement(ctx, newID, volID)
+		return ec2Placement{}, fmt.Errorf("move the home off the reserved slot %s (the reservation stays): %w", oldID, err)
+	}
+	if holder, err := e.slotHolder(ctx, oldID, ""); err != nil || holder != "" {
 		log.Printf("ecs-ec2: not terminating the reserved slot %s yet (held by %q, %v); the sweeper retires it once free",
 			oldID, holder, err)
 	} else {
 		_ = e.terminateSlot(ctx, oldID, "reserved for replacement, replaced by "+newID)
 	}
-	if err := e.claim(ctx, volID, newID); err != nil {
-		return ec2Placement{}, fmt.Errorf("claim %s for %s: %w", volID, newID, err)
-	}
 	e.clearDormancy(ctx, volID)
 	slotReplaceSeen.set(e.base.name, "")
-	return ec2Placement{volumeID: volID, instanceID: newID, az: az, deferred: true, claimed: true, wipe: homeWipeOf(vol)}, nil
+	return ec2Placement{volumeID: volID, instanceID: newID, az: az, deferred: true, claimed: true, wake: wake, wipe: homeWipeOf(vol)}, nil
+}
+
+// moveHomeOff releases this workspace's home from oldID and confirms it is detached.
+// releaseSlot can return nil with the home still on the box (a Start that raced it re-mounts
+// instead of detaching), and claiming a new slot for a home that never left the old one would
+// strand the Start.
+func (e *ecsEC2Runtime) moveHomeOff(ctx context.Context, oldID string) error {
+	if err := e.releaseSlot(ctx); err != nil {
+		return err
+	}
+	vol, err := e.homeVolume(ctx)
+	if err != nil {
+		return err
+	}
+	if vol != nil && attachedInstance(vol) == oldID {
+		return fmt.Errorf("the home is still attached to %s after the release", oldID)
+	}
+	return nil
+}
+
+// retireUnusedReplacement undoes step 1 and 2 of replaceReservedSlot after a later step
+// failed: terminate the new box — it holds nothing but this home's claim — and then drop the
+// claim, in that order so the box is never unprotected while it exists. If the terminate
+// fails the box is reserved instead, so nobody is placed on it and the sweeper retires it.
+func (e *ecsEC2Runtime) retireUnusedReplacement(ctx context.Context, newID, volID string) {
+	defer e.unclaim(ctx, volID)
+	if holder, err := e.slotHolder(ctx, newID, volID); err != nil || holder != "" {
+		log.Printf("ecs-ec2: leaving the replacement slot %s alone (held by %q, %v)", newID, holder, err)
+		return
+	}
+	if err := e.terminateSlot(ctx, newID, "replacement for "+e.base.name+" not used"); err == nil {
+		return
+	}
+	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+		Resources: []string{newID},
+		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagSlotReplace), Value: aws.String(e.now().UTC().Format(time.RFC3339))}},
+	}); err != nil {
+		log.Printf("ecs-ec2: could not reserve the unused replacement slot %s either: %v", newID, err)
+	}
+}
+
+// adoptableReplacement reports whether id — the slot this home's last claim named — is a
+// replacement an earlier start launched and never used: a slot of this pool and class in
+// the home's AZ, not reserved, and holding nobody's home or claim but this one's.
+func (e *ecsEC2Runtime) adoptableReplacement(ctx context.Context, id, az, volID string) (running, ok bool) {
+	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{id}})
+	if err != nil {
+		return false, false
+	}
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			if ec2TagValue(inst.Tags, EC2TagPool) != e.pool.pool || ec2TagValue(inst.Tags, EC2TagRole) != ec2RoleSlot ||
+				slotReserved(inst) || string(inst.InstanceType) != e.instanceType || inst.State == nil ||
+				inst.Placement == nil || aws.ToString(inst.Placement.AvailabilityZone) != az {
+				return false, false
+			}
+			switch inst.State.Name {
+			case ec2types.InstanceStateNamePending, ec2types.InstanceStateNameRunning, ec2types.InstanceStateNameStopped:
+			default:
+				return false, false
+			}
+			if holder, err := e.slotHolder(ctx, id, volID); err != nil || holder != "" {
+				return false, false
+			}
+			return inst.State.Name != ec2types.InstanceStateNameStopped, true
+		}
+	}
+	return false, false
+}
+
+// slotNowReserved re-reads a placement candidate's reservation immediately before and after
+// the attach. Candidate lists are read earlier, so a reservation can land in between.
+//
+// Why two reads close the race: ReserveSlotReplacement writes its tag and only THEN reads who
+// holds the slot. A placement whose second read missed the tag attached and claimed before
+// the tag was written, so the reservation's own read sees that home, names it in the audit
+// log, and it moves at its next Start. Either the placement sees the reservation, or the
+// reservation sees the placement. An unreadable answer counts as reserved: the cost is one
+// candidate skipped, the alternative a member placed on a box an operator wants gone.
+func (e *ecsEC2Runtime) slotNowReserved(ctx context.Context, id string) bool {
+	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{id}})
+	if err != nil {
+		return true
+	}
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			return slotReserved(inst)
+		}
+	}
+	return true
+}
+
+// backOffReservedSlot takes a home off a slot it was just attached to — before anything was
+// mounted — because the slot turned out to be reserved.
+func (e *ecsEC2Runtime) backOffReservedSlot(ctx context.Context, volID, instID string) error {
+	log.Printf("ecs-ec2 start: slot %s was reserved for replacement while %s was being placed on it; stepping off", instID, volID)
+	if _, err := e.ec2.DetachVolume(ctx, &ec2.DetachVolumeInput{VolumeId: aws.String(volID), InstanceId: aws.String(instID)}); err != nil {
+		e.unclaim(ctx, volID)
+		return fmt.Errorf("detach %s from the reserved slot %s: %w", volID, instID, err)
+	}
+	err := e.waitDetached(ctx, volID)
+	e.unclaim(ctx, volID)
+	return err
 }
 
 // slotHolder names the home attached to the instance, or placed on it under a live claim, or
-// "" when it holds none. It is the guard that makes terminating a box cost money rather than
-// somebody's files.
-func (e *ecsEC2Runtime) slotHolder(ctx context.Context, instanceID string) (string, error) {
+// "" when it holds none. except is a home whose own claim on the box does not count. It is
+// the guard that makes terminating a box cost money rather than somebody's files.
+func (e *ecsEC2Runtime) slotHolder(ctx context.Context, instanceID, except string) (string, error) {
 	vols, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
 		Filters: []ec2types.Filter{
 			tagFilter(EC2TagPool, e.pool.pool),
@@ -131,11 +250,12 @@ func (e *ecsEC2Runtime) slotHolder(ctx context.Context, instanceID string) (stri
 	}
 	for i := range vols.Volumes {
 		v := &vols.Volumes[i]
+		id := aws.ToString(v.VolumeId)
 		if attachedInstance(v) == instanceID {
-			return aws.ToString(v.VolumeId), nil
+			return id, nil
 		}
-		if ec2TagValue(v.Tags, EC2TagClaim) == instanceID && e.claimLive(v) {
-			return aws.ToString(v.VolumeId), nil
+		if id != except && ec2TagValue(v.Tags, EC2TagClaim) == instanceID && e.claimLive(v) {
+			return id, nil
 		}
 	}
 	return "", nil
@@ -207,8 +327,10 @@ func (f *ecsEC2Factory) launchTemplateLatest(ctx context.Context) (ec2LaunchTemp
 }
 
 // slotTemplateOutdated compares a slot's launch template stamp with the template's $Latest.
-// known=false when either side cannot be read; such a slot is never called outdated, so the
-// bulk reservation cannot sweep up boxes nobody can account for.
+// known=false when either side cannot be read — a missing template id, a version that is not
+// a positive integer — and such a slot is never called outdated, so the bulk reservation
+// cannot sweep up boxes nobody can account for. Both halves of the stamp are validated before
+// either is compared.
 //
 //   - a slot launched from a DIFFERENT template (the pool stack replaced it) is outdated:
 //     a version number means nothing across templates;
@@ -216,15 +338,16 @@ func (f *ecsEC2Factory) launchTemplateLatest(ctx context.Context) (ec2LaunchTemp
 //     launches with $Latest, so that is what a new slot gets.
 func slotTemplateOutdated(tags []ec2types.Tag, lt ec2LaunchTemplate) (version string, outdated, known bool) {
 	version = ec2TagValue(tags, ec2TagLaunchTemplateVersion)
-	if lt.id == "" || lt.latest <= 0 || version == "" {
+	id := ec2TagValue(tags, ec2TagLaunchTemplateID)
+	if lt.id == "" || lt.latest <= 0 || id == "" {
 		return version, false, false
-	}
-	if id := ec2TagValue(tags, ec2TagLaunchTemplateID); id != "" && id != lt.id {
-		return version, true, true
 	}
 	v, err := strconv.ParseInt(version, 10, 64)
-	if err != nil {
+	if err != nil || v <= 0 {
 		return version, false, false
+	}
+	if id != lt.id {
+		return version, true, true
 	}
 	return version, v < lt.latest, true
 }
@@ -289,13 +412,6 @@ func (f *ecsEC2Factory) ReserveSlotReplacement(ctx context.Context, instanceID s
 		}
 		return res, ErrSlotNotOutdated
 	}
-	probe := f.probeRuntime()
-	if holder, err := probe.slotHolder(ctx, instanceID); err == nil && holder != "" {
-		vols, err := f.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{holder}})
-		if err == nil && len(vols.Volumes) > 0 {
-			res.Workspace = ec2TagValue(vols.Volumes[0].Tags, EC2TagWorkspace)
-		}
-	}
 	if reserve {
 		_, err = f.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
 			Resources: []string{instanceID},
@@ -309,6 +425,16 @@ func (f *ecsEC2Factory) ReserveSlotReplacement(ctx context.Context, instanceID s
 	}
 	if err != nil {
 		return res, err
+	}
+	// Read the occupant AFTER the write, never before: a placement that attached before the
+	// tag existed is then seen here and named in the audit log, which is the other half of
+	// slotNowReserved's argument.
+	probe := f.probeRuntime()
+	if holder, err := probe.slotHolder(ctx, instanceID, ""); err == nil && holder != "" {
+		vols, err := f.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{holder}})
+		if err == nil && len(vols.Volumes) > 0 {
+			res.Workspace = ec2TagValue(vols.Volumes[0].Tags, EC2TagWorkspace)
+		}
 	}
 	res.Reserved = reserve
 	// The member's badge reads through a one-minute memo; a reservation just made should not

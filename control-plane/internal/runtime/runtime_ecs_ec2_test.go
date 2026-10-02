@@ -81,6 +81,11 @@ type fakeEC2 struct {
 	// ltLatest is the slot launch template's $Latest version number; 0 makes
 	// DescribeLaunchTemplates fail, the way it does for a role without the permission.
 	ltLatest int64
+	// afterDescribeVolumes / onAttach run after the call has answered and the fake's lock is
+	// released, so a test can change the world between two reads of a placement — the way
+	// an operator's reservation lands while a Start is under way.
+	afterDescribeVolumes func()
+	onAttach             func(instID string)
 }
 
 func newFakeEC2() *fakeEC2 {
@@ -228,6 +233,9 @@ func filterMatch(filters []ec2types.Filter, get func(name string) []string) bool
 }
 
 func (f *fakeEC2) DescribeVolumes(_ context.Context, in *ec2.DescribeVolumesInput, _ ...func(*ec2.Options)) (*ec2.DescribeVolumesOutput, error) {
+	if hook := f.afterDescribeVolumes; hook != nil {
+		defer hook()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.describeVolumesErr != nil {
@@ -450,6 +458,9 @@ func (f *fakeEC2) DeleteSnapshot(_ context.Context, in *ec2.DeleteSnapshotInput,
 }
 
 func (f *fakeEC2) AttachVolume(_ context.Context, in *ec2.AttachVolumeInput, _ ...func(*ec2.Options)) (*ec2.AttachVolumeOutput, error) {
+	if hook := f.onAttach; hook != nil {
+		defer hook(aws.ToString(in.InstanceId))
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	inst := aws.ToString(in.InstanceId)
@@ -601,6 +612,13 @@ func (f *fakeEC2) RunInstances(_ context.Context, in *ec2.RunInstancesInput, _ .
 		f.instances[id].Tags = []ec2types.Tag{
 			{Key: aws.String(ec2TagLaunchTemplateID), Value: lt.LaunchTemplateId},
 			{Key: aws.String(ec2TagLaunchTemplateVersion), Value: aws.String(strconv.FormatInt(f.ltLatest, 10))},
+		}
+	}
+	// The request's own tags land on the instance too — af-pool / af-role among them — so a
+	// new slot counts toward poolSize and shows up as a free slot, as on EC2.
+	for _, ts := range in.TagSpecifications {
+		if ts.ResourceType == ec2types.ResourceTypeInstance {
+			f.instances[id].Tags = append(f.instances[id].Tags, ts.Tags...)
 		}
 	}
 	f.ranAMI = append(f.ranAMI, aws.ToString(in.ImageId))

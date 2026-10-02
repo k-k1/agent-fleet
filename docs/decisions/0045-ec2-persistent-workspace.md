@@ -1554,15 +1554,21 @@ migration tool: every stopped workspace then pays a new slot and loses the slot'
   fits the existing `Ec2TagPoolResources` statement; the only IAM change is `ec2:DescribeLaunchTemplates`.
 - **Act at the next Start, as decision 32 does.** A reserved slot of a running workspace is untouched. On Start,
   `placeHome` launches a new slot of the workspace's class in the home's AZ **first** — so a failed launch
-  (capacity, quota) fails the Start with the reason, leaves the home where it was and keeps the mark — then
-  releases the home with `releaseSlot` (unmount before detach, refused while a task runs), terminates the old
-  instance after re-reading that nothing holds it, and claims the home for the new slot. **It never falls back
-  to the reserved slot**: the usual reason for a reservation is security. The reserved slot does not count
-  against the cap during the swap.
+  (capacity, quota) fails the Start with the reason, leaves the home where it was and keeps the mark — and
+  **claims the home for it at once**, so no other Start attaches there while this one waits. Then it releases
+  the home with `releaseSlot` (unmount before detach, refused while a task runs) and confirms it is detached,
+  and terminates the old instance after re-reading that nothing holds it. **It never falls back to the
+  reserved slot**: the usual reason for a reservation is security. The reserved slot does not count against
+  the cap during the swap. If the release fails, the new slot — holding nothing but that claim — is terminated
+  before the claim is dropped, so the pool is back under its cap and the next Start can try again; a new slot
+  left by a CP that died mid-way is found through the home's claim and reused rather than launched again.
 - **A reserved slot takes nobody new.** `slotsOfMyType` drops it, so neither a free-slot placement nor an
-  eviction lands on it; `makeRoom` treats a reserved slot of the right size like one of the wrong size; and the
+  eviction picks it; `makeRoom` treats a reserved slot of the right size like one of the wrong size; and the
   sweeper terminates a free reserved slot with no grace, behind its usual fences (fresh occupancy, ECS tasks,
-  task ENIs), even with both timers off.
+  task ENIs), even with both timers off. Because candidate lists are read before the attach, placement re-reads
+  the reservation just before the attach and again after the claim, stepping off a slot reserved in between;
+  the reservation endpoint reads the occupant only after writing its tag. So either the placement sees the
+  reservation, or the reservation sees (and audits) the placement, which then moves at its next Start.
 - **Rejected: terminate first, then launch.** Then a launch that fails leaves the home attached to nothing and
   the mark gone with the instance, and "the Start fails and the mark stays" cannot hold.
 - **Not done here:** retiring a free or stopped slot on an operator's word right away. A reservation already
