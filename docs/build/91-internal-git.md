@@ -79,6 +79,16 @@ The decision and the options it rejected are ADR 0010. What the shape rests on:
   from the workspaces. Every tenant, the default one included, gets a `<slug>` directory
   here — unlike workspace homes, where the default tenant's are flat. On disk the CP uses
   the token tenant's canonical slug, never the URL's spelling of it.
+- `git` is one entry in the flat namespace directly under `WS_DATA`, beside the default
+  tenant's member homes (`<WS_DATA>/<user_key>`), the other tenants' directories
+  (`<WS_DATA>/<slug>/`) and the CP's own files. `control-plane/internal/datalayout` lists
+  every such name; the store refuses a new tenant slug that is reserved or equals a
+  default-tenant member's key, and a new default-tenant membership whose key is reserved or
+  equals a tenant slug (#1214). Already-stored collisions are only logged at start. A test
+  in the module root fails on a literal joined onto `dataRoot` and on a `$WS_DATA/<name>` in
+  `deploy/` that is not reserved. The ECS profiles are not affected: their homes are EFS
+  access points keyed by membership id (`/home/<id>`, `/claude-config/<id>`,
+  `/home-keep/<id>`), not by slug or key.
 - **The database is the truth for what is listed and served, not a directory scan.** The
   `git_repo` table (one row per tenant and name, with the default branch and the creating
   membership) gates the smart-HTTP handler as well as the list. The GC job is the

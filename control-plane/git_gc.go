@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/datalayout"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -73,7 +74,7 @@ func (g *gitGC) run(ctx context.Context) {
 // sweep runs maintenance on every bare under the git tree. Errors are logged and
 // skipped so one bad repo never stalls the rest.
 func (g *gitGC) sweep(ctx context.Context) {
-	root := filepath.Join(g.dataRoot, "git")
+	root := filepath.Join(g.dataRoot, datalayout.GitDir)
 	tenants, err := os.ReadDir(root)
 	if err != nil {
 		return // no git tree yet (nothing created) — nothing to do

@@ -301,6 +301,17 @@ is needed, and with `AF_PROVISION=auto`, members inside the allowlist can start 
 logging in. The browser operations themselves — member management, limits, auditing — are
 covered by the admin volume for administrators.
 
+**Names a tenant slug cannot take.** A tenant's directory and a default-tenant member's home
+sit side by side directly under the data directory (`WS_DATA`), next to the Control Plane's own
+files. Creating a tenant is therefore refused when its slug is one of the names the deployment
+uses there (`git`, `shared`, `caddy`, `drawio-stencils`, `guide-staged`, and the database and
+key files) — `tenant_slug_reserved` — or equals the user key of an existing default-tenant member
+(the sanitized email, e.g. `alice-example-com`) — `tenant_slug_conflict`. The reverse is refused
+too: a person whose user key equals a tenant's slug or a reserved name cannot be added to the
+default tenant (`user_key_conflict` / `user_key_reserved`); invite them into another tenant
+instead. Names stored before this check are left alone and logged at Control Plane start as
+`data root name collision`.
+
 After starting their own Workspace, each member **logs in with their own Claude seat** from the
 Console (BYO). The operator never sets up members' Claude credentials on their behalf.
 

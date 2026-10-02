@@ -11,6 +11,13 @@ const (
 	// audit log first (store.BeginIrreversible). internal/tenantsrv emits the same literal.
 	errCodeAuditUnavailable = "audit_unavailable"
 
+	// A new default-tenant membership refused because its user key would share a
+	// directory under the data root (store.ErrDataRootNameReserved / ...Taken).
+	// internal/tenantsrv emits the same literals, and tenant_slug_reserved /
+	// tenant_slug_conflict for the tenant side.
+	errCodeUserKeyReserved = "user_key_reserved"
+	errCodeUserKeyConflict = "user_key_conflict"
+
 	// File editor API (docs/log/44 Phase 1). The CP validates the public envelope
 	// before proxying and preserves the Agent's matching stable codes.
 	errCodeFSBadPath            = "bad_path"

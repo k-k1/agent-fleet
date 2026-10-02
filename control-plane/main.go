@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
+	"github.com/k-k1/agent-fleet/control-plane/internal/datalayout"
 	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -147,7 +148,7 @@ func main() {
 	// default tenant without recreating containers.
 	// Postgres (AF_DATABASE_URL) is the RDS backend for a redeployable ECS CP whose
 	// state must outlive task replacement (P3-7 stage 3a); SQLite is the on-prem default.
-	dbPath := envx.Or("AF_DB", filepath.Join(mgr.dataRoot, "control-plane.db"))
+	dbPath := envx.Or("AF_DB", filepath.Join(mgr.dataRoot, datalayout.DBFile))
 	var st *store.SQL
 	var err error
 	if dburl := store.PGURLFromEnv(); dburl != "" {

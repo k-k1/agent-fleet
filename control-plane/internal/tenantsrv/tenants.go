@@ -653,10 +653,23 @@ func (a Admin) CreateTenant(w http.ResponseWriter, r *http.Request, _ store.Iden
 	}
 	t, err := a.cp.Store().CreateTenant(r.Context(), slug, name)
 	if err != nil {
-		writeAPIErr(w, internalErr(err))
+		writeAPIErr(w, dataRootNameErr(err, http.StatusBadRequest, "tenant_slug_reserved", "tenant_slug_conflict"))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"slug": t.Slug, "name": t.Name})
+}
+
+// dataRootNameErr maps the store's data-root name refusals (store_dataroot.go) to API
+// errors; a name another party already holds is always a conflict. Anything else stays
+// internal.
+func dataRootNameErr(err error, reservedStatus int, reservedCode, takenCode string) *APIError {
+	switch {
+	case errors.Is(err, store.ErrDataRootNameReserved):
+		return &APIError{reservedStatus, reservedCode, err.Error()}
+	case errors.Is(err, store.ErrDataRootNameTaken):
+		return &APIError{http.StatusConflict, takenCode, err.Error()}
+	}
+	return internalErr(err)
 }
 
 // AddMembership (POST /api/admin/memberships {email|user_key, tenant_slug, role}).
@@ -706,7 +719,7 @@ func (a Admin) AddMembership(w http.ResponseWriter, r *http.Request) {
 	}
 	mem, err := a.cp.Store().EnsureMembership(r.Context(), ident.ID, t.ID, role)
 	if err != nil {
-		writeAPIErr(w, internalErr(err))
+		writeAPIErr(w, dataRootNameErr(err, http.StatusConflict, "user_key_reserved", "user_key_conflict"))
 		return
 	}
 	// ★ Re-inviting somebody who was removed puts them back. EnsureMembership

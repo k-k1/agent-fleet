@@ -992,6 +992,9 @@ type TenantStore interface {
 	GetTenantBySlug(ctx context.Context, slug string) (Tenant, bool, error)
 	SetTenantLimits(ctx context.Context, tenantID, limitsJSON string) error
 	ListTenants(ctx context.Context) ([]Tenant, error)
+	// DataRootCollisions lists stored tenant slugs and default-tenant user keys that
+	// already share a directory under the data root (store_dataroot.go). Report-only.
+	DataRootCollisions(ctx context.Context) ([]string, error)
 	// DeleteTenant removes an EMPTY tenant (its leftover inactive memberships, its
 	// configuration rows, and the row itself). Irreversible, super_admin only, and the
 	// emptiness is proved by the handler — see deleteTenant in tenants.go for the five

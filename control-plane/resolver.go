@@ -168,7 +168,7 @@ func (m *manager) membershipsFor(ctx context.Context, ident store.Identity) ([]s
 	}
 	if t, contested, ok := m.tenantLogin.autoJoinTenant(ctx, ident.Email); ok && !m.hasAnyMembershipRow(ctx, ident.ID, t.ID) {
 		if _, err := m.store.EnsureMembership(ctx, ident.ID, t.ID, "member"); err != nil {
-			return nil, internalErr(err)
+			return nil, membershipErr(err)
 		}
 		// The person now holds a membership, which is also an entry-gate term — the
 		// cached "no" for this address has to go (docs/log/61 §61.9.7).
@@ -198,7 +198,7 @@ func (m *manager) membershipsFor(ctx context.Context, ident store.Identity) ([]s
 		return nil, internalErr(err)
 	}
 	if _, err := m.store.EnsureMembership(ctx, ident.ID, t.ID, "member"); err != nil {
-		return nil, internalErr(err)
+		return nil, membershipErr(err)
 	}
 	m.tenantLogin.invalidate()
 	ms, err = m.store.ListMemberships(ctx, ident.ID)

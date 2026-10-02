@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"path/filepath"
 	"sync"
@@ -164,6 +165,18 @@ type apiError struct {
 
 func internalErr(err error) *apiError {
 	return &apiError{status: http.StatusInternalServerError, code: "internal", message: err.Error()}
+}
+
+// membershipErr is internalErr for an EnsureMembership failure, except the store's
+// data-root name refusals, which are a state an administrator has to resolve and say so.
+func membershipErr(err error) *apiError {
+	switch {
+	case errors.Is(err, store.ErrDataRootNameReserved):
+		return &apiError{status: http.StatusConflict, code: errCodeUserKeyReserved, message: err.Error()}
+	case errors.Is(err, store.ErrDataRootNameTaken):
+		return &apiError{status: http.StatusConflict, code: errCodeUserKeyConflict, message: err.Error()}
+	}
+	return internalErr(err)
 }
 
 // cachedRT memoizes a built runtime + its workspace record per membership.
