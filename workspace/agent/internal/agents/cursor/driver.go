@@ -89,6 +89,17 @@ func (managedDriver) Capabilities() agents.Capabilities {
 // creating/loading the cursor session when needed (Driver interface: start a new one if
 // there is none). This doubles as the shared procedure for reconciliation.
 func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
+	h, err := managedDriver{}.resume(m)
+	if err != nil {
+		return nil, err
+	}
+	// Peer messages a halt, a shutdown or a crash left held become the first turns (#1255).
+	agents.DeliverHeld(m.Name, h)
+	return h, nil
+}
+
+// resume is Resume without the held peer messages.
+func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	if m.Kind != session.KindCursor {
 		return nil, errors.New("cursor driver は cursor セッション専用です")
 	}

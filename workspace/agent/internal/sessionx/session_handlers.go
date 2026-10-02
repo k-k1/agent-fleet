@@ -137,6 +137,7 @@ func removeManagedLedger(m session.Meta) {
 	case session.KindMuse:
 		muse.RemoveLedger(m.Name)
 	}
+	agents.DropHeld(m.Name, "purged from the trash")
 }
 
 // HandleListSessions returns the live claude_* tmux sessions.
@@ -1448,6 +1449,7 @@ func HaltSession(m session.Meta) (session.Meta, error) { return haltSession(m, f
 func ForgetRuntime(m session.Meta) {
 	sid := session.UUID(m.Dir, m.Name)
 	dropManagedRuntime(m)
+	agents.DropHeld(m.Name, "moved to the trash")
 	status.Remove(sid)
 	status.RemoveExit(m.Name)
 	status.RemoveCarried(sid)
@@ -1615,6 +1617,8 @@ func ArchiveSession(m session.Meta) {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
 	dropManagedRuntime(m) // managed: drop the runtime handle instead of a pane
+	// A held peer message waits for the next start, and an archived session has none.
+	agents.DropHeld(name, "archived")
 	status.Remove(session.UUID(m.Dir, name))
 	status.RemoveExit(name)
 	if wasAlive {
@@ -1723,6 +1727,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
 	dropManagedRuntime(m) // managed: drop the runtime handle instead of a pane
+	agents.DropHeld(m.Name, "recreated: the old session is archived")
 	status.Remove(session.UUID(m.Dir, m.Name))
 	status.RemoveExit(m.Name)
 	if wasAlive {

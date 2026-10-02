@@ -665,8 +665,10 @@ one ("tell the session next door what we just did").
 - **They reach a stopped session** — it is resumed first, then the message is delivered.
 - **Delivery is confirmed; being read or acted on is not.** A reply is not guaranteed either.
   A **Managed** session that is in the middle of a turn gets the message as its next turn, once
-  the current one ends. Stopping that run does not throw the message away; stopping the session
-  or the workspace before then does.
+  the current one ends. Stopping that run does not throw the message away, and neither does
+  stopping the session or the workspace, or the Agent restarting: the message waits on disk and
+  becomes the session's first turn when it next starts, stamped with the time it was queued.
+  Archiving or deleting the session, or switching it to Terminal (CLI), drops it.
 - **Only plain text travels.** No conversation history, no files. To pass the context itself,
   use the handoff or the branch above.
 - **Raw shell sessions (shell / ssm) can neither send nor receive**, because the text sent to
