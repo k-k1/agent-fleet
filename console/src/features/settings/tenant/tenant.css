@@ -628,6 +628,12 @@
   color: var(--muted);
   border-bottom: 1px solid var(--border);
   padding: 4px 8px 6px;
+}
+
+/* The pool's headers are short codes that read wrong when broken. The engine-access matrix's
+   are long localized role names and must wrap, or the table overflows a phone-width dialog
+   (measured at 375px, English: 346px of table in 287px). */
+.pool-table th {
   white-space: nowrap;
 }
 
