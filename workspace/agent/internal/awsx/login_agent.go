@@ -92,6 +92,24 @@ var loginAttempts = struct {
 	current map[string]*loginAttempt // by sso-session
 }{byID: map[string]*loginAttempt{}, current: map[string]*loginAttempt{}}
 
+// sessionGates serialise, per sso-session, the start of a login against a logout taking the
+// old token off disk. Never held across a network call.
+var sessionGates = struct {
+	sync.Mutex
+	m map[string]*sync.Mutex
+}{m: map[string]*sync.Mutex{}}
+
+func sessionGate(ssoSession string) *sync.Mutex {
+	sessionGates.Lock()
+	defer sessionGates.Unlock()
+	g := sessionGates.m[ssoSession]
+	if g == nil {
+		g = &sync.Mutex{}
+		sessionGates.m[ssoSession] = g
+	}
+	return g
+}
+
 // liveAttemptFor reports whether an attempt for that request is still running: the
 // request must not expire under it. A login started from a Settings row does not count;
 // it would otherwise keep any request for the profile up for its whole 15 minutes.
@@ -558,6 +576,11 @@ func newAttemptID() string {
 // Settings says, detached from every pane. requestID is "" for a login started from
 // Settings.
 func startLoginAttempt(bin, ssoSession, requestID string, sp Profile) (*loginAttempt, error) {
+	// A logout of this session is taking the old token off disk; a CLI started now could
+	// open that file before it goes and write the new token into the deleted inode.
+	g := sessionGate(ssoSession)
+	g.Lock()
+	defer g.Unlock()
 	ini, err := ssoOnlyConfig(ssoInfo{Session: ssoSession, Scopes: "sso:account:access", StartURL: sp.StartURL,
 		Region: sp.SSORegion, Account: sp.AccountID, Role: sp.RoleName})
 	if err != nil {

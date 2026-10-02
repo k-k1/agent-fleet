@@ -431,3 +431,94 @@ func TestTakeOffTokenPutsBackANewerLogin(t *testing.T) {
 		t.Fatal("the side file stayed")
 	}
 }
+
+// A still newer login written while the put-back is decided must not be replaced by it.
+func TestTakeOffTokenNeverReplacesAStillNewerLogin(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token.json")
+	os.WriteFile(path, []byte("newer"), 0o600)
+	beforePutBack = func() { os.WriteFile(path, []byte("newest"), 0o600) }
+	t.Cleanup(func() { beforePutBack = func() {} })
+	if err := takeOffToken(path, []byte("old")); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != "newest" {
+		t.Fatalf("the newest login was replaced: %q", b)
+	}
+	if _, err := os.Stat(path + ".af-logout"); !os.IsNotExist(err) {
+		t.Fatal("the side file stayed")
+	}
+}
+
+// botocore rewrites the token file in place (open, truncate, write), so a login CLI that
+// opened it before the logout took it off would write into the deleted file. No login CLI
+// starts while a logout holds the gate.
+func TestALoginDoesNotStartWhileALogoutTakesTheTokenOff(t *testing.T) {
+	bin, state := fakeAWS(t, ssoProfile)
+	exportedProd(t)
+	old := LoginAWSBin
+	LoginAWSBin = func() (string, error) { return bin, nil }
+	t.Cleanup(func() { LoginAWSBin = old })
+	os.WriteFile(filepath.Join(state, "onLogin"), []byte("sleep 5\n"), 0o600)
+
+	g := sessionGate("af-prod")
+	g.Lock()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- profileStart("prod") }()
+	select {
+	case <-done:
+		g.Unlock()
+		t.Fatal("a login started while a logout held the gate")
+	case <-time.After(150 * time.Millisecond):
+	}
+	if n := cliCalls(state); n != 0 {
+		g.Unlock()
+		t.Fatalf("aws was started %d times", n)
+	}
+	g.Unlock()
+	rec := <-done
+	if rec.Code != http.StatusOK {
+		t.Fatalf("start = %d %s", rec.Code, rec.Body.String())
+	}
+	loginAttempts.Lock()
+	cur := loginAttempts.current["af-prod"]
+	loginAttempts.Unlock()
+	cur.end(attemptFailed, "")
+	<-cur.done
+}
+
+// The logout holds the gate until the old token is off disk, and not while AWS answers.
+func TestProfileLogoutHoldsTheGateOnlyUntilTheTokenIsOff(t *testing.T) {
+	mine, _ := logoutFixture(t)
+	gateFree := make(chan bool, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		g := sessionGate("af-prod")
+		free := g.TryLock()
+		if free {
+			g.Unlock()
+		}
+		gateFree <- free
+	}))
+	t.Cleanup(srv.Close)
+	old := ssoPortalURL
+	ssoPortalURL = func(string) string { return srv.URL }
+	t.Cleanup(func() { ssoPortalURL = old })
+
+	g := sessionGate("af-prod")
+	g.Lock()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		profileLogout(t, "prod")
+	}()
+	time.Sleep(150 * time.Millisecond)
+	if _, err := os.Stat(mine[0]); err != nil {
+		g.Unlock()
+		t.Fatal("the token was taken off without the gate")
+	}
+	g.Unlock()
+	<-done
+	if !<-gateFree {
+		t.Fatal("the gate was held during the revoke")
+	}
+	assertGone(t, mine, nil)
+}

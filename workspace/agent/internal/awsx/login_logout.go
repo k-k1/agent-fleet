@@ -183,8 +183,12 @@ func endLoginFor(ssoSession string) {
 	}
 }
 
+// beforePutBack lets a test land a login between the read and the put-back.
+var beforePutBack = func() {}
+
 // takeOffToken deletes the token file at path if it still holds snap. A login that landed
-// since snap was read wrote a newer token, which is put back.
+// since snap was read wrote a newer token, which is put back unless a newer one still is
+// already there.
 func takeOffToken(path string, snap []byte) error {
 	tmp := path + ".af-logout"
 	if err := os.Rename(path, tmp); err != nil {
@@ -194,9 +198,11 @@ func takeOffToken(path string, snap []byte) error {
 		return err
 	}
 	b, err := os.ReadFile(tmp)
+	beforePutBack()
 	if err == nil && !bytes.Equal(b, snap) {
-		if _, serr := os.Stat(path); os.IsNotExist(serr) {
-			return os.Rename(tmp, path)
+		// Link, not rename: a still newer token written at path meanwhile must not be replaced.
+		if lerr := os.Link(tmp, path); lerr != nil && !os.IsExist(lerr) {
+			return lerr
 		}
 	}
 	return os.Remove(tmp)
@@ -220,6 +226,16 @@ func HandleProfileLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ssoSession := "af-" + sp.Name
+	// From ending the running login until the old token is off disk, no new login starts
+	// (sessionGate); the revoke after that runs without it.
+	gate := sessionGate(ssoSession)
+	gate.Lock()
+	gateHeld := true
+	defer func() {
+		if gateHeld {
+			gate.Unlock()
+		}
+	}()
 	endLoginFor(ssoSession)
 	// Held across the deletes and the revoke: an af-aws-exec run already turning the token
 	// into role credentials finishes first, and the next one finds nothing. Without the lock
@@ -255,6 +271,10 @@ func HandleProfileLogout(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "remove_failed", err.Error())
 			return
 		}
+	}
+	gate.Unlock()
+	gateHeld = false
+	if !out.NoToken {
 		if err := revokeSSOToken(snap, sp.SSORegion); err != nil {
 			out.Message = err.Error()
 		} else {
