@@ -24,7 +24,8 @@ Notes:
   in use).
 - `services/` files are named after the settings card's provider id
   (`features/settings/parts/providerCard`), not after the upstream slug — `cloudwatch.svg` is
-  simple-icons' `amazoncloudwatch`, `aws.svg` is `amazonwebservices`. That is what lets a card
+  simple-icons' `amazoncloudwatch`, `aws.svg` is `amazonwebservices`, `gcp.svg` is `googlecloud`
+  (the Settings > Google Cloud section's id; drawn by the WS bar's Google Cloud badge). That is what lets a card
   find its own icon without a lookup table.
 - `svn` has no icon on purpose. The Apache Subversion mark is three diagonal stripes that
   carry nothing at 16px, where the "sv" monogram at least names the thing; compared at 1:1 in

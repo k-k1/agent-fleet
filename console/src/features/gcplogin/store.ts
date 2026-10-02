@@ -25,6 +25,24 @@ export interface GcpLoginRequest {
   lastAt: string;
 }
 
+/** A Settings profile and its login, as GET /api/gcp-login/profiles lists it (the WS bar badge). */
+export interface GcpProfileState {
+  name: string;
+  label: string;
+  project: string;
+  /** The account the profile's gcloud configuration selects; "" before a login chose one. */
+  account: string;
+  /** "signed_in" | "none". The Agent cannot tell a login Google revoked from a good one
+   *  until something uses it, so "signed_in" means "a user credential is stored". */
+  state: string;
+}
+
+/** The profile login modal the badge opened: force is "Log in again". */
+export interface GcpProfileModal {
+  profile: { name: string; label: string; project: string; account: string };
+  force: boolean;
+}
+
 interface GcpLoginState {
   requests: GcpLoginRequest[];
   /** Requests whose toast the member closed in this tab; the next reload shows them again. */
@@ -35,6 +53,19 @@ interface GcpLoginState {
   hide(id: string): void;
   open(id: string): void;
   close(): void;
+  /** Every Settings profile the Agent last listed; null until it has answered once. */
+  profiles: GcpProfileState[] | null;
+  /** Asks the Agent for the profiles' login states; a failed ask keeps the old list. */
+  refreshProfiles(): Promise<void>;
+  /**
+   * Settings changed a profile. The Agent reads Settings on its own pull, every five minutes
+   * (cloudbridge.PollInterval), and its profile list is that pull's, so this asks now and
+   * once more after the next pull is due; a later change re-arms the one wait.
+   */
+  settingsChanged(): void;
+  profileModal: GcpProfileModal | null;
+  showProfile(m: GcpProfileModal): void;
+  closeProfile(): void;
 }
 
 function asRequest(raw: unknown): GcpLoginRequest | null {
@@ -53,7 +84,11 @@ function asRequest(raw: unknown): GcpLoginRequest | null {
   };
 }
 
-export const useGcpLoginStore = create<GcpLoginState>((set) => ({
+// The Agent's Settings pull interval plus slack for the pull itself.
+export const SETTINGS_SYNC_MS = 5 * 60_000 + 15_000;
+let syncTimer: ReturnType<typeof setTimeout> | undefined;
+
+export const useGcpLoginStore = create<GcpLoginState>((set, get) => ({
   requests: [],
   hidden: {},
   modal: null,
@@ -75,6 +110,41 @@ export const useGcpLoginStore = create<GcpLoginState>((set) => ({
   },
   close() {
     set({ modal: null });
+  },
+  profiles: null,
+  async refreshProfiles() {
+    let d: { profiles?: unknown[]; error?: unknown } | null = null;
+    try {
+      d = await api("api/gcp-login/profiles");
+    } catch {
+      return;
+    }
+    if (!d || d.error || !Array.isArray(d.profiles)) return;
+    const profiles: GcpProfileState[] = [];
+    for (const raw of d.profiles) {
+      const p = raw as Record<string, unknown>;
+      if (typeof p?.name !== "string" || !p.name) continue;
+      profiles.push({
+        name: p.name,
+        label: String(p.label ?? ""),
+        project: String(p.project ?? ""),
+        account: String(p.account ?? ""),
+        state: String(p.state ?? ""),
+      });
+    }
+    set({ profiles });
+  },
+  settingsChanged() {
+    void get().refreshProfiles();
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => void get().refreshProfiles(), SETTINGS_SYNC_MS);
+  },
+  profileModal: null,
+  showProfile(m) {
+    set({ profileModal: m });
+  },
+  closeProfile() {
+    set({ profileModal: null });
   },
 }));
 

@@ -100,6 +100,12 @@ connection. Not this deployment's engine."** together with the model the last ch
 
 ## Other badges
 
+- **The AWS and Google Cloud badges** in the WS bar (the AWS mark, the Google mark) — your Settings profiles' logins,
+  shown only while the workspace runs and you have such profiles. The badge names the one logged-in profile, or
+  counts them ("1/3"); green when something is logged in, plain when nothing is, amber when an AWS login ends soon
+  or an agent waits for a Google Cloud login. Press it for each profile's state and its **Log in** button (AWS:
+  **Log out** too; Google Cloud: **Log in again**). Neither picks a default profile: each command names one
+  ([10](10-integrations.md#the-google-cloud-badge-in-the-ws-bar)).
 - Colored `1`, `2`… — the number of the pane it is shown in. Press to jump to that pane.
 - "Untracked", "Added", "Modified", "Renamed", "Deleted" — the file's Git change type.
 - The number on an assistant row — the conversation's message count.
