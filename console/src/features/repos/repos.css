@@ -472,8 +472,14 @@
   background: color-mix(in srgb, var(--warn) 14%, transparent);
 }
 .repo-chip.ab {
+  gap: 4px;
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+/* The UI font is monospace, which centres the thin arrow in a full cell; pull the count in so
+   the arrow reads as part of its number rather than a separate word. */
+.repo-chip.ab .ab-arrow {
+  margin-right: -0.15em;
 }
 /* origin is ahead and fast-forwards cleanly (behind only) */
 .repo-chip.ab.ff {

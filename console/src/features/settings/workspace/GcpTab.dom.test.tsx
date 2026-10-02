@@ -69,6 +69,37 @@ async function type(el: HTMLInputElement, value: string): Promise<void> {
   });
 }
 
+async function choose(el: HTMLSelectElement, value: string): Promise<void> {
+  await act(async () => {
+    el.value = value;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
+// [region, zone] pickers of the open form.
+function pickers(): [HTMLSelectElement, HTMLSelectElement] {
+  const [region, zone] = host.querySelectorAll<HTMLSelectElement>(".ssm-frm .region-select select");
+  return [region, zone];
+}
+
+function otherInputs(): HTMLInputElement[] {
+  return Array.from(host.querySelectorAll<HTMLInputElement>(".ssm-frm .region-select input"));
+}
+
+const optionValues = (el: HTMLSelectElement) => Array.from(el.options, (o) => o.value);
+
+function lastBody(): Json {
+  return rawJSON.mock.calls.at(-1)![2] as Json;
+}
+
+async function save(): Promise<void> {
+  await click(host.querySelector<HTMLButtonElement>(".ssm-frm-foot button.primary")!);
+}
+
+async function edit(index: number): Promise<void> {
+  await click(button(t("ssm.edit"), host.querySelectorAll(".ssm-item")[index]));
+}
+
 async function click(el: Element): Promise<void> {
   await act(async () => {
     (el as HTMLElement).click();
@@ -119,7 +150,7 @@ describe("GcpTab", () => {
     expect(save().disabled).toBe(true);
     await type(input("prod"), "  Dev ");
     await type(input("my-project-123"), "my-dev-1");
-    await type(input("asia-northeast1"), "asia-northeast1");
+    await choose(pickers()[0], "asia-northeast1");
     expect(save().disabled).toBe(false);
     await click(save());
     expect(rawJSON).toHaveBeenCalledTimes(1);
@@ -152,5 +183,99 @@ describe("GcpTab", () => {
 
     await click(button(t("common.delete"), host.querySelectorAll(".ssm-item")[1]));
     expect(raw).toHaveBeenCalledWith("api/gcp/profiles/g2", { method: "DELETE" });
+  });
+
+  it("preselects a listed region and zone and offers only the region's zones", async () => {
+    await mount();
+    await edit(0);
+    const [region, zone] = pickers();
+    expect(region.value).toBe("asia-northeast1");
+    expect(zone.value).toBe("asia-northeast1-a");
+    expect(otherInputs()).toHaveLength(0);
+    expect(region.selectedOptions[0].textContent).toBe(`asia-northeast1 — ${t("gcp.region.asia-northeast1")}`);
+    expect(optionValues(zone).slice(1, -1)).toEqual(["asia-northeast1-a", "asia-northeast1-b", "asia-northeast1-c"]);
+
+    // Suffixes are per region, not a fixed a b c.
+    await choose(region, "us-central1");
+    expect(optionValues(pickers()[1]).slice(1, -1)).toEqual(["us-central1-a", "us-central1-b", "us-central1-c", "us-central1-f"]);
+    await choose(pickers()[0], "europe-west1");
+    expect(optionValues(pickers()[1]).slice(1, -1)).toEqual(["europe-west1-b", "europe-west1-c", "europe-west1-d"]);
+
+    // No region: nothing but "(not set)" and Other.
+    await choose(pickers()[0], "");
+    expect(pickers()[1].options).toHaveLength(2);
+    expect(pickers()[1].options[0].value).toBe("");
+  });
+
+  it("keeps an unlisted region and zone in Other and saves them unchanged", async () => {
+    rows = [{ ...prod, region: "us-east7", zone: "us-east7-x" }];
+    await mount();
+    await edit(0);
+    const [region, zone] = pickers();
+    expect(region.value).toBe("*other*");
+    expect(zone.value).toBe("*other*");
+    expect(otherInputs().map((i) => i.value)).toEqual(["us-east7", "us-east7-x"]);
+    await save();
+    expect(lastBody()).toMatchObject({ region: "us-east7", zone: "us-east7-x" });
+  });
+
+  it("keeps a stored zone outside the stored region as stored", async () => {
+    rows = [{ ...prod, region: "asia-northeast1", zone: "us-central1-f" }];
+    await mount();
+    await edit(0);
+    expect(pickers()[0].value).toBe("asia-northeast1");
+    expect(pickers()[1].value).toBe("*other*");
+    await save();
+    expect(lastBody()).toMatchObject({ region: "asia-northeast1", zone: "us-central1-f" });
+  });
+
+  it("saves (not set) as an empty string", async () => {
+    await mount();
+    await edit(0);
+    await choose(pickers()[1], "");
+    await choose(pickers()[0], "");
+    await save();
+    expect(lastBody()).toMatchObject({ region: "", zone: "" });
+  });
+
+  it("clears a zone picked in this edit when the region no longer has it, never the stored one", async () => {
+    await mount();
+    await edit(0);
+    // The stored zone survives a region change: it moves to Other with its value.
+    await choose(pickers()[0], "us-central1");
+    expect(pickers()[1].value).toBe("*other*");
+    expect(otherInputs().map((i) => i.value)).toEqual(["asia-northeast1-a"]);
+
+    // A zone picked from the list goes once its region no longer offers it.
+    await choose(pickers()[1], "us-central1-f");
+    await choose(pickers()[0], "europe-west1");
+    expect(pickers()[1].value).toBe("");
+    expect(otherInputs()).toHaveLength(0);
+
+    // A pick in the current region is what gets saved.
+    await choose(pickers()[1], "europe-west1-d");
+    await save();
+    expect(lastBody()).toMatchObject({ region: "europe-west1", zone: "europe-west1-d" });
+  });
+
+  it("saves an empty zone right after a region change cleared a list-picked one", async () => {
+    await mount();
+    await edit(0);
+    await choose(pickers()[1], "asia-northeast1-b");
+    await choose(pickers()[0], "us-central1");
+    expect(pickers()[1].value).toBe("");
+    await save();
+    expect(lastBody()).toMatchObject({ region: "us-central1", zone: "" });
+  });
+
+  it("keeps a zone typed into Other across a region change, even a listed one", async () => {
+    await mount();
+    await edit(0);
+    await choose(pickers()[1], "*other*");
+    await type(otherInputs()[0], "asia-northeast1-b");
+    await choose(pickers()[0], "us-central1");
+    expect(otherInputs().map((i) => i.value)).toEqual(["asia-northeast1-b"]);
+    await save();
+    expect(lastBody()).toMatchObject({ region: "us-central1", zone: "asia-northeast1-b" });
   });
 });

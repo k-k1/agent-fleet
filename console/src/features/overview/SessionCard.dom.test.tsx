@@ -257,6 +257,59 @@ describe("SessionCard", () => {
     expect(openSessionFromList).not.toHaveBeenCalled();
   });
 
+  // #1449: the menu host stopped every keydown, and a React stopPropagation also stops the
+  // native event at the root, so Escape never reached the esc layers on the document.
+  it("Escape inside the menu closes it, while Enter and Space there do not open the session", async () => {
+    await render({});
+    await act(async () => host.querySelector<HTMLElement>(".ovw-menu-btn")!.click());
+    const item = document.querySelector<HTMLElement>(".ui-menu .ui-menu-item")!;
+    for (const key of ["Enter", " "]) {
+      await act(async () => {
+        item.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      });
+    }
+    expect(openSessionFromList).not.toHaveBeenCalled();
+    let escaped = false;
+    const onDocumentKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") escaped = true;
+    };
+    document.addEventListener("keydown", onDocumentKey);
+    await act(async () => {
+      item.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    document.removeEventListener("keydown", onDocumentKey);
+    expect(escaped).toBe(true);
+    expect(menuItems()).toEqual([]);
+  });
+
+  it("Escape on the ⋯ button closes the menu it opened", async () => {
+    await render({});
+    const btn = host.querySelector<HTMLElement>(".ovw-menu-btn")!;
+    await act(async () => btn.click());
+    expect(menuItems()).toContain(t("srow.stop"));
+    await act(async () => {
+      btn.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    expect(menuItems()).toEqual([]);
+  });
+
+  it("Escape inside a dialog the menu opened closes the dialog", async () => {
+    await render({});
+    await act(async () => host.querySelector<HTMLElement>(".ovw-menu-btn")!.click());
+    const handoff = [...document.querySelectorAll<HTMLElement>(".ui-menu .ui-menu-item")].find(
+      (el) => el.textContent?.trim() === t("srow.handoff"),
+    );
+    expect(handoff).toBeTruthy();
+    await act(async () => handoff!.click());
+    const field = document.querySelector<HTMLElement>(".ui-modal textarea, .ui-modal input, .ui-modal button")!;
+    expect(field).toBeTruthy();
+    await act(async () => {
+      field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    expect(document.querySelector(".ui-modal")).toBeNull();
+    expect(openSessionFromList).not.toHaveBeenCalled();
+  });
+
   it("the Menu key on a focused card opens it too", async () => {
     await render({});
     await act(async () => {
