@@ -21,13 +21,24 @@ export const singlePaneLayout = (
   content: PaneContent,
   session: string | null,
   wrap: boolean | null = null,
+  mode: "split" | "tabs" = "split",
 ): Layout => ({
   version: 3,
-  mode: "split",
+  mode,
   cols: [{ id: "c0", rowRatio: 0.5, cells: [{ id: "g0", selectedViewId: "p0", views: [{ id: "p0", session, content, wrap }] }] }],
   colRatios: [1],
   activeCellId: "g0",
 });
+
+/** A one-cell layout re-labelled as `mode`, or null when it is not valid in that mode. A pop-out
+ * tab changes mode this way so it does not load the other profile, which would replace the pane
+ * it was popped out with. Split shows one view per cell (and normalizeStored drops the rest),
+ * so a cell with several tabs never becomes split. */
+export const relabelSingleCell = (l: Layout, mode: "split" | "tabs"): Layout | null => {
+  if (l.cols.length !== 1 || l.cols[0].cells.length !== 1) return null;
+  if (mode === "split" && l.cols[0].cells[0].views.length > 1) return null;
+  return { ...l, mode };
+};
 
 export const allCells = (l: Layout): Cell[] => l.cols.flatMap((c) => c.cells);
 export const allViews = (l: Layout): View[] => allCells(l).flatMap((c) => c.views);

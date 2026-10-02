@@ -32,8 +32,10 @@ interface LayoutStore {
   load(slug: string): void;
   loadMode(slug: string, mode: "split" | "tabs"): void;
   /** Seed a 1-pane layout from a pop-out descriptor (instead of load()) on the
-   * pop-out tab's first boot. Persists immediately so a reload restores it. */
-  initSinglePane(content: PaneContent, session: string | null, wrap: boolean | null): void;
+   * pop-out tab's first boot. Persists immediately so a reload restores it. `mode` must be the
+   * paneLayout preference: seeded in the other mode, the mode-sync effect swaps the profile and
+   * the popped pane is gone. */
+  initSinglePane(content: PaneContent, session: string | null, wrap: boolean | null, mode: "split" | "tabs"): void;
   /** popstate: adopt a history-restored layout without pushing/persisting anew. */
   setFromHistory(l: Layout): void;
   // navigation
@@ -217,8 +219,8 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
       try { history.replaceState({ __af: true, layout: l }, ""); } catch {}
     },
 
-    initSinglePane(content, session, wrap) {
-      const l = ops.singlePaneLayout(content, session, wrap);
+    initSinglePane(content, session, wrap, mode) {
+      const l = ops.singlePaneLayout(content, session, wrap, mode);
       set({ layout: l, hydrated: true });
       persist(l);
       try {
