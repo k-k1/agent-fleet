@@ -185,6 +185,7 @@ func buildMux() *http.ServeMux {
 	// The Settings row's "Log in" (#1028): the same attempts, without a request.
 	mux.HandleFunc("GET /aws-login/profiles", awsx.HandleProfileLoginStates)
 	mux.HandleFunc("POST /aws-login/profiles/{name}/start", awsx.HandleProfileLoginStart)
+	mux.HandleFunc("POST /aws-login/profiles/{name}/logout", awsx.HandleProfileLogout)
 	mux.HandleFunc("GET /aws-login/profiles/{name}/attempts/{attempt}", awsx.HandleProfileLoginAttempt)
 	mux.HandleFunc("POST /ssm/instances", handleSSMInstances)
 	mux.HandleFunc("POST /sessions/{name}/start", sessionx.HandleStartSession)

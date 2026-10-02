@@ -317,7 +317,7 @@ Tokens for driving your workspace remotely from Claude Code / Claude Desktop on 
 
 Your AWS profiles (shared settings), which `af-aws-exec` and SSM sessions sign in with, and SSM hosts (individual)
 for logging in to another in-house host. Each profile row has **Log in** to sign in to IAM Identity Center from the
-Console.
+Console, and a signed-in row has **Log out** to end that profile's login only.
 → [10 Going further](10-integrations.md#logging-in-to-another-in-house-host-ssm)
 
 ---

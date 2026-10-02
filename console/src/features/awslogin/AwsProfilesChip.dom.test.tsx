@@ -9,14 +9,22 @@ type Json = Record<string, unknown>;
 const calls: string[] = [];
 let profiles: Json[] = [];
 
+let logoutReply: Json = { revoked: true };
+let confirmAnswer = true;
+const toasts: { msg: string; kind?: string }[] = [];
 vi.mock("../../core/api/client.ts", () => ({
-  api: vi.fn(async (path: string) => {
-    calls.push(path);
+  api: vi.fn(async (path: string, opts?: RequestInit) => {
+    calls.push(opts?.method ? `${opts.method} ${path}` : path);
     if (path === "api/aws-login/profiles") return { profiles };
+    if (path.endsWith("/logout")) return logoutReply;
     return {};
   }),
   apiJSON: vi.fn(async () => ({})),
 }));
+vi.mock("../../ui/ToastProvider.tsx", () => ({
+  useToast: () => (msg: string, o?: { kind?: string }) => toasts.push({ msg, kind: o?.kind }),
+}));
+vi.mock("../../ui/ConfirmProvider.tsx", () => ({ useConfirm: () => () => Promise.resolve(confirmAnswer) }));
 
 const { AwsProfilesChip } = await import("./AwsProfilesChip.tsx");
 const { useAwsLoginStore } = await import("./store.ts");
@@ -54,6 +62,9 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
   calls.length = 0;
+  toasts.length = 0;
+  logoutReply = { revoked: true };
+  confirmAnswer = true;
   profiles = [prod, stg, dev];
   useAwsLoginStore.setState({ profiles: null, expiring: [], profileModal: null });
   useWorkspaceStore.setState({ state: "running" });
@@ -196,5 +207,48 @@ describe("AWS profiles chip", () => {
     await act(async () => useWorkspaceStore.setState({ state: "running" }));
     await tick(0);
     expect(host.querySelector(".ws-aws-pop")).toBeNull();
+  });
+  it("offers Log out on signed-in and renewable rows, and logs out only that profile after asking", async () => {
+    await mount();
+    await openPop();
+    const logoutOf = (i: number) => rows()[i].querySelector<HTMLButtonElement>(".ws-aws-logout");
+    expect(logoutOf(0)).not.toBeNull(); // prod, signed in
+    expect(logoutOf(1)).not.toBeNull(); // stg, renewable
+    expect(logoutOf(2)).toBeNull(); // dev, not signed in
+    const before = asks();
+    profiles = [{ ...prod, state: "none" }, stg, dev];
+    await act(async () => logoutOf(0)!.click());
+    await tick(0);
+    expect(calls).toContain("POST api/aws-login/profiles/prod/logout");
+    expect(calls.filter((c) => c.endsWith("/logout"))).toHaveLength(1);
+    expect(asks()).toBeGreaterThan(before);
+    expect(toasts).toEqual([{ msg: "Logged out of Production.", kind: "success" }]);
+    expect(chip()!.textContent).toContain("Staging");
+  });
+
+  it("logs out nothing when the member declines", async () => {
+    confirmAnswer = false;
+    await mount();
+    await openPop();
+    await act(async () => rows()[0].querySelector<HTMLButtonElement>(".ws-aws-logout")!.click());
+    await tick(0);
+    expect(calls.some((c) => c.endsWith("/logout"))).toBe(false);
+    expect(toasts).toEqual([]);
+  });
+
+  it("says so when AWS could not be told, and why the Agent refused", async () => {
+    logoutReply = { revoked: false, message: "Could not connect to the endpoint URL" };
+    await mount();
+    await openPop();
+    await act(async () => rows()[0].querySelector<HTMLButtonElement>(".ws-aws-logout")!.click());
+    await tick(0);
+    expect(toasts[0].kind).toBe("warn");
+    expect(toasts[0].msg).toContain("Could not connect to the endpoint URL");
+
+    logoutReply = { error: { code: "not_exported", message: "x" } };
+    await openPop();
+    await act(async () => rows()[0].querySelector<HTMLButtonElement>(".ws-aws-logout")!.click());
+    await tick(0);
+    expect(toasts[1].msg).toContain("is not in the workspace's ~/.aws/config");
   });
 });
