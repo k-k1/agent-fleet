@@ -373,13 +373,13 @@ func (a Admin) StopWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "user_key required"})
 		return
 	}
-	if aerr := a.userKeyErr(body.UserKey); aerr != nil {
-		writeAPIErr(w, aerr)
-		return
-	}
-	ident, err := a.cp.Store().UpsertIdentity(r.Context(), "", body.UserKey, "")
+	ident, found, err := a.cp.Store().GetIdentityByUserKey(r.Context(), body.UserKey)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
 		return
 	}
 	mem, ok, err := a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)
@@ -437,13 +437,13 @@ func (a Admin) CleanHome(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "user_key required"})
 		return
 	}
-	if aerr := a.userKeyErr(body.UserKey); aerr != nil {
-		writeAPIErr(w, aerr)
-		return
-	}
-	ident, err := a.cp.Store().UpsertIdentity(r.Context(), "", body.UserKey, "")
+	ident, found, err := a.cp.Store().GetIdentityByUserKey(r.Context(), body.UserKey)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
 		return
 	}
 	mem, ok, err := a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)
@@ -675,14 +675,18 @@ func (a Admin) CreateTenant(w http.ResponseWriter, r *http.Request, _ store.Iden
 	writeJSON(w, http.StatusOK, map[string]any{"slug": t.Slug, "name": t.Name})
 }
 
-// userKeyErr refuses a client-supplied user_key that sanitizeUser would change. The key
+// userKeyErr refuses a client-supplied user_key that a new identity must not get. The key
 // is the home directory name (workspaceNames joins it under the data root), and only the
 // docker runtime refuses `/`, `..` or upper case on its own; the native runtime would let
-// such a key leave <WS_DATA>/<slug>/. Every handler that can mint an identity from the key
-// (UpsertIdentity) calls this first. Read-only lookups (GetIdentityByUserKey) do not: they
-// never create a key, and an identity stored before this check must stay removable.
+// such a key leave <WS_DATA>/<slug>/. Accepted are the two forms the server mints itself:
+// sanitizeUser's fixed points, and disambiguateUserKey's "<fixed point>-<8 hex>", which
+// can run past sanitizeUser's 40 characters. Only AddMembership needs it: the other
+// member handlers look the key up and never mint one.
 func (a Admin) userKeyErr(key string) *APIError {
 	if key == a.cp.SanitizeUser(key) {
+		return nil
+	}
+	if prefix, ok := store.SplitDisambiguatedUserKey(key); ok && prefix == a.cp.SanitizeUser(prefix) {
 		return nil
 	}
 	msg := "invalid user_key: use lowercase letters and digits, separated by single hyphens, at most 40 characters"
@@ -690,6 +694,19 @@ func (a Admin) userKeyErr(key string) *APIError {
 		msg += " (for example " + strconv.Quote(s) + ")"
 	}
 	return &APIError{http.StatusBadRequest, "bad_request", msg}
+}
+
+// isMemberKey reports whether key already holds a membership of t. Re-inviting such a
+// member creates neither a membership nor a home, so a key stored before userKeyErr
+// existed stays usable there. Any other tenant is refused: a new home would be made
+// from it. A lookup error answers false.
+func (a Admin) isMemberKey(r *http.Request, t store.Tenant, key string) bool {
+	ident, ok, err := a.cp.Store().GetIdentityByUserKey(r.Context(), key)
+	if err != nil || !ok {
+		return false
+	}
+	_, ok, err = a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)
+	return err == nil && ok
 }
 
 // dataRootNameErr maps the store's data-root name refusals (store_dataroot.go) to API
@@ -724,7 +741,7 @@ func (a Admin) AddMembership(w http.ResponseWriter, r *http.Request) {
 	}
 	key := body.UserKey
 	if key != "" {
-		if aerr := a.userKeyErr(key); aerr != nil {
+		if aerr := a.userKeyErr(key); aerr != nil && !a.isMemberKey(r, t, key) {
 			writeAPIErr(w, aerr)
 			return
 		}
@@ -1298,21 +1315,20 @@ func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := body.UserKey
-	if key != "" {
-		if aerr := a.userKeyErr(key); aerr != nil {
-			writeAPIErr(w, aerr)
-			return
-		}
-	} else {
+	if key == "" {
 		key = a.cp.SanitizeUser(body.Email)
 	}
 	if key == "" {
 		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "email or user_key required"})
 		return
 	}
-	ident, err := a.cp.Store().UpsertIdentity(r.Context(), "", key, "")
+	ident, found, err := a.cp.Store().GetIdentityByUserKey(r.Context(), key)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "user is not a member of " + t.Slug})
 		return
 	}
 	mem, ok, err := a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)
@@ -1393,13 +1409,13 @@ func (a Admin) SetMembershipRole(w http.ResponseWriter, r *http.Request, _ store
 		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "user_key required"})
 		return
 	}
-	if aerr := a.userKeyErr(body.UserKey); aerr != nil {
-		writeAPIErr(w, aerr)
-		return
-	}
-	ident, err := a.cp.Store().UpsertIdentity(r.Context(), "", body.UserKey, "")
+	ident, found, err := a.cp.Store().GetIdentityByUserKey(r.Context(), body.UserKey)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member of " + t.Slug})
 		return
 	}
 	mem, ok, err := a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)

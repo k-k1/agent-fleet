@@ -35,7 +35,8 @@ At the very bottom of the roster there is an **"Add member"** form.
    the key is derived from it automatically). A key entered directly must already be in that
    derived form — lowercase letters and digits separated by single hyphens, at most 40
    characters — because it becomes the name of the member's home directory; anything else is
-   refused with a message that suggests the accepted form.
+   refused with a message that suggests the accepted form. Keys the server generated itself, as
+   shown in member rows, are accepted even when they run past 40 characters.
 2. As tenant_admin, you can only add **`member` (regular members)**. The role selector is shown
    only to super_admin. If you want to make someone an administrator, ask a super_admin as
    described below.
