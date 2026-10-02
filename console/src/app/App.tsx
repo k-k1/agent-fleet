@@ -35,7 +35,7 @@ import { startRepoJobsPolling } from "../features/repos/jobs.ts";
 import { useFilesStore } from "../features/files/store.ts";
 import { wireFilesSessionRefresh } from "../features/files/sessionRefresh.ts";
 import { useChatStore, startChatPolling } from "../features/chat/store.ts";
-import { hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setPrefsOwnerSource, setSetting, useSettings } from "../lib/settings.ts";
+import { getSettings, hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setPrefsOwnerSource, setSetting, useSettings } from "../lib/settings.ts";
 import { getTenant, getUser } from "../core/api/client.ts";
 import { MOBILE_QUERY, coarsePointer } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
@@ -386,7 +386,7 @@ export function App() {
       popoutSeedRef.current = popped;
       useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap);
     } else {
-      useLayoutStore.getState().load(tenant);
+      useLayoutStore.getState().loadMode(tenant, getSettings().paneLayout);
     }
     // This run loaded under the CURRENT identity — mark its rev as handled so the
     // identity-reload effect doesn't double-load right after boot.
@@ -437,7 +437,7 @@ export function App() {
       if (!proceed) return; // keep the shared-key layout rather than drop unsaved buffers
       const popped = popoutSeedRef.current;
       if (popped) useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap);
-      else useLayoutStore.getState().load(tenant);
+      else useLayoutStore.getState().loadMode(tenant, getSettings().paneLayout);
     });
   }, [booted, tenant, identityRev]);
 

@@ -94,8 +94,8 @@ forward while keeping an eye on another.
 **There are two ways to arrange them**, switched from **Appearance** (the paint can) in the top bar,
 or in ⚙ Settings → Display → **main area layout**.
 
-- **Split panes** (default) — arranged side by side, with draggable dividers for size.
-- **Tabbed grid** — each cell switches by tab, so a lot of open items fit without adding cells.
+- **Split panes** — arranged side by side, with draggable dividers for size.
+- **Tabbed grid** (default) — each cell switches by tab, so a lot of open items fit without adding cells.
   Closing the tab you are on brings back **the tab you were on before it**, not the one next to it
   in the strip: open a file from a chat, close it again, and you are back on that chat.
   **Right-clicking a session's tab** (or the **Menu key** / **Shift+F10** while it has focus) opens
