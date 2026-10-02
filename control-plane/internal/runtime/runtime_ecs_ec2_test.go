@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -77,6 +78,9 @@ type fakeEC2 struct {
 	// deleteTagsErr makes DeleteTags fail, without deleting anything, for a request that
 	// names this tag key.
 	deleteTagsErr map[string]error
+	// ltLatest is the slot launch template's $Latest version number; 0 makes
+	// DescribeLaunchTemplates fail, the way it does for a role without the permission.
+	ltLatest int64
 }
 
 func newFakeEC2() *fakeEC2 {
@@ -591,9 +595,31 @@ func (f *fakeEC2) RunInstances(_ context.Context, in *ec2.RunInstancesInput, _ .
 		State:        &ec2types.InstanceState{Name: ec2types.InstanceStateNamePending},
 		Placement:    &ec2types.Placement{AvailabilityZone: aws.String(f.subnetAZ[aws.ToString(in.SubnetId)])},
 	}
+	// EC2 stamps the RESOLVED version, never "$Latest" — which is what slotTemplateOutdated
+	// compares.
+	if lt := in.LaunchTemplate; lt != nil && f.ltLatest > 0 {
+		f.instances[id].Tags = []ec2types.Tag{
+			{Key: aws.String(ec2TagLaunchTemplateID), Value: lt.LaunchTemplateId},
+			{Key: aws.String(ec2TagLaunchTemplateVersion), Value: aws.String(strconv.FormatInt(f.ltLatest, 10))},
+		}
+	}
 	f.ranAMI = append(f.ranAMI, aws.ToString(in.ImageId))
 	f.log("RunInstances %s type=%s subnet=%s ami=%s", id, in.InstanceType, aws.ToString(in.SubnetId), aws.ToString(in.ImageId))
 	return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{{InstanceId: aws.String(id)}}}, nil
+}
+
+func (f *fakeEC2) DescribeLaunchTemplates(_ context.Context, in *ec2.DescribeLaunchTemplatesInput, _ ...func(*ec2.Options)) (*ec2.DescribeLaunchTemplatesOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.ltLatest == 0 {
+		return nil, fmt.Errorf("UnauthorizedOperation: ec2:DescribeLaunchTemplates")
+	}
+	if len(in.LaunchTemplateIds) != 1 || in.LaunchTemplateIds[0] != "lt-1" {
+		return &ec2.DescribeLaunchTemplatesOutput{}, nil
+	}
+	return &ec2.DescribeLaunchTemplatesOutput{LaunchTemplates: []ec2types.LaunchTemplate{{
+		LaunchTemplateId: aws.String("lt-1"), LatestVersionNumber: aws.Int64(f.ltLatest), DefaultVersionNumber: aws.Int64(1),
+	}}}, nil
 }
 
 func (f *fakeEC2) StartInstances(_ context.Context, in *ec2.StartInstancesInput, _ ...func(*ec2.Options)) (*ec2.StartInstancesOutput, error) {

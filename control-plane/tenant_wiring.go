@@ -127,6 +127,14 @@ func (a adminAPI) terminatePoolSlot(w http.ResponseWriter, r *http.Request, iden
 	a.srv().TerminatePoolSlot(w, r, ident)
 }
 
+func (a adminAPI) reservePoolSlot(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	a.srv().ReservePoolSlot(w, r, ident)
+}
+
+func (a adminAPI) reserveOutdatedPoolSlots(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	a.srv().ReserveOutdatedPoolSlots(w, r, ident)
+}
+
 func (a adminAPI) tenantNetwork(w http.ResponseWriter, r *http.Request) { a.srv().TenantNetwork(w, r) }
 
 func (a adminAPI) setTenantNetwork(w http.ResponseWriter, r *http.Request) {
@@ -261,6 +269,10 @@ func (d cpTenant) HasSlotPool() bool {
 
 func (d cpTenant) TerminateQuarantinedSlot(ctx context.Context, instanceID string) (string, bool, error) {
 	return d.m.terminateQuarantinedSlot(ctx, instanceID)
+}
+
+func (d cpTenant) ReserveSlotReplacement(ctx context.Context, instanceID string, reserve, onlyOutdated bool) (runtime.SlotReservation, bool, error) {
+	return d.m.reserveSlotReplacement(ctx, instanceID, reserve, onlyOutdated)
 }
 
 func (d cpTenant) TenantAdminFor(w http.ResponseWriter, r *http.Request, slug string) (store.Identity, store.Tenant, bool) {

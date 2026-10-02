@@ -137,7 +137,7 @@ usage.go adminAPI.usage x1 {days,from,to,totals}
 workitems.go workItemsAPI.deleteQuery x1 {ok}
 workitems.go workItemsAPI.deleteSession x1 {ok}
 workspace_handlers.go workspaceAPI.cleanHome x1 {name,state}
-workspace_handlers.go workspaceAPI.get x1 {bootPhase,name,stale,state} cond{bootPhase,stale}
+workspace_handlers.go workspaceAPI.get x1 {bootPhase,name,slotReplace,stale,state} cond{bootPhase,slotReplace,stale}
 workspace_handlers.go workspaceAPI.recreate x1 {name,state}
 workspace_handlers.go workspaceAPI.sessionsList x1 {sessions}
 workspace_handlers.go workspaceAPI.startResolved x1 {name,state}

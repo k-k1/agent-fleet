@@ -316,6 +316,11 @@ Resources:
                   - ec2:DescribeSnapshots
                   - ec2:CreateSnapshot
                   - ec2:DeleteSnapshot
+                  # The slot launch template's $Latest, which the admin pool screen
+                  # compares every slot's version against before an operator reserves
+                  # old slots for replacement (#1473). Read-only; without it no slot is
+                  # reported outdated and the bulk reservation refuses everything.
+                  - ec2:DescribeLaunchTemplates
                   # Growing a member's home in place (ResizeHome). Without these a tenant
                   # admin's "make my home bigger" saves the number, reports that the volume
                   # is growing, and grows nothing - the same shape of silent AccessDenied

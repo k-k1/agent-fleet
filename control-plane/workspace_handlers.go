@@ -223,7 +223,24 @@ func (a workspaceAPI) workspacePayload(ctx context.Context, res *resolved, state
 	if m["state"] == "running" && workspaceStale(ctx, rt) {
 		m["stale"] = true
 	}
+	// An administrator has reserved the slot this workspace's home is on for replacement
+	// (ecs-ec2, #1473): the next start moves it to a new slot and takes longer. Emitted only
+	// when true. Not while starting: that start is already the one doing the move.
+	if m["state"] != "starting" && slotReplacePending(ctx, rt) {
+		m["slotReplace"] = true
+	}
 	return m
+}
+
+// slotReplaceRuntime is the optional half of Runtime that knows whether the next Start moves
+// the workspace to a new slot (ecs-ec2's replacement reservation, #1473).
+type slotReplaceRuntime interface {
+	SlotReplacePending(ctx context.Context) bool
+}
+
+func slotReplacePending(ctx context.Context, rt runtime.Runtime) bool {
+	sr, ok := rt.(slotReplaceRuntime)
+	return ok && sr.SlotReplacePending(ctx)
 }
 
 func (a workspaceAPI) get(w http.ResponseWriter, r *http.Request, res *resolved) {

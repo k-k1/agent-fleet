@@ -12,7 +12,7 @@
 // Other runtimes have no notion of a pool. An empty table would read as "every slot is gone" on
 // a Fargate deployment, so there the whole tab is omitted (in AdminTab).
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { api, errText } from "../../../core/api/client.ts";
+import { api, apiJSON, errText, type ApiError } from "../../../core/api/client.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -91,6 +91,9 @@ export type PoolStatus = {
   /** Whether auto-baking is on (AF_ECS_EC2_GOLDEN_AUTOBAKE). The one value that cannot be
    *  derived from AWS; without it "not baked yet" and "never will be" look identical. */
   auto_bake?: boolean;
+  /** The slot launch template's $Latest version number; absent when the CP could not read it,
+   *  in which case no slot is marked outdated. */
+  template_latest?: string;
 };
 type Golden = {
   arch: string;
@@ -125,6 +128,17 @@ type Slot = {
   // A quarantined slot (decision 20): out of the pool, still being billed.
   quarantined?: boolean;
   quarantine_reason?: string;
+  /** Launch template version the slot was launched from, and whether that is older than
+   *  $Latest. User data is read only at launch, so an outdated slot runs the old one. */
+  template_version?: string;
+  template_outdated?: boolean;
+  /** Reserved for replacement: its workspace's next start moves to a new slot (#1473). */
+  replace_reserved?: boolean;
+  replace_reserved_at?: string;
+};
+type BulkReply = {
+  reserved?: { instance_id: string }[];
+  skipped?: { instance_id: string; code: string; message: string }[];
 };
 type Home = {
   volume_id: string;
@@ -165,6 +179,12 @@ export function PoolView() {
   const [killing, setKilling] = useState<Slot | null>(null);
   const [busy, setBusy] = useState(false);
   const [killErr, setKillErr] = useState("");
+  // Replacement reservations (#1473). A single one is reversible and is done in one click; the
+  // bulk one moves many people at their next start, so it is confirmed with the list first.
+  const [reserveErr, setReserveErr] = useState("");
+  const [reserving, setReserving] = useState("");
+  const [bulk, setBulk] = useState<Slot[] | null>(null);
+  const [bulkErr, setBulkErr] = useState("");
   const timer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
   const poll = useCallback(async () => {
@@ -205,6 +225,48 @@ export function PoolView() {
     poll();
   };
 
+  const setReserved = async (s: Slot, reserve: boolean) => {
+    setReserving(s.instance_id);
+    setReserveErr("");
+    const d = await api("api/admin/ec2-pool/slots/" + encodeURIComponent(s.instance_id) + "/replace", {
+      method: reserve ? "PUT" : "DELETE",
+    });
+    setReserving("");
+    if (d?.error) {
+      setReserveErr(tr("pool.reserve_failed", { id: s.instance_id, msg: errText(d.error) }));
+      return;
+    }
+    poll();
+  };
+
+  // The server re-checks every id against $Latest and skips the ones that are no longer
+  // below it, so what is reserved is never more than the list the operator confirmed.
+  const reserveBulk = async (list: Slot[]) => {
+    setBusy(true);
+    setBulkErr("");
+    const d: BulkReply & { error?: ApiError } = await apiJSON("api/admin/ec2-pool/reserve-outdated", "POST", {
+      instance_ids: list.map((s) => s.instance_id),
+    });
+    setBusy(false);
+    if (d?.error) {
+      setBulkErr(tr("pool.reserve_failed", { id: String(list.length), msg: errText(d.error) }));
+      return;
+    }
+    const skipped = d?.skipped || [];
+    if (skipped.length) {
+      setBulkErr(
+        tr("pool.reserve_bulk_skipped", {
+          n: String(skipped.length),
+          list: skipped.map((k) => `${k.instance_id} (${k.message})`).join(", "),
+        }),
+      );
+      poll();
+      return;
+    }
+    setBulk(null);
+    poll();
+  };
+
   if (err) return <p className="muted pad">{err}</p>;
   if (st === null) return <p className="muted pad">{tr("common.loading")}</p>;
   if (st.runtime !== "ecs-ec2") return <p className="muted pad">{tr("pool.not_ec2")}</p>;
@@ -223,6 +285,8 @@ export function PoolView() {
   // The reserved workspaces a bake stood up. In the slot and home tables they look like people,
   // so mark them as belonging to the golden and to nobody — and in a pool near its cap, the fact
   // that these two are occupied is itself something that needs explaining.
+  // What the bulk reservation would take: working slots below $Latest not reserved yet.
+  const outdated = pool.filter((s) => s.template_outdated && !s.replace_reserved);
   const bakeWS = new Set(
     (st.goldens || []).flatMap((g) => [g.seed?.workspace, g.probe?.workspace].filter(Boolean) as string[]),
   );
@@ -267,6 +331,17 @@ export function PoolView() {
         {/* Whether the concurrency handed out to tenants fits into this many boxes. The server
             only includes it when there is a problem. */}
         {st.budget && <PoolBudgetHint budget={st.budget} />}
+        {/* A launch template change reaches a retained slot only when the slot is replaced
+            (user data is read at launch), and a stop→start goes back to the same slot. */}
+        {outdated.length > 0 && (
+          <div className="admin-hint warn-text pool-outdated">
+            {tr("pool.outdated_hint", { n: String(outdated.length), latest: st.template_latest || "?" })}{" "}
+            <Button variant="ghost" onClick={() => { setBulkErr(""); setBulk(outdated); }}>
+              {tr("pool.reserve_bulk", { n: String(outdated.length) })}
+            </Button>
+          </div>
+        )}
+        {reserveErr && <p className="warn-text">{reserveErr}</p>}
         {slots.length === 0 ? (
           <p className="muted">{tr("pool.no_slots")}</p>
         ) : (
@@ -278,6 +353,7 @@ export function PoolView() {
                 <th>{tr("pool.col_state")}</th>
                 <th>{tr("pool.col_occupant")}</th>
                 <th>{tr("pool.col_dormant")}</th>
+                <th>{tr("pool.col_template")}</th>
                 {/* The action column: empty for every row but a quarantined one, and the
                     backup column this header used to carry belongs to the HOMES table —
                     slots have no spare copy, so it labelled a cell that was never rendered. */}
@@ -307,13 +383,35 @@ export function PoolView() {
                     {bakeWS.has(s.workspace) && <span className="pool-badge bake">{tr("pool.bake_owner")}</span>}
                   </td>
                   <td>{s.workspace ? fmtIdle(s.idle_minutes, tr) : "–"}</td>
+                  <td>
+                    {s.template_version ? <span className="mono">v{s.template_version}</span> : <span className="muted">–</span>}
+                    {s.template_outdated && (
+                      <span className="pool-badge outdated" title={tr("pool.outdated_title", { latest: st.template_latest || "?" })}>
+                        {tr("pool.outdated")}
+                      </span>
+                    )}
+                    {s.replace_reserved && (
+                      <span className="pool-badge reserved" title={s.replace_reserved_at || ""}>
+                        {tr("pool.reserved")}
+                      </span>
+                    )}
+                  </td>
                   {/* Quarantine is the only state this screen can act on, and the button is
                       the only way the product has to stop paying for one (the sweeper's
                       terminate stage filters on af-role=slot and never collects it). */}
                   <td>
-                    {s.quarantined && (
+                    {s.quarantined ? (
                       <Button variant="ghost" onClick={() => { setKillErr(""); setKilling(s); }}>
                         {tr("pool.terminate")}
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        disabled={reserving === s.instance_id}
+                        title={tr(s.replace_reserved ? "pool.reserve_cancel_title" : "pool.reserve_title")}
+                        onClick={() => void setReserved(s, !s.replace_reserved)}
+                      >
+                        {tr(s.replace_reserved ? "pool.reserve_cancel" : "pool.reserve")}
                       </Button>
                     )}
                   </td>
@@ -423,6 +521,28 @@ export function PoolView() {
           </p>
         )}
       </section>
+
+      {bulk && (
+        <ConfirmDialog
+          title={tr("pool.reserve_bulk_title", { n: String(bulk.length) })}
+          confirmLabel={tr("pool.reserve_bulk_go", { n: String(bulk.length) })}
+          busy={busy}
+          onCancel={() => setBulk(null)}
+          onConfirm={() => reserveBulk(bulk)}
+        >
+          <p>{tr("pool.reserve_bulk_body", { latest: st.template_latest || "?" })}</p>
+          {/* Who is affected is the decision: each occupant's next start takes longer. */}
+          <ul className="pool-bulk-list">
+            {bulk.map((s) => (
+              <li key={s.instance_id}>
+                <span className="mono">{s.instance_id}</span> <span className="muted">v{s.template_version}</span>{" "}
+                {s.workspace ? <span className="mono">{s.workspace}</span> : <span className="muted">{tr("pool.free_slot")}</span>}
+              </li>
+            ))}
+          </ul>
+          {bulkErr && <p className="warn-text">{bulkErr}</p>}
+        </ConfirmDialog>
+      )}
 
       {killing && (
         <ConfirmDialog

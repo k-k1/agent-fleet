@@ -199,6 +199,13 @@ export const sessions = {
   "wsbar.stale.restart": "今すぐ再起動",
   "wsbar.stale.later": "あとで",
 
+  // ecs-ec2: the slot under this workspace is reserved for replacement (#1473)
+  "wsbar.slotmove.badge": "新しいスロットへ移動",
+  "wsbar.slotmove.title": "次回の起動で新しいマシンに移ります",
+  "wsbar.slotmove.body":
+    "管理者がこのワークスペースのマシンを入れ替え対象にしました。次に起動すると新しいマシンへ移るため、いつもより少し（25 秒ほど）長くかかります。ファイル・リポジトリ・ログインはそのまま引き継がれます。停止→起動するまでは何も起きません。",
+  "wsbar.slotmove.ok": "OK",
+
   // === P2 セッション操作（features/sessions/useSessionActions.tsx）===
   "sess.lock_failed": "削除ロックの変更に失敗しました",
   "sess.locked_on": "削除ロックをかけました",

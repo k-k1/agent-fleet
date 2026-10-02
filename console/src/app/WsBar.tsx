@@ -1118,6 +1118,7 @@ export function WsBar() {
   const stopWs = useWorkspaceStore((s) => s.stop);
   const restartWs = useWorkspaceStore((s) => s.restart);
   const wsStale = useWorkspaceStore((s) => s.stale);
+  const wsSlotReplace = useWorkspaceStore((s) => s.slotReplace);
   const wsReason = useWorkspaceStore((s) => s.reason);
   const tenant = useTenantStore((s) => s.tenant);
   const superAdmin = useTenantStore((s) => s.superAdmin);
@@ -1254,6 +1255,9 @@ export function WsBar() {
   useEffect(() => {
     if (!staleShown) setStaleOpen(false);
   }, [staleShown]);
+  // ecs-ec2: an administrator retired the machine this workspace sits on (#1473). Shown
+  // whether running or stopped, hidden while a start (the move itself) runs.
+  const slotMoveShown = wsSlotReplace && !busy;
 
   // Apply the backend update: stop→start, keeping repos and everything on disk
   // (NOT recreate). Sessions stop and are resumable, so name the count up front —
@@ -1730,6 +1734,7 @@ export function WsBar() {
           )}
         </div>
       )}
+      {slotMoveShown && <SlotMoveNotice />}
       {/* The single "start anything" entry (launch flow Ph2): opens the StartModal hub
           (chat / repo / clone / home / other). While the workspace
           is stopped it offers to start it and opens the hub when ready (Ph3). */}
@@ -1849,6 +1854,34 @@ export function WsBar() {
             {pvOpen && <div className="ws-preview-pop">{previewPop}</div>}
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+// SlotMoveNotice tells a member that the next start moves their workspace to a new slot
+// (ecs-ec2 replacement reservation, #1473). There is nothing for them to do but know why that
+// start takes longer, so it is a notice with no action, styled like the restart-needed pill.
+export function SlotMoveNotice() {
+  const tr = useT();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useDismiss(ref, open, () => setOpen(false));
+  return (
+    <div className="ws-stale ws-slotmove" ref={ref}>
+      <button className="ws-stale-pill" onClick={() => setOpen((o) => !o)} aria-expanded={open} title={tr("wsbar.slotmove.title")}>
+        <Icon name="info" />
+        <span className="lbl">{tr("wsbar.slotmove.badge")}</span>
+      </button>
+      {open && (
+        <div className="ws-stale-pop">
+          <div className="ws-stale-txt">{tr("wsbar.slotmove.body")}</div>
+          <div className="ws-stale-actions">
+            <button className="ghost" onClick={() => setOpen(false)}>
+              {tr("wsbar.slotmove.ok")}
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

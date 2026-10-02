@@ -111,6 +111,30 @@ The commands are in the runbook's "Upgrade" section.
   next Start. The users concerned see a "Restart needed" badge in the Console, so when to take the
   restart is their call, not yours.
 
+### ecs-ec2: replacing slots after a launch template change
+
+A slot reads its user data only when it is launched, and a stopped workspace goes back to the
+same slot on its next Start, so a change to the slot launch template (a release's security
+setting, for example) does not reach the slots you already have. Replace them from the
+Console instead of terminating instances by hand:
+
+1. **Settings → Admin → Slots** (super_admin). The **Template** column shows the launch template
+   version each slot was launched from, marked **older than $Latest** when it is.
+2. **Reserve all N for replacement…** lists the slots below `$Latest` and the workspace on each,
+   and reserves exactly those once you confirm. **Replace at next start** on a row reserves one
+   slot; **Cancel replacement** takes it back. Every reservation is in the audit log
+   (`pool.slot_replace_reserve` / `pool.slot_replace_cancel`, with the workspace it moves).
+3. Nothing happens to a running workspace. Its member sees **Moves to a new slot** in the WS bar,
+   and their next stop → start launches a new slot from `$Latest`, moves the home onto it and
+   terminates the old one. That start is about 25 seconds longer than usual. Files, repos and
+   logins come along: the home is never deleted.
+4. If no new slot can be launched (capacity, quota), the start fails with the reason and the
+   reservation stays. The member is never put back on the reserved slot; retry later. A
+   reserved slot with no workspace on it is terminated by the sweeper.
+
+`deploy/aws/ecs/README.md`, "Moving retained slots onto new user data", has the details and how
+to verify the result.
+
 ## Installing into an air-gapped network
 
 You can install onto a host with no external network access. Since

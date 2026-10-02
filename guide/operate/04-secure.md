@@ -187,7 +187,8 @@ into answers, logs or commits is part of the agent-side instructions as well.
     in Docker's `DOCKER-USER` chain that rejects `169.254.169.254` from the workspace bridges
     (it needs root on the host; compose itself needs nothing new).
   - **ecs-ec2**: the slot user data sets `ECS_AWSVPC_BLOCK_IMDS=true`; retained slots have to
-    be replaced (`deploy/aws/ecs/README.md`, "Moving retained slots onto new user data").
+    be replaced — reserve them in Settings → Admin → Slots ([03-run](03-run.md), "ecs-ec2:
+    replacing slots after a launch template change").
 
   `AF_WS_WORKLOAD_AWS=1` on the Control Plane hands the ECS task role back to workspaces and
   stops suppressing the SDKs' metadata lookup. It removes none of the network protections above,

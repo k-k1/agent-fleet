@@ -25,6 +25,9 @@ export function phaseKey(phase: string): MsgKey {
   // would name no cause for the longest wait the product has.
   if (p.startsWith("slot: making room")) return "wsstart.slot_making_room";
   if (p.startsWith("slot: creating")) return "wsstart.slot_creating";
+  // An administrator reserved the old slot for replacement (#1473): a new one is launched and
+  // the home moves over — the "takes longer" the WS-bar notice promised.
+  if (p.startsWith("slot: renewing")) return "wsstart.slot_renewing";
   if (p.startsWith("slot: waking")) return "wsstart.slot_waking";
   if (p.startsWith("slot: booting") || p.startsWith("slot: joining")) return "wsstart.slot_booting";
   if (p.startsWith("home: restoring")) return "wsstart.home_restoring";

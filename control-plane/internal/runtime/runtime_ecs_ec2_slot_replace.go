@@ -1,0 +1,320 @@
+package runtime
+
+// Reserving a slot for replacement (#1473).
+//
+// The ECS agent reads a slot's user data only when the slot is launched, so a change to the
+// slot launch template reaches a retained slot only by replacing it — and nothing replaces a
+// slot that has a home on it, because a Stop → Start goes back to the same box. A reservation
+// is the operator's way to say "this box may not run anybody again": a tag on the instance,
+// acted on at its workspace's next Start (the "mark now, act at the next Start" pattern of
+// ADR 0045 decision 32). Nobody's running session is touched, and the home is never deleted.
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"strconv"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+)
+
+const (
+	// ec2TagSlotReplace on a SLOT reserves it for replacement; the value is when. It is on
+	// the instance rather than the home because the reservation is about the box: whoever's
+	// home is on it at the next Start is the one that moves.
+	ec2TagSlotReplace = "af-slot-replace"
+	// EC2 stamps these on every instance launched from a launch template, with the version
+	// NUMBER it resolved — never the literal "$Latest" the launch asked for.
+	ec2TagLaunchTemplateID      = "aws:ec2launchtemplate:id"
+	ec2TagLaunchTemplateVersion = "aws:ec2launchtemplate:version"
+	// ec2PhaseSlotRenewing is the Start phase while a reserved slot is being replaced. Not
+	// "slot: replacing": that one is the lost-slot recovery, a different story for the member.
+	ec2PhaseSlotRenewing = "slot: renewing"
+)
+
+// Refusals of a reservation, kept apart from AWS failures for the HTTP layer (404/409 vs 500).
+var (
+	ErrSlotQuarantined = errors.New("slot is quarantined; it runs nobody and is removed by terminating it")
+	ErrSlotNotOutdated = errors.New("slot is not on an older launch template version")
+)
+
+// slotReserved reports whether an instance carries a replacement reservation.
+func slotReserved(inst ec2types.Instance) bool {
+	return ec2TagValue(inst.Tags, ec2TagSlotReplace) != ""
+}
+
+// withoutReservedSlots drops reserved slots from a DescribeInstances answer.
+func withoutReservedSlots(out *ec2.DescribeInstancesOutput) *ec2.DescribeInstancesOutput {
+	kept := &ec2.DescribeInstancesOutput{}
+	for _, r := range out.Reservations {
+		var insts []ec2types.Instance
+		for _, inst := range r.Instances {
+			if !slotReserved(inst) {
+				insts = append(insts, inst)
+			}
+		}
+		if len(insts) > 0 {
+			r.Instances = insts
+			kept.Reservations = append(kept.Reservations, r)
+		}
+	}
+	return kept
+}
+
+// replaceReservedSlot is placeHome's branch for a home whose slot is reserved: move the home
+// onto a new slot of this workspace's class, launched from the template's $Latest, and retire
+// the old box.
+//
+// ⚠️ The ORDER is the safety argument:
+//
+//  1. Launch the new slot FIRST. Capacity and quota are the likely failures, and at this
+//     point nothing has been touched: the Start fails with the reason, the home stays on the
+//     reserved slot and the reservation stays. Falling back to the reserved slot instead
+//     would defeat the reservation, whose usual reason is security.
+//  2. Release the home with releaseSlot — the umount-before-detach and the Start-generation
+//     fence every other release uses. If it fails, the new slot is simply a free slot of the
+//     pool; the home is still on the reserved one (detach is the last step of the release),
+//     and the next Start tries again.
+//  3. Terminate the old box, but only after re-reading that no home is attached to it and no
+//     claim points at it. A failure here costs money, not data: the box is free and still
+//     reserved, so nobody is placed on it and the sweeper retires it.
+//  4. Claim the home for the new slot; the background half attaches and mounts it.
+//
+// The pool cap is checked with the reserved box not counted, since it is on its way out:
+// otherwise a full pool could never replace anything.
+func (e *ecsEC2Runtime) replaceReservedSlot(ctx context.Context, vol *ec2types.Volume, oldID string) (ec2Placement, error) {
+	volID := aws.ToString(vol.VolumeId)
+	az := aws.ToString(vol.AvailabilityZone)
+	log.Printf("ecs-ec2: slot %s under %s is reserved for replacement; moving the home to a new %s",
+		oldID, e.base.name, e.instanceType)
+	e.setPhase(ec2PhaseSlotRenewing)
+	// An EBS volume never leaves its AZ, so the new slot has to be in the home's.
+	newID, err := e.runSlotUnder(ctx, az, e.pool.maxSlots+1)
+	if err != nil {
+		return ec2Placement{}, fmt.Errorf("slot %s is reserved for replacement and no new slot could be launched "+
+			"(the reservation stays; the old slot is not reused): %w", oldID, err)
+	}
+	if err := e.releaseSlot(ctx); err != nil {
+		return ec2Placement{}, fmt.Errorf("move the home off the reserved slot %s (new slot %s stays in the pool): %w",
+			oldID, newID, err)
+	}
+	if holder, err := e.slotHolder(ctx, oldID); err != nil || holder != "" {
+		log.Printf("ecs-ec2: not terminating the reserved slot %s yet (held by %q, %v); the sweeper retires it once free",
+			oldID, holder, err)
+	} else {
+		_ = e.terminateSlot(ctx, oldID, "reserved for replacement, replaced by "+newID)
+	}
+	if err := e.claim(ctx, volID, newID); err != nil {
+		return ec2Placement{}, fmt.Errorf("claim %s for %s: %w", volID, newID, err)
+	}
+	e.clearDormancy(ctx, volID)
+	slotReplaceSeen.set(e.base.name, "")
+	return ec2Placement{volumeID: volID, instanceID: newID, az: az, deferred: true, claimed: true, wipe: homeWipeOf(vol)}, nil
+}
+
+// slotHolder names the home attached to the instance, or placed on it under a live claim, or
+// "" when it holds none. It is the guard that makes terminating a box cost money rather than
+// somebody's files.
+func (e *ecsEC2Runtime) slotHolder(ctx context.Context, instanceID string) (string, error) {
+	vols, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(EC2TagPool, e.pool.pool),
+			tagFilter(EC2TagRole, ec2RoleHome),
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	for i := range vols.Volumes {
+		v := &vols.Volumes[i]
+		if attachedInstance(v) == instanceID {
+			return aws.ToString(v.VolumeId), nil
+		}
+		if ec2TagValue(v.Tags, EC2TagClaim) == instanceID && e.claimLive(v) {
+			return aws.ToString(v.VolumeId), nil
+		}
+	}
+	return "", nil
+}
+
+// --- the member's side ---
+
+// slotReplaceSeen memoizes SlotReplacePending per workspace name. /api/workspace is polled
+// every few seconds per open Console, and the answer costs two AWS reads; a reservation is
+// acted on at the next Start, so a minute of lag in announcing it changes nothing.
+var slotReplaceSeen = &TTLCache{m: map[string]TTLEntry{}}
+
+const slotReplaceSeenTTL = time.Minute
+
+// SlotReplacePending reports whether this workspace's next Start moves it to a new slot,
+// because the slot its home is on is reserved for replacement. When in doubt, false: the
+// answer only adds a line to the member's WS bar.
+func (e *ecsEC2Runtime) SlotReplacePending(ctx context.Context) bool {
+	return slotReplaceSeen.get(e.base.name, slotReplaceSeenTTL, func() string {
+		vol, err := e.homeVolume(ctx)
+		if err != nil || vol == nil {
+			return ""
+		}
+		inst := attachedInstance(vol)
+		if inst == "" {
+			return ""
+		}
+		out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{inst}})
+		if err != nil {
+			return ""
+		}
+		for _, r := range out.Reservations {
+			for _, i := range r.Instances {
+				if slotReserved(i) {
+					return "1"
+				}
+			}
+		}
+		return ""
+	}) != ""
+}
+
+// --- the operator's side ---
+
+// ec2LaunchTemplate is what the slots are compared against: the template the CP launches
+// from, and its $Latest — the version runSlot asks for (launchTemplateSpec).
+type ec2LaunchTemplate struct {
+	id     string
+	latest int64
+}
+
+func (f *ecsEC2Factory) launchTemplateLatest(ctx context.Context) (ec2LaunchTemplate, error) {
+	in := &ec2.DescribeLaunchTemplatesInput{}
+	spec := launchTemplateSpec(f.pool.launchTemplate)
+	if spec.LaunchTemplateId != nil {
+		in.LaunchTemplateIds = []string{aws.ToString(spec.LaunchTemplateId)}
+	} else {
+		in.LaunchTemplateNames = []string{aws.ToString(spec.LaunchTemplateName)}
+	}
+	out, err := f.ec2.DescribeLaunchTemplates(ctx, in)
+	if err != nil {
+		return ec2LaunchTemplate{}, err
+	}
+	if len(out.LaunchTemplates) == 0 {
+		return ec2LaunchTemplate{}, fmt.Errorf("launch template %s not found", f.pool.launchTemplate)
+	}
+	lt := out.LaunchTemplates[0]
+	return ec2LaunchTemplate{id: aws.ToString(lt.LaunchTemplateId), latest: aws.ToInt64(lt.LatestVersionNumber)}, nil
+}
+
+// slotTemplateOutdated compares a slot's launch template stamp with the template's $Latest.
+// known=false when either side cannot be read; such a slot is never called outdated, so the
+// bulk reservation cannot sweep up boxes nobody can account for.
+//
+//   - a slot launched from a DIFFERENT template (the pool stack replaced it) is outdated:
+//     a version number means nothing across templates;
+//   - otherwise outdated means its number is below $Latest. $Default plays no part: the CP
+//     launches with $Latest, so that is what a new slot gets.
+func slotTemplateOutdated(tags []ec2types.Tag, lt ec2LaunchTemplate) (version string, outdated, known bool) {
+	version = ec2TagValue(tags, ec2TagLaunchTemplateVersion)
+	if lt.id == "" || lt.latest <= 0 || version == "" {
+		return version, false, false
+	}
+	if id := ec2TagValue(tags, ec2TagLaunchTemplateID); id != "" && id != lt.id {
+		return version, true, true
+	}
+	v, err := strconv.ParseInt(version, 10, 64)
+	if err != nil {
+		return version, false, false
+	}
+	return version, v < lt.latest, true
+}
+
+// SlotReservation is what a reservation acted on, for the reply and the audit log.
+type SlotReservation struct {
+	InstanceID      string `json:"instance_id"`
+	Workspace       string `json:"workspace"` // the occupant whose next Start moves; "" = free
+	TemplateVersion string `json:"template_version"`
+	TemplateLatest  string `json:"template_latest"`
+	Reserved        bool   `json:"reserved"`
+}
+
+// ReserveSlotReplacement sets (reserve=true) or clears a slot's replacement reservation.
+// onlyOutdated is the bulk path's re-check: the slot must still be below $Latest when the
+// write happens, whatever the screen showed when the operator confirmed.
+//
+// Everything is re-read from AWS (ADR 0012), and the guards mirror TerminateQuarantinedSlot:
+// the box must carry this pool's af-pool tag (anything else reads as "no such slot"), and a
+// quarantined box is refused — it already runs nobody, and terminating it is how it goes.
+func (f *ecsEC2Factory) ReserveSlotReplacement(ctx context.Context, instanceID string, reserve, onlyOutdated bool) (SlotReservation, error) {
+	res := SlotReservation{InstanceID: instanceID}
+	insts, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(EC2TagPool, f.pool.pool),
+			{Name: aws.String("instance-id"), Values: []string{instanceID}},
+			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped"}},
+		},
+	})
+	if err != nil {
+		return res, err
+	}
+	var inst *ec2types.Instance
+	for _, r := range insts.Reservations {
+		for i := range r.Instances {
+			if aws.ToString(r.Instances[i].InstanceId) == instanceID {
+				inst = &r.Instances[i]
+			}
+		}
+	}
+	if inst == nil {
+		return res, ErrSlotNotFound
+	}
+	switch ec2TagValue(inst.Tags, EC2TagRole) {
+	case ec2RoleSlot:
+	case ec2RoleQuarantined:
+		return res, ErrSlotQuarantined
+	default:
+		return res, ErrSlotNotFound
+	}
+	lt, ltErr := f.launchTemplateLatest(ctx)
+	if ltErr != nil {
+		log.Printf("ecs-ec2: reading the slot launch template for a reservation: %v", ltErr)
+	} else {
+		res.TemplateLatest = strconv.FormatInt(lt.latest, 10)
+	}
+	var outdated bool
+	res.TemplateVersion, outdated, _ = slotTemplateOutdated(inst.Tags, lt)
+	if reserve && onlyOutdated && !outdated {
+		if ltErr != nil {
+			return res, fmt.Errorf("%w (the launch template could not be read: %v)", ErrSlotNotOutdated, ltErr)
+		}
+		return res, ErrSlotNotOutdated
+	}
+	probe := f.probeRuntime()
+	if holder, err := probe.slotHolder(ctx, instanceID); err == nil && holder != "" {
+		vols, err := f.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{holder}})
+		if err == nil && len(vols.Volumes) > 0 {
+			res.Workspace = ec2TagValue(vols.Volumes[0].Tags, EC2TagWorkspace)
+		}
+	}
+	if reserve {
+		_, err = f.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+			Resources: []string{instanceID},
+			Tags:      []ec2types.Tag{{Key: aws.String(ec2TagSlotReplace), Value: aws.String(time.Now().UTC().Format(time.RFC3339))}},
+		})
+	} else {
+		_, err = f.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
+			Resources: []string{instanceID},
+			Tags:      []ec2types.Tag{{Key: aws.String(ec2TagSlotReplace)}},
+		})
+	}
+	if err != nil {
+		return res, err
+	}
+	res.Reserved = reserve
+	// The member's badge reads through a one-minute memo; a reservation just made should not
+	// wait it out.
+	slotReplaceSeen.reset()
+	log.Printf("ecs-ec2: slot %s (template version %s, $Latest %s, occupant %q) reserved for replacement: %v",
+		instanceID, res.TemplateVersion, res.TemplateLatest, res.Workspace, reserve)
+	return res, nil
+}
