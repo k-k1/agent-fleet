@@ -1,27 +1,38 @@
 import { useEffect, useRef, useState } from "react";
 import { useT, type MsgKey } from "../../../lib/i18n/index.ts";
-import { AWS_REGIONS, isListedAwsRegion } from "../../../lib/awsRegions.ts";
+import { AWS_REGIONS } from "../../../lib/awsRegions.ts";
 
-// Never a region code: codes are lowercase letters, digits and dashes.
+// Never a region or zone: those are lowercase letters, digits and dashes.
 const OTHER = "*other*";
 
-// RegionSelect picks an AWS region from AWS_REGIONS, with an "Other" entry that reveals a
-// text input for codes the list lacks (GovCloud, China, regions newer than the list). A
-// stored value outside the list opens in Other with the value shown, so editing a row never
-// replaces or drops it. emptyLabel names the "" choice (unset / profile default / "select").
+// The i18n families a picker draws its labels from: `<prefix>_other` and
+// `<prefix>_other_placeholder`, plus `<prefix>.<code>` per option when the options are named.
+type MsgPrefix = "ssm.region" | "gcp.region" | "gcp.zone";
+
+// RegionSelect picks a code from `options` (AWS_REGIONS unless given), with an "Other" entry
+// that reveals a text input for codes the list lacks (GovCloud, China, regions newer than the
+// list). A stored value outside the list opens in Other with the value shown, so editing a row
+// never replaces or drops it. emptyLabel names the "" choice (unset / profile default /
+// "select"). `named` options read "<code> — <name>"; unnamed ones (zones) show the code alone.
 export function RegionSelect({
   value,
   onChange,
   emptyLabel,
   className = "cinput",
+  options = AWS_REGIONS,
+  msgPrefix = "ssm.region",
+  named = true,
 }: {
   value: string;
   onChange: (v: string) => void;
   emptyLabel: string;
   className?: string;
+  options?: readonly string[];
+  msgPrefix?: MsgPrefix;
+  named?: boolean;
 }) {
   const tr = useT();
-  const unlisted = (v: string) => v.trim() !== "" && !isListedAwsRegion(v.trim());
+  const unlisted = (v: string) => v.trim() !== "" && !options.includes(v.trim());
   const [other, setOther] = useState(() => unlisted(value));
   // A value the parent sets on its own (a reset, or a profile pick that brings its region)
   // decides the mode again; one this component just emitted must not, or typing a listed
@@ -32,6 +43,15 @@ export function RegionSelect({
     emitted.current = value;
     setOther(unlisted(value));
   }, [value]);
+  // When the list itself changes (the zone picker following its region), a kept value that
+  // left the list moves to Other rather than leaving the dropdown pointing at no option.
+  // Never the other way: a value just typed into Other stays there.
+  const shown = useRef(options);
+  useEffect(() => {
+    if (options === shown.current) return;
+    shown.current = options;
+    if (unlisted(value)) setOther(true);
+  }, [options]);
   const emit = (v: string) => {
     emitted.current = v;
     onChange(v);
@@ -52,17 +72,17 @@ export function RegionSelect({
         }}
       >
         <option value="">{emptyLabel}</option>
-        {AWS_REGIONS.map((code) => (
+        {options.map((code) => (
           <option key={code} value={code}>
-            {code} — {tr(`ssm.region.${code}` as MsgKey)}
+            {named ? `${code} — ${tr(`${msgPrefix}.${code}` as MsgKey)}` : code}
           </option>
         ))}
-        <option value={OTHER}>{tr("ssm.region_other")}</option>
+        <option value={OTHER}>{tr(`${msgPrefix}_other`)}</option>
       </select>
       {other && (
         <input
           className={className}
-          placeholder={tr("ssm.region_other_placeholder")}
+          placeholder={tr(`${msgPrefix}_other_placeholder`)}
           value={value}
           onChange={(e) => emit(e.target.value)}
           autoFocus={!unlisted(value)}

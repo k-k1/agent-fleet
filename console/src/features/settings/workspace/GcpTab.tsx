@@ -13,7 +13,9 @@ import { Icon } from "../../../ui/Icon.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
+import { GCP_REGION_CODES, gcpZonesOf } from "../../../lib/gcpRegions.ts";
 import { Field, Meta } from "../parts/mcpForm.tsx";
+import { RegionSelect } from "../parts/RegionSelect.tsx";
 import { FieldGroup, deleteRow, pick, postJSON } from "./SsmTab.tsx";
 
 /** One row of GET /api/gcp/profiles. */
@@ -77,6 +79,17 @@ export function GcpTab() {
   }, [profiles, editing]);
 
   const set = (k: string) => (e: FieldEvent) => setF((p) => ({ ...p, [k]: e.target.value }));
+  // A region change drops a zone the list offered under the old region and not the new one:
+  // that zone came from this edit's own pick. The zone the row was stored with is never
+  // dropped, nor one typed into Other, so a save without touching it keeps it byte-identical.
+  const setRegion = (region: string) =>
+    setF((p) => {
+      const stored = editing?.zone ?? "";
+      const picked = p.zone !== stored && gcpZonesOf(p.region).includes(p.zone);
+      const fits = gcpZonesOf(region).includes(p.zone);
+      return { ...p, region, zone: picked && !fits ? "" : p.zone };
+    });
+  const setZone = (zone: string) => setF((p) => ({ ...p, zone }));
   const valid = !!f.label.trim() && !!f.project.trim();
 
   const startAdd = () => {
@@ -152,10 +165,23 @@ export function GcpTab() {
             />
           </Field>
           <Field label={tr("gcp.f_region")} hint={tr("gcp.f_optional")}>
-            <input className="cinput" placeholder="asia-northeast1" value={f.region} onChange={set("region")} />
+            <RegionSelect
+              value={f.region}
+              onChange={setRegion}
+              emptyLabel={tr("ssm.region_unset")}
+              options={GCP_REGION_CODES}
+              msgPrefix="gcp.region"
+            />
           </Field>
           <Field label={tr("gcp.f_zone")} hint={tr("gcp.f_optional")}>
-            <input className="cinput" placeholder="asia-northeast1-a" value={f.zone} onChange={set("zone")} />
+            <RegionSelect
+              value={f.zone}
+              onChange={setZone}
+              emptyLabel={tr("ssm.region_unset")}
+              options={gcpZonesOf(f.region)}
+              msgPrefix="gcp.zone"
+              named={false}
+            />
           </Field>
         </FieldGroup>
       </fieldset>
