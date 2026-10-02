@@ -139,3 +139,22 @@ describe("RepoRow Initialize Git Flow", () => {
     expect(itemFor("Git Flow を初期化")).toBeUndefined();
   });
 });
+
+describe("RepoRow origin ahead/behind chip", () => {
+  // The chip's flex gap is the only spacing between its parts; a part that falls back to
+  // text-with-spaces is spaced by the font instead, which is what made the gaps uneven.
+  const parts = () => [...host.querySelectorAll(".repo-chip.ab > span")].map((s) => s.textContent);
+
+  it("renders each part as its own element with no literal spaces", async () => {
+    await render({ ...WT, ahead: 4, behind: 4 });
+    expect(parts()).toEqual(["↑4", "↓4", "要マージ"]);
+    expect(host.querySelector(".repo-chip.ab")!.childNodes.length).toBe(3);
+  });
+
+  it("shows only the parts that apply", async () => {
+    await render({ ...WT, behind: 2 });
+    expect(parts()).toEqual(["↓2", "FF可"]);
+    await render({ ...WT, ahead: 3 });
+    expect(parts()).toEqual(["↑3"]);
+  });
+});
