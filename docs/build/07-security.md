@@ -64,10 +64,19 @@ at once**:
   volume to its own slot. What it creates must carry this pool's `af-pool`
   (`aws:RequestTag`), and the source of a copy must already be in the pool: it cannot
   snapshot a foreign volume or restore a foreign snapshot. `iam:PassRole` names only the
-  slot role of its own `40-ec2-pool` stack. One path stays open: `RunInstances` is fenced
-  on the instance alone, so a compromised CP can boot a slot of its own from any image,
-  or with a block device mapping from any snapshot, it can see in the account, and read
-  that copy there ([#1522](https://github.com/k-k1/agent-fleet/issues/1522)).
+  slot role of its own `40-ec2-pool` stack. What a launch boots from is fenced as well
+  ([#1522](https://github.com/k-k1/agent-fleet/issues/1522)): the image must be Amazon's
+  (`ec2:Owner` = `amazon`, or public) or one of the slot AMIs `40-ec2-pool` names, and a
+  block device mapping may not name a snapshot this account owns, so it cannot boot a slot
+  from another deployment's hibernated home or backup, or from a private image made of one.
+  Three things stay open. A snapshot or private image *shared into* the account from
+  another one passes. The snapshot fence is the negated form (`StringNotEquals` on the
+  account), chosen because whether IAM evaluates an AMI's own snapshot is undocumented and a
+  positive form would then deny every launch; if AWS presented no owner for this account's
+  snapshots, the fence would be silently void. And for the engine boxes both fences hold
+  only if an instant `CreateFleet` authorizes its launch against the caller's
+  `RunInstances`; `CreateFleet` itself is granted on `*`. The live run that settles these is
+  listed in the pull request for #1522.
 - On every target it unwraps the DEKs and injects them in plaintext (§7.6).
 
 It does not spread between companies, because those are separate deployments — which is
@@ -78,11 +87,11 @@ account, not to the deployment: `EcsDrive` and `EcsContainerInstances` name
 `Resource: "*"` with no condition, and `SsmWorkspaceParams` covers `parameter/af-ws/*`,
 one prefix for the whole account with no deployment in the path. A compromised CP can
 therefore update or delete another deployment's services, and read or overwrite its
-workspaces' `AGENT_TOKEN` and DEK. It can also boot a slot of its own from a snapshot of
-that deployment's homes (the `RunInstances` path above). What it cannot do is retag that
-deployment's instances, plant a resource in its pool, or stop, terminate, attach, detach,
-snapshot or delete its instances, volumes and snapshots: EC2 writes are bound to the
-writer's own `af-pool`. The ECS and EFS tag writes are bounded to this cluster's services
+workspaces' `AGENT_TOKEN` and DEK. What it cannot do is retag that deployment's
+instances, plant a resource in its pool, stop, terminate, attach, detach, snapshot or
+delete its instances, volumes and snapshots (EC2 writes are bound to the writer's own
+`af-pool`), or boot a slot from a snapshot of its homes (the `RunInstances` image and
+snapshot fence above, pending its live check). The ECS and EFS tag writes are bounded to this cluster's services
 and to the keys the CP writes, but EFS access points carry no `af-pool`, so that bound is
 by key, not by deployment. Candidate mitigations: rootless Docker, a socket proxy, a
 narrower CP role.
