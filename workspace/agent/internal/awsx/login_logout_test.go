@@ -245,14 +245,17 @@ func TestProfileLogoutWaitsForARunReadingTheCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	release := sync.OnceFunc(unlock)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		profileLogout(t, "prod")
 	}()
+	// Joined before HOME is restored: a logout left running would delete the real token.
+	t.Cleanup(func() { release(); <-done })
 	time.Sleep(100 * time.Millisecond)
 	os.WriteFile(mine[1], []byte(`{"ProviderType": "sso"}`), 0o600)
-	unlock()
+	release()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -456,26 +459,33 @@ func TestALoginDoesNotStartWhileALogoutTakesTheTokenOff(t *testing.T) {
 
 	g := logins.Gate("af-prod")
 	g.Lock()
+	release := sync.OnceFunc(g.Unlock)
 	done := make(chan *httptest.ResponseRecorder, 1)
-	go func() { done <- profileStart("prod") }()
+	finished := make(chan struct{})
+	go func() { defer close(finished); done <- profileStart("prod") }()
+	// Joined, and its login ended, before HOME and LoginAWSBin are restored, whichever
+	// check fails first.
+	t.Cleanup(func() {
+		release()
+		<-finished
+		if cur := logins.Current("af-prod"); cur != nil {
+			cur.End(cloudlogin.PhaseFailed, "")
+			<-cur.Exited()
+		}
+	})
 	select {
 	case <-done:
-		g.Unlock()
 		t.Fatal("a login started while a logout held the gate")
 	case <-time.After(150 * time.Millisecond):
 	}
 	if n := cliCalls(state); n != 0 {
-		g.Unlock()
 		t.Fatalf("aws was started %d times", n)
 	}
-	g.Unlock()
+	release()
 	rec := <-done
 	if rec.Code != http.StatusOK {
 		t.Fatalf("start = %d %s", rec.Code, rec.Body.String())
 	}
-	cur := logins.Current("af-prod")
-	cur.End(cloudlogin.PhaseFailed, "")
-	<-cur.Exited()
 }
 
 // The logout holds the gate until the old token is off disk, and not while AWS answers.
@@ -497,17 +507,20 @@ func TestProfileLogoutHoldsTheGateOnlyUntilTheTokenIsOff(t *testing.T) {
 
 	g := logins.Gate("af-prod")
 	g.Lock()
+	release := sync.OnceFunc(g.Unlock)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		profileLogout(t, "prod")
 	}()
+	// Joined before HOME and ssoPortalURL are restored: a logout left running would delete
+	// the real token and revoke it at the real portal.
+	t.Cleanup(func() { release(); <-done })
 	time.Sleep(150 * time.Millisecond)
 	if _, err := os.Stat(mine[0]); err != nil {
-		g.Unlock()
 		t.Fatal("the token was taken off without the gate")
 	}
-	g.Unlock()
+	release()
 	<-done
 	if !<-gateFree {
 		t.Fatal("the gate was held during the revoke")

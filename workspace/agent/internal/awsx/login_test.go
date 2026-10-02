@@ -66,12 +66,16 @@ func onlyRequest(t *testing.T) LoginRequest {
 func TestConsoleLoginWaitsForTheMembersApproval(t *testing.T) {
 	bin, state := fakeAWS(t, ssoProfile)
 	fastPoll(t)
+	helper := make(chan struct{})
 	go func() {
+		defer close(helper)
 		waitForFile(t, logins.RequestPath("af-prod"))
 		// The member approves in the Console: the token lands and the CLI accepts it.
 		writeSSOCache(t, "fresh", time.Now().Add(time.Hour))
 		os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600)
 	}()
+	// Joined before HOME is restored: the helper writes the SSO cache from HOME.
+	t.Cleanup(func() { <-helper })
 	var stderr bytes.Buffer
 	_, _, env, err := PlanExec(bin, workloadEnv, consoleOpts(&stderr, 5*time.Second))
 	if err != nil {
@@ -142,7 +146,9 @@ func TestConsoleLoginOnlyForASettingsProfileRunUnattended(t *testing.T) {
 func TestConsoleLoginCancelEndsTheWaitAndHoldsNewRuns(t *testing.T) {
 	bin, _ := fakeAWS(t, ssoProfile)
 	fastPoll(t)
+	helper := make(chan struct{})
 	go func() {
+		defer close(helper)
 		waitForFile(t, logins.RequestPath("af-prod"))
 		r, _ := logins.Read("af-prod")
 		rec := httptest.NewRecorder()
@@ -150,6 +156,8 @@ func TestConsoleLoginCancelEndsTheWaitAndHoldsNewRuns(t *testing.T) {
 		req.SetPathValue("id", r.ID)
 		HandleLoginCancel(rec, req)
 	}()
+	// Joined before HOME is restored: the cancel resolves its paths from HOME.
+	t.Cleanup(func() { <-helper })
 	var stderr bytes.Buffer
 	withSettingsCache(t)
 	start := time.Now()

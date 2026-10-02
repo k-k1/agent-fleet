@@ -473,10 +473,15 @@ func TestConsoleLoginEndToEnd(t *testing.T) {
 		err error
 	}
 	done := make(chan result, 1)
+	finished := make(chan struct{})
 	go func() {
+		defer close(finished)
 		_, _, env, err := PlanExec(l.gcloud, hostile(t), o)
 		done <- result{env, err}
 	}()
+	// Joined (ConsoleWait bounds it) before HOME and LoginGCloudBin are restored: a run
+	// left waiting would write the real gcloud state and notice outbox.
+	t.Cleanup(func() { <-finished })
 	waitForFile(t, logins.RequestPath(ConfigName("prod")))
 
 	evs := notice.List()
@@ -783,10 +788,14 @@ func TestWaitEndsWithTheReasonWhenALoginCannotHelp(t *testing.T) {
 	o := execOpts(l.env, prod())
 	o.Login, o.ConsoleLogin, o.ConsoleWait = "auto", true, 10*time.Second
 	done := make(chan error, 1)
+	finished := make(chan struct{})
 	go func() {
+		defer close(finished)
 		_, _, _, err := PlanExec(l.gcloud, hostile(t), o)
 		done <- err
 	}()
+	// Joined (ConsoleWait bounds it) before HOME and LoginGCloudBin are restored.
+	t.Cleanup(func() { <-finished })
 	waitForFile(t, logins.RequestPath(ConfigName("prod")))
 	l.write(t, "fail", "ERROR: (gcloud.config.config-helper) PERMISSION_DENIED: Permission 'iam.serviceAccounts.getAccessToken' denied")
 	addCredential(t, "dev@example.com", "authorized_user")

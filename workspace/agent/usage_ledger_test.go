@@ -572,6 +572,13 @@ func TestFoldOnReadDoesNotBlockOnRunningPass(t *testing.T) {
 		maybeFoldSessionUsage()
 		close(done)
 	}()
+	// Collect the async pass we started before leaving (no global state carried into the next
+	// test), on the failing path too, and before the isolated env is restored. Waiting only 2
+	// seconds and leaving silently is not enough: the fold reads its destination from the env at
+	// the moment it writes, so once the env is restored or the next test swaps `AF_USAGE_DIR` it
+	// writes into that ledger. If the limit cannot be waited out, fail rather than move on
+	// quietly.
+	t.Cleanup(func() { <-done; waitUsageFoldIdle(t) })
 	select {
 	case <-done:
 		usageFoldMu.Unlock()
@@ -579,12 +586,6 @@ func TestFoldOnReadDoesNotBlockOnRunningPass(t *testing.T) {
 		usageFoldMu.Unlock()
 		t.Fatal("fold-on-read blocked waiting for the fold's own lock")
 	}
-	// Collect the async pass we started before leaving (no global state carried into the next
-	// test). Waiting only 2 seconds and leaving silently is not enough: the fold reads its
-	// destination from the env at the moment it writes, so once the next test swaps
-	// `AF_USAGE_DIR` it writes into that test's ledger. If the limit cannot be waited out, fail
-	// rather than move on quietly.
-	waitUsageFoldIdle(t)
 }
 
 // waitUsageFoldIdle collects the running bulk fold. It shares globals (the running flag, the

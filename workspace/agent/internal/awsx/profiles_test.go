@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -597,17 +598,20 @@ func TestSyncFetchesUnderTheLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	release := sync.OnceFunc(unlock)
 	done := make(chan struct{})
 	go func() {
 		_, _ = Sync()
 		close(done)
 	}()
+	// Joined before HOME and the CP env are restored: a Sync left running would rewrite
+	// the real ~/.aws/config.
+	t.Cleanup(func() { release(); <-done })
 	time.Sleep(200 * time.Millisecond)
 	if n := hits.Load(); n != 0 {
-		unlock()
 		t.Fatalf("the CP was asked %d time(s) before the lock was free", n)
 	}
-	unlock()
+	release()
 	<-done
 	if hits.Load() != 1 {
 		t.Fatalf("hits = %d after the lock was released", hits.Load())

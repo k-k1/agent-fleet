@@ -214,6 +214,9 @@ func TestRestoreAndPurgeTakeTheCleanupLock(t *testing.T) {
 		httptest.NewRequest(http.MethodDelete, "/cleanup/archives/none", nil),
 	} {
 		done := make(chan struct{})
+		// Joined before HOME is restored: a restore or purge left running would write the
+		// real meta dir or touch the real archives.
+		t.Cleanup(func() { <-done })
 		sessionx.WithCleanupLock(func() {
 			go func() {
 				mux.ServeHTTP(httptest.NewRecorder(), req)

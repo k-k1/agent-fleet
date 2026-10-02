@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -291,14 +292,21 @@ func TestInstallGCloudConcurrentRunsRelinkSafely(t *testing.T) {
 		for _, b := range gcloudLinkedBins {
 			_ = os.Remove(filepath.Join(e.home, ".local", "bin", b))
 		}
+		// Every run is drained before failing: a straggler outliving the test sees the restored
+		// HOME and gcloudFetch (measured: it starts a real download into the real home and
+		// would link the real ~/.local/bin).
 		errs := make(chan error, 8)
 		for i := 0; i < 8; i++ {
 			go func() { errs <- installGCloud() }()
 		}
+		var failed []error
 		for i := 0; i < 8; i++ {
 			if err := <-errs; err != nil {
-				t.Fatalf("round %d: concurrent install-gcloud: %v", round, err)
+				failed = append(failed, err)
 			}
+		}
+		if len(failed) > 0 {
+			t.Fatalf("round %d: %d of 8 concurrent install-gcloud runs failed: %v", round, len(failed), errors.Join(failed...))
 		}
 	}
 	if len(e.fetched) != 1 {
