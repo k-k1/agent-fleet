@@ -9,17 +9,18 @@
 // ~/.aws/config is the member's own file. Only the block between the two marker lines is
 // ours; everything outside it is preserved byte for byte, and a profile whose name the
 // member already defined outside the block is not exported — their definition wins.
+//
+// awsx is the AWS backend of the provider-neutral packages: cloudbridge pulls the
+// profiles, cloudlogin runs the Console login's requests and attempts, and cloudexec is
+// af-aws-exec's skeleton. What reads AWS's own credential store stays here: the SSO token
+// cache, its expiry and token hash, what "resolved" means for a request (ADR 0102), the
+// expiry warning and the managed block of ~/.aws/config.
 package awsx
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -27,15 +28,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudbridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
-// PollInterval matches the other CP-backed pulls: an edit in Settings lands without
-// anyone asking, and `af-aws-exec` pulls on demand for the "use it right now" case.
-const PollInterval = 5 * time.Minute
+// PollInterval is how often the Agent pulls the profiles from the CP.
+const PollInterval = cloudbridge.PollInterval
 
 // ErrBridgeOff reports that this deployment injects no bridge (no PUBLIC_BASE_URL). A
 // normal state, not a failure: the file is then left exactly as it is.
@@ -94,10 +94,12 @@ type SyncResult struct {
 }
 
 // Conflict is a profile name two or more Settings labels map to.
-type Conflict struct {
-	Name   string   `json:"name"`
-	Labels []string `json:"labels"`
-}
+type Conflict = cloudbridge.Conflict
+
+// bridge pulls the AWS profiles from the CP.
+var bridge = &cloudbridge.Bridge[Profile]{Path: "/internal/aws-profiles", TokenEnv: "AF_AWS_PROFILES_TOKEN",
+	What: "AWS profiles", CacheFile: "aws-settings.json", OwnerLabel: "af-aws-profiles-cache/v1",
+	Target: "~/.aws/config", ErrOff: ErrBridgeOff}
 
 // ConfigPath is the file the AWS CLI and SDKs read by default. AWS_CONFIG_FILE is
 // deliberately not honoured: a shell that exported it for one session would otherwise
@@ -107,96 +109,43 @@ func ConfigPath() string { return filepath.Join(paths.HomeDir(), ".aws", "config
 // Fetch pulls the member's profiles from the CP, with the names it left out because
 // two labels collide.
 func Fetch() ([]Profile, []Conflict, error) {
-	base := cpurl.Request()
-	token := os.Getenv("AF_AWS_PROFILES_TOKEN")
-	if base == "" || token == "" {
-		return nil, nil, ErrBridgeOff
-	}
-	req, err := http.NewRequest(http.MethodGet, base+"/internal/aws-profiles", nil)
-	if err != nil {
-		return nil, nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode >= 400 {
-		return nil, nil, fmt.Errorf("CP AWS profiles API error (%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	var wire struct {
-		Profiles  []Profile  `json:"profiles"`
-		Conflicts []Conflict `json:"conflicts"`
-	}
-	if err := json.Unmarshal(body, &wire); err != nil {
-		return nil, nil, fmt.Errorf("CP AWS profiles response is not JSON: %w", err)
-	}
-	return wire.Profiles, wire.Conflicts, nil
+	l, err := bridge.Fetch()
+	return l.Profiles, l.Conflicts, err
 }
 
 // Sync pulls and applies. When the CP cannot be reached it re-applies the last list the
 // CP gave (the cache) under today's rules, so a CP blip never takes a working profile
 // away, though a profile the files now break (a new [DEFAULT] line, say) is held back
-// offline just as it would be online. Without a cache the block is left as it is.
+// offline just as it would be online: the block, --list and af-aws-exec then agree with
+// what the files say now. Without a cache the block is left as it is. The lock is the
+// one every writer of ~/.aws/config takes (cloudbridge.Pull says why it spans the fetch).
 func Sync() (SyncResult, error) {
-	if os.Getenv("AF_CP_BASE_URL") == "" || os.Getenv("AF_AWS_PROFILES_TOKEN") == "" {
-		return SyncResult{}, ErrBridgeOff
-	}
-	// Everything runs under one lock across processes: fetching the list, choosing it
-	// (the CP's answer, or the cache when the CP cannot be asked), saving the cache and
-	// writing the block. Otherwise two runs can commit out of order: one that fetched
-	// (or read the cache) earlier could write its older list after a newer one. Every
-	// run asks the CP itself; parallel runs queue their fetches one after another. That
-	// costs latency (one CP round trip per run, up to the 10 s timeout each while the CP
-	// is down), and it is kept that way on purpose: every shortcut tried here (reusing
-	// another run's fetch, a cooldown after a failure) could serve a list from before a
-	// Settings edit.
-	unlock, target, lerr := lockConfig(ConfigPath())
-	if lerr != nil {
-		return SyncResult{}, lerr
-	}
-	defer unlock()
-	ps, conflicts, err := Fetch()
-	if err != nil {
-		// The CP cannot be asked: re-apply the last list it gave, so the block follows
-		// what the files say now (a [DEFAULT] line added since, a profile of the
-		// member's own) and --list, the block and af-aws-exec agree.
-		cached, cconf, ok := cachedList()
-		if !ok {
-			return SyncResult{}, err
-		}
-		res, aerr := applyLocked(ConfigPath(), target, cached)
+	var res SyncResult
+	target, applied := "", false
+	p, err := bridge.Pull(func() (func(), error) {
+		unlock, t, lerr := lockConfig(ConfigPath())
+		target = t
+		return unlock, lerr
+	}, func(l cloudbridge.List[Profile]) error {
+		var aerr error
+		res, aerr = applyLocked(ConfigPath(), target, l.Profiles)
+		applied = true
+		return aerr
+	})
+	if p.Have {
 		res.Settings = map[string]Profile{}
-		for _, p := range cached {
-			res.Settings[p.Name] = p
+		for _, sp := range p.Profiles {
+			res.Settings[sp.Name] = sp
 		}
-		res.Conflicts = cconf
-		if aerr != nil {
-			return res, fmt.Errorf("%v; applying the last copy also failed: %w", err, aerr)
-		}
-		res.FromCache = true
-		return res, err
+		res.Conflicts = p.Conflicts
 	}
-	res := SyncResult{Settings: map[string]Profile{}, Conflicts: conflicts, Fetched: true}
-	for _, p := range ps {
-		res.Settings[p.Name] = p
+	res.Fetched, res.FromCache = p.Fetched, p.FromCache
+	if p.Fetched && applied {
+		// An earlier build kept the cache in ~/.aws; remove that one file so no stray
+		// agent-fleet file stays in the member's directory.
+		_ = os.Remove(filepath.Join(filepath.Dir(ConfigPath()), ".agent-fleet-settings.json"))
 	}
-	// The cache is saved BEFORE the block is written, and the block is only written once
-	// it is: the cache is then never older than the block, so a later offline re-apply
-	// cannot put an older list back (fail closed: a cache that cannot be saved leaves
-	// the block as it is, and an older cache is removed).
-	if serr := saveSettingsCache(ps, conflicts); serr != nil {
-		_ = os.Remove(settingsCachePath())
-		return res, fmt.Errorf("could not save the Settings cache (%w); ~/.aws/config was left as it is", serr)
-	}
-	applied, aerr := applyLocked(ConfigPath(), target, ps)
-	applied.Settings, applied.Conflicts, applied.Fetched = res.Settings, res.Conflicts, true
-	// An earlier build kept the cache in ~/.aws; remove that one file so no stray
-	// agent-fleet file stays in the member's directory.
-	_ = os.Remove(filepath.Join(filepath.Dir(ConfigPath()), ".agent-fleet-settings.json"))
-	return applied, aerr
+	return res, err
 }
 
 // Apply rewrites the managed block of the config at path to hold ps. It writes only when
@@ -541,17 +490,13 @@ func credentialsNames(s string) map[string]bool {
 	return out
 }
 
-// StartSync applies the member's profiles once at agent boot and then keeps polling.
-// The first pull is in the goroutine too: boot must not wait on the CP.
+// StartSync applies the member's profiles once at agent boot and then keeps polling,
+// warning of expiring logins after each pull.
 func StartSync() {
-	go func() {
-		syncAndLog("agent boot")
+	cloudbridge.Poll(func(why string) {
+		syncAndLog(why)
 		warnExpiringSSO(time.Now())
-		for range time.Tick(PollInterval) {
-			syncAndLog("poll")
-			warnExpiringSSO(time.Now())
-		}
-	}()
+	})
 }
 
 func syncAndLog(why string) {
@@ -613,63 +558,20 @@ func ExportedIn(path string) []string {
 	return out
 }
 
-// settingsCachePath keeps the last list the CP sent (non-secret, like the block), so the
-// shadow and collision checks in af-aws-exec, and the offline re-apply, still have
-// something to go on when the CP cannot be reached. The block alone cannot serve:
-// shadowed and colliding names are exactly the ones it leaves out. It lives in the
-// Agent's state directory, not under ~/.aws: the user may make ~/.aws read-only or link
-// it elsewhere, and a cache that can be neither replaced nor removed would be re-applied
-// stale.
-func settingsCachePath() string {
-	return filepath.Join(paths.AgentStateDir(), "aws-settings.json")
-}
-
-type settingsCache struct {
-	// Owner is a digest of the bridge token the list was fetched with. The token is
-	// per membership, so a cache left in a restored or shared home by another membership
-	// is never applied here.
-	Owner     string     `json:"owner"`
-	Profiles  []Profile  `json:"profiles"`
-	Conflicts []Conflict `json:"conflicts,omitempty"`
-}
-
-// cacheOwner is the digest the cache is bound to ("" when there is no bridge token).
-func cacheOwner() string {
-	tok := os.Getenv("AF_AWS_PROFILES_TOKEN")
-	if tok == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte("af-aws-profiles-cache/v1\x00" + tok))
-	return hex.EncodeToString(sum[:])
-}
+// settingsCachePath is the cache of the last list the CP sent. The shadow and collision
+// checks in af-aws-exec, and the offline re-apply, need it when the CP cannot be reached:
+// the block alone cannot serve, since shadowed and colliding names are exactly the ones
+// it leaves out.
+func settingsCachePath() string { return bridge.CachePath() }
 
 func saveSettingsCache(ps []Profile, conflicts []Conflict) error {
-	b, err := json.Marshal(settingsCache{Owner: cacheOwner(), Profiles: ps, Conflicts: conflicts})
-	if err != nil {
-		return err
-	}
-	path := settingsCachePath()
-	if old, rerr := os.ReadFile(path); rerr == nil && string(old) == string(b) {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	return writeAtomic(path, b, 0o600)
+	return bridge.SaveCache(cloudbridge.List[Profile]{Profiles: ps, Conflicts: conflicts})
 }
 
-// cachedList is the last list the CP gave: saved whenever a fetch succeeds, before the
-// block is written (see Sync), and bound to this membership (cacheOwner).
+// cachedList is the last list the CP gave, bound to this membership.
 func cachedList() ([]Profile, []Conflict, bool) {
-	b, err := os.ReadFile(settingsCachePath())
-	if err != nil {
-		return nil, nil, false
-	}
-	var c settingsCache
-	if json.Unmarshal(b, &c) != nil || c.Owner == "" || c.Owner != cacheOwner() {
-		return nil, nil, false
-	}
-	return c.Profiles, c.Conflicts, true
+	l, ok := bridge.Cached()
+	return l.Profiles, l.Conflicts, ok
 }
 
 // CachedSettings returns the last list the CP gave (saved whenever a fetch succeeds, even

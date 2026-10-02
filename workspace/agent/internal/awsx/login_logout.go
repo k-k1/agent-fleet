@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudlogin"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
@@ -160,11 +161,8 @@ func HandleProfileLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ssoSession := "af-" + sp.Name
-	loginAttempts.Lock()
-	a := loginAttempts.current[ssoSession]
-	loginAttempts.Unlock()
-	if a != nil {
-		a.end(attemptCancelled, "logged out")
+	if a := logins.Current(ssoSession); a != nil {
+		a.End(cloudlogin.PhaseCancelled, "logged out")
 	}
 
 	var out profileLogoutWire
@@ -188,6 +186,6 @@ func HandleProfileLogout(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	log.Printf("aws-login: logout profile=%s revoked=%t no_token=%t relayed=%t", sp.Name, out.Revoked, out.NoToken, relayedByCP(r))
+	log.Printf("aws-login: logout profile=%s revoked=%t no_token=%t relayed=%t", sp.Name, out.Revoked, out.NoToken, cloudlogin.RelayedByCP(r))
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudlogin"
 )
 
 // TestSSORoleCachePathMatchesBotocore pins the key to what botocore computes: the first is
@@ -177,26 +179,14 @@ func TestProfileLogoutEndsARunningLogin(t *testing.T) {
 	fakeLogoutAWS(t)
 	logoutFixture(t)
 	stopped := false
-	a := &loginAttempt{id: "running", ssoSession: "af-prod", profile: "prod", phase: attemptAuthorize,
-		url: "https://device.sso.ap-northeast-1.amazonaws.com/?user_code=ABCD-EFGH", code: "ABCD-EFGH",
-		stop: func() { stopped = true }}
-	loginAttempts.Lock()
-	loginAttempts.byID[a.id], loginAttempts.current["af-prod"] = a, a
-	loginAttempts.Unlock()
-	t.Cleanup(func() {
-		loginAttempts.Lock()
-		delete(loginAttempts.byID, a.id)
-		delete(loginAttempts.current, "af-prod")
-		loginAttempts.Unlock()
-	})
+	// That an ended attempt drops its URL and code is cloudlogin's (TestEndClearsTheURLAndCode).
+	a := logins.Begin("af-prod", "", "prod", func() { stopped = true })
 
 	if rec, _ := profileLogout(t, "prod"); rec.Code != http.StatusOK {
 		t.Fatalf("logout = %d %s", rec.Code, rec.Body.String())
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.phase != attemptCancelled || a.code != "" || !stopped {
-		t.Fatalf("the running login was not ended: phase=%s code=%q stopped=%t", a.phase, a.code, stopped)
+	if v := a.View(); v.Phase != cloudlogin.PhaseCancelled || !stopped {
+		t.Fatalf("the running login was not ended: phase=%s stopped=%t", v.Phase, stopped)
 	}
 }
 
