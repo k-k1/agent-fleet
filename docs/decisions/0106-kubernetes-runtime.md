@@ -104,6 +104,16 @@ The runbook defines two front ends, and does not support stacking them:
 The classic Application Load Balancer is not used: it closes even active WebSockets at
 `timeoutSec`.
 
+**The workspace must not reach the VM's metadata server.** On EC2 the docker adapter's
+`AWS_EC2_METADATA_DISABLED` and the host's hop limit of 1 keep a workspace away from the instance
+role (`runtime_docker.go`, `ec2-single/cfn.yaml`). GCE has no hop limit and no SDK-wide switch:
+any process that can reach `169.254.169.254` with `Metadata-Flavor: Google` gets the VM service
+account's token. So the provisioning script does two things. The VM runs with no service account,
+or one holding no roles — the DNS record and the certificate need none on the VM, since Caddy uses
+HTTP-01 and the operator creates the record with their own credentials. And a host firewall rule,
+installed at every boot, drops traffic from every Docker bridge to `169.254.169.254`. Phase 0 is
+not done until a request from inside a workspace to the metadata server fails.
+
 What this step does not give is what compose never gives: one host, no scale-out, and a VM that
 bills while its workspaces are stopped.
 
@@ -132,8 +142,10 @@ ordinal**: it does not start a replacement until the old pod is gone. The ECS ad
 client's requests to two agents (`serviceRolledOut` in `runtime_ecs.go`); here that overlap does
 not occur.
 
-**Stop** sets `replicas: 0`, with `terminationGracePeriodSeconds` from `AF_STOP_GRACE_SEC` — the
-same two-stage stop the agent already expects — and **returns only when the stop has settled**, as
+**Stop** sets `replicas: 0`, with `terminationGracePeriodSeconds` from `stopGraceSec()` and
+`AGENT_STOP_GRACE_SEC` from `agentStopGraceSec()` in the pod's environment, as every other adapter
+injects it (`runtime_docker.go`) — the same two-stage stop the agent already expects, with the same
+120-second ceiling, so that one `AF_STOP_GRACE_SEC` stays valid on every target. Stop **returns only when the stop has settled**, as
 `docker stop` does. Settled means three things, checked in this order: the controller has observed
 the generation Stop wrote (`status.observedGeneration`), it reports no replicas
 (`status.replicas` is 0), and no pod of the workspace exists. The first two matter because a
@@ -144,8 +156,9 @@ not settled by then (a node that stopped answering, below).
 
 **Start** first requires the same settled condition — or no StatefulSet at all — and returns an
 error otherwise. Then it writes the workspace's Secret (decision 6), and then the pod template and
-`replicas: 1` in one update. The
-template carries a start generation annotation and the image pinned by digest (decision 9), so
+`replicas: 1` in one update, and returns: like the ECS adapters it does not wait for the agent's
+`/healthz`, and `State` follows the convergence ([21 §21.2](../build/21-add-a-deploy-target.md)).
+The template carries a start generation annotation and the image pinned by digest (decision 9), so
 every start produces a new controller revision even when nothing else changed. Because no pod
 exists when the Secret is rewritten, no container of an earlier start can read the new values. A
 Start that fails after writing the Secret leaves no pod running, and the next Start rewrites it.
@@ -184,8 +197,11 @@ guarantee. The CP's start deadline (`start_deadline.go`) does not end that case:
 a workspace whose task still counts as running, and setting replicas to 0 does not remove a pod
 from a node that cannot be reached. The CP never force-deletes a pod: that frees the name without
 proof that the process is dead, and could run two agents on one home. Recovery is the operator's,
-by the cluster's own procedure (removing the node, or the out-of-service taint for a non-graceful
-node shutdown), and the runbook describes it.
+and it starts with that proof: first make sure the old process cannot run — the VM stopped or
+deleted, confirmed from the cloud provider, not from Kubernetes — and only then remove the Node
+or apply the out-of-service taint. Deleting a Node object does not stop its VM, and the taint
+detaches volumes; during a network partition, where the VM's state cannot be confirmed, nothing is
+done. The runbook describes the procedure in that order.
 
 `shareProcessNamespace: true` supplies the init process: the pod's pause container becomes PID 1
 and reaps orphans, as tini does under docker. This ADR keeps the shared image unchanged rather
@@ -216,8 +232,18 @@ home whatever each one is, and the home operations become:
 | `WipeHome(repos)` (Recreate) | the CP records the wipe, with a generation number, on the StatefulSet as an annotation and returns; the next Start adds an init container, from the same image, that removes `~/repos` before the agent starts and writes the generation it carried out into the home. A pod restarted later finds that generation and removes nothing, so the annotation never has to be cleared by a template change, which would roll the pod. This is ecs-ec2's "mark, and Start removes it" and returns well inside the ingress timeout |
 | `WipeHome(clean)` (Clean home) | the same, removing everything at the top of the home except the seven `homeKeep` names |
 | `EraseHome()` (an administrator's Clean home) | after checking the settled stop itself, the CP runs a one-shot erase pod from the same image — a deterministic name and label, `restartPolicy: Never` — that mounts the home claim, removes what `WipeHome(clean)` removes, and exits. The CP waits for it, which may take as long as Destroy does, reads its result, and deletes it. The claim itself is kept |
-| `ResizeHome()` | raise the home claim's request (decision 4, below) |
+| `ResizeHome()` | raise the home claim's request (see the StorageClass requirements below) |
 | `Destroy()` | decision 5 |
+
+The init container and the erase pod run a shell command the CP builds, as ecs-ec2 builds the one
+it sends over SSM (`homeWipeCommand` in `runtime_ecs_ec2_home_wipe.go`): `sh`, `find` and `rm`
+from the image, and the keep list from Go's `homeKeep`. The image is unchanged, and the keep list
+has one source in the CP; a test pins it to the entrypoint's defaults (`AF_WS_KEEP_DIRS`,
+`AF_WS_KEEP_FILES`), which hold the same seven names.
+
+An administrator's Clean home runs under a five-minute budget once it leaves the request
+(`homeEraseBudget` in `workspace_lifecycle.go`). An erase that outlives it is an error, and the
+erase pod keeps running; the next `EraseHome` finds it by name and waits for it.
 
 A finished erase pod is not removed by anyone else, and while it exists it holds the home claim
 through the claim-protection finalizer. So the erase pod is found by its name whenever it matters:
@@ -231,8 +257,8 @@ template's size cannot change after the StatefulSet is created and the home has 
 claims also keep their lifecycle — created on first start, kept on stop, removed by Destroy — in
 the adapter's code rather than in a retention policy.
 
-**Access mode `ReadWriteOncePod`** where the CSI driver supports it (GKE's Persistent Disk driver
-does), else `ReadWriteOnce`. `ReadWriteOnce` only restricts a volume to one node, not one pod; the
+**Access mode `ReadWriteOncePod`** where the CSI driver supports it (to be confirmed for GKE's
+Persistent Disk driver on the pinned version in phase 1), else `ReadWriteOnce`. `ReadWriteOnce` only restricts a volume to one node, not one pod; the
 isolation of decision 7 rests on each claim being referenced by one StatefulSet and on members
 having no Kubernetes API access, and `ReadWriteOncePod` adds the storage's own guarantee where it
 exists.
@@ -255,8 +281,12 @@ The StorageClass is a deployment setting, and the adapter requires of it:
 The volume is zonal: a workspace starts only in its volume's zone, and losing that zone makes the
 home unreachable until it returns — the exposure an ecs-ec2 home has without its backup.
 
-The pod runs as the image's `dev` uid with `fsGroup` set to its gid, so a fresh volume is
-writable without an init container running as root.
+The pod runs as the image's `dev` uid with `fsGroup` set to its gid, which should make a fresh
+volume writable without an init container running as root. That is expected, not measured: the
+state volume is mounted through `subPath`, and the kubelet creates a `subPath` directory itself.
+The live harness checks that `dev` can write to every mount of a new workspace, the keep links
+included; if it cannot, the fallback is one init container that changes the owner once, as root,
+before anything else runs.
 
 ### 5. Destroy removes the claims, and reports what it cannot confirm
 
@@ -271,8 +301,10 @@ deletes). Then:
 2. It deletes the Service, the Secret and both claims, and waits a bounded time for the claims to
    disappear.
 3. With the read-only cluster access of decision 8 it confirms that each inventoried
-   PersistentVolume object is gone — with `reclaimPolicy: Delete`, the volume object is removed
-   only after the disk behind it is deleted — and returns as a known residue
+   PersistentVolume object is gone — with `reclaimPolicy: Delete` and the PersistentVolume
+   deletion-protection finalizer (stable in Kubernetes 1.33, and honoured by the CSI
+   provisioner), the volume object is removed only after the disk behind it is deleted — and
+   returns as a known residue
    ([21 §21.2](../build/21-add-a-deploy-target.md)) every claim or volume that did not disappear
    in time, or that it could not read.
 4. It deletes the StatefulSet **only when every claim and volume of the inventory is confirmed
@@ -283,23 +315,34 @@ deletes). Then:
    existing inventory and adds to it, never replacing it with one rebuilt from claims that are
    already gone.
 
-The runbook makes `Delete` a precondition, and the CP checks the configured StorageClass at boot;
-with `Retain`, the disk, its data and its bill outlive Destroy, and the audit log says so.
+The runbook makes `Delete` and the finalizer's Kubernetes version preconditions, and the CP checks
+the configured StorageClass at boot. On a cluster without the finalizer, a volume object that is
+gone is not proof that the disk is, and Destroy reports such volumes as unconfirmed. With `Retain`,
+the disk, its data and its bill outlive Destroy, and the audit log says so.
 
-Every step is idempotent and starts from what the substrate shows, so a Destroy interrupted
-halfway is completed by running it again.
+Residues are strings of the form `statefulset:<namespace>/<name>`, `pvc:<namespace>/<name>` and
+`pv:<name>`, so the audit log names exactly what to look for. Every step is idempotent and starts
+from what the substrate shows, so a Destroy interrupted before it returned — the CP crashed, or
+the stop did not settle — is completed by running it again. Once Destroy has returned a residue,
+the CP deletes the workspace row and there is nothing left to run it on; the StatefulSet that kept
+the inventory is then the record, and removing what it names is a runbook procedure.
 
 ### 6. Secrets are referenced, never written into the pod spec
 
 The whole per-start environment the factory receives — the DEK, `AGENT_TOKEN`, and the minted
 tokens of the context section — goes into one per-workspace Secret, rewritten at every start, and
 reaches the container through `envFrom`. The pod template carries only static, non-secret
-settings. This is stricter than ECS, which puts only the DEK and `AGENT_TOKEN` behind SSM.
+settings. It is not the ECS arrangement in either direction: ECS keeps the DEK and `AGENT_TOKEN`
+behind SSM SecureString parameters with their own IAM, and the other tokens in the task
+definition's plain environment. Here all of them sit in one Secret, readable by whoever can read
+Secrets in the namespace — narrower than a plain environment, wider than a per-parameter IAM
+grant.
 
 `secretKeyRef` hides a value from the pod spec, not from someone who can read Secrets or create
 pods in the namespace. Decision 7 is what keeps those rights away from members. Secrets in etcd
-are only base64 unless the cluster encrypts them; the runbook makes application-layer secret
-encryption (Cloud KMS on GKE) a precondition.
+are only base64 unless the cluster encrypts them. The runbook makes application-layer secret
+encryption (Cloud KMS on GKE) a precondition, and the Terraform of decision 12 turns it on; the CP
+cannot see the setting, so on other clusters it rests on the runbook alone.
 
 ### 7. Isolation meets every row of 07 §7.2
 
@@ -310,13 +353,22 @@ that right belongs to the CP and the cluster's administrators alone. The operato
 ResourceQuota and LimitRange on the namespace, which caps what the stopped workspaces' claims and
 the running pods may take together; a start refused by the quota surfaces as the boot phase.
 
+**The workspace namespace enforces the `restricted` Pod Security Standard**, set by a namespace
+label the manifests apply and the CP has no right to change. The CP can create pods there (the
+StatefulSets, and the erase pod), and a CP that is compromised could otherwise create a
+privileged or `hostPath` pod and reach the node and everything else on it. With the label, the
+API server refuses such a pod whoever asks. What a compromised CP still reaches is the namespace:
+every workspace's Secret, so every DEK and every minted token — the same reach it has on every
+target, where it holds the master key. A dedicated cluster bounds it there; on a cluster shared
+with other workloads, the Pod Security label and the namespaced role are what keep it there.
+
 | Concern | `kubernetes` |
 |---|---|
 | Files between users | one pair of claims per workspace, referenced by that workspace's StatefulSet alone, `ReadWriteOncePod` where supported |
-| Process and memory | one pod per workspace, with requests and limits from the workspace sizing |
+| Process and memory | one pod per workspace, with CPU and memory requests and limits from the workspace sizing, and an `ephemeral-storage` request and limit so that one member filling the node's disk is evicted alone instead of putting the node under disk pressure. `/tmp` is an `emptyDir` with a `sizeLimit`, as ecs-ec2 makes it a tmpfs |
 | Network | the policies below |
-| Privileges | not privileged, `runAsNonRoot`, no added capabilities by default (Fargate's level). `SYS_ADMIN` for Chromium's sandbox is an opt-in where the cluster's policy allows it |
-| Cloud identity | `automountServiceAccountToken: false`; the workspace's service account is bound to no cloud identity. On GKE every node pool that can run a workspace uses the GKE metadata server (`GKE_METADATA`), and workspaces are scheduled only onto such pools, so the metadata server never hands a pod the node's credentials. The CP's own Workload Identity is a separate binding (decision 8) |
+| Privileges | what `restricted` allows and nothing more: not privileged, `runAsNonRoot`, no added capabilities, no `hostNetwork`, `hostPID` or `hostPath` — Fargate's level. The first version offers no `SYS_ADMIN` opt-in for Chromium's sandbox, since `restricted` forbids it (open question 1) |
+| Cloud identity | `automountServiceAccountToken: false`; the workspace's service account is bound to no cloud identity. On GKE every node pool that can run a workspace uses the GKE metadata server (`GKE_METADATA`), and workspaces are scheduled only onto such pools, so the metadata server never hands a pod that is not on the host network the node's credentials — and `restricted` keeps every workspace pod off it. No IAM grant may name the workspace namespace or its service account as a principal, directly or through a `principalSet`; and since Workload Identity treats the same namespace and service account names in any cluster of a project as one identity, the namespace names carry a per-deployment prefix. The CP's own Workload Identity is a separate binding (decision 8) |
 | Sensitive state | the state volume at `/var/lib/af/claude` and the keep path, as on ecs-ec2 |
 
 **Network policies.** NetworkPolicy only allows; a deny is the absence of an allow, and any other
@@ -327,7 +379,7 @@ and the runbook forbids adding broader ones:
 |---|---|
 | any → workspace agent port | from the CP's pods only |
 | workspace → cluster DNS | yes |
-| workspace → CP | yes, to the CP's internal Service (decision 8) |
+| workspace → CP | yes, to the internal port of the CP's internal Service only (decision 8) |
 | workspace → the internet | yes, as `0.0.0.0/0` with two sets of ranges excepted. The fixed special-use ranges: RFC 1918, `100.64.0.0/10`, `169.254.0.0/16` (the metadata address included). And the ranges this deployment actually uses, which the manifests take as parameters: the pod, service and node ranges and the control-plane endpoint. The fixed list alone is not enough — GKE Standard's default service range from 1.29 is `34.118.224.0/20`, and GKE can use privately used public ranges for pods and nodes |
 | workspace → a private address the deployment needs (a LAN engine, an internal git host) | only as an explicit, per-destination rule the operator adds |
 
@@ -357,18 +409,38 @@ account has a Role in the workspace namespace, and a ClusterRole that only reads
 | StorageClasses (ClusterRole) | get, limited by `resourceNames` to the configured class — the boot check of decision 4 |
 | PersistentVolumes (ClusterRole) | get — Destroy's confirmation that the disk is gone (decision 5). A volume's object names its disk and claim, nothing in it |
 
-Its store is any Postgres the deployment provides; on Google Cloud the runbook uses Cloud SQL,
-reached through Workload Identity bound to the CP's service account alone.
+Its store is any Postgres the deployment provides. On Google Cloud that is Cloud SQL on a private
+IP, reached through the Cloud SQL Auth Proxy as a sidecar of the CP pod, with automatic IAM
+database authentication: the proxy authorises the connection with the CP's Workload Identity and
+logs in as the IAM database user bound to it, and the CP's DSN points at the sidecar on loopback
+with no password. That identity is bound to the CP's service account alone.
 
 **The workspace's way back to the CP.** `AF_CP_BASE_URL` is the public base URL today, which from
 inside the cluster means leaving through NAT and coming back through the load balancer — a route
-decision 7 closes for private addresses anyway. The variable has two uses, though: API calls, and
-the links in notifications, which a browser opens. So the CP is told its internal Service URL as
-well, and the adapter passes it as a second variable, `AF_CP_INTERNAL_URL`, next to an unchanged
-`AF_CP_BASE_URL`. About fifteen places in the agent read `AF_CP_BASE_URL` today (the credential
+decision 7 closes for private addresses anyway.
+
+The internal route must not open the CP itself to the workspace. The CP is reachable only through
+the ingress today ([09 §9.3](../build/09-deploy.md)), and two things rest on that: `AUTH=proxy`
+trusts the identity header and does not strip it, and `clientip.go` reads `X-Forwarded-For` by
+hop count without checking who sent it. A workspace connecting to the CP's ordinary port could
+name any user and any client address. So the CP serves a **second listener** for workspaces only,
+and the internal Service targets that port alone. It carries only the routes the agent calls,
+each authenticated by its own bearer token (the docs, memo, schedule, MCP, engine, git and
+credential endpoints — the list is fixed in phase 1); the Console, the admin API and the login
+routes are not served on it. It ignores identity headers and forwarding headers, taking the
+connection's own address as the client. Phase 1 tests that a forged identity header and a forged
+`X-Forwarded-For` sent to it are ignored, and that a Console route answers 404 there.
+
+The variable has two uses, too: API calls, and the links in notifications, which a browser opens.
+So the adapter passes the internal URL as a second variable, `AF_CP_INTERNAL_URL`, next to an
+unchanged `AF_CP_BASE_URL`. About fifteen places in the agent read `AF_CP_BASE_URL` today (the credential
 helper, the docs sync, engines, MCP, chat, browser, AWS and branch rules among them). Each one
 that sends a request prefers the internal URL when it is set; each one that builds a link for a
-person keeps the public one. Sorting them is part of phase 1. If the template environment sets the egress proxy, `NO_PROXY` gets the
+person keeps the public one. Two kinds fit neither and are part of the same work: the explicit
+environment allowlists that codex applies to its stdio MCP children
+(`internal/mcpreg/attach.go`, `internal/chatx/chat_providers.go`), which must forward the new
+variable, and the browser's list of forbidden destinations (`internal/browserx/browser_types.go`),
+which must name both URLs. Sorting them is part of phase 1. If the template environment sets the egress proxy, `NO_PROXY` gets the
 internal Service name, so those calls do not go through the proxy. Whether the template environment (`Config.ExtraEnv`, passed today
 by docker and native only) reaches the pod is decided with the adapter
 ([21 §21.2](../build/21-add-a-deploy-target.md)).
@@ -396,8 +468,8 @@ for free.
 The adapter uses the standard library's HTTP client against the in-cluster API server over HTTPS,
 verifying it with the service account's CA, and hand-written types for the fields it reads and
 writes. The service account token is a projected token that the kubelet rotates, so the adapter
-re-reads it from its file rather than caching it at boot, and retries once with a fresh read on a
-401. The surface is the kinds of decision 8; client-go would bring a dependency tree larger than
+re-reads it from its file rather than caching it at boot, and retries once with a fresh read
+on a 401. The surface is the kinds of decision 8; client-go would bring a dependency tree larger than
 the rest of the CP's for it, and the docker adapter already shows the house preference: the
 standard library and the substrate's own interface.
 
@@ -408,7 +480,9 @@ against a real cluster: Stop then Start at once, a Stop while the controller is 
 controller's next status update, a Stop while `starting`, a CP restart in the middle of a start,
 both home wipes with a keep file replaced by a plain file, `EraseHome` with a CP restarted while the erase pod runs,
 a resize while stopped, and Destroy with a CP restarted after the claims are gone, and again with a volume left behind,
-across the boundary between Destroy returning and the CP recording the residue.
+across the boundary between Destroy returning and the CP recording the residue. It also covers a
+node made unreachable — Stop returns an error, the runbook's recovery is followed, and the
+workspace starts again — and a new workspace whose every mount `dev` can write (decision 4).
 
 ### 11. What the first version claims
 
@@ -423,6 +497,9 @@ across the boundary between Destroy returning and the CP recording the residue.
 | `TaskCounter` | yes — pods whose workspace container is running, **whether or not they are Ready**. A running agent that has stopped answering is still a task, and the start deadline must not stop it; an unreadable answer is an error, which the deadline treats as running |
 | `WipeHome()`, `EraseHome()`, `ResizeHome()` | yes (decision 4) |
 | `DocsMounter` | no — the guide is fetched from `GET /internal/docs`, as on ECS |
+| `MachineProfile()` | no — a pod has no machine of its own to name |
+| `AcquireOperationFence`, `StartFencer` | no — nothing of a workspace's lifecycle lives on the CP's host, and Start leaves no uncommitted launch behind |
+| `LaunchBudgeter` | no — Start does no work in the background after it returns |
 | `BeginHibernate()`, `BackupHome()`, `HomeBackups()` | no — VolumeSnapshot is the natural mechanism, later work |
 | Golden seeding, the slot pool | no |
 
@@ -434,12 +511,18 @@ Each row gets an assertion in `capabilities_test.go` or `runtime_test.go`, in bo
   Deployment, Service, service account and Role, the network policies of decision 7, and an
   example ResourceQuota. Any cluster can apply them.
 - `deploy/gcp/gke/` holds Terraform for what a GKE deployment needs around the cluster: the VPC,
-  the cluster with Dataplane V2, secret encryption and a workspace node pool on the GKE metadata
-  server, the StorageClass of decision 4, Cloud SQL, Cloud NAT with a static address, Cloud DNS,
-  the load balancer and Certificate Manager.
+  the cluster (at least Kubernetes 1.33, for decision 5) with Dataplane V2, secret encryption, a
+  private or restricted control-plane endpoint, and a workspace node pool on the GKE metadata
+  server; the StorageClass of decision 4; Cloud SQL on a private IP; Cloud NAT with a static
+  address; the load balancer and Certificate Manager; and the IAM grants, each to one principal
+  on one resource — the CP's identity gets Cloud SQL client and instance user, and Artifact
+  Registry reader for `Stale()`; the node pool's service account gets Artifact Registry reader and
+  log and metric writer. The state backend is a bucket the operator names, and the DNS zone is a
+  precondition the operator brings.
 
 Terraform because Google Cloud's own template service is closing: Deployment Manager lost support
-on 2026-04-01, refuses new users from 2026-06-30 and shuts down after 2027-06-30, and its
+on 2026-04-01, refuses new users from 2026-06-30 and shuts down after 2027-06-30
+([Google's deprecation notice](https://docs.cloud.google.com/deployment-manager/docs/deprecations)), and its
 successor, Infrastructure Manager, runs Terraform. It is the repository's first Terraform, and an
 operator's first new tool for it.
 
@@ -453,6 +536,34 @@ templates.
 The Helm chart is not built. The inquiry asked for Kubernetes support, not for a chart, and a
 kustomize base serves the same clusters without a second packaging format to keep in step. It is
 reopened when someone asks to install Agent Fleet through Helm.
+
+### 13. Operating it: upgrades, backups, alerts and the bill
+
+A runtime is only half of what the user asked for; the other half is running it. The runbook owns
+the procedures, and this ADR fixes what they must cover:
+
+- **Upgrading the CP.** The CP applies its migrations at start and cannot be downgraded
+  ([09 §9.7](../build/09-deploy.md)). Its Deployment uses the `Recreate` strategy, so two CPs never
+  run against one database during a rollout. An upgrade takes a Cloud SQL backup first; going back
+  means restoring that backup with the previous image. `AF_MASTER_KEY` is kept outside the
+  database and its backups, as on every target.
+- **Backups.** Cloud SQL automated backups with point-in-time recovery, and a restore rehearsed
+  once in phase 1. The homes are not backed up in the first version (out of scope).
+- **The workspace image.** A new image reaches a workspace at its next start; `Stale()` shows which
+  ones are behind.
+- **Alerts.** Logs go to the cluster's logging (Cloud Logging on GKE). The CP's `/readyz` is its
+  readiness probe and the database alarm; the runbook adds alerts for pods `Pending` for long,
+  quota refusals, Destroy residues in the audit log and certificate expiry.
+- **Nodes under live sessions.** A workspace pod carries
+  `cluster-autoscaler.kubernetes.io/safe-to-evict: "false"`, so the autoscaler does not evict a
+  running session to shrink the pool; the pool shrinks as workspaces stop. Node upgrades run in a
+  maintenance window and drain; a drained workspace stops like any other and starts again on its
+  next use, which the harness checks.
+- **The bill.** Its shape follows [09 §9.8](../build/09-deploy.md): a floor (the cluster, the CP's
+  node, Cloud SQL, Cloud NAT, the load balancer), per-workspace capacity while running, and two
+  persistent disks per workspace that bill while stopped, as an EBS home does. A cluster the user
+  already runs removes the cluster from the floor. Phase 1 fills in the numbers, including the
+  24/7 row for a broken idle-stop, the way 09 §9.8 does for AWS.
 
 ### Out of scope
 
@@ -497,6 +608,10 @@ reopened when someone asks to install Agent Fleet through Helm.
   Clean home into errors until an operator acts.
 - A node that stops answering leaves its workspace `starting` while it should run, and after a
   Stop `stopped` with a pod that blocks Start, `EraseHome` and Destroy — until an operator acts.
+- The CP grows a second listener for workspaces (decision 8), on this profile only.
+- The CP cannot read the network policies or the cluster's settings, so a policy added later that
+  widens what workspaces reach, or a cluster whose CNI stops enforcing, goes unnoticed by the
+  product. The harness's reachability probes are what an operator can rerun.
 - An operator on Google Cloud learns Terraform and kustomize, where an AWS operator needs only
   the AWS CLI.
 - A home lives in one zone until backup exists.
@@ -519,8 +634,8 @@ reopened when someone asks to install Agent Fleet through Helm.
 
 | Phase | What | Done when |
 |---|---|---|
-| 0 | Decision 1: the GCE runbook and script, the egress default, the guide pages | a session runs on a GCE VM behind Caddy, and behind a global external Application Load Balancer, where an idle terminal outlives the default `timeoutSec` and a cut connection reconnects |
-| 1 | Decisions 2–12: the adapter, `deploy/kubernetes/`, `deploy/gcp/gke/` | on GKE Standard the live harness of decision 10 passes, and the isolation rows and network policies of decision 7 are checked from inside a pod, including the node, the control-plane endpoint and a VPC address |
+| 0 | Decision 1: the GCE runbook and script, the egress default, the guide pages | a session runs on a GCE VM behind Caddy, and behind a global external Application Load Balancer, where an idle terminal outlives the default `timeoutSec` and a cut connection reconnects; a request from a workspace to the metadata server fails; the documents of [21 §21.5](../build/21-add-a-deploy-target.md) list the runbook |
+| 1 | Decisions 2–13: the adapter, the CP's internal listener, the agent's URL split, `deploy/kubernetes/`, `deploy/gcp/gke/` | on GKE Standard the live harness of decision 10 passes; the isolation rows and network policies of decision 7 are checked from inside a pod, including the node, the control-plane endpoint and a VPC address; the runbook covers decision 13, with a rehearsed restore and the cost table; and the finishing list of [21 §21.8](../build/21-add-a-deploy-target.md) is done |
 | 2 | Autopilot, and whatever of "Out of scope" is asked for | each its own issue |
 
 ## What would make us revisit it
