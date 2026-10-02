@@ -65,7 +65,7 @@ import { CommandPalette } from "../features/keys/CommandPalette.tsx";
 import { CheatSheet } from "../features/keys/CheatSheet.tsx";
 import { useUpdateCheck } from "../lib/useUpdateCheck.tsx";
 import { consumeSessionDeepLink } from "../lib/sessionDeepLink.ts";
-import { popoutMode, usePopoutMode } from "../lib/popoutMode.ts";
+import { layoutModeFor, popoutMode, usePopoutMode } from "../lib/popoutMode.ts";
 import { installSwipeGestures } from "./swipeGestures.ts";
 import { rotateRunningSession } from "../features/sessions/open.ts";
 import { displayName } from "../lib/sessionview.ts";
@@ -384,9 +384,9 @@ export function App() {
     const popped = takePendingPopout();
     if (popped) {
       popoutSeedRef.current = popped;
-      useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap, getSettings().paneLayout);
+      useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap, layoutModeFor(popoutMode(), getSettings().paneLayout));
     } else {
-      useLayoutStore.getState().loadMode(tenant, getSettings().paneLayout);
+      useLayoutStore.getState().loadMode(tenant, layoutModeFor(popoutMode(), getSettings().paneLayout));
     }
     // This run loaded under the CURRENT identity — mark its rev as handled so the
     // identity-reload effect doesn't double-load right after boot.
@@ -398,17 +398,28 @@ export function App() {
 
   // The preference chooses a profile, not a conversion: each profile retains
   // its own tab-local layout so switching never destroys terminals or drafts.
+  const prevPopoutRef = useRef(popout);
   useEffect(() => {
+    const wanted = layoutModeFor(popout, paneLayout);
+    const expanded = prevPopoutRef.current === "popout" && popout !== "popout";
+    prevPopoutRef.current = popout;
     // Read the store, not the render's snapshot: the boot effect above has already loaded the
     // preferred mode in this same commit, and a stale `layout.mode` would load it a second time.
     const current = () => useLayoutStore.getState().layout.mode;
-    if (!booted || current() === paneLayout) return;
+    if (!booted || current() === wanted) return;
+    // Expanding a minimal pop-out keeps its pane: a one-cell split layout is a valid tabbed
+    // one, whereas loading the profile would replace the pane the user popped out.
+    const l = useLayoutStore.getState().layout;
+    if (expanded && l.cols.length === 1 && l.cols[0].cells.length === 1) {
+      useLayoutStore.getState().commit({ ...l, mode: wanted }, false);
+      return;
+    }
     void confirmDirtyNavigation("layout").then((proceed) => {
-      if (current() === paneLayout) return;
-      if (proceed) useLayoutStore.getState().loadMode(tenant, paneLayout);
+      if (current() === wanted) return;
+      if (proceed) useLayoutStore.getState().loadMode(tenant, wanted);
       else setSetting("paneLayout", current() === "tabs" ? "tabs" : "split");
     });
-  }, [booted, tenant, paneLayout, layout.mode]);
+  }, [booted, tenant, paneLayout, popout, layout.mode]);
 
   // A Chromium attachment changes layout only after the user has followed its
   // action URL. MCP/server activity alone never reaches this effect. It runs
@@ -440,8 +451,8 @@ export function App() {
     void confirmDirtyNavigation("layout").then((proceed) => {
       if (!proceed) return; // keep the shared-key layout rather than drop unsaved buffers
       const popped = popoutSeedRef.current;
-      if (popped) useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap, getSettings().paneLayout);
-      else useLayoutStore.getState().loadMode(tenant, getSettings().paneLayout);
+      if (popped) useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap, layoutModeFor(popoutMode(), getSettings().paneLayout));
+      else useLayoutStore.getState().loadMode(tenant, layoutModeFor(popoutMode(), getSettings().paneLayout));
     });
   }, [booted, tenant, identityRev]);
 
