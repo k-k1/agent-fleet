@@ -13,7 +13,9 @@ import { Icon } from "../../../ui/Icon.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
+import { GCP_REGION_CODES, gcpZonesOf } from "../../../lib/gcpRegions.ts";
 import { Field, Meta } from "../parts/mcpForm.tsx";
+import { RegionSelect } from "../parts/RegionSelect.tsx";
 import { FieldGroup, deleteRow, pick, postJSON } from "./SsmTab.tsx";
 
 /** One row of GET /api/gcp/profiles. */
@@ -68,6 +70,7 @@ export function GcpTab() {
   useEffect(reload, [reload]);
 
   const close = () => {
+    setZoneFromList(false);
     setOpen(false);
     setEditing(null);
     setF(emptyProfile);
@@ -77,14 +80,29 @@ export function GcpTab() {
   }, [profiles, editing]);
 
   const set = (k: string) => (e: FieldEvent) => setF((p) => ({ ...p, [k]: e.target.value }));
+  // A region change drops a zone picked from the list in this edit once the new region does
+  // not offer it. The stored zone and one typed into Other are never dropped, so a save
+  // without touching the zone keeps it byte-identical.
+  const [zoneFromList, setZoneFromList] = useState(false);
+  const setRegion = (region: string) => {
+    const drop = zoneFromList && !gcpZonesOf(region).includes(f.zone);
+    if (drop) setZoneFromList(false);
+    setF((p) => ({ ...p, region, zone: drop ? "" : p.zone }));
+  };
+  const setZone = (zone: string, from: "list" | "other") => {
+    setZoneFromList(from === "list");
+    setF((p) => ({ ...p, zone }));
+  };
   const valid = !!f.label.trim() && !!f.project.trim();
 
   const startAdd = () => {
+    setZoneFromList(false);
     setEditing(null);
     setF(emptyProfile);
     setOpen(true);
   };
   const startEdit = (p: GcpProfile) => {
+    setZoneFromList(false);
     setOpen(false);
     setF(pick(p, emptyProfile));
     setEditing(p);
@@ -152,10 +170,23 @@ export function GcpTab() {
             />
           </Field>
           <Field label={tr("gcp.f_region")} hint={tr("gcp.f_optional")}>
-            <input className="cinput" placeholder="asia-northeast1" value={f.region} onChange={set("region")} />
+            <RegionSelect
+              value={f.region}
+              onChange={setRegion}
+              emptyLabel={tr("ssm.region_unset")}
+              options={GCP_REGION_CODES}
+              msgPrefix="gcp.region"
+            />
           </Field>
           <Field label={tr("gcp.f_zone")} hint={tr("gcp.f_optional")}>
-            <input className="cinput" placeholder="asia-northeast1-a" value={f.zone} onChange={set("zone")} />
+            <RegionSelect
+              value={f.zone}
+              onChange={setZone}
+              emptyLabel={tr("ssm.region_unset")}
+              options={gcpZonesOf(f.region)}
+              msgPrefix="gcp.zone"
+              named={false}
+            />
           </Field>
         </FieldGroup>
       </fieldset>
