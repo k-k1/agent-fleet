@@ -95,7 +95,7 @@ export function AwsProfilesChip() {
     <div className="ws-usage-wrap ws-aws" ref={ref}>
       <button
         type="button"
-        className={"ws-aws-btn" + tone}
+        className={"kind-tag ws-usage-btn ws-aws-btn" + tone}
         title={title}
         aria-label={title}
         aria-expanded={open}

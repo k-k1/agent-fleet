@@ -87,6 +87,9 @@ describe("AWS profiles chip", () => {
     expect(chip()!.textContent).toContain("2/3");
     expect(chip()!.title).toBe("AWS profiles: 2 of 3 signed in");
     expect(chip()!.className).toContain("ok");
+    // The usage chips' own classes give it their font, padding and height.
+    expect(chip()!.classList.contains("kind-tag")).toBe(true);
+    expect(chip()!.classList.contains("ws-usage-btn")).toBe(true);
     expect(chip()!.className).not.toMatch(/warn|muted/);
   });
 
