@@ -49,7 +49,7 @@ D=__DIR__
 if [ "$CLOUDSDK_CORE_DISABLE_FILE_LOGGING" != true ]; then
   mkdir -p "$CLOUDSDK_CONFIG/logs"; cat "$D/token" >> "$CLOUDSDK_CONFIG/logs/gcloud.log"
 fi
-for a; do last=$a; done
+prev=; cfgname=; for a; do [ "$prev" = --configuration ] && cfgname=$a; prev=$a; done
 case "$1 $2" in
 "config config-helper")
   if [ -f "$D/fail" ]; then cat "$D/fail" >&2; exit 1; fi
@@ -68,7 +68,7 @@ case "$1 $2" in
   case "$3" in --*) acct=$(cat "$D/login-account");; *) acct=$3;; esac
   echo "You are now logged in as [$acct]." >&2
   # gcloud rewrites the file in its own layout: the comment goes, keys move (measured).
-  sed -i -e '/^#/d' -e "s/^\[core\]\$/[core]\naccount = $acct/" "$CLOUDSDK_CONFIG/configurations/config_$last"
+  sed -i -e '/^#/d' -e '/^account = /d' -e "s/^\[core\]\$/[core]\naccount = $acct/" "$CLOUDSDK_CONFIG/configurations/config_$cfgname" || exit 8
   # Like gcloud 587.0.0: without --force a login for an account whose cached access token
   # still has time left reuses it and signs nobody in, so a rejected refresh stays rejected.
   case " $* " in *" --force "*) rm -f "$D/fail";; esac

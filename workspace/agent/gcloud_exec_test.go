@@ -177,23 +177,31 @@ func TestGCloudExecProcess(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan error, 1)
-	lines := make(chan string, 16)
+	// One goroutine drains stderr to the end (so the child never blocks on a full pipe, even
+	// after the test stopped listening), hands over only the first line, then reaps the
+	// child and closes waited; waitErr and allErr are written before the close.
+	first := make(chan string, 1)
+	waited := make(chan struct{})
+	var waitErr error
+	var allErr strings.Builder
 	go func() {
 		sc := bufio.NewScanner(stderrR)
 		for sc.Scan() {
-			lines <- sc.Text()
+			if allErr.Len() == 0 {
+				first <- sc.Text()
+			}
+			allErr.WriteString(sc.Text() + "\n")
 		}
-		close(lines)
-		done <- cmd.Wait()
+		waitErr = cmd.Wait()
+		close(waited)
 	}()
-	// Whatever happens below, the child is gone before the test returns.
+	// Whatever happens below, the child and the goroutine are gone before the test returns.
 	defer func() {
 		_ = cmd.Process.Kill()
-		<-done
+		<-waited
 	}()
 	select {
-	case l := <-lines:
+	case l := <-first:
 		if l != gcpx.WaitingMessage {
 			t.Fatalf("first stderr line %q, want the waiting notice", l)
 		}
@@ -201,12 +209,14 @@ func TestGCloudExecProcess(t *testing.T) {
 		t.Fatal("no waiting notice while the root was locked")
 	}
 	_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-	for range lines {
+	select {
+	case <-waited:
+	case <-time.After(60 * time.Second):
+		t.Fatal("--list did not finish after the release")
 	}
-	if err := <-done; err != nil || !strings.Contains(listOut.String(), "prod\tprod-project") {
-		t.Fatalf("--list after the release: %v %q", err, listOut.String())
+	if waitErr != nil || !strings.Contains(listOut.String(), "prod\tprod-project") {
+		t.Fatalf("--list after the release: %v %q %q", waitErr, listOut.String(), allErr.String())
 	}
-	done <- nil
 
 	if _, err := os.Stat(filepath.Join(home, ".config", "gcloud")); err == nil {
 		t.Error("the wrapper created ~/.config/gcloud")
