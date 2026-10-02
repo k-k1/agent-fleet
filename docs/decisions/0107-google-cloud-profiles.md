@@ -423,8 +423,12 @@ Sizes are `du` in MiB, as in the 2026-10-02 installer note.
 
   So the token reaches gcloud (`gcloud storage` included), `bq`, the GKE plugin and Terraform; it does
   not reach `gsutil`, and it reaches a client library only when the program passes it explicitly. Two
-  findings change what the notes tell agents. `gsutil` fails open towards anonymous: a public bucket
-  answers, so a read can look as if it ran as the profile. And a Node `OAuth2Client` from another major
+  findings change what the notes tell agents. `gsutil` ignores the token; in this clean environment,
+  with no boto configuration, it fell back to anonymous, and a public bucket answers, so a read can look
+  as if it ran as the profile. The child keeps `HOME`, `BOTO_CONFIG` and `BOTO_PATH`, and gsutil's
+  bootstrap reads them, `/etc/boto.cfg` and `~/.boto` (SDK code read, not run with credentials there), so
+  a member with boto credentials of their own would have gsutil act as that other identity — not
+  measured. And a Node `OAuth2Client` from another major
   version of `google-auth-library` than the client library's own is accepted silently and sends nothing.
   `bq` and `gsutil` are not linked into `~/.local/bin` (the installer links only `gcloud` and the
   plugin), so neither is on `PATH`; the notes give `bq`'s path. The wrapper sets no
@@ -472,7 +476,7 @@ Sizes are `du` in MiB, as in the 2026-10-02 installer note.
   but its post-processing recompiles the whole tree (511 → 749 MiB) and takes about 52 s, so it needs a
   sweep of every `__pycache__` afterwards. Removing the files by hand would depend on the component
   manager's layout. `gsutil` (55 MiB unpacked, 3,326 files) is not on `PATH` and does not use the
-  token, so it is harmless once the notes say so. `bq` (12 MiB) works through the wrapper. What the
+  token; the notes and the guide say so and point at `gcloud storage` instead. `bq` (12 MiB) works through the wrapper. What the
   wrapper needs is the core with the bundled Python (gcloud runs on it), `gcloud-crc32c` (used by
   `gcloud storage`) and `gke-gcloud-auth-plugin`, which asks the `gcloud` on `PATH` (`config config-helper`) for the token.
 

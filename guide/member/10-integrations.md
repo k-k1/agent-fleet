@@ -503,8 +503,8 @@ command points at and as whom it acts:
 of the workspace's own. It is separate from the `gcloud` you run in a terminal: logging in to one does not log
 in to the other, and a profile never reads or changes your own gcloud configuration, logins or application
 default credentials. A change in Settings reaches the workspace within about five minutes, or at once when you
-run `af-gcloud-exec`. Changing a profile's label or account, or deleting and adding it again, resets which
-account it uses: unless the account it names is already logged in in the workspace, the next run asks for a
+run `af-gcloud-exec`. Changing a profile's account, changing its label so that its name changes, or deleting
+and adding it again, resets which account it uses: unless the account it names is already logged in in the workspace, the next run asks for a
 login. Export and import carry the profiles (see [12 Settings](12-settings.md#export-import)).
 
 ### Running a command as a profile
@@ -546,7 +546,7 @@ af-gcloud-exec --profile <name> --project <project-id> -- kubectl get pods
 | `kubectl` against a GKE cluster | yes, through the GKE auth plugin |
 | Terraform's Google provider | yes, with the quota project |
 | `bq` | yes. It comes with the SDK but is not on the path: run `~/.local/share/agent-fleet/google-cloud-sdk/bin/bq` |
-| `gsutil` | **no**. It sends its requests without any login: a public bucket answers, a private one refuses. Use `gcloud storage` |
+| `gsutil` | **no**. It ignores the token: without a gsutil (boto) configuration of your own it sends its requests without any login, so a public bucket answers; with one, it can act as whatever identity that configuration holds. Use `gcloud storage` |
 | Google's client libraries (Go, Python, Node, …) | only when the program hands them the token |
 
 A program built on a client library stops with an error such as "File … was not found" or "no such file or
@@ -597,8 +597,9 @@ the end.
 | "waiting for another af-gcloud-exec or a profile sync …" | A login in a terminal, or another run, is using the workspace's gcloud store. It continues when that ends. |
 
 **What it does not guarantee.** The command runs as you and can read your home, your own gcloud directory
-included: `af-gcloud-exec` keeps the standard ways of finding credentials from finding anything but the token it
-hands over; it does not make your files unreadable. On a workspace that runs directly on a Google Cloud VM, a
+included: `af-gcloud-exec` keeps Google's standard ways of finding credentials (gcloud's and the client
+libraries') from finding anything but the token it hands over; it does not make your files unreadable, and a tool
+that looks elsewhere, such as `gsutil` with its own configuration, is not covered. On a workspace that runs directly on a Google Cloud VM, a
 program that ignores those standard ways could still reach the VM's own identity.
 
 ## Environment settings and recreating the workspace

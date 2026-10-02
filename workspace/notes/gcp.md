@@ -67,8 +67,11 @@ Which tools the token reaches (measured on SDK 587.0.0 against a local mock that
   and the quota project set.
 - `bq`, with project and quota project. It is in the SDK but not on `PATH`: run it as
   `af-gcloud-exec … -- ~/.local/share/agent-fleet/google-cloud-sdk/bin/bq …`.
-- **Not** `gsutil`: it ignores the token and sends its requests **without credentials**. A public
-  bucket answers, so a read can look as if it worked; a private one refuses. Use `gcloud storage`.
+- **Not** `gsutil`: it ignores the token. With no boto configuration it sends its requests
+  **without credentials** (measured): a public bucket answers, so a read can look as if it worked. It
+  still reads `BOTO_CONFIG` / `BOTO_PATH`, `/etc/boto.cfg` and `~/.boto`, which the wrapper leaves in
+  place, so with credentials there it can run as **another identity** (not measured). Use
+  `gcloud storage`.
 - **Not** Google's client libraries (Go, Python, Node and the rest) by themselves: they ignore the
   token variables and stop at the empty `GOOGLE_APPLICATION_CREDENTIALS` with an error such as
   "File … was not found", "dialing: open …: no such file or directory" or "The file at … does not
