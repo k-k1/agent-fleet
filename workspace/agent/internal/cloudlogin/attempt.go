@@ -62,10 +62,14 @@ func (a *Attempt) End(phase, message string) {
 		a.phase, a.message, a.ended = phase, message, time.Now()
 		a.url, a.code = "", ""
 	}
-	stop := a.stop
+	stop, stdin := a.stop, a.stdin
 	a.mu.Unlock()
 	if stop != nil {
 		stop()
+	}
+	if stdin != nil {
+		// Unblocks a Submit stuck on a pipe the process does not read.
+		_ = stdin.Close()
 	}
 }
 
@@ -82,17 +86,23 @@ func (a *Attempt) authorize(url, code string) {
 // asked for a code, has ended (cancelled, replaced, failed, done), or already took one.
 var ErrNotAwaitingCode = errors.New("this login attempt is not waiting for a code")
 
-// Submit writes code to the attempt's process once, under the attempt's lock, and only
-// while the attempt waits for the member. The code is never kept or logged.
+// Submit writes code to the attempt's process once, and only while the attempt waits for
+// the member. The check and the claim happen under the attempt's lock; the write does
+// not, because a process that never reads would otherwise hold the lock, and with it
+// End, View and every Begin of the store (the prune takes each attempt's lock). Ending
+// the attempt closes the pipe, which ends a stuck write. The code is never kept or
+// logged.
 func (a *Attempt) Submit(code string) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.phase != PhaseAuthorize || a.stdin == nil || a.submitted {
+		a.mu.Unlock()
 		return ErrNotAwaitingCode
 	}
 	a.submitted = true
-	_, err := io.WriteString(a.stdin, code+"\n")
-	if cerr := a.stdin.Close(); err == nil {
+	stdin := a.stdin
+	a.mu.Unlock()
+	_, err := io.WriteString(stdin, code+"\n")
+	if cerr := stdin.Close(); err == nil {
 		err = cerr
 	}
 	return err

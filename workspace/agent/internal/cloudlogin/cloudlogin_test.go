@@ -174,3 +174,77 @@ func TestNeutralPackagesImportNoBackend(t *testing.T) {
 		t.Fatalf("only %d imports checked; the scan found nothing to check", checked)
 	}
 }
+
+// recorder is a stdin that keeps what was written to it.
+type recorder struct {
+	strings.Builder
+	closed bool
+}
+
+func (r *recorder) Close() error { r.closed = true; return nil }
+
+// Only an attempt waiting in PhaseAuthorize takes a code: every other phase refuses it
+// without writing anything, even with a stdin to write to.
+func TestSubmitRefusesEveryPhaseButAuthorize(t *testing.T) {
+	s := newStore(t)
+	for _, phase := range []string{PhaseStarting, PhaseCancelled, PhaseReplaced, PhaseFailed, PhaseDone} {
+		a := s.Begin("k-"+phase, "", "prod", nil)
+		w := &recorder{}
+		a.mu.Lock()
+		a.stdin = w
+		a.mu.Unlock()
+		if phase != PhaseStarting {
+			a.authorize("https://example.invalid/auth", "")
+			a.End(phase, "")
+		}
+		if err := a.Submit("code"); !errors.Is(err, ErrNotAwaitingCode) || w.Len() != 0 {
+			t.Errorf("%s: submit = %v, wrote %q", phase, err, w.String())
+		}
+	}
+}
+
+// A process that never reads its stdin must not let a Submit hold the attempt: cancel,
+// view and the store's other attempts go on while the write is stuck, and the cancel
+// ends the write.
+func TestASubmitStuckOnAFullPipeDoesNotBlockCancel(t *testing.T) {
+	s := newStore(t)
+	a, err := s.Start("k", "", "prod", Process{
+		Name: "test login", Path: "/bin/sh", Args: []string{"-c", "echo https://example.invalid/auth; exec sleep 30"},
+		Timeout: time.Minute, Stdin: true,
+		Parse: func(o string) (string, string, error) {
+			if strings.Contains(o, "https://") {
+				return "https://example.invalid/auth", "", nil
+			}
+			return "", "", nil
+		},
+		Exited: func(error) (bool, string) { return false, "exited" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, a, PhaseAuthorize)
+	submitted := make(chan error, 1)
+	go func() { submitted <- a.Submit(strings.Repeat("x", 1<<20)) }()
+	time.Sleep(100 * time.Millisecond) // let the write fill the pipe
+
+	done := make(chan struct{})
+	go func() {
+		a.View()
+		s.Begin("other", "", "other", nil)
+		a.End(PhaseCancelled, "")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("view, another attempt or the cancel waited on a stuck Submit")
+	}
+	select {
+	case err := <-submitted:
+		if err == nil {
+			t.Fatal("a write into a pipe nobody read reported success")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the cancel did not end the stuck write")
+	}
+}
