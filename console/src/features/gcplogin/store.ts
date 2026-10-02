@@ -25,6 +25,24 @@ export interface GcpLoginRequest {
   lastAt: string;
 }
 
+/** A Settings profile and its login, as GET /api/gcp-login/profiles lists it (the WS bar badge). */
+export interface GcpProfileState {
+  name: string;
+  label: string;
+  project: string;
+  /** The account the profile's gcloud configuration selects; "" before a login chose one. */
+  account: string;
+  /** "signed_in" | "none". The Agent cannot tell a login Google revoked from a good one
+   *  until something uses it, so "signed_in" means "a user credential is stored". */
+  state: string;
+}
+
+/** The profile login modal the badge opened: force is "Log in again". */
+export interface GcpProfileModal {
+  profile: { name: string; label: string; project: string; account: string };
+  force: boolean;
+}
+
 interface GcpLoginState {
   requests: GcpLoginRequest[];
   /** Requests whose toast the member closed in this tab; the next reload shows them again. */
@@ -35,6 +53,13 @@ interface GcpLoginState {
   hide(id: string): void;
   open(id: string): void;
   close(): void;
+  /** Every Settings profile the Agent last listed; null until it has answered once. */
+  profiles: GcpProfileState[] | null;
+  /** Asks the Agent for the profiles' login states; a failed ask keeps the old list. */
+  refreshProfiles(): Promise<void>;
+  profileModal: GcpProfileModal | null;
+  showProfile(m: GcpProfileModal): void;
+  closeProfile(): void;
 }
 
 function asRequest(raw: unknown): GcpLoginRequest | null {
@@ -75,6 +100,36 @@ export const useGcpLoginStore = create<GcpLoginState>((set) => ({
   },
   close() {
     set({ modal: null });
+  },
+  profiles: null,
+  async refreshProfiles() {
+    let d: { profiles?: unknown[]; error?: unknown } | null = null;
+    try {
+      d = await api("api/gcp-login/profiles");
+    } catch {
+      return;
+    }
+    if (!d || d.error || !Array.isArray(d.profiles)) return;
+    const profiles: GcpProfileState[] = [];
+    for (const raw of d.profiles) {
+      const p = raw as Record<string, unknown>;
+      if (typeof p?.name !== "string" || !p.name) continue;
+      profiles.push({
+        name: p.name,
+        label: String(p.label ?? ""),
+        project: String(p.project ?? ""),
+        account: String(p.account ?? ""),
+        state: String(p.state ?? ""),
+      });
+    }
+    set({ profiles });
+  },
+  profileModal: null,
+  showProfile(m) {
+    set({ profileModal: m });
+  },
+  closeProfile() {
+    set({ profileModal: null });
   },
 }));
 

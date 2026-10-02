@@ -37,9 +37,14 @@ export function GcpProfileLoginModal({
 }) {
   const tr = useT();
   const refresh = useGcpLoginStore((s) => s.refresh);
+  const refreshProfiles = useGcpLoginStore((s) => s.refreshProfiles);
   const base = `api/gcp-login/profiles/${encodeURIComponent(profile.name)}`;
-  // A login here settles any request for the same profile, so its toast can go now.
-  const a = useGcpLoginAttempt(`${base}/start${force ? "?force=1" : ""}`, base, () => void refresh());
+  // A login here settles any request for the same profile, so its toast can go now, and the
+  // WS bar badge reads the new state.
+  const a = useGcpLoginAttempt(`${base}/start${force ? "?force=1" : ""}`, base, () => {
+    void refresh();
+    void refreshProfiles();
+  });
   const refusal = a.phase === "failed" ? GCP_REFUSALS[a.errorCode] : undefined;
   return (
     <Modal title={tr("gcplogin.modal_title", { profile: profile.label || profile.name })} onClose={onClose}>
