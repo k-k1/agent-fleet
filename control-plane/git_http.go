@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/datalayout"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -100,7 +101,7 @@ func (m *manager) devGitTokenMaster() []byte {
 	m.gitDevMasterOnce.Do(func() {
 		path := ""
 		if m.dataRoot != "" {
-			path = filepath.Join(m.dataRoot, "git-token-master.key")
+			path = filepath.Join(m.dataRoot, datalayout.GitTokenMasterFile)
 			if b, err := os.ReadFile(path); err == nil && len(b) >= 32 {
 				m.gitDevMaster = b[:32]
 				return
@@ -277,7 +278,7 @@ func (a gitServerAPI) gitHTTP(w http.ResponseWriter, r *http.Request) {
 	// Use the token tenant's CANONICAL slug for the on-disk tree: the URL slug is
 	// only EqualFold-equal, and a case-variant would address a sibling directory
 	// outside the real repo tree (orphan objects the GC never sees).
-	tenantRoot := filepath.Join(a.dataRoot, "git", filepath.Base(mv.TenantSlug))
+	tenantRoot := filepath.Join(a.dataRoot, datalayout.GitDir, filepath.Base(mv.TenantSlug))
 	gitBackendServe(w, r, slug, tenantRoot, membershipID)
 }
 

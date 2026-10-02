@@ -357,3 +357,66 @@ func writeJSON(t *testing.T, path string, v any) {
 	}
 	writeFile(t, path, string(b))
 }
+
+// compareRealMutated compares the checked-in bundle with a mutated copy of itself, so a rule
+// keyed on a real type name is exercised where that type actually lives.
+func compareRealMutated(t *testing.T, mutate func(b map[string]any)) *CompatReport {
+	t.Helper()
+	exp := t.TempDir()
+	var b map[string]any
+	raw, err := os.ReadFile(filepath.Join("..", "schema", "msp.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &b); err != nil {
+		t.Fatal(err)
+	}
+	mutate(b)
+	writeJSON(t, filepath.Join(exp, "msp.schema.json"), b)
+	man, err := os.ReadFile(filepath.Join("..", "schema", "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(exp, "manifest.json"), string(man))
+	r, err := Compare("..", exp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func growEnum(t *testing.T, b map[string]any, name, value string) {
+	t.Helper()
+	d := def(b, name)
+	if d == nil || d["enum"] == nil {
+		t.Fatalf("the bundle has no enum %s", name)
+	}
+	d["enum"] = append(d["enum"].([]any), value)
+}
+
+// TestCompareCapabilityNameGrowthIsAnAddition: the client only tests CapabilityName for
+// membership, so a capability it has never heard of is no reason to hold a pin.
+func TestCompareCapabilityNameGrowthIsAnAddition(t *testing.T) {
+	r := compareRealMutated(t, func(b map[string]any) { growEnum(t, b, "CapabilityName", "zzzNotInBundle") })
+	if !r.Compatible() {
+		t.Fatalf("a new CapabilityName value was judged breaking:\n%s", r)
+	}
+	want := []string{`$defs.CapabilityName.enum: new value "zzzNotInBundle" (the client only tests membership)`}
+	if !reflect.DeepEqual(r.Additions, want) {
+		t.Fatalf("additions = %q, want %q", r.Additions, want)
+	}
+}
+
+// TestCompareDecodedEnumGrowthStillBreaks is the control for the exception above: the client
+// switches on SessionStatus and ItemKind, and a value it cannot place must stay red.
+func TestCompareDecodedEnumGrowthStillBreaks(t *testing.T) {
+	for _, name := range []string{"SessionStatus", "ItemKind"} {
+		t.Run(name, func(t *testing.T) {
+			r := compareRealMutated(t, func(b map[string]any) { growEnum(t, b, name, "zzzNotInBundle") })
+			want := []string{`$defs.` + name + `.enum: new value "zzzNotInBundle" in a type the client decodes`}
+			if !reflect.DeepEqual(r.Breaks, want) {
+				t.Fatalf("breaks = %q, want %q", r.Breaks, want)
+			}
+		})
+	}
+}

@@ -98,6 +98,11 @@ export const errors = {
   "err.domain_not_allowed": "このテナントに招待できるメールアドレスのドメインではありません。",
   "err.email_required": "このテナントはドメインで招待を制限しています。メールアドレスで招待してください。",
   "err.auto_join_conflict": "その自動参加ドメインは既に別のテナントが使っています。",
+  // A tenant slug or a default-tenant user key would share a directory under the data root.
+  "err.tenant_slug_reserved": "そのスラグは Control Plane が自身のファイルに使う名前です。別のスラグを選んでください。",
+  "err.tenant_slug_conflict": "そのスラグは既定テナントのメンバーのホームディレクトリと同じ名前です。別のスラグを選んでください。",
+  "err.user_key_reserved": "このユーザーキーは Control Plane が自身のファイルに使う名前のため、既定テナントに追加できません。",
+  "err.user_key_conflict": "このユーザーキーは既にテナントのディレクトリ名として使われているため、既定テナントに追加できません。管理者に相談してください。",
   "err.unknown_provider": "そのサインイン方法はこのデプロイで有効になっていません。",
   "err.self_removal": "自分の最後のメンバーシップは外せません（戻る道が無くなるため）。他の管理者に依頼してください。",
   "err.bad_share": "共有リクエストが不正です。",

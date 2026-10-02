@@ -6,11 +6,12 @@ import type { BranchItem, BranchName, BranchWarning } from "./branchRule.ts";
 
 const CHECK_DELAY_MS = 400;
 
-/** How long a provisional answer waits before the one re-ask (ADR 0103 decision 4). The Agent
- * makes the English slug for a non-ASCII title in the background, a short-tier one-shot of a
- * few seconds; it never waits for it, so asking again sooner mostly gets the same answer.
- * Mutable so the tests need not wait for it. */
-export const launchBranchTiming = { reaskMs: 8000 };
+/** When a provisional answer is asked again, in ms after that first answer (ADR 0103 decision
+ * 4). The Agent makes the English slug for a non-ASCII title in the background and never waits
+ * for it; measured on a deployed Agent it arrived 20–80 s later, so one re-ask at 8 s almost
+ * always got the deterministic name again. A few asks with back-off, then the provisional name
+ * stays: the modal does not poll for as long as it is open. Mutable so the tests can shorten it. */
+export const launchBranchTiming = { reaskAtMs: [8000, 20000, 45000] };
 
 interface Options {
   repo: string;
@@ -32,6 +33,10 @@ export interface LaunchBranchName {
   reread: () => void;
   /** Resolve again, e.g. after Initialize Git Flow wrote a declaration. */
   resolveAgain: () => void;
+  /** The name in the field is the resolver's provisional one and may still change to the
+   * English slug: false once the person edited it, a final answer arrived, or the re-asks ran
+   * out. */
+  provisional: boolean;
   /** Mark a field as the person's own: a later answer no longer overwrites it. */
   touchName: () => void;
   touchBase: () => void;
@@ -46,7 +51,13 @@ export function useLaunchBranchName({ repo, item, name, setName, setBase }: Opti
   const nameTouched = useRef(false);
   const baseTouched = useRef(false);
   const [baseEdited, setBaseEdited] = useState(false);
+  const [nameEdited, setNameEdited] = useState(false);
+  // A provisional answer is being asked again, so the name may still change.
+  const [reasking, setReasking] = useState(false);
   const seq = useRef(0);
+  // The pending re-ask's timer, cleared on close, on another item and on an edit of the name,
+  // so nothing fires into a closed modal.
+  const reaskTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const itemRef = useRef(item);
   itemRef.current = item;
   const setNameRef = useRef(setName);
@@ -58,6 +69,9 @@ export function useLaunchBranchName({ repo, item, name, setName, setBase }: Opti
     const it = itemRef.current;
     if (!it) return;
     const my = ++seq.current;
+    // An ask that replaces a pending schedule (a re-read, another item) owns the hint from here,
+    // even when it fails before it gets to schedule anything.
+    setReasking(false);
     const apply = (r: BranchName) => {
       setResolved(r);
       // A name the resolver cannot make (name_empty) falls back to the server-minted temp/<slug>
@@ -65,17 +79,32 @@ export function useLaunchBranchName({ repo, item, name, setName, setBase }: Opti
       if (!nameTouched.current) setNameRef.current(r.name_empty ? "" : r.name);
       if (!baseTouched.current && r.base_branch) setBaseRef.current(r.base_branch);
     };
+    clearTimeout(reaskTimer.current);
     const r = await fetchBranchName(repo, { item: it });
     if (my !== seq.current || !r) return;
     apply(r);
     // A provisional name carries the deterministic slug while the English one is being made.
-    // Asked once more, not polled: a second provisional answer is kept as it is.
-    if (!r.provisional) return;
-    await new Promise((done) => setTimeout(done, launchBranchTiming.reaskMs));
-    if (my !== seq.current) return;
-    const again = await fetchBranchName(repo, { item: it });
-    if (my !== seq.current || !again) return;
-    apply(again);
+    // Asked again on a short schedule, stopping at the first final answer, when the person
+    // edits the name (a late answer must not replace theirs), or when the modal closes or
+    // moves to another item (seq moved on).
+    if (!r.provisional || nameTouched.current) return;
+    setReasking(true);
+    try {
+      // The schedule counts from the first answer, so slow answers do not push the asks later.
+      const first = Date.now();
+      for (const at of launchBranchTiming.reaskAtMs) {
+        const ms = Math.max(0, first + at - Date.now());
+        await new Promise((done) => (reaskTimer.current = setTimeout(done, ms)));
+        if (my !== seq.current || nameTouched.current) return;
+        const again = await fetchBranchName(repo, { item: it });
+        if (my !== seq.current || !again) return;
+        apply(again);
+        if (!again.provisional) return;
+      }
+    } finally {
+      // A superseded ask leaves the flag to the one that replaced it.
+      if (my === seq.current) setReasking(false);
+    }
   }, [repo]);
 
   const itemKey = item?.key ?? "";
@@ -84,6 +113,7 @@ export function useLaunchBranchName({ repo, item, name, setName, setBase }: Opti
     void resolve();
     return () => {
       seq.current++;
+      clearTimeout(reaskTimer.current);
     };
   }, [itemKey, resolve]);
 
@@ -116,8 +146,11 @@ export function useLaunchBranchName({ repo, item, name, setName, setBase }: Opti
     rereading,
     reread,
     resolveAgain: () => void resolve(),
+    provisional: reasking && !!resolved?.provisional && !nameEdited,
     touchName: () => {
       nameTouched.current = true;
+      clearTimeout(reaskTimer.current);
+      setNameEdited(true);
     },
     touchBase: () => {
       baseTouched.current = true;

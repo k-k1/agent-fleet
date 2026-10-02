@@ -99,6 +99,11 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.domain_not_allowed": "That email domain can't be invited to this tenant.",
   "err.email_required": "This tenant restricts invites by domain. Invite by email address.",
   "err.auto_join_conflict": "That auto-join domain already belongs to another tenant.",
+  // A tenant slug or a default-tenant user key would share a directory under the data root.
+  "err.tenant_slug_reserved": "That slug is a name the Control Plane uses for its own files. Choose another slug.",
+  "err.tenant_slug_conflict": "That slug is already the home directory of a default-tenant member. Choose another slug.",
+  "err.user_key_reserved": "This user key is a name the Control Plane uses for its own files, so it cannot be added to the default tenant.",
+  "err.user_key_conflict": "This user key is already a tenant's directory, so it cannot be added to the default tenant. Ask an administrator.",
   "err.unknown_provider": "That sign-in method isn't enabled on this deployment.",
   "err.self_removal": "You can't remove your last membership — it is the way back in. Ask another administrator.",
   "err.bad_share": "That share request is invalid.",

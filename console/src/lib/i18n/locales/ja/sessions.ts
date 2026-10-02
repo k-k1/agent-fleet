@@ -340,6 +340,7 @@ export const sessions = {
   "srow.locked_hint": "削除ロック中です。先にロックを解除してください。",
   "srow.archive": "アーカイブする（一覧から消す）",
   "srow.recreate": "作り直す（今の会話はアーカイブへ）",
+  "srow.recreate_worktree": "作業コピー（worktree）を作り直す…",
 
   // === P2 起動フォーム 共通（StartModal / LaunchModal）===
   "launch.field.agent": "エージェント",
@@ -403,6 +404,7 @@ export const sessions = {
   "launch.base_default": "既定",
   "launch.base_origin_note": "origin に同じ名前のブランチがあれば、その先端から切ります（このコピーのローカルが進んでいる／分岐しているときはローカルのまま。親の作業コピーは動かしません）。",
   "launch.base_source": "起点を決めた規則:",
+  "launch.branch_provisional": "仮の名前です。このダイアログを開いている間に英語の名前に変わることがあります。",
   "launch.branch_reread": "Bitbucket のブランチ設定を読み直す",
   "launch.gitflow_suggest": "origin に develop ブランチがありますが、このリポジトリには git-flow の設定がないため、今のブランチから分岐します。",
   "launch.gitflow_open": "Git Flow を初期化…",
@@ -426,8 +428,8 @@ export const sessions = {
   "launch.template_insert_title": "テンプレートから最初のプロンプトを挿入",
   "launch.template_insert": "テンプレートから挿入…",
   "launch.first_prompt_note": "セッション起動後、準備でき次第この内容を1回だけ自動送信します（⌘/Ctrl+Enter で起動）。",
-  "launch.image_paste_note": "画像はここに貼り付け、または＋ボタンで添付できます（スマホは＋から）。",
-  "launch.attach_image": "画像を添付",
+  "launch.attach_note": "ファイルはここに貼り付け・ドロップ、または＋ボタンで添付できます（スマホは＋から）。",
+  "launch.attach_file": "ファイルを添付（貼り付け・ドロップも可）",
   "launch.start_worktree": "worktree で始める",
   // 折りたたみセクション（場所 / 詳細）の見出しと、畳んでいる間に出す要約。要約は
   // 「開かなくても実際に何が起きるか読み取れる」ことが役目なので、既定のままでも
@@ -548,6 +550,7 @@ export const sessions = {
   "awslogin.toast_profile": "{profile} — アカウント {account}、ロール {role}",
   "awslogin.toast_who": "依頼元: {who}",
   "awslogin.toast_button": "ログイン",
+  "awslogin.expiry_title": "AWS のログインが {time} に切れます",
   "awslogin.modal_title": "AWS ログイン（{profile}）",
   "awslogin.modal_title_generic": "AWS ログイン",
   "awslogin.field_profile": "プロファイル",

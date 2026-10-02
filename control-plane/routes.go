@@ -753,6 +753,8 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/repos/{name}/svn-auth", rest)
 	// Launch prompt templates (repo launch modal) — proxied to the Agent.
 	mux.HandleFunc("GET /api/repos/{name}/prompt-templates", rest)
+	// Launch modal skill picker — the mirror's list before the session exists.
+	mux.HandleFunc("GET /api/repos/{name}/skills", rest)
 	// Branch naming resolver (ADR 0103 decision 7) — proxied to the Agent.
 	mux.HandleFunc("GET /api/repos/{name}/branch-rule", rest)
 	mux.HandleFunc("POST /api/repos/{name}/branch-name", rest)

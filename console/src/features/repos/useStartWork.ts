@@ -125,18 +125,21 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
     // the selected working set (docs/log/52 §1). A launch inside a repo inherits the repo's.
     if (!dir) autoAddToActiveWorkingSet("sessions", res.name);
     const chat = agentOf(kind).caps.chat;
-    // Now that the session exists, upload any pasted images to it and fold their
+    // Now that the session exists, upload any staged attachments to it and fold their
     // saved paths into the first prompt (claude opens them with its Read tool).
     let seed = prompt;
     if (withImages) {
       const paths: string[] = [];
+      // A failed file is dropped with the rest of the draft, so its toast names it: that is
+      // the user's only way to know what to resend. No client-side size check — the per-file
+      // cap is the Agent's AF_UPLOAD_MAX (413 paste_too_large), which the Console never sees.
       for (const f of images ?? []) {
         try {
           const up = await pasteImage(res.name, f);
           if (up.status < 300 && up.path) paths.push(up.path);
-          else toast(t("rp.image_upload_failed", { err: up.error ? errText(up.error) : "" }));
+          else toast(t("rp.image_upload_failed", { name: f.name, err: up.error ? errText(up.error) : "" }));
         } catch {
-          toast(t("rp.image_upload_failed_network"));
+          toast(t("rp.image_upload_failed_network", { name: f.name }));
         }
       }
       seed = buildImagePrompt(prompt, paths, kind);

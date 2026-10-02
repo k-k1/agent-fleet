@@ -332,6 +332,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "srow.locked_hint": "Locked against deletion. Unlock it first.",
   "srow.archive": "Archive (remove from the list)",
   "srow.recreate": "Recreate (current conversation goes to the archive)",
+  "srow.recreate_worktree": "Recreate working copy (worktree)…",
 
   // === P2 launch form shared (StartModal / LaunchModal) ===
   "launch.field.agent": "Agent",
@@ -393,6 +394,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.base_default": "default",
   "launch.base_origin_note": "If origin has a branch of the same name, the new branch starts at its tip (if this copy's local branch is ahead or has diverged, the local one is kept). The parent working copy is never moved.",
   "launch.base_source": "Base chosen by:",
+  "launch.branch_provisional": "A provisional name: it may still change to an English one while this dialog is open.",
   "launch.branch_reread": "Read Bitbucket's branch settings again",
   "launch.gitflow_suggest": "origin has a develop branch, but this repository declares no git-flow settings, so the branch starts from the current branch.",
   "launch.gitflow_open": "Initialize Git Flow…",
@@ -416,8 +418,8 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.template_insert_title": "Insert a first prompt from a template",
   "launch.template_insert": "Insert from a template…",
   "launch.first_prompt_note": "Once the session is up, this is auto-sent exactly once (⌘/Ctrl+Enter to launch).",
-  "launch.image_paste_note": "Paste images here, or attach with the ＋ button (on a phone, use ＋).",
-  "launch.attach_image": "Attach an image",
+  "launch.attach_note": "Paste or drop files here, or attach with the ＋ button (on a phone, use ＋).",
+  "launch.attach_file": "Attach a file (paste or drop too)",
   "launch.start_worktree": "Start in a worktree",
   // Collapsed sections (Location / More) and the summary shown while folded. The
   // summary exists so the launch is readable without expanding: Location always
@@ -538,6 +540,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "awslogin.toast_profile": "{profile} — account {account}, role {role}",
   "awslogin.toast_who": "Asked by {who}",
   "awslogin.toast_button": "Log in",
+  "awslogin.expiry_title": "Your AWS login ends at {time}",
   "awslogin.modal_title": "AWS login ({profile})",
   "awslogin.modal_title_generic": "AWS login",
   "awslogin.field_profile": "Profile",

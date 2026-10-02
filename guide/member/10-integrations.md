@@ -250,6 +250,15 @@ Beside the label, a badge shows the login state: **Signed in**, **Renews on use*
 while the portal session is open, the next use renews it) or **Not signed in**. It shows no time left: the
 workspace knows only the access token's expiry (about an hour), not when the portal session ends.
 
+**Before a login ends — only for a login that cannot renew.** A normal login from Settings renews itself on use
+until the portal session ends, and that end is recorded nowhere the workspace can read, so such a login is **not
+warned about in advance**: when the portal ends it, the next command asks for a login as below. Only when the cached
+login has nothing to renew it with (no refresh token, or its sign-in client registration has expired) is its end
+known; then the Console warns once per profile, about 10–15 minutes before: a toast "Your AWS login ends at …" (and
+a notification), with **Log in** opening the same login window. The warning goes once you log in again; closing the
+toast hides it for that end in that tab. A profile that is not in the managed block (see `af-aws-exec --list`) is
+never warned about.
+
 Every profile and host row has **Edit**, which opens the same form filled in and saves it in place. Edit rather
 than delete and re-add: a host refers to its profile by an internal ID, so a re-added profile is a new one.
 A profile that hosts still use cannot be deleted — the page names those hosts; edit them to pick another

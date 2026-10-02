@@ -28,6 +28,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "arch-residue": "noti.kind_arch_residue",
   "start-deadline": "noti.kind_start_deadline",
   "aws-login-required": "noti.kind_aws_login_required",
+  "aws-sso-expiring": "noti.kind_aws_sso_expiring",
   "terminal-notification": "noti.kind_terminal_notification",
 };
 
@@ -223,6 +224,10 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
     // Fixed text only: the payload is written by whoever filed the request, so nothing from it
     // is shown. The profile, account and role are in the toast and the modal, from the Agent.
     return { title: t("notif.aws_login.title"), body: t("notif.aws_login.body"), speech: t("notif.aws_login.speech") };
+  }
+  if (n.kind === "aws-sso-expiring") {
+    // Fixed text for the same reason: the profile, account and role come from the Agent's list.
+    return { title: t("notif.aws_expiring.title"), body: t("notif.aws_expiring.body"), speech: t("notif.aws_expiring.speech") };
   }
   if (n.kind === "terminal-notification") {
     // A program in the session asked its terminal to raise a desktop notification (OSC 9 / 99 /

@@ -347,7 +347,12 @@ func (s *SQL) EnsureDefaultTenant(ctx context.Context) (Tenant, error) {
 	return s.getTenant(ctx, "default")
 }
 
+// CreateTenant refuses a slug that would share a directory under the data root
+// (checkTenantSlugFree); the error wraps ErrDataRootNameReserved or ErrDataRootNameTaken.
 func (s *SQL) CreateTenant(ctx context.Context, slug, name string) (Tenant, error) {
+	if err := s.checkTenantSlugFree(ctx, slug); err != nil {
+		return Tenant{}, err
+	}
 	id := NewID()
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO tenant(id, slug, name, status, limits, isolation, created_at)
@@ -1132,7 +1137,19 @@ func (s *SQL) IdentityIDForMembership(ctx context.Context, membershipID string) 
 // precisely the offboarding docs/log/61 §61.10.6 exists to make work. Coming back onto
 // a roster is an explicit act — the invite API reactivates deliberately
 // (adminAPI.addMembership).
+//
+// A NEW default-tenant membership is refused when the identity's user key would share a
+// directory under the data root (checkDefaultMemberKeyFree); an existing row is returned
+// as it is, so a person who already has such a home keeps it.
 func (s *SQL) EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error) {
+	if m, ok, err := s.GetMembership(ctx, identityID, tenantID); err != nil {
+		return Membership{}, err
+	} else if ok {
+		return m, nil
+	}
+	if err := s.checkDefaultMemberKeyFree(ctx, identityID, tenantID); err != nil {
+		return Membership{}, err
+	}
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO membership(id, identity_id, tenant_id, role, status, created_at)
 		 VALUES(?, ?, ?, ?, 'active', ?) ON CONFLICT(identity_id, tenant_id) DO NOTHING`,
