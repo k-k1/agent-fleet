@@ -992,7 +992,31 @@ func (s *SQL) disambiguateUserKey(ctx context.Context, email, key string) (strin
 		return key, nil // same person (or an invite-by-key row being claimed)
 	}
 	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email))))
-	return key + "-" + hex.EncodeToString(sum[:4]), nil
+	return key + disambiguatedKeySep + hex.EncodeToString(sum[:4]), nil
+}
+
+// disambiguatedKeySep and disambiguatedKeyHex are the suffix disambiguateUserKey appends;
+// SplitDisambiguatedUserKey parses the same shape, so change them together.
+const (
+	disambiguatedKeySep = "-"
+	disambiguatedKeyHex = 8
+)
+
+// SplitDisambiguatedUserKey splits a key of disambiguateUserKey's shape,
+// "<key>-<8 lowercase hex>", into its prefix. The admin API uses it to accept a stored key
+// that runs past sanitizeUser's 40 characters; whether the prefix is itself a sanitized
+// key is the caller's check, since sanitizeUser lives outside this package.
+func SplitDisambiguatedUserKey(key string) (prefix string, ok bool) {
+	i := len(key) - disambiguatedKeyHex - len(disambiguatedKeySep)
+	if i < 1 || key[i:i+len(disambiguatedKeySep)] != disambiguatedKeySep {
+		return "", false
+	}
+	for _, c := range key[i+len(disambiguatedKeySep):] {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return "", false
+		}
+	}
+	return key[:i], true
 }
 
 func (s *SQL) GetIdentityByUserKey(ctx context.Context, key string) (Identity, bool, error) {
