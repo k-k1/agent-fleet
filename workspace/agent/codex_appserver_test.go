@@ -2,11 +2,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -574,4 +576,165 @@ func isolateCodexReleased(t *testing.T) {
 		codexReleasedMu.Unlock()
 		codexReleasedFile = prevFile
 	})
+}
+
+// A sweep slower than the ticker must still complete: ticks that land while it is between
+// pages leave it running, so its final page ends the holds a missed notLoaded broadcast would
+// have. Superseding on every tick never let such a sweep finish. A sweep nobody answers is
+// still superseded after codexSweepMaxSkips ticks, so one lost reply cannot stop sweeping.
+func TestCodexObserverTickLetsASlowSweepFinish(t *testing.T) {
+	isolateCodexReleased(t)
+	releaseCodexObservedThread("thr-gone")
+	r := newSweepRecorder(t)
+	obs := newCodexObserver(r.conn)
+
+	obs.sweep()
+	id, _ := r.next()
+	r.answer(obs, id, "p2") // first page in; the second is slow
+	id, p := r.next()
+	if p["cursor"] != "p2" {
+		t.Fatalf("second page asked for cursor %v, want p2", p["cursor"])
+	}
+	obs.tickSweep() // the ticker fires while the sweep is between pages
+	r.none("a tick superseded a sweep still in flight")
+	r.answer(obs, id, nil) // the slow last page lands
+	if codexThreadReleased("thr-gone") {
+		t.Fatal("the slow sweep did not complete: the hold on an unloaded thread survived")
+	}
+
+	// Idle again, so the next tick sweeps at once.
+	obs.tickSweep()
+	stuck, _ := r.next()
+	// Never answered: the ticks wait codexSweepMaxSkips, then the next one supersedes it.
+	for range codexSweepMaxSkips {
+		obs.tickSweep()
+	}
+	r.none("a tick superseded an in-flight sweep before codexSweepMaxSkips")
+	obs.tickSweep()
+	if id, _ := r.next(); id == stuck {
+		t.Fatal("the superseding sweep reused the stuck request")
+	}
+}
+
+// The cap counts ticks since the last page, not since the sweep began: a listing whose pages
+// each arrive within the cap but whose total runs past it must still reach its last page.
+func TestCodexObserverTickCapCountsFromTheLastPage(t *testing.T) {
+	isolateCodexReleased(t)
+	releaseCodexObservedThread("thr-gone")
+	r := newSweepRecorder(t)
+	obs := newCodexObserver(r.conn)
+
+	const pages = 3
+	obs.sweep()
+	id, _ := r.next()
+	for page := 1; ; page++ {
+		for range codexSweepMaxSkips { // each page just inside the cap; the total is far past it
+			obs.tickSweep()
+		}
+		r.none("a sweep that kept answering was superseded")
+		if page == pages {
+			r.answer(obs, id, nil)
+			break
+		}
+		r.answer(obs, id, "p"+strconv.Itoa(page+1))
+		id, _ = r.next()
+	}
+	if codexThreadReleased("thr-gone") {
+		t.Fatal("a long sweep that kept answering never completed")
+	}
+
+	// Pages stop: the cap runs from the last one, and then the sweep is superseded.
+	obs.tickSweep()
+	stuck, _ := r.next()
+	r.answer(obs, stuck, "p2")
+	stuck, _ = r.next()
+	for range codexSweepMaxSkips {
+		obs.tickSweep()
+	}
+	r.none("superseded within the cap after the last page")
+	obs.tickSweep()
+	if id, _ := r.next(); id == stuck {
+		t.Fatal("a sweep whose pages stopped was never superseded")
+	}
+}
+
+// The observer's loop hands its ticks to tickSweep, not to a sweep that supersedes.
+func TestCodexObserverLoopTicksThroughTickSweep(t *testing.T) {
+	isolateCodexReleased(t)
+	r := newSweepRecorder(t)
+	obs := newCodexObserver(r.conn)
+	ticks, stop, done := make(chan time.Time), make(chan struct{}), make(chan struct{})
+	go func() { obs.sweepLoop(ticks, stop); close(done) }()
+	t.Cleanup(func() { close(stop); <-done })
+
+	r.next()             // the loop's first sweep, never answered
+	ticks <- time.Time{} // taken by the loop while that sweep is in flight
+	r.none("the observer loop superseded an in-flight sweep on a tick")
+}
+
+// sweepRecorder is a scripted app-server that records the observer's requests and answers
+// none by itself; tests feed the observer the pages through answer.
+type sweepRecorder struct {
+	t    *testing.T
+	conn *websocket.Conn
+	sent chan map[string]any
+}
+
+func newSweepRecorder(t *testing.T) *sweepRecorder {
+	t.Helper()
+	r := &sweepRecorder{t: t, sent: make(chan map[string]any, 64)}
+	upgrader := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		c, err := upgrader.Upgrade(w, req, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		for {
+			var m map[string]any
+			if c.ReadJSON(&m) != nil {
+				return
+			}
+			r.sent <- m
+		}
+	}))
+	t.Cleanup(srv.Close)
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	r.conn = conn
+	return r
+}
+
+func (r *sweepRecorder) next() (int, map[string]any) {
+	r.t.Helper()
+	select {
+	case m := <-r.sent:
+		if m["method"] != "thread/loaded/list" {
+			r.t.Fatalf("observer sent %v, want thread/loaded/list", m["method"])
+		}
+		p, _ := m["params"].(map[string]any)
+		return int(m["id"].(float64)), p
+	case <-time.After(3 * time.Second):
+		r.t.Fatal("observer sent no thread/loaded/list")
+	}
+	return 0, nil
+}
+
+func (r *sweepRecorder) none(why string) {
+	r.t.Helper()
+	select {
+	case m := <-r.sent:
+		r.t.Fatalf("%s: observer sent %v", why, m)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// answer feeds the observer an empty page with the given next cursor (nil = last page).
+func (r *sweepRecorder) answer(obs *codexObserver, id int, cursor any) {
+	r.t.Helper()
+	b, _ := json.Marshal(map[string]any{"data": []string{}, "nextCursor": cursor})
+	obs.handleResponse(codexAppServerMessage{ID: []byte(strconv.Itoa(id)), Result: b})
 }
