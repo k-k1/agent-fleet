@@ -1551,7 +1551,8 @@ migration tool: every stopped workspace then pays a new slot and loses the slot'
   or every slot whose launch template version is below `$Latest` (a slot from another template counts as
   older; `$Default` plays no part, because the CP launches with `$Latest`; a slot whose version cannot be read
   is never selected). Each reservation is an intent-first audit pair naming the workspace it moves. The tag
-  fits the existing `Ec2TagPoolResources` statement; the only IAM change is `ec2:DescribeLaunchTemplates`.
+  fits the existing `Ec2TagPoolResources` statement; the IAM changes are `ec2:DescribeLaunchTemplates` (in
+  `Ec2SlotPoolRead`) and one create-time tag key, `af-replaces-home` (below).
 - **Act at the next Start, as decision 32 does.** A reserved slot of a running workspace is untouched. On Start,
   `placeHome` launches a new slot of the workspace's class in the home's AZ **first** — so a failed launch
   (capacity, quota) fails the Start with the reason, leaves the home where it was and keeps the mark — and
@@ -1560,8 +1561,12 @@ migration tool: every stopped workspace then pays a new slot and loses the slot'
   and terminates the old instance after re-reading that nothing holds it. **It never falls back to the
   reserved slot**: the usual reason for a reservation is security. The reserved slot does not count against
   the cap during the swap. If the release fails, the new slot — holding nothing but that claim — is terminated
-  before the claim is dropped, so the pool is back under its cap and the next Start can try again; a new slot
-  left by a CP that died mid-way is found through the home's claim and reused rather than launched again.
+  before the claim is dropped, so the pool is back under its cap and the next Start can try again. **The claim
+  is dropped only once the new slot is confirmed terminated or reserved**; on an unknown outcome it is kept
+  (the workspace reads `starting` until the claim expires), because it is the link the next Start follows.
+  The new slot also carries `af-replaces-home=<volume>` from `RunInstances` itself, so a slot whose launch
+  answered — or was accepted with the answer lost — before the claim was written is still found and reused,
+  never launched again over the cap.
 - **A reserved slot takes nobody new.** `slotsOfMyType` drops it, so neither a free-slot placement nor an
   eviction picks it; `makeRoom` treats a reserved slot of the right size like one of the wrong size; and the
   sweeper terminates a free reserved slot with no grace, behind its usual fences (fresh occupancy, ECS tasks,

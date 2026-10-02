@@ -194,7 +194,7 @@ func TestArmClassLaunchesWithTheArmAMI(t *testing.T) {
 	h.rt.pool.amiArm64 = "ami-arm64"
 	h.rt.instanceType, h.rt.arch = "m7g.large", EC2ArchArm
 
-	if _, err := h.rt.runSlot(ctx, "ap-northeast-1a", h.rt.pool.maxSlots); err != nil {
+	if _, err := h.rt.runSlot(ctx, "ap-northeast-1a", h.rt.pool.maxSlots, ""); err != nil {
 		t.Fatalf("runSlot: %v", err)
 	}
 	if len(h.ec2.ranAMI) != 1 || h.ec2.ranAMI[0] != "ami-arm64" {
@@ -204,7 +204,7 @@ func TestArmClassLaunchesWithTheArmAMI(t *testing.T) {
 	// ...and the x86_64 path overrides nothing, so it is the call it has always been.
 	h.ec2.ranAMI = nil
 	h.rt.instanceType, h.rt.arch = "m7i.large", EC2ArchX86
-	if _, err := h.rt.runSlot(ctx, "ap-northeast-1a", h.rt.pool.maxSlots); err != nil {
+	if _, err := h.rt.runSlot(ctx, "ap-northeast-1a", h.rt.pool.maxSlots, ""); err != nil {
 		t.Fatalf("runSlot: %v", err)
 	}
 	if len(h.ec2.ranAMI) != 1 || h.ec2.ranAMI[0] != "" {

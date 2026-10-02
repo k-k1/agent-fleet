@@ -63,6 +63,9 @@ func TestECSEC2ReservedSlotIsReplacedOnTheNextStart(t *testing.T) {
 			if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-new1" {
 				t.Fatalf("claim = %q, want the new slot i-new1", got)
 			}
+			if got := ec2TagValue(h.ec2.instances["i-new1"].Tags, ec2TagReplacesHome); got != "vol-1" {
+				t.Fatalf("new slot's %s = %q, want vol-1 — written at launch so a crash cannot lose the link", ec2TagReplacesHome, got)
+			}
 			if got := ec2TagValue(h.ec2.instances["i-new1"].Tags, ec2TagLaunchTemplateVersion); got != "5" {
 				t.Fatalf("new slot's template version = %q, want $Latest (5)", got)
 			}
@@ -495,5 +498,120 @@ func TestECSEC2ReservationDuringPlacementIsHonoured(t *testing.T) {
 				t.Fatalf("home attached to %q, want i-b", got)
 			}
 		})
+	}
+}
+
+// expireClaim backdates the home's claim past claimTTL, standing in for the wait before a
+// member can start again after a failure that kept it.
+func expireClaim(h *ec2Harness, vol string) {
+	h.ec2.setTag(vol, ec2TagClaimAt, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339))
+}
+
+// Review #1526 round 2, item 1: when the cleanup cannot confirm the unused replacement is
+// gone (or at least reserved), the home's claim on it is KEPT — it is what keeps other Starts
+// off the box and what points the next Start at it. Dropping it left a box nothing collects
+// and a pool stuck over its cap.
+func TestECSEC2CleanupThatCannotRetireTheReplacementKeepsTheLinkAndTheRetryAdoptsIt(t *testing.T) {
+	for _, fault := range []string{"occupancy unreadable", "terminate and reserve both fail"} {
+		t.Run(fault, func(t *testing.T) {
+			ctx := context.Background()
+			h := reservedSlotHarness(t, true)
+			h.rt.pool.maxSlots = 1
+			h.rt.pool.slotSleepAfter, h.rt.pool.slotTerminateAfter = 0, 0
+			h.ssmc.fail["af-umount"] = true
+			switch fault {
+			case "occupancy unreadable":
+				h.ssmc.onSend = func(cmd string) {
+					if strings.Contains(cmd, "af-umount") {
+						h.ec2.mu.Lock()
+						h.ec2.describeVolumesErr = errors.New("RequestLimitExceeded")
+						h.ec2.mu.Unlock()
+					}
+				}
+			case "terminate and reserve both fail":
+				h.ec2.terminateErr = errors.New("UnauthorizedOperation")
+				h.ec2.createTagsErr = map[string]error{ec2TagSlotReplace: errors.New("RequestLimitExceeded")}
+			}
+
+			if err := h.rt.Start(ctx); err == nil {
+				t.Fatal("Start with a failing umount succeeded")
+			}
+			if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-new1" {
+				t.Fatalf("claim = %q after an unconfirmed cleanup, want it kept on i-new1", got)
+			}
+
+			// The causes go away and the claim runs out; the next Start must reuse i-new1
+			// rather than find the pool full.
+			h.ssmc.onSend = nil
+			delete(h.ssmc.fail, "af-umount")
+			h.ec2.describeVolumesErr, h.ec2.terminateErr, h.ec2.createTagsErr = nil, nil, nil
+			expireClaim(h, "vol-1")
+			if err := h.rt.Start(ctx); err != nil {
+				t.Fatalf("retry: %v", err)
+			}
+			if _, ok := h.ec2.instances["i-new2"]; ok {
+				t.Fatal("the retry launched another slot instead of adopting i-new1")
+			}
+			if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-new1" {
+				t.Fatalf("claim after the retry = %q, want i-new1", got)
+			}
+			if n := liveSlots(h); n != 1 {
+				t.Fatalf("%d live slots after the retry, want 1 (i-old retired)", n)
+			}
+		})
+	}
+}
+
+// A request context cancelled mid-release (the member closed the tab) must not stop the
+// cleanup: the unused replacement is still terminated.
+func TestECSEC2CleanupOutlivesACancelledRequest(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h := reservedSlotHarness(t, true)
+	h.rt.pool.maxSlots = 1
+	h.ssmc.fail["af-umount"] = true
+	h.ssmc.onSend = func(cmd string) {
+		if strings.Contains(cmd, "af-umount") {
+			cancel()
+		}
+	}
+
+	_ = h.rt.Start(ctx)
+	if h.ec2.instances["i-new1"].State.Name != ec2types.InstanceStateNameTerminated {
+		t.Fatalf("the unused replacement is %s after the request was cancelled, want terminated", h.ec2.instances["i-new1"].State.Name)
+	}
+	if n := liveSlots(h); n != 1 {
+		t.Fatalf("%d live slots, want the pool back at 1", n)
+	}
+}
+
+// Review #1526 round 2, item 2: a replacement whose launch answered (or was accepted with the
+// answer lost) but whose claim was never written — the CP died in between — is found through
+// the af-replaces-home tag RunInstances itself wrote, and reused.
+func TestECSEC2ReplacementLaunchedBeforeACrashIsFoundByItsTag(t *testing.T) {
+	ctx := context.Background()
+	h := reservedSlotHarness(t, false)
+	h.rt.pool.maxSlots = 1
+	h.rt.pool.slotSleepAfter, h.rt.pool.slotTerminateAfter = 0, 0
+	// The previous attempt got exactly this far: the launch, nothing else.
+	if _, err := h.rt.runSlot(ctx, "ap-northeast-1a", 2, "vol-1"); err != nil {
+		t.Fatalf("seed launch: %v", err)
+	}
+	h.ec2.instances["i-new1"].State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameRunning}
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "" {
+		t.Fatalf("setup: claim %q, want none (the crash came before it)", got)
+	}
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start after the crash: %v", err)
+	}
+	if _, ok := h.ec2.instances["i-new2"]; ok {
+		t.Fatal("launched a second replacement; the first one should have been found by its tag")
+	}
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-new1" {
+		t.Fatalf("claim = %q, want the earlier replacement i-new1", got)
+	}
+	if n := liveSlots(h); n != 1 {
+		t.Fatalf("%d live slots, want 1", n)
 	}
 }

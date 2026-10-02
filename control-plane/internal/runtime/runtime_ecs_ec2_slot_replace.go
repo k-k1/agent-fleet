@@ -27,6 +27,11 @@ const (
 	// the instance rather than the home because the reservation is about the box: whoever's
 	// home is on it at the next Start is the one that moves.
 	ec2TagSlotReplace = "af-slot-replace"
+	// ec2TagReplacesHome on a SLOT names the home volume it was launched to replace a
+	// reserved slot for. It is written by RunInstances itself, so a replacement whose
+	// launch answered but whose Start never got further (a CP that died, a lost response)
+	// can still be found and reused instead of launching another box over the cap.
+	ec2TagReplacesHome = "af-replaces-home"
 	// EC2 stamps these on every instance launched from a launch template, with the version
 	// NUMBER it resolved — never the literal "$Latest" the launch asked for.
 	ec2TagLaunchTemplateID      = "aws:ec2launchtemplate:id"
@@ -98,15 +103,16 @@ func (e *ecsEC2Runtime) replaceReservedSlot(ctx context.Context, vol *ec2types.V
 		oldID, e.base.name, e.instanceType)
 	e.setPhase(ec2PhaseSlotRenewing)
 	newID, wake := "", false
-	if prev := ec2TagValue(vol.Tags, EC2TagClaim); prev != "" && prev != oldID {
+	for _, prev := range e.earlierReplacements(ctx, vol, oldID) {
 		if running, ok := e.adoptableReplacement(ctx, prev, az, volID); ok {
 			log.Printf("ecs-ec2: reusing %s, the replacement an earlier start of %s launched", prev, e.base.name)
 			newID, wake = prev, !running
+			break
 		}
 	}
 	if newID == "" {
 		// An EBS volume never leaves its AZ, so the new slot has to be in the home's.
-		id, err := e.runSlot(ctx, az, e.pool.maxSlots+1)
+		id, err := e.runSlot(ctx, az, e.pool.maxSlots+1, volID)
 		if err != nil {
 			return ec2Placement{}, fmt.Errorf("slot %s is reserved for replacement and no new slot could be launched "+
 				"(the reservation stays; the old slot is not reused): %w", oldID, err)
@@ -150,25 +156,76 @@ func (e *ecsEC2Runtime) moveHomeOff(ctx context.Context, oldID string) error {
 	return nil
 }
 
-// retireUnusedReplacement undoes step 1 and 2 of replaceReservedSlot after a later step
-// failed: terminate the new box — it holds nothing but this home's claim — and then drop the
-// claim, in that order so the box is never unprotected while it exists. If the terminate
-// fails the box is reserved instead, so nobody is placed on it and the sweeper retires it.
+// retireUnusedReplacement undoes steps 1 and 2 of replaceReservedSlot after a later step
+// failed: terminate the new box — it holds nothing but this home's claim — or, if that
+// fails, reserve it so nobody is placed on it and the sweeper retires it.
+//
+// ⚠️ The claim is dropped ONLY once one of those is confirmed. Until then it is what keeps
+// other Starts off the box and what points this home's next Start at it; dropping it on an
+// unknown outcome (an unreadable occupancy, both writes failing) left a box nothing would
+// ever collect, holding the one place under the cap the retry needs. Kept, the workspace
+// reads `starting` until the claim expires (claimTTL), and the next Start then adopts the
+// box (adoptableReplacement). The cleanup runs on a context the request cannot cancel: a
+// client that hung up must not turn a recoverable failure into a stranded box.
 func (e *ecsEC2Runtime) retireUnusedReplacement(ctx context.Context, newID, volID string) {
-	defer e.unclaim(ctx, volID)
-	if holder, err := e.slotHolder(ctx, newID, volID); err != nil || holder != "" {
-		log.Printf("ecs-ec2: leaving the replacement slot %s alone (held by %q, %v)", newID, holder, err)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
+	holder, err := e.slotHolder(ctx, newID, volID)
+	switch {
+	case err != nil:
+		log.Printf("ecs-ec2: cannot tell whether the replacement slot %s is free (%v); keeping %s's claim on it", newID, err, volID)
+		return
+	case holder != "":
+		// Somebody else's home is on it, so it is theirs now and not ours to retire.
+		log.Printf("ecs-ec2: the replacement slot %s holds %s; leaving it", newID, holder)
+		e.unclaim(ctx, volID)
 		return
 	}
 	if err := e.terminateSlot(ctx, newID, "replacement for "+e.base.name+" not used"); err == nil {
+		e.unclaim(ctx, volID)
 		return
 	}
 	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
 		Resources: []string{newID},
 		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagSlotReplace), Value: aws.String(e.now().UTC().Format(time.RFC3339))}},
 	}); err != nil {
-		log.Printf("ecs-ec2: could not reserve the unused replacement slot %s either: %v", newID, err)
+		log.Printf("ecs-ec2: could not retire or reserve the unused replacement slot %s (%v); keeping %s's claim on it", newID, err, volID)
+		return
 	}
+	e.unclaim(ctx, volID)
+}
+
+// earlierReplacements lists the slots an earlier attempt to replace oldID for this home may
+// have left: the one its claim names, and every live slot launched for it (ec2TagReplacesHome)
+// — the second covers a launch whose claim was never written. adoptableReplacement decides.
+func (e *ecsEC2Runtime) earlierReplacements(ctx context.Context, vol *ec2types.Volume, oldID string) []string {
+	volID := aws.ToString(vol.VolumeId)
+	var ids []string
+	seen := map[string]bool{oldID: true, "": true}
+	add := func(id string) {
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	add(ec2TagValue(vol.Tags, EC2TagClaim))
+	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(EC2TagPool, e.pool.pool),
+			tagFilter(ec2TagReplacesHome, volID),
+			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopped"}},
+		},
+	})
+	if err != nil {
+		log.Printf("ecs-ec2: looking for an earlier replacement for %s: %v", volID, err)
+		return ids
+	}
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			add(aws.ToString(inst.InstanceId))
+		}
+	}
+	return ids
 }
 
 // adoptableReplacement reports whether id — the slot this home's last claim named — is a

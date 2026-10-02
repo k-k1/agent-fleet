@@ -2848,7 +2848,7 @@ func (e *ecsEC2Runtime) listContainerInstanceARNs(ctx context.Context) ([]string
 // docs/log/64 §64.20.4.
 func (e *ecsEC2Runtime) growPool(ctx context.Context, az string) (string, string, error) {
 	if az != "" {
-		id, err := e.runSlot(ctx, az, e.pool.maxSlots)
+		id, err := e.runSlot(ctx, az, e.pool.maxSlots, "")
 		return id, az, err
 	}
 	azs, err := e.spreadAZs(ctx)
@@ -2860,7 +2860,7 @@ func (e *ecsEC2Runtime) growPool(ctx context.Context, az string) (string, string
 	}
 	var lastErr error
 	for _, candidate := range azs {
-		id, err := e.runSlot(ctx, candidate, e.pool.maxSlots)
+		id, err := e.runSlot(ctx, candidate, e.pool.maxSlots, "")
 		if err == nil {
 			return id, candidate, nil
 		}
@@ -2967,7 +2967,10 @@ func describeSlotClasses(cs []ec2SlotClass) string {
 // runSlot launches one slot under the cap limit. Every caller but one passes maxSlots; the
 // replacement of a reserved slot passes one more, because it launches the new box before the
 // old one is gone and the old one must not count against the place it is about to give back.
-func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string, limit int) (string, error) {
+//
+// replacesHome, when set, is the home volume a replacement slot is launched for. It is stamped
+// at launch (ec2TagReplacesHome), so the link exists the moment the instance does.
+func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string, limit int, replacesHome string) (string, error) {
 	total, err := e.poolSize(ctx)
 	if err != nil {
 		return "", err
@@ -2980,6 +2983,15 @@ func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string, limit int) (stri
 		return "", err
 	}
 	lt := launchTemplateSpec(e.pool.launchTemplate)
+	tags := []ec2types.Tag{
+		{Key: aws.String(EC2TagPool), Value: aws.String(e.pool.pool)},
+		{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleSlot)},
+		{Key: aws.String(EC2TagSlotSize), Value: aws.String(e.instanceType)},
+		{Key: aws.String("Name"), Value: aws.String("af-slot-" + e.instanceType)},
+	}
+	if replacesHome != "" {
+		tags = append(tags, ec2types.Tag{Key: aws.String(ec2TagReplacesHome), Value: aws.String(replacesHome)})
+	}
 	out, err := e.ec2.RunInstances(ctx, &ec2.RunInstancesInput{
 		LaunchTemplate: lt,
 		// Overrides the template's ImageId on arm64 and is nil everywhere else, so an
@@ -2991,12 +3003,7 @@ func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string, limit int) (stri
 		MaxCount:     aws.Int32(1),
 		TagSpecifications: []ec2types.TagSpecification{{
 			ResourceType: ec2types.ResourceTypeInstance,
-			Tags: []ec2types.Tag{
-				{Key: aws.String(EC2TagPool), Value: aws.String(e.pool.pool)},
-				{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleSlot)},
-				{Key: aws.String(EC2TagSlotSize), Value: aws.String(e.instanceType)},
-				{Key: aws.String("Name"), Value: aws.String("af-slot-" + e.instanceType)},
-			},
+			Tags:         tags,
 		}},
 	})
 	if err != nil {

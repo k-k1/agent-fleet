@@ -86,6 +86,8 @@ type fakeEC2 struct {
 	// an operator's reservation lands while a Start is under way.
 	afterDescribeVolumes func()
 	onAttach             func(instID string)
+	// terminateErr makes TerminateInstances fail without terminating anything.
+	terminateErr error
 }
 
 func newFakeEC2() *fakeEC2 {
@@ -670,9 +672,18 @@ func (f *fakeEC2) StopInstances(_ context.Context, in *ec2.StopInstancesInput, _
 // the root device, so a home left attached would come back `available`, not disappear).
 // A fake that only flipped the state would let a test "prove" a release-then-terminate
 // ordering that AWS does not actually give us.
-func (f *fakeEC2) TerminateInstances(_ context.Context, in *ec2.TerminateInstancesInput, _ ...func(*ec2.Options)) (*ec2.TerminateInstancesOutput, error) {
+func (f *fakeEC2) TerminateInstances(ctx context.Context, in *ec2.TerminateInstancesInput, _ ...func(*ec2.Options)) (*ec2.TerminateInstancesOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// The SDK refuses to send on a cancelled context; a terminate is the call whose loss
+	// strands a box, so the fake models that here.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if f.terminateErr != nil {
+		f.log("TerminateInstances REFUSED (%v)", f.terminateErr)
+		return nil, f.terminateErr
+	}
 	for _, id := range in.InstanceIds {
 		f.log("TerminateInstances %s", id)
 		if i := f.instances[id]; i != nil {

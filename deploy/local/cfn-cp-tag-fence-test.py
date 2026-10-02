@@ -255,7 +255,8 @@ T = "2026-01-01T00:00:00Z"
 INVENTORY = [
     # --- tag-on-create ---
     ("internal/runtime/runtime_ecs_ec2.go", "runSlot", "TagSpecifications", 1, [
-        on_create("RunInstances", "instance", SLOT)]),
+        on_create("RunInstances", "instance", SLOT),
+        on_create("RunInstances", "instance", dict(SLOT, **{"af-replaces-home": "vol-home"}))]),
     ("engine_fleet.go", "request", "TagSpecifications", 1, [
         on_create("CreateFleet", "instance", ENGINE)]),
     ("internal/runtime/runtime_ecs_ec2.go", "createHomeVolume", "TagSpecifications", 1, [
