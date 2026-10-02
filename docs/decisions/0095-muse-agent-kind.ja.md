@@ -2776,3 +2776,25 @@ foreign-reader スキル（`resume-claude` ほか）は現れない＝設定書�
 過不足なく一致した。前者の逆（R4161.1 の束ねに対する 1.3.0 の出力）は非互換で、消えたものを全て名指した。
 単体テストは小さな束ねで各規則を押さえ、実物の束ねを自分自身と比べる。指紋は型がどの出力から生成されたかの
 記録として `types_gen.go` に残す。束ねの出し直しは、リリースが足したものをクライアントが使いたいときに行う。
+
+### P2-25: 1.4.2 と、クライアントが「含まれるか」しか問わない列挙（2026-10-02）
+
+Muse 1.4.2-R4684.1 は追加だけだったが、検査器が非互換と判定した行が 1 つあった。
+`$defs.CapabilityName.enum` に `feedback` が増え、`CapabilityName` は `initialize` の結果
+（`grantedCapabilities`）と `ErrorData.capability` でクライアントに届く。クライアントはこれで分岐しない。
+`msp.Granted` は既知の名前がリストに有るかを問うだけなので、知らない能力名は無視され、読み違えはしない。
+`compat.go` の `membershipEnums` に `CapabilityName` を載せ、ここの増加は追加として報告する。クライアントが
+読むほかの列挙は厳しい規則のまま（`TestCompareDecodedEnumGrowthStillBreaks` が `SessionStatus` と
+`ItemKind` で押さえる）。どこかで `CapabilityName` に `switch` を書くなら、この登録を外すこと。
+
+束ねに無い値でデコードが失敗してはならない。生成される列挙はデコーダを持たない素の `string` 型で、
+`TestEnumTypesDecodeAnyString` が `types_gen.go` の全列挙をその形に保つ（手書きの `UnmarshalJSON` を
+1 つ置くと赤）。`TestUnknownEnumValuesDecode` はドライバが読むメッセージを、束ねに無い能力・状態・
+プラットフォーム・effort でデコードする。
+
+束ねは出し直さない（P2-24 のとおり）。出し直しはリリースが足したものをクライアントが必要とするときに行うもので、
+1.4.2 の追加（`feedback/submit`・`session/delete`・`workspaceRoots`・セッション一覧の絞り込み・累計の費用と
+キャッシュ内訳・説明付きの effort 段階）はまだ何も使っていない。出し直しには検査器が見せる代償もある。束ねが
+宣言し古いバイナリに無いものは「消えた」と読まれるので、1.4.2 の束ねはピンが動くまで 1.4.1 のピン（実測で
+18 件）にも PATH 上の古い `muse` にも赤になる。現行の束ねで実物を測った: 1.4.2 は変更前はその 1 件で赤、
+変更後は緑（追加 25 件、うち `feedback` が 2 件）、1.4.1 のピンは緑、`SessionStatus` から `running` を抜いた束ねでは 1.4.2 で再び赤。
