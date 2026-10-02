@@ -475,3 +475,6 @@ Sizes are `du` in MiB, as in the 2026-10-02 installer note.
   token, so it is harmless once the notes say so. `bq` (12 MiB) works through the wrapper. What the
   wrapper needs is the core with the bundled Python (gcloud runs on it), `gcloud-crc32c` (used by
   `gcloud storage`) and `gke-gcloud-auth-plugin`, which asks the `gcloud` on `PATH` (`config config-helper`) for the token.
+
+Follow-ups: #1517 (whether the child gets `GOOGLE_CLOUD_QUOTA_PROJECT`), #1518 (reauthentication with a real
+organisation).

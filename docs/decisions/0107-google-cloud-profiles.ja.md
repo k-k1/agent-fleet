@@ -400,3 +400,5 @@ SDK 587.0.0 をワークスペースで使い、本物の Google ログインは
   ノートにそう書けば害は無い。`bq`（12 MiB）はラッパー経由で動く。ラッパーに要るのは、同梱の Python を含むコア（gcloud は
   それで動く）、`gcloud-crc32c`（`gcloud storage` が使う）、`gke-gcloud-auth-plugin` である。プラグインはトークンを
   `PATH` 上の `gcloud` に（`config config-helper` で）求める。
+
+後続: #1517（子に `GOOGLE_CLOUD_QUOTA_PROJECT` を渡すか）、#1518（本物の組織での再認証）。
