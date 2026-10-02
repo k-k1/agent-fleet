@@ -244,22 +244,18 @@ func RenderSSMConfig(s session.SSMMeta) (string, error) {
 
 // ssmForgetLogin drops the cached login of the profile the pane is about to use, so the
 // `aws sso login` after it has to run the device-code flow again. `aws sso logout` cannot do
-// this: it revokes and deletes every token in ~/.aws/sso/cache and every SSO role credential
-// in ~/.aws/cli/cache, with or without --profile, so it signed the member out of every
-// profile. Only this profile's two files go: the token, keyed by the SHA-1 of its
-// sso_session (or of sso_start_url for a legacy profile), and the role credentials, keyed by
-// the SHA-1 of botocore's sorted JSON of account, role and that session name or start URL
-// (both measured with aws-cli 2.36.46). A key that does not resolve deletes nothing.
-const ssmForgetLogin = `afs=$(aws configure get sso_session 2>/dev/null); ` +
-	`afu=$(aws configure get sso_start_url 2>/dev/null); ` +
-	`afa=$(aws configure get sso_account_id 2>/dev/null); ` +
-	`afr=$(aws configure get sso_role_name 2>/dev/null); ` +
-	`if [ -n "$afs" ]; then afk=$afs; afj="\"sessionName\":\"$afs\""; else afk=$afu; afj="\"startUrl\":\"$afu\""; fi; ` +
-	`if [ -n "$afk" ]; then ` +
-	`rm -f "$HOME/.aws/sso/cache/$(printf '%s' "$afk" | sha1sum | cut -d' ' -f1).json"; ` +
-	`if [ -n "$afa" ] && [ -n "$afr" ]; then ` +
-	`rm -f "$HOME/.aws/cli/cache/$(printf '{"accountId":"%s","roleName":"%s",%s}' "$afa" "$afr" "$afj" | sha1sum | cut -d' ' -f1).json"; ` +
-	`fi; fi; `
+// this: it revokes and deletes every SSO token in ~/.aws/sso/cache whatever --profile says,
+// which would sign the member out of every other profile too.
+//
+// Only this profile's token goes: its key is the SHA-1 of the profile's sso_session (or of
+// sso_start_url for a legacy profile). Role credentials are dropped for every SSO profile
+// (ProviderType "sso" in ~/.aws/cli/cache) instead of this one's alone: botocore keys them by
+// a JSON digest whose inputs can come from the sso-session section and whose escaping a shell
+// cannot reproduce, and a stale entry left behind would keep serving the old identity. The
+// other profiles still hold their tokens, so they fetch new role credentials without a login.
+const ssmForgetLogin = `afk=$(aws configure get sso_session 2>/dev/null) || afk=$(aws configure get sso_start_url 2>/dev/null) || afk=; ` +
+	`[ -z "$afk" ] || rm -f "$HOME/.aws/sso/cache/$(printf '%s' "$afk" | sha1sum | cut -d' ' -f1).json"; ` +
+	`for f in "$HOME"/.aws/cli/cache/*.json; do grep -qs '"ProviderType": *"sso"' "$f" && rm -f "$f"; done; `
 
 // buildSSMProgram assembles the pane command for an SSM session: refresh SSO creds
 // only when the cached token is missing/expired (surfacing the login URL in the
