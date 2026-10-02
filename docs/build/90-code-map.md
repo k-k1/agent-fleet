@@ -108,6 +108,7 @@ package's files (and its `deps.go`, where it has one) say what it holds.
 | Instructions and skills | `agent_instructions.go`, `internal/userinstr`, `internal/mdblock`, `internal/fleetskills` |
 | Toolchains and installers | `env_*.go`, `jdk*.go`, `node_install.go`, `install_*.go`, `*_install_http.go`, `internal/afdb` (`af-db`) |
 | AWS | `internal/awsx` (`aws-exec`), `ssm_instances.go` |
+| Cloud profiles, provider-neutral | `internal/cloudbridge` (the Settings pull and its cache), `internal/cloudlogin` (Console login requests and attempts), `internal/cloudexec` (the wrapper skeleton); `internal/awsx` is their AWS backend |
 | Image generation | `internal/imagegen` |
 | Self-hosted engines | `engines.go` |
 | Fleet session graph | `internal/fleetgraph` |

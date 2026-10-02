@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudexec"
 )
 
 // ssoProfile is what `aws configure get` reports for a complete SSO profile.
@@ -667,7 +669,7 @@ func TestEnvCredentials(t *testing.T) {
 		// Plain env credentials (a workload's, say) outside af-aws-exec.
 		"not from af-aws-exec": {"AWS_ACCESS_KEY_ID=ASIA1", "AWS_SECRET_ACCESS_KEY=s", "AWS_SESSION_TOKEN=t"},
 		// A script exported another account's keys after af-aws-exec started it.
-		"key changed": setEnv(env, "AWS_ACCESS_KEY_ID=ASIAOTHER"),
+		"key changed": cloudexec.SetEnv(env, "AWS_ACCESS_KEY_ID=ASIAOTHER"),
 	} {
 		if b, err := EnvCredentials(e); err == nil {
 			t.Errorf("%s: handed out %s", name, b)

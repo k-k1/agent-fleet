@@ -8,12 +8,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/awsx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudexec"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
-	"golang.org/x/sys/unix"
 )
 
 const awsExecUsage = `usage: af-aws-exec --profile <name> [--account <id>] [--region <region>] [--login|--no-login]
@@ -50,6 +49,9 @@ credential_source, web identity and mfa_serial are refused.
 Exit status: the command's own on success; 2 usage error; 3 SSO login required but not
 started (no terminal, or --no-login); 1 any other refusal or failure.
 `
+
+// awsExec is af-aws-exec's skeleton: its name, usage text and version line.
+var awsExec = cloudexec.Wrapper{Name: "af-aws-exec", Usage: awsExecUsage, Version: versionLine}
 
 // runAWSExec is `workspace-agent aws-exec`, reached through the af-aws-exec PATH shim.
 // Exit codes: 2 usage, 3 SSO login required but not attempted, 1 anything else.
@@ -136,14 +138,13 @@ func runAWSExec(args []string) {
 	}
 
 	if o.Profile == "" || len(o.Argv) == 0 {
-		fmt.Fprint(os.Stderr, awsExecUsage)
-		os.Exit(2)
+		awsExec.FailUsage()
 	}
 	awsBin, err := ensureAWSCLI()
 	if err != nil {
-		awsExecFail(1, err.Error())
+		awsExec.Fail(cloudexec.ExitRefused, err.Error())
 	}
-	o.Interactive = isTerminal(os.Stdin) && isTerminal(os.Stderr)
+	o.Interactive = cloudexec.IsTerminal(os.Stdin) && cloudexec.IsTerminal(os.Stderr)
 	// Inside a workspace the Agent can show the login in the Console (ADR 0102).
 	if os.Getenv("AF_CP_BASE_URL") != "" {
 		name := os.Getenv("AF_SESSION_NAME")
@@ -152,14 +153,9 @@ func runAWSExec(args []string) {
 	}
 	prog, argv, env, err := awsx.PlanExec(awsBin, os.Environ(), o)
 	if err != nil {
-		if errors.Is(err, awsx.ErrLoginRequired) {
-			awsExecFail(3, err.Error())
-		}
-		awsExecFail(1, err.Error())
+		awsExec.FailPlan(err, awsx.ErrLoginRequired)
 	}
-	if err := syscall.Exec(prog, argv, env); err != nil {
-		awsExecFail(1, "exec "+prog+": "+err.Error())
-	}
+	awsExec.Exec(prog, argv, env)
 }
 
 // consoleLoginWaits is how long af-aws-exec waits for a Console login, per agent kind,
@@ -211,24 +207,7 @@ func parseAWSExecArgs(args []string) (awsx.ExecOptions, bool) {
 	o := awsx.ExecOptions{Login: "auto", Stderr: os.Stderr}
 	list := false
 	value := map[string]*string{"--profile": &o.Profile, "--region": &o.Region, "--account": &o.Account}
-	for len(args) > 0 {
-		a := args[0]
-		args = args[1:]
-		if a == "--" {
-			o.Argv = args
-			break
-		}
-		if k, v, ok := strings.Cut(a, "="); ok && value[k] != nil {
-			*value[k] = v
-			continue
-		}
-		if dst := value[a]; dst != nil {
-			if len(args) == 0 {
-				awsExecFail(2, a+" needs a value")
-			}
-			*dst, args = args[0], args[1:]
-			continue
-		}
+	o.Argv = awsExec.Parse(args, value, func(a string) bool {
 		switch a {
 		case "--login":
 			o.Login = "always"
@@ -240,16 +219,11 @@ func parseAWSExecArgs(args []string) (awsx.ExecOptions, bool) {
 			o.Quiet = true
 		case "--list":
 			list = true
-		case "-h", "--help":
-			fmt.Print(awsExecUsage)
-			os.Exit(0)
-		case "--version":
-			fmt.Println("af-aws-exec, part of " + versionLine())
-			os.Exit(0)
 		default:
-			awsExecFail(2, "unknown argument "+a+" (put the command after --)")
+			return false
 		}
-	}
+		return true
+	})
 	return o, list
 }
 
@@ -265,11 +239,6 @@ func runAWSEnvCredentials(args []string) {
 		os.Exit(1)
 	}
 	os.Stdout.Write(append(b, '\n'))
-}
-
-func awsExecFail(code int, msg string) {
-	fmt.Fprintln(os.Stderr, "af-aws-exec: "+msg)
-	os.Exit(code)
 }
 
 // ensureAWSCLI finds aws, installing the pinned CLI into the home first on a lean
@@ -288,14 +257,6 @@ func ensureAWSCLI() (string, error) {
 		return "", fmt.Errorf("the AWS CLI is not installed and `workspace-agent install-awscli` failed: %v", err)
 	}
 	return exec.LookPath("aws")
-}
-
-// isTerminal reports whether f is a terminal. A character-device check is not enough:
-// /dev/null is one too, and treating a redirected, unattended run as interactive would
-// start a device-code login that waits for nobody.
-func isTerminal(f *os.File) bool {
-	_, err := unix.IoctlGetTermios(int(f.Fd()), unix.TCGETS)
-	return err == nil
 }
 
 func orNone(s string) string {

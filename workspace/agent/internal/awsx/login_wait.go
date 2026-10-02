@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudlogin"
 )
 
 // loginPollInterval is how often a waiting run looks at its request and the token
@@ -23,37 +25,6 @@ func consoleEligible(sso ssoInfo, o ExecOptions) bool {
 	return listed && sameSSO(sp, sso) && sso.Session == "af-"+o.Profile
 }
 
-// errUnsettled means the cache kept changing under every check until the wait ran out,
-// so no failure was ever pinned to a cache state and nothing was filed.
-var errUnsettled = errors.New("the SSO token cache kept changing")
-
-// settle applies the snapshot rule (ADR 0102 decision 1) after a failed check that was
-// made against snap: while the cache differs from the snapshot a check was made
-// against, a login may have landed in between, so check again instead of recording.
-// It returns the credentials once a check succeeds, or the snapshot a check failed
-// against while the cache held still.
-func settle(aws awsRunner, ssoSession string, snap CacheState, deadline time.Time) (CacheState, processCreds, error) {
-	for {
-		cur := ReadCacheState(ssoSession)
-		if cur == snap {
-			return snap, processCreds{}, nil
-		}
-		if !time.Now().Before(deadline) {
-			return snap, processCreds{}, errUnsettled
-		}
-		snap = cur
-		// A cache that keeps moving must not turn this into back-to-back aws starts.
-		time.Sleep(loginPollInterval)
-		c, err := exportCreds(aws, ssoOnlyProfile)
-		if err == nil {
-			return snap, c, nil
-		}
-		if !loginNeeded(err.Error()) {
-			return snap, processCreds{}, err
-		}
-	}
-}
-
 // consoleLogin files a login request for the Console and waits for the member to approve
 // it (ADR 0102 decisions 1 and 5). first is the failure of the check made against snap.
 func consoleLogin(aws awsRunner, sso ssoInfo, snap CacheState, o ExecOptions, first error, hint string) (processCreds, error) {
@@ -61,80 +32,35 @@ func consoleLogin(aws awsRunner, sso ssoInfo, snap CacheState, o ExecOptions, fi
 	if stderr == nil {
 		stderr = io.Discard
 	}
-	deadline := time.Now().Add(o.ConsoleWait)
-	cancelled := func() error {
-		return fmt.Errorf("%w for profile %q: the login request was cancelled in the Agent Fleet Console; "+
+	creds, err := cloudlogin.Wait(logins, snap, cloudlogin.WaitSpec[processCreds]{
+		Profile: o.Profile, Key: sso.Session, Waiter: o.Waiter,
+		Wait: o.ConsoleWait, Poll: loginPollInterval,
+		Check:       func() (processCreds, error) { return exportCreds(aws, ssoOnlyProfile) },
+		LoginNeeded: func(err error) bool { return loginNeeded(err.Error()) },
+		Filed: func() {
+			fmt.Fprintf(stderr, "af-aws-exec: SSO login for profile %q requested in the Agent Fleet Console; "+
+				"waiting up to %s for the member to approve it there\n", o.Profile, o.ConsoleWait.Round(time.Second))
+		},
+		FiledAgain: func() {
+			fmt.Fprintf(stderr, "af-aws-exec: the SSO login for profile %q is still needed; requested again in the Agent Fleet Console\n", o.Profile)
+		},
+	})
+	var we *cloudlogin.WaitError
+	if !errors.As(err, &we) {
+		return creds, err
+	}
+	switch we.Reason {
+	case cloudlogin.WaitUnsettled:
+		return processCreds{}, fmt.Errorf("%w for profile %q: %v\nlog in with: %s", ErrLoginRequired, o.Profile, first, hint)
+	case cloudlogin.WaitCheckFailed:
+		return processCreds{}, fmt.Errorf("could not get credentials for profile %q: %v", o.Profile, we.Err)
+	case cloudlogin.WaitNotFiled:
+		return processCreds{}, fmt.Errorf("%w for profile %q: %v (and the Console could not be asked: %v)\nlog in with: %s",
+			ErrLoginRequired, o.Profile, first, we.Err, hint)
+	case cloudlogin.WaitCancelled:
+		return processCreds{}, fmt.Errorf("%w for profile %q: the login request was cancelled in the Agent Fleet Console; "+
 			"ask the member; they can press \"Log in\" on the profile in Settings > AWS profiles/SSM, "+
 			"or log in in a terminal with: %s", ErrLoginRequired, o.Profile, hint)
-	}
-
-	snap, creds, err := settle(aws, sso.Session, snap, deadline)
-	switch {
-	case errors.Is(err, errUnsettled):
-		return processCreds{}, fmt.Errorf("%w for profile %q: %v\nlog in with: %s", ErrLoginRequired, o.Profile, first, hint)
-	case err != nil:
-		return processCreds{}, fmt.Errorf("could not get credentials for profile %q: %v", o.Profile, err)
-	case creds.AccessKeyID != "":
-		return creds, nil
-	}
-
-	req, _, err := FileLoginRequest(o.Profile, sso.Session, snap, o.Waiter)
-	if errors.Is(err, ErrLoginHeld) {
-		return processCreds{}, cancelled()
-	}
-	if err != nil {
-		return processCreds{}, fmt.Errorf("%w for profile %q: %v (and the Console could not be asked: %v)\nlog in with: %s",
-			ErrLoginRequired, o.Profile, first, err, hint)
-	}
-	// First, before any waiting: a run its caller kills on a timeout has still said it.
-	fmt.Fprintf(stderr, "af-aws-exec: SSO login for profile %q requested in the Agent Fleet Console; "+
-		"waiting up to %s for the member to approve it there\n", o.Profile, o.ConsoleWait.Round(time.Second))
-
-	recorded := snap
-	// lost: the request is gone and could not be filed again, so only a cache change is
-	// worth another aws start.
-	lost := false
-	for time.Now().Before(deadline) {
-		time.Sleep(loginPollInterval)
-		state := requestStateFor(sso.Session, req.ID)
-		if state == requestCancelled {
-			return processCreds{}, cancelled()
-		}
-		cur := ReadCacheState(sso.Session)
-		if (state != requestGone || lost) && !(cur != recorded && cur.Unexpired(time.Now())) {
-			continue
-		}
-		c, err := exportCreds(aws, ssoOnlyProfile)
-		if err == nil {
-			return c, nil
-		}
-		if !loginNeeded(err.Error()) {
-			return processCreds{}, fmt.Errorf("could not get credentials for profile %q: %v", o.Profile, err)
-		}
-		s, c, err := settle(aws, sso.Session, cur, deadline)
-		switch {
-		case errors.Is(err, errUnsettled):
-			continue
-		case err != nil:
-			return processCreds{}, fmt.Errorf("could not get credentials for profile %q: %v", o.Profile, err)
-		case c.AccessKeyID != "":
-			return c, nil
-		}
-		// Still no login, against a cache that held still: the Agent may already have
-		// dropped the request as resolved, so file again (or join) rather than wait on
-		// a request that is gone.
-		next, created, err := FileLoginRequest(o.Profile, sso.Session, s, o.Waiter)
-		if errors.Is(err, ErrLoginHeld) {
-			return processCreds{}, cancelled()
-		}
-		if err != nil {
-			recorded, lost = s, true
-			continue
-		}
-		if created {
-			fmt.Fprintf(stderr, "af-aws-exec: the SSO login for profile %q is still needed; requested again in the Agent Fleet Console\n", o.Profile)
-		}
-		req, recorded, lost = next, s, false
 	}
 	return processCreds{}, fmt.Errorf("%w for profile %q: the login was requested in the Agent Fleet Console and is waiting "+
 		"for the member to approve it there; run the command again once it is approved", ErrLoginRequired, o.Profile)
