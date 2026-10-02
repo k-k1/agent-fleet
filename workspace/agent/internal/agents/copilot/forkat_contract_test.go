@@ -11,8 +11,9 @@
 //
 //	COPILOT_CONTRACT_LIVE=1 go test -tags contract -run TestContractLiveCopilotForkAt ./internal/agents/copilot/
 //
-// Cost: 3 real turns (one-line replies). COPILOT_HOME is isolated, so the real ~/.copilot is
-// never touched (authentication uses the environment's GitHub token / saved credential).
+// Cost: 3 real turns (one-line replies), 4 when the branch echoes the earlier "OK" format.
+// COPILOT_HOME is isolated, so the real ~/.copilot is never touched (authentication uses the
+// environment's GitHub token / saved credential).
 package copilot
 
 import (
@@ -127,12 +128,22 @@ func TestContractLiveCopilotForkAt(t *testing.T) {
 		}
 	}
 
-	out := copilotPrompt(t, home, work, dst, "What is the codeword? Answer with one word.")
-	up := strings.ToUpper(out)
-	switch {
-	case strings.Contains(up, "ALPHA"):
+	// The two earlier prompts end in "Reply exactly: OK", and the branch sometimes keeps that
+	// format, so the question has to override it explicitly.
+	const ask = "Ignore the earlier reply format. What is the codeword? Answer with that one word."
+	out := copilotPrompt(t, home, work, dst, ask)
+	verdict := classifyForkAnswer(out)
+	if verdict == forkAnswerFormatEcho {
+		// A bare "OK" says nothing about the restore either way. Ask once only: a retry loop
+		// would turn a branch that really cannot answer into a pass by attrition.
+		t.Logf("the branch echoed the earlier reply format; asking once more:\n%s", out)
+		out = copilotPrompt(t, home, work, dst, ask)
+		verdict = classifyForkAnswer(out)
+	}
+	switch verdict {
+	case forkAnswerCarried:
 		// As contracted: events.jsonl is what the restore reads from.
-	case strings.Contains(up, "BETA"):
+	case forkAnswerLeaked:
 		t.Fatalf("the branch remembered the turn we cut away — copilot no longer restores from "+
 			"events.jsonl (session.db, which we copy verbatim, now wins). Every point fork would "+
 			"silently carry history the mirror shows as removed.\n%s", out)
