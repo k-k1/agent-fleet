@@ -363,7 +363,8 @@ agent never paints a batch on its own.
 
 - The agent can only **trial**, and only **the draft exactly as it is on screen, one picture** —
   it has no way to pass anything of its own. The studio setting **Allow the agent to trial**
-  (On by default) turns that off.
+  (On by default) turns that off. The switch applies from the agent's next trial, in a session
+  that is already running too; while it is off, the agent is told you have to turn it on.
 - **Enqueueing N pictures is yours alone.**
 - **`generate_image` is not available to a studio's session** (the agent does not see it, and a
   call is refused), so this pane is the one road to a picture. A CLI's own built-in image tool

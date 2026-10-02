@@ -90,11 +90,15 @@ func TestStudioToolsFollowTheBinding(t *testing.T) {
 			}
 		}
 	})
+	// Trials off still lists run_image_trial: a client that never re-lists (codex) would
+	// otherwise never see it once the member turns trials on. The call refuses it meanwhile.
 	t.Run("bound, trials off", func(t *testing.T) {
 		bindStudioForTest(t, "slot01", false)
 		got := studioAdvertised()
-		if got["run_image_trial"] || !got["get_image_studio"] {
-			t.Errorf("advertised %v: want the studio tools without run_image_trial", got)
+		for _, n := range studioTools {
+			if !got[n] {
+				t.Errorf("%s not advertised to a bound session with trials off", n)
+			}
 		}
 	})
 	t.Run("not bound", func(t *testing.T) {
@@ -250,6 +254,48 @@ func stubStudioAgent(t *testing.T, states ...string) *[]string {
 	mcpStudioTrialPoll = time.Millisecond
 	t.Cleanup(func() { mcpStudioTrialWait, mcpStudioTrialPoll = oldWait, oldPoll })
 	return &pressed
+}
+
+// The codex case (#1132): the client lists once, with trials off, and never again. Turning
+// trials on afterwards must reach it with no re-list — the list does not move, so nothing
+// depends on list_changed — and turning them off must still refuse the call.
+func TestAgentTrialToggleNeedsNoReList(t *testing.T) {
+	withSessionSurface(t, "slot01")
+	bindStudioForTest(t, "slot01", false)
+	mcpAdvertised.mu.Lock()
+	oldNames, oldFP := mcpAdvertised.names, mcpAdvertised.fp
+	mcpAdvertised.names, mcpAdvertised.fp = nil, ""
+	mcpAdvertised.mu.Unlock()
+	t.Cleanup(func() {
+		mcpAdvertised.mu.Lock()
+		mcpAdvertised.names, mcpAdvertised.fp = oldNames, oldFP
+		mcpAdvertised.mu.Unlock()
+	})
+
+	listed := string(dispatchMCPStdio([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)))
+	if !strings.Contains(listed, `"run_image_trial"`) {
+		t.Fatalf("tools/list with trials off lacks run_image_trial: %s", listed)
+	}
+	call := func() string {
+		return string(dispatchMCPStdio([]byte(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_image_trial","arguments":{}}}`)))
+	}
+	if out := call(); !strings.Contains(out, "isError") || !strings.Contains(out, "オンにする") {
+		t.Fatalf("trial with trials off = %s, want a refusal that names the member's switch", out)
+	}
+
+	pressed := stubStudioAgent(t, "done")
+	writeStudioFileForTest(t, studioFile{Session: "slot01", AgentTrial: true})
+	if mcpCheckToolListOnce() {
+		t.Error("turning trials on moved the tool list: a client that never re-lists would miss it")
+	}
+	if out := call(); !strings.Contains(out, "/p/trial.png") || len(*pressed) != 1 {
+		t.Fatalf("trial after the member turned trials on = %s (presses %v), want it run with no re-list", out, *pressed)
+	}
+
+	writeStudioFileForTest(t, studioFile{Session: "slot01", AgentTrial: false})
+	if out := call(); !strings.Contains(out, "許可されていません") || len(*pressed) != 1 {
+		t.Fatalf("trial after trials went off again = %s (presses %v), want a refusal and no press", out, *pressed)
+	}
 }
 
 // run_image_trial takes no arguments, presses as the agent, and waits for THAT job.

@@ -198,7 +198,7 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.studio_pick": "Studio",
   "imggen.studio_settings": "Studio settings",
   "imggen.studio_agent_trial": "Let the agent run a trial",
-  "imggen.studio_agent_trial_hint": "The agent sees the change at its next tool-list refresh (within a minute) or when it resumes.",
+  "imggen.studio_agent_trial_hint": "The change applies from the agent's next trial; no restart needed.",
   "imggen.studio_delete": "Delete studio",
   "imggen.studio_delete_title": "Delete this studio?",
   "imggen.studio_delete_body": "The draft, the edit history and the versions go. The pictures stay.",
