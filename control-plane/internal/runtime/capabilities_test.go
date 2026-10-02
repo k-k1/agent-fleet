@@ -77,15 +77,19 @@ func TestHomePortsAreClaimedOnlyWhereTheHomeIsReachable(t *testing.T) {
 	}
 }
 
-// The kubernetes profile's claims, both directions (ADR 0106 decision 11). The home
-// ports and Stale arrive with #1466; until then claiming them would be the defect the
-// home-port test above describes, a success that removed nothing.
+// The kubernetes profile's claims, both directions (ADR 0106 decision 11).
 func TestKubernetesCapabilities(t *testing.T) {
 	rt := any((*kubeRuntime)(nil))
 	f := any((*kubeFactory)(nil))
 	for name, ok := range map[string]bool{
-		"TaskCounter":    implements[TaskCounter](rt),
-		"BootPhase":      implements[interface{ BootPhase() string }](rt),
+		"TaskCounter": implements[TaskCounter](rt),
+		"BootPhase":   implements[interface{ BootPhase() string }](rt),
+		"Stale":       implements[interface{ Stale(context.Context) bool }](rt),
+		"WipeHome":    implements[homeWiper](rt),
+		"EraseHome":   implements[homeEraser](rt),
+		"ResizeHome": implements[interface {
+			ResizeHome(context.Context) (HomeResize, error)
+		}](rt),
 		"SizingProfile":  implements[interface{ SizingProfile() WorkspaceSizing }](f),
 		"CostProfile":    implements[interface{ CostProfile() CostProfile }](f),
 		"WorkspaceImage": implements[interface{ WorkspaceImage() string }](f),
@@ -104,18 +108,18 @@ func TestKubernetesCapabilities(t *testing.T) {
 		"BackupHome": implements[interface {
 			BackupHome(context.Context, time.Duration) error
 		}](rt),
-		"homeBackupKeeper":  implements[homeBackupKeeper](rt),
-		"GoldenBakePool":    implements[GoldenBakePool](f),
-		"WipeHome (#1466)":  implements[homeWiper](rt),
-		"EraseHome (#1466)": implements[homeEraser](rt),
-		"ResizeHome (#1466)": implements[interface {
-			ResizeHome(context.Context) (HomeResize, error)
-		}](rt),
-		"Stale (#1466)": implements[interface{ Stale(context.Context) bool }](rt),
+		"homeBackupKeeper": implements[homeBackupKeeper](rt),
+		// The Start that carries the wipe out runs inside the handler's lease and leaves
+		// nothing in the background, so no wipe can be asked for while one is half done.
+		"homeWipeGate":   implements[homeWipeGate](rt),
+		"GoldenBakePool": implements[GoldenBakePool](f),
 	} {
 		if ok {
 			t.Errorf("the kubernetes adapter claims %s", name)
 		}
+	}
+	if ops := HomeOperationsOf(&kubeFactory{cfg: &kubeConfig{}}); !ops.Wipe || !ops.Erase || ops.Backups {
+		t.Errorf("HomeOperationsOf(kubernetes) = %+v, want wipe and erase, no backups", ops)
 	}
 }
 

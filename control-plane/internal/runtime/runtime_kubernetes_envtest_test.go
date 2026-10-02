@@ -256,7 +256,7 @@ current-context: t
 		return fail(err)
 	}
 	if e.kcm, err = run("kube-controller-manager", "--kubeconfig="+kc,
-		"--controllers=statefulset,serviceaccount,garbagecollector,pvc-protection,pv-protection",
+		"--controllers=statefulset,serviceaccount,garbagecollector,pvc-protection,pv-protection,persistentvolume-binder",
 		"--leader-elect=false", "--secure-port=0", "--concurrent-statefulset-syncs=2", "--v=0"); err != nil {
 		return fail(err)
 	}
@@ -391,10 +391,16 @@ func (e *kubeTestEnv) factory(t *testing.T, ns string) *kubeFactory {
 	}
 }
 
-type fakePinner struct{}
+// fakePinner resolves every image to a fixed digest; fingerprint, when set, is what the
+// registry says the tag's content is now (Stale's "now" side).
+type fakePinner struct{ fingerprint *string }
 
-func (fakePinner) pin(_ context.Context, image string) (string, error) {
-	return image + "@sha256:" + strings.Repeat("ab", 32), nil
+func (f fakePinner) resolve(_ context.Context, image string) (resolvedImage, error) {
+	fp := "linux/amd64=sha256:" + strings.Repeat("ab", 32)
+	if f.fingerprint != nil {
+		fp = *f.fingerprint
+	}
+	return resolvedImage{pinned: image + "@sha256:" + strings.Repeat("ab", 32), fingerprint: fp}, nil
 }
 
 func eventually(t *testing.T, within time.Duration, what string, ok func() bool) {
@@ -888,12 +894,14 @@ func TestKubernetesEnvStopNotSettledAndDestroy(t *testing.T) {
 		t.Fatalf("Destroy over a pod that still exists returned %v, nil", res)
 	}
 	node.finishDeletions(rt.base)
+	// No volume was ever bound here (there is no provisioner), so Destroy cannot show
+	// that none exists: the claims, the Service and the Secret go, and the StatefulSet
+	// stays as the record (TestKubernetesEnvDestroyWithBoundVolumes is the bound case).
 	res, err := rt.Destroy(ctx)
-	if err != nil || len(res) != 0 {
-		t.Fatalf("Destroy = %v, %v; want no residue", res, err)
+	if want := []string{"statefulset:" + ns + "/" + rt.base}; err != nil || strings.Join(res, ",") != strings.Join(want, ",") {
+		t.Fatalf("Destroy = %v, %v; want %v", res, err, want)
 	}
 	for _, path := range []string{
-		"/apis/apps/v1/namespaces/" + ns + "/statefulsets/" + rt.base,
 		"/api/v1/namespaces/" + ns + "/services/" + rt.base,
 		"/api/v1/namespaces/" + ns + "/secrets/" + rt.secretName(),
 		"/api/v1/namespaces/" + ns + "/persistentvolumeclaims/" + rt.homeClaim(),
@@ -904,8 +912,8 @@ func TestKubernetesEnvStopNotSettledAndDestroy(t *testing.T) {
 			t.Errorf("after Destroy %s: %v, want not found", path, err)
 		}
 	}
-	if got := rt.State(ctx); got != "none" {
-		t.Fatalf("State after Destroy = %q, want none", got)
+	if got := rt.State(ctx); got != "stopped" {
+		t.Fatalf("State after Destroy = %q, want stopped (the StatefulSet is kept)", got)
 	}
 }
 
@@ -986,8 +994,13 @@ func TestKubernetesEnvStartRefusesAStatefulSetChangedUnderIt(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := rt.Start(ctx); err == nil {
+	err := rt.Start(ctx)
+	if err == nil {
 		t.Fatal("Start wrote over a StatefulSet whose spec changed after it checked")
+	}
+	// The code a failed JSON Patch test gets, which ResizeHome reads as "decide again".
+	if c := kubeErrCode(err); c != 409 && c != 422 {
+		t.Fatalf("a failed patch test answered %d (%v), want 409 or 422", c, err)
 	}
 	var s kStatefulSet
 	if err := e.admin.get(ctx, stsPath, &s); err != nil {

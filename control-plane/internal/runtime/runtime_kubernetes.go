@@ -35,7 +35,6 @@ import (
 	"log"
 	"net/url"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -64,6 +63,9 @@ const (
 	kubeAnnWorkspace = "agent-fleet.io/workspace-name"
 	// kubeAnnImage is the image as configured, before Start pinned its digest.
 	kubeAnnImage = "agent-fleet.io/image"
+	// kubeAnnImageFingerprint is the content fingerprint of the image this start
+	// launched, on the template, for Stale (runtime_kubernetes_stale.go).
+	kubeAnnImageFingerprint = "agent-fleet.io/image-fingerprint"
 
 	kubeHomePath  = "/home/dev"
 	kubeStatePath = "/var/lib/af/claude"
@@ -80,10 +82,6 @@ const (
 	kubeDefaultStateGiB  = 5
 	kubeStopMargin       = 15 * time.Second
 )
-
-// kubeDestroyClaimBudget bounds Destroy's wait for the claims and their volumes to go.
-// A variable so a test can shorten it.
-var kubeDestroyClaimBudget = 2 * time.Minute
 
 // kubeConfig is the deployment-wide placement, read once at boot from AF_K8S_*.
 type kubeConfig struct {
@@ -104,15 +102,16 @@ type kubeConfig struct {
 	defaultMemBytes int64 // Config.Memory (WS_MEMORY) in bytes; 0 = no default
 }
 
-// imagePinner resolves an image reference to name@digest (runtime_kubernetes_registry.go).
-type imagePinner interface {
-	pin(ctx context.Context, image string) (string, error)
+// imageResolver reads an image reference's digest and content fingerprint
+// (runtime_kubernetes_registry.go).
+type imageResolver interface {
+	resolve(ctx context.Context, image string) (resolvedImage, error)
 }
 
 type kubeFactory struct {
 	cfg  *kubeConfig
 	c    *kubeClient
-	pins imagePinner
+	pins imageResolver
 	// poll is how often Stop and Destroy re-read the cluster while they wait.
 	poll time.Duration
 	// stopMargin is what Stop waits beyond the stop grace before it gives up.
@@ -135,6 +134,7 @@ func newKubeFactory(mcfg Config) (RuntimeFactory, error) {
 		return nil, err
 	}
 	log.Printf("runtime=kubernetes namespace=%s image=%s storageClass=%q", cfg.namespace, cfg.image, cfg.storageClass)
+	logStorageClassCheck(c, cfg.storageClass)
 	return &kubeFactory{
 		cfg:        cfg,
 		c:          c,
@@ -299,7 +299,7 @@ func kubeObjectName(name string) string {
 type kubeRuntime struct {
 	cfg        *kubeConfig
 	c          *kubeClient
-	pins       imagePinner
+	pins       imageResolver
 	wsName     string // the CP's name for the workspace (Workspace.ContainerName)
 	base       string // the Kubernetes name of the StatefulSet and the Service
 	token      string
@@ -596,6 +596,11 @@ func (k *kubeRuntime) Start(ctx context.Context) error {
 			return fmt.Errorf("kubernetes start %s: the previous stop has not settled (%s); start again once it has", k.base, why)
 		}
 	}
+	// An erase pod holds the home claim: a running one is an administrator's Clean home
+	// in progress, and a finished one is left over from a CP that died before removing it.
+	if err := k.clearFinishedErasePod(ctx); err != nil {
+		return fmt.Errorf("kubernetes start %s: %w", k.base, err)
+	}
 	if err := k.ensureClaim(ctx, k.homeClaim(), k.homeGiB); err != nil {
 		return err
 	}
@@ -608,7 +613,7 @@ func (k *kubeRuntime) Start(ctx context.Context) error {
 	if err := k.writeSecret(ctx); err != nil {
 		return err
 	}
-	image, err := k.pins.pin(ctx, k.cfg.image)
+	img, err := k.pins.resolve(ctx, k.cfg.image)
 	if err != nil {
 		return fmt.Errorf("kubernetes start %s: %w", k.base, err)
 	}
@@ -618,7 +623,13 @@ func (k *kubeRuntime) Start(ctx context.Context) error {
 			gen = prev + 1
 		}
 	}
-	tmpl := k.podTemplate(image, gen, time.Now().UTC())
+	tmpl := k.podTemplate(img.pinned, gen, time.Now().UTC())
+	if img.fingerprint != "" {
+		tmpl.Metadata.Annotations[kubeAnnImageFingerprint] = img.fingerprint
+	}
+	if s != nil {
+		k.addHomeWipe(&tmpl, s.Metadata.Annotations)
+	}
 	if k.editTemplate != nil {
 		k.editTemplate(&tmpl)
 	}
@@ -629,6 +640,7 @@ func (k *kubeRuntime) Start(ctx context.Context) error {
 			return fmt.Errorf("kubernetes start %s: create statefulset: %w", k.base, err)
 		}
 		k.setPhase("")
+		k.primeStale(img.fingerprint)
 		return nil
 	}
 	// The two tests make the write conditional on the StatefulSet this Start checked: a
@@ -644,6 +656,7 @@ func (k *kubeRuntime) Start(ctx context.Context) error {
 		return fmt.Errorf("kubernetes start %s: update statefulset: %w", k.base, err)
 	}
 	k.setPhase("")
+	k.primeStale(img.fingerprint)
 	return nil
 }
 
@@ -894,112 +907,6 @@ func (k *kubeRuntime) podTemplate(image string, gen int64, now time.Time) kPodTe
 		},
 		Spec: spec,
 	}
-}
-
-// --- Destroy ---
-
-// Destroy stops the workspace, which returns only once the stop has settled, and removes
-// the Service, the Secret and both claims. It deletes the StatefulSet only when it has
-// confirmed that every claim and every volume bound to one is gone; otherwise it leaves
-// the StatefulSet and returns it, and what it could not confirm, as residue. Residues
-// are `statefulset:<ns>/<name>`, `pvc:<ns>/<name>` and `pv:<name>` (ADR 0106 decision 5).
-//
-// The inventory that lets a re-run confirm volumes whose claims are already gone is
-// #1466. Until then a re-run that finds either claim gone and the StatefulSet still
-// there cannot tell which volumes the first run left, and says so by keeping the
-// StatefulSet.
-func (k *kubeRuntime) Destroy(ctx context.Context) ([]string, error) {
-	if err := k.Stop(ctx); err != nil {
-		return nil, err
-	}
-	s, err := k.getStatefulSet(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("kubernetes destroy %s: %w", k.base, err)
-	}
-	ns := k.cfg.namespace
-	if err := k.c.delete(ctx, k.nsPath("")+"/services/"+k.base); err != nil {
-		return nil, fmt.Errorf("kubernetes destroy %s: delete service: %w", k.base, err)
-	}
-	if err := k.c.delete(ctx, k.nsPath("")+"/secrets/"+k.secretName()); err != nil {
-		return nil, fmt.Errorf("kubernetes destroy %s: delete secret: %w", k.base, err)
-	}
-	// Read the volume names before the claims go: once a claim is deleted nothing in the
-	// namespace names its volume any more.
-	claimPath := k.nsPath("") + "/persistentvolumeclaims/"
-	var volumes []string
-	found := 0
-	for _, name := range []string{k.homeClaim(), k.stateClaim()} {
-		var pvc kPVC
-		err := k.c.get(ctx, claimPath+name, &pvc)
-		if isKubeNotFound(err) {
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("kubernetes destroy %s: claim %s: %w", k.base, name, err)
-		}
-		found++
-		if pvc.Spec.VolumeName != "" {
-			volumes = append(volumes, pvc.Spec.VolumeName)
-		}
-	}
-	// From here on nothing returns an error: the claims are being deleted, and a failure
-	// must reach the audit log as a residue rather than send the CP into a retry that no
-	// longer knows the volume names.
-	var residues []string
-	for _, name := range []string{k.homeClaim(), k.stateClaim()} {
-		if err := k.c.delete(ctx, claimPath+name); err != nil {
-			log.Printf("kubernetes destroy %s: delete claim %s: %v", k.base, name, err)
-		}
-	}
-	deadline := time.Now().Add(kubeDestroyClaimBudget)
-	pending := map[string]string{} // residue -> object path
-	for _, name := range []string{k.homeClaim(), k.stateClaim()} {
-		pending["pvc:"+ns+"/"+name] = claimPath + name
-	}
-	for _, v := range volumes {
-		pending["pv:"+v] = "/api/v1/persistentvolumes/" + v
-	}
-	for len(pending) > 0 {
-		for res, path := range pending {
-			var obj struct {
-				Metadata kObjectMeta `json:"metadata"`
-			}
-			if err := k.c.get(ctx, path, &obj); isKubeNotFound(err) {
-				delete(pending, res)
-			}
-		}
-		if len(pending) == 0 || time.Now().After(deadline) || ctx.Err() != nil {
-			break
-		}
-		select {
-		case <-ctx.Done():
-		case <-time.After(k.poll):
-		}
-	}
-	for res := range pending {
-		residues = append(residues, res)
-	}
-	sort.Strings(residues)
-	if s == nil {
-		k.setPhase("")
-		return residues, nil
-	}
-	if found < 2 {
-		// Start creates both claims before the StatefulSet, so a claim missing here was
-		// deleted by an earlier Destroy, and the volume it was bound to is not known to
-		// this run. Confirming the other claim's volume says nothing about that one.
-		residues = append(residues, "statefulset:"+ns+"/"+k.base)
-		return residues, nil
-	}
-	if len(residues) > 0 {
-		return append(residues, "statefulset:"+ns+"/"+k.base), nil
-	}
-	if err := k.c.delete(ctx, k.stsPath()); err != nil {
-		log.Printf("kubernetes destroy %s: delete statefulset: %v", k.base, err)
-		return []string{"statefulset:" + ns + "/" + k.base}, nil
-	}
-	k.setPhase("")
-	return nil, nil
 }
 
 // --- boot phase ---

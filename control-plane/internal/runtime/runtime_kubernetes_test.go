@@ -338,63 +338,6 @@ func TestKubeRunningTasks(t *testing.T) {
 
 // --- Destroy ---
 
-// Destroy keeps the StatefulSet, and says so, when a volume does not disappear; it
-// reports exactly what is left.
-func TestKubeDestroyReportsVolumesItCannotConfirm(t *testing.T) {
-	defer func(d time.Duration) { kubeDestroyClaimBudget = d }(kubeDestroyClaimBudget)
-	kubeDestroyClaimBudget = 200 * time.Millisecond
-	rt, f := fakeKubeRuntime(t)
-	f.set(stsPathX, 200, stsJSON(0, 6, 6, 0, "r", "2"))
-	f.set(podsPathX, 200, podListJSON())
-	f.set("DELETE /api/v1/namespaces/ns/services/af-ws-x", 200, `{}`)
-	f.set("DELETE /api/v1/namespaces/ns/secrets/af-ws-x-env", 200, `{}`)
-	claim := func(name, vol string) string {
-		return `{"metadata":{"name":"` + name + `"},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"10Gi"}},"volumeName":"` + vol + `"},"status":{"phase":"Bound"}}`
-	}
-	f.set("GET /api/v1/namespaces/ns/persistentvolumeclaims/af-ws-x-home", 200, claim("af-ws-x-home", "pvc-1111"))
-	f.set("GET /api/v1/namespaces/ns/persistentvolumeclaims/af-ws-x-state", 200, claim("af-ws-x-state", "pvc-2222"))
-	var once sync.Once
-	gone := func() {
-		once.Do(func() {
-			// The claims go once deleted; the home's volume stays (a disk the provisioner
-			// could not delete), the state's goes.
-			f.mu.Lock()
-			delete(f.replies, "GET /api/v1/namespaces/ns/persistentvolumeclaims/af-ws-x-home")
-			delete(f.replies, "GET /api/v1/namespaces/ns/persistentvolumeclaims/af-ws-x-state")
-			f.mu.Unlock()
-		})
-	}
-	f.set("DELETE /api/v1/namespaces/ns/persistentvolumeclaims/af-ws-x-home", 200, `{}`)
-	f.set("DELETE /api/v1/namespaces/ns/persistentvolumeclaims/af-ws-x-state", 200, `{}`)
-	f.set("GET /api/v1/persistentvolumes/pvc-1111", 200, `{"metadata":{"name":"pvc-1111"}}`)
-	f.set("DELETE /apis/apps/v1/namespaces/ns/statefulsets/af-ws-x", 200, `{}`)
-	rt.c.hc.Transport = roundTripHook{rt.c.hc.Transport, func(r *http.Request) {
-		if r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "af-ws-x-state") {
-			gone()
-		}
-	}}
-	res, err := rt.Destroy(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"pv:pvc-1111", "statefulset:ns/af-ws-x"}; !reflect.DeepEqual(res, want) {
-		t.Fatalf("residue = %v, want %v", res, want)
-	}
-	if f.saw("DELETE /apis/apps/v1/namespaces/ns/statefulsets/af-ws-x") {
-		t.Fatal("Destroy deleted the StatefulSet while a volume was unconfirmed")
-	}
-
-	// The second run: the claims are already gone, so the volumes are unknown, and the
-	// StatefulSet is kept rather than lose the only trace of them.
-	res, err = rt.Destroy(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"statefulset:ns/af-ws-x"}; !reflect.DeepEqual(res, want) {
-		t.Fatalf("re-run residue = %v, want %v", res, want)
-	}
-}
-
 type roundTripHook struct {
 	rt   http.RoundTripper
 	hook func(*http.Request)
@@ -607,44 +550,6 @@ func TestKubeSecretEnvBypassesTheProxyForTheCP(t *testing.T) {
 	rt = f.New(Workspace{ContainerName: "af-ws-x"}, "", []string{"AF_CP_INTERNAL_URL=http://af-cp-internal.af-cp.svc:8098"}).(*kubeRuntime)
 	if env := rt.secretEnv(); env["NO_PROXY"] != "af-cp-internal.af-cp.svc" {
 		t.Errorf("NO_PROXY = %q", env["NO_PROXY"])
-	}
-}
-
-// A re-run after a Destroy that removed only one claim: the other claim and its volume
-// go now, but the first claim's volume was never confirmed, so the StatefulSet stays.
-func TestKubeDestroyRerunWithOneClaimGoneKeepsTheStatefulSet(t *testing.T) {
-	defer func(d time.Duration) { kubeDestroyClaimBudget = d }(kubeDestroyClaimBudget)
-	kubeDestroyClaimBudget = 200 * time.Millisecond
-	rt, f := fakeKubeRuntime(t)
-	f.set(stsPathX, 200, stsJSON(0, 6, 6, 0, "r", "2"))
-	f.set(podsPathX, 200, podListJSON())
-	f.set("DELETE /api/v1/namespaces/ns/services/af-ws-x", 200, `{}`)
-	f.set("DELETE /api/v1/namespaces/ns/secrets/af-ws-x-env", 200, `{}`)
-	// The home claim is already gone (its volume may well still exist); the state claim
-	// is still there and is deleted cleanly, volume and all.
-	f.set("GET /api/v1/namespaces/ns/persistentvolumeclaims/af-ws-x-state", 200,
-		`{"metadata":{"name":"af-ws-x-state"},"spec":{"resources":{},"volumeName":"pvc-2222"}}`)
-	f.set("DELETE /api/v1/namespaces/ns/persistentvolumeclaims/af-ws-x-state", 200, `{}`)
-	f.set("DELETE /apis/apps/v1/namespaces/ns/statefulsets/af-ws-x", 200, `{}`)
-	rt.c.hc.Transport = roundTripHook{rt.c.hc.Transport, func(r *http.Request) {
-		if r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/af-ws-x-state") {
-			f.mu.Lock()
-			delete(f.replies, "GET /api/v1/namespaces/ns/persistentvolumeclaims/af-ws-x-state")
-			f.mu.Unlock()
-		}
-	}}
-	res, err := rt.Destroy(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"statefulset:ns/af-ws-x"}; !reflect.DeepEqual(res, want) {
-		t.Fatalf("residue = %v, want %v", res, want)
-	}
-	if f.saw("DELETE /apis/apps/v1/namespaces/ns/statefulsets/af-ws-x") {
-		t.Fatal("the StatefulSet was deleted while the home claim's volume was never confirmed")
-	}
-	if !f.saw("DELETE /api/v1/namespaces/ns/persistentvolumeclaims/af-ws-x-state") {
-		t.Fatal("the remaining claim was not deleted")
 	}
 }
 

@@ -115,46 +115,49 @@ func newRegistryClient(creds registryCreds) *registryClient {
 	}
 }
 
-// pin returns the reference with its digest: `name:tag@sha256:…`. A reference that
-// already carries a digest is returned as it is, without a registry call — the escape
-// hatch for a registry the CP cannot read.
-func (rc *registryClient) pin(ctx context.Context, image string) (string, error) {
-	r, err := parseImageReference(image)
-	if err != nil {
-		return "", err
-	}
-	if r.digest != "" {
-		return image, nil
-	}
-	d, err := rc.manifestDigest(ctx, r)
-	if err != nil {
-		return "", fmt.Errorf("resolve %s to a digest: %w (set the image to a name@sha256:… reference to pin it by hand)", image, err)
-	}
-	return r.written + "@" + d, nil
+// resolvedImage is what one read of the tag says: the reference pinned to its digest,
+// and the content fingerprint Stale compares (manifestFingerprint, the same rules as the
+// ECS adapters, so a provenance-only re-push is not a change).
+type resolvedImage struct {
+	pinned      string // name:tag@sha256:…
+	fingerprint string // "" when the manifest does not say (Stale then answers false)
 }
 
-// manifestDigest asks for the tag's manifest and returns its digest: the
-// Docker-Content-Digest header when the registry sends one, otherwise the sha256 of the
-// body, which is how the digest is defined.
-func (rc *registryClient) manifestDigest(ctx context.Context, r imageRef) (string, error) {
-	u := "https://" + r.host + "/v2/" + r.repo + "/manifests/" + r.ref
-	for _, method := range []string{http.MethodHead, http.MethodGet} {
-		resp, body, err := rc.fetch(ctx, method, u, r.host)
-		if err != nil {
-			return "", err
-		}
-		if resp.StatusCode != http.StatusOK {
-			return "", fmt.Errorf("registry %s %s: %s", method, u, resp.Status)
-		}
-		if d := resp.Header.Get("Docker-Content-Digest"); strings.HasPrefix(d, "sha256:") {
-			return d, nil
-		}
-		if method == http.MethodGet {
-			sum := sha256.Sum256(body)
-			return "sha256:" + hex.EncodeToString(sum[:]), nil
-		}
+// resolve reads the tag's manifest once and returns both. A reference that already
+// carries a digest is returned as it is, without a registry call — the escape hatch for a
+// registry the CP cannot read — and is its own fingerprint, since it cannot move.
+func (rc *registryClient) resolve(ctx context.Context, image string) (resolvedImage, error) {
+	r, err := parseImageReference(image)
+	if err != nil {
+		return resolvedImage{}, err
 	}
-	return "", errors.New("unreachable")
+	if r.digest != "" {
+		return resolvedImage{pinned: image, fingerprint: r.digest}, nil
+	}
+	d, body, err := rc.manifest(ctx, r)
+	if err != nil {
+		return resolvedImage{}, fmt.Errorf("resolve %s to a digest: %w (set the image to a name@sha256:… reference to pin it by hand)", image, err)
+	}
+	return resolvedImage{pinned: r.written + "@" + d, fingerprint: manifestFingerprint(string(body), d)}, nil
+}
+
+// manifest fetches the tag's manifest and its digest: the Docker-Content-Digest header
+// when the registry sends one, otherwise the sha256 of the body, which is how the digest
+// is defined.
+func (rc *registryClient) manifest(ctx context.Context, r imageRef) (string, []byte, error) {
+	u := "https://" + r.host + "/v2/" + r.repo + "/manifests/" + r.ref
+	resp, body, err := rc.fetch(ctx, http.MethodGet, u, r.host)
+	if err != nil {
+		return "", nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", nil, fmt.Errorf("registry GET %s: %s", u, resp.Status)
+	}
+	if d := resp.Header.Get("Docker-Content-Digest"); strings.HasPrefix(d, "sha256:") {
+		return d, body, nil
+	}
+	sum := sha256.Sum256(body)
+	return "sha256:" + hex.EncodeToString(sum[:]), body, nil
 }
 
 // fetch sends one manifest request, answering a 401 challenge once: Bearer through the

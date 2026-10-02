@@ -598,3 +598,16 @@ mux を通して振り分け、一覧に無いパターンは断るので、ハ�
 - **すでに replicas 1 の StatefulSet への Start は何もせず成功する。** どのアダプタも `running` と `starting` でそうしている。読みうる pod の下で Secret を書き換えない。決定 3 の「停止の確定」の要件は replicas 0 の StatefulSet に対して適用する。
 - **digest の固定は CP としてレジストリを読む。** レジストリのホストに対応する pull secret のエントリ、なければ Artifact Registry と Container Registry のホストに限って pod の Workload Identity トークン、なければ匿名。解決できないタグは Start を失敗させる。すでに digest を持つ参照はそのまま使う。CP が読めないレジストリへの運用者の回避策である。
 - **オブジェクト名**: 40 文字を超える CP のワークスペース名は接頭辞を残して全体のハッシュを付け、pod 名と `controller-revision-hash` ラベルを 63 文字以内に収める。
+
+## 追記（2026-10-02）— home の操作と Destroy で決めたこと
+
+#1466（`runtime_kubernetes_home.go`、`runtime_kubernetes_destroy.go`、`runtime_kubernetes_stale.go`）とともに書いた。決定は変わらない。例外が 1 つあり、最初に挙げる。
+
+- **wipe の記録は home ではなく state の claim に置く**（決定 4 は init コンテナが「実行した世代を home に書く」としている）。home の記録はメンバーが消したり書き換えたりできるファイルであり、その後に再起動した pod（drain、ノードの修復）がメンバーの作業をもう一度消してしまう。記録は state の claim の `wipe` サブパスで、init コンテナと消去 pod だけがマウントし、ワークスペースのコンテナからは届かない。決定 4 が求める振る舞いは変わらない。再起動した pod は世代を見つけて何も消さない。
+- **印は種類ごとに 1 つの注釈**（`agent-fleet.io/home-wipe-repos`、`…-clean`）で、その種類の最新の要求の世代とカウンタを持つ。Clean home の後に要求された Recreate が、保留中の Clean home を上書きすることはない。init コンテナは何かを消す前にすべての数を確かめ、読めない記録では pod を止める。
+- **`EraseHome` が見つけた終了済みの消去 pod は削除して消去をやり直す。** その結果はすでに戻った呼び出しのものだからである。実行中のものは待つ。消去 pod はワークスペースの直近の起動のイメージ、なければ設定されたイメージをその時点で固定して使う。
+- **Destroy の目録**は各 claim の UID とボリューム、そのボリュームが削除保護の finalizer（`external-provisioner.volume.kubernetes.io/finalizer` または in-tree の `kubernetes.io/pv-controller`）を持っていたかを記録する。持たないボリュームは、オブジェクトが消えても残留物として報告する。解析できない目録は信用も上書きもせず、StatefulSet を残す。見当たらず目録にも無い claim があるときも同じである。
+- **StorageClass の起動時チェックは警告し、起動は拒まない。** CP が読めない class は CP の後に RBAC を適用した場合が多く、満たさない要件はそれぞれ現れる場所がある。`Pending` のままの claim、拒否されたリサイズ、Destroy の残留物である。
+- **`ResizeHome` が `same` を返すのは、claim の容量が要求に達し、`Resizing` / `FileSystemResizePending` の条件が無いときだけ**で、それまでは `growing` を返す。書き込みは読んだ要求を条件にする。API サーバは要求が容量より大きいあいだは引き下げを許し、2 つの保存が競合しうるからである。
+- **消去 pod の終了は、フェーズではなく全コンテナが terminated を報告したことで判断する。** 退避はコンテナを kill する前にフェーズ `Failed` を書く。Start は終了した消去 pod が pod オブジェクトごと消えてから先へ進む。それが kubelet による確認であり、`ReadWriteOnce` が claim を縛るのはノードであって pod ではない。
+- **Destroy は各 claim を、記録した版であることを条件に削除する。** 読んだ後に bind された claim は消える前に記録される。ボリュームを持たずに記録された claim は、注釈にかかわらず不明として扱い、StatefulSet を残す。PV コントローラは claim の volumeName より先にボリュームの claim 参照を保存し、事前 bind や静的なボリュームにはプロビジョナが要らず、名前空間のロールではボリュームを一覧して確かめられないからである。目録は claim の UID をキーにするので、同じ名前で作り直された claim が最初の claim の記録を消すことはない。不明が解消するのは、同じ UID がボリュームとともに読み直されたときだけである。そのため、pod がボリュームを得なかったワークスペースは StatefulSet を残留物として残し、runbook に委ねる。
