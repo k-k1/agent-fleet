@@ -267,7 +267,8 @@ func reply(code int, hdr map[string]string, body string) *http.Response {
 }
 
 // A Bearer challenge naming a sibling host under the registry's parent domain gets no
-// credentials (the review's reproduction: reg.corp.example → evil.corp.example).
+// credentials: a parent domain is shared by other services and tenants, none of which the
+// pull secret was issued to.
 func TestRegistrySiblingRealmGetsNoCredentials(t *testing.T) {
 	ht := &hostTransport{handle: func(r *http.Request) *http.Response {
 		switch r.URL.Host {
