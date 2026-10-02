@@ -96,6 +96,7 @@ explains them.
 | Git hosting connections | member | Git hosting |
 | Internal repositories | member | Internal repos |
 | AWS profiles and SSM | member | AWS profiles/SSM |
+| Google Cloud profiles | member | Google Cloud |
 | Integration servers and tokens | member | MCP servers / MCP tokens |
 | Issue-tracker connections | member | Issue tracker |
 | Usage | member | Agent usage |

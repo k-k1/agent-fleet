@@ -17,7 +17,7 @@ How each setting is *used* belongs to the other chapters, so read this one as a
 | Group | What is in it |
 |---|---|
 | **Personal** | Display / Account / Keys / Speech / Notifications / Assistant / AI assistance / Agent instructions / Agent memory |
-| **Connections** | Agents / Git hosting / Ops & monitoring / Issue tracker / Chat integration / MCP servers / MCP tokens / AWS profiles/SSM |
+| **Connections** | Agents / Git hosting / Ops & monitoring / Issue tracker / Chat integration / MCP servers / MCP tokens / AWS profiles/SSM / Google Cloud |
 | **Workspace** | Agent usage / Cloud cost / Running time / Machine / Toolchain / Databases / Preview subdomains / Internal repositories / Export & import / Danger zone |
 
 - It remembers the tab you opened last and reopens there.
@@ -320,6 +320,16 @@ for logging in to another in-house host. Each profile row has **Log in** to sign
 Console, and a signed-in row has **Log out** to end that profile's login only.
 → [10 Going further](10-integrations.md#logging-in-to-another-in-house-host-ssm)
 
+### Google Cloud
+
+Your Google Cloud profiles, which `af-gcloud-exec` runs commands with: a label (the profile's name is made from
+it and shown beside it), the project, and optionally a quota project, the Google account to sign in as, a
+service account to impersonate, a region and a zone. No Google credentials are stored here, and
+service-account keys are not accepted. Two labels that make the same name are not available in the workspace
+until you rename one; the row says so. The login itself happens in a terminal in the workspace the first time a
+profile is used.
+→ [10 Going further](10-integrations.md#running-commands-in-google-cloud-as-you-af-gcloud-exec)
+
 ---
 
 ## Workspace
@@ -463,14 +473,15 @@ is stopped). → [03 Repositories and git](03-code.md)
 ### Export / import
 
 Collect your own settings into **a single file**, take it away, and read it back on another deployment or
-account. It carries three things: **personal settings** (display, keys, notifications, agent defaults, …),
-your **AWS profiles/SSM** registrations, and your **agent instructions**.
+account. It carries four things: **personal settings** (display, keys, notifications, agent defaults, …),
+your **AWS profiles/SSM** registrations, your **Google Cloud** profiles, and your **agent instructions**.
 
-- **Connections (Git / agent / AWS tokens and API keys) are NOT included.** Sign in again wherever you
+- **Connections (Git / agent / AWS tokens and API keys, Google logins) are NOT included.** Sign in again wherever you
   import. The flip side is that **this file is safe to hand to someone else** — handing a team the whole
   set of SSM registrations works.
 - Importing only **adds**. A profile with the same name, or the same host (alias + instance), is left as it
-  is and reported back as "already there".
+  is and reported back as "already there". A Google Cloud profile counts as already there when one with the
+  same label (ignoring case) exists; one without a label or project is skipped.
 - Personal settings are **merged onto** what you have now. Things that accumulate — learned quick replies,
   key bindings — are never emptied just because the imported file has none.
 - Agent instructions are the one exception: they **replace** the text you have now (you are asked to
@@ -522,6 +533,7 @@ appears only on deployments that can perform them.
 | Run a test suite that needs a database | Databases |
 | Show the app you are building to someone | Preview subdomains |
 | Get into another server | AWS profiles/SSM |
+| Run commands in my Google Cloud projects | Google Cloud |
 | Keep code that cannot leave the building | Internal repositories |
 | Take my settings to another environment | Export / import |
 | The environment is broken | Danger zone |

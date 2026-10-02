@@ -43,7 +43,13 @@ af-gcloud-exec --profile <name> --project <id> -- <command> [args...]
   is not refreshed during the command: a long `terraform apply` or a `kubectl` watch that outlives it
   fails. Split long work into shorter runs.
 - The first run installs the pinned Google Cloud SDK (`workspace-agent install-gcloud`, which
-  downloads about 85 MB once).
+  downloads about 85 MB once and takes about 510 MB). The first run of each gcloud command after
+  that is a few seconds slower once: Python compiles what it imports on first use.
+- A Google login can end before its token does, when the user's organisation requires
+  reauthentication after a set time. Nothing in the workspace records when that is, so there is no
+  warning: runs keep working while the cached token has more than ten minutes left, and the first
+  run that needs a fresh one exits 3 ("Reauthentication failed. cannot prompt during
+  non-interactive execution"). Hand the user the login command as below.
 
 What the command gets: the token in `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE` and
 `GOOGLE_OAUTH_ACCESS_TOKEN`, an empty private `CLOUDSDK_CONFIG`, the profile's project, quota project,
@@ -51,18 +57,39 @@ region and zone in their `CLOUDSDK_*` / `GOOGLE_*` forms, and `GOOGLE_APPLICATIO
 pointing at a path that holds no credentials. Every `CLOUDSDK_*`, `GOOGLE_*`, `GCLOUD_*` and
 `GCE_METADATA_*` variable of your shell is removed first.
 
-Which tools the token reaches:
+Which tools the token reaches (measured on SDK 587.0.0 against a local mock that checked the
+`Authorization` header; ADR 0107 note of 2026-10-02):
 
-- `gcloud` (through the token file), and `kubectl` against GKE through `gke-gcloud-auth-plugin`, which
-  asks that same gcloud.
+- `gcloud`, `gcloud storage` included (through the token file), with the quota project sent as
+  `X-Goog-User-Project`; and `kubectl` against GKE through `gke-gcloud-auth-plugin`, which asks that
+  same gcloud.
 - Terraform's Google provider (through `GOOGLE_OAUTH_ACCESS_TOKEN`), with `USER_PROJECT_OVERRIDE=true`
   and the quota project set.
-- **Not** Google's client libraries (Go, Python, Node and the rest): they ignore the token variables
-  and stop at the empty `GOOGLE_APPLICATION_CREDENTIALS` with an error such as "File … was not found"
-  or "Unable to read the credential file". That is deliberate: it stops them from finding another
-  identity. A script that needs a library must take the token from `GOOGLE_OAUTH_ACCESS_TOKEN`
-  explicitly; changing the user's code that way needs their agreement.
-- `bq`, `gsutil` and `gcloud storage` are not measured yet.
+- `bq`, with project and quota project. It is in the SDK but not on `PATH`: run it as
+  `af-gcloud-exec … -- ~/.local/share/agent-fleet/google-cloud-sdk/bin/bq …`.
+- **Not** `gsutil`: it ignores the token. With no boto configuration it sends its requests
+  **without credentials** (measured): a public bucket answers, so a read can look as if it worked. It
+  still reads `BOTO_CONFIG` / `BOTO_PATH`, `/etc/boto.cfg` and `~/.boto`, which the wrapper leaves in
+  place, so with credentials there it can run as **another identity** (not measured). Use
+  `gcloud storage`.
+- **Not** Google's client libraries (Go, Python, Node and the rest) by themselves: they ignore the
+  token variables and stop at the empty `GOOGLE_APPLICATION_CREDENTIALS` with an error such as
+  "File … was not found", "dialing: open …: no such file or directory" or "The file at … does not
+  exist". That is deliberate: it stops them from finding another identity. A program that needs a
+  library must take the token from `GOOGLE_OAUTH_ACCESS_TOKEN` explicitly; changing the user's code
+  that way needs their agreement. Measured to work:
+  - Go (`cloud.google.com/go/storage` 1.69.0):
+    `option.WithTokenSource(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: os.Getenv("GOOGLE_OAUTH_ACCESS_TOKEN")}))`.
+    It sends no quota project unless `GOOGLE_CLOUD_QUOTA_PROJECT` is set (the wrapper does not set
+    it; `export GOOGLE_CLOUD_QUOTA_PROJECT="$GOOGLE_BILLING_PROJECT"` inside the command does), and
+    refuses `option.WithQuotaProject` beside a token source.
+  - Python (`google-cloud-storage` 3.16.0, `google-auth` 2.59.1):
+    `google.oauth2.credentials.Credentials(os.environ["GOOGLE_OAUTH_ACCESS_TOKEN"], quota_project_id=os.environ["GOOGLE_BILLING_PROJECT"])`;
+    the project comes from `GOOGLE_CLOUD_PROJECT`.
+  - Node (`@google-cloud/storage` 8.2.0): an `OAuth2Client` with
+    `setCredentials({access_token: process.env.GOOGLE_OAUTH_ACCESS_TOKEN})`, passed as `authClient`,
+    **from the same `google-auth-library` the client library depends on** (8.2.0 bundles 9.x). One from
+    another major version (11.x) was accepted without an error and sent **no** credential at all.
 
 ## When it stops
 

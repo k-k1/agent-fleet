@@ -478,6 +478,130 @@ Agents in the workspace follow the same rule.
 - Credentials last as long as the SSO role session, or the assumed role's session (often one hour). A longer
   command fails when they expire rather than switching identity.
 
+## Running commands in Google Cloud as you (af-gcloud-exec)
+
+Your Google Cloud profiles live in **⚙ Settings → the "Google Cloud" tab**. A profile says which project a
+command points at and as whom it acts:
+
+- **Label** — the display name. The profile's **name**, the one commands use, is made from it and shown next to
+  it: lowercase letters, digits and `-` (every other run of characters becomes `-`, a name that would start with
+  a digit gets `p` in front, and a label with nothing usable in it, such as a Japanese one, gets `p-` and a short
+  code). If two labels make the same name (`Prod` and `prod`), **neither is available** in the workspace and the
+  row says so; rename one.
+- **Login method** — a Google account, including Google Workspace and Cloud Identity accounts.
+- **Project** — the project ID (not the number) commands point at by default.
+- **Quota project** (optional) — the project billed for API quota; the project itself when left blank. Some
+  APIs need one with a personal login, and your account needs permission to use services on it.
+- **Account** (optional) — the Google account to sign in as; a sign-in as anyone else is refused. Left blank,
+  you choose at the first login.
+- **Impersonate service account** (optional) — commands act as this service account through your login. Your
+  account needs the Service Account Token Creator role on it. This is the way to act as a service account:
+  service-account keys are not accepted anywhere.
+- **Region / Zone** (optional).
+
+**No Google credentials are stored in Agent Fleet.** The login lives inside your workspace, in a gcloud store
+of the workspace's own. It is separate from the `gcloud` you run in a terminal: logging in to one does not log
+in to the other, and a profile never reads or changes your own gcloud configuration, logins or application
+default credentials. A change in Settings reaches the workspace within about five minutes, or at once when you
+run `af-gcloud-exec`. Changing a profile's account, changing its label so that its name changes, or deleting
+and adding it again, resets which account it uses: unless the account it names is already logged in in the workspace, the next run asks for a
+login. Export and import carry the profiles (see [12 Settings](12-settings.md#export-import)).
+
+### Running a command as a profile
+
+```sh
+af-gcloud-exec --list
+af-gcloud-exec --profile <name> --project <project-id> -- gcloud compute instances list
+af-gcloud-exec --profile <name> --project <project-id> -- terraform plan
+af-gcloud-exec --profile <name> --project <project-id> -- kubectl get pods
+```
+
+- `--list` prints each profile's name, project, account ("chosen at the first login" until then), the service
+  account it impersonates and its label, and names the profiles that are not available, with the reason. Choose
+  by project and account, not by the name alone.
+- `--project` must be the profile's project, or the command is refused. A Google login is not bound to a
+  project, so this only checks that you and the profile agree on where the command points by default: a
+  command's own `--project`, or a project written in a Terraform configuration, still wins.
+- The command gets a short-lived **access token** of the profile and nothing else of yours: no gcloud login, no
+  application default credentials, and nothing from the machine's own Google identity. `af-gcloud-exec` prints
+  "profile … runs as <account> in project …; the token is valid for N more minutes" (`-q` leaves it out); the
+  token itself is never printed.
+- The token lasts what remained when it was handed over: at least ten minutes, at most about an hour. It is
+  **not renewed during the command**, so a long `terraform apply` or a `kubectl` watch that outlives it fails.
+  Split long work into shorter runs.
+- The first run installs the Google Cloud SDK (one pinned version, with the GKE auth plugin) into your home: about
+  85 MB to download and about 510 MB on disk, kept across stops and a Recreate. The first run of each gcloud
+  command after that is a few seconds slower once. The **Toolchain** tab's table of tool versions then shows
+  gcloud. A plain `gcloud` in a terminal is that same program, but with your own login, if any, not a profile's.
+- For `kubectl`, fetch the cluster's entry once through the profile
+  (`af-gcloud-exec --profile <name> --project <project-id> -- gcloud container clusters get-credentials <cluster> --location <location>`),
+  then run `kubectl` through `af-gcloud-exec` too: the GKE auth plugin asks gcloud for the token, and only inside
+  `af-gcloud-exec` does gcloud have one.
+
+**Which tools use the token.**
+
+| Tool | With `af-gcloud-exec` |
+|---|---|
+| `gcloud`, including `gcloud storage` | yes |
+| `kubectl` against a GKE cluster | yes, through the GKE auth plugin |
+| Terraform's Google provider | yes, with the quota project |
+| `bq` | yes. It comes with the SDK but is not on the path: run `~/.local/share/agent-fleet/google-cloud-sdk/bin/bq` |
+| `gsutil` | **no**. It ignores the token: without a gsutil (boto) configuration of your own it sends its requests without any login, so a public bucket answers; with one, it can act as whatever identity that configuration holds. Use `gcloud storage` |
+| Google's client libraries (Go, Python, Node, …) | only when the program hands them the token |
+
+A program built on a client library stops with an error such as "File … was not found" or "no such file or
+directory" for its default credentials. That is deliberate: it would otherwise find another identity (your own
+gcloud login, or the machine's). The program has to take the token itself — in Python
+`google.oauth2.credentials.Credentials(os.environ["GOOGLE_OAUTH_ACCESS_TOKEN"])`, in Go
+`option.WithTokenSource(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: os.Getenv("GOOGLE_OAUTH_ACCESS_TOKEN")}))`.
+In Node, create the `OAuth2Client` from the same version of `google-auth-library` the client library uses; one
+from another major version is accepted without an error and sends no login at all. Agents ask you before changing
+your code that way.
+
+### Logging in
+
+At a terminal, `af-gcloud-exec` starts the Google sign-in itself when the profile has no usable login. It prints
+a URL: open it in your browser, sign in (as the profile's account, if it names one), and paste the
+**verification code** the page shows back into **that** terminal. Paste only a code from a sign-in you started
+yourself just now.
+
+An agent's command cannot sign in for you. It exits with code 3 and the message "Google Cloud login required …
+log in from a terminal with:" followed by the command to run, which looks like this:
+
+```sh
+af-gcloud-exec --profile <name> --project <project-id> --login -- true
+```
+
+Run it in a terminal of your own — a shell session, or in Claude Code type it after `!` at the prompt — then tell
+the agent to run its command again. `--no-login` makes `af-gcloud-exec` exit with code 3 instead of prompting,
+even at a terminal.
+
+**When a login ends.** Google can refuse a stored login: it was revoked, or your organisation requires you to
+sign in again after a set time (session length). The next run that needs a fresh token then asks for a login as
+above, and that login really signs you in again instead of reusing what was stored. The workspace **cannot warn
+you before** such an end: the time is not recorded anywhere it can read. Until the token already handed out has
+less than ten minutes left, runs keep working, so the request for a login can come up to about 50 minutes after
+the end.
+
+### When it stops
+
+| What you see | What it means |
+|---|---|
+| exit code 3, "Google Cloud login required" | The profile has no login yet, or Google refused the stored one. Log in as above. Exit 3 always means a login. |
+| "is for project X, not Y; --project must be the profile's project" | The wrong profile for this project. Check `--list`. |
+| "no Google Cloud profile …" or "not exported: …" | The name is not one of your available profiles: add or fix it in Settings. |
+| "gcloud could not mint a token: …" | Not a login problem: no permission (also on the service account to impersonate), an API not enabled, or the network. The message says which. |
+| "the token gcloud minted is valid for only …" | gcloud could not hand out a token with ten minutes left. Try again in a minute. |
+| "this deployment does not export Google Cloud profiles" | Your deployment does not offer Google Cloud profiles. |
+| "the profile changed in Settings while this run started; run it again" | Run it again; check `--list` if the account or project now differs. |
+| "waiting for another af-gcloud-exec or a profile sync …" | A login in a terminal, or another run, is using the workspace's gcloud store. It continues when that ends. |
+
+**What it does not guarantee.** The command runs as you and can read your home, your own gcloud directory
+included: `af-gcloud-exec` keeps Google's standard ways of finding credentials (gcloud's and the client
+libraries') from finding anything but the token it hands over; it does not make your files unreadable, and a tool
+that looks elsewhere, such as `gsutil` with its own configuration, is not covered. On a workspace that runs directly on a Google Cloud VM, a
+program that ignores those standard ways could still reach the VM's own identity.
+
 ## Environment settings and recreating the workspace
 
 In **⚙ Settings → the "Toolchains" tab** you can adjust the workspace environment. Changes **apply to sessions /
