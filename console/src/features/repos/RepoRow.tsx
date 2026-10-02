@@ -26,6 +26,7 @@ import { ShareCreateModal } from "../sharing/ShareCreateModal.tsx";
 import { useMySharesStore } from "../sharing/store.ts";
 import { openRepoScm } from "../scm/open.ts";
 import { LaunchModal } from "./LaunchModal.tsx";
+import { AheadBehind } from "./AheadBehind.tsx";
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
 import { canFastForwardFromParent, parentFFMenuLabel, parentSyncLabel, parentSyncTitle } from "./parentSync.ts";
 import type { Repo } from "./store.ts";
@@ -258,11 +259,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                       : tr("repo.origin.ahead", { ahead: r.ahead ?? 0 })
                   }
                 >
-                  {/* One element per part so the chip's flex gap spaces them: a literal space
-                      takes the width of whichever font the run falls into, and adjacent text
-                      merges into one flex item that the gap never reaches. */}
-                  {r.ahead ? <span><span className="ab-arrow">↑</span>{r.ahead}</span> : null}
-                  {r.behind ? <span><span className="ab-arrow">↓</span>{r.behind}</span> : null}
+                  <AheadBehind ahead={r.ahead} behind={r.behind} />
                   {r.behind ? <span>{r.ahead ? tr("repo.need_merge") : tr("repo.ff_ok")}</span> : null}
                 </span>
               )}
