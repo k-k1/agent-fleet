@@ -7,6 +7,7 @@ import { Button } from "../../../ui/Button.tsx";
 import { useConnections } from "../parts/useConnections.ts";
 import { useSettingsUI } from "../store.ts";
 import { OnOff } from "../parts/controls.tsx";
+import { RegionSelect } from "../parts/RegionSelect.tsx";
 import { ProviderCard, StatusPill, Hint, DisconnectButton } from "../parts/providerCard.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 
@@ -299,14 +300,7 @@ function AWSProfileFields({ p }: { p: ReturnType<typeof useAWSProfile> }) {
           onChange={(e) => p.setManualProfile(e.target.value)}
         />
       )}
-      <input
-        className="cinput"
-        type="text"
-        placeholder={tr("ops.cw_region_placeholder")}
-        value={p.region}
-        onChange={(e) => p.setRegion(e.target.value)}
-        style={{ maxWidth: "12em" }}
-      />
+      <RegionSelect value={p.region} onChange={p.setRegion} emptyLabel={tr("ops.cw_region_placeholder")} />
     </>
   );
 }

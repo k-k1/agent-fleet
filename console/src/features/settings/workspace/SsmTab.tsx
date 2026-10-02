@@ -8,6 +8,7 @@ import { useSettings, setSetting } from "../../../lib/settings.ts";
 import { SSM_HOST_COLORS, hostColorBase, termBackground } from "../../../lib/termcolor.ts";
 import { useT, t, type MsgKey } from "../../../lib/i18n/index.ts";
 import { Field, Meta } from "../parts/mcpForm.tsx";
+import { RegionSelect } from "../parts/RegionSelect.tsx";
 import { ProfileLoginModal, type LoginProfile } from "../../awslogin/ProfileLoginModal.tsx";
 import { useProfileLogout } from "../../awslogin/useProfileLogout.ts";
 
@@ -240,6 +241,7 @@ function ProfileSection({
   }, []);
   useEffect(loadStates, [loadStates]);
   const set = (k: string) => (e: FieldEvent) => setF((p) => ({ ...p, [k]: e.target.value }));
+  const setVal = (k: string) => (v: string) => setF((p) => ({ ...p, [k]: v }));
   const valid = f.label.trim() && /^https:\/\//.test(f.startUrl.trim()) && f.ssoRegion.trim();
   // Why a row cannot log in from here (null when it can; "" when a CP too old to send the
   // name leaves nothing to say). The Agent refuses the same rows; saying so up front beats
@@ -357,7 +359,7 @@ function ProfileSection({
             />
           </Field>
           <Field label={tr("ssm.meta_sso_region")} req hint={tr("ssm.f_sso_region_hint")}>
-            <input className="cinput" placeholder="ap-northeast-1" value={f.ssoRegion} onChange={set("ssoRegion")} />
+            <RegionSelect value={f.ssoRegion} onChange={setVal("ssoRegion")} emptyLabel={tr("ssm.region_select")} />
           </Field>
           <Field
             label="start URL"
@@ -385,7 +387,7 @@ function ProfileSection({
             <input className="cinput" placeholder="AdministratorAccess" value={f.roleName} onChange={set("roleName")} />
           </Field>
           <Field label={tr("ssm.meta_default_region")} hint={tr("ssm.f_default_region_hint")}>
-            <input className="cinput" placeholder="ap-northeast-1" value={f.region} onChange={set("region")} />
+            <RegionSelect value={f.region} onChange={setVal("region")} emptyLabel={tr("ssm.region_unset")} />
           </Field>
         </FieldGroup>
       </fieldset>
@@ -583,6 +585,7 @@ function HostSection({
   // The host being edited (its id); its form replaces the row's details.
   const [editing, setEditing] = useState<string | null>(null);
   const set = (k: string) => (e: FieldEvent) => setF((p) => ({ ...p, [k]: e.target.value }));
+  const setVal = (k: string) => (v: string) => setF((p) => ({ ...p, [k]: v }));
   const profileOf = (id: string) => (profiles || []).find((p) => p.id === id);
   const noProfiles = profiles !== null && profiles.length === 0;
   // The profile must be one the current list holds: a dead id (deleted while the form was
@@ -676,7 +679,15 @@ function HostSection({
             <input className="cinput" placeholder="SSM-SessionManagerRunShell" value={f.documentName} onChange={set("documentName")} />
           </Field>
           <Field label={tr("ssm.meta_region")} hint={tr("ssm.f_region_hint")}>
-            <input className="cinput" placeholder={tr("ssm.f_region_placeholder")} value={f.region} onChange={set("region")} />
+            <RegionSelect
+              value={f.region}
+              onChange={setVal("region")}
+              emptyLabel={
+                profileOf(f.profileId)?.region
+                  ? tr("ssm.region_profile_default", { region: profileOf(f.profileId).region })
+                  : tr("ssm.f_region_placeholder")
+              }
+            />
           </Field>
         </FieldGroup>
       </fieldset>
