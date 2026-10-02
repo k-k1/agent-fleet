@@ -84,7 +84,7 @@ export function AwsProfilesChip() {
 
   const active = profiles.filter(isActive);
   const expiring = profiles.some((p) => p.expiring);
-  const tone = expiring ? " warn" : active.length === 0 ? " muted" : "";
+  const tone = expiring ? " warn" : active.length === 0 ? " muted" : " ok";
   // One signed-in profile is named, since "which one" is the question; more get a count.
   const label = active.length === 1 ? active[0].label || active[0].name : `${active.length}/${profiles.length}`;
   const title = expiring
@@ -95,7 +95,7 @@ export function AwsProfilesChip() {
     <div className="ws-usage-wrap ws-aws" ref={ref}>
       <button
         type="button"
-        className={"ghost ws-aws-btn" + tone}
+        className={"ws-aws-btn" + tone}
         title={title}
         aria-label={title}
         aria-expanded={open}

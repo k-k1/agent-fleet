@@ -808,19 +808,54 @@ button.wu-manage {
   color: var(--muted);
 }
 
-/* AWS profiles chip (#1477). Neutral like the resources chip: it is a workspace fact, not an
-   agent, so it takes no kind colour. warn = a login ends soon; muted = none signed in. */
-.ws-aws-btn {
+/* AWS profiles chip (#1477). A tag like the usage chips beside it, tinted by state rather
+   than by brand: ok = something is signed in (the "Signed in" pill's colour), warn = a login
+   ends soon, muted = none signed in. Not AWS orange: it sits next to --warn and would say
+   nothing about the state. Written against the element so it beats `.wsbar button`. */
+button.ws-aws-btn {
+  --aws-tone: var(--muted);
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 11px;
+  gap: 4px;
+  margin: 0;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--aws-tone) 45%, transparent);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--aws-tone) 14%, transparent);
+  color: var(--aws-tone);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  cursor: pointer;
 }
-/* The AWS mark is a wide wordmark: at the 12px of the other glyphs it is an unreadable smudge. */
+button.ws-aws-btn:hover {
+  filter: brightness(1.12);
+}
+button.ws-aws-btn.ok {
+  --aws-tone: var(--ok);
+}
+button.ws-aws-btn.warn {
+  --aws-tone: var(--warn);
+}
+/* No fill when nothing is signed in: the frame says "there is a chip", the empty inside says
+   "nothing in it". */
+button.ws-aws-btn.muted {
+  background: transparent;
+  border-color: var(--btn-border);
+}
+/* Light: the tint is laid on --bg, not on the bar. Over --panel2 the light --warn never
+   reaches 4.5:1 at any tint (measured 4.47 at 8%); on --bg at 10% it is 5.1 (--ok 5.6). */
+[data-theme="light"] button.ws-aws-btn:not(.muted) {
+  background: color-mix(in srgb, var(--aws-tone) 10%, var(--bg));
+  border-color: color-mix(in srgb, var(--aws-tone) 55%, transparent);
+}
+/* The AWS mark is a wide wordmark: at the size of the other glyphs it is an unreadable smudge.
+   line-height 1 keeps it from making this tag taller than its neighbours. */
 .ws-aws-btn .codicon {
-  font-size: 17px;
+  font-size: 16px;
+  line-height: 1;
 }
 .ws-aws-btn .codicon-chevron-down {
   font-size: 9px;
@@ -830,13 +865,6 @@ button.wu-manage {
   max-width: 14ch;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.ws-aws-btn.warn .ws-aws-label {
-  color: var(--warn);
-  font-weight: 600;
-}
-.ws-aws-btn.muted .ws-aws-label {
-  color: var(--muted);
 }
 .ws-aws-pop {
   width: min(88vw, 320px);
