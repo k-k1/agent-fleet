@@ -17,7 +17,7 @@ export interface LoginProfile {
 }
 
 // The refusals the Agent names, in the member's words; anything else shows the server's text.
-const REFUSALS: Record<string, MsgKey> = {
+export const REFUSALS: Record<string, MsgKey> = {
   not_a_settings_profile: "awslogin.err_not_found",
   not_exported: "awslogin.err_not_exported",
   incomplete_profile: "awslogin.err_incomplete",

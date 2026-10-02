@@ -45,6 +45,7 @@ func TestAuditActionTarget(t *testing.T) {
 		// #1028: the Settings row's press, keyed by the profile name in the path.
 		{"POST", "/api/aws-login/profiles/prod/start", "prod", "aws.login.start", "profile: prod", true},
 		{"GET", "/api/aws-login/profiles/prod/attempts/abc", "prod", "", "", false},
+		{"POST", "/api/aws-login/profiles/prod/logout", "prod", "aws.logout", "profile: prod", true},
 		{"GET", "/api/aws-login/profiles", "", "", "", false},
 		{"GET", "/api/aws-login", "", "", "", false},
 		// Not auditable (reads, non-change mutations, unlisted ops):

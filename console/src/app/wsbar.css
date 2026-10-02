@@ -899,7 +899,12 @@ button.wu-manage {
   white-space: nowrap;
   font-family: var(--mono);
 }
-button.ws-aws-login {
+.ws-aws-actions {
+  display: flex;
+  gap: 4px;
+}
+button.ws-aws-login,
+button.ws-aws-logout {
   font-size: 11px;
   padding: 1px 8px;
 }

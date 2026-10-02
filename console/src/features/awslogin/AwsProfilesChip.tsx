@@ -15,6 +15,7 @@ import { useDismiss } from "../../lib/useDismiss.ts";
 import { useT, type MsgKey } from "../../lib/i18n/index.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { useAwsLoginStore, type AwsProfileState } from "./store.ts";
+import { useProfileLogout } from "./useProfileLogout.ts";
 
 const STATE_KEYS: Record<string, { label: MsgKey; title: MsgKey }> = {
   signed_in: { label: "ssm.state_signed_in", title: "ssm.state_signed_in_title" },
@@ -44,6 +45,7 @@ export function AwsProfilesChip() {
   const profiles = useAwsLoginStore((s) => s.profiles);
   const refresh = useAwsLoginStore((s) => s.refreshExpiry);
   const showProfile = useAwsLoginStore((s) => s.showProfile);
+  const logout = useProfileLogout();
   const openSettings = useSettingsUI((s) => s.openSettings);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -128,7 +130,7 @@ export function AwsProfilesChip() {
                   <div className="ws-aws-meta muted">
                     {[p.label && p.label !== p.name ? p.name : "", p.accountId, p.roleName].filter(Boolean).join(" · ")}
                   </div>
-                  {(end || p.state !== "signed_in") && (
+                  {(end || p.state !== "signed_in" || isActive(p)) && (
                     <div className="ws-aws-foot">
                       {end ? (
                         <span className={p.expiring ? "warn" : "muted"}>
@@ -137,18 +139,35 @@ export function AwsProfilesChip() {
                       ) : (
                         <span />
                       )}
-                      {(p.state !== "signed_in" || p.expiring) && (
-                        <button
-                          type="button"
-                          className="ghost ws-aws-login"
-                          onClick={() => {
-                            setOpen(false);
-                            showProfile(p);
-                          }}
-                        >
-                          {tr("wsbar.aws.login")}
-                        </button>
-                      )}
+                      <span className="ws-aws-actions">
+                        {(p.state !== "signed_in" || p.expiring) && (
+                          <button
+                            type="button"
+                            className="ghost ws-aws-login"
+                            onClick={() => {
+                              setOpen(false);
+                              showProfile(p);
+                            }}
+                          >
+                            {tr("wsbar.aws.login")}
+                          </button>
+                        )}
+                        {isActive(p) && (
+                          <button
+                            type="button"
+                            className="ghost ws-aws-logout"
+                            title={tr("awslogin.logout_title")}
+                            onClick={() => {
+                              // The confirm dialog sits outside the popover, whose dismiss
+                              // layer would close it on the first press there.
+                              setOpen(false);
+                              void logout(p);
+                            }}
+                          >
+                            {tr("awslogin.logout")}
+                          </button>
+                        )}
+                      </span>
                     </div>
                   )}
                 </li>

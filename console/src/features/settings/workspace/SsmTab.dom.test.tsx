@@ -13,8 +13,9 @@ let attemptReplies: Json[] = [];
 let states: Json[] = [];
 
 vi.mock("../../../core/api/client.ts", () => ({
-  api: vi.fn(async (path: string) => {
-    calls.push({ path, method: "GET" });
+  api: vi.fn(async (path: string, opts?: RequestInit) => {
+    calls.push({ path, method: opts?.method ?? "GET" });
+    if (path.endsWith("/logout")) return { revoked: true };
     if (path === "api/ssm/profiles") return profiles;
     if (path === "api/ssm/hosts") return [];
     if (path === "api/aws-login") return { requests: [] };
@@ -177,5 +178,30 @@ describe("SsmTab profile row Log in", () => {
     await tick(300);
     expect(modal()?.textContent).toContain(t("awslogin.profile_done"));
     expect(calls.some((c) => c.path === "api/aws-login")).toBe(true);
+  });
+});
+
+describe("SsmTab profile row Log out", () => {
+  it("is offered on signed-in and renewable rows, logs out the row's profile and re-reads the states", async () => {
+    profiles = [prod, { ...prod, id: "p2", name: "dev", label: "dev" }, { ...prod, id: "p3", name: "stg", label: "stg" }];
+    states = [
+      { name: "prod-app", state: "signed_in" },
+      { name: "dev", state: "renew" },
+      { name: "stg", state: "none" },
+    ];
+    await mount();
+    const logouts = () => Array.from(host.querySelectorAll<HTMLButtonElement>("button.ssm-logout"));
+    expect(logouts()).toHaveLength(2);
+    states = [
+      { name: "prod-app", state: "none" },
+      { name: "dev", state: "renew" },
+      { name: "stg", state: "none" },
+    ];
+    const asked = calls.filter((c) => c.path === "api/aws-login/profiles").length;
+    await act(async () => logouts()[0].click());
+    await tick();
+    expect(calls).toContainEqual({ path: "api/aws-login/profiles/prod-app/logout", method: "POST" });
+    expect(calls.filter((c) => c.path === "api/aws-login/profiles").length).toBeGreaterThan(asked);
+    expect(logouts()).toHaveLength(1);
   });
 });
