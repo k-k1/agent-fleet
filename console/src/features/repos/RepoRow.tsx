@@ -26,6 +26,7 @@ import { ShareCreateModal } from "../sharing/ShareCreateModal.tsx";
 import { useMySharesStore } from "../sharing/store.ts";
 import { openRepoScm } from "../scm/open.ts";
 import { LaunchModal } from "./LaunchModal.tsx";
+import { AheadBehind } from "./AheadBehind.tsx";
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
 import { canFastForwardFromParent, parentFFMenuLabel, parentSyncLabel, parentSyncTitle } from "./parentSync.ts";
 import type { Repo } from "./store.ts";
@@ -258,10 +259,8 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                       : tr("repo.origin.ahead", { ahead: r.ahead ?? 0 })
                   }
                 >
-                  {r.ahead ? `↑${r.ahead}` : ""}
-                  {r.ahead && r.behind ? " " : ""}
-                  {r.behind ? `↓${r.behind}` : ""}
-                  {r.behind ? (r.ahead ? tr("repo.need_merge") : tr("repo.ff_ok")) : ""}
+                  <AheadBehind ahead={r.ahead} behind={r.behind} />
+                  {r.behind ? <span>{r.ahead ? tr("repo.need_merge") : tr("repo.ff_ok")}</span> : null}
                 </span>
               )}
             </span>
