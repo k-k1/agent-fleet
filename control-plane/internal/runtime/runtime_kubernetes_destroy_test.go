@@ -26,6 +26,7 @@ type destroyCluster struct {
 	claims  map[string]kPVC
 	pvs     map[string]kPV
 	retain  map[string]bool // volumes that outlive their claim
+	stuck   map[string]bool // claims whose delete is accepted but that stay (a finalizer)
 	writes  []string
 	pvReads int
 	// onInventory runs when the inventory is written: the moment a late bind can land
@@ -54,6 +55,7 @@ func newDestroyCluster() *destroyCluster {
 		claims: map[string]kPVC{},
 		pvs:    map[string]kPV{},
 		retain: map[string]bool{},
+		stuck:  map[string]bool{},
 	}
 }
 
@@ -145,6 +147,10 @@ func (c *destroyCluster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				_, _ = w.Write([]byte(`{"kind":"Status","reason":"Conflict","message":"Precondition failed","code":409}`))
 				return
 			}
+			if c.stuck[name] {
+				reply(pvc)
+				return
+			}
 			delete(c.claims, name)
 			if v := pvc.Spec.VolumeName; v != "" && !c.retain[v] {
 				delete(c.pvs, v)
@@ -231,7 +237,7 @@ func TestKubeDestroyKeepsTheInventoryUntilEveryVolumeIsGone(t *testing.T) {
 	}
 	var inv kubeInventory
 	if err := json.Unmarshal([]byte(c.sts.Metadata.Annotations[kubeAnnInventory]), &inv); err != nil ||
-		inv.Claims["af-ws-x-home"].Volume != "pv-home" || inv.Claims["af-ws-x-home"].UID != "uid-af-ws-x-home" ||
+		inv.Claims["uid-af-ws-x-home"].Volume != "pv-home" || inv.Claims["uid-af-ws-x-home"].Name != "af-ws-x-home" ||
 		!inv.Volumes["pv-home"].Protected || !inv.Volumes["pv-state"].Protected {
 		t.Fatalf("inventory = %+v (%v)", inv, err)
 	}
@@ -325,26 +331,86 @@ func TestKubeDestroyRecordsAVolumeBoundLate(t *testing.T) {
 	}
 }
 
-// An unbound claim a provisioner may be working on (the scheduler picked a node) cannot
-// be shown never to have had a volume: the StatefulSet stays, on this run and on a
-// re-run that finds the claim gone. An unbound claim nothing was provisioning is known.
-func TestKubeDestroyUnboundClaims(t *testing.T) {
+// A claim recorded without a volume is unknown whatever its annotations: a static or
+// pre-bound volume gets its claimRef saved before the claim's volumeName, so the claim can
+// read unbound while a disk is already tied to it. The StatefulSet stays on this run and
+// on a re-run that finds the claim gone.
+func TestKubeDestroyUnboundClaimsAreUnknown(t *testing.T) {
+	shortDestroyBudget(t)
+	for _, ann := range []map[string]string{nil, {"volume.kubernetes.io/selected-node": "node-a"}} {
+		c := newDestroyCluster()
+		c.unbound("af-ws-x-home", ann)
+		c.bind("af-ws-x-state", "pv-state", true)
+		rt := destroyRuntime(t, c)
+		for run := 1; run <= 2; run++ {
+			res, _ := rt.Destroy(context.Background())
+			if want := []string{"statefulset:ns/af-ws-x"}; !reflect.DeepEqual(res, want) {
+				t.Fatalf("annotations %v, run %d: residue = %v, want %v", ann, run, res, want)
+			}
+		}
+	}
+}
+
+// The review's half-bound case: the volume already names the claim, the claim does not
+// name the volume yet, and the volume outlives the claim.
+func TestKubeDestroyHalfBoundStaticVolume(t *testing.T) {
+	shortDestroyBudget(t)
+	c := newDestroyCluster()
+	c.unbound("af-ws-x-home", nil)
+	c.bind("af-ws-x-state", "pv-state", true)
+	c.pvs["pv-static"] = kPV{Metadata: kObjectMeta{Name: "pv-static"}} // claimRef → af-ws-x-home, not visible to Destroy
+	res, _ := destroyRuntime(t, c).Destroy(context.Background())
+	if want := []string{"statefulset:ns/af-ws-x"}; !reflect.DeepEqual(res, want) || c.sts == nil {
+		t.Fatalf("residue = %v, StatefulSet kept %v; want %v and kept", res, c.sts != nil, want)
+	}
+}
+
+// An unknown recorded for one claim is not erased by a claim recreated under the same
+// name with another UID (a Start after a Destroy that died before returning).
+func TestKubeDestroyKeepsAnOldUnknownWhenTheClaimIsReplaced(t *testing.T) {
 	shortDestroyBudget(t)
 	c := newDestroyCluster()
 	c.unbound("af-ws-x-home", map[string]string{"volume.kubernetes.io/selected-node": "node-a"})
 	c.bind("af-ws-x-state", "pv-state", true)
 	rt := destroyRuntime(t, c)
-	for run := 1; run <= 2; run++ {
-		res, _ := rt.Destroy(context.Background())
-		if want := []string{"statefulset:ns/af-ws-x"}; !reflect.DeepEqual(res, want) {
-			t.Fatalf("run %d: residue = %v, want %v", run, res, want)
-		}
+	if res, _ := rt.Destroy(context.Background()); !reflect.DeepEqual(res, []string{"statefulset:ns/af-ws-x"}) {
+		t.Fatalf("first run = %v", res)
 	}
-	c2 := newDestroyCluster()
-	c2.unbound("af-ws-x-home", nil)
-	c2.bind("af-ws-x-state", "pv-state", true)
-	res, err := destroyRuntime(t, c2).Destroy(context.Background())
-	if err != nil || len(res) != 0 || c2.sts != nil {
-		t.Fatalf("never-provisioned claim: %v, %v, StatefulSet left %v", res, err, c2.sts != nil)
+	c.bind("af-ws-x-home", "pv-new-home", true)
+	pvc := c.claims["af-ws-x-home"]
+	pvc.Metadata.UID = "uid-new-home"
+	c.claims["af-ws-x-home"] = pvc
+	c.bind("af-ws-x-state", "pv-new-state", true)
+	res, _ := rt.Destroy(context.Background())
+	if want := []string{"statefulset:ns/af-ws-x"}; !reflect.DeepEqual(res, want) || c.sts == nil {
+		t.Fatalf("after the replacement = %v, StatefulSet kept %v; want %v and kept", res, c.sts != nil, want)
+	}
+	var inv kubeInventory
+	_ = json.Unmarshal([]byte(c.sts.Metadata.Annotations[kubeAnnInventory]), &inv)
+	if old, ok := inv.Claims["uid-af-ws-x-home"]; !ok || old.Volume != "" || inv.Claims["uid-new-home"].Volume != "pv-new-home" {
+		t.Fatalf("inventory = %+v; want the old unknown and the new claim side by side", inv.Claims)
+	}
+}
+
+// The one way an unknown resolves: the same claim, read again, names its volume.
+func TestKubeDestroyResolvesAnUnknownWhenTheSameClaimNamesItsVolume(t *testing.T) {
+	shortDestroyBudget(t)
+	c := newDestroyCluster()
+	c.unbound("af-ws-x-home", nil)
+	c.bind("af-ws-x-state", "pv-state", true)
+	c.stuck["af-ws-x-home"] = true // its delete waits on a finalizer
+	rt := destroyRuntime(t, c)
+	if res, _ := rt.Destroy(context.Background()); !reflect.DeepEqual(res, []string{"pvc:ns/af-ws-x-home", "statefulset:ns/af-ws-x"}) {
+		t.Fatalf("first run = %v", res)
+	}
+	pvc := c.claims["af-ws-x-home"]
+	pvc.Spec.VolumeName = "pv-home"
+	c.claims["af-ws-x-home"] = pvc
+	c.touch("af-ws-x-home")
+	c.pvs["pv-home"] = kPV{Metadata: kObjectMeta{Name: "pv-home", Finalizers: []string{"external-provisioner.volume.kubernetes.io/finalizer"}}}
+	delete(c.stuck, "af-ws-x-home")
+	res, err := rt.Destroy(context.Background())
+	if err != nil || len(res) != 0 || c.sts != nil {
+		t.Fatalf("second run = %v, %v, StatefulSet left %v; want everything gone", res, err, c.sts != nil)
 	}
 }

@@ -894,12 +894,14 @@ func TestKubernetesEnvStopNotSettledAndDestroy(t *testing.T) {
 		t.Fatalf("Destroy over a pod that still exists returned %v, nil", res)
 	}
 	node.finishDeletions(rt.base)
+	// No volume was ever bound here (there is no provisioner), so Destroy cannot show
+	// that none exists: the claims, the Service and the Secret go, and the StatefulSet
+	// stays as the record (TestKubernetesEnvDestroyWithBoundVolumes is the bound case).
 	res, err := rt.Destroy(ctx)
-	if err != nil || len(res) != 0 {
-		t.Fatalf("Destroy = %v, %v; want no residue", res, err)
+	if want := []string{"statefulset:" + ns + "/" + rt.base}; err != nil || strings.Join(res, ",") != strings.Join(want, ",") {
+		t.Fatalf("Destroy = %v, %v; want %v", res, err, want)
 	}
 	for _, path := range []string{
-		"/apis/apps/v1/namespaces/" + ns + "/statefulsets/" + rt.base,
 		"/api/v1/namespaces/" + ns + "/services/" + rt.base,
 		"/api/v1/namespaces/" + ns + "/secrets/" + rt.secretName(),
 		"/api/v1/namespaces/" + ns + "/persistentvolumeclaims/" + rt.homeClaim(),
@@ -910,8 +912,8 @@ func TestKubernetesEnvStopNotSettledAndDestroy(t *testing.T) {
 			t.Errorf("after Destroy %s: %v, want not found", path, err)
 		}
 	}
-	if got := rt.State(ctx); got != "none" {
-		t.Fatalf("State after Destroy = %q, want none", got)
+	if got := rt.State(ctx); got != "stopped" {
+		t.Fatalf("State after Destroy = %q, want stopped (the StatefulSet is kept)", got)
 	}
 }
 

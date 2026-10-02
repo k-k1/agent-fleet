@@ -31,34 +31,22 @@ var kubeVolumeProtection = []string{
 	"kubernetes.io/pv-controller",
 }
 
+// kubeInventory is keyed by claim UID, not by name: a claim recreated under the same name
+// (a Start after a Destroy that died, or an operator) is another claim with another
+// volume, and recording it must not erase what was recorded about the first.
 type kubeInventory struct {
 	Claims  map[string]kubeInvClaim  `json:"claims"`
 	Volumes map[string]kubeInvVolume `json:"volumes"`
 }
 
 type kubeInvClaim struct {
-	UID    string `json:"uid"`
+	Name string `json:"name"`
+	// Volume is "" when the claim named no volume when it was read. That does not prove
+	// it had none: the PV controller saves a volume's claimRef before the claim's
+	// volumeName, a pre-bound or static volume needs no provisioner, and the namespaced
+	// role cannot list volumes to look. Such a claim stays unknown for good unless the
+	// same UID is read again with its volume.
 	Volume string `json:"volume,omitempty"`
-	// Provisioning: unbound when recorded, but a provisioner may have been creating its
-	// volume (claimMayBeProvisioned), so its having no volume is not known.
-	Provisioning bool `json:"provisioning,omitempty"`
-}
-
-// claimMayBeProvisioned reports an unbound claim a provisioner may already be working
-// on: the scheduler has picked a node for it (WaitForFirstConsumer), or the PV controller
-// has handed it to a provisioner (an Immediate class). Without either nothing creates a
-// volume for it, since no pod of the workspace exists once the stop has settled.
-func claimMayBeProvisioned(p *kPVC) bool {
-	for _, a := range []string{
-		"volume.kubernetes.io/selected-node",
-		"volume.kubernetes.io/storage-provisioner",
-		"volume.beta.kubernetes.io/storage-provisioner",
-	} {
-		if p.Metadata.Annotations[a] != "" {
-			return true
-		}
-	}
-	return false
 }
 
 type kubeInvVolume struct {
@@ -141,8 +129,9 @@ func (k *kubeRuntime) Destroy(ctx context.Context) ([]string, error) {
 			if !slices.Contains(present, name) {
 				present = append(present, name)
 			}
-			inv.Claims[name] = kubeInvClaim{UID: pvc.Metadata.UID, Volume: pvc.Spec.VolumeName,
-				Provisioning: pvc.Spec.VolumeName == "" && claimMayBeProvisioned(&pvc)}
+			if prev, ok := inv.Claims[pvc.Metadata.UID]; !ok || prev.Volume == "" {
+				inv.Claims[pvc.Metadata.UID] = kubeInvClaim{Name: name, Volume: pvc.Spec.VolumeName}
+			}
 			if v := pvc.Spec.VolumeName; v != "" {
 				if _, ok := inv.Volumes[v]; !ok {
 					inv.Volumes[v] = kubeInvVolume{Protected: k.volumeProtected(ctx, v)}
@@ -214,14 +203,19 @@ func (k *kubeRuntime) Destroy(ctx context.Context) ([]string, error) {
 			residues = append(residues, "pv:"+v)
 		}
 	}
-	// Start creates both claims before the StatefulSet, so a claim missing now and absent
-	// from the inventory was removed by something that did not record its volume. A claim
-	// recorded unbound while a provisioner may have been creating its volume is unknown
-	// too: the volume may exist without the claim ever having named it to us.
+	// Start creates both claims before the StatefulSet, so a claim name with no record and
+	// no claim was removed by something that did not record its volume. And any claim
+	// recorded without a volume is unknown (kubeInvClaim.Volume).
 	known := readable
+	recorded := map[string]bool{}
+	for _, c := range inv.Claims {
+		recorded[c.Name] = true
+		if c.Volume == "" {
+			known = false
+		}
+	}
 	for _, name := range claims {
-		c, ok := inv.Claims[name]
-		if (!ok && s != nil) || (ok && c.Volume == "" && c.Provisioning) {
+		if !recorded[name] && s != nil {
 			known = false
 		}
 	}

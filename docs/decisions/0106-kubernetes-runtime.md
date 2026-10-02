@@ -769,6 +769,10 @@ Written with #1466 (`runtime_kubernetes_home.go`, `runtime_kubernetes_destroy.go
   past a finished one only once the pod object is gone, which is the kubelet's confirmation —
   `ReadWriteOnce` keeps a claim on one node, not to one pod.
 - **Destroy deletes each claim on the condition that it is the version it recorded**, so a claim
-  bound after the read is recorded before it goes. An unbound claim that a provisioner may already
-  be working on (a selected node, or a provisioner annotation) counts as unknown, and keeps the
-  StatefulSet.
+  bound after the read is recorded before it goes. A claim recorded without a volume counts as
+  unknown, whatever its annotations, and keeps the StatefulSet: the PV controller saves a volume's
+  claim reference before the claim's volume name, a pre-bound or static volume needs no
+  provisioner, and the namespaced role cannot list volumes to look. The inventory is keyed by claim
+  UID, so a claim recreated under the same name never erases what was recorded about the first;
+  an unknown resolves only when the same UID is read again with its volume. A workspace whose pod
+  never got a volume therefore leaves its StatefulSet as a residue for the runbook.
