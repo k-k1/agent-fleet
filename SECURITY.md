@@ -137,11 +137,12 @@ declare.
   ([#1182](https://github.com/k-k1/agent-fleet/issues/1182),
   [#1419](https://github.com/k-k1/agent-fleet/issues/1419),
   [#1423](https://github.com/k-k1/agent-fleet/issues/1423)). A launch may boot only from
-  Amazon's public images or the slot AMIs its pool stack names, and may not map a snapshot
-  the account owns, so another deployment's home snapshots cannot be booted and read
-  ([#1522](https://github.com/k-k1/agent-fleet/issues/1522)); snapshots and images shared
-  in from other accounts are not covered, and the fence awaits a live check under the real
-  role. Which statements, and
+  an Amazon-owned or public image or the slot AMIs its pool stack names, and may not map a
+  snapshot the account owns, so another deployment's home snapshots cannot be booted and
+  read ([#1522](https://github.com/k-k1/agent-fleet/issues/1522)). Snapshots shared in from
+  other accounts can still be mapped, an engine purchase's mapping override is fenced only
+  if EC2 Fleet checks the caller's `RunInstances`, and the fence awaits a live check under
+  the real role. Which statements, and
   what they reach, is
   [07 §7.1](docs/build/07-security.md#71-threat-model-and-trust-boundary).
 

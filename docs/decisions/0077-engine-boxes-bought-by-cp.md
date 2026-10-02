@@ -2430,8 +2430,11 @@ it is one of the live checks #1423 lists.
 `Ec2RunAmazonImage`, `Ec2RunPublicImage`, `Ec2RunForeignOwnedSnapshot`). The GPU AMI that
 decision 7's `resolve:ssm:` picks at launch has no id to name, so the engine boxes rely on
 Amazon's image being admitted by `ec2:Owner` = `amazon` or `ec2:Public` = `true`; a snapshot
-this account owns is refused in a block device mapping. Both hold for an engine only if an
-instant fleet authorizes its launch against the caller's `RunInstances`, the same open question
-as the note above: `CreateFleet` itself is still granted on `*`, and the Service Authorization
-Reference lists no snapshot resource for it, so a fleet override with a foreign `SnapshotId`
-could not be fenced at `CreateFleet`. The live checks are listed in the pull request for #1522.
+this account owns is refused in a block device mapping. `CreateFleet` itself gets the same image
+fence (`CreateFleetAmazonImage` / `CreateFleetPublicImage` in `CpIngestPolicy`), so an `ImageId`
+override is refused even if the launch is not checked again. A mapping override is fenced only
+if an instant fleet authorizes its launch against the caller's `RunInstances`, the same open
+question as the note above: the Service Authorization Reference lists no snapshot resource for
+`CreateFleet`, and the created volume's `ec2:ParentSnapshot` is a snapshot ARN, which carries no
+owner and is also present on the AMI's own root volume. The live checks are listed in the pull
+request for #1522.

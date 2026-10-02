@@ -151,6 +151,17 @@ def run(tags, extra_resources=(), img=None, snap=AMI_SNAPSHOT[0], template=None)
     return request("ec2:RunInstances", res + list(extra_resources), tags)
 
 
+def create_fleet(tags, img, extra_resources=()):
+    """One CreateFleet as the Service Authorization Reference lists its resources: the fleet,
+    the image (img=None: not presented, i.e. left to the launch), the instance, the launch
+    template, the subnet and the volume it creates. No snapshot type is listed for it."""
+    res = [plain("arn:aws:ec2:%s:%s:fleet/fleet-new" % (REGION, ACCOUNT)), new("instance"), lt(),
+           subnet(), new("volume")]
+    if img is not None:
+        res.append(img)
+    return request("ec2:CreateFleet", res + list(extra_resources), tags)
+
+
 def every_reading(tags, images, extra_resources=()):
     """The same launch under every reading of the image and AMI-snapshot keys."""
     return [run(tags, extra_resources, img, snap) for img in images for snap in AMI_SNAPSHOT]
@@ -247,11 +258,13 @@ INVENTORY = [
         request("ec2:DeleteSnapshot", [ec2("snapshot", "snap-cand", CANDIDATE)])]),
     ("internal/runtime/runtime_ecs_ec2_golden.go", "SweepOrphans", "DeleteVolume", 1, [
         request("ec2:DeleteVolume", [ec2("volume", "vol-bake", HOME)])]),
-    # --- engine boxes (60-engines). An instant fleet launches with the caller's
-    # RunInstances; on-demand and spot both shown. PassRole of the engine role is
-    # 60-engines' own, unchanged, and not modelled here. ---
-    ("engine_fleet.go", "request", "CreateFleet", 1, [
-        request("ec2:CreateFleet", [plain("arn:aws:ec2:%s:%s:fleet/fleet-new" % (REGION, ACCOUNT))], ENGINE)]
+    # --- engine boxes (60-engines). CreateFleet itself, then the instant fleet's launch,
+    # which is assumed to be authorized against the caller's RunInstances (ADR 0077,
+    # unmeasured); on-demand and spot both shown. PassRole of the engine role is 60-engines'
+    # own, unchanged, and not modelled here. ---
+    ("engine_fleet.go", "request", "CreateFleet", 1,
+        [create_fleet(ENGINE, image("ami-gpu", c)) for c in AMAZON_IMAGE]
+        + [create_fleet(ENGINE, None)]
         # The GPU AMI is resolve:ssm at launch: no id to name, Amazon's keys only.
         + every_reading(ENGINE, [image("ami-gpu", c) for c in AMAZON_IMAGE])
         + every_reading(ENGINE, [image("ami-gpu", c) for c in AMAZON_IMAGE], [SPOT])),
@@ -342,6 +355,8 @@ ATTACKS = [
      run(SLOT, [snapshot("snap-o", owned(OTHER_POOL))], img=image(SLOT_AMI, AMAZON_IMAGE[0]))),
     # Another deployment's template carries that deployment's instance profile, and its
     # mappings are evaluated as snapshots like any other.
+    ("buy an engine box with an ImageId override of a private image this account owns",
+     create_fleet(ENGINE, image("ami-mine", {"ec2:Owner": ACCOUNT, "ec2:Public": "false"}))),
     ("launch through another deployment's launch template",
      [run(SLOT, template=lt("lt-other")), pass_role("arn:aws:iam::%s:role/af-other-pool-slot" % ACCOUNT)]),
     ("launch through another deployment's template whose mapping restores its home",
@@ -369,7 +384,8 @@ ATTACKS = [
 # template is refused on its instance profile (PassRole), as it was before, so that attack is
 # not one of them.
 RUN_1522_SIDS = {"Ec2RunAmazonImage", "Ec2RunPublicImage", "Ec2RunForeignOwnedSnapshot",
-                 "Ec2LaunchSupport", "RunSlotImage", "RunSlotImageArm64"}
+                 "Ec2LaunchSupport", "RunSlotImage", "RunSlotImageArm64",
+                 "CreateFleetSupport", "CreateFleetAmazonImage", "CreateFleetPublicImage"}
 RUN_1522_ATTACKS = {
     "boot a pool slot from a private image this account owns",
     "boot a pool slot from a private image shared from another account",
@@ -379,7 +395,26 @@ RUN_1522_ATTACKS = {
     "map another deployment's home into an engine box",
     "map another deployment's home into a slot booted from the exact slot AMI",
     "launch through another deployment's template whose mapping restores its home",
+    "buy an engine box with an ImageId override of a private image this account owns",
 }
+
+# Paths these templates do NOT close, kept here so the count of denied attacks does not
+# overstate the fence. Each must evaluate as ALLOWED; if one turns denied, move it to ATTACKS
+# and fix the docs that call it open (07-security 7.1, PARAMETERS-60-engines, PR #1527).
+KNOWN_OPEN = [
+    # A CreateFleet BlockDeviceMappings override naming another deployment's home. CreateFleet
+    # lists no snapshot resource; the created volume's ec2:ParentSnapshot is a snapshot ARN
+    # with no owner in it, and the AMI's own root volume has one too, so nothing here can tell
+    # the two apart. Closed only if the instant fleet's launch is authorized against the
+    # caller's RunInstances (then "map another deployment's home into an engine box" applies).
+    ("CreateFleet alone, with a mapping that restores another deployment's home",
+     create_fleet(ENGINE, image("ami-gpu", AMAZON_IMAGE[0]),
+                  [(tf.arn("volume", "new-from-snap"),
+                    {"ec2:ParentSnapshot": tf.arn("snapshot", "snap-o")})])),
+    # A snapshot owned by another account and shared into this one, mapped into a slot.
+    ("map a snapshot shared in from another account into a pool slot",
+     run(SLOT, [snapshot("snap-shared", owned(FOREIGN, owner="444455556666"))])),
+]
 if not RUN_1522_ATTACKS <= {w for w, _ in ATTACKS}:
     raise SystemExit("RUN_1522_ATTACKS names an attack that is not in ATTACKS")
 
@@ -571,7 +606,9 @@ def main():
         ]
         controls = [w for w, _ in ATTACKS if w not in (
             "pass this stack's slot role to a service other than EC2",
-            "ECS TagResource naming no key", "EFS TagResource naming no key")]
+            "ECS TagResource naming no key", "EFS TagResource naming no key",
+            # CreateFleet is 60-engines' grant, not one of these; the #1524 control covers it.
+            "buy an engine box with an ImageId override of a private image this account owns")]
         for what, attack in ATTACKS:
             if what in controls and not allowed_attack(old, attack)[0]:
                 failed += 1
@@ -583,7 +620,8 @@ def main():
         # "denied" above says nothing about the image and snapshot statements.
         before = [st for st in stmts if st.get("Sid") not in RUN_1522_SIDS] + [
             {"Sid": "Ec2LaunchSupport#1524", "Effect": "Allow", "Action": "ec2:RunInstances",
-             "NotResource": "arn:aws:ec2:*:*:instance/*"}]
+             "NotResource": "arn:aws:ec2:*:*:instance/*"},
+            {"Sid": "CreateFleet#1524", "Effect": "Allow", "Action": "ec2:CreateFleet", "Resource": "*"}]
         for what, attack in ATTACKS:
             if what in RUN_1522_ATTACKS and not allowed_attack(before, attack)[0]:
                 failed += 1
@@ -606,7 +644,14 @@ def main():
         print("cfn-cp-ec2-scope-test: %s" % e)
         return 2
 
-    print("%d inventoried requests, %d attacks, %d failure(s)" % (n, len(ATTACKS), failed))
+    for what, attack in KNOWN_OPEN:
+        if allowed_attack(stmts, attack)[0]:
+            print("open  still allowed (known, not fenced here): %s" % what)
+        else:
+            failed += 1
+            print("FAIL  known-open path is now DENIED - move it to ATTACKS and update the docs: %s" % what)
+    print("%d inventoried requests, %d attacks, %d known-open path(s), %d failure(s)" % (
+        n, len(ATTACKS), len(KNOWN_OPEN), failed))
     return 1 if failed else 0
 
 

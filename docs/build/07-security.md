@@ -65,18 +65,21 @@ at once**:
   (`aws:RequestTag`), and the source of a copy must already be in the pool: it cannot
   snapshot a foreign volume or restore a foreign snapshot. `iam:PassRole` names only the
   slot role of its own `40-ec2-pool` stack. What a launch boots from is fenced as well
-  ([#1522](https://github.com/k-k1/agent-fleet/issues/1522)): the image must be Amazon's
-  (`ec2:Owner` = `amazon`, or public) or one of the slot AMIs `40-ec2-pool` names, and a
-  block device mapping may not name a snapshot this account owns, so it cannot boot a slot
-  from another deployment's hibernated home or backup, or from a private image made of one.
-  Three things stay open. A snapshot or private image *shared into* the account from
-  another one passes. The snapshot fence is the negated form (`StringNotEquals` on the
-  account), chosen because whether IAM evaluates an AMI's own snapshot is undocumented and a
-  positive form would then deny every launch; if AWS presented no owner for this account's
-  snapshots, the fence would be silently void. And for the engine boxes both fences hold
-  only if an instant `CreateFleet` authorizes its launch against the caller's
-  `RunInstances`; `CreateFleet` itself is granted on `*`. The live run that settles these is
-  listed in the pull request for #1522.
+  ([#1522](https://github.com/k-k1/agent-fleet/issues/1522)): the image must be owned by
+  Amazon (`ec2:Owner` = `amazon`), be public, or be one of the slot AMIs `40-ec2-pool` names,
+  so no private image of this or another account can be booted unless it is that exact slot
+  AMI. A block device mapping may not name a snapshot this account owns, so it cannot boot a
+  slot from another deployment's hibernated home or backup, or from a private image made of
+  one. `CreateFleet`, the engine boxes' purchase, carries the same image fence for an
+  `ImageId` override. Three things stay open. A snapshot owned by another account and shared
+  into this one may be mapped as an extra disk. The snapshot fence is the negated form
+  (`StringNotEquals` on the account), chosen because whether IAM evaluates an AMI's own
+  snapshot is undocumented and a positive form would then deny every launch; if AWS
+  presented no owner for this account's snapshots, the fence would be silently void. And a
+  `CreateFleet` mapping override is fenced only if the instant fleet authorizes its launch
+  against the caller's `RunInstances` (ADR 0077's assumption): `CreateFleet` names no
+  snapshot, and the created volume's `ec2:ParentSnapshot` is an ARN without an owner. The
+  live run that settles these is listed in the pull request for #1522.
 - On every target it unwraps the DEKs and injects them in plaintext (§7.6).
 
 It does not spread between companies, because those are separate deployments — which is

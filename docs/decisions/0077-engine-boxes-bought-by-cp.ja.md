@@ -2200,7 +2200,9 @@ image 役の実測（ADR 0077 P2）からの類推である。
 `Ec2RunPublicImage`・`Ec2RunForeignOwnedSnapshot`）。決定 7 の `resolve:ssm:` が起動時に選ぶ GPU AMI は
 名指せる ID を持たないので、エンジン機は Amazon のイメージが `ec2:Owner` = `amazon` か
 `ec2:Public` = `true` で通ることに頼る。ブロックデバイスマッピングでこのアカウントが持つスナップショットを
-指せば拒まれる。どちらもエンジンに効くのは、instant フリートの起動が呼び出し元の `RunInstances` で
-認可される場合だけで、上の注記と同じ未確認の問いである。`CreateFleet` そのものは今も `*` に許されており、
-サービス認可リファレンスはそれにスナップショットのリソースを挙げないので、よその `SnapshotId` を持つ
-フリートの上書きは `CreateFleet` では囲えない。実機確認は #1522 の PR に挙げてある。
+指せば拒まれる。`CreateFleet` そのものにも同じイメージの柵を掛けた（`CpIngestPolicy` の
+`CreateFleetAmazonImage` / `CreateFleetPublicImage`）ので、`ImageId` の上書きは起動が改めて検査されなくても
+拒まれる。マッピングの上書きに柵が効くのは、instant フリートの起動が呼び出し元の `RunInstances` で
+認可される場合だけで、上の注記と同じ未確認の問いである。サービス認可リファレンスは `CreateFleet` に
+スナップショットのリソースを挙げず、作られるボリュームの `ec2:ParentSnapshot` は所有者を含まない ARN で、
+AMI 自身のルートボリュームにも付くからだ。実機確認は #1522 の PR に挙げてある。

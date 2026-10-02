@@ -411,9 +411,11 @@ Resources:
               # slot of its own from a copy of someone else's volume and read it over
               # SendCommand (#1522). Every other type (subnet, security group, network
               # interface, launch template, the root volume it creates, a spot request, ...)
-              # is in Ec2LaunchSupport. A foreign launch template adds nothing a request
-              # cannot already say, except an image, snapshots and an instance profile, and
-              # those are fenced on their own (PassRole names only this deployment's roles).
+              # is in Ec2LaunchSupport. A foreign launch template also carries user data, network
+              # settings and metadata options; none is constrained by IAM here, and a request
+              # on this pool's own template can set each of them directly, so a foreign one
+              # grants nothing more. Its image, snapshots and instance profile are fenced on
+              # their own (PassRole names only this deployment's roles).
               # Listing the support types one by one would turn a type AWS adds to
               # RunInstances into a silent AccessDenied on every slot grow.
               - Sid: Ec2RunInPool
