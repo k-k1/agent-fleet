@@ -1,4 +1,4 @@
-# The CP's main port trusts identity and forwarding headers from the ingress (09 §9.3),
+# The CP's main port trusts identity and forwarding headers from the ingress (09 sec.9.3),
 # so on a cluster that also runs other workloads only the load balancer may reach it.
 # The load balancer reaches the pod directly (container-native load balancing) from
 # Google's front-end and health-check ranges. Workspaces reach the internal listener

@@ -55,7 +55,7 @@ spec:
             - name: CP_ADDR
               value: "0.0.0.0:8099"
             # The workspace-only listener. The internal Service targets this port alone
-            # (decision 8, and the exception to 09 §9.3).
+            # (decision 8, and the exception to 09 sec.9.3).
             - name: AF_CP_INTERNAL_LISTEN
               value: ":8098"
             - name: AF_CP_INTERNAL_URL
