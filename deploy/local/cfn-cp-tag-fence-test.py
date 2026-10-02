@@ -46,6 +46,9 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 CP = os.path.join(ROOT, "control-plane")
 REGION, ACCOUNT, POOL = "ap-northeast-1", "111122223333", "af-test-cluster"
 PARAMS = {"Cluster": POOL, "AWS::Region": REGION, "AWS::AccountId": ACCOUNT}
+# The 40-ec2-pool stack's own slot role, as !GetAtt resolves it there.
+SLOT_ROLE_ARN = "arn:aws:iam::%s:role/af-test-pool-slot" % ACCOUNT
+GETATT = {"SlotRole.Arn": SLOT_ROLE_ARN}
 
 
 # --- template loading -------------------------------------------------------------------
@@ -76,6 +79,9 @@ def resolve(v):
         (k, x), = v.items()
         if k == "!Ref":
             return PARAMS.get(x, "<unresolved:%s>" % x)
+        if k == "!GetAtt":
+            name = ".".join(x) if isinstance(x, list) else x
+            return GETATT.get(name, "<opaque:!GetAtt %s>" % name)
         if k == "!Sub" and isinstance(x, str):
             def sub(m):
                 return PARAMS.get(m.group(1), "<unresolved:%s>" % m.group(1))
@@ -89,20 +95,21 @@ def resolve(v):
 
 
 def cp_role_statements():
-    """Every statement attached to CpTaskRole: its inline policies plus the 60-engines
-    policy that names it. Only those that mention ec2 tag writes matter, but all are
-    returned so an Allow added elsewhere is not missed."""
+    """Every statement attached to CpTaskRole: its inline policies plus the policies other
+    stacks attach to it (40-ec2-pool, 60-engines). Only some of them matter to any one
+    check, but all are returned so an Allow added elsewhere is not missed."""
     cfn = os.path.join(ROOT, "deploy", "aws", "ecs", "cfn")
     out = []
     with open(os.path.join(cfn, "20-platform.yaml"), encoding="utf-8") as fh:
         platform = yaml.load(fh, Loader=CfnLoader)
     for pol in platform["Resources"]["CpTaskRole"]["Properties"]["Policies"]:
         out += pol["PolicyDocument"]["Statement"]
-    with open(os.path.join(cfn, "60-engines.yaml"), encoding="utf-8") as fh:
-        engines = yaml.load(fh, Loader=CfnLoader)
-    for res in engines["Resources"].values():
-        if res.get("Type") == "AWS::IAM::Policy" and "CpTaskRoleArn" in repr(res["Properties"]["Roles"]):
-            out += res["Properties"]["PolicyDocument"]["Statement"]
+    for tpl in ("40-ec2-pool.yaml", "60-engines.yaml"):
+        with open(os.path.join(cfn, tpl), encoding="utf-8") as fh:
+            doc = yaml.load(fh, Loader=CfnLoader)
+        for res in doc["Resources"].values():
+            if res.get("Type") == "AWS::IAM::Policy" and "CpTaskRoleArn" in repr(res["Properties"]["Roles"]):
+                out += res["Properties"]["PolicyDocument"]["Statement"]
     return [resolve(s) for s in out]
 
 
@@ -175,7 +182,10 @@ def _cond(op, key, want, ctx, pick):
 def _matches(stmt, action, resource, ctx, pick):
     if not any(_glob(a, action) for a in _list(stmt.get("Action", []))):
         return False
-    if not any(fnmatch.fnmatchcase(resource, r) for r in _list(stmt.get("Resource", []))):
+    if "NotResource" in stmt:
+        if any(fnmatch.fnmatchcase(resource, r) for r in _list(stmt["NotResource"])):
+            return False
+    elif not any(fnmatch.fnmatchcase(resource, r) for r in _list(stmt.get("Resource", []))):
         return False
     for op, keys in (stmt.get("Condition") or {}).items():
         for key, want in keys.items():
