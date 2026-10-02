@@ -1,7 +1,7 @@
 ---
 audience: "everyone, but written for whoever is looking for a knob and cannot find it"
 source_of_truth: "the Console for personal and tenant settings; `deploy/compose/.env.example` for deployment variables"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # Settings — where things are configured
@@ -59,6 +59,7 @@ value you set is not the value in force, look one layer out.
 | Tab | Configures |
 |---|---|
 | Members | the roster; per-member resources, sessions and operations |
+| Engine access | per role (chat `llm`, image generation `image`) of the deployment's self-hosted engines: every member, or only the members you tick — within what the deployment administrator allows the tenant |
 | Sessions | everything running in the tenant right now |
 | Limits & idle | the limits in force (read-only — a deployment administrator sets them) |
 | Sign-in methods | your own IdP or GitHub organisation as a way in (needs approval) |
@@ -66,9 +67,11 @@ value you set is not the value in force, look one layer out.
 | Allowed networks | where members may connect from |
 | Integration OAuth apps | your tenant's own OAuth apps for GitHub / Bitbucket |
 | MCP distribution | integration servers handed to every member |
+| Branch naming rules | the tenant's default for naming new branches and choosing their base, per repository pattern (a JSON list); members' Workspaces pick it up within five minutes. Advice only — a name that does not follow it gets a warning, never a refusal |
 | Audit | who changed what, when |
 | Running time | per-member workspace uptime, exportable, plus an hour-by-hour heatmap of the whole tenant |
 | Cloud cost | the tenant's cloud spend |
+| Inference engine models | opens the model catalogue to add models to the self-hosted engines (only where the deployment administrator granted the tenant model ingest; enabling a model stays with the deployment administrator) |
 
 ## Deployment variables
 
