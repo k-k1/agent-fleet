@@ -44,7 +44,7 @@ func settle(aws awsRunner, ssoSession string, snap CacheState, deadline time.Tim
 		snap = cur
 		// A cache that keeps moving must not turn this into back-to-back aws starts.
 		time.Sleep(loginPollInterval)
-		c, err := exportCreds(aws, ssoOnlyProfile)
+		c, err := exportSSOCreds(aws, ssoSession)
 		if err == nil {
 			return snap, c, nil
 		}
@@ -104,7 +104,7 @@ func consoleLogin(aws awsRunner, sso ssoInfo, snap CacheState, o ExecOptions, fi
 		if (state != requestGone || lost) && !(cur != recorded && cur.Unexpired(time.Now())) {
 			continue
 		}
-		c, err := exportCreds(aws, ssoOnlyProfile)
+		c, err := exportSSOCreds(aws, sso.Session)
 		if err == nil {
 			return c, nil
 		}

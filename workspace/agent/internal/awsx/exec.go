@@ -426,7 +426,7 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	// Read before the check, not after: a login landing between the two must not be
 	// recorded as the cache that failed (ADR 0102 decision 1).
 	snap := ReadCacheState(sso.Session)
-	creds, err := exportCreds(aws, ssoOnlyProfile)
+	creds, err := exportSSOCreds(aws, sso.Session)
 	if err != nil && !loginNeeded(err.Error()) {
 		return "", nil, nil, fmt.Errorf("could not get credentials for profile %q: %v", o.Profile, err)
 	}
@@ -444,7 +444,7 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 			if lerr := deviceLogin(awsBin, aws.env, ssoOnlyProfile, o.Stderr); lerr != nil {
 				return "", nil, nil, fmt.Errorf("aws sso login for profile %s: %w", o.Profile, lerr)
 			}
-			if creds, err = exportCreds(aws, ssoOnlyProfile); err != nil {
+			if creds, err = exportSSOCreds(aws, sso.Session); err != nil {
 				return "", nil, nil, fmt.Errorf("credentials for profile %q after login: %w", o.Profile, err)
 			}
 		case consoleEligible(sso, o):

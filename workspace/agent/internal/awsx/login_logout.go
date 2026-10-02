@@ -4,15 +4,16 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
-	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf16"
 
@@ -22,75 +23,77 @@ import (
 
 // Logging out of one Settings profile. `aws sso logout` cannot be pointed at one profile:
 // it revokes and deletes every token in ~/.aws/sso/cache and every SSO role credential in
-// ~/.aws/cli/cache whatever --profile says (measured with aws-cli 2.36.46), which would
-// sign the member out of every other profile too. So the CLI is run against a throwaway
-// HOME that holds this profile's token alone, and the Agent deletes this profile's two
-// cache files itself.
+// ~/.aws/cli/cache whatever --profile says (measured with aws-cli 2.36.46), and it exits 0
+// when AWS refuses the revoke, so its status says nothing. The Agent therefore calls the
+// portal's Logout API for this profile's token itself and deletes this profile's cache files.
 
 // ssoLogoutTimeout bounds the revoke call. A logout that cannot reach AWS still signs out
-// here; it only leaves the portal session to run to its end.
+// here; it only leaves the session at AWS to run to its end.
 const ssoLogoutTimeout = 30 * time.Second
 
+// attemptExitWait bounds how long a logout waits for an ended login's CLI to exit. The kill
+// is SIGKILL to its process group, so this is only scheduling latency.
+const attemptExitWait = 5 * time.Second
+
 type profileLogoutWire struct {
-	// Revoked is true once AWS accepted the revoke of the cached token.
+	// Revoked is true once AWS answered the Logout call with success.
 	Revoked bool `json:"revoked"`
 	// NoToken: there was no cached token, so there was nothing to revoke.
 	NoToken bool   `json:"noToken,omitempty"`
 	Message string `json:"message,omitempty"`
 }
 
-// revokeSSOToken runs `aws sso logout` with HOME pointed at a directory holding only the
-// token at cachePath, so the CLI revokes that token and nothing else. Overridden by tests.
-var revokeSSOToken = func(bin, cachePath string) error {
-	home, err := os.MkdirTemp("", "af-aws-logout-")
-	if err != nil {
-		return err
+// ssoRegionRe is what a token's region must look like before it names a host the token is
+// sent to: the cache file is writable by every agent.
+var ssoRegionRe = regexp.MustCompile(`^[a-z]{2}(-gov)?-[a-z]+-[0-9]+$`)
+
+// ssoPortalURL is the portal endpoint of region; overridden by tests.
+var ssoPortalURL = func(region string) string {
+	host := "portal.sso." + region + ".amazonaws.com"
+	if strings.HasPrefix(region, "cn-") {
+		host += ".cn"
 	}
-	defer os.RemoveAll(home)
-	b, err := os.ReadFile(cachePath)
-	if err != nil {
-		return err
+	return "https://" + host
+}
+
+// revokeSSOToken asks AWS to end the session the cached token at cachePath belongs to
+// (the SSO portal's Logout: POST /logout with the access token in x-amz-sso_bearer_token).
+// fallbackRegion is used when the cache records none. The token never leaves this function
+// except in that header.
+func revokeSSOToken(cachePath, fallbackRegion string) error {
+	var doc struct {
+		AccessToken string `json:"accessToken"`
+		Region      string `json:"region"`
 	}
-	dir := filepath.Join(home, ".aws", "sso", "cache")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+	if !readJSON(cachePath, &doc) || doc.AccessToken == "" {
+		return fmt.Errorf("the cached login holds no access token")
 	}
-	if err := os.WriteFile(filepath.Join(dir, filepath.Base(cachePath)), b, 0o600); err != nil {
-		return err
+	region := doc.Region
+	if region == "" {
+		region = fallbackRegion
 	}
-	cfg := filepath.Join(home, "config")
-	if err := os.WriteFile(cfg, nil, 0o600); err != nil {
-		return err
+	if !ssoRegionRe.MatchString(region) {
+		return fmt.Errorf("the cached login names no usable region (%q)", region)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), ssoLogoutTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "sso", "logout")
-	cmd.Env = withHome(verifierEnv(baseEnv(os.Environ()), cfg), home)
-	out, err := cmd.CombinedOutput()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ssoPortalURL(region)+"/logout", nil)
 	if err != nil {
-		// The CLI's own error (an unreachable endpoint, a token AWS no longer knows); the
-		// token is never printed by it.
-		msg := strings.TrimSpace(string(out))
-		if len(msg) > 300 {
-			msg = msg[:300]
-		}
-		if msg == "" {
-			msg = err.Error()
-		}
-		return errors.New(msg)
+		return err
 	}
-	return nil
-}
-
-// withHome replaces HOME in env.
-func withHome(env []string, home string) []string {
-	out := make([]string, 0, len(env)+1)
-	for _, kv := range env {
-		if !strings.HasPrefix(kv, "HOME=") {
-			out = append(out, kv)
-		}
+	req.Header.Set("x-amz-sso_bearer_token", doc.AccessToken)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("could not reach AWS: %v", err)
 	}
-	return append(out, "HOME="+home)
+	defer res.Body.Close()
+	if res.StatusCode == http.StatusOK {
+		return nil
+	}
+	// An expired access token is refused (401) even while the session behind it could still
+	// be renewed: that session then runs to its end.
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 300))
+	return fmt.Errorf("AWS answered %d: %s", res.StatusCode, strings.TrimSpace(string(body)))
 }
 
 // ssoRoleCachePath is where the CLI keeps the role credentials it got for an sso-session
@@ -142,6 +145,41 @@ func pyJSONString(s string) string {
 	return b.String()
 }
 
+// roleCachePaths are the role-credential files the profile's logins may have written. The
+// managed block in ~/.aws/config and Settings can disagree for a while (Settings is cached
+// before the block is rewritten, and a write can fail), and af-aws-exec keys its cache by
+// Settings while a plain `aws --profile` keys it by the block, so both go.
+func roleCachePaths(sp Profile, ssoSession string) []string {
+	out := []string{ssoRoleCachePath(sp.AccountID, sp.RoleName, ssoSession)}
+	keys := map[string]string{}
+	if err := readINISection(ConfigPath(), configPicker("profile", sp.Name), keys); err == nil &&
+		keys["sso_session"] == ssoSession && keys["sso_account_id"] != "" && keys["sso_role_name"] != "" {
+		if p := ssoRoleCachePath(keys["sso_account_id"], keys["sso_role_name"], ssoSession); !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// endLoginFor ends the login attempt running for ssoSession, if any, and waits for its CLI
+// to exit so the token it might be writing cannot land after the logout. A login started
+// after this point is a new login, and it wins.
+func endLoginFor(ssoSession string) {
+	loginAttempts.Lock()
+	a := loginAttempts.current[ssoSession]
+	loginAttempts.Unlock()
+	if a == nil {
+		return
+	}
+	a.end(attemptCancelled, "logged out")
+	if a.done != nil {
+		select {
+		case <-a.done:
+		case <-time.After(attemptExitWait):
+		}
+	}
+}
+
 // HandleProfileLogout is POST /aws-login/profiles/{name}/logout: the "Log out" of a Settings
 // profile. It ends a running login for the profile, revokes the cached token with AWS, and
 // deletes the token and the role credentials cached for it. Other profiles' caches are not
@@ -160,29 +198,25 @@ func HandleProfileLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ssoSession := "af-" + sp.Name
-	loginAttempts.Lock()
-	a := loginAttempts.current[ssoSession]
-	loginAttempts.Unlock()
-	if a != nil {
-		a.end(attemptCancelled, "logged out")
+	endLoginFor(ssoSession)
+	// Held across the revoke and the deletes: an af-aws-exec run already turning the token
+	// into role credentials finishes first, and the next one finds nothing.
+	if unlock, err := lockSSOCache(ssoSession, syscall.LOCK_EX); err == nil {
+		defer unlock()
+	} else {
+		log.Printf("aws-login: logout profile=%s: cache lock: %v", sp.Name, err)
 	}
 
 	var out profileLogoutWire
 	token := ssoCachePath(ssoSession)
 	if _, err := os.Stat(token); err != nil {
 		out.NoToken = true
+	} else if err := revokeSSOToken(token, sp.SSORegion); err != nil {
+		out.Message = err.Error()
 	} else {
-		bin, err := LoginAWSBin()
-		if err == nil {
-			err = revokeSSOToken(bin, token)
-		}
-		if err != nil {
-			out.Message = err.Error()
-		} else {
-			out.Revoked = true
-		}
+		out.Revoked = true
 	}
-	for _, p := range []string{token, ssoRoleCachePath(sp.AccountID, sp.RoleName, ssoSession)} {
+	for _, p := range append([]string{token}, roleCachePaths(sp, ssoSession)...) {
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "remove_failed", err.Error())
 			return

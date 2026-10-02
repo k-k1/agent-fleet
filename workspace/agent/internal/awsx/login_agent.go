@@ -61,6 +61,9 @@ type loginAttempt struct {
 	message string
 	ended   time.Time
 	stop    context.CancelFunc
+	// done is closed once the CLI process has exited, so nothing it writes can land later.
+	// nil for an attempt that never had a process.
+	done chan struct{}
 }
 
 func (a *loginAttempt) live() bool {
@@ -586,7 +589,7 @@ func startLoginAttempt(bin, ssoSession, requestID string, sp Profile) (*loginAtt
 	cmd.Stdout, cmd.Stderr = pw, pw
 
 	a := &loginAttempt{id: newAttemptID(), requestID: requestID, ssoSession: ssoSession, profile: sp.Name,
-		allowed: allowedDeviceHosts(sp), phase: attemptStarting, stop: stop}
+		allowed: allowedDeviceHosts(sp), phase: attemptStarting, stop: stop, done: make(chan struct{})}
 
 	loginAttempts.Lock()
 	prev := loginAttempts.current[ssoSession]
@@ -603,12 +606,14 @@ func startLoginAttempt(bin, ssoSession, requestID string, sp Profile) (*loginAtt
 		pw.Close()
 		os.RemoveAll(dir)
 		a.end(attemptFailed, "could not start aws sso login: "+err.Error())
+		close(a.done)
 		return a, nil
 	}
 	pw.Close()
 	go readLoginOutput(a, pr)
 	go func() {
 		err := cmd.Wait()
+		defer close(a.done)
 		pr.Close()
 		os.RemoveAll(dir)
 		if err == nil && ReadCacheState(ssoSession).Unexpired(time.Now()) {

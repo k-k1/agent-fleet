@@ -26,6 +26,8 @@ export function useProfileLogout(): (p: Pick<AwsLoginTarget, "name" | "label">) 
       });
       if (!ok) return false;
       const r = await logoutProfile(p.name);
+      // Another press of the same profile is already running; its toast will say how it went.
+      if (!r.ok && r.code === "busy") return false;
       if (!r.ok) {
         const key = REFUSALS[r.code];
         toast(key ? tr(key) : tr("awslogin.logout_failed", { msg: r.message || r.code }));

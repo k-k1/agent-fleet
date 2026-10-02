@@ -263,7 +263,8 @@ never warned about.
 popover of the WS bar's AWS badge. After you confirm, the workspace ends that profile's login with AWS and deletes
 its cached login and role credentials; your other profiles stay signed in. Credentials a running command already
 received stay valid until they expire — AWS cannot recall them — so stop that command if it matters. If AWS cannot
-be reached, the workspace is signed out all the same and the Console says so; the login may then stay valid at AWS
+be reached or refuses (it does when the access token has already expired, as for a **Renews on use** row), the
+workspace is signed out all the same and the Console says so; the login may then stay valid at AWS
 until it ends. Do not use `aws sso logout` for this: it signs out every profile at once, whatever `--profile` says.
 
 Every profile and host row has **Edit**, which opens the same form filled in and saves it in place. Edit rather

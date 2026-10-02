@@ -134,6 +134,38 @@ func markerPath(ssoSession string) string {
 }
 
 // lockLogin takes the one lock every reader-writer of the directory shares.
+// lockSSOCache locks one sso-session's cached login: a logout takes it exclusively, an
+// af-aws-exec run takes it shared while it turns the token into role credentials. Without it
+// a run that read the token just before a logout writes fresh role credentials (and possibly
+// a refreshed token) back after the logout deleted them, and the profile works on. The
+// member's own `aws` calls do not take it; the revoke at AWS is what stops those.
+func lockSSOCache(ssoSession string, how int) (func(), error) {
+	if err := os.MkdirAll(loginDir(), 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(filepath.Join(loginDir(), loginFileKey(ssoSession)+".cache.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), how); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+	}, nil
+}
+
+// exportSSOCreds is exportCreds for the SSO-only profile, under the session's shared cache
+// lock. A lock that cannot be taken does not fail the run: it only reopens the race above.
+func exportSSOCreds(aws awsRunner, ssoSession string) (processCreds, error) {
+	if unlock, err := lockSSOCache(ssoSession, syscall.LOCK_SH); err == nil {
+		defer unlock()
+	}
+	return exportCreds(aws, ssoOnlyProfile)
+}
+
 func lockLogin() (func(), error) {
 	if err := os.MkdirAll(loginDir(), 0o700); err != nil {
 		return nil, err
