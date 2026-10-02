@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudlogin"
@@ -161,6 +162,8 @@ type consoleAttempt struct {
 	// gone is set (under attemptsMu) once the process is gone, so an attempt whose process
 	// ended before Start returned is never registered.
 	gone bool
+	// exchanged is set once gcloud took a code: only such a login is a new sign-in.
+	exchanged atomic.Bool
 }
 
 var (
@@ -187,6 +190,10 @@ func startLoginAttempt(bin, requestID string, p Profile, force bool) (*cloudlogi
 	ca := &consoleAttempt{p: p, hold: hold}
 	var id string
 	var noURL *time.Timer
+	// urlOnce lets go of the start's lock the first time the URL is seen, and only then:
+	// Parse runs again on every later output (the whole output so far, URL included), and
+	// by then the lock it would release is the one the code's submit took for the exchange.
+	var urlOnce sync.Once
 	// The last output, kept only in memory to word a failure; never logged.
 	var outMu sync.Mutex
 	var lastOut string
@@ -204,7 +211,7 @@ func startLoginAttempt(bin, requestID string, p Profile, force bool) (*cloudlogi
 			u, err := signInURL(out)
 			if u != "" {
 				// gcloud now waits for the code and writes nothing until it has one.
-				hold.release()
+				urlOnce.Do(hold.release)
 			}
 			return u, "", err
 		},
@@ -212,7 +219,7 @@ func startLoginAttempt(bin, requestID string, p Profile, force bool) (*cloudlogi
 			outMu.Lock()
 			out := lastOut
 			outMu.Unlock()
-			return finishLogin(p, hold, err, out)
+			return finishLogin(bin, p, hold, err, out, ca.exchanged.Load())
 		},
 		Cleanup: func() {
 			hold.close()
@@ -244,10 +251,16 @@ func startLoginAttempt(bin, requestID string, p Profile, force bool) (*cloudlogi
 }
 
 // finishLogin decides how a login process ended, under the root's lock (taken back if the
-// attempt let go of it): done only when gcloud exited cleanly and the configuration now
-// selects an account with a user credential, the profile's own when it names one. A done
-// login is recorded, which is what settles a request filed for a rejected credential.
-func finishLogin(p Profile, hold *rootHold, err error, out string) (bool, string) {
+// attempt let go of it): done only when gcloud exited cleanly, the configuration now
+// selects an account with a user credential (the profile's own when it names one), and a
+// token can be minted from it in the clean environment — decision 3 step 5's "print-access-
+// token succeeds", checked once here rather than on every sweep. A done login is recorded;
+// that mark is what settles a request (loginBackend.Landed) — but only for a login that
+// exchanged a code (exchanged). One that ended at once on a stored credential is done for
+// the member, and records nothing: it is the same credential, possibly the very one Google
+// rejected (gcloud reuses a cached access token without asking Google), and that must not
+// settle a request filed for the rejection (step 5).
+func finishLogin(bin string, p Profile, hold *rootHold, err error, out string, exchanged bool) (bool, string) {
 	if err != nil {
 		msg := "gcloud auth login did not complete"
 		var ee *exec.ExitError
@@ -276,6 +289,20 @@ func finishLogin(p Profile, hold *rootHold, err error, out string) (bool, string
 	}
 	if kind, err := credentialType(root, account); err != nil || kind != "authorized_user" {
 		return false, "the login finished but left no user credential"
+	}
+	// The user's own credential, without the profile's impersonation: whether the login
+	// works is the question here; a permission the account lacks on the service account is
+	// the waiting run's to report, with its reason.
+	user := p
+	user.ImpersonateServiceAccount = ""
+	if _, err := mint(bin, AgentEnv(os.Environ(), root), user); err != nil {
+		if errors.Is(err, ErrLoginRequired) {
+			return false, "the login finished but Google refused the credential: " + anyURL.ReplaceAllString(err.Error(), "<url>")
+		}
+		return false, "the login finished but no token could be minted with it: " + anyURL.ReplaceAllString(err.Error(), "<url>")
+	}
+	if !exchanged {
+		return true, ""
 	}
 	if err := recordLogin(root, account); err != nil {
 		return false, "the login finished but could not be recorded: " + err.Error()
@@ -505,6 +532,7 @@ func HandleProfileLoginCode(w http.ResponseWriter, r *http.Request) {
 	}
 	// From here gcloud redeems the code and writes the configuration: the attempt keeps the
 	// lock until its process has exited.
+	ca.exchanged.Store(true)
 	ca.hold.take(unlock)
 	log.Printf("gcp-login: code profile=%s attempt=%s relayed=%t", name, AttemptRef(id), cloudlogin.RelayedByCP(r))
 	httpx.WriteJSON(w, http.StatusOK, struct {

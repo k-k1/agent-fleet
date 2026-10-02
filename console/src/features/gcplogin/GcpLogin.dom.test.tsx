@@ -169,6 +169,24 @@ describe("Google Cloud login toast and modal", () => {
     expect(document.body.textContent).toContain("Another sign-in was started");
   });
 
+  it("never carries a code typed for one attempt over to the next", async () => {
+    await render(<GcpLoginHost />);
+    await act(async () => useGcpLoginStore.getState().open(prod.id as string));
+    attemptReplies = [{ phase: "authorize", url: URL_ }, { phase: "failed", message: "x" }];
+    await act(async () => button("Log in", modalFoot()).click());
+    await tick(400);
+    await typeCode(CODE);
+    await tick(1600);
+    expect(codeField()).toBeNull();
+    attemptReplies = [{ phase: "authorize", url: URL_ + "2" }];
+    await act(async () => button("Start again", modalFoot()).click());
+    await tick(400);
+    expect(codeField()!.value).toBe("");
+    expect(button("Submit code").disabled).toBe(true);
+    await act(async () => button("Submit code").click());
+    expect(calls.some((c) => c.path.includes(CODE) || c.body.includes(CODE))).toBe(false);
+  });
+
   it("says why a code was refused and lets the member try again", async () => {
     await render(<GcpLoginHost />);
     await act(async () => useGcpLoginStore.getState().open(prod.id as string));

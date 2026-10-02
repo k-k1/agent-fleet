@@ -427,19 +427,26 @@ read in SDK 587.0.0's source and played by a fake in the tests.
   An attempt that prints no URL within a minute ends, so a gcloud stuck before its URL cannot
   hold the lock for the attempt's whole fifteen minutes. A route waits for the lock at most ten
   seconds and otherwise answers "busy".
-- **"Resolved" (step 5) as built.** The Agent records a mark per account each time a login
-  completes through it (Console or terminal) in `gcloud/.agent-fleet-logins.json`. A request
-  records the profile's version (id, login method, Settings account — decision 1's reset triple),
-  the selected account, whether a user credential is stored for it, and that mark. A request filed
-  while a user credential was selected was filed because Google rejected it: it starts with
-  `--force` and is resolved only by a newer mark. Any other request is resolved once an account with
-  a user credential is selected. A request whose profile version changed is dropped.
-  "`print-access-token` succeeds" is checked by the waiting run itself (its mint), not by the
-  Agent's sweep: the sweep runs on every list and poll and a gcloud start costs about a second, so
-  it stops at the local facts that precede the mint; a run whose mint still fails files again.
+- **"Resolved" (step 5) as built.** The Agent records a mark per account in
+  `gcloud/.agent-fleet-logins.json` for a login that exchanged a code — a Console attempt that
+  took one, or a terminal login — and only after a token was minted from the user's credential
+  in the clean environment (`config config-helper`, without the profile's impersonation). That
+  mint is step 5's "`print-access-token` succeeds", run once per login instead of on every sweep
+  (a sweep runs on every list and poll, and a gcloud start costs about a second). A request
+  records the profile's version (id, login method, Settings account — decision 1's reset
+  triple), the selected account, whether a user credential is stored for it, and that mark. It
+  is resolved only by a newer mark for an account that holds a user credential; a request whose
+  profile version changed is dropped. A credential that appears in the store any other way, and
+  a login gcloud ends at once on the stored credential (no URL, no code), settle nothing: the
+  latter is done for the member but may be the very credential Google rejected, which gcloud
+  reuses without asking Google. A request filed while a user credential was selected was filed
+  because Google rejected it, and starts with `--force`. A Console login whose verification mint
+  fails ends as failed.
 - **What is logged and audited.** The Agent's log and the CP's audit name the profile and an
   attempt reference (the first 8 hex digits of the id's SHA-256), never the attempt id — whoever
-  holds it can read the sign-in URL — and never the URL or the code. The audit row's detail says
+  holds it can read the sign-in URL — and never the URL or the code. The Agent's access log
+  replaces the id in an `…/attempts/<id>` path by the same reference and leaves out a login
+  route's query. The audit row's detail says
   `via relay`. The code route's body is bounded to 4 KiB at the CP and at the Agent, and a code must
   be one line of the characters a Google code uses. The CP's error log replaces a gcp-login attempt
   id in a relayed path by its reference and drops the Agent URL from a transport error.

@@ -1,5 +1,5 @@
 // 日本語 カタログ / ドメイン: tools
-// キー接頭辞: env, mcp, pmcp, git, tracker, ssm, tts, mem, gcp, gcplogin
+// Key prefixes: env, mcp, pmcp, git, tracker, ssm, tts, mem, gcp, gcplogin
 //
 // ⚠️ 追記は**自分のドメインのファイルだけ**に行う（ADR 0067 決定 4）。分割前は 4,700 行の
 // 1 ファイルで、フロントの並列セッションが全員ここへ追記＝毎回確実に衝突していた。

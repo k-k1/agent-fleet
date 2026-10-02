@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudlogin"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
@@ -57,6 +58,17 @@ func fakeGcloudLogin(dir string, args []string) int {
 		if os.Getenv("CLOUDSDK_CORE_DISABLE_FILE_LOGGING") != "true" {
 			appendTo(filepath.Join(cfg, "logs", "gcloud.log"), s)
 		}
+	}
+	// The verification mint after a login (finishLogin): config-helper with the token.
+	if len(args) >= 2 && args[0] == "config" && args[1] == "config-helper" {
+		appendTo(filepath.Join(dir, "mints"), strings.Join(args, " "))
+		if f := rd("mint-fail"); f != "" {
+			fmt.Fprintln(os.Stderr, f)
+			return 1
+		}
+		fmt.Printf(`{"credential":{"access_token":%q,"token_expiry":%q}}`+"\n", rd("access"),
+			time.Now().Add(55*time.Minute).UTC().Format(time.RFC3339))
+		return 0
 	}
 	appendTo(filepath.Join(dir, "login-args"), strings.Join(args, " "))
 	appendTo(filepath.Join(dir, "login-env"), "CLOUDSDK_CONFIG="+cfg+
@@ -108,11 +120,18 @@ func fakeGcloudLogin(dir string, args []string) int {
 	if acct == "" {
 		acct = rd("login-account")
 	}
+	// "slow" stretches the exchange so a test can look at the lock while gcloud still runs.
+	if has("slow") {
+		time.Sleep(300 * time.Millisecond)
+	}
 	// gcloud asks before it overwrites a stored credential; stdin is closed by then, so the
 	// default (yes) is taken.
 	fmt.Fprint(os.Stderr, "Do you wish to proceed and overwrite existing credentials?\n\nDo you want to continue (Y/n)?  ")
 	rest, _ := in.ReadString('\n')
 	appendTo(filepath.Join(dir, "after-code"), strconv.Quote(rest))
+	if has("slow") {
+		time.Sleep(1500 * time.Millisecond)
+	}
 	refresh := rd("refresh")
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(cfg, "credentials.db")+"?_pragma=busy_timeout(5000)")
 	if err != nil {
@@ -236,6 +255,7 @@ func setupLogin(t *testing.T, ps ...Profile) *loginEnv {
 	l.url, l.code, l.refresh = syntheticURL(t), "4/0"+randHex(t, 30), "1//"+randHex(t, 24)
 	l.put(t, "url", l.url)
 	l.put(t, "refresh", l.refresh)
+	l.put(t, "access", l.token)
 	l.put(t, "login-account", "picked@example.com")
 	sum := sha256.Sum256([]byte(l.code))
 	l.put(t, "code-sha", hex.EncodeToString(sum[:]))
@@ -294,7 +314,8 @@ func (l *loginEnv) do(t *testing.T, method, path, body string) (int, map[string]
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("X-AF-Relay", "cp")
 	rec := httptest.NewRecorder()
-	l.mux.ServeHTTP(rec, req)
+	// Through the Agent's own access log, as main serves the routes.
+	httpx.LogRequests(l.mux).ServeHTTP(rec, req)
 	var out map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
 	return rec.Code, out
@@ -747,6 +768,7 @@ func TestWaitEndsWithTheReasonWhenALoginCannotHelp(t *testing.T) {
 	waitForFile(t, logins.RequestPath(ConfigName("prod")))
 	l.write(t, "fail", "ERROR: (gcloud.config.config-helper) PERMISSION_DENIED: Permission 'iam.serviceAccounts.getAccessToken' denied")
 	addCredential(t, "dev@example.com", "authorized_user")
+	completedLogin(t, "dev@example.com")
 	var err error
 	select {
 	case err = <-done:
@@ -768,7 +790,8 @@ func TestLandedRules(t *testing.T) {
 		want          bool
 	}{
 		{"no credential, still none", none, none, false},
-		{"no credential, now one", in, none, true},
+		{"no credential, now one after a login", in, none, true},
+		{"no credential, one written by hand", LoginState{Profile: "v1", Account: "a@example.com", Credential: true}, none, false},
 		{"rejected, same credential", in, in, false},
 		{"rejected, a login completed", LoginState{Profile: "v1", Account: "a@example.com", Credential: true, Login: "m2"}, in, true},
 		{"profile changed", LoginState{Profile: "v2"}, in, true},
@@ -799,4 +822,125 @@ func envMap(env []string) map[string]string {
 		}
 	}
 	return m
+}
+
+// completedLogin records a login of account the way a finished login does, under the lock.
+func completedLogin(t *testing.T, account string) {
+	t.Helper()
+	root, unlock, err := lockRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	if err := recordLogin(root, account); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestOnlyAVerifiedLoginSettlesARequest: a credential that appears in the store without a
+// login settles nothing, and neither does a login whose mint Google refuses (decision 3
+// step 5: resolved when a token can be minted).
+func TestOnlyAVerifiedLoginSettlesARequest(t *testing.T) {
+	l := setupLogin(t, prod())
+	o := execOpts(l.env, prod())
+	o.Login, o.ConsoleLogin, o.ConsoleWait = "auto", true, 100*time.Millisecond
+	if _, _, _, err := PlanExec(l.gcloud, hostile(t), o); !errors.Is(err, ErrLoginRequired) {
+		t.Fatalf("err = %v", err)
+	}
+	// A broken credential written by hand: the mint of a waiting run would fail with
+	// invalid_grant, and the request must stay.
+	addCredential(t, "dev@example.com", "authorized_user")
+	if pending := logins.Sweep(time.Now()); len(pending) != 1 {
+		t.Fatal("a credential written by hand settled the request")
+	}
+	// A login whose verification mint Google refuses is not done and settles nothing.
+	l.put(t, "mint-fail", "ERROR: (gcloud.config.config-helper) There was a problem refreshing your current auth tokens: invalid_grant: Token has been expired or revoked.")
+	id := l.start(t, "/gcp-login/profiles/prod/start")
+	l.waitPhase(t, "prod", id, cloudlogin.PhaseAuthorize)
+	if c, _ := l.submit(t, "prod", id, l.code); c != http.StatusOK {
+		t.Fatalf("submit: %d", c)
+	}
+	out := l.waitPhase(t, "prod", id, cloudlogin.PhaseFailed)
+	if msg, _ := out["message"].(string); !strings.Contains(msg, "Google refused the credential") {
+		t.Fatalf("view: %v", out)
+	}
+	if pending := logins.Sweep(time.Now()); len(pending) != 1 {
+		t.Fatal("a login whose mint failed settled the request")
+	}
+	// The same login with a mint that works settles it.
+	_ = os.Remove(filepath.Join(l.dir, "mint-fail"))
+	id = l.start(t, "/gcp-login/profiles/prod/start")
+	l.waitPhase(t, "prod", id, cloudlogin.PhaseAuthorize)
+	if c, _ := l.submit(t, "prod", id, l.code); c != http.StatusOK {
+		t.Fatalf("submit: %d", c)
+	}
+	l.waitPhase(t, "prod", id, cloudlogin.PhaseDone)
+	if pending := logins.Sweep(time.Now()); len(pending) != 0 {
+		t.Fatalf("the verified login left the request: %+v", pending)
+	}
+	if mints, _ := os.ReadFile(filepath.Join(l.dir, "mints")); strings.Count(string(mints), "\n") != 2 ||
+		strings.Contains(string(mints), "impersonate") || !strings.Contains(string(mints), "--configuration af-prod") {
+		t.Fatalf("verification mints: %s", mints)
+	}
+	l.noSecretAnywhere(t)
+}
+
+// TestLockHeldFromTheCodeUntilExit: output gcloud prints after the code (the overwrite
+// question) must not let go of the lock the submit took while gcloud still writes.
+func TestLockHeldFromTheCodeUntilExit(t *testing.T) {
+	l := setupLogin(t, prod())
+	l.put(t, "slow", "")
+	id := l.start(t, "/gcp-login/profiles/prod/start")
+	l.waitPhase(t, "prod", id, cloudlogin.PhaseAuthorize)
+	if _, unlock, err := lockRootNonBlocking(); err != nil {
+		t.Fatalf("the lock is held while the member signs in: %v", err)
+	} else {
+		unlock()
+	}
+	if c, _ := l.submit(t, "prod", id, l.code); c != http.StatusOK {
+		t.Fatalf("submit: %d", c)
+	}
+	// After the post-code question is printed, before gcloud stores the credential.
+	time.Sleep(800 * time.Millisecond)
+	if a := logins.Attempt(id); !a.Live() {
+		t.Fatal("the fake finished too early for this check")
+	}
+	if _, unlock, err := lockRootNonBlocking(); !errors.Is(err, errRootBusy) {
+		if err == nil {
+			unlock()
+		}
+		t.Fatalf("the lock was let go while gcloud still runs: %v", err)
+	}
+	l.waitPhase(t, "prod", id, cloudlogin.PhaseDone)
+	waitExited(t, logins.Attempt(id))
+	_, unlock, err := lockRootNonBlocking()
+	if err != nil {
+		t.Fatalf("the lock outlived the attempt: %v", err)
+	}
+	unlock()
+}
+
+// TestReuseDoesNotSettleARejectedRequest: while a request filed because Google rejected the
+// credential is pending, a plain Log in that gcloud ends at once on the stored credential
+// (no URL, no code) is done for the member but settles nothing.
+func TestReuseDoesNotSettleARejectedRequest(t *testing.T) {
+	l := setupLogin(t, prod())
+	addCredential(t, "dev@example.com", "authorized_user")
+	completedLogin(t, "dev@example.com")
+	l.write(t, "fail", "ERROR: (gcloud.config.config-helper) There was a problem refreshing your current auth tokens: "+
+		"('invalid_grant: Bad Request', {'error': 'invalid_grant'})")
+	o := execOpts(l.env, prod())
+	o.Login, o.ConsoleLogin, o.ConsoleWait = "auto", true, 100*time.Millisecond
+	if _, _, _, err := PlanExec(l.gcloud, hostile(t), o); !errors.Is(err, ErrLoginRequired) {
+		t.Fatalf("err = %v", err)
+	}
+	if req, ok := logins.Read(ConfigName("prod")); !ok || !req.Snapshot.rejected() {
+		t.Fatalf("request = %+v %v", req, ok)
+	}
+	l.put(t, "reuse", "")
+	id := l.start(t, "/gcp-login/profiles/prod/start")
+	l.waitPhase(t, "prod", id, cloudlogin.PhaseDone)
+	if pending := logins.Sweep(time.Now()); len(pending) != 1 {
+		t.Fatal("reusing the rejected credential settled the request")
+	}
 }

@@ -14,6 +14,8 @@ export type GcpLoginPhase = "idle" | "starting" | "authorize" | "done" | "failed
 const POLL_MS = 1500;
 
 export interface GcpLoginAttempt {
+  /** Which press this is; the code form starts empty for each. */
+  gen: number;
   phase: GcpLoginPhase;
   /** The checked sign-in URL, only while this tab's own attempt waits for the code. */
   url: string;
@@ -38,6 +40,9 @@ export function useGcpLoginAttempt(startPath: string, profilePath: string, onDon
   const [errorCode, setErrorCode] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [submitError, setSubmitError] = useState("");
+  // Bumped by every press: the code form is keyed by it, so a code typed for one attempt is
+  // gone when another starts (it belongs to the gcloud whose URL produced it).
+  const [gen, setGen] = useState(0);
   const latest = useRef({ profilePath, onDone });
   latest.current = { profilePath, onDone };
 
@@ -46,7 +51,12 @@ export function useGcpLoginAttempt(startPath: string, profilePath: string, onDon
     let alive = true;
     let timer = 0;
     const poll = async () => {
-      let d: { phase?: string; url?: string; message?: string; error?: unknown } | null = null;
+      let d: {
+        phase?: string;
+        url?: string;
+        message?: string;
+        error?: unknown;
+      } | null = null;
       try {
         d = await api(`${latest.current.profilePath}/attempts/${encodeURIComponent(attempt)}`);
       } catch {
@@ -74,6 +84,7 @@ export function useGcpLoginAttempt(startPath: string, profilePath: string, onDon
   }, [attempt]);
 
   const start = useCallback(async () => {
+    setGen((g) => g + 1);
     setAttempt("");
     setPhase("starting");
     setUrl("");
@@ -109,6 +120,7 @@ export function useGcpLoginAttempt(startPath: string, profilePath: string, onDon
   );
 
   return {
+    gen,
     phase,
     url,
     message,
@@ -141,7 +153,6 @@ const SUBMIT_ERRORS: Record<string, MsgKey> = {
 /** The attempt in the modal body: the sign-in link and the single code field, only for this tab's own attempt. */
 export function GcpLoginAttemptView({ a, done, failed }: { a: GcpLoginAttempt; done: string; failed?: string }) {
   const tr = useT();
-  const [code, setCode] = useState("");
   const ending = ENDINGS[a.message];
   return (
     <>
@@ -150,7 +161,11 @@ export function GcpLoginAttemptView({ a, done, failed }: { a: GcpLoginAttempt; d
         <div className="gcp-login-authorize">
           <p className="ui-field-hint">{tr("gcplogin.authorize_hint")}</p>
           <div>
-            <Button variant="primary" icon="link-external" onClick={() => window.open(a.url, "_blank", "noopener,noreferrer")}>
+            <Button
+              variant="primary"
+              icon="link-external"
+              onClick={() => window.open(a.url, "_blank", "noopener,noreferrer")}
+            >
               {tr("gcplogin.open_sign_in")}
             </Button>
           </div>
@@ -158,33 +173,9 @@ export function GcpLoginAttemptView({ a, done, failed }: { a: GcpLoginAttempt; d
             <code>{a.url}</code>
           </p>
           <p className="ui-field-hint gcp-login-warn">{tr("gcplogin.paste_rule")}</p>
-          <form
-            className="gcp-login-code"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void a.submit(code);
-            }}
-          >
-            <label className="ui-field-label" htmlFor="gcp-login-code">
-              {tr("gcplogin.code_label")}
-            </label>
-            <input
-              id="gcp-login-code"
-              className="cinput"
-              autoComplete="off"
-              spellCheck={false}
-              value={code}
-              disabled={a.submitted}
-              onChange={(e) => setCode(e.target.value)}
-            />
-            <Button variant="primary" type="submit" disabled={a.submitted || !code.trim()}>
-              {tr("gcplogin.submit")}
-            </Button>
-          </form>
+          <CodeForm key={a.gen} a={a} />
           {a.submitted && <p className="ui-field-hint">{tr("gcplogin.checking")}</p>}
-          {a.submitError && (
-            <p className="ssm-error">{tr(SUBMIT_ERRORS[a.submitError] ?? "gcplogin.err_submit")}</p>
-          )}
+          {a.submitError && <p className="ssm-error">{tr(SUBMIT_ERRORS[a.submitError] ?? "gcplogin.err_submit")}</p>}
         </div>
       )}
       {a.phase === "done" && <p className="ui-field-hint">{done}</p>}
@@ -197,5 +188,37 @@ export function GcpLoginAttemptView({ a, done, failed }: { a: GcpLoginAttempt; d
       {a.phase === "cancelled" && <p className="ssm-error">{tr("gcplogin.cancelled")}</p>}
       {a.phase === "gone" && <p className="ssm-error">{tr("gcplogin.gone")}</p>}
     </>
+  );
+}
+
+/** The single code field. It lives only while its own attempt waits for a code, and is keyed
+ *  by the press, so a code never carries over to another attempt. */
+function CodeForm({ a }: { a: GcpLoginAttempt }) {
+  const tr = useT();
+  const [code, setCode] = useState("");
+  return (
+    <form
+      className="gcp-login-code"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void a.submit(code);
+      }}
+    >
+      <label className="ui-field-label" htmlFor="gcp-login-code">
+        {tr("gcplogin.code_label")}
+      </label>
+      <input
+        id="gcp-login-code"
+        className="cinput"
+        autoComplete="off"
+        spellCheck={false}
+        value={code}
+        disabled={a.submitted}
+        onChange={(e) => setCode(e.target.value)}
+      />
+      <Button variant="primary" type="submit" disabled={a.submitted || !code.trim()}>
+        {tr("gcplogin.submit")}
+      </Button>
+    </form>
   );
 }

@@ -104,26 +104,22 @@ func (loginBackend) State(key string) LoginState {
 // Landed: a request is settled when
 //   - the profile changed in Settings since it was filed (decision 3 step 5: it is dropped;
 //     the waiting run then fails its check with ErrSettingsChanged and asks for a rerun);
-//   - it was filed because there was no usable login, and an account with a user credential
-//     is now selected;
-//   - it was filed because Google rejected the stored credential, and a login completed
-//     after it: the same credential succeeding again proves nothing, because gcloud hands
-//     out a cached token without asking Google.
+//   - a login completed through the Agent after it was filed, for the account the
+//     configuration now selects, and that account holds a user credential. A login is
+//     recorded only once a token was minted from it in the clean environment (finishLogin;
+//     the terminal login records after its own mint), so this is step 5's "print-access-token
+//     succeeds", checked once per login instead of on every sweep. For a request filed
+//     because Google rejected the stored credential it also means what step 5 asks: the same
+//     cached credential succeeding again settles nothing, only a login after the request does.
 //
-// "print-access-token succeeds" (step 5) is what the waiting run's own check then does: a
-// sweep runs on every list and every poll, and a gcloud start costs about a second, so the
-// sweep stops at the local facts that precede it. A run whose mint still fails files again.
+// A credential that appears in the store without such a login (written by hand, or by a
+// process the Agent did not run) settles nothing.
 func (loginBackend) Landed(cur, recorded LoginState, _ time.Time) bool {
 	if cur.Profile != recorded.Profile {
 		return true
 	}
-	if cur.Account == "" || !cur.Credential {
-		return false
-	}
-	if recorded.rejected() {
-		return cur.Login != recorded.Login || cur.Account != recorded.Account
-	}
-	return cur != recorded
+	return cur.Account != "" && cur.Credential && cur.Login != "" &&
+		(cur.Login != recorded.Login || cur.Account != recorded.Account)
 }
 
 // logins holds the Console login requests and attempts of the Google Cloud profiles, keyed
