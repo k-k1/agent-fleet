@@ -168,10 +168,15 @@ func doInstallGCloud(ver, sum, root string) error {
 		return fmt.Errorf("the archive declares version %q, not the pinned %s", strings.TrimSpace(string(got)), ver)
 	}
 
+	// --no-compile-python: install.sh otherwise byte-compiles every module of the SDK, bq and
+	// gsutil included — 320 MiB and ~18,000 files of __pycache__ in a tree that is 511 MiB
+	// without them, and about a minute of the install. Python writes the cache for the
+	// modules a run actually imports instead, so only the first run of a command pays (ADR
+	// 0107 note of 2026-10-02).
 	fmt.Fprintf(os.Stderr, "[install-gcloud] installing core + gke-gcloud-auth-plugin ...\n")
 	cmd := exec.Command(filepath.Join(sdk, "install.sh"),
 		"--quiet", "--usage-reporting=false", "--path-update=false", "--command-completion=false",
-		"--additional-components", "gke-gcloud-auth-plugin")
+		"--no-compile-python", "--additional-components", "gke-gcloud-auth-plugin")
 	cmd.Dir = sdk
 	cmd.Env = gcloudInstallEnv(os.Environ(), filepath.Join(staging, "config"), ver)
 	cmd.Stdout = os.Stderr

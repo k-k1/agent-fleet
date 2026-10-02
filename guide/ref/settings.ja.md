@@ -37,6 +37,7 @@ updated: "2026-09"
 | Gitホスティング | GitHub / Bitbucket の接続 |
 | 内部リポジトリ | 配備自身がホストするリポジトリ |
 | AWS プロファイル/SSM | AWS プロファイルとリモートログイン先 |
+| Google Cloud | `af-gcloud-exec` がコマンドの実行に使う Google Cloud のプロファイル |
 | 課題管理 | Jira ほか作業項目の取得元 |
 | チャット連携 | Discord / Slack のブリッジ |
 | MCP サーバー | エージェントが使える連携サーバー |

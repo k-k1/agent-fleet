@@ -743,6 +743,16 @@ func TestLoginNeededFollowsTheUnderlyingError(t *testing.T) {
 		"ERROR: (gcloud.config.config-helper) Reauthentication failed. cannot prompt during non-interactive execution.\n":                    true,
 		"ERROR: (gcloud.config.config-helper) PERMISSION_DENIED: Permission 'iam.serviceAccounts.getAccessToken' denied\n":                   false,
 		"ERROR: (gcloud.config.config-helper) something nobody has seen\n":                                                                   false,
+		// An organisation's reauthentication policy, as gcloud 587.0.0 reports Google's
+		// invalid_rapt / rapt_required (measured against a local token endpoint, ADR 0107
+		// note of 2026-10-02): without a terminal, and with one once the reauth challenge
+		// cannot be started.
+		"ERROR: (gcloud.config.config-helper) There was a problem refreshing your current auth tokens: " +
+			"Reauthentication failed. cannot prompt during non-interactive execution.\nPlease run:\n\n  $ gcloud auth login\n": true,
+		"Reauthentication required.\nERROR: (gcloud.config.config-helper) There was a problem refreshing your current auth tokens: " +
+			"('invalid_grant: reauth related error (invalid_rapt)', {'error': 'invalid_grant', 'error_description': " +
+			"'reauth related error (invalid_rapt)', 'error_uri': 'https://support.google.com/a/answer/9368756', " +
+			"'error_subtype': 'invalid_rapt'})\n": true,
 	} {
 		if got := loginNeeded(in); got != want {
 			t.Errorf("loginNeeded(%.90q) = %v, want %v", in, got, want)

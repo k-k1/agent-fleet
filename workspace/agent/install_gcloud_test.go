@@ -133,6 +133,11 @@ func TestInstallGCloudInstallsPinnedAndIsIdempotent(t *testing.T) {
 	if !strings.Contains(string(args), "--additional-components gke-gcloud-auth-plugin") || !strings.Contains(string(args), "--path-update=false") {
 		t.Errorf("install.sh args = %q", args)
 	}
+	// Without it install.sh byte-compiles the whole tree: 831 MiB and ~18,000 more files
+	// instead of 511 MiB (ADR 0107 note of 2026-10-02).
+	if !strings.Contains(string(args), "--no-compile-python") {
+		t.Errorf("install.sh args = %q, want --no-compile-python", args)
+	}
 	env, _ := os.ReadFile(filepath.Join(root, "install.env"))
 	for _, want := range []string{"CLOUDSDK_COMPONENT_MANAGER_FIXED_SDK_VERSION=587.0.0", "CLOUDSDK_CORE_DISABLE_FILE_LOGGING=true", "CLOUDSDK_CORE_CHECK_GCE_METADATA=false"} {
 		if !strings.Contains(string(env), want+"\n") {

@@ -328,6 +328,84 @@ Issue #1496。上の決定は何も変えない。段階 1 の Agent 側の実�
 - **子からは `GCE_METADATA_*` も外す。** `CLOUDSDK_*`・`GOOGLE_*`・`GCLOUD_*` に加えて外す。メタデータサーバーを探しに行く
   ライブラリを、呼び出し元のメタデータのホストが操れないようにするためである。
 
+## 注記 — 未決事項 2〜4: トークンが届く道具、再認証、小さいインストール（実測、2026-10-02）
+
+Issue #1498。上の決定は何も変えない。未決事項 4 から実装上の選択を 1 つ（インストーラの `--no-compile-python`）決めた。
+SDK 587.0.0 をワークスペースで使い、本物の Google ログインは使わずに測った。各コマンドは決定 2 の子の環境で、合成した
+トークンを持たせ、手元のモックに向けて走らせた。モックは要求ごとに `Authorization` ヘッダーを分類し（ラッパーのトークン・
+無し・それ以外）、`X-Goog-User-Project` ヘッダーを記録した。一時的な `$HOME/.config/gcloud` には、トークン発行先をモックにした
+合成の `authorized_user` の ADC ファイルを置いたが、どの道具もそこへトークンを取りに来なかった。大きさは 2026-10-02 の
+インストーラの注記と同じく `du` の MiB である。
+
+- **未決事項 2: どの道具がトークンを使うか。**
+
+  | 道具 | 送った認証情報 | プロジェクト / 割り当てプロジェクト |
+  |---|---|---|
+  | `gcloud storage ls`・`cat` | ラッパーのトークン | あり / `X-Goog-User-Project` |
+  | `bq ls`（SDK の `bin/bq`） | ラッパーのトークン | あり / `X-Goog-User-Project` |
+  | `gsutil ls` | **無し** — gsutil 組み込みの API キーだけを付けた、認証の無い要求 | プロジェクトはあり / 割り当ては無し |
+  | Go の `cloud.google.com/go/storage` 1.69.0、既定の認証情報 | 無し: `NewClient` が空の ADC パスで失敗し、要求は出ない | — |
+  | 同じものに `GOOGLE_OAUTH_ACCESS_TOKEN` からの `option.WithTokenSource` | ラッパーのトークン | 割り当ては `GOOGLE_CLOUD_QUOTA_PROJECT` があるときだけ |
+  | Python の `google-cloud-storage` 3.16.0 / `google-auth` 2.59.1、既定 | 無し: `DefaultCredentialsError`、要求は出ない | — |
+  | 同じものに `google.oauth2.credentials.Credentials(token, quota_project_id=…)` | ラッパーのトークン | あり / あり |
+  | Node の `@google-cloud/storage` 8.2.0（`google-auth-library` 9.15.1 を同梱）、既定 | 無し: ADC パスで失敗し、要求は出ない | — |
+  | 同じものに、その同じライブラリの `OAuth2Client` を `authClient` で | ラッパーのトークン | あり / `quotaProjectId` を付ければ |
+  | 同じものに、`google-auth-library` 11.1.0 の `OAuth2Client` | **無し**、しかもエラーにならない | — |
+
+  トークンは gcloud（`gcloud storage` を含む）・`bq`・GKE プラグイン・Terraform に届く。`gsutil` には届かず、クライアント
+  ライブラリにはプログラムが明示的に渡したときだけ届く。ノートでエージェントに伝える内容を変える発見が 2 つある。
+  `gsutil` はトークンを無視する。boto の設定が無いこのクリーンな環境では匿名に落ち、公開バケットは応答するので、読み取りが
+  プロファイルとして動いたように見えうる。子は `HOME`・`BOTO_CONFIG`・`BOTO_PATH` を持ったままで、gsutil の起動処理はそれらと
+  `/etc/boto.cfg`・`~/.boto` を読む（SDK のコードを読んだだけで、そこに認証情報を置いて走らせてはいない）。したがって自分の boto の
+  認証情報を持つメンバーでは、gsutil はその別の身元で動きうる。これは測っていない。
+  また、クライアントライブラリ自身のものと違うメジャー版の `google-auth-library` の `OAuth2Client` は黙って受け取られ、
+  何も送らない。`bq` と `gsutil` は `~/.local/bin` にリンクされない（インストーラがリンクするのは `gcloud` とプラグインだけ）
+  ので、どちらも `PATH` に無い。ノートには `bq` のパスを書く。Google のライブラリが割り当てプロジェクトとして読む
+  `GOOGLE_CLOUD_QUOTA_PROJECT` をラッパーは設定しない。決定 2 の一覧はここでは変えず、ノートでプログラム側に設定するよう伝える。
+  測っていないもの: 本物の Google のエンドポイント、Terraform（段階 1 の試験で済み）、Cloud Storage 以外の API のライブラリ。
+- **未決事項 3: 再認証は前もって警告できない。ログインが必要という形で表に出る。** モックのトークン発行先が、組織の
+  セッションの長さが尽きたときに Google が返すもの（`error_subtype` が `invalid_rapt` の `invalid_grant`、および
+  `rapt_required`）で更新に応えるようにした。するとラッパーの発行（`config-helper`、標準入力は端末でない）は
+  「There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive
+  execution.」で失敗した。`loginNeeded` はこれを「ログインが必要」と分類するので、実行は終了コード 3 で終わり、端末からの
+  ログインは `--force` 付きで走る。端末があると gcloud は「Reauthentication required.」と表示し、チャレンジを始める前に
+  再認証用スコープのトークンをもう一度発行先へ求めた。モックはそれも断ったので、チャレンジそのものには届いていない。
+  gcloud が保存するもの: `credentials.db` はリフレッシュトークンとクライアントを持ち、時刻は持たない。`access_tokens.db` は
+  アクセストークン・その期限・`rapt_token` 列（ここでは空）を持つ。組織のセッションがいつ終わるかはどこにも記録されず、
+  その長さは管理コンソールの設定で、ユーザーのトークンでは読めない。したがって Agent は前もって警告できない。AWS も、更新できる
+  ログインの終わりは推測しない。しかも表に出るのは遅い。キャッシュされたトークンの期限まで 30 分あり、発行先が
+  `invalid_rapt` を返す状態で、発行は Google に問い合わせずに成功した。セッションが終わったログインは、キャッシュされた
+  トークンの残りが 10 分を切るまで、最長でおよそ 50 分動き続ける。本物の組織（セッション管理あり）が要るもの:
+  Google が実際に返す応答、`--no-launch-browser` のログインでチャレンジ（パスワードやセキュリティキー）が出てそこで答えられるか、
+  `--force` のログインでポリシーを満たせるか、成り代わりのトークンが影響を受けるか。
+- **未決事項 4: `__pycache__` は落とす。`bq` と `gsutil` は残す。** 同じアーカイブを一時ディレクトリへ 4 通りに入れた
+  （インストーラと同じ環境）。
+
+  | 入れ方 | 大きさ | ファイル数 | install.sh の時間 |
+  |---|---|---|---|
+  | 段階 1 のまま（`install.sh` が全モジュールをコンパイル） | 831 MiB | 50,939 | 74 秒 |
+  | `--no-compile-python` | 511 MiB | 33,280 | 7〜8 秒 |
+  | `--no-compile-python` の後に `gcloud components remove gsutil`、その後 `__pycache__` を全部削除 | 440 MiB | 29,948（発行 1 回の後） | 削除に +52 秒 |
+  | アーカイブを展開しただけ（何も走らせない） | 485 MiB | 32,491 | — |
+
+  `__pycache__` は 320 MiB（`.pyc` 18,443 個）で、インストーラの注記が見積もった 170 MB ではなかった。これが無ければ
+  Python は実行が読み込んだモジュールの分だけキャッシュを書くので、ツリーは使った分しか増えない（440 MiB のツリーは、発行・
+  `gcloud storage`・`bq`・プラグインを経て 29 MiB 増えた）。代わりにコマンドの初回だけが遅い。この機械（ロードアベレージ
+  20 前後）では、インストール直後の最初の発行が約 10 秒、以降は 1〜3 秒で、コンパイル済みのツリーの同じ機械での値（0.8〜5 秒）
+  とほぼ同じだった。`gcloud`・`gcloud storage`・発行・`bq`・GKE プラグインは、コンパイルしていないツリーからどれも動いた。
+  そこで `install-gcloud` は `--no-compile-python` を渡すようにした。本物のインストーラを一時的な `HOME` に向けて走らせると
+  37 秒（ダウンロード込み）で終わり、511 MiB が残り、`~/.config/gcloud` は作られなかった。以前に入れたツリーは、次にピンが
+  上がって置き換わるまでキャッシュを持ったままになる。
+
+  `gsutil` と `bq` を外すことはできるが、割に合わない。`gcloud components remove` はオフラインでも動くが、後処理でツリー全体を
+  コンパイルし直し（511 → 749 MiB）、約 52 秒かかるので、その後に `__pycache__` を全部消す必要がある。手でファイルを消すと
+  コンポーネント管理の配置に依存する。`gsutil`（展開時 55 MiB、3,326 ファイル）は `PATH` に無く、トークンも使わない。
+  ノートとガイドはそう書き、代わりに `gcloud storage` を使うよう伝える。`bq`（12 MiB）はラッパー経由で動く。ラッパーに要るのは、同梱の Python を含むコア（gcloud は
+  それで動く）、`gcloud-crc32c`（`gcloud storage` が使う）、`gke-gcloud-auth-plugin` である。プラグインはトークンを
+  `PATH` 上の `gcloud` に（`config config-helper` で）求める。
+
+後続: #1517（子に `GOOGLE_CLOUD_QUOTA_PROJECT` を渡すか）、#1518（本物の組織での再認証）。
+
 ## 注記 — 作った Console ログインと、Compute Engine の問い（2026-10-02）
 
 Issue #1497。上の決定は変えない。決定 2 がフェーズ 2 に残した問いに答え、決定 3 をどう作ったかを記録する。本物の Google

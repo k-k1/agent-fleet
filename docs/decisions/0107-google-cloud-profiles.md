@@ -396,6 +396,93 @@ implementation choices.
 - **`GCE_METADATA_*` is removed for the child too**, beside `CLOUDSDK_*`, `GOOGLE_*` and `GCLOUD_*`:
   a caller's metadata host must not steer a library that does reach for the metadata server.
 
+## Note — open questions 2–4: the tools the token reaches, reauthentication, a smaller install, measured (2026-10-02)
+
+Issue #1498. The decisions above are not changed; one implementation choice (the installer's
+`--no-compile-python`) follows from question 4. Measured on SDK 587.0.0 in a workspace, without a real
+Google login: each command ran in the child environment decision 2 describes, with a synthetic token,
+against a local mock that classified each request's `Authorization` header (the wrapper's token, none,
+or another) and logged the `X-Goog-User-Project` header. A synthetic `authorized_user` ADC file whose
+token endpoint was the mock sat in the scratch `$HOME/.config/gcloud`; no tool asked it for a token.
+Sizes are `du` in MiB, as in the 2026-10-02 installer note.
+
+- **Open question 2: which tools honour the token.**
+
+  | Tool | Credential sent | Project / quota project |
+  |---|---|---|
+  | `gcloud storage ls`, `cat` | the wrapper's token | yes / `X-Goog-User-Project` |
+  | `bq ls` (the SDK's `bin/bq`) | the wrapper's token | yes / `X-Goog-User-Project` |
+  | `gsutil ls` | **none** — an unauthenticated request with gsutil's built-in API key | project yes / no quota |
+  | Go `cloud.google.com/go/storage` 1.69.0, default credentials | none: `NewClient` fails at the empty ADC path, no request | — |
+  | the same with `option.WithTokenSource` over `GOOGLE_OAUTH_ACCESS_TOKEN` | the wrapper's token | quota only with `GOOGLE_CLOUD_QUOTA_PROJECT` set |
+  | Python `google-cloud-storage` 3.16.0 / `google-auth` 2.59.1, default | none: `DefaultCredentialsError`, no request | — |
+  | the same with `google.oauth2.credentials.Credentials(token, quota_project_id=…)` | the wrapper's token | yes / yes |
+  | Node `@google-cloud/storage` 8.2.0 (bundles `google-auth-library` 9.15.1), default | none: fails at the ADC path, no request | — |
+  | the same with an `OAuth2Client` of that same library as `authClient` | the wrapper's token | yes / with `quotaProjectId` |
+  | the same with an `OAuth2Client` of `google-auth-library` 11.1.0 | **none**, and no error | — |
+
+  So the token reaches gcloud (`gcloud storage` included), `bq`, the GKE plugin and Terraform; it does
+  not reach `gsutil`, and it reaches a client library only when the program passes it explicitly. Two
+  findings change what the notes tell agents. `gsutil` ignores the token; in this clean environment,
+  with no boto configuration, it fell back to anonymous, and a public bucket answers, so a read can look
+  as if it ran as the profile. The child keeps `HOME`, `BOTO_CONFIG` and `BOTO_PATH`, and gsutil's
+  bootstrap reads them, `/etc/boto.cfg` and `~/.boto` (SDK code read, not run with credentials there), so
+  a member with boto credentials of their own would have gsutil act as that other identity — not
+  measured. And a Node `OAuth2Client` from another major
+  version of `google-auth-library` than the client library's own is accepted silently and sends nothing.
+  `bq` and `gsutil` are not linked into `~/.local/bin` (the installer links only `gcloud` and the
+  plugin), so neither is on `PATH`; the notes give `bq`'s path. The wrapper sets no
+  `GOOGLE_CLOUD_QUOTA_PROJECT`, the variable Google's libraries read for a quota project; decision 2's
+  list is unchanged here, and the notes tell a program to set it. Not measured: the real Google
+  endpoints, Terraform again (phase 1's test), and libraries for other APIs than Cloud Storage.
+- **Open question 3: reauthentication cannot be warned about; it surfaces as a login.** The mock's
+  token endpoint answered a refresh with what Google sends when an organisation's session length has
+  run out (`invalid_grant` with `error_subtype` `invalid_rapt`, and `rapt_required`). The wrapper's mint
+  (`config-helper`, stdin not a terminal) then failed with "There was a problem refreshing your current
+  auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.", which
+  `loginNeeded` classifies as "log in", so the run exits 3 and the terminal login runs with `--force`.
+  With a terminal, gcloud printed "Reauthentication required." and asked the token endpoint again for a
+  reauth-scoped token before starting its challenge; the mock refused that too, so the challenge itself
+  was not reached. What gcloud stores: `credentials.db` holds the refresh token and client, with no time;
+  `access_tokens.db` holds the access token, its expiry and a `rapt_token` column (empty here). Nothing
+  records when the organisation's session ends, and its length is an Admin-console setting that a user
+  token cannot read, so the Agent cannot warn before it. AWS does not guess a renewable login's end
+  either. It also surfaces late: with the cached token 30 minutes from its end and the token endpoint
+  set to answer `invalid_rapt`, the mint succeeded without asking Google. A login whose session has
+  ended therefore keeps working until the cached token has less than ten minutes left, up to about 50
+  minutes. Needs a real organisation with session control: the response Google really sends, whether the
+  challenge (password or security key) appears in the `--no-launch-browser` login and can be answered
+  there, whether a `--force` login satisfies the policy, and whether impersonated tokens are affected.
+- **Open question 4: the `__pycache__` goes; `bq` and `gsutil` stay.** Four installs of the same archive
+  in a scratch directory, with the installer's environment:
+
+  | Install | Size | Files | install.sh time |
+  |---|---|---|---|
+  | as phase 1 (`install.sh` compiles every module) | 831 MiB | 50,939 | 74 s |
+  | `--no-compile-python` | 511 MiB | 33,280 | 7–8 s |
+  | `--no-compile-python`, then `gcloud components remove gsutil`, then every `__pycache__` deleted | 440 MiB | 29,948 (after one mint) | + 52 s for the removal |
+  | the archive unpacked, nothing run | 485 MiB | 32,491 | — |
+
+  The `__pycache__` is 320 MiB (18,443 `.pyc` files), not the 170 MB the installer note estimated.
+  Without it Python writes the cache for the modules a run imports, so the tree grows only by what is
+  used (the 440 MiB tree grew by 29 MiB over a mint, `gcloud storage`, `bq` and the plugin), and the first run of a command pays
+  once: on this host, under a load average near 20, the first mint after the install took about 10 s
+  and later ones 1–3 s, about what the compiled tree took on the same host (0.8–5 s). `gcloud`, `gcloud storage`, the mint, `bq` and the
+  GKE plugin all ran from the uncompiled tree. So `install-gcloud` now passes `--no-compile-python`.
+  The whole real installer ran into a scratch `HOME` in 37 s (download included), leaving 511 MiB and
+  no `~/.config/gcloud`. A tree installed before keeps its cache until the next pin bump replaces it.
+
+  Leaving out `gsutil` and `bq` is possible but not worth it. `gcloud components remove` works offline,
+  but its post-processing recompiles the whole tree (511 → 749 MiB) and takes about 52 s, so it needs a
+  sweep of every `__pycache__` afterwards. Removing the files by hand would depend on the component
+  manager's layout. `gsutil` (55 MiB unpacked, 3,326 files) is not on `PATH` and does not use the
+  token; the notes and the guide say so and point at `gcloud storage` instead. `bq` (12 MiB) works through the wrapper. What the
+  wrapper needs is the core with the bundled Python (gcloud runs on it), `gcloud-crc32c` (used by
+  `gcloud storage`) and `gke-gcloud-auth-plugin`, which asks the `gcloud` on `PATH` (`config config-helper`) for the token.
+
+Follow-ups: #1517 (whether the child gets `GOOGLE_CLOUD_QUOTA_PROJECT`), #1518 (reauthentication with a real
+organisation).
+
 ## Note — the Console login as built, and the Compute Engine prompt (2026-10-02)
 
 Issue #1497. The decisions above are not changed. This note settles the question decision 2 left

@@ -38,6 +38,7 @@ value you set is not the value in force, look one layer out.
 | Git hosting | GitHub / Bitbucket connections |
 | Internal repos | repositories hosted by the deployment itself |
 | AWS profiles/SSM | AWS profiles and remote login targets |
+| Google Cloud | Google Cloud profiles that `af-gcloud-exec` runs commands with |
 | Issue tracker | Jira and the other work-item sources |
 | Chat | Discord / Slack bridge |
 | MCP servers | integration servers available to your agents |
