@@ -269,6 +269,10 @@ membership の 2 段（[06 §6.2](06-data.ja.md)）。
   （authGate が識別ヘッダを 1 箇所で消すのと同じ理由）。
 - **Workspace が呼ぶ面は対象外**——`/mcp`・`/git/`・`/engine/`・`/internal/`。送信元は本人の
   Workspace であり、人の所在を表さない。入れると自分の Workspace からの呼び出しを全部塞ぐ。
+- **Workspace 専用リスナーは転送ヘッダを一切読まない**（`AF_CP_INTERNAL_LISTEN`・
+  [09 §9.3](09-deploy.ja.md)）。ホップ数の設定にかかわらず接続そのもののアドレスを送信元とし、
+  識別ヘッダと forwarded-for/-host/-proto 系のヘッダをハンドラの前で全部消す——そこへ接続した
+  Workspace は利用者も送信元も名乗れない。配るのはトークンで認証する上記の面だけ。
 - **締め出しの逃げ道**: デプロイ管理者は対象外。編集者の現在のアドレスを締め出す保存は拒否
   （`would_lock_out`）。プロキシのホップ未申告なのに forwarded-for が届いた場合
   （`proxy_not_configured`）と、チェーンが申告より短い場合（`client_ip_unknown`）も保存を拒否する。

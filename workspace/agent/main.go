@@ -127,6 +127,9 @@ func serve() {
 	// into the cred store so clone/push against the tenant's self-hosted repos auth
 	// transparently. No-op when the CP didn't inject one.
 	seedInternalGit()
+	// Point the workspace's git at the CP's workspace listener where it has one (ADR 0106
+	// decision 8); remove the rewrite where it no longer does.
+	syncInternalGitRewrite()
 	// Record where the git OAuth refresh bridge lives (docs/log/71 §71.8) so the separate
 	// `workspace-agent cred` process can reach it without depending on its own env.
 	seedGitOAuthBridge()

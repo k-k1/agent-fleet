@@ -27,6 +27,9 @@ import (
 // tests that exercise the real wiring live in package main (see the header comment there).
 // A default here would let a test that forgot to wire it pass silently.
 func TestMain(m *testing.M) {
+	// A workspace that runs these tests may itself carry AF_CP_INTERNAL_URL, which would send
+	// the tests' requests past their fake CP (cpurl.Request).
+	_ = os.Unsetenv("AF_CP_INTERNAL_URL")
 	chromiumDefaultPin = func() string { return "" }
 	chromiumPinnedBinary = func() string { return "" }
 	installChromium = func(string) error {

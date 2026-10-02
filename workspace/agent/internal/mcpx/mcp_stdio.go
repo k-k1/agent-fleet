@@ -38,6 +38,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -4233,12 +4234,13 @@ func mcpToolErr(id json.RawMessage, msg string) []byte {
 	})
 }
 
-// cpMemoDo calls the CP's /internal/memos bridge over the public hairpin (AF_CP_BASE_URL)
-// authenticated by the per-membership AF_MEMO_TOKEN — the queue lives in the CP store,
+// cpMemoDo calls the CP's /internal/memos bridge (cpurl.Request: the public hairpin, or the
+// CP's workspace listener where AF_CP_INTERNAL_URL is set) authenticated by the
+// per-membership AF_MEMO_TOKEN — the queue lives in the CP store,
 // not the local Agent. Both env vars are injected by the CP only when PUBLIC_BASE_URL is
 // set; absent them the memo feature is unavailable and we say so in-band.
 func cpMemoDo(method, path string, body []byte) (string, error) {
-	base := os.Getenv("AF_CP_BASE_URL")
+	base := cpurl.Request()
 	if base == "" || os.Getenv("AF_MEMO_TOKEN") == "" {
 		return "", fmt.Errorf("メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）")
 	}
@@ -4266,12 +4268,12 @@ func cpMemoDo(method, path string, body []byte) (string, error) {
 	return string(b), nil
 }
 
-// CPScheduleDo calls the CP's /internal/schedules bridge over the public hairpin
-// (AF_CP_BASE_URL) authenticated by the per-membership AF_SCHEDULE_TOKEN — schedules
+// CPScheduleDo calls the CP's /internal/schedules bridge (cpurl.Request, like cpMemoDo)
+// authenticated by the per-membership AF_SCHEDULE_TOKEN — schedules
 // live in the CP store (docs/log/38), not the local Agent. Mirrors cpMemoDo; both env vars
 // are injected by the CP only when PUBLIC_BASE_URL is set.
 func CPScheduleDo(method, path string, body []byte) (string, error) {
-	base := os.Getenv("AF_CP_BASE_URL")
+	base := cpurl.Request()
 	if base == "" || os.Getenv("AF_SCHEDULE_TOKEN") == "" {
 		return "", fmt.Errorf("定時実行機能はこの環境では利用できません（CP の公開URL/トークンが未設定）")
 	}

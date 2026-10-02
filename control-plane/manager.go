@@ -148,6 +148,13 @@ type manager struct {
 	// (no PUBLIC_BASE_URL) = the memo bridge is not reachable, so it is not injected.
 	publicBaseURL string
 
+	// internalBaseURL is AF_CP_INTERNAL_URL without a trailing slash: the base a workspace
+	// uses for its own requests to the CP where it cannot use the public one (ADR 0106
+	// decision 8). Injected next to AF_CP_BASE_URL, which stays the public base because
+	// links built for a person are opened by a browser. Empty = workspaces use
+	// AF_CP_BASE_URL for everything.
+	internalBaseURL string
+
 	// previewDomain is AF_PREVIEW_DOMAIN — the parent of the per-start preview
 	// subdomains (docs/log/81). Empty = host-mode preview is off for this deployment
 	// (no wildcard DNS / certificate), and only the path-mode /preview/{port}

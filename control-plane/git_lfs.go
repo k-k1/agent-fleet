@@ -52,10 +52,10 @@ func (a gitServerAPI) lfsObjectPath(slug, repo, oid string) string {
 }
 
 // lfsHref is the absolute transfer URL returned in a batch action; it points back
-// to the CP (public base = Caddy TLS terminus), which the LFS client reaches with
-// the same Basic git token via the cred helper.
-func (a gitServerAPI) lfsHref(slug, repo, oid string) string {
-	return strings.TrimRight(a.publicBaseURL, "/") + "/git/" + slug + "/" + repo + ".git/info/lfs/objects/" + oid
+// to the CP through the listener the batch arrived on (baseURLFor), which the LFS
+// client reaches with the same Basic git token via the cred helper.
+func (a gitServerAPI) lfsHref(r *http.Request, slug, repo, oid string) string {
+	return strings.TrimRight(a.baseURLFor(r), "/") + "/git/" + slug + "/" + repo + ".git/info/lfs/objects/" + oid
 }
 
 func fileExists(p string) bool {
@@ -133,7 +133,7 @@ func (a gitServerAPI) lfsBatch(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		exists := fileExists(a.lfsObjectPath(mv.TenantSlug, name, o.OID))
-		href := a.lfsHref(slug, name, o.OID)
+		href := a.lfsHref(r, slug, name, o.OID)
 		// need is what this object adds to the tenant's total: a ledger row left by a
 		// failed publish of the same oid is already counted.
 		need := o.Size

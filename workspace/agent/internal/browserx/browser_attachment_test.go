@@ -827,6 +827,17 @@ func TestCDPDiscoveryRejectsRedirectAndReservedPort(t *testing.T) {
 	if err := validateCDPPort(8443); asAttachmentAPIError(err).Code != "bad_cdp_port" {
 		t.Fatalf("Control Plane port error = %v", err)
 	}
+	// The CP's workspace listener (ADR 0106 decision 8) is reserved the same way.
+	if err := validateCDPPort(8098); err != nil {
+		t.Fatalf("port 8098 refused before any internal URL: %v", err)
+	}
+	t.Setenv("AF_CP_INTERNAL_URL", "http://127.0.0.1:8098")
+	if err := validateCDPPort(8098); asAttachmentAPIError(err).Code != "bad_cdp_port" {
+		t.Fatalf("Control Plane workspace listener port error = %v", err)
+	}
+	if err := validateCDPPort(8443); asAttachmentAPIError(err).Code != "bad_cdp_port" {
+		t.Fatalf("Control Plane public port no longer reserved: %v", err)
+	}
 }
 
 func TestBrowserAttachmentUsesWebSocketCDPAdapter(t *testing.T) {

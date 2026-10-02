@@ -25,7 +25,10 @@ import (
 
 // cloneURL builds the clone URL a workspace container uses. It is the public
 // base (Caddy TLS terminus, reachable from the container via hairpin NAT) so the
-// unified cred helper's token injection authenticates it transparently.
+// unified cred helper's token injection authenticates it transparently. Where the CP
+// also has an internal URL, the Agent points the workspace's git at it with
+// url.<internal>.insteadOf (ADR 0106 decision 8); the URL here stays the one a person
+// can clone with.
 func (a gitServerAPI) cloneURL(slug, name string) string {
 	return strings.TrimRight(a.publicBaseURL, "/") + "/git/" + slug + "/" + name + ".git"
 }

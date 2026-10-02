@@ -707,6 +707,20 @@ Issue #1467. Nothing above is changed; this records how `deploy/kubernetes/` and
    objects and git token key, so it is a PersistentVolumeClaim (`af-cp-data`), backed up with the
    database, not scratch.
 
+## Amendment (2026-10-02) — the workspace listener's route list (#1464)
+
+Decision 8's list is fixed as `workspaceRoutes` in `control-plane/workspace_listener.go`: the
+docs, branch-rules, MCP-registry and AWS-profiles pulls, the memo and schedule routes the agent
+calls (not `/internal/memo-categories`, which no agent code calls), the two git-OAuth refreshes,
+the engine token, catalogue, props and gateway, and internal git with LFS. The listener
+dispatches through the main listener's mux and refuses any pattern not on the list, so the
+handlers are registered once. `AF_CP_INTERNAL_URL` is injected only alongside `AF_CP_BASE_URL`,
+because the bridge tokens come with that. Internal git keeps its public clone URL (people clone
+it from outside the cluster): the agent rewrites the workspace's git onto the internal URL with
+`url.<internal>/git/.insteadOf` and stores the git token under both hosts, and an LFS batch
+answered on the workspace listener returns transfer URLs on it. The
+`NO_PROXY` entry for the internal Service is left to the adapter.
+
 ## Addendum (2026-10-02) — what the core adapter settled where the decisions left a choice
 
 Written with the core adapter (#1465, `control-plane/internal/runtime/runtime_kubernetes*.go`).

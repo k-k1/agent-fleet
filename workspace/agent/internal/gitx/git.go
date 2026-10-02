@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -245,7 +247,7 @@ func gitProviderHost(remote string) (string, string) {
 	// The tenant's self-hosted git (docs/reference/internal-git-provider) has a
 	// deployment-specific host, so match it dynamically from the CP-injected env
 	// and badge it as "internal" rather than the bare host.
-	if ih := internalGitHostName(); ih != "" && strings.EqualFold(host, ih) {
+	if isInternalGitHostName(host) {
 		return "internal", host
 	}
 	switch {
@@ -258,6 +260,22 @@ func gitProviderHost(remote string) (string, string) {
 	default:
 		return host, host
 	}
+}
+
+// isInternalGitHostName reports whether host (no port) is the internal git provider's:
+// its public host, or — where the Agent rewrites the workspace's git onto the CP's
+// workspace listener (ADR 0106 decision 8) — the listener's, which is what
+// `git remote get-url` reports once url.<base>.insteadOf applies.
+func isInternalGitHostName(host string) bool {
+	if ih := internalGitHostName(); ih == "" {
+		return false
+	} else if strings.EqualFold(host, ih) {
+		return true
+	}
+	if u, err := url.Parse(cpurl.Internal()); err == nil && u.Hostname() != "" {
+		return strings.EqualFold(host, u.Hostname())
+	}
+	return false
 }
 
 // internalGitHostName is the internal git host without its port. The injected value

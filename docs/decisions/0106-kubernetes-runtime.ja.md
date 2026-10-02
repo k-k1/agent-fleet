@@ -577,6 +577,18 @@ Issue #1467。上の決定は何も変えない。決定 7・8・12・13 に選�
    git トークンの鍵が置かれるので、一時領域ではなく PersistentVolumeClaim（`af-cp-data`）とし、
    データベースと一緒にバックアップする。
 
+## 追記（2026-10-02）— Workspace 専用リスナーの経路一覧（#1464）
+
+決定 8 の一覧は `control-plane/workspace_listener.go` の `workspaceRoutes` として確定した:
+docs・ブランチ規則・MCP レジストリ・AWS プロファイルの取得、Agent が呼ぶメモと定時実行の経路
+（Agent のコードが呼ばない `/internal/memo-categories` は含めない）、git OAuth の 2 つの refresh、
+エンジンのトークン・カタログ・props・ゲートウェイ、LFS を含む内部 git。リスナーは本来のリスナーの
+mux を通して振り分け、一覧に無いパターンは断るので、ハンドラの登録は 1 回で済む。
+`AF_CP_INTERNAL_URL` の注入は、ブリッジのトークンが `AF_CP_BASE_URL` と一緒に来るため、それと
+並ぶときだけ。内部 git の clone URL は公開のまま（人がクラスタの外から clone する）で、Agent が
+`url.<internal>/git/.insteadOf` で Workspace の git を内部 URL へ書き換え、git のトークンを両方の
+ホストに保存する。Workspace 専用リスナーで答えた LFS の batch は、転送先もそのリスナーを指す。内部 Service を `NO_PROXY` に入れるのはアダプタに残す。
+
 ## 追記（2026-10-02）— 決定が選択の余地を残した点でコアアダプタが選んだこと
 
 コアアダプタ（#1465、`control-plane/internal/runtime/runtime_kubernetes*.go`）とともに書いた。決定そのものは変わらない。以下は決定が開けておいた選択で、どれも実機受け入れ（#1468）で見直せる。
