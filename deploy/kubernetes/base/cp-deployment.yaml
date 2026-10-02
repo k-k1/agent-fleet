@@ -70,9 +70,11 @@ spec:
               value: af-workspace
             - name: AF_K8S_WORKSPACE_IMAGE
               value: ghcr.io/k-k1/agent-fleet/workspace:VERSION
-            # The store is Postgres; nothing of the CP's state is on its own disk.
+            # Not scratch: the internal git provider keeps its bare repositories and LFS
+            # objects here, and the git token key (internal_git.go, git_http.go). It is a
+            # persistent claim, backed up with the database (README, "Backups").
             - name: WS_DATA
-              value: /tmp
+              value: /var/lib/af-cp
           readinessProbe:
             httpGet:
               path: /readyz
@@ -106,8 +108,13 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: data
+              mountPath: /var/lib/af-cp
       volumes:
-        # HOME=/tmp in the image, and WS_DATA above.
+        # HOME=/tmp in the image: scratch only, gone with the pod.
         - name: tmp
           emptyDir:
             sizeLimit: 2Gi
+        - name: data
+          persistentVolumeClaim:
+            claimName: af-cp-data

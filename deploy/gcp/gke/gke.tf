@@ -80,9 +80,14 @@ resource "google_container_cluster" "main" {
     }
   }
 
+  # GKE creates this default pool before Terraform removes it. It runs as the nodes'
+  # own service account too: the Compute Engine default account may be disabled or hold no
+  # role, and the cluster would then fail before the real pools exist.
   remove_default_node_pool = true
   initial_node_count       = 1
   node_config {
+    service_account = google_service_account.nodes.email
+    oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
     workload_metadata_config {
       mode = "GKE_METADATA"
     }
@@ -90,7 +95,10 @@ resource "google_container_cluster" "main" {
 
   deletion_protection = true
 
-  depends_on = [google_kms_crypto_key_iam_member.gke_secrets]
+  depends_on = [
+    google_kms_crypto_key_iam_member.gke_secrets,
+    google_project_iam_member.nodes_default_role,
+  ]
 }
 
 # The CP and the cluster's own pods.

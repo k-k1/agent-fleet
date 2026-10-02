@@ -13,6 +13,7 @@ resources:
   - namespaces.yaml
   - cp-serviceaccount.yaml
   - cp-rbac.yaml
+  - cp-data.yaml
   - cp-deployment.yaml
   - cp-services.yaml
   - workspace-serviceaccount.yaml

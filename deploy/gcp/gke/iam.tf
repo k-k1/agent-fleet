@@ -66,16 +66,13 @@ resource "google_artifact_registry_repository_iam_member" "nodes_reader" {
   member     = google_service_account.nodes.member
 }
 
-# Logging and Monitoring have no resource narrower than the project.
-resource "google_project_iam_member" "nodes_log_writer" {
+# The minimum a node needs: log and metric writing, and from 1.33 the autoscaler's
+# metrics too (autoscaling.sites.writeMetrics), which logWriter + metricWriter lack. The
+# role has no resource narrower than the project. Never grant this account the node
+# service agent's role (container.defaultNodeServiceAgent) instead.
+resource "google_project_iam_member" "nodes_default_role" {
   project = var.project_id
-  role    = "roles/logging.logWriter"
-  member  = google_service_account.nodes.member
-}
-
-resource "google_project_iam_member" "nodes_metric_writer" {
-  project = var.project_id
-  role    = "roles/monitoring.metricWriter"
+  role    = "roles/container.defaultNodeServiceAccount"
   member  = google_service_account.nodes.member
 }
 

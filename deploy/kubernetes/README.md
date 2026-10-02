@@ -25,7 +25,7 @@ What builds what:
 | Built by | What |
 |---|---|
 | Terraform (`deploy/gcp/gke`) | VPC, subnet, Cloud NAT with a static address, the cluster and its two node pools, the KMS key for Secrets, Cloud SQL, the load balancer's address, certificate and DNS records, the StorageClass, the IAM grants |
-| These manifests (`kubectl apply -k`) | Namespaces, the CP and its Services, RBAC, NetworkPolicies, quota, the Gateway and its policies |
+| These manifests (`kubectl apply -k`) | Namespaces, the CP, its Services and its own disk (`af-cp-data`), RBAC, NetworkPolicies, quota, the Gateway and its policies |
 | The CP, at run time | Per workspace: a StatefulSet, a Service, a Secret, two claims, and now and then a one-shot erase pod — all labelled `agent-fleet.io/workspace=<name>` |
 
 ## Preconditions
@@ -50,29 +50,51 @@ Terraform meets every GKE item below.
 | P13 | **A DNS zone** for the Console's name, and a **state bucket** for Terraform, both the operator's | decision 12 |
 | P14 | `AF_MASTER_KEY` is generated and kept **outside the database and its backups** | as on every target; losing it is a crypto-shred |
 
-Tools on the operator's machine: `gcloud`, `terraform` (1.6 or later), `kubectl` (its built-in
-kustomize is enough), `psql` for the one-time database grant.
+Tools on the operator's machine: `gcloud` with the `gke-gcloud-auth-plugin` component
+(`gcloud components install gke-gcloud-auth-plugin`, which `kubectl` needs to sign in to GKE),
+`terraform` (1.6 or later), `kubectl` (its built-in kustomize is enough), `psql` for the
+one-time database grant.
 
 ## GKE
 
+Every command below runs **from the repository root**, and every `gcloud` command names the
+project explicitly, so a different default project in your `gcloud` configuration cannot be
+the one that is changed. Set these once per shell:
+
+```bash
+PROJECT=<project>          # Terraform's project_id
+REGION=<region>            # Terraform's region
+PREFIX=<name_prefix>       # Terraform's name_prefix
+TF="terraform -chdir=deploy/gcp/gke"
+```
+
 ### 1. The project, once
 
-Enable the APIs Terraform uses, with your own credentials:
+Sign in twice: `gcloud` for the commands below, and Application Default Credentials for
+Terraform's providers.
+
+```bash
+gcloud auth login
+gcloud auth application-default login
+gcloud auth application-default set-quota-project "$PROJECT"
+```
+
+Enable the APIs Terraform uses:
 
 ```bash
 gcloud services enable container.googleapis.com compute.googleapis.com \
   sqladmin.googleapis.com servicenetworking.googleapis.com certificatemanager.googleapis.com \
   dns.googleapis.com cloudkms.googleapis.com artifactregistry.googleapis.com iam.googleapis.com \
-  --project <project>
+  --project "$PROJECT"
 ```
 
 The Cloud DNS managed zone for your domain must already exist in the project (P13). Create the
 state bucket if you do not have one, with versioning on:
 
 ```bash
-gcloud storage buckets create gs://<state-bucket> --project <project> --location <region> \
+gcloud storage buckets create gs://<state-bucket> --project "$PROJECT" --location "$REGION" \
   --uniform-bucket-level-access
-gcloud storage buckets update gs://<state-bucket> --versioning
+gcloud storage buckets update gs://<state-bucket> --versioning --project "$PROJECT"
 ```
 
 Images: push `control-plane` and `workspace` to an Artifact Registry repository (and set
@@ -82,10 +104,9 @@ from the public registry (`ghcr.io/k-k1/agent-fleet/…`) and leave it `null`.
 ### 2. Terraform
 
 ```bash
-cd deploy/gcp/gke
-cp terraform.tfvars.example terraform.tfvars      # fill it in; it is gitignored
-terraform init -backend-config="bucket=<state-bucket>" -backend-config="prefix=<name_prefix>"
-terraform apply
+cp deploy/gcp/gke/terraform.tfvars.example deploy/gcp/gke/terraform.tfvars   # fill it in; gitignored
+$TF init -backend-config="bucket=<state-bucket>" -backend-config="prefix=$PREFIX"
+$TF apply
 ```
 
 - `name_prefix` names every resource and the two namespaces (`<prefix>-cp`, `<prefix>-ws`).
@@ -98,61 +119,78 @@ terraform apply
   1918 or `100.64.0.0/10`, check that the egress policy still excepts it: the four ranges
   Terraform prints are excepted; the Private Service Access range is excepted only through RFC
   1918.
-- The certificate is issued once the DNS authorisation records resolve. `gcloud
-  certificate-manager certificates describe <prefix>-cert` shows its state; it is usually
-  `ACTIVE` within an hour.
+- The certificate is issued once the DNS authorisation records resolve.
+  `gcloud certificate-manager certificates describe $PREFIX-cert --project "$PROJECT"` shows its
+  state; it is usually `ACTIVE` within an hour.
 
 What it grants (decision 12; each to one principal on one resource): the CP's service account
 gets Cloud SQL client and instance user, conditioned to this instance, and Artifact Registry
-reader on the repository; the node service account gets Artifact Registry reader, log writer and
-metric writer; GKE's service agent gets encrypt/decrypt on the Secrets key; the CP's Kubernetes
-service account `<prefix>-cp/af-cp` may act as the CP's service account. Nothing names the
-workspace namespace.
+reader on the repository; the node service account gets Artifact Registry reader and the minimum
+node role (`roles/container.defaultNodeServiceAccount`: logs, metrics, and from 1.33 the
+autoscaler's metrics); GKE's service agent gets encrypt/decrypt on the Secrets key; the CP's
+Kubernetes service account `<prefix>-cp/af-cp` may act as the CP's service account. Nothing names
+the workspace namespace.
 
-### 3. The database, once
+### 3. Point kubectl at this cluster
 
-The CP's database user is an IAM user with no password and, at first, no rights. Give it the
-database, as the built-in `postgres` user, through a Cloud SQL Auth Proxy on your machine:
+Terraform does not touch your kubeconfig. **Before any `kubectl` command**, fetch this cluster's
+credentials and check that the current context is it — otherwise the namespaces, RBAC and
+Secrets below land on whatever cluster your kubeconfig pointed at:
 
 ```bash
-gcloud sql users set-password postgres --instance <prefix>-pg --prompt-for-password
-cloud-sql-proxy --private-ip "$(terraform output -raw cloud_sql_instance)" &   # from inside the VPC
+eval "$($TF output -raw get_credentials)"     # gcloud container clusters get-credentials …
+kubectl config current-context                # gke_<project>_<region>_<prefix>-gke
+kubectl get nodes -L agent-fleet.io/pool      # the system and workspace pools
+```
+
+Do the same in every new shell before the procedures under "Operating it".
+
+### 4. The database, once
+
+The CP's database user is an IAM user with no password and, at first, no rights. Give it the
+database, as the built-in `postgres` user, through a Cloud SQL Auth Proxy:
+
+```bash
+gcloud sql users set-password postgres --instance "$PREFIX-pg" --project "$PROJECT" --prompt-for-password
+DBUSER="$($TF output -raw cp_database_user)"
+cloud-sql-proxy --private-ip "$($TF output -raw cloud_sql_instance)" &   # from inside the VPC
 psql "host=127.0.0.1 user=postgres dbname=agentfleet" <<SQL
-GRANT "$(terraform output -raw cp_database_user)" TO postgres;
-ALTER DATABASE agentfleet OWNER TO "$(terraform output -raw cp_database_user)";
-ALTER SCHEMA public OWNER TO "$(terraform output -raw cp_database_user)";
+GRANT "$DBUSER" TO postgres;
+ALTER DATABASE agentfleet OWNER TO "$DBUSER";
+ALTER SCHEMA public OWNER TO "$DBUSER";
 SQL
 ```
 
 The instance has no public IP, so the proxy runs from a machine in the VPC (a short-lived VM,
 or Cloud Shell with a VPC connection). Keep the `postgres` password in your vault, not here.
 
-### 4. The overlay
+### 5. The overlay
 
 ```bash
-cp -r deploy/kubernetes/overlays/gke deploy/kubernetes/overlays/<prefix>
-terraform -chdir=deploy/gcp/gke output -raw kustomize_deployment \
-  > deploy/kubernetes/overlays/<prefix>/deployment.yaml
+cp -r deploy/kubernetes/overlays/gke "deploy/kubernetes/overlays/$PREFIX"
+$TF output -raw kustomize_deployment > "deploy/kubernetes/overlays/$PREFIX/deployment.yaml"
 ```
 
 Then edit, in the copy:
 
 - `cp.env`: `PUBLIC_BASE_URL` and `PUBLIC_DOMAIN` (the `fqdn`), `AF_PREVIEW_DOMAIN` (Terraform's
   `preview_domain`, or empty), the sign-in settings, `SUPER_ADMIN_EMAILS`. Keep
-  `AF_TRUSTED_PROXY_HOPS=2`: the load balancer appends `<client>, <load balancer>`; add one per
-  proxy you put in front of it.
+  `AF_TRUSTED_PROXY_HOPS=2` (see "The load balancer").
 - `kustomization.yaml`: `images:` — the CP image and the release tag.
+- `base/cp-data.yaml` asks 20 GiB for the CP's own disk; patch it in the copy if the internal
+  git provider will hold more.
 
 Keep this copy in your own repository or vault, not in a working copy of this one.
 
-### 5. Secrets
+### 6. Secrets
 
 The CP reads one Secret, `af-cp-secrets`, which these manifests never contain. Create it once
 the namespace exists:
 
 ```bash
-kubectl apply -k deploy/kubernetes/overlays/<prefix>
-kubectl -n <prefix>-cp create secret generic af-cp-secrets \
+kubectl config current-context                # still this cluster (step 3)
+kubectl apply -k "deploy/kubernetes/overlays/$PREFIX"
+kubectl -n "$PREFIX-cp" create secret generic af-cp-secrets \
   --from-literal=AF_MASTER_KEY="$(cat master-key)" \
   --from-literal=AF_COOKIE_SECRET="$(openssl rand -hex 32)" \
   --from-literal=GOOGLE_OAUTH_CLIENT_SECRET="$(cat google-client-secret)"
@@ -163,32 +201,60 @@ does. Generate `AF_MASTER_KEY` with `head -c 32 /dev/urandom | base64`, as for c
 ([deploy/compose/README.md](../compose/README.md)), and keep its only other copy in your vault
 (P14). Other sign-in secrets (`AF_OIDC_<ID>_CLIENT_SECRET`, `GITHUB_OAUTH_CLIENT_SECRET`) go in
 the same Secret; rotate one with `kubectl create secret … --dry-run=client -o yaml | kubectl
-apply -f -` and `kubectl -n <prefix>-cp rollout restart deployment/af-cp`.
+apply -f -` and `kubectl -n "$PREFIX-cp" rollout restart deployment/af-cp`.
 
-### 6. Check it
+### 7. The load balancer
+
+The Gateway `af-cp` (`components/gke/gateway.yaml`) makes GKE build a **global external**
+Application Load Balancer — not the classic one, which closes even an active WebSocket at the
+backend timeout. Terminals, the mirror and the browser pane are WebSockets, so two limits matter:
+
+- **An idle WebSocket** (a terminal nobody types in, a quiet session) is closed after the
+  backend service's `timeoutSec`. The default is 30 seconds; the `GCPBackendPolicy` `af-cp` in
+  the same file sets 3600. To change it, edit `timeoutSec` there and `kubectl apply -k` the
+  overlay; GKE updates the backend service within a few minutes
+  (`gcloud compute backend-services list --project "$PROJECT"` shows the value).
+- **An active WebSocket** is closed after 24 hours whatever `timeoutSec` says. That cut cannot
+  be configured away; the Console has to reconnect.
+
+Whether an idle terminal survives the timeout in practice, and whether the Console reconnects
+transparently after either cut, is **not yet measured** (ADR 0106 open question 3, #1468). Test
+both before relying on long-lived terminals.
+
+**`AF_TRUSTED_PROXY_HOPS` stays 2.** The load balancer appends `<client>, <load balancer>` to
+whatever `X-Forwarded-For` it receives, and the CP counts from the right. With nothing in front
+of the load balancer, 2 names the real client. Raising it for a CDN or proxy in front is only
+safe when the load balancer cannot be reached except through that proxy (for example a Cloud
+Armor policy admitting only the proxy's addresses) **and** you have checked which entries the
+proxy appends or replaces. Otherwise a client that sends its own `X-Forwarded-For` straight to
+the load balancer chooses the address the CP sees, and walks past a tenant's network
+restriction. This tree supports no proxy in front of the load balancer.
+
+### 8. Check it
 
 ```bash
-kubectl -n <prefix>-cp rollout status deployment/af-cp
-kubectl get ns <prefix>-ws -o jsonpath='{.metadata.labels.pod-security\.kubernetes\.io/enforce}'   # restricted
-kubectl -n <prefix>-cp get gateway af-cp        # PROGRAMMED True, ADDRESS = lb_address
+kubectl -n "$PREFIX-cp" rollout status deployment/af-cp
+kubectl get ns "$PREFIX-ws" -o jsonpath='{.metadata.labels.pod-security\.kubernetes\.io/enforce}'   # restricted
+kubectl -n "$PREFIX-cp" get pvc af-cp-data    # Bound
+kubectl -n "$PREFIX-cp" get gateway af-cp     # PROGRAMMED True, ADDRESS = lb_address
 curl -sS https://<fqdn>/readyz
 ```
 
 What the CP's account may do — every line must answer as shown:
 
 ```bash
-SA=system:serviceaccount:<prefix>-cp:af-cp
-kubectl auth can-i create statefulsets -n <prefix>-ws --as $SA        # yes
-kubectl auth can-i delete pods -n <prefix>-ws --as $SA                # yes (the erase pod)
+SA=system:serviceaccount:$PREFIX-cp:af-cp
+kubectl auth can-i create statefulsets -n "$PREFIX-ws" --as $SA       # yes
+kubectl auth can-i delete pods -n "$PREFIX-ws" --as $SA               # yes (the erase pod)
 kubectl auth can-i patch namespaces --as $SA                          # no
-kubectl auth can-i create networkpolicies -n <prefix>-ws --as $SA     # no
+kubectl auth can-i create networkpolicies -n "$PREFIX-ws" --as $SA    # no
 kubectl auth can-i list storageclasses --as $SA                       # no
-kubectl auth can-i get storageclass/<prefix>-workspace --as $SA       # yes
-kubectl auth can-i create pods -n <prefix>-cp --as $SA                # no
+kubectl auth can-i get "storageclass/$PREFIX-workspace" --as $SA      # yes
+kubectl auth can-i create pods -n "$PREFIX-cp" --as $SA               # no
 ```
 
 Then sign in, start a workspace, and check that its pod runs on the workspace pool:
-`kubectl -n <prefix>-ws get pods -o wide -l agent-fleet.io/workspace`.
+`kubectl -n "$PREFIX-ws" get pods -o wide -l agent-fleet.io/workspace`.
 
 ## Other clusters
 
@@ -202,7 +268,9 @@ Then sign in, start a workspace, and check that its pod runs on the workspace po
   `AF_K8S_IMAGE_PULL_SECRET`;
 - put your cluster's ingress in front of the Service `af-cp` (port 8099), with WebSockets and a
   long idle timeout, and set `AF_TRUSTED_PROXY_HOPS` to the number of proxies that append to
-  `X-Forwarded-For`;
+  `X-Forwarded-For` — counting a proxy only if the CP cannot be reached except through it, as
+  "The load balancer" explains;
+- give the claim `af-cp-data` a backup, as "What has to survive" does on GKE;
 - add, in the CP namespace, a policy like `components/gke/cp-networkpolicy.yaml` that admits
   only your ingress to port 8099 — on a cluster that runs other workloads, anything that
   reaches that port can name any user;
@@ -227,52 +295,129 @@ Then sign in, start a workspace, and check that its pod runs on the workspace po
 
 ## Operating it (decision 13)
 
+The commands below assume the shell variables of "GKE" and that `kubectl config current-context`
+is this cluster (step 3).
+
+### What has to survive
+
+Two things hold the deployment's state, and they belong together:
+
+- **the database** (Cloud SQL): every row;
+- **the CP's own disk**, the claim `af-cp-data` at `WS_DATA` (`/var/lib/af-cp`): the internal git
+  provider's bare repositories and LFS objects, and the git token key. The database's list of
+  repositories is worth nothing without them, and a new key invalidates every git token handed
+  out.
+
+`AF_MASTER_KEY` is the third, and lives in your vault (P14). The homes are not backed up in this
+version: a disk lost is a home lost.
+
+A backup taken **with the CP stopped** is consistent across the first two; a scheduled one is
+not (the disk's snapshot and the database's backup run at different moments, so a repository
+pushed in between can be in one and not the other).
+
+To find the CP's disk:
+
+```bash
+PV="$(kubectl -n "$PREFIX-cp" get pvc af-cp-data -o jsonpath='{.spec.volumeName}')"
+HANDLE="$(kubectl get pv "$PV" -o jsonpath='{.spec.csi.volumeHandle}')"   # projects/<p>/zones/<z>/disks/<name>
+ZONE="$(echo "$HANDLE" | cut -d/ -f4)"; DISK="${HANDLE##*/}"
+```
+
+### Backups, point-in-time recovery and the restore rehearsal
+
+Terraform turns on the database's automated backups and point-in-time recovery
+(`sql_backup_retention_days`). Give the CP's disk a snapshot schedule once, after the first
+start, with the retention you want:
+
+```bash
+gcloud compute resource-policies create snapshot-schedule "$PREFIX-cp-data" --project "$PROJECT" \
+  --region "$REGION" --daily-schedule --start-time 02:30 --max-retention-days 14
+gcloud compute disks add-resource-policies "$DISK" --zone "$ZONE" --project "$PROJECT" \
+  --resource-policies "$PREFIX-cp-data"
+```
+
+Scheduled snapshots expire by themselves; the on-demand ones below stay until you delete them
+(`gcloud compute snapshots delete <name> --project "$PROJECT"`).
+
+Rehearse a database restore once after standing up, and after any change to the database's
+settings, without touching the live instance:
+
+```bash
+gcloud sql instances clone "$PREFIX-pg" "$PREFIX-pg-rehearsal" --project "$PROJECT" \
+  --point-in-time "$(date -u -d '-15 min' +%Y-%m-%dT%H:%M:%SZ)"
+# connect to the clone as in "The database, once" and check that the data is there:
+#   SELECT count(*) FROM identity;  SELECT max(at) FROM audit_log;
+gcloud sql instances delete "$PREFIX-pg-rehearsal" --project "$PROJECT"
+```
+
+Rehearse the disk too: `gcloud compute disks create "$PREFIX-cp-data-rehearsal" --zone "$ZONE"
+--source-snapshot <snapshot> --project "$PROJECT"`, then delete it. Record the dates and how long
+each took; that is your recovery time.
+
 ### Upgrading the CP
 
 The CP migrates its database at start and **cannot be downgraded**. The Deployment's strategy is
 `Recreate`, so two CPs never run against one database.
 
-1. Take a backup and wait for it:
+1. Stop the CP and **wait until its pod is gone** (scaling is asynchronous):
    ```bash
-   gcloud sql backups create --instance <prefix>-pg --description "before <version>"
+   kubectl -n "$PREFIX-cp" scale deployment/af-cp --replicas=0
+   kubectl -n "$PREFIX-cp" wait --for=delete pod -l app.kubernetes.io/name=af-cp --timeout=300s
    ```
-2. Set the new tag under `images:` in your overlay and apply:
+2. Back up both halves, and wait for each:
    ```bash
-   kubectl apply -k deploy/kubernetes/overlays/<prefix>
-   kubectl -n <prefix>-cp rollout status deployment/af-cp
+   gcloud sql backups create --instance "$PREFIX-pg" --project "$PROJECT" --description "before <version>"
+   gcloud compute snapshots create "$PREFIX-cp-data-before-<version>" --project "$PROJECT" \
+     --source-disk "$DISK" --source-disk-zone "$ZONE"
    ```
-3. Going back means **restoring that backup and the previous image together**. The previous image
-   on the migrated database is not a rollback:
+3. Set the new tag under `images:` in your overlay and apply; `kubectl apply` sets replicas
+   back to 1:
    ```bash
-   kubectl -n <prefix>-cp scale deployment/af-cp --replicas=0
-   gcloud sql backups list --instance <prefix>-pg
-   gcloud sql backups restore <backup-id> --restore-instance <prefix>-pg
-   # set the previous tag in the overlay, then
-   kubectl apply -k deploy/kubernetes/overlays/<prefix>
+   kubectl apply -k "deploy/kubernetes/overlays/$PREFIX"
+   kubectl -n "$PREFIX-cp" rollout status deployment/af-cp
    ```
-   `kubectl apply` sets replicas back to 1.
+
+Going back means **restoring both backups of step 2 and the previous image together**. The
+previous image on the migrated database is not a rollback:
+
+1. Stop the CP and wait for its pod to be gone, as in step 1. Do not start the restore before:
+   a CP still running writes into the database being replaced.
+2. The database:
+   ```bash
+   gcloud sql backups list --instance "$PREFIX-pg" --project "$PROJECT"
+   gcloud sql backups restore <backup-id> --restore-instance "$PREFIX-pg" --project "$PROJECT"
+   ```
+3. The disk, only if the internal git provider was used since the snapshot: create a disk from
+   it, keep the current one, and point the claim at the new one.
+   ```bash
+   gcloud compute disks create "$PREFIX-cp-data-restored" --zone "$ZONE" --project "$PROJECT" \
+     --source-snapshot "$PREFIX-cp-data-before-<version>" --type pd-balanced
+   kubectl patch pv "$PV" -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'   # keep the old disk
+   kubectl -n "$PREFIX-cp" delete pvc af-cp-data
+   kubectl apply -f - <<YAML
+   apiVersion: v1
+   kind: PersistentVolume
+   metadata:
+     name: $PREFIX-cp-data-restored
+   spec:
+     capacity: { storage: 20Gi }        # the snapshot's size or more
+     accessModes: ["ReadWriteOnce"]
+     persistentVolumeReclaimPolicy: Retain
+     storageClassName: $PREFIX-workspace
+     claimRef: { namespace: $PREFIX-cp, name: af-cp-data }
+     csi:
+       driver: pd.csi.storage.gke.io
+       volumeHandle: projects/$PROJECT/zones/$ZONE/disks/$PREFIX-cp-data-restored
+       fsType: ext4
+   YAML
+   ```
+   Delete the old disk once the restored deployment is confirmed.
+4. Set the previous tag in the overlay and `kubectl apply -k` it; the claim is recreated and
+   binds to the restored volume.
 
 The workspace image follows `workspaceImage` in `deployment.yaml`. A running workspace keeps the
 image it started with; the next start pins the tag's current digest, and the Console marks the
 workspaces still on an older one as stale.
-
-### Backups, point-in-time recovery and the restore rehearsal
-
-Terraform turns on automated backups and point-in-time recovery (`sql_backup_retention_days`).
-The homes are not backed up in this version: a disk lost is a home lost.
-
-Rehearse a restore once after standing up, and after any change to the database's settings,
-without touching the live instance:
-
-```bash
-gcloud sql instances clone <prefix>-pg <prefix>-pg-rehearsal \
-  --point-in-time "$(date -u -d '-15 min' +%Y-%m-%dT%H:%M:%SZ)"
-# connect to the clone as in "The database, once" and check that the data is there:
-#   SELECT count(*) FROM identity;  SELECT max(at) FROM audit_log;
-gcloud sql instances delete <prefix>-pg-rehearsal
-```
-
-Record the date and how long the clone took; that is your recovery time.
 
 ### Alerts
 
@@ -297,7 +442,7 @@ by itself, and its capacity keeps billing. So:
    `kubectl cordon <node>`
 2. **Stop its workspaces through the CP**, those still starting included. List them:
    ```bash
-   kubectl -n <prefix>-ws get pods -l agent-fleet.io/workspace --field-selector spec.nodeName=<node> \
+   kubectl -n "$PREFIX-ws" get pods -l agent-fleet.io/workspace --field-selector spec.nodeName=<node> \
      -o custom-columns=POD:.metadata.name,WORKSPACE:.metadata.labels.agent-fleet\\.io/workspace
    ```
    and use **Force-stop the workspace** in each member's detail (guide: admin/02). Wait until the
@@ -316,7 +461,7 @@ only by the procedure above, add a maintenance exclusion with the scope "no mino
 upgrades" for the period you want to control, and run the node upgrade yourself:
 
 ```bash
-gcloud container clusters update <prefix>-gke --region <region> \
+gcloud container clusters update "$PREFIX-gke" --region "$REGION" --project "$PROJECT" \
   --add-maintenance-exclusion-name hold-nodes \
   --add-maintenance-exclusion-start <start> --add-maintenance-exclusion-end <end> \
   --add-maintenance-exclusion-scope no_minor_or_node_upgrades
@@ -339,7 +484,7 @@ operator's, **and it starts with proof that the old process cannot run**:
 1. Find the VM behind the node, and confirm **from Google Cloud, not from Kubernetes**, that it is
    stopped or gone:
    ```bash
-   gcloud compute instances describe <node> --zone <zone> --format='value(status)'
+   gcloud compute instances describe <node> --zone <zone> --project "$PROJECT" --format='value(status)'
    # TERMINATED, or "not found", is proof. RUNNING, or no answer, is not.
    ```
    If the VM is running but unreachable (a network partition), or its state cannot be read,
@@ -362,11 +507,11 @@ When Destroy cannot confirm that something is gone, it says so in the audit log
 | Residue | What to do |
 |---|---|
 | `pvc:<namespace>/<name>` | `kubectl -n <namespace> get pvc <name>`. If it is stuck terminating, a pod still uses it (`kubectl -n <namespace> get pods -l agent-fleet.io/workspace=<workspace>`): wait for that pod, or follow the procedure above for its node |
-| `pv:<name>` | `kubectl get pv <name>`. While it exists, the disk behind it may too: `kubectl get pv <name> -o jsonpath='{.spec.csi.volumeHandle}'` names it. When the volume object is gone, check the disk is too with `gcloud compute disks list --filter="name~<pv name>"` |
+| `pv:<name>` | `kubectl get pv <name>`. While it exists, the disk behind it may too: `kubectl get pv <name> -o jsonpath='{.spec.csi.volumeHandle}'` names it. When the volume object is gone, check the disk is too with `gcloud compute disks list --project "$PROJECT" --filter="name~<pv name>"` |
 | `statefulset:<namespace>/<name>` | Destroy kept it on purpose: it holds the inventory (as an annotation) of claims and volumes that were not confirmed gone. Clear each one it lists as above, **then** delete it: `kubectl -n <namespace> delete statefulset <name>` |
 
 A periodic sweep catches what nobody read in the audit log: disks no node uses
-(`gcloud compute disks list --filter="-users:*"`), volumes in `Released`
+(`gcloud compute disks list --project "$PROJECT" --filter="-users:*"`), volumes in `Released`
 (`kubectl get pv | grep Released`), and StatefulSets in the workspace namespace whose member no
 longer exists.
 
@@ -390,7 +535,21 @@ with the acceptance run (#1468).
 ## Tearing down
 
 Cloud SQL, the cluster and the KMS key are protected against deletion on purpose. To remove a
-deployment: destroy every member's workspace in the Console first (so the disks go with their
-claims), `kubectl delete -k` the overlay, then set `deletion_protection = false` on the cluster
-and the instance, remove the key's `prevent_destroy`, and `terraform destroy`. KMS keys are not
-deleted by Google Cloud, only their versions are scheduled for destruction.
+deployment:
+
+1. Destroy every member's workspace in the Console first, so the disks go with their claims.
+2. Take the backups of "Upgrading the CP" step 2 if anything may be wanted later: deleting the
+   overlay deletes the claim `af-cp-data`, and with `reclaimPolicy: Delete` its disk.
+3. `kubectl delete -k "deploy/kubernetes/overlays/$PREFIX"`.
+4. Lift every protection Terraform set, then apply: on the cluster `deletion_protection = false`;
+   on the Cloud SQL instance **both** `deletion_protection = false` (Terraform's own guard) and
+   `settings.deletion_protection_enabled = false` (the Cloud SQL API's, which refuses the delete
+   on its own); on the KMS key, remove `prevent_destroy`.
+   ```bash
+   $TF apply
+   $TF destroy
+   ```
+
+KMS keys are not deleted by Google Cloud, only their versions are scheduled for destruction. The
+snapshots of the CP's disk and the snapshot schedule outlive the destroy; delete them with
+`gcloud compute snapshots delete` and `gcloud compute resource-policies delete` once unwanted.

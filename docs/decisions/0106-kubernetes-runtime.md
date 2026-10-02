@@ -697,7 +697,12 @@ Issue #1467. Nothing above is changed; this records how `deploy/kubernetes/` and
    unchanged; this one keeps other workloads on a shared cluster off the port that trusts
    forwarding headers ([09 §9.3](../build/09-deploy.md)).
 4. **IAM.** Cloud SQL client and instance user exist only at project level, so their grants carry an
-   IAM condition naming the instance. Log and metric writer have no narrower resource than the
-   project.
+   IAM condition naming the instance. The node service account gets the minimum node role
+   (`roles/container.defaultNodeServiceAccount`) in place of log and metric writer: from 1.33 a
+   node also needs `autoscaling.sites.writeMetrics`, which those two lack. It has no narrower
+   resource than the project.
 5. **The StorageClass is Terraform's** (through the Kubernetes provider), as decision 12 lists it;
    so `terraform apply` must reach the control-plane endpoint.
+6. **The CP has a disk of its own.** `WS_DATA` holds the internal git provider's repositories, LFS
+   objects and git token key, so it is a PersistentVolumeClaim (`af-cp-data`), backed up with the
+   database, not scratch.
