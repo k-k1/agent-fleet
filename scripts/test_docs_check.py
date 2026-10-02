@@ -1,5 +1,6 @@
 """Regression and positive-control fixtures for the shipped policy gate."""
 import importlib.util
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -281,6 +282,93 @@ class AnchorTests(unittest.TestCase):
         heading = "## Syntax `[label](target)`"
         self.assertEqual(self.errors(heading, "02-target.md#syntax-labeltarget"), "")
         self.assertIn("anchor with no matching heading", self.errors(heading, "02-target.md#syntax-label"))
+
+
+class SettingTabsTests(unittest.TestCase):
+    """ref/settings*.md rows against the Console's per-domain tab labels."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.locales = self.root / "console/src/lib/i18n/locales"
+        for locale in ("en", "ja"):
+            # The composition file holds no key, as in the real tree.
+            (self.locales / f"{locale}.ts").parent.mkdir(parents=True, exist_ok=True)
+            (self.locales / f"{locale}.ts").write_text(f'export const {locale} = {{ ...settings }};\n')
+            (self.locales / locale).mkdir()
+            (self.locales / locale / "settings.ts").write_text(
+                "export const settings = {\n"
+                '  "set.tab_display": "Display",\n'
+                "  'set.tab_keys': 'Key\\'s',\n"
+                '  // "set.tab_ghost": "Ghost" is prose in a comment\n'
+                '  "set.tabs_title": "Not a tab",\n'
+                '  "set.display_note": "set.tab_fake: also not a tab",\n'
+                "};\n"
+            )
+            (self.locales / locale / "admin.ts").write_text(
+                'export const admin = {\n  "tenant.tab_engine_access":\n    "Engine access",\n};\n'
+            )
+        self.ref = self.root / "guide/ref"
+        self.ref.mkdir(parents=True)
+        self.rows = ["Display", "Key's", "Engine access"]
+        self.write_rows(self.rows)
+        self.addCleanup(patch.stopall)
+        patch.object(check, "ROOT", str(self.root)).start()
+        patch.object(check, "GUIDE", str(self.root / "guide")).start()
+
+    def write_rows(self, rows):
+        for name in ("settings.md", "settings.ja.md"):
+            table = ["| Tab | Configures |", "|---|---|"] + [f"| {r} | x |" for r in rows]
+            (self.ref / name).write_text("\n".join(table) + "\n")
+
+    def errors(self):
+        check._cache.clear()
+        findings = check.Findings()
+        check.check_ref(findings)
+        return "\n".join(findings.errors)
+
+    def test_reads_per_domain_files_and_only_tab_keys(self):
+        check._cache.clear()
+        self.assertEqual(
+            check.source_setting_tabs("en"),
+            {"set.tab_display": "Display", "set.tab_keys": "Key's", "tenant.tab_engine_access": "Engine access"},
+        )
+        self.assertEqual(self.errors(), "")
+
+    def test_missing_row_is_an_error(self):
+        self.write_rows(self.rows[:-1])
+        self.assertIn("missing from the table -> Engine access", self.errors())
+
+    def test_no_labels_is_an_error_not_a_skip(self):
+        for f in (self.locales / "en").iterdir():
+            f.unlink()
+        out = self.errors()
+        self.assertIn("locales/en/: no settings tab labels", out)
+        self.assertIn("so ref/settings.md cannot be checked", out)
+        self.assertNotIn("locales/ja/", out)
+
+    def test_missing_locale_dir_is_an_error(self):
+        for f in (self.locales / "ja").iterdir():
+            f.unlink()
+        (self.locales / "ja").rmdir()
+        self.assertIn("locales/ja/: no settings tab labels", self.errors())
+
+    def test_real_catalogue_matches_the_rail_keys(self):
+        # Every key the parser reads is a tab the Console's two rails render, and none is
+        # missed: a non-tab key matching the pattern, or a format the regex no longer
+        # reads, both show up here.
+        patch.stopall()
+        check._cache.clear()
+        rails = Path(check.ROOT, "console/src/features/settings")
+        used = set()
+        for src in (rails / "SettingsDialog.tsx", rails / "tenant/tenantScope.tsx"):
+            used |= set(re.findall(r'"((?:set|tenant)\.tab_[a-z0-9_]+)"', src.read_text()))
+        for locale in ("en", "ja"):
+            with self.subTest(locale=locale):
+                tabs = check.source_setting_tabs(locale)
+                self.assertEqual(set(tabs), used)
+                self.assertGreaterEqual(len(tabs), 40)
 
 
 if __name__ == "__main__":

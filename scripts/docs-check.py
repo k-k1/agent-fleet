@@ -817,23 +817,42 @@ def table_first_column(path: str) -> set[str]:
     return out
 
 
+# A settings tab label in a per-domain catalogue file: the key in either quote style, any
+# whitespace (a newline included — long values wrap onto the next line) before the value.
+SETTING_TAB_RE = re.compile(
+    r"""(["'])((?:set|tenant)\.tab_[a-z0-9_]+)\1\s*:\s*"""
+    r"""(?:"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)')"""
+)
+
+
 def source_setting_tabs(locale: str) -> dict[str, str]:
     """Console settings tab labels (key -> displayed string).
 
     A user looks for the name shown on screen, so a row of ref/settings.md must be the
     Console label verbatim. A new tab means a new row.
+
+    The entries live per domain in `locales/<locale>/*.ts`; `locales/<locale>.ts` only
+    spreads them together and holds no key, so reading it yields nothing. An empty result
+    is the caller's error, never a skip: a skipped check reads exactly like a passing one.
     """
-    path = os.path.join(
-        ROOT, "console", "src", "lib", "i18n", "locales", f"{locale}.ts"
-    )
-    if not os.path.exists(path):
+    folder = os.path.join(ROOT, "console", "src", "lib", "i18n", "locales", locale)
+    if not os.path.isdir(folder):
         return {}
-    return {
-        m.group(1): m.group(2)
-        for m in re.finditer(
-            r'"((?:set|tenant)\.tab_[a-z_]+)":\s*"([^"]+)"', read(path)
+    out: dict[str, str] = {}
+    for name in sorted(os.listdir(folder)):
+        if not name.endswith(".ts") or name.endswith(".test.ts"):
+            continue
+        # Whole-line comments only: they name keys in prose, and stripping `//` anywhere
+        # else would cut a URL inside a string.
+        text = "\n".join(
+            line
+            for line in read(os.path.join(folder, name)).splitlines()
+            if not line.lstrip().startswith("//")
         )
-    }
+        for m in SETTING_TAB_RE.finditer(text):
+            raw = m.group(3) if m.group(3) is not None else m.group(4)
+            out[m.group(2)] = re.sub(r"\\(.)", r"\1", raw)
+    return out
 
 
 def table_mark_shape(path: str) -> list[tuple[str, ...]]:
@@ -1328,8 +1347,15 @@ def check_ref(f: Findings) -> None:
     # silently undocumented.
     for locale, name in (("en", "settings.md"), ("ja", "settings.ja.md")):
         path = os.path.join(GUIDE, "ref", name)
+        if not os.path.exists(path):
+            continue
         tabs = source_setting_tabs(locale)
-        if not os.path.exists(path) or not tabs:
+        if not tabs:
+            f.error(
+                f"console/src/lib/i18n/locales/{locale}/: no settings tab labels"
+                f" ('set.tab_*' / 'tenant.tab_*') could be read, so ref/{name} cannot be"
+                " checked (the catalogue moved or its key format changed)"
+            )
             continue
         rows = table_first_column(path)
         missing = sorted({v for v in tabs.values()} - rows)
