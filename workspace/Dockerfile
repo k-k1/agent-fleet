@@ -390,9 +390,9 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 # setTimeout(...).unref() で走るが `disableAutoUpdate || channel==="static"` でスキップ）。
 # 焼き込みでは AF が起動フラグ `--disable-auto-update`（全経路）＋ entrypoint の
 # cli-config.json `channel:"static"` 再固定の二重で封じる（詳細 docs/log/40 Track B）。
-ARG CURSOR_VERSION=2026.09.28-64d2043
-ARG CURSOR_SHA256_X64=6e4cd936a4866b8a77c50ff51a564460d715772fabc477a01aa0f0455d9559f0
-ARG CURSOR_SHA256_ARM64=c737599b27d3d8d6743c72b487204e335f3a8ea2fdbaf18302ee207a646ffd8d
+ARG CURSOR_VERSION=2026.10.01-e373342
+ARG CURSOR_SHA256_X64=a79726c6e644520e993970be4c45775a6889802b67abe461a677a53219ae28e8
+ARG CURSOR_SHA256_ARM64=785c5f6bf2a60eb1121e27ed8c14f5ee07ed1b5b6692324f2d9a997238245eb5
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -432,9 +432,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.26.1
-ARG KIRO_SHA256_X64=f8c5f1e26114875cf1a1188b3e7c6870d709dedad1d3a980549b74bd3e3d11b2
-ARG KIRO_SHA256_ARM64=b3a3a9c5c813889060dfaae51ca4bbc924da98bc31b40f34dc1d4a07422f6151
+ARG KIRO_VERSION=2.27.0
+ARG KIRO_SHA256_X64=0c08099c718ade0cb0d8648e18706d9002eadb8ca0158049c0313433b8a4eb51
+ARG KIRO_SHA256_ARM64=fd55b9b3e626262a36bbaa7857e666e0f15bb06d906a22a50cae7338ffeb64e1
 # Muse Code（kind="muse"、ADR 0095 決定 8）。プロプライエタリなので **配布イメージには
 # 入らない**（BAKE_AGENT_CLIS=0 既定・理由は本ファイル冒頭と NOTICE）。既定の経路は
 # per-user のオンデマンド導入（workspace-agent install-muse）で、ここのピンは
