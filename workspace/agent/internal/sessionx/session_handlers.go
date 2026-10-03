@@ -385,9 +385,10 @@ type CreateReq struct {
 	// /input (#1257).
 	ScheduleID   string `json:"schedule_id"`
 	ScheduleSlot string `json:"schedule_slot"`
-	// msgID is the ClientMessageID a Managed create sends initial_prompt under, set before
-	// noteCreateOrigin so the instruction row names it (#1257). Empty on the Terminal route.
-	msgID string
+	// managed: a Managed create, which raises the instruction row as sending and sends
+	// initial_prompt carrying its id (instr) (#1257). False on the Terminal route.
+	managed bool
+	instr   string
 	// Origin / OriginConv record who STARTED this session (docs/log/46 §2-c, ADR 0029 §6) —
 	// a different axis from Source (which attributes one injected prompt). The MCP
 	// create_session sends "operator" plus its own conversation slug; the Console sends
@@ -1130,11 +1131,13 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 		slot.publish(meta)
 		recordFleetGraphBirth(meta)
-		req.msgID = agents.NormalizeMsgID("")
+		req.managed = true
 		noteCreateOrigin(name, &req, spawnParent, origin)
+		// The row stays either way: a failed launch task is reported as before.
+		defer chatx.MarkInstrSent(name, req.instr)
 		if p := strings.TrimSpace(req.InitialPrompt); p != "" {
 			if err := h.Send(agents.TurnInput{Prompt: p, Origin: createTurnOrigin(&req, spawnParent),
-				ClientMessageID: req.msgID, Schedule: scheduleRefOf(req.Source, req.ScheduleID, req.ScheduleSlot)}); err != nil {
+				Instr: req.instr, Schedule: scheduleRefOf(req.Source, req.ScheduleID, req.ScheduleSlot)}); err != nil {
 				log.Printf("managed initial prompt %s: %v", name, err)
 				meta.InitialPromptState = session.InitialPromptFailed
 			} else {
@@ -1203,7 +1206,11 @@ func noteCreateOrigin(name string, req *CreateReq, spawnParent, origin string) {
 	hasPrompt := strings.TrimSpace(req.InitialPrompt) != ""
 	switch {
 	case req.ReportTo != "":
-		chatx.AddQueuedInstruction(name, req.ReportTo, injectionSource(req.Source), req.msgID)
+		if req.managed {
+			req.instr = chatx.AddSendingInstruction(name, req.ReportTo, injectionSource(req.Source))
+		} else {
+			chatx.AddInstruction(name, req.ReportTo, injectionSource(req.Source))
+		}
 		recordInjection(name, req.InitialPrompt, injectionSource(req.Source)) // orchestrated start (docs/log/30 ② / docs/log/38)
 		if hasPrompt {
 			recordFleetGraphInstruct(name, injectionSource(req.Source), req.ReportTo, "", req.InitialPrompt)

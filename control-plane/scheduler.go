@@ -292,7 +292,8 @@ func (sc *scheduler) fireOne(ctx context.Context, sch store.Schedule, now time.T
 	if sch.ManualFirePending {
 		trigger = "manual"
 	}
-	run := store.ScheduleRun{ID: store.NewID(), ScheduleID: sch.ID, MembershipID: sch.MembershipID, FiredAt: nowRFC, Status: status, Session: session, Trigger: trigger}
+	run := store.ScheduleRun{ID: store.NewID(), ScheduleID: sch.ID, MembershipID: sch.MembershipID, FiredAt: nowRFC, Status: status, Session: session, Trigger: trigger,
+		Slot: slot.UTC().Format(time.RFC3339)}
 	if err := sc.store.AppendScheduleRun(ctx, run, scheduleRunKeep); err != nil {
 		log.Printf("scheduler: append run %s: %v", sch.ID, err)
 	}

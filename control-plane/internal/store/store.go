@@ -719,6 +719,9 @@ type ScheduleRun struct {
 	FiredAt, Status, Detail      string
 	Session                      string
 	Trigger                      string
+	// Slot is the slot the run fired for (RFC 3339 UTC), empty on rows written before it was
+	// recorded. MarkScheduleRunNotExecuted names a run by it.
+	Slot string
 }
 
 // MCPServerRow is one tenant-distributed MCP server definition (docs/log/48 P4 +
@@ -1704,11 +1707,11 @@ type ScheduleStore interface {
 	// ListScheduleRuns returns a schedule's most-recent runs (newest first), scoped by
 	// membership so a member only sees their own schedule's history.
 	ListScheduleRuns(ctx context.Context, scheduleID, membershipID string, limit int) ([]ScheduleRun, error)
-	// MarkScheduleRunNotExecuted rewrites the status and detail of the run recorded as fired
-	// into session for the slot at or after since: the first fired run of that session from
-	// the slot on, because the scheduler records one run per slot. found is false when no such
-	// run is left (trimmed, or never recorded as fired).
-	MarkScheduleRunNotExecuted(ctx context.Context, scheduleID, membershipID, session, since, status, detail string) (found bool, err error)
+	// MarkScheduleRunNotExecuted rewrites the status and detail of the run that fired into
+	// session for slot, when it is still recorded as fired. found is false when no run has that
+	// session and slot (trimmed, recorded before slots were, or never fired). changed is false
+	// when the run is found but no longer fired: a repeated report, or a run that failed.
+	MarkScheduleRunNotExecuted(ctx context.Context, scheduleID, membershipID, session, slot, status, detail string) (found, changed bool, err error)
 }
 
 // MCPServerStore is the tenant-distributed MCP server registry (docs/log/48 P4 +

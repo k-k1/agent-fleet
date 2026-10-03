@@ -719,13 +719,12 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	// The origin is what the stop rules read (ADR 0105): only member input ends a stop episode,
 	// and a discard lists the rest by origin rather than putting it back in the input box.
 	in := agents.TurnInput{Prompt: prompt, Origin: turnOrigin(badgeOriginOf(peerFrom, reportTo, source), peerFrom),
-		ClientMessageID: agents.NormalizeMsgID(""), Schedule: sched}
-	// The ledger row is raised BEFORE the send and names the prompt's id (#1257): the queue
-	// may hold the prompt behind a turn and drop it later, and the drop finds the row by that
-	// id. A send that fails withdraws it.
-	row := ""
+		Schedule: sched}
+	// The ledger row is raised BEFORE the send, marked sending, and the prompt carries its id
+	// (#1257): the queue may hold the prompt behind a turn and drop it, during the send or
+	// long after, and the drop names the row. The send's outcome settles the sending mark.
 	if peerFrom == "" && reportTo != "" {
-		row = chatx.AddQueuedInstruction(meta.Name, reportTo, injectionSource(source), in.ClientMessageID)
+		in.Instr = chatx.AddSendingInstruction(meta.Name, reportTo, injectionSource(source))
 	}
 	queued := false
 	if qs, ok := h.(agents.QueueingSender); ok {
@@ -734,7 +733,7 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 		err = h.Send(in)
 	}
 	if err != nil {
-		chatx.WithdrawInstruction(meta.Name, row)
+		chatx.WithdrawInstruction(meta.Name, in.Instr)
 		if errors.Is(err, agents.ErrQuestionPending) {
 			httpx.WriteErr(w, http.StatusConflict, "question_pending",
 				"a question is awaiting an answer; answer it via the question card, not free text")
@@ -743,6 +742,7 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 		writeRuntimeErr(w, err)
 		return
 	}
+	chatx.MarkInstrSent(meta.Name, in.Instr)
 	markSessionWorking(meta.Name)
 	cancelStopArmOnNewPrompt(meta.Name) // new work supersedes a stop-after-turn arm (docs/log/85)
 	// The usage-limit auto-resume's "resumed" notice, same as the TUI path above: Send having

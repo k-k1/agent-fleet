@@ -259,15 +259,17 @@ func (q *TurnQueue) holdInput(in *TurnInput) {
 	if in.queuedAt.IsZero() {
 		in.queuedAt = q.now()
 	}
-	putHeld(q.name, *in)
+	in.onDisk = putHeld(q.name, *in)
 }
 
-// releaseInput removes a held input's file once it no longer waits: handed to the runtime,
-// discarded by a stop, or removed by id.
-func (q *TurnQueue) releaseInput(in TurnInput) {
-	if isHeld(in) {
-		releaseHeld(q.name, in.ClientMessageID)
+// releaseInput claims a held input's file once it no longer waits: handed to the runtime,
+// discarded by a stop, or removed by id. False: a drop claimed it first (claimHeld), so it was
+// reported as not run already and must neither run nor be reported again.
+func (q *TurnQueue) releaseInput(in TurnInput) bool {
+	if !isHeld(in) || !in.onDisk {
+		return true
 	}
+	return claimHeld(q.name, in.ClientMessageID)
 }
 
 // AcceptRecorded queues input AcceptOutside has already recorded (codex: a native turn/steer
@@ -316,6 +318,9 @@ func (q *TurnQueue) holds(id string) bool {
 	}
 	return false
 }
+
+// Name is the session the queue belongs to.
+func (q *TurnQueue) Name() string { return q.name }
 
 // Len is the number of entries waiting in the queue, the taken one excluded.
 func (q *TurnQueue) Len() int { return len(q.queue) }
@@ -377,13 +382,18 @@ func (q *TurnQueue) Hold(t *Taken, held bool) (redirect bool) {
 }
 
 // Commit is the pump's last act under the lock before it hands t to the runtime. false: a stop
-// or a removal cancelled t (or t is stale); the pump must not send it.
+// or a removal cancelled t (or t is stale), or a drop claimed its held file (an archive racing a
+// Resume) and reported it as not run; the pump must not send it.
 func (q *TurnQueue) Commit(t *Taken) bool {
 	if t != q.head {
 		return false
 	}
+	if !q.releaseInput(t.In) {
+		q.head, q.stopPending, q.pendingFirst = nil, false, false
+		q.maybeEndEpisode()
+		return false
+	}
 	t.phase = phaseCommitted
-	q.releaseInput(t.In)
 	return true
 }
 
@@ -423,7 +433,7 @@ func (q *TurnQueue) Requeue(t *Taken) bool {
 	}
 	q.queue = append([]TurnInput{t.In}, q.queue...)
 	if isHeld(t.In) {
-		putHeld(q.name, t.In) // Commit released it; it waits again
+		q.queue[0].onDisk = putHeld(q.name, t.In) // Commit released it; it waits again
 	}
 	if q.at == LedgerAtTake {
 		if q.recorded == nil {
@@ -495,8 +505,9 @@ func (q *TurnQueue) keepDiscard(reason string, ins []TurnInput) *Discard {
 	items := make([]QueueItem, 0, len(ins))
 	for _, in := range ins {
 		q.recordGone(in.ClientMessageID)
-		q.releaseInput(in)
-		dropQueued(q.name, in, drop)
+		if q.releaseInput(in) {
+			dropQueued(q.name, in, drop)
+		}
 		items = append(items, itemOf(in, ""))
 	}
 	d := Discard{ID: mintID("dsc_"), At: q.now().Format(time.RFC3339), Reason: reason, Items: items}
@@ -551,8 +562,9 @@ func (q *TurnQueue) Remove(id string) (QueueItem, error) {
 		q.dropQueued(id)
 		q.maybeEndEpisode()
 		q.recordGone(id)
-		q.releaseInput(h.In)
-		dropQueued(q.name, h.In, DropRemoved)
+		if q.releaseInput(h.In) {
+			dropQueued(q.name, h.In, DropRemoved)
+		}
 		return itemOf(h.In, ""), nil
 	}
 	for _, in := range q.queue {
@@ -560,8 +572,9 @@ func (q *TurnQueue) Remove(id string) (QueueItem, error) {
 			q.dropQueued(id)
 			q.maybeEndEpisode()
 			q.recordGone(id)
-			q.releaseInput(in)
-			dropQueued(q.name, in, DropRemoved)
+			if q.releaseInput(in) {
+				dropQueued(q.name, in, DropRemoved)
+			}
 			return itemOf(in, ""), nil
 		}
 	}

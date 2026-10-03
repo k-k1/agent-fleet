@@ -814,7 +814,7 @@ func (rc *reportReconciler) prune(armed []string) {
 // arm and lost it, falls out of the definition here as "a row that cannot disappear".
 func (rc *reportReconciler) evaluate(name string, now time.Time) {
 	open := rc.reportNotRun(name, openInstrRows(name), now)
-	open = withoutHeldInstr(name, open)
+	open = withoutHeldInstr(name, open, now)
 	if len(open) == 0 {
 		return
 	}
@@ -908,18 +908,32 @@ func (rc *reportReconciler) reportNotRun(name string, open []instrRow, now time.
 	return rest
 }
 
-// withoutHeldInstr drops the rows whose prompt still waits in the session's queue (#1257): an
-// instruction that has not started cannot have completed, whatever the session's earlier turn
-// did. Such a row stays pending until its prompt is handed to the runtime, and is then judged
-// like any other.
-func withoutHeldInstr(name string, rows []instrRow) []instrRow {
+// withoutHeldInstr drops the rows whose prompt has not started (#1257): still being sent, or
+// waiting in the session's queue. An instruction that has not started cannot have completed,
+// whatever the session's earlier turn did. Such a row stays pending until its prompt is handed
+// to the runtime, and is then judged like any other.
+//
+// A row still marked sending after instrSendingGrace is judged normally: the Agent died
+// between raising it and the send's outcome, and a row that never settles is v1's lost report.
+func withoutHeldInstr(name string, rows []instrRow, now time.Time) []instrRow {
+	held := agents.HeldInstrs(name)
 	var out []instrRow
 	for _, r := range rows {
-		if !agents.HeldWaiting(name, r.Msg) {
-			out = append(out, r)
+		if held[r.ID] || (r.Sending && !instrSendingStale(r, now)) {
+			continue
 		}
+		out = append(out, r)
 	}
 	return out
+}
+
+// instrSendingGrace bounds how long a send may hold a row out of the settle decision. A send
+// is an accept under the driver's lock plus, on opencode, one status request.
+const instrSendingGrace = 5 * time.Minute
+
+func instrSendingStale(r instrRow, now time.Time) bool {
+	at, err := time.Parse(time.RFC3339, r.DeliveredAt)
+	return err != nil || now.Sub(at) > instrSendingGrace
 }
 
 // reportReopenGrace is how long a reported row stays under compensation watch

@@ -64,6 +64,7 @@ type heldPeer struct {
 	// Origin is the input's Origin.Kind; empty is a peer message.
 	Origin   string      `json:"origin,omitempty"`
 	Schedule ScheduleRef `json:"schedule,omitempty"`
+	Instr    string      `json:"instr,omitempty"`
 }
 
 func (hp heldPeer) origin() string {
@@ -120,6 +121,7 @@ const (
 type HeldDrop struct {
 	Session  string
 	ID       string // the input's ClientMessageID
+	Instr    string // TurnInput.Instr
 	Origin   string
 	Schedule ScheduleRef
 	QueuedAt time.Time
@@ -149,19 +151,19 @@ func dropQueued(name string, in TurnInput, reason string) {
 	if !isHeld(in) {
 		return
 	}
-	reportDropped(HeldDrop{Session: name, ID: in.ClientMessageID, Origin: in.Origin.Kind,
+	reportDropped(HeldDrop{Session: name, ID: in.ClientMessageID, Instr: in.Instr, Origin: in.Origin.Kind,
 		Schedule: in.Schedule, QueuedAt: in.queuedAt, Reason: reason})
 }
 
-// putHeld writes in's file. Caller holds the driver's handle lock.
-func putHeld(name string, in TurnInput) {
+// putHeld writes in's file and reports whether it did. Caller holds the driver's handle lock.
+func putHeld(name string, in TurnInput) bool {
 	if !heldName(name) || in.ClientMessageID == "" {
-		return
+		return false
 	}
 	b, err := json.Marshal(heldPeer{
 		ID: in.ClientMessageID, Prompt: in.Prompt, Attachments: in.Attachments,
 		From: in.Origin.From, QueuedAt: in.queuedAt, Seq: heldSeq.Add(1),
-		Origin: heldOriginField(in.Origin.Kind), Schedule: in.Schedule,
+		Origin: heldOriginField(in.Origin.Kind), Schedule: in.Schedule, Instr: in.Instr,
 	})
 	if err == nil {
 		err = writeFileAtomic(heldFile(name, in.ClientMessageID), b)
@@ -169,7 +171,25 @@ func putHeld(name string, in TurnInput) {
 	if err != nil {
 		// The message still runs from memory; only a restart before it starts would lose it.
 		log.Printf("held peer message: %s: write %s: %v", name, in.ClientMessageID, err)
+		return false
 	}
+	return true
+}
+
+// claimHeld removes id's file and reports whether this caller removed it. The file is the
+// token for a held input: Commit and the drops each claim it before acting, so an input that
+// a drop has reported as not run cannot also be handed to the runtime by a queue that adopted
+// it meanwhile (a Resume racing an archive), and one already handed over is not reported. A
+// removal that fails for another reason counts as claimed: the input is not lost over it.
+func claimHeld(name, id string) bool {
+	if !heldName(name) || id == "" {
+		return true
+	}
+	err := os.Remove(heldFile(name, id))
+	if err != nil && !os.IsNotExist(err) {
+		log.Printf("held peer message: %s: remove %s: %v", name, id, err)
+	}
+	return !os.IsNotExist(err)
 }
 
 // heldOriginField is the origin as stored: empty for a peer message, the spelling every
@@ -220,6 +240,18 @@ func releaseHeld(name, id string) {
 // handed to the runtime, in this process's queue or on disk for the next start. The report
 // reconciler reads it so an instruction that has not started is not reported as done.
 func HeldWaiting(name, id string) bool { return id != "" && heldExists(name, id) }
+
+// HeldInstrs is the set of instruction rows (TurnInput.Instr) whose input session name still
+// holds. The report reconciler keeps those rows pending.
+func HeldInstrs(name string) map[string]bool {
+	out := map[string]bool{}
+	for _, hp := range loadHeld(name) {
+		if hp.Instr != "" {
+			out[hp.Instr] = true
+		}
+	}
+	return out
+}
 
 func heldExists(name, id string) bool {
 	if !heldName(name) {
@@ -283,6 +315,9 @@ func DropHeld(name, reason string) {
 		return
 	}
 	for _, hp := range loadHeld(name) {
+		if !claimHeld(name, hp.ID) {
+			continue // handed to the runtime meanwhile: it runs, and is not reported
+		}
 		if hp.origin() == OriginPeer {
 			log.Printf("held peer message: %s: dropped %s from %s queued %s (%s)",
 				name, hp.ID, hp.From, hp.QueuedAt.Format(time.RFC3339), reason)
@@ -302,16 +337,15 @@ func DropHeldOrigin(name, kind, reason string) {
 		return
 	}
 	for _, hp := range loadHeld(name) {
-		if hp.origin() != kind {
+		if hp.origin() != kind || !claimHeld(name, hp.ID) {
 			continue
 		}
-		releaseHeld(name, hp.ID)
 		reportDropped(heldDropOf(name, hp, reason))
 	}
 }
 
 func heldDropOf(name string, hp heldPeer, reason string) HeldDrop {
-	return HeldDrop{Session: name, ID: hp.ID, Origin: hp.origin(), Schedule: hp.Schedule,
+	return HeldDrop{Session: name, ID: hp.ID, Instr: hp.Instr, Origin: hp.origin(), Schedule: hp.Schedule,
 		QueuedAt: hp.QueuedAt, Reason: reason}
 }
 
@@ -356,8 +390,10 @@ func restoredInput(hp heldPeer) TurnInput {
 		ClientMessageID: hp.ID,
 		Origin:          Origin{Kind: origin, From: hp.From},
 		Schedule:        hp.Schedule,
+		Instr:           hp.Instr,
 		queuedAt:        hp.QueuedAt,
 		restored:        true,
+		onDisk:          true,
 	}
 }
 

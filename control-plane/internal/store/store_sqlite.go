@@ -3211,8 +3211,8 @@ func (s *SQL) MarkManualFirePending(ctx context.Context, id, membershipID, nextR
 
 func (s *SQL) AppendScheduleRun(ctx context.Context, run ScheduleRun, keepN int) error {
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO schedule_run(id, schedule_id, membership_id, fired_at, status, detail, session, trigger_kind) VALUES(?,?,?,?,?,?,?,?)`,
-		run.ID, run.ScheduleID, run.MembershipID, run.FiredAt, run.Status, run.Detail, run.Session, run.Trigger); err != nil {
+		`INSERT INTO schedule_run(id, schedule_id, membership_id, fired_at, status, detail, session, trigger_kind, slot) VALUES(?,?,?,?,?,?,?,?,?)`,
+		run.ID, run.ScheduleID, run.MembershipID, run.FiredAt, run.Status, run.Detail, run.Session, run.Trigger, run.Slot); err != nil {
 		return err
 	}
 	if keepN <= 0 {
@@ -3227,18 +3227,27 @@ func (s *SQL) AppendScheduleRun(ctx context.Context, run ScheduleRun, keepN int)
 	return err
 }
 
-func (s *SQL) MarkScheduleRunNotExecuted(ctx context.Context, scheduleID, membershipID, session, since, status, detail string) (bool, error) {
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE schedule_run SET status=?, detail=? WHERE id = (
-		   SELECT id FROM schedule_run
-		   WHERE schedule_id=? AND membership_id=? AND session=? AND status LIKE 'fired%' AND fired_at >= ?
-		   ORDER BY fired_at ASC LIMIT 1)`,
-		status, detail, scheduleID, membershipID, session, since)
-	if err != nil {
-		return false, err
+func (s *SQL) MarkScheduleRunNotExecuted(ctx context.Context, scheduleID, membershipID, session, slot, status, detail string) (bool, bool, error) {
+	if slot == "" {
+		return false, false, nil
 	}
-	n, err := res.RowsAffected()
-	return n > 0, err
+	// The status condition sits in the UPDATE, not in choosing the run: a repeated report
+	// must find the run it already marked and change nothing, never move on to a later run.
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE schedule_run SET status=?, detail=?
+		 WHERE schedule_id=? AND membership_id=? AND session=? AND slot=? AND status LIKE 'fired%'`,
+		status, detail, scheduleID, membershipID, session, slot)
+	if err != nil {
+		return false, false, err
+	}
+	if n, err := res.RowsAffected(); err != nil || n > 0 {
+		return n > 0, n > 0, err
+	}
+	var n int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM schedule_run WHERE schedule_id=? AND membership_id=? AND session=? AND slot=?`,
+		scheduleID, membershipID, session, slot).Scan(&n)
+	return n > 0, false, err
 }
 
 func (s *SQL) ListScheduleRuns(ctx context.Context, scheduleID, membershipID string, limit int) ([]ScheduleRun, error) {
@@ -3246,7 +3255,7 @@ func (s *SQL) ListScheduleRuns(ctx context.Context, scheduleID, membershipID str
 		limit = 50
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, schedule_id, membership_id, fired_at, status, detail, session, trigger_kind FROM schedule_run
+		`SELECT id, schedule_id, membership_id, fired_at, status, detail, session, trigger_kind, slot FROM schedule_run
 		 WHERE schedule_id=? AND membership_id=? ORDER BY fired_at DESC LIMIT ?`,
 		scheduleID, membershipID, limit)
 	if err != nil {
@@ -3256,7 +3265,7 @@ func (s *SQL) ListScheduleRuns(ctx context.Context, scheduleID, membershipID str
 	var out []ScheduleRun
 	for rows.Next() {
 		var r ScheduleRun
-		if err := rows.Scan(&r.ID, &r.ScheduleID, &r.MembershipID, &r.FiredAt, &r.Status, &r.Detail, &r.Session, &r.Trigger); err != nil {
+		if err := rows.Scan(&r.ID, &r.ScheduleID, &r.MembershipID, &r.FiredAt, &r.Status, &r.Detail, &r.Session, &r.Trigger, &r.Slot); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

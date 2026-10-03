@@ -25,15 +25,29 @@ type queueFakeHandle struct {
 	mu   sync.Mutex
 	q    *agents.TurnQueue
 	fail error
+	// sending records, per send, whether the input's row was still marked sending.
+	sending []bool
+	// discardOnSend stops with discard_queue right after the accept: a drop during the send.
+	discardOnSend bool
 }
 
 func (h *queueFakeHandle) Send(in agents.TurnInput) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	for _, r := range chatx.ReadInstrRows(h.q.Name()) {
+		if r.ID == in.Instr {
+			h.sending = append(h.sending, r.Sending)
+		}
+	}
 	if h.fail != nil {
 		return h.fail
 	}
+	// opencode rewrites the id it is given (normalizeMsgID); the row must not depend on it.
+	in.ClientMessageID = "msg_af_" + agents.NormalizeMsgID(in.ClientMessageID)
 	h.q.Accept(in)
+	if h.discardOnSend {
+		h.q.Interrupt(agents.InterruptOpts{DiscardQueue: true}, true)
+	}
 	return nil
 }
 
@@ -90,17 +104,18 @@ func TestManagedOperatorInputIsTiedToItsRowAndReportedWhenDropped(t *testing.T) 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	items := h.q.Items()
-	if len(items) != 1 {
+	if items := h.q.Items(); len(items) != 1 {
 		t.Fatalf("queue = %+v", items)
 	}
-	msg := items[0].ID
 	rows := chatx.ReadInstrRows("held_dst")
-	if len(rows) != 1 || rows[0].Msg != msg || rows[0].Source != TurnSourceSchedule {
-		t.Fatalf("instruction rows = %+v, want one naming %s", rows, msg)
+	if len(rows) != 1 || rows[0].Source != TurnSourceSchedule || rows[0].Sending {
+		t.Fatalf("instruction rows = %+v, want one settled schedule row", rows)
 	}
-	if !agents.HeldWaiting("held_dst", msg) {
-		t.Fatal("the scheduled prompt is not held")
+	if len(h.sending) != 1 || !h.sending[0] {
+		t.Fatalf("row sending during the send = %v, want [true]", h.sending)
+	}
+	if !agents.HeldInstrs("held_dst")[rows[0].ID] {
+		t.Fatal("the scheduled prompt is not held under its row")
 	}
 
 	h.q.DropAll() // halt: the prompt waits on disk
@@ -192,5 +207,21 @@ func TestHaltKeepsHeldInputsAndStopSessionWithdrawsTheOperators(t *testing.T) {
 	if n := agents.HeldCount(name); n != 2 || agents.HeldWaiting(name, agents.OriginOperator) {
 		t.Fatalf("held after stop_session = %d (operator still waiting: %v), want the peer and the schedule",
 			n, agents.HeldWaiting(name, agents.OriginOperator))
+	}
+}
+
+// A drop during the send (the driver discards right after its accept) still names the row, and
+// the send's return does not undo it.
+func TestManagedOperatorInputDroppedDuringTheSend(t *testing.T) {
+	h := useQueueFake(t, "held_sync")
+	conv := newConv(t)
+	captureScheduleNotRun(t)
+	h.discardOnSend = true
+	if rec := postInput(t, "held_sync", `{"prompt":"do it","report_to":"`+conv+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	rows := chatx.ReadInstrRows("held_sync")
+	if len(rows) != 1 || rows[0].Dropped != agents.DropDiscarded || rows[0].Sending {
+		t.Fatalf("rows = %+v, want the row dropped and no longer sending", rows)
 	}
 }

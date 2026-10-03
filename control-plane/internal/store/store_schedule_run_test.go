@@ -9,8 +9,9 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
 )
 
-// MarkScheduleRunNotExecuted (#1257) rewrites only the first fired run of the session from the
-// slot on, on both dialects (the LIKE and the ORDER BY … LIMIT subquery inside UPDATE).
+// MarkScheduleRunNotExecuted (#1257) rewrites exactly the run of that session and slot, once:
+// a repeated report finds the run it marked and changes nothing, and never moves on to the
+// session's next fired run. On both dialects.
 func TestMarkScheduleRunNotExecuted(t *testing.T) {
 	ctx := context.Background()
 	run := func(t *testing.T, st *SQL) {
@@ -18,25 +19,42 @@ func TestMarkScheduleRunNotExecuted(t *testing.T) {
 			t.Fatalf("migrate: %v", err)
 		}
 		for i, r := range []ScheduleRun{
-			{FiredAt: "2026-10-03T09:00:01Z", Status: "fired", Session: "s1"},
-			{FiredAt: "2026-10-03T09:05:01Z", Status: "fired_rotated", Session: "s1"},
-			{FiredAt: "2026-10-03T09:10:01Z", Status: "fired", Session: "s1"},
-			{FiredAt: "2026-10-03T09:05:02Z", Status: "skipped_overlap", Session: "s2"},
+			{FiredAt: "2026-10-03T09:00:01Z", Slot: "2026-10-03T09:00:00Z", Status: "fired", Session: "s1"},
+			{FiredAt: "2026-10-03T09:05:01Z", Slot: "2026-10-03T09:05:00Z", Status: "fired_rotated", Session: "s1"},
+			{FiredAt: "2026-10-03T09:10:01Z", Slot: "2026-10-03T09:10:00Z", Status: "fired", Session: "s1"},
+			{FiredAt: "2026-10-03T09:05:02Z", Slot: "2026-10-03T09:05:00Z", Status: "skipped_overlap", Session: "s2"},
+			{FiredAt: "2026-10-03T08:55:01Z", Status: "fired", Session: "s1"}, // recorded before slots were
 		} {
 			r.ID, r.ScheduleID, r.MembershipID = "r"+string(rune('a'+i)), "s", "m1"
 			if err := st.AppendScheduleRun(ctx, r, 50); err != nil {
 				t.Fatal(err)
 			}
 		}
-		found, err := st.MarkScheduleRunNotExecuted(ctx, "s", "m1", "s1", "2026-10-03T09:05:00Z", "error:not executed", "archived")
-		if err != nil || !found {
-			t.Fatalf("mark = %v, %v", found, err)
+		mark := func(mid, session, slot string) (bool, bool) {
+			t.Helper()
+			found, changed, err := st.MarkScheduleRunNotExecuted(ctx, "s", mid, session, slot, "error:not executed", "archived")
+			if err != nil {
+				t.Fatal(err)
+			}
+			return found, changed
 		}
-		if found, _ := st.MarkScheduleRunNotExecuted(ctx, "s", "m2", "s1", "2026-10-03T09:00:00Z", "x", "x"); found {
-			t.Fatal("another membership's mark matched")
+		if f, c := mark("m1", "s1", "2026-10-03T09:05:00Z"); !f || !c {
+			t.Fatalf("first report = %v, %v", f, c)
 		}
-		if found, _ := st.MarkScheduleRunNotExecuted(ctx, "s", "m1", "s2", "2026-10-03T09:00:00Z", "x", "x"); found {
-			t.Fatal("a run that never fired was marked")
+		if f, c := mark("m1", "s1", "2026-10-03T09:05:00Z"); !f || c {
+			t.Fatalf("repeated report = %v, %v, want found and unchanged", f, c)
+		}
+		if f, _ := mark("m2", "s1", "2026-10-03T09:00:00Z"); f {
+			t.Fatal("another membership's report matched")
+		}
+		if f, c := mark("m1", "s2", "2026-10-03T09:05:00Z"); !f || c {
+			t.Fatalf("a run that never fired = %v, %v", f, c)
+		}
+		if f, _ := mark("m1", "s1", "2026-10-03T08:55:00Z"); f {
+			t.Fatal("a run with no slot matched")
+		}
+		if f, _ := mark("m1", "s1", ""); f {
+			t.Fatal("an empty slot matched")
 		}
 		rows, err := st.ListScheduleRuns(ctx, "s", "m1", 50)
 		if err != nil {
@@ -46,9 +64,12 @@ func TestMarkScheduleRunNotExecuted(t *testing.T) {
 		for _, r := range rows {
 			got = append(got, r.FiredAt[11:16]+"="+r.Status+"/"+r.Detail)
 		}
-		want := "09:10=fired/ 09:05=skipped_overlap/ 09:05=error:not executed/archived 09:00=fired/"
+		want := "09:10=fired/ 09:05=skipped_overlap/ 09:05=error:not executed/archived 09:00=fired/ 08:55=fired/"
 		if strings.Join(got, " ") != want {
 			t.Fatalf("runs = %v, want %s", got, want)
+		}
+		if rows[0].Slot != "2026-10-03T09:10:00Z" {
+			t.Fatalf("slot not round-tripped: %+v", rows[0])
 		}
 	}
 	t.Run("sqlite", func(t *testing.T) {

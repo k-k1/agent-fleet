@@ -21,9 +21,10 @@ func TestScheduleRunNotExecuted(t *testing.T) {
 	var dto scheduleDTO
 	_ = json.Unmarshal(rec.Body.Bytes(), &dto)
 	for _, r := range []store.ScheduleRun{
-		{FiredAt: "2026-10-03T09:00:01Z", Status: "fired", Session: "s1"},
-		{FiredAt: "2026-10-03T09:05:01Z", Status: "fired", Session: "s1"},
-		{FiredAt: "2026-10-03T09:05:02Z", Status: "fired", Session: "s2"},
+		{FiredAt: "2026-10-03T09:00:01Z", Slot: "2026-10-03T09:00:00Z", Status: "fired", Session: "s1"},
+		{FiredAt: "2026-10-03T09:05:01Z", Slot: "2026-10-03T09:05:00Z", Status: "fired", Session: "s1"},
+		{FiredAt: "2026-10-03T09:10:01Z", Slot: "2026-10-03T09:10:00Z", Status: "fired", Session: "s1"},
+		{FiredAt: "2026-10-03T09:05:02Z", Slot: "2026-10-03T09:05:00Z", Status: "fired", Session: "s2"},
 	} {
 		r.ID, r.ScheduleID, r.MembershipID = store.NewID(), dto.ID, mid
 		if err := api.store.AppendScheduleRun(ctx, r, 50); err != nil {
@@ -46,7 +47,7 @@ func TestScheduleRunNotExecuted(t *testing.T) {
 	if s := got["2026-10-03T09:05:01Z s1"]; !strings.HasPrefix(s, "error:not executed") || !strings.Contains(s, "archived") {
 		t.Fatalf("the dropped run = %q", s)
 	}
-	if got["2026-10-03T09:00:01Z s1"] != "fired" || got["2026-10-03T09:05:02Z s2"] != "fired" {
+	if got["2026-10-03T09:00:01Z s1"] != "fired" || got["2026-10-03T09:10:01Z s1"] != "fired" || got["2026-10-03T09:05:02Z s2"] != "fired" {
 		t.Fatalf("other runs changed: %v", got)
 	}
 	notes, err := api.mgr.store.ListNotifications(ctx, mid, "", 10)
@@ -57,9 +58,23 @@ func TestScheduleRunNotExecuted(t *testing.T) {
 		t.Fatalf("notifications = %+v", notes)
 	}
 
-	// Once marked, the same report finds nothing left to mark; a malformed one is refused.
-	if r := doJSON(api.runNotExecuted, mv, "POST", `{"session":"s1","slot":"2026-10-03T09:05:00Z","reason":"archived"}`, dto.ID); r.Code != http.StatusNotFound {
-		t.Fatalf("second report code=%d", r.Code)
+	// A repeated report finds the run it marked and changes nothing: the session's next fired
+	// run stays fired and no second notification is raised.
+	r = doJSON(api.runNotExecuted, mv, "POST", `{"session":"s1","slot":"2026-10-03T09:05:00Z","reason":"archived"}`, dto.ID)
+	if r.Code != http.StatusOK || !strings.Contains(r.Body.String(), `"changed":false`) {
+		t.Fatalf("repeated report code=%d body=%s", r.Code, r.Body.String())
+	}
+	runs, _ = api.store.ListScheduleRuns(ctx, dto.ID, mid, 50)
+	for _, rn := range runs {
+		if rn.FiredAt == "2026-10-03T09:10:01Z" && rn.Status != "fired" {
+			t.Fatalf("a repeated report marked the next run: %+v", rn)
+		}
+	}
+	if notes, _ := api.mgr.store.ListNotifications(ctx, mid, "", 10); len(notes) != 1 {
+		t.Fatalf("notifications after a repeat = %d, want 1", len(notes))
+	}
+	if r := doJSON(api.runNotExecuted, mv, "POST", `{"session":"s1","slot":"2026-10-03T09:15:00Z"}`, dto.ID); r.Code != http.StatusNotFound {
+		t.Fatalf("unknown slot code=%d", r.Code)
 	}
 	if r := doJSON(api.runNotExecuted, mv, "POST", `{"session":"s1","slot":"yesterday"}`, dto.ID); r.Code != http.StatusBadRequest {
 		t.Fatalf("bad slot code=%d", r.Code)

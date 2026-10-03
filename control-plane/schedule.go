@@ -444,24 +444,28 @@ func (a scheduleAPI) runNotExecuted(w http.ResponseWriter, r *http.Request, mv s
 		reason = "dropped"
 	}
 	status := truncStatus("error:not executed: the queued prompt was dropped before it ran (" + reason + ")")
-	since := slot.UTC().Format(time.RFC3339)
-	found, err := a.store.MarkScheduleRunNotExecuted(r.Context(), id, mv.MembershipID, body.Session, since, status, reason)
+	found, changed, err := a.store.MarkScheduleRunNotExecuted(r.Context(), id, mv.MembershipID, body.Session,
+		slot.UTC().Format(time.RFC3339), status, reason)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	if !found {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "run_not_found", "no fired run of this schedule for that session and slot"})
+		writeAPIErr(w, &apiError{http.StatusNotFound, "run_not_found", "no run of this schedule for that session and slot"})
 		return
 	}
-	notifyScheduleNotExecuted(r.Context(), a.mgr.store, sch, slot, body.Session, status)
-	writeJSON(w, http.StatusOK, scheduleRunNotExecutedResp{ScheduleID: id, Status: status})
+	if changed {
+		notifyScheduleNotExecuted(r.Context(), a.mgr.store, sch, slot, body.Session, status)
+	}
+	writeJSON(w, http.StatusOK, scheduleRunNotExecutedResp{ScheduleID: id, Status: status, Changed: changed})
 }
 
-// scheduleRunNotExecutedResp is runNotExecuted's answer: the status the run now has.
+// scheduleRunNotExecutedResp is runNotExecuted's answer. Changed is false for a repeated
+// report, or a run that had already failed: nothing was written.
 type scheduleRunNotExecutedResp struct {
 	ScheduleID string `json:"schedule_id"`
 	Status     string `json:"status"`
+	Changed    bool   `json:"changed"`
 }
 
 // notifyScheduleNotExecuted is notifyOutcome's notification for a run found not executed after

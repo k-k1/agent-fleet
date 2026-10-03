@@ -192,3 +192,55 @@ func TestMarkHeldInstruction(t *testing.T) {
 		t.Fatal("stripped a mark that is not at the end")
 	}
 }
+
+// Review round 1, finding 2: a drop and a queue that adopted the same held input race (an
+// archive while a Resume delivers). Whoever removes the file owns the input: once a drop has
+// reported it as not run the queue's Commit refuses it, and once Commit has handed it over the
+// drop does not report it.
+func TestHeldDropAndCommitClaimTheInputOnce(t *testing.T) {
+	drops := captureDrops(t)
+	q := newQ(t, LedgerAtAccept)
+	q.Accept(member("m0"))
+	running(t, q)
+	o1 := operator("o1")
+	o1.Instr = "i-1"
+	q.Accept(o1)
+	q.DropAll()
+
+	h := &queueHandle{q: NewTurnQueue("tq", q.ledger, LedgerAtAccept)}
+	DeliverHeld("tq", h) // the Resume adopts it
+	DropHeld("tq", DropArchived)
+	if len(*drops) != 1 || (*drops)[0].Instr != "i-1" {
+		t.Fatalf("drops = %+v", *drops)
+	}
+	tk := h.q.Take()
+	if tk == nil || h.q.Commit(tk) {
+		t.Fatal("a queue committed an input a drop had reported as not run")
+	}
+	if h.q.Head() != nil || h.q.Len() != 0 {
+		t.Fatalf("the refused input is still queued: %+v", h.q.Items())
+	}
+
+	// The other order: committed first, then the drop finds nothing to report.
+	*drops = nil
+	o2 := operator("o2")
+	o2.Instr = "i-2"
+	h.q.Accept(member("m1"))
+	running(t, h.q)
+	h.q.Accept(o2)
+	if !HeldInstrs("tq")["i-2"] {
+		t.Fatal("HeldInstrs misses the queued row")
+	}
+	h.q.Settle(h.q.Head())
+	tk = h.q.Take()
+	if !h.q.Commit(tk) {
+		t.Fatal("commit refused")
+	}
+	DropHeld("tq", DropArchived)
+	if len(*drops) != 0 {
+		t.Fatalf("a committed input was reported as not run: %+v", *drops)
+	}
+	if HeldInstrs("tq")["i-2"] {
+		t.Fatal("a committed row is still held")
+	}
+}

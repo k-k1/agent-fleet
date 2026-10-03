@@ -37,7 +37,7 @@ func InstallHeldDropHook() { agents.OnHeldDropped = noteHeldDropped }
 // noteHeldDropped runs under a driver's handle lock: the ledger write is local, and the
 // Control Plane call goes on its own goroutine.
 func noteHeldDropped(d agents.HeldDrop) {
-	chatx.MarkInstrNotRun(d.Session, d.ID, d.Reason)
+	chatx.MarkInstrNotRun(d.Session, d.Instr, d.Reason)
 	if d.Schedule.ID == "" {
 		return
 	}
