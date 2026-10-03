@@ -270,17 +270,20 @@ kubectl -n "$PREFIX-ws" get pods -o wide -l agent-fleet.io/workspace
 kubectl -n "$PREFIX-ws" exec <pod> -- getent hosts github.com     # an address, not empty
 ```
 
-No node answers a workspace, its own node included (P15). Every line must print `closed`;
-the last one is the control and must print `open`:
+No node answers a workspace, its own node included (P15). The pod itself reports `open` or
+`closed`; every node line must say `closed`, and the last line, the control, `open`. An
+`ERROR` line, or no node lines at all, means nothing was checked:
 
 ```bash
-for ip in $(kubectl get nodes -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}'); do
-  for port in 22 10250 10256; do
-    kubectl -n "$PREFIX-ws" exec <pod> -- timeout 3 bash -c "exec 3<>/dev/tcp/$ip/$port" 2>/dev/null \
-      && echo "$ip:$port open" || echo "$ip:$port closed"
-  done
-done
-kubectl -n "$PREFIX-ws" exec <pod> -- timeout 3 bash -c 'exec 3<>/dev/tcp/1.1.1.1/443' && echo "1.1.1.1:443 open"
+nodes=$(kubectl get nodes -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}') \
+  && [ -n "$nodes" ] || echo "ERROR: could not list the nodes"
+probe() {  # <ip> <port>
+  kubectl -n "$PREFIX-ws" exec <pod> -- bash -c \
+    "if timeout 3 bash -c 'exec 3<>/dev/tcp/$1/$2' 2>/dev/null; then echo '$1:$2 open'; else echo '$1:$2 closed'; fi" \
+    || echo "$1:$2 ERROR: exec failed"
+}
+for ip in $nodes; do for port in 22 10250 10256; do probe "$ip" "$port"; done; done
+probe 1.1.1.1 443
 ```
 
 In that workspace's terminal, the home has to be `dev`'s and writable by nobody else, or
