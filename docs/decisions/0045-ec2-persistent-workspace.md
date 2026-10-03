@@ -1494,6 +1494,19 @@ follows the task — the member's start, the audit outcome, Destroy's row deleti
 is lost if it restarts mid-task; the guide says how to finish by hand. Code: `control-plane/internal/runtime/runtime_ecs_home_task.go`,
 `home_task.go`, `control-plane/workspace_handlers.go` (`memberHomeWipe`), `control-plane/workspace_lifecycle.go`.
 
+**Note (2026-10-03, #1536 #1537 #1538): the same task on `ecs-ec2`, a failure that survives a restart, and its
+cost tags.** `ecs-ec2` builds its runtime on the Fargate adapter and its Destroy ends in `base.Destroy`, so the
+task was first switched off on its base: that Destroy was waited for inside the administrator's request, and the
+task did not know the keep-list. Both are now handled and the switch is gone: the task also removes
+`/home-keep/<id>`, Destroy on `ecs-ec2` answers 202 like `ecs` (`runtime.DestroyInBackground`; its own wipe and
+erase still fit in the request), and only directories the task did not remove are still reported as leftovers.
+The IAM is unchanged for that: `ecs-ec2` uses the same family and cluster. A member's background wipe that fails
+is written to `workspace_auto_stop` (kind `home-wipe-failed`) instead of CP memory: that row already means "the
+CP left this workspace stopped, and why", the tenant admins already read it, and the next start already deletes
+it, so no migration was needed. The task's `RunTask` carries the workspace service's cost tags (`af-membership`,
+`af-role=workspace`, `af-tenant`), granted as `ecs:TagResource` on a new task in this cluster only with
+`ecs:CreateAction=RunTask` and the service's key list (`TagHomeOpsTaskOnRun`).
+
 **Note (2026-10-03, #1544): the step after the task survives a CP restart.** Each home operation that runs the
 task is now a row in `home_operation` (migrations 0082 / pg 0067), written under the lifecycle lease before
 anything is stopped and holding its kind, the membership and workspace, the audit outcome an administrator's

@@ -124,9 +124,9 @@ func (m *manager) finishHomeOperation(op store.HomeOperation, err error, leftove
 }
 
 // noteHomeWipeFailure keeps why a member's background Recreate or Clean home left the
-// workspace stopped, for the workspace payload (homeWipeFailed).
+// workspace stopped, where the starter keeps it (workspace_auto_stop, homeWipeFailed).
 func (m *manager) noteHomeWipeFailure(workspaceID, why string) {
-	m.homeWipeFailures.Store(workspaceID, why)
+	newWorkspaceAPI(m, false).recordHomeWipeFailure(workspaceID, why)
 }
 
 // homeOperationOpenErr refuses a start while ws has an unfinished home operation: its task

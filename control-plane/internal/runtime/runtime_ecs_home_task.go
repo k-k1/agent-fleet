@@ -570,6 +570,15 @@ func (e *ecsRuntime) startHomeTask(ctx context.Context, what HomeWipe, token str
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		Count:          aws.Int32(1),
 		StartedBy:      aws.String(e.homeTaskStartedBy()),
+		// Billing only, as on the workspace's own service (upsertService): Fargate bills the
+		// task, so without these its minutes land in nobody's share of the bill. The same
+		// keys and af-role, so the per-member and per-role views count it as this member's
+		// workspace (ADR 0048). ECS authorizes them as ecs:TagResource on the new task
+		// (CpHomeOpsPolicy, 30-ingress).
+		Tags: appendECSTenantTag(e.tenantSlug, []ecstypes.Tag{
+			{Key: aws.String("af-membership"), Value: aws.String(e.membershipID)},
+			{Key: aws.String("af-role"), Value: aws.String("workspace")},
+		}),
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
 				Subnets:        e.cfg.subnets,

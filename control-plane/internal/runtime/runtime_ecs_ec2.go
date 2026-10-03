@@ -721,11 +721,6 @@ func (f *ecsEC2Factory) New(ws Workspace, secretKey string, extraEnv []string) R
 	if !ok { // unreachable: ecsFactory.New always returns *ecsRuntime
 		panic("ecs-ec2: base factory did not return *ecsRuntime")
 	}
-	// The Fargate home task is not this adapter's: its homes are EBS volumes, its keep files
-	// live under /home-keep, and its handlers wait for Destroy inside the request. The stack
-	// sets AF_ECS_HOME_TASK on both runtimes, so the base used as a library drops it here,
-	// and Destroy keeps reporting the EFS directories it cannot remove as leftovers.
-	base.cfg.homeTask, base.tasks = "", nil
 	rung, class := f.pool.rungFor(ws.SlotClass, ws.MemBytes)
 	return &ecsEC2Runtime{
 		base:         base,
@@ -1285,6 +1280,13 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 		// Already converging. Re-entering would attach a second slot / restart the
 		// service deployment from zero, exactly as on Fargate.
 		return nil
+	}
+	// A Destroy's home task may still be removing /claude-config/<id> and /home-keep/<id>
+	// (its CP restarted, or its budget ran out, and the row stayed). Starting now would
+	// mount them again and lose the new logins with them. Asked before anything is created:
+	// the base's gate reads the SSM marker and ECS, so it holds across a restart.
+	if err := e.base.HomeWipeBlocked(ctx); err != nil {
+		return err
 	}
 	// Mark that a Start has begun, so a teardown still draining from the Stop that the
 	// recreate / clean-home handlers issued a moment ago aborts instead of pulling this

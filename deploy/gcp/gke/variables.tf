@@ -73,9 +73,14 @@ variable "authorized_networks" {
 # --- cluster -------------------------------------------------------------------
 
 variable "min_master_version" {
-  description = "Lowest control-plane version accepted. 1.33 is where the PersistentVolume deletion-protection finalizer that Destroy relies on is stable (ADR 0106 decision 5)."
+  description = "Lowest control-plane version accepted, as MAJOR.MINOR. 1.33 is where the PersistentVolume deletion-protection finalizer that Destroy relies on is stable (ADR 0106 decision 5). A check on every plan and apply, not the version the cluster is created at: that is the release channel's default."
   type        = string
   default     = "1.33"
+
+  validation {
+    condition     = can(regex("^[0-9]+\\.[0-9]+$", var.min_master_version))
+    error_message = "min_master_version is MAJOR.MINOR, for example 1.33."
+  }
 }
 
 variable "release_channel" {

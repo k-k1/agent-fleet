@@ -70,10 +70,15 @@ stack declares (`HomeOpsTaskDef` in `30-ingress`) that mounts the file system an
 files. A Fargate task takes a few minutes to start, so these finish after the button has been
 answered. A member's Recreate and Clean home show the starting dialog ("removing what Recreate /
 Clean home deletes") until the workspace is up again; if the removal fails the workspace stays
-stopped and the reason is shown. An administrator's Clean home and **Destroy workspace** answer
-straight away, and their outcome is written to the audit log when the task has finished. Destroy
-now removes the member's EFS directories as well, instead of listing them as left over. A stack
-from before this task (no `AF_ECS_HOME_TASK`) does not offer these buttons, as before.
+stopped and the reason is shown, to the member and on their row in the administrator's member
+list, until the next start (a Control Plane restart after the failure does not lose it). An
+administrator's Clean home and **Destroy workspace** answer straight away, and their outcome is
+written to the audit log when the task has finished. Destroy now removes the member's EFS
+directories as well, instead of listing them as left over. A stack from before this task (no
+`AF_ECS_HOME_TASK`) does not offer these buttons, as before. On `ecs-ec2` the home itself is on
+EBS, but the Claude state and the kept logins and connections are on EFS: **Destroy workspace**
+removes those with the same task, so there too it answers straight away and writes its outcome
+to the audit log.
 While a task runs, a start and any second operation on that home are refused, even across a
 Control Plane restart. Each operation is recorded in the Control Plane's database before its
 task starts, so a restart in the middle loses nothing: within a minute or two of coming back, a

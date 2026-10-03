@@ -82,12 +82,14 @@ type CP interface {
 	// grow, which is every runtime but the EC2 slot pool.
 	ResizeHomeByMembership(ctx context.Context, membershipID string) (runtime.HomeResize, error)
 	DestroyWorkspaceByMembership(ctx context.Context, membershipID string) ([]string, error)
-	// HomeOpsInBackground is true where Clean home and Destroy run a task on the home that
-	// takes minutes (ecs: runtime.HomeWipeInBackground). The handlers then call the Start*
+	// HomeOpsInBackground is true where Clean home runs a task on the home that takes
+	// minutes (ecs: runtime.HomeWipeInBackground), DestroyInBackground where Destroy does
+	// (ecs and ecs-ec2: runtime.DestroyInBackground). The handlers then call the Start*
 	// variants, answer once the refusals are past, and hand over the outcome entry the
 	// action owes (store.HomeOpAudit): the CP writes it once the task has finished, after a
 	// CP restart as well (#1544).
 	HomeOpsInBackground() bool
+	DestroyInBackground() bool
 	StartCleanHomeByMembership(ctx context.Context, membershipID string, audit store.HomeOpAudit) error
 	StartDestroyWorkspaceByMembership(ctx context.Context, membershipID string, audit store.HomeOpAudit) error
 	ResolveWorkspaceSize(ctx context.Context, ws store.Workspace) (memBytes int64, cpuUnits, diskGB int)

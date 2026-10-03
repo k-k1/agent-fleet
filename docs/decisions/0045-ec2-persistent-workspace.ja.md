@@ -1379,6 +1379,18 @@ STOPPED と記述されるまで待つ。実行数だけでは停止中にも減
 ガイドにある。コード: `control-plane/internal/runtime/runtime_ecs_home_task.go`・`home_task.go`・
 `control-plane/workspace_handlers.go`（`memberHomeWipe`）・`control-plane/workspace_lifecycle.go`。
 
+**追記（2026-10-03・#1536 #1537 #1538）: `ecs-ec2` でも同じタスク・再起動を越える失敗・費用タグ。** `ecs-ec2` の
+ランタイムは Fargate のアダプタの上に作られ、破棄は `base.Destroy` で終わるので、まずはその base でタスクを無効に
+していた。破棄が管理者の要求の中で待たれ、タスクが残すものの一覧（keep）を知らなかったからだ。どちらも扱うように
+なったので無効化はやめた。タスクは `/home-keep/<id>` も消すようになり、`ecs-ec2` の
+破棄も `ecs` と同じく 202 で応答する（`runtime.DestroyInBackground`。自前の作り直し・掃除は要求の中に収まるまま）。
+消せなかったものとして返すのは、タスクが消さなかったディレクトリだけ。IAM はそのための変更が無い（同じファミリー・
+同じクラスタ）。メンバーの作り直し・掃除が後半で失敗したら、CP のメモリではなく `workspace_auto_stop`（kind
+`home-wipe-failed`）に書く。この行はもともと「CP がこのワークスペースを止めたままにした理由」で、テナント管理者が
+読み、次の起動で消えるので、マイグレーションは要らなかった。タスクの `RunTask` はワークスペースのサービスと同じ
+費用タグ（`af-membership`・`af-role=workspace`・`af-tenant`）を付け、`ecs:TagResource` はこのクラスタの新しいタスク
+に、`ecs:CreateAction=RunTask` とサービスと同じキーの一覧でだけ許す（`TagHomeOpsTaskOnRun`）。
+
 **追記（2026-10-03・#1544）: タスクの後の段が CP の再起動を越えて残る。** タスクを走らせるホームの操作はそれぞれ
 `home_operation` の行になった（マイグレーション 0082・pg 0067）。何かを止める前にライフサイクルのリースの下で書き、
 操作の種類・メンバーシップとワークスペース・管理者の操作がまだ書くべき監査の結果・`RunTask` が答えた後はタスクの ARN を
