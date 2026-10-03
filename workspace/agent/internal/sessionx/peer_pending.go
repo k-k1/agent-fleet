@@ -53,6 +53,9 @@ var (
 	pendingPeerPoll     = 2 * time.Second
 	pendingPeerIdlePoll = 10 * time.Second
 	pendingPeerNow      = time.Now
+	// pendingPeerWait is the loop's pause between two looks at the target. Tests replace it
+	// to step the loop one look at a time.
+	pendingPeerWait = time.Sleep
 )
 
 // queueableBlocker reports whether a peer send to a target in state st waits instead of being
@@ -259,8 +262,16 @@ func kickPendingPeers(name string) {
 // runPendingPeers delivers name's spool, oldest first, one message per ended turn. It ends when
 // the spool is empty; the emptiness is re-read under pendingRunMu, so a message queued while it
 // was deciding to end is never left without a loop.
+//
+// A message goes only when two consecutive looks, one poll apart, both find the target ready.
+// One look reads several sources (the status store, the pane, the hook payloads) that are each
+// rewritten while the user's answer resumes the turn, and a single read caught between two of
+// those writes can say "idle" for a turn that is running; the second look a poll later sees the
+// turn's working state or spinner. The price is one poll of latency on a delivery that already
+// waited for the user.
 func runPendingPeers(name string) {
 	defer pendingLoops.Done()
+	readyBefore := false
 	for {
 		list := agents.PendingPeers(name)
 		list = dropExpiredPending(name, list)
@@ -280,17 +291,20 @@ func runPendingPeers(name string) {
 			continue
 		}
 		ready, alive := peerDeliveryReady(meta)
-		if ready {
+		confirmed := ready && readyBefore
+		readyBefore = ready
+		if confirmed {
+			readyBefore = false
 			if deliverPendingPeer(name, list[0]) {
 				// The delivery started a turn; the next message waits for it to end.
-				time.Sleep(pendingPeerPoll)
+				pendingPeerWait(pendingPeerPoll)
 				continue
 			}
 		}
 		if alive {
-			time.Sleep(pendingPeerPoll)
+			pendingPeerWait(pendingPeerPoll)
 		} else {
-			time.Sleep(pendingPeerIdlePoll)
+			pendingPeerWait(pendingPeerIdlePoll)
 		}
 	}
 }
