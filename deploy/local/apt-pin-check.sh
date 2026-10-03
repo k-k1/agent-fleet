@@ -9,9 +9,10 @@
 # while every arm64 build failed with `Version '…' for 'chromium' was not found`.
 #
 # The pins are read out of the Dockerfile itself: every `pkg=${ARG}`, `pkg=$ARG` or
-# `pkg=<version>` argument of an `apt-get install` / `apt install` instruction. A pin
-# whose version is any other shell expression cannot be resolved here and fails the run
-# rather than being skipped.
+# `pkg=<version>` argument of an `apt-get install` / `apt install` command, options such
+# as `-o <value>` included. Any other `=` argument there (a version that is some other
+# shell expression, an arch-qualified `pkg:arch=`) cannot be checked here and fails the
+# run rather than being skipped.
 #
 # A version is "served" for an architecture when any suite the image's apt sources name
 # (trixie, trixie-updates, trixie-security; node:22-trixie-slim ships those three) lists
@@ -76,13 +77,31 @@ extract_pins() {
       # `apt-get update` is never read as an apt argument.
       ncmd = split($0, cmd, /&&|\|\||[;|()]/)
       for (c = 1; c <= ncmd; c++) {
-        if (!match(cmd[c], /(^|[[:space:]])apt(-get)?([[:space:]]+-[^[:space:]]+)*[[:space:]]+install([[:space:]]|$)/)) continue
-        rest = substr(cmd[c], RSTART + RLENGTH)
-        gsub(/["'\'']/, "", rest)
-        n = split(rest, tok, /[[:space:]]+/)
+        line = cmd[c]
+        gsub(/["'\'']/, "", line)
+        n = split(line, tok, /[[:space:]]+/)
+        # Find `apt` / `apt-get` (any path), then its subcommand: the first word that is
+        # neither an option nor the value of one. -o/-c/-t take a separate value, so
+        # `apt-get -o Acquire::Retries=3 install` is an install too.
+        sub_i = 0
         for (i = 1; i <= n; i++) {
+          if (tok[i] !~ /(^|\/)apt(-get)?$/) continue
+          for (j = i + 1; j <= n; j++) {
+            if (tok[j] ~ /^(-o|-c|-t|--option|--config-file|--target-release|--default-release)$/) { j++; continue }
+            if (tok[j] ~ /^-/) continue
+            break
+          }
+          if (j <= n && tok[j] == "install") { sub_i = j; break }
+        }
+        if (!sub_i) continue
+        for (i = sub_i + 1; i <= n; i++) {
           t = tok[i]
-          if (t !~ /^[a-z0-9][a-z0-9.+-]*=/) continue
+          if (t ~ /^(-o|-c|-t|--option|--config-file|--target-release|--default-release)$/) { i++; continue }
+          if (t ~ /^-/ || index(t, "=") == 0) continue
+          # Anything else carrying `=` is a version pin; one this script cannot check
+          # (an arch-qualified `pkg:arch=`, an odd package name) fails rather than
+          # being skipped.
+          if (t !~ /^[a-z0-9][a-z0-9.+-]*=/) { print "UNSUPPORTED " t; continue }
           eq = index(t, "=")
           pkg = substr(t, 1, eq - 1); ver = substr(t, eq + 1)
           if (ver ~ /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/) key = "$" substr(ver, 3, length(ver) - 3)

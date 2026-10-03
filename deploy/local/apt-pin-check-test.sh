@@ -7,10 +7,10 @@
 # verdict is a release build that fails on arm64 — the failure it exists to prevent.
 # Case 2 is the one that matters: the pin is still served for amd64 and gone for arm64,
 # and the check has to say so. Case 5 is the other direction: an unreadable index must
-# not be read as "served". Cases 7-10 pin the rest of the contract: pins are extracted
-# from the Dockerfile, versions are ordered as dpkg orders them, index paragraphs are read
-# in any field order and filtered by architecture, and any unreadable index makes the run
-# incomplete.
+# not be read as "served". Cases 7-11 pin the rest of the contract: pins are extracted
+# from the Dockerfile (past apt options; arch-qualified pins refused), versions are
+# ordered as dpkg orders them, index paragraphs are read in any field order and filtered
+# by architecture, and any unreadable index makes the run incomplete.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -248,4 +248,35 @@ run
 [ "$(grep -c ' ok (' "$WORK/out")" = 6 ] || fail "$CASE: want 6 ok rows"
 has "Incomplete: an index could not be read for [arm64]"
 
-echo "OK: apt-pin-check.sh (10 cases)"
+# 11. apt syntax around the pin: value-taking options before `install` (-o, -c, -t) and
+#     inside its arguments do not hide the pin, and an arch-qualified `pkg:arch=` pin is
+#     refused, not skipped.
+CASE="11 apt options and arch-qualified pins"
+reset; plain_main
+for a in amd64 arm64; do
+  # shellcheck disable=SC2046
+  index security trixie-security "$a" $(all3 "$PIN")
+done
+DOCKERFILE="$WORK/Dockerfile"
+cat > "$DOCKERFILE" <<EOF
+ARG CHROMIUM_VERSION=$PIN
+ARG GONE_VERSION=1
+RUN DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get -o Acquire::Retries=3 -c /etc/apt/x.conf install -y \\
+      -o Dpkg::Options::=--force-confold "chromium=\${CHROMIUM_VERSION}"
+RUN apt -t trixie-security install gone=\${GONE_VERSION}
+EOF
+run
+[ "$code" = 1 ] || fail "$CASE: exit $code, want 1"
+has "CHROMIUM_VERSION   arm64   chromium           ok ($PIN)"
+has "GONE_VERSION       arm64   gone               MISSING"
+lacks "UNSUPPORTED"
+cat > "$DOCKERFILE" <<EOF
+ARG CHROMIUM_VERSION=$PIN
+RUN apt-get install "chromium:arm64=\${CHROMIUM_VERSION}"
+EOF
+run
+[ "$code" = 1 ] || fail "$CASE (arch-qualified): exit $code, want 1"
+has "UNSUPPORTED pin 'chromium:arm64=\${CHROMIUM_VERSION}'"
+DOCKERFILE="$ROOT/workspace/Dockerfile"
+
+echo "OK: apt-pin-check.sh (11 cases)"
