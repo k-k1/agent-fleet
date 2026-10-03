@@ -16,14 +16,17 @@ import { useDismiss } from "../../lib/useDismiss.ts";
 import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { copyText } from "../../lib/clipboard.ts";
 import { sessionFolder } from "../../lib/project.ts";
-import { useSettings } from "../../lib/settings.ts";
-import { workingSetList, toggleWorkingSetMember } from "../../lib/workingSetsStore.ts";
+import { getSettings, useSettings } from "../../lib/settings.ts";
+import { activeWorkingSet, repoInSet, workingSetList, toggleWorkingSetMember } from "../../lib/workingSetsStore.ts";
 import { useReposStore } from "../repos/store.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { displayName, remainingShort, KEEP_AWAKE_HOURS } from "../../lib/sessionview.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { openSessionTerminal, openSessionChat } from "./open.ts";
 import { openGallery } from "../gallery/open.ts";
+import { openRepoMenuInRail } from "../repos/reveal.ts";
+import { useIsMobile } from "../../lib/device.ts";
+import { usePopoutMode } from "../../lib/popoutMode.ts";
 import { useSessionUI } from "./ui.ts";
 import { useSessionsStore } from "./store.ts";
 import { HandoffModal } from "./HandoffModal.tsx";
@@ -122,6 +125,28 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
   const repos = useReposStore((st) => st.repos);
   const folder = sessionFolder(s);
   const repoLess = !folder || !repos.some((r) => r.name === folder);
+  // The repository menu is the row's own, opened where the row sits in the rail (#1557). No
+  // rail to open it in: a pop-out has none, and on a phone the rail is a drawer only the App
+  // shell can open.
+  const popout = usePopoutMode() === "popout";
+  const mobile = useIsMobile();
+  const showRepoMenu = running && !repoLess && !popout && !mobile;
+  const openRepoMenu = () => {
+    onClose();
+    const name = folder!;
+    void openRepoMenuInRail(name).then((ok) => {
+      if (ok) return;
+      // Say why when the working set is the reason; otherwise the rail search (or a copy
+      // deleted meanwhile) kept the row out of the tree.
+      const wset = activeWorkingSet(getSettings());
+      const r = useReposStore.getState().repos.find((x) => x.name === name);
+      toast(
+        wset && r && !repoInSet(wset, r)
+          ? tr("srow.repo_menu_outside_wset", { name })
+          : tr("srow.repo_menu_hidden", { name }),
+      );
+    });
+  };
 
   return (
     <>
@@ -219,6 +244,11 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
                 onClick={openGeneratedImages}
               >
                 <Icon name="file-media" /> {tr("srow.generated_images", { n: generated.n })}
+              </button>
+            )}
+            {showRepoMenu && (
+              <button type="button" className="ui-menu-item" onClick={openRepoMenu}>
+                <Icon name="repo" /> {tr("srow.repo_menu", { name: folder! })}
               </button>
             )}
             <button
