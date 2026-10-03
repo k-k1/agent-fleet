@@ -72,7 +72,8 @@ resource "google_container_cluster" "main" {
 
   # NodeLocal DNSCache answers a pod's lookups from the node, and the workspace namespace's
   # DNS policy admits kube-dns pods only, so with the cache on every lookup is dropped
-  # (P11). GKE enables it by default on new clusters. Changing it recreates the nodes.
+  # (P11). GKE enables it by default on new clusters. Changing it may recreate the nodes on
+  # some GKE versions (not on 1.35, measured).
   addons_config {
     dns_cache_config {
       enabled = false

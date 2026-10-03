@@ -23,6 +23,8 @@ the manifests, and day-2 operations — is the runbook,
 | `lb.tf` | The global address, Certificate Manager, the DNS records |
 | `iam.tf` | Service accounts and grants, each to one principal on one resource |
 | `outputs.tf` | Includes `kustomize_deployment`, the `deployment.yaml` for the overlay |
-| `tests/` | `terraform test` against mocked providers (no project, no credentials): the version floor and the DNS cache setting of the cluster |
+| `tests/` | `terraform test` against mocked providers: the version floor and the DNS cache setting of the cluster |
 
-`terraform init -backend=false && terraform test` runs the tests offline.
+The tests need Terraform 1.11 or later (`mock_provider`, and `state_key` in a run block); the
+module itself still runs on 1.6. `terraform init -backend=false` fetches the providers once;
+after that, `terraform test` needs no project, no credentials and no network.

@@ -1,5 +1,6 @@
 # Offline checks of the cluster resource against mocked providers: no project, no
-# credentials. Run from deploy/gcp/gke after `terraform init -backend=false`:
+# credentials. Needs Terraform 1.11 or later (state_key). Run from deploy/gcp/gke after
+# `terraform init -backend=false`:
 #   terraform test
 #
 # The live failures they pin are in the runbook's P1 and P11
