@@ -787,6 +787,16 @@ type sessionWire struct {
 	// as "this session has no token history" rather than as a missing field. No DB-mirror
 	// column, for the same reason as lastSay: it is read out of the live transcript.
 	TokenSpends []int `json:"tokenSpends,omitempty"`
+	// PR: the GitHub pull request of the branch the session works on, with its state and CI
+	// rollup (#1062). Relayed as raw JSON, like Context: the CP reads nothing in it. Absent here
+	// it is silently dropped and no row shows a PR. No DB-mirror column: the Agent reads it from
+	// a cache it keeps in memory, so while the Workspace is stopped there is nothing current to
+	// show, and an old "open" left on a stopped row would outlive the merge that ended it.
+	PR json.RawMessage `json:"pr,omitempty"`
+	// Ports: the TCP ports the session's own processes listen on, each a link into the browser
+	// pane (#1062). Absent here, every row loses them. No DB-mirror column: a port is only real
+	// while the session runs.
+	Ports []int `json:"ports,omitempty"`
 	// OriginSession: the session this one came from (ADR 0073). The left rail derives its
 	// whole worktree hierarchy and its family colours from this one key (docs/log/94), and
 	// it is the only link there is — a worktree's folder and branch carry a random slug.

@@ -70,3 +70,25 @@ func TestShrunkPrefKeys(t *testing.T) {
 		t.Fatalf("boolean flips must not be counted as accumulated loss: %v", got)
 	}
 }
+
+// The launch modal's personal templates and prompt history (#1469) are typed in by hand and
+// cannot be recreated either, so a PUT that loses them parks the previous version too. The
+// Console stores them as {items, at}: a deliberate delete of the last one writes a non-empty
+// object and is not a loss.
+func TestShrunkPrefKeysLaunchPrompts(t *testing.T) {
+	before := map[string]any{
+		"launchTemplates": map[string]any{"items": []any{map[string]any{"id": "a", "name": "Triage", "body": "triage", "repo": ""}}, "at": float64(1)},
+		"launchHistory":   map[string]any{"items": []any{map[string]any{"repo": "app", "text": "fix it", "at": float64(1)}}, "at": float64(1)},
+	}
+	got := ShrunkKeys(before, map[string]any{"launchTemplates": map[string]any{}})
+	if len(got) != 2 || got[0] != "launchTemplates" || got[1] != "launchHistory" {
+		t.Fatalf("shrunk = %v, want [launchTemplates launchHistory]", got)
+	}
+	deleted := map[string]any{
+		"launchTemplates": map[string]any{"items": []any{}, "at": float64(2)},
+		"launchHistory":   before["launchHistory"],
+	}
+	if got := ShrunkKeys(before, deleted); len(got) != 0 {
+		t.Fatalf("a deliberate delete counted as a loss: %v", got)
+	}
+}

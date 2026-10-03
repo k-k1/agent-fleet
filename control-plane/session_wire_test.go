@@ -47,6 +47,7 @@ const agentSessionsPayload = `{"sessions":[{
 	"branch":"main","currentBranch":"dev","branchDrift":true,"worktree":true,
 	"exitReason":"oom","exitCode":137,"exitSignal":9,"handoffPending":true,
 	"originSession":"sparent","origin":"session","lastSay":"実装を終えて試験を回しています","tokenSpends":[1200,800,4300],
+	"pr":{"number":1062,"state":"open","draft":true,"url":"https://github.com/o/r/pull/1062","checks":"failure"},"ports":[5173,8080],
 	"generatedImages":3,"generatedImagesPath":".cache/agent-fleet/generated/2f1c0a7e-0000-5000-8000-000000000001",
 	"studio":"0b9d1f2e-7c4a-4e1b-9a3d-5f6e7a8b9c0d","initialPromptState":"pending"
 }]}`
@@ -172,6 +173,16 @@ func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 	}
 	if spends[0] != float64(1200) || spends[2] != float64(4300) {
 		t.Errorf("relayed tokenSpends = %v, want [1200 800 4300] in order", spends)
+	}
+	// The row links (#1062): the branch's PR passes through uninterpreted (RawMessage), and the
+	// listening ports keep their order. Dropped in the relay, no row shows either.
+	pr, ok := got["pr"].(map[string]any)
+	if !ok || pr["number"] != float64(1062) || pr["state"] != "open" || pr["checks"] != "failure" || pr["draft"] != true {
+		t.Errorf("relayed pr = %v, want #1062 open draft failure", got["pr"])
+	}
+	ports, ok := got["ports"].([]any)
+	if !ok || len(ports) != 2 || ports[0] != float64(5173) || ports[1] != float64(8080) {
+		t.Errorf("relayed ports = %v, want [5173 8080]", got["ports"])
 	}
 	// tmux is deliberately not relayed: the Console does not use it and it is derivable as
 	// "claude_"+name. If it ever shows up here, review it along with the struct's comments.

@@ -43,16 +43,21 @@ const heldSubdir = "held-peer"
 var heldSeq atomic.Uint64
 
 // heldPeer is one held message on disk. The prompt is stored as JSON, so any text survives.
+// The pending-peer spool (pendingpeers.go) shares the format and adds Intent and BlockedOn.
 type heldPeer struct {
 	ID          string    `json:"id"`
 	Prompt      string    `json:"prompt"`
 	Attachments []string  `json:"attachments,omitempty"`
 	From        string    `json:"from,omitempty"`
+	Intent      string    `json:"intent,omitempty"`
+	BlockedOn   string    `json:"blockedOn,omitempty"`
 	QueuedAt    time.Time `json:"queuedAt"`
 	Seq         uint64    `json:"seq"`
 }
 
-func heldDir(name string) string { return filepath.Join(heldBase(), heldSubdir, name) }
+func heldDir(name string) string { return spoolDir(heldSubdir, name) }
+
+func spoolDir(sub, name string) string { return filepath.Join(heldBase(), sub, name) }
 
 // heldName reports whether name may be a held directory: a valid session name is one path
 // segment. ReadMeta does not check the name inside a meta file, and DropHeld removes a whole
@@ -61,9 +66,11 @@ func heldName(name string) bool { return session.ValidName(name) }
 
 // heldFile names the file after a hash of the id: the id comes off the wire and is not a safe
 // file name, and the same id always maps to the same file.
-func heldFile(name, id string) string {
+func heldFile(name, id string) string { return spoolFile(heldSubdir, name, id) }
+
+func spoolFile(sub, name, id string) string {
 	sum := sha256.Sum256([]byte(id))
-	return filepath.Join(heldDir(name), hex.EncodeToString(sum[:16])+".json")
+	return filepath.Join(spoolDir(sub, name), hex.EncodeToString(sum[:16])+".json")
 }
 
 func isHeldPeer(in TurnInput) bool { return in.Origin.Kind == OriginPeer }
@@ -131,11 +138,13 @@ func heldExists(name, id string) bool {
 
 // loadHeld returns name's held messages, oldest first. A file that does not decode is removed:
 // it would otherwise be retried on every start and never deliver.
-func loadHeld(name string) []heldPeer {
+func loadHeld(name string) []heldPeer { return loadSpool(heldSubdir, name) }
+
+func loadSpool(sub, name string) []heldPeer {
 	if !heldName(name) {
 		return nil
 	}
-	dir := heldDir(name)
+	dir := spoolDir(sub, name)
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
@@ -152,7 +161,7 @@ func loadHeld(name string) []heldPeer {
 		}
 		var hp heldPeer
 		if json.Unmarshal(b, &hp) != nil || hp.ID == "" {
-			log.Printf("held peer message: %s: dropping unreadable %s", name, n)
+			log.Printf("%s message: %s: dropping unreadable %s", sub, name, n)
 			os.Remove(filepath.Join(dir, n))
 			continue
 		}

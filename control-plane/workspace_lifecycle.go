@@ -159,6 +159,13 @@ func (m *manager) workspaceStateByMembership(ctx context.Context, membershipID s
 
 // stopWorkspaceByMembership force-stops a member's workspace (admin action).
 func (m *manager) stopWorkspaceByMembership(ctx context.Context, membershipID string) error {
+	return m.stopWorkspaceByMembershipIf(ctx, membershipID, nil)
+}
+
+// stopWorkspaceByMembershipIf is stopWorkspaceByMembership with a precondition evaluated
+// once the start lock, lifecycle lease and runtime fence are held; a non-nil error from it
+// is returned with nothing stopped.
+func (m *manager) stopWorkspaceByMembershipIf(ctx context.Context, membershipID string, precond func(context.Context) error) error {
 	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, membershipID)
 	if err != nil || !ok {
 		return err
@@ -179,6 +186,11 @@ func (m *manager) stopWorkspaceByMembership(ctx context.Context, membershipID st
 	defer releaseFence()
 	if err := lease.checkpoint(ctx); err != nil {
 		return err
+	}
+	if precond != nil {
+		if err := precond(lease.Context()); err != nil {
+			return err
+		}
 	}
 	if err := rt.Stop(lease.Context()); err != nil {
 		return err

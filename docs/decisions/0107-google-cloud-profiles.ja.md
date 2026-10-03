@@ -447,3 +447,15 @@ Issue #1497。上の決定は変えない。決定 2 がフェーズ 2 に残し
   ログイン経路のクエリは残さない。監査行の detail は `via relay`。コードの経路の
   本文は CP でも Agent でも 4 KiB までで、コードは Google のコードが使う文字だけの 1 行でなければならない。CP のエラーログは、
   中継したパスの gcp-login の試行 id を参照に置き換え、通信エラーからは Agent の URL を落とす。
+
+## 注記 — 子に `GOOGLE_CLOUD_QUOTA_PROJECT` も渡す（2026-10-03）
+
+Issue #1517。利用者が決めた。決定 2 の、コマンドが受け取るものの一覧に `GOOGLE_CLOUD_QUOTA_PROJECT` を加える。値は
+`CLOUDSDK_BILLING_QUOTA_PROJECT` と `GOOGLE_BILLING_PROJECT` と同じ実効のクォータのプロジェクト（プロファイルのクォータの
+プロジェクト。空ならそのプロジェクト）。上の決定 2 の本文は書き換えない。理由は 2026-10-02 の未決事項 2 の注記にある。
+Google の Go のクライアントライブラリは、明示したトークンと一緒に `X-Goog-User-Project` を送るのがこの変数のあるときだけで、
+`cloud.google.com/go/storage` 1.69.0 はトークンソースと並べた `option.WithQuotaProject` を拒む。そのため、これが無いと
+`GOOGLE_OAUTH_ACCESS_TOKEN` からトークンを受け取る Go のプログラムは、自分で変数を設定しない限りクォータのプロジェクト無しで
+API を呼んでいた。Python の明示的な `Credentials` はこれを読まない（`quota_project_id=` で受け取る）ので、ノートのその助言は
+残す。呼び出し側の `GOOGLE_CLOUD_QUOTA_PROJECT` は、ほかの `GOOGLE_*` 変数と一緒に、ラッパーが値を設定する前にやはり取り除く。
+子の環境のテストが両方を確かめる。

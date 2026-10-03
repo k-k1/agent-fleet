@@ -73,3 +73,20 @@ func TestGitProviderHostInternalThroughWorkspaceListener(t *testing.T) {
 		t.Error("the listener's host badges as internal with internal git off")
 	}
 }
+
+func TestGitHubRepoOf(t *testing.T) {
+	cases := map[string]string{
+		"git@github.com:k-k1/agent-fleet.git":     "k-k1/agent-fleet",
+		"https://x-access-token:t@github.com/o/r": "o/r",
+		"https://github.com/o/r/":                 "o/r",
+		"https://github.example.com/o/r.git":      "", // Enterprise: not the token's host
+		"https://bitbucket.org/w/r.git":           "",
+		"https://github.com/o":                    "",
+		"https://gitlab.com/group/sub/r.git":      "",
+	}
+	for in, want := range cases {
+		if got := GitHubRepoOf(in); got != want {
+			t.Errorf("GitHubRepoOf(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

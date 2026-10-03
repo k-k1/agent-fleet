@@ -63,6 +63,9 @@ func (logFirer) fire(_ context.Context, sch store.Schedule, slot time.Time) (str
 type scheduleStore interface {
 	ListDueSchedules(ctx context.Context, nowRFC string) ([]store.Schedule, error)
 	RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, nextRun string, enabled bool, updatedAt string) error
+	HoldScheduleForRemoval(ctx context.Context, id, slot, lastRun, lastStatus, updatedAt string) (bool, error)
+	ResumeScheduleHeldByRemoval(ctx context.Context, id, membershipID, nextRun, updatedAt string) (bool, error)
+	GetMembershipByID(ctx context.Context, membershipID string) (store.MembershipView, bool, error)
 	AppendScheduleRun(ctx context.Context, run store.ScheduleRun, keepN int) error
 	// InsertNotification surfaces an unattended failure/skip in the notification center
 	// (★3, P4) — WS-independent because the CP notification store is the durable sink.
@@ -268,16 +271,14 @@ func (sc *scheduler) fireOne(ctx context.Context, sch store.Schedule, now time.T
 	// enabled it would no-op on every slot forever, appending run rows no one will ever
 	// read — an invisible schedule that quietly keeps ticking. Disable it instead: the
 	// membership id is stable per (identity, tenant) (EnsureMembership upserts on that
-	// pair), so restoring access brings the row back as a PAUSED schedule whose owner can
-	// read the reason in the ledger and resume it.
-	if status == statusMembershipInactive {
-		log.Printf("scheduler: schedule %s owner membership %s is inactive — disabling "+
-			"(nothing can run and nobody can see it; resume it after restoring access)", sch.ID, sch.MembershipID)
-		next, keep = "", false
-	}
-	enabled := sch.Enabled && keep
+	// pair), so the row is still this person's when they are re-invited, and the restore
+	// resumes it (resumeSchedulesHeldByRemoval).
 	nowRFC := now.UTC().Format(time.RFC3339)
-	if err := sc.store.RecordScheduleFire(ctx, sch.ID, nowRFC, status, next, enabled, nowRFC); err != nil {
+	if status == statusMembershipInactive {
+		if !sc.holdForRemoval(ctx, sch, nowRFC) {
+			return
+		}
+	} else if err := sc.store.RecordScheduleFire(ctx, sch.ID, nowRFC, status, next, sch.Enabled && keep, nowRFC); err != nil {
 		// If the ledger does not advance, the next tick re-fires this slot. The reuse and
 		// assistant paths have no per-slot idempotency, so that means a prompt delivered
 		// twice — loud on purpose.
@@ -302,6 +303,82 @@ func (sc *scheduler) fireOne(ctx context.Context, sch store.Schedule, now time.T
 	if scheduleNotifyStatus(status) {
 		sc.notifyOutcome(ctx, sch, slot, status, nowRFC)
 	}
+}
+
+// resumeSchedulesHeldByRemoval is the restore half of holdForRemoval: re-inviting a removed
+// member brings back the schedules the scheduler paused because of the removal, so a
+// restore needs no clean-up by the owner. Which rows those are is the held_by_removal mark,
+// which every owner-side write clears, so a schedule its owner paused stays paused.
+func (m *manager) resumeSchedulesHeldByRemoval(ctx context.Context, membershipID string) (int, error) {
+	rows, err := m.store.ListSchedules(ctx, membershipID)
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now().UTC()
+	n := 0
+	for _, sch := range rows {
+		ok, err := resumeHeldSchedule(ctx, m.store, sch, now)
+		if err != nil {
+			return n, err
+		}
+		if ok {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// resumeHeldSchedule resumes one held row. next_run is recomputed from now, as the resume
+// button does, so a restore never replays the slots missed while the person was away; a
+// `once` whose instant has passed stays paused (and held) for the same reason resume
+// refuses it (once_in_past). The write is conditional on the mark, so an owner's pause
+// between the read and the write wins.
+func resumeHeldSchedule(ctx context.Context, st interface {
+	ResumeScheduleHeldByRemoval(ctx context.Context, id, membershipID, nextRun, updatedAt string) (bool, error)
+}, sch store.Schedule, now time.Time) (bool, error) {
+	if !sch.HeldByRemoval {
+		return false, nil
+	}
+	if sch.SpecKind == "once" {
+		if t, perr := parseOnce(sch.Spec); perr != nil || !t.After(now) {
+			return false, nil
+		}
+	}
+	next, err := initialNextRun(sch, now)
+	if err != nil {
+		return false, nil
+	}
+	return st.ResumeScheduleHeldByRemoval(ctx, sch.ID, sch.MembershipID, next, store.NowTS())
+}
+
+// holdForRemoval pauses a schedule whose owner was inactive at the slot and reports
+// whether the fire should be recorded. The pause is written only while the membership is
+// still not active (HoldScheduleForRemoval), and the membership is read again afterwards:
+// a re-invite that committed while the pause was being written found nothing held to
+// resume, so the pause is undone here. Between the two, a restore either sees the hold or
+// is seen by this re-read, so no restored owner is left with a paused schedule.
+func (sc *scheduler) holdForRemoval(ctx context.Context, sch store.Schedule, nowRFC string) bool {
+	held, err := sc.store.HoldScheduleForRemoval(ctx, sch.ID, sch.NextRun, nowRFC, statusMembershipInactive, nowRFC)
+	if err != nil {
+		log.Printf("scheduler: WARNING hold %s for its removed owner failed — next tick retries: %v", sch.ID, err)
+		return false
+	}
+	if !held {
+		// Re-invited between the firer's check and this write (the slot stays due and the
+		// next tick fires it as the active member's), or the owner changed the row since it
+		// was listed (their change stands).
+		log.Printf("scheduler: schedule %s: not held for removal — owner %s restored or the row changed since it was listed", sch.ID, sch.MembershipID)
+		return false
+	}
+	log.Printf("scheduler: schedule %s owner membership %s is inactive — paused "+
+		"(nothing can run and nobody can see it; a re-invite resumes it)", sch.ID, sch.MembershipID)
+	if _, active, err := sc.store.GetMembershipByID(ctx, sch.MembershipID); err == nil && active {
+		sch.HeldByRemoval = true
+		if _, err := resumeHeldSchedule(ctx, sc.store, sch, time.Now().UTC()); err != nil {
+			log.Printf("scheduler: schedule %s: owner restored during the pause, resume failed: %v", sch.ID, err)
+		}
+	}
+	return true
 }
 
 // scheduleNotifyStatus reports whether an outcome deserves an unattended-failure

@@ -110,6 +110,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/restore", sessionx.HandleRestoreSession)
 	// Programmatic drive I/O for the MCP tools (docs/0006 P3-6 E).
 	mux.HandleFunc("POST /sessions/{name}/input", sessionx.HandleSessionInput)
+	// Drop one peer message queued behind the user's answer (#1031).
+	mux.HandleFunc("DELETE /sessions/{name}/pending-peer/{id}", sessionx.HandleDropPendingPeer)
 	// Semantic turn ops + Interaction reply (docs/log/27 P1.5/P2) — the entry point of the
 	// driver abstraction. tui delegates to the tmux path, managed to a ThreadHandle
 	// (P2: opencode / P3: codex).
