@@ -955,7 +955,7 @@ export function QuestionBlock({
               {qn.multiSelect && <span className="mq-multi muted">{tr("mirror.multi_select_ok")}</span>}
               {answered && (
                 <span className={"mq-done muted" + (declined ? " declined" : "")}>
-                  {declined ? tr("mirror.rejected") : tr("mirror.answered")}
+                  {declined ? tr("mirror.question_cancelled") : tr("mirror.answered")}
                 </span>
               )}
             </div>
@@ -979,8 +979,9 @@ export function QuestionBlock({
               })}
             </div>
             {answered && declined && qi === 0 && (
-              // One note for the whole card (not per question) — claude declines the
-              // WHOLE AskUserQuestion call, not individual questions within it.
+              // One note for the whole card (not per question) — the user's Escape dismisses
+              // the WHOLE AskUserQuestion call, not individual questions within it. The
+              // wording must not blame the agent: the agent declined nothing.
               <div className="mq-answer mq-declined-note muted">{tr("mirror.question_declined")}</div>
             )}
             {answered && !declined && extras.length > 0 && (
