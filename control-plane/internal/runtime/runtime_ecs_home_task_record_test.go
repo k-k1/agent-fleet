@@ -240,3 +240,45 @@ func TestECSResumedHomeTaskNeverAdoptsAnotherOperationsMarker(t *testing.T) {
 		}
 	}
 }
+
+// A recorded task ECS no longer describes is no proof it stopped: past the token's safe
+// age, with the operation's own marker still there, RunTask is not sent again however
+// MISSING the task reads; inside it, RunTask under the token answers that task again.
+func TestECSKnownButMissingTaskDoesNotOutliveItsToken(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		sentAgo time.Duration
+		runs    int
+	}{
+		{"past the token", 25 * time.Hour, 0},
+		{"inside the token", time.Hour, 1},
+	} {
+		fs, ft := &fakeSSM{}, &fakeTasks{exitCode: exit(0), missingPolls: 1}
+		rt := newHomeTaskECSWith(&fakeECS{}, &fakeEFS{}, fs, ft)
+		fs.values = map[string]string{rt.homeTaskMarker(): markerValue("arn:task/old-A", "op-9")}
+		BindHomeTask(rt, HomeTaskBinding{Token: "op-9", TaskARN: "arn:task/old-A", Resume: true,
+			SentAt: time.Now().Add(-c.sentAgo)})
+		err := rt.WipeHome(context.Background(), HomeWipeRepos)
+		if len(ft.runs) != c.runs {
+			t.Errorf("%s: %d RunTask, want %d", c.name, len(ft.runs), c.runs)
+		}
+		if c.runs == 0 && (!errors.Is(err, ErrHomeTaskUnresolved) || fs.values[rt.homeTaskMarker()] == "") {
+			t.Errorf("%s: %v, marker %q; want unresolved with the marker kept", c.name, err, fs.values[rt.homeTaskMarker()])
+		}
+	}
+}
+
+// A first RunTask that could not be recorded as sent is not sent, and the marker written
+// for it goes: nothing runs, and nothing would ever resolve it.
+func TestECSUnrecordedFirstSendLeavesNoMarker(t *testing.T) {
+	fs, ft := &fakeSSM{}, &fakeTasks{exitCode: exit(0)}
+	rt := newHomeTaskECSWith(&fakeECS{}, &fakeEFS{}, fs, ft)
+	BindHomeTask(rt, HomeTaskBinding{Token: "op-10", Sending: func() error { return errors.New("database temporarily unavailable") }})
+	err := rt.WipeHome(context.Background(), HomeWipeRepos)
+	if err == nil || errors.Is(err, ErrHomeTaskUnresolved) || len(ft.runs) != 0 {
+		t.Errorf("= %v with %d RunTask; want a definite failure and none sent", err, len(ft.runs))
+	}
+	if v, ok := fs.values[rt.homeTaskMarker()]; ok {
+		t.Errorf("marker %q left behind", v)
+	}
+}

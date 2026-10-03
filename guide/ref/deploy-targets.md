@@ -89,14 +89,16 @@ member has been removed in the meantime), the reason for a failure is shown, the
 written, and a Destroy removes the workspace row. A start in between is refused as above. The
 task's own log (the workspace log group, stream prefix `home-ops`) says how it ended.
 The home is released only when the Control Plane sees its task stopped. If ECS no longer reports
-the task (it forgets one about an hour after it stopped), the Control Plane runs the removal
-again, which is safe: it removes only what the operation removes, on a home nothing could start
-in between. Two cases still need an operator, and the Control Plane log names them: a refusal left
-by a Control Plane from before this version, which has no record behind it, and a start whose
-answer was lost more than 23 hours before the Control Plane came back (ECS no longer guarantees
-that asking again returns the same task). An operator who has checked in ECS that no task started
-by `af-home/<membership>` is running deletes the SSM parameter `/af-ws/<workspace>/home-task`; in the
-second case the Control Plane then finishes the operation by itself.
+the task, or the answer to starting it was lost, the Control Plane asks ECS again under the same
+token; within 23 hours of the first request that returns the task already started (or runs the
+removal again once it is gone, which is safe: it removes only what the operation removes, on a home
+nothing could start in between). Two cases need an operator, and the Control Plane log names them:
+a refusal left by a Control Plane from before this version, which has no record behind it, and a
+task not seen stopped more than 23 hours after it was requested (ECS no longer guarantees that
+asking again returns the same task rather than starting a second one). An operator who has checked
+in ECS that no task started by `af-home/<membership>` is running deletes the SSM parameter
+`/af-ws/<workspace>/home-task`; in the second case the Control Plane then finishes the operation by
+itself.
 
 ⁸ Deletes the member's home volume and its hibernation copies; the next start builds a
 fresh home, as for a new member. On this target the logins, connections and Claude state

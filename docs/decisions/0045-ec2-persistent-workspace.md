@@ -1524,7 +1524,8 @@ dying, which is what keeps the two from running together — and runs the operat
 adopts the recorded task, or the one its own marker names (the marker carries the token, so a marker of another
 operation or of a CP before this is never adopted, only waited for), asks `RunTask` again under the token when there
 is none or ECS has forgotten it, and applies the step after it. It sends `RunTask` again only while no task started
-by `af-home/<membership>` is listed running and, for an answer that was lost, while the first call is under 23 hours
+by `af-home/<membership>` is listed running and, whether the answer was lost or the recorded task reads MISSING
+(neither proves it stopped), while the first call is under 23 hours
 old (`task_sent_at`, written before it): past that the token may start a second task beside the first, so the
 operation stays open until an operator who has checked ECS deletes its marker (which this CP only ever drops when
 nothing of it can run), and the log says so. A member's start is re-checked against an active

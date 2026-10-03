@@ -59,8 +59,8 @@ const ecsHomeTaskPoll = 5 * time.Second
 // of the operation (HomeTaskBinding) is what resolves a marker that never would on its
 // own: its reconciler asks RunTask again under the operation's clientToken, which names the
 // task a lost answer started, or starts the removal again once ECS has forgotten both.
-// Only a marker no record covers — one a CP before #1544 left — and one whose RunTask
-// answer was lost longer ago than the token is sure to last (mayRunAgain) are the
+// Only a marker no record covers — one a CP before #1544 left — and one whose task was
+// not seen stopped within the time the token is sure to last (mayRunAgain) are the
 // operator's to delete (guide/ref/deploy-targets.md, note 7).
 const (
 	// homeTaskMissingGrace bounds how long one wait keeps polling a task ECS does not know.
@@ -295,6 +295,12 @@ func (e *ecsRuntime) runHomeTask(ctx context.Context, what HomeWipe) error {
 		return fail(err)
 	}
 	if err := b.sending(); err != nil {
+		// Nothing was sent: the marker this attempt wrote names no task, and left behind
+		// it would refuse the home with no record to resolve it. An earlier attempt's
+		// marker stays.
+		if !mayRun {
+			e.clearHomeTaskMarker(ctx)
+		}
 		return fail(fmt.Errorf("record the RunTask: %w", err))
 	}
 	arn, err := e.startHomeTask(ctx, what, b.Token)
@@ -327,11 +333,12 @@ const homeTokenSafeFor = 23 * time.Hour
 // mayRunAgain decides whether a resumed operation, whose earlier attempt may have started
 // a task (arn, or a RunTask sent with no answer kept), may send RunTask again. It may not
 // while any task started for this member is listed running: that is the earlier one, or a
-// stranger's, and either is still removing files. Otherwise a recorded task ECS no longer
-// describes has stopped (a running task is never MISSING once RunTask has long answered),
-// and a lost answer is safe to ask for again only while the token surely names it, or once
-// its marker is gone: the marker is dropped only when nothing of it can run, and deleting
-// it is the operator's release after checking ECS.
+// stranger's, and either is still removing files. Past that, an empty listing and a
+// MISSING task prove nothing (ECS bounds neither), so RunTask goes out again only where
+// it cannot start a second task beside a first one still running: while the token surely
+// still names the first call, which ECS then answers again, or once the operation's own
+// marker is gone — this CP drops it only when nothing of it can run, and deleting it is
+// the operator's release after checking ECS.
 func (e *ecsRuntime) mayRunAgain(ctx context.Context, b HomeTaskBinding, arn string, marked bool) error {
 	out, err := e.tasks.ListTasks(ctx, &ecs.ListTasksInput{
 		Cluster:   aws.String(e.cfg.cluster),
@@ -343,20 +350,19 @@ func (e *ecsRuntime) mayRunAgain(ctx context.Context, b HomeTaskBinding, arn str
 	if len(out.TaskArns) > 0 {
 		return fmt.Errorf("a home task (%s) is still running for %s; waiting for it to stop", out.TaskArns[0], e.membershipID)
 	}
-	if arn != "" {
-		if time.Since(b.SentAt) < e.missingGrace() {
-			return fmt.Errorf("the home task %s is not known to ECS yet", arn)
-		}
-		return nil
-	}
 	if !marked || b.SentAt.IsZero() || time.Since(b.SentAt) < homeTokenSafeFor {
 		return nil
 	}
-	log.Printf("ecs: the home operation %s on %s sent RunTask %s ago and kept no answer; its token may "+
-		"start a second task now, so it is not sent again. If no task started by %s is running, delete the "+
-		"marker %s to let it run again", b.Token, e.name, time.Since(b.SentAt).Round(time.Minute),
-		e.homeTaskStartedBy(), e.homeTaskMarker())
-	return fmt.Errorf("RunTask's answer was lost over %s ago; its token no longer proves which task it names", homeTokenSafeFor)
+	task := arn
+	if task == "" {
+		task = "(answer lost)"
+	}
+	log.Printf("ecs: the home operation %s on %s sent RunTask %s ago and has not seen its task %s stop; its "+
+		"token may start a second task now, so it is not sent again. If no task started by %s is running, "+
+		"delete the marker %s to let it run again", b.Token, e.name, time.Since(b.SentAt).Round(time.Minute),
+		task, e.homeTaskStartedBy(), e.homeTaskMarker())
+	return fmt.Errorf("RunTask went out over %s ago and its task %s was never seen stopped; its token no longer "+
+		"proves which task it names", homeTokenSafeFor, task)
 }
 
 // finishHomeTask waits for arn to stop and drops the marker once it has. An outcome the
