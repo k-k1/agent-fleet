@@ -100,16 +100,27 @@ Resources:
   # --- The Control Plane may pass THIS stack's slot role, and no other ---
   # The launch template carries the slot instance profile, so the CP's RunInstances has
   # to pass SlotRole. The grant lives here, attached to the CP task role the way
-  # 60-engines attaches CpIngestPolicy, because only this stack knows the role's ARN:
+  # 60-engines attaches CpIngestManagedPolicy, because only this stack knows the role's ARN:
   # 20-platform cannot import from a stack that imports from it, and the pattern it used
   # to hold (role/af-*-slot) matched every deployment's slot role in the account.
   # A deployment that has no pool stack has no slot role to pass, and no grant.
   # !! The live E2E runs as the deployer: losing this policy shows up only as every slot
   # grow failing with AccessDenied on iam:PassRole, under the real CP role.
-  CpPassSlotRolePolicy:
-    Type: AWS::IAM::Policy
+  #
+  # The slot AMIs by exact ARN, in the same policy. 20-platform admits Amazon's public images
+  # by ec2:Owner / ec2:Public and nothing else (#1522); these make a slot grow independent of
+  # how IAM reads those two keys, and admit an image this account owns if an operator points
+  # SlotAmiId at one. Such an image's own snapshot is still refused by 20-platform's snapshot
+  # statement if IAM evaluates it there - see SlotAmiId.
+  #
+  # Deployed before 20-platform by update.sh, so the exact grants exist before the wide one
+  # goes. Managed, not inline: IAM caps a role's inline policies at 10,240 bytes in total,
+  # and the CP task role passed it (#1576); deploy/local/cfn-iam-policy-size-test.py holds
+  # every role's total.
+  CpSlotLaunchManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
     Properties:
-      PolicyName: !Sub "af-${AWS::StackName}-cp-pass-slot"
+      ManagedPolicyName: !Sub "af-${AWS::StackName}-cp-slot-launch"
       Roles:
         - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-CpTaskRoleArn" } ] ]
       PolicyDocument:
@@ -122,41 +133,17 @@ Resources:
             Condition:
               StringEquals:
                 iam:PassedToService: ec2.amazonaws.com
-
-  # The slot AMIs by exact ARN. 20-platform admits Amazon's public images by ec2:Owner /
-  # ec2:Public and nothing else (#1522); these make a slot grow independent of how IAM reads
-  # those two keys, and admit an image this account owns if an operator points SlotAmiId at
-  # one. Such an image's own snapshot is still refused by 20-platform's snapshot statement if
-  # IAM evaluates it there - see SlotAmiId.
-  # Deployed before 20-platform by update.sh, like the PassRole above, so the exact grant
-  # exists before the wide one goes.
-  CpRunSlotImagePolicy:
-    Type: AWS::IAM::Policy
-    Properties:
-      PolicyName: !Sub "af-${AWS::StackName}-cp-run-slot-image"
-      Roles:
-        - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-CpTaskRoleArn" } ] ]
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
           - Sid: RunSlotImage
             Effect: Allow
             Action: ec2:RunInstances
             Resource: !Sub "arn:aws:ec2:${AWS::Region}::image/${SlotAmiId}"
-  CpRunSlotImageArm64Policy:
-    Type: AWS::IAM::Policy
-    Condition: HasArm64Ami
-    Properties:
-      PolicyName: !Sub "af-${AWS::StackName}-cp-run-slot-image-arm64"
-      Roles:
-        - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-CpTaskRoleArn" } ] ]
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Sid: RunSlotImageArm64
-            Effect: Allow
-            Action: ec2:RunInstances
-            Resource: !Sub "arn:aws:ec2:${AWS::Region}::image/${SlotAmiIdArm64}"
+          - !If
+            - HasArm64Ami
+            - Sid: RunSlotImageArm64
+              Effect: Allow
+              Action: ec2:RunInstances
+              Resource: !Sub "arn:aws:ec2:${AWS::Region}::image/${SlotAmiIdArm64}"
+            - !Ref AWS::NoValue
 
   # --- SG for the instance itself. No ingress at all: the workspace task has its own
   # ENI and the ws SG (awsvpc), so nothing needs to reach the host. Egress covers the

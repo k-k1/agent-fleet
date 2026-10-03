@@ -276,10 +276,14 @@ Resources:
                 Resource: !Sub "${ModelsBucket.Arn}/*"
 
   # !! The CP's only new IAM, all pinned to this stack - PARAMETERS, "The ingest permissions".
-  CpIngestPolicy:
-    Type: AWS::IAM::Policy
+  # Managed, not inline: every inline policy on the CP task role counts toward IAM's
+  # 10,240-byte aggregate per role, and this one with 20-platform's cp-runtime and the
+  # other stacks' grants passed it (#1576). deploy/local/cfn-iam-policy-size-test.py
+  # holds every role's total.
+  CpIngestManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
     Properties:
-      PolicyName: !Sub "af-${AWS::StackName}-cp-ingest"
+      ManagedPolicyName: !Sub "af-${AWS::StackName}-cp-ingest"
       Roles:
         - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-CpTaskRoleArn" } ] ]
       PolicyDocument:

@@ -132,6 +132,18 @@ for why they live outside the template).
     --template-file cfn/20-platform.yaml --capabilities CAPABILITY_NAMED_IAM \
     --profile af-sandbox --region ap-northeast-1
   ```
+  So do `40-ec2-pool`, `60-engines` and `30-ingress`: each attaches a named managed policy to
+  the CP task role (`30-ingress`'s is the home-ops `RunTask` grant). Without it the change set
+  is refused with `InsufficientCapabilitiesException … Requires capabilities : [CAPABILITY_IAM]`.
+- **The CP task role's policy budget.** IAM caps a role's inline policies at 10,240
+  characters together (whitespace not counted) and attaches at most 10 managed policies by
+  default. 20-platform's inline `cp-runtime` is about 7,000 of those; every grant another
+  stack adds to the role (`40-ec2-pool`'s slot launch, `60-engines`' ingest, `30-ingress`'s
+  home ops) is an `AWS::IAM::ManagedPolicy` of its own, because inline they came to ~10,500
+  and `30-ingress` rolled back with `ServiceLimitExceeded` (#1576).
+  `deploy/local/cfn-iam-policy-size-test.py` renders every template and fails CI past 9,500
+  inline per role or 5,800 per managed policy; `--upgrade-from <git-ref>` replays
+  `update.sh`'s order from a deployed release and prints the inline total at every step.
 
 ### 30-ingress stand-up (milestone: CP boots + Google login)
 
@@ -173,7 +185,7 @@ from `10-data`'s exports, so that stack must already be up. Prerequisites:
    fqdn/zone + client id + allowed/super-admin emails as parameters at deploy:
    ```bash
    aws cloudformation deploy --stack-name af-ecs-ingress \
-     --template-file cfn/30-ingress.yaml \
+     --template-file cfn/30-ingress.yaml --capabilities CAPABILITY_NAMED_IAM \
      --parameter-overrides GoogleClientId=<id> \
        Fqdn=af.example.com HostedZoneId=<your-zone-id> \
        AllowedEmails=you@example.com SuperAdminEmails=you@example.com \
@@ -396,7 +408,7 @@ the adapter launches. To move a deployment to a new release:
    their previous values):
    ```bash
    aws cloudformation deploy --stack-name af-ecs-ingress \
-     --template-file cfn/30-ingress.yaml \
+     --template-file cfn/30-ingress.yaml --capabilities CAPABILITY_NAMED_IAM \
      --parameter-overrides ImageTag=<v> \
      --profile <p> --region <r>
    ```
@@ -716,7 +728,7 @@ service supports it:
 | acm | 30-ingress cert | RequestCertificate/DeleteCertificate/DescribeCertificate |
 | route53 | DNS validation + alias | ChangeResourceRecordSets/GetHostedZone/ListResourceRecordSets (on the zone) |
 | logs | log groups | CreateLogGroup/DeleteLogGroup/PutRetentionPolicy/Describe* |
-| iam | 20-platform named roles, 10-data's EFS backup role | CreateRole/DeleteRole/Get/PassRole, Put/Delete/AttachRolePolicy (→ `CAPABILITY_NAMED_IAM`; `CAPABILITY_IAM` for 10-data) |
+| iam | 20-platform named roles, 10-data's EFS backup role, the managed policies 30/40/60 attach to the CP task role | CreateRole/DeleteRole/Get/PassRole, Put/Delete/Attach/DetachRolePolicy, CreatePolicy/DeletePolicy/GetPolicy, Create/Delete/ListPolicyVersions (→ `CAPABILITY_NAMED_IAM`; `CAPABILITY_IAM` for 10-data) |
 | ssm | CP secrets (out-of-band) | PutParameter/DeleteParameter under `/af-cp/*` |
 | sts | account resolution in release-ecr.sh | GetCallerIdentity |
 
@@ -1263,7 +1275,7 @@ aws cloudformation deploy --stack-name af-ecs-ec2-pool \
   --parameter-overrides NetworkStackName=af-ecs-network PlatformStackName=af-ecs-platform
 # then point the CP at it (this is the whole switch, and the whole rollback):
 aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ingress.yaml \
-  --parameter-overrides WsRuntime=ecs-ec2 Ec2SlotLaunchTemplate=lt-0123456789abcdef0 ...
+  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides WsRuntime=ecs-ec2 Ec2SlotLaunchTemplate=lt-0123456789abcdef0 ...
 ```
 
 | Parameter | Env | Default | Notes |

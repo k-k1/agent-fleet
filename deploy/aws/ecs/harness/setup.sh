@@ -258,7 +258,7 @@ aws logs create-log-group --log-group-name /$N >/dev/null 2>&1 || true
 
 # --- supply the exports 40-ec2-pool.yaml imports from dummy stacks ---
 # CpTaskRoleArn is the harness's copy of the CP role: 40-ec2-pool attaches the slot role's
-# PassRole to it (CpPassSlotRolePolicy), exactly as on a real deployment. Without it the
+# PassRole to it (CpSlotLaunchManagedPolicy), exactly as on a real deployment. Without it the
 # copy would lack PassRole and every slot grow in E2E would fail.
 cat > exports.yaml <<'YAML'
 AWSTemplateFormatVersion: "2010-09-09"
