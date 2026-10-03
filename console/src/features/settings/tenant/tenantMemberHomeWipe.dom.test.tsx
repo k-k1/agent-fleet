@@ -103,6 +103,21 @@ describe("member detail: Clean home", () => {
   });
 });
 
+// On Fargate the erase is a task that takes minutes: the CP answers 202 {pending} once the
+// workspace is stopped. The dialog closes (nothing more to decide), and the administrator is
+// told it is under way and where the outcome lands, not that it is done.
+describe("member detail: Clean home in the background", () => {
+  it("says the erase is under way and where its outcome goes", async () => {
+    whoami = { home_erase: true };
+    apiJSON.mockResolvedValue({ cleaned: "a-x-com", tenant: "acme", pending: true });
+    await mount();
+    await act(async () => buttonWith("home を掃除")!.click());
+    await act(async () => buttonWith("掃除する")!.click());
+    expect(toast).toHaveBeenCalledWith(expect.stringContaining("監査ログ"));
+    expect(buttonWith("掃除する")).toBeUndefined();
+  });
+});
+
 describe("member detail: backups", () => {
   it("never asks for backups on a runtime that keeps none", async () => {
     whoami = { home_erase: true, home_backups: false };

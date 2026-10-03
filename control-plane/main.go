@@ -100,6 +100,13 @@ func main() {
 		runDrawioPreseed(os.Args[2:])
 		return
 	}
+	// Subcommand: `control-plane efs-home-op` is the inside of the stack's home-ops task on
+	// Fargate (internal/runtime/home_task.go): Recreate, Clean home and Destroy on an EFS
+	// home the CP itself cannot mount. It reuses this image so the keep-list is the CP's own.
+	if len(os.Args) > 1 && os.Args[1] == "efs-home-op" {
+		runEFSHomeOp()
+		return
+	}
 
 	portBase, _ := strconv.Atoi(envx.Or("WS_AGENT_PORT", "7700"))
 	mgr := &manager{

@@ -54,13 +54,12 @@ func TestOnlyThePoolAdapterClaimsTheGoldenBake(t *testing.T) {
 // be the defect those ports exist to end — a success that removed nothing — so the
 // adapters that must NOT claim are pinned here.
 func TestHomePortsAreClaimedOnlyWhereTheHomeIsReachable(t *testing.T) {
-	// Fargate's home is on EFS, and nothing the CP runs can mount it: no ports at all.
+	// Fargate's home is on EFS, which the CP reaches only through the task its stack
+	// declares: it claims Wipe and Erase by type, behind the gate that asks for that task
+	// (TestECSHomePortsFollowTheStack pins both answers of the gate).
 	fargate := any((*ecsRuntime)(nil))
-	if _, ok := fargate.(homeWiper); ok {
-		t.Error("ecsRuntime claims homeWiper, but the CP cannot reach an EFS home")
-	}
-	if _, ok := fargate.(homeEraser); ok {
-		t.Error("ecsRuntime claims homeEraser, but the CP cannot reach an EFS home")
+	if _, ok := fargate.(homePortsGate); !ok {
+		t.Error("ecsRuntime claims the home ports without the gate; an older stack would offer buttons that always fail")
 	}
 	if _, ok := fargate.(homeBackupKeeper); ok {
 		t.Error("ecsRuntime claims homeBackupKeeper, but Fargate keeps no copies of a home")

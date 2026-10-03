@@ -583,7 +583,12 @@ var homeKeep = map[string]bool{
 // CP, on ECS, the same call answers success for a directory that does not exist
 // (home_wipe.go).
 func cleanHomeContext(ctx context.Context, dataDir string) error {
-	home := filepath.Join(dataDir, "home")
+	return cleanHomeDir(ctx, filepath.Join(dataDir, "home"))
+}
+
+// cleanHomeDir removes every top-level entry of home except homeKeep. Shared by the local
+// adapters and the EFS home task (home_task.go), so the keep-list has one definition.
+func cleanHomeDir(ctx context.Context, home string) error {
 	entries, err := os.ReadDir(home)
 	if err != nil {
 		if os.IsNotExist(err) {

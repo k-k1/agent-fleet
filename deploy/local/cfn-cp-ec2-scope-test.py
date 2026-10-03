@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""The Control Plane task role's EC2 writes, PassRole and ECS/EFS tag writes, checked
-against the policy offline.
+"""The Control Plane task role's EC2 writes, PassRole, ECS/EFS tag writes and the one-shot
+tasks it starts (ecs:RunTask), checked against the policy offline.
 
     python3 deploy/local/cfn-cp-ec2-scope-test.py
 
@@ -17,8 +17,8 @@ deployment notices, because the live E2E runs as the deployer, not as this role.
 So the inventory lives here, with the resources each call names, and this check fails when
 
   - a CP call site that makes an EC2 write (any ec2.*Input other than Describe* and the
-    tag calls cfn-cp-tag-fence-test.py owns), or an ECS / EFS call that writes tags, is not
-    in INVENTORY;
+    tag calls cfn-cp-tag-fence-test.py owns), an ECS / EFS call that writes tags, or an
+    ecs:RunTask, is not in INVENTORY;
   - an inventoried call would be denied by the templates as they stand;
   - an ECS / EFS tag key the code writes is not one the policy allows (read from the source);
   - one of the ATTACKS would be allowed.
@@ -177,6 +177,13 @@ def pass_role(role_arn, service="ec2.amazonaws.com"):
     return "iam:PassRole", [(role_arn, {"iam:PassedToService": service})]
 
 
+def run_task(family, cluster=tf.CLUSTER_ARN, region=REGION):
+    """ecs:RunTask of a family's revision in a cluster. IAM authorizes it against the task
+    definition, with the cluster as ecs:cluster."""
+    return "ecs:RunTask", [("arn:aws:ecs:%s:%s:task-definition/%s:7" % (region, ACCOUNT, family),
+                            {"ecs:cluster": cluster})]
+
+
 def ecs_tag(cluster, tags):
     return request("ecs:TagResource",
                    [plain("arn:aws:ecs:%s:%s:service/%s/ws-1" % (REGION, ACCOUNT, cluster))], tags)
@@ -272,6 +279,15 @@ INVENTORY = [
         + every_reading(ENGINE, [image("ami-gpu", c) for c in AMAZON_IMAGE], [SPOT])),
     ("engine_fleet.go", "terminate", "TerminateInstances", 1, [
         request("ec2:TerminateInstances", [ec2("instance", "i-engine", ENGINE)])]),
+    # --- one-shot tasks. Each names only the execution role, which PassTaskRoles
+    # (20-platform) lets the CP pass to ecs-tasks; no task role. ---
+    ("internal/runtime/runtime_ecs_home_task.go", "startHomeTask", "ecs:RunTask", 1, [
+        run_task("af-%s-home-ops" % tf.STACK),
+        pass_role(tf.EXEC_ROLE_ARN, "ecs-tasks.amazonaws.com")]),
+    ("engine_ingest.go", "runTask", "ecs:RunTask", 1, [
+        run_task("af-%s-ingest" % tf.STACK)]),
+    ("engine_ingest.go", "deleteObjects", "ecs:RunTask", 1, [
+        run_task("af-%s-ingest" % tf.STACK)]),
     # --- ECS / EFS tag writes ---
     ("internal/runtime/runtime_ecs.go", "upsertService", "ecs:CreateService+Tags", 1, [
         ecs_tag(POOL, {"af-membership": "m-1", "af-role": "workspace", "af-tenant": "acme"}),
@@ -379,6 +395,14 @@ ATTACKS = [
      efs_tag("access-point", {"owner": "x"})),
     ("EFS TagResource naming no key",
      efs_tag("access-point", None)),
+    ("run a workspace's own task definition as a one-shot task",
+     run_task("af-ws-acme-alice")),
+    ("run another deployment's home-ops task",
+     run_task("af-other-stack-home-ops")),
+    ("run the home-ops task in another cluster",
+     run_task("af-%s-home-ops" % tf.STACK, "arn:aws:ecs:%s:%s:cluster/af-other" % (REGION, ACCOUNT))),
+    ("run the home-ops family of this name in another region",
+     run_task("af-%s-home-ops" % tf.STACK, "arn:aws:ecs:us-west-2:%s:cluster/%s" % (ACCOUNT, POOL), "us-west-2")),
 ]
 
 
@@ -466,7 +490,10 @@ def discover():
                     key = (rel, func, name)
                     found[key] = found.get(key, 0) + 1
             for svc, name in ECS_EFS_RE.findall(body):
-                if name == "TagResource":
+                if (svc, name) == ("ecs", "RunTask"):
+                    # Every one-shot task the CP starts: each is fenced to its own family.
+                    op = "ecs:RunTask"
+                elif name == "TagResource":
                     op = "%s:TagResource" % svc
                 elif re.search(r"^\s*Tags:", body, re.M) and name.startswith(("Create", "Run", "Register")):
                     op = "%s:%s+Tags" % (svc, name)
@@ -605,6 +632,7 @@ def main():
              "Condition": {"StringEquals": {"iam:PassedToService": "ec2.amazonaws.com"}}},
             {"Effect": "Allow", "Resource": "*",
              "Action": ["ecs:TagResource", "elasticfilesystem:TagResource"]},
+            {"Effect": "Allow", "Resource": "*", "Action": ["ecs:RunTask"]},
         ]
         controls = [w for w, _ in ATTACKS if w not in (
             "pass this stack's slot role to a service other than EC2",

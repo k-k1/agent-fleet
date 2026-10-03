@@ -45,10 +45,18 @@ except ImportError:
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 CP = os.path.join(ROOT, "control-plane")
 REGION, ACCOUNT, POOL = "ap-northeast-1", "111122223333", "af-test-cluster"
-PARAMS = {"Cluster": POOL, "AWS::Region": REGION, "AWS::AccountId": ACCOUNT}
+# One stack name for every template: the families it builds (af-<stack>-ingest,
+# af-<stack>-home-ops) differ by their suffix, which is what the RunTask checks test.
+STACK = "test-stack"
+PARAMS = {"Cluster": POOL, "AWS::Region": REGION, "AWS::AccountId": ACCOUNT, "AWS::StackName": STACK}
 # The 40-ec2-pool stack's own slot role, as !GetAtt resolves it there.
 SLOT_ROLE_ARN = "arn:aws:iam::%s:role/af-test-pool-slot" % ACCOUNT
-GETATT = {"SlotRole.Arn": SLOT_ROLE_ARN}
+# 20-platform's execution role, which every task the CP starts names.
+EXEC_ROLE_ARN = "arn:aws:iam::%s:role/af-test-exec" % ACCOUNT
+GETATT = {"SlotRole.Arn": SLOT_ROLE_ARN, "ExecRole.Arn": EXEC_ROLE_ARN}
+# The platform stack's cluster, as the other stacks import it (…-ClusterArn).
+CLUSTER_ARN = "arn:aws:ecs:%s:%s:cluster/%s" % (REGION, ACCOUNT, POOL)
+IMPORTS = {"ClusterArn": CLUSTER_ARN}
 
 
 # --- template loading -------------------------------------------------------------------
@@ -82,6 +90,9 @@ def resolve(v):
         if k == "!GetAtt":
             name = ".".join(x) if isinstance(x, list) else x
             return GETATT.get(name, "<opaque:!GetAtt %s>" % name)
+        if k == "!ImportValue" and isinstance(x, dict) and isinstance(x.get("Fn::Sub"), str):
+            export = x["Fn::Sub"].rsplit("-", 1)[-1]
+            return IMPORTS.get(export, "<opaque:!ImportValue %s>" % export)
         if k == "!Sub" and isinstance(x, str):
             def sub(m):
                 return PARAMS.get(m.group(1), "<unresolved:%s>" % m.group(1))
@@ -96,15 +107,15 @@ def resolve(v):
 
 def cp_role_statements():
     """Every statement attached to CpTaskRole: its inline policies plus the policies other
-    stacks attach to it (40-ec2-pool, 60-engines). Only some of them matter to any one
-    check, but all are returned so an Allow added elsewhere is not missed."""
+    stacks attach to it (30-ingress, 40-ec2-pool, 60-engines). Only some of them matter to
+    any one check, but all are returned so an Allow added elsewhere is not missed."""
     cfn = os.path.join(ROOT, "deploy", "aws", "ecs", "cfn")
     out = []
     with open(os.path.join(cfn, "20-platform.yaml"), encoding="utf-8") as fh:
         platform = yaml.load(fh, Loader=CfnLoader)
     for pol in platform["Resources"]["CpTaskRole"]["Properties"]["Policies"]:
         out += pol["PolicyDocument"]["Statement"]
-    for tpl in ("40-ec2-pool.yaml", "60-engines.yaml"):
+    for tpl in ("30-ingress.yaml", "40-ec2-pool.yaml", "60-engines.yaml"):
         with open(os.path.join(cfn, tpl), encoding="utf-8") as fh:
             doc = yaml.load(fh, Loader=CfnLoader)
         for res in doc["Resources"].values():

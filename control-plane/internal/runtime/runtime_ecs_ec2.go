@@ -721,6 +721,11 @@ func (f *ecsEC2Factory) New(ws Workspace, secretKey string, extraEnv []string) R
 	if !ok { // unreachable: ecsFactory.New always returns *ecsRuntime
 		panic("ecs-ec2: base factory did not return *ecsRuntime")
 	}
+	// The Fargate home task is not this adapter's: its homes are EBS volumes, its keep files
+	// live under /home-keep, and its handlers wait for Destroy inside the request. The stack
+	// sets AF_ECS_HOME_TASK on both runtimes, so the base used as a library drops it here,
+	// and Destroy keeps reporting the EFS directories it cannot remove as leftovers.
+	base.cfg.homeTask, base.tasks = "", nil
 	rung, class := f.pool.rungFor(ws.SlotClass, ws.MemBytes)
 	return &ecsEC2Runtime{
 		base:         base,

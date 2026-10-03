@@ -88,6 +88,11 @@ var cpTenantDelegates = map[string]string{
 	"ParseLimits":                   "parseLimits",
 	"LimitsFor":                     "GetTenant",
 	"StoreTenantLimits":             "SetTenantLimits",
+
+	// The background halves of Clean home and Destroy (ecs: a task that takes minutes).
+	"HomeOpsInBackground":               "homeOperations",
+	"StartCleanHomeByMembership":        "startCleanHomeByMembership",
+	"StartDestroyWorkspaceByMembership": "startDestroyWorkspaceByMembership",
 }
 
 // bodyNames returns every identifier and selector-field name mentioned in a body.

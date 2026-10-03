@@ -82,6 +82,13 @@ type CP interface {
 	// grow, which is every runtime but the EC2 slot pool.
 	ResizeHomeByMembership(ctx context.Context, membershipID string) (runtime.HomeResize, error)
 	DestroyWorkspaceByMembership(ctx context.Context, membershipID string) ([]string, error)
+	// HomeOpsInBackground is true where Clean home and Destroy run a task on the home that
+	// takes minutes (ecs: runtime.HomeWipeInBackground). The handlers then call the Start*
+	// variants, answer once the refusals are past, and write the outcome to the audit log
+	// from done. done is called exactly once, after the request has been answered.
+	HomeOpsInBackground() bool
+	StartCleanHomeByMembership(ctx context.Context, membershipID string, done func(error)) error
+	StartDestroyWorkspaceByMembership(ctx context.Context, membershipID string, done func(leftovers []string, err error)) error
 	ResolveWorkspaceSize(ctx context.Context, ws store.Workspace) (memBytes int64, cpuUnits, diskGB int)
 	ResolveSlotClass(ctx context.Context, ws store.Workspace) (id, note string)
 	EvictMembershipCache(membershipID string)

@@ -389,6 +389,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
     "The backend was updated too. Applying it needs a workspace stop→start whenever it suits you (running sessions stop, and can be resumed later).",
   "ui.update": "Update",
   "ui.recreate_failed": "Recreate failed",
+  "ws.home_wipe_failed": "Recreate / Clean home did not finish, so the workspace was left stopped: {reason}",
   "ui.cleanup_failed": "Cleanup failed",
   "ui.default": "Default",
   "ui.default_with": "Default ({effort})",

@@ -388,6 +388,7 @@ export const common = {
     "バックエンドも更新されています。反映には任意のタイミングでワークスペースの停止→起動が必要です（実行中のセッションは停止し、あとで再開できます）。",
   "ui.update": "更新",
   "ui.recreate_failed": "作り直しに失敗しました",
+  "ws.home_wipe_failed": "作り直し・ホームの掃除が完了しなかったため、ワークスペースは停止したままです: {reason}",
   "ui.cleanup_failed": "掃除に失敗しました",
   "ui.default": "既定",
   "ui.default_with": "既定（{effort}）",
