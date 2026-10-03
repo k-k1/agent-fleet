@@ -32,6 +32,9 @@ export interface SessionFile {
   lastIdx: number;
   lastTs?: string;
   sidechain?: boolean; // ONLY subagents touched it
+  // Where it sits relative to the session (transcript.FileScope*). "other-repo" keeps its git
+  // state but is not this session's diff; "workdir" is ~/.af-work, the throwaway directory.
+  scope?: "workdir" | "other-repo";
 }
 
 /** One working-tree change from GET /fs/changes. */
@@ -54,10 +57,13 @@ export interface FsChange {
  *             stays "No diff". And these rows are KEPT either way — dropping them reads
  *             to the user as "I just edited that and it is not in the list", i.e. as a
  *             broken feature.
- *   outside — edited outside ~/repos (an agent config, a file in the home dir). Listed,
- *             but there is no git side and no diff to open.
+ *   workdir — edited in ~/.af-work ($AF_WORK_DIR): the throwaway directory agents are told
+ *             to use. Kept apart from `outside` so a report or probe the session was asked
+ *             to write there does not read as a stray edit somewhere unrelated.
+ *   outside — edited anywhere else outside ~/repos (an agent config, a file in the home
+ *             dir). Listed, but there is no git side and no diff to open.
  */
-export type FileState = "unstaged" | "staged" | "untracked" | "committed" | "clean" | "outside";
+export type FileState = "unstaged" | "staged" | "untracked" | "committed" | "clean" | "workdir" | "outside";
 
 export interface FileRow extends SessionFile {
   name: string; // basename, the row's main label
@@ -92,7 +98,7 @@ export function joinChanges(files: SessionFile[], changes: FsChange[], committed
     const slash = rel.lastIndexOf("/");
     const change = f.repo && rel ? byKey.get(changeKey(f.repo, rel)) : undefined;
     let state: FileState = "clean";
-    if (!f.repo || !rel) state = "outside";
+    if (!f.repo || !rel) state = f.scope === "workdir" ? "workdir" : "outside";
     else if (change?.untracked) state = "untracked";
     else if (change) state = change.worktree && change.worktree !== " " ? "unstaged" : "staged";
     else if (wasCommitted?.has(rel)) state = "committed";
@@ -117,7 +123,7 @@ export function sortRows(rows: FileRow[], sort: FileSort): FileRow[] {
   );
 }
 
-/** The badge a row shows for its git state. `clean` and `outside` are muted on purpose:
+/** The badge a row shows for its git state. `clean`, `workdir` and `outside` are muted on purpose:
  *  they are still part of the session's work, they just have no diff behind them. */
 export function stateBadge(state: FileState): { cls: string; label: MsgKey } {
   switch (state) {
@@ -129,6 +135,8 @@ export function stateBadge(state: FileState): { cls: string; label: MsgKey } {
       return { cls: "st-mod", label: "mirror.files.st_staged" };
     case "committed":
       return { cls: "st-done", label: "mirror.files.st_committed" };
+    case "workdir":
+      return { cls: "st-muted", label: "mirror.files.st_workdir" };
     case "outside":
       return { cls: "st-muted", label: "mirror.files.st_outside" };
     default:

@@ -40,6 +40,48 @@ func setupHome(t *testing.T) {
 	t.Cleanup(func() { forgetSessionFiles(t.Name()) })
 }
 
+// Scope separates the rows whose git state is NOT this session's diff (another working copy)
+// and the throwaway work directory from the plain "outside ~/repos" ones. The session here
+// runs in a subdirectory of its working copy, so a comparison against the directory's own
+// basename ("console") would call every row of its own copy "other".
+func TestSessionFileTouchesScope(t *testing.T) {
+	setupHome(t)
+	s := &editScript{all: []transcript.FileEdit{
+		edit(0, "/h/repos/r/a.ts", "2026-08-17T10:00:00Z", "edit", 1, 0),
+		edit(1, "/h/repos/r@wip-x/b.ts", "2026-08-17T10:01:00Z", "edit", 1, 0),
+		edit(2, "/h/.af-work/me/report.md", "2026-08-17T10:02:00Z", "add", 1, 0),
+		edit(3, "/h/.af-work/other/c.md", "2026-08-17T10:03:00Z", "add", 1, 0),
+		edit(4, "/h/.claude/settings.json", "2026-08-17T10:04:00Z", "edit", 1, 0),
+		edit(5, "/h/.af-workshop/d.md", "2026-08-17T10:05:00Z", "add", 1, 0),
+	}}
+	got := sessionFileTouches(t.Name(), "/h/repos/r/console", "/t.jsonl", "head", 6, 6, s.fn)
+	want := map[string]string{
+		"repos/r/a.ts":          "",
+		"repos/r@wip-x/b.ts":    transcript.FileScopeOtherRepo,
+		".af-work/me/report.md": transcript.FileScopeWorkDir,
+		".af-work/other/c.md":   transcript.FileScopeWorkDir,
+		".claude/settings.json": "",
+		".af-workshop/d.md":     "",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d rows, want %d: %+v", len(got), len(want), got)
+	}
+	for _, r := range got {
+		if w, ok := want[r.Path]; !ok || r.Scope != w {
+			t.Errorf("%s: scope = %q, want %q", r.Path, r.Scope, w)
+		}
+	}
+
+	// A session that did not start in a working copy has nothing to compare against: no row
+	// is called "other", or every repo row of a session launched in ~ would be.
+	forgetSessionFiles(t.Name())
+	for _, r := range sessionFileTouches(t.Name(), "/h", "/t.jsonl", "head", 6, 6, s.fn) {
+		if r.Scope == transcript.FileScopeOtherRepo {
+			t.Errorf("%s marked other-repo with no own working copy", r.Path)
+		}
+	}
+}
+
 func TestSessionFileTouchesFoldsPerFile(t *testing.T) {
 	setupHome(t)
 	s := &editScript{all: []transcript.FileEdit{
@@ -47,7 +89,7 @@ func TestSessionFileTouchesFoldsPerFile(t *testing.T) {
 		edit(1, "/h/repos/r/b.ts", "2026-08-17T10:01:00Z", "edit", 2, 1),
 		edit(2, "/h/repos/r/a.ts", "2026-08-17T10:02:00Z", "edit", 3, 4),
 	}}
-	got := sessionFileTouches(t.Name(), "/t.jsonl", "head", 3, 3, s.fn)
+	got := sessionFileTouches(t.Name(), "", "/t.jsonl", "head", 3, 3, s.fn)
 	if len(got) != 2 {
 		t.Fatalf("got %d rows, want 2: %+v", len(got), got)
 	}
@@ -76,8 +118,8 @@ func TestSessionFileTouchesIsIncremental(t *testing.T) {
 		edit(0, "/h/repos/r/a.ts", "2026-08-17T10:00:00Z", "edit", 1, 0),
 		edit(1, "/h/repos/r/a.ts", "2026-08-17T10:01:00Z", "edit", 1, 0),
 	}}
-	sessionFileTouches(t.Name(), "/t.jsonl", "head", 1, 1, s.fn)
-	got := sessionFileTouches(t.Name(), "/t.jsonl", "head", 2, 2, s.fn)
+	sessionFileTouches(t.Name(), "", "/t.jsonl", "head", 1, 1, s.fn)
+	got := sessionFileTouches(t.Name(), "", "/t.jsonl", "head", 2, 2, s.fn)
 	if len(got) != 1 || got[0].Count != 2 || got[0].Added != 2 {
 		t.Fatalf("second poll = %+v", got)
 	}
@@ -91,11 +133,11 @@ func TestSessionFileTouchesIsIncremental(t *testing.T) {
 func TestSessionFileTouchesRefoldsWhenTheTranscriptIsReplaced(t *testing.T) {
 	setupHome(t)
 	s := &editScript{all: []transcript.FileEdit{edit(0, "/h/repos/r/a.ts", "2026-08-17T10:00:00Z", "edit", 1, 0)}}
-	sessionFileTouches(t.Name(), "/t.jsonl", "head", 1, 1, s.fn)
+	sessionFileTouches(t.Name(), "", "/t.jsonl", "head", 1, 1, s.fn)
 
 	// Same path and same length, but the first record changed: the conversation was
 	// rewritten in place, so the previous fold describes a transcript that no longer exists.
-	got := sessionFileTouches(t.Name(), "/t.jsonl", "OTHER-head", 1, 1, s.fn)
+	got := sessionFileTouches(t.Name(), "", "/t.jsonl", "OTHER-head", 1, 1, s.fn)
 	if len(got) != 1 || got[0].Count != 1 {
 		t.Fatalf("after a rewrite = %+v (a stale fold would double the count)", got)
 	}
@@ -104,7 +146,7 @@ func TestSessionFileTouchesRefoldsWhenTheTranscriptIsReplaced(t *testing.T) {
 	}
 
 	// A transcript that shrank below what we folded (reset / replaced session) restarts too.
-	got = sessionFileTouches(t.Name(), "/other.jsonl", "head", 1, 1, s.fn)
+	got = sessionFileTouches(t.Name(), "", "/other.jsonl", "head", 1, 1, s.fn)
 	if len(got) != 1 || got[0].Count != 1 {
 		t.Fatalf("after a path change = %+v", got)
 	}
@@ -118,8 +160,8 @@ func TestSessionFileTouchesDoesNotDoubleCountAMutableTail(t *testing.T) {
 		edit(0, "/h/repos/r/a.ts", "2026-08-17T10:00:00Z", "edit", 1, 0),
 		edit(1, "/h/repos/r/b.ts", "2026-08-17T10:01:00Z", "edit", 5, 0),
 	}}
-	first := sessionFileTouches(t.Name(), "/t.jsonl", "head", 2, 1, s.fn)
-	second := sessionFileTouches(t.Name(), "/t.jsonl", "head", 2, 1, s.fn)
+	first := sessionFileTouches(t.Name(), "", "/t.jsonl", "head", 2, 1, s.fn)
+	second := sessionFileTouches(t.Name(), "", "/t.jsonl", "head", 2, 1, s.fn)
 	if len(first) != 2 || len(second) != 2 {
 		t.Fatalf("rows: %d then %d", len(first), len(second))
 	}
@@ -141,7 +183,7 @@ func TestSessionFileTouchesSidechainOnlyWhenNoMainThreadEdit(t *testing.T) {
 	subOnly.Sidechain = true
 	main := edit(2, "/h/repos/r/a.ts", "2026-08-17T10:02:00Z", "edit", 1, 0)
 	s := &editScript{all: []transcript.FileEdit{sub, subOnly, main}}
-	got := sessionFileTouches(t.Name(), "/t.jsonl", "head", 3, 3, s.fn)
+	got := sessionFileTouches(t.Name(), "", "/t.jsonl", "head", 3, 3, s.fn)
 	for _, r := range got {
 		if r.Rel == "a.ts" && r.Sidechain {
 			t.Fatal("a.ts was also edited on the main thread — it is not a subagent-only file")
@@ -158,7 +200,7 @@ func TestSessionFileTouchesRelativePathsAndOutsideRepos(t *testing.T) {
 	noCwd := transcript.FileEdit{Path: "src/y.ts", Cwd: "", Verb: "edit", Idx: 1, TS: "2"}
 	outside := transcript.FileEdit{Path: "/h/.claude/settings.json", Verb: "edit", Idx: 2, TS: "3"}
 	s := &editScript{all: []transcript.FileEdit{rel, noCwd, outside}}
-	got := sessionFileTouches(t.Name(), "/t.jsonl", "head", 3, 3, s.fn)
+	got := sessionFileTouches(t.Name(), "", "/t.jsonl", "head", 3, 3, s.fn)
 	if len(got) != 2 {
 		// A relative path with no cwd has nothing to anchor it; guessing would open the
 		// same-named file in whichever working copy happened to be first.
