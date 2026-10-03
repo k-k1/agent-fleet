@@ -20,6 +20,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "submodule-sync": "noti.kind_submodule_sync",
   "schedule-failed": "noti.kind_schedule_failed",
   "schedule-skipped": "noti.kind_schedule_skipped",
+  "schedule-result": "noti.kind_schedule_result",
   "carried-interaction": "noti.kind_carried_interaction",
   "stop-after-turn": "noti.kind_stop_after_turn",
   "handoff-offer": "noti.kind_handoff_offer",
@@ -206,6 +207,22 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
         ? t("notif.schedule_failed.speech", { name: label })
         : t("notif.schedule_skipped.speech", { name: label });
     return { title, body: reason ? t("notif.schedule.body_reason", { name: label, reason }) : label, speech };
+  }
+  if (n.kind === "schedule-result") {
+    // A scheduled run's result, raised because its schedule named the notification center, or
+    // because it failed, or because a chosen chat connection could not take it (#1560). The
+    // body is the answer's opening (a failure carries none), plus the connections it missed.
+    const label = String(n.payload.spec_label || name);
+    const reason = String(n.payload.report_reason || "");
+    const failed = reason !== "" || (n.payload.report_kind !== undefined && n.payload.report_kind !== "answer-ready");
+    const excerpt = typeof n.payload.excerpt === "string" ? n.payload.excerpt : "";
+    const missed = Array.isArray(n.payload.undelivered) ? n.payload.undelivered.map(String).join(", ") : "";
+    const detail = failed ? reason || String(n.payload.report_kind || "") : excerpt;
+    let body = detail ? t("notif.schedule.body_reason", { name: label, reason: detail }) : label;
+    if (missed) body += " " + t("notif.schedule_result.undelivered", { targets: missed });
+    return failed
+      ? { title: t("notif.schedule_result.failed_title"), body, speech: t("notif.schedule_result.failed_speech", { name: label }) }
+      : { title: t("notif.schedule_result.title"), body, speech: t("notif.schedule_result.speech", { name: label }) };
   }
   if (n.kind === "rate-limit-reached") {
     return {

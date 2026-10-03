@@ -685,7 +685,14 @@ type Schedule struct {
 	// bring the workspace's own stop forward — a finished session is idle, and idle was
 	// never what kept the workspace awake (holdsWorkspace is machineBusy only). Ignored in
 	// session_mode=assistant, which drives a conversation and never holds a session.
-	StopAfterRun         bool
+	StopAfterRun bool
+	// DeliverTo is where a fire's result goes when Report is on (issue #1560): a
+	// comma-separated subset of operator, notifications, discord and slack. Empty means
+	// operator alone, the meaning Report had before the column existed.
+	DeliverTo string
+	// Silent lets a run whose final answer is exactly the sentinel ([SILENT]) deliver
+	// nothing: the run is recorded as fired_silent instead. Failures are never silent.
+	Silent               bool
 	Enabled              bool
 	NextRun, LastRun     string
 	LastStatus           string
@@ -1723,7 +1730,16 @@ type ScheduleStore interface {
 	// session and slot (trimmed, recorded before slots were, or never fired). changed is false
 	// when the run is found but no longer fired: a repeated report, or a run that failed.
 	MarkScheduleRunNotExecuted(ctx context.Context, scheduleID, membershipID, session, slot, status, detail string) (found, changed bool, err error)
+	// MarkScheduleRunSilent records that the run that fired into session for slot answered
+	// with the silent sentinel (issue #1560): its status becomes ScheduleStatusFiredSilent.
+	// Only a run still recorded as plainly fired changes, so a failure is never overwritten.
+	MarkScheduleRunSilent(ctx context.Context, scheduleID, membershipID, session, slot string) (found, changed bool, err error)
 }
+
+// ScheduleStatusFiredSilent is the run status of a fire whose session answered with the
+// silent sentinel and so delivered nothing (issue #1560). It keeps the "fired" prefix, which
+// every reader of the run history treats as a run that happened.
+const ScheduleStatusFiredSilent = "fired_silent"
 
 // MCPServerStore is the tenant-distributed MCP server registry (docs/log/48 P4 +
 // ADR0031). Rows are tenant-scoped: every mutation carries tenant_id in the WHERE so a

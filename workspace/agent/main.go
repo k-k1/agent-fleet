@@ -189,6 +189,7 @@ func serve() {
 	// package main, so the single implementation of that decision is registered on the
 	// seam here. Must be installed before the app-server start and the reconcilers below.
 	agents.SetStateNotifier(sessionx.RecordSessionNotification)
+	agents.SetTurnEndRecorder(sessionx.RecordTurnOutcome)
 	// The decision that an instruction's report has been consumed (docs/log/51 Phase 1 /
 	// ADR 0035). The hooks, the notify seam and record-exit's kick are wake-up hints only;
 	// whether an instruction is complete is decided by this reconciler's tick alone. A

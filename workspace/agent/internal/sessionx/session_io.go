@@ -274,6 +274,9 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// executed (#1257). Read only alongside a schedule source.
 		ScheduleID   string `json:"schedule_id"`
 		ScheduleSlot string `json:"schedule_slot"`
+		// ScheduleDelivery is the run's own targets and silent sentinel (#1560), sent only
+		// when the schedule asks for more than its report to report_to.
+		ScheduleDelivery *chatx.ScheduleDelivery `json:"schedule_delivery"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
@@ -383,10 +386,14 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// (one carrying report_to) gets the extra "call af_report when you are done" line. It
 	// sits before the managed/tui split so both paths get the same line — after the split
 	// one of them would miss it.
-	if body.ReportTo != "" {
+	delivery := scheduleDeliveryOf(body.Source, body.ScheduleID, body.ScheduleSlot, body.ScheduleDelivery)
+	if body.ReportTo != "" || delivery != nil {
 		if m, ok := session.ReadMeta(name); ok {
 			body.Prompt = withSelfReportHint(body.Prompt, m)
 		}
+	}
+	if delivery != nil {
+		delivery.PromptSum = chatx.PromptSum(body.Prompt) // the text as it lands in the transcript
 	}
 	// A managed session's {prompt} has no tmux pane (it goes through app-server), so route
 	// it to ThreadHandle.Send before the tmux existence check. Callers that hit /input
@@ -396,7 +403,7 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	if len(body.Keys) == 0 && len(body.Seq) == 0 {
 		if meta, ok := session.ReadMeta(name); ok && meta.DriverKind() == session.DriverManaged {
 			handleManagedInputPrompt(w, meta, body.Prompt, body.ReportTo, body.Source, body.PeerFrom,
-				scheduleRefOf(body.Source, body.ScheduleID, body.ScheduleSlot))
+				scheduleRefOf(body.Source, body.ScheduleID, body.ScheduleSlot), delivery)
 			return
 		}
 	}
@@ -615,8 +622,8 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// done before delivery. It is not mirrored to Discord either: that mirror exists
 		// to reflect input a USER typed in the Console into the thread, and peer is not
 		// that.
-	case body.ReportTo != "":
-		chatx.AddInstruction(name, body.ReportTo, injectionSource(body.Source))
+	case body.ReportTo != "" || delivery != nil:
+		chatx.AddScheduledInstruction(name, body.ReportTo, injectionSource(body.Source), delivery, false)
 	case scheduleInjectionSource(body.Source) != "":
 		// A scheduled injection with completion reporting off (report_to is empty, so it
 		// misses the branch above). It does not go on the ledger — there is no report
@@ -686,7 +693,7 @@ func writePeerErr(w http.ResponseWriter, err error) {
 // start op (session_turn.go) — same ThreadHandle.Send delivery, but keeps /input's
 // report_to contract (addInstruction / recordOperatorInjection) that /turn doesn't
 // carry, so send_to_session's docs/log/30 auto-report keeps working for managed sessions.
-func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, reportTo, source, peerFrom string, sched agents.ScheduleRef) {
+func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, reportTo, source, peerFrom string, sched agents.ScheduleRef, delivery *chatx.ScheduleDelivery) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
@@ -723,8 +730,8 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	// The ledger row is raised BEFORE the send, marked sending, and the prompt carries its id
 	// (#1257): the queue may hold the prompt behind a turn and drop it, during the send or
 	// long after, and the drop names the row. The send's outcome settles the sending mark.
-	if peerFrom == "" && reportTo != "" {
-		in.Instr = chatx.AddSendingInstruction(meta.Name, reportTo, injectionSource(source))
+	if peerFrom == "" && (reportTo != "" || delivery != nil) {
+		in.Instr = chatx.AddScheduledInstruction(meta.Name, reportTo, injectionSource(source), delivery, true)
 	}
 	queued := false
 	if qs, ok := h.(agents.QueueingSender); ok {
@@ -753,7 +760,7 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	switch {
 	case peerFrom != "":
 		// Not on the ledger (ADR 0041 decision 4). The origin was recorded above.
-	case reportTo != "":
+	case reportTo != "" || delivery != nil:
 		// Raised before the send, above.
 	case scheduleInjectionSource(source) != "":
 		// Scheduled execution with reporting off (as on the TUI path) — no ledger row,

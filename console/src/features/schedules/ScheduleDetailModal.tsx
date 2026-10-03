@@ -12,10 +12,17 @@ import { useMemo, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { t, useT } from "../../lib/i18n/index.ts";
+import { t, useT, type MsgKey } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
 import { scheduleUpdate } from "./api.ts";
-import { type ScheduleDTO, type ScheduleEditable, scheduleTitle } from "./read.ts";
+import {
+  DELIVERY_TARGETS,
+  type ScheduleDTO,
+  type ScheduleEditable,
+  canonicalTargets,
+  scheduleTargets,
+  scheduleTitle,
+} from "./read.ts";
 import { scheduledKinds } from "../../agents/registry.ts";
 
 // The agent kinds this picker offers come from the registry cap (AgentCaps.scheduledRuns),
@@ -25,6 +32,12 @@ import { scheduledKinds } from "../../agents/registry.ts";
 const AGENT_KINDS: string[] = scheduledKinds;
 const SPEC_KINDS = ["cron", "interval", "once"];
 const WAKE_POLICIES = ["wake", "skip", "catch_up"];
+const TARGET_LABELS: Record<(typeof DELIVERY_TARGETS)[number], MsgKey> = {
+  operator: "sched.target_operator",
+  notifications: "sched.target_notifications",
+  discord: "sched.target_discord",
+  slack: "sched.target_slack",
+};
 
 interface Props {
   s: ScheduleDTO;
@@ -49,6 +62,10 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
   const [model, setModel] = useState(s.model || "");
   const [report, setReport] = useState(!!s.report);
   const [stopAfterRun, setStopAfterRun] = useState(!!s.stop_after_run);
+  const [targets, setTargets] = useState<string[]>(() => canonicalTargets(scheduleTargets(s)));
+  const [silent, setSilent] = useState(!!s.silent);
+  const toggleTarget = (target: string, on: boolean) =>
+    setTargets((cur) => canonicalTargets(on ? [...cur, target] : cur.filter((x) => x !== target)));
 
   const kinds = useMemo(
     () => (AGENT_KINDS.includes(agent) ? AGENT_KINDS : [agent, ...AGENT_KINDS]),
@@ -68,11 +85,15 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
     if (model !== (s.model || "")) p.model = model;
     if (report !== !!s.report) p.report = report;
     if (stopAfterRun !== !!s.stop_after_run) p.stop_after_run = stopAfterRun;
+    if (targets.join(",") !== canonicalTargets(scheduleTargets(s)).join(",")) p.deliver_to = targets;
+    if (silent !== !!s.silent) p.silent = silent;
     return p;
-  }, [s, specKind, spec, tz, label, prompt, wake, agent, model, report, stopAfterRun]);
+  }, [s, specKind, spec, tz, label, prompt, wake, agent, model, report, stopAfterRun, targets, silent]);
 
   const dirty = Object.keys(patch).length > 0;
-  const canSave = dirty && !busy && prompt.trim().length > 0 && spec.trim().length > 0;
+  // Reporting on with no target would deliver nowhere while looking switched on.
+  const targetsOk = !report || targets.length > 0;
+  const canSave = dirty && !busy && targetsOk && prompt.trim().length > 0 && spec.trim().length > 0;
 
   const save = async () => {
     if (!canSave) return;
@@ -199,6 +220,39 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
             <span>
               {tr("sched.f_report")}
               <span className="ui-field-hint"> — {tr("sched.f_report_hint")}</span>
+            </span>
+          </label>
+        )}
+
+        {/* Delivery targets (#1560): where the report goes. Only while reporting is on; an
+            empty choice is refused by canSave rather than saved as "report to nobody". */}
+        {s.session_mode !== "assistant" && report && (
+          <fieldset className="ui-field sched-targets">
+            <legend className="ui-field-label">{tr("sched.f_deliver_to")}</legend>
+            <div className="sched-target-list">
+              {DELIVERY_TARGETS.map((target) => (
+                <label key={target} className="sched-target">
+                  <input
+                    type="checkbox"
+                    checked={targets.includes(target)}
+                    onChange={(e) => toggleTarget(target, e.target.checked)}
+                  />
+                  <span>{tr(TARGET_LABELS[target])}</span>
+                </label>
+              ))}
+            </div>
+            <div className="ui-field-hint">{targetsOk ? tr("sched.f_deliver_to_hint") : tr("sched.f_deliver_to_empty")}</div>
+          </fieldset>
+        )}
+
+        {/* The silent sentinel (#1560), independent of the report: even with reporting off it
+            keeps a [SILENT] answer out of the notifications and marks the run as silent. */}
+        {s.session_mode !== "assistant" && (
+          <label className="ui-field" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
+            <input type="checkbox" checked={silent} onChange={(e) => setSilent(e.target.checked)} />
+            <span>
+              {tr("sched.f_silent")}
+              <span className="ui-field-hint"> — {tr("sched.f_silent_hint")}</span>
             </span>
           </label>
         )}

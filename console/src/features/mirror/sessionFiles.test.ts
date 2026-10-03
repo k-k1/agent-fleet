@@ -86,6 +86,27 @@ describe("joinChanges", () => {
     expect(rows[0].name).toBe("settings.json");
   });
 
+  it("tells the session's work directory apart from other places outside a working copy", () => {
+    const rows = joinChanges(
+      [
+        file({ path: ".af-work/s1/report.md", repo: undefined, rel: undefined, scope: "workdir" }),
+        file({ path: ".claude/settings.json", repo: undefined, rel: undefined }),
+      ],
+      [],
+    );
+    expect(rows.map((r) => r.state)).toEqual(["workdir", "outside"]);
+    expect(rows[0].name).toBe("report.md");
+  });
+
+  it("keeps the git state of a row in another working copy (it is real, just not this session's)", () => {
+    const rows = joinChanges(
+      [file({ repo: "r@wip-x", path: "repos/r@wip-x/src/a.ts", scope: "other-repo" })],
+      [change({ repo: "r@wip-x", path: "repos/r@wip-x/src/a.ts" })],
+    );
+    expect(rows[0].state).toBe("unstaged");
+    expect(rows[0].scope).toBe("other-repo");
+  });
+
   it("splits name from directory (the file name is the row's main label)", () => {
     const rows = joinChanges([file({ rel: "src/features/a.ts" })], []);
     expect(rows[0].name).toBe("a.ts");
@@ -167,6 +188,8 @@ describe("stateBadge", () => {
   it("mutes rows with no diff and rows outside a working copy", () => {
     expect(stateBadge("clean").cls).toBe("st-muted");
     expect(stateBadge("outside").cls).toBe("st-muted");
+    expect(stateBadge("workdir").cls).toBe("st-muted");
+    expect(stateBadge("workdir").label).not.toBe(stateBadge("outside").label);
     expect(stateBadge("unstaged").cls).toBe("st-mod");
   });
 

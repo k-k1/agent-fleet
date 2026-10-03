@@ -174,4 +174,29 @@ describe("scheduled-run notification wording (docs/log/38)", () => {
     expect(w.title).toBe("A schedule did not run");
     expect(w.body).toContain("no longer exists");
   });
+
+  // #1560: a scheduled run's result names the schedule and opens with its answer; a failure says
+  // so, and a chat connection that could not take the post is named instead of skipped quietly.
+  const result = (payload: Record<string, unknown>) => ({
+    ...event("e21", "s1", false, "session"),
+    kind: "schedule-result",
+    displayName: "nightly-session",
+    payload: { schedule_id: "sch_1", spec_label: "夜間チェック", ...payload },
+  });
+
+  it("a schedule result carries the answer's opening", () => {
+    const w = notificationWording(result({ report_kind: "answer-ready", report_reason: "", excerpt: "2 jobs failed" }));
+    expect(w.title).toBe("定時実行の結果が届きました");
+    expect(w.body).toBe("夜間チェック：2 jobs failed");
+  });
+
+  it("a failed run is worded as a failure and names the connection it missed", () => {
+    const w = notificationWording(
+      result({ report_kind: "answer-ready", report_reason: "turn-failed", excerpt: "x", undelivered: ["slack"] }),
+    );
+    expect(w.title).toBe("定時実行が正常に終わりませんでした");
+    expect(w.body).toContain("turn-failed");
+    expect(w.body).not.toContain("：x");
+    expect(w.body).toContain("slack");
+  });
 });

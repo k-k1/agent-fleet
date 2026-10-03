@@ -421,10 +421,13 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 		// The head's turn/started is where the host holds that input (ADR 0105 decision 3): a
 		// stop that found it committed left the delivery to this point.
 		stop := false
+		var run *agents.TurnInput
 		if h.starting != "" && (p.CommandID == "" || p.CommandID == h.starting || p.TurnID == h.starting) {
 			h.starting = ""
 			if t := h.tq().Head(); t != nil {
 				stop = h.tq().Received(t)
+				in := t.In
+				run = &in
 			}
 		}
 		if stop {
@@ -432,7 +435,11 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 		}
 		st := h.state
 		h.mu.Unlock()
-		agents.MarkTurnStart(h.slotSid)
+		if run != nil {
+			agents.MarkTurnStartRun(h.slotSid, *run) // our head's turn: its input is the run
+		} else {
+			agents.MarkTurnStart(h.slotSid)
+		}
 		h.emit(agents.Event{Kind: "turn_state", TurnState: st})
 		if stop {
 			// Off the read goroutine: interrupt waits for the host's answer.

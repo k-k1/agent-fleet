@@ -13,6 +13,8 @@ import { groupTurns } from "./model.ts";
 import type { TranscriptCaps } from "./capabilities.ts";
 import type { Turn } from "./types.ts";
 import { t as tr } from "../../../lib/i18n/index.ts";
+import { ja } from "../../../lib/i18n/locales/ja.ts";
+import { en } from "../../../lib/i18n/locales/en.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -41,7 +43,7 @@ const DECLINE_TEXT =
   '    Questions asked:\n- "どれにしますか？"\n  (No answer provided)';
 
 describe("QuestionBlock — declined AskUserQuestion", () => {
-  it("badges it rejected, not answered, and shows no option as selected", () => {
+  it("badges it cancelled, not answered, and shows no option as selected", () => {
     const turns: Turn[] = [
       {
         role: "assistant",
@@ -58,7 +60,9 @@ describe("QuestionBlock — declined AskUserQuestion", () => {
     ];
     const el = render(turns, OWNER);
     expect(el.querySelector(".mt-question.declined")).not.toBeNull();
-    expect(el.querySelector(".mq-done.declined")?.textContent).toBe(tr("mirror.rejected"));
+    expect(el.querySelector(".mq-done.declined")?.textContent).toBe(tr("mirror.question_cancelled"));
+    // The plan card's "Rejected" read as the agent turning the question down; the user cancelled it.
+    expect(el.querySelector(".mq-done")?.textContent).not.toBe(tr("mirror.rejected"));
     expect(el.querySelector(".mq-done")?.textContent).not.toBe(tr("mirror.answered"));
     expect(el.querySelectorAll(".mq-opt.selected").length).toBe(0);
   });
@@ -83,7 +87,16 @@ describe("QuestionBlock — declined AskUserQuestion", () => {
     // (.mq-free) — that must be gone; a short fixed note replaces it instead.
     expect(el.querySelector(".mq-free")).toBeNull();
     expect(el.textContent).not.toContain("wants to clarify");
-    expect(el.querySelector(".mq-declined-note")).not.toBeNull();
+    expect(el.querySelector(".mq-declined-note")?.textContent).toBe(tr("mirror.question_declined"));
+  });
+
+  it("words the cancel as the user's, never as the agent declining (#1604)", () => {
+    // Pinned as literals: comparing tr() with tr() would pass a catalogue that regressed to
+    // "Declined by the agent", which is the misreading this card used to cause.
+    expect(ja["mirror.question_cancelled"]).toBe("キャンセル");
+    expect(ja["mirror.question_declined"]).toBe("回答せずに閉じられました");
+    expect(en["mirror.question_cancelled"]).toBe("Cancelled");
+    expect(en["mirror.question_declined"]).toBe("Closed without an answer");
   });
 
   it("leaves a genuinely answered question alone — still badged answered, real pick highlighted", () => {

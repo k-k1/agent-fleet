@@ -16,6 +16,12 @@ vi.mock("../../core/api/client.ts", () => ({
   isTransientErr: (d: unknown) => !!d && typeof d === "object" && "error" in (d as object),
 }));
 
+const scmMock = vi.fn();
+vi.mock("../scm/open.ts", () => ({
+  openRepoScm: (...a: unknown[]) => scmMock(...a),
+  openFileDiff: vi.fn(),
+}));
+
 import { FileChangeStrip } from "./FileChangeStrip.tsx";
 import type { SessionFile } from "./sessionFiles.ts";
 
@@ -53,6 +59,7 @@ const route = (changes: unknown[], committed: string[] = []) => (url: string) =>
 beforeEach(() => {
   localStorage.clear();
   apiMock.mockReset();
+  scmMock.mockReset();
   apiMock.mockImplementation(route([{ path: "repos/r/src/a.ts", repo: "r", index: " ", worktree: "M" }]));
 });
 
@@ -154,5 +161,59 @@ describe("FileChangeStrip", () => {
       (el.querySelector(".mirror-files-toggle") as HTMLButtonElement).click();
     });
     expect((el.querySelector(".mfl-row") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("names the working copy of a row that is in another one, and keeps its git badge", async () => {
+    apiMock.mockImplementation(
+      route([
+        { path: "repos/r/src/a.ts", repo: "r", index: " ", worktree: "M" },
+        { path: "repos/r@wip-x/src/b.ts", repo: "r@wip-x", index: " ", worktree: "M" },
+      ]),
+    );
+    // The other copy's row sorts first (newest), which is exactly when the head's source
+    // control button used to open the wrong repository.
+    const other = file({
+      path: "repos/r@wip-x/src/b.ts",
+      repo: "r@wip-x",
+      rel: "src/b.ts",
+      scope: "other-repo",
+      lastTs: "2026-08-17T11:00:00Z",
+    });
+    const el = await render("s1", [other, file()]);
+    await act(async () => {
+      (el.querySelector(".mirror-files-toggle") as HTMLButtonElement).click();
+    });
+    const rows = el.querySelectorAll(".mfl-item");
+    expect(rows[0].classList.contains("mfl-other-repo")).toBe(true);
+    expect(rows[0].classList.contains("mfl-unstaged")).toBe(true);
+    expect(rows[0].querySelector(".mfl-repo")!.textContent).toBe("r@wip-x");
+    expect(rows[1].querySelector(".mfl-repo")).toBeNull();
+    await act(async () => {
+      (el.querySelector(".mfl-scm") as HTMLButtonElement).click();
+    });
+    expect(scmMock).toHaveBeenCalledWith("r");
+  });
+
+  it("offers no source-control button when every row is in another working copy", async () => {
+    apiMock.mockImplementation(route([{ path: "repos/r@wip-x/src/b.ts", repo: "r@wip-x", index: " ", worktree: "M" }]));
+    const el = await render("s1", [file({ path: "repos/r@wip-x/src/b.ts", repo: "r@wip-x", rel: "src/b.ts", scope: "other-repo" })]);
+    await act(async () => {
+      (el.querySelector(".mirror-files-toggle") as HTMLButtonElement).click();
+    });
+    expect(el.querySelector(".mfl-item")).not.toBeNull();
+    expect(el.querySelector(".mfl-scm")).toBeNull();
+  });
+
+  it("badges a file in the work directory as such, not as outside the working copy", async () => {
+    apiMock.mockImplementation(route([]));
+    const el = await render("s1", [file({ path: ".af-work/s1/report.md", repo: undefined, rel: undefined, scope: "workdir" })]);
+    await act(async () => {
+      (el.querySelector(".mirror-files-toggle") as HTMLButtonElement).click();
+    });
+    const row = el.querySelector(".mfl-item")!;
+    expect(row.classList.contains("mfl-workdir")).toBe(true);
+    expect(row.classList.contains("mfl-outside")).toBe(false);
+    // The hover text says what the place is (and that it goes away with the session).
+    expect((row.querySelector(".mfl-row") as HTMLElement).title).toContain("~/.af-work");
   });
 });

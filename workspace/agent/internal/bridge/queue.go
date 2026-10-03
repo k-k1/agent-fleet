@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -45,16 +46,74 @@ func Enqueue(m Message) {
 	if eventKeyFor(m.Kind) == "" {
 		return
 	}
+	m.Target = ""
+	enqueue(m)
+}
+
+// EnqueueToOnce queues m for the provider named target alone, whatever its event toggles say
+// (the member asked for this message on that connection specifically), and at most once per key,
+// across restarts: a caller that retries after a crash (its own state not yet updated) finds the
+// marker and queues nothing. The caller checks TargetReady first, so a connection that is gone or
+// unbound is reported instead of silently skipped. The marker is
+// written right after the queue entry, so an error leaves no marker and the caller may retry; the
+// only window left is a crash between those two local writes.
+func EnqueueToOnce(key, target string, m Message) error {
+	if target == "" {
+		return nil
+	}
+	sum := sha256.Sum256([]byte(key))
+	dir := sentDir()
+	marker := filepath.Join(dir, hex.EncodeToString(sum[:])+".sent")
+	if _, err := os.Stat(marker); err == nil {
+		return nil
+	}
+	m.Target = target
+	if err := enqueueErr(m); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	pruneSent(dir)
+	return os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339)), 0o600)
+}
+
+// sentDir holds EnqueueToOnce's markers.
+func sentDir() string { return filepath.Join(paths.AgentStateDir(), "bridge-sent") }
+
+// sentKeep is how long a marker is kept: far past any retry of the row it guards, which is
+// settled within minutes, or reported again only after an hours-long outage.
+const sentKeep = 30 * 24 * time.Hour
+
+// pruneSent drops markers past sentKeep. Called on a write, which is rare (one per scheduled
+// result per connection), so the directory listing costs nothing that matters.
+func pruneSent(dir string) {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-sentKeep)
+	for _, e := range ents {
+		if info, err := e.Info(); err == nil && !e.IsDir() && info.ModTime().Before(cutoff) {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
+}
+
+func enqueue(m Message) { _ = enqueueErr(m) }
+
+// enqueueErr is enqueue reporting whether the entry was written.
+func enqueueErr(m Message) error {
 	if m.CreatedAt == "" {
 		m.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	dir := queueDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return
+		return err
 	}
 	b, err := json.Marshal(queued{Message: m})
 	if err != nil {
-		return
+		return err
 	}
 	// Zero-padded nanos keep lexicographic order == arrival order; the random
 	// suffix disambiguates concurrent writers (hook subprocesses race).
@@ -62,9 +121,10 @@ func Enqueue(m Message) {
 	_, _ = rand.Read(suf)
 	name := fmt.Sprintf("%020d-%s.json", time.Now().UnixNano(), hex.EncodeToString(suf))
 	if err := os.WriteFile(filepath.Join(dir, name), b, 0o600); err != nil {
-		return
+		return err
 	}
 	pruneQueue(dir)
+	return nil
 }
 
 // pruneQueue enforces maxQueue by dropping the oldest entries.

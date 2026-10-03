@@ -107,6 +107,10 @@ type instrRow struct {
 	// Dropped is why the row's prompt went without running (agents.Drop*). Set, the row still
 	// owes a report: the not-run report, delivered on the next sweep.
 	Dropped string `json:"dropped,omitempty"`
+	// Delivery is set on the row of a scheduled run whose schedule chose its own targets or the
+	// silent sentinel (#1560). Such a row may have no Conv: the operator conversation is then
+	// not one of its targets, and the row exists only to route the result elsewhere.
+	Delivery *ScheduleDelivery `json:"delivery,omitempty"`
 }
 
 // open reports whether the row still owes a completion report.
@@ -117,6 +121,10 @@ func (r instrRow) open() bool {
 	}
 	return false
 }
+
+// owesReport reports whether the row is open and has somewhere to deliver: a conversation, or a
+// scheduled run's own targets (#1560).
+func (r instrRow) owesReport() bool { return r.open() && (r.Conv != "" || r.Delivery != nil) }
 
 // instrLedger is the per-session file: rows in delivery order.
 type instrLedger struct {
@@ -170,7 +178,7 @@ func ReadInstrRows(name string) []instrRow {
 func openInstrRows(name string) []instrRow {
 	var out []instrRow
 	for _, r := range ReadInstrRows(name) {
-		if r.open() && r.Conv != "" {
+		if r.owesReport() {
 			out = append(out, r)
 		}
 	}
@@ -184,7 +192,7 @@ func openInstrRows(name string) []instrRow {
 func SessionReportPending(name string) bool { return len(openInstrRows(name)) > 0 }
 
 // writeInstrRows persists the rows with the retention trim. The caller must hold lockInstr.
-func writeInstrRows(name string, rows []instrRow) {
+func writeInstrRows(name string, rows []instrRow) error {
 	var open, closed []instrRow
 	for _, r := range rows {
 		if r.open() {
@@ -198,13 +206,32 @@ func writeInstrRows(name string, rows []instrRow) {
 	}
 	if len(open) == 0 && len(closed) == 0 {
 		instrLedgers.Remove(name)
-		return
+		return nil
 	}
 	// Keep the append order (= DeliveredAt order): a closed row was not necessarily delivered
 	// before an open one, so sort by time again.
 	merged := append(append([]instrRow{}, closed...), open...)
 	sort.SliceStable(merged, func(i, j int) bool { return merged[i].DeliveredAt < merged[j].DeliveredAt })
-	_ = instrLedgers.Write(name, instrLedger{Rows: merged})
+	return instrLedgers.Write(name, instrLedger{Rows: merged})
+}
+
+// consumeInstrRows writes rows whose state the caller just closed, and only once that write has
+// landed drops the recorded run outcomes (#1560) of every closed row. The caller holds lockInstr.
+//
+// Not before: a write that fails leaves the rows open, the next sweep sinks them again, and a
+// silent run whose outcome was already dropped would then be delivered as a normal answer. A
+// crash between the write and the drop leaves an outcome for a closed row behind, which nothing
+// reads (only open rows are sunk) and the next consumption in the session drops.
+func consumeInstrRows(name string, rows []instrRow) {
+	if err := writeInstrRows(name, rows); err != nil {
+		log.Printf("session-report: %s: save the instruction ledger: %v", name, err)
+		return
+	}
+	for _, r := range rows {
+		if !r.open() {
+			scheduleOutcomes.Remove(r.ID)
+		}
+	}
 }
 
 // AddInstruction records one delivered instruction as a NEW ledger row (docs/log/51 §migration
@@ -213,6 +240,23 @@ func writeInstrRows(name string, rows []instrRow) {
 // overlapping instructions not being squashed is the whole point of this replacement (gap A).
 func AddInstruction(name, convID, source string) string {
 	return addInstructionAt(name, convID, source, time.Now())
+}
+
+// AddScheduledInstruction is AddInstruction for a scheduled run that carries its own delivery
+// (#1560). convID is empty when the operator conversation is not a target. sending is
+// instrBoot for a prompt about to go to a Managed driver (AddSendingInstruction), else "".
+func AddScheduledInstruction(name, convID, source string, d *ScheduleDelivery, sending bool) string {
+	if d == nil {
+		if sending {
+			return AddSendingInstruction(name, convID, source)
+		}
+		return AddInstruction(name, convID, source)
+	}
+	mark := ""
+	if sending {
+		mark = instrBoot
+	}
+	return addRowAt(name, convID, source, mark, d, time.Now())
 }
 
 // AddSendingInstruction is AddInstruction for a prompt about to be sent to a Managed driver,
@@ -302,7 +346,7 @@ func markInstrNotRunReported(name, id, state string, at time.Time) {
 			rows[i].ReportedAt = at.Format(time.RFC3339)
 		}
 	}
-	writeInstrRows(name, rows)
+	consumeInstrRows(name, rows)
 }
 
 // addInstructionAt is AddInstruction with an explicit delivery time (a seam so tests can build
@@ -312,16 +356,31 @@ func addInstructionAt(name, convID, source string, at time.Time) string {
 }
 
 func addSendingInstructionAt(name, convID, source, sending string, at time.Time) string {
-	if !session.ValidName(name) || !paths.ValidIDSegment(convID) {
+	return addRowAt(name, convID, source, sending, nil, at)
+}
+
+// addRowAt appends one row. A row needs a destination: a known conversation, or a scheduled
+// run's own delivery. A delivery row whose conversation is gone keeps its other targets.
+func addRowAt(name, convID, source, sending string, d *ScheduleDelivery, at time.Time) string {
+	if !session.ValidName(name) {
 		return ""
 	}
-	if _, err := LoadConv(convID); err != nil {
-		return "" // unknown conversation — no row without a destination (the same call as v1's arm)
+	if convID != "" || d == nil {
+		if !paths.ValidIDSegment(convID) {
+			return ""
+		}
+		if _, err := LoadConv(convID); err != nil {
+			if d == nil {
+				return "" // unknown conversation — no row without a destination (the same call as v1's arm)
+			}
+			convID = ""
+		}
 	}
 	ts := at.Format(time.RFC3339)
 	row := instrRow{
 		ID: newInstrID(), Conv: convID, Source: source,
 		DeliveredAt: ts, Cursor: instrCursor{At: ts}, State: instrPending, Sending: sending,
+		Delivery: d,
 	}
 	unlock := lockInstr(name)
 	writeInstrRows(name, append(ReadInstrRows(name), row))
@@ -353,7 +412,7 @@ func markInstrReported(name string, ids []string, at time.Time) {
 			rows[i].ReportedAt = at.Format(time.RFC3339)
 		}
 	}
-	writeInstrRows(name, rows)
+	consumeInstrRows(name, rows)
 }
 
 // markInstrInterim stamps the interim (non-consuming) report on every open row: a question or
@@ -462,7 +521,7 @@ func instrSweepSessions(now time.Time) (open, grace []string) {
 		}
 		rows := ReadInstrRows(name)
 		for _, r := range rows {
-			if r.open() && r.Conv != "" {
+			if r.owesReport() {
 				open = append(open, name)
 				break
 			}
@@ -531,6 +590,18 @@ func instrConvs(rows []instrRow) []string {
 		if r.Conv != "" && !seen[r.Conv] {
 			seen[r.Conv] = true
 			out = append(out, r.Conv)
+		}
+	}
+	return out
+}
+
+// instrSinkConvs is instrConvs plus "" when a scheduled run's row has no conversation: the
+// settle decision must reach the sink for it too, which routes it to its own targets.
+func instrSinkConvs(rows []instrRow) []string {
+	out := instrConvs(rows)
+	for _, r := range rows {
+		if r.Conv == "" && r.Delivery != nil {
+			return append(out, "")
 		}
 	}
 	return out

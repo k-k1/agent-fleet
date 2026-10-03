@@ -3084,22 +3084,23 @@ const scheduleCols = `SELECT id, membership_id, tenant_id, owner_conv, spec_kind
 	wake_policy, session_mode, reuse_target, agent_kind, model, repo, worktree, new_branch, prompt,
 	overlap_policy, enabled, next_run, last_run, last_status, created_at, updated_at,
 	reuse_session, reuse_started_at, reuse_run_count, rotation, missing_target_policy,
-	manual_fire_pending, report, stop_after_run, held_by_removal FROM schedule`
+	manual_fire_pending, report, stop_after_run, held_by_removal, deliver_to, silent FROM schedule`
 
 func scanSchedule(row scanner) (Schedule, error) {
 	var s Schedule
-	var newBranch, enabled, manualFire, report, stopAfterRun, held int
+	var newBranch, enabled, manualFire, report, stopAfterRun, held, silent int
 	err := row.Scan(&s.ID, &s.MembershipID, &s.TenantID, &s.OwnerConv, &s.SpecKind, &s.Spec, &s.SpecLabel, &s.TZ,
 		&s.WakePolicy, &s.SessionMode, &s.ReuseTarget, &s.AgentKind, &s.Model, &s.Repo, &s.Worktree, &newBranch, &s.Prompt,
 		&s.OverlapPolicy, &enabled, &s.NextRun, &s.LastRun, &s.LastStatus, &s.CreatedAt, &s.UpdatedAt,
 		&s.ReuseSession, &s.ReuseStartedAt, &s.ReuseRunCount, &s.Rotation, &s.MissingTargetPolicy,
-		&manualFire, &report, &stopAfterRun, &held)
+		&manualFire, &report, &stopAfterRun, &held, &s.DeliverTo, &silent)
 	s.NewBranch = newBranch != 0
 	s.Enabled = enabled != 0
 	s.ManualFirePending = manualFire != 0
 	s.Report = report != 0
 	s.StopAfterRun = stopAfterRun != 0
 	s.HeldByRemoval = held != 0
+	s.Silent = silent != 0
 	return s, err
 }
 
@@ -3109,13 +3110,13 @@ func (s *SQL) CreateSchedule(ctx context.Context, sc Schedule) error {
 		   wake_policy, session_mode, reuse_target, agent_kind, model, repo, worktree, new_branch, prompt,
 		   overlap_policy, enabled, next_run, last_run, last_status, created_at, updated_at,
 		   reuse_session, reuse_started_at, reuse_run_count, rotation, missing_target_policy, report,
-		   stop_after_run)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		   stop_after_run, deliver_to, silent)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		sc.ID, sc.MembershipID, sc.TenantID, sc.OwnerConv, sc.SpecKind, sc.Spec, sc.SpecLabel, sc.TZ,
 		sc.WakePolicy, sc.SessionMode, sc.ReuseTarget, sc.AgentKind, sc.Model, sc.Repo, sc.Worktree, b2i(sc.NewBranch), sc.Prompt,
 		sc.OverlapPolicy, b2i(sc.Enabled), sc.NextRun, sc.LastRun, sc.LastStatus, sc.CreatedAt, sc.UpdatedAt,
 		sc.ReuseSession, sc.ReuseStartedAt, sc.ReuseRunCount, sc.Rotation, sc.MissingTargetPolicy, b2i(sc.Report),
-		b2i(sc.StopAfterRun))
+		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent))
 	return err
 }
 
@@ -3171,12 +3172,12 @@ func (s *SQL) UpdateSchedule(ctx context.Context, sc Schedule) error {
 		`UPDATE schedule SET owner_conv=?, spec_kind=?, spec=?, spec_label=?, tz=?, wake_policy=?,
 		   session_mode=?, reuse_target=?, agent_kind=?, model=?, repo=?, worktree=?, new_branch=?, prompt=?,
 		   overlap_policy=?, enabled=?, next_run=?, updated_at=?, rotation=?, missing_target_policy=?, report=?,
-		   stop_after_run=?, held_by_removal=0
+		   stop_after_run=?, deliver_to=?, silent=?, held_by_removal=0
 		 WHERE id=? AND membership_id=?`,
 		sc.OwnerConv, sc.SpecKind, sc.Spec, sc.SpecLabel, sc.TZ, sc.WakePolicy,
 		sc.SessionMode, sc.ReuseTarget, sc.AgentKind, sc.Model, sc.Repo, sc.Worktree, b2i(sc.NewBranch), sc.Prompt,
 		sc.OverlapPolicy, b2i(sc.Enabled), sc.NextRun, sc.UpdatedAt, sc.Rotation, sc.MissingTargetPolicy, b2i(sc.Report),
-		b2i(sc.StopAfterRun), sc.ID, sc.MembershipID)
+		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.ID, sc.MembershipID)
 	return err
 }
 
@@ -3288,6 +3289,27 @@ func (s *SQL) MarkScheduleRunNotExecuted(ctx context.Context, scheduleID, member
 		`UPDATE schedule_run SET status=?, detail=?
 		 WHERE schedule_id=? AND membership_id=? AND session=? AND slot=? AND status LIKE 'fired%'`,
 		status, detail, scheduleID, membershipID, session, slot)
+	if err != nil {
+		return false, false, err
+	}
+	if n, err := res.RowsAffected(); err != nil || n > 0 {
+		return n > 0, n > 0, err
+	}
+	var n int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM schedule_run WHERE schedule_id=? AND membership_id=? AND session=? AND slot=?`,
+		scheduleID, membershipID, session, slot).Scan(&n)
+	return n > 0, false, err
+}
+
+func (s *SQL) MarkScheduleRunSilent(ctx context.Context, scheduleID, membershipID, session, slot string) (bool, bool, error) {
+	if slot == "" {
+		return false, false, nil
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE schedule_run SET status=?
+		 WHERE schedule_id=? AND membership_id=? AND session=? AND slot=? AND status='fired'`,
+		ScheduleStatusFiredSilent, scheduleID, membershipID, session, slot)
 	if err != nil {
 		return false, false, err
 	}

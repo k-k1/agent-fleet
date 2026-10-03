@@ -24,6 +24,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
@@ -127,6 +129,10 @@ type Deps struct {
 	// far side is a var, and receiving it into an alias variable makes a copy (hit twice in
 	// wave A and once in wave B).
 	RateLimitState func(name string) (scheduleID, resumeAt string, ok bool)
+	// SessionTurns reads a session's transcript, whatever its kind and driver (sessionx's agent
+	// registry): where a scheduled run's own answer is found (#1560). A Managed driver hands its
+	// turn end over without the answer, so the transcript is the one source every kind shares.
+	SessionTurns func(m session.Meta) ([]transcript.Turn, bool)
 }
 
 var deps Deps

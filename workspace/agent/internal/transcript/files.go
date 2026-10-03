@@ -45,7 +45,20 @@ type FileTouch struct {
 	LastIdx   int    `json:"lastIdx"`             // transcript index of the newest call
 	LastTS    string `json:"lastTs,omitempty"`    // RFC3339 of the newest call
 	Sidechain bool   `json:"sidechain,omitempty"` // ONLY subagents touched it
+	Scope     string `json:"scope,omitempty"`     // FileScopeWorkDir | FileScopeOtherRepo | "" (no claim)
 }
+
+// Where a touched file sits relative to the session. "" makes no claim: the session's own
+// working copy, anywhere else outside ~/repos, or a session that did not start in one.
+const (
+	// FileScopeWorkDir is ~/.af-work/<x>: a session's throwaway directory ($AF_WORK_DIR),
+	// which agents are told to use and which goes away with its session.
+	FileScopeWorkDir = "workdir"
+	// FileScopeOtherRepo is a working copy under ~/repos that is not the session's own
+	// (another session's worktree, the parent clone). Its git state is real but is not this
+	// session's diff.
+	FileScopeOtherRepo = "other-repo"
+)
 
 // EditVerb decides how to label an edit-family part. `explicit` is the parser's own
 // verdict when it has one (codex reads it straight out of the patch header); otherwise
