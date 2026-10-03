@@ -18,18 +18,24 @@ function Harness() {
   const chipMenu = useChipMenu();
   return (
     <div>
-      <button
-        type="button"
-        data-testid="chip"
-        onClick={() => {
-          if (chipMenu.clickSwallowed()) return;
-          applied.push("進めて");
-        }}
-        onKeyDown={(e) => chipMenu.onKeyDown(e, "進めて", false)}
-        {...chipMenu.chipProps("進めて", false)}
-      >
-        進めて
-      </button>
+      {[
+        ["chip", "進めて"],
+        ["chip2", "止めて"],
+      ].map(([id, text]) => (
+        <button
+          key={id}
+          type="button"
+          data-testid={id}
+          onClick={() => {
+            if (chipMenu.clickSwallowed()) return;
+            applied.push(text);
+          }}
+          onKeyDown={(e) => chipMenu.onKeyDown(e, text, false)}
+          {...chipMenu.chipProps(text, false)}
+        >
+          {text}
+        </button>
+      ))}
       {chipMenu.menu && (
         <SuggestChipMenu
           menu={chipMenu.menu}
@@ -50,14 +56,32 @@ function mount() {
   act(() => root!.render(<Harness />));
 }
 
-function chip() {
-  const el = host!.querySelector<HTMLButtonElement>('[data-testid="chip"]');
+function chip(id = "chip") {
+  const el = host!.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`);
   if (!el) throw new Error("chip not rendered");
   return el;
 }
 
 function menuItems() {
   return Array.from(document.querySelectorAll<HTMLButtonElement>(".suggest-menu .ui-menu-item"));
+}
+
+// A touch's pointerdown comes first, as in a browser. jsdom has no PointerEvent constructor.
+function pointerDown(el: HTMLElement) {
+  const e = new MouseEvent("pointerdown", { bubbles: true, cancelable: true });
+  Object.defineProperties(e, { pointerType: { value: "touch" }, isPrimary: { value: true } });
+  act(() => {
+    el.dispatchEvent(e);
+  });
+}
+
+function longPress(el: HTMLElement) {
+  pointerDown(el);
+  touch(el, "touchstart");
+  act(() => {
+    vi.advanceTimersByTime(500);
+  });
+  touch(el, "touchend");
 }
 
 // jsdom has no TouchEvent constructor, so build the bare minimum needed: the touch coordinates.
@@ -113,6 +137,7 @@ describe("useChipMenu / SuggestChipMenu", () => {
   it("opens on a 500ms long-press and swallows the click that follows the lift", () => {
     vi.useFakeTimers();
     mount();
+    pointerDown(chip());
     touch(chip(), "touchstart");
     act(() => {
       vi.advanceTimersByTime(500);
@@ -126,6 +151,26 @@ describe("useChipMenu / SuggestChipMenu", () => {
     touch(chip(), "touchend");
     act(() => chip().click());
     expect(applied).toEqual(["進めて"]);
+  });
+
+  // useDismiss eats the dismissing tap's pointerdown and touchend but not its touchstart, so the
+  // timer that touchstart starts is never cancelled by a touchend.
+  it.each(["chip", "chip2"])("a tap on %s that dismisses the menu does not reopen one", (id) => {
+    vi.useFakeTimers();
+    mount();
+    longPress(chip());
+    expect(menuItems()).toHaveLength(2);
+    pointerDown(chip(id));
+    touch(chip(id), "touchstart");
+    touch(chip(id), "touchend");
+    expect(menuItems()).toHaveLength(0);
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+    expect(menuItems()).toHaveLength(0);
+    // The next long press still opens it.
+    longPress(chip(id));
+    expect(menuItems()).toHaveLength(2);
   });
 
   it("treats a swipe (chip row scroll) as not a long-press", () => {
