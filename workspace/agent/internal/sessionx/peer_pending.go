@@ -111,7 +111,10 @@ var peerDeliveryReady = func(m session.Meta) (ready, alive bool) {
 	if m.DriverKind() == session.DriverManaged && managedBusy(m) {
 		return false, true
 	}
-	return DriveState(m, true, false) == "idle" && sessionInputReady(m, true), true
+	// heal=true: the pane, not only the hook cache, decides. A cached idle with claude's spinner
+	// on screen (no working hook yet, or a prompt frame mid-answer) reads working there, and a
+	// message typed then would land in the turn the answer started.
+	return DriveState(m, true, true) == "idle" && sessionInputReady(m, true), true
 }
 
 // pendingTarget serialises one target's queue decisions. mu is held for the enqueue decision

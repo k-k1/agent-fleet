@@ -838,3 +838,26 @@ func TestPendingPeerGraphRecordedOncePerDelivery(t *testing.T) {
 		t.Fatalf("a delivered message left %d peer rows, want 1", n)
 	}
 }
+
+// Review round 2: the hook cache says idle but claude's pane shows the spinner — the turn the
+// answer started is running, so nothing is delivered until the pane is really idle.
+func TestPeerDeliveryReadyTrustsTheBusyPaneOverACachedIdle(t *testing.T) {
+	pendingTestEnv(t)
+	logPath := fakeClaudeTmux(t)
+	const name = "pp_busy_pane"
+	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, name)
+	status.Persist(sid, "idle")
+	if err := os.WriteFile(logPath+".typed", nil, 0o600); err != nil { // spinner on screen
+		t.Fatal(err)
+	}
+	if ready, alive := peerDeliveryReady(m); ready || !alive {
+		t.Fatalf("busy pane with a cached idle: ready=%v alive=%v, want false, true", ready, alive)
+	}
+	status.Persist(sid, "idle")
+	if err := os.Remove(logPath + ".typed"); err != nil { // back at the prompt
+		t.Fatal(err)
+	}
+	waitFor(t, "ready once the pane is idle", func() bool { ready, _ := peerDeliveryReady(m); return ready })
+}
