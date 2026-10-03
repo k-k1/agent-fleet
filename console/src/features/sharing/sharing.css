@@ -139,12 +139,10 @@
   z-index: 2;
   background: var(--leftpane-bg);
 }
-/* The worktree node needs one more step of specificity (spell out `.wt`). project.css's
-   `.proj-node.wt > .proj-node-head` carries the owner-side tier, which also allows for the
-   filter bar and the base repo header, and matches worktree nodes in the shared tree at the
-   same specificity (0,3,0). On a tie the later rule in the bundle wins, and there project.css
-   comes last — the worktree heading then sticks far lower, leaving an empty band under the
-   project heading that session rows scroll straight through. */
+/* Spelled out for `.wt` too, so a worktree copy in the shared tree takes this tier rather
+   than any owner-side worktree rule in project.css; there project.css comes last in the
+   bundle, and an owner tier would pin the heading far lower, leaving an empty band under
+   the project heading that session rows scroll straight through. */
 .shared-project-group .proj-node.wt > .proj-node-head,
 .shared-project-group .proj-node > .proj-node-head {
   position: sticky;

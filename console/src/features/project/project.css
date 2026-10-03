@@ -156,23 +156,18 @@
   z-index: 2;
   background: var(--leftpane-bg);
 }
-.proj-node.wt > .proj-node-head {
+/* Only the FIRST level of worktrees pins, under the root that holds it. There are just
+   two tiers of sticky offset below the filter bar, and a spawn chain has no bound — a
+   third and fourth pinned header would stack on the second and eat the rail. Anchored
+   at the root because a worktree can itself be a root (its base clone is gone): matched
+   here, it would add its own measured height to its offset and pin with a gap above it. */
+.proj-tree > .proj-node > .proj-children > .proj-node.wt > .proj-node-head {
   position: sticky;
   top: calc(var(--sec-head-h, 34px) + var(--proj-filter-h, 33px) + var(--proj-base-head-h, 36px));
   /* One tier below the base header so a worktree header slides under its parent
      repo header (and under the filter) instead of covering them when scrolled. */
   z-index: 1;
   background: var(--leftpane-bg);
-}
-/* Only the FIRST level of worktrees pins. There are just two tiers of sticky offset
-   below the filter bar, and a spawn chain has no bound — a third and fourth pinned
-   header would stack on the second, cover each other, and eat the rail. Reached by
-   two nested .proj-children so the shared tree (sharing.css, one level deep) keeps
-   the rule above. */
-.proj-children .proj-children .proj-node.wt > .proj-node-head {
-  position: relative;
-  top: auto;
-  z-index: 0;
 }
 .proj-node-caret {
   flex: none;
