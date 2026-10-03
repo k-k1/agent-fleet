@@ -495,8 +495,9 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /connections/git/{host}/repos", gitx.HandleListRemoteRepos)
 	mux.HandleFunc("GET /connections/git/{host}/branches", gitx.HandleListRemoteBranches)
 	mux.HandleFunc("PUT /connections/git/{host}", handlePutGitConn)
-	// The CP pushes a rotated internal git token here (issue #1199). The CP proxies
-	// Console calls route by route and this one is not among them: only the push reaches it.
+	// The CP pushes a rotated internal git token here (issue #1199). The Console proxy does
+	// not route it, but any holder of the Agent bearer can call it: see the handler for why
+	// that is the same boundary as PUT /connections/git.
 	mux.HandleFunc("PUT /internal-git/token", handlePutInternalGitToken)
 	mux.HandleFunc("PUT /connections/git/{host}/identity", gitx.HandleGitProviderIdentityPut)
 	mux.HandleFunc("DELETE /connections/git/{host}", handleDeleteGitConn)

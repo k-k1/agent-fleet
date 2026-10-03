@@ -367,13 +367,13 @@ func selectMembership(ms []store.MembershipView, tenantSel string) (store.Member
 // change applies at the next container start.
 func (m *manager) buildResolved(ctx context.Context, ident store.Identity, mv store.MembershipView) (*resolved, *apiError) {
 	if c, ok := m.cachedRTFor(mv.MembershipID); ok {
-		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv}, nil
+		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv, gitEpoch: c.gitEpoch}, nil
 	}
 	bl := m.buildLockFor(mv.MembershipID)
 	bl.Lock()
 	defer bl.Unlock()
 	if c, ok := m.cachedRTFor(mv.MembershipID); ok { // built while we waited
-		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv}, nil
+		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv, gitEpoch: c.gitEpoch}, nil
 	}
 	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, mv.MembershipID)
 	if err != nil {
@@ -393,11 +393,14 @@ func (m *manager) buildResolved(ctx context.Context, ident store.Identity, mv st
 	// size the next container start; the built runtime captures them by value.
 	ws.MemBytes, ws.CPUUnits, ws.DiskGB = m.resolveWorkspaceSize(ctx, ws)
 	ws.SlotClass, _ = m.resolveSlotClass(ctx, ws)
+	// Read before the env is built: the env's token is then of this epoch or a later one,
+	// so a start that finds the live epoch equal to it knows the env is current.
+	gitEpoch := m.gitEpochForEnv(ctx, ws.MembershipID)
 	rt := m.runtimeFor(ws, dekHex, m.workspaceExtraEnv(ctx, ws)...)
 	m.mu.Lock()
-	m.rts[mv.MembershipID] = cachedRT{rt: rt, ws: ws}
+	m.rts[mv.MembershipID] = cachedRT{rt: rt, ws: ws, gitEpoch: gitEpoch}
 	m.mu.Unlock()
-	return &resolved{rt: rt, ws: ws, ident: ident, mv: mv}, nil
+	return &resolved{rt: rt, ws: ws, ident: ident, mv: mv, gitEpoch: gitEpoch}, nil
 }
 
 // cachedRTFor reads the runtime cache under the (now cache-only) manager lock.

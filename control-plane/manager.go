@@ -195,6 +195,9 @@ func membershipErr(err error) *apiError {
 type cachedRT struct {
 	rt runtime.Runtime
 	ws store.Workspace
+	// gitEpoch is the internal git token epoch read before rt's env was built (-1 when
+	// it could not be read). refreshGitTokenForStart compares it with the live one.
+	gitEpoch int64
 }
 
 // resolved is the full per-request resolution: runtime + workspace record +
@@ -204,6 +207,8 @@ type resolved struct {
 	ws    store.Workspace
 	ident store.Identity
 	mv    store.MembershipView
+	// gitEpoch: see cachedRT.gitEpoch.
+	gitEpoch int64
 }
 
 // workspaceNames derives the container/network/home for a (tenant, user). The

@@ -35,16 +35,35 @@ var gitTokenPushClient = &http.Client{Timeout: 10 * time.Second, Transport: newA
 
 var errGitTokenNoMembership = errors.New("membership not active")
 
+// agentGitTokenPush is the body of the Agent's PUT /internal-git/token.
+type agentGitTokenPush struct {
+	Token string `json:"token"`
+	Epoch int64  `json:"epoch"`
+}
+
 // currentGitToken mints the membership's git token at the epoch the store holds now.
-func (m *manager) currentGitToken(ctx context.Context, membershipID string) (string, error) {
+func (m *manager) currentGitToken(ctx context.Context, membershipID string) (string, int64, error) {
 	epoch, ok, err := m.store.GitTokenEpoch(ctx, membershipID)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	if !ok {
-		return "", errGitTokenNoMembership
+		return "", 0, errGitTokenNoMembership
 	}
-	return mintGitToken(gitSignKey(m.tokenSignMaster()), membershipID, epoch), nil
+	return mintGitToken(gitSignKey(m.tokenSignMaster()), membershipID, epoch), epoch, nil
+}
+
+// gitEpochForEnv is the epoch a runtime about to be built will carry, for the memo:
+// -1 (never equal to a live epoch, so the next start rebuilds) when it cannot be read.
+func (m *manager) gitEpochForEnv(ctx context.Context, membershipID string) int64 {
+	if m.internalGitHost == "" || membershipID == "" {
+		return 0
+	}
+	epoch, ok, err := m.store.GitTokenEpoch(ctx, membershipID)
+	if err != nil || !ok {
+		return -1
+	}
+	return epoch
 }
 
 // rotateGitToken bumps the membership's git token epoch and hands the new token to its
@@ -102,7 +121,7 @@ func (m *manager) pushGitToken(ctx context.Context, wsID, membershipID string) s
 	if ws.State != "running" {
 		return gitTokenPushNotRunning
 	}
-	token, err := m.currentGitToken(ctx, membershipID)
+	token, epoch, err := m.currentGitToken(ctx, membershipID)
 	if err != nil {
 		log.Printf("internal git: rotated token for %s not pushed: %v", membershipID, err)
 		return gitTokenPushFailed
@@ -111,16 +130,18 @@ func (m *manager) pushGitToken(ctx context.Context, wsID, membershipID string) s
 	if rt == nil || rt.Endpoint() == "" {
 		return gitTokenPushFailed
 	}
-	if err := putAgentGitToken(ctx, rt.Endpoint(), rt.Token(), token); err != nil {
+	if err := putAgentGitToken(ctx, rt.Endpoint(), rt.Token(), token, epoch); err != nil {
 		log.Printf("internal git: rotated token for %s not pushed to ws %s: %v", membershipID, ws.ID, err)
 		return gitTokenPushFailed
 	}
 	return gitTokenPushUpdated
 }
 
-// putAgentGitToken is a package var so tests can stand in for the Agent.
-var putAgentGitToken = func(ctx context.Context, endpoint, agentToken, gitToken string) error {
-	body, _ := json.Marshal(map[string]string{"token": gitToken})
+// putAgentGitToken is a package var so tests can stand in for the Agent. The epoch rides
+// along so the Agent keeps the later token when two replicas' pushes cross; an answer of
+// "superseded" (it already holds a later one) is success for this caller.
+var putAgentGitToken = func(ctx context.Context, endpoint, agentToken, gitToken string, epoch int64) error {
+	body, _ := json.Marshal(agentGitTokenPush{Token: gitToken, Epoch: epoch})
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint+"/internal-git/token", bytes.NewReader(body))

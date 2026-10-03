@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -27,14 +28,14 @@ func TestRotateGitTokenKillsTheOldTokenAtOnce(t *testing.T) {
 	ctx := context.Background()
 	fetch := "/git/default/shared.git/info/refs?service=git-upload-pack"
 
-	old, err := mgr.currentGitToken(ctx, member)
+	old, _, err := mgr.currentGitToken(ctx, member)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if old != mintGitToken(e.signKey, member, 0) {
 		t.Fatal("a membership that was never rotated must keep its epoch-0 token")
 	}
-	otherTok, _ := mgr.currentGitToken(ctx, other)
+	otherTok, _, _ := mgr.currentGitToken(ctx, other)
 	if w := e.do("GET", fetch, old); w.Code != http.StatusOK {
 		t.Fatalf("before rotation: want 200 got %d", w.Code)
 	}
@@ -46,7 +47,7 @@ func TestRotateGitTokenKillsTheOldTokenAtOnce(t *testing.T) {
 	if w := e.do("GET", fetch, old); w.Code != http.StatusUnauthorized || e.served {
 		t.Fatalf("old token after rotation: want 401 unserved, got %d served=%v", w.Code, e.served)
 	}
-	fresh, err := mgr.currentGitToken(ctx, member)
+	fresh, _, err := mgr.currentGitToken(ctx, member)
 	if err != nil || fresh == old {
 		t.Fatalf("token after rotation = %q (err %v), want a new one", fresh, err)
 	}
@@ -64,6 +65,7 @@ func TestRotateGitTokenKillsTheOldTokenAtOnce(t *testing.T) {
 type pushRecord struct {
 	mu                         sync.Mutex
 	endpoint, agentTok, gitTok string
+	epoch                      int64
 	n                          int
 	err                        error
 }
@@ -78,10 +80,10 @@ func rotateFixture(t *testing.T, wsState string) (*store.SQL, *manager, string, 
 	}
 	rec := &pushRecord{}
 	prev := putAgentGitToken
-	putAgentGitToken = func(_ context.Context, endpoint, agentToken, gitToken string) error {
+	putAgentGitToken = func(_ context.Context, endpoint, agentToken, gitToken string, epoch int64) error {
 		rec.mu.Lock()
 		defer rec.mu.Unlock()
-		rec.endpoint, rec.agentTok, rec.gitTok = endpoint, agentToken, gitToken
+		rec.endpoint, rec.agentTok, rec.gitTok, rec.epoch = endpoint, agentToken, gitToken, epoch
 		rec.n++
 		return rec.err
 	}
@@ -112,8 +114,8 @@ func TestRotateGitTokenPushesToTheRunningWorkspace(t *testing.T) {
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"workspace":"updated"`) {
 		t.Fatalf("rotate = %d %s, want 200 workspace updated", w.Code, w.Body.String())
 	}
-	want, _ := mgr.currentGitToken(ctx, memID)
-	if rec.n != 1 || rec.gitTok != want || rec.endpoint != "http://agent.invalid:7731" || rec.agentTok != "agent-tok" {
+	want, _, _ := mgr.currentGitToken(ctx, memID)
+	if rec.n != 1 || rec.gitTok != want || rec.epoch != 1 || rec.endpoint != "http://agent.invalid:7731" || rec.agentTok != "agent-tok" {
 		t.Fatalf("push = %+v, want one push of %q to the workspace's Agent", rec, want)
 	}
 	if rec.gitTok == mintGitToken(gitSignKey(mgr.master32), memID, 0) {
@@ -174,7 +176,7 @@ func TestRotateGitTokenOutcomes(t *testing.T) {
 		if early != 0 {
 			t.Fatal("pushed while the start still held the workspace")
 		}
-		want, _ := mgr.currentGitToken(context.Background(), memID)
+		want, _, _ := mgr.currentGitToken(context.Background(), memID)
 		deadline := time.Now().Add(5 * time.Second)
 		for {
 			rec.mu.Lock()
@@ -243,5 +245,108 @@ func TestRotateGitTokenRefusesWithoutAnAuditRecord(t *testing.T) {
 	wantAuditUnavailable(t, "rotate git token", callRotate(mgr, "boss@acme.co.jp", rotateLeaver))
 	if e, _, _ := st.GitTokenEpoch(context.Background(), memID); e != 0 || rec.n != 0 {
 		t.Fatalf("epoch = %d pushes = %d after the refusal, want 0 and 0", e, rec.n)
+	}
+}
+
+// envRecordingFactory hands out a runtime that is stopped until started and remembers the
+// env each runtime was built with and which one was started.
+type envRecordingFactory struct {
+	mu      sync.Mutex
+	built   [][]string
+	started []string // the env (joined) of each runtime Start was called on
+}
+
+type envRecordingRuntime struct {
+	stubRuntime
+	f   *envRecordingFactory
+	env []string
+}
+
+func (r *envRecordingRuntime) Start(context.Context) error {
+	r.f.mu.Lock()
+	defer r.f.mu.Unlock()
+	r.f.started = append(r.f.started, strings.Join(r.env, " "))
+	return nil
+}
+
+func (f *envRecordingFactory) New(_ runtime.Workspace, _ string, env []string) runtime.Runtime {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.built = append(f.built, env)
+	return &envRecordingRuntime{stubRuntime: stubRuntime{state: "stopped"}, f: f, env: env}
+}
+
+// A rotation on one CP replica evicts only that replica's memoized runtime. Another
+// replica that memoized the workspace before the rotation must still start it with the
+// current token, every time, not the env it built back then.
+func TestStartOnAReplicaWithAStaleMemoInjectsTheCurrentToken(t *testing.T) {
+	ctx := context.Background()
+	f := &envRecordingFactory{}
+	st, mgrA, victim, tn := destroyFixture(t, f)
+	memID := membershipIDOf(t, st, victim, tn)
+	master := []byte("master-key-for-rotate-tests-00000")
+	mgrB := p3Manager(t, st)
+	mgrB.rtFactory = f
+	for _, m := range []*manager{mgrA, mgrB} {
+		m.internalGitHost = "af.example"
+		m.master32 = master
+	}
+	ws, _, _ := st.GetWorkspaceByMembership(ctx, memID)
+	mv, _, _ := st.GetMembershipByID(ctx, memID)
+
+	// Replica B resolves (and memoizes) the stopped workspace at epoch 0.
+	resB, aerr := mgrB.buildResolved(ctx, victim, mv)
+	if aerr != nil {
+		t.Fatal(aerr)
+	}
+	if !strings.Contains(strings.Join(f.built[len(f.built)-1], " "), "AF_INTERNAL_GIT_EPOCH=0") {
+		t.Fatalf("memoized env = %v, want epoch 0", f.built[len(f.built)-1])
+	}
+	// Replica A rotates.
+	if _, push, _, err := mgrA.rotateGitToken(ctx, memID); err != nil || push != gitTokenPushNotRunning {
+		t.Fatalf("rotate push=%q err=%v", push, err)
+	}
+	want, _, _ := mgrA.currentGitToken(ctx, memID)
+
+	// B starts the workspace from its memo, twice (stop in between).
+	api := newWorkspaceAPI(mgrB, false)
+	for i := 0; i < 2; i++ {
+		res, aerr := mgrB.buildResolved(ctx, victim, mv)
+		if aerr != nil {
+			t.Fatal(aerr)
+		}
+		if i == 0 && res.rt != resB.rt {
+			t.Fatal("precondition: replica B should start from its memoized runtime")
+		}
+		if aerr := api.ensureWorkspaceStarted(ctx, res); aerr != nil {
+			t.Fatalf("start %d: %v", i, aerr)
+		}
+		f.mu.Lock()
+		got := f.started[len(f.started)-1]
+		f.mu.Unlock()
+		if !strings.Contains(got, "AF_INTERNAL_GIT_TOKEN="+want) || !strings.Contains(got, "AF_INTERNAL_GIT_EPOCH=1") {
+			t.Fatalf("start %d on the stale replica injected %q, want the epoch-1 token", i, got)
+		}
+		if err := st.SetWorkspaceState(ctx, ws.ID, "stopped"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// A runtime whose epoch matches the live one is started as it is: the rebuild costs a DEK
+// unwrap and is only for the stale case.
+func TestStartWithACurrentMemoIsNotRebuilt(t *testing.T) {
+	ctx := context.Background()
+	f := &envRecordingFactory{}
+	st, mgr, victim, tn := destroyFixture(t, f)
+	mgr.internalGitHost = "af.example"
+	mgr.master32 = []byte("master-key-for-rotate-tests-00000")
+	mv, _, _ := st.GetMembershipByID(ctx, membershipIDOf(t, st, victim, tn))
+	res, aerr := mgr.buildResolved(ctx, victim, mv)
+	if aerr != nil {
+		t.Fatal(aerr)
+	}
+	if fresh := mgr.refreshGitTokenForStart(ctx, res, nil); fresh != nil {
+		t.Fatal("rebuilt a runtime whose token epoch is current")
 	}
 }

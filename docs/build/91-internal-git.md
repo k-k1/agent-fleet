@@ -173,23 +173,37 @@ id. Changing the signing master still rotates every token at once.
 
 The new token has to reach the member's workspace, whose env still carries the old one:
 
-- The memoized runtime is evicted, so the next start injects the new token.
-- A **running** workspace is handed the new token at once: the CP `PUT`s it to the Agent's
-  `/internal-git/token` (CP-only; the Console proxy does not route it), which writes it
-  under every host name `seedInternalGit` uses. This was chosen over a restart, which
-  would kill the member's sessions, and over the Agent fetching it, which would need a
-  credential that leaked together with the git token. The Agent records the digest of the
-  env token it superseded, so an Agent restart in the same container does not seed the
-  dead token back; a new container start brings a new token and seeds normally.
+- The memoized runtime is evicted. That reaches only this CP's memo, so every start also
+  compares the epoch the runtime's env was built under (`cachedRT.gitEpoch`) with the live
+  one, under the start lock and lifecycle lease right before `Start`, and rebuilds the
+  runtime when they differ (`refreshGitTokenForStart`). Another replica's memo, or one a
+  build wrote back after the eviction, therefore cannot inject the dead token.
+- A **running** workspace is handed the new token at once: the CP `PUT`s it with its epoch
+  to the Agent's `/internal-git/token`, which writes it under every host name
+  `seedInternalGit` uses. This was chosen over a restart, which would kill the member's
+  sessions, and over the Agent fetching it, which would need a credential that leaked
+  together with the git token. The Agent records the digest of the env token it
+  superseded, so an Agent restart in the same container does not seed the dead token
+  back; a new container start brings a new token and seeds normally.
+- The route is **not CP-only**. The Console proxy does not route it, but its only gate is
+  the Agent bearer, which every session in the workspace holds. That is the boundary
+  `PUT /connections/git` already has: such a process runs as the Agent's uid and can
+  read `AF_SECRET_KEY` and rewrite the credential store directly, so a CP signature would
+  not raise the bar. All a caller can do is replace its own workspace's internal git
+  credential, which gains nothing because the CP verifies every token. The Agent accepts
+  only a token of the CP's shape for its own membership, in a body of at most 4 KiB.
+- Pushes from two replicas rotating at once can arrive in either order. The start env
+  carries `AF_INTERNAL_GIT_EPOCH`, the Agent keeps the epoch of the token it holds, and a
+  push for an older epoch is answered `superseded` and not stored.
 - The push holds the workspace's start lock, so a start already in flight finishes and is
   then pushed to. If the lock is still held after 15 s the answer is `pending` and the
   push follows in the background. The answer's `workspace` field is `updated`,
   `not_running`, `pending`, `failed` (restart the workspace) or `disabled` (no
   `PUBLIC_BASE_URL`).
 - Limits: an Agent built before the endpoint answers 404, which reads as `failed`. A start
-  whose runtime was resolved before the rotation but that takes the start lock after the
-  push comes up with the old token, and so can a start on another CP replica that still
-  holds the memoized runtime; both mend at the next start.
+  on **another** replica that passed its epoch check just before the bump comes up with the
+  old token while this replica's push finds it not yet running; the rotation does not take
+  the cross-replica lifecycle lease. The next start fixes it.
 
 ## 91.6 Integration points
 

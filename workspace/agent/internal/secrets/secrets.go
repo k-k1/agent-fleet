@@ -383,6 +383,10 @@ type Data struct {
 	// #1199). An Agent restart in the same container skips seeding that env token, which
 	// would otherwise put the dead credential back.
 	InternalGitStaleEnv string `json:"internalGitStaleEnv,omitempty"`
+	// InternalGitEpoch is the epoch of the internal git token the store holds: the one
+	// AF_INTERNAL_GIT_EPOCH named at start, or the last CP push. A push for an older
+	// epoch, delivered late by another CP replica, is not written over it.
+	InternalGitEpoch int64 `json:"internalGitEpoch,omitempty"`
 }
 
 // agentSecretKey returns the 32-byte per-user key from AF_SECRET_KEY (hex), or

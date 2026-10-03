@@ -590,6 +590,8 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	// the start.
 	if armed := a.mgr.armPreviewForStart(ctx, res, extraEnv); armed != nil {
 		rt = armed
+	} else if fresh := a.mgr.refreshGitTokenForStart(ctx, res, extraEnv); fresh != nil {
+		rt = fresh // armPreviewForStart built its env just now; this covers the other starts
 	}
 	// The previous automatic stop stops describing this workspace once a new launch is
 	// attempted, whether or not it succeeds: a Start that fails (secrets, home, launch)

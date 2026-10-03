@@ -8,6 +8,7 @@ package main
 import (
 	"bufio"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -141,7 +144,10 @@ func seedInternalGit() {
 			// A new container start brought a token the push did not know about.
 			s.InternalGitStaleEnv = ""
 		}
-		if !storeInternalGitToken(s, host, token) {
+		epoch := envInternalGitEpoch()
+		changed := s.InternalGitEpoch != epoch
+		s.InternalGitEpoch = epoch
+		if !storeInternalGitToken(s, host, token) && !changed {
 			return errInternalGitCurrent
 		}
 		return nil
@@ -154,6 +160,16 @@ func seedInternalGit() {
 		return
 	}
 	_ = ensureCredHelper()
+}
+
+// envInternalGitEpoch is the epoch the CP minted AF_INTERNAL_GIT_TOKEN under. 0 when
+// absent: a CP without epochs only ever minted epoch 0.
+func envInternalGitEpoch() int64 {
+	e, err := strconv.ParseInt(strings.TrimSpace(os.Getenv("AF_INTERNAL_GIT_EPOCH")), 10, 64)
+	if err != nil || e < 0 {
+		return 0
+	}
+	return e
 }
 
 // errInternalGitCurrent ends a seed's store update without writing: the store already
@@ -193,35 +209,58 @@ func internalGitTokenDigest(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// handlePutInternalGitToken (PUT /internal-git/token {token}) takes the internal git
-// token the CP minted after an administrator rotated it (issue #1199), so the running
-// workspace keeps cloning and pushing without a restart. Only the CP calls it; the
-// Agent's bearer gate is the authentication, as for every route. It never changes the
-// host: that stays the one the CP injected at start.
+// handlePutInternalGitToken (PUT /internal-git/token {token,epoch}) takes the internal
+// git token the CP minted after an administrator rotated it (issue #1199), so the running
+// workspace keeps cloning and pushing without a restart. It never changes the host: that
+// stays the one the CP injected at start.
+//
+// The CP is the intended caller, but the Agent bearer is the only gate, and every session
+// in this workspace holds that bearer. That is the same boundary as PUT /connections/git:
+// such a process runs as the Agent's uid, can read AF_SECRET_KEY and rewrite the store
+// directly, so a CP signature here would not raise the bar. What a caller can do is replace
+// its own workspace's internal git credential, which gains it nothing: the CP verifies
+// every token on every request. The checks below keep that write to a well-formed token
+// for this workspace's own membership.
+//
+// Pushes from different CP replicas can arrive out of order, so the store keeps the epoch
+// of the token it holds and a push for an older epoch is answered superseded, not stored.
 func handlePutInternalGitToken(w http.ResponseWriter, r *http.Request) {
 	host := internalGitHost()
 	if host == "" {
 		httpx.WriteErr(w, http.StatusConflict, "internal_git_disabled", "no internal git host was injected at start")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	var req struct {
 		Token string `json:"token"`
+		Epoch int64  `json:"epoch"`
 	}
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	token := strings.TrimSpace(req.Token)
-	if !strings.HasPrefix(token, "afg_") {
+	envToken := strings.TrimSpace(os.Getenv("AF_INTERNAL_GIT_TOKEN"))
+	mid, ok := internalGitTokenMembership(token)
+	if !ok || req.Epoch < 0 {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_token", "not an internal git token")
 		return
 	}
-	envToken := strings.TrimSpace(os.Getenv("AF_INTERNAL_GIT_TOKEN"))
+	if envMid, envOK := internalGitTokenMembership(envToken); envOK && envMid != mid {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_token", "token is for another membership")
+		return
+	}
+	superseded := false
 	err := secrets.Update(func(s *secrets.Data) error {
+		if req.Epoch < s.InternalGitEpoch {
+			superseded = true
+			return nil
+		}
 		if envToken != "" && envToken != token {
 			s.InternalGitStaleEnv = internalGitTokenDigest(envToken)
 		} else {
 			s.InternalGitStaleEnv = ""
 		}
+		s.InternalGitEpoch = req.Epoch
 		storeInternalGitToken(s, host, token)
 		return nil
 	})
@@ -229,13 +268,37 @@ func handlePutInternalGitToken(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
+	if superseded {
+		httpx.WriteJSON(w, http.StatusOK, internalGitTokenAnswer{Superseded: true})
+		return
+	}
 	_ = ensureCredHelper()
 	httpx.WriteJSON(w, http.StatusOK, internalGitTokenAnswer{Updated: true})
 }
 
-// internalGitTokenAnswer is what PUT /internal-git/token answers the CP.
+// internalGitTokenRE is the shape the CP mints (control-plane mintGitToken): "afg_",
+// the base64url membership id, ".", and a 16-byte tag in base64url (22 characters).
+var internalGitTokenRE = regexp.MustCompile(`^afg_([A-Za-z0-9_-]{1,256})\.[A-Za-z0-9_-]{22}$`)
+
+// internalGitTokenMembership returns the membership id a well-formed internal git token
+// names. It proves nothing about the tag: only the CP can.
+func internalGitTokenMembership(token string) (string, bool) {
+	m := internalGitTokenRE.FindStringSubmatch(token)
+	if m == nil {
+		return "", false
+	}
+	id, err := base64.RawURLEncoding.DecodeString(m[1])
+	if err != nil || len(id) == 0 {
+		return "", false
+	}
+	return string(id), true
+}
+
+// internalGitTokenAnswer is what PUT /internal-git/token answers the CP. Superseded means
+// the store already holds a token of a later epoch, so this one was not written.
 type internalGitTokenAnswer struct {
-	Updated bool `json:"updated"`
+	Updated    bool `json:"updated"`
+	Superseded bool `json:"superseded,omitempty"`
 }
 
 // seedGitOAuthBridge copies the CP-injected bridge coordinates into the store so the
