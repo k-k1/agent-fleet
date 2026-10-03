@@ -404,6 +404,13 @@ func (e *ecsRuntime) Stop(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
+	// The home task's wait must see these STOPPED, whatever a later listing shows
+	// (waitServiceTasksGone). Only where the stack declares that task.
+	if e.homePortsReady() {
+		if err := e.captureWorkspaceTasks(ctx); err != nil {
+			return err
+		}
+	}
 	_, err = e.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
 		Cluster:      aws.String(e.cfg.cluster),
 		Service:      aws.String(e.name),
