@@ -750,9 +750,9 @@ operator's, **and it starts with proof that the old process cannot run**:
   object and its pods, so the workspace's Stop settles without anyone acting.
 - A node whose kubelet stops while its VM keeps running is the case this procedure is for. It was
   NotReady after about 55 s, Stop failed, and Start refused. Once the VM was stopped (step 1), the
-  instance group's repair started within seconds. It deleted the stopped VM in the same second as
-  the taint of step 2, and the workspace ran again on the recreated node 4 minutes after the stop
-  began.
+  instance group queued a repair within seconds. The repair deleted the stopped VM in the same
+  second as the taint of step 2, so that run cannot tell which of the two freed the pod. The
+  workspace ran again on the recreated node 4 minutes after the stop began.
 
 A network partition, where the VM keeps running, was not measured. That case is still yours, and
 step 1 still comes first.
@@ -864,12 +864,19 @@ cordons: the test fails if its UID, node or restart count changes.
   pod; `{kubectl}` is the harness's pinned kubectl. It first sets a host timer that starts the
   kubelet again after 15 minutes, because once the kubelet is down nothing reaches the node
   through the cluster. `AF_K8S_LIVE_NODE_HALT_CMD` is then the runbook operator's VM stop, run
-  after Stop has failed. The debug pod has to run as root, hence the custom profile file:
+  after Stop has failed. The status command prints the VM's id too: a run counts only while the
+  pod, the Node object and the stopped VM stay the ones it cut off, until the pod is gone. If the
+  provider replaced the node or VM in between, that also removes the pod, so the run is
+  `INCONCLUSIVE`. The optional `AF_K8S_LIVE_NODE_RECOVER_CMD` (for example
+  `gcloud compute instances reset …`) recovers a node left cut off with its VM running. Without
+  it, the cleanup waits up to 17 minutes for the timer before deleting anything. The cleanup
+  deletes only the debug pods the stop command reported creating, by name and UID. The debug
+  pod has to run as root, hence the custom profile file:
   ```bash
   echo '{"securityContext":{"runAsUser":0,"runAsNonRoot":false}}' > "$W/debug-root.json"
   export AF_K8S_LIVE_NODE_STOP_CMD="{kubectl} debug node/{node} -n default --profile=sysadmin --custom=$W/debug-root.json --image=<workspace image> -- chroot /host sh -c 'systemd-run --on-active=900 systemctl start kubelet && systemctl stop kubelet'"
   export AF_K8S_LIVE_NODE_HALT_CMD='gcloud compute instances stop {node} --zone {zone} --project '"$PROJECT"
-  export AF_K8S_LIVE_NODE_STATUS_CMD='gcloud compute instances describe {node} --zone {zone} --project '"$PROJECT"' --format="value(status)"'
+  export AF_K8S_LIVE_NODE_STATUS_CMD='gcloud compute instances describe {node} --zone {zone} --project '"$PROJECT"' --format="value(status,id)"'
   export AF_K8S_LIVE_NODE_START_CMD='gcloud compute instances start {node} --zone {zone} --project '"$PROJECT"
   ```
 

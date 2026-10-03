@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -1268,29 +1269,6 @@ func (l *kubeLive) nodeUID(node string) string {
 	return strings.TrimSpace(l.must("get", "node", node, "--ignore-not-found", "-o", "jsonpath={.metadata.uid}"))
 }
 
-// debugPods lists the pods `kubectl debug node/<node>` leaves on the node, in any namespace.
-// It decodes only the metadata: other pods on the node have fields the adapter's own
-// types do not model (a probe on a named port).
-func (l *kubeLive) debugPods(node string) ([]kubeLiveNodePod, error) {
-	out, err := l.run("get", "pods", "-A", "--field-selector", "spec.nodeName="+node, "-o", "json")
-	if err != nil {
-		return nil, err
-	}
-	var list struct {
-		Items []kubeLiveNodePod `json:"items"`
-	}
-	if err := json.Unmarshal([]byte(out), &list); err != nil {
-		return nil, err
-	}
-	var res []kubeLiveNodePod
-	for _, p := range list.Items {
-		if strings.HasPrefix(p.Metadata.Name, "node-debugger-"+node+"-") {
-			res = append(res, p)
-		}
-	}
-	return res, nil
-}
-
 // --- DISRUPTIVE: these act on nodes, and need AF_K8S_LIVE_DISRUPTIVE=1 besides ---
 
 func needKubeLiveDisruptive(t *testing.T) *kubeLive {
@@ -1408,9 +1386,12 @@ func (l *kubeLive) cordon(nodes ...string) {
 			l.t.Logf("node %s was already cordoned; it is left cordoned", n)
 			continue
 		}
+		uid := l.nodeUID(n)
 		l.t.Cleanup(func() {
-			if present, err := l.exists("get", "node", n); err == nil && !present {
-				l.t.Logf("node %s no longer exists (replaced or removed); nothing to uncordon", n)
+			// Only the Node object this test cordoned: one recreated under the same name is
+			// someone else's, and was never cordoned by the harness.
+			if now := l.nodeUIDQuiet(n); now != uid {
+				l.t.Logf("node %s is gone or another object now (UID %q, was %q); nothing to uncordon", n, now, uid)
 				return
 			}
 			if _, err := l.run("uncordon", n); err != nil {
@@ -1485,6 +1466,7 @@ type kubeLiveNodePod struct {
 	Metadata struct {
 		Namespace       string            `json:"namespace"`
 		Name            string            `json:"name"`
+		UID             string            `json:"uid"`
 		Labels          map[string]string `json:"labels"`
 		Annotations     map[string]string `json:"annotations"`
 		OwnerReferences []struct {
@@ -1520,14 +1502,23 @@ type kubeLiveNodePod struct {
 //
 //	{kubectl} debug node/{node} ... -- chroot /host sh -c 'systemd-run --on-active=900 systemctl start kubelet && systemctl stop kubelet'
 //
-// The cleanup deletes such debug pods (node-debugger-<node>-*), removes the taint, starts
-// the VM only if the provider reports it TERMINATED, and checks that no debug pod is left. The three commands take {node} and {zone}: AF_K8S_LIVE_NODE_STOP_CMD stops the
-// VM, AF_K8S_LIVE_NODE_STATUS_CMD prints its state from the provider (TERMINATED is the
-// proof the runbook asks for), and AF_K8S_LIVE_NODE_START_CMD starts it again at the end.
+// The commands take {node}, {zone} and {kubectl}. AF_K8S_LIVE_NODE_STATUS_CMD prints the
+// VM's state from the provider (TERMINATED is the proof the runbook asks for) and, where
+// the Node names its VM (GKE's container.googleapis.com/instance_id), that id, so that a
+// VM the provider recreated under the same name is noticed. AF_K8S_LIVE_NODE_START_CMD
+// starts the VM again, and the optional AF_K8S_LIVE_NODE_RECOVER_CMD recovers a node cut
+// off with its VM running. The run counts only while the pod, the Node and the stopped
+// VM stay the ones it cut off until the pod is gone; anything the provider replaced
+// meanwhile makes it INCONCLUSIVE, since a replaced node removes the pod as well.
+//
+// The cleanup recovers the node first (starts a stopped VM, runs the recover command, or
+// waits past the stop command's timer for the node to be Ready), then deletes the debug
+// pods the stop command reported creating, by name and UID, and removes the taint from
+// the Node object it put it on.
 func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	l := needKubeLiveDisruptive(t)
 	stopCmd, statusCmd, startCmd := os.Getenv("AF_K8S_LIVE_NODE_STOP_CMD"), os.Getenv("AF_K8S_LIVE_NODE_STATUS_CMD"), os.Getenv("AF_K8S_LIVE_NODE_START_CMD")
-	haltCmd := os.Getenv("AF_K8S_LIVE_NODE_HALT_CMD")
+	haltCmd, recoverCmd := os.Getenv("AF_K8S_LIVE_NODE_HALT_CMD"), os.Getenv("AF_K8S_LIVE_NODE_RECOVER_CMD")
 	if stopCmd == "" || statusCmd == "" || startCmd == "" {
 		t.Fatal("set AF_K8S_LIVE_NODE_STOP_CMD, AF_K8S_LIVE_NODE_STATUS_CMD and AF_K8S_LIVE_NODE_START_CMD")
 	}
@@ -1538,21 +1529,21 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	ctx := context.Background()
 	began := time.Now().Add(-time.Minute) // clock skew between here and the API server
 	var node string
+	var ours []kubeLiveOwnedPod
 	// Registered before anything acts on a node, so it runs after every other cleanup but
-	// the guarded pod's: no debug pod of the node may be left behind.
+	// the guarded pod's: none of the debug pods this test created may be left behind.
 	t.Cleanup(func() {
-		if node == "" {
-			return
-		}
 		deadline := time.Now().Add(5 * time.Minute)
 		for {
-			left, err := l.debugPods(node)
+			left, err := l.ownedLeft(ours)
 			if err == nil && len(left) == 0 {
-				t.Logf("no node-debugger pod of %s is left", node)
+				if node != "" {
+					t.Logf("none of the %d debug pod(s) this test created on %s is left", len(ours), node)
+				}
 				return
 			}
 			if time.Now().After(deadline) {
-				t.Errorf("node-debugger pods of %s still present (%v, %v): remove them by hand", node, left, err)
+				t.Errorf("debug pods this test created are still present (%v, %v): remove them by hand", left, err)
 				return
 			}
 			time.Sleep(5 * time.Second)
@@ -1565,27 +1556,202 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	if slices.Contains(cordoned, node) {
 		t.Fatalf("the workspace landed on the cordoned node %s", node)
 	}
-	var nodeObj struct {
-		Metadata kObjectMeta `json:"metadata"`
-	}
-	l.getJSON(&nodeObj, "get", "node", node)
-	sel := l.factory(0).cfg.nodeSelector
-	if len(sel) == 0 {
-		t.Fatal("AF_K8S_NODE_SELECTOR is empty: the harness cannot tell a workspace node from any other")
-	}
-	for k, v := range sel {
-		if nodeObj.Metadata.Labels[k] != v {
-			t.Fatalf("node %s is not a workspace node (%s=%q, want %q): refusing to stop it", node, k, nodeObj.Metadata.Labels[k], v)
-		}
-	}
-	created, err := time.Parse(time.RFC3339, nodeObj.Metadata.CreationTimestamp)
-	if err != nil || created.Before(began) {
-		t.Fatalf("node %s was created at %q, before this test began: refusing to stop a node the harness did not get added", node, nodeObj.Metadata.CreationTimestamp)
-	}
+	nodeObj := l.requireNodeFits(node, began)
 	// The node is cordoned before its pods are read and stays cordoned until the end, so
-	// nothing can be placed on it between the check and the VM stop.
+	// nothing the scheduler places can land on it between the check and the stop.
 	l.cordon(node)
 	allow := splitCSV(os.Getenv("AF_K8S_LIVE_NODE_ALLOW_PODS"))
+	l.requireNodePods(node, rt, allow)
+	cmds := l.nodeCommands(node, stopCmd, statusCmd, startCmd, haltCmd, recoverCmd)
+	stopCmd, statusCmd, startCmd, haltCmd, recoverCmd = cmds[0], cmds[1], cmds[2], cmds[3], cmds[4]
+	// The VM's own id, where the node names it (GKE does), so that a VM the provider
+	// recreated under the same name is told from the one this test stopped.
+	vmID := nodeObj.Metadata.Annotations["container.googleapis.com/instance_id"]
+	sameVM := func(status string) bool { return vmID == "" || strings.Contains(status, vmID) }
+	sameNode := func() bool { u := l.nodeUIDQuiet(node); return u != "" && u == nodeObj.Metadata.UID }
+
+	// Recovery runs before the workspace's own cleanup, which needs a kubelet to remove
+	// the pod: the VM is started again, or a cut-off node with its VM running is
+	// recovered and waited for, before anything is deleted.
+	t.Cleanup(func() {
+		st, err := l.operatorRun(statusCmd)
+		switch {
+		case err != nil:
+			t.Logf("the provider's state of %s is unreadable (replaced by repair, or removed?): %v", node, err)
+		case strings.Contains(st, "TERMINATED") && sameVM(st):
+			if _, err := l.operatorRun(startCmd); err != nil {
+				t.Errorf("START THE VM OF %s BY HAND: %v", node, err)
+			}
+		case !sameVM(st):
+			t.Logf("the provider recreated the VM of %s (%s; was id %s)", node, strings.TrimSpace(st), vmID)
+		case sameNode() && !l.nodeReadyQuiet(node):
+			if recoverCmd != "" {
+				if _, err := l.operatorRun(recoverCmd); err != nil {
+					t.Errorf("recover %s: %v", node, err)
+				}
+			} else {
+				t.Logf("%s is cut off with its VM running and no AF_K8S_LIVE_NODE_RECOVER_CMD: waiting for the stop command's own timer", node)
+			}
+		}
+		// Whatever happened, wait for a Ready node of that name before the pods on it are
+		// deleted: past the stop command's 15-minute timer, with a margin.
+		deadline := time.Now().Add(17 * time.Minute)
+		for !l.nodeReadyQuiet(node) {
+			if present, err := l.exists("get", "node", node); err == nil && !present {
+				t.Logf("node %s is gone; its pods go with it", node)
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Errorf("node %s is not Ready 17 minutes into the cleanup: RECOVER IT BY HAND (kubelet, or reset the VM)", node)
+				break
+			}
+			time.Sleep(10 * time.Second)
+		}
+		for _, p := range ours {
+			if err := l.deleteOwned(p); err != nil {
+				t.Errorf("delete %s/%s: %v", p.ns, p.name, err)
+			}
+		}
+		if sameNode() {
+			if _, err := l.run("taint", "nodes", node, "node.kubernetes.io/out-of-service-"); err != nil && !strings.Contains(err.Error(), "not found") {
+				t.Errorf("REMOVE THE TAINT FROM %s BY HAND: %v", node, err)
+			}
+		}
+	})
+
+	// Again right before the stop: the node may have been replaced, uncordoned or given a
+	// pod since the checks above.
+	if !sameNode() {
+		t.Fatalf("INCONCLUSIVE: node %s was replaced before the stop", node)
+	}
+	if strings.TrimSpace(l.must("get", "node", node, "-o", "jsonpath={.spec.unschedulable}")) != "true" {
+		t.Fatalf("node %s is no longer cordoned; refusing to stop it", node)
+	}
+	l.requireNodePods(node, rt, allow)
+	t.Logf("making %s unreachable", node)
+	t0 := time.Now()
+	out := l.operator(stopCmd)
+	ours = l.recordDebugPods(out, node)
+	l.eventually(10*time.Minute, node+" not Ready", func() bool { return l.nodeNotReady(node) })
+	t.Logf("%s not Ready after %s", node, time.Since(t0).Round(time.Second))
+	// A stop the guest sees (an ACPI shutdown, as `gcloud compute instances stop` sends)
+	// lets the node terminate the pod and report it before going away: the pod is then
+	// terminal, deleting it is immediate, and Stop rightly settles. That is not a node that
+	// stopped answering (measured on GKE 1.35: a VM stop took 107 s, and the agent stopped
+	// answering within the first minute of it).
+	var podUID string
+	for _, p := range l.pods(rt.base) {
+		if p.Status.Phase != "Succeeded" && p.Status.Phase != "Failed" {
+			podUID = p.Metadata.UID
+		}
+		t.Logf("the workspace pod after the node went: phase %s", p.Status.Phase)
+	}
+	if podUID == "" {
+		t.Fatalf("INCONCLUSIVE: the workspace pod is gone or terminal once %s is not Ready — the stop command shut the node down gracefully instead of cutting it off", node)
+	}
+
+	err := rt.Stop(ctx)
+	if err == nil && !sameNode() {
+		// GKE's instance group recreates a workspace VM that terminated within seconds
+		// (compute.instances.repair.recreateInstance, measured on GKE 1.35), and the node
+		// controller then deletes the old Node object and its pods: the stop rightly
+		// settles, the deleted VM being the proof, and the node never stays unreachable.
+		t.Fatalf("INCONCLUSIVE: the provider replaced %s by itself, which removed the pod, so Stop settled %s after the stop command instead of meeting an unreachable node", node, time.Since(t0).Round(time.Second))
+	}
+	if err == nil || !strings.Contains(err.Error(), "not settled") {
+		t.Fatalf("Stop with the node unreachable = %v, want a not-settled error", err)
+	}
+	t.Logf("Stop reported not settled %s after the stop command: %v", time.Since(t0).Round(time.Second), err)
+	if got := rt.State(ctx); got != "stopped" {
+		t.Errorf("State after the failed Stop = %q, want stopped", got)
+	}
+	if err := rt.Start(ctx); err == nil || !strings.Contains(err.Error(), "has not settled") {
+		t.Fatalf("Start over the unreachable pod = %v, want a refusal", err)
+	}
+	t.Logf("Start refused %s after the stop command", time.Since(t0).Round(time.Second))
+
+	// The runbook: the old process must be proven unable to run — this VM stopped, from the
+	// provider — before anything frees the pod. A node cut off with its VM running (a
+	// stopped kubelet) is stopped by the operator first, AF_K8S_LIVE_NODE_HALT_CMD.
+	t2 := time.Now()
+	if st := l.operator(statusCmd); !strings.Contains(st, "TERMINATED") {
+		if haltCmd == "" {
+			t.Fatalf("the provider says %q, not TERMINATED, and no AF_K8S_LIVE_NODE_HALT_CMD is set: the runbook does nothing without that proof", strings.TrimSpace(st))
+		}
+		l.operator(haltCmd)
+		l.eventually(5*time.Minute, "the provider to report "+node+" TERMINATED", func() bool {
+			st, err := l.operatorRun(statusCmd)
+			if err != nil || !sameVM(st) || !sameNode() {
+				t.Fatalf("INCONCLUSIVE: the provider replaced or removed %s before the runbook's taint (%s after the halt; %q, %v)", node, time.Since(t2).Round(time.Second), strings.TrimSpace(st), err)
+			}
+			return strings.Contains(st, "TERMINATED")
+		})
+		t.Logf("%s TERMINATED %s after the operator's halt", node, time.Since(t2).Round(time.Second))
+	}
+	// The taint frees the pod only if the pod, the Node and the stopped VM are still the
+	// ones this test cut off — up to the moment the pod is seen gone. A node or VM the
+	// provider replaced in between removes the pod too, and then nothing shows which did.
+	stillOurs := func(what string) {
+		st, err := l.operatorRun(statusCmd)
+		if err != nil || !strings.Contains(st, "TERMINATED") || !sameVM(st) || !sameNode() {
+			t.Fatalf("INCONCLUSIVE: %s: the provider replaced or removed %s (%q, %v), so the runbook's taint is not what freed the pod", what, node, strings.TrimSpace(st), err)
+		}
+	}
+	stillOurs("before the taint")
+	if !slices.ContainsFunc(l.pods(rt.base), func(p kPod) bool { return p.Metadata.UID == podUID }) {
+		t.Fatalf("INCONCLUSIVE: the cut-off pod %s went before the runbook's taint", podUID)
+	}
+	l.must("taint", "nodes", node, "node.kubernetes.io/out-of-service=nodeshutdown:NoExecute", "--overwrite")
+	t1 := time.Now()
+	l.eventually(10*time.Minute, "the pod on the stopped node to go", func() bool {
+		gone := len(l.pods(rt.base)) == 0
+		stillOurs("while the taint freed the pod")
+		return gone
+	})
+	t.Logf("pod gone %s after the taint, with the Node and the stopped VM unchanged", time.Since(t1).Round(time.Second))
+	if err := rt.Stop(ctx); err != nil {
+		t.Fatalf("Stop once the pod is gone: %v", err)
+	}
+	t.Logf("the stop settled %s after the operator's halt began", time.Since(t2).Round(time.Second))
+	l.startRunning(rt)
+	p := l.runningPod(rt)
+	if p.Spec.NodeName == node && sameNode() {
+		t.Fatalf("running again on the stopped node %s", node)
+	}
+	t.Logf("node unreachable: running again on %s %s after the operator's halt began, %s after the node was cut off",
+		p.Spec.NodeName, time.Since(t2).Round(time.Second), time.Since(t0).Round(time.Second))
+}
+
+// requireNodeFits refuses a node that is not a workspace node or existed before the test
+// began, and returns it as read.
+func (l *kubeLive) requireNodeFits(node string, began time.Time) kubeLiveNode {
+	l.t.Helper()
+	var n kubeLiveNode
+	l.getJSON(&n, "get", "node", node)
+	sel := l.factory(0).cfg.nodeSelector
+	if len(sel) == 0 {
+		l.t.Fatal("AF_K8S_NODE_SELECTOR is empty: the harness cannot tell a workspace node from any other")
+	}
+	for k, v := range sel {
+		if n.Metadata.Labels[k] != v {
+			l.t.Fatalf("node %s is not a workspace node (%s=%q, want %q): refusing to stop it", node, k, n.Metadata.Labels[k], v)
+		}
+	}
+	created, err := time.Parse(time.RFC3339, n.Metadata.CreationTimestamp)
+	if err != nil || created.Before(began) {
+		l.t.Fatalf("node %s was created at %q, before this test began: refusing to stop a node the harness did not get added", node, n.Metadata.CreationTimestamp)
+	}
+	return n
+}
+
+type kubeLiveNode struct {
+	Metadata kObjectMeta `json:"metadata"`
+}
+
+// requireNodePods refuses a node that runs anything but the harness's own workspace pod,
+// DaemonSet pods and the pods AF_K8S_LIVE_NODE_ALLOW_PODS names.
+func (l *kubeLive) requireNodePods(node string, rt *kubeRuntime, allow []string) {
+	l.t.Helper()
 	var others struct {
 		Items []kubeLiveNodePod `json:"items"`
 	}
@@ -1604,132 +1770,71 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 			ns, prefix, ok := strings.Cut(a, "/")
 			if ok && prefix != "" && m.Namespace == ns && m.Namespace != l.ns && strings.HasPrefix(m.Name, prefix) {
 				allowed = true
-				t.Logf("node %s also runs %s/%s, allowed by AF_K8S_LIVE_NODE_ALLOW_PODS", node, m.Namespace, m.Name)
+				l.t.Logf("node %s also runs %s/%s, allowed by AF_K8S_LIVE_NODE_ALLOW_PODS", node, m.Namespace, m.Name)
 			}
 		}
 		if !own && !agent && !allowed {
-			t.Fatalf("node %s also runs %s/%s; refusing to stop it", node, m.Namespace, m.Name)
+			l.t.Fatalf("node %s also runs %s/%s; refusing to stop it", node, m.Namespace, m.Name)
 		}
 	}
-	cmds := l.nodeCommands(node, stopCmd, statusCmd, startCmd, haltCmd)
-	stopCmd, statusCmd, startCmd, haltCmd = cmds[0], cmds[1], cmds[2], cmds[3]
-	t.Logf("making %s unreachable", node)
-	t.Cleanup(func() {
-		if left, err := l.debugPods(node); err != nil {
-			t.Errorf("list the node-debugger pods of %s: %v", node, err)
-		} else {
-			for _, p := range left {
-				if _, err := l.run("-n", p.Metadata.Namespace, "delete", "pod", p.Metadata.Name, "--wait=false"); err != nil {
-					t.Errorf("delete %s/%s: %v", p.Metadata.Namespace, p.Metadata.Name, err)
-				}
-			}
-		}
-		if _, err := l.run("taint", "nodes", node, "node.kubernetes.io/out-of-service-"); err != nil && !strings.Contains(err.Error(), "not found") {
-			t.Errorf("REMOVE THE TAINT FROM %s BY HAND: %v", node, err)
-		}
-		st, err := l.operatorRun(statusCmd)
-		switch {
-		case err != nil:
-			t.Errorf("the provider's state of %s is unreadable (replaced by auto-repair, or removed?): %v", node, err)
-		case strings.Contains(st, "TERMINATED"):
-			if _, err := l.operatorRun(startCmd); err != nil {
-				t.Errorf("START THE VM OF %s BY HAND: %v", node, err)
-			}
-		default:
-			ready := "unreadable"
-			if present, err := l.exists("get", "node", node); err == nil && !present {
-				ready = "gone"
-			} else if err == nil {
-				ready = "Ready=" + strings.TrimSpace(l.mustQuiet("get", "node", node, "-o", `jsonpath={.status.conditions[?(@.type=="Ready")].status}`))
-			}
-			t.Logf("the VM of %s is %s at cleanup, node %s, UID now %q (was %q): not started; a node cut off with its VM running recovers by the stop command's own timer or the provider's repair",
-				node, strings.TrimSpace(st), ready, l.nodeUIDQuiet(node), nodeObj.Metadata.UID)
-		}
-	})
-	t0 := time.Now()
-	l.operator(stopCmd)
-	l.eventually(10*time.Minute, node+" not Ready", func() bool { return l.nodeNotReady(node) })
-	t.Logf("%s not Ready after %s", node, time.Since(t0).Round(time.Second))
-	// A stop the guest sees (an ACPI shutdown, as `gcloud compute instances stop` sends)
-	// lets the node terminate the pod and report it before going away: the pod is then
-	// terminal, deleting it is immediate, and Stop rightly settles. That is not a node that
-	// stopped answering, so the scenario did not happen; the stop command must cut the
-	// node off without a shutdown (measured on GKE 1.35: a VM stop took 107 s, and the
-	// agent stopped answering within the first minute of it).
-	var stillRunning bool
-	for _, p := range l.pods(rt.base) {
-		if p.Status.Phase != "Succeeded" && p.Status.Phase != "Failed" {
-			stillRunning = true
-		}
-		t.Logf("the workspace pod after the node went: phase %s", p.Status.Phase)
-	}
-	if !stillRunning {
-		t.Fatalf("INCONCLUSIVE: the workspace pod is gone or terminal once %s is not Ready — the stop command shut the node down gracefully instead of cutting it off", node)
-	}
+}
 
-	err = rt.Stop(ctx)
-	if err == nil {
-		// GKE's managed instance group recreates a workspace VM that terminated within
-		// seconds (compute.instances.repair.recreateInstance, measured on GKE 1.35), and the
-		// node controller then deletes the old Node object and its pods: the stop rightly
-		// settles, the deleted VM being the proof, and the node never stays unreachable.
-		if present, rerr := l.exists("get", "node", node); rerr == nil && (!present || l.nodeUID(node) != nodeObj.Metadata.UID) {
-			t.Fatalf("INCONCLUSIVE: the provider replaced %s by itself (the Node object is gone or new), which removed the pod, so Stop settled %s after the stop command instead of meeting an unreachable node", node, time.Since(t0).Round(time.Second))
+// kubeLiveOwnedPod is a pod this test created, by namespace, name and UID: a name prefix
+// proves nothing about who made a pod.
+type kubeLiveOwnedPod struct{ ns, name, uid string }
+
+// recordDebugPods takes the pods the stop command reports creating (kubectl debug prints
+// "Creating debugging pod <name> …") and records each with its namespace and UID.
+func (l *kubeLive) recordDebugPods(out, node string) []kubeLiveOwnedPod {
+	l.t.Helper()
+	var res []kubeLiveOwnedPod
+	for _, m := range regexp.MustCompile(`Creating debugging pod (\S+)`).FindAllStringSubmatch(out, -1) {
+		var list struct {
+			Items []kubeLiveNodePod `json:"items"`
+		}
+		l.getJSON(&list, "get", "pods", "-A", "--field-selector", "metadata.name="+m[1]+",spec.nodeName="+node)
+		if len(list.Items) != 1 {
+			l.t.Errorf("the stop command created pod %s, found %d such pod(s) on %s: remove it by hand", m[1], len(list.Items), node)
+			continue
+		}
+		p := list.Items[0].Metadata
+		res = append(res, kubeLiveOwnedPod{p.Namespace, p.Name, p.UID})
+		l.t.Logf("the stop command created %s/%s (UID %s)", p.Namespace, p.Name, p.UID)
+	}
+	return res
+}
+
+// ownedLeft returns the recorded pods still present with their recorded UID.
+func (l *kubeLive) ownedLeft(pods []kubeLiveOwnedPod) ([]string, error) {
+	var left []string
+	for _, p := range pods {
+		uid, err := l.run("-n", p.ns, "get", "pod", p.name, "--ignore-not-found", "-o", "jsonpath={.metadata.uid}")
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(uid) == p.uid {
+			left = append(left, p.ns+"/"+p.name)
 		}
 	}
-	if err == nil || !strings.Contains(err.Error(), "not settled") {
-		t.Fatalf("Stop with the node unreachable = %v, want a not-settled error", err)
-	}
-	t.Logf("Stop reported not settled %s after the stop command: %v", time.Since(t0).Round(time.Second), err)
-	if got := rt.State(ctx); got != "stopped" {
-		t.Errorf("State after the failed Stop = %q, want stopped", got)
-	}
-	if err := rt.Start(ctx); err == nil || !strings.Contains(err.Error(), "has not settled") {
-		t.Fatalf("Start over the unreachable pod = %v, want a refusal", err)
-	}
+	return left, nil
+}
 
-	t.Logf("Start refused %s after the stop command", time.Since(t0).Round(time.Second))
+// deleteOwned deletes the pod only while it still has the recorded UID. The name carries
+// generateName's random suffix, so the check right before the delete leaves no
+// practical window for another pod to take it.
+func (l *kubeLive) deleteOwned(p kubeLiveOwnedPod) error {
+	uid, err := l.run("-n", p.ns, "get", "pod", p.name, "--ignore-not-found", "-o", "jsonpath={.metadata.uid}")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(uid) != p.uid {
+		return nil
+	}
+	_, err = l.run("-n", p.ns, "delete", "pod", p.name, "--wait=false")
+	return err
+}
 
-	// The runbook: the old process must be proven unable to run — the VM stopped, from the
-	// provider — before anything frees the pod. A node cut off with its VM still running
-	// (a stopped kubelet) is stopped by the operator first, AF_K8S_LIVE_NODE_HALT_CMD.
-	st := l.operator(statusCmd)
-	t2 := time.Now()
-	if !strings.Contains(st, "TERMINATED") {
-		if haltCmd == "" {
-			t.Fatalf("the provider says %q, not TERMINATED, and no AF_K8S_LIVE_NODE_HALT_CMD is set: the runbook does nothing without that proof", strings.TrimSpace(st))
-		}
-		l.operator(haltCmd)
-		l.eventually(5*time.Minute, "the provider to report "+node+" TERMINATED", func() bool {
-			out, err := l.operatorRun(statusCmd)
-			if err == nil && strings.Contains(out, "TERMINATED") {
-				return true
-			}
-			// The provider may replace the VM by itself in the meantime.
-			if present, rerr := l.exists("get", "node", node); rerr == nil && (!present || l.nodeUID(node) != nodeObj.Metadata.UID) {
-				t.Fatalf("INCONCLUSIVE: the provider replaced %s by itself before the runbook's taint (%s after the halt)", node, time.Since(t2).Round(time.Second))
-			}
-			return false
-		})
-		t.Logf("%s TERMINATED %s after the operator's halt", node, time.Since(t2).Round(time.Second))
-	}
-	if present, rerr := l.exists("get", "node", node); rerr != nil || !present || l.nodeUID(node) != nodeObj.Metadata.UID {
-		t.Fatalf("INCONCLUSIVE: %s was replaced or removed by the provider before the runbook's taint (%v)", node, rerr)
-	}
-	l.must("taint", "nodes", node, "node.kubernetes.io/out-of-service=nodeshutdown:NoExecute", "--overwrite")
-	t1 := time.Now()
-	l.eventually(10*time.Minute, "the pod on the stopped node to go", func() bool { return len(l.pods(rt.base)) == 0 })
-	t.Logf("pod gone %s after the taint", time.Since(t1).Round(time.Second))
-	if err := rt.Stop(ctx); err != nil {
-		t.Fatalf("Stop once the pod is gone: %v", err)
-	}
-	t.Logf("the stop settled %s after the operator's halt began", time.Since(t2).Round(time.Second))
-	l.startRunning(rt)
-	p := l.runningPod(rt)
-	if p.Spec.NodeName == node && l.nodeUID(node) == nodeObj.Metadata.UID {
-		t.Fatalf("running again on the stopped node %s", node)
-	}
-	t.Logf("node unreachable: running again on %s %s after the operator's halt began, %s after the node was cut off",
-		p.Spec.NodeName, time.Since(t2).Round(time.Second), time.Since(t0).Round(time.Second))
-
+func (l *kubeLive) nodeReadyQuiet(node string) bool {
+	out, err := l.run("get", "node", node, "--ignore-not-found", "-o", `jsonpath={.status.conditions[?(@.type=="Ready")].status}`)
+	return err == nil && strings.TrimSpace(out) == "True"
 }
