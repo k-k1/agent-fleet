@@ -640,3 +640,14 @@ mux を通して振り分け、一覧に無いパターンは断るので、ハ�
 - 採らなかった案：Terraform が配備ごとのブロック一覧を計算する案（パラメータは残るが、generic overlay は手計算になる）と、Pod 範囲からノード範囲への VPC ファイアウォールルール（pod から自分のノードへの通信は VPC を通らないので見えず、全プールで Pod 範囲が 1 つなら metrics-server から Workspace ノードの kubelet への通信まで止める）。
 
 このポリシーでは「NetworkPolicy は pod が自分の動くノードへ届くことを常に許す」という文は Dataplane V2 に当てはまらない。Workspace はどのノードにも届かない。P6 はそれが当てはまる CNI のために残す。runbook の "Check it" は Workspace の pod から全ノードを調べる。
+
+上流への報告（2026-10-03）：<https://issuetracker.google.com/issues/569041167>。
+
+## 注記（2026-10-03）— ロードバランサの後ろの WebSocket を測った（#1468）
+
+未決事項 3 について。GKE Standard をグローバル外部 Application Load Balancer の後ろに置き、バックエンドの `timeoutSec` を 3600（2026-10-02 の deploy の木の注記にある `GCPBackendPolicy`）にした実機の受け入れ試験から：
+
+- **開いている Console のターミナルは、ロードバランサから見てアイドルにならない。** 誰も入力しないターミナルが、`timeoutSec` の 3600 秒を 67 分以上過ぎても繋がったままだった。Console は同じソケットで 15 秒ごとにアプリケーション層のハートビートを、5 秒ごとに往復時間の ping を送る（`console/src/terminal/term.ts`）ので、タブが開いている間ロードバランサは接続をアイドルと見ない。ターミナルが生き残るかを決めるのは `timeoutSec` ではない。
+- **測っていないこと：** 動いている WebSocket の 24 時間での切断と、切断の後に Console がターミナルを透過的につなぎ直すか。未決事項 3 のこの部分は残る。
+
+runbook の "The load balancer" も同じことを書いている。
