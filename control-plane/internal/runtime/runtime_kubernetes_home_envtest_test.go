@@ -32,8 +32,13 @@ func TestKubernetesEnvWipeHomeReachesTheNextStart(t *testing.T) {
 	rt := newKubeTestRuntime(e.factory(t, ns), "af-ws-kim")
 	node := kubeNode{t, e, ns}
 	ctx := context.Background()
-	if got := initEnv(node.run(rt)); len(got) != 0 {
+	first := node.run(rt)
+	if got := initEnv(first); len(got) != 0 {
 		t.Fatalf("a first start without a mark has a wipe init container: %v", got)
+	}
+	// `restricted` admitted the layout step, which every pod needs before its home exists.
+	if ic := first.Spec.InitContainers; len(ic) != 1 || ic[0].Name != kubeLayoutContainer {
+		t.Fatalf("init containers of a first start = %+v", ic)
 	}
 	stopNode := node.serveDeletions(rt.base)
 	if err := rt.Stop(ctx); err != nil {
@@ -155,6 +160,12 @@ func TestKubernetesEnvEraseHome(t *testing.T) {
 	p := node.waitErasePod(rt)
 	if p.Metadata.Labels[kubeLabelWorkspace] != rt.base || p.Metadata.Labels[kubeLabelRole] != kubeRoleErase || p.Spec.RestartPolicy != "Never" {
 		t.Fatalf("erase pod = %+v", p.Metadata.Labels)
+	}
+	// The layout runs inside the erase container: an init container that failed would leave
+	// it waiting, which podFinished never calls finished.
+	if c := p.Spec.Containers[0]; len(p.Spec.InitContainers) != 0 || c.VolumeMounts[0].MountPath != kubeHomeVolumePath ||
+		c.VolumeMounts[0].SubPath != "" || !strings.HasPrefix(c.Command[2], homeLayoutScript(kubeHomeVolumePath, kubeWipeRecordPath)) {
+		t.Fatalf("erase pod spec = %+v", p.Spec)
 	}
 	if got := rt.State(ctx); got != "stopped" {
 		t.Fatalf("State with the erase pod running = %q, want stopped", got)

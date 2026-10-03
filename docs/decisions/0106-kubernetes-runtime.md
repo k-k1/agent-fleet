@@ -790,3 +790,40 @@ Written with #1466 (`runtime_kubernetes_home.go`, `runtime_kubernetes_destroy.go
   UID, so a claim recreated under the same name never erases what was recorded about the first;
   an unknown resolves only when the same UID is read again with its volume. A workspace whose pod
   never got a volume therefore leaves its StatefulSet as a residue for the runbook.
+
+## Addendum (2026-10-03) — the home is a directory of its claim (#1543)
+
+Decision 4 mounts the home claim at `/home/dev`, and it still is; what is mounted there is now
+the claim's directory `.af-home`, through `subPath`, rather than its root. With `fsGroup` the
+kubelet leaves a claim's root `root:dev`, mode `2775` (measured on GKE), and only its owner or
+root can change that, which nothing under `restricted` is. The group-writable home made
+`cloudexec.PrivateDir` (ADR 0107) refuse the state of `af-gcloud-exec` and `af-aws-exec` alike.
+
+- **An init container from the same image, running as `dev`, makes the directory** before any
+  container mounts it (`homeLayoutScript`, `runtime_kubernetes_home.go`): a `subPath` the kubelet
+  has to create itself is root's again.
+- **A claim of the earlier layout keeps its files**: the same step moves every entry of the root
+  into `.af-home.new` and renames that into place last, so an interrupted start carries on and the
+  home never shows half of its files. `lost+found` stays on the root. An entry it cannot move, or
+  that would land on one already there, stops the pod rather than leave the home without it.
+- **Which layout a claim has is recorded on the state claim** (`layout` beside the wipe record:
+  none, moving, done), not read from the root: in the earlier layout every name there was the
+  member's to create. A `.af-home` or `.af-home.new` the member made is refused before anything
+  moves. A claim recorded as migrated is refused when its root holds anything besides the home or
+  the home is gone, and so is one whose record is missing or unreadable — the erase pod of a home
+  without a state claim included. Refusing stops the pod with the reason in its log.
+- **Group write is removed at every start** from the home and the directories above the Agent's
+  state (`~/.local`, `~/.local/state`, `~/.local/state/agent-fleet`), which `PrivateDir` walks,
+  since a recursive `fsGroup` change sets it, stopping at the first link on the way; the member's
+  other files are left alone.
+- **Rolling the CP back past this is not safe** for a workspace that has started since: an earlier
+  CP mounts the root as the home, hiding the migrated files; its Clean home and administrator's
+  Clean home remove `.af-home` whole, and its Recreate removes the root's `repos`, not the hidden one.
+  The runbook's "Rolling back past the home layout" moves a home back first; this version refuses
+  a claim an earlier one has used again (the residue check above).
+- **The wipe init container mounts the home the same way and runs after the layout; the erase pod
+  runs the layout and the erase in its one container**, on the claim's root, because a failed init
+  container leaves the main one waiting and an erase pod is finished only when every container
+  has terminated.
+- The state claim's `subPath` directories stay as the kubelet makes them. Nothing private lives
+  under them: the cloud wrappers' state is under `~/.local/state`, which is not a keep entry.
