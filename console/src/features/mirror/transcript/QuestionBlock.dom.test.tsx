@@ -41,7 +41,7 @@ const DECLINE_TEXT =
   '    Questions asked:\n- "どれにしますか？"\n  (No answer provided)';
 
 describe("QuestionBlock — declined AskUserQuestion", () => {
-  it("badges it rejected, not answered, and shows no option as selected", () => {
+  it("badges it cancelled, not answered, and shows no option as selected", () => {
     const turns: Turn[] = [
       {
         role: "assistant",
@@ -58,7 +58,9 @@ describe("QuestionBlock — declined AskUserQuestion", () => {
     ];
     const el = render(turns, OWNER);
     expect(el.querySelector(".mt-question.declined")).not.toBeNull();
-    expect(el.querySelector(".mq-done.declined")?.textContent).toBe(tr("mirror.rejected"));
+    expect(el.querySelector(".mq-done.declined")?.textContent).toBe(tr("mirror.question_cancelled"));
+    // The plan card's "Rejected" read as the agent turning the question down; the user cancelled it.
+    expect(el.querySelector(".mq-done")?.textContent).not.toBe(tr("mirror.rejected"));
     expect(el.querySelector(".mq-done")?.textContent).not.toBe(tr("mirror.answered"));
     expect(el.querySelectorAll(".mq-opt.selected").length).toBe(0);
   });
