@@ -33,8 +33,10 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 const (
@@ -63,6 +65,12 @@ func queueableBlocker(st string) bool {
 // codex keeps its question on the handle, where promptBlocker does not look (its Send refuses
 // with ErrQuestionPending instead). A variable so tests stub the blocker.
 var peerQueueBlocker = func(m session.Meta) string {
+	// claude's usage-limit menu is guarded by /input itself, not by promptBlocker; it has to be
+	// seen here too, or a target with a waiting queue would take the message instead of refusing.
+	if m.DriverKind() != session.DriverManaged && NormalizeKind(m.Kind) == session.KindClaude &&
+		tmuxx.AtRateLimitModal(m.Name) {
+		return agents.StateBlocked
+	}
 	if st := promptBlocker(m.Name); st != "" {
 		return st
 	}
@@ -106,6 +114,46 @@ var peerDeliveryReady = func(m session.Meta) (ready, alive bool) {
 	return DriveState(m, true, false) == "idle" && sessionInputReady(m, true), true
 }
 
+// pendingTarget serialises one target's queue decisions. mu is held for the enqueue decision
+// (is anything waiting or in flight, the cap, the write), the claim, the write-back and the
+// drops, never across the delivery's /input call. inflight is the claimed message on its way:
+// while it is out the spool can read empty, and a new send must still queue behind it. gen
+// moves on every drop (archive, trash, recreate, a gone session), so a delivery that was in
+// flight across one does not write its message back.
+type pendingTarget struct {
+	mu       sync.Mutex
+	inflight *agents.PendingPeer
+	gen      uint64
+}
+
+var (
+	pendingTargetsMu sync.Mutex
+	pendingTargets   = map[string]*pendingTarget{}
+)
+
+func pendingTargetOf(name string) *pendingTarget {
+	pendingTargetsMu.Lock()
+	defer pendingTargetsMu.Unlock()
+	t := pendingTargets[name]
+	if t == nil {
+		t = &pendingTarget{}
+		pendingTargets[name] = t
+	}
+	return t
+}
+
+// dropPendingPeers is every drop of a target's spool: it invalidates a delivery in flight.
+func dropPendingPeers(name, reason string) {
+	t := pendingTargetOf(name)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.gen++
+	agents.DropPendingPeers(name, reason)
+	if t.inflight != nil {
+		log.Printf("pending peer message: %s: %s in flight will not be written back (%s)", name, t.inflight.ID, reason)
+	}
+}
+
 // pendingDelivery is the context mark on a delivery's /input request.
 type pendingDeliveryKey struct{}
 
@@ -116,22 +164,67 @@ func pendingDeliveryOf(r *http.Request) (pendingDelivery, bool) {
 	return d, ok
 }
 
-// enqueuePendingPeer writes one message to name's spool and starts its delivery loop. The
-// returned rejection is the cap.
-func enqueuePendingPeer(name, from, intent, message, blockedOn string) (int, error) {
+// pendingQueueFull is the refusal past pendingPeerCap.
+func pendingQueueFull() error {
+	return peerReject("peer_queue_full",
+		"宛先は利用者の回答待ちで、届けられていないメッセージが上限（%d 通）に達しています", pendingPeerCap)
+}
+
+// enqueueDecision is what a peer send to name does about the queue, decided under the target's
+// lock so a claim, a write-back or another send cannot interleave: blockedOn == "" sends it now;
+// otherwise it was queued (pending is the queue's length) or refused (err). allow is the rate
+// limit, consulted only for a message that would be queued, so a refusal by the cap costs the
+// sender nothing.
+//
+// A blocker that does not queue (an expired login, the usage-limit menu) wins over a waiting
+// queue: such a send goes ahead and /input refuses it as before. Without one, a message waiting
+// or in flight makes the send queue behind it.
+func enqueueDecision(name string, dst session.Meta, from, intent, message string,
+	allow func() error) (blockedOn string, pending int, err error) {
+	t := pendingTargetOf(name)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	st := peerQueueBlocker(dst)
+	switch {
+	case queueableBlocker(st):
+		blockedOn = st
+	case st != "":
+		return "", 0, nil
+	case t.inflight != nil:
+		blockedOn = t.inflight.BlockedOn
+	default:
+		if q := agents.PendingPeers(name); len(q) > 0 {
+			blockedOn = q[0].BlockedOn
+		}
+	}
+	if blockedOn == "" {
+		return "", 0, nil
+	}
 	n := len(agents.PendingPeers(name))
+	if t.inflight != nil {
+		n++
+	}
 	if n >= pendingPeerCap {
-		return n, peerReject("peer_queue_full",
-			"宛先は利用者の回答待ちで、届けられていないメッセージが上限（%d 通）に達しています", pendingPeerCap)
+		return blockedOn, n, pendingQueueFull()
+	}
+	if err := allow(); err != nil {
+		return blockedOn, n, err
 	}
 	p := agents.PendingPeer{ID: agents.NormalizeMsgID(""), From: from, Intent: intent,
 		Message: strings.TrimSpace(message), BlockedOn: blockedOn, QueuedAt: pendingPeerNow()}
 	if err := agents.PutPendingPeer(name, p); err != nil {
-		return n, err
+		return blockedOn, n, err
 	}
 	log.Printf("pending peer message: %s: queued %s from %s (%s)", name, p.ID, from, blockedOn)
 	kickPendingPeers(name)
-	return n + 1, nil
+	return blockedOn, n + 1, nil
+}
+
+func takePending(name, id string) bool {
+	t := pendingTargetOf(name)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return agents.TakePendingPeer(name, id)
 }
 
 // pendingPeerQueue answers a peer send that waits: 202 with the state it waits on.
@@ -180,7 +273,7 @@ func runPendingPeers(name string) {
 		}
 		meta, ok := session.ReadMeta(name)
 		if !ok || meta.Archived {
-			agents.DropPendingPeers(name, "the session no longer exists or is archived")
+			dropPendingPeers(name, "the session no longer exists or is archived")
 			continue
 		}
 		ready, alive := peerDeliveryReady(meta)
@@ -204,7 +297,7 @@ func dropExpiredPending(name string, list []agents.PendingPeer) []agents.Pending
 	out := list[:0:0]
 	for _, p := range list {
 		if now.Sub(p.QueuedAt) > pendingPeerTTL {
-			if agents.TakePendingPeer(name, p.ID) {
+			if takePending(name, p.ID) {
 				log.Printf("pending peer message: %s: dropped %s from %s queued %s (expired after %s)",
 					name, p.ID, p.From, p.QueuedAt.Format(time.RFC3339), pendingPeerTTL)
 			}
@@ -220,9 +313,20 @@ func dropExpiredPending(name string, list []agents.PendingPeer) []agents.Pending
 // writes it back in place; one that will not clear (the policy now refuses, the target is gone)
 // or that may already have reached the session drops it.
 func deliverPendingPeer(name string, p agents.PendingPeer) bool {
-	if !agents.TakePendingPeer(name, p.ID) {
+	t := pendingTargetOf(name)
+	t.mu.Lock()
+	if t.inflight != nil || !agents.TakePendingPeer(name, p.ID) {
+		t.mu.Unlock()
 		return false // the member dropped it meanwhile
 	}
+	t.inflight = &p
+	gen := t.gen
+	t.mu.Unlock()
+	defer func() {
+		t.mu.Lock()
+		t.inflight = nil
+		t.mu.Unlock()
+	}()
 	body, _ := json.Marshal(map[string]string{"prompt": p.Message, "peer_from": p.From, "peer_intent": p.Intent})
 	ctx := context.WithValue(context.Background(), pendingDeliveryKey{}, pendingDelivery{queuedAt: p.QueuedAt})
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "/sessions/"+name+"/input", bytes.NewReader(body))
@@ -230,6 +334,9 @@ func deliverPendingPeer(name string, p agents.PendingPeer) bool {
 	rec := &captureWriter{header: http.Header{}}
 	HandleSessionInput(rec, req)
 	if rec.status >= 200 && rec.status < 300 {
+		// Recorded here, once, rather than by /input: a delivery refused and retried would
+		// otherwise add a peer arrow per attempt for a message that never arrived.
+		fleetgraph.RecordPeer(p.From, name, p.Intent, p.Message)
 		log.Printf("pending peer message: %s: delivered %s from %s", name, p.ID, p.From)
 		return true
 	}
@@ -247,6 +354,12 @@ func deliverPendingPeer(name string, p agents.PendingPeer) bool {
 		rec.status == http.StatusTooManyRequests && e.Code == "peer_rate_limited" ||
 		rec.status == http.StatusInternalServerError && e.Code != "tmux_failed"
 	if keep {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		if t.gen != gen {
+			log.Printf("pending peer message: %s: dropped %s from %s (the spool was dropped during its delivery)", name, p.ID, p.From)
+			return false
+		}
 		if err := agents.PutPendingPeer(name, p); err != nil {
 			log.Printf("pending peer message: %s: lost %s from %s: write back: %v", name, p.ID, p.From, err)
 		}
@@ -321,7 +434,11 @@ func HandleDropPendingPeer(w http.ResponseWriter, r *http.Request) {
 			from = p.From
 		}
 	}
-	if from == "" || !agents.TakePendingPeer(name, id) {
+	t := pendingTargetOf(name)
+	t.mu.Lock()
+	took := from != "" && agents.TakePendingPeer(name, id)
+	t.mu.Unlock()
+	if !took {
 		httpx.WriteErr(w, http.StatusNotFound, "not_pending", "no such pending message (it may have been delivered)")
 		return
 	}
@@ -337,10 +454,10 @@ func ResumePendingPeers() {
 		m, ok := session.ReadMeta(name)
 		switch {
 		case !ok:
-			agents.DropPendingPeers(name, "the session no longer exists")
+			dropPendingPeers(name, "the session no longer exists")
 			continue
 		case m.Archived:
-			agents.DropPendingPeers(name, "the session is archived")
+			dropPendingPeers(name, "the session is archived")
 			continue
 		}
 		agents.SweepPendingTemp(name)

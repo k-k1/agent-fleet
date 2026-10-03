@@ -336,33 +336,19 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		} else {
 			// A target waiting on its user takes the message into its pending spool rather than
 			// refusing it, and so does one that already holds queued messages, which keeps
-			// them in order.
-			blockedOn := peerQueueBlocker(dst)
-			if !queueableBlocker(blockedOn) {
-				if q := agents.PendingPeers(name); len(q) > 0 {
-					blockedOn = q[0].BlockedOn
-				} else {
-					blockedOn = ""
-				}
+			// them in order (peer_pending.go).
+			blockedOn, n, qerr := enqueueDecision(name, dst, body.PeerFrom, strings.TrimSpace(body.PeerIntent), body.Prompt,
+				func() error {
+					return peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), time.Now())
+				})
+			if _, ok := qerr.(*peerRejection); ok {
+				writePeerErr(w, qerr)
+				return
+			} else if qerr != nil {
+				httpx.WriteErr(w, http.StatusInternalServerError, "peer_queue_failed", qerr.Error())
+				return
 			}
 			if blockedOn != "" {
-				if len(agents.PendingPeers(name)) >= pendingPeerCap {
-					writePeerErr(w, peerReject("peer_queue_full",
-						"宛先は利用者の回答待ちで、届けられていないメッセージが上限（%d 通）に達しています", pendingPeerCap))
-					return
-				}
-				if err := peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), time.Now()); err != nil {
-					writePeerErr(w, err)
-					return
-				}
-				n, err := enqueuePendingPeer(name, body.PeerFrom, strings.TrimSpace(body.PeerIntent), body.Prompt, blockedOn)
-				if _, ok := err.(*peerRejection); ok {
-					writePeerErr(w, err)
-					return
-				} else if err != nil {
-					httpx.WriteErr(w, http.StatusInternalServerError, "peer_queue_failed", err.Error())
-					return
-				}
 				writePendingQueued(w, name, blockedOn, n)
 				return
 			}
@@ -375,7 +361,9 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// Fleet graph write site ⑥ (ADR 0041 / 0096 decision 4): recorded on the RAW message,
 		// before the envelope wraps it — the excerpt is for a human reading the graph, not
 		// the delivery machinery.
-		fleetgraph.RecordPeer(body.PeerFrom, name, strings.TrimSpace(body.PeerIntent), body.Prompt)
+		if !isDelivery { // a queued message is recorded once it is delivered (peer_pending.go)
+			fleetgraph.RecordPeer(body.PeerFrom, name, strings.TrimSpace(body.PeerIntent), body.Prompt)
+		}
 		// The server builds the envelope; the caller never does, so it can neither be
 		// forgotten nor forged.
 		body.Prompt = peerEnvelope(body.PeerFrom, strings.TrimSpace(body.PeerIntent), reply, body.Prompt)

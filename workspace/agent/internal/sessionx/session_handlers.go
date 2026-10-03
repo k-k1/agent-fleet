@@ -138,7 +138,7 @@ func removeManagedLedger(m session.Meta) {
 		muse.RemoveLedger(m.Name)
 	}
 	agents.DropHeld(m.Name, "purged from the trash")
-	agents.DropPendingPeers(m.Name, "purged from the trash")
+	dropPendingPeers(m.Name, "purged from the trash")
 }
 
 // HandleListSessions returns the live claude_* tmux sessions.
@@ -1451,7 +1451,7 @@ func ForgetRuntime(m session.Meta) {
 	sid := session.UUID(m.Dir, m.Name)
 	dropManagedRuntime(m)
 	agents.DropHeld(m.Name, "moved to the trash")
-	agents.DropPendingPeers(m.Name, "moved to the trash")
+	dropPendingPeers(m.Name, "moved to the trash")
 	status.Remove(sid)
 	status.RemoveExit(m.Name)
 	status.RemoveCarried(sid)
@@ -1621,7 +1621,7 @@ func ArchiveSession(m session.Meta) {
 	dropManagedRuntime(m) // managed: drop the runtime handle instead of a pane
 	// A held peer message waits for the next start, and an archived session has none.
 	agents.DropHeld(name, "archived")
-	agents.DropPendingPeers(name, "archived")
+	dropPendingPeers(name, "archived")
 	status.Remove(session.UUID(m.Dir, name))
 	status.RemoveExit(name)
 	if wasAlive {
@@ -1731,7 +1731,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	dropManagedRuntime(m) // managed: drop the runtime handle instead of a pane
 	agents.DropHeld(m.Name, "recreated: the old session is archived")
-	agents.DropPendingPeers(m.Name, "recreated: the old session is archived")
+	dropPendingPeers(m.Name, "recreated: the old session is archived")
 	status.Remove(session.UUID(m.Dir, m.Name))
 	status.RemoveExit(m.Name)
 	if wasAlive {

@@ -296,15 +296,18 @@ target's own spool (`pending-peer/<session>/`, the `held-peer` file format in a 
 and is answered `202 {"queued", "blocked_on", "pending"}`; `send_to_peer_session` reports
 `queued=true` with `blocked_on` and says not to resend. A per-target loop delivers the spool,
 oldest first, once the blocker is gone **and** the turn the answer started has ended, through
-`/input` itself, so the injection record, the fleet graph, delivery confirmation and a re-check of
-the peer policy and rate limit run as for any peer send; `queued=<time>` is added to the envelope.
+`/input` itself, so the injection record, delivery confirmation and a re-check of
+the peer policy and rate limit run as for any peer send (the fleet-graph arrow is written once, after a
+successful delivery); `queued=<time>` is added to the envelope.
 It is not `held-peer/`: a held message was already accepted and every Managed `Resume` feeds that
 directory to the runtime, while a pending one must not reach the session before the user answers
 and serves Terminal (CLI) sessions as well. Decisions: only question / plan / permission queue
 (an expired login and the usage-limit menu keep refusing, since they can last hours); the
 Console's own sends, `send_to_session` and schedules keep their 409; TTL 24 h, at most 20 per
-target (past it `429 peer_queue_full`); a message sent while others wait joins the queue so it
-cannot overtake them; halt keeps the spool, archive / trash / recreate drop it, Agent boot restarts
+target (past it `429 peer_queue_full`); a message sent while others wait or one is being delivered
+joins the queue so it cannot overtake them, unless the target now shows an expired login or the
+usage-limit menu, which refuse; the queue decision, the claim, the write-back and the drops share
+a per-target lock, and a drop during a delivery stops it being written back; halt keeps the spool, archive / trash / recreate drop it, Agent boot restarts
 the loops. The member sees the waiting messages above the composer and can drop each one. A
 message is claimed by removing its file before the send and written back only when the send left
 it undelivered, so a crash in between loses that one message rather than delivering it twice.

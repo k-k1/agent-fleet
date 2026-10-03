@@ -9,8 +9,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,12 +31,18 @@ func pendingTestEnv(t *testing.T) {
 	pendingPeerPoll, pendingPeerIdlePoll = 5*time.Millisecond, 5*time.Millisecond
 	peerRate = &peerLimiter{sends: map[string][]time.Time{}, recent: map[string]time.Time{}}
 	t.Cleanup(func() {
-		for _, n := range agents.PendingPeerSessions() {
-			agents.DropPendingPeers(n, "test end")
-		}
-		pendingLoops.Wait()
+		drainPendingLoops()
 		pendingPeerPoll, pendingPeerIdlePoll, peerRate = prevPoll, prevIdle, prevRate
 	})
+}
+
+// drainPendingLoops empties every spool and waits for the delivery loops to end. A cleanup that
+// restores a stub the loops read calls it first: it runs before pendingTestEnv's (LIFO).
+func drainPendingLoops() {
+	for _, n := range agents.PendingPeerSessions() {
+		agents.DropPendingPeers(n, "test end")
+	}
+	pendingLoops.Wait()
 }
 
 // fakeClaudeTmux is fakeTmux whose pane shows claude's idle footer until a line is submitted
@@ -235,6 +243,7 @@ func installManagedFake(t *testing.T, h *blockingFakeHandle) {
 	prev, had := managedDrivers[session.KindCodex]
 	managedDrivers[session.KindCodex] = &blockingFakeDriver{h: h}
 	t.Cleanup(func() {
+		drainPendingLoops()
 		if had {
 			managedDrivers[session.KindCodex] = prev
 			return
@@ -256,7 +265,10 @@ func stubTurnEnded(t *testing.T, ended *bool, mu *sync.Mutex) {
 		defer mu.Unlock()
 		return *ended, true
 	}
-	t.Cleanup(func() { peerDeliveryReady = prev })
+	t.Cleanup(func() {
+		drainPendingLoops()
+		peerDeliveryReady = prev
+	})
 }
 
 // codex (Managed): question and permission come from the handle's pending interaction, the
@@ -289,7 +301,10 @@ func TestPeerToManagedCodexWaitingOnUserIsDeliveredAfterTheAnswer(t *testing.T) 
 					}
 					return prev(m)
 				}
-				t.Cleanup(func() { peerQueueBlocker = prev })
+				t.Cleanup(func() {
+					drainPendingLoops()
+					peerQueueBlocker = prev
+				})
 			}
 			const name, from = "pp_codex", "pp_sender"
 			session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged})
@@ -349,7 +364,10 @@ func TestPendingPeerDeliveredWhenAnswerRacesTheEnqueue(t *testing.T) {
 		}
 		return ""
 	}
-	t.Cleanup(func() { peerQueueBlocker = prev })
+	t.Cleanup(func() {
+		drainPendingLoops()
+		peerQueueBlocker = prev
+	})
 	const name, from = "pp_race", "pp_sender"
 	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged})
 	session.WriteMeta(session.Meta{Name: from, Dir: t.TempDir(), Kind: session.KindClaude})
@@ -500,7 +518,10 @@ func TestPendingPeerKeptByHaltDroppedByArchiveAndTrash(t *testing.T) {
 	fakeTmux(t)
 	prev := peerDeliveryReady
 	peerDeliveryReady = func(session.Meta) (bool, bool) { return false, false }
-	t.Cleanup(func() { peerDeliveryReady = prev })
+	t.Cleanup(func() {
+		drainPendingLoops()
+		peerDeliveryReady = prev
+	})
 	const name = "pp_halt"
 	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged}
 	session.WriteMeta(m)
@@ -548,7 +569,10 @@ func TestNonPeerSendsAndLongBlockersKeepRefusing(t *testing.T) {
 		}
 	}
 	prev := peerQueueBlocker
-	t.Cleanup(func() { peerQueueBlocker = prev })
+	t.Cleanup(func() {
+		drainPendingLoops()
+		peerQueueBlocker = prev
+	})
 	for i, st := range []string{agents.StateAuth, agents.StateBlocked} {
 		peerQueueBlocker = func(session.Meta) string { return st }
 		rec := postInput(t, name, peerBody(from, "msg "+st+string(rune('0'+i))))
@@ -592,7 +616,10 @@ func TestPendingPeerRefusedAtDeliveryIsKept(t *testing.T) {
 	installManagedFake(t, h)
 	prev := peerDeliveryReady
 	peerDeliveryReady = func(session.Meta) (bool, bool) { return true, true } // misses the question
-	t.Cleanup(func() { peerDeliveryReady = prev })
+	t.Cleanup(func() {
+		drainPendingLoops()
+		peerDeliveryReady = prev
+	})
 	const name, from = "pp_reblock", "pp_sender"
 	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged})
 	session.WriteMeta(session.Meta{Name: from, Dir: t.TempDir(), Kind: session.KindClaude})
@@ -612,5 +639,202 @@ func TestPendingPeerRefusedAtDeliveryIsKept(t *testing.T) {
 	settle()
 	if len(h.sent()) != 1 {
 		t.Fatalf("sent %d times, want once", len(h.sent()))
+	}
+}
+
+// resumeHookDriver runs hook inside Resume, which is where a delivery sits between its claim
+// and its send.
+type resumeHookDriver struct {
+	*blockingFakeDriver
+	hook func()
+}
+
+func (d *resumeHookDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
+	if d.hook != nil {
+		d.hook()
+	}
+	return d.h, nil
+}
+
+// Review 1: while the last waiting message is claimed and on its way the spool reads empty; a
+// new send must still queue behind it, not overtake it.
+func TestPendingPeerInFlightIsNotOvertaken(t *testing.T) {
+	pendingTestEnv(t)
+	h := &blockingFakeHandle{}
+	installManagedFake(t, h)
+	var mu sync.Mutex
+	ended := true
+	stubTurnEnded(t, &ended, &mu)
+	const name, from = "pp_inflight", "pp_sender"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged})
+	session.WriteMeta(session.Meta{Name: from, Dir: t.TempDir(), Kind: session.KindClaude})
+	p := agents.PendingPeer{ID: "af_first", From: from, Intent: "request", Message: "first", BlockedOn: "question", QueuedAt: time.Now()}
+	if err := agents.PutPendingPeer(name, p); err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	managedDrivers[session.KindCodex] = &resumeHookDriver{blockingFakeDriver: &blockingFakeDriver{h: h}, hook: func() {
+		if calls.Add(1) == 1 { // only the first delivery is held; a send that overtakes passes
+			close(entered)
+			<-release
+		}
+	}}
+	done := make(chan bool)
+	go func() { done <- deliverPendingPeer(name, p) }()
+	<-entered
+	if _, blocked := decodeQueued(t, postInput(t, name, peerBody(from, "second"))); blocked != "question" {
+		t.Errorf("a send behind the message in flight reports blocked_on=%q, want question", blocked)
+	}
+	close(release)
+	if !<-done {
+		t.Fatal("the first delivery failed")
+	}
+	waitFor(t, "both delivered", func() bool { return len(h.sent()) == 2 })
+	if got := h.sent(); !strings.HasSuffix(got[0].Prompt, "first") || !strings.HasSuffix(got[1].Prompt, "second") {
+		t.Errorf("order = %q, %q; want first, second", got[0].Prompt, got[1].Prompt)
+	}
+}
+
+// Review 2: an archive that completes while a delivery is in flight is final: the refused
+// delivery does not write its message back.
+func TestPendingPeerArchiveDuringDeliveryIsFinal(t *testing.T) {
+	pendingTestEnv(t)
+	h := &blockingFakeHandle{inter: &agents.Interaction{ID: "new_q", Kind: agents.InteractionQuestion}}
+	installManagedFake(t, h)
+	const name, from = "pp_archive_race", "pp_sender"
+	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged}
+	session.WriteMeta(m)
+	session.WriteMeta(session.Meta{Name: from, Dir: t.TempDir(), Kind: session.KindClaude})
+	p := agents.PendingPeer{ID: "af_old", From: from, Intent: "request", Message: "old", BlockedOn: "question", QueuedAt: time.Now()}
+	if err := agents.PutPendingPeer(name, p); err != nil {
+		t.Fatal(err)
+	}
+	managedDrivers[session.KindCodex] = &resumeHookDriver{blockingFakeDriver: &blockingFakeDriver{h: h}, hook: func() {
+		dropPendingPeers(name, "archived")
+		m.Archived = true
+		session.WriteMeta(m)
+	}}
+	if deliverPendingPeer(name, p) {
+		t.Fatal("delivered into a question")
+	}
+	if n := len(agents.PendingPeers(name)); n != 0 {
+		t.Fatalf("the archive completed but the delivery wrote %d message(s) back", n)
+	}
+}
+
+// Review 3: a blocker that does not queue wins over a waiting queue — the send goes to /input,
+// whose own guards refuse it (stubbed here, so only "not queued" is asserted), instead of being
+// queued behind the old question.
+func TestLongBlockerRefusesEvenWithAQueue(t *testing.T) {
+	pendingTestEnv(t)
+	fakeTmux(t)
+	const name, from = "pp_long_queue", "pp_sender"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
+	session.WriteMeta(session.Meta{Name: from, Dir: t.TempDir(), Kind: session.KindClaude})
+	prevReady, prevBlock := peerDeliveryReady, peerQueueBlocker
+	peerDeliveryReady = func(session.Meta) (bool, bool) { return false, false }
+	t.Cleanup(func() {
+		drainPendingLoops()
+		peerDeliveryReady, peerQueueBlocker = prevReady, prevBlock
+	})
+	for i, st := range []string{agents.StateAuth, agents.StateBlocked} {
+		dropPendingPeers(name, "reset")
+		if err := agents.PutPendingPeer(name, agents.PendingPeer{ID: "af_old", From: from, Intent: "request",
+			Message: "old", BlockedOn: "question", QueuedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		peerQueueBlocker = func(session.Meta) string { return st }
+		rec := postInput(t, name, peerBody(from, "new "+string(rune('0'+i))))
+		if rec.Code == http.StatusAccepted {
+			t.Errorf("%s: queued behind the old question: %s", st, rec.Body.String())
+		}
+		if n := len(agents.PendingPeers(name)); n != 1 {
+			t.Errorf("%s: spool = %d, want the old message only", st, n)
+		}
+	}
+}
+
+// Review 4: the cap holds under concurrent sends.
+func TestPendingPeerCapHoldsUnderConcurrentSends(t *testing.T) {
+	pendingTestEnv(t)
+	const name = "pp_cap_race"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
+	prevReady, prevBlock := peerDeliveryReady, peerQueueBlocker
+	peerDeliveryReady = func(session.Meta) (bool, bool) { return false, false }
+	peerQueueBlocker = func(session.Meta) string { return "question" }
+	t.Cleanup(func() {
+		drainPendingLoops()
+		peerDeliveryReady, peerQueueBlocker = prevReady, prevBlock
+	})
+	for i := 0; i < pendingPeerCap-1; i++ {
+		agents.PutPendingPeer(name, agents.PendingPeer{ID: "af_" + string(rune('a'+i)), From: "pp_sender",
+			Intent: "request", Message: "old", BlockedOn: "question", QueuedAt: time.Now()})
+	}
+	senders := make([]string, 30)
+	for i := range senders {
+		senders[i] = "pp_sender_" + strconv.Itoa(i)
+		session.WriteMeta(session.Meta{Name: senders[i], Dir: t.TempDir(), Kind: session.KindClaude})
+	}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var accepted, full int
+	var cmu sync.Mutex
+	for _, from := range senders {
+		wg.Add(1)
+		go func(from string) {
+			defer wg.Done()
+			<-start
+			rec := postInput(t, name, peerBody(from, "new"))
+			cmu.Lock()
+			defer cmu.Unlock()
+			switch {
+			case rec.Code == http.StatusAccepted:
+				accepted++
+			case rec.Code == http.StatusTooManyRequests && strings.Contains(rec.Body.String(), "peer_queue_full"):
+				full++
+			}
+		}(from)
+	}
+	close(start)
+	wg.Wait()
+	if n := len(agents.PendingPeers(name)); n != pendingPeerCap || accepted != 1 || full != len(senders)-1 {
+		t.Fatalf("spool=%d accepted=%d full=%d; want %d, 1, %d", n, accepted, full, pendingPeerCap, len(senders)-1)
+	}
+}
+
+// Review 5: a delivery refused and retried leaves no fleet-graph arrow; the one that lands
+// leaves exactly one.
+func TestPendingPeerGraphRecordedOncePerDelivery(t *testing.T) {
+	pendingTestEnv(t)
+	h := &blockingFakeHandle{inter: &agents.Interaction{ID: "q", Kind: agents.InteractionQuestion}}
+	installManagedFake(t, h)
+	const name, from = "pp_graph", "pp_sender"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged})
+	session.WriteMeta(session.Meta{Name: from, Dir: t.TempDir(), Kind: session.KindClaude})
+	p := agents.PendingPeer{ID: "af_g", From: from, Intent: "request", Message: "undelivered", BlockedOn: "question", QueuedAt: time.Now()}
+	if err := agents.PutPendingPeer(name, p); err != nil {
+		t.Fatal(err)
+	}
+	peerRows := func() int {
+		files, _ := filepath.Glob(filepath.Join(os.Getenv("HOME"), ".local", "state", "agent-fleet", "fleet-graph", "activity-*.jsonl"))
+		n := 0
+		for _, f := range files {
+			b, _ := os.ReadFile(f)
+			n += strings.Count(string(b), `"ev":"peer"`)
+		}
+		return n
+	}
+	deliverPendingPeer(name, p)
+	deliverPendingPeer(name, p)
+	if n := peerRows(); n != 0 {
+		t.Fatalf("two refused deliveries left %d peer rows, want 0", n)
+	}
+	h.set(nil)
+	if !deliverPendingPeer(name, p) {
+		t.Fatal("the delivery after the answer failed")
+	}
+	if n := peerRows(); n != 1 {
+		t.Fatalf("a delivered message left %d peer rows, want 1", n)
 	}
 }
