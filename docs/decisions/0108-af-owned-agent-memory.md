@@ -1,4 +1,4 @@
-# 0108. Agent memory owned by AF: one store per user and project, written and read by every kind through the af MCP
+# 0108. Agent memory owned by AF: one store per user, workspace and project, written and read by every kind through the af MCP
 
 English | [日本語](0108-af-owned-agent-memory.ja.md)
 
@@ -32,8 +32,9 @@ files, 2.7 MB**. Pushing that into every session's instructions is a per-turn co
 accept; it has to be fetched on demand.
 
 AF already has pieces of the machinery. [0042](0042-user-instructions.md) distributes one AF-owned
-body of text to each kind's **user-wide** instruction layer — one file per kind, not per project or
-session (`agent_instructions.go`) — and cursor has no local user layer for it to write (decision 2).
+body of text to each kind's **user-wide** instruction layer — for the kinds it writes files for, one file per kind, not per project
+or session (`agent_instructions.go`); lcpp instead builds the same user-wide body into each session's
+prompt (`harness/systemprompt.go`) — and cursor has no local user layer for it to write (decision 2).
 [0022](0022-agent-memory-management.md) versions memory directories in a bare git repo with rollback,
 bundle transfer and a secret scan at export (`memoryx/memory_secrets.go`). The af MCP reaches every
 agent kind: the seven CLI kinds through `mcpreg`, muse through its own wire, lcpp in-process; shell
@@ -85,29 +86,40 @@ that is safe when what one session writes is read by every kind.
    - Step 2 (decided after measuring): switch claude's auto-memory off (`autoMemoryEnabled` /
      `CLAUDE_CODE_DISABLE_AUTO_MEMORY`) and let claude use the MCP tools like every other kind.
      Pointing claude's native writer at the store (`autoMemoryDirectory`) is acceptable **only** if
-     what claude writes there is treated as proposals — never published by being written. Both
-     names come from the 2.1.288 binary; neither is measured.
+     what claude writes there is treated as proposals — never published by being written — and is
+     scanned (decision 9) before AF keeps it; if that cannot be guaranteed, the option is rejected.
+     These setting and environment names come from the 2.1.288 binary; none is measured.
 7. **A memory is evidence, not an order.** The read tools' descriptions say so, and say that a
    file, function or flag a memory names must be checked before it is relied on. A memory never
    overrides user instructions or the fleet policy.
-8. **Every write path produces a proposal; only the member publishes.** Save, update, forget, the
-   import and a restore all create a proposal with an immutable body. A pending proposal is
+8. **By default every write path produces a proposal and only the member publishes.** Save, update,
+   forget, the import and a restore all create a proposal with an immutable body. A pending proposal is
    invisible to `memory_index`, `memory_search` and `memory_read` for every session, its author
    included. Approval — and switching a project to direct writes — exists only in the Console's
    REST, never as an MCP tool, for the reason 0042 decision 8 gives. Approving re-checks the
    revision; a proposal whose base has moved goes back to the author as stale. Without this, one
-   hostile page read by one session would be distributed to every kind. The approval path is the
+   hostile page read by one session would be distributed to every kind.
+   The one exception is a project the member has switched to direct writes: there, changes made
+   through the MCP tools are published automatically, through the same revision check, secret scan
+   (decision 9) and one-commit step. Direct mode never covers the import, a restore or claude's native
+   writer — those remain proposals. Choosing direct mode gives up this protection for that project,
+   and the Console says so when it is switched on. The approval path is the
    one #1559 needs for automated review, built once.
-9. **Secrets are stopped before they are stored.** Every save and import is scanned with the
-   0022 rules (`memory_secrets.go`) before anything is persisted, a proposal included; a hit blocks
-   by default and only the member's explicit acknowledgement in the Console lets it through. The
+9. **Secrets are stopped before they are stored.** Every candidate body — a save, an update, the
+   import, a restore, and anything claude's native writer produced (decision 6) — is scanned with the
+   0022 rules (`memory_secrets.go`) before it is persisted as a proposal or published. A restore is
+   included although 0022's restore copies history without a scan today, and an acknowledgement given
+   for one body does not carry over to another. A hit blocks by
+   default and only the member's explicit acknowledgement in the Console lets it through. The
    value is never returned or logged — rule, path, line and a masked hint, as at export today.
    Memories that already exist are scanned before they are first exposed through read or index.
    `memory_forget` removes a memory from what is published; it does not remove it from history, so
    purging a secret from history is a separate, member-only operation (open question 3).
 10. **v1 lives in the workspace.** The store sits beside `af-memory.git` under the claude-specific
-    mount (`memoryx/memory_repo.go`), which survives stop/start, recreate and "clean home"; it does
-    not survive the workspace being deleted. Sharing memory across a member's workspaces through the
+    mount (`memoryx/memory_repo.go`), which survives stop/start, recreate and "clean home". Nothing is
+    promised after the workspace is deleted: whether the files are physically removed depends on the
+    runtime (on ECS the EFS directory outlives its access point and is wiped only where the stack has
+    the home task, `runtime_ecs.go`), so deletion is not relied on to erase a secret. Sharing memory across a member's workspaces through the
     CP is a separate track, and the conditions 0022 found unmet still apply: an owner-only ACL
     (0022: the internal git provider lets every tenant member read), one canonical history,
     behaviour while a workspace is stopped, and deletion when the member leaves.
