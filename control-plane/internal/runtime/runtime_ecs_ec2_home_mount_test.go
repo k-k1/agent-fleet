@@ -142,16 +142,18 @@ func TestHomeMountScriptClearsStackedDeadMounts(t *testing.T) {
 	}
 }
 
-// The device is still there but the filesystem has shut down: stat answers EIO.
-func TestHomeMountScriptClearsAnUnreadableMount(t *testing.T) {
+// The device is still there but its root cannot be read: an attached home with an I/O
+// fault, maybe still in use. That is not a dead mount, and a lazy umount would hide it
+// from the umount check while the release detaches it.
+func TestHomeMountScriptLeavesAnUnreadableAttachedMountAlone(t *testing.T) {
 	w := newSlotScriptWorld(t)
 	w.device("259:0")
 	w.device("259:2")
 	w.mounts(miRoot, miHomeLive)
 	w.write("stat-eio", "")
 	calls, _ := w.run(w.mountCommand())
-	if !equalCalls(calls, "umount -l /af-home/M-1", "af-mount vol-1 /af-home/M-1 --mkfs") {
-		t.Fatalf("calls=%q", calls)
+	if !equalCalls(calls, "af-mount vol-1 /af-home/M-1 --mkfs") {
+		t.Fatalf("calls=%q, want af-mount alone", calls)
 	}
 }
 
@@ -197,6 +199,15 @@ func TestHomeUmountScriptConfirmsNothingIsLeftMounted(t *testing.T) {
 			[]string{"af-umount /af-home/M-1", "umount -l /af-home/M-1"}},
 		{"af-umount fails", []string{miRoot, miHomeLive}, "af-umount-fails", false,
 			[]string{"af-umount /af-home/M-1"}},
+		// Device present, root unreadable, and busy: the ordinary umount refuses, and the
+		// script must refuse with it rather than lazily detach a home still in use.
+		{"unreadable, busy, device present", []string{miRoot, miHomeLive}, "af-umount-fails+stat-eio", false,
+			[]string{"af-umount /af-home/M-1"}},
+		// An older af-umount takes off one layer per call; four rounds clear four.
+		{"four stacked mounts", []string{miRoot, miHomeLive, miHomeLive2, miHomeLive2, miHomeLive2}, "", true,
+			[]string{"af-umount /af-home/M-1", "af-umount /af-home/M-1", "af-umount /af-home/M-1", "af-umount /af-home/M-1"}},
+		{"five stacked mounts", []string{miRoot, miHomeLive, miHomeLive2, miHomeLive2, miHomeLive2, miHomeLive2}, "", false,
+			[]string{"af-umount /af-home/M-1", "af-umount /af-home/M-1", "af-umount /af-home/M-1", "af-umount /af-home/M-1"}},
 		// An af-umount that reports success over a mount that is still there is the
 		// "not mounted" answer the sandbox got; the detach must not follow it.
 		{"af-umount claims success", []string{miRoot, miHomeLive}, "af-umount-stuck", false,
@@ -208,8 +219,10 @@ func TestHomeUmountScriptConfirmsNothingIsLeftMounted(t *testing.T) {
 			w.device("259:0")
 			w.device("259:2")
 			w.mounts(c.lines...)
-			if c.flag != "" {
-				w.write(c.flag, "")
+			for _, f := range strings.Split(c.flag, "+") {
+				if f != "" {
+					w.write(f, "")
+				}
 			}
 			calls, ok := w.run(w.umountCommand())
 			if ok != c.ok || !equalCalls(calls, c.calls...) {
@@ -375,6 +388,46 @@ func TestECSEC2LaunchDoesNotQuarantineWhenTheHomeWasReleased(t *testing.T) {
 		if strings.HasPrefix(c, "SSM af-mount") || strings.HasPrefix(c, "StopInstances") {
 			t.Fatalf("%q: nothing may be mounted or stopped for a home that has left the slot; calls %q", c, h.ec2.calls)
 		}
+	}
+	// The failed launch's claim is gone, so the member is not left at `starting` until the
+	// claim TTL and a retry is a real Start.
+	if got := h.rt.State(ctx); got != "stopped" {
+		t.Fatalf("State after the failed launch = %q, want stopped", got)
+	}
+	// The retry is a real Start: it places the home again (a claim that makes it read
+	// `starting`), rather than returning early on a claim that is still there.
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("retry Start: %v", err)
+	}
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got == "" || len(h.deferred) == 0 {
+		t.Errorf("the retry Start placed nothing (claim %q, %d background steps)", got, len(h.deferred))
+	}
+	if got := h.rt.State(ctx); got != "starting" {
+		t.Errorf("State after the retry = %q, want starting", got)
+	}
+}
+
+// A newer Start's claim is not the failed launch's to drop.
+func TestECSEC2FailedLaunchKeepsALaterStartsClaim(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.setTag("vol-1", EC2TagClaim, "i-other")
+	h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339))
+	h.rt.unclaimIfOurs(ctx, ec2Placement{volumeID: "vol-1", instanceID: "i-new1"}, h.rt.generation().Load())
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-other" {
+		t.Errorf("claim on another slot = %q, want it kept", got)
+	}
+	h.ec2.setTag("vol-1", EC2TagClaim, "i-new1")
+	gen := h.rt.generation().Load()
+	h.rt.generation().Add(1) // a Start began after the launch did
+	h.rt.unclaimIfOurs(ctx, ec2Placement{volumeID: "vol-1", instanceID: "i-new1"}, gen)
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-new1" {
+		t.Errorf("claim of a later Start on the same slot = %q, want it kept", got)
+	}
+	h.rt.unclaimIfOurs(ctx, ec2Placement{volumeID: "vol-1", instanceID: "i-new1"}, h.rt.generation().Load())
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "" {
+		t.Errorf("the launch's own claim = %q, want it dropped", got)
 	}
 }
 

@@ -1932,6 +1932,7 @@ func (e *ecsEC2Runtime) converge(ctx context.Context, p ec2Placement, prep ec2Pr
 // slot needs ~18s to register with ECS plus the mount. Waiting for it to DISAPPEAR
 // (59s) or for rolloutState=COMPLETED (90s) would cost more than the bug.
 func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep) error {
+	gen := e.generation().Load()
 	// Everything this needs — the instance the constraint pins, the AZ the ENI must land
 	// in — is already decided, so it can all happen while the slot is still booting.
 	taskDefArn, reused, err := e.reuseOrRegisterTaskDef(ctx, p, prep)
@@ -1956,8 +1957,10 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 	e.setPhase("home: mounting")
 	if err := e.mountHome(ctx, p); err != nil {
 		if errors.Is(err, errHomeLeftSlot) {
-			// A release took the home off while this launch was on its way. Whoever did
-			// that owns the home now; the slot did nothing wrong.
+			// A release took the home off while this launch was on its way. The slot did
+			// nothing wrong; this launch's claim goes, so the workspace reads stopped and
+			// the next Start places it again instead of waiting out the claim TTL.
+			e.unclaimIfOurs(ctx, p, gen)
 			return fmt.Errorf("mount home on %s: %w", p.instanceID, err)
 		}
 		// A slot that cannot mount is not a slow slot, it is a broken one, and leaving it

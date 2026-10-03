@@ -227,8 +227,8 @@ Resources:
               if [ "$MKFS" = --mkfs ] && ! blkid "$DEV" >/dev/null 2>&1; then mkfs.xfs -q "$DEV"; fi
               # A home detached while it was still mounted leaves a dead mount here that answers
               # stat with EIO, and the mkdir -p below would then fail every later mount of this
-              # home on this slot. Lazily unmount such a mount (device gone or root unreadable),
-              # never a live one and never any other path. Same lines as staleHomeMountScript in
+              # home on this slot. Lazily unmount such a mount (only once its device is gone),
+              # never one whose device is still there and never any other path. Same lines as staleHomeMountScript in
               # control-plane/internal/runtime/runtime_ecs_ec2_home_mount.go, which the CP also
               # sends to slots booted before this was here.
               MOUNTINFO=/proc/self/mountinfo SYSBLOCK=/sys/dev/block
@@ -240,8 +240,8 @@ Resources:
                 devt=$(echo "$top" | cut -d ' ' -f 1)
                 fstype=$(echo "$top" | cut -d ' ' -f 2)
                 [ "$fstype" = xfs ] || break
-                if [ -e "$SYSBLOCK/$devt" ] && stat "$MP" >/dev/null 2>&1; then break; fi
-                echo "dead mount at $MP (device $devt gone or unreadable); detaching it lazily"
+                [ -e "$SYSBLOCK/$devt" ] && break
+                echo "dead mount at $MP (device $devt is gone); detaching it lazily"
                 umount -l "$MP" || break
               done
               ;;

@@ -1532,7 +1532,8 @@ umount から detach までの間に入れない。解放の後にロックを�
 そのパスに何も mount されていなくなって初めて成功する。スロットの `af-umount` は 1 つだけ外し、stat に失敗するパスを
 「not mounted」と扱っていたので、重なった 2 つ目の mount や死んだ mount が成功として通っていた。そして CP の mount・umount
 のスクリプトとスロット自身の `af-mount` は、まずそのパスちょうどにある死んだ XFS の mount（デバイスが `/sys/dev/block` に
-無い、またはルートが読めない）を lazy umount する。生きている mount と別のパスには触れない。この行は CP 自身が送るので、
+無いと確かめられたもの）を lazy umount する。デバイスが残っている mount には、ルートが読めなくても触れない（使用中の
+アタッチ済みホームかもしれない）。別のパスにも触れない。この行は CP 自身が送るので、
 古い起動テンプレートのスロットも入れ替えなしに次の mount で治る。隔離も detach の前に umount する（上限付き・失敗は無視）。
 コード: `control-plane/internal/runtime/runtime_ecs_ec2_home_mount.go`、`runtime_ecs_ec2.go`（`mountHome`・
 `releaseSlotSince`・`launch`・`quarantineSlot`）、`deploy/aws/ecs/cfn/40-ec2-pool.yaml`。

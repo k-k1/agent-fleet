@@ -1667,8 +1667,9 @@ re-reads the attachment and fails without touching (or quarantining) the slot; t
 `startGen`, so two CP replicas are not serialised by it. The umount the CP sends succeeds only once nothing at all
 is mounted at the path: the slot's `af-umount` took off one mount and treated a path whose stat failed as "not
 mounted", so a stacked second mount or a dead one passed as success. And both the CP's mount and umount scripts,
-and the slot's own `af-mount`, first lazily unmount a dead XFS mount at that exact path (device gone from
-`/sys/dev/block`, or root unreadable), never a live one and never another path. The CP sends those lines itself,
+and the slot's own `af-mount`, first lazily unmount a dead XFS mount at that exact path (its device confirmed gone
+from `/sys/dev/block`), never one whose device is still there — even with an unreadable root, which may be an
+attached home still in use — and never another path. The CP sends those lines itself,
 so slots launched from an older template heal at their next mount without being replaced. Quarantine now also
 unmounts (bounded, best-effort) before its detach. Code: `control-plane/internal/runtime/runtime_ecs_ec2_home_mount.go`,
 `runtime_ecs_ec2.go` (`mountHome`, `releaseSlotSince`, `launch`, `quarantineSlot`), `deploy/aws/ecs/cfn/40-ec2-pool.yaml`.
