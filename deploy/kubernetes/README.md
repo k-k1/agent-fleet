@@ -741,21 +741,25 @@ operator's, **and it starts with proof that the old process cannot run**:
 3. The StatefulSet recreates the pod elsewhere (in the volume's zone). Remove the taint once the
    node is gone or repaired.
 
-**On GKE, a VM that stops usually takes its node with it before you get here.** Measured on GKE
-1.35 with the live harness (#1468):
-- A VM shut down from Google Cloud (`gcloud compute instances stop`, an ACPI shutdown of about
-  110 s) terminates its pods before it goes. Stop then settles normally.
-- A VM that powers off on its own is recreated by the node pool's instance group about 6 s later
-  (`compute.instances.repair.recreateInstance` in the audit log). GKE then deletes the old Node
-  object and its pods, so the workspace's Stop settles without anyone acting.
-- A node whose kubelet stops while its VM keeps running is the case this procedure is for. It was
-  NotReady after about 55 s, Stop failed, and Start refused. Once the VM was stopped (step 1), the
-  instance group queued a repair within seconds. The repair deleted the stopped VM in the same
-  second as the taint of step 2, so that run cannot tell which of the two freed the pod. The
-  workspace ran again on the recreated node 4 minutes after the stop began.
+#### On GKE
 
-A network partition, where the VM keeps running, was not measured. That case is still yours, and
-step 1 still comes first.
+On GKE, leave the VM alone and let the node's auto-repair handle it. After a node has been
+NotReady for about ten minutes, GKE drains it and recreates its VM under the same name
+([node auto-repair](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/node-auto-repair)).
+The pod goes with the old node, the workspace's Stop settles, and the member's next start runs
+again. To hurry it, stop or delete the node's VM yourself; a stopped VM cannot run the old agent.
+The node pool's managed instance group then recreates the VM within seconds
+([instance group repair](https://docs.cloud.google.com/compute/docs/instance-groups/about-repair):
+`instances.stop` on a group member triggers repairing, recorded as
+`compute.instances.repair.recreateInstance`). GKE then deletes the old Node object and its pods.
+
+The out-of-service taint of step 2 is for clusters where a stopped node stays down. On GKE the
+instance group replaces a stopped VM before the taint could matter. Measured on GKE 1.35 with
+the live harness (#1468):
+- A VM stop is an ACPI shutdown of about 110 s, which terminates the pods before the node goes.
+- A guest power-off was recreated about 6 s later.
+- After a kubelet stop with the VM running, an operator's VM stop was followed by the group's
+  repair within seconds, in the same second as the taint.
 
 ### Residue cleanup
 
@@ -867,7 +871,14 @@ cordons: the test fails if its UID, node or restart count changes.
   after Stop has failed. The status command prints the VM's id too: a run counts only while the
   pod, the Node object and the stopped VM stay the ones it cut off, until the pod is gone. If the
   provider replaced the node or VM in between, that also removes the pod, so the run is
-  `INCONCLUSIVE`. The optional `AF_K8S_LIVE_NODE_RECOVER_CMD` (for example
+  `INCONCLUSIVE`. On GKE the halt cannot win that race (see "On GKE" under "A node that stopped
+  answering"). Set `AF_K8S_LIVE_NODE_MODE=auto-repair` instead: no halt runs, and the node's
+  auto-repair must free the pod within 20 minutes while the kubelet is still down.
+  `AF_K8S_LIVE_NODE_REPAIR_EVIDENCE_CMD` must print the repair's record, with `{since}` filled in
+  as the time of the cut, for example
+  `gcloud container operations list --location "$REGION" --filter="operationType=AUTO_REPAIR_NODES AND startTime>={since}"`.
+  Give the kubelet timer (`--on-active`) more than that, and match `AF_K8S_LIVE_NODE_RECOVER_WAIT`
+  to it. The optional `AF_K8S_LIVE_NODE_RECOVER_CMD` (for example
   `gcloud compute instances reset …`) recovers a node left cut off with its VM running. Without
   it, the cleanup waits up to 17 minutes for the timer before deleting anything. The cleanup
   deletes only the debug pods the stop command reported creating, by name and UID. The debug

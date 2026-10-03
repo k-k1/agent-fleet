@@ -1511,6 +1511,13 @@ type kubeLiveNodePod struct {
 // VM stay the ones it cut off until the pod is gone; anything the provider replaced
 // meanwhile makes it INCONCLUSIVE, since a replaced node removes the pod as well.
 //
+// AF_K8S_LIVE_NODE_MODE=auto-repair is the GKE path: after Stop has failed and Start has
+// refused, nothing touches the VM, and the node's auto-repair has to free the pod within 20
+// minutes while the kubelet is still down; AF_K8S_LIVE_NODE_REPAIR_EVIDENCE_CMD ({since} is
+// when the node was cut off) must print the provider's record of that repair. The cut-off
+// kubelet's own timer has to outlast it (AF_K8S_LIVE_NODE_RECOVER_WAIT sets how long the
+// cleanup waits for the node).
+//
 // The cleanup recovers the node first (starts a stopped VM, runs the recover command, or
 // waits past the stop command's timer for the node to be Ready), then deletes the debug
 // pods the stop command reported creating, by name and UID, and removes the taint from
@@ -1519,6 +1526,18 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	l := needKubeLiveDisruptive(t)
 	stopCmd, statusCmd, startCmd := os.Getenv("AF_K8S_LIVE_NODE_STOP_CMD"), os.Getenv("AF_K8S_LIVE_NODE_STATUS_CMD"), os.Getenv("AF_K8S_LIVE_NODE_START_CMD")
 	haltCmd, recoverCmd := os.Getenv("AF_K8S_LIVE_NODE_HALT_CMD"), os.Getenv("AF_K8S_LIVE_NODE_RECOVER_CMD")
+	// "auto-repair" is the GKE path: the provider's node repair, not an operator, frees the
+	// pod. Anything else is the runbook's path for clusters where a stopped node stays down.
+	autoRepair := os.Getenv("AF_K8S_LIVE_NODE_MODE") == "auto-repair"
+	repairEvidenceCmd := os.Getenv("AF_K8S_LIVE_NODE_REPAIR_EVIDENCE_CMD")
+	recoverWait := 17 * time.Minute
+	if v := os.Getenv("AF_K8S_LIVE_NODE_RECOVER_WAIT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			t.Fatalf("AF_K8S_LIVE_NODE_RECOVER_WAIT: %v", err)
+		}
+		recoverWait = d
+	}
 	if stopCmd == "" || statusCmd == "" || startCmd == "" {
 		t.Fatal("set AF_K8S_LIVE_NODE_STOP_CMD, AF_K8S_LIVE_NODE_STATUS_CMD and AF_K8S_LIVE_NODE_START_CMD")
 	}
@@ -1595,14 +1614,14 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 		}
 		// Whatever happened, wait for a Ready node of that name before the pods on it are
 		// deleted: past the stop command's 15-minute timer, with a margin.
-		deadline := time.Now().Add(17 * time.Minute)
+		deadline := time.Now().Add(recoverWait)
 		for !l.nodeReadyQuiet(node) {
 			if present, err := l.exists("get", "node", node); err == nil && !present {
 				t.Logf("node %s is gone; its pods go with it", node)
 				break
 			}
 			if time.Now().After(deadline) {
-				t.Errorf("node %s is not Ready 17 minutes into the cleanup: RECOVER IT BY HAND (kubelet, or reset the VM)", node)
+				t.Errorf("node %s is not Ready %s into the cleanup: RECOVER IT BY HAND (kubelet, or reset the VM)", node, recoverWait)
 				break
 			}
 			time.Sleep(10 * time.Second)
@@ -1675,6 +1694,60 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 		t.Fatalf("Start over the unreachable pod = %v, want a refusal", err)
 	}
 	t.Logf("Start refused %s after the stop command", time.Since(t0).Round(time.Second))
+
+	if autoRepair {
+		// GKE: a stopped VM in a managed instance group is recreated by the group's own
+		// repair within seconds, so "stop the VM, then taint" cannot happen there; the node's
+		// auto-repair drains and recreates a node NotReady for about ten minutes. Nothing
+		// here touches the VM. The run counts only if the pod goes while the kubelet is still
+		// down — a kubelet that came back would free it too — and the provider recorded a
+		// repair.
+		gen := ""
+		for _, p := range l.pods(rt.base) {
+			if p.Metadata.UID == podUID {
+				gen = p.Metadata.Annotations[kubeAnnStartGen]
+			}
+		}
+		var replacedAt time.Time
+		l.eventually(20*time.Minute, "the node's auto-repair to free the pod", func() bool {
+			if sameNode() && l.nodeReadyQuiet(node) {
+				t.Fatalf("INCONCLUSIVE: %s answered again (its kubelet came back) before the pod went, %s after the cut", node, time.Since(t0).Round(time.Second))
+			}
+			if replacedAt.IsZero() && !sameNode() {
+				replacedAt = time.Now()
+				t.Logf("%s was removed or recreated by the provider %s after the cut", node, time.Since(t0).Round(time.Second))
+			}
+			return !slices.ContainsFunc(l.pods(rt.base), func(p kPod) bool { return p.Metadata.UID == podUID })
+		})
+		t.Logf("the cut-off pod went %s after the cut, with the kubelet still down and no operator action", time.Since(t0).Round(time.Second))
+		if repairEvidenceCmd != "" {
+			ev := strings.TrimSpace(l.operator(strings.ReplaceAll(repairEvidenceCmd, "{since}", t0.UTC().Format(time.RFC3339))))
+			t.Logf("the provider's repair record:\n%s", ev)
+			if ev == "" {
+				t.Fatalf("INCONCLUSIVE: the provider recorded no repair since the cut, so nothing shows what freed the pod")
+			}
+		} else {
+			t.Log("no AF_K8S_LIVE_NODE_REPAIR_EVIDENCE_CMD: the provider's repair is NOT CONFIRMED from its own record")
+		}
+		if err := rt.Stop(ctx); err != nil {
+			t.Fatalf("Stop once the pod is gone: %v", err)
+		}
+		t.Logf("the stop settled %s after the cut", time.Since(t0).Round(time.Second))
+		// Stop has set replicas 0, so the workspace returns through a new Start, as a member's
+		// next use would start it; the same start generation returning is the unplanned-drain
+		// case (Lifecycle/PodDeletedBehindTheCP), where nothing stopped the workspace.
+		l.startRunning(rt)
+		p := l.runningPod(rt)
+		if p.Spec.NodeName == node && sameNode() {
+			t.Fatalf("running again on the cut-off node %s", node)
+		}
+		g, _ := strconv.Atoi(gen)
+		if got := p.Metadata.Annotations[kubeAnnStartGen]; got != strconv.Itoa(g+1) {
+			t.Errorf("the start after recovery carries generation %q, want %d", got, g+1)
+		}
+		t.Logf("node unreachable (auto-repair): running again on %s (UID %s), %s after the cut", p.Spec.NodeName, l.nodeUIDQuiet(p.Spec.NodeName), time.Since(t0).Round(time.Second))
+		return
+	}
 
 	// The runbook: the old process must be proven unable to run — this VM stopped, from the
 	// provider — before anything frees the pod. A node cut off with its VM running (a
