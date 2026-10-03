@@ -30,11 +30,39 @@ JA="$NOTES_DIR/$VERSION.ja.md"
 [ -f "$EN" ] || { echo "ERROR: release notes not found: $EN
   Write them before publishing (English is canonical; add $VERSION.ja.md for Japanese)." >&2; exit 1; }
 
-cat "$EN"
+# A release body is not rendered like a Markdown file: GitHub turns every newline in it into
+# a <br>, so the notes' hard wrap at ~100 columns showed as ragged lines and each issue link
+# on a line of its own. Join the lines of a paragraph or list item; a blank line, a list
+# marker, a heading, a quote, a table row, a rule, an HTML line or a code fence starts a new
+# block, and fenced code is left alone. Japanese takes no space where it joins after a
+# non-ASCII character and before another, or after full-width punctuation.
+unwrap() {
+  LC_ALL=C awk '
+    function flush() { if (have) print buf; have = 0; buf = "" }
+    function opens(s) { return s ~ /^[ \t]*([-*+]|[0-9]+[.)])[ \t]/ || s ~ /^[ \t]*(#|>|\||---|```|<)/ }
+    function wide_punct(s,  t) { t = substr(s, length(s) - 2); return index(PUNCT, "/" t "/") > 0 }
+    BEGIN { PUNCT = "/、/。/，/．/）/」/』/】/：/；/！/？/" }
+    {
+      if ($0 ~ /^[ \t]*```/) { flush(); print; fence = !fence; next }
+      if (fence) { print; next }
+      if ($0 ~ /^[ \t]*$/) { flush(); print; next }
+      if (have && !block && !opens($0)) {
+        cur = $0; sub(/^[ \t]+/, "", cur)
+        sep = ((buf ~ /[\200-\377]$/ && cur ~ /^[\200-\377]/) || wide_punct(buf)) ? "" : " "
+        buf = buf sep cur; next
+      }
+      flush(); buf = $0; have = 1
+      block = ($0 ~ /^[ \t]*(#|\||---|<)/)
+    }
+    END { flush() }
+  ' "$1"
+}
+
+unwrap "$EN"
 
 if [ -f "$JA" ]; then
   printf '\n---\n\n## 日本語\n\n'
-  cat "$JA"
+  unwrap "$JA"
 fi
 
 natives="" rootfs=""
