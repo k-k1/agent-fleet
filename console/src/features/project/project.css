@@ -169,6 +169,14 @@
   z-index: 1;
   background: var(--leftpane-bg);
 }
+/* Deeper worktree headers do not pin, but each still needs its own stacking context:
+   without it the desktop hover Launch overlay (.launch-wrap, absolute, z-index 1) joins
+   the first-level sticky header's context at the same z-index and, later in the DOM,
+   paints over it and takes its clicks when the row scrolls under it. */
+.proj-children .proj-children .proj-node.wt > .proj-node-head {
+  position: relative;
+  z-index: 0;
+}
 .proj-node-caret {
   flex: none;
   width: 18px;

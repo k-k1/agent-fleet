@@ -33,4 +33,10 @@ describe("project.css sticky worktree headers", () => {
     const r = sticky.find((x) => x.selectors.some((s) => s.startsWith(ANCHOR)));
     expect(r?.body).toMatch(/top:[^;]*var\(--proj-filter-h[^;]*var\(--proj-base-head-h/);
   });
+
+  it("keeps deeper worktree headers unpinned but in their own stacking context", () => {
+    const deep = rules.find((r) => r.selectors.includes(".proj-children .proj-children .proj-node.wt > .proj-node-head"));
+    expect(deep?.body).toMatch(/position:\s*relative/);
+    expect(deep?.body).toMatch(/z-index:\s*0/);
+  });
 });
