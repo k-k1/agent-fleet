@@ -33,7 +33,7 @@ const { ProjectTree } = await import("../project/ProjectTree.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
-const { useReposStore } = await import("./store.ts");
+const { useReposStore, useRepoReveal } = await import("./store.ts");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { useProjectFilter } = await import("../project/filter.ts");
 const { openRepoMenuInRail } = await import("./reveal.ts");
@@ -100,6 +100,47 @@ describe("openRepoMenuInRail", () => {
     expect(await settle(openRepoMenuInRail("app@wip-sab"))).toBe(true);
     expect(document.activeElement).toBe(row("app@wip-sab"));
     expect(repoMenu()).not.toBeNull();
+  });
+
+  it("opens the repository section too when it was folded", async () => {
+    // Folded, the section mounts no node at all, so without this the reveal had no row to find.
+    localStorage.setItem("af-section-repos", "0");
+    await render();
+    expect(row("app")).toBeNull();
+    expect(await settle(openRepoMenuInRail("app@wip-sab"))).toBe(true);
+    expect(repoMenu()).not.toBeNull();
+    expect(localStorage.getItem("af-section-repos")).toBe("1");
+  });
+
+  it("does not unfold a folded section on mount because of an earlier reveal", async () => {
+    useRepoReveal.getState().reveal("app"); // made before this tree mounted
+    localStorage.setItem("af-section-repos", "0");
+    await render();
+    expect(row("app")).toBeNull();
+  });
+
+  it("gives focus back to the row when the menu closes", async () => {
+    // jsdom has no layout, so offsetParent is always null and useMenuRoving would skip every
+    // item; give the elements a parent so focus really moves into the menu first.
+    const desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetParent")!;
+    Object.defineProperty(HTMLElement.prototype, "offsetParent", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.parentElement;
+      },
+    });
+    try {
+      await render();
+      expect(await settle(openRepoMenuInRail("app@wip-sab"))).toBe(true);
+      expect(document.activeElement?.closest(".repo-ctxmenu")).not.toBeNull();
+      await act(async () => {
+        document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      expect(repoMenu()).toBeNull();
+      expect(document.activeElement).toBe(row("app@wip-sab"));
+    } finally {
+      Object.defineProperty(HTMLElement.prototype, "offsetParent", desc);
+    }
   });
 
   it("resolves false and opens nothing when the rail never shows the row", async () => {

@@ -5,14 +5,14 @@
 // decorated flat list — and folding the base folds the whole project. The
 // section header carries the repo actions (clone / refresh) and the
 // session-maintenance actions (tidy / archive).
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button, IconButton } from "../../ui/Button.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { useReposStore, useLaunchTarget } from "../repos/store.ts";
+import { useReposStore, useLaunchTarget, useRepoReveal } from "../repos/store.ts";
 import { NewRepoModal } from "../repos/NewRepoModal.tsx";
 import { cloneRepo, svnCheckout, initRepo } from "../repos/clone.ts";
 import type { CloneRequest, SvnCheckoutRequest } from "../repos/clone.ts";
@@ -30,6 +30,8 @@ import { useRailRoving } from "./useRailRoving.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { ShareListModal } from "../sharing/ShareListModal.tsx";
 
+const SECTION_KEY = "af-section-repos";
+
 export const ProjectTree = memo(function ProjectTree() {
   const tr = useT();
   const repos = useReposStore((s) => s.repos);
@@ -43,6 +45,22 @@ export const ProjectTree = memo(function ProjectTree() {
   const actions = useSessionActions(); // one instance shared by every node's rows
   const running = ctx.running;
 
+  // The section's fold is held here rather than inside Section so a reveal can open it: folded,
+  // the section mounts no RepoNode, so the reveal (command palette, the session menu's
+  // repository item) would expand nothing and find no row. Same af-section-repos key Section
+  // itself would use, so an existing choice carries over.
+  const [secOpen, setSecOpen] = useState(() => localStorage.getItem(SECTION_KEY) !== "0");
+  const setSection = (open: boolean) => {
+    localStorage.setItem(SECTION_KEY, open ? "1" : "0");
+    setSecOpen(open);
+  };
+  // Only a reveal made while mounted opens it: the counter is never reset, so comparing with
+  // the value at mount keeps an old reveal from unfolding the section on every remount.
+  const revealN = useRepoReveal((s) => s.n);
+  const [mountRevealN] = useState(revealN);
+  useEffect(() => {
+    if (revealN !== mountRevealN) setSection(true);
+  }, [revealN, mountRevealN]);
   const [showClone, setShowClone] = useState(false);
   const [showShares, setShowShares] = useState(false);
   const jobs = useRepoJobsStore((s) => s.jobs);
@@ -113,6 +131,8 @@ export const ProjectTree = memo(function ProjectTree() {
   return (
     <Section
       id="repos"
+      open={secOpen}
+      onToggle={() => setSection(!secOpen)}
       title={tr("pj.repos")}
       icon="repo"
       count={wset ? countRepoNodes(scoped) : repos.length}
