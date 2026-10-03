@@ -32,6 +32,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -49,11 +50,13 @@ type kubeLive struct {
 	t       *testing.T
 	ns      string
 	kubectl string
-	// kubeContext pins every kubectl call to the context checked against the product's API
-	// server and CA (pinKubectl), so a kubeconfig that switches context mid-run cannot send
-	// the harness's deletes, cordons and taints to another cluster.
-	kubeContext string
-	tokens      map[string]string // workspace name -> AGENT_TOKEN, stable across adapter values
+	// kubePin holds the flags every kubectl call carries once pinKubectl has checked the
+	// context against the product's API server and CA: the context for the credentials, and
+	// the verified server and CA themselves, so that neither a switched context nor a
+	// context redefined in the kubeconfig mid-run can send the harness's deletes, cordons
+	// and taints to another cluster.
+	kubePin []string
+	tokens  map[string]string // workspace name -> AGENT_TOKEN, stable across adapter values
 }
 
 // kubeLiveCmdBudget bounds one kubectl call (an exec into a pod included) and one operator
@@ -185,22 +188,15 @@ func (l *kubeLive) pinKubectl() {
 	if ctxName == "" {
 		l.t.Fatal("kubectl has no current context")
 	}
-	l.kubeContext = ctxName
 	server := strings.TrimSpace(l.must("config", "view", "--minify", "-o", "jsonpath={.clusters[0].cluster.server}"))
 	if want := strings.TrimRight(os.Getenv("AF_K8S_LIVE_SERVER"), "/"); strings.TrimRight(server, "/") != want {
 		l.t.Fatalf("kubectl's context %s points at %s, the product at %s: refusing to act on another cluster", ctxName, server, want)
 	}
-	var ca []byte
-	if b64 := strings.TrimSpace(l.must("config", "view", "--raw", "--minify", "-o", "jsonpath={.clusters[0].cluster.certificate-authority-data}")); b64 != "" {
-		var err error
-		if ca, err = base64.StdEncoding.DecodeString(b64); err != nil {
-			l.t.Fatalf("kubectl's CA data: %v", err)
-		}
-	} else if f := strings.TrimSpace(l.must("config", "view", "--raw", "--minify", "-o", "jsonpath={.clusters[0].cluster.certificate-authority}")); f != "" {
-		var err error
-		if ca, err = os.ReadFile(f); err != nil {
-			l.t.Fatal(err)
-		}
+	// --flatten inlines a CA file, wherever its relative path resolves from.
+	b64 := strings.TrimSpace(l.must("config", "view", "--raw", "--flatten", "--minify", "-o", "jsonpath={.clusters[0].cluster.certificate-authority-data}"))
+	ca, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil || len(ca) == 0 {
+		l.t.Fatalf("kubectl's context %s carries no readable CA (%v)", ctxName, err)
 	}
 	want, err := os.ReadFile(os.Getenv("AF_K8S_LIVE_CA_FILE"))
 	if err != nil {
@@ -209,6 +205,8 @@ func (l *kubeLive) pinKubectl() {
 	if !bytes.Equal(bytes.TrimSpace(ca), bytes.TrimSpace(want)) {
 		l.t.Fatalf("kubectl's context %s trusts another CA than AF_K8S_LIVE_CA_FILE: refusing to act on another cluster", ctxName)
 	}
+	l.kubePin = []string{"--context", ctxName, "--server", server,
+		"--certificate-authority", os.Getenv("AF_K8S_LIVE_CA_FILE"), "--insecure-skip-tls-verify=false"}
 }
 
 // workspace names a new workspace for scenario, refuses a name anything in the namespace
@@ -269,12 +267,11 @@ func (l *kubeLive) runtime(f *kubeFactory, name string) *kubeRuntime {
 // --- the harness's own eyes: kubectl as the ambient identity ---
 
 func (l *kubeLive) run(args ...string) (string, error) {
-	if l.kubeContext != "" {
-		args = append([]string{"--context", l.kubeContext}, args...)
-	}
+	args = append(slices.Clone(l.kubePin), args...)
 	ctx, cancel := context.WithTimeout(context.Background(), kubeLiveCmdBudget)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, l.kubectl, args...)
+	cmd.WaitDelay = 10 * time.Second
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()
@@ -1327,7 +1324,14 @@ func (l *kubeLive) operatorRun(cmd string) (string, error) {
 	l.t.Logf("operator: %s", cmd)
 	ctx, cancel := context.WithTimeout(context.Background(), kubeLiveOperatorBudget)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "sh", "-c", cmd).CombinedOutput()
+	// The command runs in a process group of its own, and the deadline kills the whole
+	// group: killing sh alone would leave a gcloud child running, stopping a VM after the
+	// test gave up, and holding the output pipe so that Wait never returns.
+	c := exec.CommandContext(ctx, "sh", "-c", cmd)
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	c.Cancel = func() error { return syscall.Kill(-c.Process.Pid, syscall.SIGKILL) }
+	c.WaitDelay = 10 * time.Second
+	out, err := c.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("%s: %v\n%s", cmd, err, out)
 	}
@@ -1358,6 +1362,10 @@ func (l *kubeLive) cordon(nodes ...string) {
 			continue
 		}
 		l.t.Cleanup(func() {
+			if present, err := l.exists("get", "node", n); err == nil && !present {
+				l.t.Logf("node %s no longer exists (replaced or removed); nothing to uncordon", n)
+				return
+			}
 			if _, err := l.run("uncordon", n); err != nil {
 				l.t.Errorf("UNCORDON %s BY HAND: %v", n, err)
 				return
@@ -1477,6 +1485,9 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	if err != nil || created.Before(began) {
 		t.Fatalf("node %s was created at %q, before this test began: refusing to stop a node the harness did not get added", node, nodeObj.Metadata.CreationTimestamp)
 	}
+	// The node is cordoned before its pods are read and stays cordoned until the end, so
+	// nothing can be placed on it between the check and the VM stop.
+	l.cordon(node)
 	var others struct {
 		Items []kubeLiveNodePod `json:"items"`
 	}
