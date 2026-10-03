@@ -313,3 +313,22 @@ message is claimed by removing its file before the send and written back only wh
 it undelivered, so a crash in between loses that one message rather than delivering it twice.
 Expired messages are dropped with a log line; the sender is not told. Implementation:
 `workspace/agent/internal/sessionx/peer_pending.go`, `workspace/agent/internal/agents/pendingpeers.go`.
+
+## Addendum (2026-10-03) — a session may read a peer's recent output (peek)
+
+#1061. The `--peer-messaging` surface (decision 3) could message a peer but not read it. A third peer tool,
+`peek_session_output`, now does exactly that, read-only, under the same peer-messaging switch:
+asking a peer a `question` costs it a whole turn, a read costs it nothing. It is a separate tool
+rather than a widened `get_session_output` so that tool keeps its children-only meaning (ADR 0073
+decision 4) and the peek is advertised only where peer messaging is on. The MCP layer adds only
+`peek_from` = the session it serves (`mcpOwningSession`, never an argument) to
+`GET /sessions/{name}/output`; the Agent applies the rest (`sessionx/session_peek.go`): the
+switch, the same kind allowlist as a send (no shell / ssm, either end), no peeking at yourself,
+no archived target, a refusal while the target's agent login has expired, at most 200 lines and
+16 KiB whatever the caller asks, and its own per-reader limit of 30 reads a minute (separate from
+the send limit). The output is the same transcript-derived assistant text `get_session_output`
+returns — never the pane — and no redaction is applied, as for that tool. The target is not
+interrupted, notified or state-healed; each read is audited by a log line and an `ev:"peek"` line
+in the fleet-graph activity ledger. The ledger line is not on the `/api/fleet-graph` wire: the
+Console's graph draws a fixed set of event kinds, so the Console is unchanged. Every meta the
+Agent holds belongs to its one user; sessions shared in from other users never reach it.

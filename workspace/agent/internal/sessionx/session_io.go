@@ -664,12 +664,14 @@ func writePeerErr(w http.ResponseWriter, err error) {
 	}
 	status := http.StatusBadRequest
 	switch rej.Code {
-	case "peer_rate_limited", "peer_duplicate", "peer_queue_full":
+	case "peer_rate_limited", "peer_duplicate", "peer_queue_full", "peek_rate_limited":
 		status = http.StatusTooManyRequests
-	case "peer_from_forbidden", "peer_target_forbidden":
+	case "peer_from_forbidden", "peer_target_forbidden", "peek_disabled", "peek_from_forbidden", "peek_target_forbidden":
 		status = http.StatusForbidden
-	case "peer_from_unknown", "peer_target_unknown":
+	case "peer_from_unknown", "peer_target_unknown", "peek_from_unknown", "peek_target_unknown":
 		status = http.StatusNotFound
+	case "peek_target_auth":
+		status = http.StatusConflict
 	}
 	httpx.WriteErr(w, status, rej.Code, rej.Msg)
 }
@@ -1336,13 +1338,23 @@ func sessionInputReady(meta session.Meta, alive bool) bool {
 
 // HandleSessionOutput (GET /sessions/{name}/output?since=<cursor>) returns the
 // session's assistant text appended since the cursor, plus a new cursor and the
-// current status. Phase 1: claude only (its jsonl transcript). cursor is a line
-// index into the transcript.
+// current status. cursor is a line index into claude's jsonl transcript, or a turn
+// count for the other transcript-capable kinds.
+//
+// peek_from=<session> makes it a peer peek (session_peek.go): the policy, the caps, the
+// rate limit and the audit record are all applied here, not by the caller.
 func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
+	}
+	peekFrom := r.URL.Query().Get("peek_from")
+	if peekFrom != "" {
+		if err := peekPolicy(peekFrom, name); err != nil {
+			writePeerErr(w, err)
+			return
+		}
 	}
 	meta, ok := session.ReadMeta(name)
 	if !ok {
@@ -1365,13 +1377,32 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 	// tail=<bytes>: return only the TAIL of the output (when clipped, an elision marker is
 	// prepended and clipped=true). The caller is an LLM (the MCP get_session_output tool)
 	// and tool results accumulate in the conversation context, so an unbounded full dump
-	// makes every later turn more expensive.
+	// makes every later turn more expensive. lines=<n> clips to the last n lines first.
 	tail := 0
 	if v := r.URL.Query().Get("tail"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			tail = n
 		}
 	}
+	lines := 0
+	if v := r.URL.Query().Get("lines"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			lines = n
+		}
+	}
+	if peekFrom != "" {
+		if err := peekStateAllowed(state); err != nil {
+			writePeerErr(w, err)
+			return
+		}
+		if err := peekRate.allow(peekFrom, time.Now()); err != nil {
+			writePeerErr(w, err)
+			return
+		}
+		tail, lines = peekCaps(tail, lines)
+	}
+	var raw string
+	var cursor int
 	// codex/opencode: their stores aren't claude's jsonl — build the flattened assistant
 	// output from the generic Transcript() turns instead (cursor = turn count), so the
 	// drive tools (MCP get_session_output) work for every transcript-capable kind.
@@ -1387,33 +1418,33 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 				gb.WriteString(t.Text)
 			}
 		}
-		out, clipped := clipOutputTail(gb.String(), tail)
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"name": name, "output": out, "cursor": len(td.Turns),
-			"status": state, "alive": alive, "clipped": clipped,
-		})
-		return
-	}
-	sid := session.UUID(meta.Dir, name)
-	lines := claude.TranscriptLines(sid)
-	var sb strings.Builder
-	cursor := len(lines)
-	for i := since; i < len(lines); i++ {
-		if t := claude.AssistantText(lines[i]); t != "" {
-			if sb.Len() > 0 {
-				sb.WriteString("\n")
+		raw, cursor = gb.String(), len(td.Turns)
+	} else {
+		sid := session.UUID(meta.Dir, name)
+		tlines := claude.TranscriptLines(sid)
+		var sb strings.Builder
+		cursor = len(tlines)
+		for i := since; i < len(tlines); i++ {
+			if t := claude.AssistantText(tlines[i]); t != "" {
+				if sb.Len() > 0 {
+					sb.WriteString("\n")
+				}
+				sb.WriteString(t)
 			}
-			sb.WriteString(t)
+			// With tail set, do not paginate: making the caller walk 1 MiB forward pages when
+			// it asked for the tail defeats the point. TranscriptLines already holds every
+			// line in memory, so building the whole thing does not change the memory order.
+			if tail <= 0 && sb.Len() > 1<<20 { // cap at 1 MiB — the next poll resumes at i+1
+				cursor = i + 1
+				break
+			}
 		}
-		// With tail set, do not paginate: making the caller walk 1 MiB forward pages when
-		// it asked for the tail defeats the point. TranscriptLines already holds every
-		// line in memory, so building the whole thing does not change the memory order.
-		if tail <= 0 && sb.Len() > 1<<20 { // cap at 1 MiB — the next poll resumes at i+1
-			cursor = i + 1
-			break
-		}
+		raw = sb.String()
 	}
-	out, clipped := clipOutputTail(sb.String(), tail)
+	out, clipped := clipOutput(raw, tail, lines)
+	if peekFrom != "" {
+		recordPeek(peekFrom, name, since, len(out))
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"name": name, "output": out, "cursor": cursor,
 		"status": state, "alive": alive, "clipped": clipped,
@@ -1423,6 +1454,37 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 // sessionOutputClipNote is prepended to a tail-clipped output. The reader is the operator
 // (an LLM), so the body itself has to say that it was clipped and where the full text is.
 const sessionOutputClipNote = "【先頭を省略】出力が長いため末尾のみを表示しています（全文は Console のミラーで確認できます）。\n\n"
+
+// clipOutput keeps the last `lines` lines of s, then the last `tail` bytes of that, with
+// sessionOutputClipNote prepended once when either cut anything. Zero disables a cut.
+func clipOutput(s string, tail, lines int) (string, bool) {
+	lineClipped := false
+	if lines > 0 {
+		if s, lineClipped = clipOutputLines(s, lines); lineClipped && tail <= 0 {
+			return sessionOutputClipNote + s, true
+		}
+	}
+	out, byteClipped := clipOutputTail(s, tail)
+	if lineClipped && !byteClipped {
+		return sessionOutputClipNote + out, true
+	}
+	return out, lineClipped || byteClipped
+}
+
+// clipOutputLines keeps the last n lines of s (no note; clipOutput adds it). Trailing
+// newlines are dropped first so they do not count as empty last lines.
+func clipOutputLines(s string, n int) (string, bool) {
+	s = strings.TrimRight(s, "\n")
+	at := len(s)
+	for i := 0; i < n; i++ {
+		j := strings.LastIndexByte(s[:at], '\n')
+		if j < 0 {
+			return s, false
+		}
+		at = j
+	}
+	return s[at+1:], true
+}
 
 // clipOutputTail keeps the LAST max bytes of s (rune-safe: the cut point is advanced to
 // the next rune boundary), prepending sessionOutputClipNote when it actually clipped.

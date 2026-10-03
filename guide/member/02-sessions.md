@@ -614,9 +614,10 @@ this in parallel").
   one, and rename one. **Once you rename a child yourself, your name stays** and the parent can
   no longer change it.
 - **What it may not do**: add instructions to a child, answer its questions or approve its plans
-  or permission prompts on your behalf, or delete or archive it — and nothing at all with
-  sessions it did not start. Removing a child is done by you, in the Console, like any other
-  session. To give a child more work, the parent sends it a message (next section).
+  or permission prompts on your behalf, or delete or archive it — and nothing with sessions it
+  did not start beyond the messages and the read-only output peek of the next section. Removing
+  a child is done by you, in the Console, like any other session. To give a child more work, the
+  parent sends it a message (next section).
 - **No grandchildren.** A child cannot start sessions of its own; only a session you started
   yourself can. Sessions on their own extend the chain by exactly one generation, and nothing
   grows further without you launching something.
@@ -683,6 +684,12 @@ one ("tell the session next door what we just did").
   use the handoff or the branch above.
 - **Raw shell sessions (shell / ssm) can neither send nor receive**, because the text sent to
   them would run verbatim as a command.
+- **A session can also read another session's recent output**, without sending anything. The
+  same switch turns it on. It is read-only and silent: the other session is not interrupted or
+  told, but every read is recorded in the Agent log and in the fleet graph's record (the graph
+  does not draw it). A session gets at most the last 200 lines (16 KiB) at a time, cannot read
+  itself, and cannot read shell / ssm sessions or one whose agent's login has expired. It only
+  ever sees sessions in this workspace, never sessions other people shared with you.
 
 Messages are deliberately curt. Every one of them costs the receiving session a whole turn, so
 sessions are told to drop greetings and thanks and to lead with the point. Each message also
