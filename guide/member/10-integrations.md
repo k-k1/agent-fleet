@@ -184,7 +184,7 @@ When an agent is driving its own browser (Chromium) inside the workspace and rea
 **only a person can do** — signing in, a one-time code, ticking a consent box — it can hand that
 page over to you. This is a different thing from the browser pane above: there you open your own
 local web app, here you take over a page the agent already has open. Like the browser pane, it does not
-exist on a deployment that runs workspaces on Kubernetes.
+exist on a deployment that runs workspaces on Kubernetes (a preview runtime).
 
 - A link appears in the agent's message: **"Open the browser and operate it (opens as a pane in this
   tab)"**. **You are the one who clicks it** — nothing opens until you do, and it opens as a pane in
