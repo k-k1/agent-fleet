@@ -88,7 +88,8 @@ super_admin・[02-limits.md](02-limits.ja.md) を参照）。
 home の掃除はすべての配備にあるわけではありません（[ref/deploy-targets](../ref/deploy-targets.ja.md)）。
 無い配備では、代わりに **Workspace を破棄** で home を消します。消せなかったものがあれば一覧で示されます。
 Fargate（`ecs`）では home の掃除と破棄は数分かかるタスクとして動きます。ボタンはすぐに応答し、
-結果は終わった時点で監査ログに記録されます。
+結果は終わった時点で監査ログに記録されます。その間に Control Plane が再起動すると結果は記録されません。
+どう終わったかの確かめ方は [ref/deploy-targets](../ref/deploy-targets.ja.md) を参照してください。
 
 外した人も名簿には「外れています（名簿から削除済み）」として残ります。2〜4 をあとから打てる
 ようにするためで、消えたわけではありません。

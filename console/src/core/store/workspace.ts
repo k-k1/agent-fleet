@@ -247,10 +247,15 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 }));
 
 // The background wipe's failure reaches the member through the workspace payload alone, and
-// that payload arrives every few seconds: toast it when it first appears (or changes), not
-// on every frame that still carries it.
-function noteHomeWipeFailed(prev: string, next: string | undefined): void {
-  if (next && next !== prev) toast(t("ws.home_wipe_failed", { reason: next }), { kind: "error" });
+// that payload arrives every few seconds: toast each reason once. Remembered apart from the
+// store's value because with several CP replicas only the one that ran the wipe carries it,
+// so the value flips between the reason and "" as polls land on different replicas.
+let lastHomeWipeToast = "";
+function noteHomeWipeFailed(_prev: string, next: string | undefined): void {
+  if (next && next !== lastHomeWipeToast) {
+    lastHomeWipeToast = next;
+    toast(t("ws.home_wipe_failed", { reason: next }), { kind: "error" });
+  }
 }
 
 /** True while a start/stop transition is in flight (or state not yet fetched). */

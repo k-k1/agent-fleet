@@ -70,6 +70,17 @@ describe("workspace store applyPush", () => {
     expect(useWorkspaceStore.getState().homeWipeFailed).toBe("");
   });
 
+  // Several CP replicas: only the one that ran the wipe carries the reason, so polls
+  // alternate between it and nothing. That is still one failure, toasted once.
+  it("does not toast the same failure again when replicas alternate", () => {
+    toastMock.mockReset();
+    useWorkspaceStore.setState({ state: "stopped", homeWipeFailed: "" });
+    for (const f of ["exit 9", undefined, "exit 9", undefined, "exit 9"]) {
+      useWorkspaceStore.getState().applyPush({ state: "stopped", homeWipeFailed: f });
+    }
+    expect(toastMock).toHaveBeenCalledTimes(1);
+  });
+
   // stale (a backend update not yet picked up) is decided by the CP alone. Hold whatever is
   // pushed and clear it when it goes — remembering it client-side would leave the
   // restart-needed badge up even after a restart resolved it.

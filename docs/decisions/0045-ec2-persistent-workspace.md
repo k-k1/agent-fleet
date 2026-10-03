@@ -1476,16 +1476,20 @@ Code: `control-plane/internal/runtime/home_wipe.go`, `control-plane/internal/run
 **Note (2026-10-03, #1260): Fargate now has a place to run the removal.** The stack declares a one-shot task
 (`HomeOpsTaskDef` in `30-ingress`) that mounts the EFS root as uid 0 and runs `af-cp efs-home-op` from the CP
 image, so `homeKeep` has one definition. The CP starts it with `ecs:RunTask` (granted only for that family in
-this cluster, `CpHomeOpsPolicy`) and reads the exit code with `DescribeTasks`; `startedBy=af-home/<membership>`
-makes ECS the record of a task in flight, so a Start or a second operation is refused while one runs, across a
-CP restart. The root rather than the member's access point: a task definition's volumes cannot be overridden
+this cluster, `CpHomeOpsPolicy`) and reads the exit code with `DescribeTasks`. A marker parameter,
+`/af-ws/<workspace>/home-task`, written before `RunTask` and holding the ARN after it, is the record of a task in
+flight (RunTask, ListTasks and DescribeTasks are eventually consistent; GetParameter is not), so a Start or a
+second operation is refused while one may run, across a CP restart. The wait for the workspace's own task reads
+its `LastStatus`, not the service's running count, which drops while the task is still stopping. The root rather than the member's access point: a task definition's volumes cannot be overridden
 per run, uid 1000 cannot remove read-only toolchain trees, and Destroy removes the access point's own root. The
 command confines itself instead (a one-element membership id, a real mount, only `/home/<id>` and
 `/claude-config/<id>`). A task takes minutes, so the member's Recreate and Clean home answer `starting` and
 finish stop → task → start in the background under the lifecycle lease, and the administrator's Clean home and
 Destroy answer 202 and write the audit outcome when the task ends. Destroy now removes both EFS directories
 instead of returning them as leftovers, and a failed task keeps the workspace row for the retry. A stack
-without the task keeps the old refusal. Code: `control-plane/internal/runtime/runtime_ecs_home_task.go`,
+without the task keeps the old refusal, and `ecs-ec2` (whose Destroy runs this adapter's) never uses it. What
+follows the task — the member's start, the audit outcome, Destroy's row deletion — lives in the CP process and
+is lost if it restarts mid-task; the guide says how to finish by hand. Code: `control-plane/internal/runtime/runtime_ecs_home_task.go`,
 `home_task.go`, `control-plane/workspace_handlers.go` (`memberHomeWipe`), `control-plane/workspace_lifecycle.go`.
 
 ## Decision 32 — A member's Recreate and Clean home mark the home, and the next Start removes it (2026-09-30)

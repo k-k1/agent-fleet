@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/efs"
 	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 )
 
 // --- fakes for the narrow AWS ports; they record calls and return canned data so
@@ -202,16 +203,38 @@ func (f *fakeEFS) DeleteAccessPoint(_ context.Context, in *efs.DeleteAccessPoint
 type fakeSSM struct {
 	puts    []*ssm.PutParameterInput
 	deletes []*ssm.DeleteParameterInput
+	// values is what GetParameter reads back: every put, until it is deleted. at, when set,
+	// is the LastModifiedDate it reports for a name (default: now).
+	values map[string]string
+	at     map[string]time.Time
 }
 
 func (f *fakeSSM) PutParameter(_ context.Context, in *ssm.PutParameterInput, _ ...func(*ssm.Options)) (*ssm.PutParameterOutput, error) {
 	f.puts = append(f.puts, in)
+	if f.values == nil {
+		f.values = map[string]string{}
+	}
+	f.values[aws.ToString(in.Name)] = aws.ToString(in.Value)
 	return &ssm.PutParameterOutput{}, nil
 }
 
 func (f *fakeSSM) DeleteParameter(_ context.Context, in *ssm.DeleteParameterInput, _ ...func(*ssm.Options)) (*ssm.DeleteParameterOutput, error) {
 	f.deletes = append(f.deletes, in)
+	delete(f.values, aws.ToString(in.Name))
 	return &ssm.DeleteParameterOutput{}, nil
+}
+
+func (f *fakeSSM) GetParameter(_ context.Context, in *ssm.GetParameterInput, _ ...func(*ssm.Options)) (*ssm.GetParameterOutput, error) {
+	v, ok := f.values[aws.ToString(in.Name)]
+	if !ok {
+		return nil, fmt.Errorf("ParameterNotFound: %s", aws.ToString(in.Name))
+	}
+	at, ok := f.at[aws.ToString(in.Name)]
+	if !ok {
+		at = time.Now()
+	}
+	return &ssm.GetParameterOutput{Parameter: &ssmtypes.Parameter{
+		Name: in.Name, Value: aws.String(v), LastModifiedDate: aws.Time(at)}}, nil
 }
 
 func newTestECS(fe *fakeECS, ff *fakeEFS, fs *fakeSSM) *ecsRuntime {

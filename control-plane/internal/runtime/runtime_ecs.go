@@ -67,6 +67,8 @@ type efsAPI interface {
 type ssmAPI interface {
 	PutParameter(context.Context, *ssm.PutParameterInput, ...func(*ssm.Options)) (*ssm.PutParameterOutput, error)
 	DeleteParameter(context.Context, *ssm.DeleteParameterInput, ...func(*ssm.Options)) (*ssm.DeleteParameterOutput, error)
+	// GetParameter reads the home task's in-flight marker (runtime_ecs_home_task.go).
+	GetParameter(context.Context, *ssm.GetParameterInput, ...func(*ssm.Options)) (*ssm.GetParameterOutput, error)
 }
 
 // ecsRuntime is the `aws` Runtime adapter (P3-7 stage 2). It maps one per-membership
@@ -112,6 +114,8 @@ type ecsRuntime struct {
 	tasks ecsTaskAPI
 	// homeTaskPoll overrides ecsHomeTaskPoll; tests set it to a millisecond.
 	homeTaskPoll time.Duration
+	// homeTaskMissingGrace overrides the constant of that name, for tests.
+	homeTaskMissingGrace time.Duration
 }
 
 var _ Runtime = (*ecsRuntime)(nil)

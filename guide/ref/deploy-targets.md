@@ -74,6 +74,12 @@ stopped and the reason is shown. An administrator's Clean home and **Destroy wor
 straight away, and their outcome is written to the audit log when the task has finished. Destroy
 now removes the member's EFS directories as well, instead of listing them as left over. A stack
 from before this task (no `AF_ECS_HOME_TASK`) does not offer these buttons, as before.
+While a task runs, a start and any second operation on that home are refused, even across a
+Control Plane restart. What a restart does lose is the step after the task: a member's workspace
+is not started again (press Start once the task has finished), the reason for a failure is not
+shown, a Destroy leaves the workspace row (run Destroy again; it is safe to repeat), and the audit
+log has the request but no outcome. The task's own log (the workspace log group, stream prefix
+`home-ops`) says how it ended.
 
 ⁸ Deletes the member's home volume and its hibernation copies; the next start builds a
 fresh home, as for a new member. On this target the logins, connections and Claude state

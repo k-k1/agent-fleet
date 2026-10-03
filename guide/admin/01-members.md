@@ -99,6 +99,8 @@ Clean home is not offered on every deployment ([ref/deploy-targets](../ref/deplo
 Where it is missing, the home is removed by **Destroy workspace** instead, which lists anything it
 could not delete. On Fargate (`ecs`) Clean home and Destroy run as a task that takes a few
 minutes: the button answers at once, and the outcome is written to the audit log when it is done.
+If the Control Plane restarts meanwhile, the outcome entry is not written; see
+[ref/deploy-targets](../ref/deploy-targets.md) for how to tell how it ended.
 
 Someone you removed stays on the roster marked "removed". That is so steps 2 to 4 remain reachable
 afterwards — they have not vanished.
