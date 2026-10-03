@@ -258,6 +258,13 @@ func tagInjectedTurns(name string, turns []transcript.Turn) {
 				src, hit = bySource[slash]
 			}
 		}
+		if !hit {
+			// A held operator or scheduled prompt delivered after a restart carries a queue-time
+			// mark the recorded text does not (agents.MarkHeldInstruction).
+			if orig, ok := agents.StripHeldMark(text); ok {
+				src, hit = bySource[strings.TrimSpace(orig)]
+			}
+		}
 		if hit {
 			turns[i].Source = src
 		}

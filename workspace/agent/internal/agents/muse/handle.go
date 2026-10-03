@@ -968,8 +968,11 @@ func (h *threadHandle) accept(in agents.TurnInput, steer bool) (queued bool, err
 		return true, nil
 	}
 	t := h.tq().Take()
-	id := h.commitLocked(t)
+	id, ok := h.commitLocked(t)
 	h.mu.Unlock()
+	if !ok {
+		return false, nil // a drop reported it as not run (TurnQueue.Commit)
+	}
 
 	queued, err = h.launch(t, id)
 	if err != nil {
@@ -982,12 +985,15 @@ func (h *threadHandle) accept(in agents.TurnInput, steer bool) (queued bool, err
 
 // commitLocked commits the taken head and marks its turn/start out, returning the commandId.
 // Nothing waits between taking and sending, so the two share one critical section: from here a
-// stop reaches the input only through the turn it becomes. Caller holds h.mu.
-func (h *threadHandle) commitLocked(t *agents.Taken) string {
-	h.tq().Commit(t)
+// stop reaches the input only through the turn it becomes. false: Commit refused it (a drop
+// reported it as not run), and nothing is out. Caller holds h.mu.
+func (h *threadHandle) commitLocked(t *agents.Taken) (string, bool) {
+	if !h.tq().Commit(t) {
+		return "", false
+	}
 	h.starting = msp.NewCommandID()
 	h.calling = true
-	return h.starting
+	return h.starting, true
 }
 
 // launch sends the head's turn/start and records the host's answer. queued is the host's own
@@ -1145,8 +1151,11 @@ func (h *threadHandle) pump() {
 			h.mu.Unlock()
 			return
 		}
-		id := h.commitLocked(t)
+		id, ok := h.commitLocked(t)
 		h.mu.Unlock()
+		if !ok {
+			continue
+		}
 		_, err := h.launch(t, id)
 		if err == nil {
 			return

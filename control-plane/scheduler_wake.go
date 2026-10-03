@@ -331,6 +331,8 @@ func buildInjectBody(sch store.Schedule, slot time.Time) []byte {
 		// follows it, so it is on disk before the Agent delivers initial_prompt — an arm set
 		// afterwards races the delivery, and a prompt arriving after an arm releases it.
 		"stop_after_turn": sch.StopAfterRun,
+		"schedule_id":     sch.ID, // see reuseSendBody
+		"schedule_slot":   slot.UTC().Format(time.RFC3339),
 	}
 	b, _ := json.Marshal(body)
 	return b

@@ -705,6 +705,8 @@ func registerScheduleRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /internal/schedules/{id}/resume", s.withScheduleToken(s.resume))
 	mux.HandleFunc("POST /internal/schedules/{id}/run-now", s.withScheduleToken(s.runNow))
 	mux.HandleFunc("GET /internal/schedules/{id}/runs", s.withScheduleToken(s.runs))
+	// The Agent's report that a fired run's prompt was dropped before it ran (#1257).
+	mux.HandleFunc("POST /internal/schedules/{id}/runs/not-executed", s.withScheduleToken(s.runNotExecuted))
 
 	// Console member routes (P5): the logged-in member manages their own schedules. No
 	// create here — authoring a schedule from natural language is the operator's NL->spec

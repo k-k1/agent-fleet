@@ -54,6 +54,23 @@ describe("reportText (docs/log/28 P6)", () => {
     expect(exit("from-the-future")).toContain("from-the-future");
   });
 
+  // #1257: a not-run report's reason names why the queued instruction was dropped, from its own
+  // label set, not the exit reasons.
+  it("resolves the not-run reason label", () => {
+    const notRun = (reason: string) =>
+      reportText({
+        content: "",
+        notice_key: "chat.report.not_run",
+        notice_args: { display: "d", name: "s7" },
+        report_kind: "not-run",
+        report_reason: reason,
+      });
+    expect(notRun("archived")).toContain("開始前にセッションのキューから取り除かれました（セッションがアーカイブされた）");
+    setLocale("en");
+    expect(notRun("discarded")).toContain("before it started (a stop discarded the queue).");
+    expect(notRun("from-the-future")).toContain("(from-the-future)");
+  });
+
   // A note appears exactly when its argument is present. Times travel as epoch millis and are
   // formatted in the Console's display locale; formatted server-side they would stay Japanese even
   // in an English Console.

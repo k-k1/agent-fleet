@@ -92,3 +92,24 @@ restarts) all reduce to one of **identity (1 bit), detection (a one-shot edge in
   receiving end are unchanged, and the decision that "the advertised set is the scope boundary", so
   that other fleet tools cannot be called by guesswork, is maintained. `--self-report` on its own
   still advertises exactly one tool.
+
+## Addendum (2026-10-03) — an instruction whose prompt never ran
+
+On a Managed session an instruction's prompt can wait in the session's queue behind a running turn, survive a halt,
+and be dropped before it runs (#1257, [0105](0105-stop-continues-into-the-queue.md) addendum 2026-10-03). The row is
+raised before the send, marked `sending`, and the prompt carries the row id (`TurnInput.Instr`, kept in its held
+file), not a message id: a driver may rewrite the id it is given (opencode does). The send's outcome clears
+`sending`, or withdraws the row when the driver refused the prompt.
+
+- While the row is `sending` or its prompt waits (`agents.HeldInstrs`), the row is left out of the settle decision:
+  the turn it queued behind ending, or being stopped, is not its completion, and a report delivered for a prompt
+  the driver then refuses could not be taken back.
+- `sending` holds the boot id of the Agent process sending it, so a row left `sending` by an Agent that is gone
+  (another boot id) is told apart from this process's own send however a sweep interleaves with it. Such a row
+  is settled by evidence, not by time. With a held file the driver had accepted the prompt, and the row becomes an ordinary queued row. Without
+  one nothing shows whether the prompt reached the session, so it gets an `unconfirmed` report and is closed as
+  `unconfirmed`: neither a completion nor a not-run is asserted, and the operator is told to look before resending.
+- When the prompt is dropped, the row records why (`dropped`), and the next sweep delivers a `not-run` report with
+  that reason, without waiting for quiet evidence and even when the session's meta is gone. Delivered, the row is
+  closed as `not_run`, which is never a reopen candidate. A retry keeps the row open, as for every report.
+- The operator's `stop_session` cancels the rows first, so the prompts it withdraws are not reported back to it.

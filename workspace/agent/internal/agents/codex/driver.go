@@ -805,7 +805,11 @@ func (h *threadHandle) pump() {
 		}
 		// Nothing waits between taking and sending, so the entry is committed at once: from
 		// here a stop can only reach it through the turn it becomes (runTurn's Received).
-		h.tq().Commit(t)
+		// Refused: a drop reported it as not run (TurnQueue.Commit), so it never starts.
+		if !h.tq().Commit(t) {
+			h.mu.Unlock()
+			continue
+		}
 		h.running = true
 		gen := h.gen
 		h.mu.Unlock()

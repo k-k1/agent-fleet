@@ -32,11 +32,28 @@ type TurnInput struct {
 	// Origin is who this input came from (ADR 0105 decision 1). Every constructor of a
 	// TurnInput sets it; the stop rules read it to tell the member's own input from the rest.
 	Origin Origin
+	// Schedule names the scheduled run a schedule-origin input belongs to, so a held prompt
+	// that is dropped before it runs can be recorded against that run (heldpeers.go). Empty
+	// for every other origin, and for a Control Plane that does not send it.
+	Schedule ScheduleRef
+	// Instr is the instruction-ledger row an operator or scheduled input fulfils (chatx), so a
+	// held input is found by its row whatever id the driver gives it, and a drop names the row.
+	// Empty for input that owes no report.
+	Instr string
 
-	// queuedAt is when a peer message was first queued, kept across a restart (heldpeers.go).
+	// queuedAt is when a held input was first queued, kept across a restart (heldpeers.go).
 	queuedAt time.Time
-	// restored marks a held peer message DeliverHeld sends again after a restart.
+	// restored marks a held input DeliverHeld sends again after a restart.
 	restored bool
+	// onDisk: the input's held file was written. Whoever removes it first owns the input: the
+	// queue's Commit (it runs) or a drop (it is reported as not run), never both.
+	onDisk bool
+}
+
+// ScheduleRef identifies one scheduled run: the schedule and the slot it fired for (RFC 3339).
+type ScheduleRef struct {
+	ID   string `json:"id,omitempty"`
+	Slot string `json:"slot,omitempty"`
 }
 
 // Origin kinds. The spelling is the mirror's injection-badge vocabulary (sessionx

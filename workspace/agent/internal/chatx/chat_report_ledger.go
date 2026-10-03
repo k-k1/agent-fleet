@@ -28,6 +28,7 @@ package chatx
 // State machine: pending →(interim report)→ interim_reported →(completion/abnormal)→ reported
 //                reported →(compensation, Phase 3)→ reopened →…→ reported
 //                pending/interim_reported →(stop_session disarm)→ cancelled
+//                open →(its queued prompt dropped before it ran, then reported)→ not_run
 // open (= a report is still owed) = pending | interim_reported | reopened.
 
 import (
@@ -51,6 +52,14 @@ const (
 	instrReported  = "reported"
 	instrReopened  = "reopened"  // row re-opened by the compensation for a wrong "completion" (Phase 3)
 	instrCancelled = "cancelled" // stop_session = the instruction is withdrawn
+	// instrNotRun: the instruction's prompt was dropped from the session's queue before it
+	// ran (#1257), and that has been reported. Closed, and never a reopen candidate: nothing
+	// ran that a later busy period could be the continuation of.
+	instrNotRun = "not_run"
+	// instrUnconfirmed: the Agent restarted while the row's prompt was being sent, and nothing
+	// shows whether the driver accepted it (#1257). Reported as such and closed: neither a
+	// completion nor a not-run can be asserted, and waiting would wait forever.
+	instrUnconfirmed = "unconfirmed"
 )
 
 // instrCursor is the row's progress cursor: the lower bound that makes "the session worked
@@ -84,6 +93,20 @@ type instrRow struct {
 	Interim     instrInterimAt `json:"interim,omitempty"`
 	ReportedAt  string         `json:"reported_at,omitempty"`
 	ReopenCount int            `json:"reopen_count,omitempty"`
+	// Sending: the row was raised for a prompt a Managed driver has not accepted yet (#1257).
+	// It is out of the settle decision until the send returns (MarkInstrSent), or is withdrawn
+	// if the send fails: a report delivered meanwhile could not be taken back. A Managed
+	// prompt's held file names the row (agents.TurnInput.Instr), which keeps it out after that
+	// for as long as the prompt waits.
+	//
+	// The value is the boot id of the Agent process that is sending (instrBoot), so the row
+	// itself says whether the sender is still alive: a row this process is sending is never
+	// mistaken for one an Agent that is gone left behind, however a sweep interleaves with the
+	// send. Empty = not sending.
+	Sending string `json:"sending,omitempty"`
+	// Dropped is why the row's prompt went without running (agents.Drop*). Set, the row still
+	// owes a report: the not-run report, delivered on the next sweep.
+	Dropped string `json:"dropped,omitempty"`
 }
 
 // open reports whether the row still owes a completion report.
@@ -192,9 +215,103 @@ func AddInstruction(name, convID, source string) string {
 	return addInstructionAt(name, convID, source, time.Now())
 }
 
+// AddSendingInstruction is AddInstruction for a prompt about to be sent to a Managed driver,
+// which carries the returned row id (agents.TurnInput.Instr). It is called BEFORE the send, so
+// a drop during the send finds the row; the send's outcome then settles it: MarkInstrSent, or
+// WithdrawInstruction when the driver refused the prompt.
+func AddSendingInstruction(name, convID, source string) string {
+	return addSendingInstructionAt(name, convID, source, instrBoot, time.Now())
+}
+
+// instrBoot identifies this Agent process in a row's Sending field.
+var instrBoot = "boot-" + strings.ReplaceAll(RandUUID(), "-", "")[:16]
+
+// sentByGoneAgent reports whether r is marked sending by an Agent process other than this one:
+// that send's outcome will never be recorded.
+func sentByGoneAgent(r instrRow) bool { return r.Sending != "" && r.Sending != instrBoot }
+
+// MarkInstrSent ends row id's sending state: the driver accepted the prompt.
+func MarkInstrSent(name, id string) {
+	if id == "" {
+		return
+	}
+	unlock := lockInstr(name)
+	defer unlock()
+	rows := ReadInstrRows(name)
+	for i := range rows {
+		if rows[i].ID == id {
+			rows[i].Sending = ""
+			writeInstrRows(name, rows)
+			return
+		}
+	}
+}
+
+// WithdrawInstruction removes row id: its prompt was never accepted.
+func WithdrawInstruction(name, id string) {
+	if id == "" {
+		return
+	}
+	unlock := lockInstr(name)
+	defer unlock()
+	rows := ReadInstrRows(name)
+	kept := rows[:0]
+	for _, r := range rows {
+		if r.ID != id {
+			kept = append(kept, r)
+		}
+	}
+	writeInstrRows(name, kept)
+}
+
+// MarkInstrNotRun records that row id's prompt was dropped before it ran, for reason
+// (agents.Drop*). The row stays open until the next sweep has reported it as not run:
+// deliver-then-consume, as for every report. False when no such open row exists.
+func MarkInstrNotRun(name, id, reason string) bool {
+	if id == "" {
+		return false
+	}
+	unlock := lockInstr(name)
+	rows := ReadInstrRows(name)
+	hit := false
+	for i := range rows {
+		if rows[i].ID == id && rows[i].open() && rows[i].Dropped == "" {
+			rows[i].Dropped = reason
+			hit = true
+		}
+	}
+	if hit {
+		writeInstrRows(name, rows)
+	}
+	unlock()
+	if hit {
+		reportRec.nudge()
+	}
+	return hit
+}
+
+// markInstrNotRunReported closes row id as state once its not-run or unconfirmed report has
+// been delivered.
+func markInstrNotRunReported(name, id, state string, at time.Time) {
+	unlock := lockInstr(name)
+	defer unlock()
+	rows := ReadInstrRows(name)
+	for i := range rows {
+		if rows[i].ID == id && rows[i].open() {
+			rows[i].State = state
+			rows[i].ReportedAt = at.Format(time.RFC3339)
+		}
+	}
+	writeInstrRows(name, rows)
+}
+
 // addInstructionAt is AddInstruction with an explicit delivery time (a seam so tests can build
 // the ordering between delivery and evidence deterministically).
 func addInstructionAt(name, convID, source string, at time.Time) string {
+	return addSendingInstructionAt(name, convID, source, "", at)
+}
+
+func addSendingInstructionAt(name, convID, source, sending string, at time.Time) string {
 	if !session.ValidName(name) || !paths.ValidIDSegment(convID) {
 		return ""
 	}
@@ -204,7 +321,7 @@ func addInstructionAt(name, convID, source string, at time.Time) string {
 	ts := at.Format(time.RFC3339)
 	row := instrRow{
 		ID: newInstrID(), Conv: convID, Source: source,
-		DeliveredAt: ts, Cursor: instrCursor{At: ts}, State: instrPending,
+		DeliveredAt: ts, Cursor: instrCursor{At: ts}, State: instrPending, Sending: sending,
 	}
 	unlock := lockInstr(name)
 	writeInstrRows(name, append(ReadInstrRows(name), row))

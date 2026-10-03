@@ -1,22 +1,30 @@
 package agents
 
-// Held peer messages (#1255): another session's message waiting in a Managed driver's queue
-// survives what drops the queue — halt, the execution-method switch's stop, Agent shutdown, a
-// daemon drain, and a crash — and becomes the session's first turn(s) on its next start.
+// Held input (#1255, #1257): a peer message, an operator prompt (send_to_session with
+// report_to) or a scheduled prompt waiting in a Managed driver's queue survives what drops the
+// queue — halt, the execution-method switch's stop, Agent shutdown, a daemon drain, and a crash —
+// and becomes the session's first turn(s) on its next start. These are the origins nobody at the
+// session's keyboard can resend: the member's own queued input is the member's to resend, and is
+// not held.
 //
-// The queue writes a peer entry through to disk when it accepts it, not at teardown: a crash
+// The queue writes a held entry through to disk when it accepts it, not at teardown: a crash
 // or an OOM kill runs no teardown, and those are the restarts nobody is told about. The file
 // goes when the entry is handed to the runtime (Commit), when a stop discards it and when it is
 // removed by id; teardown (DropAll) leaves it. Archive and trash drop the session's files
-// (DropHeld): the issue's decision, since a message to a folded-away session has no reader.
+// (DropHeld): a message to a folded-away session has no reader.
+//
+// An operator or scheduled prompt that goes without running is reported through
+// OnHeldDropped: the operator's instruction ledger still owes a report for it, and the
+// scheduler recorded the run as fired. A peer message's drop is only logged (ADR 0041 keeps
+// peers off the ledger).
 //
 // One file per message, written by temp file + rename and removed by name, so no writer ever
 // reads, modifies and writes back a shared file (fstore has no lock and no rename, and a
 // read-modify-write there measurably loses writes). Order is the queue time, then a
-// process-wide sequence for entries queued in the same instant.
+// process-wide sequence for entries queued in the same instant, one FIFO across origins.
 //
-// Only peer messages are held. Operator and scheduled prompts are lost with the queue as
-// before (#1257), and the member's own queued input is the member's to resend.
+// The directory keeps its held-peer name: files an earlier Agent wrote there carry no origin
+// and are peer messages.
 
 import (
 	"crypto/sha256"
@@ -53,6 +61,17 @@ type heldPeer struct {
 	BlockedOn   string    `json:"blockedOn,omitempty"`
 	QueuedAt    time.Time `json:"queuedAt"`
 	Seq         uint64    `json:"seq"`
+	// Origin is the input's Origin.Kind; empty is a peer message.
+	Origin   string      `json:"origin,omitempty"`
+	Schedule ScheduleRef `json:"schedule,omitempty"`
+	Instr    string      `json:"instr,omitempty"`
+}
+
+func (hp heldPeer) origin() string {
+	if hp.Origin == "" {
+		return OriginPeer
+	}
+	return hp.Origin
 }
 
 func heldDir(name string) string { return spoolDir(heldSubdir, name) }
@@ -73,16 +92,78 @@ func spoolFile(sub, name, id string) string {
 	return filepath.Join(spoolDir(sub, name), hex.EncodeToString(sum[:16])+".json")
 }
 
-func isHeldPeer(in TurnInput) bool { return in.Origin.Kind == OriginPeer }
+// isHeldOrigin reports whether input of origin kind is held: the origins nobody at the
+// session's keyboard can resend.
+func isHeldOrigin(kind string) bool {
+	switch kind {
+	case OriginPeer, OriginOperator, OriginSchedule, OriginScheduleManual:
+		return true
+	}
+	return false
+}
 
-// putHeld writes in's file. Caller holds the driver's handle lock.
-func putHeld(name string, in TurnInput) {
-	if !heldName(name) || in.ClientMessageID == "" {
+func isHeld(in TurnInput) bool { return isHeldOrigin(in.Origin.Kind) }
+
+// Reasons a held input goes without running (HeldDrop.Reason).
+const (
+	DropArchived  = "archived"
+	DropTrashed   = "trashed"
+	DropRecreated = "recreated"
+	DropTerminal  = "switched-to-terminal"
+	DropGone      = "session-gone"
+	DropDiscarded = "discarded" // a second stop or the discard-queue stop
+	DropStopped   = "stopped"   // a first stop caught it before it started
+	DropRemoved   = "removed"   // the member removed it from the queue
+	DropWithdrawn = "withdrawn" // the operator's stop_session withdrew its instructions
+)
+
+// HeldDrop is one held operator or scheduled input that went without running.
+type HeldDrop struct {
+	Session  string
+	ID       string // the input's ClientMessageID
+	Instr    string // TurnInput.Instr
+	Origin   string
+	Schedule ScheduleRef
+	QueuedAt time.Time
+	Reason   string
+}
+
+// OnHeldDropped is told about every held operator or scheduled input that is dropped before
+// it ran, so its instruction is reported as not run and its scheduled run recorded as not
+// executed. Set once at boot, before anything is queued; nil drops silently (this package's
+// tests). It may be called under a driver's handle lock: it must not block on the network or
+// call back into a driver.
+var OnHeldDropped func(HeldDrop)
+
+func reportDropped(d HeldDrop) {
+	if d.Origin == OriginPeer || d.Origin == "" {
 		return
+	}
+	log.Printf("held input: %s: dropped %s %s queued %s (%s)",
+		d.Session, d.Origin, d.ID, d.QueuedAt.Format(time.RFC3339), d.Reason)
+	if f := OnHeldDropped; f != nil {
+		f(d)
+	}
+}
+
+// dropQueued reports in, a held input a stop or a removal took out of the queue.
+func dropQueued(name string, in TurnInput, reason string) {
+	if !isHeld(in) {
+		return
+	}
+	reportDropped(HeldDrop{Session: name, ID: in.ClientMessageID, Instr: in.Instr, Origin: in.Origin.Kind,
+		Schedule: in.Schedule, QueuedAt: in.queuedAt, Reason: reason})
+}
+
+// putHeld writes in's file and reports whether it did. Caller holds the driver's handle lock.
+func putHeld(name string, in TurnInput) bool {
+	if !heldName(name) || in.ClientMessageID == "" {
+		return false
 	}
 	b, err := json.Marshal(heldPeer{
 		ID: in.ClientMessageID, Prompt: in.Prompt, Attachments: in.Attachments,
 		From: in.Origin.From, QueuedAt: in.queuedAt, Seq: heldSeq.Add(1),
+		Origin: heldOriginField(in.Origin.Kind), Schedule: in.Schedule, Instr: in.Instr,
 	})
 	if err == nil {
 		err = writeFileAtomic(heldFile(name, in.ClientMessageID), b)
@@ -90,7 +171,37 @@ func putHeld(name string, in TurnInput) {
 	if err != nil {
 		// The message still runs from memory; only a restart before it starts would lose it.
 		log.Printf("held peer message: %s: write %s: %v", name, in.ClientMessageID, err)
+		return false
 	}
+	return true
+}
+
+// claimHeld removes id's file and reports whether this caller removed it. The file is the
+// token for a held input: Commit and the drops each claim it before acting, so an input that
+// a drop has reported as not run cannot also be handed to the runtime by a queue that adopted
+// it meanwhile (a Resume racing an archive), and one already handed over is not reported.
+//
+// Only a removal that succeeded is a claim. One that fails for another reason (EACCES, EIO)
+// leaves the token in place, and treating it as a claim would let both sides act on it: the
+// input then neither runs nor is reported, and stays on disk for the next start to deliver.
+func claimHeld(name, id string) bool {
+	if !heldName(name) || id == "" {
+		return true
+	}
+	err := os.Remove(heldFile(name, id))
+	if err != nil && !os.IsNotExist(err) {
+		log.Printf("held peer message: %s: remove %s: %v (left for the next start)", name, id, err)
+	}
+	return err == nil
+}
+
+// heldOriginField is the origin as stored: empty for a peer message, the spelling every
+// earlier Agent's files have.
+func heldOriginField(kind string) string {
+	if kind == OriginPeer {
+		return ""
+	}
+	return kind
 }
 
 func writeFileAtomic(path string, b []byte) error {
@@ -126,6 +237,23 @@ func releaseHeld(name, id string) {
 	if err := os.Remove(heldFile(name, id)); err != nil && !os.IsNotExist(err) {
 		log.Printf("held peer message: %s: remove %s: %v", name, id, err)
 	}
+}
+
+// HeldWaiting reports whether input id of session name is still held: queued and not yet
+// handed to the runtime, in this process's queue or on disk for the next start. The report
+// reconciler reads it so an instruction that has not started is not reported as done.
+func HeldWaiting(name, id string) bool { return id != "" && heldExists(name, id) }
+
+// HeldInstrs is the set of instruction rows (TurnInput.Instr) whose input session name still
+// holds. The report reconciler keeps those rows pending.
+func HeldInstrs(name string) map[string]bool {
+	out := map[string]bool{}
+	for _, hp := range loadHeld(name) {
+		if hp.Instr != "" {
+			out[hp.Instr] = true
+		}
+	}
+	return out
 }
 
 func heldExists(name, id string) bool {
@@ -179,25 +307,71 @@ func loadSpool(sub, name string) []heldPeer {
 	return out
 }
 
-// HeldCount is the number of peer messages held for session name.
+// HeldCount is the number of inputs held for session name.
 func HeldCount(name string) int { return len(loadHeld(name)) }
 
-// DropHeld discards session name's held peer messages (archive, trash, a switch to Terminal),
-// logging what went and why: nobody else is told.
+// DropHeld discards session name's held inputs (archive, trash, a switch to Terminal), one of
+// the Drop* reasons. A peer message's drop is logged; an operator or scheduled prompt's is
+// reported (OnHeldDropped).
 func DropHeld(name, reason string) {
 	if !heldName(name) {
 		return
 	}
 	for _, hp := range loadHeld(name) {
-		log.Printf("held peer message: %s: dropped %s from %s queued %s (%s)",
-			name, hp.ID, hp.From, hp.QueuedAt.Format(time.RFC3339), reason)
+		if !claimHeld(name, hp.ID) {
+			continue // handed to the runtime meanwhile: it runs, and is not reported
+		}
+		if hp.origin() == OriginPeer {
+			log.Printf("held peer message: %s: dropped %s from %s queued %s (%s)",
+				name, hp.ID, hp.From, hp.QueuedAt.Format(time.RFC3339), reason)
+		}
+		reportDropped(heldDropOf(name, hp, reason))
 	}
-	if err := os.RemoveAll(heldDir(name)); err != nil {
-		log.Printf("held peer message: %s: remove: %v", name, err)
+	// Not RemoveAll: a file written after the listing above is an input a live queue accepted
+	// meanwhile, which nobody has claimed or reported. Removing it would make its Commit read
+	// the missing token as "dropped and reported" and lose it silently. It stays, and runs or
+	// is dropped by whoever claims it. Stale temp files go; the directory goes once empty.
+	removeStaleTmp(heldDir(name))
+	if err := os.Remove(heldDir(name)); err != nil && !os.IsNotExist(err) {
+		log.Printf("held peer message: %s: directory kept: %v", name, err)
 	}
 }
 
-// DeliverHeld sends session name's held peer messages to h, oldest first. Every Managed
+// removeStaleTmp removes the temp files a crashed write left in dir, sparing young ones that may
+// be a write in flight.
+func removeStaleTmp(dir string) {
+	files, _ := os.ReadDir(dir)
+	for _, f := range files {
+		if !strings.HasPrefix(f.Name(), ".tmp-") {
+			continue
+		}
+		if fi, err := f.Info(); err == nil && time.Since(fi.ModTime()) > heldTmpGrace {
+			os.Remove(filepath.Join(dir, f.Name()))
+		}
+	}
+}
+
+// DropHeldOrigin discards session name's held inputs of origin kind only, reporting each.
+// The operator's stop_session uses it for its own prompts: it withdrew those instructions, so
+// a later start must not run them, while peer messages and scheduled prompts stay.
+func DropHeldOrigin(name, kind, reason string) {
+	if !heldName(name) {
+		return
+	}
+	for _, hp := range loadHeld(name) {
+		if hp.origin() != kind || !claimHeld(name, hp.ID) {
+			continue
+		}
+		reportDropped(heldDropOf(name, hp, reason))
+	}
+}
+
+func heldDropOf(name string, hp heldPeer, reason string) HeldDrop {
+	return HeldDrop{Session: name, ID: hp.ID, Instr: hp.Instr, Origin: hp.origin(), Schedule: hp.Schedule,
+		QueuedAt: hp.QueuedAt, Reason: reason}
+}
+
+// DeliverHeld sends session name's held inputs to h, oldest first. Every Managed
 // driver's Resume calls it once the handle is live, so they become the first turns of the next
 // start and run ahead of whatever the caller of Resume sends next.
 //
@@ -223,16 +397,50 @@ func DeliverHeld(name string, h ThreadHandle) {
 	}
 }
 
-// restoredInput is the TurnInput a held message is sent again as.
+// restoredInput is the TurnInput a held message is sent again as. The prompt is the one
+// accepted, so an operator prompt keeps its self-report line and a peer message its envelope;
+// only the queue time is added.
 func restoredInput(hp heldPeer) TurnInput {
+	origin := hp.origin()
+	prompt := MarkHeldEnvelope(hp.Prompt, hp.QueuedAt)
+	if origin != OriginPeer {
+		prompt = MarkHeldInstruction(hp.Prompt, hp.QueuedAt)
+	}
 	return TurnInput{
-		Prompt:          MarkHeldEnvelope(hp.Prompt, hp.QueuedAt),
+		Prompt:          prompt,
 		Attachments:     hp.Attachments,
 		ClientMessageID: hp.ID,
-		Origin:          Origin{Kind: OriginPeer, From: hp.From},
+		Origin:          Origin{Kind: origin, From: hp.From},
+		Schedule:        hp.Schedule,
+		Instr:           hp.Instr,
 		queuedAt:        hp.QueuedAt,
 		restored:        true,
+		onDisk:          true,
 	}
+}
+
+// heldMarkHead opens the line MarkHeldInstruction appends.
+const heldMarkHead = "\n\n[agent-fleet:held queued="
+
+// MarkHeldInstruction appends `[agent-fleet:held queued=<time>]` to an operator or scheduled
+// prompt delivered after a restart, so the agent can judge an instruction that waited across a
+// stop. It goes at the end: the prompt has no envelope to carry it, and the mirror matches the
+// turn to its recorded origin by the text before the mark (StripHeldMark).
+func MarkHeldInstruction(prompt string, at time.Time) string {
+	if at.IsZero() || strings.Contains(prompt, heldMarkHead) {
+		return prompt
+	}
+	return prompt + heldMarkHead + at.Local().Format(time.RFC3339) + "]"
+}
+
+// StripHeldMark returns text without the mark MarkHeldInstruction appended, and whether there
+// was one.
+func StripHeldMark(text string) (string, bool) {
+	i := strings.LastIndex(text, strings.TrimLeft(heldMarkHead, "\n"))
+	if i < 0 || !strings.HasSuffix(text, "]") || strings.Contains(text[i:], "\n") {
+		return text, false
+	}
+	return strings.TrimRight(text[:i], "\n"), true
 }
 
 // MarkHeldEnvelope adds queued=<time> to a peer envelope (`[agent-fleet:peer from=… reply=…]`)
@@ -255,7 +463,7 @@ func MarkHeldEnvelope(prompt string, at time.Time) string {
 // a write still in flight.
 const heldTmpGrace = time.Minute
 
-// SweepHeld removes held messages nobody will deliver, at Agent boot: a crash can land between
+// SweepHeld removes held inputs nobody will deliver, at Agent boot: a crash can land between
 // the trash removing a session's meta and DropHeld, and a send racing an archive can write after
 // it. Boot reconciliation walks metas only, so without this such a directory stays forever. It
 // drops the directories of sessions with no meta, archived ones and Terminal ones (only a Managed
@@ -275,23 +483,15 @@ func SweepHeld() {
 		m, ok := session.ReadMeta(name)
 		switch {
 		case !ok:
-			DropHeld(name, "the session no longer exists")
+			DropHeld(name, DropGone)
 			continue
 		case m.Archived:
-			DropHeld(name, "the session is archived")
+			DropHeld(name, DropArchived)
 			continue
 		case m.DriverKind() != session.DriverManaged:
-			DropHeld(name, "the session runs on Terminal (CLI)")
+			DropHeld(name, DropTerminal)
 			continue
 		}
-		files, _ := os.ReadDir(filepath.Join(root, name))
-		for _, f := range files {
-			if !strings.HasPrefix(f.Name(), ".tmp-") {
-				continue
-			}
-			if fi, err := f.Info(); err == nil && time.Since(fi.ModTime()) > heldTmpGrace {
-				os.Remove(filepath.Join(root, name, f.Name()))
-			}
-		}
+		removeStaleTmp(filepath.Join(root, name))
 	}
 }

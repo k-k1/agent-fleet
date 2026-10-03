@@ -179,3 +179,30 @@ func TestFirstStopDuringTheBusyCheckKeepsTheInput(t *testing.T) {
 	}
 	waitState(t, h, agents.TurnCompleted)
 }
+
+// #1257 on a real driver: opencode rewrites the ClientMessageID it is given (normalizeMsgID),
+// so an operator prompt is found by its instruction row, not by an id the caller minted. An
+// archive that drops it while it waits reports that row, and the pump then never sends it.
+func TestHeldOperatorInputIsFoundByItsRowAndNeverRunsOnceDropped(t *testing.T) {
+	m, srv := newMockServe(t)
+	h := newTestHandle(t, srv)
+	var drops []agents.HeldDrop
+	prev := agents.OnHeldDropped
+	agents.OnHeldDropped = func(d agents.HeldDrop) { drops = append(drops, d) }
+	t.Cleanup(func() { agents.OnHeldDropped = prev })
+
+	heldBehindAForeignTurn(t, m, h, agents.TurnInput{Prompt: "operator task", Instr: "i-row1",
+		Origin: agents.Origin{Kind: agents.OriginOperator}})
+	if !agents.HeldInstrs(h.name)["i-row1"] {
+		t.Fatal("the held operator prompt is not found by its row")
+	}
+	agents.DropHeld(h.name, agents.DropArchived)
+	if len(drops) != 1 || drops[0].Instr != "i-row1" || drops[0].Reason != agents.DropArchived {
+		t.Fatalf("drops = %+v", drops)
+	}
+	endForeignTurn(m)
+	waitPumpIdle(t, h)
+	if got := sentTurns(m); len(got) != 0 {
+		t.Fatalf("a prompt reported as not run was sent: %q", got)
+	}
+}

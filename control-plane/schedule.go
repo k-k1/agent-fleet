@@ -11,7 +11,9 @@ package main
 // it and computes the concrete next fire, which the operator reads back to the user.
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -409,6 +411,85 @@ func (a scheduleAPI) runs(w http.ResponseWriter, r *http.Request, mv store.Membe
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"schedule_id": id, "runs": out})
+}
+
+// runNotExecuted records that a run the scheduler recorded as fired never ran (#1257): a
+// Managed session queued its prompt behind a running turn and dropped it before it started
+// (an archive, a discarding stop, a removal). The Agent learns of the drop long after the fire,
+// so it names the run by schedule, session and slot. The run's status becomes an error, which
+// the history shows as a failure, and the member is notified as for a failed fire.
+func (a scheduleAPI) runNotExecuted(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
+	id := r.PathValue("id")
+	sch, aerr := a.getOwned(r, id, mv)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	var body struct {
+		Session string `json:"session"`
+		Slot    string `json:"slot"`
+		Reason  string `json:"reason"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&body); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON body"})
+		return
+	}
+	slot, err := time.Parse(time.RFC3339, body.Slot)
+	if err != nil || strings.TrimSpace(body.Session) == "" {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "session and an RFC 3339 slot are required"})
+		return
+	}
+	reason := truncStatus(body.Reason)
+	if reason == "" {
+		reason = "dropped"
+	}
+	status := truncStatus("error:not executed: the queued prompt was dropped before it ran (" + reason + ")")
+	found, changed, err := a.store.MarkScheduleRunNotExecuted(r.Context(), id, mv.MembershipID, body.Session,
+		slot.UTC().Format(time.RFC3339), status, reason)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "run_not_found", "no run of this schedule for that session and slot"})
+		return
+	}
+	if changed {
+		notifyScheduleNotExecuted(r.Context(), a.mgr.store, sch, slot, body.Session, status)
+	}
+	writeJSON(w, http.StatusOK, scheduleRunNotExecutedResp{ScheduleID: id, Status: status, Changed: changed})
+}
+
+// scheduleRunNotExecutedResp is runNotExecuted's answer. Changed is false for a repeated
+// report, or a run that had already failed: nothing was written.
+type scheduleRunNotExecutedResp struct {
+	ScheduleID string `json:"schedule_id"`
+	Status     string `json:"status"`
+	Changed    bool   `json:"changed"`
+}
+
+// notifyScheduleNotExecuted is notifyOutcome's notification for a run found not executed after
+// the fact. The EventID names the session too: one slot of a reuse schedule has one run, but a
+// new-mode schedule's create is retried under the same slot.
+func notifyScheduleNotExecuted(ctx context.Context, st interface {
+	InsertNotification(context.Context, store.Notification) error
+}, sch store.Schedule, slot time.Time, session, status string) {
+	label := sch.SpecLabel
+	if label == "" {
+		label = sch.ID
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"schedule_id": sch.ID, "status": status, "spec_label": sch.SpecLabel, "spec": sch.Spec,
+	})
+	n := store.Notification{
+		EventID:      "sched-not-executed-" + sch.ID + "-" + slot.UTC().Format(time.RFC3339) + "-" + session,
+		MembershipID: sch.MembershipID, Kind: "schedule-failed",
+		TargetType: "schedule", TargetID: sch.ID, TargetKind: sch.AgentKind,
+		DisplayName: label, Payload: string(payload), CreatedAt: store.NowTS(),
+	}
+	if err := st.InsertNotification(ctx, n); err != nil {
+		log.Printf("schedule: notify not executed %s: %v", sch.ID, err)
+	}
 }
 
 // writeOne re-reads and returns a schedule DTO — the shared tail of the toggle handlers

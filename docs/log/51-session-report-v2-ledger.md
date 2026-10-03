@@ -411,6 +411,12 @@ CI 負荷で tick に遅れると `HintReason` が空のまま marker-idle だ�
 読めるようになった。旧形式のレコード（`turnEndReason` キーが無い）は理由が空と読める
 だけで、クラッシュにも誤報にもならない（`omitempty` の zero value）。
 
+## 追補（2026-10-03）— 走らなかった指示（#1257）
+
+Managed のキューに積まれたまま捨てられた指示は、完了として報告せず `not-run` として報告する。行はプロンプトの
+`ClientMessageID`（`msg`）を持ち、プロンプトが待つ間は完了判定から外す。詳細は
+[ADR 0035](../decisions/0035-session-report-v2-ledger.ja.md) の 2026-10-03 の追記。
+
 ## テスト戦略
 
 - 述語: シグナル組合せ × kind のテーブル駆動（idle/busy 証拠の全交差の代表列）。
