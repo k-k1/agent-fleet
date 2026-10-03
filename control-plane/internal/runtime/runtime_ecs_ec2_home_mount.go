@@ -51,16 +51,20 @@ const quarantineUmountBudget = 45 * time.Second
 
 // unclaimIfOurs drops the claim a failed launch placed, and only that one: the claim must
 // still name the launch's slot, and no Start may have begun in this process since the
-// launch did (gen). A later Start's claim — on this slot or another — stays.
-func (e *ecsEC2Runtime) unclaimIfOurs(ctx context.Context, p ec2Placement, gen int64) {
-	if e.generation().Load() != gen {
+// one the placement belongs to (p.gen). A claim carries no owner beyond the slot id, so
+// the Start count is what tells a later Start's claim on the same slot from this one's.
+// It is read on both sides of the DescribeVolumes, because a Start can begin while that
+// call is out; a Start that begins after the second read still has its placement's own
+// round trips to make before it writes a claim, which the DeleteTags here precedes.
+func (e *ecsEC2Runtime) unclaimIfOurs(ctx context.Context, p ec2Placement) {
+	if p.gen == 0 || e.generation().Load() != p.gen {
 		return
 	}
 	vol, err := e.homeVolume(ctx)
 	if err != nil || vol == nil || aws.ToString(vol.VolumeId) != p.volumeID {
 		return
 	}
-	if ec2TagValue(vol.Tags, EC2TagClaim) != p.instanceID {
+	if ec2TagValue(vol.Tags, EC2TagClaim) != p.instanceID || e.generation().Load() != p.gen {
 		return
 	}
 	e.unclaim(ctx, p.volumeID)

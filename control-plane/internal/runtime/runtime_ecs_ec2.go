@@ -1291,7 +1291,7 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 	// Mark that a Start has begun, so a teardown still draining from the Stop that the
 	// recreate / clean-home handlers issued a moment ago aborts instead of pulling this
 	// workspace's home out from under it.
-	e.generation().Add(1)
+	gen := e.generation().Add(1)
 	e.setPhase("preparing")
 	prep, err := e.prepare(ctx)
 	if err != nil {
@@ -1303,6 +1303,7 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 		e.setPhase("")
 		return err
 	}
+	place.gen = gen
 	// Removing a home's contents takes as long as the home is big, and this thread is
 	// the request's.
 	if place.wipe != "" {
@@ -1330,6 +1331,7 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 			e.bg(ctx, func(c context.Context) {
 				defer e.setPhase("")
 				next, perr := e.placeHome(c)
+				next.gen = place.gen
 				if perr == nil {
 					perr = next.claimErr
 				}
@@ -1563,6 +1565,10 @@ type ec2Placement struct {
 	// replacement marks a slot launched or adopted to replace a reserved one; a successful
 	// launch clears its af-replaces-home link (clearReplacesHome).
 	replacement bool
+	// gen is the Start count (startGen) of the Start this placement belongs to, taken when
+	// that Start began; 0 when no Start made it. A launch may drop its claim only while
+	// no later Start exists (unclaimIfOurs).
+	gen int64
 }
 
 // placeHome resolves the volume and the slot, attaching the two together when it can.
@@ -1885,6 +1891,7 @@ func (e *ecsEC2Runtime) converge(ctx context.Context, p ec2Placement, prep ec2Pr
 		log.Printf("ecs-ec2 start: slot %s is not coming back; re-placing %s", p.instanceID, e.base.name)
 		e.setPhase("slot: replacing")
 		next, perr := e.placeHome(ctx)
+		next.gen = p.gen
 		if perr == nil {
 			perr = next.claimErr // this half runs in the background: see ec2Placement.claimErr
 		}
@@ -1932,7 +1939,6 @@ func (e *ecsEC2Runtime) converge(ctx context.Context, p ec2Placement, prep ec2Pr
 // slot needs ~18s to register with ECS plus the mount. Waiting for it to DISAPPEAR
 // (59s) or for rolloutState=COMPLETED (90s) would cost more than the bug.
 func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep) error {
-	gen := e.generation().Load()
 	// Everything this needs — the instance the constraint pins, the AZ the ENI must land
 	// in — is already decided, so it can all happen while the slot is still booting.
 	taskDefArn, reused, err := e.reuseOrRegisterTaskDef(ctx, p, prep)
@@ -1960,7 +1966,7 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 			// A release took the home off while this launch was on its way. The slot did
 			// nothing wrong; this launch's claim goes, so the workspace reads stopped and
 			// the next Start places it again instead of waiting out the claim TTL.
-			e.unclaimIfOurs(ctx, p, gen)
+			e.unclaimIfOurs(ctx, p)
 			return fmt.Errorf("mount home on %s: %w", p.instanceID, err)
 		}
 		// A slot that cannot mount is not a slow slot, it is a broken one, and leaving it

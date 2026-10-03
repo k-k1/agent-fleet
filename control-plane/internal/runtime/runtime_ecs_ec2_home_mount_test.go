@@ -407,28 +407,60 @@ func TestECSEC2LaunchDoesNotQuarantineWhenTheHomeWasReleased(t *testing.T) {
 	}
 }
 
-// A newer Start's claim is not the failed launch's to drop.
+// A newer Start's claim is not the failed launch's to drop, including one written while
+// the launch was reading the volume.
 func TestECSEC2FailedLaunchKeepsALaterStartsClaim(t *testing.T) {
 	ctx := context.Background()
-	h := newEC2Harness(t)
-	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
-	h.ec2.setTag("vol-1", EC2TagClaim, "i-other")
-	h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339))
-	h.rt.unclaimIfOurs(ctx, ec2Placement{volumeID: "vol-1", instanceID: "i-new1"}, h.rt.generation().Load())
-	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-other" {
-		t.Errorf("claim on another slot = %q, want it kept", got)
+	claimed := func(h *ec2Harness) string { return ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim) }
+	setup := func(t *testing.T, claim string) (*ec2Harness, ec2Placement) {
+		h := newEC2Harness(t)
+		h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+		h.ec2.setTag("vol-1", EC2TagClaim, claim)
+		h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339))
+		return h, ec2Placement{volumeID: "vol-1", instanceID: "i-new1", gen: h.rt.generation().Add(1)}
 	}
-	h.ec2.setTag("vol-1", EC2TagClaim, "i-new1")
-	gen := h.rt.generation().Load()
-	h.rt.generation().Add(1) // a Start began after the launch did
-	h.rt.unclaimIfOurs(ctx, ec2Placement{volumeID: "vol-1", instanceID: "i-new1"}, gen)
-	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-new1" {
-		t.Errorf("claim of a later Start on the same slot = %q, want it kept", got)
-	}
-	h.rt.unclaimIfOurs(ctx, ec2Placement{volumeID: "vol-1", instanceID: "i-new1"}, h.rt.generation().Load())
-	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "" {
-		t.Errorf("the launch's own claim = %q, want it dropped", got)
-	}
+	t.Run("claim on another slot", func(t *testing.T) {
+		h, p := setup(t, "i-other")
+		h.rt.unclaimIfOurs(ctx, p)
+		if got := claimed(h); got != "i-other" {
+			t.Errorf("claim = %q, want it kept", got)
+		}
+	})
+	t.Run("a Start began before the read", func(t *testing.T) {
+		h, p := setup(t, "i-new1")
+		h.rt.generation().Add(1)
+		h.rt.unclaimIfOurs(ctx, p)
+		if got := claimed(h); got != "i-new1" {
+			t.Errorf("claim = %q, want the later Start's claim kept", got)
+		}
+	})
+	t.Run("a Start began during the read", func(t *testing.T) {
+		h, p := setup(t, "i-new1")
+		h.ec2.afterDescribeVolumes = func() {
+			h.ec2.afterDescribeVolumes = nil
+			h.rt.generation().Add(1)
+			h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().Add(time.Second).UTC().Format(time.RFC3339))
+		}
+		h.rt.unclaimIfOurs(ctx, p)
+		if got := claimed(h); got != "i-new1" {
+			t.Errorf("claim = %q, want the later Start's claim kept", got)
+		}
+	})
+	t.Run("a placement no Start made", func(t *testing.T) {
+		h, p := setup(t, "i-new1")
+		p.gen = 0
+		h.rt.unclaimIfOurs(ctx, p)
+		if got := claimed(h); got != "i-new1" {
+			t.Errorf("claim = %q, want it kept", got)
+		}
+	})
+	t.Run("its own claim", func(t *testing.T) {
+		h, p := setup(t, "i-new1")
+		h.rt.unclaimIfOurs(ctx, p)
+		if got := claimed(h); got != "" {
+			t.Errorf("claim = %q, want it dropped", got)
+		}
+	})
 }
 
 // A failed af-mount can leave the home mounted; quarantine unmounts before it detaches.
