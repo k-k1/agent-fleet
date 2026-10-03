@@ -599,8 +599,9 @@ func homeBackupsUnsupported() *APIError {
 // tenant_admin (their own tenant) or super_admin — the same gate as clean-home, which is
 // already "destroy this person's work" in every sense except the billing.
 //
-// On ecs with the home task (HomeOpsInBackground) removing the EFS home takes minutes:
-// answered 202 {pending: true}, the outcome entry written when it has finished.
+// On ecs and ecs-ec2 with the home task (DestroyInBackground) removing the EFS directories
+// takes minutes: answered 202 {pending: true}, the outcome entry written when it has
+// finished.
 func (a Admin) DestroyWorkspace(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UserKey    string `json:"user_key"`
@@ -644,7 +645,7 @@ func (a Admin) DestroyWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if a.cp.HomeOpsInBackground() {
+	if a.cp.DestroyInBackground() {
 		ctx := context.WithoutCancel(r.Context())
 		err := a.cp.StartDestroyWorkspaceByMembership(ctx, mem.ID, func(leftovers []string, err error) {
 			if err != nil {
@@ -986,7 +987,7 @@ func (a Admin) RemoveMembership(w http.ResponseWriter, r *http.Request) {
 	a.cp.InvalidateTenantLogin()
 	detail := "status=inactive (workspace and home kept)"
 	var leftovers []string
-	if body.Purge && a.cp.HomeOpsInBackground() {
+	if body.Purge && a.cp.DestroyInBackground() {
 		// The membership is inactive now; destroying its workspace takes minutes here, so
 		// the outcome entry waits for it.
 		ctx := context.WithoutCancel(r.Context())

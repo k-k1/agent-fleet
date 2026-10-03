@@ -5,8 +5,8 @@
 // The task runs as root on the whole file system, because the stack declares one task
 // definition for every member and RunTask cannot swap a volume's access point. So the
 // confinement is here: the membership id is checked to be one path element, every path
-// removed is built from it and checked to lie strictly under /home or /claude-config, and
-// nothing is removed unless the root really is a mount.
+// removed is built from it and checked to lie strictly under /home, /claude-config or
+// /home-keep, and nothing is removed unless the root really is a mount.
 package runtime
 
 import (
@@ -16,11 +16,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
-// homeWipeDestroy removes both of a member's EFS directories, for Destroy. Only the task
-// accepts it; a member's or an administrator's wipe never asks for it.
+// homeWipeDestroy removes every one of a member's EFS directories, for Destroy. Only the
+// task accepts it; a member's or an administrator's wipe never asks for it.
 const homeWipeDestroy HomeWipe = "destroy"
 
 // membershipIDRe is what a membership id may be for its EFS paths. Store ids are 32 hex
@@ -38,6 +39,11 @@ const (
 	HomeOpExitRefused = 2 // bad input or an unsafe file system: nothing was removed
 )
 
+// homeTaskDirs are the top-level EFS directories a member's directories live in, the only
+// ones the task removes anything under: the Fargate home, the Claude state, and the ecs-ec2
+// keep-list (runtime_ecs_ec2.go, ensureKeepAccessPoint).
+var homeTaskDirs = []string{"home", "claude-config", "home-keep"}
+
 // errHomeOpRefused marks a refusal that happened before anything was removed.
 var errHomeOpRefused = errors.New("refused")
 
@@ -49,7 +55,9 @@ var isMountPoint = mountPoint
 //
 //   - repos:   remove /home/<id>/repos
 //   - clean:   remove everything at the top of /home/<id> except homeKeep
-//   - destroy: remove /home/<id> and /claude-config/<id> themselves
+//   - destroy: remove /home/<id>, /claude-config/<id> and /home-keep/<id> themselves
+//     (ecs-ec2 keeps the home on EBS and the keep-list in /home-keep; Fargate has no
+//     /home-keep, and a missing directory is success)
 //
 // A directory that does not exist is a home nobody booted (or one already removed), so it
 // is success: the operation is idempotent and a retry after a partial failure is safe.
@@ -69,7 +77,8 @@ func RunEFSHomeOp(ctx context.Context, root, op, membership string) error {
 	}
 	home := filepath.Join(root, "home", membership)
 	claude := filepath.Join(root, "claude-config", membership)
-	for _, p := range []string{home, claude} {
+	keep := filepath.Join(root, "home-keep", membership)
+	for _, p := range []string{home, claude, keep} {
 		if err := confinedTo(root, p); err != nil {
 			return err
 		}
@@ -86,7 +95,7 @@ func RunEFSHomeOp(ctx context.Context, root, op, membership string) error {
 		}
 		return cleanHomeDir(ctx, home)
 	case homeWipeDestroy:
-		for _, p := range []string{home, claude} {
+		for _, p := range []string{home, claude, keep} {
 			if ok, err := plainDir(p); err != nil {
 				return err
 			} else if ok {
@@ -112,14 +121,13 @@ func HomeOpExitCode(err error) int {
 	}
 }
 
-// confinedTo refuses p unless it is two elements below root: /home/<id> or
-// /claude-config/<id>. The id is already validated; this is the check that stays true if
+// confinedTo refuses p unless it is two elements below root, in one of homeTaskDirs. The id is already validated; this is the check that stays true if
 // that validation is ever loosened, because an empty or ".." id would otherwise turn the
 // removal into one of the whole /home.
 func confinedTo(root, p string) error {
 	rel, err := filepath.Rel(root, p)
 	parts := strings.Split(rel, string(filepath.Separator))
-	if err != nil || len(parts) != 2 || (parts[0] != "home" && parts[0] != "claude-config") ||
+	if err != nil || len(parts) != 2 || !slices.Contains(homeTaskDirs, parts[0]) ||
 		parts[1] == "" || parts[1] == "." || parts[1] == ".." {
 		return fmt.Errorf("%w: %s is not a member's directory under %s", errHomeOpRefused, p, root)
 	}

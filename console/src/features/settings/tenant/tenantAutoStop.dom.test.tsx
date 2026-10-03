@@ -109,6 +109,23 @@ describe("a start the Control Plane stopped", () => {
     });
   }
 
+  // A member's Recreate / Clean home that failed after its request was answered (#1537): the
+  // CP writes the same record, and the admin reads it under its own title with the raw reason.
+  it("titles a failed background home wipe by its kind, with the reason as written", async () => {
+    const why = "the home task (repos) failed with exit 1";
+    const wiped = {
+      ...STOPPED,
+      auto_stop: { kind: "home-wipe-failed", phase: why, limit_minutes: 0, stopped_at: "2026-10-01T10:00:00Z" },
+    };
+    api.mockImplementation((p: string) =>
+      p === "api/admin/workspace-sizing" ? Promise.resolve({}) : Promise.resolve({ members: [wiped] }),
+    );
+    await render(<MembersPanel slug="acme" isSuper={false} onOpenMember={() => {}} />);
+    const chip = document.querySelector(".member-row .mr-idle.hold");
+    expect(chip?.textContent).toBe(en["admin.auto_stop_home_wipe"]);
+    expect(chip?.getAttribute("title")).toBe(why);
+  });
+
   it("says nothing extra for a member without the record", async () => {
     api.mockResolvedValue({ running: false, sessions: [] });
     await render(<MemberView slug="acme" member={PLAIN} isSuper={false} onChanged={() => {}} onRemoved={() => {}} />);

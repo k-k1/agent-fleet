@@ -99,6 +99,8 @@ Clean home is not offered on every deployment ([ref/deploy-targets](../ref/deplo
 Where it is missing, the home is removed by **Destroy workspace** instead, which lists anything it
 could not delete. On Fargate (`ecs`) Clean home and Destroy run as a task that takes a few
 minutes: the button answers at once, and the outcome is written to the audit log when it is done.
+On the EC2 slot pool (`ecs-ec2`) Destroy runs the same task for what the member keeps on EFS, and
+answers the same way.
 
 Someone you removed stays on the roster marked "removed". That is so steps 2 to 4 remain reachable
 afterwards — they have not vanished.

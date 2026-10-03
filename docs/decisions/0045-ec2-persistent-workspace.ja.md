@@ -1373,6 +1373,17 @@ native ではそれがホームだが、AWS では CP タスクの空の `/tmp` 
 これまでどおり断る。コード: `control-plane/internal/runtime/runtime_ecs_home_task.go`・`home_task.go`・
 `control-plane/workspace_handlers.go`（`memberHomeWipe`）・`control-plane/workspace_lifecycle.go`。
 
+**追記（2026-10-03・#1536 #1537 #1538）: `ecs-ec2` でも同じタスク・再起動を越える失敗・費用タグ。** `ecs-ec2` の
+ランタイムは Fargate のアダプタの上に作られているので、破棄は `base.Destroy` 経由ですでにこのタスクを動かしていたが、
+管理者の要求の中で、残すものの一覧（keep）を消さずにいた。タスクは `/home-keep/<id>` も消すようになり、`ecs-ec2` の
+破棄も `ecs` と同じく 202 で応答する（`runtime.DestroyInBackground`。自前の作り直し・掃除は要求の中に収まるまま）。
+消せなかったものとして返すのは、タスクが消さなかったディレクトリだけ。IAM はそのための変更が無い（同じファミリー・
+同じクラスタ）。メンバーの作り直し・掃除が後半で失敗したら、CP のメモリではなく `workspace_auto_stop`（kind
+`home-wipe-failed`）に書く。この行はもともと「CP がこのワークスペースを止めたままにした理由」で、テナント管理者が
+読み、次の起動で消えるので、マイグレーションは要らなかった。タスクの `RunTask` はワークスペースのサービスと同じ
+費用タグ（`af-membership`・`af-role=workspace`・`af-tenant`）を付け、`ecs:TagResource` はこのクラスタの新しいタスク
+に、`ecs:CreateAction=RunTask` とサービスと同じキーの一覧でだけ許す（`TagHomeOpsTaskOnRun`）。
+
 ## 決定 32 — メンバーの作り直しとホームの掃除は、ホームに印を付けて次の Start で消す（2026-09-30）
 
 決定 31 の「メンバーの作り直しとホームの掃除は、この形態ではまだ出さない」を置き換える。そこで挙げた

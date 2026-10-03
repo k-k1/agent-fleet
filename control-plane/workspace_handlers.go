@@ -233,14 +233,35 @@ func (a workspaceAPI) workspacePayload(ctx context.Context, res *resolved, state
 	}
 	// Why a background Recreate or Clean home left this workspace stopped (memberHomeWipe):
 	// the member's request was answered `starting` minutes ago, so this is the only place
-	// the failure can still reach them.
-	if a.mgr == nil {
+	// the failure can still reach them. Read from the row, not from memory: the task takes
+	// minutes, and a CP restarted in between (a deploy) would otherwise show a stopped
+	// workspace with no reason. Asked only where a wipe can fail in the background, so the
+	// other runtimes' event ticks gain no query; CurrentAutoStop reads nothing while running
+	// or starting.
+	if a.mgr == nil || a.mgr.store == nil || !runtime.HomeWipeInBackground(rt) {
 		return m
 	}
-	if v, ok := a.mgr.homeWipeFailures.Load(res.ws.ID); ok && m["state"] != "running" {
-		m["homeWipeFailed"] = v
+	if as := store.CurrentAutoStop(ctx, a.mgr.store, res.ws.MembershipID, state); as != nil && as.Kind == autoStopHomeWipe {
+		m["homeWipeFailed"] = as.Phase
 	}
 	return m
+}
+
+// autoStopHomeWipe is the workspace_auto_stop kind of a background Recreate or Clean home
+// that left the workspace stopped. That row already means "the CP stopped this workspace
+// and here is why", is shown to the tenant admins, and is deleted by the next start
+// (ClearWorkspaceAutoStop before it, SetWorkspaceState("running") after it).
+const autoStopHomeWipe = "home-wipe-failed"
+
+// recordHomeWipeFailure keeps why a background wipe left ws stopped. Its own context: the
+// lease's may already be cancelled, which is often why the wipe failed.
+func (a workspaceAPI) recordHomeWipeFailure(wsID, why string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rec := store.WorkspaceAutoStop{Kind: autoStopHomeWipe, Phase: why, StoppedAt: store.NowTS()}
+	if err := a.mgr.store.SetWorkspaceAutoStop(ctx, wsID, rec); err != nil {
+		log.Printf("record the home wipe failure of ws %s: %v", wsID, err)
+	}
 }
 
 // slotReplaceRuntime is the optional half of Runtime that knows whether the next Start moves
@@ -358,13 +379,12 @@ func (a workspaceAPI) memberHomeWipe(w http.ResponseWriter, r *http.Request, res
 	// The local lock is not held across minutes: a start or a stop that comes in meanwhile
 	// takes it, finds the lease held and is refused, instead of hanging until the end.
 	lock.Unlock()
-	a.mgr.homeWipeFailures.Delete(res.ws.ID)
 	go func() {
 		defer release()
 		aerr := a.memberHomeWipeFinish(lease.Context(), res, lease, what, unqueue, lock)
 		if aerr != nil {
 			log.Printf("%s: background wipe of ws %s failed: %s", op, res.ws.ID, aerr.message)
-			a.mgr.homeWipeFailures.Store(res.ws.ID, aerr.message)
+			a.recordHomeWipeFailure(res.ws.ID, aerr.message)
 		}
 	}()
 	writeJSON(w, http.StatusAccepted, map[string]any{"name": res.rt.Name(), "state": "starting"})
@@ -583,7 +603,6 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 		}
 		return internalErr(err)
 	}
-	a.mgr.homeWipeFailures.Delete(res.ws.ID)
 	if err := lease.checkpoint(ctx); err != nil {
 		if f, ok := rt.(runtime.StartFencer); ok {
 			abortCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

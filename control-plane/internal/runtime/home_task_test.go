@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// efsFixture is a file system root with two members' homes and claude-config directories,
-// each holding every homeKeep entry and some work. Mount detection answers yes.
+// efsFixture is a file system root with two members' homes, claude-config and (ecs-ec2)
+// home-keep directories, each home holding every homeKeep entry and some work. Mount detection answers yes.
 func efsFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -26,6 +26,7 @@ func efsFixture(t *testing.T) string {
 		mustWrite(t, filepath.Join(home, ".cache", "blob"))
 		mustWrite(t, filepath.Join(home, ".bashrc"))
 		mustWrite(t, filepath.Join(root, "claude-config", id, ".credentials.json"))
+		mustWrite(t, filepath.Join(root, "home-keep", id, ".gitconfig"))
 	}
 	return root
 }
@@ -68,6 +69,9 @@ func assertUntouched(t *testing.T, root, id string) {
 	if got := entries(t, filepath.Join(root, "claude-config", id)); len(got) != 1 {
 		t.Errorf("%s's claude-config = %v, want it untouched", id, got)
 	}
+	if got := entries(t, filepath.Join(root, "home-keep", id)); len(got) != 1 {
+		t.Errorf("%s's home-keep = %v, want it untouched", id, got)
+	}
 }
 
 func TestEFSHomeOpRemovesWhatEachOperationRemoves(t *testing.T) {
@@ -95,13 +99,18 @@ func TestEFSHomeOpRemovesWhatEachOperationRemoves(t *testing.T) {
 	if got := entries(t, filepath.Join(root, "claude-config", "M-1")); len(got) != 1 {
 		t.Errorf("clean touched claude-config: %v", got)
 	}
+	if got := entries(t, filepath.Join(root, "home-keep", "M-1")); len(got) != 1 {
+		t.Errorf("clean touched home-keep: %v", got)
+	}
 	assertUntouched(t, root, "M-2")
 
 	root = efsFixture(t)
 	if err := RunEFSHomeOp(ctx, root, "destroy", "M-1"); err != nil {
 		t.Fatalf("destroy: %v", err)
 	}
-	for _, p := range []string{filepath.Join(root, "home", "M-1"), filepath.Join(root, "claude-config", "M-1")} {
+	// home-keep is the ecs-ec2 keep-list (#1536); Destroy must not leave it behind.
+	for _, p := range []string{filepath.Join(root, "home", "M-1"), filepath.Join(root, "claude-config", "M-1"),
+		filepath.Join(root, "home-keep", "M-1")} {
 		if _, err := os.Lstat(p); !os.IsNotExist(err) {
 			t.Errorf("destroy left %s (%v)", p, err)
 		}

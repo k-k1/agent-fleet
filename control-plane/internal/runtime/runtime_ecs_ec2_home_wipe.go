@@ -29,6 +29,10 @@ import (
 // next Start then carries out under the member's new work. No Start can begin while the
 // handler holds the lease, so a check made then, before its Stop, stays true until the
 // mark is written.
+//
+// It also refuses while the stack's home task is still running on the member's EFS
+// directories (a Destroy's, possibly one a restarted CP lost track of): the base adapter
+// asks ECS, and answers nil on a stack without the task.
 func (e *ecsEC2Runtime) HomeWipeBlocked(ctx context.Context) error {
 	vol, err := e.homeVolume(ctx)
 	if err != nil {
@@ -37,8 +41,12 @@ func (e *ecsEC2Runtime) HomeWipeBlocked(ctx context.Context) error {
 	if vol != nil && e.claimLive(vol) {
 		return ErrHomeWipeWhileStarting
 	}
-	return nil
+	return e.base.HomeWipeBlocked(ctx)
 }
+
+// DestroyRunsHomeTask satisfies homeTaskDestroyer: Destroy ends in the base adapter's,
+// which runs the home task wherever the stack declares it (#1536).
+func (e *ecsEC2Runtime) DestroyRunsHomeTask() bool { return e.base.homePortsReady() }
 
 // WipeHome marks the home for the next Start and returns; it removes nothing itself.
 //

@@ -729,7 +729,7 @@ func (m *manager) destroyWorkspaceByMembership(ctx context.Context, membershipID
 }
 
 // startDestroyWorkspaceByMembership is destroyWorkspaceByMembership where the runtime's
-// Destroy runs a task on the home and takes minutes (runtime.HomeWipeInBackground). The
+// Destroy runs a task on the home and takes minutes (runtime.DestroyInBackground). The
 // refusals answer the request; the teardown runs after it under the lease, and done gets
 // its outcome once.
 func (m *manager) startDestroyWorkspaceByMembership(ctx context.Context, membershipID string, done func([]string, error)) error {

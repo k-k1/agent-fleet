@@ -81,8 +81,9 @@ export interface Member {
   auto_stop?: MemberAutoStop;
 }
 
-/** GET …/members auto_stop (store.WorkspaceAutoStop). kind is "start-deadline" today; phase is
- *  the last boot phase before the stop, raw (worded through startDeadlineBody). */
+/** GET …/members auto_stop (store.WorkspaceAutoStop). kind is "start-deadline" (phase: the last
+ *  boot phase before the stop, raw, worded through startDeadlineBody) or "home-wipe-failed"
+ *  (phase: why a background Recreate / Clean home left the workspace stopped). */
 export interface MemberAutoStop {
   kind: string;
   phase: string;

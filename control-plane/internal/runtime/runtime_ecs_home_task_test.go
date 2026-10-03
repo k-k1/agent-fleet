@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -85,8 +86,8 @@ func TestECSHomePortsFollowTheStack(t *testing.T) {
 		t.Errorf("ecs without the home task = %+v, want none", got)
 	}
 	with := &ecsFactory{cfg: ecsConfig{homeTask: "af-stack-home-ops"}, tasks: &fakeTasks{}}
-	if got := HomeOperationsOf(with); got != (HomeOperations{Wipe: true, Erase: true, Background: true}) {
-		t.Errorf("ecs with the home task = %+v, want Wipe, Erase, Background", got)
+	if got := HomeOperationsOf(with); got != (HomeOperations{Wipe: true, Erase: true, Background: true, DestroyBackground: true}) {
+		t.Errorf("ecs with the home task = %+v, want Wipe, Erase, Background, DestroyBackground", got)
 	}
 	rt := newTestECS(&fakeECS{}, &fakeEFS{}, &fakeSSM{})
 	if err := WipeHome(context.Background(), rt, HomeWipeRepos); !errors.Is(err, ErrHomeWipeUnsupported) {
@@ -256,5 +257,88 @@ func TestECSDestroyRemovesTheEFSHomeThroughTheTask(t *testing.T) {
 	rt2 := newHomeTaskECS(&fakeECS{}, &fakeEFS{}, ft2)
 	if _, err := rt2.Destroy(context.Background()); err == nil {
 		t.Error("Destroy with a failed home task succeeded; the row would go and the directories stay")
+	}
+}
+
+// ecs-ec2 keeps the home on EBS, but the Claude state and the keep-list on EFS. With the
+// stack's task its Destroy removes both directories through it, reports neither as a
+// leftover, and says it takes minutes; an access point rooted anywhere else is still
+// reported (#1536).
+func TestECSEC2DestroyRemovesTheEFSDirectoriesThroughTheTask(t *testing.T) {
+	h := newEC2Harness(t)
+	if DestroyInBackground(h.rt) {
+		t.Error("ecs-ec2 without the home task claims a background Destroy")
+	}
+	ft := &fakeTasks{exitCode: exit(0)}
+	h.rt.base.cfg.homeTask = "af-stack-home-ops"
+	h.rt.base.tasks = ft
+	h.rt.base.homeTaskPoll = time.Millisecond
+	if !DestroyInBackground(h.rt) {
+		t.Error("ecs-ec2 with the home task must Destroy in the background: the task takes minutes")
+	}
+	if HomeWipeInBackground(h.rt) {
+		t.Error("ecs-ec2's own wipe fits in the request; only its Destroy may move to the background")
+	}
+	ap := func(id, path string) efstypes.AccessPointDescription {
+		return efstypes.AccessPointDescription{AccessPointId: aws.String(id),
+			RootDirectory: &efstypes.RootDirectory{Path: aws.String(path)},
+			Tags:          []efstypes.Tag{{Key: aws.String("af-membership"), Value: aws.String("M-1")}}}
+	}
+	h.efs.aps = []efstypes.AccessPointDescription{
+		ap("fsap-claude", "/claude-config/M-1"), ap("fsap-keep", "/home-keep/M-1"), ap("fsap-odd", "/elsewhere/M-1"),
+	}
+	leftovers, err := h.rt.Destroy(context.Background())
+	if err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+	if len(ft.runs) != 1 || runEnv(ft.runs[0])["home-ops/AF_HOME_OP"] != "destroy" ||
+		runEnv(ft.runs[0])["home-ops/AF_HOME_MEMBERSHIP"] != "M-1" {
+		t.Fatalf("Destroy ran %d tasks, want one destroy for M-1", len(ft.runs))
+	}
+	if len(leftovers) != 1 || !strings.HasSuffix(leftovers[0], "/elsewhere/M-1") {
+		t.Errorf("leftovers = %v, want only the directory the task does not remove", leftovers)
+	}
+
+	// A home task still running (a Destroy a restarted CP lost) refuses before anything.
+	ft.inflight = []string{"arn:task/earlier"}
+	if err := HomeWipeBlocked(context.Background(), h.rt); !errors.Is(err, ErrHomeTaskInFlight) {
+		t.Errorf("HomeWipeBlocked with a home task in flight = %v, want ErrHomeTaskInFlight", err)
+	}
+}
+
+// Fargate bills the home task like any other task, so it carries the cost tags of the
+// member's workspace service — the same keys and values — and no af-tenant at all when the
+// slug is unknown, never an empty one (#1538).
+func TestECSHomeTaskCarriesTheWorkspaceCostTags(t *testing.T) {
+	tags := func(in []ecstypes.Tag) map[string]string {
+		out := map[string]string{}
+		for _, tg := range in {
+			out[aws.ToString(tg.Key)] = aws.ToString(tg.Value)
+		}
+		return out
+	}
+	for _, slug := range []string{"acme", ""} {
+		fe, ft := &fakeECS{}, &fakeTasks{exitCode: exit(0)}
+		rt := newHomeTaskECS(fe, &fakeEFS{}, ft)
+		rt.tenantSlug = slug
+		if err := rt.Start(context.Background()); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		if len(fe.createCalls) != 1 {
+			t.Fatalf("Start created %d services, want 1", len(fe.createCalls))
+		}
+		service := tags(fe.createCalls[0].Tags)
+		// Stopped and drained, as the wipe requires.
+		fe.services[rt.name] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+		if err := rt.WipeHome(context.Background(), HomeWipeRepos); err != nil {
+			t.Fatalf("WipeHome: %v", err)
+		}
+		task := tags(ft.runs[0].Tags)
+		if fmt.Sprint(task) != fmt.Sprint(service) {
+			t.Errorf("slug %q: home task tags %v, want the workspace service's %v", slug, task, service)
+		}
+		if _, ok := task["af-tenant"]; ok != (slug != "") || task["af-membership"] != "M-1" {
+			t.Errorf("slug %q: home task tags = %v", slug, task)
+		}
 	}
 }

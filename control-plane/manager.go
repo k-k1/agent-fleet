@@ -161,10 +161,6 @@ type manager struct {
 	// exists. Held here as well as on config because the container env injection
 	// (workspaceExtraEnv) has to name the URLs the app will be reachable at.
 	previewDomain string
-	// homeWipeFailures is why a member's background Recreate or Clean home (ecs) left the
-	// workspace stopped, by workspace id, for the workspace payload to carry: the request
-	// that asked for it has long been answered. Process-local; cleared by the next start.
-	homeWipeFailures sync.Map
 }
 
 // apiError carries an HTTP status + machine code for handlers to return.
