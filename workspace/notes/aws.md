@@ -193,10 +193,13 @@ for an approval nobody sees, and a code from you is exactly what the user is tol
 
 To try AWS code without an account, the user may run MiniStack (an AWS API emulator) in the
 workspace; the setup is `member/10-integrations.md`, "Trying AWS code against a local emulator
-(MiniStack)". Reach it only through a dedicated profile that carries its `endpoint_url` and dummy
-keys (`aws --profile ministack …`), never by exporting dummy keys: a command that then forgets the
-endpoint reaches real AWS instead of stopping. It never goes through `af-aws-exec`. Its RDS reports a
-database that does not exist; use `af-db` for Postgres.
+(MiniStack)". Reach it only through a dedicated profile, under a name used nowhere else, that carries
+its `endpoint_url` and dummy keys (`aws --profile ministack …`), never by exporting dummy keys. Name
+that profile on every command: where the workspace's own role is handed back, or on the native
+runtime, a command that leaves it out runs against real AWS. A client that does not read
+`endpoint_url` from a profile (AWS SDK for Java 1.x, JavaScript v2, Go v1, a tool with its own
+endpoint setting) needs the endpoint set in the client, or it goes to real AWS. It never goes through
+`af-aws-exec`. Its RDS reports a database that does not exist; use `af-db` for Postgres.
 
 ## Never
 
