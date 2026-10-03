@@ -32,6 +32,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -90,6 +91,7 @@ func PromptSum(prompt string) string {
 type runAnswer struct {
 	Final string // the last assistant message: the one the sentinel is matched against
 	Body  string // every assistant message of the run, for delivery
+	At    int    // the run's prompt's position in the transcript: which run answered last
 }
 
 // scheduleClaims records which transcript prompt each scheduled run's row was matched to (row id
@@ -233,7 +235,7 @@ func answerAfter(turns []transcript.Turn, key string) (runAnswer, bool) {
 	if final == "" {
 		return runAnswer{}, false
 	}
-	return runAnswer{Final: final, Body: HeadRunes(strings.Join(parts, "\n\n"), BridgeBodyCap)}, true
+	return runAnswer{Final: final, Body: HeadRunes(strings.Join(parts, "\n\n"), BridgeBodyCap), At: start}, true
 }
 
 // TurnVerdict is what a finished turn means for the notification the hook would raise.
@@ -249,6 +251,7 @@ type TurnVerdict struct {
 }
 
 // TurnVerdictFor says what the hook should raise for a turn of the session that just ended.
+// key is the turn end's completion key (status.ReadCompletionKey), "" when unknown.
 //
 // The rows considered are those the turn can have finished: open, not still being sent, not
 // dropped, and not waiting in the session's queue. An instruction without a delivery of its own
@@ -257,11 +260,24 @@ type TurnVerdict struct {
 // the same for a Terminal and a Managed session; a run whose answer cannot be read yet is not
 // silent (the notification is raised: a wrong miss costs one message). failed is a turn that
 // ended in an error or was cut off: never silent.
-func TurnVerdictFor(name string, failed bool) TurnVerdict {
+//
+// The reconciler can settle the turn first (a Managed driver publishes the end before it
+// notifies), and then no row is open any more. The verdict it recorded for the same turn end
+// before consuming the rows (rememberTurnVerdict) answers instead: without it, the late hook
+// would broadcast a result the schedule routed, or a run it already recorded as silent.
+func TurnVerdictFor(name string, failed bool, key string) TurnVerdict {
 	rows := turnRows(name, time.Now())
 	if len(rows) == 0 {
+		if rec, ok := turnVerdicts.Read(name); ok && key != "" && rec.Key == key {
+			return rec.Verdict
+		}
 		return TurnVerdict{}
 	}
+	return verdictOf(name, rows, failed)
+}
+
+// verdictOf is TurnVerdictFor over a given set of rows.
+func verdictOf(name string, rows []instrRow, failed bool) TurnVerdict {
 	allSilent, allRouted := true, true
 	for _, r := range rows {
 		if r.Delivery == nil {
@@ -280,6 +296,66 @@ func TurnVerdictFor(name string, failed bool) TurnVerdict {
 		}
 	}
 	return TurnVerdict{Silent: silent, Routed: silent || allRouted}
+}
+
+// turnVerdictRec is the verdict the reconciler reached for one turn end, by its completion key.
+type turnVerdictRec struct {
+	Key     string      `json:"key"`
+	Verdict TurnVerdict `json:"verdict"`
+}
+
+var turnVerdicts = fstore.JSON[turnVerdictRec](paths.AgentStateDir, "schedule-turn-verdict", ".json")
+
+// rememberTurnVerdict records, before the reconciler consumes the rows a turn end covers, what a
+// hook arriving later for that same end has to raise. Only for an end whose rows include a
+// scheduled run's own delivery, and only when the end has a completion key to be matched by.
+func rememberTurnVerdict(m session.Meta, covered []instrRow, failed bool) {
+	any := false
+	for _, r := range covered {
+		any = any || r.Delivery != nil
+	}
+	if !any {
+		return
+	}
+	key, ok := status.ReadCompletionKey(session.UUID(m.Dir, m.Name))
+	if !ok || key == "" {
+		return
+	}
+	_ = turnVerdicts.Write(m.Name, turnVerdictRec{Key: key, Verdict: verdictOf(m.Name, covered, failed)})
+}
+
+// Run outcomes (clean, or the failure reason) by row id. The reason a reconciler settles with is
+// the session's latest turn end, which can be a later run's: a run that failed, then a queued run
+// that ended cleanly, would both settle as clean, and the first one's last words read as its
+// result (a [SILENT] said before the error, recorded as a silent success). So each turn end
+// records its outcome for the run it ended, and the sink trusts that over the folded reason.
+var scheduleOutcomes = fstore.Strings(paths.AgentStateDir, "schedule-outcome", ".txt")
+
+const outcomeClean = "clean"
+
+// NoteRunOutcome records how the turn that just ended went (reason: "" clean, else the failure
+// qualifier) for the scheduled run it ended: of the open runs, the one whose prompt is the latest
+// in the transcript with an answer after it. A failure is not overwritten by a later clean end of
+// the same run; an abort is (an aborted run that resumed and finished did finish).
+func NoteRunOutcome(name, reason string) {
+	answers := runAnswers(name, false)
+	best, at := "", -1
+	for id, a := range answers {
+		if a.At > at {
+			best, at = id, a.At
+		}
+	}
+	if best == "" {
+		return
+	}
+	outcome := reason
+	if outcome == "" {
+		outcome = outcomeClean
+	}
+	if prev, ok := scheduleOutcomes.Read(best); ok && prev == ReportReasonTurnFailed && outcome != ReportReasonTurnFailed {
+		return
+	}
+	_ = scheduleOutcomes.Write(best, outcome)
 }
 
 // turnRows are the open rows a turn ending at now can have finished.
@@ -358,21 +434,36 @@ func deliverScheduledRow(name, convID, kind, reason string, r instrRow) reportSi
 		}
 		return deliverConvReport(name, convID, kind, reason, []instrRow{r})
 	case ReportKindAnswerReady:
+		// The run's own outcome, when its turn end recorded one, is the truth about it: the
+		// reason this settle carries may belong to a later run of the same session.
+		outcome, hasOutcome := scheduleOutcomes.Read(r.ID)
+		if hasOutcome {
+			reason = ""
+			if outcome != outcomeClean {
+				reason = outcome
+			}
+		}
 		if reason == "" {
 			a, ok := runAnswers(name, true)[r.ID]
 			waitKey := name + ":" + instrDeliveryKey(r)
-			if ok {
+			if ok && hasOutcome {
 				scheduleAnswerWaits.forget(waitKey)
-				answer = &a
 			} else if scheduleAnswerWaits.wait(waitKey, time.Now()) {
 				// The turn's end can be settled before its answer is in the transcript (a
 				// Managed driver's store and a Terminal CLI's file are written on their own
-				// schedule). Delivering now would send an empty result, or a sentinel run as a
-				// normal one, and consume the row for good.
+				// schedule), or before its hook recorded how the run ended. Delivering now would
+				// send an empty result, or a sentinel run as a normal one, and consume the row
+				// for good.
 				return reportSinkRetry
 			}
-			if ok && d.Silent && IsSilentAnswer(a.Final) {
+			if ok {
+				answer = &a
+			}
+			// Silent only on the run's own recorded clean end: past the wait, a run whose
+			// outcome never arrived is delivered, never silenced.
+			if ok && hasOutcome && d.Silent && IsSilentAnswer(a.Final) {
 				recordScheduleSilentFn(name, d)
+				scheduleOutcomes.Remove(r.ID)
 				log.Printf("session-report: %s: schedule %s answered %s — nothing delivered", name, d.ScheduleID, SilentSentinel)
 				return reportSinkOK
 			}
@@ -424,6 +515,9 @@ func deliverScheduledRow(name, convID, kind, reason string, r instrRow) reportSi
 	}
 	if res == reportSinkDrop && (d.has(DeliverNotifications) || d.has(DeliverDiscord) || d.has(DeliverSlack)) {
 		res = reportSinkOK // the conversation is gone, but the result reached its other targets
+	}
+	if res != reportSinkRetry {
+		scheduleOutcomes.Remove(r.ID)
 	}
 	return res
 }

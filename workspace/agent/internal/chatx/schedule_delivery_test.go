@@ -130,6 +130,9 @@ func scheduledRun(t *testing.T, name, conv string, d *ScheduleDelivery, prompt s
 	for i, a := range answers {
 		say(t, name, "assistant", a, at.Add(time.Duration(2+i)*time.Second))
 	}
+	if len(answers) > 0 {
+		NoteRunOutcome(name, "") // what the turn end's hook records
+	}
 	for _, r := range ReadInstrRows(name) {
 		if r.ID == id {
 			return r
@@ -223,6 +226,7 @@ func TestScheduledRowFailureIsNeverSilent(t *testing.T) {
 	m, _, _ := ledgerFixture(t, "sched3")
 	silents := scheduleSeams(t, map[string]bool{})
 	r := scheduledRow(t, m.Name, "", delivery(true, DeliverSlack), "[SILENT]")
+	NoteRunOutcome(m.Name, ReportReasonTurnFailed)
 	if r.Conv != "" {
 		t.Fatalf("row conv = %q", r.Conv)
 	}
@@ -272,6 +276,7 @@ func TestScheduledRowQueueFailureDoesNotBlockTheNotification(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := scheduledRow(t, m.Name, "", delivery(true, DeliverNotifications, DeliverDiscord), "x")
+	NoteRunOutcome(m.Name, ReportReasonTurnFailed)
 	if res := deliverReportCard(m.Name, "", ReportKindAnswerReady, ReportReasonTurnFailed, []instrRow{r}); res != reportSinkRetry {
 		t.Fatalf("sink = %v, want a retry for the post", res)
 	}
@@ -356,6 +361,10 @@ func TestScheduledRowWaitsForItsAnswer(t *testing.T) {
 		t.Fatalf("delivered before the answer: %+v", notice.List())
 	}
 	say(t, m.Name, "assistant", "[SILENT]", at.Add(3*time.Second))
+	if res := deliverReportCard(m.Name, "", ReportKindAnswerReady, "", []instrRow{r}); res != reportSinkRetry {
+		t.Fatalf("answer but no recorded end = %v, want retry", res)
+	}
+	NoteRunOutcome(m.Name, "")
 	if res := deliverReportCard(m.Name, "", ReportKindAnswerReady, "", []instrRow{r}); res != reportSinkOK || len(*silents) != 1 {
 		t.Fatalf("after the answer: %v silents=%v", res, *silents)
 	}
@@ -393,33 +402,33 @@ func TestScheduledRowBridgePostSurvivesARestart(t *testing.T) {
 func TestTurnVerdictFor(t *testing.T) {
 	m, _, conv := ledgerFixture(t, "sched6")
 	now := time.Now()
-	if v := TurnVerdictFor(m.Name, false); v != (TurnVerdict{}) {
+	if v := TurnVerdictFor(m.Name, false, ""); v != (TurnVerdict{}) {
 		t.Fatalf("no scheduled row open: %+v", v)
 	}
 	silent := scheduledRun(t, m.Name, "", delivery(true), "check A", now.Add(-5*time.Minute), "Checking…", "[SILENT]")
-	if v := TurnVerdictFor(m.Name, false); !v.Silent || !v.Routed {
+	if v := TurnVerdictFor(m.Name, false, ""); !v.Silent || !v.Routed {
 		t.Fatalf("the run's final message is the sentinel: %+v", v)
 	}
-	if v := TurnVerdictFor(m.Name, true); v.Silent || v.Routed {
+	if v := TurnVerdictFor(m.Name, true, ""); v.Silent || v.Routed {
 		t.Fatalf("a failed turn of a report-off run: %+v, want today's notification", v)
 	}
 	markInstrReported(m.Name, []string{silent.ID}, now)
 	scheduledRun(t, m.Name, "", delivery(true), "check B", now.Add(-4*time.Minute), "Disk at 97%")
-	if v := TurnVerdictFor(m.Name, false); v.Silent || v.Routed {
+	if v := TurnVerdictFor(m.Name, false, ""); v.Silent || v.Routed {
 		t.Fatalf("a real answer of a report-off run: %+v, want today's notification", v)
 	}
 	cancelInstructions(m.Name)
 	// A run that named targets: routed, even when it failed (the sink notifies the failure).
 	scheduledRun(t, m.Name, "", delivery(false, DeliverNotifications), "check C", now.Add(-3*time.Minute), "[SILENT]")
-	if v := TurnVerdictFor(m.Name, true); v.Silent || !v.Routed {
+	if v := TurnVerdictFor(m.Name, true, ""); v.Silent || !v.Routed {
 		t.Fatalf("targeted run: %+v", v)
 	}
-	if v := TurnVerdictFor(m.Name, false); v.Silent {
+	if v := TurnVerdictFor(m.Name, false, ""); v.Silent {
 		t.Fatalf("silent for a schedule that does not enable it: %+v", v)
 	}
 	// An operator instruction finished by the same turn keeps the ordinary notification.
 	addInstructionAt(m.Name, conv, "operator", now.Add(-2*time.Minute))
-	if v := TurnVerdictFor(m.Name, false); v.Silent || v.Routed {
+	if v := TurnVerdictFor(m.Name, false, ""); v.Silent || v.Routed {
 		t.Fatalf("mixed with an operator instruction: %+v", v)
 	}
 }
@@ -434,12 +443,12 @@ func TestTurnVerdictIgnoresRunsThatHaveNotStarted(t *testing.T) {
 	addRowAt(m.Name, "", "schedule", instrBoot, d, past)
 	say(t, m.Name, "user", "check", past.Add(time.Second))
 	say(t, m.Name, "assistant", "[SILENT]", past.Add(2*time.Second))
-	if v := TurnVerdictFor(m.Name, false); v != (TurnVerdict{}) {
+	if v := TurnVerdictFor(m.Name, false, ""); v != (TurnVerdict{}) {
 		t.Fatalf("a run still being sent: %+v", v)
 	}
 	id := addRowAt(m.Name, "", "schedule", "", d, past)
 	MarkInstrNotRun(m.Name, id, "archived")
-	if v := TurnVerdictFor(m.Name, false); v != (TurnVerdict{}) {
+	if v := TurnVerdictFor(m.Name, false, ""); v != (TurnVerdict{}) {
 		t.Fatalf("a dropped run: %+v", v)
 	}
 }
@@ -464,5 +473,73 @@ func TestReconcilerSettlesAConversationlessScheduledRow(t *testing.T) {
 	}
 	if len(*silents) != 1 || len(notice.List()) != 0 {
 		t.Fatalf("silents=%v notices=%+v", *silents, notice.List())
+	}
+}
+
+// Review round 3, finding 10: run A answered [SILENT] and then failed; run B, queued behind it,
+// ended cleanly, and the reconciler settles both with B's clean end. A's own recorded failure
+// wins: A is notified as failed and never recorded as silent; B is silent.
+func TestLaterCleanRunCannotSilenceAnEarlierFailedRun(t *testing.T) {
+	m, _, _ := ledgerFixture(t, "sched14")
+	silents := scheduleSeams(t, nil)
+	at := time.Now().Add(-time.Minute)
+	d := delivery(true, DeliverNotifications)
+	a := scheduledRun(t, m.Name, "", d, "check the disk", at)
+	say(t, m.Name, "assistant", "[SILENT]", at.Add(2*time.Second))
+	NoteRunOutcome(m.Name, ReportReasonTurnFailed) // A's turn end: failed
+	d2 := *d
+	d2.Slot = "2026-10-03T09:05:00Z"
+	b := scheduledRun(t, m.Name, "", &d2, "check the disk", at.Add(5*time.Second), "[SILENT]") // B: clean
+	if res := deliverReportCard(m.Name, "", ReportKindAnswerReady, "", []instrRow{a, b}); res != reportSinkOK {
+		t.Fatalf("sink = %v", res)
+	}
+	if len(*silents) != 1 || (*silents)[0] != "sch_1@2026-10-03T09:05:00Z sched14" {
+		t.Fatalf("silent runs = %v, want B alone", *silents)
+	}
+	res := noticesOf(NoticeKindScheduleResult)
+	if len(res) != 1 || res[0].Payload["report_reason"] != ReportReasonTurnFailed {
+		t.Fatalf("notices = %+v, want A's failure", res)
+	}
+}
+
+// A failure is not washed out by a later clean end of the same run; an abort is (the run resumed
+// and finished).
+func TestRunOutcomeFailureSticks(t *testing.T) {
+	m, _, _ := ledgerFixture(t, "sched16")
+	r := scheduledRow(t, m.Name, "", delivery(true, DeliverNotifications), "partial")
+	NoteRunOutcome(m.Name, ReportReasonTurnFailed)
+	NoteRunOutcome(m.Name, "")
+	if o, _ := scheduleOutcomes.Read(r.ID); o != ReportReasonTurnFailed {
+		t.Fatalf("outcome after a failure then a clean end = %q", o)
+	}
+	r2 := scheduledRun(t, m.Name, "", delivery(true, DeliverNotifications), "other", time.Now(), "x")
+	NoteRunOutcome(m.Name, ReportReasonTurnAborted)
+	NoteRunOutcome(m.Name, "")
+	if o, _ := scheduleOutcomes.Read(r2.ID); o != outcomeClean {
+		t.Fatalf("outcome after an abort then a clean end = %q", o)
+	}
+}
+
+// Review round 3, finding 9: the reconciler settles the turn and consumes the rows before the
+// hook runs. The hook for that same turn end still gets the verdict the rows called for, and a
+// later turn (another completion key) gets today's notification.
+func TestTurnVerdictOutlivesTheConsumedRows(t *testing.T) {
+	m, sid, _ := ledgerFixture(t, "sched15")
+	scheduleSeams(t, nil)
+	rc, clock := newFakeReconciler(t, reportTickDefault, deliverReportCard)
+	scheduledRow(t, m.Name, "", delivery(false, DeliverNotifications), "private result")
+	status.PersistTurnEndReason(sid, "idle", "")
+	for i := 0; i < 3; i++ {
+		clock.advance(t, rc, reportTickDefault)
+	}
+	if SessionReportPending(m.Name) {
+		t.Fatal("the run did not settle")
+	}
+	key, _ := status.ReadCompletionKey(sid)
+	if v := TurnVerdictFor(m.Name, false, key); !v.Routed {
+		t.Fatalf("late hook for the settled end: %+v, want routed", v)
+	}
+	if v := TurnVerdictFor(m.Name, false, key+"-later"); v != (TurnVerdict{}) {
+		t.Fatalf("a later turn: %+v, want today's notification", v)
 	}
 }

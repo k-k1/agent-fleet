@@ -247,3 +247,26 @@ func TestScheduleDeliveryOf(t *testing.T) {
 		t.Fatal("a delivery without a run or without a body")
 	}
 }
+
+// Review round 3, finding 9: the reconciler settles the run and consumes its row before the hook
+// for the same turn end runs (a Managed driver publishes the end before it notifies). The late
+// hook still raises nothing broadcast for a run whose schedule named its targets.
+func TestConsumedDeliveryStillPreventsBroadcast(t *testing.T) {
+	put := fakeTranscripts(t)
+	sid := scheduleFixture(t, "s-consumed", session.KindClaude, false, chatx.DeliverNotifications)
+	stop := chatx.InstallReconcilerForTest(20 * time.Millisecond)
+	t.Cleanup(stop)
+	time.Sleep(1100 * time.Millisecond)
+	answered(put, "s-consumed", "private result")
+	status.Persist(sid, "working")
+	chatx.NoteRunOutcome("s-consumed", "") // the outcome half of the hook, as the driver records it
+	status.PersistTurnEndReason(sid, "idle", "")
+	waitSettled(t, "s-consumed")
+	RecordSessionNotification(sid, "working", "idle", "private result")
+	if n := bridgeQueueLen(); n != 0 {
+		t.Fatalf("%d broadcast queue entries after the row was consumed", n)
+	}
+	if events := notice.List(); len(events) != 1 || events[0].Kind != chatx.NoticeKindScheduleResult {
+		t.Fatalf("events = %+v, want the schedule result alone", events)
+	}
+}

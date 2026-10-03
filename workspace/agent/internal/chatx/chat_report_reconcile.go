@@ -886,6 +886,9 @@ func (rc *reportReconciler) evaluate(name string, now time.Time) {
 	if !v.Terminal && !v.Fast && !rc.debounce(name, now) {
 		return // not yet two consecutive ticks
 	}
+	if v.Kind == ReportKindAnswerReady {
+		rememberTurnVerdict(m, covered, v.Reason != "")
+	}
 	retry := false
 	delivered := false
 	for _, conv := range instrSinkConvs(covered) {

@@ -120,6 +120,11 @@ and only the sink routes it differently. Decision 10 is untouched: the prompt's 
   (the delivered text, oldest run first, each prompt claimed once), so two open runs of a reuse session never
   share an answer, and a later `[SILENT]` cannot hide an earlier alert. The sink waits up to two minutes for the
   answer to appear; past that it delivers without a body, never as silent.
+- **Each run's outcome is its own too.** A turn end records clean / failed / aborted for the run it ended, and
+  the sink trusts that over the reason the reconciler settles with (a later run's end can settle an earlier
+  run). A failure is never washed out by a later clean end, and a run is silent only on its own recorded clean
+  end. The verdict a turn end called for (routed / silent) is kept by its completion key, so a hook that runs
+  after the rows were consumed still does not broadcast.
 - **Silent sentinel** (`silent`): a run whose final answer, trimmed, is exactly `[SILENT]` (case-sensitive)
   delivers nothing — no report, no notification, no chat post — and the Agent asks the Control Plane to record
   the run as `fired_silent`, which the history shows. Only schedules that enable it tell the agent about it, in a

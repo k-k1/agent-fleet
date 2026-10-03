@@ -312,7 +312,11 @@ func RecordSessionNotification(sid, previous, state, turnText string) {
 		// included) where the schedule asked, or records the run as silent.
 		var verdict chatx.TurnVerdict
 		if kind == chatx.ReportKindAnswerReady {
-			verdict = chatx.TurnVerdictFor(m.Name, reason != "")
+			// How the run this turn ended went, kept with the run: the reconciler may settle it
+			// together with a later run's end, whose reason is not this run's.
+			chatx.NoteRunOutcome(m.Name, reason)
+			key, _ := status.ReadCompletionKey(sid)
+			verdict = chatx.TurnVerdictFor(m.Name, reason != "", key)
 		}
 		ev := notice.New(kind, m.Name, m.Kind, session.Display(m))
 		// Full-text bridge (docs/log/37, the future direction): carry the turn's final
