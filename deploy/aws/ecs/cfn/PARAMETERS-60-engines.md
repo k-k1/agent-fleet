@@ -1815,9 +1815,10 @@ with room for the filesystem.
 
 The Control Plane's ONLY new IAM in this repository (ADR 0072 decision 6), and it lives in this
 stack so that a deployment which does not adopt 60-engines gains nothing. It is a **managed**
-policy (`CpIngestManagedPolicy`, named `af-<stack>-cp-ingest`) attached to the CP task role by
-name: as an inline policy it counted toward IAM's 10,240-character aggregate for the role's
-inline policies, which the role passed once 30-ingress added its own (#1576). The update that
+policy (`CpIngestManagedPolicy`, named `af-<stack>-cp-ingest-<region>` because managed
+policy names are account-wide) attached to the CP task role by name: as an inline policy it
+counted toward IAM's 10,240-character aggregate for the role's inline policies, which the
+role passed once 30-ingress added its own (#1576). The update that
 converts it creates the managed policy before it deletes the inline one, so the role is never
 without the grant; `deploy/local/cfn-iam-policy-size-test.py` holds every role's sizes:
 

@@ -88,6 +88,10 @@ aws --profile p1 --region ap-northeast-1 cloudformation describe-stacks --stack-
 EOF
 expect_set "$WORK/want1"
 expect_order "ecr describe-repositories" "docker tag agent-fleet/control-plane:1.2.3"
+# The printed next step is copied as is: without the capability it stops at CreateChangeSet
+# with InsufficientCapabilitiesException (30-ingress holds a named IAM policy, #1576).
+grep -q -- "--template-file cfn/30-ingress.yaml --capabilities CAPABILITY_NAMED_IAM" "$WORK/out1.txt" \
+  || { cat "$WORK/out1.txt"; fail "the printed ingress deploy lacks CAPABILITY_NAMED_IAM"; }
 # The inspect is a pre-flight guard: a multi-arch build never loads locally, and without
 # it `docker tag` fails with "No such image", which reads like a failed build.
 expect_order "docker image inspect agent-fleet/control-plane:1.2.3" "docker tag agent-fleet/control-plane:1.2.3"

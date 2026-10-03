@@ -120,7 +120,7 @@ Resources:
   CpSlotLaunchManagedPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      ManagedPolicyName: !Sub "af-${AWS::StackName}-cp-slot-launch"
+      ManagedPolicyName: !Sub "af-${AWS::StackName}-cp-slot-launch-${AWS::Region}"
       Roles:
         - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-CpTaskRoleArn" } ] ]
       PolicyDocument:

@@ -7,21 +7,23 @@
 
 ## Why this exists
 
-IAM caps a role's inline policies at 10,240 characters in total (whitespace not counted),
-each managed policy at 6,144, and the managed policies attached to one role at 10 (the
-default quota). Five stacks put policies on the Control Plane task role - 20-platform's own
+IAM caps a role's inline policies at 10,240 characters in total (whitespace not counted)
+and each managed policy at 6,144; the managed policies attached to one role are capped by an
+adjustable quota, held here to the long-standing default of 10 as a conservative baseline. Five stacks put policies on the Control Plane task role - 20-platform's own
 cp-runtime, and what 30-ingress, 40-ec2-pool and 60-engines attach through the imported
 CpTaskRoleArn - so no one template shows the total. The first time it passed the limit
 was the first deployment that tried (#1576): CreatePolicy failed with ServiceLimitExceeded
 and the ingress stack rolled back.
 
 This renders every template with every optional policy present (both branches of an !If
-are tried and the longer one counts; stack names are padded to STACK_NAME_LEN), attributes
+are tried and the longer one counts; every stack name is as long as the names it creates
+allow, MAX_STACK_NAME), attributes
 each policy to the role it lands on, and fails when
 
   - a role's inline policies together exceed INLINE_MAX;
   - one managed policy exceeds MANAGED_MAX;
   - a role carries more than MANAGED_COUNT_MAX managed policies;
+  - a git ref given to --upgrade-from does not resolve (exit 2);
   - a policy names a role this script cannot find, or uses an intrinsic it cannot render
     (exit 2: a value it guessed could only make the total look smaller).
 
@@ -55,15 +57,24 @@ SLUGS = ("00-network", "10-data", "20-platform", "40-ec2-pool", "50-tts", "60-en
 # update.sh's order for the stacks that exist before a release (README "One command").
 UPDATE_ORDER = ("40-ec2-pool", "20-platform", "50-tts", "60-engines", "30-ingress")
 
-# The hard limits are IAM's; the margins below them are room for the next statement, so the
-# test goes red on the change that eats the room rather than on the deployment after it.
+# The first two hard limits are IAM's; the managed count is the older default of an adjustable
+# quota, kept as a baseline every account has. The margins below them are room for the next
+# statement, so the test goes red on the change that eats the room rather than on the
+# deployment after it.
 INLINE_HARD, MANAGED_HARD, MANAGED_COUNT_HARD = 10240, 6144, 10
 INLINE_MAX, MANAGED_MAX, MANAGED_COUNT_MAX = 9500, 5800, 8
 
 REGION, ACCOUNT = "ap-southeast-1", "123456789012"
-# The default stack names are 13 to 16 characters. Every ARN in these policies repeats one,
-# so the check runs on longer ones than any deployment is likely to choose.
-STACK_NAME_LEN = 32
+# Every ARN in these policies repeats a stack name, so each stack is given the longest name
+# the physical names it creates allow (the defaults are 13 to 16 characters):
+#   20-platform  RoleName af-<stack>-cp-task / -ws-task <= 64
+#   30-ingress   the ALB's Name af-<stack> <= 32
+#   40-ec2-pool  RoleName af-<stack>-slot <= 64
+#   60-engines   BucketName af-<stack>-models-<account id> <= 63
+#   the others   no physical-name cap: CloudFormation's own 128
+MAX_STACK_NAME = {"20-platform": 53, "30-ingress": 29, "40-ec2-pool": 56, "60-engines": 40}
+STACK_NAME_CAP = 128
+STACK_NAME_LEN = None  # None: MAX_STACK_NAME; 0: the README's af-ecs-* names; n: n each
 PLACEHOLDER_LEN = 64
 NOVALUE = object()
 
@@ -100,8 +111,21 @@ for _t in ("Ref", "Sub", "GetAtt", "ImportValue", "Select", "Split", "If", "Equa
     CfnLoader.add_constructor("!" + _t, _intrinsic(_t))
 
 
+def commit_of(ref):
+    """The commit a ref names. A typo or an unfetched tag must stop the replay: read as "no
+    stacks at that ref" it starts from nothing and passes."""
+    p = subprocess.run(["git", "-C", ROOT, "rev-parse", "--verify", "--quiet", ref + "^{commit}"],
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        raise Unrenderable("git ref %r does not resolve to a commit here (fetch it first?)" % ref)
+    return p.stdout.strip()
+
+
 def load_templates(ref=None, overrides=None):
     """{slug: template} from the working tree, or from a git ref (per slug via overrides)."""
+    for slug in overrides or {}:
+        if slug not in SLUGS:
+            raise Unrenderable("--upgrade-from %s=...: no such stack (one of %s)" % (slug, ", ".join(SLUGS)))
     out = {}
     for slug in SLUGS:
         r = (overrides or {}).get(slug, ref)
@@ -110,10 +134,14 @@ def load_templates(ref=None, overrides=None):
             with open(os.path.join(ROOT, path), encoding="utf-8") as fh:
                 text = fh.read()
         else:
-            p = subprocess.run(["git", "-C", ROOT, "show", "%s:%s" % (r, path)],
+            c = commit_of(r)
+            if subprocess.run(["git", "-C", ROOT, "cat-file", "-e", "%s:%s" % (c, path)],
+                              capture_output=True).returncode != 0:
+                continue  # the stack did not exist at that commit
+            p = subprocess.run(["git", "-C", ROOT, "show", "%s:%s" % (c, path)],
                                capture_output=True, text=True)
             if p.returncode != 0:
-                continue  # the stack did not exist at that ref
+                raise Unrenderable("git show %s:%s failed: %s" % (r, path, p.stderr.strip()))
             text = p.stdout
         out[slug] = yaml.load(text, Loader=CfnLoader)
     return out
@@ -122,7 +150,8 @@ def load_templates(ref=None, overrides=None):
 def stack_name(slug):
     if STACK_NAME_LEN == 0:  # the README's names: what a deployment measured in the field has
         return "af-ecs-" + slug.split("-", 1)[1]
-    return ("af-" + slug.split("-", 1)[1] + "-").ljust(STACK_NAME_LEN, "x")
+    n = STACK_NAME_LEN if STACK_NAME_LEN is not None else MAX_STACK_NAME.get(slug, STACK_NAME_CAP)
+    return ("af-" + slug.split("-", 1)[1] + "-").ljust(n, "x")
 
 
 # --- rendering --------------------------------------------------------------------------
@@ -339,7 +368,7 @@ def violations(att):
                 out.append("%s: managed policy %s is %d > %d (IAM refuses past %d)"
                            % (rid, p.key[1], p.size, MANAGED_MAX, MANAGED_HARD))
         if managed_count(pols) > MANAGED_COUNT_MAX:
-            out.append("%s: %d managed policies > %d (default quota %d)"
+            out.append("%s: %d managed policies > %d (baseline quota %d)"
                        % (rid, managed_count(pols), MANAGED_COUNT_MAX, MANAGED_COUNT_HARD))
     return out
 
@@ -409,8 +438,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--upgrade-from", action="append", default=[],
                     help="git ref the deployment is on, or <slug>=<ref> for one stack")
-    ap.add_argument("--stack-name-len", type=int, default=STACK_NAME_LEN,
-                    help="pad stack names to this length; 0 = the README's af-ecs-* names")
+    ap.add_argument("--stack-name-len", type=int, default=None,
+                    help="every stack name this long; 0 = the README's af-ecs-* names "
+                         "(default: the longest each stack's physical names allow)")
     args = ap.parse_args()
     STACK_NAME_LEN = args.stack_name_len
     try:
@@ -444,6 +474,12 @@ def main():
     else:
         print("FAIL  control: cp-runtime as one managed policy passes - the managed check measures nothing")
         bad.append("control")
+    try:
+        commit_of("no-such-ref-cfn-iam-policy-size-control")
+        print("FAIL  control: an unknown git ref resolved - --upgrade-from would replay from nothing")
+        bad.append("control")
+    except Unrenderable:
+        print("ok    control: an unknown git ref is refused")
 
     if args.upgrade_from:
         base, per = None, {}

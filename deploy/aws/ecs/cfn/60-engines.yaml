@@ -283,7 +283,7 @@ Resources:
   CpIngestManagedPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      ManagedPolicyName: !Sub "af-${AWS::StackName}-cp-ingest"
+      ManagedPolicyName: !Sub "af-${AWS::StackName}-cp-ingest-${AWS::Region}"
       Roles:
         - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-CpTaskRoleArn" } ] ]
       PolicyDocument:

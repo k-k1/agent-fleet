@@ -136,13 +136,16 @@ for why they live outside the template).
   the CP task role (`30-ingress`'s is the home-ops `RunTask` grant). Without it the change set
   is refused with `InsufficientCapabilitiesException … Requires capabilities : [CAPABILITY_IAM]`.
 - **The CP task role's policy budget.** IAM caps a role's inline policies at 10,240
-  characters together (whitespace not counted) and attaches at most 10 managed policies by
-  default. 20-platform's inline `cp-runtime` is about 7,000 of those; every grant another
-  stack adds to the role (`40-ec2-pool`'s slot launch, `60-engines`' ingest, `30-ingress`'s
-  home ops) is an `AWS::IAM::ManagedPolicy` of its own, because inline they came to ~10,500
-  and `30-ingress` rolled back with `ServiceLimitExceeded` (#1576).
-  `deploy/local/cfn-iam-policy-size-test.py` renders every template and fails CI past 9,500
-  inline per role or 5,800 per managed policy; `--upgrade-from <git-ref>` replays
+  characters together (whitespace not counted) and each managed policy at 6,144; how many
+  managed policies a role may carry is an adjustable quota. 20-platform's inline `cp-runtime`
+  is about 7,000 of those; every grant another stack adds to the role (`40-ec2-pool`'s slot
+  launch, `60-engines`' ingest, `30-ingress`'s home ops) is an `AWS::IAM::ManagedPolicy` of
+  its own, because inline they came to ~10,500 and `30-ingress` rolled back with
+  `ServiceLimitExceeded` (#1576). Managed policy names are account-wide, so these carry the
+  region (`af-<stack>-cp-ingest-<region>`, …). `deploy/local/cfn-iam-policy-size-test.py`
+  renders every template, each stack name as long as its physical names allow, and fails CI
+  past 9,500 inline characters per role, 5,800 per managed policy or 8 managed policies per
+  role (held under the older default quota of 10); `--upgrade-from <git-ref>` replays
   `update.sh`'s order from a deployed release and prints the inline total at every step.
 
 ### 30-ingress stand-up (milestone: CP boots + Google login)
