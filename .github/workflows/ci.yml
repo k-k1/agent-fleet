@@ -40,6 +40,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Whether this PR touches anything the build/test jobs below read (#1573). A docs-only PR
+  # skips control-plane, workspace-agent, deploy-scripts and console; the scans above them
+  # and docs.yml still run. Pushes to main/develop and manual runs always run everything, so
+  # whatever a PR skipped is still built after the merge.
+  #
+  # The gated jobs test `!= 'false'`, not `== 'true'`: if this job fails, its output is
+  # empty and the jobs run instead of skipping. A job skipped through `if:` reports
+  # "skipped", which a required check accepts — a workflow-level `paths-ignore` would leave
+  # the check pending forever instead.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # A pull_request run checks out the PR's merge commit, whose first parent is the
+          # base tip: HEAD^1..HEAD is exactly what the PR changes.
+          fetch-depth: 2
+      - name: classifier self-test
+        run: ./scripts/ci-changes-test.sh
+      - id: classify
+        name: classify the changed paths
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != pull_request ]; then
+            echo "code=true" | tee -a "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # --no-renames lists both sides of a move, so moving a file out of console/ into
+          # docs/ still counts as touching console/.
+          git diff --name-only --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/changed.txt"
+          cat "$RUNNER_TEMP/changed.txt"
+          ./scripts/ci-changes.sh < "$RUNNER_TEMP/changed.txt" | tee -a "$GITHUB_OUTPUT"
+
   # Credential-leak detection. In a public repository "committed" means "published" and
   # there is no taking it back, so this scans the whole history every time rather than a
   # diff (12 s for 2436 commits / 64 MB — cheap enough).
@@ -130,6 +167,8 @@ jobs:
         run: go run .
 
   control-plane:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -180,6 +219,8 @@ jobs:
         run: cd control-plane && ../scripts/vet-build-tags.sh
 
   workspace-agent:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -232,6 +273,8 @@ jobs:
   # the script). Zero CFN create/delete/update calls: there are 198 invocations, but every
   # one is a read against the fake `aws` (180 `describe-stacks`, among others).
   deploy-scripts:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -276,6 +319,8 @@ jobs:
         run: ./deploy/local/cli-pin-bump-stub-test.sh
 
   console:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     defaults:
       run:
