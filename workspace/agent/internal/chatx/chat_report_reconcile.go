@@ -1042,3 +1042,31 @@ func InstallReconcilerForTest(interval time.Duration) (stop func()) {
 		reportRec = old
 	}
 }
+
+// AwaitReconcilerSweepsForTest blocks until the live reconciler has completed at least n sweeps
+// after this call AND at least min has elapsed, or until timeout (then it returns false). It is
+// how a negative test proves the reconciler actually looked at a state: a bare sleep passes
+// vacuously when a loaded runner never schedules the sweep goroutine inside it.
+//
+// The leftover notification is drained first, but `swept` has capacity 1 and does not say which
+// sweep it came from, so the first completion counted may belong to a sweep that started before
+// the caller's write — callers ask for one more than the sweeps they need to have seen the state.
+// min covers the settle debounce's time condition (quiet must also span one interval).
+func AwaitReconcilerSweepsForTest(n int, min, timeout time.Duration) bool {
+	rc := reportRec
+	select {
+	case <-rc.swept:
+	default:
+	}
+	start := time.Now()
+	deadline := time.After(timeout)
+	for seen := 0; seen < n || time.Since(start) < min; {
+		select {
+		case <-rc.swept:
+			seen++
+		case <-deadline:
+			return false
+		}
+	}
+	return true
+}
