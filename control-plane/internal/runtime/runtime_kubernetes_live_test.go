@@ -1454,8 +1454,11 @@ type kubeLiveNodePod struct {
 // It fails closed on which node it stops: AF_K8S_LIVE_CORDON_NODES must cordon the nodes
 // that run anything else, the node the workspace lands on must have been created after
 // the test began (added by the autoscaler for it), and every pod on it, in every
-// namespace, must be the harness's own or a node agent (a DaemonSet's pod or a static
-// pod). The three commands take {node} and {zone}: AF_K8S_LIVE_NODE_STOP_CMD stops the
+// namespace, must be the harness's own, a node agent (a DaemonSet's pod or a static pod),
+// or one AF_K8S_LIVE_NODE_ALLOW_PODS names explicitly (<namespace>/<name prefix>,
+// comma-separated: a replicated system component such as GKE's konnectivity-agent, which
+// the scheduler places on any new node). Pods of the workspace namespace other than the
+// harness's own are refused whatever the list says. The three commands take {node} and {zone}: AF_K8S_LIVE_NODE_STOP_CMD stops the
 // VM, AF_K8S_LIVE_NODE_STATUS_CMD prints its state from the provider (TERMINATED is the
 // proof the runbook asks for), and AF_K8S_LIVE_NODE_START_CMD starts it again at the end.
 func TestKubernetesLiveNodeUnreachable(t *testing.T) {
@@ -1488,6 +1491,7 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	// The node is cordoned before its pods are read and stays cordoned until the end, so
 	// nothing can be placed on it between the check and the VM stop.
 	l.cordon(node)
+	allow := splitCSV(os.Getenv("AF_K8S_LIVE_NODE_ALLOW_PODS"))
 	var others struct {
 		Items []kubeLiveNodePod `json:"items"`
 	}
@@ -1501,7 +1505,15 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 				agent = true
 			}
 		}
-		if !own && !agent {
+		allowed := false
+		for _, a := range allow {
+			ns, prefix, ok := strings.Cut(a, "/")
+			if ok && prefix != "" && m.Namespace == ns && m.Namespace != l.ns && strings.HasPrefix(m.Name, prefix) {
+				allowed = true
+				t.Logf("node %s also runs %s/%s, allowed by AF_K8S_LIVE_NODE_ALLOW_PODS", node, m.Namespace, m.Name)
+			}
+		}
+		if !own && !agent && !allowed {
 			t.Fatalf("node %s also runs %s/%s; refusing to stop it", node, m.Namespace, m.Name)
 		}
 	}
@@ -1520,6 +1532,22 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	l.operator(stopCmd)
 	l.eventually(10*time.Minute, node+" not Ready", func() bool { return l.nodeNotReady(node) })
 	t.Logf("%s not Ready after %s", node, time.Since(t0).Round(time.Second))
+	// A stop the guest sees (an ACPI shutdown, as `gcloud compute instances stop` sends)
+	// lets the node terminate the pod and report it before going away: the pod is then
+	// terminal, deleting it is immediate, and Stop rightly settles. That is not a node that
+	// stopped answering, so the scenario did not happen; the stop command must cut the
+	// node off without a shutdown (measured on GKE 1.35: a VM stop took 107 s, and the
+	// agent stopped answering within the first minute of it).
+	var stillRunning bool
+	for _, p := range l.pods(rt.base) {
+		if p.Status.Phase != "Succeeded" && p.Status.Phase != "Failed" {
+			stillRunning = true
+		}
+		t.Logf("the workspace pod after the node went: phase %s", p.Status.Phase)
+	}
+	if !stillRunning {
+		t.Fatalf("INCONCLUSIVE: the workspace pod is gone or terminal once %s is not Ready — the stop command shut the node down gracefully instead of cutting it off", node)
+	}
 
 	err = rt.Stop(ctx)
 	if err == nil || !strings.Contains(err.Error(), "not settled") {

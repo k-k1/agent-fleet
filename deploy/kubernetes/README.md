@@ -831,12 +831,18 @@ cordons: the test fails if its UID, node or restart count changes.
 
 - `TestKubernetesLivePlannedUpgrade` cordons `AF_K8S_LIVE_CORDON_NODES` (comma-separated) for the
   test and checks that a Start lands elsewhere; it does not drain.
-- `TestKubernetesLiveNodeUnreachable` stops the VM of the node its workspace lands on (cordon the
-  others with `AF_K8S_LIVE_CORDON_NODES`, so that this is a node the autoscaler added for it) and
-  follows "A node that stopped answering". It takes three commands with `{node}` and `{zone}`
-  filled in:
+- `TestKubernetesLiveNodeUnreachable` cuts off the node its workspace lands on and follows "A node
+  that stopped answering". Cordon every other workspace node with `AF_K8S_LIVE_CORDON_NODES`, so
+  that the autoscaler adds a node for it. The test refuses a node created before it began, and it
+  cordons that node itself before checking its pods. Every pod on it must be the harness's own, a
+  DaemonSet's, a static pod, or one named in `AF_K8S_LIVE_NODE_ALLOW_PODS` (`<namespace>/<name
+  prefix>`, comma-separated; on GKE, `kube-system/konnectivity-agent-` is placed on new nodes).
+  It takes three commands with `{node}` and `{zone}` filled in. The stop must cut the node off
+  **without a shutdown the guest sees**. `gcloud compute instances stop` is an ACPI shutdown:
+  the node terminates its pods and reports them before it goes, so Stop rightly settles, and the
+  harness reports that run as `INCONCLUSIVE`.
   ```bash
-  export AF_K8S_LIVE_NODE_STOP_CMD='gcloud compute instances stop {node} --zone {zone} --project '"$PROJECT"
+  export AF_K8S_LIVE_NODE_STOP_CMD='<cut {node} off without a guest shutdown>'
   export AF_K8S_LIVE_NODE_STATUS_CMD='gcloud compute instances describe {node} --zone {zone} --project '"$PROJECT"' --format="value(status)"'
   export AF_K8S_LIVE_NODE_START_CMD='gcloud compute instances start {node} --zone {zone} --project '"$PROJECT"
   ```
