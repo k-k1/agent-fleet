@@ -44,6 +44,8 @@ import type { Session } from "../../types/session.ts";
 import { PaneFind } from "./PaneFind.tsx";
 import { BrowserPane } from "../browser/BrowserPane.tsx";
 import { BrowserAttachPane } from "../browser/BrowserAttachPane.tsx";
+import { BrowserUnavailable } from "../browser/BrowserUnavailable.tsx";
+import { useBrowserUnavailable } from "../browser/availability.ts";
 import { EngineAddView } from "../settings/admin/adminEngineAdd.tsx";
 import { SessionsOverview } from "../overview/SessionsOverview.tsx";
 import { GalleryView } from "../gallery/GalleryView.tsx";
@@ -159,6 +161,7 @@ function PopulatedPane({
   const tr = useT();
   const paneRef = useRef<HTMLDivElement>(null);
   const isTerm = pane.content.kind === "terminal";
+  const browserUnavailable = useBrowserUnavailable();
   // Minimal pop-out tab: hide the pop-out button (the pane already IS its own
   // tab); reappears after expanding (「展開」) to full-console mode.
   const popoutTabMode = usePopoutMode();
@@ -814,12 +817,20 @@ function PopulatedPane({
           headerActions={tabHeaderActions}
         />
       )}
-      {pane.content.kind === "browser" && (
+      {pane.content.kind === "browser" && (browserUnavailable ? (
+        <BrowserUnavailable
+          runtime={browserUnavailable}
+          target={{ port: pane.content.port, path: pane.content.path }}
+          headerActions={tabHeaderActions}
+        />
+      ) : (
         <BrowserPane paneId={pane.id} port={pane.content.port} path={pane.content.path} headerActions={tabHeaderActions} />
-      )}
-      {pane.content.kind === "browserAttach" && (
+      ))}
+      {pane.content.kind === "browserAttach" && (browserUnavailable ? (
+        <BrowserUnavailable runtime={browserUnavailable} headerActions={tabHeaderActions} />
+      ) : (
         <BrowserAttachPane paneId={pane.id} attachmentId={pane.content.attachmentId} headerActions={tabHeaderActions} />
-      )}
+      ))}
       {pane.content.kind === "sharedSession" && (
         <SharedSessionView sharedSessionId={pane.content.sharedSessionId} headerActions={tabHeaderActions} />
       )}

@@ -20,6 +20,15 @@ file refer to it.
 | `overlays/generic/` | The overlay to copy for any other cluster |
 | [`../gcp/gke/`](../gcp/gke/) | Terraform for everything around a GKE cluster |
 
+> **No browser features on this runtime.** Chromium's sandbox cannot start in a workspace pod
+> (Pod Security `restricted`: NoNewPrivs stops the setuid helper, RuntimeDefault seccomp refuses
+> user namespaces), and running it unsandboxed was decided against (ADR 0106, addendum
+> 2026-10-04). The CP says so for every workspace it starts here (`AF_BROWSER_UNAVAILABLE`), so
+> the Console greys out the browser pane with the reason, the Agent's browser routes and the af
+> browser tools answer `browser_unavailable`, and `workspace-agent browser-smoke` fails with that
+> explanation instead of Chromium's EOF. The lightweight preview still works. Nothing on the
+> cluster side to configure; do not add a seccomp profile or capability to work around it.
+
 What builds what:
 
 | Built by | What |

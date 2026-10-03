@@ -651,3 +651,21 @@ mux を通して振り分け、一覧に無いパターンは断るので、ハ�
 - **測っていないこと：** ブラウザがそのタイマーを遅らせたり止めたりしうる、非表示のタブ・凍結されたページ・スリープ中の端末。動いている WebSocket の 24 時間での切断。切断の後に Console がターミナルを透過的につなぎ直すか。未決事項 3 のこの部分は残る。
 
 runbook の "The load balancer" も同じことを書いている。
+
+## 追記（2026-10-04）— このランタイムにはブラウザ機能を置かない（未決事項 1、#1606）
+
+未決事項 1 について。#1468 の GKE 受け入れ用クラスタ（2026-10-03、GKE 1.35.8、`develop` から作ったワークスペースのイメージ、ワークスペースの名前空間は Pod Security `restricted`）で測った：
+
+- **サンドボックス付きの Chromium はワークスペースの pod で起動しない。** 本番の pipe-CDP ランチャーである `workspace-agent browser-smoke` は `Chromium stopped during Target.setDiscoverTargets: EOF` で失敗する。サンドボックス付きの `chromium --headless=new --dump-dom` は `The setuid sandbox is not running as root` と `Zygote process exited prematurely` を出す。同じコマンドに `--no-sandbox` を付けると DOM が出る。
+- **理由：** pod の中では `NoNewPrivs: 1`（setuid の `chrome-sandbox` が権限を上げられない）、`CapEff: 0`、`Seccomp: 2`（RuntimeDefault）で、`unshare -U` は `Operation not permitted` で断られる。setuid のサンドボックスもユーザー名前空間のサンドボックスも使えない。`docker` では同じ `unshare -U` が通り、サンドボックス付きの起動は動く。
+
+**決定：`kubernetes` ランタイムはブラウザ機能を提供しない。** ブラウザペインも、Chromium の接続も、エージェント向けのヘッドレス Chromium も置かず、黙って失敗する代わりにそう伝える。退けた案：ユーザー名前空間を許す `Localhost` seccomp プロファイルやクラスタ設定（複数メンバーのワークスペースが共有するノードのカーネルの攻撃面を広げる）、このランタイムだけ `--no-sandbox` で起動すること（サンドボックスの無いレンダラは、信頼できない Web の中身にメンバーの dev ユーザーとしてのコード実行を与える）。GKE Sandbox（gVisor）は、将来の道として別の issue に残す。
+
+実装のしかた：
+
+- 決めるのはアダプタで、場所は 1 か所（`runtime.BrowserUnavailable`、実装するのは kubernetes ランタイムだけ）。CP はランタイム ID を、ワークスペースのペイロードの `browserUnavailable` に状態を問わず載せ、pod テンプレートの `AF_BROWSER_UNAVAILABLE` にも入れる。`/api/browser/*` とブラウザの WebSocket も、CP 自身が `409 browser_unavailable` で断る。
+- Agent は調べずにこの変数に従う。ブラウザの全ルートが同じ拒否を返し、ランチャーは Chromium を起動する前に断り（`AF_CHROMIUM_NO_SANDBOX` でも覆せない）、af MCP のブラウザツールは説明と代わりにすべきことを返し、`browser-smoke` は理由を付けて失敗する。調べる方式を採らなかったのは、結論が繰り返し測る値ではなく方針だからであり、`native` ではユーザー名前空間を調べると失敗しても、AppArmor のプロファイル付きの Chromium なら動くことがあるからである。
+- Console は「ペインで開く」を理由付きで押せない状態にし、セッション行のポートを軽量プレビューで開き、レイアウトから戻ったブラウザのペインや接続のペインを理由の表示に置き換える。軽量プレビューは変わらない。
+- 変数が効くのはワークスペースの次の起動から（pod テンプレートはそのとき書かれる）。ほかのランタイムは何も変わらない。
+
+ガイドの `ref/browser-pane.md`（「ブラウザペインが無い配備」）、`ref/deploy-targets.md`、エージェント向けの `workspace/notes/browser.md`、`deploy/kubernetes/README.md` も同じことを書いている。

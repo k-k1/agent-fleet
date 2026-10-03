@@ -36,7 +36,7 @@ value instead of reverting code.
 | Idle auto-stop | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Stop / start preserving home | ✓ | ✓ | ✓ | ✓ | ✓ |
 | The user guide inside the container | ✓¹ | ✓¹ | ✓² | ✓² | ✓² |
-| Browser pane | ✓ | ✓³ | ✓ | ✓ | ✓¹² |
+| Browser pane | ✓ | ✓³ | ✓ | ✓ | —¹² |
 | Cost attribution per member | — | — | ✓ | ✓ | — |
 | An image engine the deployment provides | ✓⁴ | ✓⁴ | — | ✓⁵ | ✓⁴ |
 | A chat engine the deployment provides | ✓⁶ | ✓⁶ | — | ✓⁶ | ✓⁶ |
@@ -122,8 +122,11 @@ the last start. After Clean home the first start reinstalls the agent CLIs, as o
 
 ¹¹ The size of the home volume. It can grow, never shrink.
 
-¹² As on `ecs`, without the extra privilege `docker` grants Chromium's sandbox; whether the pane
-behaves the same on every cluster is still being measured.
+¹² No browser features at all — no browser pane, no Chromium attachments, no headless Chromium.
+The workspace pod's Pod Security `restricted` level leaves Chromium's sandbox neither its setuid
+helper nor user namespaces, and running Chromium unsandboxed was decided against (ADR 0106,
+addendum 2026-10-04). The Console greys the entry points out and says why; the lightweight preview
+still works ([browser-pane.md](browser-pane.md#where-there-is-no-browser-pane)).
 
 ¹³ A member's Recreate and Clean home mark the home and return; the next start removes the files
 before the workspace runs, as on `ecs-ec2`. An administrator's Clean home removes them at once,

@@ -895,3 +895,46 @@ Application Load Balancer, with the backend's `timeoutSec` at 3600 (the `GCPBack
   the terminal transparently after a cut. Those parts of open question 3 stay open.
 
 The runbook's "The load balancer" says the same.
+
+## Addendum (2026-10-04) — no browser features on this runtime (open question 1, #1606)
+
+On open question 1, measured on the GKE acceptance cluster of #1468 (2026-10-03, GKE 1.35.8, the
+workspace image built from `develop`, the workspace namespace at Pod Security `restricted`):
+
+- **A sandboxed Chromium does not start in a workspace pod.** `workspace-agent browser-smoke`, the
+  production pipe-CDP launcher, fails with `Chromium stopped during Target.setDiscoverTargets:
+  EOF`; `chromium --headless=new --dump-dom` with the sandbox prints `The setuid sandbox is not
+  running as root` and `Zygote process exited prematurely`. The same command with `--no-sandbox`
+  dumps the DOM.
+- **Why:** in the pod `NoNewPrivs: 1` (the setuid `chrome-sandbox` cannot elevate), `CapEff: 0`,
+  `Seccomp: 2` (RuntimeDefault), and `unshare -U` is refused with `Operation not permitted`, so
+  neither the setuid sandbox nor the user-namespace sandbox is available. Under `docker` the
+  same `unshare -U` succeeds and the sandboxed launch works.
+
+**Decision: the `kubernetes` runtime offers no browser features** — no browser pane, no Chromium
+attachments, no headless Chromium for agents — and says so instead of failing silently. Rejected:
+a `Localhost` seccomp profile or cluster settings that allow user namespaces (they widen the
+attack surface of a node kernel shared by several members' workspaces), and `--no-sandbox` on this
+runtime (an unsandboxed renderer gives untrusted web content code execution as the member's dev
+user). GKE Sandbox (gVisor) remains a possible later path, as its own issue.
+
+How it is carried out:
+
+- The adapter decides, in one place (`runtime.BrowserUnavailable`, implemented only by the
+  kubernetes runtime). The CP puts the runtime id on the workspace payload as
+  `browserUnavailable`, in every state, and on the pod template as `AF_BROWSER_UNAVAILABLE`; it
+  also refuses `/api/browser/*` and the browser WebSockets itself with `409 browser_unavailable`.
+- The Agent obeys the variable rather than probing: every browser route answers the same
+  refusal, the launcher refuses before Chromium starts (`AF_CHROMIUM_NO_SANDBOX` cannot override
+  it), the af MCP browser tools return the explanation with what to do instead, and
+  `browser-smoke` fails with the reason. A probe was not chosen because the outcome is a policy,
+  not a measurement to repeat, and on `native` a userns probe can fail where an AppArmor-profiled
+  Chromium still runs.
+- The Console greys out "open in pane" with the reason, opens a session row's port in the
+  lightweight preview, and replaces a browser or attachment pane restored from a layout with the
+  reason. The lightweight preview is unaffected.
+- The variable takes effect at a workspace's next start, since the pod template is written then.
+  Every other runtime is unchanged.
+
+The guide's `ref/browser-pane.md` ("Where there is no browser pane"), `ref/deploy-targets.md`,
+the agent-facing `workspace/notes/browser.md` and `deploy/kubernetes/README.md` say the same.

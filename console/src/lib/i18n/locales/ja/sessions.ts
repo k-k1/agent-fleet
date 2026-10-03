@@ -177,6 +177,7 @@ export const sessions = {
   "wsbar.preview.copy": "コピー",
   "wsbar.preview.copy_url": "URL をコピー",
   "wsbar.preview.hint": "ペイン表示はコンテナ内Chromiumを使います。軽量プレビューは従来どおり新しいタブで開きます。",
+  "wsbar.preview.hint_unavailable": "このワークスペース（{runtime} ランタイム）ではペイン表示を使えません。コンテナ内 Chromium のサンドボックスが起動できないためです。軽量プレビューは新しいタブで開けます。",
   // リソースタイル（tile のツールチップ）
   "wsbar.tile.ws_mem": "ワークスペースのメモリ: {mem}G",
   "wsbar.tile.ws_mem_oom_note":
@@ -374,6 +375,7 @@ export const sessions = {
   "srow.pr_checks.failure": "・CI 失敗",
   "srow.pr_checks.pending": "・CI 実行中",
   "srow.port_title": "このセッションが 127.0.0.1:{port} で待ち受けています — ブラウザペインで開く（Ctrl／中クリックで新しいペイン）",
+  "srow.port_title_preview": "このセッションが 127.0.0.1:{port} で待ち受けています — 軽量プレビュー（新しいタブ）で開く（このワークスペースではブラウザペインを使えません）",
   "srow.links": "プルリクエストと待ち受けポート",
   "srow.ports_more": "残り {n} 個のポートを表示",
   "srow.locked_hint": "削除ロック中です。先にロックを解除してください。",

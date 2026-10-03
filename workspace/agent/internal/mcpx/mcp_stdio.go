@@ -1878,7 +1878,8 @@ var mcpStdioTools = []map[string]any{
 			"Start with --remote-debugging-port=0 and pass the port from line 1 of " +
 			"<user-data-dir>/DevToolsActivePort. The returned browser_id must equal the GUID on line 2 of that " +
 			"file; if it does not, it is a different instance, so do not attach. " +
-			"Never put a CDP endpoint, cookie, password or token into an answer, a log or a commit.",
+			"Never put a CDP endpoint, cookie, password or token into an answer, a log or a commit. " +
+			"Where it answers code=browser_unavailable this workspace runtime has no browser features at all.",
 		"inputSchema": map[string]any{
 			"type":                 "object",
 			"additionalProperties": false,
@@ -4121,6 +4122,9 @@ var chromiumToolErrHints = map[string]string{
 func mcpChromiumToolErr(id json.RawMessage, action string, err error) []byte {
 	var httpErr *agentHTTPError
 	if errors.As(err, &httpErr) {
+		if httpErr.hasCode(browserx.UnavailableCode) {
+			return mcpToolErr(id, chromiumUnavailableText(httpErr.Body))
+		}
 		if code := httpErr.code(); code != "" {
 			if hint := chromiumToolErrHints[code]; hint != "" {
 				return mcpToolErr(id, fmt.Sprintf("%sに失敗しました（Agent API %d, code=%s）。%s", action, httpErr.StatusCode, code, hint))
@@ -4130,6 +4134,25 @@ func mcpChromiumToolErr(id json.RawMessage, action string, err error) []byte {
 		return mcpToolErr(id, fmt.Sprintf("%sに失敗しました（Agent API %d）", action, httpErr.StatusCode))
 	}
 	return mcpToolErr(id, action+"に失敗しました（Workspace Agentへ接続できません）")
+}
+
+// chromiumUnavailableText is the result of a browser tool on a workspace runtime without
+// browser features: the Agent's own explanation plus what to do instead, so the model stops
+// rather than starting Chromium itself (which fails there too) or reaching for
+// --no-sandbox (which was decided against).
+func chromiumUnavailableText(body string) string {
+	var b struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	msg := "Browser features are not available on this workspace runtime."
+	if json.Unmarshal([]byte(body), &b) == nil && b.Error.Message != "" {
+		msg = b.Error.Message
+	}
+	return "code=" + browserx.UnavailableCode + ": " + msg + " Do not start Chromium here, with or without " +
+		"--no-sandbox, and do not retry. Verify with tests, curl or the lightweight preview instead, " +
+		"and tell the user the browser pane is unavailable on this workspace."
 }
 
 // OutputCursors remembers, per conversation, the last /output cursor returned for

@@ -32,6 +32,15 @@ describe("workspace store applyPush", () => {
     useWorkspaceStore.setState({ state: "running", bootPhase: "" });
   });
 
+  it("adopts browserUnavailable from a push, even mid-transition, and clears it when absent", () => {
+    useWorkspaceStore.setState({ state: "starting…", browserUnavailable: "" });
+    useWorkspaceStore.getState().applyPush({ state: "running", browserUnavailable: "kubernetes" });
+    expect(useWorkspaceStore.getState().browserUnavailable).toBe("kubernetes");
+    useWorkspaceStore.setState({ state: "running" });
+    useWorkspaceStore.getState().applyPush({ state: "running" });
+    expect(useWorkspaceStore.getState().browserUnavailable).toBe("");
+  });
+
   it("adopts pushed state in steady state", () => {
     useWorkspaceStore.getState().applyPush({ state: "stopped" });
     expect(useWorkspaceStore.getState().state).toBe("stopped");
@@ -199,4 +208,25 @@ describe("workspace store recreate / cleanHome failures", () => {
       expect(await useWorkspaceStore.getState()[op](true)).toBeNull();
     });
   }
+});
+
+describe("workspace store refresh: browserUnavailable", () => {
+  const answer = (body: unknown) =>
+    ({
+      ok: true,
+      status: 200,
+      statusText: "",
+      headers: { get: () => "application/json" },
+      text: () => Promise.resolve(JSON.stringify(body)),
+    }) as unknown as Response;
+
+  it("reads the runtime that withholds browser features, and \"\" when the CP omits it", async () => {
+    useWorkspaceStore.setState({ state: "stopped", browserUnavailable: "" });
+    fetchMock.mockImplementation(() => Promise.resolve(answer({ state: "stopped", browserUnavailable: "kubernetes" })));
+    await useWorkspaceStore.getState().refresh();
+    expect(useWorkspaceStore.getState().browserUnavailable).toBe("kubernetes");
+    fetchMock.mockImplementation(() => Promise.resolve(answer({ state: "running" })));
+    await useWorkspaceStore.getState().refresh();
+    expect(useWorkspaceStore.getState().browserUnavailable).toBe("");
+  });
 });

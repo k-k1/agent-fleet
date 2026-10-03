@@ -420,7 +420,8 @@ func TestKubePodTemplateIsRestrictedAndCarriesNoSecret(t *testing.T) {
 	for _, e := range c.Env {
 		envOf[e.Name] = e.Value
 	}
-	if envOf["AGENT_STOP_GRACE_SEC"] != "35" || envOf["AF_WS_KEEP"] != kubeKeepPath || envOf["CLAUDE_CONFIG_DIR"] != kubeStatePath {
+	if envOf["AGENT_STOP_GRACE_SEC"] != "35" || envOf["AF_WS_KEEP"] != kubeKeepPath || envOf["CLAUDE_CONFIG_DIR"] != kubeStatePath ||
+		envOf[BrowserUnavailableEnv] != "kubernetes" {
 		t.Errorf("template env = %v", envOf)
 	}
 	if c.Resources.Limits["memory"] != "3221225472" || c.Resources.Limits["cpu"] != "500m" || c.Resources.Limits["ephemeral-storage"] == "" {

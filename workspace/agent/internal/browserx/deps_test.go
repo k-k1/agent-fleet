@@ -33,6 +33,9 @@ func TestMain(m *testing.M) {
 		// A workspace that runs these tests may itself carry AF_CP_INTERNAL_URL, which would send
 		// the tests' requests past their fake CP (cpurl.Request).
 		_ = os.Unsetenv("AF_CP_INTERNAL_URL")
+		// Likewise a kubernetes workspace carries UnavailableEnv, which would refuse every
+		// browser test; the tests that need it set unavailableRuntime themselves.
+		_ = os.Unsetenv(UnavailableEnv)
 		chromiumDefaultPin = func() string { return "" }
 		chromiumPinnedBinary = func() string { return "" }
 		installChromium = func(string) error {
