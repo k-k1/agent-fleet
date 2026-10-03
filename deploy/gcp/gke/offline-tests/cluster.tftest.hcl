@@ -1,7 +1,10 @@
 # Offline checks of the cluster resource against mocked providers: no project, no
-# credentials. Needs Terraform 1.11 or later (state_key). Run from deploy/gcp/gke after
-# `terraform init -backend=false`:
-#   terraform test
+# credentials. Needs Terraform 1.11 or later (state_key). Run from deploy/gcp/gke:
+#   terraform init -backend=false -test-directory=offline-tests
+#   terraform test -test-directory=offline-tests
+#
+# Not in tests/: init parses that directory on every run, and Terraform before 1.7 rejects
+# mock_provider there, which would break `terraform init` for the module's 1.6 floor.
 #
 # The live failures they pin are in the runbook's P1 and P11
 # (deploy/kubernetes/README.md).
