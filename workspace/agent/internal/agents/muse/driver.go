@@ -68,6 +68,17 @@ func (managedDriver) Capabilities() agents.Capabilities {
 // Resume returns the session's ThreadHandle, spawning `muse serve` and starting or reloading
 // the muse session when needed.
 func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
+	h, err := managedDriver{}.resume(m)
+	if err != nil {
+		return nil, err
+	}
+	// Peer messages a halt, a shutdown or a crash left held become the first turns (#1255).
+	agents.DeliverHeld(m.Name, h)
+	return h, nil
+}
+
+// resume is Resume without the held peer messages.
+func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	if m.Kind != session.KindMuse {
 		return nil, errors.New("muse driver は muse セッション専用です")
 	}

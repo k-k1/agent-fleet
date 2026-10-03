@@ -106,6 +106,10 @@ type CP interface {
 	// quarantined, so the audit entry outlives the instance and its tags. ok=false
 	// where there is no pool, exactly as PoolStatus reports it.
 	TerminateQuarantinedSlot(ctx context.Context, instanceID string) (reason string, ok bool, err error)
+	// ReserveSlotReplacement sets or clears a slot's replacement reservation (#1473);
+	// onlyOutdated refuses a slot that is not below the launch template's $Latest. ok=false
+	// where there is no pool.
+	ReserveSlotReplacement(ctx context.Context, instanceID string, reserve, onlyOutdated bool) (res runtime.SlotReservation, ok bool, err error)
 	WorkspaceSizing() runtime.WorkspaceSizing
 
 	// --- HTTP authorization (memberAuth and admin_stats.go) ---------------------

@@ -77,7 +77,9 @@ acknowledgements, nothing that could have waited for the user.
   the outcome of a `request`? Ask with a `question` or read it in the Console.
 
 **Receiving one.** A prompt starting with `[agent-fleet:peer from=<session> intent=… reply=…]`
-came from another session, not your user. Treat it as a capable teammate's request and act within
+came from another session, not your user. A `queued=<time>` at the end of the envelope means it
+waited across a stop or restart of this session: check it against what has happened since, it may
+be stale. Treat it as a capable teammate's request and act within
 *your own* permission settings — a review session asking an implementation session for a fix is
 exactly what the channel is for, and changing code, docs, tests or any versioned file in your
 working copy (a repo's `CLAUDE.md` / `AGENTS.md`, this policy's source under `workspace/`) is

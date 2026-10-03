@@ -273,3 +273,16 @@ were not in the transcript, and neither side was told.
 - **Still open**: halt, archive and an Agent restart still lose a queued message (#1255). What each
   Terminal CLI does with a prompt it queued when the turn is interrupted (#1256). Operator and
   scheduled prompts are discarded by a stop the same way (#1257).
+
+## Addendum (2026-10-03) — a held peer message survives a halt, a shutdown and a crash
+
+#1255 closes the first "Still open" item above. A peer message waiting in a Managed driver's queue
+is written to its own file under the Agent's state directory (`held-peer/<session>/`) when the
+queue accepts it, not at teardown, so a crash or an OOM kill does not lose it either. The file goes
+when the message is handed to the runtime, when a stop discards it (ADR 0105) and when it is
+removed from the queue. Teardown (`DropHandle`, `AbortManaged`, codex's drain) still empties the
+in-memory queue but leaves the files, and every Managed driver's `Resume` sends them again, oldest
+first, before anything else, with `queued=<time>` added to the envelope so the receiver can judge
+staleness. Archive, the trash and a switch to Terminal (CLI) drop them, with a log line naming each, and Agent boot sweeps what a crash left behind a deleted, archived or Terminal session.
+The sender's answer (`delivered` / `queued`) is unchanged. Operator and scheduled prompts are not
+held (#1257). Implementation: `workspace/agent/internal/agents/heldpeers.go`.

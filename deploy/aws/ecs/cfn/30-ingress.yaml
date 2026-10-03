@@ -111,8 +111,9 @@ Parameters:
     Description: >-
       The step after Ec2SlotSleepSec on the same clock, and the only one that gives the ROOT
       VOLUME back. 0 (default) = never terminate, so retained roots only grow to Ec2MaxSlots
-      x SlotRootVolumeGiB of gp3. 14400 (4h) is the recommended value; it costs the next
-      arrival 25s. Must be >= Ec2SlotSleepSec. PARAMETERS.md.
+      x SlotRootVolumeGiB of gp3. 14400 (4h) bounds that cost, at 25s and the slot's caches
+      for the next arrival; keep 0 for fast restarts. Not a migration tool: reserve slots in
+      the admin Slots tab to replace them. Must be >= Ec2SlotSleepSec. PARAMETERS.md.
   Ec2HibernateAfterSec:
     Type: String
     Default: "0"

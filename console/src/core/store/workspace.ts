@@ -57,6 +57,10 @@ interface WorkspaceStore {
    * back on the current build, so this is a STATE (the WS-bar restart-needed badge), not an
    * event. False whenever the CP can't tell — never guessed client-side. */
   stale: boolean;
+  /** ecs-ec2 only: an administrator has reserved the slot this workspace's home is on for
+   * replacement, so the next start moves it to a new slot and takes longer (#1473). A state
+   * the CP clears once the move has happened. */
+  slotReplace: boolean;
   /** Error code explaining why the state could not be read ("" = read fine). "unknown" says
    * no more than "the fetch failed", which leaves a not-yet-invited super_admin with an
    * unexplained "unknown" and a start button that does nothing (anyone not invited lands on
@@ -72,7 +76,13 @@ interface WorkspaceStore {
    * "…" transition is never clobbered — while busy only bootPhase updates (the
    * same thing start()'s transient 2s poll does); the settle refresh() after the
    * POST is what clears the busy state. */
-  applyPush(w: { state?: string; bootPhase?: string; stale?: boolean; homeWipeFailed?: string }): void;
+  applyPush(w: {
+    state?: string;
+    bootPhase?: string;
+    stale?: boolean;
+    slotReplace?: boolean;
+    homeWipeFailed?: string;
+  }): void;
   start(): Promise<void>;
   stop(): Promise<void>;
   /** Stop then start, keeping everything on disk — how a backend update is applied
@@ -95,6 +105,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   state: "…",
   bootPhase: "",
   stale: false,
+  slotReplace: false,
   reason: "",
   homeWipeFailed: "",
 
@@ -115,7 +126,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         // would wedge busy instead (the 4s poll skips while busy), so during that, and on a
         // terminal error, fall to unknown as before.
         if (isTransientErr(w) && !wsBusy(get().state)) return;
-        set({ state: "unknown", bootPhase: "", stale: false, reason: String(w.error.code || "") });
+        set({ state: "unknown", bootPhase: "", stale: false, slotReplace: false, reason: String(w.error.code || "") });
         return;
       }
       noteHomeWipeFailed(get().homeWipeFailed, w.homeWipeFailed);
@@ -123,6 +134,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         state: w.state || "unknown",
         bootPhase: w.bootPhase || "",
         stale: !!w.stale,
+        slotReplace: !!w.slotReplace,
         reason: "",
         homeWipeFailed: w.homeWipeFailed || "",
       });
@@ -138,7 +150,13 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       return;
     }
     noteHomeWipeFailed(get().homeWipeFailed, w.homeWipeFailed);
-    set({ state: w.state || "unknown", bootPhase: w.bootPhase || "", stale: !!w.stale, homeWipeFailed: w.homeWipeFailed || "" });
+    set({
+      state: w.state || "unknown",
+      bootPhase: w.bootPhase || "",
+      stale: !!w.stale,
+      slotReplace: !!w.slotReplace,
+      homeWipeFailed: w.homeWipeFailed || "",
+    });
   },
 
   async start() {

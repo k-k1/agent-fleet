@@ -266,7 +266,8 @@ T = "2026-01-01T00:00:00Z"
 INVENTORY = [
     # --- tag-on-create ---
     ("internal/runtime/runtime_ecs_ec2.go", "runSlot", "TagSpecifications", 1, [
-        on_create("RunInstances", "instance", SLOT)]),
+        on_create("RunInstances", "instance", SLOT),
+        on_create("RunInstances", "instance", dict(SLOT, **{"af-replaces-home": "vol-home"}))]),
     ("engine_fleet.go", "request", "TagSpecifications", 1, [
         on_create("CreateFleet", "instance", ENGINE)]),
     ("internal/runtime/runtime_ecs_ec2.go", "createHomeVolume", "TagSpecifications", 1, [
@@ -310,6 +311,15 @@ INVENTORY = [
         on_existing("ec2:CreateTags", "instance", SLOT, {"af-slot-idle-since": T})]),
     ("internal/runtime/runtime_ecs_ec2.go", "clearSlotFree", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "instance", SLOT, {"af-slot-idle-since": None})]),
+    ("internal/runtime/runtime_ecs_ec2_slot_replace.go", "ReserveSlotReplacement", "CreateTags", 1, [
+        on_existing("ec2:CreateTags", "instance", SLOT, {"af-slot-replace": T})]),
+    ("internal/runtime/runtime_ecs_ec2_slot_replace.go", "ReserveSlotReplacement", "DeleteTags", 1, [
+        on_existing("ec2:DeleteTags", "instance", SLOT, {"af-slot-replace": None})]),
+    ("internal/runtime/runtime_ecs_ec2_slot_replace.go", "clearReplacesHome", "DeleteTags", 1, [
+        on_existing("ec2:DeleteTags", "instance", dict(SLOT, **{"af-replaces-home": "vol-home"}),
+                    {"af-replaces-home": None})]),
+    ("internal/runtime/runtime_ecs_ec2_slot_replace.go", "retireUnusedReplacement", "CreateTags", 1, [
+        on_existing("ec2:CreateTags", "instance", SLOT, {"af-slot-replace": T})]),
     ("internal/runtime/runtime_ecs_ec2.go", "sweepSlotOwnerTags", "DeleteTags", 2, [
         on_existing("ec2:DeleteTags", "instance", SLOT, {"af-membership": None, "af-tenant": None}),
         on_existing("ec2:DeleteTags", "instance", QUARANTINED, {"af-tenant": None})]),

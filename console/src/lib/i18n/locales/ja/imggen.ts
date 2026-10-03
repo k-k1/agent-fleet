@@ -200,7 +200,7 @@ export const imggen = {
   "imggen.studio_pick": "スタジオ",
   "imggen.studio_settings": "スタジオの設定",
   "imggen.studio_agent_trial": "エージェントの試走を許す",
-  "imggen.studio_agent_trial_hint": "切り替えがエージェントに届くのは次のツール一覧の更新（1 分以内）か、再開のときです。",
+  "imggen.studio_agent_trial_hint": "切り替えはエージェントの次の試走から効きます。再開は要りません。",
   "imggen.studio_delete": "スタジオを削除",
   "imggen.studio_delete_title": "このスタジオを削除しますか？",
   "imggen.studio_delete_body": "下書き・編集履歴・版が消えます。作った絵は残ります。",

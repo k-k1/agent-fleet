@@ -1554,3 +1554,55 @@ Code: `control-plane/internal/runtime/runtime_ecs_ec2_home_wipe.go` (`WipeHome`,
 `homeWipeCommand`), `control-plane/internal/runtime/runtime_ecs_ec2.go` (`Start`, `placeHome`, `launch`,
 `hibernate`, `createHomeVolume`, `restoreSource`), `control-plane/internal/runtime/home_wipe.go`,
 `console/src/app/WsStartingDialog.tsx`.
+
+## Decision 33 — A slot can be reserved for replacement, and its workspace's next Start replaces it (2026-10-03)
+
+A slot reads its user data only at launch, and a Stop → Start goes back to the same slot (decision 10's
+affinity), so a change to the slot launch template never reaches a retained slot. The only route was
+`Ec2SlotTerminateAfterSec` (decision 23), which is a standing, deployment-wide cost knob — not a one-off
+migration tool: every stopped workspace then pays a new slot and loses the slot's caches, for good (#1473).
+
+- **The mark is a tag on the instance, `af-slot-replace`**, set by a super_admin from the Slots tab — one slot,
+  or every slot whose launch template version is below `$Latest` (a slot from another template counts as
+  older; `$Default` plays no part, because the CP launches with `$Latest`; a slot whose version cannot be read
+  is never selected). Each reservation is an intent-first audit pair naming the workspace it moves. The tag
+  fits the existing `Ec2TagPoolResources` statement; the IAM changes are `ec2:DescribeLaunchTemplates` (in
+  `Ec2SlotPoolRead`) and one create-time tag key, `af-replaces-home` (below).
+- **Act at the next Start, as decision 32 does.** A reserved slot of a running workspace is untouched. On Start,
+  `placeHome` launches a new slot of the workspace's class in the home's AZ **first** — so a failed launch
+  (capacity, quota) fails the Start with the reason, leaves the home where it was and keeps the mark — and
+  **claims the home for it at once**, so no other Start attaches there while this one waits. Then it releases
+  the home with `releaseSlot` (unmount before detach, refused while a task runs) and confirms it is detached,
+  and terminates the old instance after re-reading that nothing holds it. **It never falls back to the
+  reserved slot**: the usual reason for a reservation is security. The reserved slot does not count against
+  the cap during the swap. If the release fails, the new slot — holding nothing but that claim — is terminated
+  before the claim is dropped, so the pool is back under its cap and the next Start can try again. **The claim
+  is dropped only once the new slot is confirmed terminated or reserved**; on an unknown outcome it is kept
+  (the workspace reads `starting` until the claim expires), because it is the link the next Start follows.
+  The new slot also carries `af-replaces-home=<volume>` from `RunInstances` itself, so a slot whose launch
+  answered — or was accepted with the answer lost — before the claim was written is still found and reused,
+  never launched again over the cap. While that home is still on its reserved slot, the tagged slot is **kept
+  out of every other placement** (`slotsOfMyType`, `makeRoom`), claim or no claim; once the home has moved,
+  detached or gone, the link means nothing and the slot is ordinary again, so a stale tag cannot hold a box out
+  of the pool (a successful launch also clears it). An earlier replacement is reused only if it is from the
+  template's current `$Latest`, read authoritatively on every attempt: one from before a template change is
+  terminated to give its place back, and one whose version cannot be judged is left alone.
+- **A reserved slot takes nobody new.** `slotsOfMyType` drops it, so neither a free-slot placement nor an
+  eviction picks it; `makeRoom` treats a reserved slot of the right size like one of the wrong size; and the
+  sweeper terminates a free reserved slot with no grace, behind its usual fences (fresh occupancy, ECS tasks,
+  task ENIs), even with both timers off. Because candidate lists are read before the attach, placement re-reads
+  the reservation just before the attach and again after the claim, stepping off a slot reserved in between;
+  the reservation endpoint reads the occupant only after writing its tag. So either the placement sees the
+  reservation, or the reservation sees (and audits) the placement, which then moves at its next Start.
+- **Rejected: terminate first, then launch.** Then a launch that fails leaves the home attached to nothing and
+  the mark gone with the instance, and "the Start fails and the mark stays" cannot hold.
+- **Not done here:** retiring a free or stopped slot on an operator's word right away. A reservation already
+  covers the security case.
+
+Follow-ups: #1473 (acceptance on a real ecs-ec2 deployment, both slot architectures).
+
+Code: `control-plane/internal/runtime/runtime_ecs_ec2_slot_replace.go` (`replaceReservedSlot`,
+`ReserveSlotReplacement`, `slotTemplateOutdated`, `SlotReplacePending`), `control-plane/internal/runtime/runtime_ecs_ec2.go`
+(`placeHome`, `slotsOfMyType`, `makeRoom`, `sweepFreeSlots`, `PoolStatus`),
+`control-plane/internal/tenantsrv/pool_slot_reserve.go`, `console/src/features/settings/tenant/ec2Pool.tsx`,
+`console/src/app/WsBar.tsx` (`SlotMoveNotice`).

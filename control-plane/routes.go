@@ -259,6 +259,11 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// a quarantined slot is stopped and kept as evidence, and no sweeper collects it
 	// (ADR 0045 decision 20 / 23). The adapter refuses anything that is not quarantined.
 	mux.HandleFunc("DELETE /api/admin/ec2-pool/slots/{id}", adm.withSuperAdmin(adm.terminatePoolSlot))
+	// Reserve a slot for replacement at its workspace's next Start, or take that back (#1473),
+	// and the bulk form for every slot below the launch template's $Latest.
+	mux.HandleFunc("PUT /api/admin/ec2-pool/slots/{id}/replace", adm.withSuperAdmin(adm.reservePoolSlot))
+	mux.HandleFunc("DELETE /api/admin/ec2-pool/slots/{id}/replace", adm.withSuperAdmin(adm.reservePoolSlot))
+	mux.HandleFunc("POST /api/admin/ec2-pool/reserve-outdated", adm.withSuperAdmin(adm.reserveOutdatedPoolSlots))
 	mux.HandleFunc("GET /api/admin/workspace-sizing", adm.withIdentity(adm.workspaceSizingProfile)) // what mem/CPU/disk MEAN on this runtime (ADR 0045 decision 21)
 	mux.HandleFunc("GET /api/admin/usage", adm.usage)                                               // showback: occupancy per tenant/member (json|csv)
 	// The same occupancy at hour resolution, for the uptime heatmap (docs/log/83). A

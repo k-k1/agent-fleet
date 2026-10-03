@@ -11,6 +11,8 @@
 package agents
 
 import (
+	"time"
+
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
@@ -30,6 +32,11 @@ type TurnInput struct {
 	// Origin is who this input came from (ADR 0105 decision 1). Every constructor of a
 	// TurnInput sets it; the stop rules read it to tell the member's own input from the rest.
 	Origin Origin
+
+	// queuedAt is when a peer message was first queued, kept across a restart (heldpeers.go).
+	queuedAt time.Time
+	// restored marks a held peer message DeliverHeld sends again after a restart.
+	restored bool
 }
 
 // Origin kinds. The spelling is the mirror's injection-badge vocabulary (sessionx

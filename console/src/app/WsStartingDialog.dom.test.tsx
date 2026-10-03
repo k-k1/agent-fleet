@@ -13,6 +13,8 @@ describe("phaseKey", () => {
     // longest wait of all as the one that never names its reason.
     expect(phaseKey("slot: making room")).toBe("wsstart.slot_making_room");
     expect(phaseKey("slot: creating")).toBe("wsstart.slot_creating");
+    // A reserved slot being replaced (#1473): the member was told this start takes longer.
+    expect(phaseKey("slot: renewing")).toBe("wsstart.slot_renewing");
     expect(phaseKey("slot: waking")).toBe("wsstart.slot_waking");
     expect(phaseKey("slot: booting")).toBe("wsstart.slot_booting");
     expect(phaseKey("slot: joining the cluster")).toBe("wsstart.slot_booting");
@@ -45,7 +47,7 @@ describe("phaseKey", () => {
 
   it("has both languages for every key it can return", () => {
     const keys = [
-      "wsstart.slot_creating", "wsstart.slot_waking", "wsstart.slot_booting",
+      "wsstart.slot_creating", "wsstart.slot_renewing", "wsstart.slot_waking", "wsstart.slot_booting",
       "wsstart.home_creating", "wsstart.home_restoring", "wsstart.home_attaching",
     ] as const;
     for (const k of keys) {

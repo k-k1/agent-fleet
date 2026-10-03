@@ -138,6 +138,17 @@ func bypassPolicies() map[string]any {
 // resolve the thread (resume/fork/start) → re-assert the policies → apply the snapshot.
 // Live subscription is permanent per generation on the writer connection.
 func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
+	h, err := managedDriver{}.resume(m)
+	if err != nil {
+		return nil, err
+	}
+	// Peer messages a halt, a shutdown or a crash left held become the first turns (#1255).
+	agents.DeliverHeld(m.Name, h)
+	return h, nil
+}
+
+// resume is Resume without the held peer messages.
+func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	if m.Kind != session.KindCodex {
 		return nil, errors.New("codex driver は codex セッション専用です")
 	}

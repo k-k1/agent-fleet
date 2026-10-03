@@ -139,7 +139,7 @@ update.go updateApply x2 {mode,ok,to}
 usage.go adminAPI.usage x1 {days,from,to,totals}
 workitems.go workItemsAPI.deleteQuery x1 {ok}
 workitems.go workItemsAPI.deleteSession x1 {ok}
-workspace_handlers.go workspaceAPI.get x1 {bootPhase,homeWipeFailed,name,stale,state} cond{bootPhase,homeWipeFailed,stale}
+workspace_handlers.go workspaceAPI.get x1 {bootPhase,homeWipeFailed,name,slotReplace,stale,state} cond{bootPhase,homeWipeFailed,slotReplace,stale}
 workspace_handlers.go workspaceAPI.memberHomeWipe x2 {name,state}
 workspace_handlers.go workspaceAPI.sessionsList x1 {sessions}
 workspace_handlers.go workspaceAPI.startResolved x1 {name,state}

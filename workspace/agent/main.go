@@ -237,6 +237,10 @@ func serve() {
 	// restart feels like the tmux tui sessions surviving one (§6, reconciliation). Ensure
 	// starts a runtime if one is needed; with no managed metadata this is an immediate
 	// no-op.
+	//
+	// Held peer messages no start will deliver are swept before reconciliation delivers the
+	// rest (#1255): a crash can leave them behind a deleted or archived session.
+	agents.SweepHeld()
 	go opencode.ReconcileManaged("agent boot")
 	go codex.ReconcileManaged("agent boot")
 	go copilot.ReconcileManaged("agent boot")

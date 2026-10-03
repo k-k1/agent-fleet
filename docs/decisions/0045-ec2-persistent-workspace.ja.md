@@ -1430,3 +1430,51 @@ Follow-ups: #1259（実機での受け入れ——眠ったスロット・外れ
 `homeWipeCommand`）・`control-plane/internal/runtime/runtime_ecs_ec2.go`（`Start`・`placeHome`・`launch`・
 `hibernate`・`createHomeVolume`・`restoreSource`）・`control-plane/internal/runtime/home_wipe.go`・
 `console/src/app/WsStartingDialog.tsx`。
+
+## 決定 33 — スロットを入れ替え予約でき、そのワークスペースの次の起動で入れ替える（2026-10-03）
+
+スロットはユーザーデータを起動時にしか読まず、Stop → Start は同じスロットに戻る（決定 10 の親和性）ので、
+スロットの起動テンプレートの変更は残っているスロットに届かない。手段は `Ec2SlotTerminateAfterSec`
+（決定 23）だけだったが、これは配備全体に常時効くコストのつまみで、一度きりの移行の道具ではない。止まった
+ワークスペースはみな新しいスロット代を払い、スロットのキャッシュを恒久的に失う（#1473）。
+
+- **印はインスタンスのタグ `af-slot-replace`**。super_admin がスロットタブから付ける。1 台ずつか、起動
+  テンプレートのバージョンが `$Latest` より古いスロットすべて（別のテンプレートのスロットは古い扱い。CP は
+  `$Latest` で起動するので `$Default` は関係しない。バージョンが読めないスロットは選ばない）。予約ごとに、
+  移るワークスペース名つきで意図先行の監査ログを 1 組残す。タグは既存の `Ec2TagPoolResources` に収まり、
+  IAM の変更は `ec2:DescribeLaunchTemplates`（`Ec2SlotPoolRead`）と、起動時のタグキー `af-replaces-home`（後述）。
+- **決定 32 と同じく次の起動で実行する。** 実行中のワークスペースの予約済みスロットには触れない。起動時に
+  `placeHome` が、ホームの AZ にワークスペースのクラスの新しいスロットを**先に**起動する。起動に失敗したら
+  （容量・クォータ）理由つきで起動を失敗させ、ホームは元のまま、印も残る。起動できたら**すぐにホームを
+  そのスロットに claim する**ので、待っている間に別の起動がそこへ載ることはない。続いて `releaseSlot` で
+  ホームを外し（detach の前に umount、タスク実行中は拒否）、外れたことを確かめ、何も載っていないことを
+  読み直してから古いインスタンスを終了する。**予約済みスロットに戻ることはしない。** 予約の理由はふつう
+  セキュリティだから。入れ替えの間、予約済みスロットは上限に数えない。外すのに失敗したら、claim しか
+  持たない新しいスロットを終了してから claim を外すので、プールは上限内に戻り、次の起動でやり直せる。
+  **claim を外すのは、新しいスロットの終了か予約を確かめられたときだけ**で、結果が分からないときは残す
+  （claim が切れるまでワークスペースは `starting` に見える）。次の起動がたどる手がかりだから。新しいスロットには
+  `RunInstances` 自身が `af-replaces-home=<ボリューム>` を付けるので、claim を書く前に CP が落ちた起動や、
+  受理されたが応答が失われた起動でも見つけて再利用し、上限を超えてもう 1 台起動することはない。そのホームが
+  まだ予約済みスロットに載っている間、タグの付いたスロットは claim の有無にかかわらず**ほかの配置からは外す**
+  （`slotsOfMyType`・`makeRoom`）。ホームが移った・外れた・無くなったら関連は意味を失い、普通のスロットに
+  戻るので、古いタグがスロットを抱え込むことはない（起動に成功したらタグも外す）。以前の置換先を使い回すのは、
+  毎回読み直した起動テンプレートの現在の `$Latest` から起動したものに限る。テンプレート変更より前のものは
+  終了して枠を返し、バージョンを判断できないものには触れない。
+- **予約済みスロットには誰も新しく載せない。** `slotsOfMyType` が除くので、空きスロットへの配置にも追い出しにも
+  使われない。`makeRoom` は正しいサイズの予約済みスロットを、サイズ違いと同じに扱う。スイーパーは空きの予約済み
+  スロットを猶予なしで終了する（いつもの柵——占有の読み直し・ECS タスク・タスク ENI——は通す）。タイマーが
+  両方オフでも行う。候補一覧は attach より前に読むので、配置は attach の直前と claim の直後に予約を読み直し、
+  その間に予約されたスロットからは降りる。予約の API はタグを書いた**後で**占有者を読む。だから配置が予約を
+  見るか、予約が配置を見て監査ログに残し、そのワークスペースは次の起動で移るかのどちらかになる。
+- **却下: 先に終了してから起動する。** 起動に失敗するとホームはどこにも付いておらず、印はインスタンスと一緒に
+  消える。「起動が失敗し、印は残る」が成り立たない。
+- **ここではやらない:** 空きまたは停止中のスロットを運用者の指示で即時に退役させること。セキュリティ上の
+  必要は予約で足りる。
+
+Follow-ups: #1473（実機の ecs-ec2 配備での受け入れ。スロットのアーキテクチャ両方）。
+
+コード: `control-plane/internal/runtime/runtime_ecs_ec2_slot_replace.go`（`replaceReservedSlot`・
+`ReserveSlotReplacement`・`slotTemplateOutdated`・`SlotReplacePending`）・`control-plane/internal/runtime/runtime_ecs_ec2.go`
+（`placeHome`・`slotsOfMyType`・`makeRoom`・`sweepFreeSlots`・`PoolStatus`）・
+`control-plane/internal/tenantsrv/pool_slot_reserve.go`・`console/src/features/settings/tenant/ec2Pool.tsx`・
+`console/src/app/WsBar.tsx`（`SlotMoveNotice`）。

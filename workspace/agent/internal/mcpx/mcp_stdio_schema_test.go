@@ -61,7 +61,7 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 		// advertised — and its schema would never be compiled.
 		{name: "session-fleet-spawn", selfReport: true, fleetSpawn: true},
 		// The studio tools are offered only to a session whose meta names a studio that names it
-		// back (ADR 0100 decision 3), with run_image_trial only when the studio allows trials.
+		// back (ADR 0100 decision 3); run_image_trial is listed whether or not trials are allowed.
 		{name: "session-studio", selfReport: true, studio: true},
 	}
 

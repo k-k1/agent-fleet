@@ -448,8 +448,8 @@ func mcpStdioToolList() []map[string]any {
 		if offer, ok := mcpImageGenAdvertise(); ok {
 			tools = append(tools, mcpStdioImageGenTools(offer)...)
 		}
-		if offer, ok := mcpStudioAdvertise(); ok {
-			tools = append(tools, mcpStdioStudioTools(offer)...)
+		if mcpStudioAdvertise() {
+			tools = append(tools, mcpStdioStudioTools()...)
 		}
 		return tools
 	}
@@ -1202,14 +1202,15 @@ const mcpToolGenerateImage = "generate_image"
 
 // mcpStdioStudioTools — the image studio's four tools (ADR 0100 decision 3), offered only to a
 // session bound to a studio, or one whose identity cannot be told apart (mcpStudioAdvertise).
+// run_image_trial is among them even where the studio does not allow it; the call checks.
 // The names are spelled out as literals for the same AST scan as generate_image's.
 //
 // The descriptions are English and short: they are a fixed cost on every turn of every studio
 // session. set_image_draft declares clearing as a `clear` list rather than a nullable type,
 // because Gemini-family clients refuse type arrays; an explicit null is still accepted.
-func mcpStdioStudioTools(offer studioOffer) []map[string]any {
+func mcpStdioStudioTools() []map[string]any {
 	noArgs := map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{}}
-	tools := []map[string]any{
+	return []map[string]any{
 		{
 			"name": "get_image_studio",
 			"description": "Agent Fleet image studio: read the draft you are working on with the user - its fields, which are locked, " +
@@ -1279,17 +1280,15 @@ func mcpStdioStudioTools(offer studioOffer) []map[string]any {
 				"required": []string{"scope", "key", "note"},
 			},
 		},
-	}
-	if offer.agentTrial {
-		tools = append(tools, map[string]any{
+		{
 			"name": "run_image_trial",
 			"description": "Agent Fleet image studio: make ONE quick trial picture from the draft exactly as saved - it takes no arguments, so " +
-				"what runs is always what the user sees. Waits up to 2 minutes; a slower picture arrives in get_image_studio later. " +
+				"what runs is always what the user sees. Refused unless the user allows agent trials in the studio. " +
+				"Waits up to 2 minutes; a slower picture arrives in get_image_studio later. " +
 				"Each call wakes a GPU: do not repeat it to compare small changes.",
 			"inputSchema": noArgs,
-		})
+		},
 	}
-	return tools
 }
 
 // mcpStdioImageGenTools — the image generation tool, advertised only under

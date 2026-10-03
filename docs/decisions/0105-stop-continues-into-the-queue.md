@@ -260,3 +260,12 @@ restart instead is #1255's work.
   chapter (07, en/ja), where the Stop button is described, states the two stops.
 - The tests added in #1244 and #1258 that assert "own input is discarded by a stop" are inverted, not deleted: they
   become "own input continues after a first stop, and is discarded (and kept for return) by a second".
+
+## Addendum (2026-10-03) — decision 8 no longer loses peer messages
+
+Decision 8 stands for the in-memory queue, but a peer message's text now outlives it (#1255): the
+queue writes each peer entry to a file when it accepts it, teardown leaves the files, and the next
+`Resume` sends them as the first turns. A discarding stop (decisions 2 and 3) and a removal
+(decision 5) delete the file with the entry, so a message the member discarded does not come back
+after a restart. The kept discards of decision 4 are still memory only. Details in
+[0041](0041-cross-session-messaging.md), addendum 2026-10-03.

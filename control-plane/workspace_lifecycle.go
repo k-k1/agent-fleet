@@ -817,6 +817,22 @@ type runtimeSlotTerminator interface {
 	TerminateQuarantinedSlot(ctx context.Context, instanceID string) (reason string, err error)
 }
 
+// runtimeSlotReserver marks a slot for replacement at its workspace's next Start (#1473).
+type runtimeSlotReserver interface {
+	ReserveSlotReplacement(ctx context.Context, instanceID string, reserve, onlyOutdated bool) (runtime.SlotReservation, error)
+}
+
+// reserveSlotReplacement sets or clears a slot's replacement reservation; ok=false on every
+// runtime that has no pool.
+func (m *manager) reserveSlotReplacement(ctx context.Context, instanceID string, reserve, onlyOutdated bool) (runtime.SlotReservation, bool, error) {
+	p, ok := m.rtFactory.(runtimeSlotReserver)
+	if !ok {
+		return runtime.SlotReservation{}, false, nil
+	}
+	res, err := p.ReserveSlotReplacement(ctx, instanceID, reserve, onlyOutdated)
+	return res, true, err
+}
+
 // hasSlotPool reports whether terminateQuarantinedSlot has anything to drive.
 func (m *manager) hasSlotPool() bool {
 	_, ok := m.rtFactory.(runtimeSlotTerminator)
