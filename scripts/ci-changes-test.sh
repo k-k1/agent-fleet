@@ -28,12 +28,19 @@ check true 'control-plane/main.go\n'
 check true 'docs/a.md\nconsole/src/App.tsx\n'
 check true 'guide/ref/agents.md\n'
 check true 'docs/a.md\nguide/ref/agents.ja.md\n'
+check true 'docs/decisions/0029-usage-accounting.md\n'
+check true 'docs/a.md\ndocs/decisions/0029-usage-accounting.ja.md\n'
 check true 'workspace/workspace-notes.md\n'
 check true 'workspace/agent/knowledge/af-usage.md\n'
 check true 'deploy/kubernetes/README.md\n'
 check true '.github/workflows/ci.yml\n'
 check true 'scripts/ci-changes.sh\n'
 check true 'go.work\n'
+
+# Malformed input still classifies: no final newline, CRLF line endings.
+check true 'docs/a.md\nconsole/src/App.tsx'
+check true 'guide/ref/agents.md\r\n'
+check false 'docs/a.md\r\nREADME.md\r\n'
 
 # Nothing to classify.
 check true ''

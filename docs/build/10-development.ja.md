@@ -261,8 +261,8 @@ npm --prefix console run build
   | `release-scan` | 追跡ツリーに対する禁止トークンのゲート——pre-commit フックがステージ内容にかけるのと同じスキャナ |
   | `model-id-lint` | 両 Go モジュールで `workspace/agent/internal/modelfallback` の外にモデル ID の形の文字列リテラルが無いこと。モデルを選ばないものは `// model-id-lint:allow <理由>` で印を付ける |
 
-  PR では、変更したパスがすべて無関係なもの——`docs/`・`guide/`（Console のテストが読む
-  `guide/ref/agents{,.ja}.md` を除く）・最上位の `*.md`・docs の検査スクリプト——なら、
+  PR では、変更したパスがすべて無関係なもの——`docs/` と `guide/`（テストが読む
+  `guide/ref/agents{,.ja}.md` と `docs/decisions/0029-usage-accounting{,.ja}.md` を除く）・最上位の `*.md`・docs の検査スクリプト——なら、
   `changes` ジョブが `control-plane`・`workspace-agent`・`deploy-scripts`・`console` を飛ばす。
   一覧と理由は `scripts/ci-changes.sh` にある。`main` / `develop` への push では常に全ジョブが回る。
 
