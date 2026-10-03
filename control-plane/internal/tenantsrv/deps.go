@@ -85,12 +85,13 @@ type CP interface {
 	// HomeOpsInBackground is true where Clean home runs a task on the home that takes
 	// minutes (ecs: runtime.HomeWipeInBackground), DestroyInBackground where Destroy does
 	// (ecs and ecs-ec2: runtime.DestroyInBackground). The handlers then call the Start*
-	// variants, answer once the refusals are past, and write the outcome to the audit log
-	// from done. done is called exactly once, after the request has been answered.
+	// variants, answer once the refusals are past, and hand over the outcome entry the
+	// action owes (store.HomeOpAudit): the CP writes it once the task has finished, after a
+	// CP restart as well (#1544).
 	HomeOpsInBackground() bool
 	DestroyInBackground() bool
-	StartCleanHomeByMembership(ctx context.Context, membershipID string, done func(error)) error
-	StartDestroyWorkspaceByMembership(ctx context.Context, membershipID string, done func(leftovers []string, err error)) error
+	StartCleanHomeByMembership(ctx context.Context, membershipID string, audit store.HomeOpAudit) error
+	StartDestroyWorkspaceByMembership(ctx context.Context, membershipID string, audit store.HomeOpAudit) error
 	ResolveWorkspaceSize(ctx context.Context, ws store.Workspace) (memBytes int64, cpuUnits, diskGB int)
 	ResolveSlotClass(ctx context.Context, ws store.Workspace) (id, note string)
 	EvictMembershipCache(membershipID string)

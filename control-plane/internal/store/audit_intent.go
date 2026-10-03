@@ -63,3 +63,7 @@ func (i *AuditIntent) Done(ctx context.Context, detail string, status int) {
 			out.Action, out.Target, out.ActorID, status, detail, err)
 	}
 }
+
+// Outcome is the action's row as BeginIrreversible was given it, for an outcome another
+// process may have to write (HomeOpAudit).
+func (i *AuditIntent) Outcome() AuditLog { return i.base }

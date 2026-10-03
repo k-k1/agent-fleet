@@ -80,17 +80,25 @@ EBS, but the Claude state and the kept logins and connections are on EFS: **Dest
 removes those with the same task, so there too it answers straight away and writes its outcome
 to the audit log.
 While a task runs, a start and any second operation on that home are refused, even across a
-Control Plane restart. What a restart during the task does lose is the step after it: a member's
-workspace is not started again (press Start once the task has finished), the reason for a failure
-is not shown, a Destroy leaves the workspace row (run Destroy again; it is safe to repeat), and
-the audit log has the request but no outcome. The task's own log (the workspace log group, stream
-prefix `home-ops`) says how it ended.
-The home is released only when the Control Plane sees its task stopped. If that can no longer
-happen — ECS has forgotten a task nobody checked on for over an hour, or the answer to starting it
-was lost — the home stays refused with "an operation on this workspace's home is still running",
-and the Control Plane log names the record to clear. An operator who has checked in ECS that no
-task started by `af-home/<membership>` is running deletes the SSM parameter
-`/af-ws/<workspace>/home-task`, and the home is usable again.
+Control Plane restart. Each operation is recorded in the Control Plane's database before its
+task starts, so a restart in the middle loses nothing: within a minute or two of coming back, a
+Control Plane picks the operation up, waits for the task — or asks ECS to start it again under the
+same request token if the answer to starting it was lost, which returns the task already started
+rather than a second one — and then finishes it: the member's workspace is started (not if the
+member has been removed in the meantime), the reason for a failure is shown, the audit outcome is
+written, and a Destroy removes the workspace row. A start in between is refused as above. The
+task's own log (the workspace log group, stream prefix `home-ops`) says how it ended.
+The home is released only when the Control Plane sees its task stopped. If ECS no longer reports
+the task, or the answer to starting it was lost, the Control Plane asks ECS again under the same
+token; within 23 hours of the first request that returns the task already started (or runs the
+removal again once it is gone, which is safe: it removes only what the operation removes, on a home
+nothing could start in between). Two cases need an operator, and the Control Plane log names them:
+a refusal left by a Control Plane from before this version, which has no record behind it, and a
+task not seen stopped more than 23 hours after it was requested (ECS no longer guarantees that
+asking again returns the same task rather than starting a second one). An operator who has checked
+in ECS that no task started by `af-home/<membership>` is running deletes the SSM parameter
+`/af-ws/<workspace>/home-task`; in the second case the Control Plane then finishes the operation by
+itself.
 
 ⁸ Deletes the member's home volume and its hibernation copies; the next start builds a
 fresh home, as for a new member. On this target the logins, connections and Claude state

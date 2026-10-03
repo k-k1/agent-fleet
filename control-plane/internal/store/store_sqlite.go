@@ -1289,6 +1289,7 @@ func membershipCascade(membershipID string) []struct {
 		{`DELETE FROM shared_session_catalog WHERE owner_membership_id=?`, id},
 		{`DELETE FROM session_share_owner_lease WHERE owner_membership_id=?`, id},
 		{`DELETE FROM workspace_stop_intent WHERE owner_membership_id=?`, id},
+		{`DELETE FROM home_operation WHERE membership_id=?`, id},
 		// The parent goes last: with foreign keys on, deleting it before its children
 		// fails.
 		{`DELETE FROM membership WHERE id=?`, id},
@@ -1459,6 +1460,14 @@ func (s *SQL) SetWorkspaceState(ctx context.Context, workspaceID, state string) 
 		return err
 	}
 	defer tx.Rollback()
+	if err = setWorkspaceStateTx(ctx, tx, workspaceID, state); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// setWorkspaceStateTx is SetWorkspaceState inside a caller's transaction.
+func setWorkspaceStateTx(ctx context.Context, tx *sqlTx, workspaceID, state string) (err error) {
 	if err = lockWorkspace(ctx, tx, workspaceID); err != nil {
 		return err
 	}
@@ -1484,7 +1493,7 @@ func (s *SQL) SetWorkspaceState(ctx context.Context, workspaceID, state string) 
 	if _, err = tx.ExecContext(ctx, `DELETE FROM workspace_stop_intent WHERE workspace_id=?`, workspaceID); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 // RecordWorkspaceActivity merges a monotonic activity watermark and connection
@@ -1612,7 +1621,15 @@ func (s *SQL) DeleteWorkspace(ctx context.Context, workspaceID string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if err = lockWorkspace(ctx, tx, workspaceID); err != nil {
+	if err = deleteWorkspaceTx(ctx, tx, workspaceID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// deleteWorkspaceTx is DeleteWorkspace inside a caller's transaction.
+func deleteWorkspaceTx(ctx context.Context, tx *sqlTx, workspaceID string) error {
+	if err := lockWorkspace(ctx, tx, workspaceID); err != nil {
 		return err
 	}
 	for _, stmt := range []string{
@@ -1624,11 +1641,11 @@ func (s *SQL) DeleteWorkspace(ctx context.Context, workspaceID string) error {
 		`DELETE FROM wrapped_dek WHERE workspace_id=?`,
 		`DELETE FROM workspace WHERE id=?`,
 	} {
-		if _, err = tx.ExecContext(ctx, stmt, workspaceID); err != nil {
+		if _, err := tx.ExecContext(ctx, stmt, workspaceID); err != nil {
 			return fmt.Errorf("%s: %w", stmt, err)
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // AcquireWorkspaceOperationFence holds a Postgres session advisory lock across
@@ -1732,7 +1749,12 @@ func (s *SQL) SetWorkspacePreviewSlug(ctx context.Context, workspaceID, slug str
 // SetWorkspaceAutoStop records why the Control Plane stopped the workspace, replacing the
 // previous record.
 func (s *SQL) SetWorkspaceAutoStop(ctx context.Context, workspaceID string, a WorkspaceAutoStop) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO workspace_auto_stop(workspace_id, kind, phase, limit_minutes, stopped_at)
+	return setWorkspaceAutoStopTx(ctx, s.db, workspaceID, a)
+}
+
+// setWorkspaceAutoStopTx is SetWorkspaceAutoStop on q, a caller's transaction or the pool.
+func setWorkspaceAutoStopTx(ctx context.Context, q sqlExecQuery, workspaceID string, a WorkspaceAutoStop) error {
+	_, err := q.ExecContext(ctx, `INSERT INTO workspace_auto_stop(workspace_id, kind, phase, limit_minutes, stopped_at)
 		VALUES(?, ?, ?, ?, ?)
 		ON CONFLICT(workspace_id) DO UPDATE SET kind=excluded.kind, phase=excluded.phase,
 		  limit_minutes=excluded.limit_minutes, stopped_at=excluded.stopped_at`,

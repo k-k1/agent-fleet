@@ -147,7 +147,11 @@ func homeWipeUnsupportedErr(op string) *apiError {
 // is stopped (runtime.HomeWipeBlocked). Under the lifecycle lease no Start can begin, so
 // the answer holds until the wipe is recorded.
 func homeWipeBlockedErr(ctx context.Context, rt runtime.Runtime) *apiError {
-	err := runtime.HomeWipeBlocked(ctx, rt)
+	return homeWipeRefusal(runtime.HomeWipeBlocked(ctx, rt))
+}
+
+// homeWipeRefusal maps what refused a member's wipe to its answer.
+func homeWipeRefusal(err error) *apiError {
 	switch {
 	case err == nil:
 		return nil
@@ -360,7 +364,19 @@ func (a workspaceAPI) memberHomeWipe(w http.ResponseWriter, r *http.Request, res
 		lease.Close()
 		cancel()
 	}
+	// The record goes first, before anything is stopped: from here on a CP restart leaves
+	// an operation the reconciler finishes rather than one nobody remembers.
+	var record *store.HomeOperation
+	if background {
+		if record, err = a.mgr.openHomeOperation(lease.Context(), res.ws, res.rt, store.HomeOpMemberWipe, what, nil); err != nil {
+			release()
+			lock.Unlock()
+			writeAPIErr(w, homeWipeRefusal(err))
+			return
+		}
+	}
 	if aerr := a.memberHomeWipeStop(r, res, lease, op, background, &unqueue); aerr != nil {
+		a.mgr.dropHomeOperation(record)
 		release()
 		lock.Unlock()
 		writeAPIErr(w, aerr)
@@ -369,7 +385,7 @@ func (a workspaceAPI) memberHomeWipe(w http.ResponseWriter, r *http.Request, res
 	if !background {
 		defer lock.Unlock()
 		defer release()
-		if aerr := a.memberHomeWipeFinish(r.Context(), res, lease, what, unqueue); aerr != nil {
+		if aerr := a.memberHomeWipeFinish(r.Context(), res, lease, what, unqueue, nil); aerr != nil {
 			writeAPIErr(w, aerr)
 			return
 		}
@@ -381,7 +397,7 @@ func (a workspaceAPI) memberHomeWipe(w http.ResponseWriter, r *http.Request, res
 	lock.Unlock()
 	go func() {
 		defer release()
-		aerr := a.memberHomeWipeFinish(lease.Context(), res, lease, what, unqueue, lock)
+		aerr := a.memberHomeWipeFinish(lease.Context(), res, lease, what, unqueue, record, lock)
 		if aerr != nil {
 			log.Printf("%s: background wipe of ws %s failed: %s", op, res.ws.ID, aerr.message)
 			a.recordHomeWipeFailure(res.ws.ID, aerr.message)
@@ -426,8 +442,21 @@ func (a workspaceAPI) memberHomeWipeStop(r *http.Request, res *resolved, lease *
 
 // memberHomeWipeFinish removes what from the stopped workspace's home and starts it again.
 // lock, when given, is taken for the start: the background half no longer holds it.
-func (a workspaceAPI) memberHomeWipeFinish(ctx context.Context, res *resolved, lease *workspaceLifecycleLeaseGuard, what runtime.HomeWipe, unqueue func(), lock ...*sync.Mutex) *apiError {
-	if err := runtime.WipeHome(lease.Context(), res.rt, what); err != nil {
+//
+// With a record (home_operation.go) what follows the wipe is the record's, exactly as the
+// reconciler would apply it (finishMemberWipe): the failure, or the start, is written
+// through it, and an outcome still unknown is left to the reconciler. Nothing is returned
+// for the caller to record.
+func (a workspaceAPI) memberHomeWipeFinish(ctx context.Context, res *resolved, lease *workspaceLifecycleLeaseGuard, what runtime.HomeWipe, unqueue func(), record *store.HomeOperation, lock ...*sync.Mutex) *apiError {
+	err := runtime.WipeHome(lease.Context(), res.rt, what)
+	if record != nil {
+		// The clearing mark reads as `starting`, which Start would take for a launch
+		// already under way.
+		unqueue()
+		a.mgr.finishMemberWipe(lease, *record, err)
+		return nil
+	}
+	if err != nil {
 		if leaseErr := lease.checkpoint(ctx); leaseErr != nil {
 			return workspaceLifecycleLeaseError(leaseErr)
 		}
@@ -548,6 +577,11 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 		// Start again would double-drive the service (fresh task def + forced
 		// deployment), so return and let the poller observe the transition.
 		return nil
+	}
+	// An unfinished operation on the home (home_operation.go) is the reconciler's to
+	// finish; a start in between would run the workspace on a home its task is removing.
+	if aerr := a.mgr.homeOperationOpenErr(ctx, res.ws, rt); aerr != nil {
+		return aerr
 	}
 	t, err := a.mgr.store.GetTenant(ctx, res.ws.TenantID)
 	if err != nil {
