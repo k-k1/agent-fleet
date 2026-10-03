@@ -35,7 +35,7 @@ Enter a port number in the **port input field** on the right of the workspace ac
 "Open in pane" when you want to touch the screen, and the lightweight preview when one look at an HTTP response
 is enough.
 
-> **On a deployment that runs workspaces on Kubernetes there is no browser pane.** "Open in pane" is
+> **On a deployment that runs workspaces on Kubernetes (a preview runtime) there is no browser pane.** "Open in pane" is
 > greyed out, and its tooltip and the hint under it say why: Chromium's sandbox cannot start in the
 > restricted pod a workspace runs in, and the deployment does not run Chromium without it. A port in a
 > session row opens in the lightweight preview instead, and a browser pane kept in your layout shows the

@@ -93,7 +93,7 @@ Workspace の停止／起動中に接続しようとすると専用の overlay �
 
 ## ブラウザペインが無い配備
 
-ワークスペースを `kubernetes` ランタイムで動かす配備には、**ブラウザ機能が一切ありません**。
+ワークスペースを `kubernetes` ランタイム（プレビュー。[配備形態](deploy-targets.ja.md)）で動かす配備には、**ブラウザ機能が一切ありません**。
 ブラウザペインも、エージェント向けの Chromium の接続も、ヘッドレス Chromium もありません。
 そこでのワークスペースの pod は Pod Security の `restricted` レベルで動き、NoNewPrivs が立つ
 （setuid の `chrome-sandbox` が権限を上げられない）うえにランタイム既定の seccomp プロファイル

@@ -18,7 +18,14 @@ deployment" is the most expensive kind of documentation error here.
 | native | sandboxed host processes, no Docker at all | a directory on the host | Docker cannot be installed (a plain WSL2 machine). **Single user only** — without container isolation it refuses to run in a shared mode |
 | ecs | a task on AWS ECS / Fargate | EFS | AWS, without managing instances |
 | ecs-ec2 | a task on an EC2 slot taken from a pool | a per-user EBS volume | AWS, when start latency and disk performance matter enough to manage instances |
-| kubernetes | a pod of its own StatefulSet on a Kubernetes cluster | a per-user persistent volume (block storage), plus a second one for logins and Claude's state | you already run Kubernetes, or want Agent Fleet on Google Cloud with workspaces that scale to zero. GKE Standard is the first cluster it is verified on |
+| kubernetes | a pod of its own StatefulSet on a Kubernetes cluster | a per-user persistent volume (block storage), plus a second one for logins and Claude's state | **Preview.** You already run Kubernetes, or want Agent Fleet on Google Cloud with workspaces that scale to zero. GKE Standard is the first cluster it is verified on |
+
+> **Preview.** The `kubernetes` runtime is a preview: it has been accepted on a GKE Standard
+> cluster but is not yet supported for production. Known limits: there are no browser features
+> on this runtime (no browser pane, no headless Chromium), and on GKE the region's SSD disk quota
+> has to hold the deployment before you start ([Preconditions](../../deploy/kubernetes/README.md#preconditions)). Still being
+> measured: what it costs ([The bill](../../deploy/kubernetes/README.md#the-bill)) and how the load balancer's 24-hour
+> WebSocket cut affects day-long sessions ([7. The load balancer](../../deploy/kubernetes/README.md#7-the-load-balancer)).
 
 `docker` also answers to `local`, `ecs` to `aws`, `native` to `wsl`, and `kubernetes` to `k8s`. Anything else
 is rejected at boot rather than quietly defaulting. `ecs` and `ecs-ec2` are separate
@@ -28,7 +35,7 @@ value instead of reverting code.
 
 ## Capability differences
 
-| Capability | docker | native | ecs | ecs-ec2 | kubernetes |
+| Capability | docker | native | ecs | ecs-ec2 | kubernetes (preview) |
 |---|:--:|:--:|:--:|:--:|:--:|
 | Several users, mutually invisible | ✓ | — | ✓ | ✓ | ✓ |
 | Per-user CPU / memory limits | ✓ | — | ✓ | ✓ | ✓ |
@@ -144,7 +151,7 @@ repository next to what they operate:
 | native | [deploy/native/README.md](../../deploy/native/README.md), and [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) for a personal WSL2 machine |
 | ecs / ecs-ec2 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
 | a single EC2 VM running compose | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
-| kubernetes (GKE, and other clusters) | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
+| kubernetes (preview; GKE, and other clusters) | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 `ec2-single` is not a separate runtime profile — it is `docker` on a VM, and it exists
 because "AWS" and "manage instances yourself" are independent choices.

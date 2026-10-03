@@ -30,7 +30,7 @@ Reasons to choose something else:
 | You want it on AWS, small team, cost matters | **ec2-single** | It *is* compose, on a VM. Not a separate runtime |
 | You need task-level isolation, per-user fault isolation, rolling image replacement | **ecs** | You are buying isolation, not saving money |
 | You need the above, plus fast starts and disk performance | **ecs-ec2** | A pool of instances with a persistent per-user disk |
-| Your platform is Kubernetes, or Google Cloud, and you want workspaces that scale to zero | **kubernetes** | A workspace is a pod with a persistent per-user volume on a cluster you run; GKE Standard first |
+| Your platform is Kubernetes, or Google Cloud, and you want workspaces that scale to zero | **kubernetes** (preview) | A workspace is a pod with a persistent per-user volume on a cluster you run; GKE Standard first |
 
 ## What ECS actually costs you
 
@@ -57,6 +57,13 @@ So:
 
 ## When Kubernetes, and when not
 
+> **Preview.** The `kubernetes` runtime is a preview: it has been accepted on a GKE Standard
+> cluster but is not yet supported for production. Known limits: there are no browser features
+> on this runtime (no browser pane, no headless Chromium), and on GKE the region's SSD disk quota
+> has to hold the deployment before you start ([Preconditions](../../deploy/kubernetes/README.md#preconditions)). Still being
+> measured: what it costs ([The bill](../../deploy/kubernetes/README.md#the-bill)) and how the load balancer's 24-hour
+> WebSocket cut affects day-long sessions ([7. The load balancer](../../deploy/kubernetes/README.md#7-the-load-balancer)).
+
 Choose **kubernetes** when a Kubernetes cluster is already how your organisation runs things,
 or when you are on Google Cloud and want what ECS gives on AWS: a pod per workspace, isolated by
 the cluster, with capacity only while it runs. It brings what a cluster brings: Terraform and
@@ -80,7 +87,7 @@ bundle, so a customer with the tarball and no repository still has them:
 | a personal WSL2 machine | [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
 | ecs / ecs-ec2 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
 | ec2-single | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
-| kubernetes | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
+| kubernetes (preview) | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 Inside a workspace, the same files are staged under `operate/runbooks/` beside this
 shelf.

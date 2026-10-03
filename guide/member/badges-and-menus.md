@@ -53,7 +53,7 @@ is connected (Settings > Connections), never for the repository's default branch
 refreshed every couple of minutes, so a merge can take that long to show. The others are the
 ports the session's own processes listen on (`:5173`): click one to open it in a browser pane,
 Ctrl / middle-click for a new pane ([browser pane](../ref/browser-pane.md)); on a deployment with no
-browser pane (Kubernetes) it opens in the lightweight preview instead. Only servers bound
+browser pane (Kubernetes, a preview runtime) it opens in the lightweight preview instead. Only servers bound
 to `127.0.0.1` or every interface count — the pane opens `http://127.0.0.1:{port}` — and another
 session's servers never show; tool commands run by the shared codex / opencode Managed servers
 are not attributed to any session.
