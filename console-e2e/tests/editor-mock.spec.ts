@@ -100,6 +100,9 @@ test("CodeMirror save, conflict, dirty navigation guard, ARIA", async ({ page })
     return route.abort();
   });
   await page.addInitScript(() => {
+    // The layout below is a split-mode one, and boot reads only the profile of the paneLayout
+    // setting, which defaults to tabs — without this the seed is ignored.
+    localStorage.setItem("af-display-settings", JSON.stringify({ paneLayout: "split" }));
     // The key is the implementation's LKEY_NEW (console/src/layout/migrate.ts) =
     // "af.layout2.<user>.<slug>". The whoami mock above returns auth_mode:"dev" (empty user)
     // and no tenants (empty slug), so it is "af.layout2..". If it ever drifts from the
