@@ -92,3 +92,16 @@ restarts) all reduce to one of **identity (1 bit), detection (a one-shot edge in
   receiving end are unchanged, and the decision that "the advertised set is the scope boundary", so
   that other fleet tools cannot be called by guesswork, is maintained. `--self-report` on its own
   still advertises exactly one tool.
+
+## Addendum (2026-10-03) — an instruction whose prompt never ran
+
+On a Managed session an instruction's prompt can wait in the session's queue behind a running turn, survive a halt,
+and be dropped before it runs (#1257, [0105](0105-stop-continues-into-the-queue.md) addendum 2026-10-03). The row
+now names the prompt's `ClientMessageID` (`msg`), raised before the send and withdrawn if the send fails.
+
+- While the prompt waits (`agents.HeldWaiting`), the row is left out of the settle decision: the turn it queued
+  behind ending, or being stopped, is not its completion.
+- When the prompt is dropped, the row records why (`dropped`), and the next sweep delivers a `not-run` report with
+  that reason, without waiting for quiet evidence and even when the session's meta is gone. Delivered, the row is
+  closed as `not_run`, which is never a reopen candidate. A retry keeps the row open, as for every report.
+- The operator's `stop_session` cancels the rows first, so the prompts it withdraws are not reported back to it.

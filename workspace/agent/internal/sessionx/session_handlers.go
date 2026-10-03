@@ -137,7 +137,7 @@ func removeManagedLedger(m session.Meta) {
 	case session.KindMuse:
 		muse.RemoveLedger(m.Name)
 	}
-	agents.DropHeld(m.Name, "purged from the trash")
+	agents.DropHeld(m.Name, agents.DropTrashed)
 	dropPendingPeers(m.Name, "purged from the trash")
 }
 
@@ -381,6 +381,13 @@ type CreateReq struct {
 	// (docs/log/38): "schedule" / "schedule-manual" from the CP scheduler; anything else
 	// (incl. empty — the operator MCP) records as "operator". Whitelisted server-side.
 	Source string `json:"source"`
+	// ScheduleID / ScheduleSlot name the scheduled run a CP scheduler create belongs to, as on
+	// /input (#1257).
+	ScheduleID   string `json:"schedule_id"`
+	ScheduleSlot string `json:"schedule_slot"`
+	// msgID is the ClientMessageID a Managed create sends initial_prompt under, set before
+	// noteCreateOrigin so the instruction row names it (#1257). Empty on the Terminal route.
+	msgID string
 	// Origin / OriginConv record who STARTED this session (docs/log/46 §2-c, ADR 0029 §6) —
 	// a different axis from Source (which attributes one injected prompt). The MCP
 	// create_session sends "operator" plus its own conversation slug; the Console sends
@@ -1123,9 +1130,11 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 		slot.publish(meta)
 		recordFleetGraphBirth(meta)
+		req.msgID = agents.NormalizeMsgID("")
 		noteCreateOrigin(name, &req, spawnParent, origin)
 		if p := strings.TrimSpace(req.InitialPrompt); p != "" {
-			if err := h.Send(agents.TurnInput{Prompt: p, Origin: createTurnOrigin(&req, spawnParent)}); err != nil {
+			if err := h.Send(agents.TurnInput{Prompt: p, Origin: createTurnOrigin(&req, spawnParent),
+				ClientMessageID: req.msgID, Schedule: scheduleRefOf(req.Source, req.ScheduleID, req.ScheduleSlot)}); err != nil {
 				log.Printf("managed initial prompt %s: %v", name, err)
 				meta.InitialPromptState = session.InitialPromptFailed
 			} else {
@@ -1194,7 +1203,7 @@ func noteCreateOrigin(name string, req *CreateReq, spawnParent, origin string) {
 	hasPrompt := strings.TrimSpace(req.InitialPrompt) != ""
 	switch {
 	case req.ReportTo != "":
-		chatx.AddInstruction(name, req.ReportTo, injectionSource(req.Source))
+		chatx.AddQueuedInstruction(name, req.ReportTo, injectionSource(req.Source), req.msgID)
 		recordInjection(name, req.InitialPrompt, injectionSource(req.Source)) // orchestrated start (docs/log/30 ② / docs/log/38)
 		if hasPrompt {
 			recordFleetGraphInstruct(name, injectionSource(req.Source), req.ReportTo, "", req.InitialPrompt)
@@ -1453,7 +1462,7 @@ func HaltSession(m session.Meta) (session.Meta, error) { return haltSession(m, f
 func ForgetRuntime(m session.Meta) {
 	sid := session.UUID(m.Dir, m.Name)
 	dropManagedRuntime(m)
-	agents.DropHeld(m.Name, "moved to the trash")
+	agents.DropHeld(m.Name, agents.DropTrashed)
 	dropPendingPeers(m.Name, "moved to the trash")
 	status.Remove(sid)
 	status.RemoveExit(m.Name)
@@ -1493,6 +1502,12 @@ func HandleHaltSession(w http.ResponseWriter, r *http.Request) {
 		chatx.DisarmSessionReport(name)
 	}
 	m, err := haltSessionMeta(m)
+	if body.DisarmReport {
+		// The operator withdrew its instructions, so its prompts held for the next start go
+		// too (#1257); peer messages and scheduled prompts stay. After the halt, so the live
+		// queue cannot start one of them in between.
+		agents.DropHeldOrigin(name, agents.OriginOperator, agents.DropWithdrawn)
+	}
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
@@ -1622,8 +1637,8 @@ func ArchiveSession(m session.Meta) {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
 	dropManagedRuntime(m) // managed: drop the runtime handle instead of a pane
-	// A held peer message waits for the next start, and an archived session has none.
-	agents.DropHeld(name, "archived")
+	// A held input waits for the next start, and an archived session has none.
+	agents.DropHeld(name, agents.DropArchived)
 	dropPendingPeers(name, "archived")
 	status.Remove(session.UUID(m.Dir, name))
 	status.RemoveExit(name)
@@ -1733,7 +1748,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
 	dropManagedRuntime(m) // managed: drop the runtime handle instead of a pane
-	agents.DropHeld(m.Name, "recreated: the old session is archived")
+	agents.DropHeld(m.Name, agents.DropRecreated)
 	dropPendingPeers(m.Name, "recreated: the old session is archived")
 	status.Remove(session.UUID(m.Dir, m.Name))
 	status.RemoveExit(m.Name)

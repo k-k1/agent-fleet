@@ -35,6 +35,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -812,7 +813,8 @@ func (rc *reportReconciler) prune(armed []string) {
 // row stays pending and is reported at the end of the next turn — gap A, where v1 overwrote the
 // arm and lost it, falls out of the definition here as "a row that cannot disappear".
 func (rc *reportReconciler) evaluate(name string, now time.Time) {
-	open := openInstrRows(name)
+	open := rc.reportNotRun(name, openInstrRows(name), now)
+	open = withoutHeldInstr(name, open)
 	if len(open) == 0 {
 		return
 	}
@@ -880,6 +882,44 @@ func (rc *reportReconciler) evaluate(name string, now time.Time) {
 	if !retry {
 		rc.forget(name)
 	}
+}
+
+// reportNotRun delivers the not-run report of every row whose prompt was dropped before it ran
+// (#1257) and returns the other rows. It needs no quiet evidence: the drop is a terminal fact,
+// and the session may be archived or gone. It runs ahead of the meta check for that reason. A
+// row whose delivery must be retried stays open and is left out of this sweep's settle
+// decision, so the session's quiet period cannot report it as done meanwhile.
+func (rc *reportReconciler) reportNotRun(name string, open []instrRow, now time.Time) []instrRow {
+	var rest []instrRow
+	for _, r := range open {
+		if r.Dropped == "" {
+			rest = append(rest, r)
+			continue
+		}
+		switch rc.sink(name, r.Conv, reportKindNotRun, r.Dropped, []instrRow{r}) {
+		case reportSinkRetry:
+			continue
+		case reportSinkDrop:
+			log.Printf("session-report: %s: target conversation %s is gone — folding row %s", name, r.Conv, r.ID)
+		}
+		markInstrNotRunReported(name, r.ID, now)
+		log.Printf("session-report: %s: instruction %s not run (%s)", name, r.ID, r.Dropped)
+	}
+	return rest
+}
+
+// withoutHeldInstr drops the rows whose prompt still waits in the session's queue (#1257): an
+// instruction that has not started cannot have completed, whatever the session's earlier turn
+// did. Such a row stays pending until its prompt is handed to the runtime, and is then judged
+// like any other.
+func withoutHeldInstr(name string, rows []instrRow) []instrRow {
+	var out []instrRow
+	for _, r := range rows {
+		if !agents.HeldWaiting(name, r.Msg) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // reportReopenGrace is how long a reported row stays under compensation watch

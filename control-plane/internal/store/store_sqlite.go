@@ -3227,6 +3227,20 @@ func (s *SQL) AppendScheduleRun(ctx context.Context, run ScheduleRun, keepN int)
 	return err
 }
 
+func (s *SQL) MarkScheduleRunNotExecuted(ctx context.Context, scheduleID, membershipID, session, since, status, detail string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE schedule_run SET status=?, detail=? WHERE id = (
+		   SELECT id FROM schedule_run
+		   WHERE schedule_id=? AND membership_id=? AND session=? AND status LIKE 'fired%' AND fired_at >= ?
+		   ORDER BY fired_at ASC LIMIT 1)`,
+		status, detail, scheduleID, membershipID, session, since)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 func (s *SQL) ListScheduleRuns(ctx context.Context, scheduleID, membershipID string, limit int) ([]ScheduleRun, error) {
 	if limit <= 0 {
 		limit = 50

@@ -269,6 +269,11 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// puts both in the envelope (docs/log/58 §58.14) — the sender picks what it is, never
 		// what the receiver owes back.
 		PeerIntent string `json:"peer_intent"`
+		// ScheduleID and ScheduleSlot name the scheduled run a CP scheduler send belongs to,
+		// so a Managed session that drops the prompt before it runs can record that run as not
+		// executed (#1257). Read only alongside a schedule source.
+		ScheduleID   string `json:"schedule_id"`
+		ScheduleSlot string `json:"schedule_slot"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
@@ -390,7 +395,8 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// reason as /turn's handleManagedTurn. {keys}/{seq} (raw TUI driving) stays tui-only.
 	if len(body.Keys) == 0 && len(body.Seq) == 0 {
 		if meta, ok := session.ReadMeta(name); ok && meta.DriverKind() == session.DriverManaged {
-			handleManagedInputPrompt(w, meta, body.Prompt, body.ReportTo, body.Source, body.PeerFrom)
+			handleManagedInputPrompt(w, meta, body.Prompt, body.ReportTo, body.Source, body.PeerFrom,
+				scheduleRefOf(body.Source, body.ScheduleID, body.ScheduleSlot))
 			return
 		}
 	}
@@ -678,7 +684,7 @@ func writePeerErr(w http.ResponseWriter, err error) {
 // start op (session_turn.go) — same ThreadHandle.Send delivery, but keeps /input's
 // report_to contract (addInstruction / recordOperatorInjection) that /turn doesn't
 // carry, so send_to_session's docs/log/30 auto-report keeps working for managed sessions.
-func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, reportTo, source, peerFrom string) {
+func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, reportTo, source, peerFrom string, sched agents.ScheduleRef) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
@@ -710,7 +716,15 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	}
 	// The origin is what the stop rules read (ADR 0105): only member input ends a stop episode,
 	// and a discard lists the rest by origin rather than putting it back in the input box.
-	in := agents.TurnInput{Prompt: prompt, Origin: turnOrigin(badgeOriginOf(peerFrom, reportTo, source), peerFrom)}
+	in := agents.TurnInput{Prompt: prompt, Origin: turnOrigin(badgeOriginOf(peerFrom, reportTo, source), peerFrom),
+		ClientMessageID: agents.NormalizeMsgID(""), Schedule: sched}
+	// The ledger row is raised BEFORE the send and names the prompt's id (#1257): the queue
+	// may hold the prompt behind a turn and drop it later, and the drop finds the row by that
+	// id. A send that fails withdraws it.
+	row := ""
+	if peerFrom == "" && reportTo != "" {
+		row = chatx.AddQueuedInstruction(meta.Name, reportTo, injectionSource(source), in.ClientMessageID)
+	}
 	queued := false
 	if qs, ok := h.(agents.QueueingSender); ok {
 		queued, err = qs.SendQueued(in)
@@ -718,6 +732,7 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 		err = h.Send(in)
 	}
 	if err != nil {
+		chatx.WithdrawInstruction(meta.Name, row)
 		if errors.Is(err, agents.ErrQuestionPending) {
 			httpx.WriteErr(w, http.StatusConflict, "question_pending",
 				"a question is awaiting an answer; answer it via the question card, not free text")
@@ -737,7 +752,7 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	case peerFrom != "":
 		// Not on the ledger (ADR 0041 decision 4). The origin was recorded above.
 	case reportTo != "":
-		chatx.AddInstruction(meta.Name, reportTo, injectionSource(source))
+		// Raised before the send, above.
 	case scheduleInjectionSource(source) != "":
 		// Scheduled execution with reporting off (as on the TUI path) — no ledger row,
 		// no Discord mirror.

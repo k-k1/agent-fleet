@@ -41,6 +41,7 @@ const (
 	reportKeyReopened          = "chat.report.reopened"
 	reportKeyReopenCapped      = "chat.report.reopen_capped"
 	reportKeyExit              = "chat.report.exit"
+	reportKeyNotRun            = "chat.report.not_run"
 	reportKeyUnknown           = "chat.report.unknown"
 )
 
@@ -94,6 +95,8 @@ func (v reportView) displayKey() string {
 		return reportKeyReopened
 	case "exit":
 		return reportKeyExit
+	case reportKindNotRun:
+		return reportKeyNotRun
 	}
 	return reportKeyUnknown
 }
@@ -119,6 +122,39 @@ func exitLabelFor(reason, lang string) string {
 		return "クラッシュ"
 	case "killed":
 		return "強制終了（SIGKILL）"
+	}
+	return reason
+}
+
+// notRunLabelFor renders why a dropped instruction did not run (agents.Drop*). The Console has
+// the same labels under chat.report.not_run_reason.*; an unknown reason is printed raw.
+func notRunLabelFor(reason, lang string) string {
+	en := map[string]string{
+		"archived":             "the session was archived",
+		"trashed":              "the session was moved to the trash",
+		"recreated":            "the session was recreated",
+		"switched-to-terminal": "the session was switched to Terminal (CLI)",
+		"session-gone":         "the session no longer exists",
+		"discarded":            "a stop discarded the queue",
+		"stopped":              "a stop caught it before it started",
+		"removed":              "it was removed from the queue",
+	}
+	ja := map[string]string{
+		"archived":             "セッションがアーカイブされた",
+		"trashed":              "セッションがごみ箱に移された",
+		"recreated":            "セッションが作り直された",
+		"switched-to-terminal": "セッションがターミナル（CLI）に切り替えられた",
+		"session-gone":         "セッションが存在しない",
+		"discarded":            "停止でキューが破棄された",
+		"stopped":              "開始前に停止された",
+		"removed":              "キューから削除された",
+	}
+	labels := ja
+	if lang == "en" {
+		labels = en
+	}
+	if l, ok := labels[reason]; ok {
+		return l
 	}
 	return reason
 }
@@ -186,6 +222,12 @@ func (v reportView) fact(lang string) string {
 			return "The agent process exited abnormally: " + label + "."
 		}
 		return "エージェントプロセスが異常終了しました: " + label + "。"
+	case reportKeyNotRun:
+		label := notRunLabelFor(v.reason, lang)
+		if en {
+			return "The instruction did not run: it was dropped from the session's queue before it started (" + label + ")."
+		}
+		return "指示は実行されていません: 開始前にセッションのキューから取り除かれました（" + label + "）。"
 	case reportKeyUnknown:
 		if en {
 			return "The state changed (" + v.kind + ")."
@@ -336,6 +378,13 @@ func (v reportView) orders(lang string) string {
 		return "利用者に完了を伝えていた場合は取り消して、まだ作業中であることを伝えてください。" +
 			"追加の指示は送らず、この指示の完了報告が改めて届くのを待ってください" +
 			"（状況を確認したいときは get_session_status / get_session_output を使ってください）。"
+	case reportKeyNotRun:
+		if en {
+			return "Tell the user that this instruction was not carried out and why. " +
+				"Send it again with send_to_session only if the user still wants it, after checking the session's state with get_session_status."
+		}
+		return "この指示が実行されなかったことと理由を利用者に伝えてください。" +
+			"利用者がまだ望む場合に限り、get_session_status でセッションの状態を確認してから send_to_session で送り直してください。"
 	case reportKeyExit:
 		if en {
 			return "Tell the user what happened if it matters, and consider resuming or re-instructing."

@@ -28,6 +28,7 @@ package chatx
 // State machine: pending →(interim report)→ interim_reported →(completion/abnormal)→ reported
 //                reported →(compensation, Phase 3)→ reopened →…→ reported
 //                pending/interim_reported →(stop_session disarm)→ cancelled
+//                open →(its queued prompt dropped before it ran, then reported)→ not_run
 // open (= a report is still owed) = pending | interim_reported | reopened.
 
 import (
@@ -51,6 +52,10 @@ const (
 	instrReported  = "reported"
 	instrReopened  = "reopened"  // row re-opened by the compensation for a wrong "completion" (Phase 3)
 	instrCancelled = "cancelled" // stop_session = the instruction is withdrawn
+	// instrNotRun: the instruction's prompt was dropped from the session's queue before it
+	// ran (#1257), and that has been reported. Closed, and never a reopen candidate: nothing
+	// ran that a later busy period could be the continuation of.
+	instrNotRun = "not_run"
 )
 
 // instrCursor is the row's progress cursor: the lower bound that makes "the session worked
@@ -84,6 +89,14 @@ type instrRow struct {
 	Interim     instrInterimAt `json:"interim,omitempty"`
 	ReportedAt  string         `json:"reported_at,omitempty"`
 	ReopenCount int            `json:"reopen_count,omitempty"`
+	// Msg is the ClientMessageID the instruction's prompt was queued under on a Managed
+	// session; empty on the Terminal route. It ties the row to a held prompt (#1257): while
+	// the prompt waits the row is not reported as done, and if it is dropped the row is
+	// reported as not run.
+	Msg string `json:"msg,omitempty"`
+	// Dropped is why the row's prompt went without running (agents.Drop*). Set, the row still
+	// owes a report: the not-run report, delivered on the next sweep.
+	Dropped string `json:"dropped,omitempty"`
 }
 
 // open reports whether the row still owes a completion report.
@@ -192,9 +205,77 @@ func AddInstruction(name, convID, source string) string {
 	return addInstructionAt(name, convID, source, time.Now())
 }
 
+// AddQueuedInstruction is AddInstruction for a prompt sent to a Managed session's queue under
+// ClientMessageID msg. It is called BEFORE the send, so a drop that follows the send at once
+// finds the row; a send that fails withdraws it (WithdrawInstruction).
+func AddQueuedInstruction(name, convID, source, msg string) string {
+	return addQueuedInstructionAt(name, convID, source, msg, time.Now())
+}
+
+// WithdrawInstruction removes row id: its prompt was never accepted.
+func WithdrawInstruction(name, id string) {
+	if id == "" {
+		return
+	}
+	unlock := lockInstr(name)
+	defer unlock()
+	rows := ReadInstrRows(name)
+	kept := rows[:0]
+	for _, r := range rows {
+		if r.ID != id {
+			kept = append(kept, r)
+		}
+	}
+	writeInstrRows(name, kept)
+}
+
+// MarkInstrNotRun records that the prompt queued under msg was dropped before it ran, for
+// reason (agents.Drop*). The row stays open until the next sweep has reported it as not run:
+// deliver-then-consume, as for every report. False when no open row has that prompt.
+func MarkInstrNotRun(name, msg, reason string) bool {
+	if msg == "" {
+		return false
+	}
+	unlock := lockInstr(name)
+	rows := ReadInstrRows(name)
+	hit := false
+	for i := range rows {
+		if rows[i].Msg == msg && rows[i].open() && rows[i].Dropped == "" {
+			rows[i].Dropped = reason
+			hit = true
+		}
+	}
+	if hit {
+		writeInstrRows(name, rows)
+	}
+	unlock()
+	if hit {
+		reportRec.nudge()
+	}
+	return hit
+}
+
+// markInstrNotRunReported closes row id once its not-run report has been delivered.
+func markInstrNotRunReported(name, id string, at time.Time) {
+	unlock := lockInstr(name)
+	defer unlock()
+	rows := ReadInstrRows(name)
+	for i := range rows {
+		if rows[i].ID == id && rows[i].open() {
+			rows[i].State = instrNotRun
+			rows[i].ReportedAt = at.Format(time.RFC3339)
+		}
+	}
+	writeInstrRows(name, rows)
+}
+
 // addInstructionAt is AddInstruction with an explicit delivery time (a seam so tests can build
 // the ordering between delivery and evidence deterministically).
 func addInstructionAt(name, convID, source string, at time.Time) string {
+	return addQueuedInstructionAt(name, convID, source, "", at)
+}
+
+func addQueuedInstructionAt(name, convID, source, msg string, at time.Time) string {
 	if !session.ValidName(name) || !paths.ValidIDSegment(convID) {
 		return ""
 	}
@@ -204,7 +285,7 @@ func addInstructionAt(name, convID, source string, at time.Time) string {
 	ts := at.Format(time.RFC3339)
 	row := instrRow{
 		ID: newInstrID(), Conv: convID, Source: source,
-		DeliveredAt: ts, Cursor: instrCursor{At: ts}, State: instrPending,
+		DeliveredAt: ts, Cursor: instrCursor{At: ts}, State: instrPending, Msg: msg,
 	}
 	unlock := lockInstr(name)
 	writeInstrRows(name, append(ReadInstrRows(name), row))

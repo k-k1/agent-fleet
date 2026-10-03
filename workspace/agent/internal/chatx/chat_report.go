@@ -101,6 +101,12 @@ const reportKindReopened = "reopened"
 // so the fact is raised to the user and the loop is cut off.
 const reportReasonReopenCapped = "reopen-capped"
 
+// reportKindNotRun is the report for an instruction whose prompt was dropped from the
+// session's queue before it ran (#1257): an archive, a discarding stop, a removal. The reason is
+// the drop's (agents.Drop*). It is terminal for the row — never a completion, and never
+// reopened.
+const reportKindNotRun = "not-run"
+
 // ReportKindSelfReport is the SELF-REPORT kick (docs/log/51 §self-report fast path /
 // Phase 3): the session itself declared completion through the af_report MCP tool. It is not
 // a report kind — nothing is ever written to a conversation under it. It only carries a hint
@@ -518,7 +524,7 @@ func recordSessionReport(name, convID, kind, reason string, rows []instrRow) rep
 		if ms := reopenTargetMs(c, fresh); ms > 0 {
 			args["reopen_at"] = strconv.FormatInt(ms, 10)
 		}
-	} else if n := len(fresh); n >= 2 {
+	} else if n := len(fresh); n >= 2 && kind != reportKindNotRun {
 		args["fold_n"] = strconv.Itoa(n)
 		args["fold_ats"] = instrFoldAts(fresh)
 	}

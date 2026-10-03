@@ -137,9 +137,9 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		dropManagedRuntime(m)
 	}
 	if target == session.DriverTUI {
-		// Held peer messages are delivered by a Managed start, and Terminal has no queue to
-		// put them in: typing them into the CLI as it boots would race its own startup.
-		agents.DropHeld(name, "switched to Terminal (CLI)")
+		// Held inputs are delivered by a Managed start, and Terminal has no queue to put them
+		// in: typing them into the CLI as it boots would race its own startup.
+		agents.DropHeld(name, agents.DropTerminal)
 	}
 	status.Remove(sid)
 

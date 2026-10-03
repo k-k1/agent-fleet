@@ -238,8 +238,10 @@ func serve() {
 	// starts a runtime if one is needed; with no managed metadata this is an immediate
 	// no-op.
 	//
-	// Held peer messages no start will deliver are swept before reconciliation delivers the
-	// rest (#1255): a crash can leave them behind a deleted or archived session.
+	// Held inputs no start will deliver are swept before reconciliation delivers the rest
+	// (#1255): a crash can leave them behind a deleted or archived session. The drop hook goes
+	// in first, so an operator or scheduled prompt swept here is reported (#1257).
+	sessionx.InstallHeldDropHook()
 	agents.SweepHeld()
 	// Peer messages waiting for a user's answer (#1031) get their delivery loops back.
 	sessionx.ResumePendingPeers()

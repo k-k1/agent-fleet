@@ -13,6 +13,8 @@ package chatx
 import (
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 )
 
 // Every kind / reason combination (covering the axes the display key branches on).
@@ -145,16 +147,42 @@ func TestReportKeysExistInConsoleCatalogs(t *testing.T) {
 	keys := []string{
 		reportKeyAnswerReady, reportKeyTurnFailed, reportKeyTurnAborted, reportKeyTurnAbortedCapped,
 		reportKeyQuestion, reportKeyPlanApproval, reportKeyPermission,
-		reportKeyReopened, reportKeyReopenCapped, reportKeyExit, reportKeyUnknown,
+		reportKeyReopened, reportKeyReopenCapped, reportKeyExit, reportKeyNotRun, reportKeyUnknown,
 		// Notes and exit-reason labels (the fragments the Console assembles).
 		"chat.report.note.rate_limit_resume", "chat.report.note.fold", "chat.report.note.reopen_target",
 		"chat.report.exit_reason.oom", "chat.report.exit_reason.crashed", "chat.report.exit_reason.killed",
+	}
+	for _, r := range notRunReasons {
+		keys = append(keys, "chat.report.not_run_reason."+r)
 	}
 	for _, locale := range []string{"ja", "en"} {
 		catalog := consoleCatalog(t, locale)
 		for _, key := range keys {
 			if !consoleCatalogHasKey(catalog, key) {
 				t.Errorf("%s catalog is missing %q", locale, key)
+			}
+		}
+	}
+}
+
+// notRunReasons are the agents.Drop* reasons a not-run report can carry.
+var notRunReasons = []string{
+	agents.DropArchived, agents.DropTrashed, agents.DropRecreated, agents.DropTerminal,
+	agents.DropGone, agents.DropDiscarded, agents.DropStopped, agents.DropRemoved,
+}
+
+// The not-run labels match the Console's, so the stored ja Content and an English prompt say
+// the same as the card.
+func TestNotRunLabelsMatchConsoleCatalogs(t *testing.T) {
+	for _, locale := range []string{"ja", "en"} {
+		catalog := consoleCatalog(t, locale)
+		for _, r := range notRunReasons {
+			want := notRunLabelFor(r, locale)
+			if want == r {
+				t.Errorf("%s: no Go label for %q", locale, r)
+			}
+			if !strings.Contains(catalog, "\"chat.report.not_run_reason."+r+"\": \""+want+"\"") {
+				t.Errorf("%s: catalog label for %q is not %q", locale, r, want)
 			}
 		}
 	}

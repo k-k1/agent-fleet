@@ -1704,6 +1704,11 @@ type ScheduleStore interface {
 	// ListScheduleRuns returns a schedule's most-recent runs (newest first), scoped by
 	// membership so a member only sees their own schedule's history.
 	ListScheduleRuns(ctx context.Context, scheduleID, membershipID string, limit int) ([]ScheduleRun, error)
+	// MarkScheduleRunNotExecuted rewrites the status and detail of the run recorded as fired
+	// into session for the slot at or after since: the first fired run of that session from
+	// the slot on, because the scheduler records one run per slot. found is false when no such
+	// run is left (trimmed, or never recorded as fired).
+	MarkScheduleRunNotExecuted(ctx context.Context, scheduleID, membershipID, session, since, status, detail string) (found bool, err error)
 }
 
 // MCPServerStore is the tenant-distributed MCP server registry (docs/log/48 P4 +

@@ -77,3 +77,16 @@ consume-then-deliver の配送消失・agent 再起動中の kick 消失）は�
   `workspace-agent mcp-stdio --self-report --chromium-attach`で起動し、`af_report`に加えて
   Chromium 7種だけを対話セッションへ広告する。`af_report`の意味・受け口は不変で、他のフリートtoolを
   推測callできない「広告集合がscope境界」という決定も維持する。`--self-report`単独は従来どおり1本限定である。
+
+## 追記（2026-10-03）— プロンプトが走らなかった指示
+
+Managed のセッションでは、指示のプロンプトが実行中のターンの後ろでキューに待ち、halt を越えて残り、走る前に
+捨てられることがある（#1257、[0105](0105-stop-continues-into-the-queue.ja.md) の 2026-10-03 の追記）。行はそのプロンプトの
+`ClientMessageID`（`msg`）を持つ。行は送る前に起こし、送れなければ取り下げる。
+
+- プロンプトが待っている間（`agents.HeldWaiting`）、行は完了判定に入れない。後ろに並んだターンが終わること、
+  止められることは、その指示の完了ではない。
+- プロンプトが捨てられると行に理由（`dropped`）を記録し、次の掃引が静穏の証拠を待たずに、セッションのメタが
+  無くても、その理由で `not-run` の報告を届ける。届けた行は `not_run` で閉じ、訂正（reopen）の対象にはならない。
+  配送の再試行のあいだ行は開いたままで、ほかの報告と同じ。
+- operator の `stop_session` は先に行を取り消すので、取り下げたプロンプトが operator へ報告として返ることはない。

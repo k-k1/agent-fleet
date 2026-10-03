@@ -269,3 +269,14 @@ queue writes each peer entry to a file when it accepts it, teardown leaves the f
 (decision 5) delete the file with the entry, so a message the member discarded does not come back
 after a restart. The kept discards of decision 4 are still memory only. Details in
 [0041](0041-cross-session-messaging.md), addendum 2026-10-03.
+
+## Addendum (2026-10-03) — operator and scheduled prompts are held too
+
+The same holds now for operator prompts (`send_to_session` with `report_to`) and scheduled prompts (#1257): the
+queue writes them through on accept, teardown keeps them, and the next `Resume` delivers them in one FIFO with the
+held peer messages, by accept time. They keep their text, so an operator prompt keeps its `af_report` line; a mark
+`[agent-fleet:held queued=<time>]` is appended to one delivered after a restart. Archive, trash, recreate and the
+switch to Terminal drop them, the operator's `stop_session` drops its own, and a discarding stop and a removal drop
+them as they drop peer messages. Unlike a peer message, each dropped one is reported: its instruction row is
+reported as not run (see [0035](0035-session-report-v2-ledger.md), addendum 2026-10-03), and its scheduled run is
+recorded as not executed.
