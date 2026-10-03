@@ -840,7 +840,11 @@ cordons: the test fails if its UID, node or restart count changes.
   It takes three commands with `{node}` and `{zone}` filled in. The stop must cut the node off
   **without a shutdown the guest sees**. `gcloud compute instances stop` is an ACPI shutdown:
   the node terminates its pods and reports them before it goes, so Stop rightly settles, and the
-  harness reports that run as `INCONCLUSIVE`.
+  harness reports that run as `INCONCLUSIVE`. A power-off without a shutdown does not get there
+  on GKE either: the node pool's instance group recreates a VM that terminated within seconds,
+  and the node controller then deletes the old Node object and its pods, so Stop settles with no
+  operator action (also `INCONCLUSIVE`). On GKE the scenario needs a node whose VM keeps running
+  but stops answering.
   ```bash
   export AF_K8S_LIVE_NODE_STOP_CMD='<cut {node} off without a guest shutdown>'
   export AF_K8S_LIVE_NODE_STATUS_CMD='gcloud compute instances describe {node} --zone {zone} --project '"$PROJECT"' --format="value(status)"'

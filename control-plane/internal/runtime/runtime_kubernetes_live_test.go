@@ -1250,6 +1250,11 @@ func TestKubernetesLiveNetworkProbes(t *testing.T) {
 	}
 }
 
+func (l *kubeLive) nodeUID(node string) string {
+	l.t.Helper()
+	return strings.TrimSpace(l.must("get", "node", node, "--ignore-not-found", "-o", "jsonpath={.metadata.uid}"))
+}
+
 // debugPods lists the pods `kubectl debug node/<node>` leaves on the node, in any namespace.
 // It decodes only the metadata: other pods on the node have fields the adapter's own
 // types do not model (a probe on a named port).
@@ -1635,6 +1640,15 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	}
 
 	err = rt.Stop(ctx)
+	if err == nil {
+		// GKE's managed instance group recreates a workspace VM that terminated within
+		// seconds (compute.instances.repair.recreateInstance, measured on GKE 1.35), and the
+		// node controller then deletes the old Node object and its pods: the stop rightly
+		// settles, the deleted VM being the proof, and the node never stays unreachable.
+		if present, rerr := l.exists("get", "node", node); rerr == nil && (!present || l.nodeUID(node) != nodeObj.Metadata.UID) {
+			t.Fatalf("INCONCLUSIVE: the provider replaced %s by itself (the Node object is gone or new), which removed the pod, so Stop settled %s after the stop command instead of meeting an unreachable node", node, time.Since(t0).Round(time.Second))
+		}
+	}
 	if err == nil || !strings.Contains(err.Error(), "not settled") {
 		t.Fatalf("Stop with the node unreachable = %v, want a not-settled error", err)
 	}
