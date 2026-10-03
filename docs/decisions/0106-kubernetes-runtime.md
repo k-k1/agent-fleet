@@ -886,12 +886,12 @@ On open question 3, from the live acceptance run on GKE Standard behind the glob
 Application Load Balancer, with the backend's `timeoutSec` at 3600 (the `GCPBackendPolicy` of the
 2026-10-02 note on the deploy trees):
 
-- **An open Console terminal is never idle to the load balancer.** A terminal nobody typed in
-  stayed connected for more than 67 minutes past the 3600-second `timeoutSec`. The Console sends
-  an application-level heartbeat every 15 seconds and a round-trip ping every 5 seconds on the
-  same socket (`console/src/terminal/term.ts`), so while the tab is open the load balancer never
-  sees the connection idle, and `timeoutSec` does not decide whether a terminal survives.
-- **Not measured:** the 24-hour cut of an active WebSocket, and whether the Console reconnects the
-  terminal transparently after a cut. Those parts of open question 3 stay open.
+- **The Console's pings kept an untouched terminal from looking idle.** A terminal nobody typed
+  in stayed connected for more than 67 minutes past the 3600-second `timeoutSec`. The Console
+  pings on the same socket on timers, a round-trip ping every 5 seconds and a heartbeat every 15
+  (`console/src/terminal/term.ts`), and during this run that traffic kept the connection busy.
+- **Not measured:** a hidden tab, a frozen page or a sleeping machine, where the browser may slow
+  or stop those timers; the 24-hour cut of an active WebSocket; and whether the Console reconnects
+  the terminal transparently after a cut. Those parts of open question 3 stay open.
 
 The runbook's "The load balancer" says the same.
