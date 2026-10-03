@@ -194,6 +194,16 @@ describe("FileChangeStrip", () => {
     expect(scmMock).toHaveBeenCalledWith("r");
   });
 
+  it("offers no source-control button when every row is in another working copy", async () => {
+    apiMock.mockImplementation(route([{ path: "repos/r@wip-x/src/b.ts", repo: "r@wip-x", index: " ", worktree: "M" }]));
+    const el = await render("s1", [file({ path: "repos/r@wip-x/src/b.ts", repo: "r@wip-x", rel: "src/b.ts", scope: "other-repo" })]);
+    await act(async () => {
+      (el.querySelector(".mirror-files-toggle") as HTMLButtonElement).click();
+    });
+    expect(el.querySelector(".mfl-item")).not.toBeNull();
+    expect(el.querySelector(".mfl-scm")).toBeNull();
+  });
+
   it("badges a file in the work directory as such, not as outside the working copy", async () => {
     apiMock.mockImplementation(route([]));
     const el = await render("s1", [file({ path: ".af-work/s1/report.md", repo: undefined, rel: undefined, scope: "workdir" })]);

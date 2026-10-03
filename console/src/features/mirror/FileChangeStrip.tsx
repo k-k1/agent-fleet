@@ -75,9 +75,10 @@ function FileChangeStripImpl({ session, files }: { session: string; files: Sessi
   const added = rows.reduce((n, r) => n + (r.added || 0), 0);
   const removed = rows.reduce((n, r) => n + (r.removed || 0), 0);
   const lead = sortRows(rows, "recent")[0];
-  // The session's own working copy: a row in another one (another session's worktree, the
-  // parent clone) would otherwise open that copy's source control when it happens to sort first.
-  const repo = (rows.find((r) => r.repo && r.scope !== "other-repo") ?? rows.find((r) => r.repo))?.repo;
+  // The session's own working copy. Rows in another one (another session's worktree, the
+  // parent clone) never pick it: when they are all there is, the button is hidden rather than
+  // opening a copy this session does not own.
+  const repo = rows.find((r) => r.repo && r.scope !== "other-repo")?.repo;
 
   return (
     <section className={"mirror-files mirror-disclosure" + (open ? " open" : "")}>
