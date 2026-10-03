@@ -67,10 +67,7 @@ func TestReportReconcilerHeldInstructionIsNotDone(t *testing.T) {
 // sendingRow raises a row whose send this process has under way, delivered at.
 func sendingRow(t *testing.T, name, conv string, at time.Time) string {
 	t.Helper()
-	id := addSendingInstructionAt(name, conv, "operator", true, at)
-	instrInFlight.Store(name+"/"+id, true)
-	t.Cleanup(func() { instrInFlight.Delete(name + "/" + id) })
-	return id
+	return addSendingInstructionAt(name, conv, "operator", instrBoot, at)
 }
 
 // Review round 1, finding 4: a row raised before the send is out of the settle decision until
@@ -95,7 +92,7 @@ func TestReportReconcilerSendingInstructionIsNotDone(t *testing.T) {
 	sent := AddSendingInstruction(m.Name, conv, "operator")
 	MarkInstrSent(m.Name, sent)
 	for _, r := range ReadInstrRows(m.Name) {
-		if r.ID == sent && (r.Sending || instrSendInFlight(m.Name, sent)) {
+		if r.ID == sent && r.Sending != "" {
 			t.Fatal("MarkInstrSent left the row sending")
 		}
 	}
@@ -110,8 +107,8 @@ func TestReportReconcilerSendingRowOfADeadAgent(t *testing.T) {
 	var cs countingSink
 	rc, clock := newFakeReconciler(t, reportTickDefault, cs.sink)
 
-	lost := addSendingInstructionAt(m.Name, conv, "operator", true, time.Now().Add(-6*time.Minute))
-	accepted := addSendingInstructionAt(m.Name, conv, "operator", true, time.Now().Add(-6*time.Minute))
+	lost := addSendingInstructionAt(m.Name, conv, "operator", "boot-gone", time.Now().Add(-6*time.Minute))
+	accepted := addSendingInstructionAt(m.Name, conv, "operator", "boot-gone", time.Now().Add(-6*time.Minute))
 	queueBehindATurn(t, m.Name, accepted)
 	status.PersistTurnEnd(sid, "idle")
 	for i := 0; i < 4; i++ {
@@ -127,7 +124,7 @@ func TestReportReconcilerSendingRowOfADeadAgent(t *testing.T) {
 				t.Fatalf("lost row = %+v", r)
 			}
 		case accepted:
-			if r.State != instrPending || r.Sending {
+			if r.State != instrPending || r.Sending != "" {
 				t.Fatalf("accepted row = %+v, want pending and no longer sending", r)
 			}
 		}
@@ -215,5 +212,49 @@ func TestWithdrawInstruction(t *testing.T) {
 	rows := ReadInstrRows(m.Name)
 	if len(rows) != 1 || rows[0].ID != keep {
 		t.Fatalf("rows after the withdrawal = %+v", rows)
+	}
+}
+
+// Review round 3: a sweep that lands anywhere in this process's own send — the row just
+// raised, the prompt accepted and already started but MarkInstrSent not yet written, or a
+// refusal about to withdraw it — reports nothing. The row names its sender's boot id, so a
+// live send is never taken for a gone Agent's, whatever the interleaving; the completion is
+// still reported once the send has settled.
+func TestReportReconcilerOwnSendIsNeverUnconfirmed(t *testing.T) {
+	m, sid, conv := ledgerFixture(t, "slot76")
+	var cs countingSink
+	rc, clock := newFakeReconciler(t, reportTickDefault, cs.sink)
+	status.PersistTurnEnd(sid, "idle")
+	sweep := func(what string) {
+		t.Helper()
+		for i := 0; i < 3; i++ {
+			clock.advance(t, rc, reportTickDefault)
+		}
+		if cs.count() != 0 {
+			t.Fatalf("%s: reported %v", what, cs.callsSnapshot())
+		}
+	}
+
+	refused := AddSendingInstruction(m.Name, conv, "operator")
+	sweep("row just raised")
+	WithdrawInstruction(m.Name, refused)
+	sweep("after a refusal")
+
+	id := sendingRow(t, m.Name, conv, time.Now().Add(-60*time.Second))
+	q, run := queueBehindATurn(t, m.Name, id)
+	q.Settle(run)
+	tk := q.Take()
+	if !q.Commit(tk) { // started: no held file, MarkInstrSent not written yet
+		t.Fatal("commit refused")
+	}
+	sweep("accepted and started, send not yet settled")
+
+	MarkInstrSent(m.Name, id)
+	waitPastCursor(t, openInstrRows(m.Name)[0].Cursor.At)
+	status.PersistTurnEnd(sid, "idle")
+	clock.advance(t, rc, reportTickDefault)
+	clock.advance(t, rc, reportTickDefault)
+	if got := cs.callsSnapshot(); len(got) != 1 || got[0] != ReportKindAnswerReady+":" || cs.rowIDs(0)[0] != id {
+		t.Fatalf("after the send settled: %v", got)
 	}
 }

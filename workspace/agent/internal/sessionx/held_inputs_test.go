@@ -36,7 +36,7 @@ func (h *queueFakeHandle) Send(in agents.TurnInput) error {
 	defer h.mu.Unlock()
 	for _, r := range chatx.ReadInstrRows(h.q.Name()) {
 		if r.ID == in.Instr {
-			h.sending = append(h.sending, r.Sending)
+			h.sending = append(h.sending, r.Sending != "")
 		}
 	}
 	if h.fail != nil {
@@ -108,7 +108,7 @@ func TestManagedOperatorInputIsTiedToItsRowAndReportedWhenDropped(t *testing.T) 
 		t.Fatalf("queue = %+v", items)
 	}
 	rows := chatx.ReadInstrRows("held_dst")
-	if len(rows) != 1 || rows[0].Source != TurnSourceSchedule || rows[0].Sending {
+	if len(rows) != 1 || rows[0].Source != TurnSourceSchedule || rows[0].Sending != "" {
 		t.Fatalf("instruction rows = %+v, want one settled schedule row", rows)
 	}
 	if len(h.sending) != 1 || !h.sending[0] {
@@ -221,7 +221,7 @@ func TestManagedOperatorInputDroppedDuringTheSend(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	rows := chatx.ReadInstrRows("held_sync")
-	if len(rows) != 1 || rows[0].Dropped != agents.DropDiscarded || rows[0].Sending {
+	if len(rows) != 1 || rows[0].Dropped != agents.DropDiscarded || rows[0].Sending != "" {
 		t.Fatalf("rows = %+v, want the row dropped and no longer sending", rows)
 	}
 }

@@ -98,7 +98,12 @@ type instrRow struct {
 	// if the send fails: a report delivered meanwhile could not be taken back. A Managed
 	// prompt's held file names the row (agents.TurnInput.Instr), which keeps it out after that
 	// for as long as the prompt waits.
-	Sending bool `json:"sending,omitempty"`
+	//
+	// The value is the boot id of the Agent process that is sending (instrBoot), so the row
+	// itself says whether the sender is still alive: a row this process is sending is never
+	// mistaken for one an Agent that is gone left behind, however a sweep interleaves with the
+	// send. Empty = not sending.
+	Sending string `json:"sending,omitempty"`
 	// Dropped is why the row's prompt went without running (agents.Drop*). Set, the row still
 	// owes a report: the not-run report, delivered on the next sweep.
 	Dropped string `json:"dropped,omitempty"`
@@ -215,34 +220,27 @@ func AddInstruction(name, convID, source string) string {
 // a drop during the send finds the row; the send's outcome then settles it: MarkInstrSent, or
 // WithdrawInstruction when the driver refused the prompt.
 func AddSendingInstruction(name, convID, source string) string {
-	id := addSendingInstructionAt(name, convID, source, true, time.Now())
-	if id != "" {
-		instrInFlight.Store(name+"/"+id, true)
-	}
-	return id
+	return addSendingInstructionAt(name, convID, source, instrBoot, time.Now())
 }
 
-// instrInFlight holds the rows whose send this process has under way. A row marked sending
-// that is not here was raised by an Agent that is gone: its send's outcome was never recorded.
-var instrInFlight sync.Map
+// instrBoot identifies this Agent process in a row's Sending field.
+var instrBoot = "boot-" + strings.ReplaceAll(RandUUID(), "-", "")[:16]
 
-func instrSendInFlight(name, id string) bool {
-	_, ok := instrInFlight.Load(name + "/" + id)
-	return ok
-}
+// sentByGoneAgent reports whether r is marked sending by an Agent process other than this one:
+// that send's outcome will never be recorded.
+func sentByGoneAgent(r instrRow) bool { return r.Sending != "" && r.Sending != instrBoot }
 
 // MarkInstrSent ends row id's sending state: the driver accepted the prompt.
 func MarkInstrSent(name, id string) {
 	if id == "" {
 		return
 	}
-	instrInFlight.Delete(name + "/" + id)
 	unlock := lockInstr(name)
 	defer unlock()
 	rows := ReadInstrRows(name)
 	for i := range rows {
 		if rows[i].ID == id {
-			rows[i].Sending = false
+			rows[i].Sending = ""
 			writeInstrRows(name, rows)
 			return
 		}
@@ -254,7 +252,6 @@ func WithdrawInstruction(name, id string) {
 	if id == "" {
 		return
 	}
-	instrInFlight.Delete(name + "/" + id)
 	unlock := lockInstr(name)
 	defer unlock()
 	rows := ReadInstrRows(name)
@@ -311,10 +308,10 @@ func markInstrNotRunReported(name, id, state string, at time.Time) {
 // addInstructionAt is AddInstruction with an explicit delivery time (a seam so tests can build
 // the ordering between delivery and evidence deterministically).
 func addInstructionAt(name, convID, source string, at time.Time) string {
-	return addSendingInstructionAt(name, convID, source, false, at)
+	return addSendingInstructionAt(name, convID, source, "", at)
 }
 
-func addSendingInstructionAt(name, convID, source string, sending bool, at time.Time) string {
+func addSendingInstructionAt(name, convID, source, sending string, at time.Time) string {
 	if !session.ValidName(name) || !paths.ValidIDSegment(convID) {
 		return ""
 	}

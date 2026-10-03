@@ -104,8 +104,9 @@ file), not a message id: a driver may rewrite the id it is given (opencode does)
 - While the row is `sending` or its prompt waits (`agents.HeldInstrs`), the row is left out of the settle decision:
   the turn it queued behind ending, or being stopped, is not its completion, and a report delivered for a prompt
   the driver then refuses could not be taken back.
-- A row left `sending` by an Agent that is gone (not in this process's in-flight set) is settled by evidence, not
-  by time. With a held file the driver had accepted the prompt, and the row becomes an ordinary queued row. Without
+- `sending` holds the boot id of the Agent process sending it, so a row left `sending` by an Agent that is gone
+  (another boot id) is told apart from this process's own send however a sweep interleaves with it. Such a row
+  is settled by evidence, not by time. With a held file the driver had accepted the prompt, and the row becomes an ordinary queued row. Without
   one nothing shows whether the prompt reached the session, so it gets an `unconfirmed` report and is closed as
   `unconfirmed`: neither a completion nor a not-run is asserted, and the operator is told to look before resending.
 - When the prompt is dropped, the row records why (`dropped`), and the next sweep delivers a `not-run` report with

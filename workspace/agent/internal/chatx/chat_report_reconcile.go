@@ -891,7 +891,7 @@ func (rc *reportReconciler) evaluate(name string, now time.Time) {
 // row whose delivery must be retried stays open and is left out of this sweep's settle
 // decision, so the session's quiet period cannot report it as done meanwhile.
 //
-// A row left sending by an Agent that is gone is settled here too. Its held file, when there
+// A row left sending by an Agent that is gone (another boot id) is settled here too. Its held file, when there
 // is one, proves the driver accepted the prompt: the row stops being sending and is judged like
 // any queued instruction. Without one nothing shows whether the prompt reached the session (the
 // Agent died before the accept, or after it and before the send returned, with the prompt
@@ -902,12 +902,12 @@ func (rc *reportReconciler) reportNotRun(name string, open []instrRow, held map[
 		kind, reason, state := reportKindNotRun, r.Dropped, instrNotRun
 		switch {
 		case r.Dropped != "":
-		case r.Sending && !instrSendInFlight(name, r.ID) && held[r.ID]:
+		case sentByGoneAgent(r) && held[r.ID]:
 			MarkInstrSent(name, r.ID)
-			r.Sending = false
+			r.Sending = ""
 			rest = append(rest, r)
 			continue
-		case r.Sending && !instrSendInFlight(name, r.ID):
+		case sentByGoneAgent(r):
 			kind, reason, state = reportKindUnconfirmed, "", instrUnconfirmed
 		default:
 			rest = append(rest, r)
@@ -932,7 +932,7 @@ func (rc *reportReconciler) reportNotRun(name string, open []instrRow, held map[
 func withoutHeldInstr(name string, rows []instrRow, held map[string]bool) []instrRow {
 	var out []instrRow
 	for _, r := range rows {
-		if held[r.ID] || r.Sending {
+		if held[r.ID] || r.Sending != "" {
 			continue
 		}
 		out = append(out, r)
