@@ -355,6 +355,26 @@ order_again() { # order_again <earlier> <repeated-later>
   [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ] || fail "order: '$2' must be re-read after '$1' (a=${a:-?} b=${b:-?})"
 }
 
+# Every deploy of a template that holds IAM resources must carry the capability, or
+# CreateChangeSet refuses it (InsufficientCapabilitiesException) - on real AWS only, which is
+# how 30-ingress went on being deployed without one after it gained an IAM policy (#1576).
+# A template that names a role or policy needs CAPABILITY_NAMED_IAM, any other CAPABILITY_IAM.
+iam_caps() {
+  local line tpl n=0
+  while IFS= read -r line; do
+    tpl="$(printf '%s\n' "$line" | sed -n 's/.*--template-file \([^ ]*\).*/\1/p')"
+    [ -n "$tpl" ] && [ -r "$tpl" ] || continue
+    grep -q 'Type: AWS::IAM::' "$tpl" || continue
+    n=$((n + 1))
+    if grep -qE '^ +(RoleName|ManagedPolicyName|InstanceProfileName|PolicyName):' "$tpl"; then
+      case "$line" in *CAPABILITY_NAMED_IAM*) ;; *) fail "IAM template deployed without CAPABILITY_NAMED_IAM: $line" ;; esac
+    else
+      case "$line" in *CAPABILITY_IAM*|*CAPABILITY_NAMED_IAM*) ;; *) fail "IAM template deployed without CAPABILITY_IAM: $line" ;; esac
+    fi
+  done < <(grep -F "cloudformation deploy " "$LOG" || true)
+  [ "$n" -gt 0 ] || fail "iam_caps: no deploy of a template with IAM resources in the log (the check saw nothing)"
+}
+
 echo "== case 1: teardown without --yes touches nothing =="
 : > "$LOG"
 "$ECS/teardown.sh" --profile p --region ap-northeast-1 --stack t-ingress > "$WORK/out1" </dev/null
@@ -425,6 +445,8 @@ grep -q "deploy --stack-name t-pool .*CAPABILITY_NAMED_IAM" "$LOG" || fail "40-e
 grep -q "deploy --stack-name t-ingress .*Ec2SlotLaunchTemplate=lt-NEW" "$LOG" || fail "30-ingress got a stale launch template"
 hasnt "Ec2SlotLaunchTemplate=lt-OLD"
 grep -q "deploy --stack-name t-ingress .*ImageTag=9.9.9-dev-test" "$LOG" || fail "30-ingress did not get the deployed tag"
+grep -q "deploy --stack-name t-ingress .*CAPABILITY_NAMED_IAM" "$LOG" || fail "30-ingress needs CAPABILITY_NAMED_IAM (its home-ops policy)"
+iam_caps
 # Speech is opt-in and this capture did not opt in, so nothing about it may happen. This is
 # also the control for case 3f below: without it, a 50-tts step that never ran and a 50-tts
 # step that ran for everyone would look the same.
@@ -822,6 +844,9 @@ fi
 # call the comment above it says never to add a parameter to.
 grep -q "deploy --stack-name t-ingress .*--parameter-overrides ImageTag=9.9.9-dev-test --no-fail" "$LOG" \
   || fail "the ingress deploy no longer overrides ImageTag alone"
+grep -q "deploy --stack-name t-ingress .*CAPABILITY_NAMED_IAM" "$LOG" \
+  || fail "update.sh deploys 30-ingress without CAPABILITY_NAMED_IAM (InsufficientCapabilitiesException)"
+iam_caps
 
 # A deployment already through P6 has no model key to read, and then this is byte for byte the
 # update it always was. Without this the gate could pass by always sending the parameter, which
@@ -877,6 +902,7 @@ VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_POOL_EXPORT=fail STUB_WS_RUNTIME=ecs 
   || { cat "$WORK/out3hp"; fail "update.sh failed on a Fargate deployment without a pool"; }
 hasnt "40-ec2-pool.yaml"
 grep -q "deploy --stack-name t-ingress" "$LOG" || fail "the Fargate update did not deploy 30-ingress"
+iam_caps
 
 echo "== case 3h-2: update.sh repairs an OfferBudgetSec left on the OLD meaning's default =="
 #

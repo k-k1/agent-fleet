@@ -107,22 +107,51 @@ def resolve(v):
     return v
 
 
+# The resource types that put a policy document on a role. A grant moved between them (inline
+# to managed, #1576) must stay in view here, or every check below runs against fewer
+# statements than the role really has and passes for the wrong reason.
+POLICY_TYPES = ("AWS::IAM::Policy", "AWS::IAM::ManagedPolicy", "AWS::IAM::RolePolicy")
+
+
+def _attached_to_cp_role(props):
+    """Whether a policy resource names CpTaskRole: by !Ref inside 20-platform, or through the
+    imported CpTaskRoleArn everywhere else."""
+    roles = props.get("Roles", []) + ([props["RoleName"]] if "RoleName" in props else [])
+    return "CpTaskRoleArn" in repr(roles) or {"!Ref": "CpTaskRole"} in roles
+
+
+def _statements(doc):
+    """A policy document's statements, with every !If branch that is a statement in it: the
+    reading in which every optional grant is present (SlotAmiIdArm64 set, and so on)."""
+    out = []
+    for st in doc["Statement"]:
+        if isinstance(st, dict) and "!If" in st:
+            out += [b for b in st["!If"][1:] if b != {"!Ref": "AWS::NoValue"}]
+        else:
+            out.append(st)
+    return out
+
+
 def cp_role_statements():
     """Every statement attached to CpTaskRole: its inline policies plus the policies other
-    stacks attach to it (30-ingress, 40-ec2-pool, 60-engines). Only some of them matter to
-    any one check, but all are returned so an Allow added elsewhere is not missed."""
+    stacks attach to it (30-ingress, 40-ec2-pool, 60-engines), inline or managed. Only some of
+    them matter to any one check, but all are returned so an Allow added elsewhere is not
+    missed."""
     cfn = os.path.join(ROOT, "deploy", "aws", "ecs", "cfn")
     out = []
-    with open(os.path.join(cfn, "20-platform.yaml"), encoding="utf-8") as fh:
-        platform = yaml.load(fh, Loader=CfnLoader)
-    for pol in platform["Resources"]["CpTaskRole"]["Properties"]["Policies"]:
-        out += pol["PolicyDocument"]["Statement"]
-    for tpl in ("30-ingress.yaml", "40-ec2-pool.yaml", "60-engines.yaml"):
+    for tpl in ("20-platform.yaml", "30-ingress.yaml", "40-ec2-pool.yaml", "60-engines.yaml"):
         with open(os.path.join(cfn, tpl), encoding="utf-8") as fh:
             doc = yaml.load(fh, Loader=CfnLoader)
-        for res in doc["Resources"].values():
-            if res.get("Type") == "AWS::IAM::Policy" and "CpTaskRoleArn" in repr(res["Properties"]["Roles"]):
-                out += res["Properties"]["PolicyDocument"]["Statement"]
+        for name, res in doc["Resources"].items():
+            props = res.get("Properties", {})
+            if name == "CpTaskRole":
+                for pol in props.get("Policies", []):
+                    out += _statements(pol["PolicyDocument"])
+                for arn in props.get("ManagedPolicyArns", []):
+                    if isinstance(arn, dict) and "!Ref" in arn:
+                        out += _statements(doc["Resources"][arn["!Ref"]]["Properties"]["PolicyDocument"])
+            elif res.get("Type") in POLICY_TYPES and _attached_to_cp_role(props):
+                out += _statements(props["PolicyDocument"])
     return [resolve(s) for s in out]
 
 

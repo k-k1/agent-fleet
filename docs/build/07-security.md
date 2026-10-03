@@ -160,7 +160,7 @@ the context window the running engine started with (`engine_gateway.go`):
   itself and never passes the gateway.
 - **The CP buys the GPU instances itself** on `ecs-ec2`
   ([decisions/0077](../decisions/0077-engine-boxes-bought-by-cp.md)). That adds to the
-  CP's role, and only through `CpIngestPolicy` in `60-engines.yaml`:
+  CP's role, and only through `CpIngestManagedPolicy` in `60-engines.yaml`:
   `ec2:CreateFleet` / `DescribeFleets` / `DeleteFleets`, `iam:PassRole` for the engine
   instance role, the service-linked roles for Spot and EC2 Fleet, and, for model ingest,
   `ecs:RunTask` on the ingest task definition plus writes to the Hugging Face and Civitai

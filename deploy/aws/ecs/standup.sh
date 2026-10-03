@@ -16,8 +16,9 @@
 #  1. Order and capabilities. Each stack imports the previous one's exports, so the order
 #     is fixed. `10-data` declares `Transform: AWS::LanguageExtensions` and so needs
 #     CAPABILITY_AUTO_EXPAND, plus CAPABILITY_IAM for the EFS backup role it creates under
-#     Persistence=retain; `20-platform` and `40-ec2-pool` create named IAM roles and
-#     so need CAPABILITY_NAMED_IAM (without them the call is refused immediately).
+#     Persistence=retain; `20-platform`, `40-ec2-pool`, `60-engines` and `30-ingress`
+#     create named IAM roles or policies and so need CAPABILITY_NAMED_IAM (without them
+#     the call is refused immediately).
 #  2. ECR starts empty. The ECR repositories are 20-platform resources with
 #     `EmptyOnDelete: true`, so a teardown took the images with them. Put them back with
 #     `crane copy` after 20 and before 30 (`docker pull`+`push` flattens the index down to
@@ -719,10 +720,11 @@ if [ -n "$AF_STACK_POOL" ] && [ "$AF_DRY" != 1 ]; then
 fi
 echo "==> deploy $AF_STACK_INGRESS (30-ingress)"
 if [ "$AF_DRY" = 1 ]; then
-  echo "DRY: cloudformation deploy --stack-name $AF_STACK_INGRESS --template-file $CFN_DIR/30-ingress.yaml \\"
+  echo "DRY: cloudformation deploy --stack-name $AF_STACK_INGRESS --template-file $CFN_DIR/30-ingress.yaml --capabilities CAPABILITY_NAMED_IAM \\"
   echo "     --parameter-overrides $(af_params_masked | tr '\n' ' ')"
 else
   af_cfn_deploy "$AF_STACK_INGRESS" "$CFN_DIR/30-ingress.yaml" \
+    --capabilities CAPABILITY_NAMED_IAM \
     --parameter-overrides ${AF_PARAMS[@]+"${AF_PARAMS[@]}"} \
     --no-fail-on-empty-changeset
 fi

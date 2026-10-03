@@ -144,7 +144,7 @@ fi
 cat <<EOF
 ==> done: pushed :$VERSION to $ECR_HOST/af-{control-plane,workspace}
 next: aws cloudformation deploy --stack-name af-ecs-ingress \\
-        --template-file cfn/30-ingress.yaml \\
+        --template-file cfn/30-ingress.yaml --capabilities CAPABILITY_NAMED_IAM \\
         --parameter-overrides ImageTag=$VERSION \\
         --profile $PROFILE --region $REGION
       (keep the previous values for the other parameters. The CP does a rolling

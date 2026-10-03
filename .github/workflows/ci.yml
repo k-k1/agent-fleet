@@ -307,6 +307,12 @@ jobs:
       # writes: every call site and the resources it names, held against the templates.
       - name: CP role EC2 / PassRole / TagResource scope (inventory vs template)
         run: python3 ./deploy/local/cfn-cp-ec2-scope-test.py
+      # IAM caps a role's inline policies at 10,240 characters in total and each managed one
+      # at 6,144, and four stacks attach to the CP task role, so no one template shows the
+      # total. Passing it is a ServiceLimitExceeded and a rolled-back stack on a real
+      # deployment only (#1576). Every role's sizes, with every optional policy present.
+      - name: IAM policy size per role (inline total / managed / count)
+        run: python3 ./deploy/local/cfn-iam-policy-size-test.py
       # The release watcher's own branches. They run once a day against live registries,
       # so the only feedback on a bad one is a dispatch that silently did not happen —
       # which is exactly how one unreadable source came to drop all seven contracts for

@@ -635,7 +635,7 @@ Resources:
                 Action: ssm:GetCommandInvocation
                 Resource: "*"
               # iam:PassRole for the slot role is NOT here: 40-ec2-pool attaches it to this
-              # role (CpPassSlotRolePolicy), naming its own SlotRole. A pattern here such as
+              # role (CpSlotLaunchManagedPolicy), naming its own SlotRole. A pattern here such as
               # role/af-*-slot also matched every other deployment's slot role in the account,
               # and this stack cannot name the real one: the pool stack's name is chosen at
               # stand-up, and importing from it would make the two stacks import each other.
