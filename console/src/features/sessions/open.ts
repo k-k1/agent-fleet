@@ -102,8 +102,8 @@ export function openSessionFromList(s: Session, split: boolean, running: boolean
  * are no others". */
 export function rotateRunningSession(delta: number): RotateTarget | null {
   const sessions = useSessionsStore.getState().sessions;
-  const order = railOrder(sessions, useReposStore.getState().repos);
-  const list = rotatableSessions(order, activeWorkingSet(getSettings()));
+  const order = railOrder(sessions, useReposStore.getState().repos, activeWorkingSet(getSettings()));
+  const list = rotatableSessions(order);
   const current = rotationCurrent(activePane(useLayoutStore.getState().layout), sessions);
   const target = rotateTarget(list, current, delta, order);
   if (target) openSessionDefault(target.session);

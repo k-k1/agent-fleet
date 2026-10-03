@@ -8,12 +8,12 @@
 // Candidates and order (respecting the working sets of docs/log/52):
 // - Only alive agent sessions. A stopped one is not a switch target; it needs a decision to
 //   resume. A shell / ssm session is a terminal, not a conversation to skim through.
-// - When a working set is selected, follow that filter, so the set matches what the left rail
-//   shows.
+// - When a working set is selected, follow the rail's scoping of it (railOrder), so the
+//   rotation covers exactly what the left rail shows.
 // - The order is the left rail's, top to bottom (railOrder), so a swipe lands on the row
 //   next to the current one. The raw GET /api/sessions order (newest first across every
 //   folder) stopped matching the rail once worktrees nested by lineage.
-import { sessionInSet } from "../../lib/workingSets.ts";
+import { repoInSet, sessionInSet } from "../../lib/workingSets.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
 import { orphanSessions, repoTree, sessionsInFolder } from "../../lib/project.ts";
 import type { RepoTreeNode } from "../../lib/project.ts";
@@ -22,23 +22,31 @@ import type { Session } from "../../types/session.ts";
 
 /** Every session in the order the left rail lists it: the repo tree depth first (a node's own
  *  sessions, then its nested worktrees), then the other-sessions section. Fold state and the
- *  rail's search box are ignored — a folded node still holds its place. */
-export function railOrder(sessions: Session[], repos: Repo[]): Session[] {
+ *  rail's search box are ignored — a folded node still holds its place.
+ *
+ *  A working set scopes it the way the rail does (ProjectTree / OtherSessionsSection): a repo
+ *  root is in or out by repoInSet with its whole subtree, and only the repo-less sessions go
+ *  through sessionInSet. Filtering every session by sessionInSet instead disagrees with the
+ *  rail both ways: a directly assigned session in an out-of-set repo, and a worktree whose
+ *  folder carries no "@<base>". set=null means no scope. */
+export function railOrder(sessions: Session[], repos: Repo[], set: WorkingSet | null): Session[] {
   const out: Session[] = [];
   const walk = (n: RepoTreeNode) => {
     out.push(...sessionsInFolder(sessions, n.repo.name));
     n.children.forEach(walk);
   };
-  repoTree(repos, sessions).forEach(walk);
-  out.push(...orphanSessions(sessions, repos));
+  repoTree(repos, sessions)
+    .filter((t) => !set || repoInSet(set, t.repo))
+    .forEach(walk);
+  out.push(...orphanSessions(sessions, repos).filter((s) => !set || sessionInSet(set, s)));
   return out;
 }
 
 const terminalKind = (s: Session) => s.kind === "shell" || s.kind === "ssm";
 
-/** The rotation candidates, in rail order (see railOrder). set=null means all of them. */
-export function rotatableSessions(order: Session[], set: WorkingSet | null): Session[] {
-  return order.filter((s) => !!s.alive && !terminalKind(s) && (!set || sessionInSet(set, s)));
+/** The rotation candidates, in rail order (railOrder, already scoped to the working set). */
+export function rotatableSessions(order: Session[]): Session[] {
+  return order.filter((s) => !!s.alive && !terminalKind(s));
 }
 
 export interface RotateTarget {
@@ -52,7 +60,8 @@ export interface RotateTarget {
  *
  * - When current is not a candidate but sits in `order` (a shell, a stopped session), step
  *   from its place there: forward lands on the first candidate below it, back on the first
- *   above it, as the rail reads.
+ *   above it, as the rail reads. `order` must be scoped like `list` (railOrder with the same
+ *   set), or a session outside the set would step from a position the rail does not show.
  * - Otherwise (not a session pane at all, or in another working set) start from the head when
  *   moving forward and from the tail when moving back.
  * - When the destination would be where we already are (only one candidate), return null and
