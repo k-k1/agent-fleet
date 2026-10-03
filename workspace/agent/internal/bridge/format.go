@@ -72,6 +72,11 @@ func (m Message) headline(en bool) string {
 			return "Session exited abnormally (" + exitLabelEN(m.Detail) + ")"
 		case "bridge-test":
 			return "Connection test — if this arrived, you're all set"
+		case KindScheduleResult:
+			if m.Detail != "" {
+				return "Scheduled run did not finish cleanly (" + m.Detail + ")"
+			}
+			return "Scheduled run result"
 		}
 		return "State changed (" + m.Kind + ")"
 	}
@@ -90,6 +95,11 @@ func (m Message) headline(en bool) string {
 		return "セッションが異常終了しました（" + exitLabel(m.Detail) + "）"
 	case "bridge-test":
 		return "接続テスト — この通知が届けば設定完了です"
+	case KindScheduleResult:
+		if m.Detail != "" {
+			return "定時実行が正常に終わりませんでした（" + m.Detail + "）"
+		}
+		return "定時実行の結果です"
 	}
 	return "状態が変化しました（" + m.Kind + "）"
 }

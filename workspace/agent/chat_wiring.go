@@ -101,5 +101,6 @@ func init() {
 			}
 			return st.ScheduleID, st.ResumeAt, true
 		},
+		SessionTurns: sessionx.SessionTurns,
 	})
 }

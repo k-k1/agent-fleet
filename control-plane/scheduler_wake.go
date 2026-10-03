@@ -308,6 +308,56 @@ func scheduleReportTo(sch store.Schedule) string {
 	return ""
 }
 
+// scheduleDelivery is the per-run delivery instruction the Agent attaches to the run's
+// instruction row (#1560), or nil when the schedule asks for nothing beyond today's report —
+// then the body is exactly what it was before delivery targets existed, and the Agent
+// handles the run as it always has. Targets is empty when report is off: a silent schedule
+// still needs the row, to recognise the sentinel and keep its answer out of the
+// notifications.
+func scheduleDelivery(sch store.Schedule) map[string]any {
+	targets := scheduleTargets(sch.DeliverTo)
+	legacy := len(targets) == 1 && targets[0] == scheduleTargetOperator
+	if !sch.Silent && (!sch.Report || legacy) {
+		return nil
+	}
+	if !sch.Report {
+		targets = []string{}
+	}
+	return map[string]any{
+		"schedule_id": sch.ID, "targets": targets, "silent": sch.Silent,
+		"label": sch.SpecLabel,
+	}
+}
+
+// scheduleReportToFor is scheduleReportTo once delivery targets exist: the owner
+// conversation is the report_to only when the operator is one of the targets.
+func scheduleReportToFor(sch store.Schedule) string {
+	if !scheduleHasTarget(sch, scheduleTargetOperator) {
+		return ""
+	}
+	return scheduleReportTo(sch)
+}
+
+// scheduleSilentNote tells the agent about the sentinel. Only a schedule that enables it
+// carries the note: an agent that has never heard of [SILENT] cannot answer with it by
+// accident. Bilingual for the reason selfReportHintLine gives (the Agent's af_report note).
+const scheduleSilentNote = "[agent-fleet] これは定時実行です。作業の結果、伝えるべきことが何も無ければ、最後の返答を " +
+	scheduleSilentSentinel + " の 1 語だけにしてください（その場合は誰にも届けません）。" +
+	"伝えることがあれば普段どおり答えてください。この注記自体への返答は不要で、回答の言語も変えないでください。 / " +
+	"This is a scheduled run. If, once the task is done, there is nothing worth reporting, make your final reply exactly " +
+	scheduleSilentSentinel + " and nothing else (it is then delivered to no one). Otherwise answer as usual. " +
+	"No reply to this note is needed; keep your output language unchanged."
+
+// schedulePrompt is the prompt a session-driving fire delivers: the expanded prompt, after
+// the silent note when the schedule enables the sentinel.
+func schedulePrompt(sch store.Schedule, slot time.Time) string {
+	p := expandSchedulePrompt(sch, slot)
+	if sch.Silent {
+		return scheduleSilentNote + "\n\n" + p
+	}
+	return p
+}
+
 // scheduleIdempotencyKey derives a deterministic create key from (schedule, slot) so a
 // CP restart that re-fires the same slot collapses onto the first session via the
 // Agent's create_session ledger (★4). The slot (not now) is the dedupe axis.
@@ -322,9 +372,9 @@ func buildInjectBody(sch store.Schedule, slot time.Time) []byte {
 		"dir":             sch.Repo, // P2 verbatim passthrough; repo/worktree resolution is P3
 		"kind":            kind,
 		"model":           sch.Model,
-		"initial_prompt":  expandSchedulePrompt(sch, slot),
+		"initial_prompt":  schedulePrompt(sch, slot),
 		"driver":          injectDriver(kind),
-		"report_to":       scheduleReportTo(sch),
+		"report_to":       scheduleReportToFor(sch),
 		"idempotency_key": scheduleIdempotencyKey(sch.ID, slot),
 		"source":          scheduleSource(sch), // mirror badge: scheduled vs manual fire
 		// stop_after_run (docs/log/85): the arm rides the create rather than a POST that
@@ -333,6 +383,9 @@ func buildInjectBody(sch store.Schedule, slot time.Time) []byte {
 		"stop_after_turn": sch.StopAfterRun,
 		"schedule_id":     sch.ID, // see reuseSendBody
 		"schedule_slot":   slot.UTC().Format(time.RFC3339),
+	}
+	if d := scheduleDelivery(sch); d != nil {
+		body["schedule_delivery"] = d
 	}
 	b, _ := json.Marshal(body)
 	return b

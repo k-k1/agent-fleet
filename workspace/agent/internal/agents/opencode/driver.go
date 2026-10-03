@@ -568,7 +568,7 @@ func (h *threadHandle) commit(t *agents.Taken) bool {
 // sticks on "in progress".
 func (h *threadHandle) runTurn(t *agents.Taken) {
 	in := t.In
-	agents.MarkTurnStart(h.ocSid)
+	agents.MarkTurnStartRun(h.ocSid, in)
 	// Stamp idle with the terminal turn state (and emit the docs/log/30 report on
 	// completion). Every return path below has already called setState, so the state at
 	// defer time is the turn's terminal one. failure is the reason it failed (errors.go),

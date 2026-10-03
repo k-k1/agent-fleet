@@ -891,7 +891,7 @@ func (h *threadHandle) resumePump() {
 // The turn-boundary MarkTurnStart/End drive the status store and the docs/log/30 completion
 // report (the notify seam).
 func (h *threadHandle) runTurn(t *agents.Taken) {
-	agents.MarkTurnStart(h.slotSid)
+	agents.MarkTurnStartRun(h.slotSid, t.In)
 	defer func() { agents.MarkTurnEnd(h.slotSid, h.currentState()) }()
 	h.setState(agents.TurnStarting)
 	if h.beforeCommit != nil {

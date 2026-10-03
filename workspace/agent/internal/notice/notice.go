@@ -33,6 +33,10 @@ type Event struct {
 	DisplayName string         `json:"displayName"`
 	CreatedAt   string         `json:"createdAt"`
 	Payload     map[string]any `json:"payload"`
+	// NoBridge keeps the event out of the chat bridge: it goes to the notification center only.
+	// For an event whose chat delivery is decided elsewhere (a scheduled run that named its own
+	// targets, #1560). Not persisted: it only steers Put.
+	NoBridge bool `json:"-"`
 }
 
 func dir() string { return filepath.Join(paths.AgentStateDir(), "notification-outbox") }
@@ -63,6 +67,9 @@ func Put(e Event) error {
 	// the chat bridge. Enqueue writes a single file (the network side is the daemon's
 	// sender) and swallows its error, so a bridge outage structurally cannot take the
 	// Console notification down with it.
+	if e.NoBridge {
+		return nil
+	}
 	body, _ := e.Payload["body"].(string) // full-text bridge: the answer body (answer-ready only)
 	// P2b: the pending AskUserQuestion payload rides the "question" event so an
 	// interact-capable provider can render option buttons. Stored as raw JSON.

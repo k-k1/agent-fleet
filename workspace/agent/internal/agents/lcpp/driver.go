@@ -508,7 +508,7 @@ func (h *threadHandle) pump() {
 // AppendMessage doc comment for why the naive "everything past the old length" is wrong once
 // a compaction fires inside the same Run call).
 func (h *threadHandle) runTurn(t *agents.Taken) {
-	agents.MarkTurnStart(h.sid)
+	agents.MarkTurnStartRun(h.sid, t.In)
 	h.setState(agents.TurnStarting)
 	if h.beforeCommit != nil {
 		h.beforeCommit()

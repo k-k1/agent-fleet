@@ -385,6 +385,8 @@ type CreateReq struct {
 	// /input (#1257).
 	ScheduleID   string `json:"schedule_id"`
 	ScheduleSlot string `json:"schedule_slot"`
+	// ScheduleDelivery is the run's own targets and silent sentinel, as on /input (#1560).
+	ScheduleDelivery *chatx.ScheduleDelivery `json:"schedule_delivery"`
 	// managed: a Managed create, which raises the instruction row as sending and sends
 	// initial_prompt carrying its id (instr) (#1257). False on the Terminal route.
 	managed bool
@@ -1106,7 +1108,7 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// "call af_report when you are done" — only for an instruction that owes a report, i.e.
 	// one with report_to. Placed before the managed / tui split so both launch paths carry
 	// the same line.
-	if req.ReportTo != "" {
+	if req.ReportTo != "" || req.delivery() != nil {
 		req.InitialPrompt = withSelfReportHint(req.InitialPrompt, meta)
 	}
 	// The studio's own `session` is written BEFORE the session is published or launched (ADR
@@ -1202,15 +1204,20 @@ func createTurnOrigin(req *CreateReq, spawnParent string) agents.Origin {
 	}
 }
 
+// delivery is the scheduled run's own delivery (#1560), or nil.
+func (req *CreateReq) delivery() *chatx.ScheduleDelivery {
+	d := scheduleDeliveryOf(req.Source, req.ScheduleID, req.ScheduleSlot, req.ScheduleDelivery)
+	if d != nil {
+		d.PromptSum = chatx.PromptSum(req.InitialPrompt) // the launch task as it lands in the transcript
+	}
+	return d
+}
+
 func noteCreateOrigin(name string, req *CreateReq, spawnParent, origin string) {
 	hasPrompt := strings.TrimSpace(req.InitialPrompt) != ""
 	switch {
-	case req.ReportTo != "":
-		if req.managed {
-			req.instr = chatx.AddSendingInstruction(name, req.ReportTo, injectionSource(req.Source))
-		} else {
-			chatx.AddInstruction(name, req.ReportTo, injectionSource(req.Source))
-		}
+	case req.ReportTo != "" || req.delivery() != nil:
+		req.instr = chatx.AddScheduledInstruction(name, req.ReportTo, injectionSource(req.Source), req.delivery(), req.managed)
 		recordInjection(name, req.InitialPrompt, injectionSource(req.Source)) // orchestrated start (docs/log/30 ② / docs/log/38)
 		if hasPrompt {
 			recordFleetGraphInstruct(name, injectionSource(req.Source), req.ReportTo, "", req.InitialPrompt)

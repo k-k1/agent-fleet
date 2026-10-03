@@ -108,6 +108,7 @@ var Entries = []string{
 	"muse-transcripts",
 	// Chat bridge: the outbound queue and the per-provider binding ledgers.
 	"bridge-queue",
+	"bridge-sent",
 	"bridge-approvals",
 	"bridge-answers",
 	"bridge-operator-turn",
@@ -122,6 +123,11 @@ var Entries = []string{
 	"notification-markers",
 	"completion-key",
 	"instr-ledger",
+	// A scheduled run's latest answer, kept for its delivery (#1560). Introduced directly
+	// under AgentStateDir, so run() no-ops on a source that was never there.
+	"schedule-claims",
+	"schedule-outcome",
+	"schedule-turn-verdict",
 	"browser-handoff-ledger",
 	// af-aws-exec's Console login requests and cancel markers (ADR 0102). Introduced
 	// directly under AgentStateDir, so run() no-ops on a source that was never there.

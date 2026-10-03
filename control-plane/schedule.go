@@ -60,7 +60,13 @@ type scheduleDTO struct {
 	// StopAfterRun folds the fire's session away once it has finished the prompt
 	// (docs/log/85). Default false = leave it running. Ignored in session_mode=assistant,
 	// which drives a conversation and holds no session.
-	StopAfterRun bool   `json:"stop_after_run"`
+	StopAfterRun bool `json:"stop_after_run"`
+	// DeliverTo is where a fire's result goes when Report is on (issue #1560): any of
+	// operator, notifications, discord, slack. Empty on input means operator alone, today's
+	// report; the output always names the resolved list.
+	DeliverTo []string `json:"deliver_to"`
+	// Silent lets an answer that is exactly scheduleSilentSentinel deliver nothing.
+	Silent       bool   `json:"silent"`
 	Enabled      bool   `json:"enabled"`
 	NextRun      string `json:"next_run,omitempty"`
 	NextRunLocal string `json:"next_run_local,omitempty"` // next_run rendered in the schedule's tz
@@ -92,7 +98,8 @@ func scheduleToDTO(s store.Schedule) scheduleDTO {
 		NewBranch: s.NewBranch, Prompt: s.Prompt, OverlapPolicy: s.OverlapPolicy,
 		Rotation: s.Rotation, MissingTargetPolicy: s.MissingTargetPolicy,
 		ReuseSession: s.ReuseSession, ReuseRunCount: s.ReuseRunCount,
-		OwnerConv: s.OwnerConv, Report: s.Report, StopAfterRun: s.StopAfterRun, Enabled: s.Enabled, NextRun: s.NextRun, LastRun: s.LastRun,
+		OwnerConv: s.OwnerConv, Report: s.Report, StopAfterRun: s.StopAfterRun,
+		DeliverTo: scheduleTargets(s.DeliverTo), Silent: s.Silent, Enabled: s.Enabled, NextRun: s.NextRun, LastRun: s.LastRun,
 		LastStatus: s.LastStatus, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt,
 	}
 	// Render the next fire in the schedule's own zone so the operator can read back a
@@ -139,8 +146,13 @@ func validateScheduleDTO(mv store.MembershipView, in scheduleDTO) (store.Schedul
 		Worktree: strings.TrimSpace(in.Worktree), NewBranch: in.NewBranch,
 		Prompt: in.Prompt, OverlapPolicy: strings.TrimSpace(in.OverlapPolicy),
 		Rotation: strings.TrimSpace(in.Rotation), MissingTargetPolicy: strings.TrimSpace(in.MissingTargetPolicy),
-		Report: in.Report, StopAfterRun: in.StopAfterRun,
+		Report: in.Report, StopAfterRun: in.StopAfterRun, Silent: in.Silent,
 	}
+	targets, aerr := normalizeScheduleTargets(in.DeliverTo)
+	if aerr != nil {
+		return store.Schedule{}, aerr
+	}
+	s.DeliverTo = targets
 	applyScheduleDefaults(&s)
 	if strings.TrimSpace(s.Prompt) == "" {
 		return store.Schedule{}, &apiError{http.StatusBadRequest, "bad_prompt", "prompt is required"}
@@ -175,7 +187,60 @@ func validateScheduleFields(s store.Schedule) *apiError {
 	if err := validateRotation(s.Rotation); err != nil {
 		return &apiError{http.StatusBadRequest, "bad_rotation", err.Error()}
 	}
+	// An assistant fire's result is the turn it adds to the conversation itself, so there is
+	// nothing for a target list or the sentinel to route.
+	if s.SessionMode == "assistant" && (s.Silent || (s.DeliverTo != "" && s.DeliverTo != scheduleTargetOperator)) {
+		return &apiError{http.StatusBadRequest, "bad_delivery", "deliver_to and silent apply to session_mode new and reuse only"}
+	}
 	return nil
+}
+
+// Delivery targets of a schedule's result (issue #1560). Only destinations that already
+// exist: the owner's operator conversation, the notification center, and the member's own
+// chat-bridge connections. The Agent checks a bridge's connection and identity binding at
+// delivery time, because the connection lives in the member's workspace, not here.
+const (
+	scheduleTargetOperator      = "operator"
+	scheduleTargetNotifications = "notifications"
+	scheduleTargetDiscord       = "discord"
+	scheduleTargetSlack         = "slack"
+)
+
+// scheduleSilentSentinel is the whole final answer that marks a run with nothing to say.
+// Compared trimmed and case-sensitive, by the Agent, which sees the answer.
+const scheduleSilentSentinel = "[SILENT]"
+
+// normalizeScheduleTargets validates a target list and stores it in a fixed order, so the
+// same choice is always the same column value. An empty list stays empty (= operator).
+func normalizeScheduleTargets(in []string) (string, *apiError) {
+	seen := map[string]bool{}
+	for _, t := range in {
+		t = strings.TrimSpace(t)
+		if !oneOf(t, scheduleTargetOperator, scheduleTargetNotifications, scheduleTargetDiscord, scheduleTargetSlack) {
+			return "", &apiError{http.StatusBadRequest, "bad_deliver_to", "deliver_to entries must be operator, notifications, discord, or slack"}
+		}
+		seen[t] = true
+	}
+	var out []string
+	for _, t := range []string{scheduleTargetOperator, scheduleTargetNotifications, scheduleTargetDiscord, scheduleTargetSlack} {
+		if seen[t] {
+			out = append(out, t)
+		}
+	}
+	return strings.Join(out, ","), nil
+}
+
+// scheduleTargets is the resolved target list of a stored column value: empty is operator.
+func scheduleTargets(col string) []string {
+	if col == "" {
+		return []string{scheduleTargetOperator}
+	}
+	return strings.Split(col, ",")
+}
+
+// scheduleHasTarget reports whether the schedule's resolved targets include t.
+func scheduleHasTarget(sch store.Schedule, t string) bool {
+	return oneOf(t, scheduleTargets(sch.DeliverTo)...)
 }
 
 func oneOf(v string, allowed ...string) bool {
@@ -258,7 +323,11 @@ func (a scheduleAPI) update(w http.ResponseWriter, r *http.Request, mv store.Mem
 		return
 	}
 	oldReuseTarget, oldSessionMode := sch.ReuseTarget, sch.SessionMode
-	specChanged := p.apply(&sch)
+	specChanged, aerr := p.apply(&sch)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	applyScheduleDefaults(&sch)
 	// Re-pin (P6): an edited reuse_target / session_mode must actually take effect.
 	// The adopted-session ledger otherwise keeps pointing at the old session for as
@@ -460,7 +529,47 @@ func (a scheduleAPI) runNotExecuted(w http.ResponseWriter, r *http.Request, mv s
 	writeJSON(w, http.StatusOK, scheduleRunNotExecutedResp{ScheduleID: id, Status: status, Changed: changed})
 }
 
-// scheduleRunNotExecutedResp is runNotExecuted's answer. Changed is false for a repeated
+// runSilent records that a run answered with the silent sentinel and so delivered nothing
+// (#1560). The Agent decides it, because only the Agent sees the answer; the run keeps its
+// place in the history as fired_silent so a quiet monitor still shows that it ran. Nothing
+// is notified: saying nothing is what the schedule asked for.
+func (a scheduleAPI) runSilent(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
+	id := r.PathValue("id")
+	if _, aerr := a.getOwned(r, id, mv); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	var body struct {
+		Session string `json:"session"`
+		Slot    string `json:"slot"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&body); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON body"})
+		return
+	}
+	slot, err := time.Parse(time.RFC3339, body.Slot)
+	if err != nil || strings.TrimSpace(body.Session) == "" {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "session and an RFC 3339 slot are required"})
+		return
+	}
+	found, changed, err := a.store.MarkScheduleRunSilent(r.Context(), id, mv.MembershipID, body.Session,
+		slot.UTC().Format(time.RFC3339))
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "run_not_found", "no run of this schedule for that session and slot"})
+		return
+	}
+	resp := scheduleRunNotExecutedResp{ScheduleID: id, Changed: changed}
+	if changed {
+		resp.Status = store.ScheduleStatusFiredSilent
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// scheduleRunNotExecutedResp is runNotExecuted's (and runSilent's) answer. Changed is false for a repeated
 // report, or a run that had already failed: nothing was written.
 type scheduleRunNotExecutedResp struct {
 	ScheduleID string `json:"schedule_id"`
@@ -505,24 +614,26 @@ func (a scheduleAPI) writeOne(w http.ResponseWriter, r *http.Request, id string,
 
 // schedulePatch carries partial edits (nil = unchanged), mirroring memoPatch.
 type schedulePatch struct {
-	SpecKind            *string `json:"spec_kind"`
-	Spec                *string `json:"spec"`
-	SpecLabel           *string `json:"spec_label"`
-	TZ                  *string `json:"tz"`
-	WakePolicy          *string `json:"wake_policy"`
-	SessionMode         *string `json:"session_mode"`
-	ReuseTarget         *string `json:"reuse_target"`
-	AgentKind           *string `json:"agent_kind"`
-	Model               *string `json:"model"`
-	Repo                *string `json:"repo"`
-	Worktree            *string `json:"worktree"`
-	NewBranch           *bool   `json:"new_branch"`
-	Prompt              *string `json:"prompt"`
-	OverlapPolicy       *string `json:"overlap_policy"`
-	Rotation            *string `json:"rotation"`
-	MissingTargetPolicy *string `json:"missing_target_policy"`
-	Report              *bool   `json:"report"`
-	StopAfterRun        *bool   `json:"stop_after_run"`
+	SpecKind            *string   `json:"spec_kind"`
+	Spec                *string   `json:"spec"`
+	SpecLabel           *string   `json:"spec_label"`
+	TZ                  *string   `json:"tz"`
+	WakePolicy          *string   `json:"wake_policy"`
+	SessionMode         *string   `json:"session_mode"`
+	ReuseTarget         *string   `json:"reuse_target"`
+	AgentKind           *string   `json:"agent_kind"`
+	Model               *string   `json:"model"`
+	Repo                *string   `json:"repo"`
+	Worktree            *string   `json:"worktree"`
+	NewBranch           *bool     `json:"new_branch"`
+	Prompt              *string   `json:"prompt"`
+	OverlapPolicy       *string   `json:"overlap_policy"`
+	Rotation            *string   `json:"rotation"`
+	MissingTargetPolicy *string   `json:"missing_target_policy"`
+	Report              *bool     `json:"report"`
+	StopAfterRun        *bool     `json:"stop_after_run"`
+	DeliverTo           *[]string `json:"deliver_to"`
+	Silent              *bool     `json:"silent"`
 	// owner_conv is intentionally NOT patchable: create stamps it to the operator's own
 	// conversation (mcp_stdio withOwnerConv) so completion reports always return to the
 	// operator. Letting update change it would let a report be redirected within the
@@ -530,8 +641,9 @@ type schedulePatch struct {
 }
 
 // apply overlays the non-nil fields onto sch and reports whether the timing (spec_kind/
-// spec/tz) changed, so the caller knows to recompute next_run.
-func (p schedulePatch) apply(sch *store.Schedule) (specChanged bool) {
+// spec/tz) changed, so the caller knows to recompute next_run. A malformed deliver_to is
+// the one field it rejects itself, since only it is normalized on the way in.
+func (p schedulePatch) apply(sch *store.Schedule) (specChanged bool, aerr *apiError) {
 	set := func(dst *string, v *string) {
 		if v != nil {
 			*dst = strings.TrimSpace(*v)
@@ -572,5 +684,15 @@ func (p schedulePatch) apply(sch *store.Schedule) (specChanged bool) {
 	if p.StopAfterRun != nil {
 		sch.StopAfterRun = *p.StopAfterRun
 	}
-	return specChanged
+	if p.DeliverTo != nil {
+		targets, aerr := normalizeScheduleTargets(*p.DeliverTo)
+		if aerr != nil {
+			return specChanged, aerr
+		}
+		sch.DeliverTo = targets
+	}
+	if p.Silent != nil {
+		sch.Silent = *p.Silent
+	}
+	return specChanged, nil
 }

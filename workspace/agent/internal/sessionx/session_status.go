@@ -235,6 +235,22 @@ func turnEndReasonFor(notifyState string) string {
 	return ""
 }
 
+// RecordTurnOutcome is the agents.TurnEndRecorder: a Managed turn's end recorded for the
+// scheduled run it ended (#1560) — by the input the driver started the turn with when it had
+// one, else by the instant the driver saw the end.
+func RecordTurnOutcome(sid string, endedAt time.Time, reason string, run agents.TurnRun) {
+	for _, m := range session.ListMetas() {
+		if session.UUID(m.Dir, m.Name) == sid {
+			if run.Known {
+				chatx.NoteRunOutcomeFor(m.Name, run.Instr, reason)
+			} else {
+				chatx.NoteRunOutcome(m.Name, reason, endedAt)
+			}
+			return
+		}
+	}
+}
+
 func RecordSessionNotification(sid, previous, state, turnText string) {
 	kind := ""
 	reason := ""
@@ -305,6 +321,23 @@ func RecordSessionNotification(sid, previous, state, turnText string) {
 				chatx.ResetAutoResume(m.Name)
 			}
 		}
+		// A turn that finishes scheduled runs with their own delivery raises no answer-ready
+		// (#1560): that event goes to the notification center and every chat connection, which is
+		// what a silent run asks not to happen and what a run with named targets must not do
+		// behind them. The kick below still runs, so the sink delivers the result (failures
+		// included) where the schedule asked, or records the run as silent.
+		var verdict chatx.TurnVerdict
+		if kind == chatx.ReportKindAnswerReady {
+			// How the run this turn ended went, kept with the run: the reconciler may settle it
+			// together with a later run's end, whose reason is not this run's. A Managed driver
+			// records it itself, with the instant it saw the end (RecordTurnOutcome): this call
+			// runs later, off its own goroutine.
+			if m.DriverKind() != session.DriverManaged {
+				chatx.NoteRunOutcome(m.Name, reason, time.Now())
+			}
+			key, _ := status.ReadCompletionKey(sid)
+			verdict = chatx.TurnVerdictFor(m.Name, reason != "", key)
+		}
 		ev := notice.New(kind, m.Name, m.Kind, session.Display(m))
 		// Full-text bridge (docs/log/37, the future direction): carry the turn's final
 		// prose on the answer-ready event so a full-text-mode provider can post it. Only
@@ -338,13 +371,15 @@ func RecordSessionNotification(sid, previous, state, turnText string) {
 		// turn-end gets a fresh key. Interim events (question / plan-approval /
 		// permission) use plain Put — they have their own "previous != state" guards
 		// and do not carry turn bodies.
-		if kind == chatx.ReportKindAnswerReady {
+		switch {
+		case verdict.Silent, verdict.Routed:
+		case kind == chatx.ReportKindAnswerReady:
 			key := ev.CreatedAt
 			if k, ok := status.ReadCompletionKey(sid); ok && k != "" {
 				key = k
 			}
 			_ = notice.PutOnce("answer-ready:"+m.Name+":"+key, ev)
-		} else {
+		default:
 			_ = notice.Put(ev)
 		}
 		// One-shot session report to the operator conversation that armed this

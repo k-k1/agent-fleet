@@ -94,3 +94,48 @@ has no clock-triggered wake).
     both double firing and missed firing (an in-memory ledger is not enough).
   - v1 goes as far as injecting one prompt on cron/interval/once. Workflow DAGs, GUI creation,
     long-lived reuse and sub-minute frequencies are out of scope (later phases in docs/38).
+
+## Addendum (2026-10-03) — delivery targets and the silent sentinel
+
+A schedule chooses where its result goes, and may stay quiet when there is nothing to say (#1560). Decision 4
+stands: nothing here is a delivery path of its own. The run's row in the report ledger
+([0035](0035-session-report-v2-ledger.md)) carries the schedule's choice, the reconciler settles it like any row,
+and only the sink routes it differently. Decision 10 is untouched: the prompt's template variables are unchanged.
+
+- **Targets** (`deliver_to`, with the report on): any of the operator conversation (the default, and what
+  `report=true` meant before), the notification center, and the member's own Discord / Slack connection, reusing
+  the bridge's send path ([0020](0020-chat-bridge.md)). No new integration and no free-form webhook. A schedule
+  that asks for nothing beyond the operator conversation sends the Agent exactly the body it sent before.
+- A chat post goes only through a connection that is connected, not muted, and **bound to its member** (0020
+  decision 5's identity binding). The connection lives in the member's workspace, so the Agent checks it at
+  delivery time, not the Control Plane at registration. A connection that cannot take the post is named in a
+  notification instead of being skipped. The post carries the answer whether or not the connection is in
+  full-text mode: naming the connection for this schedule is the explicit opt-in that mode exists to ask for.
+- A run that names its targets reaches **only** them. The broadcast copies every chat connection otherwise gets
+  (the turn's answer-ready, the operator report's notification) are not raised or not bridged for it. A chat
+  post is queued once per run, report kind and connection, across restarts, and a queue that cannot be written
+  never holds back the notification center.
+- **Each run's answer is its own, read from the session's transcript** through the kind's agent, Terminal and
+  Managed alike (a Managed driver hands its turn end over with no text). The run is matched to its own prompt
+  (the delivered text, oldest run first, each prompt claimed once), so two open runs of a reuse session never
+  share an answer, and a later `[SILENT]` cannot hide an earlier alert. The sink waits up to two minutes for the
+  answer to appear; past that it delivers without a body, never as silent.
+- **Each run's outcome is its own too.** A turn end records clean / failed / aborted for the run it ended. A
+  Managed driver names that run by the input it started the turn with (the instruction row id); only a turn
+  started without one in hand (a Terminal session's hook, a Managed turn taken over across a restart) falls back
+  to the run whose prompt precedes the instant the end was seen. The outcome is kept until the ledger save that
+  consumes the row has landed, and
+  the sink trusts that over the reason the reconciler settles with (a later run's end can settle an earlier
+  run). A failure is never washed out by a later clean end, and a run is silent only on its own recorded clean
+  end. The verdict a turn end called for (routed / silent) is kept by its completion key, so a hook that runs
+  after the rows were consumed still does not broadcast.
+- **Silent sentinel** (`silent`): a run whose final answer, trimmed, is exactly `[SILENT]` (case-sensitive)
+  delivers nothing — no report, no notification, no chat post — and the Agent asks the Control Plane to record
+  the run as `fired_silent`, which the history shows. Only schedules that enable it tell the agent about it, in a
+  note ahead of the prompt. A wrong match would hide an alert and a wrong miss costs one message, so the match is
+  the whole answer, never a substring.
+- **Failures are never silent**: a failed or cut-off turn, an abnormal exit, and a run reported unconfirmed reach
+  the notification center whatever the targets say (a run dropped before it ran is already notified by the
+  Control Plane).
+- Out of scope: runs in `session_mode=assistant` (the run is itself a turn in the conversation, so the Control
+  Plane refuses targets and the sentinel there), script-only runs, and chaining one run's output into the next.

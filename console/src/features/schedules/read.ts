@@ -34,6 +34,11 @@ export interface ScheduleDTO {
   // Stop-after-run opt-in (docs/log/85): true = the fire's session stops itself once it has
   // finished the prompt (after any report it owes). Default false = it stays running.
   stop_after_run?: boolean;
+  // Where the result goes when report is on (#1560): any of DELIVERY_TARGETS. The CP always
+  // answers with the resolved list; an older CP omits it, which means the operator alone.
+  deliver_to?: string[];
+  // The silent sentinel: a run whose final answer is exactly [SILENT] delivers nothing.
+  silent?: boolean;
   enabled: boolean;
   next_run?: string;
   next_run_local?: string;
@@ -62,6 +67,22 @@ export interface ScheduleEditable {
   model?: string;
   report?: boolean;
   stop_after_run?: boolean;
+  deliver_to?: string[];
+  silent?: boolean;
+}
+
+// The delivery targets a schedule may name, in the CP's canonical order. A Discord or Slack
+// target posts only through the member's own connection, and only while it is bound to them.
+export const DELIVERY_TARGETS = ["operator", "notifications", "discord", "slack"] as const;
+
+/** The schedule's targets, with an absent list read as the operator alone (an older CP). */
+export function scheduleTargets(s: ScheduleDTO): string[] {
+  return s.deliver_to && s.deliver_to.length > 0 ? s.deliver_to : ["operator"];
+}
+
+/** The targets in canonical order, so a re-ordered choice does not read as an edit. */
+export function canonicalTargets(list: string[]): string[] {
+  return DELIVERY_TARGETS.filter((t) => list.includes(t));
 }
 
 // One row from GET /api/schedules/{id}/runs.
@@ -131,6 +152,8 @@ export function statusIcon(status?: string): string {
 // history reads "succeeded / failed / skipped / not run" instead of the raw token (which
 // stays in the row tooltip). Pure so it is unit-tested alongside statusTone.
 export function runStatusLabelKey(status?: string): MsgKey {
+  // A run that answered with the silent sentinel succeeded and delivered nothing (#1560).
+  if ((status || "").trim() === "fired_silent") return "sched.status_silent";
   switch (statusTone(status)) {
     case "ok":
       return "sched.status_ok";
