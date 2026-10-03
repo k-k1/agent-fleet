@@ -1521,3 +1521,19 @@ Follow-ups: #1473（実機の ecs-ec2 配備での受け入れ。スロットの
 （`placeHome`・`slotsOfMyType`・`makeRoom`・`sweepFreeSlots`・`PoolStatus`）・
 `control-plane/internal/tenantsrv/pool_slot_reserve.go`・`console/src/features/settings/tenant/ec2Pool.tsx`・
 `console/src/app/WsBar.tsx`（`SlotMoveNotice`）。
+
+**追記（2026-10-03・#1592）: 決定 8 の「detach の前に umount」が並行する mount に対しても成り立ち、死んだ mount でスロットが隔離されなくなった。**
+サンドボックスのプールで、golden の種の解放と同じ種の次の起動が 1 台のスロットを同時に動かした。解放の umount が起動の
+mount より先に走って「not mounted」と答え、mount が入り、その 1 秒後に解放の DetachVolume がそれを抜いた。残った mount は
+`/af-home/<membership>` の stat すべてに EIO を返すので、そのスロットでの同じメンバーシップの次の mount が失敗し、決定 20 が
+健全な箱を隔離した（2 台・同じメンバーシップ）。変更は 3 つ。CP のワークスペースごとのロックが、ホームの mount を解放の
+umount から detach までの間に入れない。解放の後にロックを取った mount はアタッチを読み直し、スロットに触れず（隔離もせず）
+失敗する。ロックは `startGen` と同じくプロセス内なので、CP のレプリカ 2 台の間は直列にならない。CP が送る umount は、
+そのパスに何も mount されていなくなって初めて成功する。スロットの `af-umount` は 1 つだけ外し、stat に失敗するパスを
+「not mounted」と扱っていたので、重なった 2 つ目の mount や死んだ mount が成功として通っていた。そして CP の mount・umount
+のスクリプトとスロット自身の `af-mount` は、まずそのパスちょうどにある死んだ XFS の mount（デバイスが `/sys/dev/block` に
+無いと確かめられたもの）を lazy umount する。デバイスが残っている mount には、ルートが読めなくても触れない（使用中の
+アタッチ済みホームかもしれない）。別のパスにも触れない。この行は CP 自身が送るので、
+古い起動テンプレートのスロットも入れ替えなしに次の mount で治る。隔離も detach の前に umount する（上限付き・失敗は無視）。
+コード: `control-plane/internal/runtime/runtime_ecs_ec2_home_mount.go`、`runtime_ecs_ec2.go`（`mountHome`・
+`releaseSlotSince`・`launch`・`quarantineSlot`）、`deploy/aws/ecs/cfn/40-ec2-pool.yaml`。

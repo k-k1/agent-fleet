@@ -1655,3 +1655,21 @@ Code: `control-plane/internal/runtime/runtime_ecs_ec2_slot_replace.go` (`replace
 (`placeHome`, `slotsOfMyType`, `makeRoom`, `sweepFreeSlots`, `PoolStatus`),
 `control-plane/internal/tenantsrv/pool_slot_reserve.go`, `console/src/features/settings/tenant/ec2Pool.tsx`,
 `console/src/app/WsBar.tsx` (`SlotMoveNotice`).
+
+**Note (2026-10-03, #1592): decision 8's "umount before detach" now holds against a concurrent mount, and a
+dead mount no longer quarantines a slot.** On a sandbox pool a golden seed's release and the next start of the
+same seed drove one slot at once: the release's umount ran before the start's mount and answered "not mounted",
+the mount landed, and the release's DetachVolume pulled it a second later. The mount left behind answers every
+stat of `/af-home/<membership>` with EIO, so the next mount of that membership on that slot failed and decision 20
+quarantined a healthy box (two slots, same membership). Three changes. A per-workspace lock in the CP holds every
+mount of a home out of a release's umount-to-detach window, and a mount that gets the lock after the release
+re-reads the attachment and fails without touching (or quarantining) the slot; the lock is process-local like
+`startGen`, so two CP replicas are not serialised by it. The umount the CP sends succeeds only once nothing at all
+is mounted at the path: the slot's `af-umount` took off one mount and treated a path whose stat failed as "not
+mounted", so a stacked second mount or a dead one passed as success. And both the CP's mount and umount scripts,
+and the slot's own `af-mount`, first lazily unmount a dead XFS mount at that exact path (its device confirmed gone
+from `/sys/dev/block`), never one whose device is still there — even with an unreadable root, which may be an
+attached home still in use — and never another path. The CP sends those lines itself,
+so slots launched from an older template heal at their next mount without being replaced. Quarantine now also
+unmounts (bounded, best-effort) before its detach. Code: `control-plane/internal/runtime/runtime_ecs_ec2_home_mount.go`,
+`runtime_ecs_ec2.go` (`mountHome`, `releaseSlotSince`, `launch`, `quarantineSlot`), `deploy/aws/ecs/cfn/40-ec2-pool.yaml`.

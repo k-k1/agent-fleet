@@ -225,6 +225,27 @@ Resources:
               # Only formats a volume that has NO filesystem, which is what makes it safe
               # for the CP to pass --mkfs on every mount, including retries.
               if [ "$MKFS" = --mkfs ] && ! blkid "$DEV" >/dev/null 2>&1; then mkfs.xfs -q "$DEV"; fi
+              # A home detached while it was still mounted leaves a dead mount here that answers
+              # stat with EIO, and the mkdir -p below would then fail every later mount of this
+              # home on this slot. Lazily unmount such a mount (only once its device is gone),
+              # never one whose device is still there and never any other path. Same lines as staleHomeMountScript in
+              # control-plane/internal/runtime/runtime_ecs_ec2_home_mount.go, which the CP also
+              # sends to slots booted before this was here.
+              MOUNTINFO=/proc/self/mountinfo SYSBLOCK=/sys/dev/block
+              case "$MP" in
+              /af-home/*/*) ;;
+              /af-home/?*)
+              for _ in 1 2 3 4; do
+                top=$(awk -v m="$MP" '$5 == m { d = $3; f = ""; for (i = 7; i < NF; i++) if ($i == "-") { f = $(i + 1); break } } END { print d " " f }' "$MOUNTINFO")
+                devt=$(echo "$top" | cut -d ' ' -f 1)
+                fstype=$(echo "$top" | cut -d ' ' -f 2)
+                [ "$fstype" = xfs ] || break
+                [ -e "$SYSBLOCK/$devt" ] && break
+                echo "dead mount at $MP (device $devt is gone); detaching it lazily"
+                umount -l "$MP" || break
+              done
+              ;;
+              esac
               mkdir -p "$MP"
               mountpoint -q "$MP" || mount -o nouuid "$DEV" "$MP"
               # Take whatever room the volume has now. A home that was grown while it was
@@ -241,16 +262,22 @@ Resources:
               #!/bin/bash
               # af-umount <mountpoint>. Must succeed before the CP detaches: a forced
               # detach of a mounted filesystem corrupts it, and this is someone's home.
+              # Succeeds only once nothing at all is mounted at the path: a second mount
+              # stacked on the first still holds the volume the CP is about to pull.
               set -euo pipefail
               MP=$1
-              mountpoint -q "$MP" || { echo "$MP not mounted"; exit 0; }
-              for i in 1 2 3; do
-                umount "$MP" && { echo "umounted $MP"; exit 0; }
-                sleep 2
+              mounted() { awk -v m="$MP" '$5 == m { found = 1 } END { exit !found }' /proc/self/mountinfo; }
+              mounted || { echo "$MP not mounted"; exit 0; }
+              for _ in 1 2 3 4 5 6; do
+                if umount "$MP"; then echo "umounted $MP"; else sleep 2; fi
+                mounted || exit 0
               done
               fuser -km "$MP" || true
               sleep 2
-              umount "$MP" && echo "umounted $MP (after fuser -k)"
+              if umount "$MP"; then echo "umounted $MP (after fuser -k)"; fi
+              mounted || exit 0
+              echo "$MP is still mounted" >&2
+              exit 1
               SH
               chmod +x /usr/local/bin/af-mount /usr/local/bin/af-umount
             - Cluster:

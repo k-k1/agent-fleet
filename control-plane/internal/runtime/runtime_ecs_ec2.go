@@ -1291,7 +1291,7 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 	// Mark that a Start has begun, so a teardown still draining from the Stop that the
 	// recreate / clean-home handlers issued a moment ago aborts instead of pulling this
 	// workspace's home out from under it.
-	e.generation().Add(1)
+	gen := e.beginStart()
 	e.setPhase("preparing")
 	prep, err := e.prepare(ctx)
 	if err != nil {
@@ -1303,6 +1303,7 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 		e.setPhase("")
 		return err
 	}
+	place.gen = gen
 	// Removing a home's contents takes as long as the home is big, and this thread is
 	// the request's.
 	if place.wipe != "" {
@@ -1330,6 +1331,7 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 			e.bg(ctx, func(c context.Context) {
 				defer e.setPhase("")
 				next, perr := e.placeHome(c)
+				next.gen = place.gen
 				if perr == nil {
 					perr = next.claimErr
 				}
@@ -1563,6 +1565,10 @@ type ec2Placement struct {
 	// replacement marks a slot launched or adopted to replace a reserved one; a successful
 	// launch clears its af-replaces-home link (clearReplacesHome).
 	replacement bool
+	// gen is the Start count (startGen) of the Start this placement belongs to, taken when
+	// that Start began; 0 when no Start made it. A launch may drop its claim only while
+	// no later Start exists (unclaimIfOurs).
+	gen int64
 }
 
 // placeHome resolves the volume and the slot, attaching the two together when it can.
@@ -1885,6 +1891,7 @@ func (e *ecsEC2Runtime) converge(ctx context.Context, p ec2Placement, prep ec2Pr
 		log.Printf("ecs-ec2 start: slot %s is not coming back; re-placing %s", p.instanceID, e.base.name)
 		e.setPhase("slot: replacing")
 		next, perr := e.placeHome(ctx)
+		next.gen = p.gen
 		if perr == nil {
 			perr = next.claimErr // this half runs in the background: see ec2Placement.claimErr
 		}
@@ -1955,6 +1962,13 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 	}
 	e.setPhase("home: mounting")
 	if err := e.mountHome(ctx, p); err != nil {
+		if errors.Is(err, errHomeLeftSlot) {
+			// A release took the home off while this launch was on its way. The slot did
+			// nothing wrong; this launch's claim goes, so the workspace reads stopped and
+			// the next Start places it again instead of waiting out the claim TTL.
+			e.unclaimIfOurs(ctx, p)
+			return fmt.Errorf("mount home on %s: %w", p.instanceID, err)
+		}
 		// A slot that cannot mount is not a slow slot, it is a broken one, and leaving it
 		// in the pool means the next Start picks it too (measured: it did, for every user
 		// that followed). Take it out of the world before returning.
@@ -2016,8 +2030,8 @@ func (e *ecsEC2Runtime) finishLaunch(ctx context.Context, p ec2Placement) {
 //  1. re-tag af-role → quarantined. Every slot query filters on that tag, so this single
 //     write removes it from freeSlots, from poolSize (a replacement may be created) and
 //     from placement.
-//  2. detach the home. The volume is the user's; it has to be able to attach elsewhere,
-//     and on the failure this was written for it was never actually opened here.
+//  2. unmount (best-effort, bounded) and detach the home. The volume is the user's; it has
+//     to be able to attach elsewhere, and a failed af-mount can have mounted it already.
 //  3. drop the claim, so the owner's next Start is immediate rather than waiting out the
 //     claim TTL on a slot that will never work.
 //  4. stop the instance. It cannot run tasks, and a wedged kernel is not something the CP
@@ -2031,12 +2045,24 @@ func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, caus
 		p.instanceID, p.volumeID, e.base.name, cause)
 	e.markQuarantined(ctx, p.instanceID, cause)
 	if p.volumeID != "" {
+		// A failed af-mount may still have mounted the home (it fails after the mount when
+		// the new filesystem cannot be written), so unmount before the detach. Bounded and
+		// best-effort: a slot that failed because SSM never answered would otherwise hold
+		// the home here for good, and the instance stop below unmounts on its way down.
+		uctx, cancel := context.WithTimeout(ctx, quarantineUmountBudget)
+		lock := e.homeMountLock()
+		lock.Lock()
+		if err := e.umountHome(uctx, p.instanceID); err != nil {
+			log.Printf("ecs-ec2: unmounting %s on the quarantined slot %s before the detach: %v", p.volumeID, p.instanceID, err)
+		}
+		cancel()
 		if _, err := e.ec2.DetachVolume(ctx, &ec2.DetachVolumeInput{
 			VolumeId:   aws.String(p.volumeID),
 			InstanceId: aws.String(p.instanceID),
 		}); err != nil {
 			log.Printf("ecs-ec2: detaching %s from the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
 		}
+		lock.Unlock()
 		e.unclaim(ctx, p.volumeID)
 	}
 	if _, err := e.ec2.StopInstances(ctx, &ec2.StopInstancesInput{InstanceIds: []string{p.instanceID}}); err != nil {
@@ -3596,13 +3622,29 @@ func (e *ecsEC2Runtime) homeMountPoint() string {
 // id (the device name we asked for is not what the kernel shows on Nitro), and only
 // formats when blkid finds no filesystem — which is why --mkfs can be passed
 // unconditionally and a retried mount never eats a home.
+//
+// It holds homeMountLock, and under it first confirms the home is still on the slot: a
+// release that ran while this launch was on its way has detached it, and mounting then
+// would either wait out af-mount's device search and fail, or — had the release not yet
+// detached — mount a filesystem the release is about to pull (see homeMountLocks).
 func (e *ecsEC2Runtime) mountHome(ctx context.Context, p ec2Placement) error {
-	mp := e.homeMountPoint()
-	return e.runOnSlot(ctx, p.instanceID, fmt.Sprintf("af-mount %s %s --mkfs", p.volumeID, mp))
+	lock := e.homeMountLock()
+	lock.Lock()
+	defer lock.Unlock()
+	return e.mountHomeLocked(ctx, p)
 }
 
+func (e *ecsEC2Runtime) mountHomeLocked(ctx context.Context, p ec2Placement) error {
+	if !e.homeStillOn(ctx, p) {
+		return fmt.Errorf("%s on %s: %w", p.volumeID, p.instanceID, errHomeLeftSlot)
+	}
+	return e.runOnSlot(ctx, p.instanceID, homeMountCommand(p.volumeID, e.homeMountPoint(), slotMountInfo, slotSysBlock))
+}
+
+// umountHome succeeds only when nothing is left mounted at the home's mountpoint
+// (homeUmountCommand). Callers that detach afterwards hold homeMountLock across both.
 func (e *ecsEC2Runtime) umountHome(ctx context.Context, instanceID string) error {
-	return e.runOnSlot(ctx, instanceID, fmt.Sprintf("af-umount %s", e.homeMountPoint()))
+	return e.runOnSlot(ctx, instanceID, homeUmountCommand(e.homeMountPoint(), slotMountInfo, slotSysBlock))
 }
 
 // runOnSlot sends one shell command through SSM and waits for it. SendCommand is
@@ -4136,6 +4178,13 @@ func (e *ecsEC2Runtime) releaseSlotSince(ctx context.Context, gen int64) error {
 	// is nothing to unmount — the instance stop is an ordinary shutdown, which unmounts
 	// filesystems on the way down. Waiting for an umount that can never run would leave
 	// dormant slots unreclaimable.
+	//
+	// From the umount to the detach no mount of this home may run, or the detach pulls a
+	// filesystem the umount never saw (homeMountLocks). A launch waiting on the lock finds
+	// the home gone once it gets it and fails without touching the slot.
+	lock := e.homeMountLock()
+	lock.Lock()
+	defer lock.Unlock()
 	running, err := e.instanceRunning(ctx, instanceID)
 	if err != nil {
 		return err
@@ -4149,7 +4198,7 @@ func (e *ecsEC2Runtime) releaseSlotSince(ctx context.Context, gen int64) error {
 	if e.generation().Load() != gen {
 		// Re-mount rather than detach: the workspace is coming up and needs its home.
 		log.Printf("ecs-ec2: %s restarted mid-release; re-mounting instead of detaching", e.base.name)
-		return e.mountHome(ctx, ec2Placement{volumeID: volumeID, instanceID: instanceID})
+		return e.mountHomeLocked(ctx, ec2Placement{volumeID: volumeID, instanceID: instanceID})
 	}
 	if _, err := e.ec2.DetachVolume(ctx, &ec2.DetachVolumeInput{
 		VolumeId:   aws.String(volumeID),
