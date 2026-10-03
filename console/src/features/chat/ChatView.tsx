@@ -51,6 +51,7 @@ import { useChatSuggest } from "./parts/useChatSuggest.ts";
 import type { Conversation, ChatMessage, ChatStep } from "../../types/chat.ts";
 import type { Assistant } from "../../types/assistant.ts";
 import type { SessionKind } from "../../types/session.ts";
+import { SessionLinkMenuHost } from "../sessions/SessionLinkMenu.tsx";
 
 // ChatView renders one assistant-chat conversation (docs/log/19) — a headless-CLI LLM
 // chat/translation thread. Unlike the terminal panes it never mounts xterm; it's a
@@ -71,7 +72,16 @@ interface ChatViewProps {
 
 const chatDraftKey = (conversationId: string) => "af.chat-draft." + conversationId;
 
-export function ChatView({ conversationId, draftAssistantId, paneId, active, headerActions }: ChatViewProps) {
+export function ChatView(props: ChatViewProps) {
+  // Session slugs in the conversation open the session context menu (SessionLinkMenu.tsx).
+  return (
+    <SessionLinkMenuHost>
+      <ChatViewBody {...props} />
+    </SessionLinkMenuHost>
+  );
+}
+
+function ChatViewBody({ conversationId, draftAssistantId, paneId, active, headerActions }: ChatViewProps) {
   // Store bridge (old context values): promote a draft pane to its real
   // conversation id; bump the rail list; publish the busy chip.
   const setPaneTarget = useLayoutStore((s) => s.setPaneTarget);

@@ -86,6 +86,16 @@
 :root[data-theme="light"] .markdown a.md-session-link {
   color: #0e4a75;
 }
+/* A session link that opens a context menu on a long press. On a touch screen the browser's own
+   long press would select the word and show the iOS callout over that menu. Touch only: on a
+   desktop a selection may still start on the slug. */
+@media (hover: none) and (pointer: coarse) {
+  .markdown a.md-session-link.md-has-menu {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+}
 /* Assistant-conversation slug ("a…") → that chat pane. Violet keeps it apart from the
    blue session slug and the amber commit hash. */
 .markdown a.md-conv-link {

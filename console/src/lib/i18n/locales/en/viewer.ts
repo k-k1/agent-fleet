@@ -158,6 +158,7 @@ export const viewer: Record<keyof typeof jaViewer, string> = {
   "view.open_commit": "Open commit {sha}",
   "view.commit_not_found": "Commit not found: {sha}",
   "view.open_session": "Open session {name}",
+  "view.session_not_found": "Session not found: {name}",
   "view.open_conversation": "Open chat {slug}",
   "view.conversation_not_found": "Conversation not found: {slug}",
   "view.table_repaired":
