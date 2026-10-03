@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/branchpr"
 )
 
 // Canonical kind list. These are the persisted Meta.Kind / wire Session.Kind
@@ -326,6 +328,16 @@ type Session struct {
 	// block, so the two sides must fold it the same way or the card and the chat would draw
 	// different trends for one session. Display only.
 	TokenSpends []int `json:"tokenSpends,omitempty"`
+	// PR is the newest GitHub pull request whose head is the branch this session works on, with
+	// its state and the CI rollup of its head commit (#1062). Absent for other providers, for a
+	// Workspace without a GitHub connection, for the repository's default branch, and until the
+	// background refresh has answered — the list itself never waits on GitHub (internal/branchpr).
+	PR *branchpr.PR `json:"pr,omitempty"`
+	// Ports are the TCP ports this session's own processes listen on, reachable on
+	// http://127.0.0.1 — what the row offers to open in the browser pane (#1062). Live sessions
+	// only, attributed by the process's AF_SESSION_NAME, so another session's server never
+	// shows here (internal/listenports).
+	Ports []int `json:"ports,omitempty"`
 	// StopAfterTurnAt mirrors Meta.StopAfterTurnAt: the session is armed to stop itself at
 	// the end of the running turn (docs/log/85). The row has to say so, because the arm is
 	// usually set from inside the conversation (the MCP tool) where the user only sees prose

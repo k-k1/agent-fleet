@@ -158,6 +158,9 @@ func (a browserAPI) socketToAgent(w http.ResponseWriter, r *http.Request, res *r
 	}
 	defer down.Close()
 	down.SetReadLimit(browserMaxClientMessageBytes)
+	// As in the terminal relay: a removal cancels the request context, which a hijacked
+	// socket does not watch on its own.
+	defer context.AfterFunc(r.Context(), func() { down.Close() })()
 
 	viewer := newBrowserViewer(a.mgr.conns, res.ws.ID)
 	viewer.setVisible(true)

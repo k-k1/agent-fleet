@@ -535,7 +535,8 @@ af-gcloud-exec --profile <name> --project <project-id> -- kubectl get pods
 見つけてしまいます。プログラムはトークンを自分で受け取る必要があります。Python なら
 `google.oauth2.credentials.Credentials(os.environ["GOOGLE_OAUTH_ACCESS_TOKEN"])`、Go なら
 `option.WithTokenSource(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: os.Getenv("GOOGLE_OAUTH_ACCESS_TOKEN")}))`
-です。Node では、クライアントライブラリが使っているのと同じ版の `google-auth-library` から `OAuth2Client` を作ってください。
+です（Go のライブラリは、`af-gcloud-exec` が `GOOGLE_CLOUD_QUOTA_PROJECT` に入れるプロファイルの割り当てプロジェクトを使います。
+Python では `Credentials` に `quota_project_id=os.environ["GOOGLE_BILLING_PROJECT"]` を渡してください）。Node では、クライアントライブラリが使っているのと同じ版の `google-auth-library` から `OAuth2Client` を作ってください。
 メジャー版の違うものはエラーにならずに受け取られ、ログインを何も送りません。エージェントは、コードをこのように変える前に
 あなたに確認します。
 

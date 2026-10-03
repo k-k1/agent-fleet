@@ -56,6 +56,9 @@
      fourth injected origin needs its own. Measured 5.1:1 on --active-bg (the darkest
      surface it lands on), 6.9:1 on --bg. */
   --peer: #b48ee0;
+  /* A merged pull request (#1062), GitHub's purple lifted for the dark surfaces: 6.3:1 on --bg,
+     5.1:1 on --active-bg. Same hue as --peer today, its own name so either can move. */
+  --pr-merged: #b48ee0;
   /* selection / hover surfaces (so light theme can override the old hardcoded blues) */
   --active-bg: #20303a;
   --hover-bg: #1b2730;
@@ -277,6 +280,7 @@
   --err: #a5281c; /* replaced #c0392b as --del (that one was 4.4:1 on its own red tint); 5.69:1+ on every light surface */
   --del: var(--err);
   --peer: #6b21a8; /* purple-800: 6.9:1 on --active-bg (#d7e6fb), 7.2:1 on --btn — the peer-origin badge */
+  --pr-merged: #6639ba; /* GitHub's light merged purple: 5.8:1 on --active-bg, 7.3:1 on --bg */
   --active-bg: #d7e6fb;
   --hover-bg: #eaf1fb;
   /* Light: soft tint + accent-tinted text (a solid fill reads too heavy). Same

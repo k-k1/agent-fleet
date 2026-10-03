@@ -48,16 +48,18 @@ const ecsHomeTaskContainer = "home-ops"
 // re-read. The task takes minutes; a poll every few seconds costs nothing against that.
 const ecsHomeTaskPoll = 5 * time.Second
 
+// Only a task seen STOPPED releases its home. MISSING, an empty answer, an error or time
+// passing prove nothing — ECS does not bound how long a task RunTask returned stays
+// invisible — so each leaves the marker, and the home refused, in place. The one way out
+// that is not STOPPED is the operator's: delete the marker after checking that no task
+// started by af-home/<membership> is running (guide/ref/deploy-targets.md, note 7).
 const (
-	// homeTaskMissingGrace is how long a task RunTask returned may stay unknown to
-	// DescribeTasks before it counts as gone. ECS documents RunTask as eventually
-	// consistent; past this a task that is still MISSING has stopped and been forgotten.
+	// homeTaskMissingGrace bounds how long one wait keeps polling a task ECS does not know.
+	// Ending the wait keeps the marker; it only stops this CP from waiting.
 	homeTaskMissingGrace = 2 * time.Minute
-	// homeTaskPendingGrace bounds a marker written before a RunTask whose answer was lost
-	// (a CP that died, a timeout after the request was sent). ListTasks has long caught up
-	// by then, so it alone decides after this.
-	homeTaskPendingGrace = 15 * time.Minute
-	// homeTaskMarkerPending is the marker's value until RunTask has returned an ARN.
+	// homeTaskMarkerPending is the marker's value until RunTask has returned an ARN. A
+	// marker left pending (a RunTask whose answer was lost) names no task that could ever
+	// be seen STOPPED, so only the operator clears it.
 	homeTaskMarkerPending = "pending"
 	// homeTaskDescribeRetries is how many failed DescribeTasks in a row end a wait. The
 	// marker stays, so the home stays refused until a later check can read the task.
@@ -132,8 +134,8 @@ func (e *ecsRuntime) homeTaskInFlight(ctx context.Context) (bool, error) {
 	return len(out.TaskArns) > 0, nil
 }
 
-// markedHomeTaskBusy reads the marker. A marker whose task has stopped, or that has
-// outlived its grace, is dropped and reads as not busy.
+// markedHomeTaskBusy reads the marker. Only a marker whose task is seen STOPPED is dropped
+// and reads as not busy.
 func (e *ecsRuntime) markedHomeTaskBusy(ctx context.Context) (bool, error) {
 	out, err := e.ssm.GetParameter(ctx, &ssm.GetParameterInput{Name: aws.String(e.homeTaskMarker())})
 	if isAWSNotFound(err) {
@@ -143,26 +145,33 @@ func (e *ecsRuntime) markedHomeTaskBusy(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("read the home task marker: %w", err)
 	}
 	value := aws.ToString(out.Parameter.Value)
-	age := time.Since(aws.ToTime(out.Parameter.LastModifiedDate))
 	if value == homeTaskMarkerPending {
-		if age < homeTaskPendingGrace {
-			return true, nil
-		}
-		e.clearHomeTaskMarker(ctx)
-		return false, nil
+		e.logStuckMarker(value, out.Parameter.LastModifiedDate, "RunTask's answer was never recorded")
+		return true, nil
 	}
 	t, known, err := e.describeHomeTask(ctx, value)
 	if err != nil {
 		return false, err
 	}
-	switch {
-	case known && aws.ToString(t.LastStatus) == string(ecstypes.DesiredStatusStopped):
-	case !known && age >= homeTaskMissingGrace:
-	default:
+	if !known {
+		e.logStuckMarker(value, out.Parameter.LastModifiedDate, "ECS does not know the task")
+		return true, nil
+	}
+	if aws.ToString(t.LastStatus) != string(ecstypes.DesiredStatusStopped) {
 		return true, nil
 	}
 	e.clearHomeTaskMarker(ctx)
 	return false, nil
+}
+
+// logStuckMarker names the marker an operator may have to clear, once it is old enough that
+// propagation no longer explains it.
+func (e *ecsRuntime) logStuckMarker(value string, at *time.Time, why string) {
+	if time.Since(aws.ToTime(at)) < homeTaskMissingGrace {
+		return
+	}
+	log.Printf("ecs: the home of %s stays refused: %s (marker %s = %q). If no task started by %s is "+
+		"running, delete the marker to release it", e.name, why, e.homeTaskMarker(), value, e.homeTaskStartedBy())
 }
 
 // describeHomeTask reads one task. known=false when ECS answers MISSING or nothing, which
@@ -239,17 +248,14 @@ func (e *ecsRuntime) runHomeTask(ctx context.Context, what HomeWipe) error {
 	}
 	arn, err := e.startHomeTask(ctx, what)
 	if err != nil {
-		// A refusal ECS answered (an API error, a failure list) started nothing. Anything
-		// else — a timeout after the request was sent — may have, so the pending marker
-		// stays and keeps the home refused for its grace.
-		var apiErr smithy.APIError
-		if errors.As(err, &apiErr) || errors.Is(err, errHomeTaskNotPlaced) {
+		if runTaskStartedNothing(err) {
 			e.clearHomeTaskMarker(ctx)
 		}
 		return err
 	}
 	if err := e.markHomeTask(ctx, arn); err != nil {
-		// The pending marker is still there and blocks for its grace; the wait goes on.
+		// The pending marker is still there and keeps the home refused; the wait goes on,
+		// and it is dropped once the task is seen STOPPED.
 		log.Printf("ecs: %v", err)
 	}
 	stopped, err := e.waitHomeTask(ctx, arn, what)
@@ -259,18 +265,48 @@ func (e *ecsRuntime) runHomeTask(ctx context.Context, what HomeWipe) error {
 	return err
 }
 
+// runTaskStartedNothing reports whether a failed RunTask is known to have started no task:
+// ECS answered with a failure list (errHomeTaskNotPlaced), or refused the request as the
+// caller's fault (a 4xx: invalid parameters, AccessDenied, a missing task definition).
+// Everything else — a server fault (5xx, ServerException) even after the SDK's retries, an
+// error with no fault, a timeout after the request was sent — may have placed one, so the
+// pending marker stays and only an operator clears it.
+func runTaskStartedNothing(err error) bool {
+	if errors.Is(err, errHomeTaskNotPlaced) {
+		return true
+	}
+	var apiErr smithy.APIError
+	return errors.As(err, &apiErr) && apiErr.ErrorFault() == smithy.FaultClient
+}
+
 // errHomeTaskNotPlaced marks a RunTask that ECS answered without starting a task.
 var errHomeTaskNotPlaced = errors.New("ECS did not place the home task")
 
-// waitServiceTasksGone returns once every task of the workspace has reached STOPPED. A
+// stoppedTasks holds, by workspace name, the tasks Stop saw running: the wait that follows
+// must see each of them STOPPED even if a listing no longer shows it. Process-local like
+// homeClearing; another replica's wait relies on the service counts and its own listings.
+var stoppedTasks sync.Map // workspace name -> []string
+
+// waitServiceTasksGone returns once every task of the workspace is known to be STOPPED. A
 // service that is back at desired 1 has been started under the operation, which the lease
 // should have made impossible; the home is left alone.
 //
-// The service's running count is not that proof: it drops when a task leaves RUNNING, and
-// a STOPPING task is still inside its stop timeout, its processes still writing the home.
-// The tasks are found by the workspace's task definition family (registerTaskDef names it
-// after the workspace), which works while the service drains and after it is INACTIVE.
+// No single read is proof. The service's counts drop when a task leaves RUNNING, while a
+// STOPPING task is still inside its stop timeout, its processes still writing the home; a
+// listing, being eventually consistent, can miss a task. So the wait needs all of: the
+// service counting nothing running or pending, and every task it has ever seen — what Stop
+// captured and what any listing returned — described as STOPPED. A task that vanishes from
+// a listing, or that DescribeTasks answers MISSING for, is not confirmed and keeps the
+// wait going; the caller's budget ends it with the home left alone. The tasks are listed by
+// the workspace's task definition family (registerTaskDef names it after the workspace),
+// which works while the service drains and after it is INACTIVE.
 func (e *ecsRuntime) waitServiceTasksGone(ctx context.Context) error {
+	pending := map[string]bool{} // arn -> seen STOPPED
+	if v, ok := stoppedTasks.Load(e.name); ok {
+		for _, arn := range v.([]string) {
+			pending[arn] = false
+		}
+	}
 	for {
 		s, ok, err := e.describeService(ctx)
 		if err != nil {
@@ -279,11 +315,12 @@ func (e *ecsRuntime) waitServiceTasksGone(ctx context.Context) error {
 		if ok && s.DesiredCount > 0 {
 			return fmt.Errorf("service %s is at desired %d; its home is left alone", e.name, s.DesiredCount)
 		}
-		alive, err := e.workspaceTasksAlive(ctx)
-		if err != nil {
+		counted := ok && (s.RunningCount > 0 || s.PendingCount > 0)
+		if err := e.confirmWorkspaceTasks(ctx, pending); err != nil {
 			return err
 		}
-		if !alive {
+		if !counted && allTrue(pending) {
+			stoppedTasks.Delete(e.name)
 			return nil
 		}
 		if err := e.pause(ctx); err != nil {
@@ -292,43 +329,83 @@ func (e *ecsRuntime) waitServiceTasksGone(ctx context.Context) error {
 	}
 }
 
-// workspaceTasksAlive reports whether any task of the workspace's family has not reached
-// STOPPED. Both desired statuses are listed: a stopping task is desired STOPPED already.
-func (e *ecsRuntime) workspaceTasksAlive(ctx context.Context) (bool, error) {
-	var arns []string
-	for _, ds := range []ecstypes.DesiredStatus{ecstypes.DesiredStatusRunning, ecstypes.DesiredStatusStopped} {
-		var token *string
-		for {
-			out, err := e.tasks.ListTasks(ctx, &ecs.ListTasksInput{
-				Cluster: aws.String(e.cfg.cluster), Family: aws.String(e.name),
-				DesiredStatus: ds, NextToken: token,
-			})
-			if err != nil {
-				return false, fmt.Errorf("list the tasks of %s: %w", e.name, err)
-			}
-			arns = append(arns, out.TaskArns...)
-			if aws.ToString(out.NextToken) == "" {
-				break
-			}
-			token = out.NextToken
+func allTrue(m map[string]bool) bool {
+	for _, v := range m {
+		if !v {
+			return false
 		}
 	}
-	for len(arns) > 0 {
-		n := min(len(arns), 100) // DescribeTasks takes at most 100
+	return true
+}
+
+// captureWorkspaceTasks records the tasks running before a Stop, for waitServiceTasksGone.
+func (e *ecsRuntime) captureWorkspaceTasks(ctx context.Context) error {
+	arns, err := e.listWorkspaceTasks(ctx, ecstypes.DesiredStatusRunning)
+	if err != nil {
+		return err
+	}
+	if len(arns) > 0 {
+		stoppedTasks.Store(e.name, arns)
+	}
+	return nil
+}
+
+// confirmWorkspaceTasks adds every task a listing returns to pending and marks those
+// described as STOPPED. Both desired statuses are listed: a stopping task is desired
+// STOPPED already. A mark once set stays: a task seen STOPPED has let go of the home.
+func (e *ecsRuntime) confirmWorkspaceTasks(ctx context.Context, pending map[string]bool) error {
+	for _, ds := range []ecstypes.DesiredStatus{ecstypes.DesiredStatusRunning, ecstypes.DesiredStatusStopped} {
+		arns, err := e.listWorkspaceTasks(ctx, ds)
+		if err != nil {
+			return err
+		}
+		for _, arn := range arns {
+			if _, seen := pending[arn]; !seen {
+				pending[arn] = false
+			}
+		}
+	}
+	var open []string
+	for arn, stopped := range pending {
+		if !stopped {
+			open = append(open, arn)
+		}
+	}
+	for len(open) > 0 {
+		n := min(len(open), 100) // DescribeTasks takes at most 100
 		out, err := e.tasks.DescribeTasks(ctx, &ecs.DescribeTasksInput{
-			Cluster: aws.String(e.cfg.cluster), Tasks: arns[:n],
+			Cluster: aws.String(e.cfg.cluster), Tasks: open[:n],
 		})
 		if err != nil {
-			return false, fmt.Errorf("describe the tasks of %s: %w", e.name, err)
+			return fmt.Errorf("describe the tasks of %s: %w", e.name, err)
 		}
 		for _, t := range out.Tasks {
-			if aws.ToString(t.LastStatus) != string(ecstypes.DesiredStatusStopped) {
-				return true, nil
+			if aws.ToString(t.LastStatus) == string(ecstypes.DesiredStatusStopped) {
+				pending[aws.ToString(t.TaskArn)] = true
 			}
 		}
-		arns = arns[n:]
+		open = open[n:]
 	}
-	return false, nil
+	return nil
+}
+
+func (e *ecsRuntime) listWorkspaceTasks(ctx context.Context, ds ecstypes.DesiredStatus) ([]string, error) {
+	var arns []string
+	var token *string
+	for {
+		out, err := e.tasks.ListTasks(ctx, &ecs.ListTasksInput{
+			Cluster: aws.String(e.cfg.cluster), Family: aws.String(e.name),
+			DesiredStatus: ds, NextToken: token,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("list the tasks of %s: %w", e.name, err)
+		}
+		arns = append(arns, out.TaskArns...)
+		if aws.ToString(out.NextToken) == "" {
+			return arns, nil
+		}
+		token = out.NextToken
+	}
 }
 
 func (e *ecsRuntime) startHomeTask(ctx context.Context, what HomeWipe) (string, error) {
@@ -379,14 +456,15 @@ func (e *ecsRuntime) startHomeTask(ctx context.Context, what HomeWipe) (string, 
 }
 
 // waitHomeTask polls the task until it has stopped and reads its container's exit code.
-// stopped says the outcome is known — the task reached STOPPED, or stayed unknown to ECS
-// past homeTaskMissingGrace. Anything else (the context ended, DescribeTasks kept failing)
-// leaves the task possibly running, and the caller keeps its marker.
+// stopped says the task was seen STOPPED. Anything else — the context ended, DescribeTasks
+// kept failing, the task stayed unknown for homeTaskMissingGrace — leaves it possibly
+// running, and the caller keeps its marker.
 //
 // A task that stopped without an exit code never ran the command — an image that would not
 // pull, a mount that failed — and its stop reason is the sentence that says which.
 func (e *ecsRuntime) waitHomeTask(ctx context.Context, arn string, what HomeWipe) (stopped bool, err error) {
-	started, failures := time.Now(), 0
+	failures := 0
+	var unknownSince time.Time
 	for {
 		t, known, err := e.describeHomeTask(ctx, arn)
 		switch {
@@ -395,14 +473,17 @@ func (e *ecsRuntime) waitHomeTask(ctx context.Context, arn string, what HomeWipe
 				return false, err
 			}
 		case !known:
-			// Eventual consistency right after RunTask; past the grace it is gone.
-			if time.Since(started) >= e.missingGrace() {
-				return true, fmt.Errorf("the home task (%s) %s is not known to ECS; its outcome is unknown", what, arn)
+			// Eventual consistency, right after RunTask or in between two reads.
+			if unknownSince.IsZero() {
+				unknownSince = time.Now()
+			} else if time.Since(unknownSince) >= e.missingGrace() {
+				return false, fmt.Errorf("the home task (%s) %s is not known to ECS; its outcome is unknown "+
+					"and the home stays refused until it is seen stopped", what, arn)
 			}
 		case aws.ToString(t.LastStatus) == string(ecstypes.DesiredStatusStopped):
 			return true, homeTaskOutcome(t, what)
 		default:
-			failures = 0
+			failures, unknownSince = 0, time.Time{}
 		}
 		if err := e.pause(ctx); err != nil {
 			return false, err

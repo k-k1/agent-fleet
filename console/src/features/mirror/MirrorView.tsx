@@ -10,6 +10,7 @@ import {
   sessionTurn,
   sessionInterrupt,
   sessionRemoveQueued,
+  sessionDropPendingPeer,
   sessionDismissDiscard,
   sessionCancelInteraction,
   isMemberOrigin,
@@ -29,6 +30,7 @@ import type {
   InteractionAnswer,
   ManagedThreadSettings,
   QueueItem,
+  PendingPeer,
   TurnResult,
 } from "../../core/api/client.ts";
 import { isManagedSession } from "../../types/session.ts";
@@ -116,6 +118,7 @@ import { HandoffProposal, useHandoffProposals, type Proposal as HandoffProposalT
 import { ApprovalCard, LiveReplyCard, PlanPendingCard, PermissionCard, QuestionCard, TypingRow } from "./parts/pendingCards.tsx";
 import { CarriedBlock } from "./CarriedBlock.tsx";
 import { DiscardNotice } from "./parts/DiscardNotice.tsx";
+import { PendingPeersNotice, parsePendingPeers } from "./parts/PendingPeersNotice.tsx";
 import {
   actionable,
   closeStep,
@@ -309,6 +312,8 @@ export function MirrorView({
   // progress through them — see stopQueue.ts for why a restored discard is held locally.
   const [discards, setDiscards] = useState<Discard[]>([]);
   const [discardNotices, setDiscardNotices] = useState<DiscardNoticeState>(emptyDiscardNotices);
+  // Peer messages the Agent holds until the member answers the pending prompt (#1031).
+  const [pendingPeers, setPendingPeers] = useState<PendingPeer[]>([]);
   // Queue entries with a remove request in flight, so a double click sends one request.
   const queueOpsRef = useRef<Set<string>>(new Set());
   const queueShown = useMemo(() => queueEntries(queuedItems, queuedPrompts), [queuedItems, queuedPrompts]);
@@ -515,6 +520,7 @@ export function MirrorView({
     setQueuedItems(null);
     setDiscards([]);
     setDiscardNotices(emptyDiscardNotices);
+    setPendingPeers([]);
     queueOpsRef.current = new Set();
     setAlive(!!sessionMeta?.alive);
     setPending(null);
@@ -688,6 +694,7 @@ export function MirrorView({
             // The poll, not the interrupt's answer, is what the notice trusts: an answer lost
             // to a closed tab or a dropped connection comes back here (decision 4).
             setDiscards(parseDiscards(d.discardedInputs));
+            setPendingPeers(parsePendingPeers(d.pendingPeers));
             setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
             setPendingText(typeof d.pendingText === "string" ? d.pendingText : "");
             setLiveText(liveOnRef.current && typeof d.liveText === "string" ? d.liveText : "");
@@ -1173,6 +1180,15 @@ export function MirrorView({
     } else if (res.code === "already_started") toast(tr("mirror.queued_already_started"));
     else if (res.code === "not_queued") toast(tr("mirror.queued_gone"));
     else toast(res.message || tr("mirror.send_failed"));
+    setTimeout(() => tickRef.current?.(), 250);
+  };
+
+  // Drops one waiting peer message (#1031). Hidden at once; the next poll confirms.
+  const dropPendingPeer = async (id: string) => {
+    if (wsDown()) return;
+    setPendingPeers((p) => p.filter((x) => x.id !== id));
+    const res = await sessionDropPendingPeer(session, id);
+    if (!res.ok) toast(res.code === "not_pending" ? tr("mirror.peer_pending_gone") : res.message || tr("mirror.send_failed"));
     setTimeout(() => tickRef.current?.(), 250);
   };
 
@@ -2306,6 +2322,7 @@ export function MirrorView({
       </div>
 
       {aboveComposer}
+      <PendingPeersNotice items={pendingPeers} onDrop={(id) => void dropPendingPeer(id)} />
       {managed && !readOnly && running && !composerBlock && (
         <DiscardNotice notices={discardView} draftBusy={draftBusy} onRestore={restoreDiscard} onClose={closeDiscard} />
       )}

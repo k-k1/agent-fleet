@@ -553,8 +553,9 @@ A program built on a client library stops with an error such as "File … was no
 directory" for its default credentials. That is deliberate: it would otherwise find another identity (your own
 gcloud login, or the machine's). The program has to take the token itself — in Python
 `google.oauth2.credentials.Credentials(os.environ["GOOGLE_OAUTH_ACCESS_TOKEN"])`, in Go
-`option.WithTokenSource(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: os.Getenv("GOOGLE_OAUTH_ACCESS_TOKEN")}))`.
-In Node, create the `OAuth2Client` from the same version of `google-auth-library` the client library uses; one
+`option.WithTokenSource(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: os.Getenv("GOOGLE_OAUTH_ACCESS_TOKEN")}))`
+(Go's libraries then use the profile's quota project, which `af-gcloud-exec` sets in `GOOGLE_CLOUD_QUOTA_PROJECT`;
+in Python pass `quota_project_id=os.environ["GOOGLE_BILLING_PROJECT"]` to `Credentials`). In Node, create the `OAuth2Client` from the same version of `google-auth-library` the client library uses; one
 from another major version is accepted without an error and sends no login at all. Agents ask you before changing
 your code that way.
 

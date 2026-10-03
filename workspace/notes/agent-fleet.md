@@ -62,7 +62,8 @@ other session needs something *now*: you landed a change that breaks what it bui
 it is blocked on got settled, a long run it waits for finished. Plain text only — no history, no
 files (that's what `propose_session_handoff` is for). The result says `delivered` when the message
 reached the peer's agent, or `queued` when the peer is mid-turn and gets it as its next turn once
-the current one ends — don't resend a queued message. Neither means it was **read or acted on**, so
+the current one ends — or, with `blocked_on`, is waiting on its user's question, plan or permission
+answer and gets it once that is answered and the turn ends — don't resend a queued message. Neither means it was **read or acted on**, so
 don't proceed as if the peer agreed. A message interrupts its work: no status updates, no
 acknowledgements, nothing that could have waited for the user.
 

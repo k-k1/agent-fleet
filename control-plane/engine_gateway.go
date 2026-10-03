@@ -493,6 +493,11 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
+	// A generation can stream for minutes on a token issued before a removal; filing it
+	// under the membership lets the removal end it (member_removal.go).
+	rctx, untrack := g.mgr.memberConns.track(r.Context(), mv.MembershipID)
+	defer untrack()
+	r = r.WithContext(rctx)
 	// ADR 0084 decision 8, gate 3: the other safety net, for the session token's own 30-day
 	// life. It costs two small reads per request — the tenant row and this member's grant
 	// (#1215), the latter narrowed to at most one row per role.
@@ -634,6 +639,11 @@ func (g engineGateway) props(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
+	// A generation can stream for minutes on a token issued before a removal; filing it
+	// under the membership lets the removal end it (member_removal.go).
+	rctx, untrack := g.mgr.memberConns.track(r.Context(), mv.MembershipID)
+	defer untrack()
+	r = r.WithContext(rctx)
 	gate, aerr := g.engineGateFor(r.Context(), mv)
 	if aerr != nil {
 		writeAPIErr(w, aerr)

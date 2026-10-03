@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 249
+# count: 251
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -156,6 +156,8 @@ sessionWire.locked bool,omitempty
 sessionWire.name string
 sessionWire.origin string,omitempty
 sessionWire.originSession string,omitempty
+sessionWire.ports [number],omitempty
+sessionWire.pr raw,omitempty
 sessionWire.rateLimitResumeAt string,omitempty
 sessionWire.remoteUrl string
 sessionWire.repo string

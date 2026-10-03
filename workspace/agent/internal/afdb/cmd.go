@@ -1164,6 +1164,7 @@ func startServer(inst *Instance, opts startOpts) error {
 		"-l", logFile,
 		"-o", serverFlags,
 	)
+	cmd.Env = withoutSessionName(os.Environ())
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

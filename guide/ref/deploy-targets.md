@@ -85,6 +85,12 @@ workspace is not started again (press Start once the task has finished), the rea
 is not shown, a Destroy leaves the workspace row (run Destroy again; it is safe to repeat), and
 the audit log has the request but no outcome. The task's own log (the workspace log group, stream
 prefix `home-ops`) says how it ended.
+The home is released only when the Control Plane sees its task stopped. If that can no longer
+happen — ECS has forgotten a task nobody checked on for over an hour, or the answer to starting it
+was lost — the home stays refused with "an operation on this workspace's home is still running",
+and the Control Plane log names the record to clear. An operator who has checked in ECS that no
+task started by `af-home/<membership>` is running deletes the SSM parameter
+`/af-ws/<workspace>/home-task`, and the home is usable again.
 
 ⁸ Deletes the member's home volume and its hibernation copies; the next start builds a
 fresh home, as for a new member. On this target the logins, connections and Claude state

@@ -1,6 +1,6 @@
 ---
 audience: "anyone wondering what a mark on the screen means"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # Icons, badges, and menus — common Console reference
@@ -44,6 +44,18 @@ conversation is), or with **"Mark all as read"** in the notification centre
 A row can also carry **"Shared"** (visible to another member —
 [02](02-sessions.md#sharing-a-conversation-shared-sessions)) and **"Delete-locked"** (excluded from deletion and
 automatic tidying — [02](02-sessions.md#tidying-up-in-bulk-cleanup)).
+
+A row can grow a **second line** with links. The first is the GitHub pull request of the
+branch the session works on — the icon says open, draft, merged or closed, and an open one
+carries its CI result (passed / failing / running; nothing when no check ran). Click it to open
+the PR on GitHub. It appears only for a working copy whose origin is on github.com while GitHub
+is connected (Settings > Connections), never for the repository's default branch, and it is
+refreshed every couple of minutes, so a merge can take that long to show. The others are the
+ports the session's own processes listen on (`:5173`): click one to open it in a browser pane,
+Ctrl / middle-click for a new pane ([browser pane](../ref/browser-pane.md)). Only servers bound
+to `127.0.0.1` or every interface count — the pane opens `http://127.0.0.1:{port}` — and another
+session's servers never show; tool commands run by the shared codex / opencode Managed servers
+are not attributed to any session.
 
 ## Repository status display
 

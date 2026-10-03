@@ -1479,8 +1479,10 @@ image, so `homeKeep` has one definition. The CP starts it with `ecs:RunTask` (gr
 this cluster, `CpHomeOpsPolicy`) and reads the exit code with `DescribeTasks`. A marker parameter,
 `/af-ws/<workspace>/home-task`, written before `RunTask` and holding the ARN after it, is the record of a task in
 flight (RunTask, ListTasks and DescribeTasks are eventually consistent; GetParameter is not), so a Start or a
-second operation is refused while one may run, across a CP restart. The wait for the workspace's own task reads
-its `LastStatus`, not the service's running count, which drops while the task is still stopping. The root rather than the member's access point: a task definition's volumes cannot be overridden
+second operation is refused while one may run, across a CP restart. Only a task seen STOPPED releases it:
+MISSING, errors and elapsed time prove nothing, so a marker that can never resolve is the operator's to delete. The wait for the workspace's own task needs
+the service to count nothing running and every task it has seen (captured at Stop, or listed) described as
+STOPPED; the running count alone drops while a task is still stopping, and a listing can lag. The root rather than the member's access point: a task definition's volumes cannot be overridden
 per run, uid 1000 cannot remove read-only toolchain trees, and Destroy removes the access point's own root. The
 command confines itself instead (a one-element membership id, a real mount, only `/home/<id>` and
 `/claude-config/<id>`). A task takes minutes, so the member's Recreate and Clean home answer `starting` and

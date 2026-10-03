@@ -541,3 +541,17 @@ read in SDK 587.0.0's source and played by a fake in the tests.
   `via relay`. The code route's body is bounded to 4 KiB at the CP and at the Agent, and a code must
   be one line of the characters a Google code uses. The CP's error log replaces a gcp-login attempt
   id in a relayed path by its reference and drops the Agent URL from a transport error.
+
+## Note — the child also gets `GOOGLE_CLOUD_QUOTA_PROJECT` (2026-10-03)
+
+Issue #1517, decided by the user. Decision 2's list of what the command receives gains
+`GOOGLE_CLOUD_QUOTA_PROJECT`, set to the same effective quota project as
+`CLOUDSDK_BILLING_QUOTA_PROJECT` and `GOOGLE_BILLING_PROJECT` (the profile's quota project, or its
+project when that is blank); the text of decision 2 above is left as written. The reason is the
+2026-10-02 note on open question 2: Google's Go client libraries send `X-Goog-User-Project` beside an
+explicit token only when this variable is set, and `cloud.google.com/go/storage` 1.69.0 refuses
+`option.WithQuotaProject` beside a token source, so without it a Go program that takes the token from
+`GOOGLE_OAUTH_ACCESS_TOKEN` called APIs with no quota project unless it exported the variable itself.
+Python's explicit `Credentials` does not read it (it takes `quota_project_id=`), so the notes keep that
+advice. A caller's own `GOOGLE_CLOUD_QUOTA_PROJECT` is still removed with every other `GOOGLE_*`
+variable before the wrapper sets its value; the child-environment test covers both.

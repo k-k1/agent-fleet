@@ -12,7 +12,7 @@
 // the folded tiers being able to CHECK them is enough. The summary must always show the
 // values the launch will actually use, so nothing is ever launched from a setting the fold
 // hid.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { KeyboardEvent, ClipboardEvent, DragEvent, ReactNode } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -23,7 +23,6 @@ import { Trans } from "../../lib/i18n/Trans.tsx";
 import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
-import { readPromptHistory } from "../../lib/promptHistory.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
 import { requiresConcreteModel, useAutoConcreteModel, useEffortOptions } from "../../lib/agentModels.ts";
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
@@ -47,6 +46,7 @@ import { useLaunchBranchName } from "./useLaunchBranchName.ts";
 import { GitflowInitModal } from "./GitflowInitModal.tsx";
 import { useSkillPicker } from "../mirror/parts/useSkillPicker.ts";
 import { SkillButton, SkillList } from "../mirror/parts/SkillList.tsx";
+import { PromptTemplateButton, PromptTemplatePopover } from "./PromptTemplatePicker.tsx";
 import { bitbucketPending, warningText } from "./branchRule.ts";
 import type { BranchItem } from "./branchRule.ts";
 
@@ -307,7 +307,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
     };
   }, [existingMode, branches, repo]);
 
-  // Template sources fetched once for this repo; history comes from localStorage.
+  // The repository's template sources, fetched once; history and personal templates are ui-prefs.
   const [srvGroups, setSrvGroups] = useState<PromptTemplateGroup[]>([]);
   useEffect(() => {
     let alive = true;
@@ -433,20 +433,57 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
   const expand = (body: string) =>
     body.replaceAll("{{repo}}", repo).replaceAll("{{branch}}", branch || "").replaceAll("{{path}}", path || "");
 
-  // History first, then in-repo sources. command/skill are claude-flavored.
-  const history = readPromptHistory(repo);
-  const groups: PromptTemplateGroup[] = [
-    ...(history.length
-      ? [{ source: "history", label: tr("launch.history"), items: history.map((h, i) => ({ id: "h" + i, label: h, body: h })) }]
-      : []),
-    ...srvGroups.filter((g) => kind === "claude" || (g.source !== "command" && g.source !== "skill")),
-  ];
-  const flatItems = groups.flatMap((g) => g.items.map((it) => it.body));
-  const hasTemplates = flatItems.length > 0;
+  // The repository's own template file. Its .claude commands and skills are left to the skill
+  // picker (PromptTemplatePicker.tsx says why); history and personal templates come from ui-prefs.
+  const fileItems = useMemo(() => srvGroups.filter((g) => g.source === "file").flatMap((g) => g.items), [srvGroups]);
+  const [tmplOpen, setTmplOpen] = useState(false);
+  const tmplBtnRef = useRef<HTMLButtonElement>(null);
 
-  const pick = (body: string) => {
-    setPrompt(expand(body));
-    setTimeout(() => textRef.current?.focus(), 0);
+  // Never discards typed text silently: the picker asks first when the prompt holds any, and
+  // "cursor" puts the template at the caret on a line of its own.
+  //
+  // On a fine pointer the text goes in as a native edit (execCommand "insertText" over the range
+  // it replaces), so Ctrl/⌘+Z takes an insert or a "replace all" back; assigning the controlled
+  // value instead leaves the browser's undo history unable to restore the typed text. The input
+  // event it fires updates the state through onChange. A touch device keeps the plain state write:
+  // the native edit needs focus, which would pop the keyboard (and phones offer no Ctrl+Z).
+  const insertTemplate = (text: string, how: "replace" | "cursor") => {
+    const el = textRef.current;
+    let from = 0;
+    let to = prompt.length;
+    let ins = text;
+    let caret = text.length;
+    if (how === "cursor") {
+      from = to = Math.min(el?.selectionEnd ?? prompt.length, prompt.length);
+      const before = prompt.slice(0, from);
+      const after = prompt.slice(from);
+      const lead = before && !before.endsWith("\n") ? "\n" : "";
+      ins = lead + text + (after && !after.startsWith("\n") ? "\n" : "");
+      caret = from + lead.length + text.length;
+    }
+    const next = prompt.slice(0, from) + ins + prompt.slice(to);
+    if (el && !coarsePointer()) {
+      el.focus();
+      el.setSelectionRange(from, to);
+      let native = false;
+      try {
+        native = typeof document.execCommand === "function" && document.execCommand("insertText", false, ins);
+      } catch {
+        native = false;
+      }
+      if (native && el.value === next) {
+        el.setSelectionRange(caret, caret);
+        return;
+      }
+    }
+    setPrompt(next);
+    // The caret lands right after the template on every device; only the focus is desktop-only.
+    requestAnimationFrame(() => {
+      const box = textRef.current;
+      if (!box) return;
+      box.setSelectionRange(caret, caret);
+      if (!coarsePointer()) box.focus();
+    });
   };
 
   // The mirror's skill picker over the first prompt. No session exists yet, so the list is
@@ -634,36 +671,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
                   </button>
                 </>
               )}
-              {hasTemplates && (
-                <select
-                  className="launch-tmpl-select"
-                  value=""
-                  title={tr("launch.template_insert_title")}
-                  onChange={(e) => {
-                    if (e.target.value === "") return;
-                    const i = Number(e.target.value);
-                    if (Number.isInteger(i) && flatItems[i] !== undefined) pick(flatItems[i]);
-                  }}
-                >
-                  <option value="">{tr("launch.template_insert")}</option>
-                  {(() => {
-                    let idx = 0;
-                    return groups.map((g) => {
-                      const start = idx;
-                      idx += g.items.length;
-                      return (
-                        <optgroup key={g.source} label={g.label}>
-                          {g.items.map((it, j) => (
-                            <option key={g.source + ":" + it.id} value={start + j}>
-                              {it.label}
-                            </option>
-                          ))}
-                        </optgroup>
-                      );
-                    });
-                  })()}
-                </select>
-              )}
+              <PromptTemplateButton btnRef={tmplBtnRef} open={tmplOpen} disabled={busy} onToggle={() => setTmplOpen((o) => !o)} />
               {skillPicker.canSkills && (
                 <SkillButton
                   btnRef={skillPicker.btnRef}
@@ -675,6 +683,19 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
               )}
             </span>
           </span>
+          {/* In the flow, between the label row and the box: the dialog body scrolls, and an
+              absolutely placed panel this tall was cut off at its bottom edge. */}
+          {tmplOpen && (
+            <PromptTemplatePopover
+              repo={repo}
+              fileItems={fileItems}
+              expand={expand}
+              hasText={!!prompt.trim()}
+              btnRef={tmplBtnRef}
+              onInsert={insertTemplate}
+              onClose={() => setTmplOpen(false)}
+            />
+          )}
           <AttachChips attachments={images} pasting={false} onRemove={removeFile} onOpen={setZoom} />
           {/* Rendered inside the Modal's panel (the portal keeps the React tree), so a click on
               the lightbox's backdrop stops at the panel instead of also closing the dialog. */}

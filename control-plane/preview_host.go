@@ -227,19 +227,20 @@ func auditPreviewShare(ctx context.Context, m *manager, res *resolved, on bool) 
 // the next request.
 //
 // GetMembershipByID returns only active rows, so a revoked membership fails here
-// (git_http.go uses the same function for the same reason).
+// (git_http.go uses the same function for the same reason). That includes the owner: an
+// owner's cookie outlives their removal like anybody else's.
 func previewViewerAllowed(ctx context.Context, m *manager, ws store.Workspace, st wsSettings, membershipID string) bool {
 	if membershipID == "" {
+		return false
+	}
+	mv, ok, err := m.store.GetMembershipByID(ctx, membershipID)
+	if err != nil || !ok {
 		return false
 	}
 	if membershipID == ws.MembershipID {
 		return true // the owner themselves
 	}
-	if !st.PreviewTenantShare {
-		return false
-	}
-	mv, ok, err := m.store.GetMembershipByID(ctx, membershipID)
-	return err == nil && ok && mv.TenantID == ws.TenantID
+	return st.PreviewTenantShare && mv.TenantID == ws.TenantID
 }
 
 // sanitizePreviewPorts normalizes what the Console sent: 1..65535, duplicates

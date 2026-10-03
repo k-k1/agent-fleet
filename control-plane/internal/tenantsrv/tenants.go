@@ -845,10 +845,19 @@ func (a Admin) AddMembership(w http.ResponseWriter, r *http.Request) {
 	// deliberately does not reactivate (it also serves the auto-provisioning paths,
 	// where that would undo an offboarding on the person's next visit) — so an
 	// invite, which IS an explicit decision, does it here.
+	detail := "role=" + role
 	if mem.Status != "active" {
 		if err := a.cp.Store().SetMembershipStatus(r.Context(), mem.ID, "active"); err != nil {
 			writeAPIErr(w, internalErr(err))
 			return
+		}
+		// The scheduler paused this person's schedules while they were away rather than
+		// deleting them; a restore is meant to give back what the removal took, so they
+		// resume here. A failure is recorded, not answered: the person IS back.
+		n, err := a.cp.ResumeSchedulesHeldByRemoval(r.Context(), mem.ID)
+		detail += "; restored; schedules resumed=" + strconv.Itoa(n)
+		if err != nil {
+			detail += " (resume failed: " + err.Error() + ")"
 		}
 	}
 	// Being on a roster is an entry-gate term now (docs/log/61 §61.9.6) — an invited
@@ -856,7 +865,7 @@ func (a Admin) AddMembership(w http.ResponseWriter, r *http.Request) {
 	a.cp.InvalidateTenantLogin()
 	_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
 		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
-		Action: "membership.add", Target: ident.UserKey, Detail: "role=" + role, At: store.NowTS(),
+		Action: "membership.add", Target: ident.UserKey, Detail: detail, At: store.NowTS(),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"user_key": ident.UserKey, "tenant": t.Slug, "role": role})
 }
@@ -894,11 +903,13 @@ func (a Admin) checkInviteDomain(r *http.Request, t store.Tenant, email, key str
 // (7 days by default) and cannot be revoked individually, so without this the
 // person keeps their access for a week after they leave (decisions 22/27).
 //
-// The delete is LOGICAL (status='inactive'): the workspace, its home and its
+// The delete is LOGICAL (status='inactive'): the workspace row, its home and its
 // encrypted secrets survive, and every resolution path already requires an active
-// membership, so access stops on the very next request. Deleting the row outright
-// would orphan the schedules, audit entries and shares that reference it.
-// Reinstating is just re-inviting — EnsureMembership reactivates.
+// membership, so access stops on the very next request. The running workspace is
+// stopped (stopRemovedWorkspace) and the scheduler pauses the person's schedules.
+// Deleting the row outright would orphan the schedules, audit entries and shares that
+// reference it. Reinstating is re-inviting (AddMembership), which reactivates the row
+// and resumes those schedules.
 //
 // The request is recorded before the status changes (beginIrreversible), purge or not: the
 // deactivation is the offboarding itself, and purge makes it irreversible.
@@ -985,9 +996,17 @@ func (a Admin) RemoveMembership(w http.ResponseWriter, r *http.Request) {
 	// disk, but nothing should keep serving it from memory for this membership.
 	a.cp.EvictMembershipCache(mem.ID)
 	a.cp.InvalidateTenantLogin()
-	detail := "status=inactive (workspace and home kept)"
+	// Requests already authorised for this membership — a terminal, an event stream, a
+	// shared preview's WebSocket — would otherwise outlive the removal; every other replica
+	// closes its own on the next removed-member sweep.
+	closed := a.cp.CloseMembershipConnections(mem.ID)
+	var detail, workspaceStop string
 	var leftovers []string
-	if body.Purge && a.cp.DestroyInBackground() {
+	if !body.Purge {
+		workspaceStop = a.stopRemovedWorkspace(r.Context(), t.ID, caller.ID, ident.UserKey, mem.ID)
+		detail = "status=inactive (home kept); connections closed=" + strconv.Itoa(closed) +
+			"; workspace stop " + workspaceStop
+	} else if a.cp.DestroyInBackground() {
 		// The membership is inactive now; destroying its workspace takes minutes here, so
 		// the outcome entry waits for it.
 		ctx := context.WithoutCancel(r.Context())
@@ -1009,8 +1028,7 @@ func (a Admin) RemoveMembership(w http.ResponseWriter, r *http.Request) {
 			"removed": ident.UserKey, "tenant": t.Slug, "purged": true, "pending": true,
 		})
 		return
-	}
-	if body.Purge {
+	} else {
 		leftovers, err = a.cp.DestroyWorkspaceByMembership(r.Context(), mem.ID)
 		if err != nil {
 			// The membership IS deactivated at this point — say so rather than
@@ -1025,8 +1043,100 @@ func (a Admin) RemoveMembership(w http.ResponseWriter, r *http.Request) {
 	in.Done(r.Context(), detail, http.StatusOK)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"removed": ident.UserKey, "tenant": t.Slug,
-		"purged": body.Purge, "leftovers": leftovers,
+		"purged": body.Purge, "leftovers": leftovers, "workspace_stop": workspaceStop,
 	})
+}
+
+// RemovalStopWait is how long RemoveMembership waits for the removed member's workspace to
+// stop before answering. A stop that takes longer carries on in the background and writes
+// its own audit row (membership.remove.stop_workspace): an ECS drain can take minutes, and
+// the administrator's request must not hang on it. A variable so tests can shorten it.
+var RemovalStopWait = 10 * time.Second
+
+// errRestoredBeforeStop marks a removal stop that found the person re-invited by the time
+// it held the workspace's locks, and so stopped nothing.
+var errRestoredBeforeStop = errors.New("membership restored before the stop")
+
+// removalStopBudget bounds the background stop, retries included.
+const removalStopBudget = 10 * time.Minute
+
+// removalStopRetry is the pause between attempts while another lifecycle operation holds
+// the workspace (a start in flight when the member was removed).
+var removalStopRetry = 2 * time.Second
+
+// stopRemovedWorkspace stops the workspace of a membership that was just deactivated and
+// says how that went: "none" (no workspace), "stopped", "skipped: membership restored",
+// "failed: …" or "pending". Whatever happens here, the removed-member sweep stops a
+// workspace this leaves running (a CP restart mid-stop, a stop past its budget).
+//
+// Why removal stops it at all: every CP route a workspace can call already refuses an
+// inactive membership on the next request, but the container itself goes on running. It
+// still holds what it pulled while the person was a member (the tenant's distributed MCP
+// headers, git and cloud logins in the home), its sessions keep spending the tenant's
+// compute, and nobody can see it — the Console, schedules and shares all resolve through
+// an active membership. Only this membership's workspace is touched: the same person
+// keeps their workspace in every other tenant.
+//
+// The stop is the administrator's ordinary stop (StopWorkspaceByMembership), which works
+// on an inactive membership because it looks the row up by id.
+func (a Admin) stopRemovedWorkspace(ctx context.Context, tenantID, actorID, target, membershipID string) string {
+	ctx = context.WithoutCancel(ctx)
+	if _, ok, err := a.cp.Store().GetWorkspaceByMembership(ctx, membershipID); err == nil && !ok {
+		return "none"
+	}
+	done := make(chan error, 1)
+	go func() {
+		bctx, cancel := context.WithTimeout(ctx, removalStopBudget)
+		defer cancel()
+		for {
+			stopped, err := a.cp.StopRemovedMemberWorkspace(bctx, membershipID)
+			if err == nil && !stopped {
+				err = errRestoredBeforeStop
+			}
+			if !errors.Is(err, store.ErrSessionShareOwnerBusy) {
+				done <- err
+				return
+			}
+			select {
+			case <-bctx.Done():
+				done <- err
+				return
+			case <-time.After(removalStopRetry):
+			}
+		}
+	}()
+	outcome := func(err error) string {
+		switch {
+		case errors.Is(err, errRestoredBeforeStop):
+			return "skipped: membership restored"
+		case err != nil:
+			return "failed: " + err.Error()
+		}
+		return "stopped"
+	}
+	timer := time.NewTimer(RemovalStopWait)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return outcome(err)
+	case <-timer.C:
+	}
+	go func() {
+		err := <-done
+		status := http.StatusOK
+		if err != nil && !errors.Is(err, errRestoredBeforeStop) {
+			status = http.StatusInternalServerError
+		}
+		if aerr := a.cp.Store().InsertAudit(ctx, store.AuditLog{
+			ID: store.NewID(), TenantID: tenantID, ActorKind: "user", ActorID: actorID,
+			Action: "membership.remove.stop_workspace", Target: target,
+			Detail: "workspace stop " + outcome(err), HTTPStatus: status, At: store.NowTS(),
+		}); aerr != nil {
+			log.Printf("membership.remove: workspace stop for %s finished (%s) but its audit row was not written: %v",
+				target, outcome(err), aerr)
+		}
+	}()
+	return "pending"
 }
 
 // DeleteMembership (DELETE /api/admin/tenants/{slug}/members/{key}) removes the row

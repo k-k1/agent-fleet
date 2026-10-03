@@ -36,6 +36,10 @@ exception for "I just need to see one HTTP response".
    afterwards, **Reload** first; **Reconnect** rebuilds the connection or Chromium.
 7. Check the **Console** drawer's badge for `warn` and `error` from the page.
 
+Shortcut: when the server was started by a session, its row in the left pane lists the port
+(`:5173`) on a second line — clicking it opens the pane at that port and `/`
+([badges](../member/badges-and-menus.md#session-display)).
+
 Reconnect, a Console reload and a Workspace stop/start all create a *new* Page at the
 current port and path. Cookies, storage and half-typed input are not restored.
 

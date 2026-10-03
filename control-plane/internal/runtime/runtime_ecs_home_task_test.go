@@ -27,6 +27,7 @@ type fakeTasks struct {
 	exitCode        *int32
 	stoppedWhy      string
 	wsStoppingPolls int
+	wsRunningListed bool // the workspace task is listed as desired RUNNING (before a Stop)
 	lists           []*ecs.ListTasksInput
 	// onRun sees the moment of the RunTask, for the ordering checks.
 	onRun func()
@@ -73,7 +74,7 @@ func (f *fakeTasks) ListTasks(_ context.Context, in *ecs.ListTasksInput, _ ...fu
 	f.lists = append(f.lists, in)
 	if in.Family != nil {
 		// The workspace's own task: listed under desired STOPPED once it is being stopped.
-		if in.DesiredStatus == ecstypes.DesiredStatusStopped {
+		if in.DesiredStatus == ecstypes.DesiredStatusStopped || f.wsRunningListed {
 			return &ecs.ListTasksOutput{TaskArns: []string{fakeWSTask}}, nil
 		}
 		return &ecs.ListTasksOutput{}, nil
@@ -321,9 +322,8 @@ func TestECSHomeTaskMissingRightAfterRunTaskKeepsWaiting(t *testing.T) {
 }
 
 // The marker is what a restarted CP (or another replica) finds. While its task is not
-// seen stopped — or, just after RunTask, not seen at all — Start and a second operation are
-// refused even though ListTasks lists nothing. A task seen STOPPED, or unknown past the
-// grace, releases it.
+// seen STOPPED — MISSING, RUNNING, MISSING again, however old the marker — Start and a
+// second operation are refused even though ListTasks lists nothing. Only STOPPED releases.
 func TestECSHomeTaskMarkerRefusesUntilItsTaskStops(t *testing.T) {
 	fs := &fakeSSM{}
 	ft := &fakeTasks{missingPolls: 1, runningPolls: 1, exitCode: exit(0)} // ListTasks: nothing
@@ -331,31 +331,109 @@ func TestECSHomeTaskMarkerRefusesUntilItsTaskStops(t *testing.T) {
 	rt := newHomeTaskECSWith(fe, &fakeEFS{}, fs, ft)
 	marker := rt.homeTaskMarker()
 	fs.values = map[string]string{marker: "arn:task/home-1"}
+	// An old marker: elapsed time is no evidence either.
+	fs.at = map[string]time.Time{marker: time.Now().Add(-time.Hour)}
 	for i, want := range []error{ErrHomeTaskInFlight, ErrHomeTaskInFlight, nil} { // MISSING, RUNNING, STOPPED
 		if err := rt.Start(context.Background()); !errors.Is(err, want) || (want == nil && err != nil) {
 			t.Fatalf("Start #%d = %v, want %v", i+1, err, want)
+		}
+		if want != nil && len(fe.createCalls) != 0 {
+			t.Fatalf("Start #%d created the service while the home task was not seen stopped", i+1)
 		}
 	}
 	if _, ok := fs.values[marker]; ok {
 		t.Error("a marker whose task stopped was kept")
 	}
 
-	// Unknown to ECS past the grace: forgotten, so it no longer blocks.
+	// RUNNING seen, then a transient MISSING: still refused, marker kept.
 	fs.values[marker] = "arn:task/home-2"
-	fs.at = map[string]time.Time{marker: time.Now().Add(-homeTaskMissingGrace - time.Second)}
-	ft.missingPolls = 1
-	if err := rt.HomeWipeBlocked(context.Background()); err != nil {
-		t.Errorf("a marker past the grace whose task ECS no longer knows = %v, want nil", err)
-	}
-	// A marker written before a RunTask whose answer never came blocks for its own grace.
-	fs.values[marker] = homeTaskMarkerPending
-	fs.at[marker] = time.Now()
+	ft.runningPolls, ft.missingPolls = 1, 0
 	if err := rt.HomeWipeBlocked(context.Background()); !errors.Is(err, ErrHomeTaskInFlight) {
-		t.Errorf("a fresh pending marker = %v, want ErrHomeTaskInFlight", err)
+		t.Errorf("RUNNING = %v, want ErrHomeTaskInFlight", err)
 	}
-	fs.at[marker] = time.Now().Add(-homeTaskPendingGrace - time.Second)
-	if err := rt.HomeWipeBlocked(context.Background()); err != nil {
-		t.Errorf("a pending marker past its grace = %v, want nil", err)
+	ft.missingPolls = 1
+	if err := rt.HomeWipeBlocked(context.Background()); !errors.Is(err, ErrHomeTaskInFlight) {
+		t.Errorf("MISSING after RUNNING = %v, want ErrHomeTaskInFlight", err)
+	}
+	if _, ok := fs.values[marker]; !ok {
+		t.Error("MISSING dropped the marker")
+	}
+
+	// A marker written before a RunTask whose answer never came names no task that could be
+	// seen stopped: it blocks however old it is, until the operator clears it.
+	fs.values[marker] = homeTaskMarkerPending
+	fs.at[marker] = time.Now().Add(-24 * time.Hour)
+	if err := rt.HomeWipeBlocked(context.Background()); !errors.Is(err, ErrHomeTaskInFlight) {
+		t.Errorf("an old pending marker = %v, want ErrHomeTaskInFlight", err)
+	}
+	if _, ok := fs.values[marker]; !ok {
+		t.Error("a pending marker was dropped without an operator")
+	}
+}
+
+// A wait that never sees its task (MISSING past the wait's bound) ends without claiming
+// the outcome: the marker stays, so the home stays refused.
+func TestECSHomeTaskUnknownOutcomeKeepsTheMarker(t *testing.T) {
+	fs, ft := &fakeSSM{}, &fakeTasks{missingPolls: 1 << 30, exitCode: exit(0)}
+	rt := newHomeTaskECSWith(&fakeECS{}, &fakeEFS{}, fs, ft)
+	rt.homeTaskMissingGrace = 20 * time.Millisecond
+	if err := rt.WipeHome(context.Background(), HomeWipeRepos); err == nil {
+		t.Fatal("a wait that never saw its task reported success")
+	}
+	if fs.values[rt.homeTaskMarker()] != "arn:task/home-1" {
+		t.Errorf("marker = %q, want the task's ARN kept", fs.values[rt.homeTaskMarker()])
+	}
+	if err := rt.HomeWipeBlocked(context.Background()); !errors.Is(err, ErrHomeTaskInFlight) {
+		t.Errorf("after an unknown outcome HomeWipeBlocked = %v, want ErrHomeTaskInFlight", err)
+	}
+}
+
+// fakeTasksNoListing hides every workspace task from ListTasks: the listing lags.
+type fakeTasksNoListing struct{ fakeTasks }
+
+func (f *fakeTasksNoListing) ListTasks(ctx context.Context, in *ecs.ListTasksInput, opts ...func(*ecs.Options)) (*ecs.ListTasksOutput, error) {
+	if in.Family != nil {
+		f.lists = append(f.lists, in)
+		return &ecs.ListTasksOutput{}, nil
+	}
+	return f.fakeTasks.ListTasks(ctx, in, opts...)
+}
+
+// An empty listing is not proof the workspace task is gone: while the service still counts
+// one running, the wait goes on and no home task starts.
+func TestECSDrainWaitTrustsTheServiceCountOverAnEmptyListing(t *testing.T) {
+	fe := &fakeECS{}
+	ft := &fakeTasksNoListing{fakeTasks{exitCode: exit(0)}}
+	rt := newHomeTaskECSWith(fe, &fakeEFS{}, &fakeSSM{}, &fakeTasks{})
+	rt.tasks = ft
+	fe.services[rt.name] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0, RunningCount: 1}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if err := rt.WipeHome(ctx, HomeWipeClean); err == nil {
+		t.Error("the wipe went ahead while the service still counts a running task")
+	}
+	if len(ft.runs) != 0 {
+		t.Error("the home task started while the workspace task was unresolved")
+	}
+}
+
+// A task Stop saw running must be seen STOPPED, even once no listing shows it any more and
+// DescribeTasks answers MISSING for it.
+func TestECSDrainWaitNeedsEveryTaskStopSawToBeSeenStopped(t *testing.T) {
+	fe := &fakeECS{}
+	ft := &fakeTasksNoListing{fakeTasks{exitCode: exit(0), missingPolls: 1 << 30}}
+	rt := newHomeTaskECSWith(fe, &fakeEFS{}, &fakeSSM{}, &fakeTasks{})
+	rt.tasks = ft
+	fe.services[rt.name] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	stoppedTasks.Store(rt.name, []string{"arn:task/ws-vanished"})
+	t.Cleanup(func() { stoppedTasks.Delete(rt.name) })
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if err := rt.WipeHome(ctx, HomeWipeClean); err == nil {
+		t.Error("the wipe went ahead although a task Stop saw was never seen STOPPED")
+	}
+	if len(ft.runs) != 0 {
+		t.Error("the home task started while a stopped workspace task was unconfirmed")
 	}
 }
 
@@ -462,6 +540,64 @@ func TestECSHomeTaskCarriesTheWorkspaceCostTags(t *testing.T) {
 		}
 		if _, ok := task["af-tenant"]; ok != (slug != "") || task["af-membership"] != "M-1" {
 			t.Errorf("slug %q: home task tags = %v", slug, task)
+		}
+	}
+}
+
+// Stop records the tasks it is stopping, for the wait that follows (only where the stack
+// declares the home task).
+func TestECSStopCapturesTheTasksItStops(t *testing.T) {
+	fe, ft := &fakeECS{}, &fakeTasks{wsRunningListed: true}
+	rt := newHomeTaskECS(fe, &fakeEFS{}, ft)
+	fe.services[rt.name] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+	t.Cleanup(func() { stoppedTasks.Delete(rt.name) })
+	if err := rt.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	v, ok := stoppedTasks.Load(rt.name)
+	if !ok || len(v.([]string)) != 1 || v.([]string)[0] != fakeWSTask {
+		t.Errorf("captured = %v, want the running workspace task", v)
+	}
+}
+
+// fakeTasksRunErr fails RunTask with err.
+type fakeTasksRunErr struct {
+	fakeTasks
+	err error
+}
+
+func (f *fakeTasksRunErr) RunTask(_ context.Context, in *ecs.RunTaskInput, _ ...func(*ecs.Options)) (*ecs.RunTaskOutput, error) {
+	f.runs = append(f.runs, in)
+	return nil, f.err
+}
+
+// Only a RunTask known to have started nothing drops the pending marker: a client fault
+// (4xx). A server fault (5xx, even after the SDK's retries) or an error with no fault may
+// have placed a task, so the marker stays and Start stays refused.
+func TestECSRunTaskFailureKeepsTheMarkerUnlessNothingStarted(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		err  error
+		kept bool
+	}{
+		{"server fault", &ecstypes.ServerException{Message: aws.String("internal server error")}, true},
+		{"no fault (transport)", errors.New("dial tcp: i/o timeout"), true},
+		{"client fault", &ecstypes.InvalidParameterException{Message: aws.String("TaskDefinition is inactive")}, false},
+		{"access denied", &ecstypes.AccessDeniedException{Message: aws.String("not authorized")}, false},
+	} {
+		fe, fs := &fakeECS{}, &fakeSSM{}
+		rt := newHomeTaskECSWith(fe, &fakeEFS{}, fs, &fakeTasks{})
+		rt.tasks = &fakeTasksRunErr{err: c.err}
+		if err := rt.WipeHome(context.Background(), HomeWipeClean); err == nil {
+			t.Fatalf("%s: the RunTask error was lost", c.name)
+		}
+		_, kept := fs.values[rt.homeTaskMarker()]
+		if kept != c.kept {
+			t.Errorf("%s: marker kept = %v, want %v", c.name, kept, c.kept)
+		}
+		startErr := rt.Start(context.Background())
+		if c.kept && (!errors.Is(startErr, ErrHomeTaskInFlight) || len(fe.createCalls) != 0) {
+			t.Errorf("%s: Start = %v (creates %d), want ErrHomeTaskInFlight and no service", c.name, startErr, len(fe.createCalls))
 		}
 	}
 }

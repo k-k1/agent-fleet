@@ -479,6 +479,8 @@ func ChildEnv(environ []string, run string, p Profile, token string) ([]string, 
 		"GOOGLE_PROJECT=" + p.Project,
 		"CLOUDSDK_BILLING_QUOTA_PROJECT=" + quota,
 		"GOOGLE_BILLING_PROJECT=" + quota,
+		// Go client libraries send X-Goog-User-Project beside an explicit token only from this.
+		"GOOGLE_CLOUD_QUOTA_PROJECT=" + quota,
 		"USER_PROJECT_OVERRIDE=true",
 		"GOOGLE_APPLICATION_CREDENTIALS=" + filepath.Join(run, noCredentials),
 	}

@@ -298,6 +298,11 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 			resp["backgroundBusyReason"] = reason
 		}
 	}
+	// Peer messages queued behind the user's answer (#1031): the mirror says they will follow
+	// and lets the member drop one.
+	if pp := pendingPeersWire(name); len(pp) > 0 {
+		resp["pendingPeers"] = pp
+	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -516,6 +521,10 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 				resp["mode"] = pm
 			}
 		}
+	}
+	// Peer messages queued behind the user's answer (#1031), as on claude's path.
+	if pp := pendingPeersWire(meta.Name); len(pp) > 0 {
+		resp["pendingPeers"] = pp
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
