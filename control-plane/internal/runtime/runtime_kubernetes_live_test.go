@@ -1265,6 +1265,38 @@ func (l *kubeLive) nodeUIDQuiet(node string) string {
 	return strings.TrimSpace(l.mustQuiet("get", "node", node, "--ignore-not-found", "-o", "jsonpath={.metadata.uid}"))
 }
 
+// nodeReplaced reads whether the Node object named node is no longer the one with UID
+// orig: gone (a successful read that found nothing) or another object. An unreadable node
+// is read again a few times and then fails the test as INCONCLUSIVE — an API error must
+// never pass for a node the provider replaced, which is what several verdicts rest on.
+func (l *kubeLive) nodeReplaced(node, orig string) bool {
+	l.t.Helper()
+	var err error
+	for attempt := 0; attempt < 4; attempt++ {
+		if attempt > 0 {
+			time.Sleep(5 * time.Second)
+		}
+		var out string
+		out, err = l.run("get", "node", node, "--ignore-not-found", "-o", "jsonpath={.metadata.uid}")
+		var gone bool
+		if gone, err = nodeReplacedFrom(out, err, orig); err == nil {
+			return gone
+		}
+	}
+	l.t.Fatalf("INCONCLUSIVE: cannot tell whether node %s was replaced: %v", node, err)
+	return false
+}
+
+// nodeReplacedFrom decides from one read of a node's UID (kubectl get --ignore-not-found):
+// replaced when the read found nothing or another UID; an error decides nothing.
+func nodeReplacedFrom(uid string, readErr error, orig string) (bool, error) {
+	if readErr != nil {
+		return false, readErr
+	}
+	uid = strings.TrimSpace(uid)
+	return uid == "" || uid != orig, nil
+}
+
 func (l *kubeLive) nodeUID(node string) string {
 	l.t.Helper()
 	return strings.TrimSpace(l.must("get", "node", node, "--ignore-not-found", "-o", "jsonpath={.metadata.uid}"))
@@ -1617,7 +1649,11 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	// recreated under the same name is told from the one this test stopped.
 	vmID := nodeObj.Metadata.Annotations["container.googleapis.com/instance_id"]
 	sameVM := func(status string) bool { return vmID == "" || strings.Contains(status, vmID) }
+	// sameNode is for the cleanup, where an unreadable node only means "leave it alone".
+	// Everything a verdict rests on uses replaced, which never takes an error for a
+	// replacement.
 	sameNode := func() bool { u := l.nodeUIDQuiet(node); return u != "" && u == nodeObj.Metadata.UID }
+	replaced := func() bool { return l.nodeReplaced(node, nodeObj.Metadata.UID) }
 
 	// Recovery runs before the workspace's own cleanup, which needs a kubelet to remove
 	// the pod: the VM is started again, or a cut-off node with its VM running is
@@ -1670,7 +1706,7 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 
 	// Again right before the stop: the node may have been replaced, uncordoned or given a
 	// pod since the checks above.
-	if !sameNode() {
+	if replaced() {
 		t.Fatalf("INCONCLUSIVE: node %s was replaced before the stop", node)
 	}
 	if strings.TrimSpace(l.must("get", "node", node, "-o", "jsonpath={.spec.unschedulable}")) != "true" {
@@ -1706,7 +1742,7 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	}
 
 	err := rt.Stop(ctx)
-	if err == nil && !sameNode() {
+	if err == nil && replaced() {
 		// GKE's instance group recreates a workspace VM that terminated within seconds
 		// (compute.instances.repair.recreateInstance, measured on GKE 1.35), and the node
 		// controller then deletes the old Node object and its pods: the stop rightly
@@ -1740,10 +1776,10 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 		}
 		var replacedAt time.Time
 		l.eventually(kubeLiveRepairWindow, "the node's auto-repair to free the pod", func() bool {
-			if sameNode() && l.nodeReadyQuiet(node) {
+			if !replaced() && l.nodeReadyQuiet(node) {
 				t.Fatalf("INCONCLUSIVE: %s answered again (its kubelet came back) before the pod went, %s after the cut", node, time.Since(t0).Round(time.Second))
 			}
-			if replacedAt.IsZero() && !sameNode() {
+			if replacedAt.IsZero() && replaced() {
 				replacedAt = time.Now()
 				t.Logf("%s was removed or recreated by the provider %s after the cut", node, time.Since(t0).Round(time.Second))
 			}
@@ -1771,7 +1807,7 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 			}
 			time.Sleep(10 * time.Second)
 		}
-		if sameNode() {
+		if !replaced() {
 			t.Fatalf("INCONCLUSIVE: the repair %s is done, yet %s is still the Node object that was cut off", op.Name, node)
 		}
 		t.Logf("the provider's repair: %s %s of %s, started %s after the cut, %s; the node was replaced", op.OperationType, op.Name, op.TargetLink, op.started.Sub(t0).Round(time.Second), op.Status)
@@ -1784,7 +1820,7 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 		// case (Lifecycle/PodDeletedBehindTheCP), where nothing stopped the workspace.
 		l.startRunning(rt)
 		p := l.runningPod(rt)
-		if p.Spec.NodeName == node && sameNode() {
+		if p.Spec.NodeName == node && !replaced() {
 			t.Fatalf("running again on the cut-off node %s", node)
 		}
 		g, _ := strconv.Atoi(gen)
@@ -1806,7 +1842,7 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 		l.operator(haltCmd)
 		l.eventually(5*time.Minute, "the provider to report "+node+" TERMINATED", func() bool {
 			st, err := l.operatorRun(statusCmd)
-			if err != nil || !sameVM(st) || !sameNode() {
+			if err != nil || !sameVM(st) || replaced() {
 				t.Fatalf("INCONCLUSIVE: the provider replaced or removed %s before the runbook's taint (%s after the halt; %q, %v)", node, time.Since(t2).Round(time.Second), strings.TrimSpace(st), err)
 			}
 			return strings.Contains(st, "TERMINATED")
@@ -1818,7 +1854,7 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	// provider replaced in between removes the pod too, and then nothing shows which did.
 	stillOurs := func(what string) {
 		st, err := l.operatorRun(statusCmd)
-		if err != nil || !strings.Contains(st, "TERMINATED") || !sameVM(st) || !sameNode() {
+		if err != nil || !strings.Contains(st, "TERMINATED") || !sameVM(st) || replaced() {
 			t.Fatalf("INCONCLUSIVE: %s: the provider replaced or removed %s (%q, %v), so the runbook's taint is not what freed the pod", what, node, strings.TrimSpace(st), err)
 		}
 	}
@@ -1840,7 +1876,7 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	t.Logf("the stop settled %s after the operator's halt began", time.Since(t2).Round(time.Second))
 	l.startRunning(rt)
 	p := l.runningPod(rt)
-	if p.Spec.NodeName == node && sameNode() {
+	if p.Spec.NodeName == node && !replaced() {
 		t.Fatalf("running again on the stopped node %s", node)
 	}
 	t.Logf("node unreachable: running again on %s %s after the operator's halt began, %s after the node was cut off",

@@ -72,3 +72,25 @@ func TestRepairSucceeded(t *testing.T) {
 		}
 	}
 }
+
+// A node read that failed is not a replacement: only a read that found nothing, or found
+// another UID, is.
+func TestNodeReplacedFrom(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		uid      string
+		err      error
+		replaced bool
+		wantErr  bool
+	}{
+		{"the same node", "u1\n", nil, false, false},
+		{"another object of that name", "u2", nil, true, false},
+		{"gone", "", nil, true, false},
+		{"an API error", "", errors.New("kubectl get node n1: exit status 1: Unable to connect to the server"), false, true},
+	} {
+		got, err := nodeReplacedFrom(tc.uid, tc.err, "u1")
+		if got != tc.replaced || (err != nil) != tc.wantErr {
+			t.Errorf("%s: nodeReplacedFrom = %v, %v; want replaced %v, error %v", tc.name, got, err, tc.replaced, tc.wantErr)
+		}
+	}
+}
