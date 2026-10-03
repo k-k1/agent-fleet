@@ -1673,3 +1673,40 @@ attached home still in use — and never another path. The CP sends those lines 
 so slots launched from an older template heal at their next mount without being replaced. Quarantine now also
 unmounts (bounded, best-effort) before its detach. Code: `control-plane/internal/runtime/runtime_ecs_ec2_home_mount.go`,
 `runtime_ecs_ec2.go` (`mountHome`, `releaseSlotSince`, `launch`, `quarantineSlot`), `deploy/aws/ecs/cfn/40-ec2-pool.yaml`.
+
+**Note (2026-10-04, #1603): every Destroy that runs the home task has a record, and the golden auto-bake is
+stepped by one CP.** During a rolling CP replacement on a sandbox pool, the old CP ran the golden seed's Destroy
+through the home task and was stopped before it recorded the answer. The seed then stayed refused every minute by its
+pending marker. The golden pipeline destroys in the tick (`destroyWorkspaceByMembership`), and only the background
+Destroy opened a `home_operation` row. Now `beginDestroyWorkspace` opens one wherever the runtime runs the home task,
+in the request or not, so the #1544 reconciler of the next CP finishes the seed's and the probe's Destroy too. Every
+path that runs the home task now writes a marker carrying its record's token.
+
+**Rejected: releasing a token-less pending marker on ECS's evidence.** ECS does not return a task's clientToken, so
+the only link between such a marker and a stopped task is time: the task's `createdAt` (ECS's clock) against the
+marker's `LastModifiedDate` (SSM's clock). The marker is written immediately before `RunTask`, so the marker's own task
+is created within about a second of it. An earlier operation's task created shortly before the marker reads as
+created after it once ECS's clock runs a few seconds ahead. A margin on both sides wide enough to absorb that also
+excludes every legitimate task, and nothing bounds the skew. Such markers come only from a CP before #1544 or one
+before this change, and they stay the operator's to release as before. Linking marker and task by the operation's id
+(for example a task tag carrying the token, which needs an IAM tag-key change) would make that proof possible.
+
+All the listings of a member's running home tasks now read every page: ECS may answer an empty page with a
+`NextToken`.
+
+Both CPs had also run the auto-bake at once (one created the seed's volume while the other released its slot), so
+the loop now steps only under a lease (`cp_lease`, migrations 0086 / pg 0071). Its expiry is computed and compared by
+the database's own clock, so CP clocks never enter it.
+- The holder renews it every tick, and every third of its 3-tick lifetime while a step runs.
+- A renewal succeeds only while the lease is still live.
+- The holder counts its deadline from when it sent the request, so a slow answer cannot extend it.
+- A timer separate from the renewals cancels the step at that deadline, so a renewal stuck on the database does not
+  keep it running.
+
+This guarantees less than "one CP only": it stops a second CP from starting golden steps. Cancelling a step does not
+withdraw what the earlier holder already handed off: an AWS call already accepted, or ecs-ec2's background completion
+of a seed or probe Start, which deliberately outlives its caller (`backgroundWithin`) up to its own bound. A process
+paused past its lease also keeps acting until its timer fires. Those overlap with a new holder's steps the way any two
+CPs' operations on one slot do, which is #1601's to close. Code: `control-plane/workspace_lifecycle.go`
+(`beginDestroyWorkspace`), `control-plane/internal/runtime/runtime_ecs_home_task.go` (`runningHomeTask`),
+`control-plane/golden_bake.go` (`tick`, `keepLease`), `control-plane/internal/store/store_cp_lease.go`.

@@ -282,3 +282,33 @@ func TestECSUnrecordedFirstSendLeavesNoMarker(t *testing.T) {
 		t.Errorf("marker %q left behind", v)
 	}
 }
+
+// ECS may answer a ListTasks page with fewer tasks than it has, even none, and a NextToken.
+// A member's task still running behind that token refuses a wipe and a start, and keeps a
+// resumed operation from sending RunTask again beside it.
+func TestECSRunningHomeTaskBehindAnEmptyPageStillRefuses(t *testing.T) {
+	fe, fs := &fakeECS{}, &fakeSSM{}
+	ft := &fakeTasks{inflightNextPage: []string{"arn:task/still-running"}, exitCode: exit(0)}
+	rt := newHomeTaskECSWith(fe, &fakeEFS{}, fs, ft)
+	if err := rt.HomeWipeBlocked(context.Background()); !errors.Is(err, ErrHomeTaskInFlight) {
+		t.Errorf("HomeWipeBlocked = %v, want ErrHomeTaskInFlight", err)
+	}
+	if err := rt.Start(context.Background()); !errors.Is(err, ErrHomeTaskInFlight) {
+		t.Errorf("Start = %v, want ErrHomeTaskInFlight", err)
+	}
+	if len(ft.runs) != 0 || len(fe.createCalls) != 0 {
+		t.Errorf("refused, but runs=%d creates=%d", len(ft.runs), len(fe.createCalls))
+	}
+
+	fs = &fakeSSM{}
+	ft = &fakeTasks{inflightNextPage: []string{"arn:task/still-running"}, exitCode: exit(0)}
+	rt = newHomeTaskECSWith(&fakeECS{}, &fakeEFS{}, fs, ft)
+	fs.values = map[string]string{rt.homeTaskMarker(): markerValue(homeTaskMarkerPending, "op-9")}
+	BindHomeTask(rt, HomeTaskBinding{Token: "op-9", Resume: true, SentAt: time.Now().Add(-time.Hour)})
+	if err := rt.WipeHome(context.Background(), HomeWipeClean); !errors.Is(err, ErrHomeTaskUnresolved) {
+		t.Errorf("resumed run = %v, want it unresolved while the task runs", err)
+	}
+	if len(ft.runs) != 0 {
+		t.Errorf("a resumed run sent RunTask %d times beside a running task", len(ft.runs))
+	}
+}

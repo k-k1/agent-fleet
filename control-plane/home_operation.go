@@ -12,7 +12,8 @@ import (
 )
 
 // A home operation that runs the stack's home task (ecs: a member's Recreate or Clean home,
-// an administrator's Clean home, Destroy and purge) is kept as a store.HomeOperation from
+// an administrator's Clean home; ecs and ecs-ec2: every Destroy — an administrator's, a
+// purge, the golden pipeline's seed and probe) is kept as a store.HomeOperation from
 // before RunTask until the step after the task — the member's start, the audit outcome,
 // Destroy's row deletion — has been applied (#1544, ADR 0045).
 //

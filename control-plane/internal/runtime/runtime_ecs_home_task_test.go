@@ -19,17 +19,20 @@ import (
 // (nil = it never ran the command). The workspace's own task, listed by its family, is
 // STOPPING for wsStoppingPolls reads and STOPPED after.
 type fakeTasks struct {
-	inflight        []string // what ListTasks answers for the member's startedBy
-	listErr         error    // what ListTasks fails with for the member's startedBy
-	runs            []*ecs.RunTaskInput
-	runFailure      string
-	missingPolls    int
-	runningPolls    int
-	exitCode        *int32
-	stoppedWhy      string
-	wsStoppingPolls int
-	wsRunningListed bool // the workspace task is listed as desired RUNNING (before a Stop)
-	lists           []*ecs.ListTasksInput
+	inflight []string // what ListTasks answers for the member's startedBy
+	// inflightNextPage, when set, is answered on a second page: the first is empty and
+	// carries a NextToken.
+	inflightNextPage []string
+	listErr          error // what ListTasks fails with for the member's startedBy
+	runs             []*ecs.RunTaskInput
+	runFailure       string
+	missingPolls     int
+	runningPolls     int
+	exitCode         *int32
+	stoppedWhy       string
+	wsStoppingPolls  int
+	wsRunningListed  bool // the workspace task is listed as desired RUNNING (before a Stop)
+	lists            []*ecs.ListTasksInput
 	// onRun sees the moment of the RunTask, for the ordering checks.
 	onRun func()
 }
@@ -82,6 +85,12 @@ func (f *fakeTasks) ListTasks(_ context.Context, in *ecs.ListTasksInput, _ ...fu
 	}
 	if f.listErr != nil {
 		return nil, f.listErr
+	}
+	if f.inflightNextPage != nil {
+		if in.NextToken == nil {
+			return &ecs.ListTasksOutput{NextToken: aws.String("page-2")}, nil
+		}
+		return &ecs.ListTasksOutput{TaskArns: f.inflightNextPage}, nil
 	}
 	return &ecs.ListTasksOutput{TaskArns: f.inflight}, nil
 }

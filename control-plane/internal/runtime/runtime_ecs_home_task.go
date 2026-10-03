@@ -131,16 +131,34 @@ func (e *ecsRuntime) homeTaskInFlight(ctx context.Context) (bool, error) {
 	if busy, err := e.markedHomeTaskBusy(ctx); err != nil || busy {
 		return busy, err
 	}
-	// startedBy has to be the only filter of a ListTasks; the default desired status
-	// RUNNING is what "not stopped yet" means.
-	out, err := e.tasks.ListTasks(ctx, &ecs.ListTasksInput{
-		Cluster:   aws.String(e.cfg.cluster),
-		StartedBy: aws.String(e.homeTaskStartedBy()),
-	})
-	if err != nil {
-		return false, fmt.Errorf("list home tasks: %w", err)
+	arn, err := e.runningHomeTask(ctx)
+	return arn != "", err
+}
+
+// runningHomeTask returns a task started for this member that ECS lists as not stopped yet,
+// or "". startedBy has to be the only filter of a ListTasks; the default desired status
+// RUNNING (which includes PENDING) is what "not stopped yet" means. Every page is read: ECS
+// may answer a page with fewer tasks than it has, even none, and a NextToken, and the task
+// behind that token may be the one still writing the home.
+func (e *ecsRuntime) runningHomeTask(ctx context.Context) (string, error) {
+	var token *string
+	for {
+		out, err := e.tasks.ListTasks(ctx, &ecs.ListTasksInput{
+			Cluster:   aws.String(e.cfg.cluster),
+			StartedBy: aws.String(e.homeTaskStartedBy()),
+			NextToken: token,
+		})
+		if err != nil {
+			return "", fmt.Errorf("list home tasks: %w", err)
+		}
+		if len(out.TaskArns) > 0 {
+			return out.TaskArns[0], nil
+		}
+		if aws.ToString(out.NextToken) == "" {
+			return "", nil
+		}
+		token = out.NextToken
 	}
-	return len(out.TaskArns) > 0, nil
 }
 
 // markedHomeTaskBusy reads the marker. Only a marker whose task is seen STOPPED is dropped
@@ -340,15 +358,12 @@ const homeTokenSafeFor = 23 * time.Hour
 // marker is gone — this CP drops it only when nothing of it can run, and deleting it is
 // the operator's release after checking ECS.
 func (e *ecsRuntime) mayRunAgain(ctx context.Context, b HomeTaskBinding, arn string, marked bool) error {
-	out, err := e.tasks.ListTasks(ctx, &ecs.ListTasksInput{
-		Cluster:   aws.String(e.cfg.cluster),
-		StartedBy: aws.String(e.homeTaskStartedBy()),
-	})
+	running, err := e.runningHomeTask(ctx)
 	if err != nil {
-		return fmt.Errorf("list home tasks: %w", err)
+		return err
 	}
-	if len(out.TaskArns) > 0 {
-		return fmt.Errorf("a home task (%s) is still running for %s; waiting for it to stop", out.TaskArns[0], e.membershipID)
+	if running != "" {
+		return fmt.Errorf("a home task (%s) is still running for %s; waiting for it to stop", running, e.membershipID)
 	}
 	if !marked || b.SentAt.IsZero() || time.Since(b.SentAt) < homeTokenSafeFor {
 		return nil
