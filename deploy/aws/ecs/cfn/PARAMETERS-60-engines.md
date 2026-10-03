@@ -779,7 +779,7 @@ as an error code in the `CreateFleet` response instead of a service event, and t
 it the same way.
 
 **Permissions.** `ec2:CreateFleet` / `DescribeFleets` / `DeleteFleets` and `iam:PassRole` on the
-engine instance role, all in this stack's own `CpIngestPolicy`
+engine instance role, all in this stack's own `CpIngestManagedPolicy`
 ([the ingest permissions](#the-ingest-permissions)). The three ECS capacity-provider grants the
 ladder used to need — `DescribeCapacityProviders`, `UpdateCapacityProvider` and the
 cluster-scoped `PutClusterCapacityProviders` nobody could find in the code — are **gone**.
@@ -1743,7 +1743,7 @@ container's `Secrets` before the container exists — and 20-platform scopes tha
 grant the task dies at startup with `ResourceInitializationError: unable to pull secrets` — not
 a 401 on the download, and nothing in the ingest log, because no container ever ran.
 `ExecHfTokenPolicy` closes it, scoped to this one secret and attached to the imported exec role
-by name the same way `CpIngestPolicy` attaches to the CP's.
+by name the same way `CpIngestManagedPolicy` attaches to the CP's.
 
 The secret's value is the token and nothing else — no `{"HF_TOKEN":"…"}` wrapper and no trailing
 newline, since `ValueFrom` with no JSON key passes the whole string through as the environment
@@ -1814,7 +1814,13 @@ with room for the filesystem.
 ### The ingest permissions
 
 The Control Plane's ONLY new IAM in this repository (ADR 0072 decision 6), and it lives in this
-stack so that a deployment which does not adopt 60-engines gains nothing:
+stack so that a deployment which does not adopt 60-engines gains nothing. It is a **managed**
+policy (`CpIngestManagedPolicy`, named `af-<stack>-cp-ingest-<region>` because managed
+policy names are account-wide) attached to the CP task role by name: as an inline policy it
+counted toward IAM's 10,240-character aggregate for the role's inline policies, which the
+role passed once 30-ingress added its own (#1576). The update that
+converts it creates the managed policy before it deletes the inline one, so the role is never
+without the grant; `deploy/local/cfn-iam-policy-size-test.py` holds every role's sizes:
 
 | Action | Scope | Why |
 |---|---|---|

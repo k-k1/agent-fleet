@@ -271,7 +271,7 @@ fi
 # how slots get patched anyway.
 #
 # BEFORE 20-platform, the reverse of this script's usual order: this stack carries the CP's
-# iam:PassRole for its slot role (CpPassSlotRolePolicy), and the 20-platform template no
+# iam:PassRole for its slot role (CpSlotLaunchManagedPolicy), and the 20-platform template no
 # longer grants any. Deployed second, any stop in between - a failed image check, a refused
 # change set, this deploy rolling back - leaves a CP that cannot grow a slot (AccessDenied
 # on PassRole) until somebody notices. Deployed first, a failure here leaves 20-platform
@@ -613,12 +613,15 @@ fi
 echo "==> cloudformation deploy $STACK (ImageTag=$VERSION)"
 deploy_out=""
 if [ "$DRY" = 1 ]; then
-  echo "DRY: aws cloudformation deploy --stack-name $STACK --template-file $TEMPLATE --parameter-overrides ImageTag=$VERSION"
+  echo "DRY: aws cloudformation deploy --stack-name $STACK --template-file $TEMPLATE --capabilities CAPABILITY_NAMED_IAM --parameter-overrides ImageTag=$VERSION"
 else
   set +e
   # Always go through af_cfn_deploy (env.sh): it switches to S3 once a template passes 51,200
   # bytes. 30-ingress crossed that line once and every release deployment stopped dead.
+  # CAPABILITY_NAMED_IAM: the stack holds a named IAM policy (CpHomeOpsManagedPolicy), and
+  # without it CreateChangeSet fails with InsufficientCapabilitiesException (#1576).
   deploy_out="$(af_cfn_deploy "$STACK" "$TEMPLATE" \
+    --capabilities CAPABILITY_NAMED_IAM \
     --parameter-overrides "ImageTag=$VERSION" \
     --no-fail-on-empty-changeset 2>&1)"
   rc=$?

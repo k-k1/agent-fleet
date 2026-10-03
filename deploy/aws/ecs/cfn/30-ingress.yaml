@@ -740,10 +740,11 @@ Resources:
   # (ecs:CreateAction), so no task that exists can be retagged, only in this cluster, and
   # only the keys EcsTagServiceOnCreate (20-platform) allows on a workspace service.
   # deploy/local/cfn-cp-ec2-scope-test.py holds the allowed calls and the denied ones.
-  CpHomeOpsPolicy:
-    Type: AWS::IAM::Policy
+  # Managed (inline total is capped, #1576); names are account-wide, hence the region.
+  CpHomeOpsManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
     Properties:
-      PolicyName: !Sub "af-${AWS::StackName}-cp-home-ops"
+      ManagedPolicyName: !Sub "af-${AWS::StackName}-cp-home-ops-${AWS::Region}"
       Roles:
         - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-CpTaskRoleArn" } ] ]
       PolicyDocument:
@@ -773,7 +774,7 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     # AF_ECS_HOME_TASK names the family as a string, which CloudFormation does not order by:
     # without this a fresh CP could offer Recreate before the family or its grant exists.
-    DependsOn: [ HomeOpsTaskDef, CpHomeOpsPolicy ]
+    DependsOn: [ HomeOpsTaskDef, CpHomeOpsManagedPolicy ]
     Properties:
       Family: !Sub "af-${AWS::StackName}-cp"
       RequiresCompatibilities: [ FARGATE ]

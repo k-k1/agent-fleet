@@ -328,6 +328,15 @@ cd console-e2e && npm ci && npx playwright test
 `deploy/local/cli-drift-check.sh` の `TARGETS`: 版をピンしている全エージェント CLI と `rtk`。
 lcpp は入らない——セルフホストのエンジンに対してプロセス内で動き、上流の CLI を持たない。
 
+同じワークフローの `apt-pins` ジョブは Debian パッケージのピンを `deploy/local/apt-pin-check.sh`
+で確かめる。ピンは `workspace/Dockerfile` の `apt-get install` から読み出す（現状は
+`ARG CHROMIUM_VERSION` だけ）。ピンの全パッケージが amd64 **と** arm64 の両方で
+trixie・trixie-updates・trixie-security のどれかに載っていること。trixie-security は現行ビルド
+しか持たないので、Debian が次の更新を出した時点でピンは消え（片方のアーキテクチャだけ先に
+消えることもある）、キャッシュの無い次のイメージビルドが落ちる。これはドリフトの定常状態では
+なくビルドが壊れた状態なので、このジョブは赤くなる。出力には両アーキテクチャで配られている
+最新版が出るので、ARG はその版へ手で上げる。判定は `deploy/local/apt-pin-check-test.sh` が固定する。
+
 もう 1 本の `cli-release-watch.yml` は毎日公開版を比べ、**版が実際に変わった CLI だけ**
 contract を dispatch する（対象の kind は `deploy/local/cli-release-edges.sh` の `KINDS`）。
 状態は 1 本の issue に置く: `tested` と `seen` の印はコメントとして追記する。repository

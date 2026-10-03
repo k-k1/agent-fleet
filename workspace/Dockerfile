@@ -145,6 +145,9 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # recommendation (suppressed by --no-install-recommends). Bump the ARG after Debian
 # publishes the same security build for both architectures. Fonts and fontconfig are
 # explicit so Japanese pages render without depending on a transient recommendation.
+# deploy/local/apt-pin-check.sh checks the pin against both architectures' indexes and
+# prints the version to bump to; cli-drift.yml runs it daily and goes red when the pin
+# is gone for either architecture.
 # ⚠ trixie-security は「現行ビルドだけ」を持ち、古い版はミラーから消える。ピンを
 # 放置すると、この層のキャッシュが破れた次のビルドで `Version ... was not found` と
 # 落ちる（＝別の ARG を触った瞬間に無関係に見える形で発火する）。上流のセキュリティ
@@ -154,7 +157,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # スイートと main スイートは別の版を指すので、片方を security・片方を main で読むと
 # **存在しない版差が出る**。実際それで「trixie にすると chromium が下がる」という誤った
 # 代償が 1 度記録され、ベース更新の判断を狂わせた。ここに書くのは常に security の版。
-ARG CHROMIUM_VERSION=154.0.8037.57-1~deb13u1
+ARG CHROMIUM_VERSION=154.0.8037.92-1~deb13u1
 # BAKE_OPTIONAL_TOOLS=0（native lean rootfs）は chromium 本体・CJK フォントを焼かず
 # オンデマンド DL（P2 の install-chromium、CHROMIUM_DL_VERSION ピン）に回すが、
 # その DL 版が動くための実行時ライブラリと fontconfig/DejaVu はここで明示導入する
