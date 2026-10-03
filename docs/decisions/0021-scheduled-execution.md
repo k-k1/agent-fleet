@@ -111,6 +111,11 @@ and only the sink routes it differently. Decision 10 is untouched: the prompt's 
   delivery time, not the Control Plane at registration. A connection that cannot take the post is named in a
   notification instead of being skipped. The post carries the answer whether or not the connection is in
   full-text mode: naming the connection for this schedule is the explicit opt-in that mode exists to ask for.
+- A run that names its targets reaches **only** them. The broadcast copies every chat connection otherwise gets
+  (the turn's answer-ready, the operator report's notification) are not raised or not bridged for it, and the
+  sink waits (up to two minutes) for the turn's answer to be recorded before it delivers, so a turn end seen
+  before its answer is neither consumed empty nor taken for a non-silent run. A chat post is queued once per run,
+  report kind and connection, across restarts.
 - **Silent sentinel** (`silent`): a run whose final answer, trimmed, is exactly `[SILENT]` (case-sensitive)
   delivers nothing — no report, no notification, no chat post — and the Agent asks the Control Plane to record
   the run as `fired_silent`, which the history shows. Only schedules that enable it tell the agent about it, in a

@@ -20,7 +20,13 @@ func (n *namedProvider) Name() string { return n.name }
 
 func TestDrainSendsATargetedMessageToItsTargetOnly(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	EnqueueTo("discord", Message{Kind: KindScheduleResult, DisplayName: "nightly", Body: "2 jobs failed"})
+	if err := EnqueueToOnce("k1", "discord", Message{Kind: KindScheduleResult, DisplayName: "nightly", Body: "2 jobs failed"}); err != nil {
+		t.Fatal(err)
+	}
+	// The same key again (a retry, or a restart before the caller recorded it) queues nothing.
+	if err := EnqueueToOnce("k1", "discord", Message{Kind: KindScheduleResult, Body: "again"}); err != nil {
+		t.Fatal(err)
+	}
 	// A notification for everyone rides beside it, unaffected.
 	Enqueue(Message{Kind: "answer-ready", DisplayName: "A"})
 	// discord has muted every event group but answer-ready; slack takes everything.

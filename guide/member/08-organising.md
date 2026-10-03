@@ -155,7 +155,9 @@ next run time, so check that it matches your intent.
   names the schedule, even when the connection is not in full-text mode. Only your own
   connection is used, and only while it is bound to your account on that service (the
   identity binding the reply and button features use) and not muted; otherwise the result goes
-  to the notification center with a line saying which connection could not take it.
+  to the notification center with a line saying which connection could not take it. A schedule
+  that names its destinations reaches only those: its runs do not also send the usual
+  "a reply is ready" copy to every chat connection.
 - **Stay silent when there is nothing to report.** For a monitoring schedule ("check the
   nightly jobs and tell me only if something failed"), tick **"Stay silent when there is
   nothing to report"** (`silent`). The agent is then told to answer exactly `[SILENT]` when

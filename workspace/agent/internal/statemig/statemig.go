@@ -108,6 +108,7 @@ var Entries = []string{
 	"muse-transcripts",
 	// Chat bridge: the outbound queue and the per-provider binding ledgers.
 	"bridge-queue",
+	"bridge-sent",
 	"bridge-approvals",
 	"bridge-answers",
 	"bridge-operator-turn",

@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
@@ -81,42 +82,73 @@ type scheduleAnswer struct {
 
 var scheduleAnswers = fstore.JSON[scheduleAnswer](paths.AgentStateDir, "schedule-answer", ".json")
 
-// NoteTurnAnswer records a finished turn's answer for the session's scheduled deliveries and
-// reports whether the turn is a silent one: a clean end whose answer is the sentinel while a
-// row that enables it is open. The caller then raises no answer-ready notification, which would
-// otherwise carry the run to the notification center and the bridge after all.
+// TurnVerdict is what a finished turn means for the notification the hook would raise.
+type TurnVerdict struct {
+	// Silent: every scheduled run this turn finishes enables the sentinel, and the answer is it.
+	// Nothing at all is raised.
+	Silent bool
+	// Routed: every instruction this turn finishes is a scheduled run that chose its own
+	// targets. The broadcast answer-ready is not raised: it would reach every chat connection,
+	// the ones the schedule did not name and unbound ones included, and the sink delivers the
+	// result (and any failure) where the schedule asked.
+	Routed bool
+}
+
+// NoteTurnAnswer records a finished turn's answer for the scheduled runs it finishes, and says
+// what the hook should raise for it.
 //
-// candidates are the forms the answer is known in (the newest message alone, the whole turn's
-// prose); any one being the sentinel is enough, since the agent is asked to make its final
-// message exactly that. failed is a turn that ended in an error or was cut off: never silent.
-func NoteTurnAnswer(name string, failed bool, candidates ...string) bool {
-	var silentRow, any bool
-	for _, r := range openInstrRows(name) {
-		if r.Delivery != nil {
-			any = true
-			silentRow = silentRow || r.Delivery.Silent
-		}
+// The rows considered are those the turn can have finished: open, not still being sent, not
+// dropped, and not waiting in the session's queue. A scheduled prompt queued behind another
+// turn has not run, so that other turn's answer must not be read as its result. An instruction
+// without a delivery of its own (an operator's, or a schedule as it was before #1560) keeps
+// today's notification whatever else the turn finishes.
+//
+// candidates are the forms the answer is known in (the newest message when it is known whole,
+// the whole turn's prose); any one being the sentinel is enough, since the agent is asked to
+// make its final message exactly that. failed is a turn that ended in an error or was cut off:
+// never silent.
+func NoteTurnAnswer(name string, failed bool, candidates ...string) TurnVerdict {
+	rows := turnRows(name, time.Now())
+	if len(rows) == 0 {
+		return TurnVerdict{}
 	}
-	if !any {
-		return false
+	allSilent, allRouted, anyDelivery := true, true, false
+	for _, r := range rows {
+		if r.Delivery == nil {
+			allSilent, allRouted = false, false
+			continue
+		}
+		anyDelivery = true
+		allSilent = allSilent && r.Delivery.Silent
+		allRouted = allRouted && len(r.Delivery.Targets) > 0
+	}
+	if !anyDelivery {
+		return TurnVerdict{}
 	}
 	ans := scheduleAnswer{At: time.Now().Format(time.RFC3339)}
 	for _, c := range candidates {
 		if !failed && IsSilentAnswer(c) {
 			ans.Silent = true
 		}
-		if ans.Text == "" {
-			ans.Text = HeadRunes(c, BridgeBodyCap)
-		}
-	}
-	// The longest candidate is the most complete answer to deliver when it is not silent.
-	for _, c := range candidates {
+		// The longest candidate is the most complete answer to deliver when it is not silent.
 		if t := HeadRunes(c, BridgeBodyCap); len(t) > len(ans.Text) {
 			ans.Text = t
 		}
 	}
 	_ = scheduleAnswers.Write(name, ans)
-	return ans.Silent && silentRow
+	silent := ans.Silent && allSilent
+	return TurnVerdict{Silent: silent, Routed: silent || allRouted}
+}
+
+// turnRows are the open rows a turn ending at now can have finished.
+func turnRows(name string, now time.Time) []instrRow {
+	var out []instrRow
+	for _, r := range withoutHeldInstr(name, openInstrRows(name), agents.HeldInstrs(name)) {
+		if r.Dropped == "" && !reportTimeBefore(now.Format(time.RFC3339), r.Cursor.At) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // answerFor returns the answer recorded for a row: the latest turn's, when it ended no earlier
@@ -128,6 +160,44 @@ func answerFor(name string, r instrRow) (scheduleAnswer, bool) {
 	}
 	return a, true
 }
+
+// scheduleAnswerGrace is how long a settled clean end waits for its answer to be recorded. Past
+// it (the hook that knew the answer never ran, say) the result is delivered without a body,
+// which is never silent: a missing answer must not hide an alert.
+var scheduleAnswerGrace = 2 * time.Minute
+
+// answerWaits remembers since when each row has waited for its answer.
+type answerWaits struct {
+	mu    sync.Mutex
+	since map[string]time.Time
+}
+
+// wait reports whether the row named key should keep waiting at now, and forgets it once not.
+func (w *answerWaits) wait(key string, now time.Time) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.since == nil {
+		w.since = map[string]time.Time{}
+	}
+	first, ok := w.since[key]
+	if !ok {
+		w.since[key] = now
+		return true
+	}
+	if now.Sub(first) < scheduleAnswerGrace {
+		return true
+	}
+	delete(w.since, key)
+	return false
+}
+
+func (w *answerWaits) forget(key string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	delete(w.since, key)
+}
+
+var scheduleAnswerWaits answerWaits
 
 // scheduleReportFailure is whether a report kind/reason is a failure. Failures are never silent:
 // they reach the notification center whatever the targets say.
@@ -141,9 +211,9 @@ func scheduleReportFailure(kind, reason string) bool {
 	return true // exit, not-run, unconfirmed
 }
 
-// deliverScheduledRow is the sink for one scheduled run's row. Retry only when the operator
-// conversation could not be written: the other targets are local queue writes that do not fail
-// in a way a retry would fix, and repeating them would post twice.
+// deliverScheduledRow is the sink for one scheduled run's row. Every part is idempotent per row,
+// report kind and target (the conversation by row key, the notification and each chat post by a
+// durable marker), so a retry, or a restart before the row is consumed, delivers nothing twice.
 func deliverScheduledRow(name, convID, kind, reason string, r instrRow) reportSinkResult {
 	d := r.Delivery
 	switch kind {
@@ -155,8 +225,19 @@ func deliverScheduledRow(name, convID, kind, reason string, r instrRow) reportSi
 		}
 		return deliverConvReport(name, convID, kind, reason, []instrRow{r})
 	case ReportKindAnswerReady:
-		if reason == "" && d.Silent {
-			if a, ok := answerFor(name, r); ok && a.Silent {
+		if reason == "" {
+			a, ok := answerFor(name, r)
+			waitKey := name + ":" + instrDeliveryKey(r)
+			if ok {
+				scheduleAnswerWaits.forget(waitKey)
+			} else if scheduleAnswerWaits.wait(waitKey, time.Now()) {
+				// The turn's end is visible before its answer is: the hook records the answer
+				// after the status write, a Managed driver notifies on its own goroutine, and the
+				// af_report fast path can settle in between. Delivering now would send an empty
+				// result, or a sentinel run as a normal one, and consume the row for good.
+				return reportSinkRetry
+			}
+			if ok && a.Silent && d.Silent {
 				recordScheduleSilentFn(name, d)
 				log.Printf("session-report: %s: schedule %s answered %s — nothing delivered", name, d.ScheduleID, SilentSentinel)
 				return reportSinkOK
@@ -192,8 +273,10 @@ func deliverScheduledRow(name, convID, kind, reason string, r instrRow) reportSi
 			undelivered = append(undelivered, t)
 			continue
 		}
-		if scheduleBridgeSent.first(name + ":" + instrDeliveryKeyFor(kind, r) + ":" + kind + ":" + t) {
-			bridge.EnqueueTo(t, scheduleBridgeMessage(name, d, kind, reason, body))
+		key := "schedule-result:" + name + ":" + instrDeliveryKeyFor(kind, r) + ":" + kind + ":" + t
+		if err := bridge.EnqueueToOnce(key, t, scheduleBridgeMessage(name, d, kind, reason, body)); err != nil {
+			log.Printf("session-report: %s: queue the schedule result for %s: %v", name, t, err)
+			return reportSinkRetry
 		}
 	}
 	if d.has(DeliverNotifications) || len(undelivered) > 0 || (failure && !notified && !cpNotified) {
@@ -208,32 +291,6 @@ func deliverScheduledRow(name, convID, kind, reason string, r instrRow) reportSi
 // bridgeTargetReady is bridge.TargetReady behind a seam: the connection lives in the encrypted
 // secrets store, which a test does not set up.
 var bridgeTargetReady = bridge.TargetReady
-
-// sentSet remembers what this process already queued. A row whose group is retried (another
-// row's conversation write failed) is sunk again on the next tick, and its post must not be.
-type sentSet struct {
-	mu   sync.Mutex
-	keys map[string]bool
-}
-
-// scheduleBridgeSentKeep bounds the set: a retry follows within a few ticks, so an old key is
-// never asked about again.
-const scheduleBridgeSentKeep = 512
-
-func (s *sentSet) first(key string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.keys[key] {
-		return false
-	}
-	if s.keys == nil || len(s.keys) >= scheduleBridgeSentKeep {
-		s.keys = map[string]bool{}
-	}
-	s.keys[key] = true
-	return true
-}
-
-var scheduleBridgeSent sentSet
 
 // scheduleBridgeMessage is the chat-bridge post for a scheduled run. The body is the answer: the
 // member chose this connection for this schedule's result, which is the explicit opt-in the

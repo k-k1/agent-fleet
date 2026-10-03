@@ -76,7 +76,7 @@ type Message struct {
 }
 
 // KindScheduleResult is a scheduled run's result posted to the connection its schedule named
-// (#1560). It belongs to no event group: only EnqueueTo sends it, and only where it was asked.
+// (#1560). It belongs to no event group: only EnqueueToOnce sends it, and only where it was asked.
 const KindScheduleResult = "schedule-result"
 
 // EventKeys are the user-toggleable notification groups of docs/log/37 P1. The

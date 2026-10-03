@@ -31,14 +31,12 @@ func scheduleSeams(t *testing.T, ready map[string]bool) *[]string {
 		silents = append(silents, d.ScheduleID+"@"+d.Slot+" "+name)
 	}
 	bridgeTargetReady = func(name string) bool { return ready[name] }
-	scheduleBridgeSent = sentSet{}
 	t.Cleanup(func() { recordScheduleSilentFn, bridgeTargetReady = oldRec, oldReady })
 	return &silents
 }
 
-// bridgeQueue reads the bridge queue entries addressed to one connection. The copy of the
-// notifications every connection gets (the operator report's session-report among them) is
-// today's behaviour and not what these tests are about.
+// bridgeQueue reads every bridge queue entry, the copies meant for every connection included: a
+// scheduled run that named its targets must leave nothing else there.
 func bridgeQueue(t *testing.T) []bridge.Message {
 	t.Helper()
 	dir := filepath.Join(paths.AgentStateDir(), "bridge-queue")
@@ -53,9 +51,7 @@ func bridgeQueue(t *testing.T) []bridge.Message {
 		if err := json.Unmarshal(b, &m); err != nil {
 			t.Fatal(err)
 		}
-		if m.Target != "" {
-			out = append(out, m)
-		}
+		out = append(out, m)
 	}
 	return out
 }
@@ -225,39 +221,116 @@ func TestScheduledRowIgnoresAnEarlierAnswer(t *testing.T) {
 	silents := scheduleSeams(t, nil)
 	_ = scheduleAnswers.Write(m.Name, scheduleAnswer{At: time.Now().Add(-time.Hour).Format(time.RFC3339), Text: "[SILENT]", Silent: true})
 	r := scheduledRow(t, m.Name, conv, delivery(true, DeliverOperator), "")
+	if res := deliverReportCard(m.Name, conv, ReportKindAnswerReady, "", []instrRow{r}); res != reportSinkRetry || len(*silents) != 0 {
+		t.Fatalf("with only an earlier answer: %v silents=%v, want a wait", res, *silents)
+	}
+	NoteTurnAnswer(m.Name, false, "Two jobs failed")
 	deliverReportCard(m.Name, conv, ReportKindAnswerReady, "", []instrRow{r})
 	if len(*silents) != 0 || convReports(t, conv) != 1 {
 		t.Fatalf("silents=%v reports=%d — the earlier answer silenced this run", *silents, convReports(t, conv))
 	}
 }
 
-// NoteTurnAnswer answers "silent" only while a row that enables the sentinel is open, only for a
-// clean turn end, and for any of the forms the answer is known in.
+// NoteTurnAnswer answers "silent" only when every run the turn finishes enables the sentinel and
+// the turn ended cleanly, and "routed" only when every instruction it finishes chose its own
+// targets. An operator instruction, or a run with nowhere to deliver, keeps today's notification.
 func TestNoteTurnAnswer(t *testing.T) {
 	m, _, conv := ledgerFixture(t, "sched6")
-	if NoteTurnAnswer(m.Name, false, "[SILENT]") {
-		t.Fatal("silent with no scheduled row open")
+	past := time.Now().Add(-time.Minute)
+	if v := NoteTurnAnswer(m.Name, false, "[SILENT]"); v != (TurnVerdict{}) {
+		t.Fatalf("no scheduled row open: %+v", v)
 	}
-	AddInstruction(m.Name, conv, "operator")
-	if NoteTurnAnswer(m.Name, false, "[SILENT]") {
-		t.Fatal("silent for an operator instruction")
-	}
-	addRowAt(m.Name, "", "schedule", "", delivery(false, DeliverNotifications), time.Now())
-	if NoteTurnAnswer(m.Name, false, "[SILENT]") {
-		t.Fatal("silent for a schedule that does not enable it")
-	}
-	addRowAt(m.Name, "", "schedule", "", delivery(true), time.Now())
-	if !NoteTurnAnswer(m.Name, false, "[SILENT]", "Checking the queue…[SILENT]") {
-		t.Fatal("the newest message alone was the sentinel")
+	silentRow := addRowAt(m.Name, "", "schedule", "", delivery(true), past)
+	if v := NoteTurnAnswer(m.Name, false, "[SILENT]", "Checking the queue…[SILENT]"); !v.Silent || !v.Routed {
+		t.Fatalf("the newest message alone was the sentinel: %+v", v)
 	}
 	if a, _ := scheduleAnswers.Read(m.Name); !a.Silent || a.Text != "Checking the queue…[SILENT]" {
 		t.Fatalf("answer = %+v, want the longer form kept as text", a)
 	}
-	if NoteTurnAnswer(m.Name, true, "[SILENT]") {
-		t.Fatal("a failed turn was silent")
+	if v := NoteTurnAnswer(m.Name, true, "[SILENT]"); v.Silent || v.Routed {
+		t.Fatalf("a failed turn of a report-off run: %+v, want today's notification", v)
 	}
-	if NoteTurnAnswer(m.Name, false, "", "Disk at 97%") {
-		t.Fatal("a real answer was silent")
+	if v := NoteTurnAnswer(m.Name, false, "", "Disk at 97%"); v.Silent || v.Routed {
+		t.Fatalf("a real answer of a report-off run: %+v, want today's notification", v)
+	}
+	// A run that named targets: routed, even when it failed (the sink notifies the failure).
+	markInstrReported(m.Name, []string{silentRow}, time.Now())
+	addRowAt(m.Name, "", "schedule", "", delivery(false, DeliverNotifications), past)
+	if v := NoteTurnAnswer(m.Name, true, "boom"); v.Silent || !v.Routed {
+		t.Fatalf("targeted run: %+v", v)
+	}
+	if v := NoteTurnAnswer(m.Name, false, "[SILENT]"); v.Silent {
+		t.Fatalf("silent for a schedule that does not enable it: %+v", v)
+	}
+	// An operator instruction finished by the same turn keeps the ordinary notification.
+	addInstructionAt(m.Name, conv, "operator", past)
+	if v := NoteTurnAnswer(m.Name, false, "[SILENT]"); v.Silent || v.Routed {
+		t.Fatalf("mixed with an operator instruction: %+v", v)
+	}
+}
+
+// Review round 1, finding 3: a silent run whose prompt has not started (still being sent, or
+// dropped) is not what the ending turn finished, so it decides nothing about that turn.
+func TestNoteTurnAnswerIgnoresRunsThatHaveNotStarted(t *testing.T) {
+	m, _, _ := ledgerFixture(t, "sched9")
+	past := time.Now().Add(-time.Minute)
+	addRowAt(m.Name, "", "schedule", instrBoot, delivery(true, DeliverNotifications), past)
+	if v := NoteTurnAnswer(m.Name, false, "[SILENT]"); v != (TurnVerdict{}) {
+		t.Fatalf("a run still being sent: %+v", v)
+	}
+	if _, ok := scheduleAnswers.Read(m.Name); ok {
+		t.Fatal("another turn's answer was recorded for a run that has not started")
+	}
+	id := addRowAt(m.Name, "", "schedule", "", delivery(true, DeliverNotifications), past)
+	MarkInstrNotRun(m.Name, id, "archived")
+	if v := NoteTurnAnswer(m.Name, false, "[SILENT]"); v != (TurnVerdict{}) {
+		t.Fatalf("a dropped run: %+v", v)
+	}
+}
+
+// Review round 1, finding 5: the end of the turn can be settled before its answer is recorded.
+// The row waits for the answer instead of being consumed as an empty, non-silent result; past the
+// grace, the result is delivered without a body (never as silent).
+func TestScheduledRowWaitsForItsAnswer(t *testing.T) {
+	m, _, _ := ledgerFixture(t, "sched10")
+	silents := scheduleSeams(t, nil)
+	r := scheduledRow(t, m.Name, "", delivery(true, DeliverNotifications), "")
+	if res := deliverReportCard(m.Name, "", ReportKindAnswerReady, "", []instrRow{r}); res != reportSinkRetry {
+		t.Fatalf("sink before the answer = %v, want retry", res)
+	}
+	if len(notice.List()) != 0 {
+		t.Fatalf("delivered before the answer: %+v", notice.List())
+	}
+	NoteTurnAnswer(m.Name, false, "[SILENT]")
+	if res := deliverReportCard(m.Name, "", ReportKindAnswerReady, "", []instrRow{r}); res != reportSinkOK || len(*silents) != 1 {
+		t.Fatalf("after the answer: %v silents=%v", res, *silents)
+	}
+
+	old := scheduleAnswerGrace
+	scheduleAnswerGrace = 0
+	t.Cleanup(func() { scheduleAnswerGrace = old })
+	r2 := scheduledRow(t, m.Name, "", delivery(true, DeliverNotifications), "")
+	_ = scheduleAnswers.Write(m.Name, scheduleAnswer{At: time.Now().Add(-time.Hour).Format(time.RFC3339), Silent: true})
+	deliverReportCard(m.Name, "", ReportKindAnswerReady, "", []instrRow{r2}) // starts the wait
+	if res := deliverReportCard(m.Name, "", ReportKindAnswerReady, "", []instrRow{r2}); res != reportSinkOK {
+		t.Fatalf("past the grace = %v", res)
+	}
+	if len(*silents) != 1 || len(noticesOf(NoticeKindScheduleResult)) != 1 {
+		t.Fatalf("past the grace: silents=%v notices=%+v", *silents, notice.List())
+	}
+}
+
+// Review round 1, finding 4: the chat post is queued once per row, kind and target even when the
+// sink runs again after a restart, before the row was consumed.
+func TestScheduledRowBridgePostSurvivesARestart(t *testing.T) {
+	m, _, _ := ledgerFixture(t, "sched11")
+	scheduleSeams(t, map[string]bool{"discord": true})
+	r := scheduledRow(t, m.Name, "", delivery(false, DeliverDiscord), "Result")
+	deliverReportCard(m.Name, "", ReportKindAnswerReady, "", []instrRow{r})
+	scheduleAnswerWaits = answerWaits{} // what a restart loses
+	deliverReportCard(m.Name, "", ReportKindAnswerReady, "", []instrRow{r})
+	if q := bridgeQueue(t); len(q) != 1 {
+		t.Fatalf("bridge queue = %+v, want one post", q)
 	}
 }
 

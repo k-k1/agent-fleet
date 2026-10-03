@@ -557,6 +557,13 @@ func recordSessionReport(name, convID, kind, reason string, rows []instrRow) rep
 	ev := notice.New("session-report", name, sessKind, display)
 	ev.Payload["conversation_id"] = convID
 	ev.Payload["conversationTitle"] = title
+	// A scheduled run that chose its own targets (#1560) decides its chat delivery itself; its
+	// report's copy must not reach the connections it did not name.
+	for _, r := range rows {
+		if r.Delivery != nil {
+			ev.NoBridge = true
+		}
+	}
 	_ = notice.Put(ev)
 	return reportSinkOK
 }

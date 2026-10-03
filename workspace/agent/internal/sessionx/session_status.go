@@ -172,9 +172,7 @@ func RunSessionStatusHook(args []string) {
 	// never match. Read here for the same reason as turnText, before the turn end clears it.
 	var lastMsg string
 	if state == "idle" {
-		if lr, ok := status.ReadLiveText(sid); ok {
-			lastMsg = lr.Text
-		}
+		lastMsg = finishedLiveMessage(sid)
 	}
 	notifyState, notifyText := state, turnText
 	if state == "idle" {
@@ -191,6 +189,23 @@ func RunSessionStatusHook(args []string) {
 	}
 	applyPendingPayloads(sid, state, h)
 	recordSessionNotification(sid, previous.State, notifyState, notifyText, lastMsg)
+}
+
+// finishedLiveMessage is the newest streamed message when it is known to be whole and to belong
+// to the turn now ending, else "". MessageDisplay flushes arrive concurrently and late: a
+// message still missing its final flush may be only the opening of a longer answer, and a late
+// flush of an earlier turn re-creates the file after that turn's Stop. Either one read as the
+// answer could hide a real alert behind the sentinel, so when in doubt there is no candidate
+// and the whole turn's text decides.
+func finishedLiveMessage(sid string) string {
+	lr, ok := status.ReadLiveText(sid)
+	if !ok || !lr.Final {
+		return ""
+	}
+	if current := status.ReadLivePrompt(sid); lr.Prompt == "" || lr.Prompt != current {
+		return ""
+	}
+	return lr.Text
 }
 
 // claudeAbortInfo is the transcript-tail verdict (docs/log/47), replaceable in tests.
@@ -320,12 +335,15 @@ func recordSessionNotification(sid, previous, state, turnText, lastMsg string) {
 				chatx.ResetAutoResume(m.Name)
 			}
 		}
-		// A scheduled run that answered with the silent sentinel raises no notification (#1560):
-		// the answer-ready event would carry it to the notification center and the chat bridge,
-		// which is exactly what the schedule asked not to happen. The kick below still runs, so
-		// the run is settled and recorded as silent.
-		silent := kind == chatx.ReportKindAnswerReady &&
-			chatx.NoteTurnAnswer(m.Name, reason != "", lastMsg, turnText)
+		// A turn that finishes scheduled runs with their own delivery raises no answer-ready
+		// (#1560): that event goes to the notification center and every chat connection, which is
+		// what a silent run asks not to happen and what a run with named targets must not do
+		// behind them. The kick below still runs, so the sink delivers the result (failures
+		// included) where the schedule asked, or records the run as silent.
+		var verdict chatx.TurnVerdict
+		if kind == chatx.ReportKindAnswerReady {
+			verdict = chatx.NoteTurnAnswer(m.Name, reason != "", lastMsg, turnText)
+		}
 		ev := notice.New(kind, m.Name, m.Kind, session.Display(m))
 		// Full-text bridge (docs/log/37, the future direction): carry the turn's final
 		// prose on the answer-ready event so a full-text-mode provider can post it. Only
@@ -360,7 +378,7 @@ func recordSessionNotification(sid, previous, state, turnText, lastMsg string) {
 		// permission) use plain Put — they have their own "previous != state" guards
 		// and do not carry turn bodies.
 		switch {
-		case silent:
+		case verdict.Silent, verdict.Routed:
 		case kind == chatx.ReportKindAnswerReady:
 			key := ev.CreatedAt
 			if k, ok := status.ReadCompletionKey(sid); ok && k != "" {
