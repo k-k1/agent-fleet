@@ -478,6 +478,50 @@ Agents in the workspace follow the same rule.
 - Credentials last as long as the SSO role session, or the assumed role's session (often one hour). A longer
   command fails when they expire rather than switching identity.
 
+### Trying AWS code against a local emulator (MiniStack)
+
+To try code, a template or a script without touching a real account, you can run
+[MiniStack](https://github.com/ministackorg/ministack) — an open-source AWS API emulator — inside the workspace.
+It needs no Docker when installed from PyPI, starts in seconds and stays small. It is not part of the image, so
+install it yourself:
+
+```sh
+python3 -m venv ~/.local/ministack && ~/.local/ministack/bin/pip install ministack
+GATEWAY_PORT=14566 ~/.local/ministack/bin/ministack
+```
+
+Ports are shared with your other sessions: pick a free one (the default 4566 may be taken) and stop the server
+when you are done.
+
+**Point a dedicated profile at it, and name that profile every time.** Add this outside the managed block of
+`~/.aws/config`:
+
+```ini
+[profile ministack]
+region = us-east-1
+endpoint_url = http://127.0.0.1:14566
+aws_access_key_id = 000000000001
+aws_secret_access_key = test
+```
+
+Then run `aws --profile ministack …`, or set the same profile in the SDK or tool. Do **not** export dummy keys
+(`AWS_ACCESS_KEY_ID=test`) in the shell instead: a command that then forgets `--endpoint-url` goes to real AWS
+rather than stopping with "Unable to locate credentials", and in a workspace where a command without a profile
+runs as the workspace's own role (see `af-aws-exec` above), it runs there as that role. With the profile, a
+command that forgets it still stops. MiniStack is never run through `af-aws-exec`, which removes endpoint
+settings on purpose.
+
+- **Sharing one server.** A 12-digit access key becomes the account id, and resources are kept apart per
+  account and region, so several sessions can use one server with different keys.
+- **What does not work here.** RDS, ElastiCache and ECS start real Docker containers, and a workspace has no
+  Docker. RDS still answers `available` with an endpoint such as `localhost:5432` that no database of its own
+  is behind — another Postgres in the workspace may be listening there. For a database, use `af-db`
+  ([Running database-backed tests](03-code.md#running-database-backed-tests)).
+- **State** is in memory and lost when the server stops, unless you start it with `PERSIST_STATE=1`; keep any
+  state directory under your home, not in `/tmp`.
+- **It is an emulator.** A template or IAM policy that works against it may still fail on AWS; use it to
+  iterate, and check the real thing through `af-aws-exec` before you rely on it.
+
 ## Running commands in Google Cloud as you (af-gcloud-exec)
 
 Your Google Cloud profiles live in **⚙ Settings → the "Google Cloud" tab**. A profile says which project a

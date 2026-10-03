@@ -189,6 +189,15 @@ profiles/SSM), and only that tab shows it. **Never run `aws sso login` or
 `af-aws-exec --login` in your own shell, and never pass a login URL or code to the user**: it waits
 for an approval nobody sees, and a code from you is exactly what the user is told never to approve.
 
+## A local emulator is not the user's account
+
+To try AWS code without an account, the user may run MiniStack (an AWS API emulator) in the
+workspace; the setup is `member/10-integrations.md`, "Trying AWS code against a local emulator
+(MiniStack)". Reach it only through a dedicated profile that carries its `endpoint_url` and dummy
+keys (`aws --profile ministack …`), never by exporting dummy keys: a command that then forgets the
+endpoint reaches real AWS instead of stopping. It never goes through `af-aws-exec`. Its RDS reports a
+database that does not exist; use `af-db` for Postgres.
+
 ## Never
 
 - Run a user-identity action with bare `aws` / an SDK / a build tool outside `af-aws-exec`, or retry
