@@ -827,3 +827,53 @@ root can change that, which nothing under `restricted` is. The group-writable ho
   has terminated.
 - The state claim's `subPath` directories stay as the kubelet makes them. Nothing private lives
   under them: the cloud wrappers' state is under `~/.local/state`, which is not a keep entry.
+
+## Addendum (2026-10-03) — workspace egress never covers a node address (#1578)
+
+Decision 7 allows workspace egress as `0.0.0.0/0` with the special-use ranges and the
+deployment's own ranges excepted, and relies on that to keep every node but a pod's own out of
+reach. On GKE Dataplane V2 the exception does not hold for node addresses. Measured on the
+acceptance cluster (GKE 1.35.8, `anetd` = Cilium 1.18.7):
+
+- **A workspace pod reached every node.** TCP to `:22`, `:10250` and `:10256` of its own node and
+  of the two others connected; an unused address in the node range did not. Nothing
+  unauthenticated answered (the kubelet returns 401, sshd wants a key), but the reach was there.
+- **GKE adds a node-identity selector to every ipBlock whose cidr contains a node address, and
+  `except` cannot take it away.** `cilium policy selectors` showed three selectors for the
+  `0.0.0.0/0` block: `cidr:0.0.0.0/0`, `reserved:world` and a `remote-node` one, each with the
+  excepted ranges as `cidr:<range>` DoesNotExist. The `remote-node` selector matches identities
+  1 (host), 6 (remote-node) and 7 (kube-apiserver), which carry no `cidr:` labels, so no except
+  removes them; the workspace endpoint's policy map allowed egress to host and remote-node on
+  every port. Upstream Cilium 1.18 adds only `reserved:world` for a `/0` prefix
+  (`pkg/policy/api/cidr.go`); the node selector is GKE's, and GKE's documentation does not
+  mention it.
+- **It follows containment, not `/0`.** Splitting the block into `0.0.0.0/1` and `128.0.0.0/1`
+  left every node open: the `remote-node` selector moved to `0.0.0.0/1`, the half holding the node
+  range, while `128.0.0.0/1` and the CP namespace's `35.191.0.0/16` and `130.211.0.0/22` got
+  none.
+- **Blocks that contain no node address close it.** The same allow written as the 47 blocks
+  that make up the complement of RFC 1918, `100.64.0.0/10` and `169.254.0.0/16`, with no
+  `except`, produced 47 `cidr:` selectors and no node or world selector. From the workspace pod
+  every node's three ports then timed out, own node included, and nothing else changed: DNS,
+  public addresses on both sides of `128.0.0.0`, and the CP's internal port stayed open; the
+  metadata address, the API Service, the control-plane endpoint, Cloud SQL and the CP's main
+  port stayed closed.
+
+Decided (the user's choice among three):
+
+- **The egress policy is that fixed complement**, written by `deploy/kubernetes/egress-blocks.py`,
+  which also fails when the file drifts from it. The manifests no longer take the deployment's
+  ranges as parameters: an `except` has to lie inside its block, so which block a range belongs
+  to would depend on its value.
+- **The deployment's node, pod, service and control-plane ranges must lie inside RFC 1918 or
+  `100.64.0.0/10`.** Terraform fails a plan otherwise; the runbook makes it precondition P15 for
+  other clusters, which must cut any other range (privately used public addresses, GKE's default
+  `34.118.224.0/20` Service range) out of the blocks themselves.
+- Rejected: Terraform computing a per-deployment block list (keeps the parameters, but leaves the
+  generic overlay to hand computation), and a VPC firewall rule from the pod range to the node
+  range (never sees a pod's traffic to its own node, and with one pod range for all pools it would
+  also cut metrics-server off from the workspace nodes' kubelets).
+
+With this policy the sentence "NetworkPolicy also always lets a pod reach the node it runs on" no
+longer describes Dataplane V2, where a workspace reaches no node at all; P6 stays, for CNIs where
+it does. The runbook's "Check it" probes every node from a workspace pod.

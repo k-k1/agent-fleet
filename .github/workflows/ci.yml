@@ -297,6 +297,10 @@ jobs:
       # diffs a deployed stack against the repo (which is how it was found).
       - name: CloudFormation templates are ASCII-only
         run: ./deploy/local/cfn-ascii-test.sh
+      # The workspace egress policy is 47 generated blocks; a hand edit that lets one cover a
+      # node address reopens every node to workspaces on GKE (ADR 0106, 2026-10-03 addendum).
+      - name: workspace egress blocks match their generator
+        run: python3 ./deploy/kubernetes/egress-blocks.py
       # The CP task role may write EC2 tags only where the SendCommand fence stays intact,
       # and a call site the policy refuses fails with AccessDenied on a real deployment
       # only: the live E2E runs as the deployer. This holds every call site against the
