@@ -88,6 +88,17 @@ func (managedDriver) Capabilities() agents.Capabilities {
 // shared reconciliation procedure: ensure the runtime, resolve the session, check the
 // snapshot; the live subscription is held permanently by the supervisor, per generation.
 func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
+	h, err := managedDriver{}.resume(m)
+	if err != nil {
+		return nil, err
+	}
+	// Peer messages a halt, a shutdown or a crash left held become the first turns (#1255).
+	agents.DeliverHeld(m.Name, h)
+	return h, nil
+}
+
+// resume is Resume without the held peer messages.
+func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	if m.Kind != session.KindOpencode {
 		return nil, errors.New("opencode driver は opencode セッション専用です")
 	}

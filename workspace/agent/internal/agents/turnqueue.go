@@ -195,6 +195,10 @@ func NewTurnQueue(name string, ledger *MsgLedger, at LedgerPoint) *TurnQueue {
 // input of any other origin.
 func (q *TurnQueue) Accept(in TurnInput) (id string, dup bool) {
 	in.ClientMessageID = NormalizeMsgID(in.ClientMessageID)
+	if in.restored {
+		return q.acceptRestored(in)
+	}
+	q.adoptHeld()
 	switch q.at {
 	case LedgerAtAccept:
 		if q.ledger != nil && q.ledger.SeenOrRecord(q.name, in.ClientMessageID) {
@@ -208,8 +212,61 @@ func (q *TurnQueue) Accept(in TurnInput) (id string, dup bool) {
 		}
 	}
 	q.queue = append(q.queue, in)
+	q.holdPeer(&q.queue[len(q.queue)-1])
 	q.noteAccepted(in)
 	return in.ClientMessageID, false
+}
+
+// acceptRestored queues a held peer message DeliverHeld sends again. The ledger is not asked:
+// the id was recorded when the message was first accepted (LedgerAtAccept), or by a Take whose
+// commit a crash cut short (LedgerAtTake), and either way the message never reached the
+// runtime — its file is the proof. A second delivery is refused here, under the handle lock:
+// one already queued or taken, and one whose file is gone because it was committed meanwhile.
+func (q *TurnQueue) acceptRestored(in TurnInput) (string, bool) {
+	id := in.ClientMessageID
+	if q.holds(id) || !heldExists(q.name, id) {
+		return id, true
+	}
+	q.queue = append(q.queue, in)
+	if q.at == LedgerAtTake {
+		if q.recorded == nil {
+			q.recorded = map[string]bool{}
+		}
+		q.recorded[id] = true
+	}
+	return id, false
+}
+
+// adoptHeld queues the session's held peer messages this queue does not hold yet, ahead of the
+// input being accepted. DeliverHeld alone cannot promise that order: a send it made can be
+// refused (a question pending), and the guard can lift (an answer) before the caller of Resume
+// sends, which would then start first while the held message waits on disk for a Resume that
+// may never come. Doing it here, under the lock the caller's input is accepted under, ties the
+// order to the queue rather than to how long a guard lasts.
+func (q *TurnQueue) adoptHeld() {
+	for _, hp := range loadHeld(q.name) {
+		q.acceptRestored(restoredInput(hp))
+	}
+}
+
+// holdPeer writes a newly queued peer message through to disk (heldpeers.go). Written at
+// accept rather than at teardown, so a crash that runs no teardown does not lose it.
+func (q *TurnQueue) holdPeer(in *TurnInput) {
+	if !isHeldPeer(*in) || in.restored {
+		return
+	}
+	if in.queuedAt.IsZero() {
+		in.queuedAt = q.now()
+	}
+	putHeld(q.name, *in)
+}
+
+// releasePeer removes a peer message's file once it no longer waits: handed to the runtime,
+// discarded by a stop, or removed by id.
+func (q *TurnQueue) releasePeer(in TurnInput) {
+	if isHeldPeer(in) {
+		releaseHeld(q.name, in.ClientMessageID)
+	}
 }
 
 // AcceptRecorded queues input AcceptOutside has already recorded (codex: a native turn/steer
@@ -217,6 +274,7 @@ func (q *TurnQueue) Accept(in TurnInput) (id string, dup bool) {
 func (q *TurnQueue) AcceptRecorded(in TurnInput) string {
 	in.ClientMessageID = NormalizeMsgID(in.ClientMessageID)
 	q.queue = append(q.queue, in)
+	q.holdPeer(&q.queue[len(q.queue)-1])
 	return in.ClientMessageID
 }
 
@@ -226,6 +284,7 @@ func (q *TurnQueue) AcceptRecorded(in TurnInput) string {
 // however it is delivered; a resend does not.
 func (q *TurnQueue) AcceptOutside(in TurnInput) (id string, dup bool) {
 	in.ClientMessageID = NormalizeMsgID(in.ClientMessageID)
+	q.adoptHeld()
 	if q.holds(in.ClientMessageID) {
 		return in.ClientMessageID, true
 	}
@@ -278,7 +337,13 @@ func (q *TurnQueue) Take() *Taken {
 		q.queue = q.queue[1:]
 		if q.recorded[in.ClientMessageID] {
 			delete(q.recorded, in.ClientMessageID)
+			// Recorded either way: a restored entry may never have been taken before, and the
+			// ledger must know it once it runs, or a resend under its id would run again.
+			if q.ledger != nil {
+				q.ledger.SeenOrRecord(q.name, in.ClientMessageID)
+			}
 		} else if q.at == LedgerAtTake && q.ledger != nil && q.ledger.SeenOrRecord(q.name, in.ClientMessageID) {
+			q.releasePeer(in)
 			continue
 		}
 		q.head = &Taken{In: in}
@@ -317,6 +382,7 @@ func (q *TurnQueue) Commit(t *Taken) bool {
 		return false
 	}
 	t.phase = phaseCommitted
+	q.releasePeer(t.In)
 	return true
 }
 
@@ -355,6 +421,9 @@ func (q *TurnQueue) Requeue(t *Taken) bool {
 		return false
 	}
 	q.queue = append([]TurnInput{t.In}, q.queue...)
+	if isHeldPeer(t.In) {
+		putHeld(q.name, t.In) // Commit released it; it waits again
+	}
 	if q.at == LedgerAtTake {
 		if q.recorded == nil {
 			q.recorded = map[string]bool{}
@@ -420,6 +489,9 @@ func (q *TurnQueue) Interrupt(opts InterruptOpts, busy bool) InterruptOutcome {
 func (q *TurnQueue) keepDiscard(reason string, items []QueueItem) *Discard {
 	for _, it := range items {
 		q.recordGone(it.ID)
+		if it.Origin.Kind == OriginPeer {
+			releaseHeld(q.name, it.ID)
+		}
 	}
 	d := Discard{ID: mintID("dsc_"), At: q.now().Format(time.RFC3339), Reason: reason, Items: items}
 	q.discards = append(q.discards, d)
@@ -473,6 +545,7 @@ func (q *TurnQueue) Remove(id string) (QueueItem, error) {
 		q.dropQueued(id)
 		q.maybeEndEpisode()
 		q.recordGone(id)
+		q.releasePeer(h.In)
 		return itemOf(h.In, ""), nil
 	}
 	for _, in := range q.queue {
@@ -480,6 +553,7 @@ func (q *TurnQueue) Remove(id string) (QueueItem, error) {
 			q.dropQueued(id)
 			q.maybeEndEpisode()
 			q.recordGone(id)
+			q.releasePeer(in)
 			return itemOf(in, ""), nil
 		}
 	}
@@ -498,6 +572,7 @@ func (q *TurnQueue) dropQueued(id string) {
 
 // DropAll is teardown (decision 8): everything unsent goes, nothing is kept for return, and
 // the episode ends. A committed or received head is left for the driver's own teardown.
+// Peer messages keep their files: DeliverHeld hands them to the session's next start (#1255).
 func (q *TurnQueue) DropAll() {
 	q.queue = nil
 	if h := q.head; h != nil && h.phase == phaseTaken {

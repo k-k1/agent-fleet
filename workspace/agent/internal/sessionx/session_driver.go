@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
@@ -134,6 +135,11 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		kiro.DropHandleWait(name, 5*time.Second)
 	} else {
 		dropManagedRuntime(m)
+	}
+	if target == session.DriverTUI {
+		// Held peer messages are delivered by a Managed start, and Terminal has no queue to
+		// put them in: typing them into the CLI as it boots would race its own startup.
+		agents.DropHeld(name, "switched to Terminal (CLI)")
 	}
 	status.Remove(sid)
 
