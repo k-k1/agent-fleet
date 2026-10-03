@@ -1250,6 +1250,19 @@ func TestKubernetesLiveNetworkProbes(t *testing.T) {
 	}
 }
 
+// mustQuiet is run for cleanups: an error is logged, not fatal.
+func (l *kubeLive) mustQuiet(args ...string) string {
+	out, err := l.run(args...)
+	if err != nil {
+		l.t.Logf("%v", err)
+	}
+	return out
+}
+
+func (l *kubeLive) nodeUIDQuiet(node string) string {
+	return strings.TrimSpace(l.mustQuiet("get", "node", node, "--ignore-not-found", "-o", "jsonpath={.metadata.uid}"))
+}
+
 func (l *kubeLive) nodeUID(node string) string {
 	l.t.Helper()
 	return strings.TrimSpace(l.must("get", "node", node, "--ignore-not-found", "-o", "jsonpath={.metadata.uid}"))
@@ -1500,6 +1513,13 @@ type kubeLiveNodePod struct {
 //
 //	{kubectl} debug node/{node} -n default --profile=sysadmin --image=<image> -- sh -c 'echo o > /proc/sysrq-trigger'
 //
+// GKE replaces a VM that terminated by itself within seconds, though, so on GKE the node is
+// cut off with its VM running — the kubelet stopped through the same debug pod, with a
+// host timer that starts it again should the test die — and AF_K8S_LIVE_NODE_HALT_CMD is
+// the runbook operator's VM stop once Stop has failed:
+//
+//	{kubectl} debug node/{node} ... -- chroot /host sh -c 'systemd-run --on-active=900 systemctl start kubelet && systemctl stop kubelet'
+//
 // The cleanup deletes such debug pods (node-debugger-<node>-*), removes the taint, starts
 // the VM only if the provider reports it TERMINATED, and checks that no debug pod is left. The three commands take {node} and {zone}: AF_K8S_LIVE_NODE_STOP_CMD stops the
 // VM, AF_K8S_LIVE_NODE_STATUS_CMD prints its state from the provider (TERMINATED is the
@@ -1507,6 +1527,7 @@ type kubeLiveNodePod struct {
 func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	l := needKubeLiveDisruptive(t)
 	stopCmd, statusCmd, startCmd := os.Getenv("AF_K8S_LIVE_NODE_STOP_CMD"), os.Getenv("AF_K8S_LIVE_NODE_STATUS_CMD"), os.Getenv("AF_K8S_LIVE_NODE_START_CMD")
+	haltCmd := os.Getenv("AF_K8S_LIVE_NODE_HALT_CMD")
 	if stopCmd == "" || statusCmd == "" || startCmd == "" {
 		t.Fatal("set AF_K8S_LIVE_NODE_STOP_CMD, AF_K8S_LIVE_NODE_STATUS_CMD and AF_K8S_LIVE_NODE_START_CMD")
 	}
@@ -1590,8 +1611,8 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 			t.Fatalf("node %s also runs %s/%s; refusing to stop it", node, m.Namespace, m.Name)
 		}
 	}
-	cmds := l.nodeCommands(node, stopCmd, statusCmd, startCmd)
-	stopCmd, statusCmd, startCmd = cmds[0], cmds[1], cmds[2]
+	cmds := l.nodeCommands(node, stopCmd, statusCmd, startCmd, haltCmd)
+	stopCmd, statusCmd, startCmd, haltCmd = cmds[0], cmds[1], cmds[2], cmds[3]
 	t.Logf("making %s unreachable", node)
 	t.Cleanup(func() {
 		if left, err := l.debugPods(node); err != nil {
@@ -1615,7 +1636,14 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 				t.Errorf("START THE VM OF %s BY HAND: %v", node, err)
 			}
 		default:
-			t.Logf("the VM of %s is %s at cleanup (auto-repair, or never stopped); not started", node, strings.TrimSpace(st))
+			ready := "unreadable"
+			if present, err := l.exists("get", "node", node); err == nil && !present {
+				ready = "gone"
+			} else if err == nil {
+				ready = "Ready=" + strings.TrimSpace(l.mustQuiet("get", "node", node, "-o", `jsonpath={.status.conditions[?(@.type=="Ready")].status}`))
+			}
+			t.Logf("the VM of %s is %s at cleanup, node %s, UID now %q (was %q): not started; a node cut off with its VM running recovers by the stop command's own timer or the provider's repair",
+				node, strings.TrimSpace(st), ready, l.nodeUIDQuiet(node), nodeObj.Metadata.UID)
 		}
 	})
 	t0 := time.Now()
@@ -1660,9 +1688,33 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 		t.Fatalf("Start over the unreachable pod = %v, want a refusal", err)
 	}
 
-	// The runbook: proof from the provider first, then the taint.
-	if st := l.operator(statusCmd); !strings.Contains(st, "TERMINATED") {
-		t.Fatalf("the provider says %q, not TERMINATED: the runbook does nothing without that proof", strings.TrimSpace(st))
+	t.Logf("Start refused %s after the stop command", time.Since(t0).Round(time.Second))
+
+	// The runbook: the old process must be proven unable to run — the VM stopped, from the
+	// provider — before anything frees the pod. A node cut off with its VM still running
+	// (a stopped kubelet) is stopped by the operator first, AF_K8S_LIVE_NODE_HALT_CMD.
+	st := l.operator(statusCmd)
+	t2 := time.Now()
+	if !strings.Contains(st, "TERMINATED") {
+		if haltCmd == "" {
+			t.Fatalf("the provider says %q, not TERMINATED, and no AF_K8S_LIVE_NODE_HALT_CMD is set: the runbook does nothing without that proof", strings.TrimSpace(st))
+		}
+		l.operator(haltCmd)
+		l.eventually(5*time.Minute, "the provider to report "+node+" TERMINATED", func() bool {
+			out, err := l.operatorRun(statusCmd)
+			if err == nil && strings.Contains(out, "TERMINATED") {
+				return true
+			}
+			// The provider may replace the VM by itself in the meantime.
+			if present, rerr := l.exists("get", "node", node); rerr == nil && (!present || l.nodeUID(node) != nodeObj.Metadata.UID) {
+				t.Fatalf("INCONCLUSIVE: the provider replaced %s by itself before the runbook's taint (%s after the halt)", node, time.Since(t2).Round(time.Second))
+			}
+			return false
+		})
+		t.Logf("%s TERMINATED %s after the operator's halt", node, time.Since(t2).Round(time.Second))
+	}
+	if present, rerr := l.exists("get", "node", node); rerr != nil || !present || l.nodeUID(node) != nodeObj.Metadata.UID {
+		t.Fatalf("INCONCLUSIVE: %s was replaced or removed by the provider before the runbook's taint (%v)", node, rerr)
 	}
 	l.must("taint", "nodes", node, "node.kubernetes.io/out-of-service=nodeshutdown:NoExecute", "--overwrite")
 	t1 := time.Now()
@@ -1671,9 +1723,13 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	if err := rt.Stop(ctx); err != nil {
 		t.Fatalf("Stop once the pod is gone: %v", err)
 	}
+	t.Logf("the stop settled %s after the operator's halt began", time.Since(t2).Round(time.Second))
 	l.startRunning(rt)
-	if p := l.runningPod(rt); p.Spec.NodeName == node {
+	p := l.runningPod(rt)
+	if p.Spec.NodeName == node && l.nodeUID(node) == nodeObj.Metadata.UID {
 		t.Fatalf("running again on the stopped node %s", node)
 	}
-	t.Logf("node unreachable: recovered and running again on %s, %s after the VM stop", l.runningPod(rt).Spec.NodeName, time.Since(t0).Round(time.Second))
+	t.Logf("node unreachable: running again on %s %s after the operator's halt began, %s after the node was cut off",
+		p.Spec.NodeName, time.Since(t2).Round(time.Second), time.Since(t0).Round(time.Second))
+
 }

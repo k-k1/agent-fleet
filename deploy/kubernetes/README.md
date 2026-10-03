@@ -741,6 +741,22 @@ operator's, **and it starts with proof that the old process cannot run**:
 3. The StatefulSet recreates the pod elsewhere (in the volume's zone). Remove the taint once the
    node is gone or repaired.
 
+**On GKE, a VM that stops usually takes its node with it before you get here.** Measured on GKE
+1.35 with the live harness (#1468):
+- A VM shut down from Google Cloud (`gcloud compute instances stop`, an ACPI shutdown of about
+  110 s) terminates its pods before it goes. Stop then settles normally.
+- A VM that powers off on its own is recreated by the node pool's instance group about 6 s later
+  (`compute.instances.repair.recreateInstance` in the audit log). GKE then deletes the old Node
+  object and its pods, so the workspace's Stop settles without anyone acting.
+- A node whose kubelet stops while its VM keeps running is the case this procedure is for. It was
+  NotReady after about 55 s, Stop failed, and Start refused. Once the VM was stopped (step 1), the
+  instance group's repair started within seconds. It deleted the stopped VM in the same second as
+  the taint of step 2, and the workspace ran again on the recreated node 4 minutes after the stop
+  began.
+
+A network partition, where the VM keeps running, was not measured. That case is still yours, and
+step 1 still comes first.
+
 ### Residue cleanup
 
 When Destroy cannot confirm that something is gone, it says so in the audit log
@@ -844,9 +860,15 @@ cordons: the test fails if its UID, node or restart count changes.
   on GKE either: the node pool's instance group recreates a VM that terminated within seconds,
   and the node controller then deletes the old Node object and its pods, so Stop settles with no
   operator action (also `INCONCLUSIVE`). On GKE the scenario needs a node whose VM keeps running
-  but stops answering.
+  but stops answering. The stop command does that by stopping the kubelet through a node debug
+  pod; `{kubectl}` is the harness's pinned kubectl. It first sets a host timer that starts the
+  kubelet again after 15 minutes, because once the kubelet is down nothing reaches the node
+  through the cluster. `AF_K8S_LIVE_NODE_HALT_CMD` is then the runbook operator's VM stop, run
+  after Stop has failed. The debug pod has to run as root, hence the custom profile file:
   ```bash
-  export AF_K8S_LIVE_NODE_STOP_CMD='<cut {node} off without a guest shutdown>'
+  echo '{"securityContext":{"runAsUser":0,"runAsNonRoot":false}}' > "$W/debug-root.json"
+  export AF_K8S_LIVE_NODE_STOP_CMD="{kubectl} debug node/{node} -n default --profile=sysadmin --custom=$W/debug-root.json --image=<workspace image> -- chroot /host sh -c 'systemd-run --on-active=900 systemctl start kubelet && systemctl stop kubelet'"
+  export AF_K8S_LIVE_NODE_HALT_CMD='gcloud compute instances stop {node} --zone {zone} --project '"$PROJECT"
   export AF_K8S_LIVE_NODE_STATUS_CMD='gcloud compute instances describe {node} --zone {zone} --project '"$PROJECT"' --format="value(status)"'
   export AF_K8S_LIVE_NODE_START_CMD='gcloud compute instances start {node} --zone {zone} --project '"$PROJECT"
   ```
