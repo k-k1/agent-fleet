@@ -743,23 +743,30 @@ operator's, **and it starts with proof that the old process cannot run**:
 
 #### On GKE
 
-On GKE, leave the VM alone and let the node's auto-repair handle it. After a node has been
-NotReady for about ten minutes, GKE drains it and recreates its VM under the same name
-([node auto-repair](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/node-auto-repair)).
-The pod goes with the old node, the workspace's Stop settles, and the member's next start runs
-again. To hurry it, stop or delete the node's VM yourself; a stopped VM cannot run the old agent.
-The node pool's managed instance group then recreates the VM within seconds
-([instance group repair](https://docs.cloud.google.com/compute/docs/instance-groups/about-repair):
-`instances.stop` on a group member triggers repairing, recorded as
-`compute.instances.repair.recreateInstance`). GKE then deletes the old Node object and its pods.
+Where the node pool has auto-repair enabled (the default; on GKE Standard it can be turned off),
+leave the VM alone and let auto-repair act. GKE starts a repair once a node has reported
+NotReady for about ten minutes. It then drains the node, waiting up to an hour for the drain,
+and recreates its VM under the same name
+([node auto-repair](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/node-auto-repair),
+"Repair criteria" and "Node repair process"). The pod goes with the old node, the workspace's
+Stop settles, and the member's next start runs again. To hurry it, stop or delete the node's VM
+yourself; a stopped VM cannot run the old agent. `instances.stop` on a member of a managed
+instance group triggers the group's repair, which recreates the VM
+([instance group repair](https://docs.cloud.google.com/compute/docs/instance-groups/about-repair),
+"Automatically repair a failed VM"). GKE then deletes the old Node object and its pods.
 
-The out-of-service taint of step 2 is for clusters where a stopped node stays down. On GKE the
-instance group replaces a stopped VM before the taint could matter. Measured on GKE 1.35 with
-the live harness (#1468):
+Where auto-repair is off, or does not act, the procedure above applies as written: proof first,
+then the taint.
+
+Measured on GKE 1.35 with the live harness (#1468). These are single observations, not
+guarantees:
 - A VM stop is an ACPI shutdown of about 110 s, which terminates the pods before the node goes.
-- A guest power-off was recreated about 6 s later.
+- A guest power-off was recreated by the instance group about 6 s later.
 - After a kubelet stop with the VM running, an operator's VM stop was followed by the group's
-  repair within seconds, in the same second as the taint.
+  repair within seconds. It deleted the VM in the same second as the taint, so that run could not
+  show which of the two freed the pod.
+- Left alone after a kubelet stop, node auto-repair started 11m15s after NotReady and finished
+  2m44s later. The workspace's pod was gone 14m37s after the cut.
 
 ### Residue cleanup
 
@@ -871,14 +878,8 @@ cordons: the test fails if its UID, node or restart count changes.
   after Stop has failed. The status command prints the VM's id too: a run counts only while the
   pod, the Node object and the stopped VM stay the ones it cut off, until the pod is gone. If the
   provider replaced the node or VM in between, that also removes the pod, so the run is
-  `INCONCLUSIVE`. On GKE the halt cannot win that race (see "On GKE" under "A node that stopped
-  answering"). Set `AF_K8S_LIVE_NODE_MODE=auto-repair` instead: no halt runs, and the node's
-  auto-repair must free the pod within 20 minutes while the kubelet is still down.
-  `AF_K8S_LIVE_NODE_REPAIR_EVIDENCE_CMD` must print the repair's record, with `{since}` filled in
-  as the time of the cut, for example
-  `gcloud container operations list --location "$REGION" --filter="operationType=AUTO_REPAIR_NODES AND startTime>={since}"`.
-  Give the kubelet timer (`--on-active`) more than that, and match `AF_K8S_LIVE_NODE_RECOVER_WAIT`
-  to it. The optional `AF_K8S_LIVE_NODE_RECOVER_CMD` (for example
+  `INCONCLUSIVE`. On GKE with node auto-repair, use the auto-repair mode below instead (see
+  "On GKE" under "A node that stopped answering"). The optional `AF_K8S_LIVE_NODE_RECOVER_CMD` (for example
   `gcloud compute instances reset …`) recovers a node left cut off with its VM running. Without
   it, the cleanup waits up to 17 minutes for the timer before deleting anything. The cleanup
   deletes only the debug pods the stop command reported creating, by name and UID. The debug
@@ -890,6 +891,24 @@ cordons: the test fails if its UID, node or restart count changes.
   export AF_K8S_LIVE_NODE_STATUS_CMD='gcloud compute instances describe {node} --zone {zone} --project '"$PROJECT"' --format="value(status,id)"'
   export AF_K8S_LIVE_NODE_START_CMD='gcloud compute instances start {node} --zone {zone} --project '"$PROJECT"
   ```
+
+  On GKE with node auto-repair, set `AF_K8S_LIVE_NODE_MODE=auto-repair`. No halt runs: after Stop
+  has failed, the node's auto-repair must free the pod within 20 minutes while the kubelet is
+  still down. The repair record must name the repair: exactly one `AUTO_REPAIR_NODES` of that
+  node in `AF_K8S_LIVE_GKE_CLUSTER`, started between the cut and the pod's end. The kubelet timer
+  has to outlast the 20 minutes, and `AF_K8S_LIVE_NODE_RECOVER_WAIT` has to cover the timer. The
+  harness refuses a wait of 20 minutes or less, or one over 45. The whole set:
+  ```bash
+  export AF_K8S_LIVE_NODE_MODE=auto-repair AF_K8S_LIVE_GKE_CLUSTER="$PREFIX-gke" AF_K8S_LIVE_NODE_RECOVER_WAIT=32m
+  export AF_K8S_LIVE_NODE_STOP_CMD="{kubectl} debug node/{node} -n default --profile=sysadmin --custom=$W/debug-root.json --image=<workspace image> -- chroot /host sh -c 'systemd-run --on-active=1800 systemctl start kubelet && systemctl stop kubelet'"
+  export AF_K8S_LIVE_NODE_REPAIR_EVIDENCE_CMD='gcloud container operations list --location '"$REGION"' --project '"$PROJECT"' --filter="operationType=AUTO_REPAIR_NODES AND startTime>={since}" --format=json'
+  # STATUS_CMD and START_CMD as above; no HALT_CMD
+  go test -count=1 -run 'TestKubernetesLiveNodeUnreachable' -v -timeout 75m ./internal/runtime/
+  ```
+  A pass takes about 21 minutes: about 4 for the first start, up to 20 for the repair, and about
+  2 for the next start. A failure while the node is cut off adds up to the 32-minute wait, which
+  can outlast an hour's token; then check the node and the debug pod by hand. Start with a
+  freshly minted token, for both the CP's token and the Google Cloud token behind kubectl.
 
 Afterwards, check that nothing of the harness is left:
 `kubectl -n "$PREFIX-ws" get sts,pvc,pods,svc,secrets | grep live-`, `kubectl get pv | grep live-`
