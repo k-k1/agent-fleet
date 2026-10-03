@@ -257,6 +257,9 @@ func readApprovalDir(t *testing.T) ([]string, error) {
 	}
 	var names []string
 	for _, e := range entries {
+		if e.IsDir() { // fstore.StagingSubdir: a record is a file
+			continue
+		}
 		names = append(names, e.Name())
 	}
 	return names, nil

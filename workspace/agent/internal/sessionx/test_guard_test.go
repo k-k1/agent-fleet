@@ -82,12 +82,30 @@ exec '` + real + `' -L '` + guardTmuxSocket + `' "$@"
 		_ = os.Unsetenv(k)
 	}
 	code := m.Run()
-	if b, _ := os.ReadFile(typed); len(b) > 0 {
+	b, _ := os.ReadFile(typed)
+	if v := guardViolations(b); len(v) > 0 {
 		fmt.Fprintf(os.Stderr, "test guard: a test typed through the default tmux socket, where the workspace's live sessions are:\n\t%s\n",
-			strings.ReplaceAll(strings.TrimRight(string(b), "\n"), "\n", "\n\t"))
+			strings.Join(v, "\n\t"))
 		return 1
 	}
 	return code
+}
+
+// guardSelfTestText is what the guard's own test types; its line, and only its line, is not a
+// violation. The log is append-only and never rewritten: a straggler typing while the self-test
+// runs must still fail the run.
+var guardSelfTestText = fmt.Sprintf("guard-self-test-%d", os.Getpid())
+
+// guardViolations is every recorded typing call except the self-test's.
+func guardViolations(log []byte) []string {
+	var out []string
+	for _, l := range strings.Split(string(log), "\n") {
+		if l == "" || strings.HasSuffix(l, " -l "+guardSelfTestText) {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
 }
 
 // The guard itself: a default-socket call is answered by the private server, and typing
@@ -107,14 +125,23 @@ func TestGuardKeepsTestsOffTheDefaultTmuxSocket(t *testing.T) {
 	if err := exec.Command("tmux", "-L", guardTmuxSocket, "has-session", "-t", "="+probe).Run(); err != nil {
 		t.Fatalf("a default-socket new-session did not land on the private server %s: %v", guardTmuxSocket, err)
 	}
-	_ = exec.Command("tmux", "send-keys", "-t", "%0", "-l", "x").Run()
+	_ = exec.Command("tmux", "send-keys", "-t", "%0", "-l", guardSelfTestText).Run()
 	after, _ := os.ReadFile(typed)
-	if !strings.HasPrefix(string(after[len(before):]), "send-keys -t %0") {
-		t.Fatalf("typing through the default socket was not recorded: %q", after[len(before):])
+	if got := string(after[len(before):]); !strings.Contains(got, "send-keys -t %0 -l "+guardSelfTestText+"\n") {
+		t.Fatalf("typing through the default socket was not recorded: %q", got)
 	}
-	// This one is the guard's own, so take it back out before the run is judged.
-	if err := os.WriteFile(typed, before, 0o600); err != nil {
-		t.Fatal(err)
+}
+
+// Only the self-test's own line is forgiven: another typing call recorded around it, a
+// straggler's, is still a violation.
+func TestGuardForgivesOnlyItsOwnLine(t *testing.T) {
+	log := "send-keys -t %0 -l " + guardSelfTestText + "\n" +
+		"send-keys -t %99 Enter\n" +
+		"send-keys -t %0 -l " + guardSelfTestText + "-not\n"
+	got := guardViolations([]byte(log))
+	want := []string{"send-keys -t %99 Enter", "send-keys -t %0 -l " + guardSelfTestText + "-not"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("violations = %q, want %q", got, want)
 	}
 }
 

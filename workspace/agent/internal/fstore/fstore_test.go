@@ -72,15 +72,19 @@ func TestWriteIsNeverSeenTorn(t *testing.T) {
 	if err := s.Write("k", rec{State: "permission", Pad: pad}); err != nil {
 		t.Fatal(err)
 	}
+	const writes = 500
 	done := make(chan struct{})
+	var failed int
 	go func() {
 		defer close(done)
-		for i := 0; i < 500; i++ {
+		for i := 0; i < writes; i++ {
 			st := "working"
 			if i%2 == 0 {
 				st = "permission"
 			}
-			_ = s.Write("k", rec{State: st, Pad: pad})
+			if s.Write("k", rec{State: st, Pad: pad}) != nil {
+				failed++
+			}
 		}
 	}()
 	torn := 0
@@ -94,15 +98,42 @@ func TestWriteIsNeverSeenTorn(t *testing.T) {
 			torn++
 		}
 	}
+	if failed > 0 {
+		t.Fatalf("%d of %d rewrites failed", failed, writes)
+	}
+	if got, ok := s.Read("k"); !ok || got.State != "working" {
+		t.Fatalf("after the rewrites: %+v ok=%v, want the last one (working)", got.State, ok)
+	}
 	if torn > 0 {
 		t.Fatalf("%d reads saw no record while it was being rewritten", torn)
 	}
+	if staged, _ := os.ReadDir(filepath.Join(s.Dir(), StagingSubdir)); len(staged) != 0 {
+		t.Fatalf("staging holds %d files after successful writes, want none", len(staged))
+	}
+}
+
+// A writer killed between staging and the rename leaves its file in StagingSubdir; the
+// store's own directory still lists the keys alone, so a walker that counts its files
+// (agy's pendingBrainSnapshots) is not thrown off.
+func TestOrphanedStagingIsNotAStoreEntry(t *testing.T) {
+	root := t.TempDir()
+	s := TrimmedStrings(func() string { return root }, "test-orphan")
+	if err := s.Write("sid1", "x"); err != nil {
+		t.Fatal(err)
+	}
+	orphan, err := os.CreateTemp(filepath.Join(s.Dir(), StagingSubdir), "sid2.*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	orphan.Close()
 	ents, _ := os.ReadDir(s.Dir())
-	if len(ents) != 1 {
-		var names []string
-		for _, e := range ents {
-			names = append(names, e.Name())
+	var files []string
+	for _, e := range ents {
+		if !e.IsDir() {
+			files = append(files, e.Name())
 		}
-		t.Fatalf("store dir holds %v, want only k.json (no temp file left behind)", names)
+	}
+	if len(files) != 1 || files[0] != "sid1" {
+		t.Fatalf("store dir files = %v, want [sid1]", files)
 	}
 }

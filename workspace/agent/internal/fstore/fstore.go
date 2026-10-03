@@ -25,22 +25,27 @@ func (s Store[T]) Dir() string { return filepath.Join(s.base(), s.subdir) }
 
 func (s Store[T]) Path(key string) string { return filepath.Join(s.Dir(), key+s.ext) }
 
+// StagingSubdir is the directory inside a store's Dir where Write stages a value before it
+// renames it into place. It is a directory so that walkers that count or list the store's
+// files (agy's pendingBrainSnapshots counts every non-directory entry) never see a staged
+// value, including one orphaned by a writer killed between the create and the rename.
+const StagingSubdir = ".staging"
+
 // Write persists v under key. The error is surfaced for the one caller that logs
 // it (session-status); everyone else discards it.
 //
-// The value is written to a temp file and renamed over the key, so a concurrent Read sees
+// The value is staged in StagingSubdir and renamed over the key, so a concurrent Read sees
 // the old record or the new one. os.WriteFile truncates first, and a reader landing between
 // the truncate and the write got "no record" — for session-status that is "idle", which let
 // the pending-peer loop deliver into a turn a permission answer had just resumed (measured:
-// 169042 missing reads across 6000 rewrites). Writers include the session-status
-// hook, a separate process, so no in-process lock could close that gap. The temp name starts
-// with a dot and ends in .tmp, so a directory sweep matching on ext never takes it for a key.
+// 169042 missing reads across 6000 rewrites). Writers include the session-status hook, a
+// separate process, so no in-process lock could close that gap.
 func (s Store[T]) Write(key string, v T) error {
-	dir := s.Dir()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	staging := filepath.Join(s.Dir(), StagingSubdir)
+	if err := os.MkdirAll(staging, 0o700); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(dir, "."+key+s.ext+".*.tmp") // mode 0600
+	f, err := os.CreateTemp(staging, key+".*") // mode 0600
 	if err != nil {
 		return err
 	}

@@ -285,7 +285,7 @@ func (d *queueingFakeDriver) Resume(session.Meta) (agents.ThreadHandle, error) {
 // from "held" — and the input has to carry its peer origin, which is how the stop rules tell it
 // from the member's own input (ADR 0105). The user's own send is member input and not held.
 func TestPeerInputToBusyManagedSessionIsQueuedAndKept(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	withTempHome(t) // waits for the input mirror that writes under HOME after /input returns
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
 	h := &queueingFakeHandle{queued: true, got: make(chan agents.TurnInput, 2)}
 	prev, had := managedDrivers[session.KindCodex]
