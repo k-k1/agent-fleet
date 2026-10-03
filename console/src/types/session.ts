@@ -125,6 +125,15 @@ export interface Session {
   // same shape. Absent for agy, shell and ssm, and until a reply with usage is known.
   // Display only.
   tokenSpends?: number[];
+  // The GitHub pull request whose head is the branch this session works on, newest first,
+  // with its state and the CI rollup of its head commit (#1062). Absent for other providers,
+  // without a GitHub connection, on the repository's default branch, and until the Agent's
+  // background refresh has answered. Refreshed every couple of minutes while open.
+  pr?: SessionPR;
+  // TCP ports this session's own processes listen on, reachable on 127.0.0.1 — each one a
+  // link into the browser pane (#1062). Live sessions only; another session's server never
+  // appears here.
+  ports?: number[];
   // Deletion lock (docs/log/45): while true, the Agent answers 403 to anything that deletes
   // (delete = forget the metadata, purge, the 7-day auto-prune of stopped sessions, and
   // removal as a side effect of deleting the working copy). Stop and archive are reversible
@@ -290,4 +299,14 @@ export interface SsmHost {
   region: string;
   instanceId: string;
   documentName: string;
+}
+
+/** The pull request a session row links to (#1062). */
+export interface SessionPR {
+  number: number;
+  state: "open" | "merged" | "closed";
+  draft?: boolean;
+  url: string;
+  /** CI rollup of the head commit; absent when nothing ran — which is not green. */
+  checks?: "success" | "failure" | "pending";
 }

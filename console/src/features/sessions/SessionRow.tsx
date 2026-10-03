@@ -22,6 +22,7 @@ import { lineageColorOf } from "../../lib/project.ts";
 import { useSessionsStore } from "./store.ts";
 import { openSessionFromList } from "./open.ts";
 import { SessionMenu } from "./SessionMenu.tsx";
+import { SessionLinks, hasSessionLinks } from "./SessionLinks.tsx";
 import { useMySharesStore } from "../sharing/store.ts";
 import { useSessionUnread } from "../notifications/unread.ts";
 import { isWaiting } from "./waiting.ts";
@@ -88,6 +89,8 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
   // Waiting on this person's answer (#1057): rings the whole row, the loudest thing in the rail,
   // because unlike the unread dot it does not clear by looking — only by answering.
   const needsYou = isWaiting(s);
+  // The branch's PR and the session's listening ports (#1062), on a second line of their own.
+  const links = hasSessionLinks(s, running);
 
   return (
     <li
@@ -99,7 +102,8 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         (inert ? " dead" : "") +
         (lineage ? " lineage" : "") +
         (needsYou ? " sess-needs-you" : "") +
-        (unread ? " sess-unread" : "")
+        (unread ? " sess-unread" : "") +
+        (links ? " sess-has-links" : "")
       }
       style={lineage ? ({ "--sess-lineage": lineage } as CSSProperties) : undefined}
       onMouseEnter={open ? () => setHover({ session: s.name }) : undefined}
@@ -245,6 +249,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
           />
         </div>
       )}
+      {links && <SessionLinks s={s} running={running} />}
     </li>
   );
 }
