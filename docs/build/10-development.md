@@ -288,6 +288,12 @@ npm --prefix console run build
   | `release-scan` | the forbidden-token gate over the tracked tree — the same scanner the pre-commit hook runs over staged content |
   | `model-id-lint` | no model-id-shaped string literal in either Go module outside `workspace/agent/internal/modelfallback`; `// model-id-lint:allow <reason>` marks one that chooses no model |
 
+  On a pull request, the `changes` job skips `control-plane`, `workspace-agent`,
+  `deploy-scripts` and `console` when every changed path is inert — `docs/`, `guide/`
+  (except `guide/ref/agents{,.ja}.md`, which a Console test reads), the top-level `*.md`
+  files and the docs checker. The list and the reason are in `scripts/ci-changes.sh`.
+  Pushes to `main` / `develop` always run every job.
+
   `docs.yml` runs `scripts/docs-check.py` on the same triggers. The end-to-end
   workflow is separate because building images is heavy. Upstream CLI breakage is a
   third system (below). The workflows that bake images (for example the workspace
