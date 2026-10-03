@@ -49,6 +49,7 @@ Terraform meets every GKE item below.
 | P12 | A **Postgres** the deployment provides (Cloud SQL on GKE) | decision 8 |
 | P13 | **A DNS zone** for the Console's name, and a **state bucket** for Terraform, both the operator's | decision 12 |
 | P14 | `AF_MASTER_KEY` is generated and kept **outside the database and its backups** | as on every target; losing it is a crypto-shred |
+| P15 | The **node, pod, service and control-plane ranges lie inside RFC 1918 or `100.64.0.0/10`** (Terraform checks it on every plan). The egress policy allows every address outside those ranges and `169.254.0.0/16`, as fixed blocks with no `except` (`deploy/kubernetes/egress-blocks.py` writes them). A cluster with a range elsewhere (privately used public addresses, GKE's default `34.118.224.0/20` Service range) must cut that range out of the blocks itself | on Dataplane V2 any allowed block that contains a node address lets workspaces reach every node, own and others, and an `except` does not stop it (decision 7, addendum of 2026-10-03) |
 
 Tools on the operator's machine: `gcloud` with the `gke-gcloud-auth-plugin` component
 (`gcloud components install gke-gcloud-auth-plugin`, which `kubectl` needs to sign in to GKE),
@@ -115,10 +116,9 @@ $TF apply
   the StorageClass talks to that endpoint, so `apply` must run from an authorised network — or,
   with `enable_private_endpoint = true`, from inside the VPC.
 - The ranges (`node_cidr`, `pod_cidr`, `service_cidr`, `control_plane_cidr`,
-  `private_service_access_cidr`) cannot change after the cluster exists. If one is outside RFC
-  1918 or `100.64.0.0/10`, check that the egress policy still excepts it: the four ranges
-  Terraform prints are excepted; the Private Service Access range is excepted only through RFC
-  1918.
+  `private_service_access_cidr`) cannot change after the cluster exists. The first four must lie
+  inside RFC 1918 or `100.64.0.0/10`, and a plan fails otherwise (P15); keep the Private Service
+  Access range there too, since the egress policy denies it only through those ranges.
 - `min_master_version` is a floor, not the version the cluster is created at: the cluster starts
   at the release channel's default, and every plan fails if the control plane runs below the
   floor (P1).
@@ -270,6 +270,19 @@ kubectl -n "$PREFIX-ws" get pods -o wide -l agent-fleet.io/workspace
 kubectl -n "$PREFIX-ws" exec <pod> -- getent hosts github.com     # an address, not empty
 ```
 
+No node answers a workspace, its own node included (P15). Every line must print `closed`;
+the last one is the control and must print `open`:
+
+```bash
+for ip in $(kubectl get nodes -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}'); do
+  for port in 22 10250 10256; do
+    kubectl -n "$PREFIX-ws" exec <pod> -- timeout 3 bash -c "exec 3<>/dev/tcp/$ip/$port" 2>/dev/null \
+      && echo "$ip:$port open" || echo "$ip:$port closed"
+  done
+done
+kubectl -n "$PREFIX-ws" exec <pod> -- timeout 3 bash -c 'exec 3<>/dev/tcp/1.1.1.1/443' && echo "1.1.1.1:443 open"
+```
+
 In that workspace's terminal, the home has to be `dev`'s and writable by nobody else, or
 `af-gcloud-exec` and `af-aws-exec` refuse to keep their state under it (ADR 0107):
 
@@ -287,8 +300,9 @@ in `kubectl logs <pod> -c home-layout`; rolling the CP back past this layout is 
 
 `overlays/generic` is the base with nothing provider-specific. Copy it, and:
 
-- set `deployment.yaml` from your cluster: the namespaces (with your own prefix), a StorageClass
-  that meets P3, the pod, service, node and control-plane ranges;
+- set `deployment.yaml` from your cluster: the namespaces (with your own prefix) and a
+  StorageClass that meets P3; check that the pod, service, node and control-plane ranges meet
+  P15;
 - put the store's DSN in `af-cp-secrets` as `AF_DATABASE_URL`;
 - if workspaces must run on particular nodes, set `AF_K8S_NODE_SELECTOR` in `cp.env`; if the
   images need a pull secret, create it in the workspace namespace and set

@@ -40,10 +40,6 @@ output "kustomize_deployment" {
       wsNamespace: ${local.ws_namespace}
       storageClass: ${local.storage_class}
       workspaceImage: ${var.workspace_image}
-      podCIDR: ${var.pod_cidr}
-      serviceCIDR: ${var.service_cidr}
-      nodeCIDR: ${var.node_cidr}
-      controlPlaneCIDR: ${var.control_plane_cidr}
       cpGoogleServiceAccount: ${google_service_account.cp.email}
       cloudSqlUser: ${google_sql_user.cp.name}
       cloudSqlInstance: ${google_sql_database_instance.main.connection_name}

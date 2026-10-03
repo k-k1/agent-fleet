@@ -15,10 +15,6 @@ data:
   wsNamespace: af-example-ws
   storageClass: af-example-workspace
   workspaceImage: europe-west1-docker.pkg.dev/example-project/agent-fleet/workspace:VERSION
-  podCIDR: 10.20.0.0/14
-  serviceCIDR: 10.24.0.0/20
-  nodeCIDR: 10.10.0.0/20
-  controlPlaneCIDR: 172.16.0.32/28
   cpGoogleServiceAccount: af-example-cp@example-project.iam.gserviceaccount.com
   # The IAM database user: the service account's email without ".gserviceaccount.com".
   cloudSqlUser: af-example-cp@example-project.iam

@@ -137,3 +137,47 @@ run "the_floor_is_major_minor" {
 
   expect_failures = [var.min_master_version]
 }
+
+# The workspace egress policy allows every address outside RFC 1918 and 100.64.0.0/10, so a
+# cluster range outside them would be reachable from workspaces, its nodes included (ADR 0106,
+# addendum of 2026-10-03).
+run "accepts_cluster_ranges_inside_the_denied_ranges" {
+  command = plan
+
+  variables {
+    node_cidr          = "100.64.0.0/20"
+    pod_cidr           = "192.168.0.0/17"
+    service_cidr       = "172.31.240.0/20"
+    control_plane_cidr = "10.255.255.240/28"
+  }
+}
+
+run "rejects_a_public_service_range" {
+  command = plan
+
+  variables {
+    service_cidr = "34.118.224.0/20"
+  }
+
+  expect_failures = [google_compute_subnetwork.nodes]
+}
+
+run "rejects_a_node_range_just_past_rfc1918" {
+  command = plan
+
+  variables {
+    node_cidr = "172.32.0.0/20"
+  }
+
+  expect_failures = [google_compute_subnetwork.nodes]
+}
+
+run "rejects_a_pod_range_wider_than_its_rfc1918_block" {
+  command = plan
+
+  variables {
+    pod_cidr = "10.0.0.0/7"
+  }
+
+  expect_failures = [google_compute_subnetwork.nodes]
+}

@@ -14,8 +14,3 @@ data:
   storageClass: af-workspace
   # A tag; the CP pins the digest at every start.
   workspaceImage: ghcr.io/k-k1/agent-fleet/workspace:VERSION
-  # This cluster's ranges, from your cluster's settings. Workspaces may not reach them.
-  podCIDR: 10.20.0.0/14
-  serviceCIDR: 10.24.0.0/20
-  nodeCIDR: 10.10.0.0/20
-  controlPlaneCIDR: 10.10.16.0/28
