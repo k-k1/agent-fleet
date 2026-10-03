@@ -31,7 +31,7 @@ func TestMain(m *testing.M) {
 	lookupPRs = func([]branchpr.Key, time.Time) map[branchpr.Key]*branchpr.PR { return nil }
 	lookupPorts = func(time.Time) map[string][]int { return nil }
 	_ = os.Unsetenv("AF_CODEX_APP_SERVER_ADDR")
-	os.Exit(m.Run())
+	os.Exit(guardTestProcess(m))
 }
 
 func userTurn(text string) transcript.Turn { return transcript.Turn{Role: "user", Text: text} }

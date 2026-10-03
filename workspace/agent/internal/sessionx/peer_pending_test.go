@@ -21,12 +21,27 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
-// pendingTestEnv isolates HOME and the sessions dir, gives the delivery loop a fast tick and a
-// fresh rate limiter, and waits for every loop before HOME is restored.
+// pendingTestEnv isolates HOME, every agent config dir and the sessions dir, puts a tmux that
+// reaches no server first on PATH, gives the delivery loop a fast tick and a fresh rate limiter,
+// and waits for every loop before any of that is restored.
+//
+// The order is the guard. t.Setenv restores to the value it found, so a helper that sets PATH
+// or HOME after this one (fakeTmux, fakeClaudeTmux) restores to the values set here, and the
+// drain registered below runs before these are restored (cleanups run LIFO). A loop still
+// delivering while a later helper is torn down therefore reaches the dead-end tmux and the
+// scratch HOME, never the workspace's tmux server or state. Without this floor, a delivery in
+// flight when fakeClaudeTmux restored PATH ran the real tmux against pane %7 (measured:
+// "delivery retry: can't find pane: %7" in a -count=50 run).
 func pendingTestEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
 	withTempHome(t)
+	isolateAgentConfigDirs(t)
+	deadEnd := t.TempDir()
+	if err := os.WriteFile(filepath.Join(deadEnd, "tmux"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", deadEnd)
 	prevPoll, prevIdle, prevRate := pendingPeerPoll, pendingPeerIdlePoll, peerRate
 	pendingPeerPoll, pendingPeerIdlePoll = 5*time.Millisecond, 5*time.Millisecond
 	peerRate = &peerLimiter{sends: map[string][]time.Time{}, recent: map[string]time.Time{}}
@@ -101,6 +116,69 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	}
 }
 
+// pendingStepper parks the delivery loops at their wait so a test decides when each look
+// happens: change the target's state, then step, and that look has seen exactly that state.
+type pendingStepper struct {
+	parked, release, stop chan struct{}
+	once                  sync.Once
+}
+
+// free stops parking: every wait returns at once from here on.
+func (s *pendingStepper) free() { s.once.Do(func() { close(s.stop) }) }
+
+// stepPendingLoops installs the stepper. Its cleanup runs before pendingTestEnv's drain, and
+// closing stop lets a parked loop run free to see its dropped spool and end.
+func stepPendingLoops(t *testing.T) *pendingStepper {
+	t.Helper()
+	s := &pendingStepper{parked: make(chan struct{}), release: make(chan struct{}), stop: make(chan struct{})}
+	prev := pendingPeerWait
+	pendingPeerWait = func(time.Duration) {
+		select {
+		case s.parked <- struct{}{}:
+		case <-s.stop:
+			return
+		}
+		select {
+		case <-s.release:
+		case <-s.stop:
+		}
+	}
+	t.Cleanup(func() {
+		s.free()
+		drainPendingLoops()
+		pendingPeerWait = prev
+	})
+	return s
+}
+
+// parked waits until the loop has finished a look and sits at its wait.
+func (s *pendingStepper) awaitParked(t *testing.T) {
+	t.Helper()
+	select {
+	case <-s.parked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the delivery loop never reached its wait")
+	}
+}
+
+// step lets the parked loop take one more look and waits until that look is done.
+func (s *pendingStepper) step(t *testing.T) {
+	t.Helper()
+	select {
+	case s.release <- struct{}{}:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the delivery loop is not waiting")
+	}
+	s.awaitParked(t)
+}
+
+// loopRunning reports whether name's delivery loop is still alive.
+func loopRunning(name string) bool {
+	pendingRunMu.Lock()
+	defer pendingRunMu.Unlock()
+	return pendingRun[name]
+}
+
 // settle lets the delivery loop run several ticks, for asserting something did NOT happen.
 func settle() { time.Sleep(60 * time.Millisecond) }
 
@@ -142,6 +220,7 @@ func TestPeerToClaudeWaitingOnUserIsDeliveredAfterTheAnswer(t *testing.T) {
 		t.Run(st, func(t *testing.T) {
 			pendingTestEnv(t)
 			logPath := fakeClaudeTmux(t)
+			steps := stepPendingLoops(t)
 			const name, from = "pp_claude", "pp_sender"
 			m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude}
 			session.WriteMeta(m)
@@ -156,21 +235,31 @@ func TestPeerToClaudeWaitingOnUserIsDeliveredAfterTheAnswer(t *testing.T) {
 			if n := statusPending(t, name); n != 1 {
 				t.Errorf("/status pendingPeerMessages = %v, want 1", n)
 			}
-			settle()
+			steps.awaitParked(t)
+			steps.step(t)
+			steps.step(t)
 			if got := typedPeerLines(t, logPath); len(got) != 0 {
 				t.Fatalf("typed into the %s dialog: %v", st, got)
 			}
 
 			// The user answered: the turn runs on. Nothing may interleave with it.
 			status.Persist(sid, "working")
-			settle()
+			steps.step(t)
+			steps.step(t)
+			steps.step(t)
 			if got := typedPeerLines(t, logPath); len(got) != 0 {
 				t.Fatalf("delivered into the turn the answer unblocked: %v", got)
 			}
 
+			// The turn ended: one look finds it ready, the next confirms and delivers.
 			status.Persist(sid, "idle")
-			waitFor(t, "delivery", func() bool { return len(typedPeerLines(t, logPath)) > 0 })
-			settle()
+			steps.step(t)
+			if got := typedPeerLines(t, logPath); len(got) != 0 {
+				t.Fatalf("delivered on the first ready look: %v", got)
+			}
+			steps.step(t)
+			steps.free() // the next look finds the spool empty and ends the loop
+			waitFor(t, "the loop to end", func() bool { return !loopRunning(name) })
 			got := typedPeerLines(t, logPath)
 			if len(got) != 1 {
 				t.Fatalf("delivered %d times, want exactly once: %v", len(got), got)
@@ -186,6 +275,42 @@ func TestPeerToClaudeWaitingOnUserIsDeliveredAfterTheAnswer(t *testing.T) {
 				t.Errorf("/status pendingPeerMessages after delivery = %v, want 0", n)
 			}
 		})
+	}
+}
+
+// One look that reads "idle" in the middle of the answer resuming the turn — the status record
+// caught between two writes, here its removal — is not enough: the next look sees the turn
+// working, and nothing is typed into it.
+func TestPendingPeerSingleIdleLookDoesNotDeliver(t *testing.T) {
+	pendingTestEnv(t)
+	logPath := fakeClaudeTmux(t)
+	steps := stepPendingLoops(t)
+	const name, from = "pp_glitch", "pp_sender"
+	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude}
+	session.WriteMeta(m)
+	session.WriteMeta(session.Meta{Name: from, Dir: t.TempDir(), Kind: session.KindClaude})
+	sid := session.UUID(m.Dir, name)
+	status.Persist(sid, "permission")
+	decodeQueued(t, postInput(t, name, peerBody(from, "PR #7 is ready")))
+	steps.awaitParked(t)
+
+	status.Remove(sid) // a look that finds no record reads idle
+	steps.step(t)
+	if got := typedPeerLines(t, logPath); len(got) != 0 {
+		t.Fatalf("one idle look delivered into the running turn: %v", got)
+	}
+	status.Persist(sid, "working")
+	steps.step(t)
+	steps.step(t)
+	if got := typedPeerLines(t, logPath); len(got) != 0 {
+		t.Fatalf("delivered into the running turn: %v", got)
+	}
+
+	status.Persist(sid, "idle")
+	steps.step(t)
+	steps.step(t)
+	if got := typedPeerLines(t, logPath); len(got) != 1 {
+		t.Fatalf("after two idle looks typed %d peer lines, want 1: %v", len(got), got)
 	}
 }
 
