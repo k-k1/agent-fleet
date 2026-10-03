@@ -147,16 +147,18 @@
 }
 /* Keep the current project context visible while its sessions scroll. A node's
    sticky header is constrained by that node's <li>, so the next base/WT pushes
-   it away naturally. Worktrees pin one row below their parent base. */
+   it away naturally. Worktrees pin right below their parent base's header. The
+   heights are measured (usePublishedHeight), not assumed: on touch the repo row
+   wraps to two lines, and a fixed 36px pinned the worktree header under it. */
 .proj-tree > .proj-node > .proj-node-head {
   position: sticky;
-  top: calc(var(--sec-head-h, 34px) + 33px);
+  top: calc(var(--sec-head-h, 34px) + var(--proj-filter-h, 33px));
   z-index: 2;
   background: var(--leftpane-bg);
 }
 .proj-node.wt > .proj-node-head {
   position: sticky;
-  top: calc(var(--sec-head-h, 34px) + 33px + 36px);
+  top: calc(var(--sec-head-h, 34px) + var(--proj-filter-h, 33px) + var(--proj-base-head-h, 36px));
   /* One tier below the base header so a worktree header slides under its parent
      repo header (and under the filter) instead of covering them when scrolled. */
   z-index: 1;
@@ -251,7 +253,7 @@
 
 .files-search-group {
   position: sticky;
-  top: calc(var(--sec-head-h, 34px) + 34px);
+  top: calc(var(--sec-head-h, 34px) + var(--proj-filter-h, 34px));
   z-index: 1;
   border-bottom: 1px solid var(--border2);
   background: var(--leftpane-bg);

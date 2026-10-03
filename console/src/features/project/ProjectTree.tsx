@@ -28,12 +28,15 @@ import { useProjectFilter, normQuery, repoMatches, sessionMatches } from "./filt
 import { RepoNode } from "./RepoNode.tsx";
 import { useRailRoving } from "./useRailRoving.ts";
 import { useT } from "../../lib/i18n/index.ts";
+import { usePublishedHeight } from "../../lib/usePublishedHeight.ts";
 import { ShareListModal } from "../sharing/ShareListModal.tsx";
 
 const SECTION_KEY = "af-section-repos";
 
 export const ProjectTree = memo(function ProjectTree() {
   const tr = useT();
+  // Sticky tiers below the filter (repo / worktree headers, file-search groups) offset by this.
+  const filterBarRef = usePublishedHeight<HTMLDivElement>("--proj-filter-h");
   const repos = useReposStore((s) => s.repos);
   const refreshRepos = useReposStore((s) => s.refresh);
   const clearRepos = useReposStore((s) => s.clear);
@@ -158,7 +161,7 @@ export const ProjectTree = memo(function ProjectTree() {
     >
       {/* Quick filter: narrows repos + sessions (this tree and the other-sessions section).
           Escape clears. Files are untouched — the tree below is lazy-loaded. */}
-      <div className="proj-filter-bar">
+      <div ref={filterBarRef} className="proj-filter-bar">
         <div className="proj-filter">
           <Icon name="search" />
           <input
