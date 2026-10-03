@@ -17,7 +17,9 @@
 //     binary and sends every default-socket call to a server private to this process;
 //   - HOME and the sessions dir point into the scratch root and the agent config dirs follow
 //     HOME, with the Go caches pinned to where they were so a test that runs `go` does not
-//     rebuild the world;
+//     rebuild the world. A contract binary (keepCredentials) keeps HOME and the config dirs,
+//     since the real CLIs it drives are signed in there; it still gets the scratch sessions
+//     dir and the tmux isolation;
 //   - the variables that name this workspace's session, tmux client, Agent or Control Plane
 //     are removed.
 //
@@ -44,6 +46,7 @@ var (
 	typedLog string // append-only record of every recorded default-socket call
 	realTmux string
 	tmuxDir  string
+	realHome string // HOME before the guard; the guard's own test checks what became of it
 )
 
 // selfTestText is what the guard's own test types; its line, and only its line, is not a
@@ -264,14 +267,19 @@ exec '` + real + `' -L '` + socket + `' "$@"
 		}
 		_ = os.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
-	_ = os.Setenv("HOME", filepath.Join(root, "home"))
+	realHome = os.Getenv("HOME")
 	_ = os.Setenv("AF_SESSIONS_DIR", filepath.Join(root, "sessions"))
-	// Unset rather than pointed into the scratch root: each defaults to a path under HOME,
-	// so a test that takes its own HOME gets the dirs under it, as in production. In this
-	// container CLAUDE_CONFIG_DIR points at the live fleet's tree.
-	for _, k := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "COPILOT_HOME", "KIRO_HOME",
-		"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME",
-		"AF_SESSION_NAME", "TMUX", "TMUX_PANE", "AF_TMUX_SOCKET", "AF_WORK_DIR",
+	if !keepCredentials {
+		_ = os.Setenv("HOME", filepath.Join(root, "home"))
+		// Unset rather than pointed into the scratch root: each defaults to a path under HOME,
+		// so a test that takes its own HOME gets the dirs under it, as in production. In this
+		// container CLAUDE_CONFIG_DIR points at the live fleet's tree.
+		for _, k := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "COPILOT_HOME", "KIRO_HOME",
+			"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"} {
+			_ = os.Unsetenv(k)
+		}
+	}
+	for _, k := range []string{"AF_SESSION_NAME", "TMUX", "TMUX_PANE", "AF_TMUX_SOCKET", "AF_WORK_DIR",
 		"AGENT_TOKEN", "AGENT_ADDR", "AF_CP_BASE_URL", "AF_CP_INTERNAL_URL"} {
 		_ = os.Unsetenv(k)
 	}
