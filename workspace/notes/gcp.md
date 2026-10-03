@@ -53,9 +53,10 @@ af-gcloud-exec --profile <name> --project <id> -- <command> [args...]
   waits (below), and the user signs in again there.
 
 What the command gets: the token in `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE` and
-`GOOGLE_OAUTH_ACCESS_TOKEN`, an empty private `CLOUDSDK_CONFIG`, the profile's project, quota project,
-region and zone in their `CLOUDSDK_*` / `GOOGLE_*` forms, and `GOOGLE_APPLICATION_CREDENTIALS`
-pointing at a path that holds no credentials. Every `CLOUDSDK_*`, `GOOGLE_*`, `GCLOUD_*` and
+`GOOGLE_OAUTH_ACCESS_TOKEN`, an empty private `CLOUDSDK_CONFIG`, the profile's project, region and
+zone in their `CLOUDSDK_*` / `GOOGLE_*` forms, the quota project as `CLOUDSDK_BILLING_QUOTA_PROJECT`,
+`GOOGLE_BILLING_PROJECT` and `GOOGLE_CLOUD_QUOTA_PROJECT` (with `USER_PROJECT_OVERRIDE=true`), and
+`GOOGLE_APPLICATION_CREDENTIALS` pointing at a path that holds no credentials. Every `CLOUDSDK_*`, `GOOGLE_*`, `GCLOUD_*` and
 `GCE_METADATA_*` variable of your shell is removed first.
 
 Which tools the token reaches (measured on SDK 587.0.0 against a local mock that checked the
@@ -81,8 +82,7 @@ Which tools the token reaches (measured on SDK 587.0.0 against a local mock that
   that way needs their agreement. Measured to work:
   - Go (`cloud.google.com/go/storage` 1.69.0):
     `option.WithTokenSource(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: os.Getenv("GOOGLE_OAUTH_ACCESS_TOKEN")}))`.
-    It sends no quota project unless `GOOGLE_CLOUD_QUOTA_PROJECT` is set (the wrapper does not set
-    it; `export GOOGLE_CLOUD_QUOTA_PROJECT="$GOOGLE_BILLING_PROJECT"` inside the command does), and
+    It takes the quota project from `GOOGLE_CLOUD_QUOTA_PROJECT`, which the wrapper sets, and
     refuses `option.WithQuotaProject` beside a token source.
   - Python (`google-cloud-storage` 3.16.0, `google-auth` 2.59.1):
     `google.oauth2.credentials.Credentials(os.environ["GOOGLE_OAUTH_ACCESS_TOKEN"], quota_project_id=os.environ["GOOGLE_BILLING_PROJECT"])`;

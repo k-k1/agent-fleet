@@ -386,7 +386,7 @@ func hostile(t *testing.T) []string {
 		"CLOUDSDK_CORE_ACCOUNT=member@example.com",
 		"GOOGLE_APPLICATION_CREDENTIALS=" + filepath.Join(os.Getenv("HOME"), ".config", "gcloud", "application_default_credentials.json"),
 		"GOOGLE_OAUTH_ACCESS_TOKEN=inherited",
-		"GCLOUD_PROJECT=member-project",
+		"GCLOUD_PROJECT=member-project", "GOOGLE_CLOUD_QUOTA_PROJECT=member-project",
 		"GCE_METADATA_HOST=127.0.0.1:1", "GCE_METADATA_IP=127.0.0.1:1",
 	}
 }
@@ -460,7 +460,7 @@ func TestPlanExecChildEnvAndCleanMint(t *testing.T) {
 		"CLOUDSDK_CORE_DISABLE_FILE_LOGGING": "true", "GOOGLE_OAUTH_ACCESS_TOKEN": e.token,
 		"CLOUDSDK_CORE_PROJECT": "prod-project", "GOOGLE_CLOUD_PROJECT": "prod-project", "GOOGLE_PROJECT": "prod-project",
 		"CLOUDSDK_BILLING_QUOTA_PROJECT": "billing-project", "GOOGLE_BILLING_PROJECT": "billing-project", "USER_PROJECT_OVERRIDE": "true",
-		"CLOUDSDK_COMPUTE_REGION": "asia-northeast1", "GOOGLE_REGION": "asia-northeast1",
+		"GOOGLE_CLOUD_QUOTA_PROJECT": "billing-project", "CLOUDSDK_COMPUTE_REGION": "asia-northeast1", "GOOGLE_REGION": "asia-northeast1",
 		"CLOUDSDK_COMPUTE_ZONE": "asia-northeast1-a", "GOOGLE_ZONE": "asia-northeast1-a",
 		"GOOGLE_APPLICATION_CREDENTIALS": got["GOOGLE_APPLICATION_CREDENTIALS"],
 	}
