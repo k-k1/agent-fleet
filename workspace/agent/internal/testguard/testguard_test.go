@@ -68,18 +68,30 @@ func TestGuardForgivesOnlyItsOwnLine(t *testing.T) {
 }
 
 // The scratch environment is in place for every test, and the workspace's session, tmux
-// client and Agent are not named in it.
+// client and Agent are not named in it. A contract binary keeps the real HOME and config dirs
+// (run this package with -tags contract to check that side).
 func TestGuardScratchEnvironment(t *testing.T) {
 	home := os.Getenv("HOME")
-	if !strings.HasPrefix(home, filepath.Dir(tmuxDir)+string(filepath.Separator)) {
+	scratch := strings.HasPrefix(home, filepath.Dir(tmuxDir)+string(filepath.Separator))
+	switch {
+	case keepCredentials && (scratch || home != realHome):
+		t.Fatalf("contract binary: HOME = %q, want the real %q", home, realHome)
+	case !keepCredentials && !scratch:
 		t.Fatalf("HOME = %q is not under the scratch root %s", home, filepath.Dir(tmuxDir))
 	}
-	for _, k := range []string{"AF_SESSION_NAME", "TMUX", "TMUX_PANE", "AF_TMUX_SOCKET", "AGENT_TOKEN", "CLAUDE_CONFIG_DIR", "CODEX_HOME"} {
+	if !strings.HasPrefix(os.Getenv("AF_SESSIONS_DIR"), filepath.Dir(tmuxDir)+string(filepath.Separator)) {
+		t.Errorf("AF_SESSIONS_DIR = %q is not under the scratch root", os.Getenv("AF_SESSIONS_DIR"))
+	}
+	unset := []string{"AF_SESSION_NAME", "TMUX", "TMUX_PANE", "AF_TMUX_SOCKET", "AGENT_TOKEN"}
+	if !keepCredentials {
+		unset = append(unset, "CLAUDE_CONFIG_DIR", "CODEX_HOME")
+	}
+	for _, k := range unset {
 		if v, ok := os.LookupEnv(k); ok {
 			t.Errorf("%s is still set (%q)", k, v)
 		}
 	}
-	if os.Getenv("GOCACHE") == "" || strings.HasPrefix(os.Getenv("GOCACHE"), home) {
+	if os.Getenv("GOCACHE") == "" || (!keepCredentials && strings.HasPrefix(os.Getenv("GOCACHE"), home)) {
 		t.Errorf("GOCACHE = %q: not pinned outside the scratch HOME", os.Getenv("GOCACHE"))
 	}
 }
