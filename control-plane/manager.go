@@ -160,6 +160,9 @@ type manager struct {
 	// AF_CP_BASE_URL for everything.
 	internalBaseURL string
 
+	// homeOpWG counts the reconciler's resumes (home_operation.go), for tests to wait on.
+	homeOpWG sync.WaitGroup
+
 	// previewDomain is AF_PREVIEW_DOMAIN — the parent of the per-start preview
 	// subdomains (docs/log/81). Empty = host-mode preview is off for this deployment
 	// (no wildcard DNS / certificate), and only the path-mode /preview/{port}
@@ -195,6 +198,9 @@ func membershipErr(err error) *apiError {
 type cachedRT struct {
 	rt runtime.Runtime
 	ws store.Workspace
+	// gitEpoch is the internal git token epoch read before rt's env was built (-1 when
+	// it could not be read). refreshGitTokenForStart compares it with the live one.
+	gitEpoch int64
 }
 
 // resolved is the full per-request resolution: runtime + workspace record +
@@ -204,6 +210,8 @@ type resolved struct {
 	ws    store.Workspace
 	ident store.Identity
 	mv    store.MembershipView
+	// gitEpoch: see cachedRT.gitEpoch.
+	gitEpoch int64
 }
 
 // workspaceNames derives the container/network/home for a (tenant, user). The

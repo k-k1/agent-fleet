@@ -308,7 +308,7 @@ func TestLFSHrefsFollowTheListener(t *testing.T) {
 		t.Fatal(err)
 	}
 	master := []byte("master-key-lfs-listener-000000000000")
-	token := mintGitToken(gitSignKey(master), mem.ID)
+	token := mintGitToken(gitSignKey(master), mem.ID, 0)
 
 	pub, internal := httptest.NewUnstartedServer(nil), httptest.NewUnstartedServer(nil)
 	defer pub.Close()

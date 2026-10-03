@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/datalayout"
@@ -136,36 +138,72 @@ func (m *manager) devGitTokenMaster() []byte {
 	return m.gitDevMaster
 }
 
-// mintGitToken returns the deterministic git access token for a membership. The
-// token carries the membership id (so verification can look up tenant+role live)
-// plus a truncated HMAC tag. Format: "afg_" + b64url(membershipID) + "." + tag.
-func mintGitToken(signKey []byte, membershipID string) string {
-	return "afg_" + base64.RawURLEncoding.EncodeToString([]byte(membershipID)) + "." + gitTokenTag(signKey, membershipID)
+// mintGitToken returns the deterministic git access token for a membership at its
+// current git token epoch (issue #1199). The token carries the membership id (so
+// verification can look up tenant, role and epoch live) plus a truncated HMAC tag.
+// Format: "afg_" + b64url(membershipID) + "." + tag. The epoch is not in the token:
+// the verifier reads the current one from the store, so a token minted under an older
+// epoch simply stops matching.
+func mintGitToken(signKey []byte, membershipID string, epoch int64) string {
+	return "afg_" + base64.RawURLEncoding.EncodeToString([]byte(membershipID)) + "." + gitTokenTag(signKey, membershipID, epoch)
 }
 
-func gitTokenTag(signKey []byte, membershipID string) string {
+// gitTokenEpochDomain prefixes the HMAC input of every epoch above 0. It starts with a
+// NUL, which no membership id contains (store.NewID), so an epoch-0 input (the bare id)
+// can never equal an epoch>0 input. The epoch is decimal and NUL-terminated before the
+// id, so two (epoch, id) pairs above 0 cannot share an input either.
+const gitTokenEpochDomain = "\x00af-git-token-epoch\x00"
+
+// gitTokenTag MACs the membership id at an epoch. Epoch 0 MACs the bare id, which is
+// exactly the input used before epochs existed: changing it would invalidate every
+// token in every running workspace on upgrade (pinned by TestGitTokenEpochZeroIsLegacy).
+func gitTokenTag(signKey []byte, membershipID string, epoch int64) string {
 	mac := hmac.New(sha256.New, signKey)
+	if epoch != 0 {
+		mac.Write([]byte(gitTokenEpochDomain + strconv.FormatInt(epoch, 10) + "\x00"))
+	}
 	mac.Write([]byte(membershipID))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)[:16])
 }
 
-// verifyGitToken checks the tag and returns the embedded membership id. It does
-// NOT resolve tenant/role — that is a live store lookup by the caller.
-func verifyGitToken(signKey []byte, token string) (membershipID string, ok bool) {
+// parseGitToken splits a token into the membership id it names and its tag, checking
+// only the shape. It proves nothing: the tag is checked by verifyGitTokenTag against
+// the epoch the store holds for that id.
+func parseGitToken(token string) (membershipID, tag string, ok bool) {
 	body, hasPrefix := strings.CutPrefix(strings.TrimSpace(token), "afg_")
 	if !hasPrefix {
-		return "", false
+		return "", "", false
 	}
 	dot := strings.LastIndexByte(body, '.')
 	if dot < 0 {
-		return "", false
+		return "", "", false
 	}
 	idRaw, err := base64.RawURLEncoding.DecodeString(body[:dot])
-	if err != nil || len(idRaw) == 0 {
+	// A NUL never occurs in a membership id, and refusing it here keeps the epoch>0 HMAC
+	// input (gitTokenEpochDomain) out of reach of a crafted id.
+	if err != nil || len(idRaw) == 0 || bytes.IndexByte(idRaw, 0) >= 0 {
+		return "", "", false
+	}
+	return string(idRaw), body[dot+1:], true
+}
+
+// verifyGitTokenTag reports whether tag is the membership's tag at exactly this epoch.
+// Only the current epoch is ever passed: accepting an earlier one would make rotation
+// a no-op.
+func verifyGitTokenTag(signKey []byte, membershipID, tag string, epoch int64) bool {
+	return hmac.Equal([]byte(tag), []byte(gitTokenTag(signKey, membershipID, epoch)))
+}
+
+// verifyGitToken checks a token against the epoch the caller looked up for the id it
+// names and returns that id. It does NOT resolve tenant/role — that is a live store
+// lookup by the caller.
+func verifyGitToken(signKey []byte, token string, epochOf func(membershipID string) (int64, bool)) (membershipID string, ok bool) {
+	mid, tag, ok := parseGitToken(token)
+	if !ok {
 		return "", false
 	}
-	mid := string(idRaw)
-	if !hmac.Equal([]byte(body[dot+1:]), []byte(gitTokenTag(signKey, mid))) {
+	epoch, ok := epochOf(mid)
+	if !ok || !verifyGitTokenTag(signKey, mid, tag, epoch) {
 		return "", false
 	}
 	return mid, true
@@ -215,7 +253,17 @@ func (a gitServerAPI) authorizeGitRepo(r *http.Request, slug, repoSeg string) (n
 	if !ok || pass == "" {
 		return "", mv, "", &gitAuthErr{http.StatusUnauthorized, "authentication required", true}
 	}
-	membershipID, ok = verifyGitToken(a.signKey, pass)
+	// The epoch is read live on every request (no cache): a rotation has to take effect
+	// on the very next request, the same reason the role below is read live.
+	var storeErr error
+	membershipID, ok = verifyGitToken(a.signKey, pass, func(mid string) (int64, bool) {
+		epoch, found, err := a.store.GitTokenEpoch(r.Context(), mid)
+		storeErr = err
+		return epoch, found && err == nil
+	})
+	if storeErr != nil {
+		return "", mv, "", &gitAuthErr{http.StatusInternalServerError, "store error", false}
+	}
 	if !ok {
 		return "", mv, "", &gitAuthErr{http.StatusUnauthorized, "authentication required", true}
 	}

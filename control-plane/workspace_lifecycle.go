@@ -224,7 +224,7 @@ const homeTaskBudget = 30 * time.Minute
 func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), homeEraseBudget)
 	defer cancel()
-	finish, err := m.beginCleanHome(ctx, membershipID, false)
+	finish, err := m.beginCleanHome(ctx, membershipID, nil)
 	if err != nil {
 		return err
 	}
@@ -233,30 +233,36 @@ func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string
 
 // startCleanHomeByMembership is cleanHomeByMembership where the erase takes minutes
 // (runtime.HomeWipeInBackground): everything up to the stop happens now, so a refusal is
-// still the request's answer, and the erase runs after it. done is called once, with the
-// erase's outcome; the lifecycle lease is held until then, so no start or second operation
-// can come in between.
-func (m *manager) startCleanHomeByMembership(ctx context.Context, membershipID string, done func(error)) error {
+// still the request's answer, and the erase runs after it. Its outcome is written to the
+// audit log as audit describes, by this process or, after a restart, by the reconciler
+// (home_operation.go); the lifecycle lease is held until then, so no start or second
+// operation can come in between.
+func (m *manager) startCleanHomeByMembership(ctx context.Context, membershipID string, audit store.HomeOpAudit) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), homeTaskBudget)
-	finish, err := m.beginCleanHome(ctx, membershipID, true)
+	finish, err := m.beginCleanHome(ctx, membershipID, &audit)
 	if err != nil {
 		cancel()
 		return err
 	}
 	go func() {
 		defer cancel()
-		done(finish())
+		_ = finish()
 	}()
 	return nil
 }
 
 // beginCleanHome is the part of an administrator's Clean home that answers the request:
-// every refusal, then the stop. finish erases and releases what begin took. In the
-// background the local start lock is released when begin returns; the lease alone keeps
-// other operations out, and they are refused rather than left waiting on the lock.
-func (m *manager) beginCleanHome(ctx context.Context, membershipID string, background bool) (finish func() error, err error) {
+// every refusal, then the stop. finish erases and releases what begin took. audit set means
+// in the background: the local start lock is released when begin returns, the lease alone
+// keeps other operations out, and they are refused rather than left waiting on the lock.
+// The outcome then goes to the audit log through the operation's record.
+func (m *manager) beginCleanHome(ctx context.Context, membershipID string, audit *store.HomeOpAudit) (finish func() error, err error) {
+	background := audit != nil
 	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, membershipID)
 	if err != nil || !ok {
+		if err == nil && background {
+			return func() error { m.writeHomeOpAudit(*audit, nil, nil); return nil }, nil
+		}
 		return func() error { return nil }, err
 	}
 	rt := m.runtimeFor(ws, "")
@@ -284,7 +290,15 @@ func (m *manager) beginCleanHome(ctx context.Context, membershipID string, backg
 			lock.Unlock()
 		}
 	}
+	var record *store.HomeOperation
+	if background {
+		if record, err = m.openHomeOperation(lease.Context(), ws, rt, store.HomeOpAdminErase, runtime.HomeWipeClean, audit); err != nil {
+			release()
+			return nil, err
+		}
+	}
 	if err := m.cleanHomePreamble(ctx, ws, rt, lease, background); err != nil {
+		m.dropHomeOperation(record)
 		release()
 		return nil, err
 	}
@@ -294,13 +308,20 @@ func (m *manager) beginCleanHome(ctx context.Context, membershipID string, backg
 	}
 	return func() error {
 		defer release()
-		if err := runtime.EraseHome(lease.Context(), rt); err != nil {
+		err := runtime.EraseHome(lease.Context(), rt)
+		if record != nil {
+			m.finishHomeOperation(*record, err, nil)
 			return err
 		}
-		if err := lease.checkpoint(ctx); err != nil {
-			return err
+		if err == nil {
+			if err = lease.checkpoint(ctx); err == nil {
+				err = m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
+			}
 		}
-		return m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
+		if background {
+			m.writeHomeOpAudit(*audit, err, nil)
+		}
+		return err
 	}, nil
 }
 
@@ -430,6 +451,36 @@ func (m *manager) armPreviewForStart(ctx context.Context, res *resolved, extraEn
 	return m.runtimeFor(ws, dekHex, append(m.workspaceExtraEnv(ctx, ws), extraEnv...)...)
 }
 
+// refreshGitTokenForStart returns a runtime rebuilt with the current internal git token
+// when the one about to start was built under an older epoch, else nil (start as is).
+//
+// The memoized runtime's env is fixed when it is built, and a rotation evicts only its
+// own CP's memo: another replica's, or one written by a build that raced the eviction,
+// would otherwise inject the dead token at every start. Called under the start lock and
+// the lifecycle lease, right before Start. A rotation on another replica in the moment
+// between this check and Start still goes unseen (docs/build/91 §91.5). extraEnv is
+// carried over, as armPreviewForStart does.
+func (m *manager) refreshGitTokenForStart(ctx context.Context, res *resolved, extraEnv []string) runtime.Runtime {
+	if m.internalGitHost == "" || res.ws.MembershipID == "" {
+		return nil
+	}
+	epoch, ok, err := m.store.GitTokenEpoch(ctx, res.ws.MembershipID)
+	if err != nil || !ok || epoch == res.gitEpoch {
+		return nil
+	}
+	dekHex, err := m.resolveDEK(ctx, res.ws, res.ident.UserKey)
+	if err != nil {
+		log.Printf("internal git: rebuild for ws %s: resolve DEK: %v (starting with the token it had)", res.ws.ID, err)
+		return nil
+	}
+	ws := res.ws
+	ws.MemBytes, ws.CPUUnits, ws.DiskGB = m.resolveWorkspaceSize(ctx, ws)
+	ws.SlotClass, _ = m.resolveSlotClass(ctx, ws)
+	// Next resolve rebuilds the memo too, so the stale env is not kept for later starts.
+	m.evictMembershipCache(res.ws.MembershipID)
+	return m.runtimeFor(ws, dekHex, append(m.workspaceExtraEnv(ctx, ws), extraEnv...)...)
+}
+
 // rotatePreviewSlug decides which slug THIS start runs under and persists it.
 //
 //   - By default a fresh slug is drawn every time, which is the requirement itself: the
@@ -522,13 +573,21 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 	}
 	// Internal git provider: inject the host + this membership's deterministic git
 	// token so the Agent seeds its cred store (secrets.go seedInternalGit) and
-	// clone/push authenticate transparently. Deterministic, so re-injection on
-	// every start is idempotent. Skipped when PUBLIC_BASE_URL is unset.
+	// clone/push authenticate transparently. Deterministic per epoch, so re-injection
+	// on every start is idempotent. Skipped when PUBLIC_BASE_URL is unset. When the
+	// epoch cannot be read nothing is injected: a token minted under a guessed epoch
+	// would overwrite a working one in the Agent's store with one that fails.
 	if m.internalGitHost != "" && ws.MembershipID != "" {
-		token := mintGitToken(gitSignKey(m.tokenSignMaster()), ws.MembershipID)
-		env = append(env,
-			"AF_INTERNAL_GIT_HOST="+m.internalGitHost,
-			"AF_INTERNAL_GIT_TOKEN="+token)
+		if token, epoch, err := m.currentGitToken(ctx, ws.MembershipID); err != nil {
+			log.Printf("internal git: token for ws %s not injected: %v", ws.ID, err)
+		} else {
+			// The epoch lets the Agent refuse a rotated token's push that arrives after a
+			// later one (handlePutInternalGitToken).
+			env = append(env,
+				"AF_INTERNAL_GIT_HOST="+m.internalGitHost,
+				"AF_INTERNAL_GIT_TOKEN="+token,
+				"AF_INTERNAL_GIT_EPOCH="+strconv.FormatInt(epoch, 10))
+		}
 	}
 	// Memo bridge: inject the CP public base + this membership's memo token so the
 	// in-container fleet operator can read/write the memo queue over the public
@@ -733,7 +792,7 @@ func (m *manager) resolveWorkspaceMemBytes(ctx context.Context, ws store.Workspa
 // this operation exists to close. Every adapter's Destroy is idempotent, so the retry
 // after a partial failure is safe.
 func (m *manager) destroyWorkspaceByMembership(ctx context.Context, membershipID string) ([]string, error) {
-	finish, err := m.beginDestroyWorkspace(ctx, membershipID, false)
+	finish, err := m.beginDestroyWorkspace(ctx, membershipID, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -742,25 +801,33 @@ func (m *manager) destroyWorkspaceByMembership(ctx context.Context, membershipID
 
 // startDestroyWorkspaceByMembership is destroyWorkspaceByMembership where the runtime's
 // Destroy runs a task on the home and takes minutes (runtime.DestroyInBackground). The
-// refusals answer the request; the teardown runs after it under the lease, and done gets
-// its outcome once.
-func (m *manager) startDestroyWorkspaceByMembership(ctx context.Context, membershipID string, done func([]string, error)) error {
+// refusals answer the request; the teardown runs after it under the lease, and its outcome
+// goes to the audit log as audit describes, by this process or, after a restart, by the
+// reconciler (home_operation.go).
+func (m *manager) startDestroyWorkspaceByMembership(ctx context.Context, membershipID string, audit store.HomeOpAudit) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), homeTaskBudget)
-	finish, err := m.beginDestroyWorkspace(ctx, membershipID, true)
+	finish, err := m.beginDestroyWorkspace(ctx, membershipID, &audit)
 	if err != nil {
 		cancel()
 		return err
 	}
 	go func() {
 		defer cancel()
-		done(finish())
+		_, _ = finish()
 	}()
 	return nil
 }
 
-func (m *manager) beginDestroyWorkspace(ctx context.Context, membershipID string, background bool) (finish func() ([]string, error), err error) {
+// beginDestroyWorkspace takes the lease and answers every refusal; finish tears down. audit
+// set means in the background, as in beginCleanHome: the row's deletion and the outcome
+// entry are then written together through the operation's record.
+func (m *manager) beginDestroyWorkspace(ctx context.Context, membershipID string, audit *store.HomeOpAudit) (finish func() ([]string, error), err error) {
+	background := audit != nil
 	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, membershipID)
 	if err != nil || !ok {
+		if err == nil && background {
+			return func() ([]string, error) { m.writeHomeOpAudit(*audit, nil, nil); return nil, nil }, nil
+		}
 		return func() ([]string, error) { return nil, nil }, err
 	}
 	lock := m.startLockFor(ws.ID)
@@ -789,8 +856,14 @@ func (m *manager) beginDestroyWorkspace(ctx context.Context, membershipID string
 		release()
 		return nil, err
 	}
+	var record *store.HomeOperation
 	if background {
+		if record, err = m.openHomeOperation(lease.Context(), ws, rt, store.HomeOpDestroy, "destroy", audit); err != nil {
+			release()
+			return nil, err
+		}
 		if err := runtime.HomeWipeBlocked(lease.Context(), rt); err != nil {
+			m.dropHomeOperation(record)
 			release()
 			return nil, err
 		}
@@ -800,18 +873,37 @@ func (m *manager) beginDestroyWorkspace(ctx context.Context, membershipID string
 	return func() ([]string, error) {
 		defer release()
 		leftovers, err := runtime.DestroyRuntime(lease.Context(), rt)
-		if err != nil {
-			return nil, err
-		}
-		if err := lease.checkpoint(ctx); err != nil {
+		if record != nil {
+			m.finishHomeOperation(*record, err, leftovers)
 			return leftovers, err
 		}
-		if err := m.store.DeleteWorkspace(ctx, ws.ID); err != nil {
-			return leftovers, err
+		if err == nil {
+			if err = lease.checkpoint(ctx); err == nil {
+				if err = m.store.DeleteWorkspace(ctx, ws.ID); err == nil {
+					m.evictMembershipCache(membershipID)
+				}
+			}
 		}
-		m.evictMembershipCache(membershipID)
-		return leftovers, nil
+		if background {
+			m.writeHomeOpAudit(*audit, err, leftovers)
+		}
+		return leftovers, err
 	}, nil
+}
+
+// writeHomeOpAudit writes the outcome of an administrator's background operation that has
+// no record (a runtime that runs no home task, or no workspace to operate on).
+func (m *manager) writeHomeOpAudit(audit store.HomeOpAudit, err error, leftovers []string) {
+	ctx, cancel := context.WithTimeout(context.Background(), homeOpFinishTimeout)
+	defer cancel()
+	e := audit.Entry(err, leftovers)
+	if err != nil {
+		log.Printf("%s of %q failed in the background: %v", e.Action, e.Target, err)
+	}
+	if werr := m.store.InsertAudit(ctx, e); werr != nil {
+		log.Printf("audit: %s on %q answered %d, but its outcome was not written: %s: %v",
+			e.Action, e.Target, e.HTTPStatus, e.Detail, werr)
+	}
 }
 
 // runtimePoolStatuser is implemented by the one adapter that has a POOL to report on.

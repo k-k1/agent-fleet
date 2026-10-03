@@ -469,14 +469,9 @@ func (a Admin) CleanHome(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := context.WithoutCancel(r.Context())
 	if a.cp.HomeOpsInBackground() {
-		err := a.cp.StartCleanHomeByMembership(ctx, mem.ID, func(err error) {
-			if err != nil {
-				log.Printf("admin clean-home of %s in %s failed in the background: %v", ident.UserKey, t.Slug, err)
-				in.Done(ctx, "error: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			in.Done(ctx, "home erased", http.StatusOK)
-		})
+		err := a.cp.StartCleanHomeByMembership(ctx, mem.ID, store.HomeOpAudit{Base: in.Outcome(),
+			OK: "home erased", OKStatus: http.StatusOK,
+			FailPrefix: "error: ", FailStatus: http.StatusInternalServerError})
 		if err != nil {
 			refuseIrreversible(w, r, in, a.homeOpRefusal(err, "clean home"))
 			return
@@ -490,6 +485,82 @@ func (a Admin) CleanHome(w http.ResponseWriter, r *http.Request) {
 	}
 	in.Done(ctx, "home erased", http.StatusOK)
 	writeJSON(w, http.StatusOK, map[string]any{"cleaned": body.UserKey, "tenant": t.Slug})
+}
+
+// RotateGitToken (POST /api/admin/rotate-git-token {tenant_slug,user_key}) gives a member a
+// new internal git token (issue #1199, docs/build/91-internal-git.md §91.5): for a token that
+// leaked out of a workspace, without deactivating the membership and without changing the
+// deployment's signing master, which would rotate everybody's.
+//
+// tenant_admin of the member's tenant, or super_admin anywhere: the same gate as
+// stop-workspace and clean-home (TenantAdminFor), and the member is looked up inside that
+// tenant only, so neither a tenant_admin of another tenant nor a member can reach it.
+//
+// Audited intent-first like the other actions an admin cannot undo: once the epoch moves,
+// the old token never verifies again. A removed member can be rotated too, because
+// re-inviting them reactivates the same membership and with it the old token.
+func (a Admin) RotateGitToken(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		UserKey    string `json:"user_key"`
+		TenantSlug string `json:"tenant_slug"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid json"})
+		return
+	}
+	caller, t, ok := a.cp.TenantAdminFor(w, r, body.TenantSlug)
+	if !ok {
+		return
+	}
+	if body.UserKey == "" {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "user_key required"})
+		return
+	}
+	ident, found, err := a.cp.Store().GetIdentityByUserKey(r.Context(), body.UserKey)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
+		return
+	}
+	mem, ok, err := a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
+		return
+	}
+	in, ok := a.beginIrreversible(w, r, store.AuditLog{
+		TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
+		Action: "membership.rotate_git_token", Target: ident.UserKey,
+	})
+	if !ok {
+		return
+	}
+	ctx := context.WithoutCancel(r.Context())
+	epoch, push, found, err := a.cp.RotateGitToken(ctx, mem.ID)
+	if err != nil {
+		refuseIrreversible(w, r, in, internalErr(err))
+		return
+	}
+	if !found {
+		refuseIrreversible(w, r, in, &APIError{http.StatusNotFound, "no_membership", "not a member"})
+		return
+	}
+	in.Done(ctx, fmt.Sprintf("epoch %d, workspace %s", epoch, push), http.StatusOK)
+	writeJSON(w, http.StatusOK, rotateGitTokenAnswer{Rotated: body.UserKey, Tenant: t.Slug, Workspace: push})
+}
+
+// rotateGitTokenAnswer is what POST /api/admin/rotate-git-token answers. Workspace is how the
+// member's running workspace took the new token (control-plane git_token_rotate.go).
+type rotateGitTokenAnswer struct {
+	Rotated   string `json:"rotated"`
+	Tenant    string `json:"tenant"`
+	Workspace string `json:"workspace"`
 }
 
 // homeOpRefusal maps what refused a Clean home or a Destroy to its answer.
@@ -647,14 +718,9 @@ func (a Admin) DestroyWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	if a.cp.DestroyInBackground() {
 		ctx := context.WithoutCancel(r.Context())
-		err := a.cp.StartDestroyWorkspaceByMembership(ctx, mem.ID, func(leftovers []string, err error) {
-			if err != nil {
-				log.Printf("destroy of %s's workspace in %s failed in the background: %v", ident.UserKey, t.Slug, err)
-				in.Done(ctx, "error: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			in.Done(ctx, destroyedDetail("workspace destroyed (home and runtime resources deleted)", leftovers), http.StatusOK)
-		})
+		err := a.cp.StartDestroyWorkspaceByMembership(ctx, mem.ID, store.HomeOpAudit{Base: in.Outcome(),
+			OK: "workspace destroyed (home and runtime resources deleted)", Leftovers: true, OKStatus: http.StatusOK,
+			FailPrefix: "error: ", FailStatus: http.StatusInternalServerError})
 		if err != nil {
 			refuseIrreversible(w, r, in, a.homeOpRefusal(err, "destroy"))
 			return
@@ -673,15 +739,10 @@ func (a Admin) DestroyWorkspace(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// destroyedDetail appends what could NOT be deleted — the part of a destroy's audit entry that
-// matters. On Fargate the EFS directories survive their access points and keep billing
-// (docs/log/64 §64.18.4); if that only ever appeared in an HTTP response nobody would ever
-// find it again.
+// destroyedDetail is store.DestroyedDetail: a Destroy finished by the CP's reconciler
+// (#1544) has to write the same entry.
 func destroyedDetail(detail string, leftovers []string) string {
-	if len(leftovers) > 0 {
-		detail += "; NOT deleted: " + strings.Join(leftovers, ", ")
-	}
-	return detail
+	return store.DestroyedDetail(detail, leftovers)
 }
 
 // CreateTenant (POST /api/admin/tenants {slug,name}).
@@ -1010,14 +1071,9 @@ func (a Admin) RemoveMembership(w http.ResponseWriter, r *http.Request) {
 		// The membership is inactive now; destroying its workspace takes minutes here, so
 		// the outcome entry waits for it.
 		ctx := context.WithoutCancel(r.Context())
-		err := a.cp.StartDestroyWorkspaceByMembership(ctx, mem.ID, func(leftovers []string, err error) {
-			if err != nil {
-				log.Printf("purge of %s's workspace in %s failed in the background: %v", ident.UserKey, t.Slug, err)
-				in.Done(ctx, "status=inactive; purge FAILED: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			in.Done(ctx, destroyedDetail("status=inactive; workspace destroyed (purge)", leftovers), http.StatusOK)
-		})
+		err := a.cp.StartDestroyWorkspaceByMembership(ctx, mem.ID, store.HomeOpAudit{Base: in.Outcome(),
+			OK: "status=inactive; workspace destroyed (purge)", Leftovers: true, OKStatus: http.StatusOK,
+			FailPrefix: "status=inactive; purge FAILED: ", FailStatus: http.StatusInternalServerError})
 		if err != nil {
 			in.Done(r.Context(), "status=inactive; purge FAILED: "+err.Error(), http.StatusInternalServerError)
 			writeAPIErr(w, &APIError{http.StatusInternalServerError, "purge_failed",

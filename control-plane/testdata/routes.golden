@@ -66,6 +66,7 @@ PUT /api/admin/membership-role
 DELETE /api/admin/memberships
 POST /api/admin/memberships
 GET /api/admin/providers
+POST /api/admin/rotate-git-token
 GET /api/admin/sessions
 POST /api/admin/stop-workspace
 GET /api/admin/tenants

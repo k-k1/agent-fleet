@@ -82,6 +82,10 @@ func (a adminAPI) stopWorkspace(w http.ResponseWriter, r *http.Request) { a.srv(
 
 func (a adminAPI) cleanHome(w http.ResponseWriter, r *http.Request) { a.srv().CleanHome(w, r) }
 
+func (a adminAPI) rotateGitToken(w http.ResponseWriter, r *http.Request) {
+	a.srv().RotateGitToken(w, r)
+}
+
 func (a adminAPI) homeBackups(w http.ResponseWriter, r *http.Request) { a.srv().HomeBackups(w, r) }
 
 func (a adminAPI) deleteHomeBackups(w http.ResponseWriter, r *http.Request) {
@@ -242,6 +246,10 @@ func (d cpTenant) ResumeSchedulesHeldByRemoval(ctx context.Context, mid string) 
 	return d.m.resumeSchedulesHeldByRemoval(ctx, mid)
 }
 
+func (d cpTenant) RotateGitToken(ctx context.Context, mid string) (int64, string, bool, error) {
+	return d.m.rotateGitToken(ctx, mid)
+}
+
 func (d cpTenant) CleanHomeByMembership(ctx context.Context, mid string) error {
 	return d.m.cleanHomeByMembership(ctx, mid)
 }
@@ -250,12 +258,12 @@ func (d cpTenant) HomeOpsInBackground() bool { return d.m.homeOperations().Backg
 
 func (d cpTenant) DestroyInBackground() bool { return d.m.homeOperations().DestroyBackground }
 
-func (d cpTenant) StartCleanHomeByMembership(ctx context.Context, mid string, done func(error)) error {
-	return d.m.startCleanHomeByMembership(ctx, mid, done)
+func (d cpTenant) StartCleanHomeByMembership(ctx context.Context, mid string, audit store.HomeOpAudit) error {
+	return d.m.startCleanHomeByMembership(ctx, mid, audit)
 }
 
-func (d cpTenant) StartDestroyWorkspaceByMembership(ctx context.Context, mid string, done func([]string, error)) error {
-	return d.m.startDestroyWorkspaceByMembership(ctx, mid, done)
+func (d cpTenant) StartDestroyWorkspaceByMembership(ctx context.Context, mid string, audit store.HomeOpAudit) error {
+	return d.m.startDestroyWorkspaceByMembership(ctx, mid, audit)
 }
 
 func (d cpTenant) HomeBackupsByMembership(ctx context.Context, mid string) (runtime.HomeBackups, bool, error) {
