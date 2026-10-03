@@ -688,8 +688,11 @@ one ("tell the session next door what we just did").
   same switch turns it on. It is read-only and silent: the other session is not interrupted or
   told, but every read is recorded in the Agent log and in the fleet graph's record (the graph
   does not draw it). A session gets at most the last 200 lines (16 KiB) at a time, cannot read
-  itself, and cannot read shell / ssm sessions or one whose agent's login has expired. It only
-  ever sees sessions in this workspace, never sessions other people shared with you.
+  itself, and cannot read shell / ssm sessions, or claude sessions while this workspace's claude
+  login has expired. It only ever sees sessions in this workspace, never sessions other people
+  shared with you. Turning the switch on exposes what your sessions' agents wrote to your other
+  sessions **as is — nothing is masked**, so a secret or a sign-in code an agent quoted in its
+  reply can be read too.
 
 Messages are deliberately curt. Every one of them costs the receiving session a whole turn, so
 sessions are told to drop greetings and thanks and to lead with the point. Each message also

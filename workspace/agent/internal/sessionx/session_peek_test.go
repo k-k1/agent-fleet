@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
@@ -41,9 +41,9 @@ func peekFixture(t *testing.T, peerMessaging bool) (home string) {
 
 // writeAssistantTranscript writes a claude jsonl whose assistant text is the given lines, one
 // assistant event per line.
-func writeAssistantTranscript(t *testing.T, home string, m session.Meta, lines []string) {
+func writeAssistantTranscript(t *testing.T, m session.Meta, lines []string) {
 	t.Helper()
-	p := filepath.Join(home, "claude", "projects", "p", session.UUID(m.Dir, m.Name)+".jsonl")
+	p := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "projects", "p", session.UUID(m.Dir, m.Name)+".jsonl")
 	var sb strings.Builder
 	sb.WriteString(`{"type":"user","message":{"content":"go"}}` + "\n")
 	for _, l := range lines {
@@ -95,12 +95,12 @@ func TestPeekPolicyRejections(t *testing.T) {
 // The workspace-wide peer-messaging switch closes peeking too, on the server: a caller that
 // skips the MCP layer still gets nothing.
 func TestPeekRefusedWhenPeerMessagingOff(t *testing.T) {
-	home := peekFixture(t, false)
+	peekFixture(t, false)
 	src := session.Meta{Name: "pk_src", Dir: t.TempDir(), Kind: session.KindClaude}
 	dst := session.Meta{Name: "pk_dst", Dir: t.TempDir(), Kind: session.KindClaude}
 	session.WriteMeta(src)
 	session.WriteMeta(dst)
-	writeAssistantTranscript(t, home, dst, []string{"secret plan"})
+	writeAssistantTranscript(t, dst, []string{"secret plan"})
 
 	rec := getOutput(t, "pk_dst", "peek_from=pk_src")
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "peek_disabled") {
@@ -114,7 +114,7 @@ func TestPeekRefusedWhenPeerMessagingOff(t *testing.T) {
 // A peek returns the tail within the caps whatever the caller asks for, and leaves an audit
 // line in the fleet-graph ledger — and nothing that reaches the target.
 func TestPeekClampsAndAudits(t *testing.T) {
-	home := peekFixture(t, true)
+	peekFixture(t, true)
 	src := session.Meta{Name: "pk_src", Dir: t.TempDir(), Kind: session.KindClaude}
 	dst := session.Meta{Name: "pk_dst", Dir: t.TempDir(), Kind: session.KindClaude}
 	session.WriteMeta(src)
@@ -123,7 +123,7 @@ func TestPeekClampsAndAudits(t *testing.T) {
 	for i := 1; i <= 300; i++ {
 		lines = append(lines, fmt.Sprintf("line %03d", i))
 	}
-	writeAssistantTranscript(t, home, dst, lines)
+	writeAssistantTranscript(t, dst, lines)
 
 	read := func(query string) (out string, clipped bool) {
 		t.Helper()
@@ -216,14 +216,56 @@ func TestPeekRateLimitIsPerReaderAndSeparateFromSends(t *testing.T) {
 	}
 }
 
-func TestPeekStateAllowedRefusesSignedOutTarget(t *testing.T) {
-	if err, ok := peekStateAllowed(agents.StateAuth).(*peerRejection); !ok || err.Code != "peek_target_auth" {
-		t.Fatalf("peekStateAllowed(auth) = %v, want peek_target_auth", err)
+// The expired-login refusal must not depend on the target being alive: DriveState answers
+// "stopped" for a dead session before it looks at the login, so a check on the state alone let a
+// stopped claude target through (review of #1549).
+func TestPeekRefusesStoppedClaudeTargetWhileLoginExpired(t *testing.T) {
+	peekFixture(t, true)
+	writeClaudeCreds(t, -2*time.Hour, -time.Hour)
+	if !claude.AuthExpired() {
+		t.Fatal("fixture: credentials should read as expired")
 	}
-	for _, st := range []string{"idle", "working", "stopped", "question", ""} {
-		if err := peekStateAllowed(st); err != nil {
-			t.Errorf("peekStateAllowed(%q) = %v, want nil", st, err)
-		}
+	src := session.Meta{Name: "pk_src", Dir: t.TempDir(), Kind: session.KindCodex}
+	dst := session.Meta{Name: "pk_dst", Dir: t.TempDir(), Kind: session.KindClaude}
+	session.WriteMeta(src)
+	session.WriteMeta(dst)
+	writeAssistantTranscript(t, dst, []string{"secret plan"})
+
+	rec := getOutput(t, "pk_dst", "peek_from=pk_src")
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "peek_target_auth") {
+		t.Fatalf("status = %d body = %s, want 409 peek_target_auth", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "secret plan") {
+		t.Fatalf("refused peek leaked the output: %s", rec.Body.String())
+	}
+
+	// A live login lets the same read through.
+	writeClaudeCreds(t, time.Hour, 24*time.Hour)
+	writeAssistantTranscript(t, dst, []string{"secret plan"})
+	if rec := getOutput(t, "pk_dst", "peek_from=pk_src"); rec.Code != http.StatusOK {
+		t.Fatalf("live login: status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The byte cap holds for what is returned, clip notice included.
+func TestPeekByteCapIncludesClipNotice(t *testing.T) {
+	peekFixture(t, true)
+	src := session.Meta{Name: "pk_src", Dir: t.TempDir(), Kind: session.KindClaude}
+	dst := session.Meta{Name: "pk_dst", Dir: t.TempDir(), Kind: session.KindClaude}
+	session.WriteMeta(src)
+	session.WriteMeta(dst)
+	writeAssistantTranscript(t, dst, []string{strings.Repeat("x", peekMaxBytes+1)})
+
+	rec := getOutput(t, "pk_dst", "peek_from=pk_src&tail=999999")
+	var body struct {
+		Output  string `json:"output"`
+		Clipped bool   `json:"clipped"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %.200s", rec.Code, rec.Body.String())
+	}
+	if !body.Clipped || len(body.Output) > peekMaxBytes {
+		t.Fatalf("output = %d bytes (clipped=%v), want clipped and at most %d", len(body.Output), body.Clipped, peekMaxBytes)
 	}
 }
 

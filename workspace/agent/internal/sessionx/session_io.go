@@ -1361,6 +1361,12 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	if peekFrom != "" {
+		if err := peekAuthAllowed(meta); err != nil {
+			writePeerErr(w, err)
+			return
+		}
+	}
 	alive := SessionAlive(meta)
 	// /output opts out of the idle-heal (heal=false) to preserve its historical behavior.
 	state := DriveState(meta, alive, false)
@@ -1391,10 +1397,6 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if peekFrom != "" {
-		if err := peekStateAllowed(state); err != nil {
-			writePeerErr(w, err)
-			return
-		}
 		if err := peekRate.allow(peekFrom, time.Now()); err != nil {
 			writePeerErr(w, err)
 			return

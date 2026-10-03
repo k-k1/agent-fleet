@@ -324,9 +324,15 @@ decision 4) and the peek is advertised only where peer messaging is on. The MCP 
 `peek_from` = the session it serves (`mcpOwningSession`, never an argument) to
 `GET /sessions/{name}/output`; the Agent applies the rest (`sessionx/session_peek.go`): the
 switch, the same kind allowlist as a send (no shell / ssm, either end), no peeking at yourself,
-no archived target, a refusal while the target's agent login has expired, at most 200 lines and
-16 KiB whatever the caller asks, and its own per-reader limit of 30 reads a minute (separate from
-the send limit). The output is the same transcript-derived assistant text `get_session_output`
+no archived target, a refusal of claude targets (running or stopped) while the workspace's
+claude login has expired (the only kind whose expiry the Agent can tell), the last 200 lines of
+the body and at most 16 KiB including the clip notice whatever the caller asks, and its own
+per-reader limit of 30 reads a minute (separate from the send limit). Trust boundary: the Agent
+REST trusts every holder of the shared `AGENT_TOKEN`, as before; `get_session_output`'s
+children-only rule is the MCP layer's. `peek_from` is an attribution, not an authenticated
+identity, so the switch, caps, limit and audit govern the ordinary MCP route, while a token
+holder can still name another reader, or omit `peek_from` and get the unrestricted `/output` the
+Console uses. The output is the same transcript-derived assistant text `get_session_output`
 returns — never the pane — and no redaction is applied, as for that tool. The target is not
 interrupted, notified or state-healed; each read is audited by a log line and an `ev:"peek"` line
 in the fleet-graph activity ledger. The ledger line is not on the `/api/fleet-graph` wire: the

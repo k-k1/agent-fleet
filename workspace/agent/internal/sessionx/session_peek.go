@@ -2,9 +2,16 @@ package sessionx
 
 // Peer peek (#1061): one session reading another session's recent output, read-only.
 //
-// It rides GET /sessions/{name}/output with peek_from=<reader>, and every rule is closed here
-// for the same reason the peer send's are (session_peer.go): MCP only names the reader, taken
-// from its own session binding, never from a tool argument. The rules:
+// It rides GET /sessions/{name}/output with peek_from=<reader>, and the rules below live here
+// rather than in the MCP layer for the same reason the peer send's do (session_peer.go).
+//
+// Trust boundary: the Agent REST trusts every holder of the shared AGENT_TOKEN, and /output
+// without peek_from stays the unrestricted read the Console and the operator have always had
+// (the children-only rule of get_session_output is the MCP layer's sessionDriveAllowed).
+// peek_from is therefore an attribution, not an authenticated identity: the MCP server fills it
+// from its own session binding (never a tool argument), so the switch, the caps, the limit and
+// the audit apply to the ordinary MCP route, but a token holder could name another reader or
+// omit it. The rules:
 //
 //   - Same population as a peer send: the workspace-wide peer-messaging switch must be on, and
 //     both ends must be kinds that can hold a peer conversation (no shell / ssm). Every meta this
@@ -13,7 +20,11 @@ package sessionx
 //   - Read-only and silent: the target is not interrupted, notified or state-healed (/output
 //     already reads with heal=false). The read is audited instead — a log line and a "peek"
 //     line in the fleet-graph activity ledger.
-//   - Bounded: at most peekMaxLines lines and peekMaxBytes bytes, whatever the caller asks.
+//   - Bounded: the last peekMaxLines lines of the body, and at most peekMaxBytes bytes including
+//     the clip notice, whatever the caller asks.
+//   - A claude target is refused while this workspace's claude login has expired, stopped or not.
+//     It is the only kind whose expiry the Agent can tell. This is not redaction: secrets the
+//     assistant quoted earlier are in the text either way.
 //   - Its own rate limit, generous because a read costs the target nothing, but present
 //     because a polling loop would still fill the reader's context and the audit ledger.
 
@@ -22,7 +33,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
@@ -67,20 +78,21 @@ func peekPolicy(from, to string) error {
 	return nil
 }
 
-// peekStateAllowed refuses a target whose agent is signed out. The output is built from the
-// transcript, never the pane, so a login screen is not in it; the refusal is for the moment a
-// re-login is in flight, when what the session shows next is a sign-in flow and not work.
-func peekStateAllowed(state string) error {
-	if state == agents.StateAuth {
-		return peerReject("peek_target_auth", "相手のエージェントはログインが切れています。ログインし直すまで出力は読めません")
+// peekAuthAllowed refuses a claude target while this workspace's claude login has expired.
+// It reads the credentials directly rather than DriveState, which answers "stopped" for a
+// session that is not alive before it ever looks at the login.
+func peekAuthAllowed(m session.Meta) error {
+	if NormalizeKind(m.Kind) == session.KindClaude && claude.AuthExpired() {
+		return peerReject("peek_target_auth", "このワークスペースの claude のログインが切れているので、claude セッションの出力は読めません")
 	}
 	return nil
 }
 
 // peekCaps clamps what a peek may return: unset or oversized values fall to the caps.
 func peekCaps(tail, lines int) (int, int) {
-	if tail <= 0 || tail > peekMaxBytes {
-		tail = peekMaxBytes
+	// The clip notice is prepended after the byte cut, so it comes out of the same budget.
+	if budget := peekMaxBytes - len(sessionOutputClipNote); tail <= 0 || tail > budget {
+		tail = budget
 	}
 	if lines <= 0 {
 		lines = peekDefaultLines
