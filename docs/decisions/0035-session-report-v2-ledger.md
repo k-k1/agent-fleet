@@ -101,10 +101,13 @@ raised before the send, marked `sending`, and the prompt carries the row id (`Tu
 file), not a message id: a driver may rewrite the id it is given (opencode does). The send's outcome clears
 `sending`, or withdraws the row when the driver refused the prompt.
 
-- While the row is `sending` (for at most five minutes, in case the Agent died mid-send) or its prompt waits
-  (`agents.HeldInstrs`), the row is left out of the settle decision: the turn it queued behind ending, or being
-  stopped, is not its completion, and a report delivered for a prompt the driver then refuses could not be taken
-  back.
+- While the row is `sending` or its prompt waits (`agents.HeldInstrs`), the row is left out of the settle decision:
+  the turn it queued behind ending, or being stopped, is not its completion, and a report delivered for a prompt
+  the driver then refuses could not be taken back.
+- A row left `sending` by an Agent that is gone (not in this process's in-flight set) is settled by evidence, not
+  by time. With a held file the driver had accepted the prompt, and the row becomes an ordinary queued row. Without
+  one nothing shows whether the prompt reached the session, so it gets an `unconfirmed` report and is closed as
+  `unconfirmed`: neither a completion nor a not-run is asserted, and the operator is told to look before resending.
 - When the prompt is dropped, the row records why (`dropped`), and the next sweep delivers a `not-run` report with
   that reason, without waiting for quiet evidence and even when the session's meta is gone. Delivered, the row is
   closed as `not_run`, which is never a reopen candidate. A retry keeps the row open, as for every report.

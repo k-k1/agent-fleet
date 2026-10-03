@@ -66,6 +66,7 @@ export const chat: Record<keyof typeof jaChat, string> = {
   "chat.report.not_run_reason.discarded": "a stop discarded the queue",
   "chat.report.not_run_reason.stopped": "a stop caught it before it started",
   "chat.report.not_run_reason.removed": "it was removed from the queue",
+  "chat.report.unconfirmed": "It is unknown whether the instruction reached the session: the agent restarted while sending it.",
   "chat.report.unknown": "The state changed ({kind}).",
   "chat.report.exit_reason.oom": "OOM (killed — out of memory)",
   "chat.report.exit_reason.crashed": "crashed",

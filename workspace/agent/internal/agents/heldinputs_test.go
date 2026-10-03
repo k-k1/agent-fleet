@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -242,5 +243,73 @@ func TestHeldDropAndCommitClaimTheInputOnce(t *testing.T) {
 	}
 	if HeldInstrs("tq")["i-2"] {
 		t.Fatal("a committed row is still held")
+	}
+}
+
+// Review round 2, finding 1: an input a live queue accepts while a drop is reporting (a /input
+// racing an archive) is written after the drop listed the directory. The drop leaves it alone,
+// so that queue still owns it and runs it, rather than finding its token gone with nobody told.
+func TestDropHeldLeavesAnInputAcceptedDuringTheDrop(t *testing.T) {
+	q := newQ(t, LedgerAtAccept)
+	q.Accept(member("m0"))
+	running(t, q)
+	q.Accept(operator("o1"))
+	q.DropAll()
+
+	live := NewTurnQueue("tq", q.ledger, LedgerAtAccept)
+	live.AcceptRecorded(member("m1")) // a turn of its own, without adopting o1 first
+	running(t, live)
+	var drops []string
+	prev := OnHeldDropped
+	OnHeldDropped = func(d HeldDrop) {
+		drops = append(drops, d.ID)
+		if d.ID == "o1" {
+			live.Accept(operator("o2")) // lands while the drop reports o1
+		}
+	}
+	t.Cleanup(func() { OnHeldDropped = prev })
+	DropHeld("tq", DropArchived)
+	if len(drops) != 1 || drops[0] != "o1" {
+		t.Fatalf("drops = %v, want o1 only", drops)
+	}
+	if !HeldWaiting("tq", "o2") {
+		t.Fatal("the drop removed an input it never claimed")
+	}
+	live.Settle(live.Head())
+	tk := live.Take()
+	if tk == nil || tk.ID() != "o2" || !live.Commit(tk) {
+		t.Fatalf("the input accepted during the drop did not run: %+v", tk)
+	}
+}
+
+// Review round 2, finding 2: a removal that fails (EACCES here) is no claim. The drop reports
+// nothing, the queue does not run it, and the input stays on disk for the next start.
+func TestFailedUnlinkIsNoClaim(t *testing.T) {
+	drops := captureDrops(t)
+	q := newQ(t, LedgerAtAccept)
+	q.Accept(member("m0"))
+	m0 := running(t, q)
+	q.Accept(operator("o1"))
+	dir := heldDir("tq")
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	if f, err := os.CreateTemp(dir, "probe"); err == nil { // root ignores the mode
+		f.Close()
+		os.Remove(f.Name())
+		t.Skip("the directory mode is not enforced for this user")
+	}
+	DropHeld("tq", DropArchived)
+	if len(*drops) != 0 {
+		t.Fatalf("a drop whose unlink failed reported %+v", *drops)
+	}
+	q.Settle(m0)
+	tk := q.Take()
+	if tk == nil || q.Commit(tk) {
+		t.Fatal("a queue ran an input whose token it could not remove")
+	}
+	if !HeldWaiting("tq", "o1") {
+		t.Fatal("the input is gone from disk")
 	}
 }

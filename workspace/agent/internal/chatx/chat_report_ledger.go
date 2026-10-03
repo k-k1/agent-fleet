@@ -56,6 +56,10 @@ const (
 	// ran (#1257), and that has been reported. Closed, and never a reopen candidate: nothing
 	// ran that a later busy period could be the continuation of.
 	instrNotRun = "not_run"
+	// instrUnconfirmed: the Agent restarted while the row's prompt was being sent, and nothing
+	// shows whether the driver accepted it (#1257). Reported as such and closed: neither a
+	// completion nor a not-run can be asserted, and waiting would wait forever.
+	instrUnconfirmed = "unconfirmed"
 )
 
 // instrCursor is the row's progress cursor: the lower bound that makes "the session worked
@@ -211,7 +215,20 @@ func AddInstruction(name, convID, source string) string {
 // a drop during the send finds the row; the send's outcome then settles it: MarkInstrSent, or
 // WithdrawInstruction when the driver refused the prompt.
 func AddSendingInstruction(name, convID, source string) string {
-	return addSendingInstructionAt(name, convID, source, true, time.Now())
+	id := addSendingInstructionAt(name, convID, source, true, time.Now())
+	if id != "" {
+		instrInFlight.Store(name+"/"+id, true)
+	}
+	return id
+}
+
+// instrInFlight holds the rows whose send this process has under way. A row marked sending
+// that is not here was raised by an Agent that is gone: its send's outcome was never recorded.
+var instrInFlight sync.Map
+
+func instrSendInFlight(name, id string) bool {
+	_, ok := instrInFlight.Load(name + "/" + id)
+	return ok
 }
 
 // MarkInstrSent ends row id's sending state: the driver accepted the prompt.
@@ -219,6 +236,7 @@ func MarkInstrSent(name, id string) {
 	if id == "" {
 		return
 	}
+	instrInFlight.Delete(name + "/" + id)
 	unlock := lockInstr(name)
 	defer unlock()
 	rows := ReadInstrRows(name)
@@ -236,6 +254,7 @@ func WithdrawInstruction(name, id string) {
 	if id == "" {
 		return
 	}
+	instrInFlight.Delete(name + "/" + id)
 	unlock := lockInstr(name)
 	defer unlock()
 	rows := ReadInstrRows(name)
@@ -274,14 +293,15 @@ func MarkInstrNotRun(name, id, reason string) bool {
 	return hit
 }
 
-// markInstrNotRunReported closes row id once its not-run report has been delivered.
-func markInstrNotRunReported(name, id string, at time.Time) {
+// markInstrNotRunReported closes row id as state once its not-run or unconfirmed report has
+// been delivered.
+func markInstrNotRunReported(name, id, state string, at time.Time) {
 	unlock := lockInstr(name)
 	defer unlock()
 	rows := ReadInstrRows(name)
 	for i := range rows {
 		if rows[i].ID == id && rows[i].open() {
-			rows[i].State = instrNotRun
+			rows[i].State = state
 			rows[i].ReportedAt = at.Format(time.RFC3339)
 		}
 	}

@@ -107,6 +107,11 @@ const reportReasonReopenCapped = "reopen-capped"
 // reopened.
 const reportKindNotRun = "not-run"
 
+// reportKindUnconfirmed is the report for an instruction whose prompt was being sent when the
+// Agent restarted, with nothing to show whether the driver took it (#1257). It asserts neither
+// completion nor not-run: the operator is asked to look before sending it again.
+const reportKindUnconfirmed = "unconfirmed"
+
 // ReportKindSelfReport is the SELF-REPORT kick (docs/log/51 §self-report fast path /
 // Phase 3): the session itself declared completion through the af_report MCP tool. It is not
 // a report kind — nothing is ever written to a conversation under it. It only carries a hint
@@ -524,7 +529,7 @@ func recordSessionReport(name, convID, kind, reason string, rows []instrRow) rep
 		if ms := reopenTargetMs(c, fresh); ms > 0 {
 			args["reopen_at"] = strconv.FormatInt(ms, 10)
 		}
-	} else if n := len(fresh); n >= 2 && kind != reportKindNotRun {
+	} else if n := len(fresh); n >= 2 && kind != reportKindNotRun && kind != reportKindUnconfirmed {
 		args["fold_n"] = strconv.Itoa(n)
 		args["fold_ats"] = instrFoldAts(fresh)
 	}

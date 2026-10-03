@@ -278,8 +278,10 @@ held peer messages, by accept time. They keep their text, so an operator prompt 
 `[agent-fleet:held queued=<time>]` is appended to one delivered after a restart. Archive, trash, recreate and the
 switch to Terminal drop them, the operator's `stop_session` drops its own, and a discarding stop and a removal drop
 them as they drop peer messages. The held file is the token for the input: Commit and every drop remove it before
-acting, and only the one that removed it acts, so an input reported as dropped never runs even when a Resume
-adopted it meanwhile, and one already handed to the runtime is not reported. Unlike a peer message, each dropped
+acting, and only the one whose removal succeeded acts, so an input reported as dropped never runs even when a Resume
+adopted it meanwhile, and one already handed to the runtime is not reported. A removal that fails (EACCES, EIO) is
+no claim: the input stays on disk for the next start. A drop removes only the files it claimed, never the whole
+directory, so an input a live queue accepts during the drop is left to that queue. Unlike a peer message, each dropped
 one is reported: its instruction row is
 reported as not run (see [0035](0035-session-report-v2-ledger.md), addendum 2026-10-03), and its scheduled run is
 recorded as not executed.

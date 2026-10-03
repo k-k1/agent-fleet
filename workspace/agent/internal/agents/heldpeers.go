@@ -179,17 +179,20 @@ func putHeld(name string, in TurnInput) bool {
 // claimHeld removes id's file and reports whether this caller removed it. The file is the
 // token for a held input: Commit and the drops each claim it before acting, so an input that
 // a drop has reported as not run cannot also be handed to the runtime by a queue that adopted
-// it meanwhile (a Resume racing an archive), and one already handed over is not reported. A
-// removal that fails for another reason counts as claimed: the input is not lost over it.
+// it meanwhile (a Resume racing an archive), and one already handed over is not reported.
+//
+// Only a removal that succeeded is a claim. One that fails for another reason (EACCES, EIO)
+// leaves the token in place, and treating it as a claim would let both sides act on it: the
+// input then neither runs nor is reported, and stays on disk for the next start to deliver.
 func claimHeld(name, id string) bool {
 	if !heldName(name) || id == "" {
 		return true
 	}
 	err := os.Remove(heldFile(name, id))
 	if err != nil && !os.IsNotExist(err) {
-		log.Printf("held peer message: %s: remove %s: %v", name, id, err)
+		log.Printf("held peer message: %s: remove %s: %v (left for the next start)", name, id, err)
 	}
-	return !os.IsNotExist(err)
+	return err == nil
 }
 
 // heldOriginField is the origin as stored: empty for a peer message, the spelling every
@@ -324,8 +327,27 @@ func DropHeld(name, reason string) {
 		}
 		reportDropped(heldDropOf(name, hp, reason))
 	}
-	if err := os.RemoveAll(heldDir(name)); err != nil {
-		log.Printf("held peer message: %s: remove: %v", name, err)
+	// Not RemoveAll: a file written after the listing above is an input a live queue accepted
+	// meanwhile, which nobody has claimed or reported. Removing it would make its Commit read
+	// the missing token as "dropped and reported" and lose it silently. It stays, and runs or
+	// is dropped by whoever claims it. Stale temp files go; the directory goes once empty.
+	removeStaleTmp(heldDir(name))
+	if err := os.Remove(heldDir(name)); err != nil && !os.IsNotExist(err) {
+		log.Printf("held peer message: %s: directory kept: %v", name, err)
+	}
+}
+
+// removeStaleTmp removes the temp files a crashed write left in dir, sparing young ones that may
+// be a write in flight.
+func removeStaleTmp(dir string) {
+	files, _ := os.ReadDir(dir)
+	for _, f := range files {
+		if !strings.HasPrefix(f.Name(), ".tmp-") {
+			continue
+		}
+		if fi, err := f.Info(); err == nil && time.Since(fi.ModTime()) > heldTmpGrace {
+			os.Remove(filepath.Join(dir, f.Name()))
+		}
 	}
 }
 
@@ -470,14 +492,6 @@ func SweepHeld() {
 			DropHeld(name, DropTerminal)
 			continue
 		}
-		files, _ := os.ReadDir(filepath.Join(root, name))
-		for _, f := range files {
-			if !strings.HasPrefix(f.Name(), ".tmp-") {
-				continue
-			}
-			if fi, err := f.Info(); err == nil && time.Since(fi.ModTime()) > heldTmpGrace {
-				os.Remove(filepath.Join(root, name, f.Name()))
-			}
-		}
+		removeStaleTmp(filepath.Join(root, name))
 	}
 }

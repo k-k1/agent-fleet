@@ -62,6 +62,7 @@ export const chat = {
   "chat.report.not_run_reason.discarded": "停止でキューが破棄された",
   "chat.report.not_run_reason.stopped": "開始前に停止された",
   "chat.report.not_run_reason.removed": "キューから削除された",
+  "chat.report.unconfirmed": "指示がセッションに届いたかは不明です: 送信中にエージェントが再起動しました。",
   "chat.report.unknown": "状態が変化しました（{kind}）。",
   "chat.report.exit_reason.oom": "OOM（メモリ不足で強制終了）",
   "chat.report.exit_reason.crashed": "クラッシュ",

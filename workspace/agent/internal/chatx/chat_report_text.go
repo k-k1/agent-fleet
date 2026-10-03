@@ -42,6 +42,7 @@ const (
 	reportKeyReopenCapped      = "chat.report.reopen_capped"
 	reportKeyExit              = "chat.report.exit"
 	reportKeyNotRun            = "chat.report.not_run"
+	reportKeyUnconfirmed       = "chat.report.unconfirmed"
 	reportKeyUnknown           = "chat.report.unknown"
 )
 
@@ -97,6 +98,8 @@ func (v reportView) displayKey() string {
 		return reportKeyExit
 	case reportKindNotRun:
 		return reportKeyNotRun
+	case reportKindUnconfirmed:
+		return reportKeyUnconfirmed
 	}
 	return reportKeyUnknown
 }
@@ -228,6 +231,11 @@ func (v reportView) fact(lang string) string {
 			return "The instruction did not run: it was dropped from the session's queue before it started (" + label + ")."
 		}
 		return "指示は実行されていません: 開始前にセッションのキューから取り除かれました（" + label + "）。"
+	case reportKeyUnconfirmed:
+		if en {
+			return "It is unknown whether the instruction reached the session: the agent restarted while sending it."
+		}
+		return "指示がセッションに届いたかは不明です: 送信中にエージェントが再起動しました。"
 	case reportKeyUnknown:
 		if en {
 			return "The state changed (" + v.kind + ")."
@@ -385,6 +393,13 @@ func (v reportView) orders(lang string) string {
 		}
 		return "この指示が実行されなかったことと理由を利用者に伝えてください。" +
 			"利用者がまだ望む場合に限り、get_session_status でセッションの状態を確認してから send_to_session で送り直してください。"
+	case reportKeyUnconfirmed:
+		if en {
+			return "Check with get_session_output whether the session worked on it. Tell the user what you found, " +
+				"and send it again with send_to_session only if it did not run and the user still wants it."
+		}
+		return "get_session_output でセッションがこの指示に取り組んだかを確認し、分かったことを利用者に伝えてください。" +
+			"走っておらず、利用者がまだ望む場合に限り send_to_session で送り直してください。"
 	case reportKeyExit:
 		if en {
 			return "Tell the user what happened if it matters, and consider resuming or re-instructing."

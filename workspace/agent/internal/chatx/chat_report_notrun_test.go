@@ -64,15 +64,23 @@ func TestReportReconcilerHeldInstructionIsNotDone(t *testing.T) {
 	}
 }
 
+// sendingRow raises a row whose send this process has under way, delivered at.
+func sendingRow(t *testing.T, name, conv string, at time.Time) string {
+	t.Helper()
+	id := addSendingInstructionAt(name, conv, "operator", true, at)
+	instrInFlight.Store(name+"/"+id, true)
+	t.Cleanup(func() { instrInFlight.Delete(name + "/" + id) })
+	return id
+}
+
 // Review round 1, finding 4: a row raised before the send is out of the settle decision until
-// the send's outcome, so a send the driver refuses never leaves a delivered report behind. A
-// row whose send never settled (the Agent died in between) is judged again after the grace.
+// the send's outcome, so a send the driver refuses never leaves a delivered report behind.
 func TestReportReconcilerSendingInstructionIsNotDone(t *testing.T) {
 	m, sid, conv := ledgerFixture(t, "slot74")
 	var cs countingSink
 	rc, clock := newFakeReconciler(t, reportTickDefault, cs.sink)
 
-	id := addSendingInstructionAt(m.Name, conv, "operator", true, time.Now().Add(-60*time.Second))
+	id := sendingRow(t, m.Name, conv, time.Now().Add(-60*time.Minute))
 	status.PersistTurnEnd(sid, "idle")
 	for i := 0; i < 4; i++ {
 		clock.advance(t, rc, reportTickDefault)
@@ -84,16 +92,44 @@ func TestReportReconcilerSendingInstructionIsNotDone(t *testing.T) {
 	if rows := ReadInstrRows(m.Name); len(rows) != 0 {
 		t.Fatalf("rows after the withdrawal = %+v", rows)
 	}
-
-	stale := addSendingInstructionAt(m.Name, conv, "operator", true, time.Now().Add(-instrSendingGrace-time.Minute))
-	if got := withoutHeldInstr(m.Name, openInstrRows(m.Name), time.Now()); len(got) != 1 || got[0].ID != stale {
-		t.Fatalf("a stale sending row is still held out: %+v", got)
-	}
 	sent := AddSendingInstruction(m.Name, conv, "operator")
 	MarkInstrSent(m.Name, sent)
 	for _, r := range ReadInstrRows(m.Name) {
-		if r.ID == sent && r.Sending {
+		if r.ID == sent && (r.Sending || instrSendInFlight(m.Name, sent)) {
 			t.Fatal("MarkInstrSent left the row sending")
+		}
+	}
+}
+
+// Review round 2, finding 3: a row left sending by an Agent that is gone. Without a held file
+// nothing shows whether the prompt reached the session: it is reported as unconfirmed, once,
+// and never as done, however long an earlier turn's quiet evidence lasts. With a held file the
+// driver had accepted it: the row is an ordinary queued instruction again.
+func TestReportReconcilerSendingRowOfADeadAgent(t *testing.T) {
+	m, sid, conv := ledgerFixture(t, "slot75")
+	var cs countingSink
+	rc, clock := newFakeReconciler(t, reportTickDefault, cs.sink)
+
+	lost := addSendingInstructionAt(m.Name, conv, "operator", true, time.Now().Add(-6*time.Minute))
+	accepted := addSendingInstructionAt(m.Name, conv, "operator", true, time.Now().Add(-6*time.Minute))
+	queueBehindATurn(t, m.Name, accepted)
+	status.PersistTurnEnd(sid, "idle")
+	for i := 0; i < 4; i++ {
+		clock.advance(t, rc, reportTickDefault)
+	}
+	if got := cs.callsSnapshot(); len(got) != 1 || got[0] != reportKindUnconfirmed+":" || cs.rowIDs(0)[0] != lost {
+		t.Fatalf("reports = %v %v, want one unconfirmed for the lost row", got, cs.rows)
+	}
+	for _, r := range ReadInstrRows(m.Name) {
+		switch r.ID {
+		case lost:
+			if r.State != instrUnconfirmed {
+				t.Fatalf("lost row = %+v", r)
+			}
+		case accepted:
+			if r.State != instrPending || r.Sending {
+				t.Fatalf("accepted row = %+v, want pending and no longer sending", r)
+			}
 		}
 	}
 }
@@ -106,7 +142,7 @@ func TestReportReconcilerDroppedInstructionIsReportedNotRun(t *testing.T) {
 	cs := countingSink{fail: 1}
 	rc, clock := newFakeReconciler(t, reportTickDefault, cs.sink)
 
-	id := addSendingInstructionAt(m.Name, conv, "operator", true, time.Now().Add(-60*time.Second))
+	id := sendingRow(t, m.Name, conv, time.Now().Add(-60*time.Second))
 	queueBehindATurn(t, m.Name, id)
 	if MarkInstrNotRun(m.Name, "nope", agents.DropArchived) {
 		t.Fatal("marked a row that does not exist")

@@ -147,7 +147,7 @@ func TestReportKeysExistInConsoleCatalogs(t *testing.T) {
 	keys := []string{
 		reportKeyAnswerReady, reportKeyTurnFailed, reportKeyTurnAborted, reportKeyTurnAbortedCapped,
 		reportKeyQuestion, reportKeyPlanApproval, reportKeyPermission,
-		reportKeyReopened, reportKeyReopenCapped, reportKeyExit, reportKeyNotRun, reportKeyUnknown,
+		reportKeyReopened, reportKeyReopenCapped, reportKeyExit, reportKeyNotRun, reportKeyUnconfirmed, reportKeyUnknown,
 		// Notes and exit-reason labels (the fragments the Console assembles).
 		"chat.report.note.rate_limit_resume", "chat.report.note.fold", "chat.report.note.reopen_target",
 		"chat.report.exit_reason.oom", "chat.report.exit_reason.crashed", "chat.report.exit_reason.killed",

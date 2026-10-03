@@ -813,8 +813,9 @@ func (rc *reportReconciler) prune(armed []string) {
 // row stays pending and is reported at the end of the next turn — gap A, where v1 overwrote the
 // arm and lost it, falls out of the definition here as "a row that cannot disappear".
 func (rc *reportReconciler) evaluate(name string, now time.Time) {
-	open := rc.reportNotRun(name, openInstrRows(name), now)
-	open = withoutHeldInstr(name, open, now)
+	held := agents.HeldInstrs(name)
+	open := rc.reportNotRun(name, openInstrRows(name), held, now)
+	open = withoutHeldInstr(name, open, held)
 	if len(open) == 0 {
 		return
 	}
@@ -889,51 +890,54 @@ func (rc *reportReconciler) evaluate(name string, now time.Time) {
 // and the session may be archived or gone. It runs ahead of the meta check for that reason. A
 // row whose delivery must be retried stays open and is left out of this sweep's settle
 // decision, so the session's quiet period cannot report it as done meanwhile.
-func (rc *reportReconciler) reportNotRun(name string, open []instrRow, now time.Time) []instrRow {
+//
+// A row left sending by an Agent that is gone is settled here too. Its held file, when there
+// is one, proves the driver accepted the prompt: the row stops being sending and is judged like
+// any queued instruction. Without one nothing shows whether the prompt reached the session (the
+// Agent died before the accept, or after it and before the send returned, with the prompt
+// started at once): it is reported as unconfirmed, never as done and never as not run.
+func (rc *reportReconciler) reportNotRun(name string, open []instrRow, held map[string]bool, now time.Time) []instrRow {
 	var rest []instrRow
 	for _, r := range open {
-		if r.Dropped == "" {
+		kind, reason, state := reportKindNotRun, r.Dropped, instrNotRun
+		switch {
+		case r.Dropped != "":
+		case r.Sending && !instrSendInFlight(name, r.ID) && held[r.ID]:
+			MarkInstrSent(name, r.ID)
+			r.Sending = false
+			rest = append(rest, r)
+			continue
+		case r.Sending && !instrSendInFlight(name, r.ID):
+			kind, reason, state = reportKindUnconfirmed, "", instrUnconfirmed
+		default:
 			rest = append(rest, r)
 			continue
 		}
-		switch rc.sink(name, r.Conv, reportKindNotRun, r.Dropped, []instrRow{r}) {
+		switch rc.sink(name, r.Conv, kind, reason, []instrRow{r}) {
 		case reportSinkRetry:
 			continue
 		case reportSinkDrop:
 			log.Printf("session-report: %s: target conversation %s is gone — folding row %s", name, r.Conv, r.ID)
 		}
-		markInstrNotRunReported(name, r.ID, now)
-		log.Printf("session-report: %s: instruction %s not run (%s)", name, r.ID, r.Dropped)
+		markInstrNotRunReported(name, r.ID, state, now)
+		log.Printf("session-report: %s: instruction %s %s (%s)", name, r.ID, state, reason)
 	}
 	return rest
 }
 
 // withoutHeldInstr drops the rows whose prompt has not started (#1257): still being sent, or
-// waiting in the session's queue. An instruction that has not started cannot have completed,
-// whatever the session's earlier turn did. Such a row stays pending until its prompt is handed
-// to the runtime, and is then judged like any other.
-//
-// A row still marked sending after instrSendingGrace is judged normally: the Agent died
-// between raising it and the send's outcome, and a row that never settles is v1's lost report.
-func withoutHeldInstr(name string, rows []instrRow, now time.Time) []instrRow {
-	held := agents.HeldInstrs(name)
+// waiting in the session's queue (held, from agents.HeldInstrs). An instruction that has not
+// started cannot have completed, whatever the session's earlier turn did. Such a row stays
+// pending until its prompt is handed to the runtime, and is then judged like any other.
+func withoutHeldInstr(name string, rows []instrRow, held map[string]bool) []instrRow {
 	var out []instrRow
 	for _, r := range rows {
-		if held[r.ID] || (r.Sending && !instrSendingStale(r, now)) {
+		if held[r.ID] || r.Sending {
 			continue
 		}
 		out = append(out, r)
 	}
 	return out
-}
-
-// instrSendingGrace bounds how long a send may hold a row out of the settle decision. A send
-// is an accept under the driver's lock plus, on opencode, one status request.
-const instrSendingGrace = 5 * time.Minute
-
-func instrSendingStale(r instrRow, now time.Time) bool {
-	at, err := time.Parse(time.RFC3339, r.DeliveredAt)
-	return err != nil || now.Sub(at) > instrSendingGrace
 }
 
 // reportReopenGrace is how long a reported row stays under compensation watch
