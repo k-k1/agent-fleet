@@ -45,6 +45,22 @@ func Enqueue(m Message) {
 	if eventKeyFor(m.Kind) == "" {
 		return
 	}
+	m.Target = ""
+	enqueue(m)
+}
+
+// EnqueueTo queues m for the provider named target alone, whatever its event toggles say: the
+// member asked for this message on that connection specifically. The caller checks TargetReady
+// first, so a connection that is gone or unbound is reported instead of silently skipped.
+func EnqueueTo(target string, m Message) {
+	if target == "" {
+		return
+	}
+	m.Target = target
+	enqueue(m)
+}
+
+func enqueue(m Message) {
 	if m.CreatedAt == "" {
 		m.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}

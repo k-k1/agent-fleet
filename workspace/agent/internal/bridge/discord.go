@@ -137,6 +137,11 @@ func (d *discordProvider) buildMessages(m Message) []outMsg {
 		// A trailing divider (docs/log/37 Fix ⑤) so a run of answers doesn't visually merge.
 		content = withDivider(renderBodyForDiscord(m.Body))
 	}
+	// A scheduled run's result keeps its headline (which schedule, whether it failed) above the
+	// answer, in either mode: the member named this connection for it (#1560).
+	if m.Kind == KindScheduleResult && m.Body != "" {
+		content = withDivider(m.Text(d.creds.Lang) + "\n\n" + renderBodyForDiscord(m.Body))
+	}
 	// Mention makes mobile push deterministic: Discord's default notification level
 	// for guild channels AND threads is "only @mentions", so an unpinged notification
 	// silently becomes badge-only (docs/log/37 P1.5). DM mode needs none. It rides the
@@ -194,7 +199,7 @@ func (d *discordProvider) shouldMention(m Message) bool {
 // abnormal exit.
 func alwaysMentionKind(kind string) bool {
 	switch kind {
-	case "question", "plan-approval", "permission-request", "exit":
+	case "question", "plan-approval", "permission-request", "exit", KindScheduleResult:
 		return true
 	}
 	return false

@@ -575,6 +575,7 @@ POST /internal/schedules/{id}/resume
 POST /internal/schedules/{id}/run-now
 GET /internal/schedules/{id}/runs
 POST /internal/schedules/{id}/runs/not-executed
+POST /internal/schedules/{id}/runs/silent
 GET /login
 GET /login/{slug}
 GET /manifest.webmanifest

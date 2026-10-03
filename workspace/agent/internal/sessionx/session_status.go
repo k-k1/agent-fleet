@@ -167,6 +167,15 @@ func RunSessionStatusHook(args []string) {
 	// it becomes the full-text bridge body (docs/log/37). The operator report itself
 	// carries no excerpt (docs/log/30: fact-only, uniform with managed).
 	turnText, _ := status.ReadPendingText(sid)
+	// The newest message alone, for the silent sentinel (#1560): turnText is every message of
+	// the turn run together, so a turn that said "checking…" before its final [SILENT] would
+	// never match. Read here for the same reason as turnText, before the turn end clears it.
+	var lastMsg string
+	if state == "idle" {
+		if lr, ok := status.ReadLiveText(sid); ok {
+			lastMsg = lr.Text
+		}
+	}
 	notifyState, notifyText := state, turnText
 	if state == "idle" {
 		// turnEndLabel is resolved BEFORE the write, not after: the qualifier it returns
@@ -181,7 +190,7 @@ func RunSessionStatusHook(args []string) {
 		status.Persist(sid, state)
 	}
 	applyPendingPayloads(sid, state, h)
-	RecordSessionNotification(sid, previous.State, notifyState, notifyText)
+	recordSessionNotification(sid, previous.State, notifyState, notifyText, lastMsg)
 }
 
 // claudeAbortInfo is the transcript-tail verdict (docs/log/47), replaceable in tests.
@@ -236,6 +245,12 @@ func turnEndReasonFor(notifyState string) string {
 }
 
 func RecordSessionNotification(sid, previous, state, turnText string) {
+	recordSessionNotification(sid, previous, state, turnText, "")
+}
+
+// recordSessionNotification is RecordSessionNotification with the turn's newest message when the
+// caller knows it apart from the whole turn's text.
+func recordSessionNotification(sid, previous, state, turnText, lastMsg string) {
 	kind := ""
 	reason := ""
 	switch {
@@ -305,6 +320,12 @@ func RecordSessionNotification(sid, previous, state, turnText string) {
 				chatx.ResetAutoResume(m.Name)
 			}
 		}
+		// A scheduled run that answered with the silent sentinel raises no notification (#1560):
+		// the answer-ready event would carry it to the notification center and the chat bridge,
+		// which is exactly what the schedule asked not to happen. The kick below still runs, so
+		// the run is settled and recorded as silent.
+		silent := kind == chatx.ReportKindAnswerReady &&
+			chatx.NoteTurnAnswer(m.Name, reason != "", lastMsg, turnText)
 		ev := notice.New(kind, m.Name, m.Kind, session.Display(m))
 		// Full-text bridge (docs/log/37, the future direction): carry the turn's final
 		// prose on the answer-ready event so a full-text-mode provider can post it. Only
@@ -338,13 +359,15 @@ func RecordSessionNotification(sid, previous, state, turnText string) {
 		// turn-end gets a fresh key. Interim events (question / plan-approval /
 		// permission) use plain Put — they have their own "previous != state" guards
 		// and do not carry turn bodies.
-		if kind == chatx.ReportKindAnswerReady {
+		switch {
+		case silent:
+		case kind == chatx.ReportKindAnswerReady:
 			key := ev.CreatedAt
 			if k, ok := status.ReadCompletionKey(sid); ok && k != "" {
 				key = k
 			}
 			_ = notice.PutOnce("answer-ready:"+m.Name+":"+key, ev)
-		} else {
+		default:
 			_ = notice.Put(ev)
 		}
 		// One-shot session report to the operator conversation that armed this

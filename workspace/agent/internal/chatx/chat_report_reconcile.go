@@ -542,7 +542,45 @@ type reportSink func(name, convID, kind, reason string, rows []instrRow) reportS
 // failure can be returned), while the operator's automatic turn goes to the debouncer
 // (chat_report_autoturn.go — it bundles nearby reports into one turn). It fires on the timer
 // goroutine, so a provider call taking minutes does not block the reconciler's single goroutine.
+//
+// A scheduled run's row that carries its own delivery (#1560) is routed to its targets by
+// deliverScheduledRow instead, one row at a time: two runs of one schedule are two results.
 func deliverReportCard(name, convID, kind, reason string, rows []instrRow) reportSinkResult {
+	var plain []instrRow
+	var results []reportSinkResult
+	for _, r := range rows {
+		if r.Delivery == nil {
+			plain = append(plain, r)
+			continue
+		}
+		results = append(results, deliverScheduledRow(name, convID, kind, reason, r))
+	}
+	if len(plain) > 0 {
+		results = append(results, deliverConvReport(name, convID, kind, reason, plain))
+	}
+	return foldSinkResults(results)
+}
+
+// foldSinkResults folds per-part sink results: a retry anywhere keeps every row open, and the
+// rows are dropped only when no part was delivered at all.
+func foldSinkResults(results []reportSinkResult) reportSinkResult {
+	drops := 0
+	for _, r := range results {
+		switch r {
+		case reportSinkRetry:
+			return reportSinkRetry
+		case reportSinkDrop:
+			drops++
+		}
+	}
+	if len(results) > 0 && drops == len(results) {
+		return reportSinkDrop
+	}
+	return reportSinkOK
+}
+
+// deliverConvReport is the report card in the operator conversation.
+func deliverConvReport(name, convID, kind, reason string, rows []instrRow) reportSinkResult {
 	res := recordSessionReport(name, convID, kind, reason, rows)
 	if res == reportSinkOK {
 		// Fleet graph write site ⑧ (ADR 0096): a report actually left the session for the
@@ -850,7 +888,7 @@ func (rc *reportReconciler) evaluate(name string, now time.Time) {
 	}
 	retry := false
 	delivered := false
-	for _, conv := range instrConvs(covered) {
+	for _, conv := range instrSinkConvs(covered) {
 		rows := instrRowsForConv(covered, conv)
 		switch rc.sink(name, conv, v.Kind, v.Reason, rows) {
 		case reportSinkRetry:
@@ -988,7 +1026,7 @@ func (rc *reportReconciler) compensate(name string, now time.Time) {
 	}
 	why := strings.Join(resumed, ",")
 	reopened := false
-	for _, conv := range instrConvs(cands) {
+	for _, conv := range instrSinkConvs(cands) {
 		var reopen, capped []instrRow
 		for _, r := range instrRowsForConv(cands, conv) {
 			if r.ReopenCount >= instrReopenMax {

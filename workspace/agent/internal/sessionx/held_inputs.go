@@ -29,6 +29,19 @@ func scheduleRefOf(source, id, slot string) agents.ScheduleRef {
 	return agents.ScheduleRef{ID: id, Slot: slot}
 }
 
+// scheduleDeliveryOf is the delivery a scheduled send asked for (#1560), completed with the
+// run's identity, or nil: only a schedule source names one, and without it the run is handled
+// exactly as before delivery targets existed.
+func scheduleDeliveryOf(source, id, slot string, d *chatx.ScheduleDelivery) *chatx.ScheduleDelivery {
+	ref := scheduleRefOf(source, id, slot)
+	if d == nil || ref.ID == "" {
+		return nil
+	}
+	c := *d
+	c.ScheduleID, c.Slot = ref.ID, ref.Slot
+	return &c
+}
+
 // InstallHeldDropHook routes held operator and scheduled prompts that are dropped before they
 // ran to their reports. Called once at boot, before anything is queued and before SweepHeld,
 // whose drops it must see.

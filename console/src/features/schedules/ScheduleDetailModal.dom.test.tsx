@@ -13,6 +13,7 @@ vi.mock("./api.ts", () => ({ scheduleUpdate: vi.fn() }));
 
 const { ScheduleDetailModal } = await import("./ScheduleDetailModal.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
+const { scheduleUpdate } = await import("./api.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -79,5 +80,63 @@ describe("ScheduleDetailModal agent picker", () => {
     expect(opts[0]).toBe("lcpp");
     expect(opts.filter((k) => k === "lcpp")).toHaveLength(1);
     expect((document.querySelector("#sched-agent") as HTMLSelectElement).value).toBe("lcpp");
+  });
+});
+
+// #1560: the delivery targets and the silent sentinel. Only what changed is patched, and a report
+// with no target cannot be saved.
+describe("ScheduleDetailModal delivery", () => {
+  const update = scheduleUpdate as unknown as ReturnType<typeof vi.fn>;
+
+  async function renderWith(extra: Record<string, unknown>): Promise<void> {
+    await act(async () => {
+      root!.render(
+        <ToastProvider>
+          <ScheduleDetailModal s={{ ...base, ...extra } as never} onClose={() => {}} onSaved={() => {}} />
+        </ToastProvider>,
+      );
+    });
+  }
+  const targetBox = (label: string): HTMLInputElement => {
+    const row = Array.from(document.querySelectorAll(".sched-target")).find((l) => l.textContent === label);
+    return row!.querySelector("input") as HTMLInputElement;
+  };
+  const saveButton = (): HTMLButtonElement =>
+    Array.from(document.querySelectorAll("button[type=submit]"))[0] as HTMLButtonElement;
+
+  beforeEach(() => {
+    update.mockReset();
+    update.mockResolvedValue({ ...base, id: "sch_1" });
+  });
+
+  it("hides the targets while reporting is off, but offers the sentinel", async () => {
+    await renderWith({ report: false });
+    expect(document.querySelector(".sched-targets")).toBeNull();
+    expect(document.body.textContent).toContain("[SILENT]");
+  });
+
+  it("patches the added target and the sentinel, nothing else", async () => {
+    await renderWith({ report: true, deliver_to: ["operator"] });
+    expect(targetBox("アシスタントの会話").checked).toBe(true);
+    await act(async () => {
+      targetBox("Slack").click();
+    });
+    const silent = Array.from(document.querySelectorAll("label")).find((l) => l.textContent?.includes("[SILENT]"));
+    await act(async () => {
+      (silent!.querySelector("input") as HTMLInputElement).click();
+    });
+    await act(async () => {
+      saveButton().click();
+    });
+    expect(update).toHaveBeenCalledWith("sch_1", { deliver_to: ["operator", "slack"], silent: true });
+  });
+
+  it("refuses to save a report with no target", async () => {
+    await renderWith({ report: true, deliver_to: ["operator"] });
+    await act(async () => {
+      targetBox("アシスタントの会話").click();
+    });
+    expect(saveButton().disabled).toBe(true);
+    expect(document.body.textContent).toContain("届け先を 1 つ以上選ぶ");
   });
 });

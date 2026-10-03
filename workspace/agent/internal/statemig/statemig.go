@@ -122,6 +122,9 @@ var Entries = []string{
 	"notification-markers",
 	"completion-key",
 	"instr-ledger",
+	// A scheduled run's latest answer, kept for its delivery (#1560). Introduced directly
+	// under AgentStateDir, so run() no-ops on a source that was never there.
+	"schedule-answer",
 	"browser-handoff-ledger",
 	// af-aws-exec's Console login requests and cancel markers (ADR 0102). Introduced
 	// directly under AgentStateDir, so run() no-ops on a source that was never there.
