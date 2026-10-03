@@ -1251,16 +1251,20 @@ func TestKubernetesLiveNetworkProbes(t *testing.T) {
 }
 
 // debugPods lists the pods `kubectl debug node/<node>` leaves on the node, in any namespace.
-func (l *kubeLive) debugPods(node string) ([]kPod, error) {
+// It decodes only the metadata: other pods on the node have fields the adapter's own
+// types do not model (a probe on a named port).
+func (l *kubeLive) debugPods(node string) ([]kubeLiveNodePod, error) {
 	out, err := l.run("get", "pods", "-A", "--field-selector", "spec.nodeName="+node, "-o", "json")
 	if err != nil {
 		return nil, err
 	}
-	var list kPodList
+	var list struct {
+		Items []kubeLiveNodePod `json:"items"`
+	}
 	if err := json.Unmarshal([]byte(out), &list); err != nil {
 		return nil, err
 	}
-	var res []kPod
+	var res []kubeLiveNodePod
 	for _, p := range list.Items {
 		if strings.HasPrefix(p.Metadata.Name, "node-debugger-"+node+"-") {
 			res = append(res, p)
