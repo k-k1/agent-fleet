@@ -2,9 +2,11 @@ package branchpr
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -50,9 +52,9 @@ func TestParsePicksTheRepositoryOwnBranchPR(t *testing.T) {
 		`"r3":null,` +
 		answer("r4", "o", "develop", "") +
 		`},"errors":[{"type":"NOT_FOUND","path":["r3"]}]}`
-	got, limited := parse([]byte(body), keys)
-	if limited {
-		t.Fatal("limited = true for a NOT_FOUND error")
+	got, failed, limited, err := parse([]byte(body), keys)
+	if limited || err != nil || len(failed) != 0 {
+		t.Fatalf("limited=%v err=%v failed=%v for a NOT_FOUND error", limited, err, failed)
 	}
 	if pr := got[keys[0]]; pr == nil || pr.Number != 7 || pr.State != "open" || !pr.Draft || pr.Checks != "pending" {
 		t.Errorf("feature/a = %+v, want #7 open draft pending (the fork's #9 skipped)", pr)
@@ -72,7 +74,7 @@ func TestParsePicksTheRepositoryOwnBranchPR(t *testing.T) {
 }
 
 func TestParseReportsTheGraphQLRateLimit(t *testing.T) {
-	if _, limited := parse([]byte(`{"data":null,"errors":[{"type":"RATE_LIMITED"}]}`), []Key{{"o/r", "b"}}); !limited {
+	if _, _, limited, _ := parse([]byte(`{"data":null,"errors":[{"type":"RATE_LIMITED"}]}`), []Key{{"o/r", "b"}}); !limited {
 		t.Fatal("limited = false for RATE_LIMITED")
 	}
 }
@@ -108,6 +110,10 @@ func server(t *testing.T, calls *atomic.Int32, status int, hdr map[string]string
 		b, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(b, &in)
 		var parts []string
+		if body := os.Getenv("BRANCHPR_TEST_BODY"); body != "" {
+			_, _ = io.WriteString(w, body)
+			return
+		}
 		for i := 0; ; i++ {
 			if _, ok := in.Variables["o"+itoa(i)]; !ok {
 				break
@@ -121,7 +127,7 @@ func server(t *testing.T, calls *atomic.Int32, status int, hdr map[string]string
 }
 
 func newTestCache(url, token string) *Cache {
-	c := New(func() string { return token })
+	c := New(func() (string, error) { return token, nil })
 	c.Endpoint = url
 	c.Async = func(f func()) { f() }
 	return c
@@ -188,5 +194,108 @@ func TestRateWait(t *testing.T) {
 	}
 	if d := rateWait(http.Header{}, now); d != rateBackoff {
 		t.Errorf("default wait = %v", d)
+	}
+}
+
+func TestParseFailsAliasesWithAnErrorOtherThanNotFound(t *testing.T) {
+	keys := []Key{{"o/r", "a"}, {"o/r", "b"}}
+	body := `{"data":{` + answer("r0", "o", "main", prNode(3, "OPEN", false, "o", "SUCCESS")) +
+		`,"r1":null},"errors":[{"type":"INTERNAL","path":["r1","pullRequests"]}]}`
+	got, failed, _, err := parse([]byte(body), keys)
+	if err != nil || got[keys[0]] == nil || !failed[keys[1]] || failed[keys[0]] {
+		t.Fatalf("got=%v failed=%v err=%v, want r0 answered and r1 failed", got, failed, err)
+	}
+	for _, b := range []string{
+		`{"data":null,"errors":[{"type":"INTERNAL","message":"service unavailable"}]}`,
+		`{"data":{"r0":{"owner":{"login":"o"},"pullReq`, // cut off mid-answer
+		`{"data":{},"errors":[{"type":"SERVICE_UNAVAILABLE"}]}`,
+		`{"data":null}`,
+	} {
+		if _, _, _, err := parse([]byte(b), keys); err == nil {
+			t.Errorf("parse(%s) err = nil, want a failure", b)
+		}
+	}
+}
+
+// seed answers keys once from the stub server and returns the cache.
+func seeded(t *testing.T, keys []Key) (*Cache, *atomic.Int32) {
+	t.Helper()
+	var calls atomic.Int32
+	srv := server(t, &calls, http.StatusOK, nil)
+	c := newTestCache(srv.URL, "tok")
+	c.Lookup(keys, time.Now())
+	if got := c.Lookup(keys, time.Now()); got[keys[0]] == nil {
+		t.Fatalf("seed: %v", got)
+	}
+	return c, &calls
+}
+
+func TestATransientGraphQLFailureKeepsTheLastAnswer(t *testing.T) {
+	keys := []Key{{"o/r", "a"}}
+	for _, body := range []string{
+		`{"data":null,"errors":[{"type":"INTERNAL","message":"service unavailable"}]}`,
+		`{"data":{"r0":{"owner":`,
+		`{"data":{"r0":null},"errors":[{"type":"INTERNAL","path":["r0"]}]}`,
+	} {
+		c, calls := seeded(t, keys)
+		t.Setenv("BRANCHPR_TEST_BODY", body)
+		later := time.Now().Add(openTTL + time.Second)
+		c.Lookup(keys, later) // refresh: fails
+		if got := c.Lookup(keys, later); got[keys[0]] == nil || got[keys[0]].Number != 100 {
+			t.Errorf("%s: after the failed refresh Lookup = %v, want the PR kept", body, got)
+		}
+		n := calls.Load()
+		c.Lookup(keys, later.Add(time.Second))
+		if calls.Load() != n {
+			t.Errorf("%s: asked again at once, want failBackoff", body)
+		}
+		os.Unsetenv("BRANCHPR_TEST_BODY")
+	}
+}
+
+func TestDisconnectingGitHubDropsTheHeldAnswers(t *testing.T) {
+	keys := []Key{{"o/r", "a"}}
+	c, _ := seeded(t, keys)
+	c.Token = func() (string, error) { return "", nil }
+	later := time.Now().Add(openTTL + time.Second)
+	c.Lookup(keys, later)
+	if got := c.Lookup(keys, later); len(got) != 0 {
+		t.Fatalf("Lookup after disconnecting = %v, want nothing", got)
+	}
+}
+
+func TestAStoreReadErrorKeepsTheHeldAnswers(t *testing.T) {
+	keys := []Key{{"o/r", "a"}}
+	c, _ := seeded(t, keys)
+	c.Token = func() (string, error) { return "", errors.New("locked") }
+	later := time.Now().Add(openTTL + time.Second)
+	c.Lookup(keys, later)
+	if got := c.Lookup(keys, later); got[keys[0]] == nil {
+		t.Fatalf("Lookup after an unreadable store = %v, want the PR kept", got)
+	}
+}
+
+func TestLookupAsksOnceForAKeyManySessionsShare(t *testing.T) {
+	var calls atomic.Int32
+	var aliases atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		var in struct {
+			Variables map[string]any `json:"variables"`
+		}
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &in)
+		aliases.Add(int32(len(in.Variables) / 3))
+		_, _ = io.WriteString(w, `{"data":{`+answer("r0", "o", "main", prNode(1, "OPEN", false, "o", ""))+`}}`)
+	}))
+	t.Cleanup(srv.Close)
+	c := newTestCache(srv.URL, "tok")
+	keys := make([]Key, batchSize+1)
+	for i := range keys {
+		keys[i] = Key{"o/r", "shared"}
+	}
+	c.Lookup(keys, time.Now())
+	if calls.Load() != 1 || aliases.Load() != 1 {
+		t.Fatalf("calls=%d aliases=%d, want one call with one alias", calls.Load(), aliases.Load())
 	}
 }

@@ -79,8 +79,9 @@ func (e *entry) fresh(now time.Time) bool {
 // Cache is the per-Agent store. The zero value is not usable; use New.
 type Cache struct {
 	// Token returns the GitHub token, "" when GitHub is not connected. Read on every refresh,
-	// so connecting or disconnecting takes effect without a restart.
-	Token func() string
+	// so connecting or disconnecting takes effect without a restart. An error means the store
+	// could not be read, which says nothing about the connection: the answers held are kept.
+	Token func() (string, error)
 	// Endpoint is the GraphQL URL; tests point it at a local server.
 	Endpoint string
 	Client   *http.Client
@@ -94,7 +95,7 @@ type Cache struct {
 }
 
 // New returns a cache that asks api.github.com.
-func New(token func() string) *Cache {
+func New(token func() (string, error)) *Cache {
 	return &Cache{
 		Token:    token,
 		Endpoint: "https://api.github.com/graphql",
@@ -109,8 +110,14 @@ func New(token func() string) *Cache {
 func (c *Cache) Lookup(keys []Key, now time.Time) map[Key]*PR {
 	out := map[Key]*PR{}
 	var due []Key
+	queued := map[Key]bool{}
 	c.mu.Lock()
 	for _, k := range keys {
+		// Sessions sharing a working copy ask about the same key; it is one alias in the call.
+		if queued[k] {
+			continue
+		}
+		queued[k] = true
 		e := c.entries[k]
 		if e == nil {
 			e = &entry{}
@@ -152,24 +159,42 @@ func (c *Cache) refresh(due []Key) {
 		}
 		c.mu.Unlock()
 	}()
-	token := c.Token()
+	token, err := c.Token()
+	if err != nil {
+		hold = failBackoff
+		return
+	}
 	if token == "" {
 		// Not connected: nothing to show, and nothing to ask until a later poll finds a token.
+		// The answers read with the old connection go too — a row must not keep showing a PR
+		// and its CI from a connection the member has removed.
 		hold = failBackoff
+		c.mu.Lock()
+		for _, e := range c.entries {
+			e.pr = nil
+			e.fetched = time.Time{}
+		}
+		c.mu.Unlock()
 		return
 	}
 	for len(due) > 0 {
 		n := min(len(due), batchSize)
 		batch := due[:n]
 		due = due[n:]
-		got, wait, err := c.fetch(token, batch)
+		got, failed, wait, err := c.fetch(token, batch)
 		if err != nil {
 			hold = wait
 			return
 		}
+		if len(failed) > 0 {
+			hold = failBackoff
+		}
 		now := time.Now()
 		c.mu.Lock()
 		for _, k := range batch {
+			if failed[k] {
+				continue // keeps its last answer, and stays due
+			}
 			if e := c.entries[k]; e != nil {
 				e.pr = got[k]
 				e.fetched = now
@@ -199,37 +224,44 @@ func query(keys []Key) (string, map[string]any) {
 	return "query(" + strings.TrimSuffix(decl.String(), ",") + "){" + body.String() + "}", vars
 }
 
-// fetch runs one batch. wait is how long to hold off after an error.
-func (c *Cache) fetch(token string, keys []Key) (map[Key]*PR, time.Duration, error) {
+// fetch runs one batch. failed are the keys GitHub could not answer this time (their alias
+// carried an error other than NOT_FOUND). wait is how long to hold off after an error.
+func (c *Cache) fetch(token string, keys []Key) (map[Key]*PR, map[Key]bool, time.Duration, error) {
 	q, vars := query(keys)
 	payload, err := json.Marshal(map[string]any{"query": q, "variables": vars})
 	if err != nil {
-		return nil, failBackoff, err
+		return nil, nil, failBackoff, err
 	}
 	req, err := http.NewRequest("POST", c.Endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return nil, failBackoff, err
+		return nil, nil, failBackoff, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "agent-fleet")
 	resp, err := c.Client.Do(req)
 	if err != nil {
-		return nil, failBackoff, err
+		return nil, nil, failBackoff, err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
-			return nil, rateWait(resp.Header, time.Now()), fmt.Errorf("github %d", resp.StatusCode)
+			return nil, nil, rateWait(resp.Header, time.Now()), fmt.Errorf("github %d", resp.StatusCode)
 		}
-		return nil, failBackoff, fmt.Errorf("github %d", resp.StatusCode)
+		return nil, nil, failBackoff, fmt.Errorf("github %d", resp.StatusCode)
 	}
-	got, limited := parse(body, keys)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, nil, failBackoff, err
+	}
+	got, failed, limited, err := parse(body, keys)
 	if limited {
-		return nil, rateWait(resp.Header, time.Now()), fmt.Errorf("github rate limit")
+		return nil, nil, rateWait(resp.Header, time.Now()), fmt.Errorf("github rate limit")
 	}
-	return got, 0, nil
+	if err != nil {
+		return nil, nil, failBackoff, err
+	}
+	return got, failed, 0, nil
 }
 
 // rateWait reads when GitHub will take calls again: Retry-After for the secondary limit, the
@@ -248,10 +280,13 @@ func rateWait(h http.Header, now time.Time) time.Duration {
 	return rateBackoff
 }
 
-// parse reads one batch's answer. Keys whose repository GitHub could not resolve (renamed,
-// not visible to the token) answer nil — no PR — like a branch that has none. limited reports
-// a rate-limit answer, which GraphQL delivers as 200 with an error of type RATE_LIMITED.
-func parse(body []byte, keys []Key) (out map[Key]*PR, limited bool) {
+// parse reads one batch's answer. Keys whose repository GitHub could not resolve (NOT_FOUND:
+// renamed, not visible to the token) answer nil — no PR — like a branch that has none. Any
+// other error on an alias puts its key in failed: GraphQL answers 200 with partial data, and
+// taking a failed alias for "no PR" would wipe a row's PR for a whole settledTTL. An error
+// that names no alias, a body that does not decode, or no data at all fails the batch. limited
+// reports a rate-limit answer, which GraphQL delivers as 200 with an error of type RATE_LIMITED.
+func parse(body []byte, keys []Key) (out map[Key]*PR, failed map[Key]bool, limited bool, err error) {
 	type node struct {
 		Number    int    `json:"number"`
 		State     string `json:"state"`
@@ -285,20 +320,42 @@ func parse(body []byte, keys []Key) (out map[Key]*PR, limited bool) {
 		Data   map[string]*repo `json:"data"`
 		Errors []struct {
 			Type string `json:"type"`
+			Path []any  `json:"path"`
 		} `json:"errors"`
 	}
 	out = map[Key]*PR{}
+	failed = map[Key]bool{}
 	if err := json.Unmarshal(body, &gr); err != nil {
-		return out, false
+		return nil, nil, false, fmt.Errorf("github answer: %w", err)
 	}
 	for _, e := range gr.Errors {
 		if e.Type == "RATE_LIMITED" {
-			return nil, true
+			return nil, nil, true, nil
 		}
+	}
+	if gr.Data == nil {
+		return nil, nil, false, fmt.Errorf("github answered no data")
+	}
+	for _, e := range gr.Errors {
+		if e.Type == "NOT_FOUND" {
+			continue
+		}
+		i := -1
+		if len(e.Path) > 0 {
+			if alias, ok := e.Path[0].(string); ok && strings.HasPrefix(alias, "r") {
+				if n, err := strconv.Atoi(alias[1:]); err == nil && n >= 0 && n < len(keys) {
+					i = n
+				}
+			}
+		}
+		if i < 0 {
+			return nil, nil, false, fmt.Errorf("github error %s", e.Type)
+		}
+		failed[keys[i]] = true
 	}
 	for i, k := range keys {
 		r := gr.Data["r"+strconv.Itoa(i)]
-		if r == nil {
+		if r == nil || failed[k] {
 			continue
 		}
 		// The default branch is the base of everyone's PRs, not a feature branch: a session on
@@ -318,7 +375,7 @@ func parse(body []byte, keys []Key) (out map[Key]*PR, limited bool) {
 			break
 		}
 	}
-	return out, false
+	return out, failed, false, nil
 }
 
 // rollupState maps GitHub's StatusState onto the row's three words. EXPECTED is a required

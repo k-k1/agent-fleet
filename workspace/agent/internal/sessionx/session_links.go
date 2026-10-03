@@ -35,13 +35,14 @@ var (
 	originOf    = cachedGitHubRepo
 )
 
-// githubToken is the Connections token for github.com, "" when GitHub is not connected.
-func githubToken() string {
+// githubToken is the Connections token for github.com, "" when GitHub is not connected. A store
+// that cannot be read is an error, not a disconnection: the cache then keeps what it showed.
+func githubToken() (string, error) {
 	s, err := secrets.Load()
-	if err != nil || s == nil {
-		return ""
+	if err != nil {
+		return "", err
 	}
-	return s.Git["github.com"].Token
+	return s.Git["github.com"].Token, nil
 }
 
 type originEntry struct {
@@ -81,7 +82,8 @@ func cachedGitHubRepo(dir string, now time.Time) string {
 // annotateSessions already read it.
 //
 // The branch asked about is the one the working copy is on now: after a drift that is where
-// the session's commits go. A detached HEAD has no PR to find.
+// the session's commits go. A detached HEAD has no PR to find — not even the start branch's,
+// which the copy is no longer on. Only an unread working copy falls back to the start branch.
 func annotateLinks(sessions []session.Session, dirBranch map[string]string, now time.Time) {
 	keys := make([]branchpr.Key, len(sessions))
 	var ask []branchpr.Key
@@ -91,10 +93,13 @@ func annotateLinks(sessions []session.Session, dirBranch map[string]string, now 
 			continue
 		}
 		branch := dirBranch[s.Dir]
-		if branch == "" || branch == "(detached)" {
+		if branch == "(detached)" {
+			continue
+		}
+		if branch == "" {
 			branch = s.Branch
 		}
-		if branch == "" || branch == "(detached)" {
+		if branch == "" {
 			continue
 		}
 		repo := originOf(s.Dir, now)

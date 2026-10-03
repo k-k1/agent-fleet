@@ -84,3 +84,19 @@ func TestAnnotateLinksAsksNothingWithoutAGitHubRow(t *testing.T) {
 		t.Fatalf("asked = %v, want no PR lookup", *asked)
 	}
 }
+
+func TestAnnotateLinksShowsNoPRForADetachedHead(t *testing.T) {
+	started := &branchpr.PR{Number: 4, State: "open"}
+	asked := stubLinks(t, map[string]string{"/wt": "o/r"},
+		map[branchpr.Key]*branchpr.PR{{Repo: "o/r", Branch: "started"}: started}, nil)
+	sessions := []session.Session{{Name: "a", Dir: "/wt", Branch: "started", Alive: true}}
+	annotateLinks(sessions, map[string]string{"/wt": "(detached)"}, time.Now())
+	if sessions[0].PR != nil || len(*asked) != 0 {
+		t.Fatalf("pr = %+v asked = %v, want no PR: the copy is no longer on its start branch", sessions[0].PR, *asked)
+	}
+	// An unread working copy (no answer for the dir) still falls back to the start branch.
+	annotateLinks(sessions, map[string]string{}, time.Now())
+	if sessions[0].PR != started {
+		t.Fatalf("pr = %+v, want the start branch's PR when the copy was not read", sessions[0].PR)
+	}
+}

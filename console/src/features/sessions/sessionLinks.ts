@@ -33,11 +33,16 @@ export const CHECK_ICON: Record<"success" | "failure" | "pending", string> = {
 };
 
 /** A GitHub pull request page, and nothing else, may become the row's href: the URL arrives
- * from the provider through two relays, and a javascript: or foreign link must not. */
+ * from the provider through two relays. Only https://github.com/<owner>/<repo>/pull/<n> with no
+ * port and no userinfo passes, and it is rebuilt from those parts, so a query or a fragment
+ * never rides along. */
+const PR_PATH = /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*$/;
+
 export function safePRURL(url: string): string | null {
   try {
     const u = new URL(url);
-    return u.protocol === "https:" && u.hostname === "github.com" ? u.href : null;
+    if (u.protocol !== "https:" || u.hostname !== "github.com" || u.port !== "" || u.username || u.password) return null;
+    return PR_PATH.test(u.pathname) ? `https://github.com${u.pathname}` : null;
   } catch {
     return null;
   }

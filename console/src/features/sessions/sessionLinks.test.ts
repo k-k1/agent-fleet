@@ -21,6 +21,15 @@ describe("sessionLinks", () => {
     expect(safePRURL("https://github.com.evil.example/o/r/pull/1")).toBeNull();
     expect(safePRURL("javascript:alert(1)")).toBeNull();
     expect(safePRURL("")).toBeNull();
+    // github.com, but not a pull request page / not the plain origin.
+    expect(safePRURL("https://github.com/login/oauth/authorize?client_id=x")).toBeNull();
+    expect(safePRURL("https://github.com/o/r/issues/2")).toBeNull();
+    expect(safePRURL("https://github.com/o/r/pull/0")).toBeNull();
+    expect(safePRURL("https://github.com/o/r/pull/1/files")).toBeNull();
+    expect(safePRURL("https://u:p@github.com/o/r/pull/2")).toBeNull();
+    expect(safePRURL("https://github.com:444/o/r/pull/2")).toBeNull();
+    // The default port spelled out is the same origin; query and fragment are dropped.
+    expect(safePRURL("https://github.com:443/o/r/pull/2?x=1#y")).toBe("https://github.com/o/r/pull/2");
   });
 
   it("drops ports the browser pane would refuse", () => {
