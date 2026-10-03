@@ -735,7 +735,11 @@ Resources:
   # roles need no new PassRole: it names only the execution role, which PassTaskRoles in
   # 20-platform already lets the CP pass to ecs-tasks. ListTasks (is a home task still
   # running) and DescribeTasks (its exit code) are EcsDrive's, unscoped there already.
-  # deploy/local/cfn-cp-ec2-scope-test.py holds the allowed call and the denied ones.
+  # The task's cost tags (af-membership, af-role, af-tenant, as on the workspace service)
+  # are authorized as ecs:TagResource on the new task: only as part of a RunTask
+  # (ecs:CreateAction), so no task that exists can be retagged, only in this cluster, and
+  # only the keys EcsTagServiceOnCreate (20-platform) allows on a workspace service.
+  # deploy/local/cfn-cp-ec2-scope-test.py holds the allowed calls and the denied ones.
   CpHomeOpsPolicy:
     Type: AWS::IAM::Policy
     Properties:
@@ -751,6 +755,19 @@ Resources:
             Resource: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/af-${AWS::StackName}-home-ops:*"
             Condition:
               ArnEquals: { "ecs:cluster": !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" } }
+          - Sid: TagHomeOpsTaskOnRun
+            Effect: Allow
+            Action: ecs:TagResource
+            Resource: !Sub
+              - "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task/${ClusterName}/*"
+              - ClusterName: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
+            Condition:
+              StringEquals:
+                ecs:CreateAction: RunTask
+              "Null":
+                aws:TagKeys: "false"
+              ForAllValues:StringEquals:
+                aws:TagKeys: [ af-membership, af-role, af-tenant ]
 
   TaskDef:
     Type: AWS::ECS::TaskDefinition

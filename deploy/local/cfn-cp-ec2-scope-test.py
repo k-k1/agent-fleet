@@ -189,6 +189,14 @@ def ecs_tag(cluster, tags):
                    [plain("arn:aws:ecs:%s:%s:service/%s/ws-1" % (REGION, ACCOUNT, cluster))], tags)
 
 
+def ecs_task_tag(cluster, tags, create_action="RunTask"):
+    """ecs:TagResource as ECS authorizes the Tags of a RunTask: on the new task, with
+    ecs:CreateAction. create_action=None is a TagResource call on a task that exists."""
+    extra = {"ecs:CreateAction": create_action} if create_action else None
+    return request("ecs:TagResource",
+                   [plain("arn:aws:ecs:%s:%s:task/%s/0123abcd" % (REGION, ACCOUNT, cluster))], tags, extra)
+
+
 def efs_tag(kind, tags):
     return request("elasticfilesystem:TagResource",
                    [plain("arn:aws:elasticfilesystem:%s:%s:%s/fsap-1" % (REGION, ACCOUNT, kind))], tags)
@@ -281,9 +289,12 @@ INVENTORY = [
         request("ec2:TerminateInstances", [ec2("instance", "i-engine", ENGINE)])]),
     # --- one-shot tasks. Each names only the execution role, which PassTaskRoles
     # (20-platform) lets the CP pass to ecs-tasks; no task role. ---
-    ("internal/runtime/runtime_ecs_home_task.go", "startHomeTask", "ecs:RunTask", 1, [
+    # The home task carries the workspace service's cost tags (#1538).
+    ("internal/runtime/runtime_ecs_home_task.go", "startHomeTask", "ecs:RunTask+Tags", 1, [
         run_task("af-%s-home-ops" % tf.STACK),
-        pass_role(tf.EXEC_ROLE_ARN, "ecs-tasks.amazonaws.com")]),
+        pass_role(tf.EXEC_ROLE_ARN, "ecs-tasks.amazonaws.com"),
+        ecs_task_tag(POOL, {"af-membership": "m-1", "af-role": "workspace", "af-tenant": "acme"}),
+        ecs_task_tag(POOL, {"af-membership": "m-1", "af-role": "workspace"})]),
     ("engine_ingest.go", "runTask", "ecs:RunTask", 1, [
         run_task("af-%s-ingest" % tf.STACK)]),
     ("engine_ingest.go", "deleteObjects", "ecs:RunTask", 1, [
@@ -389,6 +400,16 @@ ATTACKS = [
      ecs_tag(POOL, {"af-pool": POOL})),
     ("ECS TagResource naming no key",
      ecs_tag(POOL, None)),
+    ("retag a task that is already running",
+     ecs_task_tag(POOL, {"af-membership": "m-1"}, create_action=None)),
+    ("tag a task on a create call other than RunTask",
+     ecs_task_tag(POOL, {"af-membership": "m-1"}, create_action="StartTask")),
+    ("tag a new task in another cluster",
+     ecs_task_tag("af-other-cluster", {"af-membership": "m-1"})),
+    ("write af-pool onto a new task",
+     ecs_task_tag(POOL, {"af-membership": "m-1", "af-pool": POOL})),
+    ("ECS TagResource on a new task naming no key",
+     ecs_task_tag(POOL, None)),
     ("write an arbitrary key onto an EFS file system",
      efs_tag("file-system", {"af-pool": POOL})),
     ("write an arbitrary key onto an EFS access point",
@@ -491,8 +512,9 @@ def discover():
                     found[key] = found.get(key, 0) + 1
             for svc, name in ECS_EFS_RE.findall(body):
                 if (svc, name) == ("ecs", "RunTask"):
-                    # Every one-shot task the CP starts: each is fenced to its own family.
-                    op = "ecs:RunTask"
+                    # Every one-shot task the CP starts: each is fenced to its own family,
+                    # and one that sets Tags also needs ecs:TagResource on the new task.
+                    op = "ecs:RunTask+Tags" if re.search(r"^\s*Tags:", body, re.M) else "ecs:RunTask"
                 elif name == "TagResource":
                     op = "%s:TagResource" % svc
                 elif re.search(r"^\s*Tags:", body, re.M) and name.startswith(("Create", "Run", "Register")):
@@ -507,13 +529,16 @@ def discover():
 # Where the ECS / EFS tag keys come from: the functions that write them and the helpers
 # that append af-tenant.
 TAG_KEY_FUNCS = {"ensureAccessPoint", "upsertService", "writeEraseRecord",
-                 "appendEFSTenantTag", "appendECSTenantTag"}
+                 "appendEFSTenantTag", "appendECSTenantTag", "startHomeTask"}
+# The functions whose ECS tags land on a task through RunTask rather than on a service.
+# appendECSTenantTag appends af-tenant to either, so its key is checked against both.
+TASK_TAG_FUNCS = {"startHomeTask"}
 KEY_RE = re.compile(r'Key:\s*aws\.String\(\s*([A-Za-z0-9_.]+|"[^"]*")\s*\)')
 CONST_RE = re.compile(r'^\s*([A-Za-z0-9_]+)\s+(?:[A-Za-z]+\s+)?=\s*"([^"]*)"', re.M)
 
 
 def ecs_efs_keys_in_code():
-    consts, keys, seen = {}, {"ecs": set(), "efs": set()}, set()
+    consts, keys, seen = {}, {"ecs": set(), "ecs-task": set(), "efs": set()}, set()
     bodies = []
     for path in _go_files():
         src, funcs = _funcs(path)
@@ -528,14 +553,22 @@ def ecs_efs_keys_in_code():
             svc = "ecs"
         else:
             continue
+        if func == "appendECSTenantTag":
+            svcs = ["ecs", "ecs-task"]
+        elif func in TASK_TAG_FUNCS:
+            svcs = ["ecs-task"]
+        else:
+            svcs = [svc]
         for expr in KEY_RE.findall(body):
             name = expr.split(".")[-1]
             if expr.startswith('"'):
-                keys[svc].add(expr.strip('"'))
+                key = expr.strip('"')
             elif name in consts:
-                keys[svc].add(consts[name])
+                key = consts[name]
             else:
                 raise ValueError("%s: cannot resolve tag key %s" % (func, expr))
+            for s in svcs:
+                keys[s].add(key)
     if seen != TAG_KEY_FUNCS:
         raise ValueError("tag-key functions not found: %s" % sorted(TAG_KEY_FUNCS - seen))
     return keys
@@ -594,11 +627,16 @@ def main():
         if not allowed_request(stmts, *ecs_tag(POOL, {k: "v"}))[0]:
             failed += 1
             print("FAIL  the CP writes the ECS tag key %r, which EcsTagServiceOnCreate does not list" % k)
+    for k in sorted(keys["ecs-task"]):
+        if not allowed_request(stmts, *ecs_task_tag(POOL, {k: "v"}))[0]:
+            failed += 1
+            print("FAIL  the CP writes the ECS task tag key %r, which TagHomeOpsTaskOnRun does not list" % k)
     for k in sorted(keys["efs"]):
         if not allowed_request(stmts, *efs_tag("access-point", {k: "v"}))[0]:
             failed += 1
             print("FAIL  the CP writes the EFS tag key %r, which EfsTagAccessPoints does not list" % k)
-    print("ok    %d ECS and %d EFS tag keys found in code" % (len(keys["ecs"]), len(keys["efs"])))
+    print("ok    %d ECS service, %d ECS task and %d EFS tag keys found in code" % (
+        len(keys["ecs"]), len(keys["ecs-task"]), len(keys["efs"])))
 
     try:
         n = 0

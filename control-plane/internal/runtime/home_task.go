@@ -6,7 +6,7 @@
 // definition for every member and RunTask cannot swap a volume's access point. So the
 // confinement is here: the membership id is checked to be one path element, nothing is
 // removed unless the root is the NFS mount, and every removal goes through handles on
-// /home/<id> or /claude-config/<id> opened without following a link.
+// /home/<id>, /claude-config/<id> or /home-keep/<id> opened without following a link.
 package runtime
 
 import (
@@ -18,9 +18,14 @@ import (
 	"regexp"
 )
 
-// homeWipeDestroy removes both of a member's EFS directories, for Destroy. Only the task
-// accepts it; a member's or an administrator's wipe never asks for it.
+// homeWipeDestroy removes every one of a member's EFS directories, for Destroy. Only the
+// task accepts it; a member's or an administrator's wipe never asks for it.
 const homeWipeDestroy HomeWipe = "destroy"
+
+// homeTaskDirs are the top-level EFS directories a member's directories live in, and the
+// ones Destroy removes the member's from: the Fargate home, the Claude state, and the
+// ecs-ec2 keep-list (runtime_ecs_ec2.go, ensureKeepAccessPoint).
+var homeTaskDirs = []string{"home", "claude-config", "home-keep"}
 
 // membershipIDRe is what a membership id may be for its EFS paths. Store ids are 32 hex
 // characters; the wider class only admits ids a test or an older row may carry. No dot,
@@ -53,7 +58,9 @@ var homeOpOpened = func() {}
 //
 //   - repos:   remove /home/<id>/repos
 //   - clean:   remove everything at the top of /home/<id> except homeKeep
-//   - destroy: remove /home/<id> and /claude-config/<id> themselves
+//   - destroy: remove /home/<id>, /claude-config/<id> and /home-keep/<id> themselves
+//     (ecs-ec2 keeps the home on EBS and the keep-list in /home-keep; Fargate has no
+//     /home-keep, and a missing directory is success)
 //
 // Every directory on the way down — home, claude-config, the member's own — is opened
 // without following a link (openDir), and everything after that goes through those
@@ -77,7 +84,7 @@ func RunEFSHomeOp(ctx context.Context, root, op, membership string) error {
 	case HomeWipeRepos, HomeWipeClean:
 		parents = []string{"home"}
 	case homeWipeDestroy:
-		parents = []string{"home", "claude-config"}
+		parents = homeTaskDirs
 	default:
 		return fmt.Errorf("%w: unknown home operation %q", errHomeOpRefused, op)
 	}
