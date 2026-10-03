@@ -774,6 +774,68 @@ workspaces), and **two persistent disks per workspace that bill while stopped**,
 does. A cluster you already run removes the cluster from the floor. The measured numbers come
 with the acceptance run (#1468).
 
+## The live harness
+
+ADR 0106 decision 10's live harness runs the adapter against this cluster from a developer's
+machine: `TestKubernetesLive*` in `control-plane/internal/runtime/runtime_kubernetes_live_test.go`.
+It is skipped (and says so) unless `AF_K8S_LIVE=1`. It creates workspaces named `live-…` with
+real disks in the workspace namespace and removes each one when its test ends, by Destroy and
+then by `kubectl` for anything left; it checks on Google Cloud that the disks are gone too.
+
+The adapter runs with **the CP's own RBAC**: a short-lived token of the `af-cp` service account,
+so a permission missing from `cp-rbac.yaml` fails the run (the harness also checks that the token
+cannot list nodes). The harness's own checks, its cleanup and what stands for someone else (a
+pod deleted behind the CP's back, the runbook's operator) use `kubectl` with your kubeconfig.
+
+```bash
+# in a shell with kubectl pointed at this cluster (step 3)
+W=$(mktemp -d); umask 077
+kubectl -n "$PREFIX-cp" create token af-cp --duration=1h > "$W/cp-token"
+kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d > "$W/ca.crt"
+export AF_K8S_LIVE=1
+export AF_K8S_LIVE_SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+export AF_K8S_LIVE_CA_FILE=$W/ca.crt AF_K8S_LIVE_TOKEN_FILE=$W/cp-token
+export AF_K8S_NAMESPACE=$PREFIX-ws AF_K8S_STORAGE_CLASS=$PREFIX-workspace AF_K8S_SERVICE_ACCOUNT=af-workspace
+export AF_K8S_WORKSPACE_IMAGE=<the image of cp.env>
+export AF_K8S_NODE_SELECTOR=agent-fleet.io/pool=workspace AF_K8S_HOME_GIB=10 AF_K8S_STATE_GIB=5
+export AF_K8S_LIVE_GCE_PROJECT=$PROJECT                     # optional: check the disks on Google Cloud
+# decision 7's probes: the deployment's own addresses (host:port, comma-separated)
+export AF_K8S_LIVE_PROBE_OPEN=af-cp-internal.$PREFIX-cp.svc:8098
+export AF_K8S_LIVE_PROBE_CLOSED=af-cp.$PREFIX-cp.svc:8099,<Cloud SQL private IP>:5432,<an unused node-range address>:22
+cd control-plane
+go test -count=1 -run 'TestKubernetesLive(Lifecycle|StartStopRaces|NetworkProbes)' -v -timeout 50m ./internal/runtime/
+go test -count=1 -run 'TestKubernetesLive(HomeWipes|EraseHomeRestart|DestroyRestart)' -v -timeout 50m ./internal/runtime/
+```
+
+The token lives an hour, and so does a Google Cloud access token behind `kubectl`: run the
+scenarios in groups, as above, minting a fresh token for each. Each group takes 5–15 minutes. A
+check that is known to fail on a filed issue is logged as `KNOWN FAILURE (#N)` rather than
+failing the run; `AF_K8S_LIVE_STRICT=1` makes it fail.
+
+Two scenarios act on nodes and need `AF_K8S_LIVE_DISRUPTIVE=1` as well. Run them only where no
+member's session can be cut. Both need the workspace pool to be able to add a node: on Google
+Cloud a node's boot disk (`workspace_boot_disk_gb`) counts against the region's `SSD_TOTAL_GB`
+quota with `pd-balanced`, and a scale-up refused by the quota leaves the harness's pod pending
+(the autoscaler's `FailedScaleUp` event says so). `AF_K8S_LIVE_GUARD_POD=<namespace>/<pod>`
+names a pod the scenario must leave alone, such as a member's workspace on the nodes it
+cordons: the test fails if its UID, node or restart count changes.
+
+- `TestKubernetesLivePlannedUpgrade` cordons `AF_K8S_LIVE_CORDON_NODES` (comma-separated) for the
+  test and checks that a Start lands elsewhere; it does not drain.
+- `TestKubernetesLiveNodeUnreachable` stops the VM of the node its workspace lands on (cordon the
+  others with `AF_K8S_LIVE_CORDON_NODES`, so that this is a node the autoscaler added for it) and
+  follows "A node that stopped answering". It takes three commands with `{node}` and `{zone}`
+  filled in:
+  ```bash
+  export AF_K8S_LIVE_NODE_STOP_CMD='gcloud compute instances stop {node} --zone {zone} --project '"$PROJECT"
+  export AF_K8S_LIVE_NODE_STATUS_CMD='gcloud compute instances describe {node} --zone {zone} --project '"$PROJECT"' --format=value(status)'
+  export AF_K8S_LIVE_NODE_START_CMD='gcloud compute instances start {node} --zone {zone} --project '"$PROJECT"
+  ```
+
+Afterwards, check that nothing of the harness is left:
+`kubectl -n "$PREFIX-ws" get sts,pvc,pods,svc,secrets | grep live-`, `kubectl get pv | grep live-`
+and `gcloud compute disks list --project "$PROJECT" --filter="-users:*"`.
+
 ## Tearing down
 
 Cloud SQL, the cluster and the KMS key are protected against deletion on purpose. To remove a
