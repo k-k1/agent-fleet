@@ -13,12 +13,14 @@ English | [日本語](0108-af-owned-agent-memory.ja.md)
 
 ## Context
 
-What an agent learns while working survives only in the memory of the CLI that learned it. Of the
-kinds AF runs, two keep a local memory ([0022](0022-agent-memory-management.md) Context): claude's
-auto-memory (on by default) and codex's memories (off by default). opencode, agy and kiro have none,
-and copilot and cursor keep theirs on the vendor's server. A member who switches kind mid-task, hands
-a session off to another kind, or starts a child of a different kind loses everything the first
-agent recorded.
+What an agent learns while working survives only in the memory of the CLI that learned it. When
+[0022](0022-agent-memory-management.md) surveyed the CLIs of the day (its Context), two kept a local
+memory: claude's auto-memory (on by default) and codex's memories (off by default); opencode, agy and
+kiro had none, copilot keeps Copilot Memory on the server, and cursor's old Memories were removed.
+AF's memory roots today are those two (`memoryx/memory_roots.go`). lcpp and muse arrived after that
+survey: lcpp's own system prompt has no memory layer (`harness/systemprompt.go`), and whether muse
+keeps a native memory is not established. A member who switches kind mid-task, hands a session off
+to another kind, or starts a child of a different kind loses everything the first agent recorded.
 
 The obvious fix — hand claude's memory to the other kinds — makes one vendor's private format and
 location the fleet's source of truth. Its format can change with any Claude Code release, its
@@ -29,10 +31,14 @@ project: the claude memory index (`MEMORY.md`) is **25,399 bytes** and the direc
 files, 2.7 MB**. Pushing that into every session's instructions is a per-turn cost no one would
 accept; it has to be fetched on demand.
 
-AF already has the two halves of the machinery. [0042](0042-user-instructions.md) distributes one
-AF-owned body of text to every kind's instruction layer (cursor excepted, decision 2), and
-[0022](0022-agent-memory-management.md) versions memory directories in a bare git repo with
-rollback and bundle transfer. What is missing is a store AF owns that agents may write.
+AF already has pieces of the machinery. [0042](0042-user-instructions.md) distributes one AF-owned
+body of text to each kind's **user-wide** instruction layer — one file per kind, not per project or
+session (`agent_instructions.go`) — and cursor has no local user layer for it to write (decision 2).
+[0022](0022-agent-memory-management.md) versions memory directories in a bare git repo with rollback,
+bundle transfer and a secret scan at export (`memoryx/memory_secrets.go`). The af MCP reaches every
+agent kind: the seven CLI kinds through `mcpreg`, muse through its own wire, lcpp in-process; shell
+and ssm are not agents. What is missing is a store AF owns that agents may write, and a write path
+that is safe when what one session writes is read by every kind.
 
 ## Decisions
 
@@ -41,39 +47,70 @@ rollback and bundle transfer. What is missing is a store AF owns that agents may
    writing them, and that stays. AF memory is written by agents and is advisory. They live in
    different files, are distributed as different blocks, and the policy text tells agents which is
    which. Merging them would void 0042 decision 8.
-2. **Scope is user × project.** A project is identified the way claude's slug does it: a worktree
-   belongs to its parent clone's project, so every session on the same repository shares one
-   memory. A user-wide scope exists for facts about the person rather than a repository.
+2. **Scope is user × workspace × project, and AF defines the project id itself.** For a Git working
+   copy the project is the main clone the working copy belongs to (`git-common-dir`'s parent, as
+   `gitx` resolves it), so a worktree shares its parent's memory. claude's *conversation* directory
+   naming is not reused: it is per cwd, not injective, and gives each worktree its own slug
+   (`agents/claude/project_dir.go`). A working copy that is not Git (SVN, a local folder — both
+   supported, `guide/ref/repos.md`) is its own project, keyed by its root as AF registered it. A
+   session with no working copy sees the user-wide scope only. A re-clone at another path is a new
+   project until the member merges the two (open question 5). Memory does not cross workspaces in
+   v1 (decision 10).
 3. **The format is one Markdown file per memory with frontmatter** (`name`, `description`, `type`,
-   plus AF's `author_kind`, `author_session`, `created`, `updated`, and an optional `kinds` list
-   when a memory only applies to some kinds). It is the shape claude's memory already uses, so an
-   import is a copy plus fields, and a person can read the store without a tool.
-4. **Every kind reads and writes through af MCP tools** — `memory_search`, `memory_read`,
-   `memory_save` (create or update), `memory_forget`. MCP is the one surface that reaches all kinds,
-   cursor included. Each write records which kind and session wrote it, and goes into the
-   [0022](0022-agent-memory-management.md) history as its own commit, so any write can be traced
-   and rolled back.
-5. **What is distributed is a short index, not the store.** The 0042 distributor adds an AF-memory
-   block to each kind's instruction layer: that the tools exist, when to use them, and at most a
-   small fixed number of the most relevant entries' one-line hooks, under a byte cap of its own
-   (0042 decision 7's reasoning: the cap is about per-session cost). The bodies are fetched with
-   `memory_read` / `memory_search`. cursor, which has no local instruction layer, gets the tools
-   only; their descriptions carry the same guidance.
-6. **claude's own auto-memory is reconciled in two steps.**
-   - Step 1: AF imports claude's memory into the AF store one way (claude → AF), on the same
-     trigger 0022 already uses, so the 469 existing files seed the store and claude keeps working
-     unchanged.
-   - Step 2 (decided after measuring): either point claude's auto-memory at the AF store
-     (`autoMemoryDirectory`) so there is one directory and claude writes it natively, or switch it
-     off (`autoMemoryEnabled` / `CLAUDE_CODE_DISABLE_AUTO_MEMORY`) and let claude use the MCP tools
-     like every other kind. Both names come from the 2.1.288 binary; neither is measured.
+   plus AF's `revision`, `author_kind`, `author_session`, `created`, `updated`, an optional `kinds`
+   list when a memory only applies to some kinds, and `source` / `source_hash` for an imported one).
+   An author AF cannot establish is recorded as unknown, never guessed. It is the shape claude's
+   memory already uses, so an import is a copy plus fields, and a person can read the store without
+   a tool.
+4. **Every kind reads and writes through af MCP tools** — `memory_index`, `memory_search`,
+   `memory_read`, `memory_save` (create or update), `memory_forget`. An update or forget carries
+   the `revision` it was based on; a stale one is refused and the agent re-reads and re-proposes,
+   because Markdown is not merged mechanically ([0022](0022-agent-memory-management.md) on 3-way
+   merge). Publishing a change, its commit in the 0022 history and the index update happen as one
+   step per project, so each published change is one commit with its author.
+5. **What is distributed is fixed guidance, not memories.** The 0042 distributor writes user-wide
+   files, so a per-project list there would either be overwritten by whichever project wrote last or
+   mix every project into every session. The distributed block therefore says only that the tools
+   exist and when to call them — `memory_index` at the start of work, `memory_search` before
+   re-deriving something — under its own byte cap (0042 decision 7's reasoning). The project's
+   entries come back from `memory_index`, scoped by the calling session. lcpp, whose system prompt
+   is built per session, may inject them directly. cursor gets the guidance in the tools'
+   descriptions.
+6. **claude's own auto-memory: a one-time seed now, one memory later.**
+   - Step 1: the member imports claude's existing memory for a project once, as an explicit Console
+     action. It goes through the secret scan (decision 9), lands as proposals the member approves in
+     bulk or one by one (decision 8), records `source` / `source_hash` and the author as unknown.
+     There is no continuous sync: claude → AF on every trigger would resurrect memories forgotten in
+     AF, overwrite AF edits with claude's older text and re-submit rejected proposals.
+   - Step 2 (decided after measuring): switch claude's auto-memory off (`autoMemoryEnabled` /
+     `CLAUDE_CODE_DISABLE_AUTO_MEMORY`) and let claude use the MCP tools like every other kind.
+     Pointing claude's native writer at the store (`autoMemoryDirectory`) is acceptable **only** if
+     what claude writes there is treated as proposals — never published by being written. Both
+     names come from the 2.1.288 binary; neither is measured.
 7. **A memory is evidence, not an order.** The read tools' descriptions say so, and say that a
    file, function or flag a memory names must be checked before it is relied on. A memory never
    overrides user instructions or the fleet policy.
-8. **Writes are proposals by default; the member can make them direct.** A write from a session
-   lands as pending and is offered in the Console for approval, because one hostile page read by
-   one session would otherwise be distributed to every kind. The member may switch a project to
-   direct writes. The approval path is the one #1559 needs for automated review, built once.
+8. **Every write path produces a proposal; only the member publishes.** Save, update, forget, the
+   import and a restore all create a proposal with an immutable body. A pending proposal is
+   invisible to `memory_index`, `memory_search` and `memory_read` for every session, its author
+   included. Approval — and switching a project to direct writes — exists only in the Console's
+   REST, never as an MCP tool, for the reason 0042 decision 8 gives. Approving re-checks the
+   revision; a proposal whose base has moved goes back to the author as stale. Without this, one
+   hostile page read by one session would be distributed to every kind. The approval path is the
+   one #1559 needs for automated review, built once.
+9. **Secrets are stopped before they are stored.** Every save and import is scanned with the
+   0022 rules (`memory_secrets.go`) before anything is persisted, a proposal included; a hit blocks
+   by default and only the member's explicit acknowledgement in the Console lets it through. The
+   value is never returned or logged — rule, path, line and a masked hint, as at export today.
+   Memories that already exist are scanned before they are first exposed through read or index.
+   `memory_forget` removes a memory from what is published; it does not remove it from history, so
+   purging a secret from history is a separate, member-only operation (open question 3).
+10. **v1 lives in the workspace.** The store sits beside `af-memory.git` under the claude-specific
+    mount (`memoryx/memory_repo.go`), which survives stop/start, recreate and "clean home"; it does
+    not survive the workspace being deleted. Sharing memory across a member's workspaces through the
+    CP is a separate track, and the conditions 0022 found unmet still apply: an owner-only ACL
+    (0022: the internal git provider lets every tenant member read), one canonical history,
+    behaviour while a workspace is stopped, and deletion when the member leaves.
 
 ## Rejected
 
@@ -81,42 +118,55 @@ rollback and bundle transfer. What is missing is a store AF owns that agents may
   and location become the fleet's; only claude can write; the content is claude-specific.
 - **Distribute the whole store into every kind's instructions.** 25 KB of index alone, every
   session, every turn.
+- **Distribute a per-project index through the 0042 distributor.** Its files are user-wide per kind;
+  two projects open at once would read each other's entries (decision 5).
+- **Continuous claude → AF sync.** Without tombstones and precedence it resurrects forgotten and
+  rejected memories; the one-time seed avoids the problem (decision 6).
+- **Let claude's native writer publish into the store.** It bypasses decision 8.
 - **An external memory service (for example Honcho).** Conversations leave the workspace, the
   service runs its own LLM over them, and self-hosting needs Docker, which a workspace does not
   have. It stays a member's own choice through Settings → MCP.
 - **Let agents write user instructions instead.** Voids 0042 decision 8.
 - **Per-kind stores synchronised with each other.** N formats, N writers, and conflicts on every
   edit; one store with one writer path is simpler.
+- **The CP's Postgres as the v1 store.** It needs the owner-only ACL and the stopped-workspace
+  answers 0022 did not have (decision 10).
 
 ## Consequences
 
-- Knowledge survives switching kind, handing off and spawning children of another kind.
-- The kinds 0022 found with no local memory (opencode, agy, kiro) gain one. lcpp and muse came after
-  0022's survey and were not surveyed for memory; they get the same tools.
+- Knowledge survives switching kind, handing off and spawning children of another kind, within a
+  workspace.
+- The kinds without a local memory of their own gain one; for muse, whether that duplicates a
+  native memory is still to be established (open question 6).
 - Every memory has an author and a history, so a bad lesson can be found and rolled back.
-- A new failure mode: a poisoned memory reaches every kind. Decision 8 is the mitigation and must
+- A new failure mode: a poisoned memory reaches every kind. Decisions 8 and 9 are the mitigation and
   ship with the write tool, not after it.
-- Two memories coexist for claude until step 2 of decision 6 is decided.
+- The member carries an approval load until a project is switched to direct writes; #1559's review
+  is meant to reduce it.
+- Two memories coexist for claude until step 2 of decision 6 is decided; claude pays for both
+  indexes in that time.
 
 ## Open questions (decide after measuring)
 
-1. Where the store lives. Under the claude-specific mount beside `af-memory.git` (survives
-   everything, one workspace) or in the CP's Postgres (spans workspaces, and could share an index
-   with #1558's search). The first is the cheaper start; the choice decides whether a member's
-   memory follows them to another workspace.
-2. What `autoMemoryDirectory` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY` actually do on the shipped
-   Claude Code: whether the directory setting moves the index and the files, and whether claude
-   still loads the index into its prompt from there.
-3. How "most relevant" is chosen for the distributed index (recency, project, `kinds`), and the
-   byte cap.
+1. What `autoMemoryDirectory` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY` actually do on the shipped
+   Claude Code: whether the directory setting moves the index and the files, whether claude still
+   loads the index from there, and whether its writes there can be held as proposals.
+2. The size of the `memory_index` answer and how its entries are ranked (recency, `kinds`), and the
+   cost of the coexistence period measured on a real project.
+3. Purging a secret from history: rewriting the 0022 history for one memory, and what that does to
+   bundles already exported.
 4. Whether codex's `external_agent_memory_import`
    ([0022](0022-agent-memory-management.md) decision 6) makes a native codex route worth having
-   beside the MCP tools.
+   beside the MCP tools — under decision 8's rule that native writers do not publish.
+5. Project identity over time: a renamed or re-cloned repository, and how the member merges two
+   project ids.
+6. Whether muse has a native memory, and if so how it coexists with this one.
+7. The cross-workspace track (decision 10).
 
 ## Phases
 
-- **P1** — the store, the four MCP tools with authorship and history, the claude → AF import.
-  Writes pending by default, with a minimal approval list in the Console.
-- **P2** — the distributed index block through the 0042 distributor.
+- **P1** — the store, the MCP tools with revisions, authorship and history, proposals with the
+  Console approval list, the secret scan, the one-time claude seed.
+- **P2** — the distributed guidance block, and lcpp's per-session injection.
 - **P3** — decision 6 step 2 after measuring; tie-in with #1559 (automated review) and #1558
   (search).
