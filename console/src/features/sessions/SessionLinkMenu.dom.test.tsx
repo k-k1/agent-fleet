@@ -55,12 +55,31 @@ const fire = (el: HTMLElement, e: Event) => {
 const rightClick = (el: HTMLElement) =>
   fire(el, new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, clientX: 40, clientY: 50 }));
 const click = (el: HTMLElement) => fire(el, new MouseEvent("click", { bubbles: true, cancelable: true }));
-// jsdom has no TouchEvent constructor, so build the bare minimum: the touch coordinates.
+// jsdom has no TouchEvent or PointerEvent constructor, so build the bare minimum of each.
 const touch = (el: HTMLElement, type: string, x = 10, y = 10) => {
   const e = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(e, "touches", { value: type === "touchend" ? [] : [{ clientX: x, clientY: y }] });
   return fire(el, e);
 };
+const pointerDown = (el: HTMLElement, pointerType = "touch") => {
+  const e = new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 });
+  Object.defineProperties(e, { pointerType: { value: pointerType }, isPrimary: { value: true } });
+  return fire(el, e);
+};
+// A finger going down on the link: the browser sends pointerdown, then touchstart.
+const pressStart = (el: HTMLElement, x = 10, y = 10) => {
+  pointerDown(el);
+  touch(el, "touchstart", x, y);
+};
+// A real click carries detail >= 1; useDismiss lets a detail-0 (keyboard) click through.
+const tap = (el: HTMLElement) => fire(el, new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+const touchContextMenu = (el: HTMLElement) => {
+  const e = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, clientX: 40, clientY: 50 });
+  Object.defineProperty(e, "pointerType", { value: "touch" });
+  return fire(el, e);
+};
+const escape = () =>
+  fire(document.body, new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
 
 beforeEach(() => {
   toasts.length = 0;
@@ -101,7 +120,7 @@ describe("session link context menu", () => {
   it("opens on a long press and swallows the click of that lift only", async () => {
     vi.useFakeTimers();
     await render(true);
-    touch(link(), "touchstart");
+    pressStart(link());
     act(() => {
       vi.advanceTimersByTime(500);
     });
@@ -111,16 +130,72 @@ describe("session link context menu", () => {
     click(link());
     expect(opened).toHaveLength(0);
     // The next tap is an ordinary open again.
-    touch(link(), "touchstart");
+    escape();
+    pressStart(link());
     touch(link(), "touchend");
     click(link());
     expect(opened).toEqual([{ ref: "sukbq4s" }]);
   });
 
+  it("does not reopen the menu after the tap that dismissed it", async () => {
+    vi.useFakeTimers();
+    await render(true);
+    pressStart(link());
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    touch(link(), "touchend");
+    expect(menu()).not.toBeNull();
+    // A tap on the link again: useDismiss eats its pointerdown and touchend in the capture
+    // phase to close the menu, so the link only sees the touchstart in between.
+    pressStart(link());
+    touch(link(), "touchend");
+    expect(menu()).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+    expect(menu()).toBeNull();
+  });
+
+  it("on Android's own long press (a touch contextmenu) swallows the lift's click", async () => {
+    await render(true);
+    const e = touchContextMenu(link());
+    expect(e.defaultPrevented).toBe(true);
+    expect(menu()).not.toBeNull();
+    click(link());
+    expect(opened).toHaveLength(0);
+  });
+
+  it("drops the swallow flag shortly after the lift, so a later click-only open still works", async () => {
+    vi.useFakeTimers();
+    await render(true);
+    pressStart(link());
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    touch(link(), "touchend"); // the browser was told to drop this lift's click
+    escape();
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    click(link()); // e.g. a screen reader's double tap: a click and no touches
+    expect(opened).toEqual([{ ref: "sukbq4s" }]);
+  });
+
+  it("takes the menu down when its session disappears while it is open", async () => {
+    await render(true);
+    rightClick(link());
+    expect(menu()).not.toBeNull();
+    act(() => {
+      useSessionsStore.setState({ sessions: [] });
+    });
+    expect(menu()).toBeNull();
+  });
+
   it("does not open when the finger moves (a scroll that started on the link)", async () => {
     vi.useFakeTimers();
     await render(true);
-    touch(link(), "touchstart", 10, 10);
+    pressStart(link(), 10, 10);
     touch(link(), "touchmove", 12, 60);
     act(() => {
       vi.advanceTimersByTime(500);
@@ -128,11 +203,14 @@ describe("session link context menu", () => {
     expect(menu()).toBeNull();
   });
 
-  it("does not eat the next left click after a mouse right click", async () => {
+  it("does not eat the next left click after the menu closes", async () => {
     await render(true);
-    rightClick(link());
-    fire(link(), new MouseEvent("mousedown", { bubbles: true }));
-    click(link());
+    // A touch contextmenu raises the swallow flag; the mouse press that follows must clear it.
+    touchContextMenu(link());
+    escape();
+    expect(menu()).toBeNull();
+    fire(link(), new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    tap(link());
     expect(opened).toEqual([{ ref: "sukbq4s" }]);
   });
 

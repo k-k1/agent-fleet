@@ -15,6 +15,10 @@ import { isContextMenuKey, menuAnchor } from "../../project/contextMenuKey.ts";
 export const LONG_PRESS_MS = 500;
 // Further than this and the finger is scrolling the transcript, not pressing.
 const MOVE_TOL = 10;
+// How long the swallow flag outlives a lift whose click the browser was told to drop. Touch
+// browsers can hold a click back ~300 ms; past that the flag would only eat an unrelated click
+// (a screen reader's double tap sends a click and no touches).
+const SWALLOW_GRACE_MS = 800;
 
 export function wireContextMenu(
   el: HTMLElement,
@@ -23,6 +27,28 @@ export function wireContextMenu(
   let timer: number | null = null;
   let origin: { x: number; y: number } | null = null;
   let swallow = false;
+  let swallowTimer: number | null = null;
+  // Whether this gesture's pointerdown reached the link. The tap that puts an open menu away has
+  // its pointerdown and touchend eaten by useDismiss in the window capture phase, so the
+  // touchstart here still runs while the touchend that would cancel the timer never arrives:
+  // without this gate the menu reopened 500 ms after being dismissed. Checked when the timer
+  // fires, so the order of pointerdown and touchstart does not matter.
+  let pointerSeen = false;
+
+  const setSwallow = (on: boolean) => {
+    swallow = on;
+    if (swallowTimer !== null) {
+      window.clearTimeout(swallowTimer);
+      swallowTimer = null;
+    }
+  };
+
+  // A touch-opened menu returns focus to whatever had it when it closes; on a phone that is often
+  // the composer, and focusing it again brings the soft keyboard back up. Hand it the link.
+  const openFromTouch = (x: number, y: number) => {
+    el.focus({ preventScroll: true });
+    open(x, y);
+  };
 
   const cancelTimer = () => {
     if (timer !== null) {
@@ -36,18 +62,25 @@ export function wireContextMenu(
     e.preventDefault();
     // Only a touch-derived contextmenu is followed by a click; setting the flag on a mouse
     // right click would eat the next left click.
-    if ((e as PointerEvent).pointerType === "touch") swallow = true;
     cancelTimer();
-    open(e.clientX, e.clientY);
+    if ((e as PointerEvent).pointerType === "touch") {
+      setSwallow(true);
+      openFromTouch(e.clientX, e.clientY);
+    } else {
+      open(e.clientX, e.clientY);
+    }
+  });
+  el.addEventListener("pointerdown", (e) => {
+    pointerSeen = e.pointerType !== "mouse";
   });
   // No click follows a right click, so a stale flag must not survive into the next mouse use.
   el.addEventListener("mousedown", () => {
-    swallow = false;
+    setSwallow(false);
   });
   el.addEventListener(
     "touchstart",
     (e) => {
-      swallow = false;
+      setSwallow(false);
       cancelTimer();
       const t = e.touches[0];
       if (!t || e.touches.length > 1) return;
@@ -55,8 +88,10 @@ export function wireContextMenu(
       origin = { x: clientX, y: clientY };
       timer = window.setTimeout(() => {
         timer = null;
-        swallow = true;
-        open(clientX, clientY);
+        if (!pointerSeen) return; // the press that dismissed a menu, see pointerSeen
+        pointerSeen = false;
+        setSwallow(true);
+        openFromTouch(clientX, clientY);
       }, LONG_PRESS_MS);
     },
     // Passive: the transcript must keep scrolling when a swipe starts on a link.
@@ -75,10 +110,19 @@ export function wireContextMenu(
   // synthesised: that mousedown is an outside press to useDismiss and would close the menu as
   // the finger lifts. The flag stays as the fallback for a browser that ignores this.
   el.addEventListener("touchend", (e) => {
-    if (swallow && e.cancelable) e.preventDefault();
+    pointerSeen = false;
+    cancelTimer();
+    if (!swallow) return;
+    if (e.cancelable) e.preventDefault();
+    swallowTimer = window.setTimeout(() => {
+      swallowTimer = null;
+      swallow = false;
+    }, SWALLOW_GRACE_MS);
+  });
+  el.addEventListener("touchcancel", () => {
+    pointerSeen = false;
     cancelTimer();
   });
-  el.addEventListener("touchcancel", cancelTimer);
   el.addEventListener("keydown", (e) => {
     if (!isContextMenuKey(e)) return;
     e.preventDefault();
@@ -89,7 +133,7 @@ export function wireContextMenu(
   return {
     clickSwallowed: () => {
       const s = swallow;
-      swallow = false;
+      setSwallow(false);
       return s;
     },
   };
