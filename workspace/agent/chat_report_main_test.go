@@ -302,10 +302,17 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 	// Phase 1 — BG quiet, but the heal removed the marker while the main transcript
 	// is fresh: an absent marker must not read as idle, and a fresh transcript means
 	// the turn is still running. No delivery, arm intact.
+	//
+	// Every step below changes the disk in an order where each intermediate state is itself
+	// busy: the reconciler sweeps every 20ms and settles after two quiet sweeps, so a stalled
+	// test goroutine that leaves a quiet intermediate on disk gets a correct report — a red
+	// test that is not a product bug. Here the marker goes first: with the subagent quiet but
+	// the hook's idle marker still present, the fresh transcript has not grown past that
+	// marker, which is a genuine completion.
+	status.Remove(sid)
 	if err := os.Chtimes(agLog, stale, stale); err != nil {
 		t.Fatal(err)
 	}
-	status.Remove(sid)
 	settle()
 	if n := countReports(); n != 0 {
 		t.Fatalf("delivered on a missing marker + fresh transcript (n=%d)", n)
@@ -325,8 +332,11 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 	// Phase 3 — an idle marker exists, but the main transcript KEPT GROWING after it
 	// (the incident's shape: the marker is not the turn's end — the turn is still
 	// appending during a think gap). No delivery.
-	status.PersistTurnEnd(sid, "idle")
+	// The transcript grows first (absent marker + fresh transcript is Phase 1's busy state):
+	// the marker first would leave Phase 2's stale transcript under an idle marker, which is
+	// Phase 4's real completion.
 	writeMainAt(t, time.Now().Add(10*time.Second)) // a real record that grew past the marker
+	status.PersistTurnEnd(sid, "idle")
 	settle()
 	if n := countReports(); n != 0 {
 		t.Fatalf("delivered while the transcript grew past the idle marker (n=%d)", n)
