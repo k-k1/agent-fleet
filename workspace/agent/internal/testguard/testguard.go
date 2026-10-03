@@ -28,6 +28,7 @@ package testguard
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -88,21 +89,136 @@ func Run(m *testing.M, setup func()) int {
 // markerEnv names the scratch root of the guarded process; its children inherit it.
 const markerEnv = "AF_TESTGUARD_ROOT"
 
+// ownerFile, inside a root, holds the pid of the binary that created it. Together with the
+// root's name, mode and owner it is what makes a directory a guard root: sweepStale removes and
+// helperChild trusts nothing else.
+const ownerFile = ".testguard-owner"
+
 // helperChild reports whether this process is a test binary a guarded test started as a
 // helper (a fake CLI or MCP server re-exec'd with -test.run). Its environment is what that
 // test built on purpose — its own HOME, a session name the test asserts on — so applying the
-// guard again would overwrite it. A child with an inherited environment carries the marker;
-// one given an explicit environment is recognised by its parent being the same executable.
+// guard again would overwrite it. It is a helper only when it runs the same executable as a
+// guarded ancestor: the direct parent (an explicit environment, no marker), or the live owner
+// of the root the inherited marker names (through a shell). A stale or forged marker, or
+// another binary — a nested go test — gets a guard of its own.
 func helperChild() bool {
-	if os.Getenv(markerEnv) != "" {
+	self, err := os.Readlink("/proc/self/exe")
+	if err != nil {
+		return false
+	}
+	if exeOf(os.Getppid()) == self {
 		return true
 	}
-	self, err1 := os.Readlink("/proc/self/exe")
-	parent, err2 := os.Readlink(fmt.Sprintf("/proc/%d/exe", os.Getppid()))
-	return err1 == nil && err2 == nil && self == parent
+	root := os.Getenv(markerEnv)
+	if root == "" {
+		return false
+	}
+	owner, ok := rootOwner(root)
+	return ok && exeOf(owner) == self && isAncestor(owner)
+}
+
+func exeOf(pid int) string {
+	p, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+	if err != nil {
+		return ""
+	}
+	return p
+}
+
+// isAncestor reports whether pid is a parent, grandparent, … of this process.
+func isAncestor(pid int) bool {
+	cur := os.Getppid()
+	for i := 0; i < 64 && cur > 1; i++ {
+		if cur == pid {
+			return true
+		}
+		b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", cur))
+		if err != nil {
+			return false
+		}
+		// The ppid is the second field after the parenthesised command, which may hold spaces.
+		j := strings.LastIndexByte(string(b), ')')
+		if j < 0 {
+			return false
+		}
+		f := strings.Fields(string(b[j+1:]))
+		if len(f) < 2 {
+			return false
+		}
+		if cur, err = strconv.Atoi(f[1]); err != nil {
+			return false
+		}
+	}
+	return false
+}
+
+// rootOwner returns the pid that created root, when root is a guard root: a real directory
+// (not a symlink) in the temp dir, named rootPrefix<pid>-…, mode 0700, owned by this uid, with
+// an ownerFile (a regular file) naming the same pid.
+func rootOwner(root string) (int, bool) {
+	if filepath.Dir(root) != filepath.Clean(os.TempDir()) {
+		return 0, false
+	}
+	pidStr, _, ok := strings.Cut(strings.TrimPrefix(filepath.Base(root), rootPrefix), "-")
+	pid, err := strconv.Atoi(pidStr)
+	if !ok || !strings.HasPrefix(filepath.Base(root), rootPrefix) || err != nil || pid <= 0 {
+		return 0, false
+	}
+	if !ownDir(root) || ownMode(root, 0) != fs.ModeDir|0o700 {
+		return 0, false
+	}
+	owner := filepath.Join(root, ownerFile)
+	if !ownedRegular(owner) {
+		return 0, false
+	}
+	b, err := os.ReadFile(owner)
+	if err != nil || strings.TrimSpace(string(b)) != pidStr {
+		return 0, false
+	}
+	return pid, true
+}
+
+// ownMode is p's type and permission bits without following a symlink, or mode when p cannot
+// be read or is not this uid's.
+func ownMode(p string, mode fs.FileMode) fs.FileMode {
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return mode
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || int(st.Uid) != os.Getuid() {
+		return mode
+	}
+	return fi.Mode() & (fs.ModeType | fs.ModePerm)
+}
+
+func ownDir(p string) bool { return ownMode(p, 0)&fs.ModeType == fs.ModeDir }
+
+func ownedRegular(p string) bool { return ownMode(p, fs.ModeIrregular).IsRegular() }
+
+// rootSockets lists the tmux sockets under a guard root's TMUX_TMPDIR without following a
+// link anywhere on the way: root/tmux and root/tmux/tmux-<uid> must be this uid's real
+// directories, and only real sockets of this uid are returned.
+func rootSockets(dir string) []string {
+	uidDir := filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()))
+	if !ownDir(dir) || !ownDir(uidDir) {
+		return nil
+	}
+	ents, _ := os.ReadDir(uidDir)
+	var out []string
+	for _, e := range ents {
+		p := filepath.Join(uidDir, e.Name())
+		if ownMode(p, 0)&fs.ModeType == fs.ModeSocket {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func apply(root string) error {
+	if err := os.WriteFile(filepath.Join(root, ownerFile), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
+		return err
+	}
 	bin := filepath.Join(root, "bin")
 	tmuxDir = filepath.Join(root, "tmux")
 	for _, d := range []string{bin, tmuxDir} {
@@ -188,14 +304,12 @@ const rootPrefix = "af-testguard-"
 func sweepStale() {
 	roots, _ := filepath.Glob(filepath.Join(os.TempDir(), rootPrefix+"*-*"))
 	for _, r := range roots {
-		pidStr, _, ok := strings.Cut(strings.TrimPrefix(filepath.Base(r), rootPrefix), "-")
-		pid, err := strconv.Atoi(pidStr)
-		if !ok || err != nil || pid <= 0 || syscall.Kill(pid, 0) != syscall.ESRCH {
+		pid, ok := rootOwner(r)
+		if !ok || syscall.Kill(pid, 0) != syscall.ESRCH {
 			continue
 		}
 		if realTmux, err := exec.LookPath("tmux"); err == nil {
-			socks, _ := filepath.Glob(filepath.Join(r, "tmux", "tmux-*", "*"))
-			for _, s := range socks {
+			for _, s := range rootSockets(filepath.Join(r, "tmux")) {
 				_ = exec.Command(realTmux, "-S", s, "kill-server").Run()
 			}
 		}
@@ -210,8 +324,7 @@ func killServers() {
 	if realTmux == "" {
 		return
 	}
-	socks, _ := filepath.Glob(filepath.Join(tmuxDir, "tmux-*", "*"))
-	for _, s := range socks {
+	for _, s := range rootSockets(tmuxDir) {
 		_ = exec.Command(realTmux, "-S", s, "kill-server").Run()
 	}
 }
