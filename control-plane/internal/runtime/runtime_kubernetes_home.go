@@ -100,12 +100,15 @@ func (k *kubeRuntime) WipeHome(ctx context.Context, what HomeWipe) error {
 // other container of the pod, in the agent's image and restricted security settings.
 func homeLayoutContainer(main kContainer) kContainer {
 	return kContainer{
-		Name:                     kubeLayoutContainer,
-		Image:                    main.Image,
-		ImagePullPolicy:          main.ImagePullPolicy,
-		Command:                  []string{"/bin/sh", "-c", homeLayoutScript(kubeHomeVolumePath)},
-		Resources:                main.Resources,
-		VolumeMounts:             []kVolumeMount{{Name: "home", MountPath: kubeHomeVolumePath}},
+		Name:            kubeLayoutContainer,
+		Image:           main.Image,
+		ImagePullPolicy: main.ImagePullPolicy,
+		Command:         []string{"/bin/sh", "-c", homeLayoutScript(kubeHomeVolumePath, kubeWipeRecordPath)},
+		Resources:       main.Resources,
+		VolumeMounts: []kVolumeMount{
+			{Name: "home", MountPath: kubeHomeVolumePath},
+			{Name: "state", MountPath: kubeWipeRecordPath, SubPath: kubeWipeRecordSubPath},
+		},
 		SecurityContext:          main.SecurityContext,
 		TerminationMessagePolicy: "FallbackToLogsOnError",
 	}
@@ -116,38 +119,70 @@ func homeLayoutContainer(main kContainer) kContainer {
 // claim's root — it first moves every entry of the root into it, so an existing home keeps
 // its files. lost+found stays where mkfs put it: it is root's and not dev's to move.
 //
-// The moves go into a .new directory renamed into place last, so a pod stopped halfway
+// Which layout a claim has is recorded in record/layout (none, moving, done), on the state
+// claim beside the wipe record, where the member cannot reach it: nothing at the claim's
+// root can say so, since in the earlier layout every name there was the member's to create.
+// So a .af-home or .af-home.new the member made is refused before anything moves, not
+// taken for the migrated home or its staging directory, and a claim recorded as migrated
+// whose root holds anything besides the home is refused too: a pod of an earlier version
+// has used the root as the home again (deploy/kubernetes/README.md, "Rolling back").
+//
+// The moves go into the .new directory renamed into place last, so a pod stopped halfway
 // carries on at the next start and the home never appears with half of its files. An entry
-// that cannot be moved stops the pod: the alternative is a home that silently lacks it.
-// The mode is corrected at every start, since a recursive fsGroup change (the kubelet makes
-// one whenever the root does not match) sets group write on everything below the root.
-func homeLayoutScript(vol string) string {
+// that cannot be moved, or would land on one already there, stops the pod: the alternative
+// is a home that silently lacks it.
+//
+// A recursive fsGroup change (the kubelet makes one whenever the root does not match) sets
+// group write on everything below the root. Group write is removed again at every start
+// from the home and from the directories above the Agent's state (paths.AgentStateDir),
+// which cloudexec.PrivateDir walks; the member's other files are left as they are.
+func homeLayoutScript(vol, record string) string {
 	h := vol + "/" + kubeHomeSubPath
 	return strings.Join([]string{
 		"set -eu",
-		"V=" + shellQuote(vol) + "; H=" + shellQuote(h) + "; N=" + shellQuote(h+".new"),
+		"V=" + shellQuote(vol) + "; H=" + shellQuote(h) + "; N=" + shellQuote(h+".new") + "; R=" + shellQuote(record) + `; L="$R/layout"`,
 		`fail() { echo "home layout: $*" >&2; exit 1; }`,
-		`[ -L "$H" ] && fail "$H is a symbolic link"`,
-		`if [ ! -d "$H" ]; then`,
-		`  [ -e "$H" ] && fail "$H is not a directory"`,
-		`  [ -L "$N" ] && fail "$N is a symbolic link"`,
-		`  mkdir -p -- "$N"`,
-		`  for e in "$V"/.[!.]* "$V"/..?* "$V"/*; do`,
-		`    [ -e "$e" ] || [ -L "$e" ] || continue`,
-		`    n=${e##*/}`,
-		`    case "$n" in ` + shellQuote(kubeHomeSubPath+".new") + `|lost+found) continue;; esac`,
+		`[ -d "$R" ] && [ ! -L "$R" ] || fail "the record directory $R is missing or not a directory, so the home's layout is unknown"`,
+		`[ -L "$L" ] && fail "$L is a symbolic link"`,
+		`st=none; if [ -e "$L" ]; then [ -f "$L" ] || fail "$L is not a regular file"; st=$(cat -- "$L") || fail "cannot read $L"; fi`,
+		`case "$st" in none|moving|done) ;; *) fail "$L holds '$st'";; esac`,
+		`put() { [ -L "$L.tmp" ] && fail "$L.tmp is a symbolic link"; echo "$1" > "$L.tmp" && mv -fT -- "$L.tmp" "$L"; }`,
+		`if [ "$st" = none ]; then`,
+		`  for p in "$H" "$N"; do if [ -e "$p" ] || [ -L "$p" ]; then fail "the home to migrate already holds ${p##*/}; rename it and start again"; fi; done`,
+		`  put moving; st=moving`,
+		`fi`,
+		`if [ "$st" = moving ]; then`,
+		// The home exists only once every entry has moved: the last step renames it in.
+		`  if [ ! -e "$H" ] && [ ! -L "$H" ]; then`,
+		`    [ -L "$N" ] && fail "$N is a symbolic link"`,
+		`    mkdir -p -- "$N"`,
+		`    for e in "$V"/.[!.]* "$V"/..?* "$V"/*; do`,
+		`      [ -e "$e" ] || [ -L "$e" ] || continue`,
+		`      n=${e##*/}`,
+		`      case "$n" in ` + shellQuote(kubeHomeSubPath+".new") + `|lost+found) continue;; esac`,
+		`      if [ -e "$N/$n" ] || [ -L "$N/$n" ]; then fail "both $e and $N/$n exist"; fi`,
 		// Moving a directory to another parent rewrites its "..", which needs write
 		// permission on the directory itself (rename(2)); Go's module cache is read-only.
-		`    ro=; if [ -d "$e" ] && [ ! -L "$e" ] && [ ! -w "$e" ]; then chmod u+w -- "$e" || fail "cannot move $e into the home"; ro=1; fi`,
-		`    mv -- "$e" "$N/" || fail "cannot move $e into the home"`,
-		`    [ -z "$ro" ] || chmod u-w -- "$N/$n"`,
-		`  done`,
-		`  mv -T -- "$N" "$H"`,
+		`      ro=; if [ -d "$e" ] && [ ! -L "$e" ] && [ ! -w "$e" ]; then chmod u+w -- "$e" || fail "cannot move $e into the home"; ro=1; fi`,
+		`      mv -T -- "$e" "$N/$n" || fail "cannot move $e into the home"`,
+		`      [ -z "$ro" ] || chmod u-w -- "$N/$n"`,
+		`    done`,
+		`    mv -T -- "$N" "$H"`,
+		`  fi`,
+		`  put done`,
 		`fi`,
+		`[ -d "$H" ] && [ ! -L "$H" ] || fail "$H is missing or not a directory, though the home was migrated"`,
+		`for e in "$V"/.[!.]* "$V"/..?* "$V"/*; do`,
+		`  [ -e "$e" ] || [ -L "$e" ] || continue`,
+		`  case "${e##*/}" in ` + shellQuote(kubeHomeSubPath) + `|lost+found) ;; *) fail "the claim's root holds $e besides the home: an earlier version used the root as the home after the migration (see 'Rolling back' in deploy/kubernetes/README.md)";; esac`,
+		`done`,
 		// A home of another owner could only be a subPath the kubelet created; dev cannot
 		// change it, and refusing to start would take the whole workspace away for what
 		// costs only the cloud wrappers, which say why themselves.
-		`if [ "$(stat -c %u -- "$H")" = "$(id -u)" ]; then chmod go-w -- "$H"; else echo "home layout: $H is not owned by $(id -u); af-gcloud-exec and af-aws-exec will refuse it" >&2; fi`,
+		`for p in "$H" "$H/.local" "$H/.local/state" "$H/.local/state/agent-fleet"; do`,
+		`  [ -d "$p" ] && [ ! -L "$p" ] || continue`,
+		`  if [ "$(stat -c %u -- "$p")" = "$(id -u)" ]; then chmod go-w -- "$p"; else echo "home layout: $p is not owned by $(id -u); af-gcloud-exec and af-aws-exec will refuse it" >&2; fi`,
+		`done`,
 	}, "\n")
 }
 
@@ -452,6 +487,9 @@ func (k *kubeRuntime) erasePod(ctx context.Context, s *kStatefulSet) (kPod, erro
 		Requests: map[string]string{"cpu": "100m", "memory": "256Mi", "ephemeral-storage": "256Mi"},
 		Limits:   map[string]string{"cpu": "1", "memory": "512Mi", "ephemeral-storage": "1Gi"},
 	}
+	// Without the state claim there is no layout record, and the layout refuses: which of
+	// the claim's root and .af-home is the home cannot be told then.
+	//
 	// The layout runs in the erase container rather than as an init container: a failed
 	// init container leaves the erase container waiting, which podFinished never reports
 	// as finished. The claim's root is mounted, so the erase reaches the home through it.
@@ -470,7 +508,7 @@ func (k *kubeRuntime) erasePod(ctx context.Context, s *kStatefulSet) (kPod, erro
 		Name:            kubeRoleErase,
 		Image:           image,
 		ImagePullPolicy: main.ImagePullPolicy,
-		Command: []string{"/bin/sh", "-c", homeLayoutScript(kubeHomeVolumePath) + "\n" +
+		Command: []string{"/bin/sh", "-c", homeLayoutScript(kubeHomeVolumePath, kubeWipeRecordPath) + "\n" +
 			homeEraseScript(kubeHomeVolumePath+"/"+kubeHomeSubPath, kubeWipeRecordPath)},
 		Env: []kEnvVar{
 			{Name: "AF_WIPE_REPOS", Value: strconv.FormatInt(wipeGenOf(ann, kubeAnnWipePrefix+string(HomeWipeRepos)), 10)},

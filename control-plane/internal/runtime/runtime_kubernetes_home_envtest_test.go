@@ -164,7 +164,7 @@ func TestKubernetesEnvEraseHome(t *testing.T) {
 	// The layout runs inside the erase container: an init container that failed would leave
 	// it waiting, which podFinished never calls finished.
 	if c := p.Spec.Containers[0]; len(p.Spec.InitContainers) != 0 || c.VolumeMounts[0].MountPath != kubeHomeVolumePath ||
-		c.VolumeMounts[0].SubPath != "" || !strings.HasPrefix(c.Command[2], homeLayoutScript(kubeHomeVolumePath)) {
+		c.VolumeMounts[0].SubPath != "" || !strings.HasPrefix(c.Command[2], homeLayoutScript(kubeHomeVolumePath, kubeWipeRecordPath)) {
 		t.Fatalf("erase pod spec = %+v", p.Spec)
 	}
 	if got := rt.State(ctx); got != "stopped" {

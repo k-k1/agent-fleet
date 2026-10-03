@@ -265,7 +265,9 @@ stat -c '%U:%G %A' /home/dev    # dev:dev drwxr-sr-x — no w for group or other
 
 The home is the directory `.af-home` of the home claim, which an init container running as `dev`
 creates — and moves an earlier home's files into — before the agent starts; the claim's root
-stays `root:dev` with group write, as the kubelet leaves it.
+stays `root:dev` with group write, as the kubelet leaves it. A pod stuck in `Init` names the reason
+in `kubectl logs <pod> -c home-layout`; rolling the CP back past this layout is covered under
+"Rolling back past the home layout".
 
 ## Other clusters
 
@@ -574,6 +576,39 @@ previous image on the migrated database is not a rollback:
 The workspace image follows `workspaceImage` in `deployment.yaml`. A running workspace keeps the
 image it started with; the next start pins the tag's current digest, and the Console marks the
 workspaces still on an older one as stale.
+
+#### Rolling back past the home layout
+
+From the version that fixed #1543 on, a workspace's home is the directory `.af-home` of its home
+claim, and the first start under it moves an earlier home there, recording that on the state
+claim (ADR 0106, addendum of 2026-10-03). **An earlier CP does not know this, and rolling back
+past it is not safe for workspaces that have started since:** its pod mounts the claim's root as
+the home, so the member finds an almost empty home with their files hidden in `.af-home`, and its
+Recreate, Clean home or administrator's Clean home removes `.af-home` whole — the migrated home,
+logins included.
+
+So, when the CP has to go back past that version:
+
+1. Stop every workspace first, and start, Recreate or clean none of them under the earlier CP
+   until its home is moved back.
+2. To move one back: snapshot its home disk, then, with the workspace stopped, run a pod from the
+   workspace image with the workspace pod's security context (as `dev`), the home claim mounted at
+   `/v` and the state claim at `/s`, and in it:
+   ```bash
+   cd /v && [ -z "$(ls -A | grep -vxE '\.af-home|lost\+found')" ] || { echo "the root is not empty"; exit 1; }
+   for e in .af-home/.[!.]* .af-home/..?* .af-home/*; do
+     [ -e "$e" ] || [ -L "$e" ] || continue
+     mv -T -- "$e" "${e#.af-home/}" || exit 1
+   done
+   rmdir .af-home && rm -f /s/wipe/layout
+   ```
+   Without the record the next start of this version migrates the home again.
+3. If a workspace has run under the earlier CP anyway, this version refuses to start it again:
+   `kubectl logs <pod> -c home-layout` says the claim's root holds entries besides the home. The
+   root then holds what the earlier CP's session wrote and `.af-home` the migrated home. With the
+   workspace stopped and its disk snapshotted, decide in the same kind of pod which copy of each
+   entry to keep, and leave the root holding only `.af-home` and `lost+found` — or move the home
+   back as in step 2.
 
 ### Alerts
 

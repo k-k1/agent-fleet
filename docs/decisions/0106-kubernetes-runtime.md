@@ -801,12 +801,24 @@ root can change that, which nothing under `restricted` is. The group-writable ho
 
 - **An init container from the same image, running as `dev`, makes the directory** before any
   container mounts it (`homeLayoutScript`, `runtime_kubernetes_home.go`): a `subPath` the kubelet
-  has to create itself is root's again. It removes group and other write from the directory at
-  every start, since a recursive `fsGroup` change sets them.
+  has to create itself is root's again.
 - **A claim of the earlier layout keeps its files**: the same step moves every entry of the root
   into `.af-home.new` and renames that into place last, so an interrupted start carries on and the
-  home never shows half of its files. `lost+found` stays on the root. An entry it cannot move stops
-  the pod rather than leave the home without it.
+  home never shows half of its files. `lost+found` stays on the root. An entry it cannot move, or
+  that would land on one already there, stops the pod rather than leave the home without it.
+- **Which layout a claim has is recorded on the state claim** (`layout` beside the wipe record:
+  none, moving, done), not read from the root: in the earlier layout every name there was the
+  member's to create. A `.af-home` or `.af-home.new` the member made is refused before anything
+  moves. A claim recorded as migrated is refused when its root holds anything besides the home or
+  the home is gone, and so is one whose record is missing or unreadable — the erase pod of a home
+  without a state claim included. Refusing stops the pod with the reason in its log.
+- **Group write is removed at every start** from the home and the directories above the Agent's
+  state (`~/.local`, `~/.local/state`, `~/.local/state/agent-fleet`), which `PrivateDir` walks,
+  since a recursive `fsGroup` change sets it; the member's other files are left alone.
+- **Rolling the CP back past this is not safe** for a workspace that has started since: an earlier
+  CP mounts the root as the home, hiding the migrated files, and its wipes remove `.af-home` whole.
+  The runbook's "Rolling back past the home layout" moves a home back first; this version refuses
+  a claim an earlier one has used again (the residue check above).
 - **The wipe init container mounts the home the same way and runs after the layout; the erase pod
   runs the layout and the erase in its one container**, on the claim's root, because a failed init
   container leaves the main one waiting and an erase pod is finished only when every container
