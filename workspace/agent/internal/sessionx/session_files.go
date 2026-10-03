@@ -21,6 +21,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
@@ -48,14 +49,15 @@ var (
 const maxTrackedFiles = 500
 
 // sessionFileTouches folds fresh transcript records into the session's accumulator and
-// returns the current list, newest touch first.
+// returns the current list, newest touch first. `dir` is the session's working directory,
+// which decides each row's Scope.
 //
 // `stable` is how many of the records are IMMUTABLE. claude's jsonl lines never change
 // once written, so it passes len(lines). The store-backed agents can still append parts
 // to their last message (opencode does — see genericMutableTail), so they hold that one
 // back: everything below `stable` is folded into the cache, and the mutable tail is
 // folded into a copy on every call.
-func sessionFileTouches(name, src, head string, n, stable int, edits func(from, to int) []transcript.FileEdit) []transcript.FileTouch {
+func sessionFileTouches(name, dir, src, head string, n, stable int, edits func(from, to int) []transcript.FileEdit) []transcript.FileTouch {
 	if stable < 0 {
 		stable = 0
 	}
@@ -84,10 +86,15 @@ func sessionFileTouches(name, src, head string, n, stable int, edits func(from, 
 		out = cloneFileAgg(e)
 		foldFileEdits(out, edits(stable, n))
 	}
+	// Scope is set on the copies, not in the fold: it depends on `dir`, which the cached
+	// accumulator must not bake in.
+	own := ownRepoOf(dir)
 	list := make([]transcript.FileTouch, 0, len(out.order))
 	for _, k := range out.order {
 		if t := out.acc[k]; t != nil {
-			list = append(list, *t)
+			row := *t
+			row.Scope = fileScope(k, row.Repo, own)
+			list = append(list, row)
 		}
 	}
 	// Newest touch first: that is the question the list actually answers ("the one I just
@@ -173,6 +180,37 @@ func repoRelOf(abs string) (repo, rel string) {
 		return "", ""
 	}
 	return parts[0], parts[1]
+}
+
+// ownRepoOf is the ~/repos folder the session's working directory belongs to, "" when it
+// is not inside one. `dir` can be a subdirectory of the working copy (create_session's
+// subdir), so the folder comes from the path, never from the display basename.
+func ownRepoOf(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	r, err := filepath.Rel(gitx.ReposRoot(), filepath.Clean(dir))
+	if err != nil || r == "." || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	return strings.SplitN(filepath.ToSlash(r), "/", 2)[0]
+}
+
+// fileScope classifies one absolute path. A file in another working copy is only called
+// that when the session's own copy is known: with own == "" there is nothing to compare
+// against, and claiming "other" would mislabel every row of a session started in ~.
+func fileScope(abs, repo, own string) string {
+	if repo != "" {
+		if own != "" && repo != own {
+			return transcript.FileScopeOtherRepo
+		}
+		return ""
+	}
+	r, err := filepath.Rel(filepath.Join(paths.HomeDir(), ".af-work"), abs)
+	if err != nil || r == "." || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	return transcript.FileScopeWorkDir
 }
 
 // evictFileAggs keeps the cache bounded. Entries are small (a few hundred rows), so this

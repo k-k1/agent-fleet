@@ -238,7 +238,7 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	if len(lines) > 0 {
 		head = lines[0]
 	}
-	files := sessionFileTouches(name, jpath, fileAggHead(head), len(lines), len(lines),
+	files := sessionFileTouches(name, meta.Dir, jpath, fileAggHead(head), len(lines), len(lines),
 		func(from, to int) []transcript.FileEdit { return claude.CollectFileEdits(lines[:to], from) },
 	)
 	// answers / tasks / files are the three WHOLE-TRANSCRIPT aggregates: recomputed on every poll,
@@ -409,7 +409,7 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	// its edits — it is re-folded into a copy on every poll instead.
 	if total > 0 {
 		head := all[0].TS + "|" + all[0].AnchorID + "|" + strconv.Itoa(all[0].Idx)
-		if files := sessionFileTouches(meta.Name, path, head, total, total-1,
+		if files := sessionFileTouches(meta.Name, meta.Dir, path, head, total, total-1,
 			func(from, to int) []transcript.FileEdit {
 				var out []transcript.FileEdit
 				for i := from; i < to; i++ {

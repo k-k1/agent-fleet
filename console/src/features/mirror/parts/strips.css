@@ -221,9 +221,26 @@
   color: var(--muted);
   background: color-mix(in srgb, var(--muted) 15%, transparent);
 }
+/* A row in another working copy: its git state is shown, but the name is muted like the
+   other rows that are not this session's own diff. */
+.mfl-repo {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.mfl-repo .codicon {
+  font-size: 11px;
+}
 .mfl-clean .mfl-name,
 .mfl-committed .mfl-name,
-.mfl-outside .mfl-name {
+.mfl-workdir .mfl-name,
+.mfl-outside .mfl-name,
+.mfl-other-repo .mfl-name {
   color: var(--muted);
 }
 .mfl-deleted .mfl-name {

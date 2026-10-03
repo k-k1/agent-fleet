@@ -75,7 +75,10 @@ function FileChangeStripImpl({ session, files }: { session: string; files: Sessi
   const added = rows.reduce((n, r) => n + (r.added || 0), 0);
   const removed = rows.reduce((n, r) => n + (r.removed || 0), 0);
   const lead = sortRows(rows, "recent")[0];
-  const repo = rows.find((r) => r.repo)?.repo;
+  // The session's own working copy. Rows in another one (another session's worktree, the
+  // parent clone) never pick it: when they are all there is, the button is hidden rather than
+  // opening a copy this session does not own.
+  const repo = rows.find((r) => r.repo && r.scope !== "other-repo")?.repo;
 
   return (
     <section className={"mirror-files mirror-disclosure" + (open ? " open" : "")}>
@@ -132,12 +135,17 @@ function FileChangeStripImpl({ session, files }: { session: string; files: Sessi
             const badge = stateBadge(r.state);
             const openable = !r.deleted || r.state === "unstaged" || r.state === "staged";
             return (
-              <li key={r.path} className={"mfl-item mfl-" + r.state + (r.deleted ? " mfl-deleted" : "")}>
+              <li
+                key={r.path}
+                className={
+                  "mfl-item mfl-" + r.state + (r.scope === "other-repo" ? " mfl-other-repo" : "") + (r.deleted ? " mfl-deleted" : "")
+                }
+              >
                 <button
                   type="button"
                   className="mfl-row"
                   disabled={!openable}
-                  title={r.path}
+                  title={r.state === "workdir" ? r.path + "\n" + tr("mirror.files.st_workdir_hint") : r.path}
                   onClick={(e) => openRow(r, e.ctrlKey || e.metaKey)}
                 >
                   <span className="mfl-ic">
@@ -145,6 +153,14 @@ function FileChangeStripImpl({ session, files }: { session: string; files: Sessi
                   </span>
                   <span className="mfl-name">{r.name}</span>
                   {r.dir && <span className="mfl-dir muted">{r.dir}</span>}
+                  {/* The git badge stays: the state is real, it is just not this session's
+                      diff — so the row says whose working copy it is in. */}
+                  {r.scope === "other-repo" && r.repo && (
+                    <span className="mfl-repo muted" title={tr("mirror.files.other_repo", { repo: r.repo })}>
+                      <Icon name="repo" />
+                      {r.repo}
+                    </span>
+                  )}
                   {r.sidechain && (
                     <span className="mfl-sub muted" title={tr("mirror.files.sidechain")}>
                       <Icon name="tools" />
