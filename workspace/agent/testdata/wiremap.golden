@@ -177,7 +177,7 @@ internal/sessionx/session_handoff_proposal.go HandleSessionHandoffProposal x1 {p
 internal/sessionx/session_handoff_proposal.go HandleSessionHandoffProposal x2 {proposal}
 internal/sessionx/session_io.go HandleSessionInput x1 {queued}
 internal/sessionx/session_io.go HandleSessionInput x3 {sent}
-internal/sessionx/session_io.go HandleSessionOutput x2 {alive,clipped,cursor,name,output,status}
+internal/sessionx/session_io.go HandleSessionOutput x1 {alive,clipped,cursor,name,output,status}
 internal/sessionx/session_io.go HandleSessionStatus x1 {alive,kind,name,pendingPeerMessages,plan,questions,ready,status} cond{pendingPeerMessages,plan,questions}
 internal/sessionx/session_io.go handleManagedInputPrompt x1 {held,sent} cond{held}
 internal/sessionx/session_marks.go HandleSessionMarks x1 {marks}
