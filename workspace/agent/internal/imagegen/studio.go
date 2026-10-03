@@ -88,8 +88,8 @@ type ImageStudio struct {
 	// Session is the session bound to this studio, "" for none. It is the truth of the binding;
 	// the session's Meta.Studio is a copy for advertising.
 	Session string `json:"session,omitempty"`
-	// AgentTrial is "let the agent run a trial" (decision 3, on by default). It changes which
-	// tools the session is offered.
+	// AgentTrial is "let the agent run a trial" (decision 3, on by default). The session is offered
+	// run_image_trial either way; this is what the call and the agent_trial press are checked against.
 	AgentTrial bool `json:"agent_trial"`
 	// MaskStrokes are the canvas strokes of decision 11 (P1), opaque to the Agent.
 	MaskStrokes json.RawMessage `json:"mask_strokes,omitempty"`
