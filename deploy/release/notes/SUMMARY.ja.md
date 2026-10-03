@@ -13,6 +13,41 @@
 
 ---
 
+## [0.27.0](0.27.0.ja.md) — 2026-10-03
+
+**CLI ピン** — Claude Code 2.1.288 / Codex 0.160.0 / Copilot 1.0.91 / Antigravity 1.2.16 / Cursor 2026.10.01-e373342 / Kiro 2.27.1 / Muse Code 1.4.2-R4684.1
+
+**New / Improved**
+
+- **[Google Cloud]** 設定のプロファイル、Console でログインする `af-gcloud-exec`、WS バーのバッジ ([#1495](https://github.com/k-k1/agent-fleet/issues/1495), [#1496](https://github.com/k-k1/agent-fleet/issues/1496), [#1497](https://github.com/k-k1/agent-fleet/issues/1497), [#1498](https://github.com/k-k1/agent-fleet/issues/1498), [#1511](https://github.com/k-k1/agent-fleet/issues/1511), [#1517](https://github.com/k-k1/agent-fleet/issues/1517))
+- **[AWS]** WS バーにプロファイルのサインイン状態、プロファイルごとのログアウト、ログインが切れる前の警告、リージョンの一覧 ([#1477](https://github.com/k-k1/agent-fleet/issues/1477), [#1502](https://github.com/k-k1/agent-fleet/issues/1502), [#1483](https://github.com/k-k1/agent-fleet/issues/1483), [#1029](https://github.com/k-k1/agent-fleet/issues/1029), [#1506](https://github.com/k-k1/agent-fleet/issues/1506))
+- **[セッション]** セッションの行にブランチの PR と待ち受けポート ([#1062](https://github.com/k-k1/agent-fleet/issues/1062))
+- **[スケジュール]** 届け先（アシスタント・通知・Discord・Slack）と `[SILENT]` の答えで黙る ([#1560](https://github.com/k-k1/agent-fleet/issues/1560))
+- **[起動導線]** 最初のプロンプトにテンプレートと履歴、スキルピッカー、どの種類のファイルも添付。仮のブランチ名は最大 45 秒まで聞き直す ([#1469](https://github.com/k-k1/agent-fleet/issues/1469), [#1448](https://github.com/k-k1/agent-fleet/issues/1448), [#1447](https://github.com/k-k1/agent-fleet/issues/1447), [#1440](https://github.com/k-k1/agent-fleet/issues/1440))
+- **[セッション]** セッションのメニューから無くなったワークツリーを作り直す・レポのメニューを開く。セッションのリンクからメニュー ([#1445](https://github.com/k-k1/agent-fleet/issues/1445), [#1557](https://github.com/k-k1/agent-fleet/issues/1557), [#1553](https://github.com/k-k1/agent-fleet/issues/1553))
+- **[MCP]** `peek_session_output` でピアの最近の出力を読む ([#1061](https://github.com/k-k1/agent-fleet/issues/1061))
+- **[セッション間メッセージ]** ユーザーの判断を待つセッションへのピアメッセージは回答までキューに入る ([#1031](https://github.com/k-k1/agent-fleet/issues/1031))
+- **[ecs-ec2/スロットプール]** 次の起動でのスロットの置き換えを予約（設定 › 管理 › スロット） ([#1473](https://github.com/k-k1/agent-fleet/issues/1473))
+- **[内部 git]** テナント管理者がメンバー 1 人の git トークンを再発行 ([#1199](https://github.com/k-k1/agent-fleet/issues/1199))
+- **[ECS]** 「作り直し」「ホームを掃除」「破棄」が EFS のホームに届く。途切れたホームの操作は CP の再起動後に完了 ([#1260](https://github.com/k-k1/agent-fleet/issues/1260), [#1536](https://github.com/k-k1/agent-fleet/issues/1536), [#1537](https://github.com/k-k1/agent-fleet/issues/1537), [#1544](https://github.com/k-k1/agent-fleet/issues/1544))
+- **[管理]** メンバーを外すとワークスペースを止めスケジュールを一時停止、招待し直すと再開 ([#1087](https://github.com/k-k1/agent-fleet/issues/1087))
+- **[ミラー]** 変更ファイルで作業用の一時領域と他の作業コピーを分ける ([#1607](https://github.com/k-k1/agent-fleet/issues/1607))
+- **[表示]** 新しいユーザーと端末の既定レイアウトはタブ付きグリッド ([#1481](https://github.com/k-k1/agent-fleet/issues/1481))
+- **[モバイル]** スワイプは左レールの順、シェル／SSM は飛ばす ([#1595](https://github.com/k-k1/agent-fleet/issues/1595))
+- **[設定モーダル]** 設定と管理のダイアログの見出し・節・余白をそろえた ([#1480](https://github.com/k-k1/agent-fleet/issues/1480), [#1491](https://github.com/k-k1/agent-fleet/issues/1491))
+- **[ECS]** CP タスクロールをこの配備のインスタンスと Amazon 所有／公開のイメージに限定 ([#1423](https://github.com/k-k1/agent-fleet/issues/1423), [#1522](https://github.com/k-k1/agent-fleet/issues/1522), [#1576](https://github.com/k-k1/agent-fleet/issues/1576))
+
+**Fixed**
+
+- **[セッション]** キューのピア・オペレーター・スケジュールのメッセージが停止や Agent の再起動で消えていた。キューのピアが再開したターンに入ることがあった ([#1255](https://github.com/k-k1/agent-fleet/issues/1255), [#1257](https://github.com/k-k1/agent-fleet/issues/1257), [#1550](https://github.com/k-k1/agent-fleet/issues/1550))
+- **[AWS]** SSM の強制再ログインがすべての AWS プロファイルをサインアウトしていた ([#1484](https://github.com/k-k1/agent-fleet/issues/1484))
+- **[ecs-ec2]** 同じホームのマウントで解放と起動がぶつかるとスロットが隔離されることがあった ([#1592](https://github.com/k-k1/agent-fleet/issues/1592))
+- **[画像生成]** 後からスイッチを入れたスタジオの試走ツールが codex の Managed に見えなかった ([#1132](https://github.com/k-k1/agent-fleet/issues/1132))
+- **[codex]** 読み込み済みスレッドの遅い走査が終わらなかった ([#1147](https://github.com/k-k1/agent-fleet/issues/1147))
+- **[ミラー]** キャンセルした質問がエージェントが断ったと出た、チップのメニューが閉じたタップで開き直した、開き直すと翻訳が押せない ([#1604](https://github.com/k-k1/agent-fleet/issues/1604), [#1556](https://github.com/k-k1/agent-fleet/issues/1556), [#1589](https://github.com/k-k1/agent-fleet/issues/1589))
+- **[Console]** 概要のカードのメニューが Esc で閉じない、折り返したレポの見出しの下にワークツリーの見出しが隠れる、先行／遅れのチップの間隔 ([#1449](https://github.com/k-k1/agent-fleet/issues/1449), [#1584](https://github.com/k-k1/agent-fleet/issues/1584), [#1509](https://github.com/k-k1/agent-fleet/issues/1509))
+- **[管理]** メンバーのキーやテナントのスラッグがデータルートの別のディレクトリを指せた ([#1455](https://github.com/k-k1/agent-fleet/issues/1455), [#1214](https://github.com/k-k1/agent-fleet/issues/1214))
+
 ## [0.26.0](0.26.0.ja.md) — 2026-10-01
 
 **CLI ピン** — Claude Code 2.1.286 / Codex 0.159.3 / OpenCode 1.18.34 / Copilot 1.0.90 / Antigravity 1.2.14 / Kiro 2.26.1 / Muse Code 1.4.1-R4503.1

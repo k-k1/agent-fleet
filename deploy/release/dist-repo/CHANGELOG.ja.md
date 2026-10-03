@@ -3,6 +3,15 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.27.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.27.0) — 2026-10-03
+
+メンバーは `af-gcloud-exec` で Google Cloud のコマンドを自分として実行できるようになりました。AWS と同じく、プロファイルは
+設定に置き、ログインは Console で済ませます。WS バーにはどの AWS／Google Cloud プロファイルがサインイン済みかが出て、
+AWS はプロファイル 1 つだけをログアウトできます。Managed セッションのキューに入ったピア・オペレーター・スケジュールの
+メッセージは、停止や Agent の再起動を越えて残るようになりました。ECS では「作り直し」「ホームを掃除」「破棄」が EFS の
+ホームに届き、ecs-ec2 のスロットは次の起動での置き換えを予約できます。ECS の CP タスクロールはさらに絞りました。独自 AMI や
+権限を絞ったデプロイ用ロールを使う運用者には確認することがあります。
+
 ## [0.26.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.26.0) — 2026-10-01
 
 各バージョンはワークスペースの rootfs も含めて 1 つの GitHub Release になり、ネイティブパッケージは amd64 に加えて

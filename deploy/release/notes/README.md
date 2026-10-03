@@ -120,6 +120,10 @@ VERSION=0.2.3 ROOTFS=0acd1112b7b0 deploy/release/notes-body.sh \
   | gh release edit v0.2.3 -R k-k1/agent-fleet-dist --notes-file -
 ```
 
+Wrap the notes as usual: a release body turns every newline into a line break, so
+`notes-body.sh` joins the lines of each paragraph and list item before publishing (the files
+themselves, the guide's copy and the CHANGELOG render as ordinary Markdown).
+
 `publish-dist.sh` renders the body itself and writes it to
 `deploy/release/dist/RELEASE_NOTES-<version>.md`, so what was published can be
 inspected afterwards.
