@@ -97,6 +97,11 @@ async function click(el: Element): Promise<void> {
   await settle();
 }
 
+/** Lets a requestAnimationFrame callback run. */
+async function frame(): Promise<void> {
+  await act(async () => void (await new Promise((r) => setTimeout(r, 50))));
+}
+
 async function hover(el: Element): Promise<void> {
   await act(async () => {
     el.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
@@ -170,6 +175,66 @@ describe("LaunchModal template picker", () => {
     await click(button("Insert at cursor"));
     expect(promptBox().value).toBe("before\nTEMPLATE\n after"); // on a line of its own, every typed character kept
     expect(pop()).toBeNull();
+    await frame();
+    expect([promptBox().selectionStart, promptBox().selectionEnd]).toEqual([15, 15]); // right after the template
+    expect(document.activeElement).toBe(promptBox());
+  });
+
+  it("puts the caret after the template on touch too, without focusing the box", async () => {
+    coarse = true;
+    pushPromptHistory("app", "TEMPLATE");
+    await render();
+    await type(promptBox(), "before after");
+    promptBox().setSelectionRange(6, 6);
+    promptBox().blur();
+    await click(openBtn());
+    await click(button("Insert"));
+    await click(button("Insert at cursor"));
+    await frame();
+    expect(promptBox().value).toBe("before\nTEMPLATE\n after");
+    expect([promptBox().selectionStart, promptBox().selectionEnd]).toEqual([15, 15]);
+    expect(document.activeElement).not.toBe(promptBox());
+  });
+
+  // jsdom has no editing commands, so this stands in for a browser's: the template has to go in as
+  // a native edit over exactly the range it replaces, which is what lets Ctrl/⌘+Z take it back
+  // (checked in headless Chromium for the PR).
+  it("inserts and replaces as an undoable native edit where the browser offers one", async () => {
+    const calls: [number, number, string][] = [];
+    const exec = vi.fn((cmd: string, _ui?: boolean, value?: string) => {
+      const el = document.activeElement as HTMLTextAreaElement;
+      if (cmd !== "insertText" || !(el instanceof HTMLTextAreaElement)) return false;
+      const [a, b] = [el.selectionStart, el.selectionEnd];
+      calls.push([a, b, value!]);
+      setValue(el, el.value.slice(0, a) + value + el.value.slice(b));
+      el.setSelectionRange(a + value!.length, a + value!.length);
+      return true;
+    });
+    const had = Object.getOwnPropertyDescriptor(document, "execCommand");
+    Object.defineProperty(document, "execCommand", { configurable: true, value: exec });
+    try {
+      pushPromptHistory("app", "TEMPLATE");
+      await render();
+      await type(promptBox(), "before after");
+      promptBox().setSelectionRange(6, 6);
+      await click(openBtn());
+      await click(items()[0]);
+      await click(button("Insert at cursor"));
+      expect(calls).toEqual([[6, 6, "\nTEMPLATE\n"]]);
+      expect(promptBox().value).toBe("before\nTEMPLATE\n after");
+      expect([promptBox().selectionStart, promptBox().selectionEnd]).toEqual([15, 15]);
+
+      await click(openBtn());
+      await click(items()[0]);
+      await click(button("Replace all"));
+      expect(calls[1]).toEqual([0, "before\nTEMPLATE\n after".length, "TEMPLATE"]);
+      expect(promptBox().value).toBe("TEMPLATE");
+      await click(launchBtn());
+      expect(onLaunch.mock.calls[0][0].prompt).toBe("TEMPLATE"); // the state followed the native edit
+    } finally {
+      if (had) Object.defineProperty(document, "execCommand", had);
+      else delete (document as { execCommand?: unknown }).execCommand;
+    }
   });
 
   it("replaces the prompt only when asked to, and Cancel keeps it", async () => {

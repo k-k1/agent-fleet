@@ -441,25 +441,48 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
 
   // Never discards typed text silently: the picker asks first when the prompt holds any, and
   // "cursor" puts the template at the caret on a line of its own.
+  //
+  // On a fine pointer the text goes in as a native edit (execCommand "insertText" over the range
+  // it replaces), so Ctrl/⌘+Z takes an insert or a "replace all" back; assigning the controlled
+  // value instead leaves the browser's undo history unable to restore the typed text. The input
+  // event it fires updates the state through onChange. A touch device keeps the plain state write:
+  // the native edit needs focus, which would pop the keyboard (and phones offer no Ctrl+Z).
   const insertTemplate = (text: string, how: "replace" | "cursor") => {
-    let next = text;
+    const el = textRef.current;
+    let from = 0;
+    let to = prompt.length;
+    let ins = text;
     let caret = text.length;
     if (how === "cursor") {
-      const el = textRef.current;
-      const pos = Math.min(el?.selectionEnd ?? prompt.length, prompt.length);
-      const before = prompt.slice(0, pos);
-      const after = prompt.slice(pos);
-      const head = before + (before && !before.endsWith("\n") ? "\n" : "") + text;
-      next = head + (after && !after.startsWith("\n") ? "\n" : "") + after;
-      caret = head.length;
+      from = to = Math.min(el?.selectionEnd ?? prompt.length, prompt.length);
+      const before = prompt.slice(0, from);
+      const after = prompt.slice(from);
+      const lead = before && !before.endsWith("\n") ? "\n" : "";
+      ins = lead + text + (after && !after.startsWith("\n") ? "\n" : "");
+      caret = from + lead.length + text.length;
+    }
+    const next = prompt.slice(0, from) + ins + prompt.slice(to);
+    if (el && !coarsePointer()) {
+      el.focus();
+      el.setSelectionRange(from, to);
+      let native = false;
+      try {
+        native = typeof document.execCommand === "function" && document.execCommand("insertText", false, ins);
+      } catch {
+        native = false;
+      }
+      if (native && el.value === next) {
+        el.setSelectionRange(caret, caret);
+        return;
+      }
     }
     setPrompt(next);
-    if (coarsePointer()) return;
+    // The caret lands right after the template on every device; only the focus is desktop-only.
     requestAnimationFrame(() => {
-      const el = textRef.current;
-      if (!el) return;
-      el.focus();
-      el.setSelectionRange(caret, caret);
+      const box = textRef.current;
+      if (!box) return;
+      box.setSelectionRange(caret, caret);
+      if (!coarsePointer()) box.focus();
     });
   };
 
