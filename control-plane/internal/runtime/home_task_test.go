@@ -14,9 +14,9 @@ import (
 func efsFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	prev := isMountPoint
-	isMountPoint = func(string) (bool, error) { return true, nil }
-	t.Cleanup(func() { isMountPoint = prev })
+	prev := isEFSMount
+	isEFSMount = func(string) (bool, error) { return true, nil }
+	t.Cleanup(func() { isEFSMount = prev })
 	for _, id := range []string{"M-1", "M-2"} {
 		home := filepath.Join(root, "home", id)
 		for name := range homeKeep {
@@ -156,7 +156,7 @@ func TestEFSHomeOpRefusesBeforeRemovingAnything(t *testing.T) {
 // there would succeed on nothing and report a cleaned home.
 func TestEFSHomeOpRefusesWhenTheRootIsNotAMount(t *testing.T) {
 	root := efsFixture(t)
-	isMountPoint = func(string) (bool, error) { return false, nil }
+	isEFSMount = func(string) (bool, error) { return false, nil }
 	err := RunEFSHomeOp(context.Background(), root, "destroy", "M-1")
 	if HomeOpExitCode(err) != HomeOpExitRefused {
 		t.Fatalf("unmounted root: err = %v, want a refusal", err)
@@ -179,13 +179,107 @@ func TestEFSHomeOpRefusesALinkedHome(t *testing.T) {
 	assertUntouched(t, root, "M-2")
 }
 
-// The real mount detection: a temporary directory is not a mount, / is.
-func TestMountPointDetection(t *testing.T) {
-	if ok, err := mountPoint(t.TempDir()); err != nil || ok {
+// The real mount detection: a temporary directory is not a mount; a mount that is not NFS
+// (a tmpfs left at the path) is refused too, not mistaken for the file system.
+func TestEFSMountDetection(t *testing.T) {
+	if ok, err := efsMount(t.TempDir()); err != nil || ok {
 		t.Errorf("a temp dir reads as a mount (%v, %v)", ok, err)
 	}
-	if _, err := mountPoint(filepath.Join(t.TempDir(), "absent")); err == nil {
+	if _, err := efsMount(filepath.Join(t.TempDir(), "absent")); err == nil {
 		t.Error("an absent directory raised no error")
+	}
+	for _, p := range []string{"/dev", "/proc", "/sys"} {
+		if ok, err := efsMount(p); ok {
+			t.Errorf("%s reads as the EFS mount (%v)", p, err)
+		}
+	}
+}
+
+// A link above the member's directory — /home itself — is refused as well: resolving it
+// would hand the removal a different tree.
+func TestEFSHomeOpRefusesALinkedAncestor(t *testing.T) {
+	root := efsFixture(t)
+	if err := os.Rename(filepath.Join(root, "home"), filepath.Join(root, "real-home")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "claude-config"), filepath.Join(root, "home")); err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range []string{"repos", "clean", "destroy"} {
+		if err := RunEFSHomeOp(context.Background(), root, op, "M-1"); HomeOpExitCode(err) != HomeOpExitRefused {
+			t.Errorf("%s under a linked /home = %v, want a refusal", op, err)
+		}
+	}
+	if got := entries(t, filepath.Join(root, "claude-config", "M-1")); len(got) != 1 {
+		t.Errorf("claude-config reached through the link: %v", got)
+	}
+}
+
+// A link inside the home is removed as a link; what it points at stays.
+func TestEFSHomeOpRemovesNestedLinksNotTheirTargets(t *testing.T) {
+	root := efsFixture(t)
+	if err := os.Symlink(filepath.Join(root, "home", "M-2"), filepath.Join(root, "home", "M-1", "repos", "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../M-2", filepath.Join(root, "home", "M-1", "up")); err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range []string{"repos", "clean", "destroy"} {
+		if err := RunEFSHomeOp(context.Background(), root, op, "M-1"); err != nil {
+			t.Fatalf("%s: %v", op, err)
+		}
+		assertUntouched(t, root, "M-2")
+	}
+}
+
+// The directory is checked and then removed through the handle the check opened. Swapping
+// the path for a link to another member's home in between changes nothing: the removal
+// still lands in the directory that was checked, wherever it has been moved.
+func TestEFSHomeOpFollowsTheHandleNotThePath(t *testing.T) {
+	for _, op := range []string{"repos", "clean", "destroy"} {
+		root := efsFixture(t)
+		moved := filepath.Join(root, "moved-M-1")
+		homeOpOpened = func() {
+			if err := os.Rename(filepath.Join(root, "home", "M-1"), moved); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(root, "home", "M-2"), filepath.Join(root, "home", "M-1")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		err := RunEFSHomeOp(context.Background(), root, op, "M-1")
+		homeOpOpened = func() {}
+		if err != nil {
+			t.Fatalf("%s: %v", op, err)
+		}
+		assertUntouched(t, root, "M-2")
+		if op != "destroy" {
+			if got := entries(t, moved); slices.Contains(got, "repos") {
+				t.Errorf("%s: the checked directory kept repos: %v", op, got)
+			}
+		}
+	}
+}
+
+// Destroy checks both directories before it removes either: a claude-config it must refuse
+// leaves the home in place, so "refused, removed nothing" (exit 2) stays true.
+func TestEFSHomeOpDestroyRefusesBeforeRemovingEither(t *testing.T) {
+	root := efsFixture(t)
+	claude := filepath.Join(root, "claude-config", "M-1")
+	if err := os.RemoveAll(claude); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "claude-config", "M-2"), claude); err != nil {
+		t.Fatal(err)
+	}
+	err := RunEFSHomeOp(context.Background(), root, "destroy", "M-1")
+	if HomeOpExitCode(err) != HomeOpExitRefused {
+		t.Fatalf("destroy with a linked claude-config = %v, want a refusal", err)
+	}
+	want := append(keepNames(), ".bashrc", ".cache", "repos")
+	slices.Sort(want)
+	if got := entries(t, filepath.Join(root, "home", "M-1")); !slices.Equal(got, want) {
+		t.Errorf("the home went although destroy was refused: %v", got)
 	}
 }
 

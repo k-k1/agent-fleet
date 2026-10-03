@@ -1362,20 +1362,25 @@ native ではそれがホームだが、AWS では CP タスクの空の `/tmp` 
 **追記（2026-10-03・#1260）: Fargate にも削除を走らせる場所ができた。** スタックが単発のタスク（`30-ingress` の
 `HomeOpsTaskDef`）を宣言し、EFS のルートを uid 0 でマウントして CP のイメージの `af-cp efs-home-op` を走らせる。
 `homeKeep` の定義は 1 つのまま。CP は `ecs:RunTask`（このクラスタのこのファミリーだけに許す `CpHomeOpsPolicy`）で
-起動し、終了コードを `DescribeTasks` で読む。`startedBy=af-home/<membership>` によって ECS 自体が実行中のタスクの
-記録になり、CP が再起動しても、実行中は Start も 2 つ目の操作も断る。メンバーのアクセスポイントではなくルートを
+起動し、終了コードを `DescribeTasks` で読む。実行中のタスクの記録は、`RunTask` の前に書き、その後は ARN を持つ
+パラメータ `/af-ws/<workspace>/home-task` である（RunTask・ListTasks・DescribeTasks は結果整合で、GetParameter は
+そうではない）。そのため CP が再起動しても、走っているかもしれない間は Start も 2 つ目の操作も断る。ワークスペース
+自身のタスクの終了は、停止中にも減るサービスの実行数ではなく、タスクの `LastStatus` で待つ。メンバーのアクセスポイントではなくルートを
 使うのは、タスク定義のボリュームは実行ごとに差し替えられず、uid 1000 では読み取り専用のツールチェーンの木を消せず、
 破棄ではアクセスポイント自身のルートを消すからだ。閉じ込めはコマンド側で行う（1 要素のメンバーシップ ID・本物の
 マウント・`/home/<id>` と `/claude-config/<id>` の下だけ）。タスクは数分かかるので、メンバーの作り直しとホームの
 掃除は `starting` で応答し、停止 → タスク → 起動をライフサイクルのリースの下で後から行う。管理者のホームの掃除と
 破棄は 202 で応答し、タスクが終わった時点で監査の結果を書く。破棄は EFS の 2 つのディレクトリを消すようになり、
 消せなかったものとして返さない。タスクが失敗したら行を残し、やり直しでもう一度走らせる。タスクの無いスタックは
-これまでどおり断る。コード: `control-plane/internal/runtime/runtime_ecs_home_task.go`・`home_task.go`・
+これまでどおり断り、`ecs-ec2`（その破棄はこのアダプタのものを呼ぶ）はこれを使わない。タスクの後の段——メンバーの
+起動・監査の結果・破棄での行の削除——は CP のプロセスにあり、タスクの途中で再起動すると失われる。手で終える方法は
+ガイドにある。コード: `control-plane/internal/runtime/runtime_ecs_home_task.go`・`home_task.go`・
 `control-plane/workspace_handlers.go`（`memberHomeWipe`）・`control-plane/workspace_lifecycle.go`。
 
 **追記（2026-10-03・#1536 #1537 #1538）: `ecs-ec2` でも同じタスク・再起動を越える失敗・費用タグ。** `ecs-ec2` の
-ランタイムは Fargate のアダプタの上に作られているので、破棄は `base.Destroy` 経由ですでにこのタスクを動かしていたが、
-管理者の要求の中で、残すものの一覧（keep）を消さずにいた。タスクは `/home-keep/<id>` も消すようになり、`ecs-ec2` の
+ランタイムは Fargate のアダプタの上に作られ、破棄は `base.Destroy` で終わるので、まずはその base でタスクを無効に
+していた。破棄が管理者の要求の中で待たれ、タスクが残すものの一覧（keep）を知らなかったからだ。どちらも扱うように
+なったので無効化はやめた。タスクは `/home-keep/<id>` も消すようになり、`ecs-ec2` の
 破棄も `ecs` と同じく 202 で応答する（`runtime.DestroyInBackground`。自前の作り直し・掃除は要求の中に収まるまま）。
 消せなかったものとして返すのは、タスクが消さなかったディレクトリだけ。IAM はそのための変更が無い（同じファミリー・
 同じクラスタ）。メンバーの作り直し・掃除が後半で失敗したら、CP のメモリではなく `workspace_auto_stop`（kind

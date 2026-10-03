@@ -14,19 +14,25 @@ import (
 	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
 )
 
-// fakeTasks is the home task's ECS port. A started task reports RUNNING for runningPolls
-// reads and then STOPPED with exitCode (nil = it never ran the command).
+// fakeTasks is the home task's ECS port. A started task is MISSING for missingPolls reads
+// (RunTask's eventual consistency), RUNNING for runningPolls, then STOPPED with exitCode
+// (nil = it never ran the command). The workspace's own task, listed by its family, is
+// STOPPING for wsStoppingPolls reads and STOPPED after.
 type fakeTasks struct {
-	inflight     []string // what ListTasks answers for the member's startedBy
-	runs         []*ecs.RunTaskInput
-	runFailure   string
-	runningPolls int
-	exitCode     *int32
-	stoppedWhy   string
-	lists        []*ecs.ListTasksInput
+	inflight        []string // what ListTasks answers for the member's startedBy
+	runs            []*ecs.RunTaskInput
+	runFailure      string
+	missingPolls    int
+	runningPolls    int
+	exitCode        *int32
+	stoppedWhy      string
+	wsStoppingPolls int
+	lists           []*ecs.ListTasksInput
 	// onRun sees the moment of the RunTask, for the ordering checks.
 	onRun func()
 }
+
+const fakeWSTask = "arn:task/ws-1"
 
 func (f *fakeTasks) RunTask(_ context.Context, in *ecs.RunTaskInput, _ ...func(*ecs.Options)) (*ecs.RunTaskOutput, error) {
 	f.runs = append(f.runs, in)
@@ -40,6 +46,18 @@ func (f *fakeTasks) RunTask(_ context.Context, in *ecs.RunTaskInput, _ ...func(*
 }
 
 func (f *fakeTasks) DescribeTasks(_ context.Context, in *ecs.DescribeTasksInput, _ ...func(*ecs.Options)) (*ecs.DescribeTasksOutput, error) {
+	if in.Tasks[0] == fakeWSTask {
+		t := ecstypes.Task{TaskArn: aws.String(fakeWSTask), LastStatus: aws.String("STOPPED")}
+		if f.wsStoppingPolls > 0 {
+			f.wsStoppingPolls--
+			t.LastStatus = aws.String("DEACTIVATING")
+		}
+		return &ecs.DescribeTasksOutput{Tasks: []ecstypes.Task{t}}, nil
+	}
+	if f.missingPolls > 0 {
+		f.missingPolls--
+		return &ecs.DescribeTasksOutput{Failures: []ecstypes.Failure{{Arn: aws.String(in.Tasks[0]), Reason: aws.String("MISSING")}}}, nil
+	}
 	t := ecstypes.Task{TaskArn: aws.String(in.Tasks[0]), LastStatus: aws.String("RUNNING")}
 	if f.runningPolls > 0 {
 		f.runningPolls--
@@ -53,6 +71,13 @@ func (f *fakeTasks) DescribeTasks(_ context.Context, in *ecs.DescribeTasksInput,
 
 func (f *fakeTasks) ListTasks(_ context.Context, in *ecs.ListTasksInput, _ ...func(*ecs.Options)) (*ecs.ListTasksOutput, error) {
 	f.lists = append(f.lists, in)
+	if in.Family != nil {
+		// The workspace's own task: listed under desired STOPPED once it is being stopped.
+		if in.DesiredStatus == ecstypes.DesiredStatusStopped {
+			return &ecs.ListTasksOutput{TaskArns: []string{fakeWSTask}}, nil
+		}
+		return &ecs.ListTasksOutput{}, nil
+	}
 	return &ecs.ListTasksOutput{TaskArns: f.inflight}, nil
 }
 
@@ -60,7 +85,11 @@ func exit(code int32) *int32 { return &code }
 
 // newHomeTaskECS is newTestECS on a stack that declares the home-ops task.
 func newHomeTaskECS(fe *fakeECS, ff *fakeEFS, ft *fakeTasks) *ecsRuntime {
-	rt := newTestECS(fe, ff, &fakeSSM{})
+	return newHomeTaskECSWith(fe, ff, &fakeSSM{}, ft)
+}
+
+func newHomeTaskECSWith(fe *fakeECS, ff *fakeEFS, fs *fakeSSM, ft *fakeTasks) *ecsRuntime {
+	rt := newTestECS(fe, ff, fs)
 	rt.cfg.homeTask = "af-stack-home-ops"
 	rt.tasks = ft
 	rt.homeTaskPoll = time.Millisecond
@@ -100,15 +129,16 @@ func TestECSHomePortsFollowTheStack(t *testing.T) {
 func TestECSWipeHomeRunsTheTaskAfterTheWorkspaceTaskIsGone(t *testing.T) {
 	fe, ft := &fakeECS{}, &fakeTasks{runningPolls: 2, exitCode: exit(0)}
 	rt := newHomeTaskECS(fe, &fakeEFS{}, ft)
+	// The service already counts no running task, but the old task is still STOPPING (its
+	// stop timeout): only its own LastStatus says when it has let go of the home.
 	fe.services[rt.name] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
-	fe.drainingPolls = 3
 	ft.onRun = func() {
-		if fe.drainingPolls != 0 {
-			t.Errorf("the home task started while the workspace task was still draining (%d polls left)", fe.drainingPolls)
+		if ft.wsStoppingPolls != 0 {
+			t.Errorf("the home task started while the workspace task was still stopping (%d polls left)", ft.wsStoppingPolls)
 		}
 	}
 	for _, what := range []HomeWipe{HomeWipeRepos, HomeWipeClean} {
-		fe.drainingPolls = 3
+		ft.wsStoppingPolls = 3
 		ft.runs = nil
 		if err := WipeHome(context.Background(), rt, what); err != nil {
 			t.Fatalf("WipeHome(%s): %v", what, err)
@@ -172,8 +202,18 @@ func TestECSHomeTaskInFlightRefusesWipeAndStart(t *testing.T) {
 	if len(ft.runs) != 0 || len(fe.regCalls) != 0 || len(fe.createCalls) != 0 {
 		t.Errorf("refused, but runs=%d registrations=%d creates=%d", len(ft.runs), len(fe.regCalls), len(fe.createCalls))
 	}
-	if len(ft.lists) == 0 || aws.ToString(ft.lists[0].StartedBy) != "af-home/M-1" || ft.lists[0].Family != nil {
-		t.Errorf("ListTasks must filter on startedBy alone (ECS refuses it combined), got %+v", ft.lists)
+	byStarter := 0
+	for _, l := range ft.lists {
+		if l.StartedBy == nil {
+			continue
+		}
+		byStarter++
+		if aws.ToString(l.StartedBy) != "af-home/M-1" || l.Family != nil || l.ServiceName != nil || l.DesiredStatus != "" {
+			t.Errorf("ListTasks must filter on startedBy alone (ECS refuses it combined), got %+v", l)
+		}
+	}
+	if byStarter == 0 {
+		t.Error("no ListTasks by startedBy")
 	}
 	ft.inflight = nil
 	if err := rt.HomeWipeBlocked(context.Background()); err != nil {
@@ -226,16 +266,16 @@ func TestECSQueuedHomeWipeReadsAsStarting(t *testing.T) {
 func TestECSDestroyRemovesTheEFSHomeThroughTheTask(t *testing.T) {
 	fe, ff, ft := &fakeECS{}, &fakeEFS{}, &fakeTasks{exitCode: exit(0)}
 	rt := newHomeTaskECS(fe, ff, ft)
-	// Stopped a moment ago: its task is still draining for the next two reads.
+	// Stopped a moment ago: its task is still stopping for the next two reads.
 	fe.services[rt.name] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
-	fe.drainingPolls = 2
+	ft.wsStoppingPolls = 2
 	ff.aps = []efstypes.AccessPointDescription{
 		{AccessPointId: aws.String("fsap-home"), RootDirectory: &efstypes.RootDirectory{Path: aws.String("/home/M-1")},
 			Tags: []efstypes.Tag{{Key: aws.String("af-membership"), Value: aws.String("M-1")}}},
 	}
 	ft.onRun = func() {
-		if fe.drainingPolls != 0 {
-			t.Error("the destroy task ran while the workspace task was still draining")
+		if ft.wsStoppingPolls != 0 {
+			t.Error("the destroy task ran while the workspace task was still stopping")
 		}
 		if len(fe.deleteCalls) != 1 || len(ff.aps) != 0 {
 			t.Errorf("the destroy task ran before the service (%d deletes) and access points (%d left) were gone",
@@ -260,6 +300,77 @@ func TestECSDestroyRemovesTheEFSHomeThroughTheTask(t *testing.T) {
 	}
 }
 
+// R2: right after RunTask, DescribeTasks may not know the task yet. That is not the end of
+// it: the wait keeps polling, the marker keeps the home refused meanwhile, and only the
+// task's own STOPPED ends it.
+func TestECSHomeTaskMissingRightAfterRunTaskKeepsWaiting(t *testing.T) {
+	fs, ft := &fakeSSM{}, &fakeTasks{missingPolls: 3, runningPolls: 1, exitCode: exit(0)}
+	rt := newHomeTaskECSWith(&fakeECS{}, &fakeEFS{}, fs, ft)
+	marker := rt.homeTaskMarker()
+	ft.onRun = func() {
+		if fs.values[marker] != homeTaskMarkerPending {
+			t.Errorf("RunTask before the marker was written (marker = %q)", fs.values[marker])
+		}
+	}
+	if err := rt.WipeHome(context.Background(), HomeWipeRepos); err != nil {
+		t.Fatalf("WipeHome with an eventually consistent DescribeTasks: %v", err)
+	}
+	if _, ok := fs.values[marker]; ok {
+		t.Error("the marker outlived a task seen STOPPED")
+	}
+}
+
+// The marker is what a restarted CP (or another replica) finds. While its task is not
+// seen stopped — or, just after RunTask, not seen at all — Start and a second operation are
+// refused even though ListTasks lists nothing. A task seen STOPPED, or unknown past the
+// grace, releases it.
+func TestECSHomeTaskMarkerRefusesUntilItsTaskStops(t *testing.T) {
+	fs := &fakeSSM{}
+	ft := &fakeTasks{missingPolls: 1, runningPolls: 1, exitCode: exit(0)} // ListTasks: nothing
+	fe := &fakeECS{}
+	rt := newHomeTaskECSWith(fe, &fakeEFS{}, fs, ft)
+	marker := rt.homeTaskMarker()
+	fs.values = map[string]string{marker: "arn:task/home-1"}
+	for i, want := range []error{ErrHomeTaskInFlight, ErrHomeTaskInFlight, nil} { // MISSING, RUNNING, STOPPED
+		if err := rt.Start(context.Background()); !errors.Is(err, want) || (want == nil && err != nil) {
+			t.Fatalf("Start #%d = %v, want %v", i+1, err, want)
+		}
+	}
+	if _, ok := fs.values[marker]; ok {
+		t.Error("a marker whose task stopped was kept")
+	}
+
+	// Unknown to ECS past the grace: forgotten, so it no longer blocks.
+	fs.values[marker] = "arn:task/home-2"
+	fs.at = map[string]time.Time{marker: time.Now().Add(-homeTaskMissingGrace - time.Second)}
+	ft.missingPolls = 1
+	if err := rt.HomeWipeBlocked(context.Background()); err != nil {
+		t.Errorf("a marker past the grace whose task ECS no longer knows = %v, want nil", err)
+	}
+	// A marker written before a RunTask whose answer never came blocks for its own grace.
+	fs.values[marker] = homeTaskMarkerPending
+	fs.at[marker] = time.Now()
+	if err := rt.HomeWipeBlocked(context.Background()); !errors.Is(err, ErrHomeTaskInFlight) {
+		t.Errorf("a fresh pending marker = %v, want ErrHomeTaskInFlight", err)
+	}
+	fs.at[marker] = time.Now().Add(-homeTaskPendingGrace - time.Second)
+	if err := rt.HomeWipeBlocked(context.Background()); err != nil {
+		t.Errorf("a pending marker past its grace = %v, want nil", err)
+	}
+}
+
+// A task ECS never placed leaves no marker behind to block the next attempt.
+func TestECSHomeTaskNotPlacedDropsTheMarker(t *testing.T) {
+	fs, ft := &fakeSSM{}, &fakeTasks{runFailure: "RESOURCE:ENI"}
+	rt := newHomeTaskECSWith(&fakeECS{}, &fakeEFS{}, fs, ft)
+	if err := rt.WipeHome(context.Background(), HomeWipeClean); err == nil {
+		t.Fatal("WipeHome with a refused RunTask succeeded")
+	}
+	if _, ok := fs.values[rt.homeTaskMarker()]; ok {
+		t.Error("a RunTask that placed nothing left the home refused")
+	}
+}
+
 // ecs-ec2 keeps the home on EBS, but the Claude state and the keep-list on EFS. With the
 // stack's task its Destroy removes both directories through it, reports neither as a
 // leftover, and says it takes minutes; an access point rooted anywhere else is still
@@ -269,7 +380,19 @@ func TestECSEC2DestroyRemovesTheEFSDirectoriesThroughTheTask(t *testing.T) {
 	if DestroyInBackground(h.rt) {
 		t.Error("ecs-ec2 without the home task claims a background Destroy")
 	}
+	// Through the factory, as the CP builds it: the stack sets AF_ECS_HOME_TASK on both
+	// runtimes, and the base the pool adapter uses as a library keeps it.
+	f := h.factory()
 	ft := &fakeTasks{exitCode: exit(0)}
+	f.base.cfg.homeTask = "af-stack-home-ops"
+	f.base.tasks = ft
+	if ops := HomeOperationsOf(f); ops.Background || !ops.DestroyBackground {
+		t.Errorf("ecs-ec2 home operations = %+v, want only Destroy in the background", ops)
+	}
+	built := f.New(Workspace{ContainerName: "af-ws-acme-alice", MembershipID: "M-1"}, "", nil).(*ecsEC2Runtime)
+	if !built.base.homePortsReady() {
+		t.Fatal("the ecs-ec2 runtime's base dropped the stack's home task; its EFS directories would stay")
+	}
 	h.rt.base.cfg.homeTask = "af-stack-home-ops"
 	h.rt.base.tasks = ft
 	h.rt.base.homeTaskPoll = time.Millisecond

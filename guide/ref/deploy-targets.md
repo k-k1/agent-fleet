@@ -71,7 +71,7 @@ files. A Fargate task takes a few minutes to start, so these finish after the bu
 answered. A member's Recreate and Clean home show the starting dialog ("removing what Recreate /
 Clean home deletes") until the workspace is up again; if the removal fails the workspace stays
 stopped and the reason is shown, to the member and on their row in the administrator's member
-list, until the next start (a Control Plane restart in between does not lose it). An
+list, until the next start (a Control Plane restart after the failure does not lose it). An
 administrator's Clean home and **Destroy workspace** answer straight away, and their outcome is
 written to the audit log when the task has finished. Destroy now removes the member's EFS
 directories as well, instead of listing them as left over. A stack from before this task (no
@@ -79,6 +79,12 @@ directories as well, instead of listing them as left over. A stack from before t
 EBS, but the Claude state and the kept logins and connections are on EFS: **Destroy workspace**
 removes those with the same task, so there too it answers straight away and writes its outcome
 to the audit log.
+While a task runs, a start and any second operation on that home are refused, even across a
+Control Plane restart. What a restart during the task does lose is the step after it: a member's
+workspace is not started again (press Start once the task has finished), the reason for a failure
+is not shown, a Destroy leaves the workspace row (run Destroy again; it is safe to repeat), and
+the audit log has the request but no outcome. The task's own log (the workspace log group, stream
+prefix `home-ops`) says how it ended.
 
 ⁸ Deletes the member's home volume and its hibernation copies; the next start builds a
 fresh home, as for a new member. On this target the logins, connections and Claude state
