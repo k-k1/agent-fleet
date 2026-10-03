@@ -410,12 +410,19 @@ Resources:
                   StringEquals:
                     aws:RequestTag/af-pool: !Ref Cluster
               # RunInstances: the slot grow, and the engine boxes, which an instant CreateFleet
-              # launches with this role's RunInstances permission. The instance is the
-              # fence. Every other resource a launch names (subnet, security group, network
-              # interface, launch template, image, the root volume it creates, a spot request,
-              # ...) is in Ec2LaunchSupport: none of them carries af-pool, and listing them
-              # one by one would turn a type AWS adds to RunInstances into a silent
-              # AccessDenied on every slot grow.
+              # launches with this role's RunInstances permission. Three resource types are
+              # fenced: the instance (af-pool), the image and the snapshot (both below), because
+              # an image or a block-device snapshot is what would let a compromised CP boot a
+              # slot of its own from a copy of someone else's volume and read it over
+              # SendCommand (#1522). Every other type (subnet, security group, network
+              # interface, launch template, the root volume it creates, a spot request, ...)
+              # is in Ec2LaunchSupport. A foreign launch template also carries user data, network
+              # settings and metadata options; none is constrained by IAM here, and a request
+              # on this pool's own template can set each of them directly, so a foreign one
+              # grants nothing more. Its image, snapshots and instance profile are fenced on
+              # their own (PassRole names only this deployment's roles).
+              # Listing the support types one by one would turn a type AWS adds to
+              # RunInstances into a silent AccessDenied on every slot grow.
               - Sid: Ec2RunInPool
                 Effect: Allow
                 Action: ec2:RunInstances
@@ -423,18 +430,58 @@ Resources:
                 Condition:
                   StringEquals:
                     aws:RequestTag/af-pool: !Ref Cluster
-              # Not a fence, and it leaves one path open: a launch may name any image or any
-              # snapshot in a block device mapping, so a compromised CP can boot a slot of its
-              # own from a copy of another volume and read it there (#1522). The image the
-              # launch template names is Amazon's and carries no tag to test.
-              # The excluded ARN is every instance in every region and account, not this
-              # region's: NotResource matches everything it does not name, so excluding only
-              # this region's instances would let a launch in another region create an
-              # untagged instance through this statement alone.
+              # The image: Amazon's, by either of two keys the Service Authorization Reference
+              # lists for image (ec2:Owner = amazon | aws-marketplace | account id; ec2:Public).
+              # Every AMI a launch uses is an Amazon ECS-optimized one from a public SSM
+              # parameter (40-ec2-pool SlotAmiId / SlotAmiIdArm64, the engines' resolve:ssm,
+              # which resolves at launch and so has no id to name here). Two statements,
+              # because a launch is denied only if both keys read differently from the
+              # documented values; 40-ec2-pool also names the slot AMIs exactly.
+              # A public image is no leak: its data is public already, and code on a slot of
+              # this pool is what SendCommand gives this role anyway. What stays out is a
+              # private image of this account, e.g. one registered from a home snapshot.
+              - Sid: Ec2RunAmazonImage
+                Effect: Allow
+                Action: ec2:RunInstances
+                Resource: !Sub "arn:aws:ec2:${AWS::Region}::image/*"
+                Condition:
+                  StringEquals:
+                    ec2:Owner: amazon
+              - Sid: Ec2RunPublicImage
+                Effect: Allow
+                Action: ec2:RunInstances
+                Resource: !Sub "arn:aws:ec2:${AWS::Region}::image/*"
+                Condition:
+                  StringEquals:
+                    ec2:Public: "true"
+              # Snapshots: no launch names one of its own (no block device mapping in the
+              # calls; the templates' mappings have no SnapshotId), but whether IAM evaluates
+              # the AMI's backing snapshot is not documented. So this is the negated form: an
+              # absent ec2:Owner, Amazon's owner, or no snapshot evaluated at all still
+              # launches; what is refused is a snapshot this account owns - another
+              # deployment's hibernated home or backup. A slot AMI this account owns would be
+              # refused too, if IAM does evaluate its snapshot (40-ec2-pool SlotAmiId).
+              - Sid: Ec2RunForeignOwnedSnapshot
+                Effect: Allow
+                Action: ec2:RunInstances
+                Resource: !Sub "arn:aws:ec2:${AWS::Region}::snapshot/*"
+                Condition:
+                  StringNotEquals:
+                    # !Sub, not !Ref: harness/setup.sh resolves only !Sub pseudo-parameters.
+                    ec2:Owner: !Sub "${AWS::AccountId}"
+              # The excluded ARNs are every instance, image and snapshot in every region and
+              # account, not this region's: NotResource matches everything it does not name,
+              # so excluding only this region's would let a launch in another region create
+              # an untagged instance, or boot from any image, through this statement alone.
               - Sid: Ec2LaunchSupport
                 Effect: Allow
                 Action: ec2:RunInstances
-                NotResource: "arn:aws:ec2:*:*:instance/*"
+                NotResource:
+                  - "arn:aws:ec2:*:*:instance/*"
+                  # Image and snapshot ARNs have no account field (the Service
+                  # Authorization Reference format), so none is written here.
+                  - "arn:aws:ec2:*::image/*"
+                  - "arn:aws:ec2:*::snapshot/*"
               # --- Tag writes: the fence under the SendCommand fence ---
               # SsmSlotCommandInstances trusts af-pool + af-role=slot, so whoever may write
               # those two tags decides where this role gets a root shell. An unconditioned

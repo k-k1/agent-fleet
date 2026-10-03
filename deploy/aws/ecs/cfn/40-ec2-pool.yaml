@@ -21,7 +21,10 @@ Parameters:
     Default: /aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id
     Description: ECS-optimized AMI. Resolved at stack update, so re-deploying this
       stack is how slots get patched (the one operational cost the EC2 launch type
-      really does add - ADR 0045 decision 7).
+      really does add - ADR 0045 decision 7). Keep it an Amazon-published image. The
+      CP role may launch only Amazon's public images and the two named here, and an image
+      this account owns may still be refused on its snapshot (#1522, 20-platform
+      Ec2RunForeignOwnedSnapshot).
   SlotAmiIdArm64:
     Type: String
     Default: ""
@@ -119,6 +122,41 @@ Resources:
             Condition:
               StringEquals:
                 iam:PassedToService: ec2.amazonaws.com
+
+  # The slot AMIs by exact ARN. 20-platform admits Amazon's public images by ec2:Owner /
+  # ec2:Public and nothing else (#1522); these make a slot grow independent of how IAM reads
+  # those two keys, and admit an image this account owns if an operator points SlotAmiId at
+  # one. Such an image's own snapshot is still refused by 20-platform's snapshot statement if
+  # IAM evaluates it there - see SlotAmiId.
+  # Deployed before 20-platform by update.sh, like the PassRole above, so the exact grant
+  # exists before the wide one goes.
+  CpRunSlotImagePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "af-${AWS::StackName}-cp-run-slot-image"
+      Roles:
+        - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-CpTaskRoleArn" } ] ]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: RunSlotImage
+            Effect: Allow
+            Action: ec2:RunInstances
+            Resource: !Sub "arn:aws:ec2:${AWS::Region}::image/${SlotAmiId}"
+  CpRunSlotImageArm64Policy:
+    Type: AWS::IAM::Policy
+    Condition: HasArm64Ami
+    Properties:
+      PolicyName: !Sub "af-${AWS::StackName}-cp-run-slot-image-arm64"
+      Roles:
+        - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-CpTaskRoleArn" } ] ]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: RunSlotImageArm64
+            Effect: Allow
+            Action: ec2:RunInstances
+            Resource: !Sub "arn:aws:ec2:${AWS::Region}::image/${SlotAmiIdArm64}"
 
   # --- SG for the instance itself. No ingress at all: the workspace task has its own
   # ENI and the ws SG (awsvpc), so nothing needs to reach the host. Egress covers the
