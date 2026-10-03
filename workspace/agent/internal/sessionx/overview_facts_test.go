@@ -12,6 +12,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/branchpr"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -27,11 +28,12 @@ import (
 // would start a background refresh that reads the credential store and calls GitHub, and the
 // port scan would attribute this machine's real listeners. session_links_test.go stubs them.
 func TestMain(m *testing.M) {
-	overviewFactsRead = func(session.Meta) ([]transcript.Turn, bool) { return nil, false }
-	lookupPRs = func([]branchpr.Key, time.Time) map[branchpr.Key]*branchpr.PR { return nil }
-	lookupPorts = func(time.Time) map[string][]int { return nil }
-	_ = os.Unsetenv("AF_CODEX_APP_SERVER_ADDR")
-	os.Exit(guardTestProcess(m))
+	os.Exit(testguard.Run(m, func() {
+		overviewFactsRead = func(session.Meta) ([]transcript.Turn, bool) { return nil, false }
+		lookupPRs = func([]branchpr.Key, time.Time) map[branchpr.Key]*branchpr.PR { return nil }
+		lookupPorts = func(time.Time) map[string][]int { return nil }
+		_ = os.Unsetenv("AF_CODEX_APP_SERVER_ADDR")
+	}))
 }
 
 func userTurn(text string) transcript.Turn { return transcript.Turn{Role: "user", Text: text} }

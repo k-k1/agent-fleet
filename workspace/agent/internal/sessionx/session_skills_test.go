@@ -310,6 +310,9 @@ func TestOpencodeSkills(t *testing.T) {
 func TestCursorSkills(t *testing.T) {
 	dir := t.TempDir()
 	name := "sk_cursor_scan"
+	// The advertised list is process-wide: without this the next -count round never sees the
+	// fallback.
+	t.Cleanup(func() { agents.PublishCommands(name, nil) })
 	writeFile(t, filepath.Join(dir, ".cursor", "commands", "probe.md"), "Say probe-ok.")
 	writeFile(t, filepath.Join(dir, ".cursor", "skills", "helper", "SKILL.md"),
 		"---\nname: helper\ndescription: 補助\n---\nbody")

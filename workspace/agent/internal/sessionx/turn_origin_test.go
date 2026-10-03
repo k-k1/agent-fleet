@@ -83,6 +83,7 @@ func TestInputSetsOriginFromTheBadge(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			freshPeerRate(t)
 			h, _ := useOriginFake(t, "origin_dst")
 			session.WriteMeta(session.Meta{Name: "origin_src", Dir: t.TempDir(), Kind: session.KindClaude})
 			rec := postInput(t, "origin_dst", tc.body)

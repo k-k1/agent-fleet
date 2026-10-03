@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 func postStopAfterTurn(t *testing.T, name, body string) *httptest.ResponseRecorder {
@@ -161,6 +163,7 @@ func TestCreateSessionCanArmStopAfterTurn(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
+	testguard.IsolateTmux(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
@@ -179,7 +182,7 @@ func TestCreateSessionCanArmStopAfterTurn(t *testing.T) {
 			do(t, srv, "POST", "/sessions", map[string]any{
 				"dir": home, "kind": "shell", "stop_after_turn": tc.arm,
 			}, http.StatusCreated, &created)
-			defer exec.Command("tmux", "kill-session", "-t", session.TmuxName(created.Name)).Run()
+			defer tmuxx.Cmd("kill-session", "-t", session.TmuxName(created.Name)).Run()
 
 			m, ok := session.ReadMeta(created.Name)
 			if !ok {

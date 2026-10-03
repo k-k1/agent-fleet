@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // These go through the REAL create handler, which the unit tests around them do not.
@@ -55,6 +57,7 @@ func spawnServer(t *testing.T) *spawnEnv {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
+	testguard.IsolateTmux(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
@@ -83,7 +86,7 @@ func spawnServer(t *testing.T) *spawnEnv {
 			if env.planted[m.Name] {
 				continue
 			}
-			_ = exec.Command("tmux", "kill-session", "-t", session.ExactTarget(session.TmuxName(m.Name))).Run()
+			_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(session.TmuxName(m.Name))).Run()
 		}
 	})
 	return env

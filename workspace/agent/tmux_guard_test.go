@@ -31,6 +31,11 @@ func scanAgentSources(t *testing.T, visit func(path, src string)) {
 			if d.Name() == "testdata" || d.Name() == "node_modules" {
 				return filepath.SkipDir
 			}
+			// Test-only code (TestEveryTestBinaryIsGuarded keeps it out of the product
+			// binary): its kill-server targets servers under its own scratch TMUX_TMPDIR.
+			if filepath.ToSlash(path) == "internal/testguard" {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
