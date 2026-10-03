@@ -57,6 +57,13 @@ type CP interface {
 	CountRunningInTenant(ctx context.Context, tenantID string) (int, error)
 	WorkspaceStateByMembership(ctx context.Context, membershipID string) (container, state string)
 	StopWorkspaceByMembership(ctx context.Context, membershipID string) error
+	// StopRemovedMemberWorkspace is StopWorkspaceByMembership for a removal: it re-reads
+	// the membership once it holds the workspace's locks and leaves the workspace alone
+	// (stopped=false, err=nil) when the person has been re-invited in the meantime.
+	StopRemovedMemberWorkspace(ctx context.Context, membershipID string) (stopped bool, err error)
+	// CloseMembershipConnections ends this CP's in-flight requests of a membership — the
+	// WebSockets and streams opened before it was removed — and reports how many.
+	CloseMembershipConnections(membershipID string) int
 	// ResumeSchedulesHeldByRemoval re-enables the schedules the scheduler paused because
 	// their owner had been removed, and only those; it returns how many it resumed.
 	ResumeSchedulesHeldByRemoval(ctx context.Context, membershipID string) (int, error)

@@ -701,6 +701,10 @@ type Schedule struct {
 	// ManualFirePending is set by run-now and read+cleared by the scheduler on the next
 	// fire to tag that run as manual (docs/log/38). Transient — not part of the schedule DTO.
 	ManualFirePending bool
+	// HeldByRemoval: the scheduler paused this row because its owner had been removed
+	// (issue #1087); a re-invite resumes it. Cleared by any change the owner makes. Not
+	// part of the schedule DTO.
+	HeldByRemoval bool
 }
 
 // ScheduleRun is one fire-attempt history row (docs/log/38 P3 get_schedule_runs).
@@ -1683,6 +1687,13 @@ type ScheduleStore interface {
 	// and the recomputed next_run, disabling the row (enabled=0) when next_run is ""
 	// (a spent "once"). The scheduler is the only caller, so no membership scoping.
 	RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, nextRun string, enabled bool, updatedAt string) error
+	// HoldScheduleForRemoval / ResumeScheduleHeldByRemoval are the two halves of member
+	// removal (issue #1087): the scheduler pauses a slot that came due while the owner
+	// was inactive, and a re-invite resumes it. Both are conditional single statements —
+	// the hold only while the membership is not active, the resume only while the row is
+	// still held — and every owner-side write clears the mark.
+	HoldScheduleForRemoval(ctx context.Context, id, lastRun, lastStatus, updatedAt string) (held bool, err error)
+	ResumeScheduleHeldByRemoval(ctx context.Context, id, membershipID, nextRun, updatedAt string) (resumed bool, err error)
 	// SetScheduleReuse persists the reuse ledger (P6): the current long-lived session,
 	// when it started, and the fire count since the last rotation. Only reuse schedules
 	// use it; the firer calls it, so no membership scoping.

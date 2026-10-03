@@ -954,11 +954,16 @@ func (a Admin) RemoveMembership(w http.ResponseWriter, r *http.Request) {
 	// disk, but nothing should keep serving it from memory for this membership.
 	a.cp.EvictMembershipCache(mem.ID)
 	a.cp.InvalidateTenantLogin()
+	// Requests already authorised for this membership — a terminal, an event stream, a
+	// shared preview's WebSocket — would otherwise outlive the removal; every other replica
+	// closes its own on the next removed-member sweep.
+	closed := a.cp.CloseMembershipConnections(mem.ID)
 	var detail, workspaceStop string
 	var leftovers []string
 	if !body.Purge {
 		workspaceStop = a.stopRemovedWorkspace(r.Context(), t.ID, caller.ID, ident.UserKey, mem.ID)
-		detail = "status=inactive (home kept); workspace stop " + workspaceStop
+		detail = "status=inactive (home kept); connections closed=" + strconv.Itoa(closed) +
+			"; workspace stop " + workspaceStop
 	} else {
 		leftovers, err = a.cp.DestroyWorkspaceByMembership(r.Context(), mem.ID)
 		if err != nil {
@@ -984,6 +989,10 @@ func (a Admin) RemoveMembership(w http.ResponseWriter, r *http.Request) {
 // the administrator's request must not hang on it. A variable so tests can shorten it.
 var RemovalStopWait = 10 * time.Second
 
+// errRestoredBeforeStop marks a removal stop that found the person re-invited by the time
+// it held the workspace's locks, and so stopped nothing.
+var errRestoredBeforeStop = errors.New("membership restored before the stop")
+
 // removalStopBudget bounds the background stop, retries included.
 const removalStopBudget = 10 * time.Minute
 
@@ -992,7 +1001,9 @@ const removalStopBudget = 10 * time.Minute
 var removalStopRetry = 2 * time.Second
 
 // stopRemovedWorkspace stops the workspace of a membership that was just deactivated and
-// says how that went: "none" (no workspace), "stopped", "failed: …" or "pending".
+// says how that went: "none" (no workspace), "stopped", "skipped: membership restored",
+// "failed: …" or "pending". Whatever happens here, the removed-member sweep stops a
+// workspace this leaves running (a CP restart mid-stop, a stop past its budget).
 //
 // Why removal stops it at all: every CP route a workspace can call already refuses an
 // inactive membership on the next request, but the container itself goes on running. It
@@ -1014,7 +1025,10 @@ func (a Admin) stopRemovedWorkspace(ctx context.Context, tenantID, actorID, targ
 		bctx, cancel := context.WithTimeout(ctx, removalStopBudget)
 		defer cancel()
 		for {
-			err := a.cp.StopWorkspaceByMembership(bctx, membershipID)
+			stopped, err := a.cp.StopRemovedMemberWorkspace(bctx, membershipID)
+			if err == nil && !stopped {
+				err = errRestoredBeforeStop
+			}
 			if !errors.Is(err, store.ErrSessionShareOwnerBusy) {
 				done <- err
 				return
@@ -1028,7 +1042,10 @@ func (a Admin) stopRemovedWorkspace(ctx context.Context, tenantID, actorID, targ
 		}
 	}()
 	outcome := func(err error) string {
-		if err != nil {
+		switch {
+		case errors.Is(err, errRestoredBeforeStop):
+			return "skipped: membership restored"
+		case err != nil:
 			return "failed: " + err.Error()
 		}
 		return "stopped"
@@ -1043,7 +1060,7 @@ func (a Admin) stopRemovedWorkspace(ctx context.Context, tenantID, actorID, targ
 	go func() {
 		err := <-done
 		status := http.StatusOK
-		if err != nil {
+		if err != nil && !errors.Is(err, errRestoredBeforeStop) {
 			status = http.StatusInternalServerError
 		}
 		if aerr := a.cp.Store().InsertAudit(ctx, store.AuditLog{

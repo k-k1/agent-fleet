@@ -3033,21 +3033,22 @@ const scheduleCols = `SELECT id, membership_id, tenant_id, owner_conv, spec_kind
 	wake_policy, session_mode, reuse_target, agent_kind, model, repo, worktree, new_branch, prompt,
 	overlap_policy, enabled, next_run, last_run, last_status, created_at, updated_at,
 	reuse_session, reuse_started_at, reuse_run_count, rotation, missing_target_policy,
-	manual_fire_pending, report, stop_after_run FROM schedule`
+	manual_fire_pending, report, stop_after_run, held_by_removal FROM schedule`
 
 func scanSchedule(row scanner) (Schedule, error) {
 	var s Schedule
-	var newBranch, enabled, manualFire, report, stopAfterRun int
+	var newBranch, enabled, manualFire, report, stopAfterRun, held int
 	err := row.Scan(&s.ID, &s.MembershipID, &s.TenantID, &s.OwnerConv, &s.SpecKind, &s.Spec, &s.SpecLabel, &s.TZ,
 		&s.WakePolicy, &s.SessionMode, &s.ReuseTarget, &s.AgentKind, &s.Model, &s.Repo, &s.Worktree, &newBranch, &s.Prompt,
 		&s.OverlapPolicy, &enabled, &s.NextRun, &s.LastRun, &s.LastStatus, &s.CreatedAt, &s.UpdatedAt,
 		&s.ReuseSession, &s.ReuseStartedAt, &s.ReuseRunCount, &s.Rotation, &s.MissingTargetPolicy,
-		&manualFire, &report, &stopAfterRun)
+		&manualFire, &report, &stopAfterRun, &held)
 	s.NewBranch = newBranch != 0
 	s.Enabled = enabled != 0
 	s.ManualFirePending = manualFire != 0
 	s.Report = report != 0
 	s.StopAfterRun = stopAfterRun != 0
+	s.HeldByRemoval = held != 0
 	return s, err
 }
 
@@ -3119,7 +3120,7 @@ func (s *SQL) UpdateSchedule(ctx context.Context, sc Schedule) error {
 		`UPDATE schedule SET owner_conv=?, spec_kind=?, spec=?, spec_label=?, tz=?, wake_policy=?,
 		   session_mode=?, reuse_target=?, agent_kind=?, model=?, repo=?, worktree=?, new_branch=?, prompt=?,
 		   overlap_policy=?, enabled=?, next_run=?, updated_at=?, rotation=?, missing_target_policy=?, report=?,
-		   stop_after_run=?
+		   stop_after_run=?, held_by_removal=0
 		 WHERE id=? AND membership_id=?`,
 		sc.OwnerConv, sc.SpecKind, sc.Spec, sc.SpecLabel, sc.TZ, sc.WakePolicy,
 		sc.SessionMode, sc.ReuseTarget, sc.AgentKind, sc.Model, sc.Repo, sc.Worktree, b2i(sc.NewBranch), sc.Prompt,
@@ -3142,7 +3143,7 @@ func (s *SQL) SetScheduleReuse(ctx context.Context, id, reuseSession, reuseStart
 
 func (s *SQL) SetScheduleEnabled(ctx context.Context, id, membershipID string, enabled bool, nextRun, updatedAt string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE schedule SET enabled=?, next_run=?, updated_at=? WHERE id=? AND membership_id=?`,
+		`UPDATE schedule SET enabled=?, next_run=?, updated_at=?, held_by_removal=0 WHERE id=? AND membership_id=?`,
 		b2i(enabled), nextRun, updatedAt, id, membershipID)
 	return err
 }
@@ -3156,9 +3157,41 @@ func (s *SQL) RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, n
 	// Clear manual_fire_pending on every fire: the run-now signal is consumed once the
 	// fire it requested has happened (the scheduler already read it to tag the run).
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE schedule SET last_run=?, last_status=?, next_run=?, enabled=?, updated_at=?, manual_fire_pending=0 WHERE id=?`,
+		`UPDATE schedule SET last_run=?, last_status=?, next_run=?, enabled=?, updated_at=?, manual_fire_pending=0, held_by_removal=0 WHERE id=?`,
 		lastRun, lastStatus, nextRun, b2i(enabled), updatedAt, id)
 	return err
+}
+
+// HoldScheduleForRemoval records a slot that came due while the owner's membership was
+// inactive: the fire is stamped as skipped and the row paused and marked held_by_removal,
+// in one statement that applies only while the membership is still not active. held=false
+// means the person was re-invited first, and nothing was written.
+func (s *SQL) HoldScheduleForRemoval(ctx context.Context, id, lastRun, lastStatus, updatedAt string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE schedule SET last_run=?, last_status=?, next_run='', enabled=0, updated_at=?,
+		   manual_fire_pending=0, held_by_removal=1
+		 WHERE id=? AND NOT EXISTS (SELECT 1 FROM membership m WHERE m.id=schedule.membership_id AND m.status='active')`,
+		lastRun, lastStatus, updatedAt, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// ResumeScheduleHeldByRemoval re-enables a row only while it still carries
+// held_by_removal, so an owner's pause landing between the caller's read and this write
+// wins. resumed=false means there was nothing to resume.
+func (s *SQL) ResumeScheduleHeldByRemoval(ctx context.Context, id, membershipID, nextRun, updatedAt string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE schedule SET enabled=1, next_run=?, updated_at=?, held_by_removal=0
+		 WHERE id=? AND membership_id=? AND held_by_removal=1`,
+		nextRun, updatedAt, id, membershipID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // MarkManualFirePending flags a run-now request: it sets next_run so the ticker fires the
@@ -3167,7 +3200,7 @@ func (s *SQL) RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, n
 // true (run-now on a paused schedule is rejected earlier). membership_id scopes the write.
 func (s *SQL) MarkManualFirePending(ctx context.Context, id, membershipID, nextRun, updatedAt string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE schedule SET enabled=1, next_run=?, manual_fire_pending=1, updated_at=? WHERE id=? AND membership_id=?`,
+		`UPDATE schedule SET enabled=1, next_run=?, manual_fire_pending=1, updated_at=?, held_by_removal=0 WHERE id=? AND membership_id=?`,
 		nextRun, updatedAt, id, membershipID)
 	return err
 }

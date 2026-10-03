@@ -396,3 +396,304 @@ func TestRemovedMemberSchedulesPauseAndResumeOnRestore(t *testing.T) {
 		t.Error("membership not active after the restore")
 	}
 }
+
+// waitAudit polls until tenantID has n rows of action, and returns them.
+func waitAudit(t *testing.T, st *store.SQL, tenantID, action string, n int) []store.AuditLog {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		rows := auditWith(t, st, tenantID, action)
+		if len(rows) >= n {
+			return rows
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d %s audit row(s) never appeared (have %d)", n, action, len(rows))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A removal whose stop is queued behind a start (the workspace was booting) must not stop
+// the workspace of somebody re-invited before the stop got the lock: the stop re-reads the
+// membership once it holds the workspace, and leaves a restored person's workspace alone.
+func TestRemovalStopQueuedBehindAStartSparesARestoredMember(t *testing.T) {
+	old := tenantsrv.RemovalStopWait
+	tenantsrv.RemovalStopWait = 20 * time.Millisecond
+	t.Cleanup(func() { tenantsrv.RemovalStopWait = old })
+	f := &stopRecordingFactory{}
+	st, mgr, _, sales, _ := twoTenantFixture(t, f)
+
+	start := mgr.startLockFor("W-sales") // a start in flight holds this
+	start.Lock()
+	w := callRemoveMembership(mgr, `{"tenant_slug":"sales","user_key":"leaver-acme-co-jp"}`)
+	if !strings.Contains(w.Body.String(), `"workspace_stop":"pending"`) {
+		t.Fatalf("remove: %d %s, want the stop pending behind the start", w.Code, w.Body.String())
+	}
+	if w := callAddMembership(mgr, `{"tenant_slug":"sales","user_key":"leaver-acme-co-jp"}`); w.Code != http.StatusOK {
+		t.Fatalf("re-invite: %d %s", w.Code, w.Body.String())
+	}
+	start.Unlock() // the start finishes; the queued removal stop runs now
+
+	rows := waitAudit(t, st, sales.ID, "membership.remove.stop_workspace", 1)
+	if rows[0].Detail != "workspace stop skipped: membership restored" {
+		t.Errorf("stop outcome = %q, want it skipped", rows[0].Detail)
+	}
+	if got := f.stops(); len(got) != 0 {
+		t.Errorf("stopped %v after the person was re-invited", got)
+	}
+}
+
+// Removed, restored and removed again while the first stop is still queued: both stops
+// act on the status they read under the lock, which is the second removal's.
+func TestRemovalStopAfterRemoveRestoreRemoveStops(t *testing.T) {
+	old := tenantsrv.RemovalStopWait
+	tenantsrv.RemovalStopWait = 20 * time.Millisecond
+	t.Cleanup(func() { tenantsrv.RemovalStopWait = old })
+	f := &stopRecordingFactory{}
+	st, mgr, _, sales, _ := twoTenantFixture(t, f)
+
+	start := mgr.startLockFor("W-sales")
+	start.Lock()
+	body := `{"tenant_slug":"sales","user_key":"leaver-acme-co-jp"}`
+	callRemoveMembership(mgr, body)
+	callAddMembership(mgr, body)
+	callRemoveMembership(mgr, body)
+	start.Unlock()
+
+	rows := waitAudit(t, st, sales.ID, "membership.remove.stop_workspace", 2)
+	for _, r := range rows {
+		if r.Detail != "workspace stop stopped" {
+			t.Errorf("stop outcome = %q, want stopped (the membership is inactive again)", r.Detail)
+		}
+	}
+	if got := f.stops(); len(got) == 0 || got[0] != "af-ws-sales-leaver" {
+		t.Errorf("stopped %v, want af-ws-sales-leaver", got)
+	}
+}
+
+// The removal's own stop lives in one process. A CP restart before it ran, or a stop that
+// ran out of budget, leaves an inactive membership's workspace running; the sweep finds it
+// by the row and stops it, and leaves active members' workspaces alone.
+func TestRemovedMemberSweepStopsWhatTheRemovalLeftRunning(t *testing.T) {
+	ctx := context.Background()
+	f := &stopRecordingFactory{}
+	st, mgr, victim, sales, _ := twoTenantFixture(t, f)
+	// The removal as it looks after a CP restart: the row is inactive, nothing ran.
+	if err := st.SetMembershipStatus(ctx, membershipIDOf(t, st, victim, sales), "inactive"); err != nil {
+		t.Fatal(err)
+	}
+	mgr.sweepRemovedMembers(ctx)
+	if got := f.stops(); len(got) != 1 || got[0] != "af-ws-sales-leaver" {
+		t.Fatalf("sweep stopped %v, want only af-ws-sales-leaver", got)
+	}
+	if rows := auditWith(t, st, sales.ID, "membership.remove.stop_workspace"); len(rows) != 1 {
+		t.Errorf("sweep audit rows = %+v, want one", rows)
+	}
+	mgr.sweepRemovedMembers(ctx) // stopped rows are not stopped again
+	if got := f.stops(); len(got) != 1 {
+		t.Errorf("second sweep stopped again: %v", got)
+	}
+}
+
+// A schedule's owner pause must survive a later remove/restore, even when every write lands
+// in the same second (the timestamps cannot tell them apart; the mark can).
+func TestRestoreLeavesAnOwnerPauseFromTheSameSecond(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, victim, sales, _ := twoTenantFixture(t, &stopRecordingFactory{})
+	mid := membershipIDOf(t, st, victim, sales)
+	now := store.NowTS()
+	if err := st.CreateSchedule(ctx, store.Schedule{ID: "S", MembershipID: mid, SpecKind: "interval", Spec: "3600",
+		TZ: "UTC", Enabled: true, NextRun: now, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"tenant_slug":"sales","user_key":"leaver-acme-co-jp"}`
+	callRemoveMembership(mgr, body)
+	if held, err := st.HoldScheduleForRemoval(ctx, "S", now, statusMembershipInactive, now); err != nil || !held {
+		t.Fatalf("hold: %v %v", held, err)
+	}
+	callAddMembership(mgr, body)
+	if got, _, _ := st.GetSchedule(ctx, "S"); !got.Enabled {
+		t.Fatal("restore did not resume the held schedule")
+	}
+	// The owner pauses it, stamped with the same second as the hold.
+	if err := st.SetScheduleEnabled(ctx, "S", mid, false, "", now); err != nil {
+		t.Fatal(err)
+	}
+	callRemoveMembership(mgr, body)
+	callAddMembership(mgr, body)
+	if got, _, _ := st.GetSchedule(ctx, "S"); got.Enabled {
+		t.Error("a second restore resumed the schedule the owner had paused")
+	}
+}
+
+// The resume is conditional: an owner's pause between the restore's read and its write wins.
+func TestResumeHeldScheduleLosesToAnOwnerPause(t *testing.T) {
+	ctx := context.Background()
+	st, _, victim, sales, _ := twoTenantFixture(t, &stopRecordingFactory{})
+	mid := membershipIDOf(t, st, victim, sales)
+	now := store.NowTS()
+	_ = st.CreateSchedule(ctx, store.Schedule{ID: "S", MembershipID: mid, SpecKind: "interval", Spec: "3600",
+		TZ: "UTC", Enabled: true, NextRun: now, CreatedAt: now, UpdatedAt: now})
+	_ = st.SetMembershipStatus(ctx, mid, "inactive")
+	if held, _ := st.HoldScheduleForRemoval(ctx, "S", now, statusMembershipInactive, now); !held {
+		t.Fatal("not held")
+	}
+	read, _, _ := st.GetSchedule(ctx, "S") // the restore's read
+	if err := st.SetScheduleEnabled(ctx, "S", mid, false, "", now); err != nil {
+		t.Fatal(err) // the owner's pause lands in between
+	}
+	if ok, err := resumeHeldSchedule(ctx, st, read, time.Now().UTC()); err != nil || ok {
+		t.Fatalf("resume over an owner pause = %v %v, want no-op", ok, err)
+	}
+	if got, _, _ := st.GetSchedule(ctx, "S"); got.Enabled {
+		t.Error("the owner's pause was overwritten")
+	}
+}
+
+// holdRacingStore lets the restore commit at the worst moment for the scheduler: right
+// after its hold was written, before it reads the membership again — the order in which
+// the restore's scan finds nothing held.
+type holdRacingStore struct {
+	*store.SQL
+	restore func()
+}
+
+func (s holdRacingStore) HoldScheduleForRemoval(ctx context.Context, id, lastRun, lastStatus, updatedAt string) (bool, error) {
+	held, err := s.SQL.HoldScheduleForRemoval(ctx, id, lastRun, lastStatus, updatedAt)
+	s.restore()
+	return held, err
+}
+
+// The scheduler decided "inactive", then the person was re-invited before its pause was
+// written (no pause is written), or while it was being written (the pause is undone).
+// Either way a restored owner never keeps a paused schedule.
+func TestSchedulerPauseRacingARestore(t *testing.T) {
+	ctx := context.Background()
+	past := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	setup := func(t *testing.T) (*store.SQL, string) {
+		st, _, victim, sales, _ := twoTenantFixture(t, &stopRecordingFactory{})
+		mid := membershipIDOf(t, st, victim, sales)
+		if err := st.CreateSchedule(ctx, store.Schedule{ID: "S", MembershipID: mid, SpecKind: "interval", Spec: "3600",
+			TZ: "UTC", Enabled: true, NextRun: past, CreatedAt: past, UpdatedAt: past}); err != nil {
+			t.Fatal(err)
+		}
+		return st, mid
+	}
+	t.Run("restored before the pause is written", func(t *testing.T) {
+		st, _ := setup(t) // membership active: the firer's verdict is stale
+		sc := newScheduler(st, &fakeFirer{status: statusMembershipInactive}, time.Minute)
+		sc.tickAt(ctx, time.Now().UTC())
+		got, _, _ := st.GetSchedule(ctx, "S")
+		if !got.Enabled || got.HeldByRemoval {
+			t.Errorf("schedule = enabled %v held %v, want left enabled for the next tick", got.Enabled, got.HeldByRemoval)
+		}
+	})
+	t.Run("restored while the pause is written", func(t *testing.T) {
+		st, mid := setup(t)
+		_ = st.SetMembershipStatus(ctx, mid, "inactive")
+		racing := holdRacingStore{SQL: st, restore: func() { _ = st.SetMembershipStatus(ctx, mid, "active") }}
+		sc := newScheduler(racing, &fakeFirer{status: statusMembershipInactive}, time.Minute)
+		sc.tickAt(ctx, time.Now().UTC())
+		got, _, _ := st.GetSchedule(ctx, "S")
+		if !got.Enabled || got.HeldByRemoval {
+			t.Errorf("schedule = enabled %v held %v, want resumed after the racing restore", got.Enabled, got.HeldByRemoval)
+		}
+	})
+}
+
+// hostPreviewCookie mints the af_pv cookie the handshake would have set for membershipID.
+func hostPreviewCookie(e *previewHostEnv, slug string, port int, membershipID string) *http.Cookie {
+	v := newPreviewHostAPI(e.cfg).sign(previewClaims{Slug: slug, Port: port, MembershipID: membershipID,
+		Exp: time.Now().Add(time.Hour).Unix()})
+	return &http.Cookie{Name: previewAuthCookie, Value: v}
+}
+
+// The owner's own preview cookie is judged against the live membership like anyone
+// else's, and a removed owner's workspace serves nobody — public mode included — while
+// its stop is pending or after it failed.
+func TestPreviewOfARemovedOwnerServesNobody(t *testing.T) {
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer agent.Close()
+	e := newPreviewHostEnv(t, agent.URL)
+	slug := e.mintSlug(t)
+	ctx := context.Background()
+	ck := hostPreviewCookie(e, slug, 3000, e.ws.MembershipID)
+	if rec := e.get(t, slug, 3000, "/", ck); rec.Code != http.StatusOK {
+		t.Fatalf("control: owner with cookie = %d", rec.Code)
+	}
+	_ = e.mgr.store.SetMembershipStatus(ctx, e.ws.MembershipID, "inactive")
+	if rec := e.get(t, slug, 3000, "/", ck); rec.Code == http.StatusOK {
+		t.Errorf("removed owner's cookie still served: %d", rec.Code)
+	}
+	raw, _ := e.mgr.store.GetWorkspaceSettings(ctx, e.ws.ID)
+	st := parseWSSettings(raw)
+	st.PreviewPublic = true
+	_ = e.mgr.store.SetWorkspaceSettings(ctx, e.ws.ID, toWSSettingsJSON(t, st))
+	if rec := e.get(t, slug, 8080, "/"); rec.Code == http.StatusOK {
+		t.Errorf("public preview of a removed owner still served: %d", rec.Code)
+	}
+}
+
+// A stream opened through another member's shared preview before the viewer was removed
+// ends when the removal reaches this replica — here through the sweep, which is how every
+// replica other than the one serving the removal hears of it. The owner's workspace keeps
+// running.
+func TestRemovedViewersOpenPreviewStreamIsClosed(t *testing.T) {
+	opened := make(chan struct{})
+	release := make(chan struct{}) // lets a failing run end instead of hanging agent.Close
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		close(opened)
+		select { // stream until the CP hangs up
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer agent.Close()
+	defer close(release)
+	e := newPreviewHostEnv(t, agent.URL)
+	slug := e.mintSlug(t)
+	ctx := context.Background()
+	raw, _ := e.mgr.store.GetWorkspaceSettings(ctx, e.ws.ID)
+	st := parseWSSettings(raw)
+	st.PreviewTenantShare = true
+	_ = e.mgr.store.SetWorkspaceSettings(ctx, e.ws.ID, toWSSettingsJSON(t, st))
+	viewer, _ := e.mgr.store.UpsertIdentity(ctx, "", "viewer", "")
+	vm, err := e.mgr.store.EnsureMembership(ctx, viewer.ID, e.ws.TenantID, "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan int, 1)
+	go func() { done <- e.get(t, slug, 3000, "/events", hostPreviewCookie(e, slug, 3000, vm.ID)).Code }()
+	select {
+	case <-opened:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stream never reached the owner's agent")
+	}
+	_ = e.mgr.store.SetMembershipStatus(ctx, vm.ID, "inactive")
+	e.mgr.sweepRemovedMembers(ctx)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the removed viewer's stream is still open")
+	}
+}
+
+// Removing a member closes their tracked requests on the serving replica at once, without
+// waiting for the sweep — and only theirs.
+func TestRemoveMembershipClosesTheMembersConnections(t *testing.T) {
+	st, mgr, victim, sales, dev := twoTenantFixture(t, &stopRecordingFactory{})
+	salesCtx, untrackSales := mgr.memberConns.track(context.Background(), membershipIDOf(t, st, victim, sales))
+	defer untrackSales()
+	devCtx, untrackDev := mgr.memberConns.track(context.Background(), membershipIDOf(t, st, victim, dev))
+	defer untrackDev()
+	callRemoveMembership(mgr, `{"tenant_slug":"sales","user_key":"leaver-acme-co-jp"}`)
+	if salesCtx.Err() == nil {
+		t.Error("the removed membership's request is still open")
+	}
+	if devCtx.Err() != nil {
+		t.Error("the same person's request in another tenant was closed")
+	}
+}

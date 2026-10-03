@@ -22,6 +22,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/netip"
 
@@ -226,6 +227,16 @@ func (d cpTenant) WorkspaceStateByMembership(ctx context.Context, mid string) (s
 func (d cpTenant) StopWorkspaceByMembership(ctx context.Context, mid string) error {
 	return d.m.stopWorkspaceByMembership(ctx, mid)
 }
+
+func (d cpTenant) StopRemovedMemberWorkspace(ctx context.Context, mid string) (bool, error) {
+	err := d.m.stopWorkspaceOfRemovedMember(ctx, mid)
+	if errors.Is(err, errMembershipActive) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (d cpTenant) CloseMembershipConnections(mid string) int { return d.m.memberConns.cancel(mid) }
 
 func (d cpTenant) ResumeSchedulesHeldByRemoval(ctx context.Context, mid string) (int, error) {
 	return d.m.resumeSchedulesHeldByRemoval(ctx, mid)
