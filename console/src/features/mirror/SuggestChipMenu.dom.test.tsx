@@ -176,6 +176,7 @@ describe("useChipMenu / SuggestChipMenu", () => {
   it("treats a swipe (chip row scroll) as not a long-press", () => {
     vi.useFakeTimers();
     mount();
+    pointerDown(chip()); // without it the gate alone keeps the menu shut and the move goes untested
     touch(chip(), "touchstart", 10, 10);
     touch(chip(), "touchmove", 60, 12); // the finger moved = a horizontal scroll
     act(() => {
