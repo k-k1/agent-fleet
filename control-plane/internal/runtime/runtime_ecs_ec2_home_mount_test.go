@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 )
@@ -446,6 +447,38 @@ func TestECSEC2FailedLaunchKeepsALaterStartsClaim(t *testing.T) {
 			t.Errorf("claim = %q, want the later Start's claim kept", got)
 		}
 	})
+	// The delete is slow (or retried) and a Start begins and claims the same slot while
+	// it is in flight: the Start must wait for the delete, so its claim is what is left.
+	t.Run("a Start began during the delete", func(t *testing.T) {
+		h, p := setup(t, "i-new1")
+		started := make(chan struct{})
+		var once sync.Once
+		h.rt.ec2 = &deleteTagsHook{ec2API: h.ec2, before: func() {
+			once.Do(func() {
+				go func() {
+					defer close(started)
+					h.rt.beginStart()
+					h.ec2.mu.Lock()
+					h.ec2.setTag("vol-1", EC2TagClaim, "i-new1")
+					h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().Add(time.Second).UTC().Format(time.RFC3339))
+					h.ec2.mu.Unlock()
+				}()
+				// Give the Start every chance to claim before the delete is processed.
+				select {
+				case <-started:
+				case <-time.After(200 * time.Millisecond):
+				}
+			})
+		}}
+		h.rt.unclaimIfOurs(ctx, p)
+		<-started
+		h.ec2.mu.Lock()
+		got := claimed(h)
+		h.ec2.mu.Unlock()
+		if got != "i-new1" {
+			t.Errorf("claim = %q, want the Start's claim written after the delete", got)
+		}
+	})
 	t.Run("a placement no Start made", func(t *testing.T) {
 		h, p := setup(t, "i-new1")
 		p.gen = 0
@@ -482,4 +515,15 @@ func TestECSEC2QuarantineUnmountsBeforeDetach(t *testing.T) {
 	if umount < 0 || detach < 0 || umount > detach {
 		t.Fatalf("want umount before detach, got umount=%d detach=%d in %q", umount, detach, h.ec2.calls)
 	}
+}
+
+// deleteTagsHook runs before before every DeleteTags reaches the fake.
+type deleteTagsHook struct {
+	ec2API
+	before func()
+}
+
+func (d *deleteTagsHook) DeleteTags(ctx context.Context, in *ec2.DeleteTagsInput, opts ...func(*ec2.Options)) (*ec2.DeleteTagsOutput, error) {
+	d.before()
+	return d.ec2API.DeleteTags(ctx, in, opts...)
 }

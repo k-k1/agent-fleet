@@ -49,13 +49,32 @@ func (e *ecsEC2Runtime) homeStillOn(ctx context.Context, p ec2Placement) bool {
 // the budget is for an SSM agent that does not answer at all.
 const quarantineUmountBudget = 45 * time.Second
 
+// claimGenLocks serialises, per workspace, a Start's increment of startGen against
+// unclaimIfOurs's last check of it through the end of its DeleteTags. Without it the
+// delete can be in flight (slow, retried by the SDK) while a later Start increments the
+// count and writes its own claim on the same slot; the key-only delete then lands after
+// and removes that claim. Held only for one tag call, never across a Start's work.
+var claimGenLocks sync.Map // workspace name -> *sync.Mutex
+
+func (e *ecsEC2Runtime) claimGenLock() *sync.Mutex {
+	v, _ := claimGenLocks.LoadOrStore(e.base.name, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
+// beginStart counts a Start (startGen) and returns its number.
+func (e *ecsEC2Runtime) beginStart() int64 {
+	lock := e.claimGenLock()
+	lock.Lock()
+	defer lock.Unlock()
+	return e.generation().Add(1)
+}
+
 // unclaimIfOurs drops the claim a failed launch placed, and only that one: the claim must
 // still name the launch's slot, and no Start may have begun in this process since the
 // one the placement belongs to (p.gen). A claim carries no owner beyond the slot id, so
 // the Start count is what tells a later Start's claim on the same slot from this one's.
-// It is read on both sides of the DescribeVolumes, because a Start can begin while that
-// call is out; a Start that begins after the second read still has its placement's own
-// round trips to make before it writes a claim, which the DeleteTags here precedes.
+// The last check and the delete run under claimGenLock, so a Start that begins after the
+// check cannot write its claim before the delete has completed.
 func (e *ecsEC2Runtime) unclaimIfOurs(ctx context.Context, p ec2Placement) {
 	if p.gen == 0 || e.generation().Load() != p.gen {
 		return
@@ -64,6 +83,9 @@ func (e *ecsEC2Runtime) unclaimIfOurs(ctx context.Context, p ec2Placement) {
 	if err != nil || vol == nil || aws.ToString(vol.VolumeId) != p.volumeID {
 		return
 	}
+	lock := e.claimGenLock()
+	lock.Lock()
+	defer lock.Unlock()
 	if ec2TagValue(vol.Tags, EC2TagClaim) != p.instanceID || e.generation().Load() != p.gen {
 		return
 	}

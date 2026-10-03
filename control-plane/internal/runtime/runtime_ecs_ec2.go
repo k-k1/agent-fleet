@@ -1291,7 +1291,7 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 	// Mark that a Start has begun, so a teardown still draining from the Stop that the
 	// recreate / clean-home handlers issued a moment ago aborts instead of pulling this
 	// workspace's home out from under it.
-	gen := e.generation().Add(1)
+	gen := e.beginStart()
 	e.setPhase("preparing")
 	prep, err := e.prepare(ctx)
 	if err != nil {
