@@ -22,6 +22,7 @@ package runtime
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -48,8 +49,20 @@ type kubeLive struct {
 	t       *testing.T
 	ns      string
 	kubectl string
-	tokens  map[string]string // workspace name -> AGENT_TOKEN, stable across adapter values
+	// kubeContext pins every kubectl call to the context checked against the product's API
+	// server and CA (pinKubectl), so a kubeconfig that switches context mid-run cannot send
+	// the harness's deletes, cordons and taints to another cluster.
+	kubeContext string
+	tokens      map[string]string // workspace name -> AGENT_TOKEN, stable across adapter values
 }
+
+// kubeLiveCmdBudget bounds one kubectl call (an exec into a pod included) and one operator
+// command: a hung API server or CLI fails the step, and the test's cleanups still run.
+// go test's own -timeout panics without running them.
+const (
+	kubeLiveCmdBudget      = 3 * time.Minute
+	kubeLiveOperatorBudget = 6 * time.Minute
+)
 
 var kubeLiveIdentity struct {
 	once sync.Once
@@ -81,6 +94,7 @@ func needKubeLive(t *testing.T) *kubeLive {
 	// several stops stays inside the token's hour.
 	t.Setenv("AF_STOP_GRACE_SEC", "20")
 	l := &kubeLive{t: t, ns: os.Getenv("AF_K8S_NAMESPACE"), kubectl: kc, tokens: map[string]string{}}
+	l.pinKubectl()
 	l.checkIdentity()
 	return l
 }
@@ -163,13 +177,88 @@ func (l *kubeLive) factory(homeGiB int) *kubeFactory {
 	}
 }
 
-// workspace names a new workspace for scenario and registers its cleanup.
+// pinKubectl checks that kubectl's current context is the cluster the product talks to —
+// the same API server URL and the same CA — and pins every later call to that context.
+func (l *kubeLive) pinKubectl() {
+	l.t.Helper()
+	ctxName := strings.TrimSpace(l.must("config", "current-context"))
+	if ctxName == "" {
+		l.t.Fatal("kubectl has no current context")
+	}
+	l.kubeContext = ctxName
+	server := strings.TrimSpace(l.must("config", "view", "--minify", "-o", "jsonpath={.clusters[0].cluster.server}"))
+	if want := strings.TrimRight(os.Getenv("AF_K8S_LIVE_SERVER"), "/"); strings.TrimRight(server, "/") != want {
+		l.t.Fatalf("kubectl's context %s points at %s, the product at %s: refusing to act on another cluster", ctxName, server, want)
+	}
+	var ca []byte
+	if b64 := strings.TrimSpace(l.must("config", "view", "--raw", "--minify", "-o", "jsonpath={.clusters[0].cluster.certificate-authority-data}")); b64 != "" {
+		var err error
+		if ca, err = base64.StdEncoding.DecodeString(b64); err != nil {
+			l.t.Fatalf("kubectl's CA data: %v", err)
+		}
+	} else if f := strings.TrimSpace(l.must("config", "view", "--raw", "--minify", "-o", "jsonpath={.clusters[0].cluster.certificate-authority}")); f != "" {
+		var err error
+		if ca, err = os.ReadFile(f); err != nil {
+			l.t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(os.Getenv("AF_K8S_LIVE_CA_FILE"))
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	if !bytes.Equal(bytes.TrimSpace(ca), bytes.TrimSpace(want)) {
+		l.t.Fatalf("kubectl's context %s trusts another CA than AF_K8S_LIVE_CA_FILE: refusing to act on another cluster", ctxName)
+	}
+}
+
+// workspace names a new workspace for scenario, refuses a name anything in the namespace
+// already uses, and registers its cleanup only then: the cleanup destroys by name, and
+// must never reach a workspace the harness did not create.
 func (l *kubeLive) workspace(scenario string) string {
 	l.t.Helper()
-	name := "live-" + scenario + "-" + randHexT(2)
+	name := "live-" + scenario + "-" + randHexT(6)
+	base := kubeObjectName(name)
+	if !strings.HasPrefix(base, "live-") || base != name {
+		l.t.Fatalf("workspace name %q maps to %q; the harness only touches names it can recognise as its own", name, base)
+	}
+	left := l.mustList("-n", l.ns, "get", "statefulset,pod,pvc,service,secret", "-l", kubeLabelWorkspace+"="+base)
+	for _, obj := range []string{"statefulset/" + base, "pvc/" + base + "-home", "pvc/" + base + "-state",
+		"service/" + base, "secret/" + base + "-env", "pod/" + base + "-erase"} {
+		left = append(left, l.mustList("-n", l.ns, "get", obj, "--ignore-not-found")...)
+	}
+	if len(left) > 0 {
+		l.t.Fatalf("workspace %s: objects with its names already exist (%v); refusing to use it", name, left)
+	}
 	l.tokens[name] = randHexT(16)
 	l.t.Cleanup(func() { l.purge(name) })
 	return name
+}
+
+// mustList runs a kubectl get and returns the object names it printed; an error fails the
+// test, never reads as "nothing there".
+func (l *kubeLive) mustList(args ...string) []string {
+	l.t.Helper()
+	return strings.Fields(l.must(append(args, "-o", "name")...))
+}
+
+// exists reports whether kubectl get finds the object. An error is an error: an
+// unreadable API server must not pass for an object that is gone.
+func (l *kubeLive) exists(args ...string) (bool, error) {
+	out, err := l.run(append(args, "--ignore-not-found", "-o", "name")...)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "", nil
+}
+
+// gone is exists for a polling condition inside the test: an error fails the test.
+func (l *kubeLive) gone(args ...string) bool {
+	l.t.Helper()
+	ok, err := l.exists(args...)
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	return !ok
 }
 
 func (l *kubeLive) runtime(f *kubeFactory, name string) *kubeRuntime {
@@ -180,7 +269,12 @@ func (l *kubeLive) runtime(f *kubeFactory, name string) *kubeRuntime {
 // --- the harness's own eyes: kubectl as the ambient identity ---
 
 func (l *kubeLive) run(args ...string) (string, error) {
-	cmd := exec.Command(l.kubectl, args...)
+	if l.kubeContext != "" {
+		args = append([]string{"--context", l.kubeContext}, args...)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), kubeLiveCmdBudget)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, l.kubectl, args...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()
@@ -265,8 +359,10 @@ func (l *kubeLive) requireDisksGone(volumes []string) {
 	filter := "name=(" + strings.Join(volumes, ",") + ")"
 	deadline := time.Now().Add(3 * time.Minute)
 	for {
-		out, err := exec.Command("gcloud", "compute", "disks", "list", "--project", project,
+		ctx, cancel := context.WithTimeout(context.Background(), kubeLiveCmdBudget)
+		out, err := exec.CommandContext(ctx, "gcloud", "compute", "disks", "list", "--project", project,
 			"--filter", filter, "--format", "value(name)").Output()
+		cancel()
 		if err != nil {
 			l.t.Fatalf("gcloud compute disks list: %v", err)
 		}
@@ -290,7 +386,10 @@ func (l *kubeLive) purge(name string) {
 	f := l.factory(0)
 	rt := l.runtime(f, name)
 	var vols []string
-	if out, err := l.run("get", "pv", "-o", "json"); err == nil {
+	if out, err := l.run("get", "pv", "-o", "json"); err != nil {
+		// Without the list the volumes cannot be followed, nor a hold released: say so.
+		t.Errorf("cleanup of %s: cannot list the volumes, check them by hand: %v", name, err)
+	} else {
 		var list struct {
 			Items []struct {
 				Metadata kObjectMeta `json:"metadata"`
@@ -299,7 +398,9 @@ func (l *kubeLive) purge(name string) {
 				} `json:"spec"`
 			} `json:"items"`
 		}
-		_ = json.Unmarshal([]byte(out), &list)
+		if err := json.Unmarshal([]byte(out), &list); err != nil {
+			t.Errorf("cleanup of %s: decode the volume list: %v", name, err)
+		}
 		for _, pv := range list.Items {
 			if r := pv.Spec.ClaimRef; r != nil && r.Namespace == l.ns && (r.Name == rt.homeClaim() || r.Name == rt.stateClaim()) {
 				vols = append(vols, pv.Metadata.Name)
@@ -323,15 +424,19 @@ func (l *kubeLive) purge(name string) {
 	}
 	deadline := time.Now().Add(4 * time.Minute)
 	for {
+		// An unreadable answer counts as still there: only a read that found nothing is gone.
 		var left []string
-		for _, kind := range []string{"statefulset", "pod", "pvc"} {
-			if out, err := l.run("-n", l.ns, "get", kind, "-l", sel, "-o", "name"); err == nil && strings.TrimSpace(out) != "" {
+		for _, kind := range []string{"statefulset", "pod", "service", "secret", "pvc"} {
+			out, err := l.run("-n", l.ns, "get", kind, "-l", sel, "-o", "name")
+			if err != nil {
+				left = append(left, kind+" (unreadable: "+err.Error()+")")
+			} else {
 				left = append(left, strings.Fields(out)...)
 			}
 		}
 		for _, v := range vols {
-			if out, _ := l.run("get", "pv", v, "--ignore-not-found", "-o", "name"); strings.TrimSpace(out) != "" {
-				left = append(left, "pv/"+v)
+			if ok, err := l.exists("get", "pv", v); err != nil || ok {
+				left = append(left, fmt.Sprintf("pv/%s (%v)", v, err))
 			}
 		}
 		if len(left) == 0 {
@@ -348,16 +453,27 @@ func (l *kubeLive) purge(name string) {
 	}
 }
 
+// hold keeps the volume from going until unhold; the release is registered before the
+// hold is placed, so a test that stops halfway still lets the volume go.
 func (l *kubeLive) hold(pv string) {
 	l.t.Helper()
+	l.t.Cleanup(func() { l.unhold(pv) })
 	l.must("patch", "pv", pv, "--type=json", "-p",
 		`[{"op":"add","path":"/metadata/finalizers/-","value":"`+kubeLiveHold+`"}]`)
 }
 
 func (l *kubeLive) unhold(pv string) {
 	var obj kPV
-	out, err := l.run("get", "pv", pv, "-o", "json")
-	if err != nil || json.Unmarshal([]byte(out), &obj) != nil {
+	out, err := l.run("get", "pv", pv, "--ignore-not-found", "-o", "json")
+	if err != nil {
+		l.t.Errorf("read %s to release the harness's hold, release it by hand: %v", pv, err)
+		return
+	}
+	if strings.TrimSpace(out) == "" {
+		return
+	}
+	if err := json.Unmarshal([]byte(out), &obj); err != nil {
+		l.t.Errorf("decode %s: %v", pv, err)
 		return
 	}
 	i := slices.Index(obj.Metadata.Finalizers, kubeLiveHold)
@@ -682,6 +798,9 @@ func TestKubernetesLiveStartStopRaces(t *testing.T) {
 			t.Logf("round %d: Stop settled in %s; the controller created %d pod(s) in the window", i, d.Round(time.Millisecond), n)
 		}
 		t.Logf("Stop right after Start: the controller had created a pod in %d of %d rounds", created, rounds)
+		if created == 0 {
+			t.Errorf("INCONCLUSIVE: the controller created no pod in any round, so no Stop met a pod being created")
+		}
 	})
 
 	t.Run("StopWhileStarting", func(t *testing.T) {
@@ -752,6 +871,9 @@ func TestKubernetesLiveStartStopRaces(t *testing.T) {
 			}
 		}
 		t.Logf("State read %d times before running (%s); %d read(s) saw the controller behind the template", reads, time.Since(start).Round(time.Second), lagging)
+		if lagging == 0 {
+			t.Errorf("INCONCLUSIVE: no read landed before the controller observed the new template")
+		}
 	})
 
 	t.Run("StopThenStartAtOnce", func(t *testing.T) {
@@ -881,24 +1003,24 @@ cd ~/bulk && seq 1 20000 | xargs touch
 rm -f ~/.gitconfig; printf '[user]\n\tname = plain-erase\n' > ~/.gitconfig`)
 	l.stop(rt)
 
-	// The first CP starts the erase and dies as soon as the erase pod exists.
+	// The first CP starts the erase and dies as soon as the erase pod exists. The pod then
+	// still has its volume to attach, so it is pending, not finished, at the restart; a run
+	// where it had finished is reported as inconclusive, not passed.
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
+	var firstErr error
+	done := make(chan struct{})
 	t0 := time.Now()
-	go func() { done <- rt.EraseHome(ctx) }()
-	l.eventually(time.Minute, "the erase pod", func() bool {
-		out, _ := l.run("-n", l.ns, "get", "pod", rt.erasePodName(), "--ignore-not-found", "-o", "name")
-		return strings.TrimSpace(out) != ""
-	})
+	go func() { defer close(done); firstErr = rt.EraseHome(ctx) }()
+	t.Cleanup(func() { cancel(); <-done })
+	l.eventually(time.Minute, "the erase pod", func() bool { return !l.gone("-n", l.ns, "get", "pod", rt.erasePodName()) })
 	cancel()
-	if err := <-done; err == nil {
-		t.Log("the first EraseHome finished before its CP died; the restart below finds no pod running")
-	} else {
-		t.Logf("the first CP died: %v", err)
-	}
+	<-done
 	var ep kPod
 	l.getJSON(&ep, "-n", l.ns, "get", "pod", rt.erasePodName())
-	t.Logf("the erase pod at the restart: phase %s", ep.Status.Phase)
+	t.Logf("the first CP died (%v); the erase pod at the restart: phase %s", firstErr, ep.Status.Phase)
+	if firstErr == nil || podFinished(&ep) {
+		t.Errorf("INCONCLUSIVE: the erase finished before the CP restart, so the restart did not meet a running erase pod")
+	}
 
 	restarted := l.runtime(l.factory(0), name)
 	if !podFinished(&ep) {
@@ -914,8 +1036,8 @@ rm -f ~/.gitconfig; printf '[user]\n\tname = plain-erase\n' > ~/.gitconfig`)
 		t.Fatalf("EraseHome from the restarted CP: %v", err)
 	}
 	t.Logf("EraseHome across a CP restart: %s", time.Since(t0).Round(time.Second))
-	if out, _ := l.run("-n", l.ns, "get", "pod", rt.erasePodName(), "--ignore-not-found", "-o", "name"); strings.TrimSpace(out) != "" {
-		t.Errorf("the erase pod is still there after EraseHome returned: %s", out)
+	if !l.gone("-n", l.ns, "get", "pod", rt.erasePodName()) {
+		t.Errorf("the erase pod is still there after EraseHome returned")
 	}
 	l.startRunning(restarted)
 	out := l.sh(restarted, `[ -e ~/repos ] && echo repos-present || echo repos-gone
@@ -948,6 +1070,12 @@ func TestKubernetesLiveDestroyRestart(t *testing.T) {
 		rt := l.runtime(l.factory(0), name)
 		l.startRunning(rt)
 		vols := l.volumesOf(rt)
+		if len(vols) != 2 {
+			t.Fatalf("volumes %v, want two", vols)
+		}
+		// One volume is held so that the first Destroy is still waiting when its CP dies:
+		// with a fast provisioner it could otherwise finish, StatefulSet and all, first.
+		l.hold(vols[0])
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 		go func() {
@@ -955,12 +1083,13 @@ func TestKubernetesLiveDestroyRestart(t *testing.T) {
 			res, err := rt.Destroy(ctx)
 			t.Logf("the first CP's Destroy (its answer is lost with the CP): %v, %v", res, err)
 		}()
+		t.Cleanup(func() { cancel(); <-done })
 		l.eventually(5*time.Minute, "both claims gone", func() bool {
-			out, _ := l.run("-n", l.ns, "get", "pvc", rt.homeClaim(), rt.stateClaim(), "--ignore-not-found", "-o", "name")
-			return strings.TrimSpace(out) == ""
+			return l.gone("-n", l.ns, "get", "pvc", rt.homeClaim()) && l.gone("-n", l.ns, "get", "pvc", rt.stateClaim())
 		})
 		cancel()
 		<-done
+		l.unhold(vols[0])
 		s := l.sts(rt.base)
 		inv, ok := readInventory(&s)
 		if !ok || len(inv.Volumes) != 2 {
@@ -971,7 +1100,7 @@ func TestKubernetesLiveDestroyRestart(t *testing.T) {
 		if err != nil || len(res) != 0 {
 			t.Fatalf("Destroy from the restarted CP = %v, %v; want no residue", res, err)
 		}
-		if out := strings.TrimSpace(l.must("-n", l.ns, "get", "statefulset", rt.base, "--ignore-not-found", "-o", "name")); out != "" {
+		if !l.gone("-n", l.ns, "get", "statefulset", rt.base) {
 			t.Errorf("the StatefulSet is still there after a clean Destroy")
 		}
 		l.requireDisksGone(vols)
@@ -1007,15 +1136,12 @@ func TestKubernetesLiveDestroyRestart(t *testing.T) {
 		}
 		l.unhold(held)
 		kubeDestroyClaimBudget = prev
-		l.eventually(3*time.Minute, "the released volume to go", func() bool {
-			out, _ := l.run("get", "pv", held, "--ignore-not-found", "-o", "name")
-			return strings.TrimSpace(out) == ""
-		})
+		l.eventually(3*time.Minute, "the released volume to go", func() bool { return l.gone("get", "pv", held) })
 		res, err = restarted.Destroy(context.Background())
 		if err != nil || len(res) != 0 {
 			t.Fatalf("Destroy once the volume went = %v, %v; want no residue", res, err)
 		}
-		if out := strings.TrimSpace(l.must("-n", l.ns, "get", "statefulset", rt.base, "--ignore-not-found", "-o", "name")); out != "" {
+		if !l.gone("-n", l.ns, "get", "statefulset", rt.base) {
 			t.Errorf("the StatefulSet is still there after a clean Destroy")
 		}
 		l.requireDisksGone(vols)
@@ -1025,50 +1151,50 @@ func TestKubernetesLiveDestroyRestart(t *testing.T) {
 // kubeLiveProbe is one TCP destination probed from inside a workspace pod.
 type kubeLiveProbe struct {
 	label, host, port string
-	open              bool   // what decision 7 expects
-	known             string // a filed issue when the cluster is known to differ; "" = a hard assertion
+	open              bool // what decision 7 expects
 }
 
 // TestKubernetesLiveNetworkProbes: decision 7's probes from inside a workspace pod, as the
 // workspace user, with nothing but the image's bash (/dev/tcp) and timeout: the metadata
-// server, the API server's Service and the control-plane endpoint, the node, kube-dns, and
-// the deployment's own addresses from AF_K8S_LIVE_PROBE_OPEN / AF_K8S_LIVE_PROBE_CLOSED
-// (host:port lists: the CP's internal port, its other ports, Cloud SQL, unused VPC
-// addresses).
+// server, the API server's Service and the control-plane endpoint, every node (the pod's
+// own included), kube-dns, an internet address as the open control
+// (AF_K8S_LIVE_PROBE_INTERNET, 1.1.1.1:443 by default), and the deployment's own addresses
+// from AF_K8S_LIVE_PROBE_OPEN / AF_K8S_LIVE_PROBE_CLOSED (host:port lists: the CP's internal
+// port, its other ports, Cloud SQL, unused VPC addresses).
 //
-// Every node's addresses, the pod's own node included, are reachable on GKE Dataplane V2
-// (#1578). Decision 7 accepts the own node (NetworkPolicy always allows it, and the
-// requirement there is no unauthenticated service, so the kubelet's read-only port is a
-// hard assertion); the other nodes are expected closed and recorded as a known failure
-// until #1578 is settled. AF_K8S_LIVE_STRICT=1 turns known failures into failures.
+// No node is reachable: on GKE Dataplane V2 an ipBlock that contains a node address also
+// selects the nodes, which an `except` cannot remove, so the egress policy lists the
+// complement of the private ranges instead (#1578). A cluster still on the older policy
+// fails the node probes here.
 func TestKubernetesLiveNetworkProbes(t *testing.T) {
 	l := needKubeLive(t)
 	rt := l.runtime(l.factory(0), l.workspace("net"))
 	l.startRunning(rt)
 
 	var probes []kubeLiveProbe
-	add := func(label, hostport string, open bool, known string) {
+	add := func(label, hostport string, open bool) {
 		h, p, ok := strings.Cut(hostport, ":")
 		if !ok || h == "" || p == "" {
 			t.Fatalf("probe %s: %q is not host:port", label, hostport)
 		}
-		probes = append(probes, kubeLiveProbe{label, h, p, open, known})
+		probes = append(probes, kubeLiveProbe{label, h, p, open})
 	}
-	add("metadata server", "169.254.169.254:80", false, "")
-	add("API server Service", strings.TrimSpace(l.must("get", "svc", "kubernetes", "-n", "default", "-o", "jsonpath={.spec.clusterIP}:{.spec.ports[0].port}")), false, "")
+	add("metadata server", "169.254.169.254:80", false)
+	add("API server Service", strings.TrimSpace(l.must("get", "svc", "kubernetes", "-n", "default", "-o", "jsonpath={.spec.clusterIP}:{.spec.ports[0].port}")), false)
 	if u, err := url.Parse(os.Getenv("AF_K8S_LIVE_SERVER")); err == nil && u.Hostname() != "" {
 		port := u.Port()
 		if port == "" {
 			port = "443"
 		}
-		add("control-plane endpoint", u.Hostname()+":"+port, false, "")
+		add("control-plane endpoint", u.Hostname()+":"+port, false)
 	}
-	add("kube-dns", strings.TrimSpace(l.must("get", "svc", "kube-dns", "-n", "kube-system", "-o", "jsonpath={.spec.clusterIP}"))+":53", true, "")
+	add("kube-dns", strings.TrimSpace(l.must("get", "svc", "kube-dns", "-n", "kube-system", "-o", "jsonpath={.spec.clusterIP}"))+":53", true)
+	add("internet (control)", envOr("AF_K8S_LIVE_PROBE_INTERNET", "1.1.1.1:443"), true)
 	for _, hp := range splitCSV(os.Getenv("AF_K8S_LIVE_PROBE_OPEN")) {
-		add("deployment (open)", hp, true, "")
+		add("deployment (open)", hp, true)
 	}
 	for _, hp := range splitCSV(os.Getenv("AF_K8S_LIVE_PROBE_CLOSED")) {
-		add("deployment (closed)", hp, false, "")
+		add("deployment (closed)", hp, false)
 	}
 	own := l.pods(rt.base)[0].Spec.NodeName
 	var nodes struct {
@@ -1080,7 +1206,6 @@ func TestKubernetesLiveNetworkProbes(t *testing.T) {
 		} `json:"items"`
 	}
 	l.getJSON(&nodes, "get", "nodes")
-	others := 0
 	for _, n := range nodes.Items {
 		ip := ""
 		for _, a := range n.Status.Addresses {
@@ -1089,23 +1214,16 @@ func TestKubernetesLiveNetworkProbes(t *testing.T) {
 			}
 		}
 		if ip == "" {
+			t.Errorf("node %s has no InternalIP to probe", n.Metadata.Name)
 			continue
 		}
+		label := "other node " + n.Metadata.Name
 		if n.Metadata.Name == own {
-			// Reachable by design; it must offer nothing unauthenticated.
-			add("own node kubelet read-only", ip+":10255", false, "")
-			for _, p := range []string{"22", "10250", "10256"} {
-				probes = append(probes, kubeLiveProbe{label: "own node (informational)", host: ip, port: p, open: true, known: "informational"})
-			}
-			continue
+			label = "own node " + n.Metadata.Name
 		}
-		others++
-		for _, p := range []string{"22", "10250", "10256"} {
-			add("other node "+n.Metadata.Name, ip+":"+p, false, "#1578")
+		for _, p := range []string{"22", "10250", "10255", "10256"} {
+			add(label, ip+":"+p, false)
 		}
-	}
-	if others == 0 {
-		t.Log("other-node probe: NOT RUN — the cluster has a single node")
 	}
 
 	var script strings.Builder
@@ -1120,8 +1238,7 @@ func TestKubernetesLiveNetworkProbes(t *testing.T) {
 			got[hp] = state == "open"
 		}
 	}
-	strict := os.Getenv("AF_K8S_LIVE_STRICT") == "1"
-	var knownFailures []string
+	word := map[bool]string{true: "open", false: "closed"}
 	for _, p := range probes {
 		hp := p.host + ":" + p.port
 		isOpen, ok := got[hp]
@@ -1129,18 +1246,10 @@ func TestKubernetesLiveNetworkProbes(t *testing.T) {
 			t.Errorf("%s %s: no answer from the probe script", p.label, hp)
 			continue
 		}
-		word := map[bool]string{true: "open", false: "closed"}
 		t.Logf("%-28s %-24s %s (expected %s)", p.label, hp, word[isOpen], word[p.open])
-		switch {
-		case p.known == "informational" || isOpen == p.open:
-		case p.known != "" && !strict:
-			knownFailures = append(knownFailures, fmt.Sprintf("%s %s is %s", p.label, hp, word[isOpen]))
-		default:
+		if isOpen != p.open {
 			t.Errorf("%s %s is %s, want %s", p.label, hp, word[isOpen], word[p.open])
 		}
-	}
-	if len(knownFailures) > 0 {
-		t.Logf("KNOWN FAILURE (#1578, expected closed): %s", strings.Join(knownFailures, "; "))
 	}
 }
 
@@ -1198,57 +1307,88 @@ func (l *kubeLive) guardPod() {
 	})
 }
 
-// nodeExpand fills {node} and {zone} into an operator command.
-func (l *kubeLive) nodeExpand(cmd, node string) string {
+// nodeCommands fills {node} and {zone} into the operator commands, once, before anything
+// is stopped: a cleanup must not depend on reading the node again.
+func (l *kubeLive) nodeCommands(node string, cmds ...string) []string {
 	l.t.Helper()
 	zone := strings.TrimSpace(l.must("get", "node", node, "-o", `jsonpath={.metadata.labels.topology\.kubernetes\.io/zone}`))
-	return strings.NewReplacer("{node}", node, "{zone}", zone).Replace(cmd)
+	if zone == "" {
+		l.t.Fatalf("node %s has no zone label", node)
+	}
+	r := strings.NewReplacer("{node}", node, "{zone}", zone)
+	out := make([]string, len(cmds))
+	for i, c := range cmds {
+		out[i] = r.Replace(c)
+	}
+	return out
+}
+
+func (l *kubeLive) operatorRun(cmd string) (string, error) {
+	l.t.Logf("operator: %s", cmd)
+	ctx, cancel := context.WithTimeout(context.Background(), kubeLiveOperatorBudget)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "sh", "-c", cmd).CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("%s: %v\n%s", cmd, err, out)
+	}
+	return string(out), nil
 }
 
 func (l *kubeLive) operator(cmd string) string {
 	l.t.Helper()
-	l.t.Logf("operator: %s", cmd)
-	out, err := exec.Command("sh", "-c", cmd).CombinedOutput()
+	out, err := l.operatorRun(cmd)
 	if err != nil {
-		l.t.Fatalf("%s: %v\n%s", cmd, err, out)
+		l.t.Fatal(err)
 	}
-	return string(out)
+	return out
 }
 
-// cordon cordons each node for the rest of the test and uncordons it at the end.
+// cordon cordons each node for the rest of the test. The restore is registered before the
+// cordon and puts back the state the node had: a node an operator had already cordoned
+// stays cordoned.
 func (l *kubeLive) cordon(nodes ...string) {
 	l.t.Helper()
 	for _, n := range nodes {
 		if n == "" {
 			continue
 		}
-		l.must("cordon", n)
+		was := strings.TrimSpace(l.must("get", "node", n, "-o", "jsonpath={.spec.unschedulable}")) == "true"
+		if was {
+			l.t.Logf("node %s was already cordoned; it is left cordoned", n)
+			continue
+		}
 		l.t.Cleanup(func() {
 			if _, err := l.run("uncordon", n); err != nil {
-				l.t.Errorf("UNCORDON BY HAND: %v", err)
+				l.t.Errorf("UNCORDON %s BY HAND: %v", n, err)
+				return
 			}
-			if out, _ := l.run("get", "node", n, "-o", "jsonpath={.spec.unschedulable}"); strings.TrimSpace(out) == "true" {
+			out, err := l.run("get", "node", n, "-o", "jsonpath={.spec.unschedulable}")
+			switch {
+			case err != nil:
+				l.t.Errorf("cannot read node %s after the uncordon, check it by hand: %v", n, err)
+			case strings.TrimSpace(out) == "true":
 				l.t.Errorf("node %s is still unschedulable: UNCORDON BY HAND", n)
-			} else {
+			default:
 				l.t.Logf("node %s is schedulable again", n)
 			}
 		})
+		l.must("cordon", n)
 	}
 }
 
-func (l *kubeLive) nodeReady(node string) bool {
+// nodeNotReady reports a node whose Ready condition is explicitly False or Unknown. A
+// node that cannot be read fails the test rather than passing for an unreachable one.
+func (l *kubeLive) nodeNotReady(node string) bool {
+	l.t.Helper()
 	var n struct {
 		Status struct {
 			Conditions []kPodCondition `json:"conditions"`
 		} `json:"status"`
 	}
-	out, err := l.run("get", "node", node, "-o", "json")
-	if err != nil || json.Unmarshal([]byte(out), &n) != nil {
-		return false
-	}
+	l.getJSON(&n, "get", "node", node)
 	for _, c := range n.Status.Conditions {
 		if c.Type == "Ready" {
-			return c.Status == "True"
+			return c.Status == "False" || c.Status == "Unknown"
 		}
 	}
 	return false
@@ -1268,7 +1408,7 @@ func (l *kubeLive) runningPod(rt *kubeRuntime) kPod {
 // TestKubernetesLivePlannedUpgrade: the runbook's planned node upgrade, up to the point
 // that concerns the adapter: with AF_K8S_LIVE_CORDON_NODES cordoned, a Start lands on
 // another node (the autoscaler adds one when none is free). It does not drain: a drain
-// would cut every session on the node, the harness's own scenarios have stopped theirs.
+// would cut every session on the node.
 func TestKubernetesLivePlannedUpgrade(t *testing.T) {
 	l := needKubeLiveDisruptive(t)
 	cordoned := splitCSV(os.Getenv("AF_K8S_LIVE_CORDON_NODES"))
@@ -1285,25 +1425,43 @@ func TestKubernetesLivePlannedUpgrade(t *testing.T) {
 	t.Logf("with %v cordoned, the start landed on %s", cordoned, p.Spec.NodeName)
 }
 
+// kubeLiveNodePod is the part of a pod the node check reads.
+type kubeLiveNodePod struct {
+	Metadata struct {
+		Namespace       string            `json:"namespace"`
+		Name            string            `json:"name"`
+		Labels          map[string]string `json:"labels"`
+		Annotations     map[string]string `json:"annotations"`
+		OwnerReferences []struct {
+			Kind string `json:"kind"`
+		} `json:"ownerReferences"`
+	} `json:"metadata"`
+}
+
 // TestKubernetesLiveNodeUnreachable: a node made unreachable under a running workspace.
 // Stop returns an error and Start refuses while the pod is there; the runbook's recovery
 // is followed — proof from the provider that the VM is stopped, then the out-of-service
 // taint — and the workspace starts again elsewhere.
 //
-// The node is the one the workspace lands on. AF_K8S_LIVE_CORDON_NODES keeps the
-// workspace off nodes that run anything else (cordoned for the whole test), so that only
-// a node the autoscaler added for it is stopped. The three commands take {node} and
-// {zone}: AF_K8S_LIVE_NODE_STOP_CMD stops the VM, AF_K8S_LIVE_NODE_STATUS_CMD prints its
-// state from the provider (TERMINATED is the proof the runbook asks for), and
-// AF_K8S_LIVE_NODE_START_CMD starts it again at the end.
+// It fails closed on which node it stops: AF_K8S_LIVE_CORDON_NODES must cordon the nodes
+// that run anything else, the node the workspace lands on must have been created after
+// the test began (added by the autoscaler for it), and every pod on it, in every
+// namespace, must be the harness's own or a node agent (a DaemonSet's pod or a static
+// pod). The three commands take {node} and {zone}: AF_K8S_LIVE_NODE_STOP_CMD stops the
+// VM, AF_K8S_LIVE_NODE_STATUS_CMD prints its state from the provider (TERMINATED is the
+// proof the runbook asks for), and AF_K8S_LIVE_NODE_START_CMD starts it again at the end.
 func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	l := needKubeLiveDisruptive(t)
 	stopCmd, statusCmd, startCmd := os.Getenv("AF_K8S_LIVE_NODE_STOP_CMD"), os.Getenv("AF_K8S_LIVE_NODE_STATUS_CMD"), os.Getenv("AF_K8S_LIVE_NODE_START_CMD")
 	if stopCmd == "" || statusCmd == "" || startCmd == "" {
 		t.Fatal("set AF_K8S_LIVE_NODE_STOP_CMD, AF_K8S_LIVE_NODE_STATUS_CMD and AF_K8S_LIVE_NODE_START_CMD")
 	}
-	ctx := context.Background()
 	cordoned := splitCSV(os.Getenv("AF_K8S_LIVE_CORDON_NODES"))
+	if len(cordoned) == 0 {
+		t.Fatal("set AF_K8S_LIVE_CORDON_NODES to every node that runs anything but the harness: this test stops a node's VM")
+	}
+	ctx := context.Background()
+	began := time.Now().Add(-time.Minute) // clock skew between here and the API server
 	l.cordon(cordoned...)
 	rt := l.runtime(l.factory(0), l.workspace("unreach"))
 	l.startRunning(rt)
@@ -1311,28 +1469,48 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	if slices.Contains(cordoned, node) {
 		t.Fatalf("the workspace landed on the cordoned node %s", node)
 	}
+	var nodeObj struct {
+		Metadata kObjectMeta `json:"metadata"`
+	}
+	l.getJSON(&nodeObj, "get", "node", node)
+	created, err := time.Parse(time.RFC3339, nodeObj.Metadata.CreationTimestamp)
+	if err != nil || created.Before(began) {
+		t.Fatalf("node %s was created at %q, before this test began: refusing to stop a node the harness did not get added", node, nodeObj.Metadata.CreationTimestamp)
+	}
 	var others struct {
-		Items []kPod `json:"items"`
+		Items []kubeLiveNodePod `json:"items"`
 	}
 	l.getJSON(&others, "get", "pods", "-A", "--field-selector", "spec.nodeName="+node)
 	for _, p := range others.Items {
-		if p.Metadata.Namespace == l.ns && p.Metadata.Labels[kubeLabelWorkspace] != rt.base {
-			t.Fatalf("node %s also runs %s; refusing to stop it", node, p.Metadata.Name)
+		m := p.Metadata
+		own := m.Namespace == l.ns && m.Labels[kubeLabelWorkspace] == rt.base
+		agent := m.Annotations["kubernetes.io/config.mirror"] != ""
+		for _, o := range m.OwnerReferences {
+			if o.Kind == "DaemonSet" {
+				agent = true
+			}
+		}
+		if !own && !agent {
+			t.Fatalf("node %s also runs %s/%s; refusing to stop it", node, m.Namespace, m.Name)
 		}
 	}
+	cmds := l.nodeCommands(node, stopCmd, statusCmd, startCmd)
+	stopCmd, statusCmd, startCmd = cmds[0], cmds[1], cmds[2]
 	t.Logf("making %s unreachable", node)
 	t.Cleanup(func() {
-		l.run("taint", "nodes", node, "node.kubernetes.io/out-of-service-")
-		if out, err := exec.Command("sh", "-c", l.nodeExpand(startCmd, node)).CombinedOutput(); err != nil {
-			t.Errorf("START THE VM BY HAND (%s): %v\n%s", node, err, out)
+		if _, err := l.run("taint", "nodes", node, "node.kubernetes.io/out-of-service-"); err != nil && !strings.Contains(err.Error(), "not found") {
+			t.Errorf("REMOVE THE TAINT FROM %s BY HAND: %v", node, err)
+		}
+		if _, err := l.operatorRun(startCmd); err != nil {
+			t.Errorf("START THE VM OF %s BY HAND (or check whether auto-repair replaced it): %v", node, err)
 		}
 	})
 	t0 := time.Now()
-	l.operator(l.nodeExpand(stopCmd, node))
-	l.eventually(10*time.Minute, node+" not Ready", func() bool { return !l.nodeReady(node) })
+	l.operator(stopCmd)
+	l.eventually(10*time.Minute, node+" not Ready", func() bool { return l.nodeNotReady(node) })
 	t.Logf("%s not Ready after %s", node, time.Since(t0).Round(time.Second))
 
-	err := rt.Stop(ctx)
+	err = rt.Stop(ctx)
 	if err == nil || !strings.Contains(err.Error(), "not settled") {
 		t.Fatalf("Stop with the node unreachable = %v, want a not-settled error", err)
 	}
@@ -1345,7 +1523,7 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	}
 
 	// The runbook: proof from the provider first, then the taint.
-	if st := l.operator(l.nodeExpand(statusCmd, node)); !strings.Contains(st, "TERMINATED") {
+	if st := l.operator(statusCmd); !strings.Contains(st, "TERMINATED") {
 		t.Fatalf("the provider says %q, not TERMINATED: the runbook does nothing without that proof", strings.TrimSpace(st))
 	}
 	l.must("taint", "nodes", node, "node.kubernetes.io/out-of-service=nodeshutdown:NoExecute", "--overwrite")

@@ -807,10 +807,19 @@ go test -count=1 -run 'TestKubernetesLive(Lifecycle|StartStopRaces|NetworkProbes
 go test -count=1 -run 'TestKubernetesLive(HomeWipes|EraseHomeRestart|DestroyRestart)' -v -timeout 50m ./internal/runtime/
 ```
 
+Before it acts, the harness checks that `kubectl`'s current context names the same API server and
+CA as `AF_K8S_LIVE_SERVER` and `AF_K8S_LIVE_CA_FILE`, and pins every call to that context. Each
+command has its own time limit, so a hung step fails the test and its cleanup runs; `go test`'s
+own `-timeout` does not run cleanups, so keep it well above the run, and if it ever fires, do the
+check below by hand.
+
 The token lives an hour, and so does a Google Cloud access token behind `kubectl`: run the
-scenarios in groups, as above, minting a fresh token for each. Each group takes 5–15 minutes. A
-check that is known to fail on a filed issue is logged as `KNOWN FAILURE (#N)` rather than
-failing the run; `AF_K8S_LIVE_STRICT=1` makes it fail.
+scenarios in groups, as above, minting a fresh token for each. Each group takes 5–15 minutes.
+A scenario whose race or window was not observed in a run (a Stop that met no pod being created,
+an erase that finished before the restart) fails as `INCONCLUSIVE` rather than passing.
+
+The network probes expect every node's ports closed, the pod's own node included, and
+`AF_K8S_LIVE_PROBE_INTERNET` (default `1.1.1.1:443`) open as the control.
 
 Two scenarios act on nodes and need `AF_K8S_LIVE_DISRUPTIVE=1` as well. Run them only where no
 member's session can be cut. Both need the workspace pool to be able to add a node: on Google
@@ -828,7 +837,7 @@ cordons: the test fails if its UID, node or restart count changes.
   filled in:
   ```bash
   export AF_K8S_LIVE_NODE_STOP_CMD='gcloud compute instances stop {node} --zone {zone} --project '"$PROJECT"
-  export AF_K8S_LIVE_NODE_STATUS_CMD='gcloud compute instances describe {node} --zone {zone} --project '"$PROJECT"' --format=value(status)'
+  export AF_K8S_LIVE_NODE_STATUS_CMD='gcloud compute instances describe {node} --zone {zone} --project '"$PROJECT"' --format="value(status)"'
   export AF_K8S_LIVE_NODE_START_CMD='gcloud compute instances start {node} --zone {zone} --project '"$PROJECT"
   ```
 
