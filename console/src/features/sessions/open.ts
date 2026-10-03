@@ -12,10 +12,11 @@ import { agentOf } from "../../agents/registry.ts";
 import { getSettings } from "../../lib/settings.ts";
 import { activeWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useSessionsStore } from "./store.ts";
-import { rotatableSessions, rotateTarget, rotationCurrent } from "./rotate.ts";
+import { railOrder, rotatableSessions, rotateTarget, rotationCurrent } from "./rotate.ts";
 import type { RotateTarget } from "./rotate.ts";
 import type { Session } from "../../types/session.ts";
 import { openImagegen } from "../imagegen/open.ts";
+import { useReposStore } from "../repos/store.ts";
 
 // A session bound to an image studio opens in the studio pane (ADR 0100 decision 10), which
 // embeds its mirror: a second mirror on the same session would fight it over the composer
@@ -101,9 +102,10 @@ export function openSessionFromList(s: Session, split: boolean, running: boolean
  * are no others". */
 export function rotateRunningSession(delta: number): RotateTarget | null {
   const sessions = useSessionsStore.getState().sessions;
-  const list = rotatableSessions(sessions, activeWorkingSet(getSettings()));
+  const order = railOrder(sessions, useReposStore.getState().repos);
+  const list = rotatableSessions(order, activeWorkingSet(getSettings()));
   const current = rotationCurrent(activePane(useLayoutStore.getState().layout), sessions);
-  const target = rotateTarget(list, current, delta);
+  const target = rotateTarget(list, current, delta, order);
   if (target) openSessionDefault(target.session);
   return target;
 }

@@ -6,18 +6,39 @@
 // (the same split as workingSets.ts vs workingSetsStore.ts).
 //
 // Candidates and order (respecting the working sets of docs/log/52):
-// - Only alive sessions. A stopped one is not a switch target; it needs a decision to resume.
+// - Only alive agent sessions. A stopped one is not a switch target; it needs a decision to
+//   resume. A shell / ssm session is a terminal, not a conversation to skim through.
 // - When a working set is selected, follow that filter, so the set matches what the left rail
 //   shows.
-// - The order is whatever GET /api/sessions returned (CreatedAt descending = newest first,
-//   session_handlers.go). As long as the list does not change, the rotation order is stable.
+// - The order is the left rail's, top to bottom (railOrder), so a swipe lands on the row
+//   next to the current one. The raw GET /api/sessions order (newest first across every
+//   folder) stopped matching the rail once worktrees nested by lineage.
 import { sessionInSet } from "../../lib/workingSets.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
+import { orphanSessions, repoTree, sessionsInFolder } from "../../lib/project.ts";
+import type { RepoTreeNode } from "../../lib/project.ts";
+import type { Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
 
-/** The rotation candidates. set=null means all of them (no filter). */
-export function rotatableSessions(sessions: Session[], set: WorkingSet | null): Session[] {
-  return sessions.filter((s) => !!s.alive && (!set || sessionInSet(set, s)));
+/** Every session in the order the left rail lists it: the repo tree depth first (a node's own
+ *  sessions, then its nested worktrees), then the other-sessions section. Fold state and the
+ *  rail's search box are ignored — a folded node still holds its place. */
+export function railOrder(sessions: Session[], repos: Repo[]): Session[] {
+  const out: Session[] = [];
+  const walk = (n: RepoTreeNode) => {
+    out.push(...sessionsInFolder(sessions, n.repo.name));
+    n.children.forEach(walk);
+  };
+  repoTree(repos, sessions).forEach(walk);
+  out.push(...orphanSessions(sessions, repos));
+  return out;
+}
+
+const terminalKind = (s: Session) => s.kind === "shell" || s.kind === "ssm";
+
+/** The rotation candidates, in rail order (see railOrder). set=null means all of them. */
+export function rotatableSessions(order: Session[], set: WorkingSet | null): Session[] {
+  return order.filter((s) => !!s.alive && !terminalKind(s) && (!set || sessionInSet(set, s)));
 }
 
 export interface RotateTarget {
@@ -29,20 +50,29 @@ export interface RotateTarget {
 
 /** The destination delta steps on from current, wrapping at either end.
  *
- * - When current is not a candidate (stopped, in another working set, or not a session pane
- *   at all), start from the head when moving forward and from the tail when moving back.
+ * - When current is not a candidate but sits in `order` (a shell, a stopped session), step
+ *   from its place there: forward lands on the first candidate below it, back on the first
+ *   above it, as the rail reads.
+ * - Otherwise (not a session pane at all, or in another working set) start from the head when
+ *   moving forward and from the tail when moving back.
  * - When the destination would be where we already are (only one candidate), return null and
  *   do nothing. */
 export function rotateTarget(
   list: Session[],
   current: string | null | undefined,
   delta: number,
+  order: Session[] = list,
 ): RotateTarget | null {
   if (list.length === 0 || delta === 0) return null;
   const at = list.findIndex((s) => s.name === current);
   if (list.length === 1) return at === 0 ? null : { session: list[0], index: 0, total: 1 };
-  // Base when current is not in the list: -1 going forward (→ head), 0 going back (→ tail).
-  const base = at < 0 ? (delta > 0 ? -1 : 0) : at;
+  let base = at;
+  if (at < 0) {
+    const pos = order.findIndex((s) => s.name === current);
+    // Candidates above current: forward starts just before the first one below it.
+    const above = pos < 0 ? 0 : list.filter((s) => order.indexOf(s) < pos).length;
+    base = delta > 0 ? above - 1 : above;
+  }
   // Double mod so a negative |delta| > list.length still cannot produce a negative index
   // (same as layout/nav).
   const i = (((base + delta) % list.length) + list.length) % list.length;

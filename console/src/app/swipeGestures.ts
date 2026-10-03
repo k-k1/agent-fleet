@@ -1,5 +1,5 @@
 // Touch horizontal-swipe recognition — opening/closing the left pane, and rotating
-// through running sessions on a phone (left = next, right = previous).
+// through running sessions on a phone (right = the row below in the rail, left = above).
 //
 // The recognition logic lives here rather than in an App.tsx useEffect so it can be
 // tested: phone gestures can only be tried on a real device, but the decisions themselves
@@ -13,7 +13,7 @@
 //   horizontal swipe advances/rewinds the running session by one.
 // - A rightward swipe starting at the left edge belongs to the drawer (that is where the
 //   rail is pulled out from). In the ordering below it settles on the 50px drawer branch
-//   first and never reaches the 70px rotate threshold, so going back with a rightward
+//   first and never reaches the 70px rotate threshold, so moving down with a rightward
 //   swipe only works when the gesture starts away from the edge.
 // - Opening is subject to the same guard as rotating (swipeGuard.ts): a surface that pans
 //   sideways owns the gesture. A Markdown table on a phone spans the full width, so its
@@ -47,7 +47,7 @@ export interface SwipeSurfaces {
   setDrawer(open: boolean): void;
   openRailOverlay(): void;
   closeRail(): void;
-  /** Advance the running session by delta (left swipe = +1 next, right = -1 previous). */
+  /** Advance the running session by delta (right swipe = +1, the row below; left = -1, above). */
   rotateSession(delta: number): void;
 }
 
@@ -146,12 +146,12 @@ export function installSwipeGestures(win: Window, s: SwipeSurfaces): () => void 
     } else if (rotate && dx < -ROTATE_DIST) {
       // A left swipe starting at the edge coexists with mode==="open" (which waits for
       // a rightward swipe), but direction lands it here, so the two never contend.
-      s.rotateSession(1);
+      s.rotateSession(-1);
       cancelGesture();
     } else if (rotate && dx > ROTATE_DIST) {
       // Only reached when the gesture did not start at the left edge; there the drawer
       // branch above settles first, at 50px.
-      s.rotateSession(-1);
+      s.rotateSession(1);
       cancelGesture();
     }
   };

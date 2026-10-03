@@ -108,8 +108,8 @@ function wireWorkspaceRefresh(): () => void {
   });
 }
 
-// Phone horizontal swipe: advance the running session by one (left = next, right =
-// previous). The whole screen changes, so a short toast reports where it landed (which
+// Phone horizontal swipe: move to the running session one row below (right) or above (left)
+// in the left rail. The whole screen changes, so a short toast reports where it landed (which
 // of how many). A no-op (only this session, or none) says why rather than dropping
 // silently.
 function rotateToSession(delta: number): void {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { rotatableSessions, rotateTarget, rotationCurrent } from "./rotate.ts";
+import { railOrder, rotatableSessions, rotateTarget, rotationCurrent } from "./rotate.ts";
+import type { Repo } from "../repos/store.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
 import type { Session } from "../../types/session.ts";
 
@@ -20,10 +21,60 @@ const set = (over: Partial<WorkingSet> = {}): WorkingSet => ({
   ...over,
 });
 
+describe("railOrder", () => {
+  const at = (n: number) => `2026-09-0${n}T00:00:00Z`;
+  const repos: Repo[] = [
+    { name: "beta" },
+    { name: "af" },
+    { name: "af@p", worktree: true, parent: "af", createdAt: at(2) },
+    { name: "af@q", worktree: true, parent: "af", createdAt: at(3) },
+    { name: "af@c", worktree: true, parent: "af", createdAt: at(4) },
+  ];
+  const sessions = [
+    s("sh", { kind: "shell", createdAt: at(7) }), // no folder: the other-sessions section
+    s("b1", { repo: "beta", createdAt: at(6) }),
+    s("child", { repo: "af@c", createdAt: at(4), originSession: "parent" }),
+    s("other", { repo: "af@q", createdAt: at(3) }),
+    s("parent", { repo: "af@p", createdAt: at(2) }),
+    s("main", { repo: "af", createdAt: at(1) }),
+  ];
+
+  it("lists sessions as the rail does: repo tree depth first with nested worktrees, then the rest", () => {
+    // The API order (newest first) would be sh, b1, child, other, parent, main.
+    expect(railOrder(sessions, repos).map((x) => x.name)).toEqual(["main", "parent", "child", "other", "b1", "sh"]);
+  });
+
+  it("drives the swipe: +1 is the row below, -1 the row above, across a nested child", () => {
+    const order = railOrder(sessions, repos);
+    const list = rotatableSessions(order, null);
+    expect(rotateTarget(list, "parent", 1, order)?.session.name).toBe("child");
+    expect(rotateTarget(list, "child", 1, order)?.session.name).toBe("other");
+    expect(rotateTarget(list, "child", -1, order)?.session.name).toBe("parent");
+  });
+
+  it("skips shell and ssm, and steps from one by its place in the rail", () => {
+    const withSsm = [...sessions, s("box", { kind: "ssm", repo: "af@p", createdAt: at(5) })];
+    const order = railOrder(withSsm, repos);
+    const list = rotatableSessions(order, null);
+    expect(list.map((x) => x.name)).toEqual(["main", "parent", "child", "other", "b1"]);
+    // box sits above parent in af@p (newest first within a folder).
+    expect(rotateTarget(list, "box", 1, order)).toMatchObject({ index: 1, total: 5, session: { name: "parent" } });
+    expect(rotateTarget(list, "box", -1, order)?.session.name).toBe("main");
+    // sh is the last row: forward wraps to the head, back lands on the last candidate.
+    expect(rotateTarget(list, "sh", 1, order)?.session.name).toBe("main");
+    expect(rotateTarget(list, "sh", -1, order)?.session.name).toBe("b1");
+  });
+});
+
 describe("rotatableSessions", () => {
   it("returns only the alive sessions, in the list's own order", () => {
     const list = [s("s1"), s("s2", { alive: false }), s("s3", { alive: undefined }), s("s4")];
     expect(rotatableSessions(list, null).map((x) => x.name)).toEqual(["s1", "s4"]);
+  });
+
+  it("leaves out shell and ssm sessions", () => {
+    const list = [s("s1", { kind: "shell" }), s("s2"), s("s3", { kind: "ssm" }), s("s4", { kind: "codex" })];
+    expect(rotatableSessions(list, null).map((x) => x.name)).toEqual(["s2", "s4"]);
   });
 
   it("follows the filter when a working set is selected", () => {
