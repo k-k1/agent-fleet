@@ -328,8 +328,9 @@ cd console-e2e && npm ci && npx playwright test
 `deploy/local/cli-drift-check.sh` の `TARGETS`: 版をピンしている全エージェント CLI と `rtk`。
 lcpp は入らない——セルフホストのエンジンに対してプロセス内で動き、上流の CLI を持たない。
 
-同じワークフローの `apt-pins` ジョブは Debian パッケージのピン（`ARG CHROMIUM_VERSION`）を
-`deploy/local/apt-pin-check.sh` で確かめる。ピンの全パッケージが amd64 **と** arm64 の両方で
+同じワークフローの `apt-pins` ジョブは Debian パッケージのピンを `deploy/local/apt-pin-check.sh`
+で確かめる。ピンは `workspace/Dockerfile` の `apt-get install` から読み出す（現状は
+`ARG CHROMIUM_VERSION` だけ）。ピンの全パッケージが amd64 **と** arm64 の両方で
 trixie・trixie-updates・trixie-security のどれかに載っていること。trixie-security は現行ビルド
 しか持たないので、Debian が次の更新を出した時点でピンは消え（片方のアーキテクチャだけ先に
 消えることもある）、キャッシュの無い次のイメージビルドが落ちる。これはドリフトの定常状態では

@@ -7,7 +7,10 @@
 # verdict is a release build that fails on arm64 — the failure it exists to prevent.
 # Case 2 is the one that matters: the pin is still served for amd64 and gone for arm64,
 # and the check has to say so. Case 5 is the other direction: an unreadable index must
-# not be read as "served".
+# not be read as "served". Cases 7-10 pin the rest of the contract: pins are extracted
+# from the Dockerfile, versions are ordered as dpkg orders them, index paragraphs are read
+# in any field order and filtered by architecture, and any unreadable index makes the run
+# incomplete.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -48,8 +51,19 @@ all3() { # all3 <version> — the three chromium packages at one version
 # A case: fresh trees, then the caller writes the indexes.
 reset() { rm -rf "$WORK/debian" "$WORK/security"; }
 
+# raw <tree> <suite> <arch> — the index body comes from stdin, verbatim.
+raw() {
+  local dir="$WORK/$1/dists/$2/main/binary-$3"
+  mkdir -p "$dir"
+  cat > "$dir/Packages"
+  xz -f "$dir/Packages"
+}
+
+DOCKERFILE="$ROOT/workspace/Dockerfile"
+
 run() {
   set +e
+  APT_PIN_DOCKERFILE="$DOCKERFILE" \
   APT_PIN_DEBIAN_URL="file://$WORK/debian" APT_PIN_SECURITY_URL="file://$WORK/security" \
     "$CHECK" > "$WORK/out" 2> "$WORK/err"
   code=$?
@@ -78,6 +92,8 @@ run
 [ "$code" = 0 ] || fail "$CASE: exit $code, want 0"
 [ "$(grep -c ' ok (' "$WORK/out")" = 6 ] || fail "$CASE: want 6 ok rows"
 has "on [amd64 arm64]: $PIN"
+# Positive control for the extraction: the real Dockerfile yields exactly these three.
+has "all of [chromium chromium-common chromium-sandbox] on"
 
 # 2. Still served for amd64, gone for arm64 (issue #1577).
 CASE="2 gone for arm64 only"
@@ -147,4 +163,89 @@ run
 [ "$code" = 1 ] || fail "$CASE: exit $code, want 1"
 has "on [amd64 arm64]: 1.0.0.100-1"
 
-echo "OK: apt-pin-check.sh (6 cases)"
+# 7. Pins come from the Dockerfile, not a list: a new ARG-pinned package in another RUN
+#    (continued over lines, after an options flag), a fourth package on CHROMIUM_VERSION
+#    and a literal pin are all checked; a pin whose version cannot be resolved fails; a
+#    `pip install x==1` chained after `apt-get update` is not an apt pin.
+CASE="7 pins extracted from the Dockerfile"
+reset; plain_main
+for a in amd64 arm64; do
+  # shellcheck disable=SC2046
+  index security trixie-security "$a" $(all3 "$PIN") lit "1.2-3"
+done
+DOCKERFILE="$WORK/Dockerfile"
+cat "$ROOT/workspace/Dockerfile" - > "$DOCKERFILE" <<'EOF'
+ARG EXTRA_VERSION=1
+RUN apt-get update \
+ && apt-get -y --no-install-recommends install \
+      "extra=${EXTRA_VERSION}" \
+      chromium-driver=$CHROMIUM_VERSION \
+      lit=1.2-3 \
+ && pip install foo==1.0
+EOF
+run
+[ "$code" = 1 ] || fail "$CASE: exit $code, want 1"
+has "EXTRA_VERSION      amd64   extra              MISSING (1 not served)"
+has "CHROMIUM_VERSION   arm64   chromium-driver    MISSING"
+has "literal            arm64   lit                ok (1.2-3)"
+lacks "foo"
+cat "$ROOT/workspace/Dockerfile" - > "$DOCKERFILE" <<'EOF'
+RUN apt-get install -y "odd=${ODD_VERSION:-1}"
+EOF
+run
+[ "$code" = 1 ] || fail "$CASE (unsupported): exit $code, want 1"
+has "UNSUPPORTED pin 'odd=\${ODD_VERSION:-1}'"
+DOCKERFILE="$ROOT/workspace/Dockerfile"
+
+# 8. Newest by dpkg ordering, where `sort -V` is wrong: a letter after the upstream
+#    digits, `~` sorting before the release, and an epoch beating any upstream version.
+CASE="8 dpkg version ordering"
+for set in "1.0-1 1.0a-1|1.0a-1" "1.0~rc1-1 1.0-1|1.0-1" "1:1.0-1 2.0-1|1:1.0-1"; do
+  vers="${set%%|*}"; want="${set##*|}"
+  reset; plain_main
+  for a in amd64 arm64; do
+    args=()
+    for v in $vers; do
+      # shellcheck disable=SC2207
+      args+=($(all3 "$v"))
+    done
+    index security trixie-security "$a" "${args[@]}"
+  done
+  run
+  has "on [amd64 arm64]: $want"
+done
+
+# 9. Paragraphs in any field order; only this architecture's (or `all`) count.
+CASE="9 paragraph parsing"
+reset; plain_main
+stanza() { printf '%s\n' "$@" ""; }
+{
+  stanza "Version: $PIN" "Architecture: amd64" "Package: chromium"
+  stanza "Architecture: all" "Package: chromium-common" "Version: $PIN"
+  stanza "Package: chromium-sandbox" "Description: x" "Version: $PIN" "Architecture: amd64"
+} | raw security trixie-security amd64
+{
+  stanza "Package: chromium" "Version: $PIN" "Architecture: arm64"
+  stanza "Package: chromium-common" "Version: $PIN" "Architecture: all"
+  stanza "Package: chromium-sandbox" "Version: $PIN" "Architecture: amd64"
+} | raw security trixie-security arm64
+run
+[ "$code" = 1 ] || fail "$CASE: exit $code, want 1"
+[ "$(grep -c ' ok (' "$WORK/out")" = 5 ] || fail "$CASE: want 5 ok rows"
+has "arm64   chromium-sandbox   MISSING"
+
+# 10. Pin found, but one index unreadable: rows are ok, the run is incomplete (exit 2).
+CASE="10 unreadable index with the pin found elsewhere"
+reset
+for a in amd64 arm64; do
+  index debian trixie "$a"
+  # shellcheck disable=SC2046
+  index security trixie-security "$a" $(all3 "$PIN")
+done
+index debian trixie-updates amd64
+run
+[ "$code" = 2 ] || fail "$CASE: exit $code, want 2"
+[ "$(grep -c ' ok (' "$WORK/out")" = 6 ] || fail "$CASE: want 6 ok rows"
+has "Incomplete: an index could not be read for [arm64]"
+
+echo "OK: apt-pin-check.sh (10 cases)"
