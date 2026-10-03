@@ -289,8 +289,9 @@ npm --prefix console run build
   | `model-id-lint` | no model-id-shaped string literal in either Go module outside `workspace/agent/internal/modelfallback`; `// model-id-lint:allow <reason>` marks one that chooses no model |
 
   On a pull request, the `changes` job skips `control-plane`, `workspace-agent`,
-  `deploy-scripts` and `console` when every changed path is inert — `docs/`, `guide/`
-  (except `guide/ref/agents{,.ja}.md`, which a Console test reads), the top-level `*.md`
+  `deploy-scripts` and `console` when every changed path is inert — `docs/` and `guide/`
+  (except the files a test reads: `guide/ref/agents{,.ja}.md` and
+  `docs/decisions/0029-usage-accounting{,.ja}.md`), the top-level `*.md`
   files and the docs checker. The list and the reason are in `scripts/ci-changes.sh`.
   Pushes to `main` / `develop` always run every job.
 

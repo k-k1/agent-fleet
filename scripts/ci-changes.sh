@@ -13,15 +13,18 @@
 # would skip a job that a change does break. Anything not listed counts as code, and so
 # does an empty diff — when in doubt, answer true.
 #
-# Before adding a path here, grep the tests and scripts the four jobs run for it. Two files
-# under guide/ are read by a test and are therefore code:
+# Before adding a path here, grep the tests and scripts the four jobs run for it — including
+# the `filepath.Join("..", "..", "docs", …)` form, which a grep for "docs/" misses. These
+# files under docs/ and guide/ are read by a test and are therefore code:
 #   guide/ref/agents.md, guide/ref/agents.ja.md  (console/src/agents/guideTable.test.ts)
+#   docs/decisions/0029-usage-accounting{,.ja}.md (workspace/agent/usage_features_catalog_test.go)
 # The positive and negative controls are scripts/ci-changes-test.sh.
 set -euo pipefail
 
 inert() {
   case "$1" in
     guide/ref/agents.md | guide/ref/agents.ja.md) return 1 ;;
+    docs/decisions/0029-usage-accounting.md | docs/decisions/0029-usage-accounting.ja.md) return 1 ;;
     docs/* | guide/*) return 0 ;;
     scripts/docs-check.py | scripts/test_docs_check.py) return 0 ;;
     */*) return 1 ;;
@@ -31,7 +34,10 @@ inert() {
 }
 
 seen=0
-while IFS= read -r f; do
+# `|| [ -n "$f" ]` keeps a last line with no newline, and the CR is stripped so a CRLF list
+# still matches the exceptions above; either slip would otherwise answer false.
+while IFS= read -r f || [ -n "$f" ]; do
+  f="${f%$'\r'}"
   [ -n "$f" ] || continue
   seen=1
   if ! inert "$f"; then
