@@ -463,6 +463,64 @@ then echo isolated; else echo not-isolated; fi; unset err st
 - 資格情報の寿命は SSO のロールセッション、または引き受けたロールのセッション（多くは 1 時間）です。それより長いコマンドは、期限で身元が切り替わるのでは
   なく失敗します。
 
+### ローカルのエミュレーター（MiniStack）で AWS のコードを試す
+
+本物のアカウントに触らずにコード・テンプレート・スクリプトを試したいときは、オープンソースの AWS API
+エミュレーター [MiniStack](https://github.com/ministackorg/ministack) をワークスペースの中で動かせます。PyPI から
+入れれば Docker は要らず、数秒で起動し、小さいままです。イメージには入っていないので自分で入れてください。
+
+```sh
+python3 -m venv ~/.local/ministack && ~/.local/ministack/bin/pip install ministack
+GATEWAY_PORT=14566 ~/.local/ministack/bin/ministack
+```
+
+ポートは他のセッションと共有です。空いているものを選び（既定の 4566 は使われていることがあります）、使い終わったら
+サーバーを止めてください。
+
+**専用のプロファイルを向け、毎回その名前を指定します。** まだどこにも使われていないプロファイル名を選んでください。
+`aws configure list-profiles` にも、`af-aws-exec --list` にも、`~/.aws/credentials` にも無い名前です。
+`~/.aws/credentials` に `[ministack]` があると下の鍵よりそちらが優先され、本物の資格情報がエミュレーターに送られます。
+設定画面に同じ名前のプロファイルがあれば、そちらは書き出されなくなります。そのうえで `~/.aws/config` の管理ブロックの
+外に新しい節を足します。
+
+```ini
+[profile ministack]
+region = us-east-1
+endpoint_url = http://127.0.0.1:14566
+aws_access_key_id = 000000000001
+aws_secret_access_key = test
+```
+
+あとは `aws --profile ministack …` で実行します。プロファイルがエンドポイントを運ぶのは、プロファイルの
+`endpoint_url` を読むクライアントだけです。AWS CLI v2 と現行の SDK は読みますが、AWS SDK for Java 1.x・
+JavaScript v2・Go v1 は読まず、自分でエンドポイントを決めるツールも読みません。それらはクライアント自身に
+エンドポイントを渡さない限り（Terraform の `endpoints` ブロック、SDK のエンドポイント指定）、ダミーの鍵のまま
+本物の AWS に向かいます。シェルに `AWS_ENDPOINT_URL*` や `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true` が
+`export` されているとプロファイルのエンドポイントより優先されるので、それも確かめてください。
+
+代わりにダミーの鍵をシェルに `export`（`AWS_ACCESS_KEY_ID=test`）**しないでください**。すべてのコマンドが
+その鍵を持つことになり、`--endpoint-url` を付け忘れたコマンドは、何もワークスペースの外に出る前に「Unable to
+locate credentials」で止まる代わりに、本物の AWS へリクエストを送ります（ダミーの鍵なので拒否されます）。
+プロファイルを付け忘れたときにどこまで守られるかはワークスペースによります。プロファイル無しのコマンドがその
+エラーで止まるワークスペース（上の `af-aws-exec` を参照）では止まります。ワークスペース自身のロールが戻される
+（`AF_WS_WORKLOAD_AWS=1`）場合や、マシン自身の資格情報を持つネイティブランタイムでは、プロファイル無しの
+コマンドはその身元で本物の AWS に対して動きます。そこでは決してプロファイルを省かないでください。MiniStack は
+`af-aws-exec` を通しては使いません。`af-aws-exec` はエンドポイントの設定を意図して外します。
+
+- **1 つのサーバーを共有する。** 12 桁のアクセスキーがそのままアカウント ID になり、リソースはアカウントごとに
+  分かれるので、互いのリソースを見てはいけないセッションは別々のキーを使います。リージョンで分かれるかは
+  サービスによります（たとえば S3 のバケットはどのリージョンからも見えます）。2 つのセッションを分けるのに
+  リージョンを頼らないでください。
+- **ここでは動かないもの。** RDS・ElastiCache・ECS は本物の Docker コンテナを起動しますが、ワークスペースには
+  Docker がありません。それでも RDS は `available` と答え、`localhost:5432` のような、自分のデータベースが
+  どこにも無いエンドポイントを返します。そこではワークスペースの別の Postgres が待ち受けていることがあります。
+  データベースが要るなら `af-db` を使ってください（[DB を使うテストを回す](03-code.ja.md#db-を使うテストを回す)）。
+- **状態**はメモリ上にあり、サーバーを止めると消えます。`PERSIST_STATE=1` はサービスの状態を残しますが S3 の
+  オブジェクトの中身は残さず、それには `S3_PERSIST=1` も要ります。どちらも既定の置き場は `/tmp` の下なので、
+  `STATE_DIR` と `S3_DATA_DIR` を home の下のディレクトリにしてください。
+- **エミュレーターです。** これで動いたテンプレートや IAM ポリシーが AWS では失敗することもあります。試行錯誤に使い、
+  頼る前に本物を `af-aws-exec` で確かめてください。
+
 ## Google Cloud で自分としてコマンドを実行する（af-gcloud-exec）
 
 Google Cloud のプロファイルは **⚙設定 →「Google Cloud」タブ**に置きます。プロファイルは、コマンドがどのプロジェクトに

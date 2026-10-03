@@ -478,6 +478,65 @@ Agents in the workspace follow the same rule.
 - Credentials last as long as the SSO role session, or the assumed role's session (often one hour). A longer
   command fails when they expire rather than switching identity.
 
+### Trying AWS code against a local emulator (MiniStack)
+
+To try code, a template or a script without touching a real account, you can run
+[MiniStack](https://github.com/ministackorg/ministack) — an open-source AWS API emulator — inside the workspace.
+It needs no Docker when installed from PyPI, starts in seconds and stays small. It is not part of the image, so
+install it yourself:
+
+```sh
+python3 -m venv ~/.local/ministack && ~/.local/ministack/bin/pip install ministack
+GATEWAY_PORT=14566 ~/.local/ministack/bin/ministack
+```
+
+Ports are shared with your other sessions: pick a free one (the default 4566 may be taken) and stop the server
+when you are done.
+
+**Point a dedicated profile at it, and name that profile every time.** Pick a profile name that is used nowhere
+yet — not in `aws configure list-profiles`, not in `af-aws-exec --list`, not in `~/.aws/credentials` — because a
+`[ministack]` entry in `~/.aws/credentials` would win over the keys below and send real credentials to the
+emulator, and a Settings profile of the same name stops being exported. Then add a new section outside the managed
+block of `~/.aws/config`:
+
+```ini
+[profile ministack]
+region = us-east-1
+endpoint_url = http://127.0.0.1:14566
+aws_access_key_id = 000000000001
+aws_secret_access_key = test
+```
+
+and run `aws --profile ministack …`. The profile carries the endpoint only for clients that read `endpoint_url`
+from a profile: the AWS CLI v2 and current SDKs do; AWS SDK for Java 1.x, JavaScript v2 and Go v1 do not, and
+neither does a tool that sets its own endpoint. Those go to real AWS with the dummy keys unless you give the
+client the endpoint itself (Terraform's `endpoints` block, the SDK's endpoint option). An exported
+`AWS_ENDPOINT_URL*` or `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true` overrides the profile's endpoint too, so
+check your shell for them.
+
+Do **not** export dummy keys (`AWS_ACCESS_KEY_ID=test`) instead. Every command would then carry them, and one that
+forgets `--endpoint-url` sends its request to real AWS (where the dummy keys are rejected) instead of stopping
+with "Unable to locate credentials" before anything leaves the workspace. How much a forgotten profile protects
+you depends on the workspace: where a command without a profile stops with that error (see `af-aws-exec` above),
+it stops; where the workspace's own role is handed back (`AF_WS_WORKLOAD_AWS=1`) or on the native runtime with
+the machine's own credentials, a command without a profile runs as that identity against real AWS — so there,
+never leave the profile out. MiniStack is never run through `af-aws-exec`, which removes endpoint settings on
+purpose.
+
+- **Sharing one server.** A 12-digit access key becomes the account id, and resources are kept apart per
+  account, so sessions that must not see each other's resources use different keys. Separation by region
+  depends on the service (S3 buckets, for one, are visible from every region), so do not rely on a region to
+  keep two sessions apart.
+- **What does not work here.** RDS, ElastiCache and ECS start real Docker containers, and a workspace has no
+  Docker. RDS still answers `available` with an endpoint such as `localhost:5432` that no database of its own
+  is behind — another Postgres in the workspace may be listening there. For a database, use `af-db`
+  ([Running database-backed tests](03-code.md#running-database-backed-tests)).
+- **State** is in memory and lost when the server stops. `PERSIST_STATE=1` keeps service state but not S3
+  object contents, which need `S3_PERSIST=1` as well; both default to directories under `/tmp`, so set
+  `STATE_DIR` and `S3_DATA_DIR` to directories under your home.
+- **It is an emulator.** A template or IAM policy that works against it may still fail on AWS; use it to
+  iterate, and check the real thing through `af-aws-exec` before you rely on it.
+
 ## Running commands in Google Cloud as you (af-gcloud-exec)
 
 Your Google Cloud profiles live in **⚙ Settings → the "Google Cloud" tab**. A profile says which project a
