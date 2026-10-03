@@ -366,6 +366,15 @@ drift clears. The rows it checks are `TARGETS` in `deploy/local/cli-drift-check.
 every agent CLI whose version is pinned, plus `rtk`. lcpp is not among them: it runs
 in-process against a self-hosted engine and has no upstream CLI.
 
+The same workflow's `apt-pins` job checks the Debian package pin (`ARG CHROMIUM_VERSION`)
+with `deploy/local/apt-pin-check.sh`: every package of the pin must still be listed for
+amd64 **and** arm64 in trixie, trixie-updates or trixie-security. trixie-security keeps
+only the current build, so a pin disappears as soon as Debian ships the next update — for
+one architecture first, sometimes — and the next uncached image build fails. That is a
+broken build, not steady-state drift, so this job goes red; its output names the newest
+version served on both architectures, which is what the ARG is bumped to by hand.
+`deploy/local/apt-pin-check-test.sh` pins its verdicts.
+
 A second workflow, `cli-release-watch.yml`, compares the published versions daily and
 dispatches a contract **only for the CLIs whose version actually changed** (the kinds
 are `KINDS` in `deploy/local/cli-release-edges.sh`). Its state lives in one issue:
