@@ -92,14 +92,9 @@ The home is released only when the Control Plane sees its task stopped. If ECS n
 the task, or the answer to starting it was lost, the Control Plane asks ECS again under the same
 token; within 23 hours of the first request that returns the task already started (or runs the
 removal again once it is gone, which is safe: it removes only what the operation removes, on a home
-nothing could start in between). A refusal with no record behind it (left by an earlier Control
-Plane) is released by the Control Plane itself when ECS still lists exactly one task started by
-`af-home/<membership>` after the refusal was written, stopped with exit code 0, none created in the
-minute before it, none running or still stopping, and accounts for every task it lists;
-the release is written to the audit log as `workspace.home_marker_released`. Two cases need an
-operator, and the Control Plane log names them: such a refusal whose task ECS no longer lists
-(about an hour after it stopped) or that is ambiguous, and a task not seen stopped more than 23
-hours after it was requested (ECS no longer guarantees that
+nothing could start in between). Two cases need an operator, and the Control Plane log names them:
+a refusal left by a Control Plane from before this version, which has no record behind it, and a
+task not seen stopped more than 23 hours after it was requested (ECS no longer guarantees that
 asking again returns the same task rather than starting a second one). An operator who has checked
 in ECS that no task started by `af-home/<membership>` is running deletes the SSM parameter
 `/af-ws/<workspace>/home-task`; in the second case the Control Plane then finishes the operation by

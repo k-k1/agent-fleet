@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -157,25 +156,6 @@ func (m *manager) closeHomeOperation(op store.HomeOperation, err error, f store.
 		m.evictMembershipCache(op.MembershipID)
 	}
 	return true
-}
-
-// auditHomeMarkerRelease records a pending home marker the adapter released on ECS's
-// evidence alone (runtime.OnHomeMarkerReleased): a refused home freed with nobody asking is
-// an operator's decision taken by the CP, and is answered for like one.
-func (m *manager) auditHomeMarkerRelease(rel runtime.HomeMarkerRelease) {
-	ctx, cancel := context.WithTimeout(context.Background(), homeOpFinishTimeout)
-	defer cancel()
-	tenantID := ""
-	if ws, ok, err := m.store.GetWorkspaceByMembership(ctx, rel.MembershipID); err == nil && ok {
-		tenantID = ws.TenantID
-	}
-	e := store.AuditLog{ID: store.NewID(), TenantID: tenantID, ActorKind: "system", ActorID: "control-plane",
-		Action: "workspace.home_marker_released", Target: rel.Workspace, At: store.NowTS(),
-		Detail: fmt.Sprintf("%s = %q released: its task %s stopped with exit 0 and none is running (membership %s)",
-			rel.Marker, rel.Value, rel.TaskARN, rel.MembershipID)}
-	if err := m.store.InsertAudit(ctx, e); err != nil {
-		log.Printf("audit: %s on %q: %s: %v", e.Action, e.Target, e.Detail, err)
-	}
 }
 
 // homeOpStartKey carries, on the context of the start a member's wipe owes, the id of
