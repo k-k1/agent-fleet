@@ -1281,6 +1281,13 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 		// service deployment from zero, exactly as on Fargate.
 		return nil
 	}
+	// A Destroy's home task may still be removing /claude-config/<id> and /home-keep/<id>
+	// (its CP restarted, or its budget ran out, and the row stayed). Starting now would
+	// mount them again and lose the new logins with them. Asked before anything is created:
+	// the base's gate reads the SSM marker and ECS, so it holds across a restart.
+	if err := e.base.HomeWipeBlocked(ctx); err != nil {
+		return err
+	}
 	// Mark that a Start has begun, so a teardown still draining from the Stop that the
 	// recreate / clean-home handlers issued a moment ago aborts instead of pulling this
 	// workspace's home out from under it.

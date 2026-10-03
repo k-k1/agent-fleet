@@ -808,6 +808,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.idle_hold_watching_row": "someone is working here (recent typing or Console interaction)",
   "admin.auto_stop_at": "Stopped at {at}. The member was notified. This clears on the next start.",
   "admin.auto_stop_home_wipe": "Recreate / Clean home failed",
+  "admin.auto_stop_home_wipe_at": "Stopped at {at}. This clears on the next start.",
   "admin.idle_observed": "As observed at {at} (may lag by up to one sweep interval)",
   "admin.idle_stop_at": "Scheduled idle-stop: {at} (the reaper's latest read)",
   "admin.idle_off": "Idle-stop off",

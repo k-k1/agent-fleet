@@ -236,7 +236,11 @@ export function MemberAutoStopDetail({ autoStop }: { autoStop?: MemberAutoStop }
       <h4>{autoStopTitle(autoStop, tr)}</h4>
       <p>{autoStopReason(autoStop)}</p>
       <p className="admin-hint">
-        {tr("admin.auto_stop_at", { at: new Date(autoStop.stopped_at).toLocaleString() })}
+        {/* Only the start deadline writes the member a notification; a failed home wipe reaches
+            them as a toast in a Console that happens to be open, so it claims nothing. */}
+        {tr(autoStop.kind === "home-wipe-failed" ? "admin.auto_stop_home_wipe_at" : "admin.auto_stop_at", {
+          at: new Date(autoStop.stopped_at).toLocaleString(),
+        })}
       </p>
     </section>
   );

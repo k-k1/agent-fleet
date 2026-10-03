@@ -20,6 +20,7 @@ import (
 // STOPPING for wsStoppingPolls reads and STOPPED after.
 type fakeTasks struct {
 	inflight        []string // what ListTasks answers for the member's startedBy
+	listErr         error    // what ListTasks fails with for the member's startedBy
 	runs            []*ecs.RunTaskInput
 	runFailure      string
 	missingPolls    int
@@ -78,6 +79,9 @@ func (f *fakeTasks) ListTasks(_ context.Context, in *ecs.ListTasksInput, _ ...fu
 			return &ecs.ListTasksOutput{TaskArns: []string{fakeWSTask}}, nil
 		}
 		return &ecs.ListTasksOutput{}, nil
+	}
+	if f.listErr != nil {
+		return nil, f.listErr
 	}
 	return &ecs.ListTasksOutput{TaskArns: f.inflight}, nil
 }
@@ -599,5 +603,50 @@ func TestECSRunTaskFailureKeepsTheMarkerUnlessNothingStarted(t *testing.T) {
 		if c.kept && (!errors.Is(startErr, ErrHomeTaskInFlight) || len(fe.createCalls) != 0) {
 			t.Errorf("%s: Start = %v (creates %d), want ErrHomeTaskInFlight and no service", c.name, startErr, len(fe.createCalls))
 		}
+	}
+}
+
+// A Destroy's task that outlived its CP (or its budget) is still removing the member's EFS
+// directories, and the workspace row is still there. ecs-ec2's Start must not mount them
+// again: it refuses, with nothing created, whichever record says the task is in flight, and
+// when that cannot be read.
+func TestECSEC2StartRefusedWhileAHomeTaskRuns(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		marker string
+		ft     *fakeTasks
+		want   error
+	}{
+		{"pending marker", homeTaskMarkerPending, &fakeTasks{}, ErrHomeTaskInFlight},
+		{"marker of a running task", "arn:task/home-1", &fakeTasks{runningPolls: 5}, ErrHomeTaskInFlight},
+		{"listed by startedBy", "", &fakeTasks{inflight: []string{"arn:task/home-9"}}, ErrHomeTaskInFlight},
+		{"listing fails", "", &fakeTasks{listErr: errors.New("ThrottlingException")}, nil},
+	} {
+		h := newEC2Harness(t)
+		h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+		h.rt.base.cfg.homeTask = "af-stack-home-ops"
+		h.rt.base.tasks = c.ft
+		if c.marker != "" {
+			h.ssm.values = map[string]string{h.rt.base.homeTaskMarker(): c.marker}
+		}
+		err := h.rt.Start(context.Background())
+		if err == nil || (c.want != nil && !errors.Is(err, c.want)) {
+			t.Errorf("%s: Start = %v, want a refusal (%v)", c.name, err, c.want)
+		}
+		if len(h.efs.aps) != 0 || len(h.ec2.volumes) != 0 || len(h.deferred) != 0 || len(h.ecs.createCalls) != 0 {
+			t.Errorf("%s: refused, but created access points %d, volumes %d, deferred starts %d, services %d",
+				c.name, len(h.efs.aps), len(h.ec2.volumes), len(h.deferred), len(h.ecs.createCalls))
+		}
+	}
+	// Positive control: with nothing in flight the same Start goes ahead.
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.rt.base.cfg.homeTask = "af-stack-home-ops"
+	h.rt.base.tasks = &fakeTasks{}
+	if err := h.rt.Start(context.Background()); err != nil {
+		t.Fatalf("Start with no home task in flight: %v", err)
+	}
+	if len(h.efs.aps) == 0 {
+		t.Error("the positive control created no access point; the refusals above prove nothing")
 	}
 }

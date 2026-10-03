@@ -126,6 +126,26 @@ describe("a start the Control Plane stopped", () => {
     expect(chip?.getAttribute("title")).toBe(why);
   });
 
+  // Nothing notifies the member of a failed home wipe, so the detail must not say it did.
+  it("does not claim the member was notified of a failed home wipe", async () => {
+    const autoStop = {
+      kind: "home-wipe-failed",
+      phase: "the home task (repos) failed with exit 1",
+      limit_minutes: 0,
+      stopped_at: "2026-10-01T10:00:00Z",
+    };
+    api.mockImplementation((p: string) =>
+      Promise.resolve(p.endsWith("/stats") ? { running: false, auto_stop: autoStop } : { sessions: [] }),
+    );
+    await render(
+      <MemberView slug="acme" member={{ ...STOPPED, auto_stop: autoStop }} isSuper={false} onChanged={() => {}} onRemoved={() => {}} />,
+    );
+    const text = (document.body.textContent || "").replace(/\s+/g, " ");
+    expect(text).toContain(en["admin.auto_stop_home_wipe"]);
+    expect(text).toContain(en["admin.auto_stop_home_wipe_at"].split("{at}")[1].trim());
+    expect(text).not.toContain("The member was notified");
+  });
+
   it("says nothing extra for a member without the record", async () => {
     api.mockResolvedValue({ running: false, sessions: [] });
     await render(<MemberView slug="acme" member={PLAIN} isSuper={false} onChanged={() => {}} onRemoved={() => {}} />);

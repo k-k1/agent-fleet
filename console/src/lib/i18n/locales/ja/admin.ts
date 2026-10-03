@@ -798,6 +798,7 @@ export const admin = {
   "admin.idle_hold_watching_row": "端末で操作中（打鍵または Console の操作が直近にある）",
   "admin.auto_stop_at": "{at} に停止しました。メンバーには通知済みです。次に起動すると消えます。",
   "admin.auto_stop_home_wipe": "作り直し・ホームの掃除に失敗",
+  "admin.auto_stop_home_wipe_at": "{at} に停止しました。次に起動すると消えます。",
   "admin.idle_observed": "{at} 時点の観測（最大でスイープ間隔ぶん古い場合があります）",
   "admin.idle_stop_at": "自動停止の予定: {at}（reaper の直近の観測）",
   "admin.idle_off": "自動停止 無効",
