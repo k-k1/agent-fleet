@@ -163,7 +163,8 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
     ワークスペースのブリッジからの `169.254.169.254` を拒否するホストのファイアウォール規則（ホストの root が
     要ります。compose 自体に新しい権限は要りません）。
   - **ecs-ec2**: スロットのユーザーデータが `ECS_AWSVPC_BLOCK_IMDS=true` を設定します。残っている
-    スロットは入れ替えが要ります（`deploy/aws/ecs/README.md`「Moving retained slots onto new user data」）。
+    スロットは入れ替えが要ります。設定 → 管理 → スロットで入れ替え予約してください（[03-run](03-run.ja.md)
+    「ecs-ec2: 起動テンプレートを変えたあとのスロットの入れ替え」）。
 
   Control Plane の `AF_WS_WORKLOAD_AWS=1` は ECS のタスクロールをワークスペースに戻し、SDK のメタデータ参照の
   抑止をやめます。上のネットワークの防護はどれも外さないので、docker のワークスペースがホストのインスタンス

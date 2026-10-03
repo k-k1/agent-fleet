@@ -154,6 +154,7 @@ export const common = {
   "wsstart.toolchain": "ツールチェーンを導入中…",
   "wsstart.slot_making_room": "空いているマシンを片付けて、あなたに合う大きさのものを用意しています…（この経路がいちばん時間がかかります）",
   "wsstart.slot_creating": "実行するマシンを用意しています…（新しく起動するので数分かかります）",
+  "wsstart.slot_renewing": "新しいマシンへ移っています…（以前のマシンは管理者が入れ替え対象にしました。ファイルはそのまま引き継がれます）",
   "wsstart.slot_waking": "マシンを起こしています…",
   "wsstart.slot_booting": "マシンの起動を待っています…",
   "wsstart.home_creating": "home のディスクを作成しています…（初回のみ）",

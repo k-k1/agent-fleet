@@ -56,6 +56,15 @@ describe("workspace store applyPush", () => {
   // stale (a backend update not yet picked up) is decided by the CP alone. Hold whatever is
   // pushed and clear it when it goes — remembering it client-side would leave the
   // restart-needed badge up even after a restart resolved it.
+  // ecs-ec2: the slot under this workspace is reserved for replacement (#1473). The CP says
+  // so on running and stopped workspaces alike, and stops saying it once the move happened.
+  it("adopts and clears the CP's slotReplace flag", () => {
+    useWorkspaceStore.getState().applyPush({ state: "stopped", slotReplace: true });
+    expect(useWorkspaceStore.getState().slotReplace).toBe(true);
+    useWorkspaceStore.getState().applyPush({ state: "running" });
+    expect(useWorkspaceStore.getState().slotReplace).toBe(false);
+  });
+
   it("adopts and clears the CP-detected stale flag", () => {
     useWorkspaceStore.getState().applyPush({ state: "running", stale: true });
     expect(useWorkspaceStore.getState().stale).toBe(true);

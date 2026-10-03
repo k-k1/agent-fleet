@@ -72,3 +72,10 @@ func (c *TTLCache) peek(key string) string {
 	defer c.mu.Unlock()
 	return c.m[key].v
 }
+
+// reset drops every entry, for a write that may change any of the answers cached.
+func (c *TTLCache) reset() {
+	c.mu.Lock()
+	c.m = map[string]TTLEntry{}
+	c.mu.Unlock()
+}

@@ -226,9 +226,15 @@ floor would hold specific people's instances through weekends and shutdowns. The
 IS worth buying belongs to a RUNNING free slot, which costs ~$95/month, not $3.84.
 
 0 (the default) = never terminate, which is what every deployment did before this existed.
-14400 (4h) is the recommended value: come back the same day and you get the 110s path, come
-back tomorrow and you pay 135s. Must be ≥ `Ec2SlotSleepSec` to mean "sleep, then terminate";
-a smaller value simply skips the sleeping stage.
+It is a trade-off, not a recommended setting: a deployment that keeps stopped slots on purpose
+for fast restarts wants 0, and one that wants the root-volume bill bounded picks a value —
+14400 (4h) means come back the same day and you get the 110s path, come back tomorrow and you
+pay 135s and the slot's root-volume caches. Must be ≥ `Ec2SlotSleepSec` to mean "sleep, then
+terminate"; a smaller value simply skips the sleeping stage.
+
+It is not the way to move retained slots onto a changed launch template: reserve them for
+replacement in the Console's Settings → Admin → Slots tab, and each workspace moves to a new
+slot at its next start (`deploy/aws/ecs/README.md`, "Moving retained slots onto new user data").
 
 ### `Ec2HibernateAfterSec`
 

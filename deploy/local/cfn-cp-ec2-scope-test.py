@@ -150,6 +150,8 @@ INVENTORY = [
         request("ec2:DetachVolume", [ec2("instance", "i-slot", SLOT), ec2("volume", "vol-home", HOME)])]),
     ("internal/runtime/runtime_ecs_ec2.go", "releaseSlotSince", "DetachVolume", 1, [
         request("ec2:DetachVolume", [ec2("instance", "i-slot", SLOT), ec2("volume", "vol-home", HOME)])]),
+    ("internal/runtime/runtime_ecs_ec2_slot_replace.go", "backOffReservedSlot", "DetachVolume", 1, [
+        request("ec2:DetachVolume", [ec2("instance", "i-slot", SLOT), ec2("volume", "vol-home", HOME)])]),
     ("internal/runtime/runtime_ecs_ec2.go", "attachHome", "AttachVolume", 1, [
         request("ec2:AttachVolume", [ec2("instance", "i-slot", SLOT), ec2("volume", "vol-home", HOME)])]),
     ("internal/runtime/runtime_ecs_ec2.go", "sweepVolume", "StopInstances", 1, [

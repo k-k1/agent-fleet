@@ -1576,24 +1576,33 @@ slot's instance profile (`SlotRole`) through IMDS; the launch template's hop lim
 because an `awsvpc` task's ENI reaches IMDS directly. The ECS agent reads `ecs.config` when the
 slot is launched, so **a slot launched before the template carried it stays open until it is
 replaced**, and nothing replaces one by itself: a workspace **Stop → Start goes back to the
-same slot** (its home stays attached, see "A workspace keeps its slot while it is stopped" above), and `Ec2SlotTerminateAfterSec`
-defaults to off. Until then the Agent's own isolation still holds for every SDK that honours
+same slot** (its home stays attached, see "A workspace keeps its slot while it is stopped" above).
+Until then the Agent's own isolation still holds for every SDK that honours
 `AWS_EC2_METADATA_DISABLED`, but not for a tool that calls IMDS directly. To finish the move:
 
 1. **Update the pool stack.** `update.sh` does it (§One command). By hand:
    `aws cloudformation deploy --stack-name <pool stack> --template-file cfn/40-ec2-pool.yaml
    --capabilities CAPABILITY_NAMED_IAM` (parameters keep their previous values). The CP
    launches slots from the template's `$Latest`, so only new slots change.
-2. **Let the retained slots go through the CP's own sweeper**, which is the path that keeps
-   homes safe: it detaches the home first (`releaseSlot`, which refuses while a task is
-   running) and only then terminates the instance; the home volume is never deleted. Set
-   `Ec2SlotTerminateAfterSec` on the ingress stack (14400 is the recommended value anyway; a
-   lower one finishes the move sooner). A slot is terminated once its workspace has been
-   stopped for that long, or, with no home, once it has been free that long. Do not
-   terminate slot instances by hand while a home is attached.
-3. **Users restart their workspaces** after their slot has gone (the Console's "restart
-   required" badge covers the image; the slot is replaced by the next Start). The next
-   Start builds a new slot from the current template and mounts the same home.
+2. **Reserve the old slots for replacement** in the Console: Settings → Admin → the Slots tab
+   (super_admin). Each slot shows the launch template version it was launched from and
+   whether that is older than `$Latest`; "Reserve all N for replacement…" lists the slots
+   and the workspaces on them before it reserves exactly those below `$Latest` (each one is
+   re-checked when it is written, and each reservation is in the audit log as
+   `pool.slot_replace_reserve`). "Replace at next start" / "Cancel replacement" on a row does
+   one slot. The reservation is a tag on the instance (`af-slot-replace`); it moves nobody
+   by itself and touches no running session.
+3. **Users stop and start their workspaces** when it suits them. Their WS bar says the next
+   start moves to a new slot. That Start launches a new slot of the workspace's class from
+   the template's `$Latest` first, then moves the home off the reserved slot through the
+   same release the sweeper uses (unmount before detach; refused while a task runs) and
+   terminates the old instance; the home volume is never deleted. If the new slot cannot
+   be launched (capacity, quota) the Start fails with the reason, the home stays where it
+   was and the reservation stays: it never falls back to the reserved slot. A reserved
+   slot with no home is never handed to anybody and the sweeper terminates it.
+   Do not terminate slot instances by hand while a home is attached.
+   `Ec2SlotTerminateAfterSec` is not needed for this; it is a standing cost trade-off
+   (see `cfn/PARAMETERS.md`), not a migration tool.
 4. **Verify from a shell session in a workspace on a new slot**: the IMDSv2 token request
    `curl -s -o /dev/null -m 3 -w '%{http_code}' -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token`
    must not answer `200` (it times out: `000`), also with a clean environment

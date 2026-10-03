@@ -201,6 +201,13 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "wsbar.stale.restart": "Restart now",
   "wsbar.stale.later": "Later",
 
+  // ecs-ec2: the slot under this workspace is reserved for replacement (#1473)
+  "wsbar.slotmove.badge": "Moves to a new slot",
+  "wsbar.slotmove.title": "Your next start moves this workspace to a new machine",
+  "wsbar.slotmove.body":
+    "An administrator has retired the machine this workspace runs on. The next start moves it to a new one, which takes a little longer than usual (about 25 seconds more). Files, repos and logins come along unchanged; nothing happens until you stop and start.",
+  "wsbar.slotmove.ok": "OK",
+
   // === P2 session actions (features/sessions/useSessionActions.tsx) ===
   "sess.lock_failed": "Failed to change the deletion lock",
   "sess.locked_on": "Locked against deletion",

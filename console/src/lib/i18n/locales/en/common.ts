@@ -154,6 +154,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "wsstart.toolchain": "Installing toolchain…",
   "wsstart.slot_making_room": "Clearing an unused machine to make space for one your size… (this is the slowest path)",
   "wsstart.slot_creating": "Getting a machine ready for you… (a new one is being started; this takes a few minutes)",
+  "wsstart.slot_renewing": "Moving to a new machine… (the previous one was retired by an administrator; your files come along)",
   "wsstart.slot_waking": "Waking your machine…",
   "wsstart.slot_booting": "Waiting for the machine to come up…",
   "wsstart.home_creating": "Creating your home disk… (first start only)",

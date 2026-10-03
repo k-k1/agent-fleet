@@ -668,6 +668,34 @@
   font-family: var(--sans);
 }
 
+/* Replacement reservations (#1473). An older template version is the thing to act on, so it
+   takes the warning colour; a reservation is the action already taken, so it stays muted. */
+.pool-badge.outdated,
+.pool-badge.reserved {
+  margin-left: 6px;
+  font-family: var(--sans);
+}
+
+.pool-badge.outdated {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.pool-outdated {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.pool-bulk-list {
+  max-height: 240px;
+  overflow: auto;
+  margin: 8px 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
 /* The golden bake (docs/log/64 §64.30). One block per architecture. */
 .golden-arch + .golden-arch {
   margin-top: 14px;

@@ -388,6 +388,9 @@ type ec2API interface {
 	DescribeSnapshots(context.Context, *ec2.DescribeSnapshotsInput, ...func(*ec2.Options)) (*ec2.DescribeSnapshotsOutput, error)
 	CreateSnapshot(context.Context, *ec2.CreateSnapshotInput, ...func(*ec2.Options)) (*ec2.CreateSnapshotOutput, error)
 	DeleteSnapshot(context.Context, *ec2.DeleteSnapshotInput, ...func(*ec2.Options)) (*ec2.DeleteSnapshotOutput, error)
+	// The slot launch template's $Latest, which the pool screen compares every slot's
+	// version against (slotTemplateOutdated).
+	DescribeLaunchTemplates(context.Context, *ec2.DescribeLaunchTemplatesInput, ...func(*ec2.Options)) (*ec2.DescribeLaunchTemplatesOutput, error)
 }
 
 type ssmCommandAPI interface {
@@ -1550,6 +1553,9 @@ type ec2Placement struct {
 	// invisible: State() does not say `starting`, and a member's wipe (HomeWipeBlocked)
 	// would be let through while that half goes on to scale up past the mark.
 	claimErr error
+	// replacement marks a slot launched or adopted to replace a reserved one; a successful
+	// launch clears its af-replaces-home link (clearReplacesHome).
+	replacement bool
 }
 
 // placeHome resolves the volume and the slot, attaching the two together when it can.
@@ -1561,20 +1567,23 @@ type ec2Placement struct {
 // An instance that has vanished (terminated between the volume read and here) counts
 // as NOT matching, so the caller releases and re-places rather than pinning a task to
 // a box that is gone.
-func (e *ecsEC2Runtime) slotTypeMatches(ctx context.Context, instanceID string) (bool, error) {
+//
+// reserved is the other fact placeHome needs from the same read: an operator has reserved
+// this slot for replacement (ec2TagSlotReplace), so it may not be reused whatever its type.
+func (e *ecsEC2Runtime) slotTypeMatches(ctx context.Context, instanceID string) (matches, reserved bool, err error) {
 	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
 	if err != nil {
 		if isAWSNotFound(err) {
-			return false, nil
+			return false, false, nil
 		}
-		return false, fmt.Errorf("describe slot %s: %w", instanceID, err)
+		return false, false, fmt.Errorf("describe slot %s: %w", instanceID, err)
 	}
 	for _, r := range out.Reservations {
 		for _, inst := range r.Instances {
-			return string(inst.InstanceType) == e.instanceType, nil
+			return string(inst.InstanceType) == e.instanceType, slotReserved(inst), nil
 		}
 	}
-	return false, nil
+	return false, false, nil
 }
 
 func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
@@ -1601,9 +1610,15 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 			// the saver class (m6i, x86_64) to arm (m8g, arm64) and their workspace
 			// could not start again. So the match is checked before the affinity is
 			// honoured, and a stale slot is released rather than reused.
-			matches, err := e.slotTypeMatches(ctx, inst)
+			matches, reserved, err := e.slotTypeMatches(ctx, inst)
 			if err != nil {
 				return ec2Placement{}, err
+			}
+			if reserved {
+				// Checked before the type: a reservation is the operator saying this box
+				// must not run anybody again, and a type mismatch would otherwise release
+				// the home and leave the reserved box free for nobody.
+				return e.replaceReservedSlot(ctx, vol, inst)
 			}
 			if !matches {
 				log.Printf("ecs-ec2: %s now needs %s but its home is on %s; releasing that slot first",
@@ -1698,6 +1713,10 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	// surface — move to the next one.
 	for _, s := range slots {
 		volID := aws.ToString(vol.VolumeId)
+		// The candidate list was read before; a reservation may have landed since.
+		if e.slotNowReserved(ctx, s.id) {
+			continue
+		}
 		if err := e.waitVolumeAttachable(ctx, volID); err != nil {
 			return ec2Placement{}, err
 		}
@@ -1710,6 +1729,14 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 		claimErr := e.claim(ctx, volID, s.id)
 		if claimErr != nil {
 			log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, claimErr)
+		}
+		if e.slotNowReserved(ctx, s.id) {
+			// Reserved between the check above and the attach. Nothing is mounted yet, so
+			// stepping off is safe; see slotNowReserved for why the second check closes it.
+			if err := e.backOffReservedSlot(ctx, volID, s.id); err != nil {
+				return ec2Placement{}, err
+			}
+			continue
 		}
 		// A hot, already-registered slot is the only case that can finish inline.
 		return ec2Placement{
@@ -1749,6 +1776,13 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 				}
 			}
 			volID := aws.ToString(vol.VolumeId)
+			// The victim was picked from a list read before its release; a reservation may
+			// have landed since. The freed box is then free and reserved, and the sweeper
+			// retires it; this Start fails rather than run on it, and the next one has room.
+			errReserved := fmt.Errorf("the reclaimed slot %s was reserved for replacement during this start; start again", victim)
+			if e.slotNowReserved(ctx, victim) {
+				return ec2Placement{}, errReserved
+			}
 			if err := e.waitVolumeAttachable(ctx, volID); err != nil {
 				return ec2Placement{}, err
 			}
@@ -1758,6 +1792,12 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 			claimErr := e.claim(ctx, volID, victim)
 			if claimErr != nil {
 				log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, claimErr)
+			}
+			if e.slotNowReserved(ctx, victim) {
+				if err := e.backOffReservedSlot(ctx, volID, victim); err != nil {
+					return ec2Placement{}, err
+				}
+				return ec2Placement{}, errReserved
 			}
 			e.clearDormancy(ctx, volID)
 			running, err := e.instanceRunning(ctx, victim)
@@ -1952,6 +1992,9 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 // now, so drop the claim and make sure the home is not counted as dormant while its task
 // runs.
 func (e *ecsEC2Runtime) finishLaunch(ctx context.Context, p ec2Placement) {
+	if p.replacement {
+		e.clearReplacesHome(ctx, p.instanceID)
+	}
 	e.unclaim(ctx, p.volumeID)
 	e.clearDormancy(ctx, p.volumeID)
 	e.base.watchReady(ctx)
@@ -2613,7 +2656,16 @@ func (e *ecsEC2Runtime) slotsOfMyType(ctx context.Context, az string) (*ec2.Desc
 	if az != "" {
 		filters = append(filters, ec2types.Filter{Name: aws.String("availability-zone"), Values: []string{az}})
 	}
-	return e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{Filters: filters})
+	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{Filters: filters})
+	if err != nil {
+		return nil, err
+	}
+	// A slot reserved for replacement takes nobody new: its next tenant would run on the
+	// very box the operator wants gone. EC2 cannot filter on a tag being absent, so it is
+	// dropped here, the one place both placement paths read. So is a replacement launched
+	// for somebody else's home that has not moved onto it yet (pendingReplacementsForOthers).
+	out = withoutReservedSlots(out)
+	return withoutSlots(out, e.pendingReplacementsForOthers(ctx, out)), nil
 }
 
 // freeSlots lists the pool's slots that nobody's home is on, hot ones first (22–27s to
@@ -2804,7 +2856,7 @@ func (e *ecsEC2Runtime) listContainerInstanceARNs(ctx context.Context) ([]string
 // docs/log/64 §64.20.4.
 func (e *ecsEC2Runtime) growPool(ctx context.Context, az string) (string, string, error) {
 	if az != "" {
-		id, err := e.runSlot(ctx, az)
+		id, err := e.runSlot(ctx, az, e.pool.maxSlots, "")
 		return id, az, err
 	}
 	azs, err := e.spreadAZs(ctx)
@@ -2816,7 +2868,7 @@ func (e *ecsEC2Runtime) growPool(ctx context.Context, az string) (string, string
 	}
 	var lastErr error
 	for _, candidate := range azs {
-		id, err := e.runSlot(ctx, candidate)
+		id, err := e.runSlot(ctx, candidate, e.pool.maxSlots, "")
 		if err == nil {
 			return id, candidate, nil
 		}
@@ -2920,12 +2972,18 @@ func describeSlotClasses(cs []ec2SlotClass) string {
 	return strings.Join(parts, " ")
 }
 
-func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string) (string, error) {
+// runSlot launches one slot under the cap limit. Every caller but one passes maxSlots; the
+// replacement of a reserved slot passes one more, because it launches the new box before the
+// old one is gone and the old one must not count against the place it is about to give back.
+//
+// replacesHome, when set, is the home volume a replacement slot is launched for. It is stamped
+// at launch (ec2TagReplacesHome), so the link exists the moment the instance does.
+func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string, limit int, replacesHome string) (string, error) {
 	total, err := e.poolSize(ctx)
 	if err != nil {
 		return "", err
 	}
-	if total >= e.pool.maxSlots {
+	if total >= limit {
 		return "", fmt.Errorf("slot pool is full (%d/%d); raise AF_ECS_EC2_MAX_SLOTS", total, e.pool.maxSlots)
 	}
 	subnet, err := e.subnetIn(ctx, az)
@@ -2933,6 +2991,15 @@ func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string) (string, error) 
 		return "", err
 	}
 	lt := launchTemplateSpec(e.pool.launchTemplate)
+	tags := []ec2types.Tag{
+		{Key: aws.String(EC2TagPool), Value: aws.String(e.pool.pool)},
+		{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleSlot)},
+		{Key: aws.String(EC2TagSlotSize), Value: aws.String(e.instanceType)},
+		{Key: aws.String("Name"), Value: aws.String("af-slot-" + e.instanceType)},
+	}
+	if replacesHome != "" {
+		tags = append(tags, ec2types.Tag{Key: aws.String(ec2TagReplacesHome), Value: aws.String(replacesHome)})
+	}
 	out, err := e.ec2.RunInstances(ctx, &ec2.RunInstancesInput{
 		LaunchTemplate: lt,
 		// Overrides the template's ImageId on arm64 and is nil everywhere else, so an
@@ -2944,12 +3011,7 @@ func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string) (string, error) 
 		MaxCount:     aws.Int32(1),
 		TagSpecifications: []ec2types.TagSpecification{{
 			ResourceType: ec2types.ResourceTypeInstance,
-			Tags: []ec2types.Tag{
-				{Key: aws.String(EC2TagPool), Value: aws.String(e.pool.pool)},
-				{Key: aws.String(EC2TagRole), Value: aws.String(ec2RoleSlot)},
-				{Key: aws.String(EC2TagSlotSize), Value: aws.String(e.instanceType)},
-				{Key: aws.String("Name"), Value: aws.String("af-slot-" + e.instanceType)},
-			},
+			Tags:         tags,
 		}},
 	})
 	if err != nil {
@@ -3128,6 +3190,7 @@ func (e *ecsEC2Runtime) makeRoom(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	pending := e.pendingReplacementsForOthers(ctx, out)
 	now := e.now()
 	type occupant struct {
 		vol     *ec2types.Volume
@@ -3168,8 +3231,15 @@ func (e *ecsEC2Runtime) makeRoom(ctx context.Context) (bool, error) {
 	for _, r := range out.Reservations {
 		for _, inst := range r.Instances {
 			id := aws.ToString(inst.InstanceId)
-			if string(inst.InstanceType) == e.instanceType {
-				continue // evictLongestIdle already had first refusal on this size
+			// evictLongestIdle already had first refusal on this size — except a box reserved
+			// for replacement, which no placement may reuse and so blocks the cap exactly as
+			// a box of the wrong size does.
+			if string(inst.InstanceType) == e.instanceType && !slotReserved(inst) {
+				continue
+			}
+			// Another home's pending replacement is spoken for, whatever its size.
+			if pending[id] {
+				continue
 			}
 			if claimed[id] || tasks[id] > 0 {
 				continue
@@ -5410,9 +5480,10 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 // a slot leaves this walk forever the moment it is stopped, so the terminate stage would
 // never see the boxes it exists for.
 func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Volume) {
-	if f.pool.slotSleepAfter <= 0 && f.pool.slotTerminateAfter <= 0 {
-		return // both off (see slotSleepAfter / slotTerminateAfter)
-	}
+	// No early return when both timers are off: a free slot reserved for replacement is
+	// retired whatever they say, because placement skips it (slotsOfMyType) and nothing
+	// else would ever give its place under the cap back.
+	timersOff := f.pool.slotSleepAfter <= 0 && f.pool.slotTerminateAfter <= 0
 	probe := f.probeRuntime()
 	busy := map[string]bool{}
 	for i := range homes {
@@ -5443,6 +5514,7 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 		id        string
 		idle      time.Duration
 		terminate bool
+		reserved  bool
 	}
 	var due []candidate
 	for _, r := range out.Reservations {
@@ -5457,6 +5529,15 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 					probe.clearSlotFree(ctx, id)
 				}
 				continue
+			}
+			if slotReserved(inst) {
+				// No grace: nobody can be placed on it, so waiting buys nothing. The fences
+				// below (fresh occupancy, ECS tasks, task ENIs) still apply.
+				due = append(due, candidate{id: id, terminate: true, reserved: true})
+				continue
+			}
+			if timersOff {
+				continue // see slotSleepAfter / slotTerminateAfter
 			}
 			at, err := time.Parse(time.RFC3339, stamp)
 			if stamp == "" || err != nil {
@@ -5520,7 +5601,11 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 			// Nothing to release: this walk is BY DEFINITION the slots holding no home, and
 			// the three checks above have just re-confirmed it against volumes, ECS tasks
 			// and the instance's own ENIs.
-			probe.terminateSlot(ctx, c.id, fmt.Sprintf("free for %.0fm", c.idle.Minutes()))
+			why := fmt.Sprintf("free for %.0fm", c.idle.Minutes())
+			if c.reserved {
+				why = "free and reserved for replacement"
+			}
+			probe.terminateSlot(ctx, c.id, why)
 			continue
 		}
 		log.Printf("ecs-ec2 sweep: slot %s has held no home for %.0fm; stopping it", c.id, c.idle.Minutes())
@@ -5920,6 +6005,14 @@ type ec2SlotView struct {
 	// terminates it, and because "the pool shrank by one" is not an explanation.
 	Quarantined      bool   `json:"quarantined"`
 	QuarantineReason string `json:"quarantine_reason"`
+	// TemplateVersion is the launch template version the slot was launched from, and
+	// TemplateOutdated whether that is older than $Latest (slotTemplateOutdated) — user data
+	// is read only at launch, so an outdated slot runs the old one until it is replaced.
+	TemplateVersion  string `json:"template_version,omitempty"`
+	TemplateOutdated bool   `json:"template_outdated,omitempty"`
+	// ReplaceReserved: its workspace's next Start moves to a new slot (#1473).
+	ReplaceReserved   bool   `json:"replace_reserved,omitempty"`
+	ReplaceReservedAt string `json:"replace_reserved_at,omitempty"`
 }
 
 type ec2HomeView struct {
@@ -5985,6 +6078,10 @@ type EC2PoolStatus struct {
 	// a stopped workspace still holds a box (lazy release) while counting toward neither
 	// tenant's concurrency. See poolBudget.
 	Budget *PoolBudget `json:"budget,omitempty"`
+
+	// TemplateLatest is the slot launch template's $Latest version number, "" when it could
+	// not be read — in which case no slot is reported outdated.
+	TemplateLatest string `json:"template_latest,omitempty"`
 }
 
 // EC2GoldenView is one architecture's golden situation, including how far along a bake
@@ -6148,6 +6245,12 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 		log.Printf("ecs-ec2 pool status: container instances unreadable: %v", err)
 		registered = map[string]bool{}
 	}
+	lt, err := f.launchTemplateLatest(ctx)
+	if err != nil {
+		log.Printf("ecs-ec2 pool status: slot launch template unreadable: %v", err)
+	} else {
+		st.TemplateLatest = strconv.FormatInt(lt.latest, 10)
+	}
 	for _, r := range insts.Reservations {
 		for _, inst := range r.Instances {
 			id := aws.ToString(inst.InstanceId)
@@ -6170,6 +6273,9 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 				s.Quarantined = true
 				s.QuarantineReason = ec2TagValue(inst.Tags, ec2TagQuarantineReason)
 			}
+			s.TemplateVersion, s.TemplateOutdated, _ = slotTemplateOutdated(inst.Tags, lt)
+			s.ReplaceReservedAt = ec2TagValue(inst.Tags, ec2TagSlotReplace)
+			s.ReplaceReserved = s.ReplaceReservedAt != ""
 			st.Slots = append(st.Slots, s)
 		}
 	}
