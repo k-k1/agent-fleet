@@ -107,6 +107,9 @@ async function openMirrorWithPendingPlan(page: Page, calls: { path: string; body
   });
   await page.addInitScript(
     ([layoutKey, lsKey, key, comment]) => {
+      // The layout below is a split-mode one, and boot reads only the profile of the paneLayout
+      // setting, which defaults to tabs — without this the seed is ignored.
+      localStorage.setItem("af-display-settings", JSON.stringify({ paneLayout: "split" }));
       sessionStorage.setItem(
         layoutKey as string,
         JSON.stringify({
