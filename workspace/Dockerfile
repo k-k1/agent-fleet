@@ -346,10 +346,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.2.15
-ARG AGY_RELEASE_BUILD=5434575321694208
-ARG AGY_SHA256_X64=bbd4a4b29f0e9fe1fc2e1345b5d44fa08540e43014da46bc2c4bf70cf05745d8
-ARG AGY_SHA256_ARM64=851bdabda3b2eb679d0d46b469629b91752d1f1d7497185107408b60c58c2e32
+ARG AGY_VERSION=1.2.16
+ARG AGY_RELEASE_BUILD=5594158052802560
+ARG AGY_SHA256_X64=d4247430e04cebdbe1ca93d9ccb483cd2f3daeb4cdb0ace5a71cd130e0bdab84
+ARG AGY_SHA256_ARM64=a6d269d2764e5636ab2bcda73b78c587fe9d00ead767aa3974574229585ee0d3
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -435,9 +435,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.27.0
-ARG KIRO_SHA256_X64=0c08099c718ade0cb0d8648e18706d9002eadb8ca0158049c0313433b8a4eb51
-ARG KIRO_SHA256_ARM64=fd55b9b3e626262a36bbaa7857e666e0f15bb06d906a22a50cae7338ffeb64e1
+ARG KIRO_VERSION=2.27.1
+ARG KIRO_SHA256_X64=e68927fe0bffb752746a573010cb68792b0f3e97be3a6ce73792c9cc02f08007
+ARG KIRO_SHA256_ARM64=937ff1ae3df373717b66cc09aec79c3b7f0b8e53968d746e3a4545722e1e4587
 # Muse Code（kind="muse"、ADR 0095 決定 8）。プロプライエタリなので **配布イメージには
 # 入らない**（BAKE_AGENT_CLIS=0 既定・理由は本ファイル冒頭と NOTICE）。既定の経路は
 # per-user のオンデマンド導入（workspace-agent install-muse）で、ここのピンは
