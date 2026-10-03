@@ -54,9 +54,9 @@ SLOT_ROLE_ARN = "arn:aws:iam::%s:role/af-test-pool-slot" % ACCOUNT
 # 20-platform's execution role, which every task the CP starts names.
 EXEC_ROLE_ARN = "arn:aws:iam::%s:role/af-test-exec" % ACCOUNT
 GETATT = {"SlotRole.Arn": SLOT_ROLE_ARN, "ExecRole.Arn": EXEC_ROLE_ARN}
-# The platform stack's cluster, as the other stacks import it (…-ClusterArn).
+# The platform stack's cluster, as the other stacks import it (…-ClusterArn, …-ClusterName).
 CLUSTER_ARN = "arn:aws:ecs:%s:%s:cluster/%s" % (REGION, ACCOUNT, POOL)
-IMPORTS = {"ClusterArn": CLUSTER_ARN}
+IMPORTS = {"ClusterArn": CLUSTER_ARN, "ClusterName": POOL}
 
 
 # --- template loading -------------------------------------------------------------------
@@ -93,10 +93,12 @@ def resolve(v):
         if k == "!ImportValue" and isinstance(x, dict) and isinstance(x.get("Fn::Sub"), str):
             export = x["Fn::Sub"].rsplit("-", 1)[-1]
             return IMPORTS.get(export, "<opaque:!ImportValue %s>" % export)
-        if k == "!Sub" and isinstance(x, str):
+        if k == "!Sub" and (isinstance(x, str) or (isinstance(x, list) and len(x) == 2)):
+            # The list form names its own variables, each resolved like any other value.
+            template, local = (x, {}) if isinstance(x, str) else (x[0], resolve(x[1]))
             def sub(m):
-                return PARAMS.get(m.group(1), "<unresolved:%s>" % m.group(1))
-            return re.sub(r"\$\{([^}]+)\}", sub, x)
+                return str(local.get(m.group(1), PARAMS.get(m.group(1), "<unresolved:%s>" % m.group(1))))
+            return re.sub(r"\$\{([^}]+)\}", sub, template)
         return "<opaque:%s>" % k
     if isinstance(v, list):
         return [resolve(i) for i in v]

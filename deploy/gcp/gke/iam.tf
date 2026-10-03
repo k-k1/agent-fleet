@@ -14,6 +14,11 @@ resource "google_service_account_iam_member" "cp_workload_identity" {
   service_account_id = google_service_account.cp.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "serviceAccount:${local.workload_pool}[${local.cp_namespace}/${local.cp_ksa}]"
+
+  # The pool is a string built from the project ID, so nothing else orders this after the
+  # cluster, and the pool exists only once the first Workload Identity cluster does:
+  # before that the grant fails with "Identity Pool does not exist".
+  depends_on = [google_container_cluster.main]
 }
 
 # Cloud SQL roles exist only at project level; the condition narrows them to this

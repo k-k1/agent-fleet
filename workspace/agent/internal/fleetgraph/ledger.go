@@ -103,8 +103,8 @@ type activityLine struct {
 	Ev      string `json:"ev"`
 	Ts      string `json:"ts"`
 	Name    string `json:"name,omitempty"` // state / resync: the lane
-	From    string `json:"from,omitempty"` // instruct / report / peer / state (optional)
-	To      string `json:"to,omitempty"`   // instruct / report / peer / state / resync
+	From    string `json:"from,omitempty"` // instruct / report / peer / peek / state (optional)
+	To      string `json:"to,omitempty"`   // instruct / report / peer / peek / state / resync
 	Source  string `json:"source,omitempty"`
 	Excerpt string `json:"excerpt,omitempty"`
 	Kind    string `json:"kind,omitempty"` // report

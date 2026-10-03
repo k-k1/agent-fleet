@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -171,8 +172,18 @@ func TestMemberHomeWipeFailureInTheBackgroundReachesThePayload(t *testing.T) {
 		t.Errorf("a failed wipe went on to start the workspace: %q", got)
 	}
 	payload := api.workspacePayload(context.Background(), res, rt.State(context.Background()))
-	if payload["state"] != "stopped" || !strings.Contains(payload["homeWipeFailed"].(string), "exit 1") {
+	if payload["state"] != "stopped" || !strings.Contains(fmt.Sprint(payload["homeWipeFailed"]), "exit 1") {
 		t.Errorf("payload = %v, want stopped with the failure", payload)
+	}
+	// A CP restarted in between (a deploy) still says why: a new manager over the same
+	// store, nothing carried in memory (#1537).
+	restarted := newWorkspaceAPI(&manager{store: mgr.store, conns: newConnRegistry()}, false)
+	if got := restarted.workspacePayload(context.Background(), res, "stopped")["homeWipeFailed"]; !strings.Contains(fmt.Sprint(got), "exit 1") {
+		t.Errorf("after a restart homeWipeFailed = %v, want the failure", got)
+	}
+	// The tenant admins see the same record.
+	if as := store.CurrentAutoStop(context.Background(), mgr.store, res.ws.MembershipID, "stopped"); as == nil || as.Kind != autoStopHomeWipe {
+		t.Errorf("auto-stop record = %+v, want kind %s", as, autoStopHomeWipe)
 	}
 	// The next start clears it.
 	if aerr := api.ensureWorkspaceStarted(context.Background(), res); aerr != nil {
@@ -333,4 +344,50 @@ func TestDestroyWorkspaceFailureInTheBackgroundKeepsTheRow(t *testing.T) {
 	if _, ok, _ := st.GetWorkspaceByMembership(ctx, mid); !ok {
 		t.Error("the row went although the home was not removed; nothing would point at it any more")
 	}
+}
+
+// poolDestroyRuntime is ecs-ec2 with the stack's home task: its own wipes fit in the
+// request, but its Destroy runs the task on the member's EFS directories (#1536).
+type poolDestroyRuntime struct {
+	*reachableHomeRuntime
+	gate chan struct{}
+}
+
+func (poolDestroyRuntime) DestroyRunsHomeTask() bool { return true }
+
+// Destroy waits for the test to open gate, which it does only after the request has been
+// answered; a Destroy run inside the request gives up after a few seconds instead of hanging.
+func (r poolDestroyRuntime) Destroy(context.Context) ([]string, error) {
+	select {
+	case <-r.gate:
+	case <-time.After(3 * time.Second):
+		return nil, errors.New("Destroy ran inside the request")
+	}
+	r.rec.add("destroy")
+	return nil, nil
+}
+
+// The pool's Destroy runs the same task, so it answers 202 and finishes after the request
+// like ecs's; an administrator's Clean home on it still runs in the request.
+func TestDestroyWorkspaceInTheBackgroundOnThePool(t *testing.T) {
+	ctx := context.Background()
+	rt := poolDestroyRuntime{&reachableHomeRuntime{unreachableHomeRuntime: unreachableHomeRuntime{rec: &wipeRecorder{}, state: "stopped"}},
+		make(chan struct{})}
+	st, mgr, victim, tn := destroyFixture(t, fixedRuntimeFactory{rt})
+	if ops := mgr.homeOperations(); ops.Background || !ops.DestroyBackground {
+		t.Fatalf("homeOperations = %+v, want only Destroy in the background", ops)
+	}
+	mid := membershipIDOf(t, st, victim, tn)
+	if err := st.SetMembershipStatus(ctx, mid, "inactive"); err != nil {
+		t.Fatal(err)
+	}
+	w := callDestroy(newAdminAPI(mgr), `{"tenant_slug":"sales","user_key":"leaver-acme-co-jp"}`)
+	if w.Code != http.StatusAccepted || !strings.Contains(w.Body.String(), `"pending":true`) {
+		t.Fatalf("destroy = %d %s, want 202 pending", w.Code, w.Body.String())
+	}
+	close(rt.gate)
+	waitFor(t, "the row to go", func() bool {
+		_, ok, _ := st.GetWorkspaceByMembership(ctx, mid)
+		return !ok
+	})
 }

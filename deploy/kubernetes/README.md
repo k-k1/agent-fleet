@@ -35,7 +35,7 @@ Terraform meets every GKE item below.
 
 | # | Precondition | Why (ADR 0106) |
 |---|---|---|
-| P1 | Kubernetes **1.33 or later** | the PersistentVolume deletion-protection finalizer Destroy relies on is stable from 1.33 (decision 5) |
+| P1 | Kubernetes **1.33 or later**. Terraform creates the cluster at its release channel's default version and checks this floor (`min_master_version`) on every plan | the PersistentVolume deletion-protection finalizer Destroy relies on is stable from 1.33 (decision 5) |
 | P2 | A CNI that **enforces NetworkPolicy** (Dataplane V2 on GKE) | without one the policies are accepted and enforce nothing (decision 7) |
 | P3 | A StorageClass with `volumeBindingMode: WaitForFirstConsumer`, `allowVolumeExpansion: true`, `reclaimPolicy: Delete`, backed by **block storage** (not NFS / Filestore) | decision 4; with `Retain` the disk and its bill outlive Destroy (decision 5) |
 | P4 | **Application-layer encryption of Secrets** (Cloud KMS on GKE) | every workspace's DEK and tokens are in a Secret (decision 6) |
@@ -45,7 +45,7 @@ Terraform meets every GKE item below.
 | P8 | **No IAM grant names the workspace namespace or its service account**, directly or through a `principalSet`, and the namespace names carry this deployment's own prefix | Workload Identity treats equal names in any cluster of the project as one identity (decision 7) |
 | P9 | **Members have no Kubernetes API access** to the workspace namespace. Creating pods there is reading every member's home and Secret | decision 7 |
 | P10 | The cluster is **IPv4 single-stack**. The egress policy allows no `::/0`, so IPv6 egress is denied rather than unfiltered | decision 7 |
-| P11 | **NodeLocal DNSCache is off**, or a policy for its address is added. The DNS policy allows `kube-dns` pods only; `169.254.0.0/16` is denied | decision 7 |
+| P11 | **NodeLocal DNSCache is off** (GKE turns it on for new clusters; Terraform sets it off. On an existing cluster the change takes about 10 minutes and may recreate the nodes depending on the GKE version; on 1.35 it removed the `node-local-dns` pods and recreated no node and restarted no workspace, measured 2026-10-03), or a policy for its address is added. The DNS policy allows `kube-dns` pods only; `169.254.0.0/16` is denied, so with the cache on every lookup from a workspace fails | decision 7 |
 | P12 | A **Postgres** the deployment provides (Cloud SQL on GKE) | decision 8 |
 | P13 | **A DNS zone** for the Console's name, and a **state bucket** for Terraform, both the operator's | decision 12 |
 | P14 | `AF_MASTER_KEY` is generated and kept **outside the database and its backups** | as on every target; losing it is a crypto-shred |
@@ -119,6 +119,9 @@ $TF apply
   1918 or `100.64.0.0/10`, check that the egress policy still excepts it: the four ranges
   Terraform prints are excepted; the Private Service Access range is excepted only through RFC
   1918.
+- `min_master_version` is a floor, not the version the cluster is created at: the cluster starts
+  at the release channel's default, and every plan fails if the control plane runs below the
+  floor (P1).
 - The certificate is issued once the DNS authorisation records resolve.
   `gcloud certificate-manager certificates describe $PREFIX-cert --project "$PROJECT"` shows its
   state; it is usually `ACTIVE` within an hour.
@@ -253,8 +256,32 @@ kubectl auth can-i get "storageclass/$PREFIX-workspace" --as $SA      # yes
 kubectl auth can-i create pods -n "$PREFIX-cp" --as $SA               # no
 ```
 
-Then sign in, start a workspace, and check that its pod runs on the workspace pool:
-`kubectl -n "$PREFIX-ws" get pods -o wide -l agent-fleet.io/workspace`.
+NodeLocal DNSCache is off (P11); this prints nothing:
+
+```bash
+kubectl -n kube-system get pods -l k8s-app=node-local-dns
+```
+
+Then sign in, start a workspace, and check that its pod runs on the workspace pool and resolves
+names:
+
+```bash
+kubectl -n "$PREFIX-ws" get pods -o wide -l agent-fleet.io/workspace
+kubectl -n "$PREFIX-ws" exec <pod> -- getent hosts github.com     # an address, not empty
+```
+
+In that workspace's terminal, the home has to be `dev`'s and writable by nobody else, or
+`af-gcloud-exec` and `af-aws-exec` refuse to keep their state under it (ADR 0107):
+
+```bash
+stat -c '%U:%G %A' /home/dev    # dev:dev drwxr-sr-x — no w for group or other (the s, from fsGroup, is harmless)
+```
+
+The home is the directory `.af-home` of the home claim, which an init container running as `dev`
+creates — and moves an earlier home's files into — before the agent starts; the claim's root
+stays `root:dev` with group write, as the kubelet leaves it. A pod stuck in `Init` names the reason
+in `kubectl logs <pod> -c home-layout`; rolling the CP back past this layout is covered under
+"Rolling back past the home layout".
 
 ## Other clusters
 
@@ -563,6 +590,76 @@ previous image on the migrated database is not a rollback:
 The workspace image follows `workspaceImage` in `deployment.yaml`. A running workspace keeps the
 image it started with; the next start pins the tag's current digest, and the Console marks the
 workspaces still on an older one as stale.
+
+#### Rolling back past the home layout
+
+From the version that fixed #1543 on, a workspace's home is the directory `.af-home` of its home
+claim, and the first start under it moves an earlier home there, recording that on the state
+claim (ADR 0106, addendum of 2026-10-03). **An earlier CP does not know this, and rolling back
+past it is not safe for workspaces that have started since:** its pod mounts the claim's root as
+the home, so the member finds an almost empty home with their files hidden in `.af-home`. Its Clean
+home and administrator's Clean home remove `.af-home` whole — the migrated home, logins included;
+its Recreate removes only the root's `repos`, leaving the migrated `~/repos` in place and hidden.
+
+So, when the CP has to go back past that version:
+
+1. Stop every workspace first, and start, Recreate or clean none of them under the earlier CP
+   until its home is moved back.
+2. To move one back: snapshot its home disk, then, with the workspace stopped, run a pod from the
+   workspace image with the workspace pod's security context (as `dev`), the home claim mounted at
+   `/v` and the state claim at `/s`, and in it run this as a script (`sh -s`):
+   ```bash
+   V=/v R=/s/wipe/layout
+   set -eu
+   cd "$V"
+   # Stopped after the last move: only the record is left to remove.
+   if [ "$(cat -- "$R" 2>/dev/null)" = reverting ] && [ ! -e .af-home ] && [ ! -L .af-home ]; then rm -f -- "$R"; exit 0; fi
+   [ -d .af-home ] && [ ! -L .af-home ] || { echo ".af-home is missing or not a directory"; exit 1; }
+   [ -f "$R" ] && [ ! -L "$R" ] || { echo "no layout record at $R"; exit 1; }
+   st=$(cat -- "$R")
+   case "$st" in
+     done)
+       for e in .[!.]* ..?* *; do
+         [ -e "$e" ] || [ -L "$e" ] || continue
+         case "$e" in .af-home|lost+found) ;; *) echo "the root holds $e besides the home: see step 3"; exit 1;; esac
+       done ;;
+     reverting) ;;  # a run stopped halfway: carry on
+     *) echo "the layout record is not done or reverting"; exit 1 ;;
+   esac
+   for e in .af-home/.[!.]* .af-home/..?* .af-home/*; do
+     [ -e "$e" ] || [ -L "$e" ] || continue
+     n=${e#.af-home/}
+     case "$n" in .af-home|lost+found) echo "the home holds $n, a name the root keeps"; exit 1;; esac
+     if [ -e "$n" ] || [ -L "$n" ]; then echo "$n is both in the home and on the root"; exit 1; fi
+   done
+   # Only now, with every check passed, mark the move; replaced whole, never truncated.
+   if [ "$st" = done ]; then
+     if [ -e "$R.tmp" ] || [ -L "$R.tmp" ]; then echo "$R.tmp is in the way"; exit 1; fi
+     { echo reverting > "$R.tmp" && mv -fT -- "$R.tmp" "$R"; } || { echo "cannot mark $R"; exit 1; }
+   fi
+   for e in .af-home/.[!.]* .af-home/..?* .af-home/*; do
+     [ -e "$e" ] || [ -L "$e" ] || continue
+     n=${e#.af-home/}; ro=
+     # Moving a directory rewrites its "..", which needs write permission on it.
+     if [ -d "$e" ] && [ ! -L "$e" ] && [ ! -w "$e" ]; then chmod u+w -- "$e"; ro=1; fi
+     mv -T -- "$e" "$n"
+     [ -z "$ro" ] || chmod u-w -- "$n"
+   done
+   rmdir .af-home
+   rm -f -- "$R"
+   ```
+   It checks everything before it marks or moves anything, and moves nothing onto an existing name. If it
+   stops halfway, the record says `reverting`: fix what it printed and run it again, and it
+   carries on. Until it has finished, start the workspace under neither CP — this version refuses
+   a `reverting` record, an earlier one would mount the half-moved root. A read-only directory it
+   stopped on in the middle of its move may be left writable. Once the record is gone, the next
+   start under this version migrates the home again.
+3. If a workspace has run under the earlier CP anyway, this version refuses to start it again:
+   `kubectl logs <pod> -c home-layout` says the claim's root holds entries besides the home. The
+   root then holds what the earlier CP's session wrote and `.af-home` the migrated home. With the
+   workspace stopped and its disk snapshotted, decide in the same kind of pod which copy of each
+   entry to keep, and leave the root holding only `.af-home` and `lost+found` — or move the home
+   back as in step 2.
 
 ### Alerts
 

@@ -91,6 +91,7 @@ var cpTenantDelegates = map[string]string{
 
 	// The background halves of Clean home and Destroy (ecs: a task that takes minutes).
 	"HomeOpsInBackground":               "homeOperations",
+	"DestroyInBackground":               "DestroyBackground",
 	"StartCleanHomeByMembership":        "startCleanHomeByMembership",
 	"StartDestroyWorkspaceByMembership": "startDestroyWorkspaceByMembership",
 }
