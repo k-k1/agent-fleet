@@ -297,7 +297,16 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 		return n
 	}
 	stale := time.Now().Add(-3 * time.Minute)
-	settle := func() { time.Sleep(150 * time.Millisecond) } // several reconciler ticks
+	// settle waits until the reconciler has really looked at the state just written: three
+	// sweeps that started after the write (plus the one that may have been in flight) and four
+	// intervals, enough for the two-quiet-sweep debounce to fire if the state read as complete.
+	// A bare sleep passed vacuously when a loaded runner never scheduled a sweep inside it.
+	settle := func() {
+		t.Helper()
+		if !chatx.AwaitReconcilerSweepsForTest(4, 4*20*time.Millisecond, 10*time.Second) {
+			t.Fatal("reconciler did not sweep")
+		}
+	}
 
 	// Phase 1 — BG quiet, but the heal removed the marker while the main transcript
 	// is fresh: an absent marker must not read as idle, and a fresh transcript means
@@ -305,10 +314,11 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 	//
 	// Every step below changes the disk in an order where each intermediate state is itself
 	// busy: the reconciler sweeps every 20ms and settles after two quiet sweeps, so a stalled
-	// test goroutine that leaves a quiet intermediate on disk gets a correct report — a red
-	// test that is not a product bug. Here the marker goes first: with the subagent quiet but
-	// the hook's idle marker still present, the fresh transcript has not grown past that
-	// marker, which is a genuine completion.
+	// test goroutine that leaves a quiet intermediate on disk gets a report the current
+	// completion predicate allows — a red run that says nothing about the false-idle rule
+	// under test. Here the marker goes first: with the subagent quiet but the hook's idle
+	// marker still present, the fresh transcript has not grown past that marker, which the
+	// predicate reads as a completion.
 	status.Remove(sid)
 	if err := os.Chtimes(agLog, stale, stale); err != nil {
 		t.Fatal(err)
@@ -334,7 +344,7 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 	// appending during a think gap). No delivery.
 	// The transcript grows first (absent marker + fresh transcript is Phase 1's busy state):
 	// the marker first would leave Phase 2's stale transcript under an idle marker, which is
-	// Phase 4's real completion.
+	// Phase 4's completion state.
 	writeMainAt(t, time.Now().Add(10*time.Second)) // a real record that grew past the marker
 	status.PersistTurnEnd(sid, "idle")
 	settle()
