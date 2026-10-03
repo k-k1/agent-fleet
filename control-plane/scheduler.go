@@ -63,7 +63,7 @@ func (logFirer) fire(_ context.Context, sch store.Schedule, slot time.Time) (str
 type scheduleStore interface {
 	ListDueSchedules(ctx context.Context, nowRFC string) ([]store.Schedule, error)
 	RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, nextRun string, enabled bool, updatedAt string) error
-	HoldScheduleForRemoval(ctx context.Context, id, lastRun, lastStatus, updatedAt string) (bool, error)
+	HoldScheduleForRemoval(ctx context.Context, id, slot, lastRun, lastStatus, updatedAt string) (bool, error)
 	ResumeScheduleHeldByRemoval(ctx context.Context, id, membershipID, nextRun, updatedAt string) (bool, error)
 	GetMembershipByID(ctx context.Context, membershipID string) (store.MembershipView, bool, error)
 	AppendScheduleRun(ctx context.Context, run store.ScheduleRun, keepN int) error
@@ -358,15 +358,16 @@ func resumeHeldSchedule(ctx context.Context, st interface {
 // resume, so the pause is undone here. Between the two, a restore either sees the hold or
 // is seen by this re-read, so no restored owner is left with a paused schedule.
 func (sc *scheduler) holdForRemoval(ctx context.Context, sch store.Schedule, nowRFC string) bool {
-	held, err := sc.store.HoldScheduleForRemoval(ctx, sch.ID, nowRFC, statusMembershipInactive, nowRFC)
+	held, err := sc.store.HoldScheduleForRemoval(ctx, sch.ID, sch.NextRun, nowRFC, statusMembershipInactive, nowRFC)
 	if err != nil {
 		log.Printf("scheduler: WARNING hold %s for its removed owner failed — next tick retries: %v", sch.ID, err)
 		return false
 	}
 	if !held {
-		// Re-invited between the firer's check and this write: leave the slot due, and
-		// the next tick fires it as the active member's.
-		log.Printf("scheduler: schedule %s owner membership %s was restored mid-fire — leaving the slot for the next tick", sch.ID, sch.MembershipID)
+		// Re-invited between the firer's check and this write (the slot stays due and the
+		// next tick fires it as the active member's), or the owner changed the row since it
+		// was listed (their change stands).
+		log.Printf("scheduler: schedule %s: not held for removal — owner %s restored or the row changed since it was listed", sch.ID, sch.MembershipID)
 		return false
 	}
 	log.Printf("scheduler: schedule %s owner membership %s is inactive — paused "+

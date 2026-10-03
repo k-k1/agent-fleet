@@ -753,12 +753,17 @@ workspace が持つトークン（AF_MEMO_TOKEN ほか /internal/* の各トー�
   CP の再起動や予算切れで止め損ねた分は、各 CP が 1 分ごとに回す removed-member sweep が
   「inactive なのに stopped でない workspace」として拾って止める（idle-stop を切っていても回る）。
 - **外す前に認可済みの長い接続**（ターミナル・イベントストリーム・他人の共有プレビューの
-  WebSocket／SSE）。認可はリクエスト単位なので、開いたままの接続は残る。→ CP が membership
-  ごとに実行中のリクエストを登録し、外したときに閉じる。他レプリカの分は sweep が閉じる。
+  WebSocket／SSE・発行済みエンジントークンでの生成ストリーム）。認可はリクエスト単位なので、
+  開いたままの接続は残る。→ CP が membership ごとに実行中のリクエストを登録し、外したときに
+  閉じる。他レプリカの分は sweep が閉じる。接続の sweep と workspace 停止は別ループで、停止は
+  workspace ごとの goroutine で走るので、遅い停止が接続の失効や他の停止を待たせない。
+  内部 git（git-http-backend の CGI）と LFS 転送は登録しない — どちらも要求の context を見ないので
+  閉じられず、1 回の転送で終わる。
   あわせて、ホスト型プレビューは**所有者の membership も毎回確かめる**（所有者の af_pv cookie は
   所有者だからという理由で素通りしていた）。外された所有者の workspace は公開モードでも配信しない。
 - **スケジュールは消さない。** 外れている間に来た枠は何も起こさず一時停止し、`held_by_removal`
-  の印を付ける（membership がまだ active でないときだけ書く条件付き UPDATE）。**招待し直すと
+  の印を付ける（membership がまだ active でなく、行が scheduler の読んだ枠のまま有効なときだけ
+  書く条件付き UPDATE — 読んだ後に本人が止めた行には付けない）。**招待し直すと
   印の付いたものだけを今から再開**する（印は本人の操作で消えるので本人が止めたものは触らない・
   過ぎた once は戻さない・逃した枠は再生しない）。一時停止の書き込みと再招待がすれ違った場合は、
   scheduler が書いた後に membership を読み直して戻す。監査は `membership.add` の detail に

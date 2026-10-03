@@ -1692,7 +1692,7 @@ type ScheduleStore interface {
 	// was inactive, and a re-invite resumes it. Both are conditional single statements —
 	// the hold only while the membership is not active, the resume only while the row is
 	// still held — and every owner-side write clears the mark.
-	HoldScheduleForRemoval(ctx context.Context, id, lastRun, lastStatus, updatedAt string) (held bool, err error)
+	HoldScheduleForRemoval(ctx context.Context, id, slot, lastRun, lastStatus, updatedAt string) (held bool, err error)
 	ResumeScheduleHeldByRemoval(ctx context.Context, id, membershipID, nextRun, updatedAt string) (resumed bool, err error)
 	// SetScheduleReuse persists the reuse ledger (P6): the current long-lived session,
 	// when it started, and the fire count since the last rotation. Only reuse schedules

@@ -3164,14 +3164,18 @@ func (s *SQL) RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, n
 
 // HoldScheduleForRemoval records a slot that came due while the owner's membership was
 // inactive: the fire is stamped as skipped and the row paused and marked held_by_removal,
-// in one statement that applies only while the membership is still not active. held=false
-// means the person was re-invited first, and nothing was written.
-func (s *SQL) HoldScheduleForRemoval(ctx context.Context, id, lastRun, lastStatus, updatedAt string) (bool, error) {
+// in one statement that applies only while the membership is still not active AND the row
+// is still the enabled one the scheduler listed at slot (enabled=1, next_run=slot). held=
+// false means nothing was written: the person was re-invited first, or the owner paused,
+// edited or re-ran the row after it was listed — a hold must never be stamped on top of
+// the owner's own change, or the next re-invite would resume what they stopped.
+func (s *SQL) HoldScheduleForRemoval(ctx context.Context, id, slot, lastRun, lastStatus, updatedAt string) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE schedule SET last_run=?, last_status=?, next_run='', enabled=0, updated_at=?,
 		   manual_fire_pending=0, held_by_removal=1
-		 WHERE id=? AND NOT EXISTS (SELECT 1 FROM membership m WHERE m.id=schedule.membership_id AND m.status='active')`,
-		lastRun, lastStatus, updatedAt, id)
+		 WHERE id=? AND enabled=1 AND next_run=?
+		   AND NOT EXISTS (SELECT 1 FROM membership m WHERE m.id=schedule.membership_id AND m.status='active')`,
+		lastRun, lastStatus, updatedAt, id, slot)
 	if err != nil {
 		return false, err
 	}

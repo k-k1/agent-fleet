@@ -22,6 +22,8 @@ import (
 type manager struct {
 	// memberConns has its own lock: in-flight requests per membership, closed on removal.
 	memberConns memberConnRegistry
+	// removalStops: workspace ids with a removed-member sweep stop in flight.
+	removalStops sync.Map
 
 	// mu guards ONLY the in-memory maps below (runtime/lock/activity caches) — it is
 	// never held across store/docker I/O (docs/log/23 P2-W2). The I/O of a first resolve
