@@ -165,6 +165,21 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
   useDismiss([wrapRef, launchMenuRef], showLaunch, () => setShowLaunch(false));
   useDismiss([wrapRef, menuRef], !!menu, () => setMenu(null));
   useMenuRoving(menuRef, !!menu);
+  // Closing the menu unmounts the item that had focus, and focus would fall to <body>: after a
+  // Menu-key open, or a reveal from the session menu, the user is left nowhere to arrow from.
+  // Hand it back to whatever opened the menu, but only if nothing else took it meanwhile (a
+  // click on another control keeps the focus the user chose). A layout effect so the opener is
+  // read before useMenuRoving's passive effect moves focus onto the first item.
+  const menuOpen = !!menu;
+  useLayoutEffect(() => {
+    if (!menuOpen) return;
+    const opener = document.activeElement as HTMLElement | null;
+    if (!opener || opener === document.body) return;
+    return () => {
+      const now = document.activeElement;
+      if ((!now || now === document.body) && opener.isConnected) opener.focus();
+    };
+  }, [menuOpen]);
 
   return (
     <li
