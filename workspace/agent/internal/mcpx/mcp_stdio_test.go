@@ -1069,6 +1069,17 @@ func TestSendToPeerSessionReportsQueuedAsNotDelivered(t *testing.T) {
 		t.Errorf("queued send carries no note: %v", got)
 	}
 
+	// A peer waiting on its user's answer (#1031): queued with the state it waits on, and told
+	// not to resend.
+	answer = `{"queued":"child1","blocked_on":"plan","pending":1}`
+	got = send()
+	if got["delivered"] != false || got["queued"] != true || got["blocked_on"] != "plan" {
+		t.Errorf("send to a peer waiting on its user = %v, want delivered=false queued=true blocked_on=plan", got)
+	}
+	if note, _ := got["note"].(string); note != peerBlockedNote {
+		t.Errorf("note = %q, want peerBlockedNote", note)
+	}
+
 	answer = `{"sent":"child1"}`
 	got = send()
 	if got["delivered"] != true {

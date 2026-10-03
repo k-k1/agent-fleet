@@ -450,6 +450,33 @@ export interface QueueItem {
   state?: QueueState;
 }
 
+/** A peer message waiting for the member to answer the session's question, plan or
+ *  permission prompt (#1031). The Agent delivers it after the answer, once that turn ends. */
+export interface PendingPeer {
+  id: string;
+  from: string;
+  intent?: string;
+  blockedOn?: string;
+  queuedAt: string;
+  excerpt: string;
+}
+
+/** sessionDropPendingPeer drops one waiting peer message so it is never delivered. code
+ *  "not_pending" means it was already delivered or dropped. */
+export async function sessionDropPendingPeer(
+  session: string,
+  id: string,
+): Promise<{ ok: boolean; code?: string; message?: string }> {
+  const r = await apiJSON(
+    `api/sessions/${encodeURIComponent(session)}/pending-peer/${encodeURIComponent(id)}`,
+    "DELETE",
+  ).catch(() => ({ error: { message: t("err.network") } }));
+  const err = r?.error as ApiError | undefined;
+  if (!err) return { ok: true };
+  const code = typeof err.code === "string" ? err.code : "";
+  return { ok: false, message: errText(err) || t("err.send_failed"), ...(code ? { code } : {}) };
+}
+
 /** What one second stop (or stop-and-discard) threw away, kept by the driver until a tab
  *  restores or dismisses it (decision 4). `items` carry no state: all were still queued. */
 export interface Discard {

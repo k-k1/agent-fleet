@@ -333,3 +333,49 @@ the typing indicator and stop control, mode chips, and the floating pills (.mirr
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Peer messages waiting for the member's answer (#1031), just above the composer, next to the
+   card that answers it. */
+.mirror-peer-pending {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.mirror-peer-pending .mpp-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mirror-peer-pending .mpp-msg {
+  flex: 1;
+  min-width: 0;
+}
+.mirror-peer-pending .mpp-items {
+  margin: 2px 0 0;
+  padding: 0 0 0 20px;
+  list-style: none;
+}
+.mirror-peer-pending .mpp-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.mirror-peer-pending .mpp-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.mirror-peer-pending .mpp-drop {
+  flex: none;
+  font-size: 12px;
+  padding: 1px 8px;
+}

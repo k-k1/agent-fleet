@@ -318,7 +318,8 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			writePeerErr(w, err)
 			return
 		}
-		if _, err := peerPolicy(body.PeerFrom, name); err != nil {
+		dst, err := peerPolicy(body.PeerFrom, name)
+		if err != nil {
 			writePeerErr(w, err)
 			return
 		}
@@ -327,7 +328,47 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			writePeerErr(w, err)
 			return
 		}
-		if err := peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), time.Now()); err != nil {
+		delivery, isDelivery := pendingDeliveryOf(r)
+		if isDelivery {
+			// A queued message (peer_pending.go) was counted when it was queued; the rate is
+			// re-checked here, not counted again.
+			err = peerRate.check(body.PeerFrom, time.Now())
+		} else {
+			// A target waiting on its user takes the message into its pending spool rather than
+			// refusing it, and so does one that already holds queued messages, which keeps
+			// them in order.
+			blockedOn := peerQueueBlocker(dst)
+			if !queueableBlocker(blockedOn) {
+				if q := agents.PendingPeers(name); len(q) > 0 {
+					blockedOn = q[0].BlockedOn
+				} else {
+					blockedOn = ""
+				}
+			}
+			if blockedOn != "" {
+				if len(agents.PendingPeers(name)) >= pendingPeerCap {
+					writePeerErr(w, peerReject("peer_queue_full",
+						"宛先は利用者の回答待ちで、届けられていないメッセージが上限（%d 通）に達しています", pendingPeerCap))
+					return
+				}
+				if err := peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), time.Now()); err != nil {
+					writePeerErr(w, err)
+					return
+				}
+				n, err := enqueuePendingPeer(name, body.PeerFrom, strings.TrimSpace(body.PeerIntent), body.Prompt, blockedOn)
+				if _, ok := err.(*peerRejection); ok {
+					writePeerErr(w, err)
+					return
+				} else if err != nil {
+					httpx.WriteErr(w, http.StatusInternalServerError, "peer_queue_failed", err.Error())
+					return
+				}
+				writePendingQueued(w, name, blockedOn, n)
+				return
+			}
+			err = peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), time.Now())
+		}
+		if err != nil {
 			writePeerErr(w, err)
 			return
 		}
@@ -338,6 +379,9 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// The server builds the envelope; the caller never does, so it can neither be
 		// forgotten nor forged.
 		body.Prompt = peerEnvelope(body.PeerFrom, strings.TrimSpace(body.PeerIntent), reply, body.Prompt)
+		if isDelivery {
+			body.Prompt = agents.MarkHeldEnvelope(body.Prompt, delivery.queuedAt)
+		}
 		// Unattended path, so delivery confirmation is mandatory. Answering 200 on the
 		// keystroke alone would let the sending model proceed as if the message landed.
 		body.Confirm = true
@@ -632,7 +676,7 @@ func writePeerErr(w http.ResponseWriter, err error) {
 	}
 	status := http.StatusBadRequest
 	switch rej.Code {
-	case "peer_rate_limited", "peer_duplicate":
+	case "peer_rate_limited", "peer_duplicate", "peer_queue_full":
 		status = http.StatusTooManyRequests
 	case "peer_from_forbidden", "peer_target_forbidden":
 		status = http.StatusForbidden
@@ -1262,6 +1306,11 @@ func HandleSessionStatus(w http.ResponseWriter, r *http.Request) {
 		if plan, ok := status.ReadPendingPlan(sid); ok && plan != "" {
 			resp["plan"] = plan
 		}
+	}
+	// Peer messages queued behind the user's answer (#1031), so a sender can see its message
+	// still waits.
+	if n := len(agents.PendingPeers(name)); n > 0 {
+		resp["pendingPeerMessages"] = n
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }

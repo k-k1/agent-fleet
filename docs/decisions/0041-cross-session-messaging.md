@@ -286,3 +286,27 @@ first, before anything else, with `queued=<time>` added to the envelope so the r
 staleness. Archive, the trash and a switch to Terminal (CLI) drop them, with a log line naming each, and Agent boot sweeps what a crash left behind a deleted, archived or Terminal session.
 The sender's answer (`delivered` / `queued`) is unchanged. Operator and scheduled prompts are not
 held (#1257). Implementation: `workspace/agent/internal/agents/heldpeers.go`.
+
+## Addendum (2026-10-03) — a peer message to a session waiting on its user is queued, not refused
+
+#1031. A peer send whose target shows a question, a plan approval or a permission prompt used to
+be refused with `409 question_pending` / `plan_pending` / `permission_pending`, leaving the sender
+to poll and resend. It now passes the same policy, intent and rate checks, is written to the
+target's own spool (`pending-peer/<session>/`, the `held-peer` file format in a sibling directory)
+and is answered `202 {"queued", "blocked_on", "pending"}`; `send_to_peer_session` reports
+`queued=true` with `blocked_on` and says not to resend. A per-target loop delivers the spool,
+oldest first, once the blocker is gone **and** the turn the answer started has ended, through
+`/input` itself, so the injection record, the fleet graph, delivery confirmation and a re-check of
+the peer policy and rate limit run as for any peer send; `queued=<time>` is added to the envelope.
+It is not `held-peer/`: a held message was already accepted and every Managed `Resume` feeds that
+directory to the runtime, while a pending one must not reach the session before the user answers
+and serves Terminal (CLI) sessions as well. Decisions: only question / plan / permission queue
+(an expired login and the usage-limit menu keep refusing, since they can last hours); the
+Console's own sends, `send_to_session` and schedules keep their 409; TTL 24 h, at most 20 per
+target (past it `429 peer_queue_full`); a message sent while others wait joins the queue so it
+cannot overtake them; halt keeps the spool, archive / trash / recreate drop it, Agent boot restarts
+the loops. The member sees the waiting messages above the composer and can drop each one. A
+message is claimed by removing its file before the send and written back only when the send left
+it undelivered, so a crash in between loses that one message rather than delivering it twice.
+Expired messages are dropped with a log line; the sender is not told. Implementation:
+`workspace/agent/internal/sessionx/peer_pending.go`, `workspace/agent/internal/agents/pendingpeers.go`.

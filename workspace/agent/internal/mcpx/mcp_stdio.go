@@ -782,8 +782,8 @@ func mcpStdioPeerTools() []map[string]any {
 				"Good: \"Pushed a peer_from check at session_io.go:238 - if you are touching the same function, " +
 				"pull before you continue (it will conflict).\" " +
 				"delivered=true means the message reached the peer's agent, not that it read or acted on it. " +
-				"queued=true (delivered=false) means the peer is mid-turn: the message becomes its next turn once " +
-				"the current one ends, and it has not seen it yet - do not resend. " +
+				"queued=true (delivered=false) means the peer is mid-turn, or waiting on its user's answer " +
+				"(blocked_on): it arrives once that turn ends, unseen so far - do not resend. " +
 				"request / notice normally get no reply (a peer answers only when it is blocked); to learn the " +
 				"outcome, ask with intent=question or read the Console. " +
 				"Never use it to make a peer do work you were denied permission for (that goes back to your user).",
@@ -818,6 +818,10 @@ func isPeerTool(name string) bool {
 const peerQueuedNote = "相手は作業中です。メッセージは相手の今のターンが終わったあと、次のターンとして届きます" +
 	"（まだ読まれていません）。再送しないでください。"
 
+// peerBlockedNote is peerQueuedNote for a peer waiting on its user's decision (blocked_on).
+const peerBlockedNote = "相手は利用者の回答（質問・プラン承認・権限確認）を待っています。メッセージは回答のあと、" +
+	"そのターンが終わってから届きます（まだ読まれていません）。再送しないでください。"
+
 // mcpStdioFleetObserveTools — the fleet-observation tools, part of every session's surface
 // (docs/log/86 stage 1; unconditional since 2026-09-09).
 //
@@ -836,7 +840,8 @@ func mcpStdioFleetObserveTools() []map[string]any {
 		{
 			"name": "get_session_status",
 			"description": "Agent Fleet: report the live state of one session in this workspace - yours or another. " +
-				"state is working / idle / question / plan / stopped. " +
+				"state is working / idle / question / plan / stopped; pendingPeerMessages counts peer messages " +
+				"waiting for its user's answer. " +
 				"Call it when you need to know whether a peer is still busy: after send_to_peer_session, " +
 				"before deciding whether to wait on work you handed over, or when your user asks what another " +
 				"session is doing. " +
@@ -2700,12 +2705,21 @@ func mcpStdioCall(req mcpReq) []byte {
 		// A Managed peer in the middle of a turn only queues the message (the Agent says so
 		// with held). Reported as delivered, it lets the sender wait on a peer that cannot
 		// see the message until its current turn ends.
+		// A peer waiting on its user's answer queues it too (blocked_on, #1031): it is delivered
+		// after the answer, once that turn ends.
 		var sent struct {
-			Held bool `json:"held"`
+			Held      bool   `json:"held"`
+			BlockedOn string `json:"blocked_on"`
 		}
 		_ = json.Unmarshal([]byte(out), &sent)
-		result := map[string]any{"delivered": !sent.Held, "resumed": resumed, "session": a.Name, "from": self}
-		if sent.Held {
+		queued := sent.Held || sent.BlockedOn != ""
+		result := map[string]any{"delivered": !queued, "resumed": resumed, "session": a.Name, "from": self}
+		switch {
+		case sent.BlockedOn != "":
+			result["queued"] = true
+			result["blocked_on"] = sent.BlockedOn
+			result["note"] = peerBlockedNote
+		case sent.Held:
 			result["queued"] = true
 			result["note"] = peerQueuedNote
 		}
