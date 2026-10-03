@@ -256,6 +256,17 @@ kubectl auth can-i create pods -n "$PREFIX-cp" --as $SA               # no
 Then sign in, start a workspace, and check that its pod runs on the workspace pool:
 `kubectl -n "$PREFIX-ws" get pods -o wide -l agent-fleet.io/workspace`.
 
+In that workspace's terminal, the home has to be `dev`'s and writable by nobody else, or
+`af-gcloud-exec` and `af-aws-exec` refuse to keep their state under it (ADR 0107):
+
+```bash
+stat -c '%U:%G %A' /home/dev    # dev:dev drwxr-sr-x — no w for group or other (the s, from fsGroup, is harmless)
+```
+
+The home is the directory `.af-home` of the home claim, which an init container running as `dev`
+creates — and moves an earlier home's files into — before the agent starts; the claim's root
+stays `root:dev` with group write, as the kubelet leaves it.
+
 ## Other clusters
 
 `overlays/generic` is the base with nothing provider-specific. Copy it, and:

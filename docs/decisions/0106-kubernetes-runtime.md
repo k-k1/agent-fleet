@@ -790,3 +790,26 @@ Written with #1466 (`runtime_kubernetes_home.go`, `runtime_kubernetes_destroy.go
   UID, so a claim recreated under the same name never erases what was recorded about the first;
   an unknown resolves only when the same UID is read again with its volume. A workspace whose pod
   never got a volume therefore leaves its StatefulSet as a residue for the runbook.
+
+## Addendum (2026-10-03) — the home is a directory of its claim (#1543)
+
+Decision 4 mounts the home claim at `/home/dev`, and it still is; what is mounted there is now
+the claim's directory `.af-home`, through `subPath`, rather than its root. With `fsGroup` the
+kubelet leaves a claim's root `root:dev`, mode `2775` (measured on GKE), and only its owner or
+root can change that, which nothing under `restricted` is. The group-writable home made
+`cloudexec.PrivateDir` (ADR 0107) refuse the state of `af-gcloud-exec` and `af-aws-exec` alike.
+
+- **An init container from the same image, running as `dev`, makes the directory** before any
+  container mounts it (`homeLayoutScript`, `runtime_kubernetes_home.go`): a `subPath` the kubelet
+  has to create itself is root's again. It removes group and other write from the directory at
+  every start, since a recursive `fsGroup` change sets them.
+- **A claim of the earlier layout keeps its files**: the same step moves every entry of the root
+  into `.af-home.new` and renames that into place last, so an interrupted start carries on and the
+  home never shows half of its files. `lost+found` stays on the root. An entry it cannot move stops
+  the pod rather than leave the home without it.
+- **The wipe init container mounts the home the same way and runs after the layout; the erase pod
+  runs the layout and the erase in its one container**, on the claim's root, because a failed init
+  container leaves the main one waiting and an erase pod is finished only when every container
+  has terminated.
+- The state claim's `subPath` directories stay as the kubelet makes them. Nothing private lives
+  under them: the cloud wrappers' state is under `~/.local/state`, which is not a keep entry.

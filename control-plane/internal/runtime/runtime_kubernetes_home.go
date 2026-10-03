@@ -38,6 +38,18 @@ const (
 	kubeWipeRecordSubPath = "wipe"
 
 	kubeRoleErase = "erase"
+
+	// The home is a directory of the home claim, not the claim's root. The kubelet leaves
+	// the root of a claim mounted with fsGroup as root:dev, mode 2775 (measured on GKE),
+	// and only its owner or root can change that; a pod under `restricted` is neither. A
+	// group-writable home fails the private-directory check of af-gcloud-exec and
+	// af-aws-exec (ADR 0107, cloudexec.PrivateDir). The directory is created by the
+	// home-layout init container (homeLayoutScript), running as dev, before anything
+	// mounts it through subPath: a subPath the kubelet has to create itself is root's again.
+	kubeHomeSubPath = ".af-home"
+	// kubeHomeVolumePath is where the layout step and the erase pod mount the claim's root.
+	kubeHomeVolumePath  = "/var/lib/af/home-volume"
+	kubeLayoutContainer = "home-layout"
 )
 
 func (k *kubeRuntime) erasePodName() string { return k.base + "-erase" }
@@ -84,6 +96,61 @@ func (k *kubeRuntime) WipeHome(ctx context.Context, what HomeWipe) error {
 	}
 }
 
+// homeLayoutContainer is the init container that runs homeLayoutScript before every
+// other container of the pod, in the agent's image and restricted security settings.
+func homeLayoutContainer(main kContainer) kContainer {
+	return kContainer{
+		Name:                     kubeLayoutContainer,
+		Image:                    main.Image,
+		ImagePullPolicy:          main.ImagePullPolicy,
+		Command:                  []string{"/bin/sh", "-c", homeLayoutScript(kubeHomeVolumePath)},
+		Resources:                main.Resources,
+		VolumeMounts:             []kVolumeMount{{Name: "home", MountPath: kubeHomeVolumePath}},
+		SecurityContext:          main.SecurityContext,
+		TerminationMessagePolicy: "FallbackToLogsOnError",
+	}
+}
+
+// homeLayoutScript makes vol/kubeHomeSubPath the home: a directory owned by dev and
+// writable by nobody else. On a claim that predates the subdirectory — the home was the
+// claim's root — it first moves every entry of the root into it, so an existing home keeps
+// its files. lost+found stays where mkfs put it: it is root's and not dev's to move.
+//
+// The moves go into a .new directory renamed into place last, so a pod stopped halfway
+// carries on at the next start and the home never appears with half of its files. An entry
+// that cannot be moved stops the pod: the alternative is a home that silently lacks it.
+// The mode is corrected at every start, since a recursive fsGroup change (the kubelet makes
+// one whenever the root does not match) sets group write on everything below the root.
+func homeLayoutScript(vol string) string {
+	h := vol + "/" + kubeHomeSubPath
+	return strings.Join([]string{
+		"set -eu",
+		"V=" + shellQuote(vol) + "; H=" + shellQuote(h) + "; N=" + shellQuote(h+".new"),
+		`fail() { echo "home layout: $*" >&2; exit 1; }`,
+		`[ -L "$H" ] && fail "$H is a symbolic link"`,
+		`if [ ! -d "$H" ]; then`,
+		`  [ -e "$H" ] && fail "$H is not a directory"`,
+		`  [ -L "$N" ] && fail "$N is a symbolic link"`,
+		`  mkdir -p -- "$N"`,
+		`  for e in "$V"/.[!.]* "$V"/..?* "$V"/*; do`,
+		`    [ -e "$e" ] || [ -L "$e" ] || continue`,
+		`    n=${e##*/}`,
+		`    case "$n" in ` + shellQuote(kubeHomeSubPath+".new") + `|lost+found) continue;; esac`,
+		// Moving a directory to another parent rewrites its "..", which needs write
+		// permission on the directory itself (rename(2)); Go's module cache is read-only.
+		`    ro=; if [ -d "$e" ] && [ ! -L "$e" ] && [ ! -w "$e" ]; then chmod u+w -- "$e" || fail "cannot move $e into the home"; ro=1; fi`,
+		`    mv -- "$e" "$N/" || fail "cannot move $e into the home"`,
+		`    [ -z "$ro" ] || chmod u-w -- "$N/$n"`,
+		`  done`,
+		`  mv -T -- "$N" "$H"`,
+		`fi`,
+		// A home of another owner could only be a subPath the kubelet created; dev cannot
+		// change it, and refusing to start would take the whole workspace away for what
+		// costs only the cloud wrappers, which say why themselves.
+		`if [ "$(stat -c %u -- "$H")" = "$(id -u)" ]; then chmod go-w -- "$H"; else echo "home layout: $H is not owned by $(id -u); af-gcloud-exec and af-aws-exec will refuse it" >&2; fi`,
+	}, "\n")
+}
+
 // addHomeWipe adds the wipe init container when the StatefulSet carries a wipe mark.
 // The container stays in every later template: a pod finds in the record which
 // generations were carried out and removes nothing for them, so the mark never has to be
@@ -95,7 +162,7 @@ func (k *kubeRuntime) addHomeWipe(tmpl *kPodTemplateSpec, ann map[string]string)
 		return
 	}
 	main := tmpl.Spec.Containers[0]
-	tmpl.Spec.InitContainers = []kContainer{{
+	tmpl.Spec.InitContainers = append(tmpl.Spec.InitContainers, kContainer{
 		Name:            kubeWipeContainer,
 		Image:           main.Image,
 		ImagePullPolicy: main.ImagePullPolicy,
@@ -106,12 +173,12 @@ func (k *kubeRuntime) addHomeWipe(tmpl *kPodTemplateSpec, ann map[string]string)
 		},
 		Resources: main.Resources,
 		VolumeMounts: []kVolumeMount{
-			{Name: "home", MountPath: kubeHomePath},
+			{Name: "home", MountPath: kubeHomePath, SubPath: kubeHomeSubPath},
 			{Name: "state", MountPath: kubeWipeRecordPath, SubPath: kubeWipeRecordSubPath},
 		},
 		SecurityContext:          main.SecurityContext,
 		TerminationMessagePolicy: "FallbackToLogsOnError",
-	}}
+	})
 }
 
 // homeCleanCommand removes everything at the top of the home but the homeKeep names,
@@ -385,7 +452,11 @@ func (k *kubeRuntime) erasePod(ctx context.Context, s *kStatefulSet) (kPod, erro
 		Requests: map[string]string{"cpu": "100m", "memory": "256Mi", "ephemeral-storage": "256Mi"},
 		Limits:   map[string]string{"cpu": "1", "memory": "512Mi", "ephemeral-storage": "1Gi"},
 	}
-	mounts := []kVolumeMount{{Name: "home", MountPath: kubeHomePath}}
+	// The layout runs in the erase container rather than as an init container: a failed
+	// init container leaves the erase container waiting, which podFinished never reports
+	// as finished. The claim's root is mounted, so the erase reaches the home through it.
+	spec.InitContainers = nil
+	mounts := []kVolumeMount{{Name: "home", MountPath: kubeHomeVolumePath}}
 	volumes := []kVolume{{Name: "home", PersistentVolumeClaim: &kPVCVolumeSource{ClaimName: k.homeClaim()}}}
 	var state kPVC
 	if err := k.c.get(ctx, k.nsPath("")+"/persistentvolumeclaims/"+k.stateClaim(), &state); err == nil {
@@ -399,7 +470,8 @@ func (k *kubeRuntime) erasePod(ctx context.Context, s *kStatefulSet) (kPod, erro
 		Name:            kubeRoleErase,
 		Image:           image,
 		ImagePullPolicy: main.ImagePullPolicy,
-		Command:         []string{"/bin/sh", "-c", homeEraseScript(kubeHomePath, kubeWipeRecordPath)},
+		Command: []string{"/bin/sh", "-c", homeLayoutScript(kubeHomeVolumePath) + "\n" +
+			homeEraseScript(kubeHomeVolumePath+"/"+kubeHomeSubPath, kubeWipeRecordPath)},
 		Env: []kEnvVar{
 			{Name: "AF_WIPE_REPOS", Value: strconv.FormatInt(wipeGenOf(ann, kubeAnnWipePrefix+string(HomeWipeRepos)), 10)},
 			{Name: "AF_WIPE_CLEAN", Value: strconv.FormatInt(wipeGenOf(ann, kubeAnnWipePrefix+string(HomeWipeClean)), 10)},

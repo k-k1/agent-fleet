@@ -7,8 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -247,16 +249,18 @@ func TestKubeAddHomeWipe(t *testing.T) {
 	rt := f.New(Workspace{ContainerName: "af-ws-x"}, "", nil).(*kubeRuntime)
 	tmpl := rt.podTemplate("img:1@sha256:"+strings.Repeat("0", 64), 2, testEpoch)
 	rt.addHomeWipe(&tmpl, map[string]string{})
-	if len(tmpl.Spec.InitContainers) != 0 {
-		t.Fatal("an init container without a mark")
+	if len(tmpl.Spec.InitContainers) != 1 || tmpl.Spec.InitContainers[0].Name != kubeLayoutContainer {
+		t.Fatalf("init containers without a mark = %+v", tmpl.Spec.InitContainers)
 	}
 	rt.addHomeWipe(&tmpl, map[string]string{kubeAnnWipePrefix + "clean": "4", kubeAnnWipePrefix + "repos": "5"})
 	ic := tmpl.Spec.InitContainers
-	if len(ic) != 1 || ic[0].Image != tmpl.Spec.Containers[0].Image || ic[0].SecurityContext != tmpl.Spec.Containers[0].SecurityContext {
+	// The wipe runs on the home the layout step has made, so it comes second.
+	if len(ic) != 2 || ic[0].Name != kubeLayoutContainer || ic[1].Name != kubeWipeContainer ||
+		ic[1].Image != tmpl.Spec.Containers[0].Image || ic[1].SecurityContext != tmpl.Spec.Containers[0].SecurityContext {
 		t.Fatalf("init containers = %+v", ic)
 	}
 	env := map[string]string{}
-	for _, e := range ic[0].Env {
+	for _, e := range ic[1].Env {
 		env[e.Name] = e.Value
 	}
 	if env["AF_WIPE_CLEAN"] != "4" || env["AF_WIPE_REPOS"] != "5" {
@@ -265,6 +269,221 @@ func TestKubeAddHomeWipe(t *testing.T) {
 	for _, m := range tmpl.Spec.Containers[0].VolumeMounts {
 		if m.SubPath == kubeWipeRecordSubPath {
 			t.Fatal("the workspace container mounts the wipe record: a member could rewrite it")
+		}
+	}
+}
+
+// --- the home's layout on its claim (#1543) ---
+
+// layoutVolume is a claim's root as the kubelet leaves it with fsGroup — group-writable
+// and setgid — holding a home of the earlier layout, where the root was the home.
+func layoutVolume(t *testing.T) string {
+	t.Helper()
+	vol := filepath.Join(t.TempDir(), "vol")
+	for _, p := range []string{"repos/app/.git", ".config/agent-fleet", ".local/state", "lost+found", "go/pkg/mod/m@v1"} {
+		if err := os.MkdirAll(filepath.Join(vol, p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []string{"notes.txt", ".bashrc", "..odd", "-dash"} {
+		if err := os.WriteFile(filepath.Join(vol, f), []byte(f), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("/var/lib/af/keep/.ssh", filepath.Join(vol, ".ssh")); err != nil {
+		t.Fatal(err)
+	}
+	// Go's module cache is read-only; moving a directory needs write permission on it.
+	if err := os.Chmod(filepath.Join(vol, "go/pkg/mod/m@v1"), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(vol, "go"), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(vol, os.ModeSetgid|0o775); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = filepath.Walk(filepath.Dir(vol), func(p string, fi os.FileInfo, err error) error {
+			if err == nil && fi.IsDir() {
+				_ = os.Chmod(p, 0o755)
+			}
+			return nil
+		})
+	})
+	return vol
+}
+
+// assertPrivateHome is the part of cloudexec.PrivateDir's ancestor walk the home decides:
+// owned by this user and writable by nobody else.
+func assertPrivateHome(t *testing.T, home string) {
+	t.Helper()
+	fi, err := os.Lstat(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := fi.Sys().(*syscall.Stat_t)
+	if !fi.IsDir() || int(st.Uid) != os.Getuid() || fi.Mode().Perm()&0o022 != 0 {
+		t.Fatalf("home %s: dir=%v uid=%d mode=%v; want a directory of uid %d without group or other write",
+			home, fi.IsDir(), st.Uid, fi.Mode(), os.Getuid())
+	}
+}
+
+// An existing home moves into the subdirectory whole — hidden names, a link, a read-only
+// directory — and comes out private; lost+found stays on the root; a second start changes
+// nothing.
+func TestKubeHomeLayoutMovesAnExistingHome(t *testing.T) {
+	vol := layoutVolume(t)
+	home := filepath.Join(vol, kubeHomeSubPath)
+	for run := 1; run <= 2; run++ {
+		if err := runScript(t, "umask 002\n"+homeLayoutScript(vol)); err != nil {
+			t.Fatalf("run %d: %v", run, err)
+		}
+		if got := topLevel(t, vol); !reflect.DeepEqual(got, []string{kubeHomeSubPath, "lost+found"}) {
+			t.Fatalf("run %d: the claim's root holds %v", run, got)
+		}
+		want := []string{"-dash", "..odd", ".bashrc", ".config", ".local", ".ssh", "go", "notes.txt", "repos"}
+		if got := topLevel(t, home); !reflect.DeepEqual(got, want) {
+			t.Fatalf("run %d: the home holds %v, want %v", run, got, want)
+		}
+		assertPrivateHome(t, home)
+	}
+	if b, err := os.ReadFile(filepath.Join(home, "..odd")); err != nil || string(b) != "..odd" {
+		t.Fatalf("..odd = %q, %v", b, err)
+	}
+	if l, err := os.Readlink(filepath.Join(home, ".ssh")); err != nil || l != "/var/lib/af/keep/.ssh" {
+		t.Fatalf(".ssh link = %q, %v", l, err)
+	}
+	if fi, err := os.Stat(filepath.Join(home, "go")); err != nil || fi.Mode().Perm() != 0o555 {
+		t.Fatalf("the read-only directory came out %v, %v", fi.Mode(), err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "repos/app/.git")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A new claim gets an empty private home; one left group-writable (a recursive fsGroup
+// change) is made private again.
+func TestKubeHomeLayoutFreshAndRegroupedClaims(t *testing.T) {
+	vol := filepath.Join(t.TempDir(), "vol")
+	if err := os.MkdirAll(filepath.Join(vol, "lost+found"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(vol, os.ModeSetgid|0o775); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(vol, kubeHomeSubPath)
+	if err := runScript(t, "umask 002\n"+homeLayoutScript(vol)); err != nil {
+		t.Fatal(err)
+	}
+	if got := topLevel(t, home); len(got) != 0 {
+		t.Fatalf("a new home holds %v", got)
+	}
+	assertPrivateHome(t, home)
+	if err := os.Chmod(home, os.ModeSetgid|0o775); err != nil {
+		t.Fatal(err)
+	}
+	if err := runScript(t, homeLayoutScript(vol)); err != nil {
+		t.Fatal(err)
+	}
+	assertPrivateHome(t, home)
+}
+
+// A start stopped halfway through the move finishes it at the next start; the home is
+// never visible with only part of its files.
+func TestKubeHomeLayoutResumesAnInterruptedMove(t *testing.T) {
+	vol := layoutVolume(t)
+	part := filepath.Join(vol, kubeHomeSubPath+".new")
+	if err := os.Mkdir(part, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(vol, "repos"), filepath.Join(part, "repos")); err != nil {
+		t.Fatal(err)
+	}
+	if err := runScript(t, homeLayoutScript(vol)); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(vol, kubeHomeSubPath)
+	if got := topLevel(t, vol); !reflect.DeepEqual(got, []string{kubeHomeSubPath, "lost+found"}) {
+		t.Fatalf("the claim's root holds %v", got)
+	}
+	for _, p := range []string{"repos/app/.git", "notes.txt", ".config/agent-fleet"} {
+		if _, err := os.Stat(filepath.Join(home, p)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// The erase pod runs the layout and then the Clean home on the claim's root, so an
+// administrator's Clean home of a claim of the earlier layout removes the home's files and
+// not lost+found, which dev cannot remove.
+func TestKubeEraseScriptOnAnEarlierLayout(t *testing.T) {
+	vol := layoutVolume(t)
+	// Out of this test: rm as dev cannot remove a read-only directory's contents.
+	for _, d := range []string{"go", "go/pkg/mod/m@v1"} {
+		if err := os.Chmod(filepath.Join(vol, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record := t.TempDir()
+	home := filepath.Join(vol, kubeHomeSubPath)
+	sh := homeLayoutScript(vol) + "\n" + homeEraseScript(home, record)
+	if err := runScript(t, sh, "AF_WIPE_CLEAN=1", "AF_WIPE_REPOS=0"); err != nil {
+		t.Fatal(err)
+	}
+	if got := topLevel(t, vol); !reflect.DeepEqual(got, []string{kubeHomeSubPath, "lost+found"}) {
+		t.Fatalf("the claim's root holds %v", got)
+	}
+	if got := topLevel(t, home); !reflect.DeepEqual(got, []string{".config", ".ssh"}) {
+		t.Fatalf("the home after Clean home holds %v", got)
+	}
+	assertPrivateHome(t, home)
+}
+
+// What the layout cannot make into a home stops the pod rather than mounting something else.
+func TestKubeHomeLayoutRefusesALinkOrAFile(t *testing.T) {
+	for _, mk := range []func(string) error{
+		func(p string) error { return os.Symlink("/tmp", p) },
+		func(p string) error { return os.WriteFile(p, []byte("x"), 0o644) },
+	} {
+		vol := t.TempDir()
+		if err := mk(filepath.Join(vol, kubeHomeSubPath)); err != nil {
+			t.Fatal(err)
+		}
+		if err := runScript(t, homeLayoutScript(vol)); err == nil {
+			t.Fatal("the layout accepted a home that is not a directory")
+		}
+	}
+}
+
+// Every container that mounts the home through subPath starts after the layout step, which
+// alone mounts the claim's root; the agent never sees the root.
+func TestKubePodMountsTheHomeThroughTheLayout(t *testing.T) {
+	f := &kubeFactory{cfg: &kubeConfig{namespace: "ns", image: "img:1", serviceAccount: "default"}}
+	rt := f.New(Workspace{ContainerName: "af-ws-x"}, "", nil).(*kubeRuntime)
+	tmpl := rt.podTemplate("img:1@sha256:"+strings.Repeat("0", 64), 2, testEpoch)
+	rt.addHomeWipe(&tmpl, map[string]string{kubeAnnWipePrefix + "repos": "1"})
+	homeMounts := func(c kContainer) []kVolumeMount {
+		var out []kVolumeMount
+		for _, m := range c.VolumeMounts {
+			if m.Name == "home" {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	ic := tmpl.Spec.InitContainers
+	if len(ic) == 0 || ic[0].Name != kubeLayoutContainer ||
+		!reflect.DeepEqual(homeMounts(ic[0]), []kVolumeMount{{Name: "home", MountPath: kubeHomeVolumePath}}) {
+		t.Fatalf("the first init container is not the layout on the claim's root: %+v", ic)
+	}
+	if ic[0].SecurityContext != tmpl.Spec.Containers[0].SecurityContext {
+		t.Fatal("the layout step does not run with the agent's security settings")
+	}
+	for _, c := range append(ic[1:], tmpl.Spec.Containers...) {
+		want := []kVolumeMount{{Name: "home", MountPath: kubeHomePath, SubPath: kubeHomeSubPath}}
+		if got := homeMounts(c); !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s mounts the home as %+v, want %+v", c.Name, got, want)
 		}
 	}
 }
