@@ -36,6 +36,9 @@ Workspace の中で動いている Web アプリを見せる手段は 2 つあ�
    接続や Chromium 自体を作り直すなら再接続。
 7. **Console** ドロワーのバッジで、そのページの `warn` / `error` を先に見る。
 
+近道: サーバをセッションが起動した場合は、左ペインのそのセッションの行の 2 行目にポート（`:5173`）が
+出ます。クリックすると、そのポートの `/` でペインが開きます（[バッジ](../member/badges-and-menus.ja.md#セッションの表示)）。
+
 再接続・Console のリロード・Workspace の Stop→Start は、いずれも現在の port/path から
 **新しい Page を作る**操作です。cookie・storage・入力途中の状態は復元されません。
 

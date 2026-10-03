@@ -283,10 +283,13 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	// Enrich rows from their working copy (worktree flag + branch-drift). One git call
 	// per unique dir.
+	dirBranch := map[string]string{}
 	annotateSessions(sessions, func(dir string) dirInfo {
 		b, wt := gitx.GitDirInfo(dir)
+		dirBranch[dir] = b
 		return dirInfo{branch: b, worktree: wt}
 	})
+	annotateLinks(sessions, dirBranch, time.Now())
 	// Stable order: newest first by creation time.
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
 	// repoJobs and imageJobs are the only channels telling the CP "no session, but the

@@ -190,7 +190,7 @@ func startMySQLServer(inst *Instance, opts startOpts) error {
 	}
 
 	srv := exec.Command(filepath.Join(binDir, "mysqld"), args...)
-	srv.Env = buildMySQLEnv("")
+	srv.Env = withoutSessionName(buildMySQLEnv(""))
 	srv.Stdout = nil
 	srv.Stderr = nil
 	srv.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -398,4 +398,18 @@ func mysqlVersion(inst *Instance) string {
 		return ""
 	}
 	return strings.TrimSpace(out)
+}
+
+// withoutSessionName drops AF_SESSION_NAME from a server's environment. The server is shared
+// by every session of the Workspace, whichever one's af-db happened to start it, and the
+// session rows attribute listening ports by exactly this variable (internal/listenports): left
+// in, the database port would show on that one session's row as a server it runs.
+func withoutSessionName(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "AF_SESSION_NAME=") {
+			out = append(out, kv)
+		}
+	}
+	return out
 }

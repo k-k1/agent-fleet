@@ -227,6 +227,19 @@ func gitRemotePath(remote string) string {
 	return strings.Trim(path, "/")
 }
 
+// GitHubRepoOf returns "owner/name" when origin points at github.com itself, "" for any other
+// host — GitHub Enterprise included, which the Connections token does not reach.
+func GitHubRepoOf(origin string) string {
+	if _, host := gitProviderHost(origin); host != "github.com" {
+		return ""
+	}
+	p := gitRemotePath(origin)
+	if strings.Count(p, "/") != 1 {
+		return ""
+	}
+	return p
+}
+
 // gitProviderHost derives (provider slug, host) from an origin remote URL. Known SaaS
 // hosts collapse to a short slug the Console can badge/icon; anything else returns the
 // bare host as the slug so self-hosted remotes still identify. ("", "") when no host.

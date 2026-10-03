@@ -324,6 +324,90 @@
   display: flex;
   align-items: center;
 }
+/* A row with a link line (#1062) wraps it onto a second line. The ⋯ button stays centred on
+   the first line, where the state chip it replaces on hover sits; centred on the whole row it
+   would land between the two lines. 28px = the button row's height (measured in headless
+   Chromium: 4px padding each side around the 13px title's line box). */
+.sess-row.sess-has-links {
+  flex-wrap: wrap;
+}
+.sess-row.sess-has-links .sess-menu-wrap {
+  bottom: auto;
+  height: 28px;
+}
+/* Indented to the title's left edge (8px button padding + 17px kind icon + 6px gap), so the
+   line reads as belonging to the title above it rather than as a row of its own. */
+.sess-links {
+  flex: 1 0 100%;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  padding: 0 6px 3px 31px;
+  margin-top: -2px;
+  font-size: 11px;
+  line-height: 16px;
+}
+.sess-pr,
+.sess-port {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 3px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sess-pr:hover,
+.sess-port:hover {
+  background: var(--btn);
+  color: var(--fg);
+}
+.sess-pr > .codicon,
+.sess-ports > .codicon {
+  font-size: 12px;
+}
+/* One globe for the group rather than one per port: at the rail's narrowest a per-port icon
+   pushed the third port onto a line of its own. */
+.sess-ports {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 1px;
+  color: var(--muted);
+}
+.sess-ports > .codicon {
+  margin-right: 1px;
+}
+/* GitHub's own reading of a PR's state: green open, grey draft, purple merged, red closed. The
+   colour is on the icon only, so the number stays at the muted text contrast in both themes. */
+.sess-pr.pr-open > .codicon:first-child {
+  color: var(--ok);
+}
+.sess-pr.pr-merged > .codicon:first-child {
+  color: var(--pr-merged);
+}
+.sess-pr.pr-closed > .codicon:first-child {
+  color: var(--err);
+}
+.sess-pr-ci {
+  margin-left: 2px;
+}
+.sess-pr-ci.ci-success {
+  color: var(--ok);
+}
+.sess-pr-ci.ci-failure {
+  color: var(--err);
+}
+.sess-pr-ci.ci-pending {
+  color: var(--warn);
+}
 .sess-menu-btn {
   background: none;
   border: none;
