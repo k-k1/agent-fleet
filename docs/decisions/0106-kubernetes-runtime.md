@@ -877,3 +877,21 @@ Decided (the user's choice among three):
 With this policy the sentence "NetworkPolicy also always lets a pod reach the node it runs on" no
 longer describes Dataplane V2, where a workspace reaches no node at all; P6 stays, for CNIs where
 it does. The runbook's "Check it" probes every node from a workspace pod.
+
+Reported upstream (2026-10-03): <https://issuetracker.google.com/issues/569041167>.
+
+## Note (2026-10-03) — the WebSocket behind the load balancer, measured (#1468)
+
+On open question 3, from the live acceptance run on GKE Standard behind the global external
+Application Load Balancer, with the backend's `timeoutSec` at 3600 (the `GCPBackendPolicy` of the
+2026-10-02 note on the deploy trees):
+
+- **The Console's pings kept an untouched terminal from looking idle.** A terminal nobody typed
+  in stayed connected for more than 67 minutes past the 3600-second `timeoutSec`. The Console
+  pings on the same socket on timers, a round-trip ping every 5 seconds and a heartbeat every 15
+  (`console/src/terminal/term.ts`), and during this run that traffic kept the connection busy.
+- **Not measured:** a hidden tab, a frozen page or a sleeping machine, where the browser may slow
+  or stop those timers; the 24-hour cut of an active WebSocket; and whether the Console reconnects
+  the terminal transparently after a cut. Those parts of open question 3 stay open.
+
+The runbook's "The load balancer" says the same.

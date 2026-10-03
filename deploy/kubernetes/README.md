@@ -51,6 +51,58 @@ Terraform meets every GKE item below.
 | P14 | `AF_MASTER_KEY` is generated and kept **outside the database and its backups** | as on every target; losing it is a crypto-shred |
 | P15 | The **node, pod, service and control-plane ranges lie inside RFC 1918 or `100.64.0.0/10`** (Terraform checks it on every plan). The egress policy allows every address outside those ranges and `169.254.0.0/16`, as fixed blocks with no `except` (`deploy/kubernetes/egress-blocks.py` writes them). A cluster with a range elsewhere (privately used public addresses, GKE's default `34.118.224.0/20` Service range) must cut that range out of the blocks itself | on Dataplane V2 any allowed block that contains a node address lets workspaces reach every node, own and others, and an `except` does not stop it (decision 7, addendum of 2026-10-03) |
 
+**Disk quota (GKE).** Every node's boot disk and every claim is a `pd-balanced` disk, and
+`pd-balanced` counts against the regional **Persistent Disk SSD quota** (`SSD_TOTAL_GB`), which
+is 500 GB per region on a fresh project. When the quota is used up the autoscaler cannot add a
+node: the scale-up fails with `QUOTA_EXCEEDED` and the workspace pod stays `Pending`. A
+steady-state estimate of what the deployment can reach, from the Terraform variables
+(`deploy/gcp/gke/variables.tf`), the CP's claim sizes and the default `pd-balanced`:
+
+```
+zones x (system_node_count x 100 + workspace_max_nodes x workspace_boot_disk_gb)
+  + 20                                    the CP's disk (af-cp-data)
+  + workspaces x (AF_K8S_HOME_GIB + AF_K8S_STATE_GIB)    50 + 5 by default, more after a resize
+  + 20 during a disk rehearsal            the restored copy of the CP's disk
+```
+
+The system pool's 100 GB is GKE's default boot disk, which Terraform does not change. With the
+defaults and two zones (`system_node_count = 1`, `workspace_max_nodes = 4` per zone,
+`workspace_boot_disk_gb = 200`) the nodes alone can reach 2 x (100 + 4 x 200) = 1800 GB. On a
+fresh project 500 GB is already gone with two system nodes, one workspace node and one workspace
+(2 x 100 + 200 + 20 + 55 = 475 GB): the second workspace node never comes. Raise the quota before
+going live, or lower `workspace_max_nodes` / `workspace_boot_disk_gb`, and leave headroom above
+the sum rather than a quota that fits it exactly:
+
+- **Node upgrades.** Both pools upgrade automatically, and a surge upgrade adds a node per zone
+  (GKE's default surge is one) with that pool's boot disk; a quota with no room for it fails the
+  upgrade with `QUOTA_EXCEEDED`.
+- **Other disks** in the region (other deployments, VMs) count against the same quota.
+- **Stopped workspaces** keep their claims, so count every workspace, not the running ones.
+
+With another `storage_class_disk_type` the claims count against that type's quota instead (for
+example `pd-standard` against `DISKS_TOTAL_GB`). Check it:
+
+```bash
+gcloud compute regions list --project <project> --flatten=quotas \
+  --filter='name=<region> AND quotas.metric=SSD_TOTAL_GB' \
+  --format='table(name,quotas.metric,quotas.usage,quotas.limit)'
+```
+
+Raise it on the Cloud Console's Quotas page (IAM & Admin > Quotas & system limits, "Persistent
+Disk SSD (GB)" for the region), or through the Cloud Quotas API:
+
+```bash
+gcloud services enable cloudquotas.googleapis.com --project <project>
+gcloud beta quotas preferences create --project <project> --service compute.googleapis.com \
+  --quota-id SSD-TOTAL-GB-per-project-region --dimensions region=<region> \
+  --preferred-value <GB> --preference-id <prefix>-ssd-total-gb \
+  --justification "Agent Fleet on GKE: node boot disks and workspace volumes"
+gcloud beta quotas preferences describe <prefix>-ssd-total-gb --project <project>   # granted value
+```
+
+In our case an increase to 2000 GB was approved within a minute; that is not a promise, and a
+larger request may go to review.
+
 Tools on the operator's machine: `gcloud` with the `gke-gcloud-auth-plugin` component
 (`gcloud components install gke-gcloud-auth-plugin`, which `kubectl` needs to sign in to GKE),
 `terraform` (1.6 or later), `kubectl` (its built-in kustomize is enough), `psql` for the
@@ -88,6 +140,10 @@ gcloud services enable container.googleapis.com compute.googleapis.com \
   dns.googleapis.com cloudkms.googleapis.com artifactregistry.googleapis.com iam.googleapis.com \
   --project "$PROJECT"
 ```
+
+Check the regional SSD quota against what the deployment can reach, and raise it now if it falls
+short ("Disk quota (GKE)" under Preconditions): a fresh project's 500 GB does not hold a second
+workspace node with the defaults.
 
 The Cloud DNS managed zone for your domain must already exist in the project (P13). Create the
 state bucket if you do not have one, with versioning on:
@@ -220,9 +276,13 @@ backend timeout. Terminals, the mirror and the browser pane are WebSockets, so t
 - **An active WebSocket** is closed after 24 hours whatever `timeoutSec` says. That cut cannot
   be configured away; the Console has to reconnect.
 
-Whether an idle terminal survives the timeout in practice, and whether the Console reconnects
-transparently after either cut, is **not yet measured** (ADR 0106 open question 3, #1468). Test
-both before relying on long-lived terminals.
+Measured on 2026-10-03: a Console terminal nobody typed in stayed connected for more than 67
+minutes past the 3600-second `timeoutSec` (ADR 0106, note of 2026-10-03). The Console pings on
+the same socket on timers, a round-trip ping every 5 seconds and a heartbeat every 15
+(`console/src/terminal/term.ts`), and during that run the pings kept the connection from looking
+idle. A browser may slow or stop those timers for a hidden tab, a frozen page or a sleeping
+machine, and that was **not measured**; nor were the 24-hour cut and whether the Console
+reconnects transparently after a cut (#1468). Test them before relying on day-long terminals.
 
 **`AF_TRUSTED_PROXY_HOPS` stays 2.** The load balancer appends `<client>, <load balancer>` to
 whatever `X-Forwarded-For` it receives, and the CP counts from the right. With nothing in front
@@ -435,10 +495,19 @@ settings, without touching the live instance:
 ```bash
 gcloud sql instances clone "$PREFIX-pg" "$PREFIX-pg-rehearsal" --project "$PROJECT" \
   --point-in-time "$(date -u -d '-15 min' +%Y-%m-%dT%H:%M:%SZ)"
+# gcloud may stop waiting after about 10 minutes ("taking longer than expected") while the
+# clone goes on. Wait for the operation it named, or until the clone's state is RUNNABLE:
+#   gcloud beta sql operations wait --project "$PROJECT" --timeout unlimited <operation>
+#   gcloud sql instances describe "$PREFIX-pg-rehearsal" --project "$PROJECT" --format='value(state)'
 # connect to the clone as in "The database, once" and check that the data is there:
 #   SELECT count(*) FROM identity;  SELECT max(at) FROM audit_log;
+gcloud sql instances patch "$PREFIX-pg-rehearsal" --project "$PROJECT" --no-deletion-protection
 gcloud sql instances delete "$PREFIX-pg-rehearsal" --project "$PROJECT"
 ```
+
+The clone inherits deletion protection from the live instance, so the delete alone fails with
+"The instance is protected". Turn it off on **the clone only** (`$PREFIX-pg-rehearsal`), never on
+`$PREFIX-pg`: Terraform set it there so that nothing removes the live database by mistake.
 
 Rehearse the disk the same way: restore a snapshot beside the live one, **read it**, and remove
 it. Creating a disk proves nothing about what is on it. Before taking the snapshot, push a
@@ -535,7 +604,10 @@ kubectl delete pv "$NAME"
 gcloud compute disks delete "$NAME" --zone "$ZONE" --project "$PROJECT"
 ```
 
-Record the dates and how long each restore took; that is your recovery time.
+Record the dates and how long each restore took; that is your recovery time. One measurement,
+as an example only (2026-10-03, near-empty data): the database clone took about 10 minutes
+(10 min 18 s); for the disk, the snapshot took 61 s, the disk from the snapshot 26 s and the
+check pod 48 s. Real data makes each of these longer.
 
 ### Upgrading the CP
 
