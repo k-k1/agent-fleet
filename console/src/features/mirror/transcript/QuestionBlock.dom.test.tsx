@@ -13,6 +13,8 @@ import { groupTurns } from "./model.ts";
 import type { TranscriptCaps } from "./capabilities.ts";
 import type { Turn } from "./types.ts";
 import { t as tr } from "../../../lib/i18n/index.ts";
+import { ja } from "../../../lib/i18n/locales/ja.ts";
+import { en } from "../../../lib/i18n/locales/en.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -85,7 +87,16 @@ describe("QuestionBlock — declined AskUserQuestion", () => {
     // (.mq-free) — that must be gone; a short fixed note replaces it instead.
     expect(el.querySelector(".mq-free")).toBeNull();
     expect(el.textContent).not.toContain("wants to clarify");
-    expect(el.querySelector(".mq-declined-note")).not.toBeNull();
+    expect(el.querySelector(".mq-declined-note")?.textContent).toBe(tr("mirror.question_declined"));
+  });
+
+  it("words the cancel as the user's, never as the agent declining (#1604)", () => {
+    // Pinned as literals: comparing tr() with tr() would pass a catalogue that regressed to
+    // "Declined by the agent", which is the misreading this card used to cause.
+    expect(ja["mirror.question_cancelled"]).toBe("キャンセル");
+    expect(ja["mirror.question_declined"]).toBe("回答せずに閉じられました");
+    expect(en["mirror.question_cancelled"]).toBe("Cancelled");
+    expect(en["mirror.question_declined"]).toBe("Closed without an answer");
   });
 
   it("leaves a genuinely answered question alone — still badged answered, real pick highlighted", () => {
