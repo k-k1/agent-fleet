@@ -37,7 +37,7 @@ function setup(over: Partial<Harness["state"]> = {}): Harness {
     setDrawer: (open) => calls.push(open ? "drawer:open" : "drawer:close"),
     openRailOverlay: () => calls.push("rail:open"),
     closeRail: () => calls.push("rail:close"),
-    rotateSession: (delta) => calls.push(delta > 0 ? "rotate:next" : "rotate:prev"),
+    rotateSession: (delta) => calls.push(delta > 0 ? "rotate:down" : "rotate:up"),
   };
   const uninstall = installSwipeGestures(window, surfaces);
   return { surfaces, calls, state, target, uninstall };
@@ -156,22 +156,22 @@ describe("left pane show/hide", () => {
 });
 
 describe("phone horizontal swipe = rotate through running sessions", () => {
-  it("a left swipe with the drawer closed advances to the next session", () => {
+  it("a left swipe with the drawer closed moves to the session one row up in the rail", () => {
     h = setup();
     swipe([300, 300], -120);
-    expect(h.calls).toEqual(["rotate:next"]);
+    expect(h.calls).toEqual(["rotate:up"]);
   });
 
-  it("a right swipe away from the left edge goes back to the previous session", () => {
+  it("a right swipe away from the left edge moves to the session one row down", () => {
     h = setup();
     swipe([300, 300], 120);
-    expect(h.calls).toEqual(["rotate:prev"]);
+    expect(h.calls).toEqual(["rotate:down"]);
   });
 
   it("a left swipe from the left edge still rotates, coexisting with the pending right swipe", () => {
     h = setup();
     swipe([10, 300], -120);
-    expect(h.calls).toEqual(["rotate:next"]);
+    expect(h.calls).toEqual(["rotate:up"]);
   });
 
   it("with the drawer open a right swipe does nothing; only the closing left swipe is taken", () => {
@@ -201,7 +201,7 @@ describe("phone horizontal swipe = rotate through running sessions", () => {
     touchEvent("touchmove", 180, 300, h.target);
     touchEvent("touchmove", 40, 300, h.target);
     touchEvent("touchend", 40, 300, h.target);
-    expect(h.calls).toEqual(["rotate:next"]);
+    expect(h.calls).toEqual(["rotate:up"]);
   });
 
   it("swinging back the other way with the same finger still settles only once", () => {
@@ -210,7 +210,7 @@ describe("phone horizontal swipe = rotate through running sessions", () => {
     touchEvent("touchmove", 440, 300, h.target);
     touchEvent("touchmove", 100, 300, h.target);
     touchEvent("touchend", 100, 300, h.target);
-    expect(h.calls).toEqual(["rotate:prev"]);
+    expect(h.calls).toEqual(["rotate:down"]);
   });
 
   it("passing the long-press window cancels the candidate, so a text-selection drag is not mistaken for a swipe", () => {
@@ -270,7 +270,7 @@ describe("phone horizontal swipe = rotate through running sessions", () => {
     expect(h.calls).toEqual([]);
     setPageZoom(1);
     swipe([300, 300], -120);
-    expect(h.calls).toEqual(["rotate:next"]);
+    expect(h.calls).toEqual(["rotate:up"]);
   });
 
   it("a popped-out tab (rotatable=false) does not rotate", () => {
