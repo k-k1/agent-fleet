@@ -248,17 +248,14 @@ func (e *ecsRuntime) runHomeTask(ctx context.Context, what HomeWipe) error {
 	}
 	arn, err := e.startHomeTask(ctx, what)
 	if err != nil {
-		// A refusal ECS answered (an API error, a failure list) started nothing. Anything
-		// else — a timeout after the request was sent — may have, so the pending marker
-		// stays and keeps the home refused for its grace.
-		var apiErr smithy.APIError
-		if errors.As(err, &apiErr) || errors.Is(err, errHomeTaskNotPlaced) {
+		if runTaskStartedNothing(err) {
 			e.clearHomeTaskMarker(ctx)
 		}
 		return err
 	}
 	if err := e.markHomeTask(ctx, arn); err != nil {
-		// The pending marker is still there and blocks for its grace; the wait goes on.
+		// The pending marker is still there and keeps the home refused; the wait goes on,
+		// and it is dropped once the task is seen STOPPED.
 		log.Printf("ecs: %v", err)
 	}
 	stopped, err := e.waitHomeTask(ctx, arn, what)
@@ -266,6 +263,20 @@ func (e *ecsRuntime) runHomeTask(ctx context.Context, what HomeWipe) error {
 		e.clearHomeTaskMarker(ctx)
 	}
 	return err
+}
+
+// runTaskStartedNothing reports whether a failed RunTask is known to have started no task:
+// ECS answered with a failure list (errHomeTaskNotPlaced), or refused the request as the
+// caller's fault (a 4xx: invalid parameters, AccessDenied, a missing task definition).
+// Everything else — a server fault (5xx, ServerException) even after the SDK's retries, an
+// error with no fault, a timeout after the request was sent — may have placed one, so the
+// pending marker stays and only an operator clears it.
+func runTaskStartedNothing(err error) bool {
+	if errors.Is(err, errHomeTaskNotPlaced) {
+		return true
+	}
+	var apiErr smithy.APIError
+	return errors.As(err, &apiErr) && apiErr.ErrorFault() == smithy.FaultClient
 }
 
 // errHomeTaskNotPlaced marks a RunTask that ECS answered without starting a task.

@@ -496,3 +496,45 @@ func TestECSStopCapturesTheTasksItStops(t *testing.T) {
 		t.Errorf("captured = %v, want the running workspace task", v)
 	}
 }
+
+// fakeTasksRunErr fails RunTask with err.
+type fakeTasksRunErr struct {
+	fakeTasks
+	err error
+}
+
+func (f *fakeTasksRunErr) RunTask(_ context.Context, in *ecs.RunTaskInput, _ ...func(*ecs.Options)) (*ecs.RunTaskOutput, error) {
+	f.runs = append(f.runs, in)
+	return nil, f.err
+}
+
+// Only a RunTask known to have started nothing drops the pending marker: a client fault
+// (4xx). A server fault (5xx, even after the SDK's retries) or an error with no fault may
+// have placed a task, so the marker stays and Start stays refused.
+func TestECSRunTaskFailureKeepsTheMarkerUnlessNothingStarted(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		err  error
+		kept bool
+	}{
+		{"server fault", &ecstypes.ServerException{Message: aws.String("internal server error")}, true},
+		{"no fault (transport)", errors.New("dial tcp: i/o timeout"), true},
+		{"client fault", &ecstypes.InvalidParameterException{Message: aws.String("TaskDefinition is inactive")}, false},
+		{"access denied", &ecstypes.AccessDeniedException{Message: aws.String("not authorized")}, false},
+	} {
+		fe, fs := &fakeECS{}, &fakeSSM{}
+		rt := newHomeTaskECSWith(fe, &fakeEFS{}, fs, &fakeTasks{})
+		rt.tasks = &fakeTasksRunErr{err: c.err}
+		if err := rt.WipeHome(context.Background(), HomeWipeClean); err == nil {
+			t.Fatalf("%s: the RunTask error was lost", c.name)
+		}
+		_, kept := fs.values[rt.homeTaskMarker()]
+		if kept != c.kept {
+			t.Errorf("%s: marker kept = %v, want %v", c.name, kept, c.kept)
+		}
+		startErr := rt.Start(context.Background())
+		if c.kept && (!errors.Is(startErr, ErrHomeTaskInFlight) || len(fe.createCalls) != 0) {
+			t.Errorf("%s: Start = %v (creates %d), want ErrHomeTaskInFlight and no service", c.name, startErr, len(fe.createCalls))
+		}
+	}
+}
