@@ -26,6 +26,7 @@ import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useUnreadSessions } from "../notifications/unread.ts";
+import { usePublishedHeight } from "../../lib/usePublishedHeight.ts";
 
 /** Deepest level that still adds indentation; below it nodes stay at this inset. */
 const MAX_INDENT_DEPTH = 3;
@@ -105,6 +106,9 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
   const unread =
     !open &&
     [...mine, ...below.flatMap((f) => sessionsInFolder(sessions, f))].some((s) => unreadSessions.has(s.name));
+  // A root's header height sets where its worktrees' headers pin (project.css). Only roots:
+  // deeper worktree headers do not pin, and a nested value would shadow the root's.
+  const headRef = usePublishedHeight<HTMLDivElement>("--proj-base-head-h", depth === 0);
   const row = (s: Session) => (
     <SessionRow
       key={s.name}
@@ -127,7 +131,7 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
       // The spine reads this; a node without a family leaves the default accent alone.
       style={n.spine ? ({ "--proj-lineage": n.spine } as CSSProperties) : undefined}
     >
-      <div className="proj-node-head">
+      <div ref={headRef} className="proj-node-head">
         <button
           type="button"
           className="proj-node-caret"

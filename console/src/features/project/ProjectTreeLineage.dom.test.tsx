@@ -171,3 +171,17 @@ describe("indentation depth cap", () => {
     expect(spine("af@5")).toBe(spine("af@1"));
   });
 });
+
+describe("sticky offsets", () => {
+  // project.css pins a worktree header at filter + its root's header height. Both are measured,
+  // because the touch layout wraps the repo row and a fixed guess slid the worktree header under it.
+  it("publishes the filter height on the tree's container and the header height on roots only", async () => {
+    await render();
+    expect(host.querySelector<HTMLElement>(".proj-tree")!.parentElement!.style.getPropertyValue("--proj-filter-h")).toMatch(/^\d+px$/);
+    expect(nodeFor("af")!.style.getPropertyValue("--proj-base-head-h")).toMatch(/^\d+px$/);
+    expect(nodeFor("other")!.style.getPropertyValue("--proj-base-head-h")).toMatch(/^\d+px$/);
+    // A nested value would shadow the root's for the worktree headers that pin under it.
+    expect(nodeFor("af@p")!.style.getPropertyValue("--proj-base-head-h")).toBe("");
+    expect(nodeFor("af@c")!.style.getPropertyValue("--proj-base-head-h")).toBe("");
+  });
+});
