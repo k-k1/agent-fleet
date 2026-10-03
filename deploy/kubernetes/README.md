@@ -35,7 +35,7 @@ Terraform meets every GKE item below.
 
 | # | Precondition | Why (ADR 0106) |
 |---|---|---|
-| P1 | Kubernetes **1.33 or later** | the PersistentVolume deletion-protection finalizer Destroy relies on is stable from 1.33 (decision 5) |
+| P1 | Kubernetes **1.33 or later**. Terraform creates the cluster at its release channel's default version and checks this floor (`min_master_version`) on every plan | the PersistentVolume deletion-protection finalizer Destroy relies on is stable from 1.33 (decision 5) |
 | P2 | A CNI that **enforces NetworkPolicy** (Dataplane V2 on GKE) | without one the policies are accepted and enforce nothing (decision 7) |
 | P3 | A StorageClass with `volumeBindingMode: WaitForFirstConsumer`, `allowVolumeExpansion: true`, `reclaimPolicy: Delete`, backed by **block storage** (not NFS / Filestore) | decision 4; with `Retain` the disk and its bill outlive Destroy (decision 5) |
 | P4 | **Application-layer encryption of Secrets** (Cloud KMS on GKE) | every workspace's DEK and tokens are in a Secret (decision 6) |
@@ -45,7 +45,7 @@ Terraform meets every GKE item below.
 | P8 | **No IAM grant names the workspace namespace or its service account**, directly or through a `principalSet`, and the namespace names carry this deployment's own prefix | Workload Identity treats equal names in any cluster of the project as one identity (decision 7) |
 | P9 | **Members have no Kubernetes API access** to the workspace namespace. Creating pods there is reading every member's home and Secret | decision 7 |
 | P10 | The cluster is **IPv4 single-stack**. The egress policy allows no `::/0`, so IPv6 egress is denied rather than unfiltered | decision 7 |
-| P11 | **NodeLocal DNSCache is off**, or a policy for its address is added. The DNS policy allows `kube-dns` pods only; `169.254.0.0/16` is denied | decision 7 |
+| P11 | **NodeLocal DNSCache is off** (GKE turns it on for new clusters; Terraform sets it off, and changing it on an existing cluster recreates the nodes), or a policy for its address is added. The DNS policy allows `kube-dns` pods only; `169.254.0.0/16` is denied, so with the cache on every lookup from a workspace fails | decision 7 |
 | P12 | A **Postgres** the deployment provides (Cloud SQL on GKE) | decision 8 |
 | P13 | **A DNS zone** for the Console's name, and a **state bucket** for Terraform, both the operator's | decision 12 |
 | P14 | `AF_MASTER_KEY` is generated and kept **outside the database and its backups** | as on every target; losing it is a crypto-shred |
@@ -119,6 +119,9 @@ $TF apply
   1918 or `100.64.0.0/10`, check that the egress policy still excepts it: the four ranges
   Terraform prints are excepted; the Private Service Access range is excepted only through RFC
   1918.
+- `min_master_version` is a floor, not the version the cluster is created at: the cluster starts
+  at the release channel's default, and every plan fails if the control plane runs below the
+  floor (P1).
 - The certificate is issued once the DNS authorisation records resolve.
   `gcloud certificate-manager certificates describe $PREFIX-cert --project "$PROJECT"` shows its
   state; it is usually `ACTIVE` within an hour.
@@ -253,8 +256,19 @@ kubectl auth can-i get "storageclass/$PREFIX-workspace" --as $SA      # yes
 kubectl auth can-i create pods -n "$PREFIX-cp" --as $SA               # no
 ```
 
-Then sign in, start a workspace, and check that its pod runs on the workspace pool:
-`kubectl -n "$PREFIX-ws" get pods -o wide -l agent-fleet.io/workspace`.
+NodeLocal DNSCache is off (P11); this prints nothing:
+
+```bash
+kubectl -n kube-system get pods -l k8s-app=node-local-dns
+```
+
+Then sign in, start a workspace, and check that its pod runs on the workspace pool and resolves
+names:
+
+```bash
+kubectl -n "$PREFIX-ws" get pods -o wide -l agent-fleet.io/workspace
+kubectl -n "$PREFIX-ws" exec <pod> -- getent hosts github.com     # an address, not empty
+```
 
 ## Other clusters
 

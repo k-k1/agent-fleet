@@ -7,6 +7,9 @@ locals {
   storage_class  = "${var.name_prefix}-workspace"
   workload_pool  = "${var.project_id}.svc.id.goog"
   workspace_pool = "workspace"
+
+  # [major, minor] of the floor, compared with the cluster's in its postcondition.
+  version_floor = [for p in split(".", var.min_master_version) : tonumber(p)]
 }
 
 resource "google_container_cluster" "main" {
@@ -15,7 +18,10 @@ resource "google_container_cluster" "main" {
 
   node_locations = var.node_zones
 
-  min_master_version = var.min_master_version
+  # No min_master_version: GKE creates the cluster at that version, matched as a prefix
+  # against what the channel offers today, so a floor written there fails the create once
+  # the channel drops it. The cluster starts at the channel's default; the floor is the
+  # postcondition below.
   release_channel {
     channel = var.release_channel
   }
@@ -64,6 +70,15 @@ resource "google_container_cluster" "main" {
     channel = "CHANNEL_STANDARD"
   }
 
+  # NodeLocal DNSCache answers a pod's lookups from the node, and the workspace namespace's
+  # DNS policy admits kube-dns pods only, so with the cache on every lookup is dropped
+  # (P11). GKE enables it by default on new clusters. Changing it recreates the nodes.
+  addons_config {
+    dns_cache_config {
+      enabled = false
+    }
+  }
+
   # The kubelet's read-only port serves pod data unauthenticated, and NetworkPolicy
   # always lets a pod reach its own node.
   node_pool_defaults {
@@ -94,6 +109,24 @@ resource "google_container_cluster" "main" {
   }
 
   deletion_protection = true
+
+  lifecycle {
+    # Clusters created while min_master_version was set keep it in state; the provider
+    # never reads it back and an unset value upgrades nothing, so a diff would be noise.
+    ignore_changes = [min_master_version]
+
+    # P1 / ADR 0106 decision 5: the PersistentVolume deletion-protection finalizer that
+    # Destroy relies on. Checked on every plan of an existing cluster and after a create.
+    postcondition {
+      # master_version reads like "1.35.8-gke.1000000".
+      condition = (
+        tonumber(split(".", self.master_version)[0]) > local.version_floor[0] ||
+        (tonumber(split(".", self.master_version)[0]) == local.version_floor[0] &&
+        tonumber(split(".", self.master_version)[1]) >= local.version_floor[1])
+      )
+      error_message = "The control plane runs ${self.master_version}, below min_master_version ${var.min_master_version} (ADR 0106 decision 5). Pick a release channel that offers it, or upgrade the cluster."
+    }
+  }
 
   depends_on = [
     google_kms_crypto_key_iam_member.gke_secrets,
