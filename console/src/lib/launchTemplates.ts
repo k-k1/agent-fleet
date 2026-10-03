@@ -3,7 +3,11 @@
 // ui-prefs object is one PUT capped at 64 KiB by the Agent, and a PUT over it fails the sync of
 // EVERY setting, so this module caps the templates on write (a refused save says why) and on read
 // (a value imported or written by another client is trimmed rather than trusted).
-import { getSettings, setSettings } from "./settings.ts";
+//
+// Nothing is written before the server copy has been read: a key changed before that read is kept
+// over the server's value by the hydrate, so a template created then would replace every template
+// the other devices saved.
+import { getSettings, serverPrefsFit, setSettings, uiPrefsLoaded } from "./settings.ts";
 import { folderBase } from "./workingSets.ts";
 
 export interface LaunchTemplate {
@@ -16,12 +20,28 @@ export interface LaunchTemplate {
   at: number;
 }
 
+/** The stored shape. Once written it is never an empty value, even with no items, which is what
+ *  lets "deleted the last template" win over another device's older copy (settings.ts ACCUMULATED
+ *  restores only an EMPTY server value); a missing or `{}` value is still restored. */
+export interface LaunchTemplateStore {
+  items?: LaunchTemplate[];
+  at?: number;
+}
+
 export const TEMPLATE_MAX_COUNT = 40;
 export const TEMPLATE_NAME_MAX = 80;
 export const TEMPLATE_BODY_MAX_BYTES = 8 * 1024;
 export const TEMPLATES_MAX_BYTES = 16 * 1024;
 
-export type TemplateError = "name_required" | "body_required" | "name_too_long" | "body_too_long" | "too_many" | "full";
+export type TemplateError =
+  | "name_required"
+  | "body_required"
+  | "name_too_long"
+  | "body_too_long"
+  | "too_many"
+  | "full"
+  | "prefs_full"
+  | "not_loaded";
 
 const enc = new TextEncoder();
 export const byteLength = (s: string): number => enc.encode(s).length;
@@ -36,8 +56,10 @@ function isTemplate(v: unknown): v is LaunchTemplate {
   return typeof t.id === "string" && !!t.id && typeof t.name === "string" && typeof t.body === "string" && typeof t.repo === "string";
 }
 
-/** Valid entries only, unique ids, within every cap — the oldest edits are what a cap drops. */
+/** Valid entries only, unique ids, within every cap — the oldest edits are what a cap drops.
+ *  Takes the stored object or a bare list. */
 export function normalizeTemplates(v: unknown): LaunchTemplate[] {
+  if (v && typeof v === "object" && !Array.isArray(v)) v = (v as LaunchTemplateStore).items;
   if (!Array.isArray(v)) return [];
   const seen = new Set<string>();
   const out: LaunchTemplate[] = [];
@@ -71,20 +93,6 @@ export interface TemplateDraft {
   repo: string;
 }
 
-/** Validates without saving, against the list the save would produce. */
-export function checkTemplate(d: TemplateDraft, all: LaunchTemplate[] = readTemplates()): TemplateError | null {
-  const name = d.name.trim();
-  if (!name) return "name_required";
-  if (!d.body.trim()) return "body_required";
-  if (name.length > TEMPLATE_NAME_MAX) return "name_too_long";
-  if (byteLength(d.body) > TEMPLATE_BODY_MAX_BYTES) return "body_too_long";
-  const others = all.filter((t) => t.id !== d.id);
-  if (!d.id && others.length >= TEMPLATE_MAX_COUNT) return "too_many";
-  const next = [...others, { id: d.id || "x", name, body: d.body, repo: d.repo, at: 0 }];
-  if (byteLength(JSON.stringify(next)) > TEMPLATES_MAX_BYTES) return "full";
-  return null;
-}
-
 const newId = (): string => {
   try {
     return crypto.randomUUID();
@@ -93,22 +101,37 @@ const newId = (): string => {
   }
 };
 
-/** Create or update; an existing template keeps its place in the list. */
+const storeOf = (items: LaunchTemplate[]): LaunchTemplateStore => ({ items, at: Date.now() });
+
+/** Create or update; an existing template keeps its place in the list. The caps are checked on the
+ *  exact list that would be stored (real id and time), so a save that passes is never trimmed by
+ *  the next read. */
 export function saveTemplate(d: TemplateDraft): { ok: true; id: string } | { ok: false; error: TemplateError } {
+  const fail = (error: TemplateError) => ({ ok: false as const, error });
+  const name = d.name.trim();
+  if (!name) return fail("name_required");
+  if (!d.body.trim()) return fail("body_required");
+  if (name.length > TEMPLATE_NAME_MAX) return fail("name_too_long");
+  if (byteLength(d.body) > TEMPLATE_BODY_MAX_BYTES) return fail("body_too_long");
+  if (!uiPrefsLoaded()) return fail("not_loaded");
   const all = readTemplates();
-  const error = checkTemplate(d, all);
-  if (error) return { ok: false, error };
-  const id = d.id && all.some((t) => t.id === d.id) ? d.id : newId();
-  const tpl: LaunchTemplate = { id, name: d.name.trim(), body: d.body, repo: scopeRepo(d.repo), at: Date.now() };
-  const next = all.some((t) => t.id === id) ? all.map((t) => (t.id === id ? tpl : t)) : [...all, tpl];
-  setSettings({ launchTemplates: next });
+  const existing = !!d.id && all.some((t) => t.id === d.id);
+  if (!existing && all.length >= TEMPLATE_MAX_COUNT) return fail("too_many");
+  const id = existing ? d.id! : newId();
+  const tpl: LaunchTemplate = { id, name, body: d.body, repo: scopeRepo(d.repo), at: Date.now() };
+  const next = existing ? all.map((t) => (t.id === id ? tpl : t)) : [...all, tpl];
+  if (byteLength(JSON.stringify(next)) > TEMPLATES_MAX_BYTES) return fail("full");
+  const store = storeOf(next);
+  if (!serverPrefsFit({ launchTemplates: store })) return fail("prefs_full");
+  setSettings({ launchTemplates: store });
   return { ok: true, id };
 }
 
-export function deleteTemplate(id: string): void {
+export function deleteTemplate(id: string): { ok: boolean; error?: TemplateError } {
+  if (!uiPrefsLoaded()) return { ok: false, error: "not_loaded" };
   const all = readTemplates();
-  if (!all.some((t) => t.id === id)) return;
-  setSettings({ launchTemplates: all.filter((t) => t.id !== id) });
+  if (all.some((t) => t.id === id)) setSettings({ launchTemplates: storeOf(all.filter((t) => t.id !== id)) });
+  return { ok: true };
 }
 
 // promptTitle / promptExcerpt: the one-line summary a long prompt is shown by. The title is the

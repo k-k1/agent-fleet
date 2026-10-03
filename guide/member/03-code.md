@@ -135,7 +135,8 @@ cursor** or **replace all** — typed text is never dropped silently.
 
 Your templates and history are saved with your settings, so they follow you to every browser and
 device. They have a size budget (40 templates, 16 KB in total, 8 KB each); a prompt larger than
-3 KB is kept in history on that device only. To invoke a repository's `.claude` commands or
+3 KB (or one that would push your synced settings past their 64 KB limit) is kept in history on
+that device only. To invoke a repository's `.claude` commands or
 skills, use the skill button (**/**) next to "Templates" instead — they are no longer listed here.
 
 ### What you can do with right-click

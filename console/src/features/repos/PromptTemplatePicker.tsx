@@ -114,6 +114,8 @@ export function PromptTemplatePopover({
   const [mode, setMode] = useState<Mode>({ t: "list" });
   // History can also live in device-only localStorage, which no settings change announces.
   const [histRev, setHistRev] = useState(0);
+  // Why a delete did not happen (the server copy has not been read yet).
+  const [notice, setNotice] = useState("");
   const coarse = coarsePointer();
 
   // The device-only history of older Consoles moves into the synced list here, once the server
@@ -198,7 +200,7 @@ export function PromptTemplatePopover({
   };
 
   const onSearchKey = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.nativeEvent.isComposing) return;
+    if (imeKey(e)) return;
     if ((e.key === "ArrowDown" || e.key === "ArrowUp") && shown.length) {
       e.preventDefault();
       const n = shown.length;
@@ -289,11 +291,12 @@ export function PromptTemplatePopover({
                       role="option"
                       aria-selected={i === activeIdx}
                       className={"launch-tmpl-item" + (i === activeIdx ? " sel" : "")}
-                      onMouseMove={() => e.key !== active?.key && setActiveKey(e.key)}
+                      // A touch has no hover: a tap (and the mousemove it synthesizes) only
+                      // previews, and the preview's Insert button commits — the first row is
+                      // highlighted from the start, so "tap the highlighted row" cannot mean insert.
+                      onMouseMove={() => !coarse && e.key !== active?.key && setActiveKey(e.key)}
                       onMouseDown={(ev) => ev.preventDefault()}
-                      // A touch has no hover to preview with, so the first tap previews and the
-                      // preview's Insert button commits.
-                      onClick={() => (coarse && e.key !== active?.key ? setActiveKey(e.key) : choose(e))}
+                      onClick={() => (coarse ? setActiveKey(e.key) : choose(e))}
                     >
                       <span className="launch-tmpl-item-title">
                         {e.title || tr("launch.tmpl.untitled")}
@@ -315,7 +318,8 @@ export function PromptTemplatePopover({
                       variant="danger"
                       small
                       onClick={() => {
-                        deleteTemplate(mode.id);
+                        const r = deleteTemplate(mode.id);
+                        setNotice(r.ok ? "" : tr("launch.tmpl.err.not_loaded"));
                         setMode({ t: "list" });
                       }}
                     >
@@ -359,7 +363,7 @@ export function PromptTemplatePopover({
                           small
                           icon="trash"
                           onClick={() => {
-                            deletePromptHistory(repo, active.body);
+                            setNotice(deletePromptHistory(repo, active.body) ? "" : tr("launch.tmpl.err.not_loaded"));
                             setHistRev((n) => n + 1);
                           }}
                         >
@@ -372,6 +376,11 @@ export function PromptTemplatePopover({
               </div>
             )}
           </div>
+          {notice && (
+            <div className="launch-tmpl-err" role="alert">
+              {notice}
+            </div>
+          )}
           <div className="launch-tmpl-foot">
             <Button variant="ghost" small icon="add" onClick={() => startEdit({ name: "", body: "", repo: "" })}>
               {tr("launch.tmpl.new")}
@@ -385,6 +394,10 @@ export function PromptTemplatePopover({
 }
 
 const optId = (listId: string, i: number) => `${listId}-opt-${i}`;
+
+// The Enter that confirms an IME conversion: some browsers report it with isComposing already
+// false but keyCode 229 (the same pair lib/keys/chords.ts shouldIgnore drops).
+const imeKey = (e: KeyboardEvent<HTMLElement>): boolean => e.nativeEvent.isComposing || e.keyCode === 229;
 
 function TemplateEditor({
   draft,
@@ -428,7 +441,7 @@ function TemplateEditor({
         aria-describedby={error ? errId : undefined}
         onChange={(e) => onChange({ ...draft, body: e.target.value })}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.nativeEvent.isComposing) {
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !imeKey(e)) {
             e.preventDefault();
             onSave();
           }

@@ -3,8 +3,8 @@ import { api, apiJSON } from "../core/api/client.ts";
 import { setLocale } from "./i18n/index.ts";
 import type { MsgKey } from "./i18n/index.ts";
 import type { WorkingSet } from "./workingSets.ts";
-import type { LaunchTemplate } from "./launchTemplates.ts";
-import type { PromptHistoryEntry } from "./promptHistory.ts";
+import type { LaunchTemplateStore } from "./launchTemplates.ts";
+import type { PromptHistoryStore } from "./promptHistory.ts";
 
 // Display settings (theme / fonts / file-viewer options / icon set). Persisted in
 // localStorage for instant load + offline, AND mirrored to the server per-user
@@ -790,10 +790,12 @@ export interface Settings {
   // The launch modal's personal first-prompt templates (#1469): every repository, or one base
   // repository when `repo` is set. Synced so they follow the user across devices; size-capped by
   // lib/launchTemplates.ts, because one PUT over the Agent's 64 KiB limit fails every key's sync.
-  launchTemplates: LaunchTemplate[];
-  // The launch modal's recent first prompts, newest first, keyed by base repository. Capped by
-  // lib/promptHistory.ts for the same reason.
-  launchHistory: PromptHistoryEntry[];
+  // Wrapped in an object that is never empty once written, so a deliberate "deleted the last one"
+  // reaches other devices instead of being restored by the ACCUMULATED empty-server rule.
+  launchTemplates: LaunchTemplateStore;
+  // The launch modal's recent first prompts, newest first, keyed by base repository. Capped and
+  // wrapped by lib/promptHistory.ts for the same reasons.
+  launchHistory: PromptHistoryStore;
 }
 
 // The pinned fallback model. Used as the seeded global default and as resolveModel's
@@ -1262,8 +1264,8 @@ const DEFAULTS: Settings = {
   workItemBranchTemplate: "",
   workingSets: [],
   workingSetActive: "",
-  launchTemplates: [],
-  launchHistory: [],
+  launchTemplates: {},
+  launchHistory: {},
 };
 
 // VOICEVOX Zundamon styles (speaker number → label), used by the speaker picker in the settings UI.
@@ -1678,6 +1680,12 @@ function setSyncState(next: PrefsSyncState): void {
 
 export const prefsSyncState = (): PrefsSyncState => syncState;
 
+/** Called on every sync-state change; returns the unsubscribe. */
+export function subscribePrefsSync(fn: () => void): () => void {
+  syncSubs.add(fn);
+  return () => void syncSubs.delete(fn);
+}
+
 export function usePrefsSyncState(): PrefsSyncState {
   return useSyncExternalStore(
     (fn) => {
@@ -1893,6 +1901,19 @@ export function isEmptyPref(v: unknown): boolean {
   if (Array.isArray(v)) return v.length === 0;
   if (typeof v === "object") return Object.keys(v as object).length === 0;
   return false;
+}
+
+// The Agent's cap on the ui-prefs blob (uiprefs.MaxBytes). A PUT over it is refused whole, so
+// every synced setting stops saving — not just the one that grew.
+export const SERVER_PREFS_MAX_BYTES = 64 * 1024;
+// Room left for the keys that grow without a check of their own (counters, learned suggestions).
+const SERVER_PREFS_HEADROOM = 2 * 1024;
+
+/** Whether the server copy would still fit the Agent's cap with `patch` applied. For writers of
+ *  user-sized content to refuse a change before it breaks the sync of everything else. */
+export function serverPrefsFit(patch: Partial<Settings>): boolean {
+  const body = JSON.stringify(serverPrefs({ ...state, ...patch }));
+  return new TextEncoder().encode(body).length <= SERVER_PREFS_MAX_BYTES - SERVER_PREFS_HEADROOM;
 }
 
 // serverPrefs is a shallow copy of only the settings that may be stored on the server, i.e.

@@ -25,14 +25,16 @@ vi.mock("../../core/api/client.ts", () => ({
   isTransientErr: () => false,
 }));
 
-// jsdom reports touch support, so the picker runs in its touch mode unless a case says otherwise.
-let coarse = true;
+// jsdom reports touch support; the cases run as a desktop (fine pointer) unless they say otherwise.
+let coarse = false;
 vi.mock("../../lib/device.ts", async (orig) => ({ ...(await orig<typeof import("../../lib/device.ts")>()), coarsePointer: () => coarse }));
 
 const { LaunchModal } = await import("./LaunchModal.tsx");
 const { resetAttachDraftDB } = await import("../../lib/attachDraft.ts");
 const { getSettings, hydrateUIPrefs, setSettings } = await import("../../lib/settings.ts");
-const { pushPromptHistory } = await import("../../lib/promptHistory.ts");
+const { normalizeHistory, pushPromptHistory } = await import("../../lib/promptHistory.ts");
+const { readTemplates } = await import("../../lib/launchTemplates.ts");
+const hist = () => normalizeHistory(getSettings().launchHistory);
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
 
 type Launch = (o: LaunchOpts) => Promise<LaunchResult>;
@@ -105,9 +107,9 @@ async function hover(el: Element): Promise<void> {
 const LONG = "Fix the flaky upload test\n\nThe upload test fails one run in five on CI. Find the race, add a test that fails without the fix, and explain the root cause in the commit body.";
 
 beforeEach(async () => {
-  coarse = true;
+  coarse = false;
   localStorage.clear();
-  setSettings({ launchTemplates: [], launchHistory: [] });
+  setSettings({ launchTemplates: {}, launchHistory: {} });
   await hydrateUIPrefs(); // the server copy has been read, so history is the synced list
   globalThis.indexedDB = new IDBFactory();
   resetAttachDraftDB();
@@ -208,13 +210,13 @@ describe("LaunchModal template picker", () => {
     expect(titles()).toEqual(["drop me", "keep me"]);
     await click(button("Delete", must(document.querySelector(".launch-tmpl-actions"), "actions")));
     expect(titles()).toEqual(["keep me"]);
-    expect(getSettings().launchHistory.map((e) => e.text)).toEqual(["keep me"]);
+    expect(hist().map((e) => e.text)).toEqual(["keep me"]);
   });
 
   it("deletes a history entry too large to sync, which lives on this device only", async () => {
     const big = "huge prompt\n" + "x".repeat(4000);
     pushPromptHistory("app", big);
-    expect(getSettings().launchHistory).toEqual([]);
+    expect(hist()).toEqual([]);
     await render();
     await click(openBtn());
     expect(titles()).toEqual(["huge prompt"]);
@@ -224,10 +226,19 @@ describe("LaunchModal template picker", () => {
   });
 
   it("previews on the first tap with a touch pointer, and inserts from the preview", async () => {
+    coarse = true;
     pushPromptHistory("app", "first");
     pushPromptHistory("app", "second");
     await render();
     await click(openBtn());
+    expect(preview()).toBe("second");
+    // The first row starts highlighted; tapping it still only previews.
+    await hover(items()[0]);
+    await click(items()[0]);
+    expect(pop()).not.toBeNull();
+    expect(promptBox().value).toBe("");
+    // A synthesized mousemove does not move the highlight either; the tap does.
+    await hover(items()[1]);
     expect(preview()).toBe("second");
     await click(items()[1]);
     expect(pop()).not.toBeNull(); // previewed, not inserted
@@ -237,8 +248,28 @@ describe("LaunchModal template picker", () => {
     expect(promptBox().value).toBe("first");
   });
 
+  it("ignores the Enter that confirms an IME conversion", async () => {
+    pushPromptHistory("app", "TEMPLATE");
+    await render();
+    await click(openBtn());
+    await key(search(), "Enter", { keyCode: 229 } as KeyboardEventInit);
+    expect(pop()).not.toBeNull();
+    expect(promptBox().value).toBe("");
+    await key(search(), "Enter");
+    expect(promptBox().value).toBe("TEMPLATE");
+
+    await click(openBtn());
+    await click(button("New template"));
+    await type(must(document.querySelector<HTMLInputElement>(".launch-tmpl-edit input[type=text]"), "name"), "n");
+    const body = must(document.querySelector<HTMLTextAreaElement>(".launch-tmpl-edit textarea"), "body");
+    await type(body, "b");
+    await key(body, "Enter", { ctrlKey: true, keyCode: 229 } as KeyboardEventInit);
+    expect(readTemplates()).toEqual([]);
+    await key(body, "Enter", { ctrlKey: true });
+    expect(readTemplates().map((t) => t.name)).toEqual(["n"]);
+  });
+
   it("hands focus back to the button when Esc closes the picker", async () => {
-    coarse = false;
     await render();
     await click(openBtn());
     expect(document.activeElement).toBe(search());
@@ -256,7 +287,7 @@ describe("LaunchModal template picker", () => {
     const body = must(document.querySelector<HTMLTextAreaElement>(".launch-tmpl-edit textarea"), "body");
     await click(button("Save"));
     expect(document.querySelector(".launch-tmpl-err")?.textContent).toMatch(/name/); // validated, not saved
-    expect(getSettings().launchTemplates).toEqual([]);
+    expect(readTemplates()).toEqual([]);
 
     await type(name, "Triage");
     await type(body, "Triage the open issues of {{repo}}");
@@ -264,7 +295,7 @@ describe("LaunchModal template picker", () => {
     expect(groups()).toEqual(["My templates"]);
     expect(titles()).toEqual(["Triage"]);
     expect(preview()).toBe("Triage the open issues of app");
-    expect(getSettings().launchTemplates).toMatchObject([{ name: "Triage", body: "Triage the open issues of {{repo}}", repo: "" }]);
+    expect(readTemplates()).toMatchObject([{ name: "Triage", body: "Triage the open issues of {{repo}}", repo: "" }]);
 
     // Another repository's launch dialog shows it too.
     await act(async () => root!.unmount());
@@ -278,13 +309,13 @@ describe("LaunchModal template picker", () => {
     await type(must(document.querySelector<HTMLInputElement>(".launch-tmpl-edit input[type=text]"), "name"), "Issue triage");
     await click(button("Save"));
     expect(titles()).toEqual(["Issue triage"]);
-    expect(getSettings().launchTemplates).toHaveLength(1);
+    expect(readTemplates()).toHaveLength(1);
 
     await click(button("Delete", must(document.querySelector(".launch-tmpl-actions"), "actions")));
     expect(document.querySelector(".launch-tmpl-actions")?.textContent).toMatch(/Delete this template\?/);
-    expect(getSettings().launchTemplates).toHaveLength(1); // asked first
+    expect(readTemplates()).toHaveLength(1); // asked first
     await click(button("Delete", must(document.querySelector(".launch-tmpl-actions"), "actions")));
-    expect(getSettings().launchTemplates).toEqual([]);
+    expect(readTemplates()).toEqual([]);
     expect(titles()).toEqual([]);
   });
 
@@ -302,7 +333,7 @@ describe("LaunchModal template picker", () => {
     await click(must(only.querySelector("input"), "radio"));
     await click(button("Save"));
     expect(groups()).toEqual(["My templates", "History"]);
-    expect(getSettings().launchTemplates).toMatchObject([{ name: "Fix the flaky upload test", body: LONG, repo: "app" }]);
+    expect(readTemplates()).toMatchObject([{ name: "Fix the flaky upload test", body: LONG, repo: "app" }]);
 
     await act(async () => root!.unmount());
     root = createRoot(host);

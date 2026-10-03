@@ -4,11 +4,13 @@
 // of every setting.
 //
 // It used to live in this browser's localStorage only (`af.repo-prompts.<repo>`). Those keys are
-// moved into the synced list once the server copy has been read, never before: a write before
+// copied into the synced list once the server copy has been read, never before: a write before
 // that read is kept over the server's value by the next hydrate, which would replace the history
-// other devices saved. Until then, and for any entry that does not fit the synced budget, the
-// legacy keys stay where they are and are still shown — moving them must not lose any.
-import { getSettings, setSettings, uiPrefsLoaded } from "./settings.ts";
+// other devices saved. A legacy entry is removed only once the server has CONFIRMED a list holding
+// it (no save pending or failed): until then a failed PUT followed by a reload hydrates the
+// server's older list over the local one, and the legacy key is the only copy left. Entries that
+// do not fit the synced budget stay in the legacy key for good and are still shown.
+import { getSettings, prefsSyncState, serverPrefsFit, setSettings, subscribePrefsSync, uiPrefsLoaded } from "./settings.ts";
 import { byteLength, scopeRepo } from "./launchTemplates.ts";
 
 export interface PromptHistoryEntry {
@@ -17,6 +19,12 @@ export interface PromptHistoryEntry {
   text: string;
   /** Launch time, epoch ms (0 = moved from the device-only history, time unknown). */
   at: number;
+}
+
+/** The stored shape; see LaunchTemplateStore for why it is wrapped. */
+export interface PromptHistoryStore {
+  items?: PromptHistoryEntry[];
+  at?: number;
 }
 
 const LEGACY_PREFIX = "af.repo-prompts.";
@@ -33,6 +41,7 @@ function isEntry(v: unknown): v is PromptHistoryEntry {
 
 /** Order kept (newest first); duplicates, oversized entries and the overflow past each cap dropped. */
 export function normalizeHistory(v: unknown): PromptHistoryEntry[] {
+  if (v && typeof v === "object" && !Array.isArray(v)) v = (v as PromptHistoryStore).items;
   if (!Array.isArray(v)) return [];
   const seen = new Set<string>();
   const perRepo = new Map<string, number>();
@@ -54,6 +63,15 @@ export function normalizeHistory(v: unknown): PromptHistoryEntry[] {
 }
 
 const synced = (): PromptHistoryEntry[] => normalizeHistory(getSettings().launchHistory);
+const storeOf = (items: PromptHistoryEntry[]): PromptHistoryStore => ({ items, at: Date.now() });
+
+/** Writes the synced list, unless it would push the whole ui-prefs over the Agent's cap. */
+function writeSynced(items: PromptHistoryEntry[]): boolean {
+  const launchHistory = storeOf(items);
+  if (!serverPrefsFit({ launchHistory })) return false;
+  setSettings({ launchHistory });
+  return true;
+}
 
 function legacyKeys(): string[] {
   const keys: string[] = [];
@@ -92,31 +110,39 @@ const legacyFor = (base: string): string[] =>
     .filter((k) => scopeRepo(k.slice(LEGACY_PREFIX.length)) === base)
     .flatMap(readLegacy);
 
+/** Drops from the legacy keys what the server-confirmed list holds. Only while nothing is pending
+ *  or failed — then this tab's list IS the server's. Runs the moment a save is confirmed, too: left
+ *  for later, an entry another device deletes meanwhile would be copied back from here. */
+function pruneLegacy(): void {
+  if (!uiPrefsLoaded() || prefsSyncState() !== "synced") return;
+  const has = new Set(synced().map((e) => e.repo + "\u0000" + e.text));
+  for (const k of legacyKeys()) {
+    const repo = scopeRepo(k.slice(LEGACY_PREFIX.length));
+    const list = readLegacy(k);
+    const kept = list.filter((t) => !has.has(repo + "\u0000" + t.trim()));
+    if (kept.length !== list.length) writeLegacy(k, kept);
+  }
+}
+subscribePrefsSync(pruneLegacy);
+
 /**
- * Moves the device-only history into the synced list, behind what is already there. A key is
- * removed only once all its entries are in the list; what did not fit stays in it (and is still
- * shown). Returns whether anything moved. Does nothing before the server copy has been read.
+ * Copies the device-only history into the synced list, behind what is already there, and removes
+ * from the legacy keys what a server-confirmed list already holds (see the header). Returns
+ * whether the synced list changed. Does nothing before the server copy has been read.
  */
 export function migrateLegacyPromptHistory(): boolean {
   if (!uiPrefsLoaded()) return false;
   const keys = legacyKeys();
   if (!keys.length) return false;
+  pruneLegacy();
   const current = synced();
   const moved: PromptHistoryEntry[] = keys.flatMap((k) => {
     const repo = scopeRepo(k.slice(LEGACY_PREFIX.length));
     return readLegacy(k).map((text) => ({ repo, text: text.trim(), at: 0 }));
   });
   const next = normalizeHistory([...current, ...moved]);
-  const has = new Set(next.map((e) => e.repo + "\u0000" + e.text));
-  // An entry the synced list already had counts as moved; an oversized one is kept in the legacy
-  // key, where it was always remembered.
-  for (const k of keys) {
-    const repo = scopeRepo(k.slice(LEGACY_PREFIX.length));
-    writeLegacy(k, readLegacy(k).filter((t) => !has.has(repo + "\u0000" + t.trim())));
-  }
   if (JSON.stringify(next) === JSON.stringify(current)) return false;
-  setSettings({ launchHistory: next });
-  return true;
+  return writeSynced(next);
 }
 
 /** The history shown for `repo`, newest first: the synced entries, then any not moved yet. */
@@ -133,23 +159,25 @@ export function readPromptHistory(repo: string): string[] {
 // pushPromptHistory records a just-launched prompt at the front, dropping any earlier identical
 // entry so re-running the same prompt doesn't pile up duplicates. Before the server copy has been
 // read it goes to the device-only key instead (see the header), to be moved on the next read; so
-// does a prompt too large for the synced budget, which then stays on this device only.
+// does a prompt too large for the synced budget (or for the whole ui-prefs), which then stays on
+// this device only.
 export function pushPromptHistory(repo: string, prompt: string): void {
   const p = (prompt || "").trim();
   if (!repo || !p) return;
   const base = scopeRepo(repo);
-  if (!uiPrefsLoaded() || byteLength(p) > HISTORY_ENTRY_MAX_BYTES) {
+  const local = () => {
     const key = LEGACY_PREFIX + base;
     writeLegacy(key, [p, ...readLegacy(key).filter((s) => s.trim() !== p)].slice(0, HISTORY_PER_REPO));
-    return;
-  }
+  };
+  if (!uiPrefsLoaded() || byteLength(p) > HISTORY_ENTRY_MAX_BYTES) return local();
   migrateLegacyPromptHistory();
   const rest = synced().filter((e) => !(e.repo === base && e.text === p));
-  setSettings({ launchHistory: normalizeHistory([{ repo: base, text: p, at: Date.now() }, ...rest]) });
+  if (!writeSynced(normalizeHistory([{ repo: base, text: p, at: Date.now() }, ...rest]))) local();
 }
 
-/** Forget one entry, wherever it is stored. */
-export function deletePromptHistory(repo: string, text: string): void {
+/** Forget one entry, wherever it is stored. False when it is in the synced list and the server
+ *  copy has not been read yet (a write now would replace other devices' history). */
+export function deletePromptHistory(repo: string, text: string): boolean {
   const base = scopeRepo(repo);
   const t = text.trim();
   for (const k of legacyKeys()) {
@@ -160,5 +188,8 @@ export function deletePromptHistory(repo: string, text: string): void {
   }
   const all = synced();
   const next = all.filter((e) => !(e.repo === base && e.text === t));
-  if (next.length !== all.length) setSettings({ launchHistory: next });
+  if (next.length === all.length) return true;
+  if (!uiPrefsLoaded()) return false;
+  setSettings({ launchHistory: storeOf(next) });
+  return true;
 }

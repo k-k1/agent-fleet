@@ -459,6 +459,8 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.tmpl.err.body_too_long": "The prompt is too long for a template (8 KB at most).",
   "launch.tmpl.err.too_many": "You have the maximum of 40 templates. Delete one first.",
   "launch.tmpl.err.full": "Template storage is full (16 KB across all templates). Shorten or delete some first.",
+  "launch.tmpl.err.prefs_full": "Your synced settings are near their 64 KB limit, so this template would stop every setting from saving. Shorten it, or delete other templates first.",
+  "launch.tmpl.err.not_loaded": "Your settings haven't been read from the workspace yet, so this change could overwrite what other devices saved. Try again in a moment.",
   "launch.first_prompt_note": "Once the session is up, this is auto-sent exactly once (⌘/Ctrl+Enter to launch).",
   "launch.attach_note": "Paste or drop files here, or attach with the ＋ button (on a phone, use ＋).",
   "launch.attach_file": "Attach a file (paste or drop too)",

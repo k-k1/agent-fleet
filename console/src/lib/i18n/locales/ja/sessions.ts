@@ -469,6 +469,8 @@ export const sessions = {
   "launch.tmpl.err.body_too_long": "テンプレートにするには長すぎます（8 KB まで）。",
   "launch.tmpl.err.too_many": "テンプレートは 40 件までです。先にどれかを削除してください。",
   "launch.tmpl.err.full": "テンプレートの保存領域がいっぱいです（全体で 16 KB）。短くするか削除してください。",
+  "launch.tmpl.err.prefs_full": "同期される設定全体が上限（64 KB）に近く、このテンプレートを保存するとすべての設定が保存できなくなります。短くするか、ほかのテンプレートを削除してください。",
+  "launch.tmpl.err.not_loaded": "設定をまだワークスペースから読み込めていないため、今変更するとほかの端末で保存した内容を上書きしてしまいます。少し待ってからやり直してください。",
   "launch.first_prompt_note": "セッション起動後、準備でき次第この内容を1回だけ自動送信します（⌘/Ctrl+Enter で起動）。",
   "launch.attach_note": "ファイルはここに貼り付け・ドロップ、または＋ボタンで添付できます（スマホは＋から）。",
   "launch.attach_file": "ファイルを添付（貼り付け・ドロップも可）",
