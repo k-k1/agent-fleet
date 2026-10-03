@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
 )
 
 // TestMain clears AF_CP_INTERNAL_URL: a workspace that runs these tests may itself carry
@@ -24,8 +26,9 @@ func TestMain(m *testing.M) {
 	if dir := os.Getenv(fakeLoginDirEnv); dir != "" {
 		os.Exit(fakeGcloudLogin(dir, os.Args[1:]))
 	}
-	_ = os.Unsetenv("AF_CP_INTERNAL_URL")
-	os.Exit(m.Run())
+	os.Exit(testguard.Run(m, func() {
+		_ = os.Unsetenv("AF_CP_INTERNAL_URL")
+	}))
 }
 
 // randHex builds secret-shaped fixtures at run time, never as literals.

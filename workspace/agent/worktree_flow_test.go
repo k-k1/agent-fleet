@@ -13,6 +13,8 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // TestWorktreeGuardDriftFlow drives the ①②③ feature set end-to-end over real HTTP +
@@ -27,6 +29,7 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
+	testguard.IsolateTmux(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
@@ -49,7 +52,7 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 	do(t, srv, "POST", "/sessions", map[string]any{
 		"worktree": true, "dir": parent, "branch": "main", "new_branch": "feat-x", "kind": "shell",
 	}, http.StatusCreated, &created)
-	defer exec.Command("tmux", "kill-session", "-t", session.TmuxName(created.Name)).Run()
+	defer tmuxx.Cmd("kill-session", "-t", session.TmuxName(created.Name)).Run()
 
 	wantDir := filepath.Join(home, "repos", "app@feat-x")
 	if created.Dir != wantDir {

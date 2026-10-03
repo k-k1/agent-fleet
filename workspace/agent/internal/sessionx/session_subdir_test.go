@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // TestCreateSessionSubdir drives POST /sessions with a subdir over real HTTP + tmux + git:
@@ -23,6 +25,7 @@ func TestCreateSessionSubdir(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
+	testguard.IsolateTmux(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
@@ -41,7 +44,7 @@ func TestCreateSessionSubdir(t *testing.T) {
 	do(t, srv, "POST", "/sessions", map[string]any{
 		"dir": repo, "kind": "shell", "subdir": "console/src",
 	}, http.StatusCreated, &created)
-	defer exec.Command("tmux", "kill-session", "-t", session.TmuxName(created.Name)).Run()
+	defer tmuxx.Cmd("kill-session", "-t", session.TmuxName(created.Name)).Run()
 
 	if created.Dir != repo {
 		t.Fatalf("session dir = %q, want the working copy %q", created.Dir, repo)
@@ -85,6 +88,7 @@ func TestCreateSessionSubdirInWorktree(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
+	testguard.IsolateTmux(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
@@ -111,7 +115,7 @@ func TestCreateSessionSubdirInWorktree(t *testing.T) {
 		"worktree": true, "dir": parent, "branch": "main", "new_branch": "feat-sub",
 		"kind": "shell", "subdir": "console",
 	}, http.StatusCreated, &created)
-	defer exec.Command("tmux", "kill-session", "-t", session.TmuxName(created.Name)).Run()
+	defer tmuxx.Cmd("kill-session", "-t", session.TmuxName(created.Name)).Run()
 
 	wantDir := filepath.Join(home, "repos", "app@feat-sub")
 	if created.Dir != wantDir {

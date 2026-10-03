@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // The tmux-side plumbing of GracefulStop: true once the pane exits on its own after receiving
@@ -16,15 +18,16 @@ func TestGracefulStopEndsPane(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not on PATH")
 	}
+	testguard.IsolateTmux(t)
 	t.Setenv("HOME", t.TempDir())
 	name := fmt.Sprintf("agystop%d", os.Getpid())
 	tn := session.TmuxName(name)
-	_ = exec.Command("tmux", "kill-session", "-t", tn).Run()
-	if out, err := exec.Command("tmux", "new-session", "-d", "-s", tn, "sh", "-c",
+	_ = tmuxx.Cmd("kill-session", "-t", tn).Run()
+	if out, err := tmuxx.Cmd("new-session", "-d", "-s", tn, "sh", "-c",
 		`while read line; do case "$line" in */exit) exit 0;; esac; done`).CombinedOutput(); err != nil {
 		t.Skipf("tmux new-session failed (no server?): %v %s", err, out)
 	}
-	defer func() { _ = exec.Command("tmux", "kill-session", "-t", tn).Run() }()
+	defer func() { _ = tmuxx.Cmd("kill-session", "-t", tn).Run() }()
 
 	if !(agentImpl{}).GracefulStop(session.Meta{Name: name, Dir: t.TempDir()}) {
 		t.Fatal("GracefulStop = false; want the fake TUI to exit on /exit")
@@ -37,15 +40,16 @@ func TestGracefulStopTimesOutOnStuckPane(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not on PATH")
 	}
+	testguard.IsolateTmux(t)
 	t.Setenv("HOME", t.TempDir())
 	name := fmt.Sprintf("agystuck%d", os.Getpid())
 	tn := session.TmuxName(name)
-	_ = exec.Command("tmux", "kill-session", "-t", tn).Run()
-	if out, err := exec.Command("tmux", "new-session", "-d", "-s", tn, "sh", "-c",
+	_ = tmuxx.Cmd("kill-session", "-t", tn).Run()
+	if out, err := tmuxx.Cmd("new-session", "-d", "-s", tn, "sh", "-c",
 		"while :; do sleep 1; done").CombinedOutput(); err != nil {
 		t.Skipf("tmux new-session failed (no server?): %v %s", err, out)
 	}
-	defer func() { _ = exec.Command("tmux", "kill-session", "-t", tn).Run() }()
+	defer func() { _ = tmuxx.Cmd("kill-session", "-t", tn).Run() }()
 
 	if (agentImpl{}).GracefulStop(session.Meta{Name: name, Dir: t.TempDir()}) {
 		t.Fatal("GracefulStop = true on a pane that never exits")

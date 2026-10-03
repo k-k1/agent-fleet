@@ -42,13 +42,23 @@ func pendingTestEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", deadEnd)
-	prevPoll, prevIdle, prevRate := pendingPeerPoll, pendingPeerIdlePoll, peerRate
+	freshPeerRate(t)
+	prevPoll, prevIdle := pendingPeerPoll, pendingPeerIdlePoll
 	pendingPeerPoll, pendingPeerIdlePoll = 5*time.Millisecond, 5*time.Millisecond
-	peerRate = &peerLimiter{sends: map[string][]time.Time{}, recent: map[string]time.Time{}}
 	t.Cleanup(func() {
 		drainPendingLoops()
-		pendingPeerPoll, pendingPeerIdlePoll, peerRate = prevPoll, prevIdle, prevRate
+		pendingPeerPoll, pendingPeerIdlePoll = prevPoll, prevIdle
 	})
+}
+
+// freshPeerRate gives the test an empty peer limiter. The limiter is process-wide, so a test
+// that sends a fixed text to a fixed peer is otherwise dropped as peer_duplicate by its own
+// previous round under -count=N.
+func freshPeerRate(t *testing.T) {
+	t.Helper()
+	prev := peerRate
+	peerRate = &peerLimiter{sends: map[string][]time.Time{}, recent: map[string]time.Time{}}
+	t.Cleanup(func() { peerRate = prev })
 }
 
 // drainPendingLoops empties every spool and waits for the delivery loops to end. A cleanup that

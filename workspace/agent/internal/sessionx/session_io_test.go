@@ -333,6 +333,7 @@ esac
 // The fake tmux copies the store at the moment of typing and, in the same breath, pretends
 // claude wrote the user line. Origin present in that copy is the proof of the ordering.
 func TestPeerInputRecordsBadgeOriginBeforeDelivery(t *testing.T) {
+	freshPeerRate(t)
 	home := t.TempDir()
 	bin := t.TempDir()
 	snapshot := filepath.Join(bin, "store-at-typing-time.json")
@@ -528,7 +529,7 @@ esac
 		b, _ := os.ReadFile(logPath)
 		// Two Enters: the submit and typeInitialPrompt's nudge 900ms later. Returning on the
 		// first left the nudge to run after PATH was restored, and it pressed Enter in pane %9
-		// of the workspace's own tmux server (caught by guardTestProcess).
+		// of the workspace's own tmux server (caught by testguard).
 		if strings.Count(string(b), "send-keys -t %9 Enter") >= 2 {
 			if got, _ := os.ReadFile(stdinPath); string(got) != "最初の指示" {
 				t.Fatalf("pasted text = %q, want the prompt", got)

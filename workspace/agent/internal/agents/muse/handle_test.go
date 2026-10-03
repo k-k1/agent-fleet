@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +23,11 @@ import (
 
 // newTestHandle wires a handle to a fake host that is already past the handshake, and returns
 // both. The spawn path itself needs a real binary and is covered by the live test.
+// handleSeq makes each handle's name new to the process. What is keyed by it — the
+// ClientMessageID ledger under HOME, the transcript stores — outlives the test, and under
+// -count=N a reused name made the next round's sends look already delivered.
+var handleSeq atomic.Int64
+
 func newTestHandle(t *testing.T, h *threadHandle) *msptest.Host {
 	t.Helper()
 	host, cl := msptest.New(t, msp.Handler{OnNotification: h.onNotify, OnRequest: h.onRequest})
@@ -31,7 +38,7 @@ func newTestHandle(t *testing.T, h *threadHandle) *msptest.Host {
 		h.events = make(chan agents.Event, 64)
 	}
 	if h.name == "" {
-		h.name = "test-" + t.Name()
+		h.name = fmt.Sprintf("test-%s-%d", t.Name(), handleSeq.Add(1))
 	}
 	if h.slotSid == "" {
 		h.slotSid = "00000000-0000-5000-8000-000000000001"

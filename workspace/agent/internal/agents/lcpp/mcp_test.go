@@ -30,6 +30,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpc"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
 )
 
 const (
@@ -63,9 +64,10 @@ const (
 // rather than per test — is the only way this stays closed for every test in this package,
 // present and future, not just the ones a change happens to touch.
 func TestMain(m *testing.M) {
-	os.Setenv("AF_AGENT_INSTALLED_BIN", "/bin/false")
-	mcpServersForSession = func(string) ([]mcpreg.ServerDef, error) { return nil, nil }
-	os.Exit(m.Run())
+	os.Exit(testguard.Run(m, func() {
+		os.Setenv("AF_AGENT_INSTALLED_BIN", "/bin/false")
+		mcpServersForSession = func(string) ([]mcpreg.ServerDef, error) { return nil, nil }
+	}))
 }
 
 // TestHelperProcess is the trampoline: a normal `go test` run returns immediately (the env
