@@ -522,13 +522,18 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 	}
 	// Internal git provider: inject the host + this membership's deterministic git
 	// token so the Agent seeds its cred store (secrets.go seedInternalGit) and
-	// clone/push authenticate transparently. Deterministic, so re-injection on
-	// every start is idempotent. Skipped when PUBLIC_BASE_URL is unset.
+	// clone/push authenticate transparently. Deterministic per epoch, so re-injection
+	// on every start is idempotent. Skipped when PUBLIC_BASE_URL is unset. When the
+	// epoch cannot be read nothing is injected: a token minted under a guessed epoch
+	// would overwrite a working one in the Agent's store with one that fails.
 	if m.internalGitHost != "" && ws.MembershipID != "" {
-		token := mintGitToken(gitSignKey(m.tokenSignMaster()), ws.MembershipID)
-		env = append(env,
-			"AF_INTERNAL_GIT_HOST="+m.internalGitHost,
-			"AF_INTERNAL_GIT_TOKEN="+token)
+		if token, err := m.currentGitToken(ctx, ws.MembershipID); err != nil {
+			log.Printf("internal git: token for ws %s not injected: %v", ws.ID, err)
+		} else {
+			env = append(env,
+				"AF_INTERNAL_GIT_HOST="+m.internalGitHost,
+				"AF_INTERNAL_GIT_TOKEN="+token)
+		}
 	}
 	// Memo bridge: inject the CP public base + this membership's memo token so the
 	// in-container fleet operator can read/write the memo queue over the public

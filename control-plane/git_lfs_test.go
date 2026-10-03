@@ -45,7 +45,7 @@ func newLFSEnv(t *testing.T) *lfsEnv {
 	return &lfsEnv{
 		st:    st,
 		memID: mem.ID,
-		token: mintGitToken(gitSignKey(master), mem.ID),
+		token: mintGitToken(gitSignKey(master), mem.ID, 0),
 		g: newGitServerAPI(&manager{store: st, master32: master, dataRoot: t.TempDir()},
 			"https://fleet.example.com"),
 	}
@@ -230,7 +230,7 @@ func TestLFSCrossTenantAndAuth(t *testing.T) {
 	sec, _ := e.st.CreateTenant(ctx, "security", "Security")
 	id2, _ := e.st.UpsertIdentity(ctx, "s@x", "s-x", "")
 	mem2, _ := e.st.EnsureMembership(ctx, id2.ID, sec.ID, "member")
-	otherTok := mintGitToken(gitSignKey(e.g.mgr.master32), mem2.ID)
+	otherTok := mintGitToken(gitSignKey(e.g.mgr.master32), mem2.ID, 0)
 
 	body, _ := json.Marshal(map[string]any{"operation": "download", "objects": []map[string]any{}})
 	r = httptest.NewRequest("POST", "/git/default/shared.git/info/lfs/objects/batch", bytes.NewReader(body))

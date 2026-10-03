@@ -61,7 +61,7 @@ func TestRemovedMemberIsRefusedOnEveryWorkspaceRoute(t *testing.T) {
 	bearer := func(tok string) func(*http.Request) {
 		return func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+tok) }
 	}
-	gitAuth := func(r *http.Request) { r.SetBasicAuth("x-access-token", mintGitToken(gitSignKey(master), mem.ID)) }
+	gitAuth := func(r *http.Request) { r.SetBasicAuth("x-access-token", mintGitToken(gitSignKey(master), mem.ID, 0)) }
 	families := []struct {
 		prefix string
 		auth   func(*http.Request)

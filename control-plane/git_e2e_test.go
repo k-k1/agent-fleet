@@ -43,7 +43,7 @@ func TestGitHTTPEndToEnd(t *testing.T) {
 
 	master := []byte("master-key-e2e-000000000000000000")
 	g := newGitServerAPI(&manager{store: st, master32: master, dataRoot: dataRoot}, "")
-	token := mintGitToken(gitSignKey(master), mem.ID)
+	token := mintGitToken(gitSignKey(master), mem.ID, 0)
 
 	// Create the bare + ledger row the way the API does.
 	dir := filepath.Join(dataRoot, "git", "default", "shared.git")

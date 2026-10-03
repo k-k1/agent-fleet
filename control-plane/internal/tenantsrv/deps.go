@@ -92,6 +92,11 @@ type CP interface {
 	ResolveWorkspaceSize(ctx context.Context, ws store.Workspace) (memBytes int64, cpuUnits, diskGB int)
 	ResolveSlotClass(ctx context.Context, ws store.Workspace) (id, note string)
 	EvictMembershipCache(membershipID string)
+	// RotateGitToken bumps the membership's internal git token epoch, which kills the
+	// old token at once, and pushes the new one to its running workspace (issue #1199).
+	// push is the outcome of that push (updated | not_running | disabled | pending |
+	// failed). found=false when there is no such membership.
+	RotateGitToken(ctx context.Context, membershipID string) (epoch int64, push string, found bool, err error)
 	EvictTenantCache(tenantID string)
 	// PushEngineCatalogChanged tells the tenant's running workspaces at once that its
 	// engine catalogue view moved (ADR 0084 decision 9) — the tenant-scoped counterpart

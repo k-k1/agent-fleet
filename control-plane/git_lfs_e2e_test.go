@@ -63,7 +63,7 @@ func TestLFSEndToEnd(t *testing.T) {
 
 	master := []byte("master-key-lfs-e2e-0000000000000000")
 	mgr := &manager{store: st, master32: master, dataRoot: dataRoot}
-	token := mintGitToken(gitSignKey(master), mem.ID)
+	token := mintGitToken(gitSignKey(master), mem.ID, 0)
 
 	// Create the bare + ledger row.
 	dir := filepath.Join(dataRoot, "git", "default", "shared.git")

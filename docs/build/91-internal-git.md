@@ -123,7 +123,12 @@ browsing and cloning stay open to every member.
 
 **The git surface** uses a **deterministic HMAC token per membership, with no token
 table at all**: `afg_<base64url(membership id)>.<tag>`, where the tag is a truncated
-HMAC-SHA256 of the membership id (`mintGitToken`, `verifyGitToken`). The signing key
+HMAC-SHA256 of the membership id at the membership's **git token epoch**
+(`membership.git_token_epoch`, `mintGitToken`, `verifyGitToken`). Epoch 0 MACs the bare
+id, which is byte-for-byte the token from before epochs existed, so the column's
+introduction invalidated nothing; an epoch above 0 MACs `NUL "af-git-token-epoch" NUL
+<epoch> NUL <id>`, and a token naming an id with a NUL is refused, so no two
+(epoch, id) pairs share an input. The signing key
 (`gitSignKey`) derives from the deployment's token-signing master — `AF_MASTER_KEY`, or a
 random key kept under `WS_DATA` when there is none ([03 §3.4](03-control-plane.md#34-wiring-at-start-keys-and-tokens)).
 So **the CP can regenerate the token**: injection is idempotent, the CP stores no token,
@@ -140,9 +145,11 @@ with no further work. The key keeps the port because git asks for `host:port` wh
 the clone URL carries an explicit one; `gitProviderHost` compares the bare host name
 when it badges a remote as internal.
 
-The smart-HTTP and LFS handlers share `authorizeGitRepo`, which verifies the token,
-resolves the membership **live** (`GetMembershipByID`, active memberships only), and
-enforces on **every request**:
+The smart-HTTP and LFS handlers (batch, transfer and locks) share `authorizeGitRepo`, the
+only verifier of this token. It reads the membership's **current** epoch live
+(`GitTokenEpoch`, active memberships only, no cache) and accepts the tag for that epoch
+alone, resolves the membership **live** (`GetMembershipByID`), and enforces on **every
+request**:
 
 - the slug in the URL equals the token's tenant — **you cannot reach another tenant's
   repository** (403);
@@ -154,9 +161,35 @@ enforces on **every request**:
   that a read-only role would be refused.
 
 **Revocation is live**: deactivating a membership makes the same deterministic token
-stop working immediately, without a token table to update. **There is no rotation of a
-single membership's token**: it changes only when the signing master does, and then
-every token changes ([#1199](https://github.com/k-k1/agent-fleet/issues/1199)).
+stop working immediately, without a token table to update.
+
+**Rotating one membership's token** (#1199) is an administrator's action in the member
+detail ("Rotate git token", `POST /api/admin/rotate-git-token {tenant_slug,user_key}`):
+a `tenant_admin` of the member's tenant or a `super_admin`, the same gate as
+stop-workspace and clean-home, and audited intent-first (`membership.rotate_git_token`).
+It bumps the epoch in one statement, so the old token fails from the next request on. A
+removed member can be rotated too, because a re-invite reactivates the same membership
+id. Changing the signing master still rotates every token at once.
+
+The new token has to reach the member's workspace, whose env still carries the old one:
+
+- The memoized runtime is evicted, so the next start injects the new token.
+- A **running** workspace is handed the new token at once: the CP `PUT`s it to the Agent's
+  `/internal-git/token` (CP-only; the Console proxy does not route it), which writes it
+  under every host name `seedInternalGit` uses. This was chosen over a restart, which
+  would kill the member's sessions, and over the Agent fetching it, which would need a
+  credential that leaked together with the git token. The Agent records the digest of the
+  env token it superseded, so an Agent restart in the same container does not seed the
+  dead token back; a new container start brings a new token and seeds normally.
+- The push holds the workspace's start lock, so a start already in flight finishes and is
+  then pushed to. If the lock is still held after 15 s the answer is `pending` and the
+  push follows in the background. The answer's `workspace` field is `updated`,
+  `not_running`, `pending`, `failed` (restart the workspace) or `disabled` (no
+  `PUBLIC_BASE_URL`).
+- Limits: an Agent built before the endpoint answers 404, which reads as `failed`. A start
+  whose runtime was resolved before the rotation but that takes the start lock after the
+  push comes up with the old token, and so can a start on another CP replica that still
+  holds the memoized runtime; both mend at the next start.
 
 ## 91.6 Integration points
 

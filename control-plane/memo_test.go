@@ -229,7 +229,7 @@ func TestMemoTokenRoundTrip(t *testing.T) {
 		t.Fatal("verify accepted a forged membership id")
 	}
 	// The git token and the memo token do not cross-verify (separate credentials).
-	if _, ok := verifyMemoToken(key, mintGitToken(gitSignKey([]byte("master-key-under-test")), "mem-123")); ok {
+	if _, ok := verifyMemoToken(key, mintGitToken(gitSignKey([]byte("master-key-under-test")), "mem-123", 0)); ok {
 		t.Fatal("verify accepted a git token as a memo token")
 	}
 }

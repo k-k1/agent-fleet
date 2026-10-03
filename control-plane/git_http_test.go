@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -12,30 +13,94 @@ import (
 
 // --- token unit tests -------------------------------------------------------
 
+// epochAt is an epoch lookup that answers e for every id.
+func epochAt(e int64) func(string) (int64, bool) {
+	return func(string) (int64, bool) { return e, true }
+}
+
 func TestGitTokenRoundTrip(t *testing.T) {
 	key := gitSignKey([]byte("master-key-for-test-000000000000"))
-	tok := mintGitToken(key, "mem-123")
-	if got, ok := verifyGitToken(key, tok); !ok || got != "mem-123" {
+	epoch0 := epochAt(0)
+	tok := mintGitToken(key, "mem-123", 0)
+	if got, ok := verifyGitToken(key, tok, epoch0); !ok || got != "mem-123" {
 		t.Fatalf("round trip: got %q ok=%v", got, ok)
 	}
 	// Determinism: same input → same token (this is what makes injection idempotent).
-	if mintGitToken(key, "mem-123") != tok {
+	if mintGitToken(key, "mem-123", 0) != tok {
 		t.Fatal("token not deterministic")
 	}
 	// Tampered tag is rejected.
-	if _, ok := verifyGitToken(key, tok+"x"); ok {
+	if _, ok := verifyGitToken(key, tok+"x", epoch0); ok {
 		t.Fatal("accepted tampered tag")
 	}
 	// A token minted under a different key must not verify (cross-deployment).
 	other := gitSignKey([]byte("a-different-master-key-0000000000"))
-	if _, ok := verifyGitToken(key, mintGitToken(other, "mem-123")); ok {
+	if _, ok := verifyGitToken(key, mintGitToken(other, "mem-123", 0), epoch0); ok {
 		t.Fatal("accepted token signed by a different key")
 	}
 	// Garbage / wrong prefix.
 	for _, bad := range []string{"", "afg_", "afg_nodot", "pat_abc.def", "afg_!!!.tag"} {
-		if _, ok := verifyGitToken(key, bad); ok {
+		if _, ok := verifyGitToken(key, bad, epoch0); ok {
 			t.Fatalf("accepted malformed token %q", bad)
 		}
+	}
+}
+
+// Epoch 0 must mint exactly the token every workspace already holds, or the upgrade that
+// adds epochs logs every member out of internal git at once. The literal was computed
+// outside Go from the pre-epoch formula: HMAC-SHA256(gitSignKey(master), id)[:16].
+func TestGitTokenEpochZeroIsLegacy(t *testing.T) {
+	key := gitSignKey([]byte("master-key-for-test-000000000000"))
+	const legacy = "afg_bWVtLTEyMw.ug5rn3oOt6S0iQBJs1Rvbg"
+	if got := mintGitToken(key, "mem-123", 0); got != legacy {
+		t.Fatalf("epoch 0 token = %q, want the pre-epoch token %q", got, legacy)
+	}
+	if got, ok := verifyGitToken(key, legacy, epochAt(0)); !ok || got != "mem-123" {
+		t.Fatalf("pre-epoch token at epoch 0: got %q ok=%v", got, ok)
+	}
+}
+
+// Only the current epoch verifies: a rotated-away token is dead, and so is a token from
+// an epoch that has not happened yet.
+func TestGitTokenOnlyCurrentEpochVerifies(t *testing.T) {
+	key := gitSignKey([]byte("master-key-for-test-000000000000"))
+	toks := map[int64]string{}
+	for e := int64(0); e <= 3; e++ {
+		toks[e] = mintGitToken(key, "mem-123", e)
+		for prev, pt := range toks {
+			if prev != e && pt == toks[e] {
+				t.Fatalf("epochs %d and %d mint the same token", prev, e)
+			}
+		}
+	}
+	for cur := int64(0); cur <= 3; cur++ {
+		for e, tok := range toks {
+			_, ok := verifyGitToken(key, tok, epochAt(cur))
+			if ok != (e == cur) {
+				t.Errorf("token of epoch %d at current epoch %d: ok=%v", e, cur, ok)
+			}
+		}
+	}
+	// An id the store does not know (lookup ok=false) never verifies.
+	if _, ok := verifyGitToken(key, toks[0], func(string) (int64, bool) { return 0, false }); ok {
+		t.Fatal("verified a token whose membership the lookup did not find")
+	}
+}
+
+// The epoch>0 HMAC input is gitTokenEpochDomain + epoch + NUL + id, while epoch 0 MACs the
+// bare id. A crafted id spelling out that input would carry another membership's epoch>0
+// tag as its own epoch-0 tag, so an id with a NUL is refused before any lookup.
+func TestGitTokenRefusesNULInID(t *testing.T) {
+	key := gitSignKey([]byte("master-key-for-test-000000000000"))
+	forged := gitTokenEpochDomain + "1\x00mem-123"
+	tag := gitTokenTag(key, "mem-123", 1)
+	if gitTokenTag(key, forged, 0) != tag {
+		t.Fatal("precondition: the forged id should reproduce the epoch-1 input")
+	}
+	tok := "afg_" + base64.RawURLEncoding.EncodeToString([]byte(forged)) + "." + tag
+	looked := false
+	if _, ok := verifyGitToken(key, tok, func(string) (int64, bool) { looked = true; return 0, true }); ok || looked {
+		t.Fatalf("NUL id: ok=%v, looked up=%v (want refused before lookup)", ok, looked)
 	}
 }
 
@@ -182,7 +247,7 @@ func TestGitHTTPAuthAndIsolation(t *testing.T) {
 	memberSec := e.addMembership(t, "security", "member")
 	e.addRepo(t, "security", "secret")
 
-	tokDefault := mintGitToken(e.signKey, memberDefault)
+	tokDefault := mintGitToken(e.signKey, memberDefault, 0)
 	fetch := "/git/default/shared.git/info/refs?service=git-upload-pack"
 
 	// No credentials → 401.
@@ -208,7 +273,7 @@ func TestGitHTTPAuthAndIsolation(t *testing.T) {
 		t.Fatalf("cross-tenant: want 403 unserved, got code=%d served=%v", w.Code, e.served)
 	}
 	// And the reverse: the security member cannot reach default's repo.
-	w = e.do("GET", fetch, mintGitToken(e.signKey, memberSec))
+	w = e.do("GET", fetch, mintGitToken(e.signKey, memberSec, 0))
 	if w.Code != http.StatusForbidden || e.served {
 		t.Fatalf("cross-tenant reverse: want 403, got %d served=%v", w.Code, e.served)
 	}
@@ -228,14 +293,14 @@ func TestGitHTTPPushRoleGate(t *testing.T) {
 
 	push := "/git/default/shared.git/git-receive-pack"
 	// viewer may read but not push.
-	if w := e.do("GET", "/git/default/shared.git/info/refs?service=git-upload-pack", mintGitToken(e.signKey, viewer)); w.Code != http.StatusOK {
+	if w := e.do("GET", "/git/default/shared.git/info/refs?service=git-upload-pack", mintGitToken(e.signKey, viewer, 0)); w.Code != http.StatusOK {
 		t.Fatalf("viewer read: want 200 got %d", w.Code)
 	}
-	if w := e.do("POST", push, mintGitToken(e.signKey, viewer)); w.Code != http.StatusForbidden || e.served {
+	if w := e.do("POST", push, mintGitToken(e.signKey, viewer, 0)); w.Code != http.StatusForbidden || e.served {
 		t.Fatalf("viewer push: want 403 unserved, got %d served=%v", w.Code, e.served)
 	}
 	// member may push.
-	if w := e.do("POST", push, mintGitToken(e.signKey, member)); w.Code != http.StatusOK || !e.served {
+	if w := e.do("POST", push, mintGitToken(e.signKey, member, 0)); w.Code != http.StatusOK || !e.served {
 		t.Fatalf("member push: want 200 served, got %d served=%v", w.Code, e.served)
 	}
 }
@@ -244,7 +309,7 @@ func TestGitHTTPRevokedMembership(t *testing.T) {
 	e := newGitTestEnv(t)
 	member := e.addMembership(t, "default", "member")
 	e.addRepo(t, "default", "shared")
-	tok := mintGitToken(e.signKey, member)
+	tok := mintGitToken(e.signKey, member, 0)
 	fetch := "/git/default/shared.git/info/refs?service=git-upload-pack"
 	if w := e.do("GET", fetch, tok); w.Code != http.StatusOK {
 		t.Fatalf("pre-revoke: want 200 got %d", w.Code)

@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -50,5 +53,59 @@ func TestSeedInternalGitDropsThePortlessEntry(t *testing.T) {
 	}
 	if e := s.Git["127.0.0.1:8080"]; e.Token != "tok-1" {
 		t.Fatalf("the credential was not stored under host:port: %v", s.Git)
+	}
+}
+
+// A rotated token pushed by the CP (issue #1199) replaces the stored one at once, and an
+// Agent restart in the same container — whose env still holds the dead token — does not
+// seed the dead one back. A new container start with a new token seeds normally.
+func TestPushedInternalGitTokenSurvivesAnAgentRestart(t *testing.T) {
+	withAgentHome(t)
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "gitconfig"))
+	t.Setenv("AF_INTERNAL_GIT_HOST", "127.0.0.1:8080")
+	t.Setenv("AF_INTERNAL_GIT_TOKEN", "afg_old")
+	seedInternalGit()
+
+	stored := func() string {
+		var out bytes.Buffer
+		credHelperGet(strings.NewReader("protocol=http\nhost=127.0.0.1:8080\n\n"), &out)
+		return out.String()
+	}
+	mux := buildMux()
+	put := func(body string) int {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/internal-git/token", strings.NewReader(body)))
+		return w.Code
+	}
+	if code := put(`{"token":"ghp_not_ours"}`); code != http.StatusBadRequest {
+		t.Fatalf("non-internal token = %d, want 400", code)
+	}
+	if code := put(`{"token":"afg_new"}`); code != http.StatusOK {
+		t.Fatalf("push = %d, want 200", code)
+	}
+	if want := "username=x-access-token\npassword=afg_new\n"; stored() != want {
+		t.Fatalf("after the push the helper answers %q, want %q", stored(), want)
+	}
+
+	seedInternalGit() // the Agent restarts; env still says afg_old
+	if want := "username=x-access-token\npassword=afg_new\n"; stored() != want {
+		t.Fatalf("an Agent restart seeded the dead token back: %q", stored())
+	}
+
+	t.Setenv("AF_INTERNAL_GIT_TOKEN", "afg_next") // a new container start
+	seedInternalGit()
+	if want := "username=x-access-token\npassword=afg_next\n"; stored() != want {
+		t.Fatalf("a new start's token was not seeded: %q", stored())
+	}
+}
+
+// Without an injected host there is no internal git to hold a token for.
+func TestPushInternalGitTokenWithoutHost(t *testing.T) {
+	withAgentHome(t)
+	t.Setenv("AF_INTERNAL_GIT_HOST", "")
+	w := httptest.NewRecorder()
+	buildMux().ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/internal-git/token", strings.NewReader(`{"token":"afg_x"}`)))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("push without a host = %d, want 409", w.Code)
 	}
 }

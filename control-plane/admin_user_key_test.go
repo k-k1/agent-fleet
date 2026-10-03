@@ -117,6 +117,7 @@ func TestMemberHandlersLookUpTheStoredUserKey(t *testing.T) {
 	}{
 		{"stop-workspace", http.MethodPost, "/api/admin/stop-workspace", adm.stopWorkspace},
 		{"clean-home", http.MethodPost, "/api/admin/clean-home", adm.cleanHome},
+		{"rotate-git-token", http.MethodPost, "/api/admin/rotate-git-token", adm.rotateGitToken},
 		{"user-limit", http.MethodPut, "/api/admin/user-limit", adm.setUserLimit},
 		{"membership-role", http.MethodPut, "/api/admin/membership-role", setRole},
 	} {

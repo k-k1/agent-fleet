@@ -117,6 +117,24 @@ pointing at them, and the server refuses for the same reason.
 
 There is no undo. Inviting the same person again starts a brand new member.
 
+## Rotating a member's git token
+
+Each member reaches the tenant's internal git repositories (the "Internal repos" tab) with a token
+their workspace holds for them. If that token may have leaked out of the workspace — pasted into a
+log, copied to another machine — press **Rotate git token** in the "Operations" section of the
+member detail. The current token stops working at once, for anyone holding it, and the member gets
+a new one; nothing else about the member changes.
+
+- **A running workspace** is handed the new token straight away, and the member carries on without
+  noticing. If the message says the workspace did not take it, restart the workspace: until then,
+  clones in it cannot fetch or push.
+- **A stopped workspace** gets the new token at its next start.
+- A removed member can be rotated too. Do it before inviting them back if their old token may be
+  out there: coming back restores the same membership, and with it the same token.
+
+The rotation is recorded in the audit log. To change every member's token at once, the operator
+changes the deployment's master key instead.
+
 ## What the roles mean
 
 Agent Fleet has 3 roles. The ones that mainly concern you (tenant_admin) are the first two below.
@@ -124,8 +142,8 @@ Agent Fleet has 3 roles. The ones that mainly concern you (tenant_admin) are the
 - **member (regular member)** — someone who writes code in their own workspace and runs sessions.
   They cannot enter tenant settings.
 - **tenant_admin (tenant administrator)** — can manage members within this tenant, view resources,
-  force-stop workspaces, set session limits, remove members, clean their home and delete its
-  backups. **They cannot
+  force-stop workspaces, set session limits, rotate a member's git token, remove members, clean
+  their home and delete its backups. **They cannot
   touch other tenants at all.** They cannot create tenants, change tenant-wide limits, grant admin
   rights, or change the login rules. = You.
 - **super_admin** — the deployment-wide administrator. Sees all tenants and can create tenants,

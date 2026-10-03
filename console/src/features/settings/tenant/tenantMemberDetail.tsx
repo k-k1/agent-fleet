@@ -9,7 +9,9 @@
 //
 //	Size and limits   its own card, directly under the meters it explains. Editing a
 //	                  number is not an operation on anybody.
-//	Operations        force-stop, which is a pause and takes the work with it.
+//	Operations        force-stop, which is a pause and takes the work with it, and rotating
+//	                  the internal git token, which breaks nothing that the new token
+//	                  does not mend.
 //	  Cannot be undone   ruled off below it: clean home, delete backups, remove, discard,
 //	                     delete.
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -56,6 +58,7 @@ export function MemberView({
   const [sessions, setSessions] = useState<any[] | null>(null);
   const [confirmStop, setConfirmStop] = useState(false);
   const [confirmClean, setConfirmClean] = useState(false);
+  const [confirmRotate, setConfirmRotate] = useState(false);
   const [confirmGrant, setConfirmGrant] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [confirmDestroy, setConfirmDestroy] = useState(false);
@@ -269,6 +272,31 @@ export function MemberView({
       setConfirmStop(false);
       poll();
       onChanged();
+    } finally {
+      setBusy(false);
+    }
+  };
+  // The CP answers how the running workspace took the new token (control-plane
+  // git_token_rotate.go): the toast says whether anything is left for the admin to do.
+  const rotateGitToken = async () => {
+    setBusy(true);
+    try {
+      const res = await apiJSON("api/admin/rotate-git-token", "POST", { tenant_slug: slug, user_key: key }).catch(
+        () => ({ error: { code: "network" } }),
+      );
+      if (res?.error) {
+        toast(errText(res.error));
+        return;
+      }
+      setConfirmRotate(false);
+      const outcome: Record<string, string> = {
+        updated: tr("admin.rotate_git_updated"),
+        not_running: tr("admin.rotate_git_not_running"),
+        pending: tr("admin.rotate_git_pending"),
+        failed: tr("admin.rotate_git_failed"),
+        disabled: tr("admin.rotate_git_disabled"),
+      };
+      toast(outcome[res?.workspace] ?? tr("admin.rotate_git_not_running"));
     } finally {
       setBusy(false);
     }
@@ -730,6 +758,9 @@ export function MemberView({
           <button disabled={!running} onClick={() => setConfirmStop(true)}>
             <Icon name="debug-stop" /> {tr("admin.force_stop_ws")}
           </button>
+          <button disabled={busy} onClick={() => setConfirmRotate(true)}>
+            <Icon name="key" /> {tr("admin.rotate_git_token")}
+          </button>
         </div>
         <div className="danger-zone">
           <div className="danger-zone-title">
@@ -776,6 +807,18 @@ export function MemberView({
           onConfirm={stop}
         >
           <p>{tr("admin.stop_body", { slug })}</p>
+        </ConfirmDialog>
+      )}
+      {confirmRotate && (
+        <ConfirmDialog
+          title={tr("admin.rotate_git_title", { key })}
+          confirmLabel={tr("admin.rotate_git_confirm")}
+          busy={busy}
+          onCancel={() => setConfirmRotate(false)}
+          onConfirm={rotateGitToken}
+        >
+          <p>{tr("admin.rotate_git_body")}</p>
+          <p className="muted">{tr("admin.rotate_git_breaks")}</p>
         </ConfirmDialog>
       )}
       {confirmClean && (

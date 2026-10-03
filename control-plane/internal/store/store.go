@@ -1262,6 +1262,15 @@ type MembershipStore interface {
 	// its id — used by the internal-git smart-HTTP handler to map a git token back
 	// to (tenant, role) on every request. ok=false when it is missing/inactive.
 	GetMembershipByID(ctx context.Context, membershipID string) (MembershipView, bool, error)
+	// GitTokenEpoch is the epoch the membership's internal git token is minted under
+	// (issue #1199). Only the current epoch verifies, so the git face reads it live on
+	// every request. ok=false when the membership is missing or inactive.
+	GitTokenEpoch(ctx context.Context, membershipID string) (epoch int64, ok bool, err error)
+	// BumpGitTokenEpoch advances the membership's git token epoch by one and returns the
+	// new value, killing every token minted under an earlier one. It works on an inactive
+	// membership too: re-inviting a removed person reactivates the same id, so rotating
+	// before the re-invite is how the old token is kept dead. ok=false when no such row.
+	BumpGitTokenEpoch(ctx context.Context, membershipID string) (epoch int64, ok bool, err error)
 	// IdentityIDForMembership maps a membership id back to its owning identity id —
 	// used by the internal memo-bridge flush to resolve the workspace runtime from a
 	// memo token (which carries only the membership). ok=false when it is missing.
