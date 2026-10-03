@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -12,7 +13,8 @@ import (
 )
 
 // A home operation that runs the stack's home task (ecs: a member's Recreate or Clean home,
-// an administrator's Clean home, Destroy and purge) is kept as a store.HomeOperation from
+// an administrator's Clean home; ecs and ecs-ec2: every Destroy — an administrator's, a
+// purge, the golden pipeline's seed and probe) is kept as a store.HomeOperation from
 // before RunTask until the step after the task — the member's start, the audit outcome,
 // Destroy's row deletion — has been applied (#1544, ADR 0045).
 //
@@ -155,6 +157,25 @@ func (m *manager) closeHomeOperation(op store.HomeOperation, err error, f store.
 		m.evictMembershipCache(op.MembershipID)
 	}
 	return true
+}
+
+// auditHomeMarkerRelease records a pending home marker the adapter released on ECS's
+// evidence alone (runtime.OnHomeMarkerReleased): a refused home freed with nobody asking is
+// an operator's decision taken by the CP, and is answered for like one.
+func (m *manager) auditHomeMarkerRelease(rel runtime.HomeMarkerRelease) {
+	ctx, cancel := context.WithTimeout(context.Background(), homeOpFinishTimeout)
+	defer cancel()
+	tenantID := ""
+	if ws, ok, err := m.store.GetWorkspaceByMembership(ctx, rel.MembershipID); err == nil && ok {
+		tenantID = ws.TenantID
+	}
+	e := store.AuditLog{ID: store.NewID(), TenantID: tenantID, ActorKind: "system", ActorID: "control-plane",
+		Action: "workspace.home_marker_released", Target: rel.Workspace, At: store.NowTS(),
+		Detail: fmt.Sprintf("%s = %q released: its task %s stopped with exit 0 and none is running (membership %s)",
+			rel.Marker, rel.Value, rel.TaskARN, rel.MembershipID)}
+	if err := m.store.InsertAudit(ctx, e); err != nil {
+		log.Printf("audit: %s on %q: %s: %v", e.Action, e.Target, e.Detail, err)
+	}
 }
 
 // homeOpStartKey carries, on the context of the start a member's wipe owes, the id of

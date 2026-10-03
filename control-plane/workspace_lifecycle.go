@@ -857,7 +857,10 @@ func (m *manager) beginDestroyWorkspace(ctx context.Context, membershipID string
 		return nil, err
 	}
 	var record *store.HomeOperation
-	if background {
+	// A Destroy in the request (the golden pipeline's seed and probe) opens the record as
+	// well wherever the home task runs: without one, a CP replaced between RunTask and its
+	// answer leaves a pending marker no reconciler resolves and the workspace refused.
+	if background || runtime.RunsHomeTask(rt) {
 		if record, err = m.openHomeOperation(lease.Context(), ws, rt, store.HomeOpDestroy, "destroy", audit); err != nil {
 			release()
 			return nil, err
@@ -867,6 +870,8 @@ func (m *manager) beginDestroyWorkspace(ctx context.Context, membershipID string
 			release()
 			return nil, err
 		}
+	}
+	if background {
 		lock.Unlock()
 		locked = false
 	}

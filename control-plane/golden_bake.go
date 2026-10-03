@@ -85,7 +85,23 @@ type goldenBaker struct {
 	loggedBlocked string
 	// warned does the same for the cleanup path, per reserved key: see warn.
 	warned map[string]string
+	// holder names this process in the golden lease (goldenLeaseName); loggedLease keeps
+	// "another CP has it" to one line per change.
+	holder      string
+	loggedLease string
 }
+
+// goldenLeaseName is the cp_lease the auto-bake runs under. Two CP tasks overlap during a
+// rolling replacement, and both driving the bake had one create the seed's volume while the
+// other released the seed's slot (#1603). Every step reads AWS afresh, so the loop is safe to
+// hand over; it is not safe to run twice at once.
+const goldenLeaseName = "golden-bake"
+
+// goldenLeaseFor is how long the lease outlives its last renewal: three ticks, so a
+// holder renewing every tick keeps it, and a holder that died hands it over within that.
+// While a step runs it is renewed every third of that, because a step can wait minutes on
+// a home task.
+func goldenLeaseFor(every time.Duration) time.Duration { return max(3*every, time.Minute) }
 
 func newGoldenBaker(mgr *manager, pool runtime.GoldenBakePool) *goldenBaker {
 	return &goldenBaker{
@@ -95,6 +111,7 @@ func newGoldenBaker(mgr *manager, pool runtime.GoldenBakePool) *goldenBaker {
 		seedBudget:  20 * time.Minute,
 		probeBudget: 20 * time.Minute,
 		now:         time.Now,
+		holder:      store.NewID(),
 	}
 }
 
@@ -127,9 +144,73 @@ func (b *goldenBaker) run(ctx context.Context, every time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			b.step(ctx)
+			b.tick(ctx, every)
 		}
 	}
+}
+
+// tick runs one step if this CP holds the golden lease, renewing it while the step runs.
+// A lease lost in the middle cancels the step: the next holder takes it from AWS's state,
+// and a home task the cancelled step had started is finished by its record's reconciler.
+func (b *goldenBaker) tick(ctx context.Context, every time.Duration) {
+	ttl := goldenLeaseFor(every)
+	ok, err := b.mgr.store.AcquireCPLease(ctx, goldenLeaseName, b.holder, time.Now(), time.Now().Add(ttl))
+	switch {
+	case err != nil:
+		b.noteLease(fmt.Sprintf("golden: taking the auto-bake lease failed: %v", err))
+		return
+	case !ok:
+		b.noteLease("golden: another Control Plane runs the auto-bake; this one waits")
+		return
+	}
+	b.noteLease("golden: this Control Plane runs the auto-bake")
+	stepCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		b.keepLease(stepCtx, cancel, ttl)
+	}()
+	b.step(stepCtx)
+	cancel()
+	<-done
+}
+
+// keepLease renews the lease every third of ttl until ctx ends, and cancels the step when
+// the lease is gone: another holder has it, or no renewal has succeeded since it expired.
+func (b *goldenBaker) keepLease(ctx context.Context, cancel context.CancelFunc, ttl time.Duration) {
+	t := time.NewTicker(ttl / 3)
+	defer t.Stop()
+	held := time.Now().Add(ttl)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		ok, err := b.mgr.store.AcquireCPLease(ctx, goldenLeaseName, b.holder, time.Now(), time.Now().Add(ttl))
+		switch {
+		case err == nil && ok:
+			held = time.Now().Add(ttl)
+			continue
+		case err == nil:
+			log.Printf("golden: the auto-bake lease went to another Control Plane mid-step; stopping this step")
+		case time.Now().Before(held):
+			continue
+		default:
+			log.Printf("golden: the auto-bake lease could not be renewed before it expired (%v); stopping this step", err)
+		}
+		cancel()
+		return
+	}
+}
+
+// noteLease logs the lease's state when it changes.
+func (b *goldenBaker) noteLease(msg string) {
+	if b.loggedLease == msg {
+		return
+	}
+	b.loggedLease = msg
+	log.Print(msg)
 }
 
 // seedKey / probeKey name the reserved workspace for one architecture.

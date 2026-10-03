@@ -28,6 +28,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -58,10 +59,11 @@ const ecsHomeTaskPoll = 5 * time.Second
 // invisible — so each leaves the marker, and the home refused, in place. The CP's record
 // of the operation (HomeTaskBinding) is what resolves a marker that never would on its
 // own: its reconciler asks RunTask again under the operation's clientToken, which names the
-// task a lost answer started, or starts the removal again once ECS has forgotten both.
-// Only a marker no record covers — one a CP before #1544 left — and one whose task was
-// not seen stopped within the time the token is sure to last (mayRunAgain) are the
-// operator's to delete (guide/ref/deploy-targets.md, note 7).
+// task a lost answer started, or starts the removal again once ECS has forgotten both. A
+// pending marker no record covers is released when ECS still lists its task stopped
+// (releaseProvenPending). Only such a marker whose task ECS no longer lists, and one whose
+// task was not seen stopped within the time the token is sure to last (mayRunAgain), are
+// the operator's to delete (guide/ref/deploy-targets.md, note 7).
 const (
 	// homeTaskMissingGrace bounds how long one wait keeps polling a task ECS does not know.
 	// Ending the wait keeps the marker; it only stops this CP from waiting.
@@ -156,6 +158,9 @@ func (e *ecsRuntime) markedHomeTaskBusy(ctx context.Context) (bool, error) {
 	value := aws.ToString(out.Parameter.Value)
 	target, _ := parseMarker(value)
 	if target == homeTaskMarkerPending {
+		if e.releaseProvenPending(ctx, value, aws.ToTime(out.Parameter.LastModifiedDate)) {
+			return false, nil
+		}
 		e.logStuckMarker(value, out.Parameter.LastModifiedDate, "RunTask's answer was never recorded")
 		return true, nil
 	}
@@ -181,8 +186,126 @@ func (e *ecsRuntime) logStuckMarker(value string, at *time.Time, why string) {
 		return
 	}
 	log.Printf("ecs: the home of %s stays refused: %s (marker %s = %q). The CP resolves it while a "+
-		"home operation record is open for the workspace; with none, and no task started by %s running, "+
-		"delete the marker to release it", e.name, why, e.homeTaskMarker(), value, e.homeTaskStartedBy())
+		"home operation record is open for the workspace, or while ECS lists its task stopped; with neither, "+
+		"and no task started by %s running, delete the marker to release it", e.name, why, e.homeTaskMarker(), value, e.homeTaskStartedBy())
+}
+
+// homeTaskClockSkew allows for SSM's and ECS's clocks where a task's creation is compared
+// with the marker's write.
+const homeTaskClockSkew = 5 * time.Second
+
+// releaseProvenPending drops a pending marker whose task ECS shows finished, and reports
+// whether it did. A CP lost between RunTask and its answer leaves one. With the operation's
+// record the reconciler resolves it under the token; a marker no record covers (one a CP
+// before #1603 left, or a path that opened none) otherwise waited for an operator.
+//
+// The proof is all of: the marker is older than homeTaskMissingGrace (listings lag), no
+// task started for this member is listed running, and exactly one task started for this
+// member after the marker was written is listed stopped, seen STOPPED with exit 0. Anything
+// else — none (ECS forgets a stopped task after about an hour), two, one still stopping,
+// one that failed — is ambiguous, and the marker stays. The creation time is what keeps an
+// earlier operation's task out: the golden seed's membership is reused by every bake, so
+// its earlier Destroy tasks carry the same startedBy.
+//
+// Every caller holds the member's lifecycle lease, so no other operation of this member
+// writes a marker in between; it is read again before the delete all the same. A record
+// still open for the marker's own operation loses nothing: its reconciler, finding no
+// marker, sends RunTask again under the same token and is answered the same stopped task.
+func (e *ecsRuntime) releaseProvenPending(ctx context.Context, value string, at time.Time) bool {
+	if at.IsZero() || time.Since(at) < homeTaskMissingGrace {
+		return false
+	}
+	running, err := e.tasks.ListTasks(ctx, &ecs.ListTasksInput{
+		Cluster:   aws.String(e.cfg.cluster),
+		StartedBy: aws.String(e.homeTaskStartedBy()),
+	})
+	if err != nil || len(running.TaskArns) > 0 {
+		return false
+	}
+	stopped, err := e.stoppedHomeTasksSince(ctx, at.Add(-homeTaskClockSkew))
+	if err != nil {
+		log.Printf("ecs: look for the task behind the pending home marker of %s: %v", e.name, err)
+		return false
+	}
+	if len(stopped) != 1 {
+		return false
+	}
+	t := stopped[0]
+	if aws.ToString(t.LastStatus) != string(ecstypes.DesiredStatusStopped) || homeTaskOutcome(t, "") != nil {
+		return false
+	}
+	cur, err := e.ssm.GetParameter(ctx, &ssm.GetParameterInput{Name: aws.String(e.homeTaskMarker())})
+	if err != nil || aws.ToString(cur.Parameter.Value) != value || !aws.ToTime(cur.Parameter.LastModifiedDate).Equal(at) {
+		return false
+	}
+	if _, err := e.ssm.DeleteParameter(ctx, &ssm.DeleteParameterInput{Name: aws.String(e.homeTaskMarker())}); err != nil && !isAWSNotFound(err) {
+		log.Printf("ecs: drop the home task marker of %s: %v", e.name, err)
+		return false
+	}
+	rel := HomeMarkerRelease{Workspace: e.name, MembershipID: e.membershipID, Marker: e.homeTaskMarker(),
+		Value: value, TaskARN: aws.ToString(t.TaskArn)}
+	log.Printf("ecs: released the pending home marker of %s (%s = %q): its task %s, started by %s after the "+
+		"marker was written, stopped with exit 0 and none is running", e.name, rel.Marker, value, rel.TaskARN,
+		e.homeTaskStartedBy())
+	if f := homeMarkerReleased.Load(); f != nil {
+		(*f)(rel)
+	}
+	return true
+}
+
+// stoppedHomeTasksSince lists the home tasks started for this member, created at or after
+// since, that ECS lists under desired status STOPPED. A ListTasks filtered by startedBy
+// takes no other filter, so the home task's family is listed and startedBy read from each.
+func (e *ecsRuntime) stoppedHomeTasksSince(ctx context.Context, since time.Time) ([]ecstypes.Task, error) {
+	var arns []string
+	var token *string
+	for {
+		out, err := e.tasks.ListTasks(ctx, &ecs.ListTasksInput{
+			Cluster: aws.String(e.cfg.cluster), Family: aws.String(e.cfg.homeTask),
+			DesiredStatus: ecstypes.DesiredStatusStopped, NextToken: token,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("list stopped home tasks: %w", err)
+		}
+		arns = append(arns, out.TaskArns...)
+		if aws.ToString(out.NextToken) == "" {
+			break
+		}
+		token = out.NextToken
+	}
+	var mine []ecstypes.Task
+	for len(arns) > 0 {
+		n := min(len(arns), 100) // DescribeTasks takes at most 100
+		out, err := e.tasks.DescribeTasks(ctx, &ecs.DescribeTasksInput{Cluster: aws.String(e.cfg.cluster), Tasks: arns[:n]})
+		if err != nil {
+			return nil, fmt.Errorf("describe stopped home tasks: %w", err)
+		}
+		for _, t := range out.Tasks {
+			if aws.ToString(t.StartedBy) == e.homeTaskStartedBy() && t.CreatedAt != nil && !t.CreatedAt.Before(since) {
+				mine = append(mine, t)
+			}
+		}
+		arns = arns[n:]
+	}
+	return mine, nil
+}
+
+// HomeMarkerRelease is a pending home marker the adapter released on ECS's evidence alone
+// (releaseProvenPending), for the CP's audit log.
+type HomeMarkerRelease struct {
+	Workspace, MembershipID, Marker, Value, TaskARN string
+}
+
+var homeMarkerReleased atomic.Pointer[func(HomeMarkerRelease)]
+
+// OnHomeMarkerReleased sets what is told of each such release. The adapter keeps no
+// database (ADR 0012); the CP writes the audit entry.
+func OnHomeMarkerReleased(f func(HomeMarkerRelease)) {
+	if f == nil {
+		homeMarkerReleased.Store(nil)
+		return
+	}
+	homeMarkerReleased.Store(&f)
 }
 
 // describeHomeTask reads one task. known=false when ECS answers MISSING or nothing, which

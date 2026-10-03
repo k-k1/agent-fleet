@@ -1537,3 +1537,21 @@ umount から detach までの間に入れない。解放の後にロックを�
 古い起動テンプレートのスロットも入れ替えなしに次の mount で治る。隔離も detach の前に umount する（上限付き・失敗は無視）。
 コード: `control-plane/internal/runtime/runtime_ecs_ec2_home_mount.go`、`runtime_ecs_ec2.go`（`mountHome`・
 `releaseSlotSince`・`launch`・`quarantineSlot`）、`deploy/aws/ecs/cfn/40-ec2-pool.yaml`。
+
+**追記（2026-10-04・#1603）: ホームタスクを走らせる Destroy はすべて記録を持ち、記録の無い pending の印は ECS の証拠で解かれ、golden の自動ベイクは 1 つの CP だけで走る。**
+サンドボックスのプールで CP をローリング置換している間に、古い CP が golden シードの Destroy をホームタスクで走らせ、
+応答を記録する前に止められた。以後シードは pending の印に毎分拒まれ続けた。golden のパイプラインはティックの中で破棄し
+（`destroyWorkspaceByMembership`）、`home_operation` の行を開くのはバックグラウンドの Destroy だけだった。いまは
+`beginDestroyWorkspace` がランタイムがホームタスクを走らせる限りリクエスト内でも行を開くので、次の CP の #1544 の
+リコンサイラがシードとプローブの Destroy も終える。行の無い pending の印（以前の CP、または行を開かなかった経路が
+残したもの）も運用者だけのものではなくなった。メンバーのライフサイクルリースの下で、印が一覧の猶予より古く、
+`af-home/<membership>` が起動したタスクが動いておらず、印が書かれた後に作られたそのようなタスクがちょうど 1 つ、
+ホームタスクのファミリーの desired STOPPED に並び、STOPPED・終了コード 0 と読めたとき、アダプタが印を消す。作成時刻が
+以前の操作のタスクを除く（golden シードのメンバーシップはベイクのたびに使い回される）。それ以外は拒否を保つ。解いたことは
+ログと監査（`workspace.home_marker_released`）に残る。2 つの CP が同時に自動ベイクを走らせてもいた（片方がシードの
+ボリュームを作り、もう片方がそのスロットを解放した）ので、ループはストアのリース（`cp_lease`、マイグレーション 0086 /
+pg 0071）の下でだけ進む。持ち主はティックごとに、段の実行中は 3 ティックの寿命の 3 分の 1 ごとに更新し、リースを失った
+段は取り消され、死んだ CP は 3 ティック以内に引き渡す。#1601 のプロセス内の mount/解放ロックの代わりではなく、同じ
+スロットを 2 つの CP が動かす原因の 1 つとして golden ループを除くものである。コード: `control-plane/workspace_lifecycle.go`
+（`beginDestroyWorkspace`）、`control-plane/internal/runtime/runtime_ecs_home_task.go`（`releaseProvenPending`）、
+`control-plane/golden_bake.go`（`tick`・`keepLease`）、`control-plane/internal/store/store_cp_lease.go`。

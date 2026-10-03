@@ -331,6 +331,8 @@ func main() {
 	// Not behind AF_IDLE_SWEEP_INTERVAL: switching idle-stop off must not leave a removed
 	// member's workspace running (member_removal.go).
 	go mgr.runRemovedMemberSweep(context.Background(), removedMemberSweepInterval)
+	// A pending home marker the ecs adapter releases on ECS's evidence is audited here.
+	runtime.OnHomeMarkerReleased(mgr.auditHomeMarkerRelease)
 	// Home operations a CP restart interrupted (ecs, home_operation.go): their task may
 	// still be running, and the step after it is owed. Not behind any switch either: an
 	// unfinished record keeps the workspace from starting until it is finished.

@@ -1673,3 +1673,24 @@ attached home still in use — and never another path. The CP sends those lines 
 so slots launched from an older template heal at their next mount without being replaced. Quarantine now also
 unmounts (bounded, best-effort) before its detach. Code: `control-plane/internal/runtime/runtime_ecs_ec2_home_mount.go`,
 `runtime_ecs_ec2.go` (`mountHome`, `releaseSlotSince`, `launch`, `quarantineSlot`), `deploy/aws/ecs/cfn/40-ec2-pool.yaml`.
+
+**Note (2026-10-04, #1603): every Destroy that runs the home task has a record, a record-less pending marker is
+released on ECS's proof, and the golden auto-bake runs on one CP.** During a rolling CP replacement on a sandbox
+pool, the old CP ran the golden seed's Destroy through the home task and was stopped before it recorded the answer;
+the seed then stayed refused every minute by its pending marker. The golden pipeline destroys in the tick
+(`destroyWorkspaceByMembership`), and only the background Destroy opened a `home_operation` row. Now
+`beginDestroyWorkspace` opens one wherever the runtime runs the home task, in the request or not, so the #1544
+reconciler of the next CP finishes the seed's and the probe's Destroy too. A pending marker with no row behind it (a
+CP before this, or any path that opened none) is no longer the operator's alone: under the member's lifecycle lease
+the adapter drops it when the marker is older than the listing grace, no task started by `af-home/<membership>` is
+listed running, and exactly one such task created after the marker was written is listed under the home task's
+family with desired status STOPPED, seen STOPPED with exit 0. The creation time is what excludes an earlier
+operation's task — the golden seed's membership is reused by every bake. Anything else keeps the refusal. The
+release is logged and audited as `workspace.home_marker_released`. Both CPs had also run the auto-bake at once (one
+created the seed's volume while the other released its slot), so the loop now steps only under a store-backed lease
+(`cp_lease`, migrations 0086 / pg 0071): the holder renews it every tick and every third of its 3-tick lifetime while
+a step runs, a step whose lease is lost is cancelled, and a CP that dies hands it over within three ticks. It does not
+replace #1601's process-local mount/release locks; it removes the golden loop as one source of two CPs driving the
+same slot. Code: `control-plane/workspace_lifecycle.go` (`beginDestroyWorkspace`),
+`control-plane/internal/runtime/runtime_ecs_home_task.go` (`releaseProvenPending`), `control-plane/golden_bake.go`
+(`tick`, `keepLease`), `control-plane/internal/store/store_cp_lease.go`.
