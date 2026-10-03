@@ -27,6 +27,11 @@ export const viewer: Record<keyof typeof jaViewer, string> = {
   "browser.workspace_starting": "The workspace is starting. Reconnect when it is ready.",
   "browser.page_limit": "The limit for concurrently open browser panes has been reached.",
   "browser.protocol_mismatch": "The browser-pane protocol version does not match.",
+  "browser.unavailable.title": "Browser features are not available on this workspace",
+  "browser.unavailable.body":
+    "This workspace runs on the {runtime} runtime, where Chromium's sandbox cannot start (it needs user namespaces or a setuid helper, and the restricted pod forbids both). Rather than run Chromium unsandboxed, the browser pane and the agents' browser tools are turned off. Open web apps in the lightweight preview (a new tab) instead.",
+  "browser.unavailable.short": "Not available on the {runtime} runtime: Chromium's sandbox cannot start in its restricted pod",
+  "browser.unavailable.open_light": "Open :{port} in the lightweight preview",
   "browser.console_empty": "No Console messages.",
   "browser.copy_console": "Copy Console messages",
   "browser.copy_selection": "Copy the selected text (Ctrl+C)",

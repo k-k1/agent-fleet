@@ -38,6 +38,7 @@ import { AUTO_INLINE, noteSessionKinds, planUsageChips, readKindStamps, type Kin
 import { setSettings, useSettings } from "../lib/settings.ts";
 import { useSettingsUI } from "../features/settings/store.ts";
 import { browserTarget } from "../features/browser/target.ts";
+import { useBrowserUnavailable } from "../features/browser/availability.ts";
 import { AwsProfilesChip } from "../features/awslogin/AwsProfilesChip.tsx";
 import { GcpProfilesChip } from "../features/gcplogin/GcpProfilesChip.tsx";
 
@@ -1169,6 +1170,7 @@ export function WsBar() {
   const moreRef = useRef<HTMLDivElement>(null);
   const resRef = useRef<HTMLDivElement>(null);
   const running = wsState === "running";
+  const browserUnavailable = useBrowserUnavailable();
   // Toggle inert while a transition is in flight: the optimistic "…" states AND the
   // server-reported "starting" (ECS cold pull — a second Start click must not
   // re-drive the deployment; the 4s poll flips the bar to "running" on its own).
@@ -1286,6 +1288,8 @@ export function WsBar() {
   };
 
   const openBrowserPane = () => {
+    // Enter in the port field still opens something useful where the pane cannot.
+    if (browserUnavailable) return openPreview();
     if (!running) return;
     const target = browserTarget(Number(port.trim()), previewPath.trim());
     if (!target) return;
@@ -1304,10 +1308,14 @@ export function WsBar() {
       return;
     }
     let cancelled = false;
-    void listBrowserAttachments().then(
-      (list) => !cancelled && setAttachments(list),
-      () => !cancelled && setAttachments((prev) => (prev.length ? [] : prev)),
-    );
+    // No attachment can exist where the runtime has no browser features; asking would only
+    // collect a browser_unavailable refusal.
+    if (browserUnavailable) setAttachments((prev) => (prev.length ? [] : prev));
+    else
+      void listBrowserAttachments().then(
+        (list) => !cancelled && setAttachments(list),
+        () => !cancelled && setAttachments((prev) => (prev.length ? [] : prev)),
+      );
     void api("api/env/ws-settings").then(
       (res: any) => {
         if (cancelled) return;
@@ -1328,7 +1336,7 @@ export function WsBar() {
     return () => {
       cancelled = true;
     };
-  }, [pvOpen, moreOpen, running]);
+  }, [pvOpen, moreOpen, running, browserUnavailable]);
 
   // Previews shared within this tenant (docs/log/81 §14.6). Not conditioned on running:
   // what appears here belongs to OTHER people's workspaces, so whether ours is stopped is
@@ -1516,7 +1524,13 @@ export function WsBar() {
           />
         </div>
         <div className="pv-row pv-actions">
-          <button onClick={openBrowserPane} disabled={!running || !browserTarget(Number(port.trim()), previewPath.trim())}>
+          {/* Disabled rather than hidden where the runtime has no browser features, so the
+              tooltip and the hint below can say why the button everyone else has is off. */}
+          <button
+            onClick={openBrowserPane}
+            disabled={!!browserUnavailable || !running || !browserTarget(Number(port.trim()), previewPath.trim())}
+            title={browserUnavailable ? tr("browser.unavailable.short", { runtime: browserUnavailable }) : undefined}
+          >
             {tr("wsbar.preview.open_pane")}
           </button>
           {/* Disabled by the same browserTarget check openPreview uses, so an out-of-range
@@ -1526,7 +1540,11 @@ export function WsBar() {
             {tr("wsbar.preview.open_light")}
           </button>
         </div>
-        <div className="pv-hint">{tr("wsbar.preview.hint")}</div>
+        <div className="pv-hint">
+          {browserUnavailable
+            ? tr("wsbar.preview.hint_unavailable", { runtime: browserUnavailable })
+            : tr("wsbar.preview.hint")}
+        </div>
       </div>
       {/* The issued preview subdomain (docs/log/81). No URL is shown while stopped: the
           slug is issued per start and expires on stop, so the link would only 404 — and a

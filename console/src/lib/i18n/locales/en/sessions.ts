@@ -171,6 +171,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "wsbar.preview.copy": "Copy",
   "wsbar.preview.copy_url": "Copy the URL",
   "wsbar.preview.hint": "Pane view uses Chromium inside the container. Lightweight preview opens the existing proxy in a new tab.",
+  "wsbar.preview.hint_unavailable": "Pane view is not available on this workspace ({runtime} runtime): Chromium's sandbox cannot start in its container. Lightweight preview still opens in a new tab.",
   "wsbar.tile.ws_mem": "Workspace memory: {mem}G",
   "wsbar.tile.ws_mem_oom_note":
     "⚠ A process in the container was OOM-killed within the last few minutes (memory limit reached; a build/agent may have been killed)",
@@ -366,6 +367,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "srow.pr_checks.failure": " · CI failing",
   "srow.pr_checks.pending": " · CI running",
   "srow.port_title": "This session listens on 127.0.0.1:{port} — open it in a browser pane (Ctrl / middle-click for a new pane)",
+  "srow.port_title_preview": "This session listens on 127.0.0.1:{port} — open it in the lightweight preview (a new tab; the browser pane is not available on this workspace)",
   "srow.links": "Pull request and listening ports",
   "srow.ports_more": "Show {n} more ports",
   "srow.locked_hint": "Locked against deletion. Unlock it first.",

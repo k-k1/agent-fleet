@@ -104,6 +104,12 @@ func browserAgentHTTPURL(endpoint string, r *http.Request) (string, error) {
 }
 
 func browserRuntimeReady(w http.ResponseWriter, r *http.Request, rt runtime.Runtime) bool {
+	// Refused here as well as by the Agent, so the answer does not depend on the image the
+	// workspace happens to run and a stopped workspace is not told to start first.
+	if why := runtime.BrowserUnavailable(rt); why != "" {
+		writeAPIErr(w, browserUnavailableErr(why))
+		return false
+	}
 	switch rt.State(r.Context()) {
 	case "running":
 		return true
@@ -115,6 +121,16 @@ func browserRuntimeReady(w http.ResponseWriter, r *http.Request, rt runtime.Runt
 			"workspace is stopped — start it first"})
 	}
 	return false
+}
+
+// browserUnavailableErr is the refusal on a runtime without browser features. The status,
+// code and wording match the Agent's (workspace/agent/internal/browserx/availability.go);
+// a 4xx because the Console retries every 5xx.
+func browserUnavailableErr(runtimeID string) *apiError {
+	return &apiError{http.StatusConflict, "browser_unavailable",
+		"Browser features are not available on this workspace runtime (" + runtimeID + "): " +
+			"Chromium's sandbox needs user namespaces or a setuid helper, which the runtime's " +
+			"restricted pod forbids. See ref/browser-pane.md in the user guide."}
 }
 
 // socket bridges /ws/browser to the Agent while keeping browser-specific

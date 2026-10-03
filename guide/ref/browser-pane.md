@@ -1,7 +1,7 @@
 ---
 audience: "everyone, and specifically an agent deciding how to show a running web app to a person"
 source_of_truth: "this file for terminology, flow, states and limits; the Console for what a button is called"
-updated: "2026-08"
+updated: "2026-10"
 ---
 
 # Browser pane — the usage contract
@@ -92,9 +92,34 @@ until it is running, then reconnect.
   same port / path fields and "Open in pane". From there it is the same flow — the
   toolbar, tapping the canvas, Japanese input, the Console drawer.
 
+## Where there is no browser pane
+
+A deployment that runs workspaces on the `kubernetes` runtime offers **no browser features at
+all**: no browser pane, no Chromium attachments for agents, no headless Chromium. A workspace pod
+there runs under the Pod Security `restricted` level, which sets NoNewPrivs (the setuid
+`chrome-sandbox` cannot elevate) and the runtime's default seccomp profile (no user namespaces),
+so Chromium's sandbox cannot start; running Chromium without its sandbox was decided against
+(ADR 0106, addendum 2026-10-04).
+
+What you see instead:
+
+- In **Preview**, "open in pane" is greyed out; its tooltip and the hint under it name the reason.
+  The **lightweight preview** works as everywhere else.
+- A port in a session row opens in the lightweight preview (a new tab), not in a pane.
+- A browser pane restored from a saved layout shows the reason in place of the page, with a
+  button that opens the same port and path in the lightweight preview. A Chromium attachment
+  pane restored the same way shows the reason only, since it has no local port to open.
+- Agents' browser tools answer `browser_unavailable` with the same explanation.
+
+The decision comes from the deployment's runtime, so it is the same for every member of it and
+shows even while the workspace is stopped.
+
 ## For agents working inside a Workspace
 
 You have no tool that opens, drives or sees this pane; it belongs to the person. Tell
 them the exact port and path and point them at Preview → open in pane. Never claim a
 UI "looks right" on the basis of a pane you cannot see — if you need to verify
 something yourself, drive your own headless Chromium and say that is what you did.
+Where `AF_BROWSER_UNAVAILABLE` is set in your environment there is neither a pane nor a headless
+Chromium ([above](#where-there-is-no-browser-pane)): verify with tests and HTTP checks, offer the
+person the lightweight preview, and say plainly that nothing was checked visually.

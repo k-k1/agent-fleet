@@ -254,3 +254,25 @@
   .browser-port { flex: 0 1 54px; min-width: 34px; }
   .browser-path { min-width: 28px; }
 }
+
+/* A workspace runtime without browser features (BrowserUnavailable.tsx): the reason in the
+   middle of the pane, where the canvas would be. */
+.browser-unavailable {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+}
+.browser-unavailable p {
+  max-width: 52ch;
+  margin: 0;
+  line-height: 1.5;
+}
+.browser-unavailable strong {
+  color: var(--fg);
+}

@@ -7,6 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 const { SessionRow } = await import("./SessionRow.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
 const { useLayoutStore } = await import("../../layout/store.ts");
+const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 type Session = import("../../types/session.ts").Session;
 
 let root: Root | null = null;
@@ -45,6 +46,7 @@ afterEach(() => {
   host.remove();
   root = null;
   useLayoutStore.setState(original);
+  useWorkspaceStore.setState({ browserUnavailable: "" });
 });
 
 describe("SessionRow link line", () => {
@@ -94,6 +96,17 @@ describe("SessionRow link line", () => {
       ports()[1].dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true }));
     });
     expect(openTargetInNew).toHaveBeenCalledWith({ content: { kind: "browser", port: 8080, path: "/" } }, true);
+  });
+
+  it("opens a port in the lightweight preview where the runtime has no browser features", async () => {
+    useWorkspaceStore.setState({ browserUnavailable: "kubernetes" });
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    await render({ ports: [5173] });
+    expect(ports()[0].title).toBe(t("srow.port_title_preview", { port: 5173 }));
+    await act(async () => ports()[0].click());
+    expect(openTarget).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledWith(expect.stringMatching(/5173\/$/), "_blank", "noopener");
+    open.mockRestore();
   });
 
   it("folds ports past the third behind +N, which unfolds them", async () => {

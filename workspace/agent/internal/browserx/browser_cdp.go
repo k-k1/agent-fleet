@@ -87,6 +87,11 @@ type cdpResponse struct {
 }
 
 func launchPipeCDP(ctx context.Context) (browserCDP, error) {
+	// Checked before the escape hatch below: on a runtime that withholds browser features,
+	// AF_CHROMIUM_NO_SANDBOX must not turn into the unsandboxed launch that was rejected.
+	if id := Unavailable(); id != "" {
+		return nil, fmt.Errorf("%w: %s", errBrowserUnavailable, UnavailableMessage(id))
+	}
 	// AF_CHROMIUM_NO_SANDBOX=1 is the documented escape hatch for hosts where no
 	// Chromium sandbox can work at all — the native rootfs mode runs under an
 	// unprivileged userns (no SUID helper) and its namespace-sandbox viability is

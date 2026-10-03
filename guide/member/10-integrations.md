@@ -35,6 +35,13 @@ Enter a port number in the **port input field** on the right of the workspace ac
 "Open in pane" when you want to touch the screen, and the lightweight preview when one look at an HTTP response
 is enough.
 
+> **On a deployment that runs workspaces on Kubernetes there is no browser pane.** "Open in pane" is
+> greyed out, and its tooltip and the hint under it say why: Chromium's sandbox cannot start in the
+> restricted pod a workspace runs in, and the deployment does not run Chromium without it. A port in a
+> session row opens in the lightweight preview instead, and a browser pane kept in your layout shows the
+> reason with a button for the same page in the lightweight preview. Agents cannot hand you a browser
+> page there either (next section). Details: [browser-pane.md](../ref/browser-pane.md#where-there-is-no-browser-pane).
+
 On a touch screen such as a tablet, **swipe to scroll** (a flick keeps coasting after you lift your finger),
 **tap to click**, **press and hold to drag** (text selection, sliders), and **pinch with two fingers to zoom**.
 A pinch re-lays the page out at a narrower width rather than stretching the picture, so text stays legible at
@@ -176,7 +183,8 @@ workspace is running.
 When an agent is driving its own browser (Chromium) inside the workspace and reaches something
 **only a person can do** — signing in, a one-time code, ticking a consent box — it can hand that
 page over to you. This is a different thing from the browser pane above: there you open your own
-local web app, here you take over a page the agent already has open.
+local web app, here you take over a page the agent already has open. Like the browser pane, it does not
+exist on a deployment that runs workspaces on Kubernetes.
 
 - A link appears in the agent's message: **"Open the browser and operate it (opens as a pane in this
   tab)"**. **You are the one who clicks it** — nothing opens until you do, and it opens as a pane in

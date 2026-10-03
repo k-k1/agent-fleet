@@ -318,6 +318,10 @@ type kubeRuntime struct {
 func (k *kubeRuntime) Name() string  { return k.wsName }
 func (k *kubeRuntime) Token() string { return k.token }
 
+// BrowserUnavailable: the restricted pod leaves Chromium neither a setuid sandbox nor user
+// namespaces (browser_support.go).
+func (k *kubeRuntime) BrowserUnavailable() string { return "kubernetes" }
+
 // Endpoint is the Service's cluster DNS name. `<svc>.<ns>.svc` resolves through the
 // pod's search path whatever the cluster domain is, and unlike a Service Connect alias it
 // resolves for a Service created after the CP started.
@@ -822,6 +826,7 @@ func (k *kubeRuntime) podTemplate(image string, gen int64, now time.Time) kPodTe
 		{Name: "CLAUDE_CONFIG_DIR", Value: kubeStatePath},
 		{Name: "AF_WS_KEEP", Value: kubeKeepPath},
 		{Name: "AGENT_STOP_GRACE_SEC", Value: strconv.Itoa(agentStopGraceSec())},
+		{Name: BrowserUnavailableEnv, Value: k.BrowserUnavailable()},
 	}
 	if k.cfg.sessionCmd != "" {
 		env = append(env, kEnvVar{Name: "AGENT_SESSION_CMD", Value: k.cfg.sessionCmd})

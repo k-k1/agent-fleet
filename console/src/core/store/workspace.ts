@@ -71,6 +71,11 @@ interface WorkspaceStore {
    * POST was answered `starting`) left the workspace stopped. The CP carries it on the
    * workspace payload until the next start; "" = none. */
   homeWipeFailed: string;
+  /** The runtime id that withholds browser features from this workspace ("kubernetes"), or
+   * "" when they are available. Decided by the CP's runtime adapter and sent in every state
+   * (control-plane/internal/runtime/browser_support.go); the browser entry points read it
+   * through features/browser/availability.ts. */
+  browserUnavailable: string;
   refresh(): Promise<void>;
   /** Apply a pushed workspace payload (api/events). Poll parity: an optimistic
    * "…" transition is never clobbered — while busy only bootPhase updates (the
@@ -82,6 +87,7 @@ interface WorkspaceStore {
     stale?: boolean;
     slotReplace?: boolean;
     homeWipeFailed?: string;
+    browserUnavailable?: string;
   }): void;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -108,6 +114,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   slotReplace: false,
   reason: "",
   homeWipeFailed: "",
+  browserUnavailable: "",
 
   async refresh() {
     const stamp = pushStamp("workspace");
@@ -137,6 +144,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         slotReplace: !!w.slotReplace,
         reason: "",
         homeWipeFailed: w.homeWipeFailed || "",
+        browserUnavailable: typeof w.browserUnavailable === "string" ? w.browserUnavailable : "",
       });
     } catch {
       set({ state: "unknown" }); // network drop: keep the previous reason; the next poll settles it
@@ -145,6 +153,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 
   applyPush(w) {
     const cur = get().state;
+    // A property of the runtime, not of the lifecycle, so it lands even while busy.
+    set({ browserUnavailable: typeof w.browserUnavailable === "string" ? w.browserUnavailable : "" });
     if (wsBusy(cur)) {
       if (cur === "starting…" || cur === "recreating…") set({ bootPhase: w.bootPhase || "" });
       return;

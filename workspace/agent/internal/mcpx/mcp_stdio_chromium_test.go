@@ -431,6 +431,34 @@ func TestMCPChromiumPortCollisionExplainsTheFix(t *testing.T) {
 	}
 }
 
+// On a workspace runtime without browser features the tools say so in English and tell the
+// model what to do instead, rather than reporting a generic Agent failure it would retry.
+func TestMCPChromiumUnavailableExplainsTheRuntime(t *testing.T) {
+	const msg = "Browser features are not available on this workspace runtime (kubernetes): sandbox."
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"code":"browser_unavailable","message":"` + msg + `"}}`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	for name, args := range map[string]map[string]any{
+		"list_chromium_targets":   {"port": 9222},
+		"get_chromium_attachment": {"attachment_id": "a1"},
+	} {
+		resp := callChromiumMCP(t, name, args)
+		if !mcpCallIsError(t, resp) {
+			t.Fatalf("%s: browser_unavailable must be an error: %s", name, resp)
+		}
+		for _, want := range []string{"code=browser_unavailable", msg, "Do not start Chromium", "--no-sandbox"} {
+			if !strings.Contains(string(resp), want) {
+				t.Errorf("%s: error must mention %q: %s", name, want, resp)
+			}
+		}
+	}
+}
+
 func callChromiumMCP(t *testing.T, name string, args map[string]any) []byte {
 	t.Helper()
 	params, err := json.Marshal(map[string]any{"name": name, "arguments": args})
