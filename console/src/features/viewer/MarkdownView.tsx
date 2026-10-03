@@ -7,6 +7,7 @@ import { marked, repairFullwidthTables, splitYamlFrontMatter } from "../../lib/m
 import { useSettings } from "../../lib/settings.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { openSessionChat, openSessionChatSplit } from "../sessions/open.ts";
+import { useSessionLinkMenu } from "../sessions/SessionLinkMenu.tsx";
 import { useChatStore, ensureConvs } from "../chat/store.ts";
 import { openChat, openChatSplit } from "../chat/open.ts";
 import { useFilesStore } from "../files/store.ts";
@@ -94,6 +95,12 @@ export function MarkdownView({
   onOpenDirRef.current = onOpenDir;
   onOpenSessionRef.current = onOpenSession;
   onOpenConversationRef.current = onOpenConversation;
+  // Session links get a context menu only under a SessionLinkMenuHost (the mirror, the
+  // assistant chat); elsewhere they keep the browser's own menu.
+  const openSessionMenu = useSessionLinkMenu();
+  const openSessionMenuRef = useRef(openSessionMenu);
+  openSessionMenuRef.current = openSessionMenu;
+  const hasSessionMenu = openSessionMenu !== null;
 
   useEffect(() => {
     const el = ref.current;
@@ -165,6 +172,7 @@ export function MarkdownView({
           else if (openInNew) openChatSplit(id);
           else openChat(id);
         },
+        hasSessionMenu ? (name, x, y) => openSessionMenuRef.current?.(name, x, y) : undefined,
       );
     runLinkify();
     // A conv slug can only be existence-checked once the conversation list is in the
@@ -252,7 +260,7 @@ export function MarkdownView({
       alive = false;
       stickyCleanup();
     };
-  }, [source, basePath, baseDir, repo, breaks, streaming, theme, codeWrapDefault, toast]);
+  }, [source, basePath, baseDir, repo, breaks, streaming, theme, codeWrapDefault, toast, hasSessionMenu]);
 
   return (
     <div

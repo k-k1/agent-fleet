@@ -8,6 +8,7 @@ import { useSessionsStore } from "../../sessions/store.ts";
 import { displayName } from "../../../lib/sessionview.ts";
 import { mergeChatTitles, useChatStore } from "../../chat/store.ts";
 import { openCommit } from "../../scm/open.ts";
+import { wireContextMenu } from "./linkContextMenu.ts";
 
 // linkifyRefs turns bare git commit hashes, session slugs and assistant-conversation
 // slugs into clickable links, mirroring renderEmoji's text-node walk (skips existing
@@ -80,6 +81,8 @@ export function linkifyRefs(
   onError: (message: string) => void,
   openSession: (name: string, openInNew: boolean) => void,
   openConversation: (id: string, openInNew: boolean) => void,
+  // Absent → a session link keeps the browser's own context menu (see SessionLinkMenu.tsx).
+  openSessionMenu?: (name: string, x: number, y: number) => void,
 ) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
@@ -121,7 +124,7 @@ export function linkifyRefs(
       } else if (!a && /^s[a-z2-7]{6}$/.test(token)) {
         // session-slug shape: link only if that session exists right now
         const exists = useSessionsStore.getState().sessions.some((s) => s.name === token);
-        if (exists) a = makeSessionLink(token, openSession);
+        if (exists) a = makeSessionLink(token, openSession, openSessionMenu);
       }
       if (a) {
         if (m.index > last) out.appendChild(document.createTextNode(text.slice(last, m.index)));
@@ -252,15 +255,23 @@ function wireTooltip(a: HTMLAnchorElement, compute: () => string) {
 // makeSessionLink builds a non-navigating anchor that opens a session's chat mirror.
 // Modifier keys follow the same convention as file links (wireLinks): a plain click / Enter
 // is the default open, while Ctrl/Cmd-click and a middle click force a new pane (openInNew).
-function makeSessionLink(name: string, openSession: (name: string, openInNew: boolean) => void): HTMLAnchorElement {
+// With openMenu, a right click, a long press and the Menu key open the session's context menu.
+function makeSessionLink(
+  name: string,
+  openSession: (name: string, openInNew: boolean) => void,
+  openMenu?: (name: string, x: number, y: number) => void,
+): HTMLAnchorElement {
   const a = document.createElement("a");
   a.className = "md-ref-link md-session-link";
   a.textContent = name;
   a.setAttribute("role", "link");
   a.tabIndex = 0;
   wireTooltip(a, () => sessionLinkTooltip(name));
+  const menu = openMenu ? wireContextMenu(a, (x, y) => openMenu(name, x, y)) : null;
+  if (menu) a.classList.add("md-has-menu");
   a.addEventListener("click", (e) => {
     e.preventDefault();
+    if (menu?.clickSwallowed()) return; // the lift of the long press that opened the menu
     openSession(name, e.ctrlKey || e.metaKey);
   });
   a.addEventListener("auxclick", (e) => {

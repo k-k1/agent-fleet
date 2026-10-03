@@ -148,6 +148,7 @@ import { useMarksController } from "./transcript/useMarks.ts";
 import { MarkStrip } from "./transcript/MarkStrip.tsx";
 import { targetLang } from "./translate.ts";
 import { useTranslate } from "./useTranslate.ts";
+import { SessionLinkMenuHost } from "../sessions/SessionLinkMenu.tsx";
 
 const q = encodeURIComponent;
 
@@ -179,7 +180,16 @@ const FINALIZE_GRACE_MS = 8000;
 // Limits (case-A): the transcript is written per turn, so turns appear per response,
 // not token-by-token. Prompts typed in the raw terminal DO appear (they're logged as
 // user turns), just at the next poll.
-export function MirrorView({
+export function MirrorView(props: Parameters<typeof MirrorViewBody>[0]) {
+  // Session slugs in the transcript open the session context menu (SessionLinkMenu.tsx).
+  return (
+    <SessionLinkMenuHost>
+      <MirrorViewBody {...props} />
+    </SessionLinkMenuHost>
+  );
+}
+
+function MirrorViewBody({
   paneId,
   session,
   sessionMeta,
