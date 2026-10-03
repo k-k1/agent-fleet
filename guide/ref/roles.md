@@ -29,6 +29,7 @@ settings**. Only a deployment administrator sees the shield-icon **Admin** item.
 | Own connections and settings | ✓ | ✓ | ✓ |
 | See every session in the tenant | — | ✓ | ✓ |
 | Force-stop another member's workspace | — | ✓ | ✓ |
+| Rotate another member's internal git token | — | ✓ | ✓ |
 | Add and remove members | — | ✓ | ✓ |
 | Per-member session limits | — | ✓ | ✓ |
 | Tenant-wide limits, sizing and idle auto-stop | — | —¹ | ✓ |

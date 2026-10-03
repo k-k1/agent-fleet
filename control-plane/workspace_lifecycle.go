@@ -451,6 +451,36 @@ func (m *manager) armPreviewForStart(ctx context.Context, res *resolved, extraEn
 	return m.runtimeFor(ws, dekHex, append(m.workspaceExtraEnv(ctx, ws), extraEnv...)...)
 }
 
+// refreshGitTokenForStart returns a runtime rebuilt with the current internal git token
+// when the one about to start was built under an older epoch, else nil (start as is).
+//
+// The memoized runtime's env is fixed when it is built, and a rotation evicts only its
+// own CP's memo: another replica's, or one written by a build that raced the eviction,
+// would otherwise inject the dead token at every start. Called under the start lock and
+// the lifecycle lease, right before Start. A rotation on another replica in the moment
+// between this check and Start still goes unseen (docs/build/91 §91.5). extraEnv is
+// carried over, as armPreviewForStart does.
+func (m *manager) refreshGitTokenForStart(ctx context.Context, res *resolved, extraEnv []string) runtime.Runtime {
+	if m.internalGitHost == "" || res.ws.MembershipID == "" {
+		return nil
+	}
+	epoch, ok, err := m.store.GitTokenEpoch(ctx, res.ws.MembershipID)
+	if err != nil || !ok || epoch == res.gitEpoch {
+		return nil
+	}
+	dekHex, err := m.resolveDEK(ctx, res.ws, res.ident.UserKey)
+	if err != nil {
+		log.Printf("internal git: rebuild for ws %s: resolve DEK: %v (starting with the token it had)", res.ws.ID, err)
+		return nil
+	}
+	ws := res.ws
+	ws.MemBytes, ws.CPUUnits, ws.DiskGB = m.resolveWorkspaceSize(ctx, ws)
+	ws.SlotClass, _ = m.resolveSlotClass(ctx, ws)
+	// Next resolve rebuilds the memo too, so the stale env is not kept for later starts.
+	m.evictMembershipCache(res.ws.MembershipID)
+	return m.runtimeFor(ws, dekHex, append(m.workspaceExtraEnv(ctx, ws), extraEnv...)...)
+}
+
 // rotatePreviewSlug decides which slug THIS start runs under and persists it.
 //
 //   - By default a fresh slug is drawn every time, which is the requirement itself: the
@@ -543,13 +573,21 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 	}
 	// Internal git provider: inject the host + this membership's deterministic git
 	// token so the Agent seeds its cred store (secrets.go seedInternalGit) and
-	// clone/push authenticate transparently. Deterministic, so re-injection on
-	// every start is idempotent. Skipped when PUBLIC_BASE_URL is unset.
+	// clone/push authenticate transparently. Deterministic per epoch, so re-injection
+	// on every start is idempotent. Skipped when PUBLIC_BASE_URL is unset. When the
+	// epoch cannot be read nothing is injected: a token minted under a guessed epoch
+	// would overwrite a working one in the Agent's store with one that fails.
 	if m.internalGitHost != "" && ws.MembershipID != "" {
-		token := mintGitToken(gitSignKey(m.tokenSignMaster()), ws.MembershipID)
-		env = append(env,
-			"AF_INTERNAL_GIT_HOST="+m.internalGitHost,
-			"AF_INTERNAL_GIT_TOKEN="+token)
+		if token, epoch, err := m.currentGitToken(ctx, ws.MembershipID); err != nil {
+			log.Printf("internal git: token for ws %s not injected: %v", ws.ID, err)
+		} else {
+			// The epoch lets the Agent refuse a rotated token's push that arrives after a
+			// later one (handlePutInternalGitToken).
+			env = append(env,
+				"AF_INTERNAL_GIT_HOST="+m.internalGitHost,
+				"AF_INTERNAL_GIT_TOKEN="+token,
+				"AF_INTERNAL_GIT_EPOCH="+strconv.FormatInt(epoch, 10))
+		}
 	}
 	// Memo bridge: inject the CP public base + this membership's memo token so the
 	// in-container fleet operator can read/write the memo queue over the public

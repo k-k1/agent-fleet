@@ -68,6 +68,7 @@ var cpTenantDelegates = map[string]string{
 	"StopWorkspaceByMembership":     "stopWorkspaceByMembership", // ↕ same type; swap = wiped home
 	"CleanHomeByMembership":         "cleanHomeByMembership",     // ↕
 	"ResumeSchedulesHeldByRemoval":  "resumeSchedulesHeldByRemoval",
+	"RotateGitToken":                "rotateGitToken",
 	"StopRemovedMemberWorkspace":    "stopWorkspaceOfRemovedMember",
 	"CloseMembershipConnections":    "memberConns",
 	"DestroyWorkspaceByMembership":  "destroyWorkspaceByMembership", // ↕

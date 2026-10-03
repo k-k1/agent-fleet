@@ -487,6 +487,82 @@ func (a Admin) CleanHome(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"cleaned": body.UserKey, "tenant": t.Slug})
 }
 
+// RotateGitToken (POST /api/admin/rotate-git-token {tenant_slug,user_key}) gives a member a
+// new internal git token (issue #1199, docs/build/91-internal-git.md §91.5): for a token that
+// leaked out of a workspace, without deactivating the membership and without changing the
+// deployment's signing master, which would rotate everybody's.
+//
+// tenant_admin of the member's tenant, or super_admin anywhere: the same gate as
+// stop-workspace and clean-home (TenantAdminFor), and the member is looked up inside that
+// tenant only, so neither a tenant_admin of another tenant nor a member can reach it.
+//
+// Audited intent-first like the other actions an admin cannot undo: once the epoch moves,
+// the old token never verifies again. A removed member can be rotated too, because
+// re-inviting them reactivates the same membership and with it the old token.
+func (a Admin) RotateGitToken(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		UserKey    string `json:"user_key"`
+		TenantSlug string `json:"tenant_slug"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid json"})
+		return
+	}
+	caller, t, ok := a.cp.TenantAdminFor(w, r, body.TenantSlug)
+	if !ok {
+		return
+	}
+	if body.UserKey == "" {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "user_key required"})
+		return
+	}
+	ident, found, err := a.cp.Store().GetIdentityByUserKey(r.Context(), body.UserKey)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
+		return
+	}
+	mem, ok, err := a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
+		return
+	}
+	in, ok := a.beginIrreversible(w, r, store.AuditLog{
+		TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
+		Action: "membership.rotate_git_token", Target: ident.UserKey,
+	})
+	if !ok {
+		return
+	}
+	ctx := context.WithoutCancel(r.Context())
+	epoch, push, found, err := a.cp.RotateGitToken(ctx, mem.ID)
+	if err != nil {
+		refuseIrreversible(w, r, in, internalErr(err))
+		return
+	}
+	if !found {
+		refuseIrreversible(w, r, in, &APIError{http.StatusNotFound, "no_membership", "not a member"})
+		return
+	}
+	in.Done(ctx, fmt.Sprintf("epoch %d, workspace %s", epoch, push), http.StatusOK)
+	writeJSON(w, http.StatusOK, rotateGitTokenAnswer{Rotated: body.UserKey, Tenant: t.Slug, Workspace: push})
+}
+
+// rotateGitTokenAnswer is what POST /api/admin/rotate-git-token answers. Workspace is how the
+// member's running workspace took the new token (control-plane git_token_rotate.go).
+type rotateGitTokenAnswer struct {
+	Rotated   string `json:"rotated"`
+	Tenant    string `json:"tenant"`
+	Workspace string `json:"workspace"`
+}
+
 // homeOpRefusal maps what refused a Clean home or a Destroy to its answer.
 func (a Admin) homeOpRefusal(err error, op string) *APIError {
 	switch {

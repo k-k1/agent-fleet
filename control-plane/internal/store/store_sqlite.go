@@ -1138,6 +1138,35 @@ func (s *SQL) GetMembershipByID(ctx context.Context, membershipID string) (Membe
 	return v, true, nil
 }
 
+func (s *SQL) GitTokenEpoch(ctx context.Context, membershipID string) (int64, bool, error) {
+	var epoch int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT git_token_epoch FROM membership WHERE id=? AND status='active'`, membershipID).Scan(&epoch)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return epoch, true, nil
+}
+
+func (s *SQL) BumpGitTokenEpoch(ctx context.Context, membershipID string) (int64, bool, error) {
+	// One statement, so two concurrent rotations each move the epoch rather than both
+	// writing the same next value.
+	var epoch int64
+	err := s.db.QueryRowContext(ctx,
+		`UPDATE membership SET git_token_epoch = git_token_epoch + 1 WHERE id=? RETURNING git_token_epoch`,
+		membershipID).Scan(&epoch)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return epoch, true, nil
+}
+
 func (s *SQL) IdentityIDForMembership(ctx context.Context, membershipID string) (string, bool, error) {
 	var id string
 	err := s.db.QueryRowContext(ctx,
