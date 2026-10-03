@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -123,21 +124,39 @@ func TestLaunchPipeCDPDelegatesWhenAvailable(t *testing.T) {
 	}
 }
 
-// The same against a real Chromium, where this host can run its sandbox. The environment is
-// judged first and independently of the launcher (a Chromium on PATH, user namespaces
-// available); once both hold, any launch or CDP failure is a regression, not a skip.
+// sandboxPrecondition reports why this host cannot run Chromium's namespace sandbox, or nil
+// when it can. Judged without the code under test, by what that sandbox itself needs: an
+// unprivileged process creating a user namespace, mapping itself to root in it, and creating
+// PID and network namespaces from there. A bare `unshare -U` is not enough: it succeeded on
+// GitHub's Ubuntu 24.04 runner, where a sandboxed Chromium then died (EOF on
+// Browser.getVersion) — that image's AppArmor policy restricts what an unprivileged user
+// namespace may do. A host that could only use the setuid helper skips too: coverage lost
+// there is preferable to a red CI decided by guesswork. A variable so a mutation run can
+// force it.
+var sandboxPrecondition = func() error {
+	unshare, err := exec.LookPath("unshare")
+	if err != nil {
+		return errors.New("unshare is not installed, so user-namespace support cannot be judged")
+	}
+	out, err := exec.Command(unshare, "--user", "--map-root-user", "--pid", "--net", "--fork", "true").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("an unprivileged user namespace with PID and network namespaces cannot be created (%v: %s)",
+			err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// The same against a real Chromium, where this host can run its sandbox. The precondition is
+// judged first and independently of the launcher; once it holds, any launch or CDP failure is
+// a regression and fails the test.
 func TestLaunchPipeCDPStillLaunchesWhenAvailable(t *testing.T) {
 	withUnavailable(t, "")
 	t.Setenv("AF_CHROMIUM_NO_SANDBOX", "")
 	if _, err := findChromiumBinary(); err != nil {
 		t.Skip("Chromium is not installed in this test environment")
 	}
-	unshare, err := exec.LookPath("unshare")
-	if err != nil {
-		t.Skip("unshare is not installed, so whether user namespaces work cannot be judged")
-	}
-	if err := exec.Command(unshare, "-U", "true").Run(); err != nil {
-		t.Skipf("user namespaces are not available here, so Chromium's sandbox cannot start: %v", err)
+	if err := sandboxPrecondition(); err != nil {
+		t.Skipf("Chromium's sandbox cannot run on this host: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
