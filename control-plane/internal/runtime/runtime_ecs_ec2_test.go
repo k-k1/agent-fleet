@@ -705,8 +705,11 @@ func (f *fakeEC2) TerminateInstances(ctx context.Context, in *ec2.TerminateInsta
 }
 
 type fakeSSMCmd struct {
-	mu       sync.Mutex
+	mu sync.Mutex
+	// commands is what each script runs on the slot, by its helper line (ssmHelperLine);
+	// scripts is the full text sent.
 	commands []string
+	scripts  []string
 	fail     map[string]bool // substring of the command -> fail it
 	// sink shares the EC2 fake's call log so a test can assert the ORDER of an SSM
 	// command against an EC2 call — "umount before detach" spans both.
@@ -719,7 +722,9 @@ type fakeSSMCmd struct {
 func (f *fakeSSMCmd) SendCommand(_ context.Context, in *ssm.SendCommandInput, _ ...func(*ssm.Options)) (*ssm.SendCommandOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	cmd := in.Parameters["commands"][0]
+	script := in.Parameters["commands"][0]
+	cmd := ssmHelperLine(script)
+	f.scripts = append(f.scripts, script)
 	f.commands = append(f.commands, cmd)
 	if f.sink != nil {
 		f.sink.log("SSM %s", cmd)
@@ -730,6 +735,18 @@ func (f *fakeSSMCmd) SendCommand(_ context.Context, in *ssm.SendCommandInput, _ 
 	// The command id carries the command text so GetCommandInvocation can decide
 	// whether this particular step is the one the test wants to fail.
 	return &ssm.SendCommandOutput{Command: &ssmtypes.Command{CommandId: aws.String(cmd)}}, nil
+}
+
+// ssmHelperLine is the line of a slot script that calls af-mount or af-umount, or the
+// whole script when it calls neither. The mount and umount scripts wrap the helper in
+// dead-mount handling (homeMountCommand); what most tests assert is which helper ran.
+func ssmHelperLine(script string) string {
+	for _, l := range strings.Split(script, "\n") {
+		if l = strings.TrimSpace(l); strings.HasPrefix(l, "af-mount ") || strings.HasPrefix(l, "af-umount ") {
+			return strings.TrimSuffix(l, " || exit 1")
+		}
+	}
+	return script
 }
 
 func (f *fakeSSMCmd) GetCommandInvocation(_ context.Context, in *ssm.GetCommandInvocationInput, _ ...func(*ssm.Options)) (*ssm.GetCommandInvocationOutput, error) {
