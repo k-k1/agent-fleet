@@ -102,6 +102,12 @@ func (a previewHostAPI) serve(w http.ResponseWriter, r *http.Request, ph preview
 		previewNotFound(w)
 		return
 	}
+	// A removed owner's workspace serves nobody, public mode included: it is being
+	// stopped (or failed to stop), and what it serves is no longer anyone's to share.
+	if _, active, err := a.mgr.store.GetMembershipByID(ctx, ws.MembershipID); err != nil || !active {
+		previewNotFound(w)
+		return
+	}
 	st := parseWSSettings(mustSettings(ctx, a.mgr, ws.ID))
 	if !previewPortAllowed(st, ph.port) {
 		previewNotFound(w) // a port off the allowlist "does not exist" (decision 6)
@@ -133,9 +139,13 @@ func (a previewHostAPI) serve(w http.ResponseWriter, r *http.Request, ph preview
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if !st.PreviewPublic && !a.authorized(ctx, r, ph, ws, st) {
-		a.startHandshake(w, r, ph)
-		return
+	var viewer string
+	if !st.PreviewPublic {
+		var ok bool
+		if viewer, ok = a.authorized(ctx, r, ph, ws, st); !ok {
+			a.startHandshake(w, r, ph)
+			return
+		}
 	}
 	if err := a.mgr.touchWorkspace(ctx, ws.ID); err != nil {
 		http.Error(w, "workspace unavailable", http.StatusServiceUnavailable)
@@ -155,7 +165,12 @@ func (a previewHostAPI) serve(w http.ResponseWriter, r *http.Request, ph preview
 		identityHeader: a.mgr.emailHeader,
 		allowOrigin:    allowOrigin,
 	}
-	relayPreview(w, r, rt, opts)
+	// Authorisation is decided once per request, and a WebSocket or SSE relay is one
+	// request for as long as it stays open: filing it under the viewer and the owner lets
+	// removing either of them close it (member_removal.go).
+	rctx, untrack := a.mgr.memberConns.track(r.Context(), viewer, ws.MembershipID)
+	defer untrack()
+	relayPreview(w, r.WithContext(rctx), rt, opts)
 }
 
 // previewNotFound answers everything we refuse with the same bare 404 — a wrong slug,
@@ -190,19 +205,19 @@ func mustSettings(ctx context.Context, m *manager, wsID string) string {
 // (previewViewerAllowed / ADR 0062 decision 15). The cookie lives 12 hours, so baking the
 // permission into it would keep it alive after sharing is switched off or the person is
 // removed from the tenant.
-func (a previewHostAPI) authorized(ctx context.Context, r *http.Request, ph previewHost, ws store.Workspace, st wsSettings) bool {
+func (a previewHostAPI) authorized(ctx context.Context, r *http.Request, ph previewHost, ws store.Workspace, st wsSettings) (viewer string, ok bool) {
 	c, err := r.Cookie(previewAuthCookie)
 	if err != nil || c.Value == "" {
-		return false
+		return "", false
 	}
 	cl, ok := a.verifyClaims(c.Value)
 	if !ok {
-		return false
+		return "", false
 	}
 	if cl.Slug != ph.slug || cl.Port != ph.port {
-		return false
+		return "", false
 	}
-	return previewViewerAllowed(ctx, a.mgr, ws, st, cl.MembershipID)
+	return cl.MembershipID, previewViewerAllowed(ctx, a.mgr, ws, st, cl.MembershipID)
 }
 
 func (a previewHostAPI) verifyClaims(s string) (previewClaims, bool) {

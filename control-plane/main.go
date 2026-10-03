@@ -321,6 +321,9 @@ func main() {
 		backupDef := time.Duration(runtime.EnvInt("AF_ECS_EC2_BACKUP_EVERY_SEC", 0)) * time.Second
 		go newReaper(mgr, iv, sessDef, interDef, wsDef, hibDef, backupDef).run(context.Background())
 	}
+	// Not behind AF_IDLE_SWEEP_INTERVAL: switching idle-stop off must not leave a removed
+	// member's workspace running (member_removal.go).
+	go mgr.runRemovedMemberSweep(context.Background(), removedMemberSweepInterval)
 
 	// Golden snapshot auto-bake (ecs-ec2 only — ADR 0045 decision 9 / docs/log/64 §64.28).
 	// The CP already refuses a golden stamped with another image; this is the CP acting

@@ -455,6 +455,9 @@ func (a agentProxyAPI) terminal(w http.ResponseWriter, r *http.Request, res *res
 		return
 	}
 	defer down.Close()
+	// A hijacked socket does not watch the request context, and removing the member
+	// cancels it (memberConnRegistry): close the socket so the relay below ends.
+	defer context.AfterFunc(r.Context(), func() { down.Close() })()
 
 	errc := make(chan error, 2)
 	go relay(up, down, errc, nil)       // agent -> browser
