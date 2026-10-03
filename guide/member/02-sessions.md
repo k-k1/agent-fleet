@@ -669,6 +669,16 @@ one ("tell the session next door what we just did").
   stopping the session or the workspace, or the Agent restarting: the message waits on disk and
   becomes the session's first turn when it next starts, stamped with the time it was queued.
   Archiving or deleting the session, or switching it to Terminal (CLI), drops it.
+- **A session waiting on your answer gets it after you answer.** While a session shows a
+  question, a plan to approve or a permission prompt, a message sent to it waits instead of
+  being refused (typed into the dialog, it would pick an answer for you). Its chat view says how
+  many messages from which session will be delivered after you answer, and **Drop** discards one
+  so it is never delivered. Once you have answered and the turn that answer started has ended,
+  they arrive one at a time, oldest first, stamped with the time they were queued; the sender is
+  told its message is waiting and does not resend. They wait up to 24 hours (20 per session),
+  survive the session or the Agent stopping, and are dropped when the session is archived or
+  deleted. Expired login and the usage-limit menu still refuse: those can last for hours, and
+  the sender is better off knowing.
 - **Only plain text travels.** No conversation history, no files. To pass the context itself,
   use the handoff or the branch above.
 - **Raw shell sessions (shell / ssm) can neither send nor receive**, because the text sent to

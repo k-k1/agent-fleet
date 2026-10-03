@@ -241,6 +241,8 @@ func serve() {
 	// Held peer messages no start will deliver are swept before reconciliation delivers the
 	// rest (#1255): a crash can leave them behind a deleted or archived session.
 	agents.SweepHeld()
+	// Peer messages waiting for a user's answer (#1031) get their delivery loops back.
+	sessionx.ResumePendingPeers()
 	go opencode.ReconcileManaged("agent boot")
 	go codex.ReconcileManaged("agent boot")
 	go copilot.ReconcileManaged("agent boot")

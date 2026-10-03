@@ -260,6 +260,24 @@ func (l *peerLimiter) allow(from, to, message string, now time.Time) error {
 	return nil
 }
 
+// check applies the rate window to from without recording a send or looking at duplicates:
+// a queued message's delivery (peer_pending.go), which was counted when it was queued.
+func (l *peerLimiter) check(from string, now time.Time) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, t := range l.sends[from] {
+		if now.Sub(t) < peerRateWindow {
+			n++
+		}
+	}
+	if n >= peerRatePerWindow {
+		return peerReject("peer_rate_limited",
+			"送信が多すぎます（%s あたり %d 通まで）", peerRateWindow, peerRatePerWindow)
+	}
+	return nil
+}
+
 // pruneLocked drops stale duplicate keys. Left alone they grow memory monotonically in a
 // long-lived Agent.
 func (l *peerLimiter) pruneLocked(now time.Time) {
