@@ -15,7 +15,7 @@
 // translation adds (§97.12) is not a timer either: it is the same press, made once, on the
 // transcript's own "this turn just finished" edge, and only for a reader who turned it on.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { api, errText, type ApiError } from "../../core/api/client.ts";
 import {
   splitForTranslate,
@@ -56,12 +56,15 @@ interface TranslateState {
   errors: Map<string, string>;
 }
 
-const emptyState = (): TranslateState => ({
+// The one empty state, shared by every key nothing has been written to yet. Never mutated (every
+// write builds a new state), and it has to be ONE object: useSyncExternalStore compares snapshots
+// by identity, and a fresh empty per read would re-render forever.
+const EMPTY: TranslateState = {
   entries: new Map(),
   shown: new Set(),
   busy: new Set(),
   errors: new Map(),
-});
+};
 
 // Stashed per session+language at module level, the same way parts/sendEcho.ts's echoStore
 // stashes un-landed prompts. A pane can keep this hook's owner mounted across a session switch
@@ -71,8 +74,31 @@ const emptyState = (): TranslateState => ({
 // (session_translate.go's store knows only the cached TEXT, not which turns currently have it
 // on screen). Without this, looking at another tab and back flipped an open translation back to
 // the original on its own — the one thing a toggle must never do by itself.
+//
+// The stash is the state itself, not a copy written from inside a setState updater. A press
+// takes tens of seconds, and React never runs an updater queued on an unmounted component: a
+// reply that landed after the pane remounted used to reach nobody, leaving the new pane with the
+// press's `busy` for good — a disabled button over the original text (#1589).
 const stateStore = new Map<string, TranslateState>();
+const listeners = new Map<string, Set<() => void>>();
 const storeKey = (session: string, lang: string): string => session + "\u0000" + lang;
+
+const readStore = (key: string): TranslateState => stateStore.get(key) ?? EMPTY;
+
+function writeStore(key: string, fn: (prev: TranslateState) => TranslateState): void {
+  stateStore.set(key, fn(readStore(key)));
+  for (const l of listeners.get(key) ?? []) l();
+}
+
+function subscribeStore(key: string, l: () => void): () => void {
+  let set = listeners.get(key);
+  if (!set) listeners.set(key, (set = new Set()));
+  set.add(l);
+  return () => {
+    set.delete(l);
+    if (!set.size) listeners.delete(key);
+  };
+}
 
 // Turns the automatic press has already fired on, for the life of the tab. Deliberately never
 // cleared — not when the reader flips back to the original, not on a remount, not after a
@@ -95,27 +121,18 @@ export interface TranslateOptions {
 }
 
 export function useTranslate({ session, lang, enabled, auto = false }: TranslateOptions): TranscriptTranslateWiring | undefined {
-  const [state, setState] = useState<TranslateState>(() => stateStore.get(storeKey(session, lang)) ?? emptyState());
-  // The state is replaced wholesale on every change (a new Map/Set per mutation) so the memo
-  // below changes identity and the transcript repaints. toggle() must not close over a stale
-  // copy though — presses can overlap with the open fetch — so writes go through the updater
-  // form, and this ref is only for the "do I already have it" read.
-  const latest = useRef(state);
-  latest.current = state;
-
-  // Write-through: every state change is stashed under this session+language so a remount, or
-  // this same hook instance reused for a different session prop, can restore exactly where the
-  // reader left off (see stateStore above).
-  const apply = useCallback(
-    (fn: (prev: TranslateState) => TranslateState) => {
-      setState((prev) => {
-        const next = fn(prev);
-        stateStore.set(storeKey(session, lang), next);
-        return next;
-      });
-    },
-    [session, lang],
+  const stashKey = storeKey(session, lang);
+  // Every instance on this session+language reads the same stash, so whichever one is mounted
+  // when a reply lands repaints with it. The state is replaced wholesale on every change (a new
+  // Map/Set per mutation), so the memo below changes identity and the transcript repaints.
+  const state = useSyncExternalStore(
+    useCallback((l: () => void) => subscribeStore(stashKey, l), [stashKey]),
+    () => readStore(stashKey),
   );
+
+  // Bound to the key at the moment of the press, not to whatever this instance shows when the
+  // reply lands: a reused MirrorView may have moved on to another session by then.
+  const apply = useCallback((fn: (prev: TranslateState) => TranslateState) => writeStore(stashKey, fn), [stashKey]);
 
   // What this session already has translated, once per session/language. Restored from the
   // module stash first (so a session this pane already had open does not flash back to "nothing
@@ -126,7 +143,6 @@ export function useTranslate({ session, lang, enabled, auto = false }: Translate
   // reused MirrorView swapping the session/lang props). On a key both sides hold, the two values
   // are the same translation of the same source text, so which one wins does not matter.
   useEffect(() => {
-    setState(stateStore.get(storeKey(session, lang)) ?? emptyState());
     if (!session || !enabled) return;
     let alive = true;
     void api(`api/sessions/${q(session)}/translations?lang=${lang}`).then((j: TranslationsReply | { error?: unknown }) => {
@@ -143,7 +159,9 @@ export function useTranslate({ session, lang, enabled, auto = false }: Translate
   const toggle = useCallback(
     (key: string, texts: string[], trigger: "manual" | "auto" = "manual") => {
       if (!key || !texts.length) return;
-      const held = latest.current;
+      // Read at press time rather than from the rendered snapshot: presses can overlap with the
+      // open fetch, and a render-time copy may already be stale.
+      const held = readStore(storeKey(session, lang));
       if (held.shown.has(key)) {
         apply((prev) => {
           const shown = new Set(prev.shown);

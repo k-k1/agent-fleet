@@ -124,10 +124,84 @@ describe("useTranslate — surviving a tab switch", () => {
     // A chat-to-terminal tab switch unmounts MirrorView entirely (Pane.tsx's showMirror branch).
     unmount();
     mount("remount-a");
-    // Restored synchronously from the module stash by the lazy initializer — true even before
+    // Read synchronously from the module stash on the first render — true even before
     // the GET /translations re-fetch (which is asserted below to still fire and not clobber it).
     expect(latest()!.shown(KEY)).toBe(true);
     expect(latest()!.get(TEXT)).toBe("訳:" + TEXT);
+    await flush();
+    expect(latest()!.shown(KEY)).toBe(true);
+    expect(latest()!.get(TEXT)).toBe("訳:" + TEXT);
+  });
+});
+
+// A press takes tens of seconds, so a pane remounting (or a reused MirrorView switching session)
+// while one is in flight is ordinary. Each test holds the POST open, moves the pane, then lets
+// the reply land.
+describe("useTranslate — a reply that lands after the pane moved (#1589)", () => {
+  function holdNextPost(reply: unknown): () => Promise<void> {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    apiMock.mockImplementationOnce(async (path: string, opts?: RequestInit) => {
+      calls.push({ path, opts });
+      await gate;
+      return reply;
+    });
+    return async () => {
+      release();
+      await flush();
+    };
+  }
+
+  it("shows the translation in the pane mounted after the press", async () => {
+    mount("inflight-remount");
+    await flush();
+    const land = holdNextPost({ lang: "ja", parts: [{ hash: KEY, text: "訳:" + TEXT, cached: false }] });
+    act(() => latest()!.toggle(KEY, [TEXT]));
+    await flush();
+    unmount();
+    mount("inflight-remount");
+    await flush();
+    expect(latest()!.busy(KEY)).toBe(true);
+
+    await land();
+    expect(latest()!.busy(KEY)).toBe(false);
+    expect(latest()!.shown(KEY)).toBe(true);
+    expect(latest()!.get(TEXT)).toBe("訳:" + TEXT);
+  });
+
+  it("lets the reader press again after a failure that landed in the remounted pane", async () => {
+    mount("inflight-remount-fail");
+    await flush();
+    const land = holdNextPost({ error: { code: "generation_failed", message: "translation failed" } });
+    act(() => latest()!.toggle(KEY, [TEXT]));
+    await flush();
+    unmount();
+    mount("inflight-remount-fail");
+    await flush();
+
+    await land();
+    expect(latest()!.busy(KEY)).toBe(false);
+    expect(latest()!.error(KEY)).toBe("translation failed");
+
+    act(() => latest()!.toggle(KEY, [TEXT]));
+    await flush();
+    expect(latest()!.shown(KEY)).toBe(true);
+  });
+
+  it("files the reply under the session that was pressed, not the one on screen when it lands", async () => {
+    mount("inflight-swap-a");
+    await flush();
+    const land = holdNextPost({ lang: "ja", parts: [{ hash: KEY, text: "訳:" + TEXT, cached: false }] });
+    act(() => latest()!.toggle(KEY, [TEXT]));
+    await flush();
+    switchTo("inflight-swap-b");
+    await flush();
+
+    await land();
+    expect(latest()!.shown(KEY)).toBe(false);
+    expect(latest()!.get(TEXT)).toBeUndefined();
+
+    switchTo("inflight-swap-a");
     await flush();
     expect(latest()!.shown(KEY)).toBe(true);
     expect(latest()!.get(TEXT)).toBe("訳:" + TEXT);
