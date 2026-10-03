@@ -323,6 +323,10 @@ jobs:
       # accepted is decided here, so it is tested here.
       - name: CLI pin bump decisions (real script, stub drift/gh/curl)
         run: ./deploy/local/cli-pin-bump-stub-test.sh
+      # The daily apt-pins job in cli-drift.yml reads live Debian indexes; its verdicts
+      # (missing for one architecture, unreadable index) are pinned here on fixtures.
+      - name: Debian package pin check (real script, fixture indexes)
+        run: ./deploy/local/apt-pin-check-test.sh
 
   console:
     needs: changes

@@ -115,6 +115,19 @@ jobs:
           gh issue close "${{ steps.issue.outputs.num }}" \
             --comment "Pins have caught up to npm latest (cli-drift.yml)."
 
+  # Debian package pins (workspace/Dockerfile `ARG CHROMIUM_VERSION`). trixie-security
+  # keeps only the current build, so a pin vanishes the day Debian ships the next update,
+  # possibly for one architecture first; the next uncached image build then fails. Unlike
+  # CLI drift this is not a steady state — the image cannot be built — so the job goes
+  # red, and its output names the version served on every architecture to bump to.
+  apt-pins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: pinned Debian packages are served for amd64 and arm64
+        run: deploy/local/apt-pin-check.sh
+
   # プラン決着の文言ドリフト（クレデンシャル不要・毎日）。
   #
   # 上の drift ジョブが答えるのは「ピンが遅れているか」だけで、**上流が文言を変えたか**は
