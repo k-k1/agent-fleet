@@ -60,8 +60,8 @@ const ecsHomeTaskPoll = 5 * time.Second
 // of the operation (HomeTaskBinding) is what resolves a marker that never would on its
 // own: its reconciler asks RunTask again under the operation's clientToken, which names the
 // task a lost answer started, or starts the removal again once ECS has forgotten both. A
-// pending marker no record covers is released when ECS still lists its task stopped
-// (releaseProvenPending). Only such a marker whose task ECS no longer lists, and one whose
+// pending marker without a token is released when ECS proves its task stopped
+// (releaseProvenPending). Only such a marker ECS cannot prove, and one whose
 // task was not seen stopped within the time the token is sure to last (mayRunAgain), are
 // the operator's to delete (guide/ref/deploy-targets.md, note 7).
 const (
@@ -190,28 +190,39 @@ func (e *ecsRuntime) logStuckMarker(value string, at *time.Time, why string) {
 		"and no task started by %s running, delete the marker to release it", e.name, why, e.homeTaskMarker(), value, e.homeTaskStartedBy())
 }
 
-// homeTaskClockSkew allows for SSM's and ECS's clocks where a task's creation is compared
-// with the marker's write.
-const homeTaskClockSkew = 5 * time.Second
+// homeTaskProofMargin is how far before a pending marker's write a task of the same member
+// makes the proof ambiguous. The marker is written before RunTask, so its own task was
+// created after it. A task created shortly before it is an earlier operation's, and
+// SSM's and ECS's clocks are not exact enough to tell the two apart by seconds.
+const homeTaskProofMargin = time.Minute
+
+// errHomeTaskProofIncomplete is an ECS answer that does not account for every task listed.
+var errHomeTaskProofIncomplete = errors.New("ECS did not describe every listed home task")
 
 // releaseProvenPending drops a pending marker whose task ECS shows finished, and reports
-// whether it did. A CP lost between RunTask and its answer leaves one. With the operation's
-// record the reconciler resolves it under the token; a marker no record covers (one a CP
-// before #1603 left, or a path that opened none) otherwise waited for an operator.
+// whether it did. A CP lost between RunTask and its answer leaves one. A marker that carries
+// an operation's token is that operation's record's to resolve (the reconciler asks RunTask
+// again under the token, which names the task) and is never released here. A marker
+// without one (a CP before #1544 wrote it, or a path that bound no record) otherwise waited
+// for an operator.
 //
 // The proof is all of: the marker is older than homeTaskMissingGrace (listings lag), no
-// task started for this member is listed running, and exactly one task started for this
-// member after the marker was written is listed stopped, seen STOPPED with exit 0. Anything
-// else — none (ECS forgets a stopped task after about an hour), two, one still stopping,
-// one that failed — is ambiguous, and the marker stays. The creation time is what keeps an
-// earlier operation's task out: the golden seed's membership is reused by every bake, so
-// its earlier Destroy tasks carry the same startedBy.
+// task started for this member is listed running, every task listed under the home task's
+// family with desired status STOPPED is described with its startedBy and creation time,
+// every one of this member's reads STOPPED, none was created within homeTaskProofMargin
+// before the marker, and exactly one was created after it — and it exited 0. Anything else
+// is ambiguous, and the marker stays: none (ECS forgets a stopped task after about an hour),
+// two, one still stopping, one that failed, an incomplete answer. Creation time is what
+// separates an earlier operation's task, which matters for the golden seed: its membership
+// is reused by every bake.
 //
-// Every caller holds the member's lifecycle lease, so no other operation of this member
-// writes a marker in between; it is read again before the delete all the same. A record
-// still open for the marker's own operation loses nothing: its reconciler, finding no
-// marker, sends RunTask again under the same token and is answered the same stopped task.
+// Every caller holds the member's lifecycle lease, and a CP that wrote a marker without a
+// token is gone or still holds that lease, so no operation of this member writes a marker in
+// between; it is read again before the delete all the same.
 func (e *ecsRuntime) releaseProvenPending(ctx context.Context, value string, at time.Time) bool {
+	if _, token := parseMarker(value); token != "" {
+		return false
+	}
 	if at.IsZero() || time.Since(at) < homeTaskMissingGrace {
 		return false
 	}
@@ -222,18 +233,27 @@ func (e *ecsRuntime) releaseProvenPending(ctx context.Context, value string, at 
 	if err != nil || len(running.TaskArns) > 0 {
 		return false
 	}
-	stopped, err := e.stoppedHomeTasksSince(ctx, at.Add(-homeTaskClockSkew))
+	mine, err := e.stoppedHomeTasks(ctx)
 	if err != nil {
 		log.Printf("ecs: look for the task behind the pending home marker of %s: %v", e.name, err)
 		return false
 	}
-	if len(stopped) != 1 {
+	var found []ecstypes.Task
+	for _, t := range mine {
+		created := aws.ToTime(t.CreatedAt)
+		switch {
+		case aws.ToString(t.LastStatus) != string(ecstypes.DesiredStatusStopped):
+			return false // still stopping: it may be writing the home
+		case !created.Before(at):
+			found = append(found, t)
+		case !created.Before(at.Add(-homeTaskProofMargin)):
+			return false // too close to the marker to say whose it is
+		}
+	}
+	if len(found) != 1 || homeTaskOutcome(found[0], "") != nil {
 		return false
 	}
-	t := stopped[0]
-	if aws.ToString(t.LastStatus) != string(ecstypes.DesiredStatusStopped) || homeTaskOutcome(t, "") != nil {
-		return false
-	}
+	t := found[0]
 	cur, err := e.ssm.GetParameter(ctx, &ssm.GetParameterInput{Name: aws.String(e.homeTaskMarker())})
 	if err != nil || aws.ToString(cur.Parameter.Value) != value || !aws.ToTime(cur.Parameter.LastModifiedDate).Equal(at) {
 		return false
@@ -253,10 +273,13 @@ func (e *ecsRuntime) releaseProvenPending(ctx context.Context, value string, at 
 	return true
 }
 
-// stoppedHomeTasksSince lists the home tasks started for this member, created at or after
-// since, that ECS lists under desired status STOPPED. A ListTasks filtered by startedBy
-// takes no other filter, so the home task's family is listed and startedBy read from each.
-func (e *ecsRuntime) stoppedHomeTasksSince(ctx context.Context, since time.Time) ([]ecstypes.Task, error) {
+// stoppedHomeTasks describes every task ECS lists under the home task's family with desired
+// status STOPPED, and returns this member's. A ListTasks filtered by startedBy takes no other
+// filter, so the family is listed and startedBy read from each. An answer that leaves any
+// listed task unaccounted for — a failure entry, a task missing from the answer, one without
+// startedBy or, for this member's, without its creation time — is errHomeTaskProofIncomplete:
+// the task it hides could be this member's, still running.
+func (e *ecsRuntime) stoppedHomeTasks(ctx context.Context) ([]ecstypes.Task, error) {
 	var arns []string
 	var token *string
 	for {
@@ -276,16 +299,35 @@ func (e *ecsRuntime) stoppedHomeTasksSince(ctx context.Context, since time.Time)
 	var mine []ecstypes.Task
 	for len(arns) > 0 {
 		n := min(len(arns), 100) // DescribeTasks takes at most 100
-		out, err := e.tasks.DescribeTasks(ctx, &ecs.DescribeTasksInput{Cluster: aws.String(e.cfg.cluster), Tasks: arns[:n]})
+		batch := arns[:n]
+		arns = arns[n:]
+		out, err := e.tasks.DescribeTasks(ctx, &ecs.DescribeTasksInput{Cluster: aws.String(e.cfg.cluster), Tasks: batch})
 		if err != nil {
 			return nil, fmt.Errorf("describe stopped home tasks: %w", err)
 		}
+		if len(out.Failures) > 0 {
+			return nil, fmt.Errorf("%w: %s %s", errHomeTaskProofIncomplete,
+				aws.ToString(out.Failures[0].Arn), aws.ToString(out.Failures[0].Reason))
+		}
+		described := map[string]bool{}
 		for _, t := range out.Tasks {
-			if aws.ToString(t.StartedBy) == e.homeTaskStartedBy() && t.CreatedAt != nil && !t.CreatedAt.Before(since) {
-				mine = append(mine, t)
+			described[aws.ToString(t.TaskArn)] = true
+			if t.StartedBy == nil {
+				return nil, fmt.Errorf("%w: %s has no startedBy", errHomeTaskProofIncomplete, aws.ToString(t.TaskArn))
+			}
+			if aws.ToString(t.StartedBy) != e.homeTaskStartedBy() {
+				continue
+			}
+			if t.CreatedAt == nil {
+				return nil, fmt.Errorf("%w: %s has no creation time", errHomeTaskProofIncomplete, aws.ToString(t.TaskArn))
+			}
+			mine = append(mine, t)
+		}
+		for _, arn := range batch {
+			if !described[arn] {
+				return nil, fmt.Errorf("%w: %s is missing from the answer", errHomeTaskProofIncomplete, arn)
 			}
 		}
-		arns = arns[n:]
 	}
 	return mine, nil
 }

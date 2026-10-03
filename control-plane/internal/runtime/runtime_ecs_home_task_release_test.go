@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -12,10 +14,15 @@ import (
 )
 
 // fakeTasksHistory adds what ECS still lists under the home task's family with desired
-// status STOPPED: the tasks of operations whose answers were lost.
+// status STOPPED: the tasks of operations whose answers were lost. pageSize splits the
+// listing into pages; failARN is answered as a DescribeTasks failure and dropARN left out
+// of the answer without one.
 type fakeTasksHistory struct {
 	fakeTasks
-	history []ecstypes.Task
+	history          []ecstypes.Task
+	pageSize         int
+	failARN, dropARN string
+	describedBatches []int
 }
 
 const fakeHomeFamily = "af-stack-home-ops"
@@ -30,22 +37,44 @@ func (f *fakeTasksHistory) ListTasks(ctx context.Context, in *ecs.ListTasksInput
 		for _, t := range f.history {
 			arns = append(arns, aws.ToString(t.TaskArn))
 		}
-		return &ecs.ListTasksOutput{TaskArns: arns}, nil
+		from := 0
+		if in.NextToken != nil {
+			from, _ = strconv.Atoi(aws.ToString(in.NextToken))
+		}
+		to := len(arns)
+		if f.pageSize > 0 && from+f.pageSize < to {
+			to = from + f.pageSize
+		}
+		out := &ecs.ListTasksOutput{TaskArns: arns[from:to]}
+		if to < len(arns) {
+			out.NextToken = aws.String(strconv.Itoa(to))
+		}
+		return out, nil
 	}
 	return f.fakeTasks.ListTasks(ctx, in, opts...)
 }
 
 func (f *fakeTasksHistory) DescribeTasks(ctx context.Context, in *ecs.DescribeTasksInput, opts ...func(*ecs.Options)) (*ecs.DescribeTasksOutput, error) {
-	var out []ecstypes.Task
+	out := &ecs.DescribeTasksOutput{}
+	inHistory := false
 	for _, arn := range in.Tasks {
 		for _, t := range f.history {
-			if aws.ToString(t.TaskArn) == arn {
-				out = append(out, t)
+			if aws.ToString(t.TaskArn) != arn {
+				continue
+			}
+			inHistory = true
+			switch arn {
+			case f.failARN:
+				out.Failures = append(out.Failures, ecstypes.Failure{Arn: aws.String(arn), Reason: aws.String("MISSING")})
+			case f.dropARN:
+			default:
+				out.Tasks = append(out.Tasks, t)
 			}
 		}
 	}
-	if len(out) == len(in.Tasks) {
-		return &ecs.DescribeTasksOutput{Tasks: out}, nil
+	if inHistory {
+		f.describedBatches = append(f.describedBatches, len(in.Tasks))
+		return out, nil
 	}
 	return f.fakeTasks.DescribeTasks(ctx, in, opts...)
 }
@@ -64,22 +93,47 @@ func TestECSPendingMarkerIsReleasedOnlyOnECSsProof(t *testing.T) {
 	writtenAt := time.Now().Add(-10 * time.Minute)
 	after := writtenAt.Add(3 * time.Second)
 	const me = "af-home/M-1"
+	earlier := writtenAt.Add(-3 * time.Second)
+	lost := homeTaskAt("arn:task/lost", me, "STOPPED", after, exit(0))
+	noStartedBy := homeTaskAt("arn:task/manual", "", "STOPPED", after, exit(0))
+	noStartedBy.StartedBy = nil
+	noCreated := homeTaskAt("arn:task/lost", me, "STOPPED", after, exit(0))
+	noCreated.CreatedAt = nil
+	// 150 tasks of other members around one of ours: two listing pages, two describe batches.
+	var crowd []ecstypes.Task
+	for i := range 150 {
+		crowd = append(crowd, homeTaskAt(fmt.Sprintf("arn:task/other-%d", i), fmt.Sprintf("af-home/M-%d", i+2), "STOPPED", after, exit(0)))
+	}
+	crowd = append(crowd[:120], append([]ecstypes.Task{lost}, crowd[120:]...)...)
 	for _, c := range []struct {
 		name     string
 		value    string
 		at       time.Time
 		history  []ecstypes.Task
 		inflight []string
+		pageSize int
+		fail     string
+		drop     string
 		release  bool
 	}{
 		{name: "the task stopped with exit 0", value: "pending", at: writtenAt, release: true,
-			history: []ecstypes.Task{homeTaskAt("arn:task/lost", me, "STOPPED", after, exit(0))}},
-		{name: "the marker carries the operation's token", value: "pending tok-1", at: writtenAt, release: true,
-			history: []ecstypes.Task{homeTaskAt("arn:task/lost", me, "STOPPED", after, exit(0))}},
+			history: []ecstypes.Task{lost}},
+		{name: "an earlier operation long before the marker", value: "pending", at: writtenAt, release: true,
+			history: []ecstypes.Task{homeTaskAt("arn:task/last-bake", me, "STOPPED", writtenAt.Add(-time.Hour), exit(0)), lost}},
+		{name: "past one page and one describe batch", value: "pending", at: writtenAt, release: true,
+			history: crowd, pageSize: 100},
+		{name: "the marker carries an operation's token", value: "pending tok-1", at: writtenAt,
+			history: []ecstypes.Task{lost}},
 		{name: "another task of the member is running", value: "pending", at: writtenAt, inflight: []string{"arn:task/other"},
-			history: []ecstypes.Task{homeTaskAt("arn:task/lost", me, "STOPPED", after, exit(0))}},
+			history: []ecstypes.Task{lost}},
 		{name: "only an earlier operation's task is listed", value: "pending", at: writtenAt,
-			history: []ecstypes.Task{homeTaskAt("arn:task/last-bake", me, "STOPPED", writtenAt.Add(-time.Minute), exit(0))}},
+			history: []ecstypes.Task{homeTaskAt("arn:task/last-bake", me, "STOPPED", writtenAt.Add(-time.Hour), exit(0))}},
+		{name: "an earlier operation's task just before the marker, ours not listed yet", value: "pending", at: writtenAt,
+			history: []ecstypes.Task{homeTaskAt("arn:task/last-op", me, "STOPPED", earlier, exit(0))}},
+		{name: "an earlier operation's task just before the marker beside ours", value: "pending", at: writtenAt,
+			history: []ecstypes.Task{homeTaskAt("arn:task/last-op", me, "STOPPED", earlier, exit(0)), lost}},
+		{name: "an older task of the member still stopping", value: "pending", at: writtenAt,
+			history: []ecstypes.Task{homeTaskAt("arn:task/old", me, "DEACTIVATING", writtenAt.Add(-time.Hour), nil), lost}},
 		{name: "the task failed", value: "pending", at: writtenAt,
 			history: []ecstypes.Task{homeTaskAt("arn:task/lost", me, "STOPPED", after, exit(1))}},
 		{name: "the task never ran its command", value: "pending", at: writtenAt,
@@ -89,6 +143,14 @@ func TestECSPendingMarkerIsReleasedOnlyOnECSsProof(t *testing.T) {
 		{name: "two tasks after the marker", value: "pending", at: writtenAt,
 			history: []ecstypes.Task{homeTaskAt("arn:task/a", me, "STOPPED", after, exit(0)),
 				homeTaskAt("arn:task/b", me, "STOPPED", after.Add(time.Second), exit(0))}},
+		{name: "a listed task answered as a failure", value: "pending", at: writtenAt, fail: "arn:task/b",
+			history: []ecstypes.Task{lost, homeTaskAt("arn:task/b", me, "STOPPED", after, exit(0))}},
+		{name: "a listed task missing from the answer", value: "pending", at: writtenAt, drop: "arn:task/b",
+			history: []ecstypes.Task{lost, homeTaskAt("arn:task/b", me, "STOPPED", after, exit(0))}},
+		{name: "a listed task without startedBy", value: "pending", at: writtenAt,
+			history: []ecstypes.Task{lost, noStartedBy}},
+		{name: "the member's task without a creation time", value: "pending", at: writtenAt,
+			history: []ecstypes.Task{noCreated}},
 		{name: "only another member's task", value: "pending", at: writtenAt,
 			history: []ecstypes.Task{homeTaskAt("arn:task/lost", "af-home/M-2", "STOPPED", after, exit(0))}},
 		{name: "ECS no longer lists the task", value: "pending", at: writtenAt},
@@ -97,7 +159,8 @@ func TestECSPendingMarkerIsReleasedOnlyOnECSsProof(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			fs := &fakeSSM{}
-			ft := &fakeTasksHistory{fakeTasks: fakeTasks{inflight: c.inflight}, history: c.history}
+			ft := &fakeTasksHistory{fakeTasks: fakeTasks{inflight: c.inflight}, history: c.history,
+				pageSize: c.pageSize, failARN: c.fail, dropARN: c.drop}
 			rt := newTestECS(&fakeECS{}, &fakeEFS{}, fs)
 			rt.cfg.homeTask = fakeHomeFamily
 			rt.tasks = ft
@@ -110,6 +173,9 @@ func TestECSPendingMarkerIsReleasedOnlyOnECSsProof(t *testing.T) {
 			t.Cleanup(func() { OnHomeMarkerReleased(nil) })
 
 			err := rt.HomeWipeBlocked(context.Background())
+			if c.pageSize > 0 && len(ft.describedBatches) != 2 {
+				t.Errorf("described in batches %v, want two (150 tasks, 100 a call)", ft.describedBatches)
+			}
 			_, kept := fs.values[marker]
 			if c.release {
 				if err != nil || kept {

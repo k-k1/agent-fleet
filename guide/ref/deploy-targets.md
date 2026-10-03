@@ -94,7 +94,8 @@ token; within 23 hours of the first request that returns the task already starte
 removal again once it is gone, which is safe: it removes only what the operation removes, on a home
 nothing could start in between). A refusal with no record behind it (left by an earlier Control
 Plane) is released by the Control Plane itself when ECS still lists exactly one task started by
-`af-home/<membership>` after the refusal was written, stopped with exit code 0, and none running;
+`af-home/<membership>` after the refusal was written, stopped with exit code 0, none created in the
+minute before it, none running or still stopping, and accounts for every task it lists;
 the release is written to the audit log as `workspace.home_marker_released`. Two cases need an
 operator, and the Control Plane log names them: such a refusal whose task ECS no longer lists
 (about an hour after it stopped) or that is ambiguous, and a task not seen stopped more than 23

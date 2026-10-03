@@ -1675,22 +1675,30 @@ unmounts (bounded, best-effort) before its detach. Code: `control-plane/internal
 `runtime_ecs_ec2.go` (`mountHome`, `releaseSlotSince`, `launch`, `quarantineSlot`), `deploy/aws/ecs/cfn/40-ec2-pool.yaml`.
 
 **Note (2026-10-04, #1603): every Destroy that runs the home task has a record, a record-less pending marker is
-released on ECS's proof, and the golden auto-bake runs on one CP.** During a rolling CP replacement on a sandbox
+released on ECS's proof, and the golden auto-bake is stepped by one CP.** During a rolling CP replacement on a sandbox
 pool, the old CP ran the golden seed's Destroy through the home task and was stopped before it recorded the answer;
 the seed then stayed refused every minute by its pending marker. The golden pipeline destroys in the tick
 (`destroyWorkspaceByMembership`), and only the background Destroy opened a `home_operation` row. Now
 `beginDestroyWorkspace` opens one wherever the runtime runs the home task, in the request or not, so the #1544
-reconciler of the next CP finishes the seed's and the probe's Destroy too. A pending marker with no row behind it (a
-CP before this, or any path that opened none) is no longer the operator's alone: under the member's lifecycle lease
-the adapter drops it when the marker is older than the listing grace, no task started by `af-home/<membership>` is
-listed running, and exactly one such task created after the marker was written is listed under the home task's
-family with desired status STOPPED, seen STOPPED with exit 0. The creation time is what excludes an earlier
-operation's task — the golden seed's membership is reused by every bake. Anything else keeps the refusal. The
-release is logged and audited as `workspace.home_marker_released`. Both CPs had also run the auto-bake at once (one
-created the seed's volume while the other released its slot), so the loop now steps only under a store-backed lease
-(`cp_lease`, migrations 0086 / pg 0071): the holder renews it every tick and every third of its 3-tick lifetime while
-a step runs, a step whose lease is lost is cancelled, and a CP that dies hands it over within three ticks. It does not
-replace #1601's process-local mount/release locks; it removes the golden loop as one source of two CPs driving the
-same slot. Code: `control-plane/workspace_lifecycle.go` (`beginDestroyWorkspace`),
-`control-plane/internal/runtime/runtime_ecs_home_task.go` (`releaseProvenPending`), `control-plane/golden_bake.go`
-(`tick`, `keepLease`), `control-plane/internal/store/store_cp_lease.go`.
+reconciler of the next CP finishes the seed's and the probe's Destroy too. A pending marker that carries an
+operation's token stays that record's to resolve. One without a token (a CP before #1544, or a path that bound no
+record) is no longer the operator's alone: under the member's lifecycle lease the adapter drops it when the marker is
+older than the listing grace, no task started by `af-home/<membership>` is listed running, every task ECS lists under
+the home task's family with desired status STOPPED is described with its startedBy and creation time, every one of
+this member's reads STOPPED, none was created within a minute before the marker, and exactly one was created after it,
+with exit 0. A minute, not seconds: SSM's and ECS's clocks are compared, and an earlier operation's task shortly
+before the marker must read as ambiguous, not as the marker's own — the golden seed's membership is reused by every
+bake. Anything else keeps the refusal. The release is logged and audited as `workspace.home_marker_released`. Both
+CPs had also run the auto-bake at once (one created the seed's volume while the other released its slot), so the loop
+now steps only under a lease (`cp_lease`, migrations 0086 / pg 0071) whose expiry the database computes and compares
+by its own clock, so CP clocks never enter it. The holder renews it every tick and every third of its 3-tick lifetime
+while a step runs; a renewal succeeds only while the lease is still live; the holder counts its deadline from when it
+sent the request, so a slow answer cannot extend it; and a timer apart from the renewals cancels the step at that
+deadline, so a renewal stuck on the database does not keep it running. What this guarantees is narrower than "one CP
+only": it stops a second CP from starting golden steps. Cancelling a step does not withdraw what the earlier holder
+already handed off — an AWS call already accepted, or ecs-ec2's background completion of a seed or probe Start, which
+deliberately outlives its caller (`backgroundWithin`) for up to its own bound — and a process paused past its lease
+acts on until its timer runs. Those overlap with a new holder's steps the way any two CPs' operations on one slot do,
+which is #1601's to close. Code: `control-plane/workspace_lifecycle.go` (`beginDestroyWorkspace`),
+`control-plane/internal/runtime/runtime_ecs_home_task.go` (`releaseProvenPending`, `stoppedHomeTasks`),
+`control-plane/golden_bake.go` (`tick`, `keepLease`), `control-plane/internal/store/store_cp_lease.go`.

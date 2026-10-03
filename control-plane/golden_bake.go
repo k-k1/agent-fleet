@@ -94,7 +94,10 @@ type goldenBaker struct {
 // goldenLeaseName is the cp_lease the auto-bake runs under. Two CP tasks overlap during a
 // rolling replacement, and both driving the bake had one create the seed's volume while the
 // other released the seed's slot (#1603). Every step reads AWS afresh, so the loop is safe to
-// hand over; it is not safe to run twice at once.
+// hand over; it is not safe to run twice at once. The lease keeps a second CP from starting
+// steps. Cancelling a step does not withdraw what it already handed off — an accepted AWS
+// call, ecs-ec2's background completion of a Start — and those still meet the new holder's
+// steps the way any two CPs' operations on one slot do (#1601).
 const goldenLeaseName = "golden-bake"
 
 // goldenLeaseFor is how long the lease outlives its last renewal: three ticks, so a
@@ -152,9 +155,16 @@ func (b *goldenBaker) run(ctx context.Context, every time.Duration) {
 // tick runs one step if this CP holds the golden lease, renewing it while the step runs.
 // A lease lost in the middle cancels the step: the next holder takes it from AWS's state,
 // and a home task the cancelled step had started is finished by its record's reconciler.
+//
+// The deadline this process holds the lease until is counted from when the request that
+// took or renewed it was SENT: the database set the expiry no earlier than that, so a slow
+// answer can only make the local deadline early, never late.
 func (b *goldenBaker) tick(ctx context.Context, every time.Duration) {
 	ttl := goldenLeaseFor(every)
-	ok, err := b.mgr.store.AcquireCPLease(ctx, goldenLeaseName, b.holder, time.Now(), time.Now().Add(ttl))
+	sent := time.Now()
+	actx, cancelAcquire := context.WithTimeout(ctx, ttl/3)
+	ok, err := b.mgr.store.AcquireCPLease(actx, goldenLeaseName, b.holder, ttl)
+	cancelAcquire()
 	switch {
 	case err != nil:
 		b.noteLease(fmt.Sprintf("golden: taking the auto-bake lease failed: %v", err))
@@ -168,39 +178,70 @@ func (b *goldenBaker) tick(ctx context.Context, every time.Duration) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		b.keepLease(stepCtx, cancel, ttl)
+		b.keepLease(stepCtx, cancel, ttl, sent.Add(ttl))
 	}()
 	b.step(stepCtx)
 	cancel()
 	<-done
 }
 
-// keepLease renews the lease every third of ttl until ctx ends, and cancels the step when
-// the lease is gone: another holder has it, or no renewal has succeeded since it expired.
-func (b *goldenBaker) keepLease(ctx context.Context, cancel context.CancelFunc, ttl time.Duration) {
+// leaseRenewal is one renewal's answer: the new deadline, or lost.
+type leaseRenewal struct {
+	deadline time.Time
+	lost     bool
+}
+
+// keepLease renews the lease every third of ttl until ctx ends, and cancels the step once
+// the lease is gone: another holder has it, or held passed without a renewal confirming a
+// later one. The expiry is watched apart from the renewals, which run one at a time and
+// are bounded by the deadline they are trying to extend, so a renewal stuck on the database
+// cannot keep the step alive past it.
+func (b *goldenBaker) keepLease(ctx context.Context, cancel context.CancelFunc, ttl time.Duration, held time.Time) {
+	expiry := time.NewTimer(time.Until(held))
+	defer expiry.Stop()
 	t := time.NewTicker(ttl / 3)
 	defer t.Stop()
-	held := time.Now().Add(ttl)
+	answers := make(chan leaseRenewal, 1)
+	inflight := false
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-expiry.C:
+			log.Printf("golden: the auto-bake lease expired before a renewal was confirmed; stopping this step")
+			cancel()
+			return
+		case a := <-answers:
+			inflight = false
+			if a.lost {
+				log.Printf("golden: the auto-bake lease went to another Control Plane mid-step; stopping this step")
+				cancel()
+				return
+			}
+			if a.deadline.After(held) {
+				held = a.deadline
+				expiry.Reset(time.Until(held))
+			}
 		case <-t.C:
+			if inflight {
+				continue
+			}
+			inflight = true
+			go func(until time.Time) {
+				sent := time.Now()
+				rctx, rcancel := context.WithDeadline(ctx, until)
+				ok, err := b.mgr.store.RenewCPLease(rctx, goldenLeaseName, b.holder, ttl)
+				rcancel()
+				switch {
+				case err != nil:
+					answers <- leaseRenewal{} // nothing confirmed; the expiry timer decides
+				case !ok:
+					answers <- leaseRenewal{lost: true}
+				default:
+					answers <- leaseRenewal{deadline: sent.Add(ttl)}
+				}
+			}(held)
 		}
-		ok, err := b.mgr.store.AcquireCPLease(ctx, goldenLeaseName, b.holder, time.Now(), time.Now().Add(ttl))
-		switch {
-		case err == nil && ok:
-			held = time.Now().Add(ttl)
-			continue
-		case err == nil:
-			log.Printf("golden: the auto-bake lease went to another Control Plane mid-step; stopping this step")
-		case time.Now().Before(held):
-			continue
-		default:
-			log.Printf("golden: the auto-bake lease could not be renewed before it expired (%v); stopping this step", err)
-		}
-		cancel()
-		return
 	}
 }
 

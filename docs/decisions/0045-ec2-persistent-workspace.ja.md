@@ -1538,20 +1538,28 @@ umount から detach までの間に入れない。解放の後にロックを�
 コード: `control-plane/internal/runtime/runtime_ecs_ec2_home_mount.go`、`runtime_ecs_ec2.go`（`mountHome`・
 `releaseSlotSince`・`launch`・`quarantineSlot`）、`deploy/aws/ecs/cfn/40-ec2-pool.yaml`。
 
-**追記（2026-10-04・#1603）: ホームタスクを走らせる Destroy はすべて記録を持ち、記録の無い pending の印は ECS の証拠で解かれ、golden の自動ベイクは 1 つの CP だけで走る。**
+**追記（2026-10-04・#1603）: ホームタスクを走らせる Destroy はすべて記録を持ち、記録の無い pending の印は ECS の証拠で解かれ、golden の自動ベイクは 1 つの CP だけが段を進める。**
 サンドボックスのプールで CP をローリング置換している間に、古い CP が golden シードの Destroy をホームタスクで走らせ、
 応答を記録する前に止められた。以後シードは pending の印に毎分拒まれ続けた。golden のパイプラインはティックの中で破棄し
 （`destroyWorkspaceByMembership`）、`home_operation` の行を開くのはバックグラウンドの Destroy だけだった。いまは
 `beginDestroyWorkspace` がランタイムがホームタスクを走らせる限りリクエスト内でも行を開くので、次の CP の #1544 の
-リコンサイラがシードとプローブの Destroy も終える。行の無い pending の印（以前の CP、または行を開かなかった経路が
-残したもの）も運用者だけのものではなくなった。メンバーのライフサイクルリースの下で、印が一覧の猶予より古く、
-`af-home/<membership>` が起動したタスクが動いておらず、印が書かれた後に作られたそのようなタスクがちょうど 1 つ、
-ホームタスクのファミリーの desired STOPPED に並び、STOPPED・終了コード 0 と読めたとき、アダプタが印を消す。作成時刻が
-以前の操作のタスクを除く（golden シードのメンバーシップはベイクのたびに使い回される）。それ以外は拒否を保つ。解いたことは
-ログと監査（`workspace.home_marker_released`）に残る。2 つの CP が同時に自動ベイクを走らせてもいた（片方がシードの
-ボリュームを作り、もう片方がそのスロットを解放した）ので、ループはストアのリース（`cp_lease`、マイグレーション 0086 /
-pg 0071）の下でだけ進む。持ち主はティックごとに、段の実行中は 3 ティックの寿命の 3 分の 1 ごとに更新し、リースを失った
-段は取り消され、死んだ CP は 3 ティック以内に引き渡す。#1601 のプロセス内の mount/解放ロックの代わりではなく、同じ
-スロットを 2 つの CP が動かす原因の 1 つとして golden ループを除くものである。コード: `control-plane/workspace_lifecycle.go`
-（`beginDestroyWorkspace`）、`control-plane/internal/runtime/runtime_ecs_home_task.go`（`releaseProvenPending`）、
+リコンサイラがシードとプローブの Destroy も終える。操作のトークンを持つ pending の印は、その記録が解くものとして残す。
+トークンの無い印（#1544 より前の CP、または記録を結ばなかった経路が残したもの）は運用者だけのものではなくなった。
+メンバーのライフサイクルリースの下で、次のすべてが揃ったときアダプタが印を消す。印が一覧の猶予より古い。
+`af-home/<membership>` が起動したタスクが動いていない。ホームタスクのファミリーの desired STOPPED に並ぶタスクが
+すべて startedBy と作成時刻つきで記述される。このメンバーのタスクはすべて STOPPED と読める。印の前 1 分以内に作られた
+ものが無い。印の後に作られたものがちょうど 1 つで、終了コード 0。数秒でなく 1 分なのは、SSM と ECS の時計を比べるからで、
+印の少し前に作られた以前の操作のタスクは印自身のものではなく曖昧と読まねばならない（golden シードのメンバーシップは
+ベイクのたびに使い回される）。それ以外は拒否を保つ。解いたことはログと監査（`workspace.home_marker_released`）に残る。
+2 つの CP が同時に自動ベイクを走らせてもいた（片方がシードのボリュームを作り、もう片方がそのスロットを解放した）ので、
+ループはリース（`cp_lease`、マイグレーション 0086 / pg 0071）の下でだけ進む。期限はデータベースが自分の時計で計算し
+比べるので、CP の時計は入らない。持ち主はティックごとに、段の実行中は 3 ティックの寿命の 3 分の 1 ごとに更新する。
+更新はリースがまだ有効なときだけ成功する。持ち主は期限を要求を送った時刻から数えるので、遅い応答が期限を延ばすことは
+ない。更新とは別のタイマーがその期限で段を取り消すので、データベースで詰まった更新が段を生かし続けることもない。
+保証するのは「1 つの CP だけ」より狭く、2 つ目の CP が golden の段を始めないことである。段を取り消しても、先の持ち主が
+すでに手放したもの（受理済みの AWS 呼び出しや、呼び出し元より長く生きるよう作られた ecs-ec2 のシード・プローブの
+Start のバックグラウンド完了（`backgroundWithin`、それ自身の上限まで））は撤回されず、リースを過ぎて停止していた
+プロセスはタイマーが動くまで動き続ける。これらは 2 つの CP が同じスロットを操作するのと同じ形で新しい持ち主の段と
+重なり、それを閉じるのは #1601 である。コード: `control-plane/workspace_lifecycle.go`（`beginDestroyWorkspace`）、
+`control-plane/internal/runtime/runtime_ecs_home_task.go`（`releaseProvenPending`・`stoppedHomeTasks`）、
 `control-plane/golden_bake.go`（`tick`・`keepLease`）、`control-plane/internal/store/store_cp_lease.go`。

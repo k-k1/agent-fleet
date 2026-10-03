@@ -4,6 +4,5 @@
 CREATE TABLE IF NOT EXISTS cp_lease (
     name       TEXT PRIMARY KEY,
     holder     TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    expires_ms BIGINT NOT NULL
 )
