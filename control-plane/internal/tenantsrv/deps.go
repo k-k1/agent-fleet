@@ -57,6 +57,9 @@ type CP interface {
 	CountRunningInTenant(ctx context.Context, tenantID string) (int, error)
 	WorkspaceStateByMembership(ctx context.Context, membershipID string) (container, state string)
 	StopWorkspaceByMembership(ctx context.Context, membershipID string) error
+	// ResumeSchedulesHeldByRemoval re-enables the schedules the scheduler paused because
+	// their owner had been removed, and only those; it returns how many it resumed.
+	ResumeSchedulesHeldByRemoval(ctx context.Context, membershipID string) (int, error)
 	// CleanHomeByMembership returns runtime.ErrHomeWipeUnsupported, having stopped
 	// nothing, on a runtime that cannot reach the workspace home.
 	CleanHomeByMembership(ctx context.Context, membershipID string) error

@@ -227,6 +227,10 @@ func (d cpTenant) StopWorkspaceByMembership(ctx context.Context, mid string) err
 	return d.m.stopWorkspaceByMembership(ctx, mid)
 }
 
+func (d cpTenant) ResumeSchedulesHeldByRemoval(ctx context.Context, mid string) (int, error) {
+	return d.m.resumeSchedulesHeldByRemoval(ctx, mid)
+}
+
 func (d cpTenant) CleanHomeByMembership(ctx context.Context, mid string) error {
 	return d.m.cleanHomeByMembership(ctx, mid)
 }

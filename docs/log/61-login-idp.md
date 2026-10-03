@@ -738,6 +738,22 @@ tenant_admin の仕事**とする。情シス（super_admin）に毎回頼む形
 あの文が本当に守っていたのは**履歴**（監査・費用・稼働時間）で、schedules と shares はその人の
 ものだから一緒に消えてよい。条件・消える表・残る表は §61.18.5。
 
+★ **2026-10-03 追記（#1087）: 外した人の「動いている workspace」と「スケジュール」。**
+workspace が持つトークン（AF_MEMO_TOKEN ほか /internal/* の各トークン・内部 git・エンジンの
+発行／セッショントークン）は、どれも検証のたびに `GetMembershipByID`（active のみ）を引くので、
+外した直後の次のリクエストから 401 になる（`workspaceRoutes` 全件の表テスト
+`TestRemovedMemberIsRefusedOnEveryWorkspaceRoute` で固定）。AGENT_TOKEN は CP→Agent 方向の
+共有秘密で、CP 側にこれを受け付けるルートは無い。穴は**コンテナ自体が動き続けること**だった
+（取得済みのテナント MCP ヘッダや home のログインを抱えたまま、誰にも見えずに計算資源を使う）。
+
+- **外すと、そのテナントの workspace を止める**（管理者の停止と同じ `stopWorkspaceByMembership`）。
+  他テナントの同じ人の workspace は止めない。10 秒で終わらなければ応答は `workspace_stop:"pending"`
+  で返し、結果は `membership.remove.stop_workspace` として監査に残る。
+- **スケジュールは消さない。** 外れている間に来た枠は従来どおり何も起こさず一時停止する
+  （`skipped_membership_inactive`）。**招待し直すと、この理由で止まったものだけを今から再開**する
+  （本人が止めたものは触らない・過ぎた once は戻さない・逃した枠は再生しない）。監査は
+  `membership.add` の detail に `schedules resumed=N`。
+
 ### 61.10.7 `super_admin` の移譲・退職
 
 `super_admin` はホスト側の env（決定 24）なので、**移譲そのものはホストのファイルを書き換えて

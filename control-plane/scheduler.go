@@ -268,8 +268,8 @@ func (sc *scheduler) fireOne(ctx context.Context, sch store.Schedule, now time.T
 	// enabled it would no-op on every slot forever, appending run rows no one will ever
 	// read — an invisible schedule that quietly keeps ticking. Disable it instead: the
 	// membership id is stable per (identity, tenant) (EnsureMembership upserts on that
-	// pair), so restoring access brings the row back as a PAUSED schedule whose owner can
-	// read the reason in the ledger and resume it.
+	// pair), so the row is still this person's when they are re-invited, and the restore
+	// resumes it (resumeSchedulesHeldByRemoval).
 	if status == statusMembershipInactive {
 		log.Printf("scheduler: schedule %s owner membership %s is inactive — disabling "+
 			"(nothing can run and nobody can see it; resume it after restoring access)", sch.ID, sch.MembershipID)
@@ -302,6 +302,45 @@ func (sc *scheduler) fireOne(ctx context.Context, sch store.Schedule, now time.T
 	if scheduleNotifyStatus(status) {
 		sc.notifyOutcome(ctx, sch, slot, status, nowRFC)
 	}
+}
+
+// resumeSchedulesHeldByRemoval is the restore half of the inactive-owner rule in fireOne:
+// re-inviting a removed member brings back the schedules that rule paused, so a restore
+// needs no clean-up by the owner. A row qualifies only when the last thing that touched it
+// was that pause — disabled, last_status skipped_membership_inactive, and updated_at equal
+// to last_run (RecordScheduleFire stamps both with the same instant, while a pause or
+// resume by a person moves updated_at alone). Without the last condition a schedule its
+// owner paused after an earlier restore would be resumed against their choice.
+//
+// next_run is recomputed from now, as the resume button does, so a restore never replays
+// the slots missed while the person was away; a `once` whose instant has passed stays
+// paused for the same reason resume refuses it (once_in_past).
+func (m *manager) resumeSchedulesHeldByRemoval(ctx context.Context, membershipID string) (int, error) {
+	rows, err := m.store.ListSchedules(ctx, membershipID)
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now().UTC()
+	n := 0
+	for _, sch := range rows {
+		if sch.Enabled || sch.LastStatus != statusMembershipInactive || sch.UpdatedAt != sch.LastRun {
+			continue
+		}
+		if sch.SpecKind == "once" {
+			if t, perr := parseOnce(sch.Spec); perr != nil || !t.After(now) {
+				continue
+			}
+		}
+		next, err := initialNextRun(sch, now)
+		if err != nil {
+			continue
+		}
+		if err := m.store.SetScheduleEnabled(ctx, sch.ID, membershipID, true, next, store.NowTS()); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
 }
 
 // scheduleNotifyStatus reports whether an outcome deserves an unattended-failure
