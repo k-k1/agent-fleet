@@ -24,6 +24,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -1516,8 +1517,10 @@ type kubeLiveNodePod struct {
 // kubeLiveRepairWindow while the kubelet is still down. AF_K8S_LIVE_NODE_REPAIR_EVIDENCE_CMD
 // (with {node}, {zone} and {since}, the time of the cut) must print the provider's
 // operations as JSON — `gcloud container operations list --format=json` — and exactly one of
-// them must be an AUTO_REPAIR_NODES of this node in cluster AF_K8S_LIVE_GKE_CLUSTER, started
-// after the cut and before the pod was seen gone. The cut-off kubelet's own timer has to
+// them must be an AUTO_REPAIR_NODES of this node in AF_K8S_LIVE_GKE_PROJECT (the ID and/or
+// the number; the node's providerID must name one), AF_K8S_LIVE_GKE_LOCATION and
+// AF_K8S_LIVE_GKE_CLUSTER, started after the cut and before the pod was seen gone. It must
+// then finish without an error, and the Node object must have been replaced. The cut-off kubelet's own timer has to
 // outlast the window, and AF_K8S_LIVE_NODE_RECOVER_WAIT (how long the cleanup waits for
 // the node) has to cover that timer.
 //
@@ -1533,7 +1536,11 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	// pod. Anything else is the runbook's path for clusters where a stopped node stays down.
 	autoRepair := os.Getenv("AF_K8S_LIVE_NODE_MODE") == "auto-repair"
 	repairEvidenceCmd := os.Getenv("AF_K8S_LIVE_NODE_REPAIR_EVIDENCE_CMD")
-	gkeCluster := os.Getenv("AF_K8S_LIVE_GKE_CLUSTER")
+	repairAt := kubeLiveRepairTarget{
+		projects: splitCSV(os.Getenv("AF_K8S_LIVE_GKE_PROJECT")),
+		location: os.Getenv("AF_K8S_LIVE_GKE_LOCATION"),
+		cluster:  os.Getenv("AF_K8S_LIVE_GKE_CLUSTER"),
+	}
 	recoverWait := 17 * time.Minute
 	if v := os.Getenv("AF_K8S_LIVE_NODE_RECOVER_WAIT"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -1544,8 +1551,8 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 		recoverWait = d
 	}
 	if autoRepair {
-		if repairEvidenceCmd == "" || gkeCluster == "" {
-			t.Fatal("AF_K8S_LIVE_NODE_MODE=auto-repair needs AF_K8S_LIVE_NODE_REPAIR_EVIDENCE_CMD and AF_K8S_LIVE_GKE_CLUSTER: without the provider's record nothing ties the pod's end to a repair")
+		if repairEvidenceCmd == "" || len(repairAt.projects) == 0 || repairAt.location == "" || repairAt.cluster == "" {
+			t.Fatal("AF_K8S_LIVE_NODE_MODE=auto-repair needs AF_K8S_LIVE_NODE_REPAIR_EVIDENCE_CMD, AF_K8S_LIVE_GKE_PROJECT, AF_K8S_LIVE_GKE_LOCATION and AF_K8S_LIVE_GKE_CLUSTER: without the provider's record of this cluster's repair nothing ties the pod's end to it")
 		}
 		if recoverWait <= kubeLiveRepairWindow {
 			t.Fatalf("AF_K8S_LIVE_NODE_RECOVER_WAIT=%s must exceed the %s repair window (and the stop command's kubelet timer must lie between the two)", recoverWait, kubeLiveRepairWindow)
@@ -1589,6 +1596,16 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 		t.Fatalf("the workspace landed on the cordoned node %s", node)
 	}
 	nodeObj := l.requireNodeFits(node, began)
+	if autoRepair {
+		// The node's own record of its project (gce://<project>/<zone>/<instance>) has to be
+		// one the repair record is matched against: otherwise the record could be another
+		// project's.
+		parts := strings.Split(strings.TrimPrefix(nodeObj.Spec.ProviderID, "gce://"), "/")
+		if !strings.HasPrefix(nodeObj.Spec.ProviderID, "gce://") || len(parts) != 3 || !slices.Contains(repairAt.projects, parts[0]) {
+			t.Fatalf("node %s has providerID %q, not a GCE instance of AF_K8S_LIVE_GKE_PROJECT %v", node, nodeObj.Spec.ProviderID, repairAt.projects)
+		}
+		repairAt.node = node
+	}
 	// The node is cordoned before its pods are read and stays cordoned until the end, so
 	// nothing the scheduler places can land on it between the check and the stop.
 	l.cordon(node)
@@ -1734,11 +1751,30 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 		})
 		goneAt := time.Now()
 		t.Logf("the cut-off pod went %s after the cut, with the kubelet still down and no operator action", time.Since(t0).Round(time.Second))
-		op, err := matchRepair(l.operator(strings.ReplaceAll(repairEvidenceCmd, "{since}", t0.UTC().Format(time.RFC3339))), gkeCluster, node, t0, goneAt)
-		if err != nil {
-			t.Fatalf("INCONCLUSIVE: %v", err)
+		// The repair must be this node's, and it must have finished without an error: a repair
+		// that failed or was cut short did not recreate the node, and something else freed
+		// the pod. The pod can go before the operation is marked done, so it is read again.
+		evidence := strings.ReplaceAll(repairEvidenceCmd, "{since}", t0.UTC().Format(time.RFC3339))
+		var op kubeLiveRepairOp
+		deadline := time.Now().Add(10 * time.Minute)
+		for {
+			var err error
+			if op, err = matchRepair(l.operator(evidence), repairAt, t0, goneAt); err != nil {
+				t.Fatalf("INCONCLUSIVE: %v", err)
+			}
+			err = repairSucceeded(op)
+			if err == nil {
+				break
+			}
+			if !errors.Is(err, errRepairRunning) || time.Now().After(deadline) {
+				t.Fatalf("INCONCLUSIVE: the repair %s of %s: %v", op.Name, node, err)
+			}
+			time.Sleep(10 * time.Second)
 		}
-		t.Logf("the provider's repair: %s %s of %s, started %s after the cut (status %s)", op.OperationType, op.Name, op.TargetLink, op.started.Sub(t0).Round(time.Second), op.Status)
+		if sameNode() {
+			t.Fatalf("INCONCLUSIVE: the repair %s is done, yet %s is still the Node object that was cut off", op.Name, node)
+		}
+		t.Logf("the provider's repair: %s %s of %s, started %s after the cut, %s; the node was replaced", op.OperationType, op.Name, op.TargetLink, op.started.Sub(t0).Round(time.Second), op.Status)
 		if err := rt.Stop(ctx); err != nil {
 			t.Fatalf("Stop once the pod is gone: %v", err)
 		}
@@ -1821,13 +1857,48 @@ type kubeLiveRepairOp struct {
 	StartTime     string `json:"startTime"`
 	Status        string `json:"status"`
 	TargetLink    string `json:"targetLink"`
-	started       time.Time
+	StatusMessage string `json:"statusMessage"`
+	Error         *struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+	started time.Time
 }
 
-// matchRepair finds, in the JSON list of GKE operations out, the one auto-repair of node in
-// cluster that started after the cut and before the pod was seen gone. None, or more than
-// one, is an error: then nothing ties the pod's end to a repair.
-func matchRepair(out, cluster, node string, cut, gone time.Time) (kubeLiveRepairOp, error) {
+// kubeLiveRepairTarget is the node a repair must name: its project (the ID or the number,
+// which is what GKE's operation links carry), the cluster's location and name, the node.
+type kubeLiveRepairTarget struct {
+	projects                []string
+	location, cluster, node string
+}
+
+// kubeLiveRepairLink is GKE's link to a node of a node pool:
+// …/projects/<project>/locations/<location>/clusters/<cluster>/nodePools/<pool>/node/<node>.
+var kubeLiveRepairLink = regexp.MustCompile(`/projects/([^/]+)/locations/([^/]+)/clusters/([^/]+)/nodePools/[^/]+/node/([^/]+)$`)
+
+var errRepairRunning = errors.New("the repair has not finished")
+
+// repairSucceeded accepts a repair that finished without an error, and reports one still
+// running as errRepairRunning.
+func repairSucceeded(op kubeLiveRepairOp) error {
+	if op.Error != nil {
+		return fmt.Errorf("it failed: %d %s", op.Error.Code, op.Error.Message)
+	}
+	switch op.Status {
+	case "DONE":
+		return nil
+	case "PENDING", "RUNNING":
+		return errRepairRunning
+	default:
+		return fmt.Errorf("it ended %s: %s", op.Status, op.StatusMessage)
+	}
+}
+
+// matchRepair finds, in the JSON list of GKE operations out, the one auto-repair of the
+// target node in its project, location and cluster that started after the cut and before
+// the pod was seen gone. None, or more than one, is an error: then nothing ties the pod's
+// end to a repair.
+func matchRepair(out string, want kubeLiveRepairTarget, cut, gone time.Time) (kubeLiveRepairOp, error) {
 	var ops []kubeLiveRepairOp
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &ops); err != nil {
 		return kubeLiveRepairOp{}, fmt.Errorf("the repair record is not a JSON list of operations: %v", err)
@@ -1835,8 +1906,9 @@ func matchRepair(out, cluster, node string, cut, gone time.Time) (kubeLiveRepair
 	var hits []kubeLiveRepairOp
 	for _, op := range ops {
 		started, err := time.Parse(time.RFC3339Nano, op.StartTime)
-		if err != nil || op.OperationType != "AUTO_REPAIR_NODES" ||
-			!strings.Contains(op.TargetLink, "/clusters/"+cluster+"/") || !strings.HasSuffix(op.TargetLink, "/"+node) ||
+		m := kubeLiveRepairLink.FindStringSubmatch(op.TargetLink)
+		if err != nil || op.OperationType != "AUTO_REPAIR_NODES" || m == nil ||
+			!slices.Contains(want.projects, m[1]) || m[2] != want.location || m[3] != want.cluster || m[4] != want.node ||
 			started.Before(cut) || started.After(gone) {
 			continue
 		}
@@ -1844,7 +1916,7 @@ func matchRepair(out, cluster, node string, cut, gone time.Time) (kubeLiveRepair
 		hits = append(hits, op)
 	}
 	if len(hits) != 1 {
-		return kubeLiveRepairOp{}, fmt.Errorf("%d auto-repair operations of %s in cluster %s started between the cut and the pod's end (out of %d listed)", len(hits), node, cluster, len(ops))
+		return kubeLiveRepairOp{}, fmt.Errorf("%d auto-repair operations of %s in cluster %s/%s (project %v) started between the cut and the pod's end (out of %d listed)", len(hits), want.node, want.location, want.cluster, want.projects, len(ops))
 	}
 	return hits[0], nil
 }
@@ -1873,6 +1945,9 @@ func (l *kubeLive) requireNodeFits(node string, began time.Time) kubeLiveNode {
 
 type kubeLiveNode struct {
 	Metadata kObjectMeta `json:"metadata"`
+	Spec     struct {
+		ProviderID string `json:"providerID"`
+	} `json:"spec"`
 }
 
 // requireNodePods refuses a node that runs anything but the harness's own workspace pod,

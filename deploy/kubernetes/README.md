@@ -895,11 +895,16 @@ cordons: the test fails if its UID, node or restart count changes.
   On GKE with node auto-repair, set `AF_K8S_LIVE_NODE_MODE=auto-repair`. No halt runs: after Stop
   has failed, the node's auto-repair must free the pod within 20 minutes while the kubelet is
   still down. The repair record must name the repair: exactly one `AUTO_REPAIR_NODES` of that
-  node in `AF_K8S_LIVE_GKE_CLUSTER`, started between the cut and the pod's end. The kubelet timer
+  node in `AF_K8S_LIVE_GKE_PROJECT` (the project ID and number, comma-separated; operation links
+  carry the number), `AF_K8S_LIVE_GKE_LOCATION` and `AF_K8S_LIVE_GKE_CLUSTER`, started between the
+  cut and the pod's end. That repair must then finish without an error, and the Node object must
+  have been replaced. The kubelet timer
   has to outlast the 20 minutes, and `AF_K8S_LIVE_NODE_RECOVER_WAIT` has to cover the timer. The
   harness refuses a wait of 20 minutes or less, or one over 45. The whole set:
   ```bash
-  export AF_K8S_LIVE_NODE_MODE=auto-repair AF_K8S_LIVE_GKE_CLUSTER="$PREFIX-gke" AF_K8S_LIVE_NODE_RECOVER_WAIT=32m
+  export AF_K8S_LIVE_NODE_MODE=auto-repair AF_K8S_LIVE_NODE_RECOVER_WAIT=32m
+  export AF_K8S_LIVE_GKE_PROJECT="$PROJECT,$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')"
+  export AF_K8S_LIVE_GKE_LOCATION="$REGION" AF_K8S_LIVE_GKE_CLUSTER="$PREFIX-gke"
   export AF_K8S_LIVE_NODE_STOP_CMD="{kubectl} debug node/{node} -n default --profile=sysadmin --custom=$W/debug-root.json --image=<workspace image> -- chroot /host sh -c 'systemd-run --on-active=1800 systemctl start kubelet && systemctl stop kubelet'"
   export AF_K8S_LIVE_NODE_REPAIR_EVIDENCE_CMD='gcloud container operations list --location '"$REGION"' --project '"$PROJECT"' --filter="operationType=AUTO_REPAIR_NODES AND startTime>={since}" --format=json'
   # STATUS_CMD and START_CMD as above; no HALT_CMD
