@@ -83,21 +83,23 @@ type HomeBackups struct {
 // Which adapter claims which port. The claiming direction is pinned here; the adapters
 // that must not claim one are pinned in capabilities_test.go.
 var (
-	_ homeWiper        = (*dockerRuntime)(nil)
-	_ homeWiper        = (*nativeRuntime)(nil)
-	_ homeWiper        = (*ecsEC2Runtime)(nil)
-	_ homeWipeGate     = (*ecsEC2Runtime)(nil)
-	_ homeEraser       = (*dockerRuntime)(nil)
-	_ homeEraser       = (*nativeRuntime)(nil)
-	_ homeEraser       = (*ecsEC2Runtime)(nil)
-	_ homeWiper        = (*kubeRuntime)(nil)
-	_ homeEraser       = (*kubeRuntime)(nil)
-	_ homeBackupKeeper = (*ecsEC2Runtime)(nil)
-	_ homeWiper        = (*ecsRuntime)(nil)
-	_ homeEraser       = (*ecsRuntime)(nil)
-	_ homePortsGate    = (*ecsRuntime)(nil)
-	_ homeWipeGate     = (*ecsRuntime)(nil)
-	_ backgroundWiper  = (*ecsRuntime)(nil)
+	_ homeWiper         = (*dockerRuntime)(nil)
+	_ homeWiper         = (*nativeRuntime)(nil)
+	_ homeWiper         = (*ecsEC2Runtime)(nil)
+	_ homeWipeGate      = (*ecsEC2Runtime)(nil)
+	_ homeEraser        = (*dockerRuntime)(nil)
+	_ homeEraser        = (*nativeRuntime)(nil)
+	_ homeEraser        = (*ecsEC2Runtime)(nil)
+	_ homeWiper         = (*kubeRuntime)(nil)
+	_ homeEraser        = (*kubeRuntime)(nil)
+	_ homeBackupKeeper  = (*ecsEC2Runtime)(nil)
+	_ homeWiper         = (*ecsRuntime)(nil)
+	_ homeEraser        = (*ecsRuntime)(nil)
+	_ homePortsGate     = (*ecsRuntime)(nil)
+	_ homeWipeGate      = (*ecsRuntime)(nil)
+	_ backgroundWiper   = (*ecsRuntime)(nil)
+	_ homeTaskDestroyer = (*ecsRuntime)(nil)
+	_ homeTaskDestroyer = (*ecsEC2Runtime)(nil)
 )
 
 // homePortsGate is claimed by an adapter whose home ports depend on the deployment, not
@@ -124,11 +126,31 @@ type backgroundWiper interface {
 }
 
 // HomeWipeInBackground reports whether a member's Recreate and Clean home on rt, and an
-// administrator's Clean home and Destroy, run for minutes and so are finished after the
+// administrator's Clean home, run for minutes and so are finished after the
 // request has been answered.
 func HomeWipeInBackground(rt Runtime) bool {
 	_, ok := rt.(backgroundWiper)
 	return ok && portsReady(rt)
+}
+
+// homeTaskDestroyer is claimed by an adapter whose Destroy may run the stack's home task to
+// remove the member's EFS directories: ecs, and ecs-ec2 through the same library, which
+// keeps its home on EBS but the Claude state and the keep-list on EFS (#1536). Separate
+// from backgroundWiper because ecs-ec2's own wipe and erase fit in the request; only its
+// Destroy waits on a Fargate task.
+type homeTaskDestroyer interface {
+	DestroyRunsHomeTask() bool
+}
+
+// DestroyInBackground reports whether Destroy on rt runs for minutes (a Fargate task from
+// cold) and so is finished after the administrator's request has been answered. An adapter
+// whose wipes run in the background destroys there as well.
+func DestroyInBackground(rt Runtime) bool {
+	if HomeWipeInBackground(rt) {
+		return true
+	}
+	d, ok := rt.(homeTaskDestroyer)
+	return ok && d.DestroyRunsHomeTask()
 }
 
 // QueueHomeWipe marks rt as clearing its home until release is called. A no-op on an
@@ -229,9 +251,12 @@ type HomeOperations struct {
 	Wipe    bool // a member's Recreate and Clean home
 	Erase   bool // an administrator's Clean home
 	Backups bool // listing and deleting a member's backup copies
-	// Background: Wipe, Erase and Destroy take minutes and finish after the request is
-	// answered (HomeWipeInBackground).
+	// Background: Wipe and Erase take minutes and finish after the request is answered
+	// (HomeWipeInBackground).
 	Background bool
+	// DestroyBackground: Destroy takes minutes and finishes after the request is answered
+	// (DestroyInBackground). True wherever Background is, and on ecs-ec2 as well.
+	DestroyBackground bool
 }
 
 // HomeOperationsOf answers HomeOperations from a runtime the factory builds for an empty
@@ -241,7 +266,7 @@ func HomeOperationsOf(f RuntimeFactory) HomeOperations {
 	rt := f.New(Workspace{}, "", nil)
 	_, backups := rt.(homeBackupKeeper)
 	return HomeOperations{Wipe: CanWipeHome(rt), Erase: CanEraseHome(rt), Backups: backups,
-		Background: HomeWipeInBackground(rt)}
+		Background: HomeWipeInBackground(rt), DestroyBackground: DestroyInBackground(rt)}
 }
 
 // wipeLocalHome is the docker and native wipe: both keep the home at <dataDir>/home, the

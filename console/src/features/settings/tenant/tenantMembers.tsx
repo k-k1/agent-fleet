@@ -208,9 +208,18 @@ function MemberAutoStopChip({ autoStop }: { autoStop?: MemberAutoStop }) {
   if (!autoStop) return null;
   return (
     <span className="mr-idle hold" title={autoStopReason(autoStop)}>
-      {autoStop.kind === "start-deadline" ? tr("noti.kind_start_deadline") : autoStop.kind}
+      {autoStopTitle(autoStop, tr)}
     </span>
   );
+}
+
+// The kinds the CP writes: "start-deadline" (start_deadline.go) and "home-wipe-failed", a
+// member's Recreate / Clean home that failed after its request was answered (ecs, #1537).
+// An unknown kind is shown raw rather than hidden: a newer CP may write one.
+function autoStopTitle(a: MemberAutoStop, tr: ReturnType<typeof useT>): string {
+  if (a.kind === "start-deadline") return tr("noti.kind_start_deadline");
+  if (a.kind === "home-wipe-failed") return tr("admin.auto_stop_home_wipe");
+  return a.kind;
 }
 
 function autoStopReason(a: MemberAutoStop): string {
@@ -224,10 +233,14 @@ export function MemberAutoStopDetail({ autoStop }: { autoStop?: MemberAutoStop }
   if (!autoStop) return null;
   return (
     <section className="admin-panel">
-      <h4>{autoStop.kind === "start-deadline" ? tr("noti.kind_start_deadline") : autoStop.kind}</h4>
+      <h4>{autoStopTitle(autoStop, tr)}</h4>
       <p>{autoStopReason(autoStop)}</p>
       <p className="admin-hint">
-        {tr("admin.auto_stop_at", { at: new Date(autoStop.stopped_at).toLocaleString() })}
+        {/* Only the start deadline writes the member a notification; a failed home wipe reaches
+            them as a toast in a Console that happens to be open, so it claims nothing. */}
+        {tr(autoStop.kind === "home-wipe-failed" ? "admin.auto_stop_home_wipe_at" : "admin.auto_stop_at", {
+          at: new Date(autoStop.stopped_at).toLocaleString(),
+        })}
       </p>
     </section>
   );

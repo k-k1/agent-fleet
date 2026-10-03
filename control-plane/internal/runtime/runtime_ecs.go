@@ -425,12 +425,13 @@ func (e *ecsRuntime) Stop(ctx context.Context) error {
 // library) after it has released the slot and deleted the EBS home.
 //
 // The EFS directories the access points pointed at (/home/<membership>,
-// /claude-config/<membership>) survive the access points, and EFS keeps billing for them.
-// Where the stack declares the home task, Destroy runs it to remove both, after the
-// workspace's own task is gone, and a failure is an error: the row stays, and the retry
-// runs the task again. On a stack without it they come back as leftovers rather than an
-// error so the caller can record them; an error there would only make the operator retry
-// a teardown that already did everything it can (docs/log/64 §64.18.4).
+// /claude-config/<membership>, and ecs-ec2's /home-keep/<membership>) survive the access
+// points, and EFS keeps billing for them. Where the stack declares the home task, Destroy
+// runs it to remove them, after the workspace's own task is gone, and a failure is an
+// error: the row stays, and the retry runs the task again. On a stack without it they come
+// back as leftovers rather than an error so the caller can record them; an error there
+// would only make the operator retry a teardown that already did everything it can
+// (docs/log/64 §64.18.4).
 //
 // Every step is idempotent (already-gone is success): a partial Destroy must be safe to
 // re-run, which is the normal case after a CP restart mid-teardown.
@@ -464,10 +465,32 @@ func (e *ecsRuntime) Destroy(ctx context.Context) ([]string, error) {
 		if err := e.runHomeTask(ctx, homeWipeDestroy); err != nil {
 			return nil, fmt.Errorf("remove the EFS home: %w", err)
 		}
-		return nil, nil
+		return e.notRemovedByHomeTask(leftovers), nil
 	}
 	return leftovers, nil
 }
+
+// notRemovedByHomeTask drops from leftovers the directories the destroy task has just
+// removed (homeTaskDirs). An access point rooted anywhere else stays reported: nothing
+// removed it, and a leftover silently dropped is one nobody looks for again.
+func (e *ecsRuntime) notRemovedByHomeTask(leftovers []string) []string {
+	var out []string
+	for _, l := range leftovers {
+		removed := false
+		for _, dir := range homeTaskDirs {
+			if l == "efs:"+e.cfg.efsFileSystem+"/"+dir+"/"+e.membershipID {
+				removed = true
+			}
+		}
+		if !removed {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// DestroyRunsHomeTask satisfies homeTaskDestroyer.
+func (e *ecsRuntime) DestroyRunsHomeTask() bool { return e.homePortsReady() }
 
 // accessPoints lists every access point on the deployment's file system, following
 // NextToken. One call returns at most 100 (the API's default page), and one file system

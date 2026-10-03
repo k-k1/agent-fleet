@@ -611,3 +611,15 @@ mux を通して振り分け、一覧に無いパターンは断るので、ハ�
 - **`ResizeHome` が `same` を返すのは、claim の容量が要求に達し、`Resizing` / `FileSystemResizePending` の条件が無いときだけ**で、それまでは `growing` を返す。書き込みは読んだ要求を条件にする。API サーバは要求が容量より大きいあいだは引き下げを許し、2 つの保存が競合しうるからである。
 - **消去 pod の終了は、フェーズではなく全コンテナが terminated を報告したことで判断する。** 退避はコンテナを kill する前にフェーズ `Failed` を書く。Start は終了した消去 pod が pod オブジェクトごと消えてから先へ進む。それが kubelet による確認であり、`ReadWriteOnce` が claim を縛るのはノードであって pod ではない。
 - **Destroy は各 claim を、記録した版であることを条件に削除する。** 読んだ後に bind された claim は消える前に記録される。ボリュームを持たずに記録された claim は、注釈にかかわらず不明として扱い、StatefulSet を残す。PV コントローラは claim の volumeName より先にボリュームの claim 参照を保存し、事前 bind や静的なボリュームにはプロビジョナが要らず、名前空間のロールではボリュームを一覧して確かめられないからである。目録は claim の UID をキーにするので、同じ名前で作り直された claim が最初の claim の記録を消すことはない。不明が解消するのは、同じ UID がボリュームとともに読み直されたときだけである。そのため、pod がボリュームを得なかったワークスペースは StatefulSet を残留物として残し、runbook に委ねる。
+
+## 追記（2026-10-03）— home は claim の中のディレクトリ（#1543）
+
+決定 4 は home の claim を `/home/dev` にマウントし、それは変わらない。そこにマウントするのが claim のルートではなく、`subPath` で claim 内のディレクトリ `.af-home` になった。`fsGroup` を指定すると kubelet は claim のルートを `root:dev`、モード `2775` のまま残し（GKE で実測）、これを変えられるのは所有者か root だけで、`restricted` の下ではどちらも動かない。グループ書き込み可の home のせいで、`cloudexec.PrivateDir`（ADR 0107）が `af-gcloud-exec` と `af-aws-exec` の両方の状態ディレクトリを拒んでいた。
+
+- **同じイメージの init コンテナが `dev` として、どのコンテナがマウントするより先にこのディレクトリを作る**（`runtime_kubernetes_home.go` の `homeLayoutScript`）。kubelet 自身が作る `subPath` はまた root のものになるからである。
+- **以前の配置の claim はファイルを失わない。** 同じ手順がルートの全エントリを `.af-home.new` に移し、最後にそれを所定の名前へ rename する。途中で止まった起動は次の起動で続きから進み、home がファイルの半分だけで見えることはない。`lost+found` はルートに残す。移せないエントリや、移し先に既にあるエントリがあれば、それを欠いた home にせず pod を止める。
+- **claim がどちらの配置かは state claim に記録する**（wipe 記録の隣の `layout`：none・moving・done）。ルートからは読まない。以前の配置ではそこのどの名前もメンバーが作れたからである。メンバーが作った `.af-home` や `.af-home.new` は何も移す前に拒む。移行済みと記録された claim でも、ルートに home 以外のものがある、または home が無いときは拒み、記録が無い・読めないときも拒む（state claim の無い home の消去 pod を含む）。拒むと pod は止まり、理由はログに出る。
+- **グループ書き込みは起動のたびに外す。** 対象は home と、Agent の状態ディレクトリの上のディレクトリ（`~/.local`、`~/.local/state`、`~/.local/state/agent-fleet`）で、`PrivateDir` がたどる範囲である。再帰的な `fsGroup` 変更がそれを付けるからで、途中にリンクがあればそこで止め、メンバーの他のファイルには触れない。
+- **この版より前へ CP を戻すのは、その後に起動したワークスペースにとって安全ではない。** 以前の CP はルートを home としてマウントするので移行済みのファイルが隠れ、その Clean home と管理者の Clean home は `.af-home` を丸ごと消す。Recreate が消すのはルートの `repos` で、隠れた方の `~/repos` は残る。runbook の "Rolling back past the home layout" が先に home を戻す手順を示す。以前の版が再び使った claim は、この版が拒む（上のルート残留の検査）。
+- **消去の init コンテナも同じ方法で home をマウントし、配置の後に走る。消去 pod は 1 つのコンテナで配置と消去を続けて行い**、claim のルートをマウントする。init コンテナが失敗するとメインのコンテナは待機のまま残り、消去 pod の終了は全コンテナの terminated で判断するからである。
+- state claim の `subPath` ディレクトリは kubelet が作るままにする。その下に私的なものは置かない。クラウドラッパーの状態は `~/.local/state` の下にあり、これは keep の対象ではない。

@@ -863,7 +863,7 @@ func (k *kubeRuntime) podTemplate(image string, gen int64, now time.Time) kPodTe
 			EnvFrom:         []kEnvFromSource{{SecretRef: &kSecretEnvSource{Name: k.secretName()}}},
 			Resources:       res,
 			VolumeMounts: []kVolumeMount{
-				{Name: "home", MountPath: kubeHomePath},
+				{Name: "home", MountPath: kubeHomePath, SubPath: kubeHomeSubPath},
 				{Name: "state", MountPath: kubeStatePath, SubPath: "claude"},
 				{Name: "state", MountPath: kubeKeepPath, SubPath: "keep"},
 				{Name: "tmp", MountPath: "/tmp"},
@@ -889,6 +889,7 @@ func (k *kubeRuntime) podTemplate(image string, gen int64, now time.Time) kPodTe
 			{Name: "tmp", EmptyDir: &kEmptyDirVolumeSource{SizeLimit: kubeTmpSizeLimit}},
 		},
 	}
+	spec.InitContainers = []kContainer{homeLayoutContainer(spec.Containers[0])}
 	if k.cfg.pullSecret != "" {
 		spec.ImagePullSecrets = []kLocalObjectRef{{Name: k.cfg.pullSecret}}
 	}
