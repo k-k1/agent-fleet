@@ -169,8 +169,8 @@ async function openCatalog(
       content: { kind: "engineAdd", engineKey: key, lora: false, view: registered ? "registered" : "search" },
     };
     if (tabs) {
-      // One cell, two tabs. `.tabs` is its own stored layout (LKEY_NEW), and the mode comes from
-      // the display setting above — seeding one without the other opens the other mode's layout.
+      // One cell, two tabs. `.tabs` is its own stored layout (LKEY_NEW), and boot reads only the
+      // layout of the paneLayout set above, so the two must name the same mode.
       localStorage.setItem("af.layout2.demo@example.com.demo.tabs", JSON.stringify({
         version: 3, mode: "tabs",
         cols: [{ id: "catalog-col", rowRatio: 0.5, cells: [{ id: "cell", selectedViewId: "catalog", views: [
