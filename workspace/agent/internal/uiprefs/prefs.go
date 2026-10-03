@@ -54,6 +54,8 @@ var accumulatedPrefKeys = []string{
 	"workingSets",
 	"ttsVoicePool",
 	"ttsUserDict",
+	"launchTemplates",
+	"launchHistory",
 }
 
 // emptyPref reports "there is nothing in it": missing, null, empty string, empty array or
