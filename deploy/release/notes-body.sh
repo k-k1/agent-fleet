@@ -39,7 +39,9 @@ JA="$NOTES_DIR/$VERSION.ja.md"
 unwrap() {
   LC_ALL=C awk '
     function flush() { if (have) print buf; have = 0; buf = "" }
-    function opens(s) { return s ~ /^[ \t]*([-*+]|[0-9]+[.)])[ \t]/ || s ~ /^[ \t]*(#|>|\||---|```|<)/ }
+    function opens(s) { return s ~ /^[ \t]*([-*+]|[0-9]+[.)])[ \t]/ || s ~ /^[ \t]*(#|>|\||---|```)/ || html(s) }
+    # An HTML tag or comment, not an autolink such as <https://…>.
+    function html(s) { return s ~ /^[ \t]*<(\/?[A-Za-z][A-Za-z0-9-]*([ \t>]|\/>|$)|!--)/ }
     function wide_punct(s,  t) { t = substr(s, length(s) - 2); return index(PUNCT, "/" t "/") > 0 }
     BEGIN { PUNCT = "/、/。/，/．/）/」/』/】/：/；/！/？/" }
     {
@@ -52,7 +54,7 @@ unwrap() {
         buf = buf sep cur; next
       }
       flush(); buf = $0; have = 1
-      block = ($0 ~ /^[ \t]*(#|\||---|<)/)
+      block = ($0 ~ /^[ \t]*(#|\||---)/ || html($0))
     }
     END { flush() }
   ' "$1"

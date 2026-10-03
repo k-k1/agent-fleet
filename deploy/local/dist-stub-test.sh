@@ -364,10 +364,11 @@ echo "ok"
 
 echo "== case 11c: notes-body.sh joins hard-wrapped lines (a release body shows each newline) =="
 NW="$WORK/notes-wrap"; mkdir -p "$NW"
-printf '%s\n' 'Intro wraps' 'here.' '' '- **Item** one' '  continues ([#1](u),' '  [#2](u))' '1. First' '```' 'keep' 'lines' '```' '| a |' '| b |' > "$NW/$V.md"
+printf '%s\n' 'Intro wraps' 'here.' '' '- **Item** one' '  continues ([#1](u),' '  [#2](u))' '1. First' '```' 'keep' 'lines' '```' '| a |' '| b |' '' 'Tracked at' '<https://x>' '' '<details>' 'body' > "$NW/$V.md"
 printf '%s\n' '設定に置き、' 'ログインは' 'Console で' '済ませます。' '([#1](u))' > "$NW/$V.ja.md"
 NOTES_DIR="$NW" VERSION=$V ROOTFS=$RV "$ROOT/deploy/release/notes-body.sh" > "$WORK/body11c.md"
 for want in 'Intro wraps here.' '- **Item** one continues ([#1](u), [#2](u))' '1. First' 'keep' 'lines' '| a |' '| b |' \
+            'Tracked at <https://x>' '<details>' 'body' \
             '設定に置き、ログインは Console で済ませます。([#1](u))'; do
   grep -qxF -- "$want" "$WORK/body11c.md" || { cat "$WORK/body11c.md"; fail "unwrap: missing line: $want"; }
 done
