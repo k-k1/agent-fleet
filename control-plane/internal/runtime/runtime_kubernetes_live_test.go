@@ -1607,9 +1607,9 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 			}
 			time.Sleep(10 * time.Second)
 		}
-		for _, p := range ours {
-			if err := l.deleteOwned(p); err != nil {
-				t.Errorf("delete %s/%s: %v", p.ns, p.name, err)
+		for i := range ours {
+			if err := l.deleteOwned(&ours[i]); err != nil {
+				t.Errorf("delete the debug pod %s on %s: %v", ours[i].name, node, err)
 			}
 		}
 		if sameNode() {
@@ -1630,8 +1630,14 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	l.requireNodePods(node, rt, allow)
 	t.Logf("making %s unreachable", node)
 	t0 := time.Now()
-	out := l.operator(stopCmd)
-	ours = l.recordDebugPods(out, node)
+	// What the command reports creating is recorded before its own result is looked at: a
+	// command that created the debug pod and then failed (an attach error, its deadline)
+	// still left that pod behind.
+	out, stopErr := l.operatorRun(stopCmd)
+	l.recordDebugPods(&ours, out, node, t0)
+	if stopErr != nil {
+		t.Fatal(stopErr)
+	}
 	l.eventually(10*time.Minute, node+" not Ready", func() bool { return l.nodeNotReady(node) })
 	t.Logf("%s not Ready after %s", node, time.Since(t0).Round(time.Second))
 	// A stop the guest sees (an ACPI shutdown, as `gcloud compute instances stop` sends)
@@ -1780,34 +1786,75 @@ func (l *kubeLive) requireNodePods(node string, rt *kubeRuntime, allow []string)
 }
 
 // kubeLiveOwnedPod is a pod this test created, by namespace, name and UID: a name prefix
-// proves nothing about who made a pod.
-type kubeLiveOwnedPod struct{ ns, name, uid string }
-
-// recordDebugPods takes the pods the stop command reports creating (kubectl debug prints
-// "Creating debugging pod <name> …") and records each with its namespace and UID.
-func (l *kubeLive) recordDebugPods(out, node string) []kubeLiveOwnedPod {
-	l.t.Helper()
-	var res []kubeLiveOwnedPod
-	for _, m := range regexp.MustCompile(`Creating debugging pod (\S+)`).FindAllStringSubmatch(out, -1) {
-		var list struct {
-			Items []kubeLiveNodePod `json:"items"`
-		}
-		l.getJSON(&list, "get", "pods", "-A", "--field-selector", "metadata.name="+m[1]+",spec.nodeName="+node)
-		if len(list.Items) != 1 {
-			l.t.Errorf("the stop command created pod %s, found %d such pod(s) on %s: remove it by hand", m[1], len(list.Items), node)
-			continue
-		}
-		p := list.Items[0].Metadata
-		res = append(res, kubeLiveOwnedPod{p.Namespace, p.Name, p.UID})
-		l.t.Logf("the stop command created %s/%s (UID %s)", p.Namespace, p.Name, p.UID)
-	}
-	return res
+// proves nothing about who made a pod. An entry whose lookup failed keeps the name, the
+// node and when the command ran, and is resolved again by the cleanup.
+type kubeLiveOwnedPod struct {
+	ns, name, uid, node string
+	since               time.Time
 }
 
-// ownedLeft returns the recorded pods still present with their recorded UID.
+// recordDebugPods appends to ours, one at a time, each pod the stop command reports
+// creating (kubectl debug prints "Creating debugging pod <name> …"), with its namespace and
+// UID. A failed lookup still appends the name, so the cleanup tries again and says so if it
+// cannot settle it; nothing recorded so far is lost to a later failure.
+func (l *kubeLive) recordDebugPods(ours *[]kubeLiveOwnedPod, out, node string, since time.Time) {
+	for _, m := range regexp.MustCompile(`Creating debugging pod (\S+)`).FindAllStringSubmatch(out, -1) {
+		p := kubeLiveOwnedPod{name: m[1], node: node, since: since}
+		if err := l.resolveOwned(&p); err != nil {
+			l.t.Errorf("the stop command created pod %s on %s; its owner could not be confirmed yet (%v), the cleanup tries again", m[1], node, err)
+		} else {
+			l.t.Logf("the stop command created %s/%s (UID %s)", p.ns, p.name, p.uid)
+		}
+		*ours = append(*ours, p)
+	}
+}
+
+// resolveOwned fills in the namespace and UID of a recorded pod: exactly one pod of that
+// name on that node, created no earlier than the command that reported it. Anything else
+// is ambiguous, and an ambiguous pod is never deleted.
+func (l *kubeLive) resolveOwned(p *kubeLiveOwnedPod) error {
+	if p.uid != "" {
+		return nil
+	}
+	out, err := l.run("get", "pods", "-A", "--field-selector", "metadata.name="+p.name+",spec.nodeName="+p.node, "-o", "json")
+	if err != nil {
+		return err
+	}
+	var list struct {
+		Items []struct {
+			Metadata kObjectMeta `json:"metadata"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		return err
+	}
+	if len(list.Items) != 1 {
+		return fmt.Errorf("%d pods named %s on %s", len(list.Items), p.name, p.node)
+	}
+	m := list.Items[0].Metadata
+	created, err := time.Parse(time.RFC3339, m.CreationTimestamp)
+	// Timestamps have one-second resolution, and the clocks may differ by a little.
+	if err != nil || created.Before(p.since.Add(-time.Minute)) {
+		return fmt.Errorf("pod %s/%s was created at %q, before the command that reported it", m.Namespace, m.Name, m.CreationTimestamp)
+	}
+	p.ns, p.uid = m.Namespace, m.UID
+	return nil
+}
+
+// ownedLeft returns the recorded pods still present with their recorded UID, and every
+// recorded pod whose owner could still not be confirmed.
 func (l *kubeLive) ownedLeft(pods []kubeLiveOwnedPod) ([]string, error) {
 	var left []string
-	for _, p := range pods {
+	for i := range pods {
+		p := &pods[i]
+		if err := l.resolveOwned(p); err != nil {
+			// Gone by now is settled too; an unreadable or ambiguous one is not.
+			if out, gerr := l.run("get", "pods", "-A", "--field-selector", "metadata.name="+p.name+",spec.nodeName="+p.node, "-o", "name"); gerr == nil && strings.TrimSpace(out) == "" {
+				continue
+			}
+			left = append(left, fmt.Sprintf("%s on %s (unconfirmed: %v)", p.name, p.node, err))
+			continue
+		}
 		uid, err := l.run("-n", p.ns, "get", "pod", p.name, "--ignore-not-found", "-o", "jsonpath={.metadata.uid}")
 		if err != nil {
 			return nil, err
@@ -1819,10 +1866,13 @@ func (l *kubeLive) ownedLeft(pods []kubeLiveOwnedPod) ([]string, error) {
 	return left, nil
 }
 
-// deleteOwned deletes the pod only while it still has the recorded UID. The name carries
-// generateName's random suffix, so the check right before the delete leaves no
-// practical window for another pod to take it.
-func (l *kubeLive) deleteOwned(p kubeLiveOwnedPod) error {
+// deleteOwned deletes the pod only once its owner is confirmed and while it still has the
+// recorded UID. The name carries generateName's random suffix, so the check right before
+// the delete leaves no practical window for another pod to take it.
+func (l *kubeLive) deleteOwned(p *kubeLiveOwnedPod) error {
+	if err := l.resolveOwned(p); err != nil {
+		return fmt.Errorf("not deleted, its owner is unconfirmed: %w", err)
+	}
 	uid, err := l.run("-n", p.ns, "get", "pod", p.name, "--ignore-not-found", "-o", "jsonpath={.metadata.uid}")
 	if err != nil {
 		return err
