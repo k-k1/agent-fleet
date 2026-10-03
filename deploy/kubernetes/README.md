@@ -593,16 +593,48 @@ So, when the CP has to go back past that version:
    until its home is moved back.
 2. To move one back: snapshot its home disk, then, with the workspace stopped, run a pod from the
    workspace image with the workspace pod's security context (as `dev`), the home claim mounted at
-   `/v` and the state claim at `/s`, and in it:
+   `/v` and the state claim at `/s`, and in it run this as a script (`sh -s`):
    ```bash
-   cd /v && [ -z "$(ls -A | grep -vxE '\.af-home|lost\+found')" ] || { echo "the root is not empty"; exit 1; }
+   V=/v R=/s/wipe/layout
+   set -eu
+   cd "$V"
+   # Stopped after the last move: only the record is left to remove.
+   if [ "$(cat -- "$R" 2>/dev/null)" = reverting ] && [ ! -e .af-home ] && [ ! -L .af-home ]; then rm -f -- "$R"; exit 0; fi
+   [ -d .af-home ] && [ ! -L .af-home ] || { echo ".af-home is missing or not a directory"; exit 1; }
+   [ -f "$R" ] && [ ! -L "$R" ] || { echo "no layout record at $R"; exit 1; }
+   case "$(cat -- "$R")" in
+     done)
+       for e in .[!.]* ..?* *; do
+         [ -e "$e" ] || [ -L "$e" ] || continue
+         case "$e" in .af-home|lost+found) ;; *) echo "the root holds $e besides the home: see step 3"; exit 1;; esac
+       done
+       echo reverting > "$R" ;;
+     reverting) ;;  # a run stopped halfway: carry on
+     *) echo "the layout record is not done or reverting"; exit 1 ;;
+   esac
    for e in .af-home/.[!.]* .af-home/..?* .af-home/*; do
      [ -e "$e" ] || [ -L "$e" ] || continue
-     mv -T -- "$e" "${e#.af-home/}" || exit 1
+     n=${e#.af-home/}
+     case "$n" in .af-home|lost+found) echo "the home holds $n, a name the root keeps"; exit 1;; esac
+     if [ -e "$n" ] || [ -L "$n" ]; then echo "$n is both in the home and on the root"; exit 1; fi
    done
-   rmdir .af-home && rm -f /s/wipe/layout
+   for e in .af-home/.[!.]* .af-home/..?* .af-home/*; do
+     [ -e "$e" ] || [ -L "$e" ] || continue
+     n=${e#.af-home/}; ro=
+     # Moving a directory rewrites its "..", which needs write permission on it.
+     if [ -d "$e" ] && [ ! -L "$e" ] && [ ! -w "$e" ]; then chmod u+w -- "$e"; ro=1; fi
+     mv -T -- "$e" "$n"
+     [ -z "$ro" ] || chmod u-w -- "$n"
+   done
+   rmdir .af-home
+   rm -f -- "$R"
    ```
-   Without the record the next start of this version migrates the home again.
+   It checks everything before it moves anything, and moves nothing onto an existing name. If it
+   stops halfway, the record says `reverting`: fix what it printed and run it again, and it
+   carries on. Until it has finished, start the workspace under neither CP — this version refuses
+   a `reverting` record, an earlier one would mount the half-moved root. A read-only directory it
+   stopped on in the middle of its move may be left writable. Once the record is gone, the next
+   start under this version migrates the home again.
 3. If a workspace has run under the earlier CP anyway, this version refuses to start it again:
    `kubectl logs <pod> -c home-layout` says the claim's root holds entries besides the home. The
    root then holds what the earlier CP's session wrote and `.af-home` the migrated home. With the

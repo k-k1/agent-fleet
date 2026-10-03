@@ -130,7 +130,9 @@ func homeLayoutContainer(main kContainer) kContainer {
 // The moves go into the .new directory renamed into place last, so a pod stopped halfway
 // carries on at the next start and the home never appears with half of its files. An entry
 // that cannot be moved, or would land on one already there, stops the pod: the alternative
-// is a home that silently lacks it.
+// is a home that silently lacks it. A read-only directory is given owner write for its
+// move and has it taken back after; a pod stopped between the two leaves it writable,
+// which loses nothing.
 //
 // A recursive fsGroup change (the kubelet makes one whenever the root does not match) sets
 // group write on everything below the root. Group write is removed again at every start
@@ -179,9 +181,11 @@ func homeLayoutScript(vol, record string) string {
 		// A home of another owner could only be a subPath the kubelet created; dev cannot
 		// change it, and refusing to start would take the whole workspace away for what
 		// costs only the cloud wrappers, which say why themselves.
+		// The walk stops at the first link or foreign directory: past a link, the paths
+		// below lead out of the home or into the member's own files.
 		`for p in "$H" "$H/.local" "$H/.local/state" "$H/.local/state/agent-fleet"; do`,
-		`  [ -d "$p" ] && [ ! -L "$p" ] || continue`,
-		`  if [ "$(stat -c %u -- "$p")" = "$(id -u)" ]; then chmod go-w -- "$p"; else echo "home layout: $p is not owned by $(id -u); af-gcloud-exec and af-aws-exec will refuse it" >&2; fi`,
+		`  [ -d "$p" ] && [ ! -L "$p" ] || break`,
+		`  if [ "$(stat -c %u -- "$p")" = "$(id -u)" ]; then chmod go-w -- "$p"; else echo "home layout: $p is not owned by $(id -u); af-gcloud-exec and af-aws-exec will refuse it" >&2; break; fi`,
 		`done`,
 	}, "\n")
 }

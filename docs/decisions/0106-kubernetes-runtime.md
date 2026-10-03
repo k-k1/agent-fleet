@@ -814,7 +814,8 @@ root can change that, which nothing under `restricted` is. The group-writable ho
   without a state claim included. Refusing stops the pod with the reason in its log.
 - **Group write is removed at every start** from the home and the directories above the Agent's
   state (`~/.local`, `~/.local/state`, `~/.local/state/agent-fleet`), which `PrivateDir` walks,
-  since a recursive `fsGroup` change sets it; the member's other files are left alone.
+  since a recursive `fsGroup` change sets it, stopping at the first link on the way; the member's
+  other files are left alone.
 - **Rolling the CP back past this is not safe** for a workspace that has started since: an earlier
   CP mounts the root as the home, hiding the migrated files, and its wipes remove `.af-home` whole.
   The runbook's "Rolling back past the home layout" moves a home back first; this version refuses
