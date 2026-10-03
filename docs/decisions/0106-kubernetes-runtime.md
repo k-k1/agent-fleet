@@ -817,7 +817,8 @@ root can change that, which nothing under `restricted` is. The group-writable ho
   since a recursive `fsGroup` change sets it, stopping at the first link on the way; the member's
   other files are left alone.
 - **Rolling the CP back past this is not safe** for a workspace that has started since: an earlier
-  CP mounts the root as the home, hiding the migrated files, and its wipes remove `.af-home` whole.
+  CP mounts the root as the home, hiding the migrated files; its Clean home and administrator's
+  Clean home remove `.af-home` whole, and its Recreate removes the root's `repos`, not the hidden one.
   The runbook's "Rolling back past the home layout" moves a home back first; this version refuses
   a claim an earlier one has used again (the residue check above).
 - **The wipe init container mounts the home the same way and runs after the layout; the erase pod

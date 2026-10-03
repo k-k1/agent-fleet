@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -351,16 +352,36 @@ func layoutRecord(t *testing.T, record string) string {
 	return strings.TrimSpace(string(b))
 }
 
-// snapshot lists every path under dir, so a refusal can be shown to have changed nothing.
+// snapshot lists every path under dir with its mode, a regular file's content and a link's
+// target, so a refusal can be shown to have changed nothing, the layout record included.
 func snapshot(t *testing.T, dir string) []string {
 	t.Helper()
 	var out []string
-	_ = filepath.Walk(dir, func(p string, fi os.FileInfo, err error) error {
-		if err == nil {
-			out = append(out, strings.TrimPrefix(p, dir)+" "+fi.Mode().String())
+	err := filepath.Walk(dir, func(p string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return err
 		}
+		line := strings.TrimPrefix(p, dir) + " " + fi.Mode().String()
+		switch {
+		case fi.Mode()&os.ModeSymlink != 0:
+			l, err := os.Readlink(p)
+			if err != nil {
+				return err
+			}
+			line += " -> " + l
+		case fi.Mode().IsRegular():
+			b, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			line += " = " + strconv.Quote(string(b))
+		}
+		out = append(out, line)
 		return nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	return out
 }
 
@@ -773,6 +794,46 @@ func TestKubeRollbackScriptRefuses(t *testing.T) {
 				t.Fatalf("a refused move back changed the claim:\nbefore %v\nafter  %v", before, after)
 			}
 		})
+	}
+}
+
+// The record is marked only after every check, and replaced whole: a mark that cannot be
+// written leaves the record saying done and nothing moved, so this version still starts.
+func TestKubeRollbackScriptMarkFailsCleanly(t *testing.T) {
+	vol, record := layoutVolume(t)
+	if err := runScript(t, homeLayoutScript(vol, record)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(record, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshot(t, filepath.Dir(vol))
+	if err := runScript(t, rollbackScript(t, vol, record)); err == nil {
+		t.Fatal("the move back went ahead without its mark")
+	}
+	if after := snapshot(t, filepath.Dir(vol)); !reflect.DeepEqual(before, after) {
+		t.Fatalf("a failed mark changed the claim:\nbefore %v\nafter  %v", before, after)
+	}
+	if err := os.Chmod(record, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := runScript(t, homeLayoutScript(vol, record)); err != nil {
+		t.Fatalf("this version no longer starts after a failed mark: %v", err)
+	}
+}
+
+// The same for the layout: a record it cannot write stops it before anything moves.
+func TestKubeHomeLayoutMarkFailsCleanly(t *testing.T) {
+	vol, record := layoutVolume(t)
+	if err := os.Chmod(record, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshot(t, filepath.Dir(vol))
+	if err := runScript(t, homeLayoutScript(vol, record)); err == nil {
+		t.Fatal("the layout went ahead without its record")
+	}
+	if after := snapshot(t, filepath.Dir(vol)); !reflect.DeepEqual(before, after) {
+		t.Fatalf("a failed record changed the claim:\nbefore %v\nafter  %v", before, after)
 	}
 }
 

@@ -583,9 +583,9 @@ From the version that fixed #1543 on, a workspace's home is the directory `.af-h
 claim, and the first start under it moves an earlier home there, recording that on the state
 claim (ADR 0106, addendum of 2026-10-03). **An earlier CP does not know this, and rolling back
 past it is not safe for workspaces that have started since:** its pod mounts the claim's root as
-the home, so the member finds an almost empty home with their files hidden in `.af-home`, and its
-Recreate, Clean home or administrator's Clean home removes `.af-home` whole — the migrated home,
-logins included.
+the home, so the member finds an almost empty home with their files hidden in `.af-home`. Its Clean
+home and administrator's Clean home remove `.af-home` whole — the migrated home, logins included;
+its Recreate removes only the root's `repos`, leaving the migrated `~/repos` in place and hidden.
 
 So, when the CP has to go back past that version:
 
@@ -602,13 +602,13 @@ So, when the CP has to go back past that version:
    if [ "$(cat -- "$R" 2>/dev/null)" = reverting ] && [ ! -e .af-home ] && [ ! -L .af-home ]; then rm -f -- "$R"; exit 0; fi
    [ -d .af-home ] && [ ! -L .af-home ] || { echo ".af-home is missing or not a directory"; exit 1; }
    [ -f "$R" ] && [ ! -L "$R" ] || { echo "no layout record at $R"; exit 1; }
-   case "$(cat -- "$R")" in
+   st=$(cat -- "$R")
+   case "$st" in
      done)
        for e in .[!.]* ..?* *; do
          [ -e "$e" ] || [ -L "$e" ] || continue
          case "$e" in .af-home|lost+found) ;; *) echo "the root holds $e besides the home: see step 3"; exit 1;; esac
-       done
-       echo reverting > "$R" ;;
+       done ;;
      reverting) ;;  # a run stopped halfway: carry on
      *) echo "the layout record is not done or reverting"; exit 1 ;;
    esac
@@ -618,6 +618,11 @@ So, when the CP has to go back past that version:
      case "$n" in .af-home|lost+found) echo "the home holds $n, a name the root keeps"; exit 1;; esac
      if [ -e "$n" ] || [ -L "$n" ]; then echo "$n is both in the home and on the root"; exit 1; fi
    done
+   # Only now, with every check passed, mark the move; replaced whole, never truncated.
+   if [ "$st" = done ]; then
+     if [ -e "$R.tmp" ] || [ -L "$R.tmp" ]; then echo "$R.tmp is in the way"; exit 1; fi
+     { echo reverting > "$R.tmp" && mv -fT -- "$R.tmp" "$R"; } || { echo "cannot mark $R"; exit 1; }
+   fi
    for e in .af-home/.[!.]* .af-home/..?* .af-home/*; do
      [ -e "$e" ] || [ -L "$e" ] || continue
      n=${e#.af-home/}; ro=
@@ -629,7 +634,7 @@ So, when the CP has to go back past that version:
    rmdir .af-home
    rm -f -- "$R"
    ```
-   It checks everything before it moves anything, and moves nothing onto an existing name. If it
+   It checks everything before it marks or moves anything, and moves nothing onto an existing name. If it
    stops halfway, the record says `reverting`: fix what it printed and run it again, and it
    carries on. Until it has finished, start the workspace under neither CP — this version refuses
    a `reverting` record, an earlier one would mount the half-moved root. A read-only directory it
