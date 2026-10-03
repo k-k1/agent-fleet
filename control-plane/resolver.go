@@ -393,10 +393,9 @@ func (m *manager) buildResolved(ctx context.Context, ident store.Identity, mv st
 	// size the next container start; the built runtime captures them by value.
 	ws.MemBytes, ws.CPUUnits, ws.DiskGB = m.resolveWorkspaceSize(ctx, ws)
 	ws.SlotClass, _ = m.resolveSlotClass(ctx, ws)
-	// Read before the env is built: the env's token is then of this epoch or a later one,
-	// so a start that finds the live epoch equal to it knows the env is current.
-	gitEpoch := m.gitEpochForEnv(ctx, ws.MembershipID)
-	rt := m.runtimeFor(ws, dekHex, m.workspaceExtraEnv(ctx, ws)...)
+	env := m.workspaceExtraEnv(ctx, ws)
+	gitEpoch := m.gitEpochOfEnv(ws.MembershipID, env)
+	rt := m.runtimeFor(ws, dekHex, env...)
 	m.mu.Lock()
 	m.rts[mv.MembershipID] = cachedRT{rt: rt, ws: ws, gitEpoch: gitEpoch}
 	m.mu.Unlock()

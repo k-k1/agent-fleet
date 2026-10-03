@@ -436,8 +436,9 @@ func (m *manager) armPreviewForStart(ctx context.Context, res *resolved, extraEn
 // The memoized runtime's env is fixed when it is built, and a rotation evicts only its
 // own CP's memo: another replica's, or one written by a build that raced the eviction,
 // would otherwise inject the dead token at every start. Called under the start lock and
-// the lifecycle lease, right before Start, so nothing moves the epoch unseen after this.
-// extraEnv is carried over, as armPreviewForStart does.
+// the lifecycle lease, right before Start. A rotation on another replica in the moment
+// between this check and Start still goes unseen (docs/build/91 §91.5). extraEnv is
+// carried over, as armPreviewForStart does.
 func (m *manager) refreshGitTokenForStart(ctx context.Context, res *resolved, extraEnv []string) runtime.Runtime {
 	if m.internalGitHost == "" || res.ws.MembershipID == "" {
 		return nil

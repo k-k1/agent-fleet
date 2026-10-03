@@ -350,3 +350,61 @@ func TestStartWithACurrentMemoIsNotRebuilt(t *testing.T) {
 		t.Fatal("rebuilt a runtime whose token epoch is current")
 	}
 }
+
+// epochFailingStore fails GitTokenEpoch while fail is set and passes everything else through.
+type epochFailingStore struct {
+	store.Store
+	fail *bool
+}
+
+func (s epochFailingStore) GitTokenEpoch(ctx context.Context, id string) (int64, bool, error) {
+	if *s.fail {
+		return 0, false, errors.New("database is locked")
+	}
+	return s.Store.GitTokenEpoch(ctx, id)
+}
+
+// When the epoch read fails while the env is built, no token is injected. The memo must
+// not then claim the current epoch: once the store recovers, the next start has to
+// rebuild with the token, or the workspace starts without one at every start.
+func TestStartAfterAFailedTokenInjectionRebuildsWithTheToken(t *testing.T) {
+	ctx := context.Background()
+	f := &envRecordingFactory{}
+	st, mgr, victim, tn := destroyFixture(t, f)
+	memID := membershipIDOf(t, st, victim, tn)
+	mgr.internalGitHost = "af.example"
+	mgr.master32 = []byte("master-key-for-rotate-tests-00000")
+	if _, _, err := st.BumpGitTokenEpoch(ctx, memID); err != nil {
+		t.Fatal(err)
+	}
+	failing := true
+	mgr.store = epochFailingStore{st, &failing}
+	mv, _, _ := st.GetMembershipByID(ctx, memID)
+	res, aerr := mgr.buildResolved(ctx, victim, mv)
+	if aerr != nil {
+		t.Fatal(aerr)
+	}
+	if env := strings.Join(f.built[len(f.built)-1], " "); strings.Contains(env, "AF_INTERNAL_GIT_TOKEN=") {
+		t.Fatalf("precondition: the token was injected although its epoch could not be read: %s", env)
+	}
+	failing = false
+	want, _, _ := mgr.currentGitToken(ctx, memID)
+	for i := 0; i < 2; i++ {
+		res, aerr = mgr.buildResolved(ctx, victim, mv)
+		if aerr != nil {
+			t.Fatal(aerr)
+		}
+		if aerr := newWorkspaceAPI(mgr, false).ensureWorkspaceStarted(ctx, res); aerr != nil {
+			t.Fatalf("start %d: %v", i, aerr)
+		}
+		f.mu.Lock()
+		got := f.started[len(f.started)-1]
+		f.mu.Unlock()
+		if !strings.Contains(got, "AF_INTERNAL_GIT_TOKEN="+want) || !strings.Contains(got, "AF_INTERNAL_GIT_EPOCH=1") {
+			t.Fatalf("start %d after the store recovered injected %q, want the epoch-1 token", i, got)
+		}
+		if err := st.SetWorkspaceState(ctx, "W-1", "stopped"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

@@ -9,6 +9,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -53,17 +55,22 @@ func (m *manager) currentGitToken(ctx context.Context, membershipID string) (str
 	return mintGitToken(gitSignKey(m.tokenSignMaster()), membershipID, epoch), epoch, nil
 }
 
-// gitEpochForEnv is the epoch a runtime about to be built will carry, for the memo:
-// -1 (never equal to a live epoch, so the next start rebuilds) when it cannot be read.
-func (m *manager) gitEpochForEnv(ctx context.Context, membershipID string) int64 {
+// gitEpochOfEnv is the epoch of the internal git token env actually carries, for the memo.
+// It is read from the env itself, not looked up beside it: when the injection was skipped
+// (the epoch read failed) the answer is -1, which never equals a live epoch, so the next
+// start rebuilds the runtime instead of starting without a token for good.
+func (m *manager) gitEpochOfEnv(membershipID string, env []string) int64 {
 	if m.internalGitHost == "" || membershipID == "" {
 		return 0
 	}
-	epoch, ok, err := m.store.GitTokenEpoch(ctx, membershipID)
-	if err != nil || !ok {
-		return -1
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, "AF_INTERNAL_GIT_EPOCH="); ok {
+			if e, err := strconv.ParseInt(v, 10, 64); err == nil {
+				return e
+			}
+		}
 	}
-	return epoch
+	return -1
 }
 
 // rotateGitToken bumps the membership's git token epoch and hands the new token to its

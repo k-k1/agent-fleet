@@ -174,8 +174,8 @@ id. Changing the signing master still rotates every token at once.
 The new token has to reach the member's workspace, whose env still carries the old one:
 
 - The memoized runtime is evicted. That reaches only this CP's memo, so every start also
-  compares the epoch the runtime's env was built under (`cachedRT.gitEpoch`) with the live
-  one, under the start lock and lifecycle lease right before `Start`, and rebuilds the
+  compares the epoch of the token the runtime's env carries (`cachedRT.gitEpoch`, `-1` when
+  none was injected because the epoch read failed) with the live one, under the start lock and lifecycle lease right before `Start`, and rebuilds the
   runtime when they differ (`refreshGitTokenForStart`). Another replica's memo, or one a
   build wrote back after the eviction, therefore cannot inject the dead token.
 - A **running** workspace is handed the new token at once: the CP `PUT`s it with its epoch
