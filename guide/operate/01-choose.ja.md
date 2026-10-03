@@ -28,7 +28,7 @@ updated: "2026-10"
 | AWS に置きたい・少人数・費用が効く | **ec2-single** | 実体は **VM 上の compose**。別の runtime ではない |
 | タスク単位の隔離・ユーザー単位の障害分離・イメージの順次入替が要る | **ecs** | 買っているのは隔離であって、節約ではない |
 | 上に加えて、起動の速さとディスク性能が要る | **ecs-ec2** | インスタンスのプール ＋ ユーザー毎の永続ディスク |
-| 基盤が Kubernetes か Google Cloud で、使わないときは 0 台に縮むワークスペースが欲しい | **kubernetes** | 自分のクラスタ上で、ワークスペースはユーザー毎の永続ボリュームを持つ Pod。最初は GKE Standard |
+| 基盤が Kubernetes か Google Cloud で、使わないときは 0 台に縮むワークスペースが欲しい | **kubernetes**（プレビュー） | 自分のクラスタ上で、ワークスペースはユーザー毎の永続ボリュームを持つ Pod。最初は GKE Standard |
 
 ## ECS が実際にいくら「かかる」か
 
@@ -54,6 +54,13 @@ updated: "2026-10"
 
 ## Kubernetes を選ぶとき、選ばないとき
 
+> **プレビュー。** `kubernetes` ランタイムはプレビューです。GKE Standard クラスタで受け入れを確かめて
+> いますが、本番での利用はまだサポートしていません。既知の制約：このランタイムにはブラウザ機能が
+> ありません（ブラウザペインもヘッドレス Chromium もなし）。GKE では、始める前にリージョンの SSD
+> ディスク割り当てが配備に足りている必要があります（[Preconditions](../../deploy/kubernetes/README.md#preconditions)）。まだ測って
+> いるもの：費用（[The bill](../../deploy/kubernetes/README.md#the-bill)）と、ロードバランサが WebSocket を 24 時間で切ることが
+> 1 日続くセッションにどう響くか（[7. The load balancer](../../deploy/kubernetes/README.md#7-the-load-balancer)）。
+
 **kubernetes** を選ぶのは、組織がすでに Kubernetes クラスタでものを動かしているとき、または
 Google Cloud で、AWS の ECS がくれるもの——ワークスペース毎の Pod、クラスタによる隔離、動いている
 間だけの容量——が欲しいときです。代わりにクラスタが持ち込むものも引き受けます。まだ使っていなければ
@@ -77,7 +84,7 @@ tarball だけ持っていてリポジトリを持たない顧客の手元にも
 | 個人の WSL2 | [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
 | ecs / ecs-ec2 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
 | ec2-single | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
-| kubernetes | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
+| kubernetes（プレビュー） | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 ワークスペースの中では、同じファイルがこのセクションと並んで `operate/runbooks/` に置かれます。
 

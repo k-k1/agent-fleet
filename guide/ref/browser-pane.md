@@ -94,7 +94,8 @@ until it is running, then reconnect.
 
 ## Where there is no browser pane
 
-A deployment that runs workspaces on the `kubernetes` runtime offers **no browser features at
+A deployment that runs workspaces on the `kubernetes` runtime (a preview, see
+[deployment targets](deploy-targets.md)) offers **no browser features at
 all**: no browser pane, no Chromium attachments for agents, no headless Chromium. A workspace pod
 there runs under the Pod Security `restricted` level, which sets NoNewPrivs (the setuid
 `chrome-sandbox` cannot elevate) and the runtime's default seccomp profile (no user namespaces),

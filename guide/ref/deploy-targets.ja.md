@@ -18,7 +18,14 @@ updated: "2026-10"
 | native | Docker を使わない、サンドボックスされたホストプロセス | ホスト上のディレクトリ | Docker を入れられない（素の WSL2 など）。**単独利用のみ**——コンテナ境界が無いので、共有モードでは起動を拒否する |
 | ecs | AWS ECS / Fargate のタスク | EFS | AWS で、インスタンスを管理したくない |
 | ecs-ec2 | プールから取った EC2 スロット上のタスク | ユーザー毎の EBS ボリューム | AWS で、起動レイテンシとディスク性能がインスタンス管理に見合う |
-| kubernetes | Kubernetes クラスタ上の、ワークスペース専用の StatefulSet の Pod | ユーザー毎の永続ボリューム（ブロックストレージ）。ログインと Claude の状態はもう 1 本の専用ボリューム | すでに Kubernetes を運用している、または Google Cloud で、使わないときは 0 台に縮むワークスペースが欲しい。最初に検証するクラスタは GKE Standard |
+| kubernetes | Kubernetes クラスタ上の、ワークスペース専用の StatefulSet の Pod | ユーザー毎の永続ボリューム（ブロックストレージ）。ログインと Claude の状態はもう 1 本の専用ボリューム | **プレビュー。** すでに Kubernetes を運用している、または Google Cloud で、使わないときは 0 台に縮むワークスペースが欲しい。最初に検証するクラスタは GKE Standard |
+
+> **プレビュー。** `kubernetes` ランタイムはプレビューです。GKE Standard クラスタで受け入れを確かめて
+> いますが、本番での利用はまだサポートしていません。既知の制約：このランタイムにはブラウザ機能が
+> ありません（ブラウザペインもヘッドレス Chromium もなし）。GKE では、始める前にリージョンの SSD
+> ディスク割り当てが配備に足りている必要があります（[Preconditions](../../deploy/kubernetes/README.md#preconditions)）。まだ測って
+> いるもの：費用（[The bill](../../deploy/kubernetes/README.md#the-bill)）と、ロードバランサが WebSocket を 24 時間で切ることが
+> 1 日続くセッションにどう響くか（[7. The load balancer](../../deploy/kubernetes/README.md#7-the-load-balancer)）。
 
 `docker` は `local`、`ecs` は `aws`、`native` は `wsl`、`kubernetes` は `k8s` という綴りでも通ります。
 それ以外は**起動時に失敗**します（黙って docker に落ちたりしません）。
@@ -28,7 +35,7 @@ updated: "2026-10"
 
 ## 能力の差
 
-| 機能 | docker | native | ecs | ecs-ec2 | kubernetes |
+| 機能 | docker | native | ecs | ecs-ec2 | kubernetes（プレビュー） |
 |---|:--:|:--:|:--:|:--:|:--:|
 | 複数ユーザーの相互不可視な利用 | ✓ | — | ✓ | ✓ | ✓ |
 | ユーザー毎の CPU / メモリ上限 | ✓ | — | ✓ | ✓ | ✓ |
@@ -137,7 +144,7 @@ EFS にあるので、ほかの形態と同じく残る。ただし、その中�
 | native | [deploy/native/README.md](../../deploy/native/README.md)。個人の WSL2 は [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
 | ecs / ecs-ec2 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
 | compose を EC2 1 台に載せる | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
-| kubernetes（GKE、およびほかのクラスタ）| [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
+| kubernetes（プレビュー。GKE、およびほかのクラスタ）| [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 `ec2-single` は別の runtime プロファイルではありません。**VM 上の `docker`** です。
 「AWS を使う」と「インスタンスを自分で管理する」が独立した選択だから存在します。

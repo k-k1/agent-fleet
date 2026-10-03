@@ -40,7 +40,7 @@ has them:
 | a personal WSL2 machine | [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
 | ecs / ecs-ec2 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
 | ec2-single | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
-| kubernetes | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
+| kubernetes (preview) | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 Inside a workspace the same files are staged as `operate/runbooks/*.md` beside this
 shelf, so they are readable from the container too — which is where you will want them

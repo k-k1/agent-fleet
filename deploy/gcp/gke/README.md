@@ -1,5 +1,8 @@
 # deploy/gcp/gke — Terraform around a GKE cluster
 
+> **Preview.** The `kubernetes` runtime on GKE is a preview, not yet supported for production;
+> its known limits and what is still being measured are in the runbook's opening note.
+
 What a GKE deployment of the `kubernetes` runtime profile needs outside the cluster's own
 manifests: the VPC, Cloud NAT with a static address, the GKE Standard cluster (Dataplane V2,
 Secrets encrypted with Cloud KMS, a private or authorised-network control plane, a workspace

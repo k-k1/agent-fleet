@@ -6,10 +6,11 @@ The design, and the reason behind every rule below, is
 [ADR 0106](../../docs/decisions/0106-kubernetes-runtime.md); the decision numbers in this
 file refer to it.
 
-> **Status.** Built, not yet applied to a live cluster. GKE Standard is the first and only
-> cluster the profile is to be verified on; the acceptance run, including the live harness
-> and the reachability probes of decision 7, is tracked in issue #1468. Until it has run,
-> treat every step here as unproven.
+> **Preview.** This runtime profile is a preview: accepted on a GKE Standard cluster, not yet
+> supported for production. Known limits: no browser features on this runtime (below), and the
+> regional SSD quota on GKE ("Disk quota (GKE)" under Preconditions). Still being measured: the
+> bill ("The bill"), and the load balancer's 24-hour WebSocket cut ("7. The load balancer").
+> The rest of the acceptance run is tracked in issue #1468.
 
 | Path | What it is |
 |---|---|

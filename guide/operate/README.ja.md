@@ -40,7 +40,7 @@ updated: "2026-08"
 | 個人の WSL2 | [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
 | ecs / ecs-ec2 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
 | ec2-single | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
-| kubernetes | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
+| kubernetes（プレビュー） | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 ワークスペースの中では、同じファイルがこのセクションと並んで `operate/runbooks/*.md` として
 置かれます。**コンテナからも読めます**——燃えているときに欲しくなるのはそこだからです。
