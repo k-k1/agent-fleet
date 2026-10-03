@@ -51,8 +51,28 @@ func (m *manager) openHomeOperation(ctx context.Context, ws store.Workspace, rt 
 		}
 		return nil, err
 	}
-	runtime.BindHomeTask(rt, runtime.HomeTaskBinding{Token: op.ID, Started: m.recordHomeTask(op.ID)})
+	runtime.BindHomeTask(rt, runtime.HomeTaskBinding{Token: op.ID, Started: m.recordHomeTask(op.ID),
+		Sending: m.recordHomeTaskSent(op.ID)})
 	return &op, nil
+}
+
+// recordHomeTaskSent stores when the operation's first RunTask goes out, before it does: a
+// later attempt asks again under the same token only while ECS surely still keeps it.
+func (m *manager) recordHomeTaskSent(id string) func() error {
+	return func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), homeOpFinishTimeout)
+		defer cancel()
+		return m.store.SetHomeOperationSent(ctx, id, store.NowTS())
+	}
+}
+
+// homeOpSentAt parses TaskSentAt; zero when no RunTask went out.
+func homeOpSentAt(op store.HomeOperation) time.Time {
+	t, err := time.Parse(time.RFC3339, op.TaskSentAt)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 // recordHomeTask stores the task's ARN on the record. A failed write only costs the
@@ -101,7 +121,21 @@ func (m *manager) finishHomeOperation(op store.HomeOperation, err error, leftove
 	if err == nil {
 		f.DeleteWorkspace = op.Kind == store.HomeOpDestroy
 		f.StopWorkspace = op.Kind == store.HomeOpAdminErase
+	} else if op.Kind == store.HomeOpMemberWipe {
+		f.AutoStop = homeWipeFailure(err.Error())
 	}
+	return m.closeHomeOperation(op, err, f)
+}
+
+// homeWipeFailure is the workspace_auto_stop row that tells the member why their
+// Recreate or Clean home left the workspace stopped (homeWipeFailed).
+func homeWipeFailure(why string) *store.WorkspaceAutoStop {
+	return &store.WorkspaceAutoStop{Kind: autoStopHomeWipe, Phase: why, StoppedAt: store.NowTS()}
+}
+
+// closeHomeOperation deletes op's record with f's writes and reports whether this caller
+// claimed it.
+func (m *manager) closeHomeOperation(op store.HomeOperation, err error, f store.HomeOperationFinish) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), homeOpFinishTimeout)
 	defer cancel()
 	claimed, ferr := m.store.FinishHomeOperation(ctx, op.ID, f)
@@ -123,11 +157,9 @@ func (m *manager) finishHomeOperation(op store.HomeOperation, err error, leftove
 	return true
 }
 
-// noteHomeWipeFailure keeps why a member's background Recreate or Clean home left the
-// workspace stopped, where the starter keeps it (workspace_auto_stop, homeWipeFailed).
-func (m *manager) noteHomeWipeFailure(workspaceID, why string) {
-	newWorkspaceAPI(m, false).recordHomeWipeFailure(workspaceID, why)
-}
+// homeOpStartKey carries, on the context of the start a member's wipe owes, the id of
+// that operation: its own record is the one open record that does not refuse it.
+type homeOpStartKey struct{}
 
 // homeOperationOpenErr refuses a start while ws has an unfinished home operation: its task
 // may be running, or the operation has yet to apply its own step after it. Asked only where
@@ -136,9 +168,12 @@ func (m *manager) homeOperationOpenErr(ctx context.Context, ws store.Workspace, 
 	if m.store == nil || !runtime.RunsHomeTask(rt) {
 		return nil
 	}
-	_, open, err := m.store.GetHomeOperationByWorkspace(ctx, ws.ID)
+	cur, open, err := m.store.GetHomeOperationByWorkspace(ctx, ws.ID)
 	if err != nil {
 		return internalErr(err)
+	}
+	if own, _ := ctx.Value(homeOpStartKey{}).(string); open && own == cur.ID && cur.Phase == store.HomeOpPhaseStart {
+		return nil // the start the operation itself still owes
 	}
 	if open {
 		return &apiError{http.StatusConflict, errCodeHomeOperationInProgress, runtime.ErrHomeTaskInFlight.Error()}
@@ -219,9 +254,14 @@ func (m *manager) resumeHomeOperation(ctx context.Context, op store.HomeOperatio
 		return
 	}
 	op = cur
-	log.Printf("home operation %s (%s, ws %s): resuming (task %q)", op.ID, op.Kind, ws.ID, op.TaskARN)
+	log.Printf("home operation %s (%s, %s, ws %s): resuming (task %q)", op.ID, op.Kind, op.Phase, ws.ID, op.TaskARN)
+	if op.Phase == store.HomeOpPhaseStart {
+		// The wipe is done and recorded as done; only the start it owes is left.
+		m.startAfterMemberWipe(lease, op)
+		return
+	}
 	runtime.BindHomeTask(rt, runtime.HomeTaskBinding{Token: op.ID, TaskARN: op.TaskARN, Resume: true,
-		Started: m.recordHomeTask(op.ID)})
+		SentAt: homeOpSentAt(op), Started: m.recordHomeTask(op.ID), Sending: m.recordHomeTaskSent(op.ID)})
 	var leftovers []string
 	switch op.Kind {
 	case store.HomeOpMemberWipe:
@@ -235,24 +275,59 @@ func (m *manager) resumeHomeOperation(ctx context.Context, op store.HomeOperatio
 	default:
 		err = errors.New("unknown home operation kind " + op.Kind)
 	}
-	if !m.finishHomeOperation(op, err, leftovers) || op.Kind != store.HomeOpMemberWipe {
+	if op.Kind == store.HomeOpMemberWipe {
+		m.finishMemberWipe(lease, op, err)
 		return
 	}
+	m.finishHomeOperation(op, err, leftovers)
+}
+
+// finishMemberWipe applies what follows a member's wipe task, for its starter and for the
+// reconciler alike. A failure ends the record with the reason in one write. A success
+// first moves the record to HomeOpPhaseStart — durably, so a CP lost before the start leaves
+// the reconciler a start to make, never the wipe to run again — and only then starts.
+func (m *manager) finishMemberWipe(lease *workspaceLifecycleLeaseGuard, op store.HomeOperation, err error) {
 	if err != nil {
-		m.noteHomeWipeFailure(ws.ID, err.Error())
+		m.finishHomeOperation(op, err, nil)
 		return
 	}
-	if aerr := m.startAfterHomeWipe(lease, op); aerr != nil {
-		log.Printf("home operation %s: start after the wipe: %s", op.ID, aerr.message)
-		m.noteHomeWipeFailure(ws.ID, aerr.message)
+	ctx, cancel := context.WithTimeout(context.Background(), homeOpFinishTimeout)
+	claimed, aerr := m.store.AdvanceHomeOperation(ctx, op.ID, store.HomeOpPhaseStart)
+	cancel()
+	if aerr != nil {
+		log.Printf("home operation %s: record the finished wipe: %v; the reconciler takes it over", op.ID, aerr)
+		return
 	}
+	if !claimed {
+		return
+	}
+	op.Phase = store.HomeOpPhaseStart
+	m.startAfterMemberWipe(lease, op)
+}
+
+// startAfterMemberWipe makes the start a finished member wipe owes and then ends the
+// record: with no more to write when it started (or must not: the member is gone), with
+// the reason when it failed. A start cut off by losing the lease leaves the record in
+// HomeOpPhaseStart for the reconciler.
+func (m *manager) startAfterMemberWipe(lease *workspaceLifecycleLeaseGuard, op store.HomeOperation) {
+	aerr := m.startAfterHomeWipe(lease, op)
+	var f store.HomeOperationFinish
+	if aerr != nil {
+		if aerr.code == "workspace_operation_in_progress" {
+			log.Printf("home operation %s: the start after the wipe lost its lease; the reconciler retries it", op.ID)
+			return
+		}
+		log.Printf("home operation %s: start after the wipe: %s", op.ID, aerr.message)
+		f.AutoStop = homeWipeFailure("the home was cleared, but the workspace did not start: " + aerr.message)
+	}
+	m.closeHomeOperation(op, nil, f)
 }
 
 // startAfterHomeWipe is the member's start that follows a resumed Recreate or Clean home.
 // It is what the member asked for, but only while it still can be: a membership removed in
 // the meantime is not started, nor is a workspace row that has been replaced.
 func (m *manager) startAfterHomeWipe(lease *workspaceLifecycleLeaseGuard, op store.HomeOperation) *apiError {
-	ctx := lease.Context()
+	ctx := context.WithValue(lease.Context(), homeOpStartKey{}, op.ID)
 	identityID, active, err := m.store.IdentityIDForMembership(ctx, op.MembershipID)
 	if err != nil {
 		return internalErr(err)

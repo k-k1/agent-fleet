@@ -155,3 +155,36 @@ func TestHomeOperationFinishStopsOrDrops(t *testing.T) {
 		}
 	}
 }
+
+// The start a member's wipe owes is claimed once (phase task -> start); the first RunTask's
+// time is kept; a failure ends the record with its reason in the same transaction.
+func TestHomeOperationPhaseSentAndFailure(t *testing.T) {
+	ctx := context.Background()
+	for name, st := range homeOpStores(t) {
+		ws := homeOpWorkspace(t, st)
+		op := HomeOperation{ID: NewID(), WorkspaceID: ws.ID, MembershipID: ws.MembershipID, Kind: HomeOpMemberWipe, Op: "repos"}
+		if err := st.InsertHomeOperation(ctx, op); err != nil {
+			t.Fatal(err)
+		}
+		_ = st.SetHomeOperationSent(ctx, op.ID, "2026-10-03T00:00:00Z")
+		_ = st.SetHomeOperationSent(ctx, op.ID, "2026-10-04T00:00:00Z")
+		got, _, _ := st.GetHomeOperationByWorkspace(ctx, ws.ID)
+		if got.Phase != HomeOpPhaseTask || got.TaskSentAt != "2026-10-03T00:00:00Z" {
+			t.Errorf("%s: phase %q sent %q, want task and the first send", name, got.Phase, got.TaskSentAt)
+		}
+		if c, err := st.AdvanceHomeOperation(ctx, op.ID, HomeOpPhaseStart); err != nil || !c {
+			t.Fatalf("%s: advance = %v %v", name, c, err)
+		}
+		if c, err := st.AdvanceHomeOperation(ctx, op.ID, HomeOpPhaseStart); err != nil || c {
+			t.Errorf("%s: second advance = %v %v, want unclaimed", name, c, err)
+		}
+		fail := WorkspaceAutoStop{Kind: "home-wipe-failed", Phase: "did not start", StoppedAt: NowTS()}
+		if c, err := st.FinishHomeOperation(ctx, op.ID, HomeOperationFinish{AutoStop: &fail}); err != nil || !c {
+			t.Fatalf("%s: finish = %v %v", name, c, err)
+		}
+		as, ok, err := st.GetWorkspaceAutoStopByMembership(ctx, ws.MembershipID)
+		if err != nil || !ok || as.Phase != "did not start" {
+			t.Errorf("%s: auto-stop = %+v %v %v", name, as, ok, err)
+		}
+	}
+}

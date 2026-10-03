@@ -40,13 +40,14 @@ func TestECSBoundHomeTaskCarriesTheTokenAndReportsItsTask(t *testing.T) {
 func TestECSResumedHomeTaskAsksAgainUnderTheSameToken(t *testing.T) {
 	fs, ft := &fakeSSM{}, &fakeTasks{exitCode: exit(0)}
 	rt := newHomeTaskECSWith(&fakeECS{}, &fakeEFS{}, fs, ft)
-	fs.values = map[string]string{rt.homeTaskMarker(): homeTaskMarkerPending}
+	fs.values = map[string]string{rt.homeTaskMarker(): markerValue(homeTaskMarkerPending, "op-7")}
 
 	if err := rt.WipeHome(context.Background(), HomeWipeClean); !errors.Is(err, ErrHomeTaskInFlight) {
 		t.Fatalf("an unbound run over a pending marker = %v, want ErrHomeTaskInFlight", err)
 	}
 	var started string
-	BindHomeTask(rt, HomeTaskBinding{Token: "op-7", Resume: true, Started: func(arn string) { started = arn }})
+	BindHomeTask(rt, HomeTaskBinding{Token: "op-7", Resume: true, SentAt: time.Now().Add(-time.Hour),
+		Started: func(arn string) { started = arn }})
 	if err := rt.WipeHome(context.Background(), HomeWipeClean); err != nil {
 		t.Fatalf("resumed run: %v", err)
 	}
@@ -67,8 +68,8 @@ func TestECSResumedHomeTaskAdoptsTheRecordedTask(t *testing.T) {
 	for _, c := range []struct {
 		name, recorded, marker string
 	}{
-		{"recorded on the operation", "arn:task/home-9", "arn:task/home-9"},
-		{"only in the marker", "", "arn:task/home-9"},
+		{"recorded on the operation", "arn:task/home-9", "arn:task/home-9 op-2"},
+		{"only in the marker", "", "arn:task/home-9 op-2"},
 	} {
 		fs, ft := &fakeSSM{}, &fakeTasks{runningPolls: 2, exitCode: exit(1)}
 		rt := newHomeTaskECSWith(&fakeECS{}, &fakeEFS{}, fs, ft)
@@ -142,19 +143,100 @@ func TestECSHomeTaskOutcomeIsUnresolvedOnlyWhileATaskMayRun(t *testing.T) {
 	// client fault proves nothing; a failure list under the token is ECS's own answer.
 	resumed := newHomeTaskECSWith(&fakeECS{}, &fakeEFS{}, &fakeSSM{values: map[string]string{}}, &fakeTasks{})
 	resumed.tasks = &fakeTasksRunErr{err: &ecstypes.AccessDeniedException{Message: aws.String("no")}}
-	resumed.ssm.(*fakeSSM).values[resumed.homeTaskMarker()] = homeTaskMarkerPending
-	BindHomeTask(resumed, HomeTaskBinding{Token: "op-4", Resume: true})
+	resumed.ssm.(*fakeSSM).values[resumed.homeTaskMarker()] = markerValue(homeTaskMarkerPending, "op-4")
+	BindHomeTask(resumed, HomeTaskBinding{Token: "op-4", Resume: true, SentAt: time.Now().Add(-time.Hour)})
 	if err := resumed.WipeHome(ctx, HomeWipeRepos); !errors.Is(err, ErrHomeTaskUnresolved) {
 		t.Errorf("resumed client fault = %v, want ErrHomeTaskUnresolved", err)
 	}
 	fs := &fakeSSM{}
 	resumedNP := newHomeTaskECSWith(&fakeECS{}, &fakeEFS{}, fs, &fakeTasks{runFailure: "RESOURCE:ENI"})
-	fs.values = map[string]string{resumedNP.homeTaskMarker(): homeTaskMarkerPending}
-	BindHomeTask(resumedNP, HomeTaskBinding{Token: "op-5", Resume: true})
+	fs.values = map[string]string{resumedNP.homeTaskMarker(): markerValue(homeTaskMarkerPending, "op-5")}
+	BindHomeTask(resumedNP, HomeTaskBinding{Token: "op-5", Resume: true, SentAt: time.Now().Add(-time.Hour)})
 	if err := resumedNP.WipeHome(ctx, HomeWipeRepos); err == nil || errors.Is(err, ErrHomeTaskUnresolved) {
 		t.Errorf("resumed, not placed = %v, want a definite failure", err)
 	}
 	if _, ok := fs.values[resumedNP.homeTaskMarker()]; ok {
 		t.Error("a token ECS placed nothing for kept its marker")
+	}
+}
+
+// A RunTask answer lost long enough ago that the token may have expired (ECS keeps one for
+// at most 24 hours) is not asked for again: the same token could start a second task while
+// the first still removes files. Nor is any RunTask sent while a task started for this
+// member is listed running, whatever the token's age.
+func TestECSResumedHomeTaskDoesNotOutliveItsToken(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		sentAgo  time.Duration
+		inflight []string
+		runs     int
+	}{
+		{"recent, nothing listed", time.Hour, nil, 1},
+		{"recent, the first task still listed", time.Hour, []string{"arn:task/home-A"}, 0},
+		{"past the token, the first task still listed", 25 * time.Hour, []string{"arn:task/home-A"}, 0},
+		{"past the token, nothing listed", 25 * time.Hour, nil, 0},
+	} {
+		fs, ft := &fakeSSM{}, &fakeTasks{exitCode: exit(0), inflight: c.inflight}
+		rt := newHomeTaskECSWith(&fakeECS{}, &fakeEFS{}, fs, ft)
+		fs.values = map[string]string{rt.homeTaskMarker(): markerValue(homeTaskMarkerPending, "op-8")}
+		BindHomeTask(rt, HomeTaskBinding{Token: "op-8", Resume: true, SentAt: time.Now().Add(-c.sentAgo)})
+		err := rt.WipeHome(context.Background(), HomeWipeRepos)
+		if len(ft.runs) != c.runs {
+			t.Errorf("%s: %d RunTask, want %d", c.name, len(ft.runs), c.runs)
+		}
+		if c.runs == 0 {
+			if !errors.Is(err, ErrHomeTaskUnresolved) {
+				t.Errorf("%s: outcome = %v, want unresolved", c.name, err)
+			}
+			if _, ok := fs.values[rt.homeTaskMarker()]; !ok {
+				t.Errorf("%s: the marker was dropped although the first task may still run", c.name)
+			}
+		} else if err != nil {
+			t.Errorf("%s: %v", c.name, err)
+		}
+	}
+	// The operator's release: with the marker deleted after checking ECS, the operation
+	// runs again.
+	fs, ft := &fakeSSM{}, &fakeTasks{exitCode: exit(0)}
+	rt := newHomeTaskECSWith(&fakeECS{}, &fakeEFS{}, fs, ft)
+	BindHomeTask(rt, HomeTaskBinding{Token: "op-8", Resume: true, SentAt: time.Now().Add(-25 * time.Hour)})
+	if err := rt.WipeHome(context.Background(), HomeWipeRepos); err != nil || len(ft.runs) != 1 {
+		t.Errorf("released by the operator: %v, %d RunTask; want it run again", err, len(ft.runs))
+	}
+}
+
+// Only the operation's own marker names its task. A marker without a token (a CP before
+// #1544) or with another operation's is a home task like any other: running or pending it
+// keeps this operation waiting, and once seen STOPPED it is cleared and this operation
+// starts its own task — it never takes the stranger's exit code as its outcome.
+func TestECSResumedHomeTaskNeverAdoptsAnotherOperationsMarker(t *testing.T) {
+	for _, c := range []struct {
+		name, marker string
+		running      int
+		runs         int
+	}{
+		{"legacy, stopped", "arn:task/old-recreate", 0, 1},
+		{"another operation's, stopped", "arn:task/old-recreate op-other", 0, 1},
+		{"legacy, pending", homeTaskMarkerPending, 0, 0},
+		{"another operation's, running", "arn:task/old-recreate op-other", 1 << 30, 0},
+	} {
+		fs, ft := &fakeSSM{}, &fakeTasks{exitCode: exit(0), runningPolls: c.running}
+		rt := newHomeTaskECSWith(&fakeECS{}, &fakeEFS{}, fs, ft)
+		fs.values = map[string]string{rt.homeTaskMarker(): c.marker}
+		var started string
+		BindHomeTask(rt, HomeTaskBinding{Token: "op-destroy", Resume: true, Started: func(arn string) { started = arn }})
+		err := rt.WipeHome(context.Background(), HomeWipeClean)
+		if len(ft.runs) != c.runs {
+			t.Errorf("%s: %d RunTask, want %d", c.name, len(ft.runs), c.runs)
+		}
+		if started == "arn:task/old-recreate" {
+			t.Errorf("%s: adopted another operation's task", c.name)
+		}
+		if c.runs == 0 && !errors.Is(err, ErrHomeTaskUnresolved) {
+			t.Errorf("%s: outcome = %v, want unresolved", c.name, err)
+		}
+		if c.runs == 1 && (err != nil || aws.ToString(ft.runs[0].ClientToken) != "op-destroy") {
+			t.Errorf("%s: %v, token %q; want its own task under its own token", c.name, err, aws.ToString(ft.runs[0].ClientToken))
+		}
 	}
 }

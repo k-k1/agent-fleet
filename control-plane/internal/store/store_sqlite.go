@@ -1749,7 +1749,12 @@ func (s *SQL) SetWorkspacePreviewSlug(ctx context.Context, workspaceID, slug str
 // SetWorkspaceAutoStop records why the Control Plane stopped the workspace, replacing the
 // previous record.
 func (s *SQL) SetWorkspaceAutoStop(ctx context.Context, workspaceID string, a WorkspaceAutoStop) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO workspace_auto_stop(workspace_id, kind, phase, limit_minutes, stopped_at)
+	return setWorkspaceAutoStopTx(ctx, s.db, workspaceID, a)
+}
+
+// setWorkspaceAutoStopTx is SetWorkspaceAutoStop on q, a caller's transaction or the pool.
+func setWorkspaceAutoStopTx(ctx context.Context, q sqlExecQuery, workspaceID string, a WorkspaceAutoStop) error {
+	_, err := q.ExecContext(ctx, `INSERT INTO workspace_auto_stop(workspace_id, kind, phase, limit_minutes, stopped_at)
 		VALUES(?, ?, ?, ?, ?)
 		ON CONFLICT(workspace_id) DO UPDATE SET kind=excluded.kind, phase=excluded.phase,
 		  limit_minutes=excluded.limit_minutes, stopped_at=excluded.stopped_at`,

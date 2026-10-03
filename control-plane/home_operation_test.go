@@ -21,6 +21,20 @@ type recordedHomeRuntime struct {
 	bmu      sync.Mutex
 	bindings []runtime.HomeTaskBinding
 	outcomes []error
+	// startErr fails Start; onStart sees the world at the moment of the start.
+	startErr error
+	onStart  func()
+}
+
+func (r *recordedHomeRuntime) Start(ctx context.Context) error {
+	if r.onStart != nil {
+		r.onStart()
+	}
+	if r.startErr != nil {
+		r.rec.add("start-failed")
+		return r.startErr
+	}
+	return r.backgroundHomeRuntime.Start(ctx)
 }
 
 func newRecordedHomeRuntime(state string, outcomes ...error) *recordedHomeRuntime {
@@ -297,5 +311,79 @@ func TestReconcilerReportsAFailedMemberWipe(t *testing.T) {
 	}
 	if recordOpen(t, st, ws.ID) {
 		t.Error("a definite failure left the record open")
+	}
+}
+
+// A wipe that succeeded is recorded as such before the start it owes: a CP lost between the
+// two leaves a record in the start phase, and the reconciler then makes the start — and
+// does not run the wipe again.
+func TestReconcilerMakesTheStartAFinishedWipeOwes(t *testing.T) {
+	rt := newRecordedHomeRuntime("stopped")
+	close(rt.gate)
+	st, mgr, victim, tn := destroyFixture(t, fixedRuntimeFactory{rt})
+	ws := victimWorkspace(t, st, victim, tn)
+	rec := openRecord(t, st, ws, store.HomeOpMemberWipe, "repos", nil, "arn:task/done")
+	if claimed, err := st.AdvanceHomeOperation(context.Background(), rec.ID, store.HomeOpPhaseStart); err != nil || !claimed {
+		t.Fatalf("advance: %v %v", claimed, err)
+	}
+	res := &resolved{rt: rt, ws: ws, mv: store.MembershipView{MembershipID: ws.MembershipID, TenantID: ws.TenantID}}
+	if aerr := newWorkspaceAPI(mgr, false).ensureWorkspaceStarted(context.Background(), res); aerr == nil || aerr.code != errCodeHomeOperationInProgress {
+		t.Errorf("somebody else's start while the start is owed = %+v, want %s", aerr, errCodeHomeOperationInProgress)
+	}
+	reconcileNow(mgr)
+	if got := rt.rec.log(); got != "start" {
+		t.Errorf("drove %q, want only the start", got)
+	}
+	if recordOpen(t, st, ws.ID) {
+		t.Error("the record stayed open after its start")
+	}
+}
+
+// The starter moves the record to the start phase before it starts, so the start is never
+// only in its memory.
+func TestMemberWipeRecordsTheFinishedWipeBeforeItStarts(t *testing.T) {
+	rt := newRecordedHomeRuntime("running")
+	close(rt.gate)
+	st, mgr, victim, tn := destroyFixture(t, fixedRuntimeFactory{rt})
+	ws := victimWorkspace(t, st, victim, tn)
+	phase := make(chan string, 1)
+	rt.onStart = func() {
+		op, open, _ := st.GetHomeOperationByWorkspace(context.Background(), ws.ID)
+		if !open {
+			phase <- "closed"
+			return
+		}
+		phase <- op.Phase
+	}
+	res := &resolved{rt: rt, ws: ws, mv: store.MembershipView{MembershipID: ws.MembershipID, TenantID: ws.TenantID}}
+	if w := callMemberWipe(newWorkspaceAPI(mgr, false), "recreate", res); w.Code != http.StatusAccepted {
+		t.Fatalf("recreate = %d %s", w.Code, w.Body.String())
+	}
+	if got := <-phase; got != store.HomeOpPhaseStart {
+		t.Errorf("at the start the record was %q, want it open in the start phase", got)
+	}
+	waitFor(t, "the record to close", func() bool { return !recordOpen(t, st, ws.ID) })
+}
+
+// A start that fails after the wipe ends the record with the reason in the same write, so a
+// CP lost right after cannot lose it.
+func TestFailedStartAfterAWipeIsRecordedWithTheRecordsEnd(t *testing.T) {
+	rt := newRecordedHomeRuntime("stopped")
+	rt.startErr = errors.New("no capacity")
+	close(rt.gate)
+	st, mgr, victim, tn := destroyFixture(t, fixedRuntimeFactory{rt})
+	ws := victimWorkspace(t, st, victim, tn)
+	openRecord(t, st, ws, store.HomeOpMemberWipe, "clean", nil, "")
+	reconcileNow(mgr)
+	if recordOpen(t, st, ws.ID) {
+		t.Fatal("the record stayed open after a failed start")
+	}
+	as, ok, err := st.GetWorkspaceAutoStopByMembership(context.Background(), ws.MembershipID)
+	if err != nil || !ok || as.Kind != autoStopHomeWipe || !strings.Contains(as.Phase, "no capacity") {
+		t.Errorf("auto-stop = %+v %v %v, want the failed start's reason", as, ok, err)
+	}
+	reconcileNow(mgr)
+	if got := rt.rec.log(); strings.Count(got, "wipe:") != 1 {
+		t.Errorf("drove %q; the wipe ran again", got)
 	}
 }

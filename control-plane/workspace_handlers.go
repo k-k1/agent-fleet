@@ -443,12 +443,17 @@ func (a workspaceAPI) memberHomeWipeStop(r *http.Request, res *resolved, lease *
 // memberHomeWipeFinish removes what from the stopped workspace's home and starts it again.
 // lock, when given, is taken for the start: the background half no longer holds it.
 //
-// With a record (home_operation.go) the wipe's outcome finishes it first, and only the
-// caller that claims it goes on: an outcome still unknown leaves the record, and the start,
-// to the reconciler, and is no failure to show.
+// With a record (home_operation.go) what follows the wipe is the record's, exactly as the
+// reconciler would apply it (finishMemberWipe): the failure, or the start, is written
+// through it, and an outcome still unknown is left to the reconciler. Nothing is returned
+// for the caller to record.
 func (a workspaceAPI) memberHomeWipeFinish(ctx context.Context, res *resolved, lease *workspaceLifecycleLeaseGuard, what runtime.HomeWipe, unqueue func(), record *store.HomeOperation, lock ...*sync.Mutex) *apiError {
 	err := runtime.WipeHome(lease.Context(), res.rt, what)
-	if record != nil && !a.mgr.finishHomeOperation(*record, err, nil) {
+	if record != nil {
+		// The clearing mark reads as `starting`, which Start would take for a launch
+		// already under way.
+		unqueue()
+		a.mgr.finishMemberWipe(lease, *record, err)
 		return nil
 	}
 	if err != nil {

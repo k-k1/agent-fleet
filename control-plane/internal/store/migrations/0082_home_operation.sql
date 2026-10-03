@@ -6,7 +6,10 @@
 -- that outlives the process that wrote it is what the reconciler finishes.
 --
 -- id is the RunTask clientToken, so a RunTask asked again for the same operation answers
--- the task the first call started. One open operation per workspace (the UNIQUE), which is
+-- the task the first call started. task_sent_at is when that first call went out, written
+-- before it: ECS keeps a token for at most 24 hours, after which asking again could start a
+-- second task. phase is task until the task's outcome is known, then start while a member's
+-- workspace is still to be started after a wipe that succeeded. One open operation per workspace (the UNIQUE), which is
 -- also what refuses a Start while it is open.
 --
 -- No foreign key to workspace: Destroy deletes the workspace row in the transaction that
@@ -18,7 +21,9 @@ CREATE TABLE IF NOT EXISTS home_operation (
     membership_id TEXT NOT NULL,
     kind          TEXT NOT NULL,
     op            TEXT NOT NULL,
+    phase         TEXT NOT NULL DEFAULT 'task',
     task_arn      TEXT NOT NULL DEFAULT '',
+    task_sent_at  TEXT NOT NULL DEFAULT '',
     audit         TEXT NOT NULL DEFAULT '',
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL

@@ -1514,12 +1514,20 @@ action still owes, and the task's ARN once `RunTask` has answered. The row's id 
 ECS keeps a token for 24 hours or the task's lifetime plus one hour, whichever is shorter, and answers a repeat
 with the same parameters with the task the first call started (a repeat with other parameters gets a
 `ConflictException` naming that task, read the same way). The step after the task begins by deleting the row in the
-transaction that writes the audit outcome and, for Destroy, deletes the workspace row, so it is applied once; the
-member's start follows the deletion. A reconciler on every CP (at boot, then every minute) takes each open row's
+transaction that writes the audit outcome and, for Destroy, deletes the workspace row, so it is applied once. A
+member's wipe that succeeded first moves the row to phase `start` (a claimed update), then starts the workspace
+through a gate only its own row opens, and then deletes the row; a failure, of the wipe or of that start, is
+written to `workspace_auto_stop` in the deleting transaction. A CP lost in between leaves the reconciler a start to
+make, never the wipe to repeat. A reconciler on every CP (at boot, then every minute) takes each open row's
 member lifecycle lease — the starter holds it for the whole operation and loses it within the lease's 30 s of
 dying, which is what keeps the two from running together — and runs the operation again bound to the row: it
-adopts the recorded task (or the one the SSM marker names), asks `RunTask` again under the token when there is
-none or ECS has forgotten it, and applies the step after it. A member's start is re-checked against an active
+adopts the recorded task, or the one its own marker names (the marker carries the token, so a marker of another
+operation or of a CP before this is never adopted, only waited for), asks `RunTask` again under the token when there
+is none or ECS has forgotten it, and applies the step after it. It sends `RunTask` again only while no task started
+by `af-home/<membership>` is listed running and, for an answer that was lost, while the first call is under 23 hours
+old (`task_sent_at`, written before it): past that the token may start a second task beside the first, so the
+operation stays open until an operator who has checked ECS deletes its marker (which this CP only ever drops when
+nothing of it can run), and the log says so. A member's start is re-checked against an active
 membership and the same workspace row. A start is refused while a row is open. An outcome the starter cannot read
 (`runtime.ErrHomeTaskUnresolved`: a `RunTask` that may have placed a task, a wait that never saw it stop) leaves
 the row to the reconciler instead of being reported as a failure. The SSM marker stays: the adapter has no

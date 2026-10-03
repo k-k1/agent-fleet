@@ -21,8 +21,13 @@ type HomeOperation struct {
 	Kind string
 	// Op is what the task removes (the runtime's HomeWipe: repos, clean, destroy).
 	Op string
+	// Phase is HomeOpPhaseTask until the task's outcome is known, then HomeOpPhaseStart
+	// while a member's workspace is still to be started after a wipe that succeeded.
+	Phase string
 	// TaskARN is the task RunTask answered, once it has.
 	TaskARN string
+	// TaskSentAt is when the first RunTask went out ("" before), written before it.
+	TaskSentAt string
 	// Audit is the outcome entry an administrator's operation still owes; nil for a
 	// member's.
 	Audit     *HomeOpAudit
@@ -35,6 +40,12 @@ const (
 	HomeOpMemberWipe = "member-wipe"
 	HomeOpAdminErase = "admin-erase"
 	HomeOpDestroy    = "destroy"
+)
+
+// The phases of HomeOperation.
+const (
+	HomeOpPhaseTask  = "task"
+	HomeOpPhaseStart = "start"
 )
 
 // HomeOpAudit is the outcome entry of an administrator's irreversible action, kept with
@@ -91,6 +102,9 @@ type HomeOperationFinish struct {
 	// StopWorkspace records the workspace as stopped (an administrator's Clean home that
 	// succeeded), as SetWorkspaceState does.
 	StopWorkspace bool
+	// AutoStop records why the workspace was left stopped (a member's wipe that failed), as
+	// SetWorkspaceAutoStop does, so the reason and the record's end are one write.
+	AutoStop *WorkspaceAutoStop
 }
 
 // ErrHomeOperationOpen refuses a second operation on a workspace whose last one is not
@@ -104,6 +118,11 @@ type HomeOperationStore interface {
 	InsertHomeOperation(ctx context.Context, op HomeOperation) error
 	// SetHomeOperationTask records the task's ARN.
 	SetHomeOperationTask(ctx context.Context, id, taskARN string) error
+	// SetHomeOperationSent records when the first RunTask went out; a later call keeps it.
+	SetHomeOperationSent(ctx context.Context, id, at string) error
+	// AdvanceHomeOperation moves the record from HomeOpPhaseTask to phase. claimed is false
+	// when it was no longer in HomeOpPhaseTask: somebody else applied the task's outcome.
+	AdvanceHomeOperation(ctx context.Context, id, phase string) (claimed bool, err error)
 	GetHomeOperationByWorkspace(ctx context.Context, workspaceID string) (HomeOperation, bool, error)
 	ListHomeOperations(ctx context.Context) ([]HomeOperation, error)
 	// FinishHomeOperation deletes the record and applies f in one transaction. claimed is
@@ -143,13 +162,29 @@ func (s *SQL) SetHomeOperationTask(ctx context.Context, id, taskARN string) erro
 	return err
 }
 
-const homeOperationCols = `id, workspace_id, membership_id, kind, op, task_arn, audit, created_at, updated_at`
+func (s *SQL) SetHomeOperationSent(ctx context.Context, id, at string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE home_operation SET task_sent_at=?, updated_at=? WHERE id=? AND task_sent_at=''`,
+		at, NowTS(), id)
+	return err
+}
+
+func (s *SQL) AdvanceHomeOperation(ctx context.Context, id, phase string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE home_operation SET phase=?, updated_at=? WHERE id=? AND phase=?`,
+		phase, NowTS(), id, HomeOpPhaseTask)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+const homeOperationCols = `id, workspace_id, membership_id, kind, op, phase, task_arn, task_sent_at, audit, created_at, updated_at`
 
 func scanHomeOperation(row interface{ Scan(...any) error }) (HomeOperation, error) {
 	var op HomeOperation
 	var audit string
-	if err := row.Scan(&op.ID, &op.WorkspaceID, &op.MembershipID, &op.Kind, &op.Op, &op.TaskARN,
-		&audit, &op.CreatedAt, &op.UpdatedAt); err != nil {
+	if err := row.Scan(&op.ID, &op.WorkspaceID, &op.MembershipID, &op.Kind, &op.Op, &op.Phase, &op.TaskARN,
+		&op.TaskSentAt, &audit, &op.CreatedAt, &op.UpdatedAt); err != nil {
 		return HomeOperation{}, err
 	}
 	if audit != "" {
@@ -225,6 +260,10 @@ func (s *SQL) FinishHomeOperation(ctx context.Context, id string, f HomeOperatio
 		}
 	case f.StopWorkspace:
 		if err := setWorkspaceStateTx(ctx, tx, wsID, "stopped"); err != nil {
+			return false, err
+		}
+	case f.AutoStop != nil:
+		if err := setWorkspaceAutoStopTx(ctx, tx, wsID, *f.AutoStop); err != nil {
 			return false, err
 		}
 	}
