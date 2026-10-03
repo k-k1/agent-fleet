@@ -603,3 +603,77 @@ func TestGroupRetryKeepsTheSilentOutcome(t *testing.T) {
 		t.Fatal("the silent run was never recorded as silent")
 	}
 }
+
+// Review round 4, finding 2: the ledger save that consumes a silent run fails. The row stays
+// open and its outcome must stay with it, so the retry silences the run again instead of
+// delivering its [SILENT] as a normal result.
+func TestOutcomeSurvivesAFailedLedgerSave(t *testing.T) {
+	m, _, _ := ledgerFixture(t, "sched19")
+	silents := scheduleSeams(t, nil)
+	old := scheduleAnswerGrace
+	scheduleAnswerGrace = 0
+	t.Cleanup(func() { scheduleAnswerGrace = old })
+	r := scheduledRow(t, m.Name, "", delivery(true, DeliverNotifications), "[SILENT]")
+	if res := deliverReportCard(m.Name, "", ReportKindAnswerReady, "", []instrRow{r}); res != reportSinkOK || len(*silents) != 1 {
+		t.Fatalf("first sink = %v silents=%v", res, *silents)
+	}
+	staging := filepath.Join(instrLedgers.Dir(), ".staging")
+	if err := os.RemoveAll(staging); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(staging, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	markInstrReported(m.Name, []string{r.ID}, time.Now())
+	if !SessionReportPending(m.Name) {
+		t.Fatal("the row was consumed although its save failed")
+	}
+	if _, ok := scheduleOutcomes.Read(r.ID); !ok {
+		t.Fatal("the outcome was dropped although the row is still open")
+	}
+	_ = os.Remove(staging)
+	for i := 0; i < 2; i++ {
+		deliverReportCard(m.Name, "", ReportKindAnswerReady, "", []instrRow{r})
+	}
+	if res := noticesOf(NoticeKindScheduleResult); len(res) != 0 {
+		t.Fatalf("the silent run was delivered after the failed save: %+v", res)
+	}
+	markInstrReported(m.Name, []string{r.ID}, time.Now())
+	if _, ok := scheduleOutcomes.Read(r.ID); ok || SessionReportPending(m.Name) {
+		t.Fatal("a successful save left the row open or its outcome behind")
+	}
+}
+
+// A store that keeps whole seconds can show the same prompt twice in one second (a queued reuse
+// run). Each run still claims its own prompt and reads its own answer.
+func TestSameSecondPromptsAreTwoRuns(t *testing.T) {
+	m, _, _ := ledgerFixture(t, "sched20")
+	silents := scheduleSeams(t, nil)
+	sec := time.Now().Truncate(time.Second).Add(-20 * time.Second)
+	d := delivery(true, DeliverNotifications)
+	d.PromptSum = PromptSum("check the disk")
+	a := addRowAt(m.Name, "", "schedule", "", d, sec)
+	d2 := *d
+	d2.Slot = "2026-10-03T09:05:00Z"
+	b := addRowAt(m.Name, "", "schedule", "", &d2, sec)
+	testTurnsMu.Lock()
+	testTurns[m.Name] = []transcript.Turn{
+		{Role: "user", Text: "check the disk", TS: sec.UTC().Format(time.RFC3339)},
+		{Role: "assistant", Text: "Disk failed. Alert!", TS: sec.UTC().Format(time.RFC3339)},
+		{Role: "user", Text: "check the disk", TS: sec.UTC().Format(time.RFC3339)},
+		{Role: "assistant", Text: "[SILENT]", TS: sec.UTC().Format(time.RFC3339)},
+	}
+	testTurnsMu.Unlock()
+	t.Cleanup(func() { testTurnsMu.Lock(); delete(testTurns, m.Name); testTurnsMu.Unlock() })
+	NoteRunOutcomeFor(m.Name, a, "")
+	NoteRunOutcomeFor(m.Name, b, "")
+	var rows []instrRow
+	for _, r := range ReadInstrRows(m.Name) {
+		rows = append(rows, r)
+	}
+	deliverReportCard(m.Name, "", ReportKindAnswerReady, "", rows)
+	res := noticesOf(NoticeKindScheduleResult)
+	if len(*silents) != 1 || (*silents)[0] != "sch_1@2026-10-03T09:05:00Z sched20" || len(res) != 1 || res[0].Payload["excerpt"] != "Disk failed. Alert!" {
+		t.Fatalf("silents=%v notices=%+v", *silents, res)
+	}
+}

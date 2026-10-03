@@ -235,12 +235,17 @@ func turnEndReasonFor(notifyState string) string {
 	return ""
 }
 
-// RecordTurnOutcome is the agents.TurnEndRecorder: a Managed turn's end, with the instant the
-// driver saw it, recorded for the scheduled run it ended (#1560).
-func RecordTurnOutcome(sid string, endedAt time.Time, reason string) {
+// RecordTurnOutcome is the agents.TurnEndRecorder: a Managed turn's end recorded for the
+// scheduled run it ended (#1560) — by the input the driver started the turn with when it had
+// one, else by the instant the driver saw the end.
+func RecordTurnOutcome(sid string, endedAt time.Time, reason string, run agents.TurnRun) {
 	for _, m := range session.ListMetas() {
 		if session.UUID(m.Dir, m.Name) == sid {
-			chatx.NoteRunOutcome(m.Name, reason, endedAt)
+			if run.Known {
+				chatx.NoteRunOutcomeFor(m.Name, run.Instr, reason)
+			} else {
+				chatx.NoteRunOutcome(m.Name, reason, endedAt)
+			}
 			return
 		}
 	}

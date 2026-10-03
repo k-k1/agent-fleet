@@ -272,3 +272,54 @@ func TestConsumedDeliveryStillPreventsBroadcast(t *testing.T) {
 		t.Fatalf("events = %+v, want the schedule result alone", events)
 	}
 }
+
+// Review round 4, finding 1: a Managed turn's outcome goes to the run whose input the driver
+// started the turn with, never to the run that looks latest by time. Here the transcript keeps
+// whole seconds and the next run's prompt shares the failed run's second, and the next run has
+// already started when the recorder runs: timing would put A's failure on B.
+func TestManagedOutcomeFollowsTheTurnsInput(t *testing.T) {
+	put := fakeTranscripts(t)
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "s-identity", Dir: t.TempDir(), Kind: session.KindOpencode, Driver: session.DriverManaged}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+	raise := func(slot string) string {
+		d := &chatx.ScheduleDelivery{ScheduleID: "sch_1", Slot: slot, Targets: []string{chatx.DeliverNotifications},
+			Silent: true, PromptSum: chatx.PromptSum(runPrompt)}
+		id := chatx.AddScheduledInstruction(m.Name, "", "schedule", d, false)
+		if id == "" {
+			t.Fatal("no row")
+		}
+		return id
+	}
+	a, b := raise("2026-10-03T09:00:00Z"), raise("2026-10-03T09:05:00Z")
+	sec := time.Now().Truncate(time.Second).Add(-20 * time.Second)
+	put(m.Name, turn("user", runPrompt, sec), turn("assistant", "[SILENT]", sec),
+		turn("user", runPrompt, sec), turn("assistant", "B result", sec))
+
+	done := make(chan struct{})
+	release := make(chan struct{})
+	agents.SetTurnEndRecorder(func(sid string, endedAt time.Time, reason string, run agents.TurnRun) {
+		<-release // the recorder runs late, after B has started
+		RecordTurnOutcome(sid, endedAt, reason, run)
+		close(done)
+	})
+	t.Cleanup(func() { agents.SetTurnEndRecorder(nil) })
+
+	agents.MarkTurnStartRun(sid, agents.TurnInput{Instr: a})
+	agents.MarkTurnEndErr(sid, agents.TurnFailed, "provider error")
+	agents.MarkTurnStartRun(sid, agents.TurnInput{Instr: b})
+	close(release)
+	<-done
+
+	outcome := func(id string) string {
+		b, _ := os.ReadFile(filepath.Join(paths.AgentStateDir(), "schedule-outcome", id+".txt"))
+		return string(b)
+	}
+	if got := outcome(a); got != chatx.ReportReasonTurnFailed {
+		t.Fatalf("A's outcome = %q, want its failure", got)
+	}
+	if got := outcome(b); got != "" {
+		t.Fatalf("B's outcome = %q, want none (B has not ended)", got)
+	}
+}

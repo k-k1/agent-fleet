@@ -192,7 +192,7 @@ func openInstrRows(name string) []instrRow {
 func SessionReportPending(name string) bool { return len(openInstrRows(name)) > 0 }
 
 // writeInstrRows persists the rows with the retention trim. The caller must hold lockInstr.
-func writeInstrRows(name string, rows []instrRow) {
+func writeInstrRows(name string, rows []instrRow) error {
 	var open, closed []instrRow
 	for _, r := range rows {
 		if r.open() {
@@ -206,13 +206,32 @@ func writeInstrRows(name string, rows []instrRow) {
 	}
 	if len(open) == 0 && len(closed) == 0 {
 		instrLedgers.Remove(name)
-		return
+		return nil
 	}
 	// Keep the append order (= DeliveredAt order): a closed row was not necessarily delivered
 	// before an open one, so sort by time again.
 	merged := append(append([]instrRow{}, closed...), open...)
 	sort.SliceStable(merged, func(i, j int) bool { return merged[i].DeliveredAt < merged[j].DeliveredAt })
-	_ = instrLedgers.Write(name, instrLedger{Rows: merged})
+	return instrLedgers.Write(name, instrLedger{Rows: merged})
+}
+
+// consumeInstrRows writes rows whose state the caller just closed, and only once that write has
+// landed drops the recorded run outcomes (#1560) of every closed row. The caller holds lockInstr.
+//
+// Not before: a write that fails leaves the rows open, the next sweep sinks them again, and a
+// silent run whose outcome was already dropped would then be delivered as a normal answer. A
+// crash between the write and the drop leaves an outcome for a closed row behind, which nothing
+// reads (only open rows are sunk) and the next consumption in the session drops.
+func consumeInstrRows(name string, rows []instrRow) {
+	if err := writeInstrRows(name, rows); err != nil {
+		log.Printf("session-report: %s: save the instruction ledger: %v", name, err)
+		return
+	}
+	for _, r := range rows {
+		if !r.open() {
+			scheduleOutcomes.Remove(r.ID)
+		}
+	}
 }
 
 // AddInstruction records one delivered instruction as a NEW ledger row (docs/log/51 §migration
@@ -318,7 +337,6 @@ func MarkInstrNotRun(name, id, reason string) bool {
 // markInstrNotRunReported closes row id as state once its not-run or unconfirmed report has
 // been delivered.
 func markInstrNotRunReported(name, id, state string, at time.Time) {
-	scheduleOutcomes.Remove(id)
 	unlock := lockInstr(name)
 	defer unlock()
 	rows := ReadInstrRows(name)
@@ -328,7 +346,7 @@ func markInstrNotRunReported(name, id, state string, at time.Time) {
 			rows[i].ReportedAt = at.Format(time.RFC3339)
 		}
 	}
-	writeInstrRows(name, rows)
+	consumeInstrRows(name, rows)
 }
 
 // addInstructionAt is AddInstruction with an explicit delivery time (a seam so tests can build
@@ -378,11 +396,6 @@ func addRowAt(name, convID, source, sending string, d *ScheduleDelivery, at time
 // Rows are named by id, so instructions added between the delivery and returning here are not
 // caught in the crossfire (gap B's generation-less consumption disappears structurally).
 func markInstrReported(name string, ids []string, at time.Time) {
-	// A scheduled run's recorded outcome goes with its row (#1560). Not earlier: a group whose
-	// other row asked for a retry is sunk again, and the outcome must still be there.
-	for _, id := range ids {
-		scheduleOutcomes.Remove(id)
-	}
 	if len(ids) == 0 {
 		return
 	}
@@ -399,7 +412,7 @@ func markInstrReported(name string, ids []string, at time.Time) {
 			rows[i].ReportedAt = at.Format(time.RFC3339)
 		}
 	}
-	writeInstrRows(name, rows)
+	consumeInstrRows(name, rows)
 }
 
 // markInstrInterim stamps the interim (non-consuming) report on every open row: a question or

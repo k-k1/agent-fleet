@@ -182,13 +182,26 @@ func matchRuns(name string, persist bool) ([]transcript.Turn, map[string]string)
 	return turns, out
 }
 
-// turnKey names a transcript prompt stably enough to be claimed: its time and text. The index
-// shifts when a transcript is compacted.
-func turnKey(t transcript.Turn, sum string) string {
-	if t.TS != "" {
-		return t.TS + "|" + sum
+// promptKeys names each prompt (user turn) of the transcript stably enough to be claimed: its
+// time, its text, and which occurrence of that pair it is. The index shifts when a transcript is
+// compacted; time and text alone collide when a store keeps whole seconds and the same prompt is
+// sent twice within one (a queued reuse run). Non-prompt turns get "".
+func promptKeys(turns []transcript.Turn) []string {
+	keys := make([]string, len(turns))
+	seen := map[string]int{}
+	for i, t := range turns {
+		if t.Role != "user" || t.Sidechain {
+			continue
+		}
+		base := t.TS
+		if base == "" {
+			base = "idx:" + strconv.Itoa(t.Idx)
+		}
+		base += "|" + promptSumOf(t.Text)
+		keys[i] = base + "#" + strconv.Itoa(seen[base])
+		seen[base]++
 	}
-	return "idx:" + strconv.Itoa(t.Idx) + "|" + sum
+	return keys
 }
 
 // promptSumOf is the sum of a user turn's text, with the queue-time mark a held prompt
@@ -204,14 +217,15 @@ func promptSumOf(text string) string {
 // is not older than the row by more than runPromptSlack. "" when there is none yet.
 func claimRunPrompt(turns []transcript.Turn, r instrRow, taken map[string]bool) string {
 	floor, err := time.Parse(time.RFC3339, r.DeliveredAt)
-	for _, t := range turns {
+	keys := promptKeys(turns)
+	for i, t := range turns {
 		if t.Role != "user" || t.Sidechain || t.Compact || promptSumOf(t.Text) != r.Delivery.PromptSum {
 			continue
 		}
 		if at, perr := time.Parse(time.RFC3339, t.TS); err == nil && perr == nil && at.Before(floor.Add(-runPromptSlack)) {
 			continue
 		}
-		if k := turnKey(t, r.Delivery.PromptSum); !taken[k] {
+		if k := keys[i]; !taken[k] {
 			return k
 		}
 	}
@@ -222,8 +236,9 @@ func claimRunPrompt(turns []transcript.Turn, r instrRow, taken map[string]bool) 
 // prompt. Not found until the run has an assistant message with text.
 func answerAfter(turns []transcript.Turn, key string) (runAnswer, bool) {
 	start := -1
-	for i, t := range turns {
-		if t.Role == "user" && !t.Sidechain && turnKey(t, promptSumOf(t.Text)) == key {
+	keys := promptKeys(turns)
+	for i := range turns {
+		if keys[i] == key {
 			start = i
 			break
 		}
@@ -346,21 +361,39 @@ var scheduleOutcomes = fstore.Strings(paths.AgentStateDir, "schedule-outcome", "
 
 const outcomeClean = "clean"
 
-// NoteRunOutcome records how a turn went (reason: "" clean, else the failure qualifier) for the
-// scheduled run it ended. endedAt is when the turn ended, taken where the end was seen (the hook,
-// or the Managed driver before it hands the end to an async notifier): the run is the open one
-// whose prompt is the latest in the transcript at or before that instant. Never "the latest
-// prompt now": by the time a delayed notifier runs, the next queued run may have started and
-// answered, and its prompt must not take the earlier run's outcome.
+// NoteRunOutcomeFor records how a turn went (reason: "" clean, else the failure qualifier) for
+// the run the driver says that turn was running: instr is the instruction row id its input
+// carried, captured when the turn started. Identity, never timing: a delayed recorder cannot
+// put one run's outcome on the next. An instr that names no open scheduled run (the member's own
+// input, an operator instruction) records nothing.
+func NoteRunOutcomeFor(name, instr, reason string) {
+	if instr == "" {
+		return
+	}
+	for _, r := range openInstrRows(name) {
+		if r.ID == instr && r.Delivery != nil {
+			writeRunOutcome(instr, reason)
+			return
+		}
+	}
+}
+
+// NoteRunOutcome is the fallback for a turn end that names no input: a Terminal session's hook
+// (the CLI's Stop says nothing about which prompt it answered), and a Managed turn its driver did
+// not start itself (taken over across an Agent restart, or started by the host). endedAt is when
+// the turn ended, taken where the end was seen; the run is the open one whose prompt is the
+// latest in the transcript at or before that instant.
 //
-// A failure is not overwritten by a later clean end of the same run; an abort is (an aborted run
-// that resumed and finished did finish).
+// Timing is only as good as the transcript's clock: a store that keeps whole seconds (opencode's)
+// cannot tell an end at :00.3 from a prompt at :00.6. A Managed turn with its input in hand never
+// comes here (NoteRunOutcomeFor).
 func NoteRunOutcome(name, reason string, endedAt time.Time) {
 	turns, matched := matchRuns(name, false)
 	best, bestIdx := "", -1
+	keys := promptKeys(turns)
 	for id, key := range matched {
 		for i, t := range turns {
-			if t.Role != "user" || t.Sidechain || turnKey(t, promptSumOf(t.Text)) != key {
+			if keys[i] != key {
 				continue
 			}
 			if at, err := time.Parse(time.RFC3339Nano, t.TS); err == nil && at.After(endedAt) {
@@ -372,17 +405,22 @@ func NoteRunOutcome(name, reason string, endedAt time.Time) {
 			break
 		}
 	}
-	if best == "" {
-		return
+	if best != "" {
+		writeRunOutcome(best, reason)
 	}
+}
+
+// writeRunOutcome stores a run's outcome. A failure is not overwritten by a later clean end of
+// the same run; an abort is (an aborted run that resumed and finished did finish).
+func writeRunOutcome(id, reason string) {
 	outcome := reason
 	if outcome == "" {
 		outcome = outcomeClean
 	}
-	if prev, ok := scheduleOutcomes.Read(best); ok && prev == ReportReasonTurnFailed && outcome != ReportReasonTurnFailed {
+	if prev, ok := scheduleOutcomes.Read(id); ok && prev == ReportReasonTurnFailed && outcome != ReportReasonTurnFailed {
 		return
 	}
-	_ = scheduleOutcomes.Write(best, outcome)
+	_ = scheduleOutcomes.Write(id, outcome)
 }
 
 // turnRows are the open rows a turn ending at now can have finished.

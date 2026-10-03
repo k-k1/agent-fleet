@@ -120,9 +120,11 @@ and only the sink routes it differently. Decision 10 is untouched: the prompt's 
   (the delivered text, oldest run first, each prompt claimed once), so two open runs of a reuse session never
   share an answer, and a later `[SILENT]` cannot hide an earlier alert. The sink waits up to two minutes for the
   answer to appear; past that it delivers without a body, never as silent.
-- **Each run's outcome is its own too.** A turn end records clean / failed / aborted for the run it ended (the
-  run whose prompt precedes the instant the end was seen, taken before any async hand-off), kept until the row
-  is consumed, and
+- **Each run's outcome is its own too.** A turn end records clean / failed / aborted for the run it ended. A
+  Managed driver names that run by the input it started the turn with (the instruction row id); only a turn
+  started without one in hand (a Terminal session's hook, a Managed turn taken over across a restart) falls back
+  to the run whose prompt precedes the instant the end was seen. The outcome is kept until the ledger save that
+  consumes the row has landed, and
   the sink trusts that over the reason the reconciler settles with (a later run's end can settle an earlier
   run). A failure is never washed out by a later clean end, and a run is silent only on its own recorded clean
   end. The verdict a turn end called for (routed / silent) is kept by its completion key, so a hook that runs

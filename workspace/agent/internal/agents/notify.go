@@ -17,6 +17,7 @@ package agents
 // second copy of that judgement.
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -56,11 +57,20 @@ func notify(sid, previous, state, excerpt string) {
 	go (*fn)(sid, previous, state, excerpt)
 }
 
+// TurnRun names the input a turn is running, for attributing how the turn ended (#1560). Known
+// is false when the driver started the turn without one in hand (a turn taken over across an
+// Agent restart, a host-started turn): the recorder then falls back to timing. Known with an
+// empty Instr is a turn no instruction row raised (the member's own input): it ended no run.
+type TurnRun struct {
+	Known bool
+	Instr string // the input's instruction row id (TurnInput.Instr)
+}
+
 // TurnEndRecorder is told how a managed turn ended (reason: "" clean, else the persisted
-// qualifier) and WHEN, the instant taken here, before anything async. A scheduled run's outcome
-// is attributed by that instant (#1560): the notifier runs later, by which time the next queued
-// turn may have started, and "the latest turn" would then name the wrong run.
-type TurnEndRecorder func(sid string, endedAt time.Time, reason string)
+// qualifier), which input that turn was running, and when it ended — all taken here, before
+// anything async. The notifier runs later, by which time the next queued turn may have started
+// and answered; anything read then could name the wrong run.
+type TurnEndRecorder func(sid string, endedAt time.Time, reason string, run TurnRun)
 
 var turnEndRecorder atomic.Pointer[TurnEndRecorder]
 
@@ -75,19 +85,39 @@ func SetTurnEndRecorder(fn TurnEndRecorder) {
 
 // recordTurnEnd hands the end to the recorder off the caller's goroutine, for notify's reason:
 // it reads files, and the caller may be the readLoop every codex session shares.
-func recordTurnEnd(sid string, endedAt time.Time, reason string) {
+func recordTurnEnd(sid string, endedAt time.Time, reason string, run TurnRun) {
 	fn := turnEndRecorder.Load()
 	if fn == nil {
 		return
 	}
-	go (*fn)(sid, endedAt, reason)
+	go (*fn)(sid, endedAt, reason, run)
 }
+
+// turnRuns holds, per sid, the input of the turn now running (TurnRun). Written at the start of
+// a turn, read at its end; the next start replaces it, which cannot happen before this end.
+var turnRuns sync.Map // sid -> TurnRun
 
 // MarkTurnStart records that a managed turn began: status=working (the hook route's
 // UserPromptSubmit). A start is never notified — recordSessionNotification ignores working
 // as well, but stopping here avoids creating a goroutine for nothing.
 func MarkTurnStart(sid string) {
+	turnRuns.Store(sid, TurnRun{})
 	status.Persist(sid, "working")
+}
+
+// MarkTurnStartRun is MarkTurnStart for a turn whose input the driver has in hand: the turn's
+// end is then attributed to that input's run by identity rather than by timing.
+func MarkTurnStartRun(sid string, in TurnInput) {
+	turnRuns.Store(sid, TurnRun{Known: true, Instr: in.Instr})
+	status.Persist(sid, "working")
+}
+
+// runOf is the input the turn of sid that is ending was started with.
+func runOf(sid string) TurnRun {
+	if v, ok := turnRuns.Load(sid); ok {
+		return v.(TurnRun)
+	}
+	return TurnRun{}
 }
 
 // MarkTurnEnd records that a managed turn ended: it writes status=idle (the hook route's
@@ -231,7 +261,7 @@ func MarkTurnEndErr(sid string, st TurnState, failure string) {
 		reason = status.TurnEndReasonAborted
 	}
 	status.PersistTurnEndReason(sid, "idle", reason)
-	recordTurnEnd(sid, time.Now(), reason)
+	recordTurnEnd(sid, time.Now(), reason, runOf(sid))
 	if st == TurnFailed {
 		notify(sid, previous.State, StateFailed, failure)
 		return
