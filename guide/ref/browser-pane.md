@@ -106,8 +106,9 @@ What you see instead:
 - In **Preview**, "open in pane" is greyed out; its tooltip and the hint under it name the reason.
   The **lightweight preview** works as everywhere else.
 - A port in a session row opens in the lightweight preview (a new tab), not in a pane.
-- A browser pane or a Chromium attachment pane restored from a saved layout shows the reason in
-  place of the page, with a button that opens the same port and path in the lightweight preview.
+- A browser pane restored from a saved layout shows the reason in place of the page, with a
+  button that opens the same port and path in the lightweight preview. A Chromium attachment
+  pane restored the same way shows the reason only, since it has no local port to open.
 - Agents' browser tools answer `browser_unavailable` with the same explanation.
 
 The decision comes from the deployment's runtime, so it is the same for every member of it and
