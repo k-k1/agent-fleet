@@ -131,7 +131,7 @@ func scheduledRun(t *testing.T, name, conv string, d *ScheduleDelivery, prompt s
 		say(t, name, "assistant", a, at.Add(time.Duration(2+i)*time.Second))
 	}
 	if len(answers) > 0 {
-		NoteRunOutcome(name, "") // what the turn end's hook records
+		NoteRunOutcome(name, "", time.Now()) // what the turn end's hook records
 	}
 	for _, r := range ReadInstrRows(name) {
 		if r.ID == id {
@@ -226,7 +226,7 @@ func TestScheduledRowFailureIsNeverSilent(t *testing.T) {
 	m, _, _ := ledgerFixture(t, "sched3")
 	silents := scheduleSeams(t, map[string]bool{})
 	r := scheduledRow(t, m.Name, "", delivery(true, DeliverSlack), "[SILENT]")
-	NoteRunOutcome(m.Name, ReportReasonTurnFailed)
+	NoteRunOutcome(m.Name, ReportReasonTurnFailed, time.Now())
 	if r.Conv != "" {
 		t.Fatalf("row conv = %q", r.Conv)
 	}
@@ -276,7 +276,7 @@ func TestScheduledRowQueueFailureDoesNotBlockTheNotification(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := scheduledRow(t, m.Name, "", delivery(true, DeliverNotifications, DeliverDiscord), "x")
-	NoteRunOutcome(m.Name, ReportReasonTurnFailed)
+	NoteRunOutcome(m.Name, ReportReasonTurnFailed, time.Now())
 	if res := deliverReportCard(m.Name, "", ReportKindAnswerReady, ReportReasonTurnFailed, []instrRow{r}); res != reportSinkRetry {
 		t.Fatalf("sink = %v, want a retry for the post", res)
 	}
@@ -364,7 +364,7 @@ func TestScheduledRowWaitsForItsAnswer(t *testing.T) {
 	if res := deliverReportCard(m.Name, "", ReportKindAnswerReady, "", []instrRow{r}); res != reportSinkRetry {
 		t.Fatalf("answer but no recorded end = %v, want retry", res)
 	}
-	NoteRunOutcome(m.Name, "")
+	NoteRunOutcome(m.Name, "", time.Now())
 	if res := deliverReportCard(m.Name, "", ReportKindAnswerReady, "", []instrRow{r}); res != reportSinkOK || len(*silents) != 1 {
 		t.Fatalf("after the answer: %v silents=%v", res, *silents)
 	}
@@ -486,7 +486,7 @@ func TestLaterCleanRunCannotSilenceAnEarlierFailedRun(t *testing.T) {
 	d := delivery(true, DeliverNotifications)
 	a := scheduledRun(t, m.Name, "", d, "check the disk", at)
 	say(t, m.Name, "assistant", "[SILENT]", at.Add(2*time.Second))
-	NoteRunOutcome(m.Name, ReportReasonTurnFailed) // A's turn end: failed
+	NoteRunOutcome(m.Name, ReportReasonTurnFailed, time.Now()) // A's turn end: failed
 	d2 := *d
 	d2.Slot = "2026-10-03T09:05:00Z"
 	b := scheduledRun(t, m.Name, "", &d2, "check the disk", at.Add(5*time.Second), "[SILENT]") // B: clean
@@ -507,14 +507,14 @@ func TestLaterCleanRunCannotSilenceAnEarlierFailedRun(t *testing.T) {
 func TestRunOutcomeFailureSticks(t *testing.T) {
 	m, _, _ := ledgerFixture(t, "sched16")
 	r := scheduledRow(t, m.Name, "", delivery(true, DeliverNotifications), "partial")
-	NoteRunOutcome(m.Name, ReportReasonTurnFailed)
-	NoteRunOutcome(m.Name, "")
+	NoteRunOutcome(m.Name, ReportReasonTurnFailed, time.Now())
+	NoteRunOutcome(m.Name, "", time.Now())
 	if o, _ := scheduleOutcomes.Read(r.ID); o != ReportReasonTurnFailed {
 		t.Fatalf("outcome after a failure then a clean end = %q", o)
 	}
-	r2 := scheduledRun(t, m.Name, "", delivery(true, DeliverNotifications), "other", time.Now(), "x")
-	NoteRunOutcome(m.Name, ReportReasonTurnAborted)
-	NoteRunOutcome(m.Name, "")
+	r2 := scheduledRun(t, m.Name, "", delivery(true, DeliverNotifications), "other", time.Now().Add(-10*time.Second), "x")
+	NoteRunOutcome(m.Name, ReportReasonTurnAborted, time.Now())
+	NoteRunOutcome(m.Name, "", time.Now())
 	if o, _ := scheduleOutcomes.Read(r2.ID); o != outcomeClean {
 		t.Fatalf("outcome after an abort then a clean end = %q", o)
 	}
@@ -541,5 +541,65 @@ func TestTurnVerdictOutlivesTheConsumedRows(t *testing.T) {
 	}
 	if v := TurnVerdictFor(m.Name, false, key+"-later"); v != (TurnVerdict{}) {
 		t.Fatalf("a later turn: %+v, want today's notification", v)
+	}
+}
+
+// Review round 4: a Managed turn end is recorded late, after the next queued run has started and
+// answered. It still goes to the run that ended (the instant the driver saw the end decides),
+// and the next run's own clean end is recorded for it, not refused as a washed-out failure.
+func TestDelayedOutcomeGoesToTheRunThatEnded(t *testing.T) {
+	m, _, _ := ledgerFixture(t, "sched17")
+	at := time.Now().Add(-time.Minute)
+	d := delivery(true, DeliverNotifications)
+	c := *d
+	c.PromptSum = PromptSum("check the disk")
+	a := addRowAt(m.Name, "", "schedule", "", &c, at)
+	say(t, m.Name, "user", "check the disk", at.Add(time.Second))
+	say(t, m.Name, "assistant", "[SILENT]", at.Add(2*time.Second))
+	aEnded := at.Add(3 * time.Second)
+	c2 := c
+	c2.Slot = "2026-10-03T09:05:00Z"
+	b := addRowAt(m.Name, "", "schedule", "", &c2, at.Add(time.Second))
+	say(t, m.Name, "user", "check the disk", at.Add(4*time.Second))
+	say(t, m.Name, "assistant", "B result", at.Add(5*time.Second))
+	NoteRunOutcome(m.Name, ReportReasonTurnFailed, aEnded) // A's end, recorded late
+	NoteRunOutcome(m.Name, "", time.Now())                 // B's end
+	if o, _ := scheduleOutcomes.Read(a); o != ReportReasonTurnFailed {
+		t.Fatalf("A's outcome = %q, want its failure", o)
+	}
+	if o, _ := scheduleOutcomes.Read(b); o != outcomeClean {
+		t.Fatalf("B's outcome = %q, want clean", o)
+	}
+}
+
+// Review round 4: a group retried because another row's post could not be queued keeps the
+// silent row's outcome, so the retry silences it again instead of delivering its [SILENT].
+func TestGroupRetryKeepsTheSilentOutcome(t *testing.T) {
+	m, _, _ := ledgerFixture(t, "sched18")
+	silents := scheduleSeams(t, map[string]bool{"discord": true})
+	old := scheduleAnswerGrace
+	scheduleAnswerGrace = 0
+	t.Cleanup(func() { scheduleAnswerGrace = old })
+	if err := os.MkdirAll(paths.AgentStateDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(paths.AgentStateDir(), "bridge-queue"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	r1 := scheduledRun(t, m.Name, "", delivery(true, DeliverNotifications), "check A", now.Add(-3*time.Minute), "[SILENT]")
+	r2 := scheduledRun(t, m.Name, "", delivery(false, DeliverDiscord), "check B", now.Add(-time.Minute), "B result")
+	for i := 0; i < 3; i++ {
+		if res := deliverReportCard(m.Name, "", ReportKindAnswerReady, "", []instrRow{r1, r2}); res != reportSinkRetry {
+			t.Fatalf("sink %d = %v, want retry while the queue is unwritable", i, res)
+		}
+	}
+	for _, e := range noticesOf(NoticeKindScheduleResult) {
+		if e.Payload["excerpt"] == "[SILENT]" {
+			t.Fatalf("the silent run was delivered on a retry: %+v", e)
+		}
+	}
+	if len(*silents) == 0 {
+		t.Fatal("the silent run was never recorded as silent")
 	}
 }

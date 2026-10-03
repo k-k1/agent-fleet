@@ -212,6 +212,8 @@ func TestManagedScheduledRunUsesItsTranscript(t *testing.T) {
 				done <- struct{}{}
 			})
 			t.Cleanup(func() { agents.SetStateNotifier(nil) })
+			agents.SetTurnEndRecorder(RecordTurnOutcome)
+			t.Cleanup(func() { agents.SetTurnEndRecorder(nil) })
 			time.Sleep(1100 * time.Millisecond)
 			answered(put, "s-managed", tc.answer)
 			agents.MarkTurnStart(sid)
@@ -259,7 +261,7 @@ func TestConsumedDeliveryStillPreventsBroadcast(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond)
 	answered(put, "s-consumed", "private result")
 	status.Persist(sid, "working")
-	chatx.NoteRunOutcome("s-consumed", "") // the outcome half of the hook, as the driver records it
+	chatx.NoteRunOutcome("s-consumed", "", time.Now()) // the outcome half of the hook, as the driver records it
 	status.PersistTurnEndReason(sid, "idle", "")
 	waitSettled(t, "s-consumed")
 	RecordSessionNotification(sid, "working", "idle", "private result")

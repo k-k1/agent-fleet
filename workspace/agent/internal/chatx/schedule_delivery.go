@@ -114,6 +114,21 @@ const runPromptSlack = 50 * time.Second
 // (the first not delivered yet when the second answers), and each must get its own answer, or a
 // later [SILENT] would hide an earlier alert.
 func runAnswers(name string, persist bool) map[string]runAnswer {
+	turns, matched := matchRuns(name, persist)
+	out := map[string]runAnswer{}
+	for id, key := range matched {
+		if a, ok := answerAfter(turns, key); ok {
+			out[id] = a
+		}
+	}
+	return out
+}
+
+// matchRuns matches every open scheduled run of the session to its own prompt in the transcript
+// (row id -> turn key), oldest run first, each prompt to one run. A run whose prompt is not in
+// the transcript yet is absent. persist writes the matches (the reconciler); a hook process
+// passes false and only reads.
+func matchRuns(name string, persist bool) ([]transcript.Turn, map[string]string) {
 	var rows []instrRow
 	for _, r := range openInstrRows(name) {
 		if r.Delivery != nil && r.Delivery.PromptSum != "" && r.Sending == "" && r.Dropped == "" {
@@ -121,15 +136,15 @@ func runAnswers(name string, persist bool) map[string]runAnswer {
 		}
 	}
 	if len(rows) == 0 {
-		return nil
+		return nil, nil
 	}
 	m, ok := session.ReadMeta(name)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	turns, ok := deps.SessionTurns(m)
 	if !ok || len(turns) == 0 {
-		return nil
+		return nil, nil
 	}
 	claims, _ := scheduleClaims.Read(name)
 	if claims == nil {
@@ -139,7 +154,7 @@ func runAnswers(name string, persist bool) map[string]runAnswer {
 	for _, k := range claims {
 		taken[k] = true
 	}
-	out := map[string]runAnswer{}
+	out := map[string]string{}
 	changed := false
 	for _, r := range rows {
 		key, ok := claims[r.ID]
@@ -149,9 +164,7 @@ func runAnswers(name string, persist bool) map[string]runAnswer {
 			}
 			claims[r.ID], taken[key], changed = key, true, true
 		}
-		if a, ok := answerAfter(turns, key); ok {
-			out[r.ID] = a
-		}
+		out[r.ID] = key
 	}
 	if persist && changed {
 		// Only rows still in the ledger keep a claim, so the record stays as small as the ledger.
@@ -166,7 +179,7 @@ func runAnswers(name string, persist bool) map[string]runAnswer {
 		}
 		_ = scheduleClaims.Write(name, claims)
 	}
-	return out
+	return turns, out
 }
 
 // turnKey names a transcript prompt stably enough to be claimed: its time and text. The index
@@ -333,16 +346,30 @@ var scheduleOutcomes = fstore.Strings(paths.AgentStateDir, "schedule-outcome", "
 
 const outcomeClean = "clean"
 
-// NoteRunOutcome records how the turn that just ended went (reason: "" clean, else the failure
-// qualifier) for the scheduled run it ended: of the open runs, the one whose prompt is the latest
-// in the transcript with an answer after it. A failure is not overwritten by a later clean end of
-// the same run; an abort is (an aborted run that resumed and finished did finish).
-func NoteRunOutcome(name, reason string) {
-	answers := runAnswers(name, false)
-	best, at := "", -1
-	for id, a := range answers {
-		if a.At > at {
-			best, at = id, a.At
+// NoteRunOutcome records how a turn went (reason: "" clean, else the failure qualifier) for the
+// scheduled run it ended. endedAt is when the turn ended, taken where the end was seen (the hook,
+// or the Managed driver before it hands the end to an async notifier): the run is the open one
+// whose prompt is the latest in the transcript at or before that instant. Never "the latest
+// prompt now": by the time a delayed notifier runs, the next queued run may have started and
+// answered, and its prompt must not take the earlier run's outcome.
+//
+// A failure is not overwritten by a later clean end of the same run; an abort is (an aborted run
+// that resumed and finished did finish).
+func NoteRunOutcome(name, reason string, endedAt time.Time) {
+	turns, matched := matchRuns(name, false)
+	best, bestIdx := "", -1
+	for id, key := range matched {
+		for i, t := range turns {
+			if t.Role != "user" || t.Sidechain || turnKey(t, promptSumOf(t.Text)) != key {
+				continue
+			}
+			if at, err := time.Parse(time.RFC3339Nano, t.TS); err == nil && at.After(endedAt) {
+				break // asked after the turn ended: not the run that ended
+			}
+			if i > bestIdx {
+				best, bestIdx = id, i
+			}
+			break
 		}
 	}
 	if best == "" {
@@ -463,7 +490,6 @@ func deliverScheduledRow(name, convID, kind, reason string, r instrRow) reportSi
 			// outcome never arrived is delivered, never silenced.
 			if ok && hasOutcome && d.Silent && IsSilentAnswer(a.Final) {
 				recordScheduleSilentFn(name, d)
-				scheduleOutcomes.Remove(r.ID)
 				log.Printf("session-report: %s: schedule %s answered %s — nothing delivered", name, d.ScheduleID, SilentSentinel)
 				return reportSinkOK
 			}
@@ -515,9 +541,6 @@ func deliverScheduledRow(name, convID, kind, reason string, r instrRow) reportSi
 	}
 	if res == reportSinkDrop && (d.has(DeliverNotifications) || d.has(DeliverDiscord) || d.has(DeliverSlack)) {
 		res = reportSinkOK // the conversation is gone, but the result reached its other targets
-	}
-	if res != reportSinkRetry {
-		scheduleOutcomes.Remove(r.ID)
 	}
 	return res
 }

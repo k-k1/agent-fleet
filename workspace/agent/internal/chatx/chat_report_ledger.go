@@ -318,6 +318,7 @@ func MarkInstrNotRun(name, id, reason string) bool {
 // markInstrNotRunReported closes row id as state once its not-run or unconfirmed report has
 // been delivered.
 func markInstrNotRunReported(name, id, state string, at time.Time) {
+	scheduleOutcomes.Remove(id)
 	unlock := lockInstr(name)
 	defer unlock()
 	rows := ReadInstrRows(name)
@@ -377,6 +378,11 @@ func addRowAt(name, convID, source, sending string, d *ScheduleDelivery, at time
 // Rows are named by id, so instructions added between the delivery and returning here are not
 // caught in the crossfire (gap B's generation-less consumption disappears structurally).
 func markInstrReported(name string, ids []string, at time.Time) {
+	// A scheduled run's recorded outcome goes with its row (#1560). Not earlier: a group whose
+	// other row asked for a retry is sunk again, and the outcome must still be there.
+	for _, id := range ids {
+		scheduleOutcomes.Remove(id)
+	}
 	if len(ids) == 0 {
 		return
 	}

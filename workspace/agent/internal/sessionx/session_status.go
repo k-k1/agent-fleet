@@ -235,6 +235,17 @@ func turnEndReasonFor(notifyState string) string {
 	return ""
 }
 
+// RecordTurnOutcome is the agents.TurnEndRecorder: a Managed turn's end, with the instant the
+// driver saw it, recorded for the scheduled run it ended (#1560).
+func RecordTurnOutcome(sid string, endedAt time.Time, reason string) {
+	for _, m := range session.ListMetas() {
+		if session.UUID(m.Dir, m.Name) == sid {
+			chatx.NoteRunOutcome(m.Name, reason, endedAt)
+			return
+		}
+	}
+}
+
 func RecordSessionNotification(sid, previous, state, turnText string) {
 	kind := ""
 	reason := ""
@@ -313,8 +324,12 @@ func RecordSessionNotification(sid, previous, state, turnText string) {
 		var verdict chatx.TurnVerdict
 		if kind == chatx.ReportKindAnswerReady {
 			// How the run this turn ended went, kept with the run: the reconciler may settle it
-			// together with a later run's end, whose reason is not this run's.
-			chatx.NoteRunOutcome(m.Name, reason)
+			// together with a later run's end, whose reason is not this run's. A Managed driver
+			// records it itself, with the instant it saw the end (RecordTurnOutcome): this call
+			// runs later, off its own goroutine.
+			if m.DriverKind() != session.DriverManaged {
+				chatx.NoteRunOutcome(m.Name, reason, time.Now())
+			}
 			key, _ := status.ReadCompletionKey(sid)
 			verdict = chatx.TurnVerdictFor(m.Name, reason != "", key)
 		}

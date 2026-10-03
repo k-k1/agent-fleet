@@ -18,6 +18,7 @@ package agents
 
 import (
 	"sync/atomic"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -53,6 +54,33 @@ func notify(sid, previous, state, excerpt string) {
 		return
 	}
 	go (*fn)(sid, previous, state, excerpt)
+}
+
+// TurnEndRecorder is told how a managed turn ended (reason: "" clean, else the persisted
+// qualifier) and WHEN, the instant taken here, before anything async. A scheduled run's outcome
+// is attributed by that instant (#1560): the notifier runs later, by which time the next queued
+// turn may have started, and "the latest turn" would then name the wrong run.
+type TurnEndRecorder func(sid string, endedAt time.Time, reason string)
+
+var turnEndRecorder atomic.Pointer[TurnEndRecorder]
+
+// SetTurnEndRecorder wires the recorder (main, at startup; tests). nil unwires it.
+func SetTurnEndRecorder(fn TurnEndRecorder) {
+	if fn == nil {
+		turnEndRecorder.Store(nil)
+		return
+	}
+	turnEndRecorder.Store(&fn)
+}
+
+// recordTurnEnd hands the end to the recorder off the caller's goroutine, for notify's reason:
+// it reads files, and the caller may be the readLoop every codex session shares.
+func recordTurnEnd(sid string, endedAt time.Time, reason string) {
+	fn := turnEndRecorder.Load()
+	if fn == nil {
+		return
+	}
+	go (*fn)(sid, endedAt, reason)
 }
 
 // MarkTurnStart records that a managed turn began: status=working (the hook route's
@@ -203,6 +231,7 @@ func MarkTurnEndErr(sid string, st TurnState, failure string) {
 		reason = status.TurnEndReasonAborted
 	}
 	status.PersistTurnEndReason(sid, "idle", reason)
+	recordTurnEnd(sid, time.Now(), reason)
 	if st == TurnFailed {
 		notify(sid, previous.State, StateFailed, failure)
 		return
