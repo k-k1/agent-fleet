@@ -167,13 +167,6 @@ func RunSessionStatusHook(args []string) {
 	// it becomes the full-text bridge body (docs/log/37). The operator report itself
 	// carries no excerpt (docs/log/30: fact-only, uniform with managed).
 	turnText, _ := status.ReadPendingText(sid)
-	// The newest message alone, for the silent sentinel (#1560): turnText is every message of
-	// the turn run together, so a turn that said "checking…" before its final [SILENT] would
-	// never match. Read here for the same reason as turnText, before the turn end clears it.
-	var lastMsg string
-	if state == "idle" {
-		lastMsg = finishedLiveMessage(sid)
-	}
 	notifyState, notifyText := state, turnText
 	if state == "idle" {
 		// turnEndLabel is resolved BEFORE the write, not after: the qualifier it returns
@@ -188,24 +181,7 @@ func RunSessionStatusHook(args []string) {
 		status.Persist(sid, state)
 	}
 	applyPendingPayloads(sid, state, h)
-	recordSessionNotification(sid, previous.State, notifyState, notifyText, lastMsg)
-}
-
-// finishedLiveMessage is the newest streamed message when it is known to be whole and to belong
-// to the turn now ending, else "". MessageDisplay flushes arrive concurrently and late: a
-// message still missing its final flush may be only the opening of a longer answer, and a late
-// flush of an earlier turn re-creates the file after that turn's Stop. Either one read as the
-// answer could hide a real alert behind the sentinel, so when in doubt there is no candidate
-// and the whole turn's text decides.
-func finishedLiveMessage(sid string) string {
-	lr, ok := status.ReadLiveText(sid)
-	if !ok || !lr.Final {
-		return ""
-	}
-	if current := status.ReadLivePrompt(sid); lr.Prompt == "" || lr.Prompt != current {
-		return ""
-	}
-	return lr.Text
+	RecordSessionNotification(sid, previous.State, notifyState, notifyText)
 }
 
 // claudeAbortInfo is the transcript-tail verdict (docs/log/47), replaceable in tests.
@@ -260,12 +236,6 @@ func turnEndReasonFor(notifyState string) string {
 }
 
 func RecordSessionNotification(sid, previous, state, turnText string) {
-	recordSessionNotification(sid, previous, state, turnText, "")
-}
-
-// recordSessionNotification is RecordSessionNotification with the turn's newest message when the
-// caller knows it apart from the whole turn's text.
-func recordSessionNotification(sid, previous, state, turnText, lastMsg string) {
 	kind := ""
 	reason := ""
 	switch {
@@ -342,7 +312,7 @@ func recordSessionNotification(sid, previous, state, turnText, lastMsg string) {
 		// included) where the schedule asked, or records the run as silent.
 		var verdict chatx.TurnVerdict
 		if kind == chatx.ReportKindAnswerReady {
-			verdict = chatx.NoteTurnAnswer(m.Name, reason != "", lastMsg, turnText)
+			verdict = chatx.TurnVerdictFor(m.Name, reason != "")
 		}
 		ev := notice.New(kind, m.Name, m.Kind, session.Display(m))
 		// Full-text bridge (docs/log/37, the future direction): carry the turn's final

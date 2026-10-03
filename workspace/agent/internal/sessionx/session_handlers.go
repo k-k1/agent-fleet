@@ -1206,7 +1206,11 @@ func createTurnOrigin(req *CreateReq, spawnParent string) agents.Origin {
 
 // delivery is the scheduled run's own delivery (#1560), or nil.
 func (req *CreateReq) delivery() *chatx.ScheduleDelivery {
-	return scheduleDeliveryOf(req.Source, req.ScheduleID, req.ScheduleSlot, req.ScheduleDelivery)
+	d := scheduleDeliveryOf(req.Source, req.ScheduleID, req.ScheduleSlot, req.ScheduleDelivery)
+	if d != nil {
+		d.PromptSum = chatx.PromptSum(req.InitialPrompt) // the launch task as it lands in the transcript
+	}
+	return d
 }
 
 func noteCreateOrigin(name string, req *CreateReq, spawnParent, origin string) {

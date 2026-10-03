@@ -16,6 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // The Agent interface and its input/output types live in internal/agents
@@ -39,6 +40,13 @@ var agentRegistry = map[string]agents.Agent{
 	session.KindSSM:      ssmAgent{},
 	session.KindLcpp:     lcpp.New(),
 	session.KindMuse:     muse.New(),
+}
+
+// SessionTurns reads a session's transcript through its kind's agent, Terminal and Managed
+// alike: the mirror's source, and chatx's for a scheduled run's answer (#1560).
+func SessionTurns(m session.Meta) ([]transcript.Turn, bool) {
+	td, ok := AgentOf(m.Kind).Transcript(m)
+	return td.Turns, ok
 }
 
 func AgentOf(kind string) agents.Agent {

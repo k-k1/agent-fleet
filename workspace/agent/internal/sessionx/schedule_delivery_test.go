@@ -1,123 +1,115 @@
 package sessionx
 
-// #1560: a scheduled run that answers with the silent sentinel raises no answer-ready
-// notification, and a scheduled send that carries its own delivery raises a ledger row for it.
+// #1560: what a turn that finishes a scheduled run raises, on the Terminal hook route and the
+// Managed driver route, and the ledger row a scheduled send raises.
 
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-func silentScheduleFixture(t *testing.T, name string, silent bool, targets ...string) string {
+// fakeTranscripts makes chatx read the given transcripts (by session name) instead of the real
+// agents' stores, for the rest of the test.
+func fakeTranscripts(t *testing.T) func(name string, turns ...transcript.Turn) {
+	t.Helper()
+	var mu sync.Mutex
+	byName := map[string][]transcript.Turn{}
+	d := chatxStubDeps()
+	d.SessionTurns = func(m session.Meta) ([]transcript.Turn, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		turns, ok := byName[m.Name]
+		return append([]transcript.Turn(nil), turns...), ok
+	}
+	chatx.Configure(d)
+	t.Cleanup(func() { chatx.Configure(chatxStubDeps()) })
+	return func(name string, turns ...transcript.Turn) {
+		mu.Lock()
+		defer mu.Unlock()
+		byName[name] = append(byName[name], turns...)
+	}
+}
+
+func turn(role, text string, at time.Time) transcript.Turn {
+	return transcript.Turn{Role: role, Text: text, TS: at.UTC().Format(time.RFC3339Nano)}
+}
+
+const runPrompt = "check the nightly jobs"
+
+// scheduleFixture raises a scheduled run's row (a minute ago) on a new session of kind and
+// returns its sid. targets empty = reporting off.
+func scheduleFixture(t *testing.T, name, kind string, silent bool, targets ...string) string {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
-	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude, Title: "Nightly"}
+	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: kind, Title: "Nightly"}
+	if kind != session.KindClaude {
+		m.Driver = session.DriverManaged
+	}
 	session.WriteMeta(m)
-	d := &chatx.ScheduleDelivery{ScheduleID: "sch_1", Slot: "2026-10-03T09:00:00Z", Targets: append([]string{}, targets...), Silent: silent}
-	if chatx.AddScheduledInstruction(name, "", "schedule", d, false) == "" {
+	d := &chatx.ScheduleDelivery{ScheduleID: "sch_1", Slot: "2026-10-03T09:00:00Z", Targets: append([]string{}, targets...),
+		Silent: silent, PromptSum: chatx.PromptSum(runPrompt)}
+	if id := chatx.AddScheduledInstruction(name, "", "schedule", d, false); id == "" {
 		t.Fatal("no row raised for a conversation-less scheduled run")
 	}
 	return session.UUID(m.Dir, m.Name)
 }
 
-// The turn's prose runs every message together; the newest message alone is the sentinel. The
-// hook reads it before the turn end clears it, and the notification is not raised.
+// answered puts the run's prompt and answers in the session's transcript.
+func answered(put func(string, ...transcript.Turn), name string, answers ...string) {
+	at := time.Now().Add(-50 * time.Second)
+	put(name, turn("user", runPrompt, at))
+	for i, a := range answers {
+		put(name, turn("assistant", a, at.Add(time.Duration(i+1)*time.Second)))
+	}
+}
+
+// A Terminal run whose final message is the sentinel raises nothing, even though the turn's
+// streamed prose ran its messages together.
 func TestSilentScheduledTurnRaisesNoNotification(t *testing.T) {
-	sid := silentScheduleFixture(t, "s-silent", true)
+	put := fakeTranscripts(t)
+	sid := scheduleFixture(t, "s-silent", session.KindClaude, true)
+	answered(put, "s-silent", "Checking the queue…", "[SILENT]")
 	status.Persist(sid, "working")
 	status.AppendPendingText(sid, "Checking the queue…")
 	status.AppendPendingText(sid, "[SILENT]")
-	status.WriteLivePrompt(sid, "p")
-	status.AppendLiveText(sid, status.LiveFlush{Prompt: "p", Turn: "t", Msg: "m2", Index: 0, Final: true, Delta: "[SILENT]"})
 	RunSessionStatusHook([]string{"idle", sid})
 	if events := notice.List(); len(events) != 0 {
 		t.Fatalf("a silent scheduled turn raised %+v", events)
 	}
 }
 
-// Review round 1, finding 2: the newest streamed message is a candidate only when it is whole
-// and belongs to the turn now ending. A sentinel that is only the opening of a longer answer, or
-// a late flush of the previous turn, must not hide this turn's answer.
-func TestUncertainStreamedSentinelDoesNotSuppress(t *testing.T) {
-	for name, fl := range map[string]struct {
-		current string
-		flush   status.LiveFlush
-	}{
-		"not final yet":      {"p", status.LiveFlush{Prompt: "p", Turn: "t", Msg: "m", Index: 0, Final: false, Delta: "[SILENT]"}},
-		"an earlier turn":    {"new", status.LiveFlush{Prompt: "old", Turn: "t0", Msg: "m0", Index: 0, Final: true, Delta: "[SILENT]"}},
-		"no prompt recorded": {"", status.LiveFlush{Prompt: "p", Turn: "t", Msg: "m", Index: 0, Final: true, Delta: "[SILENT]"}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			sid := silentScheduleFixture(t, "s-uncertain", true)
-			status.Persist(sid, "working")
-			if fl.current != "" {
-				status.WriteLivePrompt(sid, fl.current)
-			}
-			status.AppendPendingText(sid, "[SILENT] is an example token. Disk failed.")
-			status.AppendLiveText(sid, fl.flush)
-			RunSessionStatusHook([]string{"idle", sid})
-			if events := notice.List(); len(events) != 1 {
-				t.Fatalf("events = %+v, want the answer notified", events)
-			}
-		})
-	}
-}
-
-// Review round 1, finding 3: a silent run still being sent is not what another turn finished, so
-// that turn's [SILENT] answer is notified as usual.
-func TestUnstartedSilentRunDoesNotSuppressAnotherTurn(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	m := session.Meta{Name: "s-sending", Dir: t.TempDir(), Kind: session.KindCodex}
-	session.WriteMeta(m)
-	d := &chatx.ScheduleDelivery{ScheduleID: "sch_1", Slot: "2026-10-03T09:00:00Z", Silent: true}
-	if chatx.AddScheduledInstruction(m.Name, "", "schedule", d, true) == "" {
-		t.Fatal("no row")
-	}
-	RecordSessionNotification(session.UUID(m.Dir, m.Name), "working", "idle", "[SILENT]")
-	if events := notice.List(); len(events) != 1 {
-		t.Fatalf("events = %+v, want the other turn's answer notified", events)
-	}
-}
-
-// Review round 1, finding 1, end to end: a run whose schedule named only the notification center
-// puts nothing in the chat bridge's queue — not the hook's answer-ready, not the report's copy —
-// and its result reaches the notification center through the sink.
-func TestNamedTargetsBroadcastNothing(t *testing.T) {
-	sid := silentScheduleFixture(t, "s-private", false, chatx.DeliverNotifications)
-	// Installed after the fixture's HOME, so its cleanup (LIFO) stops it before HOME is restored.
-	stop := chatx.InstallReconcilerForTest(20 * time.Millisecond)
-	t.Cleanup(stop)
-	time.Sleep(1100 * time.Millisecond) // the turn ends in a later second than the row's cursor
+// Review round 1, finding 2: silence is the run's own final message in the transcript, never the
+// streamed text. A streamed [SILENT] the answer does not end with hides nothing.
+func TestStreamedSentinelDoesNotSuppress(t *testing.T) {
+	put := fakeTranscripts(t)
+	sid := scheduleFixture(t, "s-streamed", session.KindClaude, true)
+	answered(put, "s-streamed", "[SILENT] is an example token. Disk failed.")
 	status.Persist(sid, "working")
-	status.AppendPendingText(sid, "private result")
+	status.WriteLivePrompt(sid, "p")
+	status.AppendLiveText(sid, status.LiveFlush{Prompt: "p", Turn: "t", Msg: "m", Index: 0, Final: true, Delta: "[SILENT]"})
+	status.AppendPendingText(sid, "[SILENT]")
 	RunSessionStatusHook([]string{"idle", sid})
-	deadline := time.Now().Add(10 * time.Second)
-	for chatx.SessionReportPending("s-private") {
-		if time.Now().After(deadline) {
-			t.Fatal("the run never settled")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if ents, _ := os.ReadDir(filepath.Join(paths.AgentStateDir(), "bridge-queue")); len(ents) != 0 {
-		t.Fatalf("%d bridge message(s) queued for a notifications-only schedule", len(ents))
-	}
-	events := notice.List()
-	if len(events) != 1 || events[0].Kind != chatx.NoticeKindScheduleResult || events[0].Payload["excerpt"] != "private result" {
-		t.Fatalf("events = %+v, want the schedule result alone", events)
+	if events := notice.List(); len(events) != 1 {
+		t.Fatalf("events = %+v, want the answer notified", events)
 	}
 }
 
 // Without the sentinel enabled, the same answer is an ordinary answer-ready notification.
 func TestSentinelNotEnabledStillNotifies(t *testing.T) {
-	sid := silentScheduleFixture(t, "s-loud", false)
+	put := fakeTranscripts(t)
+	sid := scheduleFixture(t, "s-loud", session.KindClaude, false)
+	answered(put, "s-loud", "[SILENT]")
 	status.Persist(sid, "working")
 	status.AppendPendingText(sid, "[SILENT]")
 	RunSessionStatusHook([]string{"idle", sid})
@@ -128,10 +120,115 @@ func TestSentinelNotEnabledStillNotifies(t *testing.T) {
 
 // A failed turn is never silent, whatever it printed.
 func TestFailedScheduledTurnStillNotifies(t *testing.T) {
-	sid := silentScheduleFixture(t, "s-failed", true)
-	recordSessionNotification(sid, "working", "failed", "[SILENT]", "[SILENT]")
+	put := fakeTranscripts(t)
+	sid := scheduleFixture(t, "s-failed", session.KindClaude, true)
+	answered(put, "s-failed", "[SILENT]")
+	RecordSessionNotification(sid, "working", "failed", "[SILENT]")
 	if events := notice.List(); len(events) != 1 {
 		t.Fatalf("events = %+v, want the failure notified", events)
+	}
+}
+
+// Review round 1, finding 3: a silent run still being sent is not what another turn finished, so
+// that turn's [SILENT] answer is notified as usual.
+func TestUnstartedSilentRunDoesNotSuppressAnotherTurn(t *testing.T) {
+	put := fakeTranscripts(t)
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "s-sending", Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged}
+	session.WriteMeta(m)
+	d := &chatx.ScheduleDelivery{ScheduleID: "sch_1", Slot: "2026-10-03T09:00:00Z", Silent: true, PromptSum: chatx.PromptSum(runPrompt)}
+	if chatx.AddScheduledInstruction(m.Name, "", "schedule", d, true) == "" {
+		t.Fatal("no row")
+	}
+	put(m.Name, turn("user", "something else", time.Now().Add(-time.Second)), turn("assistant", "[SILENT]", time.Now()))
+	RecordSessionNotification(session.UUID(m.Dir, m.Name), "working", "idle", "[SILENT]")
+	if events := notice.List(); len(events) != 1 {
+		t.Fatalf("events = %+v, want the other turn's answer notified", events)
+	}
+}
+
+// waitSettled waits until the session owes no report.
+func waitSettled(t *testing.T, name string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for chatx.SessionReportPending(name) {
+		if time.Now().After(deadline) {
+			t.Fatal("the run never settled")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func bridgeQueueLen() int {
+	ents, _ := os.ReadDir(filepath.Join(paths.AgentStateDir(), "bridge-queue"))
+	return len(ents)
+}
+
+// Review round 1, finding 1, end to end: a run whose schedule named only the notification center
+// puts nothing in the chat bridge's queue — not the hook's answer-ready, not the report's copy —
+// and its result reaches the notification center through the sink.
+func TestNamedTargetsBroadcastNothing(t *testing.T) {
+	put := fakeTranscripts(t)
+	sid := scheduleFixture(t, "s-private", session.KindClaude, false, chatx.DeliverNotifications)
+	// Installed after the fixture's HOME, so its cleanup (LIFO) stops it before HOME is restored.
+	stop := chatx.InstallReconcilerForTest(20 * time.Millisecond)
+	t.Cleanup(stop)
+	time.Sleep(1100 * time.Millisecond) // the turn ends in a later second than the row's cursor
+	answered(put, "s-private", "private result")
+	status.Persist(sid, "working")
+	status.AppendPendingText(sid, "private result")
+	RunSessionStatusHook([]string{"idle", sid})
+	waitSettled(t, "s-private")
+	if n := bridgeQueueLen(); n != 0 {
+		t.Fatalf("%d bridge message(s) queued for a notifications-only schedule", n)
+	}
+	events := notice.List()
+	if len(events) != 1 || events[0].Kind != chatx.NoticeKindScheduleResult || events[0].Payload["excerpt"] != "private result" {
+		t.Fatalf("events = %+v, want the schedule result alone", events)
+	}
+}
+
+// Review round 2, finding 8: a Managed driver ends a turn with no text at all (MarkTurnEnd hands
+// the notifier an empty excerpt). The run's answer still reaches its target, read from the
+// transcript, and a sentinel answer is still silent.
+func TestManagedScheduledRunUsesItsTranscript(t *testing.T) {
+	for name, tc := range map[string]struct {
+		silent  bool
+		answer  string
+		targets []string
+	}{
+		"answer delivered": {false, "2 jobs failed", []string{chatx.DeliverNotifications}},
+		"sentinel silent":  {true, "[SILENT]", []string{chatx.DeliverNotifications}},
+		"report off quiet": {true, "[SILENT]", nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			put := fakeTranscripts(t)
+			sid := scheduleFixture(t, "s-managed", session.KindCodex, tc.silent, tc.targets...)
+			stop := chatx.InstallReconcilerForTest(20 * time.Millisecond)
+			t.Cleanup(stop)
+			done := make(chan struct{}, 4)
+			agents.SetStateNotifier(func(sid, previous, state, excerpt string) {
+				RecordSessionNotification(sid, previous, state, excerpt)
+				done <- struct{}{}
+			})
+			t.Cleanup(func() { agents.SetStateNotifier(nil) })
+			time.Sleep(1100 * time.Millisecond)
+			answered(put, "s-managed", tc.answer)
+			agents.MarkTurnStart(sid)
+			agents.MarkTurnEndErr(sid, agents.TurnCompleted, "")
+			<-done
+			waitSettled(t, "s-managed")
+			events := notice.List()
+			if tc.silent {
+				if len(events) != 0 {
+					t.Fatalf("a silent Managed run raised %+v", events)
+				}
+				return
+			}
+			if len(events) != 1 || events[0].Kind != chatx.NoticeKindScheduleResult || events[0].Payload["excerpt"] != tc.answer {
+				t.Fatalf("events = %+v, want the answer from the transcript", events)
+			}
+		})
 	}
 }
 

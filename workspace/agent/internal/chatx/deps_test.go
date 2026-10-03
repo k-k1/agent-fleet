@@ -204,6 +204,7 @@ func testDeps() Deps {
 		MaybePushOperatorReply: func(string, string) {},
 		StopArmedSession:       func(string) error { return nil },
 		RateLimitState:         func(string) (string, string, bool) { return "", "", false },
+		SessionTurns:           testSessionTurns,
 	}
 }
 

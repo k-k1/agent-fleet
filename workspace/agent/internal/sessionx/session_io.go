@@ -392,6 +392,9 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			body.Prompt = withSelfReportHint(body.Prompt, m)
 		}
 	}
+	if delivery != nil {
+		delivery.PromptSum = chatx.PromptSum(body.Prompt) // the text as it lands in the transcript
+	}
 	// A managed session's {prompt} has no tmux pane (it goes through app-server), so route
 	// it to ThreadHandle.Send before the tmux existence check. Callers that hit /input
 	// directly — send_to_session (the af_write MCP tool) and friends — do not know about

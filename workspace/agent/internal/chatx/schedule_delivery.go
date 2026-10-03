@@ -15,9 +15,12 @@ package chatx
 // missed hook, delivered before it is consumed.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +32,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // SilentSentinel is the whole final answer that means "nothing to report". Compared after
@@ -54,6 +58,9 @@ type ScheduleDelivery struct {
 	Targets    []string `json:"targets"`
 	Silent     bool     `json:"silent,omitempty"`
 	Label      string   `json:"label,omitempty"`
+	// PromptSum is PromptSum of the prompt as delivered, set by the Agent when it raises the row:
+	// how the run's own answer is found in the transcript (runAnswers).
+	PromptSum string `json:"prompt_sum,omitempty"`
 }
 
 func (d *ScheduleDelivery) has(target string) bool {
@@ -71,21 +78,168 @@ func (d *ScheduleDelivery) has(target string) bool {
 // IsSilentAnswer reports whether text is the sentinel and nothing else.
 func IsSilentAnswer(text string) bool { return strings.TrimSpace(text) == SilentSentinel }
 
-// scheduleAnswer is the final answer of the session's latest turn, kept while the session owes a
-// scheduled delivery: the reconciler settles later, in another process, and the hook that knew
-// the answer is gone by then.
-type scheduleAnswer struct {
-	At     string `json:"at"` // RFC3339 (seconds), comparable with a row's cursor
-	Text   string `json:"text,omitempty"`
-	Silent bool   `json:"silent,omitempty"`
+// PromptSum identifies a delivered prompt by its text, for finding the run's own turn in the
+// transcript later. The same trimming as the injection store, which badges the same turn.
+func PromptSum(prompt string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(prompt)))
+	return hex.EncodeToString(sum[:16])
 }
 
-var scheduleAnswers = fstore.JSON[scheduleAnswer](paths.AgentStateDir, "schedule-answer", ".json")
+// runAnswer is one scheduled run's answer, read from the session's transcript: the assistant
+// turns that follow the run's own prompt, up to the next prompt.
+type runAnswer struct {
+	Final string // the last assistant message: the one the sentinel is matched against
+	Body  string // every assistant message of the run, for delivery
+}
+
+// scheduleClaims records which transcript prompt each scheduled run's row was matched to (row id
+// -> turn key). A reuse session takes the same prompt text run after run; without the record a
+// later run could be matched to an earlier run's prompt, and read that run's answer. Written by
+// the reconciler alone (one goroutine), never from a hook process.
+var scheduleClaims = fstore.JSON[map[string]string](paths.AgentStateDir, "schedule-claims", ".json")
+
+// runPromptSlack is how much earlier than its row a run's prompt may appear in the transcript: a
+// Terminal session's row is raised after the prompt's delivery was confirmed. Shorter than the
+// shortest interval a schedule may have (60 s), so the previous fire's prompt is never in reach.
+const runPromptSlack = 50 * time.Second
+
+// runAnswers reads the answer of every open scheduled run of the session from its transcript,
+// matching each run to its own prompt, oldest run first, each prompt to one run. A run whose
+// prompt or answer is not in the transcript yet is absent from the result. persist writes the
+// matches (the reconciler); a hook process passes false and only reads.
+//
+// One answer per run, never the session's latest: two runs of a reuse session can both be open
+// (the first not delivered yet when the second answers), and each must get its own answer, or a
+// later [SILENT] would hide an earlier alert.
+func runAnswers(name string, persist bool) map[string]runAnswer {
+	var rows []instrRow
+	for _, r := range openInstrRows(name) {
+		if r.Delivery != nil && r.Delivery.PromptSum != "" && r.Sending == "" && r.Dropped == "" {
+			rows = append(rows, r)
+		}
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	m, ok := session.ReadMeta(name)
+	if !ok {
+		return nil
+	}
+	turns, ok := deps.SessionTurns(m)
+	if !ok || len(turns) == 0 {
+		return nil
+	}
+	claims, _ := scheduleClaims.Read(name)
+	if claims == nil {
+		claims = map[string]string{}
+	}
+	taken := map[string]bool{}
+	for _, k := range claims {
+		taken[k] = true
+	}
+	out := map[string]runAnswer{}
+	changed := false
+	for _, r := range rows {
+		key, ok := claims[r.ID]
+		if !ok {
+			if key = claimRunPrompt(turns, r, taken); key == "" {
+				continue
+			}
+			claims[r.ID], taken[key], changed = key, true, true
+		}
+		if a, ok := answerAfter(turns, key); ok {
+			out[r.ID] = a
+		}
+	}
+	if persist && changed {
+		// Only rows still in the ledger keep a claim, so the record stays as small as the ledger.
+		live := map[string]bool{}
+		for _, r := range ReadInstrRows(name) {
+			live[r.ID] = true
+		}
+		for id := range claims {
+			if !live[id] {
+				delete(claims, id)
+			}
+		}
+		_ = scheduleClaims.Write(name, claims)
+	}
+	return out
+}
+
+// turnKey names a transcript prompt stably enough to be claimed: its time and text. The index
+// shifts when a transcript is compacted.
+func turnKey(t transcript.Turn, sum string) string {
+	if t.TS != "" {
+		return t.TS + "|" + sum
+	}
+	return "idx:" + strconv.Itoa(t.Idx) + "|" + sum
+}
+
+// promptSumOf is the sum of a user turn's text, with the queue-time mark a held prompt
+// delivered after a restart carries removed (agents.MarkHeldEnvelope).
+func promptSumOf(text string) string {
+	if orig, ok := agents.StripHeldMark(strings.TrimSpace(text)); ok {
+		text = orig
+	}
+	return PromptSum(text)
+}
+
+// claimRunPrompt finds the run's prompt: the oldest unclaimed user turn with the run's text that
+// is not older than the row by more than runPromptSlack. "" when there is none yet.
+func claimRunPrompt(turns []transcript.Turn, r instrRow, taken map[string]bool) string {
+	floor, err := time.Parse(time.RFC3339, r.DeliveredAt)
+	for _, t := range turns {
+		if t.Role != "user" || t.Sidechain || t.Compact || promptSumOf(t.Text) != r.Delivery.PromptSum {
+			continue
+		}
+		if at, perr := time.Parse(time.RFC3339, t.TS); err == nil && perr == nil && at.Before(floor.Add(-runPromptSlack)) {
+			continue
+		}
+		if k := turnKey(t, r.Delivery.PromptSum); !taken[k] {
+			return k
+		}
+	}
+	return ""
+}
+
+// answerAfter collects the assistant messages that follow the prompt named key, up to the next
+// prompt. Not found until the run has an assistant message with text.
+func answerAfter(turns []transcript.Turn, key string) (runAnswer, bool) {
+	start := -1
+	for i, t := range turns {
+		if t.Role == "user" && !t.Sidechain && turnKey(t, promptSumOf(t.Text)) == key {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return runAnswer{}, false
+	}
+	var parts []string
+	final := ""
+	for _, t := range turns[start+1:] {
+		if t.Sidechain {
+			continue
+		}
+		if t.Role == "user" && !t.Compact {
+			break
+		}
+		if t.Role == "assistant" && strings.TrimSpace(t.Text) != "" {
+			parts = append(parts, strings.TrimSpace(t.Text))
+			final = t.Text
+		}
+	}
+	if final == "" {
+		return runAnswer{}, false
+	}
+	return runAnswer{Final: final, Body: HeadRunes(strings.Join(parts, "\n\n"), BridgeBodyCap)}, true
+}
 
 // TurnVerdict is what a finished turn means for the notification the hook would raise.
 type TurnVerdict struct {
-	// Silent: every scheduled run this turn finishes enables the sentinel, and the answer is it.
-	// Nothing at all is raised.
+	// Silent: every scheduled run this turn finishes enables the sentinel, and each one's own
+	// answer is it. Nothing at all is raised.
 	Silent bool
 	// Routed: every instruction this turn finishes is a scheduled run that chose its own
 	// targets. The broadcast answer-ready is not raised: it would reach every chat connection,
@@ -94,49 +248,37 @@ type TurnVerdict struct {
 	Routed bool
 }
 
-// NoteTurnAnswer records a finished turn's answer for the scheduled runs it finishes, and says
-// what the hook should raise for it.
+// TurnVerdictFor says what the hook should raise for a turn of the session that just ended.
 //
 // The rows considered are those the turn can have finished: open, not still being sent, not
-// dropped, and not waiting in the session's queue. A scheduled prompt queued behind another
-// turn has not run, so that other turn's answer must not be read as its result. An instruction
-// without a delivery of its own (an operator's, or a schedule as it was before #1560) keeps
-// today's notification whatever else the turn finishes.
-//
-// candidates are the forms the answer is known in (the newest message when it is known whole,
-// the whole turn's prose); any one being the sentinel is enough, since the agent is asked to
-// make its final message exactly that. failed is a turn that ended in an error or was cut off:
-// never silent.
-func NoteTurnAnswer(name string, failed bool, candidates ...string) TurnVerdict {
+// dropped, and not waiting in the session's queue. An instruction without a delivery of its own
+// (an operator's, or a schedule as it was before #1560) keeps today's notification whatever else
+// the turn finishes. Silence is decided from each run's own answer in the transcript, so it is
+// the same for a Terminal and a Managed session; a run whose answer cannot be read yet is not
+// silent (the notification is raised: a wrong miss costs one message). failed is a turn that
+// ended in an error or was cut off: never silent.
+func TurnVerdictFor(name string, failed bool) TurnVerdict {
 	rows := turnRows(name, time.Now())
 	if len(rows) == 0 {
 		return TurnVerdict{}
 	}
-	allSilent, allRouted, anyDelivery := true, true, false
+	allSilent, allRouted := true, true
 	for _, r := range rows {
 		if r.Delivery == nil {
-			allSilent, allRouted = false, false
-			continue
+			return TurnVerdict{}
 		}
-		anyDelivery = true
 		allSilent = allSilent && r.Delivery.Silent
 		allRouted = allRouted && len(r.Delivery.Targets) > 0
 	}
-	if !anyDelivery {
-		return TurnVerdict{}
-	}
-	ans := scheduleAnswer{At: time.Now().Format(time.RFC3339)}
-	for _, c := range candidates {
-		if !failed && IsSilentAnswer(c) {
-			ans.Silent = true
-		}
-		// The longest candidate is the most complete answer to deliver when it is not silent.
-		if t := HeadRunes(c, BridgeBodyCap); len(t) > len(ans.Text) {
-			ans.Text = t
+	silent := !failed && allSilent
+	if silent {
+		answers := runAnswers(name, false)
+		for _, r := range rows {
+			if a, ok := answers[r.ID]; !ok || !IsSilentAnswer(a.Final) {
+				silent = false
+			}
 		}
 	}
-	_ = scheduleAnswers.Write(name, ans)
-	silent := ans.Silent && allSilent
 	return TurnVerdict{Silent: silent, Routed: silent || allRouted}
 }
 
@@ -151,19 +293,9 @@ func turnRows(name string, now time.Time) []instrRow {
 	return out
 }
 
-// answerFor returns the answer recorded for a row: the latest turn's, when it ended no earlier
-// than the row was raised. An older one belongs to an earlier instruction.
-func answerFor(name string, r instrRow) (scheduleAnswer, bool) {
-	a, ok := scheduleAnswers.Read(name)
-	if !ok || reportTimeBefore(a.At, r.Cursor.At) {
-		return scheduleAnswer{}, false
-	}
-	return a, true
-}
-
-// scheduleAnswerGrace is how long a settled clean end waits for its answer to be recorded. Past
-// it (the hook that knew the answer never ran, say) the result is delivered without a body,
-// which is never silent: a missing answer must not hide an alert.
+// scheduleAnswerGrace is how long a settled clean end waits for its answer to appear in the
+// transcript. Past it (a kind whose transcript cannot be read, say) the result is delivered
+// without a body, which is never silent: a missing answer must not hide an alert.
 var scheduleAnswerGrace = 2 * time.Minute
 
 // answerWaits remembers since when each row has waited for its answer.
@@ -216,6 +348,7 @@ func scheduleReportFailure(kind, reason string) bool {
 // durable marker), so a retry, or a restart before the row is consumed, delivers nothing twice.
 func deliverScheduledRow(name, convID, kind, reason string, r instrRow) reportSinkResult {
 	d := r.Delivery
+	var answer *runAnswer
 	switch kind {
 	case reportKindReopened:
 		// The correction of a premature completion. Only a conversation can take a completion
@@ -226,18 +359,19 @@ func deliverScheduledRow(name, convID, kind, reason string, r instrRow) reportSi
 		return deliverConvReport(name, convID, kind, reason, []instrRow{r})
 	case ReportKindAnswerReady:
 		if reason == "" {
-			a, ok := answerFor(name, r)
+			a, ok := runAnswers(name, true)[r.ID]
 			waitKey := name + ":" + instrDeliveryKey(r)
 			if ok {
 				scheduleAnswerWaits.forget(waitKey)
+				answer = &a
 			} else if scheduleAnswerWaits.wait(waitKey, time.Now()) {
-				// The turn's end is visible before its answer is: the hook records the answer
-				// after the status write, a Managed driver notifies on its own goroutine, and the
-				// af_report fast path can settle in between. Delivering now would send an empty
-				// result, or a sentinel run as a normal one, and consume the row for good.
+				// The turn's end can be settled before its answer is in the transcript (a
+				// Managed driver's store and a Terminal CLI's file are written on their own
+				// schedule). Delivering now would send an empty result, or a sentinel run as a
+				// normal one, and consume the row for good.
 				return reportSinkRetry
 			}
-			if ok && a.Silent && d.Silent {
+			if ok && d.Silent && IsSilentAnswer(a.Final) {
 				recordScheduleSilentFn(name, d)
 				log.Printf("session-report: %s: schedule %s answered %s — nothing delivered", name, d.ScheduleID, SilentSentinel)
 				return reportSinkOK
@@ -259,28 +393,34 @@ func deliverScheduledRow(name, convID, kind, reason string, r instrRow) reportSi
 	// A run dropped before it ran is notified by the Control Plane itself (runNotExecuted).
 	cpNotified := kind == reportKindNotRun
 	var body string
-	if !failure {
-		if a, ok := answerFor(name, r); ok {
-			body = a.Text
+	if !failure && answer != nil {
+		body = answer.Body
+	}
+	// Chat posts are queued after the notification, and a queue that cannot be written does not
+	// hold the notification back: the bridge never blocks the notification center (ADR 0020
+	// decision 4), and a failure must reach it. Both are idempotent, so the retry a queue error
+	// asks for repeats neither.
+	var undelivered, queueFailed []string
+	for _, t := range []string{DeliverDiscord, DeliverSlack} {
+		if d.has(t) && !bridgeTargetReady(t) {
+			undelivered = append(undelivered, t)
 		}
 	}
-	var undelivered []string
+	if d.has(DeliverNotifications) || len(undelivered) > 0 || (failure && !notified && !cpNotified) {
+		putScheduleResultNotice(name, r, kind, reason, body, undelivered)
+	}
 	for _, t := range []string{DeliverDiscord, DeliverSlack} {
-		if !d.has(t) {
-			continue
-		}
-		if !bridgeTargetReady(t) {
-			undelivered = append(undelivered, t)
+		if !d.has(t) || !bridgeTargetReady(t) {
 			continue
 		}
 		key := "schedule-result:" + name + ":" + instrDeliveryKeyFor(kind, r) + ":" + kind + ":" + t
 		if err := bridge.EnqueueToOnce(key, t, scheduleBridgeMessage(name, d, kind, reason, body)); err != nil {
 			log.Printf("session-report: %s: queue the schedule result for %s: %v", name, t, err)
-			return reportSinkRetry
+			queueFailed = append(queueFailed, t)
 		}
 	}
-	if d.has(DeliverNotifications) || len(undelivered) > 0 || (failure && !notified && !cpNotified) {
-		putScheduleResultNotice(name, r, kind, reason, body, undelivered)
+	if len(queueFailed) > 0 {
+		return reportSinkRetry
 	}
 	if res == reportSinkDrop && (d.has(DeliverNotifications) || d.has(DeliverDiscord) || d.has(DeliverSlack)) {
 		res = reportSinkOK // the conversation is gone, but the result reached its other targets
