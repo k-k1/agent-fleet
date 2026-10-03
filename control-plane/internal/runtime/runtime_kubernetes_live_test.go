@@ -1250,6 +1250,25 @@ func TestKubernetesLiveNetworkProbes(t *testing.T) {
 	}
 }
 
+// debugPods lists the pods `kubectl debug node/<node>` leaves on the node, in any namespace.
+func (l *kubeLive) debugPods(node string) ([]kPod, error) {
+	out, err := l.run("get", "pods", "-A", "--field-selector", "spec.nodeName="+node, "-o", "json")
+	if err != nil {
+		return nil, err
+	}
+	var list kPodList
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		return nil, err
+	}
+	var res []kPod
+	for _, p := range list.Items {
+		if strings.HasPrefix(p.Metadata.Name, "node-debugger-"+node+"-") {
+			res = append(res, p)
+		}
+	}
+	return res, nil
+}
+
 // --- DISRUPTIVE: these act on nodes, and need AF_K8S_LIVE_DISRUPTIVE=1 besides ---
 
 func needKubeLiveDisruptive(t *testing.T) *kubeLive {
@@ -1312,7 +1331,13 @@ func (l *kubeLive) nodeCommands(node string, cmds ...string) []string {
 	if zone == "" {
 		l.t.Fatalf("node %s has no zone label", node)
 	}
-	r := strings.NewReplacer("{node}", node, "{zone}", zone)
+	// {kubectl} is the harness's own pinned kubectl, so an operator command that acts
+	// through the cluster reaches the verified one.
+	kc := []string{shellQuote(l.kubectl)}
+	for _, a := range l.kubePin {
+		kc = append(kc, shellQuote(a))
+	}
+	r := strings.NewReplacer("{node}", node, "{zone}", zone, "{kubectl}", strings.Join(kc, " "))
 	out := make([]string, len(cmds))
 	for i, c := range cmds {
 		out[i] = r.Replace(c)
@@ -1452,13 +1477,22 @@ type kubeLiveNodePod struct {
 // taint — and the workspace starts again elsewhere.
 //
 // It fails closed on which node it stops: AF_K8S_LIVE_CORDON_NODES must cordon the nodes
-// that run anything else, the node the workspace lands on must have been created after
-// the test began (added by the autoscaler for it), and every pod on it, in every
-// namespace, must be the harness's own, a node agent (a DaemonSet's pod or a static pod),
-// or one AF_K8S_LIVE_NODE_ALLOW_PODS names explicitly (<namespace>/<name prefix>,
+// that run anything else, the node the workspace lands on must carry the workspace node
+// selector's labels and have been created after the test began (added by the autoscaler
+// for it), and every pod on it, in every namespace, must be the harness's own, a
+// DaemonSet's, or one AF_K8S_LIVE_NODE_ALLOW_PODS names explicitly (<namespace>/<name prefix>,
 // comma-separated: a replicated system component such as GKE's konnectivity-agent, which
 // the scheduler places on any new node). Pods of the workspace namespace other than the
-// harness's own are refused whatever the list says. The three commands take {node} and {zone}: AF_K8S_LIVE_NODE_STOP_CMD stops the
+// harness's own are refused whatever the list says.
+//
+// The stop must cut the node off without a shutdown the guest sees (the check after
+// NotReady below). The commands may use {kubectl}, the harness's pinned kubectl; on GKE a
+// power-off through a node debug pod does it:
+//
+//	{kubectl} debug node/{node} -n default --profile=sysadmin --image=<image> -- sh -c 'echo o > /proc/sysrq-trigger'
+//
+// The cleanup deletes such debug pods (node-debugger-<node>-*), removes the taint, starts
+// the VM only if the provider reports it TERMINATED, and checks that no debug pod is left. The three commands take {node} and {zone}: AF_K8S_LIVE_NODE_STOP_CMD stops the
 // VM, AF_K8S_LIVE_NODE_STATUS_CMD prints its state from the provider (TERMINATED is the
 // proof the runbook asks for), and AF_K8S_LIVE_NODE_START_CMD starts it again at the end.
 func TestKubernetesLiveNodeUnreachable(t *testing.T) {
@@ -1473,10 +1507,31 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	}
 	ctx := context.Background()
 	began := time.Now().Add(-time.Minute) // clock skew between here and the API server
+	var node string
+	// Registered before anything acts on a node, so it runs after every other cleanup but
+	// the guarded pod's: no debug pod of the node may be left behind.
+	t.Cleanup(func() {
+		if node == "" {
+			return
+		}
+		deadline := time.Now().Add(5 * time.Minute)
+		for {
+			left, err := l.debugPods(node)
+			if err == nil && len(left) == 0 {
+				t.Logf("no node-debugger pod of %s is left", node)
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Errorf("node-debugger pods of %s still present (%v, %v): remove them by hand", node, left, err)
+				return
+			}
+			time.Sleep(5 * time.Second)
+		}
+	})
 	l.cordon(cordoned...)
 	rt := l.runtime(l.factory(0), l.workspace("unreach"))
 	l.startRunning(rt)
-	node := l.runningPod(rt).Spec.NodeName
+	node = l.runningPod(rt).Spec.NodeName
 	if slices.Contains(cordoned, node) {
 		t.Fatalf("the workspace landed on the cordoned node %s", node)
 	}
@@ -1484,6 +1539,15 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 		Metadata kObjectMeta `json:"metadata"`
 	}
 	l.getJSON(&nodeObj, "get", "node", node)
+	sel := l.factory(0).cfg.nodeSelector
+	if len(sel) == 0 {
+		t.Fatal("AF_K8S_NODE_SELECTOR is empty: the harness cannot tell a workspace node from any other")
+	}
+	for k, v := range sel {
+		if nodeObj.Metadata.Labels[k] != v {
+			t.Fatalf("node %s is not a workspace node (%s=%q, want %q): refusing to stop it", node, k, nodeObj.Metadata.Labels[k], v)
+		}
+	}
 	created, err := time.Parse(time.RFC3339, nodeObj.Metadata.CreationTimestamp)
 	if err != nil || created.Before(began) {
 		t.Fatalf("node %s was created at %q, before this test began: refusing to stop a node the harness did not get added", node, nodeObj.Metadata.CreationTimestamp)
@@ -1499,7 +1563,7 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	for _, p := range others.Items {
 		m := p.Metadata
 		own := m.Namespace == l.ns && m.Labels[kubeLabelWorkspace] == rt.base
-		agent := m.Annotations["kubernetes.io/config.mirror"] != ""
+		agent := false
 		for _, o := range m.OwnerReferences {
 			if o.Kind == "DaemonSet" {
 				agent = true
@@ -1521,11 +1585,28 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	stopCmd, statusCmd, startCmd = cmds[0], cmds[1], cmds[2]
 	t.Logf("making %s unreachable", node)
 	t.Cleanup(func() {
+		if left, err := l.debugPods(node); err != nil {
+			t.Errorf("list the node-debugger pods of %s: %v", node, err)
+		} else {
+			for _, p := range left {
+				if _, err := l.run("-n", p.Metadata.Namespace, "delete", "pod", p.Metadata.Name, "--wait=false"); err != nil {
+					t.Errorf("delete %s/%s: %v", p.Metadata.Namespace, p.Metadata.Name, err)
+				}
+			}
+		}
 		if _, err := l.run("taint", "nodes", node, "node.kubernetes.io/out-of-service-"); err != nil && !strings.Contains(err.Error(), "not found") {
 			t.Errorf("REMOVE THE TAINT FROM %s BY HAND: %v", node, err)
 		}
-		if _, err := l.operatorRun(startCmd); err != nil {
-			t.Errorf("START THE VM OF %s BY HAND (or check whether auto-repair replaced it): %v", node, err)
+		st, err := l.operatorRun(statusCmd)
+		switch {
+		case err != nil:
+			t.Errorf("the provider's state of %s is unreadable (replaced by auto-repair, or removed?): %v", node, err)
+		case strings.Contains(st, "TERMINATED"):
+			if _, err := l.operatorRun(startCmd); err != nil {
+				t.Errorf("START THE VM OF %s BY HAND: %v", node, err)
+			}
+		default:
+			t.Logf("the VM of %s is %s at cleanup (auto-repair, or never stopped); not started", node, strings.TrimSpace(st))
 		}
 	})
 	t0 := time.Now()
@@ -1553,7 +1634,7 @@ func TestKubernetesLiveNodeUnreachable(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not settled") {
 		t.Fatalf("Stop with the node unreachable = %v, want a not-settled error", err)
 	}
-	t.Logf("Stop: %v", err)
+	t.Logf("Stop reported not settled %s after the stop command: %v", time.Since(t0).Round(time.Second), err)
 	if got := rt.State(ctx); got != "stopped" {
 		t.Errorf("State after the failed Stop = %q, want stopped", got)
 	}
