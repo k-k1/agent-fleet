@@ -215,3 +215,7 @@ func homeWipeCommand(mountPoint string, what HomeWipe) (string, error) {
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
+
+// BindHomeTask satisfies homeTaskBinder: ecs-ec2's Destroy ends in the base adapter's,
+// which runs the stack's home task where the base keeps one.
+func (e *ecsEC2Runtime) BindHomeTask(b HomeTaskBinding) bool { return e.base.BindHomeTask(b) }

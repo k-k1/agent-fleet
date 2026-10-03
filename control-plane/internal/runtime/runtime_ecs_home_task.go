@@ -14,6 +14,11 @@
 // ListTasks and DescribeTasks are eventually consistent and can miss a task RunTask has
 // just returned. ListTasks (startedBy=af-home/<membership>) is asked as well, for a task
 // whose marker is gone.
+//
+// The marker stays although the CP now keeps a record of each operation in its database
+// (#1544): the record is the CP's, and this adapter has no database (ADR 0012), while every
+// Start passes through here. The marker is the guard; the record is what finishes the
+// operation and resolves a marker that would otherwise wait for an operator.
 package runtime
 
 import (
@@ -50,16 +55,19 @@ const ecsHomeTaskPoll = 5 * time.Second
 
 // Only a task seen STOPPED releases its home. MISSING, an empty answer, an error or time
 // passing prove nothing — ECS does not bound how long a task RunTask returned stays
-// invisible — so each leaves the marker, and the home refused, in place. The one way out
-// that is not STOPPED is the operator's: delete the marker after checking that no task
-// started by af-home/<membership> is running (guide/ref/deploy-targets.md, note 7).
+// invisible — so each leaves the marker, and the home refused, in place. The CP's record
+// of the operation (HomeTaskBinding) is what resolves a marker that never would on its
+// own: its reconciler asks RunTask again under the operation's clientToken, which names the
+// task a lost answer started, or starts the removal again once ECS has forgotten both.
+// Only a marker no record covers — one a CP before #1544 left — is the operator's to
+// delete (guide/ref/deploy-targets.md, note 7).
 const (
 	// homeTaskMissingGrace bounds how long one wait keeps polling a task ECS does not know.
 	// Ending the wait keeps the marker; it only stops this CP from waiting.
 	homeTaskMissingGrace = 2 * time.Minute
 	// homeTaskMarkerPending is the marker's value until RunTask has returned an ARN. A
 	// marker left pending (a RunTask whose answer was lost) names no task that could ever
-	// be seen STOPPED, so only the operator clears it.
+	// be seen STOPPED; the operation's record and its clientToken find that task.
 	homeTaskMarkerPending = "pending"
 	// homeTaskDescribeRetries is how many failed DescribeTasks in a row end a wait. The
 	// marker stays, so the home stays refused until a later check can read the task.
@@ -170,8 +178,9 @@ func (e *ecsRuntime) logStuckMarker(value string, at *time.Time, why string) {
 	if time.Since(aws.ToTime(at)) < homeTaskMissingGrace {
 		return
 	}
-	log.Printf("ecs: the home of %s stays refused: %s (marker %s = %q). If no task started by %s is "+
-		"running, delete the marker to release it", e.name, why, e.homeTaskMarker(), value, e.homeTaskStartedBy())
+	log.Printf("ecs: the home of %s stays refused: %s (marker %s = %q). The CP resolves it while a "+
+		"home operation record is open for the workspace; with none, and no task started by %s running, "+
+		"delete the marker to release it", e.name, why, e.homeTaskMarker(), value, e.homeTaskStartedBy())
 }
 
 // describeHomeTask reads one task. known=false when ECS answers MISSING or nothing, which
@@ -221,6 +230,12 @@ func (e *ecsRuntime) EraseHome(ctx context.Context) error {
 
 // runHomeTask waits for the workspace's own task to be gone, starts the home task and
 // waits for it to stop. nil only when the task exited 0.
+//
+// Bound to an operation record (BindHomeTask), RunTask carries the record's id as its
+// clientToken, and an error that leaves a task possibly running wraps
+// ErrHomeTaskUnresolved: the record stays open and the CP's reconciler finishes it. With
+// Resume set, the run is that reconciler's: its own marker is no refusal, and a task an
+// earlier attempt started is adopted rather than started again.
 func (e *ecsRuntime) runHomeTask(ctx context.Context, what HomeWipe) error {
 	if !e.homePortsReady() {
 		return ErrHomeWipeUnsupported
@@ -229,40 +244,171 @@ func (e *ecsRuntime) runHomeTask(ctx context.Context, what HomeWipe) error {
 	if !ValidMembershipID(e.membershipID) {
 		return fmt.Errorf("membership id %q cannot name a home", e.membershipID)
 	}
-	busy, err := e.homeTaskInFlight(ctx)
-	if err != nil {
-		return err
+	b := e.homeBinding
+	mayRun := false // a task of this operation may already exist
+	if b.Resume {
+		arn, marked, err := e.resumeTarget(ctx, b.TaskARN)
+		if err != nil {
+			return unresolved(err)
+		}
+		mayRun = marked || arn != ""
+		if arn != "" {
+			_, known, err := e.describeHomeTask(ctx, arn)
+			if err != nil {
+				return unresolved(err)
+			}
+			if known {
+				b.started(arn)
+				return e.finishHomeTask(ctx, arn, what)
+			}
+			// ECS does not report it (not yet, or no longer). RunTask with the same token
+			// below answers that task while the token lives, and runs the removal again
+			// after; either way the outcome comes from a task that can be seen.
+		}
+	} else {
+		busy, err := e.homeTaskInFlight(ctx)
+		if err != nil {
+			return err
+		}
+		if busy {
+			return ErrHomeTaskInFlight
+		}
 	}
-	if busy {
-		return ErrHomeTaskInFlight
+	fail := func(err error) error {
+		if mayRun {
+			return unresolved(err)
+		}
+		return err
 	}
 	// Stop only set the desired count to 0. The old task holds the home until it exits,
 	// and removing files under a workspace that is still writing them leaves a half-home.
 	if err := e.waitServiceTasksGone(ctx); err != nil {
-		return err
+		return fail(err)
 	}
 	// The marker goes first: a CP that dies between RunTask and its answer still leaves a
 	// record that something may be running.
 	if err := e.markHomeTask(ctx, homeTaskMarkerPending); err != nil {
-		return err
+		return fail(err)
 	}
-	arn, err := e.startHomeTask(ctx, what)
+	arn, err := e.startHomeTask(ctx, what, b.Token)
 	if err != nil {
-		if runTaskStartedNothing(err) {
+		// Under the operation's token a failure list is ECS's own answer for that token:
+		// nothing of it runs. A client fault after an earlier attempt proves less — that
+		// attempt may have started a task before whatever is refused now.
+		if errors.Is(err, errHomeTaskNotPlaced) || (runTaskStartedNothing(err) && !mayRun) {
 			e.clearHomeTaskMarker(ctx)
+			return err
 		}
-		return err
+		return unresolved(err)
 	}
+	b.started(arn)
 	if err := e.markHomeTask(ctx, arn); err != nil {
 		// The pending marker is still there and keeps the home refused; the wait goes on,
 		// and it is dropped once the task is seen STOPPED.
 		log.Printf("ecs: %v", err)
 	}
+	return e.finishHomeTask(ctx, arn, what)
+}
+
+// finishHomeTask waits for arn to stop and drops the marker once it has. An outcome the
+// wait could not read is unresolved: the task may still be running.
+func (e *ecsRuntime) finishHomeTask(ctx context.Context, arn string, what HomeWipe) error {
 	stopped, err := e.waitHomeTask(ctx, arn, what)
 	if stopped {
 		e.clearHomeTaskMarker(ctx)
+		return err
 	}
-	return err
+	return unresolved(err)
+}
+
+// resumeTarget is the task a resumed operation looks for: the one its record names, else
+// the one the marker names (an earlier attempt wrote the marker and died before its
+// record). marked says the marker exists in any form, so a RunTask may have been sent.
+func (e *ecsRuntime) resumeTarget(ctx context.Context, recorded string) (arn string, marked bool, err error) {
+	out, err := e.ssm.GetParameter(ctx, &ssm.GetParameterInput{Name: aws.String(e.homeTaskMarker())})
+	switch {
+	case isAWSNotFound(err):
+		return recorded, false, nil
+	case err != nil:
+		return "", false, fmt.Errorf("read the home task marker: %w", err)
+	}
+	if recorded != "" {
+		return recorded, true, nil
+	}
+	if v := aws.ToString(out.Parameter.Value); v != homeTaskMarkerPending {
+		return v, true, nil
+	}
+	return "", true, nil
+}
+
+// ErrHomeTaskUnresolved wraps an error after which a home task may still be running, or
+// may have run with an outcome nobody read: a RunTask whose answer was lost, a wait that
+// ended before the task was seen STOPPED. The CP keeps the operation's record open and its
+// reconciler finishes it (#1544); it is never the operation's outcome.
+var ErrHomeTaskUnresolved = errors.New("the home task's outcome is not known yet")
+
+func unresolved(err error) error {
+	if err == nil || errors.Is(err, ErrHomeTaskUnresolved) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", ErrHomeTaskUnresolved, err)
+}
+
+// HomeTaskBinding ties the home task of one operation to the CP's durable record of it
+// (#1544). The adapter keeps no database (ADR 0012), so the record's id and the task's ARN
+// come and go through this.
+type HomeTaskBinding struct {
+	// Token is the RunTask clientToken: the record's id, the same on every attempt, so
+	// RunTask asked again answers the task the first call started. ECS keeps a token for
+	// 24 hours or the task's lifetime plus one hour, whichever is shorter; after that the
+	// same token starts a new task, which repeats the removal on a home nothing could
+	// start in between (the record and the marker keep it refused).
+	Token string
+	// TaskARN is the task an earlier attempt recorded, if any.
+	TaskARN string
+	// Resume marks the reconciler's attempt at an operation an earlier one left open.
+	Resume bool
+	// Started records the task's ARN as soon as RunTask has answered it.
+	Started func(arn string)
+}
+
+func (b HomeTaskBinding) started(arn string) {
+	if b.Started != nil {
+		b.Started(arn)
+	}
+}
+
+// homeTaskBinder is claimed by an adapter that may run the stack's home task.
+var (
+	_ homeTaskBinder = (*ecsRuntime)(nil)
+	_ homeTaskBinder = (*ecsEC2Runtime)(nil)
+)
+
+type homeTaskBinder interface {
+	BindHomeTask(HomeTaskBinding) bool
+}
+
+// BindHomeTask binds rt's next home task to an operation record. false where rt runs no
+// home task, and the operation then needs no record.
+func BindHomeTask(rt Runtime, b HomeTaskBinding) bool {
+	h, ok := rt.(homeTaskBinder)
+	return ok && h.BindHomeTask(b)
+}
+
+// RunsHomeTask reports whether an operation on rt's home may run the stack's home task,
+// without binding anything.
+func RunsHomeTask(rt Runtime) bool {
+	h, ok := rt.(homeTaskBinder)
+	return ok && h.BindHomeTask(HomeTaskBinding{})
+}
+
+// BindHomeTask satisfies homeTaskBinder.
+func (e *ecsRuntime) BindHomeTask(b HomeTaskBinding) bool {
+	if !e.homePortsReady() {
+		return false
+	}
+	e.homeBinding = b
+	return true
 }
 
 // runTaskStartedNothing reports whether a failed RunTask is known to have started no task:
@@ -408,8 +554,17 @@ func (e *ecsRuntime) listWorkspaceTasks(ctx context.Context, ds ecstypes.Desired
 	}
 }
 
-func (e *ecsRuntime) startHomeTask(ctx context.Context, what HomeWipe) (string, error) {
+// startHomeTask runs the task. token, when set, is the RunTask clientToken: asked again
+// with the same parameters, ECS answers the task the first call started. A ConflictException
+// (the same token with other parameters: a stack update changed the task definition's
+// revision in between) names that task as well.
+func (e *ecsRuntime) startHomeTask(ctx context.Context, what HomeWipe, token string) (string, error) {
+	var clientToken *string
+	if token != "" {
+		clientToken = aws.String(token)
+	}
 	out, err := e.tasks.RunTask(ctx, &ecs.RunTaskInput{
+		ClientToken:    clientToken,
 		Cluster:        aws.String(e.cfg.cluster),
 		TaskDefinition: aws.String(e.cfg.homeTask),
 		LaunchType:     ecstypes.LaunchTypeFargate,
@@ -432,6 +587,10 @@ func (e *ecsRuntime) startHomeTask(ctx context.Context, what HomeWipe) (string, 
 			}},
 		},
 	})
+	var conflict *ecstypes.ConflictException
+	if errors.As(err, &conflict) && len(conflict.ResourceIds) > 0 {
+		return conflict.ResourceIds[0], nil
+	}
 	if err != nil {
 		return "", fmt.Errorf("run the home task: %w", err)
 	}

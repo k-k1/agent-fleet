@@ -950,6 +950,7 @@ type Store interface {
 	TenantGitOAuthStore
 	EngineAccessStore
 	TenantBranchRulesStore
+	HomeOperationStore
 
 	// Ping backs GET /readyz. Not in a sub-interface: "is the database reachable"
 	// belongs to the store as a whole, not to a feature.

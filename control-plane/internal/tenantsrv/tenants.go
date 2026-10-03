@@ -469,14 +469,9 @@ func (a Admin) CleanHome(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := context.WithoutCancel(r.Context())
 	if a.cp.HomeOpsInBackground() {
-		err := a.cp.StartCleanHomeByMembership(ctx, mem.ID, func(err error) {
-			if err != nil {
-				log.Printf("admin clean-home of %s in %s failed in the background: %v", ident.UserKey, t.Slug, err)
-				in.Done(ctx, "error: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			in.Done(ctx, "home erased", http.StatusOK)
-		})
+		err := a.cp.StartCleanHomeByMembership(ctx, mem.ID, store.HomeOpAudit{Base: in.Outcome(),
+			OK: "home erased", OKStatus: http.StatusOK,
+			FailPrefix: "error: ", FailStatus: http.StatusInternalServerError})
 		if err != nil {
 			refuseIrreversible(w, r, in, a.homeOpRefusal(err, "clean home"))
 			return
@@ -646,14 +641,9 @@ func (a Admin) DestroyWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	if a.cp.HomeOpsInBackground() {
 		ctx := context.WithoutCancel(r.Context())
-		err := a.cp.StartDestroyWorkspaceByMembership(ctx, mem.ID, func(leftovers []string, err error) {
-			if err != nil {
-				log.Printf("destroy of %s's workspace in %s failed in the background: %v", ident.UserKey, t.Slug, err)
-				in.Done(ctx, "error: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			in.Done(ctx, destroyedDetail("workspace destroyed (home and runtime resources deleted)", leftovers), http.StatusOK)
-		})
+		err := a.cp.StartDestroyWorkspaceByMembership(ctx, mem.ID, store.HomeOpAudit{Base: in.Outcome(),
+			OK: "workspace destroyed (home and runtime resources deleted)", Leftovers: true, OKStatus: http.StatusOK,
+			FailPrefix: "error: ", FailStatus: http.StatusInternalServerError})
 		if err != nil {
 			refuseIrreversible(w, r, in, a.homeOpRefusal(err, "destroy"))
 			return
@@ -672,15 +662,10 @@ func (a Admin) DestroyWorkspace(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// destroyedDetail appends what could NOT be deleted — the part of a destroy's audit entry that
-// matters. On Fargate the EFS directories survive their access points and keep billing
-// (docs/log/64 §64.18.4); if that only ever appeared in an HTTP response nobody would ever
-// find it again.
+// destroyedDetail is store.DestroyedDetail: a Destroy finished by the CP's reconciler
+// (#1544) has to write the same entry.
 func destroyedDetail(detail string, leftovers []string) string {
-	if len(leftovers) > 0 {
-		detail += "; NOT deleted: " + strings.Join(leftovers, ", ")
-	}
-	return detail
+	return store.DestroyedDetail(detail, leftovers)
 }
 
 // CreateTenant (POST /api/admin/tenants {slug,name}).
@@ -1009,14 +994,9 @@ func (a Admin) RemoveMembership(w http.ResponseWriter, r *http.Request) {
 		// The membership is inactive now; destroying its workspace takes minutes here, so
 		// the outcome entry waits for it.
 		ctx := context.WithoutCancel(r.Context())
-		err := a.cp.StartDestroyWorkspaceByMembership(ctx, mem.ID, func(leftovers []string, err error) {
-			if err != nil {
-				log.Printf("purge of %s's workspace in %s failed in the background: %v", ident.UserKey, t.Slug, err)
-				in.Done(ctx, "status=inactive; purge FAILED: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			in.Done(ctx, destroyedDetail("status=inactive; workspace destroyed (purge)", leftovers), http.StatusOK)
-		})
+		err := a.cp.StartDestroyWorkspaceByMembership(ctx, mem.ID, store.HomeOpAudit{Base: in.Outcome(),
+			OK: "status=inactive; workspace destroyed (purge)", Leftovers: true, OKStatus: http.StatusOK,
+			FailPrefix: "status=inactive; purge FAILED: ", FailStatus: http.StatusInternalServerError})
 		if err != nil {
 			in.Done(r.Context(), "status=inactive; purge FAILED: "+err.Error(), http.StatusInternalServerError)
 			writeAPIErr(w, &APIError{http.StatusInternalServerError, "purge_failed",

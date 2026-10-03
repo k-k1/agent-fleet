@@ -116,6 +116,9 @@ type ecsRuntime struct {
 	homeTaskPoll time.Duration
 	// homeTaskMissingGrace overrides the constant of that name, for tests.
 	homeTaskMissingGrace time.Duration
+	// homeBinding ties the next home task to the CP's record of the operation
+	// (BindHomeTask). Zero: no record, no clientToken of ours.
+	homeBinding HomeTaskBinding
 }
 
 var _ Runtime = (*ecsRuntime)(nil)

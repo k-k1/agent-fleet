@@ -1494,6 +1494,27 @@ follows the task — the member's start, the audit outcome, Destroy's row deleti
 is lost if it restarts mid-task; the guide says how to finish by hand. Code: `control-plane/internal/runtime/runtime_ecs_home_task.go`,
 `home_task.go`, `control-plane/workspace_handlers.go` (`memberHomeWipe`), `control-plane/workspace_lifecycle.go`.
 
+**Note (2026-10-03, #1544): the step after the task survives a CP restart.** Each home operation that runs the
+task is now a row in `home_operation` (migrations 0082 / pg 0067), written under the lifecycle lease before
+anything is stopped and holding its kind, the membership and workspace, the audit outcome an administrator's
+action still owes, and the task's ARN once `RunTask` has answered. The row's id is the `RunTask` `clientToken`:
+ECS keeps a token for 24 hours or the task's lifetime plus one hour, whichever is shorter, and answers a repeat
+with the same parameters with the task the first call started (a repeat with other parameters gets a
+`ConflictException` naming that task, read the same way). The step after the task begins by deleting the row in the
+transaction that writes the audit outcome and, for Destroy, deletes the workspace row, so it is applied once; the
+member's start follows the deletion. A reconciler on every CP (at boot, then every minute) takes each open row's
+member lifecycle lease — the starter holds it for the whole operation and loses it within the lease's 30 s of
+dying, which is what keeps the two from running together — and runs the operation again bound to the row: it
+adopts the recorded task (or the one the SSM marker names), asks `RunTask` again under the token when there is
+none or ECS has forgotten it, and applies the step after it. A member's start is re-checked against an active
+membership and the same workspace row. A start is refused while a row is open. An outcome the starter cannot read
+(`runtime.ErrHomeTaskUnresolved`: a `RunTask` that may have placed a task, a wait that never saw it stop) leaves
+the row to the reconciler instead of being reported as a failure. The SSM marker stays: the adapter has no
+database and every Start passes through it, so it remains the guard; the row is what resolves it, and only a
+marker no row covers (left by a CP before this) is still an operator's to delete. Code: `control-plane/home_operation.go`,
+`control-plane/internal/store/store_home_operation.go`, `control-plane/internal/runtime/runtime_ecs_home_task.go`
+(`HomeTaskBinding`, `runHomeTask`).
+
 ## Decision 32 — A member's Recreate and Clean home mark the home, and the next Start removes it (2026-09-30)
 
 This replaces decision 31's "a member's Recreate and Clean home are not offered on this target yet". The shape

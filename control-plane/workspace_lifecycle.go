@@ -224,7 +224,7 @@ const homeTaskBudget = 30 * time.Minute
 func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), homeEraseBudget)
 	defer cancel()
-	finish, err := m.beginCleanHome(ctx, membershipID, false)
+	finish, err := m.beginCleanHome(ctx, membershipID, nil)
 	if err != nil {
 		return err
 	}
@@ -233,30 +233,36 @@ func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string
 
 // startCleanHomeByMembership is cleanHomeByMembership where the erase takes minutes
 // (runtime.HomeWipeInBackground): everything up to the stop happens now, so a refusal is
-// still the request's answer, and the erase runs after it. done is called once, with the
-// erase's outcome; the lifecycle lease is held until then, so no start or second operation
-// can come in between.
-func (m *manager) startCleanHomeByMembership(ctx context.Context, membershipID string, done func(error)) error {
+// still the request's answer, and the erase runs after it. Its outcome is written to the
+// audit log as audit describes, by this process or, after a restart, by the reconciler
+// (home_operation.go); the lifecycle lease is held until then, so no start or second
+// operation can come in between.
+func (m *manager) startCleanHomeByMembership(ctx context.Context, membershipID string, audit store.HomeOpAudit) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), homeTaskBudget)
-	finish, err := m.beginCleanHome(ctx, membershipID, true)
+	finish, err := m.beginCleanHome(ctx, membershipID, &audit)
 	if err != nil {
 		cancel()
 		return err
 	}
 	go func() {
 		defer cancel()
-		done(finish())
+		_ = finish()
 	}()
 	return nil
 }
 
 // beginCleanHome is the part of an administrator's Clean home that answers the request:
-// every refusal, then the stop. finish erases and releases what begin took. In the
-// background the local start lock is released when begin returns; the lease alone keeps
-// other operations out, and they are refused rather than left waiting on the lock.
-func (m *manager) beginCleanHome(ctx context.Context, membershipID string, background bool) (finish func() error, err error) {
+// every refusal, then the stop. finish erases and releases what begin took. audit set means
+// in the background: the local start lock is released when begin returns, the lease alone
+// keeps other operations out, and they are refused rather than left waiting on the lock.
+// The outcome then goes to the audit log through the operation's record.
+func (m *manager) beginCleanHome(ctx context.Context, membershipID string, audit *store.HomeOpAudit) (finish func() error, err error) {
+	background := audit != nil
 	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, membershipID)
 	if err != nil || !ok {
+		if err == nil && background {
+			return func() error { m.writeHomeOpAudit(*audit, nil, nil); return nil }, nil
+		}
 		return func() error { return nil }, err
 	}
 	rt := m.runtimeFor(ws, "")
@@ -284,7 +290,15 @@ func (m *manager) beginCleanHome(ctx context.Context, membershipID string, backg
 			lock.Unlock()
 		}
 	}
+	var record *store.HomeOperation
+	if background {
+		if record, err = m.openHomeOperation(lease.Context(), ws, rt, store.HomeOpAdminErase, runtime.HomeWipeClean, audit); err != nil {
+			release()
+			return nil, err
+		}
+	}
 	if err := m.cleanHomePreamble(ctx, ws, rt, lease, background); err != nil {
+		m.dropHomeOperation(record)
 		release()
 		return nil, err
 	}
@@ -294,13 +308,20 @@ func (m *manager) beginCleanHome(ctx context.Context, membershipID string, backg
 	}
 	return func() error {
 		defer release()
-		if err := runtime.EraseHome(lease.Context(), rt); err != nil {
+		err := runtime.EraseHome(lease.Context(), rt)
+		if record != nil {
+			m.finishHomeOperation(*record, err, nil)
 			return err
 		}
-		if err := lease.checkpoint(ctx); err != nil {
-			return err
+		if err == nil {
+			if err = lease.checkpoint(ctx); err == nil {
+				err = m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
+			}
 		}
-		return m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
+		if background {
+			m.writeHomeOpAudit(*audit, err, nil)
+		}
+		return err
 	}, nil
 }
 
@@ -733,7 +754,7 @@ func (m *manager) resolveWorkspaceMemBytes(ctx context.Context, ws store.Workspa
 // this operation exists to close. Every adapter's Destroy is idempotent, so the retry
 // after a partial failure is safe.
 func (m *manager) destroyWorkspaceByMembership(ctx context.Context, membershipID string) ([]string, error) {
-	finish, err := m.beginDestroyWorkspace(ctx, membershipID, false)
+	finish, err := m.beginDestroyWorkspace(ctx, membershipID, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -742,25 +763,33 @@ func (m *manager) destroyWorkspaceByMembership(ctx context.Context, membershipID
 
 // startDestroyWorkspaceByMembership is destroyWorkspaceByMembership where the runtime's
 // Destroy runs a task on the home and takes minutes (runtime.HomeWipeInBackground). The
-// refusals answer the request; the teardown runs after it under the lease, and done gets
-// its outcome once.
-func (m *manager) startDestroyWorkspaceByMembership(ctx context.Context, membershipID string, done func([]string, error)) error {
+// refusals answer the request; the teardown runs after it under the lease, and its outcome
+// goes to the audit log as audit describes, by this process or, after a restart, by the
+// reconciler (home_operation.go).
+func (m *manager) startDestroyWorkspaceByMembership(ctx context.Context, membershipID string, audit store.HomeOpAudit) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), homeTaskBudget)
-	finish, err := m.beginDestroyWorkspace(ctx, membershipID, true)
+	finish, err := m.beginDestroyWorkspace(ctx, membershipID, &audit)
 	if err != nil {
 		cancel()
 		return err
 	}
 	go func() {
 		defer cancel()
-		done(finish())
+		_, _ = finish()
 	}()
 	return nil
 }
 
-func (m *manager) beginDestroyWorkspace(ctx context.Context, membershipID string, background bool) (finish func() ([]string, error), err error) {
+// beginDestroyWorkspace takes the lease and answers every refusal; finish tears down. audit
+// set means in the background, as in beginCleanHome: the row's deletion and the outcome
+// entry are then written together through the operation's record.
+func (m *manager) beginDestroyWorkspace(ctx context.Context, membershipID string, audit *store.HomeOpAudit) (finish func() ([]string, error), err error) {
+	background := audit != nil
 	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, membershipID)
 	if err != nil || !ok {
+		if err == nil && background {
+			return func() ([]string, error) { m.writeHomeOpAudit(*audit, nil, nil); return nil, nil }, nil
+		}
 		return func() ([]string, error) { return nil, nil }, err
 	}
 	lock := m.startLockFor(ws.ID)
@@ -789,8 +818,14 @@ func (m *manager) beginDestroyWorkspace(ctx context.Context, membershipID string
 		release()
 		return nil, err
 	}
+	var record *store.HomeOperation
 	if background {
+		if record, err = m.openHomeOperation(lease.Context(), ws, rt, store.HomeOpDestroy, "destroy", audit); err != nil {
+			release()
+			return nil, err
+		}
 		if err := runtime.HomeWipeBlocked(lease.Context(), rt); err != nil {
+			m.dropHomeOperation(record)
 			release()
 			return nil, err
 		}
@@ -800,18 +835,37 @@ func (m *manager) beginDestroyWorkspace(ctx context.Context, membershipID string
 	return func() ([]string, error) {
 		defer release()
 		leftovers, err := runtime.DestroyRuntime(lease.Context(), rt)
-		if err != nil {
-			return nil, err
-		}
-		if err := lease.checkpoint(ctx); err != nil {
+		if record != nil {
+			m.finishHomeOperation(*record, err, leftovers)
 			return leftovers, err
 		}
-		if err := m.store.DeleteWorkspace(ctx, ws.ID); err != nil {
-			return leftovers, err
+		if err == nil {
+			if err = lease.checkpoint(ctx); err == nil {
+				if err = m.store.DeleteWorkspace(ctx, ws.ID); err == nil {
+					m.evictMembershipCache(membershipID)
+				}
+			}
 		}
-		m.evictMembershipCache(membershipID)
-		return leftovers, nil
+		if background {
+			m.writeHomeOpAudit(*audit, err, leftovers)
+		}
+		return leftovers, err
 	}, nil
+}
+
+// writeHomeOpAudit writes the outcome of an administrator's background operation that has
+// no record (a runtime that runs no home task, or no workspace to operate on).
+func (m *manager) writeHomeOpAudit(audit store.HomeOpAudit, err error, leftovers []string) {
+	ctx, cancel := context.WithTimeout(context.Background(), homeOpFinishTimeout)
+	defer cancel()
+	e := audit.Entry(err, leftovers)
+	if err != nil {
+		log.Printf("%s of %q failed in the background: %v", e.Action, e.Target, err)
+	}
+	if werr := m.store.InsertAudit(ctx, e); werr != nil {
+		log.Printf("audit: %s on %q answered %d, but its outcome was not written: %s: %v",
+			e.Action, e.Target, e.HTTPStatus, e.Detail, werr)
+	}
 }
 
 // runtimePoolStatuser is implemented by the one adapter that has a POOL to report on.

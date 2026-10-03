@@ -160,6 +160,9 @@ type manager struct {
 	// AF_CP_BASE_URL for everything.
 	internalBaseURL string
 
+	// homeOpWG counts the reconciler's resumes (home_operation.go), for tests to wait on.
+	homeOpWG sync.WaitGroup
+
 	// previewDomain is AF_PREVIEW_DOMAIN — the parent of the per-start preview
 	// subdomains (docs/log/81). Empty = host-mode preview is off for this deployment
 	// (no wildcard DNS / certificate), and only the path-mode /preview/{port}
