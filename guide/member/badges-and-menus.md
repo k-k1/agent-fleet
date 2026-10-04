@@ -129,6 +129,8 @@ connection. Not this deployment's engine."** together with the model the last ch
   prompt you did not type came from: the fleet operator, a schedule, an auto-resume after an interruption, and
   [a message from another session](02-sessions.md#messages-between-sessions).
 - **"Paused"** on a schedule row — that schedule is suspended ([11](08-organising.md)).
+- **The budget mark** (a pulse icon) on a stopped session — its estimated spend reached its budget and it was
+  stopped; **"Raise budget & resume…"** in its menu carries on ([02](02-sessions.md#a-spend-budget-pausing-a-session-that-spends-too-much)).
 - **"N awaiting approval"** on shared sessions — proposals from a recipient are waiting for you
   ([02](02-sessions.md#sharing-a-conversation-shared-sessions)).
 - **"Safe" / "Review" / "Keep"** in the cleanup modal — whether it is fine to tidy away
@@ -145,6 +147,8 @@ set** appears here too (an item shown ticked but unclickable is one that follows
 automatically).
 If the session has made images with `generate_image`, **"Generated images (N)"** appears too (N is how many;
 absent for sessions that have not, and while the workspace is stopped — [04](04-files.md#image-gallery)).
+**"Spend budget…"** sets the session's budget; on a session its budget stopped it reads **"Raise budget &
+resume…"** ([02](02-sessions.md#a-spend-budget-pausing-a-session-that-spends-too-much)).
 Archive keeps the conversation but hides it from the list; recreate archives the current conversation and starts
 a new one in the same place. When there is no working folder, resume, handoff, and recreate are not shown.
 

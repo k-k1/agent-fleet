@@ -377,6 +377,9 @@ type CreateReq struct {
 	// before the prompt is delivered: an arm set afterwards races that delivery, and a prompt
 	// arriving after an arm is exactly what releases it.
 	StopAfterTurn bool `json:"stop_after_turn"`
+	// SpendCapUSD is the new session's spend budget (#1054). Absent = the user's default
+	// (ui-prefs sessionSpendCapUsd); an explicit 0 = no budget, even when a default is set.
+	SpendCapUSD *float64 `json:"spend_cap_usd"`
 	// Source attributes the initial_prompt injection's origin for the mirror badge
 	// (docs/log/38): "schedule" / "schedule-manual" from the CP scheduler; anything else
 	// (incl. empty — the operator MCP) records as "operator". Whitelisted server-side.
@@ -779,6 +782,12 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_mode", `mode must be "plan" or "normal"`)
 		return
 	}
+	if req.SpendCapUSD != nil {
+		if _, ok := session.NormalizeSpendCap(*req.SpendCapUSD); !ok {
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_spend_cap", spendCapRangeMsg)
+			return
+		}
+	}
 	// "Ask for tool approval" is only accepted for kinds whose pending approvals can be
 	// answered from the Console (docs/log/76). Ignoring it silently would leave the caller
 	// believing the session runs with approvals on, so refusing is the honest answer.
@@ -1103,6 +1112,10 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// task is precisely the work it is waiting for the end of.
 	if req.StopAfterTurn {
 		meta.StopAfterTurnAt = meta.CreatedAt
+	}
+	meta.SpendCapUSD = session.DefaultSpendCap()
+	if req.SpendCapUSD != nil {
+		meta.SpendCapUSD, _ = session.NormalizeSpendCap(*req.SpendCapUSD) // validated above
 	}
 	// docs/log/51 Phase 3, the self-report fast path: add one line to the launch task saying
 	// "call af_report when you are done" — only for an instruction that owes a report, i.e.
@@ -1786,7 +1799,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	// recreated managed (docs/log/27 P2).
 	newMeta := session.Meta{
 		Name: allocSessionName(m.Dir), Dir: m.Dir, Subdir: m.Subdir, Model: m.Model, Effort: m.Effort, Mode: m.Mode,
-		Kind: m.Kind, Driver: m.Driver, SkipPermissions: m.SkipPermissions,
+		Kind: m.Kind, Driver: m.Driver, SkipPermissions: m.SkipPermissions, SpendCapUSD: m.SpendCapUSD,
 		Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitx.GitCurrentBranch(m.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
 		// recreate means "make the same slot again, empty", so the origin is inherited (ADR 0029 §6).
@@ -1866,12 +1879,16 @@ func forkSids(src session.Meta) []string {
 // the ancestry the cache orphan scan relies on above all — can be checked without driving a
 // real fork, which needs a real source conversation.
 func forkMeta(src session.Meta, forkName, title, forkFrom, forkAt string) session.Meta {
+	now := time.Now()
 	return session.Meta{
 		Name: forkName, Dir: src.Dir, Subdir: src.Subdir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
 		Kind: src.Kind, Driver: src.Driver, Title: title, SkipPermissions: src.SkipPermissions,
+		// The budget value carries over, the hit does not: the fork's spend starts from the
+		// instant it was made, to the sub-second (SpendFrom), so it has spent nothing yet.
+		SpendCapUSD: src.SpendCapUSD, SpendFrom: now.Format(time.RFC3339Nano),
 		Repo:      filepath.Base(src.Dir),
 		Branch:    gitx.GitCurrentBranch(src.Dir),
-		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
+		CreatedAt: now.Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
 		ForkSids: forkSids(src),
 		// The fork works in the same working copy, so it renames the same branch for the same item.
 		WorkItem: src.WorkItem,

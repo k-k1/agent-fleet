@@ -17,6 +17,7 @@ import {
   type ImageFleetRow,
 } from "../../../lib/settings.ts";
 import { agentOf } from "../../../agents/registry.ts";
+import { SPEND_CAP_DEFAULTS } from "../../sessions/spendBudget.ts";
 import { useConnections } from "../parts/useConnections.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
 import { tCount, useT } from "../../../lib/i18n/index.ts";
@@ -170,6 +171,16 @@ export function AgentsTab() {
         />
       </Row>
       <p className="muted ds-note">{tr("agents.note_stopped_archive")}</p>
+      {/* The default spend budget (#1054): every session, spawned or not, so it sits with the
+          archive period. Fixed choices for the same reason as the child limit below. */}
+      <Row label={tr("agents.spend_cap_default")}>
+        <Choice
+          value={SPEND_CAP_DEFAULTS.includes(s.sessionSpendCapUsd) ? s.sessionSpendCapUsd : 0}
+          options={SPEND_CAP_DEFAULTS.map((n): [number, string] => [n, n === 0 ? tr("agents.spend_cap_none") : "$" + n])}
+          onChange={(v) => setSetting("sessionSpendCapUsd", v)}
+        />
+      </Row>
+      <p className="muted ds-note">{tr("agents.note_spend_cap_default")}</p>
       {/* Automatic title suggestions (autoTitleSuggest) moved to Settings > AI assist
           (docs/log/84). Here it looked like a session setting, but the one key also disabled the
           AI branch-name suggestion; each AI-generation on/off now has a single home. */}

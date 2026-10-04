@@ -11,6 +11,13 @@ describe("notifyRowOf", () => {
     expect(notifyRowOf("question", true)).toBe("needs-input");
   });
 
+  it("gives a budget stop its own row, whose dot cannot be muted", () => {
+    expect(notifyRowOf("spend-budget", false)).toBe("spend-budget");
+    const s = { ...base, notifyUnread: { "spend-budget": false } };
+    expect(notifyCell(s, "spend-budget", "unread")).toBe(true);
+    expect(notifyCellPatch(s, "spend-budget", "unread", false)).toEqual({});
+  });
+
   it("puts an unknown kind in a row whose cells default on", () => {
     expect(notifyRowOf("a-kind-from-a-newer-cp", false)).toBe("other");
   });

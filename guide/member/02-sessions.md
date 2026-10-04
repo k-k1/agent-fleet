@@ -379,6 +379,33 @@ go to the archive, shell / SSM to the trash).
   origin as well — **that one cannot be undone**. A branch that is not in the parent's history
   cannot be deleted through this route at all.
 
+### A spend budget — pausing a session that spends too much
+
+A session can carry a **spend budget** in US dollars. When its **estimated** spend reaches the
+budget, the session **stops after the turn it is running** (the same resumable stop as "stop after
+this turn") and the notification centre says so (**"Stopped by its budget"**). If one turn alone
+runs on to **twice** the budget, the session is halted at once, mid-turn, and the notification says
+**halted mid-turn**.
+
+- **Setting it.** In the start dialog under **Advanced → Budget (USD)**; later from the session's
+  menu, **"Spend budget…"**. Settings › Agents › **"Budget for new sessions"** is the default for
+  every launch that names none — including sessions started by `create_session` and by schedules.
+  0 means no budget.
+- **Seeing it.** The chat's context row shows **"≈$1.84 / $5.00"** — amber from 80%, red at the
+  budget. Press it to change the budget. For a session that started others with `create_session`,
+  **"children ≈$X"** sits beside it: their spend is shown here but **not** counted against this
+  session's budget — each child has its own.
+- **Carrying on.** A stopped row shows the budget mark. **"Raise budget & resume…"** (in the row's
+  menu and on the notification) sets a higher budget and resumes in one step; it only accepts a
+  budget above what is already spent. Resuming without raising it gives the session one more turn,
+  after which it stops again.
+- **What the figure is.** An estimate at list price from the session's own transcript — or the
+  CLI's own reported cost where it gives one (opencode) — **not your bill**. On a subscription plan
+  it is the API-equivalent figure. A model with no price cannot be estimated, so a budget has no
+  effect on it (the dialog says so); kinds that record no token counts (Kiro, Cursor, Antigravity)
+  and the self-hosted engine ($0) are never stopped by one. A fork starts from $0: the history it
+  copied is not charged to it.
+
 ## When you can — and can't — resume
 
 Stopped sessions can be opened and resumed with a click. However, claude / codex / cursor / copilot / kiro / agy / opencode / lcpp / muse

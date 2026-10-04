@@ -819,6 +819,12 @@ type sessionWire struct {
 	// transcript can see it, or cancel it. No DB-mirror column: a stopped session has no
 	// turn to end, and every fold consumes the arm.
 	StopAfterTurnAt string `json:"stopAfterTurnAt,omitempty"`
+	// SpendCapUSD / SpendCapHitAt: the session's spend budget and when it was crossed
+	// (#1054) — the budget dialog's value and the row's "paused: budget" badge. No DB-mirror
+	// column: the budget is the Agent's (it is what enforces it), and a stopped Workspace's
+	// rows simply show no badge until the Agent answers again.
+	SpendCapUSD   float64 `json:"spendCapUsd,omitempty"`
+	SpendCapHitAt string  `json:"spendCapHitAt,omitempty"`
 	// Carried is the kind of interaction that was waiting for an answer when the session
 	// was folded away (docs/log/75 §75.6.5). A gap in the relay is a silent drop, so it is
 	// needed in BOTH this struct and the DB mirror: while running the list is built from

@@ -48,6 +48,11 @@ updated: "2026-09"
     `AF_SESSION_STOPPED_TTL`、無ければ 7 日（`session.StoppedTTL`）。
   - ロックされたセッションは対象外。
   - 掃引は一覧ハンドラの中で走る。タイマーは無い。
+- **セッションには予算を付けられる**（`Meta.SpendCapUSD`、#1054）。報告リコンサイラの tick が、
+  予算付きで動いているセッションの会話記録を値付けし（`usage_spend.go`、10 秒キャッシュ）、推定が
+  予算に達したら stop-after-turn を arm し、2 倍（`SpendCapHardFactor`）で即座に止める。起動時に
+  指定が無いときの既定は ui-prefs の `sessionSpendCapUsd`
+  （[ADR 0029 追記](../decisions/0029-usage-accounting.ja.md)）。
 - **一覧はメタデータ駆動で、driver ごとの生存状態を重ねる**（`HandleListSessions`）。managed は
   runtime のハンドル、tui は tmux を見る。
   - メタデータの無い `claude_*` の tmux セッション（孤児）も列挙する。kind はペインの起動コマンドから

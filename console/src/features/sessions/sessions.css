@@ -275,6 +275,14 @@
   font-size: 11px;
 }
 
+/* Spend budget (#1054): the session was stopped by its budget, and stays stopped until
+   someone raises it. Warning colour: it is waiting on a person's decision. */
+.sess-budget {
+  flex: none;
+  color: var(--warn);
+  font-size: 11px;
+}
+
 /* Session sharing: badge marking that this session is currently shared with someone.
    Treated like .sess-lock (muted, no warning colour). */
 .sess-shared {
@@ -849,3 +857,12 @@
 }
 /* A cache row's size, after its name. */
 .clean-size { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 8px; font-variant-numeric: tabular-nums; }
+
+/* Spend budget dialog (#1054): two short lines above the field, not paragraphs. */
+.spend-budget-lead,
+.spend-budget-spent {
+  margin: 0 0 6px;
+}
+.spend-budget-spent {
+  color: var(--muted);
+}

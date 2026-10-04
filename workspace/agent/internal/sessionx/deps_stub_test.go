@@ -166,6 +166,7 @@ func chatxStubDeps() chatx.Deps {
 	d.CleanTitle = CleanTitle
 	d.NormalizeKind = NormalizeKind
 	d.SessionTurns = SessionTurns
+	d.SweepSpendCaps = SweepSpendCaps
 	d.ReplySuggestWindow = func(b *strings.Builder, msgs []chatx.ReplyMsg) {
 		// The same repacking as main's chat_wiring.go (chatx cannot name sessionx's types).
 		out := make([]ReplyMsg, 0, len(msgs))

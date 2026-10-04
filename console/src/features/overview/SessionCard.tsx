@@ -102,7 +102,8 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
   const waited = s.alive ? elapsedShort(waitingAt) : "";
   const waitingNow = isWaiting(s);
   const awake = remainingShort(s.keepAwakeUntil);
-  const badges = !!(s.locked || awake || (s.alive && s.stopAfterTurnAt) || isShared);
+  const budgetStopped = !s.alive && !!s.spendCapHitAt;
+  const badges = !!(s.locked || awake || (s.alive && s.stopAfterTurnAt) || budgetStopped || isShared);
 
   // newPane = the modifier was held (or the wheel was clicked): open in another pane whatever
   // the screen. Without it, `beside` decides.
@@ -255,6 +256,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
           <Icon name="debug-pause" className="sess-awake" title={tr("srow.keep_awake_badge", { left: remainingShort(s.keepAwakeUntil) })} />
         )}
         {s.alive && s.stopAfterTurnAt && <Icon name="debug-stop" className="sess-stoparm" title={tr("srow.stop_after_turn_badge")} />}
+        {budgetStopped && <Icon name="pulse" className="sess-budget" title={tr("srow.budget_paused_hint")} />}
         {isShared && <Icon name="broadcast" className="sess-shared" title={tr("srow.shared_badge")} />}
       </div>
       )}

@@ -197,6 +197,11 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         {s.alive && s.stopAfterTurnAt && (
           <Icon name="debug-stop" className="sess-stoparm" title={tr("srow.stop_after_turn_badge")} />
         )}
+        {/* Spend budget (#1054): stopped because the estimate reached the cap. The menu's
+            "raise and resume" is the way back. */}
+        {!s.alive && s.spendCapHitAt && (
+          <Icon name="pulse" className="sess-budget" title={tr("srow.budget_paused_hint")} />
+        )}
         {isShared && <Icon name="broadcast" className="sess-shared" title={tr("srow.shared_badge")} />}
         <span className={"session-state " + st.cls + (loud ? "" : " mini")} title={st.text}>
           <Icon name={st.icon} spin={st.spin} />

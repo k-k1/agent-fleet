@@ -23,6 +23,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "schedule-result": "noti.kind_schedule_result",
   "carried-interaction": "noti.kind_carried_interaction",
   "stop-after-turn": "noti.kind_stop_after_turn",
+  "spend-budget": "noti.kind_spend_budget",
   "handoff-offer": "noti.kind_handoff_offer",
   "handoff-accepted": "noti.kind_handoff_accepted",
   "handoff-expired": "noti.kind_handoff_expired",
@@ -178,6 +179,17 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
       title: t("notif.stop_after_turn.title"),
       body: t("notif.stop_after_turn.body", { name }),
       speech: t("notif.stop_after_turn.speech", { name }),
+    };
+  }
+  if (n.kind === "spend-budget") {
+    // The budget stopped the session (#1054): after its turn, or mid-turn past the hard limit.
+    // The spend is an estimate, so the message says "about", and it names the one way on.
+    const cap = typeof n.payload.capUsd === "number" ? "$" + n.payload.capUsd.toFixed(2) : "";
+    const midTurn = n.payload.midTurn === true;
+    return {
+      title: midTurn ? t("notif.spend_budget.title_mid_turn") : t("notif.spend_budget.title"),
+      body: t("notif.spend_budget.body", { name, cap }),
+      speech: t("notif.spend_budget.speech", { name }),
     };
   }
   if (n.kind === "handoff-offer") {

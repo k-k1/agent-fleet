@@ -310,6 +310,8 @@ POST /sessions/{name}/restore
 GET /sessions/{name}/settings
 POST /sessions/{name}/settings
 GET /sessions/{name}/skills
+GET /sessions/{name}/spend
+POST /sessions/{name}/spend-cap
 GET /sessions/{name}/ssm-login
 POST /sessions/{name}/start
 GET /sessions/{name}/status
