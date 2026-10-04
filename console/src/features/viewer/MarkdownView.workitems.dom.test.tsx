@@ -196,6 +196,17 @@ describe("ticket references", () => {
       expect(useWorkItemModal.getState().detail?.item.provider).toBe("bitbucket");
     });
 
+    it("does not guess an uncached qualified number onto the other host's clone, in either list order", async () => {
+      for (const repos of [bothHosts, [...bothHosts].reverse()]) {
+        useReposStore.setState({ repos });
+        useWorkItemStore.setState({ payload: payload([]) });
+        await render("see #7 and team/both#7", "bb-copy");
+        expect(links()).toHaveLength(0);
+        await render("see #7 and team/both#7", "gh-copy");
+        expect(links().map((a) => a.textContent)).toEqual(["#7", "team/both#7"]);
+      }
+    });
+
     it("keeps a qualified link on the host it was drawn for when that row leaves the cache", async () => {
       useReposStore.setState({ repos: bothHosts });
       useWorkItemStore.setState({ payload: payload([row("bitbucket", "team/both#7", { kind: "pr" }), row("github", "team/both#7")]) });
@@ -250,6 +261,17 @@ describe("ticket references", () => {
     });
     expect(host.querySelector("a.md-path-link")).toBeNull();
     expect(host.querySelector("code a.md-workitem-link")?.textContent).toBe("team/app#7");
+  });
+
+  it("re-links when only a clone's host changes", async () => {
+    // The chat: no context repository, so team/svc's host comes from the clones alone.
+    useReposStore.setState({ repos: [{ name: "svc", provider: "bitbucket", remote: "bitbucket.org", remotePath: "team/svc" }] });
+    await render("see team/svc#7", null);
+    expect(links()).toHaveLength(0);
+    await act(async () => {
+      useReposStore.setState({ repos: [{ name: "svc", provider: "github", remote: "github.com", remotePath: "team/svc" }] });
+    });
+    expect(links().map((a) => a.textContent)).toEqual(["team/svc#7"]);
   });
 
   it("links once the repository list arrives, without the text changing", async () => {

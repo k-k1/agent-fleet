@@ -26,9 +26,9 @@ export interface WorkItemRefContext {
   origin: RefOrigin | null;
   /** The inbox cache (the CP's rows). */
   items: WorkItem[];
-  /** "owner/name" → host for the clones in this workspace, so an uncached `owner/name#N` about a
-   * Bitbucket repository is not guessed onto GitHub. */
-  known: Map<string, "github" | "bitbucket">;
+  /** "owner/name" → the hosts it is cloned from in this workspace (see cloneHosts), so an
+   * uncached `owner/name#N` about a Bitbucket repository is not guessed onto GitHub. */
+  known: Map<string, Set<"github" | "bitbucket">>;
 }
 
 // A bare or qualified issue number. The look-behind is what keeps `C#`, `&#123;`, `page#12`
@@ -52,6 +52,32 @@ const JIRA_TOKEN = /^([A-Z][A-Z0-9_]+)-\d+$/;
 /** Whole-token test for the qualified form, so a path-shaped `owner/name#12` in inline code is
  * handed to this linkifier rather than to the file-path one. */
 export const isQualifiedIssueToken = (text: string): boolean => /^[A-Za-z0-9][\w.-]*\/[\w.-]+#[1-9]\d*$/.test(text);
+
+/** The clones' hosts per "owner/name". A set, because the same owner/name can be cloned from both
+ * hosts, and keeping only one would make the answer depend on the order of the repository list. */
+export function cloneHosts(repos: { provider?: string; remote?: string; remotePath?: string }[]): WorkItemRefContext["known"] {
+  const out: WorkItemRefContext["known"] = new Map();
+  for (const r of repos) {
+    const o = originOf(r);
+    if (o) out.set(o.path, (out.get(o.path) ?? new Set()).add(o.provider));
+  }
+  return out;
+}
+
+/** cloneHosts as one comparable string: a rendered message re-links when it changes. */
+export function cloneHostsInputs(known: WorkItemRefContext["known"]): string {
+  return [...known].map(([path, hosts]) => `${path}:${[...hosts].sort().join("+")}`).sort().join(",");
+}
+
+/** The host an uncached `owner/name` is on, as far as this workspace can tell: the text's own
+ * repository's host when it names that one, else the clones' when they agree. "both" when the
+ * clones are on both hosts; undefined when no clone has it. */
+export function hostOf(path: string, ctx: WorkItemRefContext): "github" | "bitbucket" | "both" | undefined {
+  if (ctx.origin?.path === path) return ctx.origin.provider;
+  const hosts = ctx.known.get(path);
+  if (!hosts?.size) return undefined;
+  return hosts.size > 1 ? "both" : [...hosts][0];
+}
 
 export function originOf(repo: { provider?: string; remote?: string; remotePath?: string } | undefined): RefOrigin | null {
   if (!repo?.remotePath) return null;
@@ -111,10 +137,10 @@ export function classifyWorkItemRef(token: string, ctx: WorkItemRefContext, inCo
     const cached = hosts.find((p) => cachedRow(ctx.items, p, key));
     if (cached) return { provider: cached, key };
     if (inCode) return null;
-    const guess = qualified
-      ? ctx.known.get(qualified) || (ctx.origin?.path === qualified ? ctx.origin.provider : "github")
-      : ctx.origin!.provider;
-    return guess === "bitbucket" ? null : { provider: guess, key, guessed: true };
+    // An unknown repository is guessed onto GitHub; one cloned from Bitbucket (or from both, which
+    // leaves the host unknown) is not guessed at all.
+    const host = qualified ? (hostOf(qualified, ctx) ?? "github") : ctx.origin!.provider;
+    return host === "github" ? { provider: host, key, guessed: true } : null;
   }
   const jira = token.match(JIRA_TOKEN);
   if (!jira) return null;

@@ -1,7 +1,7 @@
 // The gates that decide whether a ticket-shaped token in prose becomes a link (#1659). The false
 // positives listed here are the reason each gate exists.
 import { describe, expect, it } from "vitest";
-import { classifyWorkItemRef, originOf, resolveWorkItemRef, WORK_ITEM_HINT_RE, workItemRefInputs, type WorkItemRefContext } from "./refs.ts";
+import { classifyWorkItemRef, cloneHosts, originOf, resolveWorkItemRef, WORK_ITEM_HINT_RE, workItemRefInputs, type WorkItemRefContext } from "./refs.ts";
 import type { WorkItem } from "./read.ts";
 
 const row = (provider: string, key: string, extra: Partial<WorkItem> = {}): WorkItem => ({
@@ -73,8 +73,22 @@ describe("classifyWorkItemRef", () => {
       provider: "bitbucket",
       key: "team/app#7",
     });
-    const known = new Map([["team/svc", "bitbucket" as const]]);
+    const known = cloneHosts([{ provider: "bitbucket", remote: "bitbucket.org", remotePath: "team/svc" }]);
     expect(classifyWorkItemRef("team/svc#3", ctx({ known }))).toBeNull();
+  });
+
+  it("guesses an uncached qualified number on its own repository's host, whatever order the clones are in", () => {
+    const bb = { name: "bb-copy", provider: "bitbucket", remote: "bitbucket.org", remotePath: "team/both" };
+    const ghc = { name: "gh-copy", provider: "github", remote: "github.com", remotePath: "team/both" };
+    for (const repos of [[bb, ghc], [ghc, bb]]) {
+      const known = cloneHosts(repos);
+      // Written from the Bitbucket copy: its own repository, so never guessed onto GitHub.
+      expect(classifyWorkItemRef("team/both#7", ctx({ origin: { provider: "bitbucket", path: "team/both" }, known }))).toBeNull();
+      // Written from the GitHub copy: a guess on GitHub.
+      expect(classifyWorkItemRef("team/both#7", ctx({ origin: { provider: "github", path: "team/both" }, known }))?.provider).toBe("github");
+      // From elsewhere: cloned from both hosts, so the host is unknown and nothing is guessed.
+      expect(classifyWorkItemRef("team/both#7", ctx({ known }))).toBeNull();
+    }
   });
 
   it("reads a bare number on the context repository's own host, whatever the other host has cached", () => {

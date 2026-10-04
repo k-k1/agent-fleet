@@ -13,7 +13,7 @@ import { openChat, openChatSplit } from "../chat/open.ts";
 import { useFilesStore } from "../files/store.ts";
 import { ensureWorkItems, useWorkItemStore } from "../workitems/store.ts";
 import { useReposStore } from "../repos/store.ts";
-import { originOf, WORK_ITEM_HINT_RE, workItemRefInputs } from "../workitems/refs.ts";
+import { cloneHosts, cloneHostsInputs, originOf, WORK_ITEM_HINT_RE, workItemRefInputs } from "../workitems/refs.ts";
 import { markRepairedTables, renderFrontMatter } from "./parts/mdFrontMatter.ts";
 import { renderEmoji } from "./parts/mdEmoji.ts";
 import { CONV_HINT_RE, linkifyPathRefs, linkifyRefs } from "./parts/mdRefLinks.ts";
@@ -117,8 +117,10 @@ export function MarkdownView({
     const o = workItemRefs && repo ? originOf(s.repos.find((r) => r.name === repo)) : null;
     return o ? `${o.provider}:${o.path}` : "";
   });
+  // The clones' hosts decide whether an uncached `owner/name#N` is guessed onto GitHub.
+  const wiClones = useReposStore((s) => (workItemRefs ? cloneHostsInputs(cloneHosts(s.repos)) : ""));
   const wiCache = useWorkItemStore((s) => (workItemRefs ? workItemRefInputs(null, s.payload?.items || []) : ""));
-  const wiInputs = `${wiOrigin}#${wiCache}`;
+  const wiInputs = `${wiOrigin}#${wiClones}#${wiCache}`;
   const relink = useRef<{ run: () => void; inputs: string } | null>(null);
 
   useEffect(() => {

@@ -15,6 +15,8 @@ import { useWorkItemModal } from "../../workitems/modal.ts";
 import { dedupeWorkItems, sortWorkItems, type WorkItem } from "../../workitems/read.ts";
 import {
   classifyWorkItemRef,
+  cloneHosts,
+  hostOf,
   isQualifiedIssueToken,
   ISSUE_REF_SRC,
   JIRA_REF_SRC,
@@ -179,15 +181,10 @@ export function linkifyRefs(
 // its origin), the inbox cache, and the clones' origins.
 function workItemRefContext(repo: string | null): WorkItemRefContext {
   const repos = useReposStore.getState().repos;
-  const known: WorkItemRefContext["known"] = new Map();
-  for (const r of repos) {
-    const o = originOf(r);
-    if (o) known.set(o.path, o.provider);
-  }
   return {
     origin: repo ? originOf(repos.find((r) => r.name === repo)) : null,
     items: cachedWorkItems(),
-    known,
+    known: cloneHosts(repos),
   };
 }
 
@@ -258,8 +255,8 @@ function reguess(text: string, drawn: WorkItemRef, ctx: WorkItemRefContext): Wor
   const now = classifyWorkItemRef(text, ctx);
   if (now) return now;
   const hash = text.lastIndexOf("#");
-  const host = hash > 0 ? ctx.known.get(text.slice(0, hash)) : undefined;
-  return host ? { provider: host, key: drawn.key } : drawn;
+  const host = hash > 0 ? hostOf(text.slice(0, hash), ctx) : undefined;
+  return host === "bitbucket" ? { provider: host, key: drawn.key } : drawn;
 }
 
 // makeCommitLink builds a non-navigating anchor for a bare sha. On click it verifies the
