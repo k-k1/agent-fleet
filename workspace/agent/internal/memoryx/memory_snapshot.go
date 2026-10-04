@@ -29,6 +29,8 @@ const (
 	memoryTriggerPreRestore = "pre-restore"
 	memoryTriggerRestore    = "restore"
 	memoryTriggerImport     = "import"
+	// memoryTriggerAgentMemory is one write to the AF-owned store (agent_memory.go).
+	memoryTriggerAgentMemory = "agent-memory"
 )
 
 // memorySnapshotResult is the outcome of one snapshot run. Committed=false means nothing was

@@ -464,7 +464,10 @@ The same approach as cmux.
   - It also always advertises a small observation set: session status and usage, and
     the memo tools, and `branch_name`, which asks the branch-name resolver
     (`POST /repos/{name}/branch-name`) about the caller's own working copy unless told
-    another. The seven Chromium attach tools come with `--chromium-attach`.
+    another. The five `memory_*` tools (ADR 0108) are always there too: they call the
+    Agent's loopback-only `/agents/memory/entries` routes with the caller's session name,
+    which decides the author recorded and the project scope. The seven Chromium attach
+    tools come with `--chromium-attach`.
   - The user's preferences add `--peer-messaging`, `--image-gen` and `--fleet-spawn`
     (`builtinRunArgsFor`).
   - Anything not advertised is refused on call too (`mcpAdvertised`).

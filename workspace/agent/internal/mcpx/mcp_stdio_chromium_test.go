@@ -86,13 +86,14 @@ func TestMCPChromiumSessionScopeIsExact(t *testing.T) {
 	for _, want := range []string{
 		"af_report", "propose_session_handoff", "af_stop_after_turn",
 		"get_session_status", "get_session_usage", "list_memos", "add_memo", "update_memo", "branch_name",
+		"memory_index", "memory_search", "memory_read", "memory_save", "memory_forget",
 	} {
 		if legacy[want] == nil {
 			t.Fatalf("bare self-report tools = %v, missing %s", sortedChromiumToolMapKeys(legacy), want)
 		}
 	}
-	if len(legacy) != 9 {
-		t.Fatalf("bare self-report tools = %v, want exactly those nine", sortedChromiumToolMapKeys(legacy))
+	if len(legacy) != 14 {
+		t.Fatalf("bare self-report tools = %v, want exactly those fourteen", sortedChromiumToolMapKeys(legacy))
 	}
 	if resp := callChromiumMCP(t, "list_chromium_targets", map[string]any{"port": 9222}); !mcpCallIsError(t, resp) || !strings.Contains(string(resp), "tools/list に無いツール名") {
 		t.Fatalf("legacy self-report guessed Chromium call was not gated: %s", resp)
@@ -106,6 +107,7 @@ func TestMCPChromiumSessionScopeIsExact(t *testing.T) {
 	wantNames := append([]string{
 		"af_report", "af_stop_after_turn", "propose_session_handoff",
 		"get_session_status", "get_session_usage", "list_memos", "add_memo", "update_memo", "branch_name",
+		"memory_index", "memory_search", "memory_read", "memory_save", "memory_forget",
 	}, chromiumReadToolNames...)
 	wantNames = append(wantNames, chromiumWriteToolNames...)
 	if got, want := sortedChromiumToolMapKeys(found), append([]string(nil), wantNames...); !sameSortedStrings(got, want) {

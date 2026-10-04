@@ -2,11 +2,14 @@
 
 English | [日本語](0108-af-owned-agent-memory.ja.md)
 
-- Status: **proposed** (2026-10-03). Nothing is built yet. The figures below were measured on one
-  workspace on 2026-10-03; the claude settings named in decision 6 were found as strings in the
-  Claude Code 2.1.288 binary and **their behaviour is not measured**. Revised 2026-10-04 before
-  any of it was built: decision 8 now publishes changes directly instead of queueing them for the
-  member's approval (the reason is in decision 8, the dropped design under Rejected).
+- Status: **proposed** (2026-10-03). Built so far (P1, part 1): the store, the five MCP tools,
+  revisions, authorship, the one-commit history under `af/` and the secret scan
+  (`memoryx/agent_memory.go`). Not built: the Console change list and the claude seed. The figures
+  below were measured on one workspace on 2026-10-03; the claude settings named in decision 6 were
+  found as strings in the Claude Code 2.1.288 binary and **their behaviour is not measured**.
+  Revised 2026-10-04 before any of it was built: decision 8 now publishes changes directly instead
+  of queueing them for the member's approval (the reason is in decision 8, the dropped design under
+  Rejected).
 - Tracking: #1569
 - Related: [0022](0022-agent-memory-management.md) (memory history in a bare repo — this record's
   safety net) / [0042](0042-user-instructions.md) (the distributor this record reuses, and the

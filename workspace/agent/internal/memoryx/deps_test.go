@@ -3,7 +3,7 @@ package memoryx
 // The memoryx tests have no package main of their own, so they wire the outward
 // dependencies themselves (the same shape as internal/gitx/deps_test.go).
 //
-// This family's only outward dependency is 13 stable error codes, all of them constants in
+// This family's only outward dependency is 16 stable error codes, all of them constants in
 // errcodes.go. Do not copy the real values here: a copy becomes a second source of truth
 // (the real one is wired by main's memory_wiring.go). The set of bugs this can catch is the
 // same either way — the memoryx tests observe which code a handler picked, not the string
@@ -34,6 +34,9 @@ func testDeps() Deps {
 		ErrCodeBadImport:      "memoryx-test-bad_import",
 		ErrCodeSecretDetected: "memoryx-test-secret_detected",
 		ErrCodeTooLarge:       "memoryx-test-too_large",
+		ErrCodeNotFound:       "memoryx-test-not_found",
+		ErrCodeConflict:       "memoryx-test-conflict",
+		ErrCodeNoProject:      "memoryx-test-no_project",
 	}
 }
 
@@ -48,8 +51,8 @@ func TestConfigureRejectsEveryUnwiredField(t *testing.T) {
 	good := testDeps()
 	v := reflect.ValueOf(good)
 	typ := v.Type()
-	if typ.NumField() != 13 {
-		t.Fatalf("Deps has %d fields (the memory section of errcodes.go has 13: either the wrong struct is being read, or only one side grew)", typ.NumField())
+	if typ.NumField() != 16 {
+		t.Fatalf("Deps has %d fields (the memory section of errcodes.go has 16: either the wrong struct is being read, or only one side grew)", typ.NumField())
 	}
 	for i := 0; i < typ.NumField(); i++ {
 		f := typ.Field(i)

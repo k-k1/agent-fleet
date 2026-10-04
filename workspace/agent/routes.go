@@ -444,6 +444,13 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /agents/memory/export", memoryx.HandleMemoryExport)
 	mux.HandleFunc("POST /agents/memory/import", memoryx.HandleMemoryImport)
 	mux.HandleFunc("POST /agents/memory/import/apply", memoryx.HandleMemoryImportApply)
+	// AF-owned agent memory (ADR 0108): what the af MCP memory tools call. Not proxied by the
+	// CP: agents reach it on loopback, and the Console's view of it is a separate set of routes.
+	mux.HandleFunc("GET /agents/memory/entries", memoryx.HandleAgentMemoryIndex)
+	mux.HandleFunc("GET /agents/memory/entries/search", memoryx.HandleAgentMemorySearch)
+	mux.HandleFunc("GET /agents/memory/entries/read", memoryx.HandleAgentMemoryRead)
+	mux.HandleFunc("POST /agents/memory/entries", memoryx.HandleAgentMemorySave)
+	mux.HandleFunc("POST /agents/memory/entries/forget", memoryx.HandleAgentMemoryForget)
 
 	// Toolchain selection (node via nvm / java via pre-baked Temurin) — Console.
 	mux.HandleFunc("GET /env/toolchains", handleToolchainsGet)

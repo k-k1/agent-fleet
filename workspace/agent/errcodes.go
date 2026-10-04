@@ -160,6 +160,10 @@ const (
 	errCodeMemoryBadImport      = "memory_bad_import"
 	errCodeMemorySecretDetected = "memory_secret_detected"
 	errCodeMemoryTooLarge       = "memory_too_large"
+	// AF-owned agent memory (agent_memory.go, ADR 0108)
+	errCodeMemoryNotFound  = "memory_not_found"
+	errCodeMemoryConflict  = "memory_conflict"
+	errCodeMemoryNoProject = "memory_no_project"
 
 	// The reason for failing to wake the managed runtime (the shared daemon) that waiting
 	// will not fix. Its only content: the daemon was not started because the CLI is not

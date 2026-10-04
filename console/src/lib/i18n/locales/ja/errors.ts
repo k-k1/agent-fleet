@@ -211,6 +211,9 @@ export const errors = {
   "err.memory_bad_import": "取り込めない形式のファイルです（別環境の書き出しファイルを選んでください）",
   "err.memory_secret_detected": "書き出す内容に秘密情報らしき記述があります",
   "err.memory_too_large": "ファイルが大きすぎます",
+  "err.memory_not_found": "そのメモリはありません",
+  "err.memory_conflict": "メモリが先に更新されています。読み直してからやり直してください",
+  "err.memory_no_project": "このセッションには作業コピーが無いため、プロジェクトのメモリを使えません",
   "err.tenant_idp_link_claim_required":
     "このデプロイには、同じ発行元のサインイン方法がすでにあります。この発行元はアプリ登録ごとに同じ人へ違う subject を割り当てるため、" +
     "「同一アカウントの見分け方」を指定しないと、すでにこのデプロイを使っている人が全員ログインできなくなります（メールアドレス重複として拒否されます）。",
