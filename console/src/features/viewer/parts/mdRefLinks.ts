@@ -142,9 +142,7 @@ export function linkifyRefs(
       // A ticket token has a "#" or starts upper-case, so none of the shapes below can match it.
       if (wiCtx && (token.includes("#") || /^[A-Z]/.test(token))) {
         const ref = classifyWorkItemRef(token, wiCtx);
-        // Launch from the working copy this text is about only when the ticket belongs to it.
-        const hint = ref && repo && wiCtx.origin && ref.key.startsWith(`${wiCtx.origin.path}#`) ? repo : "";
-        if (ref) a = makeWorkItemLink(token, repo, ref, hint);
+        if (ref) a = makeWorkItemLink(token, repo, ref);
       }
       // conv-slug shape first (see the classification-order note above): link only if
       // a conversation with that slug exists right now.
@@ -202,7 +200,7 @@ const cachedWorkItems = (): WorkItem[] =>
 // the way the rail row's external link does. The token is classified again at click and hover
 // time, not trusted from the render: the cache may have loaded since, and a qualified reference
 // linked as GitHub before it did may turn out to be a cached Bitbucket pull request.
-function makeWorkItemLink(text: string, repo: string | null, rendered: WorkItemRef, repoHint: string): HTMLAnchorElement {
+function makeWorkItemLink(text: string, repo: string | null, rendered: WorkItemRef): HTMLAnchorElement {
   const a = document.createElement("a");
   a.className = "md-ref-link md-workitem-link";
   a.textContent = text;
@@ -210,7 +208,18 @@ function makeWorkItemLink(text: string, repo: string | null, rendered: WorkItemR
   a.tabIndex = 0;
   const current = () => {
     const ctx = workItemRefContext(repo);
-    return resolveWorkItemRef(classifyWorkItemRef(text, ctx) ?? rendered, ctx.items);
+    // null now can mean the context grew (a clone revealed the repository is on Bitbucket, where an
+    // uncached number is not linked) — the link stays, but never on the host it was guessed for.
+    let ref = classifyWorkItemRef(text, ctx);
+    if (!ref) {
+      const hash = rendered.key.lastIndexOf("#");
+      const known = hash > 0 ? ctx.known.get(rendered.key.slice(0, hash)) : undefined;
+      ref = known ? { provider: known, key: rendered.key } : rendered;
+    }
+    // Launch from the working copy this text is about only when the ticket belongs to it; read
+    // now, since the repository list may have arrived after the text did.
+    const repoHint = repo && ctx.origin && ref.key.startsWith(`${ctx.origin.path}#`) ? repo : "";
+    return { ...resolveWorkItemRef(ref, ctx.items), repoHint };
   };
   wireTooltip(a, () => {
     const { item, reference } = current();
@@ -218,7 +227,7 @@ function makeWorkItemLink(text: string, repo: string | null, rendered: WorkItemR
     return reference || !item.title ? hint : `${item.title}\n${hint}`;
   });
   const open = (external: boolean) => {
-    const { item, reference } = current();
+    const { item, reference, repoHint } = current();
     if (external && item.url) {
       window.open(item.url, "_blank", "noopener,noreferrer");
       return;
@@ -449,7 +458,10 @@ export async function linkifyPathRefs(
     // which the resolver can legitimately place) has nowhere to be revealed. Leave it as
     // text rather than offer a link that scrolls to nothing. Files there open fine.
     if (hit.type === "dir" && hit.path.startsWith("/")) continue;
-    if (!code.isConnected || code.dataset.pathLink) continue;
+    // Asked again after the await: the ticket linkifier may have run meanwhile (the inbox or the
+    // repository list arrived) and put a link of its own in this <code>. Wrapping that one would
+    // nest two anchors, and a click would open both.
+    if (!code.isConnected || code.dataset.pathLink || !isPathCandidateCode(code)) continue;
     code.dataset.pathLink = "1";
     const a = makePathLink(cwd, ref, hit, onOpenFile, onOpenDir, onError);
     while (code.firstChild) a.appendChild(code.firstChild);

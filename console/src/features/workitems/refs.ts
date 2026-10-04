@@ -33,9 +33,10 @@ export interface WorkItemRefContext {
 // A bare or qualified issue number. The look-behind is what keeps `C#`, `&#123;`, `page#12`
 // and the middle of a path off it: a citation is preceded by a space, a bracket, a table bar or
 // CJK text, never by a word character. `owner/name` is GitHub's own cross-reference syntax.
-// The number is taken whole, however long, so a run of digits is never left over for the commit
-// shape to claim (`#11223344` is a colour, not a sha); classifyWorkItemRef decides what it is.
-export const ISSUE_REF_SRC = String.raw`(?<![\w&#/.\-])(?:[A-Za-z0-9][\w.\-]*\/[\w.\-]+)?#[1-9]\d*(?![\w#])`;
+// The number is taken whole, however long and even with a leading zero, so a run of digits is
+// never left over for the commit shape to claim (`#11223344`, `#00000000` are colours, not shas);
+// classifyWorkItemRef decides what it is.
+export const ISSUE_REF_SRC = String.raw`(?<![\w&#/.\-])(?:[A-Za-z0-9][\w.\-]*\/[\w.\-]+)?#\d+(?![\w#])`;
 // A Jira key. The shape alone also matches UTF-8, SHA-256, ISO-8601, GPT-4 and P2-1, so this is
 // only a candidate: classifyWorkItemRef links it only when its project is one the cache knows.
 export const JIRA_REF_SRC = String.raw`(?<![\w/\-])[A-Z][A-Z0-9_]{1,9}-[1-9]\d{0,6}(?![\w\-])`;
@@ -97,7 +98,7 @@ export function classifyWorkItemRef(token: string, ctx: WorkItemRefContext): Wor
   const issue = token.match(ISSUE_TOKEN);
   if (issue) {
     const [, qualified, num] = issue;
-    if (num.length > 10) return null;
+    if (num.length > 10 || num.startsWith("0")) return null;
     let provider: string;
     let key: string;
     if (qualified) {

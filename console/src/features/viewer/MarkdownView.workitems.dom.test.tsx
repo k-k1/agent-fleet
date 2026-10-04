@@ -12,6 +12,16 @@ const toast = () => {};
 vi.mock("../../ui/ToastProvider.tsx", () => ({ useToast: () => toast }));
 vi.mock("../scm/open.ts", () => ({ openCommit: () => {} }));
 
+// The file resolver behind linkifyPathRefs, held open so a test can let the ticket linkifier run
+// while a path answer is still on its way.
+let resolvePaths: (m: Map<string, { path: string; type: string }>) => void = () => {};
+vi.mock("./pathResolve.ts", () => ({
+  resolvePathRefs: () =>
+    new Promise((r) => {
+      resolvePaths = r;
+    }),
+}));
+
 // The inbox read behind ensureWorkItems (the "cache not loaded yet" path).
 const workItemList = vi.fn();
 vi.mock("../workitems/api.ts", () => ({
@@ -140,7 +150,7 @@ describe("ticket references", () => {
   });
 
   it("takes a long number whole, so no digits are left for the commit shape", async () => {
-    await render("colour #11223344 and octo/fleet#11223344");
+    await render("colour #11223344, #00112233, #00000000 and octo/fleet#11223344");
     expect(links().map((a) => a.textContent)).toEqual(["octo/fleet#11223344"]);
     expect(host.querySelector("a.md-commit-link")).toBeNull();
   });
@@ -157,6 +167,49 @@ describe("ticket references", () => {
     const d = useWorkItemModal.getState().detail;
     expect(d?.item.provider).toBe("bitbucket");
     expect(d?.reference).toBe(false);
+  });
+
+  it("does not send a reference to the host it was guessed for once the clone says otherwise", async () => {
+    useReposStore.setState({ repos: [] });
+    await render("see team/svc#7", null);
+    expect(links()).toHaveLength(1);
+    // team/svc turns out to be a Bitbucket clone, and #7 is not cached: not a GitHub issue.
+    useReposStore.setState({ repos: [{ name: "svc", provider: "bitbucket", remote: "bitbucket.org", remotePath: "team/svc" }] });
+    await click(links()[0]);
+    const d = useWorkItemModal.getState().detail;
+    expect(d?.item.provider).toBe("bitbucket");
+    expect(d?.item.url).toBe("https://bitbucket.org/team/svc/pull-requests/7");
+  });
+
+  it("reads the launch hint when clicked, so a late repository list still names the session's copy", async () => {
+    // The working copy's folder name differs from the remote's, so only the hint can find it.
+    useReposStore.setState({ repos: [] });
+    await render("see octo/app#7", "renamed");
+    useReposStore.setState({
+      repos: [
+        { name: "other", provider: "github", remote: "github.com", remotePath: "octo/other" },
+        { name: "renamed", provider: "github", remote: "github.com", remotePath: "octo/app" },
+      ],
+    });
+    await click(links()[0]);
+    expect(useWorkItemModal.getState().detail?.repoHint).toBe("renamed");
+  });
+
+  it("does not wrap a ticket link that appeared while a path answer was on its way", async () => {
+    // team/app is a Bitbucket clone and #7 is not cached yet, so the path pass takes the code.
+    await act(async () => {
+      root.render(<MarkdownView source="see `team/app#7`" repo="fleet" workItemRefs onOpenFile={() => {}} />);
+    });
+    expect(links()).toHaveLength(0);
+    await act(async () => {
+      useWorkItemStore.setState({ payload: payload([row("bitbucket", "team/app#7", { kind: "pr" })]) });
+    });
+    expect(links()).toHaveLength(1);
+    await act(async () => {
+      resolvePaths(new Map([["team/app#7", { path: "team/app#7", type: "file" }]]));
+    });
+    expect(host.querySelector("a.md-path-link")).toBeNull();
+    expect(host.querySelector("code a.md-workitem-link")?.textContent).toBe("team/app#7");
   });
 
   it("links once the repository list arrives, without the text changing", async () => {

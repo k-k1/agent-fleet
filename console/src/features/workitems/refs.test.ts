@@ -42,6 +42,8 @@ describe("classifyWorkItemRef", () => {
   it("does not read a colour-shaped number as an issue", () => {
     expect(classifyWorkItemRef("#112233", ctx())).toBeNull();
     expect(classifyWorkItemRef("#11223344", ctx())).toBeNull();
+    expect(classifyWorkItemRef("#00112233", ctx())).toBeNull();
+    expect(classifyWorkItemRef("#0", ctx())).toBeNull();
     expect(classifyWorkItemRef("#1234567", ctx())).toEqual({ provider: "github", key: "octo/fleet#1234567" });
     // …but the qualified form is unambiguous at any length.
     expect(classifyWorkItemRef("octo/fleet#112233", ctx())).toEqual({ provider: "github", key: "octo/fleet#112233" });
