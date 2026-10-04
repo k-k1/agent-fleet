@@ -162,6 +162,70 @@ func TestExitedRunsBeforeCleanup(t *testing.T) {
 	}
 }
 
+// Exited sees everything the process printed: a failed login's reason is its last line,
+// printed just before it exits, and Wait returns without waiting for the output reader.
+// The slow first Parse holds the reader back while the process prints its last line and
+// exits.
+func TestExitedSeesTheLastOutput(t *testing.T) {
+	s := newStore(t)
+	var mu sync.Mutex
+	var last string
+	first := true
+	exited := make(chan string, 1)
+	a, err := s.Start("k", "", "prod", Process{
+		Name: "test login", Path: "/bin/sh",
+		Args:    []string{"-c", `echo working; sleep 0.05; echo "ERROR: the reason"; exit 1`},
+		Timeout: 10 * time.Second,
+		Parse: func(out string) (string, string, error) {
+			mu.Lock()
+			last = out
+			slow := first
+			first = false
+			mu.Unlock()
+			if slow {
+				time.Sleep(300 * time.Millisecond)
+			}
+			return "", "", nil
+		},
+		Exited: func(error) (bool, string) {
+			mu.Lock()
+			defer mu.Unlock()
+			exited <- last
+			return false, "exited"
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, a, PhaseFailed)
+	if out := <-exited; !strings.Contains(out, "ERROR: the reason") {
+		t.Fatalf("Exited saw %q, without the last line", out)
+	}
+}
+
+// A process that leaves a child holding its output open still ends its attempt: the wait
+// for the output to drain is bounded.
+func TestAnOutputHeldOpenDoesNotHoldTheExit(t *testing.T) {
+	old := outputDrainWait
+	outputDrainWait = 100 * time.Millisecond
+	t.Cleanup(func() { outputDrainWait = old })
+	s := newStore(t)
+	start := time.Now()
+	a, err := s.Start("k", "", "prod", Process{
+		Name: "test login", Path: "/bin/sh", Args: []string{"-c", "sleep 3 & exit 1"},
+		Timeout: 10 * time.Second,
+		Parse:   func(string) (string, string, error) { return "", "", nil },
+		Exited:  func(error) (bool, string) { return false, "exited" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-a.Exited()
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("the exit waited %v for the held output", d)
+	}
+}
+
 func waitFor(t *testing.T, a *Attempt, phase string) AttemptWire {
 	t.Helper()
 	var v AttemptWire

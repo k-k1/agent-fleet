@@ -241,11 +241,26 @@ func (s *Store[S]) Start(key, requestID, profile string, p Process) (*Attempt, e
 		return a, nil
 	}
 	pw.Close()
-	go watchOutput(a, pr, p.Parse)
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		watchOutput(a, pr, p.Parse)
+	}()
 	go func() {
 		defer close(done)
 		err := cmd.Wait()
+		// Wait does not wait for the reader, and a failed login's reason is the last thing
+		// the process prints: Exited reads the output only once the reader has seen it all.
+		// A child the process left behind can hold the pipe open, so the wait is bounded and
+		// closing the pipe ends the reader.
+		t := time.NewTimer(outputDrainWait)
+		select {
+		case <-drained:
+		case <-t.C:
+		}
+		t.Stop()
 		pr.Close()
+		<-drained
 		// Exited before Cleanup: a backend may hold a lock from the process's start that its
 		// Exited still needs (gcpx records a finished login under the gcloud root's lock),
 		// and Cleanup is where it lets go.
@@ -259,6 +274,10 @@ func (s *Store[S]) Start(key, requestID, profile string, p Process) (*Attempt, e
 	}()
 	return a, nil
 }
+
+// outputDrainWait bounds how long an exited process's output may take to reach the reader
+// before Exited runs without the rest. A var so a test can shorten it.
+var outputDrainWait = 2 * time.Second
 
 // watchOutput feeds the process's output to parse until it yields a URL. The output is
 // kept only in memory and never logged: it may hold the code.
