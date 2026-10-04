@@ -26,28 +26,35 @@ const row = (provider: string, key: string, extra: Partial<WorkItem> = {}): Work
 const ctx = (over: Partial<WorkItemRefContext> = {}): WorkItemRefContext => ({
   origin: { provider: "github", path: "octo/fleet" },
   items: [],
-  known: new Map(),
   ...over,
 });
+const gh = (n: string) => row("github", `octo/fleet#${n}`);
 
 describe("classifyWorkItemRef", () => {
-  it("rewrites a bare number into the inbox key of the context repository", () => {
-    expect(classifyWorkItemRef("#956", ctx())).toEqual({ provider: "github", key: "octo/fleet#956" });
+  it("links only a ticket the inbox holds (#166 typed as a search is some issue, not a citation)", () => {
+    expect(classifyWorkItemRef("#956", ctx({ items: [gh("956")] }))).toEqual({ provider: "github", key: "octo/fleet#956" });
+    expect(classifyWorkItemRef("#166", ctx({ items: [gh("956")] }))).toBeNull();
+    expect(classifyWorkItemRef("octo/fleet#166", ctx({ items: [gh("956")] }))).toBeNull();
   });
 
   it("leaves a bare number alone without a context repository", () => {
-    expect(classifyWorkItemRef("#956", ctx({ origin: null }))).toBeNull();
+    expect(classifyWorkItemRef("#956", ctx({ origin: null, items: [gh("956")] }))).toBeNull();
+    // The qualified form needs none.
+    expect(classifyWorkItemRef("octo/fleet#956", ctx({ origin: null, items: [gh("956")] }))).toEqual({
+      provider: "github",
+      key: "octo/fleet#956",
+    });
   });
 
-  it("does not read a colour-shaped number as an issue", () => {
-    expect(classifyWorkItemRef("#112233", ctx())).toBeNull();
-    expect(classifyWorkItemRef("#11223344", ctx())).toBeNull();
-    expect(classifyWorkItemRef("#00112233", ctx())).toBeNull();
-    expect(classifyWorkItemRef("#0", ctx())).toBeNull();
-    expect(classifyWorkItemRef("#1234567", ctx())).toEqual({ provider: "github", key: "octo/fleet#1234567" });
+  it("does not read a colour-shaped number as an issue, even a cached one", () => {
+    const items = [gh("112233"), gh("11223344"), gh("1234567")];
+    expect(classifyWorkItemRef("#112233", ctx({ items }))).toBeNull();
+    expect(classifyWorkItemRef("#11223344", ctx({ items }))).toBeNull();
+    expect(classifyWorkItemRef("#00112233", ctx({ items }))).toBeNull();
+    expect(classifyWorkItemRef("#0", ctx({ items }))).toBeNull();
+    expect(classifyWorkItemRef("#1234567", ctx({ items }))).toEqual({ provider: "github", key: "octo/fleet#1234567" });
     // …but the qualified form is unambiguous at any length.
-    expect(classifyWorkItemRef("octo/fleet#112233", ctx())).toEqual({ provider: "github", key: "octo/fleet#112233" });
-    expect(classifyWorkItemRef("octo/fleet#11223344", ctx())).toEqual({ provider: "github", key: "octo/fleet#11223344" });
+    expect(classifyWorkItemRef("octo/fleet#11223344", ctx({ items }))).toEqual({ provider: "github", key: "octo/fleet#11223344" });
   });
 
   it("reads a bare number on the context repository's own host, whatever the other host has cached", () => {
@@ -58,30 +65,25 @@ describe("classifyWorkItemRef", () => {
     expect(classifyWorkItemRef("#7", ctx({ origin: bbOrigin, items: [ghRow] }))).toBeNull();
     expect(classifyWorkItemRef("#7", ctx({ origin: bbOrigin, items: [ghRow, bbRow] }))).toEqual({ provider: "bitbucket", key: "team/app#7" });
     const ghOrigin = { provider: "github" as const, path: "team/app" };
-    expect(classifyWorkItemRef("#7", ctx({ origin: ghOrigin, items: [bbRow] }))).toEqual({ provider: "github", key: "team/app#7" });
+    expect(classifyWorkItemRef("#7", ctx({ origin: ghOrigin, items: [bbRow] }))).toBeNull();
   });
 
-  it("takes the qualified form's provider from the cache, then the clones, then GitHub", () => {
-    const items = [row("bitbucket", "team/app#7")];
-    expect(classifyWorkItemRef("team/app#7", ctx({ items }))).toEqual({ provider: "bitbucket", key: "team/app#7" });
-    const known = new Map([["team/svc", "bitbucket" as const]]);
-    // A Bitbucket repository's uncached number is not linked (its #N is as often an issue).
-    expect(classifyWorkItemRef("team/svc#3", ctx({ known }))).toBeNull();
-    expect(classifyWorkItemRef("other/repo#3", ctx())).toEqual({ provider: "github", key: "other/repo#3" });
-  });
-
-  it("links a Bitbucket working copy's number only when the cache has it", () => {
-    const origin = { provider: "bitbucket" as const, path: "team/app" };
-    expect(classifyWorkItemRef("#7", ctx({ origin }))).toBeNull();
-    expect(classifyWorkItemRef("#7", ctx({ origin, items: [row("bitbucket", "team/app#7")] }))).toEqual({
+  it("takes the qualified form's host from the cached row, the context's host first", () => {
+    expect(classifyWorkItemRef("team/app#7", ctx({ items: [row("bitbucket", "team/app#7")] }))).toEqual({
       provider: "bitbucket",
       key: "team/app#7",
     });
+    const both = [row("github", "team/app#7"), row("bitbucket", "team/app#7")];
+    const bbOrigin = { provider: "bitbucket" as const, path: "team/app" };
+    expect(classifyWorkItemRef("team/app#7", ctx({ origin: bbOrigin, items: both }))?.provider).toBe("bitbucket");
+    expect(classifyWorkItemRef("team/app#7", ctx({ items: both }))?.provider).toBe("github");
   });
 
-  it("links a Jira key only for a project the cache knows", () => {
+  it("links a Jira key only when that issue is cached", () => {
     const items = [row("jira", "G3M-5")];
-    expect(classifyWorkItemRef("G3M-12", ctx({ items }))).toEqual({ provider: "jira", key: "G3M-12" });
+    expect(classifyWorkItemRef("G3M-5", ctx({ items }))).toEqual({ provider: "jira", key: "G3M-5" });
+    // Same project, not in the list.
+    expect(classifyWorkItemRef("G3M-12", ctx({ items }))).toBeNull();
     for (const tok of ["UTF-8", "SHA-256", "GPT-4", "P2-1", "ADR-0061"]) {
       expect(classifyWorkItemRef(tok, ctx({ items })), tok).toBeNull();
     }

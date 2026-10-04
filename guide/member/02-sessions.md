@@ -221,14 +221,16 @@ In the mirror and the assistant chat, **ticket references the agent writes becom
 the same details panel — even with the left pane collapsed. Ctrl/⌘-click or a middle click goes
 straight to the tracker instead.
 
+- **Only tickets in your Issue tracker list become links.** A number that is not in the list stays
+  text even when it exists on GitHub, so a `#166` quoted as something you typed does not turn into a
+  link to an unrelated issue.
 - `#956` is read as a number in the session's own repository (its origin on github.com or
   bitbucket.org). The chat has no working copy, so there only the `owner/name#956` form links.
-- A Jira key (`PROJ-123`) links only **when the list already holds an issue of that project**, so
-  look-alikes such as `UTF-8` or `SHA-256` stay text.
-- In a Bitbucket working copy, `#N` links only the pull requests the list holds.
-- A ticket that is not in the list opens with just its key and a link to the original page; a
-  session can still be started from it. **Nothing is fetched for it** — as with the list, opening
-  it never starts a stopped workspace.
+- A Jira key (`PROJ-123`) also links only when the list holds it; look-alikes such as `UTF-8` or
+  `SHA-256` stay text.
+- A ticket that leaves the list after its link was drawn opens with just its key and a link to the
+  original page; a session can still be started from it. **Nothing is fetched for it** — as with
+  the list, opening it never starts a stopped workspace.
 - Someone reading a shared session sees these as plain text.
 
 ## Reading state — badges and notifications
