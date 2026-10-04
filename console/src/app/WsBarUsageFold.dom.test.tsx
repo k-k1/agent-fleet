@@ -201,6 +201,32 @@ describe("WS bar usage chips: folding", () => {
     expect(host!.querySelector(".ws-fold-pop")).toBeNull();
   });
 
+  // A chip that stops being drawn keeps its state; left "open", its dismiss layer would eat the
+  // next click anywhere on the page (#1651 review). Moving it off the bar — by the user's fold
+  // or by the bar running out of width — and closing the +N it sits in both close it.
+  it("closes a chip's detail when the chip moves into a closed +N", async () => {
+    await mount();
+    const claudeBtn = () =>
+      [...host!.querySelectorAll<HTMLButtonElement>(".ws-usage-btn")].find((b) => b.textContent?.includes("Claude"));
+    await act(async () => claudeBtn()!.click());
+    expect(claudeBtn()!.getAttribute("aria-expanded")).toBe("true");
+    await act(async () => setSettings({ usageChipsFolded: ["claude"] }));
+    expect(claudeBtn()).toBeUndefined(); // in the closed +N: not drawn anywhere
+    await act(async () => setSettings({ usageChipsFolded: [] }));
+    expect(claudeBtn()!.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("closes a folded chip's detail when its +N closes", async () => {
+    await mount();
+    await act(async () => foldBtn()!.click());
+    const museBtn = () => host!.querySelector<HTMLButtonElement>(".ws-fold-list .ws-usage-btn");
+    await act(async () => museBtn()!.click());
+    expect(museBtn()!.getAttribute("aria-expanded")).toBe("true");
+    await act(async () => foldBtn()!.click()); // close +N
+    await act(async () => foldBtn()!.click()); // and open it again
+    expect(museBtn()!.getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("honours a pin on an agent nobody has run lately", async () => {
     setSettings({ usageChipsPinned: ["agy"] });
     await mount();

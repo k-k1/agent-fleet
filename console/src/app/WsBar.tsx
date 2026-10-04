@@ -494,13 +494,24 @@ const FoldCtx = createContext<FoldCtxValue | null>(null);
 // nothing until the popover holding it is open, so toggling it from the keyboard has to
 // open that popover too — otherwise the shortcut silently does nothing for exactly the
 // agents the user reaches for least often, which is where a shortcut is most useful.
-function useChipSlot(kind: string, visible: boolean, urgent: boolean) {
+//
+// `open` / `close` are the chip's own popover. A chip that stops being drawn — moved into a
+// closed +N, or its +N closed — keeps its state, so its popover would stay "open" with a
+// dismiss layer that swallows the next click anywhere. Closed on that transition only: a
+// keyboard reveal opens a folded chip one render before the +N body exists to draw it.
+function useChipSlot(kind: string, visible: boolean, urgent: boolean, open: boolean, close: () => void) {
   const ctx = useContext(FoldCtx);
   const report = ctx?.report;
   useEffect(() => {
     report?.(kind, { visible, urgent });
   }, [report, kind, visible, urgent]);
   const slot = ctx ? ctx.slot(kind) : ("bar" as const);
+  const drawn = slot === "bar" || !!ctx?.host;
+  const wasDrawn = useRef(drawn);
+  useEffect(() => {
+    if (wasDrawn.current && !drawn && open) close();
+    wasDrawn.current = drawn;
+  }, [drawn, open, close]);
   return {
     slot,
     host: ctx?.host || null,
@@ -569,6 +580,7 @@ export function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | 
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
+  const closePop = useCallback(() => setOpen(false), []);
   // Keyboard: Ctrl/⌘+K g c / g x toggles this agent's usage popover. `reveal` (declared
   // below, once the chip knows where it sits) opens the fold popover first when this chip
   // lives inside it — the callback runs from an effect, so reading it here is safe.
@@ -611,7 +623,7 @@ export function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | 
   // nothing to show has to say so rather than skip its turn. `bind` moved above the return
   // for the same reason — the group promotes a near-cap chip onto the bar.
   const visible = !(unavailable && !usage?.authed);
-  const { slot, host, reveal } = useChipSlot(src.kind, visible, !!bind || !!resetCount);
+  const { slot, host, reveal } = useChipSlot(src.kind, visible, !!bind || !!resetCount, open, closePop);
   // Hide the chip only when the user isn't signed into this agent (nothing to show, and
   // never will be). If they ARE signed in but the (unofficial, rate-limited) reading is
   // momentarily unavailable, keep a degraded chip so it never vanishes on a transient
@@ -722,6 +734,7 @@ export function AgyUsageChip({ tenant }: { tenant: string | null }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
+  const closePop = useCallback(() => setOpen(false), []);
   // Keyboard: Ctrl/⌘+K g a toggles this popover (g c / g x = Claude / Codex). See the
   // generic chip for why `reveal` is read before its declaration.
   useOpenSignal("usage-agy", () => {
@@ -752,7 +765,7 @@ export function AgyUsageChip({ tenant }: { tenant: string | null }) {
 
   // Report before the early return (see useChipSlot), same as the generic chip.
   const visible = !(unavailable && !usage?.authed);
-  const { slot, host, reveal } = useChipSlot("agy", visible, !!bind);
+  const { slot, host, reveal } = useChipSlot("agy", visible, !!bind, open, closePop);
   if (!visible) return null;
 
   // Chip numbers: the first group (Gemini), 5h% / weekly% — same order as the other chips.
@@ -835,6 +848,7 @@ export function CopilotUsageChip({ tenant }: { tenant: string | null }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
+  const closePop = useCallback(() => setOpen(false), []);
   useOpenSignal("usage-copilot", () => {
     setOpen((o) => !o);
     reveal();
@@ -863,7 +877,7 @@ export function CopilotUsageChip({ tenant }: { tenant: string | null }) {
 
   // Report before the early return (see useChipSlot), same as the generic chip.
   const visible = !(unavailable && !usage?.authed);
-  const { slot, host, reveal } = useChipSlot("copilot", visible, !!bind);
+  const { slot, host, reveal } = useChipSlot("copilot", visible, !!bind, open, closePop);
   if (!visible) return null;
 
   // Chip number: the primary pool's used% (quotas are pre-ordered by the backend —
@@ -947,7 +961,17 @@ const USAGE_CHIP_ORDER: string[] = [...USAGE_SOURCES.map((s) => s.kind as string
 // themselves only report what they are (see useChipSlot).
 // `squeeze`: the bar is out of width (app/wsBarFold.ts), so no chip keeps an auto-ranked slot;
 // pinned and near-cap chips still do, since those are the user's word and a warning.
-export function UsageChipFold({ children, squeeze = false }: { children: ReactElement; squeeze?: boolean }) {
+// `onUnfoldedChange` hears which chips would sit on the bar without the squeeze, so the bar
+// knows when what squeezing saves has changed.
+export function UsageChipFold({
+  children,
+  squeeze = false,
+  onUnfoldedChange,
+}: {
+  children: ReactElement;
+  squeeze?: boolean;
+  onUnfoldedChange?: (key: string) => void;
+}) {
   const tr = useT();
   const [reports, setReports] = useState<Record<string, ChipReport>>({});
   const [open, setOpen] = useState(false);
@@ -978,15 +1002,19 @@ export function UsageChipFold({ children, squeeze = false }: { children: ReactEl
     setStamps(noteSessionKinds(useSessionsStore.getState().sessions));
   }, [useKey]);
 
-  const plan = planUsageChips({
+  const planInput = {
     order: USAGE_CHIP_ORDER,
     visible: USAGE_CHIP_ORDER.filter((k) => reports[k]?.visible),
     urgent: USAGE_CHIP_ORDER.filter((k) => reports[k]?.urgent),
     pinned: settings.usageChipsPinned,
     folded: settings.usageChipsFolded,
     stamps,
-    inline: squeeze ? 0 : AUTO_INLINE,
-  });
+  };
+  const plan = planUsageChips({ ...planInput, inline: squeeze ? 0 : AUTO_INLINE });
+  const unfoldedKey = (squeeze ? planUsageChips({ ...planInput, inline: AUTO_INLINE }) : plan).bar.join(",");
+  useEffect(() => {
+    onUnfoldedChange?.(unfoldedKey);
+  }, [onUnfoldedChange, unfoldedKey]);
   const foldSet = new Set(plan.fold);
   const value: FoldCtxValue = {
     report,
@@ -1139,7 +1167,7 @@ export function WsBar() {
   const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
   const isMobile = useIsMobile();
   const barRef = useRef<HTMLDivElement>(null);
-  const { foldUsage, foldMore } = useWsBarFold(barRef, !isMobile);
+  const { foldUsage, foldMore, noteUsageLayout } = useWsBarFold(barRef, !isMobile);
   const [port, setPort] = useState("");
   const [previewPath, setPreviewPath] = useState("/");
   const [pvOpen, setPvOpen] = useState(false); // desktop port-preview popover
@@ -1882,10 +1910,12 @@ export function WsBar() {
         <>
           {/* Desktop only: on a phone these already sit in the ⋯ overflow, a vertical list
               with room for all of them — folding a list into a list would only bury them. */}
-          <UsageChipFold squeeze={foldUsage}>{usageChips}</UsageChipFold>
+          <UsageChipFold squeeze={foldUsage} onUnfoldedChange={noteUsageLayout}>
+            {usageChips}
+          </UsageChipFold>
           {/* Outside the fold: that group ranks agents by use, and these are not agents. */}
-          <AwsProfilesChip />
-          <GcpProfilesChip />
+          <AwsProfilesChip hidden={foldMore} />
+          <GcpProfilesChip hidden={foldMore} />
           {resourcesEl}
           <div className="ws-preview" ref={pvRef}>
             <Button
@@ -1920,8 +1950,8 @@ export function WsBar() {
                 <div className="ws-more-stats">
                   {graphs}
                   {graphs && <MachineDetailsLink onNavigate={() => setMoreOpen(false)} />}
-                  <AwsProfilesChip />
-                  <GcpProfilesChip />
+                  <AwsProfilesChip passive />
+                  <GcpProfilesChip passive />
                 </div>
                 {previewPop}
               </div>

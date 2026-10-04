@@ -40,7 +40,9 @@ export function sortProfiles(list: AwsProfileState[]): AwsProfileState[] {
 // The longest a one-shot refresh waits; setTimeout overflows past ~24.8 days anyway.
 const MAX_WAIT_MS = 24 * 3600_000;
 
-export function AwsProfilesChip() {
+// `hidden` / `passive`: as GcpProfilesChip — folded away by the WS bar / a display copy that
+// leaves the asks and the expiry timer to the bar's own instance.
+export function AwsProfilesChip({ hidden = false, passive = false }: { hidden?: boolean; passive?: boolean } = {}) {
   const tr = useT();
   const running = useWorkspaceStore((s) => s.state) === "running";
   const profiles = useAwsLoginStore((s) => s.profiles);
@@ -54,16 +56,16 @@ export function AwsProfilesChip() {
   const shown = running && !!profiles && profiles.length > 0;
   // A popover that vanished with the chip must not keep its dismiss layer: that layer would
   // swallow the next press anywhere on the page.
-  useDismiss(ref, open && shown, () => setOpen(false));
+  useDismiss(ref, open && shown && !hidden, () => setOpen(false));
   useEffect(() => {
-    if (!shown) setOpen(false);
-  }, [shown]);
+    if (!shown || hidden) setOpen(false);
+  }, [shown, hidden]);
 
   // The App-level ask may have run while the workspace was still stopped, which leaves the
   // list empty until something else asks.
   useEffect(() => {
-    if (running) void refresh();
-  }, [running, refresh]);
+    if (running && !passive) void refresh();
+  }, [running, passive, refresh]);
 
   // A login with a known end turns "not signed in" at that end and nothing notifies then.
   // Picked once per answer, not per render: a render between the end and the refresh would
@@ -77,10 +79,10 @@ export function AwsProfilesChip() {
       .reduce((m, t) => Math.min(m, t), Infinity);
   }, [profiles]);
   useEffect(() => {
-    if (!running || !Number.isFinite(nextEnd)) return;
+    if (!running || passive || !Number.isFinite(nextEnd)) return;
     const t = window.setTimeout(() => void refresh(), Math.min(nextEnd - Date.now() + 2000, MAX_WAIT_MS));
     return () => clearTimeout(t);
-  }, [running, nextEnd, refresh]);
+  }, [running, passive, nextEnd, refresh]);
 
   if (!shown || !profiles) return null;
 

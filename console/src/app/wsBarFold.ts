@@ -17,7 +17,9 @@
 // state: each candidate is applied and measured inside one layout pass, so the bar settles
 // before it is painted and never flickers between two states. The usage fold is the one
 // step React has to render (the chips portal into the +N popover), so it is a state, and
-// unfolding it is judged from the width folding it saved last time.
+// unfolding it is judged from the width folding it saved last time — forgotten whenever
+// the set of chips that would come back changes, and then re-learnt by unfolding and
+// refolding inside the same layout-effect chain, which is not painted in between.
 
 import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react";
 
@@ -102,14 +104,15 @@ export function useWsBarFold(
   barRef: RefObject<HTMLElement | null>,
   enabled: boolean,
   measureWidth: (bar: HTMLElement) => number = barContentWidth,
-): { foldUsage: boolean; foldMore: boolean } {
+): { foldUsage: boolean; foldMore: boolean; noteUsageLayout: (key: string) => void } {
   const [foldUsage, setFoldUsage] = useState(false);
   const [foldMore, setFoldMore] = useState(false);
   const usageRef = useRef(foldUsage);
   usageRef.current = foldUsage;
-  // saving: width the last usage fold freed. pending: the unfolded width at MORE, recorded
-  // when the fold is asked for and turned into `saving` once React has rendered it.
-  const mem = useRef<{ saving: number; pending: number | null }>({ saving: 0, pending: null });
+  // saving: width the last usage fold freed, null once it is no longer known. pending: the
+  // unfolded width at MORE, recorded when the fold is asked for and turned into `saving`
+  // once React has rendered it. key: which chips would sit on the bar unfolded.
+  const mem = useRef<{ saving: number | null; pending: number | null; key: string }>({ saving: 0, pending: null, key: "" });
 
   const settle = useCallback(() => {
     const bar = barRef.current;
@@ -130,12 +133,32 @@ export function useWsBarFold(
       m.saving = Math.max(0, m.pending - measure(STEP_MORE));
       m.pending = null;
     }
-    const plan = planFold(measure, avail, { folded: usageRef.current, saving: m.saving });
+    if (usageRef.current && m.saving === null) {
+      // What folding saves is unknown: unfold, and the settle after that render measures it.
+      setFoldUsage(false);
+      return;
+    }
+    const plan = planFold(measure, avail, { folded: usageRef.current, saving: m.saving ?? 0 });
     if (plan.foldUsage && !usageRef.current) m.pending = measure(STEP_MORE);
     applyFoldStep(bar, plan.step);
     if (plan.foldUsage !== usageRef.current) setFoldUsage(plan.foldUsage);
     setFoldMore(plan.step >= STEP_MORE);
   }, [barRef, measureWidth]);
+
+  // UsageChipFold reports which chips would sit on the bar unfolded; pinning one, or one
+  // going near its cap, changes what folding them saves.
+  const noteUsageLayout = useCallback(
+    (key: string) => {
+      const m = mem.current;
+      if (key === m.key) return;
+      m.key = key;
+      if (!usageRef.current) return;
+      m.saving = null;
+      m.pending = null;
+      settle();
+    },
+    [settle],
+  );
 
   // Re-settle after every render that changes the usage fold (the chips have just moved),
   // and whenever desktop mode flips.
@@ -144,7 +167,7 @@ export function useWsBarFold(
     if (!bar) return;
     if (!enabled) {
       clearFold(bar);
-      mem.current = { saving: 0, pending: null };
+      mem.current = { saving: 0, pending: null, key: mem.current.key };
       setFoldUsage(false);
       setFoldMore(false);
       return;
@@ -152,29 +175,39 @@ export function useWsBarFold(
     settle();
   }, [barRef, enabled, foldUsage, settle]);
 
-  // Width changes come from the window (the bar) and from the content: a chip appearing,
-  // a reading growing a digit, the locale, a late web font. Watching every child catches
-  // all of them; the spacer alone would miss changes while the bar is already full.
+  // Width changes come from the window and from the content. The window is a ResizeObserver
+  // on the bar alone: settle resizes the bar's children, and observing them would make it
+  // resize observed targets while their notifications are being delivered ("ResizeObserver
+  // loop completed with undelivered notifications"). The content is a MutationObserver on
+  // the whole subtree — a chip appearing, a reading growing a digit, a profile label
+  // changing inside a chip hidden by a fold (hidden, it has no size to observe) — and late
+  // web fonts. Both of those settle in a microtask, still before the frame is painted.
   useLayoutEffect(() => {
     const bar = barRef.current;
-    if (!bar || !enabled || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => settle());
-    const watch = () => {
-      ro.disconnect();
-      ro.observe(bar);
-      for (const el of Array.from(bar.children)) ro.observe(el);
+    if (!bar || !enabled) return;
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => settle());
+    ro?.observe(bar);
+    let queued = false;
+    const soon = () => {
+      if (queued) return;
+      queued = true;
+      queueMicrotask(() => {
+        queued = false;
+        settle();
+      });
     };
-    watch();
-    const mo = new MutationObserver(() => {
-      watch();
-      settle();
-    });
-    mo.observe(bar, { childList: true });
+    // Not "attributes" wholesale: settle writes the bar's own data-fold-* attributes, and
+    // reacting to those would loop.
+    const mo = new MutationObserver(soon);
+    mo.observe(bar, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["class", "style"] });
+    const fonts = typeof document !== "undefined" ? document.fonts : undefined;
+    fonts?.addEventListener?.("loadingdone", soon);
     return () => {
-      ro.disconnect();
+      ro?.disconnect();
       mo.disconnect();
+      fonts?.removeEventListener?.("loadingdone", soon);
     };
   }, [barRef, enabled, settle]);
 
-  return { foldUsage: enabled && foldUsage, foldMore: enabled && foldMore };
+  return { foldUsage: enabled && foldUsage, foldMore: enabled && foldMore, noteUsageLayout };
 }
