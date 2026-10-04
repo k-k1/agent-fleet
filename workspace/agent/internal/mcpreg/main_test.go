@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
 )
 
@@ -17,5 +18,8 @@ func TestMain(m *testing.M) {
 		// A workspace that runs these tests may itself carry AF_CP_INTERNAL_URL, which would send
 		// the tests' requests past their fake CP (cpurl.Request).
 		os.Unsetenv("AF_CP_INTERNAL_URL")
+		// A kubernetes workspace sets it, and the af run-args would then carry
+		// BrowserUnavailableFlag in every test that pins them.
+		os.Unsetenv(browserx.UnavailableEnv)
 	}))
 }

@@ -977,6 +977,7 @@ func opencodeChatConfig(c *ChatConversation) string {
 		// which are write-side plumbing (mcp_stdio.go).
 		mcpArgs = append(mcpArgs, "--write", "--conv", c.ID)
 	}
+	mcpArgs = append(mcpArgs, mcpreg.BrowserUnavailableArgs()...)
 	servers := mcpreg.OpencodeServers(c.mcpServersFor(session.KindOpencode))
 	servers["af"] = map[string]any{"type": "local", "command": mcpArgs, "enabled": true}
 	cfg := map[string]any{

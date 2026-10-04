@@ -3,6 +3,7 @@ package chatx
 import (
 	"encoding/json"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"os"
 	"path/filepath"
@@ -175,5 +176,33 @@ func TestParseOpencodeRunEventsOKHasNoError(t *testing.T) {
 	reply, _, _, turnErr, _ := parseOpencodeRunEvents([]byte(out))
 	if reply != "OK" || turnErr != "" {
 		t.Fatalf("reply=%q turnErr=%q", reply, turnErr)
+	}
+}
+
+// The assistant's af server is launched here, not from mcpreg's builtin, so it has to carry the
+// browser-unavailable flag itself or the assistant keeps listing the Chromium tools on a
+// workspace without a browser (#1614). Every launcher of the server is checked: claude's
+// --mcp-config (afServerArgs) and opencode's per-conversation config.
+func TestChatAFServerCarriesBrowserUnavailable(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	old := mcpreg.BrowserUnavailable
+	t.Cleanup(func() { mcpreg.BrowserUnavailable = old })
+
+	for _, tools := range []string{assistants.ToolsAFRead, assistants.ToolsAFWrite} {
+		c := &ChatConversation{ID: "ce4f94b9-2854-44ee-8425-61859128d669", Tools: tools}
+		for _, id := range []string{"", "kubernetes"} {
+			mcpreg.BrowserUnavailable = func() string { return id }
+			args, ok := c.afServerArgs()
+			if !ok {
+				t.Fatalf("%s: no af server", tools)
+			}
+			oc := strings.Join(mcpCommand(t, readJSONFile(t, opencodeChatConfig(c))), " ")
+			for where, joined := range map[string]string{"afServerArgs": strings.Join(args, " "), "opencode": oc} {
+				has := strings.Contains(joined, mcpreg.BrowserUnavailableFlag+" kubernetes")
+				if has != (id != "") || (id == "" && strings.Contains(joined, mcpreg.BrowserUnavailableFlag)) {
+					t.Errorf("%s/%s with unavailable=%q: %q", tools, where, id, joined)
+				}
+			}
+		}
 	}
 }
