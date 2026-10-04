@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"image"
 	"image/color"
@@ -251,6 +252,50 @@ func TestJPEGOrientationToleratesGarbage(t *testing.T) {
 	} {
 		if got := jpegOrientation(b); got != 0 {
 			t.Errorf("jpegOrientation(%v) = %d, want 0", b, got)
+		}
+	}
+}
+
+// tiffIFD0 builds a TIFF header and an IFD0 holding one Orientation entry, with every field the
+// parser has to check set by the caller.
+func tiffIFD0(big bool, magic, typ uint16, count uint32, orient uint16) []byte {
+	var bo binary.ByteOrder = binary.LittleEndian
+	head := []byte("II")
+	if big {
+		bo, head = binary.BigEndian, []byte("MM")
+	}
+	t := make([]byte, 8+2+12+4)
+	copy(t, head)
+	bo.PutUint16(t[2:], magic)
+	bo.PutUint32(t[4:], 8)
+	bo.PutUint16(t[8:], 1)
+	bo.PutUint16(t[10:], 0x0112)
+	bo.PutUint16(t[12:], typ)
+	bo.PutUint32(t[14:], count)
+	bo.PutUint16(t[18:], orient)
+	return t
+}
+
+// Only a well-formed tag counts: the TIFF magic, type SHORT and count 1, in either byte order.
+// Anything else must not swap a picture's edges.
+func TestTiffOrientationRejectsMalformedTag(t *testing.T) {
+	for _, big := range []bool{false, true} {
+		if got := tiffOrientation(tiffIFD0(big, 42, 3, 1, 6)); got != 6 {
+			t.Fatalf("big=%v well-formed: %d, want 6", big, got)
+		}
+		for name, tiff := range map[string][]byte{
+			"magic 0":  tiffIFD0(big, 0, 3, 1, 6),
+			"type 0":   tiffIFD0(big, 42, 0, 1, 6),
+			"type 4":   tiffIFD0(big, 42, 4, 1, 6),
+			"count 9":  tiffIFD0(big, 42, 3, 9, 6),
+			"count 0":  tiffIFD0(big, 42, 3, 0, 6),
+			"value 9":  tiffIFD0(big, 42, 3, 1, 9),
+			"value 0":  tiffIFD0(big, 42, 3, 1, 0),
+			"cut tail": tiffIFD0(big, 42, 3, 1, 6)[:20],
+		} {
+			if got := tiffOrientation(tiff); got != 0 {
+				t.Errorf("big=%v %s: %d, want 0", big, name, got)
+			}
 		}
 	}
 }

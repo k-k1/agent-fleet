@@ -165,6 +165,9 @@ func tiffOrientation(t []byte) int {
 	default:
 		return 0
 	}
+	if bo.Uint16(t[2:]) != 42 {
+		return 0 // not a TIFF header: whatever follows is not an IFD
+	}
 	ifd := int(bo.Uint32(t[4:]))
 	if ifd < 8 || ifd+2 > len(t) {
 		return 0
@@ -177,6 +180,12 @@ func tiffOrientation(t []byte) int {
 		}
 		if bo.Uint16(t[at:]) != 0x0112 {
 			continue
+		}
+		// Orientation is one SHORT (type 3, count 1), stored in the first two bytes of the
+		// value field. Any other type or count is malformed — and with count > 1 that field
+		// would be an offset, not a value.
+		if bo.Uint16(t[at+2:]) != 3 || bo.Uint32(t[at+4:]) != 1 {
+			return 0
 		}
 		if v := int(bo.Uint16(t[at+8:])); v >= 1 && v <= 8 {
 			return v

@@ -532,6 +532,13 @@ decode, not the scale).
     and no pictures); a hidden START is walked, which is how `.cache/agent-fleet/generated` is
     reached.
   - `warm=` warms the newest 120 on the existing two background workers.
+  - *Added 2026-10-04 (review):* a folder is read in batches no larger than what is left of the
+    entry budget (`os.ReadDir` reads and sorts a whole folder first), the time budget and the
+    request's own context are checked per batch, at most two walks run Agent-wide (a third
+    waits 2 s, then answers 503, which the gallery retries), and one warm-up runs at a time. The
+    denylist is checked against the start as it RESOLVES as well as the spelling asked for —
+    `alias -> .local/share` otherwise listed `.local/share/agent-fleet`; `fs/tree` (and its
+    `peek`) had the same hole and got the same check.
   - The toggle is pane content (`flat: true`, absent = off), beside `sort` and `tile`. It is
     **dropped on a walk to another folder**: carried to the browse root it would turn one click
     on "Home" into a walk of the whole home folder. The cache keys a flattened folder apart from
