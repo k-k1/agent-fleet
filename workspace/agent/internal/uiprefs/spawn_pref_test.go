@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -89,6 +90,29 @@ func TestFleetSpawnDefaultsOff(t *testing.T) {
 		writePrefs(t, obj)
 		if FleetSpawn() {
 			t.Fatalf("FleetSpawn() = true for %v", obj)
+		}
+	}
+}
+
+// Past-session search defaults ON (ADR 0109 decision 6); only an explicit false turns it off.
+func TestSessionSearchDefaultsOn(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		prefs map[string]any
+		want  bool
+	}{
+		{"missing", map[string]any{}, true},
+		{"on", map[string]any{"sessionSearch": true}, true},
+		{"off", map[string]any{"sessionSearch": false}, false},
+		{"malformed", map[string]any{"sessionSearch": "false"}, true},
+	} {
+		writePrefs(t, c.prefs)
+		if got := SessionSearch(); got != c.want {
+			t.Errorf("%s: SessionSearch() = %v, want %v", c.name, got, c.want)
+		}
+		// End to end: the hook mcpreg builds the af server's argv from must be this reader.
+		if mcpreg.SessionSearchEnabled == nil || mcpreg.SessionSearchEnabled() != c.want {
+			t.Errorf("%s: mcpreg.SessionSearchEnabled is not wired to the preference", c.name)
 		}
 	}
 }

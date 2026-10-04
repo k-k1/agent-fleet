@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 	"os"
@@ -160,6 +161,7 @@ func trashSession(m session.Meta, stop bool) (string, string, error) {
 		}
 	}
 	sessionx.ForgetRuntime(m)
+	sessionsearch.Forget(m.Name) // the trash bundle is now the only copy of its text (ADR 0109)
 	removeSessionSideFiles(m.Name)
 	removeTerminalHistory(m.Name)
 	invalidateCleanupUsage() // the trash just grew

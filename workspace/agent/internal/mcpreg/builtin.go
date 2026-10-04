@@ -117,6 +117,13 @@ var FleetSpawnEnabled func() bool
 
 func fleetSpawnOn() bool { return FleetSpawnEnabled != nil && FleetSpawnEnabled() }
 
+// SessionSearchEnabled is the hook for past-session search (ADR 0109 decision 6). Unlike the
+// three above it defaults ON in uiprefs; a nil hook still reads as off, so a process that never
+// wired it (a test, a tool) does not advertise a tool nobody decided to offer.
+var SessionSearchEnabled func() bool
+
+func sessionSearchOn() bool { return SessionSearchEnabled != nil && SessionSearchEnabled() }
+
 // BrowserUnavailableFlag tells `mcp-stdio` that this workspace has no browser features, and
 // which runtime withholds them. The server then leaves the Chromium tools out of tools/list
 // and answers a call to one with browser_unavailable (#1614).
@@ -157,6 +164,9 @@ func builtinRunArgsFor(id string, spec builtinSpec) []string {
 	}
 	if fleetSpawnOn() {
 		args = append(args, "--fleet-spawn")
+	}
+	if sessionSearchOn() {
+		args = append(args, "--session-search")
 	}
 	return append(args, BrowserUnavailableArgs()...)
 }
