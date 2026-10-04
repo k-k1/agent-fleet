@@ -496,3 +496,42 @@ func TestAgentMemoryChangesLatestCountsWithheldRows(t *testing.T) {
 		t.Fatalf("changes = %+v", out)
 	}
 }
+
+// ---- review round 3 (PR #1670) ----
+
+// The newest change for a revert is decided by the same trailer parsing as the list: a quoted
+// trailer in another commit's body does not count, and trailing blanks do not hide one.
+func TestAgentMemoryLatestChangeParsesTrailers(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "shell-home")
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "a", Description: "d", Body: "v1"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	created := agentMemChangesT(t)[0].Commit
+	// A later, unrelated commit that quotes a's trailers in its body.
+	quote := "snapshot: note\n\nExample of a memory commit:\nAF-Trigger: agent-memory\nAF-Memory: af/user/a.md\n\nAF-Trigger: manual\nAF-Memory: af/user/other.md\n"
+	agentMemCommitRaw(t, map[string]string{"af/user/other.md": "---\nname: other\ndescription: d\n---\nb\n"}, quote)
+	if got, err := agentMemLatestChange("user/a.md"); err != nil || got != created {
+		t.Fatalf("latest = %q, %v; want %s", got, err, created)
+	}
+	if _, err := agentMemRevert(agentMemRevertReq{Commit: created, Forget: true}, time.Now()); err != nil {
+		t.Fatalf("forget from the real newest change: %v", err)
+	}
+
+	// Trailing blanks on the AF-Memory line, kept verbatim.
+	body := "---\nname: b\ndescription: d\n---\nb\n"
+	stg := filepath.Join(memoryStagingDir(), "af", "user", "b.md")
+	memoryMkdirAll(t, filepath.Dir(stg))
+	memoryWrite(t, stg, body)
+	if _, err := memoryGitRun("add", "--", "af/user/b.md"); err != nil {
+		t.Fatal(err)
+	}
+	msg := "agent-memory: create\n\nAF-Trigger: agent-memory\nAF-Op: create\nAF-Memory: af/user/b.md   \nAF-Author-Kind: claude\nAF-Author-Session: s\n"
+	if _, err := memoryGitRun("commit", "--quiet", "--no-verify", "--cleanup=verbatim", "-m", msg, "--", "af/user/b.md"); err != nil {
+		t.Fatal(err)
+	}
+	head, _ := memoryGitRun("rev-parse", memoryBranch)
+	if got, err := agentMemLatestChange("user/b.md"); err != nil || got != head {
+		t.Fatalf("latest with trailing blanks = %q, %v; want %s", got, err, head)
+	}
+}

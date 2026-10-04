@@ -183,7 +183,7 @@ func agentMemListChanges(limit int) (agentMemChangesWire, error) {
 		return out, nil
 	}
 	log, err := memoryGitRun("log", memoryBranch, "-n", strconv.Itoa(limit),
-		"--grep=^AF-Trigger: "+memoryTriggerAgentMemory+"$",
+		"-F", "--grep=AF-Trigger: "+memoryTriggerAgentMemory,
 		"--format=%H"+memoryFldSep+"%aI"+memoryFldSep+"%B"+memoryRecSep)
 	if err != nil {
 		return out, err
@@ -344,11 +344,27 @@ func agentMemResolveChange(commitArg string) (commit, rel string, err error) {
 	return commit, rel, nil
 }
 
-// agentMemLatestChange is the newest agent-memory commit on main for one memory path.
+// agentMemLatestChange is the newest agent-memory commit on main for one memory path, decided
+// by the same trailer parsing the list uses: git's --grep only narrows the candidates, since it
+// also matches a quoted line in a message body and misses a line with trailing blanks.
 func agentMemLatestChange(rel string) (string, error) {
-	path := regexp.QuoteMeta(agentMemRepoPrefix + "/" + rel)
-	return memoryGitRun("log", "-1", "--format=%H", "-E", "--all-match", memoryBranch,
-		"--grep=^AF-Trigger: "+memoryTriggerAgentMemory+"$", "--grep=^AF-Memory: "+path+"$")
+	path := agentMemRepoPrefix + "/" + rel
+	log, err := memoryGitRun("log", memoryBranch, "-F", "--grep=AF-Memory: "+path,
+		"--format=%H"+memoryFldSep+"%B"+memoryRecSep)
+	if err != nil {
+		return "", err
+	}
+	for _, rec := range strings.Split(log, memoryRecSep) {
+		f := strings.SplitN(strings.TrimSpace(rec), memoryFldSep, 2)
+		if len(f) < 2 {
+			continue
+		}
+		tr := agentMemTrailers(f[1])
+		if tr["AF-Trigger"] == memoryTriggerAgentMemory && tr["AF-Memory"] == path {
+			return f[0], nil
+		}
+	}
+	return "", nil
 }
 
 // agentMemRevertReq undoes one published change, or (Forget) removes the memory as that change
