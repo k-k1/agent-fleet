@@ -214,8 +214,11 @@ event of that same call id confirms success and the file exists (claude's PostTo
 with status completed). A pending path is not owned: if the call was refused or failed, and another session
 creates the path, the first session's later edits are outside its scope. The **first** creating edit is
 allowed by `created_by_session` only when the path is absent and inside the working copy. Paths are resolved
-before matching: relative to the session's cwd, cleaned, `..` resolved, and the parent's symlinks resolved, so
-a path that resolves outside the working copy is never in scope. A delete followed by a re-creation through an
+before matching: relative to the session's cwd, cleaned and `..` resolved. A target that exists is resolved
+with `realpath`, so a link inside the working copy that points at a file outside it is outside the scope. A
+target that does not exist yet has its nearest existing ancestor resolved. A path that resolves outside the
+working copy is never in scope. A link swapped between the check and the write (TOCTOU) is not caught: this
+is a guard-rail, not a sandbox (decision 9). A delete followed by a re-creation through an
 edit tool starts a new pending state. A rename or a creation done by a `shell` command is not seen, so ownership
 does not follow it. A kind whose completion events cannot confirm a call cannot offer `created_by_session` as
 block; it falls to observe for that policy.
@@ -248,44 +251,79 @@ parameter takes the stricter value: the lower `max`, the intersection of `path_s
 them by id. A `once` approval lets this call through. A broader scope (`turn`, `thread`) may only disarm a
 policy whose layer the answering person may edit, so a member can disarm their own user- or session-layer
 gate for the session but not a deployment or tenant gate. A cap is never raised from a card in the first
-version; it is raised by editing the layer that set it (open questions 5 and 6).
+version. Editing the layer that set it loosens the policy, and a loosening reaches only sessions launched
+afterwards (below). A session that has reached its cap therefore continues only through an **explicit
+exception**: a person who may edit that layer grants a raise for that one session, the grant is audited, and
+the session's snapshot and effective set are updated (a loosening may be written after it takes effect,
+because a crash then falls back to the stricter state). Whether to offer the exception at all is open
+question 6.
 
 **The policy is fixed at launch and tightened live.** The effective set is computed when the session starts.
 A later pull that adds or tightens a policy applies to the running session on its next call, subject to
 decision 7 when the session cannot enforce it. A pull that loosens one applies to sessions launched
-afterwards, so a CP blip or an edit cannot open a running session up mid-turn.
+afterwards, so a CP blip or an edit cannot open a running session up mid-turn. Resume, restart and recreate
+are not launches in this sense: they keep the session's effective set (with every tightening since), and only
+the exception above loosens it.
+
+**A policy added to a running session starts from the session's whole history.** The ledger keeps a compact
+record of every call of the session, not only the last N, so a policy that a pull adds, or whose selector
+changes (which makes it a new policy), is initialised by replaying that record: a push-after-download gate
+added after the session ran `npm install` is armed at once. Where the history is incomplete (calls an
+observe-only seam missed, or a session started before the ledger existed), a closed gate starts with its flag
+set, and a closed cap counts from the replayed calls and is marked *partial* on the card and in the audit
+record. A partial cap may undercount, and the guide says so.
 
 ### 4. State: a per-session ledger owned by the decision point, updated atomically
 
 The decision point keeps, per session, a **ledger**: counts per constraint, the gate flags that are set,
-the paths pending and owned (decision 2), the reservations still open, and the last N normalised calls (for
-the card and for audit). Transcripts are not the source. They are read on demand with seconds of lag, and a
+the paths pending and owned (decision 2), the records still `prepared` or `awaiting`, and a compact record of
+every normalised call of the session (for the card, for audit, and to initialise a policy added later,
+decision 3). Transcripts are not the source. They are read on demand with seconds of lag, and a
 policy that waited for them would let the later `git push` run before the earlier `npm install` was ever read.
 
 **One check is one atomic step per session.** Checks for one session are serialised. Each check evaluates,
 reserves, persists, and only then answers. Parallel tool calls in one turn therefore cannot both read the same
 remaining count.
 
-- **Idempotency.** The key is the call id the kind provides (claude and codex `tool_use_id`, ACP `toolCallId`,
-  lcpp's call id). A repeated check with an id already in the ledger (an HTTP retry, a re-sent request) returns
-  the stored verdict and counts nothing. A kind without a stable id has every check counted (the stricter
-  error).
+- **Idempotency.** A *retry* here means the same check delivered again (an HTTP resend, the CLI re-running the
+  hook for the same call), never the model running the tool again, which produces a new call id. The key is
+  the session, the CLI's incarnation (its process start), the call id the kind provides (claude and codex
+  `tool_use_id`, ACP `toolCallId`, lcpp's call id) and a hash of the normalised input; each record also holds
+  the policy version it was judged under. A retry with the same key counts nothing but is **evaluated again
+  under the current policy**, so a tightening that arrived in between applies to it, and a call that was
+  already counted stays counted. The same call id with a different input, or in another incarnation, is
+  denied. A kind without a stable id has every check counted (the stricter error).
 - **What counts.** A call is counted when the decision point raises no objection or the member approves it.
   "Attempt" means *passed by the decision point*, not *executed*: a call the CLI then refuses, or that fails,
   still counts and still sets flags. A call the decision point denies, or whose approval is denied, times out
   or is cancelled, counts nothing and sets no flag.
-- **Ask holds a reservation.** While an approval is open the call holds one unit of every cap it would count
-  against, so parallel calls cannot overshoot while the member decides. On approval the call is evaluated
-  again against the ledger as it is now, since other calls may have passed meanwhile, and the reservation
-  becomes the count. Otherwise the reservation is released.
-- **Persistence.** The ledger is an append-only file per session under the Agent's state directory. An entry
-  is fsynced before an answer that relies on it goes back. A crash between the reservation and the answer
-  leaves the entry reserved. On restart, reserved entries with no answer are counted (stricter), and the
-  CLI's retry with the same id gets the stored verdict.
+- **Each record moves through four states, each at most once:** `prepared` (evaluated, a no-objection answer
+  about to go back), `awaiting` (an approval is open), `committed` (counted, flags set) and `released`
+  (counts nothing). A record holds one unit of every cap it would count against while it is `prepared` or
+  `awaiting`, so parallel calls cannot overshoot while the member decides. An approval moves `awaiting` to a
+  new evaluation against the ledger as it is now, since other calls may have passed meanwhile, and then to
+  `committed` or `released`; a denial, timeout or cancel moves it to `released`. A unit is consumed exactly
+  once: by the commit, or given back by the release.
+- **Asks in P0 are AF-held only.** A native ask (claude's own prompt) is answered by keys in the CLI, so the
+  Agent never learns the answer and could not close the record. Native asks wait for a gate (decision 10,
+  item 8) that shows the native allow, deny and cancel can be tied to the call id and that the record can be
+  re-evaluated just before the call runs.
+- **Persistence.** The ledger is an append-only file per session under the Agent's state directory. A state
+  change is fsynced before an answer that relies on it goes back. On restart, a `prepared` record with no
+  answer is committed (stricter: the CLI may have run the call). An `awaiting` record is released and its
+  approval id expires, because its card and its waiting hook died with the Agent; a retry of that call is a
+  new check and, if it still needs one, a new card. A stored `ask` is never handed out again.
 - **Restart, resume, recreate** keep the same session and reload its ledger. A ledger that is missing or
-  fails to parse, for a session known to be governed (decision 8), is treated by every closed policy as *caps
-  exhausted, flags set*. A notice is raised, and a person can reset the ledger from the Console. An observed
-  (late) entry from an observe-only kind is marked as observed, not checked.
+  fails to parse, for an AF session (every one is marked, decision 8), is treated by every closed policy as *caps
+  exhausted, flags set*. A notice is raised. A person can reset the state, but only the state of policies in
+  the layers that person may edit (decision 3): a member resets user- and session-layer counts and flags, and
+  a deployment or tenant policy's state is reset by its own administrators. An observed (late) entry from an
+  observe-only kind is marked as observed, not checked.
+- **The trash** ([ADR 0101](0101-session-delete-via-trash.md)). The ledger travels with the session: it is
+  not removed before the session's archive is written, a restore brings back the session's effective set,
+  counts and flags as they were (a restore is not a reset), and a purge removes it. A restore never revives
+  the old snapshot or an old approval id: the relaunch writes a new snapshot, and open approvals were released
+  when the session stopped.
 
 **Lineage: children and forks.** What a new session inherits differs by how it was started:
 
@@ -303,9 +341,9 @@ parent cannot exceed its cap through children or parallel forks. #1054 asks the 
 
 An `ask` verdict becomes one of the two approval surfaces the Console already has. A third one is not built.
 
-- **Where the kind can ask natively** (claude Terminal with `ask`, if the P0 gate measures that it prompts
-  under the skip flag), the CLI shows its own menu and the existing `PermissionCard` answers it by keys. The
-  card gains a line naming the policies that asked.
+- **Where the kind can ask natively** (claude Terminal with `ask`), from P1 and only after decision 10's
+  item 8: the CLI shows its own menu and the existing `PermissionCard` answers it by keys. The card gains a
+  line naming the policies that asked. In P0 every ask is AF-held (decision 4).
 - **Everywhere else** the decision point raises an **AF-held approval**: an `Interaction` of kind `approval`
   with the existing `ApprovalRequest` (summary, tool, command, stages), plus a new optional `policies` field
   (each asking policy's id, layer and one-line reason). It renders as the existing `ApprovalCard` and raises
@@ -332,10 +370,12 @@ the AF-held approval is open, and then prints `deny` or no decision.
 - **What the CLI does when a hook is killed, times out, or exits non-zero is a gate, not an assumption.** If a
   kind runs the call in any of those cases, it cannot host a held ask safely: for that kind `ask` policies
   are enforced only through a native ask, or the kind falls to observe for them (decision 10).
-- **A held approval stops the whole turn.** The CLI waits on its hook, so nothing else in that turn runs until
-  the member answers or the deadline passes. The card says so.
+- **The call waits; the rest of the turn may.** The call whose hook is waiting does not run until the member
+  answers or the deadline passes. Whether the CLI meanwhile runs sibling calls of the same turn, and what
+  happens to a shell already running, is the kind's own scheduling and is measured (decision 10, item 9). The
+  card promises only that this call waits.
 - **Stop, interrupt and restart release the waiter.** The hook is told to deny, the card is withdrawn, and the
-  reservation is released (decision 4). Decision 5 says what survives.
+  record is released (decision 4). Decision 5 says what survives.
 
 Whether an unattended session (a schedule, a child) should rather stop and wait is open question 4.
 
@@ -353,9 +393,11 @@ whose enforcement point has passed its gate for that policy type on this executi
   every call reaches the request with that configuration. The no-objection path then answers as decision 1
   says.
 - **A running session that gains a block policy it cannot enforce** (a pull adds one, or tightens an observe
-  policy to block, on an observe-only kind, or on an ACP session running with its skip flag on) is **stopped
-  before its next tool call can pass**: the Agent interrupts the turn and stops the session, with a notice that
-  names the policy. Resuming it goes through the launch check, which relaunches an ACP kind with the flag off
+  policy to block, on an observe-only kind, or on an ACP session running with its skip flag on) is **stopped**:
+  the Agent interrupts the turn and stops the session, with a notice that names the policy. On a kind with a
+  blocking seam the next check is denied while the stop completes. On an observe-only kind there is no check
+  to deny, so a call already in flight, or one racing the interrupt, may still run; the gap is measured
+  (decision 10, item 9) and stated in the guide. Resuming it goes through the launch check, which relaunches an ACP kind with the flag off
   or refuses a kind that cannot block. A switch of execution method (Terminal ↔ Managed) goes through the same
   check.
 - **observe** policies run on every kind whose class is observe or block. The ledger is fed late; a breach
@@ -378,15 +420,20 @@ applies.
 
 - **It is written atomically** (temporary file, fsync, rename) and **before** the state it describes takes
   effect. A launch waits for it; a tightening is written to the snapshot first and applied after. If the write
-  fails, the launch is refused, or for a running session the tightening is applied in memory and the session
-  is stopped as in decision 7, because a crash would otherwise fall back to the older, looser snapshot. A
-  snapshot is therefore never looser than what the decision point is applying.
-- **A governed session is marked at launch** by a variable in its environment (`AF_POLICY_GOVERNED=1`), so the
-  hook knows a snapshot must exist.
+  fails, the launch is refused. For a running session the order is: apply the tightening in memory, stop the
+  session and confirm its CLI has exited, and refuse to resume it until the snapshot is persisted. The
+  window that remains is a crash of the Agent between the pull and the confirmed stop: while the Agent is
+  down, the hook falls back to the older snapshot. That window is bounded by the Agent's restart (which
+  re-applies the current copy before it answers any check) and is stated, not hidden. Apart from it, a
+  snapshot is never looser than what the decision point is applying.
+- **Every AF session is marked from launch**, whether or not a policy applies yet: the marker is the
+  `AF_SESSION_NAME` it already carries, and the Agent writes a snapshot (empty if nothing applies) before
+  the CLI starts. A first policy reaching a running session therefore never meets a session the hook would
+  treat as ungoverned.
 - **The hook cannot reach the Agent** (it is down or restarting): if the snapshot says a closed policy applies,
-  the hook denies with a reason. If the session is marked governed and the snapshot is missing, unreadable,
-  partial or for another session, the hook denies. Only an unmarked session, or a snapshot that says no closed
-  policy applies, gets no decision.
+  the hook denies with a reason. If the session is marked and the snapshot is missing, unreadable, partial or
+  for another session, the hook denies. Only a process with no `AF_SESSION_NAME` (a member's own terminal
+  `claude`), or a snapshot that says no closed policy applies, gets no decision.
 - **The CP is unreachable:** the last pulled copy stays in force for as long as the CP stays unreachable (as
   branch rules do), and the Console shows when the copy was last fetched. A deployment that has never pulled a
   copy starts with the built-in defaults, which are empty (open question 8). Whether a copy older than some
@@ -405,7 +452,7 @@ agent that sets out to defeat it, because the agent runs at the same uid as ever
 - **An agent editing its own policy.** No policy is writable from inside the workspace: the Agent exposes no
   route that changes a policy, and the source is the CP. The agent can still write the ledger, the snapshot,
   the pulled cache and claude's `settings.json` (including `disableAllHooks`), and can unset
-  `AF_POLICY_GOVERNED` in a shell it starts. So the claude enforcement hook is placed where the agent cannot
+  `AF_SESSION_NAME` in a shell it starts. So the claude enforcement hook is placed where the agent cannot
   write it: a new, root-owned managed settings file under `/etc/claude-code/` in the image (today that
   directory holds only `CLAUDE.md`). Whether a managed hook survives a user-scope `disableAllHooks` in 2.1.288
   is a P0 gate. The ledger, snapshot and cache are checked for integrity against accidents only. Against a
@@ -444,10 +491,15 @@ be measured, stays observe.
 5. **Ordering.** Whether the policy hook sees the command before or after another hook rewrites it (rtk).
 6. **Identity.** Whether the call id is stable across the check, the completion event and a retry.
 7. **Budget.** The figures in § Performance budget.
+8. **Native ask** (before a kind's own prompt replaces an AF-held approval): the native allow, deny and cancel
+   can be tied to the call id, and the record can be re-evaluated just before the call runs.
+9. **Concurrency and stop.** Whether the CLI runs sibling calls while one hook waits, what an interrupt or
+   stop does to a call in flight, and, for observe-only kinds, how many calls can pass between a stop decision
+   and the CLI's exit.
 
 | Kind | Gate in | Notes |
 |---|---|---|
-| claude Terminal | P0 | all seven |
+| claude Terminal | P0 | items 1–7 and 9; item 8 before native ask (P1) |
 | lcpp | P1 | 1, 2 and 7 only; the harness is AF's own |
 | cursor, kiro, copilot Managed | P1 | 1 with the skip flag off is the deciding item |
 | codex Terminal, copilot Terminal | P2 | 2 is expected to show deny only for codex |
@@ -528,8 +580,9 @@ they are decision 10's gates.
 5. **"Always allow" on a policy-held approval.** Allow `turn` / `thread` scope at all? If so, is decision 3's
    boundary right: a member may disarm their own user- and session-layer gates, never a deployment or tenant
    gate?
-6. **The cap is reached.** Deny every further call, ask to raise it, or stop the session? If raising is
-   allowed, who may raise a cap set by a layer above the member?
+6. **The cap is reached.** Deny every further call (as written), or stop the session? And is the per-session
+   exception of decision 3 offered at all, and to whom: only a person who may edit the layer that set the
+   cap, or also the member for a deployment or tenant cap?
 7. **Observe-only breaches.** Notify only, or also interrupt the turn?
 8. **Defaults.** Ship with no policy enabled (as written), or with one deployment default such as the
    push-after-download gate?
@@ -546,7 +599,7 @@ they are decision 10's gates.
 
 | Phase | What | Done when |
 |---|---|---|
-| P0 | Decision 10's gates for claude Terminal. The decision point with the atomic, idempotent ledger and the snapshot. `tool_call_cap` and `approval_gate` (with in-call sequences and the parser). Deployment and user layers by pull. Approvals on the existing cards. The launch refusal of decision 7 for **every** other kind, and the stop on an unenforceable change | the gates are written into this record; parallel calls cannot overshoot a cap and a retried check does not double-count; in a real claude session `npm install x && git push` and the two as separate calls both raise a card naming the gate, deny reaches the model, a cap denies the N+1th call; launching any other kind under a block policy is refused; the budget holds |
+| P0 | Decision 10's gates for claude Terminal. The decision point with the atomic, idempotent ledger and the snapshot. `tool_call_cap` and `approval_gate` (with in-call sequences and the parser). Deployment and user layers by pull. AF-held approvals on the existing cards. The launch refusal of decision 7 for **every** other kind, and the stop on an unenforceable change | the gates are written into this record; parallel calls cannot overshoot a cap and a retried check does not double-count; in a real claude session `npm install x && git push` and the two as separate calls both raise a card naming the gate, deny reaches the model, a cap denies the N+1th call; launching any other kind under a block policy is refused; the budget holds |
 | P1 | `path_scope` (with pending and owned paths), `ask_on_categories`; the session layer; lcpp with a check before every `tool.Run`; cursor, kiro and copilot Managed once their gate passes; the `guide/ref/agents.md` row | each listed kind passes its gate and the same scenarios |
 | P2 | codex Terminal (deny, held ask) and Managed; opencode; copilot, kiro and cursor Terminal hooks; observe-only feed for agy and muse; the tenant layer if wanted | each kind's row in the matrix is measured, not inferred |
 | P3 | User-authored declarative policies (open question 10) | — |
