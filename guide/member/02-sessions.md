@@ -215,6 +215,22 @@ five-minute refreshes, and a stale copy of them is worse than none.
   started badge keeps working for it.
 - **The description is still not shown here.**
 
+### From a ticket number in the conversation
+
+In the mirror and the assistant chat, **ticket references the agent writes become links** that open
+the same details panel — even with the left pane collapsed. Ctrl/⌘-click or a middle click goes
+straight to the tracker instead.
+
+- `#956` is read as a number in the session's own repository (its origin on github.com or
+  bitbucket.org). The chat has no working copy, so there only the `owner/name#956` form links.
+- A Jira key (`PROJ-123`) links only **when the list already holds an issue of that project**, so
+  look-alikes such as `UTF-8` or `SHA-256` stay text.
+- In a Bitbucket working copy, `#N` links only the pull requests the list holds.
+- A ticket that is not in the list opens with just its key and a link to the original page; a
+  session can still be started from it. **Nothing is fetched for it** — as with the list, opening
+  it never starts a stopped workspace.
+- Someone reading a shared session sees these as plain text.
+
 ## Reading state — badges and notifications
 
 In each row of the list, the colored icon at the front shows the agent kind, and the state icon

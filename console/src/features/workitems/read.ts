@@ -591,7 +591,8 @@ export function sanitizeBranch(raw: string): string {
 export function promptForItem(item: WorkItem, body?: string, reviewBranch?: string): string {
   const isPR = item.kind === "pr";
   const lines = [
-    t("wi.prompt_target", { key: item.key, title: item.title }),
+    // A ticket opened from a link in the mirror may have no cached title (#1659).
+    item.title ? t("wi.prompt_target", { key: item.key, title: item.title }) : t("wi.prompt_target_key", { key: item.key }),
     t("wi.prompt_url", { url: item.url }),
     "",
     readLine(item),
