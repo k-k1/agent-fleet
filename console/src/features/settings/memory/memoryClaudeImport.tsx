@@ -6,7 +6,7 @@
 // A file the secret scan flags is listed with masked findings and cannot be imported: the member
 // fixes the claude file and previews again. Applying needs the Agent Fleet memory switch on.
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { api, apiJSON, errDetail, errText, isTransientErr } from "../../../core/api/client.ts";
 import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -54,11 +54,17 @@ export function ClaudeImportPanel({ reload, onChanged }: { reload: number; onCha
   }, []);
   useRetryLoad(load, [reload, again]);
 
+  // Only the latest request may answer: a slow response for a source picked earlier must not
+  // replace the preview of the one shown (the confirm would pair one project with another slug).
+  const previewSeq = useRef(0);
   const loadPreview = useCallback(async (s: string) => {
+    const seq = ++previewSeq.current;
     setPreview(null);
     setPreviewErr("");
     if (!s) return;
     const res = await api("api/agents/memory/claude-import/preview?slug=" + encodeURIComponent(s));
+    if (seq !== previewSeq.current) return;
+    
     if (res?.error) {
       setPreviewErr(errDetail(res.error));
       return;
@@ -86,7 +92,7 @@ export function ClaudeImportPanel({ reload, onChanged }: { reload: number; onCha
         // The project id also goes in the query: the CP audit ledger reads the URL only.
         const res = await apiJSON("api/agents/memory/claude-import?project=" + encodeURIComponent(project), "POST", {
           project,
-          slug,
+          slug: preview.slug,
           items,
         });
         if (res?.error) {

@@ -844,6 +844,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mem.ci_reason_no_frontmatter": "no frontmatter",
   "mem.ci_reason_no_description": "no description",
   "mem.ci_reason_no_body": "empty body",
+  "mem.ci_reason_bad_description": "description spans more than one line",
   "mem.ci_reason_too_large": "too large",
   "mem.ci_reason_nul_byte": "binary content",
   "mem.ci_reason_line_too_long": "a line is too long",

@@ -17,6 +17,7 @@ package memoryx
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -25,6 +26,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -149,17 +151,25 @@ func agentMemImportProjects() (map[string]*agentMemProject, map[string]bool) {
 	return byKey, ambiguous
 }
 
-// agentMemImportMemoryDir opens projects/<slug>/memory without following a symlink at either
-// level. ok=false: there is no such directory.
-func agentMemImportMemoryDir(slug string) (string, bool) {
-	proj := filepath.Join(claude.ConfigDir(), "projects", slug)
-	mem := filepath.Join(proj, "memory")
-	for _, p := range []string{proj, mem} {
-		if st, err := os.Lstat(p); err != nil || !st.IsDir() {
-			return "", false
-		}
+// agentMemImportMemoryDir opens projects/<slug>/memory one component at a time with O_NOFOLLOW,
+// and the caller reads every file relative to the returned handle. A check followed by a path
+// read would let a parent be swapped for a symlink in between; a pinned handle cannot be.
+// ok=false: there is no such directory, or a component is a symlink.
+func agentMemImportMemoryDir(slug string) (*os.File, bool) {
+	flags := syscall.O_RDONLY | syscall.O_DIRECTORY | syscall.O_NOFOLLOW | syscall.O_CLOEXEC
+	fd, err := syscall.Open(filepath.Join(claude.ConfigDir(), "projects"), flags, 0)
+	if err != nil {
+		return nil, false
 	}
-	return mem, true
+	for _, seg := range []string{slug, "memory"} {
+		next, err := syscall.Openat(fd, seg, flags, 0)
+		_ = syscall.Close(fd)
+		if err != nil {
+			return nil, false
+		}
+		fd = next
+	}
+	return os.NewFile(uintptr(fd), "memory"), true
 }
 
 // agentMemImportList returns the sources.
@@ -178,6 +188,7 @@ func agentMemImportList() agentMemImportSources {
 			continue
 		}
 		files, _ := agentMemImportFiles(mem)
+		mem.Close()
 		if len(files) == 0 {
 			continue
 		}
@@ -201,8 +212,8 @@ func agentMemImportList() agentMemImportSources {
 }
 
 // agentMemImportFiles lists the .md files of a memory directory, claude's index excluded.
-func agentMemImportFiles(mem string) (files []string, truncated bool) {
-	ents, err := os.ReadDir(mem)
+func agentMemImportFiles(mem *os.File) (files []string, truncated bool) {
+	ents, err := mem.ReadDir(-1)
 	if err != nil {
 		return nil, false
 	}
@@ -220,13 +231,14 @@ func agentMemImportFiles(mem string) (files []string, truncated bool) {
 }
 
 // agentMemImportResolve finds the source and, when it can be imported, its project.
-func agentMemImportResolve(slug string) (mem string, p *agentMemProject, reason string, err error) {
-	if !claudeImportSlugRe.MatchString(slug) {
-		return "", nil, "", memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "slug is not a claude project directory name")
+func agentMemImportResolve(slug string) (mem *os.File, p *agentMemProject, reason string, err error) {
+	// The slug is never echoed: a directory name can be a token, and the list withholds those.
+	if !claudeImportSlugRe.MatchString(slug) || !agentMemCleanText(slug) {
+		return nil, nil, "", memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "slug is not a claude project directory name")
 	}
 	mem, ok := agentMemImportMemoryDir(slug)
 	if !ok {
-		return "", nil, "", memoryErrf(http.StatusNotFound, errCodeMemoryNotFound, "no claude memory for that project")
+		return nil, nil, "", memoryErrf(http.StatusNotFound, errCodeMemoryNotFound, "no claude memory for that project")
 	}
 	byKey, ambiguous := agentMemImportProjects()
 	switch p = byKey[slug]; {
@@ -257,12 +269,20 @@ func agentMemImportHistory(rel string) (map[string]bool, error) {
 			}
 		}
 	}
-	if dir, err := agentMemCheckDir(rel+"/"+agentMemTombDir, false); err == nil {
-		if ents, err := os.ReadDir(dir); err == nil {
-			for _, d := range ents {
-				seen[d.Name()] = true
-			}
+	// Not knowing is not "nothing was forgotten": a tombstone directory that cannot be listed
+	// fails the whole evaluation, and a write checks the candidate's own tombstone again.
+	dir, err := agentMemCheckDir(rel+"/"+agentMemTombDir, false)
+	switch {
+	case err == nil:
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			return nil, err
 		}
+		for _, d := range ents {
+			seen[d.Name()] = true
+		}
+	case !os.IsNotExist(err):
+		return nil, err
 	}
 	return seen, nil
 }
@@ -292,9 +312,18 @@ func agentMemImportShowable(name string) bool {
 	return agentMemCleanText(name)
 }
 
+// agentMemImportOpen opens one file of the pinned memory directory without following a symlink.
+func agentMemImportOpen(mem *os.File, file string) (*os.File, error) {
+	fd, err := syscall.Openat(int(mem.Fd()), file, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), "claude-memory"), nil
+}
+
 // agentMemImportEvaluate reads one claude file and decides its status. withheld=true: the file
 // name itself cannot be shown, so the caller only counts it. Callers hold agentMemMu.
-func agentMemImportEvaluate(mem, file, slug, rel string, history map[string]bool) (it agentMemImportItem, withheld bool) {
+func agentMemImportEvaluate(mem *os.File, file, slug, rel string, history map[string]bool) (it agentMemImportItem, withheld bool) {
 	stem := strings.TrimSuffix(file, ".md")
 	if !agentMemImportShowable(stem) {
 		return it, true
@@ -307,12 +336,17 @@ func agentMemImportEvaluate(mem, file, slug, rel string, history map[string]bool
 	if !agentMemNameRe.MatchString(stem) {
 		return invalid("bad_name")
 	}
-	abs := filepath.Join(mem, file)
-	st, err := os.Lstat(abs)
+	f, err := agentMemImportOpen(mem, file)
+	if err != nil {
+		return invalid("symlink")
+	}
+	defer f.Close()
+	// The mtime is the opened file's, not a second look at the path.
+	st, err := f.Stat()
 	if err != nil || !st.Mode().IsRegular() {
 		return invalid("symlink")
 	}
-	raw, _, err := agentMemReadFile(abs)
+	raw, err := agentMemReadHandle(f)
 	switch {
 	case err == agentMemErrTooLarge:
 		return invalid("too_large")
@@ -325,6 +359,7 @@ func agentMemImportEvaluate(mem, file, slug, rel string, history map[string]bool
 
 	// NUL and over-long lines are judged on the raw file: the scanner cannot vouch for either,
 	// and a parse would hide them.
+	var findings []memorySecretFinding
 	for _, f := range agentMemScanText("file", string(raw)) {
 		switch f.Rule {
 		case "nul-byte":
@@ -332,6 +367,9 @@ func agentMemImportEvaluate(mem, file, slug, rel string, history map[string]bool
 		case "line-too-long":
 			return invalid("line_too_long")
 		}
+		// A hit anywhere in the file counts, fields that are not imported included.
+		f.Path = "file"
+		findings = append(findings, f)
 	}
 	e, ok := agentMemParse(raw)
 	if !ok {
@@ -342,6 +380,8 @@ func agentMemImportEvaluate(mem, file, slug, rel string, history map[string]bool
 	switch {
 	case desc == "":
 		return invalid("no_description")
+	case strings.ContainsAny(desc, "\r\n"):
+		return invalid("bad_description")
 	case body == "":
 		return invalid("no_body")
 	}
@@ -365,10 +405,12 @@ func agentMemImportEvaluate(mem, file, slug, rel string, history map[string]bool
 		Source: source, SourceHash: it.SourceHash, Body: body,
 	}
 	// Finding paths are fixed field names, so a hit never hands back text from the file.
-	var findings []memorySecretFinding
-	findings = append(findings, agentMemScanText("description", full)...)
-	findings = append(findings, agentMemScanText("body", body)...)
-	findings = append(findings, agentMemScanText("type", e.Type)...)
+	if len(findings) == 0 {
+		// The raw file is clean; the decoded values can still differ from it (a JSON escape).
+		findings = append(findings, agentMemScanText("description", full)...)
+		findings = append(findings, agentMemScanText("body", body)...)
+		findings = append(findings, agentMemScanText("type", e.Type)...)
+	}
 	if len(findings) == 0 {
 		conv.Created, conv.Updated, conv.Revision = "1970-01-01T00:00:00Z", "1970-01-01T00:00:00Z", 1
 		findings = append(findings, agentMemScanText("memory", agentMemPublished(conv))...)
@@ -399,10 +441,16 @@ func agentMemImportEvaluate(mem, file, slug, rel string, history map[string]bool
 		le := live.Entry
 		it.live, it.AFUpdated = &le, le.Updated
 		at, perr := time.Parse(time.RFC3339, le.Updated)
-		if le.SourceHash == it.SourceHash || (perr == nil && !st.ModTime().After(at)) {
+		switch {
+		case le.SourceHash == it.SourceHash:
 			it.Status = claudeImportUnchanged
-		} else {
+		case perr != nil:
+			// Overwriting needs proof that the claude file is newer.
+			return invalid("store_unreadable")
+		case st.ModTime().After(at):
 			it.Status = claudeImportUpdate
+		default:
+			it.Status = claudeImportUnchanged
 		}
 	case history[stem]:
 		it.Status = claudeImportForgotten
@@ -423,6 +471,7 @@ func agentMemImportBuild(slug string) (*agentMemImportPreview, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer mem.Close()
 	pv := &agentMemImportPreview{Slug: slug, Project: p, Reason: reason, Items: []agentMemImportItem{},
 		Counts: map[string]int{}, byName: map[string]*agentMemImportItem{}}
 	if p == nil {
@@ -535,7 +584,9 @@ func agentMemImportApply(req agentMemImportReq, now time.Time) (agentMemImportAp
 			res.Reason = "status_" + it.Status
 		default:
 			commit, err := agentMemImportWrite(*pv.Project, rel, it, now)
-			if err != nil {
+			if errors.Is(err, errAgentMemImportForgotten) {
+				res.Reason = "status_forgotten"
+			} else if err != nil {
 				res.Reason = "write_failed"
 				// Only the kind of failure is logged: a path in the error carries a name.
 				log.Printf("agent memory: import: %s", agentMemErrKind(err))
@@ -552,6 +603,9 @@ func agentMemImportApply(req agentMemImportReq, now time.Time) (agentMemImportAp
 	return out, nil
 }
 
+// errAgentMemImportForgotten: a tombstone says this name was forgotten, whatever the history lists.
+var errAgentMemImportForgotten = errors.New("memory was forgotten")
+
 // agentMemImportWrite publishes one converted memory with the member as the commit's author.
 func agentMemImportWrite(p agentMemProject, rel string, it *agentMemImportItem, now time.Time) (string, error) {
 	e := it.entry
@@ -563,6 +617,9 @@ func agentMemImportWrite(p agentMemProject, rel string, it *agentMemImportItem, 
 		tomb, err := agentMemTombRevision(rel, e.Name)
 		if err != nil {
 			return "", err
+		}
+		if tomb > 0 {
+			return "", errAgentMemImportForgotten
 		}
 		e.Revision = tomb + 1
 	}

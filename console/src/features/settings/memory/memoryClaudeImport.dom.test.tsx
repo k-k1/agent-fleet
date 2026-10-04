@@ -25,6 +25,7 @@ const project = { id: "app-0123456789ab", root: "/r/app", vcs: "git", display: "
 const sources = [
   { slug: "-r-app", count: 130, project },
   { slug: "-gone", count: 2, reason: "no_project" },
+  { slug: "-late", count: 1, project: { id: "late-0123456789ab", root: "/r/late", vcs: "git", display: "late" } },
 ];
 const mk = (n: number) =>
   Array.from({ length: n }, (_, i) => ({ name: `mem-${i}`, status: "new", sourceHash: `h${i}` }));
@@ -160,5 +161,33 @@ describe("ClaudeImportPanel", () => {
     await act(async () => applyButton().click());
     await flush();
     expect(apiJSON).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a slow preview for a source that is no longer selected", async () => {
+    const other = { ...previewBody, slug: "-late", project: { ...project, id: "late-0123456789ab", display: "late" }, items: mk(1) };
+    const resolvers: Record<string, (v: unknown) => void> = {};
+    api.mockImplementation((path: string) => {
+      if (!path.startsWith("api/agents/memory/claude-import/preview")) return Promise.resolve({ sources });
+      const slug = decodeURIComponent(path.split("slug=")[1]);
+      return new Promise((r) => (resolvers[slug] = r));
+    });
+    await mount();
+    const sel = host!.querySelector<HTMLSelectElement>("select")!;
+    const choose = async (v: string) => {
+      await act(async () => {
+        sel.value = v;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+    await choose("-late");
+    await choose("-r-app");
+    await act(async () => resolvers["-r-app"](previewBody));
+    await act(async () => resolvers["-late"](other)); // arrives after, for the old choice
+    await flush();
+    expect(host!.textContent).toContain("app");
+    expect(applyButton().textContent).toContain("121");
+    await choose("");
+    await flush();
+    expect(host!.querySelector(".mem-ci-actions")).toBeNull();
   });
 });

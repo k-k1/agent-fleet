@@ -281,19 +281,28 @@ func agentMemReadFile(abs string) ([]byte, bool, error) {
 		return nil, false, err
 	}
 	defer f.Close()
+	b, err := agentMemReadHandle(f)
+	if err == agentMemErrSymlink {
+		return nil, false, err
+	}
+	return b, true, err
+}
+
+// agentMemReadHandle reads an already opened regular file.
+func agentMemReadHandle(f *os.File) ([]byte, error) {
 	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
-		return nil, false, agentMemErrSymlink
+		return nil, agentMemErrSymlink
 	}
 	b, err := io.ReadAll(io.LimitReader(f, agentMemMaxFile+1))
 	if err != nil {
-		return nil, true, err
+		return nil, err
 	}
 	if len(b) > agentMemMaxFile {
 		// Never return a truncated file: it would be shown as the memory, or written back as
 		// the original by a rollback.
-		return nil, true, agentMemErrTooLarge
+		return nil, agentMemErrTooLarge
 	}
-	return b, true, nil
+	return b, nil
 }
 
 // agentMemErrTooLarge is a stored file larger than any memory a save can produce.

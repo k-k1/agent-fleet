@@ -845,6 +845,7 @@ export const tools = {
   "mem.ci_reason_no_frontmatter": "フロントマターがありません",
   "mem.ci_reason_no_description": "説明がありません",
   "mem.ci_reason_no_body": "本文が空です",
+  "mem.ci_reason_bad_description": "説明が複数行です",
   "mem.ci_reason_too_large": "大きすぎます",
   "mem.ci_reason_nul_byte": "バイナリを含みます",
   "mem.ci_reason_line_too_long": "長すぎる行があります",

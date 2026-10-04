@@ -3,6 +3,7 @@ package memoryx
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -245,7 +246,7 @@ func TestClaudeImportSecretIsSkippedAndNeverEchoed(t *testing.T) {
 
 	pv := e.preview()
 	it := e.item(pv, "leaky")
-	if it.Status != claudeImportSecret || len(it.Findings) == 0 || it.Findings[0].Path != "body" {
+	if it.Status != claudeImportSecret || len(it.Findings) == 0 || it.Findings[0].Path != "file" {
 		t.Fatalf("leaky = %+v", it)
 	}
 	out := e.apply(time.Now(), "leaky", "clean")
@@ -504,5 +505,130 @@ func TestClaudeImportWorktreeSlugMapsToMainProject(t *testing.T) {
 	s := claudeImportListed(wtSlug)
 	if s == nil || s.Project == nil || s.Project.ID != e.pid {
 		t.Errorf("worktree source = %+v", s)
+	}
+}
+
+// A direct preview of a token-named slug answers without the slug, even when it has files.
+func TestClaudeImportPreviewDoesNotEchoSecretSlug(t *testing.T) {
+	e := newClaudeImportEnv(t)
+	slug := "AKIA" + "ZXCVBNMLKJHGFDSA"
+	e.raw(slug, "note.md", "---\ndescription: d\n---\nb\n")
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	defer log.SetOutput(os.Stderr)
+	w := httptest.NewRecorder()
+	HandleAgentMemoryClaudePreview(w, httptest.NewRequest("GET", "/agents/memory/claude-import/preview?slug="+slug, nil))
+	if w.Code != http.StatusBadRequest || strings.Contains(w.Body.String()+logs.String(), slug) {
+		t.Errorf("preview of a secret slug: %d %s", w.Code, w.Body)
+	}
+}
+
+// A tombstone directory that cannot be listed must not turn a forgotten, never-committed
+// memory back into a new one; a write also checks the candidate's own tombstone.
+func TestClaudeImportForgottenSurvivesUnlistableTombstones(t *testing.T) {
+	e := newClaudeImportEnv(t)
+	now := time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)
+	// A memory put in the store by hand (never committed), then forgotten: the commit is empty,
+	// so only the tombstone remembers it.
+	memoryWrite(t, filepath.Join(agentMemDir(), "projects", e.pid, "gone.md"),
+		"---\nname: \"gone\"\ndescription: \"d\"\nrevision: 3\nauthor_kind: \"unknown\"\nauthor_session: \"unknown\"\ncreated: \"2026-10-01T00:00:00Z\"\nupdated: \"2026-10-01T00:00:00Z\"\n---\nb\n")
+	if _, err := agentMemForget(agentMemCallerT(t, "claude-main"), agentMemForgetReq{Name: "gone", Revision: 3}, now); err != nil {
+		t.Fatal(err)
+	}
+	e.file("gone", "d", "user", "b")
+	tombs := filepath.Join(agentMemDir(), "projects", e.pid, agentMemTombDir)
+	if err := os.Chmod(tombs, 0o300); err != nil { // can be entered, not listed
+		t.Fatal(err)
+	}
+	defer os.Chmod(tombs, 0o700)
+	if os.Geteuid() != 0 {
+		if _, err := agentMemImportPreviewFor(e.slug); err == nil {
+			t.Errorf("an unlistable tombstone directory must fail the preview, not read as empty")
+		}
+	}
+	// Write-side check: even with a stale preview that says new, the tombstone refuses it.
+	_ = os.Chmod(tombs, 0o700)
+	pv := e.preview()
+	it := pv.byName["gone"]
+	it.Status = claudeImportNew
+	out, err := agentMemImportApply(agentMemImportReq{Project: e.pid, Slug: e.slug, Items: []agentMemImportReqItem{{Name: "gone", SourceHash: it.SourceHash}}}, now)
+	if err != nil || out.Results[0].Result != "skipped" {
+		t.Errorf("forgotten, never-committed memory came back: %+v %v", out, err)
+	}
+	if _, err := agentMemImportWrite(*agentMemProjectFor(e.clone), "projects/"+e.pid, it, now); !errors.Is(err, errAgentMemImportForgotten) {
+		t.Errorf("write did not refuse a tombstoned name: %v", err)
+	}
+}
+
+// Swapping a parent for a symlink after the directory was opened does not redirect the reads.
+func TestClaudeImportParentSwapDoesNotRedirect(t *testing.T) {
+	e := newClaudeImportEnv(t)
+	e.file("real", "d", "user", "original")
+	mem, ok := agentMemImportMemoryDir(e.slug)
+	if !ok {
+		t.Fatal("memory dir not opened")
+	}
+	defer mem.Close()
+	other := filepath.Join(e.home, "other-memory")
+	memoryWrite(t, filepath.Join(other, "real.md"), "---\ndescription: d\n---\nSWAPPED\n")
+	dir := e.memDir(e.slug)
+	if err := os.Rename(dir, dir+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(other, dir); err != nil {
+		t.Fatal(err)
+	}
+	it, _ := agentMemImportEvaluate(mem, "real.md", e.slug, "projects/"+e.pid, map[string]bool{})
+	if it.Status != claudeImportNew || it.entry.Body != "original" {
+		t.Errorf("read followed the swapped parent: %+v", it)
+	}
+	// A fresh open now refuses the symlink.
+	if m2, ok := agentMemImportMemoryDir(e.slug); ok {
+		m2.Close()
+		t.Errorf("a symlinked memory directory was opened")
+	}
+}
+
+func TestClaudeImportRawFindingsDescriptionAndStoredUpdated(t *testing.T) {
+	e := newClaudeImportEnv(t)
+	key := "ghp_" + strings.Repeat("k3Zq", 9)
+	// A secret in a frontmatter field that is not imported still counts.
+	e.raw(e.slug, "other-field.md", "---\ndescription: d\nother: "+key+"\n---\nbody\n")
+	// A quoted description whose escape decodes to a newline.
+	e.raw(e.slug, "two-lines.md", "---\ndescription: \"a\\nb\"\n---\nbody\n")
+	e.file("stored", "d", "user", "v1")
+	out := e.apply(time.Now().Add(-48*time.Hour), "stored")
+	if claudeImportResult(out, "stored").Result != "imported" {
+		t.Fatal(out)
+	}
+	// Break the AF copy's updated stamp, then change the claude file.
+	af := filepath.Join(agentMemDir(), "projects", e.pid, "stored.md")
+	b, _ := os.ReadFile(af)
+	memoryWrite(t, af, strings.Replace(string(b), "updated: \"", "updated: \"not-a-time", 1))
+	e.file("stored", "d", "user", "v2")
+
+	pv := e.preview()
+	if it := e.item(pv, "other-field"); it.Status != claudeImportSecret || it.Findings[0].Path != "file" {
+		t.Errorf("other-field = %+v", it)
+	}
+	wire, _ := json.Marshal(pv)
+	if strings.Contains(string(wire), key) {
+		t.Errorf("the key leaked into the preview")
+	}
+	if it := e.item(pv, "two-lines"); it.Status != claudeImportInvalid || it.Reason != "bad_description" {
+		t.Errorf("two-lines = %+v", it)
+	}
+	if it := e.item(pv, "stored"); it.Status != claudeImportInvalid || it.Reason != "store_unreadable" {
+		t.Errorf("stored with a broken updated = %+v", it)
+	}
+}
+
+// A JSON escape hides a key from the raw scan; the decoded description is scanned too.
+func TestClaudeImportDecodedValueIsScanned(t *testing.T) {
+	e := newClaudeImportEnv(t)
+	e.raw(e.slug, "escaped.md", "---\ndescription: \"\\u0041KIA"+"ZXCVBNMLKJHGFDSA\"\n---\nbody\n")
+	it := e.item(e.preview(), "escaped")
+	if it.Status != claudeImportSecret || it.Findings[0].Path != "description" {
+		t.Errorf("escaped = %+v", it)
 	}
 }
