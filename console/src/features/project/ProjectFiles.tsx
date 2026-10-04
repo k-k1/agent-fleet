@@ -876,8 +876,10 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   const refreshDir = useCallback(
     // false: the tenant changed while it was reading, nothing was written and the caller must not
     // go on to select or open a path of the previous tenant's workspace.
-    async (dir: string) => {
-      const started = tenantRef.current;
+    // `started` is the tenant the operation began under: it is captured by the caller, before the
+    // mutation's own await, so a switch during the mutation is caught too.
+    async (dir: string, started: string) => {
+      if (tenantRef.current !== started) return false;
       const d = await fsList(dir);
       if (tenantRef.current !== started) return false;
       const e = d.entries || [];
@@ -894,6 +896,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     async (dir: string, fileList: FileList | null) => {
       const files = Array.from(fileList || []).filter((f) => f && f.name);
       if (!files.length) return;
+      const started = tenantRef.current;
       let res = await uploadFiles(dir, files);
       if (res.status === 409 && Array.isArray(res.conflicts) && (res.conflicts as string[]).length) {
         const ok = await askConfirm({
@@ -902,10 +905,11 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
           confirmLabel: t("proj.overwrite_confirm"),
           danger: true,
         });
+        if (tenantRef.current !== started) return; // never send the overwrite to another tenant's workspace
         if (ok) res = await uploadFiles(dir, files, { overwrite: true });
       }
       if (res.error) toast(t("proj.upload_failed", { msg: (res.error as { message?: string }).message || String(res.error) }));
-      if (!(await refreshDir(dir))) return;
+      if (!(await refreshDir(dir, started))) return;
       setDropTarget(null);
     },
     [refreshDir, askConfirm, toast],
@@ -936,18 +940,20 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     const name = window.prompt(t("proj.new_folder_prompt", { parent: baseName(parent) }), "");
     if (!name || !name.trim()) return;
     const p = joinPath(parent, name.trim());
+    const started = tenantRef.current;
     const res = await fsMkdir(p);
     if (res.error) return toast(t("proj.create_failed", { msg: (res.error as { message?: string }).message || String(res.error) }));
-    if (!(await refreshDir(parent))) return;
+    if (!(await refreshDir(parent, started))) return;
     setSelected(p);
   };
   const newFile = async (parent: string) => {
     const name = window.prompt(t("proj.new_file_prompt", { parent: baseName(parent) }), "");
     if (!name || !name.trim()) return;
     const p = joinPath(parent, name.trim());
+    const started = tenantRef.current;
     const res = await fsNewFile(p);
     if (res.error) return toast(t("proj.create_failed", { msg: (res.error as { message?: string }).message || String(res.error) }));
-    if (!(await refreshDir(parent))) return;
+    if (!(await refreshDir(parent, started))) return;
     setSelected(p);
     showFile(p);
   };
@@ -957,22 +963,24 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     if (!name || !name.trim() || name.trim() === base) return;
     const parent = parentOf(row.path);
     const to = joinPath(parent, name.trim());
+    const started = tenantRef.current;
     const res = await fsRename(row.path, to);
     if (res.error) return toast(t("proj.rename_failed", { msg: (res.error as { message?: string }).message || String(res.error) }));
-    if (!(await refreshDir(parent))) return;
+    if (!(await refreshDir(parent, started))) return;
     setSelected(to);
   };
   const deleteRow = async (row: Row) => {
+    const started = tenantRef.current;
     const ok = await askConfirm({
       title: t("proj.delete_title"),
       body: t("proj.delete_body", { path: row.path, dirNote: row.type === "dir" ? t("proj.delete_dir_note") : "" }),
       confirmLabel: t("common.delete_do"),
       danger: true,
     });
-    if (!ok) return;
+    if (!ok || tenantRef.current !== started) return; // the path names the previous tenant's file
     const res = await fsDelete(row.path);
     if (res.error) return toast(t("proj.delete_failed", { msg: (res.error as { message?: string }).message || String(res.error) }));
-    if (!(await refreshDir(parentOf(row.path)))) return;
+    if (!(await refreshDir(parentOf(row.path), started))) return;
     setSelected(parentOf(row.path) || null);
   };
   const copyText = (text: string, label: string) => {

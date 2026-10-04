@@ -13,6 +13,7 @@ let served: Record<string, Entry[]> = {};
 // Set by a test that wants to hold an answer back; return a promise to delay the listing.
 let gate: ((path: string) => Promise<void> | undefined) | null = null;
 let searchHits: string[] = [];
+let uploadGate: (() => Promise<void>) | null = null;
 
 vi.mock("../../core/api/client.ts", () => ({
   getTenant: () => "",
@@ -23,7 +24,7 @@ vi.mock("../../core/api/client.ts", () => ({
     return { entries };
   }),
   isTransientErr: () => false,
-  uploadFiles: vi.fn(async () => ({})),
+  uploadFiles: vi.fn(async () => (await uploadGate?.(), {})),
   downloadURL: vi.fn(),
   fsMkdir: vi.fn(),
   fsNewFile: vi.fn(),
@@ -55,6 +56,7 @@ async function settle(): Promise<void> {
 
 beforeEach(async () => {
   gate = null;
+  uploadGate = null;
   searchHits = [];
   useFilesFilter.getState().setQ("");
   useWorkspaceStore.setState({ state: "running" });
@@ -165,6 +167,32 @@ describe("FILES tree on a tenant switch", () => {
       release();
     });
     await settle();
+    expect(names()).toEqual(["beta-repo"]);
+  });
+
+  // The mutation itself is still on the wire at the switch: its continuation must not refresh or
+  // select anything in the new tenant's workspace.
+  it("ignores an upload that finishes after the switch", async () => {
+    const input = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(input, "files", { value: [new File(["x"], "x.txt")], configurable: true });
+    let release!: () => void;
+    uploadGate = () => new Promise<void>((r) => (release = r));
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const asked: string[] = [];
+    gate = (p) => void asked.push(p);
+    served = { repos: [{ name: "beta-repo", type: "dir" }] };
+    await act(async () => {
+      useTenantStore.setState({ tenant: "beta" });
+    });
+    await settle();
+    asked.length = 0;
+    await act(async () => {
+      release();
+    });
+    await settle();
+    expect(asked).toEqual([]); // no re-read of the old tenant's directory under the new tenant
     expect(names()).toEqual(["beta-repo"]);
   });
 });
