@@ -26,7 +26,15 @@ var (
 	aliveOf       = sessionx.SessionAlive
 	canTranscript = func(m session.Meta) bool { return sessionx.AgentOf(m.Kind).Caps().CanTranscript }
 	indexPath     = func() string { return filepath.Join(paths.AgentStateDir(), "session-search", "index.db") }
+	metaExists    = func(name string) bool { _, ok := session.ReadMeta(name); return ok }
 )
+
+// writeMu orders the pass's write of one session against Forget. The pass reads a transcript
+// long after it listed the metas, and the trash may remove the meta and call Forget in between;
+// without this, the pass's write would put the trashed session's text back after Forget had
+// removed it. The pass re-checks the meta under the lock, and the trash removes the meta before
+// it calls Forget, so either the write sees no meta or Forget runs after the write.
+var writeMu sync.Mutex
 
 var (
 	storeMu sync.Mutex
@@ -122,7 +130,10 @@ func runPass() error {
 	}
 	for name := range held {
 		if !keep[name] {
-			if err := s.Forget(name); err != nil {
+			writeMu.Lock()
+			err := s.Forget(name)
+			writeMu.Unlock()
+			if err != nil {
 				log.Printf("session-search: forget %s: %v", name, err)
 			}
 		}
@@ -155,6 +166,11 @@ func indexSession(s *Store, m session.Meta) error {
 		// empty although its conversation happened. Only the trash (Forget) removes rows.
 		return nil
 	}
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	if !metaExists(m.Name) {
+		return nil // trashed while its transcript was being read
+	}
 	return s.Apply(m.Name, m.Kind, docs, settled)
 }
 
@@ -169,6 +185,8 @@ func Forget(name string) {
 		log.Printf("session-search: forget %s: %v", name, err)
 		return
 	}
+	writeMu.Lock()
+	defer writeMu.Unlock()
 	if err := s.Forget(name); err != nil {
 		log.Printf("session-search: forget %s: %v", name, err)
 	}

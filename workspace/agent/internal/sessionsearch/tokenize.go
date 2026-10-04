@@ -5,6 +5,7 @@ import (
 	"strings"
 	"unicode"
 
+	"golang.org/x/text/unicode/norm"
 	"golang.org/x/text/width"
 )
 
@@ -30,8 +31,10 @@ func isCJK(r rune) bool {
 }
 
 // fold maps fullwidth Latin and halfwidth katakana onto their usual forms, so "ＡＰＩ"
-// and "API", or "ｶﾀｶﾅ" and "カタカナ", are one word to the index.
-func fold(s string) string { return width.Fold.String(s) }
+// and "API", or "ﾊﾞｸﾞ" and "バグ", are one word to the index. NFC is not optional: width.Fold
+// turns a halfwidth voiced kana into the base kana plus a combining mark, and the mark, which is
+// not CJK, would cut the run in two.
+func fold(s string) string { return norm.NFC.String(width.Fold.String(s)) }
 
 // IndexText rewrites s into what the FTS column stores: CJK runs become space-separated
 // bigrams (a one-character run stays a unigram) and every other character passes through
@@ -88,10 +91,11 @@ func Terms(q string) []string {
 }
 
 // MatchQuery builds the FTS5 MATCH expression for q: every term must occur (implicit AND),
-// and each term is one phrase of its own tokens, so a CJK word matches only where its
-// bigrams sit next to each other. User input never reaches FTS5 syntax unquoted — an
-// operator or a stray quote in a query would otherwise be a syntax error, or worse, a
-// different query.
+// and each term is one quoted phrase of its IndexText form, so a CJK word matches only where its
+// bigrams sit next to each other. Splitting inside the quotes is left to unicode61 itself, the
+// same tokenizer that split the stored text; a Go copy of its rules drifts (it once dropped
+// "Ⅲ" and "①"). User input never reaches FTS5 syntax unquoted — an operator or a stray quote
+// would otherwise be a syntax error, or worse, a different query.
 func MatchQuery(q string) (string, error) {
 	var parts []string
 	for _, term := range Terms(q) {
@@ -101,7 +105,7 @@ func MatchQuery(q string) (string, error) {
 		if len(toks) == 0 {
 			continue
 		}
-		phrase := `"` + strings.ReplaceAll(strings.Join(toks, " "), `"`, `""`) + `"`
+		phrase := `"` + strings.ReplaceAll(strings.Join(strings.Fields(IndexText(term)), " "), `"`, `""`) + `"`
 		// A single CJK character is stored only inside bigrams, so it is asked for as a prefix:
 		// it then matches every bigram it starts. It misses the character at the end of a run.
 		lone := len(toks) == 1 && len([]rune(toks[0])) == 1 && isCJK([]rune(toks[0])[0])
@@ -116,11 +120,12 @@ func MatchQuery(q string) (string, error) {
 	return strings.Join(parts, " "), nil
 }
 
-// ftsTokens is IndexText's output split the way unicode61 would split it: on anything that
-// is not a letter or a digit. Punctuation inside a term ("foo.bar") therefore becomes a
-// two-token phrase, which is what the stored side holds too.
+// ftsTokens approximates how unicode61 splits IndexText's output — its token characters are the
+// categories L*, N* and Co — for the two questions MatchQuery asks itself: whether a term has
+// anything to search for, and whether it is one lone CJK character. The phrase itself is split
+// by SQLite.
 func ftsTokens(term string) []string {
 	return strings.FieldsFunc(IndexText(term), func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.Is(unicode.Mn, r)
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r) && !unicode.Is(unicode.Co, r)
 	})
 }

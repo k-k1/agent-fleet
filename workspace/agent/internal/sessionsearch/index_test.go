@@ -27,17 +27,25 @@ func installFake(t *testing.T) *fakeFleet {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	f := &fakeFleet{turns: map[string][]transcript.Turn{}, alive: map[string]bool{}, reads: map[string]int{}, probes: map[string]int{}}
-	oldList, oldTurns, oldAlive, oldCan, oldPath := listMetas, turnsOf, aliveOf, canTranscript, indexPath
+	oldList, oldTurns, oldAlive, oldCan, oldPath, oldExists := listMetas, turnsOf, aliveOf, canTranscript, indexPath, metaExists
 	dir := t.TempDir()
 	listMetas = func() []session.Meta { return append([]session.Meta(nil), f.metas...) }
 	turnsOf = func(m session.Meta) []transcript.Turn { f.reads[m.Name]++; return f.turns[m.Name] }
 	aliveOf = func(m session.Meta) bool { f.probes[m.Name]++; return f.alive[m.Name] }
 	canTranscript = func(m session.Meta) bool { return m.Kind != session.KindShell }
 	indexPath = func() string { return filepath.Join(dir, "index.db") }
+	metaExists = func(name string) bool {
+		for _, m := range f.metas {
+			if m.Name == name {
+				return true
+			}
+		}
+		return false
+	}
 	resetStoreForTest()
 	t.Cleanup(func() {
 		resetStoreForTest()
-		listMetas, turnsOf, aliveOf, canTranscript, indexPath = oldList, oldTurns, oldAlive, oldCan, oldPath
+		listMetas, turnsOf, aliveOf, canTranscript, indexPath, metaExists = oldList, oldTurns, oldAlive, oldCan, oldPath, oldExists
 	})
 	return f
 }
@@ -134,6 +142,28 @@ func TestDeletedSessionsAreNeverFound(t *testing.T) {
 	Forget("here")
 	if n, _ := s.Names(); len(n) != 0 {
 		t.Fatalf("Forget left rows: %v", n)
+	}
+}
+
+// The trash can remove the meta and call Forget while the pass is reading that session's
+// transcript; the pass must not write the text back afterwards.
+func TestPassDoesNotRewriteASessionTrashedMidRead(t *testing.T) {
+	f := installFake(t)
+	f.metas = []session.Meta{{Name: "doomed", Kind: "claude"}}
+	f.turns["doomed"] = []transcript.Turn{say(1, "user", "secret plan")}
+	_ = runPass() // indexed once, so Forget has rows to remove
+	f.turns["doomed"] = append(f.turns["doomed"], say(2, "user", "more secret"))
+	read := turnsOf
+	turnsOf = func(m session.Meta) []transcript.Turn {
+		turns := read(m)
+		f.metas = nil // the trash: meta removed, then Forget
+		Forget(m.Name)
+		return turns
+	}
+	_ = runPass()
+	s, _ := openStore()
+	if n, _ := s.Names(); len(n) != 0 {
+		t.Fatalf("a session trashed mid-read was written back: %v", n)
 	}
 }
 

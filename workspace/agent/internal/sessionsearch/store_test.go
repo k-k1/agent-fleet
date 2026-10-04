@@ -21,7 +21,15 @@ func mustMatch(t *testing.T, s *Store, q string) []rawHit {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hits, err := s.match(expr, "", 100)
+	held, err := s.Names()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for n := range held {
+		names = append(names, n)
+	}
+	hits, err := s.match(expr, names, 100, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,5 +153,69 @@ func TestStoreRebuildsOnSchemaChange(t *testing.T) {
 	defer s.Close()
 	if n, _ := s.Names(); len(n) != 0 {
 		t.Fatalf("an index of another schema must be dropped: %v", n)
+	}
+}
+
+// Two transcripts that end alike but differ earlier are different conversations: the earlier
+// text must not stay searchable, with or without new turns after it.
+func TestStoreApplyNoticesAnEditedPrefix(t *testing.T) {
+	for _, appendOne := range []bool{false, true} {
+		s := openTestStore(t)
+		docs := []Doc{{Idx: 1, Role: "user", Text: "oldsecret"}, {Idx: 2, Role: "user", Text: "middle"},
+			{Idx: 3, Role: "user", Text: "anchor"}, {Idx: 4, Role: "user", Text: "tail"}}
+		if err := s.Apply("s1", "claude", docs, ""); err != nil {
+			t.Fatal(err)
+		}
+		docs[0].Text = "replacement"
+		if appendOne {
+			docs = append(docs, Doc{Idx: 5, Role: "user", Text: "more"})
+		}
+		if err := s.Apply("s1", "claude", docs, ""); err != nil {
+			t.Fatal(err)
+		}
+		if len(mustMatch(t, s, "oldsecret")) != 0 || len(mustMatch(t, s, "replacement")) != 1 {
+			t.Fatalf("append=%v: an edited first turn left the old text searchable", appendOne)
+		}
+		if got := len(mustMatch(t, s, "middle")); got != 1 {
+			t.Fatalf("append=%v: %d rows for an unchanged turn", appendOne, got)
+		}
+	}
+}
+
+// Round trips through the real SQLite: what the text holds, the same words as a query find.
+func TestStoreMatchesFoldedAndNumberLikeText(t *testing.T) {
+	s := openTestStore(t)
+	_ = s.Apply("s1", "claude", []Doc{
+		{Idx: 1, Role: "user", Text: "バグ修正 stageⅢ ①foo 一〇二"},
+		{Idx: 2, Role: "user", Text: "ﾃﾞｰﾀﾍﾞｰｽ"},
+	}, "")
+	for _, q := range []string{"ﾊﾞｸﾞ", "バグ", "stageⅢ", "①foo", "一〇二", "データベース", "ﾃﾞｰﾀ"} {
+		if got := len(mustMatch(t, s, q)); got != 1 {
+			t.Errorf("%q: %d hits, want 1", q, got)
+		}
+	}
+}
+
+// One session with hundreds of strong matches must not push a filtered session's only match out.
+func TestStoreMatchFiltersAndCapsBeforeTheLimit(t *testing.T) {
+	s := openTestStore(t)
+	var many []Doc
+	for i := 0; i < candidatePool+1; i++ {
+		many = append(many, Doc{Idx: i, Role: "user", Text: "flaky"})
+	}
+	_ = s.Apply("loud", "claude", many, "")
+	_ = s.Apply("quiet", "claude", []Doc{{Idx: 1, Role: "user", Text: "a much longer turn that mentions flaky only once among many other words"}}, "")
+	expr, _ := MatchQuery("flaky")
+	hits, err := s.match(expr, []string{"quiet"}, 3, candidatePool)
+	if err != nil || len(hits) != 1 || hits[0].Session != "quiet" {
+		t.Fatalf("filtered: %d hits, %v", len(hits), err)
+	}
+	hits, _ = s.match(expr, []string{"loud", "quiet"}, 3, candidatePool)
+	per := map[string]int{}
+	for _, h := range hits {
+		per[h.Session]++
+	}
+	if per["loud"] != 3 || per["quiet"] != 1 {
+		t.Fatalf("per-session cap in SQL: %v", per)
 	}
 }

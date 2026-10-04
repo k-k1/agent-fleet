@@ -4,11 +4,11 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	_ "modernc.org/sqlite"
 )
@@ -16,7 +16,7 @@ import (
 // schemaVersion is bumped whenever the tables or IndexText's output change. The index is a cache
 // of transcripts that stay where they are, so a mismatch drops it and the next pass rebuilds it;
 // there is no migration to write.
-const schemaVersion = "1"
+const schemaVersion = "2"
 
 // Store is the on-disk index: one SQLite file holding a plain table of indexed turns and a
 // contentless FTS5 table over their bigram-rewritten text. Contentless because the original text
@@ -66,11 +66,11 @@ func (s *Store) migrate() error {
 		`DROP TABLE IF EXISTS fts`,
 		`DROP TABLE IF EXISTS turns`,
 		`DROP TABLE IF EXISTS sessions`,
-		// docs = rows held; anchor/tail = fingerprints of the second-to-last and last row, which
-		// is how a pass tells "the transcript grew" from "the transcript is a different one".
+		// docs = rows held; prefix/full = digests of every row but the last, and of every row,
+		// which is how a pass tells "the transcript grew" from "the transcript is a different one".
 		// settled = the session's StoppedAt when it was last indexed while stopped ("" otherwise).
 		`CREATE TABLE sessions(name TEXT PRIMARY KEY, kind TEXT NOT NULL, docs INTEGER NOT NULL,
-			anchor TEXT NOT NULL, tail TEXT NOT NULL, settled TEXT NOT NULL)`,
+			prefix TEXT NOT NULL, full TEXT NOT NULL, settled TEXT NOT NULL)`,
 		`CREATE TABLE turns(id INTEGER PRIMARY KEY AUTOINCREMENT, session TEXT NOT NULL, ord INTEGER NOT NULL,
 			idx INTEGER NOT NULL, role TEXT NOT NULL, ts TEXT NOT NULL, text TEXT NOT NULL)`,
 		`CREATE INDEX turns_session_ord ON turns(session, ord)`,
@@ -95,16 +95,16 @@ func (s *Store) migrate() error {
 type sessionState struct {
 	Kind    string
 	Docs    int
-	Anchor  string
-	Tail    string
+	Prefix  string
+	Full    string
 	Settled string
 	Found   bool
 }
 
 func (s *Store) state(name string) (sessionState, error) {
 	var st sessionState
-	err := s.db.QueryRow(`SELECT kind, docs, anchor, tail, settled FROM sessions WHERE name=?`, name).
-		Scan(&st.Kind, &st.Docs, &st.Anchor, &st.Tail, &st.Settled)
+	err := s.db.QueryRow(`SELECT kind, docs, prefix, full, settled FROM sessions WHERE name=?`, name).
+		Scan(&st.Kind, &st.Docs, &st.Prefix, &st.Full, &st.Settled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return sessionState{}, nil
 	}
@@ -112,27 +112,28 @@ func (s *Store) state(name string) (sessionState, error) {
 	return st, err
 }
 
-// fingerprint identifies one doc well enough to tell whether a re-read transcript still starts
-// with what was indexed.
-func fingerprint(d Doc) string {
-	sum := sha256.Sum256([]byte(d.Role + "\x00" + d.TS + "\x00" + d.Text))
-	return strconv.Itoa(d.Idx) + ":" + hex.EncodeToString(sum[:8])
+// digest covers every doc in docs, in order. It is the whole run rather than its last rows: two
+// transcripts that end alike but differ earlier — an edited turn, a different conversation of the
+// same length — must not read as the same one, or the earlier text stays searchable.
+func digest(docs []Doc) string {
+	h := sha256.New()
+	for _, d := range docs {
+		fmt.Fprintf(h, "%d\x00%s\x00%s\x00%d:%s\x00", d.Idx, d.Role, d.TS, len(d.Text), d.Text)
+	}
+	return hex.EncodeToString(h.Sum(nil)[:16])
 }
 
-func edgeFingerprints(docs []Doc) (anchor, tail string) {
+func prefixAndFull(docs []Doc) (prefix, full string) {
 	if n := len(docs); n > 0 {
-		tail = fingerprint(docs[n-1])
-		if n > 1 {
-			anchor = fingerprint(docs[n-2])
-		}
+		return digest(docs[:n-1]), digest(docs)
 	}
-	return anchor, tail
+	return digest(nil), digest(nil)
 }
 
 // Apply brings one session's rows in line with docs, the session's whole conversation as just
-// read. A transcript normally only grows, so when the stored second-to-last row is still in
-// place only the last row (an assistant turn may still have been streaming when it was indexed)
-// and what follows it are rewritten. Anything else — a shorter transcript, a claude sid that
+// read. A transcript normally only grows, so when every stored row but the last is still in
+// place, unchanged, only the last row (an assistant turn may still have been streaming when it
+// was indexed) and what follows it are rewritten. Anything else — a shorter transcript, a claude sid that
 // moved to a sibling jsonl, an edited file — replaces the session's rows outright, which is
 // always correct and only slower.
 func (s *Store) Apply(name, kind string, docs []Doc, settled string) error {
@@ -142,19 +143,19 @@ func (s *Store) Apply(name, kind string, docs []Doc, settled string) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	var st sessionState
-	err = tx.QueryRow(`SELECT kind, docs, anchor, tail, settled FROM sessions WHERE name=?`, name).
-		Scan(&st.Kind, &st.Docs, &st.Anchor, &st.Tail, &st.Settled)
+	err = tx.QueryRow(`SELECT kind, docs, prefix, full, settled FROM sessions WHERE name=?`, name).
+		Scan(&st.Kind, &st.Docs, &st.Prefix, &st.Full, &st.Settled)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	anchor, tail := edgeFingerprints(docs)
+	prefix, full := prefixAndFull(docs)
 	start := 0
 	switch {
 	case st.Kind != kind:
 		// A different kind under the same name cannot be the same conversation.
-	case st.Docs == len(docs) && st.Anchor == anchor && st.Tail == tail:
+	case st.Docs == len(docs) && st.Full == full:
 		start = len(docs) // unchanged
-	case st.Docs >= 2 && len(docs) >= st.Docs && fingerprint(docs[st.Docs-2]) == st.Anchor:
+	case st.Docs >= 1 && len(docs) >= st.Docs && digest(docs[:st.Docs-1]) == st.Prefix:
 		start = st.Docs - 1
 	}
 	if start < len(docs) || start < st.Docs {
@@ -186,10 +187,10 @@ func (s *Store) Apply(name, kind string, docs []Doc, settled string) error {
 			}
 		}
 	}
-	if _, err := tx.Exec(`INSERT INTO sessions(name, kind, docs, anchor, tail, settled) VALUES(?, ?, ?, ?, ?, ?)
-		ON CONFLICT(name) DO UPDATE SET kind=excluded.kind, docs=excluded.docs, anchor=excluded.anchor,
-			tail=excluded.tail, settled=excluded.settled`,
-		name, kind, len(docs), anchor, tail, settled); err != nil {
+	if _, err := tx.Exec(`INSERT INTO sessions(name, kind, docs, prefix, full, settled) VALUES(?, ?, ?, ?, ?, ?)
+		ON CONFLICT(name) DO UPDATE SET kind=excluded.kind, docs=excluded.docs, prefix=excluded.prefix,
+			full=excluded.full, settled=excluded.settled`,
+		name, kind, len(docs), prefix, full, settled); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -247,13 +248,23 @@ type rawHit struct {
 	BM25 float64 // FTS5's bm25(): more negative is a better match
 }
 
-// match runs an already-built MATCH expression and returns up to limit rows, best first. A
-// non-empty session restricts it to that session in SQL, so a session's own matches are not
-// crowded out of the candidate pool by everyone else's.
-func (s *Store) match(expr, session string, limit int) ([]rawHit, error) {
-	rows, err := s.db.Query(`SELECT t.session, t.idx, t.role, t.ts, t.text, bm25(fts)
-		FROM fts JOIN turns t ON t.id = fts.rowid
-		WHERE fts MATCH ? AND (? = '' OR t.session = ?) ORDER BY bm25(fts) LIMIT ?`, expr, session, session, limit)
+// match runs an already-built MATCH expression over the named sessions only and returns, best
+// first, at most perSession rows from any one session and limit rows in all. Both restrictions
+// are applied before the limit, in SQL: filtering or capping a pool already cut to the top rows
+// lets one session with hundreds of strong matches push every other session's only match out
+// of the pool, and a filtered search then finds nothing.
+func (s *Store) match(expr string, sessions []string, perSession, limit int) ([]rawHit, error) {
+	names, err := json.Marshal(sessions)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`SELECT session, idx, role, ts, text, r FROM (
+			SELECT t.session, t.idx, t.role, t.ts, t.text, m.r,
+				ROW_NUMBER() OVER (PARTITION BY t.session ORDER BY m.r) AS rn
+			FROM (SELECT rowid AS id, bm25(fts) AS r FROM fts WHERE fts MATCH ?) m
+			JOIN turns t ON t.id = m.id
+			WHERE t.session IN (SELECT value FROM json_each(?))
+		) WHERE rn <= ? ORDER BY r LIMIT ?`, expr, string(names), perSession, limit)
 	if err != nil {
 		return nil, err
 	}

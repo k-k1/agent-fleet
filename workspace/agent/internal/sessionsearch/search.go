@@ -11,8 +11,6 @@ import (
 	"time"
 	"unicode"
 
-	"golang.org/x/text/width"
-
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
@@ -22,8 +20,8 @@ const (
 	defaultLimit      = 10
 	maxLimit          = 50
 	defaultPerSession = 3
-	// candidatePool is how many FTS5 rows are re-ranked in Go. Filters by kind and repo are
-	// applied after the query, so the pool has to be wider than the answer.
+	// candidatePool is how many FTS5 rows are re-ranked in Go (recency and the schedule weight
+	// can reorder bm25's answer), already filtered and capped per session in SQL.
 	candidatePool = 400
 	snippetRunes  = 200
 
@@ -85,16 +83,20 @@ func Search(q Query) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	raw, err := s.match(expr, q.Session, candidatePool)
-	if err != nil {
-		return Result{}, err
-	}
+	// Only sessions that exist now, and pass the filters, are searched. Checking the metas at
+	// answer time as well as in the pass means a session trashed since the last pass is never
+	// found, whatever the index still holds.
 	metas := map[string]session.Meta{}
+	var names []string
 	total := 0
 	for _, m := range listMetas() {
-		if canTranscript(m) {
-			metas[m.Name] = m
-			total++
+		if !canTranscript(m) {
+			continue
+		}
+		total++
+		metas[m.Name] = m
+		if (q.Session == "" || m.Name == q.Session) && (q.Kind == "" || m.Kind == q.Kind) && (q.Repo == "" || m.Repo == q.Repo) {
+			names = append(names, m.Name)
 		}
 	}
 	held, err := s.Names()
@@ -107,16 +109,19 @@ func Search(q Query) (Result, error) {
 			indexed++
 		}
 	}
+	res := Result{Hits: []Hit{}, Indexed: indexed, Total: total}
+	if len(names) == 0 {
+		return res, nil
+	}
+	raw, err := s.match(expr, names, q.PerSession, candidatePool)
+	if err != nil {
+		return Result{}, err
+	}
 	terms := Terms(q.Q)
 	now := nowFunc()
 	var hits []Hit
 	for _, h := range raw {
-		// The meta is checked at answer time as well as in the pass: a session trashed since the
-		// last pass must not be found, whatever the index still holds.
-		m, ok := metas[h.Session]
-		if !ok || (q.Kind != "" && m.Kind != q.Kind) || (q.Repo != "" && m.Repo != q.Repo) {
-			continue
-		}
+		m := metas[h.Session]
 		hits = append(hits, Hit{
 			Session: m.Name, Display: session.Display(m), Kind: m.Kind, Repo: m.Repo, Archived: m.Archived,
 			Idx: h.Idx, Role: h.Role, TS: h.TS,
@@ -125,7 +130,8 @@ func Search(q Query) (Result, error) {
 		})
 	}
 	sort.SliceStable(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
-	return Result{Hits: capHits(hits, q.Limit, q.PerSession), Indexed: indexed, Total: total}, nil
+	res.Hits = capHits(hits, q.Limit, q.PerSession)
+	return res, nil
 }
 
 // score turns bm25 (negative, lower is better) into a positive score with the two adjustments.
@@ -161,20 +167,20 @@ func capHits(hits []Hit, limit, perSession int) []Hit {
 	return out
 }
 
-// Snippet is about n runes of text around the first place a term occurs, whitespace collapsed,
-// with "…" where it was cut. With no term found (a match through diacritics or a prefix the
+// Snippet is about n runes of text around the first place a term occurs, whitespace collapsed
+// and width-folded the way the index folds it (so "ﾊﾞｸﾞ" finds "バグ"), with "…" where it was cut. With no term found (a match through diacritics or a prefix the
 // plain comparison misses) it is the head of the text.
 func Snippet(text string, terms []string, n int) string {
-	rs := []rune(strings.Join(strings.Fields(text), " "))
+	rs := []rune(strings.Join(strings.Fields(fold(text)), " "))
 	low := make([]rune, len(rs))
 	for i, r := range rs {
-		low[i] = normRune(r)
+		low[i] = unicode.ToLower(r)
 	}
 	at := -1
 	for _, t := range terms {
-		tr := []rune(strings.TrimRight(t, "*"))
+		tr := []rune(fold(strings.TrimRight(t, "*")))
 		for i := range tr {
-			tr[i] = normRune(tr[i])
+			tr[i] = unicode.ToLower(tr[i])
 		}
 		if len(tr) == 0 {
 			continue
@@ -199,13 +205,6 @@ func Snippet(text string, terms []string, n int) string {
 		out += "…"
 	}
 	return out
-}
-
-func normRune(r rune) rune {
-	if f := width.LookupRune(r).Folded(); f != 0 {
-		r = f
-	}
-	return unicode.ToLower(r)
 }
 
 func runeIndex(hay, needle []rune) int {
