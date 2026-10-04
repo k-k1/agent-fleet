@@ -456,3 +456,123 @@
   border: 1px solid var(--border2);
   border-radius: 8px;
 }
+
+/* The notification settings table (NotificationTable). Three narrow switch columns beside a
+   wrapping label column, so it stays a table at phone width instead of scrolling sideways. */
+.noti-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.noti-table-caption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.noti-table th,
+.noti-table td {
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.noti-table thead th {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.25;
+}
+
+.noti-table thead th:first-child,
+.noti-table tbody th {
+  text-align: left;
+}
+
+.noti-table thead th:not(:first-child),
+.noti-table td {
+  width: 76px;
+  text-align: center;
+}
+
+.noti-table tbody th {
+  font-weight: normal;
+}
+
+.noti-table-row {
+  display: block;
+  color: var(--fg);
+}
+
+.noti-table-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+/* A native checkbox drawn as a switch: keyboard and screen-reader behaviour stay the browser's. */
+.noti-switch {
+  appearance: none;
+  position: relative;
+  width: 32px;
+  height: 18px;
+  margin: 0;
+  border: 1px solid var(--btn-border);
+  border-radius: 9px;
+  background: var(--btn);
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background 0.12s;
+}
+
+.noti-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.12s;
+}
+
+.noti-switch:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.noti-switch:checked::after {
+  background: var(--bg);
+  transform: translateX(14px);
+}
+
+.noti-switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.noti-switch:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+@media (max-width: 520px) {
+  .noti-table thead th:not(:first-child),
+  .noti-table td {
+    width: 60px;
+  }
+
+  /* keep-all: a narrow header otherwise breaks a Japanese word one character from its end. */
+  .noti-table thead th {
+    font-size: 11px;
+    word-break: keep-all;
+  }
+}

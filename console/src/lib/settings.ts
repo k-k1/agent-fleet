@@ -675,6 +675,14 @@ export interface Settings {
   // notification read on arrival (no dot, no unread count; the row stays). Questions and
   // permission requests from a child still notify: nobody but a person can answer those.
   childIdleNotify: boolean;
+  // The notification settings table (features/notifications/prefs.ts): per-row overrides of the
+  // unread dot, sparse, row -> false. Absent means the row's legacy key or ON, so an empty map is
+  // exactly the behaviour before the table existed. Synced, because unread is the CP's per-member
+  // seen mark: a device that muted a row marks it read for every device.
+  notifyUnread: Record<string, boolean>;
+  // The same table's "row.os" / "row.voice" overrides. Device-local like ttsSessionNotify:
+  // whether this device interrupts depends on where it is.
+  notifyDevice: Record<string, boolean>;
   // Convert English words to katakana before handing them to VOICEVOX (docs/log/24, the CP's
   // enkana preprocessing), so English is read plausibly in a Japanese accent without leaving
   // Zundamon's voice. It is a transliteration based on the CMU pronouncing dictionary, so a word
@@ -1227,6 +1235,8 @@ const DEFAULTS: Settings = {
   ttsSessionNotify: false,
   usageResetNotify: true,
   childIdleNotify: true,
+  notifyUnread: {},
+  notifyDevice: {},
   ttsEnglishKana: true,
   ttsUserDict: "",
   ttsCacheSec: 900, // 15 minutes
@@ -1847,6 +1857,7 @@ const DEVICE_LOCAL = new Set<keyof Settings>([
   "ttsEnabled", // read-aloud ON/OFF
   "ttsSessionNotify", // voice notification ON/OFF
   "usageResetNotify", // limit-reset notification ON/OFF (does this device make the sound)
+  "notifyDevice", // notification table's OS / read-aloud cells (does this device interrupt)
   "theme", // dark/light
   "mirrorTheme", // session mirror theme (per-device presentation)
   "sharedTheme", // shared session theme (per-device presentation)

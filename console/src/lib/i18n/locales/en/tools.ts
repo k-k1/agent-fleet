@@ -525,7 +525,6 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "tts.userdict": "Reading dictionary",
   "tts.cache": "Audio cache",
   "tts.session_notify": "Session voice notifications",
-  "tts.usage_reset_notify": "Limit-reset notifications",
   "tts.reset_btn": "Reset settings to initial state",
   // --- Engine activity (ADR 0070, the on-demand engine) ---
   "tts.engine_off": "An administrator has switched Zundamon off. Japanese is read by Polly too.",
@@ -586,9 +585,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "tts.note_cache":
     "Keeps the audio of already-read text in memory so re-reading the same text plays with no wait. The cap is total playback time; anything over it is dropped oldest-first (and it clears on a page reload).",
   "tts.note_session_notify":
-    "When a background session returns a reply/confirmation, it announces it briefly by voice with the session name (multiple at once are read in order). It adds voice to browser notifications and works only while the Console tab is visible. It works independently even if “Read aloud” above is off (voice/speed settings are shared).",
-  "tts.note_usage_reset_notify":
-    "When a Claude/Codex usage limit (5-hour / weekly) you were hitting resets, it notifies you in the browser with “You can resume” (plus voice if “Read aloud” is on). It doesn't fire on ordinary resets when you weren't hitting a limit. It uses the value the WsBar usage chip fetches, so it's detected while the Console is open (a reset that happened while closed is notified once the next time you open it).",
+    "When a background session returns a reply/confirmation, it announces it briefly by voice with the session name (multiple at once are read in order). It adds voice to browser notifications and works only while the Console tab is visible. It works independently even if “Read aloud” in the Speech tab is off (voice/speed settings are shared). Which notifications speak is chosen per row in the table below.",
   "tts.note_reset":
     "Resets all TTS settings on this tab to their initial state (read-aloud and voice notifications off, everything else at the recommended defaults). The reading dictionary is not cleared.",
   "tts.char_remove": "Remove from session assignment",

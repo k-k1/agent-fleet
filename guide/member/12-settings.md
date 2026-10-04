@@ -112,17 +112,47 @@ Reads out replies from sessions and assistants.
 - **How it reads** — abbreviate code fragments, pause after particles, read English as kana, and a
   **pronunciation dictionary** (`written=reading`, one per line).
 - **Advanced** — background playback and volume, panning to match the pane position, audio cache.
-- **Audio notifications** — announce session state changes and rate-limit resets by voice.
+- **Audio notifications** — announce session state changes and usage-limit resets by voice; which ones is
+  chosen in the Notifications tab.
 - **Read-aloud language** — Auto (follows the display language) / Japanese / English. With the engine on
   "auto", English switches to a Polly English voice. This is separate from the assistant's **Output language**.
 - "Reset to defaults" resets the speech settings only (the pronunciation dictionary is kept).
 
 ### Notifications
 
-- **Audio notifications** on / off (the entry point into the speech tab's detail).
-- **Service notifications** — stop sending to Discord / Slack **without disconnecting**. The connection itself
-  lives in the "Chat integration" tab ([08](10-integrations.md)).
-- **Allow desktop notifications** — asks the browser for permission.
+- **Allow desktop notifications** — shown while the browser has not been asked yet; it asks for permission.
+  If the browser blocked notifications for this site, the tab says so: only the site settings can undo it.
+- **Session voice notifications** on / off — the master switch for the "Read aloud" column below (also the
+  speaker button in the notification centre).
+- **The notification table** — one row per kind of notification, one switch per effect:
+
+  | Row | Covers |
+  |---|---|
+  | Turn finished | a session finished its turn and waits for you |
+  | Turn finished (child session) | the same, for a session another session started with `create_session` |
+  | Needs your answer | a question, a plan approval, a permission request |
+  | Usage limit reset | a Claude / Codex 5-hour or weekly limit you had hit has reset |
+  | Session report | a session reported to an assistant conversation |
+  | Rate limit | a session hit a rate limit, or resumed after one |
+  | Scheduled runs | a scheduled run finished, failed or was skipped |
+  | Handoffs | a handoff offered to you, accepted or expired |
+  | Cloud sign-in | AWS or Google Cloud needs you to sign in, or an SSO session is about to expire |
+  | Terminal notifications | a program in a session sent OSC 9 / 99 / 777 |
+  | Other notices | assistant chat paused or near its context limit, submodule sync, stop after turn, a workspace start that was stopped, and any kind added later |
+
+  - **Unread dot** — off marks the notification read the moment it arrives: no red dot on the session and no
+    unread count, while the notification centre keeps it as a read row. This column follows you to your
+    other devices (the read mark does anyway). It cannot be turned off for "Needs your answer", "Handoffs"
+    and "Cloud sign-in", which wait for a person.
+  - **OS notification** and **Read aloud** — this device only, so a phone and a desk can differ. Read aloud
+    also needs "Session voice notifications" on; a usage-limit reset speaks whenever "Read aloud" is on in
+    the speech tab instead.
+  - Everything is on by default, which is how notifications behaved before the table. The two switches it
+    replaced carry over as they were: "Notify when a child session is waiting for input" became the
+    child-session row (all three cells), "Limit-reset notifications" the usage-limit row.
+  - Nothing pops up or speaks for the session in the pane you are working in, whatever the table says.
+- **Service notifications** — stop sending to Discord / Slack **without disconnecting**. The connection itself,
+  and which events each service receives, live in the "Chat integration" tab ([08](10-integrations.md)).
 - History is in the **notification centre** (last 7 days), opened from the bell in the top bar. An entry
   you have not read puts a red dot on its session; **"Mark all as read"** clears them all at once
   ([02](02-sessions.md#reading-state-badges-and-notifications)).
