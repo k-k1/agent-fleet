@@ -31,10 +31,12 @@ var (
 	// because gitleaks' generic-api-key rule reads "Auth" in the name as a credential
 	// keyword; a client_id is public.
 	builtinGitHubOAuthClientID = "Ov23liJpLp15wcnFMDnV" // gitleaks:allow
-	builtinGitHubAppClientID   = ""
+	// The project's GitHub App (Device flow on, installable by any account). Measured: a
+	// nonexistent scope still yields a device code, so the probe classifies it as a GitHub App.
+	builtinGitHubAppClientID = "Iv23liEMe78j1i77oAme"
 	// builtinGitHubAppSlug is the GitHub App's URL name. GitHub exposes no way to learn it
 	// from a client_id, and the install link is built from it.
-	builtinGitHubAppSlug = ""
+	builtinGitHubAppSlug = "agent-fleet-git"
 )
 
 // GitHub row sources (tenant_git_oauth.source).
