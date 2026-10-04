@@ -938,3 +938,13 @@ How it is carried out:
 
 The guide's `ref/browser-pane.md` ("Where there is no browser pane"), `ref/deploy-targets.md`,
 the agent-facing `workspace/notes/browser.md` and `deploy/kubernetes/README.md` say the same.
+
+## Note (2026-10-04) — the af MCP server no longer lists the browser tools here (#1614)
+
+The seven browser tools (`list_chromium_targets` … `set_chromium_control_mode`) were still in the
+af MCP server's `tools/list` and only refused when called. The Agent now passes
+`--browser-unavailable <runtime>` to every `mcp-stdio` it configures (the session-side af server
+for every kind, and the assistant's), and the server leaves those tools out of `tools/list`; a call
+that names one anyway still answers `browser_unavailable`. The argv carries it rather than the
+variable because the variable does not reach every agent's MCP children: codex starts them
+default-deny and muse, cursor, kiro and copilot are handed an explicit environment.

@@ -59,9 +59,9 @@ func (c *ChatConversation) afServerArgs() ([]string, bool) {
 		return nil, false
 	}
 	if c.AFWriteEnabled() {
-		return []string{"mcp-stdio", "--write", "--conv", c.ID}, true
+		return append([]string{"mcp-stdio", "--write", "--conv", c.ID}, mcpreg.BrowserUnavailableArgs()...), true
 	}
-	return []string{"mcp-stdio"}, true
+	return append([]string{"mcp-stdio"}, mcpreg.BrowserUnavailableArgs()...), true
 }
 
 // --- claude ----------------------------------------------------------------------

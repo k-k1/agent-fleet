@@ -669,3 +669,7 @@ runbook の "The load balancer" も同じことを書いている。
 - 変数が効くのはワークスペースの次の起動から（pod テンプレートはそのとき書かれる）。ほかのランタイムは何も変わらない。
 
 ガイドの `ref/browser-pane.md`（「ブラウザペインが無い配備」）、`ref/deploy-targets.md`、エージェント向けの `workspace/notes/browser.md`、`deploy/kubernetes/README.md` も同じことを書いている。
+
+## 注記（2026-10-04）— このランタイムでは af MCP サーバーがブラウザツールを一覧に出さない（#1614）
+
+7 つのブラウザツール（`list_chromium_targets` … `set_chromium_control_mode`）は af MCP サーバーの `tools/list` に残り、呼ばれて初めて断っていた。Agent は自分が構成するすべての `mcp-stdio`（全 kind のセッション側 af サーバーとアシスタントのもの）に `--browser-unavailable <runtime>` を渡し、サーバーはそれらのツールを `tools/list` から外す。それでも名前で呼ばれたときは `browser_unavailable` を返す。変数ではなく argv で渡すのは、変数がすべてのエージェントの MCP 子プロセスに届くわけではないからである（codex は既定で環境を渡さず、muse・cursor・kiro・copilot には明示した環境だけが渡る）。
