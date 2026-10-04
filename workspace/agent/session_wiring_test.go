@@ -49,6 +49,7 @@ func TestSessionWiringIsLive(t *testing.T) {
 
 		"BrowseRoot":     func(t *testing.T) { sameSessionFunc(t, w.BrowseRoot, browseRoot) },
 		"MaxUploadBytes": func(t *testing.T) { sameSessionFunc(t, w.MaxUploadBytes, maxUploadBytes) },
+		"ReadRoots":      func(t *testing.T) { sameSessionFunc(t, w.ReadRoots, allowedReadRoots) },
 
 		"IsSvnRepo":       func(t *testing.T) { sameSessionFunc(t, w.IsSvnRepo, isSvnRepo) },
 		"RepoJobsRunning": func(t *testing.T) { sameSessionFunc(t, w.RepoJobsRunning, repoJobsRunning) },

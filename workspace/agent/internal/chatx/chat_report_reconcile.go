@@ -37,6 +37,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -74,6 +75,12 @@ type reportSignals struct {
 	PendingQuestion   bool // waiting on a question (interim — not a completion at all)
 	PendingPlan       bool // waiting on plan approval
 	PendingPermission bool // waiting on tool permission
+
+	// StopContinued means another Stop hook blocked the Stop that wrote this idle marker, so
+	// the turn went on (#1600): the marker is that stop's, not the turn's end. Read only
+	// for claude and codex Terminal sessions, whose idle comes from our own Stop hook running
+	// alongside the user's (reportStopContinued).
+	StopContinued bool
 
 	SubagentBusy   bool // freshness of the BG subagent / Workflow jsonl (claude)
 	TranscriptBusy bool // freshness of the main transcript (claude — covers thinking gaps)
@@ -184,6 +191,9 @@ func (s reportSignals) busyEvidence() []string {
 	}
 	if s.PendingPermission {
 		ev = append(ev, "pending-permission")
+	}
+	if s.StopContinued {
+		ev = append(ev, "stop-continued")
 	}
 	if s.SubagentBusy {
 		ev = append(ev, "subagent-busy")
@@ -391,6 +401,9 @@ func collectReportSignals(m session.Meta, since, hintReason, selfAt string) repo
 		s.TranscriptBusy = reportTranscriptBusy(sid, markerAt)
 		collectAbortSignal(&s, m.Name, sid, since)
 	}
+	if s.markerIdle() && !s.TailAborted {
+		s.StopContinued = reportStopContinued(m, sid, markerAt)
+	}
 	if e, ok := status.ReadExit(m.Name); ok {
 		switch e.Reason {
 		case "oom", "crashed", "killed":
@@ -494,6 +507,23 @@ func reportTranscriptBusy(sid string, marker time.Time) bool {
 		return true // no end-of-turn marker: freshness is the only handle (the v1 waiter's position)
 	}
 	return at.After(marker.Add(reportMarkerGrace))
+}
+
+// reportStopContinued asks the kind whether the Stop behind an idle marker was blocked by
+// another Stop hook (#1600). Only the kinds whose idle comes from our Stop hook running beside
+// the user's can be fooled that way: a managed codex ends on turn/completed, which the
+// app-server sends after every Stop hook has decided, and the other kinds have no Stop hook.
+// It runs only when the marker is idle, so the transcript or rollout read stays off the busy
+// sessions. An abort at the tail is excluded by the caller: that is how the continued turn
+// ended, with no further Stop.
+func reportStopContinued(m session.Meta, sid string, marker time.Time) bool {
+	switch normalizeKind(m.Kind) {
+	case session.KindClaude:
+		return claude.StopContinued(sid, marker)
+	case session.KindCodex:
+		return m.DriverKind() != session.DriverManaged && codex.StopContinued(m, marker)
+	}
+	return false
 }
 
 // reportPaneBusy checks the pane's interrupt affordance (the same grounds as the reverse heal).

@@ -52,6 +52,9 @@ type Deps struct {
 	// everything, so the zero value is not allowed.
 	BrowseRoot     func() string
 	MaxUploadBytes func() int64
+	// ReadRoots are the roots the file reader serves from, browse root first (fs.go
+	// allowedReadRoots). The changed-files list spells its FileView paths against them.
+	ReadRoots func() []string
 
 	// --- Repositories (svn.go / repo_jobs.go) ---
 	//

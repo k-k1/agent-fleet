@@ -247,6 +247,8 @@ func TestReportEvidenceTable(t *testing.T) {
 		{"main transcript is fresh (thinking gap, sqmconc)",
 			with(func(s *reportSignals) { s.TranscriptBusy = true }), false, "", "", false},
 		{"pane shows an interrupt affordance", with(func(s *reportSignals) { s.PaneBusy = true }), false, "", "", false},
+		{"another Stop hook blocked the marker's stop (#1600)",
+			with(func(s *reportSignals) { s.StopContinued = true }), false, "", "", false},
 		{"deliberately stopped keeps the arm", with(func(s *reportSignals) { s.Stopped = true }), false, "", "", false},
 		{"completion carrying an abort hint",
 			with(func(s *reportSignals) { s.HintReason = ReportReasonTurnAborted }),
