@@ -190,9 +190,10 @@ const cachedWorkItems = (): WorkItem[] =>
 
 // makeWorkItemLink builds a non-navigating anchor for a ticket reference. A plain click / Enter
 // opens the work item detail modal; Ctrl/Cmd-click and a middle click go straight to the tracker,
-// the way the rail row's external link does. The token is classified again at click and hover
-// time, not trusted from the render: the cache and the repository list may have changed since.
-function makeWorkItemLink(text: string, repo: string | null, rendered: WorkItemRef): HTMLAnchorElement {
+// the way the rail row's external link does. The ticket is fixed at render — only a cached row is
+// ever linked, so its host is known then — but the row and the launch hint are read at click and
+// hover time: the cache and the repository list may have changed since.
+function makeWorkItemLink(text: string, repo: string | null, ref: WorkItemRef): HTMLAnchorElement {
   const a = document.createElement("a");
   a.className = "md-ref-link md-workitem-link";
   a.textContent = text;
@@ -200,13 +201,13 @@ function makeWorkItemLink(text: string, repo: string | null, rendered: WorkItemR
   a.tabIndex = 0;
   const current = () => {
     const ctx = workItemRefContext(repo);
-    // null now means the row left the cache after the link was drawn: the panel still opens, as
-    // the reference-only stand-in on the host the row had.
-    const ref = classifyWorkItemRef(text, ctx) ?? rendered;
     // Launch from the working copy this text is about only when the ticket belongs to it — same
     // path AND same host; read now, since the repository list may have arrived after the text.
     const repoHint =
       repo && ctx.origin && ref.provider === ctx.origin.provider && ref.key.startsWith(`${ctx.origin.path}#`) ? repo : "";
+    // ref is never re-classified: with the same owner/name cached on both hosts, losing the drawn
+    // host's row would hand the link to the other host's ticket. A row that left the cache opens
+    // as the reference-only stand-in on the host it had.
     return { ...resolveWorkItemRef(ref, ctx.items), repoHint };
   };
   wireTooltip(a, () => {
