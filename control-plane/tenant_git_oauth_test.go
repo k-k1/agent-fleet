@@ -24,6 +24,10 @@ import (
 
 func gitOAuthEnv(t *testing.T) (*store.SQL, *manager, tenantGitOAuthAPI) {
 	t.Helper()
+	stubGitHubProbe(t, func(id string) (string, string, *ghProbeError) {
+		return ghAppTypeFromClientID(id), ghTypeByPrefix, nil
+	})
+	setBuiltinGitHubApps(t, "", "", "") // a test opts into built-in apps explicitly
 	st := p3Store(t)
 	mgr := p3Manager(t, st)
 	return st, mgr, newTenantGitOAuthAPI(mgr)

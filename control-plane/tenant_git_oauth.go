@@ -81,6 +81,11 @@ func (m *manager) gitOAuthApp(ctx context.Context, tenantID, provider string) (c
 	if tenantID == "" || !validGitOAuthProvider(provider) {
 		return "", "", false, nil
 	}
+	// GitHub's row may name a built-in app instead of a client_id (github_builtin_apps.go).
+	if provider == gitOAuthGitHub {
+		app, ok, err := m.githubOAuthApp(ctx, tenantID)
+		return app.ClientID, "", ok, err
+	}
 	row, found, err := m.store.GetTenantGitOAuth(ctx, tenantID, provider)
 	if err != nil {
 		return "", "", false, err

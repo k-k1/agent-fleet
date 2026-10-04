@@ -3,6 +3,8 @@
 [English](0052-tenant-git-oauth.md) | 日本語
 
 - 状態: **採用**（2026-08-22）。検討の記録は [docs/71](../log/71-tenant-git-oauth.md)。
+  2026-10-04 改訂（issue #1667）: GitHub に組み込みアプリと種類の自動判別を追加——決定 8・9。
+  決定 1・2 を一部置き換える。
 - 関連: [0043-login-idp.md](0043-login-idp.ja.md) 決定 29/30（テナント定義の IdP＝**承認が要る**側）・
   決定 24/25（テナントの外へ届くものは運用者、中で閉じるものはテナント管理者） /
   [0047-tenant-network-restriction.md](0047-tenant-network-restriction.ja.md) 決定 6（同じ線引き）
@@ -21,6 +23,10 @@
 単一テナントのデプロイ（native / compose）では default テナントの行が事実上の
 デプロイ設定になる。層を 2 つ持つより、1 つの層を全構成で共有する方が説明も導線も 1 本になる。
 
+🔴 **2026-10-04 改訂（#1667）:** GitHub の行は client_id の代わりにバイナリへ組み込んだ
+**組み込みアプリ**を指せるようになった。運用者側には、組み込みアプリを全テナントから外す
+スイッチ `AF_GITHUB_BUILTIN_APPS=off` が 1 つだけ増える。決定 8 を参照。
+
 ## 決定 2 — env は**フォールバックにもしない**。移送もしない
 
 「行が無ければ env」を残すと、*どのアプリに送られるか*が**テナントによって変わる**。
@@ -30,6 +36,12 @@
 **起動時だけ嘘になり**、`.env` を消し忘れたデプロイで再起動のたびに復活する行ができる。
 稼働中デプロイの代償は「テナント管理者が登録し直すまで OAuth ボタンが出ない」だけで、
 token 貼付も既存接続も止まらない。
+
+🔴 **2026-10-04 改訂（#1667）:** GitHub の行が無い**デプロイの default テナント**は、組み込みの
+OAuth App を使うようになった。この決定が退けたフォールバックとは別物である——値は消し忘れる
+env ではなくバイナリにあり、テナント設定の画面は実際に効いている選択を「（既定）」付きで常に
+表示する。見る場所は 1 つのまま。default 以外のテナントは、行が無ければ今までどおりボタンが
+出ない。決定 8 を参照。
 
 ## 決定 3 — **承認を要らない**（`tenant_idp` と揃えない）
 
@@ -105,6 +117,60 @@ key/secret を Agent へ渡し、Agent が自前で回していた ＝ **テナ�
 key/secret を必須にしているため、**アップグレードの窓で 1 回だけ**「ワークスペースを
 停止→起動」が要る（CP がその旨に文言を差し替える）。
 
+## 決定 8 — GitHub の**組み込みアプリを 2 つ**同梱し、テナントはどちらか・自前・使わないを選ぶ（2026-10-04・#1667）
+
+個人の native / WSL では、持ち主が GitHub で OAuth App を作り、Device flow を有効にして client_id を
+貼るまで OAuth ボタンが出なかった。プロジェクトが所有するアプリを 2 つリリースに同梱する。
+
+| source | client_id | 向き |
+|---|---|---|
+| `builtin_oauth` — 組み込み OAuth App | バイナリ | 個人。認可 1 回、scope は `repo workflow` |
+| `builtin_app` — 組み込み GitHub App | バイナリ | 小さなチーム。インストール→リポジトリ選択→認可。権限が細かい |
+| `custom` — テナント自前 | 行 | 自社の OAuth App **または** GitHub App を運用する組織 |
+| `none` | — | ボタンなし。トークン貼付で接続 |
+
+- **バイナリに入れてよい理由。** device flow は client_id だけで認証するので漏れる secret が無い
+  （gh も同じ）。トークンはメンバーのワークスペースに入り、アプリの持ち主には届かない。
+- **callback が使える構成でも device flow に揃える理由。** 同梱アプリには配備ごとのドメインを
+  callback として登録しきれない（GitHub は 1 アプリ 10 個まで）。native なら loopback の callback が
+  成立するが、code の交換に client_secret が要り、それがバイナリに載ることになる。全構成で
+  共通に使えるのは device flow だけ。
+- **両方を置く理由。** GitHub App の方が付与は狭い（リポジトリ単位のインストール・細かい権限・
+  組織が管理できる）が、インストールの 1 手間は個人には実際の敷居になる。OAuth App は `repo` が
+  広い代わりに 1 クリック。どちらも万人向けではないので、テナントが選ぶ。
+- **既定**は `builtin_oauth`。デプロイの default テナントだけ（決定 2 の改訂）。
+- **client_id の置き場所。** `github_builtin_apps.go`。`-ldflags -X` で差し替えられる。値の無い
+  ビルド（fork）は組み込みの選択肢を出さない。それを指す行は「ボタンなし」に解決し、画面が
+  理由を示す。
+- **運用者のスイッチ** `AF_GITHUB_BUILTIN_APPS=off` は両方の組み込みアプリを全テナントから外す。
+  第三者のアプリにメンバーを送ってはならない組織のため。テナントの外へ届くものなのでデプロイ
+  設定とする（0043 決定 24/25）。
+- **GitHub App はインストール先にしか届かない。** 認可の後で CP が `GET /user/installations` を
+  確かめ、1 つも無ければその場でインストールのリンク付きで知らせる（後で clone が落ちるのを
+  待たない）。GitHub App のインストールページは client_id からは分からないので、自前の GitHub App
+  ではテナント管理者が `https://github.com/apps/<名前>` を入力する。
+- **期限付きのユーザートークンはまだ更新しない。** 「Expire user authorization tokens」が有効な
+  GitHub App は 8 時間の token と refresh token を返す。device flow で得た token は client_secret
+  なしで更新できるが、af は今は access token しか保存しないので、接続はしたうえでメンバーに
+  警告し、管理画面では期限をオフにするよう案内する。更新への対応は #1676。
+
+## 決定 9 — 自前アプリの種類は**尋ねずに判別する**（2026-10-04・#1667）
+
+CP は client_id が OAuth App か GitHub App かを知る必要がある（scope の扱い・インストールの確認）。
+管理者に尋ねると、入力した場所から遠いところで落ちる誤答を招く。強い順に 3 つの手掛かりを使う。
+
+1. **保存時:** 存在しない scope を付けた `POST /login/device/code`。github.com で実測: OAuth App は
+   `invalid_scope`（device code は作られない）、GitHub App は scope を無視して device code を返す
+   （使われずに失効する）、未知の client_id は `Not Found`、Device flow が無効なアプリは
+   `device_flow_disabled`。後の 2 つは保存時に断る——保存すると設定済みに見え、メンバーが
+   ボタンを押したときに初めて落ちるため。
+2. **毎回の認可の後:** GitHub が文書化しているトークンの接頭辞——`gho_` は OAuth App、`ghu_` は
+   GitHub App。行を訂正する（行がまだその client_id を指している間だけ）。
+3. **保存時に GitHub へ届かなかったときの代替:** client_id の形（`Ov23…` / 16 進 20 桁 → OAuth
+   App、`Iv1.…` / `Iv23…` → GitHub App）。GitHub は文書化していないので、画面では推定として示す。
+
+どの手掛かりで決まったかを行に記録する（`app_type_by`: `probe` / `token` / `prefix`）。
+
 ## 影響
 
 - `BITBUCKET_OAUTH_KEY` / `_SECRET` は読まれなくなる。CFN の `BitbucketOauthKey` と
@@ -115,3 +181,6 @@ key/secret を必須にしているため、**アップグレードの窓で 1 �
 - `AUTH=dev` のデプロイで管理モーダルが開くようになる（今まで開かなかった）。
 - ワークスペースに `AF_GIT_OAUTH_TOKEN` が 1 つ増え、`secrets.enc` から Bitbucket の
   `key`/`secret` が（次回 refresh 時に）消える。逆に refresh は CP 到達性に依存する。
+- （#1667）`tenant_git_oauth` に `source`・`app_type`・`app_type_by`・`install_url` を追加
+  （migration 0088 / pg 0073）。既存行は `custom`。env `AF_GITHUB_BUILTIN_APPS` を新設。
+  GitHub の OAuth 接続ごとに、source と client_id を記した監査行 `git_oauth.github_connect` を書く。

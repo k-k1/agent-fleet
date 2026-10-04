@@ -649,6 +649,11 @@ export const tools = {
   "git.rename": "リネーム",
   "git.rename_cancel": "取消",
   "git.github_oauth_unconfigured": "このテナントに GitHub の OAuth アプリが登録されていません。テナント管理者に「テナント設定 › 連携 › git プロバイダ OAuth」での登録を依頼するか、アクセストークンの貼付で接続してください。",
+  "git.github_app_install_hint": "このテナントは GitHub App で接続します。GitHub App はインストールされたリポジトリにしか届きません。接続の前後どちらでもよいので、自分のアカウントや organization にインストールしてリポジトリを選んでください。",
+  "git.github_app_install_link": "アプリをインストール / リポジトリを選ぶ",
+  "git.github_app_not_installed": "接続しましたが、GitHub App があなたから見えるどのアカウントにもインストールされていないため、まだどのリポジトリにも届きません。インストールしてリポジトリを選んでください。",
+  "git.github_app_connected_hint": "テナントの GitHub App で接続した場合、届くのはアプリをインストールしたリポジトリだけです。追加・変更するには:",
+  "git.github_token_expires": "接続しましたが、この GitHub App のトークンは約 8 時間で失効し、af はまだ更新しません。テナント管理者に、アプリ設定の「Expire user authorization tokens」をオフにするよう依頼してください。",
   // OAuth の導線そのものを出さないときの説明（docs/log/71）。押せないボタンを置いても、
   // 押した本人には直せない（設定はテナント管理者のもの）。
   "git.oauth_unregistered": "このテナントには OAuth アプリが登録されていないため、OAuth での接続は出していません。テナント管理者に「テナント設定 › 連携 › git プロバイダ OAuth」での登録を依頼してください。",

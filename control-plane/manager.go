@@ -82,8 +82,11 @@ type manager struct {
 	// (<dataRoot>/<key>) default-tenant path from a nested (<dataRoot>/<slug>/<key>)
 	// one without a per-call store lookup.
 	defaultTenantID string
-	agentHost       string
-	memory          string
+	// githubBuiltinOff is the operator's AF_GITHUB_BUILTIN_APPS=off: no tenant may send
+	// its members to the GitHub apps compiled into this binary (github_builtin_apps.go).
+	githubBuiltinOff bool
+	agentHost        string
+	memory           string
 	// memMaxBytes is the deployment-wide HARD ceiling for a per-workspace RAM cap
 	// (AF_MAX_WORKSPACE_MEM, bytes; 0 = no extra ceiling). It bounds a tenant_admin's
 	// per-user mem_limit on top of the per-tenant cap so no single workspace can be

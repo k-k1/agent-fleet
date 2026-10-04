@@ -47,6 +47,38 @@ Members can always connect GitHub or Bitbucket by pasting a token. Registering y
 tenant's **own** OAuth app adds the nicer path: a **"Connect with OAuth"** button on
 that provider, so nobody has to mint a token by hand.
 
+### GitHub: choose which app
+
+GitHub's card does not start empty. You pick which app the button talks to:
+
+| Choice | What members go through | When to pick it |
+|---|---|---|
+| **Built-in OAuth App** | One authorization. The token reaches every repository the member can access (scopes `repo` and `workflow`). | Individuals, small setups. This is the **default** of a deployment's first tenant, so a personal install has the button from the start. |
+| **Built-in GitHub App** | Install the app on their account or organisation, choose the repositories, then authorize. | Teams that want narrower, per-repository access. In an organisation only an owner can install it. |
+| **Your own app** | Whatever your app is — an OAuth App or a GitHub App you registered. | Organisations that keep their own app. |
+| **None** | No button; members paste a token. | |
+
+The built-in apps need nothing from you, and they cannot see members' tokens: the
+device flow GitHub uses needs no secret, and the token goes only into the member's own
+workspace. The operator can withdraw them from the whole deployment
+(`AF_GITHUB_BUILTIN_APPS=off`); the card then says so.
+
+For **your own app**, paste its client_id. Whether it is an OAuth App or a GitHub App is
+**checked with GitHub when you save** and shown on the card; if GitHub cannot be reached,
+the card shows an estimate, which the first member's connection confirms. Two things to
+set on GitHub's side:
+
+- Tick **Enable Device Flow** — a client_id without it is refused when you save.
+- For a GitHub App, turn **Expire user authorization tokens** off (af does not renew
+  them yet, so connections would stop after about eight hours), and enter the app's page
+  (`https://github.com/apps/<name>`) as the install page. A GitHub App reaches only the
+  repositories it is installed on; members are sent there to install it, and are warned
+  after connecting if it is installed nowhere.
+
+**Reset to default** removes your choice.
+
+### Bitbucket and Jira
+
 To register one:
 
 1. Create an OAuth app in your own organisation on the provider's side. The screen

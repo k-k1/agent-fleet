@@ -258,6 +258,7 @@ func main() {
 	// docs/log/81: the parent of the preview subdomains (e.g. pv.example.com). A leading
 	// "." and upper case are normalised away so it can be compared — reading a slightly
 	// mistyped setting charitably beats having the whole feature go dead.
+	mgr.githubBuiltinOff = githubBuiltinOffFromEnv(os.Getenv("AF_GITHUB_BUILTIN_APPS"))
 	mgr.previewDomain = strings.ToLower(strings.Trim(strings.TrimSpace(os.Getenv("AF_PREVIEW_DOMAIN")), "."))
 	cfg := config{
 		addr:          envx.Or("CP_ADDR", ":8080"),

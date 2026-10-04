@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -39,6 +40,47 @@ type gitOAuthBody struct {
 	// flow has no callback (GitHub's device flow). Returning it is the difference between
 	// a form somebody can complete and one they have to guess at.
 	RedirectURI string `json:"redirect_uri,omitempty"`
+
+	// GitHub only (issue #1667). Source is writable: none / builtin_oauth / builtin_app /
+	// custom, and a save without it means custom so a client written against the old
+	// shape keeps working. InstallURL is writable for a custom GitHub App.
+	Source     string `json:"source,omitempty"`
+	InstallURL string `json:"install_url,omitempty"`
+	// Read-only. IsDefault says Source is the default of a tenant with no row. AppType /
+	// AppTypeBy are what the client_id turned out to be and how that was learnt.
+	IsDefault bool               `json:"is_default,omitempty"`
+	AppType   string             `json:"app_type,omitempty"`
+	AppTypeBy string             `json:"app_type_by,omitempty"`
+	Builtin   *githubBuiltinWire `json:"builtin,omitempty"`
+}
+
+// githubBuiltinWire tells the screen which built-in sources it may offer, and why one
+// it may not is missing: a build without the apps and an operator who switched them off
+// are fixed by different people.
+type githubBuiltinWire struct {
+	OAuthApp      bool `json:"oauth_app"`
+	GitHubApp     bool `json:"github_app"`
+	OffByOperator bool `json:"off_by_operator,omitempty"`
+}
+
+// githubCard fills the GitHub-only fields of a card from the tenant's effective app.
+func (m *manager) githubCard(ctx context.Context, tenantID string, b *gitOAuthBody) error {
+	app, _, err := m.githubOAuthApp(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	b.Source, b.IsDefault = app.Source, app.Default
+	if app.Source == ghSourceCustom {
+		b.AppType, b.AppTypeBy, b.InstallURL = app.Type, app.TypeBy, app.InstallURL
+	} else {
+		b.ClientID = ""
+	}
+	b.Builtin = &githubBuiltinWire{
+		OAuthApp:      m.githubBuiltinAvailable(ghSourceBuiltinOAuth),
+		GitHubApp:     m.githubBuiltinAvailable(ghSourceBuiltinApp),
+		OffByOperator: m.githubBuiltinOff,
+	}
+	return nil
 }
 
 // list (GET /api/admin/tenants/{slug}/git-oauth) — one entry per KNOWN provider, whether
@@ -61,12 +103,19 @@ func (a tenantGitOAuthAPI) list(w http.ResponseWriter, r *http.Request) {
 	out := make([]gitOAuthBody, 0, len(gitOAuthProviders))
 	for _, p := range gitOAuthProviders {
 		row := byProvider[p]
-		out = append(out, gitOAuthBody{
+		card := gitOAuthBody{
 			Provider: p, ClientID: row.ClientID,
 			HasSecret: row.SecretEnc != "", NeedsSecret: gitOAuthNeedsSecret(p),
 			UpdatedBy: row.UpdatedBy, UpdatedAt: row.UpdatedAt,
 			RedirectURI: a.mgr.gitOAuthRedirectURI(p),
-		})
+		}
+		if p == gitOAuthGitHub {
+			if err := a.mgr.githubCard(r.Context(), t.ID, &card); err != nil {
+				writeAPIErr(w, internalErr(err))
+				return
+			}
+		}
+		out = append(out, card)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"providers": out, "tenant": t.Slug})
 }
@@ -89,7 +138,14 @@ func (a tenantGitOAuthAPI) save(w http.ResponseWriter, r *http.Request) {
 	}
 	b.ClientID = strings.TrimSpace(b.ClientID)
 	b.ClientSecret = strings.TrimSpace(b.ClientSecret)
-	if b.ClientID == "" {
+	var gh githubSave
+	if provider == gitOAuthGitHub {
+		var aerr *apiError
+		if gh, aerr = a.mgr.prepareGitHubSave(&b); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+	} else if b.ClientID == "" {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "client_id is required"})
 		return
 	}
@@ -123,6 +179,7 @@ func (a tenantGitOAuthAPI) save(w http.ResponseWriter, r *http.Request) {
 	row := store.TenantGitOAuth{
 		ID: prev.ID, TenantID: t.ID, Provider: provider, ClientID: b.ClientID,
 		SecretEnc: secretEnc, KeyRef: keyRef, UpdatedBy: ident.ID,
+		Source: gh.source, AppType: gh.appType, AppTypeBy: gh.appTypeBy, InstallURL: gh.installURL,
 		CreatedAt: prev.CreatedAt, UpdatedAt: now,
 	}
 	if !existed {
@@ -137,13 +194,87 @@ func (a tenantGitOAuthAPI) save(w http.ResponseWriter, r *http.Request) {
 	_ = a.mgr.store.InsertAudit(r.Context(), store.AuditLog{
 		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
 		Action: "tenant.git_oauth_save", Target: provider,
-		Detail: "client_id=" + b.ClientID + " secret=" + boolWord(secretEnc != ""), At: now,
+		Detail: "client_id=" + b.ClientID + " secret=" + boolWord(secretEnc != "") + gh.auditDetail(), At: now,
 	})
-	writeJSON(w, http.StatusOK, gitOAuthBody{
+	out := gitOAuthBody{
 		Provider: provider, ClientID: row.ClientID, HasSecret: secretEnc != "",
 		NeedsSecret: gitOAuthNeedsSecret(provider), UpdatedBy: ident.ID, UpdatedAt: now,
 		RedirectURI: a.mgr.gitOAuthRedirectURI(provider),
-	})
+	}
+	if provider == gitOAuthGitHub {
+		if err := a.mgr.githubCard(r.Context(), t.ID, &out); err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// githubSave is the GitHub-only part of a save, decided before anything is written.
+type githubSave struct {
+	source, appType, appTypeBy, installURL string
+}
+
+func (g githubSave) auditDetail() string {
+	if g.source == "" {
+		return ""
+	}
+	d := " source=" + g.source
+	if g.appType != "" {
+		d += " app_type=" + g.appType + "(" + g.appTypeBy + ")"
+	}
+	return d
+}
+
+// prepareGitHubSave validates a GitHub save and, for a custom client_id, asks GitHub
+// what kind of app it is. A client_id GitHub does not know, or an app with the device
+// flow switched off, is refused here: saved, it would look configured and fail only when
+// a member presses the button.
+func (m *manager) prepareGitHubSave(b *gitOAuthBody) (githubSave, *apiError) {
+	src := strings.TrimSpace(b.Source)
+	if src == "" {
+		src = ghSourceCustom
+	}
+	switch src {
+	case ghSourceNone:
+		b.ClientID = ""
+		return githubSave{source: src}, nil
+	case ghSourceBuiltinOAuth, ghSourceBuiltinApp:
+		if !m.githubBuiltinAvailable(src) {
+			return githubSave{}, &apiError{http.StatusBadRequest, "builtin_unavailable",
+				"this deployment does not offer the built-in GitHub app " + src}
+		}
+		// The client_id comes from the binary at use time, so a release can replace the
+		// app without rewriting rows.
+		b.ClientID = ""
+		return githubSave{source: src}, nil
+	case ghSourceCustom:
+	default:
+		return githubSave{}, &apiError{http.StatusBadRequest, "bad_source", "unknown source: " + src}
+	}
+	if b.ClientID == "" {
+		return githubSave{}, &apiError{http.StatusBadRequest, "bad_request", "client_id is required"}
+	}
+	g := githubSave{source: src}
+	if raw := strings.TrimSpace(b.InstallURL); raw != "" {
+		page, ok := normalizeGitHubAppURL(raw)
+		if !ok {
+			return githubSave{}, &apiError{http.StatusBadRequest, "bad_install_url",
+				"the install URL must be https://github.com/apps/<app name>"}
+		}
+		g.installURL = page
+	}
+	appType, by, perr := ghProbeAppType(b.ClientID)
+	if perr != nil {
+		return githubSave{}, &apiError{http.StatusBadRequest, perr.code, perr.msg}
+	}
+	g.appType, g.appTypeBy = appType, by
+	if appType == ghTypeOAuthApp {
+		// An OAuth App has nothing to install; a stale URL from an earlier app would
+		// send members to the wrong place.
+		g.installURL = ""
+	}
+	return g, nil
 }
 
 // remove (DELETE /api/admin/tenants/{slug}/git-oauth/{provider}) takes the OAuth option
@@ -187,6 +318,11 @@ func (a tenantGitOAuthAPI) availability(w http.ResponseWriter, r *http.Request, 
 	out := map[string]any{}
 	for _, p := range gitOAuthProviders {
 		out[p] = map[string]any{"configured": a.mgr.gitOAuthConfigured(r.Context(), mv.TenantID, p)}
+	}
+	// A GitHub App reaches only the repositories it is installed on, so the member is
+	// shown where to install it before connecting rather than after a clone fails.
+	if app, ok, err := a.mgr.githubOAuthApp(r.Context(), mv.TenantID); err == nil && ok && app.Type == ghTypeGitHubApp {
+		out[gitOAuthGitHub] = map[string]any{"configured": true, "app_type": app.Type, "install_url": app.InstallURL}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

@@ -648,6 +648,11 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "git.rename": "Rename",
   "git.rename_cancel": "Cancel",
   "git.github_oauth_unconfigured": "This tenant has no GitHub OAuth app. Ask a tenant administrator to register one under Tenant settings › Integrations › Git provider OAuth, or connect by pasting an access token.",
+  "git.github_app_install_hint": "This tenant connects through a GitHub App, which reaches only the repositories it is installed on. Install it on your account or organization and choose the repositories before or after connecting.",
+  "git.github_app_install_link": "Install the app / choose repositories",
+  "git.github_app_not_installed": "Connected, but the GitHub App is not installed on any account you can see, so no repository is reachable yet. Install it and choose the repositories.",
+  "git.github_app_connected_hint": "If this connection went through the tenant's GitHub App, it reaches only the repositories the app is installed on. To add or change them:",
+  "git.github_token_expires": "Connected, but this GitHub App issues tokens that expire in about eight hours and af does not renew them yet. Ask your tenant administrator to turn off “Expire user authorization tokens” in the app's settings.",
   // Shown when the OAuth option is not offered at all (docs/log/71). A button nobody can
   // make work is worse than no button: the setting belongs to their tenant admin.
   "git.oauth_unregistered": "Connecting with OAuth isn't offered because this tenant has no OAuth app registered. Ask a tenant administrator to add one under Tenant settings › Integrations › Git provider OAuth.",

@@ -115,7 +115,7 @@ func cpContractFamilies() []contractFamily {
 			binding: gitOAuthBinding,
 			tsPath:  "../console/src/features/settings/tenant/tenantGitOAuth.tsx",
 			tsName:  "GitOAuthApp",
-			tsKeys:  keySet("provider", "client_id", "has_secret", "needs_secret", "updated_at", "redirect_uri"),
+			tsKeys:  keySet("provider", "client_id", "has_secret", "needs_secret", "updated_at", "redirect_uri", "source", "install_url", "is_default", "app_type", "app_type_by", "builtin"),
 			tsOnly:  map[string]string{},
 			goOnly: map[string]string{
 				// Not a gap: the Console must not read this. The secret is accepted on
@@ -226,6 +226,8 @@ var gitOAuthBinding = map[string]string{
 	"Provider": "provider", "ClientID": "client_id", "ClientSecret": "client_secret",
 	"HasSecret": "has_secret", "NeedsSecret": "needs_secret", "UpdatedBy": "updated_by",
 	"UpdatedAt": "updated_at", "RedirectURI": "redirect_uri",
+	"Source": "source", "InstallURL": "install_url", "IsDefault": "is_default",
+	"AppType": "app_type", "AppTypeBy": "app_type_by", "Builtin": "builtin",
 }
 
 func TestContractFamilies(t *testing.T) {

@@ -3,6 +3,8 @@
 English | [日本語](0052-tenant-git-oauth.ja.md)
 
 - Status: **adopted** (2026-08-22). The record of the investigation is [docs/71](../log/71-tenant-git-oauth.md).
+  Amended 2026-10-04 (issue #1667): GitHub gains built-in apps and app-kind detection — decisions 8
+  and 9, which partly supersede decisions 1 and 2.
 - See also: [0043-login-idp.md](0043-login-idp.md) decisions 29/30 (a tenant-defined IdP — the side
   that **requires approval**) and decisions 24/25 (what reaches outside the tenant belongs to the
   operator; what stays inside belongs to the tenant admin) /
@@ -24,6 +26,10 @@ On a single-tenant deployment (native / compose) the default tenant's row effect
 deployment setting. Rather than having two layers, sharing one layer across every configuration keeps
 both the explanation and the route singular.
 
+🔴 **Amended 2026-10-04 (#1667):** for GitHub the row may now name a **built-in app** compiled into
+the binary instead of a client_id, and the operator gains one switch, `AF_GITHUB_BUILTIN_APPS=off`,
+that withdraws the built-in apps from every tenant. See decision 8.
+
 ## Decision 2 — the env is **not even a fallback**, and nothing is migrated
 
 Keeping "fall back to env when the row is missing" makes *which app you are sent to* **vary by
@@ -35,6 +41,12 @@ Automatic migration at startup (env → the default tenant) is not added either.
 row would reappear on every restart. The price for a running deployment is only "the OAuth button is
 missing until the tenant admin registers it again" — pasting a token and existing connections keep
 working.
+
+🔴 **Amended 2026-10-04 (#1667):** the deployment's **default tenant** with no GitHub row now gets the
+built-in OAuth App. This is not the fallback this decision rejected: the value is in the binary, not
+in an env a deployment forgets about, and the tenant settings screen always shows the effective
+choice, marked "(default)" — there is still one place to look. Every other tenant with no row still
+has no button. See decision 8.
 
 ## Decision 3 — **no approval required** (unlike `tenant_idp`)
 
@@ -117,6 +129,63 @@ valid for ~2h, so a CP restart is invisible). (2) The Agent in a container start
 requires key/secret in its save API, so **one "stop and start the workspace" is needed once during the
 upgrade window** (the CP swaps in wording that says so).
 
+## Decision 8 — ship **two built-in GitHub apps**; the tenant picks one, its own, or none (2026-10-04, #1667)
+
+A personal native / WSL install had no OAuth button until its owner created an OAuth App on GitHub,
+ticked Device flow and pasted the client_id. Two project-owned apps now ship with the release:
+
+| Source | client_id | Suits |
+|---|---|---|
+| `builtin_oauth` — built-in OAuth App | in the binary | individuals: one authorization, scopes `repo workflow` |
+| `builtin_app` — built-in GitHub App | in the binary | small teams: install, choose repositories, authorize; fine-grained permissions |
+| `custom` — the tenant's own | the row | organisations that run their own OAuth App **or** GitHub App |
+| `none` | — | no button; members paste a token |
+
+- **Why compiling them in is safe.** The device flow authenticates with the client_id alone, so
+  there is no secret to leak (gh does the same). The token goes to the member's workspace, never to
+  the app's owner.
+- **Why the device flow everywhere, even where a callback would work.** A bundled app cannot register a
+  callback for every deployment's own domain (GitHub allows ten per app). On native the loopback
+  callback would work, but the code exchange needs the client_secret, which would then ship in the
+  binary. The device flow is the one flow every topology shares.
+- **Why both kinds.** A GitHub App is the narrower grant (per-repository installation, fine-grained
+  permissions, org-managed), but the extra install step is a real barrier for an individual; an OAuth
+  App is one click with a broad `repo` scope. Neither is right for everyone, so the tenant chooses.
+- **The default** is `builtin_oauth`, for the deployment's default tenant only (amendment to decision 2).
+- **Where the client_ids live.** `github_builtin_apps.go`, overridable with `-ldflags -X`. A build
+  without them (a fork) offers no built-in source; a row that names one then resolves to "no button",
+  and the screen says why.
+- **The operator's switch** `AF_GITHUB_BUILTIN_APPS=off` removes both built-in apps from every tenant,
+  for organisations that must not send members to a third-party app. It is a deployment setting
+  because it reaches outside the tenant (0043 decisions 24/25).
+- **A GitHub App reaches only where it is installed.** After a grant the CP asks
+  `GET /user/installations`; with none, the member is told at once with the install link instead of
+  meeting failing clones later. GitHub exposes no way to learn a GitHub App's install page from its
+  client_id, so for a custom GitHub App the tenant admin enters `https://github.com/apps/<name>`.
+- **Expiring user tokens are not renewed yet.** A GitHub App with "Expire user authorization tokens"
+  on returns an 8-hour token and a refresh token. A device-flow token can be refreshed without a
+  client_secret, but af stores only the access token today, so the connection is made, the member is
+  warned, and the admin form says to switch expiration off. Renewal is #1676.
+
+## Decision 9 — the kind of a custom app is **detected**, not asked (2026-10-04, #1667)
+
+The CP has to know whether a client_id is an OAuth App or a GitHub App (scope handling, the
+installation check), and asking the admin invites a wrong answer that fails far from where it was
+typed. Three signals, strongest first:
+
+1. **At save:** `POST /login/device/code` with a scope that does not exist. Measured on github.com: an
+   OAuth App answers `invalid_scope` (no device code is created); a GitHub App ignores scopes and
+   returns a device code, which expires unused; an unknown client_id answers `Not Found`, and an app
+   without Device flow `device_flow_disabled` — both are refused at save, because saved they would
+   look configured and fail only when a member presses the button.
+2. **After every grant:** the token prefix, which GitHub documents — `gho_` OAuth App, `ghu_` GitHub
+   App. It corrects the row (only while the row still names that client_id).
+3. **Fallback when GitHub is unreachable at save:** the client_id's shape (`Ov23…` / 20 hex → OAuth
+   App, `Iv1.…` / `Iv23…` → GitHub App). GitHub does not document these, so the screen shows the
+   result as an estimate.
+
+The row records which signal decided (`app_type_by`: `probe` / `token` / `prefix`).
+
 ## Impact
 
 - `BITBUCKET_OAUTH_KEY` / `_SECRET` stop being read. The CFN references to `BitbucketOauthKey` and
@@ -127,3 +196,7 @@ upgrade window** (the CP swaps in wording that says so).
 - The admin modal now opens on an `AUTH=dev` deployment (it did not before).
 - The workspace gains one `AF_GIT_OAUTH_TOKEN`, and Bitbucket's `key`/`secret` disappear from
   `secrets.enc` (at the next refresh). In exchange, a refresh now depends on the CP being reachable.
+- (#1667) `tenant_git_oauth` gains `source`, `app_type`, `app_type_by` and `install_url`
+  (migration 0088 / pg 0073). Existing rows are `custom`. A new env `AF_GITHUB_BUILTIN_APPS`.
+  Each GitHub OAuth connection writes a `git_oauth.github_connect` audit row naming the source and
+  client_id.

@@ -9,6 +9,9 @@
 // no identity, have a CP-fixed redirect_uri, and hand the token only to the owner's own
 // workspace. They take effect the moment they are saved.
 //
+// GitHub can also use one of two built-in apps shipped with the release instead of the
+// tenant's own (issue #1667, ADR 0052 decisions 8/9); its card is GitHubOAuthCard below.
+//
 // client_secret is write-only. A stored value is never returned, so saving with the field
 // empty means "leave unchanged" (the server keeps the same contract).
 import { useCallback, useEffect, useState } from "react";
@@ -24,7 +27,16 @@ interface GitOAuthApp {
   needs_secret?: boolean;
   updated_at?: string;
   redirect_uri?: string;
+  // GitHub only (issue #1667).
+  source?: GitHubSource;
+  is_default?: boolean;
+  install_url?: string;
+  app_type?: "oauth_app" | "github_app";
+  app_type_by?: "probe" | "token" | "prefix";
+  builtin?: { oauth_app: boolean; github_app: boolean; off_by_operator?: boolean };
 }
+
+type GitHubSource = "builtin_oauth" | "builtin_app" | "custom" | "none";
 
 const PROVIDER_LABEL: Record<string, string> = { github: "GitHub", bitbucket: "Bitbucket", jira: "Jira" };
 
@@ -61,9 +73,13 @@ export function TenantGitOAuthView({ slug }: { slug: string }) {
     <section className="admin-panel">
       <p className="admin-hint">{tr("tenant.git_oauth_intro")}</p>
       <p className="admin-hint">{tr("tenant.git_oauth_optional")}</p>
-      {apps.map((app) => (
-        <GitOAuthCard key={app.provider} slug={slug} app={app} onChanged={load} />
-      ))}
+      {apps.map((app) =>
+        app.provider === "github" ? (
+          <GitHubOAuthCard key={app.provider} slug={slug} app={app} onChanged={load} />
+        ) : (
+          <GitOAuthCard key={app.provider} slug={slug} app={app} onChanged={load} />
+        ),
+      )}
     </section>
   );
 }
@@ -188,4 +204,159 @@ function GitOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuthApp
       </div>
     </div>
   );
+}
+
+// GitHub's card picks WHICH app rather than only taking a client_id (issue #1667): a
+// built-in OAuth App, a built-in GitHub App, the tenant's own app, or none. The built-in
+// options appear only when this build carries them and the operator has not switched them
+// off; one that is selected but unavailable stays listed, disabled, so the screen still
+// says why the member has no button.
+function GitHubOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuthApp; onChanged: () => void }) {
+  const tr = useT();
+  const toast = useToast();
+  const current: GitHubSource = app.source || "custom";
+  const [source, setSource] = useState<GitHubSource>(current);
+  const [clientID, setClientID] = useState(app.client_id || "");
+  const [installURL, setInstallURL] = useState(app.install_url ? appPage(app.install_url) : "");
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    setSource(app.source || "custom");
+    setClientID(app.client_id || "");
+    setInstallURL(app.install_url ? appPage(app.install_url) : "");
+    // is_default too: resetting an explicit row that named the default's own source changes
+    // nothing else, and the form would keep an unsaved choice that the next save writes back.
+  }, [app.source, app.client_id, app.install_url, app.is_default]);
+
+  const base = `api/admin/tenants/${encodeURIComponent(slug)}/git-oauth/github`;
+  const builtin = app.builtin || { oauth_app: false, github_app: false };
+  const offered: GitHubSource[] = [];
+  if (builtin.oauth_app || current === "builtin_oauth") offered.push("builtin_oauth");
+  if (builtin.github_app || current === "builtin_app") offered.push("builtin_app");
+  offered.push("custom", "none");
+  const available = (s: GitHubSource) =>
+    s === "builtin_oauth" ? builtin.oauth_app : s === "builtin_app" ? builtin.github_app : true;
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const body: Record<string, string> = { source };
+      if (source === "custom") {
+        body.client_id = clientID.trim();
+        body.install_url = installURL.trim();
+      }
+      const res = await apiJSON(base, "PUT", body);
+      if (res?.error) {
+        toast(errText(res.error), { kind: "warn" });
+        return;
+      }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const reset = async () => {
+    setBusy(true);
+    try {
+      await raw(base, { method: "DELETE" });
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const label = (s: GitHubSource) => tr(`tenant.gh_src_${s}`);
+  const canSave = source !== "custom" || !!clientID.trim();
+  return (
+    <div className="admin-fgroup">
+      <h4>
+        GitHub
+        <span className="af-note">
+          {tr("tenant.gh_current", { src: label(current) })}
+          {app.is_default ? ` ${tr("tenant.gh_default_note")}` : ""}
+        </span>
+      </h4>
+      <div className="gh-src" role="radiogroup" aria-label={tr("tenant.gh_source_label")}>
+        {offered.map((s) => (
+          <label key={s} className={available(s) ? "" : "off"}>
+            <input
+              type="radio"
+              name={`gh-src-${slug}`}
+              checked={source === s}
+              disabled={!available(s)}
+              onChange={() => setSource(s)}
+            />
+            <span>
+              <span className="gh-src-t">{label(s)}</span>
+              <span className="gh-src-s">{tr(`tenant.gh_src_${s}_sub`)}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+      {builtin.off_by_operator ? (
+        <p className="admin-hint">{tr("tenant.gh_builtin_off")}</p>
+      ) : (
+        (current === "builtin_oauth" || current === "builtin_app") &&
+        !available(current) && <p className="admin-hint warn">{tr("tenant.gh_builtin_missing")}</p>
+      )}
+      {source === "custom" && (
+        <>
+          <div className="admin-fgrid">
+            <label className="admin-fld wide">
+              <span className="af-cap">{tr("tenant.git_oauth_client_id")}</span>
+              <input type="text" value={clientID} onChange={(e) => setClientID(e.target.value)} />
+            </label>
+            <label className="admin-fld wide">
+              <span className="af-cap">{tr("tenant.gh_install_url")}</span>
+              <input
+                type="text"
+                placeholder="https://github.com/apps/…"
+                value={installURL}
+                onChange={(e) => setInstallURL(e.target.value)}
+              />
+              <span className="af-unit">{tr("tenant.gh_install_url_unit")}</span>
+            </label>
+          </div>
+          {current === "custom" && app.client_id && clientID.trim() === app.client_id && (
+            <p className="admin-hint">
+              {tr("tenant.gh_detected", {
+                type: tr(`tenant.gh_type_${app.app_type || "unknown"}`),
+                how: app.app_type_by ? tr(`tenant.gh_type_by_${app.app_type_by}`) : tr("tenant.gh_type_by_none"),
+              })}
+            </p>
+          )}
+          <p className="admin-hint">{tr("tenant.git_oauth_gh_device")}</p>
+          <p className="admin-hint">{tr("tenant.gh_github_app_expiry")}</p>
+          <p className="admin-hint">
+            {tr("tenant.git_oauth_where")}{" "}
+            <a href={REGISTER_URL.github} target="_blank" rel="noopener noreferrer">
+              {REGISTER_URL.github}
+            </a>
+          </p>
+        </>
+      )}
+      <div className="le-actions">
+        <button className="primary" disabled={busy || !canSave} onClick={save}>
+          {tr("common.save")}
+        </button>
+        {!app.is_default && (
+          <button className="ghost" disabled={busy} onClick={reset}>
+            {tr("tenant.gh_reset")}
+          </button>
+        )}
+        {saved && (
+          <span className="saved-note">
+            <Icon name="check" /> {tr("admin.saved")}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// The server returns the install page; the form edits the app page it was entered as.
+function appPage(installURL: string): string {
+  return installURL.replace(/\/installations\/new$/, "");
 }

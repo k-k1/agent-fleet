@@ -17,6 +17,13 @@ interface RowProps {
   oauthAvailable: boolean;
 }
 
+interface GitOAuthAvailability {
+  configured?: boolean;
+  // GitHub only: set when the tenant's app is a GitHub App (issue #1667).
+  app_type?: "github_app";
+  install_url?: string;
+}
+
 // useGitOAuthAvailability — whether "connect with OAuth" may be offered.
 //
 // Never let the button be pressed only to return not_configured: the setting belongs to the
@@ -27,7 +34,7 @@ interface RowProps {
 // Reads /api/git-oauth on the CP directly, not /api/connections (proxied to the Agent): the
 // answer lives in the CP's DB, and this surface is opened while the workspace is stopped.
 function useGitOAuthAvailability() {
-  const [avail, setAvail] = useState<Record<string, { configured?: boolean }> | null>(null);
+  const [avail, setAvail] = useState<Record<string, GitOAuthAvailability> | null>(null);
   useEffect(() => {
     api("api/git-oauth")
       .then((d) => {
@@ -79,7 +86,12 @@ export function GitTab() {
           {/* While the availability is still unknown (null), fall on the side of showing it.
               Hiding the control merely because the fetch failed produces an unfixable screen:
               the app is registered, yet there is no button. */}
-          <GithubRow st={conns.github} reload={reload} oauthAvailable={oauth?.github?.configured !== false} />
+          <GithubRow
+            st={conns.github}
+            reload={reload}
+            oauthAvailable={oauth?.github?.configured !== false}
+            installURL={oauth?.github?.app_type === "github_app" ? oauth.github.install_url || "" : undefined}
+          />
           <BitbucketRow st={conns.bitbucket} reload={reload} oauthAvailable={oauth?.bitbucket?.configured !== false} />
           <div className="ds-title">{tr("git.cat_svn")}</div>
           <SvnCard servers={svnServers(conns)} reload={reload} />
@@ -298,15 +310,24 @@ function GlobalIdentity() {
   );
 }
 
-function GithubRow({ st, reload, oauthAvailable }: RowProps) {
+// installURL is set (possibly "") when the tenant's app is a GitHub App, which reaches only
+// the repositories it is installed on — so the member is told before connecting, not after a
+// clone fails.
+function GithubRow({ st, reload, oauthAvailable, installURL }: RowProps & { installURL?: string }) {
   const tr = useT();
   const toast = useToast();
   const poll = usePolling();
   const [mode, setMode] = useState("idle"); // idle | oauth | token
   const [oauth, setOauth] = useState<any>(null); // { user_code, verification_uri, status }
   const [token, setToken] = useState("");
+  // What the last OAuth grant reported. It outlives the toast because the card it concerns
+  // switches to the connected view, which is where the member has to act on it.
+  const [grant, setGrant] = useState<{ notInstalled?: boolean; installURL?: string; expires?: boolean } | null>(
+    null,
+  );
 
   const startOAuth = async () => {
+    setGrant(null);
     const res = await api("api/connections/git/github/oauth/start", { method: "POST" });
     if (!res || res.error) {
       if (res?.error?.code === "not_configured")
@@ -331,6 +352,11 @@ function GithubRow({ st, reload, oauthAvailable }: RowProps) {
         if (p && p.connected) {
           setMode("idle");
           reload();
+          // The token is stored either way; these say what still stands between the member and
+          // a working clone. The card keeps them, with the link, after the toasts are gone.
+          setGrant({ notInstalled: !!p.not_installed, installURL: p.install_url, expires: !!p.token_expires });
+          if (p.not_installed) toast(tr("git.github_app_not_installed"), { kind: "warn" });
+          if (p.token_expires) toast(tr("git.github_token_expires"), { kind: "warn" });
           return { stop: true };
         }
         if (p && p.error) {
@@ -352,10 +378,12 @@ function GithubRow({ st, reload, oauthAvailable }: RowProps) {
     }
     setToken("");
     setMode("idle");
+    setGrant(null); // the last grant's findings were about a token that is gone now
     reload();
   };
   const disconnect = async () => {
     await raw("api/connections/git/github.com", { method: "DELETE" });
+    setGrant(null);
     reload();
   };
 
@@ -374,6 +402,18 @@ function GithubRow({ st, reload, oauthAvailable }: RowProps) {
             {st.email && <span className="p-pl">{st.email}</span>}
             <DisconnectButton onClick={disconnect} />
           </div>
+          {grant?.notInstalled && <Hint>{tr("git.github_app_not_installed")}</Hint>}
+          {grant?.expires && <Hint>{tr("git.github_token_expires")}</Hint>}
+          {/* A GitHub App reaches only where it is installed, and adding a repository later is
+              done on GitHub — so the way there stays on the connected card too. */}
+          {(grant?.installURL || installURL) && (
+            <Hint>
+              {tr("git.github_app_connected_hint")}{" "}
+              <a href={grant?.installURL || installURL} target="_blank" rel="noopener noreferrer">
+                {tr("git.github_app_install_link")}
+              </a>
+            </Hint>
+          )}
           <IdentityFields host="github.com" name0={st.commitName} email0={st.commitEmail} />
         </>
       ) : mode === "oauth" && oauth ? (
@@ -423,6 +463,16 @@ function GithubRow({ st, reload, oauthAvailable }: RowProps) {
               </button>
             </div>
             {!oauthAvailable && <Hint>{tr("git.oauth_unregistered")}</Hint>}
+            {oauthAvailable && installURL !== undefined && (
+              <Hint>
+                {tr("git.github_app_install_hint")}{" "}
+                {installURL && (
+                  <a href={installURL} target="_blank" rel="noopener noreferrer">
+                    {tr("git.github_app_install_link")}
+                  </a>
+                )}
+              </Hint>
+            )}
           </div>
         </>
       )}
