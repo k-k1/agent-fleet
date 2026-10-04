@@ -5,7 +5,10 @@
 //   - FILE mode (no quote): the WHOLE file is handed by PATH reference to a SESSION — for
 //     work that produces a file (e.g. "translate this manual and save it"), which the
 //     chat assistant can't do (it's chat-only, no file writes). Assistants are hidden here
-//     since attaching a file to a chat is the Files "open with the assistant" flow.
+//     since attaching a file to a chat is the Files "open with the assistant" flow — unless
+//     the caller passes `withAssistants` (the gallery's "send", ADR 0080): a picture is
+//     something to LOOK at, which an assistant can do, so it is offered both, the assistant
+//     through the same attach_path chat the quote mode opens.
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -36,10 +39,19 @@ interface SendSelectionModalProps {
   quote?: string;
   startLine?: number;
   endLine?: number;
+  /** File mode only: offer assistants as well as sessions (quote mode always does). */
+  withAssistants?: boolean;
   onClose: () => void;
 }
 
-export function SendSelectionModal({ filePath, quote, startLine, endLine, onClose }: SendSelectionModalProps) {
+export function SendSelectionModal({
+  filePath,
+  quote,
+  startLine,
+  endLine,
+  withAssistants,
+  onClose,
+}: SendSelectionModalProps) {
   const sessions = useSessionsStore((s) => s.sessions);
   const layout = useLayoutStore((s) => s.layout);
   const bumpMemos = useMemoStore((s) => s.bump);
@@ -53,13 +65,14 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
   const [catSuggest, setCatSuggest] = useState<string[]>([]);
 
   const fileMode = quote == null; // whole file (session-only) vs an inline quote
+  const offerAssistants = !fileMode || !!withAssistants;
 
   useEffect(() => {
-    if (fileMode) return; // no assistant targets in file mode
+    if (!offerAssistants) return; // no assistant targets in plain file mode
     assistantList()
       .then((r) => setAssistants(r.assistants || []))
       .catch(() => {});
-  }, [fileMode]);
+  }, [offerAssistants]);
 
   // Existing categories, to suggest while queuing (docs/log/21). Cheap membership-scoped read.
   useEffect(() => {
@@ -96,9 +109,9 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
     }
     const best = sortedSessions.find((s) => s.alive) || sortedSessions[0];
     if (best) setTarget(`session:${best.name}`);
-    else if (!fileMode && assistants[0]) setTarget(`assistant:${assistants[0].id}`);
+    else if (offerAssistants && assistants[0]) setTarget(`assistant:${assistants[0].id}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortedSessions, sessions, assistants, target, fileMode]);
+  }, [sortedSessions, sessions, assistants, target, offerAssistants]);
 
   // The currently-selected session (if the target is a session), for the stopped guard.
   const selectedSession =
@@ -130,7 +143,8 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
         const id = target.slice("assistant:".length);
         // Open a chat with the file attached (context) and the quote prefilled — the user
         // reviews and sends (consistent with the other assistant-open flows).
-        const c = await chatCreate(id, t("send.quote_title", { name: baseName(filePath) }), { attachPath: filePath });
+        const title = fileMode ? baseName(filePath) : t("send.quote_title", { name: baseName(filePath) });
+        const c = await chatCreate(id, title, { attachPath: filePath });
         if (c && c.id) {
           openChat(c.id, composed);
           onClose();
@@ -194,11 +208,11 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
     }
   };
 
-  const noTarget = sortedSessions.length === 0 && (fileMode || assistants.length === 0);
+  const noTarget = sortedSessions.length === 0 && (!offerAssistants || assistants.length === 0);
 
   return (
     <Modal
-      title={fileMode ? tr("send.title_file") : tr("send.title_selection")}
+      title={fileMode ? tr(withAssistants ? "send.title_file_any" : "send.title_file") : tr("send.title_selection")}
       onClose={onClose}
       className="send-modal"
       as="form"
@@ -231,7 +245,7 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
                   ))}
                 </optgroup>
               )}
-              {!fileMode && assistants.length > 0 && (
+              {offerAssistants && assistants.length > 0 && (
                 <optgroup label={tr("send.optgroup_assistant")}>
                   {assistants.map((a) => (
                     <option key={a.id} value={`assistant:${a.id}`}>
@@ -245,10 +259,10 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
           <div className={"ui-field-hint" + (sessionStopped ? " warn" : "")}>
             {sessionStopped
               ? tr("send.hint_stopped")
-              : fileMode
-                ? tr("send.hint_file")
-                : isAssistant
-                  ? tr("send.hint_assistant")
+              : isAssistant
+                ? tr(fileMode ? "send.hint_assistant_file" : "send.hint_assistant")
+                : fileMode
+                  ? tr("send.hint_file")
                   : tr("send.hint_session")}
           </div>
         </div>
@@ -268,7 +282,7 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
             rows={3}
             placeholder={
               fileMode
-                ? tr("send.ph_file")
+                ? tr(withAssistants ? "send.ph_image" : "send.ph_file")
                 : tr("send.ph_selection")
             }
             autoFocus

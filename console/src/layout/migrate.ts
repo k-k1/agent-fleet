@@ -198,6 +198,7 @@ function contentFromFlat(p: any): PaneContent {
             galleryPath,
             ...(sort ? { sort } : {}),
             ...(tile ? { tile } : {}),
+            ...(p.flat === true ? { flat: true } : {}),
             ...(galleryFocus && validGalleryPath(galleryFocus) ? { galleryFocus } : {}),
             ...(gallerySession && SESSION_NAME_RE.test(gallerySession) ? { gallerySession } : {}),
           }

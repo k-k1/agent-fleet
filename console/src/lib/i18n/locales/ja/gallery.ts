@@ -56,5 +56,8 @@ export const gallery = {
   "gallery.delete_folder": "フォルダを削除",
   "gallery.delete_folder_title": "フォルダを削除",
   "gallery.delete_folder_body": "{name} を中身ごと削除します。元には戻せません。",
+  "gallery.send": "セッション/アシスタントに送る…",
+  "gallery.flat": "サブフォルダの画像も並べる",
+  "gallery.flat_truncated": "新しい {n} 枚まで",
   "gallery.open_folder_pane": "別のペインで開く",
 };

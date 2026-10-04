@@ -167,6 +167,17 @@ describe("ペイン種別 gallery の定型", () => {
     });
   });
 
+  it("flat は true だけ残し、それ以外は欄ごと落とす", () => {
+    expect(validateStoredContent({ kind: "gallery", galleryPath: "d", flat: true })).toEqual({
+      kind: "gallery",
+      galleryPath: "d",
+      flat: true,
+    });
+    for (const flat of ["true", 1, false, null]) {
+      expect(validateStoredContent({ kind: "gallery", galleryPath: "d", flat })).toEqual({ kind: "gallery", galleryPath: "d" });
+    }
+  });
+
   it("空白を含むふつうのフォルダ名は通す（弾きすぎない）", () => {
     expect(validateStoredContent({ kind: "gallery", galleryPath: "repos/my images" })).toEqual({
       kind: "gallery",
