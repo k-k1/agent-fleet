@@ -40,10 +40,18 @@ type mcpMemoryProject struct {
 	Display string `json:"display"`
 }
 
+// mcpAgentMemoryEnabled advertises the memory tools under `--self-report --agent-memory`, the
+// user's switch (ui-prefs agentMemory, default off). The Agent re-checks the switch on every call
+// (memoryx.AgentMemoryEnabled), so turning it off refuses sessions launched while it was on.
+var mcpAgentMemoryEnabled bool
+
 // mcpMemoryCall dispatches the five memory tools.
 func mcpMemoryCall(id json.RawMessage, name string, raw json.RawMessage) []byte {
 	if !selfReportOnly() {
 		return mcpToolErr(id, name+" はセッション側の Agent Fleet サーバー専用です")
+	}
+	if !mcpAgentMemoryEnabled {
+		return mcpToolErr(id, "Agent Fleet memory is not enabled for this session (Settings > Agents)")
 	}
 	var a struct {
 		Query       string   `json:"query"`
@@ -138,6 +146,8 @@ func mcpMemoryErr(err error) string {
 	}
 	_ = json.Unmarshal([]byte(he.Body), &body)
 	switch {
+	case body.Error.Code == "memory_disabled":
+		return "Agent Fleet memory is turned off in Settings > Agents; do not retry, and keep notes in your own memory instead."
 	case body.Error.Code == "memory_secret_detected":
 		parts := make([]string, 0, len(body.Findings))
 		for _, f := range body.Findings {

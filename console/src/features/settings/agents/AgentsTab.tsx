@@ -221,6 +221,11 @@ export function AgentsTab() {
         <OnOff value={s.sessionSearch} onChange={(v) => setSetting("sessionSearch", v)} />
       </Row>
       <p className="muted ds-note">{tr("agents.note_session_search")}</p>
+      {/* AF memory (ADR 0108): one more af MCP tool set every kind gets, so it sits here too. */}
+      <Row label={tr("agents.agent_memory")}>
+        <OnOff value={s.agentMemory} onChange={(v) => setSetting("agentMemory", v)} />
+      </Row>
+      <p className="muted ds-note">{tr("agents.note_agent_memory")}</p>
       {/* Image generation (ADR 0069) sits next to it for the same reason: one tool distributed
           to every kind through af's own MCP server, not any one agent's setting. */}
       <Row label={tr("agents.image_generation")}>

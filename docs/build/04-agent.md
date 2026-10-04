@@ -469,13 +469,13 @@ The same approach as cmux.
   - It also always advertises a small observation set: session status and usage, and
     the memo tools, and `branch_name`, which asks the branch-name resolver
     (`POST /repos/{name}/branch-name`) about the caller's own working copy unless told
-    another. The five `memory_*` tools (ADR 0108) are always there too: they call the
-    Agent's loopback-only `/agents/memory/entries` routes with the caller's session name,
-    which decides the author recorded and the project scope. The seven Chromium attach
-    tools come with `--chromium-attach`.
-  - The user's preferences add `--peer-messaging`, `--image-gen`, `--fleet-spawn` and
-    `--session-search` (`builtinRunArgsFor`). The last one defaults on and advertises
-    `search_sessions` (ADR 0110).
+    another. The seven Chromium attach tools come with `--chromium-attach`.
+  - The user's preferences add `--peer-messaging`, `--image-gen`, `--fleet-spawn`,
+    `--session-search` and `--agent-memory` (`builtinRunArgsFor`). `--session-search` defaults
+    on and advertises `search_sessions` (ADR 0110). `--agent-memory` defaults off and advertises
+    the five `memory_*` tools (ADR 0108): they call the Agent's loopback-only
+    `/agents/memory/entries` routes with the caller's session name, which decides the author
+    recorded and the project scope, and those routes refuse while the switch is off.
   - Anything not advertised is refused on call too (`mcpAdvertised`).
 - **Unattended approval for codex**: a headless chat has no approval UI. Besides
   `-a never`, the attached MCP servers are set to

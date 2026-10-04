@@ -124,6 +124,12 @@ var SessionSearchEnabled func() bool
 
 func sessionSearchOn() bool { return SessionSearchEnabled != nil && SessionSearchEnabled() }
 
+// AgentMemoryEnabled is the hook for the AF memory tools (ADR 0108). Off by default in uiprefs,
+// and a nil hook reads as off too.
+var AgentMemoryEnabled func() bool
+
+func agentMemoryOn() bool { return AgentMemoryEnabled != nil && AgentMemoryEnabled() }
+
 // BrowserUnavailableFlag tells `mcp-stdio` that this workspace has no browser features, and
 // which runtime withholds them. The server then leaves the Chromium tools out of tools/list
 // and answers a call to one with browser_unavailable (#1614).
@@ -167,6 +173,9 @@ func builtinRunArgsFor(id string, spec builtinSpec) []string {
 	}
 	if sessionSearchOn() {
 		args = append(args, "--session-search")
+	}
+	if agentMemoryOn() {
+		args = append(args, "--agent-memory")
 	}
 	return append(args, BrowserUnavailableArgs()...)
 }

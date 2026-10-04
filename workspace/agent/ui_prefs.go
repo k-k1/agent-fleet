@@ -293,6 +293,7 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	imageGenBefore := uiprefs.ImageGeneration()
 	fleetSpawnBefore := uiprefs.FleetSpawn()
 	sessionSearchBefore := uiprefs.SessionSearch()
+	agentMemoryBefore := uiprefs.AgentMemory()
 	if err := os.WriteFile(uiprefs.Path(), body, 0o600); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
@@ -308,9 +309,11 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	// configs twice for a PUT that flipped both would be pure noise in the log.
 	// Session steering (ADR 0073) joins them for the same reason: --fleet-spawn is the third
 	// launch argument of that one server. (Fleet observation was the fourth until it stopped
-	// being a setting at all.) Past-session search (ADR 0110) is --session-search, the same shape.
+	// being a setting at all.) Past-session search (ADR 0110) is --session-search, the same shape,
+	// and so is AF memory (ADR 0108, --agent-memory).
 	if uiprefs.PeerMessaging() != peerBefore || uiprefs.ImageGeneration() != imageGenBefore ||
-		uiprefs.FleetSpawn() != fleetSpawnBefore || uiprefs.SessionSearch() != sessionSearchBefore {
+		uiprefs.FleetSpawn() != fleetSpawnBefore || uiprefs.SessionSearch() != sessionSearchBefore ||
+		uiprefs.AgentMemory() != agentMemoryBefore {
 		mcpx.MaterializeAll()
 	}
 	// Switching the tier changes the env that is injected (the free tier drops

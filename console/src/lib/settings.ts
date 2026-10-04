@@ -364,6 +364,11 @@ export interface Settings {
   // missing-key answer: it only reads this user's transcripts, which a session's shell can
   // already open. The Console's own search (the palette's conversations mode) ignores it.
   sessionSearch: boolean;
+  // AF-owned agent memory for sessions (ADR 0108): whether the session-side MCP server offers the
+  // memory_* tools, and whether the Agent answers them. Default FALSE, like the Agent's own
+  // missing-key answer: what one session saves is read by every kind in later sessions, so it is
+  // turned on knowingly. The Console's change list works whatever this is set to.
+  agentMemory: boolean;
   // How many children ONE session may have at a time (ADR 0073 decision 6, AgentsTab > Session).
   // Per parent, not per workspace: two parents at the ceiling is twice that many agents.
   //
@@ -1172,6 +1177,7 @@ const DEFAULTS: Settings = {
   imageGeneration: false, // opt-in (ADR 0069) — it spends the ChatGPT plan quota
   sessionFleetSpawn: false, // opt-in (ADR 0073) — lets a session spend host resources unattended
   sessionSearch: true, // opt-out (ADR 0110) — read-only, and the Agent treats a missing key as on
+  agentMemory: false, // opt-in (ADR 0108) — what one session saves reaches every kind later
   sessionSpawnChildLimit: 3, // the value the limit had while it was a constant (ADR 0073 decision 6)
   sessionStoppedArchiveDays: 0, // the deployment default (ADR 0097)
   sessionSpendCapUsd: 0, // no budget (#1054)

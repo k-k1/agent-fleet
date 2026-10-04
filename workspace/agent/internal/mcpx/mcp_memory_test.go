@@ -35,6 +35,9 @@ func memoryTestEnv(t *testing.T) {
 	oldNames := mcpAdvertised.names
 	mcpAdvertised.names = nil
 	mcpAdvertised.mu.Unlock()
+	oldMemory, oldHook := mcpAgentMemoryEnabled, memoryx.AgentMemoryEnabled
+	mcpAgentMemoryEnabled = true
+	memoryx.AgentMemoryEnabled = func() bool { return true }
 	oldDeps := memoryx.Wired()
 	memoryx.Configure(memoryx.Deps{
 		ErrCodeBadRequest: "memory_bad_request", ErrCodeBadRev: "x", ErrCodeBadPath: "x", ErrCodeNoSnapshots: "x",
@@ -42,8 +45,10 @@ func memoryTestEnv(t *testing.T) {
 		ErrCodeRestoreFailed: "x", ErrCodeExportFailed: "x", ErrCodeImportFailed: "x", ErrCodeBadImport: "x",
 		ErrCodeSecretDetected: "memory_secret_detected", ErrCodeTooLarge: "memory_too_large",
 		ErrCodeNotFound: "memory_not_found", ErrCodeConflict: "memory_conflict", ErrCodeNoProject: "memory_no_project",
+		ErrCodeDisabled: "memory_disabled",
 	})
 	t.Cleanup(func() {
+		mcpAgentMemoryEnabled, memoryx.AgentMemoryEnabled = oldMemory, oldHook
 		mcpSourceSession = oldSource
 		mcpAdvertised.mu.Lock()
 		mcpAdvertised.names = oldNames
@@ -88,15 +93,33 @@ func callMemoryTool(t *testing.T, name string, args map[string]any) branchToolRe
 	return branchToolResult{parsed.Result.IsError, parsed.Result.Content[0].Text}
 }
 
-// Every session gets the memory tools whatever its other capabilities; the operator surface
-// does not, because "this session's project" means nothing there.
-func TestMemoryToolsAdvertisedOnEverySessionSurface(t *testing.T) {
+// A session gets the memory tools only under --agent-memory, the user's switch (off by
+// default); the operator surface never does, because "this session's project" means nothing
+// there.
+func TestMemoryToolsAdvertisedOnlyWithTheSwitch(t *testing.T) {
+	old := mcpAgentMemoryEnabled
+	t.Cleanup(func() { mcpAgentMemoryEnabled = old })
 	withMCPFlags(t, false, true, false)
+	parseStdioFlags([]string{"--self-report"})
 	names := advertisedNames(t)
 	for _, n := range memoryToolNames {
-		if !names[n] {
-			t.Errorf("%s is missing from the session surface", n)
+		if names[n] {
+			t.Errorf("%s is advertised without --agent-memory", n)
 		}
+	}
+	if r := callMemoryTool(t, "memory_index", nil); !r.IsError {
+		t.Errorf("memory_index answered without the switch: %+v", r)
+	}
+	parseStdioFlags([]string{"--self-report", "--agent-memory"})
+	names = advertisedNames(t)
+	for _, n := range memoryToolNames {
+		if !names[n] {
+			t.Errorf("%s is missing under --agent-memory", n)
+		}
+	}
+	parseStdioFlags([]string{"--agent-memory"})
+	if mcpAgentMemoryEnabled {
+		t.Error("--agent-memory took effect on the operator surface")
 	}
 	withMCPFlags(t, true, false, false)
 	names = advertisedNames(t)

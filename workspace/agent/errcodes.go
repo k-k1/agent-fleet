@@ -164,6 +164,7 @@ const (
 	errCodeMemoryNotFound  = "memory_not_found"
 	errCodeMemoryConflict  = "memory_conflict"
 	errCodeMemoryNoProject = "memory_no_project"
+	errCodeMemoryDisabled  = "memory_disabled"
 
 	// The reason for failing to wake the managed runtime (the shared daemon) that waiting
 	// will not fix. Its only content: the daemon was not started because the CLI is not
