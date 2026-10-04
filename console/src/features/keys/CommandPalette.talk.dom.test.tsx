@@ -122,6 +122,32 @@ afterEach(() => {
   host = null;
 });
 
+describe("CommandPalette mode tabs", () => {
+  // On a narrow screen the tab row scrolls sideways and Tab switching keeps focus in the input,
+  // so the palette itself has to bring the selected tab into view.
+  it("scrolls the selected tab into view when the mode changes", () => {
+    const seen: string[] = [];
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      if (this.classList.contains("cp-mode")) seen.push(this.textContent || "");
+    };
+    try {
+      act(() => {
+        input().dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+      });
+      act(() => {
+        input().dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }));
+      });
+    } finally {
+      Element.prototype.scrollIntoView = orig;
+    }
+    const tabs = [...document.querySelectorAll(".cp-mode")].map((b) => b.textContent || "");
+    const talk = tabs.findIndex((x) => /会話|Conversations/.test(x));
+    // beforeEach left the palette on the conversations tab: Tab moves one right, Shift+Tab back.
+    expect(seen).toEqual([tabs[(talk + 1) % tabs.length], tabs[talk]]);
+  });
+});
+
 describe("CommandPalette conversations mode", () => {
   it("shows the server's hits in its order, unfiltered, and opens the first at its turn", async () => {
     searchBody = {
