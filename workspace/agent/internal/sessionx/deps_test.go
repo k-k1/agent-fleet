@@ -181,6 +181,7 @@ func testDeps() Deps {
 		MaxUploadBytes:        func() int64 { unreached("MaxUploadBytes"); return 0 },
 		FinalizeSessionUsage:  func(session.Meta) { unreached("FinalizeSessionUsage") },
 		MaybeFoldSessionUsage: func() { unreached("MaybeFoldSessionUsage") },
+		SessionSpend:          func(m session.Meta) session.Spend { return fakeSessionSpend(m) },
 		RemoveTerminalHistory: func(string) { unreached("RemoveTerminalHistory") },
 		TrashSession: func(session.Meta, bool) (string, string, error) {
 			unreached("TrashSession")

@@ -471,6 +471,8 @@ POST /api/sessions/{name}/restore
 GET /api/sessions/{name}/settings
 POST /api/sessions/{name}/settings
 GET /api/sessions/{name}/skills
+GET /api/sessions/{name}/spend
+POST /api/sessions/{name}/spend-cap
 GET /api/sessions/{name}/ssm-login
 POST /api/sessions/{name}/start
 GET /api/sessions/{name}/status

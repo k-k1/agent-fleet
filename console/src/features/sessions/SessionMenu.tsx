@@ -53,6 +53,7 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
   const openRename = useSessionUI((u) => u.openRename);
   const openBranchRename = useSessionUI((u) => u.openBranchRename);
   const openSsmResume = useSessionUI((u) => u.openSsmResume);
+  const openBudget = useSessionUI((u) => u.openBudget);
   const startSession = useSessionsStore((st) => st.start);
   const toast = useToast();
   const tr = useT();
@@ -384,6 +385,21 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
               >
                 <Icon name="debug-stop" />{" "}
                 {s.stopAfterTurnAt ? tr("srow.stop_after_turn_off") : tr("srow.stop_after_turn_on")}
+              </button>
+            )}
+            {/* Spend budget (#1054): only kinds with a transcript can be priced. On a session the
+                budget stopped, the same item is the "raise and resume" action. */}
+            {running && agentOf(s.kind).caps.transcript && (
+              <button
+                type="button"
+                className="ui-menu-item"
+                onClick={() => {
+                  onClose();
+                  openBudget(s);
+                }}
+              >
+                <Icon name="pulse" />{" "}
+                {s.spendCapHitAt && !s.alive ? tr("srow.budget_raise_resume") : tr("srow.budget")}
               </button>
             )}
             {agentOf(s.kind).caps.ephemeral ? (

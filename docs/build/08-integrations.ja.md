@@ -283,7 +283,7 @@ codex は MCP の子を空の環境で起動するので、`AGENT_TOKEN`・`AGEN
 
 | 群 | 条件 |
 |---|---|
-| 引き継ぎ・`af_report`・`af_stop_after_turn`、セッションの状態と使用量、メモ（一覧・追加・更新）、`branch_name`（ブランチ名リゾルバー、ADR 0103）| 常に |
+| 引き継ぎ・`af_report`・`af_stop_after_turn`、セッションの状態と使用量、メモ（一覧・追加・更新）、`branch_name`（ブランチ名リゾルバー、ADR 0103）、`memory_index`・`memory_search`・`memory_read`・`memory_save`・`memory_forget`（全種別で共有する AF のメモリ、ADR 0108）| 常に |
 | Chromium Attach のツール | `--chromium-attach` 付きで起動したとき。組み込みの登録は常にこれを渡す（`mcp-stdio --self-report --chromium-attach`）|
 | `list_peer_sessions`・`send_to_peer_session`・`peek_session_output`（読み取りのみ） | 利用者のピアメッセージ設定 |
 | `search_sessions`（過去セッションの会話の全文検索。読み取りのみ、ADR 0110） | 利用者の過去セッション検索の設定（既定でオン） |

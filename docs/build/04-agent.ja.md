@@ -48,6 +48,11 @@ updated: "2026-09"
     `AF_SESSION_STOPPED_TTL`、無ければ 7 日（`session.StoppedTTL`）。
   - ロックされたセッションは対象外。
   - 掃引は一覧ハンドラの中で走る。タイマーは無い。
+- **セッションには予算を付けられる**（`Meta.SpendCapUSD`、#1054）。報告リコンサイラの tick が、
+  予算付きで動いているセッションの会話記録を値付けし（`usage_spend.go`、10 秒キャッシュ）、推定が
+  予算に達したら stop-after-turn を arm し、2 倍（`SpendCapHardFactor`）で即座に止める。起動時に
+  指定が無いときの既定は ui-prefs の `sessionSpendCapUsd`
+  （[ADR 0029 追記](../decisions/0029-usage-accounting.ja.md)）。
 - **一覧はメタデータ駆動で、driver ごとの生存状態を重ねる**（`HandleListSessions`）。managed は
   runtime のハンドル、tui は tmux を見る。
   - メタデータの無い `claude_*` の tmux セッション（孤児）も列挙する。kind はペインの起動コマンドから
@@ -399,7 +404,9 @@ tmux 3.5a で実測: 素の OSC も tmux のパススルー包み（`ESC P tmux;
   - 自己報告のツール（`af_report`・`af_stop_after_turn`・`propose_session_handoff`）は常に広告する。
   - 小さな観測用のツール（セッションの状態と使用量、メモ）も常に広告する。`branch_name` も常に
     広告し、ブランチ名リゾルバー（`POST /repos/{name}/branch-name`）に、既定では呼び出し元自身の
-    作業コピーについて尋ねる。Chromium アタッチの 7 本は `--chromium-attach` で付く。
+    作業コピーについて尋ねる。`memory_*` の 5 本（ADR 0108）も常に広告する。呼び出し元のセッション名を
+    付けて Agent のループバック専用ルート `/agents/memory/entries` を呼び、その名前が記録する書き手と
+    プロジェクトの範囲を決める。Chromium アタッチの 7 本は `--chromium-attach` で付く。
   - 利用者の設定で `--peer-messaging`・`--image-gen`・`--fleet-spawn`・`--session-search` が加わる
     （`builtinRunArgsFor`）。最後のものは既定でオンで、`search_sessions` を広告する（ADR 0110）。
   - 広告していないツールは、呼ばれても断る（`mcpAdvertised`）。

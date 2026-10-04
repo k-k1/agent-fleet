@@ -65,7 +65,26 @@ export const useWorkItemStore = create<WorkItemState>((set) => ({
   reset: () => set({ payload: null, loaded: false, loadErr: "", refreshing: false }),
 }));
 
-const POLL_MS = 60000;
+export const POLL_MS = 60000;
+
+let pending: Promise<void> | null = null;
+let lastTry = 0;
+
+/** Load the cache once for a surface that only reads it (the mirror's ticket links, #1659). The
+ * rail normally has it loaded already; a pop-out or a phone layout without the rail does not.
+ * Every rendered message asks, so a failing read is not retried more than once a minute. */
+export function ensureWorkItems(): Promise<void> {
+  if (useWorkItemStore.getState().loaded) return Promise.resolve();
+  if (!pending && Date.now() - lastTry < POLL_MS) return Promise.resolve();
+  lastTry = Date.now();
+  pending ??= useWorkItemStore
+    .getState()
+    .refresh()
+    .finally(() => {
+      pending = null;
+    });
+  return pending;
+}
 
 /** Poll while the section is mounted and the push stream is NOT carrying the data.
  * Returns the cleanup (StrictMode-safe). */

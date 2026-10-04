@@ -32,6 +32,7 @@ import {
   WsStoppedNotice,
 } from "./parts/ComposerNotices.tsx";
 import { ContextBar } from "./ContextBar.tsx";
+import { SpendChip } from "./SpendChip.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { t as tr, useLocale, useT } from "../../lib/i18n/index.ts";
 import { agentOf } from "../../agents/registry.ts";
@@ -150,6 +151,7 @@ function MirrorViewBody({
   const setPaneTarget = useLayoutStore((s) => s.setPaneTarget);
   const setActivePane = useLayoutStore((s) => s.setActive);
   const refreshSessions = useSessionsStore((s) => s.refresh);
+  const sessionRow = useSessionsStore((st) => st.sessions.find((x) => x.name === session));
   const bumpSessions = () => void refreshSessions();
   const wsState = useWorkspaceStore((s) => s.state);
   const toast = useToast();
@@ -525,7 +527,14 @@ function MirrorViewBody({
         )}
       </ViewHead>
 
-      {ctxUsage && <ContextBar {...ctxUsage} spends={spends} maxSpend={maxSpend} />}
+      {ctxUsage && (
+        <ContextBar
+          {...ctxUsage}
+          spends={spends}
+          maxSpend={maxSpend}
+          action={running && !readOnly && sessionRow ? <SpendChip s={sessionRow} /> : undefined}
+        />
+      )}
       {/* These keys exist to rebuild each strip per session, and siblings must never share one.
           When the key changes, React collects the leftover fibers in a Map keyed by key; a
           duplicate is overwritten last-wins, so the earlier one (ToDo) falls out of the Map and

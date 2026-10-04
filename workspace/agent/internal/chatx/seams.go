@@ -130,6 +130,7 @@ func safeBrowsePath(p string) (full, rel string, ok bool) {
 }
 func maybePushOperatorReply(conv, reply string) { deps.MaybePushOperatorReply(conv, reply) }
 func stopArmedSession(name string) error        { return deps.StopArmedSession(name) }
+func sweepSpendCaps(now time.Time)              { deps.SweepSpendCaps(now) }
 
 // chatTurnUsageTag is the usage tag for one conversation turn. ChatConversation is a type
 // on this side, so the seam passes plain values only and main's tag assembly stays put.

@@ -125,6 +125,37 @@ working directory changed (.mirror-context / .mc-*)
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+/* Spend vs budget (#1054): an estimate, so it reads as quietly as the token peak until it
+   nears the cap. */
+.cb-spend {
+  flex: none;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.cb-spend:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.cb-spend-warn {
+  color: var(--warn);
+}
+.cb-spend-over {
+  color: var(--err);
+}
+.cb-spend-unpriced {
+  font-style: italic;
+}
+.cb-spend-kids {
+  flex: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 /* Context strip: shown above a turn only when the git branch / working dir changes,
    marking the switch once instead of repeating it on every turn. */
 .mirror-context {

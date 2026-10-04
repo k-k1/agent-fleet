@@ -24,6 +24,7 @@ import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
+import { parseCap } from "../sessions/spendBudget.ts";
 import { requiresConcreteModel, useAutoConcreteModel, useEffortOptions } from "../../lib/agentModels.ts";
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
 import { readLaunchOpen, writeLaunchOpen } from "./launchPrefs.ts";
@@ -80,6 +81,9 @@ export interface LaunchOpts {
   base: string;
   newBranch: string;
   useExisting?: boolean; // check out the existing branch instead of creating one
+  /** The session's spend budget in USD (#1054). undefined = the user's default, which the Agent
+   *  applies; 0 = none. Only for kinds with a transcript to price. */
+  spendCapUsd?: number;
 }
 
 // LaunchResult: close on ok, else stay open and offer a fix for a name collision.
@@ -239,6 +243,8 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
   // the create API's rule here — otherwise it stays editable yet the launch alone fails with
   // bad_title.
   const [title, setTitle] = useState(() => clampSessionTitle(initialTitle ?? ""));
+  // Empty = the user's default budget (Settings › Agents), resolved by the Agent.
+  const [budget, setBudget] = useState("");
   // Attachments awaiting the launch: the raw File (+ an object URL when it is an image).
   // Any file type, as in the mirror composer. Uploaded only after the session is minted (in
   // onStartWork), then referenced in the first prompt. Agents without the imagePaste cap
@@ -359,12 +365,20 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
   const placeWarned = worktree && !existingMode && naming.warnings.length > 0;
   // Advanced does the opposite and lists only what moved off its default; all-defaults gets a
   // single word. Always printing 5 items turns the line into another grey band nobody reads.
+  const hasBudget = agentOf(kind).caps.transcript;
+  const budgetCap = parseCap(budget);
+  const budgetInvalid = hasBudget && Number.isNaN(budgetCap);
   const advParts = [
     agentOf(kind).managedDriver ? tr(driverManaged ? "launch.sum.driver_managed" : "launch.sum.driver_terminal") : "",
     hasEffort && effort ? tr("launch.sum.effort", { v: effortOptions.find(([v]) => v === effort)?.[1] || effort }) : "",
     hasStartMode && startMode === "plan" ? "Plan" : "",
     hasPermChoice && !skipPermEffective ? tr("launch.sum.permissions_on") : "",
     title.trim() ? tr("launch.sum.title", { name: title.trim() }) : "",
+    hasBudget && budget.trim() && !budgetInvalid
+      ? budgetCap > 0
+        ? tr("launch.sum.budget", { v: "$" + budgetCap.toFixed(2) })
+        : tr("launch.sum.budget_none")
+      : "",
   ].filter(Boolean);
   const advSummary = advParts.length ? advParts.join(" · ") : tr("launch.sum.defaults");
 
@@ -524,6 +538,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
       base: worktree ? wtBase : "",
       newBranch: worktree && !useExisting ? newBranch : "",
       useExisting,
+      spendCapUsd: hasBudget && budget.trim() && !budgetInvalid ? budgetCap : undefined,
     });
     if (r?.ok) {
       // A successful launch means this text and its attachments reached the new session in
@@ -549,7 +564,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
   // A kind that requires a concrete model (lcpp) with none resolved yet — the catalog is
   // still loading, or came back empty — must not launch with an empty model (docs/log/109).
   const modelPending = hasModel && requiresConcreteModel(kind) && !model;
-  const canLaunch = !!kinds.length && (!existingMode || !!existingBranch) && !modelPending;
+  const canLaunch = !!kinds.length && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid;
 
   // Follow the shared composer send-key setting: Ctrl/⌘+Enter (default), or
   // Enter with Shift+Enter reserved for a newline.
@@ -1014,6 +1029,25 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
               placeholder={tr("launch.title_ph")}
             />
           </div>
+          {hasBudget && (
+            <div className="ui-field">
+              <span className="ui-field-label">{tr("launch.field.budget")}</span>
+              <input
+                value={budget}
+                inputMode="decimal"
+                onChange={(e) => setBudget(e.target.value)}
+                aria-invalid={budgetInvalid || undefined}
+                placeholder={
+                  settings.sessionSpendCapUsd > 0
+                    ? tr("launch.budget_ph_default", { v: "$" + settings.sessionSpendCapUsd })
+                    : tr("launch.budget_ph_none")
+                }
+              />
+              <span className="ui-field-hint">
+                {budgetInvalid ? tr("sess.budget_invalid") : tr("launch.budget_hint")}
+              </span>
+            </div>
+          )}
         </LaunchSection>
       </div>
 

@@ -40,6 +40,11 @@ export interface TranscriptCaps {
   /** Repo the paths in Markdown resolve against, for click-to-open links. */
   repo?: string | null;
   /**
+   * Link ticket references (`#956`, `PROJ-123`) to the work item detail modal (#1659). Absent →
+   * they stay text: a recipient has neither the owner's tracker connections nor their inbox.
+   */
+  workItemRefs?: boolean;
+  /**
    * Fetch a pasted image's bytes by transcript name. Absent → no thumbnails
    * (the shared DTO drops attachment paths, and the bytes live in the owner's
    * Workspace, so there is nothing a recipient could fetch).

@@ -13,6 +13,7 @@ import { useRepoRailContext } from "../repos/useRepoRail.ts";
 import { orphanSessions } from "../../lib/project.ts";
 import { useActiveWorkingSet, sessionInSet } from "../../lib/workingSetsStore.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
+import { useRefIndex } from "../sessions/useRefIndex.ts";
 import { useRailRoving } from "./useRailRoving.ts";
 import { useUnreadSessions } from "../notifications/unread.ts";
 import { useT } from "../../lib/i18n/index.ts";
@@ -24,6 +25,7 @@ export const OtherSessionsSection = memo(function OtherSessionsSection() {
   const ctx = useRepoRailContext();
   const actions = useSessionActions();
   const nq = normQuery(useProjectFilter((f) => f.q));
+  const refs = useRefIndex();
   const rail = useRailRoving();
   // Working sets (docs/log/52) narrow this list — direct assignment (set.sessions) or
   // folder-name inheritance (covers a session whose repo was deleted) — then the
@@ -31,7 +33,7 @@ export const OtherSessionsSection = memo(function OtherSessionsSection() {
   const wset = useActiveWorkingSet();
   const orphans = orphanSessions(sessions, repos)
     .filter((s) => !wset || sessionInSet(wset, s))
-    .filter((s) => sessionMatches(s, nq));
+    .filter((s) => sessionMatches(s, nq, refs));
 
   // Collapsed, the header is all that is left of these rows — roll their unread dot up.
   const unreadSessions = useUnreadSessions();

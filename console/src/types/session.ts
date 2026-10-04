@@ -147,6 +147,10 @@ export interface Session {
   // conversation (the af_stop_after_turn MCP tool), which is why the row shows it: otherwise
   // the only trace is a sentence in a transcript nobody is watching.
   stopAfterTurnAt?: string;
+  // The session's spend budget in USD and when its estimated spend first reached it (#1054).
+  // Set while crossed: the row reads "paused: budget" once the session has stopped.
+  spendCapUsd?: number;
+  spendCapHitAt?: string;
   // How many images this session has generated, and the folder they are in — browse-root
   // relative, the form the file API takes (ADR 0080 decision 8). Both absent when there are
   // none, and that absence IS the condition: the session menu offers "Generated images (N)"

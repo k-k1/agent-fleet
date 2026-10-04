@@ -107,6 +107,17 @@
 :root[data-theme="light"] .markdown a.md-conv-link {
   color: #5b21b6;
 }
+/* A ticket reference (`#956`, `owner/name#956`, `PROJ-123`) → the work item detail modal.
+   Teal, apart from the four hues above. */
+.markdown a.md-workitem-link {
+  color: #6cc4c0;
+}
+.markdown a.md-workitem-link:hover {
+  color: #9adbd8;
+}
+:root[data-theme="light"] .markdown a.md-workitem-link {
+  color: #0b5e5b;
+}
 /* An existing file path written as inline code (`docs/log/65-drawio-viewer.md`) → that file's
    pane. The anchor lives INSIDE the <code>, so it inherits the code chip's font and
    background and only takes the link color; green keeps it apart from the amber commit

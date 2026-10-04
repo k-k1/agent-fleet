@@ -47,6 +47,7 @@ func sessionDeps() sessionx.Deps {
 
 		FinalizeSessionUsage:  finalizeSessionUsage,
 		MaybeFoldSessionUsage: maybeFoldSessionUsage,
+		SessionSpend:          sessionSpend,
 
 		RemoveTerminalHistory: removeTerminalHistory,
 		TrashSession:          trashSession,

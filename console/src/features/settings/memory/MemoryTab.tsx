@@ -34,7 +34,7 @@ import type { RestoreScopeState } from "./memoryRestore.tsx";
 import { RestorePanel } from "./memoryRestore.tsx";
 import { TransferSection } from "./memoryTransfer.tsx";
 
-// Trigger label. The trailer value the Agent returns (auto/manual/pre-restore/restore/import)
+// Trigger label. The trailer value the Agent returns (auto/manual/pre-restore/restore/import/agent-memory)
 // is used as the key directly and an unknown value is printed raw, so adding a new trigger
 // upstream does not break this screen.
 const triggerLabel = (trigger: string): string =>

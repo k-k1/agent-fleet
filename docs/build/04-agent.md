@@ -50,6 +50,11 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     else `AF_SESSION_STOPPED_TTL`, else 7 days (`session.StoppedTTL`).
   - Locked sessions are exempt.
   - The sweep runs inside the list handler; there is no timer.
+- **A session can carry a spend budget** (`Meta.SpendCapUSD`, #1054). The report reconciler's tick
+  prices each live capped session's transcript (`usage_spend.go`, cached 10 s), arms
+  stop-after-turn when the estimate reaches the cap, and halts at once at 2× (`SpendCapHardFactor`).
+  The default for a launch that names none is ui-prefs `sessionSpendCapUsd`
+  ([ADR 0029 addendum](../decisions/0029-usage-accounting.md)).
 - **The list is metadata-driven, merged with per-driver liveness**: the runtime handle
   for managed, tmux for tui (`HandleListSessions`).
   - Orphaned `claude_*` tmux sessions with no metadata are listed too. Their kind is
@@ -464,7 +469,10 @@ The same approach as cmux.
   - It also always advertises a small observation set: session status and usage, and
     the memo tools, and `branch_name`, which asks the branch-name resolver
     (`POST /repos/{name}/branch-name`) about the caller's own working copy unless told
-    another. The seven Chromium attach tools come with `--chromium-attach`.
+    another. The five `memory_*` tools (ADR 0108) are always there too: they call the
+    Agent's loopback-only `/agents/memory/entries` routes with the caller's session name,
+    which decides the author recorded and the project scope. The seven Chromium attach
+    tools come with `--chromium-attach`.
   - The user's preferences add `--peer-messaging`, `--image-gen`, `--fleet-spawn` and
     `--session-search` (`builtinRunArgsFor`). The last one defaults on and advertises
     `search_sessions` (ADR 0110).

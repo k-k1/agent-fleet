@@ -1092,6 +1092,38 @@ export const sessionStopAfterTurn = (
   on: boolean,
 ): Promise<{ stopAfterTurnAt?: string; error?: ApiError }> =>
   apiJSON(`api/sessions/${encodeURIComponent(name)}/stop-after-turn`, "POST", { on });
+
+// Spend budget (#1054). The spend is an estimate at list price (the CLI's own reported cost
+// where it gives one); a cap at or under it pauses the session after its turn, and past
+// hardFactor × the cap the session is halted mid-turn.
+export interface SessionSpendChild {
+  name: string;
+  display: string;
+  kind: string;
+  alive: boolean;
+  spendCapUsd?: number;
+  spendUsd: number;
+  priced: boolean;
+}
+export interface SessionSpend {
+  name: string;
+  spendCapUsd?: number;
+  spendCapHitAt?: string;
+  hardFactor: number;
+  spendUsd: number;
+  priced: boolean;
+  unpriced?: boolean;
+  reported?: boolean;
+  children: SessionSpendChild[];
+  childrenUsd: number;
+}
+export const sessionSpend = (name: string): Promise<SessionSpend & { error?: ApiError }> =>
+  api(`api/sessions/${encodeURIComponent(name)}/spend`);
+export const sessionSetSpendCap = (
+  name: string,
+  usd: number,
+): Promise<{ spendCapUsd?: number; spendCapHitAt?: string; spendUsd?: number; error?: ApiError }> =>
+  apiJSON(`api/sessions/${encodeURIComponent(name)}/spend-cap`, "POST", { usd });
 export const repoSetLock = (name: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>
   apiJSON(`api/repos/${encodeURIComponent(name)}/lock`, "POST", { locked });
 export const chatSetLock = (id: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>

@@ -97,6 +97,7 @@ export function TranscriptView({
           after={ctxSizeAfter(groups, i)}
           repo={caps.repo}
           onOpenFile={caps.openFile}
+          workItemRefs={caps.workItemRefs}
         />
       ) : (
         <TranscriptTurn

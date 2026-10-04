@@ -22,6 +22,8 @@ import { RepoJobRow } from "../repos/RepoJobRow.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useSessionUI } from "../sessions/ui.ts";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
+import { refQuery } from "../sessions/refSearch.ts";
+import { useLedgerWhile, useRefIndex } from "../sessions/useRefIndex.ts";
 import { repoTree, filterRepoTree, countRepoNodes, sessionsInFolder } from "../../lib/project.ts";
 import { useActiveWorkingSet, repoInSet, autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useProjectFilter, normQuery, repoMatches, sessionMatches } from "./filter.ts";
@@ -70,7 +72,11 @@ export const ProjectTree = memo(function ProjectTree() {
   const q = useProjectFilter((f) => f.q);
   const setQ = useProjectFilter((f) => f.setQ);
   const nq = normQuery(q);
+  const refs = useRefIndex();
   const rail = useRailRoving();
+  // Issue keys live in the work-item ledger, which nothing has loaded when the work-items
+  // section is hidden; only a ticket-shaped query is worth the request.
+  useLedgerWhile(!!refQuery(nq));
 
   // Right after a WS start the agent is still unreachable and the CP answers GET /api/repos with
   // a plain-text 502. The store's refresh() treats that as a transient failure, keeps repos and
@@ -98,7 +104,7 @@ export const ProjectTree = memo(function ProjectTree() {
   // Filtering: a working copy is visible when it matches itself or hosts a
   // matching session; an ancestor also stays as the anchor of a matching descendant.
   const visible = (r: (typeof repos)[number]) =>
-    repoMatches(r, nq) || sessionsInFolder(sessions, r.name).some((s) => sessionMatches(s, nq));
+    repoMatches(r, nq) || sessionsInFolder(sessions, r.name).some((s) => sessionMatches(s, nq, refs));
   const roots = nq ? filterRepoTree(scoped, visible) : scoped;
 
   // The Agent-side job is the source of truth for import progress (docs/log/78). This only

@@ -124,6 +124,10 @@ type Deps struct {
 	// turn ended"; the fold itself stays on the session side, where the halt promotes a
 	// pending interaction out of the doomed process first and consumes the arm.
 	StopArmedSession func(name string) error
+	// SweepSpendCaps checks every capped session's spend against its budget (#1054) and arms
+	// or forces the stop. It runs on this tick, just before the arms are swept, so an arm it
+	// sets is consumed by the same evidence and the same debounce as one the user set.
+	SweepSpendCaps func(now time.Time)
 	// RateLimitState reads the reservation of a rate-limit episode (the fstore handle in
 	// rate_limit_resume.go). An accessor rather than the value, so the var is not copied: the
 	// far side is a var, and receiving it into an alias variable makes a copy (hit twice in

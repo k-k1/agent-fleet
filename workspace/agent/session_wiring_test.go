@@ -60,6 +60,7 @@ func TestSessionWiringIsLive(t *testing.T) {
 
 		"RemoveTerminalHistory": func(t *testing.T) { sameSessionFunc(t, w.RemoveTerminalHistory, removeTerminalHistory) },
 		"TrashSession":          func(t *testing.T) { sameSessionFunc(t, w.TrashSession, trashSession) },
+		"SessionSpend":          func(t *testing.T) { sameSessionFunc(t, w.SessionSpend, sessionSpend) },
 		"ToolchainShellPrefix":  func(t *testing.T) { sameSessionFunc(t, w.ToolchainShellPrefix, toolchainShellPrefix) },
 
 		"RunOperatorTurn": func(t *testing.T) { sameSessionFunc(t, w.RunOperatorTurn, runOperatorTurn) },

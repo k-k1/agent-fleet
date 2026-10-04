@@ -45,6 +45,7 @@ import { WorkingSetBar } from "./WorkingSetBar.tsx";
 import { AssistantSection } from "../features/chat/AssistantSection.tsx";
 import { MemoQueueSection } from "../features/memo/MemoQueueSection.tsx";
 import { WorkItemsSection } from "../features/workitems/WorkItemsSection.tsx";
+import { WorkItemModalHost } from "../features/workitems/WorkItemModalHost.tsx";
 import { SchedulesSection } from "../features/schedules/SchedulesSection.tsx";
 import { ProjectTree } from "../features/project/ProjectTree.tsx";
 import { OtherSessionsSection } from "../features/project/OtherSessionsSection.tsx";
@@ -468,6 +469,9 @@ export function App() {
             from a detached pane (accepting a shared-view handover, docs/log/77, or sending
             a memo) would be a button that does nothing. */}
         <StartHost />
+        {/* The work item detail / report modals: a rail row and a ticket link in the mirror
+            open the same instance (#1659). */}
+        <WorkItemModalHost />
         <WsStartingDialog />
         <AuthExpiredModal />
         <ProviderRequiredModal />
@@ -557,6 +561,7 @@ export function App() {
       {tenantOpen && <TenantDialog />}
       {guideOpen && <GuideModal />}
       <StartHost />
+      <WorkItemModalHost />
       <SessionModals />
       <AwsLoginHost />
       <GcpLoginHost />

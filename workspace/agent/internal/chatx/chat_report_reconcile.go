@@ -842,6 +842,9 @@ func (rc *reportReconciler) sweep(now time.Time) {
 	// that owes a report is stopped only after that report has gone out. Stopping first parks
 	// the report until somebody resumes the session, which for the operator waiting on it is
 	// indistinguishable from never being told.
+	// The spend budget (#1054) only ARMS (or, past its hard limit, halts); the arm it sets is
+	// then consumed below like any other.
+	sweepSpendCaps(now)
 	rc.sweepStopArms(now)
 }
 

@@ -10,6 +10,8 @@ import { useOpenSignal } from "../../core/store/uiOpen.ts";
 import { relTime } from "../../lib/intl.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { notificationKindLabel, notificationRowSubtitle } from "./wording.ts";
+import { useSessionsStore } from "../sessions/store.ts";
+import { useSessionUI } from "../sessions/ui.ts";
 // Relative time for a notification; delegated to the shared implementation (lib/intl).
 const relative = (at: string): string => relTime(at);
 
@@ -136,6 +138,12 @@ function Dot({ seen }: { seen: boolean }) {
 
 function FleetRow({ n, onActivate }: { n: FleetNotification; onActivate: (n: FleetNotification, split: boolean) => void }) {
   const tr = useT();
+  // A budget stop's one action (#1054): raise the cap and resume. Offered only while the session
+  // is still stopped by it — once resumed or raised elsewhere, the button would do nothing new.
+  const budgetSession = useSessionsStore((st) =>
+    n.kind === "spend-budget" && n.target.type === "session" ? st.sessions.find((x) => x.name === n.target.id) : undefined);
+  const openBudget = useSessionUI((u) => u.openBudget);
+  const canRaise = !!budgetSession && !budgetSession.alive && !!budgetSession.spendCapHitAt;
   return <div className={"notification-row" + (n.seen ? "" : " unread")}>
     <Dot seen={n.seen} />
     <Button className="notification-item"
@@ -148,9 +156,10 @@ function FleetRow({ n, onActivate }: { n: FleetNotification; onActivate: (n: Fle
       <Icon name={n.kind === "answer-ready" ? "check"
         : n.kind.startsWith("schedule-") ? "watch" // same glyph as the schedule section in the left rail
           : n.kind.startsWith("handoff-") ? "git-branch" // same glyph as the handoff badge in the sharing rail
-            : ["usage-reset", "rate-limit-reached", "rate-limit-resumed"].includes(n.kind) ? "pulse" : "comment-discussion"} />
+            : ["usage-reset", "rate-limit-reached", "rate-limit-resumed", "spend-budget"].includes(n.kind) ? "pulse" : "comment-discussion"} />
       <span><b>{notificationKindLabel(n.kind)}</b><small>{notificationRowSubtitle(n)} · {relative(n.createdAt)}</small></span>
     </Button>
+    {canRaise && <Button className="notification-action" small onClick={() => budgetSession && openBudget(budgetSession)}>{tr("noti.budget_action")}</Button>}
     <Button className="notification-replay" title={tr("noti.replay")} aria-label={tr("noti.replay")} onClick={() => replayNotification(n)}><Icon name="unmute" /></Button>
   </div>;
 }

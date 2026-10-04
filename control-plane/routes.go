@@ -408,6 +408,10 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// Stop-after-turn arm (docs/log/85) — fold this session away once the turn it is
 	// running ends. The pin's mirror image, and proxied the same way.
 	mux.HandleFunc("POST /api/sessions/{name}/stop-after-turn", rest)
+	// Spend budget (#1054) — set the cap, and read the spend against it (with the
+	// session's create_session children beside it). The Agent enforces it; proxied verbatim.
+	mux.HandleFunc("POST /api/sessions/{name}/spend-cap", rest)
+	mux.HandleFunc("GET /api/sessions/{name}/spend", rest)
 	// Read and live-update a managed session's ThreadSettings (docs/log/27 P2 §9.4-3) —
 	// proxied verbatim.
 	mux.HandleFunc("GET /api/sessions/{name}/settings", rest)

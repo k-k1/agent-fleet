@@ -215,6 +215,22 @@ five-minute refreshes, and a stale copy of them is worse than none.
   started badge keeps working for it.
 - **The description is still not shown here.**
 
+### From a ticket number in the conversation
+
+In the mirror and the assistant chat, **ticket references the agent writes become links** that open
+the same details panel — even with the left pane collapsed. Ctrl/⌘-click or a middle click goes
+straight to the tracker instead.
+
+- `#956` is read as a number in the session's own repository (its origin on github.com or
+  bitbucket.org). The chat has no working copy, so there only the `owner/name#956` form links.
+- A Jira key (`PROJ-123`) links only **when the list already holds an issue of that project**, so
+  look-alikes such as `UTF-8` or `SHA-256` stay text.
+- In a Bitbucket working copy, `#N` links only the pull requests the list holds.
+- A ticket that is not in the list opens with just its key and a link to the original page; a
+  session can still be started from it. **Nothing is fetched for it** — as with the list, opening
+  it never starts a stopped workspace.
+- Someone reading a shared session sees these as plain text.
+
 ## Reading state — badges and notifications
 
 In each row of the list, the colored icon at the front shows the agent kind, and the state icon
@@ -378,6 +394,33 @@ go to the archive, shell / SSM to the trash).
   trash can restore them). Adding **"Delete the branch on the remote (origin) too"** removes it on
   origin as well — **that one cannot be undone**. A branch that is not in the parent's history
   cannot be deleted through this route at all.
+
+### A spend budget — pausing a session that spends too much
+
+A session can carry a **spend budget** in US dollars. When its **estimated** spend reaches the
+budget, the session **stops after the turn it is running** (the same resumable stop as "stop after
+this turn") and the notification centre says so (**"Stopped by its budget"**). If one turn alone
+runs on to **twice** the budget, the session is halted at once, mid-turn, and the notification says
+**halted mid-turn**.
+
+- **Setting it.** In the start dialog under **Advanced → Budget (USD)**; later from the session's
+  menu, **"Spend budget…"**. Settings › Agents › **"Budget for new sessions"** is the default for
+  every launch that names none — including sessions started by `create_session` and by schedules.
+  0 means no budget.
+- **Seeing it.** The chat's context row shows **"≈$1.84 / $5.00"** — amber from 80%, red at the
+  budget. Press it to change the budget. For a session that started others with `create_session`,
+  **"children ≈$X"** sits beside it: their spend is shown here but **not** counted against this
+  session's budget — each child has its own.
+- **Carrying on.** A stopped row shows the budget mark. **"Raise budget & resume…"** (in the row's
+  menu and on the notification) sets a higher budget and resumes in one step; it only accepts a
+  budget above what is already spent. Resuming without raising it gives the session one more turn,
+  after which it stops again.
+- **What the figure is.** An estimate at list price from the session's own transcript — or the
+  CLI's own reported cost where it gives one (opencode) — **not your bill**. On a subscription plan
+  it is the API-equivalent figure. A model with no price cannot be estimated, so a budget has no
+  effect on it (the dialog says so); kinds that record no token counts (Kiro, Cursor, Antigravity)
+  and the self-hosted engine ($0) are never stopped by one. A fork starts from $0: the history it
+  copied is not charged to it.
 
 ## When you can — and can't — resume
 

@@ -88,6 +88,7 @@ func init() {
 		},
 		CleanTitle:             sessionx.CleanTitle,
 		StopArmedSession:       sessionx.StopArmedSession,
+		SweepSpendCaps:         sessionx.SweepSpendCaps,
 		NormalizeKind:          sessionx.NormalizeKind,
 		SafeBrowsePath:         safeBrowsePath,
 		MaybePushOperatorReply: maybePushOperatorReply,

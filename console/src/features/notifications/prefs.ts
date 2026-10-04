@@ -22,6 +22,7 @@ export type NotifyRow =
   | "handoff"
   | "cloud-login"
   | "terminal"
+  | "spend-budget"
   | "other";
 
 export type NotifyEffect = "unread" | "os" | "voice";
@@ -46,6 +47,8 @@ export const NOTIFY_ROWS: NotifyRowDef[] = [
   { row: "handoff", label: "noti.row_handoff", hint: "noti.row_handoff_hint", unreadFixed: true },
   { row: "cloud-login", label: "noti.row_cloud_login", hint: "noti.row_cloud_login_hint", unreadFixed: true },
   { row: "terminal", label: "noti.row_terminal", hint: "noti.row_terminal_hint" },
+  // A budget stop waits on a person to raise the cap, so its dot cannot be muted either.
+  { row: "spend-budget", label: "noti.row_spend_budget", hint: "noti.row_spend_budget_hint", unreadFixed: true },
   { row: "other", label: "noti.row_other", hint: "noti.row_other_hint" },
 ];
 
@@ -68,6 +71,7 @@ const KIND_ROW: Record<string, NotifyRow> = {
   "aws-sso-expiring": "cloud-login",
   "gcp-login-required": "cloud-login",
   "terminal-notification": "terminal",
+  "spend-budget": "spend-budget",
 };
 
 /** The row a notification kind belongs to. A kind this Console does not know (a newer CP) lands

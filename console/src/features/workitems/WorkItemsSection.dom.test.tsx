@@ -53,8 +53,11 @@ vi.mock("../sessions/open.ts", () => ({
 }));
 
 const { WorkItemsSection } = await import("./WorkItemsSection.tsx");
+const { WorkItemModalHost } = await import("./WorkItemModalHost.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { useWorkItemStore } = await import("./store.ts");
+const { useWorkItemModal } = await import("./modal.ts");
+const { resolveWorkItemRef } = await import("./refs.ts");
 const { useLaunchSeed, useLaunchTarget, useReposStore } = await import("../repos/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
@@ -86,6 +89,7 @@ async function render(): Promise<void> {
       <ToastProvider>
         <ConfirmProvider>
           <WorkItemsSection />
+          <WorkItemModalHost />
         </ConfirmProvider>
       </ToastProvider>,
     );
@@ -146,6 +150,7 @@ beforeEach(() => {
   workItemDetail.mockReset();
   workItemDetail.mockResolvedValue({ error: { code: "workspace_stopped" } });
   useWorkItemStore.getState().reset();
+  useWorkItemModal.getState().close();
   useLaunchSeed.getState().clear();
   useLaunchTarget.getState().clear();
   useReposStore.setState({ repos: [] });
@@ -516,6 +521,7 @@ describe("WorkItemsSection", () => {
           <ConfirmProvider>
             <div className="app-rail-scroll">
               <WorkItemsSection />
+              <WorkItemModalHost />
             </div>
           </ConfirmProvider>
         </ToastProvider>,
@@ -547,6 +553,7 @@ describe("WorkItemsSection", () => {
           <ConfirmProvider>
             <div className="app-rail-scroll">
               <WorkItemsSection />
+              <WorkItemModalHost />
             </div>
           </ConfirmProvider>
         </ToastProvider>,
@@ -1333,5 +1340,53 @@ describe("WorkItemsSection — the sessions a ticket was started in (#1108)", ()
     await act(async () => confirmButton()!.click());
     await settle();
     expect(openTerminal).toHaveBeenCalledWith("sarch01");
+  });
+});
+
+describe("WorkItemModalHost — opened from a ticket link outside the rail (#1659)", () => {
+  it("shows a reference that is not in the inbox as itself, and still launches from it", async () => {
+    useReposStore.setState({
+      repos: [
+        { name: "web", path: "/home/dev/repos/web" },
+        { name: "web@wip-abc", path: "/home/dev/repos/web@wip-abc", worktree: true, parent: "web", branch: "x" },
+        { name: "api", path: "/home/dev/repos/api" },
+      ],
+    });
+    workItemList.mockResolvedValue({ items: [], queries: [query], sessions: [], fetchedAt: "", running: true });
+    await render();
+    const { item: ref } = resolveWorkItemRef({ provider: "github", key: "acme/web#1649" }, []);
+    // The mirror rendering the web@wip-abc worktree passes it as the hint.
+    await act(async () => {
+      useWorkItemModal.getState().openDetail(ref, { reference: true, repoHint: "web@wip-abc" });
+    });
+    const modal = document.querySelector(".wi-dmodal")!;
+    expect(modal.querySelector(".wi-dtitle")?.textContent).toBe("acme/web#1649");
+    expect(modal.querySelector(".wi-dref")?.textContent).toBe(t("wi.detail_ref_note", { name: "GitHub" }));
+    // An issue or a pull request: a stand-in cannot tell, so it claims neither, nor a state.
+    expect(modal.textContent).not.toContain(t("wi.detail_kind"));
+    expect(modal.textContent).not.toContain(t("wi.detail_state"));
+    expect(modal.querySelector<HTMLAnchorElement>(".wi-dlink")?.href).toBe("https://github.com/acme/web/issues/1649");
+    // The worktree hint resolves to its base.
+    expect(document.querySelectorAll<HTMLSelectElement>(".wi-sfield select")[0].value).toBe("web");
+
+    await act(async () => {
+      detailStart().click();
+    });
+    expect(useLaunchTarget.getState().target?.name).toBe("web");
+    // No cached title: the prompt names the key alone instead of an empty quote.
+    expect(useLaunchSeed.getState().prompt.split("\n")[0]).toBe(t("wi.prompt_target_key", { key: "acme/web#1649" }));
+    expect(document.querySelector(".wi-dmodal")).toBeNull();
+  });
+
+  it("re-points the open panel when a second link is clicked", async () => {
+    workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
+    await render();
+    await openRow();
+    const { item: ref } = resolveWorkItemRef({ provider: "github", key: "acme/web#9" }, []);
+    await act(async () => {
+      useWorkItemModal.getState().openDetail(ref, { reference: true });
+    });
+    expect(document.querySelectorAll(".wi-dmodal")).toHaveLength(1);
+    expect(document.querySelector(".wi-dmodal .wi-dtitle")?.textContent).toBe("acme/web#9");
   });
 });

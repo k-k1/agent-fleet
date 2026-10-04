@@ -54,6 +54,7 @@ import { anyLive, engineState, foldGroups, studioJobs } from "./jobs.ts";
 import { draftFromProperties, emptyDraft, remappedOp } from "./draft.ts";
 import { noteImagegenStatus } from "./available.ts";
 import { GenerateForm } from "./parts/GenerateForm.tsx";
+import { MaskCanvasModal, maskCanvasOffer } from "./parts/MaskCanvasModal.tsx";
 import { StudioEngineBar } from "./parts/StudioEngineBar.tsx";
 import { JobList } from "./parts/JobList.tsx";
 import { ResultCards, TrialSlot, resultsOf, type ResultItem } from "./parts/ResultCards.tsx";
@@ -205,6 +206,10 @@ function StudioPane({
   const [now, setNow] = useState(() => Date.now());
 
   const patch = studio.patchForm;
+  // The mask canvas, pinned to the picture it was opened on (see pictureCurrent below).
+  const [painting, setPainting] = useState<{ picture: string; mask: string } | null>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
 
   // Remember the studio this browser has open, for the next plain "open image generation".
   useEffect(() => {
@@ -563,10 +568,12 @@ function StudioPane({
       patch({ op: ops.includes("edit") ? "edit" : ops.find((o) => o !== "generate") || "edit", inputs: [path] });
       toast(tr("imggen.pic_reference_done"), { kind: "info" });
     },
-    // P0: the mask is the existing path field; painting it is P1 (decision 11).
+    // "Fix this part" goes straight to the canvas on that picture where the canvas is offered;
+    // elsewhere the mask comes by path, and the toast says where that field is.
     onFix: (path) => {
       patch({ op: "inpaint", inputs: [path], mask: "" });
-      toast(tr("imggen.pic_fix_done"), { kind: "info" });
+      if (maskCanvasOffer(provider, model) === "ok") setPainting({ picture: path, mask: "" });
+      else toast(tr("imggen.pic_fix_done"), { kind: "info" });
     },
   };
 
@@ -690,6 +697,15 @@ function StudioPane({
         >
           <Icon name="history" /> {tr("imggen.lb_restore")}
         </button>
+        <button
+          type="button"
+          onClick={() => {
+            close();
+            pictureActions.onFix(zoomPath);
+          }}
+        >
+          <Icon name="edit" /> {tr("imggen.pic_fix")}
+        </button>
       </>
     ) : undefined;
 
@@ -788,6 +804,7 @@ function StudioPane({
       onToggleLock={studio.toggleLock}
       highlight={studio.highlight as ReadonlySet<string>}
       familyExtra={model ? <KnowledgeMemo family={model.family} model={model.id} /> : null}
+      onPaintMask={(picture, mask) => setPainting({ picture, mask })}
     />
   );
 
@@ -1011,6 +1028,21 @@ function StudioPane({
           initialImage={{ providerId: provider?.id || "", model: draft.model }}
           onClose={() => setAttachOpen(null)}
           onAttach={attach}
+        />
+      )}
+      {painting && (
+        <MaskCanvasModal
+          picture={painting.picture}
+          mask={painting.mask}
+          // Pinned: a mask painted on one picture is never written into a draft whose first
+          // reference has since become another (a reorder, an upload, the agent).
+          pictureCurrent={() => (draftRef.current.inputs[0] || "").trim() === painting.picture}
+          onSaved={(mask) => {
+            if ((draftRef.current.inputs[0] || "").trim() !== painting.picture) return false;
+            patch({ mask });
+            setPainting(null);
+          }}
+          onClose={() => setPainting(null)}
         />
       )}
       {zoomPath &&

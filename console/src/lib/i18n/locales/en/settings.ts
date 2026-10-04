@@ -164,6 +164,9 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.stopped_archive_never": "Off",
   "agents.note_stopped_archive":
     "How long a session left stopped stays in the session list before it moves to the archive. Nothing is deleted — restore it from the archive at any time — and a session locked against deletion stays in the list. A stopped child session holds its slot until then; with Off, until you archive or delete it. Applies from the next list refresh, so shortening it moves sessions already past the new period to the archive at once. Default is the deployment's period: 7 days unless the deployment changed it.",
+  "agents.spend_cap_default": "Budget for new sessions",
+  "agents.spend_cap_none": "None",
+  "agents.note_spend_cap_default": "The spend budget a session gets when its launch names none — including sessions started by create_session or a schedule. When its estimated spend (at list price; not your bill) reaches the budget, the session stops after its turn. Change one session's budget from its menu (Spend budget…)",
   "agents.peer_messaging": "Messages between sessions",
   "agents.note_peer_messaging":
     "Lets a session send a short message to another session in this workspace. It reaches a stopped session by resuming it, and the recipient is told this is not an instruction from you. Applies to sessions started from now on. Default OFF.",

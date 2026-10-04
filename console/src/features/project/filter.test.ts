@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
 import { normQuery, repoMatches, sessionMatches } from "./filter.ts";
+import { refIndex } from "../sessions/refSearch.ts";
 
 const repo = (name: string, extra: Partial<Repo> = {}): Repo => ({ name, ...extra });
 const sess = (name: string, extra: Partial<Session> = {}): Session => ({ name, kind: "claude", ...extra });
@@ -46,5 +47,19 @@ describe("sessionMatches", () => {
   });
   it("matches only the dir basename, not the whole path", () => {
     expect(sessionMatches(sess("s9", { title: "改善", dir: "/home/dev/repos/foo" }), "repos")).toBe(false);
+  });
+});
+
+describe("sessionMatches by ticket reference (#1665)", () => {
+  const refs = refIndex([{ id: "1", provider: "jira", itemKey: "PROJ-7", sessionName: "s2", repo: "", branch: "", createdAt: "" }]);
+  const withPR = sess("s1", { title: "改善", pr: { number: 1662, state: "open", url: "https://github.com/acme/app/pull/1662" } });
+  it("finds the session by its PR number or its ledger ticket", () => {
+    expect(sessionMatches(withPR, normQuery("#1662"), refs)).toBe(true);
+    expect(sessionMatches(withPR, normQuery("1662"), refs)).toBe(true);
+    expect(sessionMatches(sess("s2", { title: "改善" }), normQuery("PROJ-7"), refs)).toBe(true);
+  });
+  it("does not let a shorter number find it, and keeps free-text matching on the branch", () => {
+    expect(sessionMatches(withPR, normQuery("#166"), refs)).toBe(false);
+    expect(sessionMatches(sess("s3", { title: "改善", branch: "feature/1662-x" }), normQuery("1662"), refs)).toBe(true);
   });
 });

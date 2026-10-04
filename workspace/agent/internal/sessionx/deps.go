@@ -79,6 +79,13 @@ type Deps struct {
 	FinalizeSessionUsage  func(m session.Meta)
 	MaybeFoldSessionUsage func()
 
+	// --- Spend budget (usage_spend.go) ---
+	//
+	// SessionSpend prices a session's own transcript for its budget (#1054). The price table
+	// and the turn fold are main's (usage_price.go / usage_fold.go), and a second copy here
+	// would make the budget and the usage view disagree about the same turn.
+	SessionSpend func(m session.Meta) session.Spend
+
 	// --- Terminal history (terminal_history.go) ---
 	//
 	// Session teardown deletes the history file. Filling an unwired field with a no-op
@@ -226,6 +233,8 @@ func trashSession(m session.Meta, stop bool) (string, string, error) {
 func finalizeSessionUsage(m session.Meta) { deps.FinalizeSessionUsage(m) }
 
 func maybeFoldSessionUsage() { deps.MaybeFoldSessionUsage() }
+
+func sessionSpendUncached(m session.Meta) session.Spend { return deps.SessionSpend(m) }
 
 func toolchainShellPrefix() string { return deps.ToolchainShellPrefix() }
 

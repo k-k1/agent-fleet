@@ -31,7 +31,7 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
   const refreshRepos = useReposStore((s) => s.refresh);
   const refreshSessions = useSessionsStore((s) => s.refresh);
 
-  return async ({ dir, repo }, { kind, driver, model, effort, startMode, skipPermissions, prompt, title, images, worktree, subdir, base, newBranch, useExisting }) => {
+  return async ({ dir, repo }, { kind, driver, model, effort, startMode, skipPermissions, prompt, title, images, worktree, subdir, base, newBranch, useExisting, spendCapUsd }) => {
     const hasModel = agentOf(kind).caps.model;
     // With attachments the first prompt's text cannot be fixed until the session exists,
     // because the saved paths have to be woven into it and the upload target IS that
@@ -50,6 +50,8 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
       body.skip_permissions = skipPermissions;
     }
 		if (title) body.title = title;
+    // Spend budget (#1054): only when the user typed one; absent, the Agent applies the default.
+    if (typeof spendCapUsd === "number") body.spend_cap_usd = spendCapUsd;
     // Working directory (Meta.Subdir): the Agent resolves it INSIDE whatever working
     // copy the launch lands in — including a worktree it creates in this same call —
     // and rejects a path that isn't there, so no client-side existence check.
