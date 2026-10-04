@@ -181,6 +181,32 @@ describe("ticket references", () => {
     expect(d?.item.url).toBe("https://bitbucket.org/team/svc/pull-requests/7");
   });
 
+  describe("the same owner/name on both hosts", () => {
+    const bothHosts = [
+      { name: "bb-copy", provider: "bitbucket", remote: "bitbucket.org", remotePath: "team/both" },
+      { name: "gh-copy", provider: "github", remote: "github.com", remotePath: "team/both" },
+    ];
+
+    it("keeps a bare number on the mirror's host after its row leaves the cache", async () => {
+      useReposStore.setState({ repos: bothHosts });
+      useWorkItemStore.setState({ payload: payload([row("bitbucket", "team/both#7", { kind: "pr" })]) });
+      await render("PR #7", "bb-copy");
+      useWorkItemStore.setState({ payload: payload([]) });
+      await click(links()[0]);
+      expect(useWorkItemModal.getState().detail?.item.provider).toBe("bitbucket");
+    });
+
+    it("does not hint the mirror's copy for the other host's ticket", async () => {
+      useReposStore.setState({ repos: bothHosts });
+      useWorkItemStore.setState({ payload: payload([row("github", "team/both#7")]) });
+      await render("see team/both#7", "bb-copy");
+      await click(links()[0]);
+      const d = useWorkItemModal.getState().detail;
+      expect(d?.item.provider).toBe("github");
+      expect(d?.repoHint).toBe("");
+    });
+  });
+
   it("reads the launch hint when clicked, so a late repository list still names the session's copy", async () => {
     // The working copy's folder name differs from the remote's, so only the hint can find it.
     useReposStore.setState({ repos: [] });

@@ -210,15 +210,18 @@ function makeWorkItemLink(text: string, repo: string | null, rendered: WorkItemR
     const ctx = workItemRefContext(repo);
     // null now can mean the context grew (a clone revealed the repository is on Bitbucket, where an
     // uncached number is not linked) — the link stays, but never on the host it was guessed for.
+    // Only a qualified token falls back on the clones: a bare #N is a number on the context
+    // repository's own host, and a same-named clone on the other host must not re-point it.
     let ref = classifyWorkItemRef(text, ctx);
     if (!ref) {
-      const hash = rendered.key.lastIndexOf("#");
-      const known = hash > 0 ? ctx.known.get(rendered.key.slice(0, hash)) : undefined;
+      const hash = text.lastIndexOf("#");
+      const known = hash > 0 ? ctx.known.get(text.slice(0, hash)) : undefined;
       ref = known ? { provider: known, key: rendered.key } : rendered;
     }
-    // Launch from the working copy this text is about only when the ticket belongs to it; read
-    // now, since the repository list may have arrived after the text did.
-    const repoHint = repo && ctx.origin && ref.key.startsWith(`${ctx.origin.path}#`) ? repo : "";
+    // Launch from the working copy this text is about only when the ticket belongs to it — same
+    // path AND same host; read now, since the repository list may have arrived after the text.
+    const repoHint =
+      repo && ctx.origin && ref.provider === ctx.origin.provider && ref.key.startsWith(`${ctx.origin.path}#`) ? repo : "";
     return { ...resolveWorkItemRef(ref, ctx.items), repoHint };
   };
   wireTooltip(a, () => {
