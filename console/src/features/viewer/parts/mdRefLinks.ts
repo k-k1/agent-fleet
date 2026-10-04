@@ -175,18 +175,11 @@ export function linkifyRefs(
 }
 
 // The context a ticket reference is read in: the working copy the text is about (Session.repo →
-// its origin), the inbox cache, and the clones' origins.
+// its origin) and the inbox cache.
 function workItemRefContext(repo: string | null): WorkItemRefContext {
-  const repos = useReposStore.getState().repos;
-  const known: WorkItemRefContext["known"] = new Map();
-  for (const r of repos) {
-    const o = originOf(r);
-    if (o) known.set(o.path, o.provider);
-  }
   return {
-    origin: repo ? originOf(repos.find((r) => r.name === repo)) : null,
+    origin: repo ? originOf(useReposStore.getState().repos.find((r) => r.name === repo)) : null,
     items: cachedWorkItems(),
-    known,
   };
 }
 
@@ -198,8 +191,7 @@ const cachedWorkItems = (): WorkItem[] =>
 // makeWorkItemLink builds a non-navigating anchor for a ticket reference. A plain click / Enter
 // opens the work item detail modal; Ctrl/Cmd-click and a middle click go straight to the tracker,
 // the way the rail row's external link does. The token is classified again at click and hover
-// time, not trusted from the render: the cache may have loaded since, and a qualified reference
-// linked as GitHub before it did may turn out to be a cached Bitbucket pull request.
+// time, not trusted from the render: the cache and the repository list may have changed since.
 function makeWorkItemLink(text: string, repo: string | null, rendered: WorkItemRef): HTMLAnchorElement {
   const a = document.createElement("a");
   a.className = "md-ref-link md-workitem-link";
@@ -208,16 +200,9 @@ function makeWorkItemLink(text: string, repo: string | null, rendered: WorkItemR
   a.tabIndex = 0;
   const current = () => {
     const ctx = workItemRefContext(repo);
-    // null now can mean the context grew (a clone revealed the repository is on Bitbucket, where an
-    // uncached number is not linked) — the link stays, but never on the host it was guessed for.
-    // Only a qualified token falls back on the clones: a bare #N is a number on the context
-    // repository's own host, and a same-named clone on the other host must not re-point it.
-    let ref = classifyWorkItemRef(text, ctx);
-    if (!ref) {
-      const hash = text.lastIndexOf("#");
-      const known = hash > 0 ? ctx.known.get(text.slice(0, hash)) : undefined;
-      ref = known ? { provider: known, key: rendered.key } : rendered;
-    }
+    // null now means the row left the cache after the link was drawn: the panel still opens, as
+    // the reference-only stand-in on the host the row had.
+    const ref = classifyWorkItemRef(text, ctx) ?? rendered;
     // Launch from the working copy this text is about only when the ticket belongs to it — same
     // path AND same host; read now, since the repository list may have arrived after the text.
     const repoHint =

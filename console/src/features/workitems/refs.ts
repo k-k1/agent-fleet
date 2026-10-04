@@ -1,8 +1,7 @@
 // Ticket references written in prose — `#956`, `owner/name#956`, `PROJ-123` — resolved to the
 // work item they name (#1659), so the mirror can open the same detail modal a rail row opens.
 //
-// Pure: every input (the cached rows, the working copy the text is about, the known clones) is
-// passed in, so the gates below are testable without a DOM or a store.
+// Pure: every input (the cached rows, the working copy the text is about) is passed in, so the gates below are testable without a DOM or a store.
 import type { WorkItem } from "./read.ts";
 
 /** One reference, already rewritten into the inbox's own key ("owner/name#N" / "PROJ-123"). */
@@ -23,11 +22,8 @@ export interface RefOrigin {
 export interface WorkItemRefContext {
   /** The working copy the text is about; null = none, and a bare `#N` then stays text. */
   origin: RefOrigin | null;
-  /** The inbox cache (the CP's rows). */
+  /** The inbox cache (the CP's rows). Only what is here is linked. */
   items: WorkItem[];
-  /** "owner/name" → provider for the clones in this workspace, so `owner/name#N` written about
-   * a Bitbucket repository is not sent to GitHub. */
-  known: Map<string, "github" | "bitbucket">;
 }
 
 // A bare or qualified issue number. The look-behind is what keeps `C#`, `&#123;`, `page#12`
@@ -38,7 +34,7 @@ export interface WorkItemRefContext {
 // classifyWorkItemRef decides what it is.
 export const ISSUE_REF_SRC = String.raw`(?<![\w&#/.\-])(?:[A-Za-z0-9][\w.\-]*\/[\w.\-]+)?#\d+(?![\w#])`;
 // A Jira key. The shape alone also matches UTF-8, SHA-256, ISO-8601, GPT-4 and P2-1, so this is
-// only a candidate: classifyWorkItemRef links it only when its project is one the cache knows.
+// only a candidate: classifyWorkItemRef links it only when the cache holds that issue.
 export const JIRA_REF_SRC = String.raw`(?<![\w/\-])[A-Z][A-Z0-9_]{1,9}-[1-9]\d{0,6}(?![\w\-])`;
 
 /** "Does this text mention anything ticket-shaped at all" — decides whether loading the cache is
@@ -59,23 +55,12 @@ export function originOf(repo: { provider?: string; remote?: string; remotePath?
   return null;
 }
 
-/** The project keys the cached Jira rows belong to. */
-export function jiraProjects(items: WorkItem[]): Set<string> {
-  const out = new Set<string>();
-  for (const it of items) {
-    if (it.provider !== "jira") continue;
-    const m = it.key.match(JIRA_TOKEN);
-    if (m) out.add(m[1]);
-  }
-  return out;
-}
-
 /** What classifyWorkItemRef's answers depend on beyond the token, as one comparable string: the
- * context origin, the Jira projects and the cached Bitbucket keys. A rendered message re-runs its
- * linkifier when this changes — the repository list or the inbox arriving after the text did. */
+ * context origin and the cached keys. A rendered message re-runs its linkifier when this changes —
+ * the repository list or the inbox arriving after the text did. */
 export function workItemRefInputs(origin: RefOrigin | null, items: WorkItem[]): string {
-  const bb = items.filter((i) => i.provider === "bitbucket").map((i) => i.key);
-  return [origin ? `${origin.provider}:${origin.path}` : "", [...jiraProjects(items)].sort().join(","), bb.sort().join(",")].join("|");
+  const keys = items.map((i) => `${i.provider}:${i.key}`);
+  return [origin ? `${origin.provider}:${origin.path}` : "", keys.sort().join(",")].join("|");
 }
 
 const cachedRow = (items: WorkItem[], provider: string, key: string) =>
@@ -84,43 +69,41 @@ const cachedRow = (items: WorkItem[], provider: string, key: string) =>
 /** Decide whether a matched token is a reference worth a link, and to what. null = leave the
  * text alone.
  *
+ * Only a ticket the inbox already holds is linked. Prose is full of `#N` that are not citations
+ * — a search a user typed (`#166`), a list number, an example — and in a busy repository almost
+ * every such number is SOME issue, so "it exists on GitHub" says nothing about whether the
+ * writer meant it. Being in the reader's own work item list does.
+ *
  * - A bare `#N` needs a context repository on github.com / bitbucket.org, and is a number on
- *   THAT host: the same owner/name can exist on both, and the other host's cached row is a
- *   different ticket. Six digits and more than seven are left out: `#112233` / `#11223344` are
- *   hex colours, and issue numbers that high are rare enough that the qualified form covers them.
- * - GitHub links optimistically, as a commit hash does. Agents cite pull requests nobody
- *   assigned to the reader, which are exactly the ones missing from the cache, and an unknown
- *   number still opens a panel with a working link to the tracker.
- * - Bitbucket links only cached rows: the inbox knows only its pull requests, and `#N` in a
- *   Bitbucket repository is just as often one of its issues.
- * - Jira links only when the project is one the cache already holds a row of. */
+ *   THAT host: the same owner/name can exist on both, and the other host's row is a different
+ *   ticket. Six digits and more than seven are left out: `#112233` / `#11223344` are colours.
+ * - `owner/name#N` takes the row of either host, the context repository's host first.
+ * - A Jira key needs its own row. */
 export function classifyWorkItemRef(token: string, ctx: WorkItemRefContext): WorkItemRef | null {
   const issue = token.match(ISSUE_TOKEN);
   if (issue) {
     const [, qualified, num] = issue;
     if (num.length > 10 || num.startsWith("0")) return null;
-    let provider: string;
+    let hosts: string[];
     let key: string;
     if (qualified) {
       key = `${qualified}#${num}`;
-      const cached = ["github", "bitbucket"].find((p) => cachedRow(ctx.items, p, key));
-      provider =
-        cached || ctx.known.get(qualified) || (ctx.origin?.path === qualified ? ctx.origin.provider : "github");
+      hosts = ctx.origin?.path === qualified && ctx.origin.provider === "bitbucket" ? ["bitbucket", "github"] : ["github", "bitbucket"];
     } else {
       if (!ctx.origin || num.length === 6 || num.length > 7) return null;
       key = `${ctx.origin.path}#${num}`;
-      provider = ctx.origin.provider;
+      hosts = [ctx.origin.provider];
     }
-    if (provider === "bitbucket" && !cachedRow(ctx.items, provider, key)) return null;
-    return { provider, key };
+    const provider = hosts.find((p) => cachedRow(ctx.items, p, key));
+    return provider ? { provider, key } : null;
   }
-  const jira = token.match(JIRA_TOKEN);
-  if (jira && jiraProjects(ctx.items).has(jira[1])) return { provider: "jira", key: token };
+  if (JIRA_TOKEN.test(token) && cachedRow(ctx.items, "jira", token)) return { provider: "jira", key: token };
   return null;
 }
 
-/** The row a reference opens: the cached one when there is one, else a reference-only stand-in
- * carrying the key and a constructed tracker URL. The stand-in never claims a title, a state or
+/** The row a reference opens: the cached one when there is one, else — the row left the cache
+ * after the link was drawn — a reference-only stand-in carrying the key and a constructed tracker
+ * URL. The stand-in never claims a title, a state or
  * a kind it does not know; the modal says it is not in the inbox instead. */
 export function resolveWorkItemRef(ref: WorkItemRef, items: WorkItem[]): { item: WorkItem; reference: boolean } {
   const hit = cachedRow(items, ref.provider, ref.key);
@@ -151,8 +134,7 @@ export function resolveWorkItemRef(ref: WorkItemRef, items: WorkItem[]): { item:
 }
 
 // GitHub redirects /issues/N to /pull/N when N is a pull request, so one URL serves both. Jira's
-// site is not known to the Console except through a cached row's URL, which is also the only way
-// a Jira key gets linked at all (classifyWorkItemRef).
+// site is not known to the Console except through a cached row's URL.
 function referenceUrl(ref: WorkItemRef, repo: string, num: string, items: WorkItem[]): string {
   if (ref.provider === "github" && repo) return `https://github.com/${repo}/issues/${num}`;
   if (ref.provider === "bitbucket" && repo) return `https://bitbucket.org/${repo}/pull-requests/${num}`;
