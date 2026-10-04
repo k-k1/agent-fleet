@@ -166,6 +166,14 @@ const (
 	errCodeCivitaiTokenStoreFailed = "civitai_token_store_failed"
 	errCodeCivitaiTokenPutFailed   = "civitai_token_put_failed"
 
+	// The LAN ComfyUI's URL and key entered from the admin panel (#957). A managed table row
+	// holding the role is its own code because the remedy is the stack, not the form.
+	errCodeEngineComfyURLInvalid     = "engine_comfy_url_invalid"
+	errCodeEngineComfyURLCredentials = "engine_comfy_url_credentials"
+	errCodeEngineComfyManaged        = "engine_comfy_managed"
+	errCodeEngineComfyUnsupported    = "engine_comfy_unsupported"
+	errCodeEngineComfyStoreFailed    = "engine_comfy_store_failed"
+
 	// A member's Recreate or Clean home on a deployment whose runtime cannot reach the
 	// workspace home (internal/runtime/home_wipe.go). Its own code because the answer is
 	// "not on this deployment": nothing was stopped, pressing again changes nothing, and the

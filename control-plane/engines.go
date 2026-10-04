@@ -110,7 +110,18 @@ type engineDef struct {
 	IdleSec          int    `json:"idleSec"`
 	StartDeadlineSec int    `json:"startDeadlineSec"`
 	Mode             string `json:"mode"` // the DEFAULT mode; a stored setting wins
+	// origin says which of the CP's own sources synthesised this row: "" for a table row,
+	// engineOriginEnv for AF_COMFY_URL, engineOriginPanel for the admin panel. Never in the JSON
+	// table — an operator cannot declare it — and it decides where the row's bearer comes from
+	// (engineComfyPanel's precedence: a panel URL never presents an environment key).
+	origin string
 }
+
+// Where a synthesised image row came from (ADR 0076 decision 2 and its 2026-10-04 addendum).
+const (
+	engineOriginEnv   = "env"
+	engineOriginPanel = "panel"
+)
 
 // The two lifecycles that are not this deployment's, and they are NOT the same question
 // (ADR 0076 decision 1, ADR 0079 decision 1):
@@ -413,6 +424,18 @@ type engineRegistry struct {
 	// registry rather than off an engine. Nil when the stack declares none — a deployment
 	// running an ADR 0071 table, or one whose CP has no AWS at all.
 	ing *engineIngester
+	// buildComfy is build, always set, for the image row the admin panel replaces at run time
+	// (engine_comfy_panel.go). Separate from build because build's nil-ness is what tells adopt
+	// there is nothing to adopt with.
+	buildComfy func(engineDef) *engineRuntimeState
+	// comfyFallback is the external image row this process would serve without the panel —
+	// AF_COMFY_URL's, or an external row of the table — which clearing the panel returns to. nil
+	// when there is none, and then clearing the panel takes the role away.
+	comfyFallback *engineDef
+	// comfyMu serialises a panel change from reading the current row to swapping it, and
+	// comfyWriteMu one save from the stored value to the swap (engine_comfy_panel.go).
+	comfyMu      sync.Mutex
+	comfyWriteMu sync.Mutex
 }
 
 // ingester is the ingest runner, or nil when this deployment has none.
@@ -626,13 +649,20 @@ func engineSubnets() []string {
 // it, which means that proxy has to let the health path through with the same bearer or this
 // engine is never healthy (decision 7).
 //
-// Read once, at startup: an environment variable cannot change under a running process, so
-// changing the URL is a Control Plane restart.
+// Read once, at startup: an environment variable cannot change under a running process. The
+// admin panel is the way to change the URL without a restart, and its value wins over this one
+// (engine_comfy_panel.go).
 func engineComfyEnvRow() (engineDef, string, bool) {
 	url := strings.TrimSpace(envx.Or("AF_COMFY_URL", ""))
 	if url == "" {
 		return engineDef{}, "", false
 	}
+	return engineComfyRow(url, engineOriginEnv), strings.TrimSpace(envx.Or("AF_COMFY_API_KEY", "")), true
+}
+
+// engineComfyRow is the external image row a LAN ComfyUI URL stands for, whichever source named
+// it — the environment or the admin panel build the same row and differ only in origin.
+func engineComfyRow(url, origin string) engineDef {
 	return engineDef{
 		Key:       "image",
 		API:       engineAPIImages,
@@ -640,7 +670,8 @@ func engineComfyEnvRow() (engineDef, string, bool) {
 		URL:       url,
 		Health:    "/system_stats",
 		Lifecycle: engineLifecycleExternal,
-	}, strings.TrimSpace(envx.Or("AF_COMFY_API_KEY", "")), true
+		origin:    origin,
+	}
 }
 
 // engineLlmEnvRow synthesises the engine table row an operator gets from AF_LLM_URL: the
@@ -731,7 +762,11 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	// with no registry at all — and registerEngineRoutes then skips the gateway routes entirely,
 	// so `/engine/…` would not even be routed.
 	rem := newEngineRemotes(mgr)
-	if name == "" && inline == "" && !hasEnvRow && !hasLlmEnvRow && rem == nil {
+	// A CP with a store can be given a LAN ComfyUI from the admin panel at any time (#957), so it
+	// always gets a registry — possibly an empty one — for the panel to put the row into. Without
+	// it a first save on a deployment that booted with no engines would still need a restart.
+	panel := newEngineComfyPanel(mgr)
+	if name == "" && inline == "" && !hasEnvRow && !hasLlmEnvRow && rem == nil && panel == nil {
 		return nil
 	}
 	// The inline table is parsed BEFORE any AWS client exists, because whether a single row
@@ -782,6 +817,21 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	if hasLlmEnvRow {
 		table.Engines = engineTableWithEnvRow(table.Engines, llmEnvRow, "AF_LLM_URL")
 	}
+	// The panel's URL goes on top of the environment's, after the row it would replace has been
+	// kept as the fallback that clearing the panel returns to. The same merge as the environment's,
+	// so a managed table row wins over the panel too (ADR 0076 decision 2, 2026-10-04 addendum).
+	var comfyFallback *engineDef
+	for _, d := range table.Engines {
+		if d.Key == "image" && d.notManagedHere() {
+			d := d
+			comfyFallback = &d
+		}
+	}
+	panelURL, panelKey := panel.boot(ctx)
+	panelRow := engineComfyRow(panelURL, engineOriginPanel)
+	if panelURL != "" {
+		table.Engines = engineTableWithEnvRow(table.Engines, panelRow, "the admin panel")
+	}
 	// 🔴 NOT "return nil" any more (ADR 0077 P1 hardware run). A table with no rows is a real
 	// state of a deployment that is mid-migration — the `<Role>Enabled` round trip drops the
 	// conditional resources, the engine table among them — and a CP that started in that window
@@ -796,7 +846,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	// review found: a borrowing native or docker CP has NO rows at boot — they arrive with the first
 	// catalogue fetch (decision 2) — and no AWS either, so it used to fall out here and serve
 	// nothing for the rest of its life.
-	if len(table.Engines) == 0 && !haveAWS && rem == nil {
+	if len(table.Engines) == 0 && !haveAWS && rem == nil && panel == nil {
 		return nil
 	}
 
@@ -808,7 +858,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		auditor = mgr.store
 		models = mgr.store
 	}
-	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{}}
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{}, comfyFallback: comfyFallback}
 	if mgr != nil {
 		reg.signKey = engineSignKey(mgr.tokenSignMaster())
 	}
@@ -922,6 +972,9 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			// the two, and it is what every ADR 0076 deployment already sets. One line when both are
 			// declared, because a bearer that is silently not the one the operator just edited is a
 			// 401 with nothing to read.
+			//
+			// A row the admin panel synthesised gets neither: its key is the panel's own, set by the
+			// caller (the boot loop below, applyComfyPanel), and engineEnvAPIKey refuses it.
 			if hasEnvRow && d == envRow && envAPIKey != "" {
 				st.apiKey = envAPIKey
 				if other := engineEnvAPIKey(d); other != "" && other != envAPIKey {
@@ -1001,10 +1054,16 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	if haveAWS || rem != nil {
 		reg.build = build
 	}
+	// The panel rebuilds the image row whenever an administrator saves, on every deployment —
+	// including one with no AWS and nothing to borrow, where build above stays unset.
+	reg.buildComfy = build
 	for _, d := range table.Engines {
 		st := build(d)
 		if st == nil {
 			continue
+		}
+		if d.origin == engineOriginPanel {
+			st.apiKey = panelKey
 		}
 		reg.byKey[d.Key] = st
 		if st.ctrl != nil && st.ctrl.cfg.interval > 0 {
@@ -1044,7 +1103,10 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 // Read once, at registry build, like every other AF_ variable: an environment variable cannot
 // change under a running process, so changing it is a Control Plane restart.
 func engineEnvAPIKey(d engineDef) string {
-	if !d.external() {
+	// 🔴 Never for the admin panel's row: its URL is one an administrator typed in, and a bearer
+	// configured in the environment for some other host must not be sent to it (#957, ADR 0076
+	// 2026-10-04 addendum). An empty panel key means no bearer at all.
+	if !d.external() || d.origin == engineOriginPanel {
 		return ""
 	}
 	return strings.TrimSpace(envx.Or(engineAPIKeyEnvName(d.Key), ""))

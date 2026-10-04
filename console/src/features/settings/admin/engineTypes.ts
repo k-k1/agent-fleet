@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, errDetail } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { loadEngines, saveEngines } from "./catalogMemory.ts";
+import type { ComfyLanStatus } from "./adminEngineLan.tsx";
 
 export type EngineBox = {
   id?: string;
@@ -771,6 +772,9 @@ export function useEngineRows() {
   // keeping their own list is three places for a deployment's gate to be forgotten.
   const [sources, setSources] = useState<CatalogSource[]>(held?.sources ?? [...CATALOG_SOURCES_DEFAULT]);
   const [err, setErr] = useState("");
+  // The LAN ComfyUI panel's state (#957), operator-only and absent for anyone else. Not held
+  // across mounts: it is one panel's form state, not something a returning pane has to draw.
+  const [comfyLan, setComfyLan] = useState<ComfyLanStatus | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -786,6 +790,7 @@ export function useEngineRows() {
       setIsSuper(superAdmin);
       setSources(offered);
       setRows(answered);
+      setComfyLan(d?.comfy_lan ?? null);
       saveEngines({ rows: answered, isSuper: superAdmin, sources: offered });
     } catch {
       setErr(tr("admin.load_error"));
@@ -795,7 +800,7 @@ export function useEngineRows() {
     load();
   }, [load]);
 
-  return { rows, isSuper, sources, err, setErr, setRows, load };
+  return { rows, isSuper, sources, comfyLan, err, setErr, setRows, load };
 }
 
 // The heading names the engine by what it does, not by its key: "llm" and "image" are the

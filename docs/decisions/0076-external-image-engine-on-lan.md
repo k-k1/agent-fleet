@@ -6,6 +6,7 @@ English | [日本語](0076-external-image-engine-on-lan.ja.md)
   checked every claim against the code and found no premise that fails; its corrections are
   folded into the decisions below and P0 may start.
   Status update (2026-09-24): P0 is implemented. Its four lanes landed as #556 (Agent), #557 (documentation), #558 (Console) and #560 (CP: the external row synthesised from `AF_COMFY_URL`, `control-plane/engines.go`). P0's completion run — one image from a LAN ComfyUI — is not recorded.
+  Status update (2026-10-04): P1's first item — URL and key from the admin panel (#957) — is implemented; its precedence is the addendum to decision 2 at the end.
 - Follow-ups: #957, #958, #962
 - **Nothing was measured for this document.** Every claim says where it comes from —
   (a) measurements in ADR 0069, 0071 and 0072, (b) facts read out of this repository's code on
@@ -373,3 +374,41 @@ What the documentation lane found while writing P0 (2026-09-11, the same day):
   decision 7.
 - **Two P1 items surfaced**: the admin-panel URL field moved to the top of P1, and a
   member-facing section on deployment-provided engines, which the guide lacks for ECS as well.
+
+## Addendum (2026-10-04) — decision 2: the URL and key from the admin panel (#957)
+
+Decision 2 stands as written: the environment is still read once, a managed table row still
+wins over it, and the reloader still skips external rows. What it deferred — entering the URL
+from the admin panel — now exists, and it adds a third source for the `image` role. The order,
+highest first:
+
+1. a **managed** row of the engine table — it wins over the panel for decision 2's reason (an
+   ECS service nobody could stop), and the panel answers `409 engine_comfy_managed` and draws no
+   form;
+2. the URL saved in the panel;
+3. `AF_COMFY_URL`;
+4. an external row of the table, or a borrowed one (ADR 0079).
+
+The panel beats the environment because a stored setting beats the deployment's default
+everywhere else in the Control Plane (`engineRuntimeState.mode`). The reverse — the variable as
+a lock — would leave an environment-only deployment needing a restart for every change, which
+is the cost this item exists to remove. Clearing the panel falls back to `AF_COMFY_URL` live.
+
+**The key follows its URL's source.** A panel URL presents the panel's key, or no bearer at all
+when the panel holds none. It never presents `AF_COMFY_API_KEY` or `AF_ENGINE_API_KEY_IMAGE`,
+because those were configured for the host the environment names, and the panel's URL may be a
+different machine. `engineEnvAPIKey` refuses the panel's row for that reason.
+
+The key is sealed the way the Hugging Face token is (sealed settings rows under the
+`deployment` custodian key), so no schema migration was needed. No route returns it: the
+engine list's `comfy_lan` says only whether one is set. The audit entry `engine.comfy_lan`
+records the old and new URL and whether the key was set, cleared or left alone. A save rebuilds
+the `image` runtime row rather than editing it, so decision 8's cached health answer of the
+previous URL does not outlive the change. A Control Plane with a store now always builds an
+engine registry, possibly empty, and the gateway's routes are therefore registered on every
+deployment. Otherwise a first save on a deployment that booted with no engine would still have
+needed a restart.
+
+Unverified: a `generate_image` run against a real LAN ComfyUI configured through the panel.
+The tests drive httptest stubs, which record which host received which `Authorization`.
+

@@ -10,6 +10,7 @@ import { EngineIssueTokenPanel } from "./adminEngineIssueToken.tsx";
 import { EngineUptimePanel, Sep, useDuration } from "./EngineUptime.tsx";
 import { secsUntil, windowIsPartial } from "./engineUptime.ts";
 import { outputForWindow, refitWindows, type WindowRefit } from "./engineFit.ts";
+import { ComfyLanPanel } from "./adminEngineLan.tsx";
 import {
   engineIsExternal,
   engineIsRemote,
@@ -51,7 +52,7 @@ import {
 
 export function EnginesAdminView() {
   const tr = useT();
-  const { rows, isSuper, sources, err, setErr, setRows, load } = useEngineRows();
+  const { rows, isSuper, sources, comfyLan, err, setErr, setRows, load } = useEngineRows();
   const [busy, setBusy] = useState("");
   /** What the last class change did to the windows, so an automatic edit is never a silent one.
    *  Null until a rung is picked, and cleared by the next pick. */
@@ -300,6 +301,9 @@ export function EnginesAdminView() {
           open question 11) and has no door to this one — but the component is reachable from
           tenant settings' own rail, so it says so rather than rendering an empty page. */}
       {!isSuper && rows.length > 0 && <p className="admin-hint pad">{tr("admin.engines_ops_super_only")}</p>}
+      {/* Where the image role's LAN ComfyUI is, settable without a Control Plane restart (#957).
+          Operator-only: it decides where every member's images go, and it holds a credential. */}
+      {isSuper && comfyLan && <ComfyLanPanel status={comfyLan} onChanged={load} />}
 
       {rows.map((e) => (
         <section className="admin-panel" key={e.key}>
