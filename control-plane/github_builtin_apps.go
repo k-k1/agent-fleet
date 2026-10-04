@@ -26,7 +26,11 @@ import (
 // build) offers no built-in source at all. They can be overridden at link time with
 // -ldflags "-X main.builtinGitHubOAuthClientID=…" without editing this file.
 var (
-	builtinGitHubOAuthClientID = ""
+	// The project's OAuth App (Device flow on). Measured: a nonexistent scope answers
+	// invalid_scope, so the probe classifies it as an OAuth App. The allow marker is there
+	// because gitleaks' generic-api-key rule reads "Auth" in the name as a credential
+	// keyword; a client_id is public.
+	builtinGitHubOAuthClientID = "Ov23liJpLp15wcnFMDnV" // gitleaks:allow
 	builtinGitHubAppClientID   = ""
 	// builtinGitHubAppSlug is the GitHub App's URL name. GitHub exposes no way to learn it
 	// from a client_id, and the install link is built from it.

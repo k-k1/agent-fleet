@@ -25,8 +25,15 @@ func stubGitHubProbe(t *testing.T, f func(string) (string, string, *ghProbeError
 // withBuiltinGitHubApps compiles in both built-in apps for the duration of a test.
 func withBuiltinGitHubApps(t *testing.T) {
 	t.Helper()
+	setBuiltinGitHubApps(t, "Ov23builtin", "Iv23builtin", "af-builtin")
+}
+
+// setBuiltinGitHubApps pins the built-in apps, so a test does not depend on which ones the
+// build carries.
+func setBuiltinGitHubApps(t *testing.T, oauthID, appID, appSlug string) {
+	t.Helper()
 	o, a, s := builtinGitHubOAuthClientID, builtinGitHubAppClientID, builtinGitHubAppSlug
-	builtinGitHubOAuthClientID, builtinGitHubAppClientID, builtinGitHubAppSlug = "Ov23builtin", "Iv23builtin", "af-builtin"
+	builtinGitHubOAuthClientID, builtinGitHubAppClientID, builtinGitHubAppSlug = oauthID, appID, appSlug
 	t.Cleanup(func() { builtinGitHubOAuthClientID, builtinGitHubAppClientID, builtinGitHubAppSlug = o, a, s })
 }
 
