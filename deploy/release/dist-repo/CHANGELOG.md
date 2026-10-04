@@ -3,6 +3,15 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.28.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.28.0) — 2026-10-04
+
+Past sessions' conversations can be searched from the command palette and by agents, and sessions can
+be found by the issue or pull request they belong to. A session can carry a spend budget and stops
+after its turn when it reaches it. Agents can share an Agent Fleet memory across every agent kind,
+off until each member turns it on. GitHub can be connected through a built-in app, the inpaint mask
+is painted on the picture, and a LAN ComfyUI can be set from the admin panel. On AWS, member secrets
+can be sealed with a KMS key.
+
 ## [0.27.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.27.0) — 2026-10-03
 
 Members can run Google Cloud commands as themselves with `af-gcloud-exec`, from profiles in Settings with

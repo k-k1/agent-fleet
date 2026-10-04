@@ -14,6 +14,31 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 
 ---
 
+## [0.28.0](0.28.0.md) — 2026-10-04
+
+**New / Improved**
+
+- **[sessions]** Search past conversations from the command palette (Conversations) and with `search_sessions` ([#1558](https://github.com/k-k1/agent-fleet/issues/1558))
+- **[sessions]** Find a session by its issue, PR or Jira key in the left-pane filter and the palette ([#1665](https://github.com/k-k1/agent-fleet/issues/1665))
+- **[mirror]** Ticket references in the mirror and the assistant chat open the work item ([#1659](https://github.com/k-k1/agent-fleet/issues/1659))
+- **[usage]** Per-session spend budget: stop after the turn at the budget, Raise budget & resume ([#1054](https://github.com/k-k1/agent-fleet/issues/1054))
+- **[agent memory]** Agent Fleet memory shared by every kind, off by default, with a change list to revert or forget ([#1569](https://github.com/k-k1/agent-fleet/issues/1569))
+- **[git]** Connect GitHub through a built-in OAuth App or GitHub App; a tenant's own app kind is detected ([#1667](https://github.com/k-k1/agent-fleet/issues/1667))
+- **[image generation]** Paint the inpaint mask on a canvas over the picture ([#956](https://github.com/k-k1/agent-fleet/issues/956))
+- **[gallery]** Include subfolders, send a picture to a session, EXIF-aware width × height ([#961](https://github.com/k-k1/agent-fleet/issues/961))
+- **[engines]** LAN ComfyUI URL and key in Admin › Inference engines; `comfyui-lan.sh` runs the pinned image on a LAN host ([#957](https://github.com/k-k1/agent-fleet/issues/957), [#958](https://github.com/k-k1/agent-fleet/issues/958))
+- **[AWS]** Opt-in KMS key custodian for member secrets ([#969](https://github.com/k-k1/agent-fleet/issues/969))
+- **[notifications]** One settings table: kinds × dot / OS notification / read-aloud ([#1085](https://github.com/k-k1/agent-fleet/issues/1085))
+- **[console]** The WS bar folds by width instead of wrapping ([#1642](https://github.com/k-k1/agent-fleet/issues/1642))
+- **[agents]** Live compacting for codex Terminal and OpenCode; OpenCode's reported cost in usage ([#1139](https://github.com/k-k1/agent-fleet/issues/1139), [#1082](https://github.com/k-k1/agent-fleet/issues/1082))
+
+**Fixed**
+
+- **[agents]** Auto-resume declined a first request the usage limit had refused ([#1658](https://github.com/k-k1/agent-fleet/issues/1658))
+- **[question cards]** Picking a single-choice option erased the free text ([#1653](https://github.com/k-k1/agent-fleet/issues/1653))
+- **[session state]** A turn reported finished early when a user Stop hook blocked the stop ([#1600](https://github.com/k-k1/agent-fleet/issues/1600))
+- **[mirror]** Changed files misplaced files under a symlinked `~/repos` or `~/.af-work` ([#1610](https://github.com/k-k1/agent-fleet/issues/1610))
+
 ## [0.27.0](0.27.0.md) — 2026-10-03
 
 **CLI pins** — Claude Code 2.1.288, Codex 0.160.0, Copilot 1.0.91, Antigravity 1.2.16, Cursor 2026.10.01-e373342, Kiro 2.27.1, Muse Code 1.4.2-R4684.1

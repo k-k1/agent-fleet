@@ -3,6 +3,14 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.28.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.28.0) — 2026-10-04
+
+過去のセッションの会話を、コマンドパレットからもエージェントからも検索できるようになりました。セッションは、
+ひも付いた Issue や PR からも探せます。セッションに費用の予算を持たせると、達したところでターンの終わりに止まります。
+エージェントはすべての種別で共有する Agent Fleet のメモリを使えます（メンバーが各自でオンにするまでは無効です）。
+GitHub は組み込みのアプリで接続でき、インペイントのマスクは画像の上で塗れ、LAN の ComfyUI は管理パネルで設定
+できます。AWS ではメンバーの秘密情報を KMS のキーで封印できます。
+
 ## [0.27.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.27.0) — 2026-10-03
 
 メンバーは `af-gcloud-exec` で Google Cloud のコマンドを自分として実行できるようになりました。AWS と同じく、プロファイルは
