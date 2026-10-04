@@ -3685,7 +3685,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		if limit <= 0 {
 			limit = 20
 		}
-		path = "/agents/memory/snapshots?limit=" + strconv.Itoa(limit)
+		// claude's and codex's history only, like get_memory_snapshot's diff: commits that touch
+		// nothing but the AF memory are left out before the limit applies (ADR 0108).
+		path = "/agents/memory/snapshots?native=1&limit=" + strconv.Itoa(limit)
 	case "list_cleanup_candidates":
 		path = "/sessions/cleanup"
 	case "list_cleanup_archives":

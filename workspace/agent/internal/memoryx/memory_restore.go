@@ -551,6 +551,11 @@ func memoryTreeOfRev(sha string) ([]memoryTreeKind, []memoryTreeProject, error) 
 			}
 		}
 		kind, _, _ := strings.Cut(p, "/")
+		// The AF memory (ADR 0108) is not a root: no restore or import can apply it, so it is no
+		// scope to choose either, and its names and sizes stay out of what the tree reports.
+		if kind == agentMemRepoPrefix {
+			continue
+		}
 		i, seen := kindIdx[kind]
 		if !seen {
 			d := decls[kind]

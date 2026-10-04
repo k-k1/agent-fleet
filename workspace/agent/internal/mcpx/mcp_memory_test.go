@@ -227,11 +227,16 @@ func TestMemoryIndexReportsWithheld(t *testing.T) {
 // The assistant's snapshot tool reads claude's and codex's memory history only: it asks the
 // Agent for the diff without the AF memory under af/ (ADR 0108), whatever the switch says.
 func TestGetMemorySnapshotAsksForNativeDiff(t *testing.T) {
-	var diffQuery string
+	var diffQuery, listQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/agents/memory/diff" {
+		switch r.URL.Path {
+		case "/agents/memory/diff":
 			diffQuery = r.URL.RawQuery
 			_, _ = w.Write([]byte(`{"diff":""}`))
+			return
+		case "/agents/memory/snapshots":
+			listQuery = r.URL.RawQuery
+			_, _ = w.Write([]byte(`{"snapshots":[]}`))
 			return
 		}
 		_, _ = w.Write([]byte(`{"rev":"abc"}`))
@@ -249,5 +254,11 @@ func TestGetMemorySnapshotAsksForNativeDiff(t *testing.T) {
 	q, _ := url.ParseQuery(diffQuery)
 	if q.Get("native") != "1" {
 		t.Fatalf("diff query = %q, want native=1", diffQuery)
+	}
+	if resp := mcpCall(t, "list_memory_snapshots", map[string]any{}); mcpIsError(t, resp) {
+		t.Fatalf("list_memory_snapshots: %s", resp)
+	}
+	if q, _ := url.ParseQuery(listQuery); q.Get("native") != "1" {
+		t.Fatalf("snapshots query = %q, want native=1", listQuery)
 	}
 }
