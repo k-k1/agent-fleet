@@ -4,7 +4,13 @@
 
 /* Legacy control styles (old element globals), scoped to the bar — the verbatim-
    ported WsBar keeps raw <button className="ghost">/<input> markup. :where()
-   keeps the old 0-0-1 specificity so class rules still win (see mirror.css). */
+   keeps the old 0-0-1 specificity so class rules still win (see mirror.css).
+   ui/Button is not a drop-in replacement here: its inline-flex, gap and nowrap stop the
+   pane buttons' labels wrapping when the bar is crowded (measured at 1700px with every
+   chip shown: the bar drops from 60px to 40px and every button moves), the preview
+   button gets wider, and the AWS / Google Cloud chips' login buttons take all their
+   chrome from this rule.
+   There is no ui/ input primitive for the input rules. */
 :where(.wsbar) button {
   background: var(--btn);
   color: var(--fg);
