@@ -221,6 +221,15 @@
 .mq-freetext:disabled {
   opacity: 0.55;
 }
+/* Free text kept while a single-select option is picked: shown, but not what is sent. */
+.mq-freetext.inactive {
+  opacity: 0.55;
+  border-style: dashed;
+}
+.mq-freetext-note {
+  margin-top: 2px;
+  font-size: 11px;
+}
 .mq-submit-row {
   display: flex;
   justify-content: flex-end;

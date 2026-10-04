@@ -230,3 +230,82 @@ describe("PendingQuestions translation", () => {
     expect(pressed).toBe(1);
   });
 });
+
+// A single-select pick and free text are mutually exclusive answers, but the pick must not
+// erase what was typed: a user still weighing the options loses the text to one click.
+describe("PendingQuestions free text kept under a pick", () => {
+  const ONE: Question[] = [{ question: "どっち？", options: [{ label: "A" }, { label: "B" }] }];
+  const inactive = () => texts()[0].classList.contains("inactive");
+
+  it("a pick greys the typed text out instead of erasing it, and sends only the pick", async () => {
+    mount(ONE);
+    type(texts()[0], "迷い中のメモ");
+    click(opts()[1]); // B
+    expect(texts()[0].value).toBe("迷い中のメモ");
+    expect(inactive()).toBe(true);
+    expect(document.querySelector(".mq-freetext-note")).not.toBeNull();
+
+    click(document.querySelector(".mq-submit"));
+    await act(async () => {});
+    expect(sent).toEqual([["Down", "Enter"]]);
+  });
+
+  it("editing the kept text makes it the answer again and drops the pick", async () => {
+    mount(ONE);
+    type(texts()[0], "迷い中のメモ");
+    click(opts()[1]);
+    type(texts()[0], "やっぱりこれ");
+    expect(picked()).toEqual([false, false]);
+    expect(inactive()).toBe(false);
+
+    click(document.querySelector(".mq-submit"));
+    await act(async () => {});
+    expect(JSON.stringify(sent)).toContain("やっぱりこれ");
+  });
+
+  it("un-picking the option makes the kept text the answer again", () => {
+    mount(ONE);
+    type(texts()[0], "迷い中のメモ");
+    click(opts()[1]);
+    click(opts()[1]); // toggle B off
+    expect(inactive()).toBe(false);
+    expect(texts()[0].value).toBe("迷い中のメモ");
+  });
+
+  it("both survive the card being unmounted", () => {
+    mount(ONE);
+    type(texts()[0], "迷い中のメモ");
+    click(opts()[0]);
+    unmount();
+    mount(ONE);
+    expect(picked()).toEqual([true, false]);
+    expect(texts()[0].value).toBe("迷い中のメモ");
+    expect(inactive()).toBe(true);
+  });
+
+  it("a carried answer carries the pick without the inactive text as notes", async () => {
+    const answers: unknown[] = [];
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() =>
+      root!.render(
+        <PendingQuestions
+          questions={ONE}
+          draftKey={null}
+          sending={false}
+          onSubmitKeys={() => {}}
+          onSubmitSeq={() => {}}
+          onSubmitAnswers={(a) => {
+            answers.push(a);
+          }}
+        />,
+      ),
+    );
+    type(texts()[0], "迷い中のメモ");
+    click(opts()[0]);
+    click(document.querySelector(".mq-submit"));
+    await act(async () => {});
+    expect(answers).toEqual([[{ labels: ["A"], notes: "" }]]);
+  });
+});

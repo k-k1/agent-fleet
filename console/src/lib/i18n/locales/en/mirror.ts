@@ -343,6 +343,7 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.multi_select": "Multiple selection",
   "mirror.multi_select_ok": "Multiple selection allowed",
   "mirror.freeform_ph": "or type your own (Type something / newlines ok)",
+  "mirror.freeform_inactive": "The selected option will be sent. Edit the text to answer with it instead.",
   "mirror.submit_answer": "Submit answer",
   "mirror.question_cancel": "Cancel — back to chat",
   // Carried interaction (docs/log/75) — what was on screen when the session was folded away.
