@@ -8,6 +8,8 @@ import type { WorkItem } from "./read.ts";
 export interface WorkItemRef {
   provider: string;
   key: string;
+  /** Linked without a cached row (prose only): the host is a guess, re-made when it is clicked. */
+  guessed?: boolean;
 }
 
 /** Where a GitHub / Bitbucket working copy's origin lives. Only github.com and bitbucket.org
@@ -22,8 +24,11 @@ export interface RefOrigin {
 export interface WorkItemRefContext {
   /** The working copy the text is about; null = none, and a bare `#N` then stays text. */
   origin: RefOrigin | null;
-  /** The inbox cache (the CP's rows). Only what is here is linked. */
+  /** The inbox cache (the CP's rows). */
   items: WorkItem[];
+  /** "owner/name" → the hosts it is cloned from in this workspace (see cloneHosts), so an
+   * uncached `owner/name#N` about a Bitbucket repository is not guessed onto GitHub. */
+  known: Map<string, Set<"github" | "bitbucket">>;
 }
 
 // A bare or qualified issue number. The look-behind is what keeps `C#`, `&#123;`, `page#12`
@@ -34,7 +39,7 @@ export interface WorkItemRefContext {
 // classifyWorkItemRef decides what it is.
 export const ISSUE_REF_SRC = String.raw`(?<![\w&#/.\-])(?:[A-Za-z0-9][\w.\-]*\/[\w.\-]+)?#\d+(?![\w#])`;
 // A Jira key. The shape alone also matches UTF-8, SHA-256, ISO-8601, GPT-4 and P2-1, so this is
-// only a candidate: classifyWorkItemRef links it only when the cache holds that issue.
+// only a candidate: classifyWorkItemRef links it only for a project the cache holds.
 export const JIRA_REF_SRC = String.raw`(?<![\w/\-])[A-Z][A-Z0-9_]{1,9}-[1-9]\d{0,6}(?![\w\-])`;
 
 /** "Does this text mention anything ticket-shaped at all" — decides whether loading the cache is
@@ -47,6 +52,32 @@ const JIRA_TOKEN = /^([A-Z][A-Z0-9_]+)-\d+$/;
 /** Whole-token test for the qualified form, so a path-shaped `owner/name#12` in inline code is
  * handed to this linkifier rather than to the file-path one. */
 export const isQualifiedIssueToken = (text: string): boolean => /^[A-Za-z0-9][\w.-]*\/[\w.-]+#[1-9]\d*$/.test(text);
+
+/** The clones' hosts per "owner/name". A set, because the same owner/name can be cloned from both
+ * hosts, and keeping only one would make the answer depend on the order of the repository list. */
+export function cloneHosts(repos: { provider?: string; remote?: string; remotePath?: string }[]): WorkItemRefContext["known"] {
+  const out: WorkItemRefContext["known"] = new Map();
+  for (const r of repos) {
+    const o = originOf(r);
+    if (o) out.set(o.path, (out.get(o.path) ?? new Set()).add(o.provider));
+  }
+  return out;
+}
+
+/** cloneHosts as one comparable string: a rendered message re-links when it changes. */
+export function cloneHostsInputs(known: WorkItemRefContext["known"]): string {
+  return [...known].map(([path, hosts]) => `${path}:${[...hosts].sort().join("+")}`).sort().join(",");
+}
+
+/** The host an uncached `owner/name` is on, as far as this workspace can tell: the text's own
+ * repository's host when it names that one, else the clones' when they agree. "both" when the
+ * clones are on both hosts; undefined when no clone has it. */
+export function hostOf(path: string, ctx: WorkItemRefContext): "github" | "bitbucket" | "both" | undefined {
+  if (ctx.origin?.path === path) return ctx.origin.provider;
+  const hosts = ctx.known.get(path);
+  if (!hosts?.size) return undefined;
+  return hosts.size > 1 ? "both" : [...hosts][0];
+}
 
 export function originOf(repo: { provider?: string; remote?: string; remotePath?: string } | undefined): RefOrigin | null {
   if (!repo?.remotePath) return null;
@@ -70,17 +101,23 @@ const cachedRow = (items: WorkItem[], provider: string, key: string) =>
 /** Decide whether a matched token is a reference worth a link, and to what. null = leave the
  * text alone.
  *
- * Only a ticket the inbox already holds is linked. Prose is full of `#N` that are not citations
- * — a search a user typed (`#166`), a list number, an example — and in a busy repository almost
- * every such number is SOME issue, so "it exists on GitHub" says nothing about whether the
- * writer meant it. Being in the reader's own work item list does.
+ * Where the token sits decides how much evidence it needs:
+ * - In prose, `#N` is how an agent cites a pull request or an issue, and the ones it cites are
+ *   as often merged or closed — gone from the inbox, which holds open items only — as open. So a
+ *   GitHub number is linked even when the cache does not hold it (`guessed`, as a commit hash is
+ *   linked before it is verified), and a Jira key when the cache holds its project.
+ * - In inline code, the same token is usually literal text: a search the user typed (`#166`), a
+ *   colour, an example. Almost every number in a busy repository is SOME issue, so existence
+ *   proves nothing there; only a ticket the inbox holds is linked.
  *
+ * Either way:
  * - A bare `#N` needs a context repository on github.com / bitbucket.org, and is a number on
  *   THAT host: the same owner/name can exist on both, and the other host's row is a different
  *   ticket. Six digits and more than seven are left out: `#112233` / `#11223344` are colours.
- * - `owner/name#N` takes the row of either host, the context repository's host first.
- * - A Jira key needs its own row. */
-export function classifyWorkItemRef(token: string, ctx: WorkItemRefContext): WorkItemRef | null {
+ * - `owner/name#N` takes the cached row of either host, the context's host first.
+ * - Bitbucket is never guessed: the inbox knows only its pull requests, and `#N` there is as
+ *   often one of its issues. */
+export function classifyWorkItemRef(token: string, ctx: WorkItemRefContext, inCode = false): WorkItemRef | null {
   const issue = token.match(ISSUE_TOKEN);
   if (issue) {
     const [, qualified, num] = issue;
@@ -97,15 +134,25 @@ export function classifyWorkItemRef(token: string, ctx: WorkItemRefContext): Wor
       key = `${ctx.origin.path}#${num}`;
       hosts = [ctx.origin.provider];
     }
-    const provider = hosts.find((p) => cachedRow(ctx.items, p, key));
-    return provider ? { provider, key } : null;
+    const cached = hosts.find((p) => cachedRow(ctx.items, p, key));
+    if (cached) return { provider: cached, key };
+    if (inCode) return null;
+    // An unknown repository is guessed onto GitHub; one cloned from Bitbucket (or from both, which
+    // leaves the host unknown) is not guessed at all.
+    const host = qualified ? (hostOf(qualified, ctx) ?? "github") : ctx.origin!.provider;
+    return host === "github" ? { provider: host, key, guessed: true } : null;
   }
-  if (JIRA_TOKEN.test(token) && cachedRow(ctx.items, "jira", token)) return { provider: "jira", key: token };
+  const jira = token.match(JIRA_TOKEN);
+  if (!jira) return null;
+  if (cachedRow(ctx.items, "jira", token)) return { provider: "jira", key: token };
+  if (!inCode && ctx.items.some((i) => i.provider === "jira" && i.key.startsWith(`${jira[1]}-`))) {
+    return { provider: "jira", key: token, guessed: true };
+  }
   return null;
 }
 
-/** The row a reference opens: the cached one when there is one, else — the row left the cache
- * after the link was drawn — a reference-only stand-in carrying the key and a constructed tracker
+/** The row a reference opens: the cached one when there is one, else — a guessed reference, or a
+ * row that left the cache after the link was drawn — a reference-only stand-in carrying the key and a constructed tracker
  * URL. The stand-in never claims a title, a state or
  * a kind it does not know; the modal says it is not in the inbox instead. */
 export function resolveWorkItemRef(ref: WorkItemRef, items: WorkItem[]): { item: WorkItem; reference: boolean } {

@@ -15,6 +15,7 @@ import { useWorkItemModal } from "../../workitems/modal.ts";
 import { dedupeWorkItems, sortWorkItems, type WorkItem } from "../../workitems/read.ts";
 import {
   classifyWorkItemRef,
+  cloneHosts,
   isQualifiedIssueToken,
   ISSUE_REF_SRC,
   JIRA_REF_SRC,
@@ -113,6 +114,16 @@ export function linkifyRefs(
   // to this pass first. Linked, the <code> gains an element and linkifyPathRefs (which runs after)
   // passes it over; not linked, it is still a path candidate there.
   const ticketCode = (code: Element) => !!wiCtx && isQualifiedIssueToken((code.textContent ?? "").trim());
+  // A guessed ticket link drawn earlier is judged again with what is known now (the clones may
+  // have arrived and put the repository on both hosts, or on Bitbucket): one this pass would not
+  // draw goes back to text, so the page reads as if it had been rendered now. Links drawn from a
+  // cached row keep their host and stay.
+  if (wiCtx) {
+    root.querySelectorAll<HTMLAnchorElement>("a.md-workitem-link[data-guessed]").forEach((a) => {
+      const text = a.textContent ?? "";
+      if (!classifyWorkItemRef(text, wiCtx, !!a.parentElement?.closest("code"))) a.replaceWith(text);
+    });
+  }
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
       if (!n.nodeValue || !/[0-9a-z]/i.test(n.nodeValue)) return NodeFilter.FILTER_REJECT;
@@ -141,7 +152,8 @@ export function linkifyRefs(
       let a: HTMLAnchorElement | null = null;
       // A ticket token has a "#" or starts upper-case, so none of the shapes below can match it.
       if (wiCtx && (token.includes("#") || /^[A-Z]/.test(token))) {
-        const ref = classifyWorkItemRef(token, wiCtx);
+        // Inline code is literal text more often than a citation; classifyWorkItemRef asks more of it.
+        const ref = classifyWorkItemRef(token, wiCtx, !!node.parentElement?.closest("code"));
         if (ref) a = makeWorkItemLink(token, repo, ref);
       }
       // conv-slug shape first (see the classification-order note above): link only if
@@ -175,11 +187,13 @@ export function linkifyRefs(
 }
 
 // The context a ticket reference is read in: the working copy the text is about (Session.repo →
-// its origin) and the inbox cache.
+// its origin), the inbox cache, and the clones' origins.
 function workItemRefContext(repo: string | null): WorkItemRefContext {
+  const repos = useReposStore.getState().repos;
   return {
-    origin: repo ? originOf(useReposStore.getState().repos.find((r) => r.name === repo)) : null,
+    origin: repo ? originOf(repos.find((r) => r.name === repo)) : null,
     items: cachedWorkItems(),
+    known: cloneHosts(repos),
   };
 }
 
@@ -190,24 +204,29 @@ const cachedWorkItems = (): WorkItem[] =>
 
 // makeWorkItemLink builds a non-navigating anchor for a ticket reference. A plain click / Enter
 // opens the work item detail modal; Ctrl/Cmd-click and a middle click go straight to the tracker,
-// the way the rail row's external link does. The ticket is fixed at render — only a cached row is
-// ever linked, so its host is known then — but the row and the launch hint are read at click and
-// hover time: the cache and the repository list may have changed since.
-function makeWorkItemLink(text: string, repo: string | null, ref: WorkItemRef): HTMLAnchorElement {
+// the way the rail row's external link does. A ticket linked from a cached row is fixed at render;
+// a guessed one is guessed again when clicked. The row and the launch hint are always read at
+// click and hover time: the cache and the repository list may have changed since.
+function makeWorkItemLink(text: string, repo: string | null, drawn: WorkItemRef): HTMLAnchorElement {
   const a = document.createElement("a");
   a.className = "md-ref-link md-workitem-link";
+  if (drawn.guessed) a.dataset.guessed = "1";
   a.textContent = text;
   a.setAttribute("role", "link");
   a.tabIndex = 0;
   const current = () => {
     const ctx = workItemRefContext(repo);
+    // A guessed link is guessed again: its row may have reached the cache. One that would not be
+    // drawn now is already text again — the linkifier re-runs whenever the cache or the clones
+    // change — so falling back to the drawn guess is only for the instant in between.
+    const ref = drawn.guessed ? (classifyWorkItemRef(text, ctx) ?? drawn) : drawn;
     // Launch from the working copy this text is about only when the ticket belongs to it — same
     // path AND same host; read now, since the repository list may have arrived after the text.
     const repoHint =
       repo && ctx.origin && ref.provider === ctx.origin.provider && ref.key.startsWith(`${ctx.origin.path}#`) ? repo : "";
-    // ref is never re-classified: with the same owner/name cached on both hosts, losing the drawn
-    // host's row would hand the link to the other host's ticket. A row that left the cache opens
-    // as the reference-only stand-in on the host it had.
+    // A ref drawn from a cached row is never re-classified: with the same owner/name cached on
+    // both hosts, losing the drawn host's row would hand the link to the other host's ticket. A row
+    // that left the cache opens as the reference-only stand-in on the host it had.
     return { ...resolveWorkItemRef(ref, ctx.items), repoHint };
   };
   wireTooltip(a, () => {
