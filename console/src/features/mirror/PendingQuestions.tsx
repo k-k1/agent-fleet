@@ -17,6 +17,7 @@
 // typed text on option rows and the Enter confirms the highlighted first option
 // (measured on v2.1.204, docs/build/92-driving-a-tui.md).
 
+import { useId } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { t as tr } from "../../lib/i18n/index.ts";
 import type { InteractionAnswer } from "../../core/api/client.ts";
@@ -96,9 +97,10 @@ export function PendingQuestions({
   translate?: QuestionTranslateView;
 }) {
   const qs = questions || [];
-  // The picked labels and the per-question free-text ("Type something"; filled → that
-  // question is answered by free text instead of an option, mutually exclusive with a
-  // selection below). Both survive the card's unmount — switching tab or toggling to the
+  const noteId = useId();
+  // The picked labels and the per-question free-text ("Type something"). On a single-select
+  // question both may be held at once, but only one is the answer (freeInactive below).
+  // Both survive the card's unmount — switching tab or toggling to the
   // terminal takes the whole mirror down, and an answer half made while going to check
   // something is exactly what must not be thrown away (questionDraft).
   const { sel, setSel, freeText, setFreeText, clear: clearDraft, save: saveDraft } = useQuestionDraft(draftKey, qs);
@@ -138,7 +140,7 @@ export function PendingQuestions({
   // typed while still weighing the options does not lose it to one click. What is SENT is
   // only the active side — every submit path below reads activeFree, never freeText.
   const freeInactive = (qi: number) =>
-    !qs[qi]?.multiSelect && (sel[qi] || []).length > 0 && (freeText[qi] || "") !== "";
+    !qs[qi]?.multiSelect && (sel[qi] || []).length > 0 && (freeText[qi] || "").trim() !== "";
   const activeFree = qs.map((_, qi) => (freeInactive(qi) ? "" : freeText[qi] || ""));
 
   // A question is answered by a selection OR free text (multi-select may be left empty).
@@ -255,9 +257,14 @@ export function PendingQuestions({
                 placeholder={tr("mirror.freeform_ph")}
                 value={freeText[qi] || ""}
                 disabled={sending}
+                aria-describedby={freeInactive(qi) ? `${noteId}-${qi}` : undefined}
                 onChange={(e) => setFree(qi, e.target.value, qn.multiSelect)}
               />
-              {freeInactive(qi) && <div className="mq-freetext-note muted">{tr("mirror.freeform_inactive")}</div>}
+              {freeInactive(qi) && (
+                <div id={`${noteId}-${qi}`} className="mq-freetext-note muted">
+                  {tr("mirror.freeform_inactive")}
+                </div>
+              )}
             </>
           )}
         </div>

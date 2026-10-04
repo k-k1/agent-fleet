@@ -283,29 +283,87 @@ describe("PendingQuestions free text kept under a pick", () => {
     expect(inactive()).toBe(true);
   });
 
-  it("a carried answer carries the pick without the inactive text as notes", async () => {
-    const answers: unknown[] = [];
+  // Every submit path must see the same "pick wins" rule: the builders on their own still
+  // let text beat a pick (questionKeys.test.ts), so only the card's activeFree keeps the
+  // greyed-out text from being sent.
+  function mountWith(qs: Question[], extra: Partial<Parameters<typeof PendingQuestions>[0]>) {
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
     act(() =>
       root!.render(
         <PendingQuestions
-          questions={ONE}
+          questions={qs}
           draftKey={null}
           sending={false}
-          onSubmitKeys={() => {}}
-          onSubmitSeq={() => {}}
-          onSubmitAnswers={(a) => {
-            answers.push(a);
+          onSubmitKeys={(keys) => {
+            sent.push(keys);
           }}
+          onSubmitSeq={(seq) => {
+            sent.push(seq);
+          }}
+          {...extra}
         />,
       ),
     );
-    type(texts()[0], "迷い中のメモ");
-    click(opts()[0]);
+  }
+  const submitNow = async () => {
     click(document.querySelector(".mq-submit"));
     await act(async () => {});
+  };
+
+  it("a carried answer carries the pick without the inactive text as notes", async () => {
+    const answers: unknown[] = [];
+    mountWith(ONE, { onSubmitAnswers: (a) => void answers.push(a) });
+    type(texts()[0], "迷い中のメモ");
+    click(opts()[0]);
+    await submitNow();
     expect(answers).toEqual([[{ labels: ["A"], notes: "" }]]);
+  });
+
+  it("a managed answer carries the pick without the inactive text", async () => {
+    const answers: unknown[] = [];
+    mountWith(ONE, { onRespond: (a) => void answers.push(a) });
+    type(texts()[0], "迷い中のメモ");
+    click(opts()[1]);
+    await submitNow();
+    expect(answers).toEqual([[{ options: [1] }]]);
+  });
+
+  it("an agy write-in menu sends the option, not the inactive text", async () => {
+    mountWith(ONE, { answerMode: "menu", writeIn: true });
+    type(texts()[0], "迷い中のメモ");
+    click(opts()[1]);
+    await submitNow();
+    expect(JSON.stringify(sent)).not.toContain("迷い中のメモ");
+    expect(sent).toEqual([[{ k: "Down" }, { k: "Enter" }]]);
+  });
+
+  it("multi-select still sends checked options AND the text", async () => {
+    const answers: unknown[] = [];
+    mountWith([{ question: "どれ？", multiSelect: true, options: [{ label: "X" }, { label: "Y" }] }], {
+      onRespond: (a) => void answers.push(a),
+    });
+    type(texts()[0], "ほかにも");
+    click(opts()[0]);
+    expect(inactive()).toBe(false);
+    await submitNow();
+    expect(answers).toEqual([[{ options: [0], text: "ほかにも" }]]);
+  });
+
+  it("whitespace-only text is not shown as kept", () => {
+    mount(ONE);
+    type(texts()[0], "  \n");
+    click(opts()[0]);
+    expect(inactive()).toBe(false);
+    expect(document.querySelector(".mq-freetext-note")).toBeNull();
+  });
+
+  it("the note is announced on the greyed-out field", () => {
+    mount(ONE);
+    type(texts()[0], "迷い中のメモ");
+    click(opts()[0]);
+    const id = texts()[0].getAttribute("aria-describedby");
+    expect(id && document.getElementById(id)?.classList.contains("mq-freetext-note")).toBe(true);
   });
 });
