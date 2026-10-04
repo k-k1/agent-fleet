@@ -292,7 +292,10 @@ not a provider bill. So for `kind=opencode`, `feature=session` rows:
 
 - the fold sums the messages of a logical turn into that row's `cost_usd` — once per message,
   because each message is its own call (unlike the input tokens, which keep their
-  replace-not-add rule);
+  replace-not-add rule). A fork's copies of earlier messages (new ids, original `time_created`,
+  so older than the session holding them) carry no cost: the session that made the call already
+  reported it. A billed message with nothing to display still counts, on the adjacent assistant
+  turn, never as a turn of its own;
 - `cost_est_usd` is still computed from the tokens and **never** added to, replaced by or
   back-filled from `cost_usd`. The two legitimately differ: opencode prices every call of a
   multi-step turn, while the fold keeps one input snapshot per turn;

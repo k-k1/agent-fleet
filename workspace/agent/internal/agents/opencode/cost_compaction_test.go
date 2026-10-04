@@ -1,11 +1,14 @@
 package opencode
 
 import (
+	"fmt"
+	"math"
 	"testing"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // The compaction message shapes measured on 1.18.34 (/summarize and the automatic overflow
@@ -241,5 +244,116 @@ func TestOpencodeReadSessionCost(t *testing.T) {
 	}
 	if turns[0].CostUSD != 0 || turns[1].CostUSD != 0.0187629 || turns[2].CostUSD != 0 {
 		t.Fatalf("CostUSD = %v / %v / %v, want 0 / 0.0187629 / 0", turns[0].CostUSD, turns[1].CostUSD, turns[2].CostUSD)
+	}
+}
+
+func sumCost(turns []transcript.Turn) float64 {
+	var s float64
+	for _, t := range turns {
+		s += t.CostUSD
+	}
+	return s
+}
+
+func nearCost(a, b float64) bool { return math.Abs(a-b) < 1e-12 }
+
+// A fork copies the source's messages under new ids with their original time_created (measured
+// 1.18.34). Each call's cost must be counted once across parent, fork and fork-of-fork: in the
+// session that made it, never again in the copies. A resumed session's own messages still count.
+func TestOpencodeForkCopiesDoNotRecountCost(t *testing.T) {
+	db := newOpencodeTestDB(t)
+	insSes := func(id string, born int) {
+		t.Helper()
+		if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created) VALUES(?,NULL,'/d',?)`, id, born); err != nil {
+			t.Fatal(err)
+		}
+	}
+	asst := func(id, ses string, created int, cost float64) {
+		t.Helper()
+		insMsg(t, db, id, ses, created, fmt.Sprintf(`{"role":"assistant","cost":%v,"time":{"created":%d,"completed":%d}}`, cost, created, created+1))
+		insPart(t, db, id+"_p", id, ses, created, `{"type":"text","text":"a"}`)
+	}
+	user := func(id, ses string, created int) {
+		t.Helper()
+		insMsg(t, db, id, ses, created, fmt.Sprintf(`{"role":"user","time":{"created":%d}}`, created))
+		insPart(t, db, id+"_p", id, ses, created, `{"type":"text","text":"u"}`)
+	}
+	// parent: two calls, the second after a resume much later.
+	insSes("ses_p", 1000)
+	user("p_u1", "ses_p", 1100)
+	asst("p_a1", "ses_p", 1200, 1.0)
+	user("p_u2", "ses_p", 4000)
+	asst("p_a2", "ses_p", 4100, 0.5)
+	// fork1 at 5000: copies of the parent's four messages, then its own call.
+	insSes("ses_f1", 5000)
+	user("f1_u1", "ses_f1", 1100)
+	asst("f1_a1", "ses_f1", 1200, 1.0)
+	user("f1_u2", "ses_f1", 4000)
+	asst("f1_a2", "ses_f1", 4100, 0.5)
+	user("f1_u3", "ses_f1", 6000)
+	asst("f1_a3", "ses_f1", 6100, 0.25)
+	// fork2 of fork1 at 9000: everything copied, then its own call.
+	insSes("ses_f2", 9000)
+	user("f2_u1", "ses_f2", 1100)
+	asst("f2_a1", "ses_f2", 1200, 1.0)
+	user("f2_u2", "ses_f2", 4000)
+	asst("f2_a2", "ses_f2", 4100, 0.5)
+	user("f2_u3", "ses_f2", 6000)
+	asst("f2_a3", "ses_f2", 6100, 0.25)
+	user("f2_u4", "ses_f2", 9500)
+	asst("f2_a4", "ses_f2", 9600, 0.125)
+
+	p, f1, f2 := readSession(db, "ses_p"), readSession(db, "ses_f1"), readSession(db, "ses_f2")
+	if !nearCost(sumCost(p), 1.5) || !nearCost(sumCost(f1), 0.25) || !nearCost(sumCost(f2), 0.125) {
+		t.Fatalf("per-session cost = %v / %v / %v, want 1.5 / 0.25 / 0.125", sumCost(p), sumCost(f1), sumCost(f2))
+	}
+	if total := sumCost(p) + sumCost(f1) + sumCost(f2); !nearCost(total, 1.875) {
+		t.Fatalf("total = %v, want each call once (1.875)", total)
+	}
+	// The copies are still displayed and keep their tokens; only the cost is withheld.
+	if len(f2) != 8 {
+		t.Fatalf("fork2 turns = %d, want all 8 displayed", len(f2))
+	}
+}
+
+// A billed call that ends with nothing to display (step parts only, or an empty text) is dropped
+// from the chat, but its cost still reaches the ledger — once, and without adding a turn.
+func TestOpencodeUndisplayedMessageCostCounted(t *testing.T) {
+	db := newOpencodeTestDB(t)
+	ses := "ses_e"
+	n := 0
+	msg := func(role string, cost float64, parts ...string) {
+		t.Helper()
+		n++
+		id := fmt.Sprintf("m%02d", n)
+		insMsg(t, db, id, ses, 1000+n, fmt.Sprintf(`{"role":%q,"cost":%v,"time":{"created":%d,"completed":%d}}`, role, cost, 1000+n, 1001+n))
+		for i, p := range parts {
+			insPart(t, db, fmt.Sprintf("%s_p%d", id, i), id, ses, i, p)
+		}
+	}
+	const (
+		text      = `{"type":"text","text":"shown"}`
+		emptyText = `{"type":"text","text":"  "}`
+		start     = `{"type":"step-start"}`
+		finish    = `{"type":"step-finish","cost":0.5}`
+	)
+	msg("user", 0, text)
+	msg("assistant", 0.5, start, finish) // first in its turn: carried to the next assistant turn
+	msg("assistant", 0.25, text)
+	msg("assistant", 0.125, start, emptyText, finish) // after a shown one: added to it
+	msg("user", 0, text)
+	msg("assistant", 2, start, finish) // a turn with nothing shown: carried into the next turn
+	msg("user", 0, text)
+	msg("assistant", 1, text)
+
+	turns := readSession(db, ses)
+	if len(turns) != 5 {
+		t.Fatalf("turns = %d, want 5 (the undisplayed messages add none)", len(turns))
+	}
+	if !nearCost(turns[1].CostUSD, 0.875) || !nearCost(turns[4].CostUSD, 3) {
+		t.Fatalf("CostUSD = %v / %v, want 0.875 / 3", turns[1].CostUSD, turns[4].CostUSD)
+	}
+	if !nearCost(sumCost(turns), 3.875) {
+		t.Fatalf("total = %v, want every call once (3.875)", sumCost(turns))
 	}
 }

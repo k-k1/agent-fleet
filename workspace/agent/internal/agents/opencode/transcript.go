@@ -590,24 +590,30 @@ func readSession(db *sql.DB, ses string) []transcript.Turn {
 		args[i] = s
 	}
 	rows, err := db.Query(
-		`SELECT id, session_id, data FROM message WHERE session_id IN (`+ph+`) ORDER BY time_created, id`, args...,
+		`SELECT id, session_id, time_created, data FROM message WHERE session_id IN (`+ph+`) ORDER BY time_created, id`, args...,
 	)
 	if err != nil {
 		return nil
 	}
 	type msgRow struct {
-		id   string
-		ses  string
-		data []byte
+		id      string
+		ses     string
+		created int64
+		data    []byte
 	}
 	var msgs []msgRow
 	for rows.Next() {
 		var mr msgRow
-		if rows.Scan(&mr.id, &mr.ses, &mr.data) == nil {
+		var created sql.NullInt64
+		if rows.Scan(&mr.id, &mr.ses, &created, &mr.data) == nil {
+			mr.created = created.Int64
 			msgs = append(msgs, mr)
 		}
 	}
 	rows.Close()
+	born := sessionsCreated(db, sessions)
+	// Reported cost that has to reach the ledger without a turn of its own (costCarry).
+	var carry costCarry
 
 	// A batch at a time: the parts are fetched for a whole group of messages (one query
 	// instead of one per message), then those messages are turned into turns and the raw
@@ -624,14 +630,97 @@ func readSession(db *sql.DB, ses string) []transcript.Turn {
 		}
 		byMsg := loadParts(db, ids)
 		for i, mr := range batch {
+			// A fork copies every message into the new session under a new id but keeps its
+			// time_created (measured 1.18.34, fork of a fork included), so a message older than
+			// its own session is a copy: the session it came from already reported that cost.
+			copied := mr.created > 0 && mr.created < born[mr.ses]
+			sidechain := mr.ses != ses
 			t, ok := parseMessage(mr.id, mr.data, byMsg[mr.id], start+i, win)
-			if ok {
-				t.Sidechain = mr.ses != ses
-				turns = append(turns, t)
+			if !ok {
+				if !copied {
+					carry.dropped(turns, sidechain, messageCost(mr.data))
+				}
+				continue
 			}
+			t.Sidechain = sidechain
+			if copied {
+				t.CostUSD = 0
+			}
+			if t.Role == "assistant" {
+				t.CostUSD += carry.take(sidechain)
+			}
+			turns = append(turns, t)
 		}
 	}
 	return turns
+}
+
+// costCarry keeps the reported cost of an assistant message that has nothing to display (an
+// empty text, step-start/step-finish only) — a billed call parseMessage drops. Its cost goes
+// onto the previous turn when that one is an assistant turn on the same side (the same logical
+// turn for the usage fold), otherwise onto the next such turn. Never a turn of its own: an extra
+// logical turn would renumber every later one and the fold's watermark would count them again.
+// Lost only when no assistant turn ever follows.
+type costCarry struct{ pending [2]float64 } // [main, sidechain]
+
+func sideIdx(sidechain bool) int {
+	if sidechain {
+		return 1
+	}
+	return 0
+}
+
+func (c *costCarry) dropped(turns []transcript.Turn, sidechain bool, cost float64) {
+	if cost <= 0 {
+		return
+	}
+	if n := len(turns); n > 0 && turns[n-1].Role == "assistant" && turns[n-1].Sidechain == sidechain {
+		turns[n-1].CostUSD += cost
+		return
+	}
+	c.pending[sideIdx(sidechain)] += cost
+}
+
+func (c *costCarry) take(sidechain bool) float64 {
+	v := c.pending[sideIdx(sidechain)]
+	c.pending[sideIdx(sidechain)] = 0
+	return v
+}
+
+// messageCost is an assistant message row's reported cost, 0 for anything else.
+func messageCost(data []byte) float64 {
+	var md struct {
+		Role string  `json:"role"`
+		Cost float64 `json:"cost"`
+	}
+	if json.Unmarshal(data, &md) != nil || md.Role != "assistant" {
+		return 0
+	}
+	return md.Cost
+}
+
+// sessionsCreated maps each session id to its creation time (store epoch millis). Missing rows
+// map to 0, so nothing is taken for a copy.
+func sessionsCreated(db *sql.DB, ids []string) map[string]int64 {
+	out := make(map[string]int64, len(ids))
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := db.Query(`SELECT id, time_created FROM session WHERE id IN (`+ph+`)`, args...)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var tc sql.NullInt64
+		if rows.Scan(&id, &tc) == nil && tc.Valid {
+			out[id] = tc.Int64
+		}
+	}
+	return out
 }
 
 // partBatch is how many messages one parts query covers. SQLite's variable limit is the
