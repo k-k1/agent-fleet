@@ -359,6 +359,11 @@ export interface Settings {
   // Default FALSE — this is the one that spends the shared host with nobody watching. (It used
   // to be offered only once observation was on; that prerequisite went with the switch.)
   sessionFleetSpawn: boolean;
+  // Past-session search for sessions (ADR 0110): whether the session-side MCP server offers
+  // search_sessions. Default TRUE, unlike the switches above, and matching the Agent's own
+  // missing-key answer: it only reads this user's transcripts, which a session's shell can
+  // already open. The Console's own search (the palette's conversations mode) ignores it.
+  sessionSearch: boolean;
   // How many children ONE session may have at a time (ADR 0073 decision 6, AgentsTab > Session).
   // Per parent, not per workspace: two parents at the ceiling is twice that many agents.
   //
@@ -1166,6 +1171,7 @@ const DEFAULTS: Settings = {
   peerMessaging: false, // opt-in (docs/log/58 / ADR 0041) — not a surface to widen by default
   imageGeneration: false, // opt-in (ADR 0069) — it spends the ChatGPT plan quota
   sessionFleetSpawn: false, // opt-in (ADR 0073) — lets a session spend host resources unattended
+  sessionSearch: true, // opt-out (ADR 0110) — read-only, and the Agent treats a missing key as on
   sessionSpawnChildLimit: 3, // the value the limit had while it was a constant (ADR 0073 decision 6)
   sessionStoppedArchiveDays: 0, // the deployment default (ADR 0097)
   sessionSpendCapUsd: 0, // no budget (#1054)
@@ -1881,6 +1887,13 @@ const DEVICE_LOCAL = new Set<keyof Settings>([
  * must never cross the device boundary. */
 export const isDeviceLocalSetting = (key: keyof Settings): boolean => DEVICE_LOCAL.has(key);
 
+// Keys the Agent itself reads from ui-prefs with a default of its own when the key is missing, the
+// DEFAULTS here being that same default. A missing key is therefore not "never saved" but "the
+// Agent's default is in force", and hydrate keeps the two sides from disagreeing about it.
+const AGENT_DEFAULTED = new Set<keyof Settings>([
+  "sessionSearch", // ADR 0110: missing ⇒ on (uiprefs.SessionSearch)
+]);
+
 // Accumulated data — unlike toggles and colors these settings build up over time and cannot be
 // recovered once lost (learned reply suggestions, pins, SSM usage tallies, keybindings, working
 // sets, the reading dictionary). Server-wins is fine for ordinary settings, but for these an
@@ -2045,6 +2058,17 @@ export async function hydrateUIPrefs(): Promise<boolean> {
       // A key the server has never held while this device holds a non-default value — say,
       // hidden models set while every save failed. Pushed back only for the recorded owner.
       if (unsaved.has(key) || (sameOwner && isAccumulatedSetting(key) && !sameValue((merged as any)[k], DEFAULTS[key]))) restore = true;
+      // A key the Agent reads with its own default when absent: showing this device's value while
+      // the server holds none would show one thing and enforce another. The recorded owner's
+      // choice goes back to the server; a known other owner's device takes the Agent's answer.
+      // With the owner not known yet, neither — the next hydrate decides.
+      else if (AGENT_DEFAULTED.has(key) && !sameValue((merged as any)[k], DEFAULTS[key])) {
+        if (sameOwner) restore = true;
+        else if (owner) {
+          (merged as any)[k] = DEFAULTS[key];
+          changed = true;
+        }
+      }
       continue;
     }
     if (sameValue(srv[k], (merged as any)[k])) {

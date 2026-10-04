@@ -425,6 +425,8 @@ GET /api/session-handoff-offers/received
 DELETE /api/session-handoff-offers/{id}
 POST /api/session-handoff-offers/{id}/accept
 POST /api/session-handoff-offers/{id}/decline
+GET /api/session-search
+GET /api/session-search/turns
 GET /api/session-share-proposals
 POST /api/session-share-proposals/{id}/approve
 POST /api/session-share-proposals/{id}/reject

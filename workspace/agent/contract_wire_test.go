@@ -34,6 +34,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -74,6 +75,19 @@ func agentContractFamilies() []contractFamily {
 				"default": "not a gap: the sibling remoteBranch(internal/gitx/git_remote.go:42) emits json:\"default\". BranchList draws local and remote with the same TS type",
 			},
 			goOnly: map[string]string{},
+		},
+
+		// One past-session search hit (ADR 0110): the palette's conversations mode renders it,
+		// and a renamed key leaves rows without a session to open.
+		{
+			name:    "sessionsearch.Hit",
+			goType:  reflect.TypeOf(sessionsearch.Hit{}),
+			binding: sessionSearchHitBinding,
+			tsPath:  "../../console/src/features/keys/talkSearch.ts",
+			tsName:  "SessionSearchHit",
+			tsKeys:  keySet("session", "display", "kind", "repo", "archived", "idx", "role", "ts", "snippet", "score"),
+			tsOnly:  map[string]string{},
+			goOnly:  map[string]string{},
 		},
 
 		// The cleanup safety net (archive).
@@ -228,6 +242,11 @@ var cleanupManifestBinding = map[string]string{
 	"Branches": "branches", "Worktree": "worktree", "Bytes": "bytes",
 }
 
+var sessionSearchHitBinding = map[string]string{
+	"Session": "session", "Display": "display", "Kind": "kind", "Repo": "repo", "Archived": "archived",
+	"Idx": "idx", "Role": "role", "TS": "ts", "Snippet": "snippet", "Score": "score",
+}
+
 var browserAttachmentBinding = map[string]string{
 	"ID": "id", "State": "state", "Title": "title", "URL": "url", "OpenURL": "openUrl",
 	"ExpiresAt": "expiresAt", "Viewer": "viewer", "ControlMode": "controlMode", "Handoff": "handoff",
@@ -237,7 +256,7 @@ func TestContractFamilies(t *testing.T) {
 	fams := agentContractFamilies()
 	// Guard the population being scanned (the #320 shape): a family that silently
 	// disappears is caught here.
-	if len(fams) != 8 {
+	if len(fams) != 9 {
 		t.Fatalf("only %d families - one has dropped out of the table (if you added one, fix the count too)", len(fams))
 	}
 	for _, f := range fams {
