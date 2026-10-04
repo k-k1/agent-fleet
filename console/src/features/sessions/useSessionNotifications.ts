@@ -13,7 +13,7 @@ import { getSettings } from "../../lib/settings.ts";
 import { announce, sessionVoiceOpts } from "../chat/tts.ts";
 import { hasTurnReader } from "../mirror/turnTts.ts";
 import { useSessionsStore } from "./store.ts";
-import { childIdleMuted } from "../notifications/childIdle.ts";
+import { notificationEffectOn } from "../notifications/effects.ts";
 
 const notify = (title: string, body: string) => {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
@@ -51,17 +51,19 @@ export function useSessionNotifications(enabled = true): void {
         const st = getSettings();
         const speak = st.ttsSessionNotify;
         const mirrored = st.ttsEnabled && st.ttsAutoReadAllPanes && hasTurnReader(s.name);
-        // A spawned child going idle stays silent when childIdleNotify is off (its parent is
-        // the one waiting); the idle state never falls through to the question branch below.
-        if (s.state === "idle" && before === "working" && !childIdleMuted(s.name, s)) {
-          notify(t("sx.notify_answered_title"), displayName(s));
+        // Each effect is its cell in the notification table, as on the CP feed; the event is
+        // spelled as the feed's kind so the two paths resolve the same row. The idle state
+        // never falls through to the question branch below.
+        const as = (kind: string) => ({ kind, target: { type: "session", id: s.name } });
+        if (s.state === "idle" && before === "working") {
+          if (notificationEffectOn(as("answer-ready"), "os", s)) notify(t("sx.notify_answered_title"), displayName(s));
           // The voice is fixed per session (sessionVoiceOpts), keyed by session name rather
           // than display name so a rename does not change it.
-          if (speak && !(mirrored && st.ttsAutoReadMirror))
+          if (speak && notificationEffectOn(as("answer-ready"), "voice", s) && !(mirrored && st.ttsAutoReadMirror))
             announce(t("sx.notify_answered_body", { name: displayName(s) }), displayName(s), sessionVoiceOpts(s.name), s.name, "session-notification");
         } else if (s.state === "question") {
-          notify(t("sx.notify_question_title"), displayName(s));
-          if (speak && !(mirrored && st.ttsReadPending))
+          if (notificationEffectOn(as("question"), "os", s)) notify(t("sx.notify_question_title"), displayName(s));
+          if (speak && notificationEffectOn(as("question"), "voice", s) && !(mirrored && st.ttsReadPending))
             announce(t("sx.notify_question_body", { name: displayName(s) }), displayName(s), sessionVoiceOpts(s.name), s.name, "session-notification");
         }
       }
