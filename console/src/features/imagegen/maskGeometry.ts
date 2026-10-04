@@ -106,15 +106,16 @@ export function aspectDiffers(a: Size, b: Size): boolean {
 export type MaskVerdict = "blank" | "full" | "ok";
 
 /**
- * Judge a mask by its pixels (RGBA, red channel read — what ComfyUI reads): "blank" when fewer
- * pixels than one thin-brush dab reach PAINTED_RED, "full" when nearly all of them do. Counting
- * strokes cannot answer this: the underlay is raster and the eraser removes paint.
+ * Judge a mask by its pixels (RGBA: the red of a grey mask, which ComfyUI reads, or the alpha of
+ * a display mask with `channel` 3): "blank" when fewer pixels than one thin-brush dab reach
+ * PAINTED_RED, "full" when nearly all of them do. Counting strokes cannot answer this: the
+ * underlay is raster and the eraser removes paint.
  */
-export function judgeMask(rgba: ArrayLike<number>, size: Size): MaskVerdict {
+export function judgeMask(rgba: ArrayLike<number>, size: Size, channel: 0 | 3 = 0): MaskVerdict {
   const total = size.w * size.h;
   if (total <= 0) return "blank";
   let painted = 0;
-  for (let i = 0; i < total; i++) if (rgba[i * 4] >= PAINTED_RED) painted++;
+  for (let i = 0; i < total; i++) if (rgba[i * 4 + channel] >= PAINTED_RED) painted++;
   const r = brushPx(MASK_BRUSH.thin, size) / 2;
   const dab = Math.max(1, Math.floor(Math.PI * r * r));
   if (painted < dab) return "blank";
@@ -136,6 +137,14 @@ export function redToGrey(rgba: Uint8ClampedArray): void {
     rgba[i + 1] = r;
     rgba[i + 2] = r;
     rgba[i + 3] = 255;
+  }
+}
+
+/** Turn RGBA pixels into a display mask: white whose alpha is the red the Agent would read. */
+export function redToAlpha(rgba: Uint8ClampedArray): void {
+  for (let i = 0; i < rgba.length; i += 4) {
+    rgba[i + 3] = rgba[i];
+    rgba[i] = rgba[i + 1] = rgba[i + 2] = 255;
   }
 }
 
@@ -164,6 +173,7 @@ export type MaskCtx = Pick<
   | "lineJoin"
   | "globalCompositeOperation"
   | "fillRect"
+  | "clearRect"
   | "beginPath"
   | "moveTo"
   | "lineTo"
@@ -177,37 +187,66 @@ export type MaskCtx = Pick<
 /** Rebuild a mask from its start: `drawBase` paints the starting mask (black, or the reopened PNG),
  *  and runs again at every reset. Undo and redo replay this list instead of keeping bitmaps: one
  *  full-size snapshot per step is what iOS's total canvas memory cannot afford (log 111 §10.9). */
-export function replayOps(ctx: MaskCtx, ops: readonly MaskOp[], size: Size, drawBase: () => void): void {
+export function replayOps(ctx: MaskCtx, ops: readonly MaskOp[], size: Size, drawBase: () => void, form: MaskForm = "grey"): void {
   drawBase();
   for (const op of ops) {
     if (op.kind === "reset") drawBase();
-    else drawOp(ctx, op, size);
+    else drawOp(ctx, op, size, form);
   }
 }
 
-/** Draw one op onto a mask canvas of `size`. White paints, black erases; invert uses the
- *  "difference" blend against white (255 − v per channel), so no pixel loop runs per press. */
-export function drawOp(ctx: MaskCtx, op: MaskOp, size: Size): void {
+/**
+ * How a mask canvas holds the mask. "grey" is what is exported: opaque, black = keep, white =
+ * repaint (red channel, log 111 §2-3). "alpha" is what is shown: white whose alpha is the mask, so
+ * a tint can be laid over the picture with plain source-over. (A screen blend of a grey mask
+ * adds nothing over white, so paint on a white shirt was invisible.)
+ */
+export type MaskForm = "grey" | "alpha";
+
+/** Draw one op onto a mask canvas of `size`. Grey: white paints, black erases, invert is a
+ *  "difference" against white (255 − v). Alpha: erase and clear remove coverage, invert is an "xor"
+ *  with an opaque fill (1 − α). Neither runs a pixel loop per press. */
+export function drawOp(ctx: MaskCtx, op: MaskOp, size: Size, form: MaskForm = "grey"): void {
   ctx.save();
   ctx.globalCompositeOperation = "source-over";
   if (op.kind === "clear") {
-    ctx.fillStyle = "#000";
-    ctx.fillRect(0, 0, size.w, size.h);
+    if (form === "alpha") ctx.clearRect(0, 0, size.w, size.h);
+    else {
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, size.w, size.h);
+    }
   } else if (op.kind === "reset") {
     // Only replayOps knows the starting mask; drawn alone a reset changes nothing.
   } else if (op.kind === "invert") {
-    ctx.globalCompositeOperation = "difference";
+    ctx.globalCompositeOperation = form === "alpha" ? "xor" : "difference";
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, size.w, size.h);
   } else {
-    drawStroke(ctx, op, size, 0);
+    drawStroke(ctx, op, size, 0, form);
   }
   ctx.restore();
 }
 
 /** Draw a stroke's points from index `from` on (a live stroke draws only its new segment). */
-export function drawStroke(ctx: MaskCtx, op: Extract<MaskOp, { points: Point[] }>, size: Size, from: number): void {
-  const color = op.kind === "paint" ? "#fff" : "#000";
+export function drawStroke(
+  ctx: MaskCtx,
+  op: Extract<MaskOp, { points: Point[] }>,
+  size: Size,
+  from: number,
+  form: MaskForm = "grey",
+): void {
+  ctx.save();
+  try {
+    paintStroke(ctx, op, size, from, form);
+  } finally {
+    ctx.restore();
+  }
+}
+
+function paintStroke(ctx: MaskCtx, op: Extract<MaskOp, { points: Point[] }>, size: Size, from: number, form: MaskForm): void {
+  const erase = op.kind === "erase";
+  ctx.globalCompositeOperation = erase && form === "alpha" ? "destination-out" : "source-over";
+  const color = erase && form === "grey" ? "#000" : "#fff";
   const w = brushPx(op.width, size);
   const pts = op.points;
   if (!pts.length) return;

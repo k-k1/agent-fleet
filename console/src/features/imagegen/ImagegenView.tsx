@@ -804,7 +804,7 @@ function StudioPane({
       onToggleLock={studio.toggleLock}
       highlight={studio.highlight as ReadonlySet<string>}
       familyExtra={model ? <KnowledgeMemo family={model.family} model={model.id} /> : null}
-      onPaintMask={(picture) => setPainting({ picture, mask: draft.mask })}
+      onPaintMask={(picture, mask) => setPainting({ picture, mask })}
     />
   );
 

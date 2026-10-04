@@ -17,8 +17,8 @@ export function MaskEntry({
   patch: (p: Partial<ImagegenDraft>) => void;
   /** maskCanvasOffer's answer for the selected engine and model. */
   offer: "ok" | "engine" | "model";
-  /** Open the canvas on this picture. Absent: no canvas here at all. */
-  onPaint?: (picture: string) => void;
+  /** Open the canvas on this picture, with `mask` as the underlay. Absent: no canvas here at all. */
+  onPaint?: (picture: string, mask: string) => void;
 }) {
   const tr = useT();
   // The first reference decides the output's frame, so it is the one painted over.
@@ -28,16 +28,33 @@ export function MaskEntry({
 
   // A mask is painted for one picture. When the first reference changes under it (a new upload,
   // a reorder, the agent), the mask still points at the old picture's regions: ask, do not guess.
+  // Until the member answers, the mask is HELD out of the draft, so every press path — the form,
+  // the draft bar, the lightbox's seeded trial, Ctrl+Enter — meets "inpaint needs a mask" instead
+  // of running the old picture's mask. `held` is the old path; any new mask (kept, repainted and
+  // saved, or typed into the path field) settles the question.
   const prev = useRef(picture);
-  const [ask, setAsk] = useState(false);
+  // True from asking the draft to drop the mask until it has: the old mask still in the draft
+  // during that gap is not an answer.
+  const clearing = useRef(false);
+  const [held, setHeld] = useState("");
   useEffect(() => {
     if (prev.current === picture) return;
-    if (prev.current && mask) setAsk(true);
+    const was = prev.current;
     prev.current = picture;
-  }, [picture, mask]);
+    if (was && mask && draft.op === "inpaint") {
+      setHeld(mask);
+      clearing.current = true;
+      patch({ mask: "" });
+    }
+  }, [picture, mask, draft.op, patch]);
   useEffect(() => {
-    if (!mask) setAsk(false);
-  }, [mask]);
+    if (clearing.current) {
+      if (!mask) clearing.current = false;
+      return;
+    }
+    if (held && mask) setHeld("");
+  }, [held, mask]);
+  const ask = !!held;
 
   if (draft.op !== "inpaint") return null;
   return (
@@ -48,7 +65,7 @@ export function MaskEntry({
           {mask ? mask.split("/").pop() : tr("imggen.mask_entry_none")}
         </span>
         {canPaint && (
-          <Button small icon="edit" disabled={!picture} onClick={() => onPaint!(picture)}>
+          <Button small icon="edit" disabled={!picture} onClick={() => onPaint!(picture, mask || held)}>
             {tr("imggen.mask_canvas_open")}
           </Button>
         )}
@@ -59,28 +76,16 @@ export function MaskEntry({
       {ask && (
         <div className="igen-mask-ask" role="group" aria-label={tr("imggen.mask_input_changed")}>
           <span>{tr("imggen.mask_input_changed")}</span>
-          <Button small onClick={() => setAsk(false)}>
+          <Button small onClick={() => patch({ mask: held })}>
             {tr("imggen.mask_input_keep")}
           </Button>
+          {/* The question stays until a new mask is saved: cancelling the canvas leaves it here. */}
           {canPaint && picture && (
-            <Button
-              small
-              onClick={() => {
-                setAsk(false);
-                onPaint!(picture);
-              }}
-            >
+            <Button small onClick={() => onPaint!(picture, held)}>
               {tr("imggen.mask_input_repaint")}
             </Button>
           )}
-          <Button
-            small
-            variant="danger"
-            onClick={() => {
-              setAsk(false);
-              patch({ mask: "" });
-            }}
-          >
+          <Button small variant="danger" onClick={() => setHeld("")}>
             {tr("imggen.mask_input_clear")}
           </Button>
         </div>

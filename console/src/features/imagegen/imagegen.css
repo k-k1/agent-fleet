@@ -1417,7 +1417,10 @@
 /* The inpaint mask canvas (MaskCanvasModal / MaskPainter). The picture gets a width from the
    component and height auto, so its box keeps the aspect ratio the browser decoded, EXIF
    orientation included; the component reads that box to refuse a sideways display. Never set
-   `image-orientation` here (log 111 §10.4: the shown picture and the export would disagree). */
+   `image-orientation` here (log 111 §10.4: the shown picture and the export would disagree).
+
+   Layout: tools, notes and the save row never shrink below their content (notes are capped and
+   scroll); the stage takes whatever height is left and the picture refits to it. */
 .ui-modal.igen-mask-modal {
   width: min(1100px, 96vw);
   max-width: 96vw;
@@ -1427,20 +1430,20 @@
 .igen-mask-body {
   flex: 1;
   min-height: 0;
-  /* The stage takes the room; the tools and the save row never scroll away. */
   overflow: hidden;
 }
 
 .igen-mask-painter {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   flex: 1;
   min-height: 0;
   min-width: 0;
 }
 
 .igen-mask-tools {
+  flex: none;
   display: flex;
   flex-wrap: wrap;
   gap: 6px 14px;
@@ -1454,10 +1457,20 @@
   align-items: center;
 }
 
+.igen-mask-notes {
+  flex: none;
+  max-height: 4.6em;
+  overflow-y: auto;
+}
+
+.igen-mask-notes > p {
+  margin: 0 0 2px;
+}
+
 .igen-mask-stage {
   position: relative;
-  flex: 1;
-  min-height: 120px;
+  flex: 1 1 0;
+  min-height: 0;
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -1489,9 +1502,8 @@
   inset: 0;
   width: 100%;
   height: 100%;
-  /* The view holds tint-on-black; screen adds the tint and leaves black unpainted areas clear. */
-  mix-blend-mode: screen;
-  opacity: 0.75;
+  /* Plain source-over of a tint whose alpha is the mask: visible over white and black alike. */
+  opacity: 0.55;
   /* Painting owns every touch on the canvas: no page scroll, no browser pinch under a finger. */
   touch-action: none;
   cursor: crosshair;
@@ -1502,16 +1514,17 @@
 }
 
 .igen-mask-actions {
+  flex: none;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px 8px;
   align-items: center;
   justify-content: flex-end;
 }
 
-.igen-mask-actions .igen-hint {
-  flex: 1;
-  min-width: 12em;
+.igen-mask-actions .igen-err {
+  flex: 1 1 12em;
+  margin: 0;
 }
 
 .igen-mask-ask {
@@ -1541,7 +1554,7 @@
 
 /* Phones: the dialog takes the visible viewport (--app-h / --app-top follow the on-screen
    keyboard, app/viewport.ts) and keeps clear of the notch and the home indicator. */
-@media (max-width: 760px) {
+@media (max-width: 760px), (max-height: 600px) {
   .ui-modal.igen-mask-modal {
     position: fixed;
     top: var(--app-top, 0px);
@@ -1558,6 +1571,24 @@
   }
 
   .igen-mask-body {
-    padding: 8px;
+    padding: 6px 8px;
+  }
+}
+
+/* Short screens (a phone on its side, a keyboard up): the tools become one row that scrolls
+   sideways, so they cost one line of height. */
+@media (max-height: 600px) {
+  .igen-mask-tools,
+  .igen-mask-group {
+    flex-wrap: nowrap;
+  }
+
+  .igen-mask-tools {
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .igen-mask-notes {
+    max-height: 2.4em;
   }
 }

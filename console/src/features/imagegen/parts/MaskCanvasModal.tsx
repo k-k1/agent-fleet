@@ -2,10 +2,11 @@
 // All painting lives in the painter; the shell adds the title, the close paths (×, backdrop, Esc,
 // the browser's back), the question those ask while strokes are unsaved, and the lock that keeps
 // the dialog open while a save is uploading.
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Modal } from "../../../ui/Modal.tsx";
 import { Button } from "../../../ui/Button.tsx";
+import { useBackClose } from "../../../lib/backClose.ts";
 import type { ImagegenModel, ImagegenProvider } from "../wire.ts";
 import { MaskPainter, type MaskPainterHandle, type MaskPainterProps } from "./MaskPainter.tsx";
 
@@ -42,14 +43,25 @@ export function MaskCanvasModal({ onClose, ...painter }: ShellProps) {
     else onClose();
   };
 
+  // The browser's back is guarded here, not by Modal: Modal drops its history entry while
+  // `lockClose` is on, so a back press during an upload left the page with the drawing on it.
+  // Every back press uses up the entry, so it is re-armed at once (off for one render, then on,
+  // which pushes a fresh one); while uploading or with unsaved strokes, back never leaves.
+  const [armed, setArmed] = useState(true);
+  useEffect(() => {
+    if (!armed) setArmed(true);
+  }, [armed]);
+  useBackClose(() => {
+    setArmed(false);
+    requestClose();
+  }, armed);
+
   return (
     <Modal
       title={tr("imggen.mask_canvas_title")}
       onClose={requestClose}
       lockClose={busy}
-      // Off while the question is up: the back press that raised it already used the history
-      // entry, and turning this back on afterwards pushes a fresh one for the next back.
-      backClose={!asking}
+      backClose={false}
       className="igen-mask-modal"
     >
       <div className="ui-modal-body igen-mask-body">

@@ -35,11 +35,13 @@ import {
   judgeMask,
   MASK_BRUSH,
   maskFileName,
+  redToAlpha,
   redToGrey,
   replayOps,
   toNormalized,
   zoomAbout,
   type BrushSize,
+  type MaskForm,
   type MaskOp,
   type Point,
   type Size,
@@ -53,8 +55,9 @@ export const MASK_DIR = "generated/console/masks";
  *  allocate three canvases of tens of megabytes for no visible gain. */
 const VIEW_AREA_CAP = 4_000_000;
 
-/** What the view tints a painted pixel with (screen-blended over the picture by CSS). */
-const TINT = "#ff3b30";
+/** What the view tints a painted pixel with, laid over the picture at the view's CSS opacity.
+ *  Magenta stands out on white, black and skin alike. */
+const TINT = "#ff2bd6";
 
 /** How many fresh names a save tries before giving up on 409s. */
 const NAME_TRIES = 5;
@@ -149,7 +152,9 @@ export function MaskPainter({
   const note = useCallback((n: string) => setNotices((cur) => (cur.includes(n) ? cur : [...cur, n])), []);
 
   useEffect(() => onBusy?.(saving), [saving, onBusy]);
-  useEffect(() => onDirty?.(ops.length > 0), [ops.length, onDirty]);
+  // A stroke counts from its first point: Esc mid-stroke must ask, not drop it.
+  const [drawing, setDrawing] = useState(false);
+  useEffect(() => onDirty?.(ops.length > 0 || drawing), [ops.length, drawing, onDirty]);
 
   const ctxOf = (c: HTMLCanvasElement | null) => c?.getContext("2d") ?? null;
 
@@ -162,8 +167,8 @@ export function MaskPainter({
     ctx.globalCompositeOperation = "source-over";
     ctx.clearRect(0, 0, v.width, v.height);
     ctx.drawImage(m, 0, 0);
-    // White × tint = tint, black stays black; the view is screen-blended, so black adds nothing.
-    ctx.globalCompositeOperation = "multiply";
+    // The display mask is coverage (alpha): keep it, swap its colour for the tint.
+    ctx.globalCompositeOperation = "source-in";
     ctx.fillStyle = TINT;
     ctx.fillRect(0, 0, v.width, v.height);
     ctx.restore();
@@ -181,25 +186,30 @@ export function MaskPainter({
         ctx.globalCompositeOperation = "copy";
         ctx.drawImage(base, 0, 0);
         ctx.restore();
-      });
+      }, "alpha");
       refreshView();
     },
     [refreshView],
   );
 
-  /** Fill a canvas with black, then (when there is one) the underlay's red channel as opaque grey. */
-  const paintBase = useCallback((c: HTMLCanvasElement, img: HTMLImageElement | null) => {
+  /** The starting mask on a canvas: empty (black, or no coverage), then the underlay's red channel
+   *  as opaque grey (export) or as coverage (display). */
+  const paintBase = useCallback((c: HTMLCanvasElement, img: HTMLImageElement | null, form: MaskForm) => {
     const ctx = ctxOf(c);
     if (!ctx) return;
     ctx.save();
     ctx.globalCompositeOperation = "source-over";
+    ctx.clearRect(0, 0, c.width, c.height);
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, c.width, c.height);
     if (img) {
       ctx.drawImage(img, 0, 0, c.width, c.height);
       const data = ctx.getImageData(0, 0, c.width, c.height);
-      redToGrey(data.data);
+      if (form === "alpha") redToAlpha(data.data);
+      else redToGrey(data.data);
       ctx.putImageData(data, 0, 0);
+    } else if (form === "alpha") {
+      ctx.clearRect(0, 0, c.width, c.height);
     }
     ctx.restore();
   }, []);
@@ -288,7 +298,7 @@ export function MaskPainter({
         if (aspectDiffers(natural, { w: img.naturalWidth, h: img.naturalHeight })) note(tr("imggen.mask_canvas_underlay_aspect"));
       }
     }
-    paintBase(baseRef.current, img);
+    paintBase(baseRef.current, img, "alpha");
     repaint(opsRef.current);
   }, [viewSize, underlayReady, natural, paintBase, repaint, note, tr]);
 
@@ -342,6 +352,7 @@ export function MaskPainter({
   const abortStroke = () => {
     if (gestureRef.current?.kind !== "stroke") return;
     gestureRef.current = null;
+    setDrawing(false);
     repaint(opsRef.current);
   };
 
@@ -383,9 +394,10 @@ export function MaskPainter({
     }
     const op: Stroke = { kind: tool, width: ratio, points: [pointOf(e)] };
     gestureRef.current = { kind: "stroke", id: e.pointerId, op };
+    setDrawing(true);
     const m = maskRef.current;
     const ctx = ctxOf(m);
-    if (m && ctx) drawStroke(ctx, op, { w: m.width, h: m.height }, 0);
+    if (m && ctx) drawStroke(ctx, op, { w: m.width, h: m.height }, 0, "alpha");
     refreshView();
   };
 
@@ -416,7 +428,7 @@ export function MaskPainter({
     for (const ev of events.length ? events : [e]) g.op.points.push(pointOf(ev));
     const m = maskRef.current;
     const ctx = ctxOf(m);
-    if (m && ctx) drawStroke(ctx, g.op, { w: m.width, h: m.height }, from);
+    if (m && ctx) drawStroke(ctx, g.op, { w: m.width, h: m.height }, from, "alpha");
     refreshView();
   };
 
@@ -432,6 +444,7 @@ export function MaskPainter({
     if (g.id !== e.pointerId) return;
     gestureRef.current = null;
     if (g.kind === "stroke") {
+      setDrawing(false);
       if (e.type === "pointercancel") repaint(opsRef.current);
       else commit(g.op);
     }
@@ -441,6 +454,7 @@ export function MaskPainter({
 
   const commit = (op: MaskOp) => {
     const next = [...opsRef.current, op];
+    opsRef.current = next;
     setOps(next);
     setRedo([]);
     setFullAck(false);
@@ -455,7 +469,7 @@ export function MaskPainter({
       // Inverting a few strokes repaints nearly the whole picture — say so where it happened.
       const m = maskRef.current;
       const ctx = ctxOf(m);
-      if (m && ctx) setInvertWarn(judgeMask(ctx.getImageData(0, 0, m.width, m.height).data, { w: m.width, h: m.height }) === "full");
+      if (m && ctx) setInvertWarn(judgeMask(ctx.getImageData(0, 0, m.width, m.height).data, { w: m.width, h: m.height }, 3) === "full");
     }
   };
 
@@ -484,7 +498,16 @@ export function MaskPainter({
     const m = maskRef.current;
     const mctx = ctxOf(m);
     if (!m || !mctx || !natural || !ready || saving) return false;
-    const verdict = judgeMask(mctx.getImageData(0, 0, m.width, m.height).data, { w: m.width, h: m.height });
+    // A stroke still under a finger is part of what the member sees and saves: commit it now, so
+    // the judgement, the export and the undo list are one list, and its late pointerup is ignored.
+    let list = opsRef.current;
+    const live = gestureRef.current;
+    if (live?.kind === "stroke") {
+      gestureRef.current = null;
+      setDrawing(false);
+      list = commit(live.op);
+    }
+    const verdict = judgeMask(mctx.getImageData(0, 0, m.width, m.height).data, { w: m.width, h: m.height }, 3);
     if (verdict === "blank") {
       setError(tr("imggen.mask_canvas_blank"));
       return false;
@@ -509,7 +532,7 @@ export function MaskPainter({
       if (!ctx) throw new Error("no 2d context");
       // Black over everything first: ComfyUI reads the red channel, and a transparent pixel would
       // read as 0 only by accident of the encoder (log 111 §2-3).
-      replayOps(ctx, ops, out, () => paintBase(c, underlayRef.current));
+      replayOps(ctx, list, out, () => paintBase(c, underlayRef.current, "grey"));
       const blob = await new Promise<Blob | null>((res) => c.toBlob(res, "image/png"));
       if (!blob) throw new Error("toBlob");
       // Never overwrite: a 409 means the name exists, so ask for another one.
@@ -608,15 +631,20 @@ export function MaskPainter({
           </Button>
         </div>
       </div>
-      {brushTooThin(ratio) && <p className="igen-warn">{tr("imggen.mask_canvas_thin")}</p>}
-      {invertWarn && <p className="igen-warn">{tr("imggen.mask_canvas_invert_full")}</p>}
-      {notices.map((n) => (
-        <p key={n} className="igen-warn" role="status">
-          {n}
-        </p>
-      ))}
-      {sideways && <p className="igen-err" role="alert">{tr("imggen.mask_canvas_sideways")}</p>}
-      {picError && <p className="igen-err" role="alert">{tr("imggen.mask_canvas_picture_failed")}</p>}
+      {/* Notes scroll inside a capped strip: on a short screen (a phone on its side, a keyboard up)
+          growing text must shrink nothing but the picture, never push Save off the bottom. */}
+      <div className="igen-mask-notes">
+        {sideways && <p className="igen-err" role="alert">{tr("imggen.mask_canvas_sideways")}</p>}
+        {picError && <p className="igen-err" role="alert">{tr("imggen.mask_canvas_picture_failed")}</p>}
+        {brushTooThin(ratio) && <p className="igen-warn">{tr("imggen.mask_canvas_thin")}</p>}
+        {invertWarn && <p className="igen-warn">{tr("imggen.mask_canvas_invert_full")}</p>}
+        {notices.map((n) => (
+          <p key={n} className="igen-warn" role="status">
+            {n}
+          </p>
+        ))}
+        <p className="igen-hint">{tr("imggen.mask_canvas_hint")}</p>
+      </div>
       <div className={"igen-mask-stage" + (mode === "move" ? " igen-mask-moving" : "")} ref={stageRef}>
         <div
           className="igen-mask-frame"
@@ -646,9 +674,12 @@ export function MaskPainter({
           />
         </div>
       </div>
-      {error && <p className="igen-err" role="alert">{error}</p>}
       <div className="igen-mask-actions">
-        <span className="igen-hint">{tr("imggen.mask_canvas_hint")}</span>
+        {error && (
+          <p className="igen-err" role="alert">
+            {error}
+          </p>
+        )}
         <Button onClick={onCancel} disabled={saving}>
           {tr("imggen.mask_canvas_cancel")}
         </Button>

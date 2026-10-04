@@ -60,7 +60,7 @@ interface Props {
   familyExtra?: ReactNode;
   /** Open the mask canvas on this picture (the pane owns the dialog, which "fix this part" opens
    *  too). Absent: no canvas, the path field only. */
-  onPaintMask?: (picture: string) => void;
+  onPaintMask?: (picture: string, mask: string) => void;
 }
 
 export function GenerateForm({

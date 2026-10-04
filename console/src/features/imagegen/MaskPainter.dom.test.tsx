@@ -36,7 +36,7 @@ const bufOf = (c: HTMLCanvasElement): Buf => {
   return b;
 };
 const rgb = (s: string): [number, number, number] =>
-  s === "#fff" ? [255, 255, 255] : s === "#000" ? [0, 0, 0] : [255, 59, 48];
+  s === "#fff" ? [255, 255, 255] : s === "#000" ? [0, 0, 0] : [parseInt(s.slice(1, 3), 16), parseInt(s.slice(3, 5), 16), parseInt(s.slice(5, 7), 16)];
 
 function fakeCtx(canvas: HTMLCanvasElement) {
   let path: { x: number; y: number }[] = [];
@@ -51,7 +51,23 @@ function fakeCtx(canvas: HTMLCanvasElement) {
     globalCompositeOperation: "source-over",
     set(i: number, c: [number, number, number]) {
       const d = bufOf(canvas).d;
-      if (ctx.globalCompositeOperation === "difference") {
+      const op = ctx.globalCompositeOperation;
+      // Opaque sources only, so each Porter-Duff mode reduces to a rule per pixel.
+      if (op === "destination-out") {
+        d.fill(0, i, i + 4);
+        return;
+      }
+      if (op === "xor") {
+        if (d[i + 3] > 0) d.fill(0, i, i + 4);
+        else d.set([c[0], c[1], c[2], 255], i);
+        return;
+      }
+      if (op === "source-in") {
+        if (d[i + 3] > 0) d.set([c[0], c[1], c[2], d[i + 3]], i);
+        else d.fill(0, i, i + 4);
+        return;
+      }
+      if (op === "difference") {
         d[i] = Math.abs(d[i] - c[0]);
         d[i + 1] = Math.abs(d[i + 1] - c[1]);
         d[i + 2] = Math.abs(d[i + 2] - c[2]);
@@ -78,8 +94,9 @@ function fakeCtx(canvas: HTMLCanvasElement) {
       for (let y = Math.max(0, y0); y < Math.min(b.h, y0 + h); y++)
         for (let x = Math.max(0, x0); x < Math.min(b.w, x0 + w); x++) ctx.set((y * b.w + x) * 4, c);
     },
-    clearRect() {
-      bufOf(canvas).d.fill(0);
+    clearRect(x0 = 0, y0 = 0, w = Infinity, h = Infinity) {
+      const b = bufOf(canvas);
+      for (let y = Math.max(0, y0); y < Math.min(b.h, y0 + h); y++) b.d.fill(0, (y * b.w + Math.max(0, x0)) * 4, (y * b.w + Math.min(b.w, x0 + w)) * 4);
     },
     beginPath() {
       path = [];
@@ -130,8 +147,9 @@ function fakeCtx(canvas: HTMLCanvasElement) {
           else continue;
           if (ctx.globalCompositeOperation === "copy") {
             b.d.set(c, i);
-          } else {
-            b.d.set([c[0], c[1], c[2], Math.max(b.d[i + 3], c[3])], i);
+          } else if (c[3] > 0) {
+            // source-over of a 0/255 alpha source; a partial alpha keeps its value (underlay probe).
+            b.d.set(c[3] === 255 ? c : [c[0], c[1], c[2], Math.max(b.d[i + 3], c[3])], i);
           }
         }
     },
@@ -311,6 +329,34 @@ describe("MaskPainter", () => {
     for (let i = 3; i < out.d.length; i += 4) if (out.d[i] !== 255) throw new Error(`transparent pixel at ${i}`);
     for (let i = 0; i < out.d.length; i += 4)
       if (out.d[i] !== out.d[i + 1] || out.d[i] !== out.d[i + 2]) throw new Error(`not grey at ${i}`);
+  });
+
+  it("saving with a finger still down saves that stroke, once", async () => {
+    await renderPainter();
+    await loadPicture();
+    await act(async () => {
+      pointer("pointerdown", 40, 25, { id: 1, kind: "touch" });
+      pointer("pointermove", 360, 25, { id: 1, kind: "touch" });
+    });
+    await click(SAVE);
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(red(exported!, 200, 25), "the stroke on screen is the stroke exported").toBe(255);
+    // Its pointerup arrives after the save started: it must not add the stroke a second time.
+    await act(async () => pointer("pointerup", 360, 25, { id: 1, kind: "touch" }));
+    await click(UNDO);
+    expect(btn(UNDO).disabled, "one stroke in the history, not two").toBe(true);
+  });
+
+  it("shows painted areas as an opaque tint over any picture, transparent elsewhere", async () => {
+    await renderPainter();
+    await loadPicture();
+    await strokeTop();
+    const v = bufOf(canvas());
+    const at = (x: number, y: number) => [...v.d.slice((y * v.w + x) * 4, (y * v.w + x) * 4 + 4)];
+    expect(at(200, 25), "tint with full coverage: visible on white").toEqual([255, 43, 214, 255]);
+    expect(at(200, 150)[3], "unpainted: nothing over the picture").toBe(0);
+    const css = getComputedStyle(canvas());
+    expect(css.mixBlendMode || "normal", "no blend that vanishes over white").toBe("normal");
   });
 
   it("a name that exists (409) is never overwritten: it asks for another name", async () => {
@@ -545,6 +591,9 @@ describe("MaskPainter underlay", () => {
 
 describe("MaskCanvasModal closing", () => {
   async function renderModal() {
+    // useBackClose counts the popstates its own history.back() will cause (module scope); let
+    // the previous test's ones arrive before this test presses back, or they eat its presses.
+    await act(async () => new Promise((r) => setTimeout(r, 30)));
     const closed = vi.fn();
     host = document.createElement("div");
     document.body.appendChild(host);
@@ -583,6 +632,47 @@ describe("MaskCanvasModal closing", () => {
     expect(closed).toHaveBeenCalledTimes(1);
   });
 
+  it("Esc in the middle of the first stroke asks instead of dropping it", async () => {
+    const closed = await renderModal();
+    await act(async () => {
+      pointer("pointerdown", 40, 25);
+      pointer("pointermove", 200, 25);
+    });
+    await esc();
+    expect(ask()).not.toBeNull();
+    expect(closed).not.toHaveBeenCalled();
+  });
+
+  it("the browser's back closes a clean canvas, asks on a dirty one, and never leaves during an upload", async () => {
+    const back = async () => act(async () => window.dispatchEvent(new PopStateEvent("popstate", { state: null })));
+    const push = vi.spyOn(history, "pushState");
+    const closed = await renderModal();
+    const armed = push.mock.calls.length;
+    expect(armed, "the guard entry is pushed on open").toBeGreaterThan(0);
+    await strokeTop();
+    await back();
+    expect(ask(), "dirty: back asks").not.toBeNull();
+    expect(push.mock.calls.length, "and re-arms the guard").toBe(armed + 1);
+    await click("編集を続ける");
+    // An upload that does not finish yet.
+    let finish: (v: { status: number }) => void = () => {};
+    upload.mockImplementationOnce(() => new Promise((r) => (finish = r)));
+    await click(SAVE);
+    expect(upload).toHaveBeenCalledTimes(1);
+    await back();
+    await back();
+    expect(closed, "two backs during the upload").not.toHaveBeenCalled();
+    expect(document.querySelector(".igen-mask-modal"), "still on screen").not.toBeNull();
+    expect(push.mock.calls.length, "a fresh guard after each back").toBe(armed + 3);
+    await act(async () => finish({ status: 200 }));
+  });
+
+  it("back on a clean canvas closes it", async () => {
+    const closed = await renderModal();
+    await act(async () => window.dispatchEvent(new PopStateEvent("popstate", { state: null })));
+    expect(closed).toHaveBeenCalledTimes(1);
+  });
+
   it("save from the question uploads", async () => {
     await renderModal();
     await strokeTop();
@@ -613,7 +703,7 @@ function FormHarness({
   provider: ImagegenProvider | null;
   model?: ImagegenModel;
   initial: Partial<ImagegenDraft>;
-  onPaint?: (picture: string) => void;
+  onPaint?: (picture: string, mask: string) => void;
 }) {
   const [draft, setDraft] = useState<ImagegenDraft>({ ...emptyDraft(), model: model.id, ...initial });
   patchForm = (p) => setDraft((d) => ({ ...d, ...p }));
@@ -644,7 +734,7 @@ function FormHarness({
 async function renderForm(
   provider: ImagegenProvider | null,
   initial: Partial<ImagegenDraft>,
-  { model, onPaint = () => {} }: { model?: ImagegenModel; onPaint?: (p: string) => void } = {},
+  { model, onPaint = () => {} }: { model?: ImagegenModel; onPaint?: (p: string, m: string) => void } = {},
 ) {
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -693,21 +783,34 @@ describe("the mask row", () => {
     expect(btn(OPEN).disabled).toBe(true);
   });
 
-  it("asks when the first reference changes under a mask: keep, repaint, or clear", async () => {
-    const painted: string[] = [];
-    await renderForm(COMFY, { op: "inpaint", inputs: ["a.jpg"], mask: "generated/console/masks/m.png" }, { onPaint: (p) => painted.push(p) });
+  it("when the first reference changes under a mask, holds it out of the draft until answered", async () => {
+    const M = "generated/console/masks/m.png";
+    const painted: [string, string][] = [];
+    await renderForm(COMFY, { op: "inpaint", inputs: ["a.jpg"], mask: M }, { onPaint: (p, m) => painted.push([p, m]) });
     const question = () => document.querySelector(".igen-mask-ask");
+    const pressable = () =>
+      [...document.querySelectorAll<HTMLButtonElement>(".igen-actions button")].filter((b) => !b.disabled).length;
     expect(question(), "nothing changed yet").toBeNull();
+    expect(pressable(), "with a mask the presses are live").toBeGreaterThan(0);
     await act(async () => patchForm({ inputs: ["a.jpg", "b.jpg"] }));
     expect(question(), "a second reference does not move the frame").toBeNull();
+
     await act(async () => patchForm({ inputs: ["b.jpg"] }));
     expect(question()).not.toBeNull();
+    expect(draftNow!.mask, "held: the draft has no mask, so no press path can run the old one").toBe("");
+    expect(pressable(), "trial and enqueue are held").toBe(0);
     await click("マスクをそのまま使う");
     expect(question()).toBeNull();
-    expect(draftNow!.mask).toBe("generated/console/masks/m.png");
+    expect(draftNow!.mask).toBe(M);
+
     await act(async () => patchForm({ inputs: ["c.jpg"] }));
     await click("塗り直す");
-    expect(painted).toEqual(["c.jpg"]);
+    expect(painted.at(-1), "repaint opens on the new picture over the held mask").toEqual(["c.jpg", M]);
+    expect(question(), "cancelling the canvas leaves the question").not.toBeNull();
+    expect(draftNow!.mask).toBe("");
+    await act(async () => patchForm({ mask: "generated/console/masks/new.png" }));
+    expect(question(), "a saved mask answers it").toBeNull();
+
     await act(async () => patchForm({ inputs: ["d.jpg"] }));
     await click("マスクを外す");
     expect(draftNow!.mask).toBe("");
