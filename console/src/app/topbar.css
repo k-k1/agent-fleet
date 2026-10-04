@@ -5,7 +5,8 @@
 /* Legacy select styles (old element global), scoped — the account menu's tenant picker
    is a raw <select>: console/src/ui has no select primitive yet. :where() keeps the old
    0-0-1 specificity so class rules still win (see mirror.css). Every button in the bar and
-   in what it hosts (EnginesPill, NotificationCenter, SwatchGrid) is a ui/Button. */
+   in what it hosts (EnginesPill, NotificationCenter, SwatchGrid) is a ui/Button, except the
+   appearance popover's .seg-btn segments, which are the ui-seg primitive (ui.css). */
 :where(.topbar) select {
   background: var(--btn);
   color: var(--fg);
@@ -108,7 +109,8 @@
 .notification-dot { flex: 0 0 auto; width: 7px; height: 7px; margin-left: 9px; border-radius: 50%; background: transparent; }
 .notification-row.unread { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .notification-row.unread .notification-dot { background: var(--accent); }
-:where(.topbar) .notification-item { min-width: 0; flex: 1; display: flex; align-items: flex-start; gap: 10px; padding: 10px 10px 10px 8px; border: 0; background: transparent; text-align: left; }
+/* white-space: normal undoes ui/Button's nowrap: the title wraps; only the subtitle ellipsizes. */
+:where(.topbar) .notification-item { min-width: 0; flex: 1; display: flex; align-items: flex-start; gap: 10px; white-space: normal; padding: 10px 10px 10px 8px; border: 0; background: transparent; text-align: left; }
 /* inline-block: the row is the 21px line box plus padding (33px); ui/Button's inline-flex would
    shrink it to the 16px glyph (28px). Same reason for .acct-ver-copy below. */
 :where(.topbar) .notification-replay, :where(.topbar) .notification-dismiss { flex: 0 0 auto; display: inline-block; margin-right: 5px; padding: 6px; border: 0; background: transparent; color: var(--muted); }

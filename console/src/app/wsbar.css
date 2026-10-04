@@ -497,6 +497,9 @@ button.wu-manage {
 /* An attachment is listed by its page title, which is arbitrary length — let the
    row give it the full width and ellipsize instead of widening the popover. */
 .pv-attachment {
+  /* Block, not ui/Button's inline-flex: as a flex box the title would be an anonymous item
+     and the ellipsis below would never draw. */
+  display: block;
   flex: 1;
   min-width: 0;
   overflow: hidden;
