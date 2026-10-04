@@ -392,15 +392,21 @@ highest first:
 The panel beats the environment because a stored setting beats the deployment's default
 everywhere else in the Control Plane (`engineRuntimeState.mode`). The reverse — the variable as
 a lock — would leave an environment-only deployment needing a restart for every change, which
-is the cost this item exists to remove. Clearing the panel falls back to `AF_COMFY_URL` live.
+is the cost this item exists to remove. Clearing the panel falls back live to the next source in
+the order: `AF_COMFY_URL`, an external table row, or a borrowed row on the next poll. The panel
+shows which one, because clearing does not necessarily stop generation.
 
 **The key follows its URL's source.** A panel URL presents the panel's key, or no bearer at all
 when the panel holds none. It never presents `AF_COMFY_API_KEY` or `AF_ENGINE_API_KEY_IMAGE`,
 because those were configured for the host the environment names, and the panel's URL may be a
-different machine. `engineEnvAPIKey` refuses the panel's row for that reason.
+different machine. `engineEnvAPIKey` refuses the panel's row for that reason. For the same
+reason the panel row's requests refuse a redirect off the URL's origin (scheme, host, effective
+port). net/http would copy the `Authorization` header onto a hop to the same host name on
+another port.
 
-The key is sealed the way the Hugging Face token is (sealed settings rows under the
-`deployment` custodian key), so no schema migration was needed. No route returns it: the
+The key is sealed the way the Hugging Face token is (the `deployment` custodian key) and is
+stored with its URL in **one** settings row. A failed write therefore cannot pair a new URL with
+an old key. No schema migration was needed. No route returns it: the
 engine list's `comfy_lan` says only whether one is set. The audit entry `engine.comfy_lan`
 records the old and new URL and whether the key was set, cleared or left alone. A save rebuilds
 the `image` runtime row rather than editing it, so decision 8's cached health answer of the

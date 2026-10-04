@@ -143,6 +143,23 @@ describe("ComfyLanPanel", () => {
     expect(apiJSON).toHaveBeenLastCalledWith("api/admin/engines/comfy-lan", "DELETE", undefined);
   });
 
+  // Removing is not always "no image engine": a table row or a borrowed engine takes the role back.
+  it("says what removing the panel value returns images to", async () => {
+    const base: ComfyLanStatus = { available: true, source: "panel", panel_url: "http://192.0.2.20:8188" };
+    const cases: [ComfyLanStatus, string][] = [
+      [{ ...base, fallback_source: "env", fallback_url: "http://192.0.2.10:8188" }, "http://192.0.2.10:8188（AF_COMFY_URL）"],
+      [{ ...base, fallback_source: "table", fallback_url: "http://192.0.2.30:8188" }, "エンジン表の外部の行 http://192.0.2.30:8188"],
+      [{ ...base, remote_configured: true }, "止まるとは限りません"],
+      [base, "画像エンジンは無くなります"],
+    ];
+    for (const [status, want] of cases) {
+      await mount(<ComfyLanPanel status={status} />);
+      expect(text("comfy-lan-fallback")).toContain(want);
+      act(() => root?.unmount());
+      host?.remove();
+    }
+  });
+
   it("offers no form where a managed engine-table row holds the role", async () => {
     await mount(<ComfyLanPanel status={{ available: false, source: "table", url: "http://image.af.internal:8188" }} />);
     expect(urlInput()).toBeNull();

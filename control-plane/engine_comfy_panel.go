@@ -16,13 +16,15 @@ package main
 // AF_COMFY_API_KEY or AF_ENGINE_API_KEY_IMAGE — those were configured for whatever host the
 // environment names, and the panel URL may be a different one.
 //
-// Stored as sealed settings rows, exactly like the Hugging Face token (engine_hf_token.go): the
-// deployment-wide custodian key, plaintext only on a deployment with no master key. The key is
-// write-only — no route answers it, and neither the audit log nor a log line carries it.
+// Stored as one settings row holding the URL and the key sealed like the Hugging Face token
+// (engine_hf_token.go): the deployment-wide custodian key, plaintext only on a deployment with no
+// master key. The key is write-only — no route answers it, neither the audit log nor a log line
+// carries it, and the panel row's requests do not follow a redirect off the URL's origin.
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
@@ -33,17 +35,27 @@ import (
 )
 
 const (
-	engineComfyURLSetting    = "engine_comfy_lan_url"
-	engineComfyKeySetting    = "engine_comfy_lan_key"
-	engineComfyKeyRefSetting = "engine_comfy_lan_key_ref"
-	engineComfyBySetting     = "engine_comfy_lan_by"
-	engineComfyAtSetting     = "engine_comfy_lan_at"
+	// engineComfySetting holds the whole panel value as ONE JSON row, so the URL and the key that
+	// belongs to it are written together or not at all. Separate rows could be left half-written
+	// by a failed save — a new URL beside the old key — and the next boot would send that key to
+	// a host it was never entered for.
+	engineComfySetting = "engine_comfy_lan"
 	// The deployment-wide custodian key, the one the Hugging Face token is sealed under: the value
 	// belongs to no tenant.
 	engineComfyKeyRef = engineHfTokenKeyRef
 )
 
-// engineComfyPanel is the stored panel value: the settings rows and the seal around the key.
+// engineComfyRecord is the stored panel value. KeyEnc is the sealed key ("" = no key) and KeyRef
+// the custodian reference it was sealed under ("" = plaintext, a deployment with no master key).
+type engineComfyRecord struct {
+	URL    string `json:"url"`
+	KeyEnc string `json:"key_enc,omitempty"`
+	KeyRef string `json:"key_ref,omitempty"`
+	By     string `json:"by,omitempty"`
+	At     string `json:"at,omitempty"`
+}
+
+// engineComfyPanel is the stored panel value: the settings row and the seal around the key.
 type engineComfyPanel struct {
 	settings store.SettingsStore
 	sealer   engineTokenSealer
@@ -57,52 +69,67 @@ func newEngineComfyPanel(mgr *manager) *engineComfyPanel {
 	return &engineComfyPanel{settings: mgr.store, sealer: mgr}
 }
 
-// boot reads the stored value for registry construction. A store that cannot answer, or a key
-// that cannot be unsealed, is logged rather than fatal: the CP serves the panel's URL without a
-// bearer (the upstream then answers 401, which names the problem) instead of quietly falling
-// back to a different host from the environment.
+// load reads the stored value; the zero record when nothing is saved.
+func (p *engineComfyPanel) load(ctx context.Context) (engineComfyRecord, error) {
+	var rec engineComfyRecord
+	raw, err := p.settings.GetSetting(ctx, engineComfySetting)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return rec, err
+	}
+	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+		return engineComfyRecord{}, err
+	}
+	rec.URL = strings.TrimSpace(rec.URL)
+	return rec, nil
+}
+
+// save writes the whole value in one row; the zero record clears it.
+func (p *engineComfyPanel) save(ctx context.Context, rec engineComfyRecord) *apiError {
+	raw := ""
+	if rec.URL != "" {
+		b, err := json.Marshal(rec)
+		if err != nil {
+			return &apiError{http.StatusInternalServerError, errCodeEngineComfyStoreFailed, err.Error()}
+		}
+		raw = string(b)
+	}
+	if err := p.settings.SetSetting(ctx, engineComfySetting, raw); err != nil {
+		return &apiError{http.StatusInternalServerError, errCodeEngineComfyStoreFailed, err.Error()}
+	}
+	return nil
+}
+
+// boot reads the stored value for registry construction. A store that cannot answer is logged and
+// the panel not applied; a key that cannot be unsealed is logged and the panel's URL served
+// without a bearer (the upstream then answers 401, which names the problem) rather than quietly
+// falling back to a different host from the environment.
 func (p *engineComfyPanel) boot(ctx context.Context) (string, string) {
 	if p == nil {
 		return "", ""
 	}
-	u, err := p.settings.GetSetting(ctx, engineComfyURLSetting)
+	rec, err := p.load(ctx)
 	if err != nil {
-		log.Printf("engines: the admin panel's ComfyUI URL is unreadable (%v) - not applied", err)
+		log.Printf("engines: the admin panel's ComfyUI setting is unreadable (%v) - not applied", err)
 		return "", ""
 	}
-	u = strings.TrimSpace(u)
-	if u == "" {
+	if rec.URL == "" {
 		return "", ""
 	}
-	key, aerr := p.key(ctx)
+	key, aerr := p.key(ctx, rec)
 	if aerr != nil {
-		log.Printf("engines: the admin panel's ComfyUI key could not be read (%s) - %s is used without a bearer until it is entered again", aerr.message, u)
-		return u, ""
+		log.Printf("engines: the admin panel's ComfyUI key could not be read (%s) - %s is used without a bearer until it is entered again", aerr.message, rec.URL)
+		return rec.URL, ""
 	}
-	return u, key
+	return rec.URL, key
 }
 
-// storedURL is the panel's URL, "" when none is saved.
-func (p *engineComfyPanel) storedURL(ctx context.Context) (string, error) {
-	v, err := p.settings.GetSetting(ctx, engineComfyURLSetting)
-	return strings.TrimSpace(v), err
-}
-
-// key unseals the stored key. An unreadable value is an error, never an empty key, for the
+// key unseals the record's key. An unreadable value is an error, never an empty key, for the
 // reason openTenantSecret gives.
-func (p *engineComfyPanel) key(ctx context.Context) (string, *apiError) {
-	enc, err := p.settings.GetSetting(ctx, engineComfyKeySetting)
-	if err != nil {
-		return "", &apiError{http.StatusInternalServerError, errCodeEngineComfyStoreFailed, err.Error()}
-	}
-	if strings.TrimSpace(enc) == "" {
+func (p *engineComfyPanel) key(ctx context.Context, rec engineComfyRecord) (string, *apiError) {
+	if strings.TrimSpace(rec.KeyEnc) == "" {
 		return "", nil
 	}
-	ref, err := p.settings.GetSetting(ctx, engineComfyKeyRefSetting)
-	if err != nil {
-		return "", &apiError{http.StatusInternalServerError, errCodeEngineComfyStoreFailed, err.Error()}
-	}
-	k, err := p.sealer.openTenantSecret(ctx, enc, ref)
+	k, err := p.sealer.openTenantSecret(ctx, rec.KeyEnc, rec.KeyRef)
 	if err != nil {
 		return "", &apiError{http.StatusInternalServerError, errCodeEngineComfyStoreFailed,
 			"the stored ComfyUI key could not be unsealed: " + err.Error()}
@@ -110,31 +137,13 @@ func (p *engineComfyPanel) key(ctx context.Context) (string, *apiError) {
 	return strings.TrimSpace(k), nil
 }
 
-// write saves URL and key together. key is the plaintext to seal ("" = no key).
-func (p *engineComfyPanel) write(ctx context.Context, u, key, by string) *apiError {
-	enc, ref := "", ""
-	if key != "" {
-		var err error
-		if enc, ref, err = p.sealer.sealTenantSecret(ctx, engineComfyKeyRef, key); err != nil {
-			return &apiError{http.StatusInternalServerError, errCodeEngineComfyStoreFailed, err.Error()}
-		}
+// seal seals a plaintext key for a record.
+func (p *engineComfyPanel) seal(ctx context.Context, key string) (string, string, *apiError) {
+	enc, ref, err := p.sealer.sealTenantSecret(ctx, engineComfyKeyRef, key)
+	if err != nil {
+		return "", "", &apiError{http.StatusInternalServerError, errCodeEngineComfyStoreFailed, err.Error()}
 	}
-	at := store.NowTS()
-	if u == "" {
-		at = ""
-	}
-	for _, kv := range [][2]string{
-		{engineComfyURLSetting, u},
-		{engineComfyKeySetting, enc},
-		{engineComfyKeyRefSetting, ref},
-		{engineComfyBySetting, by},
-		{engineComfyAtSetting, at},
-	} {
-		if err := p.settings.SetSetting(ctx, kv[0], kv[1]); err != nil {
-			return &apiError{http.StatusInternalServerError, errCodeEngineComfyStoreFailed, err.Error()}
-		}
-	}
-	return nil
+	return enc, ref, nil
 }
 
 // engineComfyURLValid normalises a URL typed into the panel, or refuses it. http and https only,
@@ -192,13 +201,19 @@ func (r *engineRegistry) applyComfyPanel(u, key string) bool {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Read again under the lock that guards the swap: the table reloader can adopt a managed image
+	// row (and start its controller) while buildComfy ran, and overwriting it would leave that
+	// controller driving a GPU nothing in the registry can reach.
+	if now := r.byKey["image"]; now != nil && !now.def.notManagedHere() {
+		return false
+	}
 	if next != nil {
 		r.byKey["image"] = next
 		return true
 	}
 	// Cleared with nothing to fall back to. A borrowed row is left alone — the panel never put it
 	// there — and anything else the panel or the environment synthesised goes.
-	if cur != nil && !cur.def.remote() {
+	if now := r.byKey["image"]; now != nil && !now.def.remote() {
 		delete(r.byKey, "image")
 	}
 	return true
@@ -228,8 +243,15 @@ type engineComfyLanStatus struct {
 	// can say what clearing it falls back to.
 	EnvURL    string `json:"env_url,omitempty"`
 	EnvKeySet bool   `json:"env_key_set"`
-	UpdatedBy string `json:"updated_by,omitempty"`
-	UpdatedAt string `json:"updated_at,omitempty"`
+	// FallbackSource / FallbackURL are what removing the panel value returns the image role to:
+	// "env" (AF_COMFY_URL), "table" (an external row of the inline table) or "remote" (a
+	// borrowed row the table declared), or "" for nothing — in which case RemoteConfigured says
+	// whether a borrowed image engine may still arrive on the next catalogue poll.
+	FallbackSource   string `json:"fallback_source,omitempty"`
+	FallbackURL      string `json:"fallback_url,omitempty"`
+	RemoteConfigured bool   `json:"remote_configured"`
+	UpdatedBy        string `json:"updated_by,omitempty"`
+	UpdatedAt        string `json:"updated_at,omitempty"`
 }
 
 func (a engineAdminAPI) comfyPanel() *engineComfyPanel {
@@ -260,20 +282,27 @@ func (a engineAdminAPI) comfyLanStatus(ctx context.Context) engineComfyLanStatus
 			out.Source = "table"
 		}
 	}
+	if a.reg != nil && a.reg.comfyFallback != nil {
+		fb := a.reg.comfyFallback
+		out.FallbackURL = fb.URL
+		switch {
+		case fb.origin == engineOriginEnv:
+			out.FallbackSource = "env"
+		case fb.remote():
+			out.FallbackSource = "remote"
+		default:
+			out.FallbackSource = "table"
+		}
+	}
+	out.RemoteConfigured = strings.TrimSpace(envx.Or("AF_REMOTE_ENGINE_URL", "")) != ""
 	p := a.comfyPanel()
 	out.Available = p != nil && a.reg != nil && a.reg.buildComfy != nil && !a.reg.engineComfyManaged()
 	if p == nil {
 		return out
 	}
-	if u, err := p.storedURL(ctx); err == nil {
-		out.PanelURL = u
-	}
-	if enc, err := p.settings.GetSetting(ctx, engineComfyKeySetting); err == nil {
-		out.PanelKeySet = strings.TrimSpace(enc) != ""
-	}
-	if out.PanelURL != "" {
-		out.UpdatedBy, _ = p.settings.GetSetting(ctx, engineComfyBySetting)
-		out.UpdatedAt, _ = p.settings.GetSetting(ctx, engineComfyAtSetting)
+	if rec, err := p.load(ctx); err == nil && rec.URL != "" {
+		out.PanelURL, out.PanelKeySet = rec.URL, rec.KeyEnc != ""
+		out.UpdatedBy, out.UpdatedAt = rec.By, rec.At
 	}
 	return out
 }
@@ -311,28 +340,54 @@ func (a engineAdminAPI) putComfyLan(w http.ResponseWriter, r *http.Request, iden
 	// could leave the store saying one URL and the registry serving the other.
 	a.reg.comfyWriteMu.Lock()
 	defer a.reg.comfyWriteMu.Unlock()
-	prevURL, _ := p.storedURL(ctx)
+	prev, err := p.load(ctx)
+	if err != nil {
+		writeAPIErr(w, &apiError{http.StatusInternalServerError, errCodeEngineComfyStoreFailed, err.Error()})
+		return
+	}
+	rec := engineComfyRecord{URL: u, By: ident.ID, At: store.NowTS()}
 	key, keyAct := newKey, "set"
 	switch {
 	case b.ClearKey:
 		key, keyAct = "", "cleared"
 	case newKey == "":
-		if key, aerr = p.key(ctx); aerr != nil {
+		// The stored key stays with the record as it is sealed; unsealed only to hand to the row.
+		if key, aerr = p.key(ctx, prev); aerr != nil {
 			writeAPIErr(w, aerr)
 			return
 		}
-		keyAct = "unchanged"
+		rec.KeyEnc, rec.KeyRef, keyAct = prev.KeyEnc, prev.KeyRef, "unchanged"
+	default:
+		if rec.KeyEnc, rec.KeyRef, aerr = p.seal(ctx, newKey); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
 	}
-	if aerr := p.write(ctx, u, key, ident.ID); aerr != nil {
+	if aerr := a.saveAndApply(ctx, p, prev, rec, key); aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
-	a.reg.applyComfyPanel(u, key)
-	go notifyEngineCatalogChanged(context.WithoutCancel(ctx), a.mgr, "image")
 	// What changed, never the key: whether one was set, cleared or left alone.
-	a.audit(ctx, ident, "engine.comfy_lan", "url="+u+" was="+engineComfyOr(prevURL, "(none)")+" key="+keyAct)
+	a.audit(ctx, ident, "engine.comfy_lan", "url="+u+" was="+engineComfyOr(prev.URL, "(none)")+" key="+keyAct)
 	log.Printf("engines: image now comes from the admin panel (%s, key %s)", u, keyAct)
 	writeJSON(w, http.StatusOK, a.comfyLanStatus(ctx))
+}
+
+// saveAndApply stores rec and swaps the registry's row to match. When the registry refuses —
+// a managed row arrived between comfyWritable and the swap — the previous record is put back,
+// so the store never holds a panel value the process is not serving, and the caller answers 409.
+func (a engineAdminAPI) saveAndApply(ctx context.Context, p *engineComfyPanel, prev, rec engineComfyRecord, key string) *apiError {
+	if aerr := p.save(ctx, rec); aerr != nil {
+		return aerr
+	}
+	if !a.reg.applyComfyPanel(rec.URL, key) {
+		if aerr := p.save(context.WithoutCancel(ctx), prev); aerr != nil {
+			log.Printf("engines: a managed image row took the role during a panel save, and the previous panel value could not be restored: %s", aerr.message)
+		}
+		return engineComfyManagedErr()
+	}
+	go notifyEngineCatalogChanged(context.WithoutCancel(ctx), a.mgr, "image")
+	return nil
 }
 
 // deleteComfyLan (DELETE /api/admin/engines/comfy-lan) forgets the panel's URL and key; the role
@@ -346,14 +401,16 @@ func (a engineAdminAPI) deleteComfyLan(w http.ResponseWriter, r *http.Request, i
 	ctx := r.Context()
 	a.reg.comfyWriteMu.Lock()
 	defer a.reg.comfyWriteMu.Unlock()
-	prevURL, _ := p.storedURL(ctx)
-	if aerr := p.write(ctx, "", "", ident.ID); aerr != nil {
+	prev, err := p.load(ctx)
+	if err != nil {
+		writeAPIErr(w, &apiError{http.StatusInternalServerError, errCodeEngineComfyStoreFailed, err.Error()})
+		return
+	}
+	if aerr := a.saveAndApply(ctx, p, prev, engineComfyRecord{}, ""); aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
-	a.reg.applyComfyPanel("", "")
-	go notifyEngineCatalogChanged(context.WithoutCancel(ctx), a.mgr, "image")
-	a.audit(ctx, ident, "engine.comfy_lan", "url=(none) was="+engineComfyOr(prevURL, "(none)")+" key=cleared")
+	a.audit(ctx, ident, "engine.comfy_lan", "url=(none) was="+engineComfyOr(prev.URL, "(none)")+" key=cleared")
 	log.Print("engines: the admin panel's ComfyUI URL was removed")
 	writeJSON(w, http.StatusOK, a.comfyLanStatus(ctx))
 }
@@ -366,10 +423,14 @@ func (a engineAdminAPI) comfyWritable() (*engineComfyPanel, *apiError) {
 			"this Control Plane has no store or no engine registry to keep a ComfyUI URL in"}
 	}
 	if a.reg.engineComfyManaged() {
-		return nil, &apiError{http.StatusConflict, errCodeEngineComfyManaged,
-			"the image role is a managed engine in this deployment's engine table, which wins over the panel; take the role out of the stack to point it at a LAN ComfyUI"}
+		return nil, engineComfyManagedErr()
 	}
 	return p, nil
+}
+
+func engineComfyManagedErr() *apiError {
+	return &apiError{http.StatusConflict, errCodeEngineComfyManaged,
+		"the image role is a managed engine in this deployment's engine table, which wins over the panel; take the role out of the stack to point it at a LAN ComfyUI"}
 }
 
 func engineComfyOr(s, def string) string {
@@ -377,4 +438,48 @@ func engineComfyOr(s, def string) string {
 		return def
 	}
 	return s
+}
+
+// engineOriginPinKey marks an upstream request whose redirects must stay on the URL's own origin.
+type engineOriginPinKey struct{}
+
+// errEngineRedirectOffOrigin is the refusal engineCheckRedirect answers for such a request.
+var errEngineRedirectOffOrigin = errors.New("the engine answered with a redirect to another origin, which is not followed for a URL set in the admin panel")
+
+// engineDo sends one upstream request for eng. For the admin panel's row it pins redirects to the
+// URL's origin: net/http copies Authorization onto a redirect to the same host name on another
+// port (and onto a subdomain), so a 302 from the saved URL would hand the panel's key to a
+// machine nobody saved. Other rows keep net/http's own redirect rules.
+func engineDo(eng *engineRuntimeState, req *http.Request) (*http.Response, error) {
+	if eng != nil && eng.def.origin == engineOriginPanel {
+		req = req.WithContext(context.WithValue(req.Context(), engineOriginPinKey{}, true))
+	}
+	return engineClient.Do(req)
+}
+
+// engineCheckRedirect is engineClient's redirect policy: net/http's default (stop after 10), and
+// for a pinned request no hop off the first request's scheme, host and effective port.
+func engineCheckRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if pinned, _ := req.Context().Value(engineOriginPinKey{}).(bool); pinned && !engineSameOrigin(req.URL, via[0].URL) {
+		return errEngineRedirectOffOrigin
+	}
+	return nil
+}
+
+func engineSameOrigin(a, b *url.URL) bool {
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Hostname(), b.Hostname()) &&
+		engineEffectivePort(a) == engineEffectivePort(b)
+}
+
+func engineEffectivePort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if strings.EqualFold(u.Scheme, "https") {
+		return "443"
+	}
+	return "80"
 }

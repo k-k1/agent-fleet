@@ -16,6 +16,11 @@ export type ComfyLanStatus = {
   panel_key_set?: boolean;
   env_url?: string;
   env_key_set?: boolean;
+  /** What removing the panel value returns the image role to, "" / absent for nothing. */
+  fallback_source?: "env" | "table" | "remote" | "";
+  fallback_url?: string;
+  /** A borrowed image engine may arrive on the next poll when nothing else is left. */
+  remote_configured?: boolean;
   updated_by?: string;
   updated_at?: string;
 };
@@ -127,10 +132,15 @@ export function ComfyLanPanel({ status, onChanged }: { status: ComfyLanStatus; o
               </Button>
             )}
           </div>
-          <p className="muted">
-            {st.env_url
-              ? tr("admin.engines_comfy_lan_env").replace("{url}", st.env_url)
-              : tr("admin.engines_comfy_lan_env_none")}
+          {/* What "remove" leads to. Not always "nothing": an external table row or a borrowed
+              engine takes the role back, and generation then goes on to that host. */}
+          <p className="muted" data-testid="comfy-lan-fallback">
+            {st.fallback_source
+              ? (tr(`admin.engines_comfy_lan_fallback_${st.fallback_source}` as never) as string).replace(
+                  "{url}",
+                  st.fallback_url || "-",
+                )
+              : tr(st.remote_configured ? "admin.engines_comfy_lan_fallback_borrow" : "admin.engines_comfy_lan_fallback_none")}
           </p>
           <p className="muted">{tr("admin.engines_comfy_lan_note")}</p>
         </>

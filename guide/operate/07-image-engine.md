@@ -63,9 +63,16 @@ one is a CP restart.
 **The key goes with its URL.** A URL saved in the panel is sent the panel's key, or no
 `Authorization` header at all when the panel holds none. It is **never** sent
 `AF_COMFY_API_KEY` or `AF_ENGINE_API_KEY_IMAGE`, because those were set for the host the
-environment names. **Remove panel setting** falls back to `AF_COMFY_URL` and its key, live. When
-`AF_COMFY_URL` is unset, it takes the image engine away. The panel says which source is in effect
-and what removing it would fall back to.
+environment names. The key is also never carried across a redirect: when the saved URL answers
+with a redirect to another scheme, host or port, the Control Plane refuses it instead of following
+it.
+
+**Remove panel setting** returns the image role, live, to whatever is next in the order above:
+`AF_COMFY_URL` with its own key, or else an external row of the inline table. If neither exists
+but `AF_REMOTE_ENGINE_URL` is set, an `image` engine borrowed from that fleet takes over on the
+next poll. Only when none of these exists does removing take the image engine away. Removing is
+therefore **not** a way to stop image generation; switch the engine **off** for that. The panel
+says which source is in effect and what removing would return to.
 
 The rest of this section is about the environment variables.
 

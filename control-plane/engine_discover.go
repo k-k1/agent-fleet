@@ -176,7 +176,7 @@ func engineObjectInfoEnum(ctx context.Context, e *engineRuntimeState, node, fiel
 	if e.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+e.apiKey)
 	}
-	resp, err := engineClient.Do(req)
+	resp, err := engineDo(e, req)
 	if err != nil {
 		return nil, errNotAnswering(e)
 	}

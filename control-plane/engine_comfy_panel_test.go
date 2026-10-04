@@ -8,8 +8,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -159,7 +161,14 @@ func TestComfyPanelWinsOverEnvAtBootAndNeverGetsTheEnvKey(t *testing.T) {
 		{"panel-secret", "Bearer panel-secret"},
 		{"", ""},
 	} {
-		if aerr := p.write(ctx, panelSrv.URL, tc.key, "u-root"); aerr != nil {
+		rec := engineComfyRecord{URL: panelSrv.URL, By: "u-root"}
+		if tc.key != "" {
+			var aerr *apiError
+			if rec.KeyEnc, rec.KeyRef, aerr = p.seal(ctx, tc.key); aerr != nil {
+				t.Fatalf("seal: %v", aerr)
+			}
+		}
+		if aerr := p.save(ctx, rec); aerr != nil {
 			t.Fatalf("write: %v", aerr)
 		}
 		reg := newEngineRegistry(ctx, mgr)
@@ -299,9 +308,9 @@ func TestComfyPanelKeyNeverLeaves(t *testing.T) {
 	if s := comfyStatusOf(t, get); !s.PanelKeySet {
 		t.Errorf("GET does not say a key is set: %s", get)
 	}
-	enc, _ := st.GetSetting(ctx, engineComfyKeySetting)
-	if enc == "" || strings.Contains(enc, secret) {
-		t.Errorf("stored key = %q, want it sealed", enc)
+	raw, _ := st.GetSetting(ctx, engineComfySetting)
+	if !strings.Contains(raw, `"key_enc"`) || strings.Contains(raw, secret) {
+		t.Errorf("stored record = %q, want the key sealed", raw)
 	}
 	mustOK(t, a, "PUT", `{"url":"http://192.0.2.21:8188","clear_key":true}`)
 	mustOK(t, a, "DELETE", "")
@@ -349,10 +358,8 @@ func TestComfyPanelRefusesABadURLBeforeStoringAnything(t *testing.T) {
 			t.Errorf("PUT %s = %d %s, want 400", body, code, out)
 		}
 	}
-	for _, k := range []string{engineComfyURLSetting, engineComfyKeySetting} {
-		if v, _ := st.GetSetting(ctx, k); v != "" {
-			t.Errorf("%s = %q after refused saves", k, v)
-		}
+	if v, _ := st.GetSetting(ctx, engineComfySetting); v != "" {
+		t.Errorf("%s = %q after refused saves", engineComfySetting, v)
 	}
 	if reg.get("image") != nil {
 		t.Error("a refused save registered an image row")
@@ -380,7 +387,7 @@ func TestComfyPanelDoesNotReplaceAManagedRow(t *testing.T) {
 	if reg.get("image") != managed {
 		t.Error("the managed row was replaced")
 	}
-	if v, _ := st.GetSetting(context.Background(), engineComfyURLSetting); v != "" {
+	if v, _ := st.GetSetting(context.Background(), engineComfySetting); v != "" {
 		t.Errorf("the refused URL was stored: %q", v)
 	}
 	if s := comfyStatusOf(t, mustOK(t, a, "GET", "")); s.Available || s.Source != "table" {
@@ -418,7 +425,7 @@ func TestComfyPanelRoutesRefuseNonSuperAdmins(t *testing.T) {
 			}
 		}
 	}
-	if v, _ := st.GetSetting(ctx, engineComfyURLSetting); v != "" {
+	if v, _ := st.GetSetting(ctx, engineComfySetting); v != "" {
 		t.Fatalf("a refused caller stored %q", v)
 	}
 	if code := call("PUT", "root@acme.co.jp", body); code != http.StatusOK {
@@ -452,5 +459,181 @@ func TestComfyPanelStateIsOnTheEngineListForTheOperatorOnly(t *testing.T) {
 	}
 	if v, ok := list(false)["comfy_lan"]; ok {
 		t.Errorf("a tenant_admin's engine list carries comfy_lan: %v", v)
+	}
+}
+
+// redirectStub answers every path with a 302 to target, except the health path, which is up.
+func redirectStub(t *testing.T, target string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/system_stats" && !strings.Contains(r.URL.RawQuery, "hop") {
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		http.Redirect(w, r, target+r.URL.Path, http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// A 302 from the panel's URL to the same host on another port must not carry the panel key
+// there: net/http copies Authorization onto such a hop, so the panel row's requests refuse it —
+// on the health probe and on the gateway's generation path alike. An environment row keeps
+// net/http's own rules (the hop is followed, as before).
+func TestComfyPanelKeyDoesNotFollowARedirectOffOrigin(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		origin   string
+		wantSent bool
+	}{
+		{engineOriginPanel, false},
+		{engineOriginEnv, true},
+	} {
+		other := newComfyAuthStub(t)
+		up := redirectStub(t, other.URL)
+		e := &engineRuntimeState{def: engineComfyRow(up.URL, tc.origin), apiKey: "panel-probe-secret",
+			catalog: newEngineCatalog(nil, "image")}
+
+		// The health probe, sent to a path that redirects.
+		e.def.Health = "/system_stats?hop=1"
+		healthy := engineHealthy(ctx, e)
+		e.def.Health = "/system_stats"
+
+		// The gateway's generation path.
+		g := engineGateway{reg: &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}}
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(`{}`))
+		r.SetPathValue("path", "prompt")
+		g.plain(rec, r, e, engineSessionClaims{Key: "image"}, testMembership(), []byte(`{}`))
+
+		sent := 0
+		other.mu.Lock()
+		for _, a := range other.auths {
+			if a == "Bearer panel-probe-secret" {
+				sent++
+			}
+		}
+		other.mu.Unlock()
+		if tc.wantSent {
+			if sent != 2 || !healthy || rec.Code != http.StatusOK {
+				t.Errorf("env row: key reached the redirect target %d time(s), healthy=%v, gateway=%d; want the hop followed as before",
+					sent, healthy, rec.Code)
+			}
+			continue
+		}
+		if sent != 0 || other.calls() != 0 {
+			t.Errorf("panel row: the redirect target was asked %d time(s), %d with the panel key", other.calls(), sent)
+		}
+		if healthy || rec.Code == http.StatusOK {
+			t.Errorf("panel row: an off-origin redirect counted as success (healthy=%v, gateway=%d)", healthy, rec.Code)
+		}
+	}
+}
+
+func TestEngineSameOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		a, b string
+		same bool
+	}{
+		{"http://h:8188/x", "http://h:8188/y", true},
+		{"http://h/x", "http://H:80/y", true},
+		{"https://h/x", "https://h:443/y", true},
+		{"http://h:8188/x", "http://h:8189/x", false},
+		{"https://h/x", "http://h/x", false},
+		{"http://h/x", "http://a.h/x", false},
+	} {
+		a, _ := url.Parse(tc.a)
+		b, _ := url.Parse(tc.b)
+		if got := engineSameOrigin(a, b); got != tc.same {
+			t.Errorf("engineSameOrigin(%s, %s) = %v", tc.a, tc.b, got)
+		}
+	}
+}
+
+// failingSettings fails every write of the panel's row while fail is set.
+type failingSettings struct {
+	store.Store
+	fail bool
+}
+
+func (f *failingSettings) SetSetting(ctx context.Context, k, v string) error {
+	if f.fail && k == engineComfySetting {
+		return errors.New("disk full")
+	}
+	return f.Store.SetSetting(ctx, k, v)
+}
+
+// A save or a removal that fails to write leaves the previous URL and key together — in the
+// store, in the registry, and in what the next boot serves.
+func TestComfyPanelFailedWriteKeepsThePreviousPair(t *testing.T) {
+	silenceCatalogPush(t)
+	comfyPanelEnv(t, nil)
+	oldSrv, newSrv := newComfyAuthStub(t), newComfyAuthStub(t)
+	mgr, st := comfyPanelManager(t)
+	fs := &failingSettings{Store: st}
+	mgr.store = fs
+	ctx := context.Background()
+	reg := newEngineRegistry(ctx, mgr)
+	a := engineAdminAPI{memberAuth{mgr}, reg, fs}
+	mustOK(t, a, "PUT", `{"url":"`+oldSrv.URL+`","key":"key-a"}`)
+
+	fs.fail = true
+	for _, call := range []struct{ method, body string }{
+		{"PUT", `{"url":"` + newSrv.URL + `","key":"key-b"}`},
+		{"PUT", `{"url":"` + newSrv.URL + `","clear_key":true}`},
+		{"DELETE", ""},
+	} {
+		if code, out := comfyPanelCall(t, a, call.method, call.body); code != http.StatusInternalServerError {
+			t.Errorf("%s %s with a failing store = %d %s, want 500", call.method, call.body, code, out)
+		}
+	}
+	fs.fail = false
+	if e := reg.get("image"); e == nil || e.def.URL != oldSrv.URL || e.apiKey != "key-a" {
+		t.Fatalf("after failed writes the registry serves %v", e != nil && e.def.URL == oldSrv.URL)
+	}
+	rebooted := newEngineRegistry(ctx, mgr)
+	e := rebooted.get("image")
+	if e == nil || !engineHealthy(ctx, e) {
+		t.Fatal("after a reboot the previous panel URL is not served")
+	}
+	if got := oldSrv.lastAuth(t); got != "Bearer key-a" {
+		t.Errorf("the previous URL was sent %q after a reboot, want its own key", got)
+	}
+	if newSrv.calls() != 0 {
+		t.Errorf("the URL of a failed save was asked %d time(s)", newSrv.calls())
+	}
+}
+
+// A managed row the table reloader adopts while a save is building its row wins: the save answers
+// 409, the managed row stays reachable, and the store goes back to the previous value.
+func TestComfyPanelSaveLosesToAManagedRowAdoptedMidway(t *testing.T) {
+	silenceCatalogPush(t)
+	comfyPanelEnv(t, nil)
+	mgr, st := comfyPanelManager(t)
+	managed := &engineRuntimeState{
+		def: engineDef{Key: "image", API: engineAPIImages, Provider: "comfy", Service: "af-image",
+			URL: "http://image.af.internal:8188"},
+		ecs: &engineECS{key: "image"},
+	}
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{}}
+	reg.build = func(engineDef) *engineRuntimeState { return managed }
+	reg.buildComfy = func(d engineDef) *engineRuntimeState {
+		// The reloader's adopt, landing between the save's managed check and its swap.
+		if !reg.adopt(managed.def) {
+			t.Error("adopt refused the managed row")
+		}
+		return &engineRuntimeState{def: d}
+	}
+	a := engineAdminAPI{memberAuth{mgr}, reg, st}
+
+	code, body := comfyPanelCall(t, a, "PUT", `{"url":"http://192.0.2.20:8188","key":"k"}`)
+	if code != http.StatusConflict || !strings.Contains(body, errCodeEngineComfyManaged) {
+		t.Fatalf("PUT racing an adopt = %d %s, want 409 %s", code, body, errCodeEngineComfyManaged)
+	}
+	if reg.get("image") != managed {
+		t.Error("the save overwrote a managed row adopted while it ran")
+	}
+	if v, _ := st.GetSetting(context.Background(), engineComfySetting); v != "" {
+		t.Errorf("the refused save stayed in the store: %q", v)
 	}
 }
