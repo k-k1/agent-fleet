@@ -917,7 +917,12 @@
   gap: 6px;
   flex-wrap: wrap;
 }
+/* A swatch is a ui/Button with its own geometry: block (it is a flex item of .swatch-row) and
+   wrapping, so the check mark centres as it does in a plain button — .ui-btn's inline-flex
+   would pin it to the left edge. */
 .swatch {
+  display: inline-block;
+  white-space: normal;
   width: 26px;
   height: 26px;
   padding: 0;
@@ -929,7 +934,14 @@
   background: var(--btn);
   cursor: pointer;
 }
-.swatch.active {
+/* Keyboard focus keeps the app-wide ring (base.css), not .ui-btn's accent one; the selected
+   swatch keeps its accent ring even while focused, as it always has. */
+.swatch:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.swatch.active,
+.swatch.active:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }

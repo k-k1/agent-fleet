@@ -22,6 +22,7 @@ import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSettingsUI } from "../settings/store.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { useT } from "../../lib/i18n/index.ts";
+import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useGcpLoginStore, type GcpProfileState } from "./store.ts";
 
@@ -96,8 +97,7 @@ export function GcpProfilesChip() {
 
   return (
     <div className="ws-usage-wrap ws-aws ws-gcp" ref={ref}>
-      <button
-        type="button"
+      <Button
         className={"kind-tag ws-usage-btn ws-aws-btn ws-gcp-btn" + tone}
         title={title}
         aria-label={title}
@@ -110,7 +110,7 @@ export function GcpProfilesChip() {
         <Icon name="brand:gcp" />
         <span className="ws-aws-label">{label}</span>
         <Icon name="chevron-down" />
-      </button>
+      </Button>
       {open && (
         <div className="ws-usage-pop ws-aws-pop ws-gcp-pop">
           <div className="wu-title">{tr("wsbar.gcp.title")}</div>
@@ -136,9 +136,9 @@ export function GcpProfilesChip() {
                   <div className="ws-aws-foot">
                     {waiting.has(p.name) ? <span className="warn">{tr("wsbar.gcp.waiting")}</span> : <span />}
                     <span className="ws-aws-actions">
-                      <button
-                        type="button"
-                        className="ghost ws-aws-login ws-gcp-login"
+                      <Button
+                        variant="ghost"
+                        className="ws-aws-login ws-gcp-login"
                         title={tr(on ? "gcplogin.login_again_title" : "gcplogin.login_title")}
                         onClick={() => {
                           // The modal sits outside the popover, whose dismiss layer would
@@ -151,7 +151,7 @@ export function GcpProfilesChip() {
                         }}
                       >
                         {tr(on ? "gcplogin.login_again" : "gcplogin.login")}
-                      </button>
+                      </Button>
                     </span>
                   </div>
                 </li>
@@ -162,8 +162,7 @@ export function GcpProfilesChip() {
             {tr("wsbar.gcp.no_default")}{" "}
             <code className="ws-aws-cmd">af-gcloud-exec --profile {tr("wsbar.aws.cmd_name")}</code>
           </div>
-          <button
-            type="button"
+          <Button
             className="wu-manage"
             onClick={() => {
               setOpen(false);
@@ -171,7 +170,7 @@ export function GcpProfilesChip() {
             }}
           >
             <Icon name="settings-gear" /> {tr("wsbar.gcp.settings")}
-          </button>
+          </Button>
         </div>
       )}
     </div>
