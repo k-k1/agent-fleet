@@ -243,3 +243,19 @@ rollup（`usage/rollup/YYYY-MM.json`）と `/usage/series` は **P3 で同時に
   rtk の節約量は別軸（台帳が測るのは rtk 適用「後」の実消費）。
   copilot は `outTok` のみ・kiro/cursor/agy は転写にトークンが無い＝`measured` で正直に出す。
 - **プライバシー**: 本文非記録。台帳はワークスペース内に閉じる。
+
+## 追記（2026-10-04）— opencode のセッションは opencode 自身が報告するコストを `cost_usd` に入れる
+
+§7-1 は `cost_usd` を claude の実測に限った。opencode は assistant メッセージごとに自前のコストを
+報告する（`message.cost`。1.18.34 で実測：メッセージ＝LLM 呼び出し 1 回ごとの値で、`time.completed`
+で確定する。`session.cost` はその累計。無料モデルは 0）。中身は opencode のカタログ単価×その呼び出しの
+トークンで、claude の `total_cost_usd` と同じ種類の値であってプロバイダの請求額ではない。そこで
+`kind=opencode` の `feature=session` 行は次のとおりにする。
+
+- 折り込みは論理ターン内のメッセージのコストを合計して、その行の `cost_usd` にする。各メッセージが
+  独立した呼び出しなので 1 メッセージ 1 回だけ足す（入力トークンの「足さずに置き換える」規則とは別）。
+- `cost_est_usd` は従来どおりトークンから計算し、`cost_usd` と**決して**足し合わせない・置き換えない・
+  埋め合わせない。両者は正当に食い違う：opencode は複数ステップのターンの呼び出しを 1 回ずつ値付けし、
+  折り込みはターンごとに入力のスナップショットを 1 つしか持たない。
+- この変更より前に折り込んだ行の `cost_usd` は空のまま（watermark は折り込み直さない）。0 は書かない。
+  他の kind は変わらない。

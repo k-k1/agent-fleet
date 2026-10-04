@@ -131,8 +131,13 @@ type Turn struct {
 	// the already-deduplicated numbers, and adding a wire field would only invite a second,
 	// divergent dedup there. Empty = this kind has one usage record per row.
 	ReqID string `json:"-"`
-	TS    string `json:"ts"`  // RFC3339 from the transcript line, "" if absent
-	Idx   int    `json:"idx"` // transcript line index — a stable render key
+	// CostUSD is the USD cost the agent itself reported for this row (opencode's per-message
+	// `cost`: its own catalog price times this LLM call's tokens). Ledger-only, so json:"-":
+	// the usage fold writes it as the row's cost_usd, beside — never added to — the
+	// cost_est_usd the Agent derives from tokens. 0 = not reported.
+	CostUSD float64 `json:"-"`
+	TS      string  `json:"ts"`  // RFC3339 from the transcript line, "" if absent
+	Idx     int     `json:"idx"` // transcript line index — a stable render key
 	// AnchorID is the AGENT's own stable identifier for this turn, opaque to the Console:
 	// claude = message uuid, codex = turn id, opencode = message id ("msg_…"). It is the
 	// handle "branch from this message" (docs/log/55) passes back to POST /fork {"at": …}.

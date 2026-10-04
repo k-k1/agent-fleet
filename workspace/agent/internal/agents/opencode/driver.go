@@ -241,6 +241,7 @@ func DropHandle(name string) {
 	h.mu.Lock()
 	addr, ses, dir, running := h.addr, h.ses, h.dir, h.running
 	h.alive = false
+	h.compacting = false
 	// Teardown discards the queue (ADR 0105 decision 8), the input the pump holds included. An
 	// input already committed is left a pending stop, so the pump does not send it.
 	h.tq().DropAll()
@@ -349,7 +350,12 @@ type threadHandle struct {
 	q        *agents.TurnQueue
 	settings agents.ThreadSettings
 	inter    *agents.Interaction // pending question (the payload of waiting_interaction)
-	events   chan agents.Event
+	// compacting: serve said a compaction summary is being written for this session (an
+	// in-flight compaction message.updated). Only half of the "compacting" state — the store
+	// has to agree (sessionCompacting) — and cleared by every terminal turn state, a stop, the
+	// daemon going away and teardown, so a missed end event cannot keep it on.
+	compacting bool
+	events     chan agents.Event
 }
 
 // tq returns the handle's queue, creating it on first use. Caller holds h.mu.
@@ -358,6 +364,18 @@ func (h *threadHandle) tq() *agents.TurnQueue {
 		h.q = agents.NewTurnQueue(h.name, ledger, agents.LedgerAtAccept)
 	}
 	return h.q
+}
+
+func (h *threadHandle) isCompacting() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.compacting
+}
+
+func (h *threadHandle) setCompacting(on bool) {
+	h.mu.Lock()
+	h.compacting = on
+	h.mu.Unlock()
 }
 
 func (h *threadHandle) sessionID() string {
@@ -378,6 +396,9 @@ func (h *threadHandle) emit(e agents.Event) {
 func (h *threadHandle) setState(st agents.TurnState) {
 	h.mu.Lock()
 	h.state = st
+	if st != agents.TurnRunning && st != agents.TurnWaitingInteraction {
+		h.compacting = false // the turn ended, or is being stopped
+	}
 	h.mu.Unlock()
 	h.emit(agents.Event{Kind: "turn_state", TurnState: st})
 }
@@ -394,6 +415,7 @@ func (h *threadHandle) currentState() agents.TurnState {
 func (h *threadHandle) runtimeLost() {
 	h.mu.Lock()
 	h.alive = false
+	h.compacting = false
 	h.state = agents.TurnUnknown
 	h.mu.Unlock()
 	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnUnknown})
@@ -736,6 +758,7 @@ func (h *threadHandle) interrupt(opts agents.InterruptOpts, teardown bool) (agen
 	running := h.running
 	out := h.tq().Interrupt(opts, running || foreign)
 	abort := running && out.Head != agents.HeadStopPending
+	h.compacting = false // a stop ends any compaction with the turn (measured: the abort completes it)
 	switch {
 	case running:
 		h.state = agents.TurnInterrupting
@@ -1217,6 +1240,35 @@ func handleServeEvent(data []byte) {
 			}
 			h.mu.Unlock()
 			h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
+		}
+	case "message.updated":
+		// Compaction (measured 1.18.34): the v1 loop announces neither
+		// session.next.compaction.started nor .ended — those belong to the v2 event store and
+		// never reach /global/event. What it does send is the compaction summary's own
+		// message.updated: an assistant message with mode "compaction", without time.completed
+		// while it is written and with it once it ends or is aborted. Any other assistant
+		// message means the summary is over and the turn has moved on.
+		var p struct {
+			Info struct {
+				compactionProbe
+				SessionID string `json:"sessionID"`
+			} `json:"info"`
+		}
+		if json.Unmarshal(ev.Properties, &p) != nil || p.Info.Role != "assistant" {
+			return
+		}
+		if h := handleBySes(p.Info.SessionID); h != nil {
+			h.setCompacting(p.Info.inFlight())
+		}
+	case "session.compacted", "session.idle":
+		var p struct {
+			SessionID string `json:"sessionID"`
+		}
+		if json.Unmarshal(ev.Properties, &p) != nil {
+			return
+		}
+		if h := handleBySes(p.SessionID); h != nil {
+			h.setCompacting(false)
 		}
 	case "permission.asked":
 		var p struct {

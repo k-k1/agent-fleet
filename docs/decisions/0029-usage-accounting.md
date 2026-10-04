@@ -281,3 +281,20 @@ skill). The frozen rules:
   different axis (the ledger measures actual consumption *after* rtk is applied). copilot has only
   `outTok`, and kiro/cursor/agy have no tokens in the transcript — reported honestly via `measured`.
 - **Privacy**: no content is recorded. The ledger stays inside the workspace.
+
+## Addendum (2026-10-04) — opencode sessions fill `cost_usd` with the cost opencode reports
+
+§7-1 limited `cost_usd` to claude's measurement. opencode reports a cost of its own on every
+assistant message (`message.cost`, measured on 1.18.34: per message, i.e. per LLM call, final at
+`time.completed`; `session.cost` is the running total; a free model reports 0). It is opencode's
+catalog price times that call's tokens — the same kind of figure as claude's `total_cost_usd`,
+not a provider bill. So for `kind=opencode`, `feature=session` rows:
+
+- the fold sums the messages of a logical turn into that row's `cost_usd` — once per message,
+  because each message is its own call (unlike the input tokens, which keep their
+  replace-not-add rule);
+- `cost_est_usd` is still computed from the tokens and **never** added to, replaced by or
+  back-filled from `cost_usd`. The two legitimately differ: opencode prices every call of a
+  multi-step turn, while the fold keeps one input snapshot per turn;
+- rows folded before this change keep an empty `cost_usd` (the watermark does not re-fold), and
+  a 0 is not written. Other kinds are unchanged.

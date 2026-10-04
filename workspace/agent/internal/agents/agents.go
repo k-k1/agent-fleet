@@ -266,7 +266,7 @@ type TranscriptData struct {
 	QueuedItems []QueueItem
 	Discards    []Discard
 	// Compacting reports the agent is compacting its conversation right now
-	// (opencode session.time_compacting) — surfaced as the mirror's "compacting" badge.
+	// (opencode's in-flight compaction summary) — surfaced as the mirror's "compacting" badge.
 	Compacting bool
 }
 

@@ -135,6 +135,11 @@ func LiveState(m session.Meta) string {
 		return ""
 	}
 	defer db.Close()
+	return liveState(db, m)
+}
+
+// liveState is LiveState on an already open store.
+func liveState(db *sql.DB, m session.Meta) string {
 	ses, err := activeSessionErr(db, m)
 	if err != nil {
 		return "" // store contract moved — unknown, not idle
@@ -200,7 +205,7 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 		Pending:    openQuestion(db, ses, m),
 		Mode:       mode(db, ses),
 		Queued:     queued(db, ses),
-		Compacting: compacting(db, ses),
+		Compacting: sessionCompacting(db, m, ses),
 	}
 	// Managed sessions (docs/log/27 P2): merge in the driver's runtime state — the Interaction
 	// id (the address /respond posts to) onto a pending question, and the driver-held queue
@@ -286,16 +291,69 @@ func promptText(raw string) string {
 	return raw
 }
 
-// compacting reports whether opencode is compacting this session's conversation right
-// now — session.time_compacting is set while a compaction runs and cleared after
-// (opencode's own status derives "compacting" from exactly this field).
-func compacting(db *sql.DB, ses string) bool {
-	var v sql.NullInt64
-	if db.QueryRow(`SELECT time_compacting FROM session WHERE id = ?`, ses).Scan(&v) != nil {
+// isCompacting reports whether the session is compacting its conversation right now — the
+// session list's "compacting" state (WireLive).
+func isCompacting(m session.Meta) bool {
+	db, ok := openRO()
+	if !ok {
 		return false
 	}
-	return v.Valid && v.Int64 > 0
+	defer db.Close()
+	ses := activeSession(db, m)
+	return ses != "" && sessionCompacting(db, m, ses)
 }
+
+// sessionCompacting is the store's compaction in flight, confirmed by the side that knows the
+// turn is live: under Managed the driver's event-fed flag, which every turn end, stop, abort and
+// daemon loss clears (driver.go); under Terminal liveState's "working", which already rules out a
+// turn an earlier process left incomplete. Either alone can stick: the store keeps an
+// incomplete message after a SIGKILL, and a missed SSE event keeps the flag.
+func sessionCompacting(db *sql.DB, m session.Meta, ses string) bool {
+	if !compactionInFlight(db, ses) {
+		return false
+	}
+	if m.DriverKind() == session.DriverManaged {
+		h := handleFor(m.Name)
+		return h != nil && h.isCompacting()
+	}
+	return liveState(db, m) == "working"
+}
+
+// compactionInFlight reports whether the session's newest message is a compaction summary
+// still being written. Measured on 1.18.34: /summarize and the automatic overflow compaction
+// both write an assistant message with mode and agent "compaction" (summary: true) that gains
+// time.completed when it ends, an abort included (MessageAbortedError). session.time_compacting
+// is still read in case a later release writes it, but 1.18.34 never does — it only maps the
+// column.
+func compactionInFlight(db *sql.DB, ses string) bool {
+	var tc sql.NullInt64
+	if db.QueryRow(`SELECT time_compacting FROM session WHERE id = ?`, ses).Scan(&tc) == nil && tc.Valid && tc.Int64 > 0 {
+		return true
+	}
+	var data []byte
+	if db.QueryRow(`SELECT data FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`, ses).Scan(&data) != nil {
+		return false
+	}
+	var md compactionProbe
+	return json.Unmarshal(data, &md) == nil && md.inFlight()
+}
+
+// compactionProbe is the part of a message (store row or message.updated info) that says
+// whether it is a compaction summary and whether it has finished.
+type compactionProbe struct {
+	Role  string `json:"role"`
+	Mode  string `json:"mode"`
+	Agent string `json:"agent"`
+	Time  struct {
+		Completed int64 `json:"completed"`
+	} `json:"time"`
+}
+
+func (p compactionProbe) isCompaction() bool {
+	return p.Role == "assistant" && (p.Mode == "compaction" || p.Agent == "compaction")
+}
+
+func (p compactionProbe) inFlight() bool { return p.isCompaction() && p.Time.Completed == 0 }
 
 // mode reports the session's current agent/mode normalized to "plan" | "normal".
 // opencode's "plan" agent is its plan mode; anything else (build, …) is normal. Read from
@@ -645,7 +703,11 @@ func parseMessage(msgID string, data []byte, partRows [][]byte, idx int, win win
 		ModelID    string `json:"modelID"`
 		ProviderID string `json:"providerID"` // with ModelID, the key the declared window is filed under
 		Variant    string `json:"variant"`    // opencode's reasoning effort/variant (e.g. "max")
-		Tokens     struct {
+		// Cost is this message's own USD cost, summed over its steps (measured 1.18.34: per
+		// message, not cumulative — session.cost is the running total — filled at each
+		// step-finish and final at time.completed; 0 on a free model).
+		Cost   float64 `json:"cost"`
+		Tokens struct {
 			Input  int `json:"input"`
 			Output int `json:"output"`
 			Cache  struct {
@@ -708,6 +770,7 @@ func parseMessage(msgID string, data []byte, partRows [][]byte, idx int, win win
 		t.Effort = md.Variant
 		t.InTok, t.OutTok = md.Tokens.Input, md.Tokens.Output
 		t.CacheRead, t.CacheCreate = md.Tokens.Cache.Read, md.Tokens.Cache.Write
+		t.CostUSD = md.Cost
 		// The declared window, so the gauge is measured against what opencode itself is
 		// using rather than against usagex.WindowGuess's 200,000 (window.go: a self-hosted
 		// 32k engine read as 13% full while it compacted on every turn).

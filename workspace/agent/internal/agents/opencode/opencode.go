@@ -220,6 +220,11 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		} else {
 			li.State = status.LiveState(session.UUID(m.Dir, m.Name))
 		}
+		// Same vocabulary as codex: a turn busy compacting its context shows as such, and
+		// counts as busy everywhere "working" does.
+		if li.State == "working" && isCompacting(m) {
+			li.State = "compacting"
+		}
 	} else if !session.DirExists(m.Dir) {
 		li.Resumable = false
 	}

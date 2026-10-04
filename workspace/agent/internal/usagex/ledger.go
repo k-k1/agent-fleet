@@ -110,7 +110,7 @@ type Record struct {
 	CacheRead   int     `json:"cread"`
 	CacheCreate int     `json:"ccreate"`
 	Spend       int     `json:"spend"`              // = in + ccreate + out (cache_read excluded)
-	CostUSD     float64 `json:"cost_usd,omitempty"` // only when actually measured (claude)
+	CostUSD     float64 `json:"cost_usd,omitempty"` // only when the agent reports it (claude aux calls, opencode sessions)
 	MS          int     `json:"ms,omitempty"`
 	OK          bool    `json:"ok"`
 	Measured    string  `json:"measured"`

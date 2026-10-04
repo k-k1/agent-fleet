@@ -122,7 +122,10 @@ type usageTurnRow struct {
 	Trigger   string // derived from the injection source of the preceding user turn
 	Sidechain bool
 	Tokens    usagex.Tokens
-	LastIdx   int // transcript line number of the last event (diagnostic)
+	// CostUSD is the agent-reported cost of the turn (transcript.Turn.CostUSD). Unlike the
+	// input tokens it is additive: each row is one LLM call's own cost, never a re-report.
+	CostUSD float64
+	LastIdx int // transcript line number of the last event (diagnostic)
 }
 
 // foldTurnRows folds a transcript's event sequence into logical turns. The aggregation
@@ -163,6 +166,7 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 			inGroup = true
 		}
 		cur.Tokens.Out += t.OutTok
+		cur.CostUSD += t.CostUSD
 		if t.InTok+t.CacheRead+t.CacheCreate > 0 {
 			cur.Tokens.In, cur.Tokens.CacheRead, cur.Tokens.CacheCreate = t.InTok, t.CacheRead, t.CacheCreate
 		}
@@ -271,6 +275,7 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 			In: r.Tokens.In, Out: r.Tokens.Out,
 			CacheRead: r.Tokens.CacheRead, CacheCreate: r.Tokens.CacheCreate,
 			Spend:    usagex.Spend(r.Tokens.In, r.Tokens.CacheCreate, r.Tokens.Out),
+			CostUSD:  r.CostUSD,
 			OK:       true,
 			Measured: measured,
 		}
