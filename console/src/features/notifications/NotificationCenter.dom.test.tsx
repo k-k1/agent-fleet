@@ -96,3 +96,27 @@ describe("acknowledging notifications", () => {
     expect(btn?.title).toBe(t("noti.mark_all_read"));
   });
 });
+
+describe("controls", () => {
+  // Every control here is a ui/Button (#1631): the bar's old element rule that styled raw
+  // buttons is gone, so a raw one would fall back to the browser's own button chrome.
+  it("are ui/Buttons with an accessible name, the row and its replay included", async () => {
+    useToastLog.setState({ items: [{ id: "l1", kind: "error", message: "boom", createdAt: "2026-09-22T00:00:00Z", seen: false }] });
+    await render();
+    await click(".notification-btn");
+    const buttons = Array.from(host.querySelectorAll<HTMLButtonElement>("button"));
+    // bell, voice toggle, mark-all-read, the fleet row, its replay, the log row's dismiss
+    // (the desktop-permission button only exists where Notification is defined).
+    expect(buttons.length).toBeGreaterThanOrEqual(6);
+    for (const b of buttons) {
+      expect(b.classList.contains("ui-btn"), b.className).toBe(true);
+      expect(b.type).toBe("button");
+      const name = b.getAttribute("aria-label") || b.getAttribute("title") || b.textContent?.trim();
+      expect(name, b.className).toBeTruthy();
+    }
+    expect(host.querySelector(".notification-btn")!.getAttribute("aria-label")).toBe(t("noti.notifications"));
+    expect(host.querySelector(".notification-replay")!.getAttribute("aria-label")).toBe(t("noti.replay"));
+    expect(host.querySelector(".notification-dismiss")!.getAttribute("aria-label")).toBe(t("noti.dismiss"));
+    expect(host.querySelector<HTMLButtonElement>(".notification-readall")!.disabled).toBe(false);
+  });
+});

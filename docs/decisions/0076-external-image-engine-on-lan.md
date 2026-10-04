@@ -7,6 +7,7 @@ English | [日本語](0076-external-image-engine-on-lan.ja.md)
   folded into the decisions below and P0 may start.
   Status update (2026-09-24): P0 is implemented. Its four lanes landed as #556 (Agent), #557 (documentation), #558 (Console) and #560 (CP: the external row synthesised from `AF_COMFY_URL`, `control-plane/engines.go`). P0's completion run — one image from a LAN ComfyUI — is not recorded.
   Status update (2026-10-04): P1's first item — URL and key from the admin panel (#957) — is implemented; its precedence is the addendum to decision 2 at the end.
+  Status update (2026-10-04): P2's script (#958) is in `deploy/comfyui-lan/`, tested against a fake docker only; see the last addendum.
 - Follow-ups: #957, #958, #962
 - **Nothing was measured for this document.** Every claim says where it comes from —
   (a) measurements in ADR 0069, 0071 and 0072, (b) facts read out of this repository's code on
@@ -418,3 +419,48 @@ needed a restart.
 Unverified: a `generate_image` run against a real LAN ComfyUI configured through the panel.
 The tests drive httptest stubs, which record which host received which `Authorization`.
 
+
+## Addendum (2026-10-04) — open question 4 and P2: a script that runs the pinned image (#958)
+
+Open question 4 asked whether the fleet's pinned ComfyUI image would run on a LAN GPU host
+with a `run-voicevox.sh`-style script and `--gpus all`. The script now exists as
+`deploy/comfyui-lan/comfyui-lan.sh`. Running it on a real GPU host would answer the question,
+and that has not happened, so the question stays open. The decisions above are unchanged.
+What the script settles:
+
+- **Where the image comes from.** `ghcr.io/k-k1/agent-fleet/comfyui` is public and pulls
+  without credentials (checked on 2026-10-04: the tag list holds `v0.37.0`). The tag is
+  `ImageComfyImageTag`'s Default in `60-engines.yaml`, read the same way `update.sh` reads it,
+  so a LAN host follows the deployment's pin without a second number to keep in step.
+  `--digest` pins the image by digest. `--build` builds the Dockerfile at that ref on the host,
+  for an operator who does not want to pull from GHCR.
+- **The same entry point as the ECS task.** `main.py --listen 0.0.0.0 --port 8188
+  --disable-auto-launch` inside the container (ECS uses port 8080 and adds `--verbose DETAIL`;
+  8188 is ComfyUI's own default, which LAN setups and decision 2's example use), with the models folder bind-mounted read-only
+  over `/ComfyUI/models`. ECS replaces that directory with a link to `/models/image`, so both
+  keep ComfyUI's own type folders and decision 6's file names mean the same thing on both.
+- **The published address is the operator's.** The default is `127.0.0.1`. `0.0.0.0` is
+  refused unless `--all-interfaces` is passed with it, because decision 7 says reachability is
+  not a defence and the script should not widen it on its own.
+- **Decision 7's reverse proxy, built in.** `--api-key-file` puts Caddy (compose's image) in
+  front of ComfyUI and no longer publishes ComfyUI itself. Every path, `/system_stats` included,
+  needs `Authorization: Bearer <key>`, which is what the CP presents from `AF_COMFY_API_KEY` or
+  the panel's key (the addendum to decision 2). The key reaches the proxy through the
+  environment and never through a command line, and a key file the group or others can read
+  is refused.
+- **Lifecycle stays the operator's** (the rejected "CP owns the LAN ComfyUI's start and stop").
+  The script sets `--restart unless-stopped` and a docker health check on `/system_stats`.
+  Re-running `up` is idempotent: each container carries a label with every input that shapes
+  it, so the same arguments do nothing, a stopped container is started, and a new pin, port
+  or key recreates only the container it affects. An upgrade is `git pull` and the same `up`.
+  An owner label marks what the script created; a same-named container or network without it
+  is refused rather than removed.
+- **It refuses before it changes anything** when docker or its daemon is missing, when
+  `nvidia-smi -L` fails, when no NVIDIA Container Toolkit is found, or when the host is not
+  x86_64 (the image is built for amd64 only).
+
+Verified: `deploy/local/comfyui-lan-stub-test.sh` (in `ci.yml`'s `deploy-scripts` job)
+runs the real script against a fake docker that keeps state between calls. It asserts the exact
+docker commands, each refusal, and the re-run behaviour. Unverified: everything a real host
+would show, namely the image starting under `--gpus`, Caddy accepting the bearer, and one
+`generate_image` answered through the script's container. That run is tracked in #958.

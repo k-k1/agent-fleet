@@ -13,6 +13,7 @@ import { useSettingsUI } from "../settings/store.ts";
 import { fmtDateTime, TIME_HM } from "../../lib/intl.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { useT, type MsgKey } from "../../lib/i18n/index.ts";
+import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useAwsLoginStore, type AwsProfileState } from "./store.ts";
 import { useProfileLogout } from "./useProfileLogout.ts";
@@ -94,8 +95,7 @@ export function AwsProfilesChip() {
 
   return (
     <div className="ws-usage-wrap ws-aws" ref={ref}>
-      <button
-        type="button"
+      <Button
         className={"kind-tag ws-usage-btn ws-aws-btn" + tone}
         title={title}
         aria-label={title}
@@ -108,7 +108,7 @@ export function AwsProfilesChip() {
         <Icon name="brand:aws" />
         <span className="ws-aws-label">{label}</span>
         <Icon name="chevron-down" />
-      </button>
+      </Button>
       {open && (
         <div className="ws-usage-pop ws-aws-pop">
           <div className="wu-title">{tr("wsbar.aws.title")}</div>
@@ -142,21 +142,21 @@ export function AwsProfilesChip() {
                       )}
                       <span className="ws-aws-actions">
                         {(p.state !== "signed_in" || p.expiring) && (
-                          <button
-                            type="button"
-                            className="ghost ws-aws-login"
+                          <Button
+                            variant="ghost"
+                            className="ws-aws-login"
                             onClick={() => {
                               setOpen(false);
                               showProfile(p);
                             }}
                           >
                             {tr("wsbar.aws.login")}
-                          </button>
+                          </Button>
                         )}
                         {isActive(p) && (
-                          <button
-                            type="button"
-                            className="ghost ws-aws-logout"
+                          <Button
+                            variant="ghost"
+                            className="ws-aws-logout"
                             title={tr("awslogin.logout_title")}
                             disabled={loggingOut[p.name] === true}
                             onClick={() => {
@@ -167,7 +167,7 @@ export function AwsProfilesChip() {
                             }}
                           >
                             {tr("awslogin.logout")}
-                          </button>
+                          </Button>
                         )}
                       </span>
                     </div>
@@ -179,8 +179,7 @@ export function AwsProfilesChip() {
           <div className="wu-note muted">
             {tr("wsbar.aws.no_default")} <code className="ws-aws-cmd">af-aws-exec --profile {tr("wsbar.aws.cmd_name")}</code>
           </div>
-          <button
-            type="button"
+          <Button
             className="wu-manage"
             onClick={() => {
               setOpen(false);
@@ -188,7 +187,7 @@ export function AwsProfilesChip() {
             }}
           >
             <Icon name="settings-gear" /> {tr("wsbar.aws.settings")}
-          </button>
+          </Button>
         </div>
       )}
     </div>
