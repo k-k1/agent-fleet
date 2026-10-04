@@ -368,6 +368,9 @@ export function App() {
     // tenant's copy.
     if (prefsSyncedTenantRef.current !== null && prefsSyncedTenantRef.current !== tenant) {
       void resyncAccumulatedForIdentitySwitch();
+      // The rail's repos are the previous tenant's workspace. When both workspaces are running
+      // no running edge fires, so nothing else drops them; ProjectTree reloads on the switch.
+      useReposStore.getState().clear();
     }
     prefsSyncedTenantRef.current = tenant;
     // pane ids are tab-local, not tenant-global. Never carry an ephemeral Page

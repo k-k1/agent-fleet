@@ -12,6 +12,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { Button, IconButton } from "../../ui/Button.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { useTenantStore } from "../../core/store/tenant.ts";
 import { useReposStore, useLaunchTarget, useRepoReveal } from "../repos/store.ts";
 import { NewRepoModal } from "../repos/NewRepoModal.tsx";
 import { cloneRepo, svnCheckout, initRepo } from "../repos/clone.ts";
@@ -49,6 +50,7 @@ export const ProjectTree = memo(function ProjectTree() {
   const ctx = useRepoRailContext();
   const actions = useSessionActions(); // one instance shared by every node's rows
   const running = ctx.running;
+  const tenant = useTenantStore((s) => s.tenant);
 
   // The section's fold is held here rather than inside Section so a reveal can open it: folded,
   // the section mounts no RepoNode, so the reveal (command palette, the session menu's
@@ -94,7 +96,8 @@ export const ProjectTree = memo(function ProjectTree() {
       clearRepos(); // stopped WS — settle to empty
       return true;
     },
-    [refreshRepos, clearRepos, running],
+    // tenant: a switch between two running workspaces changes nothing else here.
+    [refreshRepos, clearRepos, running, tenant],
   );
 
   // Working sets (docs/log/52): scope to the active set first — a whole project

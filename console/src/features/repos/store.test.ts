@@ -15,9 +15,11 @@ vi.stubGlobal("window", { fetch: fetchMock });
 vi.stubGlobal("fetch", fetchMock);
 
 let useReposStore: typeof import("./store.ts")["useReposStore"];
+let setTenant: typeof import("../../core/api/client.ts")["setTenant"];
 
 beforeAll(async () => {
   ({ useReposStore } = await import("./store.ts"));
+  ({ setTenant } = await import("../../core/api/client.ts"));
 });
 
 // The exact response the CP writes while the workspace agent is still booting after a
@@ -85,6 +87,20 @@ describe("repos store refresh", () => {
     fetchMock.mockResolvedValue(json({ error: { code: "internal", message: "db down" } }, 500));
     await expect(useReposStore.getState().refresh()).resolves.toBe(false);
     expect(useReposStore.getState().repos).toEqual([repo("agent-fleet")]);
+  });
+
+  // Switching tenants while GET /api/repos is in flight: its answer is the previous tenant's
+  // workspace and must not land on the rail the switch just cleared.
+  it("drops a response that lands after a tenant switch", async () => {
+    setTenant("alpha");
+    let answer!: (r: Response) => void;
+    fetchMock.mockReturnValue(new Promise<Response>((res) => (answer = res)));
+    const pending = useReposStore.getState().refresh();
+    setTenant("beta");
+    useReposStore.getState().clear();
+    answer(json({ repos: [repo("alpha-only")] }));
+    await expect(pending).resolves.toBe(false);
+    expect(useReposStore.getState().repos).toEqual([]);
   });
 
   it("clear() settles to empty for a caller that knows the repos are unreachable", () => {
