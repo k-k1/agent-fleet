@@ -12,7 +12,8 @@ import { useChatStore, ensureConvs } from "../chat/store.ts";
 import { openChat, openChatSplit } from "../chat/open.ts";
 import { useFilesStore } from "../files/store.ts";
 import { ensureWorkItems, useWorkItemStore } from "../workitems/store.ts";
-import { WORK_ITEM_HINT_RE } from "../workitems/refs.ts";
+import { useReposStore } from "../repos/store.ts";
+import { originOf, WORK_ITEM_HINT_RE, workItemRefInputs } from "../workitems/refs.ts";
 import { markRepairedTables, renderFrontMatter } from "./parts/mdFrontMatter.ts";
 import { renderEmoji } from "./parts/mdEmoji.ts";
 import { CONV_HINT_RE, linkifyPathRefs, linkifyRefs } from "./parts/mdRefLinks.ts";
@@ -109,10 +110,22 @@ export function MarkdownView({
   openSessionMenuRef.current = openSessionMenu;
   const hasSessionMenu = openSessionMenu !== null;
 
+  // What a ticket link's classification depends on besides the text (#1659). The repository list
+  // and the inbox can both land after the message rendered (a deep link, a push adding a Jira
+  // project); a change re-runs the linkifier alone, never the parse. "" when the surface is off.
+  const wiOrigin = useReposStore((s) => {
+    const o = workItemRefs && repo ? originOf(s.repos.find((r) => r.name === repo)) : null;
+    return o ? `${o.provider}:${o.path}` : "";
+  });
+  const wiCache = useWorkItemStore((s) => (workItemRefs ? workItemRefInputs(null, s.payload?.items || []) : ""));
+  const wiInputs = `${wiOrigin}#${wiCache}`;
+  const relink = useRef<{ run: () => void; inputs: string } | null>(null);
+
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     let alive = true;
+    relink.current = null;
 
     const frontMatter = splitYamlFrontMatter(source ?? "");
     const body = frontMatter?.body ?? source ?? "";
@@ -183,6 +196,7 @@ export function MarkdownView({
         workItemRefs,
       );
     runLinkify();
+    relink.current = { run: runLinkify, inputs: wiInputs };
     // A conv slug can only be existence-checked once the conversation list is in the
     // store. When this document mentions one before any surface has loaded the list
     // (e.g. a mirror opened straight from a deep link, left rail not mounted yet),
@@ -275,7 +289,16 @@ export function MarkdownView({
       alive = false;
       stickyCleanup();
     };
+    // wiInputs is read for the relink bookkeeping only: a change to it is the effect below.
   }, [source, basePath, baseDir, repo, breaks, streaming, theme, codeWrapDefault, toast, hasSessionMenu, workItemRefs]);
+
+  // Idempotent: existing anchors are skipped, and the links already there re-classify on click.
+  useEffect(() => {
+    const r = relink.current;
+    if (!r || r.inputs === wiInputs) return;
+    r.inputs = wiInputs;
+    r.run();
+  }, [wiInputs]);
 
   return (
     <div

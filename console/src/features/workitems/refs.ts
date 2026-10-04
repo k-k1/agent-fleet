@@ -33,7 +33,9 @@ export interface WorkItemRefContext {
 // A bare or qualified issue number. The look-behind is what keeps `C#`, `&#123;`, `page#12`
 // and the middle of a path off it: a citation is preceded by a space, a bracket, a table bar or
 // CJK text, never by a word character. `owner/name` is GitHub's own cross-reference syntax.
-export const ISSUE_REF_SRC = String.raw`(?<![\w&#/.\-])(?:[A-Za-z0-9][\w.\-]*\/[\w.\-]+)?#[1-9]\d{0,6}(?![\w#])`;
+// The number is taken whole, however long, so a run of digits is never left over for the commit
+// shape to claim (`#11223344` is a colour, not a sha); classifyWorkItemRef decides what it is.
+export const ISSUE_REF_SRC = String.raw`(?<![\w&#/.\-])(?:[A-Za-z0-9][\w.\-]*\/[\w.\-]+)?#[1-9]\d*(?![\w#])`;
 // A Jira key. The shape alone also matches UTF-8, SHA-256, ISO-8601, GPT-4 and P2-1, so this is
 // only a candidate: classifyWorkItemRef links it only when its project is one the cache knows.
 export const JIRA_REF_SRC = String.raw`(?<![\w/\-])[A-Z][A-Z0-9_]{1,9}-[1-9]\d{0,6}(?![\w\-])`;
@@ -47,7 +49,7 @@ const JIRA_TOKEN = /^([A-Z][A-Z0-9_]+)-\d+$/;
 
 /** Whole-token test for the qualified form, so a path-shaped `owner/name#12` in inline code is
  * handed to this linkifier rather than to the file-path one. */
-export const isQualifiedIssueToken = (text: string): boolean => /^[A-Za-z0-9][\w.-]*\/[\w.-]+#[1-9]\d{0,6}$/.test(text);
+export const isQualifiedIssueToken = (text: string): boolean => /^[A-Za-z0-9][\w.-]*\/[\w.-]+#[1-9]\d*$/.test(text);
 
 export function originOf(repo: { provider?: string; remote?: string; remotePath?: string } | undefined): RefOrigin | null {
   if (!repo?.remotePath) return null;
@@ -67,15 +69,24 @@ export function jiraProjects(items: WorkItem[]): Set<string> {
   return out;
 }
 
+/** What classifyWorkItemRef's answers depend on beyond the token, as one comparable string: the
+ * context origin, the Jira projects and the cached Bitbucket keys. A rendered message re-runs its
+ * linkifier when this changes — the repository list or the inbox arriving after the text did. */
+export function workItemRefInputs(origin: RefOrigin | null, items: WorkItem[]): string {
+  const bb = items.filter((i) => i.provider === "bitbucket").map((i) => i.key);
+  return [origin ? `${origin.provider}:${origin.path}` : "", [...jiraProjects(items)].sort().join(","), bb.sort().join(",")].join("|");
+}
+
 const cachedRow = (items: WorkItem[], provider: string, key: string) =>
   items.find((i) => i.provider === provider && i.key === key);
 
 /** Decide whether a matched token is a reference worth a link, and to what. null = leave the
  * text alone.
  *
- * - A bare `#N` needs a context repository on github.com / bitbucket.org. Six and eight digits
- *   are left out: that is a hex colour (`#112233`), and issue numbers that high are rare enough
- *   that the qualified form covers them.
+ * - A bare `#N` needs a context repository on github.com / bitbucket.org, and is a number on
+ *   THAT host: the same owner/name can exist on both, and the other host's cached row is a
+ *   different ticket. Six digits and more than seven are left out: `#112233` / `#11223344` are
+ *   hex colours, and issue numbers that high are rare enough that the qualified form covers them.
  * - GitHub links optimistically, as a commit hash does. Agents cite pull requests nobody
  *   assigned to the reader, which are exactly the ones missing from the cache, and an unknown
  *   number still opens a panel with a working link to the tracker.
@@ -86,17 +97,20 @@ export function classifyWorkItemRef(token: string, ctx: WorkItemRefContext): Wor
   const issue = token.match(ISSUE_TOKEN);
   if (issue) {
     const [, qualified, num] = issue;
-    if (!qualified && (num.length === 6 || num.length === 8)) return null;
-    const path = qualified || ctx.origin?.path;
-    if (!path) return null;
-    const key = `${path}#${num}`;
-    for (const p of ["github", "bitbucket"]) {
-      if (cachedRow(ctx.items, p, key)) return { provider: p, key };
+    if (num.length > 10) return null;
+    let provider: string;
+    let key: string;
+    if (qualified) {
+      key = `${qualified}#${num}`;
+      const cached = ["github", "bitbucket"].find((p) => cachedRow(ctx.items, p, key));
+      provider =
+        cached || ctx.known.get(qualified) || (ctx.origin?.path === qualified ? ctx.origin.provider : "github");
+    } else {
+      if (!ctx.origin || num.length === 6 || num.length > 7) return null;
+      key = `${ctx.origin.path}#${num}`;
+      provider = ctx.origin.provider;
     }
-    const provider = qualified
-      ? ctx.known.get(path) || (ctx.origin?.path === path ? ctx.origin.provider : "github")
-      : ctx.origin!.provider;
-    if (provider === "bitbucket") return null;
+    if (provider === "bitbucket" && !cachedRow(ctx.items, provider, key)) return null;
     return { provider, key };
   }
   const jira = token.match(JIRA_TOKEN);

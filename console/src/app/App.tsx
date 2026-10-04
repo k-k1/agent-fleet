@@ -469,7 +469,6 @@ export function App() {
             from a detached pane (accepting a shared-view handover, docs/log/77, or sending
             a memo) would be a button that does nothing. */}
         <StartHost />
-      <WorkItemModalHost />
         {/* The work item detail / report modals: a rail row and a ticket link in the mirror
             open the same instance (#1659). */}
         <WorkItemModalHost />
@@ -562,6 +561,7 @@ export function App() {
       {tenantOpen && <TenantDialog />}
       {guideOpen && <GuideModal />}
       <StartHost />
+      <WorkItemModalHost />
       <SessionModals />
       <AwsLoginHost />
       <GcpLoginHost />

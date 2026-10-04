@@ -42,8 +42,21 @@ describe("classifyWorkItemRef", () => {
   it("does not read a colour-shaped number as an issue", () => {
     expect(classifyWorkItemRef("#112233", ctx())).toBeNull();
     expect(classifyWorkItemRef("#11223344", ctx())).toBeNull();
+    expect(classifyWorkItemRef("#1234567", ctx())).toEqual({ provider: "github", key: "octo/fleet#1234567" });
     // …but the qualified form is unambiguous at any length.
     expect(classifyWorkItemRef("octo/fleet#112233", ctx())).toEqual({ provider: "github", key: "octo/fleet#112233" });
+    expect(classifyWorkItemRef("octo/fleet#11223344", ctx())).toEqual({ provider: "github", key: "octo/fleet#11223344" });
+  });
+
+  it("reads a bare number on the context repository's own host, whatever the other host has cached", () => {
+    // The same owner/name on both hosts is two different repositories.
+    const ghRow = row("github", "team/app#7");
+    const bbRow = row("bitbucket", "team/app#7");
+    const bbOrigin = { provider: "bitbucket" as const, path: "team/app" };
+    expect(classifyWorkItemRef("#7", ctx({ origin: bbOrigin, items: [ghRow] }))).toBeNull();
+    expect(classifyWorkItemRef("#7", ctx({ origin: bbOrigin, items: [ghRow, bbRow] }))).toEqual({ provider: "bitbucket", key: "team/app#7" });
+    const ghOrigin = { provider: "github" as const, path: "team/app" };
+    expect(classifyWorkItemRef("#7", ctx({ origin: ghOrigin, items: [bbRow] }))).toEqual({ provider: "github", key: "team/app#7" });
   });
 
   it("takes the qualified form's provider from the cache, then the clones, then GitHub", () => {

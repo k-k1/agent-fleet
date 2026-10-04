@@ -5,7 +5,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { WorkItem, WorkItemPayload } from "../workitems/read.ts";
 
-vi.mock("../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
+// One toast function for the whole file, as the real provider gives: a new identity per render
+// would re-run MarkdownView's parse effect on every store change and hide whether the relink
+// effect (the one under test for late repositories and cache pushes) does its job.
+const toast = () => {};
+vi.mock("../../ui/ToastProvider.tsx", () => ({ useToast: () => toast }));
 vi.mock("../scm/open.ts", () => ({ openCommit: () => {} }));
 
 // The inbox read behind ensureWorkItems (the "cache not loaded yet" path).
@@ -20,6 +24,7 @@ const { useReposStore } = await import("../repos/store.ts");
 const { useWorkItemStore } = await import("../workitems/store.ts");
 const { useWorkItemModal } = await import("../workitems/modal.ts");
 const { useChatStore } = await import("../chat/store.ts");
+const { isPathCandidateCode } = await import("./parts/mdRefLinks.ts");
 
 const row = (provider: string, key: string, extra: Partial<WorkItem> = {}): WorkItem => ({
   id: `${provider}:${key}`,
@@ -132,6 +137,58 @@ describe("ticket references", () => {
     await render("fixed in #1234567");
     expect(links().map((a) => a.textContent)).toEqual(["#1234567"]);
     expect(host.querySelector("a.md-commit-link")).toBeNull();
+  });
+
+  it("takes a long number whole, so no digits are left for the commit shape", async () => {
+    await render("colour #11223344 and octo/fleet#11223344");
+    expect(links().map((a) => a.textContent)).toEqual(["octo/fleet#11223344"]);
+    expect(host.querySelector("a.md-commit-link")).toBeNull();
+  });
+
+  it("re-reads the reference at click time, after the cache has arrived", async () => {
+    // Linked as GitHub before the inbox knew better (the chat: no repository, team/svc not cloned).
+    useWorkItemStore.setState({ payload: payload([]), loaded: true });
+    await render("see team/svc#7", null);
+    expect(links()).toHaveLength(1);
+    useWorkItemStore.setState({
+      payload: payload([row("bitbucket", "team/svc#7", { kind: "pr", url: "https://bitbucket.org/team/svc/pull-requests/7" })]),
+    });
+    await click(links()[0]);
+    const d = useWorkItemModal.getState().detail;
+    expect(d?.item.provider).toBe("bitbucket");
+    expect(d?.reference).toBe(false);
+  });
+
+  it("links once the repository list arrives, without the text changing", async () => {
+    const repos = useReposStore.getState().repos;
+    useReposStore.setState({ repos: [] });
+    await render("see #956");
+    expect(links()).toHaveLength(0);
+    await act(async () => {
+      useReposStore.setState({ repos });
+    });
+    expect(links().map((a) => a.textContent)).toEqual(["#956"]);
+  });
+
+  it("links a Jira key when a push brings its project into a loaded cache", async () => {
+    await render("G3M-12 is blocked", null);
+    expect(links()).toHaveLength(0);
+    await act(async () => {
+      useWorkItemStore.setState({ payload: payload([row("jira", "G3M-5")]) });
+    });
+    expect(links().map((a) => a.textContent)).toEqual(["G3M-12"]);
+  });
+
+  it("leaves a path-shaped token a path where ticket links are off or do not take it", async () => {
+    await render("see `octo/fleet#956`", "fleet", false);
+    expect(isPathCandidateCode(host.querySelector("code")!)).toBe(true);
+    // Off, the code stays the path pass's: its digits are not offered to the commit shape either.
+    await render("see `octo/fleet#1234567`", "fleet", false);
+    expect(host.querySelector("a.md-commit-link")).toBeNull();
+    // A Bitbucket clone's uncached number is not a ticket here, so the path pass still gets it.
+    await render("see `team/app#7`", "fleet");
+    expect(links()).toHaveLength(0);
+    expect(isPathCandidateCode(host.querySelector("code")!)).toBe(true);
   });
 
   it("links a qualified reference in inline code instead of treating it as a path", async () => {

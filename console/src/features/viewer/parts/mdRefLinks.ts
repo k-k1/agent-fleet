@@ -92,8 +92,6 @@ const inPathLikeContext = (text: string, start: number, end: number) =>
 export function isPathCandidateCode(code: HTMLElement): boolean {
   if (code.closest("pre,a")) return false;
   if (code.childElementCount) return false;
-  // `owner/name#12` is path-shaped but is a ticket reference (#1659), not a file.
-  if (isQualifiedIssueToken((code.textContent ?? "").trim())) return false;
   return pathRefCandidate(code.textContent) !== null;
 }
 
@@ -111,6 +109,10 @@ export function linkifyRefs(
 ) {
   const wiCtx = workItemRefs ? workItemRefContext(repo) : null;
   const re = wiCtx ? REF_RE_WI : REF_RE;
+  // `owner/name#12` in inline code is path-shaped, but on a surface with ticket links it is offered
+  // to this pass first. Linked, the <code> gains an element and linkifyPathRefs (which runs after)
+  // passes it over; not linked, it is still a path candidate there.
+  const ticketCode = (code: Element) => !!wiCtx && isQualifiedIssueToken((code.textContent ?? "").trim());
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
       if (!n.nodeValue || !/[0-9a-z]/i.test(n.nodeValue)) return NodeFilter.FILTER_REJECT;
@@ -119,7 +121,7 @@ export function linkifyRefs(
       if (n.parentElement?.closest("pre,a")) return NodeFilter.FILTER_REJECT;
       // …except when that inline code is a path: it belongs to linkifyPathRefs whole.
       const code = n.parentElement?.closest("code");
-      if (code && isPathCandidateCode(code)) return NodeFilter.FILTER_REJECT;
+      if (code && isPathCandidateCode(code) && !ticketCode(code)) return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;
     },
   });
@@ -142,7 +144,7 @@ export function linkifyRefs(
         const ref = classifyWorkItemRef(token, wiCtx);
         // Launch from the working copy this text is about only when the ticket belongs to it.
         const hint = ref && repo && wiCtx.origin && ref.key.startsWith(`${wiCtx.origin.path}#`) ? repo : "";
-        if (ref) a = makeWorkItemLink(token, ref, hint);
+        if (ref) a = makeWorkItemLink(token, repo, ref, hint);
       }
       // conv-slug shape first (see the classification-order note above): link only if
       // a conversation with that slug exists right now.
@@ -197,21 +199,26 @@ const cachedWorkItems = (): WorkItem[] =>
 
 // makeWorkItemLink builds a non-navigating anchor for a ticket reference. A plain click / Enter
 // opens the work item detail modal; Ctrl/Cmd-click and a middle click go straight to the tracker,
-// the way the rail row's external link does. The row is looked up at click time, not at render:
-// the cache may have loaded or refreshed while the message stayed on screen.
-function makeWorkItemLink(text: string, ref: WorkItemRef, repoHint: string): HTMLAnchorElement {
+// the way the rail row's external link does. The token is classified again at click and hover
+// time, not trusted from the render: the cache may have loaded since, and a qualified reference
+// linked as GitHub before it did may turn out to be a cached Bitbucket pull request.
+function makeWorkItemLink(text: string, repo: string | null, rendered: WorkItemRef, repoHint: string): HTMLAnchorElement {
   const a = document.createElement("a");
   a.className = "md-ref-link md-workitem-link";
   a.textContent = text;
   a.setAttribute("role", "link");
   a.tabIndex = 0;
+  const current = () => {
+    const ctx = workItemRefContext(repo);
+    return resolveWorkItemRef(classifyWorkItemRef(text, ctx) ?? rendered, ctx.items);
+  };
   wireTooltip(a, () => {
-    const hint = t("view.open_work_item", { key: ref.key });
-    const { item, reference } = resolveWorkItemRef(ref, cachedWorkItems());
+    const { item, reference } = current();
+    const hint = t("view.open_work_item", { key: item.key });
     return reference || !item.title ? hint : `${item.title}\n${hint}`;
   });
   const open = (external: boolean) => {
-    const { item, reference } = resolveWorkItemRef(ref, cachedWorkItems());
+    const { item, reference } = current();
     if (external && item.url) {
       window.open(item.url, "_blank", "noopener,noreferrer");
       return;
