@@ -4,7 +4,12 @@
 
 /* Legacy control styles (old element globals), scoped — the verbatim-ported
    TopBar keeps raw <button>/<select> markup. :where() keeps the old 0-0-1
-   specificity so class rules still win (see mirror.css). */
+   specificity so class rules still win (see mirror.css).
+   ui/Button is not a drop-in replacement here: its inline-flex and 4px padding shrink the
+   gear buttons (27.6px → 26px tall), and the buttons of what the bar hosts — EnginesPill,
+   NotificationCenter, SwatchGrid — take their font, border and hover from this rule.
+   SwatchGrid is shared with Settings, where this rule does not apply. There is no ui/
+   select primitive for the select rules. */
 :where(.topbar) button {
   background: var(--btn);
   color: var(--fg);
