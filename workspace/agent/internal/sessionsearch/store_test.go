@@ -3,6 +3,7 @@ package sessionsearch
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func openTestStore(t *testing.T) *Store {
@@ -29,7 +30,7 @@ func mustMatch(t *testing.T, s *Store, q string) []rawHit {
 	for n := range held {
 		names = append(names, n)
 	}
-	hits, err := s.match(expr, names, 100, 100)
+	hits, err := s.match(expr, matchOpts{Sessions: names, Now: time.Now(), PerSession: 100, Limit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,11 +207,11 @@ func TestStoreMatchFiltersAndCapsBeforeTheLimit(t *testing.T) {
 	_ = s.Apply("loud", "claude", many, "")
 	_ = s.Apply("quiet", "claude", []Doc{{Idx: 1, Role: "user", Text: "a much longer turn that mentions flaky only once among many other words"}}, "")
 	expr, _ := MatchQuery("flaky")
-	hits, err := s.match(expr, []string{"quiet"}, 3, candidatePool)
+	hits, err := s.match(expr, matchOpts{Sessions: []string{"quiet"}, Now: time.Now(), PerSession: 3, Limit: candidatePool})
 	if err != nil || len(hits) != 1 || hits[0].Session != "quiet" {
 		t.Fatalf("filtered: %d hits, %v", len(hits), err)
 	}
-	hits, _ = s.match(expr, []string{"loud", "quiet"}, 3, candidatePool)
+	hits, _ = s.match(expr, matchOpts{Sessions: []string{"loud", "quiet"}, Now: time.Now(), PerSession: 3, Limit: candidatePool})
 	per := map[string]int{}
 	for _, h := range hits {
 		per[h.Session]++

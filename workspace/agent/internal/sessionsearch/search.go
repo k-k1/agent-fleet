@@ -87,7 +87,7 @@ func Search(q Query) (Result, error) {
 	// answer time as well as in the pass means a session trashed since the last pass is never
 	// found, whatever the index still holds.
 	metas := map[string]session.Meta{}
-	var names []string
+	var names, scheduled []string
 	total := 0
 	for _, m := range listMetas() {
 		if !canTranscript(m) {
@@ -97,6 +97,9 @@ func Search(q Query) (Result, error) {
 		metas[m.Name] = m
 		if (q.Session == "" || m.Name == q.Session) && (q.Kind == "" || m.Kind == q.Kind) && (q.Repo == "" || m.Repo == q.Repo) {
 			names = append(names, m.Name)
+			if session.OriginOf(m) == session.OriginSchedule {
+				scheduled = append(scheduled, m.Name)
+			}
 		}
 	}
 	held, err := s.Names()
@@ -113,20 +116,32 @@ func Search(q Query) (Result, error) {
 	if len(names) == 0 {
 		return res, nil
 	}
-	raw, err := s.match(expr, names, q.PerSession, candidatePool)
+	raw, err := s.match(expr, matchOpts{
+		Sessions: names, Scheduled: scheduled, Now: nowFunc(), PerSession: q.PerSession, Limit: candidatePool,
+	})
 	if err != nil {
 		return Result{}, err
 	}
+	// Checked again after the query: the trash can remove a meta and finish Forget while the query
+	// runs, and the rows already read would otherwise be returned with the meta read before it.
+	gone := map[string]bool{}
+	for _, h := range raw {
+		if _, seen := gone[h.Session]; !seen {
+			gone[h.Session] = !metaExists(h.Session)
+		}
+	}
 	terms := Terms(q.Q)
-	now := nowFunc()
 	var hits []Hit
 	for _, h := range raw {
+		if gone[h.Session] {
+			continue
+		}
 		m := metas[h.Session]
 		hits = append(hits, Hit{
 			Session: m.Name, Display: session.Display(m), Kind: m.Kind, Repo: m.Repo, Archived: m.Archived,
 			Idx: h.Idx, Role: h.Role, TS: h.TS,
 			Snippet: Snippet(h.Text, terms, snippetRunes),
-			Score:   score(h.BM25, h.TS, session.OriginOf(m), now),
+			Score:   h.Score,
 		})
 	}
 	sort.SliceStable(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
@@ -135,6 +150,8 @@ func Search(q Query) (Result, error) {
 }
 
 // score turns bm25 (negative, lower is better) into a positive score with the two adjustments.
+// It is the definition; Store.match computes the same expression in SQL so the per-session cap
+// and the limit see the final order.
 func score(bm25 float64, ts, origin string, now time.Time) float64 {
 	sc := -bm25
 	if origin == session.OriginSchedule {

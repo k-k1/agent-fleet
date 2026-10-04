@@ -167,6 +167,33 @@ func TestPassDoesNotRewriteASessionTrashedMidRead(t *testing.T) {
 	}
 }
 
+// The other order: the meta is still there at the re-check, and Forget arrives from another
+// goroutine before the write. writeMu must make that Forget wait for the write and then remove it.
+func TestForgetRacingTheWriteRunsAfterIt(t *testing.T) {
+	f := installFake(t)
+	f.metas = []session.Meta{{Name: "doomed", Kind: "claude"}}
+	f.turns["doomed"] = []transcript.Turn{say(1, "user", "secret plan")}
+	done := make(chan struct{})
+	afterMetaCheck = func(name string) {
+		go func() { Forget(name); close(done) }()
+		select {
+		case <-done: // only without the lock: Forget finished before the write
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+	t.Cleanup(func() { afterMetaCheck = nil })
+	// Forget does nothing until the index file exists, so create it first.
+	if _, err := openStore(); err != nil {
+		t.Fatal(err)
+	}
+	_ = runPass()
+	<-done
+	s, _ := openStore()
+	if n, _ := s.Names(); len(n) != 0 {
+		t.Fatalf("a Forget racing the write left the session indexed: %v", n)
+	}
+}
+
 func TestSearchCapsPerSessionAndRanksScheduledRunsDown(t *testing.T) {
 	f := installFake(t)
 	f.metas = []session.Meta{
@@ -284,4 +311,63 @@ func repeat(s string, n int) string {
 		b = append(b, s...)
 	}
 	return string(b)
+}
+
+// A session trashed while the query runs is not returned, whatever the query already read.
+func TestSearchDropsSessionsTrashedDuringTheQuery(t *testing.T) {
+	f := installFake(t)
+	f.metas = []session.Meta{{Name: "gone", Kind: "claude"}, {Name: "here", Kind: "claude"}}
+	f.turns["gone"] = []transcript.Turn{say(1, "user", "secret plan")}
+	f.turns["here"] = []transcript.Turn{say(1, "user", "public plan")}
+	_ = runPass()
+	// listMetas has already been read for the query; the meta disappears before the answer.
+	exists := metaExists
+	metaExists = func(name string) bool { return name != "gone" && exists(name) }
+	t.Cleanup(func() { metaExists = exists })
+	if res := search(t, "plan"); len(res.Hits) != 1 || res.Hits[0].Session != "here" {
+		t.Fatalf("hits = %+v", res.Hits)
+	}
+}
+
+// The SQL score is score(): what the cap and the limit order by is what the answer reports.
+func TestMatchScoreIsScore(t *testing.T) {
+	f := installFake(t)
+	now := time.Now().UTC()
+	old := now.AddDate(-1, 0, 0).Format(time.RFC3339)
+	f.metas = []session.Meta{{Name: "s1", Kind: "claude"}, {Name: "cron", Kind: "codex", Origin: session.OriginSchedule}}
+	f.turns["s1"] = []transcript.Turn{
+		{Idx: 1, Role: "user", Text: "needle", TS: old},
+		{Idx: 2, Role: "user", Text: "needle with more text around it today", TS: now.Format(time.RFC3339)},
+		{Idx: 3, Role: "user", Text: "needle without a time"},
+	}
+	f.turns["cron"] = []transcript.Turn{{Idx: 1, Role: "user", Text: "needle", TS: now.Format(time.RFC3339)}}
+	_ = runPass()
+	s, _ := openStore()
+	expr, _ := MatchQuery("needle")
+	raw, err := s.match(expr, matchOpts{Sessions: []string{"s1", "cron"}, Scheduled: []string{"cron"}, Now: now, PerSession: 10, Limit: 10})
+	if err != nil || len(raw) != 4 {
+		t.Fatalf("raw = %+v, %v", raw, err)
+	}
+	for _, h := range raw {
+		var r float64
+		if err := s.db.QueryRow(`SELECT bm25(fts) FROM fts JOIN turns t ON t.id = fts.rowid
+			WHERE fts MATCH ? AND t.session = ? AND t.idx = ?`, expr, h.Session, h.Idx).Scan(&r); err != nil {
+			t.Fatal(err)
+		}
+		origin := "user"
+		if h.Session == "cron" {
+			origin = session.OriginSchedule
+		}
+		if want := score(r, h.TS, origin, now); math.Abs(h.Score-want) > 1e-9*math.Max(1, math.Abs(want)) {
+			t.Errorf("%s#%d: SQL score %g, score() %g", h.Session, h.Idx, h.Score, want)
+		}
+	}
+	// And the cap keeps the row the final score prefers: with one per session, today's longer
+	// turn beats last year's short one.
+	nowFunc = func() time.Time { return now }
+	t.Cleanup(func() { nowFunc = time.Now })
+	res, _ := Search(Query{Q: "needle", Limit: 10, PerSession: 1, Session: "s1"})
+	if len(res.Hits) != 1 || res.Hits[0].Idx == 1 {
+		t.Fatalf("per-session cap chose by bm25 alone: %+v", res.Hits)
+	}
 }

@@ -36,6 +36,10 @@ var (
 // it calls Forget, so either the write sees no meta or Forget runs after the write.
 var writeMu sync.Mutex
 
+// afterMetaCheck is a test seam between the meta re-check and the write, where a concurrent
+// Forget would land without writeMu. Nil in production.
+var afterMetaCheck func(name string)
+
 var (
 	storeMu sync.Mutex
 	opened  *Store
@@ -170,6 +174,9 @@ func indexSession(s *Store, m session.Meta) error {
 	defer writeMu.Unlock()
 	if !metaExists(m.Name) {
 		return nil // trashed while its transcript was being read
+	}
+	if afterMetaCheck != nil {
+		afterMetaCheck(m.Name)
 	}
 	return s.Apply(m.Name, m.Kind, docs, settled)
 }

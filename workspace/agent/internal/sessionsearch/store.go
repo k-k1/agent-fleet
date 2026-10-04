@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -241,30 +242,54 @@ func (s *Store) Names() (map[string]int, error) {
 	return out, rows.Err()
 }
 
-// rawHit is one matching row before ranking.
+// rawHit is one matching row with its final score.
 type rawHit struct {
 	Session string
 	Doc
-	BM25 float64 // FTS5's bm25(): more negative is a better match
+	Score float64 // score() of the row, computed in SQL
 }
 
-// match runs an already-built MATCH expression over the named sessions only and returns, best
-// first, at most perSession rows from any one session and limit rows in all. Both restrictions
-// are applied before the limit, in SQL: filtering or capping a pool already cut to the top rows
-// lets one session with hundreds of strong matches push every other session's only match out
-// of the pool, and a filtered search then finds nothing.
-func (s *Store) match(expr string, sessions []string, perSession, limit int) ([]rawHit, error) {
-	names, err := json.Marshal(sessions)
+// matchOpts says which sessions to search and how to rank and cap the rows.
+type matchOpts struct {
+	Sessions   []string // the only sessions searched
+	Scheduled  []string // the subset that weighs scheduleWeight
+	Now        time.Time
+	PerSession int
+	Limit      int
+}
+
+// match runs an already-built MATCH expression and returns, best first by the final score, at
+// most PerSession rows from any one session and Limit rows in all.
+//
+// The filter, the score and the per-session cap all run in SQL, before the limit. Filtering or
+// capping a pool already cut to the top rows lets one session with hundreds of strong matches
+// push every other session's only match out of it; capping by bm25 alone and adjusting after
+// drops a recent row the adjustment would have ranked first. The SQL expression is score()'s,
+// and TestMatchScoreIsScore holds the two together.
+func (s *Store) match(expr string, o matchOpts) ([]rawHit, error) {
+	names, err := json.Marshal(o.Sessions)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT session, idx, role, ts, text, r FROM (
-			SELECT t.session, t.idx, t.role, t.ts, t.text, m.r,
-				ROW_NUMBER() OVER (PARTITION BY t.session ORDER BY m.r) AS rn
-			FROM (SELECT rowid AS id, bm25(fts) AS r FROM fts WHERE fts MATCH ?) m
-			JOIN turns t ON t.id = m.id
-			WHERE t.session IN (SELECT value FROM json_each(?))
-		) WHERE rn <= ? ORDER BY r LIMIT ?`, expr, string(names), perSession, limit)
+	sched, err := json.Marshal(append([]string{}, o.Scheduled...))
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`SELECT session, idx, role, ts, text, sc FROM (
+			SELECT session, idx, role, ts, text, sc,
+				ROW_NUMBER() OVER (PARTITION BY session ORDER BY sc DESC) AS rn
+			FROM (
+				SELECT t.session, t.idx, t.role, t.ts, t.text,
+					-m.r
+					* CASE WHEN t.session IN (SELECT value FROM json_each(?)) THEN ? ELSE 1.0 END
+					* COALESCE(pow(0.5, max(julianday(?) - julianday(t.ts), 0) / ?), 1.0) AS sc
+				FROM (SELECT rowid AS id, bm25(fts) AS r FROM fts WHERE fts MATCH ?) m
+				JOIN turns t ON t.id = m.id
+				WHERE t.session IN (SELECT value FROM json_each(?))
+			)
+		) WHERE rn <= ? ORDER BY sc DESC LIMIT ?`,
+		string(sched), scheduleWeight, o.Now.UTC().Format(time.RFC3339), recencyHalfLifeDays,
+		expr, string(names), o.PerSession, o.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +297,7 @@ func (s *Store) match(expr string, sessions []string, perSession, limit int) ([]
 	var out []rawHit
 	for rows.Next() {
 		var h rawHit
-		if err := rows.Scan(&h.Session, &h.Idx, &h.Role, &h.TS, &h.Text, &h.BM25); err != nil {
+		if err := rows.Scan(&h.Session, &h.Idx, &h.Role, &h.TS, &h.Text, &h.Score); err != nil {
 			return nil, err
 		}
 		out = append(out, h)
