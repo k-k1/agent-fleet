@@ -806,7 +806,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mem.trigger_import": "import",
   "mem.trigger_agent_memory": "agent memory",
   "mem.af_title": "Agent Fleet memory (shared by every agent)",
-  "mem.af_intro": "What agents save with af's memory_save is shared with every kind of agent at once, without approval. Check here who changed what and when, and revert or forget a bad change. Nothing leaves the history: a revert is recorded as a new change.",
+  "mem.af_intro": "What agents save with af's memory_* tools is shared with every kind of agent at once, without approval (the tools are available only while Settings > Agents > Agent Fleet memory is on; it is off by default). Check here who changed what and when, and revert or forget a bad change. Nothing leaves the history: a revert is recorded as a new change.",
   "mem.af_empty": "No changes yet.",
   "mem.af_scope_user": "All projects",
   "mem.af_by_member": "You (Console)",

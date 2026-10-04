@@ -364,6 +364,11 @@ export interface Settings {
   // missing-key answer: it only reads this user's transcripts, which a session's shell can
   // already open. The Console's own search (the palette's conversations mode) ignores it.
   sessionSearch: boolean;
+  // AF-owned agent memory for sessions (ADR 0108): whether the session-side MCP server offers the
+  // memory_* tools, and whether the Agent answers them. Default FALSE, like the Agent's own
+  // missing-key answer: what one session saves is read by every kind in later sessions, so it is
+  // turned on knowingly. The Console's change list works whatever this is set to.
+  agentMemory: boolean;
   // How many children ONE session may have at a time (ADR 0073 decision 6, AgentsTab > Session).
   // Per parent, not per workspace: two parents at the ceiling is twice that many agents.
   //
@@ -1172,6 +1177,7 @@ const DEFAULTS: Settings = {
   imageGeneration: false, // opt-in (ADR 0069) — it spends the ChatGPT plan quota
   sessionFleetSpawn: false, // opt-in (ADR 0073) — lets a session spend host resources unattended
   sessionSearch: true, // opt-out (ADR 0110) — read-only, and the Agent treats a missing key as on
+  agentMemory: false, // opt-in (ADR 0108) — what one session saves reaches every kind later
   sessionSpawnChildLimit: 3, // the value the limit had while it was a constant (ADR 0073 decision 6)
   sessionStoppedArchiveDays: 0, // the deployment default (ADR 0097)
   sessionSpendCapUsd: 0, // no budget (#1054)
@@ -1513,10 +1519,16 @@ function load(): Settings {
       agentLaunchDefaults: normalizeAgentLaunchDefaults(rows, legacyClaudeModel),
       // Map the legacy model-list values (go-first / hide-zen / all) onto the three billing routes.
       opencodeCatalog: migrateOpencodeCatalog(saved.opencodeCatalog),
+      agentMemory: normalizeAgentMemory(saved.agentMemory),
     };
   } catch {
     return { ...DEFAULTS };
   }
+}
+
+/** AF memory is on only for a boolean true, the Agent's own reading (uiprefs.AgentMemory). */
+export function normalizeAgentMemory(value: unknown): boolean {
+  return value === true;
 }
 
 export function normalizeClaudeCustomModels(value: unknown): string[] {
@@ -1892,6 +1904,10 @@ export const isDeviceLocalSetting = (key: keyof Settings): boolean => DEVICE_LOC
 // Agent's default is in force", and hydrate keeps the two sides from disagreeing about it.
 const AGENT_DEFAULTED = new Set<keyof Settings>([
   "sessionSearch", // ADR 0110: missing ⇒ on (uiprefs.SessionSearch)
+  // ADR 0108: missing ⇒ off (uiprefs.AgentMemory). Without this a browser that had it on for one
+  // account would show it on for another whose server copy lacks the key, and the next save of
+  // any setting would switch it on there.
+  "agentMemory",
 ]);
 
 // Accumulated data — unlike toggles and colors these settings build up over time and cannot be
@@ -2111,6 +2127,12 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   const pinned = pinSyncedFallbacks(merged);
   if (pinned) {
     merged.notifyDevice = pinned;
+    changed = true;
+  }
+  // The Agent enables AF memory only on a boolean true (uiprefs.AgentMemory); anything else shown
+  // as on would show one thing and enforce another.
+  if (merged.agentMemory !== normalizeAgentMemory(merged.agentMemory)) {
+    merged.agentMemory = normalizeAgentMemory(merged.agentMemory);
     changed = true;
   }
   const customClaude = normalizeClaudeCustomModels(merged.claudeCustomModels);

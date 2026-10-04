@@ -76,6 +76,13 @@ that is safe when what one session writes is read by every kind.
    because Markdown is not merged mechanically ([0022](0022-agent-memory-management.md) on 3-way
    merge). Publishing a change, its commit in the 0022 history and the index update happen as one
    step per project, so each published change is one commit with its author.
+   The tools are **off by default**, behind a per-user switch (Settings → Agents, ui-prefs
+   `agentMemory`): what one session saves is read by every kind in later sessions, so a member turns
+   that on knowingly rather than finding it on after an upgrade. Off means the af server is launched
+   without the tools *and* the Agent's tool routes refuse, because the routes answer anything that
+   holds `AGENT_TOKEN`. The Console's change list, diff and revert stay available while it is off,
+   so what was written while it was on can still be reviewed and undone. The assistant's snapshot
+   tool (0022) reads claude's and codex's history only, never `af/`.
 5. **What is distributed is fixed guidance, not memories.** The 0042 distributor writes user-wide
    files, so a per-project list there would either be overwritten by whichever project wrote last or
    mix every project into every session. The distributed block therefore says only that the tools

@@ -9,6 +9,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -249,6 +250,14 @@ func SessionSearch() bool {
 	return !ok || v
 }
 
+// AgentMemory is the ON/OFF for the af MCP's memory_* tools (ADR 0108, ui-prefs agentMemory).
+// Missing/invalid ⇒ **false**: a memory one session saves is read by every kind in later
+// sessions, so a member turns that on knowingly rather than finding it on after an upgrade.
+func AgentMemory() bool {
+	v, _ := Read()["agentMemory"].(bool)
+	return v
+}
+
 // SpawnChildLimit is how many children the user lets one session have at a time (ADR 0073
 // decision 6, ui-prefs sessionSpawnChildLimit). It returns the stored number RAW — 0 for missing
 // or malformed — because the range and the fallback belong to session.NormalizeSpawnChildLimit,
@@ -309,6 +318,9 @@ func init() {
 func init() {
 	mcpreg.ImageGenEnabled = ImageGeneration
 	imagegen.Enabled = ImageGeneration
+	// AF memory (ADR 0108) takes the same double gate: the tool set and the Agent routes.
+	mcpreg.AgentMemoryEnabled = AgentMemory
+	memoryx.AgentMemoryEnabled = AgentMemory
 	imagegen.ProviderOrderPref = ImageProviderOrder
 }
 

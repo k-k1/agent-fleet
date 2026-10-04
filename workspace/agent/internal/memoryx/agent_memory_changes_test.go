@@ -535,3 +535,58 @@ func TestAgentMemoryLatestChangeParsesTrailers(t *testing.T) {
 		t.Fatalf("latest with trailing blanks = %q, %v; want %s", got, err, head)
 	}
 }
+
+// The native-only diff (the assistant's snapshot tool) never carries the AF memory, while the
+// Console's full diff still does.
+func TestMemoryDiffNativeOnlyExcludesAFMemory(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	if _, err := memorySnapshot(memoryTriggerManual, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentMemSave(agentMemCallerT(t, "claude-main"), agentMemSaveReq{Name: "a", Description: "d", Body: "af-only-text"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	mux := buildMux()
+	head, _ := memoryGitRun("rev-parse", memoryBranch)
+	w := smokeDo(t, mux, http.MethodGet, "/agents/memory/diff?to="+head+"&native=1", "", "")
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), "af-only-text") {
+		t.Fatalf("native diff %d: %s", w.Code, w.Body)
+	}
+	w = smokeDo(t, mux, http.MethodGet, "/agents/memory/diff?to="+head, "", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "af-only-text") {
+		t.Fatalf("full diff %d: %s", w.Code, w.Body)
+	}
+}
+
+// The native-only snapshot list leaves out commits that touch only the AF memory, before the
+// limit, and the tree never reports af/ as a scope; the Console's full list still shows them.
+func TestMemoryNativeSnapshotsAndTreeLeaveOutAFMemory(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	if _, err := memorySnapshot(memoryTriggerManual, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	c := agentMemCallerT(t, "claude-main")
+	for _, n := range []string{"a", "b", "c"} {
+		if _, err := agentMemSave(c, agentMemSaveReq{Name: n, Description: "d", Body: "x"}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	native, err := memoryListSnapshots(1, "", true)
+	if err != nil || len(native) != 1 || native[0].Trigger != memoryTriggerManual {
+		t.Fatalf("native list = %+v, %v", native, err)
+	}
+	full, _ := memoryListSnapshots(1, "")
+	if len(full) != 1 || full[0].Trigger != memoryTriggerAgentMemory {
+		t.Fatalf("full list = %+v", full)
+	}
+	head, _ := memoryGitRun("rev-parse", memoryBranch)
+	kinds, _, err := memoryTreeOfRev(head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range kinds {
+		if k.Kind == agentMemRepoPrefix {
+			t.Fatalf("tree reports the AF memory: %+v", kinds)
+		}
+	}
+}

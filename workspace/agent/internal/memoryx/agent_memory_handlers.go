@@ -63,7 +63,19 @@ func agentMemErrKind(err error) string {
 	return "agent memory operation failed (internal error)"
 }
 
+// AgentMemoryEnabled is the user's switch for the tools' routes (ADR 0108, ui-prefs agentMemory,
+// default off), wired by uiprefs. A nil hook reads as off. Hiding the tools is not enough on its
+// own: these routes answer anything holding AGENT_TOKEN, which every session's own MCP server
+// does. The Console's routes (changes, diff, revert) are not gated: the switch governs what
+// sessions may do, and the member can still review and undo what was written while it was on.
+var AgentMemoryEnabled func() bool
+
 func agentMemCallerFrom(w http.ResponseWriter, name string) (agentMemCaller, bool) {
+	if AgentMemoryEnabled == nil || !AgentMemoryEnabled() {
+		httpx.WriteErr(w, http.StatusForbidden, errCodeMemoryDisabled,
+			"Agent Fleet memory is turned off for sessions in Settings > Agents")
+		return agentMemCaller{}, false
+	}
 	c, err := agentMemResolveCaller(name)
 	if err != nil {
 		agentMemWriteErr(w, err)

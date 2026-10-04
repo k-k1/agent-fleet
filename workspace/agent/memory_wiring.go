@@ -35,5 +35,6 @@ func memoryDeps() memoryx.Deps {
 		ErrCodeNotFound:       errCodeMemoryNotFound,
 		ErrCodeConflict:       errCodeMemoryConflict,
 		ErrCodeNoProject:      errCodeMemoryNoProject,
+		ErrCodeDisabled:       errCodeMemoryDisabled,
 	}
 }

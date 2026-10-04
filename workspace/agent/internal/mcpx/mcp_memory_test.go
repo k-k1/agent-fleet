@@ -35,6 +35,9 @@ func memoryTestEnv(t *testing.T) {
 	oldNames := mcpAdvertised.names
 	mcpAdvertised.names = nil
 	mcpAdvertised.mu.Unlock()
+	oldMemory, oldHook := mcpAgentMemoryEnabled, memoryx.AgentMemoryEnabled
+	mcpAgentMemoryEnabled = true
+	memoryx.AgentMemoryEnabled = func() bool { return true }
 	oldDeps := memoryx.Wired()
 	memoryx.Configure(memoryx.Deps{
 		ErrCodeBadRequest: "memory_bad_request", ErrCodeBadRev: "x", ErrCodeBadPath: "x", ErrCodeNoSnapshots: "x",
@@ -42,8 +45,10 @@ func memoryTestEnv(t *testing.T) {
 		ErrCodeRestoreFailed: "x", ErrCodeExportFailed: "x", ErrCodeImportFailed: "x", ErrCodeBadImport: "x",
 		ErrCodeSecretDetected: "memory_secret_detected", ErrCodeTooLarge: "memory_too_large",
 		ErrCodeNotFound: "memory_not_found", ErrCodeConflict: "memory_conflict", ErrCodeNoProject: "memory_no_project",
+		ErrCodeDisabled: "memory_disabled",
 	})
 	t.Cleanup(func() {
+		mcpAgentMemoryEnabled, memoryx.AgentMemoryEnabled = oldMemory, oldHook
 		mcpSourceSession = oldSource
 		mcpAdvertised.mu.Lock()
 		mcpAdvertised.names = oldNames
@@ -88,15 +93,33 @@ func callMemoryTool(t *testing.T, name string, args map[string]any) branchToolRe
 	return branchToolResult{parsed.Result.IsError, parsed.Result.Content[0].Text}
 }
 
-// Every session gets the memory tools whatever its other capabilities; the operator surface
-// does not, because "this session's project" means nothing there.
-func TestMemoryToolsAdvertisedOnEverySessionSurface(t *testing.T) {
+// A session gets the memory tools only under --agent-memory, the user's switch (off by
+// default); the operator surface never does, because "this session's project" means nothing
+// there.
+func TestMemoryToolsAdvertisedOnlyWithTheSwitch(t *testing.T) {
+	old := mcpAgentMemoryEnabled
+	t.Cleanup(func() { mcpAgentMemoryEnabled = old })
 	withMCPFlags(t, false, true, false)
+	parseStdioFlags([]string{"--self-report"})
 	names := advertisedNames(t)
 	for _, n := range memoryToolNames {
-		if !names[n] {
-			t.Errorf("%s is missing from the session surface", n)
+		if names[n] {
+			t.Errorf("%s is advertised without --agent-memory", n)
 		}
+	}
+	if r := callMemoryTool(t, "memory_index", nil); !r.IsError {
+		t.Errorf("memory_index answered without the switch: %+v", r)
+	}
+	parseStdioFlags([]string{"--self-report", "--agent-memory"})
+	names = advertisedNames(t)
+	for _, n := range memoryToolNames {
+		if !names[n] {
+			t.Errorf("%s is missing under --agent-memory", n)
+		}
+	}
+	parseStdioFlags([]string{"--agent-memory"})
+	if mcpAgentMemoryEnabled {
+		t.Error("--agent-memory took effect on the operator surface")
 	}
 	withMCPFlags(t, true, false, false)
 	names = advertisedNames(t)
@@ -198,5 +221,44 @@ func TestMemoryIndexReportsWithheld(t *testing.T) {
 	out := mcpMemoryFormatIndex(`{"project":{"display":"p"},"entries":[],"withheld":2}`)
 	if !strings.Contains(out, "2 memory file(s) are withheld") || strings.Contains(out, "No memories yet") {
 		t.Fatalf("index = %q", out)
+	}
+}
+
+// The assistant's snapshot tool reads claude's and codex's memory history only: it asks the
+// Agent for the diff without the AF memory under af/ (ADR 0108), whatever the switch says.
+func TestGetMemorySnapshotAsksForNativeDiff(t *testing.T) {
+	var diffQuery, listQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/agents/memory/diff":
+			diffQuery = r.URL.RawQuery
+			_, _ = w.Write([]byte(`{"diff":""}`))
+			return
+		case "/agents/memory/snapshots":
+			listQuery = r.URL.RawQuery
+			_, _ = w.Write([]byte(`{"snapshots":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"rev":"abc"}`))
+	}))
+	t.Cleanup(srv.Close)
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENT_ADDR", u.Host)
+	withMCPFlags(t, false, false, false)
+	if resp := mcpCall(t, "get_memory_snapshot", map[string]any{"rev": "abc"}); mcpIsError(t, resp) {
+		t.Fatalf("get_memory_snapshot: %s", resp)
+	}
+	q, _ := url.ParseQuery(diffQuery)
+	if q.Get("native") != "1" {
+		t.Fatalf("diff query = %q, want native=1", diffQuery)
+	}
+	if resp := mcpCall(t, "list_memory_snapshots", map[string]any{}); mcpIsError(t, resp) {
+		t.Fatalf("list_memory_snapshots: %s", resp)
+	}
+	if q, _ := url.ParseQuery(listQuery); q.Get("native") != "1" {
+		t.Fatalf("snapshots query = %q, want native=1", listQuery)
 	}
 }

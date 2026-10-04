@@ -24,12 +24,12 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 	oldWrite, oldSelfReport := writeEnabled(), selfReportOnly()
 	oldChromium, oldPeer := sessionChromiumEnabled(), mcpPeerMessagingEnabled
 	oldImageGen, oldSource := mcpImageGenEnabled, mcpSourceSession
-	oldSpawn := mcpFleetSpawnEnabled
+	oldSpawn, oldMemory := mcpFleetSpawnEnabled, mcpAgentMemoryEnabled
 	t.Cleanup(func() {
 		setFlags(oldWrite, oldSelfReport, oldChromium)
 		mcpPeerMessagingEnabled = oldPeer
 		mcpImageGenEnabled, mcpSourceSession = oldImageGen, oldSource
-		mcpFleetSpawnEnabled = oldSpawn
+		mcpFleetSpawnEnabled, mcpAgentMemoryEnabled = oldSpawn, oldMemory
 	})
 	// generate_image's tool list is not static: the server asks the Agent for the session's
 	// kind and the effective provider on every tools/list (ADR 0069 decision 8), so the
@@ -48,6 +48,7 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 		imageGen                    bool
 		fleetSpawn                  bool
 		studio                      bool
+		agentMemory                 bool
 	}{
 		{name: "assistant-read"},
 		{name: "assistant-write", write: true},
@@ -63,6 +64,8 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 		// The studio tools are offered only to a session whose meta names a studio that names it
 		// back (ADR 0100 decision 3); run_image_trial is listed whether or not trials are allowed.
 		{name: "session-studio", selfReport: true, studio: true},
+		// The memory tools appear only under --agent-memory (ADR 0108, off by default).
+		{name: "session-agent-memory", selfReport: true, agentMemory: true},
 	}
 
 	advertised := make(map[string]struct{})
@@ -72,6 +75,7 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 			mcpPeerMessagingEnabled = variant.peer
 			mcpImageGenEnabled = variant.imageGen
 			mcpFleetSpawnEnabled = variant.fleetSpawn
+			mcpAgentMemoryEnabled = variant.agentMemory
 			if variant.studio {
 				bindStudioForTest(t, "slot01", true)
 			}

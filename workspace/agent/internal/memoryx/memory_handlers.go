@@ -137,7 +137,7 @@ func HandleMemorySnapshots(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
-	list, err := memoryListSnapshots(limit, r.URL.Query().Get("before"))
+	list, err := memoryListSnapshots(limit, r.URL.Query().Get("before"), r.URL.Query().Get("native") == "1")
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeMemoryBadRequest, err.Error())
 		return
@@ -194,7 +194,7 @@ func HandleMemoryDiff(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeMemoryBadPath, "path must be inside a declared memory root")
 		return
 	}
-	diff, err := memoryDiff(from, to, path)
+	diff, err := memoryDiff(from, to, path, q.Get("native") == "1")
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, errCodeMemoryDiffFailed, err.Error())
 		return

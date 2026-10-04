@@ -413,6 +413,50 @@ describe("ui-prefs: the owner of the local copy", () => {
     expect(s.getSettings().sessionSearch).toBe(true);
   });
 
+  // ADR 0108: the Agent reads a missing agentMemory as OFF. One account's ON must not survive into
+  // another account whose server copy lacks the key, or the next save of anything would switch
+  // AF memory on there.
+  it("turns AF memory off when another owner left it on and the server lacks the key", async () => {
+    const s = await freshSettings({ agentMemory: true });
+    localStorage.setItem(OWNER_KEY, "t1|u1");
+    s.setPrefsOwnerSource(() => "t1|u2");
+    apiMock.mockResolvedValueOnce({ chatSize: 14 });
+    await s.hydrateUIPrefs();
+    expect(s.getSettings().agentMemory).toBe(false);
+    s.setSetting("chatSize", 15);
+    await vi.advanceTimersByTimeAsync(1_000);
+    for (const call of apiJSONMock.mock.calls as [string, string, Record<string, unknown>][]) {
+      expect(call[2].agentMemory).not.toBe(true);
+    }
+  });
+
+  it("pushes the recorded owner's AF memory ON back when the server lost the key", async () => {
+    const s = await freshSettings({ agentMemory: true });
+    localStorage.setItem(OWNER_KEY, "t1|u1");
+    s.setPrefsOwnerSource(() => "t1|u1");
+    apiMock.mockResolvedValueOnce({ chatSize: 14 });
+    await s.hydrateUIPrefs();
+    expect(s.getSettings().agentMemory).toBe(true);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect((apiJSONMock.mock.calls[0] as [string, string, Record<string, unknown>])[2].agentMemory).toBe(true);
+  });
+
+  it("reads AF memory as on only for a boolean true, from the server and from storage", async () => {
+    const s = await freshSettings({ agentMemory: "true" as unknown as boolean });
+    expect(s.getSettings().agentMemory).toBe(false);
+    localStorage.setItem(OWNER_KEY, "t1|u1");
+    s.setPrefsOwnerSource(() => "t1|u1");
+    apiMock.mockResolvedValueOnce({ agentMemory: "false" });
+    await s.hydrateUIPrefs();
+    expect(s.getSettings().agentMemory).toBe(false);
+    apiMock.mockResolvedValueOnce({ agentMemory: 1 });
+    await s.hydrateUIPrefs();
+    expect(s.getSettings().agentMemory).toBe(false);
+    apiMock.mockResolvedValueOnce({ agentMemory: true });
+    await s.hydrateUIPrefs();
+    expect(s.getSettings().agentMemory).toBe(true);
+  });
+
   it("does not push a never-held key while the owner is unknown", async () => {
     const s = await freshSettings({ hiddenModels: hidden });
     localStorage.setItem(OWNER_KEY, "t1|u1");

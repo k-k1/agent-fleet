@@ -24,6 +24,9 @@ import (
 func agentMemTestEnv(t *testing.T) (home, clone, wt string) {
 	t.Helper()
 	home, _, _ = memoryTestEnv(t)
+	oldHook := AgentMemoryEnabled
+	AgentMemoryEnabled = func() bool { return true }
+	t.Cleanup(func() { AgentMemoryEnabled = oldHook })
 	clone = filepath.Join(home, "repos", "demo")
 	wt = filepath.Join(home, "repos", "demo@feature-x")
 	memoryMkdirAll(t, clone)
@@ -861,5 +864,36 @@ func TestAgentMemoryUnreadableTokenNamedFileNotEchoed(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), name) {
 		t.Errorf("log carries the name:\n%s", logs.String())
+	}
+}
+
+// With the switch off (the default, ADR 0108) the tools' routes refuse every session, while the
+// Console's change list still answers, so what was written while it was on can be reviewed.
+func TestAgentMemoryRoutesRefuseWhenSwitchedOff(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	if _, err := agentMemSave(agentMemCallerT(t, "claude-main"), agentMemSaveReq{Name: "a", Description: "d", Body: "v1"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	for _, hook := range []func() bool{nil, func() bool { return false }} {
+		AgentMemoryEnabled = hook
+		mux := buildMux()
+		for _, r := range []struct{ method, path, body string }{
+			{http.MethodGet, "/agents/memory/entries?session=claude-main", ""},
+			{http.MethodGet, "/agents/memory/entries/search?session=claude-main&q=v1", ""},
+			{http.MethodGet, "/agents/memory/entries/read?session=claude-main&name=a", ""},
+			{http.MethodPost, "/agents/memory/entries", `{"session":"claude-main","name":"b","description":"d","body":"x"}`},
+			{http.MethodPost, "/agents/memory/entries/forget", `{"session":"claude-main","name":"a","revision":1}`},
+		} {
+			w := smokeDo(t, mux, r.method, r.path, "", r.body)
+			if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), errCodeMemoryDisabled) {
+				t.Errorf("%s %s with the switch off: %d %s", r.method, r.path, w.Code, w.Body)
+			}
+		}
+		if w := smokeDo(t, mux, http.MethodGet, "/agents/memory/entries/changes", "", ""); w.Code != http.StatusOK {
+			t.Errorf("change list with the switch off: %d %s", w.Code, w.Body)
+		}
+	}
+	if _, err := agentMemRead(agentMemCallerT(t, "claude-main"), "", "a"); err != nil {
+		t.Fatalf("the memory itself is kept: %v", err)
 	}
 }

@@ -163,9 +163,10 @@ func parseStdioFlags(args []string) {
 	mcpImageGenEnabled = false
 	mcpFleetSpawnEnabled = false
 	mcpSessionSearchEnabled = false
+	mcpAgentMemoryEnabled = false
 	mcpBrowserUnavailable = ""
 	chromiumAttachRequested, peerMessagingRequested, imageGenRequested := false, false, false
-	fleetSpawnRequested, sessionSearchRequested := false, false
+	fleetSpawnRequested, sessionSearchRequested, agentMemoryRequested := false, false, false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--write":
@@ -185,6 +186,8 @@ func parseStdioFlags(args []string) {
 			fleetSpawnRequested = true
 		case "--session-search":
 			sessionSearchRequested = true
+		case "--agent-memory":
+			agentMemoryRequested = true
 		case "--conv":
 			if i+1 < len(args) {
 				i++
@@ -205,6 +208,7 @@ func parseStdioFlags(args []string) {
 	mcpImageGenEnabled = selfReportOnly() && imageGenRequested
 	mcpFleetSpawnEnabled = selfReportOnly() && fleetSpawnRequested
 	mcpSessionSearchEnabled = selfReportOnly() && sessionSearchRequested
+	mcpAgentMemoryEnabled = selfReportOnly() && agentMemoryRequested
 }
 
 // RunStdio is the `workspace-agent mcp-stdio` subcommand: a blocking stdio loop.
@@ -430,7 +434,10 @@ func mcpStdioInstructions() string {
 		}
 		return "Agent Fleet local MCP for the assistant: observe the sessions in your own Workspace."
 	}
-	parts := []string{"completion report", "handoff proposal", "stop after this turn", "session status and usage", "memos to your user", "branch names from your naming rules", "agent memory shared by every agent kind"}
+	parts := []string{"completion report", "handoff proposal", "stop after this turn", "session status and usage", "memos to your user", "branch names from your naming rules"}
+	if mcpAgentMemoryEnabled {
+		parts = append(parts, "agent memory shared by every agent kind")
+	}
 	if sessionChromiumEnabled() && mcpBrowserUnavailable == "" {
 		parts = append(parts, "Chromium hand-off to the user")
 	}
@@ -462,7 +469,9 @@ func mcpStdioToolList() []map[string]any {
 		}
 		tools = append(tools, mcpStdioFleetObserveTools()...)
 		tools = append(tools, mcpStdioBranchTools()...)
-		tools = append(tools, mcpStdioMemoryTools()...)
+		if mcpAgentMemoryEnabled {
+			tools = append(tools, mcpStdioMemoryTools()...)
+		}
 		if mcpSessionSearchEnabled {
 			tools = append(tools, mcpStdioSessionSearchTools()...)
 		}
@@ -3437,6 +3446,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		if a.Path != "" {
 			q.Set("path", a.Path)
 		}
+		// claude's and codex's memories only: the AF memory's history (af/) is not this tool's,
+		// and it is withheld from sessions and the assistant alike while its switch is off.
+		q.Set("native", "1")
 		diff, err := agentGET("/agents/memory/diff?" + q.Encode())
 		if err != nil {
 			return mcpToolErr(req.ID, "メモリの差分の取得に失敗しました: "+err.Error())
@@ -3673,7 +3685,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		if limit <= 0 {
 			limit = 20
 		}
-		path = "/agents/memory/snapshots?limit=" + strconv.Itoa(limit)
+		// claude's and codex's history only, like get_memory_snapshot's diff: commits that touch
+		// nothing but the AF memory are left out before the limit applies (ADR 0108).
+		path = "/agents/memory/snapshots?native=1&limit=" + strconv.Itoa(limit)
 	case "list_cleanup_candidates":
 		path = "/sessions/cleanup"
 	case "list_cleanup_archives":
