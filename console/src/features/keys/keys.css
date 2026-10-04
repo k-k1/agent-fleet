@@ -124,9 +124,9 @@
   outline: none;
   font-family: inherit;
 }
-/* Mode tabs (command / changed) under the input — VS Code-style quick-open switcher. */
-/* One line, always: a tab never wraps its label. Where the panel is narrower than the tabs (a
-   phone), the row scrolls sideways instead. */
+/* Mode tabs under the input — VS Code-style quick-open switcher. One line, always: a tab never
+   wraps its label, and where the panel is narrower than the tabs (a phone) the row scrolls
+   sideways instead. */
 .cp-modes {
   display: flex;
   align-items: center;
