@@ -80,6 +80,9 @@ var Entries = []string{
 	// Per-agent id ledgers and message rings (agents.NewSidStore / NewMsgLedger).
 	"claude-sid",
 	"codex-sid",
+	// An open PreCompact on a Terminal codex session (codex.MarkCompacting). Introduced
+	// directly under AgentStateDir; it never existed under .config.
+	"codex-compacting",
 	"opencode-sid",
 	"copilot-sid",
 	"cursor-sid",

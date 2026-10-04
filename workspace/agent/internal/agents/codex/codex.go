@@ -49,8 +49,53 @@ func IsCompactingThread(threadID string) bool {
 }
 
 func isCompacting(m session.Meta) bool {
-	threadID := sids.Read(session.UUID(m.Dir, m.Name))
-	return IsCompactingThread(threadID)
+	slot := session.UUID(m.Dir, m.Name)
+	if IsCompactingThread(sids.Read(slot)) {
+		return true
+	}
+	// Managed sessions are fed by the driver's contextCompaction events above; a Terminal
+	// session's thread never reaches an app-server, so only its hooks can say.
+	return m.DriverKind() != session.DriverManaged && terminalCompacting(slot)
+}
+
+// compactMarks holds, per slot sid, the turn id of a Terminal session's open PreCompact.
+// The hook runs in its own process, so the mark has to be on disk for the Agent to see it.
+var compactMarks = agents.NewSidStore("codex-compacting")
+
+// unknownCompactTurn marks a PreCompact whose payload named no turn: only the hooks and a
+// relaunch can close it then.
+const unknownCompactTurn = "-"
+
+// MarkCompacting records a Terminal session's PreCompact (active, with the turn_id its
+// payload carries) or PostCompact hook. Called from the session-status hook entrypoint in
+// package sessionx.
+func MarkCompacting(slotSid, turnID string, active bool) {
+	switch {
+	case !active:
+		compactMarks.Remove(slotSid)
+	case turnID == "":
+		compactMarks.Write(slotSid, unknownCompactTurn)
+	default:
+		compactMarks.Write(slotSid, turnID)
+	}
+}
+
+// terminalCompacting reports whether a PreCompact mark is still open. PostCompact removes
+// it, but an Esc during the compaction fires neither PostCompact nor Stop (measured on codex
+// 0.160.0); the rollout's turn_aborted for the mark's turn is then the only end.
+func terminalCompacting(slot string) bool {
+	turn := compactMarks.Read(slot)
+	if turn == "" {
+		return false
+	}
+	if turn == unknownCompactTurn {
+		return true
+	}
+	ended := false
+	withRollout(rolloutPath(sids.Read(slot)), slot, func(p *rolloutParser) {
+		_, ended = p.endedTurns[turn]
+	})
+	return !ended
 }
 
 // RememberSid records the slot sid → codex session id mapping. Called from the
@@ -198,6 +243,10 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if threadHeld(resumeID) {
 		return agents.LaunchPlan{}, ErrThreadReleasing
 	}
+	// A pane killed mid-compaction left its PreCompact mark open, and a resumed rollout
+	// records no end for that turn: drop it, or the fresh pane reads compacting until its
+	// first prompt.
+	compactMarks.Remove(cxSid)
 	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, cxSid, resumeID, forkFrom), Cwd: m.CWD()}, nil
 }
 
@@ -346,7 +395,10 @@ func rolloutTailLifecycle(path string) string {
 	return ""
 }
 
-func (agentImpl) ClearResume(sid string) { sids.Remove(sid) }
+func (agentImpl) ClearResume(sid string) {
+	sids.Remove(sid)
+	compactMarks.Remove(sid)
+}
 
 // IsRateLimited reports whether a managed codex session's last turn failed with a
 // usage-limit error. The shared live-state helper in package main uses this to

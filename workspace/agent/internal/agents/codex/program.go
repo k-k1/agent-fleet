@@ -77,6 +77,12 @@ func buildProgram(model, effort, slotSid, codexResumeID, forkFrom string) string
 	parts = append(parts, "-c", session.ShellQuote("features.default_mode_request_user_input=true"))
 	parts = append(parts, hookFlag("UserPromptSubmit", "working"))
 	parts = append(parts, hookFlag("Stop", "idle"))
+	// No app-server sees this thread, so these are the only live compaction signal
+	// (isCompacting). Measured on 0.160.0: both fire around /compact and auto-compaction,
+	// and a user's own PreCompact/PostCompact hooks (config.toml or hooks.json) still run
+	// alongside these -c ones.
+	parts = append(parts, hookFlag("PreCompact", "compacting"))
+	parts = append(parts, hookFlag("PostCompact", "compacted"))
 	if model != "" {
 		parts = append(parts, "-m", session.ShellQuote(model))
 	}

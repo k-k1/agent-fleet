@@ -598,3 +598,57 @@ func TestClaudeHookSIDDriftStaysOnSlotAndIsRecorded(t *testing.T) {
 		t.Fatalf("LiveSID = %q, want the drifted id %q", got, drifted)
 	}
 }
+
+// feedCodexStatusHook drives the hook as codex's injected -c command does: state, the baked-in
+// slot sid and the codex marker, with codex's hook JSON on stdin.
+func feedCodexStatusHook(t *testing.T, state, slot, stdinJSON string) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	if _, err := w.WriteString(stdinJSON); err != nil {
+		t.Fatalf("write stdin: %v", err)
+	}
+	_ = w.Close()
+	orig := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = orig }()
+	RunSessionStatusHook([]string{state, slot, "codex"})
+	_ = r.Close()
+}
+
+// PreCompact / PostCompact on a Terminal codex session (#1139) open and close the compaction
+// mark without touching the stored state: an auto-compaction runs inside a working turn, and
+// rewriting the state there would end that turn early and fire an answer-ready notification.
+// The turn's own hooks close a mark an interrupted compaction left open.
+func TestCodexCompactHooksMarkWithoutTouchingState(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const slot = "slot-compact"
+	const in = `{"session_id":"01a10463-1ce3-7df3-aa43-c8900d974e88","turn_id":"t2","hook_event_name":"PreCompact","trigger":"auto"}`
+	marks := agents.NewSidStore("codex-compacting")
+
+	feedCodexStatusHook(t, "working", slot, `{"session_id":"01a10463-1ce3-7df3-aa43-c8900d974e88"}`)
+	feedCodexStatusHook(t, "compacting", slot, in)
+	// The mark names the turn, which is what the rollout's turn end is matched against.
+	if got := marks.Read(slot); got != "t2" {
+		t.Fatalf("PreCompact mark = %q, want the payload's turn t2", got)
+	}
+	if st, _ := status.Read(slot); st.State != "working" {
+		t.Fatalf("PreCompact rewrote the state to %q, want working", st.State)
+	}
+	feedCodexStatusHook(t, "compacted", slot, in)
+	if marks.Read(slot) != "" {
+		t.Fatal("PostCompact left the compaction mark open")
+	}
+	if st, _ := status.Read(slot); st.State != "working" {
+		t.Fatalf("PostCompact rewrote the state to %q, want working", st.State)
+	}
+
+	// Esc mid-compaction fires no PostCompact; the next prompt's hook closes the mark.
+	feedCodexStatusHook(t, "compacting", slot, in)
+	feedCodexStatusHook(t, "working", slot, `{"session_id":"01a10463-1ce3-7df3-aa43-c8900d974e88"}`)
+	if marks.Read(slot) != "" {
+		t.Fatal("UserPromptSubmit left a stale compaction mark open")
+	}
+}
