@@ -36,9 +36,9 @@ type fileAggEntry struct {
 	acc   map[string]*transcript.FileTouch
 	order []string // insertion order of acc's keys (stable tiebreak)
 	used  time.Time
-	// dir / own cache ownRepoOf(dir), which resolves symlinks and so is not free at poll rate.
-	dir, own string
-	ownSet   bool
+	// dir / ownRoot / own cache ownRepoOf, which resolves symlinks and so is not free at poll rate.
+	dir, ownRoot, own string
+	ownSet            bool
 }
 
 var (
@@ -69,6 +69,7 @@ func sessionFileTouches(name, dir, src, head string, n, stable int, edits func(f
 	}
 	fileAggMu.Lock()
 	defer fileAggMu.Unlock()
+	roots := snapshotFileRoots()
 
 	e := fileAggs[name]
 	// A different transcript file, a rewritten head, or a transcript that SHRANK (reset,
@@ -78,7 +79,7 @@ func sessionFileTouches(name, dir, src, head string, n, stable int, edits func(f
 		fileAggs[name] = e
 	}
 	if e.done < stable {
-		foldFileEdits(e, edits(e.done, stable))
+		foldFileEdits(e, edits(e.done, stable), roots)
 		e.done = stable
 	}
 	e.used = time.Now()
@@ -87,19 +88,19 @@ func sessionFileTouches(name, dir, src, head string, n, stable int, edits func(f
 	out := e
 	if stable < n {
 		out = cloneFileAgg(e)
-		foldFileEdits(out, edits(stable, n))
+		foldFileEdits(out, edits(stable, n), roots)
 	}
 	// Scope is set on the copies, not in the fold: it depends on `dir`, which the cached
 	// accumulator must not bake in.
-	if !e.ownSet || e.dir != dir {
-		e.dir, e.own, e.ownSet = dir, ownRepoOf(dir), true
+	if !e.ownSet || e.dir != dir || e.ownRoot != roots.repos {
+		e.dir, e.ownRoot, e.own, e.ownSet = dir, roots.repos, ownRepoOf(dir, roots.repos), true
 	}
 	own := e.own
 	list := make([]transcript.FileTouch, 0, len(out.order))
 	for _, k := range out.order {
 		if t := out.acc[k]; t != nil {
 			row := *t
-			row.Scope = fileScope(k, row.Repo, own)
+			row.Scope = fileScope(k, row.Repo, own, roots.work)
 			list = append(list, row)
 		}
 	}
@@ -115,7 +116,7 @@ func sessionFileTouches(name, dir, src, head string, n, stable int, edits func(f
 }
 
 // foldFileEdits merges raw edit calls into per-file rows.
-func foldFileEdits(e *fileAggEntry, edits []transcript.FileEdit) {
+func foldFileEdits(e *fileAggEntry, edits []transcript.FileEdit, roots fileRoots) {
 	for _, ed := range edits {
 		written := absEditPath(ed.Path, ed.Cwd)
 		if written == "" {
@@ -129,9 +130,9 @@ func foldFileEdits(e *fileAggEntry, edits []transcript.FileEdit) {
 			if len(e.acc) >= maxTrackedFiles {
 				continue
 			}
-			repo, rel := repoRelOf(abs)
+			repo, rel := repoRelOf(abs, roots.repos)
 			t = &transcript.FileTouch{
-				Path: browsePathOf(written, abs), Repo: repo, Rel: rel,
+				Path: browsePathOf(written, abs, roots), Repo: repo, Rel: rel,
 				Sidechain: ed.Sidechain,
 			}
 			e.acc[abs] = t
@@ -188,28 +189,50 @@ func absEditPath(p, cwd string) string {
 // (ReadDir's IsDir is false for it), and git does not descend through a symlinked directory
 // inside a working copy, so resolving those cannot split a row git would have joined.
 
+// fileRoots is one poll's resolved roots. Taking it once per poll keeps root resolution
+// independent of the row count even for a root that is not cached because it does not exist.
+type fileRoots struct {
+	repos, work string // resolved ~/repos and ~/.af-work
+	// read are the file reader's roots (Deps.ReadRoots, browse root first) as given and
+	// resolved: the FileView path is spelled against them.
+	read []readRoot
+}
+
+type readRoot struct{ given, resolved string }
+
+func snapshotFileRoots() fileRoots {
+	r := fileRoots{repos: resolvedRoot(gitx.ReposRoot()), work: resolvedRoot(workRoot())}
+	for _, g := range deps.ReadRoots() {
+		r.read = append(r.read, readRoot{given: filepath.Clean(g), resolved: resolvedRoot(g)})
+	}
+	return r
+}
+
+func workRoot() string { return filepath.Join(paths.HomeDir(), ".af-work") }
+
 var (
 	resolvedRootsMu sync.Mutex
 	resolvedRoots   = map[string]string{}
+	// rootResolutions counts uncached resolutions, so a test can show they do not scale
+	// with the row count.
+	rootResolutions int
 )
 
-// resolvedRoot is root with every symlink resolved, computed once per root: this runs on
-// every poll for every row. A root that does not exist yet is not cached, because it can
-// still appear as a symlink; one that exists is assumed not to be re-pointed under a running
-// Agent (the entrypoint sets these up before the Agent starts).
+// resolvedRoot is root with every symlink resolved, computed once per root. A root that
+// does not exist yet is not cached, because it can still appear as a symlink; one that
+// exists is assumed not to be re-pointed under a running Agent (the entrypoint sets these
+// up before the Agent starts).
 func resolvedRoot(root string) string {
 	root = filepath.Clean(root)
 	resolvedRootsMu.Lock()
-	r, ok := resolvedRoots[root]
-	resolvedRootsMu.Unlock()
-	if ok {
+	defer resolvedRootsMu.Unlock()
+	if r, ok := resolvedRoots[root]; ok {
 		return r
 	}
+	rootResolutions++
 	r, exists := resolveExisting(root)
 	if exists {
-		resolvedRootsMu.Lock()
 		resolvedRoots[root] = r
-		resolvedRootsMu.Unlock()
 	}
 	return r
 }
@@ -242,26 +265,26 @@ func resolveExisting(p string) (string, bool) {
 	}
 }
 
-// browsePathOf is the row's FileView path, relative to the browse root in the form that
-// root is given in. The form the agent wrote is tried first; otherwise the resolved path is
-// carried back onto the link form of whichever root contains it (a symlinked ~/repos puts
-// the target outside home, where nothing could open it).
-func browsePathOf(written, resolved string) string {
-	root := browseRoot()
-	if p := toBrowseRel(written, "", root); !filepath.IsAbs(p) {
-		return p
-	}
-	for _, r := range []string{gitx.ReposRoot(), workRoot(), root} {
-		if rel, ok := relUnder(resolved, resolvedRoot(r)); ok {
-			if p := toBrowseRel(filepath.Join(r, rel), "", root); !filepath.IsAbs(p) {
-				return p
-			}
+// browsePathOf is the row's FileView path, spelled so the file reader can open it. The
+// reader opens a read root by the name it is given and refuses any symlink below it
+// (fs_fd_linux.go), so the symlink-free resolved path is expressed against the root that
+// contains it: relative for the browse root, absolute for the others (the scratch root,
+// which ~/.af-work can point into). Carrying it back onto a link form would produce a path
+// the reader rejects. Outside every read root nothing can open it, and the written form
+// is kept as before.
+func browsePathOf(written, resolved string, roots fileRoots) string {
+	for i, r := range roots.read {
+		rel, ok := relUnder(resolved, r.resolved)
+		if !ok || rel == "." {
+			continue
 		}
+		if i == 0 {
+			return filepath.ToSlash(rel)
+		}
+		return filepath.Join(r.given, rel)
 	}
-	return written
+	return toBrowseRel(written, "", browseRoot())
 }
-
-func workRoot() string { return filepath.Join(paths.HomeDir(), ".af-work") }
 
 // relUnder is p relative to root when p is root or inside it.
 func relUnder(p, root string) (string, bool) {
@@ -275,8 +298,8 @@ func relUnder(p, root string) (string, bool) {
 // repoRelOf splits a resolved absolute path into the working-copy folder and the path
 // inside it. Both are empty for anything outside ~/repos (a file in the home dir, an agent
 // config): the row is still listed, it just has no git side to be joined with.
-func repoRelOf(abs string) (repo, rel string) {
-	r, err := filepath.Rel(resolvedRoot(gitx.ReposRoot()), abs)
+func repoRelOf(abs, reposRoot string) (repo, rel string) {
+	r, err := filepath.Rel(reposRoot, abs)
 	if err != nil || r == "." || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
 		return "", ""
 	}
@@ -290,12 +313,12 @@ func repoRelOf(abs string) (repo, rel string) {
 // ownRepoOf is the ~/repos folder the session's working directory belongs to, "" when it
 // is not inside one. `dir` can be a subdirectory of the working copy (create_session's
 // subdir), so the folder comes from the path, never from the display basename.
-func ownRepoOf(dir string) string {
+func ownRepoOf(dir, reposRoot string) string {
 	if dir == "" {
 		return ""
 	}
 	d, _ := resolveExisting(filepath.Clean(dir))
-	r, err := filepath.Rel(resolvedRoot(gitx.ReposRoot()), d)
+	r, err := filepath.Rel(reposRoot, d)
 	if err != nil || r == "." || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
 		return ""
 	}
@@ -305,14 +328,14 @@ func ownRepoOf(dir string) string {
 // fileScope classifies one resolved absolute path. A file in another working copy is only called
 // that when the session's own copy is known: with own == "" there is nothing to compare
 // against, and claiming "other" would mislabel every row of a session started in ~.
-func fileScope(abs, repo, own string) string {
+func fileScope(abs, repo, own, workRoot string) string {
 	if repo != "" {
 		if own != "" && repo != own {
 			return transcript.FileScopeOtherRepo
 		}
 		return ""
 	}
-	r, err := filepath.Rel(resolvedRoot(workRoot()), abs)
+	r, err := filepath.Rel(workRoot, abs)
 	if err != nil || r == "." || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
 		return ""
 	}
