@@ -3,6 +3,7 @@
 [English](0005-envelope-custodian.md) | 日本語
 
 - 状態: 確定（P3-3）
+- Follow-ups: #1645, #1646
 - 関連: [history/p3-3-envelope-crypto](../log/p3-3-envelope-crypto.md) / [dev/07 §7.6 シークレット管理と封筒暗号](../build/07-security.ja.md#76-シークレット管理と封筒暗号)（旧 security §4.4） / [ロードマップ §12.3](../log/roadmap.md#123-tos-と分離の留意自社ホスト前提)
 
 ## 背景
@@ -72,6 +73,6 @@ CP が Workspace 起動時に custodian で unwrap し、**Phase 2 と同じ経�
   テナントごとの鍵は作っていない。
 - 無効化した鍵でも、キャッシュ済みのデータ鍵は最大 1 TTL のあいだ開ける。
 
-残り: ワークスペースのランダムな DEK（既存の `secrets.enc` を暗号化し直す手段と組で）、旧形式の値（`wrapped_dek`・MCP ヘッダ・サインインのクライアントシークレット・エンジンのトークン・
-引き継ぎ・共有）をすべて KMS で封じ直す一回限りの rewrap コマンド、テナントごとの KMS 鍵、Vault transit。
+残り: ワークスペースのランダムな DEK（既存の `secrets.enc` を暗号化し直す手段と組で。#1646）、旧形式の値（`wrapped_dek`・MCP ヘッダ・サインインのクライアントシークレット・エンジンのトークン・
+引き継ぎ・共有）をすべて KMS で封じ直す一回限りの rewrap コマンド（#1645）、テナントごとの KMS 鍵、Vault transit。
 KMS 鍵のローテーションは AWS の自動ローテーション（`EnableKeyRotation`）で、Control Plane 側は何も要らない。

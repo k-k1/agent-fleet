@@ -3,6 +3,7 @@
 English | [日本語](0005-envelope-custodian.ja.md)
 
 - Status: decided (P3-3)
+- Follow-ups: #1645, #1646
 - See also: [history/p3-3-envelope-crypto](../log/p3-3-envelope-crypto.md) / [build/07 §7.6 Secrets and envelope encryption](../build/07-security.md#76-secrets-and-envelope-encryption) (formerly security §4.4) / [Roadmap §12.3](../log/roadmap.md#123-tos-と分離の留意自社ホスト前提)
 
 ## Context
@@ -89,8 +90,8 @@ Limits, stated plainly:
   administrator of the key can undo, not a shred. A key per tenant is not built.
 - A disabled key keeps opening already-cached data keys for up to one cache TTL.
 
-Remaining: random DEKs for workspaces (with a way to re-encrypt an existing `secrets.enc`);
-a one-shot rewrap command that re-seals every legacy value (`wrapped_dek`, MCP
-headers, sign-in client secrets, engine tokens, handoffs, shares) under KMS; per-tenant KMS
-keys; Vault transit. KMS key rotation is AWS's automatic rotation (`EnableKeyRotation`), which
+Remaining: random DEKs for workspaces, with a way to re-encrypt an existing `secrets.enc`
+(#1646); a one-shot rewrap command that re-seals every legacy value (`wrapped_dek`, MCP
+headers, sign-in client secrets, engine tokens, handoffs, shares) under KMS (#1645);
+per-tenant KMS keys; Vault transit. KMS key rotation is AWS's automatic rotation (`EnableKeyRotation`), which
 needs nothing from the Control Plane.
