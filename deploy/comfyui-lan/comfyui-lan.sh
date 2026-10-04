@@ -159,22 +159,43 @@ MODELS="$(cd "$MODELS" && pwd -P)"
 
 [[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || die "--port '$PORT' is not a TCP port."
 
-# is_unspecified <addr> — true for every spelling docker reads as "all interfaces": 0.0.0.0,
-# any all-zero IPv6 (::, 0::0, 0:0:0:0:0:0:0:0, bracketed or not) and the IPv4-mapped or
-# -compatible all-zero forms in dotted or hex spelling (::ffff:0.0.0.0, ::ffff:0:0, ::0.0.0.0);
-# docker unmaps an IPv4-mapped host address to IPv4, so the mapped zero is 0.0.0.0. Matching
-# the literal "::" alone let 0:0:0:0:0:0:0:0 through.
+# is_unspecified <addr> — true when docker would read the address as "all interfaces":
+# 0.0.0.0 in any zero-padding, and any IPv6 whose value is all zero or the IPv4-mapped
+# zero (::ffff:0.0.0.0), because docker unmaps a mapped host address to IPv4. The IPv6 form
+# is expanded to its eight hextets and judged by value, because matching spellings misses
+# the compressed ones (0:0:0:0:0:ffff:: is the mapped zero too).
+# Anything that does not parse returns false and is left for docker to reject.
 is_unspecified() {
-  local a="${1#[}"
+  local a="${1#[}" left right h=() l=() r=() x i
   a="${a%]}"; a="${a,,}"
   [ -n "$a" ] || return 0
-  [[ "$a" =~ ^0+(\.0+){3}$ ]] && return 0
-  [[ "$a" == *:* ]] || return 1
-  if [[ "$a" =~ ^(.*:)ffff:0+(\.0+){3}$ ]] || [[ "$a" =~ ^(.*:)ffff:0+:0+$ ]] \
-      || [[ "$a" =~ ^(.*:)0+(\.0+){3}$ ]]; then
-    a="${BASH_REMATCH[1]}0"
+  if [[ "$a" != *:* ]]; then
+    [[ "$a" =~ ^0+(\.0+){3}$ ]]
+    return
   fi
-  [[ "$a" =~ ^[0:]+$ ]]
+  # A dotted IPv4 tail is two hextets.
+  if [[ "$a" =~ ^(.*:)([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+    for i in 2 3 4 5; do (( 10#${BASH_REMATCH[$i]} <= 255 )) || return 1; done
+    a="${BASH_REMATCH[1]}$(printf '%x:%x' $(( 10#${BASH_REMATCH[2]} * 256 + 10#${BASH_REMATCH[3]} )) \
+      $(( 10#${BASH_REMATCH[4]} * 256 + 10#${BASH_REMATCH[5]} )))"
+  fi
+  if [[ "$a" == *::* ]]; then
+    left="${a%%::*}"; right="${a#*::}"
+    [[ "$right" != *::* ]] || return 1
+    [ -z "$left" ] || IFS=: read -ra l <<< "$left"
+    [ -z "$right" ] || IFS=: read -ra r <<< "$right"
+    (( ${#l[@]} + ${#r[@]} <= 7 )) || return 1
+    h=("${l[@]}")
+    for (( i = ${#l[@]} + ${#r[@]}; i < 8; i++ )); do h+=(0); done
+    h+=("${r[@]}")
+  else
+    IFS=: read -ra h <<< "$a"
+    [[ "$a" != *: ]] || return 1
+  fi
+  (( ${#h[@]} == 8 )) || return 1
+  for x in "${h[@]}"; do [[ "$x" =~ ^[0-9a-f]{1,4}$ ]] || return 1; done
+  for i in 0 1 2 3 4 6 7; do (( 16#${h[$i]} == 0 )) || return 1; done
+  (( 16#${h[5]} == 0 || 16#${h[5]} == 0xffff ))
 }
 if is_unspecified "$BIND"; then
   [ "$ALL_IFACES" = 1 ] || die "--bind '$BIND' publishes ComfyUI on EVERY interface of this host. Give the LAN address the Control Plane reaches (e.g. --bind 192.0.2.10), or pass --all-interfaces to mean it."

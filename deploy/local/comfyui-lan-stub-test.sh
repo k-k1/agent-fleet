@@ -317,6 +317,31 @@ for b in '[::]' 0:0:0:0:0:0:0:0 '[0:0:0:0:0:0:0:0]' 0::0 0000::0000 '::ffff:0.0.
          ::ffff:0:0 0:0:0:0:0:ffff:0:0 '[::ffff:0000:0000]' '::FFFF:0:0'; do
   expect_refused "$b without --all-interfaces" "EVERY interface" up --models "$MODELS" --bind "$b"
 done
+# spellings <hextet>... — the full form and every legal :: compression of a run of zero
+# hextets, so the refusal is checked against the address's value, not a list of spellings.
+spellings() {
+  local h=("$@") i j
+  (IFS=:; echo "${h[*]}")
+  for ((i = 0; i < $#; i++)); do
+    for ((j = i; j < $#; j++)); do
+      [ "${h[$j]}" = 0 ] || break
+      echo "$(IFS=:; echo "${h[*]:0:i}")::$(IFS=:; echo "${h[*]:j+1}")"
+    done
+  done
+}
+n=0; missed=""
+while read -r b; do
+  n=$((n+1)); run up --models "$MODELS" --bind "$b"
+  if [ "$RC" = 0 ] || [ -n "$(writes)" ] || ! grep -q "EVERY interface" "$OUT"; then missed="$missed $b"; fi
+done < <(spellings 0 0 0 0 0 ffff 0 0; spellings 0 0 0 0 0 0 0 0)
+[ "$n" = 56 ] || ng "expected 19 + 37 spellings, enumerated $n"
+[ -z "$missed" ] && ok "all $n spellings of :: and ::ffff:0:0 refused" || ng "accepted without --all-interfaces:$missed"
+for b in ffff:: 1:: 0:0:0:0:0:fffe:0:0 ::ffff:0.0.0.1 ::ffff:7f00:1; do
+  reset_state
+  run up --models "$MODELS" --bind "$b"
+  [ "$RC" = 0 ] && ok "$b is not taken for all interfaces" || { ng "$b refused (rc=$RC)"; cat "$OUT"; }
+done
+reset_state
 run up --models "$MODELS" --bind 0:0:0:0:0:0:0:0 --all-interfaces
 grep -q -- "-p \[::\]:8188:8188" "$LOG" && ok "--all-interfaces with an all-zero IPv6 publishes on [::]" || { ng "v6 all-interfaces"; writes; }
 reset_state
