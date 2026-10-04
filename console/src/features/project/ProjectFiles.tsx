@@ -252,6 +252,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
       setOpen(new Set());
       setCache({});
       setSelected(null);
+      setDropTarget(null);
       setSearchRows(null);
       setSearchTrunc(false);
       setCollapsedRepos(new Set());
@@ -873,14 +874,19 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
 
   // --- upload (drag-drop) ---
   const refreshDir = useCallback(
+    // false: the tenant changed while it was reading, nothing was written and the caller must not
+    // go on to select or open a path of the previous tenant's workspace.
     async (dir: string) => {
+      const started = tenantRef.current;
       const d = await fsList(dir);
+      if (tenantRef.current !== started) return false;
       const e = d.entries || [];
       if (dir === root) setEntries(e);
       else {
         setCache((c) => ({ ...c, [dir]: e }));
         setOpen((s) => new Set(s).add(dir));
       }
+      return true;
     },
     [root],
   );
@@ -899,7 +905,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
         if (ok) res = await uploadFiles(dir, files, { overwrite: true });
       }
       if (res.error) toast(t("proj.upload_failed", { msg: (res.error as { message?: string }).message || String(res.error) }));
-      await refreshDir(dir);
+      if (!(await refreshDir(dir))) return;
       setDropTarget(null);
     },
     [refreshDir, askConfirm, toast],
@@ -932,7 +938,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     const p = joinPath(parent, name.trim());
     const res = await fsMkdir(p);
     if (res.error) return toast(t("proj.create_failed", { msg: (res.error as { message?: string }).message || String(res.error) }));
-    await refreshDir(parent);
+    if (!(await refreshDir(parent))) return;
     setSelected(p);
   };
   const newFile = async (parent: string) => {
@@ -941,7 +947,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     const p = joinPath(parent, name.trim());
     const res = await fsNewFile(p);
     if (res.error) return toast(t("proj.create_failed", { msg: (res.error as { message?: string }).message || String(res.error) }));
-    await refreshDir(parent);
+    if (!(await refreshDir(parent))) return;
     setSelected(p);
     showFile(p);
   };
@@ -953,7 +959,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     const to = joinPath(parent, name.trim());
     const res = await fsRename(row.path, to);
     if (res.error) return toast(t("proj.rename_failed", { msg: (res.error as { message?: string }).message || String(res.error) }));
-    await refreshDir(parent);
+    if (!(await refreshDir(parent))) return;
     setSelected(to);
   };
   const deleteRow = async (row: Row) => {
@@ -966,7 +972,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     if (!ok) return;
     const res = await fsDelete(row.path);
     if (res.error) return toast(t("proj.delete_failed", { msg: (res.error as { message?: string }).message || String(res.error) }));
-    await refreshDir(parentOf(row.path));
+    if (!(await refreshDir(parentOf(row.path)))) return;
     setSelected(parentOf(row.path) || null);
   };
   const copyText = (text: string, label: string) => {

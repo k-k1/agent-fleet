@@ -23,7 +23,7 @@ vi.mock("../../core/api/client.ts", () => ({
     return { entries };
   }),
   isTransientErr: () => false,
-  uploadFiles: vi.fn(),
+  uploadFiles: vi.fn(async () => ({})),
   downloadURL: vi.fn(),
   fsMkdir: vi.fn(),
   fsNewFile: vi.fn(),
@@ -143,5 +143,28 @@ describe("FILES tree on a tenant switch", () => {
     expect(names()).toEqual([]);
     await sleep(300);
     expect(names()).toEqual(["new-secret.txt beta-repo"]);
+  });
+
+  // The re-read after an upload is started by the old tenant and is still on the wire at the switch.
+  it("ignores the re-read an upload started under the previous tenant", async () => {
+    const input = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(input, "files", { value: [new File(["x"], "x.txt")], configurable: true });
+    let release!: () => void;
+    gate = (p) => (p === "repos" ? new Promise<void>((r) => (release = r)) : undefined);
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    gate = null;
+    served = { repos: [{ name: "beta-repo", type: "dir" }] };
+    await act(async () => {
+      useTenantStore.setState({ tenant: "beta" });
+    });
+    await settle();
+    expect(names()).toEqual(["beta-repo"]);
+    await act(async () => {
+      release();
+    });
+    await settle();
+    expect(names()).toEqual(["beta-repo"]);
   });
 });

@@ -36,4 +36,11 @@ describe("reloadCloudProfiles", () => {
     wsState = "stopped";
     expect(await reloadCloudProfiles()).toBe(true);
   });
+
+  it("stops asking for a tenant that has no workspace yet", async () => {
+    aws.mockResolvedValue(null);
+    gcp.mockResolvedValue(false);
+    wsState = "none";
+    expect(await reloadCloudProfiles()).toBe(true);
+  });
 });
