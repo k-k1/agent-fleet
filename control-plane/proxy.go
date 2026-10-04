@@ -82,7 +82,9 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 		case p == "/api/agents/memory/entries/revert":
 			// ADR 0108: undoing or forgetting one AF memory change. Like restore, the Console
 			// repeats the commit in the query as the audit hint; the body governs.
-			return "memory.entry.revert", q.Get("commit"), true
+			// Only a commit id is copied into the ledger: the hint is free text the Agent never
+			// reads, so anything else is recorded as an empty target.
+			return "memory.entry.revert", auditCommitHint(q.Get("commit")), true
 		case strings.HasPrefix(p, "/api/aws-login/profiles/") && strings.HasSuffix(p, "/logout"):
 			return "aws.logout", "profile: " + name, true
 		case strings.HasPrefix(p, "/api/aws-login/profiles/") && strings.HasSuffix(p, "/start"):
@@ -519,4 +521,17 @@ func relay(src, dst *websocket.Conn, errc chan<- error, onInput func()) {
 			return
 		}
 	}
+}
+
+// auditCommitHint keeps a commit-id-shaped audit hint and drops anything else.
+func auditCommitHint(s string) string {
+	if len(s) < 7 || len(s) > 64 {
+		return ""
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return ""
+		}
+	}
+	return s
 }

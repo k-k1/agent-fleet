@@ -32,6 +32,7 @@ const changes = [
     authorSession: "s1",
     latest: true,
     live: true,
+    revertible: true,
   },
   {
     commit: "c1c1c1c1c1c1",
@@ -44,6 +45,7 @@ const changes = [
     authorSession: "s0",
     latest: false,
     live: false,
+    revertible: true,
   },
 ];
 
@@ -78,7 +80,7 @@ const confirmButton = () => document.body.querySelector<HTMLButtonElement>(".ui-
 
 beforeEach(() => {
   api.mockImplementation((path: string) =>
-    Promise.resolve(path.startsWith("api/agents/memory/entries/changes") ? { changes } : { diff: "" }),
+    Promise.resolve(path.startsWith("api/agents/memory/entries/changes") ? { changes } : { diff: "+line" }),
   );
 });
 
@@ -138,5 +140,48 @@ describe("AgentMemorySection", () => {
     const cancel = document.body.querySelector<HTMLButtonElement>(".ui-confirm-actions button:first-child");
     await click(cancel!);
     expect(apiJSON).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows masked findings instead of a diff the Agent withheld", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(
+        path.startsWith("api/agents/memory/entries/changes")
+          ? { changes }
+          : { diff: "", withheld: true, findings: [{ path: "diff", line: 4, rule: "github-token", hint: "ghp_…(40)" }] },
+      ),
+    );
+    await mount();
+    expect(api.mock.calls.some(([p]) => p === "api/agents/memory/entries/diff?commit=c2c2c2c2c2c2")).toBe(true);
+    expect(host!.querySelector(".mem-findings")?.textContent).toContain("ghp_…(40)");
+    expect(host!.querySelector(".mem-diff .diff")).toBeNull();
+  });
+
+  it("offers no revert on a change the history cannot undo, and says why", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(
+        path.startsWith("api/agents/memory/entries/changes")
+          ? { changes: [{ ...changes[0], op: "forget", live: false, revertible: false }] }
+          : { diff: "" },
+      ),
+    );
+    await mount();
+    expect(host!.querySelectorAll(".mem-diff-head button")).toHaveLength(0);
+    expect(host!.querySelector(".mem-diff-head .muted")).toBeTruthy();
+  });
+
+  it("reports a failed request and re-reads the list instead of throwing", async () => {
+    apiJSON.mockRejectedValueOnce(new TypeError("network down"));
+    const unhandled = vi.fn();
+    window.addEventListener("unhandledrejection", unhandled);
+    await mount();
+    const before = api.mock.calls.filter(([p]) => String(p).startsWith("api/agents/memory/entries/changes")).length;
+    await click(host!.querySelector<HTMLButtonElement>(".mem-diff-head button")!);
+    await click(confirmButton()!);
+    await flush();
+    const after = api.mock.calls.filter(([p]) => String(p).startsWith("api/agents/memory/entries/changes")).length;
+    expect(after).toBeGreaterThan(before);
+    expect(document.body.textContent).toMatch(/confirm|確認/);
+    window.removeEventListener("unhandledrejection", unhandled);
+    expect(unhandled).not.toHaveBeenCalled();
   });
 });

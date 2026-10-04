@@ -899,6 +899,7 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	// tools' own routes (/agents/memory/entries, …/search, …/read, …/forget) stay unrelayed:
 	// agents reach them on loopback.
 	mux.HandleFunc("GET /api/agents/memory/entries/changes", rest)
+	mux.HandleFunc("GET /api/agents/memory/entries/diff", rest)
 	mux.HandleFunc("POST /api/agents/memory/entries/revert", rest)
 	// Transfer between environments (P3). export streams the body with its
 	// Content-Disposition untouched and import hands the multipart straight to the

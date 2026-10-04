@@ -101,6 +101,15 @@ export interface MemoryChange {
   revertOf?: string;
   latest: boolean;
   live: boolean;
+  /** The history holds the memory's text on at least one side of this change. A forget of a
+   *  file that was never committed has none, so there is nothing to bring back. */
+  revertible: boolean;
+}
+/** One change's diff from the Agent, scanned first: withheld carries masked findings instead. */
+export interface ChangeDiff {
+  diff: string;
+  withheld?: boolean;
+  findings?: SecretFinding[];
 }
 export interface MemoryChangeProject {
   id: string;

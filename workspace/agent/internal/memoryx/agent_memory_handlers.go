@@ -163,12 +163,22 @@ func HandleAgentMemoryForget(w http.ResponseWriter, r *http.Request) {
 // HandleAgentMemoryChanges lists the published changes for the Console (ADR 0108 decision 8).
 func HandleAgentMemoryChanges(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	changes, err := agentMemListChanges(limit)
+	out, err := agentMemListChanges(limit)
 	if err != nil {
 		agentMemWriteErr(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, agentMemChangesWire{Changes: changes})
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// HandleAgentMemoryChangeDiff is one change's diff, scanned before it leaves the Agent.
+func HandleAgentMemoryChangeDiff(w http.ResponseWriter, r *http.Request) {
+	out, err := agentMemChangeDiff(r.URL.Query().Get("commit"))
+	if err != nil {
+		agentMemWriteErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // HandleAgentMemoryRevert undoes one change, or forgets the memory as that change left it.

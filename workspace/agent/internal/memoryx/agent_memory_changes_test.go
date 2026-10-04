@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -16,7 +18,7 @@ func agentMemChangesT(t *testing.T) []agentMemChangeView {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return ch
+	return ch.Changes
 }
 
 // The list shows who changed what, newest first, and marks only the newest change of each
@@ -204,3 +206,193 @@ func TestAgentMemoryChangesHandlers(t *testing.T) {
 
 // regexpMustV1 flags the line "v1", standing in for a secret rule the earlier text would trip.
 func regexpMustV1() *regexp.Regexp { return regexp.MustCompile(`^v1$`) }
+
+// ---- review round 1 (PR #1670) ----
+
+// agentMemCommitRaw commits files under af/ with a message of the test's choosing, the way an
+// adopted lineage from another environment could carry them.
+func agentMemCommitRaw(t *testing.T, files map[string]string, msg string) string {
+	t.Helper()
+	if err := memoryEnsureRepo(); err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for p, body := range files {
+		stg := filepath.Join(memoryStagingDir(), filepath.FromSlash(p))
+		memoryMkdirAll(t, filepath.Dir(stg))
+		memoryWrite(t, stg, body)
+		paths = append(paths, p)
+	}
+	if _, err := memoryGitRun(append([]string{"add", "--"}, paths...)...); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := memoryGitRun(append([]string{"commit", "--quiet", "--no-verify", "-m", msg, "--"}, paths...)...); err != nil {
+		t.Fatal(err)
+	}
+	rev, _ := memoryGitRun("rev-parse", memoryBranch)
+	return rev
+}
+
+// A forget that is not the newest change cannot be reverted, even though the memory is absent
+// both after it and now.
+func TestAgentMemoryRevertRefusesOlderForget(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	now := time.Now()
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "a", Description: "d", Body: "v1"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentMemForget(c, agentMemForgetReq{Name: "a", Revision: 1}, now); err != nil {
+		t.Fatal(err)
+	}
+	firstForget := agentMemChangesT(t)[0].Commit
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "a", Description: "d", Body: "v2"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentMemForget(c, agentMemForgetReq{Name: "a", Revision: 2}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentMemRevert(agentMemRevertReq{Commit: firstForget}, now); agentMemCode(err) != errCodeMemoryConflict {
+		t.Fatalf("reverting the older forget: %v", err)
+	}
+	if _, err := agentMemRead(c, "", "a"); agentMemCode(err) != errCodeMemoryNotFound {
+		t.Fatalf("v1 came back: %v", err)
+	}
+}
+
+// With its scope directory (and tombstone) gone, a restored memory still gets a revision past
+// every one the history knows.
+func TestAgentMemoryRevertRevisionSurvivesLostDirectory(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "shell-home")
+	now := time.Now()
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "a", Description: "d", Body: "v1"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentMemForget(c, agentMemForgetReq{Name: "a", Revision: 1}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(agentMemDir(), "user")); err != nil {
+		t.Fatal(err)
+	}
+	res, err := agentMemRevert(agentMemRevertReq{Commit: agentMemChangesT(t)[0].Commit}, now)
+	if err != nil || res.Revision != 2 {
+		t.Fatalf("revert = %+v, %v", res, err)
+	}
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "a", Description: "d", Body: "stale", Revision: 1}, now); agentMemCode(err) != errCodeMemoryConflict {
+		t.Fatalf("stale save with the pre-forget revision: %v", err)
+	}
+}
+
+// project.json is shown only when every value in it passes the scan.
+func TestAgentMemoryChangesProjectInfoScanned(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "a", Description: "d", Body: "v1"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	cred := "https://" + "user" + ":" + "s3cr3tPassw0rd" + "@" + "git.corp-host.test/repo"
+	b, _ := json.Marshal(agentMemProject{ID: c.Project.ID, Root: cred, VCS: "git", Display: "demo"})
+	memoryWrite(t, filepath.Join(agentMemDir(), "projects", c.Project.ID, "project.json"), string(b))
+	out, err := agentMemListChanges(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(out)
+	if strings.Contains(string(raw), "s3cr3tPassw0rd") || out.Changes[0].Project.Display != c.Project.ID {
+		t.Fatalf("changes = %s", raw)
+	}
+}
+
+// A commit from an adopted lineage whose trailers carry a secret, or text AF never writes, is
+// withheld from the list.
+func TestAgentMemoryChangesWithholdForeignTrailers(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	key := agentMemFakeAWS()
+	agentMemCommitRaw(t, map[string]string{"af/user/x.md": "---\nname: x\ndescription: d\n---\nb\n"},
+		"agent-memory: create\n\nAF-Trigger: agent-memory\nAF-Op: create\nAF-Memory: af/user/x.md\nAF-Author-Kind: claude\nAF-Author-Session: "+key+"\n")
+	agentMemCommitRaw(t, map[string]string{"af/user/y.md": "---\nname: y\ndescription: d\n---\nb\n"},
+		"agent-memory: create\n\nAF-Trigger: agent-memory\nAF-Op: anything goes here\nAF-Memory: af/user/y.md\nAF-Author-Kind: claude\nAF-Author-Session: s\n")
+	out, err := agentMemListChanges(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(out)
+	if strings.Contains(string(raw), key) || out.Withheld != 2 || len(out.Changes) != 0 {
+		t.Fatalf("changes = %s", raw)
+	}
+}
+
+// A change's diff is scanned before it leaves the Agent.
+func TestAgentMemoryChangeDiffScanned(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	key := agentMemFakeAWS()
+	commit := agentMemCommitRaw(t, map[string]string{"af/user/x.md": "---\nname: x\ndescription: d\n---\nkey " + key + "\n"},
+		"agent-memory: create\n\nAF-Trigger: agent-memory\nAF-Op: create\nAF-Memory: af/user/x.md\nAF-Author-Kind: claude\nAF-Author-Session: s\n")
+	d, err := agentMemChangeDiff(commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(d)
+	if !d.Withheld || strings.Contains(string(raw), key) || len(d.Findings) == 0 {
+		t.Fatalf("diff = %s", raw)
+	}
+	// A clean change's diff comes back, limited to the memory it changed.
+	c := agentMemCallerT(t, "claude-main")
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "ok", Description: "d", Body: "fine"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	d, err = agentMemChangeDiff(agentMemChangesT(t)[0].Commit)
+	if err != nil || d.Withheld || !strings.Contains(d.Diff, "+fine") || strings.Contains(d.Diff, "project.json") {
+		t.Fatalf("clean diff = %+v, %v", d, err)
+	}
+	if _, err := agentMemChangeDiff("--output=/tmp/x"); agentMemCode(err) != errCodeMemoryBadRev {
+		t.Fatalf("option-shaped commit: %v", err)
+	}
+}
+
+// A history read that fails is an error, never "the memory did not exist before".
+func TestAgentMemoryRevertUnreadableHistoryIsAnError(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "shell-home")
+	now := time.Now()
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "a", Description: "d", Body: "v1"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "a", Description: "d", Body: "v2", Revision: 1}, now); err != nil {
+		t.Fatal(err)
+	}
+	blob, err := memoryGitRun("rev-parse", memoryBranch+"^:af/user/a.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj := filepath.Join(memoryRepoDir(), "objects", blob[:2], blob[2:])
+	if err := os.Remove(obj); err != nil {
+		t.Skip("blob is packed:", err)
+	}
+	if _, err := agentMemRevert(agentMemRevertReq{Commit: agentMemChangesT(t)[0].Commit}, now); err == nil {
+		t.Fatal("revert succeeded with the earlier text unreadable")
+	}
+	if e, err := agentMemRead(c, "", "a"); err != nil || e.Body != "v2" {
+		t.Fatalf("memory after a refused revert = %+v, %v", e, err)
+	}
+}
+
+// A forget of a file never committed has no text on either side: the row says it cannot be
+// reverted, and the Agent refuses with the reason.
+func TestAgentMemoryUntrackedForgetIsNotRevertible(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "shell-home")
+	memoryMkdirAll(t, filepath.Join(agentMemDir(), "user"))
+	memoryWrite(t, filepath.Join(agentMemDir(), "user", "hand.md"), "---\nname: hand\ndescription: d\n---\nb\n")
+	if _, err := agentMemForget(c, agentMemForgetReq{Name: "hand", Revision: 1}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	row := agentMemChangesT(t)[0]
+	if !row.Latest || row.Revertible {
+		t.Fatalf("row = %+v", row)
+	}
+	if _, err := agentMemRevert(agentMemRevertReq{Commit: row.Commit}, time.Now()); agentMemCode(err) != errCodeMemoryConflict {
+		t.Fatalf("revert: %v", err)
+	}
+}

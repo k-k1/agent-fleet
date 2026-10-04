@@ -70,7 +70,7 @@ describe("agent memory tab in the settings modal", () => {
   });
 
   it("registers the AF memory change list and revert on both sides", () => {
-    for (const p of ["api/agents/memory/entries/changes", "api/agents/memory/entries/revert"]) {
+    for (const p of ["api/agents/memory/entries/changes", "api/agents/memory/entries/diff", "api/agents/memory/entries/revert"]) {
       expect(tab).toContain(p);
       expect(cpRoutes).toContain("/" + p);
       expect(agentRoutes).toContain(p.replace(/^api\//, "/"));

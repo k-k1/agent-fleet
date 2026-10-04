@@ -463,6 +463,7 @@ func buildMux() *http.ServeMux {
 	// The member's after-the-fact view of those writes (ADR 0108 decision 8). These two are
 	// for the Console, so control-plane/routes.go relays them.
 	mux.HandleFunc("GET /agents/memory/entries/changes", memoryx.HandleAgentMemoryChanges)
+	mux.HandleFunc("GET /agents/memory/entries/diff", memoryx.HandleAgentMemoryChangeDiff)
 	mux.HandleFunc("POST /agents/memory/entries/revert", memoryx.HandleAgentMemoryRevert)
 
 	// Toolchain selection (node via nvm / java via pre-baked Temurin) — Console.

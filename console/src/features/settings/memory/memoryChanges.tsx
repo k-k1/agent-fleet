@@ -14,7 +14,7 @@ import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { Diff } from "../../scm/GitDiff.tsx";
 import { useT, tMaybe } from "../../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
-import type { MemoryChange, SecretFinding } from "./memoryTypes.ts";
+import type { ChangeDiff, MemoryChange, SecretFinding } from "./memoryTypes.ts";
 
 // An unknown op from a newer Agent is printed raw rather than breaking the row.
 const opLabel = (op: string): string => tMaybe("mem.af_op_" + op) ?? op;
@@ -25,7 +25,7 @@ export function AgentMemorySection({ reload, onChanged }: { reload: number; onCh
   const askConfirm = useConfirm();
   const [changes, setChanges] = useState<MemoryChange[] | null>(null);
   const [sel, setSel] = useState("");
-  const [diff, setDiff] = useState<string | null>(null);
+  const [diff, setDiff] = useState<ChangeDiff | null>(null);
   const [busy, setBusy] = useState(false);
   const [mine, setMine] = useState(0);
 
@@ -53,9 +53,11 @@ export function AgentMemorySection({ reload, onChanged }: { reload: number; onCh
     }
     let live = true;
     setDiff(null);
-    api("api/agents/memory/diff?to=" + encodeURIComponent(sel))
-      .then((d) => live && setDiff(d?.error ? "" : (d.diff ?? "")))
-      .catch(() => live && setDiff(""));
+    // The Agent scans this diff before it answers (the generic memory diff does not), and
+    // sends masked findings instead of a diff that fails.
+    api("api/agents/memory/entries/diff?commit=" + encodeURIComponent(sel))
+      .then((d) => live && setDiff(d?.error ? { diff: "" } : d))
+      .catch(() => live && setDiff({ diff: "" }));
     return () => {
       live = false;
     };
@@ -117,6 +119,11 @@ export function AgentMemorySection({ reload, onChanged }: { reload: number; onCh
       });
       setMine((n) => n + 1);
       onChanged();
+    } catch {
+      // The request may or may not have reached the Agent: say so and re-read the list, which
+      // shows what actually happened.
+      toast(tr("mem.af_failed"));
+      setMine((n) => n + 1);
     } finally {
       setBusy(false);
     }
@@ -162,23 +169,43 @@ export function AgentMemorySection({ reload, onChanged }: { reload: number; onCh
           {selected && (
             <div className="mem-diff-head">
               <code title={selected.commit}>{selected.commit.slice(0, 9)}</code>
-              {selected.latest ? (
+              {!selected.latest ? (
+                <span className="muted">{tr("mem.af_not_latest")}</span>
+              ) : (
                 <>
-                  <button type="button" disabled={busy} onClick={() => void act(selected, false)}>
-                    {tr("mem.af_revert")}
-                  </button>
+                  {selected.revertible ? (
+                    <button type="button" disabled={busy} onClick={() => void act(selected, false)}>
+                      {tr("mem.af_revert")}
+                    </button>
+                  ) : (
+                    <span className="muted">{tr("mem.af_not_revertible")}</span>
+                  )}
                   {selected.live && (
                     <button type="button" disabled={busy} onClick={() => void act(selected, true)}>
                       {tr("mem.af_forget")}
                     </button>
                   )}
                 </>
-              ) : (
-                <span className="muted">{tr("mem.af_not_latest")}</span>
               )}
             </div>
           )}
-          {selected && (diff === null ? <pre className="diff muted">{tr("common.loading")}</pre> : <Diff text={diff} embedded wrap />)}
+          {selected &&
+            (diff === null ? (
+              <pre className="diff muted">{tr("common.loading")}</pre>
+            ) : diff.withheld ? (
+              <div className="pad">
+                <p className="mem-warn">{tr("mem.af_diff_withheld")}</p>
+                <ul className="mem-findings">
+                  {(diff.findings ?? []).map((f, i) => (
+                    <li key={i}>
+                      <code>{f.rule}</code> {tr("mem.af_secret_line", { line: f.line })} <code>{f.hint}</code>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <Diff text={diff.diff} embedded wrap />
+            ))}
         </div>
       </div>
     </section>

@@ -25,6 +25,7 @@ func TestMemoryRoutesProxiedByCP(t *testing.T) {
 		{"POST", "/api/agents/memory/import", "POST /api/agents/memory/import"},
 		{"POST", "/api/agents/memory/import/apply", "POST /api/agents/memory/import/apply"},
 		{"GET", "/api/agents/memory/entries/changes", "GET /api/agents/memory/entries/changes"},
+		{"GET", "/api/agents/memory/entries/diff", "GET /api/agents/memory/entries/diff"},
 		{"POST", "/api/agents/memory/entries/revert", "POST /api/agents/memory/entries/revert"},
 		// Must not be swallowed by the existing pattern route /api/agents/{kind}/models.
 		{"GET", "/api/agents/codex/models", "GET /api/agents/{kind}/models"},
@@ -74,6 +75,12 @@ func TestMemorySnapshotIsAudited(t *testing.T) {
 	action, target, ok = auditActionTarget(req)
 	if !ok || action != "memory.entry.revert" || target != "abc1234" {
 		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.entry.revert/abc1234", action, target, ok)
+	}
+	// A hint that is not a commit id is not copied into the ledger; the event is still kept.
+	req = httptest.NewRequest(http.MethodPost, "/api/agents/memory/entries/revert?commit=not-a-commit+value", nil)
+	action, target, ok = auditActionTarget(req)
+	if !ok || action != "memory.entry.revert" || target != "" {
+		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.entry.revert with an empty target", action, target, ok)
 	}
 	// The other read-only routes are not audited.
 	for _, p := range []string{"/api/agents/memory/snapshots", "/api/agents/memory/tree", "/api/agents/memory/diff"} {

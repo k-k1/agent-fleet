@@ -1,22 +1,29 @@
 package memoryx
 
 // AF-owned agent memory (ADR 0108 decision 8) — the member's after-the-fact view: the list of
-// published changes (who, when, what) and the way back from one of them. Writes are published
-// without approval, so this is where a bad memory is found and undone.
+// published changes (who, when, what), the diff of one, and the way back from one. Writes are
+// published without approval, so this is where a bad memory is found and undone.
 //
 // A revert never rewrites history. It writes the memory's state from before the change as a
 // new change, with a new revision, the member as author and an AF-Revert-Of trailer, through
 // the same lock, scan and one-commit step as an agent's write.
+//
+// The history is not trusted to have been scanned: an import can adopt another environment's
+// lineage, and the rules grow. Every value this file returns — trailers, names, project
+// info, diffs — is scanned on the way out, and a row or diff that fails is withheld.
 
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 const (
@@ -32,6 +39,7 @@ var agentMemMember = agentMemCaller{Session: "console", Kind: "member"}
 var (
 	agentMemRepoPathRe = regexp.MustCompile(`^af/(user|projects/[a-z0-9._-]{1,80})/([a-z0-9][a-z0-9-]{0,63})\.md$`)
 	agentMemCommitRe   = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
+	agentMemOps        = map[string]bool{"create": true, "update": true, "forget": true, "revert": true}
 )
 
 // agentMemChangeView is one published change as the Console lists it.
@@ -45,16 +53,22 @@ type agentMemChangeView struct {
 	AuthorKind    string           `json:"authorKind"`
 	AuthorSession string           `json:"authorSession"`
 	RevertOf      string           `json:"revertOf,omitempty"`
-	// Latest is the newest change of this memory in the list; only that one can be reverted
-	// or used to forget the memory. Live says the memory exists now.
-	Latest bool `json:"latest"`
-	Live   bool `json:"live"`
+	// Latest is the newest change of this memory in the list, the only one a revert or forget
+	// may start from. Live says the memory exists now. Revertible says the history holds a
+	// text on at least one side of the change (a forget of a file never committed has none).
+	Latest     bool `json:"latest"`
+	Live       bool `json:"live"`
+	Revertible bool `json:"revertible"`
 }
 
-// agentMemChangesWire is the change list.
+// agentMemChangesWire is the change list. Withheld counts rows left out because a value in
+// them failed the scan or the expected form.
 type agentMemChangesWire struct {
-	Changes []agentMemChangeView `json:"changes"`
+	Changes  []agentMemChangeView `json:"changes"`
+	Withheld int                  `json:"withheld,omitempty"`
 }
+
+func agentMemCleanText(s string) bool { return len(agentMemScanText("", s)) == 0 }
 
 // agentMemParseRepoPath splits af/<scope dir>/<name>.md.
 func agentMemParseRepoPath(p string) (rel, scope, projectID, name string, ok bool) {
@@ -81,29 +95,80 @@ func agentMemTrailers(body string) map[string]string {
 }
 
 // agentMemProjectInfo reads what a project id stands for, for display. A project whose
-// project.json is missing or unreadable is shown by its id.
+// project.json is missing, unreadable, behind a symlink or fails the scan is shown by its id.
 func agentMemProjectInfo(id string) *agentMemProject {
 	p := &agentMemProject{ID: id, Display: id}
-	b, ok, err := agentMemReadFile(filepath.Join(agentMemDir(), "projects", id, "project.json"))
+	dir, err := agentMemCheckDir("projects/"+id, false)
+	if err != nil {
+		return p
+	}
+	b, ok, err := agentMemReadFile(filepath.Join(dir, "project.json"))
 	if err != nil || !ok {
 		return p
 	}
 	var v agentMemProject
-	if json.Unmarshal(b, &v) == nil && v.Display != "" && len(agentMemScanText("", v.Display)) == 0 {
-		p.Display, p.Root, p.VCS = v.Display, v.Root, v.VCS
+	if json.Unmarshal(b, &v) != nil || v.Display == "" || !agentMemCleanText(v.Root+"\n"+v.VCS+"\n"+v.Display) {
+		return p
+	}
+	p.Display, p.Root, p.VCS = v.Display, v.Root, v.VCS
+	return p
+}
+
+// agentMemAuthorOK holds an author to the forms AF writes, so a trailer from an adopted
+// lineage cannot smuggle free text into the list.
+func agentMemAuthorOK(kind, sess string) bool {
+	kindOK := kind == agentMemUnknown || kind == agentMemMember.Kind || agentMemKindRe.MatchString(kind)
+	sessOK := sess == agentMemUnknown || sess == agentMemMember.Session || session.ValidName(sess)
+	return kindOK && sessOK
+}
+
+// agentMemBlob is one file at a revision. exists=false means the tree does not have it; an
+// error means git could not say, which is never read as "absent".
+func agentMemBlob(rev, rel string) (data []byte, exists bool, err error) {
+	path := agentMemRepoPrefix + "/" + rel
+	out, err := memoryGitRun("ls-tree", rev, "--", path)
+	if err != nil {
+		return nil, false, fmt.Errorf("read agent memory history: %w", err)
+	}
+	if out == "" {
+		return nil, false, nil
+	}
+	b, err := memoryGit("show", rev+":"+path).Output()
+	if err != nil {
+		return nil, false, fmt.Errorf("read agent memory history: %w", err)
+	}
+	return b, true, nil
+}
+
+// agentMemParent is a commit's first parent, or "" for a root commit.
+func agentMemParent(commit string) string {
+	p, err := memoryGitRun("rev-parse", "--verify", "--quiet", commit+"^")
+	if err != nil {
+		return ""
 	}
 	return p
 }
 
+// agentMemSides returns the memory's text before and after a commit.
+func agentMemSides(commit, rel string) (before []byte, beforeOK bool, after []byte, afterOK bool, err error) {
+	if after, afterOK, err = agentMemBlob(commit, rel); err != nil {
+		return
+	}
+	if parent := agentMemParent(commit); parent != "" {
+		before, beforeOK, err = agentMemBlob(parent, rel)
+	}
+	return
+}
+
 // agentMemListChanges returns the newest published changes first.
-func agentMemListChanges(limit int) ([]agentMemChangeView, error) {
+func agentMemListChanges(limit int) (agentMemChangesWire, error) {
 	if limit <= 0 {
 		limit = agentMemChangesDefault
 	}
 	limit = min(limit, agentMemChangesMax)
 	agentMemMu.RLock()
 	defer agentMemMu.RUnlock()
-	out := []agentMemChangeView{}
+	out := agentMemChangesWire{Changes: []agentMemChangeView{}}
 	if !memoryHasCommits() {
 		return out, nil
 	}
@@ -111,7 +176,7 @@ func agentMemListChanges(limit int) ([]agentMemChangeView, error) {
 		"--grep=^AF-Trigger: "+memoryTriggerAgentMemory+"$",
 		"--format=%H"+memoryFldSep+"%aI"+memoryFldSep+"%B"+memoryRecSep)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	seen := map[string]bool{}
 	projects := map[string]*agentMemProject{}
@@ -120,14 +185,10 @@ func agentMemListChanges(limit int) ([]agentMemChangeView, error) {
 		if len(f) < 3 {
 			continue
 		}
-		tr := agentMemTrailers(f[2])
-		rel, scope, pid, name, ok := agentMemParseRepoPath(tr["AF-Memory"])
+		v, rel, pid, ok := agentMemChangeFrom(f[0], f[1], f[2])
 		if !ok {
+			out.Withheld++
 			continue
-		}
-		v := agentMemChangeView{
-			Commit: f[0], At: f[1], Op: tr["AF-Op"], Scope: scope, Name: name,
-			AuthorKind: tr["AF-Author-Kind"], AuthorSession: tr["AF-Author-Session"], RevertOf: tr["AF-Revert-Of"],
 		}
 		if pid != "" {
 			if projects[pid] == nil {
@@ -140,10 +201,107 @@ func agentMemListChanges(limit int) ([]agentMemChangeView, error) {
 			v.Latest = true
 			_, live, _ := agentMemReadFile(filepath.Join(agentMemDir(), filepath.FromSlash(rel)))
 			v.Live = live
+			_, beforeOK, _, afterOK, err := agentMemSides(v.Commit, rel)
+			v.Revertible = err == nil && (beforeOK || afterOK)
 		}
-		out = append(out, v)
+		out.Changes = append(out.Changes, v)
 	}
 	return out, nil
+}
+
+// agentMemChangeFrom builds a row from one commit, or ok=false when anything in it is not in the
+// form AF writes or fails the scan. The trigger is checked again here: --grep matches a line
+// anywhere in the message.
+func agentMemChangeFrom(commit, at, body string) (v agentMemChangeView, rel, pid string, ok bool) {
+	tr := agentMemTrailers(body)
+	if tr["AF-Trigger"] != memoryTriggerAgentMemory || !agentMemCommitRe.MatchString(commit) {
+		return v, "", "", false
+	}
+	rel, scope, pid, name, ok := agentMemParseRepoPath(tr["AF-Memory"])
+	if !ok || !agentMemOps[tr["AF-Op"]] || !agentMemAuthorOK(tr["AF-Author-Kind"], tr["AF-Author-Session"]) {
+		return v, "", "", false
+	}
+	if r := tr["AF-Revert-Of"]; r != "" && !agentMemCommitRe.MatchString(r) {
+		return v, "", "", false
+	}
+	if _, err := time.Parse(time.RFC3339, at); err != nil {
+		return v, "", "", false
+	}
+	if !agentMemCleanText(name + "\n" + pid + "\n" + tr["AF-Author-Session"]) {
+		return v, "", "", false
+	}
+	v = agentMemChangeView{
+		Commit: commit, At: at, Op: tr["AF-Op"], Scope: scope, Name: name,
+		AuthorKind: tr["AF-Author-Kind"], AuthorSession: tr["AF-Author-Session"], RevertOf: tr["AF-Revert-Of"],
+	}
+	return v, rel, pid, true
+}
+
+// agentMemDiffWire is one change's diff, or the masked findings that withheld it.
+type agentMemDiffWire struct {
+	Diff     string                `json:"diff"`
+	Withheld bool                  `json:"withheld,omitempty"`
+	Findings []memorySecretFinding `json:"findings,omitempty"`
+}
+
+// agentMemChangeDiff is the diff of one change, limited to the memory it changed and scanned
+// before it is returned (the generic memory diff returns history as it is).
+func agentMemChangeDiff(commitArg string) (agentMemDiffWire, error) {
+	agentMemMu.RLock()
+	defer agentMemMu.RUnlock()
+	commit, rel, err := agentMemResolveChange(commitArg)
+	if err != nil {
+		return agentMemDiffWire{}, err
+	}
+	base := agentMemParent(commit)
+	if base == "" {
+		if base, err = memoryGitRun("hash-object", "-t", "tree", "/dev/null"); err != nil {
+			return agentMemDiffWire{}, err
+		}
+	}
+	diff, err := memoryGitRun("diff", "--no-color", base, commit, "--", agentMemRepoPrefix+"/"+rel)
+	if err != nil {
+		return agentMemDiffWire{}, err
+	}
+	if f := agentMemScanText("diff", diff); len(f) > 0 {
+		return agentMemDiffWire{Withheld: true, Findings: f}, nil
+	}
+	return agentMemDiffWire{Diff: diff}, nil
+}
+
+// agentMemResolveChange checks that commitArg names an agent-memory change on main and returns
+// it with the memory path it changed.
+func agentMemResolveChange(commitArg string) (commit, rel string, err error) {
+	if !agentMemCommitRe.MatchString(commitArg) {
+		return "", "", memoryErrf(http.StatusBadRequest, errCodeMemoryBadRev, "commit must be a commit id")
+	}
+	if !memoryHasCommits() {
+		return "", "", memoryErrf(http.StatusNotFound, errCodeMemoryBadRev, "no such change")
+	}
+	commit, err = memoryGitRun("rev-parse", "--verify", "--quiet", commitArg+"^{commit}")
+	if err != nil || commit == "" {
+		return "", "", memoryErrf(http.StatusNotFound, errCodeMemoryBadRev, "no such change")
+	}
+	if _, err := memoryGitRun("merge-base", "--is-ancestor", commit, memoryBranch); err != nil {
+		return "", "", memoryErrf(http.StatusNotFound, errCodeMemoryBadRev, "no such change in the memory history")
+	}
+	body, err := memoryGitRun("log", "-1", "--format=%B", commit)
+	if err != nil {
+		return "", "", err
+	}
+	tr := agentMemTrailers(body)
+	rel, _, _, _, ok := agentMemParseRepoPath(tr["AF-Memory"])
+	if tr["AF-Trigger"] != memoryTriggerAgentMemory || !ok {
+		return "", "", memoryErrf(http.StatusBadRequest, errCodeMemoryBadRev, "that commit is not an agent memory change")
+	}
+	return commit, rel, nil
+}
+
+// agentMemLatestChange is the newest agent-memory commit on main for one memory path.
+func agentMemLatestChange(rel string) (string, error) {
+	path := regexp.QuoteMeta(agentMemRepoPrefix + "/" + rel)
+	return memoryGitRun("log", "-1", "--format=%H", "-E", "--all-match", memoryBranch,
+		"--grep=^AF-Trigger: "+memoryTriggerAgentMemory+"$", "--grep=^AF-Memory: "+path+"$")
 }
 
 // agentMemRevertReq undoes one published change, or (Forget) removes the memory as that change
@@ -154,44 +312,51 @@ type agentMemRevertReq struct {
 	Ack    bool   `json:"ack"`
 }
 
-// agentMemRevert applies a revert or a forget from the Console. It refuses unless the memory
-// is still exactly as the change left it: reverting anything older would silently drop the
-// changes made since.
-func agentMemRevert(req agentMemRevertReq, now time.Time) (agentMemWriteResult, error) {
-	if !agentMemCommitRe.MatchString(req.Commit) {
-		return agentMemWriteResult{}, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRev, "commit must be a commit id")
+func agentMemRevOf(b []byte, ok bool) int {
+	if !ok {
+		return 0
 	}
+	if e, ok := agentMemParse(b); ok {
+		return e.Revision
+	}
+	return 0
+}
+
+// agentMemRevert applies a revert or a forget from the Console. It starts only from the newest
+// change of the memory, and only while the memory is still exactly as that change left it:
+// reverting anything older would silently drop what came after.
+func agentMemRevert(req agentMemRevertReq, now time.Time) (agentMemWriteResult, error) {
 	agentMemMu.Lock()
 	defer agentMemMu.Unlock()
 	memorySnapshotMu.Lock()
 	defer memorySnapshotMu.Unlock()
 
-	commit, err := memoryGitRun("rev-parse", "--verify", "--quiet", req.Commit+"^{commit}")
-	if err != nil || commit == "" {
-		return agentMemWriteResult{}, memoryErrf(http.StatusNotFound, errCodeMemoryBadRev, "no such change")
-	}
-	if _, err := memoryGitRun("merge-base", "--is-ancestor", commit, memoryBranch); err != nil {
-		return agentMemWriteResult{}, memoryErrf(http.StatusNotFound, errCodeMemoryBadRev, "no such change in the memory history")
-	}
-	body, err := memoryGitRun("log", "-1", "--format=%B", commit)
+	commit, rel, err := agentMemResolveChange(req.Commit)
 	if err != nil {
 		return agentMemWriteResult{}, err
 	}
-	tr := agentMemTrailers(body)
-	rel, scope, _, name, ok := agentMemParseRepoPath(tr["AF-Memory"])
-	if tr["AF-Trigger"] != memoryTriggerAgentMemory || !ok {
-		return agentMemWriteResult{}, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRev, "that commit is not an agent memory change")
+	_, scope, _, name, _ := agentMemParseRepoPath(agentMemRepoPrefix + "/" + rel)
+	// Compared by commit, not only by content: after create → forget → create → forget, the
+	// first forget and the live store agree that the memory is absent, yet reverting it would
+	// bring back the older text.
+	latest, err := agentMemLatestChange(rel)
+	if err != nil {
+		return agentMemWriteResult{}, err
+	}
+	if latest != commit {
+		return agentMemWriteResult{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
+			"the memory has changed since this change; only its newest change can be reverted")
 	}
 	scopeDir := filepath.ToSlash(filepath.Dir(rel))
-
-	after, afterOK := agentMemShow(commit, rel)
-	before, beforeOK := agentMemShow(commit+"^", rel)
+	before, beforeOK, after, afterOK, err := agentMemSides(commit, rel)
+	if err != nil {
+		return agentMemWriteResult{}, err
+	}
 	dir, err := agentMemCheckDir(scopeDir, true)
 	if err != nil {
 		return agentMemWriteResult{}, err
 	}
-	abs := filepath.Join(dir, name+".md")
-	live, liveOK, err := agentMemReadFile(abs)
+	live, liveOK, err := agentMemReadFile(filepath.Join(dir, name+".md"))
 	if err != nil {
 		return agentMemWriteResult{}, err
 	}
@@ -199,24 +364,25 @@ func agentMemRevert(req agentMemRevertReq, now time.Time) (agentMemWriteResult, 
 		return agentMemWriteResult{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
 			"the memory has changed since this change; only its newest change can be reverted")
 	}
-	liveRev := 0
-	if liveOK {
-		if e, ok := agentMemParse(live); ok {
-			liveRev = e.Revision
-		}
-	}
 	tomb, err := agentMemTombRevision(scopeDir, name)
 	if err != nil {
 		return agentMemWriteResult{}, err
 	}
+	// Every revision this memory is known to have had is a floor: the store's own record (the
+	// live file, the tombstone) can be lost with its directory, the history cannot.
+	floor := max(agentMemRevOf(live, liveOK), tomb, agentMemRevOf(after, afterOK), agentMemRevOf(before, beforeOK))
 	trailer := "AF-Revert-Of: " + commit
 
 	if req.Forget || !beforeOK {
 		// Forgetting the memory, or undoing its creation: either way it goes.
 		if !liveOK {
+			if !beforeOK {
+				return agentMemWriteResult{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
+					"there is no earlier text to bring back: the history never held this memory's text")
+			}
 			return agentMemWriteResult{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict, "the memory is already gone")
 		}
-		if err := agentMemWriteTomb(scopeDir, name, max(liveRev, tomb)); err != nil {
+		if err := agentMemWriteTomb(scopeDir, name, floor); err != nil {
 			return agentMemWriteResult{}, err
 		}
 		op, extra := "forget", []string{}
@@ -227,7 +393,7 @@ func agentMemRevert(req agentMemRevertReq, now time.Time) (agentMemWriteResult, 
 		if err != nil {
 			return agentMemWriteResult{}, err
 		}
-		return agentMemWriteResult{Name: name, Scope: scope, Revision: liveRev, Commit: rev, Deleted: true}, nil
+		return agentMemWriteResult{Name: name, Scope: scope, Revision: agentMemRevOf(live, liveOK), Commit: rev, Deleted: true}, nil
 	}
 
 	e, ok := agentMemParse(before)
@@ -235,7 +401,7 @@ func agentMemRevert(req agentMemRevertReq, now time.Time) (agentMemWriteResult, 
 		return agentMemWriteResult{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict, "the earlier version cannot be read as a memory")
 	}
 	e.Name, e.Scope = name, scope
-	e.Revision = max(liveRev, tomb) + 1
+	e.Revision = floor + 1
 	e.AuthorKind, e.AuthorSession = agentMemMember.Kind, agentMemMember.Session
 	e.Updated = now.UTC().Format(time.RFC3339)
 	data := agentMemRender(e)
@@ -253,13 +419,4 @@ func agentMemRevert(req agentMemRevertReq, now time.Time) (agentMemWriteResult, 
 		agentMemRemoveTomb(scopeDir, name)
 	}
 	return agentMemWriteResult{Name: name, Scope: scope, Revision: e.Revision, Commit: rev, Created: !liveOK}, nil
-}
-
-// agentMemShow is one file at a commit; ok=false when the commit does not have it.
-func agentMemShow(rev, rel string) ([]byte, bool) {
-	b, err := memoryGit("show", rev+":"+agentMemRepoPrefix+"/"+rel).Output()
-	if err != nil {
-		return nil, false
-	}
-	return b, true
 }
