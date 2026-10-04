@@ -7,8 +7,11 @@
 package codex
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -285,24 +288,62 @@ func MissedTurnEnd(m session.Meta) bool {
 // hooks/src/engine/dispatcher.rs, FuturesUnordered), so our hook writes idle before it can
 // know a sibling answered `decision:"block"`. On a block codex records the hook's prompt and
 // `continue`s the same turn loop (core/src/session/turn.rs); task_complete is written only
-// when the task finishes after the last Stop. So a rollout whose newest lifecycle event is a
-// task_started from before the marker is a turn the marker did not end. A normal Stop's
-// task_complete lands milliseconds after our hook, so a sweep in between costs one tick, not
-// a report.
+// when the task finishes after the last Stop. So a rollout whose newest lifecycle event is
+// task_started is a turn the marker did not end. A normal Stop's task_complete lands
+// milliseconds after our hook, so a sweep in between costs one tick, not a report.
 //
-// No rollout, or no lifecycle in it, answers false (the pre-#1600 behaviour): holding a
-// finished turn's report on a guess is worse than the early report this prevents.
+// It reads a bounded tail (rolloutTailLifecycle), not the shared parse: this runs on the
+// report reconciler's synchronous sweep, and a cold withRollout parses the whole rollout
+// (measured 3.9 s for 147 MB in rolloutcache.go) to answer one field.
+//
+// No rollout, or no lifecycle event in the tail, answers false (the pre-#1600 behaviour):
+// holding a finished turn's report on a guess is worse than the early report this prevents.
 func StopContinued(m session.Meta, marker time.Time) bool {
-	slot := session.UUID(m.Dir, m.Name)
-	path := rolloutPath(sids.Read(slot))
-	if path == "" || marker.IsZero() {
+	if marker.IsZero() {
 		return false
 	}
-	open := false
-	withRollout(path, slot, func(p *rolloutParser) {
-		open = p.lifecycle == "task_started"
-	})
-	return open
+	path := rolloutPath(sids.Read(session.UUID(m.Dir, m.Name)))
+	return path != "" && rolloutTailLifecycle(path) == "task_started"
+}
+
+// rolloutLifecycleTail bounds rolloutTailLifecycle's read, as PendingQuestionID's tail does.
+const rolloutLifecycleTail = 256 << 10
+
+// rolloutTailLifecycle returns the newest task_started / task_complete / turn_aborted event in
+// the last rolloutLifecycleTail bytes of path, or "" when the window holds none (one tool
+// output can fill it).
+func rolloutTailLifecycle(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	off := int64(0)
+	if fi, err := f.Stat(); err == nil && fi.Size() > rolloutLifecycleTail {
+		off = fi.Size() - rolloutLifecycleTail
+	}
+	b := make([]byte, rolloutLifecycleTail)
+	n, _ := f.ReadAt(b, off)
+	lines := bytes.Split(b[:n], []byte("\n"))
+	if off > 0 && len(lines) > 0 {
+		lines = lines[1:] // the first line of a mid-file read is likely partial
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		var ev struct {
+			Type    string `json:"type"`
+			Payload struct {
+				Type string `json:"type"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal(lines[i], &ev) != nil || ev.Type != "event_msg" {
+			continue
+		}
+		switch ev.Payload.Type {
+		case "task_started", "task_complete", "turn_aborted":
+			return ev.Payload.Type
+		}
+	}
+	return ""
 }
 
 func (agentImpl) ClearResume(sid string) { sids.Remove(sid) }
