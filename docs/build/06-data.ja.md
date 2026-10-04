@@ -163,7 +163,9 @@ membership ──< user_limit (1:1), ssm_profile ──< ssm_host, memo, memo_ca
 本章が持つのは CP の DB だけ。ほかの永続状態は別の章が持つ：
 
 - **ワークスペース自身の状態**は home にある：セッションのメタデータ（ごみ箱を含む）、
-  transcript、使用量の記録（[04 §4.2](04-agent.ja.md)・[04 §4.7](04-agent.ja.md)）。
+  transcript、使用量の記録（[04 §4.2](04-agent.ja.md)・[04 §4.7](04-agent.ja.md)）、
+  過去セッション検索の索引（transcript の会話本文の、作り直せる写し。
+  [decisions/0110](../decisions/0110-past-session-search.ja.md)）。
   **ユーザーの秘密**は同じ home の暗号ストアにある（[07 §7.6](07-security.ja.md)）。
 - **home が物理的にどこにあるか**はデプロイ先で決まる（[09](09-deploy.ja.md)）。
 - **内部 git のリポジトリ**は `<WS_DATA>/git/` の下のファイル（[91](91-internal-git.ja.md)）。

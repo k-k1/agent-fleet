@@ -16,11 +16,12 @@ import type { DraftLogEntry, HistoryItem, Job, JobsResponse, StudioWire } from "
 // the list from before.
 const jobsNow: { jobs: Job[]; served: Job[]; held: boolean } = { jobs: [], served: [], held: false };
 const historyNow: { items: HistoryItem[] } = { items: [] };
+const statusNow: { s: unknown } = { s: { enabled: true, ready: true, providers: [] } };
 const baseStudio = { id: "s1", title: "", draft: {}, locks: [], session: "sess-1", agent_trial: true, created_at: "2026-09-27T10:00:00Z" };
 const studioNow: { s: StudioWire } = { s: { ...baseStudio, updated_at: "1", recent_log: [] } as unknown as StudioWire };
 vi.mock("./api.ts", async (orig) => ({
   ...(await orig<typeof import("./api.ts")>()),
-  imagegenStatus: async () => ({ enabled: true, ready: true, providers: [] }),
+  imagegenStatus: async () => statusNow.s,
   imagegenJobs: async (): Promise<JobsResponse> => {
     if (!jobsNow.held) jobsNow.served = jobsNow.jobs;
     return { jobs: jobsNow.served, groups: [] } as JobsResponse;
@@ -130,6 +131,7 @@ beforeEach(() => {
   jobsNow.served = [];
   jobsNow.held = false;
   historyNow.items = [];
+  statusNow.s = { enabled: true, ready: true, providers: [] };
   pressSeq = 0;
   useSessionsStore.setState({ loaded: true, sessions: [] });
   studioNow.s = { ...baseStudio, updated_at: "1", recent_log: [] } as unknown as StudioWire;
@@ -335,7 +337,7 @@ describe("the lightbox from the history", () => {
     await act(async () => thumb.click());
     await act(async () => {});
     const verbs = [...document.querySelectorAll(".mirror-lightbox-actions button")].map((b) => b.textContent || "");
-    expect(verbs.length).toBe(3);
+    expect(verbs.length).toBe(4);
     expect(verbs.some((t) => /seed/.test(t))).toBe(true);
     // It runs the CURRENT draft at that seed, not the old picture's settings: the label says so.
     expect(verbs.some((t) => /今の下書き|current draft/.test(t))).toBe(true);
@@ -348,7 +350,7 @@ describe("the lightbox from the history", () => {
     await mount();
     await act(async () => host.querySelector<HTMLButtonElement>(".igen-history .igen-thumb")!.click());
     await act(async () => {});
-    expect(document.querySelectorAll(".mirror-lightbox-actions button").length).toBe(2);
+    expect(document.querySelectorAll(".mirror-lightbox-actions button").length).toBe(3);
   });
 });
 
@@ -366,5 +368,49 @@ describe("the lightbox from the results", () => {
     expect(pos()).toMatch(/3\s*\/\s*3/);
     expect(document.querySelector<HTMLButtonElement>(".mirror-lightbox-next")!.disabled).toBe(true);
     expect(document.querySelector(".mirror-lightbox-actions")).not.toBeNull();
+  });
+});
+
+// ADR 0100 decision 11's entry: "fix this part" on an enlarged picture goes straight to the mask
+// canvas on that picture where the canvas is offered (a ComfyUI engine, a model that declares
+// inpaint), and falls back to the path field — with a toast saying where — everywhere else.
+describe("fix this part from the lightbox", () => {
+  const COMFY = {
+    enabled: true,
+    ready: true,
+    providers: [{ id: "image", kind: "comfy", fleet: true, ready: true, models: [{ id: "sdxl-base", family: "sdxl", ops: ["generate", "edit", "inpaint"] }] }],
+  };
+  const openFix = async () => {
+    const thumbs = [...host.querySelectorAll<HTMLButtonElement>(".igen-results .igen-thumb")];
+    await act(async () => thumbs[0].click());
+    const fix = [...document.querySelectorAll<HTMLButtonElement>(".mirror-lightbox-actions button")].find((b) =>
+      /この部分を直す|Fix this part/.test(b.textContent || ""),
+    );
+    expect(fix, "the lightbox carries the verb").toBeTruthy();
+    await act(async () => fix!.click());
+    await tick(50);
+  };
+
+  it("opens the canvas on that picture on a ComfyUI inpaint model", async () => {
+    narrowPane(false);
+    statusNow.s = COMFY;
+    studioNow.s = { ...studioNow.s, draft: { provider: "image", model: "sdxl-base" } } as unknown as StudioWire;
+    jobsNow.jobs = [done(1)];
+    await mount();
+    await openFix();
+    const modal = document.querySelector(".igen-mask-modal");
+    expect(modal, "the canvas opened").not.toBeNull();
+    expect(modal!.querySelector<HTMLImageElement>("img.igen-mask-picture")!.src).toContain(encodeURIComponent("generated/console/p0.png"));
+    expect(document.querySelector(".mirror-lightbox"), "the lightbox made way").toBeNull();
+  });
+
+  it("falls back to the path field off ComfyUI", async () => {
+    narrowPane(false);
+    statusNow.s = { ...COMFY, providers: [{ ...COMFY.providers[0], kind: "openai-compat" }] };
+    studioNow.s = { ...studioNow.s, draft: { provider: "image", model: "sdxl-base" } } as unknown as StudioWire;
+    jobsNow.jobs = [done(1)];
+    await mount();
+    await openFix();
+    expect(document.querySelector(".igen-mask-modal")).toBeNull();
   });
 });

@@ -4,6 +4,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 
@@ -76,6 +77,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/recreate", sessionx.HandleRecreateSession)
 	mux.HandleFunc("GET /sessions/archived", sessionx.HandleListArchived)
 	mux.HandleFunc("GET /sessions/usage", sessionx.HandleSessionsUsage)
+	// Past-session search (ADR 0110). Top-level rather than under /sessions/ so no session name
+	// can collide with it.
+	mux.HandleFunc("GET /session-search", sessionsearch.HandleSearch)
+	mux.HandleFunc("GET /session-search/turns", sessionsearch.HandleWindow)
 	// Per-feature usage time series (docs/log/46 P3 / ADR0029), aggregated server-side.
 	// control-plane/routes.go needs the same path registered: the CP is an explicit allowlist.
 	mux.HandleFunc("GET /usage/series", handleUsageSeries)
@@ -392,6 +397,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /fs/download", handleFSDownload)
 	// A picture's width and height from its header, many paths per request (fs_imagesize.go).
 	mux.HandleFunc("POST /fs/imagesize", handleFSImageSize)
+	// Every picture under a folder, a bounded walk, flattened into one list (fs_images.go).
+	mux.HandleFunc("GET /fs/images", handleFSImages)
 	mux.HandleFunc("POST /fs/upload", handleFSUpload)
 	mux.HandleFunc("GET /fs/changes", handleFSChanges)
 	mux.HandleFunc("GET /fs/linemarks", handleFSLineMarks)

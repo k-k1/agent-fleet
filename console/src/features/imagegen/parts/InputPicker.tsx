@@ -19,9 +19,9 @@ export const INPUT_DIR = "generated/console/inputs";
  *  families differ, so the number is the Agent's word rather than a constant here.
  *
  *  `label` exists because inpaint's MASK is the same control with a different name and a ceiling
- *  of one (ADR 0081 decision 9 — a mask file by path works from day one; painting one needs a
- *  canvas the Console does not have). Two copies of the drop zone would be two places to fix the
- *  next time uploading changes. */
+ *  of one (ADR 0081 decision 9 — a mask file by path works on every route; the canvas only on
+ *  ComfyUI). Two copies of the drop zone would be two places to fix the next time uploading
+ *  changes. */
 export function InputPicker({
   paths,
   max,

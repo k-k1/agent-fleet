@@ -468,8 +468,9 @@ The same approach as cmux.
     Agent's loopback-only `/agents/memory/entries` routes with the caller's session name,
     which decides the author recorded and the project scope. The seven Chromium attach
     tools come with `--chromium-attach`.
-  - The user's preferences add `--peer-messaging`, `--image-gen` and `--fleet-spawn`
-    (`builtinRunArgsFor`).
+  - The user's preferences add `--peer-messaging`, `--image-gen`, `--fleet-spawn` and
+    `--session-search` (`builtinRunArgsFor`). The last one defaults on and advertises
+    `search_sessions` (ADR 0110).
   - Anything not advertised is refused on call too (`mcpAdvertised`).
 - **Unattended approval for codex**: a headless chat has no approval UI. Besides
   `-a never`, the attached MCP servers are set to

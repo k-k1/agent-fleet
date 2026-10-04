@@ -239,6 +239,16 @@ func FleetSpawn() bool {
 	return v
 }
 
+// SessionSearch is the ON/OFF for the af MCP's search_sessions (ADR 0110 decision 6, ui-prefs
+// sessionSearch). Missing/invalid ⇒ **true**, unlike the switches above: it only reads, and what
+// it reads — this user's own transcripts — a session's shell can already open as the same uid.
+// The switches that default off guard writing into other sessions or spending quota and host
+// resources, which this does not. The Console's own search ignores it.
+func SessionSearch() bool {
+	v, ok := Read()["sessionSearch"].(bool)
+	return !ok || v
+}
+
 // SpawnChildLimit is how many children the user lets one session have at a time (ADR 0073
 // decision 6, ui-prefs sessionSpawnChildLimit). It returns the stored number RAW — 0 for missing
 // or malformed — because the range and the fallback belong to session.NormalizeSpawnChildLimit,
@@ -276,6 +286,7 @@ func StoppedArchiveDays() int {
 func init() {
 	mcpreg.PeerMessagingEnabled = PeerMessaging
 	mcpreg.FleetSpawnEnabled = FleetSpawn
+	mcpreg.SessionSearchEnabled = SessionSearch
 	session.SpawnChildLimitPref = SpawnChildLimit
 	session.StoppedArchiveDaysPref = StoppedArchiveDays
 }

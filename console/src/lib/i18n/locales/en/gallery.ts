@@ -59,4 +59,7 @@ export const gallery: Record<keyof typeof jaGallery, string> = {
   "gallery.delete_folder_title": "Delete the folder",
   "gallery.delete_folder_body": "Delete {name} and everything in it. This cannot be undone.",
   "gallery.open_folder_pane": "Open in another pane",
+  "gallery.send": "Send to a session / assistant…",
+  "gallery.flat": "Include subfolders",
+  "gallery.flat_truncated": "newest {n} only",
 };

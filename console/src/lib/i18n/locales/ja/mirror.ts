@@ -371,6 +371,7 @@ export const mirror = {
   "mirror.multi_select": "複数選択",
   "mirror.multi_select_ok": "複数選択可",
   "mirror.freeform_ph": "または自由入力（Type something / 改行可）",
+  "mirror.freeform_inactive": "選んだ選択肢が送信されます。文章を編集すると自由入力に切り替わります。",
   "mirror.submit_answer": "回答を送信",
   "mirror.question_cancel": "キャンセルして会話に戻る",
   // 持ち越した対話（docs/log/75）— 停止時に画面に出ていたが答えが届かなかったもの。
@@ -418,6 +419,9 @@ export const mirror = {
   "send.send_failed_to": "{name} への送信に失敗しました",
   "send.sent_to": "{name} に送信しました",
   "send.title_file": "ファイルをセッションに送る",
+  "send.title_file_any": "ファイルをセッション/アシスタントに送る",
+  "send.hint_assistant_file": "このアシスタントとのチャットをファイル添付で開き、コメントを下書きします（送信は会話側で）。",
+  "send.ph_image": "例: これを参考に次の 1 枚を作って。/ このスクリーンショットのおかしい所を教えて。（Ctrl+Enter で送信）",
   "send.title_selection": "選択範囲をセッション/アシスタントに送る",
   "send.destination": "送信先",
   "send.no_running": "⚠ 稼働中のセッションがありません。セッションを起動してから送ってください。",

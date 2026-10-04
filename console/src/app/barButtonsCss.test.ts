@@ -33,4 +33,17 @@ describe("bar controls that undo ui/Button's layout", () => {
     expect(att[0]).toMatch(/display:\s*(block|inline-block)/);
     expect(att[0]).toMatch(/text-overflow:\s*ellipsis/);
   });
+
+  // The WS bar's pane buttons keep ui/Button's nowrap. Wrapping is what turned each one into a
+  // one-character column on a crowded bar (#1642); the bar folds by width instead
+  // (wsBarFold.ts), and that fold measures natural widths, so nothing on it may shrink.
+  it("never lets the WS bar's pane buttons wrap or shrink", () => {
+    const css = read("wsbar.css");
+    for (const sel of [".ws-split", ".ws-closeall", ".ws-preview-btn"]) {
+      const b = bodies(css, sel);
+      expect(b.length, sel).toBe(1);
+      expect(b[0], sel).not.toMatch(/white-space:\s*normal/);
+    }
+    expect(css).toMatch(/\.wsbar > \*\s*\{\s*flex-shrink:\s*0;/);
+  });
 });

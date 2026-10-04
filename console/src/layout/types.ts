@@ -82,6 +82,9 @@ export type PaneContent =
       galleryPath: string;
       sort?: "new" | "name";
       tile?: "s" | "m" | "l";
+      /** Every picture under the folder in one grid, several levels down (`api/fs/images`).
+       *  Absent is one level. Dropped on a walk to another folder (GalleryView `navigate`). */
+      flat?: boolean;
       galleryFocus?: string;
       gallerySession?: string;
     }
