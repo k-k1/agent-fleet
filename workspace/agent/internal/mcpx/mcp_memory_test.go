@@ -192,3 +192,11 @@ func TestMemoryToolsWithoutAnOwner(t *testing.T) {
 		t.Fatalf("read = %+v", r)
 	}
 }
+
+// A store holding only withheld files is not reported as empty.
+func TestMemoryIndexReportsWithheld(t *testing.T) {
+	out := mcpMemoryFormatIndex(`{"project":{"display":"p"},"entries":[],"withheld":2}`)
+	if !strings.Contains(out, "2 memory file(s) are withheld") || strings.Contains(out, "No memories yet") {
+		t.Fatalf("index = %q", out)
+	}
+}

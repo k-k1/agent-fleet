@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -589,5 +590,183 @@ func TestAgentMemoryErrorsDoNotEchoInput(t *testing.T) {
 		if err == nil || strings.Contains(err.Error(), key) {
 			t.Errorf("case %d: %v", i, err)
 		}
+	}
+}
+
+// ---- review round 2 (PR #1657) ----
+// Secret-shaped values are assembled at run time: gitleaks scans every pushed branch.
+
+func agentMemFakeSlackName() string { return "xo" + "xb-" + "1234567890" + "-abcdefghij" }
+
+// What a reader is shown is scanned decoded: a JSON escape cannot hide a key, and a name that is
+// itself secret-shaped withholds the file.
+func TestAgentMemoryPublishedValuesAreScanned(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "shell-home")
+	escaped := `A` + agentMemFakeAWS()[1:]
+	memoryMkdirAll(t, filepath.Join(agentMemDir(), "user"))
+	memoryWrite(t, filepath.Join(agentMemDir(), "user", "esc.md"), "---\nname: \"esc\"\ndescription: \"key "+escaped+"\"\n---\nbody\n")
+	memoryWrite(t, filepath.Join(agentMemDir(), "user", agentMemFakeSlackName()+".md"), "---\nname: x\ndescription: safe\n---\nsafe\n")
+	idx, err := agentMemListIndex(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(idx)
+	if idx.Withheld != 2 || strings.Contains(string(b), agentMemFakeAWS()) || strings.Contains(string(b), agentMemFakeSlackName()) {
+		t.Fatalf("index = %s", b)
+	}
+}
+
+// A refusal never builds a finding path from the name.
+func TestAgentMemorySecretNameNotEchoed(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "shell-home")
+	_, err := agentMemSave(c, agentMemSaveReq{Name: agentMemFakeSlackName(), Description: "d", Body: "b"}, time.Now())
+	var se *agentMemSecretErr
+	if !errors.As(err, &se) {
+		t.Fatalf("err = %v, want a refusal", err)
+	}
+	b, _ := json.Marshal(se.Findings)
+	if strings.Contains(string(b), agentMemFakeSlackName()) {
+		t.Fatalf("findings carry the name: %s", b)
+	}
+}
+
+// The tombstone directory is held to the same symlink rule, and a tombstone that cannot be
+// written refuses the forget instead of losing the revision.
+func TestAgentMemoryTombstoneSafety(t *testing.T) {
+	home, _, _ := agentMemTestEnv(t)
+	c := agentMemCallerT(t, "shell-home")
+	outside := filepath.Join(home, "outside")
+	memoryMkdirAll(t, outside)
+	memoryWrite(t, filepath.Join(outside, "x"), "17\n")
+	memoryMkdirAll(t, filepath.Join(agentMemDir(), "user"))
+	if err := os.Symlink(outside, filepath.Join(agentMemDir(), "user", agentMemTombDir)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "x", Description: "d", Body: "b"}, time.Now()); err == nil {
+		t.Fatal("create read a tombstone through a symlink")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "x")); err != nil {
+		t.Fatalf("the outside file was touched: %v", err)
+	}
+
+	if err := os.Remove(filepath.Join(agentMemDir(), "user", agentMemTombDir)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "y", Description: "d", Body: "b"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	memoryWrite(t, filepath.Join(agentMemDir(), "user", agentMemTombDir), "not a directory")
+	if _, err := agentMemForget(c, agentMemForgetReq{Name: "y", Revision: 1}, time.Now()); err == nil {
+		t.Fatal("forget succeeded without a tombstone")
+	}
+	if e, err := agentMemRead(c, "", "y"); err != nil || e.Body != "b" {
+		t.Fatalf("memory after a refused forget = %+v, %v", e, err)
+	}
+}
+
+// An oversized file is refused, never truncated (and so never written back truncated).
+func TestAgentMemoryOversizedFileRefused(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "shell-home")
+	big := "---\nname: big\ndescription: d\n---\n" + strings.Repeat("line\n", agentMemMaxFile/5+10)
+	memoryMkdirAll(t, filepath.Join(agentMemDir(), "user"))
+	p := filepath.Join(agentMemDir(), "user", "big.md")
+	memoryWrite(t, p, big)
+	if _, err := agentMemRead(c, "", "big"); err == nil {
+		t.Fatal("read an oversized file")
+	}
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "big", Description: "d", Body: "small", Revision: 1}, time.Now()); err == nil {
+		t.Fatal("updated an oversized file")
+	}
+	if b, _ := os.ReadFile(p); string(b) != big {
+		t.Fatal("the oversized file was changed")
+	}
+}
+
+// A FIFO in the store is skipped, not opened.
+func TestAgentMemoryFIFODoesNotBlock(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "shell-home")
+	memoryMkdirAll(t, filepath.Join(agentMemDir(), "user"))
+	if err := syscall.Mkfifo(filepath.Join(agentMemDir(), "user", "fifo.md"), 0o600); err != nil {
+		t.Skip("mkfifo:", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		_, _ = agentMemListIndex(c)
+		_, _ = agentMemRead(c, "", "fifo")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a FIFO blocked the store")
+	}
+}
+
+// project.json is committed, so the folder name it records is scanned too.
+func TestAgentMemoryProjectInfoScanned(t *testing.T) {
+	home, _, _ := agentMemTestEnv(t)
+	dir := filepath.Join(home, "repos", agentMemFakeAWS())
+	memoryMkdirAll(t, dir)
+	session.WriteMeta(session.Meta{Name: "odd", Dir: dir, Kind: "claude"})
+	c := agentMemCallerT(t, "odd")
+	_, err := agentMemSave(c, agentMemSaveReq{Name: "m", Description: "d", Body: "b"}, time.Now())
+	var se *agentMemSecretErr
+	if !errors.As(err, &se) || se.Findings[0].Path != "project" {
+		t.Fatalf("err = %v, want a refusal on project", err)
+	}
+	if memoryHasCommits() {
+		t.Fatal("project info with a secret was committed")
+	}
+}
+
+// Every worktree of one bare repository is one project.
+func TestAgentMemoryBareRepoWorktreesShareAProject(t *testing.T) {
+	home, _, _ := agentMemTestEnv(t)
+	bare := filepath.Join(home, "bare.git")
+	git := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	git(home, "init", "--quiet", "--bare", "-b", "main", bare)
+	seed := filepath.Join(home, "seed")
+	git(home, "clone", "--quiet", bare, seed)
+	git(seed, "commit", "--quiet", "--allow-empty", "-m", "init")
+	git(seed, "push", "--quiet", "origin", "main")
+	left, right := filepath.Join(home, "repos", "left"), filepath.Join(home, "repos", "right")
+	git(bare, "worktree", "add", "--quiet", left, "main")
+	git(bare, "worktree", "add", "--quiet", "-b", "other", right)
+	pl, pr := agentMemProjectFor(left), agentMemProjectFor(right)
+	if pl == nil || pr == nil || pl.ID != pr.ID {
+		t.Fatalf("bare worktrees: %+v vs %+v", pl, pr)
+	}
+}
+
+// A memory put in the store by hand, never committed, can still be forgotten, and the forget is
+// recorded with its author.
+func TestAgentMemoryForgetUntrackedFile(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "shell-home")
+	memoryMkdirAll(t, filepath.Join(agentMemDir(), "user"))
+	memoryWrite(t, filepath.Join(agentMemDir(), "user", "manual.md"), "---\nname: manual\ndescription: d\n---\nhand\n")
+	res, err := agentMemForget(c, agentMemForgetReq{Name: "manual", Revision: 1}, time.Now())
+	if err != nil || !res.Deleted {
+		t.Fatalf("forget = %+v, %v", res, err)
+	}
+	if _, err := agentMemRead(c, "", "manual"); agentMemCode(err) != errCodeMemoryNotFound {
+		t.Fatalf("read after forget: %v", err)
+	}
+	msg, _ := memoryGitRun("log", "-1", "--format=%B", memoryBranch)
+	if !strings.Contains(msg, "AF-Op: forget") || !strings.Contains(msg, "AF-Author-Kind: shell") {
+		t.Fatalf("forget not recorded:\n%s", msg)
 	}
 }

@@ -160,6 +160,7 @@ func mcpMemoryFormatIndex(raw string) string {
 		Project   *mcpMemoryProject `json:"project"`
 		Entries   []mcpMemoryEntry  `json:"entries"`
 		Truncated bool              `json:"truncated"`
+		Withheld  int               `json:"withheld"`
 	}
 	if json.Unmarshal([]byte(raw), &v) != nil {
 		return raw
@@ -170,8 +171,14 @@ func mcpMemoryFormatIndex(raw string) string {
 	} else {
 		b.WriteString("Project: none (this session has no working copy under ~/repos; user scope only)\n")
 	}
+	if v.Withheld > 0 {
+		// Count only: a withheld file's name may be the very thing that failed the scan.
+		fmt.Fprintf(&b, "%d memory file(s) are withheld because they look like they contain a secret or cannot be checked; tell your user, who has to fix them.\n", v.Withheld)
+	}
 	if len(v.Entries) == 0 {
-		b.WriteString("No memories yet. Save what a later session should know with memory_save.\n")
+		if v.Withheld == 0 {
+			b.WriteString("No memories yet. Save what a later session should know with memory_save.\n")
+		}
 		return b.String()
 	}
 	for _, e := range v.Entries {

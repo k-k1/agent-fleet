@@ -53,6 +53,7 @@ const (
 	agentMemTombDir    = ".forgotten"
 
 	agentMemMaxBody        = 64 << 10
+	agentMemMaxFile        = 4 * agentMemMaxBody
 	agentMemMaxLine        = 4 << 10
 	agentMemMaxDescription = 300
 	agentMemMaxKinds       = 16
@@ -139,7 +140,7 @@ func agentMemProjectFor(dir string) *agentMemProject {
 	if r, err := filepath.Rel(repos, root); err == nil && !strings.HasPrefix(r, "..") {
 		display = filepath.ToSlash(r)
 	}
-	return &agentMemProject{ID: agentMemProjectID(root, key), Root: root, VCS: vcs, Display: display}
+	return &agentMemProject{ID: agentMemProjectID(key), Root: root, VCS: vcs, Display: display}
 }
 
 // agentMemGitIdentity returns the repository's main working tree (for display) and its key:
@@ -171,11 +172,16 @@ func agentMemGitIdentity(dir string) (root, key string) {
 	return root, filepath.Clean(common)
 }
 
-// agentMemProjectID names a project by its root's base name, readable for a person browsing
-// the store, and keys it by the hash of key, so two roots with one base name never collide.
-func agentMemProjectID(root, key string) string {
+// agentMemProjectID derives the whole id from key alone, so every checkout of one repository
+// (a bare repository's worktrees included) gets the same id. The readable prefix is the
+// repository's own name: for ".../app/.git" it is "app", for ".../app.git" it is "app".
+func agentMemProjectID(key string) string {
 	sum := sha256.Sum256([]byte(key))
-	base := strings.ToLower(filepath.Base(root))
+	base := filepath.Base(key)
+	if base == ".git" {
+		base = filepath.Base(filepath.Dir(key))
+	}
+	base = strings.ToLower(strings.TrimSuffix(base, ".git"))
 	var b strings.Builder
 	for _, r := range base {
 		switch {
@@ -262,7 +268,9 @@ func agentMemCheckDir(rel string, create bool) (string, error) {
 // agentMemReadFile reads a regular file without following a symlink at the leaf.
 // ok=false: it does not exist.
 func agentMemReadFile(abs string) ([]byte, bool, error) {
-	f, err := os.OpenFile(abs, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	// O_NONBLOCK: opening a FIFO for reading would otherwise wait for a writer, with agentMemMu
+	// held. It has no effect on a regular file.
+	f, err := os.OpenFile(abs, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, false, nil
@@ -276,9 +284,20 @@ func agentMemReadFile(abs string) ([]byte, bool, error) {
 	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
 		return nil, false, agentMemErrSymlink
 	}
-	b, err := io.ReadAll(io.LimitReader(f, 4*agentMemMaxBody))
-	return b, true, err
+	b, err := io.ReadAll(io.LimitReader(f, agentMemMaxFile+1))
+	if err != nil {
+		return nil, true, err
+	}
+	if len(b) > agentMemMaxFile {
+		// Never return a truncated file: it would be shown as the memory, or written back as
+		// the original by a rollback.
+		return nil, true, agentMemErrTooLarge
+	}
+	return b, true, nil
 }
+
+// agentMemErrTooLarge is a stored file larger than any memory a save can produce.
+var agentMemErrTooLarge = errors.New("agent memory file is larger than the store accepts")
 
 // agentMemEntry is one memory. The frontmatter keys are snake_case (ADR 0108 decision 3, the
 // shape claude's memory files use); the wire is camelCase like the rest of the memory API.
@@ -426,20 +445,27 @@ func agentMemScanText(path, text string) []memorySecretFinding {
 	return memoryScanContent(path, []byte(text))
 }
 
-// agentMemScanCache remembers the verdict on a stored file by its content hash, so the index
-// does not rescan every file on every call.
-var agentMemScanCache sync.Map // sha256 hex -> bool (true = clean)
+// agentMemScanCache remembers the verdict on a stored file by its content and the name it is
+// shown under, so the index does not rescan every file on every call.
+var agentMemScanCache sync.Map // sha256(raw) + "\x00" + name -> bool (true = clean)
+
+// agentMemPublished is every value of an entry a reader is shown, decoded. It is what gets
+// scanned: the raw file can hide a value behind a JSON escape (\u0041) or an escaped quote.
+func agentMemPublished(e agentMemEntry) string {
+	return strings.Join(append([]string{e.Name, e.Scope, e.Description, e.Type,
+		e.AuthorKind, e.AuthorSession, e.Created, e.Updated, e.Source, e.SourceHash, e.Body}, e.Kinds...), "\n")
+}
 
 // agentMemClean says whether a stored file may be shown (ADR 0108 decision 9: what already
-// exists is scanned before it is first exposed). A hand-edited file that fails stays on disk,
-// withheld, for the member to fix.
-func agentMemClean(raw []byte) bool {
+// exists is scanned before it is first exposed): both the raw file and the decoded values it
+// would be shown as. A hand-edited file that fails stays on disk, withheld, for the member to fix.
+func agentMemClean(raw []byte, e agentMemEntry) bool {
 	sum := sha256.Sum256(raw)
-	key := hex.EncodeToString(sum[:])
+	key := hex.EncodeToString(sum[:]) + "\x00" + e.Scope + "\x00" + e.Name
 	if v, ok := agentMemScanCache.Load(key); ok {
 		return v.(bool)
 	}
-	clean := len(agentMemScanText("", string(raw))) == 0
+	clean := len(agentMemScanText("", string(raw))) == 0 && len(agentMemScanText("", agentMemPublished(e))) == 0
 	agentMemScanCache.Store(key, clean)
 	return clean
 }
@@ -473,7 +499,7 @@ func agentMemLoadScope(scope string, c agentMemCaller) ([]agentMemEntry, int, er
 	withheld := 0
 	for _, d := range ents {
 		name, ok := strings.CutSuffix(d.Name(), ".md")
-		if !ok || !agentMemNameRe.MatchString(name) {
+		if !ok || !d.Type().IsRegular() || !agentMemNameRe.MatchString(name) {
 			continue
 		}
 		l, ok, err := agentMemLoadFile(filepath.Join(dir, d.Name()), scope, name)
@@ -494,14 +520,14 @@ func agentMemLoadFile(abs, scope, name string) (agentMemLoaded, bool, error) {
 	if err != nil || !ok {
 		return agentMemLoaded{}, ok, err
 	}
-	if !agentMemClean(raw) {
-		return agentMemLoaded{Withheld: true}, true, nil
-	}
 	e, ok := agentMemParse(raw)
 	if !ok {
 		return agentMemLoaded{}, false, fmt.Errorf("memory file is not in the expected format")
 	}
 	e.Name, e.Scope = name, scope // the file name is the identity, not the frontmatter
+	if !agentMemClean(raw, e) {
+		return agentMemLoaded{Withheld: true}, true, nil
+	}
 	return agentMemLoaded{Entry: e}, true, nil
 }
 
@@ -770,14 +796,44 @@ func agentMemDefaultScope(scope string, c agentMemCaller) string {
 }
 
 // agentMemTombRevision is the last revision a forgotten memory had, so a re-created one never
-// reuses a revision a stale reader may still hold.
-func agentMemTombRevision(dir, name string) int {
-	b, ok, err := agentMemReadFile(filepath.Join(dir, agentMemTombDir, name))
-	if err != nil || !ok {
-		return 0
+// reuses a revision a stale reader may still hold. An unreadable tombstone is an error, never
+// revision 0: guessing low is exactly the reuse it exists to prevent.
+func agentMemTombRevision(rel, name string) (int, error) {
+	dir, err := agentMemCheckDir(rel+"/"+agentMemTombDir, false)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
 	}
-	n, _ := strconv.Atoi(strings.TrimSpace(string(b)))
-	return max(n, 0)
+	b, ok, err := agentMemReadFile(filepath.Join(dir, name))
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("tombstone of a forgotten memory is not a revision")
+	}
+	return n, nil
+}
+
+// agentMemWriteTomb records the revision a memory is forgotten at. It is written before the
+// forget is committed, so a forget that succeeded always has one.
+func agentMemWriteTomb(rel, name string, rev int) error {
+	dir, err := agentMemCheckDir(rel+"/"+agentMemTombDir, true)
+	if err != nil {
+		return err
+	}
+	return agentMemWriteFile(filepath.Join(dir, name), []byte(strconv.Itoa(rev)+"\n"))
+}
+
+func agentMemRemoveTomb(rel, name string) {
+	if dir, err := agentMemCheckDir(rel+"/"+agentMemTombDir, false); err == nil {
+		_ = os.Remove(filepath.Join(dir, name))
+	}
 }
 
 // agentMemSave publishes a create or update (ADR 0108 decisions 4, 8 and 9).
@@ -792,7 +848,10 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 	}
 	// The raw fields are scanned, not only the rendered file: rendering escapes quotes, which
 	// would hide `password: "…"` in a description from the rule that looks for it.
+	// Finding paths are fixed field names: a path built from the name would hand back a secret
+	// the name itself carries.
 	var findings []memorySecretFinding
+	findings = append(findings, agentMemScanText("name", req.Name)...)
 	findings = append(findings, agentMemScanText("description", req.Description)...)
 	findings = append(findings, agentMemScanText("body", req.Body)...)
 	if len(findings) > 0 {
@@ -828,7 +887,9 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 		return agentMemWriteResult{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound,
 			"the memory does not exist (it may have been forgotten); save it with revision 0 to create it")
 	case !exists:
-		base = agentMemTombRevision(dir, req.Name)
+		if base, err = agentMemTombRevision(rel, req.Name); err != nil {
+			return agentMemWriteResult{}, err
+		}
 	}
 
 	stamp := now.UTC().Format(time.RFC3339)
@@ -842,7 +903,7 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 	}
 	data := agentMemRender(e)
 	repoRel := rel + "/" + req.Name + ".md"
-	if f := agentMemScanText(agentMemRepoPrefix+"/"+repoRel, string(data)); len(f) > 0 {
+	if f := agentMemScanText("memory", string(data)); len(f) > 0 {
 		return agentMemWriteResult{}, &agentMemSecretErr{Findings: f}
 	}
 
@@ -851,6 +912,10 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 		info := agentMemProjectInfoRel(*c.Project)
 		if _, ok, _ := agentMemReadFile(filepath.Join(agentMemDir(), filepath.FromSlash(info))); !ok {
 			b, _ := json.MarshalIndent(c.Project, "", "  ")
+			// The root path comes from a folder name anyone can choose; it is committed too.
+			if f := agentMemScanText("project", string(b)); len(f) > 0 {
+				return agentMemWriteResult{}, &agentMemSecretErr{Findings: f}
+			}
 			changes = append(changes, agentMemChange{Rel: info, Data: append(b, '\n')})
 		}
 	}
@@ -863,7 +928,7 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 		return agentMemWriteResult{}, err
 	}
 	if !exists {
-		_ = os.Remove(filepath.Join(dir, agentMemTombDir, req.Name))
+		agentMemRemoveTomb(rel, req.Name)
 	}
 	return agentMemWriteResult{Name: e.Name, Scope: e.Scope, Revision: e.Revision, Commit: rev, Created: !exists}, nil
 }
@@ -913,12 +978,13 @@ func agentMemForget(c agentMemCaller, req agentMemForgetReq, now time.Time) (age
 			"the memory is at revision %d, not %d; read it again before forgetting it", cur.Entry.Revision, req.Revision)
 	}
 	repoRel := rel + "/" + req.Name + ".md"
-	rev, err := agentMemApplyLocked([]agentMemChange{{Rel: repoRel, Delete: true}}, "forget", repoRel, c, now)
-	if err != nil {
+	if err := agentMemWriteTomb(rel, req.Name, cur.Entry.Revision); err != nil {
 		return agentMemWriteResult{}, err
 	}
-	if _, err := agentMemCheckDir(rel+"/"+agentMemTombDir, true); err == nil {
-		_ = agentMemWriteFile(filepath.Join(dir, agentMemTombDir, req.Name), []byte(strconv.Itoa(cur.Entry.Revision)+"\n"))
+	rev, err := agentMemApplyLocked([]agentMemChange{{Rel: repoRel, Delete: true}}, "forget", repoRel, c, now)
+	if err != nil {
+		// The memory is back; a tombstone beside it is harmless (it is read only on create).
+		return agentMemWriteResult{}, err
 	}
 	return agentMemWriteResult{Name: req.Name, Scope: req.Scope, Revision: cur.Entry.Revision, Commit: rev, Deleted: true}, nil
 }
@@ -1000,25 +1066,67 @@ func agentMemApplyLocked(changes []agentMemChange, op, memRel string, c agentMem
 		}
 	}
 
-	args := append([]string{"add", "-A", "--"}, paths...)
-	if _, err := memoryGitRun(args...); err != nil {
-		undo()
-		return "", fmt.Errorf("stage agent memory: %w", err)
+	// A path git has never seen and that is gone now (forgetting a file put in the store by
+	// hand) has nothing to stage; pathspecs that match nothing would fail the whole commit.
+	var staged []string
+	for i, p := range paths {
+		tracked, _ := memoryGitRun("ls-files", "--", p)
+		if tracked != "" || !changes[i].Delete {
+			staged = append(staged, p)
+		}
+	}
+	if len(staged) > 0 {
+		if _, err := memoryGitRun(append([]string{"add", "-A", "--"}, staged...)...); err != nil {
+			undo()
+			return "", fmt.Errorf("stage agent memory: %w", err)
+		}
 	}
 	msg := fmt.Sprintf("agent-memory: %s %s (%s)\n\nAF-Trigger: %s\nAF-Op: %s\nAF-Memory: %s\nAF-Author-Kind: %s\nAF-Author-Session: %s\n",
 		op, memRel, now.Format(time.RFC3339),
 		memoryTriggerAgentMemory, op, agentMemRepoPrefix+"/"+memRel, c.Kind, c.Session)
-	// --only with pathspecs commits these paths alone even if something else is staged.
-	args = append([]string{"commit", "--quiet", "--no-verify", "-m", msg, "--"}, paths...)
-	if _, err := memoryGitRun(args...); err != nil {
-		undo()
-		return "", fmt.Errorf("commit agent memory: %w", err)
-	}
-	rev, err := memoryGitRun("rev-parse", memoryBranch)
-	if err != nil {
-		return "", err
+	var rev string
+	if len(staged) > 0 {
+		// --only with pathspecs commits these paths alone even if something else is staged.
+		if _, err := memoryGitRun(append([]string{"commit", "--quiet", "--no-verify", "-m", msg, "--"}, staged...)...); err != nil {
+			undo()
+			return "", fmt.Errorf("commit agent memory: %w", err)
+		}
+		var err error
+		if rev, err = memoryGitRun("rev-parse", memoryBranch); err != nil {
+			return "", err
+		}
+	} else {
+		// Still one commit per published change, so the forget has its author in history.
+		var err error
+		if rev, err = agentMemEmptyCommit(msg); err != nil {
+			undo()
+			return "", err
+		}
 	}
 	_, _ = memoryGitRun("gc", "--auto", "--quiet")
+	return rev, nil
+}
+
+// agentMemEmptyCommit records msg on main without touching the index, for a change git has no
+// path for.
+func agentMemEmptyCommit(msg string) (string, error) {
+	args := []string{"commit-tree", "-m", msg}
+	if memoryHasCommits() {
+		args = append(args, "-p", memoryBranch, memoryBranch+"^{tree}")
+	} else {
+		tree, err := memoryGitRun("mktree")
+		if err != nil {
+			return "", err
+		}
+		args = append(args, tree)
+	}
+	rev, err := memoryGitRun(args...)
+	if err != nil {
+		return "", fmt.Errorf("record agent memory change: %w", err)
+	}
+	if _, err := memoryGitRun("update-ref", "refs/heads/"+memoryBranch, rev); err != nil {
+		return "", err
+	}
 	return rev, nil
 }
 
