@@ -123,17 +123,19 @@ describe("ticket references", () => {
     expect(d?.item.url).toBe("https://github.com/octo/fleet/issues/1652");
   });
 
-  it("re-guesses a guessed link when clicked, once the cache or the clones know better", async () => {
+  it("re-guesses a guessed link once the cache or the clones know better", async () => {
     useReposStore.setState({ repos: [] });
     await render("see team/svc#7 and team/svc#8", null);
     expect(links()).toHaveLength(2);
-    useReposStore.setState({ repos: [{ name: "svc", provider: "bitbucket", remote: "bitbucket.org", remotePath: "team/svc" }] });
-    useWorkItemStore.setState({ payload: payload([row("bitbucket", "team/svc#7", { kind: "pr" })]) });
+    await act(async () => {
+      useReposStore.setState({ repos: [{ name: "svc", provider: "bitbucket", remote: "bitbucket.org", remotePath: "team/svc" }] });
+      useWorkItemStore.setState({ payload: payload([row("bitbucket", "team/svc#7", { kind: "pr" })]) });
+    });
+    // #8 is an uncached number on a Bitbucket repository: text again, never the GitHub it was
+    // guessed for. #7 is now the cached Bitbucket pull request.
+    expect(links().map((a) => a.textContent)).toEqual(["team/svc#7"]);
     await click(links()[0]);
     expect(useWorkItemModal.getState().detail?.item).toMatchObject({ provider: "bitbucket", key: "team/svc#7", title: "title of team/svc#7" });
-    // #8 is uncached on a Bitbucket repository: never sent to the GitHub it was guessed for.
-    await click(links()[1]);
-    expect(useWorkItemModal.getState().detail?.item.url).toBe("https://bitbucket.org/team/svc/pull-requests/8");
   });
 
   it("goes straight to the tracker on a Ctrl-click", async () => {
@@ -261,6 +263,24 @@ describe("ticket references", () => {
     });
     expect(host.querySelector("a.md-path-link")).toBeNull();
     expect(host.querySelector("code a.md-workitem-link")?.textContent).toBe("team/app#7");
+  });
+
+  it("turns a guessed link back into text once the clones make it ambiguous", async () => {
+    useReposStore.setState({ repos: [] });
+    await render("see team/both#7 and octo/fleet#956", null);
+    expect(links()).toHaveLength(2);
+    await act(async () => {
+      useReposStore.setState({
+        repos: [
+          { name: "bb-copy", provider: "bitbucket", remote: "bitbucket.org", remotePath: "team/both" },
+          { name: "gh-copy", provider: "github", remote: "github.com", remotePath: "team/both" },
+        ],
+      });
+    });
+    // As if rendered now: team/both is on both hosts, so its uncached number is not guessed. The
+    // link drawn from a cached row stays.
+    expect(links().map((a) => a.textContent)).toEqual(["octo/fleet#956"]);
+    expect(host.textContent).toContain("see team/both#7 and");
   });
 
   it("re-links when only a clone's host changes", async () => {

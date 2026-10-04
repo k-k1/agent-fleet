@@ -16,7 +16,6 @@ import { dedupeWorkItems, sortWorkItems, type WorkItem } from "../../workitems/r
 import {
   classifyWorkItemRef,
   cloneHosts,
-  hostOf,
   isQualifiedIssueToken,
   ISSUE_REF_SRC,
   JIRA_REF_SRC,
@@ -115,6 +114,16 @@ export function linkifyRefs(
   // to this pass first. Linked, the <code> gains an element and linkifyPathRefs (which runs after)
   // passes it over; not linked, it is still a path candidate there.
   const ticketCode = (code: Element) => !!wiCtx && isQualifiedIssueToken((code.textContent ?? "").trim());
+  // A guessed ticket link drawn earlier is judged again with what is known now (the clones may
+  // have arrived and put the repository on both hosts, or on Bitbucket): one this pass would not
+  // draw goes back to text, so the page reads as if it had been rendered now. Links drawn from a
+  // cached row keep their host and stay.
+  if (wiCtx) {
+    root.querySelectorAll<HTMLAnchorElement>("a.md-workitem-link[data-guessed]").forEach((a) => {
+      const text = a.textContent ?? "";
+      if (!classifyWorkItemRef(text, wiCtx, !!a.parentElement?.closest("code"))) a.replaceWith(text);
+    });
+  }
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
       if (!n.nodeValue || !/[0-9a-z]/i.test(n.nodeValue)) return NodeFilter.FILTER_REJECT;
@@ -201,12 +210,16 @@ const cachedWorkItems = (): WorkItem[] =>
 function makeWorkItemLink(text: string, repo: string | null, drawn: WorkItemRef): HTMLAnchorElement {
   const a = document.createElement("a");
   a.className = "md-ref-link md-workitem-link";
+  if (drawn.guessed) a.dataset.guessed = "1";
   a.textContent = text;
   a.setAttribute("role", "link");
   a.tabIndex = 0;
   const current = () => {
     const ctx = workItemRefContext(repo);
-    const ref = drawn.guessed ? reguess(text, drawn, ctx) : drawn;
+    // A guessed link is guessed again: its row may have reached the cache. One that would not be
+    // drawn now is already text again — the linkifier re-runs whenever the cache or the clones
+    // change — so falling back to the drawn guess is only for the instant in between.
+    const ref = drawn.guessed ? (classifyWorkItemRef(text, ctx) ?? drawn) : drawn;
     // Launch from the working copy this text is about only when the ticket belongs to it — same
     // path AND same host; read now, since the repository list may have arrived after the text.
     const repoHint =
@@ -245,18 +258,6 @@ function makeWorkItemLink(text: string, repo: string | null, drawn: WorkItemRef)
     }
   });
   return a;
-}
-
-// reguess re-makes a guessed reference with what is known now: its row may have reached the cache,
-// or the clones may say the repository is on Bitbucket. When nothing would be linked now (an
-// uncached Bitbucket number), the link still opens — on the host the clones name, never on the
-// one it was guessed for.
-function reguess(text: string, drawn: WorkItemRef, ctx: WorkItemRefContext): WorkItemRef {
-  const now = classifyWorkItemRef(text, ctx);
-  if (now) return now;
-  const hash = text.lastIndexOf("#");
-  const host = hash > 0 ? hostOf(text.slice(0, hash), ctx) : undefined;
-  return host === "bitbucket" ? { provider: host, key: drawn.key } : drawn;
 }
 
 // makeCommitLink builds a non-navigating anchor for a bare sha. On click it verifies the
