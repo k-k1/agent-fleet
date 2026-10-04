@@ -3,7 +3,10 @@ package memoryx
 import (
 	"encoding/json"
 	"errors"
+	"io/fs"
+	"log"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -817,5 +820,46 @@ func TestAgentMemoryMalformedFilesAreCounted(t *testing.T) {
 	idx, err := agentMemListIndex(c)
 	if err != nil || idx.Withheld != 2 || len(idx.Entries) != 0 {
 		t.Fatalf("index = %+v, %v", idx, err)
+	}
+}
+
+// ---- review round 4 (PR #1657) ----
+
+// A token-shaped name never comes back out: read and forget refuse it before touching a path,
+// and an OS error that quotes a path reaches neither the response nor the log.
+func TestAgentMemoryUnreadableTokenNamedFileNotEchoed(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	name := agentMemFakeSlackName()
+	memoryMkdirAll(t, filepath.Join(agentMemDir(), "user"))
+	p := filepath.Join(agentMemDir(), "user", name+".md")
+	memoryWrite(t, p, "---\nname: x\ndescription: d\n---\nb\n")
+	if err := os.Chmod(p, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(p, 0o600) })
+
+	var logs strings.Builder
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	mux := buildMux()
+	for _, req := range []struct{ method, path, body string }{
+		{http.MethodGet, "/agents/memory/entries/read?session=shell-home&name=" + name, ""},
+		{http.MethodPost, "/agents/memory/entries/forget", `{"session":"shell-home","name":"` + name + `","revision":1}`},
+		{http.MethodGet, "/agents/memory/entries?session=shell-home", ""},
+	} {
+		w := smokeDo(t, mux, req.method, req.path, "", req.body)
+		if strings.Contains(w.Body.String(), name) {
+			t.Errorf("%s %s echoed the name: %s", req.method, req.path, w.Body)
+		}
+	}
+	// The boundary itself: a path-bearing OS error is reduced to its kind.
+	w := httptest.NewRecorder()
+	agentMemWriteErr(w, &os.PathError{Op: "open", Path: "/x/user/" + name + ".md", Err: fs.ErrPermission})
+	if strings.Contains(w.Body.String(), name) || !strings.Contains(w.Body.String(), "permission denied") {
+		t.Errorf("boundary response = %s", w.Body)
+	}
+	if strings.Contains(logs.String(), name) {
+		t.Errorf("log carries the name:\n%s", logs.String())
 	}
 }

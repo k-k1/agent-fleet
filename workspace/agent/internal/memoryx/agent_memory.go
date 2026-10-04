@@ -662,8 +662,8 @@ func agentMemTruncate(s string, n int) string {
 
 // agentMemRead returns one memory with its body. With no scope it looks in the project first.
 func agentMemRead(c agentMemCaller, scope, name string) (agentMemEntry, error) {
-	if !agentMemNameRe.MatchString(name) {
-		return agentMemEntry{}, agentMemBadName()
+	if err := agentMemCheckName(name); err != nil {
+		return agentMemEntry{}, err
 	}
 	scopes := agentMemScopes(c)
 	if scope != "" {
@@ -701,6 +701,18 @@ func agentMemLoadOne(c agentMemCaller, scope, name string) (agentMemLoaded, bool
 		return agentMemLoaded{}, false, err
 	}
 	return agentMemLoadFile(filepath.Join(dir, name+".md"), scope, name)
+}
+
+// agentMemCheckName is the gate every name passes before it reaches a path: the slug rule, then
+// the secret scan, so a token-shaped name never gets as far as an error that quotes a path.
+func agentMemCheckName(name string) error {
+	if !agentMemNameRe.MatchString(name) {
+		return agentMemBadName()
+	}
+	if len(agentMemScanText("name", name)) > 0 {
+		return memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "name looks like a secret; choose a descriptive name")
+	}
+	return nil
 }
 
 func agentMemBadName() error {
@@ -943,8 +955,8 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 // a secret from history is a separate, member-only operation (ADR 0108 open question 3).
 func agentMemForget(c agentMemCaller, req agentMemForgetReq, now time.Time) (agentMemWriteResult, error) {
 	req.Name = strings.TrimSpace(req.Name)
-	if !agentMemNameRe.MatchString(req.Name) {
-		return agentMemWriteResult{}, agentMemBadName()
+	if err := agentMemCheckName(req.Name); err != nil {
+		return agentMemWriteResult{}, err
 	}
 	if req.Revision < 1 {
 		return agentMemWriteResult{}, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest,
@@ -1038,11 +1050,11 @@ func agentMemApplyLocked(changes []agentMemChange, op, memRel string, c agentMem
 				err = rmErr
 			}
 			if err != nil {
-				log.Printf("agent memory: undo %s: %v", ch.Rel, err)
+				log.Printf("agent memory: undo: %s", agentMemErrKind(err))
 			}
 		}
 		if err := agentMemResetStaging(paths); err != nil {
-			log.Printf("agent memory: reset staging: %v", err)
+			log.Printf("agent memory: reset staging: %s", agentMemErrKind(err))
 		}
 	}
 

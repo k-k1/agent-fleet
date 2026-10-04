@@ -6,6 +6,8 @@ package memoryx
 
 import (
 	"errors"
+	"io/fs"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -33,7 +35,32 @@ func agentMemWriteErr(w http.ResponseWriter, err error) {
 		})
 		return
 	}
-	memoryWriteErr(w, err, errCodeMemorySnapshotFailed)
+	var ue *memoryUserErr
+	if errors.As(err, &ue) {
+		httpx.WriteErr(w, ue.Status, ue.Code, ue.Msg)
+		return
+	}
+	// OS and git errors carry paths, and a path carries a memory name nobody has scanned yet
+	// (a hand-made file named like a token): neither the response nor the log gets more than
+	// the kind of failure.
+	msg := agentMemErrKind(err)
+	log.Printf("agent memory: %s", msg)
+	httpx.WriteErr(w, http.StatusInternalServerError, errCodeMemorySnapshotFailed, msg)
+}
+
+// agentMemErrKind names a failure without any text that came from the filesystem or git.
+func agentMemErrKind(err error) string {
+	switch {
+	case errors.Is(err, agentMemErrSymlink):
+		return agentMemErrSymlink.Error()
+	case errors.Is(err, agentMemErrTooLarge):
+		return agentMemErrTooLarge.Error()
+	case errors.Is(err, fs.ErrPermission):
+		return "agent memory file or directory is not accessible (permission denied)"
+	case errors.Is(err, fs.ErrNotExist):
+		return "agent memory file or directory vanished during the operation"
+	}
+	return "agent memory operation failed (internal error)"
 }
 
 func agentMemCallerFrom(w http.ResponseWriter, name string) (agentMemCaller, bool) {
