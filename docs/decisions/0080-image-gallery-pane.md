@@ -4,7 +4,7 @@ English | [日本語](0080-image-gallery-pane.ja.md)
 
 - Status: **accepted** (drafted 2026-09-13; accepted the same day with the review's corrections
   folded in).
-- Follow-ups: #961
+- Follow-ups: #961, #1643
 - Related: [0049](0049-session-changed-files.md) decision 4 and [0046](0046-drawio-viewer.md)
   (**do not add a `PaneKind`; add one more face to an existing pane** — this ADR argues the
   exception) / [0078](0078-sessions-overview-pane.md) (the nearest precedent: one pane kind, the
@@ -286,6 +286,8 @@ that can ignore `.gitignore` and bound the result (`GET /fs/images?path=&depth=&
 gets built **once recursion is known to be needed**. The flat cases (generated images, `docs/img`,
 a folder of screenshots) are most of the cases, and they come first.
 
+- *Added 2026-10-04:* that endpoint is decision 17.
+
 **Revised in P1 (2026-09-14, at the user's request): let the READER do the walking.**
 Subfolders are drawn as cards, and opening one MOVES THIS PANE into it (the breadcrumb goes back;
 `galleryFocus` and `gallerySession` are dropped on the way, `sort` is carried). **The listing is
@@ -515,6 +517,37 @@ decode, not the scale).
   it would be a grid of numbers), in the card name's tooltip, and as the first line of the
   lightbox's (i) panel, which touch devices reach without hover.
 
+### Decision 17 — "include subfolders" is `GET /fs/images`, "send" is the file pane's send, and W x H honours EXIF (P1)
+
+- **Flattening is one bounded walk on the Agent** (`fs_images.go`), the endpoint decision 9
+  reserved. It answers `fs/tree`'s entry shape with `name` = the path relative to the folder
+  asked for (`sub/a.png`), so the gallery joins folder + name exactly as it does for one level.
+  - Bounded on every axis at once: depth (default 3, max 6), entries returned (default 1000,
+    max 2000), 400 folders, 20,000 directory entries and 500 ms. Past any of them the answer is
+    the newest of what was seen, marked `truncated`, and the header says "newest N only".
+  - It never leaves the folder: the start goes through `fs/tree`'s own gate (`safeBrowsePath`,
+    the codex store, `fsQueryResolvedOK` for a symlinked start), every child through the
+    denylist by its browse-relative path, and a symlink — file or folder — is skipped rather
+    than followed. Hidden folders below the start are skipped (`.git` has thousands of entries
+    and no pictures); a hidden START is walked, which is how `.cache/agent-fleet/generated` is
+    reached.
+  - `warm=` warms the newest 120 on the existing two background workers.
+  - The toggle is pane content (`flat: true`, absent = off), beside `sort` and `tile`. It is
+    **dropped on a walk to another folder**: carried to the browse root it would turn one click
+    on "Home" into a walk of the whole home folder. The cache keys a flattened folder apart from
+    the one-level listing of the same path. A rename builds the destination in the picture's own
+    folder, not the folder on screen.
+- **"Send" is `SendSelectionModal` in file mode** (the file pane's own), opened from an image
+  card's right-click menu. A session gets the path through `api/sessions/<name>/input`, as the
+  file mode always did; an assistant gets the chat that quote mode already opens
+  (`chatCreate` with `attach_path`, then `openChat` with the comment drafted). The modal gained
+  `withAssistants`, because plain file mode hides assistants — a picture is something to look
+  at, which an assistant can do. No new transport and no new route.
+- **W x H swaps its edges for EXIF orientation 5-8** (JPEG only). The browser draws such a file
+  upright (`image-orientation: from-image`), so the stored width is the height the reader sees.
+  The APP1 segment sits before the frame header, so it is read from the bytes `DecodeConfig`
+  already consumed: no second read.
+
 ## Options rejected
 
 - **A modal gallery** (like cleanup / archive): cheap, but it throws away everything a pane gets
@@ -597,6 +630,8 @@ decode, not the scale).
   session or an assistant; W x H (the header-reading endpoint); an endpoint that flattens several
   levels into one grid; tile size (S/M/L) and the matching `thumb`.
   - *Added 2026-10-01:* W x H and the tile sizes landed as decision 16.
+  - *Added 2026-10-04:* "send" and the flattening endpoint landed as decision 17, which also
+    makes W x H honour EXIF orientation.
 - **P2 (landed 2026-09-15)**: ✅ decision 10 (a folder walked into is remembered); ✅ decision 11
   (a folder's cover and count, `peek`); ✅ decision 12 (the lightbox's screen-sized copy,
   `preview`); ✅ decision 13 (the fast path in the downscale).

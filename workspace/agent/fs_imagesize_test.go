@@ -187,3 +187,70 @@ func TestImageSizeCapsThePathsPerRequest(t *testing.T) {
 		t.Errorf("a path past the cap was answered")
 	}
 }
+
+// withExifOrientation inserts an APP1 "Exif" segment carrying only IFD0's Orientation right
+// after the SOI marker, which is where cameras and phones put it.
+func withExifOrientation(t *testing.T, jpg []byte, orient uint16, bigEndian bool) []byte {
+	t.Helper()
+	tiff := []byte{'I', 'I', 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, byte(orient), byte(orient >> 8), 0, 0, 0, 0, 0, 0}
+	if bigEndian {
+		tiff = []byte{'M', 'M', 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, byte(orient >> 8), byte(orient), 0, 0, 0, 0, 0, 0}
+	}
+	payload := append([]byte("Exif\x00\x00"), tiff...)
+	n := len(payload) + 2
+	seg := append([]byte{0xFF, 0xE1, byte(n >> 8), byte(n)}, payload...)
+	out := append([]byte{}, jpg[:2]...)
+	out = append(out, seg...)
+	return append(out, jpg[2:]...)
+}
+
+// A phone's portrait JPEG is stored landscape with Orientation 6; the browser draws it upright,
+// so the size the reader sees has the two edges swapped. 1-4 keep the stored edges.
+func TestImageSizeAppliesExifOrientation(t *testing.T) {
+	root := thumbRoots(t)
+	img := image.NewRGBA(image.Rect(0, 0, 640, 480))
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name   string
+		orient uint16
+		big    bool
+		w, h   int
+	}{
+		{"r6.jpg", 6, false, 480, 640},
+		{"r8.jpg", 8, true, 480, 640},
+		{"r5.jpg", 5, false, 480, 640},
+		{"r3.jpg", 3, false, 640, 480},
+		{"r1.jpg", 1, true, 640, 480},
+	}
+	var paths []string
+	for _, c := range cases {
+		if err := os.WriteFile(filepath.Join(root, c.name), withExifOrientation(t, buf.Bytes(), c.orient, c.big), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, c.name)
+	}
+	got := imageSizeRequest(t, paths...)
+	for _, c := range cases {
+		if g := got[c.name]; g.W != c.w || g.H != c.h {
+			t.Errorf("%s (orientation %d) = %dx%d, want %dx%d", c.name, c.orient, g.W, g.H, c.w, c.h)
+		}
+	}
+}
+
+// Malformed or truncated EXIF is "no orientation", never a panic or a swapped size.
+func TestJPEGOrientationToleratesGarbage(t *testing.T) {
+	for _, b := range [][]byte{
+		nil,
+		{0xFF, 0xD8},
+		{0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x40, 'E', 'x', 'i', 'f', 0, 0},
+		{0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x10, 'E', 'x', 'i', 'f', 0, 0, 'I', 'I', 42, 0, 0xFF, 0xFF, 0xFF, 0x7F},
+		{0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x01},
+	} {
+		if got := jpegOrientation(b); got != 0 {
+			t.Errorf("jpegOrientation(%v) = %d, want 0", b, got)
+		}
+	}
+}

@@ -24,6 +24,17 @@ interface CacheEntry {
   at: number;
   scrollTop: number;
   limit: number;
+  /** A flattened listing that left pictures out (`api/fs/images`'s bounds). */
+  truncated?: boolean;
+}
+
+/**
+ * The cache key for a folder as one view shows it. A flattened folder is a different listing
+ * of the same path — its own entries, scroll position and page size — so it is remembered
+ * under its own key; NUL cannot appear in a path, so the two never collide.
+ */
+export function galleryKey(path: string, flat?: boolean): string {
+  return flat ? path + "\u0000flat" : path;
 }
 
 /**
@@ -63,9 +74,15 @@ function put(path: string, next: CacheEntry): void {
 
 /** Remember a listing. The reader's place in the folder is kept — a background refresh that
  *  landed one new picture must not scroll them back to the top. */
-export function writeGallery(path: string, entries: FsEntry[]): void {
-  const prev = cache.get(path);
-  put(path, { entries, at: Date.now(), scrollTop: prev?.scrollTop ?? 0, limit: prev?.limit ?? PAGE_SIZE });
+export function writeGallery(key: string, entries: FsEntry[], truncated?: boolean): void {
+  const prev = cache.get(key);
+  put(key, {
+    entries,
+    at: Date.now(),
+    scrollTop: prev?.scrollTop ?? 0,
+    limit: prev?.limit ?? PAGE_SIZE,
+    ...(truncated ? { truncated } : {}),
+  });
 }
 
 /** Remember where in the folder the reader is. Written from a scroll handler and from "show
@@ -108,29 +125,50 @@ export function galleryTreeURL(path: string, warm: number): string {
 }
 
 /**
+ * How deep "include subfolders" walks and how many pictures it asks for. Three levels covers
+ * the generated root (root → session folder → pictures) and a docs/img-style tree; the limit
+ * is a few pages of PAGE_SIZE — the Agent bounds its walk on its own as well (fs_images.go).
+ */
+const FLAT_DEPTH = 3;
+const FLAT_LIMIT = 1000;
+
+/** The flattened listing's URL. Same one-builder rule as galleryTreeURL. */
+export function galleryImagesURL(path: string, warm: number): string {
+  return `api/fs/images?path=${encodeURIComponent(path)}&depth=${FLAT_DEPTH}&limit=${FLAT_LIMIT}&warm=${warm}`;
+}
+
+/**
  * `ok` is a listing to show. `retry` says what a failure MEANS: true for a transport failure
  * or a 5xx (the CP's answer while the agent restarts — worth another try), false for an answer
  * that settled (gone, denied, or the request was aborted).
  */
-export type ListingResult = { ok: true; entries: FsEntry[] } | { ok: false; retry: boolean; hard: boolean };
+export type ListingResult =
+  | { ok: true; entries: FsEntry[]; truncated?: boolean }
+  | { ok: false; retry: boolean; hard: boolean };
 
 /**
  * Read one folder and cache it. `hard` distinguishes "the Agent answered, and the answer is no"
  * — which a first read must show as an error rather than keep a stale grid for — from a
  * transport failure, where what is already on screen is the better answer.
  */
-export async function fetchGalleryListing(path: string, warm: number, signal?: AbortSignal): Promise<ListingResult> {
-  let d: { entries?: FsEntry[]; error?: { code?: string } };
+export async function fetchGalleryListing(
+  path: string,
+  warm: number,
+  signal?: AbortSignal,
+  flat?: boolean,
+): Promise<ListingResult> {
+  let d: { entries?: FsEntry[]; truncated?: boolean; error?: { code?: string } };
   try {
-    d = await api(galleryTreeURL(path, warm));
+    d = await api(flat ? galleryImagesURL(path, warm) : galleryTreeURL(path, warm));
   } catch {
     return { ok: false, retry: true, hard: false };
   }
   if (signal?.aborted) return { ok: false, retry: false, hard: false };
   if (!d || isTransientErr(d)) return { ok: false, retry: true, hard: false };
   if (d.error || !Array.isArray(d.entries)) return { ok: false, retry: false, hard: true };
-  writeGallery(path, d.entries);
-  return { ok: true, entries: d.entries };
+  const truncated = d.truncated === true;
+  writeGallery(galleryKey(path, flat), d.entries, truncated);
+  return { ok: true, entries: d.entries, ...(truncated ? { truncated } : {}) };
 }
 
 /**

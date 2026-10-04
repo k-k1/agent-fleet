@@ -28,6 +28,8 @@ const {
   clearGalleryCache,
   fetchGalleryListing,
   forgetGallery,
+  galleryImagesURL,
+  galleryKey,
   galleryTreeURL,
   prefetchGallery,
   readGallery,
@@ -132,5 +134,42 @@ describe("ギャラリーのフォルダキャッシュ", () => {
     // And the folder is not left marked as in flight — the next pointer may try again.
     prefetchGallery("nope", 512);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("サブフォルダもまとめた一覧（flat）", () => {
+  it("同じフォルダでも別の一覧として覚える（一段の一覧と混ざらない）", async () => {
+    const answer = async (url?: unknown) => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: { get: () => null },
+      text: async () =>
+        JSON.stringify(
+          String(url).includes("fs/images")
+            ? { entries: [entry("sub/a.png")], truncated: true }
+            : { entries: [entry("top.png")] },
+        ),
+    });
+    // Once per call, so the file's default answer is back for whatever runs next.
+    fetchMock.mockImplementationOnce(answer).mockImplementationOnce(answer);
+    const flat = await fetchGalleryListing("gen", 256, undefined, true);
+    expect(flat).toEqual({ ok: true, entries: [entry("sub/a.png")], truncated: true });
+    expect(String(fetchMock.mock.calls[0][0])).toContain(galleryImagesURL("gen", 256));
+
+    await fetchGalleryListing("gen", 256);
+    expect(readGallery(galleryKey("gen", true))?.entries).toEqual([entry("sub/a.png")]);
+    expect(readGallery(galleryKey("gen", true))?.truncated).toBe(true);
+    expect(readGallery("gen")?.entries).toEqual([entry("top.png")]);
+    expect(galleryKey("gen", false)).toBe("gen");
+    expect(galleryKey("gen", true)).not.toBe("gen");
+  });
+
+  it("URL は深さと上限を付けて fs/images を呼ぶ", () => {
+    const u = galleryImagesURL("a b", 512);
+    expect(u.startsWith("api/fs/images?path=a%20b&")).toBe(true);
+    expect(u).toMatch(/depth=\d+/);
+    expect(u).toMatch(/limit=\d+/);
+    expect(u).toContain("warm=512");
   });
 });
