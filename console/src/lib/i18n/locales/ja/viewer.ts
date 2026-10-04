@@ -161,6 +161,7 @@ export const viewer = {
   "view.open_commit": "コミット {sha} を開く",
   "view.commit_not_found": "コミットが見つかりません: {sha}",
   "view.open_session": "セッション {name} を開く",
+  "view.open_work_item": "{key} を開く",
   "view.session_not_found": "セッションが見つかりません: {name}",
   "view.open_conversation": "チャット {slug} を開く",
   "view.conversation_not_found": "会話が見つかりません: {slug}",

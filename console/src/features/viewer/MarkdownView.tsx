@@ -11,6 +11,8 @@ import { useSessionLinkMenu } from "../sessions/SessionLinkMenu.tsx";
 import { useChatStore, ensureConvs } from "../chat/store.ts";
 import { openChat, openChatSplit } from "../chat/open.ts";
 import { useFilesStore } from "../files/store.ts";
+import { ensureWorkItems, useWorkItemStore } from "../workitems/store.ts";
+import { WORK_ITEM_HINT_RE } from "../workitems/refs.ts";
 import { markRepairedTables, renderFrontMatter } from "./parts/mdFrontMatter.ts";
 import { renderEmoji } from "./parts/mdEmoji.ts";
 import { CONV_HINT_RE, linkifyPathRefs, linkifyRefs } from "./parts/mdRefLinks.ts";
@@ -60,6 +62,10 @@ interface MarkdownViewProps {
   // highlight layer sends it back when a mark is created; the Agent re-checks it, because
   // only kinds whose text crosses the shared DTO verbatim may carry one (docs/log/69 §69.4).
   markKind?: string;
+  // Link ticket references (`#956` against `repo`'s origin, `owner/name#956`, a Jira key the
+  // inbox knows) to the work item detail modal (#1659). Opt-in: on by the mirror and the
+  // assistant chat, never on a shared session (the viewer has not the sharer's inbox).
+  workItemRefs?: boolean;
 }
 
 export function MarkdownView({
@@ -75,6 +81,7 @@ export function MarkdownView({
   onOpenConversation,
   markRoot,
   markKind,
+  workItemRefs = false,
 }: MarkdownViewProps) {
   const ref = useRef<HTMLDivElement>(null);
   const toast = useToast();
@@ -173,6 +180,7 @@ export function MarkdownView({
           else openChat(id);
         },
         hasSessionMenu ? (name, x, y) => openSessionMenuRef.current?.(name, x, y) : undefined,
+        workItemRefs,
       );
     runLinkify();
     // A conv slug can only be existence-checked once the conversation list is in the
@@ -181,6 +189,13 @@ export function MarkdownView({
     // fetch it once and re-run the linkifier — idempotent: existing anchors are skipped.
     if (useChatStore.getState().convs === null && CONV_HINT_RE.test(source ?? "")) {
       void ensureConvs().then(() => {
+        if (alive) runLinkify();
+      });
+    }
+    // The same for ticket references: a Jira key (and a Bitbucket number) links only against the
+    // inbox cache, which a surface without the rail may not have loaded yet.
+    if (workItemRefs && !useWorkItemStore.getState().loaded && WORK_ITEM_HINT_RE.test(source ?? "")) {
+      void ensureWorkItems().then(() => {
         if (alive) runLinkify();
       });
     }
@@ -260,7 +275,7 @@ export function MarkdownView({
       alive = false;
       stickyCleanup();
     };
-  }, [source, basePath, baseDir, repo, breaks, streaming, theme, codeWrapDefault, toast, hasSessionMenu]);
+  }, [source, basePath, baseDir, repo, breaks, streaming, theme, codeWrapDefault, toast, hasSessionMenu, workItemRefs]);
 
   return (
     <div

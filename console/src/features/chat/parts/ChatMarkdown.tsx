@@ -91,6 +91,9 @@ export function ChatMarkdown({ source, breaks, streaming }: { source: string; br
       // in-place would replace it. Like file citations above, always open in a NEW pane.
       onOpenSession={(name) => openSessionChatSplit(name)}
       onOpenConversation={(id) => openChatSplit(id)}
+      // Only the qualified form and Jira keys can link here: the chat has no repository for a
+      // bare #N to belong to.
+      workItemRefs
     />
   );
 }

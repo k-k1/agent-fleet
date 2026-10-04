@@ -197,12 +197,14 @@ export function CompactBlock({
   after,
   repo,
   onOpenFile,
+  workItemRefs,
 }: {
   turn: Group;
   before?: number;
   after?: number;
   repo?: string | null;
   onOpenFile?: (path: string, line?: number, column?: number) => void;
+  workItemRefs?: boolean;
 }) {
   // Show the reduction only once both sides are real: `after` is 0 until the first
   // post-compaction turn's usage lands, so the effect appears a beat after compaction finishes.
@@ -241,7 +243,7 @@ export function CompactBlock({
             </div>
           </div>
         )}
-        <MarkdownView source={turn.text} baseDir={turn.cwd} repo={repo} onOpenFile={onOpenFile} />
+        <MarkdownView source={turn.text} baseDir={turn.cwd} repo={repo} onOpenFile={onOpenFile} workItemRefs={workItemRefs} />
       </div>
     </details>
   );
@@ -265,12 +267,14 @@ export function ThinkingBlock({
   baseDir,
   repo,
   onOpenFile,
+  workItemRefs,
 }: {
   text?: string;
   defaultOpen: boolean;
   baseDir?: string;
   repo?: string | null;
   onOpenFile?: (path: string, line?: number, column?: number) => void;
+  workItemRefs?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const head = useRef<HTMLButtonElement>(null);
@@ -297,7 +301,7 @@ export function ThinkingBlock({
       </button>
       <DisclosureContent open={open} className="mirror-thinking-body">
         <div ref={body}>
-          <MarkdownView source={text} baseDir={baseDir} repo={repo} onOpenFile={onOpenFile} />
+          <MarkdownView source={text} baseDir={baseDir} repo={repo} onOpenFile={onOpenFile} workItemRefs={workItemRefs} />
         </div>
         {long && (
           <DisclosureFoot

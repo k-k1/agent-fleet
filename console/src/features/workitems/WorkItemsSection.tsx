@@ -29,41 +29,30 @@ import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { IconButton } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { useConfirm } from "../../ui/ConfirmProvider.tsx";
-import { api, raw } from "../../core/api/client.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
-import { useReposStore, type Repo } from "../repos/store.ts";
-import { useLaunchSeed, useLaunchTarget } from "../repos/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
-import { useSettings } from "../../lib/settings.ts";
-import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
-import { agentOf } from "../../agents/registry.ts";
 import { useWorkItemStore, startWorkItemPolling } from "./store.ts";
+import { useWorkItemModal } from "./modal.ts";
+import { useOpenWorkItemSession } from "./WorkItemModalHost.tsx";
 import { WorkItemQueryModal } from "./WorkItemQueryModal.tsx";
-import { WorkItemReportModal } from "./WorkItemReportModal.tsx";
-import { WorkItemDetailModal } from "./WorkItemDetailModal.tsx";
 import { LabelBadge } from "./LabelBadge.tsx";
-import { readShelf, resolveSessionRef, useArchivedFor, type ResolvedSessionRef } from "./sessionRefs.ts";
+import { resolveSessionRef } from "./sessionRefs.ts";
 import {
-  branchForItem,
   checksText,
   checksTone,
   dedupeWorkItems,
   fullLocal,
   matchWorkItem,
-  promptForItem,
   RAIL_VISIBLE,
   railLabels,
   railWhen,
-  repoForItem,
   sessionsForItem,
   shortKey,
   shortLocal,
   sortWorkItems,
   stateLabel,
   stateTone,
-  titleForItem,
   uniformMeta,
   readWorkItemSearch,
   type WorkItem,
@@ -204,22 +193,18 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, unif
 export const WorkItemsSection = memo(function WorkItemsSection() {
   const tr = useT();
   const toast = useToast();
-  const askConfirm = useConfirm();
   const tenant = useTenantStore((s) => s.tenant);
   const payload = useWorkItemStore((s) => s.payload);
   const loaded = useWorkItemStore((s) => s.loaded);
   const loadErr = useWorkItemStore((s) => s.loadErr);
   const refreshing = useWorkItemStore((s) => s.refreshing);
   const reset = useWorkItemStore((s) => s.reset);
-  const repos = useReposStore((s) => s.repos);
-  const settings = useSettings();
   const sessions = useSessionsStore((s) => s.sessions);
-  const seed = useLaunchSeed((s) => s.set);
-  const openLaunch = useLaunchTarget((s) => s.open);
-  const startHub = useSessionsStore((s) => s.openStart);
+  // The detail modal is rendered by WorkItemModalHost, so a ticket link elsewhere opens the same
+  // single instance (#1659).
+  const openDetail = useWorkItemModal((s) => s.openDetail);
+  const openSession = useOpenWorkItemSession();
   const [queries, setQueries] = useState(false);
-  const [reportOn, setReportOn] = useState<WorkItem | null>(null);
-  const [detailOn, setDetailOn] = useState<WorkItem | null>(null);
   const [needle, setNeedle] = useState("");
   const [expanded, setExpanded] = useState(false);
   // Collapsing removes most of the section's height at once; without compensation the
@@ -275,7 +260,6 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   // is what makes the surviving row the one that heads the shelf: still open and most recent.
   const items = useMemo(() => dedupeWorkItems(sortWorkItems(payload?.items || [])), [payload]);
   const ledger = payload?.sessions || [];
-  const folders = useMemo(() => repos.map((r) => r.name), [repos]);
 
   // The volume wall (measured at 41 rows, docs/log/80 §80.18.4). Filter first, then fold: what
   // someone typing in the box wants is the top 10 of the filtered result, not the matches within
@@ -317,97 +301,9 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   };
   const labelOf = (id: string) => payload?.queries.find((x) => x.id === id)?.label || id;
 
-  // The ledger names a slug; what the modals show for it is looked up here (#1108). The shelf is
-  // read only while a modal lists a slug that is not on the live list.
-  const shownRefs = [detailOn, reportOn].flatMap((i) => (i ? sessionsForItem(ledger, i.key) : []));
-  const missing = [...new Set(shownRefs.map((r) => r.sessionName))].filter((n) => !sessions.some((s) => s.name === n));
-  const archived = useArchivedFor(missing);
-  const sessionRef = (name: string): ResolvedSessionRef => resolveSessionRef(name, sessions, archived);
-
   const startedNameFor = (item: WorkItem) => {
     const first = sessionsForItem(ledger, item.key)[0];
-    return first ? sessionRef(first.sessionName).title || first.sessionName : "";
-  };
-
-  const openLive = (name: string) => {
-    const s = useSessionsStore.getState().sessions.find((x) => x.name === name);
-    (agentOf(s?.kind || "claude").caps.chat ? openSessionChat : openSessionTerminal)(name);
-  };
-
-  // A slug that is not on the live list used to open nothing at all (#1108). Read the shelf
-  // fresh at the click — the row badge reaches here with no modal open — and offer to bring an
-  // archived session back; a slug on neither list is said to be gone. If the shelf cannot be
-  // read (a stopped workspace), fall through to the plain open, which is what it always did.
-  const openSession = async (name: string) => {
-    if (sessions.some((s) => s.name === name)) return openLive(name);
-    const shelf = readShelf(await api("api/sessions/archived").catch(() => null));
-    if (!shelf) return openLive(name);
-    const ref = resolveSessionRef(name, [], shelf);
-    if (ref.state === "gone") {
-      toast(t("wi.session_gone", { name }));
-      return;
-    }
-    const label = ref.title || name;
-    // A session whose folder is gone restores all the same, as on the shelf: its conversation
-    // can still be read, it just cannot resume — so the confirm says that rather than refusing.
-    const ok = await askConfirm({
-      title: tr("wi.restore_title"),
-      body:
-        tr("wi.restore_body", { name: label }) +
-        (ref.session?.resumable === false ? "\n" + tr("wi.restore_folder_gone") : ""),
-      confirmLabel: tr("arch.restore"),
-      danger: false,
-    });
-    if (!ok) return;
-    const res = await raw(`api/sessions/${encodeURIComponent(name)}/restore`, { method: "POST" }).catch(() => null);
-    if (!res?.ok) {
-      toast(t("arch.restore_failed"));
-      return;
-    }
-    // Open only once the row is on the list: a chat pane draws nothing for a session the list
-    // does not have, and refresh() keeps the old list when its read fails.
-    await useSessionsStore.getState().refresh();
-    if (!useSessionsStore.getState().sessions.some((s) => s.name === name)) {
-      toast(t("wi.restored_not_listed", { name: label }));
-      return;
-    }
-    openLive(name);
-  };
-
-  // reviewBranch: the PR's head branch, when the detail modal's live read resolved one and the
-  // launch is landing in a fresh worktree (WorkItemDetailModal only sets it in that case).
-  const seedFor = (item: WorkItem, reviewBranch = "") => {
-    seed(promptForItem(item, undefined, reviewBranch), titleForItem(item), "", "", "", {
-      provider: item.provider,
-      key: item.key,
-      branch: branchForItem(item, settings.workItemBranchTemplate),
-      title: item.title,
-      type: item.type || "",
-      labels: item.labels ?? [],
-    });
-  };
-
-  // Hand off to the existing launch stack only once the detail modal has settled WHERE
-  // (docs/log/80 §80.8). A ticket knows nothing about working copies — a GitHub item names a
-  // repository at most, Jira not even that — so the repository and new-worktree vs. existing-copy
-  // choice are already decided by the time this runs.
-  //
-  // reviewBranch, when set, checks that branch out in the new worktree instead of cutting one
-  // from the template (docs/log/80 §80.24) — reviewing a pull request means reading the code
-  // it already has, not starting a new branch from it. It is dropped for inPlace: the user
-  // picked that existing copy by hand, and launching it on a DIFFERENT branch than the one they
-  // saw in the picker would be a silent switch under them.
-  const pickTarget = (item: WorkItem, target: Repo, inPlace: boolean, reviewBranch: string) => {
-    seedFor(item, reviewBranch);
-    setDetailOn(null);
-    openLaunch(target, inPlace ? "" : reviewBranch, inPlace);
-  };
-
-  // Defer to the start hub (the clone path) only when there is no working copy at all.
-  const toStartHub = (item: WorkItem) => {
-    seedFor(item);
-    setDetailOn(null);
-    startHub();
+    return first ? resolveSessionRef(first.sessionName, sessions, null).title || first.sessionName : "";
   };
 
   const count = items.filter((i) => i.state !== "done").length;
@@ -536,7 +432,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
                 started={sessionsForItem(ledger, item.key)}
                 startedName={startedNameFor(item)}
                 uniform={uniform[item.queryId] || { repo: false, assignee: false }}
-                onOpen={setDetailOn}
+                onOpen={openDetail}
                 onOpenSession={openSession}
               />
             ))}
@@ -572,7 +468,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
                   started={sessionsForItem(ledger, item.key)}
                   startedName={startedNameFor(item)}
                   uniform={{ repo: false, assignee: false }}
-                  onOpen={setDetailOn}
+                  onOpen={openDetail}
                   onOpenSession={openSession}
                 />
               ))}
@@ -626,36 +522,6 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
             </button>
           )}
         </>
-      )}
-      {detailOn && (
-        <WorkItemDetailModal
-          item={detailOn}
-          repos={repos}
-          defaultRepo={repoForItem(detailOn, payload?.queries.find((q) => q.id === detailOn.queryId)?.repoHint || "", folders)}
-          started={sessionsForItem(ledger, detailOn.key)}
-          onClose={() => setDetailOn(null)}
-          onPick={(target, inPlace, reviewBranch) => pickTarget(detailOn, target, inPlace, reviewBranch)}
-          onStartHub={() => toStartHub(detailOn)}
-          sessionRef={sessionRef}
-          onOpenSession={(name) => {
-            setDetailOn(null);
-            void openSession(name);
-          }}
-          // Close the detail modal before opening the report one: never stack two modals, since
-          // both the Esc layering and the focus trap assume one at a time.
-          onReport={() => {
-            setDetailOn(null);
-            setReportOn(detailOn);
-          }}
-        />
-      )}
-      {reportOn && (
-        <WorkItemReportModal
-          item={reportOn}
-          sessions={sessionsForItem(ledger, reportOn.key)}
-          sessionRef={sessionRef}
-          onClose={() => setReportOn(null)}
-        />
       )}
       {queries && (
         <WorkItemQueryModal

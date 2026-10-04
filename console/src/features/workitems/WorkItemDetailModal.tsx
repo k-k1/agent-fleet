@@ -134,8 +134,14 @@ function useLiveDetail(item: WorkItem) {
   return { detail, err, stopped, busy, retry: () => setAttempt((n) => n + 1) };
 }
 
+const PROVIDER_NAMES: Record<string, string> = { github: "GitHub", bitbucket: "Bitbucket", jira: "Jira" };
+
 interface Props {
   item: WorkItem;
+  /** The item is not in the inbox cache: it came from a ticket link in the mirror (#1659) and
+   * `item` is a stand-in with only the key, the provider and a tracker URL. The panel says so
+   * rather than drawing empty fields, and still offers the launch, which needs nothing more. */
+  reference?: boolean;
   repos: Repo[];
   /** Working copy resolved from the query's default or the item's own repo ("" = none). */
   defaultRepo: string;
@@ -160,6 +166,7 @@ interface Props {
 
 export function WorkItemDetailModal({
   item,
+  reference = false,
   repos,
   defaultRepo,
   started,
@@ -176,6 +183,9 @@ export function WorkItemDetailModal({
   // leads and the cached row is the fallback — never the other way round.
   const view = live.detail || item;
   const isPR = item.kind === "pr";
+  // A GitHub number names an issue or a pull request alike, and a stand-in cannot tell which.
+  const kindKnown = !reference || item.provider !== "github";
+  const providerName = PROVIDER_NAMES[item.provider] || item.provider;
   const bases = useMemo(() => repos.filter((r) => !r.worktree), [repos]);
   // Default repository: the query's hint, then the item's repo, then the first one. A worktree
   // as the default resolves to its parent; where to launch is chosen on the row below.
@@ -258,7 +268,11 @@ export function WorkItemDetailModal({
     // The heading word is the kind itself (issue / pull request), so that a third name for this
     // thing never reaches the UI — the rail and the settings tab both use one term.
     <Modal
-      title={tr("wi.detail_title", { kind: tr(item.kind === "pr" ? "wi.kind_pr" : "wi.kind_issue"), key: item.key })}
+      title={
+        kindKnown
+          ? tr("wi.detail_title", { kind: tr(item.kind === "pr" ? "wi.kind_pr" : "wi.kind_issue"), key: item.key })
+          : item.key
+      }
       onClose={onClose}
       className="wi-dmodal"
     >
@@ -267,13 +281,24 @@ export function WorkItemDetailModal({
           frame. */}
       <div className="ui-modal-body">
         <div className="wi-dhead">
-          <span className={`wi-dot tone-${stateTone(view.state)}`} title={stateLabel(view.state)}>
-            <Icon name={isPR ? "git-pull-request" : "issues"} />
+          {/* No state read (a stand-in) is muted: stateTone's default would paint it as open. */}
+          <span className={`wi-dot tone-${view.state ? stateTone(view.state) : "muted"}`} title={view.state ? stateLabel(view.state) : undefined}>
+            <Icon name={!kindKnown ? "link" : isPR ? "git-pull-request" : "issues"} />
           </span>
           {/* Never ellipsised here: this is the panel people open to read what the rail row cut
               to one line, so it wraps and shows the title in full. */}
-          <h3 className="wi-dtitle">{view.title}</h3>
+          <h3 className="wi-dtitle">{view.title || item.key}</h3>
         </div>
+
+        {/* A stand-in has nothing the CP holds: it is not in any saved query's results. Fetching
+            it here would be a new single-item read (ADR 0061 decision 20.1), so the panel says
+            where to read it instead. */}
+        {reference && !live.detail && (
+          <p className="wi-dref" role="status">
+            <Icon name="info" />
+            <span>{tr("wi.detail_ref_note", { name: providerName })}</span>
+          </p>
+        )}
 
         {/* Always say which of the two this is. A panel that silently shows a five-minute-old
             row looks exactly like one showing the live pull request, and the difference is the
@@ -304,10 +329,18 @@ export function WorkItemDetailModal({
         {/* Exactly the fields the CP holds. A row with no value is not drawn; a column of
             em-dashes only adds things to read. */}
         <dl className="wi-dfacts">
-          <dt>{tr("wi.detail_state")}</dt>
-          <dd>{stateLabel(view.state)}</dd>
-          <dt>{tr("wi.detail_kind")}</dt>
-          <dd>{isPR ? tr("wi.kind_pr") : tr("wi.kind_issue")}</dd>
+          {view.state && (
+            <>
+              <dt>{tr("wi.detail_state")}</dt>
+              <dd>{stateLabel(view.state)}</dd>
+            </>
+          )}
+          {kindKnown && (
+            <>
+              <dt>{tr("wi.detail_kind")}</dt>
+              <dd>{isPR ? tr("wi.kind_pr") : tr("wi.kind_issue")}</dd>
+            </>
+          )}
           <dt>{tr("wi.detail_provider")}</dt>
           <dd>
             <span className="wi-dprov">{item.provider}</span>
@@ -407,7 +440,7 @@ export function WorkItemDetailModal({
         {/* The body is not shown here, so where to go and read it always is (same reason as
             §80.9). A pull request carries the same link as the footer's main button, so it is
             not repeated here. */}
-        {!isPR && (
+        {!isPR && view.url && (
           <a className="wi-dlink" href={view.url} target="_blank" rel="noreferrer noopener">
             <Icon name="link-external" />
             {tr("wi.open_external")}
@@ -519,7 +552,7 @@ export function WorkItemDetailModal({
           // copy of the provider's own page (§80.1).
           <a className="ui-btn ui-btn-primary wi-dopen" href={view.url} target="_blank" rel="noreferrer noopener">
             <Icon name="link-external" />
-            {tr("wi.open_provider", { name: item.provider === "bitbucket" ? "Bitbucket" : "GitHub" })}
+            {tr("wi.open_provider", { name: providerName })}
           </a>
         ) : (
           <Button onClick={go} disabled={bases.length > 0 && !baseRepo}>

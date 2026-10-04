@@ -1,5 +1,5 @@
-// Turns bare commit hashes, session slugs, assistant-conversation slugs and file paths
-// written as inline code into links that open the corresponding surface.
+// Turns bare commit hashes, session slugs, assistant-conversation slugs, ticket references and
+// file paths written as inline code into links that open the corresponding surface.
 import { pathRefCandidate, type PathRef } from "../../../lib/pathref.ts";
 import { resolvePathRefs, type ResolvedPathRef } from "../pathResolve.ts";
 import { api } from "../../../core/api/client.ts";
@@ -9,6 +9,20 @@ import { displayName } from "../../../lib/sessionview.ts";
 import { mergeChatTitles, useChatStore } from "../../chat/store.ts";
 import { openCommit } from "../../scm/open.ts";
 import { wireContextMenu } from "./linkContextMenu.ts";
+import { useReposStore } from "../../repos/store.ts";
+import { useWorkItemStore } from "../../workitems/store.ts";
+import { useWorkItemModal } from "../../workitems/modal.ts";
+import { dedupeWorkItems, sortWorkItems, type WorkItem } from "../../workitems/read.ts";
+import {
+  classifyWorkItemRef,
+  isQualifiedIssueToken,
+  ISSUE_REF_SRC,
+  JIRA_REF_SRC,
+  originOf,
+  resolveWorkItemRef,
+  type WorkItemRef,
+  type WorkItemRefContext,
+} from "../../workitems/refs.ts";
 
 // linkifyRefs turns bare git commit hashes, session slugs and assistant-conversation
 // slugs into clickable links, mirroring renderEmoji's text-node walk (skips existing
@@ -30,6 +44,9 @@ import { wireContextMenu } from "./linkContextMenu.ts";
 //   Checked BEFORE the commit shape: an all-hex token like "abcdef2" is both a valid
 //   sha prefix and a valid conv slug, and a live conversation is the stronger signal —
 //   the commit branch keeps the token only when no such conversation exists.
+// - ticket reference (`#956`, `owner/name#956`, `PROJ-123`, only with workItemRefs): opens the
+//   work item detail modal. The gates (context repository, colour-shaped numbers, Jira projects
+//   the cache knows) live in workitems/refs.ts.
 //
 // Code context: a fenced block (<pre>) is literal source and is never touched. INLINE
 // code (`sukbq4s` / `9219ab9` written in backticks — the common way these are mentioned)
@@ -49,6 +66,9 @@ const CONV_RE = "a[a-z2-7]{6}"; // randConvSlug: "a" + 6 base32-lower chars
 // so it never collides; "a" IS hex, so a rare all-hex conv slug is disambiguated by the
 // existence-gated classification order above, not by the regex.
 const REF_RE = new RegExp(`\\b(?:${COMMIT_RE}|${SLUG_RE}|${CONV_RE})\\b`, "g");
+// With ticket references on (#1659), they come first: at the same position `#1234567` is an issue
+// number, never a 7-hex commit, and a ticket token that is not linked is skipped whole.
+const REF_RE_WI = new RegExp(`${ISSUE_REF_SRC}|${JIRA_REF_SRC}|\\b(?:${COMMIT_RE}|${SLUG_RE}|${CONV_RE})\\b`, "g");
 // Cheap "does this document mention a conv-slug-shaped token at all" probe, used to
 // decide whether loading the conversation list is worth it (see ensureConvs call).
 export const CONV_HINT_RE = new RegExp(`\\b${CONV_RE}\\b`);
@@ -72,6 +92,8 @@ const inPathLikeContext = (text: string, start: number, end: number) =>
 export function isPathCandidateCode(code: HTMLElement): boolean {
   if (code.closest("pre,a")) return false;
   if (code.childElementCount) return false;
+  // `owner/name#12` is path-shaped but is a ticket reference (#1659), not a file.
+  if (isQualifiedIssueToken((code.textContent ?? "").trim())) return false;
   return pathRefCandidate(code.textContent) !== null;
 }
 
@@ -83,7 +105,12 @@ export function linkifyRefs(
   openConversation: (id: string, openInNew: boolean) => void,
   // Absent → a session link keeps the browser's own context menu (see SessionLinkMenu.tsx).
   openSessionMenu?: (name: string, x: number, y: number) => void,
+  // Ticket references → the work item detail modal (#1659). Off unless the surface asks: a
+  // shared session's viewer has neither the sharer's connections nor their inbox cache.
+  workItemRefs = false,
 ) {
+  const wiCtx = workItemRefs ? workItemRefContext(repo) : null;
+  const re = wiCtx ? REF_RE_WI : REF_RE;
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
       if (!n.nodeValue || !/[0-9a-z]/i.test(n.nodeValue)) return NodeFilter.FILTER_REJECT;
@@ -101,8 +128,8 @@ export function linkifyRefs(
 
   for (const node of targets) {
     const text = node.nodeValue!;
-    REF_RE.lastIndex = 0;
-    let m = REF_RE.exec(text);
+    re.lastIndex = 0;
+    let m = re.exec(text);
     if (!m) continue;
 
     const out = document.createDocumentFragment();
@@ -110,6 +137,13 @@ export function linkifyRefs(
     do {
       const token = m[0];
       let a: HTMLAnchorElement | null = null;
+      // A ticket token has a "#" or starts upper-case, so none of the shapes below can match it.
+      if (wiCtx && (token.includes("#") || /^[A-Z]/.test(token))) {
+        const ref = classifyWorkItemRef(token, wiCtx);
+        // Launch from the working copy this text is about only when the ticket belongs to it.
+        const hint = ref && repo && wiCtx.origin && ref.key.startsWith(`${wiCtx.origin.path}#`) ? repo : "";
+        if (ref) a = makeWorkItemLink(token, ref, hint);
+      }
       // conv-slug shape first (see the classification-order note above): link only if
       // a conversation with that slug exists right now.
       if (/^a[a-z2-7]{6}$/.test(token)) {
@@ -131,13 +165,75 @@ export function linkifyRefs(
         out.appendChild(a);
         last = m.index + token.length;
       }
-      m = REF_RE.exec(text);
+      m = re.exec(text);
     } while (m);
 
     if (last === 0) continue; // nothing linkified in this node — leave it untouched
     if (last < text.length) out.appendChild(document.createTextNode(text.slice(last)));
     node.parentNode?.replaceChild(out, node);
   }
+}
+
+// The context a ticket reference is read in: the working copy the text is about (Session.repo →
+// its origin), the inbox cache, and the clones' origins.
+function workItemRefContext(repo: string | null): WorkItemRefContext {
+  const repos = useReposStore.getState().repos;
+  const known: WorkItemRefContext["known"] = new Map();
+  for (const r of repos) {
+    const o = originOf(r);
+    if (o) known.set(o.path, o.provider);
+  }
+  return {
+    origin: repo ? originOf(repos.find((r) => r.name === repo)) : null,
+    items: cachedWorkItems(),
+    known,
+  };
+}
+
+// One row per ticket, the same one the rail keeps, so the panel's launch default (the row's
+// query hint) is the one a rail click would give.
+const cachedWorkItems = (): WorkItem[] =>
+  dedupeWorkItems(sortWorkItems(useWorkItemStore.getState().payload?.items || []));
+
+// makeWorkItemLink builds a non-navigating anchor for a ticket reference. A plain click / Enter
+// opens the work item detail modal; Ctrl/Cmd-click and a middle click go straight to the tracker,
+// the way the rail row's external link does. The row is looked up at click time, not at render:
+// the cache may have loaded or refreshed while the message stayed on screen.
+function makeWorkItemLink(text: string, ref: WorkItemRef, repoHint: string): HTMLAnchorElement {
+  const a = document.createElement("a");
+  a.className = "md-ref-link md-workitem-link";
+  a.textContent = text;
+  a.setAttribute("role", "link");
+  a.tabIndex = 0;
+  wireTooltip(a, () => {
+    const hint = t("view.open_work_item", { key: ref.key });
+    const { item, reference } = resolveWorkItemRef(ref, cachedWorkItems());
+    return reference || !item.title ? hint : `${item.title}\n${hint}`;
+  });
+  const open = (external: boolean) => {
+    const { item, reference } = resolveWorkItemRef(ref, cachedWorkItems());
+    if (external && item.url) {
+      window.open(item.url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    useWorkItemModal.getState().openDetail(item, { reference, repoHint });
+  };
+  a.addEventListener("click", (e) => {
+    e.preventDefault();
+    open(e.ctrlKey || e.metaKey);
+  });
+  a.addEventListener("auxclick", (e) => {
+    if (e.button !== 1) return; // middle click → the tracker
+    e.preventDefault();
+    open(true);
+  });
+  a.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      open(e.ctrlKey || e.metaKey);
+    }
+  });
+  return a;
 }
 
 // makeCommitLink builds a non-navigating anchor for a bare sha. On click it verifies the

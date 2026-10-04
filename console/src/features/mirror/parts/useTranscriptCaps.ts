@@ -91,6 +91,7 @@ export function useTranscriptCaps({
     (): TranscriptCaps => ({
       agentName,
       repo: sessionMeta?.repo ?? null,
+      workItemRefs: true,
       loadPastedImage: (name) => actsRef.current.loadPastedImage!(name),
       fileURL: (p) => actsRef.current.fileURL!(p),
       thumbURL: (p) => actsRef.current.thumbURL!(p),
