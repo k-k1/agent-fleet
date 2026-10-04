@@ -70,7 +70,7 @@ export const usage = {
     "推定です。トークン数 × 各モデルの公表 API 単価（キャッシュ書込 ×1.25・読取 ×0.1）で起こしています。この消費を API で払っていたらいくらか、であって、サブスク定額の請求額ではありません。",
   "usage.cost_est_hint":
     "トークン数 × そのモデルの公表 API 単価から起こした推定値です（実測ではありません）。",
-  "usage.cost_measured": "実測 {v}（claude の補助呼び出しのみ）",
+  "usage.cost_measured": "エージェント報告値 {v}（claude の補助呼び出しと opencode のセッションのみ）",
   "usage.cost_unpriced_hint":
     "このモデルの公表単価を持っていないため、金額を推定していません（消費 0 ではありません）。",
   "usage.price_line": "単価 {in} / {out}（100万トークンあたり・入力/出力）。",
