@@ -84,6 +84,7 @@ Control Plane の起動前に設定します。注釈つきの一覧は
 | `AUTH` | サインインの方式。`dev`（単独）/ `oauth`（CP 内蔵）/ `proxy`（上流のゲートウェイ）|
 | `DATA_DIR` | 永続する状態が全部ここに在る＝**バックアップすべき対象** |
 | `AF_MASTER_KEY` | at-rest 暗号の根。**失うと保存済みの資格情報は復元できない** |
+| `AF_KEY_CUSTODIAN` | 保存時の鍵を誰が持つか: `local`（既定。`AF_MASTER_KEY` から導く）か `kms`（AWS KMS。`AF_KMS_KEY_ID` と組で。[operate/04](../operate/04-secure.ja.md#aws-kms-で保存時の鍵を守る)）。未知の値や不足は起動時に拒否 |
 | `SUPER_ADMIN_EMAILS` | 誰が配備管理者か |
 | `PUBLIC_BASE_URL` | 利用者が到達する住所。OAuth のコールバックもここから組み立てる |
 | `WS_MEMORY` | ワークスペースの既定メモリ上限 |

@@ -31,7 +31,7 @@ platform changes:
 | File | Status | Contents |
 |------|--------|----------|
 | `cfn/00-network.yaml` | **proven** (deploy→verify→teardown in sandbox) | VPC, 2×AZ public+private subnets, IGW, NAT, S3 gateway endpoint, base SGs (`alb`/`cp`/`ws`) |
-| `cfn/10-data.yaml` | **proven** (EFS 2 mount targets available, RDS pg18 available/private/encrypted) | EFS filesystem + mount targets, RDS(Postgres, single-AZ t4g.micro, RDS-managed master secret) |
+| `cfn/10-data.yaml` | **proven** (EFS 2 mount targets available, RDS pg18 available/private/encrypted) | EFS filesystem + mount targets, RDS(Postgres, single-AZ t4g.micro, RDS-managed master secret), optionally the KMS key of the CP's key custodian (`CustodianKmsKey=create`) |
 | `cfn/20-platform.yaml` | **proven** (ECR×2, cluster ACTIVE w/ SC default, 3 IAM roles) | ECR (cp+workspace, plus an empty `af-voicevox` for the optional speech engine and `af-llamacpp` / `af-comfyui` / `af-engine-tools` for the optional inference engines — the last two self-built, by `comfyui-image.yml` and `engine-tools-image.yml`), ECS cluster, Service Connect namespace (`af.internal`), IAM roles (`cp-task`/`exec`/`ws-task`) |
 | `cfn/30-ingress.yaml` | **proven** (CP boots on Fargate, `/healthz` 200, `/oauth2/login` → Google w/ correct redirect_uri) | ACM(DNS-validated), ALB (TLS-termination only — auth is CP-native `AUTH=oauth`, no ALB OIDC), CP/Console Fargate service (Service Connect client), Route53 alias |
 | `cfn/40-ec2-pool.yaml` | **proven in a sandbox** (deployed as a stack and driven end to end, in a public subnet and behind a NAT — docs/log/64 §64.16, §64.17, §64.19; never at scale) | **Optional — only for `WsRuntime=ecs-ec2`.** Launch template for a workspace *slot* (ECS-optimized AMI, cluster-join user-data, `af-mount`/`af-umount`), slot instance role + profile, slot SG. Creates **no instances**: the CP runs them on demand. One template covers both architectures — `SlotAmiIdArm64` is passed through as an ImageId override (docs/log/70 §70.8) |
@@ -262,6 +262,21 @@ reason to re-issue the Console's TLS to add a preview.
 - Members choose which ports are exposed, whether the URL stays stable across starts,
   and whether it is readable without signing in (off by default, and it returns to off
   on every start).
+
+### Keys at rest on KMS (optional, off by default)
+
+```bash
+# 10-data: make the key (it follows Persistence, like RDS)
+--parameter-overrides CustodianKmsKey=create ...
+# 30-ingress: hand the CP the key from 10-data's CustodianKmsKeyArn output
+--parameter-overrides CustodianKmsKeyArn=arn:aws:kms:<region>:<account>:key/<key-id> ...
+```
+
+The CP's key custodian (ADR 0005) then seals with data keys from KMS instead of a key derived
+from `AF_MASTER_KEY`. Nothing stored before is re-encrypted and `AF_MASTER_KEY` stays
+required; KMS errors fail closed. The trade-offs are in
+[`cfn/PARAMETERS.md`](cfn/PARAMETERS.md#custodiankmskeyarn) and the operator's view in
+`guide/operate/04-secure.md`.
 
 ### Alarms — the Control Plane cannot reach its database (set this one)
 
@@ -726,6 +741,7 @@ service supports it:
 | servicediscovery | Service Connect namespace | Create/Delete/Get namespace |
 | efs | 10-data filesystem + mount targets | CreateFileSystem/DeleteFileSystem/CreateMountTarget/DeleteMountTarget/Describe* |
 | backup | 10-data EFS backup vault + plan (`Persistence=retain`), the runbook's backup/restore, teardown | CreateBackupVault/DescribeBackupVault/DeleteBackupVault/ListBackupVaults, Create/Get/Update/Delete BackupPlan, Create/Get/Delete BackupSelection, ListBackupPlans; `backup-storage:MountCapsule` and `kms:CreateGrant`/`DescribeKey` on the default `aws/backup` key; StartBackupJob/StartRestoreJob/DescribeRestoreJob, ListRecoveryPointsByBackupVault/DeleteRecoveryPoint, and `iam:PassRole` on the 10-data backup role |
+| kms | 10-data custodian key (`CustodianKmsKey=create` only) | CreateKey, PutKeyPolicy, EnableKeyRotation, DescribeKey, TagResource, CreateAlias/DeleteAlias, ScheduleKeyDeletion (stack deletion with `Persistence=delete`) |
 | rds | 10-data instance | CreateDBInstance/DeleteDBInstance/CreateDBSubnetGroup/Describe* (ManageMasterUserPassword also needs `secretsmanager:*` on the RDS-managed secret + `kms:DescribeKey`) |
 | elasticloadbalancing | 30-ingress ALB/TG/listeners | Create/Delete/Describe/Modify load balancers, target groups, listeners |
 | acm | 30-ingress cert | RequestCertificate/DeleteCertificate/DescribeCertificate |

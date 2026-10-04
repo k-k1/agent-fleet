@@ -141,9 +141,19 @@ func main() {
 	if mk := os.Getenv("AF_MASTER_KEY"); mk != "" {
 		sum := sha256.Sum256([]byte(mk))
 		mgr.master32 = sum[:]
-		// P3-3: envelope key custodian (on-prem default). Vault/KMS adapters
-		// implement the same interface for true per-tenant crypto-shred.
-		mgr.custodian = newLocalCustodian(mgr.master32)
+	}
+	// Envelope key custodian (ADR 0005): local by default, KMS on AWS. A misconfigured
+	// kms stops the CP here rather than starting one that cannot open what it stored.
+	{
+		kind := envx.Or("AF_KEY_CUSTODIAN", "local")
+		c, err := newKeyCustodian(context.Background(), kind, mgr.master32, os.Getenv)
+		if err != nil {
+			log.Fatalf("key custodian: %v", err)
+		}
+		if c != nil {
+			mgr.custodian = c
+			log.Printf("key custodian: %s", kind)
+		}
 	}
 	if mgr.plaintextSecrets() {
 		log.Printf(plaintextSecretsLog, mgr.authMode)

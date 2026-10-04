@@ -348,12 +348,16 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
 
 - Workspace ごとの DEK をテナントごとの KEK で wrap して保存（`wrapped_dek`）。CP が Workspace
   起動時に unwrap して `AF_SECRET_KEY` として注入する。**Agent は暗号方式に無関心。**
-- custodian は interface（`KeyCustodian`）。現実装（`localCustodian`）は KEK をマスター鍵から
-  導出する。同じ custodian が上のテナントの秘密と、セッションの引き継ぎ・共有のペイロードも封印する。
-- ⚠️ **正直な限界**: KEK がマスター鍵由来で——DEK 自体もマスター鍵とユーザーキーから導出する
-  （封筒保存より前に書かれたストアを開けるため）——実効強度は単一のマスター鍵と同等。
-  **真のテナント単位の crypto-shred は Vault / KMS の custodian を採ったとき**で、📋——継ぎ目が
-  あるだけ。
+- custodian は interface（`KeyCustodian`）。既定（`localCustodian`）は KEK をマスター鍵から
+  導出する。`kmsCustodian`（`AF_KEY_CUSTODIAN=kms`、AWS）は値ごとに KMS の新しいデータ鍵で封じ、
+  暗号化コンテキストで key ref に結び付け、KMS が失敗すれば失敗する（フェイルクローズ）。同じ custodian が
+  上のテナントの秘密と、セッションの引き継ぎ・共有のペイロードも封印する。KMS へ切り替える前に封じた値は
+  形式で見分けて local の custodian が開き、KMS の失敗で振り分けることは無い。
+- ⚠️ **正直な限界**: local の custodian では KEK がマスター鍵由来で、実効強度は単一のマスター鍵と同等。
+  KMS では鍵の無効化で切り替え後に封じたものが shred されるが、ワークスペースの DEK 自体は今もマスター鍵と
+  ユーザーキーから導出する（封筒保存より前に書かれたストアを開けるため）ので、メンバーの資格情報ストアは
+  それでは shred されない。ワークスペースごとのランダムな DEK と Vault は 📋
+  （[decisions/0005](../decisions/0005-envelope-custodian.ja.md) の 2026-10-04 追記）。
 
 ## 7.7 監査
 
@@ -404,7 +408,7 @@ enforce へ切り替える。
 2. **CP/ホスト侵害 = デプロイ内一括崩壊**（§7.1）。会社間非波及が緩和（AWS ではアカウントを分けた場合だけ）。CP の AWS ロールには
    まだ絞る余地がある（[#1182](https://github.com/k-k1/agent-fleet/issues/1182)）。
 3. **長期保持するエージェント資格情報の失効・ローテーション** — 枠組みはあるが、真の失効は
-   Vault / KMS 待ち（§7.6）。
+   ワークスペースの DEK をランダムにするまで待ち（§7.6）。
 4. **サプライチェーン** — Workspace イメージ同梱ツールの出所管理・定期更新（[04](04-agent.ja.md)）。
 5. **egress の enforce はまだ Workspace を縛らない** — proxy は遮断するが、Workspace を proxy に
    通す柵が無い（§7.8・[#1181](https://github.com/k-k1/agent-fleet/issues/1181)）。

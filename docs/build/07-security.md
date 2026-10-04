@@ -414,14 +414,18 @@ credentials as exposed and rotate them.
 - A per-workspace DEK is wrapped by a per-tenant KEK and stored (`wrapped_dek`). The CP
   unwraps it when starting the workspace and injects it as `AF_SECRET_KEY`. **The agent
   is indifferent to the scheme.**
-- The custodian is an interface (`KeyCustodian`). The current implementation
-  (`localCustodian`) derives the KEK from the master key; the same custodian seals the
-  tenant secrets above and the session handoff and share payloads.
-- ⚠️ **The honest limit**: because that KEK derives from the master key — and the DEK
-  itself is derived from the master key and the user key, so that stores written before
-  envelope storage still open — the effective strength equals a single master key.
-  **True per-tenant crypto-shredding only arrives with a Vault or KMS custodian**, which
-  is 📋 — the seam exists and nothing more.
+- The custodian is an interface (`KeyCustodian`). The default (`localCustodian`) derives
+  the KEK from the master key; `kmsCustodian` (`AF_KEY_CUSTODIAN=kms`, AWS) seals each value
+  with a fresh KMS data key, bound to the key ref by the encryption context, and fails closed
+  when KMS does. The same custodian seals the tenant secrets above and the session handoff
+  and share payloads. Values sealed before a switch to KMS are opened by the local custodian,
+  chosen by their format, never by a KMS failure.
+- ⚠️ **The honest limit**: with the local custodian the KEK derives from the master key, so
+  the effective strength equals a single master key. With KMS, disabling the key shreds what
+  was sealed after the switch — but the workspace DEK itself is still derived from the master
+  key and the user key (so that stores written before envelope storage still open), so
+  members' credential stores are not shredded by it. A random DEK per workspace and Vault
+  are 📋 ([decisions/0005](../decisions/0005-envelope-custodian.md), 2026-10-04 addendum).
 
 ## 7.7 Audit
 
@@ -481,7 +485,7 @@ from what you measured, and only then switch to enforce.
    mitigation is that it does not spread between companies — on AWS, only across
    separate AWS accounts. The CP's AWS role can still be narrowed ([#1182](https://github.com/k-k1/agent-fleet/issues/1182)).
 3. **Revoking and rotating long-lived agent credentials** — the framework is there, but
-   real revocation waits for Vault or KMS (§7.6).
+   real revocation of the workspace DEK waits for random DEKs (§7.6).
 4. **Supply chain** — provenance and regular updates for what is baked into the
    workspace image ([04](04-agent.md)).
 5. **Egress enforcement does not constrain workspaces yet** — the proxy blocks, but no

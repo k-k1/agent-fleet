@@ -330,7 +330,7 @@ Bedrock を呼ばない。
   できない。
 - SSO キャッシュはワークスペース内の `~/.aws/sso/cache/` にある。
 
-KMS custodian は 📋 — seam のみ（`KeyCustodian`、[07 §7.6](07-security.ja.md)）。
+鍵の custodian は AWS KMS にできる（`AF_KEY_CUSTODIAN=kms`。`KeyCustodian`、[07 §7.6](07-security.ja.md)）。
 
 ## 8.9 エンジン
 
