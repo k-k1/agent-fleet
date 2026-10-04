@@ -7,7 +7,7 @@
 // anyway, because undoing it would silently drop what came after.
 
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errDetail, isTransientErr } from "../../../core/api/client.ts";
+import { api, apiJSON, errDetail, errText, isTransientErr } from "../../../core/api/client.ts";
 import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
@@ -24,6 +24,9 @@ export function AgentMemorySection({ reload, onChanged }: { reload: number; onCh
   const toast = useToast();
   const askConfirm = useConfirm();
   const [changes, setChanges] = useState<MemoryChange[] | null>(null);
+  // Rows the Agent left out because a value in them failed the scan; only the count is sent.
+  const [withheld, setWithheld] = useState(0);
+  const [loadErr, setLoadErr] = useState("");
   const [sel, setSel] = useState("");
   const [diff, setDiff] = useState<ChangeDiff | null>(null);
   const [busy, setBusy] = useState(false);
@@ -33,7 +36,10 @@ export function AgentMemorySection({ reload, onChanged }: { reload: number; onCh
     const res = await api("api/agents/memory/entries/changes?limit=100");
     if (signal.aborted) return true;
     if (isTransientErr(res)) return false;
+    // A failed read is said, not shown as an empty history.
+    setLoadErr(res?.error ? errText(res.error) : "");
     setChanges(res?.error ? [] : (res?.changes ?? []));
+    setWithheld(res?.error ? 0 : (res?.withheld ?? 0));
     return true;
   }, []);
   useRetryLoad(load, [reload, mine]);
@@ -137,12 +143,14 @@ export function AgentMemorySection({ reload, onChanged }: { reload: number; onCh
         <h3>{tr("mem.af_title")}</h3>
       </div>
       <p className="muted ds-hint">{tr("mem.af_intro")}</p>
+      {loadErr && <p className="mem-warn">{loadErr}</p>}
+      {withheld > 0 && <p className="mem-warn">{tr("mem.af_withheld", { n: withheld })}</p>}
       <div className="mem-body">
         <ul className="mem-list">
           {changes === null ? (
             <li className="muted pad">{tr("common.loading")}</li>
           ) : changes.length === 0 ? (
-            <li className="muted pad">{tr("mem.af_empty")}</li>
+            !loadErr && withheld === 0 && <li className="muted pad">{tr("mem.af_empty")}</li>
           ) : (
             changes.map((c) => (
               <li key={c.commit}>

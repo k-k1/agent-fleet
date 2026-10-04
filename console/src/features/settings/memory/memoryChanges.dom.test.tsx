@@ -184,4 +184,27 @@ describe("AgentMemorySection", () => {
     window.removeEventListener("unhandledrejection", unhandled);
     expect(unhandled).not.toHaveBeenCalled();
   });
+
+  it("says how many changes were withheld instead of reporting an empty history", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(path.startsWith("api/agents/memory/entries/changes") ? { changes: [], withheld: 2 } : { diff: "" }),
+    );
+    await mount();
+    expect(host!.textContent).toMatch(/2/);
+    expect(host!.querySelector(".mem-warn")).toBeTruthy();
+    expect(host!.querySelector(".mem-list li")).toBeNull();
+  });
+
+  it("shows a failed read as an error, not as no changes", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(
+        path.startsWith("api/agents/memory/entries/changes")
+          ? { error: { code: "memory_snapshot_failed", message: "boom" } }
+          : { diff: "" },
+      ),
+    );
+    await mount();
+    expect(host!.querySelector(".mem-warn")).toBeTruthy();
+    expect(host!.querySelector(".mem-list li")).toBeNull();
+  });
 });

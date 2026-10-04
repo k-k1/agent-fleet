@@ -825,6 +825,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mem.af_not_revertible": "The history holds no text to bring back for this change (it forgot a file put in place by hand before it was ever recorded).",
   "mem.af_failed": "Could not confirm the result. The list has been re-read; check whether the change took effect.",
   "mem.af_diff_withheld": "This diff is not shown because it looks like it contains secrets (the values are masked).",
+  "mem.af_withheld": "{n} change(s) are not listed because they look like they contain secrets (an imported history may have carried them).",
   "mem.restore": "Restore this point",
   "mem.restore_title": "What to restore",
   "mem.scope_all": "Everything",

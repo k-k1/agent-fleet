@@ -140,13 +140,21 @@ func agentMemBlob(rev, rel string) (data []byte, exists bool, err error) {
 	return b, true, nil
 }
 
-// agentMemParent is a commit's first parent, or "" for a root commit.
-func agentMemParent(commit string) string {
-	p, err := memoryGitRun("rev-parse", "--verify", "--quiet", commit+"^")
+// agentMemParent is a commit's first parent, or "" for a root commit. A git failure is an
+// error: read as "no parent", it would turn an update into a create and its revert into a delete.
+func agentMemParent(commit string) (string, error) {
+	out, err := memoryGitRun("rev-list", "--parents", "-n", "1", commit)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("read agent memory history: %w", err)
 	}
-	return p
+	f := strings.Fields(out)
+	if len(f) == 0 || f[0] != commit {
+		return "", fmt.Errorf("read agent memory history: unexpected rev-list output")
+	}
+	if len(f) == 1 {
+		return "", nil
+	}
+	return f[1], nil
 }
 
 // agentMemSides returns the memory's text before and after a commit.
@@ -154,9 +162,11 @@ func agentMemSides(commit, rel string) (before []byte, beforeOK bool, after []by
 	if after, afterOK, err = agentMemBlob(commit, rel); err != nil {
 		return
 	}
-	if parent := agentMemParent(commit); parent != "" {
-		before, beforeOK, err = agentMemBlob(parent, rel)
+	parent, err := agentMemParent(commit)
+	if err != nil || parent == "" {
+		return
 	}
+	before, beforeOK, err = agentMemBlob(parent, rel)
 	return
 }
 
@@ -186,6 +196,13 @@ func agentMemListChanges(limit int) (agentMemChangesWire, error) {
 			continue
 		}
 		v, rel, pid, ok := agentMemChangeFrom(f[0], f[1], f[2])
+		// The newest change of a path is decided before any row is withheld, the same way
+		// agentMemLatestChange decides it for a revert: otherwise the row before a withheld
+		// one would offer a revert the Agent always refuses.
+		first := rel != "" && !seen[rel]
+		if rel != "" {
+			seen[rel] = true
+		}
 		if !ok {
 			out.Withheld++
 			continue
@@ -196,8 +213,7 @@ func agentMemListChanges(limit int) (agentMemChangesWire, error) {
 			}
 			v.Project = projects[pid]
 		}
-		if !seen[rel] {
-			seen[rel] = true
+		if first {
 			v.Latest = true
 			_, live, _ := agentMemReadFile(filepath.Join(agentMemDir(), filepath.FromSlash(rel)))
 			v.Live = live
@@ -218,17 +234,21 @@ func agentMemChangeFrom(commit, at, body string) (v agentMemChangeView, rel, pid
 		return v, "", "", false
 	}
 	rel, scope, pid, name, ok := agentMemParseRepoPath(tr["AF-Memory"])
-	if !ok || !agentMemOps[tr["AF-Op"]] || !agentMemAuthorOK(tr["AF-Author-Kind"], tr["AF-Author-Session"]) {
+	if !ok {
 		return v, "", "", false
+	}
+	// From here on the path counts for "newest change", whether or not the row is shown.
+	if !agentMemOps[tr["AF-Op"]] || !agentMemAuthorOK(tr["AF-Author-Kind"], tr["AF-Author-Session"]) {
+		return v, rel, "", false
 	}
 	if r := tr["AF-Revert-Of"]; r != "" && !agentMemCommitRe.MatchString(r) {
-		return v, "", "", false
+		return v, rel, "", false
 	}
 	if _, err := time.Parse(time.RFC3339, at); err != nil {
-		return v, "", "", false
+		return v, rel, "", false
 	}
-	if !agentMemCleanText(name + "\n" + pid + "\n" + tr["AF-Author-Session"]) {
-		return v, "", "", false
+	if !agentMemCleanText(name + "\n" + pid + "\n" + tr["AF-Author-Kind"] + "\n" + tr["AF-Author-Session"]) {
+		return v, rel, "", false
 	}
 	v = agentMemChangeView{
 		Commit: commit, At: at, Op: tr["AF-Op"], Scope: scope, Name: name,
@@ -253,7 +273,10 @@ func agentMemChangeDiff(commitArg string) (agentMemDiffWire, error) {
 	if err != nil {
 		return agentMemDiffWire{}, err
 	}
-	base := agentMemParent(commit)
+	base, err := agentMemParent(commit)
+	if err != nil {
+		return agentMemDiffWire{}, err
+	}
 	if base == "" {
 		if base, err = memoryGitRun("hash-object", "-t", "tree", "/dev/null"); err != nil {
 			return agentMemDiffWire{}, err
@@ -263,8 +286,26 @@ func agentMemChangeDiff(commitArg string) (agentMemDiffWire, error) {
 	if err != nil {
 		return agentMemDiffWire{}, err
 	}
-	if f := agentMemScanText("diff", diff); len(f) > 0 {
-		return agentMemDiffWire{Withheld: true, Findings: f}, nil
+	// The raw diff, and both sides decoded the way a reader would see them: a JSON escape in
+	// the file hides a value from a scan of the raw text alone.
+	findings := agentMemScanText("diff", diff)
+	before, beforeOK, after, afterOK, err := agentMemSides(commit, rel)
+	if err != nil {
+		return agentMemDiffWire{}, err
+	}
+	for _, side := range []struct {
+		b  []byte
+		ok bool
+	}{{before, beforeOK}, {after, afterOK}} {
+		if !side.ok {
+			continue
+		}
+		if e, ok := agentMemParse(side.b); ok {
+			findings = append(findings, agentMemScanText("diff", agentMemPublished(e))...)
+		}
+	}
+	if len(findings) > 0 {
+		return agentMemDiffWire{Withheld: true, Findings: findings}, nil
 	}
 	return agentMemDiffWire{Diff: diff}, nil
 }
@@ -290,9 +331,15 @@ func agentMemResolveChange(commitArg string) (commit, rel string, err error) {
 		return "", "", err
 	}
 	tr := agentMemTrailers(body)
-	rel, _, _, _, ok := agentMemParseRepoPath(tr["AF-Memory"])
+	rel, _, pid, name, ok := agentMemParseRepoPath(tr["AF-Memory"])
 	if tr["AF-Trigger"] != memoryTriggerAgentMemory || !ok {
 		return "", "", memoryErrf(http.StatusBadRequest, errCodeMemoryBadRev, "that commit is not an agent memory change")
+	}
+	// The path is about to reach a response and a new commit message: refuse, without the
+	// value, a change whose name or project id the list would have withheld.
+	if !agentMemCleanText(name + "\n" + pid) {
+		return "", "", memoryErrf(http.StatusUnprocessableEntity, errCodeMemorySecretDetected,
+			"this change is withheld: its memory name or project id looks like a secret")
 	}
 	return commit, rel, nil
 }

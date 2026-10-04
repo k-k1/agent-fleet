@@ -396,3 +396,103 @@ func TestAgentMemoryUntrackedForgetIsNotRevertible(t *testing.T) {
 		t.Fatalf("revert: %v", err)
 	}
 }
+
+// ---- review round 2 (PR #1670) ----
+
+func agentMemRawMsg(op, path, kind, sess string) string {
+	return "agent-memory: " + op + "\n\nAF-Trigger: agent-memory\nAF-Op: " + op + "\nAF-Memory: " + path +
+		"\nAF-Author-Kind: " + kind + "\nAF-Author-Session: " + sess + "\n"
+}
+
+// An author kind is scanned like every other value, not only held to the kind form.
+func TestAgentMemoryChangesScanAuthorKind(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	kind := agentMemFakeSlackName()
+	agentMemCommitRaw(t, map[string]string{"af/user/x.md": "---\nname: x\ndescription: d\n---\nb\n"},
+		agentMemRawMsg("create", "af/user/x.md", kind, "s"))
+	out, err := agentMemListChanges(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(out)
+	if strings.Contains(string(raw), kind) || out.Withheld != 1 {
+		t.Fatalf("changes = %s", raw)
+	}
+}
+
+// A diff is withheld when a side, decoded, carries a secret the raw text hides behind a JSON
+// escape.
+func TestAgentMemoryChangeDiffScansDecodedSides(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	value := "Q7v5M9w2" + "J8s6R4p3"
+	desc := `"pass` + `word: \"` + value + `\""`
+	commit := agentMemCommitRaw(t, map[string]string{"af/user/x.md": "---\nname: x\ndescription: " + desc + "\n---\nb\n"},
+		agentMemRawMsg("create", "af/user/x.md", "claude", "s"))
+	d, err := agentMemChangeDiff(commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(d)
+	if !d.Withheld || strings.Contains(string(raw), value) {
+		t.Fatalf("diff = %s", raw)
+	}
+}
+
+// A revert straight at a change whose memory name is secret-shaped is refused without the
+// value, and leaves no commit carrying it.
+func TestAgentMemoryRevertRefusesSecretShapedName(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	name := agentMemFakeSlackName()
+	path := "af/user/" + name + ".md"
+	body := "---\nname: x\ndescription: d\n---\nb\n"
+	commit := agentMemCommitRaw(t, map[string]string{path: body}, agentMemRawMsg("create", path, "claude", "s"))
+	memoryMkdirAll(t, filepath.Join(agentMemDir(), "user"))
+	memoryWrite(t, filepath.Join(agentMemDir(), "user", name+".md"), body)
+	_, err := agentMemRevert(agentMemRevertReq{Commit: commit}, time.Now())
+	if agentMemCode(err) != errCodeMemorySecretDetected || strings.Contains(err.Error(), name) {
+		t.Fatalf("revert = %v", err)
+	}
+	if head, _ := memoryGitRun("rev-parse", memoryBranch); head != commit {
+		t.Fatal("a commit was made")
+	}
+}
+
+// A root commit has no parent; an unknown commit is an error, never "no parent".
+func TestAgentMemoryParent(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "shell-home")
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "a", Description: "d", Body: "v1"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "a", Description: "d", Body: "v2", Revision: 1}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	ch := agentMemChangesT(t)
+	if p, err := agentMemParent(ch[1].Commit); err != nil || p != "" {
+		t.Fatalf("root parent = %q, %v", p, err)
+	}
+	if p, err := agentMemParent(ch[0].Commit); err != nil || p != ch[1].Commit {
+		t.Fatalf("parent = %q, %v", p, err)
+	}
+	if _, err := agentMemParent(strings.Repeat("ab", 20)); err == nil {
+		t.Fatal("unknown commit read as a root")
+	}
+}
+
+// When the newest change of a memory is withheld, no older row is offered as the newest.
+func TestAgentMemoryChangesLatestCountsWithheldRows(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "shell-home")
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "a", Description: "d", Body: "v1"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	agentMemCommitRaw(t, map[string]string{"af/user/a.md": "---\nname: a\ndescription: d\nrevision: 2\n---\nv2\n"},
+		agentMemRawMsg("update", "af/user/a.md", "Not A Kind", "s"))
+	out, err := agentMemListChanges(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Withheld != 1 || len(out.Changes) != 1 || out.Changes[0].Latest {
+		t.Fatalf("changes = %+v", out)
+	}
+}
