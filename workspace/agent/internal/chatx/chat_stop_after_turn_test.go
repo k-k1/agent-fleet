@@ -214,3 +214,42 @@ func TestStopArmRetriesAfterFailedHalt(t *testing.T) {
 		t.Fatalf("the next tick must retry: %d calls", h.count())
 	}
 }
+
+// TestSpendCapArmCatchesATurnThatEndedBeforeTheCrossingWasSeen: the budget (#1054) arms at
+// session.SpendCrossingBound rather than at the tick that noticed the crossing, because the turn
+// that crossed has often ended by then. An arm stamped after that turn's end marker discards it
+// and the session runs on; the bound keeps the marker in.
+func TestSpendCapArmCatchesATurnThatEndedBeforeTheCrossingWasSeen(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		atTick   bool // arm at the moment the crossing was seen (the defect) instead of the bound
+		wantHalt int
+	}{{"bound", false, 1}, {"tick", true, 0}} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, sid, _ := ledgerFixture(t, "slotsc"+tc.name)
+			var h haltRecorder
+			withHaltRecorder(t, &h)
+			rc, clock := newFakeReconciler(t, reportTickDefault, (&countingSink{}).sink)
+
+			before := time.Now().Add(-20 * time.Second)
+			status.PersistTurnEnd(sid, "idle") // the crossing turn ended here
+			ended := time.Now()
+			time.Sleep(1100 * time.Millisecond) // the tick that sees the crossing comes later
+
+			seen := time.Now()
+			at := session.SpendCrossingBound(session.Spend{Marks: []session.SpendMark{
+				{End: before, USD: 4.9}, {End: ended, USD: 5.2},
+			}}, 5, m.CreatedAt, seen)
+			if tc.atTick {
+				at = seen
+			}
+			armStop(t, m, at)
+			for i := 0; i < 3; i++ {
+				clock.advance(t, rc, reportTickDefault)
+			}
+			if h.count() != tc.wantHalt {
+				t.Fatalf("halts = %d, want %d (arm at %v, turn ended %v)", h.count(), tc.wantHalt, at, ended)
+			}
+		})
+	}
+}

@@ -46,19 +46,30 @@ export function SpendChip({ s }: SpendChipProps) {
   if (!spend) return null;
   const cap = spend.spendCapUsd ?? 0;
   const kids = spend.childrenUsd > 0;
-  if (!spend.priced && cap <= 0 && !kids) return null; // nothing measurable and nothing set
+  // Nothing measured and nothing set: no chip. Tokens with no price DO show — a budget that
+  // cannot see part of the spend has to say so, not read as "≈$0.00".
+  if (!spend.priced && !spend.unpriced && cap <= 0 && !kids) return null;
   const level = spendLevel(spend.spendUsd, cap);
+  const unpricedOnly = !!spend.unpriced && !spend.priced;
+  const partly = !!spend.unpriced && spend.priced;
+  const title =
+    tr("sess.budget_chip_title") +
+    (unpricedOnly ? "\n" + tr("sess.budget_unpriced") : partly ? "\n" + tr("sess.budget_partly_unpriced") : "");
   return (
     <>
       <span className="cb-div" aria-hidden="true" />
       <button
         type="button"
-        className={"cb-spend" + (level === "warn" || level === "over" ? " cb-spend-" + level : "")}
-        title={tr("sess.budget_chip_title")}
+        className={
+          "cb-spend" +
+          (level === "warn" || level === "over" ? " cb-spend-" + level : "") +
+          (spend.unpriced ? " cb-spend-unpriced" : "")
+        }
+        title={title}
         onClick={() => openBudget(s)}
         data-testid="spend-chip"
       >
-        {fmtSpend(spend.spendUsd)}
+        {unpricedOnly ? tr("sess.budget_chip_unpriced") : fmtSpend(spend.spendUsd) + (partly ? "+" : "")}
         {cap > 0 && <> / ${cap.toFixed(2)}</>}
       </button>
       {kids && (

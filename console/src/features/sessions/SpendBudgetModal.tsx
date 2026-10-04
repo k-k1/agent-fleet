@@ -5,7 +5,9 @@
 // The resume is the ordinary start, after the cap is written: the Agent clears the crossing
 // (and the stop it armed) only when the new cap is above the spend, so a resume with a cap still
 // at or under it would run one more turn and stop again. The button therefore stays disabled
-// until the value clears the spend — or is 0, which removes the budget.
+// until the spend has been read and the value clears it — or is 0, which removes the budget.
+// The read here can be seconds old while the Agent re-prices on the write, so the start also
+// waits for the write's own answer: a crossing it did not lift means no resume.
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -32,16 +34,21 @@ export function SpendBudgetModal({ s, onClose }: SpendBudgetModalProps) {
   const [spend, setSpend] = useState<SessionSpend | null>(null);
   const [value, setValue] = useState(cap > 0 ? String(cap) : "");
   const [saving, setSaving] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
     let live = true;
     void sessionSpend(s.name)
       .then((r) => {
-        if (!live || r?.error) return;
+        if (!live) return;
+        if (!r || r.error) {
+          setLoadFailed(true);
+          return;
+        }
         setSpend(r);
         if (resume) setValue(String(suggestedRaise(r.spendCapUsd ?? cap, r.spendUsd)));
       })
-      .catch(() => {});
+      .catch(() => live && setLoadFailed(true));
     return () => {
       live = false;
     };
@@ -51,15 +58,24 @@ export function SpendBudgetModal({ s, onClose }: SpendBudgetModalProps) {
   const spent = spend?.spendUsd ?? 0;
   const invalid = Number.isNaN(next);
   const stillUnder = !invalid && next > 0 && spend !== null && next <= spent;
+  // Without the spend, a positive cap cannot be checked against it; removing the budget (0) can.
+  const unknownSpend = resume && !invalid && next > 0 && spend === null;
+  const blocked = invalid || (resume && (stillUnder || unknownSpend));
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (saving || invalid || (resume && stillUnder)) return;
+    if (saving || blocked) return;
     setSaving(true);
     try {
       const r = await sessionSetSpendCap(s.name, next);
       if (r?.error) {
         toast(errText(r.error));
+        return;
+      }
+      if (resume && r.spendCapHitAt) {
+        // The Agent priced the transcript afresh and the cap is still at or under it.
+        if (spend && typeof r.spendUsd === "number") setSpend({ ...spend, spendUsd: r.spendUsd });
+        toast(tr("sess.budget_still_over", { spend: fmtSpend(r.spendUsd ?? spent) }));
         return;
       }
       if (resume) {
@@ -93,10 +109,13 @@ export function SpendBudgetModal({ s, onClose }: SpendBudgetModalProps) {
         {resume && <p className="spend-budget-lead">{tr("sess.budget_raise_lead", { cap: "$" + cap.toFixed(2) })}</p>}
         <p className="spend-budget-spent" data-testid="spend-budget-spent">
           {spend === null
-            ? tr("sess.budget_loading")
-            : spend.priced
-              ? tr("sess.budget_spent", { spend: fmtSpend(spent) })
-              : tr("sess.budget_unpriced")}
+            ? loadFailed
+              ? tr("sess.budget_load_failed")
+              : tr("sess.budget_loading")
+            : spend.unpriced && !spend.priced
+              ? tr("sess.budget_unpriced")
+              : tr("sess.budget_spent", { spend: fmtSpend(spent) })}
+          {spend?.unpriced && spend.priced && <> {tr("sess.budget_partly_unpriced")}</>}
         </p>
         <label className="ui-field">
           <span className="ui-field-label">{tr("sess.budget_label")}</span>
@@ -123,7 +142,7 @@ export function SpendBudgetModal({ s, onClose }: SpendBudgetModalProps) {
         <Button variant="ghost" onClick={onClose} disabled={saving}>
           {tr("sx.cancel")}
         </Button>
-        <Button variant="primary" type="submit" disabled={saving || invalid || (resume && stillUnder)}>
+        <Button variant="primary" type="submit" disabled={saving || blocked}>
           {resume ? tr("sess.budget_raise_resume") : tr("sx.save")}
         </Button>
       </footer>

@@ -44,6 +44,7 @@ func spendOfTurns(m session.Meta, turns []transcript.Turn) session.Spend {
 		if r.CostUSD > 0 {
 			sp.USD += r.CostUSD
 			sp.Priced, sp.Reported = true, true
+			sp.Marks = append(sp.Marks, session.SpendMark{End: rowEnd(r.TS), USD: sp.USD})
 			continue
 		}
 		agg := usageAgg{In: r.Tokens.In, Out: r.Tokens.Out,
@@ -62,6 +63,16 @@ func spendOfTurns(m session.Meta, turns []transcript.Turn) session.Spend {
 		}
 		sp.USD += usd
 		sp.Priced = true
+		sp.Marks = append(sp.Marks, session.SpendMark{End: rowEnd(r.TS), USD: sp.USD})
 	}
 	return sp
+}
+
+// rowEnd is a folded turn's timestamp (its last event), zero when there is none to parse.
+func rowEnd(ts string) time.Time {
+	t, err := time.Parse(time.RFC3339Nano, ts)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }

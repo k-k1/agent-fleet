@@ -104,7 +104,7 @@ func evaluateSpendCap(m session.Meta, sp session.Spend, now time.Time) {
 			return false
 		}
 		c.SpendCapHitAt = stamp
-		c.StopAfterTurnAt = stamp
+		armForCrossing(c, session.SpendCrossingBound(sp, c.SpendCapUSD, c.CreatedAt, now), now)
 		return true
 	})
 	if cur.Name == "" || cur.StoppedAt != "" || !session.OverSpendCap(cur, sp.USD) {
@@ -122,6 +122,23 @@ func evaluateSpendCap(m session.Meta, sp session.Spend, now time.Time) {
 	}
 	log.Printf("spend-cap: halted %s mid-turn (≈$%.2f of $%.2f)", m.Name, sp.USD, cur.SpendCapUSD)
 	notifySpendCapStop(halted, sp, true)
+}
+
+// armForCrossing arms the budget's stop at bound — the end of the last turn that stayed under
+// the cap — so the turn that crossed is the one whose end stops the session, even when it ended
+// before this tick saw the crossing. An arm already live at or before bound covers that turn
+// too and is left as it is (still the user's). A later one is displaced and kept in
+// SpendCapArmPrev, to be put back if the crossing is lifted.
+func armForCrossing(c *session.Meta, bound, now time.Time) {
+	if at, live := session.StopArmedAt(*c, now); live && !at.After(bound) {
+		return
+	}
+	c.SpendCapArmPrev = ""
+	if _, live := session.StopArmedAt(*c, now); live {
+		c.SpendCapArmPrev = c.StopAfterTurnAt
+	}
+	c.StopAfterTurnAt = bound.Format(time.RFC3339)
+	c.SpendCapArmAt = c.StopAfterTurnAt
 }
 
 // overSpendCapArmed: the session has crossed its budget and the cap has not been raised since.
@@ -184,14 +201,19 @@ func HandleSessionSpendCap(w http.ResponseWriter, r *http.Request) {
 }
 
 // setSpendCap writes the cap and, when the new cap lifts the crossing, clears the hit and the
-// stop it armed. A cap still at or under the spend keeps the hit (the next sweep re-arms if
+// stop the budget armed (restoring any arm that stop displaced). A cap still at or under the spend keeps the hit (the next sweep re-arms if
 // the arm was consumed), so lowering a cap cannot quietly cancel a pending stop.
 func setSpendCap(name string, usd float64, sp session.Spend) (session.Meta, bool) {
 	return UpdateSessionMeta(name, func(m *session.Meta) bool {
 		m.SpendCapUSD = usd
 		if m.SpendCapHitAt != "" && !session.OverSpendCap(*m, sp.USD) {
 			m.SpendCapHitAt = ""
-			m.StopAfterTurnAt = ""
+			// Only the budget's own arm is released; one it displaced comes back, and an arm the
+			// user or a schedule set (before or after the crossing) is not the budget's to drop.
+			if session.SpendCapOwnsArm(*m) {
+				m.StopAfterTurnAt = m.SpendCapArmPrev
+			}
+			m.SpendCapArmAt, m.SpendCapArmPrev = "", ""
 		}
 		return true
 	})

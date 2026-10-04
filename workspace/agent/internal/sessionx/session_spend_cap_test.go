@@ -352,3 +352,84 @@ func TestCreateSessionTakesSpendCap(t *testing.T) {
 		t.Fatalf("fork cap=%v hit=%q, want 4 and no crossing", f.SpendCapUSD, f.SpendCapHitAt)
 	}
 }
+
+// The crossing is seen on a tick, often after the short turn that crossed has already ended.
+// The arm has to sit at or before that turn's end, or its end-of-turn evidence is discarded and
+// the stop waits for some later turn (review of #1652).
+func TestSpendCapArmCoversATurnThatAlreadyEnded(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := cappedMeta(t, "cap7", 5)
+	under := time.Now().Add(-40 * time.Second).Truncate(time.Second)
+	crossed := under.Add(20 * time.Second) // the crossing turn ended 20 s before the tick
+	sp := session.Spend{USD: 5.2, Priced: true, Marks: []session.SpendMark{
+		{End: under.Add(-time.Minute), USD: 3}, {End: under, USD: 4.9}, {End: crossed, USD: 5.2},
+	}}
+	evaluateSpendCap(m, sp, time.Now())
+	got, _ := session.ReadMeta(m.Name)
+	at, live := session.StopArmedAt(got, time.Now())
+	if !live || at.After(crossed) {
+		t.Fatalf("arm at %v must be at or before the crossing turn's end %v (live=%v)", at, crossed, live)
+	}
+	if !at.Equal(under) {
+		t.Fatalf("arm at %v, want the end of the last turn under the cap %v", at, under)
+	}
+	if !session.SpendCapOwnsArm(got) {
+		t.Fatal("the arm the budget wrote must be marked as the budget's")
+	}
+}
+
+// A stop the user (or a schedule) asked for is not the budget's to drop.
+func TestSpendCapLeavesOtherArmsAlone(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	under := time.Now().Add(-30 * time.Second).Truncate(time.Second)
+	sp := session.Spend{USD: 6, Priced: true, Marks: []session.SpendMark{{End: under, USD: 4}, {End: under.Add(10 * time.Second), USD: 6}}}
+
+	t.Run("an earlier user arm is kept and survives the raise", func(t *testing.T) {
+		m := cappedMeta(t, "cap8a", 5)
+		m.StopAfterTurnAt = under.Add(-time.Minute).Format(time.RFC3339)
+		session.WriteMeta(m)
+		evaluateSpendCap(m, sp, time.Now())
+		got, _ := session.ReadMeta(m.Name)
+		if got.StopAfterTurnAt != m.StopAfterTurnAt || session.SpendCapOwnsArm(got) {
+			t.Fatalf("an arm already covering the crossing turn must stay the user's: %+v", got)
+		}
+		setFakeSpend(t, m.Name, 6)
+		postSpendCap(t, m.Name, `{"usd":10}`)
+		if got, _ = session.ReadMeta(m.Name); got.StopAfterTurnAt != m.StopAfterTurnAt {
+			t.Fatalf("raising the cap dropped the user's stop: %q", got.StopAfterTurnAt)
+		}
+	})
+
+	t.Run("a later user arm is displaced and put back", func(t *testing.T) {
+		m := cappedMeta(t, "cap8b", 5)
+		user := time.Now().Add(-2 * time.Second).Format(time.RFC3339)
+		m.StopAfterTurnAt = user
+		session.WriteMeta(m)
+		evaluateSpendCap(m, sp, time.Now())
+		got, _ := session.ReadMeta(m.Name)
+		if got.StopAfterTurnAt != under.Format(time.RFC3339) || got.SpendCapArmPrev != user {
+			t.Fatalf("want the budget's earlier arm with the user's kept aside: %+v", got)
+		}
+		setFakeSpend(t, m.Name, 6)
+		postSpendCap(t, m.Name, `{"usd":10}`)
+		if got, _ = session.ReadMeta(m.Name); got.StopAfterTurnAt != user {
+			t.Fatalf("raising the cap must put the user's stop back, got %q", got.StopAfterTurnAt)
+		}
+	})
+
+	t.Run("a user re-arm after the crossing survives the raise", func(t *testing.T) {
+		m := cappedMeta(t, "cap8c", 5)
+		evaluateSpendCap(m, sp, time.Now())
+		postStopAfterTurn(t, m.Name, `{"on":true}`)
+		got, _ := session.ReadMeta(m.Name)
+		armed := got.StopAfterTurnAt
+		if session.SpendCapOwnsArm(got) {
+			t.Fatal("an arm the user set is the user's")
+		}
+		setFakeSpend(t, m.Name, 6)
+		postSpendCap(t, m.Name, `{"usd":10}`)
+		if got, _ = session.ReadMeta(m.Name); got.StopAfterTurnAt != armed || got.SpendCapHitAt != "" {
+			t.Fatalf("the raise must lift the crossing and keep the user's arm: %+v", got)
+		}
+	})
+}

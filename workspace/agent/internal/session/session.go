@@ -500,6 +500,14 @@ type Meta struct {
 	// it is set, a new prompt re-arms the stop-after-turn instead of releasing it, so every
 	// further turn ends in a stop until the cap is raised above the spend (which clears it).
 	SpendCapHitAt string `json:"spendCapHitAt,omitempty"`
+	// SpendCapArmAt is the StopAfterTurnAt value the budget itself wrote. The arm is the budget's
+	// exactly while the two are equal (SpendCapOwnsArm); a user or schedule arm has its own
+	// instant, so the budget never releases a stop it did not set.
+	SpendCapArmAt string `json:"spendCapArmAt,omitempty"`
+	// SpendCapArmPrev is the arm the budget's earlier one displaced — a user's or schedule's stop
+	// whose instant came after the crossing turn ended and so would have missed it. Lifting the
+	// crossing puts it back, so raising the cap never cancels a stop someone else asked for.
+	SpendCapArmPrev string `json:"spendCapArmPrev,omitempty"`
 	// ForkFrom is the SOURCE conversation id this session was forked from, in the
 	// kind's own id space: claude = the source slot's sid (jsonl), opencode = its
 	// ses_… id, codex = its session uuid. It only affects the FIRST launch — each

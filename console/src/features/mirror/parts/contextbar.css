@@ -148,6 +148,9 @@ working directory changed (.mirror-context / .mc-*)
 .cb-spend-over {
   color: var(--err);
 }
+.cb-spend-unpriced {
+  font-style: italic;
+}
 .cb-spend-kids {
   flex: none;
   color: var(--muted);

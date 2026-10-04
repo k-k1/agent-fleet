@@ -6,7 +6,10 @@ package session
 // halts, chatx's reconciler drives the sweep, the Agent's main package prices the transcript,
 // and all three have to agree on what "over budget" means without seeing each other.
 
-import "math"
+import (
+	"math"
+	"time"
+)
 
 // SpendCapHardFactor is the multiple of the cap at which a session is halted at once, even in
 // the middle of a turn. Below it the stop waits for the turn to end, because killing a turn
@@ -34,6 +37,52 @@ type Spend struct {
 	Unpriced bool `json:"unpriced,omitempty"`
 	// Reported: at least one turn's cost came from the CLI rather than the price table.
 	Reported bool `json:"reported,omitempty"`
+	// Marks is the running total after each priced turn, oldest first: where the spend stood
+	// when each turn ended. SpendCrossingBound reads it; it never goes on the wire.
+	Marks []SpendMark `json:"-"`
+}
+
+// SpendMark is the running total of a session's spend at the end of one turn. End is zero when
+// the transcript gave the turn no usable timestamp.
+type SpendMark struct {
+	End time.Time
+	USD float64
+}
+
+// SpendCrossingBound is the lower bound a budget stop's arm takes: the end of the last turn that
+// still left the spend under the cap, or the session's creation when the first turn crossed it.
+//
+// The arm's instant is the lower bound the end-of-turn evidence is cut by (StopArmedAt), and
+// the crossing is only SEEN on a later tick — after a short turn may already have ended. Arming
+// at the moment of the tick would discard that turn's end marker and leave the session running
+// with the stop pending until some later turn. The bound has to come before the end of the
+// turn that crossed, and after the end of every turn that did not.
+//
+// The result is never older than StopArmMaxAge allows (an arm older than that is dead on
+// arrival) and never later than now.
+func SpendCrossingBound(sp Spend, capUSD float64, createdAt string, now time.Time) time.Time {
+	bound, _ := time.Parse(time.RFC3339, createdAt)
+	for _, mk := range sp.Marks {
+		if mk.USD >= capUSD {
+			break
+		}
+		if !mk.End.IsZero() {
+			bound = mk.End
+		}
+	}
+	if floor := now.Add(-StopArmMaxAge + time.Minute); bound.Before(floor) {
+		bound = floor
+	}
+	if bound.After(now) {
+		bound = now
+	}
+	return bound
+}
+
+// SpendCapOwnsArm reports whether the stop-after-turn arm on m is the one the budget wrote,
+// rather than the user's or a schedule's. Only that arm is the budget's to release.
+func SpendCapOwnsArm(m Meta) bool {
+	return m.StopAfterTurnAt != "" && m.StopAfterTurnAt == m.SpendCapArmAt
 }
 
 // SpendCapDefaultPref is the user's default budget for new sessions (ui-prefs

@@ -323,6 +323,11 @@ ADR:
   added. A turn with tokens but no price is left out and flagged `unpriced`; no 0 is invented.
 - **Only the session's own turns.** Turns stamped before the session's `CreatedAt` are not
   charged: a fork starts from a copy of its source's history with the source's timestamps.
+- **The stop is armed at the end of the last turn that stayed under the cap**
+  (`session.SpendCrossingBound`), not at the tick that noticed the crossing: the arm's instant
+  is the lower bound the end-of-turn evidence is cut by, and the turn that crossed has often
+  ended before the tick sees it. The budget releases only an arm it wrote itself
+  (`SpendCapArmAt`); a user's or schedule's arm it displaced comes back when the cap is raised.
 - **Children are shown, not charged.** The parent's spend view lists its `create_session`
   descendants' spend beside its own; each child has its own budget.
 

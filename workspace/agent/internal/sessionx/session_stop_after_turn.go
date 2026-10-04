@@ -74,6 +74,9 @@ func setStopArm(name string, on bool) (session.Meta, bool) {
 		} else {
 			m.StopAfterTurnAt = ""
 		}
+		// Whatever the user does to the arm now is theirs: the budget no longer owns it, and an
+		// arm it had displaced is superseded.
+		m.SpendCapArmAt, m.SpendCapArmPrev = "", ""
 		return true
 	})
 	if !ok {
@@ -122,6 +125,7 @@ func cancelStopArmOnNewPrompt(name string) {
 				return false
 			}
 			c.StopAfterTurnAt = time.Now().Format(time.RFC3339)
+			c.SpendCapArmAt, c.SpendCapArmPrev = c.StopAfterTurnAt, ""
 			return true
 		})
 		return
