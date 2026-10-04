@@ -405,3 +405,12 @@
   padding: 4px 12px;
   border-top: 1px solid var(--border2);
 }
+.cp-talk-retry {
+  background: none;
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  color: var(--fg);
+  font-size: 12px;
+  padding: 1px 10px;
+  cursor: pointer;
+}

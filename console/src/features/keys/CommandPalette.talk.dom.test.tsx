@@ -5,7 +5,8 @@
 //    query (a CJK bigram match, a width-folded one).
 // 2. Enter opens the hit's session with a mark at the hit's turn, so the mirror lands there.
 // 3. An archived hit opens the archive shelf rather than doing nothing.
-// 4. While the Agent is still building the index, the palette says so.
+// 4. While the Agent is still building the index, the palette says so and asks again until done.
+// 5. A search that could not run says why; it never reads as "no matching conversation".
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -18,12 +19,16 @@ vi.stubGlobal("localStorage", {
 });
 
 let searchBody: unknown = { hits: [], indexing: false, indexed: 0, total: 0 };
+let searchStatus = 200;
+let searchReject = false;
 const searched: string[] = [];
 const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
   const url = String(input);
   if (url.includes("session-search")) {
     searched.push(url);
-    return new Response(JSON.stringify(searchBody), { status: 200, headers: { "Content-Type": "application/json" } });
+    if (searchReject) throw new TypeError("Failed to fetch");
+    const body = typeof searchBody === "string" ? searchBody : JSON.stringify(searchBody);
+    return new Response(body, { status: searchStatus, headers: { "Content-Type": "application/json" } });
   }
   return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
 });
@@ -91,6 +96,8 @@ beforeEach(() => {
   clearMarks();
   opened.length = 0;
   searched.length = 0;
+  searchStatus = 200;
+  searchReject = false;
   useReposStore.setState({ repos: [] });
   useSessionsStore.setState({ sessions: [{ name: "fixer", kind: "codex", alive: false, title: "fixer" }] });
   useSessionUI.setState({ archivedOpen: false });
@@ -140,9 +147,71 @@ describe("CommandPalette conversations mode", () => {
     expect(useSessionUI.getState().archivedOpen).toBe(true);
   });
 
-  it("says when the index is still being built", async () => {
+  it("says when the index is still being built, and asks again until it is", async () => {
     searchBody = { hits: [], indexing: true, indexed: 2, total: 9 };
     await typeQuery("anything");
     expect(document.querySelector(".cp-talk-indexing")?.textContent).toMatch(/2\/9/);
+    const asked = searched.length;
+    searchBody = { hits: [hit("fixer", 1, "found after indexing")], indexing: false, indexed: 9, total: 9 };
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 3300));
+    });
+    expect(searched.length).toBe(asked + 1);
+    expect(snippets()).toEqual(["found after indexing"]);
+    expect(document.querySelector(".cp-talk-indexing")).toBeNull();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 3300));
+    });
+    expect(searched.length).toBe(asked + 1); // done indexing: no more polling
+  }, 10_000);
+
+  it("stops asking again once the palette closes", async () => {
+    searchBody = { hits: [], indexing: true, indexed: 2, total: 9 };
+    await typeQuery("anything");
+    const asked = searched.length;
+    act(() => useKeysStore.getState().closePalette());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 3300));
+    });
+    expect(searched.length).toBe(asked);
+  }, 10_000);
+
+  it("reports a failed search with its reason, not as no match", async () => {
+    const failures: [string, () => void][] = [
+      ["index cannot be read", () => {
+        searchStatus = 500;
+        searchBody = { error: { code: "search_failed", message: "index cannot be read" } };
+      }],
+      ["bad gateway", () => {
+        searchStatus = 502;
+        searchBody = "<html>bad gateway</html>";
+      }],
+      ["Failed to fetch", () => {
+        searchReject = true;
+      }],
+    ];
+    for (const [reason, arrange] of failures) {
+      arrange();
+      await typeQuery("q " + reason);
+      const err = document.querySelector(".cp-talk-err");
+      expect(err?.textContent, reason).toContain(reason);
+      expect(document.querySelector(".cp-list")?.textContent).not.toMatch(/No matching conversation|一致する会話はありません/);
+      searchStatus = 200;
+      searchReject = false;
+    }
+    // Retry runs the same query again.
+    searchBody = { hits: [hit("fixer", 1, "back")], indexing: false, indexed: 1, total: 1 };
+    const asked = searched.length;
+    act(() => {
+      document.querySelector(".cp-talk-retry")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 320));
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(searched.length).toBe(asked + 1);
+    expect(snippets()).toEqual(["back"]);
   });
 });

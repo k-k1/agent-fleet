@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  applyMark, captureMark, captureMarkBelow, saveMark, scrollTopForTurn, loadMark, type ScrollMark,
+  applyMark, captureMark, captureMarkBelow, saveMark, scrollTopForTurn, loadMark, onJump, type ScrollMark,
 } from "../scrollMark.ts";
 import type { Group } from "../transcript/types.ts";
 import { workSplit } from "../mirrorParts.ts";
@@ -70,6 +70,8 @@ export function useMirrorScroll() {
   // and "follow was re-armed" (send, jump to latest).
   const restoreMarkRef = useRef<ScrollMark | null>(null);
   const restoringRef = useRef(false);
+  // The session this mirror shows, for the explicit-jump listener below (set by resetForSession).
+  const sessionRef = useRef("");
   // The idx of the latest reply block — what "jump to reply top" targets. Written on every
   // render so the closures built with [] (the ResizeObserver, onScroll) can read the current
   // value, as ttsCaptureRef does.
@@ -115,6 +117,34 @@ export function useMirrorScroll() {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // An explicit jump (a past-session search hit, scrollMark.requestJump) into the session this
+  // mirror already shows. A mirror reads its mark only on a session switch, and opening a session
+  // that is already on screen switches nothing. Before the first settle the new mark simply
+  // replaces the one being waited on; after it, the jump is a restore like any other — held
+  // through late layout until the reader touches it — or, when the turn is outside the loaded
+  // window, nothing (the view stays where the reader left it).
+  useEffect(
+    () =>
+      onJump((session, mark) => {
+        if (session !== sessionRef.current) return;
+        restoreMarkRef.current = mark;
+        if (!didInitRef.current) return;
+        const el = bodyRef.current;
+        if (el && applyMark(el, mark)) {
+          selfTopRef.current = el.scrollTop;
+          atBottomRef.current = false;
+          restoringRef.current = true;
+          prependAnchorRef.current = null;
+          setShowJump(true);
+          scheduleReplyTopSync();
+        } else {
+          endRestore();
+        }
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the refs are read live; subscribe once
+    [],
+  );
 
   // Re-pin whenever the geometry changes while follow is on: the body's own box resizing
   // (the ToDo / spend / context panels above it, the composer auto-growing, a pane/window
@@ -451,6 +481,7 @@ export function useMirrorScroll() {
 
   // Reset on a session switch, run inside MirrorView's layout effect in that effect's order.
   const resetForSession = (session: string) => {
+    sessionRef.current = session;
     atBottomRef.current = true; // a freshly opened session starts pinned to the bottom
     // The old scroller can be reused for another session (pane D&D / opening a row
     // in the current mirror). Clear its physical offset in the same pre-paint phase;

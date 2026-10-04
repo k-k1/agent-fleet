@@ -175,7 +175,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
     "How many children one session may have at a time. It is per parent, not per workspace, so more parents mean more sessions. Each child is a whole agent's memory. 1–10, default 3.",
   "agents.session_search": "Past-session search",
   "agents.note_session_search":
-    "Lets a session search what was said in this workspace's past sessions — every kind, stopped and archived included (search_sessions). Read-only, and only conversation text is indexed: no tool output or thinking. The command palette's Conversations mode works whatever this is set to. Applies to sessions started from now on. Default ON.",
+    "Lets a session search what was said in this workspace's past sessions — every kind, stopped and archived included (search_sessions). Read-only, and only conversation text is indexed: no tool output or thinking. The command palette's Conversations mode works whatever this is set to. Turning it on reaches sessions started from now on; turning it off refuses running sessions' searches as soon as it is saved. Default ON.",
   "agents.image_generation": "Image generation",
   "agents.note_image_generation":
     "Lets a session generate an image from a prompt (the generate_image tool). It uses a connected CLI's own image generation, spending that plan's usage each time. Applies to sessions started from now on. Default OFF.",
@@ -543,7 +543,9 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "keys.palette.talk_hint": "Type to search every session's conversation, stopped and archived included",
   "keys.palette.talk_empty": "No matching conversation",
   "keys.palette.talk_indexing": "Building the index ({indexed}/{total} sessions). Results may be incomplete",
-  "keys.palette.talk_archived": "This session is archived. Restore it from the archive and it opens at that point",
+  "keys.palette.talk_archived": "This session is archived. Restore it from the archive, then open it from the list and it opens at that point",
+  "keys.palette.talk_failed": "Could not search ({reason})",
+  "keys.palette.talk_retry": "Retry",
   "keys.palette.talk_archived_badge": "Archived",
   "keys.palette.talk_role_user": "You",
   "keys.palette.talk_role_agent": "Agent",

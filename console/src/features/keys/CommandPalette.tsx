@@ -96,6 +96,8 @@ const MODE_LABEL: Record<Mode, MsgKey> = {
 // Modes whose list the backend already filtered by the query: the client-side fuzzy filter
 // would only drop hits the server matched for reasons the row text does not show.
 const SERVER_FILTERED: ReadonlySet<Mode> = new Set<Mode>(["file", "talk"]);
+// How often talk mode asks again while the Agent reports a first indexing pass in progress.
+const TALK_REPOLL_MS = 3000;
 // File search is rooted at ~/repos: the working-copy scope, so results are code files (the
 // backend excludes caches/packages), shown repo-relative like the changed-files mode.
 const FILE_ROOT = "repos";
@@ -375,6 +377,8 @@ export function CommandPalette() {
   const [sessionFiles, setSessionFiles] = useState<Item[] | null>(null); // null = loading
   const [fileHits, setFileHits] = useState<Item[] | null>(null); // null = searching (file mode)
   const [talk, setTalk] = useState<SessionSearchResult | null>(null); // null = searching (talk mode)
+  const [talkErr, setTalkErr] = useState<string | null>(null); // the search could not run, and why
+  const [talkRetry, setTalkRetry] = useState(0); // bumped by the retry button to run it again
   // The session list's order is frozen (as an array of names) the moment the palette opens.
   // List polling keeps running while it is open, and one session entering the question
   // state reorders everything; since the selection is an index, the row under the cursor
@@ -481,25 +485,40 @@ export function CommandPalette() {
 
   // Talk mode asks the Agent's index per keystroke, debounced a little longer than file search:
   // each query is a full-text search, and IME composition produces bursts of intermediate text.
+  // While the Agent says it is still indexing, the same query is asked again every few seconds,
+  // or a search made during the first pass would show its partial answer until the palette is
+  // retyped. A failure is kept apart from an empty answer: "no match" is a claim about the
+  // conversations, and a search that never ran cannot make it.
   useEffect(() => {
     if (!open || mode !== "talk") return;
+    setTalkErr(null);
     const query = q.trim();
     if (!query) {
       setTalk({ hits: [], indexing: false, indexed: 0, total: 0 });
       return;
     }
     const ctl = new AbortController();
-    setTalk(null); // searching
-    const timer = setTimeout(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const ask = () => {
       searchSessions(query, ctl.signal)
-        .then((r) => !ctl.signal.aborted && setTalk(r))
-        .catch(() => !ctl.signal.aborted && setTalk({ hits: [], indexing: false, indexed: 0, total: 0 }));
-    }, 250);
+        .then((r) => {
+          if (ctl.signal.aborted) return;
+          setTalk(r);
+          if (r.indexing) timer = setTimeout(ask, TALK_REPOLL_MS);
+        })
+        .catch((e: unknown) => {
+          if (ctl.signal.aborted) return;
+          setTalk({ hits: [], indexing: false, indexed: 0, total: 0 });
+          setTalkErr(e instanceof Error ? e.message : String(e));
+        });
+    };
+    setTalk(null); // searching
+    timer = setTimeout(ask, 250);
     return () => {
       ctl.abort();
       clearTimeout(timer);
     };
-  }, [open, mode, q]);
+  }, [open, mode, q, talkRetry]);
   const talkItems = useMemo<Item[]>(
     () => (talk ? talk.hits.map((h) => talkItem(h, running)) : []),
     [talk, running],
@@ -702,6 +721,20 @@ export function CommandPalette() {
             <div className="cp-empty">{t("keys.palette.file_hint")}</div>
           ) : mode === "talk" && !q.trim() ? (
             <div className="cp-empty">{t("keys.palette.talk_hint")}</div>
+          ) : mode === "talk" && talkErr ? (
+            <div className="cp-empty cp-talk-err" role="alert">
+              {t("keys.palette.talk_failed", { reason: talkErr })}{" "}
+              <button
+                type="button"
+                className="cp-talk-retry"
+                onMouseDown={(e) => {
+                  e.preventDefault(); // keep focus in the search input
+                  setTalkRetry((n) => n + 1);
+                }}
+              >
+                {t("keys.palette.talk_retry")}
+              </button>
+            </div>
           ) : loading ? (
             <div className="cp-empty">
               {t(mode === "file" || mode === "talk" ? "keys.palette.file_searching" : "keys.palette.changed_loading")}

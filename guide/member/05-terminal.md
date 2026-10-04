@@ -77,10 +77,11 @@ you are reading does not move under your cursor — only its badge follows.
 running, stopped and archived. Type a few words (all of them must occur; Japanese works from two
 characters) and each hit shows the session, who said it and when, and the matching text.
 **Enter** opens that session scrolled to the turn. Only the conversation itself is searched, not
-tool output or the agent's thinking. A hit in an archived session opens the archive, where you
-restore it; it then opens at the same turn. The first search after an update can take a minute or
+tool output or the agent's thinking. A hit in an archived session opens the archive: restore it there, then open it from the list
+and it opens at the same turn. The first search after an update can take a minute or
 two to cover every session — the palette says "Building the index" until it has.
-A turn older than the part of the conversation the mirror loads lands at the end instead.
+A turn older than the part of the conversation the mirror loads lands at the end instead. If the
+search itself fails, the palette says why and offers to retry, rather than reporting no match.
 
 When the terminal has focus and **"Terminal input priority"** is turned on in settings, Ctrl+P is
 passed to the terminal. In that case, open it with the default **Ctrl+K → ;** (macOS: **⌘K → ;**).

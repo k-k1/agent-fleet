@@ -50,6 +50,25 @@ export function clearMarks(): void {
   marks.clear();
 }
 
+/** Who wants to hear about an explicit jump: every mounted mirror, which acts only on its own session. */
+const jumpListeners = new Set<(session: string, mark: ScrollMark) => void>();
+
+/** Moves a session's view to mark — an explicit request such as a search hit, not a remembered
+ * position. Saved as the session's mark so a mirror that mounts it next lands there, AND told to
+ * the mirrors already showing it: those read the mark only when they switch session, so without
+ * this a jump into an open session would do nothing. */
+export function requestJump(session: string, mark: ScrollMark): void {
+  saveMark(session, mark);
+  for (const fn of jumpListeners) fn(session, mark);
+}
+
+export function onJump(fn: (session: string, mark: ScrollMark) => void): () => void {
+  jumpListeners.add(fn);
+  return () => {
+    jumpListeners.delete(fn);
+  };
+}
+
 /** Capture the current position. The reference is the first turn overlapping the top edge of the
  * scroll container el. When no turn overlaps (empty transcript) or only synthetic turns do, return
  * null = leave it to land at the tail. */

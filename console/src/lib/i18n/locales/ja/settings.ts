@@ -173,7 +173,7 @@ export const settings = {
     "1 つのセッションが同時に持てる子の数です。ワークスペース全体ではなく親 1 つあたりなので、親が増えればその分だけ増えます。子 1 本がエージェント 1 つ分のメモリを使います。1〜10・既定 3。",
   "agents.session_search": "過去セッションの検索",
   "agents.note_session_search":
-    "セッションが、このワークスペースの過去のセッション（停止・アーカイブ済みを含む全種別）の会話を全文検索できるようにします（search_sessions）。読み取りのみで、索引に入るのは会話の本文だけです。ツールの出力や思考は入りません。コマンドパレットの「会話」はこの設定に関係なく使えます。反映は次に起動するセッションから。既定 ON。",
+    "セッションが、このワークスペースの過去のセッション（停止・アーカイブ済みを含む全種別）の会話を全文検索できるようにします（search_sessions）。読み取りのみで、索引に入るのは会話の本文だけです。ツールの出力や思考は入りません。コマンドパレットの「会話」はこの設定に関係なく使えます。オンにした分は次に起動するセッションから使えるようになり、オフは保存した時点で起動中のセッションの検索も断ります。既定 ON。",
   "agents.image_generation": "画像生成",
   "agents.note_image_generation":
     "セッションがプロンプトから画像を生成できるようにします（generate_image ツール）。接続済み CLI の画像生成を使い、生成のたびにそのプランの利用枠を消費します。反映は次に起動するセッションから。既定 OFF。",
@@ -537,7 +537,9 @@ export const settings = {
   "keys.palette.talk_hint": "文字を入力して、全セッションの会話を検索（停止・アーカイブ済みを含む）",
   "keys.palette.talk_empty": "一致する会話はありません",
   "keys.palette.talk_indexing": "索引を作成中です（{indexed}/{total} セッション）。結果がまだ揃っていないことがあります",
-  "keys.palette.talk_archived": "アーカイブ済みのセッションです。アーカイブから復元すると、その位置で開きます",
+  "keys.palette.talk_archived": "アーカイブ済みのセッションです。アーカイブから復元してから一覧で開くと、その位置で開きます",
+  "keys.palette.talk_failed": "検索できませんでした（{reason}）",
+  "keys.palette.talk_retry": "再試行",
   "keys.palette.talk_archived_badge": "アーカイブ",
   "keys.palette.talk_role_user": "あなた",
   "keys.palette.talk_role_agent": "エージェント",

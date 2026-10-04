@@ -34,7 +34,7 @@ Getting this wrong is what makes a setting look like it "didn't work".
 | Timing | What |
 |---|---|
 | **Immediately** | Display, keys, speech, notifications; adding and removing connections; the stopped-session archive period (on the next session-list refresh) |
-| **From the next session you start** | Agent behaviour settings, agent instructions, session-to-session messaging, starting sessions from sessions, fleet observation, past-session search, image generation, MCP servers |
+| **From the next session you start** | Agent behaviour settings, agent instructions, session-to-session messaging, starting sessions from sessions, fleet observation, past-session search (turning it off also refuses running sessions' searches at once), image generation, MCP servers |
 | **From the next chat message** | Assistant settings; ops & monitoring connections (when used from an assistant) |
 | **After stopping and starting the workspace** | Toolchain (timezone, language versions); Machine (a size or class your admin changed) |
 
