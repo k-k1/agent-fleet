@@ -105,9 +105,28 @@ func clearStopArm(m session.Meta) session.Meta {
 //
 // Answers to a modal (keys / seq, an Interaction reply, a carried answer) deliberately do NOT
 // come through here: they continue the armed turn rather than starting new work.
+//
+// A session over its spend budget (#1054) is the exception: the new prompt re-arms the stop at
+// its own instant, so the turn it starts is allowed to finish and the session then stops again.
+// Releasing it would let one prompt after the crossing run unbudgeted for as long as it is fed.
 func cancelStopArmOnNewPrompt(name string) {
 	m, ok := session.ReadMeta(name)
-	if !ok || m.StopAfterTurnAt == "" {
+	if !ok {
+		return
+	}
+	if overSpendCapArmed(m) {
+		// Re-checked under the meta mutex: a cap raised between the read above and here has
+		// cleared the hit, and re-arming then would stop a session the user just let go on.
+		UpdateSessionMeta(name, func(c *session.Meta) bool {
+			if !overSpendCapArmed(*c) {
+				return false
+			}
+			c.StopAfterTurnAt = time.Now().Format(time.RFC3339)
+			return true
+		})
+		return
+	}
+	if m.StopAfterTurnAt == "" {
 		return
 	}
 	clearStopArm(m)
@@ -130,6 +149,10 @@ func StopArmedSession(name string) error {
 	halted, err := haltSessionMeta(m) // consumes the arm itself, on every one of its exits
 	if err != nil {
 		return err
+	}
+	if overSpendCapArmed(halted) {
+		notifySpendCapStop(halted, sessionSpendOf(halted, time.Now()), false)
+		return nil
 	}
 	notifyStopArmFired(halted)
 	return nil

@@ -266,6 +266,15 @@ func StoppedArchiveDays() int {
 	return int(v)
 }
 
+// SessionSpendCapUSD is the user's default spend budget for new sessions, in US dollars
+// (#1054, ui-prefs sessionSpendCapUsd). RAW, 0 for missing or malformed — the range belongs to
+// session.NormalizeSpendCap. Read in-process so a session started over MCP or by a schedule
+// gets the same default as one started from the Console.
+func SessionSpendCapUSD() float64 {
+	v, _ := Read()["sessionSpendCapUsd"].(float64)
+	return v
+}
+
 // mcpreg builds the session-side af server's launch args and must not read main's
 // config files itself, so it takes the answer as a hook (same shape as opencode.UsagePref).
 //
@@ -278,6 +287,7 @@ func init() {
 	mcpreg.FleetSpawnEnabled = FleetSpawn
 	session.SpawnChildLimitPref = SpawnChildLimit
 	session.StoppedArchiveDaysPref = StoppedArchiveDays
+	session.SpendCapDefaultPref = SessionSpendCapUSD
 }
 
 // imagegen needs the same answer twice over: mcpreg to decide the af server's launch args,

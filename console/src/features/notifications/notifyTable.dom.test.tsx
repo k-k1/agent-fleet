@@ -51,6 +51,7 @@ const SAMPLES: [string, string, string][] = [
   ["handoff-offer", "session", "someone"],
   ["aws-login-required", "workspace", ""],
   ["terminal-notification", "session", "parent"],
+  ["spend-budget", "session", "parent"],
   ["chat-auto-paused", "session", "parent"],
   ["a-kind-from-a-newer-cp", "session", "parent"],
 ];
@@ -165,6 +166,18 @@ describe("the table's new cells", () => {
     await arrive(items);
     const ownTurns = items.filter((n) => n.kind === "answer-ready" && n.target.id !== "child").map((n) => n.id);
     expect(acked().sort()).toEqual(ownTurns.sort());
+  });
+
+  it("lets the budget-stop row's OS and voice cells silence it, but never its dot", async () => {
+    setSettings({ notifyUnread: { "spend-budget": false }, notifyDevice: { "spend-budget.os": false, "spend-budget.voice": false } });
+    const items = rows();
+    stop = wireNotificationReadOnVisibleSessions();
+    await arrive(items);
+    const budget = items.find((n) => n.kind === "spend-budget")!;
+    expect(shown).not.toContain(budget.id);
+    expect(shown).toHaveLength(items.length - 1);
+    expect(announce).toHaveBeenCalledTimes(items.length - 1);
+    expect(acked()).not.toContain(budget.id);
   });
 
   it("lets a child's OS notification stay on with its dot muted", async () => {

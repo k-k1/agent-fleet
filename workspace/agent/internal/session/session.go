@@ -344,6 +344,11 @@ type Session struct {
 	// claiming it was set, and because a session that is about to fold itself away must be
 	// cancellable before it does.
 	StopAfterTurnAt string `json:"stopAfterTurnAt,omitempty"`
+	// SpendCapUSD / SpendCapHitAt mirror Meta's spend budget (#1054): the row's "paused:
+	// budget" badge and the budget dialog's starting value. The spend itself is NOT here —
+	// it is a whole-transcript read, kept off this 4 s poll (GET /sessions/{name}/spend).
+	SpendCapUSD   float64 `json:"spendCapUsd,omitempty"`
+	SpendCapHitAt string  `json:"spendCapHitAt,omitempty"`
 	// GeneratedImages / GeneratedImagesPath: how many images generate_image has stored for
 	// this session, and the folder they are in, browse-root relative (ADR 0080 decision 8).
 	// Both absent when there are none, which is what the Console's "Generated images (N)"
@@ -487,6 +492,14 @@ type Meta struct {
 	// (stopArmMaxAge) instead of folding a session away hours later, in the middle of
 	// unrelated work.
 	StopAfterTurnAt string `json:"stopAfterTurnAt,omitempty"`
+	// SpendCapUSD is the session's spend budget in US dollars (#1054); 0 = none. The spend it
+	// is compared with is an estimate (spend_cap.go), so this is a guard against a runaway
+	// session, not a billing limit.
+	SpendCapUSD float64 `json:"spendCapUsd,omitempty"`
+	// SpendCapHitAt is the instant (RFC3339) the spend was first seen at or over the cap. While
+	// it is set, a new prompt re-arms the stop-after-turn instead of releasing it, so every
+	// further turn ends in a stop until the cap is raised above the spend (which clears it).
+	SpendCapHitAt string `json:"spendCapHitAt,omitempty"`
 	// ForkFrom is the SOURCE conversation id this session was forked from, in the
 	// kind's own id space: claude = the source slot's sid (jsonl), opencode = its
 	// ses_… id, codex = its session uuid. It only affects the FIRST launch — each

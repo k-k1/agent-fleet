@@ -15,6 +15,7 @@ import { CleanupModal } from "./CleanupModal.tsx";
 import { SsmLoginModal } from "./SsmLoginModal.tsx";
 import { SessionTitleModal } from "./SessionTitleModal.tsx";
 import { BranchRenameModal } from "./BranchRenameModal.tsx";
+import { SpendBudgetModal } from "./SpendBudgetModal.tsx";
 
 export function SessionModals() {
   const refreshSessions = useSessionsStore((s) => s.refresh);
@@ -24,10 +25,12 @@ export function SessionModals() {
   const archivedOpen = useSessionUI((s) => s.archivedOpen);
   const archivedDir = useSessionUI((s) => s.archivedDir);
   const cleanupOpen = useSessionUI((s) => s.cleanupOpen);
+  const budget = useSessionUI((s) => s.budget);
   const close = useSessionUI((s) => s.close);
 
   return (
     <>
+      {budget && <SpendBudgetModal s={budget} onClose={close} />}
       {ssmResume && (
         <SsmLoginModal
           name={ssmResume.name}

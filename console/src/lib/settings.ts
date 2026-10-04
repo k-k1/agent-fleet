@@ -372,6 +372,10 @@ export interface Settings {
   // than 7 so the deployment's env var still applies to a user who never picked a period. The
   // Agent reads it on every session list, so a change applies on the next list with no restart.
   sessionStoppedArchiveDays: number;
+  // The spend budget a new session gets when its launch names none (#1054, AgentsTab > Session),
+  // in USD; 0 = none. The Agent reads it at create time, so MCP and scheduled launches get it
+  // too. One of SPEND_CAP_DEFAULTS — the spend is an estimate, and round figures say so.
+  sessionSpendCapUsd: number;
   // Which image provider generate_image tries first (AgentsTab > Sessions, ADR 0069). The
   // Agent normalizes whatever is stored into a TOTAL order — unknown ids and duplicates drop,
   // unmentioned providers append in the built-in order — so a list saved before a provider
@@ -1164,6 +1168,7 @@ const DEFAULTS: Settings = {
   sessionFleetSpawn: false, // opt-in (ADR 0073) — lets a session spend host resources unattended
   sessionSpawnChildLimit: 3, // the value the limit had while it was a constant (ADR 0073 decision 6)
   sessionStoppedArchiveDays: 0, // the deployment default (ADR 0097)
+  sessionSpendCapUsd: 0, // no budget (#1054)
   imageProviderOrder: [...IMAGE_PROVIDERS],
   opencodeCatalog: "off",
   lcppEnabled: true, // opt-out (docs/log/105 §106.2) — an existing deployment launches lcpp today

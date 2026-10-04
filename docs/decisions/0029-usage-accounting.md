@@ -306,3 +306,25 @@ not a provider bill. So for `kind=opencode`, `feature=session` rows:
   multi-step turn, while the fold keeps one input snapshot per turn;
 - rows folded before this change keep an empty `cost_usd` (the watermark does not re-fold), and
   a 0 is not written. Other kinds are unchanged.
+
+## Addendum (2026-10-04) — the per-session spend budget prices the transcript, not the ledger
+
+[#1054](https://github.com/k-k1/agent-fleet/issues/1054) adds a per-session spend budget: when a
+session's estimated spend reaches its cap it is stopped after its turn (the stop-after-turn arm),
+and at `SpendCapHardFactor` (2) × the cap it is halted mid-turn. The decisions that touch this
+ADR:
+
+- **The budget does not read the ledger.** It prices the session's own transcript through the same
+  turn fold (`foldTurnRows`) and price table (`usageEstCostUSD`) the ledger and the usage view use
+  (`usage_spend.go`). The ledger has no per-session query, folds lazily on read, and adding its rows
+  to a transcript sum would count every turn twice.
+- **Per logical turn, one price.** A turn the CLI reported a cost for is charged that cost
+  (`cost_usd`); any other turn is charged the list-price estimate of its tokens. The two are never
+  added. A turn with tokens but no price is left out and flagged `unpriced`; no 0 is invented.
+- **Only the session's own turns.** Turns stamped before the session's `CreatedAt` are not
+  charged: a fork starts from a copy of its source's history with the source's timestamps.
+- **Children are shown, not charged.** The parent's spend view lists its `create_session`
+  descendants' spend beside its own; each child has its own budget.
+
+The figure is an estimate at list price, and the Console writes it with "≈" and says it is not the
+bill. Where it lives: `internal/session/spend_cap.go`, `internal/sessionx/session_spend_cap.go`.

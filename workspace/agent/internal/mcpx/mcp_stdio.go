@@ -1068,6 +1068,7 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 					"new_branch":     map[string]any{"type": "string", "description": "Name of the branch to create in the worktree (optional; default: generated)"},
 					"subdir":         map[string]any{"type": "string", "description": "Relative path inside the working copy to start in, e.g. console (optional)"},
 					"report_back":    map[string]any{"type": "boolean", "description": "Ask the child to send you one message when it finishes. Default true. Turn it off when you will read the result in the Console instead"},
+					"spend_cap_usd":  map[string]any{"type": "number", "description": "The child's own spend budget in USD, an estimate at list price (optional; default: the user's default budget; 0 = none). Past it the child stops after its turn. It is not charged to yours"},
 				},
 			},
 		},
@@ -2586,6 +2587,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		// on, and a plain bool would silently turn the report off for every caller that did
 		// not think about it.
 		ReportBack *bool `json:"report_back"`
+		// SpendCapUSD is create_session's per-child budget (#1054). A pointer: omitted means the
+		// user's default, which the Agent applies; an explicit 0 means none.
+		SpendCapUSD *float64 `json:"spend_cap_usd"`
 		// answer_session_question args: 1-based choice numbers, in question order.
 		Choices []int `json:"choices"`
 		// respond_session_plan args
@@ -3168,7 +3172,7 @@ func mcpStdioCall(req mcpReq) []byte {
 			}
 		}
 		idemKey := CreateSessionKey(scope, a.Dir, a.Subdir, a.Kind, model, effort, initialPrompt, worktree, a.Branch, a.NewBranch)
-		reqBody, _ := json.Marshal(map[string]any{
+		body := map[string]any{
 			"dir":             a.Dir,
 			"subdir":          a.Subdir,
 			"title":           a.Title,
@@ -3190,7 +3194,11 @@ func mcpStdioCall(req mcpReq) []byte {
 			"origin":         origin,
 			"origin_conv":    originConv,
 			"origin_session": parent,
-		})
+		}
+		if a.SpendCapUSD != nil {
+			body["spend_cap_usd"] = *a.SpendCapUSD
+		}
+		reqBody, _ := json.Marshal(body)
 		// A create costs 40s + 45s at worst, over opencode's 60s per-call ceiling. The
 		// heartbeat resets that clock (measured, ADR 0069); claude ignores progress for
 		// timeouts and codex has tool_timeout_sec=600.

@@ -97,6 +97,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		Context: li.Context, LastSay: li.LastSay, TokenSpends: li.TokenSpends,
 		Locked: m.Locked, Archived: m.Archived,
 		KeepAwakeUntil: m.KeepAwakeUntil, StopAfterTurnAt: stopArmVisible(m),
+		SpendCapUSD: m.SpendCapUSD, SpendCapHitAt: m.SpendCapHitAt,
 		LastTurnEndAt: lastTurnEndAt(m),
 		// Origin / OriginSession ride the wire so a caller outside this process can answer
 		// "is this one of MY children" without reading metas off disk (ADR 0073): the MCP
