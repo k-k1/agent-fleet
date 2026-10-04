@@ -91,10 +91,11 @@ What to know before you switch:
   other keys are derived from it. Keep it exactly as before.
 - **Nothing is re-encrypted.** Values stored before the switch stay readable and stay protected
   by the master key alone; only what is stored afterwards is protected by KMS.
-- **Members' stored credentials are not shredded by KMS.** The key to each workspace's credential
-  store is wrapped by KMS once the workspace first starts after the switch, but the key itself is
-  still derived from `AF_MASTER_KEY` and the member, so that stores written before keep opening.
-  Anyone with the master key can still derive it. Protect the master key as before.
+- **Members' stored credentials are not shredded by KMS.** Only a workspace whose key is stored
+  for the first time after the switch has it wrapped by KMS; a workspace that already had one
+  keeps the master-key wrapping, and restarting it changes nothing. Either way the key itself is
+  still derived from `AF_MASTER_KEY` and the member, so that stores written before keep opening,
+  and anyone with the master key can still derive it. Protect the master key as before.
 - **No fallback.** If KMS cannot be reached or refuses, sealing and opening fail with an error
   that names KMS. The Control Plane never quietly uses the master key for a value KMS sealed.
 - **Opened keys are cached in memory for 5 minutes** (`AF_KMS_DATA_KEY_CACHE_TTL`, `0` turns it

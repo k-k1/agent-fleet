@@ -38,7 +38,8 @@ const (
 
 // Bounds of the unwrapped data-key cache. The TTL is also how long a disabled KMS key
 // keeps opening values this process has already opened, so crypto-shredding takes effect
-// within one TTL, not instantly.
+// within one TTL, not instantly. An expired key is zeroed and dropped by the sweep, which
+// runs on every call and on a timer, so it stays in memory for at most two TTLs.
 const (
 	kmsDataKeyCacheTTLDefault = 5 * time.Minute
 	kmsDataKeyCacheMax        = 1024
@@ -67,6 +68,7 @@ type kmsCustodian struct {
 
 	mu    sync.Mutex
 	cache map[[sha256.Size]byte]kmsCachedKey
+	sweep *time.Timer // pending sweep while the cache holds entries; guarded by mu
 }
 
 type kmsCachedKey struct {
@@ -99,6 +101,8 @@ func (c *kmsCustodian) Wrap(ctx context.Context, keyRef string, dek []byte) (str
 	if err != nil {
 		return "", fmt.Errorf("kms custodian: GenerateDataKey for key ref %q failed, nothing was sealed: %w", keyRef, err)
 	}
+	// The plaintext data key is ours to erase; the cache keeps its own copy.
+	defer clear(out.Plaintext)
 	if len(out.Plaintext) != 32 || len(out.CiphertextBlob) == 0 || len(out.CiphertextBlob) > 0xffff {
 		return "", errors.New("kms custodian: GenerateDataKey returned a malformed data key")
 	}
@@ -147,6 +151,7 @@ func (c *kmsCustodian) Unwrap(ctx context.Context, keyRef, ciphertext string) ([
 	if err != nil {
 		return nil, err
 	}
+	defer clear(key)
 	g, err := kmsGCM(key)
 	if err != nil {
 		return nil, err
@@ -161,20 +166,20 @@ func (c *kmsCustodian) Unwrap(ctx context.Context, keyRef, ciphertext string) ([
 	return out, nil
 }
 
-// dataKey returns the plaintext data key inside blob, from the cache or from KMS. KMS
-// checks the encryption context, so a blob generated under another key ref is refused
-// there (InvalidCiphertextException) before the AAD check gets a say.
+// dataKey returns a copy of the plaintext data key inside blob, from the cache or from
+// KMS; the caller erases it. KMS checks the encryption context, so a blob generated under
+// another key ref is refused there (InvalidCiphertextException) before the AAD check gets
+// a say.
 func (c *kmsCustodian) dataKey(ctx context.Context, keyRef string, blob []byte) ([]byte, error) {
 	id := kmsCacheID(keyRef, blob)
 	if c.ttl > 0 {
 		c.mu.Lock()
-		e, ok := c.cache[id]
-		if ok && c.now().Before(e.expires) {
+		c.sweepExpiredLocked(c.now())
+		if e, ok := c.cache[id]; ok {
+			// Copied under the lock: an eviction erases the cached slice in place.
+			key := append([]byte(nil), e.key...)
 			c.mu.Unlock()
-			return e.key, nil
-		}
-		if ok {
-			delete(c.cache, id)
+			return key, nil
 		}
 		c.mu.Unlock()
 	}
@@ -187,6 +192,7 @@ func (c *kmsCustodian) dataKey(ctx context.Context, keyRef string, blob []byte) 
 		return nil, fmt.Errorf("kms custodian: Decrypt of the data key for key ref %q failed, the value stays sealed: %w", keyRef, err)
 	}
 	if len(out.Plaintext) != 32 {
+		clear(out.Plaintext)
 		return nil, errors.New("kms custodian: Decrypt returned a malformed data key")
 	}
 	c.remember(keyRef, blob, out.Plaintext)
@@ -198,28 +204,55 @@ func (c *kmsCustodian) remember(keyRef string, blob, key []byte) {
 		return
 	}
 	now := c.now()
+	id := kmsCacheID(keyRef, blob)
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.sweepExpiredLocked(now)
+	c.dropLocked(id)
+	// Still full of live entries: drop the one closest to expiry.
 	if len(c.cache) >= kmsDataKeyCacheMax {
+		var oldest [sha256.Size]byte
+		var at time.Time
+		first := true
 		for k, e := range c.cache {
-			if !now.Before(e.expires) {
-				delete(c.cache, k)
+			if first || e.expires.Before(at) {
+				oldest, at, first = k, e.expires, false
 			}
 		}
-		// Still full of live entries: drop the one closest to expiry.
-		if len(c.cache) >= kmsDataKeyCacheMax {
-			var oldest [sha256.Size]byte
-			var at time.Time
-			first := true
-			for k, e := range c.cache {
-				if first || e.expires.Before(at) {
-					oldest, at, first = k, e.expires, false
-				}
-			}
-			delete(c.cache, oldest)
+		c.dropLocked(oldest)
+	}
+	c.cache[id] = kmsCachedKey{key: append([]byte(nil), key...), expires: now.Add(c.ttl)}
+	if c.sweep == nil {
+		c.sweep = time.AfterFunc(c.ttl, c.sweepTick)
+	}
+}
+
+// dropLocked erases and removes one cache entry, if present.
+func (c *kmsCustodian) dropLocked(id [sha256.Size]byte) {
+	if e, ok := c.cache[id]; ok {
+		clear(e.key)
+		delete(c.cache, id)
+	}
+}
+
+func (c *kmsCustodian) sweepExpiredLocked(now time.Time) {
+	for k, e := range c.cache {
+		if !now.Before(e.expires) {
+			c.dropLocked(k)
 		}
 	}
-	c.cache[kmsCacheID(keyRef, blob)] = kmsCachedKey{key: append([]byte(nil), key...), expires: now.Add(c.ttl)}
+}
+
+// sweepTick is the timer half of the sweep: without it a quiet deployment would keep an
+// expired plaintext key until the next seal or open. It re-arms while entries remain.
+func (c *kmsCustodian) sweepTick() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sweep = nil
+	c.sweepExpiredLocked(c.now())
+	if len(c.cache) > 0 {
+		c.sweep = time.AfterFunc(c.ttl, c.sweepTick)
+	}
 }
 
 // kmsCacheID keys the cache on the key ref as well as the blob, so a hit can never

@@ -33,6 +33,7 @@ type fakeKMS struct {
 	gens     int
 	decrypts int
 	contexts []map[string]string
+	issued   [][]byte // every plaintext data key handed out, to check they get erased
 }
 
 func newFakeKMS(t *testing.T) *fakeKMS {
@@ -77,6 +78,7 @@ func (f *fakeKMS) GenerateDataKey(_ context.Context, in *kms.GenerateDataKeyInpu
 	io.ReadFull(rand.Reader, pt)
 	io.ReadFull(rand.Reader, nonce)
 	blob := f.root.Seal(append([]byte(nil), nonce...), nonce, pt, fakeContextAAD(in.EncryptionContext))
+	f.issued = append(f.issued, pt)
 	return &kms.GenerateDataKeyOutput{Plaintext: pt, CiphertextBlob: blob, KeyId: in.KeyId}, nil
 }
 
@@ -99,6 +101,7 @@ func (f *fakeKMS) Decrypt(_ context.Context, in *kms.DecryptInput, _ ...func(*km
 	if err != nil {
 		return nil, errors.New("InvalidCiphertextException")
 	}
+	f.issued = append(f.issued, pt)
 	return &kms.DecryptOutput{Plaintext: pt, KeyId: in.KeyId}, nil
 }
 
@@ -428,5 +431,84 @@ func TestNewKeyCustodianConfig(t *testing.T) {
 	}
 	if r := kmsRegion("alias/af", env(map[string]string{"AWS_REGION": "us-east-1"})); r != "us-east-1" {
 		t.Errorf("region for a bare alias = %q", r)
+	}
+}
+
+func isZero(b []byte) bool {
+	for _, x := range b {
+		if x != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// Plaintext data keys are erased once used, and a cached copy when it is evicted,
+// replaced or expires — also on a quiet deployment, through the timer sweep.
+func TestKMSCustodianErasesPlaintextKeys(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeKMS(t)
+	c := newKMSCustodian(f, f.keyID, nil, 0)
+	ct, err := c.Wrap(ctx, "tenant-a", randBytes(t, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Unwrap(ctx, "tenant-a", ct); err != nil {
+		t.Fatal(err)
+	}
+	for i, k := range f.issued {
+		if len(k) != 32 || !isZero(k) {
+			t.Fatalf("plaintext data key %d from KMS was not erased after use", i)
+		}
+	}
+
+	now := time.Unix(1_800_000_000, 0)
+	cached := newKMSCustodian(f, f.keyID, nil, time.Minute)
+	cached.now = func() time.Time { return now }
+	entry := func() []byte {
+		t.Helper()
+		if len(cached.cache) != 1 {
+			t.Fatalf("cache holds %d entries, want 1", len(cached.cache))
+		}
+		for _, e := range cached.cache {
+			return e.key
+		}
+		return nil
+	}
+	if _, err := cached.Unwrap(ctx, "tenant-a", ct); err != nil {
+		t.Fatal(err)
+	}
+	first := entry()
+	// Replaced: the same blob decrypted again after expiry.
+	now = now.Add(2 * time.Minute)
+	if _, err := cached.Unwrap(ctx, "tenant-a", ct); err != nil {
+		t.Fatal(err)
+	}
+	if !isZero(first) {
+		t.Fatal("an expired cache entry was replaced without being erased")
+	}
+	second := entry()
+	// Expired while KMS refuses: dropped and erased, not left in the map.
+	now = now.Add(2 * time.Minute)
+	f.err = errors.New("DisabledException")
+	if _, err := cached.Unwrap(ctx, "tenant-a", ct); err == nil {
+		t.Fatal("an expired entry opened a value while KMS refuses")
+	}
+	if len(cached.cache) != 0 || !isZero(second) {
+		t.Fatalf("expired entry left behind: %d entries, erased=%v", len(cached.cache), isZero(second))
+	}
+	// Nobody calls again: the timer sweep alone erases an expired entry.
+	f.err = nil
+	if _, err := cached.Unwrap(ctx, "tenant-a", ct); err != nil {
+		t.Fatal(err)
+	}
+	third := entry()
+	if cached.sweep == nil {
+		t.Fatal("caching a key armed no sweep")
+	}
+	now = now.Add(2 * time.Minute)
+	cached.sweepTick()
+	if len(cached.cache) != 0 || !isZero(third) || cached.sweep != nil {
+		t.Fatalf("sweep left %d entries, erased=%v, re-armed=%v", len(cached.cache), isZero(third), cached.sweep != nil)
 	}
 }

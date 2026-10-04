@@ -144,9 +144,10 @@ second volume of their own. The home volume itself is kept.
 ¹⁴ Off by default; the operator turns it on in the stack ([operate/04](../operate/04-secure.md#keys-at-rest-on-aws-kms)).
 The secrets the Control Plane itself seals after the switch (MCP connection headers, sign-in
 client secrets, engine tokens, session handoffs and shares) are then sealed with keys from AWS
-KMS, so disabling the KMS key makes them unreadable. The key to each member's stored
-credentials is wrapped by KMS too, but it is still derived from `AF_MASTER_KEY` so that existing
-stores keep opening: for those, the master key remains enough. `AF_MASTER_KEY` stays required on
+KMS, so disabling the KMS key makes them unreadable. The key to a member's stored credentials is
+wrapped by KMS only for a workspace whose key is first stored after the switch, and it is still
+derived from `AF_MASTER_KEY` so that existing stores keep opening: for those, the master key
+remains enough. `AF_MASTER_KEY` stays required on
 every target.
 
 ## Where the procedure lives
