@@ -331,7 +331,9 @@ try {
     });
     // Seed the browser state a returning user would have: display settings (locale +
     // theme) and this scene's saved pane layout, keyed exactly like the app writes it
-    // (af.layout2.<user>.<tenant> — see console/src/layout/migrate.ts LKEY_NEW).
+    // (af.layout2.<user>.<tenant> — see console/src/layout/migrate.ts LKEY_NEW). That is
+    // the split-mode key, so paneLayout is pinned to "split": under the Tabbed default the
+    // Console reads `….tabs`, ignores the scene and shows an unconnected pane.
     const sections = Object.entries(scene.sections || {})
       .map(([id, v]) => `localStorage.setItem("af-section-${id}", "${v}");`)
       .join("\n        ");
@@ -345,7 +347,7 @@ try {
       try {
         ${sections}
         ${storage}
-        localStorage.setItem("af-display-settings", ${JSON.stringify(JSON.stringify({ locale: LOCALE, theme: THEME }))});
+        localStorage.setItem("af-display-settings", ${JSON.stringify(JSON.stringify({ locale: LOCALE, theme: THEME, paneLayout: "split" }))});
         localStorage.setItem("af-tenant", "demo");
         ${scene.settings ? `localStorage.setItem("af-settings-section", ${JSON.stringify(scene.settings)});` : ""}
         localStorage.setItem("af.layout2.demo@example.com.demo", ${JSON.stringify(JSON.stringify(scene.layout))});

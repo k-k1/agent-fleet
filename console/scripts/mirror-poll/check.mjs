@@ -270,9 +270,11 @@ try {
     // shows a single session pane (no second pane polling alongside).
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+    // paneLayout is pinned to "split" because the seeded layout is the split-mode key; under the
+    // Tabbed default the Console reads `….tabs` instead and ignores it.
     await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
       source: `try {
-        localStorage.setItem("af-display-settings", '{"locale":"ja","theme":"dark"}');
+        localStorage.setItem("af-display-settings", '{"locale":"ja","theme":"dark","paneLayout":"split"}');
         localStorage.setItem("af-tenant", "demo");
         localStorage.setItem("af.layout2.demo@example.com.demo", ${JSON.stringify(JSON.stringify(layout))});
       } catch (e) {}`,
