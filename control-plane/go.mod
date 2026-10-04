@@ -11,6 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.60.6
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.87.0
 	github.com/aws/aws-sdk-go-v2/service/efs v1.43.0
+	github.com/aws/aws-sdk-go-v2/service/kms v1.59.0
 	github.com/aws/aws-sdk-go-v2/service/polly v1.59.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.0
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.44.0

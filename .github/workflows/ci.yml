@@ -311,6 +311,11 @@ jobs:
       # writes: every call site and the resources it names, held against the templates.
       - name: CP role EC2 / PassRole / TagResource scope (inventory vs template)
         run: python3 ./deploy/local/cfn-cp-ec2-scope-test.py
+      # The kms key custodian's grant and key policy name the encryption context the Go
+      # sends; a rename on either side is AccessDenied on every seal, on a real deployment
+      # only, and a widened grant decrypts with keys the CP has no business with.
+      - name: CP role KMS custodian grant (template vs Go)
+        run: python3 ./deploy/local/cfn-cp-kms-scope-test.py
       # IAM caps a role's inline policies at 10,240 characters in total and each managed one
       # at 6,144, and four stacks attach to the CP task role, so no one template shows the
       # total. Passing it is a ServiceLimitExceeded and a rolled-back stack on a real

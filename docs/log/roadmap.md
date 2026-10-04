@@ -25,7 +25,7 @@ AWS アダプタを後付けする（[ポータビリティ](../build/09-deploy.
 
 ### Phase 3 — プロダクト化（パッケージ配布・グループ各社セルフホスト）　▶ 進行中
 「AWS 移植」から**プロダクトのパッケージ化**へ再定義。提供モデルの意思決定（SaaS 断念の経緯・ToS 根拠）は
-[decisions/0001](../decisions/0001-self-host-vs-saas.ja.md)。**P3-1〜P3-7 + Console 刷新は実装済み**（P3-7 残 = KMS custodian・実 AWS 再検証）、
+[decisions/0001](../decisions/0001-self-host-vs-saas.ja.md)。**P3-1〜P3-7 + Console 刷新は実装済み**（P3-7 残 = 実 AWS 再検証。KMS custodian は 2026-10-04 に #969 で実装）、
 **P3-10（パッケージング）は dist 配布の publish 運用中**（[docs/35](35-packaging.md)）。残 = P3-8・P3-9 の成熟項目・
 P3-10 の完了ゲート（第 2 デプロイ E2E）。詳細は本書「Phase 3 詳細設計」章（↓）。
 
@@ -282,7 +282,7 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 > Connect→Agent 到達（`POST /sessions` 受理）、DEK/token は平文 env になし。findings=大容量イメージ cold pull が Start の
 > healthz 待ち超過(→(A)対応済=非致命化)/CP SQLite ephemeral ゆえ再デプロイで状態消失(→(B)対応済=**段3a RDS Postgres Store**、
 > 共有 sqlStore＋?→$n rebind、Docker Postgres で conformance green、CP→RDS を CFN 配線)。残＝段3b(KMS custodian)・実 AWS 再検証。AWS 構成は [reference/aws](../build/09-deploy.md)。
-> 段3b（KMS custodian）は Issue #969（2026-09-24）。オンプレ向けの Vault transit custodian は、オンプレの配備が求めるまで予定しない。
+> 段3b（KMS custodian）は Issue #969（2026-09-24）、2026-10-04 に実装（[decisions/0005](../decisions/0005-envelope-custodian.ja.md) 追記）。オンプレ向けの Vault transit custodian は、オンプレの配備が求めるまで予定しない。
 
 各社が**自社のデプロイ先を選ぶ**。コアは無改修、周縁アダプタのみ（[09](../build/09-deploy.md)）。我々は両方を同梱（P3-10）。
 
@@ -379,7 +379,7 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 3. ✅ **P3-4（オンプレ）**: クォータ強制を Start/SessionCreate/clone に差す（メモリは既存 `--memory` ですぐ）。
 4. ✅/◐ **P3-5 + P3-6（オンプレ）**: 管理サービス層 → admin API（単一テナント）→ MCP を同一層で（管理 UI・MCP admin read/write 済＝残は dangerous 段のみ）。
 5. ◐ **P3-10（オンプレ）**: compose パッケージ + 設定ファイル + マイグレーション + 設置/更新 runbook（dist publish 運用中）→ **第 2 デプロイ（別のグループ会社）を実際に立てて検証**（残）。
-6. ◐ **P3-7（AWS）**: 希望する社向けに ECS/EFS/RDS/ALB アダプタ + KMS custodian（残 = KMS custodian・実 AWS 再検証）。
+6. ◐ **P3-7（AWS）**: 希望する社向けに ECS/EFS/RDS/ALB アダプタ + KMS custodian（残 = 実 AWS 再検証。KMS custodian は #969 で実装）。
 7. ▶ **P3-8 / P3-9**: 専用分離・showback・idle-stop・バックアップ・観測を需要に応じ。
 
 （Phase 3/4 の完了条件は冒頭「[マイルストーン判定](#マイルストーン判定)」を参照。）

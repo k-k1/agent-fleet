@@ -363,7 +363,7 @@ CP**):
   to the workload role.
 - The SSO cache lives in `~/.aws/sso/cache/` inside the workspace.
 
-A KMS custodian is 📋 — the seam only (`KeyCustodian`, [07 §7.6](07-security.md)).
+The key custodian can be AWS KMS (`AF_KEY_CUSTODIAN=kms`; `KeyCustodian`, [07 §7.6](07-security.md)).
 
 ## 8.9 Engines
 

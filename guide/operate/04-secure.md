@@ -67,10 +67,45 @@ risks", grouped by deployment target (every target, `docker` and `native`, `ecs`
 - **Backups**: strictly control who can access where they are stored, and enforce at-rest
   encryption there.
 
-A caveat on limits: in the current localCustodian, the KEK is derived from the master key, so
-the effective strength is equivalent to the single `AF_MASTER_KEY`. **True per-tenant
-crypto-shred via tenant key revocation will be achieved when a Vault/KMS custodian is adopted
-in the future** (currently design only). Details in `docs/build/07-security.md` §7.6.
+A caveat on limits: by default the key that protects each workspace's credentials is derived
+from the master key, so the effective strength is equivalent to the single `AF_MASTER_KEY`. On
+AWS that key can be held by KMS instead (next section). Details in `docs/build/07-security.md`
+§7.6.
+
+### Keys at rest on AWS KMS
+
+On `ecs` / `ecs-ec2` the Control Plane can have AWS KMS hold the keys for what it seals: MCP
+connection headers, sign-in client secrets, engine tokens, session handoffs and shares, and the
+key of each workspace's credential store. Each value is sealed with a fresh data key from KMS,
+bound to its tenant, so it cannot be opened under another tenant's name. Turning it on:
+
+1. Deploy `10-data` with `CustodianKmsKey=create` (or bring a symmetric KMS key of your own in
+   the same account), and read the `CustodianKmsKeyArn` output.
+2. Deploy `30-ingress` with `CustodianKmsKeyArn=<that ARN>`. The Control Plane gets
+   `AF_KEY_CUSTODIAN=kms` and `AF_KMS_KEY_ID`, and its task role gets `kms:GenerateDataKey` and
+   `kms:Decrypt` on that key only, and only with the Control Plane's encryption context.
+
+What to know before you switch:
+
+- **`AF_MASTER_KEY` stays required.** It still opens everything stored before the switch, and
+  other keys are derived from it. Keep it exactly as before.
+- **Nothing is re-encrypted.** Values stored before the switch stay readable and stay protected
+  by the master key alone; only what is stored afterwards is protected by KMS.
+- **Members' stored credentials are not shredded by KMS.** The key to each workspace's credential
+  store is wrapped by KMS once the workspace first starts after the switch, but the key itself is
+  still derived from `AF_MASTER_KEY` and the member, so that stores written before keep opening.
+  Anyone with the master key can still derive it. Protect the master key as before.
+- **No fallback.** If KMS cannot be reached or refuses, sealing and opening fail with an error
+  that names KMS. The Control Plane never quietly uses the master key for a value KMS sealed.
+- **Opened keys are cached in memory for 5 minutes** (`AF_KMS_DATA_KEY_CACHE_TTL`, `0` turns it
+  off), so disabling the key takes effect within that time, not at once.
+- **Disabling or scheduling deletion of the KMS key makes everything sealed after the switch
+  unreadable to the Control Plane**, for every tenant at once. That is the crypto-shred lever, so restrict who can
+  administer the key. To cut off one tenant, add a statement to the key policy that denies
+  `kms:Decrypt` when `kms:EncryptionContext:af:key_ref` is that tenant's id; that is a
+  revocation an administrator of the key can undo, not a shred.
+- **Do not switch back to `local`** while values sealed by KMS exist: the local custodian refuses
+  them with an error that says so.
 
 ## Operating egress control
 

@@ -183,7 +183,7 @@ Console: Repos → URL 入力 → CP /api/repos → Agent: git clone
 | 永続ホーム | Runtime 内 | bind mount したディレクトリ / ホストのディレクトリ | EFS アクセスポイント / 利用者ごとの EBS ボリューム | Workspace ごとに PersistentVolumeClaim 2 本: ホームと、ホームの掃除でも残る状態 |
 | L1 認証 | `AUTH` env 分岐 | `oauth`・`proxy`・`dev` / `dev` のみ | `oauth`（テンプレートは `dev` も受け付ける）| `oauth`（マニフェストの例） |
 | メタデータ | `Store` | SQLite（既定・pure-Go）| Postgres（RDS）| Postgres（GKE では Auth Proxy サイドカー経由の Cloud SQL） |
-| at-rest 鍵 | `KeyCustodian` | localCustodian（master 由来 KEK）| 同じ。KMS custodian は seam のみ（[decisions/0005](../decisions/0005-envelope-custodian.ja.md)・#969）| 同じ |
+| at-rest 鍵 | `KeyCustodian` | localCustodian（master 由来 KEK）| 同じ。または `AF_KEY_CUSTODIAN=kms` で AWS KMS（[decisions/0005](../decisions/0005-envelope-custodian.ja.md) の 2026-10-04 追記）| 同じ |
 | 入口/TLS | （CP 外）| Caddy / Funnel | ALB + ACM | クラスタの入口。GKE ではグローバル外部アプリケーションロードバランサ + Certificate Manager |
 | エンジン | エンジン表 | ネットワーク上ですでに動いているものを URL で | CP がオンデマンドで起動（GPU のものは `ecs-ec2` のみ）| ネットワーク上ですでに動いているものを URL で |
 
@@ -203,5 +203,5 @@ Console: Repos → URL 入力 → CP /api/repos → Agent: git clone
 | 自前の推論エンジン | ✅ AWS ではオンデマンドで起動（GPU のものは `ecs-ec2` のみ）。`docker` / `native` ではネットワーク上ですでに動いているもの（§1.3）|
 | コンテナ内ブラウザペイン | ✅（[decisions/0018](../decisions/0018-container-browser-pane.ja.md)）|
 | egress 統制 | ◐ 観測・版付きの許可リストと人の承認・proxy の enforce スイッチまで。Workspace の通信を proxy に通す配線はまだ無い（[07 §7.8](07-security.ja.md)）|
-| KMS custodian | 📋 seam のみ（#969）|
+| KMS custodian | ✅ AWS で選択制。切り替え前に保存された値は master 鍵だけのまま（[decisions/0005](../decisions/0005-envelope-custodian.ja.md)）|
 | Go 内部リファクタ | ✅ 完了（[decisions/0012](../decisions/0012-go-internal-refactor.ja.md)・[0067](../decisions/0067-parallel-refactor.ja.md)）。現配置は [90](90-code-map.ja.md) |

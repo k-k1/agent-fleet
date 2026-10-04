@@ -604,6 +604,27 @@ dev identity with NO login — sandbox/E2E gates only: restrict the ALB security
 own IP before using it (an internet-facing ALB with dev auth hands out an authenticated
 session to anyone who reaches it).
 
+## Keys at rest
+
+### `CustodianKmsKeyArn`
+
+Empty (the default) = the local key custodian: the per-tenant keys that wrap every workspace's
+DEK and the other sealed values are derived from `AF_MASTER_KEY`. A KMS **key** ARN = the kms
+custodian (ADR 0005, 2026-10-04 addendum): the CP gets `AF_KEY_CUSTODIAN=kms` and
+`AF_KMS_KEY_ID`, and `CpCustodianKmsPolicy` gives its task role `kms:GenerateDataKey` and
+`kms:Decrypt` on that key only, and only with the custodian's encryption context
+(`af:purpose=agent-fleet-custodian` plus `af:key_ref`). `10-data` with
+`CustodianKmsKey=create` makes such a key and outputs its ARN; a key of your own works too, as
+long as it is symmetric, in this account, and its policy lets the account's IAM grant use.
+
+An alias ARN is refused by the pattern on purpose: IAM matches a key's calls against the key
+ARN, so a grant on an alias would allow nothing.
+
+⚠️ `AF_MASTER_KEY` stays required: values stored before the switch are not re-encrypted and
+open with it. Do not clear this parameter again while KMS-sealed values exist; the local
+custodian refuses them. The operator's side is `guide/operate/04-secure.md`, "Keys at rest on
+AWS KMS".
+
 ## Alarms
 
 ### `CpAlarmEmail`

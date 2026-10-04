@@ -86,6 +86,7 @@ else:
 | `AUTH` | how people sign in: `dev` (single user), `oauth` (the Control Plane's own), `proxy` (an upstream gateway) |
 | `DATA_DIR` | where all persistent state lives — the thing to back up |
 | `AF_MASTER_KEY` | the root of at-rest encryption. Lose it and the stored credentials are unrecoverable |
+| `AF_KEY_CUSTODIAN` | who holds the at-rest keys: `local` (the default, derived from `AF_MASTER_KEY`) or `kms` (AWS KMS, with `AF_KMS_KEY_ID`; [operate/04](../operate/04-secure.md#keys-at-rest-on-aws-kms)). Rejected at boot if unknown or incomplete |
 | `SUPER_ADMIN_EMAILS` | who is a deployment administrator |
 | `PUBLIC_BASE_URL` | the address people reach, and what OAuth callbacks are built from |
 | `WS_MEMORY` | the default memory ceiling for a workspace |

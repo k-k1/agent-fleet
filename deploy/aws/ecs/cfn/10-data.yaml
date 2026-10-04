@@ -74,9 +74,18 @@ Parameters:
       Days each daily EFS recovery point is kept when Persistence=retain (ignored
       otherwise). 7 matches the RDS automated backups. Billed per GB-month of
       backup storage - see the ecs runbook, "EFS backup and restore".
+  CustodianKmsKey:
+    Type: String
+    Default: none
+    AllowedValues: [ none, create ]
+    Description: >-
+      create = a KMS key for the Control Plane's key custodian (ADR 0005), output as
+      CustodianKmsKeyArn for 30-ingress. none (default) = the local custodian, or a key
+      you manage yourself. See cfn/PARAMETERS.md.
 
 Conditions:
   IsRetain: !Equals [ !Ref Persistence, retain ]
+  CreateCustodianKey: !Equals [ !Ref CustodianKmsKey, create ]
   IsProvisionedTp: !Equals [ !Ref EfsThroughputMode, provisioned ]
 
 Resources:
@@ -243,6 +252,53 @@ Resources:
       DeletionProtection: !If [ IsRetain, true, false ]
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-db" } ]
 
+  # The key custodian's KMS key (ADR 0005, control-plane/custodian_kms.go). It lives with
+  # the data it protects: every data key in the database is unreadable without it, so it
+  # follows Persistence like RDS, and a deleted one is only scheduled (30 days to cancel).
+  # The account root keeps administration through IAM. Every principal, the CP included, is
+  # denied the crypto calls unless the request carries the custodian's encryption context,
+  # so the key cannot be borrowed for anything else; the CP's own grant is 30-ingress's
+  # CpCustodianKmsPolicy. deploy/local/cfn-cp-kms-scope-test.py holds both against the Go.
+  CustodianKey:
+    Type: AWS::KMS::Key
+    Condition: CreateCustodianKey
+    DeletionPolicy: !If [ IsRetain, Retain, Delete ]
+    UpdateReplacePolicy: !If [ IsRetain, Retain, Delete ]
+    Properties:
+      Description: !Sub "af-${AWS::StackName} Control Plane key custodian"
+      KeySpec: SYMMETRIC_DEFAULT
+      KeyUsage: ENCRYPT_DECRYPT
+      EnableKeyRotation: true
+      PendingWindowInDays: 30
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AccountAdministersThroughIam
+            Effect: Allow
+            Principal: { AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root" }
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: DenyUseOutsideTheCustodianContext
+            Effect: Deny
+            Principal: "*"
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+            Resource: "*"
+            Condition:
+              StringNotEquals:
+                kms:EncryptionContext:af:purpose: agent-fleet-custodian
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-custodian" } ]
+
+  CustodianKeyAlias:
+    Type: AWS::KMS::Alias
+    Condition: CreateCustodianKey
+    Properties:
+      AliasName: !Sub "alias/af-${AWS::StackName}-custodian"
+      TargetKeyId: !Ref CustodianKey
+
 Outputs:
   EfsId:
     Value: !Ref FileSystem
@@ -261,3 +317,7 @@ Outputs:
     Description: Secrets Manager ARN of the RDS-managed master credentials.
     Value: !GetAtt Db.MasterUserSecret.SecretArn
     Export: { Name: !Sub "${AWS::StackName}-DbSecretArn" }
+  CustodianKmsKeyArn:
+    Condition: CreateCustodianKey
+    Description: Pass to 30-ingress as CustodianKmsKeyArn to switch the CP to the KMS custodian.
+    Value: !GetAtt CustodianKey.Arn
