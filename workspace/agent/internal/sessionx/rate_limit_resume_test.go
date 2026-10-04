@@ -773,33 +773,54 @@ func TestRateLimitChipDropsAPastResumeTime(t *testing.T) {
 // TestRateLimitResumePromptCoversUnansweredRequest pins the clause that makes a resumed agent
 // carry out a request the limit refused before it began. Without it the "say so instead of
 // starting something new" clause is all an agent with nothing to continue has to go on, and it
-// declines the very instruction it never answered.
+// declines the very instruction it never answered. The clause has to stay limited to a request
+// nothing was done for: a turn that ran tools and was then cut off would otherwise redo them.
 func TestRateLimitResumePromptCoversUnansweredRequest(t *testing.T) {
-	for locale, clause := range map[string]string{
-		"en": "carry it out from the beginning",
-		"ja": "その依頼を最初から実行してください",
+	for locale, clauses := range map[string][]string{
+		"en": {
+			"before you started it and you have done none of it yet",
+			"carry it out from the beginning",
+			"if you had done part of it, continue from there instead",
+			"from where it stopped",
+		},
+		"ja": {
+			"着手前に上限で断られ、まだ何も実行していない場合は",
+			"その依頼を最初から実行してください",
+			"途中まで実行していた場合は、その続きから再開してください",
+			"止まったところから続けてください",
+		},
 	} {
-		if p := rateLimitResumePromptFor(locale); !strings.Contains(p, clause) {
-			t.Errorf("%s prompt lacks %q: %s", locale, clause, p)
+		p := rateLimitResumePromptFor(locale)
+		for _, c := range clauses {
+			if !strings.Contains(p, c) {
+				t.Errorf("%s prompt lacks %q: %s", locale, c, p)
+			}
 		}
 	}
 }
 
 // TestIsRateLimitResumePromptAcceptsBookedWordings: a schedule carries the prompt from booking
 // time, so a resume booked by an older Agent arrives in the old words after an upgrade and must
-// still be recognised, or its "resumed" notice is dropped.
+// still be recognised, or its "resumed" notice is dropped. The old wordings are spelled out here
+// rather than read from legacyRateLimitResumePrompts, so an edit to that list cannot pass along
+// with it.
 func TestIsRateLimitResumePromptAcceptsBookedWordings(t *testing.T) {
-	for _, p := range append([]string{rateLimitResumePromptFor("ja"), rateLimitResumePromptFor("en")},
-		legacyRateLimitResumePrompts...) {
-		if !isRateLimitResumePrompt("  " + p + "\n") {
+	booked := []string{
+		rateLimitResumePromptFor("ja"),
+		rateLimitResumePromptFor("en"),
+		"The usage limit has reset. Continue the work that was cut off, from where it stopped. " +
+			"This is an automatic resume — there is no new instruction. " +
+			"If you cannot tell where it stopped, say so instead of starting something new.",
+		"利用上限がリセットされました。上限で中断した作業を、止まったところから続けてください。" +
+			"これは自動再開なので新しい指示はありません。" +
+			"どこで止まったか分からない場合は、新しい作業を始めずにその旨を伝えてください。",
+	}
+	for _, p := range booked {
+		if !isRateLimitResumePrompt(p) || !isRateLimitResumePrompt("  "+p+"\n") {
 			t.Errorf("not recognised as a resume prompt: %q", p)
 		}
 	}
 	if isRateLimitResumePrompt("利用上限がリセットされました。続けてください。") {
 		t.Error("an unrelated scheduled prompt was taken for the resume prompt")
-	}
-	if !strings.HasPrefix(legacyRateLimitResumePrompts[1], "利用上限がリセットされました。上限で中断した作業を") ||
-		strings.Contains(legacyRateLimitResumePrompts[1], "最初から実行") {
-		t.Errorf("legacy ja wording changed: %q", legacyRateLimitResumePrompts[1])
 	}
 }

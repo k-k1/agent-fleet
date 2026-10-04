@@ -582,13 +582,14 @@ func rateLimitResumePrompt() string {
 func rateLimitResumePromptFor(locale string) string {
 	if locale == "en" {
 		return "The usage limit has reset. Continue the work that was cut off, from where it stopped. " +
-			"If the latest request has no answer from you yet because the limit refused it before you started, " +
-			"carry it out from the beginning. " +
+			"If the limit refused the latest request before you started it and you have done none of it yet, " +
+			"carry it out from the beginning; if you had done part of it, continue from there instead. " +
 			"This is an automatic resume — there is no new instruction. " +
 			"Otherwise, if you cannot tell where it stopped, say so instead of starting something new."
 	}
 	return "利用上限がリセットされました。上限で中断した作業を、止まったところから続けてください。" +
-		"直前の依頼に上限で断られてまだ何も答えていない場合は、その依頼を最初から実行してください。" +
+		"直前の依頼が着手前に上限で断られ、まだ何も実行していない場合は、その依頼を最初から実行してください" +
+		"（途中まで実行していた場合は、その続きから再開してください）。" +
 		"これは自動再開なので新しい指示はありません。" +
 		"それ以外でどこで止まったか分からない場合は、新しい作業を始めずにその旨を伝えてください。"
 }
