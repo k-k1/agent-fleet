@@ -17,7 +17,7 @@ const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.met
 // memoryTransfer (export and import), so the family is concatenated and read as one tab body.
 // Add any new file here: forget one and the check that is supposed to watch for unregistered
 // REST paths silently stops covering it.
-const tab = ["./MemoryTab.tsx", "./memoryTypes.ts", "./memoryRestore.tsx", "./memoryTransfer.tsx"]
+const tab = ["./MemoryTab.tsx", "./memoryTypes.ts", "./memoryRestore.tsx", "./memoryTransfer.tsx", "./memoryChanges.tsx"]
   .map(read)
   .join("\n");
 const dialog = read("../SettingsDialog.tsx");
@@ -47,6 +47,9 @@ describe("agent memory tab in the settings modal", () => {
         // "import" (the CP entry is checked below by containing /api/agents/memory/import).
         "api/agents/memory/export",
         "api/agents/memory/import",
+        // ADR 0108: entries/changes and entries/revert (the regex stops at "entries"; both full
+        // paths are checked below).
+        "api/agents/memory/entries",
       ]),
     );
     for (const p of new Set(paths)) {
@@ -63,6 +66,14 @@ describe("agent memory tab in the settings modal", () => {
     for (const key of new Set(used)) {
       expect(ja, `ja is missing ${key}`).toHaveProperty(key);
       expect(en, `en is missing ${key}`).toHaveProperty(key);
+    }
+  });
+
+  it("registers the AF memory change list and revert on both sides", () => {
+    for (const p of ["api/agents/memory/entries/changes", "api/agents/memory/entries/diff", "api/agents/memory/entries/revert"]) {
+      expect(tab).toContain(p);
+      expect(cpRoutes).toContain("/" + p);
+      expect(agentRoutes).toContain(p.replace(/^api\//, "/"));
     }
   });
 
@@ -94,6 +105,18 @@ describe("agent memory tab in the settings modal", () => {
     // Migration is offered only for a bundle: a tar holds one generation, so choosing it
     // would merely throw the history away.
     expect(tab).toContain('preview.format === "bundle"');
+  });
+
+  it("covers every AF memory op the Agent records with a badge key", () => {
+    // The AF-Op trailer values written by agent_memory.go / agent_memory_changes.go.
+    const goSrc = ["agent_memory.go", "agent_memory_changes.go"]
+      .map((f) => read("../../../../../workspace/agent/internal/memoryx/" + f))
+      .join("\n");
+    for (const op of ["create", "update", "forget", "revert"]) {
+      expect(goSrc).toContain(`"${op}"`);
+      expect(ja, `ja is missing mem.af_op_${op}`).toHaveProperty("mem.af_op_" + op);
+      expect(en, `en is missing mem.af_op_${op}`).toHaveProperty("mem.af_op_" + op);
+    }
   });
 
   it("covers every Agent AF-Trigger value with a trigger-badge key", () => {

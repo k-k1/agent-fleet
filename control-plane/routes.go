@@ -895,6 +895,12 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/agents/memory/tree", rest)
 	mux.HandleFunc("POST /api/agents/memory/restore", rest)
 	mux.HandleFunc("PUT /api/agents/memory/settings", rest)
+	// AF-owned agent memory (ADR 0108): the change list and the way back from a change. The
+	// tools' own routes (/agents/memory/entries, …/search, …/read, …/forget) stay unrelayed:
+	// agents reach them on loopback.
+	mux.HandleFunc("GET /api/agents/memory/entries/changes", rest)
+	mux.HandleFunc("GET /api/agents/memory/entries/diff", rest)
+	mux.HandleFunc("POST /api/agents/memory/entries/revert", rest)
 	// Transfer between environments (P3). export streams the body with its
 	// Content-Disposition untouched and import hands the multipart straight to the
 	// Agent; rest passes body and headers through.

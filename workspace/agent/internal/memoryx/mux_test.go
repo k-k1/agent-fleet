@@ -31,7 +31,7 @@ import (
 )
 
 // memoryTestRoutes is the same (method, path) -> handler mapping as the memory section of
-// routes.go (15 routes).
+// routes.go (18 routes).
 var memoryTestRoutes = map[string]http.HandlerFunc{
 	"GET /agents/memory/roots":           HandleMemoryRoots,
 	"GET /agents/memory/snapshots":       HandleMemorySnapshots,
@@ -48,6 +48,9 @@ var memoryTestRoutes = map[string]http.HandlerFunc{
 	"GET /agents/memory/entries/read":    HandleAgentMemoryRead,
 	"POST /agents/memory/entries":        HandleAgentMemorySave,
 	"POST /agents/memory/entries/forget": HandleAgentMemoryForget,
+	"GET /agents/memory/entries/changes": HandleAgentMemoryChanges,
+	"GET /agents/memory/entries/diff":    HandleAgentMemoryChangeDiff,
+	"POST /agents/memory/entries/revert": HandleAgentMemoryRevert,
 }
 
 func buildMux() *http.ServeMux {

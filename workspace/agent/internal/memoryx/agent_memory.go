@@ -1021,7 +1021,7 @@ type agentMemChange struct {
 // put in the store by hand is never swept into this author's commit unscanned. On failure the
 // store, staging and the index are put back, so a later snapshot cannot commit the change
 // either.
-func agentMemApplyLocked(changes []agentMemChange, op, memRel string, c agentMemCaller, now time.Time) (string, error) {
+func agentMemApplyLocked(changes []agentMemChange, op, memRel string, c agentMemCaller, now time.Time, extra ...string) (string, error) {
 	if err := memoryEnsureRepo(); err != nil {
 		return "", err
 	}
@@ -1108,6 +1108,9 @@ func agentMemApplyLocked(changes []agentMemChange, op, memRel string, c agentMem
 	msg := fmt.Sprintf("agent-memory: %s %s (%s)\n\nAF-Trigger: %s\nAF-Op: %s\nAF-Memory: %s\nAF-Author-Kind: %s\nAF-Author-Session: %s\n",
 		op, memRel, now.Format(time.RFC3339),
 		memoryTriggerAgentMemory, op, agentMemRepoPrefix+"/"+memRel, c.Kind, c.Session)
+	for _, t := range extra {
+		msg += t + "\n"
+	}
 	var rev string
 	if len(staged) > 0 {
 		// --only with pathspecs commits these paths alone even if something else is staged.
