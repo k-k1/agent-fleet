@@ -63,21 +63,26 @@ deploy/comfyui-lan/comfyui-lan.sh up --models /srv/comfy-models --bind 192.0.2.1
   pass `--all-interfaces`. `--port` changes the port (default `8188`).
 - **`--api-key-file <file>`** puts a bearer-checking proxy (Caddy, the same image compose
   uses) in front of ComfyUI, and ComfyUI itself is then not published at all. The file holds
-  one key of at least 24 characters (`openssl rand -hex 32 > comfy.key`). Give the CP the
+  one key of at least 24 characters, and only its owner may read it — a file the group or
+  others can read is refused: `(umask 077; openssl rand -hex 32 > comfy.key)`. Give the CP the
   same key, either in the panel's key field or as `AF_COMFY_API_KEY`. Every path needs the
   key, `/system_stats` included, and that is the health check the CP sends it with. This is
   the reverse proxy described in [The network is yours to close](#the-network-is-yours-to-close).
 - The container restarts with docker (`--restart unless-stopped`), and docker reports a
   health state from `/system_stats`. `comfyui-lan.sh status` shows it.
   `comfyui-lan.sh down` removes the containers and leaves the models and the image in place.
+  The script labels everything it creates and touches nothing else: a container or network
+  that already has its name (`af-comfyui-lan`, or `--name`) but not its label is refused, not
+  replaced.
 
 Then point the Control Plane at `http://192.0.2.10:8188` (next section).
 
 **Running it again is safe.** `up` with the same arguments changes nothing. A stopped
 container is started again, and a container is recreated only when its image or a setting
-changed. **Upgrading follows the deployment**: `git pull` brings a new `ImageComfyImageTag`,
+changed — a changed proxy key, Caddyfile or Caddy image recreates the proxy alone.
+**Upgrading follows the deployment**: `git pull` brings a new `ImageComfyImageTag`,
 and the same `up` pulls that tag and recreates the container. `--pull` re-pulls the current tag
-(GHCR tags can be pushed again), `--digest sha256:…` pins the image by digest, and `--build`
+and the proxy's Caddy image (tags can be pushed again), `--digest sha256:…` pins the image by digest, and `--build`
 builds `deploy/aws/ecs/comfyui/Dockerfile` at the pinned ComfyUI version on the host instead
 of pulling. Every option has an `AF_COMFY_LAN_*` environment variable as well (`--help` lists
 them), so you can keep a host's settings in one file and source it before each `up`. Pictures

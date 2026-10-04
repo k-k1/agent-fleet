@@ -446,12 +446,15 @@ What the script settles:
   front of ComfyUI and no longer publishes ComfyUI itself. Every path, `/system_stats` included,
   needs `Authorization: Bearer <key>`, which is what the CP presents from `AF_COMFY_API_KEY` or
   the panel's key (the addendum to decision 2). The key reaches the proxy through the
-  environment and never through a command line.
+  environment and never through a command line, and a key file the group or others can read
+  is refused.
 - **Lifecycle stays the operator's** (the rejected "CP owns the LAN ComfyUI's start and stop").
   The script sets `--restart unless-stopped` and a docker health check on `/system_stats`.
   Re-running `up` is idempotent: each container carries a label with every input that shapes
   it, so the same arguments do nothing, a stopped container is started, and a new pin, port
   or key recreates only the container it affects. An upgrade is `git pull` and the same `up`.
+  An owner label marks what the script created; a same-named container or network without it
+  is refused rather than removed.
 - **It refuses before it changes anything** when docker or its daemon is missing, when
   `nvidia-smi -L` fails, when no NVIDIA Container Toolkit is found, or when the host is not
   x86_64 (the image is built for amd64 only).

@@ -60,21 +60,25 @@ deploy/comfyui-lan/comfyui-lan.sh up --models /srv/comfy-models --bind 192.0.2.1
   付けない限り断ります。ポートは `--port` で変えられます（既定 `8188`）。
 - **`--api-key-file <file>`** を付けると、bearer を確かめる proxy（compose と同じ Caddy の
   イメージ）を ComfyUI の前に置き、ComfyUI 自体はどこにも公開しません。ファイルには
-  24 文字以上の鍵を 1 つ書きます（`openssl rand -hex 32 > comfy.key`）。CP には同じ鍵を、
+  24 文字以上の鍵を 1 つ書き、読めるのは所有者だけにします。グループやその他が読めるファイルは
+  断ります: `(umask 077; openssl rand -hex 32 > comfy.key)`。CP には同じ鍵を、
   パネルの鍵の欄か `AF_COMFY_API_KEY` で渡します。鍵はすべてのパスで要り、`/system_stats`
   も例外ではありません。CP はヘルスチェックにも鍵を付けて送ります。これが
   [網を閉じるのはあなたの仕事](#網を閉じるのはあなたの仕事)の reverse proxy です。
 - コンテナは docker と一緒に再起動し（`--restart unless-stopped`）、docker は
   `/system_stats` から健康状態を出します。`comfyui-lan.sh status` で見えます。
   `comfyui-lan.sh down` はコンテナを消し、モデルとイメージは残します。
+  スクリプトは作ったものすべてにラベルを付け、それ以外には触りません。同じ名前
+  （`af-comfyui-lan` か `--name`）でラベルの無いコンテナやネットワークがあれば、置き換えずに断ります。
 
 あとは Control Plane に `http://192.0.2.10:8188` を教えます（次の節）。
 
 **何度実行しても安全です。** 同じ引数の `up` は何も変えません。止まっているコンテナは
-起動し直し、コンテナを作り直すのはイメージか設定が変わったときだけです。
+起動し直し、コンテナを作り直すのはイメージか設定が変わったときだけです。proxy の鍵・Caddyfile・Caddy の
+イメージが変わったときは proxy だけを作り直します。
 **上げるときは配備に合わせます**。`git pull` で新しい `ImageComfyImageTag` が来れば、同じ
-`up` がそのタグを pull してコンテナを作り直します。`--pull` は今のタグを pull し直し
-（GHCR のタグは上書きできるため）、`--digest sha256:…` はイメージを digest で固定し、
+`up` がそのタグを pull してコンテナを作り直します。`--pull` は今のタグと proxy の Caddy の
+イメージを pull し直し（タグは上書きできるため）、`--digest sha256:…` はイメージを digest で固定し、
 `--build` は pull の代わりに `deploy/aws/ecs/comfyui/Dockerfile` を固定された版でその機械の
 上で build します。どのオプションにも `AF_COMFY_LAN_*` の環境変数があるので（`--help` に
 一覧）、機械ごとの設定を 1 つのファイルに書き、`up` の前に source しておけます。ComfyUI が

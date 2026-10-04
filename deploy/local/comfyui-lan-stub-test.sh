@@ -8,21 +8,29 @@
 # docker (and could have a real nvidia-ctk), and a refusal test that finds the real one
 # passes on a laptop and fails on the runner.
 #
+# The script runs from a copy of its folder (plus 60-engines.yaml) so a test can edit the
+# Caddyfile it mounts without touching the checkout.
+#
 # Not measured here: that the pinned image really starts ComfyUI under --gpus on a real
 # NVIDIA host, that the Caddyfile accepts the bearer, and the health command's output.
 # shellcheck disable=SC2015 # `cond && ok … || ng …`: ok only echoes and cannot fail.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-SCRIPT="$ROOT/deploy/comfyui-lan/comfyui-lan.sh"
-YAML="$ROOT/deploy/aws/ecs/cfn/60-engines.yaml"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+REPO="$WORK/repo"
+mkdir -p "$REPO/deploy/comfyui-lan" "$REPO/deploy/aws/ecs/cfn"
+cp "$ROOT/deploy/comfyui-lan/comfyui-lan.sh" "$ROOT/deploy/comfyui-lan/Caddyfile" "$REPO/deploy/comfyui-lan/"
+cp "$ROOT/deploy/aws/ecs/cfn/60-engines.yaml" "$REPO/deploy/aws/ecs/cfn/"
+SCRIPT="$REPO/deploy/comfyui-lan/comfyui-lan.sh"
+YAML="$REPO/deploy/aws/ecs/cfn/60-engines.yaml"
+CADDYFILE="$REPO/deploy/comfyui-lan/Caddyfile"
 STUB="$WORK/stub"; SYS="$WORK/sys"; STATE="$WORK/state"; LOG="$WORK/calls.log"
 mkdir -p "$STUB" "$SYS" "$STATE/c" "$STATE/img" "$STATE/net"
 
-for t in bash env sed head tr sha256sum cut mkdir grep cat rm dirname ls; do
+for t in bash env sed head tr sha256sum cut mkdir grep cat rm dirname ls stat; do
   p="$(command -v "$t")" || { echo "test needs $t"; exit 1; }
   ln -s "$p" "$SYS/$t"
 done
@@ -44,6 +52,7 @@ case "$1" in
     tmpl="$4"; c="$5"; d="$S/c/$c"
     [ -d "$d" ] || { echo "Error: No such container: $c" >&2; exit 1; }
     case "$tmpl" in
+      *owner*) if [ -f "$d/owner" ]; then cat "$d/owner"; else echo -; fi ;;
       *Labels*) cat "$d/spec" ;;
       *State.Running*) cat "$d/running" ;;
       *.Id*) echo "cid-$c" ;;
@@ -55,14 +64,21 @@ case "$1" in
     [ -f "$f" ] || exit 1
     case "$*" in *-f*) cat "$f" ;; esac ;;
   network)
+    # The file holds the owner label ("-" for none); `inspect -f` prints it.
+    n="${!#}"
     case "$2" in
-      inspect) echo "read docker $*" >> "$STUB_LOG"; [ -f "$S/net/$3" ] ;;
-      create) echo "docker $*" >> "$STUB_LOG"; : > "$S/net/$3" ;;
-      rm) echo "docker $*" >> "$STUB_LOG"; rm -f "$S/net/$3" ;;
+      inspect) echo "read docker $*" >> "$STUB_LOG"; [ -f "$S/net/$n" ] || exit 1
+        case "$*" in *-f*) cat "$S/net/$n" ;; esac ;;
+      create) echo "docker $*" >> "$STUB_LOG"
+        o=-; [ "$3" = --label ] && o="${4#af.comfyui-lan.owner=}"; echo "$o" > "$S/net/$n" ;;
+      rm) echo "docker $*" >> "$STUB_LOG"; rm -f "$S/net/$n" ;;
     esac ;;
   pull)
     echo "docker $*" >> "$STUB_LOG"
-    echo "sha256:${STUB_PULL_ID:-aaaa}" > "$S/img/$(key "$2")" ;;
+    case "$2" in
+      caddy*) echo "sha256:${STUB_PROXY_ID:-pppp}" > "$S/img/$(key "$2")" ;;
+      *) echo "sha256:${STUB_PULL_ID:-aaaa}" > "$S/img/$(key "$2")" ;;
+    esac ;;
   build)
     echo "docker $*" >> "$STUB_LOG"
     shift; ref=""
@@ -73,14 +89,25 @@ case "$1" in
     # by environment and never on the command line.
     echo "docker $*" >> "$STUB_LOG"
     [ -z "${AF_COMFY_LAN_KEY:-}" ] || echo "env AF_COMFY_LAN_KEY=$AF_COMFY_LAN_KEY" >> "$S/env.log"
-    name=""; spec=""; args=("$@")
+    # A host port is held by the container that published it, as docker does: a second -p of
+    # the same port fails with exit 125 and creates nothing.
+    name=""; spec=""; owner=""; port=""; args=("$@")
     for ((i=0; i<${#args[@]}; i++)); do
+      v="${args[$((i+1))]:-}"
       case "${args[$i]}" in
-        --name) name="${args[$((i+1))]}" ;;
-        --label) spec="${args[$((i+1))]#af.comfyui-lan.spec=}" ;;
+        --name) name="$v" ;;
+        --label) case "$v" in
+            af.comfyui-lan.spec=*) spec="${v#af.comfyui-lan.spec=}" ;;
+            af.comfyui-lan.owner=*) owner="${v#af.comfyui-lan.owner=}" ;;
+          esac ;;
+        -p) port="${v%:*}"; port="${port##*:}" ;;
       esac
     done
-    mkdir -p "$S/c/$name"; printf '%s\n' "$spec" > "$S/c/$name/spec"; echo true > "$S/c/$name/running" ;;
+    if [ -n "$port" ] && grep -qxF "$port" "$S"/c/*/port 2>/dev/null; then
+      echo "docker: Error response from daemon: port is already allocated" >&2; exit 125
+    fi
+    mkdir -p "$S/c/$name"; printf '%s\n' "$spec" > "$S/c/$name/spec"; echo true > "$S/c/$name/running"
+    echo "$owner" > "$S/c/$name/owner"; [ -z "$port" ] || echo "$port" > "$S/c/$name/port" ;;
   start) echo "docker $*" >> "$STUB_LOG"; echo true > "$S/c/$2/running" ;;
   rm) echo "docker $*" >> "$STUB_LOG"; rm -rf "${S:?}/c/$3" ;;
   *) echo "unexpected docker $*" >> "$STUB_LOG"; exit 99 ;;
@@ -117,7 +144,7 @@ run() {
   env -i HOME="$WORK" PATH="$STUB:$SYS" STUB_LOG="$LOG" STUB_STATE="$STATE" \
     ${STUB_ARCH:+STUB_ARCH=$STUB_ARCH} ${STUB_NVIDIA_RC:+STUB_NVIDIA_RC=$STUB_NVIDIA_RC} \
     ${STUB_DAEMON_DOWN:+STUB_DAEMON_DOWN=$STUB_DAEMON_DOWN} ${STUB_PULL_ID:+STUB_PULL_ID=$STUB_PULL_ID} \
-    ${STUB_RUNTIMES:+STUB_RUNTIMES=$STUB_RUNTIMES} \
+    ${STUB_RUNTIMES:+STUB_RUNTIMES=$STUB_RUNTIMES} ${STUB_PROXY_ID:+STUB_PROXY_ID=$STUB_PROXY_ID} \
     bash "$SCRIPT" "$@" > "$OUT" 2>&1
   RC=$?
   set -e
@@ -138,14 +165,14 @@ reset_state() { rm -rf "${STATE:?}"/c/* "${STATE:?}"/img/* "${STATE:?}"/net/* "$
 HC="python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8188/system_stats', timeout=5)\""
 RUNCOMMON="--network af-comfyui-lan --restart unless-stopped --log-opt max-size=50m --log-opt max-file=3 --gpus all -v $MODELS_REAL:/ComfyUI/models:ro --health-cmd $HC --health-interval 30s --health-timeout 10s --health-start-period 180s --health-retries 3"
 comfy_run() { # <publish args or empty> <image> <spec>
-  echo "docker run -d --name af-comfyui-lan --label af.comfyui-lan.spec=$3 $RUNCOMMON ${1:+$1 }$2 python3 /ComfyUI/main.py --listen 0.0.0.0 --port 8188 --disable-auto-launch"
+  echo "docker run -d --name af-comfyui-lan --label af.comfyui-lan.owner=af-comfyui-lan --label af.comfyui-lan.spec=$3 $RUNCOMMON ${1:+$1 }$2 python3 /ComfyUI/main.py --listen 0.0.0.0 --port 8188 --disable-auto-launch"
 }
 
 echo "== up: fresh host, defaults (loopback, the 60-engines pin)"
 run up --models "$MODELS"
 spec="image=sha256:aaaa models=$MODELS_REAL gpus=all publish=-p 127.0.0.1:8188:8188"
 expect_writes "pulls $IMG, creates the network and one container" "docker pull $IMG
-docker network create af-comfyui-lan
+docker network create --label af.comfyui-lan.owner=af-comfyui-lan af-comfyui-lan
 $(comfy_run "-p 127.0.0.1:8188:8188" "$IMG" "$spec")"
 [ "$RC" = 0 ] && ok "exit 0" || { ng "exit $RC"; cat "$OUT"; }
 missing=""
@@ -178,16 +205,21 @@ STUB_PULL_ID=bbbb run up --models "$MODELS" --port 8190 --pull
 expect_writes "a pull that returns the same image changes nothing else" "docker pull $IMG"
 
 echo "== --api-key-file: ComfyUI loses its port, the proxy takes it"
-KEYF="$WORK/key"; K1="k1-0123456789abcdef0123456789abcdef"; echo "$K1" > "$KEYF"
+KEYF="$WORK/key"; K1="k1-0123456789abcdef0123456789abcdef"
+(umask 077; echo "$K1" > "$KEYF")
 reset_state
 run up --models "$MODELS" --bind 192.0.2.10 --api-key-file "$KEYF"
 h1="$(printf '%s' "$K1" | sha256sum | cut -c1-16)"
 cspec="image=sha256:aaaa models=$MODELS_REAL gpus=all publish=proxy"
-pspec="image=caddy:2-alpine upstream=af-comfyui-lan:8188 publish=192.0.2.10:8188 key=$h1"
-expect_writes "comfy without -p, proxy with -e and -p" "docker pull $IMG
-docker network create af-comfyui-lan
+proxy_run() { # <proxy image id> <caddyfile hash> <key hash>
+  echo "docker run -d --name af-comfyui-lan-proxy --label af.comfyui-lan.owner=af-comfyui-lan --label af.comfyui-lan.spec=image=sha256:$1 ref=caddy:2-alpine caddyfile=$CADDYFILE@$2 upstream=af-comfyui-lan:8188 publish=192.0.2.10:8188 key=$3 --network af-comfyui-lan --restart unless-stopped --log-opt max-size=50m --log-opt max-file=3 -e AF_COMFY_LAN_KEY -e AF_COMFY_LAN_UPSTREAM -v $CADDYFILE:/etc/caddy/Caddyfile:ro -p 192.0.2.10:8188:8188 caddy:2-alpine"
+}
+ch1="$(sha256sum < "$CADDYFILE" | cut -c1-16)"
+expect_writes "comfy without -p, proxy (image pulled first) with -e and -p" "docker pull $IMG
+docker pull caddy:2-alpine
+docker network create --label af.comfyui-lan.owner=af-comfyui-lan af-comfyui-lan
 $(comfy_run "" "$IMG" "$cspec")
-docker run -d --name af-comfyui-lan-proxy --label af.comfyui-lan.spec=$pspec --network af-comfyui-lan --restart unless-stopped --log-opt max-size=50m --log-opt max-file=3 -e AF_COMFY_LAN_KEY -e AF_COMFY_LAN_UPSTREAM -v $ROOT/deploy/comfyui-lan/Caddyfile:/etc/caddy/Caddyfile:ro -p 192.0.2.10:8188:8188 caddy:2-alpine"
+$(proxy_run pppp "$ch1" "$h1")"
 if grep -qF "$K1" "$LOG" || grep -qF "$K1" "$OUT"; then ng "key leaked onto a command line or the output"; else ok "key on no command line"; fi
 grep -qxF "env AF_COMFY_LAN_KEY=$K1" "$STATE/env.log" && ok "key handed over by environment" || ng "proxy did not get the key"
 run up --models "$MODELS" --bind 192.0.2.10 --api-key-file "$KEYF"
@@ -196,24 +228,77 @@ K2="k2-fedcba9876543210fedcba9876543210"; echo "$K2" > "$KEYF"
 run up --models "$MODELS" --bind 192.0.2.10 --api-key-file "$KEYF"
 h2="$(printf '%s' "$K2" | sha256sum | cut -c1-16)"
 expect_writes "new key: only the proxy is recreated" "docker rm -f af-comfyui-lan-proxy
-docker run -d --name af-comfyui-lan-proxy --label af.comfyui-lan.spec=${pspec%key=*}key=$h2 --network af-comfyui-lan --restart unless-stopped --log-opt max-size=50m --log-opt max-file=3 -e AF_COMFY_LAN_KEY -e AF_COMFY_LAN_UPSTREAM -v $ROOT/deploy/comfyui-lan/Caddyfile:/etc/caddy/Caddyfile:ro -p 192.0.2.10:8188:8188 caddy:2-alpine"
+$(proxy_run pppp "$ch1" "$h2")"
+
+echo "# a test edit to the copied Caddyfile" >> "$CADDYFILE"
+ch2="$(sha256sum < "$CADDYFILE" | cut -c1-16)"
+run up --models "$MODELS" --bind 192.0.2.10 --api-key-file "$KEYF"
+expect_writes "changed Caddyfile: only the proxy is recreated" "docker rm -f af-comfyui-lan-proxy
+$(proxy_run pppp "$ch2" "$h2")"
+run up --models "$MODELS" --bind 192.0.2.10 --api-key-file "$KEYF" --pull
+expect_writes "--pull, both ids unchanged: pulls only" "docker pull $IMG
+docker pull caddy:2-alpine"
+STUB_PROXY_ID=qqqq run up --models "$MODELS" --bind 192.0.2.10 --api-key-file "$KEYF" --pull
+expect_writes "--pull, new caddy id: only the proxy is recreated" "docker pull $IMG
+docker pull caddy:2-alpine
+docker rm -f af-comfyui-lan-proxy
+$(proxy_run qqqq "$ch2" "$h2")"
+
 run up --models "$MODELS" --bind 192.0.2.10
-expect_writes "key dropped: comfy republished, proxy removed" "docker rm -f af-comfyui-lan
-$(comfy_run "-p 192.0.2.10:8188:8188" "$IMG" "image=sha256:aaaa models=$MODELS_REAL gpus=all publish=-p 192.0.2.10:8188:8188")
-docker rm -f af-comfyui-lan-proxy"
+expect_writes "key dropped: proxy removed before comfy takes its port" "docker rm -f af-comfyui-lan-proxy
+docker rm -f af-comfyui-lan
+$(comfy_run "-p 192.0.2.10:8188:8188" "$IMG" "image=sha256:aaaa models=$MODELS_REAL gpus=all publish=-p 192.0.2.10:8188:8188")"
+[ "$RC" = 0 ] && ok "key dropped: exit 0" || { ng "key dropped rc=$RC"; cat "$OUT"; }
 grep -q "can queue prompts" "$OUT" && ok "warns that a LAN bind without a key is open" || ng "no open-LAN note"
+
+# The state the old order left behind: the proxy still holds the port and ComfyUI is gone.
+reset_state
+run up --models "$MODELS" --bind 192.0.2.10 --api-key-file "$KEYF"
+rm -rf "$STATE/c/af-comfyui-lan"
+run up --models "$MODELS" --bind 192.0.2.10
+[ "$RC" = 0 ] && [ -f "$STATE/c/af-comfyui-lan/port" ] && [ ! -d "$STATE/c/af-comfyui-lan-proxy" ] \
+  && ok "re-run after a half-done switch recovers" || { ng "half-done switch rc=$RC"; cat "$OUT"; }
+
+echo "== key file permissions"
+reset_state
+(umask 022; echo "$K1" > "$WORK/key644")
+expect_refused "0644 key file" "readable by group or others" up --models "$MODELS" --api-key-file "$WORK/key644"
+(umask 027; echo "$K1" > "$WORK/key640")
+expect_refused "0640 key file" "readable by group or others" up --models "$MODELS" --api-key-file "$WORK/key640"
+run up --models "$MODELS" --api-key-file "$KEYF"
+[ "$RC" = 0 ] && ok "0600 key file accepted" || { ng "0600 rc=$RC"; cat "$OUT"; }
+expect_refused "a directory as key file" "is not a readable file" up --models "$MODELS" --api-key-file "$WORK"
+
+echo "== objects this script did not create"
+reset_state
+mkdir -p "$STATE/c/af-comfyui-lan"; echo "<no value>" > "$STATE/c/af-comfyui-lan/spec"; echo true > "$STATE/c/af-comfyui-lan/running"
+expect_refused "up: same-named container without our label" "container 'af-comfyui-lan' (owner label: -)" up --models "$MODELS"
+expect_refused "down: same-named container without our label" "did not create" down
+reset_state
+echo - > "$STATE/net/af-comfyui-lan"
+expect_refused "up: same-named network without our label" "network 'af-comfyui-lan' (owner label: -)" up --models "$MODELS"
+expect_refused "down: same-named network without our label" "network 'af-comfyui-lan'" down
+reset_state
+run up --models "$MODELS" --api-key-file "$KEYF"
+echo other > "$STATE/c/af-comfyui-lan-proxy/owner"
+expect_refused "down with ours and another owner's mixed: removes nothing" "container 'af-comfyui-lan-proxy' (owner label: other)" down
+[ -d "$STATE/c/af-comfyui-lan" ] && [ -f "$STATE/net/af-comfyui-lan" ] && ok "our objects are still there" || ng "mixed down removed part of the set"
+reset_state
+run up --models "$MODELS" --name other-comfy
+[ "$RC" = 0 ] && [ "$(cat "$STATE/c/other-comfy/owner")" = other-comfy ] && [ "$(cat "$STATE/net/other-comfy")" = other-comfy ] \
+  && ok "--name labels container and network with that name" || { ng "--name owner"; cat "$OUT"; }
 
 echo "== image sources"
 reset_state
 run up --models "$MODELS" --build
-expect_writes "--build builds the Dockerfile at the pin, no pull" "docker build --build-arg COMFYUI_REF=$TAG -t af-comfyui-lan:$TAG $ROOT/deploy/aws/ecs/comfyui
-docker network create af-comfyui-lan
+expect_writes "--build builds the Dockerfile at the pin, no pull" "docker build --build-arg COMFYUI_REF=$TAG -t af-comfyui-lan:$TAG $REPO/deploy/aws/ecs/comfyui
+docker network create --label af.comfyui-lan.owner=af-comfyui-lan af-comfyui-lan
 $(comfy_run "-p 127.0.0.1:8188:8188" "af-comfyui-lan:$TAG" "image=sha256:built models=$MODELS_REAL gpus=all publish=-p 127.0.0.1:8188:8188")"
 reset_state
 D="sha256:$(printf 'c%.0s' $(seq 64))"
 run up --models "$MODELS" --digest "$D" --tag v9.9.9 --gpus device=0
 expect_writes "--digest pulls by digest; --gpus is passed through" "docker pull ghcr.io/k-k1/agent-fleet/comfyui@$D
-docker network create af-comfyui-lan
+docker network create --label af.comfyui-lan.owner=af-comfyui-lan af-comfyui-lan
 $(comfy_run "-p 127.0.0.1:8188:8188" "ghcr.io/k-k1/agent-fleet/comfyui@$D" "image=sha256:aaaa models=$MODELS_REAL gpus=device=0 publish=-p 127.0.0.1:8188:8188" | sed 's/--gpus all/--gpus device=0/')"
 reset_state
 run up --models "$MODELS" --bind fd00::10
@@ -228,14 +313,23 @@ echo "== refusals (no docker state may change)"
 reset_state
 expect_refused "0.0.0.0 without --all-interfaces" "EVERY interface" up --models "$MODELS" --bind 0.0.0.0
 expect_refused ":: without --all-interfaces" "EVERY interface" up --models "$MODELS" --bind ::
+for b in '[::]' 0:0:0:0:0:0:0:0 '[0:0:0:0:0:0:0:0]' 0::0 0000::0000 '::ffff:0.0.0.0' '::0.0.0.0' 00.0.0.000; do
+  expect_refused "$b without --all-interfaces" "EVERY interface" up --models "$MODELS" --bind "$b"
+done
+run up --models "$MODELS" --bind 0:0:0:0:0:0:0:0 --all-interfaces
+grep -q -- "-p \[::\]:8188:8188" "$LOG" && ok "--all-interfaces with an all-zero IPv6 publishes on [::]" || { ng "v6 all-interfaces"; writes; }
+reset_state
+run up --models "$MODELS" --bind ::1
+[ "$RC" = 0 ] && grep -q -- "-p \[::1\]:8188:8188" "$LOG" && ok "::1 is not taken for all interfaces" || { ng "::1"; cat "$OUT"; }
+reset_state
 expect_refused "no --models" "--models <dir> is required" up
 expect_refused "models dir missing" "is not a directory" up --models "$WORK/nope"
 expect_refused "bad port" "is not a TCP port" up --models "$MODELS" --port 99999
 expect_refused "bad digest" "--digest wants" up --models "$MODELS" --digest sha256:xyz
 expect_refused "digest with build" "cannot be combined with --build" up --models "$MODELS" --digest "$D" --build
-echo short > "$WORK/shortkey"
+(umask 077; echo short > "$WORK/shortkey")
 expect_refused "short key" "at least 24 characters" up --models "$MODELS" --api-key-file "$WORK/shortkey"
-expect_refused "unreadable key file" "is not readable" up --models "$MODELS" --api-key-file "$WORK/nokey"
+expect_refused "unreadable key file" "is not a readable file" up --models "$MODELS" --api-key-file "$WORK/nokey"
 expect_refused "bad tag" "is not a usable image tag" up --models "$MODELS" --tag 'v1;rm'
 STUB_ARCH=aarch64 expect_refused "arm64 host" "amd64 (x86_64) only" up --models "$MODELS"
 STUB_NVIDIA_RC=9 expect_refused "nvidia-smi fails" "failed to list a GPU" up --models "$MODELS"

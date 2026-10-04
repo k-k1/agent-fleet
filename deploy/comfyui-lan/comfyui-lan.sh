@@ -39,6 +39,9 @@ INNER_PORT=8188
 # text_encoders/ is clip/'s newer name; ComfyUI lists both under the same loader.
 TYPE_DIRS="checkpoints diffusion_models clip text_encoders vae loras"
 SPEC_LABEL=af.comfyui-lan.spec
+# Set on every container and network this script creates, valued with --name. Only objects
+# carrying it are ever removed or replaced; a same-named object without it is someone else's.
+OWNER_LABEL=af.comfyui-lan.owner
 
 usage() {
   cat <<'EOF'
@@ -55,7 +58,7 @@ up options:
   --tag <t>             image tag (default: ImageComfyImageTag in 60-engines.yaml) [AF_COMFY_LAN_TAG]
   --digest <sha256:..>  pin the pulled image by digest [AF_COMFY_LAN_DIGEST]
   --build               build from deploy/aws/ecs/comfyui/Dockerfile at --tag instead of pulling
-  --pull                pull (or rebuild) even when the image is already present
+  --pull                pull (or rebuild) even when present; also re-pulls the proxy image
   --gpus <spec>         value for docker run --gpus (default all) [AF_COMFY_LAN_GPUS]
   --name <name>         container name (default af-comfyui-lan) [AF_COMFY_LAN_NAME]
 EOF
@@ -100,7 +103,26 @@ fi
 # container_field <container> <go-template> — empty when the container does not exist.
 container_field() { docker container inspect -f "$2" "$1" 2>/dev/null || true; }
 
+# refuse_foreign — die, before anything is changed, when a container or network under one of
+# our names exists without our owner label (or with another --name's). Every name is checked
+# first so a mixed set is never half removed.
+refuse_foreign() {
+  local bad="" o c
+  for c in "$NAME" "$PROXY_NAME"; do
+    if o="$(docker container inspect -f "{{with index .Config.Labels \"$OWNER_LABEL\"}}{{.}}{{else}}-{{end}}" "$c" 2>/dev/null)" \
+        && [ "$o" != "$NAME" ]; then
+      bad="$bad container '$c' (owner label: $o);"
+    fi
+  done
+  if o="$(docker network inspect -f "{{with index .Labels \"$OWNER_LABEL\"}}{{.}}{{else}}-{{end}}" "$NET" 2>/dev/null)" \
+      && [ "$o" != "$NAME" ]; then
+    bad="$bad network '$NET' (owner label: $o);"
+  fi
+  [ -z "$bad" ] || die "refusing to touch objects this script did not create:$bad remove or rename them yourself, or pick another --name."
+}
+
 if [ "$CMD" = down ]; then
+  refuse_foreign
   for c in "$PROXY_NAME" "$NAME"; do
     if [ -n "$(container_field "$c" '{{.Id}}')" ]; then
       docker rm -f "$c" >/dev/null
@@ -137,24 +159,43 @@ MODELS="$(cd "$MODELS" && pwd -P)"
 
 [[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || die "--port '$PORT' is not a TCP port."
 
-case "$BIND" in
-  0.0.0.0|::|'[::]'|'')
-    [ "$ALL_IFACES" = 1 ] || die "--bind '$BIND' publishes ComfyUI on EVERY interface of this host. Give the LAN address the Control Plane reaches (e.g. --bind 192.0.2.10), or pass --all-interfaces to mean it."
-    BIND=0.0.0.0
-    echo "comfyui-lan: WARNING publishing on every interface of this host (--all-interfaces)." >&2
-    ;;
-esac
+# is_unspecified <addr> — true for every spelling docker reads as "all interfaces": 0.0.0.0,
+# any all-zero IPv6 (::, 0::0, 0:0:0:0:0:0:0:0, bracketed or not) and the IPv4-mapped or
+# -compatible all-zero forms (::ffff:0.0.0.0, ::0.0.0.0). Matching the literal "::" alone let
+# 0:0:0:0:0:0:0:0 through.
+is_unspecified() {
+  local a="${1#[}"
+  a="${a%]}"; a="${a,,}"
+  [ -n "$a" ] || return 0
+  [[ "$a" =~ ^0+(\.0+){3}$ ]] && return 0
+  [[ "$a" == *:* ]] || return 1
+  if [[ "$a" =~ ^(.*:)ffff:0+(\.0+){3}$ ]] || [[ "$a" =~ ^(.*:)0+(\.0+){3}$ ]]; then
+    a="${BASH_REMATCH[1]}0"
+  fi
+  [[ "$a" =~ ^[0:]+$ ]]
+}
+if is_unspecified "$BIND"; then
+  [ "$ALL_IFACES" = 1 ] || die "--bind '$BIND' publishes ComfyUI on EVERY interface of this host. Give the LAN address the Control Plane reaches (e.g. --bind 192.0.2.10), or pass --all-interfaces to mean it."
+  case "$BIND" in *:*) BIND=:: ;; *) BIND=0.0.0.0 ;; esac
+  echo "comfyui-lan: WARNING publishing on every interface of this host (--all-interfaces)." >&2
+fi
 # docker -p wants an IPv6 host address in brackets.
 publish_host="$BIND"
 case "$BIND" in *:*) publish_host="[${BIND#[}"; publish_host="${publish_host%]}]" ;; esac
 
 KEY=""
 if [ -n "$KEY_FILE" ]; then
-  [ -r "$KEY_FILE" ] || die "--api-key-file '$KEY_FILE' is not readable."
+  [ -f "$KEY_FILE" ] && [ -r "$KEY_FILE" ] || die "--api-key-file '$KEY_FILE' is not a readable file."
+  # A key any local user can read lets them past the proxy, which is the only thing keeping
+  # "only the Control Plane" true (ADR 0076 decision 7).
+  key_mode="$(stat -L -c %a "$KEY_FILE")"
+  if (( 8#$key_mode & 8#044 )); then
+    die "--api-key-file '$KEY_FILE' is readable by group or others (mode $key_mode). Run: chmod 600 '$KEY_FILE'"
+  fi
   KEY="$(tr -d '\r\n' < "$KEY_FILE")"
   # The key lands in a Caddyfile placeholder and an Authorization header: no spaces or quotes.
   [[ "$KEY" =~ ^[A-Za-z0-9._~+/=-]{24,}$ ]] \
-    || die "the key in '$KEY_FILE' must be at least 24 characters of [A-Za-z0-9._~+/=-] (e.g. openssl rand -hex 32)."
+    || die "the key in '$KEY_FILE' must be at least 24 characters of [A-Za-z0-9._~+/=-] (e.g. (umask 077; openssl rand -hex 32 > comfy.key))."
   [ -f "$HERE/Caddyfile" ] || die "$HERE/Caddyfile is missing; the proxy needs it."
 elif [ "$BIND" != 127.0.0.1 ] && [ "$BIND" != ::1 ]; then
   echo "comfyui-lan: note: no --api-key-file, so anything that reaches $BIND:$PORT can queue prompts (ADR 0076 decision 7)." >&2
@@ -187,6 +228,8 @@ if [ "$toolkit" = 0 ] && docker info --format '{{json .Runtimes}}' 2>/dev/null |
 fi
 [ "$toolkit" = 1 ] || die "the NVIDIA Container Toolkit is not installed, so 'docker run --gpus' cannot reach the GPU. Install nvidia-container-toolkit and run 'nvidia-ctk runtime configure --runtime=docker', then restart docker."
 
+refuse_foreign
+
 # --- image ------------------------------------------------------------------------------
 
 if [ "$BUILD" = 1 ]; then
@@ -206,6 +249,20 @@ fi
 image_id="$(docker image inspect -f '{{.Id}}' "$IMAGE")"
 [ -n "$image_id" ] || die "docker has no image id for $IMAGE after pulling/building it."
 
+# The proxy's image id and its Caddyfile's content go into its spec: Caddy reads the file once
+# at start (admin off, no reload), so a changed file or a re-pulled caddy:2-alpine needs a
+# recreate that a spec of names alone would never trigger.
+proxy_id=""; caddy_hash=""
+if [ -n "$KEY" ]; then
+  if [ "$PULL" = 1 ] || ! docker image inspect "$PROXY_IMAGE" >/dev/null 2>&1; then
+    echo "==> pulling $PROXY_IMAGE"
+    docker pull "$PROXY_IMAGE"
+  fi
+  proxy_id="$(docker image inspect -f '{{.Id}}' "$PROXY_IMAGE")"
+  [ -n "$proxy_id" ] || die "docker has no image id for $PROXY_IMAGE after pulling it."
+  caddy_hash="$(sha256sum < "$HERE/Caddyfile" | cut -c1-16)"
+fi
+
 for d in $TYPE_DIRS; do
   if [ ! -d "$MODELS/$d" ] && ! mkdir -p "$MODELS/$d" 2>/dev/null; then
     echo "comfyui-lan: note: could not create $MODELS/$d (not writable); ComfyUI lists it as empty." >&2
@@ -214,8 +271,15 @@ done
 
 # --- containers -------------------------------------------------------------------------
 
+# Without a key the proxy has to go before ComfyUI is published: it holds the same host port,
+# and docker refuses the second -p with "port is already allocated".
+if [ -z "$KEY" ] && [ -n "$(container_field "$PROXY_NAME" '{{.Id}}')" ]; then
+  docker rm -f "$PROXY_NAME" >/dev/null
+  echo "==> removed $PROXY_NAME (no --api-key-file this time)"
+fi
+
 if ! docker network inspect "$NET" >/dev/null 2>&1; then
-  docker network create "$NET" >/dev/null
+  docker network create --label "$OWNER_LABEL=$NAME" "$NET" >/dev/null
 fi
 
 # ensure <name> <spec> <docker run args...> — leave a container whose spec label matches
@@ -240,7 +304,7 @@ ensure() {
     echo "==> $name changed; recreating"
     docker rm -f "$name" >/dev/null
   fi
-  docker run -d --name "$name" --label "$SPEC_LABEL=$spec" --network "$NET" \
+  docker run -d --name "$name" --label "$OWNER_LABEL=$NAME" --label "$SPEC_LABEL=$spec" --network "$NET" \
     --restart unless-stopped --log-opt max-size=50m --log-opt max-file=3 "$@" >/dev/null
   echo "==> $name created"
 }
@@ -266,7 +330,7 @@ ensure "$NAME" "$comfy_spec" \
   "$IMAGE" python3 /ComfyUI/main.py --listen 0.0.0.0 --port "$INNER_PORT" --disable-auto-launch
 
 if [ -n "$KEY" ]; then
-  proxy_spec="image=$PROXY_IMAGE upstream=$NAME:$INNER_PORT publish=$publish_host:$PORT key=$key_hash"
+  proxy_spec="image=$proxy_id ref=$PROXY_IMAGE caddyfile=$HERE/Caddyfile@$caddy_hash upstream=$NAME:$INNER_PORT publish=$publish_host:$PORT key=$key_hash"
   # -e NAME without a value hands docker the variable from this environment, so the key never
   # appears on a command line (ps).
   AF_COMFY_LAN_KEY="$KEY" AF_COMFY_LAN_UPSTREAM="$NAME:$INNER_PORT" ensure "$PROXY_NAME" "$proxy_spec" \
@@ -274,9 +338,6 @@ if [ -n "$KEY" ]; then
     -v "$HERE/Caddyfile:/etc/caddy/Caddyfile:ro" \
     -p "$publish_host:$PORT:$INNER_PORT" \
     "$PROXY_IMAGE"
-elif [ -n "$(container_field "$PROXY_NAME" '{{.Id}}')" ]; then
-  docker rm -f "$PROXY_NAME" >/dev/null
-  echo "==> removed $PROXY_NAME (no --api-key-file this time)"
 fi
 
 url_host="$BIND"; [ "$BIND" = 0.0.0.0 ] && url_host="<this host's LAN address>"
