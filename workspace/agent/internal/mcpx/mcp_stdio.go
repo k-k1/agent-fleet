@@ -3446,6 +3446,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		if a.Path != "" {
 			q.Set("path", a.Path)
 		}
+		// claude's and codex's memories only: the AF memory's history (af/) is not this tool's,
+		// and it is withheld from sessions and the assistant alike while its switch is off.
+		q.Set("native", "1")
 		diff, err := agentGET("/agents/memory/diff?" + q.Encode())
 		if err != nil {
 			return mcpToolErr(req.ID, "メモリの差分の取得に失敗しました: "+err.Error())

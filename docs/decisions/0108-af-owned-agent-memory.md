@@ -81,7 +81,8 @@ that is safe when what one session writes is read by every kind.
    that on knowingly rather than finding it on after an upgrade. Off means the af server is launched
    without the tools *and* the Agent's tool routes refuse, because the routes answer anything that
    holds `AGENT_TOKEN`. The Console's change list, diff and revert stay available while it is off,
-   so what was written while it was on can still be reviewed and undone.
+   so what was written while it was on can still be reviewed and undone. The assistant's snapshot
+   tool (0022) reads claude's and codex's history only, never `af/`.
 5. **What is distributed is fixed guidance, not memories.** The 0042 distributor writes user-wide
    files, so a per-project list there would either be overwritten by whichever project wrote last or
    mix every project into every session. The distributed block therefore says only that the tools

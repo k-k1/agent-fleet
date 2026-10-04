@@ -1519,10 +1519,16 @@ function load(): Settings {
       agentLaunchDefaults: normalizeAgentLaunchDefaults(rows, legacyClaudeModel),
       // Map the legacy model-list values (go-first / hide-zen / all) onto the three billing routes.
       opencodeCatalog: migrateOpencodeCatalog(saved.opencodeCatalog),
+      agentMemory: normalizeAgentMemory(saved.agentMemory),
     };
   } catch {
     return { ...DEFAULTS };
   }
+}
+
+/** AF memory is on only for a boolean true, the Agent's own reading (uiprefs.AgentMemory). */
+export function normalizeAgentMemory(value: unknown): boolean {
+  return value === true;
 }
 
 export function normalizeClaudeCustomModels(value: unknown): string[] {
@@ -1898,6 +1904,10 @@ export const isDeviceLocalSetting = (key: keyof Settings): boolean => DEVICE_LOC
 // Agent's default is in force", and hydrate keeps the two sides from disagreeing about it.
 const AGENT_DEFAULTED = new Set<keyof Settings>([
   "sessionSearch", // ADR 0110: missing ⇒ on (uiprefs.SessionSearch)
+  // ADR 0108: missing ⇒ off (uiprefs.AgentMemory). Without this a browser that had it on for one
+  // account would show it on for another whose server copy lacks the key, and the next save of
+  // any setting would switch it on there.
+  "agentMemory",
 ]);
 
 // Accumulated data — unlike toggles and colors these settings build up over time and cannot be
@@ -2117,6 +2127,12 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   const pinned = pinSyncedFallbacks(merged);
   if (pinned) {
     merged.notifyDevice = pinned;
+    changed = true;
+  }
+  // The Agent enables AF memory only on a boolean true (uiprefs.AgentMemory); anything else shown
+  // as on would show one thing and enforce another.
+  if (merged.agentMemory !== normalizeAgentMemory(merged.agentMemory)) {
+    merged.agentMemory = normalizeAgentMemory(merged.agentMemory);
     changed = true;
   }
   const customClaude = normalizeClaudeCustomModels(merged.claudeCustomModels);

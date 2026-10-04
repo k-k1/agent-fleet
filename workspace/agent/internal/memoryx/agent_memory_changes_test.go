@@ -535,3 +535,25 @@ func TestAgentMemoryLatestChangeParsesTrailers(t *testing.T) {
 		t.Fatalf("latest with trailing blanks = %q, %v; want %s", got, err, head)
 	}
 }
+
+// The native-only diff (the assistant's snapshot tool) never carries the AF memory, while the
+// Console's full diff still does.
+func TestMemoryDiffNativeOnlyExcludesAFMemory(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	if _, err := memorySnapshot(memoryTriggerManual, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentMemSave(agentMemCallerT(t, "claude-main"), agentMemSaveReq{Name: "a", Description: "d", Body: "af-only-text"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	mux := buildMux()
+	head, _ := memoryGitRun("rev-parse", memoryBranch)
+	w := smokeDo(t, mux, http.MethodGet, "/agents/memory/diff?to="+head+"&native=1", "", "")
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), "af-only-text") {
+		t.Fatalf("native diff %d: %s", w.Code, w.Body)
+	}
+	w = smokeDo(t, mux, http.MethodGet, "/agents/memory/diff?to="+head, "", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "af-only-text") {
+		t.Fatalf("full diff %d: %s", w.Code, w.Body)
+	}
+}

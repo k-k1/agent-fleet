@@ -282,7 +282,7 @@ func memoryPathSafe(p string) bool {
 // working tree and mix in the staging contents (= the current live state), which is wrong for
 // browsing history; parent-dependent shorthands such as `<rev>^!` are avoided for the same
 // reason.
-func memoryDiff(from, to, path string) (string, error) {
+func memoryDiff(from, to, path string, nativeOnly ...bool) (string, error) {
 	if !memoryPathSafe(path) {
 		return "", fmt.Errorf("invalid path scope")
 	}
@@ -301,8 +301,13 @@ func memoryDiff(from, to, path string) (string, error) {
 		}
 	}
 	args := []string{"diff", "--no-color", "--find-renames", base, to}
-	if path != "" {
+	switch {
+	case path != "":
 		args = append(args, "--", path)
+	case len(nativeOnly) > 0 && nativeOnly[0]:
+		// The CLIs' own memories only: the AF memory under af/ has its own scanned, switch-gated
+		// routes (ADR 0108), and this diff is what the assistant's snapshot tool reads.
+		args = append(args, "--", ".", ":(exclude)"+agentMemRepoPrefix)
 	}
 	return memoryGitRun(args...)
 }

@@ -223,3 +223,31 @@ func TestMemoryIndexReportsWithheld(t *testing.T) {
 		t.Fatalf("index = %q", out)
 	}
 }
+
+// The assistant's snapshot tool reads claude's and codex's memory history only: it asks the
+// Agent for the diff without the AF memory under af/ (ADR 0108), whatever the switch says.
+func TestGetMemorySnapshotAsksForNativeDiff(t *testing.T) {
+	var diffQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/agents/memory/diff" {
+			diffQuery = r.URL.RawQuery
+			_, _ = w.Write([]byte(`{"diff":""}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"rev":"abc"}`))
+	}))
+	t.Cleanup(srv.Close)
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENT_ADDR", u.Host)
+	withMCPFlags(t, false, false, false)
+	if resp := mcpCall(t, "get_memory_snapshot", map[string]any{"rev": "abc"}); mcpIsError(t, resp) {
+		t.Fatalf("get_memory_snapshot: %s", resp)
+	}
+	q, _ := url.ParseQuery(diffQuery)
+	if q.Get("native") != "1" {
+		t.Fatalf("diff query = %q, want native=1", diffQuery)
+	}
+}
