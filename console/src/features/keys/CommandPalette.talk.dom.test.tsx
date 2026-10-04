@@ -199,18 +199,28 @@ describe("CommandPalette conversations mode", () => {
       searchStatus = 200;
       searchReject = false;
     }
-    // Retry runs the same query again.
+    // Retry runs the same query again — from the keyboard first (Enter in the input), then
+    // through the button's click, which is what a keyboard press on it or a screen reader sends.
+    const settle = async () => {
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 320));
+      });
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      });
+    };
+    let asked = searched.length;
+    pressEnter();
+    await settle();
+    expect(searched.length).toBe(asked + 1);
+    expect(opened).toEqual([]); // Enter retried; it did not try to open a row
     searchBody = { hits: [hit("fixer", 1, "back")], indexing: false, indexed: 1, total: 1 };
-    const asked = searched.length;
-    act(() => {
-      document.querySelector(".cp-talk-retry")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    });
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 320));
-    });
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
-    });
+    searchReject = true;
+    await typeQuery("again");
+    searchReject = false;
+    asked = searched.length;
+    act(() => document.querySelector<HTMLButtonElement>(".cp-talk-retry")!.click());
+    await settle();
     expect(searched.length).toBe(asked + 1);
     expect(snippets()).toEqual(["back"]);
   });

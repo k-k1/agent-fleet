@@ -694,7 +694,10 @@ export function CommandPalette() {
               setSel((s) => Math.max(s - 1, 0));
             } else if (e.key === "Enter") {
               e.preventDefault();
-              run(filtered[sel], e.ctrlKey || e.metaKey); // Ctrl/⌘+Enter → new pane
+              // A failed conversation search has no row to run; Enter retries it instead, so the
+              // keyboard reaches the retry without leaving the input (Tab cycles modes here).
+              if (mode === "talk" && talkErr) setTalkRetry((n) => n + 1);
+              else run(filtered[sel], e.ctrlKey || e.metaKey); // Ctrl/⌘+Enter → new pane
             }
           }}
         />
@@ -727,10 +730,8 @@ export function CommandPalette() {
               <button
                 type="button"
                 className="cp-talk-retry"
-                onMouseDown={(e) => {
-                  e.preventDefault(); // keep focus in the search input
-                  setTalkRetry((n) => n + 1);
-                }}
+                onMouseDown={(e) => e.preventDefault()} // keep focus in the search input
+                onClick={() => setTalkRetry((n) => n + 1)}
               >
                 {t("keys.palette.talk_retry")}
               </button>
