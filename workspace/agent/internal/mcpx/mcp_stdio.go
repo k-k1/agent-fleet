@@ -162,9 +162,10 @@ func parseStdioFlags(args []string) {
 	mcpPeerMessagingEnabled = false
 	mcpImageGenEnabled = false
 	mcpFleetSpawnEnabled = false
+	mcpSessionSearchEnabled = false
 	mcpBrowserUnavailable = ""
 	chromiumAttachRequested, peerMessagingRequested, imageGenRequested := false, false, false
-	fleetSpawnRequested := false
+	fleetSpawnRequested, sessionSearchRequested := false, false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--write":
@@ -182,6 +183,8 @@ func parseStdioFlags(args []string) {
 			// written before that change still passes the flag until it is re-materialized.
 		case "--fleet-spawn":
 			fleetSpawnRequested = true
+		case "--session-search":
+			sessionSearchRequested = true
 		case "--conv":
 			if i+1 < len(args) {
 				i++
@@ -201,6 +204,7 @@ func parseStdioFlags(args []string) {
 	mcpPeerMessagingEnabled = selfReportOnly() && peerMessagingRequested
 	mcpImageGenEnabled = selfReportOnly() && imageGenRequested
 	mcpFleetSpawnEnabled = selfReportOnly() && fleetSpawnRequested
+	mcpSessionSearchEnabled = selfReportOnly() && sessionSearchRequested
 }
 
 // RunStdio is the `workspace-agent mcp-stdio` subcommand: a blocking stdio loop.
@@ -433,6 +437,9 @@ func mcpStdioInstructions() string {
 	if mcpPeerMessagingEnabled {
 		parts = append(parts, "messages to and read-only peeks at peer sessions")
 	}
+	if mcpSessionSearchEnabled {
+		parts = append(parts, "search over past sessions' conversations")
+	}
 	if mcpFleetSpawnEnabled {
 		parts = append(parts, "starting and steering your own child sessions")
 	}
@@ -455,6 +462,9 @@ func mcpStdioToolList() []map[string]any {
 		}
 		tools = append(tools, mcpStdioFleetObserveTools()...)
 		tools = append(tools, mcpStdioBranchTools()...)
+		if mcpSessionSearchEnabled {
+			tools = append(tools, mcpStdioSessionSearchTools()...)
+		}
 		if mcpFleetSpawnEnabled {
 			tools = append(tools, mcpStdioFleetSpawnTools()...)
 		}
@@ -2691,6 +2701,8 @@ func mcpStdioCall(req mcpReq) []byte {
 			inputs: a.Inputs, mask: a.Mask, model: a.Model, loras: a.Loras, seed: a.Seed,
 			negativePrompt: a.NegativePrompt, strength: a.Strength, params: a.Params,
 		})
+	case mcpToolSearchSessions:
+		return mcpSearchSessions(req.ID, p.Args)
 	case "list_child_sessions":
 		// The only one of the nine that is NOT also an operator tool: the operator has
 		// list_my_sessions, which sees every session and needs no lineage filter. So the gate

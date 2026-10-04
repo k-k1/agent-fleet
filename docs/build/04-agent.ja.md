@@ -400,8 +400,8 @@ tmux 3.5a で実測: 素の OSC も tmux のパススルー包み（`ESC P tmux;
   - 小さな観測用のツール（セッションの状態と使用量、メモ）も常に広告する。`branch_name` も常に
     広告し、ブランチ名リゾルバー（`POST /repos/{name}/branch-name`）に、既定では呼び出し元自身の
     作業コピーについて尋ねる。Chromium アタッチの 7 本は `--chromium-attach` で付く。
-  - 利用者の設定で `--peer-messaging`・`--image-gen`・`--fleet-spawn` が加わる
-    （`builtinRunArgsFor`）。
+  - 利用者の設定で `--peer-messaging`・`--image-gen`・`--fleet-spawn`・`--session-search` が加わる
+    （`builtinRunArgsFor`）。最後のものは既定でオンで、`search_sessions` を広告する（ADR 0110）。
   - 広告していないツールは、呼ばれても断る（`mcpAdvertised`）。
 - **codex の無人承認**: headless のチャットには承認 UI が無い。`-a never` に加えて、付けた MCP
   サーバーを `default_tools_approval_mode="approve"` にする。無いと呼び出しがすべて取り消される。
