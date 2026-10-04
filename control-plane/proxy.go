@@ -79,6 +79,10 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			// rev/at/scope is what actually governs, and what happened is recorded in the
 			// repo's restore commit (AF-Restore-Rev / -Scope).
 			return "memory.restore", q.Get("rev"), true
+		case p == "/api/agents/memory/entries/revert":
+			// ADR 0108: undoing or forgetting one AF memory change. Like restore, the Console
+			// repeats the commit in the query as the audit hint; the body governs.
+			return "memory.entry.revert", q.Get("commit"), true
 		case strings.HasPrefix(p, "/api/aws-login/profiles/") && strings.HasSuffix(p, "/logout"):
 			return "aws.logout", "profile: " + name, true
 		case strings.HasPrefix(p, "/api/aws-login/profiles/") && strings.HasSuffix(p, "/start"):

@@ -83,3 +83,28 @@ export interface ImportPreview {
    *  meaning when true, so collapsing the zero value with the missing key is safe. */
   secretScanFailed?: boolean;
 }
+
+/**
+ * One published change to the AF-owned agent memory (ADR 0108), newest first. `latest` marks
+ * the newest change of that memory in the list, the only one the Agent lets the member revert;
+ * `live` says the memory exists now.
+ */
+export interface MemoryChange {
+  commit: string;
+  at: string;
+  op: string;
+  scope: string;
+  project?: MemoryChangeProject;
+  name: string;
+  authorKind: string;
+  authorSession: string;
+  revertOf?: string;
+  latest: boolean;
+  live: boolean;
+}
+export interface MemoryChangeProject {
+  id: string;
+  root: string;
+  vcs: string;
+  display: string;
+}

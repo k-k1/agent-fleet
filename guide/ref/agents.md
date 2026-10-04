@@ -38,6 +38,7 @@ because "does this apply to a plain shell session?" is a real question.
 | Usage / remaining-quota chip | ✓ | ✓ | — | ✓ | — | — | ✓ | — | ✓¹⁵ | — | — |
 | Receives your agent instructions | ✓ | ✓ | ✓ | ✓ | —⁸ | ✓ | ✓ | ✓¹⁰ | ✓¹⁶ | — | — |
 | Receives integration (MCP) servers | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓¹⁸ | ✓¹⁷ | — | — |
+| Shares Agent Fleet memory (af memory tools) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
 | Agent memory is version-managed | ✓ | ✓ | — | — | — | — | — | — | — | — | — |
 
 ¹ copilot's model list depends on the plan: Free offers only "Auto (Copilot picks)".

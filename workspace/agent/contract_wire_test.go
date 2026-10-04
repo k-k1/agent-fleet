@@ -117,6 +117,21 @@ func agentContractFamilies() []contractFamily {
 			},
 		},
 
+		// One row of the AF memory change list (ADR 0108).
+		// AST route: `agentMemChangeView` is an unexported type in internal/memoryx.
+		{
+			name:    "agentMemChangeView",
+			goPath:  "internal/memoryx/agent_memory_changes.go",
+			goName:  "agentMemChangeView",
+			binding: agentMemChangeViewBinding,
+			tsPath:  "../../console/src/features/settings/memory/memoryTypes.ts",
+			tsName:  "MemoryChange",
+			tsKeys: keySet("commit", "at", "op", "scope", "project", "name", "authorKind",
+				"authorSession", "revertOf", "latest", "live"),
+			tsOnly: map[string]string{},
+			goOnly: map[string]string{},
+		},
+
 		// The preview of a memory import.
 		// AST route: `memoryImportPreview` is an unexported type in internal/memoryx.
 		{
@@ -214,6 +229,12 @@ var transcriptTurnBinding = map[string]string{
 	"TS": "ts", "Idx": "idx", "AnchorID": "anchorId", "EndTS": "endTs", "Compact": "compact",
 }
 
+var agentMemChangeViewBinding = map[string]string{
+	"Commit": "commit", "At": "at", "Op": "op", "Scope": "scope", "Project": "project",
+	"Name": "name", "AuthorKind": "authorKind", "AuthorSession": "authorSession",
+	"RevertOf": "revertOf", "Latest": "latest", "Live": "live",
+}
+
 var memoryImportPreviewBinding = map[string]string{
 	"ImportID": "importId", "Format": "format", "Ref": "ref", "Head": "head",
 	"HeadTs": "headTs", "Snapshots": "snapshots", "Kinds": "kinds", "Projects": "projects",
@@ -256,7 +277,7 @@ func TestContractFamilies(t *testing.T) {
 	fams := agentContractFamilies()
 	// Guard the population being scanned (the #320 shape): a family that silently
 	// disappears is caught here.
-	if len(fams) != 9 {
+	if len(fams) != 10 {
 		t.Fatalf("only %d families - one has dropped out of the table (if you added one, fix the count too)", len(fams))
 	}
 	for _, f := range fams {

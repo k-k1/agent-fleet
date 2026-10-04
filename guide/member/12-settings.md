@@ -236,6 +236,15 @@ See [06 Agents](06-agents.md#agent-instructions-write-down-how-you-work-once).
 Version control over the memory an agent accumulates by itself (claude's auto-memory, codex's memories), so
 "it learned something it shouldn't have" and "when did this go wrong" are fixable after the fact.
 
+- **Agent Fleet memory (shared by every agent)** — memory Agent Fleet keeps itself, which every kind of agent
+  reads and writes with the af tools `memory_index` / `memory_search` / `memory_read` / `memory_save` /
+  `memory_forget`. It is per project (a worktree shares its repository's), plus one user-wide scope, so what one
+  agent learns survives a switch of kind, a handoff and a child of another kind. A save is shared at once,
+  **without your approval**; text that looks like a secret is refused. The list shows every change — when, which
+  agent and session, what — newest first. On a memory's newest change you can **revert it** (the earlier text
+  comes back) or **forget the memory**; either is recorded as a new change, so it can be undone too. If the text
+  you bring back looks like a secret, you are shown the masked findings and asked to confirm.
+
 - **Targets** — what can be versioned, with file count, size and the last snapshot. codex has memory disabled by
   default, so enable it here if you want it.
 - **Automatic snapshots** — taken a few minutes after an agent stops (nothing is stored if nothing changed).

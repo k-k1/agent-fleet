@@ -113,6 +113,25 @@
   border-color: var(--accent);
 }
 
+/* AF-owned memory changes: a forget or a member's revert reads apart from an agent's write. */
+.mem-badge.af-op-forget,
+.mem-badge.af-op-revert {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.mem-af-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.mem-findings {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
 .mem-body {
   display: grid;
   grid-template-columns: minmax(220px, 300px) 1fr;

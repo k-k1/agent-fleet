@@ -2,9 +2,10 @@
 
 English | [日本語](0108-af-owned-agent-memory.ja.md)
 
-- Status: **proposed** (2026-10-03). Built so far (P1, part 1): the store, the five MCP tools,
-  revisions, authorship, the one-commit history under `af/` and the secret scan
-  (`memoryx/agent_memory.go`). Not built: the Console change list and the claude seed. The figures
+- Status: **proposed** (2026-10-03). Built so far (P1 without the claude seed): the store, the
+  five MCP tools, revisions, authorship, the one-commit history under `af/` and the secret scan
+  (`memoryx/agent_memory.go`); the Console change list with revert and forget
+  (`memoryx/agent_memory_changes.go`, Settings → Agent memory). Not built: the claude seed. The figures
   below were measured on one workspace on 2026-10-03; the claude settings named in decision 6 were
   found as strings in the Claude Code 2.1.288 binary and **their behaviour is not measured**.
   Revised 2026-10-04 before any of it was built: decision 8 now publishes changes directly instead
