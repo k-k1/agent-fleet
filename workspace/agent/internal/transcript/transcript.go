@@ -139,7 +139,8 @@ type Turn struct {
 	// CostOnly marks an accounting row: a billed call with nothing to display, carrying only
 	// CostUSD. Only an agents.UsageReader returns one, never the chat. A fold adds its cost to
 	// the logical turn it falls in and never lets it open, close or split one — an extra logical
-	// turn would renumber every later one past the fold's watermark.
+	// turn would renumber every later one past the fold's watermark. AnchorID carries the
+	// message's own stable id: a cost-only ledger row is identified by it, not by position.
 	CostOnly bool   `json:"-"`
 	TS       string `json:"ts"`  // RFC3339 from the transcript line, "" if absent
 	Idx      int    `json:"idx"` // transcript line index — a stable render key

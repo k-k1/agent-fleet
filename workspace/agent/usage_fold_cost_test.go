@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
@@ -91,7 +92,11 @@ func TestFoldWithoutReportedCostLeavesCostEmpty(t *testing.T) {
 }
 
 func costOnly(cost float64, sidechain bool, ts string) transcript.Turn {
-	return transcript.Turn{Role: "assistant", CostOnly: true, CostUSD: cost, Sidechain: sidechain, TS: ts}
+	return costOnlyID(fmt.Sprintf("msg_%v_%v_%s", cost, sidechain, ts), cost, sidechain, ts)
+}
+
+func costOnlyID(id string, cost float64, sidechain bool, ts string) transcript.Turn {
+	return transcript.Turn{Role: "assistant", CostOnly: true, CostUSD: cost, Sidechain: sidechain, TS: ts, AnchorID: id}
 }
 
 func foldOnce(t *testing.T, m session.Meta, turns []transcript.Turn, includeTrailing bool) int {
@@ -137,8 +142,11 @@ func TestFoldTrailingCostOnlySettles(t *testing.T) {
 			t.Fatalf("cost-only row = %+v, want idx 0 and no tokens", r)
 		}
 	}
-	if mark := readUsageFoldState().Sessions[m.Name]; mark.Groups != 0 || mark.Orphans != 2 {
-		t.Fatalf("watermark = %+v, want groups 0 / orphans 2", mark)
+	if mark := readUsageFoldState().Sessions[m.Name]; mark.Groups != 0 || len(mark.OrphanKeys) != 2 {
+		t.Fatalf("watermark = %+v, want groups 0 / two orphan keys", mark)
+	}
+	if rows[0].Key == "" || rows[0].Key == rows[1].Key {
+		t.Fatalf("keys = %q / %q, want two distinct ledger keys", rows[0].Key, rows[1].Key)
 	}
 }
 
@@ -188,7 +196,7 @@ func TestFoldCostOnlyKeepsLogicalTurns(t *testing.T) {
 	if logical[0].CostUSD != 2.625 || logical[1].CostUSD != 1 {
 		t.Fatalf("turn costs = %v / %v, want 2.625 / 1", logical[0].CostUSD, logical[1].CostUSD)
 	}
-	if len(orphan) != 2 || orphan[0].CostUSD != 0.25 || !orphan[0].Sidechain || orphan[1].CostUSD != 4 || orphan[0].OrphanSeq != 1 || orphan[1].OrphanSeq != 2 {
+	if len(orphan) != 2 || orphan[0].CostUSD != 0.25 || !orphan[0].Sidechain || orphan[1].CostUSD != 4 || orphan[0].OrphanKey == "" || orphan[0].OrphanKey == orphan[1].OrphanKey {
 		t.Fatalf("cost-only rows = %+v, want sidechain 0.25 then main 4", orphan)
 	}
 	if got, want := sessionx.AggregateUsage(with).Cumulative, sessionx.AggregateUsage(plain).Cumulative; got != want {
@@ -229,5 +237,71 @@ func TestFoldCostOnlyAgainstOldWatermark(t *testing.T) {
 	}
 	if total != 1.5 {
 		t.Fatalf("total cost_usd = %v, want 1.5", total)
+	}
+}
+
+// The same session moves to another conversation (a new one, a relaunch that could not resume):
+// its cost-only rows are told apart by message id, not by count or time, so the new one folds.
+func TestFoldCostOnlyAfterConversationSwap(t *testing.T) {
+	useTempUsageDir(t)
+	m := session.Meta{Name: "oc04", Kind: session.KindOpencode}
+	a := []transcript.Turn{{Role: "user", Text: "1"}, costOnlyID("msg_a", 0.5, false, "2026-10-04T00:00:01Z"), {Role: "user", Text: "2"}}
+	b := []transcript.Turn{{Role: "user", Text: "1"}, costOnlyID("msg_b", 0.75, false, "2026-10-04T01:00:01Z"), {Role: "user", Text: "2"}}
+	if n := foldOnce(t, m, a, false); n != 1 {
+		t.Fatalf("conversation A = %d rows, want 1", n)
+	}
+	if n := foldOnce(t, m, b, false); n != 1 {
+		t.Fatalf("conversation B = %d rows, want 1 (its cost-only call is new)", n)
+	}
+	if n := foldOnce(t, m, b, false); n != 0 {
+		t.Fatalf("re-fold of B added %d", n)
+	}
+	if n := foldOnce(t, m, a, false); n != 0 {
+		t.Fatalf("swapping back to A added %d", n)
+	}
+	var total float64
+	for _, r := range usagex.ReadRows() {
+		total += r.CostUSD
+	}
+	if total != 1.25 {
+		t.Fatalf("total cost_usd = %v, want 1.25", total)
+	}
+}
+
+// The append succeeded and the watermark write did not: the next pass re-appends the cost-only
+// row, and the aggregation still counts its cost once (Key dedup).
+func TestFoldCostOnlyCrashWindowIsNotDoubleCounted(t *testing.T) {
+	useIsolatedUsageDir(t)
+	m := session.Meta{Name: "oc05", Kind: session.KindOpencode}
+	turns := []transcript.Turn{
+		{Role: "user", Text: "1"},
+		asstCost("big-pickle", 100, 10, 0, 1),
+		{Role: "user", Text: "2"},
+		costOnlyID("msg_e", 0.5, false, "2026-07-26T00:00:00Z"),
+		{Role: "user", Text: "3"},
+	}
+	fold := func(persist bool) {
+		t.Helper()
+		usageFoldMu.Lock()
+		defer usageFoldMu.Unlock()
+		st := readUsageFoldState()
+		if _, err := foldSessionUsageWithTurns(m, &st, turns, false); err != nil {
+			t.Fatal(err)
+		}
+		if persist {
+			if err := writeUsageFoldState(st); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	fold(false) // rows written, died before the watermark
+	fold(true)  // the next pass appends both again
+	if n := len(usagex.ReadRows()); n != 4 {
+		t.Fatalf("ledger = %d rows, want 4 (the crash window is not reproduced)", n)
+	}
+	day := "2026-07-26"
+	got := getSeries(t, "from="+day+"&to="+day)
+	if math.Abs(got.Totals.CostUSD-1.5) > 1e-12 {
+		t.Fatalf("totals cost_usd = %v, want 1.5 (each counted once)", got.Totals.CostUSD)
 	}
 }

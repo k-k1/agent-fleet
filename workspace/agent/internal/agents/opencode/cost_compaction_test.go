@@ -376,7 +376,7 @@ func TestOpencodeUndisplayedMessageCostOnlyForUsage(t *testing.T) {
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("usage turns =\n%v\nwant\n%v", got, want)
 	}
-	if turns[1].Model != "big-pickle" || turns[1].TS == "" {
+	if turns[1].Model != "big-pickle" || turns[1].TS == "" || turns[1].AnchorID != "m03" {
 		t.Fatalf("cost-only turn = %+v, want its model and time", turns[1])
 	}
 }

@@ -73,6 +73,17 @@ func usageRefKey(ref string) string {
 // one" changes with the query period, the totals move when only the period changed (the same
 // day's number would wobble depending on the range asked for).
 func (d usageDedupIndex) accept(r usagex.Record, ts time.Time) bool {
+	// A keyed row (a cost-only session row) counts once per key, wherever and whenever it
+	// appears again. Hashed like a ref, and in the same map: a key never collides with a ref
+	// because of the prefix.
+	if r.Key != "" {
+		k := usageRefKey("key\x00" + r.Key)
+		if _, seen := d[k]; seen {
+			return false
+		}
+		d[k] = usageDedupMark{TS: ts.Unix()}
+		return true
+	}
 	// Auxiliary calls carry no idx: one call writes one row on the spot, so there is no path
 	// on which a duplicate can arise.
 	if r.Feature != usagex.FeatureSession || r.Ref == "" || r.Idx <= 0 {

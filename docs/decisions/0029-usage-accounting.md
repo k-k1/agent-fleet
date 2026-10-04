@@ -297,8 +297,10 @@ not a provider bill. So for `kind=opencode`, `feature=session` rows:
   reported it. A billed message with nothing to display (an empty text, step parts only) still
   counts: the usage read returns it as a cost-only turn, whose cost joins the logical turn on its
   side, else the next one before the next user turn, else becomes a cost-only row at that boundary
-  or at the settle on archive/delete. Such a row has `idx` 0 and its own watermark count, so it
-  never renumbers the logical turns;
+  or at the settle on archive/delete. Such a row has `idx` 0, so it never renumbers the logical
+  turns, and is identified by its message id instead: the fold's watermark keeps the folded ids
+  (a session that moves to another conversation still folds its new ones), and the row's `key`
+  makes the aggregation count it once even when a crash before the watermark write re-appends it;
 - `cost_est_usd` is still computed from the tokens and **never** added to, replaced by or
   back-filled from `cost_usd`. The two legitimately differ: opencode prices every call of a
   multi-step turn, while the fold keeps one input snapshot per turn;

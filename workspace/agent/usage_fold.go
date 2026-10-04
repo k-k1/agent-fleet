@@ -21,10 +21,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -55,9 +57,10 @@ type usageFoldMark struct {
 	LastTS string `json:"lastTS,omitempty"`
 	// LastIdx is the transcript line number of the last folded event (diagnostic).
 	LastIdx int `json:"lastIdx,omitempty"`
-	// Orphans is the number of Orphan (cost-only) rows folded so far. They sit outside the
-	// logical turn sequence, so they have their own count; Groups and LastTS ignore them.
-	Orphans int `json:"orphans,omitempty"`
+	// OrphanKeys are the OrphanKey of every cost-only row folded so far. They sit outside the
+	// logical turn sequence, so neither a count nor a timestamp can say which are new; Groups and
+	// LastTS ignore them. Rare (a billed call with nothing to display, alone in its turn).
+	OrphanKeys []string `json:"orphanKeys,omitempty"`
 }
 
 type usageFoldState struct {
@@ -131,11 +134,12 @@ type usageTurnRow struct {
 	LastIdx int // transcript line number of the last event (diagnostic)
 	// Orphan marks a cost-only row: the reported cost of CostOnly turns that no logical turn on
 	// their side took in before the next boundary. It is outside the logical turn sequence (Idx
-	// stays 0) and is numbered by OrphanSeq instead, so the watermark's Groups never moves. The
-	// (ref, idx) dedup does not see it either: only a crash between the append and the watermark
-	// write can repeat one, against a cost that would otherwise never be counted.
+	// stays 0, so the watermark's Groups never moves) and is identified by OrphanKey, the
+	// segment's last message id: stable across polls, unique across conversations, so a session
+	// that moves to another conversation still folds its new ones, and the ledger's Key dedup
+	// drops a re-append.
 	Orphan    bool
-	OrphanSeq int
+	OrphanKey string
 }
 
 // foldTurnRows folds a transcript's event sequence into logical turns. The aggregation
@@ -156,7 +160,7 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 	var cur usageTurnRow
 	inGroup, sidechain := false, false
 	trigger := usagex.TriggerUser
-	groups, orphans := 0, 0
+	groups := 0
 	var pending [2]usageTurnRow // CostOnly cost waiting for a logical turn, [main, sidechain]
 	side := func(sc bool) int {
 		if sc {
@@ -176,8 +180,10 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 	flush := func() {
 		for i := range pending {
 			if p := pending[i]; p.CostUSD > 0 {
-				orphans++
-				p.Orphan, p.OrphanSeq = true, orphans
+				p.Orphan = true
+				if p.OrphanKey == "" { // no message id: the best stable stand-in there is
+					p.OrphanKey = fmt.Sprintf("ts:%s#%d", p.TS, p.LastIdx)
+				}
 				rows = append(rows, p)
 			}
 			pending[i] = usageTurnRow{}
@@ -201,6 +207,9 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 				p.Model = t.Model
 			}
 			p.LastIdx = t.Idx
+			if t.AnchorID != "" {
+				p.OrphanKey = t.AnchorID
+			}
 			continue
 		}
 		if t.Role != "assistant" {
@@ -317,11 +326,9 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 		// same turns a second time.
 		return 0, nil
 	}
-	groups, orphans := 0, 0
+	groups := 0
 	for _, r := range rows {
-		if r.Orphan {
-			orphans++
-		} else {
+		if !r.Orphan {
 			groups++
 		}
 	}
@@ -338,7 +345,8 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 			TS: r.TS, Call: chatx.RandUUID(), Feature: usagex.FeatureSession, Trigger: r.Trigger,
 			Origin: origin, OriginConv: originConv, Kind: m.Kind,
 			Ref: m.Name, Sidechain: r.Sidechain, Idx: r.Idx,
-			In: r.Tokens.In, Out: r.Tokens.Out,
+			Key: orphanLedgerKey(m, r),
+			In:  r.Tokens.In, Out: r.Tokens.Out,
 			CacheRead: r.Tokens.CacheRead, CacheCreate: r.Tokens.CacheCreate,
 			Spend:    usagex.Spend(r.Tokens.In, r.Tokens.CacheCreate, r.Tokens.Out),
 			CostUSD:  r.CostUSD,
@@ -368,18 +376,29 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 	}
 	// The watermark only goes up (a flip to a shorter transcript must not lower it).
 	next := usageFoldMark{
-		Groups:  max(mark.Groups, groups),
-		LastTS:  mark.LastTS,
-		LastIdx: mark.LastIdx,
-		Orphans: max(mark.Orphans, orphans),
+		Groups:     max(mark.Groups, groups),
+		LastTS:     mark.LastTS,
+		LastIdx:    mark.LastIdx,
+		OrphanKeys: mark.OrphanKeys,
 	}
 	for _, r := range fresh {
-		if !r.Orphan {
+		if r.Orphan {
+			next.OrphanKeys = append(next.OrphanKeys, r.OrphanKey)
+		} else {
 			next.LastTS, next.LastIdx = laterUsageTS(next.LastTS, r.TS), r.LastIdx
 		}
 	}
 	st.Sessions[m.Name] = next
 	return len(out), nil
+}
+
+// orphanLedgerKey is a cost-only row's ledger Key ("" for a logical turn). The session name is
+// part of it so the stand-in key of a message without an id cannot meet another session's.
+func orphanLedgerKey(m session.Meta, r usageTurnRow) string {
+	if !r.Orphan {
+		return ""
+	}
+	return m.Kind + ":" + m.Name + ":" + r.OrphanKey
 }
 
 // unfoldedTurnRows returns the logical turns not yet folded. Deciding by both the count
@@ -393,13 +412,13 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 //     Anything taken twice by mistake is absorbed by the aggregation side's (ref, idx)
 //     deduplication.
 //
-// An Orphan row is taken by its own count alone: it only exists for opencode, whose store is
-// one append-only conversation, so the swap case does not arise.
+// An Orphan row is taken by its key alone, so a session that moved to another conversation
+// (a new conversation, a relaunch that could not resume) still folds the new ones.
 func unfoldedTurnRows(rows []usageTurnRow, mark usageFoldMark) []usageTurnRow {
 	var out []usageTurnRow
 	for _, r := range rows {
 		if r.Orphan {
-			if r.OrphanSeq > mark.Orphans {
+			if !slices.Contains(mark.OrphanKeys, r.OrphanKey) {
 				out = append(out, r)
 			}
 			continue

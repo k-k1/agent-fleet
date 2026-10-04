@@ -644,7 +644,8 @@ func readSessionTurns(db *sql.DB, ses string, usage bool) []transcript.Turn {
 				if usage && !copied {
 					if cost, ts, model := messageCost(mr.data); cost > 0 {
 						turns = append(turns, transcript.Turn{Role: "assistant", CostOnly: true,
-							CostUSD: cost, TS: ts, Model: model, Idx: start + i, Sidechain: sidechain})
+							CostUSD: cost, TS: ts, Model: model, Idx: start + i, Sidechain: sidechain,
+							AnchorID: mr.id}) // the stable identity a cost-only ledger row is kept by
 					}
 				}
 				continue
