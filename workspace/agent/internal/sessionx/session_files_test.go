@@ -1,9 +1,13 @@
 package sessionx
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -229,7 +233,7 @@ func TestRepoRelOf(t *testing.T) {
 		{"/etc/passwd", "", ""},   //
 	}
 	for _, c := range cases {
-		repo, rel := repoRelOf(filepath.Clean(c.abs))
+		repo, rel := repoRelOf(filepath.Clean(c.abs), "/h/repos")
 		if repo != c.repo || rel != c.rel {
 			t.Fatalf("repoRelOf(%q) = %q,%q want %q,%q", c.abs, repo, rel, c.repo, c.rel)
 		}
@@ -305,5 +309,294 @@ func TestCommittedSinceListsPathsFromCommitsInTheWindow(t *testing.T) {
 	// badge would stop carrying information.
 	if set["old.txt"] {
 		t.Fatalf("picked up commits from before the session start: %v", got)
+	}
+}
+
+// symlinkTree builds base/<real> as real directories and base/<link> -> base/<target>
+// symlinks, and returns base with its own symlinks resolved (a temp dir may sit under one).
+func symlinkTree(t *testing.T, dirs []string, links map[string]string) string {
+	t.Helper()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range dirs {
+		if err := os.MkdirAll(filepath.Join(base, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for link, target := range links {
+		if err := os.Symlink(filepath.Join(base, target), filepath.Join(base, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return base
+}
+
+// wantTouch is one expected row. With path "" the row is found by repo/rel and its path
+// is not checked: outside every read root no spelling of it can be opened.
+type wantTouch struct{ path, repo, rel, scope string }
+
+func checkTouches(t *testing.T, got []transcript.FileTouch, want map[string]wantTouch) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("got %d rows, want %d: %+v", len(got), len(want), got)
+	}
+	byRel := map[string]transcript.FileTouch{}
+	for _, r := range got {
+		byRel[r.Path] = r
+	}
+	for name, w := range want {
+		r, ok := byRel[w.path]
+		if w.path == "" {
+			for _, g := range got {
+				if g.Repo == w.repo && g.Rel == w.rel {
+					r, ok = g, true
+				}
+			}
+		}
+		if !ok {
+			t.Errorf("%s: no row with path %q in %+v", name, w.path, got)
+			continue
+		}
+		if r.Repo != w.repo || r.Rel != w.rel || r.Scope != w.scope {
+			t.Errorf("%s: repo/rel/scope = %q/%q/%q, want %q/%q/%q",
+				name, r.Repo, r.Rel, r.Scope, w.repo, w.rel, w.scope)
+		}
+	}
+}
+
+func symlinkSession(t *testing.T, home, dir string, paths ...string) []transcript.FileTouch {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_BROWSE_ROOT", "")
+	forgetSessionFiles(t.Name())
+	t.Cleanup(func() { forgetSessionFiles(t.Name()) })
+	s := &editScript{}
+	for i, p := range paths {
+		s.all = append(s.all, transcript.FileEdit{Path: p, Verb: "edit", Idx: i, TS: "2026-10-04T10:00:0" + string(rune('0'+i)) + "Z"})
+	}
+	return sessionFileTouches(t.Name(), dir, "/t.jsonl", "head", len(paths), len(paths), s.fn)
+}
+
+// Home is a symlink and the agent reports paths through its target: the rows must still
+// join their working copy and keep their scope.
+func TestSessionFileTouchesSymlinkedHome(t *testing.T) {
+	base := symlinkTree(t, []string{"real/repos/r", "real/repos/r@x", "real/.af-work/me"},
+		map[string]string{"home": "real"})
+	home, real := filepath.Join(base, "home"), filepath.Join(base, "real")
+	got := symlinkSession(t, home, filepath.Join(home, "repos/r"),
+		filepath.Join(real, "repos/r/a.ts"),
+		filepath.Join(real, "repos/r@x/b.ts"),
+		filepath.Join(real, ".af-work/me/n.md"),
+	)
+	checkTouches(t, got, map[string]wantTouch{
+		"own":   {"repos/r/a.ts", "r", "a.ts", ""},
+		"other": {"repos/r@x/b.ts", "r@x", "b.ts", transcript.FileScopeOtherRepo},
+		"work":  {".af-work/me/n.md", "", "", transcript.FileScopeWorkDir},
+	})
+}
+
+// ~/repos is a symlink. The session Dir arrives resolved and the edits in both forms; the
+// same file reached both ways is one row.
+func TestSessionFileTouchesSymlinkedRepos(t *testing.T) {
+	base := symlinkTree(t, []string{"h", "store/repos/r", "store/repos/q"},
+		map[string]string{"h/repos": "store/repos"})
+	home, store := filepath.Join(base, "h"), filepath.Join(base, "store/repos")
+	got := symlinkSession(t, home, filepath.Join(store, "r"),
+		filepath.Join(home, "repos/r/a.ts"),
+		filepath.Join(store, "r/a.ts"),
+		filepath.Join(home, "repos/q/b.ts"),
+	)
+	checkTouches(t, got, map[string]wantTouch{
+		"own":   {"repos/r/a.ts", "r", "a.ts", ""},
+		"other": {"repos/q/b.ts", "q", "b.ts", transcript.FileScopeOtherRepo},
+	})
+	for _, r := range got {
+		if r.Rel == "a.ts" && r.Count != 2 {
+			t.Errorf("a.ts through the link and the target folded into count %d, want 2", r.Count)
+		}
+	}
+}
+
+// ~/.af-work is a symlink; an edit through its target is still the work directory.
+func TestSessionFileTouchesSymlinkedWorkDir(t *testing.T) {
+	base := symlinkTree(t, []string{"h/repos/r", "scratch/me"},
+		map[string]string{"h/.af-work": "scratch"})
+	home := filepath.Join(base, "h")
+	got := symlinkSession(t, home, filepath.Join(home, "repos/r"),
+		filepath.Join(base, "scratch/me/n.md"),
+		filepath.Join(home, ".af-work/me/m.md"),
+	)
+	for _, r := range got {
+		if r.Scope != transcript.FileScopeWorkDir {
+			t.Errorf("%s: scope = %q, want workdir", r.Path, r.Scope)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d rows, want 2: %+v", len(got), got)
+	}
+}
+
+// The reverse of the symlinked home: HOME is the resolved form and the agent reports paths
+// (and its working directory) through a link to it.
+func TestSessionFileTouchesLinkFormPathsAgainstResolvedHome(t *testing.T) {
+	base := symlinkTree(t, []string{"real/repos/r", "real/repos/q", "real/.af-work/me"},
+		map[string]string{"alias": "real"})
+	real, alias := filepath.Join(base, "real"), filepath.Join(base, "alias")
+	got := symlinkSession(t, real, filepath.Join(alias, "repos/r"),
+		filepath.Join(alias, "repos/r/a.ts"),
+		filepath.Join(alias, "repos/q/b.ts"),
+		filepath.Join(alias, ".af-work/me/n.md"),
+	)
+	checkTouches(t, got, map[string]wantTouch{
+		"own":   {"repos/r/a.ts", "r", "a.ts", ""},
+		"other": {"repos/q/b.ts", "q", "b.ts", transcript.FileScopeOtherRepo},
+		"work":  {".af-work/me/n.md", "", "", transcript.FileScopeWorkDir},
+	})
+}
+
+// A deleted file (and its deleted directory) under a symlinked root resolves through the
+// nearest directory that still exists: the row keeps its repo/rel rather than vanishing.
+func TestSessionFileTouchesDeletedFileUnderSymlinkedRoot(t *testing.T) {
+	base := symlinkTree(t, []string{"h", "store/repos/r"},
+		map[string]string{"h/repos": "store/repos"})
+	home, store := filepath.Join(base, "h"), filepath.Join(base, "store/repos")
+	got := symlinkSession(t, home, filepath.Join(home, "repos/r"),
+		filepath.Join(store, "r/gone/dir/old.ts"),
+		filepath.Join(home, "repos/r/gone/x.ts"),
+	)
+	checkTouches(t, got, map[string]wantTouch{
+		"resolved form": {"", "r", "gone/dir/old.ts", ""},
+		"link form":     {"repos/r/gone/x.ts", "r", "gone/x.ts", ""},
+	})
+}
+
+// A tracked symlink is a file of its own working copy: following it would move the row to
+// wherever it points.
+func TestSessionFileTouchesDoesNotFollowASymlinkedFile(t *testing.T) {
+	base := symlinkTree(t, []string{"h/repos/r", "h/repos/q"}, nil)
+	if err := os.WriteFile(filepath.Join(base, "h/repos/q/AGENTS.md"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(base, "h/repos/q/AGENTS.md"), filepath.Join(base, "h/repos/r/CLAUDE.md")); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(base, "h")
+	got := symlinkSession(t, home, filepath.Join(home, "repos/r"), filepath.Join(home, "repos/r/CLAUDE.md"))
+	checkTouches(t, got, map[string]wantTouch{"link": {"repos/r/CLAUDE.md", "r", "CLAUDE.md", ""}})
+}
+
+// A root is resolved once and then cached, except while it does not exist: it can still
+// appear as a symlink, and a cached guess would classify against the wrong form forever.
+func TestResolvedRootCachesOnlyExistingRoots(t *testing.T) {
+	base := symlinkTree(t, []string{"h", "store/repos"}, nil)
+	root := filepath.Join(base, "h/repos")
+	if got := resolvedRoot(root); got != root {
+		t.Fatalf("missing root = %q, want it unchanged", got)
+	}
+	if err := os.Symlink(filepath.Join(base, "store/repos"), root); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(base, "store/repos")
+	if got := resolvedRoot(root); got != want {
+		t.Fatalf("root after it appeared as a link = %q, want %q", got, want)
+	}
+	if err := os.Remove(root); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolvedRoot(root); got != want {
+		t.Fatalf("existing root re-resolved per call: %q, want the cached %q", got, want)
+	}
+}
+
+// The FileView path has to be one the file reader opens: it opens a read root by its given
+// name and refuses any symlink below it (fs_fd_linux.go). This is that contract, not a copy
+// of the reader: the given root must not itself be a link, and the rest must not cross one.
+func openLikeTheReader(t *testing.T, path string) error {
+	t.Helper()
+	root, rel := browseRoot(), path
+	if filepath.IsAbs(path) {
+		root = ""
+		for _, r := range deps.ReadRoots()[1:] {
+			if p, ok := relUnder(path, filepath.Clean(r)); ok {
+				root, rel = filepath.Clean(r), p
+			}
+		}
+		if root == "" {
+			return fmt.Errorf("%s is outside every read root", path)
+		}
+	}
+	rootFD, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return fmt.Errorf("open root %s: %w", root, err)
+	}
+	defer unix.Close(rootFD)
+	fd, err := unix.Openat2(rootFD, rel, &unix.OpenHow{
+		Flags:   uint64(unix.O_RDONLY | unix.O_CLOEXEC),
+		Resolve: unix.RESOLVE_BENEATH | unix.RESOLVE_NO_SYMLINKS,
+	})
+	if err != nil {
+		return fmt.Errorf("open %s under %s: %w", rel, root, err)
+	}
+	return unix.Close(fd)
+}
+
+// ~/.af-work points into the scratch root, a read root of its own. A file written there
+// must stay openable: spelled against the scratch root, never as .af-work/<x> under home,
+// which crosses the link the reader refuses.
+func TestSessionFileTouchesPathsStayOpenableThroughAWorkDirLink(t *testing.T) {
+	scratch := "claude-" + strconv.Itoa(os.Getuid())
+	base := symlinkTree(t, []string{"h/repos/r", scratch + "/me"},
+		map[string]string{"h/.af-work": scratch})
+	t.Setenv("TMPDIR", base)
+	for _, f := range []string{scratch + "/me/n.md", scratch + "/me/m.md", "h/repos/r/a.ts"} {
+		if err := os.WriteFile(filepath.Join(base, f), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	home := filepath.Join(base, "h")
+	got := symlinkSession(t, home, filepath.Join(home, "repos/r"),
+		filepath.Join(base, scratch, "me/n.md"),
+		filepath.Join(home, ".af-work/me/m.md"),
+		filepath.Join(home, "repos/r/a.ts"),
+	)
+	checkTouches(t, got, map[string]wantTouch{
+		"resolved form": {filepath.Join(base, scratch, "me/n.md"), "", "", transcript.FileScopeWorkDir},
+		"link form":     {filepath.Join(base, scratch, "me/m.md"), "", "", transcript.FileScopeWorkDir},
+		"repo":          {"repos/r/a.ts", "r", "a.ts", ""},
+	})
+	for _, r := range got {
+		if err := openLikeTheReader(t, r.Path); err != nil {
+			t.Errorf("row %q cannot be opened: %v", r.Path, err)
+		}
+	}
+}
+
+// Root resolution is per poll, not per row: a missing ~/.af-work is not cached (it can still
+// appear), so resolving it inside the row loop would cost one walk per repo-less row.
+func TestSessionFileTouchesResolvesRootsPerPollNotPerRow(t *testing.T) {
+	base := symlinkTree(t, []string{"h/repos/r"}, nil)
+	home := filepath.Join(base, "h")
+	var paths []string
+	for i := 0; i < 20; i++ {
+		paths = append(paths, filepath.Join(home, "notes", strconv.Itoa(i)+".md"))
+	}
+	symlinkSession(t, home, filepath.Join(home, "repos/r"), paths...)
+	resolvedRootsMu.Lock()
+	before := rootResolutions
+	resolvedRootsMu.Unlock()
+	s := &editScript{}
+	for i, p := range paths {
+		s.all = append(s.all, transcript.FileEdit{Path: p, Verb: "edit", Idx: i})
+	}
+	if got := sessionFileTouches(t.Name(), filepath.Join(home, "repos/r"), "/t.jsonl", "head", 20, 20, s.fn); len(got) != 20 {
+		t.Fatalf("got %d rows, want 20", len(got))
+	}
+	resolvedRootsMu.Lock()
+	n := rootResolutions - before
+	resolvedRootsMu.Unlock()
+	if n > 5 { // at most once per root, for the roots that do not exist here
+		t.Fatalf("one poll over 20 rows resolved roots %d times; want it independent of the rows", n)
 	}
 }

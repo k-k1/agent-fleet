@@ -39,6 +39,7 @@ func sessionDeps() sessionx.Deps {
 
 		BrowseRoot:     browseRoot,
 		MaxUploadBytes: maxUploadBytes,
+		ReadRoots:      allowedReadRoots,
 
 		IsSvnRepo:       isSvnRepo,
 		RepoJobsRunning: repoJobsRunning,
