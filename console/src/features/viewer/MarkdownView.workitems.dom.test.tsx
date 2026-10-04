@@ -174,6 +174,19 @@ describe("ticket references", () => {
       expect(useWorkItemModal.getState().detail?.item.provider).toBe("bitbucket");
     });
 
+    it("keeps a qualified link on the host it was drawn for when that row leaves the cache", async () => {
+      useReposStore.setState({ repos: bothHosts });
+      useWorkItemStore.setState({ payload: payload([row("bitbucket", "team/both#7", { kind: "pr" }), row("github", "team/both#7")]) });
+      await render("see team/both#7", "bb-copy");
+      // Only the Bitbucket row goes; the GitHub one with the same key is a different ticket.
+      useWorkItemStore.setState({ payload: payload([row("github", "team/both#7")]) });
+      await click(links()[0]);
+      const d = useWorkItemModal.getState().detail;
+      expect(d?.item.provider).toBe("bitbucket");
+      expect(d?.reference).toBe(true);
+      expect(d?.repoHint).toBe("bb-copy");
+    });
+
     it("does not hint the mirror's copy for the other host's ticket", async () => {
       useReposStore.setState({ repos: bothHosts });
       useWorkItemStore.setState({ payload: payload([row("github", "team/both#7")]) });

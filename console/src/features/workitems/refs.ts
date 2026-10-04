@@ -59,7 +59,8 @@ export function originOf(repo: { provider?: string; remote?: string; remotePath?
  * context origin and the cached keys. A rendered message re-runs its linkifier when this changes —
  * the repository list or the inbox arriving after the text did. */
 export function workItemRefInputs(origin: RefOrigin | null, items: WorkItem[]): string {
-  const keys = items.map((i) => `${i.provider}:${i.key}`);
+  // A set: the same ticket matched by two saved queries is one key, not a change.
+  const keys = [...new Set(items.map((i) => `${i.provider}:${i.key}`))];
   return [origin ? `${origin.provider}:${origin.path}` : "", keys.sort().join(",")].join("|");
 }
 
@@ -88,7 +89,9 @@ export function classifyWorkItemRef(token: string, ctx: WorkItemRefContext): Wor
     let key: string;
     if (qualified) {
       key = `${qualified}#${num}`;
-      hosts = ctx.origin?.path === qualified && ctx.origin.provider === "bitbucket" ? ["bitbucket", "github"] : ["github", "bitbucket"];
+      // The text's own host first, whichever repository it names: a Bitbucket session cites
+      // Bitbucket tickets.
+      hosts = ctx.origin?.provider === "bitbucket" ? ["bitbucket", "github"] : ["github", "bitbucket"];
     } else {
       if (!ctx.origin || num.length === 6 || num.length > 7) return null;
       key = `${ctx.origin.path}#${num}`;

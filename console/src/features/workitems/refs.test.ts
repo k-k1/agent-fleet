@@ -1,7 +1,7 @@
 // The gates that decide whether a ticket-shaped token in prose becomes a link (#1659). The false
 // positives listed here are the reason each gate exists.
 import { describe, expect, it } from "vitest";
-import { classifyWorkItemRef, originOf, resolveWorkItemRef, WORK_ITEM_HINT_RE, type WorkItemRefContext } from "./refs.ts";
+import { classifyWorkItemRef, originOf, resolveWorkItemRef, WORK_ITEM_HINT_RE, workItemRefInputs, type WorkItemRefContext } from "./refs.ts";
 import type { WorkItem } from "./read.ts";
 
 const row = (provider: string, key: string, extra: Partial<WorkItem> = {}): WorkItem => ({
@@ -77,6 +77,9 @@ describe("classifyWorkItemRef", () => {
     const bbOrigin = { provider: "bitbucket" as const, path: "team/app" };
     expect(classifyWorkItemRef("team/app#7", ctx({ origin: bbOrigin, items: both }))?.provider).toBe("bitbucket");
     expect(classifyWorkItemRef("team/app#7", ctx({ items: both }))?.provider).toBe("github");
+    // The text's own host first even for another repository: a Bitbucket session cites Bitbucket.
+    const other = [row("github", "team/other#7"), row("bitbucket", "team/other#7")];
+    expect(classifyWorkItemRef("team/other#7", ctx({ origin: bbOrigin, items: other }))?.provider).toBe("bitbucket");
   });
 
   it("links a Jira key only when that issue is cached", () => {
@@ -108,6 +111,14 @@ describe("originOf", () => {
     expect(originOf({ provider: "github", remote: "github.corp.test", remotePath: "o/n" })).toBeNull();
     expect(originOf({ provider: "gitlab", remote: "gitlab.com", remotePath: "o/n" })).toBeNull();
     expect(originOf(undefined)).toBeNull();
+  });
+});
+
+describe("workItemRefInputs", () => {
+  it("does not change when the same ticket comes back from a second query", () => {
+    const one = [row("github", "octo/fleet#1")];
+    const twice = [...one, { ...row("github", "octo/fleet#1"), queryId: "q2" }];
+    expect(workItemRefInputs(null, twice)).toBe(workItemRefInputs(null, one));
   });
 });
 
