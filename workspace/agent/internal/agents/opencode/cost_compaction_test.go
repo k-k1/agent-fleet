@@ -316,17 +316,29 @@ func TestOpencodeForkCopiesDoNotRecountCost(t *testing.T) {
 	}
 }
 
-// A billed call that ends with nothing to display (step parts only, or an empty text) is dropped
-// from the chat, but its cost still reaches the ledger — once, and without adding a turn.
-func TestOpencodeUndisplayedMessageCostCounted(t *testing.T) {
+// A billed call that ends with nothing to display (step parts only, or an empty text) stays out
+// of the chat, and the usage read returns it as a CostOnly turn in place — main and sidechain
+// alike — so the fold can count it even when nothing follows. A fork's copy of one does not.
+func TestOpencodeUndisplayedMessageCostOnlyForUsage(t *testing.T) {
 	db := newOpencodeTestDB(t)
-	ses := "ses_e"
+	for _, s := range []struct {
+		id, parent string
+		born       int
+	}{{"ses_e", "", 1000}, {"ses_child", "ses_e", 1000}} {
+		var parent any
+		if s.parent != "" {
+			parent = s.parent
+		}
+		if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created) VALUES(?,?,'/d',?)`, s.id, parent, s.born); err != nil {
+			t.Fatal(err)
+		}
+	}
 	n := 0
-	msg := func(role string, cost float64, parts ...string) {
+	msg := func(ses, role string, created int, cost float64, parts ...string) {
 		t.Helper()
 		n++
 		id := fmt.Sprintf("m%02d", n)
-		insMsg(t, db, id, ses, 1000+n, fmt.Sprintf(`{"role":%q,"cost":%v,"time":{"created":%d,"completed":%d}}`, role, cost, 1000+n, 1001+n))
+		insMsg(t, db, id, ses, created, fmt.Sprintf(`{"role":%q,"modelID":"big-pickle","cost":%v,"time":{"created":%d,"completed":%d}}`, role, cost, created, created+1))
 		for i, p := range parts {
 			insPart(t, db, fmt.Sprintf("%s_p%d", id, i), id, ses, i, p)
 		}
@@ -337,23 +349,34 @@ func TestOpencodeUndisplayedMessageCostCounted(t *testing.T) {
 		start     = `{"type":"step-start"}`
 		finish    = `{"type":"step-finish","cost":0.5}`
 	)
-	msg("user", 0, text)
-	msg("assistant", 0.5, start, finish) // first in its turn: carried to the next assistant turn
-	msg("assistant", 0.25, text)
-	msg("assistant", 0.125, start, emptyText, finish) // after a shown one: added to it
-	msg("user", 0, text)
-	msg("assistant", 2, start, finish) // a turn with nothing shown: carried into the next turn
-	msg("user", 0, text)
-	msg("assistant", 1, text)
+	msg("ses_e", "assistant", 900, 4, start, finish) // older than its session: a fork's copy
+	msg("ses_e", "user", 1100, 0, text)
+	msg("ses_e", "assistant", 1200, 0.5, start, finish)
+	msg("ses_e", "assistant", 1300, 0.25, text)
+	msg("ses_e", "user", 1400, 0, text)
+	msg("ses_child", "assistant", 1500, 0.125, start, emptyText, finish)
+	msg("ses_e", "assistant", 1600, 2, start, finish) // the session ends on it
 
-	turns := readSession(db, ses)
-	if len(turns) != 5 {
-		t.Fatalf("turns = %d, want 5 (the undisplayed messages add none)", len(turns))
+	if shown := readSession(db, "ses_e"); len(shown) != 3 {
+		t.Fatalf("chat turns = %d, want 3 (no undisplayed message, no cost-only row)", len(shown))
 	}
-	if !nearCost(turns[1].CostUSD, 0.875) || !nearCost(turns[4].CostUSD, 3) {
-		t.Fatalf("CostUSD = %v / %v, want 0.875 / 3", turns[1].CostUSD, turns[4].CostUSD)
+	turns := readSessionTurns(db, "ses_e", true)
+	var got []string
+	for _, tt := range turns {
+		got = append(got, fmt.Sprintf("%s/%v/%v/%v", tt.Role, tt.CostOnly, tt.Sidechain, tt.CostUSD))
 	}
-	if !nearCost(sumCost(turns), 3.875) {
-		t.Fatalf("total = %v, want every call once (3.875)", sumCost(turns))
+	want := []string{
+		"user/false/false/0",
+		"assistant/true/false/0.5",
+		"assistant/false/false/0.25",
+		"user/false/false/0",
+		"assistant/true/true/0.125",
+		"assistant/true/false/2",
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("usage turns =\n%v\nwant\n%v", got, want)
+	}
+	if turns[1].Model != "big-pickle" || turns[1].TS == "" {
+		t.Fatalf("cost-only turn = %+v, want its model and time", turns[1])
 	}
 }

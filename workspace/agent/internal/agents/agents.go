@@ -339,6 +339,13 @@ type BackgroundReporter interface {
 	BackgroundWork(m session.Meta) (busy bool, reason string)
 }
 
+// UsageReader is an optional Agent capability: the conversation as the usage fold reads it,
+// when that differs from Transcript's turns — today opencode, whose billed calls with nothing to
+// display come back as transcript.Turn.CostOnly rows so their reported cost is not lost.
+type UsageReader interface {
+	UsageTurns(m session.Meta) []transcript.Turn
+}
+
 // Forker is the optional fork capability behind Caps().CanFork: ForkSource resolves
 // the source session's provider-native conversation id (claude sid / opencode ses_… /
 // codex session uuid) for the new session's ForkFrom, or an error when there is no

@@ -579,7 +579,13 @@ func sessionResumable(ses string) bool {
 // Ordering note: rows are stamped time_created at insert, so the merged parent+child
 // sequence is append-only across polls — each turn's ordinal (Idx, the render key and
 // paging cursor unit) stays stable as new messages arrive.
-func readSession(db *sql.DB, ses string) []transcript.Turn {
+func readSession(db *sql.DB, ses string) []transcript.Turn { return readSessionTurns(db, ses, false) }
+
+// readSessionTurns is readSession; with usage set it also returns a CostOnly turn for every
+// assistant message parseMessage drops whose reported cost is its own — a billed call that
+// ended with nothing to display (an empty text, step-start/step-finish only). Only the usage
+// fold reads those (UsageTurns); the chat never sees them.
+func readSessionTurns(db *sql.DB, ses string, usage bool) []transcript.Turn {
 	// Taken once for the whole read: every assistant message asks the same question, and the
 	// answer cannot change inside one poll.
 	win := modelWindowLookup()
@@ -612,8 +618,6 @@ func readSession(db *sql.DB, ses string) []transcript.Turn {
 	}
 	rows.Close()
 	born := sessionsCreated(db, sessions)
-	// Reported cost that has to reach the ledger without a turn of its own (costCarry).
-	var carry costCarry
 
 	// A batch at a time: the parts are fetched for a whole group of messages (one query
 	// instead of one per message), then those messages are turned into turns and the raw
@@ -637,8 +641,11 @@ func readSession(db *sql.DB, ses string) []transcript.Turn {
 			sidechain := mr.ses != ses
 			t, ok := parseMessage(mr.id, mr.data, byMsg[mr.id], start+i, win)
 			if !ok {
-				if !copied {
-					carry.dropped(turns, sidechain, messageCost(mr.data))
+				if usage && !copied {
+					if cost, ts, model := messageCost(mr.data); cost > 0 {
+						turns = append(turns, transcript.Turn{Role: "assistant", CostOnly: true,
+							CostUSD: cost, TS: ts, Model: model, Idx: start + i, Sidechain: sidechain})
+					}
 				}
 				continue
 			}
@@ -646,57 +653,46 @@ func readSession(db *sql.DB, ses string) []transcript.Turn {
 			if copied {
 				t.CostUSD = 0
 			}
-			if t.Role == "assistant" {
-				t.CostUSD += carry.take(sidechain)
-			}
 			turns = append(turns, t)
 		}
 	}
 	return turns
 }
 
-// costCarry keeps the reported cost of an assistant message that has nothing to display (an
-// empty text, step-start/step-finish only) — a billed call parseMessage drops. Its cost goes
-// onto the previous turn when that one is an assistant turn on the same side (the same logical
-// turn for the usage fold), otherwise onto the next such turn. Never a turn of its own: an extra
-// logical turn would renumber every later one and the fold's watermark would count them again.
-// Lost only when no assistant turn ever follows.
-type costCarry struct{ pending [2]float64 } // [main, sidechain]
-
-func sideIdx(sidechain bool) int {
-	if sidechain {
-		return 1
-	}
-	return 0
-}
-
-func (c *costCarry) dropped(turns []transcript.Turn, sidechain bool, cost float64) {
-	if cost <= 0 {
-		return
-	}
-	if n := len(turns); n > 0 && turns[n-1].Role == "assistant" && turns[n-1].Sidechain == sidechain {
-		turns[n-1].CostUSD += cost
-		return
-	}
-	c.pending[sideIdx(sidechain)] += cost
-}
-
-func (c *costCarry) take(sidechain bool) float64 {
-	v := c.pending[sideIdx(sidechain)]
-	c.pending[sideIdx(sidechain)] = 0
-	return v
-}
-
-// messageCost is an assistant message row's reported cost, 0 for anything else.
-func messageCost(data []byte) float64 {
+// messageCost is an assistant message row's reported cost (0 for anything else), its creation
+// time as a transcript timestamp, and its model.
+func messageCost(data []byte) (float64, string, string) {
 	var md struct {
-		Role string  `json:"role"`
-		Cost float64 `json:"cost"`
+		Role    string  `json:"role"`
+		ModelID string  `json:"modelID"`
+		Cost    float64 `json:"cost"`
+		Time    struct {
+			Created int64 `json:"created"`
+		} `json:"time"`
 	}
 	if json.Unmarshal(data, &md) != nil || md.Role != "assistant" {
-		return 0
+		return 0, "", ""
 	}
-	return md.Cost
+	ts := ""
+	if md.Time.Created > 0 {
+		ts = time.UnixMilli(md.Time.Created).UTC().Format(time.RFC3339)
+	}
+	return md.Cost, ts, md.ModelID
+}
+
+// usageTurns is the conversation as the usage fold reads it: readTranscript's turns plus the
+// CostOnly ones.
+func usageTurns(m session.Meta) []transcript.Turn {
+	db, ok := openRO()
+	if !ok {
+		return nil
+	}
+	defer db.Close()
+	ses := activeSession(db, m)
+	if ses == "" {
+		return nil
+	}
+	return readSessionTurns(db, ses, true)
 }
 
 // sessionsCreated maps each session id to its creation time (store epoch millis). Missing rows

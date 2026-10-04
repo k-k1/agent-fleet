@@ -55,6 +55,9 @@ type usageFoldMark struct {
 	LastTS string `json:"lastTS,omitempty"`
 	// LastIdx is the transcript line number of the last folded event (diagnostic).
 	LastIdx int `json:"lastIdx,omitempty"`
+	// Orphans is the number of Orphan (cost-only) rows folded so far. They sit outside the
+	// logical turn sequence, so they have their own count; Groups and LastTS ignore them.
+	Orphans int `json:"orphans,omitempty"`
 }
 
 type usageFoldState struct {
@@ -126,6 +129,13 @@ type usageTurnRow struct {
 	// input tokens it is additive: each row is one LLM call's own cost, never a re-report.
 	CostUSD float64
 	LastIdx int // transcript line number of the last event (diagnostic)
+	// Orphan marks a cost-only row: the reported cost of CostOnly turns that no logical turn on
+	// their side took in before the next boundary. It is outside the logical turn sequence (Idx
+	// stays 0) and is numbered by OrphanSeq instead, so the watermark's Groups never moves. The
+	// (ref, idx) dedup does not see it either: only a crash between the append and the watermark
+	// write can repeat one, against a cost that would otherwise never be counted.
+	Orphan    bool
+	OrphanSeq int
 }
 
 // foldTurnRows folds a transcript's event sequence into logical turns. The aggregation
@@ -136,22 +146,66 @@ type usageTurnRow struct {
 //
 // With includeTrailing=false, a group that never closed is not returned (a turn still in
 // progress).
+//
+// A CostOnly turn (transcript.Turn.CostOnly) never opens, closes or splits a logical turn. Its
+// cost joins the open logical turn on its side, else the next one on its side before the next
+// boundary; failing both it becomes an Orphan row at that boundary (or at the end, with
+// includeTrailing). A closed segment is final, so where a cost lands never changes later.
 func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow {
 	var rows []usageTurnRow
 	var cur usageTurnRow
 	inGroup, sidechain := false, false
 	trigger := usagex.TriggerUser
+	groups, orphans := 0, 0
+	var pending [2]usageTurnRow // CostOnly cost waiting for a logical turn, [main, sidechain]
+	side := func(sc bool) int {
+		if sc {
+			return 1
+		}
+		return 0
+	}
 	fold := func() {
 		if !inGroup {
 			return
 		}
-		cur.Idx = len(rows) + 1
+		groups++
+		cur.Idx = groups
 		rows = append(rows, cur)
 		cur, inGroup = usageTurnRow{}, false
 	}
+	flush := func() {
+		for i := range pending {
+			if p := pending[i]; p.CostUSD > 0 {
+				orphans++
+				p.Orphan, p.OrphanSeq = true, orphans
+				rows = append(rows, p)
+			}
+			pending[i] = usageTurnRow{}
+		}
+	}
 	for _, t := range turns {
+		if t.CostOnly {
+			if inGroup && cur.Sidechain == t.Sidechain {
+				cur.CostUSD += t.CostUSD
+				continue
+			}
+			p := &pending[side(t.Sidechain)]
+			if p.CostUSD == 0 {
+				*p = usageTurnRow{Trigger: trigger, Sidechain: t.Sidechain}
+			}
+			p.CostUSD += t.CostUSD
+			if t.TS != "" {
+				p.TS = t.TS
+			}
+			if t.Model != "" {
+				p.Model = t.Model
+			}
+			p.LastIdx = t.Idx
+			continue
+		}
 		if t.Role != "assistant" {
 			fold()
+			flush()
 			if t.Role == "user" && !t.Compact {
 				trigger = usageTriggerFromTurnSource(t.Source)
 			}
@@ -164,6 +218,9 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 		if !inGroup {
 			cur = usageTurnRow{Trigger: trigger, Sidechain: sidechain}
 			inGroup = true
+			if p := &pending[side(sidechain)]; p.CostUSD > 0 {
+				cur.CostUSD, *p = p.CostUSD, usageTurnRow{}
+			}
 		}
 		cur.Tokens.Out += t.OutTok
 		cur.CostUSD += t.CostUSD
@@ -180,6 +237,7 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 	}
 	if includeTrailing {
 		fold()
+		flush()
 	}
 	return rows
 }
@@ -259,10 +317,18 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 		// same turns a second time.
 		return 0, nil
 	}
-	if len(rows) < mark.Groups {
+	groups, orphans := 0, 0
+	for _, r := range rows {
+		if r.Orphan {
+			orphans++
+		} else {
+			groups++
+		}
+	}
+	if groups < mark.Groups {
 		// Flipped to a shorter transcript. A count-only delta stopped here forever.
 		log.Printf("usage: fold %s: transcript flipped from %d to %d logical turns (taking the delta by timestamp)",
-			m.Name, mark.Groups, len(rows))
+			m.Name, mark.Groups, groups)
 	}
 	origin, originConv := session.OriginOf(m), m.OriginConv
 	measured := usageMeasuredForKind(m.Kind)
@@ -300,13 +366,19 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 	if err := usagex.AppendRows(out); err != nil {
 		return 0, err
 	}
-	last := fresh[len(fresh)-1]
 	// The watermark only goes up (a flip to a shorter transcript must not lower it).
-	st.Sessions[m.Name] = usageFoldMark{
-		Groups:  max(mark.Groups, len(rows)),
-		LastTS:  laterUsageTS(mark.LastTS, last.TS),
-		LastIdx: last.LastIdx,
+	next := usageFoldMark{
+		Groups:  max(mark.Groups, groups),
+		LastTS:  mark.LastTS,
+		LastIdx: mark.LastIdx,
+		Orphans: max(mark.Orphans, orphans),
 	}
+	for _, r := range fresh {
+		if !r.Orphan {
+			next.LastTS, next.LastIdx = laterUsageTS(next.LastTS, r.TS), r.LastIdx
+		}
+	}
+	st.Sessions[m.Name] = next
 	return len(out), nil
 }
 
@@ -320,9 +392,18 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 //     with an older timestamp is not, so another conversation's rerun is not counted.
 //     Anything taken twice by mistake is absorbed by the aggregation side's (ref, idx)
 //     deduplication.
+//
+// An Orphan row is taken by its own count alone: it only exists for opencode, whose store is
+// one append-only conversation, so the swap case does not arise.
 func unfoldedTurnRows(rows []usageTurnRow, mark usageFoldMark) []usageTurnRow {
 	var out []usageTurnRow
 	for _, r := range rows {
+		if r.Orphan {
+			if r.OrphanSeq > mark.Orphans {
+				out = append(out, r)
+			}
+			continue
+		}
 		if r.Idx > mark.Groups || usageTSAfter(r.TS, mark.LastTS) {
 			out = append(out, r)
 		}

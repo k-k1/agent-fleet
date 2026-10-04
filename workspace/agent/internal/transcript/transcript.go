@@ -136,8 +136,13 @@ type Turn struct {
 	// the usage fold writes it as the row's cost_usd, beside — never added to — the
 	// cost_est_usd the Agent derives from tokens. 0 = not reported.
 	CostUSD float64 `json:"-"`
-	TS      string  `json:"ts"`  // RFC3339 from the transcript line, "" if absent
-	Idx     int     `json:"idx"` // transcript line index — a stable render key
+	// CostOnly marks an accounting row: a billed call with nothing to display, carrying only
+	// CostUSD. Only an agents.UsageReader returns one, never the chat. A fold adds its cost to
+	// the logical turn it falls in and never lets it open, close or split one — an extra logical
+	// turn would renumber every later one past the fold's watermark.
+	CostOnly bool   `json:"-"`
+	TS       string `json:"ts"`  // RFC3339 from the transcript line, "" if absent
+	Idx      int    `json:"idx"` // transcript line index — a stable render key
 	// AnchorID is the AGENT's own stable identifier for this turn, opaque to the Console:
 	// claude = message uuid, codex = turn id, opencode = message id ("msg_…"). It is the
 	// handle "branch from this message" (docs/log/55) passes back to POST /fork {"at": …}.

@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
@@ -149,6 +150,9 @@ func UsageTurns(m session.Meta) []transcript.Turn {
 		lines, _, _ := claude.TranscriptRead(session.UUID(m.Dir, m.Name))
 		return claude.CollectTurns(lines, 0, len(lines))
 	}
+	if ur, ok := AgentOf(m.Kind).(agents.UsageReader); ok {
+		return ur.UsageTurns(m)
+	}
 	td, _ := AgentOf(m.Kind).Transcript(m)
 	return td.Turns
 }
@@ -174,6 +178,9 @@ func AggregateUsage(turns []transcript.Turn) sessionUsage {
 		inGroup = false
 	}
 	for _, t := range turns {
+		if t.CostOnly {
+			continue // tokens only here, and an accounting row must not split a logical turn
+		}
 		if t.Role != "assistant" {
 			fold()
 			continue

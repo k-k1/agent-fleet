@@ -294,8 +294,11 @@ not a provider bill. So for `kind=opencode`, `feature=session` rows:
   because each message is its own call (unlike the input tokens, which keep their
   replace-not-add rule). A fork's copies of earlier messages (new ids, original `time_created`,
   so older than the session holding them) carry no cost: the session that made the call already
-  reported it. A billed message with nothing to display still counts, on the adjacent assistant
-  turn, never as a turn of its own;
+  reported it. A billed message with nothing to display (an empty text, step parts only) still
+  counts: the usage read returns it as a cost-only turn, whose cost joins the logical turn on its
+  side, else the next one before the next user turn, else becomes a cost-only row at that boundary
+  or at the settle on archive/delete. Such a row has `idx` 0 and its own watermark count, so it
+  never renumbers the logical turns;
 - `cost_est_usd` is still computed from the tokens and **never** added to, replaced by or
   back-filled from `cost_usd`. The two legitimately differ: opencode prices every call of a
   multi-step turn, while the fold keeps one input snapshot per turn;

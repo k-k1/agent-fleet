@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
@@ -86,5 +87,147 @@ func TestFoldWithoutReportedCostLeavesCostEmpty(t *testing.T) {
 	}
 	if rows := usagex.ReadRows(); len(rows) != 1 || rows[0].CostUSD != 0 {
 		t.Fatalf("rows = %+v, want one row with no cost_usd", rows)
+	}
+}
+
+func costOnly(cost float64, sidechain bool, ts string) transcript.Turn {
+	return transcript.Turn{Role: "assistant", CostOnly: true, CostUSD: cost, Sidechain: sidechain, TS: ts}
+}
+
+func foldOnce(t *testing.T, m session.Meta, turns []transcript.Turn, includeTrailing bool) int {
+	t.Helper()
+	usageFoldMu.Lock()
+	defer usageFoldMu.Unlock()
+	st := readUsageFoldState()
+	n, err := foldSessionUsageWithTurns(m, &st, turns, includeTrailing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeUsageFoldState(st); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// The session ends on a billed call with nothing to display, with no assistant turn after it:
+// the settle on archive/delete still records its cost, once — main and sidechain alike.
+func TestFoldTrailingCostOnlySettles(t *testing.T) {
+	useTempUsageDir(t)
+	m := session.Meta{Name: "oc02", Kind: session.KindOpencode, Model: "opencode/big-pickle"}
+	turns := []transcript.Turn{
+		{Role: "user", Text: "1"},
+		costOnly(0.5, false, "2026-10-04T00:00:01Z"),
+		costOnly(0.125, true, "2026-10-04T00:00:02Z"),
+	}
+	if n := foldOnce(t, m, turns, false); n != 0 {
+		t.Fatalf("open segment folded %d rows, want 0", n)
+	}
+	if n := foldOnce(t, m, turns, true); n != 2 {
+		t.Fatalf("settle = %d rows, want 2 (main + sidechain)", n)
+	}
+	if n := foldOnce(t, m, turns, true); n != 0 {
+		t.Fatalf("second settle added %d rows", n)
+	}
+	rows := usagex.ReadRows()
+	if len(rows) != 2 || rows[0].CostUSD != 0.5 || rows[0].Sidechain || rows[1].CostUSD != 0.125 || !rows[1].Sidechain {
+		t.Fatalf("rows = %+v, want 0.5 main + 0.125 sidechain", rows)
+	}
+	for _, r := range rows {
+		if r.Idx != 0 || r.Spend != 0 {
+			t.Fatalf("cost-only row = %+v, want idx 0 and no tokens", r)
+		}
+	}
+	if mark := readUsageFoldState().Sessions[m.Name]; mark.Groups != 0 || mark.Orphans != 2 {
+		t.Fatalf("watermark = %+v, want groups 0 / orphans 2", mark)
+	}
+}
+
+// Cost-only turns never open, close or split a logical turn: the logical turns and their
+// numbering are exactly what they are without them, and each cost lands once.
+func TestFoldCostOnlyKeepsLogicalTurns(t *testing.T) {
+	const model = "big-pickle"
+	plain := []transcript.Turn{
+		{Role: "user", Text: "1"},
+		asstCost(model, 100, 10, 0, 1),
+		asstCost(model, 120, 5, 0, 1),
+		{Role: "user", Text: "2"},
+		asstCost(model, 200, 20, 0, 1),
+		{Role: "user", Text: "3"},
+	}
+	with := []transcript.Turn{
+		{Role: "user", Text: "1"},
+		costOnly(0.5, false, ""), // before the turn's first shown reply: joins it
+		asstCost(model, 100, 10, 0, 1),
+		costOnly(0.25, true, ""), // a subagent's empty call mid-turn: must not split the turn
+		asstCost(model, 120, 5, 0, 1),
+		costOnly(0.125, false, ""), // inside the open turn: joins it
+		{Role: "user", Text: "2"},
+		costOnly(4, false, ""), // a turn with nothing shown: its own cost-only row
+		{Role: "user", Text: "2b"},
+		asstCost(model, 200, 20, 0, 1),
+		{Role: "user", Text: "3"},
+	}
+	a, b := foldTurnRows(plain, false), foldTurnRows(with, false)
+	var logical []usageTurnRow
+	var orphan []usageTurnRow
+	for _, r := range b {
+		if r.Orphan {
+			orphan = append(orphan, r)
+		} else {
+			logical = append(logical, r)
+		}
+	}
+	if len(logical) != len(a) {
+		t.Fatalf("logical turns = %d, want %d", len(logical), len(a))
+	}
+	for i := range a {
+		if logical[i].Idx != a[i].Idx || logical[i].Tokens != a[i].Tokens {
+			t.Fatalf("turn %d = %+v, want %+v", i, logical[i], a[i])
+		}
+	}
+	if logical[0].CostUSD != 2.625 || logical[1].CostUSD != 1 {
+		t.Fatalf("turn costs = %v / %v, want 2.625 / 1", logical[0].CostUSD, logical[1].CostUSD)
+	}
+	if len(orphan) != 2 || orphan[0].CostUSD != 0.25 || !orphan[0].Sidechain || orphan[1].CostUSD != 4 || orphan[0].OrphanSeq != 1 || orphan[1].OrphanSeq != 2 {
+		t.Fatalf("cost-only rows = %+v, want sidechain 0.25 then main 4", orphan)
+	}
+	if got, want := sessionx.AggregateUsage(with).Cumulative, sessionx.AggregateUsage(plain).Cumulative; got != want {
+		t.Fatalf("get_session_usage with cost-only turns = %+v, want %+v", got, want)
+	}
+}
+
+// A watermark written before cost-only rows existed: the logical turns are not folded again,
+// and the cost-only rows are taken once.
+func TestFoldCostOnlyAgainstOldWatermark(t *testing.T) {
+	useTempUsageDir(t)
+	m := session.Meta{Name: "oc03", Kind: session.KindOpencode}
+	turns := []transcript.Turn{
+		{Role: "user", Text: "1"},
+		asstCost("big-pickle", 100, 10, 0, 1),
+		{Role: "user", Text: "2"},
+		{Role: "user", Text: "3"},
+	}
+	if n := foldOnce(t, m, turns, false); n != 1 {
+		t.Fatalf("first fold = %d, want 1", n)
+	}
+	turns = []transcript.Turn{
+		{Role: "user", Text: "1"},
+		asstCost("big-pickle", 100, 10, 0, 1),
+		{Role: "user", Text: "2"},
+		costOnly(0.5, false, "2026-10-04T00:00:01Z"),
+		{Role: "user", Text: "3"},
+	}
+	if n := foldOnce(t, m, turns, false); n != 1 {
+		t.Fatalf("fold with the cost-only call = %d, want 1 (only it)", n)
+	}
+	if n := foldOnce(t, m, turns, false); n != 0 {
+		t.Fatalf("re-fold added %d", n)
+	}
+	var total float64
+	for _, r := range usagex.ReadRows() {
+		total += r.CostUSD
+	}
+	if total != 1.5 {
+		t.Fatalf("total cost_usd = %v, want 1.5", total)
 	}
 }
