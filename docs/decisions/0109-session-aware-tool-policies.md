@@ -270,13 +270,15 @@ record of every call of the session, not only the last N, so a policy that a pul
 changes (which makes it a new policy), is initialised by replaying that record: a push-after-download gate
 added after the session ran `npm install` is armed at once. Where the history is incomplete (calls an
 observe-only seam missed, or a session started before the ledger existed), a closed gate starts with its flag
-set, and a closed cap counts from the replayed calls and is marked *partial* on the card and in the audit
-record. A partial cap may undercount, and the guide says so.
+set, and a closed cap starts **exhausted**: it denies until a person resets it or grants the exception above,
+because counting only what was replayed could allow a call known to exceed the cap. Only an observe cap, or a
+cap with `on_error: open`, counts the replayed calls and is marked *partial* on the card and in the audit
+record; a partial cap may undercount, and the guide says so.
 
 ### 4. State: a per-session ledger owned by the decision point, updated atomically
 
 The decision point keeps, per session, a **ledger**: counts per constraint, the gate flags that are set,
-the paths pending and owned (decision 2), the records still `prepared` or `awaiting`, and a compact record of
+the paths pending and owned (decision 2), the units still held and the attempts still `awaiting`, and a compact record of
 every normalised call of the session (for the card, for audit, and to initialise a policy added later,
 decision 3). Transcripts are not the source. They are read on demand with seconds of lag, and a
 policy that waited for them would let the later `git push` run before the earlier `npm install` was ever read.
@@ -297,22 +299,32 @@ remaining count.
   "Attempt" means *passed by the decision point*, not *executed*: a call the CLI then refuses, or that fails,
   still counts and still sets flags. A call the decision point denies, or whose approval is denied, times out
   or is cancelled, counts nothing and sets no flag.
-- **Each record moves through four states, each at most once:** `prepared` (evaluated, a no-objection answer
-  about to go back), `awaiting` (an approval is open), `committed` (counted, flags set) and `released`
-  (counts nothing). A record holds one unit of every cap it would count against while it is `prepared` or
-  `awaiting`, so parallel calls cannot overshoot while the member decides. An approval moves `awaiting` to a
-  new evaluation against the ledger as it is now, since other calls may have passed meanwhile, and then to
-  `committed` or `released`; a denial, timeout or cancel moves it to `released`. A unit is consumed exactly
-  once: by the commit, or given back by the release.
+- **A call record and its attempts are different things.** The **call record** lives for the key's lifetime
+  and holds at most one unit of every cap it counts against; its unit is `held`, `committed` or `released`,
+  and it is committed at most once. An **attempt** is one check of that record (the first delivery, a retry, an
+  approval) and is what may be `awaiting`. While a unit is held, parallel calls cannot overshoot.
+  - **No objection:** the count and the `after` flags are committed and fsynced **before** the reply goes
+    back, inside the serialised step, so the next check, parallel or not, always sees them.
+  - **Ask:** the attempt is `awaiting` and the record's unit is held. On approval the record is evaluated
+    again against the ledger as it is now, **excluding the unit the record itself holds**: other records'
+    units and the current `max` decide. So with `max=1`, approving the one awaiting call lets it through. Then
+    the unit is committed; a denial, timeout or cancel releases it.
+  - **A retry of a committed record** keeps its count and is evaluated the same way, excluding its own unit,
+    so a lost reply followed by a retry never consumes a second unit. If the current policy now says `ask`,
+    that is a new approval attempt on the same committed record (no new unit); `deny` denies it, and the count
+    stays.
+  - **A retry of a released record** is a new attempt that may hold a unit again.
 - **Asks in P0 are AF-held only.** A native ask (claude's own prompt) is answered by keys in the CLI, so the
   Agent never learns the answer and could not close the record. Native asks wait for a gate (decision 10,
   item 8) that shows the native allow, deny and cancel can be tied to the call id and that the record can be
   re-evaluated just before the call runs.
 - **Persistence.** The ledger is an append-only file per session under the Agent's state directory. A state
-  change is fsynced before an answer that relies on it goes back. On restart, a `prepared` record with no
-  answer is committed (stricter: the CLI may have run the call). An `awaiting` record is released and its
-  approval id expires, because its card and its waiting hook died with the Agent; a retry of that call is a
-  new check and, if it still needs one, a new card. A stored `ask` is never handed out again.
+  change is fsynced before an answer that relies on it goes back, so a reply the CLI received always has its
+  commit on disk, and a unit held with no reply sent is released on restart (nothing ran). On restart, every
+  `awaiting` attempt is released and its approval id expires: approvals belong to the Agent's **boot
+  generation**, and a new generation never honours an old one. The waiting hook is a separate process the CLI
+  started and may still be alive; decision 6 says how it ends. A retry of that call is a new attempt and, if it
+  still needs one, a new card. A stored `ask` is never handed out again.
 - **Restart, resume, recreate** keep the same session and reload its ledger. A ledger that is missing or
   fails to parse, for an AF session (every one is marked, decision 8), is treated by every closed policy as *caps
   exhausted, flags set*. A notice is raised. A person can reset the state, but only the state of policies in
@@ -359,8 +371,16 @@ An `ask` verdict becomes one of the two approval surfaces the Console already ha
 
 ### 6. Holding an approval inside a hook, and the timeouts
 
-For codex, and for claude if `ask` does not prompt under the skip flag, the hook process itself waits while
-the AF-held approval is open, and then prints `deny` or no decision.
+In P0 every ask on claude, and on any kind until its native-ask gate (decision 10, item 8) passes, is held
+inside the hook: codex has no native ask at all. The hook process itself waits while the AF-held approval is
+open, and then prints `deny` or no decision.
+
+- **The hook and the Agent are separate processes.** `workspace-agent policy-check` is a command the CLI
+  executes (like the existing hooks, `hooks.go:28-30`), so the Agent can crash or restart while the CLI and
+  the waiting hook live on. The hook waits on the Agent with the approval id and the Agent's boot generation.
+  If the Agent answers that the generation is unknown, or cannot be reached until the hook's deadline, the
+  hook prints `deny` with a reason and exits. An approval resumes only under a new approval id, through a new
+  attempt.
 
 - **AF's deadline is shorter than the CLI's.** The injected hook configuration sets the CLI's hook timeout
   explicitly, and the hook gives up at that timeout minus a margin (10 s in the first version), printing
@@ -496,10 +516,12 @@ be measured, stays observe.
 9. **Concurrency and stop.** Whether the CLI runs sibling calls while one hook waits, what an interrupt or
    stop does to a call in flight, and, for observe-only kinds, how many calls can pass between a stop decision
    and the CLI's exit.
+10. **Agent-only restart.** With the CLI and a waiting hook alive, restart only the Agent: the hook ends with
+   `deny`, the old approval id is refused, and the CLI's next attempt gets a new card.
 
 | Kind | Gate in | Notes |
 |---|---|---|
-| claude Terminal | P0 | items 1–7 and 9; item 8 before native ask (P1) |
+| claude Terminal | P0 | items 1–7, 9 and 10; item 8 before native ask (P1) |
 | lcpp | P1 | 1, 2 and 7 only; the harness is AF's own |
 | cursor, kiro, copilot Managed | P1 | 1 with the skip flag off is the deciding item |
 | codex Terminal, copilot Terminal | P2 | 2 is expected to show deny only for codex |
@@ -599,7 +621,7 @@ they are decision 10's gates.
 
 | Phase | What | Done when |
 |---|---|---|
-| P0 | Decision 10's gates for claude Terminal. The decision point with the atomic, idempotent ledger and the snapshot. `tool_call_cap` and `approval_gate` (with in-call sequences and the parser). Deployment and user layers by pull. AF-held approvals on the existing cards. The launch refusal of decision 7 for **every** other kind, and the stop on an unenforceable change | the gates are written into this record; parallel calls cannot overshoot a cap and a retried check does not double-count; in a real claude session `npm install x && git push` and the two as separate calls both raise a card naming the gate, deny reaches the model, a cap denies the N+1th call; launching any other kind under a block policy is refused; the budget holds |
+| P0 | Decision 10's gates for claude Terminal. The decision point with the atomic, idempotent ledger and the snapshot. `tool_call_cap` and `approval_gate` (with in-call sequences and the parser). Deployment and user layers by pull. AF-held approvals on the existing cards. The launch refusal of decision 7 for **every** other kind, and the stop on an unenforceable change | the gates are written into this record; parallel calls cannot overshoot a cap and a retried check does not double-count; with `max=1` an approved awaiting call runs, and a retry after its reply was lost passes without consuming a second unit; a closed cap added to a session with incomplete history denies; in a real claude session `npm install x && git push` and the two as separate calls both raise a card naming the gate, deny reaches the model, a cap denies the N+1th call; launching any other kind under a block policy is refused; the budget holds |
 | P1 | `path_scope` (with pending and owned paths), `ask_on_categories`; the session layer; lcpp with a check before every `tool.Run`; cursor, kiro and copilot Managed once their gate passes; the `guide/ref/agents.md` row | each listed kind passes its gate and the same scenarios |
 | P2 | codex Terminal (deny, held ask) and Managed; opencode; copilot, kiro and cursor Terminal hooks; observe-only feed for agy and muse; the tenant layer if wanted | each kind's row in the matrix is measured, not inferred |
 | P3 | User-authored declarative policies (open question 10) | — |
