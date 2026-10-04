@@ -110,7 +110,8 @@ What you see instead:
 - A browser pane restored from a saved layout shows the reason in place of the page, with a
   button that opens the same port and path in the lightweight preview. A Chromium attachment
   pane restored the same way shows the reason only, since it has no local port to open.
-- Agents' browser tools answer `browser_unavailable` with the same explanation.
+- Agents are not offered the browser tools at all; one that calls them by name anyway gets
+  `browser_unavailable` with the same explanation.
 
 The decision comes from the deployment's runtime, so it is the same for every member of it and
 shows even while the workspace is stopped.

@@ -194,7 +194,8 @@ tool is already there.
 `list_chromium_targets` / `attach_chromium` / `set_chromium_control_mode` /
 `request_browser_action` / `get_browser_action_result` / `detach_chromium` — the procedure, and the
 fixed-port trap that attaches you to another session's browser, are in
-`/usr/local/share/agent-fleet/notes/browser.md`.
+`/usr/local/share/agent-fleet/notes/browser.md`. Where `$AF_BROWSER_UNAVAILABLE` is set they are
+not offered at all, and a call by name answers `browser_unavailable`.
 
 ## Adding an MCP server is a Console action
 

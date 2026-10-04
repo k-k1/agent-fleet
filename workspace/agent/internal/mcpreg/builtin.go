@@ -11,6 +11,7 @@ package mcpreg
 // definition can express.
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -116,6 +117,31 @@ var FleetSpawnEnabled func() bool
 
 func fleetSpawnOn() bool { return FleetSpawnEnabled != nil && FleetSpawnEnabled() }
 
+// BrowserUnavailableFlag tells `mcp-stdio` that this workspace has no browser features, and
+// which runtime withholds them. The server then leaves the Chromium tools out of tools/list
+// and answers a call to one with browser_unavailable (#1614).
+//
+// Argv rather than the server reading browserx.UnavailableEnv itself: the env does not reach
+// every host's MCP children. codex starts them default-deny (builtinEnvVars), and cursor, kiro
+// and copilot are handed an explicit env map, while the argv is written verbatim into every
+// kind's config. The Agent's env is fixed for its lifetime, so the flag is too.
+const BrowserUnavailableFlag = "--browser-unavailable"
+
+// BrowserUnavailable is the Agent's own answer, the one its browser routes refuse on. A
+// variable so tests, here and in the packages that launch the assistant's server, can
+// substitute it without touching the process env.
+var BrowserUnavailable = browserx.Unavailable
+
+// BrowserUnavailableArgs is the argv tail that carries BrowserUnavailableFlag, or nil when the
+// workspace has browser features. Every launcher of `mcp-stdio` appends it, the assistant's
+// as well as the sessions' af server.
+func BrowserUnavailableArgs() []string {
+	if id := BrowserUnavailable(); id != "" {
+		return []string{BrowserUnavailableFlag, id}
+	}
+	return nil
+}
+
 // builtinRunArgsFor resolves a builtin's launch args, applying the switches that depend
 // on user settings rather than on the spec alone.
 func builtinRunArgsFor(id string, spec builtinSpec) []string {
@@ -132,7 +158,7 @@ func builtinRunArgsFor(id string, spec builtinSpec) []string {
 	if fleetSpawnOn() {
 		args = append(args, "--fleet-spawn")
 	}
-	return args
+	return append(args, BrowserUnavailableArgs()...)
 }
 
 // BuiltinRunArgs returns the subcommand args that launch a builtin's MCP server.

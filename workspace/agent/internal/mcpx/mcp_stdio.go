@@ -141,6 +141,13 @@ var mcpImageGenEnabled bool
 // stays closed even for those.
 var mcpFleetSpawnEnabled bool
 
+// mcpBrowserUnavailable is the runtime id the Agent passed in mcpreg.BrowserUnavailableFlag, ""
+// when the workspace has browser features. When set, the Chromium tools leave tools/list on
+// both surfaces, and a call that names one anyway (a client holding a list from an older
+// config, or a guessed name) answers browser_unavailable instead of "not in tools/list", so
+// the model learns why rather than looking for the tool elsewhere.
+var mcpBrowserUnavailable string
+
 // parseStdioFlags resolves the argv into this package's capability flags. It is separate from
 // RunStdio because RunStdio then blocks on stdin forever: the conjunctions below are the whole
 // scope boundary between the assistant and session surfaces, and they have to be reachable by
@@ -155,6 +162,7 @@ func parseStdioFlags(args []string) {
 	mcpPeerMessagingEnabled = false
 	mcpImageGenEnabled = false
 	mcpFleetSpawnEnabled = false
+	mcpBrowserUnavailable = ""
 	chromiumAttachRequested, peerMessagingRequested, imageGenRequested := false, false, false
 	fleetSpawnRequested := false
 	for i := 0; i < len(args); i++ {
@@ -178,6 +186,11 @@ func parseStdioFlags(args []string) {
 			if i+1 < len(args) {
 				i++
 				setConvID(args[i])
+			}
+		case mcpreg.BrowserUnavailableFlag:
+			if i+1 < len(args) {
+				i++
+				mcpBrowserUnavailable = strings.TrimSpace(args[i])
 			}
 		}
 	}
@@ -414,7 +427,7 @@ func mcpStdioInstructions() string {
 		return "Agent Fleet local MCP for the assistant: observe the sessions in your own Workspace."
 	}
 	parts := []string{"completion report", "handoff proposal", "stop after this turn", "session status and usage", "memos to your user", "branch names from your naming rules"}
-	if sessionChromiumEnabled() {
+	if sessionChromiumEnabled() && mcpBrowserUnavailable == "" {
 		parts = append(parts, "Chromium hand-off to the user")
 	}
 	if mcpPeerMessagingEnabled {
@@ -433,7 +446,7 @@ func mcpStdioInstructions() string {
 func mcpStdioToolList() []map[string]any {
 	if selfReportOnly() {
 		tools := append([]map[string]any{}, mcpStdioSelfReportTools()...)
-		if sessionChromiumEnabled() {
+		if sessionChromiumEnabled() && mcpBrowserUnavailable == "" {
 			tools = appendMatchingMCPTools(tools, mcpStdioTools, isChromiumReadTool)
 			tools = appendMatchingMCPTools(tools, mcpStdioWriteTools, isChromiumWriteTool)
 		}
@@ -453,10 +466,16 @@ func mcpStdioToolList() []map[string]any {
 		}
 		return tools
 	}
+	tools := mcpStdioTools
 	if writeEnabled() {
-		return append(append([]map[string]any{}, mcpStdioTools...), mcpStdioWriteTools...)
+		tools = append(append([]map[string]any{}, mcpStdioTools...), mcpStdioWriteTools...)
 	}
-	return mcpStdioTools
+	if mcpBrowserUnavailable != "" {
+		return appendMatchingMCPTools(nil, tools, func(name string) bool {
+			return !isChromiumReadTool(name) && !isChromiumWriteTool(name)
+		})
+	}
+	return tools
 }
 
 func appendMatchingMCPTools(dst, src []map[string]any, keep func(string) bool) []map[string]any {
@@ -2526,6 +2545,12 @@ func mcpStdioCall(req mcpReq) []byte {
 	// selfReportOnly()/sessionChromiumEnabled()). Refuse every unadvertised name here
 	// too, or a client that guesses names could reach fleet read/write handlers from any
 	// interactive session.
+	// Ahead of the advertised-set check, which would otherwise answer a withheld browser tool
+	// with "not in tools/list". Only for a name this server would have offered on a workspace
+	// with a browser, so the scope boundary is unchanged.
+	if mcpBrowserUnavailable != "" && mcpChromiumToolInScope(p.Name) {
+		return mcpToolErr(req.ID, chromiumUnavailableTextFor(browserx.UnavailableMessage(mcpBrowserUnavailable)))
+	}
 	if selfReportOnly() && !mcpStdioToolAdvertised(p.Name) {
 		// The reason is "this name was not in tools/list", not "you lack permission" — those call
 		// for opposite responses, and the old wording sent a model looking for a settings page
@@ -3858,6 +3883,16 @@ func mcpChromiumWriteEnabled() bool {
 	return writeEnabled() || (selfReportOnly() && sessionChromiumEnabled())
 }
 
+// mcpChromiumToolInScope reports whether name is a Chromium tool this server's flags would
+// advertise when the workspace has browser features: the read pair on the assistant surface or
+// under --chromium-attach, the mutating five wherever mcpChromiumWriteEnabled allows them.
+func mcpChromiumToolInScope(name string) bool {
+	if isChromiumReadTool(name) {
+		return !selfReportOnly() || sessionChromiumEnabled()
+	}
+	return isChromiumWriteTool(name) && mcpChromiumWriteEnabled()
+}
+
 func mcpListChromiumTargets(id json.RawMessage, port int) []byte {
 	if port < 1 || port > 65535 {
 		return mcpToolErr(id, "portには1〜65535のChromium remote-debugging portが必要です")
@@ -4150,6 +4185,11 @@ func chromiumUnavailableText(body string) string {
 	if json.Unmarshal([]byte(body), &b) == nil && b.Error.Message != "" {
 		msg = b.Error.Message
 	}
+	return chromiumUnavailableTextFor(msg)
+}
+
+// chromiumUnavailableTextFor wraps the explanation msg in the browser_unavailable result.
+func chromiumUnavailableTextFor(msg string) string {
 	return "code=" + browserx.UnavailableCode + ": " + msg + " Do not start Chromium here, with or without " +
 		"--no-sandbox, and do not retry. Verify with tests, curl or the lightweight preview instead, " +
 		"and tell the user the browser pane is unavailable on this workspace."
