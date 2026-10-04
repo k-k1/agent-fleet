@@ -23,7 +23,7 @@ import (
 // The mutex serialises one process; across CP replicas the store lease lockHome takes
 // with it does (homeLockMount). The slot-side recovery in staleHomeMountScript still saves
 // a slot where neither held.
-var homeMountLocks sync.Map // replica + workspace name -> *sync.Mutex
+var homeMountLocks sync.Map // replica + workspace name -> homeSem
 
 // errHomeLeftSlot is a mount that found the home no longer attached to the slot it was
 // placed on: a release took it off in the meantime. It says nothing about the slot, so the
@@ -45,13 +45,20 @@ func (e *ecsEC2Runtime) homeStillOn(ctx context.Context, p ec2Placement) bool {
 // the budget is for an SSM agent that does not answer at all.
 const quarantineUmountBudget = 45 * time.Second
 
+// quarantineLockBudget bounds quarantine's wait for the home's mount lock, and
+// quarantineCleanupBudget the whole of it: the instance stop at its end has to be sent
+// even when another holder keeps the lock, or the store cannot be reached.
+const quarantineCleanupBudget = 3 * time.Minute
+
+var quarantineLockBudget = 30 * time.Second // a var only so a test can shorten it
+
 // claimGenLocks serialises, per workspace, a Start's increment of its Start count against
 // unclaimIfOurs's last check of it through the end of its DeleteTags. Without it the
 // delete can be in flight (slow, retried by the SDK) while a later Start increments the
 // count and writes its own claim on the same slot; the key-only delete then lands after
 // and removes that claim. Held only for one tag call, never across a Start's work. Across
 // replicas the store lease lockHome takes with it (homeLockClaim) does the same.
-var claimGenLocks sync.Map // replica + workspace name -> *sync.Mutex
+var claimGenLocks sync.Map // replica + workspace name -> homeSem
 
 // beginStart counts a Start and returns its number: in the store where there is one, so a
 // release on any replica sees it (startedSince).
@@ -65,7 +72,9 @@ func (e *ecsEC2Runtime) beginStart(ctx context.Context) (int64, error) {
 		return e.generation().Add(1), nil
 	}
 	gen, err := e.leases.BumpCPCounter(lctx, homeStartGen+e.base.name)
-	if err != nil {
+	if err = homeGuardOf(lctx).outcome(err); err != nil {
+		// A count that landed after the lock was lost stays: a higher count only makes a
+		// release or a failed launch leave the home alone.
 		return 0, fmt.Errorf("count the start of %s: %w", e.base.name, err)
 	}
 	return gen, nil
@@ -98,6 +107,9 @@ func (e *ecsEC2Runtime) unclaimIfOurs(ctx context.Context, p ec2Placement) {
 		return
 	}
 	if moved, err := e.startedSince(lctx, p.gen); err != nil || moved {
+		return
+	}
+	if homeGuardOf(lctx).check() != nil {
 		return
 	}
 	e.unclaim(lctx, p.volumeID)

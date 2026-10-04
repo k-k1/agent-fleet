@@ -2065,6 +2065,10 @@ func (e *ecsEC2Runtime) finishLaunch(ctx context.Context, p ec2Placement) {
 func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, cause error) {
 	log.Printf("ecs-ec2: QUARANTINING slot %s — it could not mount %s for %s: %v",
 		p.instanceID, p.volumeID, e.base.name, cause)
+	// Its own bounded context: this runs when a launch has already failed, often with the
+	// launch's context ending, and the stop below must still be sent.
+	ctx, cancelAll := context.WithTimeout(context.WithoutCancel(ctx), quarantineCleanupBudget)
+	defer cancelAll()
 	e.markQuarantined(ctx, p.instanceID, cause)
 	if p.volumeID != "" {
 		// A failed af-mount may still have mounted the home (it fails after the mount when
@@ -2073,7 +2077,9 @@ func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, caus
 		// the home here for good, and the instance stop below unmounts on its way down.
 		// Without the lock the home stays attached: a detach another replica's mount could
 		// land beside is the corruption the lock exists for, and the stop below unmounts.
-		if lctx, unlock, err := e.lockHome(ctx, homeLockMount); err != nil {
+		lockCtx, cancelLock := context.WithTimeout(ctx, quarantineLockBudget)
+		lctx, unlock, err := e.lockHome(lockCtx, homeLockMount)
+		if err != nil {
 			log.Printf("ecs-ec2: leaving %s attached to the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
 		} else {
 			uctx, cancel := context.WithTimeout(lctx, quarantineUmountBudget)
@@ -2081,7 +2087,9 @@ func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, caus
 				log.Printf("ecs-ec2: unmounting %s on the quarantined slot %s before the detach: %v", p.volumeID, p.instanceID, err)
 			}
 			cancel()
-			if _, err := e.ec2.DetachVolume(lctx, &ec2.DetachVolumeInput{
+			if err := homeGuardOf(lctx).check(); err != nil {
+				log.Printf("ecs-ec2: leaving %s attached to the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
+			} else if _, err := e.ec2.DetachVolume(lctx, &ec2.DetachVolumeInput{
 				VolumeId:   aws.String(p.volumeID),
 				InstanceId: aws.String(p.instanceID),
 			}); err != nil {
@@ -2089,6 +2097,7 @@ func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, caus
 			}
 			unlock()
 		}
+		cancelLock()
 		e.unclaim(ctx, p.volumeID)
 	}
 	if _, err := e.ec2.StopInstances(ctx, &ec2.StopInstancesInput{InstanceIds: []string{p.instanceID}}); err != nil {
@@ -3659,7 +3668,7 @@ func (e *ecsEC2Runtime) mountHome(ctx context.Context, p ec2Placement) error {
 		return err
 	}
 	defer unlock()
-	return lockLost(lctx, e.mountHomeLocked(lctx, p))
+	return homeGuardOf(lctx).outcome(e.mountHomeLocked(lctx, p))
 }
 
 func (e *ecsEC2Runtime) mountHomeLocked(ctx context.Context, p ec2Placement) error {
@@ -3679,9 +3688,17 @@ func (e *ecsEC2Runtime) umountHome(ctx context.Context, instanceID string) error
 // retried for a while because a freshly booted slot registers with SSM a little after
 // it registers with ECS, and an InvalidInstanceId there is a timing artifact rather
 // than a failure.
+//
+// Under a home lock (homeGuardOf) each send is preceded by the lock's check, and the
+// command is recorded on the lock until it is seen ending, so the lock is not let go while
+// it may still run.
 func (e *ecsEC2Runtime) runOnSlot(ctx context.Context, instanceID, command string) error {
+	g := homeGuardOf(ctx)
 	var cmdID string
 	for attempt := 1; ; attempt++ {
+		if err := g.check(); err != nil {
+			return fmt.Errorf("ssm send %q to %s: %w", command, instanceID, err)
+		}
 		out, err := e.ssmc.SendCommand(ctx, &ssm.SendCommandInput{
 			DocumentName: aws.String("AWS-RunShellScript"),
 			InstanceIds:  []string{instanceID},
@@ -3690,7 +3707,11 @@ func (e *ecsEC2Runtime) runOnSlot(ctx context.Context, instanceID, command strin
 		})
 		if err == nil && out.Command != nil {
 			cmdID = aws.ToString(out.Command.CommandId)
+			g.sent(cmdID, instanceID)
 			break
+		}
+		if err == nil || !ssmSendRefused(err) {
+			g.sendUnknown()
 		}
 		// SAY SOMETHING. A slot whose SSM agent never came back swallows every mount and
 		// unmount silently, and the workspace just sits at `starting` with no clue why —
@@ -3732,6 +3753,9 @@ func (e *ecsEC2Runtime) runOnSlot(ctx context.Context, instanceID, command strin
 		})
 		if err != nil {
 			continue // InvocationDoesNotExist right after SendCommand is normal
+		}
+		if ssmCommandEnded(inv.Status) {
+			g.ended(cmdID)
 		}
 		switch inv.Status {
 		case "Success":
@@ -4239,17 +4263,21 @@ func (e *ecsEC2Runtime) releaseSlotSince(ctx context.Context, gen int64) error {
 	if err != nil {
 		// The home is unmounted and stays attached: a Start mounts it, a later release
 		// detaches it.
-		return lockLost(ctx, err)
+		return homeGuardOf(ctx).outcome(err)
 	}
 	if moved {
 		// Re-mount rather than detach: the workspace is coming up and needs its home.
 		log.Printf("ecs-ec2: %s restarted mid-release; re-mounting instead of detaching", e.base.name)
 		return e.mountHomeLocked(ctx, ec2Placement{volumeID: volumeID, instanceID: instanceID})
 	}
-	// Asked here, not left to the call: a fake or a retried request may not look at ctx,
-	// and a detach after the lease is gone is the one step that must not happen.
+	// Asked here, not left to the context: its end is a timer's callback, which a goroutine
+	// resumed past the deadline can outrun, and a detach after the lease is gone is the one
+	// step that must not happen.
+	if err := homeGuardOf(ctx).check(); err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
-		return lockLost(ctx, err)
+		return err
 	}
 	if _, err := e.ec2.DetachVolume(ctx, &ec2.DetachVolumeInput{
 		VolumeId:   aws.String(volumeID),

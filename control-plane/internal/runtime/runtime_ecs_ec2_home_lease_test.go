@@ -10,7 +10,10 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 )
 
 // fakeLeaseStore is cp_lease and cp_counter as the store implements them: one holder per
@@ -20,7 +23,10 @@ type fakeLeaseStore struct {
 	leases   map[string]fakeLease
 	counters map[string]int64
 	// renewals, when set, answers every renewal instead of the table.
-	renewals func(name, holder string) (bool, error)
+	renewals func(ctx context.Context, name, holder string) (bool, error)
+	// onAcquire, when set, runs before every acquisition is answered.
+	onAcquire func()
+	acquires  atomic.Int32
 }
 
 type fakeLease struct {
@@ -36,6 +42,10 @@ func (f *fakeLeaseStore) AcquireCPLease(ctx context.Context, name, holder string
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
+	f.acquires.Add(1)
+	if f.onAcquire != nil {
+		f.onAcquire()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if l, ok := f.leases[name]; ok && l.holder != holder && time.Now().Before(l.until) {
@@ -50,7 +60,7 @@ func (f *fakeLeaseStore) RenewCPLease(ctx context.Context, name, holder string, 
 		return false, err
 	}
 	if f.renewals != nil {
-		return f.renewals(name, holder)
+		return f.renewals(ctx, name, holder)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -88,6 +98,20 @@ func (f *fakeLeaseStore) CPCounter(ctx context.Context, name string) (int64, err
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.counters[name], nil
+}
+
+// waitFree waits until nobody holds name.
+func (f *fakeLeaseStore) waitFree(t *testing.T, name string) {
+	t.Helper()
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		f.mu.Lock()
+		l, ok := f.leases[name]
+		f.mu.Unlock()
+		if !ok || !time.Now().Before(l.until) {
+			return
+		}
+	}
+	t.Fatalf("%s is still held", name)
 }
 
 // twoReplicas stands up two CPs over one fake AWS and one store: each runtime keeps its own
@@ -239,7 +263,9 @@ func TestECSEC2HomeLeaseOfADeadReplicaExpires(t *testing.T) {
 	if firstCall(ec2Calls(h), "SSM af-mount") < 0 {
 		t.Errorf("never mounted after the lease expired")
 	}
-	// A live lease of another CP, by contrast, holds until the caller gives up.
+	// A live lease of another CP, by contrast, holds until the caller gives up. (unlock
+	// gives the lease back in the background.)
+	st.waitFree(t, homeLockMount+"af-ws-acme-alice")
 	if ok, _ := st.AcquireCPLease(ctx, homeLockMount+"af-ws-acme-alice", "live-cp", time.Hour); !ok {
 		t.Fatal("seed live lease")
 	}
@@ -259,7 +285,7 @@ func TestECSEC2ReleaseStopsWhenItsLeaseIsLost(t *testing.T) {
 	a.leaseTTL = 60 * time.Millisecond
 	lost := make(chan struct{})
 	var lose sync.Once
-	st.renewals = func(name, _ string) (bool, error) {
+	st.renewals = func(_ context.Context, name, _ string) (bool, error) {
 		if strings.HasPrefix(name, homeLockMount) {
 			lose.Do(func() { close(lost) })
 			return false, nil
@@ -334,5 +360,220 @@ func TestECSEC2FailedLaunchKeepsAnotherReplicasClaim(t *testing.T) {
 	a.unclaimIfOurs(ctx, p)
 	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-new1" {
 		t.Errorf("claim = %q, want it kept for B's later Start", got)
+	}
+}
+
+// slowSSM keeps every command containing hold in progress until release is closed: a
+// command SSM accepted and the slot has not run yet.
+type slowSSM struct {
+	*fakeSSMCmd
+	hold    string
+	release chan struct{}
+}
+
+func (s *slowSSM) GetCommandInvocation(ctx context.Context, in *ssm.GetCommandInvocationInput, opts ...func(*ssm.Options)) (*ssm.GetCommandInvocationOutput, error) {
+	if strings.Contains(aws.ToString(in.CommandId), s.hold) {
+		select {
+		case <-s.release:
+		default:
+			return &ssm.GetCommandInvocationOutput{Status: ssmtypes.CommandInvocationStatusInProgress}, nil
+		}
+	}
+	return s.fakeSSMCmd.GetCommandInvocation(ctx, in, opts...)
+}
+
+// A mount whose caller stopped waiting while its af-mount was still queued on the slot
+// keeps the home's lock until that af-mount is seen ending: released at once, another
+// replica's release would umount (nothing mounted yet), the queued mount would land, and
+// the detach would pull it — the #1592 dead mount.
+func TestECSEC2LockOutlivesASlotCommandItsCallerGaveUpOn(t *testing.T) {
+	ctx := context.Background()
+	h, a, b, _ := twoReplicas(t)
+	homeOnSlot(h)
+	slow := &slowSSM{fakeSSMCmd: h.ssmc, hold: "af-mount", release: make(chan struct{})}
+	a.ssmc = slow
+	a.sleep = func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
+
+	mctx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	err := a.mountHome(mctx, ec2Placement{volumeID: "vol-1", instanceID: "i-hot"})
+	cancel()
+	if err == nil {
+		t.Fatal("mountHome returned nil although its af-mount never finished")
+	}
+	released := make(chan error, 1)
+	go func() { released <- b.releaseSlot(ctx) }()
+	time.Sleep(150 * time.Millisecond)
+	if calls := ec2Calls(h); firstCall(calls, "SSM af-umount") >= 0 || firstCall(calls, "DetachVolume") >= 0 {
+		t.Fatalf("B's release ran while A's af-mount was still queued: %q", calls)
+	}
+	close(slow.release)
+	select {
+	case err := <-released:
+		if err != nil {
+			t.Fatalf("B's release after A's mount ended: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("B's release never ran after A's mount ended")
+	}
+	calls := ec2Calls(h)
+	if mount, umount, detach := firstCall(calls, "SSM af-mount"), firstCall(calls, "SSM af-umount"), firstCall(calls, "DetachVolume"); !(mount < umount && umount < detach) {
+		t.Fatalf("want A's mount, then B's umount, then its detach: %q", calls)
+	}
+}
+
+// A release that resumes past its lease's deadline — before the timer that ends its
+// context has fired — sends no DetachVolume: the guard reads the clock itself.
+func TestECSEC2ReleaseResumedPastItsLeaseDoesNotDetach(t *testing.T) {
+	ctx := context.Background()
+	h, a, _, _ := twoReplicas(t)
+	homeOnSlot(h)
+	var skew atomic.Int64
+	a.now = func() time.Time { return time.Now().Add(time.Duration(skew.Load())) }
+	h.ssmc.onSend = func(cmd string) {
+		if strings.HasPrefix(ssmHelperLine(cmd), "af-umount") {
+			skew.Store(int64(2 * homeLeaseTTL)) // the pause
+		}
+	}
+	err := a.releaseSlot(ctx)
+	if !errors.Is(err, errHomeLockLost) {
+		t.Fatalf("releaseSlot = %v, want errHomeLockLost", err)
+	}
+	if i := firstCall(ec2Calls(h), "DetachVolume"); i >= 0 {
+		t.Fatalf("detached after the lease ran out: %q", ec2Calls(h))
+	}
+}
+
+// An acquisition answered after the lease it granted ran out grants nothing.
+func TestECSEC2LateLeaseAnswerIsAskedAgain(t *testing.T) {
+	ctx := context.Background()
+	h, a, _, st := twoReplicas(t)
+	homeOnSlot(h)
+	var skew atomic.Int64
+	a.now = func() time.Time { return time.Now().Add(time.Duration(skew.Load())) }
+	var once sync.Once
+	st.onAcquire = func() { once.Do(func() { skew.Store(int64(2 * homeLeaseTTL)) }) }
+	lctx, unlock, err := a.lockHome(ctx, homeLockMount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	if n := st.acquires.Load(); n != 2 {
+		t.Errorf("acquisitions = %d, want the late one asked again", n)
+	}
+	if err := homeGuardOf(lctx).check(); err != nil {
+		t.Errorf("the lock taken on the second answer: %v", err)
+	}
+}
+
+// A mount whose af-mount answers Success after the lease was lost reports the lost lease,
+// so the launch does not start a task on a home another holder may be taking away.
+func TestECSEC2MountSuccessAfterALostLeaseIsNoSuccess(t *testing.T) {
+	ctx := context.Background()
+	h, a, _, st := twoReplicas(t)
+	homeOnSlot(h)
+	a.leaseTTL = 60 * time.Millisecond
+	lost := make(chan struct{})
+	var lose sync.Once
+	st.renewals = func(context.Context, string, string) (bool, error) {
+		lose.Do(func() { close(lost) })
+		return false, nil
+	}
+	h.ssmc.onSend = func(cmd string) {
+		if strings.HasPrefix(ssmHelperLine(cmd), "af-mount") {
+			<-lost
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if err := a.mountHome(ctx, ec2Placement{volumeID: "vol-1", instanceID: "i-hot"}); !errors.Is(err, errHomeLockLost) {
+		t.Fatalf("mountHome = %v, want errHomeLockLost", err)
+	}
+}
+
+// A waiter for the process-local lock gives up with its context, and unlock does not wait
+// for a renewal stuck on the database.
+func TestECSEC2HomeLockWaitsAndUnlocksPromptly(t *testing.T) {
+	ctx := context.Background()
+	h, a, _, st := twoReplicas(t)
+	homeOnSlot(h)
+	_, unlock, err := a.lockHome(ctx, homeLockMount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wctx, cancel := context.WithTimeout(ctx, 30*time.Millisecond)
+	waited := make(chan error, 1)
+	go func() {
+		_, u, err := a.lockHome(wctx, homeLockMount)
+		if u != nil {
+			u()
+		}
+		waited <- err
+	}()
+	select {
+	case err := <-waited:
+		if !errors.Is(err, errHomeLockLost) {
+			t.Errorf("a cancelled waiter = %v, want errHomeLockLost", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a waiter for the local lock ignored its cancelled context")
+	}
+	cancel()
+	unlock()
+	st.waitFree(t, homeLockMount+"af-ws-acme-alice")
+
+	a.leaseTTL = 3 * time.Second
+	stuck := make(chan struct{})
+	var once sync.Once
+	st.renewals = func(ctx context.Context, _, _ string) (bool, error) {
+		once.Do(func() { close(stuck) })
+		<-ctx.Done()
+		return false, ctx.Err()
+	}
+	_, unlock, err = a.lockHome(ctx, homeLockMount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-stuck
+	t0 := time.Now()
+	unlock()
+	st.waitFree(t, homeLockMount+"af-ws-acme-alice")
+	if d := time.Since(t0); d > time.Second {
+		t.Errorf("the lease was given back %s after unlock; a stuck renewal held it", d)
+	}
+}
+
+// ctxStopHook fails a StopInstances whose context has ended, as the SDK does.
+type ctxStopHook struct {
+	ec2API
+	stopped atomic.Bool
+}
+
+func (c *ctxStopHook) StopInstances(ctx context.Context, in *ec2.StopInstancesInput, opts ...func(*ec2.Options)) (*ec2.StopInstancesOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	c.stopped.Store(true)
+	return c.ec2API.StopInstances(ctx, in, opts...)
+}
+
+// A quarantine that cannot take the home's lock — another replica holds it, and the
+// launch's context has already ended — still stops the box, and leaves the home attached.
+func TestECSEC2QuarantineStopsTheSlotWithoutTheLock(t *testing.T) {
+	h, a, _, st := twoReplicas(t)
+	homeOnSlot(h)
+	defer func(d time.Duration) { quarantineLockBudget = d }(quarantineLockBudget)
+	quarantineLockBudget = 50 * time.Millisecond
+	if ok, _ := st.AcquireCPLease(context.Background(), homeLockMount+"af-ws-acme-alice", "other-cp", time.Hour); !ok {
+		t.Fatal("seed lease")
+	}
+	hook := &ctxStopHook{ec2API: h.ec2}
+	a.ec2 = hook
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	a.quarantineSlot(ctx, ec2Placement{volumeID: "vol-1", instanceID: "i-hot"}, errors.New("mount failed"))
+	if !hook.stopped.Load() {
+		t.Error("the quarantined slot was not stopped")
+	}
+	if i := firstCall(ec2Calls(h), "DetachVolume"); i >= 0 {
+		t.Errorf("detached without the lock: %q", ec2Calls(h))
 	}
 }
