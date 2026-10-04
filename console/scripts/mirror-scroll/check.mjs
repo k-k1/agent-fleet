@@ -819,9 +819,11 @@ async function runScenario(sc, chrome) {
       if (CPU > 1) await cdp.send("Emulation.setCPUThrottlingRate", { rate: CPU });
       // A returning user's browser: display settings + the saved pane layout. `from` seeds a
       // pane already showing ANOTHER session, so the scenario exercises a pane being reused.
+      // paneLayout is pinned to "split": the layout below is the split-mode key, and under the
+      // Tabbed default the Console reads `….tabs` instead, ignores the seed and opens empty.
       await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
         source: `try {
-          localStorage.setItem("af-display-settings", '{"locale":"ja","theme":"dark"}');
+          localStorage.setItem("af-display-settings", '{"locale":"ja","theme":"dark","paneLayout":"split"}');
           localStorage.setItem("af-tenant", "demo");
           localStorage.setItem("af.layout2.demo@example.com.demo", ${JSON.stringify(JSON.stringify(layout(sc.from || null)))});
         } catch (e) {}`,
