@@ -632,3 +632,42 @@ func TestClaudeImportDecodedValueIsScanned(t *testing.T) {
 		t.Errorf("escaped = %+v", it)
 	}
 }
+
+// A frontmatter field that is replaced or dropped is still scanned decoded.
+func TestClaudeImportDecodedNameIsScanned(t *testing.T) {
+	e := newClaudeImportEnv(t)
+	e.raw(e.slug, "note.md", "---\nname: \"\\u0041KIA"+"ZXCVBNMLKJHGFDSA\"\ndescription: d\n---\nbody\n")
+	it := e.item(e.preview(), "note")
+	if it.Status != claudeImportSecret || it.Findings[0].Path != "frontmatter" {
+		t.Errorf("note = %+v", it)
+	}
+}
+
+// A project whose root fails the scan still counts for ambiguity: the shared slug is not
+// presented as the other project's, and the hidden root is not returned.
+func TestClaudeImportHiddenCollidingProjectStaysAmbiguous(t *testing.T) {
+	e := newClaudeImportEnv(t)
+	val := strings.Repeat("aB3dE5gH", 3)
+	hidden := filepath.Join(e.home, "repos", `password="`+val+`"`)
+	visible := filepath.Join(e.home, "repos", "password--"+val+"-")
+	memoryMkdirAll(t, hidden)
+	memoryMkdirAll(t, visible)
+	if claude.ProjectKey(hidden) != claude.ProjectKey(visible) {
+		t.Fatal("test directories must share a slug")
+	}
+	slug := claude.ProjectKey(visible)
+	e.raw(slug, "note.md", "---\ndescription: d\n---\nb\n")
+	s := claudeImportListed(slug)
+	b, _ := json.Marshal(agentMemImportList())
+	if s == nil || s.Reason != claudeImportAmbiguous || s.Project != nil || strings.Contains(string(b), val) && s.Reason == "" {
+		t.Errorf("source = %+v", s)
+	}
+	pv, err := agentMemImportPreviewFor(slug)
+	if err != nil || pv.Project != nil || pv.Reason != claudeImportAmbiguous {
+		t.Errorf("preview = %+v, %v", pv, err)
+	}
+	if _, err := agentMemImportApply(agentMemImportReq{Project: agentMemProjectFor(visible).ID, Slug: slug,
+		Items: []agentMemImportReqItem{{Name: "note"}}}, time.Now()); agentMemCode(err) != errCodeMemoryConflict {
+		t.Errorf("apply: %v", err)
+	}
+}

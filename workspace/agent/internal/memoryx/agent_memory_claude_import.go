@@ -108,6 +108,7 @@ type agentMemImportPreview struct {
 func agentMemImportProjects() (map[string]*agentMemProject, map[string]bool) {
 	byKey := map[string]*agentMemProject{}
 	ambiguous := map[string]bool{}
+	blocked := map[string]bool{}
 	ents, err := os.ReadDir(gitx.ReposRoot())
 	if err != nil {
 		return byKey, ambiguous
@@ -135,10 +136,14 @@ func agentMemImportProjects() (map[string]*agentMemProject, map[string]bool) {
 	wg.Wait()
 	for _, r := range results {
 		p := r.p
-		// The display and root come from folder names; one that fails the scan is not shown, so
-		// that working copy simply does not map.
-		if p == nil || !agentMemCleanText(p.Root+"\n"+p.Display+"\n"+p.ID) {
+		if p == nil {
 			continue
+		}
+		// A project whose root or display fails the scan still takes part in the ambiguity
+		// check (dropping it first would let a colliding slug look unique); it is only never
+		// shown, so it is removed from the result afterwards.
+		if !agentMemCleanText(p.Root + "\n" + p.Display + "\n" + p.ID) {
+			blocked[p.ID] = true
 		}
 		for _, k := range []string{claude.ProjectKey(r.dir), claude.ProjectKey(p.Root)} {
 			if prev, ok := byKey[k]; ok && prev.ID != p.ID {
@@ -146,6 +151,11 @@ func agentMemImportProjects() (map[string]*agentMemProject, map[string]bool) {
 				continue
 			}
 			byKey[k] = p
+		}
+	}
+	for k, p := range byKey {
+		if blocked[p.ID] {
+			delete(byKey, k)
 		}
 	}
 	return byKey, ambiguous
@@ -407,6 +417,9 @@ func agentMemImportEvaluate(mem *os.File, file, slug, rel string, history map[st
 	// Finding paths are fixed field names, so a hit never hands back text from the file.
 	if len(findings) == 0 {
 		// The raw file is clean; the decoded values can still differ from it (a JSON escape).
+		// Every decoded frontmatter field, the ones that are replaced or dropped included.
+		findings = append(findings, agentMemScanText("frontmatter", strings.Join(append([]string{
+			e.Name, e.AuthorKind, e.AuthorSession, e.Created, e.Updated, e.Source, e.SourceHash}, e.Kinds...), "\n"))...)
 		findings = append(findings, agentMemScanText("description", full)...)
 		findings = append(findings, agentMemScanText("body", body)...)
 		findings = append(findings, agentMemScanText("type", e.Type)...)
