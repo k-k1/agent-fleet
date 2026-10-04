@@ -94,10 +94,11 @@ afterEach(async () => {
 });
 
 describe("ticket references", () => {
-  it("links the inbox's tickets in an agent's status table and opens the cached row", async () => {
+  it("links every number in an agent's status table and opens the cached row", async () => {
     await render("| PR | Issue |\n|---|---|\n| #1649 | #956 |\n| #1652 | #1054 |");
-    // #1652 and #1054 are not in the reader's list: some issue on GitHub, but nothing they track.
-    expect(links().map((a) => a.textContent)).toEqual(["#1649", "#956"]);
+    // #1652 and #1054 are not in the inbox (merged, closed, or never the reader's): cited in prose,
+    // they still link.
+    expect(links().map((a) => a.textContent)).toEqual(["#1649", "#956", "#1652", "#1054"]);
     expect(links()[1].title.split("\n")[0]).toBe("title of octo/fleet#956");
 
     await click(links()[1]);
@@ -108,10 +109,31 @@ describe("ticket references", () => {
     expect(d?.repoHint).toBe("fleet");
   });
 
-  it("leaves a number the inbox does not hold as text, in prose and in code", async () => {
+  it("leaves a number in inline code as text unless the inbox holds it", async () => {
     // A search the user typed, quoted back by the agent: #166 exists on GitHub, but is not cited.
-    await render("typed `#166` and `octo/fleet#166`, then #167");
-    expect(links()).toHaveLength(0);
+    await render("typed `#166` and `octo/fleet#166`; `#956` is ours; merged in #167");
+    expect(links().map((a) => a.textContent)).toEqual(["#956", "#167"]);
+  });
+
+  it("opens a merged or closed ticket the inbox no longer holds as a reference with a tracker link", async () => {
+    await render("merged in #1652");
+    await click(links()[0]);
+    const d = useWorkItemModal.getState().detail;
+    expect(d?.reference).toBe(true);
+    expect(d?.item.url).toBe("https://github.com/octo/fleet/issues/1652");
+  });
+
+  it("re-guesses a guessed link when clicked, once the cache or the clones know better", async () => {
+    useReposStore.setState({ repos: [] });
+    await render("see team/svc#7 and team/svc#8", null);
+    expect(links()).toHaveLength(2);
+    useReposStore.setState({ repos: [{ name: "svc", provider: "bitbucket", remote: "bitbucket.org", remotePath: "team/svc" }] });
+    useWorkItemStore.setState({ payload: payload([row("bitbucket", "team/svc#7", { kind: "pr" })]) });
+    await click(links()[0]);
+    expect(useWorkItemModal.getState().detail?.item).toMatchObject({ provider: "bitbucket", key: "team/svc#7", title: "title of team/svc#7" });
+    // #8 is uncached on a Bitbucket repository: never sent to the GitHub it was guessed for.
+    await click(links()[1]);
+    expect(useWorkItemModal.getState().detail?.item.url).toBe("https://bitbucket.org/team/svc/pull-requests/8");
   });
 
   it("goes straight to the tracker on a Ctrl-click", async () => {
@@ -153,7 +175,7 @@ describe("ticket references", () => {
 
   it("takes a number whole, so no digits are left for the commit shape", async () => {
     useWorkItemStore.setState({ payload: payload([row("github", "octo/fleet#1234567"), row("github", "octo/fleet#11223344")]) });
-    await render("fixed in #1234567; colour #11223344, #00112233, #00000000 and octo/fleet#11223344; #7654321 unknown");
+    await render("fixed in #1234567; colour #11223344, #00112233, #00000000 and octo/fleet#11223344; `#7654321` unknown");
     expect(links().map((a) => a.textContent)).toEqual(["#1234567", "octo/fleet#11223344"]);
     expect(host.querySelector("a.md-commit-link")).toBeNull();
   });
@@ -242,7 +264,7 @@ describe("ticket references", () => {
   });
 
   it("links a ticket when a push brings it into a loaded cache", async () => {
-    await render("G3M-12 and #2000 are blocked");
+    await render("`G3M-12` and `#2000` are blocked");
     expect(links()).toHaveLength(0);
     await act(async () => {
       useWorkItemStore.setState({ payload: payload([row("jira", "G3M-12"), row("github", "octo/fleet#2000")]) });
