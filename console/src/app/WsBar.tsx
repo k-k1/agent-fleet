@@ -476,6 +476,7 @@ export const USAGE_SOURCES: UsageSource[] = [
 interface ChipReport {
   visible: boolean;
   urgent: boolean;
+  label: string; // what the chip reads; its width is part of what squeezing saves
 }
 interface FoldCtxValue {
   report(kind: string, state: ChipReport): void;
@@ -499,12 +500,12 @@ const FoldCtx = createContext<FoldCtxValue | null>(null);
 // closed +N, or its +N closed — keeps its state, so its popover would stay "open" with a
 // dismiss layer that swallows the next click anywhere. Closed on that transition only: a
 // keyboard reveal opens a folded chip one render before the +N body exists to draw it.
-function useChipSlot(kind: string, visible: boolean, urgent: boolean, open: boolean, close: () => void) {
+function useChipSlot(kind: string, visible: boolean, urgent: boolean, label: string, open: boolean, close: () => void) {
   const ctx = useContext(FoldCtx);
   const report = ctx?.report;
   useEffect(() => {
-    report?.(kind, { visible, urgent });
-  }, [report, kind, visible, urgent]);
+    report?.(kind, { visible, urgent, label });
+  }, [report, kind, visible, urgent, label]);
   const slot = ctx ? ctx.slot(kind) : ("bar" as const);
   const drawn = slot === "bar" || !!ctx?.host;
   const wasDrawn = useRef(drawn);
@@ -623,18 +624,18 @@ export function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | 
   // nothing to show has to say so rather than skip its turn. `bind` moved above the return
   // for the same reason — the group promotes a near-cap chip onto the bar.
   const visible = !(unavailable && !usage?.authed);
-  const { slot, host, reveal } = useChipSlot(src.kind, visible, !!bind || !!resetCount, open, closePop);
+  const label = unavailable
+    ? "—"
+    : bind
+      ? resetChipText(bind.resetsAt)
+      : [uh && (uh.stale ? "—" : `${uh.pct}%`), uw && (uw.stale ? "—" : `${uw.pct}%`)].filter(Boolean).join(" / ");
+  const { slot, host, reveal } = useChipSlot(src.kind, visible, !!bind || !!resetCount, label, open, closePop);
   // Hide the chip only when the user isn't signed into this agent (nothing to show, and
   // never will be). If they ARE signed in but the (unofficial, rate-limited) reading is
   // momentarily unavailable, keep a degraded chip so it never vanishes on a transient
   // failure — its dropdown links out to the vendor's own usage page to check manually.
   if (!visible) return null;
 
-  const label = unavailable
-    ? "—"
-    : bind
-      ? resetChipText(bind.resetsAt)
-      : [uh && (uh.stale ? "—" : `${uh.pct}%`), uw && (uw.stale ? "—" : `${uw.pct}%`)].filter(Boolean).join(" / ");
   const chipTitle = unavailable
     ? tr("wsbar.usage.unavailable_title", { name: kindLabel(src.kind) })
     : bind
@@ -765,9 +766,6 @@ export function AgyUsageChip({ tenant }: { tenant: string | null }) {
 
   // Report before the early return (see useChipSlot), same as the generic chip.
   const visible = !(unavailable && !usage?.authed);
-  const { slot, host, reveal } = useChipSlot("agy", visible, !!bind, open, closePop);
-  if (!visible) return null;
-
   // Chip numbers: the first group (Gemini), 5h% / weekly% — same order as the other chips.
   const g0 = usage?.ok && Array.isArray(usage.groups) ? usage.groups[0] : null;
   const label = unavailable
@@ -777,6 +775,9 @@ export function AgyUsageChip({ tenant }: { tenant: string | null }) {
       : [g0?.fiveHour && `${used(g0.fiveHour.remainingPct)}%`, g0 && `${used(g0.remainingPct)}%`]
           .filter(Boolean)
           .join(" / ");
+  const { slot, host, reveal } = useChipSlot("agy", visible, !!bind, label, open, closePop);
+  if (!visible) return null;
+
   const chipTitle = unavailable
     ? tr("wsbar.usage.unavailable_title", { name: "Antigravity" })
     : bind
@@ -877,12 +878,12 @@ export function CopilotUsageChip({ tenant }: { tenant: string | null }) {
 
   // Report before the early return (see useChipSlot), same as the generic chip.
   const visible = !(unavailable && !usage?.authed);
-  const { slot, host, reveal } = useChipSlot("copilot", visible, !!bind, open, closePop);
-  if (!visible) return null;
-
   // Chip number: the primary pool's used% (quotas are pre-ordered by the backend —
   // premium first on paid plans, else chat).
   const label = unavailable ? "—" : bind ? resetChipText(bind.resetsAt!) : `${wins[0].pct}%`;
+  const { slot, host, reveal } = useChipSlot("copilot", visible, !!bind, label, open, closePop);
+  if (!visible) return null;
+
   const chipTitle = unavailable
     ? tr("wsbar.usage.unavailable_title", { name: "GitHub Copilot" })
     : bind
@@ -985,7 +986,7 @@ export function UsageChipFold({
   const report = useCallback((kind: string, state: ChipReport) => {
     setReports((cur) => {
       const prev = cur[kind];
-      if (prev && prev.visible === state.visible && prev.urgent === state.urgent) return cur;
+      if (prev && prev.visible === state.visible && prev.urgent === state.urgent && prev.label === state.label) return cur;
       return { ...cur, [kind]: state };
     });
   }, []);
@@ -1013,9 +1014,14 @@ export function UsageChipFold({
   const tight = planUsageChips({ ...planInput, inline: 0 });
   const plan = squeeze ? tight : roomy;
   // Both layouts, whichever is drawn: what squeezing saves is the difference between them,
-  // and a pin or a near-cap chip can change the squeezed one alone. Not keyed on `squeeze`,
-  // or the bar's own measuring unfold/refold would look like a change.
-  const layoutKey = roomy.bar.join(",") + "|" + tight.bar.join(",");
+  // and a pin or a near-cap chip can change the squeezed one alone. So can a reading: the
+  // chips that squeezing hides sit in a closed +N, drawn nowhere, so a label that shortens
+  // there ("94% / 94%" → "0% / 0%") reaches the bar only through this key. Not keyed on
+  // `squeeze`, or the bar's own measuring unfold/refold would look like a change.
+  const tightSet = new Set(tight.bar);
+  const saved = roomy.bar.filter((k) => !tightSet.has(k));
+  const layoutKey =
+    roomy.bar.join(",") + "|" + tight.bar.join(",") + "|" + saved.map((k) => reports[k]?.label ?? "").join(",");
   useEffect(() => {
     onLayoutChange?.(layoutKey);
   }, [onLayoutChange, layoutKey]);

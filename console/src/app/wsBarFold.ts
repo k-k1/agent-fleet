@@ -200,12 +200,17 @@ export function useWsBarFold(
     // reacting to those would loop.
     const mo = new MutationObserver(soon);
     mo.observe(bar, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["class", "style"] });
+    // A late font resizes the chips folded into +N too, which no measurement here can see.
+    const onFonts = () => {
+      if (usageRef.current) mem.current = { ...mem.current, saving: null, pending: null };
+      soon();
+    };
     const fonts = typeof document !== "undefined" ? document.fonts : undefined;
-    fonts?.addEventListener?.("loadingdone", soon);
+    fonts?.addEventListener?.("loadingdone", onFonts);
     return () => {
       ro?.disconnect();
       mo.disconnect();
-      fonts?.removeEventListener?.("loadingdone", soon);
+      fonts?.removeEventListener?.("loadingdone", onFonts);
     };
   }, [barRef, enabled, settle]);
 

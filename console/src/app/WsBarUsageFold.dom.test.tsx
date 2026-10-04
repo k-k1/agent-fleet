@@ -253,14 +253,39 @@ describe("WS bar usage chips: folding", () => {
     const keys: string[] = [];
     const onLayoutChange = (k: string) => void keys.push(k);
     await mount({ squeeze: true, onLayoutChange });
-    const before = keys.at(-1);
-    expect(before).toBe("claude,codex|");
+    const layouts = () => keys.at(-1)!.split("|").slice(0, 2).join("|");
+    expect(layouts()).toBe("claude,codex|");
     await act(async () => setSettings({ usageChipsPinned: ["claude"] }));
-    expect(keys.at(-1)).toBe("claude,codex|claude");
+    expect(layouts()).toBe("claude,codex|claude");
     // And squeezing itself is not a change: the bar's measuring unfold must not re-trigger it.
     const n = keys.length;
     await mount({ squeeze: false, onLayoutChange });
     expect(keys.length).toBe(n);
+  });
+
+  // Same chips in the same places, but a reading inside the closed +N shortens (a reset).
+  // Nothing of it is drawn, so only this report can tell the bar its saving shrank.
+  it("reports a reading change of a chip hidden in the squeezed +N", async () => {
+    let claude = calm(94, 94);
+    api.mockImplementation((path: string) => {
+      if (path.startsWith("api/claude/usage")) return Promise.resolve(claude);
+      if (path.startsWith("api/codex/usage")) return Promise.resolve(calm(33, 27));
+      return Promise.resolve(signedOut);
+    });
+    const keys: string[] = [];
+    await mount({ squeeze: true, onLayoutChange: (k) => void keys.push(k) });
+    expect(foldBtn()!.textContent).toContain("+2");
+    const before = keys.at(-1)!;
+    expect(before).toContain("94% / 94%");
+    claude = calm(0, 0);
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange")); // the chips' own re-read
+      await Promise.resolve();
+    });
+    await act(async () => void (await Promise.resolve()));
+    expect(keys.at(-1)).not.toBe(before);
+    expect(keys.at(-1)).toContain("0% / 0%");
+    expect(foldBtn()!.textContent).toContain("+2"); // still the same layout
   });
 
   it("honours a pin on an agent nobody has run lately", async () => {
