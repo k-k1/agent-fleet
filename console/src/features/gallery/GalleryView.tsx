@@ -33,6 +33,7 @@ import { isBusySession } from "../files/sessionRefresh.ts";
 import { REVALIDATE_GAP_MS, WORKING_TICK_MS } from "../files/refreshPolicy.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
+import { SendSelectionModal } from "../memo/SendSelectionModal.tsx";
 import { previewEdge } from "../viewer/previewEdge.ts";
 import { formatImageSize, useImageSize } from "../viewer/imageSize.ts";
 import { isContextMenuKey, synthContextMenu } from "../project/contextMenuKey.ts";
@@ -63,7 +64,14 @@ import {
   type GalleryTile,
 } from "./gallery.ts";
 import { openGallery } from "./open.ts";
-import { fetchGalleryListing, forgetGallery, prefetchGallery, readGallery, rememberGalleryView } from "./galleryCache.ts";
+import {
+  fetchGalleryListing,
+  forgetGallery,
+  galleryKey,
+  prefetchGallery,
+  readGallery,
+  rememberGalleryView,
+} from "./galleryCache.ts";
 import "./gallery.css";
 
 /**
@@ -144,6 +152,8 @@ interface GalleryViewProps {
   sort?: GallerySort;
   /** The card size (S/M/L), from the pane content like `sort`. Absent is M. */
   tile?: GalleryTile;
+  /** Every picture under the folder in one grid (`api/fs/images`), from the pane content. */
+  flat?: boolean;
   focus?: string;
   /** The session NAME (slug) from the content; the title is looked up from it here, so
    *  a rename shows through and no display text is frozen into the layout. */
@@ -151,7 +161,7 @@ interface GalleryViewProps {
   headerActions?: ReactNode;
 }
 
-export function GalleryView({ paneId, path, sort, tile, focus, sessionName, headerActions }: GalleryViewProps) {
+export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName, headerActions }: GalleryViewProps) {
   const tr = useT();
   const showToast = useToast();
   const askConfirm = useConfirm();
@@ -167,8 +177,12 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
   // -folder path below takes it again). Seeding the state from it is what makes the first paint
   // of a folder already seen have its cards, instead of one render of the loading state and
   // then them — this view is mounted fresh whenever its tab is switched back to.
-  const [atMount] = useState(() => readGallery(path));
+  // A flattened folder is its own listing (galleryCache.ts), so everything below that is "per
+  // folder" — the cache, the change-of-folder reset, the scroll restore — is per KEY.
+  const key = galleryKey(path, flat);
+  const [atMount] = useState(() => readGallery(key));
   const [entries, setEntries] = useState<FsEntry[] | null>(atMount?.entries ?? null);
+  const [truncated, setTruncated] = useState(!!atMount?.truncated);
   const [failed, setFailed] = useState(false);
   const [limit, setLimit] = useState(atMount?.limit ?? PAGE_SIZE);
   /** True while the first read of a folder drawn FROM CACHE is still out. The grid is real and
@@ -186,6 +200,9 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
   // must not have.
   const [menu, setMenu] = useState<(MenuTarget & { x: number; y: number }) | null>(null);
   const menuRef = useRef<HTMLUListElement>(null);
+  /** The picture being sent to a session or an assistant (the menu's "send"). By path, like
+   *  the menu: the modal outlives the menu and must not follow a reshuffled grid. */
+  const [sendPath, setSendPath] = useState<string | null>(null);
 
   // Refs the refresh path reads: it runs from a timer / event, not from a render, so it
   // must not close over a stale listing or re-subscribe whenever one arrives.
@@ -202,7 +219,7 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
   const restoredFor = useRef<string | null>(null);
   /** Which folder the state below belongs to. This view is NOT remounted when it walks into a
    *  folder — the pane keeps it and changes `path` — so the switch has to be made here. */
-  const shownPath = useRef(path);
+  const shownPath = useRef(key);
   /** The tile size the refresh path reads. A ref, not a dependency of `load`: changing the
    *  size must not re-run the mount effect as if the folder had changed. */
   const tileRef = useRef(tile);
@@ -218,10 +235,11 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
   // folder already seen HAS its cards. The remembered names are also what the "new card" tint
   // diffs against: seeded from the cache, walking back into a folder tints nothing and only a
   // picture that really did arrive since lights up.
-  if (shownPath.current !== path) {
-    shownPath.current = path;
-    const cached = readGallery(path);
+  if (shownPath.current !== key) {
+    shownPath.current = key;
+    const cached = readGallery(key);
     setEntries(cached?.entries ?? null);
+    setTruncated(!!cached?.truncated);
     setFailed(false);
     setStale(!!cached);
     setLimit(cached?.limit ?? PAGE_SIZE);
@@ -281,11 +299,11 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
       // `warm` asks the Agent to decode this folder's thumbnails into its cache while it
       // answers. A cold thumbnail is ~95 ms and a cached one ~44 µs (measured), so without
       // it the first look at a fresh folder trickles in card by card.
-      const r = await fetchGalleryListing(path, thumbEdge(tileRef.current), signal);
+      const r = await fetchGalleryListing(path, thumbEdge(tileRef.current), signal, flat);
       if (signal.aborted) return true;
       if (!r.ok) {
         if (r.hard && initial) {
-          forgetGallery(path);
+          forgetGallery(key);
           namesRef.current = null;
           shownRef.current = false;
           setEntries(null);
@@ -308,6 +326,7 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
       setFailed(false);
       setStale(false);
       setEntries(next);
+      setTruncated(!!r.truncated);
       if (before) {
         const added = [...names].filter((n) => !before.has(n));
         if (added.length) {
@@ -318,7 +337,7 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
       }
       return true;
     },
-    [path],
+    [path, flat, key],
   );
 
   // Mount (and every change of folder): retry through the window where the workspace is up
@@ -350,11 +369,11 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
   // restore reads as a jump. Once per change of folder: a background refresh must never move
   // the scroll position under someone.
   useLayoutEffect(() => {
-    if (entries === null || restoredFor.current === path) return;
-    restoredFor.current = path;
-    const top = readGallery(path)?.scrollTop ?? 0;
+    if (entries === null || restoredFor.current === key) return;
+    restoredFor.current = key;
+    const top = readGallery(key)?.scrollTop ?? 0;
     if (top && bodyRef.current) bodyRef.current.scrollTop = top;
-  }, [entries, path]);
+  }, [entries, key]);
 
   const refresh = useCallback(
     (force = false) => {
@@ -414,6 +433,7 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
         galleryPath: path,
         ...(sort ? { sort } : {}),
         ...(tile ? { tile } : {}),
+        ...(flat ? { flat } : {}),
         ...(sessionName ? { gallerySession: sessionName } : {}),
       },
     });
@@ -494,7 +514,10 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
     const next = typed.trim();
     if (!next || next === target.name) return;
     if (next.includes("/")) return showToast(tr("gallery.rename_bad_name"), { kind: "error" });
-    const to = path ? path + "/" + next : next;
+    // The entry's OWN folder, not the one on screen: in a flattened grid a picture can sit
+    // several levels below it, and renaming it must not move it up to here.
+    const dir = parentPath(target.path) ?? "";
+    const to = dir ? dir + "/" + next : next;
     const res = await fsRename(target.path, to);
     if (res.error) return showToast(tr("gallery.rename_failed", { msg: errDetail(res.error) }), { kind: "error" });
     setZoomPath((p) => (p === target.path ? to : p));
@@ -531,7 +554,9 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
    * and carrying it into a different folder would leave the tab claiming a session whose
    * pictures are no longer on screen. `sort` is a preference for the pane, so it stays.
    *
-   * `tile` is the same kind of preference and stays too.
+   * `tile` is the same kind of preference and stays too. `flat` does NOT: it is a walk of
+   * everything below, and carried up to the browse root it would turn one click on "Home" into
+   * a walk of the whole home folder.
    *
    * `push: true` is what makes the browser's own Back button retrace these steps: the layout
    * store already keeps one history entry per pushed commit (`layout/store.ts`) and restores
@@ -551,6 +576,7 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
         galleryPath: path,
         sort: next,
         ...(tile ? { tile } : {}),
+        ...(flat ? { flat } : {}),
         ...(sessionName ? { gallerySession: sessionName } : {}),
       },
     });
@@ -566,6 +592,22 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
         galleryPath: path,
         ...(sort ? { sort } : {}),
         ...(next !== "m" ? { tile: next } : {}),
+        ...(flat ? { flat } : {}),
+        ...(sessionName ? { gallerySession: sessionName } : {}),
+      },
+    });
+  };
+
+  // Absent is written for "off", like tile's default, so a layout that never touched it and one
+  // that turned it back off read the same.
+  const toggleFlat = () => {
+    setPaneTarget(paneId, {
+      content: {
+        kind: "gallery",
+        galleryPath: path,
+        ...(sort ? { sort } : {}),
+        ...(tile ? { tile } : {}),
+        ...(flat ? {} : { flat: true }),
         ...(sessionName ? { gallerySession: sessionName } : {}),
       },
     });
@@ -624,6 +666,8 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
             {folders.length > 0 && <>{tr("gallery.summary_folders", { n: folders.length })} · </>}
             {tr("gallery.summary", { count: totals.count, size: humanSize(totals.bytes) })}
             {shown.length < totals.count && <> · {tr("gallery.shown", { shown: shown.length, count: totals.count })}</>}
+            {/* The Agent's walk stopped at a bound: say so, or a partial set reads as the whole. */}
+            {flat && truncated && <> · {tr("gallery.flat_truncated", { n: totals.count })}</>}
             {/* Drawn from what this folder looked like last time, with the confirming read still
                 out. Said out loud rather than shown as a spinner over the grid: the cards are
                 real and usable, and the only thing in doubt is whether one more has landed. */}
@@ -699,6 +743,15 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
             </span>
           ))}
         </span>
+        {/* In this row rather than the head: it changes WHICH folders are shown, like the
+            breadcrumb beside it, and the head is already full at a phone's width. */}
+        <IconButton
+          icon="list-flat"
+          label={tr("gallery.flat")}
+          className={"gal-flat" + (flat ? " on" : "")}
+          aria-pressed={!!flat}
+          onClick={toggleFlat}
+        />
         {/* Who made these. A generated folder is named by a UUID, so without this the pane
             cannot say whose pictures it is showing — and the label is the way back to that
             session's conversation, which is where the prompt behind the picture is. Drawn only
@@ -735,7 +788,7 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
           // Where the reader is, kept with the listing, so coming back lands them there. A plain
           // map write (galleryCache.ts) — a scroll handler that set state would re-render the
           // whole grid on every wheel notch.
-          onScroll={(e) => rememberGalleryView(path, { scrollTop: e.currentTarget.scrollTop })}
+          onScroll={(e) => rememberGalleryView(key, { scrollTop: e.currentTarget.scrollTop })}
         >
           <div className={"gal-grid tile-" + (tile ?? "m")} role="list">
             {parent !== null && (
@@ -782,7 +835,9 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
                 onBroken={() => setBroken((b) => new Set(b).add(img.path))}
                 onZoom={() => setZoomPath(img.path)}
                 onOpenPane={() => openPane(img)}
-                onMenu={(x, y) => setMenu({ kind: "image", name: img.name, path: img.path, x, y })}
+                // The file's own name: in a flattened grid `img.name` is "sub/a.png", and the
+                // rename prompt and "copy the file name" want "a.png".
+                onMenu={(x, y) => setMenu({ kind: "image", name: baseName(img.path), path: img.path, x, y })}
                 showTime={mode === "new"}
               />
             ))}
@@ -795,7 +850,7 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
                 onClick={() => {
                   const next = limit + PAGE_SIZE;
                   setLimit(next);
-                  rememberGalleryView(path, { limit: next });
+                  rememberGalleryView(key, { limit: next });
                 }}
               >
                 {tr("gallery.more")}
@@ -854,6 +909,16 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
                 </button>
               </li>
             )}
+            {/* The whole file by path to a session, or attached to an assistant's chat — the
+                file pane's own send (SendSelectionModal), not a transport of the gallery's. A
+                folder is left out: "look at this folder" is not what either path carries. */}
+            {menu.kind === "image" && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => runMenu(() => setSendPath(menu.path))}>
+                  <Icon name="send" /> {tr("gallery.send")}
+                </button>
+              </li>
+            )}
             <li>
               <button
                 type="button"
@@ -899,6 +964,11 @@ export function GalleryView({ paneId, path, sort, tile, focus, sessionName, head
               </button>
             </li>
           </ul>,
+          document.body,
+        )}
+      {sendPath !== null &&
+        createPortal(
+          <SendSelectionModal filePath={sendPath} withAssistants onClose={() => setSendPath(null)} />,
           document.body,
         )}
     </div>

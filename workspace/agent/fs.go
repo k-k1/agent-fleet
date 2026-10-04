@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -406,10 +407,18 @@ func handleFSTree(w http.ResponseWriter, r *http.Request) {
 	peeked, peekDeadline := 0, time.Now().Add(peekBudget)
 	var previewPaths []string
 
+	// The denylist is also checked against the folder as it RESOLVES: a start reached through
+	// a symlink inside the root (alias -> .local/share) would otherwise list, and peek into,
+	// what the denylist hides under the real folder (imagesDenyBase, fs_images.go).
+	denyBase := imagesDenyBase(full)
 	out := []fsEntry{}
 	for _, e := range ents {
 		childRel := filepath.Join(rel, e.Name())
-		if isDenied(childRel) {
+		denyRel := childRel
+		if denyBase != nil {
+			denyRel = path.Join(*denyBase, e.Name())
+		}
+		if isDenied(childRel) || isDenied(denyRel) {
 			continue
 		}
 		fe := fsEntry{Name: e.Name(), Type: "file"}
@@ -429,7 +438,7 @@ func handleFSTree(w http.ResponseWriter, r *http.Request) {
 		if peek > 0 && e.IsDir() && err == nil && peeked < peekMaxDirs && time.Now().Before(peekDeadline) {
 			peeked++
 			childFull := filepath.Join(full, e.Name())
-			res := peekDir(childFull, childRel, fi.ModTime())
+			res := peekDir(childFull, denyRel, fi.ModTime())
 			fe.Images = res.images
 			fe.Preview = res.preview
 			if len(fe.Preview) > peek {

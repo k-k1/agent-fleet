@@ -173,7 +173,9 @@ file and use "Send" in the viewer.
 
 ### Cards in the image gallery
 
-A picture's card offers **copy the path**, **copy the file name**, **rename the file** (within the same
+A picture's card offers **"Send to a session / assistant…"** (the same send as the file viewer's:
+a session gets the file's path, an assistant opens a chat with the file attached and your comment
+drafted), **copy the path**, **copy the file name**, **rename the file** (within the same
 folder — a slash is refused) and **delete the file** (through a confirmation). A folder's card offers the
 same for the folder, plus **"Open in another pane"** (a plain click moves this pane into it), and deleting
 a folder takes everything in it. Where the folder holds a session's generated images, **"Open …, the

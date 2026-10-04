@@ -388,6 +388,10 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "send.send_failed_to": "Failed to send to {name}",
   "send.sent_to": "Sent to {name}",
   "send.title_file": "Send the file to a session",
+  "send.title_file_any": "Send the file to a session / assistant",
+  "send.hint_assistant_file":
+    "Opens a chat with this assistant with the file attached and your comment drafted (you send from the conversation).",
+  "send.ph_image": "e.g. Use this as the reference for the next one. / What is off in this screenshot? (Ctrl+Enter to send)",
   "send.title_selection": "Send the selection to a session / assistant",
   "send.destination": "Destination",
   "send.no_running": "⚠ No running session. Start a session before sending.",

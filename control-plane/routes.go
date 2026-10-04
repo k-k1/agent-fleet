@@ -841,6 +841,9 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	// A picture's width and height from its header — read-only, a bounded header read per
 	// path (workspace/agent/fs_imagesize.go).
 	mux.HandleFunc("POST /api/fs/imagesize", rest)
+	// Every picture under a folder as one flat list — read-only, a walk bounded by depth,
+	// folders, files and time (workspace/agent/fs_images.go).
+	mux.HandleFunc("GET /api/fs/images", rest)
 	mux.HandleFunc("POST /api/fs/upload", rest)
 	mux.HandleFunc("GET /api/fs/changes", rest)
 	mux.HandleFunc("GET /api/fs/linemarks", rest)
