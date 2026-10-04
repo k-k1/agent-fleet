@@ -65,7 +65,7 @@ export const useWorkItemStore = create<WorkItemState>((set) => ({
   reset: () => set({ payload: null, loaded: false, loadErr: "", refreshing: false }),
 }));
 
-const POLL_MS = 60000;
+export const POLL_MS = 60000;
 
 let pending: Promise<void> | null = null;
 let lastTry = 0;
