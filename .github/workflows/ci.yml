@@ -331,6 +331,10 @@ jobs:
       # (missing for one architecture, unreadable index) are pinned here on fixtures.
       - name: Debian package pin check (real script, fixture indexes)
         run: ./deploy/local/apt-pin-check-test.sh
+      # The LAN ComfyUI helper runs on an operator's GPU host, where no CI reaches; its
+      # docker calls, refusals and re-run behaviour are pinned against a stateful fake docker.
+      - name: LAN ComfyUI helper (real script, stub docker / nvidia-smi)
+        run: ./deploy/local/comfyui-lan-stub-test.sh
 
   console:
     needs: changes

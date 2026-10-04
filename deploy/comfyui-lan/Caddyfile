@@ -1,0 +1,24 @@
+# Bearer check in front of a LAN ComfyUI, started by comfyui-lan.sh --api-key-file.
+#
+# ComfyUI has no authentication of its own and its API changes things (/prompt,
+# /upload/image), so this proxy is what makes "only the Control Plane can use it" true on a
+# network the operator does not otherwise close (ADR 0076 decision 7). The CP presents the
+# same key as `Authorization: Bearer` on every call, the /system_stats health check
+# included, which is why no path is exempt here.
+#
+# {$...} is substituted from the container's environment when Caddy reads this file;
+# comfyui-lan.sh passes both values with `docker run -e` and recreates the proxy when the
+# key changes.
+{
+	admin off
+}
+
+http://:8188 {
+	@authorized header Authorization "Bearer {$AF_COMFY_LAN_KEY}"
+	handle @authorized {
+		reverse_proxy {$AF_COMFY_LAN_UPSTREAM}
+	}
+	handle {
+		respond "unauthorized" 401
+	}
+}
