@@ -11,6 +11,7 @@ const rawJSON = vi.fn();
 const raw = vi.fn();
 
 vi.mock("../../../core/api/client.ts", () => ({
+  getTenant: () => "",
   api: vi.fn(async (path: string) => (path === "api/gcp/profiles" ? rows : {})),
   apiJSON: vi.fn(),
   raw: (...a: unknown[]) => raw(...a),

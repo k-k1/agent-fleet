@@ -17,6 +17,13 @@ export function setCachedConns(c: ConnectionsStatus | null): void {
   for (const fn of subs) fn();
 }
 
+/** Forgets the snapshot: it describes one tenant's workspace and is wrong for the next. */
+export function clearCachedConns(): void {
+  if (!cached) return;
+  cached = null;
+  for (const fn of subs) fn();
+}
+
 export function getCachedConns(): ConnectionsStatus | null {
   return cached;
 }

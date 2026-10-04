@@ -21,6 +21,7 @@ import { useDismiss } from "../../lib/useDismiss.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
 import { useFilesStore } from "../files/store.ts";
 import { REVALIDATE_GAP_MS } from "../files/refreshPolicy.ts";
 import { MiddleEllipsis } from "../files/MiddleEllipsis.tsx";
@@ -152,6 +153,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   const running = useWorkspaceStore((s) => s.state) === "running";
   const reveal = useFilesStore((s) => s.reveal);
   const filesTick = useFilesStore((s) => s.tick);
+  const tenant = useTenantStore((s) => s.tenant);
   const scopedRefresh = useFilesStore((s) => s.scoped);
   const q = useFilesFilter((s) => s.q);
   const nq = normQuery(q);
@@ -234,12 +236,23 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   // Right after a WS start the agent is unreachable and fsList returns {error: http_5xx}
   // (fsList's .catch only takes real exceptions). A transient failure while running is retried
   // with backoff; while stopped the result is settled as empty, to avoid pointless polling.
+  // A tenant switch is a different workspace: its listing replaces the old one, and the old
+  // expansion, selection and cached dirs name paths that may not exist there.
+  const loadedTenantRef = useRef(tenant);
   useRetryLoad(async (signal) => {
+    const switched = loadedTenantRef.current !== tenant;
+    if (switched) {
+      loadedTenantRef.current = tenant;
+      setEntries(null);
+      setOpen(new Set());
+      setCache({});
+      setSelected(null);
+    }
     const r = await fsList(root);
     if (signal.aborted) return true;
     if (isTransientErr(r) && running) return false; // WS agent still booting — retry
     setEntries(r.entries || []);
-    const opened = [...open];
+    const opened = switched ? [] : [...open];
     if (opened.length) {
       const pairs = await Promise.all(opened.map(async (p) => [p, (await fsList(p)).entries || []] as const));
       if (signal.aborted) return true;
@@ -250,7 +263,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
       });
     }
     return true;
-  }, [root, filesTick, running]);
+  }, [root, filesTick, running, tenant]);
 
   // Hold the rows that just appeared, then let them go. Each path keeps its own
   // timer so a second batch does not cut the first one's highlight short.

@@ -12,6 +12,7 @@ let attemptReply: Json = { phase: "starting" };
 let profilesFail: "" | "throw" | "error" = "";
 
 vi.mock("../../core/api/client.ts", () => ({
+  getTenant: () => "",
   api: vi.fn(async (path: string) => {
     calls.push({ path, method: "GET" });
     if (path === "api/aws-login") return { requests: [] };

@@ -3,7 +3,7 @@
 // conversation history list. Picking an assistant opens a DRAFT — nothing is
 // persisted until the first message. Port onto the zustand stores.
 import { createPortal } from "react-dom";
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -14,6 +14,7 @@ import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { isTransientErr, type ApiError } from "../../core/api/client.ts";
 import { copyText } from "../../lib/clipboard.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
 import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -45,6 +46,7 @@ export const AssistantSection = memo(function AssistantSection() {
   const chatListTick = useChatStore((s) => s.listTick);
   const chatBusy = useChatStore((s) => s.busy);
   const running = useWorkspaceStore((s) => s.state) === "running";
+  const tenant = useTenantStore((s) => s.tenant);
   const multiPane = paneCount(layout) > 1;
   // Which chats are on screen, and which one the focused pane is showing. Ordinal badges
   // stay a split-only affordance, but the open/current marks apply with a single pane too
@@ -96,8 +98,13 @@ export const AssistantSection = memo(function AssistantSection() {
       setAssistants(a?.assistants || []);
       return true;
     },
-    [chatListTick, running],
+    // tenant: the chat list and the assistants are the workspace's, and a switch between two
+    // running workspaces bumps neither of the other deps.
+    [chatListTick, running, tenant],
   );
+  // The assistants are local state: drop the previous tenant's until the load above answers.
+  // (The conversation list is the store's, which App resets.)
+  useEffect(() => setAssistants([]), [tenant]);
 
   useDismiss([pickerRef, pickerMenuRef], pickerOpen, () => setPickerOpen(false));
   // Anchor the popover below the new-chat button, viewport-clamped.

@@ -12,6 +12,7 @@ let agentRequests: Json[] = [];
 const asked: string[] = [];
 
 vi.mock("../../core/api/client.ts", () => ({
+  getTenant: () => "",
   api: vi.fn(async (path: string) => {
     asked.push(path);
     if (path === "api/gcp/profiles") return settingsRows;

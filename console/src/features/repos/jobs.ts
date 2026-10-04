@@ -11,7 +11,7 @@
 //     the outcome is seen puts us back at "it failed silently".
 //   - Polling speeds up only while something runs (2s); otherwise 60s, like the repo list.
 import { create } from "zustand";
-import { api, isTransientErr, raw } from "../../core/api/client.ts";
+import { api, getTenant, isTransientErr, raw } from "../../core/api/client.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { useReposStore } from "./store.ts";
 
@@ -46,6 +46,8 @@ interface RepoJobsStore {
   /** Re-fetch the list. A transient failure (the 502 right after a start) keeps the previous
    *  contents. */
   refresh(): Promise<RepoJob[]>;
+  /** Drops the list and any request in flight: both belong to the tenant that was active. */
+  reset(): void;
   /** Cancel while running, acknowledge once settled (both DELETE /api/repo-jobs/{id}). */
   remove(id: string): Promise<void>;
   /** Wait until id is no longer running. null when the job is gone. */
@@ -60,15 +62,20 @@ export const useRepoJobsStore = create<RepoJobsStore>((set, get) => ({
   jobs: [],
   refresh() {
     if (inflight) return inflight;
-    inflight = (async () => {
+    const tenant = getTenant();
+    let p!: Promise<RepoJob[]>;
+    p = (async () => {
       let d: { jobs?: RepoJob[] };
       try {
         d = await api("api/repo-jobs");
       } catch {
         return get().jobs; // network drop — keep what we have
       } finally {
-        inflight = null;
+        // Not unconditional: after reset() a newer request owns the slot.
+        if (inflight === p) inflight = null;
       }
+      // The list describes the tenant that was active when it was asked.
+      if (getTenant() !== tenant) return get().jobs;
       if (isTransientErr(d)) return get().jobs;
       const jobs = Array.isArray(d.jobs) ? d.jobs : [];
       const before = get().jobs;
@@ -80,7 +87,12 @@ export const useRepoJobsStore = create<RepoJobsStore>((set, get) => ({
       if (settled) void useReposStore.getState().refresh();
       return jobs;
     })();
-    return inflight;
+    inflight = p;
+    return p;
+  },
+  reset() {
+    inflight = null;
+    set({ jobs: [] });
   },
   async remove(id) {
     await raw(`api/repo-jobs/${encodeURIComponent(id)}`, { method: "DELETE" });

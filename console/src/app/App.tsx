@@ -25,6 +25,9 @@ import { useSessionsStore, startSessionsPolling } from "../features/sessions/sto
 import { wireSessionPaneReconcile } from "../features/sessions/paneReconcile.ts";
 import { SessionModals } from "../features/sessions/SessionModals.tsx";
 import { AwsLoginHost } from "../features/awslogin/AwsLoginHost.tsx";
+import { useAwsLoginStore } from "../features/awslogin/store.ts";
+import { useGcpLoginStore } from "../features/gcplogin/store.ts";
+import { clearCachedConns } from "../features/repos/connsCache.ts";
 import { GcpLoginHost } from "../features/gcplogin/GcpLoginHost.tsx";
 import { AuthExpiredModal } from "../features/auth/AuthExpiredModal.tsx";
 import { ProviderRequiredModal } from "../features/auth/ProviderRequiredModal.tsx";
@@ -32,7 +35,7 @@ import { NotProvisioned } from "../features/auth/NotProvisioned.tsx";
 import { WsStartingDialog } from "./WsStartingDialog.tsx";
 import { useSessionNotifications } from "../features/sessions/useSessionNotifications.ts";
 import { useReposStore, startReposPolling } from "../features/repos/store.ts";
-import { startRepoJobsPolling } from "../features/repos/jobs.ts";
+import { startRepoJobsPolling, useRepoJobsStore } from "../features/repos/jobs.ts";
 import { useFilesStore } from "../features/files/store.ts";
 import { wireFilesSessionRefresh } from "../features/files/sessionRefresh.ts";
 import { useChatStore, startChatPolling } from "../features/chat/store.ts";
@@ -371,6 +374,21 @@ export function App() {
       // The rail's repos are the previous tenant's workspace. When both workspaces are running
       // no running edge fires, so nothing else drops them; ProjectTree reloads on the switch.
       useReposStore.getState().clear();
+      // Same for the other workspace-proxied snapshots: the Agent's answers (connections, import
+      // jobs, cloud logins, the chat list) are not keyed on the tenant, so drop and re-ask. The
+      // FILES tree, the connection hook and the chat rail reload on the tenant themselves.
+      clearCachedConns();
+      useRepoJobsStore.getState().reset();
+      void useRepoJobsStore.getState().refresh();
+      useChatStore.getState().resetConvs();
+      const aws = useAwsLoginStore.getState();
+      aws.reset();
+      void aws.refresh();
+      void aws.refreshExpiry();
+      const gcp = useGcpLoginStore.getState();
+      gcp.reset();
+      void gcp.refresh();
+      void gcp.refreshProfiles();
     }
     prefsSyncedTenantRef.current = tenant;
     // pane ids are tab-local, not tenant-global. Never carry an ephemeral Page

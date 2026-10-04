@@ -4,7 +4,7 @@
 // Agent joins with Settings. An id the Agent does not list shows nothing, and nothing here
 // ever holds an attempt id: only the modal's own press does (useGcpLoginAttempt).
 import { create } from "zustand";
-import { api } from "../../core/api/client.ts";
+import { api, getTenant } from "../../core/api/client.ts";
 
 export interface GcpLoginWaiter {
   session?: string;
@@ -50,6 +50,8 @@ interface GcpLoginState {
   /** The request whose login modal is open, if any. */
   modal: string | null;
   refresh(): Promise<void>;
+  /** Back to the never-asked state: everything here describes the previous tenant's workspace. */
+  reset(): void;
   hide(id: string): void;
   open(id: string): void;
   close(): void;
@@ -93,6 +95,7 @@ export const useGcpLoginStore = create<GcpLoginState>((set, get) => ({
   hidden: {},
   modal: null,
   async refresh() {
+    const tenant = getTenant();
     let d: { requests?: unknown[]; error?: unknown } | null = null;
     try {
       d = await api("api/gcp-login");
@@ -100,7 +103,12 @@ export const useGcpLoginStore = create<GcpLoginState>((set, get) => ({
       return; // a dropped connection proves nothing; the next poll asks again
     }
     if (!d || d.error || !Array.isArray(d.requests)) return;
+    if (getTenant() !== tenant) return; // asked under the previous tenant
     set({ requests: d.requests.map(asRequest).filter((r): r is GcpLoginRequest => r !== null) });
+  },
+  reset() {
+    clearTimeout(syncTimer);
+    set({ requests: [], hidden: {}, modal: null, profiles: null, profileModal: null });
   },
   hide(id) {
     set((s) => ({ hidden: { ...s.hidden, [id]: true } }));
@@ -113,6 +121,7 @@ export const useGcpLoginStore = create<GcpLoginState>((set, get) => ({
   },
   profiles: null,
   async refreshProfiles() {
+    const tenant = getTenant();
     let d: { profiles?: unknown[]; error?: unknown } | null = null;
     try {
       d = await api("api/gcp-login/profiles");
@@ -120,6 +129,7 @@ export const useGcpLoginStore = create<GcpLoginState>((set, get) => ({
       return;
     }
     if (!d || d.error || !Array.isArray(d.profiles)) return;
+    if (getTenant() !== tenant) return; // asked under the previous tenant
     const profiles: GcpProfileState[] = [];
     for (const raw of d.profiles) {
       const p = raw as Record<string, unknown>;
