@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"image"
 	"image/color"
@@ -185,5 +186,116 @@ func TestImageSizeCapsThePathsPerRequest(t *testing.T) {
 	}
 	if _, ok := got[paths[len(paths)-1]]; ok {
 		t.Errorf("a path past the cap was answered")
+	}
+}
+
+// withExifOrientation inserts an APP1 "Exif" segment carrying only IFD0's Orientation right
+// after the SOI marker, which is where cameras and phones put it.
+func withExifOrientation(t *testing.T, jpg []byte, orient uint16, bigEndian bool) []byte {
+	t.Helper()
+	tiff := []byte{'I', 'I', 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, byte(orient), byte(orient >> 8), 0, 0, 0, 0, 0, 0}
+	if bigEndian {
+		tiff = []byte{'M', 'M', 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, byte(orient >> 8), byte(orient), 0, 0, 0, 0, 0, 0}
+	}
+	payload := append([]byte("Exif\x00\x00"), tiff...)
+	n := len(payload) + 2
+	seg := append([]byte{0xFF, 0xE1, byte(n >> 8), byte(n)}, payload...)
+	out := append([]byte{}, jpg[:2]...)
+	out = append(out, seg...)
+	return append(out, jpg[2:]...)
+}
+
+// A phone's portrait JPEG is stored landscape with Orientation 6; the browser draws it upright,
+// so the size the reader sees has the two edges swapped. 1-4 keep the stored edges.
+func TestImageSizeAppliesExifOrientation(t *testing.T) {
+	root := thumbRoots(t)
+	img := image.NewRGBA(image.Rect(0, 0, 640, 480))
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name   string
+		orient uint16
+		big    bool
+		w, h   int
+	}{
+		{"r6.jpg", 6, false, 480, 640},
+		{"r8.jpg", 8, true, 480, 640},
+		{"r5.jpg", 5, false, 480, 640},
+		{"r3.jpg", 3, false, 640, 480},
+		{"r1.jpg", 1, true, 640, 480},
+	}
+	var paths []string
+	for _, c := range cases {
+		if err := os.WriteFile(filepath.Join(root, c.name), withExifOrientation(t, buf.Bytes(), c.orient, c.big), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, c.name)
+	}
+	got := imageSizeRequest(t, paths...)
+	for _, c := range cases {
+		if g := got[c.name]; g.W != c.w || g.H != c.h {
+			t.Errorf("%s (orientation %d) = %dx%d, want %dx%d", c.name, c.orient, g.W, g.H, c.w, c.h)
+		}
+	}
+}
+
+// Malformed or truncated EXIF is "no orientation", never a panic or a swapped size.
+func TestJPEGOrientationToleratesGarbage(t *testing.T) {
+	for _, b := range [][]byte{
+		nil,
+		{0xFF, 0xD8},
+		{0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x40, 'E', 'x', 'i', 'f', 0, 0},
+		{0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x10, 'E', 'x', 'i', 'f', 0, 0, 'I', 'I', 42, 0, 0xFF, 0xFF, 0xFF, 0x7F},
+		{0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x01},
+	} {
+		if got := jpegOrientation(b); got != 0 {
+			t.Errorf("jpegOrientation(%v) = %d, want 0", b, got)
+		}
+	}
+}
+
+// tiffIFD0 builds a TIFF header and an IFD0 holding one Orientation entry, with every field the
+// parser has to check set by the caller.
+func tiffIFD0(big bool, magic, typ uint16, count uint32, orient uint16) []byte {
+	var bo binary.ByteOrder = binary.LittleEndian
+	head := []byte("II")
+	if big {
+		bo, head = binary.BigEndian, []byte("MM")
+	}
+	t := make([]byte, 8+2+12+4)
+	copy(t, head)
+	bo.PutUint16(t[2:], magic)
+	bo.PutUint32(t[4:], 8)
+	bo.PutUint16(t[8:], 1)
+	bo.PutUint16(t[10:], 0x0112)
+	bo.PutUint16(t[12:], typ)
+	bo.PutUint32(t[14:], count)
+	bo.PutUint16(t[18:], orient)
+	return t
+}
+
+// Only a well-formed tag counts: the TIFF magic, type SHORT and count 1, in either byte order.
+// Anything else must not swap a picture's edges.
+func TestTiffOrientationRejectsMalformedTag(t *testing.T) {
+	for _, big := range []bool{false, true} {
+		if got := tiffOrientation(tiffIFD0(big, 42, 3, 1, 6)); got != 6 {
+			t.Fatalf("big=%v well-formed: %d, want 6", big, got)
+		}
+		for name, tiff := range map[string][]byte{
+			"magic 0":  tiffIFD0(big, 0, 3, 1, 6),
+			"type 0":   tiffIFD0(big, 42, 0, 1, 6),
+			"type 4":   tiffIFD0(big, 42, 4, 1, 6),
+			"count 9":  tiffIFD0(big, 42, 3, 9, 6),
+			"count 0":  tiffIFD0(big, 42, 3, 0, 6),
+			"value 9":  tiffIFD0(big, 42, 3, 1, 9),
+			"value 0":  tiffIFD0(big, 42, 3, 1, 0),
+			"cut tail": tiffIFD0(big, 42, 3, 1, 6)[:20],
+		} {
+			if got := tiffOrientation(tiff); got != 0 {
+				t.Errorf("big=%v %s: %d, want 0", big, name, got)
+			}
+		}
 	}
 }

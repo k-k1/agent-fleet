@@ -175,7 +175,7 @@ elsewhere:
   included), transcripts and the usage records ([04 §4.2](04-agent.md),
   [04 §4.7](04-agent.md)), and the past-session search index, which is a rebuildable copy
   of the transcripts' conversation text
-  ([decisions/0109](../decisions/0109-past-session-search.md)). **User secrets** are in the encrypted store on the same home
+  ([decisions/0110](../decisions/0110-past-session-search.md)). **User secrets** are in the encrypted store on the same home
   ([07 §7.6](07-security.md)).
 - **Where the home physically lives** depends on the deployment target
   ([09](09-deploy.md)).

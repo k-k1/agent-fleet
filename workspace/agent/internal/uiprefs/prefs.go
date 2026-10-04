@@ -239,7 +239,7 @@ func FleetSpawn() bool {
 	return v
 }
 
-// SessionSearch is the ON/OFF for the af MCP's search_sessions (ADR 0109 decision 6, ui-prefs
+// SessionSearch is the ON/OFF for the af MCP's search_sessions (ADR 0110 decision 6, ui-prefs
 // sessionSearch). Missing/invalid ⇒ **true**, unlike the switches above: it only reads, and what
 // it reads — this user's own transcripts — a session's shell can already open as the same uid.
 // The switches that default off guard writing into other sessions or spending quota and host

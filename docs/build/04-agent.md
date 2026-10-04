@@ -467,7 +467,7 @@ The same approach as cmux.
     another. The seven Chromium attach tools come with `--chromium-attach`.
   - The user's preferences add `--peer-messaging`, `--image-gen`, `--fleet-spawn` and
     `--session-search` (`builtinRunArgsFor`). The last one defaults on and advertises
-    `search_sessions` (ADR 0109).
+    `search_sessions` (ADR 0110).
   - Anything not advertised is refused on call too (`mcpAdvertised`).
 - **Unattended approval for codex**: a headless chat has no approval UI. Besides
   `-a never`, the attached MCP servers are set to

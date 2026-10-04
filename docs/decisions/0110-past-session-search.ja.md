@@ -1,6 +1,6 @@
-# 0109. 過去セッションの検索：Workspace 内の FTS5 索引を会話本文だけで作り、af MCP で全種別に配る
+# 0110. 過去セッションの検索：Workspace 内の FTS5 索引を会話本文だけで作り、af MCP で全種別に配る
 
-[English](0109-past-session-search.md) | 日本語
+[English](0110-past-session-search.md) | 日本語
 
 - 状態: **accepted**（2026-10-04）。Agent 側（索引・REST・`search_sessions` ツール）は作った。Console の
   検索ボックスと設定のスイッチは #1558 の第 2 段である。以下の数値は 2026-10-04 に 1 つの Workspace

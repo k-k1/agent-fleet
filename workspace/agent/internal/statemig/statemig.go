@@ -109,7 +109,7 @@ var Entries = []string{
 	// AF's own mirror of each muse conversation, written from the live item stream
 	// (transcript.go explains why muse's own at-rest file cannot be read instead).
 	"muse-transcripts",
-	// The past-session search index (sessionsearch, ADR 0109), a rebuildable cache. Introduced
+	// The past-session search index (sessionsearch, ADR 0110), a rebuildable cache. Introduced
 	// directly under AgentStateDir; it never existed under .config.
 	"session-search",
 	// Chat bridge: the outbound queue and the per-provider binding ledgers.

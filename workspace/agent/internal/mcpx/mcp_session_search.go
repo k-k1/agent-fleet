@@ -8,7 +8,7 @@ import (
 )
 
 // mcpToolSearchSessions is the session-side face of GET /session-search and
-// /session-search/turns (ADR 0109): one tool with two modes rather than two tools, because every
+// /session-search/turns (ADR 0110): one tool with two modes rather than two tools, because every
 // advertised description is a fixed cost on every session's first turn.
 const mcpToolSearchSessions = "search_sessions"
 

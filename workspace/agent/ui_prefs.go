@@ -308,7 +308,7 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	// configs twice for a PUT that flipped both would be pure noise in the log.
 	// Session steering (ADR 0073) joins them for the same reason: --fleet-spawn is the third
 	// launch argument of that one server. (Fleet observation was the fourth until it stopped
-	// being a setting at all.) Past-session search (ADR 0109) is --session-search, the same shape.
+	// being a setting at all.) Past-session search (ADR 0110) is --session-search, the same shape.
 	if uiprefs.PeerMessaging() != peerBefore || uiprefs.ImageGeneration() != imageGenBefore ||
 		uiprefs.FleetSpawn() != fleetSpawnBefore || uiprefs.SessionSearch() != sessionSearchBefore {
 		mcpx.MaterializeAll()

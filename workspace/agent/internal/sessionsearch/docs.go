@@ -21,7 +21,7 @@ type Doc struct {
 }
 
 // DocsFromTurns picks out the conversation from a transcript. Kept: text, plans, and asked
-// questions with their answers. Left out, by decision (ADR 0109 decision 3):
+// questions with their answers. Left out, by decision (ADR 0110 decision 3):
 //   - tool calls and their output — the bulk of a transcript, mostly file contents and command
 //     output, and the likeliest place for a secret to sit;
 //   - thinking, subagent sidechains and delegation prompts — the agent talking to itself or to a

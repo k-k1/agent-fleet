@@ -161,7 +161,7 @@ func trashSession(m session.Meta, stop bool) (string, string, error) {
 		}
 	}
 	sessionx.ForgetRuntime(m)
-	sessionsearch.Forget(m.Name) // the trash bundle is now the only copy of its text (ADR 0109)
+	sessionsearch.Forget(m.Name) // the trash bundle is now the only copy of its text (ADR 0110)
 	removeSessionSideFiles(m.Name)
 	removeTerminalHistory(m.Name)
 	invalidateCleanupUsage() // the trash just grew

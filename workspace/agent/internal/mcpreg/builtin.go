@@ -117,7 +117,7 @@ var FleetSpawnEnabled func() bool
 
 func fleetSpawnOn() bool { return FleetSpawnEnabled != nil && FleetSpawnEnabled() }
 
-// SessionSearchEnabled is the hook for past-session search (ADR 0109 decision 6). Unlike the
+// SessionSearchEnabled is the hook for past-session search (ADR 0110 decision 6). Unlike the
 // three above it defaults ON in uiprefs; a nil hook still reads as off, so a process that never
 // wired it (a test, a tool) does not advertise a tool nobody decided to offer.
 var SessionSearchEnabled func() bool

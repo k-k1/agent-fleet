@@ -94,7 +94,7 @@ func TestFleetSpawnDefaultsOff(t *testing.T) {
 	}
 }
 
-// Past-session search defaults ON (ADR 0109 decision 6); only an explicit false turns it off.
+// Past-session search defaults ON (ADR 0110 decision 6); only an explicit false turns it off.
 func TestSessionSearchDefaultsOn(t *testing.T) {
 	for _, c := range []struct {
 		name  string

@@ -2,7 +2,7 @@ package mcpreg
 
 import "testing"
 
-// Past-session search reaches the session-side server only through --session-search (ADR 0109
+// Past-session search reaches the session-side server only through --session-search (ADR 0110
 // decision 6). The preference defaults on in uiprefs, but an unwired hook here still reads off.
 func TestSessionSearchRunArg(t *testing.T) {
 	old := SessionSearchEnabled

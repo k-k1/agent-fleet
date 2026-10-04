@@ -1,6 +1,6 @@
-# 0109. Past-session search: an FTS5 index inside the workspace, over conversation text only, offered to every kind through the af MCP
+# 0110. Past-session search: an FTS5 index inside the workspace, over conversation text only, offered to every kind through the af MCP
 
-English | [日本語](0109-past-session-search.ja.md)
+English | [日本語](0110-past-session-search.ja.md)
 
 - Status: **accepted** (2026-10-04). The Agent side (index, REST, the `search_sessions` tool) is
   built. The Console's search box and the Settings switch are the second step of #1558. The

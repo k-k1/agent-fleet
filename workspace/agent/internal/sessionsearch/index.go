@@ -1,5 +1,5 @@
 // Package sessionsearch is full-text search over past sessions' conversations, every agent kind
-// alike (ADR 0109). The index is an SQLite FTS5 file under the Agent's state directory; it is a
+// alike (ADR 0110). The index is an SQLite FTS5 file under the Agent's state directory; it is a
 // cache of the transcripts, which stay where each CLI keeps them, so deleting it is always safe
 // and the next pass rebuilds it.
 package sessionsearch
