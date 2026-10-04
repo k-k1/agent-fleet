@@ -63,13 +63,13 @@ function foldBtn() {
   return host!.querySelector<HTMLButtonElement>(".ws-fold-btn");
 }
 
-async function mount() {
-  host = document.createElement("div");
+async function mount(props: { squeeze?: boolean; onLayoutChange?: (key: string) => void } = {}) {
+  host ??= document.createElement("div");
   document.body.append(host);
-  root = createRoot(host);
+  root ??= createRoot(host);
   await act(async () => {
     root!.render(
-      <UsageChipFold>
+      <UsageChipFold {...props}>
         <>
           {USAGE_SOURCES.map((s) => (
             <UsageChip key={s.endpoint} src={s} tenant="t" />
@@ -225,6 +225,42 @@ describe("WS bar usage chips: folding", () => {
     await act(async () => foldBtn()!.click()); // close +N
     await act(async () => foldBtn()!.click()); // and open it again
     expect(museBtn()!.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  // Squeezed by the bar (wsBarFold.ts) and then widened: the +N disappears with its popover
+  // open. Its state must go too — left "open", the dismiss layer eats the next click, and the
+  // next squeeze would bring the popover back by itself.
+  it("drops an open +N when nothing is left to fold", async () => {
+    api.mockImplementation((path: string) => {
+      if (path.startsWith("api/claude/usage")) return Promise.resolve(calm(14, 70));
+      if (path.startsWith("api/codex/usage")) return Promise.resolve(calm(33, 27));
+      return Promise.resolve(signedOut);
+    });
+    await mount({ squeeze: true });
+    expect(foldBtn()!.textContent).toContain("+2");
+    await act(async () => foldBtn()!.click());
+    expect(host!.querySelector(".ws-fold-pop")).not.toBeNull();
+    await mount({ squeeze: false });
+    expect(foldBtn()).toBeNull();
+    await mount({ squeeze: true });
+    expect(foldBtn()!.getAttribute("aria-expanded")).toBe("false");
+    expect(host!.querySelector(".ws-fold-pop")).toBeNull();
+  });
+
+  // The bar re-learns what squeezing saves when this key changes. Pinning a chip that is
+  // already on the roomy bar leaves that layout alone and changes only the squeezed one.
+  it("reports a layout change that only the squeezed bar sees", async () => {
+    const keys: string[] = [];
+    const onLayoutChange = (k: string) => void keys.push(k);
+    await mount({ squeeze: true, onLayoutChange });
+    const before = keys.at(-1);
+    expect(before).toBe("claude,codex|");
+    await act(async () => setSettings({ usageChipsPinned: ["claude"] }));
+    expect(keys.at(-1)).toBe("claude,codex|claude");
+    // And squeezing itself is not a change: the bar's measuring unfold must not re-trigger it.
+    const n = keys.length;
+    await mount({ squeeze: false, onLayoutChange });
+    expect(keys.length).toBe(n);
   });
 
   it("honours a pin on an agent nobody has run lately", async () => {

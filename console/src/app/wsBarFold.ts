@@ -111,7 +111,7 @@ export function useWsBarFold(
   usageRef.current = foldUsage;
   // saving: width the last usage fold freed, null once it is no longer known. pending: the
   // unfolded width at MORE, recorded when the fold is asked for and turned into `saving`
-  // once React has rendered it. key: which chips would sit on the bar unfolded.
+  // once React has rendered it. key: UsageChipFold's two layouts.
   const mem = useRef<{ saving: number | null; pending: number | null; key: string }>({ saving: 0, pending: null, key: "" });
 
   const settle = useCallback(() => {
@@ -145,8 +145,8 @@ export function useWsBarFold(
     setFoldMore(plan.step >= STEP_MORE);
   }, [barRef, measureWidth]);
 
-  // UsageChipFold reports which chips would sit on the bar unfolded; pinning one, or one
-  // going near its cap, changes what folding them saves.
+  // UsageChipFold reports which chips sit on the bar squeezed and unsqueezed; pinning one, or
+  // one going near its cap, changes what squeezing saves.
   const noteUsageLayout = useCallback(
     (key: string) => {
       const m = mem.current;

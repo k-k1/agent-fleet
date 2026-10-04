@@ -961,23 +961,22 @@ const USAGE_CHIP_ORDER: string[] = [...USAGE_SOURCES.map((s) => s.kind as string
 // themselves only report what they are (see useChipSlot).
 // `squeeze`: the bar is out of width (app/wsBarFold.ts), so no chip keeps an auto-ranked slot;
 // pinned and near-cap chips still do, since those are the user's word and a warning.
-// `onUnfoldedChange` hears which chips would sit on the bar without the squeeze, so the bar
+// `onLayoutChange` hears which chips sit on the bar with and without the squeeze, so the bar
 // knows when what squeezing saves has changed.
 export function UsageChipFold({
   children,
   squeeze = false,
-  onUnfoldedChange,
+  onLayoutChange,
 }: {
   children: ReactElement;
   squeeze?: boolean;
-  onUnfoldedChange?: (key: string) => void;
+  onLayoutChange?: (key: string) => void;
 }) {
   const tr = useT();
   const [reports, setReports] = useState<Record<string, ChipReport>>({});
   const [open, setOpen] = useState(false);
   const [host, setHost] = useState<HTMLDivElement | null>(null);
   const ref = useRef<HTMLDivElement>(null);
-  useDismiss(ref, open, () => setOpen(false));
   const settings = useSettings();
 
   // Stable identity: a report() that changed every render would re-fire every chip's
@@ -1010,11 +1009,23 @@ export function UsageChipFold({
     folded: settings.usageChipsFolded,
     stamps,
   };
-  const plan = planUsageChips({ ...planInput, inline: squeeze ? 0 : AUTO_INLINE });
-  const unfoldedKey = (squeeze ? planUsageChips({ ...planInput, inline: AUTO_INLINE }) : plan).bar.join(",");
+  const roomy = planUsageChips({ ...planInput, inline: AUTO_INLINE });
+  const tight = planUsageChips({ ...planInput, inline: 0 });
+  const plan = squeeze ? tight : roomy;
+  // Both layouts, whichever is drawn: what squeezing saves is the difference between them,
+  // and a pin or a near-cap chip can change the squeezed one alone. Not keyed on `squeeze`,
+  // or the bar's own measuring unfold/refold would look like a change.
+  const layoutKey = roomy.bar.join(",") + "|" + tight.bar.join(",");
   useEffect(() => {
-    onUnfoldedChange?.(unfoldedKey);
-  }, [onUnfoldedChange, unfoldedKey]);
+    onLayoutChange?.(layoutKey);
+  }, [onLayoutChange, layoutKey]);
+  // The +N vanishes when nothing is left to fold (the bar widened, a pin): its popover goes
+  // with it, so its state and dismiss layer must too, or the next click anywhere is eaten.
+  const hasFold = plan.fold.length > 0;
+  useDismiss(ref, open && hasFold, () => setOpen(false));
+  useEffect(() => {
+    if (!hasFold) setOpen(false);
+  }, [hasFold]);
   const foldSet = new Set(plan.fold);
   const value: FoldCtxValue = {
     report,
@@ -1910,7 +1921,7 @@ export function WsBar() {
         <>
           {/* Desktop only: on a phone these already sit in the ⋯ overflow, a vertical list
               with room for all of them — folding a list into a list would only bury them. */}
-          <UsageChipFold squeeze={foldUsage} onUnfoldedChange={noteUsageLayout}>
+          <UsageChipFold squeeze={foldUsage} onLayoutChange={noteUsageLayout}>
             {usageChips}
           </UsageChipFold>
           {/* Outside the fold: that group ranks agents by use, and these are not agents. */}
