@@ -27,7 +27,8 @@ import { openGeneratedGallery } from "../gallery/open.ts";
 import { openFleetGraph } from "../fleetgraph/open.ts";
 import { useMemoStore } from "../memo/store.ts";
 import { useSettingsUI } from "../settings/store.ts";
-import { getSettings, setSetting, defaultSetting } from "../../lib/settings.ts";
+import { getSettings, setSetting, setSettings, defaultSetting } from "../../lib/settings.ts";
+import { notifyCell, notifyCellPatch } from "../notifications/prefs.ts";
 import { fontSettingFor, stepFontSize } from "../../lib/viewFont.ts";
 import type { FontSetting } from "../../lib/viewFont.ts";
 import { cycleActiveWorkingSet, workingSetList } from "../../lib/workingSetsStore.ts";
@@ -251,10 +252,14 @@ function toggleTtsSessionNotify(): void {
   toast(t(next ? "keys.toast.ttsSessionOn" : "keys.toast.ttsSessionOff"), { kind: "success" });
 }
 
-// Toggle the limit-reset voice notification (Settings › Notifications).
+// Toggle the limit-reset notification row (Settings › Notifications): its OS notification and
+// read-aloud cells together, as the single switch this command was written for did. Off when
+// either is on, so one press always silences it.
 function toggleUsageResetNotify(): void {
-  const next = !getSettings().usageResetNotify;
-  setSetting("usageResetNotify", next);
+  const s = getSettings();
+  const next = !(notifyCell(s, "usage-reset", "os") || notifyCell(s, "usage-reset", "voice"));
+  const first = notifyCellPatch(s, "usage-reset", "os", next);
+  setSettings({ ...first, ...notifyCellPatch({ ...s, ...first }, "usage-reset", "voice", next) });
   toast(t(next ? "keys.toast.usageResetOn" : "keys.toast.usageResetOff"), { kind: "success" });
 }
 

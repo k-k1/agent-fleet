@@ -4,7 +4,8 @@
 // stop(). The engine (features/chat/tts.ts) calls setActive/setSpeaking from outside React.
 import { create } from "zustand";
 import type { TtsController } from "../../features/chat/tts.ts";
-import { getSettings, setSetting } from "../../lib/settings.ts";
+import { getSettings, setSetting, setSettings } from "../../lib/settings.ts";
+import { notifyCellPatch } from "../../features/notifications/prefs.ts";
 import { toast } from "../../ui/toast.ts";
 import { t } from "../../lib/i18n/index.ts";
 
@@ -46,7 +47,7 @@ export function toggleTtsPlayback(): void {
   if (busy) {
     st.stop();
     if (st.purpose === "session-notification") setSetting("ttsSessionNotify", false);
-    else if (st.purpose === "usage-notification") setSetting("usageResetNotify", false);
+    else if (st.purpose === "usage-notification") setSettings(notifyCellPatch(getSettings(), "usage-reset", "voice", false));
     else if (st.purpose !== "manual") setSetting("ttsEnabled", false);
     // Pressed while playing = "silence it now": report the stop rather than a specific
     // on/off, since which switch flipped depends on what was playing.

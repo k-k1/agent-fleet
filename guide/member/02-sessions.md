@@ -245,7 +245,8 @@ When a state changes while you're not watching, a **browser notification** appea
 while you have that screen open). When the work pauses — the session becomes Ready — you're
 notified with **"A reply is ready"**; when a question arrives, with **"A question is waiting"** —
 the session name is included in the body. This suits use cases like waiting for a reply on your
-phone during a commute (shell / ssm don't notify).
+phone during a commute (shell / ssm don't notify). Which kinds of notification pop up, speak, or
+leave an unread dot is chosen per kind in [Settings › Notifications](12-settings.md#notifications).
 
 When a program running in a session **asks its terminal for a notification** (the OSC 9 / 99 /
 777 escape sequences — you can emit one yourself, e.g. `printf '\e]9;Build done\a'`), it
