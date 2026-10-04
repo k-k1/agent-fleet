@@ -149,3 +149,22 @@ describe("carrying marks around", () => {
     expect(loadMark("")).toBeNull();
   });
 });
+
+// A search hit names a transcript row, which may sit inside a block mounted under an earlier idx.
+describe("applyMark with near", () => {
+  it("lands on the block holding a row that has no element of its own", () => {
+    const el = fixture(TURNS);
+    expect(applyMark(el, { atBottom: false, idx: 2.5, offset: 0, near: true })).toBe(true);
+    expect(el.scrollTop).toBe(200);
+  });
+
+  it("still gives up on a row older than the window", () => {
+    const el = fixture(TURNS);
+    expect(applyMark(el, { atBottom: false, idx: 0, offset: 0, near: true })).toBe(false);
+  });
+
+  it("is exact without near, as a captured mark expects", () => {
+    const el = fixture(TURNS);
+    expect(applyMark(el, { atBottom: false, idx: 2.5, offset: 0 })).toBe(false);
+  });
+});

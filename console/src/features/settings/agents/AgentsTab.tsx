@@ -204,6 +204,12 @@ export function AgentsTab() {
           <p className="muted ds-note">{tr("agents.note_spawn_child_limit")}</p>
         </>
       )}
+      {/* Past-session search (ADR 0110): the same kind of switch — one af MCP tool every kind
+          gets — so it sits with the others rather than in any agent's card. */}
+      <Row label={tr("agents.session_search")}>
+        <OnOff value={s.sessionSearch} onChange={(v) => setSetting("sessionSearch", v)} />
+      </Row>
+      <p className="muted ds-note">{tr("agents.note_session_search")}</p>
       {/* Image generation (ADR 0069) sits next to it for the same reason: one tool distributed
           to every kind through af's own MCP server, not any one agent's setting. */}
       <Row label={tr("agents.image_generation")}>

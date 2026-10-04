@@ -18,6 +18,12 @@ export interface ScrollMark {
   idx: number;
   /** That turn's top edge minus the viewport's top edge (px). Negative when scrolled into the turn. */
   offset: number;
+  /** Accept the nearest earlier mounted turn when idx itself is not one. Set by a jump to a
+   * past-session search hit (ADR 0110): the index records every transcript row, while the mirror
+   * mounts one block per group of rows under the group's first idx, so a hit inside a claude
+   * reply has no element of its own. A mark captured here always names a mounted turn and leaves
+   * this off. */
+  near?: boolean;
 }
 
 /** Synthetic turns for optimistic echo / queued prompts (MirrorView assigns 1e9 and up). By the
@@ -85,10 +91,22 @@ export function captureMarkBelow(el: HTMLElement | null): ScrollMark | null {
 }
 
 /** The scrollTop that puts the top edge of turn idx offset px below the viewport's top edge.
- * null when that turn is not mounted (outside the tail window; the caller falls back to the tail). */
-export function scrollTopForTurn(el: HTMLElement | null, idx: number, offset = 0): number | null {
+ * null when that turn is not mounted (outside the tail window; the caller falls back to the tail).
+ * With near, a missing idx resolves to the block that holds it — the nearest earlier mounted turn —
+ * but never past the start of the window: a turn older than every mounted one is outside it. */
+export function scrollTopForTurn(el: HTMLElement | null, idx: number, offset = 0, near = false): number | null {
   if (!el) return null;
-  const turn = el.querySelector<HTMLElement>(`[data-turn-idx="${idx}"]`);
+  let turn = el.querySelector<HTMLElement>(`[data-turn-idx="${idx}"]`);
+  if (!turn && near) {
+    let best = -Infinity;
+    for (const t of Array.from(el.querySelectorAll<HTMLElement>("[data-turn-idx]"))) {
+      const n = Number(t.getAttribute("data-turn-idx"));
+      if (Number.isFinite(n) && n < SYNTHETIC_IDX && n <= idx && n > best) {
+        best = n;
+        turn = t;
+      }
+    }
+  }
   if (!turn) return null;
   const delta = turn.getBoundingClientRect().top - el.getBoundingClientRect().top - offset;
   const max = Math.max(0, el.scrollHeight - el.clientHeight);
@@ -97,7 +115,7 @@ export function scrollTopForTurn(el: HTMLElement | null, idx: number, offset = 0
 
 /** Restore the saved position. true when restored (false when the anchor turn is missing). */
 export function applyMark(el: HTMLElement | null, mark: ScrollMark): boolean {
-  const top = scrollTopForTurn(el, mark.idx, mark.offset);
+  const top = scrollTopForTurn(el, mark.idx, mark.offset, mark.near);
   if (top === null || !el) return false;
   el.scrollTop = top;
   return true;

@@ -364,3 +364,44 @@
   padding: 20px;
   text-align: center;
 }
+
+/* ---- palette: past-session search hits (the talk mode, ADR 0110) ----
+   Two lines: the session with who/when on the first, the matching text on the second. The
+   snippet is what tells two hits from the same session apart, so it gets the width. */
+.cp-item.cp-talk {
+  align-items: flex-start;
+  gap: 8px;
+}
+.cp-talk-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cp-talk-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.cp-talk-meta {
+  flex: none;
+  font-size: 11px;
+  color: var(--muted);
+}
+.cp-talk-snippet {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+.cp-talk-indexing {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 4px 12px;
+  border-top: 1px solid var(--border2);
+}

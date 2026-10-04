@@ -359,6 +359,10 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// Per-feature usage time series (docs/log/46 P3 / ADR0029) — relayed verbatim; the
 	// Agent has already aggregated it.
 	mux.HandleFunc("GET /api/usage/series", rest)
+	// Past-session search (ADR 0110): the full-text index lives in the workspace, so the
+	// Console's search box reaches it through the relay like every other workspace read.
+	mux.HandleFunc("GET /api/session-search", rest)
+	mux.HandleFunc("GET /api/session-search/turns", rest)
 	mux.HandleFunc("GET /api/sessions/cleanup", rest)
 	// Fleet session graph (ADR 0096): lanes = sessions, x = time. Proxied verbatim like
 	// the other GETs above; the Agent has already assembled the page.

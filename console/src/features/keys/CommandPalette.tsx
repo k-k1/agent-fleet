@@ -15,6 +15,9 @@
 //   - file    : recursive filename search under ~/repos (server-side via /fs/search = ripgrep
 //               --files, .gitignore-honouring) → open the file. Unlike command/changed (a
 //               static list client-fuzzed), this queries the backend per keystroke.
+//   - talk    : full-text search over what was said in this workspace's sessions, every kind,
+//               running, stopped and archived (ADR 0110, GET /session-search). Server-filtered per
+//               keystroke like `file`; a hit opens its session scrolled to that turn.
 //   - sfiles  : the files the ACTIVE session's agent edited (docs/log/68), joined with the
 //               working tree the same way the mirror's changed-files strip joins them.
 //               A different axis from `changed`, which is per working copy and cannot
@@ -38,6 +41,8 @@ import { useBackClose } from "../../lib/backClose.ts";
 import { t, useLocale, type MsgKey } from "../../lib/i18n/index.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { api, fsSearch } from "../../core/api/client.ts";
+import { relTime } from "../../lib/intl.ts";
+import { openSessionSearchHit, searchSessions, type SessionSearchHit, type SessionSearchResult } from "./talkSearch.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useKeysStore } from "./store.ts";
 import { useEffectiveCommands, boundChord, APP_LEADER, APP_PALETTE } from "./bindings.ts";
@@ -78,15 +83,19 @@ import {
 // `sessions` = the session list; `sfiles` = the active session's changed files. Their UI
 // labels are easy to confuse as well ("sessions" / "this session's changes"), so the mode
 // ids are kept deliberately unalike.
-type Mode = "sessions" | "command" | "changed" | "file" | "sfiles";
-const MODES: Mode[] = ["sessions", "command", "changed", "file", "sfiles"];
+type Mode = "sessions" | "command" | "changed" | "file" | "talk" | "sfiles";
+const MODES: Mode[] = ["sessions", "command", "changed", "file", "talk", "sfiles"];
 const MODE_LABEL: Record<Mode, MsgKey> = {
   sessions: "keys.palette.mode_sessions",
   command: "keys.palette.mode_command",
   changed: "keys.palette.mode_changed",
   sfiles: "keys.palette.mode_session",
   file: "keys.palette.mode_file",
+  talk: "keys.palette.mode_talk",
 };
+// Modes whose list the backend already filtered by the query: the client-side fuzzy filter
+// would only drop hits the server matched for reasons the row text does not show.
+const SERVER_FILTERED: ReadonlySet<Mode> = new Set<Mode>(["file", "talk"]);
 // File search is rooted at ~/repos: the working-copy scope, so results are code files (the
 // backend excludes caches/packages), shown repo-relative like the changed-files mode.
 const FILE_ROOT = "repos";
@@ -107,6 +116,9 @@ interface Item {
   /** Set on a row of the sessions mode: the row renders as a session (kind icon, working
    * copy, state chip) instead of the plain title + sub pill. */
   session?: Session;
+  /** Set on a row of the talk mode: the row renders the hit (kind icon, session, when, and the
+   * matching text) instead of the plain title + sub pill. */
+  hit?: SessionSearchHit;
 }
 
 // One working-tree change from api/repos/{repo}/changes.
@@ -225,6 +237,47 @@ function fileItem(homeRel: string): Item {
   };
 }
 
+// One past-session search hit → a palette row. Enter opens the session at that turn; an archived
+// one opens the archive shelf, since it has to be restored before it can be shown.
+function talkItem(h: SessionSearchHit, running: boolean): Item {
+  return {
+    id: `talk:${h.session}:${h.idx}`,
+    title: h.display || h.session,
+    sub: kindLabel(h.kind),
+    search: h.snippet,
+    keys: [],
+    hit: h,
+    run: (split) => {
+      const outcome = openSessionSearchHit(h, split, running);
+      if (outcome === "archived") toast(t("keys.palette.talk_archived"));
+      else if (outcome === "missing") toast(t("srow.cant_resume"), { kind: "warn" });
+    },
+  };
+}
+
+// The talk row's body: which session said it, who and when, then the matching text itself —
+// the snippet is what tells two hits from the same session apart.
+function TalkRowBody({ h }: { h: SessionSearchHit }) {
+  return (
+    <>
+      <span className={"sess-kic kind-" + kindClass(h.kind)} title={kindLabel(h.kind)}>
+        <Icon name={kindIcon(h.kind)} />
+      </span>
+      <span className="cp-talk-main">
+        <span className="cp-talk-head">
+          <span className="cp-title">{h.display || h.session}</span>
+          {h.archived && <span className="cp-sub">{t("keys.palette.talk_archived_badge")}</span>}
+          <span className="cp-talk-meta">
+            {t(h.role === "user" ? "keys.palette.talk_role_user" : "keys.palette.talk_role_agent")}
+            {h.ts ? " · " + relTime(h.ts) : ""}
+          </span>
+        </span>
+        <span className="cp-talk-snippet">{h.snippet}</span>
+      </span>
+    </>
+  );
+}
+
 // Names sorted by attention, frozen for as long as the palette is open. "Last became
 // waiting-for-input" is the newer of the notification ledger (server-side, surviving
 // reloads and other devices) and the transition observed on this device; the reasoning is
@@ -321,6 +374,7 @@ export function CommandPalette() {
   const [changed, setChanged] = useState<Item[] | null>(null); // null = loading
   const [sessionFiles, setSessionFiles] = useState<Item[] | null>(null); // null = loading
   const [fileHits, setFileHits] = useState<Item[] | null>(null); // null = searching (file mode)
+  const [talk, setTalk] = useState<SessionSearchResult | null>(null); // null = searching (talk mode)
   // The session list's order is frozen (as an array of names) the moment the palette opens.
   // List polling keeps running while it is open, and one session entering the question
   // state reorders everything; since the selection is an index, the row under the cursor
@@ -425,6 +479,32 @@ export function CommandPalette() {
     };
   }, [open, mode, q]);
 
+  // Talk mode asks the Agent's index per keystroke, debounced a little longer than file search:
+  // each query is a full-text search, and IME composition produces bursts of intermediate text.
+  useEffect(() => {
+    if (!open || mode !== "talk") return;
+    const query = q.trim();
+    if (!query) {
+      setTalk({ hits: [], indexing: false, indexed: 0, total: 0 });
+      return;
+    }
+    const ctl = new AbortController();
+    setTalk(null); // searching
+    const timer = setTimeout(() => {
+      searchSessions(query, ctl.signal)
+        .then((r) => !ctl.signal.aborted && setTalk(r))
+        .catch(() => !ctl.signal.aborted && setTalk({ hits: [], indexing: false, indexed: 0, total: 0 }));
+    }, 250);
+    return () => {
+      ctl.abort();
+      clearTimeout(timer);
+    };
+  }, [open, mode, q]);
+  const talkItems = useMemo<Item[]>(
+    () => (talk ? talk.hits.map((h) => talkItem(h, running)) : []),
+    [talk, running],
+  );
+
   // The session list, ordered by the `order` frozen when the palette opened.
   //  - A session missing from `order` (born while open) goes to the foot. Slotting it into
   //    the middle would cause exactly the row-swapping-under-the-cursor the freeze prevents.
@@ -495,7 +575,8 @@ export function CommandPalette() {
   const loading =
     (mode === "changed" && changed === null) ||
     (mode === "sfiles" && sessionFiles === null) ||
-    (mode === "file" && fileHits === null && !!q.trim());
+    (mode === "file" && fileHits === null && !!q.trim()) ||
+    (mode === "talk" && talk === null && !!q.trim());
   const items =
     mode === "sessions"
       ? sessionItems
@@ -505,9 +586,11 @@ export function CommandPalette() {
           ? (changed ?? [])
           : mode === "sfiles"
             ? (sessionFiles ?? [])
-            : (fileHits ?? []);
+            : mode === "talk"
+              ? talkItems
+              : (fileHits ?? []);
   const filtered = useMemo(
-    () => (mode === "file" ? items : items.filter((it) => fuzzy(q, it.search + " " + it.sub))),
+    () => (SERVER_FILTERED.has(mode) ? items : items.filter((it) => fuzzy(q, it.search + " " + it.sub))),
     [items, q, mode],
   );
 
@@ -561,7 +644,9 @@ export function CommandPalette() {
                   ? "keys.palette.placeholder_session"
                   : mode === "file"
                     ? "keys.palette.placeholder_file"
-                    : "keys.palette.placeholder",
+                    : mode === "talk"
+                      ? "keys.palette.placeholder_talk"
+                      : "keys.palette.placeholder",
           )}
           aria-label={t("keys.palette.aria")}
           autoComplete="off"
@@ -615,14 +700,20 @@ export function CommandPalette() {
         <div className="cp-list">
           {mode === "file" && !q.trim() ? (
             <div className="cp-empty">{t("keys.palette.file_hint")}</div>
+          ) : mode === "talk" && !q.trim() ? (
+            <div className="cp-empty">{t("keys.palette.talk_hint")}</div>
           ) : loading ? (
-            <div className="cp-empty">{t(mode === "file" ? "keys.palette.file_searching" : "keys.palette.changed_loading")}</div>
+            <div className="cp-empty">
+              {t(mode === "file" || mode === "talk" ? "keys.palette.file_searching" : "keys.palette.changed_loading")}
+            </div>
           ) : filtered.length === 0 ? (
             <div className="cp-empty">
               {mode === "changed"
                 ? t("keys.palette.changed_empty")
                 : mode === "sfiles"
                   ? t("keys.palette.session_empty")
+                  : mode === "talk"
+                    ? t("keys.palette.talk_empty")
                   : mode === "sessions" && !q.trim()
                     ? t("keys.palette.sessions_empty")
                     : t("keys.palette.empty")}
@@ -636,7 +727,8 @@ export function CommandPalette() {
                   "cp-item" +
                   (i === sel ? " sel" : "") +
                   (it.session ? " cp-sess" : "") +
-                  (it.session && !it.session.alive ? " cp-stopped" : "")
+                  (it.session && !it.session.alive ? " cp-stopped" : "") +
+                  (it.hit ? " cp-talk" : "")
                 }
                 onMouseMove={() => setSel(i)}
                 onMouseDown={(e) => {
@@ -646,6 +738,8 @@ export function CommandPalette() {
               >
                 {it.session ? (
                   <SessionRowBody s={it.session} />
+                ) : it.hit ? (
+                  <TalkRowBody h={it.hit} />
                 ) : (
                   <>
                     <span className="cp-title">{it.title}</span>
@@ -663,6 +757,13 @@ export function CommandPalette() {
             ))
           )}
         </div>
+        {mode === "talk" && talk && (talk.indexing || talk.indexed < talk.total) && (
+          // Said out loud rather than left as a short list: the first search after an upgrade
+          // answers while the Agent is still reading every transcript for the first time.
+          <div className="cp-talk-indexing" role="status">
+            {t("keys.palette.talk_indexing", { indexed: talk.indexed, total: talk.total })}
+          </div>
+        )}
         {mode !== "command" && (
           <div className="cp-foot">
             <span>

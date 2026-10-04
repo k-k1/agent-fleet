@@ -74,6 +74,9 @@ const exact = {
       ? { name: "s" + crypto.randomUUID().slice(0, 6) }
       : { sessions: FLEET_LANES ? fx.sessionsBig(LOCALE, FLEET_LANES) : fx.sessions(LOCALE) },
   "/api/sessions/cleanup": () => ({ candidates: fx.cleanupCandidates(LOCALE) }),
+  // Past-session search (ADR 0110) for the palette's conversations mode. Hits name sessions from
+  // fx.sessions so Enter has something to open, plus one archived session that is not listed.
+  "/api/session-search": (q) => fx.sessionSearch(LOCALE, q.get("q") || ""),
   "/api/fleet-graph": () => (FLEET_LANES ? fx.fleetGraphBig(LOCALE, FLEET_LANES) : fx.fleetGraph(LOCALE)),
   "/api/cleanup/archives": () => ({ archives: fx.cleanupArchives(LOCALE) }),
   "/api/repos": () => ({ repos: fx.repos(LOCALE) }),

@@ -70,8 +70,17 @@ The order is fixed at the moment you open the palette, so a session that changes
 you are reading does not move under your cursor — only its badge follows.
 
 - **↑ ↓ / Enter** — pick a result and run / open it. For sessions, files and changed files, **Ctrl+Enter** (macOS: **⌘Enter**) opens them in another pane.
-- **Tab**, or **Ctrl+P / ⌘P** again — switches the search scope between "Sessions", "Commands", "Changed files", and "Files".
+- **Tab**, or **Ctrl+P / ⌘P** again — switches the search scope between "Sessions", "Commands", "Changed files", "Files" and "Conversations".
 - **Esc** — closes it and returns to where you were working before opening it.
+
+**"Conversations"** searches what was said in every session of this workspace — any agent kind,
+running, stopped and archived. Type a few words (all of them must occur; Japanese works from two
+characters) and each hit shows the session, who said it and when, and the matching text.
+**Enter** opens that session scrolled to the turn. Only the conversation itself is searched, not
+tool output or the agent's thinking. A hit in an archived session opens the archive, where you
+restore it; it then opens at the same turn. The first search after an update can take a minute or
+two to cover every session — the palette says "Building the index" until it has.
+A turn older than the part of the conversation the mirror loads lands at the end instead.
 
 When the terminal has focus and **"Terminal input priority"** is turned on in settings, Ctrl+P is
 passed to the terminal. In that case, open it with the default **Ctrl+K → ;** (macOS: **⌘K → ;**).
