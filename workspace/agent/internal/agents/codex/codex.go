@@ -278,6 +278,33 @@ func MissedTurnEnd(m session.Meta) bool {
 	return rolloutCompletedAfter(m, workingSince)
 }
 
+// StopContinued reports whether the turn whose Stop wrote the end-of-turn marker (at marker)
+// is still running because another Stop hook blocked that stop (#1600).
+//
+// codex runs a Stop event's handlers concurrently and only then decides (codex-rs
+// hooks/src/engine/dispatcher.rs, FuturesUnordered), so our hook writes idle before it can
+// know a sibling answered `decision:"block"`. On a block codex records the hook's prompt and
+// `continue`s the same turn loop (core/src/session/turn.rs); task_complete is written only
+// when the task finishes after the last Stop. So a rollout whose newest lifecycle event is a
+// task_started from before the marker is a turn the marker did not end. A normal Stop's
+// task_complete lands milliseconds after our hook, so a sweep in between costs one tick, not
+// a report.
+//
+// No rollout, or no lifecycle in it, answers false (the pre-#1600 behaviour): holding a
+// finished turn's report on a guess is worse than the early report this prevents.
+func StopContinued(m session.Meta, marker time.Time) bool {
+	slot := session.UUID(m.Dir, m.Name)
+	path := rolloutPath(sids.Read(slot))
+	if path == "" || marker.IsZero() {
+		return false
+	}
+	open := false
+	withRollout(path, slot, func(p *rolloutParser) {
+		open = p.lifecycle == "task_started"
+	})
+	return open
+}
+
 func (agentImpl) ClearResume(sid string) { sids.Remove(sid) }
 
 // IsRateLimited reports whether a managed codex session's last turn failed with a

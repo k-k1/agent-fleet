@@ -113,3 +113,19 @@ file), not a message id: a driver may rewrite the id it is given (opencode does)
   that reason, without waiting for quiet evidence and even when the session's meta is gone. Delivered, the row is
   closed as `not_run`, which is never a reopen candidate. A retry keeps the row open, as for every report.
 - The operator's `stop_session` cancels the rows first, so the prompts it withdraws are not reported back to it.
+
+## Addendum (2026-10-04) — a Stop another hook blocked
+
+claude and codex run all of a Stop event's hooks in parallel, so ours writes the end-of-turn marker before it can know
+that a user's Stop hook answered `decision:"block"` and the turn goes on (#1600; measured on claude 2.1.288, read in
+codex's source). When the continued turn stays quiet past the transcript's freshness window and the pane is not read
+as busy, two sweeps deliver the report at the blocked stop. Compensation cannot take it back, because an idle marker
+reads as "the turn ended", so the real end is never reported (reproduced in the reconciler test).
+
+- A marker whose stop was blocked is busy evidence (`stop-continued`), read off what the CLI records rather than
+  off the hook. claude: the newest `stop_hook_summary` in the transcript tail is preceded by a Stop
+  `hook_blocking_error`, with no interruption after it. codex (Terminal): the rollout's newest lifecycle event is
+  an unended `task_started`, since codex writes `task_complete` only after the last Stop.
+- When that evidence is missing or unclear, the old behaviour applies. An abort at the transcript tail also ends
+  the continued turn. Managed codex ends on `turn/completed` and the other kinds have no Stop hook, so they are
+  unchanged.
