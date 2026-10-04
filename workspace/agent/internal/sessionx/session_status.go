@@ -77,12 +77,12 @@ func RunSessionStatusHook(args []string) {
 			// state, so the status itself (and the answer-ready notification) is left alone.
 			switch state {
 			case "compacting", "compacted":
-				codex.MarkCompacting(sid, state == "compacting")
+				codex.MarkCompacting(sid, in.turnID, state == "compacting")
 				return
 			case "working", "idle":
 				// A new prompt or a finished turn means no compaction is running; this also
 				// closes the mark an interrupted compaction left behind.
-				codex.MarkCompacting(sid, false)
+				codex.MarkCompacting(sid, "", false)
 			}
 		} else {
 			h = in // claude: sid + pending payloads come from stdin

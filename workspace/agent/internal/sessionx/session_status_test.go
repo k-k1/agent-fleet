@@ -630,8 +630,9 @@ func TestCodexCompactHooksMarkWithoutTouchingState(t *testing.T) {
 
 	feedCodexStatusHook(t, "working", slot, `{"session_id":"01a10463-1ce3-7df3-aa43-c8900d974e88"}`)
 	feedCodexStatusHook(t, "compacting", slot, in)
-	if marks.Read(slot) == "" {
-		t.Fatal("PreCompact left no compaction mark")
+	// The mark names the turn, which is what the rollout's turn end is matched against.
+	if got := marks.Read(slot); got != "t2" {
+		t.Fatalf("PreCompact mark = %q, want the payload's turn t2", got)
 	}
 	if st, _ := status.Read(slot); st.State != "working" {
 		t.Fatalf("PreCompact rewrote the state to %q, want working", st.State)

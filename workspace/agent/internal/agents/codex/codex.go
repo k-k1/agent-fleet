@@ -55,36 +55,44 @@ func isCompacting(m session.Meta) bool {
 	return m.DriverKind() != session.DriverManaged && terminalCompacting(slot)
 }
 
-// compactMarks holds, per slot sid, when a Terminal session's PreCompact hook fired
-// (RFC 3339, nanoseconds). The hook runs in its own process, so the mark has to be on disk
-// for the Agent to see it.
+// compactMarks holds, per slot sid, the turn id of a Terminal session's open PreCompact.
+// The hook runs in its own process, so the mark has to be on disk for the Agent to see it.
 var compactMarks = agents.NewSidStore("codex-compacting")
 
-// MarkCompacting records a Terminal session's PreCompact (active) or PostCompact hook.
-// Called from the session-status hook entrypoint in package sessionx.
-func MarkCompacting(slotSid string, active bool) {
-	if active {
-		compactMarks.Write(slotSid, time.Now().UTC().Format(time.RFC3339Nano))
-	} else {
+// unknownCompactTurn marks a PreCompact whose payload named no turn: only the hooks and a
+// relaunch can close it then.
+const unknownCompactTurn = "-"
+
+// MarkCompacting records a Terminal session's PreCompact (active, with the turn_id its
+// payload carries) or PostCompact hook. Called from the session-status hook entrypoint in
+// package sessionx.
+func MarkCompacting(slotSid, turnID string, active bool) {
+	switch {
+	case !active:
 		compactMarks.Remove(slotSid)
+	case turnID == "":
+		compactMarks.Write(slotSid, unknownCompactTurn)
+	default:
+		compactMarks.Write(slotSid, turnID)
 	}
 }
 
 // terminalCompacting reports whether a PreCompact mark is still open. PostCompact removes
 // it, but an Esc during the compaction fires neither PostCompact nor Stop (measured on codex
-// 0.160.0); the rollout's turn_aborted is then the only end, so a turn end recorded at or
-// after the mark closes it too. task_started is deliberately not an end: codex writes it
-// just before the PreCompact of a compaction that opens a turn.
+// 0.160.0); the rollout's turn_aborted for the mark's turn is then the only end.
 func terminalCompacting(slot string) bool {
-	raw := compactMarks.Read(slot)
-	if raw == "" {
+	turn := compactMarks.Read(slot)
+	if turn == "" {
 		return false
 	}
-	since, err := time.Parse(time.RFC3339Nano, raw)
-	if err != nil {
-		return false
+	if turn == unknownCompactTurn {
+		return true
 	}
-	return !rolloutCompletedAt(slot, since)
+	ended := false
+	withRollout(rolloutPath(sids.Read(slot)), slot, func(p *rolloutParser) {
+		_, ended = p.endedTurns[turn]
+	})
+	return !ended
 }
 
 // RememberSid records the slot sid → codex session id mapping. Called from the

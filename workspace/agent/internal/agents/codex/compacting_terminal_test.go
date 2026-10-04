@@ -36,7 +36,8 @@ func TestTerminalCompactingFollowsTheHooks(t *testing.T) {
 		t.Fatalf("before PreCompact: state = %q, want idle", got)
 	}
 
-	MarkCompacting(slot, true)
+	MarkCompacting(slot, "t2", true)
+	writeSlotRollout(t, m, thread, append(append([][]byte(nil), earlier...), taskStarted(ts(0), "t2"))...)
 	if got := state(); got != "compacting" {
 		t.Fatalf("after PreCompact: state = %q, want compacting", got)
 	}
@@ -44,24 +45,25 @@ func TestTerminalCompactingFollowsTheHooks(t *testing.T) {
 		t.Fatal("after PreCompact: transcript does not report compacting")
 	}
 
-	MarkCompacting(slot, false)
+	MarkCompacting(slot, "", false)
 	if got := state(); got != "idle" {
 		t.Fatalf("after PostCompact: state = %q, want idle", got)
 	}
 
-	// Esc during the compaction: no PostCompact, but the rollout ends the turn after the mark.
-	MarkCompacting(slot, true)
-	time.Sleep(2 * time.Millisecond)
+	// Esc during the compaction: no PostCompact, only the rollout's turn_aborted for t3. Its
+	// timestamp is cut to milliseconds and the hook runs late, so it may read as earlier than
+	// the mark; the turn id is what closes it.
+	MarkCompacting(slot, "t3", true)
 	writeSlotRollout(t, m, thread, append(append([][]byte(nil), earlier...),
-		taskStarted(ts(-30*time.Second), "t2"),
-		turnAborted(time.Now().UTC().Format(time.RFC3339Nano), "t2"))...)
+		taskStarted(ts(-30*time.Second), "t3"),
+		turnAborted(ts(-30*time.Second), "t3"))...)
 	if got := state(); got != "idle" {
 		t.Fatalf("after an interrupted compaction: state = %q, want idle", got)
 	}
 
 	// A pane killed mid-compaction: the relaunch drops the mark.
 	writeSlotRollout(t, m, thread, earlier...)
-	MarkCompacting(slot, true)
+	MarkCompacting(slot, "t4", true)
 	if got := state(); got != "compacting" {
 		t.Fatalf("killed mid-compaction: state = %q, want compacting", got)
 	}
@@ -70,6 +72,12 @@ func TestTerminalCompactingFollowsTheHooks(t *testing.T) {
 	}
 	if got := state(); got != "idle" {
 		t.Fatalf("after relaunch: state = %q, want idle", got)
+	}
+
+	// A PreCompact that named no turn cannot be closed by the rollout, only by the hooks.
+	MarkCompacting(slot, "", true)
+	if got := state(); got != "compacting" {
+		t.Fatalf("PreCompact without a turn id: state = %q, want compacting", got)
 	}
 }
 
@@ -80,7 +88,7 @@ func TestManagedIgnoresTheTerminalCompactionMark(t *testing.T) {
 	m := session.Meta{Name: "cx-managed", Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged}
 	slot := session.UUID(m.Dir, m.Name)
 	writeSlotRollout(t, m, "01a10463-0000-7000-8000-000000000003")
-	MarkCompacting(slot, true)
+	MarkCompacting(slot, "t1", true)
 	if isCompacting(m) {
 		t.Fatal("managed session reads the Terminal hook mark")
 	}

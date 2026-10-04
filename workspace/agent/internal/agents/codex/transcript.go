@@ -146,6 +146,11 @@ type rolloutParser struct {
 	// Folded in on the way past so that check costs nothing of its own.
 	lifecycle   string
 	lifecycleAt time.Time
+	// Turn ids that reached task_complete or turn_aborted, for closing a Terminal
+	// session's compaction mark (terminalCompacting). By id, not by time: the rollout's
+	// timestamps are cut to milliseconds and the PreCompact hook runs late, so an end can
+	// carry a timestamp before the mark it closes.
+	endedTurns map[string]struct{}
 
 	next int // absolute index of the next line — a turn's Idx, and the paging currency
 }
@@ -155,6 +160,7 @@ func newRolloutParser() *rolloutParser {
 		lastAssistant: -1,
 		callTurn:      map[string]int{},
 		answered:      map[string]bool{},
+		endedTurns:    map[string]struct{}{},
 	}
 }
 
@@ -261,12 +267,14 @@ func (p *rolloutParser) feed(ln []byte) {
 			p.askOpenFrom = len(p.askCalls)
 		case "task_complete":
 			p.noteLifecycle("task_complete", ev.Timestamp)
+			p.noteTurnEnded(ev.Payload)
 			p.askOpenFrom = len(p.askCalls)
 		case "turn_aborted":
 			// Esc fires no Stop hook (measured 0.159.0), so this is the only record that an
 			// interrupted turn is over. An interrupted question writes its own output too;
 			// askOpenFrom only closes what a turn left with none.
 			p.noteLifecycle("turn_aborted", ev.Timestamp)
+			p.noteTurnEnded(ev.Payload)
 			p.askOpenFrom = len(p.askCalls)
 		case "token_count":
 			if in, out, read, win, ok := tokenUsage(ev.Payload); ok && p.lastAssistant >= 0 {
@@ -328,6 +336,12 @@ func (p *rolloutParser) noteLifecycle(kind, ts string) {
 		return
 	}
 	p.lifecycle, p.lifecycleAt = kind, at
+}
+
+func (p *rolloutParser) noteTurnEnded(payload json.RawMessage) {
+	if id := payloadTurnID(payload); id != "" {
+		p.endedTurns[id] = struct{}{}
+	}
 }
 
 // snapshot renders the parse so far as the caller's own copy: the transcript, the ToDo
@@ -1641,11 +1655,7 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 // from making a newly-submitted prompt look idle; a later task_started replaces the
 // lifecycle outright.
 func rolloutCompletedAfter(m session.Meta, workingSince time.Time) bool {
-	return rolloutCompletedAt(session.UUID(m.Dir, m.Name), workingSince)
-}
-
-// rolloutCompletedAt is rolloutCompletedAfter keyed by the slot sid.
-func rolloutCompletedAt(slot string, workingSince time.Time) bool {
+	slot := session.UUID(m.Dir, m.Name)
 	path := rolloutPath(sids.Read(slot))
 	if path == "" || workingSince.IsZero() {
 		return false
