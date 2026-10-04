@@ -214,4 +214,20 @@ describe("GitHub app source", () => {
       install_url: "https://github.com/apps/acme",
     });
   });
+
+  it("drops an unsaved choice when the row is reset to a default with the same source", async () => {
+    const builtin = { oauth_app: true, github_app: true };
+    api.mockResolvedValueOnce(github({ source: "builtin_oauth", builtin }));
+    raw.mockResolvedValue({});
+    await mount();
+    await act(async () => radioLabel("使わない").querySelector("input")!.click());
+    // After the reset only is_default differs from what the card held.
+    api.mockResolvedValueOnce(github({ source: "builtin_oauth", is_default: true, builtin }));
+    await act(async () => buttonIn(groupFor("GitHub"), "既定に戻す").click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(radioLabel("組み込みの OAuth App").querySelector("input")!.checked).toBe(true);
+    expect(radioLabel("使わない").querySelector("input")!.checked).toBe(false);
+  });
 });

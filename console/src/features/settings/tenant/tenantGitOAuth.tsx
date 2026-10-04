@@ -224,7 +224,9 @@ function GitHubOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuth
     setSource(app.source || "custom");
     setClientID(app.client_id || "");
     setInstallURL(app.install_url ? appPage(app.install_url) : "");
-  }, [app.source, app.client_id, app.install_url]);
+    // is_default too: resetting an explicit row that named the default's own source changes
+    // nothing else, and the form would keep an unsaved choice that the next save writes back.
+  }, [app.source, app.client_id, app.install_url, app.is_default]);
 
   const base = `api/admin/tenants/${encodeURIComponent(slug)}/git-oauth/github`;
   const builtin = app.builtin || { oauth_app: false, github_app: false };

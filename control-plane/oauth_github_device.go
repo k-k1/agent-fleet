@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -246,36 +247,47 @@ func (c config) handleGithubDevicePoll(w http.ResponseWriter, r *http.Request) {
 //   - A GitHub App token sees only the repositories the app is installed on. With no
 //     installation at all the connection looks fine and every clone fails, so say so
 //     now, with the install link.
-//   - A refresh_token means the GitHub App has user-token expiration on. Nothing renews
-//     the token (the device flow has no secret to refresh with), so it stops working
-//     after about eight hours unless the app's owner switches expiration off.
+//   - A refresh_token means the GitHub App has user-token expiration on. af does not
+//     renew GitHub tokens yet, so the connection stops working after about eight hours
+//     unless the app's owner switches expiration off.
+//
+// The token is already stored when this runs, so the member's request may be gone (a
+// closed tab) by the time GitHub answers. The row writes therefore run on a context of
+// their own and come first; the installation check, which only adds to the answer, runs
+// last and stops with the request.
 func (m *manager) afterGithubGrant(ctx context.Context, f *ghDeviceFlow, token string, expires bool) map[string]any {
 	out := map[string]any{"connected": true}
 	appType := ghAppTypeFromToken(token)
 	if appType == "" {
 		appType = f.app.Type
 	}
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
 	if f.app.Source == ghSourceCustom && appType != "" {
-		_ = m.store.SetTenantGitOAuthAppType(ctx, f.tenantID, gitOAuthGitHub, f.clientID, appType, ghTypeByToken)
+		if err := m.store.SetTenantGitOAuthAppType(wctx, f.tenantID, gitOAuthGitHub, f.clientID, appType, ghTypeByToken); err != nil {
+			log.Printf("github oauth: record app type for tenant %s: %v", f.tenantID, err)
+		}
 	}
-	if appType == ghTypeGitHubApp {
-		if installed, known := ghHasInstallation(token); known && !installed {
-			out["not_installed"] = true
-		}
-		if f.app.InstallURL != "" {
-			out["install_url"] = f.app.InstallURL
-		}
+	// Which app a member's token came from is the question an audit of a misbehaving
+	// app starts from, and the connection itself does not record it.
+	if err := m.store.InsertAudit(wctx, store.AuditLog{
+		ID: store.NewID(), TenantID: f.tenantID, ActorKind: "user", ActorID: f.actorID,
+		Action: "git_oauth.github_connect", Target: gitOAuthGitHub,
+		Detail: "source=" + f.app.Source + " client_id=" + f.clientID + " app_type=" + appType, At: store.NowTS(),
+	}); err != nil {
+		log.Printf("github oauth: audit connect for tenant %s: %v", f.tenantID, err)
 	}
 	if expires {
 		out["token_expires"] = true
 	}
-	// Which app a member's token came from is the question an audit of a misbehaving
-	// app starts from, and the connection itself does not record it.
-	_ = m.store.InsertAudit(ctx, store.AuditLog{
-		ID: store.NewID(), TenantID: f.tenantID, ActorKind: "user", ActorID: f.actorID,
-		Action: "git_oauth.github_connect", Target: gitOAuthGitHub,
-		Detail: "source=" + f.app.Source + " client_id=" + f.clientID + " app_type=" + appType, At: store.NowTS(),
-	})
+	if appType == ghTypeGitHubApp {
+		if f.app.InstallURL != "" {
+			out["install_url"] = f.app.InstallURL
+		}
+		if installed, known := ghHasInstallation(ctx, token); known && !installed {
+			out["not_installed"] = true
+		}
+	}
 	return out
 }
 

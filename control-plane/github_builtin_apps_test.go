@@ -258,7 +258,7 @@ func TestAfterGithubGrantCorrectsTheTypeAndReportsWhatTheMemberMustDo(t *testing
 
 	// A GitHub App installed nowhere, with token expiration on.
 	prev := ghHasInstallation
-	ghHasInstallation = func(string) (bool, bool) { return false, true }
+	ghHasInstallation = func(context.Context, string) (bool, bool) { return false, true }
 	t.Cleanup(func() { ghHasInstallation = prev })
 	flow.app = githubApp{Source: ghSourceCustom, ClientID: "Iv23guess", Type: ghTypeGitHubApp,
 		TypeBy: ghTypeByToken, InstallURL: "https://github.com/apps/acme/installations/new"}
@@ -356,4 +356,30 @@ func TestGitHubHelpers(t *testing.T) {
 			t.Errorf("githubBuiltinOffFromEnv(%q) = %v, want %v", v, got, want)
 		}
 	}
+}
+
+// The token is stored before these checks run, so a member who closes the tab while GitHub
+// is being asked about installations must still leave the audit row behind.
+func TestAfterGithubGrantAuditsEvenWhenTheRequestIsGone(t *testing.T) {
+	st, mgr, _ := gitOAuthEnv(t)
+	tn := seedGitOAuthTenant(t, st, "sub", "admin@sub.co.jp")
+	prev := ghHasInstallation
+	ghHasInstallation = func(ctx context.Context, _ string) (bool, bool) { return false, ctx.Err() == nil }
+	t.Cleanup(func() { ghHasInstallation = prev })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the browser went away
+	flow := &ghDeviceFlow{tenantID: tn.ID, clientID: "Iv23app",
+		app: githubApp{Source: ghSourceBuiltinApp, ClientID: "Iv23app", Type: ghTypeGitHubApp}}
+	out := mgr.afterGithubGrant(ctx, flow, "ghu_abc", false)
+	if out["not_installed"] != nil {
+		t.Fatalf("an unanswered installation check must say nothing: %v", out)
+	}
+	audits, _ := st.ListAuditByTenant(context.Background(), tn.ID, 10)
+	for _, a := range audits {
+		if a.Action == "git_oauth.github_connect" {
+			return
+		}
+	}
+	t.Fatalf("no connect audit row after the request was cancelled: %+v", audits)
 }

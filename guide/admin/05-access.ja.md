@@ -66,8 +66,8 @@ device flow には secret が無く、トークンはメンバー自身のワー
 接続で確定します。GitHub 側で設定するものは 2 つです。
 
 - **Enable Device Flow** にチェック——無いと保存時に断られます。
-- GitHub App なら **Expire user authorization tokens** をオフにし（af はこのトークンを更新
-  できないので、約 8 時間で接続が切れます）、アプリのページ（`https://github.com/apps/<名前>`）を
+- GitHub App なら **Expire user authorization tokens** をオフにし（af はまだこのトークンを
+  更新しないので、約 8 時間で接続が切れます）、アプリのページ（`https://github.com/apps/<名前>`）を
   インストールページに入力します。GitHub App はインストールされたリポジトリにしか届きません。
   メンバーはそこへ案内され、どこにもインストールされていなければ接続後に警告が出ます。
 

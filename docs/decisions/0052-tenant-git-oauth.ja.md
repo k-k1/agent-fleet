@@ -149,10 +149,10 @@ key/secret を必須にしているため、**アップグレードの窓で 1 �
   確かめ、1 つも無ければその場でインストールのリンク付きで知らせる（後で clone が落ちるのを
   待たない）。GitHub App のインストールページは client_id からは分からないので、自前の GitHub App
   ではテナント管理者が `https://github.com/apps/<名前>` を入力する。
-- **期限付きのユーザートークンには対応しない。** 「Expire user authorization tokens」が有効な
-  GitHub App は refresh token を返すが、refresh には device flow に無い client_secret が要る。
-  接続はしたうえでメンバーに警告し、管理画面では期限をオフにするよう案内する。決定 6 の
-  「GitHub は secret を保存しない」はこれで保たれる。
+- **期限付きのユーザートークンはまだ更新しない。** 「Expire user authorization tokens」が有効な
+  GitHub App は 8 時間の token と refresh token を返す。device flow で得た token は client_secret
+  なしで更新できるが、af は今は access token しか保存しないので、接続はしたうえでメンバーに
+  警告し、管理画面では期限をオフにするよう案内する。更新への対応は #1676。
 
 ## 決定 9 — 自前アプリの種類は**尋ねずに判別する**（2026-10-04・#1667）
 

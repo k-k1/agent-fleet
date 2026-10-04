@@ -1208,7 +1208,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "tenant.gh_type_by_token": "confirmed by a member's connection",
   "tenant.gh_type_by_prefix": "estimated from the client_id, because GitHub could not be reached",
   "tenant.gh_type_by_none": "GitHub could not be reached and the client_id gives no hint; the first connection will tell",
-  "tenant.gh_github_app_expiry": "For a GitHub App, turn off “Expire user authorization tokens” in its settings. af cannot renew those tokens (the device flow has no secret), so connections would stop working after about eight hours.",
+  "tenant.gh_github_app_expiry": "For a GitHub App, turn off “Expire user authorization tokens” in its settings. af does not renew those tokens yet, so connections would stop working after about eight hours.",
   "tenant.gh_reset": "Reset to default",
   "tenant.summary_note": "a deployment administrator sets the tenant-wide caps",
   "tenant.group_manage": "Operations",

@@ -320,8 +320,14 @@ function GithubRow({ st, reload, oauthAvailable, installURL }: RowProps & { inst
   const [mode, setMode] = useState("idle"); // idle | oauth | token
   const [oauth, setOauth] = useState<any>(null); // { user_code, verification_uri, status }
   const [token, setToken] = useState("");
+  // What the last OAuth grant reported. It outlives the toast because the card it concerns
+  // switches to the connected view, which is where the member has to act on it.
+  const [grant, setGrant] = useState<{ notInstalled?: boolean; installURL?: string; expires?: boolean } | null>(
+    null,
+  );
 
   const startOAuth = async () => {
+    setGrant(null);
     const res = await api("api/connections/git/github/oauth/start", { method: "POST" });
     if (!res || res.error) {
       if (res?.error?.code === "not_configured")
@@ -347,14 +353,9 @@ function GithubRow({ st, reload, oauthAvailable, installURL }: RowProps & { inst
           setMode("idle");
           reload();
           // The token is stored either way; these say what still stands between the member and
-          // a working clone.
-          if (p.not_installed)
-            toast(
-              p.install_url
-                ? tr("git.github_app_not_installed_at", { url: p.install_url })
-                : tr("git.github_app_not_installed"),
-              { kind: "warn" },
-            );
+          // a working clone. The card keeps them, with the link, after the toasts are gone.
+          setGrant({ notInstalled: !!p.not_installed, installURL: p.install_url, expires: !!p.token_expires });
+          if (p.not_installed) toast(tr("git.github_app_not_installed"), { kind: "warn" });
           if (p.token_expires) toast(tr("git.github_token_expires"), { kind: "warn" });
           return { stop: true };
         }
@@ -399,6 +400,18 @@ function GithubRow({ st, reload, oauthAvailable, installURL }: RowProps & { inst
             {st.email && <span className="p-pl">{st.email}</span>}
             <DisconnectButton onClick={disconnect} />
           </div>
+          {grant?.notInstalled && <Hint>{tr("git.github_app_not_installed")}</Hint>}
+          {grant?.expires && <Hint>{tr("git.github_token_expires")}</Hint>}
+          {/* A GitHub App reaches only where it is installed, and adding a repository later is
+              done on GitHub — so the way there stays on the connected card too. */}
+          {(grant?.installURL || installURL) && (
+            <Hint>
+              {tr("git.github_app_connected_hint")}{" "}
+              <a href={grant?.installURL || installURL} target="_blank" rel="noopener noreferrer">
+                {tr("git.github_app_install_link")}
+              </a>
+            </Hint>
+          )}
           <IdentityFields host="github.com" name0={st.commitName} email0={st.commitEmail} />
         </>
       ) : mode === "oauth" && oauth ? (

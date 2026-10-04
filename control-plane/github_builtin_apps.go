@@ -243,8 +243,8 @@ var ghProbeAppType = func(clientID string) (appType, by string, perr *ghProbeErr
 // installation of its app. A GitHub App token reaches only repositories the app is
 // installed on, so with none the connection looks fine and every clone fails.
 // known=false means GitHub could not be asked; the caller then says nothing.
-var ghHasInstallation = func(token string) (installed, known bool) {
-	req, err := http.NewRequest(http.MethodGet, ghAPIBase+"/user/installations?per_page=1", nil)
+var ghHasInstallation = func(ctx context.Context, token string) (installed, known bool) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ghAPIBase+"/user/installations?per_page=1", nil)
 	if err != nil {
 		return false, false
 	}

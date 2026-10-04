@@ -40,12 +40,15 @@ async function render(): Promise<void> {
   });
 }
 
+let connected = false;
+
 function serve(github: Record<string, unknown>) {
+  connected = false;
   apiMock.mockImplementation((p: string) => {
     if (p === "api/git-oauth") return Promise.resolve({ github, bitbucket: { configured: false } });
     if (p === "api/connections/git/github/oauth/start")
       return Promise.resolve({ flow_id: "f", user_code: "ABCD-1234", verification_uri: "https://github.com/login/device", interval: 1, expires_in: 60 });
-    return Promise.resolve({ github: { connected: false }, bitbucket: { connected: false } });
+    return Promise.resolve({ github: connected ? { connected: true, username: "octo" } : { connected: false }, bitbucket: { connected: false } });
   });
 }
 
@@ -82,14 +85,17 @@ describe("GitTab GitHub App", () => {
     expect(host.textContent).not.toContain(t("git.github_app_install_hint"));
   });
 
-  it("warns after connecting when GitHub reports no installation or an expiring token", async () => {
+  it("keeps the warnings and the install link on the connected card after the toasts are gone", async () => {
     vi.useFakeTimers();
     serve({ configured: true, app_type: "github_app", install_url: "https://github.com/apps/acme/installations/new" });
-    apiJSONMock.mockResolvedValue({
-      connected: true,
-      not_installed: true,
-      token_expires: true,
-      install_url: "https://github.com/apps/acme/installations/new",
+    apiJSONMock.mockImplementation(async () => {
+      connected = true; // the token is stored before the poll answers
+      return {
+        connected: true,
+        not_installed: true,
+        token_expires: true,
+        install_url: "https://github.com/apps/acme/installations/new",
+      };
     });
     await render();
     const oauth = [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
@@ -100,9 +106,16 @@ describe("GitTab GitHub App", () => {
       await vi.advanceTimersByTimeAsync(1100);
     });
     expect(apiJSONMock).toHaveBeenCalledWith("api/connections/git/github/oauth/poll", "POST", { flow_id: "f" });
-    expect(document.body.textContent).toContain(
-      t("git.github_app_not_installed_at", { url: "https://github.com/apps/acme/installations/new" }),
+    // Long after any toast has faded, the connected card still says what to do and links there.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(host.textContent).toContain("octo");
+    expect(host.textContent).toContain(t("git.github_app_not_installed"));
+    expect(host.textContent).toContain(t("git.github_token_expires"));
+    const link = [...host.querySelectorAll<HTMLAnchorElement>("a")].find(
+      (a) => a.textContent === t("git.github_app_install_link"),
     );
-    expect(document.body.textContent).toContain(t("git.github_token_expires"));
+    expect(link?.href).toBe("https://github.com/apps/acme/installations/new");
   });
 });

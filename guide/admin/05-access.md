@@ -69,8 +69,8 @@ the card shows an estimate, which the first member's connection confirms. Two th
 set on GitHub's side:
 
 - Tick **Enable Device Flow** — a client_id without it is refused when you save.
-- For a GitHub App, turn **Expire user authorization tokens** off (af cannot renew them,
-  so connections would stop after about eight hours), and enter the app's page
+- For a GitHub App, turn **Expire user authorization tokens** off (af does not renew
+  them yet, so connections would stop after about eight hours), and enter the app's page
   (`https://github.com/apps/<name>`) as the install page. A GitHub App reaches only the
   repositories it is installed on; members are sent there to install it, and are warned
   after connecting if it is installed nowhere.

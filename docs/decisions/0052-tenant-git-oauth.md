@@ -162,10 +162,10 @@ ticked Device flow and pasted the client_id. Two project-owned apps now ship wit
   `GET /user/installations`; with none, the member is told at once with the install link instead of
   meeting failing clones later. GitHub exposes no way to learn a GitHub App's install page from its
   client_id, so for a custom GitHub App the tenant admin enters `https://github.com/apps/<name>`.
-- **Expiring user tokens are not supported.** A GitHub App with "Expire user authorization tokens" on
-  returns a refresh token, and refreshing needs the client_secret the device flow does not have. The
-  connection is made and the member is warned; the admin form says to switch expiration off. This
-  keeps decision 6's "GitHub stores no secret".
+- **Expiring user tokens are not renewed yet.** A GitHub App with "Expire user authorization tokens"
+  on returns an 8-hour token and a refresh token. A device-flow token can be refreshed without a
+  client_secret, but af stores only the access token today, so the connection is made, the member is
+  warned, and the admin form says to switch expiration off. Renewal is #1676.
 
 ## Decision 9 — the kind of a custom app is **detected**, not asked (2026-10-04, #1667)
 
