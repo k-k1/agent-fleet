@@ -8,7 +8,7 @@ import (
 func TestBuildCodexProgram(t *testing.T) {
 	// Fresh launch: plain codex with bypass flags + injected status hooks.
 	got := buildProgram("", "", "slot1", "", "")
-	for _, want := range []string{"codex", "--dangerously-bypass-approvals-and-sandbox", "session-status working slot1 codex", "session-status idle slot1 codex", "'features.default_mode_request_user_input=true'"} {
+	for _, want := range []string{"codex", "--dangerously-bypass-approvals-and-sandbox", "session-status working slot1 codex", "session-status idle slot1 codex", "hooks.PreCompact=", "session-status compacting slot1 codex", "hooks.PostCompact=", "session-status compacted slot1 codex", "'features.default_mode_request_user_input=true'"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in %q", want, got)
 		}

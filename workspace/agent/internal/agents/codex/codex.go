@@ -46,8 +46,45 @@ func IsCompactingThread(threadID string) bool {
 }
 
 func isCompacting(m session.Meta) bool {
-	threadID := sids.Read(session.UUID(m.Dir, m.Name))
-	return IsCompactingThread(threadID)
+	slot := session.UUID(m.Dir, m.Name)
+	if IsCompactingThread(sids.Read(slot)) {
+		return true
+	}
+	// Managed sessions are fed by the driver's contextCompaction events above; a Terminal
+	// session's thread never reaches an app-server, so only its hooks can say.
+	return m.DriverKind() != session.DriverManaged && terminalCompacting(slot)
+}
+
+// compactMarks holds, per slot sid, when a Terminal session's PreCompact hook fired
+// (RFC 3339, nanoseconds). The hook runs in its own process, so the mark has to be on disk
+// for the Agent to see it.
+var compactMarks = agents.NewSidStore("codex-compacting")
+
+// MarkCompacting records a Terminal session's PreCompact (active) or PostCompact hook.
+// Called from the session-status hook entrypoint in package sessionx.
+func MarkCompacting(slotSid string, active bool) {
+	if active {
+		compactMarks.Write(slotSid, time.Now().UTC().Format(time.RFC3339Nano))
+	} else {
+		compactMarks.Remove(slotSid)
+	}
+}
+
+// terminalCompacting reports whether a PreCompact mark is still open. PostCompact removes
+// it, but an Esc during the compaction fires neither PostCompact nor Stop (measured on codex
+// 0.160.0); the rollout's turn_aborted is then the only end, so a turn end recorded at or
+// after the mark closes it too. task_started is deliberately not an end: codex writes it
+// just before the PreCompact of a compaction that opens a turn.
+func terminalCompacting(slot string) bool {
+	raw := compactMarks.Read(slot)
+	if raw == "" {
+		return false
+	}
+	since, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return false
+	}
+	return !rolloutCompletedAt(slot, since)
 }
 
 // RememberSid records the slot sid → codex session id mapping. Called from the
@@ -195,6 +232,10 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if threadHeld(resumeID) {
 		return agents.LaunchPlan{}, ErrThreadReleasing
 	}
+	// A pane killed mid-compaction left its PreCompact mark open, and a resumed rollout
+	// records no end for that turn: drop it, or the fresh pane reads compacting until its
+	// first prompt.
+	compactMarks.Remove(cxSid)
 	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, cxSid, resumeID, forkFrom), Cwd: m.CWD()}, nil
 }
 
@@ -278,7 +319,10 @@ func MissedTurnEnd(m session.Meta) bool {
 	return rolloutCompletedAfter(m, workingSince)
 }
 
-func (agentImpl) ClearResume(sid string) { sids.Remove(sid) }
+func (agentImpl) ClearResume(sid string) {
+	sids.Remove(sid)
+	compactMarks.Remove(sid)
+}
 
 // IsRateLimited reports whether a managed codex session's last turn failed with a
 // usage-limit error. The shared live-state helper in package main uses this to

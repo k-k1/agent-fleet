@@ -1641,7 +1641,11 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 // from making a newly-submitted prompt look idle; a later task_started replaces the
 // lifecycle outright.
 func rolloutCompletedAfter(m session.Meta, workingSince time.Time) bool {
-	slot := session.UUID(m.Dir, m.Name)
+	return rolloutCompletedAt(session.UUID(m.Dir, m.Name), workingSince)
+}
+
+// rolloutCompletedAt is rolloutCompletedAfter keyed by the slot sid.
+func rolloutCompletedAt(slot string, workingSince time.Time) bool {
 	path := rolloutPath(sids.Read(slot))
 	if path == "" || workingSince.IsZero() {
 		return false
