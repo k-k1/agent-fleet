@@ -102,7 +102,9 @@
   padding-top: 12vh;
 }
 .cp-panel {
-  width: min(640px, 94vw);
+  /* Wide enough for the six mode tabs plus the switch hint on one line in Japanese (~670px of
+     labels at 640 made each tab wrap inside itself), with room left for the session rows. */
+  width: min(760px, 94vw);
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -123,12 +125,16 @@
   font-family: inherit;
 }
 /* Mode tabs (command / changed) under the input — VS Code-style quick-open switcher. */
+/* One line, always: a tab never wraps its label. Where the panel is narrower than the tabs (a
+   phone), the row scrolls sideways instead. */
 .cp-modes {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--border2);
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 .cp-mode {
   font-size: 12px;
@@ -138,6 +144,8 @@
   border-radius: 999px;
   padding: 2px 10px;
   cursor: pointer;
+  flex: none;
+  white-space: nowrap;
 }
 .cp-mode:hover {
   color: var(--fg);
@@ -149,8 +157,11 @@
 }
 .cp-mode-hint {
   margin-left: auto;
+  padding-left: 8px;
   font-size: 11px;
   color: var(--muted);
+  flex: none;
+  white-space: nowrap;
 }
 .cp-list {
   overflow: auto;
