@@ -467,8 +467,8 @@ colour the whole card, so they can be spotted from across the room.
   That last one is read from notifications and this device's own observations, so it stays blank
   when neither saw the change. Which agent it is (Claude, Codex, …) is the coloured icon at the
   top left.
-- **The very bottom of a card is the opening of the last thing that session said** (Claude only;
-  shown for stopped sessions too). A long line is cut off, and hovering shows it in full. On a
+- **The very bottom of a card is the opening of the last thing that session said** (shown for
+  stopped sessions too). A long line is cut off, and hovering shows it in full. On a
   session that has not said anything yet, the line is not there at all.
 - **Right-click, the ⋯ button, or the Menu key on a card gives the same menu as the row in the
   left pane** — stop, rename, hand off, share, lock, keep awake, archive, and the rest
