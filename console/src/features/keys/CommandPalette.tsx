@@ -407,6 +407,7 @@ export function CommandPalette() {
   const inputRef = useRef<HTMLInputElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
   const selRef = useRef<HTMLDivElement | null>(null);
+  const modeTabRef = useRef<HTMLButtonElement | null>(null);
 
   const close = () => useKeysStore.getState().closePalette();
   // Cancel = close without running anything → hand focus back to whoever opened us.
@@ -659,6 +660,12 @@ export function CommandPalette() {
   useEffect(() => {
     selRef.current?.scrollIntoView({ block: "nearest" });
   }, [sel, mode, filtered.length]);
+  // The same for the mode tabs: on a narrow screen their row scrolls sideways, and switching with
+  // Tab keeps focus in the input, so nothing else brings the selected tab into view — it can sit
+  // past the edge with the list below already showing its results.
+  useEffect(() => {
+    modeTabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [open, mode]);
 
   const switchMode = (m: Mode) => {
     setMode(m);
@@ -745,6 +752,7 @@ export function CommandPalette() {
           {modes.map((m) => (
             <button
               key={m}
+              ref={m === mode ? modeTabRef : null}
               type="button"
               role="tab"
               aria-selected={m === mode}

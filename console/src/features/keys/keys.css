@@ -128,6 +128,10 @@
    wraps its label, and where the panel is narrower than the tabs (a phone) the row scrolls
    sideways instead. */
 .cp-modes {
+  /* flex: none — with overflow-x set, overflow-y computes to auto too, which drops the row's
+     content-height floor in the panel's column; a long result list then squeezed it until the
+     tabs were clipped (measured: 15px for 23px tabs). Only the list below should shrink. */
+  flex: none;
   display: flex;
   align-items: center;
   gap: 6px;
