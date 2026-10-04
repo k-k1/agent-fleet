@@ -457,7 +457,7 @@ func TestECSEC2FailedLaunchKeepsALaterStartsClaim(t *testing.T) {
 			once.Do(func() {
 				go func() {
 					defer close(started)
-					h.rt.beginStart()
+					_, _ = h.rt.beginStart(ctx)
 					h.ec2.mu.Lock()
 					h.ec2.setTag("vol-1", EC2TagClaim, "i-new1")
 					h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().Add(time.Second).UTC().Format(time.RFC3339))

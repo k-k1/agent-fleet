@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"strings"
 	"time"
 )
@@ -16,6 +18,13 @@ type CPLeaseStore interface {
 	// RenewCPLease extends holder's lease by ttl from now, only while it is still live: a
 	// holder whose lease expired has to acquire it again, and loses to whoever took it.
 	RenewCPLease(ctx context.Context, name, holder string, ttl time.Duration) (bool, error)
+	// ReleaseCPLease gives name up when holder still has it, so the next holder need not
+	// wait out the expiry. Releasing a lease somebody else holds now changes nothing.
+	ReleaseCPLease(ctx context.Context, name, holder string) error
+	// BumpCPCounter adds one to the counter name (created at 1) and returns the new value.
+	BumpCPCounter(ctx context.Context, name string) (int64, error)
+	// CPCounter reads the counter name, 0 when it has never been bumped.
+	CPCounter(ctx context.Context, name string) (int64, error)
 }
 
 // dbNowMs is the database's current time in Unix milliseconds.
@@ -49,4 +58,26 @@ func (s *SQL) RenewCPLease(ctx context.Context, name, holder string, ttl time.Du
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err
+}
+
+func (s *SQL) ReleaseCPLease(ctx context.Context, name, holder string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM cp_lease WHERE name=? AND holder=?`, name, holder)
+	return err
+}
+
+// BumpCPCounter is one statement, so two CPs bumping at once get two different values.
+func (s *SQL) BumpCPCounter(ctx context.Context, name string) (int64, error) {
+	var v int64
+	err := s.db.QueryRowContext(ctx, `INSERT INTO cp_counter (name, value) VALUES(?, 1)
+		ON CONFLICT(name) DO UPDATE SET value = cp_counter.value + 1 RETURNING value`, name).Scan(&v)
+	return v, err
+}
+
+func (s *SQL) CPCounter(ctx context.Context, name string) (int64, error) {
+	var v int64
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM cp_counter WHERE name=?`, name).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return v, err
 }

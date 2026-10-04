@@ -1710,3 +1710,28 @@ paused past its lease also keeps acting until its timer fires. Those overlap wit
 CPs' operations on one slot do, which is #1601's to close. Code: `control-plane/workspace_lifecycle.go`
 (`beginDestroyWorkspace`), `control-plane/internal/runtime/runtime_ecs_home_task.go` (`runningHomeTask`),
 `control-plane/golden_bake.go` (`tick`, `keepLease`), `control-plane/internal/store/store_cp_lease.go`.
+
+**Note (2026-10-04, #1601): a home's mount, umount and detach are serialised across CP replicas.** The #1592
+lock and the Start count it is checked against (`startGen`) were held in each CP process. A release on one replica
+therefore neither kept another replica's mount out of its umount-to-detach window, nor saw a Start made on that
+replica, and could detach the home a workspace was coming up on. Both now live in the store: each of the two
+per-workspace locks (the mount lock, and the lock between a Start's count and a failed launch's claim delete) is also
+a `cp_lease` row, and the Start count is a `cp_counter` row (migrations 0087 / pg 0072) that every replica bumps and
+every release reads. A lease expires on the database clock (90 s past its last confirmed renewal, renewed every
+30 s), so a CP that died holding one blocks the home for at most that long. The work under a lock runs on a context
+that ends when its lease is lost, and a release checks it once more before `DetachVolume`; a mount cut off that way
+fails like a mount that found the home gone (no quarantine, the claim dropped). Every replica now behaves alike: a
+Start counted before a release's last check makes the release re-mount instead of detaching, and a Start's mount
+that waits on a release finds the home gone and fails cleanly. This also covers the golden overlap the #1603 note
+leaves here (a background seed or probe Start of the previous lease holder against the new holder's release). Every
+irreversible step under a lock (a slot command, `DetachVolume`, a claim delete) first checks the lease's deadline by
+the clock, not only the context a timer ends, so a process resumed from a pause past it sends nothing new; a mount
+that answers success after its lease was lost reports the loss. A slot command whose caller stopped waiting keeps
+the lock, renewed for up to five minutes, until SSM shows it ended, and one whose `SendCommand` answer was lost keeps
+the lease until it expires: an `af-mount` still queued on the slot must not land between another holder's umount and
+detach. What stays open: an AWS call already sent when a lease is lost is not withdrawn, and a slot command that runs
+later than all of that has no fence on the slot itself. A quarantine waits at most 30 s for the lock; without it the
+home stays attached to the box, which is still stopped. Code:
+`control-plane/internal/runtime/runtime_ecs_ec2_home_lease.go` (`lockHome`, `startedSince`),
+`runtime_ecs_ec2_home_mount.go` (`beginStart`, `unclaimIfOurs`), `runtime_ecs_ec2.go` (`mountHome`,
+`releaseSlotSince`, `quarantineSlot`), `control-plane/internal/store/store_cp_lease.go`.

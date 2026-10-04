@@ -1571,3 +1571,26 @@ umount から detach までの間に入れない。解放の後にロックを�
 重なり、それを閉じるのは #1601 である。コード: `control-plane/workspace_lifecycle.go`（`beginDestroyWorkspace`）、
 `control-plane/internal/runtime/runtime_ecs_home_task.go`（`runningHomeTask`）、`control-plane/golden_bake.go`
 （`tick`・`keepLease`）、`control-plane/internal/store/store_cp_lease.go`。
+
+**追記（2026-10-04・#1601）: ホームの mount・umount・detach が CP のレプリカをまたいで直列になった。** #1592 のロックと、
+それと照らす Start の回数（`startGen`）は CP のプロセスごとに持っていた。そのため 1 台のレプリカの解放は、別のレプリカの
+mount を umount から detach までの間から締め出せず、別のレプリカで始まった Start も見えず、起動中のワークスペースの
+ホームを detach することがあった。どちらもストアに移した。ワークスペースごとの 2 つのロック（mount のロックと、Start の回数と
+失敗した起動の claim 削除の間のロック）はそれぞれ `cp_lease` の行でもあり、Start の回数は `cp_counter` の行
+（マイグレーション 0087 / pg 0072）で、すべてのレプリカが増やし、すべての解放が読む。リースの期限はデータベースの時計で
+決まり（最後に確かめた更新から 90 秒、30 秒ごとに更新）、持ったまま死んだ CP がホームを止めるのは最長でその間だけである。
+ロックの下の処理はリースを失うと終わるコンテキストで走り、解放は `DetachVolume` の直前にもう一度それを確かめる。そうして
+打ち切られた mount は、ホームが無くなっていた mount と同じく失敗する（隔離せず、claim を外す）。どのレプリカでも振る舞いは
+同じになった。解放の最後の確認より前に数えられた Start があれば解放は detach せず mount し直し、解放を待った Start の
+mount はホームが無いのを見てきれいに失敗する。#1603 の追記がここに残した golden の重なり（前のリースの持ち主のシード・
+プローブの Start のバックグラウンド完了と、新しい持ち主の解放）もこれで覆われる。ロックの下の取り消せない一歩
+（スロットへのコマンド、`DetachVolume`、claim の削除）は、タイマーが終わらせるコンテキストだけでなく、送る直前に
+時計でリースの期限を確かめる。そのため期限を越えて停止していたプロセスが再開しても新しく何も送らない。リースを失った
+後に成功を返した mount は、失ったことを返す。呼び出し元が待つのをやめたスロットのコマンドは、SSM が終わったと示す
+まで（更新しながら最長 5 分）ロックを持ち続け、`SendCommand` の応答が失われたものはリースが切れるまで持つ。スロットに
+まだ並んでいる `af-mount` が、別の持ち主の umount と detach の間に入ってはならないからである。残るもの: リースを失った
+時点で送り済みの AWS 呼び出しは撤回されず、それらすべてより遅れて走るスロットのコマンドにはスロット側の柵が無い。
+隔離がロックを待つのは最長 30 秒で、取れなければホームは箱に付いたままになり、箱は止める。
+コード: `control-plane/internal/runtime/runtime_ecs_ec2_home_lease.go`（`lockHome`・`startedSince`）、
+`runtime_ecs_ec2_home_mount.go`（`beginStart`・`unclaimIfOurs`）、`runtime_ecs_ec2.go`（`mountHome`・
+`releaseSlotSince`・`quarantineSlot`）、`control-plane/internal/store/store_cp_lease.go`。
