@@ -13,6 +13,31 @@
 
 ---
 
+## [0.28.0](0.28.0.ja.md) — 2026-10-04
+
+**New / Improved**
+
+- **[セッション]** コマンドパレットの「会話」と `search_sessions` で過去の会話を検索 ([#1558](https://github.com/k-k1/agent-fleet/issues/1558))
+- **[セッション]** 左ペインの絞り込みとパレットで Issue・PR・Jira のキーからセッションを探す ([#1665](https://github.com/k-k1/agent-fleet/issues/1665))
+- **[ミラー]** ミラーとアシスタントのチャットのチケット番号から作業項目を開く ([#1659](https://github.com/k-k1/agent-fleet/issues/1659))
+- **[使用量]** セッションごとの費用の予算。達したらターン後に停止、「予算を上げて再開」 ([#1054](https://github.com/k-k1/agent-fleet/issues/1054))
+- **[メモリ管理]** 全種別で共有する Agent Fleet のメモリ。既定はオフ、変更一覧から元に戻す・消す ([#1569](https://github.com/k-k1/agent-fleet/issues/1569))
+- **[git]** 組み込みの OAuth App／GitHub App で GitHub に接続。テナント自前のアプリの種類は自動で判別 ([#1667](https://github.com/k-k1/agent-fleet/issues/1667))
+- **[画像生成]** インペイントのマスクを画像に重ねたキャンバスで塗る ([#956](https://github.com/k-k1/agent-fleet/issues/956))
+- **[ギャラリー]** サブフォルダーを含める、画像をセッションへ送る、向きを反映した幅×高さ ([#961](https://github.com/k-k1/agent-fleet/issues/961))
+- **[エンジン]** 管理 › 推論エンジン で LAN の ComfyUI の URL とキー。`comfyui-lan.sh` で固定版のイメージを LAN のホストで動かす ([#957](https://github.com/k-k1/agent-fleet/issues/957), [#958](https://github.com/k-k1/agent-fleet/issues/958))
+- **[AWS]** メンバーの秘密情報を封印する KMS のキー管理（任意） ([#969](https://github.com/k-k1/agent-fleet/issues/969))
+- **[通知]** 設定を 1 つの表に。種類 × 未読の印／OS の通知／読み上げ ([#1085](https://github.com/k-k1/agent-fleet/issues/1085))
+- **[Console]** WS バーは折り返さず幅に合わせて畳む ([#1642](https://github.com/k-k1/agent-fleet/issues/1642))
+- **[エージェント]** codex のターミナルと OpenCode でコンパクト化中を表示。OpenCode の報告費用を使用量に ([#1139](https://github.com/k-k1/agent-fleet/issues/1139), [#1082](https://github.com/k-k1/agent-fleet/issues/1082))
+
+**Fixed**
+
+- **[エージェント]** 使用量の上限で断られた最初の依頼を、自動再開で断っていた ([#1658](https://github.com/k-k1/agent-fleet/issues/1658))
+- **[質問カード]** 単一選択で選択肢を選ぶと自由入力の文字が消えた ([#1653](https://github.com/k-k1/agent-fleet/issues/1653))
+- **[セッション状態]** 自分の Stop フックが停止を止めるとターンが早く終わったと報告された ([#1600](https://github.com/k-k1/agent-fleet/issues/1600))
+- **[ミラー]** `~/repos`・`~/.af-work` がシンボリックリンクだと変更ファイルの分類がずれた ([#1610](https://github.com/k-k1/agent-fleet/issues/1610))
+
 ## [0.27.0](0.27.0.ja.md) — 2026-10-03
 
 **CLI ピン** — Claude Code 2.1.288 / Codex 0.160.0 / Copilot 1.0.91 / Antigravity 1.2.16 / Cursor 2026.10.01-e373342 / Kiro 2.27.1 / Muse Code 1.4.2-R4684.1
