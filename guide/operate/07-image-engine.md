@@ -1,7 +1,7 @@
 ---
 audience: "a deployment administrator who already runs a ComfyUI somewhere on the network and wants sessions to use it"
-source_of_truth: "the environment variables the Control Plane reads at startup; the runbook next to your target (`deploy/native/README.md`, `deploy/compose/.env.example`) for the exact syntax"
-updated: "2026-09"
+source_of_truth: "the LAN ComfyUI panel under Admin → Inference engines, or the environment variables the Control Plane reads at startup; the runbook next to your target (`deploy/native/README.md`, `deploy/compose/.env.example`) for the exact syntax"
+updated: "2026-10"
 ---
 
 # 07. Image generation on your own ComfyUI
@@ -19,7 +19,7 @@ box under someone's desk, the Windows side of a WSL2 machine, a shared server. T
 Control Plane relays to it, so no session has to know where it is or hold a
 credential for it.
 
-It is two environment variables and a model list you keep yourself. **The engine stays
+It is a URL (and optionally a key) and a model list you keep yourself. **The engine stays
 yours**: the Control Plane never starts it, never stops it, and never bills for it.
 A deployment is not limited to one of these either — a LAN ComfyUI, a borrowed engine
 and an OpenAI-compatible server can all be rows at once, and which one draws a given
@@ -31,10 +31,50 @@ Agent Fleet on AWS, this deployment can **borrow that one's engines** —
 chat engine as well as the image one, and the far fleet does the waking and the
 paying.
 
-## The two variables
+## Pointing the Control Plane at it
 
-Both are read by the Control Plane **once at startup**. Changing either one is a CP
-restart — there is no field for them in the Console today.
+There are two places to say where the ComfyUI is, and you need only one of them.
+
+**From the Console (no restart).** A super admin opens **Admin → Inference engines**, and the
+**LAN ComfyUI (image engine)** panel at the top of the page takes a URL and an optional bearer
+key. A save applies at once. The image row is rebuilt, so the panel's health answer is about the
+new URL straight away and sessions are told about the change. The key is stored encrypted, like
+the Hugging Face token, and is **write-only**: the panel shows whether a key is set, never its
+value, and offers **Remove key** to clear it. URLs that are not `http://` or `https://`, or that
+carry a user name or password, are refused. Put the bearer in the key field instead.
+
+**From the environment (read once at startup).** The two variables below. Changing either
+one is a CP restart.
+
+| Variable | Meaning |
+|---|---|
+| `AF_COMFY_URL` | Full URL including the port, as the CP sees it — e.g. `http://192.168.1.20:8188`. Setting it is what turns the route on. |
+| `AF_COMFY_API_KEY` | Optional. Sent upstream as `Authorization: Bearer`, on generation calls **and on the health check**. |
+
+**Which one wins.** Highest first:
+
+1. A **managed** `image` row in the engine stack's table (AWS). The panel shows the URL in
+   effect, offers no form, and says why. To use a LAN ComfyUI instead, take the role out of
+   the stack.
+2. The URL saved in the panel.
+3. `AF_COMFY_URL`.
+4. An external row of the inline table, or an engine borrowed from another fleet.
+
+**The key goes with its URL.** A URL saved in the panel is sent the panel's key, or no
+`Authorization` header at all when the panel holds none. It is **never** sent
+`AF_COMFY_API_KEY` or `AF_ENGINE_API_KEY_IMAGE`, because those were set for the host the
+environment names. The key is also never carried across a redirect: when the saved URL answers
+with a redirect to another scheme, host or port, the Control Plane refuses it instead of following
+it.
+
+**Remove panel setting** returns the image role, live, to whatever is next in the order above:
+`AF_COMFY_URL` with its own key, or else an external row of the inline table. If neither exists
+but `AF_REMOTE_ENGINE_URL` is set, an `image` engine borrowed from that fleet takes over on the
+next poll. Only when none of these exists does removing take the image engine away. Removing is
+therefore **not** a way to stop image generation; switch the engine **off** for that. The panel
+says which source is in effect and what removing would return to.
+
+The rest of this section is about the environment variables.
 
 | Variable | Meaning |
 |---|---|

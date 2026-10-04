@@ -56,20 +56,15 @@ func routeSwitches(t *testing.T) []routeSwitch {
 		// is set; the link itself is read per request.
 		{name: "update", env: map[string]string{"AF_SELF_LINK": filepath.Join(t.TempDir(), "af")},
 			routes: []string{"POST /api/update/apply", "GET /api/update/status"}},
-		// The engine gateway (registerEngineRoutes), present only when newEngineRegistry returns
-		// a registry. AF_LLM_URL is the one way to get one that neither reaches AWS nor starts
-		// a poller: an external row gets no controller, and nothing is dialled at build time.
-		{name: "engine", env: map[string]string{"AF_LLM_URL": "http://127.0.0.1:9/v1"},
-			routes: []string{
-				"POST /internal/engine/token", "GET /internal/engine/catalog",
-				"GET /engine/{key}/props", "ANY /engine/{key}/v1/{path...}",
-			}},
+		// No engine switch: a CP with a store always builds an engine registry, possibly empty,
+		// so the admin panel can give it a LAN ComfyUI without a restart (#957). The gateway's
+		// routes are therefore part of the base table.
 	}
 }
 
-// routeSwitchOffEnv is every variable that can turn a routeSwitch on, including the engine
-// sources the switch itself does not use: AF_ENGINES_SSM_PARAM in the caller's environment
-// would otherwise make each smokeEnv load an AWS config.
+// routeSwitchOffEnv is every variable that can turn a routeSwitch on, plus the engine sources:
+// AF_ENGINES_SSM_PARAM in the caller's environment would otherwise make each smokeEnv load an
+// AWS config.
 var routeSwitchOffEnv = []string{
 	"AF_MCP_ENABLED",
 	"AF_SELF_LINK",
@@ -164,18 +159,13 @@ func TestRouteTableConditionalRoutesAreKnown(t *testing.T) {
 	}
 }
 
-// TestRouteSwitchExemptionsDoNotOutliveTheTest — a switch's authGate exemption must be gone
-// once the test that turned it on ends, or a later all-off mux still lets /engine/ through.
-func TestRouteSwitchExemptionsDoNotOutliveTheTest(t *testing.T) {
-	t.Run("engine on", func(t *testing.T) {
-		smokeEnvWith(t, "engine")
-		if !isAuthExempt("/engine/llm/v1/models") {
-			t.Fatal("the engine switch did not exempt /engine/: the check below proves nothing")
-		}
-	})
+// TestEngineGatewayIsExemptWithNoEngineDeclared — the gateway is registered on every CP with a
+// store (#957), so its session exemption is too: a Workspace's bearer-authenticated call must not
+// meet the login redirect on a deployment whose only engine arrived from the admin panel.
+func TestEngineGatewayIsExemptWithNoEngineDeclared(t *testing.T) {
 	smokeEnv(t)
-	if isAuthExempt("/engine/llm/v1/models") {
-		t.Error("/engine/ is still auth-exempt after the engine switch's test ended")
+	if !isAuthExempt("/engine/image/v1/prompt") || !isAuthExempt("/internal/engine/catalog") {
+		t.Error("with no engine declared, /engine/ is not auth-exempt")
 	}
 }
 

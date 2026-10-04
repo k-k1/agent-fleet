@@ -216,7 +216,10 @@ AF_COMFY_URL=http://<host>:8188 af start
 A full URL including the port, as the CP sees it (e.g.
 `http://192.168.1.20:8188`). Under systemd, add
 `Environment=AF_COMFY_URL=...` to the unit's `[Service]` section. It is read **once
-at startup**, so changing it is a restart.
+at startup**, so changing it is a restart. A super admin can instead set the URL and key
+under **Admin → Inference engines → LAN ComfyUI** in the Console. That needs no restart, and a
+URL saved there wins over `AF_COMFY_URL` and never receives `AF_COMFY_API_KEY`
+([guide/operate/07-image-engine.md](../../guide/operate/07-image-engine.md)).
 
 Optionally set `AF_COMFY_API_KEY` as well. The CP then sends it as
 `Authorization: Bearer` — on generation calls **and on the health check**. ComfyUI

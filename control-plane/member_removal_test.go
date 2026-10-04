@@ -27,6 +27,9 @@ import (
 // here fails the test rather than going unchecked.
 func TestRemovedMemberIsRefusedOnEveryWorkspaceRoute(t *testing.T) {
 	setRouteSwitches(t, allRouteSwitches(t)...)
+	// An llm row for the /engine/llm/ samples to reach past the handler's "no engine" answer. An
+	// external row gets no controller and dials nothing at build time.
+	t.Setenv("AF_LLM_URL", "http://127.0.0.1:9/v1")
 	restoreAuthExemptions(t)
 	ctx := context.Background()
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))

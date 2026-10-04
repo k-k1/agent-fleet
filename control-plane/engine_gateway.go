@@ -168,6 +168,7 @@ var engineClient = &http.Client{
 		// connections to it is pointless.
 		MaxIdleConnsPerHost: 4,
 	},
+	CheckRedirect: engineCheckRedirect,
 }
 
 type engineGateway struct {
@@ -699,7 +700,7 @@ func (g engineGateway) props(w http.ResponseWriter, r *http.Request) {
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
-	resp, err := engineClient.Do(req)
+	resp, err := engineDo(eng, req)
 	if err != nil {
 		// A box that is asleep (or, borrowed, a far gateway that is itself down) answers here,
 		// fast, because enginePropsTimeout never gives it the minutes ensureReady would. This is
@@ -853,7 +854,7 @@ func enginePropsLiveModelWindows(ctx context.Context, eng *engineRuntimeState, b
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
-	resp, err := engineClient.Do(req)
+	resp, err := engineDo(eng, req)
 	if err != nil {
 		return nil
 	}
@@ -1411,7 +1412,7 @@ func (g engineGateway) dial(ctx context.Context, eng *engineRuntimeState, r *htt
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
-	resp, err := engineClient.Do(req)
+	resp, err := engineDo(eng, req)
 	if err != nil {
 		return upstreamStart{err: engineRelayErr(ctx, eng, err)}
 	}
@@ -1702,7 +1703,7 @@ func engineHealthy(ctx context.Context, eng *engineRuntimeState) bool {
 	if eng.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+eng.apiKey)
 	}
-	resp, err := engineClient.Do(req)
+	resp, err := engineDo(eng, req)
 	if err != nil {
 		return false
 	}
@@ -1754,7 +1755,7 @@ func engineLoadedModels(ctx context.Context, eng *engineRuntimeState) []string {
 	if eng.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+eng.apiKey)
 	}
-	resp, err := engineClient.Do(req)
+	resp, err := engineDo(eng, req)
 	if err != nil {
 		return nil
 	}

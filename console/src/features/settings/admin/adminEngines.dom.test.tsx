@@ -785,6 +785,24 @@ describe("EnginesAdminView", () => {
     expect(called.sort()).toEqual(["api/admin/engines"]);
   });
 
+  // The LAN ComfyUI panel (#957) is drawn from the list's own `comfy_lan`, for the operator only.
+  it("draws the LAN ComfyUI panel from comfy_lan, and not for a tenant_admin", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [row()],
+      comfy_lan: { available: true, source: "env", url: "http://192.0.2.10:8188", env_url: "http://192.0.2.10:8188" },
+    });
+    await mount();
+    expect(host!.querySelector('[data-testid="comfy-lan-panel"]')?.textContent).toContain("AF_COMFY_URL");
+    act(() => root?.unmount());
+    host?.remove();
+
+    // Even an answer that carried it draws nothing for a non-operator.
+    api.mockResolvedValue({ super_admin: false, engines: [row()], comfy_lan: { available: true, source: "env" } });
+    await mount();
+    expect(host!.querySelector('[data-testid="comfy-lan-panel"]')).toBeNull();
+  });
+
   it("lists every engine, each with its own control", async () => {
     api.mockResolvedValue({
       super_admin: true,
