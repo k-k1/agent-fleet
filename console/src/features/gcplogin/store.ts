@@ -58,7 +58,8 @@ interface GcpLoginState {
   /** Every Settings profile the Agent last listed; null until it has answered once. */
   profiles: GcpProfileState[] | null;
   /** Asks the Agent for the profiles' login states; a failed ask keeps the old list. */
-  refreshProfiles(): Promise<void>;
+  /** true once the Agent answered (and the answer is still for the current tenant). */
+  refreshProfiles(): Promise<boolean>;
   /**
    * Settings changed a profile. The Agent reads Settings on its own pull, every five minutes
    * (cloudbridge.PollInterval), and its profile list is that pull's, so this asks now and
@@ -126,10 +127,10 @@ export const useGcpLoginStore = create<GcpLoginState>((set, get) => ({
     try {
       d = await api("api/gcp-login/profiles");
     } catch {
-      return;
+      return false;
     }
-    if (!d || d.error || !Array.isArray(d.profiles)) return;
-    if (getTenant() !== tenant) return; // asked under the previous tenant
+    if (!d || d.error || !Array.isArray(d.profiles)) return false;
+    if (getTenant() !== tenant) return false; // asked under the previous tenant
     const profiles: GcpProfileState[] = [];
     for (const raw of d.profiles) {
       const p = raw as Record<string, unknown>;
@@ -143,6 +144,7 @@ export const useGcpLoginStore = create<GcpLoginState>((set, get) => ({
       });
     }
     set({ profiles });
+    return true;
   },
   settingsChanged() {
     void get().refreshProfiles();

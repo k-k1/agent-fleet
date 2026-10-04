@@ -6,6 +6,8 @@
 // the per-tenant sync effect loads that tenant's layout. History (back/forward)
 // traverses layout states.
 import { useEffect, useRef, useState } from "react";
+import { useRetryLoad } from "../lib/retryLoad.ts";
+import { reloadCloudProfiles } from "./cloudProfilesReload.ts";
 import { useTenantStore } from "../core/store/tenant.ts";
 import { useT } from "../lib/i18n/index.ts";
 import { startPushChannel, restartPush } from "../core/push/events.ts";
@@ -167,6 +169,7 @@ export function App() {
   // (clear + re-hydrate) the accumulated keys on an ACTUAL tenant change, not on the
   // effect's initial post-boot run.
   const prefsSyncedTenantRef = useRef<string | null>(null);
+  const profilesReloadRef = useRef(false);
   const browserAttachmentActionHandledRef = useRef(false);
 
   // Detect a newer deployed build and offer a one-tap, cache-busting reload.
@@ -384,11 +387,10 @@ export function App() {
       const aws = useAwsLoginStore.getState();
       aws.reset();
       void aws.refresh();
-      void aws.refreshExpiry();
       const gcp = useGcpLoginStore.getState();
       gcp.reset();
       void gcp.refresh();
-      void gcp.refreshProfiles();
+      profilesReloadRef.current = true; // the retrying load below asks for the profiles
     }
     prefsSyncedTenantRef.current = tenant;
     // pane ids are tab-local, not tenant-global. Never carry an ephemeral Page
@@ -419,6 +421,18 @@ export function App() {
     void useWorkspaceStore.getState().refresh();
     void useSessionsStore.getState().refresh();
   }, [booted, tenant]);
+
+  // The cloud-login profiles after a tenant switch (cloudProfilesReload.ts).
+  useRetryLoad(
+    async (signal) => {
+      if (!profilesReloadRef.current) return true;
+      const done = await reloadCloudProfiles();
+      if (signal.aborted) return true;
+      if (done) profilesReloadRef.current = false;
+      return done;
+    },
+    [tenant],
+  );
 
   usePaneLayoutSync(booted, tenant, paneLayout, popout);
 

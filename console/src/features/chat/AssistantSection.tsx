@@ -11,7 +11,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
-import { isTransientErr, type ApiError } from "../../core/api/client.ts";
+import { getTenant, isTransientErr, type ApiError } from "../../core/api/client.ts";
 import { copyText } from "../../lib/clipboard.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
@@ -75,11 +75,17 @@ export const AssistantSection = memo(function AssistantSection() {
   const convMenuRef = useRef<HTMLUListElement>(null);
 
   const refresh = useCallback(() => {
+    // An answer asked under the previous tenant must not repopulate what the switch emptied.
+    const started = getTenant();
     chatList()
-      .then((r) => setConvs(r.conversations || []))
+      .then((r) => {
+        if (getTenant() === started) setConvs(r.conversations || []);
+      })
       .catch(() => {});
     assistantList()
-      .then((r) => setAssistants(r.assistants || []))
+      .then((r) => {
+        if (getTenant() === started) setAssistants(r.assistants || []);
+      })
       .catch(() => {});
   }, [setConvs]);
   // The list is proxied to the agent, so right after a workspace start it is unreachable and
