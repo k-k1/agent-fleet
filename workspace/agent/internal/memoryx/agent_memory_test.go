@@ -349,3 +349,245 @@ func TestAgentMemorySaveHandlerSecret(t *testing.T) {
 		t.Fatalf("unknown session status %d", w.Code)
 	}
 }
+
+// ---- review round 1 (PR #1657): one test per finding ----
+
+func agentMemFakeAWS() string { return "AKIA" + "ZXCVBNMLKJHGFDSA" }
+
+// The scan cannot be dodged by NUL, by padding a line past the old 8 KiB cut, or by putting a
+// placeholder of the same rule first on the line.
+func TestAgentMemorySecretScanCannotBeDodged(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	key := agentMemFakeAWS()
+	for name, body := range map[string]string{
+		"nul":         "note\x00 " + key,
+		"padded":      strings.Repeat("x", 9000) + " " + key,
+		"placeholder": "AKIAEXAMPLEEXAMPLE00 then " + key,
+	} {
+		_, err := agentMemSave(c, agentMemSaveReq{Name: "dodge", Description: "d", Body: body}, time.Now())
+		var se *agentMemSecretErr
+		if !errors.As(err, &se) {
+			t.Errorf("%s: err = %v, want a refusal", name, err)
+		}
+	}
+	// The shared scanner itself sees a key behind a placeholder of the same rule.
+	if f := memoryScanContent("x", []byte("AKIAEXAMPLEEXAMPLE00 "+key)); len(f) != 1 {
+		t.Errorf("scanner findings behind a placeholder = %+v", f)
+	}
+}
+
+// The raw description is scanned: rendering escapes the quotes the generic rule looks for.
+func TestAgentMemoryDescriptionScannedRaw(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	// Assembled at run time: a literal of this shape is what the repository's own secret scan
+	// (gitleaks over every pushed branch) flags.
+	desc := "pass" + "word" + `: "` + "Q7v5M9w2" + "J8s6R4p3" + `"`
+	_, err := agentMemSave(c, agentMemSaveReq{Name: "pw", Description: desc, Body: "b"}, time.Now())
+	var se *agentMemSecretErr
+	if !errors.As(err, &se) || se.Findings[0].Path != "description" {
+		t.Fatalf("err = %v, want a refusal on description", err)
+	}
+}
+
+// A file put in the store by hand is scanned before it is shown, and a write never sweeps it
+// into its own commit.
+func TestAgentMemoryHandEditedFileIsWithheldAndNotCommitted(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	key := agentMemFakeAWS()
+	memoryMkdirAll(t, filepath.Join(agentMemDir(), "user"))
+	memoryWrite(t, filepath.Join(agentMemDir(), "user", "manual.md"), "---\nname: manual\ndescription: key "+key+"\n---\nbody\n")
+
+	idx, err := agentMemListIndex(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(idx)
+	if strings.Contains(string(b), key) || idx.Withheld != 1 {
+		t.Fatalf("index = %s", b)
+	}
+	if _, err := agentMemRead(c, "", "manual"); agentMemCode(err) != errCodeMemorySecretDetected || strings.Contains(err.Error(), key) {
+		t.Fatalf("read of a withheld file = %v", err)
+	}
+	if hits, _ := agentMemSearch(c, "key", 0); len(hits) != 0 {
+		t.Fatalf("search reached a withheld file: %+v", hits)
+	}
+
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "safe", Description: "d", Body: "b"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	files, _ := memoryGitRun("ls-tree", "-r", "--name-only", memoryBranch)
+	if strings.Contains(files, "manual.md") {
+		t.Fatalf("a hand-edited file was committed with someone else's write:\n%s", files)
+	}
+}
+
+// A failed commit leaves the store, staging and the index as they were, so the next snapshot
+// cannot commit the change either.
+func TestAgentMemoryFailedCommitRollsBackStaging(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "m", Description: "d", Body: "v1"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	lock := filepath.Join(memoryRepoDir(), "index.lock")
+	memoryWrite(t, lock, "")
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "m", Description: "d", Body: "v2", Revision: 1}, time.Now()); err == nil {
+		t.Fatal("save succeeded with index.lock held")
+	}
+	if err := os.Remove(lock); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := agentMemRead(c, "", "m"); e.Body != "v1" || e.Revision != 1 {
+		t.Fatalf("live after a failed save = %+v", e)
+	}
+	if _, err := memorySnapshot(memoryTriggerManual, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := memoryGitRun("show", memoryBranch+":af/projects/"+c.Project.ID+"/m.md")
+	if strings.Contains(body, "v2") {
+		t.Fatalf("the failed change reached history through a later snapshot:\n%s", body)
+	}
+}
+
+// Symlinks inside the store are refused for reading and for writing.
+func TestAgentMemorySymlinksRefused(t *testing.T) {
+	home, _, _ := agentMemTestEnv(t)
+	c := agentMemCallerT(t, "shell-home")
+	outside := filepath.Join(home, "outside")
+	memoryMkdirAll(t, outside)
+	memoryWrite(t, filepath.Join(outside, "x.md"), "---\nname: x\ndescription: d\n---\nexternal\n")
+	memoryMkdirAll(t, filepath.Join(agentMemDir(), "user"))
+	if err := os.Symlink(filepath.Join(outside, "x.md"), filepath.Join(agentMemDir(), "user", "x.md")); err != nil {
+		t.Fatal(err)
+	}
+	if e, err := agentMemRead(c, "", "x"); err == nil {
+		t.Fatalf("read followed a symlink: %+v", e)
+	}
+	if err := os.RemoveAll(filepath.Join(agentMemDir(), "user")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(agentMemDir(), "user")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "y", Description: "d", Body: "b"}, time.Now()); err == nil {
+		t.Fatal("save wrote through a symlinked scope directory")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "y.md")); err == nil {
+		t.Fatal("a file was written outside the store")
+	}
+}
+
+// Two repositories whose git dirs share a parent are two projects.
+func TestAgentMemorySeparateGitDirsAreDistinctProjects(t *testing.T) {
+	home, _, _ := agentMemTestEnv(t)
+	meta := filepath.Join(home, "metadata")
+	memoryMkdirAll(t, meta)
+	ids := map[string]bool{}
+	for _, n := range []string{"a", "b"} {
+		dir := filepath.Join(home, "repos", n)
+		memoryMkdirAll(t, dir)
+		cmd := exec.Command("git", "init", "--quiet", "--separate-git-dir", filepath.Join(meta, n), dir)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git init: %v: %s", err, out)
+		}
+		p := agentMemProjectFor(dir)
+		if p == nil || p.Root != dir {
+			t.Fatalf("project for %s = %+v", dir, p)
+		}
+		ids[p.ID] = true
+	}
+	if len(ids) != 2 {
+		t.Fatalf("separate git dirs collided: %v", ids)
+	}
+}
+
+func TestAgentMemorySessionNameIsValidated(t *testing.T) {
+	home, _, _ := agentMemTestEnv(t)
+	// The forged meta names itself as the caller asked, so only the name check stops it.
+	memoryWrite(t, filepath.Join(home, "forged.json"), `{"name":"../forged","dir":"/","kind":"claude"}`)
+	for _, n := range []string{"../forged", "a/b", "claude-main\x00"} {
+		if _, err := agentMemResolveCaller(n); agentMemCode(err) != errCodeMemoryBadRequest {
+			t.Errorf("%q: %v", n, err)
+		}
+	}
+}
+
+// A file with no revision reads as revision 1, so a blind create cannot overwrite it.
+func TestAgentMemoryHandFileWithoutRevisionIsNotOverwritten(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "shell-home")
+	memoryMkdirAll(t, filepath.Join(agentMemDir(), "user"))
+	memoryWrite(t, filepath.Join(agentMemDir(), "user", "x.md"), "---\nname: x\ndescription: d\n---\nmine\n")
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "x", Description: "d", Body: "blind"}, time.Now()); agentMemCode(err) != errCodeMemoryConflict {
+		t.Fatalf("blind create over a hand file: %v", err)
+	}
+	if res, err := agentMemSave(c, agentMemSaveReq{Name: "x", Description: "d", Body: "read first", Revision: 1}, time.Now()); err != nil || res.Revision != 2 {
+		t.Fatalf("update from revision 1: %+v, %v", res, err)
+	}
+}
+
+// Forget then re-create never reuses a revision, so a reader holding the old one is refused.
+func TestAgentMemoryRecreateDoesNotReuseRevision(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "x", Description: "d", Body: "old"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentMemForget(c, agentMemForgetReq{Name: "x", Revision: 1}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	res, err := agentMemSave(c, agentMemSaveReq{Name: "x", Description: "d", Body: "new"}, time.Now())
+	if err != nil || res.Revision != 2 {
+		t.Fatalf("re-create = %+v, %v", res, err)
+	}
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "x", Description: "d", Body: "stale", Revision: 1}, time.Now()); agentMemCode(err) != errCodeMemoryConflict {
+		t.Fatalf("stale save after re-create: %v", err)
+	}
+	if _, err := agentMemForget(c, agentMemForgetReq{Name: "x", Revision: 1}, time.Now()); agentMemCode(err) != errCodeMemoryConflict {
+		t.Fatalf("stale forget after re-create: %v", err)
+	}
+}
+
+// Readers wait for a write in progress, so they never see a change that may be rolled back.
+func TestAgentMemoryReadersWaitForWriter(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	agentMemMu.Lock()
+	done := make(chan struct{})
+	go func() { _, _ = agentMemListIndex(c); close(done) }()
+	select {
+	case <-done:
+		agentMemMu.Unlock()
+		t.Fatal("index did not wait for the writer")
+	case <-time.After(100 * time.Millisecond):
+	}
+	agentMemMu.Unlock()
+	<-done
+}
+
+// Refusals before the scan never echo the value.
+func TestAgentMemoryErrorsDoNotEchoInput(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	key := agentMemFakeAWS()
+	errs := []error{}
+	_, err := agentMemSave(c, agentMemSaveReq{Name: key, Description: "d", Body: "b"}, time.Now())
+	errs = append(errs, err)
+	_, err = agentMemSave(c, agentMemSaveReq{Name: "ok", Description: "d", Body: "b", Kinds: []string{key}}, time.Now())
+	errs = append(errs, err)
+	_, err = agentMemRead(c, "", key)
+	errs = append(errs, err)
+	_, err = agentMemForget(c, agentMemForgetReq{Name: key, Revision: 1}, time.Now())
+	errs = append(errs, err)
+	_, err = agentMemResolveCaller(key)
+	errs = append(errs, err)
+	for i, err := range errs {
+		if err == nil || strings.Contains(err.Error(), key) {
+			t.Errorf("case %d: %v", i, err)
+		}
+	}
+}

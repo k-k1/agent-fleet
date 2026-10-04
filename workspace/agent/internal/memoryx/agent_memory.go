@@ -3,22 +3,30 @@ package memoryx
 // AF-owned agent memory (ADR 0108) — the store every agent kind reads and writes through the
 // af MCP tools.
 //
-//	<claude config>/af-agent-memory/user/<name>.md               user-wide scope
-//	<claude config>/af-agent-memory/projects/<id>/<name>.md      one project
-//	<claude config>/af-agent-memory/projects/<id>/project.json   what <id> stands for
+//	<claude config>/af-agent-memory/user/<name>.md                 user-wide scope
+//	<claude config>/af-agent-memory/projects/<id>/<name>.md        one project
+//	<claude config>/af-agent-memory/projects/<id>/project.json     what <id> stands for
+//	<claude config>/af-agent-memory/<scope dir>/.forgotten/<name>  last revision of a forgotten one
 //
 // Every change is published at once (ADR 0108 decision 8): the revision check, the secret scan
-// and one commit under af/ in the 0022 history happen under memorySnapshotMu, so a change that
-// is visible is also a commit with its author. The store is deliberately not a memoryRoot: the
-// generic restore and import write a root back without a secret scan, which decision 9 forbids
-// for this store.
+// and one commit under af/ in the 0022 history happen with agentMemMu and memorySnapshotMu
+// held, and readers take agentMemMu too, so nothing is visible that has no commit. The store is
+// deliberately not a memoryRoot: the generic restore and import write a root back without a
+// secret scan, which decision 9 forbids for this store.
+//
+// The store sits in a directory the agents' own shells can write, so a file is trusted for
+// nothing: every file is scanned before it is shown, symlinks are refused on both read and
+// write, and a write stages only the file it changed.
 
 import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -26,6 +34,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
@@ -40,8 +50,10 @@ const (
 
 	// agentMemRepoPrefix is where the store lives inside af-memory.git, beside claude/ and codex/.
 	agentMemRepoPrefix = "af"
+	agentMemTombDir    = ".forgotten"
 
 	agentMemMaxBody        = 64 << 10
+	agentMemMaxLine        = 4 << 10
 	agentMemMaxDescription = 300
 	agentMemMaxKinds       = 16
 	agentMemIndexCap       = 500
@@ -58,18 +70,13 @@ var (
 	agentMemKindRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 	// agentMemTypes are the memory types claude's auto-memory uses, so the import keeps them.
 	agentMemTypes = map[string]bool{"": true, "user": true, "feedback": true, "project": true, "reference": true}
+
+	// agentMemMu orders readers against a write: a write holds it from the file change to the
+	// commit, so a reader never sees a change that is about to be rolled back.
+	agentMemMu sync.RWMutex
 )
 
 func agentMemDir() string { return filepath.Join(claude.ConfigDir(), "af-agent-memory") }
-
-// agentMemRoot is the store seen as a memoryRoot, so the copy into staging reuses the
-// allowlist and symlink rules of memorySyncToStaging. It is never added to memoryRootDecls.
-func agentMemRoot() memoryRoot {
-	return memoryRoot{
-		Kind: "af", Label: "Agent Fleet", Dir: agentMemDir(), RepoPrefix: agentMemRepoPrefix,
-		Include: []string{"user/*.md", "projects/*/*.md", "projects/*/project.json"},
-	}
-}
 
 // agentMemProject is the project a session works in (ADR 0108 decision 2).
 type agentMemProject struct {
@@ -87,16 +94,21 @@ type agentMemCaller struct {
 }
 
 // agentMemResolveCaller looks the calling session up. An empty name is an author AF cannot
-// establish; a name that is not a session is refused rather than recorded.
+// establish; a name that is not a session is refused rather than recorded. The name is never
+// echoed back: whatever a caller put there must not come back out in an error.
 func agentMemResolveCaller(name string) (agentMemCaller, error) {
 	c := agentMemCaller{Session: agentMemUnknown, Kind: agentMemUnknown}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return c, nil
 	}
+	// ValidName first: ReadMeta joins the name into a path.
+	if !session.ValidName(name) {
+		return c, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "session is not a valid session name")
+	}
 	m, ok := session.ReadMeta(name)
-	if !ok {
-		return c, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "no session named %q", name)
+	if !ok || m.Name != name {
+		return c, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "session does not name a session in this workspace")
 	}
 	c.Session = name
 	if m.Kind != "" {
@@ -117,23 +129,52 @@ func agentMemProjectFor(dir string) *agentMemProject {
 	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
 		return nil
 	}
-	root, vcs := filepath.Clean(dir), projcfg.DetectVCS(dir)
+	root, key, vcs := filepath.Clean(dir), filepath.Clean(dir), projcfg.DetectVCS(dir)
 	if vcs == projcfg.VCSGit {
-		if parent := gitx.WorktreeParent(dir); parent != "" {
-			root = filepath.Clean(parent)
+		if r, k := agentMemGitIdentity(dir); k != "" {
+			root, key = r, k
 		}
 	}
 	display := filepath.Base(root)
 	if r, err := filepath.Rel(repos, root); err == nil && !strings.HasPrefix(r, "..") {
 		display = filepath.ToSlash(r)
 	}
-	return &agentMemProject{ID: agentMemProjectID(root), Root: root, VCS: vcs, Display: display}
+	return &agentMemProject{ID: agentMemProjectID(root, key), Root: root, VCS: vcs, Display: display}
 }
 
-// agentMemProjectID keys a project by its root path: readable for a person browsing the store,
-// and injective through the hash where two roots share a base name.
-func agentMemProjectID(root string) string {
-	sum := sha256.Sum256([]byte(root))
+// agentMemGitIdentity returns the repository's main working tree (for display) and its key:
+// the absolute git-common-dir, which every worktree of one repository shares and no two
+// repositories do. The parent of git-common-dir is not the key: with --separate-git-dir or in a
+// submodule it is a metadata directory that several repositories can share.
+func agentMemGitIdentity(dir string) (root, key string) {
+	common, err := gitx.Run(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil || common == "" {
+		return "", ""
+	}
+	top, err := gitx.Run(dir, "rev-parse", "--show-toplevel")
+	if err != nil || top == "" {
+		return "", ""
+	}
+	root = filepath.Clean(top)
+	gitDir, err := gitx.Run(dir, "rev-parse", "--absolute-git-dir")
+	if err == nil && filepath.Clean(gitDir) != filepath.Clean(common) {
+		// A linked worktree: the main one is git's first entry, when it is a real checkout.
+		if out, err := gitx.Run(dir, "worktree", "list", "--porcelain"); err == nil {
+			first, _, _ := strings.Cut(out, "\n")
+			if p, ok := strings.CutPrefix(first, "worktree "); ok {
+				if _, err := os.Lstat(filepath.Join(p, ".git")); err == nil {
+					root = filepath.Clean(p)
+				}
+			}
+		}
+	}
+	return root, filepath.Clean(common)
+}
+
+// agentMemProjectID names a project by its root's base name, readable for a person browsing
+// the store, and keys it by the hash of key, so two roots with one base name never collide.
+func agentMemProjectID(root, key string) string {
+	sum := sha256.Sum256([]byte(key))
 	base := strings.ToLower(filepath.Base(root))
 	var b strings.Builder
 	for _, r := range base {
@@ -175,6 +216,68 @@ func agentMemScopes(c agentMemCaller) []string {
 		return []string{agentMemScopeProject, agentMemScopeUser}
 	}
 	return []string{agentMemScopeUser}
+}
+
+// agentMemErrSymlink is a store path that is not a plain file in a plain directory.
+var agentMemErrSymlink = errors.New("agent memory store path is a symlink or not a regular entry")
+
+// agentMemCheckDir refuses a symlink anywhere from the store root down to rel, so neither a
+// read nor a write can leave the store. With create, missing directories are made.
+func agentMemCheckDir(rel string, create bool) (string, error) {
+	cur := agentMemDir()
+	segs := []string{""}
+	if rel != "" {
+		segs = append(segs, strings.Split(rel, "/")...)
+	}
+	for i, seg := range segs {
+		if i > 0 {
+			cur = filepath.Join(cur, seg)
+		}
+		st, err := os.Lstat(cur)
+		switch {
+		case err == nil && st.IsDir():
+			continue
+		case err == nil:
+			return "", agentMemErrSymlink
+		case os.IsNotExist(err) && create:
+			if i == 0 {
+				// The store's parent is outside the store and may not exist yet on a fresh mount.
+				if err := os.MkdirAll(filepath.Dir(cur), 0o700); err != nil {
+					return "", err
+				}
+			}
+			if err := os.Mkdir(cur, 0o700); err != nil && !os.IsExist(err) {
+				return "", err
+			}
+			if st, err := os.Lstat(cur); err != nil || !st.IsDir() {
+				return "", agentMemErrSymlink
+			}
+		default:
+			return "", err
+		}
+	}
+	return cur, nil
+}
+
+// agentMemReadFile reads a regular file without following a symlink at the leaf.
+// ok=false: it does not exist.
+func agentMemReadFile(abs string) ([]byte, bool, error) {
+	f, err := os.OpenFile(abs, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		if errors.Is(err, syscall.ELOOP) {
+			return nil, false, agentMemErrSymlink
+		}
+		return nil, false, err
+	}
+	defer f.Close()
+	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
+		return nil, false, agentMemErrSymlink
+	}
+	b, err := io.ReadAll(io.LimitReader(f, 4*agentMemMaxBody))
+	return b, true, err
 }
 
 // agentMemEntry is one memory. The frontmatter keys are snake_case (ADR 0108 decision 3, the
@@ -233,7 +336,8 @@ func agentMemRender(e agentMemEntry) []byte {
 
 // agentMemParse reads a file agentMemRender wrote. It also accepts plain YAML scalars and
 // skips keys it does not know (indented lines included), so a file a person edited by hand
-// still loads.
+// still loads. A missing or invalid revision reads as 1, never 0: 0 means "create", and a
+// hand-made file must not be overwritable by a blind create.
 func agentMemParse(b []byte) (agentMemEntry, bool) {
 	var e agentMemEntry
 	s := strings.ReplaceAll(string(b), "\r\n", "\n")
@@ -300,43 +404,105 @@ func agentMemParse(b []byte) (agentMemEntry, bool) {
 			e.SourceHash = unq(v)
 		}
 	}
+	if e.Revision < 1 {
+		e.Revision = 1
+	}
 	e.Body = strings.TrimRight(body, "\n")
 	return e, true
 }
 
-// agentMemLoadScope reads every memory of one scope. A file that does not parse is skipped:
-// one hand-broken file must not take the index down for every kind.
-func agentMemLoadScope(scope string, c agentMemCaller) ([]agentMemEntry, error) {
+// agentMemScanText scans text the way a write is judged: NUL and over-long lines are refused
+// outright, because the scanner cannot vouch for them (it skips binary, and a reader is not
+// helped by a 4 KiB line in a memory).
+func agentMemScanText(path, text string) []memorySecretFinding {
+	if strings.IndexByte(text, 0) >= 0 {
+		return []memorySecretFinding{{Path: path, Rule: "nul-byte", Hint: "…"}}
+	}
+	for i, line := range strings.Split(text, "\n") {
+		if len(line) > agentMemMaxLine {
+			return []memorySecretFinding{{Path: path, Line: i + 1, Rule: "line-too-long", Hint: "…"}}
+		}
+	}
+	return memoryScanContent(path, []byte(text))
+}
+
+// agentMemScanCache remembers the verdict on a stored file by its content hash, so the index
+// does not rescan every file on every call.
+var agentMemScanCache sync.Map // sha256 hex -> bool (true = clean)
+
+// agentMemClean says whether a stored file may be shown (ADR 0108 decision 9: what already
+// exists is scanned before it is first exposed). A hand-edited file that fails stays on disk,
+// withheld, for the member to fix.
+func agentMemClean(raw []byte) bool {
+	sum := sha256.Sum256(raw)
+	key := hex.EncodeToString(sum[:])
+	if v, ok := agentMemScanCache.Load(key); ok {
+		return v.(bool)
+	}
+	clean := len(agentMemScanText("", string(raw))) == 0
+	agentMemScanCache.Store(key, clean)
+	return clean
+}
+
+// agentMemLoaded is one stored file as read: its entry, or why it is withheld.
+type agentMemLoaded struct {
+	Entry    agentMemEntry
+	Withheld bool
+}
+
+// agentMemLoadScope reads every memory of one scope. A file that does not parse, is not a
+// regular file or fails the scan is not shown: one bad file must not take the index down for
+// every kind, nor leak through it.
+func agentMemLoadScope(scope string, c agentMemCaller) ([]agentMemEntry, int, error) {
 	rel, err := agentMemScopeDir(scope, c)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	dir := filepath.Join(agentMemDir(), filepath.FromSlash(rel))
-	ents, err := os.ReadDir(dir)
+	dir, err := agentMemCheckDir(rel, false)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, 0, nil
 		}
-		return nil, err
+		return nil, 0, err
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, 0, err
 	}
 	var out []agentMemEntry
+	withheld := 0
 	for _, d := range ents {
 		name, ok := strings.CutSuffix(d.Name(), ".md")
-		if !ok || !d.Type().IsRegular() || !agentMemNameRe.MatchString(name) {
+		if !ok || !agentMemNameRe.MatchString(name) {
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join(dir, d.Name()))
-		if err != nil {
+		l, ok, err := agentMemLoadFile(filepath.Join(dir, d.Name()), scope, name)
+		if err != nil || !ok {
 			continue
 		}
-		e, ok := agentMemParse(b)
-		if !ok {
+		if l.Withheld {
+			withheld++
 			continue
 		}
-		e.Name, e.Scope = name, scope // the file name is the identity, not the frontmatter
-		out = append(out, e)
+		out = append(out, l.Entry)
 	}
-	return out, nil
+	return out, withheld, nil
+}
+
+func agentMemLoadFile(abs, scope, name string) (agentMemLoaded, bool, error) {
+	raw, ok, err := agentMemReadFile(abs)
+	if err != nil || !ok {
+		return agentMemLoaded{}, ok, err
+	}
+	if !agentMemClean(raw) {
+		return agentMemLoaded{Withheld: true}, true, nil
+	}
+	e, ok := agentMemParse(raw)
+	if !ok {
+		return agentMemLoaded{}, false, fmt.Errorf("memory file is not in the expected format")
+	}
+	e.Name, e.Scope = name, scope // the file name is the identity, not the frontmatter
+	return agentMemLoaded{Entry: e}, true, nil
 }
 
 // agentMemAppliesTo says whether a memory is meant for the caller's kind. An unknown caller
@@ -358,15 +524,21 @@ type agentMemIndex struct {
 	Project   *agentMemProject `json:"project"`
 	Entries   []agentMemEntry  `json:"entries"`
 	Truncated bool             `json:"truncated,omitempty"`
+	// Withheld counts files left out because they failed the secret scan or are malformed
+	// beyond reading; their names are not shown either.
+	Withheld int `json:"withheld,omitempty"`
 }
 
 func agentMemListIndex(c agentMemCaller) (agentMemIndex, error) {
+	agentMemMu.RLock()
+	defer agentMemMu.RUnlock()
 	out := agentMemIndex{Project: c.Project, Entries: []agentMemEntry{}}
 	for _, scope := range agentMemScopes(c) {
-		es, err := agentMemLoadScope(scope, c)
+		es, withheld, err := agentMemLoadScope(scope, c)
 		if err != nil {
 			return out, err
 		}
+		out.Withheld += withheld
 		for _, e := range es {
 			if agentMemAppliesTo(e, c.Kind) {
 				e.Body = ""
@@ -399,9 +571,11 @@ func agentMemSearch(c agentMemCaller, query string, limit int) ([]agentMemHit, e
 		limit = agentMemSearchDefault
 	}
 	limit = min(limit, agentMemSearchMax)
+	agentMemMu.RLock()
+	defer agentMemMu.RUnlock()
 	hits := []agentMemHit{}
 	for _, scope := range agentMemScopes(c) {
-		es, err := agentMemLoadScope(scope, c)
+		es, _, err := agentMemLoadScope(scope, c)
 		if err != nil {
 			return nil, err
 		}
@@ -425,11 +599,7 @@ func agentMemSearch(c agentMemCaller, query string, limit int) ([]agentMemHit, e
 				low := strings.ToLower(line)
 				for _, t := range terms {
 					if strings.Contains(low, t) {
-						line = strings.TrimSpace(line)
-						if len(line) > agentMemSnippetChars {
-							line = agentMemTruncate(line, agentMemSnippetChars)
-						}
-						h.Snippets = append(h.Snippets, line)
+						h.Snippets = append(h.Snippets, agentMemTruncate(strings.TrimSpace(line), agentMemSnippetChars))
 						break
 					}
 				}
@@ -462,42 +632,48 @@ func agentMemTruncate(s string, n int) string {
 // agentMemRead returns one memory with its body. With no scope it looks in the project first.
 func agentMemRead(c agentMemCaller, scope, name string) (agentMemEntry, error) {
 	if !agentMemNameRe.MatchString(name) {
-		return agentMemEntry{}, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "invalid memory name %q", name)
+		return agentMemEntry{}, agentMemBadName()
 	}
 	scopes := agentMemScopes(c)
 	if scope != "" {
 		scopes = []string{scope}
 	}
+	agentMemMu.RLock()
+	defer agentMemMu.RUnlock()
 	for _, s := range scopes {
-		e, ok, err := agentMemLoadOne(c, s, name)
+		l, ok, err := agentMemLoadOne(c, s, name)
 		if err != nil {
-			return e, err
+			return agentMemEntry{}, err
 		}
-		if ok {
-			return e, nil
+		if !ok {
+			continue
 		}
+		if l.Withheld {
+			return agentMemEntry{}, memoryErrf(http.StatusUnprocessableEntity, errCodeMemorySecretDetected,
+				"this memory is withheld: its file looks like it contains a secret or cannot be checked; your user has to fix the file")
+		}
+		return l.Entry, nil
 	}
-	return agentMemEntry{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound, "no memory named %q", name)
+	return agentMemEntry{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound, "no memory by that name")
 }
 
-func agentMemLoadOne(c agentMemCaller, scope, name string) (agentMemEntry, bool, error) {
+func agentMemLoadOne(c agentMemCaller, scope, name string) (agentMemLoaded, bool, error) {
 	rel, err := agentMemScopeDir(scope, c)
 	if err != nil {
-		return agentMemEntry{}, false, err
+		return agentMemLoaded{}, false, err
 	}
-	b, err := os.ReadFile(filepath.Join(agentMemDir(), filepath.FromSlash(rel), name+".md"))
+	dir, err := agentMemCheckDir(rel, false)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return agentMemEntry{}, false, nil
+			return agentMemLoaded{}, false, nil
 		}
-		return agentMemEntry{}, false, err
+		return agentMemLoaded{}, false, err
 	}
-	e, ok := agentMemParse(b)
-	if !ok {
-		return agentMemEntry{}, false, fmt.Errorf("memory %s/%s is not in the expected format", rel, name)
-	}
-	e.Name, e.Scope = name, scope
-	return e, true, nil
+	return agentMemLoadFile(filepath.Join(dir, name+".md"), scope, name)
+}
+
+func agentMemBadName() error {
+	return memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "name must be lower-case letters, digits and hyphens, at most 64")
 }
 
 // agentMemSaveReq is a create or update. Revision is the one the caller read: 0 creates, and
@@ -537,23 +713,23 @@ type agentMemSecretErr struct{ Findings []memorySecretFinding }
 
 func (e *agentMemSecretErr) Error() string { return "the memory contains possible secrets" }
 
+// agentMemValidate checks a save before anything else. Its messages name the field and the
+// rule, never the value: a value refused here has not been scanned yet.
 func agentMemValidate(req *agentMemSaveReq) error {
-	bad := func(format string, args ...any) error {
-		return memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, format, args...)
-	}
+	bad := func(msg string) error { return memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "%s", msg) }
 	req.Name = strings.TrimSpace(req.Name)
 	req.Description = strings.TrimSpace(req.Description)
 	req.Type = strings.TrimSpace(req.Type)
 	req.Body = strings.TrimSpace(req.Body)
 	switch {
 	case !agentMemNameRe.MatchString(req.Name):
-		return bad("name must be lower-case letters, digits and hyphens (at most 64), got %q", req.Name)
+		return agentMemBadName()
 	case req.Description == "":
 		return bad("description is required")
 	case strings.ContainsAny(req.Description, "\r\n"):
 		return bad("description must be one line")
 	case len(req.Description) > agentMemMaxDescription:
-		return bad("description is longer than %d bytes", agentMemMaxDescription)
+		return bad(fmt.Sprintf("description is longer than %d bytes", agentMemMaxDescription))
 	case !agentMemTypes[req.Type]:
 		return bad("type must be one of user, feedback, project, reference")
 	case req.Body == "":
@@ -561,7 +737,7 @@ func agentMemValidate(req *agentMemSaveReq) error {
 	case len(req.Body) > agentMemMaxBody:
 		return memoryErrf(http.StatusRequestEntityTooLarge, errCodeMemoryTooLarge, "body is larger than %d bytes", agentMemMaxBody)
 	case len(req.Kinds) > agentMemMaxKinds:
-		return bad("at most %d kinds", agentMemMaxKinds)
+		return bad(fmt.Sprintf("at most %d kinds", agentMemMaxKinds))
 	case req.Revision < 0:
 		return bad("revision must not be negative")
 	}
@@ -570,7 +746,7 @@ func agentMemValidate(req *agentMemSaveReq) error {
 	for _, k := range req.Kinds {
 		k = strings.TrimSpace(k)
 		if !agentMemKindRe.MatchString(k) {
-			return bad("invalid kind %q", k)
+			return bad("each kind must be a lower-case agent kind such as claude or codex")
 		}
 		if !seen[k] {
 			seen[k] = true
@@ -593,6 +769,17 @@ func agentMemDefaultScope(scope string, c agentMemCaller) string {
 	return agentMemScopeUser
 }
 
+// agentMemTombRevision is the last revision a forgotten memory had, so a re-created one never
+// reuses a revision a stale reader may still hold.
+func agentMemTombRevision(dir, name string) int {
+	b, ok, err := agentMemReadFile(filepath.Join(dir, agentMemTombDir, name))
+	if err != nil || !ok {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	return max(n, 0)
+}
+
 // agentMemSave publishes a create or update (ADR 0108 decisions 4, 8 and 9).
 func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMemWriteResult, error) {
 	if err := agentMemValidate(&req); err != nil {
@@ -603,59 +790,80 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 	if err != nil {
 		return agentMemWriteResult{}, err
 	}
+	// The raw fields are scanned, not only the rendered file: rendering escapes quotes, which
+	// would hide `password: "…"` in a description from the rule that looks for it.
+	var findings []memorySecretFinding
+	findings = append(findings, agentMemScanText("description", req.Description)...)
+	findings = append(findings, agentMemScanText("body", req.Body)...)
+	if len(findings) > 0 {
+		return agentMemWriteResult{}, &agentMemSecretErr{Findings: findings}
+	}
 
+	agentMemMu.Lock()
+	defer agentMemMu.Unlock()
 	memorySnapshotMu.Lock()
 	defer memorySnapshotMu.Unlock()
 
-	cur, exists, err := agentMemLoadOne(c, req.Scope, req.Name)
+	dir, err := agentMemCheckDir(rel, true)
 	if err != nil {
 		return agentMemWriteResult{}, err
 	}
+	cur, exists, err := agentMemLoadFile(filepath.Join(dir, req.Name+".md"), req.Scope, req.Name)
+	if err != nil {
+		return agentMemWriteResult{}, err
+	}
+	if cur.Withheld {
+		return agentMemWriteResult{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
+			"a withheld file already has this name; choose another name until your user fixes it")
+	}
+	base := cur.Entry.Revision
 	switch {
-	case exists && req.Revision == 0 && cur.Revision != 0:
+	case exists && req.Revision == 0:
 		return agentMemWriteResult{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
-			"memory %q already exists at revision %d; read it and pass that revision to update it", req.Name, cur.Revision)
-	case exists && req.Revision != cur.Revision:
+			"the memory already exists at revision %d; read it and pass that revision to update it", base)
+	case exists && req.Revision != base:
 		return agentMemWriteResult{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
-			"memory %q is at revision %d, not %d; read it again and rewrite from the current text", req.Name, cur.Revision, req.Revision)
+			"the memory is at revision %d, not %d; read it again and rewrite from the current text", base, req.Revision)
 	case !exists && req.Revision != 0:
 		return agentMemWriteResult{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound,
-			"memory %q does not exist (it may have been forgotten); save it with revision 0 to create it", req.Name)
+			"the memory does not exist (it may have been forgotten); save it with revision 0 to create it")
+	case !exists:
+		base = agentMemTombRevision(dir, req.Name)
 	}
 
 	stamp := now.UTC().Format(time.RFC3339)
 	e := agentMemEntry{
 		Name: req.Name, Scope: req.Scope, Description: req.Description, Type: req.Type,
-		Kinds: req.Kinds, Revision: cur.Revision + 1, AuthorKind: c.Kind, AuthorSession: c.Session,
+		Kinds: req.Kinds, Revision: base + 1, AuthorKind: c.Kind, AuthorSession: c.Session,
 		Created: stamp, Updated: stamp, Body: req.Body,
 	}
 	if exists {
-		e.Created, e.Source, e.SourceHash = cur.Created, cur.Source, cur.SourceHash
+		e.Created, e.Source, e.SourceHash = cur.Entry.Created, cur.Entry.Source, cur.Entry.SourceHash
 	}
 	data := agentMemRender(e)
-	repoPath := agentMemRepoPrefix + "/" + rel + "/" + req.Name + ".md"
-	if f := memoryScanContent(repoPath, data); len(f) > 0 {
+	repoRel := rel + "/" + req.Name + ".md"
+	if f := agentMemScanText(agentMemRepoPrefix+"/"+repoRel, string(data)); len(f) > 0 {
 		return agentMemWriteResult{}, &agentMemSecretErr{Findings: f}
 	}
 
-	abs := filepath.Join(agentMemDir(), filepath.FromSlash(rel), req.Name+".md")
-	prev, _ := os.ReadFile(abs)
+	changes := []agentMemChange{{Rel: repoRel, Data: data}}
 	if c.Project != nil && req.Scope == agentMemScopeProject {
-		if err := agentMemWriteProjectInfo(*c.Project); err != nil {
-			return agentMemWriteResult{}, err
+		info := agentMemProjectInfoRel(*c.Project)
+		if _, ok, _ := agentMemReadFile(filepath.Join(agentMemDir(), filepath.FromSlash(info))); !ok {
+			b, _ := json.MarshalIndent(c.Project, "", "  ")
+			changes = append(changes, agentMemChange{Rel: info, Data: append(b, '\n')})
 		}
-	}
-	if err := agentMemWriteFile(abs, data); err != nil {
-		return agentMemWriteResult{}, err
 	}
 	op := "update"
 	if !exists {
 		op = "create"
 	}
-	rev, err := agentMemCommitLocked(op, repoPath, c, now)
+	rev, err := agentMemApplyLocked(changes, op, repoRel, c, now)
 	if err != nil {
-		agentMemUndo(abs, prev, exists)
 		return agentMemWriteResult{}, err
+	}
+	if !exists {
+		_ = os.Remove(filepath.Join(dir, agentMemTombDir, req.Name))
 	}
 	return agentMemWriteResult{Name: e.Name, Scope: e.Scope, Revision: e.Revision, Commit: rev, Created: !exists}, nil
 }
@@ -665,10 +873,11 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 func agentMemForget(c agentMemCaller, req agentMemForgetReq, now time.Time) (agentMemWriteResult, error) {
 	req.Name = strings.TrimSpace(req.Name)
 	if !agentMemNameRe.MatchString(req.Name) {
-		return agentMemWriteResult{}, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "invalid memory name %q", req.Name)
+		return agentMemWriteResult{}, agentMemBadName()
 	}
-	if req.Revision < 0 {
-		return agentMemWriteResult{}, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "revision must not be negative")
+	if req.Revision < 1 {
+		return agentMemWriteResult{}, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest,
+			"revision is required: pass the revision you read, so a memory changed since is not removed unseen")
 	}
 	req.Scope = agentMemDefaultScope(req.Scope, c)
 	rel, err := agentMemScopeDir(req.Scope, c)
@@ -676,43 +885,173 @@ func agentMemForget(c agentMemCaller, req agentMemForgetReq, now time.Time) (age
 		return agentMemWriteResult{}, err
 	}
 
+	agentMemMu.Lock()
+	defer agentMemMu.Unlock()
 	memorySnapshotMu.Lock()
 	defer memorySnapshotMu.Unlock()
 
-	cur, exists, err := agentMemLoadOne(c, req.Scope, req.Name)
-	if err != nil {
+	dir, err := agentMemCheckDir(rel, false)
+	if err != nil && !os.IsNotExist(err) {
 		return agentMemWriteResult{}, err
+	}
+	var cur agentMemLoaded
+	exists := false
+	if err == nil {
+		cur, exists, err = agentMemLoadFile(filepath.Join(dir, req.Name+".md"), req.Scope, req.Name)
+		if err != nil {
+			return agentMemWriteResult{}, err
+		}
 	}
 	if !exists {
-		return agentMemWriteResult{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound, "no memory named %q in scope %s", req.Name, req.Scope)
+		return agentMemWriteResult{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound, "no memory by that name in scope %s", req.Scope)
 	}
-	if cur.Revision != req.Revision {
+	if cur.Withheld {
+		return agentMemWriteResult{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict, "this memory is withheld; your user has to fix or remove the file")
+	}
+	if cur.Entry.Revision != req.Revision {
 		return agentMemWriteResult{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
-			"memory %q is at revision %d, not %d; read it again before forgetting it", req.Name, cur.Revision, req.Revision)
+			"the memory is at revision %d, not %d; read it again before forgetting it", cur.Entry.Revision, req.Revision)
 	}
-	abs := filepath.Join(agentMemDir(), filepath.FromSlash(rel), req.Name+".md")
-	prev, err := os.ReadFile(abs)
+	repoRel := rel + "/" + req.Name + ".md"
+	rev, err := agentMemApplyLocked([]agentMemChange{{Rel: repoRel, Delete: true}}, "forget", repoRel, c, now)
 	if err != nil {
 		return agentMemWriteResult{}, err
 	}
-	if err := os.Remove(abs); err != nil {
-		return agentMemWriteResult{}, err
+	if _, err := agentMemCheckDir(rel+"/"+agentMemTombDir, true); err == nil {
+		_ = agentMemWriteFile(filepath.Join(dir, agentMemTombDir, req.Name), []byte(strconv.Itoa(cur.Entry.Revision)+"\n"))
 	}
-	repoPath := agentMemRepoPrefix + "/" + rel + "/" + req.Name + ".md"
-	rev, err := agentMemCommitLocked("forget", repoPath, c, now)
+	return agentMemWriteResult{Name: req.Name, Scope: req.Scope, Revision: cur.Entry.Revision, Commit: rev, Deleted: true}, nil
+}
+
+func agentMemProjectInfoRel(p agentMemProject) string { return "projects/" + p.ID + "/project.json" }
+
+// agentMemChange is one file of a write, relative to the store (= relative to af/ in the repo).
+type agentMemChange struct {
+	Rel    string
+	Data   []byte
+	Delete bool
+}
+
+// agentMemApplyLocked writes the changes to the store and to staging and commits exactly those
+// paths, with agentMemMu and memorySnapshotMu held. Only these paths are staged: a file someone
+// put in the store by hand is never swept into this author's commit unscanned. On failure the
+// store, staging and the index are put back, so a later snapshot cannot commit the change
+// either.
+func agentMemApplyLocked(changes []agentMemChange, op, memRel string, c agentMemCaller, now time.Time) (string, error) {
+	if err := memoryEnsureRepo(); err != nil {
+		return "", err
+	}
+	type saved struct {
+		existed bool
+		data    []byte
+	}
+	prev := make([]saved, len(changes))
+	paths := make([]string, len(changes))
+	for i, ch := range changes {
+		b, ok, err := agentMemReadFile(filepath.Join(agentMemDir(), filepath.FromSlash(ch.Rel)))
+		if err != nil {
+			return "", err
+		}
+		prev[i] = saved{existed: ok, data: b}
+		paths[i] = agentMemRepoPrefix + "/" + ch.Rel
+	}
+
+	undo := func() {
+		for i, ch := range changes {
+			abs := filepath.Join(agentMemDir(), filepath.FromSlash(ch.Rel))
+			var err error
+			if prev[i].existed {
+				err = agentMemWriteFile(abs, prev[i].data)
+			} else if rmErr := os.Remove(abs); rmErr != nil && !os.IsNotExist(rmErr) {
+				err = rmErr
+			}
+			if err != nil {
+				log.Printf("agent memory: undo %s: %v", ch.Rel, err)
+			}
+		}
+		if err := agentMemResetStaging(paths); err != nil {
+			log.Printf("agent memory: reset staging: %v", err)
+		}
+	}
+
+	for _, ch := range changes {
+		abs := filepath.Join(agentMemDir(), filepath.FromSlash(ch.Rel))
+		stg := filepath.Join(memoryStagingDir(), agentMemRepoPrefix, filepath.FromSlash(ch.Rel))
+		var err error
+		if ch.Delete {
+			if err = os.Remove(abs); err == nil || os.IsNotExist(err) {
+				err = os.Remove(stg)
+				if os.IsNotExist(err) {
+					err = nil
+				}
+			}
+		} else {
+			if _, err = agentMemCheckDir(filepath.ToSlash(filepath.Dir(ch.Rel)), true); err == nil {
+				if err = agentMemWriteFile(abs, ch.Data); err == nil {
+					if err = os.MkdirAll(filepath.Dir(stg), 0o700); err == nil {
+						err = os.WriteFile(stg, ch.Data, 0o600)
+					}
+				}
+			}
+		}
+		if err != nil {
+			undo()
+			return "", err
+		}
+	}
+
+	args := append([]string{"add", "-A", "--"}, paths...)
+	if _, err := memoryGitRun(args...); err != nil {
+		undo()
+		return "", fmt.Errorf("stage agent memory: %w", err)
+	}
+	msg := fmt.Sprintf("agent-memory: %s %s (%s)\n\nAF-Trigger: %s\nAF-Op: %s\nAF-Memory: %s\nAF-Author-Kind: %s\nAF-Author-Session: %s\n",
+		op, memRel, now.Format(time.RFC3339),
+		memoryTriggerAgentMemory, op, agentMemRepoPrefix+"/"+memRel, c.Kind, c.Session)
+	// --only with pathspecs commits these paths alone even if something else is staged.
+	args = append([]string{"commit", "--quiet", "--no-verify", "-m", msg, "--"}, paths...)
+	if _, err := memoryGitRun(args...); err != nil {
+		undo()
+		return "", fmt.Errorf("commit agent memory: %w", err)
+	}
+	rev, err := memoryGitRun("rev-parse", memoryBranch)
 	if err != nil {
-		agentMemUndo(abs, prev, true)
-		return agentMemWriteResult{}, err
+		return "", err
 	}
-	return agentMemWriteResult{Name: req.Name, Scope: req.Scope, Revision: cur.Revision, Commit: rev, Deleted: true}, nil
+	_, _ = memoryGitRun("gc", "--auto", "--quiet")
+	return rev, nil
+}
+
+// agentMemResetStaging puts paths in the index and in staging back to HEAD (or removes them
+// when HEAD does not have them).
+func agentMemResetStaging(paths []string) error {
+	var errs []error
+	if memoryHasCommits() {
+		if _, err := memoryGitRun(append([]string{"reset", "-q", "HEAD", "--"}, paths...)...); err != nil {
+			errs = append(errs, err)
+		}
+	} else if _, err := memoryGitRun(append([]string{"rm", "-q", "--cached", "--ignore-unmatch", "--"}, paths...)...); err != nil {
+		errs = append(errs, err)
+	}
+	for _, p := range paths {
+		stg := filepath.Join(memoryStagingDir(), filepath.FromSlash(p))
+		body, err := memoryGit("show", memoryBranch+":"+p).Output()
+		if err != nil {
+			if rmErr := os.Remove(stg); rmErr != nil && !os.IsNotExist(rmErr) {
+				errs = append(errs, rmErr)
+			}
+			continue
+		}
+		if err := os.WriteFile(stg, body, 0o600); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // agentMemWriteFile replaces a file by rename, so a reader in another kind never sees half a
-// memory.
+// memory. The rename replaces a symlink at the leaf rather than writing through it.
 func agentMemWriteFile(abs string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
-		return err
-	}
 	tmp, err := os.CreateTemp(filepath.Dir(abs), ".tmp-*")
 	if err != nil {
 		return err
@@ -726,53 +1065,4 @@ func agentMemWriteFile(abs string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), abs)
-}
-
-// agentMemUndo puts the live file back when the commit failed: a change that is visible but
-// has no commit would have no author and no way back.
-func agentMemUndo(abs string, prev []byte, existed bool) {
-	if existed {
-		_ = agentMemWriteFile(abs, prev)
-		return
-	}
-	_ = os.Remove(abs)
-}
-
-// agentMemWriteProjectInfo records what a project id stands for, for a person reading the
-// store and for the Console. Written once; the id is derived from Root, so it cannot drift.
-func agentMemWriteProjectInfo(p agentMemProject) error {
-	abs := filepath.Join(agentMemDir(), "projects", p.ID, "project.json")
-	if _, err := os.Stat(abs); err == nil {
-		return nil
-	}
-	b, _ := json.MarshalIndent(p, "", "  ")
-	return agentMemWriteFile(abs, append(b, '\n'))
-}
-
-// agentMemCommitLocked records one change as one commit under af/, with memorySnapshotMu held.
-// Only af/ is staged and committed, so claude's and codex's live changes wait for their own
-// snapshot instead of being attributed to this author.
-func agentMemCommitLocked(op, repoPath string, c agentMemCaller, now time.Time) (string, error) {
-	if err := memoryEnsureRepo(); err != nil {
-		return "", err
-	}
-	if _, err := memorySyncToStaging(agentMemRoot(), memoryStagingDir()); err != nil {
-		return "", err
-	}
-	if _, err := memoryGitRun("add", "-A", "--", agentMemRepoPrefix); err != nil {
-		return "", fmt.Errorf("stage agent memory: %w", err)
-	}
-	msg := fmt.Sprintf("agent-memory: %s %s (%s)\n\nAF-Trigger: %s\nAF-Op: %s\nAF-Memory: %s\nAF-Author-Kind: %s\nAF-Author-Session: %s\n",
-		op, strings.TrimPrefix(repoPath, agentMemRepoPrefix+"/"), now.Format(time.RFC3339),
-		memoryTriggerAgentMemory, op, repoPath, c.Kind, c.Session)
-	// --only with a pathspec commits af/ alone even if something else is staged.
-	if _, err := memoryGitRun("commit", "--quiet", "--no-verify", "-m", msg, "--", agentMemRepoPrefix); err != nil {
-		return "", fmt.Errorf("commit agent memory: %w", err)
-	}
-	rev, err := memoryGitRun("rev-parse", memoryBranch)
-	if err != nil {
-		return "", err
-	}
-	_, _ = memoryGitRun("gc", "--auto", "--quiet")
-	return rev, nil
 }

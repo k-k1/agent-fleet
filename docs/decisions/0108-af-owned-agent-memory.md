@@ -54,8 +54,9 @@ that is safe when what one session writes is read by every kind.
    different files, are distributed as different blocks, and the policy text tells agents which is
    which. Merging them would void 0042 decision 8.
 2. **Scope is user × workspace × project, and AF defines the project id itself.** For a Git working
-   copy the project is the main clone the working copy belongs to (`git-common-dir`'s parent, as
-   `gitx` resolves it), so a worktree shares its parent's memory. claude's *conversation* directory
+   copy the project is the repository the working copy belongs to, keyed by its absolute
+   `git-common-dir` (not that directory's parent, which `--separate-git-dir` and submodules let
+   several repositories share), so a worktree shares its parent's memory. claude's *conversation* directory
    naming is not reused: it is per cwd, not injective, and gives each worktree its own slug
    (`agents/claude/project_dir.go`). A working copy that is not Git (SVN, a local folder — both
    supported, `guide/ref/repos.md`) is its own project, keyed by its root as AF registered it. A
