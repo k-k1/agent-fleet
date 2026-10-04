@@ -117,3 +117,41 @@ export interface MemoryChangeProject {
   vcs: string;
   display: string;
 }
+
+/** One claude project with memory files that could be imported into AF memory (ADR 0108). */
+export interface ClaudeImportSource {
+  slug: string;
+  count: number;
+  /** Where the files would go; absent when `reason` says why they cannot (no_project | ambiguous). */
+  project?: MemoryChangeProject;
+  reason?: string;
+}
+export type ClaudeImportStatus = "new" | "update" | "unchanged" | "forgotten" | "secret" | "invalid";
+/** One claude file in a preview. Findings are masked by the Agent; a hit is never importable. */
+export interface ClaudeImportItem {
+  name: string;
+  status: ClaudeImportStatus;
+  reason?: string;
+  description?: string;
+  type?: string;
+  shortened?: boolean;
+  sourceHash?: string;
+  sourceModified?: string;
+  afUpdated?: string;
+  findings?: SecretFinding[];
+}
+export interface ClaudeImportPreview {
+  slug: string;
+  project?: MemoryChangeProject;
+  reason?: string;
+  items: ClaudeImportItem[];
+  counts: Partial<Record<ClaudeImportStatus, number>>;
+  withheld?: number;
+  truncated?: boolean;
+}
+export interface ClaudeImportResult {
+  name: string;
+  result: "imported" | "updated" | "skipped";
+  reason?: string;
+  commit?: string;
+}

@@ -354,7 +354,7 @@ func agentMemRender(e agentMemEntry) []byte {
 }
 
 // agentMemParse reads a file agentMemRender wrote. It also accepts plain YAML scalars and
-// skips keys it does not know (indented lines included), so a file a person edited by hand
+// skips keys it does not know (indented lines included, except `type` under `metadata:`), so a file a person edited by hand
 // still loads. A missing or invalid revision reads as 1, never 0: 0 means "create", and a
 // hand-made file must not be overwritable by a blind create.
 func agentMemParse(b []byte) (agentMemEntry, bool) {
@@ -384,21 +384,30 @@ func agentMemParse(b []byte) (agentMemEntry, bool) {
 		}
 		return v
 	}
+	// claude writes its memory type as `metadata:` with an indented `type:`; a top-level type wins.
+	inMeta, metaType, topType := false, "", false
 	for _, line := range strings.Split(head, "\n") {
-		if line == "" || line[0] == ' ' || line[0] == '\t' || line[0] == '#' {
+		if line == "" || line[0] == '#' {
+			continue
+		}
+		if line[0] == ' ' || line[0] == '\t' {
+			if k, v, ok := strings.Cut(strings.TrimSpace(line), ":"); ok && inMeta && strings.TrimSpace(k) == "type" {
+				metaType = unq(v)
+			}
 			continue
 		}
 		k, v, ok := strings.Cut(line, ":")
 		if !ok {
 			continue
 		}
+		inMeta = strings.TrimSpace(k) == "metadata" && strings.TrimSpace(v) == ""
 		switch strings.TrimSpace(k) {
 		case "name":
 			e.Name = unq(v)
 		case "description":
 			e.Description = unq(v)
 		case "type":
-			e.Type = unq(v)
+			e.Type, topType = unq(v), true
 		case "kinds":
 			v = strings.TrimSpace(v)
 			v = strings.TrimSuffix(strings.TrimPrefix(v, "["), "]")
@@ -422,6 +431,9 @@ func agentMemParse(b []byte) (agentMemEntry, bool) {
 		case "source_hash":
 			e.SourceHash = unq(v)
 		}
+	}
+	if !topType {
+		e.Type = metaType
 	}
 	if e.Revision < 1 {
 		e.Revision = 1
@@ -926,16 +938,11 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 
 	changes := []agentMemChange{{Rel: repoRel, Data: data}}
 	if c.Project != nil && req.Scope == agentMemScopeProject {
-		info := agentMemProjectInfoRel(*c.Project)
-		if _, ok, _ := agentMemReadFile(filepath.Join(agentMemDir(), filepath.FromSlash(info))); !ok {
-			b, _ := json.MarshalIndent(c.Project, "", "  ")
-			// The root path comes from a folder name anyone can choose; it is committed too.
-			// Raw values as well as the JSON: JSON escapes the quotes the generic rule needs.
-			if f := agentMemScanText("project", c.Project.Root+"\n"+c.Project.Display+"\n"+string(b)); len(f) > 0 {
-				return agentMemWriteResult{}, &agentMemSecretErr{Findings: f}
-			}
-			changes = append(changes, agentMemChange{Rel: info, Data: append(b, '\n')})
+		extra, err := agentMemProjectInfoChange(*c.Project)
+		if err != nil {
+			return agentMemWriteResult{}, err
 		}
+		changes = append(changes, extra...)
 	}
 	op := "update"
 	if !exists {
@@ -1005,6 +1012,22 @@ func agentMemForget(c agentMemCaller, req agentMemForgetReq, now time.Time) (age
 		return agentMemWriteResult{}, err
 	}
 	return agentMemWriteResult{Name: req.Name, Scope: req.Scope, Revision: cur.Entry.Revision, Commit: rev, Deleted: true}, nil
+}
+
+// agentMemProjectInfoChange is the project.json write a project's first memory brings along, or
+// nothing when it is there already.
+func agentMemProjectInfoChange(p agentMemProject) ([]agentMemChange, error) {
+	info := agentMemProjectInfoRel(p)
+	if _, ok, _ := agentMemReadFile(filepath.Join(agentMemDir(), filepath.FromSlash(info))); ok {
+		return nil, nil
+	}
+	b, _ := json.MarshalIndent(p, "", "  ")
+	// The root path comes from a folder name anyone can choose; it is committed too.
+	// Raw values as well as the JSON: JSON escapes the quotes the generic rule needs.
+	if f := agentMemScanText("project", p.Root+"\n"+p.Display+"\n"+string(b)); len(f) > 0 {
+		return nil, &agentMemSecretErr{Findings: f}
+	}
+	return []agentMemChange{{Rel: info, Data: append(b, '\n')}}, nil
 }
 
 func agentMemProjectInfoRel(p agentMemProject) string { return "projects/" + p.ID + "/project.json" }

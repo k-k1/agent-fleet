@@ -245,6 +245,19 @@ Version control over the memory an agent accumulates by itself (claude's auto-me
   agent and session, what — newest first. On a memory's newest change you can **revert it** (the earlier text
   comes back) or **forget the memory**; either is recorded as a new change, so it can be undone too. If the text
   you bring back looks like a secret, you are shown the masked findings and asked to confirm.
+  - **Import from Claude Code** — below the list, brings the memory Claude Code kept for a project into Agent
+    Fleet memory, once. Pick a project and you see what would happen before anything is written: **new**,
+    **newer in Claude** (will overwrite the Agent Fleet copy, even one you edited since — both times are shown),
+    **unchanged**, **forgotten** (a memory you forgot, or whose import you reverted, is never brought back),
+    **possible secrets** (skipped, with masked findings — fix the Claude file and preview again; there is no
+    way to import it anyway) and **cannot import** (with the reason). A description over 300 bytes is
+    shortened and its full text becomes the first paragraph of the memory. A Claude project is matched to a
+    working copy under `~/repos`; one with no match, or two, is listed but cannot be imported. Importing needs
+    Agent Fleet memory to be on; the preview works either way. The imported memories show in the list as
+    **imported**, with the author unknown, and each can be reverted like any other change.
+  - **From a terminal** — `af-memory import-sources`, `af-memory import --project <slug> --dry-run` (preview) and
+    `af-memory import --project <slug>` (import); `af-memory changes` lists the latest changes. The import is
+    gated by the same switch and the same secret scan as the Console.
 
 - **Targets** — what can be versioned, with file count, size and the last snapshot. codex has memory disabled by
   default, so enable it here if you want it.

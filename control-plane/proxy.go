@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -85,6 +86,10 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			// Only a commit id is copied into the ledger: the hint is free text the Agent never
 			// reads, so anything else is recorded as an empty target.
 			return "memory.entry.revert", auditCommitHint(q.Get("commit")), true
+		case p == "/api/agents/memory/claude-import":
+			// ADR 0108 decision 6: the one-time import of claude's memory writes the store. The
+			// Console repeats the project id in the query; only an id-shaped value is recorded.
+			return "memory.claude_import", auditProjectHint(q.Get("project")), true
 		case strings.HasPrefix(p, "/api/aws-login/profiles/") && strings.HasSuffix(p, "/logout"):
 			return "aws.logout", "profile: " + name, true
 		case strings.HasPrefix(p, "/api/aws-login/profiles/") && strings.HasSuffix(p, "/start"):
@@ -521,6 +526,18 @@ func relay(src, dst *websocket.Conn, errc chan<- error, onInput func()) {
 			return
 		}
 	}
+}
+
+// agentMemProjectIDRe is the form of an agent-memory project id: a readable prefix, then 12
+// hex digits of the repository key's hash.
+var agentMemProjectIDRe = regexp.MustCompile(`^[a-z0-9._-]{1,40}-[0-9a-f]{12}$`)
+
+// auditProjectHint keeps a project-id-shaped audit hint and drops anything else.
+func auditProjectHint(s string) string {
+	if agentMemProjectIDRe.MatchString(s) {
+		return s
+	}
+	return ""
 }
 
 // auditCommitHint keeps a commit-id-shaped audit hint and drops anything else.

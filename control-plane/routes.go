@@ -901,6 +901,10 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/agents/memory/entries/changes", rest)
 	mux.HandleFunc("GET /api/agents/memory/entries/diff", rest)
 	mux.HandleFunc("POST /api/agents/memory/entries/revert", rest)
+	// The one-time import of claude's own memory: sources, a read-only preview, and the apply.
+	mux.HandleFunc("GET /api/agents/memory/claude-import", rest)
+	mux.HandleFunc("GET /api/agents/memory/claude-import/preview", rest)
+	mux.HandleFunc("POST /api/agents/memory/claude-import", rest)
 	// Transfer between environments (P3). export streams the body with its
 	// Content-Disposition untouched and import hands the multipart straight to the
 	// Agent; rest passes body and headers through.

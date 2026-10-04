@@ -14,6 +14,7 @@ import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { Diff } from "../../scm/GitDiff.tsx";
 import { useT, tMaybe } from "../../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
+import { ClaudeImportPanel } from "./memoryClaudeImport.tsx";
 import type { ChangeDiff, MemoryChange, SecretFinding } from "./memoryTypes.ts";
 
 // An unknown op from a newer Agent is printed raw rather than breaking the row.
@@ -216,6 +217,7 @@ export function AgentMemorySection({ reload, onChanged }: { reload: number; onCh
             ))}
         </div>
       </div>
+      <ClaudeImportPanel reload={reload} onChanged={() => setMine((n) => n + 1)} />
     </section>
   );
 }

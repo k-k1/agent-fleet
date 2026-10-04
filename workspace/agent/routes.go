@@ -465,6 +465,11 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /agents/memory/entries/changes", memoryx.HandleAgentMemoryChanges)
 	mux.HandleFunc("GET /agents/memory/entries/diff", memoryx.HandleAgentMemoryChangeDiff)
 	mux.HandleFunc("POST /agents/memory/entries/revert", memoryx.HandleAgentMemoryRevert)
+	// One-time import of claude's own auto-memory (ADR 0108 decision 6 step 1). Not
+	// /agents/memory/import: that is the bundle import of the 0022 history.
+	mux.HandleFunc("GET /agents/memory/claude-import", memoryx.HandleAgentMemoryClaudeSources)
+	mux.HandleFunc("GET /agents/memory/claude-import/preview", memoryx.HandleAgentMemoryClaudePreview)
+	mux.HandleFunc("POST /agents/memory/claude-import", memoryx.HandleAgentMemoryClaudeApply)
 
 	// Toolchain selection (node via nvm / java via pre-baked Temurin) — Console.
 	mux.HandleFunc("GET /env/toolchains", handleToolchainsGet)
