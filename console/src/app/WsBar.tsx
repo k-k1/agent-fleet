@@ -22,6 +22,7 @@ import { Icon } from "../ui/Icon.tsx";
 import { Sparkline } from "../ui/Sparkline.tsx";
 import { useConfirm } from "../ui/ConfirmProvider.tsx";
 import { useIsMobile } from "../lib/device.ts";
+import { useWsBarFold } from "./wsBarFold.ts";
 import { machineSummary, type WsMachine } from "../lib/machine.ts";
 import { useDismiss } from "../lib/useDismiss.ts";
 import { listBrowserAttachments } from "../features/browser/attachmentService.ts";
@@ -944,7 +945,9 @@ const USAGE_CHIP_ORDER: string[] = [...USAGE_SOURCES.map((s) => s.kind as string
 // UsageChipFold: the group that decides which chips keep a slot on the bar. It owns the
 // "+N" chip, the popover the folded chips portal into, and the ranking; the chips
 // themselves only report what they are (see useChipSlot).
-export function UsageChipFold({ children }: { children: ReactElement }) {
+// `squeeze`: the bar is out of width (app/wsBarFold.ts), so no chip keeps an auto-ranked slot;
+// pinned and near-cap chips still do, since those are the user's word and a warning.
+export function UsageChipFold({ children, squeeze = false }: { children: ReactElement; squeeze?: boolean }) {
   const tr = useT();
   const [reports, setReports] = useState<Record<string, ChipReport>>({});
   const [open, setOpen] = useState(false);
@@ -982,7 +985,7 @@ export function UsageChipFold({ children }: { children: ReactElement }) {
     pinned: settings.usageChipsPinned,
     folded: settings.usageChipsFolded,
     stamps,
-    inline: AUTO_INLINE,
+    inline: squeeze ? 0 : AUTO_INLINE,
   });
   const foldSet = new Set(plan.fold);
   const value: FoldCtxValue = {
@@ -1135,6 +1138,8 @@ export function WsBar() {
   const tr = useT();
   const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
   const isMobile = useIsMobile();
+  const barRef = useRef<HTMLDivElement>(null);
+  const { foldUsage, foldMore } = useWsBarFold(barRef, !isMobile);
   const [port, setPort] = useState("");
   const [previewPath, setPreviewPath] = useState("/");
   const [pvOpen, setPvOpen] = useState(false); // desktop port-preview popover
@@ -1155,10 +1160,21 @@ export function WsBar() {
   // Previews shared by other people in the same tenant (docs/log/81 §14.6).
   const [pvShared, setPvShared] = useState<SharedPreview[]>([]);
   const [staleOpen, setStaleOpen] = useState(false); // "restart required" badge popover
-  const [moreOpen, setMoreOpen] = useState(false); // mobile overflow popover
+  const [moreOpen, setMoreOpen] = useState(false); // ⋯ overflow popover (phone, or a full desktop bar)
   const [resOpen, setResOpen] = useState(false); // desktop resource-tiles popover
-  // Keyboard: Ctrl/⌘+K g r toggles the resource-tiles popover (desktop).
-  useOpenSignal("resources", () => setResOpen((o) => !o));
+  // Keyboard: Ctrl/⌘+K g r toggles the resource-tiles popover (desktop). While the bar has
+  // folded the resources chip into ⋯, the tiles are in there, and a popover anchored on a
+  // hidden chip would open invisibly.
+  useOpenSignal("resources", () => (foldMore ? setMoreOpen((o) => !o) : setResOpen((o) => !o)));
+  // A fold step hides the anchor of whichever popover is on the wrong side of it. A hidden
+  // popover's dismiss layer would still swallow the next click anywhere, so close it.
+  useEffect(() => {
+    if (isMobile) return;
+    if (foldMore) {
+      setResOpen(false);
+      setPvOpen(false);
+    } else setMoreOpen(false);
+  }, [foldMore, isMobile]);
   const machine = useWsMachine(resOpen, tenant, wsState === "running");
   const machineLine = machine ? machineSummary(machine) : "";
   const pvRef = useRef<HTMLDivElement>(null);
@@ -1654,7 +1670,7 @@ export function WsBar() {
   );
 
   return (
-    <div className="wsbar">
+    <div className="wsbar" ref={barRef}>
       <span className="ws-label">
         <span className="lbl">Workspace</span>
         <span className="lbl-short">WS</span>
@@ -1764,6 +1780,7 @@ export function WsBar() {
               ? tr("wsbar.start_here.queued")
               : tr("wsbar.start_here.stopped")
         }
+        aria-label={tr("wsbar.start_here")}
         onClick={() => void onStart()}
       >
         <Icon name={startQueued ? "loading" : "add"} spin={startQueued} />
@@ -1778,6 +1795,7 @@ export function WsBar() {
           variant="ghost"
           className="ws-split"
           title={tr("wsbar.split_right") + hintSuffix("pane.splitRight")}
+          aria-label={tr("wsbar.split_right")}
           disabled={!canSplitRight}
           onClick={() => splitRight()}
         >
@@ -1789,6 +1807,7 @@ export function WsBar() {
         variant="ghost"
         className="ws-split"
         title={tr("wsbar.split_down_title") + hintSuffix("pane.splitDown")}
+        aria-label={tr("wsbar.split_down")}
         disabled={!canSplitDown}
         onClick={() => activePaneId && splitDown(activePaneId)}
       >
@@ -1799,6 +1818,7 @@ export function WsBar() {
         variant="ghost"
         className="ws-closeall"
         title={tr("wsbar.close_all_title") + hintSuffix("pane.closeAll")}
+        aria-label={tr("wsbar.close_all")}
         disabled={!canCloseAll}
         onClick={() => resetToTerminal()}
       >
@@ -1812,6 +1832,7 @@ export function WsBar() {
         variant="ghost"
         className="ws-split ws-overview"
         title={tr("wsbar.overview_title") + hintSuffix("open.sessions")}
+        aria-label={tr("wsbar.overview")}
         onClick={() => openSessionsOverview()}
       >
         <Icon name="dashboard" />
@@ -1827,6 +1848,7 @@ export function WsBar() {
           variant="ghost"
           className="ws-split ws-imagegen"
           title={tr("wsbar.imagegen_title") + hintSuffix("open.imagegen")}
+          aria-label={tr("wsbar.imagegen")}
           onClick={() => void openImagegen()}
         >
           <Icon name="wand" />
@@ -1860,7 +1882,7 @@ export function WsBar() {
         <>
           {/* Desktop only: on a phone these already sit in the ⋯ overflow, a vertical list
               with room for all of them — folding a list into a list would only bury them. */}
-          <UsageChipFold>{usageChips}</UsageChipFold>
+          <UsageChipFold squeeze={foldUsage}>{usageChips}</UsageChipFold>
           {/* Outside the fold: that group ranks agents by use, and these are not agents. */}
           <AwsProfilesChip />
           <GcpProfilesChip />
@@ -1877,6 +1899,33 @@ export function WsBar() {
               <Icon name="globe" /> {tr("wsbar.preview")} <Icon name="chevron-down" />
             </Button>
             {pvOpen && <div className="ws-preview-pop">{previewPop}</div>}
+          </div>
+          {/* The same four, folded behind ⋯ once the bar runs out of width (wsBarFold.ts).
+              The chips above stay mounted, hidden by CSS, so nothing re-fetches as the
+              window crosses the boundary; the popover mounts its copies only while open. */}
+          <div className="ws-more ws-more-desk" ref={moreRef}>
+            <Button
+              variant="ghost"
+              className="ws-more-btn"
+              title={tr("wsbar.more_title")}
+              aria-label={tr("wsbar.more_title")}
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen((o) => !o)}
+            >
+              <Icon name="ellipsis" />
+            </Button>
+            {moreOpen && foldMore && (
+              <div className="ws-more-pop">
+                {/* statsBlock without the usage chips: those keep their own +N group. */}
+                <div className="ws-more-stats">
+                  {graphs}
+                  {graphs && <MachineDetailsLink onNavigate={() => setMoreOpen(false)} />}
+                  <AwsProfilesChip />
+                  <GcpProfilesChip />
+                </div>
+                {previewPop}
+              </div>
+            )}
           </div>
         </>
       )}

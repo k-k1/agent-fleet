@@ -519,20 +519,14 @@ button.wu-manage {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  white-space: normal;
 }
 /* Split buttons moved here from the pane header — icon + label, label folds away on a
    narrow bar (like "close all"). Disabled (not hidden) when the split isn't possible. */
-/* white-space: normal undoes ui/Button's nowrap on purpose. On a crowded bar (every chip
-   shown, 1700px) these labels are what gives: kept on one line they cannot shrink, and the
-   bar overflows its right edge instead — measured, the resources chip and the preview button
-   ended up past the viewport, unreachable. */
 .ws-split {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   padding: 3px 10px;
-  white-space: normal;
 }
 /* New Session shortcut on the bar: an accent-tinted icon so it reads as a create
    action distinct from the split buttons it sits beside. */
@@ -689,11 +683,9 @@ button.wu-manage {
 .ws-preview {
   position: relative;
 }
-/* Laid out as the plain button it was (inline flow, wrapping) for the reason .ws-split wraps:
-   on one line it is the last thing on a crowded bar and goes off the right edge first. */
+/* Inline flow, not ui/Button's inline-flex, so it keeps its neighbours' height (as .ws-more-btn). */
 .ws-preview-btn {
   display: inline-block;
-  white-space: normal;
 }
 .ws-preview-pop {
   position: absolute;
@@ -771,6 +763,44 @@ button.wu-manage {
    show nothing but padding inside the popover, so collapse it here — WsBar cannot tell. */
 .ws-more-stats:empty {
   display: none;
+}
+
+/* Desktop fold steps, set as attributes on the bar by app/wsBarFold.ts as the content stops
+   fitting. Nothing on the desktop bar shrinks: a label that could wrap is what turned each
+   pane button into a one-character column on a crowded bar (a CJK label breaks after any
+   character), and the fold logic measures natural widths — a shrunk item would always fit.
+   The phone keeps its own layout above. */
+.ws-more-desk {
+  display: none;
+}
+@media (min-width: 761px) {
+  .wsbar > * {
+    flex-shrink: 0;
+  }
+  .wsbar[data-fold-labels] > :is(.ws-split:not(.ws-newsession), .ws-closeall) .lbl {
+    display: none;
+  }
+  .wsbar[data-fold-more] > :is(.ws-aws, .ws-res, .ws-preview) {
+    display: none;
+  }
+  .wsbar[data-fold-more] > .ws-more-desk {
+    display: block;
+  }
+  .wsbar[data-fold-tight] > :is(.ws-newsession, .ws-stale) .lbl,
+  .wsbar[data-fold-tight] > .ws-label .lbl {
+    display: none;
+  }
+  .wsbar[data-fold-tight] > .ws-label .lbl-short {
+    display: inline;
+  }
+  /* Last resort: whatever still does not fit squeezes the state text, never the controls. */
+  .wsbar[data-fold-tight] > .ws-state {
+    flex-shrink: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 /* ---- left pane ---- */
