@@ -341,3 +341,20 @@ describe("engine pill — the model behind the member connection (docs/log/107, 
     expect(lines.some((t) => t?.includes("gemma-4-e4b-uncensored-hauhaucs-balanced-q4_k_m"))).toBe(true);
   });
 });
+
+describe("engine pill — the control", () => {
+  // A ui/Button (#1631), carrying the summary as its accessible name: below 760px the pill is
+  // an icon and a dot, so the name is the only text a screen reader gets.
+  it("is a ui/Button named by its summary, and toggles its popover", async () => {
+    await render([{ key: "llm", api: "chat", state: "running" }]);
+    const [pill] = pills();
+    expect(pill.classList.contains("ui-btn")).toBe(true);
+    expect(pill.type).toBe("button");
+    expect(pill.getAttribute("aria-label")).toContain("チャット");
+    expect(pill.getAttribute("aria-expanded")).toBe("false");
+    await openPopover(pill);
+    expect(pill.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector(".engine-popover")).not.toBeNull();
+  });
+});
+

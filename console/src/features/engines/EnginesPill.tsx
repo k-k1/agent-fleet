@@ -7,6 +7,7 @@
 // same split `imagegen/parts/JobList.tsx` uses. `EnginesPill` (the default export TopBar
 // renders) is the thin store-connected wrapper.
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { useT, type MsgKey } from "../../lib/i18n/index.ts";
@@ -192,8 +193,7 @@ function MemberChatPill({ conn }: { conn: MemberChatConn }) {
 
   return (
     <div className="engine-pill-wrap" ref={ref}>
-      <button
-        type="button"
+      <Button
         className={"engine-pill engine-pill-" + tone}
         title={summary}
         aria-label={summary}
@@ -203,7 +203,7 @@ function MemberChatPill({ conn }: { conn: MemberChatConn }) {
         <Icon name={ROLE_ICON.chat} />
         <span className={"engine-pill-dot engine-pill-dot-" + tone} aria-hidden="true" />
         <span className="engine-pill-state">{stateLabel}</span>
-      </button>
+      </Button>
       {open && (
         <div className="engine-popover" role="dialog" aria-label={roleLabel}>
           <div className="engine-popover-head">
@@ -256,8 +256,7 @@ function EngineRolePill({ role, rows }: { role: EngineRole; rows: EngineMemberRo
 
   return (
     <div className="engine-pill-wrap" ref={ref}>
-      <button
-        type="button"
+      <Button
         className={"engine-pill engine-pill-" + tone}
         title={summary}
         aria-label={summary}
@@ -274,7 +273,7 @@ function EngineRolePill({ role, rows }: { role: EngineRole; rows: EngineMemberRo
           <span className="engine-pill-countdown">{tr("engine.stops_in", { d: dur(headLeftSecs) })}</span>
         )}
         {queued !== undefined && <span className="engine-pill-queue">{tr("engine.queue_shared", { n: queued })}</span>}
-      </button>
+      </Button>
       {open && (
         <div className="engine-popover" role="dialog" aria-label={roleLabel}>
           {/* With one row — what nearly every deployment has — the row's own head would repeat
