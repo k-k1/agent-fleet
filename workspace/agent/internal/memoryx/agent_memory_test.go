@@ -770,3 +770,52 @@ func TestAgentMemoryForgetUntrackedFile(t *testing.T) {
 		t.Fatalf("forget not recorded:\n%s", msg)
 	}
 }
+
+// ---- review round 3 (PR #1657) ----
+
+// The raw folder name is scanned too: JSON escapes the quotes the generic rule needs.
+func TestAgentMemoryProjectInfoScannedRaw(t *testing.T) {
+	home, _, _ := agentMemTestEnv(t)
+	dir := filepath.Join(home, "repos", "pass"+"word: \""+"Q7v5M9w2"+"J8s6R4p3"+"\"")
+	memoryMkdirAll(t, dir)
+	session.WriteMeta(session.Meta{Name: "odd2", Dir: dir, Kind: "claude"})
+	_, err := agentMemSave(agentMemCallerT(t, "odd2"), agentMemSaveReq{Name: "m", Description: "d", Body: "b"}, time.Now())
+	var se *agentMemSecretErr
+	if !errors.As(err, &se) || se.Findings[0].Path != "project" {
+		t.Fatalf("err = %v, want a refusal on project", err)
+	}
+}
+
+// A git failure while checking whether a path is tracked fails the forget instead of
+// recording an empty one.
+func TestAgentMemoryForgetFailsWhenIndexUnreadable(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "shell-home")
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "x", Description: "d", Body: "b"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	head, _ := memoryGitRun("rev-parse", memoryBranch)
+	memoryWrite(t, filepath.Join(memoryRepoDir(), "index"), "corrupt")
+	if _, err := agentMemForget(c, agentMemForgetReq{Name: "x", Revision: 1}, time.Now()); err == nil {
+		t.Fatal("forget succeeded with an unreadable index")
+	}
+	if now, _ := memoryGitRun("rev-parse", memoryBranch); now != head {
+		t.Fatal("a commit was recorded")
+	}
+	if e, err := agentMemRead(c, "", "x"); err != nil || e.Body != "b" {
+		t.Fatalf("memory after a failed forget = %+v, %v", e, err)
+	}
+}
+
+// A file that is there but cannot be read as a memory is counted as withheld, not ignored.
+func TestAgentMemoryMalformedFilesAreCounted(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "shell-home")
+	memoryMkdirAll(t, filepath.Join(agentMemDir(), "user"))
+	memoryWrite(t, filepath.Join(agentMemDir(), "user", "malformed.md"), "no frontmatter\n")
+	memoryWrite(t, filepath.Join(agentMemDir(), "user", "big.md"), "---\nname: big\ndescription: d\n---\n"+strings.Repeat("x\n", agentMemMaxFile))
+	idx, err := agentMemListIndex(c)
+	if err != nil || idx.Withheld != 2 || len(idx.Entries) != 0 {
+		t.Fatalf("index = %+v, %v", idx, err)
+	}
+}

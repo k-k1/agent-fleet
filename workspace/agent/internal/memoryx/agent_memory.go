@@ -503,8 +503,13 @@ func agentMemLoadScope(scope string, c agentMemCaller) ([]agentMemEntry, int, er
 			continue
 		}
 		l, ok, err := agentMemLoadFile(filepath.Join(dir, d.Name()), scope, name)
-		if err != nil || !ok {
+		if err != nil {
+			// There, but unreadable, oversized or malformed: counted, never named.
+			withheld++
 			continue
+		}
+		if !ok {
+			continue // gone since the listing
 		}
 		if l.Withheld {
 			withheld++
@@ -913,7 +918,8 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 		if _, ok, _ := agentMemReadFile(filepath.Join(agentMemDir(), filepath.FromSlash(info))); !ok {
 			b, _ := json.MarshalIndent(c.Project, "", "  ")
 			// The root path comes from a folder name anyone can choose; it is committed too.
-			if f := agentMemScanText("project", string(b)); len(f) > 0 {
+			// Raw values as well as the JSON: JSON escapes the quotes the generic rule needs.
+			if f := agentMemScanText("project", c.Project.Root+"\n"+c.Project.Display+"\n"+string(b)); len(f) > 0 {
 				return agentMemWriteResult{}, &agentMemSecretErr{Findings: f}
 			}
 			changes = append(changes, agentMemChange{Rel: info, Data: append(b, '\n')})
@@ -1070,7 +1076,13 @@ func agentMemApplyLocked(changes []agentMemChange, op, memRel string, c agentMem
 	// hand) has nothing to stage; pathspecs that match nothing would fail the whole commit.
 	var staged []string
 	for i, p := range paths {
-		tracked, _ := memoryGitRun("ls-files", "--", p)
+		tracked, err := memoryGitRun("ls-files", "--", p)
+		if err != nil {
+			// Not knowing is not "untracked": an empty commit would record a forget whose
+			// tree still holds the file.
+			undo()
+			return "", fmt.Errorf("inspect agent memory index: %w", err)
+		}
 		if tracked != "" || !changes[i].Delete {
 			staged = append(staged, p)
 		}
