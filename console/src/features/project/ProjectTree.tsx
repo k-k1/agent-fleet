@@ -23,8 +23,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { useSessionUI } from "../sessions/ui.ts";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
 import { refQuery } from "../sessions/refSearch.ts";
-import { useRefIndex } from "../sessions/useRefIndex.ts";
-import { ensureWorkItems } from "../workitems/store.ts";
+import { useLedgerWhile, useRefIndex } from "../sessions/useRefIndex.ts";
 import { repoTree, filterRepoTree, countRepoNodes, sessionsInFolder } from "../../lib/project.ts";
 import { useActiveWorkingSet, repoInSet, autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useProjectFilter, normQuery, repoMatches, sessionMatches } from "./filter.ts";
@@ -77,10 +76,7 @@ export const ProjectTree = memo(function ProjectTree() {
   const rail = useRailRoving();
   // Issue keys live in the work-item ledger, which nothing has loaded when the work-items
   // section is hidden; only a ticket-shaped query is worth the request.
-  const refShaped = !!refQuery(nq);
-  useEffect(() => {
-    if (refShaped) void ensureWorkItems();
-  }, [refShaped]);
+  useLedgerWhile(!!refQuery(nq));
 
   // Right after a WS start the agent is still unreachable and the CP answers GET /api/repos with
   // a plain-text 502. The store's refresh() treats that as a transient failure, keeps repos and

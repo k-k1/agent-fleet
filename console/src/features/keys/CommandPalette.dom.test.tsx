@@ -221,6 +221,33 @@ describe("command palette — ticket references (#1665)", () => {
     expect(refOf("feature1662")).toBeUndefined();
   });
 
+  it("keeps the highlighted row when a reference arrives and re-sorts the list under it", () => {
+    act(() => {
+      useSessionsStore.setState({ sessions: [session("busy"), session("ticketText", { title: "PROJ-123-notes" })] });
+    });
+    mount();
+    type("PROJ-123");
+    expect(titles()).toEqual(["PROJ-123-notes"]);
+    // The ledger lands after the query was typed: busy becomes a reference hit and goes first.
+    act(() => {
+      useWorkItemStore.setState({
+        loaded: true,
+        payload: {
+          items: [],
+          queries: [],
+          fetchedAt: "",
+          running: false,
+          sessions: [{ id: "2", provider: "jira", itemKey: "PROJ-123", sessionName: "busy", repo: "", branch: "", createdAt: "" }],
+        },
+      });
+    });
+    expect(titles()).toEqual(["busy", "PROJ-123-notes"]);
+    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("PROJ-123-notes");
+    // A new query starts again at the top.
+    type("PROJ-123 ");
+    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("busy");
+  });
+
   it("does not let a prefix of the number match", () => {
     mount();
     type("#166");

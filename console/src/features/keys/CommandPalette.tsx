@@ -27,7 +27,7 @@
 // Focus: opening from a composer/input must not strand focus. We remember the opener and,
 // on a CANCEL (Esc / browser-back / backdrop), return focus to it. Running a command/opening
 // a file does NOT restore — it may move focus deliberately (e.g. focus a pane).
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Kbd } from "../../ui/Kbd.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { toast } from "../../ui/toast.ts";
@@ -532,6 +532,24 @@ export function CommandPalette() {
     }
     return [...hits, ...rest];
   }, [items, q, mode, refs]);
+
+  // `sel` is an index, and the list can re-sort under it without the user typing: a ledger
+  // or PR update turns a row into a reference hit and moves it to the top. Follow the
+  // highlighted row by id then, or Enter opens a different session. A new query or mode
+  // still starts again at the top.
+  const selTrack = useRef<{ id: string | null; q: string; mode: Mode; list: Item[] }>({ id: null, q, mode, list: filtered });
+  useLayoutEffect(() => {
+    const t = selTrack.current;
+    if (t.list !== filtered && t.id && t.q === q && t.mode === mode) {
+      const i = filtered.findIndex((it) => it.id === t.id);
+      t.list = filtered;
+      if (i >= 0 && i !== sel) {
+        setSel(i);
+        return;
+      }
+    }
+    selTrack.current = { id: filtered[sel]?.id ?? null, q, mode, list: filtered };
+  }, [filtered, sel, q, mode]);
 
   // Keep the highlighted row visible: arrow-key navigation moves `sel` but the list is a
   // fixed-height scroller, so a selection past the fold would otherwise vanish. `nearest`
