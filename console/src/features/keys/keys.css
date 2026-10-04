@@ -364,3 +364,15 @@
   padding: 20px;
   text-align: center;
 }
+/* The ticket reference that found this row (#1665) — shown so a hit on `#1662` is not a
+   row whose visible text never mentions 1662. */
+.cp-ref {
+  flex: none;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}

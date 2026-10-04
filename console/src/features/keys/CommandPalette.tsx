@@ -58,6 +58,9 @@ import { useNotificationStore } from "../notifications/store.ts";
 import { useReposStore } from "../repos/store.ts";
 import type { Repo } from "../repos/store.ts";
 import { revealRepoInRail } from "../repos/reveal.ts";
+import { matchSessionRef, refQuery } from "../sessions/refSearch.ts";
+import { useRefIndex } from "../sessions/useRefIndex.ts";
+import { ensureWorkItems } from "../workitems/store.ts";
 import { openFileDiff } from "../scm/open.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { activePane } from "../../layout/ops.ts";
@@ -107,6 +110,10 @@ interface Item {
   /** Set on a row of the sessions mode: the row renders as a session (kind icon, working
    * copy, state chip) instead of the plain title + sub pill. */
   session?: Session;
+  /** The session a row stands for, in either mode — matched against a ticket-shaped query. */
+  refOf?: Session;
+  /** Set by the filter: the reference that found this row ("PR #1662", "PROJ-123"). */
+  refHit?: string;
 }
 
 // One working-tree change from api/repos/{repo}/changes.
@@ -254,6 +261,7 @@ function sessionItem(s: Session, repos: Repo[], running: boolean): Item {
     search: [name, s.name, project, wt, branch, kindLabel(s.kind), st.text, s.state || ""].join(" "),
     keys: [],
     session: s,
+    refOf: s,
     // Enter opens in the active pane, Ctrl/⌘+Enter in a new one. The rules for how the
     // destination changes with running/stopped/missing-folder are shared with the left
     // rail's rows (openSessionFromList).
@@ -269,7 +277,7 @@ function sessionItem(s: Session, repos: Repo[], running: boolean): Item {
 
 // The session row's body. Reads the repos store itself (like WorkingCopyLabel) so the
 // working-copy half stays correct when the repo list lands after the palette opened.
-function SessionRowBody({ s }: { s: Session }) {
+function SessionRowBody({ s, refHit }: { s: Session; refHit?: string }) {
   const folder = sessionFolder(s);
   const repo = useReposStore((st) => st.repos.find((r) => r.name === folder));
   const { project, branch } = workingCopyLabel(folder, repo);
@@ -295,6 +303,7 @@ function SessionRowBody({ s }: { s: Session }) {
           </span>
         )}
       </span>
+      {refHit && <span className="cp-ref">{refHit}</span>}
       <span className={"session-state " + st.cls} title={st.text}>
         <Icon name={st.icon} spin={st.spin} />
         {st.text}
@@ -307,6 +316,7 @@ export function CommandPalette() {
   const open = useKeysStore((s) => s.paletteOpen);
   const sessions = useSessionsStore((s) => s.sessions);
   const repos = useReposStore((s) => s.repos);
+  const refs = useRefIndex();
   // Subscribed (not a getState peek): which session is active decides whether the session
   // mode exists at all, and the palette must not open with a stale answer.
   const layout = useLayoutStore((s) => s.layout);
@@ -363,6 +373,7 @@ export function CommandPalette() {
     setMode(live.length ? "sessions" : "command");
     setOrder(freezeOrder(live)); // freeze the order here (see `order` above)
     void useReposStore.getState().refresh(); // repos+worktrees are searchable in command mode
+    void ensureWorkItems(); // issue keys come from the work-item ledger (#1665)
     const id = requestAnimationFrame(() => inputRef.current?.focus());
     return () => cancelAnimationFrame(id);
   }, [open]);
@@ -462,6 +473,7 @@ export function CommandPalette() {
         sub: t("keys.item.session"),
         search: title + " " + s.name,
         keys: [],
+        refOf: s,
         // Enter → open in the active pane; Ctrl/⌘+Enter → open in a new (split) pane.
         run: (split) =>
           (chat
@@ -506,10 +518,20 @@ export function CommandPalette() {
           : mode === "sfiles"
             ? (sessionFiles ?? [])
             : (fileHits ?? []);
-  const filtered = useMemo(
-    () => (mode === "file" ? items : items.filter((it) => fuzzy(q, it.search + " " + it.sub))),
-    [items, q, mode],
-  );
+  // A ticket-shaped query (#1665) finds the sessions tied to that reference first, whole-token
+  // only; the fuzzy pass still runs for the rest, so `1662` keeps finding `feature/1662-…`.
+  const filtered = useMemo(() => {
+    if (mode === "file") return items;
+    const rq = refQuery(q);
+    const hits: Item[] = [];
+    const rest: Item[] = [];
+    for (const it of items) {
+      const refHit = it.refOf ? matchSessionRef(it.refOf, refs, rq) : null;
+      if (refHit) hits.push({ ...it, refHit });
+      else if (fuzzy(q, it.search + " " + it.sub)) rest.push(it);
+    }
+    return [...hits, ...rest];
+  }, [items, q, mode, refs]);
 
   // Keep the highlighted row visible: arrow-key navigation moves `sel` but the list is a
   // fixed-height scroller, so a selection past the fold would otherwise vanish. `nearest`
@@ -645,11 +667,11 @@ export function CommandPalette() {
                 }}
               >
                 {it.session ? (
-                  <SessionRowBody s={it.session} />
+                  <SessionRowBody s={it.session} refHit={it.refHit} />
                 ) : (
                   <>
                     <span className="cp-title">{it.title}</span>
-                    <span className="cp-sub">{it.sub}</span>
+                    <span className="cp-sub">{it.refHit ? it.sub + " · " + it.refHit : it.sub}</span>
                   </>
                 )}
                 {it.keys.length > 0 && (
