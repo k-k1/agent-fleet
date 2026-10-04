@@ -1,0 +1,202 @@
+package mcpx
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+)
+
+var memoryToolNames = []string{"memory_index", "memory_search", "memory_read", "memory_save", "memory_forget"}
+
+// memoryTestEnv serves the real memoryx routes as the Agent, so the tools are exercised end to
+// end: argument relay, owner resolution, the store and its error answers. The calling session
+// is owner01 (claude), working in ~/repos/proj; peer02 is a codex session in the same folder.
+func memoryTestEnv(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	withMCPFlags(t, false, true, false)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, "claude-config"))
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	oldSource := mcpSourceSession
+	mcpSourceSession = "owner01"
+	mcpAdvertised.mu.Lock()
+	oldNames := mcpAdvertised.names
+	mcpAdvertised.names = nil
+	mcpAdvertised.mu.Unlock()
+	oldDeps := memoryx.Wired()
+	memoryx.Configure(memoryx.Deps{
+		ErrCodeBadRequest: "memory_bad_request", ErrCodeBadRev: "x", ErrCodeBadPath: "x", ErrCodeNoSnapshots: "x",
+		ErrCodeSnapshotFailed: "memory_snapshot_failed", ErrCodeDiffFailed: "x", ErrCodeBadScope: "x",
+		ErrCodeRestoreFailed: "x", ErrCodeExportFailed: "x", ErrCodeImportFailed: "x", ErrCodeBadImport: "x",
+		ErrCodeSecretDetected: "memory_secret_detected", ErrCodeTooLarge: "memory_too_large",
+		ErrCodeNotFound: "memory_not_found", ErrCodeConflict: "memory_conflict", ErrCodeNoProject: "memory_no_project",
+	})
+	t.Cleanup(func() {
+		mcpSourceSession = oldSource
+		mcpAdvertised.mu.Lock()
+		mcpAdvertised.names = oldNames
+		mcpAdvertised.mu.Unlock()
+		if oldDeps.ErrCodeBadRequest != "" {
+			memoryx.Configure(oldDeps)
+		}
+	})
+	proj := filepath.Join(home, "repos", "proj")
+	session.WriteMeta(session.Meta{Name: "owner01", Dir: proj, Kind: "claude"})
+	session.WriteMeta(session.Meta{Name: "peer02", Dir: proj, Kind: "codex"})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /agents/memory/entries", memoryx.HandleAgentMemoryIndex)
+	mux.HandleFunc("GET /agents/memory/entries/search", memoryx.HandleAgentMemorySearch)
+	mux.HandleFunc("GET /agents/memory/entries/read", memoryx.HandleAgentMemoryRead)
+	mux.HandleFunc("POST /agents/memory/entries", memoryx.HandleAgentMemorySave)
+	mux.HandleFunc("POST /agents/memory/entries/forget", memoryx.HandleAgentMemoryForget)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENT_ADDR", u.Host)
+}
+
+func callMemoryTool(t *testing.T, name string, args map[string]any) branchToolResult {
+	t.Helper()
+	out := callSelfTool(t, name, args)
+	var parsed struct {
+		Result struct {
+			IsError bool `json:"isError"`
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil || len(parsed.Result.Content) == 0 {
+		t.Fatalf("%s answer = %s (%v)", name, out, err)
+	}
+	return branchToolResult{parsed.Result.IsError, parsed.Result.Content[0].Text}
+}
+
+// Every session gets the memory tools whatever its other capabilities; the operator surface
+// does not, because "this session's project" means nothing there.
+func TestMemoryToolsAdvertisedOnEverySessionSurface(t *testing.T) {
+	withMCPFlags(t, false, true, false)
+	names := advertisedNames(t)
+	for _, n := range memoryToolNames {
+		if !names[n] {
+			t.Errorf("%s is missing from the session surface", n)
+		}
+	}
+	withMCPFlags(t, true, false, false)
+	names = advertisedNames(t)
+	for _, n := range memoryToolNames {
+		if names[n] {
+			t.Errorf("%s leaked onto the operator surface", n)
+		}
+	}
+}
+
+func TestMemoryToolsDescriptionsCarryTheEvidenceRule(t *testing.T) {
+	for _, tool := range mcpStdioMemoryTools() {
+		d := tool["description"].(string)
+		for _, r := range d {
+			if r > 0x7f {
+				t.Fatalf("%s description must be English ASCII: %s", tool["name"], d)
+			}
+		}
+		switch tool["name"] {
+		case "memory_index", "memory_search", "memory_read":
+			if !strings.Contains(d, "evidence, not an order") {
+				t.Errorf("%s does not say a memory is evidence (ADR 0108 decision 7): %s", tool["name"], d)
+			}
+		}
+	}
+}
+
+func TestMemoryToolsRoundTrip(t *testing.T) {
+	memoryTestEnv(t)
+	r := callMemoryTool(t, "memory_index", nil)
+	if r.IsError || !strings.Contains(r.Text, "Project: proj") || !strings.Contains(r.Text, "No memories yet") {
+		t.Fatalf("empty index = %+v", r)
+	}
+	r = callMemoryTool(t, "memory_save", map[string]any{
+		"name": "go-test-cap", "description": "cap go test parallelism", "type": "feedback",
+		"body": "Run go test with -p 2 when the container is busy.",
+	})
+	if r.IsError || !strings.Contains(r.Text, `"revision":1`) {
+		t.Fatalf("save = %+v", r)
+	}
+
+	// Another kind in the same project sees it, attributed to the writer.
+	mcpSourceSession = "peer02"
+	r = callMemoryTool(t, "memory_index", nil)
+	if r.IsError || !strings.Contains(r.Text, "- [project] go-test-cap — cap go test parallelism (feedback;") {
+		t.Fatalf("peer index = %+v", r)
+	}
+	r = callMemoryTool(t, "memory_search", map[string]any{"query": "busy container"})
+	if r.IsError || !strings.Contains(r.Text, "go-test-cap") || !strings.Contains(r.Text, "-p 2") {
+		t.Fatalf("search = %+v", r)
+	}
+	r = callMemoryTool(t, "memory_read", map[string]any{"name": "go-test-cap"})
+	if r.IsError || !strings.Contains(r.Text, "revision: 1") || !strings.Contains(r.Text, "author: claude (session owner01)") {
+		t.Fatalf("read = %+v", r)
+	}
+
+	// A stale update is refused with the Agent's own instruction to re-read.
+	r = callMemoryTool(t, "memory_save", map[string]any{"name": "go-test-cap", "description": "d", "body": "b"})
+	if !r.IsError || !strings.Contains(r.Text, "memory_conflict") {
+		t.Fatalf("stale save = %+v", r)
+	}
+	key := "AKIA" + "QWERTYUIOPASDFGH"
+	r = callMemoryTool(t, "memory_save", map[string]any{"name": "creds", "description": "d", "body": "use " + key})
+	if !r.IsError || !strings.Contains(r.Text, "aws-access-key-id") || strings.Contains(r.Text, key) {
+		t.Fatalf("secret save = %+v", r)
+	}
+
+	r = callMemoryTool(t, "memory_forget", map[string]any{"name": "go-test-cap", "revision": 1})
+	if r.IsError || !strings.Contains(r.Text, `"deleted":true`) {
+		t.Fatalf("forget = %+v", r)
+	}
+	if r = callMemoryTool(t, "memory_read", map[string]any{"name": "go-test-cap"}); !r.IsError || !strings.Contains(r.Text, "memory_not_found") {
+		t.Fatalf("read after forget = %+v", r)
+	}
+}
+
+// A session the Agent cannot find still gets the user scope, with the author recorded as
+// unknown, instead of a refusal.
+func TestMemoryToolsWithoutAnOwner(t *testing.T) {
+	memoryTestEnv(t)
+	mcpSourceSession = ""
+	t.Setenv("AF_SESSION_NAME", "")
+	r := callMemoryTool(t, "memory_save", map[string]any{"name": "pref", "description": "d", "body": "b", "scope": "project"})
+	if !r.IsError || !strings.Contains(r.Text, "memory_no_project") {
+		t.Fatalf("project save without an owner = %+v", r)
+	}
+	r = callMemoryTool(t, "memory_save", map[string]any{"name": "pref", "description": "d", "body": "b"})
+	if r.IsError {
+		t.Fatalf("user save without an owner = %+v", r)
+	}
+	r = callMemoryTool(t, "memory_read", map[string]any{"name": "pref"})
+	if r.IsError || !strings.Contains(r.Text, "author: unknown (session unknown)") {
+		t.Fatalf("read = %+v", r)
+	}
+}
+
+// A store holding only withheld files is not reported as empty.
+func TestMemoryIndexReportsWithheld(t *testing.T) {
+	out := mcpMemoryFormatIndex(`{"project":{"display":"p"},"entries":[],"withheld":2}`)
+	if !strings.Contains(out, "2 memory file(s) are withheld") || strings.Contains(out, "No memories yet") {
+		t.Fatalf("index = %q", out)
+	}
+}

@@ -2,9 +2,14 @@
 
 English | [日本語](0108-af-owned-agent-memory.ja.md)
 
-- Status: **proposed** (2026-10-03). Nothing is built yet. The figures below were measured on one
-  workspace on 2026-10-03; the claude settings named in decision 6 were found as strings in the
-  Claude Code 2.1.288 binary and **their behaviour is not measured**.
+- Status: **proposed** (2026-10-03). Built so far (P1, part 1): the store, the five MCP tools,
+  revisions, authorship, the one-commit history under `af/` and the secret scan
+  (`memoryx/agent_memory.go`). Not built: the Console change list and the claude seed. The figures
+  below were measured on one workspace on 2026-10-03; the claude settings named in decision 6 were
+  found as strings in the Claude Code 2.1.288 binary and **their behaviour is not measured**.
+  Revised 2026-10-04 before any of it was built: decision 8 now publishes changes directly instead
+  of queueing them for the member's approval (the reason is in decision 8, the dropped design under
+  Rejected).
 - Tracking: #1569
 - Related: [0022](0022-agent-memory-management.md) (memory history in a bare repo — this record's
   safety net) / [0042](0042-user-instructions.md) (the distributor this record reuses, and the
@@ -49,8 +54,9 @@ that is safe when what one session writes is read by every kind.
    different files, are distributed as different blocks, and the policy text tells agents which is
    which. Merging them would void 0042 decision 8.
 2. **Scope is user × workspace × project, and AF defines the project id itself.** For a Git working
-   copy the project is the main clone the working copy belongs to (`git-common-dir`'s parent, as
-   `gitx` resolves it), so a worktree shares its parent's memory. claude's *conversation* directory
+   copy the project is the repository the working copy belongs to, keyed by its absolute
+   `git-common-dir` (not that directory's parent, which `--separate-git-dir` and submodules let
+   several repositories share), so a worktree shares its parent's memory. claude's *conversation* directory
    naming is not reused: it is per cwd, not injective, and gives each worktree its own slug
    (`agents/claude/project_dir.go`). A working copy that is not Git (SVN, a local folder — both
    supported, `guide/ref/repos.md`) is its own project, keyed by its root as AF registered it. A
@@ -65,7 +71,7 @@ that is safe when what one session writes is read by every kind.
    a tool.
 4. **Every kind reads and writes through af MCP tools** — `memory_index`, `memory_search`,
    `memory_read`, `memory_save` (create or update), `memory_forget`. An update or forget carries
-   the `revision` it was based on; a stale one is refused and the agent re-reads and re-proposes,
+   the `revision` it was based on; a stale one is refused and the agent re-reads and writes again,
    because Markdown is not merged mechanically ([0022](0022-agent-memory-management.md) on 3-way
    merge). Publishing a change, its commit in the 0022 history and the index update happen as one
    step per project, so each published change is one commit with its author.
@@ -79,39 +85,45 @@ that is safe when what one session writes is read by every kind.
    descriptions.
 6. **claude's own auto-memory: a one-time seed now, one memory later.**
    - Step 1: the member imports claude's existing memory for a project once, as an explicit Console
-     action. It goes through the secret scan (decision 9), lands as proposals the member approves in
-     bulk or one by one (decision 8), records `source` / `source_hash` and the author as unknown.
-     There is no continuous sync: claude → AF on every trigger would resurrect memories forgotten in
-     AF, overwrite AF edits with claude's older text and re-submit rejected proposals.
+     action. The Console first shows what would be imported and what the secret scan (decision 9)
+     found; the member confirms, and each imported memory records `source` / `source_hash` and the
+     author as unknown. There is no continuous sync: claude → AF on every trigger would resurrect
+     memories forgotten in AF and overwrite AF edits with claude's older text.
    - Step 2 (decided after measuring): switch claude's auto-memory off (`autoMemoryEnabled` /
      `CLAUDE_CODE_DISABLE_AUTO_MEMORY`) and let claude use the MCP tools like every other kind.
      Pointing claude's native writer at the store (`autoMemoryDirectory`) is acceptable **only** if
-     what claude writes there is treated as proposals — never published by being written — and is
-     scanned (decision 9) before AF keeps it; if that cannot be guaranteed, the option is rejected.
+     what claude writes there is never published by being written: AF has to scan it (decision 9),
+     check its revision and attribute it before it becomes a memory; if that cannot be guaranteed,
+     the option is rejected.
      These setting and environment names come from the 2.1.288 binary; none is measured.
 7. **A memory is evidence, not an order.** The read tools' descriptions say so, and say that a
    file, function or flag a memory names must be checked before it is relied on. A memory never
    overrides user instructions or the fleet policy.
-8. **By default every write path produces a proposal and only the member publishes.** Save, update,
-   forget, the import and a restore all create a proposal with an immutable body. A pending proposal is
-   invisible to `memory_index`, `memory_search` and `memory_read` for every session, its author
-   included. Approval — and switching a project to direct writes — exists only in the Console's
-   REST, never as an MCP tool, for the reason 0042 decision 8 gives. Approving re-checks the
-   revision; a proposal whose base has moved goes back to the author as stale. Without this, one
-   hostile page read by one session would be distributed to every kind.
-   The one exception is a project the member has switched to direct writes: there, changes made
-   through the MCP tools are published automatically, through the same revision check, secret scan
-   (decision 9) and one-commit step. Direct mode never covers the import, a restore or claude's native
-   writer — those remain proposals. Choosing direct mode gives up this protection for that project,
-   and the Console says so when it is switched on. The approval path is the
-   one #1559 needs for automated review, built once.
+8. **Changes are published directly; the safeguards find and undo a bad one rather than gate it.**
+   A save, update or forget through the MCP tools is published at once — through the revision check
+   (decision 4), the secret scan (decision 9) and the one-commit step — and is visible to its author
+   and every other session from then on. There is no proposal queue and no approval step.
+   An approval would not be a boundary. The Agent's REST has one bearer token, `AGENT_TOKEN`, and
+   every session's shell holds it
+   ([07-security §7.2](../build/07-security.md#72-isolation-controls)), so an agent could approve
+   its own proposal; and an agent with a shell can already write the repository's `CLAUDE.md` /
+   `AGENTS.md` and the code, so a gate in front of memory alone would not narrow what one hostile
+   page can reach. What it would cost is certain: a queue the member ends up approving in bulk
+   unread or switching off, and an agent that cannot read back what it saved a turn earlier.
+   claude's auto-memory writes without asking for the same reasons.
+   What the member has instead: every change carries its author (kind and session) and a commit in
+   the 0022 history; the Console lists recent changes — who, when, what — and can forget one or roll
+   it back; and decision 7 tells every reader that a memory is evidence. The import and a restore
+   are the member's own actions in the Console, and their preview is the confirmation. A review
+   queue is built when #1559's automated review needs one, not before.
 9. **Secrets are stopped before they are stored.** Every candidate body — a save, an update, the
    import, a restore, and anything claude's native writer produced (decision 6) — is scanned with the
-   0022 rules (`memory_secrets.go`) before it is persisted as a proposal or published. A restore is
-   included although 0022's restore copies history without a scan today, and an acknowledgement given
-   for one body does not carry over to another. A hit blocks by
-   default and only the member's explicit acknowledgement in the Console lets it through. The
-   value is never returned or logged — rule, path, line and a masked hint, as at export today.
+   0022 rules (`memory_secrets.go`) before it is published. A hit in an agent's write is refused:
+   the agent is told the rule and the line so it can rewrite the memory without the value, and
+   there is no override on the MCP side. A hit in the import or a restore — a restore is included
+   although 0022's restore copies history without a scan today — blocks unless the member
+   acknowledges it in the Console, and an acknowledgement given for one body does not carry over to
+   another. The value is never returned or logged — rule, path, line and a masked hint, as at export today.
    Memories that already exist are scanned before they are first exposed through read or index.
    `memory_forget` removes a memory from what is published; it does not remove it from history, so
    purging a secret from history is a separate, member-only operation (open question 3).
@@ -134,7 +146,12 @@ that is safe when what one session writes is read by every kind.
   two projects open at once would read each other's entries (decision 5).
 - **Continuous claude → AF sync.** Without tombstones and precedence it resurrects forgotten and
   rejected memories; the one-time seed avoids the problem (decision 6).
-- **Let claude's native writer publish into the store.** It bypasses decision 8.
+- **Let claude's native writer publish into the store.** It bypasses the revision check, the secret
+  scan and authorship (decisions 4, 8 and 9).
+- **Writes as pending proposals the member approves** (this record's first draft). Not a boundary
+  while every session holds `AGENT_TOKEN` and a shell, and a certain cost in approval load and in
+  agents unable to read what they just saved (decision 8). If #1559's automated review needs a
+  queue, it is built for that.
 - **An external memory service (for example Honcho).** Conversations leave the workspace, the
   service runs its own LLM over them, and self-hosting needs Docker, which a workspace does not
   have. It stays a member's own choice through Settings → MCP.
@@ -151,10 +168,12 @@ that is safe when what one session writes is read by every kind.
 - The kinds without a local memory of their own gain one; for muse, whether that duplicates a
   native memory is still to be established (open question 6).
 - Every memory has an author and a history, so a bad lesson can be found and rolled back.
-- A new failure mode: a poisoned memory reaches every kind. Decisions 8 and 9 are the mitigation and
-  ship with the write tool, not after it.
-- The member carries an approval load until a project is switched to direct writes; #1559's review
-  is meant to reduce it.
+- A new failure mode: a poisoned memory reaches every kind, and nothing stops it before it is read.
+  Decision 9 keeps secrets out; decisions 7 and 8 — evidence, not orders, with an author, a history
+  and a rollback on every change — make a bad memory findable and reversible. They ship with the
+  write tool, not after it.
+- The member carries no approval load; review is after the fact, through the change list, and
+  #1559's automated review is meant to take most of it.
 - Two memories coexist for claude until step 2 of decision 6 is decided; claude pays for both
   indexes in that time.
 
@@ -162,14 +181,15 @@ that is safe when what one session writes is read by every kind.
 
 1. What `autoMemoryDirectory` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY` actually do on the shipped
    Claude Code: whether the directory setting moves the index and the files, whether claude still
-   loads the index from there, and whether its writes there can be held as proposals.
+   loads the index from there, and whether its writes there can be held back until AF has scanned
+   and attributed them.
 2. The size of the `memory_index` answer and how its entries are ranked (recency, `kinds`), and the
    cost of the coexistence period measured on a real project.
 3. Purging a secret from history: rewriting the 0022 history for one memory, and what that does to
    bundles already exported.
 4. Whether codex's `external_agent_memory_import`
    ([0022](0022-agent-memory-management.md) decision 6) makes a native codex route worth having
-   beside the MCP tools — under decision 8's rule that native writers do not publish.
+   beside the MCP tools — under decision 6's rule that a native writer never publishes by writing.
 5. Project identity over time: a renamed or re-cloned repository, and how the member merges two
    project ids.
 6. Whether muse has a native memory, and if so how it coexists with this one.
@@ -177,8 +197,8 @@ that is safe when what one session writes is read by every kind.
 
 ## Phases
 
-- **P1** — the store, the MCP tools with revisions, authorship and history, proposals with the
-  Console approval list, the secret scan, the one-time claude seed.
+- **P1** — the store, the MCP tools with revisions, authorship and history, the secret scan, the
+  Console change list with forget and rollback, the one-time claude seed.
 - **P2** — the distributed guidance block, and lcpp's per-session injection.
 - **P3** — decision 6 step 2 after measuring; tie-in with #1559 (automated review) and #1558
   (search).

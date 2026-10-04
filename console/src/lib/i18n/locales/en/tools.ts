@@ -799,6 +799,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mem.trigger_pre_restore": "pre-restore",
   "mem.trigger_restore": "restore",
   "mem.trigger_import": "import",
+  "mem.trigger_agent_memory": "agent memory",
   "mem.restore": "Restore this point",
   "mem.restore_title": "What to restore",
   "mem.scope_all": "Everything",

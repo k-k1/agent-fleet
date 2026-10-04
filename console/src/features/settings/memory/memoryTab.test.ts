@@ -98,7 +98,7 @@ describe("agent memory tab in the settings modal", () => {
 
   it("covers every Agent AF-Trigger value with a trigger-badge key", () => {
     // One to one with the Agent constants (memory_snapshot.go); "-" becomes "_" in the key.
-    for (const trigger of ["auto", "manual", "pre-restore", "restore", "import"]) {
+    for (const trigger of ["auto", "manual", "pre-restore", "restore", "import", "agent-memory"]) {
       const key = "mem.trigger_" + trigger.replace(/-/g, "_");
       expect(ja, `ja is missing ${key}`).toHaveProperty(key);
       expect(en, `en is missing ${key}`).toHaveProperty(key);

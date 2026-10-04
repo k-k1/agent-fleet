@@ -1107,6 +1107,7 @@ func TestMCPStdioInstructionsFollowSessionSurface(t *testing.T) {
 		{"get_session_usage", "usage"},
 		{"add_memo", "memos"},
 		{"branch_name", "branch names"},
+		{"memory_index", "agent memory"},
 		{"list_chromium_targets", "Chromium"},
 		{"send_to_peer_session", "peer sessions"},
 		{"create_session", "child sessions"},

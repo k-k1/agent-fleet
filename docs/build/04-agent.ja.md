@@ -404,7 +404,9 @@ tmux 3.5a で実測: 素の OSC も tmux のパススルー包み（`ESC P tmux;
   - 自己報告のツール（`af_report`・`af_stop_after_turn`・`propose_session_handoff`）は常に広告する。
   - 小さな観測用のツール（セッションの状態と使用量、メモ）も常に広告する。`branch_name` も常に
     広告し、ブランチ名リゾルバー（`POST /repos/{name}/branch-name`）に、既定では呼び出し元自身の
-    作業コピーについて尋ねる。Chromium アタッチの 7 本は `--chromium-attach` で付く。
+    作業コピーについて尋ねる。`memory_*` の 5 本（ADR 0108）も常に広告する。呼び出し元のセッション名を
+    付けて Agent のループバック専用ルート `/agents/memory/entries` を呼び、その名前が記録する書き手と
+    プロジェクトの範囲を決める。Chromium アタッチの 7 本は `--chromium-attach` で付く。
   - 利用者の設定で `--peer-messaging`・`--image-gen`・`--fleet-spawn`・`--session-search` が加わる
     （`builtinRunArgsFor`）。最後のものは既定でオンで、`search_sessions` を広告する（ADR 0110）。
   - 広告していないツールは、呼ばれても断る（`mcpAdvertised`）。

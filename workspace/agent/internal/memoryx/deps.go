@@ -2,7 +2,7 @@ package memoryx
 
 // deps.go collects in one place every hand memoryx reaches out to its caller (package main).
 //
-// The whole outward dependency of this family is the 13 stable error codes in errcodes.go
+// The whole outward dependency of this family is the 16 stable error codes in errcodes.go
 // (the complete section, as listed by the compiler with `go build -gcflags=-e`). Not one
 // function or type is needed: memory version management is closed over the live tree and its
 // dedicated bare repo, and calls into no other family.
@@ -37,6 +37,9 @@ type Deps struct {
 	ErrCodeBadImport      string
 	ErrCodeSecretDetected string
 	ErrCodeTooLarge       string
+	ErrCodeNotFound       string
+	ErrCodeConflict       string
+	ErrCodeNoProject      string
 }
 
 var deps Deps
@@ -81,6 +84,9 @@ func Configure(d Deps) {
 	errCodeMemoryBadImport = d.ErrCodeBadImport
 	errCodeMemorySecretDetected = d.ErrCodeSecretDetected
 	errCodeMemoryTooLarge = d.ErrCodeTooLarge
+	errCodeMemoryNotFound = d.ErrCodeNotFound
+	errCodeMemoryConflict = d.ErrCodeConflict
+	errCodeMemoryNoProject = d.ErrCodeNoProject
 }
 
 // Wired returns the current wiring. It is the read port for callers that verify end to end
@@ -107,4 +113,7 @@ var (
 	errCodeMemoryBadImport      string
 	errCodeMemorySecretDetected string
 	errCodeMemoryTooLarge       string
+	errCodeMemoryNotFound       string
+	errCodeMemoryConflict       string
+	errCodeMemoryNoProject      string
 )

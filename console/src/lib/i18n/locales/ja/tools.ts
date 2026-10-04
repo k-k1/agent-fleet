@@ -800,6 +800,7 @@ export const tools = {
   "mem.trigger_pre_restore": "巻き戻し前",
   "mem.trigger_restore": "巻き戻し",
   "mem.trigger_import": "取り込み",
+  "mem.trigger_agent_memory": "エージェントの記録",
   "mem.restore": "この時点に戻す",
   "mem.restore_title": "戻す範囲",
   "mem.scope_all": "すべて",
