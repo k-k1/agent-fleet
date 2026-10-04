@@ -28,6 +28,64 @@ CLI のプラン**——Codex の背後の ChatGPT ログイン、agy の背後�
 [08 別の配備のエンジンを借りる](08-borrowed-engine.ja.md)。あちらは画像だけでなく
 チャットのエンジンも対象で、起こすのも払うのも向こうのフリートです。
 
+## フリートのイメージを自分の GPU 機で動かす
+
+その機械でまだ ComfyUI が動いていないなら、手で組み立てる必要はありません。
+`deploy/comfyui-lan/comfyui-lan.sh` が、**`ecs-ec2` の画像エンジンが動かしているのと同じ、
+版を固定した ComfyUI イメージ**を、その機械の docker で起動します。イメージは誰でも pull
+できる `ghcr.io/k-k1/agent-fleet/comfyui` で、タグは `deploy/aws/ecs/cfn/60-engines.yaml`
+が `ImageComfyImageTag` として固定しているものです。スクリプトはそのタグを、自分が置かれて
+いるチェックアウトから読みます。セッションが送るワークフローのテンプレートは、この版の
+ComfyUI に対して試験されています。
+
+その機械に要るものは、x86_64 の Linux（イメージは amd64 専用）、Docker Engine、NVIDIA の
+ドライバ（`nvidia-smi -L` が GPU を列挙する）、そして `docker run --gpus` を動かす
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+です。どれかが欠けていれば、スクリプトは何かを変える前に止まり、欠けているものを言います。
+このリポジトリをその機械に clone するか、`deploy/comfyui-lan/` を
+`deploy/aws/ecs/cfn/60-engines.yaml` と一緒にコピーしてから、次を実行します。
+
+```bash
+# models/ には checkpoints/・diffusion_models/・clip/・text_encoders/・vae/・loras/ を置く
+deploy/comfyui-lan/comfyui-lan.sh up --models /srv/comfy-models --bind 192.0.2.10
+```
+
+- **`--models`** は ComfyUI の `models/` として**読み取り専用で**マウントされます。足りない
+  種類のフォルダはスクリプトが作ります。ファイルは
+  [モデルは手で登録する](#モデルは手で登録する)のとおり、種類のフォルダの直下に置きます。
+  ファイルを置くのはあなたで、何もダウンロードしてくれません。
+- **`--bind`** はポートを公開するホスト側のアドレスです。既定は `127.0.0.1` で、Control
+  Plane が同じ機械で動くときにしか使えません。CP が別の機械にあるなら、その機械の LAN の
+  アドレスを渡します。`0.0.0.0`（すべてのインタフェース）は、`--all-interfaces` を一緒に
+  付けない限り断ります。ポートは `--port` で変えられます（既定 `8188`）。
+- **`--api-key-file <file>`** を付けると、bearer を確かめる proxy（compose と同じ Caddy の
+  イメージ）を ComfyUI の前に置き、ComfyUI 自体はどこにも公開しません。ファイルには
+  24 文字以上の鍵を 1 つ書きます（`openssl rand -hex 32 > comfy.key`）。CP には同じ鍵を、
+  パネルの鍵の欄か `AF_COMFY_API_KEY` で渡します。鍵はすべてのパスで要り、`/system_stats`
+  も例外ではありません。CP はヘルスチェックにも鍵を付けて送ります。これが
+  [網を閉じるのはあなたの仕事](#網を閉じるのはあなたの仕事)の reverse proxy です。
+- コンテナは docker と一緒に再起動し（`--restart unless-stopped`）、docker は
+  `/system_stats` から健康状態を出します。`comfyui-lan.sh status` で見えます。
+  `comfyui-lan.sh down` はコンテナを消し、モデルとイメージは残します。
+
+あとは Control Plane に `http://192.0.2.10:8188` を教えます（次の節）。
+
+**何度実行しても安全です。** 同じ引数の `up` は何も変えません。止まっているコンテナは
+起動し直し、コンテナを作り直すのはイメージか設定が変わったときだけです。
+**上げるときは配備に合わせます**。`git pull` で新しい `ImageComfyImageTag` が来れば、同じ
+`up` がそのタグを pull してコンテナを作り直します。`--pull` は今のタグを pull し直し
+（GHCR のタグは上書きできるため）、`--digest sha256:…` はイメージを digest で固定し、
+`--build` は pull の代わりに `deploy/aws/ecs/comfyui/Dockerfile` を固定された版でその機械の
+上で build します。どのオプションにも `AF_COMFY_LAN_*` の環境変数があるので（`--help` に
+一覧）、機械ごとの設定を 1 つのファイルに書き、`up` の前に source しておけます。ComfyUI が
+書き出した画像はコンテナの中にあり、作り直すと消えます。
+
+🔴 **実際の GPU 機ではまだ動かしていません。** スクリプトが打つ docker のコマンド、断る
+場面、再実行の振る舞いは、docker の代役に対して試験しています
+（`deploy/local/comfyui-lan-stub-test.sh`）。`--gpus` でイメージが起動すること、proxy が鍵を
+受け付けること、絵が返ってくることは実機で測っていません。その実行は
+[#958](https://github.com/k-k1/agent-fleet/issues/958) で追っています。
+
 ## Control Plane に場所を教える
 
 ComfyUI の場所を伝える方法は 2 つあり、どちらか 1 つで足ります。
@@ -245,6 +303,8 @@ ComfyUI に直接話しかけられます**——Control Plane を迂回して�
   `AF_COMFY_API_KEY` で **Control Plane にだけ**渡します。今日使えるのはこちらです。
   🔴 **その proxy は `/system_stats` も同じ bearer で通さなければなりません**——それが
   ヘルスチェックで、いつまでも健康に見えないエンジンは、いつまでも答えないエンジンです。
+  `comfyui-lan.sh --api-key-file` はそういう proxy を立てます
+  （[フリートのイメージを自分の GPU 機で動かす](#フリートのイメージを自分の-gpu-機で動かす)）。
 
 どちらも取らないなら、正直な現状は「この配備にセッションを持つ人は誰でもその GPU を
 使える。頼りにしているのはその人たちを信用していることだけ」です。

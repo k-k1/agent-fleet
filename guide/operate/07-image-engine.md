@@ -31,6 +31,64 @@ Agent Fleet on AWS, this deployment can **borrow that one's engines** —
 chat engine as well as the image one, and the far fleet does the waking and the
 paying.
 
+## Running the fleet's image on your GPU host
+
+If the machine does not run ComfyUI yet, you do not have to build one by hand.
+`deploy/comfyui-lan/comfyui-lan.sh` starts **the same pinned ComfyUI image the `ecs-ec2`
+image engine runs** under docker on that machine. The image is
+`ghcr.io/k-k1/agent-fleet/comfyui`, which anyone can pull, at the tag
+`deploy/aws/ecs/cfn/60-engines.yaml` pins as `ImageComfyImageTag`. The script reads that tag
+from the checkout it lives in. The workflow templates the sessions send were tested against
+this ComfyUI version.
+
+What the host needs: Linux on x86_64 (the image is built for amd64 only), Docker Engine, an
+NVIDIA driver (`nvidia-smi -L` lists the GPU), and the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html),
+which is what makes `docker run --gpus` work. If any of these is missing, the script stops and
+says which one before it changes anything. Clone this repository on the host, or copy the
+`deploy/comfyui-lan/` folder together with `deploy/aws/ecs/cfn/60-engines.yaml`, then:
+
+```bash
+# models/ holds checkpoints/, diffusion_models/, clip/, text_encoders/, vae/, loras/
+deploy/comfyui-lan/comfyui-lan.sh up --models /srv/comfy-models --bind 192.0.2.10
+```
+
+- **`--models`** is mounted **read-only** as ComfyUI's `models/` folder. The script creates
+  any missing type folders. Put each file directly in its type folder, as described in
+  [Registering the models by hand](#registering-the-models-by-hand). Copying the files in is
+  your job; nothing downloads them for you.
+- **`--bind`** is the host address the port is published on. The default is `127.0.0.1`,
+  which works only when the Control Plane runs on the same machine. For a CP on another
+  machine, give the host's LAN address. `0.0.0.0` (every interface) is refused unless you also
+  pass `--all-interfaces`. `--port` changes the port (default `8188`).
+- **`--api-key-file <file>`** puts a bearer-checking proxy (Caddy, the same image compose
+  uses) in front of ComfyUI, and ComfyUI itself is then not published at all. The file holds
+  one key of at least 24 characters (`openssl rand -hex 32 > comfy.key`). Give the CP the
+  same key, either in the panel's key field or as `AF_COMFY_API_KEY`. Every path needs the
+  key, `/system_stats` included, and that is the health check the CP sends it with. This is
+  the reverse proxy described in [The network is yours to close](#the-network-is-yours-to-close).
+- The container restarts with docker (`--restart unless-stopped`), and docker reports a
+  health state from `/system_stats`. `comfyui-lan.sh status` shows it.
+  `comfyui-lan.sh down` removes the containers and leaves the models and the image in place.
+
+Then point the Control Plane at `http://192.0.2.10:8188` (next section).
+
+**Running it again is safe.** `up` with the same arguments changes nothing. A stopped
+container is started again, and a container is recreated only when its image or a setting
+changed. **Upgrading follows the deployment**: `git pull` brings a new `ImageComfyImageTag`,
+and the same `up` pulls that tag and recreates the container. `--pull` re-pulls the current tag
+(GHCR tags can be pushed again), `--digest sha256:…` pins the image by digest, and `--build`
+builds `deploy/aws/ecs/comfyui/Dockerfile` at the pinned ComfyUI version on the host instead
+of pulling. Every option has an `AF_COMFY_LAN_*` environment variable as well (`--help` lists
+them), so you can keep a host's settings in one file and source it before each `up`. Pictures
+ComfyUI writes stay inside the container and are dropped when it is recreated.
+
+🔴 **Not yet run on a real GPU host.** The script's docker commands, its refusals and its
+re-run behaviour are tested against a stand-in for docker (`deploy/local/comfyui-lan-stub-test.sh`).
+The image starting under `--gpus`, the proxy accepting the key, and a picture coming back have
+not been measured on a real machine. [#958](https://github.com/k-k1/agent-fleet/issues/958)
+tracks that run.
+
 ## Pointing the Control Plane at it
 
 There are two places to say where the ComfyUI is, and you need only one of them.
@@ -264,7 +322,8 @@ Two ways to make it true:
   token given to the Control Plane alone through `AF_COMFY_API_KEY`. This is the one
   that works today. **The proxy must also let `/system_stats` through with the same
   bearer** — that is the health check, and an engine that never looks healthy is an
-  engine that never answers.
+  engine that never answers. `comfyui-lan.sh --api-key-file` starts one that does
+  ([Running the fleet's image on your GPU host](#running-the-fleets-image-on-your-gpu-host)).
 
 Failing both, the honest position is that anyone with a session on this deployment
 can use that GPU, and you are relying on trusting them.

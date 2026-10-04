@@ -21,6 +21,7 @@ applies no cgroup limits.
 | [`kubernetes/`](kubernetes/README.md) | **Kubernetes deployment** (`AF_RUNTIME=kubernetes`): kustomize base and overlays for the CP, RBAC and NetworkPolicies, and the runbook. GKE Standard first. |
 | [`gcp/gke/`](gcp/gke/README.md) | Terraform around a GKE cluster for the `kubernetes` profile (VPC, cluster, Cloud SQL, NAT, load balancer certificate, IAM). |
 | [`release/`](release/) | Release build & publish tooling: `build.sh` (artifact orchestrator), `publish-dist.sh` (GitHub Releases publish), `dist-repo/` (seed of the public distribution repo incl. `install.sh`). |
+| [`comfyui-lan/`](comfyui-lan/comfyui-lan.sh) | Runs the fleet's pinned ComfyUI image on a LAN GPU host under docker, for `AF_COMFY_URL` / the LAN ComfyUI panel ([guide](../guide/operate/07-image-engine.md#running-the-fleets-image-on-your-gpu-host), ADR 0076 P2). |
 | [`local/`](local/) | Local development helpers (`run-dev.sh` etc.), WSL personal-use guide ([README-wsl.md](local/README-wsl.md)), and CI test scripts (stub tests, e2e smoke). |
 
 Release engineering design and gates: [docs/log/35-packaging.md](../docs/log/35-packaging.md). Deployment architecture
