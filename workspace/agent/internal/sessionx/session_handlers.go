@@ -1879,15 +1879,16 @@ func forkSids(src session.Meta) []string {
 // the ancestry the cache orphan scan relies on above all — can be checked without driving a
 // real fork, which needs a real source conversation.
 func forkMeta(src session.Meta, forkName, title, forkFrom, forkAt string) session.Meta {
+	now := time.Now()
 	return session.Meta{
 		Name: forkName, Dir: src.Dir, Subdir: src.Subdir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
 		Kind: src.Kind, Driver: src.Driver, Title: title, SkipPermissions: src.SkipPermissions,
-		// The budget value carries over, the hit does not: the fork's spend starts from its own
-		// CreatedAt (session.Spend), so it has spent nothing yet.
-		SpendCapUSD: src.SpendCapUSD,
-		Repo:        filepath.Base(src.Dir),
-		Branch:      gitx.GitCurrentBranch(src.Dir),
-		CreatedAt:   time.Now().Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
+		// The budget value carries over, the hit does not: the fork's spend starts from the
+		// instant it was made, to the sub-second (SpendFrom), so it has spent nothing yet.
+		SpendCapUSD: src.SpendCapUSD, SpendFrom: now.Format(time.RFC3339Nano),
+		Repo:      filepath.Base(src.Dir),
+		Branch:    gitx.GitCurrentBranch(src.Dir),
+		CreatedAt: now.Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
 		ForkSids: forkSids(src),
 		// The fork works in the same working copy, so it renames the same branch for the same item.
 		WorkItem: src.WorkItem,

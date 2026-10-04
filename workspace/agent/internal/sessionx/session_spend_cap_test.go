@@ -351,6 +351,15 @@ func TestCreateSessionTakesSpendCap(t *testing.T) {
 	if f.SpendCapUSD != 4 || f.SpendCapHitAt != "" {
 		t.Fatalf("fork cap=%v hit=%q, want 4 and no crossing", f.SpendCapUSD, f.SpendCapHitAt)
 	}
+	// The fork's spend starts at the sub-second instant it was made, not CreatedAt's whole second.
+	from, err := time.Parse(time.RFC3339Nano, f.SpendFrom)
+	created, _ := time.Parse(time.RFC3339, f.CreatedAt)
+	if err != nil || from.Before(created) || from.Sub(created) >= time.Second {
+		t.Fatalf("fork SpendFrom=%q CreatedAt=%q: want the same second, kept to the sub-second", f.SpendFrom, f.CreatedAt)
+	}
+	if start, _ := session.SpendStart(f); !start.Equal(from) {
+		t.Fatalf("SpendStart = %v, want SpendFrom %v", start, from)
+	}
 }
 
 // The crossing is seen on a tick, often after the short turn that crossed has already ended.

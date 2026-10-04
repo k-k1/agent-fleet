@@ -239,7 +239,7 @@ func TestSpendCapArmCatchesATurnThatEndedBeforeTheCrossingWasSeen(t *testing.T) 
 			seen := time.Now()
 			at := session.SpendCrossingBound(session.Spend{Marks: []session.SpendMark{
 				{End: before, USD: 4.9}, {End: ended, USD: 5.2},
-			}}, 5, m.CreatedAt, seen)
+			}}, 5, before.Add(-time.Hour), seen)
 			if tc.atTick {
 				at = seen
 			}

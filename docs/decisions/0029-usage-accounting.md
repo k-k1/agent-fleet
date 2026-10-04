@@ -321,8 +321,10 @@ ADR:
 - **Per logical turn, one price.** A turn the CLI reported a cost for is charged that cost
   (`cost_usd`); any other turn is charged the list-price estimate of its tokens. The two are never
   added. A turn with tokens but no price is left out and flagged `unpriced`; no 0 is invented.
-- **Only the session's own turns.** Turns stamped before the session's `CreatedAt` are not
-  charged: a fork starts from a copy of its source's history with the source's timestamps.
+- **Only the session's own turns.** Turns stamped before the session's start are not charged: a
+  fork starts from a copy of its source's history with the source's timestamps. A fork's start is
+  `SpendFrom`, the sub-second instant it was made — `CreatedAt` keeps whole seconds, and history
+  copied from the same second would otherwise be charged to the fork.
 - **The stop is armed at the end of the last turn that stayed under the cap**
   (`session.SpendCrossingBound`), not at the tick that noticed the crossing: the arm's instant
   is the lower bound the end-of-turn evidence is cut by, and the turn that crossed has often

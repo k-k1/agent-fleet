@@ -60,8 +60,8 @@ type SpendMark struct {
 //
 // The result is never older than StopArmMaxAge allows (an arm older than that is dead on
 // arrival) and never later than now.
-func SpendCrossingBound(sp Spend, capUSD float64, createdAt string, now time.Time) time.Time {
-	bound, _ := time.Parse(time.RFC3339, createdAt)
+func SpendCrossingBound(sp Spend, capUSD float64, start, now time.Time) time.Time {
+	bound := start
 	for _, mk := range sp.Marks {
 		if mk.USD >= capUSD {
 			break
@@ -77,6 +77,17 @@ func SpendCrossingBound(sp Spend, capUSD float64, createdAt string, now time.Tim
 		bound = now
 	}
 	return bound
+}
+
+// SpendStart is the instant a session's own spend starts from: SpendFrom on a fork (sub-second),
+// else CreatedAt. Turns stamped before it are history copied from elsewhere. ok=false when
+// neither parses, and then nothing is excluded.
+func SpendStart(m Meta) (time.Time, bool) {
+	if t, err := time.Parse(time.RFC3339Nano, m.SpendFrom); err == nil {
+		return t, true
+	}
+	t, err := time.Parse(time.RFC3339, m.CreatedAt)
+	return t, err == nil
 }
 
 // SpendCapOwnsArm reports whether the stop-after-turn arm on m is the one the budget wrote,

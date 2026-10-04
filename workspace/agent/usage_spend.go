@@ -28,15 +28,15 @@ func sessionSpend(m session.Meta) session.Spend {
 // The open turn is included (includeTrailing): the hard limit exists for a turn that is still
 // running, and a transcript written per message already carries its spend so far.
 //
-// Turns whose timestamp is before the session's CreatedAt are skipped. Claude and codex forks
+// Turns whose timestamp is before the session's own start (session.SpendStart) are skipped. Claude and codex forks
 // start from a copy of the source's history with the source's own timestamps; opencode zeroes
 // the copied cost but keeps the tokens, which the estimate would price. A turn with no usable
 // timestamp is counted — undercounting is the failure the budget exists to prevent.
 func spendOfTurns(m session.Meta, turns []transcript.Turn) session.Spend {
 	var sp session.Spend
-	born, bornErr := time.Parse(time.RFC3339, m.CreatedAt)
+	born, bornOK := session.SpendStart(m)
 	for _, r := range foldTurnRows(turns, true) {
-		if bornErr == nil && r.TS != "" {
+		if bornOK && r.TS != "" {
 			if ts, err := time.Parse(time.RFC3339Nano, r.TS); err == nil && ts.Before(born) {
 				continue
 			}

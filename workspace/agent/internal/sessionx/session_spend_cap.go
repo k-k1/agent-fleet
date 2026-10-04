@@ -104,7 +104,8 @@ func evaluateSpendCap(m session.Meta, sp session.Spend, now time.Time) {
 			return false
 		}
 		c.SpendCapHitAt = stamp
-		armForCrossing(c, session.SpendCrossingBound(sp, c.SpendCapUSD, c.CreatedAt, now), now)
+		start, _ := session.SpendStart(*c)
+		armForCrossing(c, session.SpendCrossingBound(sp, c.SpendCapUSD, start, now), now)
 		return true
 	})
 	if cur.Name == "" || cur.StoppedAt != "" || !session.OverSpendCap(cur, sp.USD) {

@@ -508,6 +508,11 @@ type Meta struct {
 	// whose instant came after the crossing turn ended and so would have missed it. Lifting the
 	// crossing puts it back, so raising the cap never cancels a stop someone else asked for.
 	SpendCapArmPrev string `json:"spendCapArmPrev,omitempty"`
+	// SpendFrom is the instant (RFC3339Nano) the session's own spend starts from, set on a fork.
+	// CreatedAt keeps whole seconds, and a fork's copied history can end in the same second it
+	// was made: cut at CreatedAt, those copied turns would be charged to the fork. Empty = from
+	// CreatedAt (a fresh session has no copied history to exclude).
+	SpendFrom string `json:"spendFrom,omitempty"`
 	// ForkFrom is the SOURCE conversation id this session was forked from, in the
 	// kind's own id space: claude = the source slot's sid (jsonl), opencode = its
 	// ses_… id, codex = its session uuid. It only affects the FIRST launch — each

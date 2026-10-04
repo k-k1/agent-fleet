@@ -51,3 +51,25 @@ func TestSpendOfTurnsFlagsUnpricedTokens(t *testing.T) {
 		t.Fatalf("no turns = nothing measured: %+v", sp)
 	}
 }
+
+// CreatedAt keeps whole seconds; a fork made late in the second its copied history ended would
+// be charged that history if the cut were CreatedAt (review of #1652). SpendFrom keeps the
+// sub-second instant the fork was made.
+func TestSpendOfTurnsExcludesHistoryCopiedInTheForksOwnSecond(t *testing.T) {
+	sec := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	m := session.Meta{Name: "f", Kind: session.KindClaude, Model: "claude-opus-5",
+		CreatedAt: sec.Format(time.RFC3339),
+		SpendFrom: sec.Add(900 * time.Millisecond).Format(time.RFC3339Nano)}
+	turns := []transcript.Turn{
+		// The source's expensive turn, ended 0.1 s into the same second, copied into the fork.
+		{Role: "user", TS: sec.Add(50 * time.Millisecond).Format(time.RFC3339Nano)},
+		{Role: "assistant", Model: "claude-opus-5", InTok: 1_000_000, OutTok: 1_000_000,
+			TS: sec.Add(100 * time.Millisecond).Format(time.RFC3339Nano)},
+		// The fork's own turn: 1M in × $5 = $5.
+		{Role: "user", TS: sec.Add(5 * time.Second).Format(time.RFC3339Nano)},
+		{Role: "assistant", Model: "claude-opus-5", InTok: 1_000_000, TS: sec.Add(6 * time.Second).Format(time.RFC3339Nano)},
+	}
+	if sp := spendOfTurns(m, turns); !spendNear(sp.USD, 5) {
+		t.Fatalf("spend = %v, want only the fork's own $5", sp.USD)
+	}
+}
