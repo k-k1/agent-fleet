@@ -378,10 +378,12 @@ function GithubRow({ st, reload, oauthAvailable, installURL }: RowProps & { inst
     }
     setToken("");
     setMode("idle");
+    setGrant(null); // the last grant's findings were about a token that is gone now
     reload();
   };
   const disconnect = async () => {
     await raw("api/connections/git/github.com", { method: "DELETE" });
+    setGrant(null);
     reload();
   };
 

@@ -118,4 +118,47 @@ describe("GitTab GitHub App", () => {
     );
     expect(link?.href).toBe("https://github.com/apps/acme/installations/new");
   });
+
+  it("forgets the last grant's warnings once that connection is replaced by a token", async () => {
+    vi.useFakeTimers();
+    serve({ configured: true, app_type: "github_app", install_url: "https://github.com/apps/acme/installations/new" });
+    apiJSONMock.mockImplementation(async (path: string) => {
+      connected = true;
+      if (path === "api/connections/git/github.com") return { connected: true };
+      return { connected: true, not_installed: true, token_expires: true };
+    });
+    await render();
+    const button = (label: string) =>
+      [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) => (b.textContent || "").includes(label))!;
+    await act(async () => button(t("git.connect_oauth")).click());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1100);
+    });
+    expect(host.textContent).toContain(t("git.github_token_expires"));
+
+    // Disconnect (through the confirmation), then connect again with a pasted token.
+    connected = false;
+    await act(async () => button(t("provider.disconnect")).click());
+    const dialogConfirm = [...document.querySelectorAll<HTMLButtonElement>("button")].filter(
+      (b) => (b.textContent || "").includes(t("provider.disconnect")) && !b.classList.contains("conn-disconnect"),
+    );
+    await act(async () => dialogConfirm[dialogConfirm.length - 1].click());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    await act(async () => button(t("git.connect_token")).click());
+    const input = host.querySelector<HTMLInputElement>('input[type="password"]')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(input, "ghp_pasted");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => button(t("conn.connect")).click());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(host.textContent).toContain("octo");
+    expect(host.textContent).not.toContain(t("git.github_app_not_installed"));
+    expect(host.textContent).not.toContain(t("git.github_token_expires"));
+  });
 });
