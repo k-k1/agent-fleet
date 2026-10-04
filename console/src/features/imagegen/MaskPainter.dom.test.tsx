@@ -817,6 +817,30 @@ describe("the mask row", () => {
     expect(question()).toBeNull();
   });
 
+  it("a picture swapped while on another op still holds the mask for the return to inpaint", async () => {
+    const M = "generated/console/masks/m.png";
+    const question = () => document.querySelector(".igen-mask-ask");
+    const pressable = () =>
+      [...document.querySelectorAll<HTMLButtonElement>(".igen-actions button")].filter((b) => !b.disabled).length;
+    // In three steps: edit, swap, back to inpaint.
+    await renderForm(COMFY, { op: "inpaint", inputs: ["a.jpg"], mask: M });
+    await act(async () => patchForm({ op: "edit" }));
+    await act(async () => patchForm({ inputs: ["b.jpg"] }));
+    await act(async () => patchForm({ op: "inpaint" }));
+    expect(draftNow!.mask).toBe("");
+    expect(question()).not.toBeNull();
+    expect(pressable()).toBe(0);
+    await click("マスクをそのまま使う");
+    expect(draftNow!.mask).toBe(M);
+    // And with the op and the picture changed in one patch.
+    await remount(COMFY, { op: "inpaint", inputs: ["a.jpg"], mask: M });
+    await act(async () => patchForm({ op: "edit", inputs: ["b.jpg"] }));
+    await act(async () => patchForm({ op: "inpaint" }));
+    expect(draftNow!.mask).toBe("");
+    expect(question()).not.toBeNull();
+    expect(pressable()).toBe(0);
+  });
+
   it("does not ask when there is no mask, or when the mask is cleared with the picture", async () => {
     await renderForm(COMFY, { op: "inpaint", inputs: ["a.jpg"], mask: "" });
     await act(async () => patchForm({ inputs: ["b.jpg"] }));

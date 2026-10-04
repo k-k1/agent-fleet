@@ -41,12 +41,14 @@ export function MaskEntry({
     if (prev.current === picture) return;
     const was = prev.current;
     prev.current = picture;
-    if (was && mask && draft.op === "inpaint") {
+    // Whatever the op: the form keeps the mask across an edit, so a picture swapped while editing
+    // would otherwise bring the old picture's mask back silently on the return to inpaint.
+    if (was && mask) {
       setHeld(mask);
       clearing.current = true;
       patch({ mask: "" });
     }
-  }, [picture, mask, draft.op, patch]);
+  }, [picture, mask, patch]);
   useEffect(() => {
     if (clearing.current) {
       if (!mask) clearing.current = false;
