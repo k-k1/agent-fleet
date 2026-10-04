@@ -143,3 +143,20 @@ export function notifyCellPatch(s: CellSettings, row: NotifyRow, effect: NotifyE
   if (row === "usage-reset") patch.usageResetNotify = device["usage-reset.os"] || device["usage-reset.voice"];
   return patch;
 }
+
+/** The child row's OS and read-aloud cells, pinned to what they read now, or null when both are
+ *  pinned already. Called on every ui-prefs hydrate: childIdleNotify is synced, so a cell still
+ *  falling back to it would follow another device's change of the child dot — and those cells
+ *  are this device's alone. The first hydrate pins them to the server's value, which is how a
+ *  device inherits the switch it had before the table. */
+export function pinSyncedFallbacks(s: CellSettings): Record<string, boolean> | null {
+  const device = cleanMap(s.notifyDevice);
+  let changed = false;
+  for (const e of ["os", "voice"] as const) {
+    const k = `turn-child.${e}`;
+    if (k in device) continue;
+    device[k] = notifyCell(s, "turn-child", e);
+    changed = true;
+  }
+  return changed ? device : null;
+}

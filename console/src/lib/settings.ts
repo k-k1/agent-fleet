@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { pinSyncedFallbacks } from "../features/notifications/prefs.ts";
 import { api, apiJSON } from "../core/api/client.ts";
 import { setLocale } from "./i18n/index.ts";
 import type { MsgKey } from "./i18n/index.ts";
@@ -2075,6 +2076,12 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   const normalized = normalizeAgentLaunchDefaults(rows, legacyClaudeModel);
   if (JSON.stringify(normalized) !== JSON.stringify(merged.agentLaunchDefaults)) {
     merged.agentLaunchDefaults = normalized;
+    changed = true;
+  }
+  // The notification table's device-local cells must not follow a synced key from here on.
+  const pinned = pinSyncedFallbacks(merged);
+  if (pinned) {
+    merged.notifyDevice = pinned;
     changed = true;
   }
   const customClaude = normalizeClaudeCustomModels(merged.claudeCustomModels);

@@ -57,6 +57,20 @@ describe("notification table keys and ui-prefs sync", () => {
     expect(notifyCell(st, "usage-reset", "os")).toBe(true); // usageResetNotify defaults on
   });
 
+  // Device A changes only the child row's dot; device B, already on this Console, takes the
+  // synced childIdleNotify on its next hydrate. B's OS and read-aloud cells are B's own and must
+  // not move with it, in either direction.
+  it.each([true, false])("keeps another device's child OS / read-aloud cells when the child dot syncs (was %s)", async (was) => {
+    const s = await freshSettings({ childIdleNotify: was });
+    apiMock.mockResolvedValueOnce({ childIdleNotify: was });
+    await s.hydrateUIPrefs();
+    apiMock.mockResolvedValueOnce({ childIdleNotify: !was });
+    await s.refreshUIPrefs();
+    const st = s.getSettings();
+    expect(notifyCell(st, "turn-child", "unread")).toBe(!was);
+    expect([notifyCell(st, "turn-child", "os"), notifyCell(st, "turn-child", "voice")]).toEqual([was, was]);
+  });
+
   it("syncs notifyUnread written by this Console to another device", async () => {
     const s = await freshSettings({});
     apiMock.mockResolvedValueOnce({ notifyUnread: { schedule: false } });
@@ -80,6 +94,6 @@ describe("notification table keys and ui-prefs sync", () => {
     for (const b of bodies) expect(b).not.toHaveProperty("notifyDevice");
     expect(bodies.at(-1)!.notifyUnread).toEqual({ "session-report": false });
     // It is kept on this device.
-    expect(JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}").notifyDevice).toEqual({ "session-report.os": false });
+    expect(JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}").notifyDevice).toEqual({ "session-report.os": false, "turn-child.os": true, "turn-child.voice": true });
   });
 });
