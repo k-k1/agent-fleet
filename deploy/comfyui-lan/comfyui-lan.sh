@@ -161,15 +161,17 @@ MODELS="$(cd "$MODELS" && pwd -P)"
 
 # is_unspecified <addr> — true for every spelling docker reads as "all interfaces": 0.0.0.0,
 # any all-zero IPv6 (::, 0::0, 0:0:0:0:0:0:0:0, bracketed or not) and the IPv4-mapped or
-# -compatible all-zero forms (::ffff:0.0.0.0, ::0.0.0.0). Matching the literal "::" alone let
-# 0:0:0:0:0:0:0:0 through.
+# -compatible all-zero forms in dotted or hex spelling (::ffff:0.0.0.0, ::ffff:0:0, ::0.0.0.0);
+# docker unmaps an IPv4-mapped host address to IPv4, so the mapped zero is 0.0.0.0. Matching
+# the literal "::" alone let 0:0:0:0:0:0:0:0 through.
 is_unspecified() {
   local a="${1#[}"
   a="${a%]}"; a="${a,,}"
   [ -n "$a" ] || return 0
   [[ "$a" =~ ^0+(\.0+){3}$ ]] && return 0
   [[ "$a" == *:* ]] || return 1
-  if [[ "$a" =~ ^(.*:)ffff:0+(\.0+){3}$ ]] || [[ "$a" =~ ^(.*:)0+(\.0+){3}$ ]]; then
+  if [[ "$a" =~ ^(.*:)ffff:0+(\.0+){3}$ ]] || [[ "$a" =~ ^(.*:)ffff:0+:0+$ ]] \
+      || [[ "$a" =~ ^(.*:)0+(\.0+){3}$ ]]; then
     a="${BASH_REMATCH[1]}0"
   fi
   [[ "$a" =~ ^[0:]+$ ]]

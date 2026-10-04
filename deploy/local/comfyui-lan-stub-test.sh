@@ -313,7 +313,8 @@ echo "== refusals (no docker state may change)"
 reset_state
 expect_refused "0.0.0.0 without --all-interfaces" "EVERY interface" up --models "$MODELS" --bind 0.0.0.0
 expect_refused ":: without --all-interfaces" "EVERY interface" up --models "$MODELS" --bind ::
-for b in '[::]' 0:0:0:0:0:0:0:0 '[0:0:0:0:0:0:0:0]' 0::0 0000::0000 '::ffff:0.0.0.0' '::0.0.0.0' 00.0.0.000; do
+for b in '[::]' 0:0:0:0:0:0:0:0 '[0:0:0:0:0:0:0:0]' 0::0 0000::0000 '::ffff:0.0.0.0' '::0.0.0.0' 00.0.0.000 \
+         ::ffff:0:0 0:0:0:0:0:ffff:0:0 '[::ffff:0000:0000]' '::FFFF:0:0'; do
   expect_refused "$b without --all-interfaces" "EVERY interface" up --models "$MODELS" --bind "$b"
 done
 run up --models "$MODELS" --bind 0:0:0:0:0:0:0:0 --all-interfaces
@@ -321,6 +322,9 @@ grep -q -- "-p \[::\]:8188:8188" "$LOG" && ok "--all-interfaces with an all-zero
 reset_state
 run up --models "$MODELS" --bind ::1
 [ "$RC" = 0 ] && grep -q -- "-p \[::1\]:8188:8188" "$LOG" && ok "::1 is not taken for all interfaces" || { ng "::1"; cat "$OUT"; }
+reset_state
+run up --models "$MODELS" --bind ::ffff:7f00:1
+[ "$RC" = 0 ] && grep -q -- "-p \[::ffff:7f00:1\]:8188:8188" "$LOG" && ok "a non-zero mapped address (::ffff:7f00:1) is accepted" || { ng "::ffff:7f00:1"; cat "$OUT"; }
 reset_state
 expect_refused "no --models" "--models <dir> is required" up
 expect_refused "models dir missing" "is not a directory" up --models "$WORK/nope"
