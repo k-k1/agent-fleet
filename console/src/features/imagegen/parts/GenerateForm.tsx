@@ -21,6 +21,8 @@ import { familyFacts, SIZE_SHAPES, sizeOptions, sizeShape, sizesByShape, type Si
 import { LOCKABLE, changeKey, marked, type StudioKey } from "../studioSync.ts";
 import { effectiveParams, MAX_BATCH, MAX_JOBS, OPS, type ImagegenDraft } from "../draft.ts";
 import { InputPicker } from "./InputPicker.tsx";
+import { MaskEntry } from "./MaskEntry.tsx";
+import { maskCanvasOffer } from "./MaskCanvasModal.tsx";
 
 interface Props {
   draft: ImagegenDraft;
@@ -56,6 +58,9 @@ interface Props {
   modelInHead?: boolean;
   /** Drawn right under the family card: the studio's knowledge memo. */
   familyExtra?: ReactNode;
+  /** Open the mask canvas on this picture (the pane owns the dialog, which "fix this part" opens
+   *  too). Absent: no canvas, the path field only. */
+  onPaintMask?: (picture: string) => void;
 }
 
 export function GenerateForm({
@@ -80,6 +85,7 @@ export function GenerateForm({
   highlight,
   modelInHead = false,
   familyExtra,
+  onPaintMask,
 }: Props) {
   const tr = useT();
   const card = familyFacts(model);
@@ -119,8 +125,8 @@ export function GenerateForm({
   // Held HERE and not only at the Agent, which is the rule InputPicker already states for the
   // reference count: the Agent's refusal ("inpaint needs a mask image") arrives on the QUEUE route
   // as a failed job, so the member reads it in the job list rather than beside the field they have
-  // to change. ADR 0081 decision 9 is why there is a field at all — a mask by path works from day
-  // one; painting one needs a canvas this Console does not have.
+  // to change. ADR 0081 decision 9 is why there is a field at all — a mask by path works on every
+  // route; the canvas (MaskCanvasModal) is a second way to fill the same field.
   const needsMask = draft.op === "inpaint" && !draft.mask.trim();
   const append = (text: string) => {
     const cur = draft.prompt.trimEnd();
@@ -585,6 +591,7 @@ export function GenerateForm({
         )}
       </details>
 
+      <MaskEntry draft={draft} patch={patch} offer={maskCanvasOffer(provider, model)} onPaint={onPaintMask} />
       <div className="igen-actions">
         <button
           type="button"
