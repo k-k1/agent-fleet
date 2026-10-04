@@ -22,6 +22,7 @@ import { Icon } from "../ui/Icon.tsx";
 import { Sparkline } from "../ui/Sparkline.tsx";
 import { useConfirm } from "../ui/ConfirmProvider.tsx";
 import { useIsMobile } from "../lib/device.ts";
+import { useWsBarFold } from "./wsBarFold.ts";
 import { machineSummary, type WsMachine } from "../lib/machine.ts";
 import { useDismiss } from "../lib/useDismiss.ts";
 import { listBrowserAttachments } from "../features/browser/attachmentService.ts";
@@ -475,6 +476,7 @@ export const USAGE_SOURCES: UsageSource[] = [
 interface ChipReport {
   visible: boolean;
   urgent: boolean;
+  label: string; // what the chip reads; its width is part of what squeezing saves
 }
 interface FoldCtxValue {
   report(kind: string, state: ChipReport): void;
@@ -493,13 +495,24 @@ const FoldCtx = createContext<FoldCtxValue | null>(null);
 // nothing until the popover holding it is open, so toggling it from the keyboard has to
 // open that popover too — otherwise the shortcut silently does nothing for exactly the
 // agents the user reaches for least often, which is where a shortcut is most useful.
-function useChipSlot(kind: string, visible: boolean, urgent: boolean) {
+//
+// `open` / `close` are the chip's own popover. A chip that stops being drawn — moved into a
+// closed +N, or its +N closed — keeps its state, so its popover would stay "open" with a
+// dismiss layer that swallows the next click anywhere. Closed on that transition only: a
+// keyboard reveal opens a folded chip one render before the +N body exists to draw it.
+function useChipSlot(kind: string, visible: boolean, urgent: boolean, label: string, open: boolean, close: () => void) {
   const ctx = useContext(FoldCtx);
   const report = ctx?.report;
   useEffect(() => {
-    report?.(kind, { visible, urgent });
-  }, [report, kind, visible, urgent]);
+    report?.(kind, { visible, urgent, label });
+  }, [report, kind, visible, urgent, label]);
   const slot = ctx ? ctx.slot(kind) : ("bar" as const);
+  const drawn = slot === "bar" || !!ctx?.host;
+  const wasDrawn = useRef(drawn);
+  useEffect(() => {
+    if (wasDrawn.current && !drawn && open) close();
+    wasDrawn.current = drawn;
+  }, [drawn, open, close]);
   return {
     slot,
     host: ctx?.host || null,
@@ -568,6 +581,7 @@ export function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | 
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
+  const closePop = useCallback(() => setOpen(false), []);
   // Keyboard: Ctrl/⌘+K g c / g x toggles this agent's usage popover. `reveal` (declared
   // below, once the chip knows where it sits) opens the fold popover first when this chip
   // lives inside it — the callback runs from an effect, so reading it here is safe.
@@ -610,18 +624,18 @@ export function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | 
   // nothing to show has to say so rather than skip its turn. `bind` moved above the return
   // for the same reason — the group promotes a near-cap chip onto the bar.
   const visible = !(unavailable && !usage?.authed);
-  const { slot, host, reveal } = useChipSlot(src.kind, visible, !!bind || !!resetCount);
+  const label = unavailable
+    ? "—"
+    : bind
+      ? resetChipText(bind.resetsAt)
+      : [uh && (uh.stale ? "—" : `${uh.pct}%`), uw && (uw.stale ? "—" : `${uw.pct}%`)].filter(Boolean).join(" / ");
+  const { slot, host, reveal } = useChipSlot(src.kind, visible, !!bind || !!resetCount, label, open, closePop);
   // Hide the chip only when the user isn't signed into this agent (nothing to show, and
   // never will be). If they ARE signed in but the (unofficial, rate-limited) reading is
   // momentarily unavailable, keep a degraded chip so it never vanishes on a transient
   // failure — its dropdown links out to the vendor's own usage page to check manually.
   if (!visible) return null;
 
-  const label = unavailable
-    ? "—"
-    : bind
-      ? resetChipText(bind.resetsAt)
-      : [uh && (uh.stale ? "—" : `${uh.pct}%`), uw && (uw.stale ? "—" : `${uw.pct}%`)].filter(Boolean).join(" / ");
   const chipTitle = unavailable
     ? tr("wsbar.usage.unavailable_title", { name: kindLabel(src.kind) })
     : bind
@@ -721,6 +735,7 @@ export function AgyUsageChip({ tenant }: { tenant: string | null }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
+  const closePop = useCallback(() => setOpen(false), []);
   // Keyboard: Ctrl/⌘+K g a toggles this popover (g c / g x = Claude / Codex). See the
   // generic chip for why `reveal` is read before its declaration.
   useOpenSignal("usage-agy", () => {
@@ -751,9 +766,6 @@ export function AgyUsageChip({ tenant }: { tenant: string | null }) {
 
   // Report before the early return (see useChipSlot), same as the generic chip.
   const visible = !(unavailable && !usage?.authed);
-  const { slot, host, reveal } = useChipSlot("agy", visible, !!bind);
-  if (!visible) return null;
-
   // Chip numbers: the first group (Gemini), 5h% / weekly% — same order as the other chips.
   const g0 = usage?.ok && Array.isArray(usage.groups) ? usage.groups[0] : null;
   const label = unavailable
@@ -763,6 +775,9 @@ export function AgyUsageChip({ tenant }: { tenant: string | null }) {
       : [g0?.fiveHour && `${used(g0.fiveHour.remainingPct)}%`, g0 && `${used(g0.remainingPct)}%`]
           .filter(Boolean)
           .join(" / ");
+  const { slot, host, reveal } = useChipSlot("agy", visible, !!bind, label, open, closePop);
+  if (!visible) return null;
+
   const chipTitle = unavailable
     ? tr("wsbar.usage.unavailable_title", { name: "Antigravity" })
     : bind
@@ -834,6 +849,7 @@ export function CopilotUsageChip({ tenant }: { tenant: string | null }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
+  const closePop = useCallback(() => setOpen(false), []);
   useOpenSignal("usage-copilot", () => {
     setOpen((o) => !o);
     reveal();
@@ -862,12 +878,12 @@ export function CopilotUsageChip({ tenant }: { tenant: string | null }) {
 
   // Report before the early return (see useChipSlot), same as the generic chip.
   const visible = !(unavailable && !usage?.authed);
-  const { slot, host, reveal } = useChipSlot("copilot", visible, !!bind);
-  if (!visible) return null;
-
   // Chip number: the primary pool's used% (quotas are pre-ordered by the backend —
   // premium first on paid plans, else chat).
   const label = unavailable ? "—" : bind ? resetChipText(bind.resetsAt!) : `${wins[0].pct}%`;
+  const { slot, host, reveal } = useChipSlot("copilot", visible, !!bind, label, open, closePop);
+  if (!visible) return null;
+
   const chipTitle = unavailable
     ? tr("wsbar.usage.unavailable_title", { name: "GitHub Copilot" })
     : bind
@@ -944,13 +960,24 @@ const USAGE_CHIP_ORDER: string[] = [...USAGE_SOURCES.map((s) => s.kind as string
 // UsageChipFold: the group that decides which chips keep a slot on the bar. It owns the
 // "+N" chip, the popover the folded chips portal into, and the ranking; the chips
 // themselves only report what they are (see useChipSlot).
-export function UsageChipFold({ children }: { children: ReactElement }) {
+// `squeeze`: the bar is out of width (app/wsBarFold.ts), so no chip keeps an auto-ranked slot;
+// pinned and near-cap chips still do, since those are the user's word and a warning.
+// `onLayoutChange` hears which chips sit on the bar with and without the squeeze, so the bar
+// knows when what squeezing saves has changed.
+export function UsageChipFold({
+  children,
+  squeeze = false,
+  onLayoutChange,
+}: {
+  children: ReactElement;
+  squeeze?: boolean;
+  onLayoutChange?: (key: string) => void;
+}) {
   const tr = useT();
   const [reports, setReports] = useState<Record<string, ChipReport>>({});
   const [open, setOpen] = useState(false);
   const [host, setHost] = useState<HTMLDivElement | null>(null);
   const ref = useRef<HTMLDivElement>(null);
-  useDismiss(ref, open, () => setOpen(false));
   const settings = useSettings();
 
   // Stable identity: a report() that changed every render would re-fire every chip's
@@ -959,7 +986,7 @@ export function UsageChipFold({ children }: { children: ReactElement }) {
   const report = useCallback((kind: string, state: ChipReport) => {
     setReports((cur) => {
       const prev = cur[kind];
-      if (prev && prev.visible === state.visible && prev.urgent === state.urgent) return cur;
+      if (prev && prev.visible === state.visible && prev.urgent === state.urgent && prev.label === state.label) return cur;
       return { ...cur, [kind]: state };
     });
   }, []);
@@ -975,15 +1002,36 @@ export function UsageChipFold({ children }: { children: ReactElement }) {
     setStamps(noteSessionKinds(useSessionsStore.getState().sessions));
   }, [useKey]);
 
-  const plan = planUsageChips({
+  const planInput = {
     order: USAGE_CHIP_ORDER,
     visible: USAGE_CHIP_ORDER.filter((k) => reports[k]?.visible),
     urgent: USAGE_CHIP_ORDER.filter((k) => reports[k]?.urgent),
     pinned: settings.usageChipsPinned,
     folded: settings.usageChipsFolded,
     stamps,
-    inline: AUTO_INLINE,
-  });
+  };
+  const roomy = planUsageChips({ ...planInput, inline: AUTO_INLINE });
+  const tight = planUsageChips({ ...planInput, inline: 0 });
+  const plan = squeeze ? tight : roomy;
+  // Both layouts, whichever is drawn: what squeezing saves is the difference between them,
+  // and a pin or a near-cap chip can change the squeezed one alone. So can a reading: the
+  // chips that squeezing hides sit in a closed +N, drawn nowhere, so a label that shortens
+  // there ("94% / 94%" → "0% / 0%") reaches the bar only through this key. Not keyed on
+  // `squeeze`, or the bar's own measuring unfold/refold would look like a change.
+  const tightSet = new Set(tight.bar);
+  const saved = roomy.bar.filter((k) => !tightSet.has(k));
+  const layoutKey =
+    roomy.bar.join(",") + "|" + tight.bar.join(",") + "|" + saved.map((k) => reports[k]?.label ?? "").join(",");
+  useEffect(() => {
+    onLayoutChange?.(layoutKey);
+  }, [onLayoutChange, layoutKey]);
+  // The +N vanishes when nothing is left to fold (the bar widened, a pin): its popover goes
+  // with it, so its state and dismiss layer must too, or the next click anywhere is eaten.
+  const hasFold = plan.fold.length > 0;
+  useDismiss(ref, open && hasFold, () => setOpen(false));
+  useEffect(() => {
+    if (!hasFold) setOpen(false);
+  }, [hasFold]);
   const foldSet = new Set(plan.fold);
   const value: FoldCtxValue = {
     report,
@@ -1135,6 +1183,8 @@ export function WsBar() {
   const tr = useT();
   const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
   const isMobile = useIsMobile();
+  const barRef = useRef<HTMLDivElement>(null);
+  const { foldUsage, foldMore, noteUsageLayout } = useWsBarFold(barRef, !isMobile);
   const [port, setPort] = useState("");
   const [previewPath, setPreviewPath] = useState("/");
   const [pvOpen, setPvOpen] = useState(false); // desktop port-preview popover
@@ -1155,10 +1205,21 @@ export function WsBar() {
   // Previews shared by other people in the same tenant (docs/log/81 §14.6).
   const [pvShared, setPvShared] = useState<SharedPreview[]>([]);
   const [staleOpen, setStaleOpen] = useState(false); // "restart required" badge popover
-  const [moreOpen, setMoreOpen] = useState(false); // mobile overflow popover
+  const [moreOpen, setMoreOpen] = useState(false); // ⋯ overflow popover (phone, or a full desktop bar)
   const [resOpen, setResOpen] = useState(false); // desktop resource-tiles popover
-  // Keyboard: Ctrl/⌘+K g r toggles the resource-tiles popover (desktop).
-  useOpenSignal("resources", () => setResOpen((o) => !o));
+  // Keyboard: Ctrl/⌘+K g r toggles the resource-tiles popover (desktop). While the bar has
+  // folded the resources chip into ⋯, the tiles are in there, and a popover anchored on a
+  // hidden chip would open invisibly.
+  useOpenSignal("resources", () => (foldMore ? setMoreOpen((o) => !o) : setResOpen((o) => !o)));
+  // A fold step hides the anchor of whichever popover is on the wrong side of it. A hidden
+  // popover's dismiss layer would still swallow the next click anywhere, so close it.
+  useEffect(() => {
+    if (isMobile) return;
+    if (foldMore) {
+      setResOpen(false);
+      setPvOpen(false);
+    } else setMoreOpen(false);
+  }, [foldMore, isMobile]);
   const machine = useWsMachine(resOpen, tenant, wsState === "running");
   const machineLine = machine ? machineSummary(machine) : "";
   const pvRef = useRef<HTMLDivElement>(null);
@@ -1654,7 +1715,7 @@ export function WsBar() {
   );
 
   return (
-    <div className="wsbar">
+    <div className="wsbar" ref={barRef}>
       <span className="ws-label">
         <span className="lbl">Workspace</span>
         <span className="lbl-short">WS</span>
@@ -1764,6 +1825,7 @@ export function WsBar() {
               ? tr("wsbar.start_here.queued")
               : tr("wsbar.start_here.stopped")
         }
+        aria-label={tr("wsbar.start_here")}
         onClick={() => void onStart()}
       >
         <Icon name={startQueued ? "loading" : "add"} spin={startQueued} />
@@ -1778,6 +1840,7 @@ export function WsBar() {
           variant="ghost"
           className="ws-split"
           title={tr("wsbar.split_right") + hintSuffix("pane.splitRight")}
+          aria-label={tr("wsbar.split_right")}
           disabled={!canSplitRight}
           onClick={() => splitRight()}
         >
@@ -1789,6 +1852,7 @@ export function WsBar() {
         variant="ghost"
         className="ws-split"
         title={tr("wsbar.split_down_title") + hintSuffix("pane.splitDown")}
+        aria-label={tr("wsbar.split_down")}
         disabled={!canSplitDown}
         onClick={() => activePaneId && splitDown(activePaneId)}
       >
@@ -1799,6 +1863,7 @@ export function WsBar() {
         variant="ghost"
         className="ws-closeall"
         title={tr("wsbar.close_all_title") + hintSuffix("pane.closeAll")}
+        aria-label={tr("wsbar.close_all")}
         disabled={!canCloseAll}
         onClick={() => resetToTerminal()}
       >
@@ -1812,6 +1877,7 @@ export function WsBar() {
         variant="ghost"
         className="ws-split ws-overview"
         title={tr("wsbar.overview_title") + hintSuffix("open.sessions")}
+        aria-label={tr("wsbar.overview")}
         onClick={() => openSessionsOverview()}
       >
         <Icon name="dashboard" />
@@ -1827,6 +1893,7 @@ export function WsBar() {
           variant="ghost"
           className="ws-split ws-imagegen"
           title={tr("wsbar.imagegen_title") + hintSuffix("open.imagegen")}
+          aria-label={tr("wsbar.imagegen")}
           onClick={() => void openImagegen()}
         >
           <Icon name="wand" />
@@ -1860,10 +1927,12 @@ export function WsBar() {
         <>
           {/* Desktop only: on a phone these already sit in the ⋯ overflow, a vertical list
               with room for all of them — folding a list into a list would only bury them. */}
-          <UsageChipFold>{usageChips}</UsageChipFold>
+          <UsageChipFold squeeze={foldUsage} onLayoutChange={noteUsageLayout}>
+            {usageChips}
+          </UsageChipFold>
           {/* Outside the fold: that group ranks agents by use, and these are not agents. */}
-          <AwsProfilesChip />
-          <GcpProfilesChip />
+          <AwsProfilesChip hidden={foldMore} />
+          <GcpProfilesChip hidden={foldMore} />
           {resourcesEl}
           <div className="ws-preview" ref={pvRef}>
             <Button
@@ -1877,6 +1946,33 @@ export function WsBar() {
               <Icon name="globe" /> {tr("wsbar.preview")} <Icon name="chevron-down" />
             </Button>
             {pvOpen && <div className="ws-preview-pop">{previewPop}</div>}
+          </div>
+          {/* The same four, folded behind ⋯ once the bar runs out of width (wsBarFold.ts).
+              The chips above stay mounted, hidden by CSS, so nothing re-fetches as the
+              window crosses the boundary; the popover mounts its copies only while open. */}
+          <div className="ws-more ws-more-desk" ref={moreRef}>
+            <Button
+              variant="ghost"
+              className="ws-more-btn"
+              title={tr("wsbar.more_title")}
+              aria-label={tr("wsbar.more_title")}
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen((o) => !o)}
+            >
+              <Icon name="ellipsis" />
+            </Button>
+            {moreOpen && foldMore && (
+              <div className="ws-more-pop">
+                {/* statsBlock without the usage chips: those keep their own +N group. */}
+                <div className="ws-more-stats">
+                  {graphs}
+                  {graphs && <MachineDetailsLink onNavigate={() => setMoreOpen(false)} />}
+                  <AwsProfilesChip passive />
+                  <GcpProfilesChip passive />
+                </div>
+                {previewPop}
+              </div>
+            )}
           </div>
         </>
       )}

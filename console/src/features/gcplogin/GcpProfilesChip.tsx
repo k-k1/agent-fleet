@@ -34,7 +34,10 @@ export function sortGcpProfiles(list: GcpProfileState[]): GcpProfileState[] {
   );
 }
 
-export function GcpProfilesChip() {
+// `hidden`: the WS bar folded this chip away (it stays mounted, hidden by CSS), so its popover
+// closes. `passive`: a display copy (the desktop ⋯ popover) — the bar's own instance owns the
+// asks, listeners and timers, and a second set would double every request.
+export function GcpProfilesChip({ hidden = false, passive = false }: { hidden?: boolean; passive?: boolean } = {}) {
   const tr = useT();
   const running = useWorkspaceStore((s) => s.state) === "running";
   const profiles = useGcpLoginStore((s) => s.profiles);
@@ -47,23 +50,23 @@ export function GcpProfilesChip() {
   const shown = running && !!profiles && profiles.length > 0;
   // A popover that vanished with the chip must not keep its dismiss layer: that layer would
   // swallow the next press anywhere on the page.
-  useDismiss(ref, open && shown, () => setOpen(false));
+  useDismiss(ref, open && shown && !hidden, () => setOpen(false));
   useEffect(() => {
-    if (!shown) setOpen(false);
-  }, [shown]);
+    if (!shown || hidden) setOpen(false);
+  }, [shown, hidden]);
 
   // Keyed by the ids, not the array: GcpLoginHost re-reads the list every few seconds while a
   // toast is up, and an unchanged answer must not cost a second request each time.
   const requestIds = requests.map((r) => r.id).join(",");
   useEffect(() => {
-    if (running) void refresh();
-  }, [running, refresh, requestIds]);
+    if (running && !passive) void refresh();
+  }, [running, passive, refresh, requestIds]);
 
   // Coming back to the tab asks once: a login finished in another tab or device, or a
   // Settings change made there, notifies nothing here.
   const refreshRequests = useGcpLoginStore((s) => s.refresh);
   useEffect(() => {
-    if (!running) return;
+    if (!running || passive) return;
     let last = 0;
     const again = () => {
       // A tab switch fires both events; one pair of asks is enough.
@@ -78,7 +81,7 @@ export function GcpProfilesChip() {
       window.removeEventListener("focus", again);
       document.removeEventListener("visibilitychange", again);
     };
-  }, [running, refresh, refreshRequests]);
+  }, [running, passive, refresh, refreshRequests]);
 
   // Profiles with a pending request. A Set, not an object: a profile named "constructor"
   // would read Object.prototype's.
