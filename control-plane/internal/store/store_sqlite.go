@@ -3551,11 +3551,13 @@ func (s *SQL) DeleteTenantIdP(ctx context.Context, tenantID, id string) error {
 // --- tenant-owned git provider OAuth apps (docs/log/71 + ADR0052) ------------------
 
 const tenantGitOAuthCols = `SELECT id, tenant_id, provider, client_id, secret_enc, key_ref,
+       source, app_type, app_type_by, install_url,
        updated_by, created_at, updated_at FROM tenant_git_oauth`
 
 func scanTenantGitOAuth(sc scanner) (TenantGitOAuth, error) {
 	var g TenantGitOAuth
 	err := sc.Scan(&g.ID, &g.TenantID, &g.Provider, &g.ClientID, &g.SecretEnc, &g.KeyRef,
+		&g.Source, &g.AppType, &g.AppTypeBy, &g.InstallURL,
 		&g.UpdatedBy, &g.CreatedAt, &g.UpdatedAt)
 	return g, err
 }
@@ -3591,13 +3593,24 @@ func (s *SQL) GetTenantGitOAuth(ctx context.Context, tenantID, provider string) 
 func (s *SQL) PutTenantGitOAuth(ctx context.Context, g TenantGitOAuth) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO tenant_git_oauth(id, tenant_id, provider, client_id, secret_enc, key_ref,
+		   source, app_type, app_type_by, install_url,
 		   updated_by, created_at, updated_at)
-		 VALUES(?,?,?,?,?,?,?,?,?)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(tenant_id, provider) DO UPDATE SET
 		   client_id=excluded.client_id, secret_enc=excluded.secret_enc, key_ref=excluded.key_ref,
+		   source=excluded.source, app_type=excluded.app_type, app_type_by=excluded.app_type_by,
+		   install_url=excluded.install_url,
 		   updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
 		g.ID, g.TenantID, g.Provider, g.ClientID, g.SecretEnc, g.KeyRef,
+		g.Source, g.AppType, g.AppTypeBy, g.InstallURL,
 		g.UpdatedBy, g.CreatedAt, g.UpdatedAt)
+	return err
+}
+
+func (s *SQL) SetTenantGitOAuthAppType(ctx context.Context, tenantID, provider, clientID, appType, by string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tenant_git_oauth SET app_type=?, app_type_by=? WHERE tenant_id=? AND provider=? AND client_id=?`,
+		appType, by, tenantID, provider, clientID)
 	return err
 }
 

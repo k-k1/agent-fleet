@@ -85,7 +85,7 @@ memo.go memoAPI.flush x1 {ids,sent,sentAt}
 metrics.go workspaceAPI.stats x1 {cpu_pct,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} cond{cpu_pct,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
 notification.go notificationAPI.list x1 {items,maxSeq,sourceState,unseenCount}
 oauth_bitbucket.go config.handleBitbucketOAuthStart x1 {authorize_url}
-oauth_github_device.go config.handleGithubDevicePoll x1 {connected}
+oauth_github_device.go config.handleGithubDevicePoll x1 {connected,install_url,not_installed,token_expires} cond{install_url,not_installed,token_expires}
 oauth_github_device.go config.handleGithubDevicePoll x1 {interval,pending}
 oauth_github_device.go config.handleGithubDevicePoll x1 {pending}
 oauth_github_device.go config.handleGithubDeviceStart x1 {expires_in,flow_id,interval,user_code,verification_uri}

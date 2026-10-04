@@ -133,8 +133,85 @@ describe("git provider OAuth", () => {
     raw.mockResolvedValue({});
     await mount();
     api.mockClear();
-    await act(async () => buttonIn(groupFor("GitHub"), "削除").click());
-    expect(raw).toHaveBeenCalledWith("api/admin/tenants/acme/git-oauth/github", { method: "DELETE" });
+    await act(async () => buttonIn(groupFor("Bitbucket"), "削除").click());
+    expect(raw).toHaveBeenCalledWith("api/admin/tenants/acme/git-oauth/bitbucket", { method: "DELETE" });
     expect(api).toHaveBeenCalledWith("api/admin/tenants/acme/git-oauth");
+  });
+});
+
+// Issue #1667: GitHub's card chooses WHICH app — built-in OAuth App, built-in GitHub App, the
+// tenant's own, or none — and shows what the tenant's own client_id was detected as.
+describe("GitHub app source", () => {
+  const github = (over: Record<string, unknown>) => ({
+    providers: [{ provider: "github", has_secret: false, needs_secret: false, ...over }],
+  });
+  const radios = () => Array.from(groupFor("GitHub").querySelectorAll<HTMLInputElement>('input[type="radio"]'));
+  const radioLabel = (text: string) =>
+    Array.from(groupFor("GitHub").querySelectorAll<HTMLLabelElement>(".gh-src label")).find((l) =>
+      (l.textContent || "").includes(text),
+    )!;
+
+  it("offers the built-in apps this build carries and saves the choice without a client_id", async () => {
+    api.mockResolvedValue(
+      github({ source: "builtin_oauth", is_default: true, builtin: { oauth_app: true, github_app: true } }),
+    );
+    apiJSON.mockResolvedValue({ provider: "github", source: "builtin_app" });
+    await mount();
+    expect(radios().length).toBe(4);
+    expect(groupFor("GitHub").textContent).toContain("（既定）");
+    // The default is not a row, so there is nothing to reset.
+    expect(buttonIn(groupFor("GitHub"), "既定に戻す")).toBeUndefined();
+    // No client_id field unless the tenant's own app is chosen.
+    expect(groupFor("GitHub").querySelector('input[type="text"]')).toBeNull();
+    await act(async () => radioLabel("組み込みの GitHub App").querySelector("input")!.click());
+    await act(async () => buttonIn(groupFor("GitHub"), "保存").click());
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/git-oauth/github", "PUT", { source: "builtin_app" });
+  });
+
+  it("hides built-in apps the build lacks, but keeps a selected one visible and disabled", async () => {
+    api.mockResolvedValue(github({ source: "builtin_app", builtin: { oauth_app: false, github_app: false } }));
+    await mount();
+    expect(radioLabel("組み込みの OAuth App")).toBeUndefined();
+    const app = radioLabel("組み込みの GitHub App");
+    expect(app.querySelector("input")!.disabled).toBe(true);
+    expect(groupFor("GitHub").querySelector(".admin-hint.warn")).not.toBeNull();
+  });
+
+  it("says when the operator switched the built-in apps off", async () => {
+    api.mockResolvedValue(
+      github({ source: "custom", client_id: "Iv23x", builtin: { oauth_app: false, github_app: false, off_by_operator: true } }),
+    );
+    await mount();
+    expect(groupFor("GitHub").textContent).toContain("AF_GITHUB_BUILTIN_APPS=off");
+  });
+
+  it("sends the tenant's own client_id with its install page, and shows how its kind was learnt", async () => {
+    api.mockResolvedValue(
+      github({
+        source: "custom",
+        client_id: "Iv23x",
+        app_type: "github_app",
+        app_type_by: "prefix",
+        install_url: "https://github.com/apps/acme/installations/new",
+        builtin: { oauth_app: false, github_app: false },
+      }),
+    );
+    apiJSON.mockResolvedValue({ provider: "github", source: "custom" });
+    await mount();
+    const gh = groupFor("GitHub");
+    expect(gh.textContent).toContain("GitHub App");
+    expect(gh.textContent).toContain("推定");
+    const [idInput, urlInput] = Array.from(gh.querySelectorAll<HTMLInputElement>('input[type="text"]'));
+    // The form edits the app page; the install suffix the server adds is not echoed back.
+    expect(urlInput.value).toBe("https://github.com/apps/acme");
+    await typeInto(idInput, "Iv23y");
+    // The detection belongs to the saved client_id, not to what is being typed.
+    expect(groupFor("GitHub").textContent).not.toContain("推定");
+    await act(async () => buttonIn(groupFor("GitHub"), "保存").click());
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/git-oauth/github", "PUT", {
+      source: "custom",
+      client_id: "Iv23y",
+      install_url: "https://github.com/apps/acme",
+    });
   });
 });

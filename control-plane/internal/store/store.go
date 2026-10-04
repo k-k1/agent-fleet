@@ -1117,10 +1117,17 @@ type TenantIdPStore interface {
 // button talks to — so it takes effect the moment the tenant_admin saves it
 // (ADR0052 decision 3). An empty SecretEnc is normal for GitHub: its device flow
 // authenticates with the client_id alone.
+//
+// Source, AppType, AppTypeBy and InstallURL are GitHub's (migration 0088): which app
+// the row points at — a built-in one compiled into the binary, or the tenant's own —
+// and, for the tenant's own, whether it is an OAuth App or a GitHub App.
 type TenantGitOAuth struct {
 	ID, TenantID, Provider string
 	ClientID               string
 	SecretEnc, KeyRef      string
+	Source                 string
+	AppType, AppTypeBy     string
+	InstallURL             string
 	UpdatedBy              string
 	CreatedAt, UpdatedAt   string
 }
@@ -1137,6 +1144,10 @@ type TenantGitOAuthStore interface {
 	// invite a duplicate row the unique index then refuses.
 	PutTenantGitOAuth(ctx context.Context, row TenantGitOAuth) error
 	DeleteTenantGitOAuth(ctx context.Context, tenantID, provider string) error
+	// SetTenantGitOAuthAppType records what a client_id turned out to be. It writes only
+	// while the row still names clientID: the lesson comes from a token minted earlier,
+	// and an administrator may have pointed the row at another app in the meantime.
+	SetTenantGitOAuthAppType(ctx context.Context, tenantID, provider, clientID, appType, by string) error
 }
 
 // IdentityLink is one proven login, on its way to LinkIdentity. It is a struct

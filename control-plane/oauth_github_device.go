@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -8,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // GitHub git-connection OAuth via the Device Authorization Grant (RFC 8628), run by
@@ -32,10 +35,14 @@ import (
 // Bitbucket's grant lives in oauth_bitbucket.go; the two differ only in which leg the
 // browser walks.
 
-const (
+// The GitHub endpoints are variables so tests can point them at a stub.
+var (
 	ghDeviceCodeURL  = "https://github.com/login/device/code"
 	ghAccessTokenURL = "https://github.com/login/oauth/access_token"
-	ghDeviceGrant    = "urn:ietf:params:oauth:grant-type:device_code"
+)
+
+const (
+	ghDeviceGrant = "urn:ietf:params:oauth:grant-type:device_code"
 	// repo = private read + push. workflow is the extra scope GitHub demands for a push
 	// that creates or changes anything under .github/workflows/ (without it the remote
 	// rejects), and matches the gh CLI's defaults. Existing connections are NOT
@@ -59,9 +66,11 @@ type ghDeviceFlow struct {
 	interval   int
 	deadline   time.Time
 	user       string // identity user key
+	actorID    string // identity id, for the audit row
 	tenant     string // tenant selector as sent at start
 	tenantID   string
 	clientID   string
+	app        githubApp // the app the flow was started with, for the checks after the grant
 }
 
 // ghDeviceRegistry owns the in-flight flows. Process memory, like bbFlows: a
@@ -108,7 +117,8 @@ func (c config) handleGithubDeviceStart(w http.ResponseWriter, r *http.Request) 
 		writeAPIErr(w, aerr)
 		return
 	}
-	clientID, _, ok, err := c.mgr.gitOAuthApp(r.Context(), mv.TenantID, gitOAuthGitHub)
+	app, ok, err := c.mgr.githubOAuthApp(r.Context(), mv.TenantID)
+	clientID := app.ClientID
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -151,6 +161,7 @@ func (c config) handleGithubDeviceStart(w http.ResponseWriter, r *http.Request) 
 		deviceCode: resp.DeviceCode, interval: interval,
 		deadline: time.Now().Add(time.Duration(expires) * time.Second),
 		user:     ident.UserKey, tenant: tenantSel(r), tenantID: mv.TenantID, clientID: clientID,
+		actorID: ident.ID, app: app,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"flow_id": flowID, "user_code": resp.UserCode, "verification_uri": resp.VerificationURI,
@@ -192,8 +203,9 @@ func (c config) handleGithubDevicePoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var resp struct {
-		AccessToken string `json:"access_token"`
-		Error       string `json:"error"`
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		Error        string `json:"error"`
 	}
 	form := url.Values{"client_id": {f.clientID}, "device_code": {f.deviceCode}, "grant_type": {ghDeviceGrant}}
 	if err := ghDevicePostForm(ghAccessTokenURL, form, &resp); err != nil {
@@ -210,7 +222,7 @@ func (c config) handleGithubDevicePoll(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ghDeviceFlows.forget(req.FlowID)
-		writeJSON(w, http.StatusOK, map[string]any{"connected": true})
+		writeJSON(w, http.StatusOK, c.mgr.afterGithubGrant(r.Context(), f, resp.AccessToken, resp.RefreshToken != ""))
 	case resp.Error == "authorization_pending":
 		writeJSON(w, http.StatusOK, map[string]any{"pending": true})
 	case resp.Error == "slow_down":
@@ -223,6 +235,48 @@ func (c config) handleGithubDevicePoll(w http.ResponseWriter, r *http.Request) {
 		ghDeviceFlows.forget(req.FlowID)
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "oauth_error", resp.Error})
 	}
+}
+
+// afterGithubGrant runs the checks that only a minted token can answer, once it is
+// stored, and builds the poll's success answer. None of them fails the connection: the
+// token is in the workspace either way, and each finding is something to tell the member.
+//
+//   - The token's prefix says for certain which kind of app minted it. A custom row whose
+//     recorded type was a guess, or wrong, is corrected.
+//   - A GitHub App token sees only the repositories the app is installed on. With no
+//     installation at all the connection looks fine and every clone fails, so say so
+//     now, with the install link.
+//   - A refresh_token means the GitHub App has user-token expiration on. Nothing renews
+//     the token (the device flow has no secret to refresh with), so it stops working
+//     after about eight hours unless the app's owner switches expiration off.
+func (m *manager) afterGithubGrant(ctx context.Context, f *ghDeviceFlow, token string, expires bool) map[string]any {
+	out := map[string]any{"connected": true}
+	appType := ghAppTypeFromToken(token)
+	if appType == "" {
+		appType = f.app.Type
+	}
+	if f.app.Source == ghSourceCustom && appType != "" {
+		_ = m.store.SetTenantGitOAuthAppType(ctx, f.tenantID, gitOAuthGitHub, f.clientID, appType, ghTypeByToken)
+	}
+	if appType == ghTypeGitHubApp {
+		if installed, known := ghHasInstallation(token); known && !installed {
+			out["not_installed"] = true
+		}
+		if f.app.InstallURL != "" {
+			out["install_url"] = f.app.InstallURL
+		}
+	}
+	if expires {
+		out["token_expires"] = true
+	}
+	// Which app a member's token came from is the question an audit of a misbehaving
+	// app starts from, and the connection itself does not record it.
+	_ = m.store.InsertAudit(ctx, store.AuditLog{
+		ID: store.NewID(), TenantID: f.tenantID, ActorKind: "user", ActorID: f.actorID,
+		Action: "git_oauth.github_connect", Target: gitOAuthGitHub,
+		Detail: "source=" + f.app.Source + " client_id=" + f.clientID + " app_type=" + appType, At: store.NowTS(),
+	})
+	return out
 }
 
 // storeGithubToken hands the access token to the member's Agent through the ordinary
