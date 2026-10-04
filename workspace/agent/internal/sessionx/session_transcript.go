@@ -461,8 +461,8 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	if len(td.Discards) > 0 {
 		resp["discardedInputs"] = td.Discards
 	}
-	// Compaction in flight (opencode session.time_compacting): reuse the chat's claude
-	// compacting block (spinner-only — opencode reports no progress percentage).
+	// Compaction in flight (opencode's compaction summary message, agents/opencode
+	// sessionCompacting): reuse the chat's claude compacting block (spinner-only — opencode reports no progress percentage).
 	if alive && td.Compacting {
 		resp["terminalState"] = "compacting"
 	}

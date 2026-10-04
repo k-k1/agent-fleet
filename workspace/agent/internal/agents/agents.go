@@ -266,7 +266,7 @@ type TranscriptData struct {
 	QueuedItems []QueueItem
 	Discards    []Discard
 	// Compacting reports the agent is compacting its conversation right now
-	// (opencode session.time_compacting) — surfaced as the mirror's "compacting" badge.
+	// (opencode's in-flight compaction summary) — surfaced as the mirror's "compacting" badge.
 	Compacting bool
 }
 
@@ -337,6 +337,13 @@ type ContextReporter interface {
 // must not block: it runs on the list poll.
 type BackgroundReporter interface {
 	BackgroundWork(m session.Meta) (busy bool, reason string)
+}
+
+// UsageReader is an optional Agent capability: the conversation as the usage fold reads it,
+// when that differs from Transcript's turns — today opencode, whose billed calls with nothing to
+// display come back as transcript.Turn.CostOnly rows so their reported cost is not lost.
+type UsageReader interface {
+	UsageTurns(m session.Meta) []transcript.Turn
 }
 
 // Forker is the optional fork capability behind Caps().CanFork: ForkSource resolves

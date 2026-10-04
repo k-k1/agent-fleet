@@ -70,7 +70,7 @@ type usageAgg struct {
 	// construction and the money lives in the tenant's GPU hour (ADR 0081 decision 10).
 	Images  int     `json:"images,omitempty"`
 	Pixels  int     `json:"pixels,omitempty"`
-	CostUSD float64 `json:"cost_usd,omitempty"` // measured (only claude returns it)
+	CostUSD float64 `json:"cost_usd,omitempty"` // reported by the agent itself (claude, opencode)
 	// CostEstUSD is the estimate derived from the price table (usage_price.go). It is a
 	// separate value from the measured cost and is never added to it. It is not written to the
 	// rollup: prices get revised, so it is recomputed with the current table on every read
