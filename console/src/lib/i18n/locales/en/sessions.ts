@@ -737,5 +737,5 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "ovw.hidden_children": "+{n}",
   "ovw.hidden_children_hint": "{n} child sessions hidden",
   "ovw.started": "started {ago}",
-  "ovw.last_say_hint": "The opening of the last thing the agent said (claude only; display only)",
+  "ovw.last_say_hint": "The opening of the last thing the agent said (display only)",
 };

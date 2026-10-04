@@ -747,5 +747,5 @@ export const sessions = {
   "ovw.hidden_children": "＋{n}",
   "ovw.hidden_children_hint": "子セッション {n} 本を隠しています",
   "ovw.started": "開始 {ago}",
-  "ovw.last_say_hint": "エージェントが最後に言ったことの冒頭（claude のみ・表示専用）",
+  "ovw.last_say_hint": "エージェントが最後に言ったことの冒頭（表示専用）",
 };
