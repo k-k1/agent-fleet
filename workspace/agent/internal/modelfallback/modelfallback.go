@@ -33,11 +33,10 @@ const (
 	ChatAgy = "Gemini 3.5 Flash (Medium)"
 )
 
-// Image generation (internal/imagegen). Both are the DRIVER model of the turn, not the image
-// model, which the CLI's built-in tool chooses itself.
+// Image generation (internal/imagegen). The agy id is the DRIVER model of the turn, not the
+// image model, which the CLI's built-in tool chooses itself. The codex route has no pin of its
+// own: it takes the newest "-luna" the signed-in account lists and falls back to ChatCodex.
 const (
-	// ImagegenCodexDriver is overridden deployment-wide by AF_IMAGEGEN_CODEX_MODEL.
-	ImagegenCodexDriver = "gpt-5.4-mini"
 	// ImagegenAgyDriver is overridden deployment-wide by AF_IMAGEGEN_AGY_MODEL.
 	ImagegenAgyDriver = "gemini-3.8-flash-low"
 )
@@ -64,7 +63,7 @@ var Entries = []Entry{
 			"and a conversation snapshots a concrete id",
 	},
 	{
-		ID: ChatCodex, Kind: "codex", Owner: "assistant chat (chatx.codexNewestLuna)",
+		ID: ChatCodex, Kind: "codex", Owner: "assistant chat (chatx.codexNewestLuna) and the codex image route's last-resort driver (imagegen.codexDriver)",
 		Source:           "product choice: the high-volume Luna tier for conversation (feat(chat) 92d298584)",
 		WhyNotDiscovered: "used only when the codex catalog cannot be read; with a catalog the newest -luna it lists wins (#972)",
 	},
@@ -88,11 +87,6 @@ var Entries = []Entry{
 		ID: ChatAgy, Kind: "agy", Owner: "assistant chat and agy one-shot fallback (chatx.agyNamedModel)",
 		Source:           "product choice: Gemini Flash is the quota-cheapest agy model on Starter (docs/log/32 Track D)",
 		WhyNotDiscovered: "a preference among listed models; dropped at send time when the catalog no longer lists it",
-	},
-	{
-		ID: ImagegenCodexDriver, Kind: "codex", Owner: "image generation, codex route (imagegen.newCodexProvider)",
-		Source:           "measured 2026-09-06: the cheapest tier that drives image_gen reliably (ADR 0069 P0)",
-		WhyNotDiscovered: "the catalog does not say which model can drive the built-in image tool",
 	},
 	{
 		ID: ImagegenAgyDriver, Kind: "agy", Owner: "image generation, agy route (imagegen.newAgyProvider)",

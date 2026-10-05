@@ -1000,3 +1000,16 @@ vendor の API が公開している欄ではない。sdcpp は受けない―�
 参照画像をサブエージェントに読ませる許可が可能か（#1718）。
 
 Follow-ups: #1716（報告）、#1718（readiness と参照画像の測定）。
+
+## 追記 — Codex のドライバーはピン留めでなく発見する（2026-10-05）
+
+ピン留めしていたドライバー `gpt-5.4-mini` は ChatGPT アカウントのログインでは拒否される。
+`codex exec -m gpt-5.4-mini` は HTTP 400「The 'gpt-5.4-mini' model is not supported when using
+Codex with a ChatGPT account」で終わり、Codex の画像呼び出しは画像を要求する前にすべて失敗していた。
+ドライバーは、サインイン中のアカウント自身のカタログ（`codex debug models`、`codex.Models()` 経由。
+アシスタントチャットと同じ規則）で最新の `-luna` とし、カタログが読めないときの最後の手段は
+`modelfallback.ChatCodex`。`AF_IMAGEGEN_CODEX_MODEL` は引き続き両方に優先する。
+`modelfallback.ImagegenCodexDriver` は廃止した。400「model not supported」には
+`AF_IMAGEGEN_CODEX_MODEL` を名指しする案内を付ける。2026-10-05 実測（codex-cli 0.160.0、
+`auth_mode=chatgpt`）: 画像を作らない小さなターンは `gpt-6-luna` で受理され、`gpt-5.4-mini` では
+同じ 400 を再現した。新しいドライバーでの実画像生成は未実施（プラン枠のため）。
