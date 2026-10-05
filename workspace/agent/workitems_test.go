@@ -341,7 +341,7 @@ func TestGitHubSearchRetryFailureSurfacesMessageAndDoesNotLoop(t *testing.T) {
 }
 
 func TestGitHubSearchNoRetryWhenQueryHasTypeQualifier(t *testing.T) {
-	for _, q := range []string{"is:issue involves:@me", "(is:pr OR author:@me)", "type:bug is:open", "is:open is:pull-request"} {
+	for _, q := range []string{"is:issue involves:@me", "(is:pr OR author:@me)", "type:pr is:open", "is:open is:pull-request", "type:issue"} {
 		qs := stubGitHubSearch(t, [2]string{"422", typeQualifier422})
 		_, _, err := githubSearchWorkItems("tok", "q1", q)
 		if err == nil || !strings.Contains(err.Error(), "Query must include") {
@@ -350,5 +350,39 @@ func TestGitHubSearchNoRetryWhenQueryHasTypeQualifier(t *testing.T) {
 		if len(*qs) != 1 {
 			t.Errorf("%q: requests = %d, want 1", q, len(*qs))
 		}
+	}
+}
+
+// A qualifier that does not satisfy GitHub (negated, misspelt, a non-type `type:`, quoted text)
+// must not suppress the retry.
+func TestGitHubSearchRetriesWhenQualifierDoesNotCount(t *testing.T) {
+	for _, q := range []string{"is:open -is:pr", "type:bug is:open", "is:open is:issues", `"foo is:issue" is:open`, `label:"is:pr"`} {
+		qs := stubGitHubSearch(t, [2]string{"422", typeQualifier422}, [2]string{"200", `{"items":[]}`})
+		if _, _, err := githubSearchWorkItems("tok", "q1", q); err != nil || len(*qs) != 2 {
+			t.Errorf("%q: err=%v requests=%d, want a retry", q, err, len(*qs))
+		}
+	}
+}
+
+func TestGitHubSearchRetriesWhenReasonIsInErrorsArray(t *testing.T) {
+	qs := stubGitHubSearch(t,
+		[2]string{"422", `{"message":"Validation Failed","errors":[{"message":"Query must include 'is:issue' or 'is:pr'"}]}`},
+		[2]string{"200", `{"items":[]}`})
+	if _, _, err := githubSearchWorkItems("tok", "q1", "involves:@me"); err != nil || len(*qs) != 2 {
+		t.Errorf("err=%v requests=%d, want a retry", err, len(*qs))
+	}
+}
+
+func TestGitHubSearch422WithNonJSONBodyDoesNotRetry(t *testing.T) {
+	qs := stubGitHubSearch(t, [2]string{"422", "<html>nope</html>"})
+	_, _, err := githubSearchWorkItems("tok", "q1", "involves:@me")
+	if err == nil || err.Error() != "github rejected the query: no reason given" || len(*qs) != 1 {
+		t.Errorf("err=%v requests=%d", err, len(*qs))
+	}
+}
+
+func TestGitHubErrorTextDropsBidiOverrides(t *testing.T) {
+	if got := githubErrorText([]byte(`{"message":"a\u202Eb"}`)); strings.ContainsRune(got, '\u202e') {
+		t.Errorf("got %q", got)
 	}
 }

@@ -254,13 +254,20 @@ func (e *githubQueryRejected) Error() string { return "github rejected the query
 // "Query must include 'is:issue' or 'is:pull-request'".
 func (e *githubQueryRejected) needsTypeQualifier() bool {
 	m := strings.ToLower(e.msg)
-	return strings.Contains(m, "must include") && strings.Contains(m, "is:issue") && strings.Contains(m, "is:pull-request")
+	return strings.Contains(m, "must include") && strings.Contains(m, "is:issue") && (strings.Contains(m, "is:pull-request") || strings.Contains(m, "is:pr"))
 }
 
-// githubTypeQualifierRe matches the qualifiers that already say what kind of item is wanted.
-var githubTypeQualifierRe = regexp.MustCompile(`(?i)(?:^|[\s(\-])(?:is:(?:issue|pr|pull-request)|type:\S)`)
+// githubTypeQualifierRe matches the positive qualifiers that already say what kind of item is
+// wanted. A leading `-` is deliberately not a separator: `-is:pr` does not satisfy GitHub's
+// requirement. (A negation right after a parenthesis, `(-is:pr`, is not told apart; it is rare.)
+var githubTypeQualifierRe = regexp.MustCompile(`(?i)(?:^|[\s(])(?:is:(?:issue|pr|pull-request)|type:(?:issue|pr))(?:$|[\s)])`)
 
-func githubQueryHasTypeQualifier(query string) bool { return githubTypeQualifierRe.MatchString(query) }
+// githubQuotedRe is a double-quoted phrase, which GitHub treats as literal text.
+var githubQuotedRe = regexp.MustCompile(`"[^"]*"`)
+
+func githubQueryHasTypeQualifier(query string) bool {
+	return githubTypeQualifierRe.MatchString(githubQuotedRe.ReplaceAllString(query, `""`))
+}
 
 // githubErrorText extracts GitHub's explanation from an error body (`message` plus any
 // `errors[].message`), stripped of control bytes and bounded: it ends up in a row the Console
@@ -282,7 +289,7 @@ func githubErrorText(body []byte) string {
 		}
 	}
 	text = strings.Join(strings.Fields(strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return ' '
 		}
 		return r
