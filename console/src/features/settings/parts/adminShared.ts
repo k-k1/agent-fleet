@@ -66,6 +66,13 @@ export interface Member {
    *  ("" / undefined = the tenant default). Not a size — mem_limit still picks the
    *  rung within the class (docs/log/70). */
   slot_class?: string | null;
+  /** The class the member's next start actually lands on: the stored value, else the
+   *  tenant default, else the deployment default (the CP's resolveSlotClass). "" / absent
+   *  when the deployment declares no classes. What the roster draws — the stored
+   *  slot_class alone cannot say which box a member who follows the tenant default gets. */
+  slot_class_effective?: string | null;
+  /** What "" (follow the tenant default) resolves to for this member, whatever is stored. */
+  slot_class_default?: string | null;
   /** "active" | "removed". A removed member is off the roster and can no longer
    *  sign in, but stays on THIS list so the rest of the offboarding sequence
    *  (stop workspace → clean home) is still reachable (docs/log/61 §61.10.6). */
@@ -211,6 +218,11 @@ export function ladderFor(sizing: WsSizing, classID: string): WsSlot[] | undefin
   const want = classID || sizing.default_slot_class || cs[0].id;
   return (cs.find((c) => c.id === want) ?? cs.find((c) => c.id === sizing.default_slot_class) ?? cs[0]).slots;
 }
+
+/** The class id a member's box is drawn from: the CP's effective answer when it sent one,
+ *  else the stored value. "" falls through to the deployment default inside ladderFor. */
+export const memberClassID = (m: Pick<Member, "slot_class" | "slot_class_effective">): string =>
+  m.slot_class_effective || m.slot_class || "";
 
 /** The workspace sizes offered as named choices. The three axes are stored as
  *  independent numbers (ADR 0044 decision 1); these presets exist only so an admin picks
