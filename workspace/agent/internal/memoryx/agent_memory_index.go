@@ -18,6 +18,10 @@ const (
 	// agentMemIndexTailBudget bounds the abbreviated names of what did not fit; it is separate
 	// so a small described budget does not also shrink the safety net of names.
 	agentMemIndexTailBudget = 8 << 10
+	// agentMemIndexTailOverhead is reserved out of the tail budget for what the formatter adds
+	// around the names: the explanatory header line and the "and N more" line. The mcpx test
+	// measures the real tail against the full budget.
+	agentMemIndexTailOverhead = 256
 	// agentMemIndexTailScan bounds the quadratic grouping below; whatever lies past it is counted.
 	agentMemIndexTailScan = 2000
 	// agentMemIndexDescRunes is the description length in an index line only; memory_read and
@@ -26,9 +30,10 @@ const (
 	agentMemIndexNameBytes = 32
 )
 
-// agentMemClampBudget maps a caller's budget to the allowed range; 0 (absent) is the default.
+// agentMemClampBudget maps a caller's budget to the allowed range; only 0 (absent) is the
+// default, so a negative value is raised to the minimum like any other too-small one.
 func agentMemClampBudget(b int) int {
-	if b <= 0 {
+	if b == 0 {
 		return agentMemIndexBudgetDefault
 	}
 	return min(max(b, agentMemIndexBudgetMin), agentMemIndexBudgetMax)
@@ -100,46 +105,38 @@ func agentMemRank(es []agentMemEntry) {
 	})
 }
 
-// agentMemGroupNames renders names grouped by their first hyphen segment, `adr-{a,b}`, a lone
-// member whole. Groups and members are sorted so the output is stable.
+// agentMemGroupNames renders names grouped by their first hyphen segment, `adr-{a,b}`. A name
+// without a hyphen and a lone hyphenated member are printed whole, so no name is ever rewritten
+// into another. Tokens are sorted so the output is stable.
 func agentMemGroupNames(names []string) []string {
 	groups := map[string][]string{}
+	var out []string
 	for _, n := range names {
-		p, rest, ok := strings.Cut(n, "-")
+		p, _, ok := strings.Cut(n, "-")
 		if !ok {
-			groups[n] = append(groups[n], "")
+			out = append(out, n)
 			continue
 		}
-		groups[p] = append(groups[p], rest)
+		groups[p] = append(groups[p], n)
 	}
-	keys := make([]string, 0, len(groups))
-	for k := range groups {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	out := make([]string, 0, len(keys))
-	for _, k := range keys {
-		rests := groups[k]
-		sort.Strings(rests)
-		if len(rests) == 1 {
-			if rests[0] == "" {
-				out = append(out, k)
-			} else {
-				out = append(out, k+"-"+rests[0])
-			}
+	for p, ms := range groups {
+		if len(ms) == 1 {
+			out = append(out, ms[0])
 			continue
 		}
+		sort.Strings(ms)
 		var b strings.Builder
-		b.WriteString(k + "-{")
-		for i, r := range rests {
+		b.WriteString(p + "-{")
+		for i, m := range ms {
 			if i > 0 {
 				b.WriteByte(',')
 			}
-			b.WriteString(r)
+			b.WriteString(m[len(p)+1:])
 		}
 		b.WriteByte('}')
 		out = append(out, b.String())
 	}
+	sort.Strings(out)
 	return out
 }
 
@@ -186,7 +183,7 @@ func agentMemBudgetIndex(ranked []agentMemEntry, budget int) (described []agentM
 			continue
 		}
 		cand := agentMemGroupNames(append(append([]string(nil), names...), n))
-		if agentMemTailSize(cand) > agentMemIndexTailBudget {
+		if agentMemTailSize(cand) > agentMemIndexTailBudget-agentMemIndexTailOverhead {
 			break
 		}
 		seen[n] = true

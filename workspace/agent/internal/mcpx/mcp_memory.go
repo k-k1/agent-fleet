@@ -80,7 +80,7 @@ func mcpMemoryCall(id json.RawMessage, name string, raw json.RawMessage) []byte 
 
 	switch name {
 	case mcpToolMemoryIndex:
-		if a.Budget > 0 {
+		if a.Budget != 0 {
 			q.Set("budget", fmt.Sprint(a.Budget)) // the Agent clamps it
 		}
 		out, err := agentDo(http.MethodGet, "/agents/memory/entries?"+q.Encode(), nil)
@@ -192,7 +192,7 @@ func mcpMemoryFormatIndex(raw string) string {
 		// Count only: a withheld file's name may be the very thing that failed the scan.
 		fmt.Fprintf(&b, "%d memory file(s) are withheld because they look like they contain a secret or cannot be checked; tell your user, who has to fix them.\n", v.Withheld)
 	}
-	if len(v.Entries) == 0 {
+	if len(v.Entries) == 0 && len(v.More) == 0 && v.Omitted == 0 {
 		if v.Withheld == 0 {
 			b.WriteString("No memories yet. Save what a later session should know with memory_save.\n")
 		}

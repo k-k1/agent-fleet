@@ -103,7 +103,8 @@ that is safe when what one session writes is read by every kind.
      with "…" (a prefix), grouped by first hyphen segment (`adr-{0072-…,0079-…}`). Past that, "and
      N more (use memory_search)".
    - The guidance says the index is partial and to `memory_search` with the task's keywords
-     before re-deriving something.
+     before re-deriving something. Today that is the `memory_index` tool description; the
+     distributed block itself is not built yet and must carry the same wording within its cap.
    Measured on the 473 imported claude memories: 111 KB of full lines became 117 described
    lines (24.4 KB) plus a 8.2 KB tail naming 355 more; one was left to the count.
 6. **claude's own auto-memory: a one-time seed now, one memory later.**

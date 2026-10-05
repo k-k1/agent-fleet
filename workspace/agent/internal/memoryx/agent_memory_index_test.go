@@ -78,7 +78,7 @@ func TestAgentMemBudgetIndexSmallStoreFitsAndKeepsOrder(t *testing.T) {
 }
 
 func TestAgentMemClampBudget(t *testing.T) {
-	for in, want := range map[int]int{-5: agentMemIndexBudgetDefault, 0: agentMemIndexBudgetDefault, 1: agentMemIndexBudgetMin,
+	for in, want := range map[int]int{-5: agentMemIndexBudgetMin, 0: agentMemIndexBudgetDefault, 1: agentMemIndexBudgetMin,
 		10000: 10000, 1 << 30: agentMemIndexBudgetMax} {
 		if got := agentMemClampBudget(in); got != want {
 			t.Errorf("clamp(%d) = %d, want %d", in, got, want)
@@ -120,6 +120,16 @@ func TestAgentMemNameAbbrevAndGrouping(t *testing.T) {
 	want := []string{"adr-{0072-a,0079-b}", "mirror-x", "solo", "zeta-{1,2}"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("grouped = %v, want %v", got, want)
+	}
+	// A hyphen-less name never merges into a group, and a lone trailing-hyphen name stays whole.
+	if got := strings.Join(agentMemGroupNames([]string{"adr", "adr-x", "adr-y"}), "|"); got != "adr|adr-{x,y}" {
+		t.Errorf("adr group = %q", got)
+	}
+	if got := strings.Join(agentMemGroupNames([]string{"adr-"}), "|"); got != "adr-" {
+		t.Errorf("lone adr- = %q", got)
+	}
+	if got := strings.Join(agentMemGroupNames([]string{"adr-", "adr-x"}), "|"); got != "adr-{,x}" {
+		t.Errorf("adr-/adr-x = %q", got)
 	}
 }
 

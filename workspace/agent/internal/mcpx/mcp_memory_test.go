@@ -2,6 +2,7 @@ package mcpx
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -285,5 +286,39 @@ func TestMemoryIndexRendersTailAndOmittedAsTheAgentCutThem(t *testing.T) {
 	// Nothing cut: no tail, no count.
 	if out := mcpMemoryFormatIndex(`{"project":{"display":"p"},"entries":[{"name":"a","scope":"user","description":"d"}]}`); strings.Contains(out, "names only") || strings.Contains(out, "more (use") {
 		t.Errorf("unexpected tail: %q", out)
+	}
+}
+
+// The Agent reserves agentMemIndexTailOverhead (256) of its 8 KiB tail budget for what this
+// formatter adds; the real tail, header and count line included, must stay within 8 KiB.
+func TestMemoryIndexTailWithinBudgetWithOverhead(t *testing.T) {
+	names := make([]string, 0, 1000)
+	size := 0
+	for i := 0; size+len("n0000 ") <= 8192-256; i++ {
+		n := fmt.Sprintf("n%04d", i)
+		names = append(names, n)
+		size += len(n) + 1
+	}
+	more, _ := json.Marshal(names)
+	out := mcpMemoryFormatIndex(`{"project":{"display":"p"},"entries":[],"more":` + string(more) + `,"omitted":99999}`)
+	i := strings.Index(out, "Not listed above")
+	if i < 0 {
+		t.Fatalf("no tail: %q", out)
+	}
+	if tail := len(out) - i; tail > 8192 {
+		t.Fatalf("tail = %d bytes, over 8192", tail)
+	}
+}
+
+// Nothing described does not mean nothing known: names and the count still render, alongside withheld.
+func TestMemoryIndexWithNoDescribedLinesStillRendersTail(t *testing.T) {
+	out := mcpMemoryFormatIndex(`{"project":{"display":"p"},"entries":[],"more":["real-memory"],"omitted":3,"withheld":1,"truncated":true}`)
+	for _, want := range []string{"real-memory", "and 3 more", "1 memory file(s) are withheld"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in %q", want, out)
+		}
+	}
+	if strings.Contains(out, "No memories yet") {
+		t.Errorf("claimed an empty store: %q", out)
 	}
 }
