@@ -8,7 +8,7 @@ updated: "2026-09"
 
 English | [日本語](limits.ja.md)
 
-Collected in one place because a limit is only ever met at the worst possible moment,
+This page collects the limits in one place because a limit is only ever met at the worst possible moment,
 and the reader then needs three things at once: what the ceiling is, who can raise it,
 and what happens when it is reached.
 
@@ -18,7 +18,7 @@ These do not vary by deployment.
 
 | Limit | Value | What happens at it |
 |---|---|---|
-| Session title | 80 characters | Control characters are stripped and the title is truncated. **Enforced identically at every layer on purpose** — see below |
+| Session title | 80 characters | Control characters are stripped and the title is truncated. **Enforced identically at every layer on purpose**; see below |
 | Browser pane: Chromium processes | 1 per workspace | — |
 | Browser pane: concurrent pages | 2 per workspace | A third cannot be opened until one is released |
 | Browser pane: viewport | 1600×1200 (DPR 1) | Larger is clamped |
@@ -28,10 +28,10 @@ These do not vary by deployment.
 
 > **Why the title limit is worth naming.** It used to differ per layer: a handoff
 > proposal accepted 512 bytes, showed it on the card and in the launch dialog and let
-> you edit it — and then session creation alone refused it at 80, surfacing as
+> you edit it, and then session creation alone refused it at 80, surfacing as
 > "failed to start worktree: title is too long". A limit enforced at different values
 > in different layers produces failures that appear only at one specific moment, which
-> is the hardest kind to diagnose. One value, one place.
+> is the hardest kind to diagnose.
 
 ## Set by the deployment
 
@@ -45,9 +45,9 @@ which stays the source of truth.
 | Per-user home volume (EC2 target) | 50 GiB | `AF_ECS_EC2_HOME_GB` |
 | Graceful stop | 30 s | `AF_STOP_GRACE_SEC` |
 | Start timeout (AWS targets) | 300 s | `AF_ECS_START_TIMEOUT_SEC` |
-| Stopped session kept in the list | 7 days | Each user's **Settings → Agents → Session** (1 / 3 / 7 / 14 / 30 days, or off); `AF_SESSION_STOPPED_TTL` is the deployment default for users who leave it at Default — then it moves to the archive, never deleted, and its working copy stays; a session locked against deletion stays in the list |
+| Stopped session kept in the list | 7 days | Each user's **Settings → Agents → Session** (1 / 3 / 7 / 14 / 30 days, or off); `AF_SESSION_STOPPED_TTL` is the deployment default for users who leave it at Default; after that it moves to the archive, never deleted, and its working copy stays; a session locked against deletion stays in the list |
 | Cloud-cost window | 7 days | `AF_CLOUD_COST_WINDOW_DAYS` |
-| Idle sweep | on | `AF_IDLE_SWEEP_INTERVAL` — **`0` switches the reaper off entirely**, so nothing is ever stopped for being idle |
+| Idle sweep | on | `AF_IDLE_SWEEP_INTERVAL`: **`0` switches the reaper off entirely**, so nothing is ever stopped for being idle |
 
 The self-hosted engines' own auto-stop is not in this table: **Stop after** is set per role under
 Admin → Inference engines, and a saved value wins over the engine stack's default from the
@@ -60,16 +60,16 @@ under **Tenant settings → Limits & idle**, and a deployment administrator sets
 Read the screen rather than this page.
 
 - Workspaces per tenant, and sessions per member
-- Workspace size (CPU, memory, disk) where the target supports it —
-  [deploy-targets.md](deploy-targets.md)
+- Workspace size (CPU, memory, disk) where the target supports it;
+  see [deploy-targets.md](deploy-targets.md)
 - Idle auto-stop threshold
 - Whether the tenant's administrators may take engine models in (off unless granted), and whether
-  the tenant may use the self-hosted engines at all, per role (llm / image) — allowed unless
+  the tenant may use the self-hosted engines at all, per role (llm / image): allowed unless
   switched off
 
 ## Status
 
 Two rules for anyone extending this page. A limit enforced in more than one layer must
 state **every** layer, for the reason above. And a limit nobody measures must say so
-rather than being given a plausible-looking number — an invented default is worse than
+rather than being given a plausible-looking number. An invented default is worse than
 an admitted gap, because it stops people from checking.

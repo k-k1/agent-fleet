@@ -14,7 +14,7 @@ check the FAQ at the end. Each entry links to the relevant chapter of the main g
 
 ### Selecting claude shows a login screen ("Select login method")
 
-In most cases the connection itself is still alive. This isn't an authentication problem —
+In most cases the connection itself is still alive. This isn't an authentication problem:
 the interactive screen is just redoing its onboarding, and it usually clears if you
 **resume** the session or use **"Recreate (current conversation goes to the archive)"**
 from the ⋯ menu. The traditional manual `/login` inside the terminal works alongside this too.
@@ -30,12 +30,12 @@ claude, and reaches stopped sessions too. The full comparison is in
 [02 Sessions](02-sessions.md#how-this-differs-from-claude-codes-own-version).
 
 If the agent still seems to lack the tools after you turn it on, check whether that session was
-already running beforehand — a running session keeps its current tools until it restarts.
+already running beforehand: a running session keeps its current tools until it restarts.
 
 ### A **Restart needed** badge sits next to the power button
 
 The backend was updated while your workspace was running. Nothing is broken and nothing has to
-happen now: the badge offers **Restart now** (a stop→start, which stops running sessions —
+happen now: the badge offers **Restart now** (a stop→start, which stops running sessions;
 they stay resumable) and goes away once the workspace is back on the current version
 ([01](01-first-day.md#a-new-version-is-available-and-the-restart-needed-badge)).
 
@@ -43,7 +43,7 @@ they stay resumable) and goes away once the workspace is back on the current ver
 
 A start that does not finish within the deployment's limit (30 minutes by default) is stopped
 automatically, so it stops holding capacity. The notification center (the bell) then shows
-**"Workspace start stopped automatically"** with the last step the start reached — on AWS it
+**"Workspace start stopped automatically"** with the last step the start reached; on AWS it
 often says why no machine could take the workspace. Press **Start** to try again; if it stops
 the same way, tell your administrator: they see the same reason on your entry in the member
 list until you start again.
@@ -57,7 +57,7 @@ return ([02](02-sessions.md#narrowing-the-view-with-working-sets)).
 
 If it is still missing, check whether it was **archived** (AI sessions can be restored from
 the archive browser) or tidied away by **cleanup** (deleted sessions can be restored from the
-trash) — [02](02-sessions.md#tidying-up-in-bulk-cleanup).
+trash). See [02](02-sessions.md#tidying-up-in-bulk-cleanup).
 
 ### A session won't resume / is shown struck through
 
@@ -74,7 +74,7 @@ working folder is missing ([02](02-sessions.md)).
   how the work is actually laid out.
 - **Archived sessions drop off the recipient's list.** The share rule itself remains, so
   restoring it from the archive makes it visible again.
-- **While the owner's workspace is stopped, the history cannot be read** — the recipient sees
+- **While the owner's workspace is stopped, the history cannot be read**: the recipient sees
   a note saying so.
 - The list refreshes periodically; **"Refresh"** in Shared sessions pulls it right now
   ([02](02-sessions.md#sharing-a-conversation-shared-sessions)).
@@ -82,7 +82,7 @@ working folder is missing ([02](02-sessions.md)).
 ### I sent something from a session shared with me, but the agent does nothing
 
 With the **may-propose** permission, what you type **does not reach the agent until the owner
-approves it**. The owner's Shared sessions section shows **"N awaiting approval"** — ask them
+approves it**. The owner's Shared sessions section shows **"N awaiting approval"**. Ask them
 to review it and "Approve and send". With **view only** there is no composer in the first
 place.
 
@@ -119,7 +119,7 @@ from then on you can clone / push without entering tokens ([04](03-code.md) · [
   If it still can't reach, verify that the server really is up on that port and that you didn't mistype the port number.
 - **A blank page / 404** tends to happen when you open an app that loads assets by absolute path in the **lightweight preview**.
   Its URL is a **sub-path** (`/preview/{port}/`), so the moment the app asks for `/static/...` it lands outside.
-  **If preview subdomains are issued on your deployment, open it there first** — the app is served at the root, so
+  **If preview subdomains are issued on your deployment, open it there first**: the app is served at the root, so
   the problem cannot arise. Otherwise switch to **"Open in pane"** (browser pane). If you really must use the
   lightweight preview, set `server.forward-headers-strategy=framework` (or `native`) for Spring Boot,
   or adjust the base path on the app side for anything else ([08](10-integrations.md)).
@@ -132,24 +132,24 @@ from then on you can clone / push without entering tokens ([04](03-code.md) · [
   visitor to whatever the URL is at the time they open it.
 - If they see **nothing under "Shared with you", or a 404**, check that **"Show it to your tenant"**
   is on under Settings › Preview subdomains. Turning it off closes the preview
-  **from their very next request**, even mid-session — that is deliberate.
+  **from their very next request**, even mid-session; that is deliberate.
 - **"Stopped" on their side** means your workspace is not running. **They cannot start your
-  workspace** — start it and tell them.
+  workspace**. Start it and tell them.
 - Removing the port from the exposed-ports list also produces a 404 ([08](10-integrations.md)).
 
 ### HMR (live reload) doesn't work / no automatic refresh / the shell renders but no data
 
 - **If this is Next.js (15.2 and later, including 16.x) opened on a preview subdomain**, suspect this first.
-  **Only the layout shell renders and not one row of the data fetched from the API appears** — not blank, no
-  error, so it looks like a bug in your own app, yet `127.0.0.1:<port>` shows it correctly. The dev server
+  **Only the layout shell renders and not one row of the data fetched from the API appears** (not blank, no
+  error), so it looks like a bug in your own app, yet `127.0.0.1:<port>` shows it correctly. The dev server
   **blocks cross-origin access to `/_next/*` by default**, so HMR never connects and hydration never finishes.
   `⚠ Blocked cross-origin request to Next.js dev resource` in the dev server log confirms it. Add
-  **`allowedDevOrigins`** to `next.config.ts` (the URL changes on every start, so a wildcard is required —
+  **`allowedDevOrigins`** to `next.config.ts` (the URL changes on every start, so a wildcard is required;
   see [08](10-integrations.md) for the exact form).
 - **The lightweight preview and the preview subdomains both pass WebSocket and SSE through.** If HMR still does not
   connect, the dev server may be **embedding its own port into the client** (Vite does this). Then the app needs a
   setting such as `server.hmr.clientPort: 443`.
-- To avoid adding configuration — or to isolate the cause — use **"Open in pane"** (browser pane). A browser inside
+- To avoid adding configuration, or to isolate the cause, use **"Open in pane"** (browser pane). A browser inside
   the workspace opens `127.0.0.1` directly, so HMR, WebSocket and SSE behave exactly like plain localhost
   ([08](10-integrations.md)).
 
@@ -166,7 +166,7 @@ from then on you can clone / push without entering tokens ([04](03-code.md) · [
 
 ### The browser pane shows `crashed` / `disconnected`, or keeps dying
 
-- **`disconnected`** means the communication channel (WebSocket) dropped — not necessarily an abnormal exit. Check that the
+- **`disconnected`** means the communication channel (WebSocket) dropped; it is not necessarily an abnormal exit. Check that the
   workspace is running and press **"Reconnect"**.
 - **`crashed`** means the browser inside the workspace terminated abnormally. Reopen it with **"Reconnect"**.
 - **If it keeps dying within a short time**, workspace memory pressure is the likely suspect. Clean up heavy builds, watchers, and
@@ -189,10 +189,10 @@ won't get you any further ([06](06-agents.md)).
 
 Candidates rated **Keep** are left alone by cleanup, and the row states why.
 
-- **Running** — stop the session first.
-- **Uncommitted / unpushed** — commit or push and it becomes Safe or Review. If you must drop
+- **Running**: stop the session first.
+- **Uncommitted / unpushed**: commit or push and it becomes Safe or Review. If you must drop
   it anyway, force-delete from the Console.
-- **Delete-locked** — clear the lock from the session's ⋯ menu.
+- **Delete-locked**: clear the lock from the session's ⋯ menu.
 
 Note that **only deleting a worktree cannot be undone** (the working copy goes; the history,
 the remote and the branch stay). Deleted sessions and branches are stashed in the **trash**,
@@ -213,14 +213,14 @@ To use a specific Claude release (a full id such as `claude-opus-4-8`), register
 ### The launch dialog offers only "Default"
 
 The agents with a live catalog (codex / opencode / copilot / cursor / kiro / agy / lcpp / muse) fetch their
-model list when the dialog opens, so **"Loading models…" for a moment is normal** — wait for
+model list when the dialog opens, so **"Loading models…" for a moment is normal**. Wait for
 it before concluding anything. What the picker says once it settles is the answer:
 
 | It says | What to do |
 |---|---|
 | **Every model is excluded in settings** | ⚙ Settings → Agents → that card → "Models you don't use" |
 | **The current billing choice leaves no model to pick** | ⚙ Settings → Agents → opencode → "opencode.ai billing" ([06](06-agents.md)) |
-| **Only the default model is available (check this agent's connection and plan)** | The agent answered with an empty catalog. Check the sign-in and the plan on that card. On a Copilot Free plan an empty list is normal — that plan offers Auto alone. |
+| **Only the default model is available (check this agent's connection and plan)** | The agent answered with an empty catalog. Check the sign-in and the plan on that card. On a Copilot Free plan an empty list is normal: that plan offers Auto alone. |
 | **Couldn't fetch the model list — the workspace may have only just started** | The request never landed. The Agent isn't listening yet in the first seconds after a start: **wait half a minute and reopen the dialog** (each open tries again). |
 
 ### An MCP server I registered isn't available in sessions or assistants
@@ -231,7 +231,7 @@ Work through ⚙ Settings → MCP servers in this order
 1. Is it **enabled**? Disabled keeps the definition but hands it to nobody.
 2. Do the **targets** include "sessions" / "assistants"? With both cleared it goes nowhere.
 3. Did you narrow **target agents**? Leaving it empty covers every agent.
-4. **Sessions pick it up from the next session you start** — a running session doesn't change
+4. **Sessions pick it up from the next session you start**: a running session doesn't change
    until it restarts.
 5. Press **"Connection test"** and see whether a server name and tool count come back.
 6. Does it say it is unused because the name collides with a tenant distribution? The tenant
@@ -247,14 +247,14 @@ shows the connection state ([06](06-agents.md)).
 
 Once you are signed in again, **that same error turns into "Re-authenticated"** (the button
 goes away) and **the session picks up where it stopped by itself** (Claude, with automatic
-resume on — the mirror shows the continuation carrying an auto-resume badge). The failure
+resume on; the mirror shows the continuation carrying an auto-resume badge). The failure
 itself stays red: it did happen, so it is not erased. If nothing continues after a while, send
 "continue" in that conversation and it resumes from the same point.
 
 ### A Claude session shows "Login expired — sign in again", or sending starts nothing
 
 **This workspace's Claude login has expired.** The credentials are still on disk, so the
-terminal looks like an ordinary ready prompt — but nothing you send there ever starts a turn.
+terminal looks like an ordinary ready prompt, but nothing you send there ever starts a turn.
 That is why the Console shows the **Login expired** chip instead of Ready and refuses the send
 outright (without the refusal, a prompt looks delivered and then simply never runs). Fix it from
 ⚙ Settings → Agents → the Claude card's **Re-authenticate**. You don't need to stop the session;
@@ -287,11 +287,11 @@ Assistant), but exceeding the limit before that point produces this state. Lower
 
 Check its row in the **Schedules** section of the left pane.
 
-- A **"Paused"** tag means it is suspended — **"Resume"** in the row menu brings it back.
+- A **"Paused"** tag means it is suspended; **"Resume"** in the row menu brings it back.
 - `skipped_*` entries in the **run history** mean the previous run was still going (the
   overlap policy) or the target conversation was busy.
 - The firing time, timezone and prompt are visible and editable under **"Details & edit"** in
-  the row menu (only the advanced fields — session mode, reuse and so on — are changed from
+  the row menu (only the advanced fields, session mode, reuse and so on, are changed from
   the operator chat).
 - **"Run now"** exercises the same path as a timed firing (allow up to about a minute).
 - If there is no Schedules section at all, scheduled execution is disabled on this deployment
@@ -308,10 +308,10 @@ automatic on select, or Ctrl+Shift+C; paste with right-click / middle-click / Ct
 While a terminal has focus, a setting in ⚙ Settings → Keys may be handing your keys to the
 terminal.
 
-- **"Prioritise the terminal over the app while a terminal has focus"** — every Ctrl-key goes
+- **"Prioritise the terminal over the app while a terminal has focus"**: every Ctrl-key goes
   to the terminal. Only the leader survives on the app side, so open the palette with the
   default **Ctrl+K → ;** (**⌘K → ;** on macOS).
-- **"Pass every key to shell / SSM terminals"** — even the leader and the palette go through.
+- **"Pass every key to shell / SSM terminals"**: even the leader and the palette go through.
   Move focus to another pane to get the app operations back.
 
 **?** opens the list of what is bound to what ([03](05-terminal.md#shortcuts),
@@ -325,7 +325,7 @@ with the **≡ (menu)** at the top left of the screen ([03](05-terminal.md)).
 
 ### Only the terminal stays dark on the light theme
 
-Known behavior. Even after switching themes, the terminal (the black screen) background stays dark. The file
+This is known behavior. Even after switching themes, the terminal (the black screen) background stays dark. The file
 viewer and other screens follow the theme ([03](05-terminal.md)).
 
 ### The workspace has stopped without me noticing
@@ -363,15 +363,15 @@ It can't be selected until you've registered at least one API key. Register a ke
 ⚙ Settings → the "Agents" tab ([06](06-agents.md)).
 
 **Q. If I unshare it, does it disappear from their side too?**
-No. The recipient can save what was displayed, so **unsharing only ends further access** — a
+No. The recipient can save what was displayed, so **unsharing only ends further access**. A
 copy they already saved cannot be recalled. Before sharing, check what the conversation
 exposes (secrets in it are not detected for you). See
 [02](02-sessions.md#sharing-a-conversation-shared-sessions).
 
 **Q. Does "Models you don't use" stop the billing?**
 It prevents picking one by accident; it is not a hard billing guard. The model disappears from
-the launch dialog, the settings and the assistant's list, and launching it by name is refused
-— but **it cannot stop the CLI's own commands, such as typing `/model` inside the terminal**
+the launch dialog, the settings and the assistant's list, and launching it by name is refused,
+but **it cannot stop the CLI's own commands, such as typing `/model` inside the terminal**
 ([06](06-agents.md)).
 
 **Q. Builds die / freeze from running out of memory**
@@ -397,5 +397,5 @@ also ask the agent you're using to do this for you.
 
 **The repository is public.** Before pasting in logs, screenshots, or error text, strip out
 secrets, internal hostnames/URLs, tenant or customer names, and anything else about your
-organisation's environment that shouldn't be visible outside it — describe what happened in
+organisation's environment that shouldn't be visible outside it. Describe what happened in
 general terms instead.

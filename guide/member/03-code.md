@@ -13,8 +13,8 @@ To clone or push private repositories, first connect GitHub or Bitbucket.
 Do this in **⚙Settings → the "Git hosting" tab** (the connection goes through the Agent inside the
 workspace, so the workspace must be started).
 
-- **GitHub** — "Connect via OAuth" (recommended; a device flow you approve in the browser) or "Connect with an access token" (paste a Personal Access Token).
-- **Bitbucket** — "Connect via OAuth" (recommended; a code grant you approve in a separate tab) or "Connect with an app token" (Atlassian email + API token).
+- **GitHub**: "Connect via OAuth" (recommended; a device flow you approve in the browser) or "Connect with an access token" (paste a Personal Access Token).
+- **Bitbucket**: "Connect via OAuth" (recommended; a code grant you approve in a separate tab) or "Connect with an app token" (Atlassian email + API token).
 
 OAuth (device flow) is three steps: **Copy the code** shown, **Open the link and paste**,
 then **Wait for approval**. Once connected, your handle and email are displayed.
@@ -32,8 +32,8 @@ never be asked for a token on each clone or push.
 Open **"Add"** in the **Repositories** section of the left pane and pick **Git** under **Kind**.
 There are two sources.
 
-- **Pick from connections** (default) — choose a repository and branch from your connected GitHub / Bitbucket. Private repositories are marked with 🔒. Tabs for unconnected providers cannot be selected and show "Not connected (Settings → Git)".
-- **Enter URL** — enter a "Clone URL" (`https://…` / `git@…`) and "Branch (optional)". For repositories you are not connected to.
+- **Pick from connections** (default): choose a repository and branch from your connected GitHub / Bitbucket. Private repositories are marked with 🔒. Tabs for unconnected providers cannot be selected and show "Not connected (Settings → Git)".
+- **Enter URL**: enter a "Clone URL" (`https://…` / `git@…`) and "Branch (optional)". For repositories you are not connected to.
 
 If you specify **"New branch (optional)"**, a new branch is created from the base branch and
 checked out. When you do, you can also give the working copy its own folder via **"Folder name"**.
@@ -50,17 +50,17 @@ available from **"+ Start" → "Start in a new folder…"**, which continues str
   with the usual review / commit / share / delete actions available. **A remote can be added
   later** with `git remote add` in a terminal (creating a home for it in the internal git
   provider is one way to do that).
-- **Until the first commit exists, a separate working copy (worktree) cannot be created** — git
-  cannot resolve HEAD yet — so launches during that window run directly in the folder (the launch
+- **Until the first commit exists, a separate working copy (worktree) cannot be created** (git
+  cannot resolve HEAD yet), so launches during that window run directly in the folder (the launch
   dialog says so). After one commit it behaves like any other repository.
 - The name must start with a letter or number and must not collide with an existing working copy.
 
 ### Submodules and Git LFS
 
-- **Submodules** — fetched on a best-effort basis after a clone and after a working copy (worktree) is created. Submodules registered over SSH are automatically rewritten to HTTPS and fetched (even if this fails, the parent clone succeeds).
+- **Submodules**: fetched on a best-effort basis after a clone and after a working copy (worktree) is created. Submodules registered over SSH are automatically rewritten to HTTPS and fetched (even if this fails, the parent clone succeeds).
   - Each working copy clones the submodules again, so **a large submodule may not finish fetching within the launch**. You can still start working (the fetch continues in the background). When work starts on an incomplete checkout, the notification center shows "Started work with submodules not checked out", followed by "Submodules are now checked out" once the fetch lands. Clicking the notification opens that working copy's Source Control view, which lists the submodules and their fetched state.
   - A submodule whose fetch was cut off is repaired automatically on the next launch. If you are in a hurry, enter the working copy in a terminal and run `git submodule update --init --recursive`.
-- **Git LFS** — actual content is fetched automatically on clone / checkout (smudge). In an existing working copy, files that are still pointers show an "LFS pointer" badge in the viewer. In that case, enter the repository in a terminal and run `git lfs pull` to fetch the content.
+- **Git LFS**: actual content is fetched automatically on clone / checkout (smudge). In an existing working copy, files that are still pointers show an "LFS pointer" badge in the viewer. In that case, enter the repository in a terminal and run `git lfs pull` to fetch the content.
 
 ## The built-in git provider (internal Git)
 
@@ -68,15 +68,15 @@ You can also **host repositories inside the fleet** without using external hosti
 In **⚙Settings → the "Internal repos" tab**, just enter
 a name and click **"Create"**. No external account is needed, and you can share clone / push with
 members in your tenant (authentication is transparent via an auto-injected token). From the row you
-can copy the clone URL or **"Browse"** the contents (browsing without cloning). Good for
+can copy the clone URL or **"Browse"** the contents (browsing without cloning). It suits
 prototypes and in-team sharing.
 
 - A repository can be **renamed**, and **deleted** when no longer needed (deletion cannot be undone).
   Only **the person who created it or a tenant administrator** can do either; on other rows the two
   buttons are not shown.
 - The tab talks to the control plane directly, so **it works while the workspace is stopped**.
-- It also serves as a home for code that must not leave the building. Clone it like any other
-  repository — "Start" → "Clone a new repository…" — by pasting the URL you copied.
+- It is also a home for code that must not leave the building. Clone it like any other
+  repository ("Start" → "Clone a new repository…") by pasting the URL you copied.
 
 ## Launch a session from a repository row
 
@@ -85,24 +85,24 @@ the **"Start working"** screen, where you choose the agent, model, **location**,
 prompt, then launch. For **location**, the default is **"New worktree"** (isolated · safe across
 branch switches); the other option is **"Directly in this copy"**.
 
-- **New worktree** (default) — carves out an independent working copy dedicated to that task. Since edits never collide with other sessions, this is the safe choice for parallel work (you can pick the base branch and branch name; if left empty, a provisional name `temp/…` is used).
-- **Directly in this copy** — works directly in the folder currently open.
+- **New worktree** (default): carves out an independent working copy dedicated to that task. Since edits never collide with other sessions, this is the safe choice for parallel work (you can pick the base branch and branch name; if left empty, a provisional name `temp/…` is used).
+- **Directly in this copy**: works directly in the folder currently open.
 
 The **▾** to the right of "Launch" lets you pick a kind (claude / codex / cursor / copilot / kiro / agy / opencode / lcpp / muse / shell) and
 **launch instantly** without opening the settings screen (Ctrl / middle-click launches in a new pane).
 
 Rows also show status indicators. Learning to read them helps you catch things before pushing.
 
-- **Uncommitted** — there are changes that have not been committed.
+- **Uncommitted**: there are changes that have not been committed.
 - On a worktree's chip, "parent" is the upstream of the parent working copy's branch (e.g. `origin/develop`). A PR merged on GitHub shows up after the next fetch (automatic, every 10 minutes) without fast-forwarding the parent working copy. With no upstream, the chip compares with the parent working copy's HEAD. The chip's tooltip names the target. Commits the parent working copy has not pushed are not compared and are not brought in by the fast-forward item (they reach the comparison target only once pushed).
-- Worktree **= parent** — same commit as the parent.
-- Worktree **unmerged N** — there are N commits unique to the worktree not yet in the parent.
-- Worktree **parent+N, FF ok** — the worktree's HEAD is contained in the parent, and **the parent is N commits ahead**. **"Fast-forward from origin/develop"** in the right-click menu (**"Fast-forward from parent"** without an upstream) brings those changes straight into this worktree (no merge commit).
-- Worktree **diverged N↕M, no FF** — both the worktree and the parent have unique commits; a merge or rebase is needed.
-- Worktree **n/a** — the relationship cannot be determined, e.g. detached HEAD or a repository with no commits.
-- **↑N** (ahead) — N commits ahead of origin (not pushed).
-- **↓N FF ok** — origin is N commits ahead and can be fast-forwarded cleanly (Fast-Forward in the commit graph).
-- **↑N ↓N needs merge** — diverged from origin. A fast-forward is not possible; a merge or rebase is needed.
+- Worktree **= parent**: same commit as the parent.
+- Worktree **unmerged N**: there are N commits unique to the worktree not yet in the parent.
+- Worktree **parent+N, FF ok**: the worktree's HEAD is contained in the parent, and **the parent is N commits ahead**. **"Fast-forward from origin/develop"** in the right-click menu (**"Fast-forward from parent"** without an upstream) brings those changes straight into this worktree (no merge commit).
+- Worktree **diverged N↕M, no FF**: both the worktree and the parent have unique commits; a merge or rebase is needed.
+- Worktree **n/a**: the relationship cannot be determined, e.g. detached HEAD or a repository with no commits.
+- **↑N** (ahead): N commits ahead of origin (not pushed).
+- **↓N FF ok**: origin is N commits ahead and can be fast-forwarded cleanly (Fast-Forward in the commit graph).
+- **↑N ↓N needs merge**: diverged from origin. A fast-forward is not possible; a merge or rebase is needed.
 
 Worktree status indicators compare against the current branch in the parent working copy, while
 `↑` / `↓` compare against origin. Hover over the status indicator to see what it is compared
@@ -119,25 +119,25 @@ colored number is the pane number showing that repository's commit graph. See
 The **"Templates"** button above the first prompt opens a searchable list of three kinds of
 starting text:
 
-- **My templates** — your own. **"New template"** creates one (name, prompt, and where it shows:
+- **My templates**: your own. **"New template"** creates one (name, prompt, and where it shows:
   every repository, or only this one). Pick one and use **"Edit"** to change or rename it, or
   **"Delete"** to remove it.
-- **This repository** — the entries of `.agent-fleet/launch-prompts.md` committed in the
+- **This repository**: the entries of `.agent-fleet/launch-prompts.md` committed in the
   repository (one per `## heading`), shared with everyone who clones it. Read-only here.
-- **History** — the first prompts you launched in this repository recently (8 at most), shown by
+- **History**: the first prompts you launched in this repository recently (8 at most), shown by
   their first line. **"Delete"** forgets one; **"Save as template"** keeps it as one of yours.
 
 Type to filter, **↑ / ↓** to move, **Enter** to insert, **Esc** to close. The highlighted entry's
 full text shows in the preview beside the list (on a phone, the first tap previews and
 **"Insert"** inserts). `{{repo}}`, `{{branch}}` and `{{path}}` are filled in for the row you
 launch from. If the first prompt already has text, you are asked whether to **insert at the
-cursor** or **replace all** — typed text is never dropped silently.
+cursor** or **replace all**; typed text is never dropped silently.
 
 Your templates and history are saved with your settings, so they follow you to every browser and
 device. They have a size budget (40 templates, 16 KB in total, 8 KB each); a prompt larger than
 3 KB (or one that would push your synced settings past their 64 KB limit) is kept in history on
 that device only. To invoke a repository's `.claude` commands or
-skills, use the skill button (**/**) next to "Templates" instead — they are no longer listed here.
+skills, use the skill button (**/**) next to "Templates" instead; they are no longer listed here.
 
 ### What you can do with right-click
 
@@ -146,12 +146,12 @@ depending on state and location.
 
 - **Open commit graph** / **Open the folder** / **Commit changes**
 - **Switch branch** / **Copy the branch name** / **Fast-Forward** (on a worktree, **"Fast-forward from origin/develop"** or similar)
-- **Initialize Git Flow** (a git repository's base copy only) — see [below](#initialize-git-flow)
-- **Project settings** — the MCP definitions committed in that repository, with per-agent status and warnings ([12](12-settings.md#mcp-servers))
-- **Share…** — share this working copy's (project's) sessions with another member ([02](02-sessions.md#sharing-a-conversation-shared-sessions))
+- **Initialize Git Flow** (a git repository's base copy only); see [below](#initialize-git-flow)
+- **Project settings**: the MCP definitions committed in that repository, with per-agent status and warnings ([12](12-settings.md#mcp-servers))
+- **Share…**: share this working copy's (project's) sessions with another member ([02](02-sessions.md#sharing-a-conversation-shared-sessions))
 - **Assignment to a working set** ([02](02-sessions.md#narrowing-the-view-with-working-sets))
 - Per-kind session launch: claude, codex, opencode, shell, and so on
-- **Stop the sessions below** — stops every session running in that copy and in the copies nested under it, from one modal ([02](02-sessions.md#stopping-and-tidying-up-sessions))
+- **Stop the sessions below**: stops every session running in that copy and in the copies nested under it, from one modal ([02](02-sessions.md#stopping-and-tidying-up-sessions))
 - **Delete the working copy** (only for working copies that can be deleted)
 
 ### Initialize Git Flow
@@ -192,10 +192,10 @@ The **commit graph** view opens from "Open commit graph" in the right-click
 menu. Ctrl / ⌘+click or middle-click opens it directly in a new pane. The header shows the
 current branch and action buttons, which collapse into **⋯** when space is tight.
 
-- **Changes** — opens the work screen for committing changes (in a separate pane).
-- **fetch** — fetches from the remote (`git fetch --prune`).
-- **Fast-Forward** — fast-forwards the current branch to upstream (`pull --ff-only`).
-- **Refresh** — refreshes the display.
+- **Changes**: opens the work screen for committing changes (in a separate pane).
+- **fetch**: fetches from the remote (`git fetch --prune`).
+- **Fast-Forward**: fast-forwards the current branch to upstream (`pull --ff-only`).
+- **Refresh**: refreshes the display.
 - Clicking the branch name part opens **"Switch branch"** (with filtering, sorted by latest commit).
 - If a `.gitmodules` file exists, **submodules** are listed in the header's target selector.
   Selecting a fetched submodule lets you browse that submodule's own commit graph and commit
@@ -238,7 +238,7 @@ Bitbucket tokens are refreshed automatically even after they expire.
 ## Running database-backed tests
 
 Postgres is available inside the workspace without Docker or any external service. `af-db url`
-returns a connection URL for the current working copy's database — downloading, initialising, and
+returns a connection URL for the current working copy's database, downloading, initialising, and
 starting the server on first call if needed (first use may take a few minutes). The server idle-stops
 after 30 minutes of no connections.
 
@@ -257,24 +257,24 @@ Check what is running with `af-db status`. When you are done, stop the server:
 af-db down
 ```
 
-Stop it before a memory-intensive build — the server holds ≈ 47 MB of the workspace's memory
+Stop it before a memory-intensive build: the server holds ≈ 47 MB of the workspace's memory
 quota, and a heavy JVM build next to it can exhaust it.
 
 A few things worth knowing:
 
 - **One database per working copy.** Two sessions that share the same working copy share the same
   database. To address a named database explicitly, use `af-db url --db=<name>`.
-- **`af-db url --tcp`** — use when the test driver requires TCP (for example,
+- **`af-db url --tcp`**: use when the test driver requires TCP (for example,
   `jdbc:postgresql://127.0.0.1:…`). The default URL uses a unix socket, which most Go and Python
   clients support but JDBC cannot.
 - **Your data survives a Stop → Start.** The database files live in your home
   (`~/.local/state/af-db`), which is workspace state like anything else there. Only two things
   delete them: `af-db down --purge`, and deleting a database from the Databases tab.
-- **`af-db up --durable`** — also flushes every commit to disk (`fsync`). The default trades that
+- **`af-db up --durable`**: also flushes every commit to disk (`fsync`). The default trades that
   for speed, which is the right trade for test data: a crash of the workspace can lose the last
   few transactions, but a normal stop never does. (`--persist` is the old name for this flag and
   still works.)
-- **`af-db up --ephemeral`** — the opposite: put the files on the task-local disk, which is
+- **`af-db up --ephemeral`**: the opposite: put the files on the task-local disk, which is
   faster and is **wiped when the workspace stops**. Use it when you know the contents are a
   fixture. Where the deployment has no task-local disk, it says so and uses your home.
 - **`psql` and `mysql` are on PATH, and connect with no arguments.** Starting an engine
@@ -284,10 +284,10 @@ A few things worth knowing:
   and `mysql <name>` opens a MySQL one.
 - **The port is stable**: 5432 for Postgres and 3306 for MySQL, the numbers your framework already
   defaults to. It only moves if something else in the container holds it when the server starts,
-  and the server keeps whatever it got across later restarts — so a connection string in the
+  and the server keeps whatever it got across later restarts, so a connection string in the
   application you are developing keeps working. `af-db status` always shows the live number.
 - **`af-db connect [engine] [--db=NAME]`** opens the client on a database whatever your shell
-  already has in it — it resolves the socket, password and user itself, and starts the engine
+  already has in it; it resolves the socket, password and user itself, and starts the engine
   first if it is not running. Use it in a shell you opened before the server was up.
 
 ### MySQL
@@ -306,40 +306,40 @@ nothing sets it for you. Pass the connection in the form your driver expects wit
 Things to know about MySQL specifically:
 
 - **Memory: ≈ 226 MB resident** (MySQL holds an InnoDB buffer pool even at idle). Stop it
-  before a JVM build or another memory-intensive task — the workspace's cgroup is shared with
-  all sessions: `af-db down mysql`.
+  before a JVM build or another memory-intensive task (the workspace's cgroup is shared with
+  all sessions): `af-db down mysql`.
 - **arm64 install downloads 909 MB.** The full tarball is required on arm64 (there is no
   `minimal` build for that architecture). The installer keeps only what af-db needs and strips
-  the debug sections, so **the installed tree is ≈ 147 MB** — smaller than x86_64's. Measured
+  the debug sections, so **the installed tree is ≈ 147 MB**, smaller than x86_64's. Measured
   end to end: about 30 seconds.
 - **x86_64 install downloads ≈ 63 MB** (the `minimal` tarball, ≈ 446 MB installed).
 - The memory guard refuses `af-db up mysql` when the workspace's cgroup limit is below 1 GiB
-  and says so — run `af-db down postgres` first if Postgres is running.
+  and says so; run `af-db down postgres` first if Postgres is running.
 
 ### Console Databases tab
 
-The workspace settings **Databases** tab shows the state of every engine — version, resident size
-(MB), port, connection URL — and lets you start and stop an engine, and create, delete or reset a
+The workspace settings **Databases** tab shows every engine's version, resident size
+(MB), port, connection URL and state, and lets you start and stop an engine, and create, delete or reset a
 database, without opening a terminal.
 
 - **Start** on an uninstalled engine downloads and installs it first, then starts it. The card
   polls automatically while the state is `installing` or `starting`.
 - **Stop** has a "Stop and remove data" option (`--purge`): use it to free the datadir space. It
-  takes **every database on that engine** with it — other working copies' included, and any
+  takes **every database on that engine** with it, other working copies' included, and any
   shared one made with `--db=`. To start one over, use **Reset** on its row instead.
 - **Start with the workspace** keeps that engine running: tick it and the Agent starts the engine
   whenever the workspace starts, with no terminal and no button. It only appears for an engine
-  that has been started at least once, so booting never downloads a server. Off by default —
+  that has been started at least once, so booting never downloads a server. Off by default:
   a database costs memory even when nothing is querying it.
 - **Connect** opens a Shell session in your home and starts `psql` / `mysql` on that row's
   database (`af-db connect`). Quitting the client leaves you in the shell.
 - **Create** makes a database with the name you type (same as `af-db create --db=<name>`). Use it
-  for anything that is not one working copy's database — a scratch schema, a second database for
+  for anything that is not one working copy's database: a scratch schema, a second database for
   one project, one shared between sessions. Names are lower-case letters, digits and `_`, not
   starting with a digit; the button stays disabled with the reason shown until the name is usable.
 - **Delete** removes one database and everything in it (same as `af-db drop --db=<name>`), after a
   confirmation that names it. Anything still connected to that database is disconnected.
-- **Reset** empties one database — it is dropped and recreated (same as `af-db reset`). A
+- **Reset** empties one database: it is dropped and recreated (same as `af-db reset`). A
   confirmation is shown before anything is deleted.
 - **One row per database**, with the working copy it belongs to; Copy hands you the URL of
   *that* database. When there is none yet, create one here or run `af-db url` in a working copy.
@@ -355,35 +355,35 @@ You can work with **SVN** repositories, not just git. In the clone modal, use th
 toggle** to select SVN, then enter the **Repository URL** and, if needed, a **subpath**
 (e.g. `trunk`, `branches/x`) and **username / password** (basic auth) to check out.
 
-- **A specific path only / multiple paths** — you can check out just a subtree via the subpath.
+- **A specific path only / multiple paths**: you can check out just a subtree via the subpath.
   Checking out another path again creates a separate folder, giving you the same isolation as
   git's separate clones. Since SVN has no worktrees, **this is how you split parallel work**
   (session launch from an svn row is **in-place only**; no worktree option is shown).
-- **Saving credentials (optional)** — if you check the save option, credentials are stored in
+- **Saving credentials (optional)**: if you check the save option, credentials are stored in
   the encrypted store and reused automatically for subsequent updates. The password never
   appears in the process list or in a plaintext cache.
-- **Entering credentials later** — you do not have to check out again if you declined. Use
+- **Entering credentials later**: you do not have to check out again if you declined. Use
   **"Re-authenticate (svn)"** on the row menu (an update that fails on authentication offers it
   by itself). What you enter is checked against the server before it is saved. Servers saved this
   way are listed under Settings › Connections › Git, where you can also add or forget one.
-- **Self-signed certificates** — if the certificate cannot be trusted (e.g. an in-house server),
+- **Self-signed certificates**: if the certificate cannot be trusted (e.g. an in-house server),
   turn on "Trust self-signed certificate" in the modal. This is a per-server opt-in that
   **disables certificate verification for that server**, and it persists across future updates.
-- **Update and lock cleanup** — use "Update (svn)" on the svn row to move to the latest revision.
+- **Update and lock cleanup**: use "Update (svn)" on the svn row to move to the latest revision.
   If the working copy gets locked (an error prompting `svn cleanup`), e.g. after an interruption,
   checkout / update automatically attempts one recovery. If the lock remains, use
   **"Clean up lock"** from the row menu.
-- **Show log and local changes** — the svn row menu has **"Show log"** (revision list, newest
+- **Show log and local changes**: the svn row menu has **"Show log"** (revision list, newest
   first, with a path filter and "Load more"; a revision newer than the working copy is marked
   "not updated yet", and selecting one shows its changed paths and diff) and **"Local changes"**
   (the entries of `svn status`; a click opens the file's diff). Right-click a folder or file
   under the working copy in the Files tree and choose **"Show log"** to filter the log to it.
-  The log is read from the server when you open it or press "Load more" — it is not refreshed
-  in the background — and if the server needs a password you get the re-authenticate dialog.
+  The log is read from the server when you open it or press "Load more" (it is not refreshed
+  in the background), and if the server needs a password you get the re-authenticate dialog.
   Both views are read-only.
 - The svn row shows the current revision (`r1234`). Branch switch and the stage / commit
-  workbench are git-only, so commit with `svn commit` inside a session — **the saved
+  workbench are git-only, so commit with `svn commit` inside a session. **The saved
   credentials apply there too**, so `svn update` / `svn commit -m "…"` typed in a session
   authenticate without a `--username`. Two cases still ask for the password themselves: a
   `commit` with no `-m` (svn opens an editor and keeps the terminal), and a command you gave an
-  explicit `--username` / `--password` — an explicit credential always wins.
+  explicit `--username` / `--password`; an explicit credential always wins.

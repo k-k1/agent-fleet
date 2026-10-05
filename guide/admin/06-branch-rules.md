@@ -10,11 +10,11 @@ English | [日本語](06-branch-rules.ja.md)
 When a member launches work on an issue, the launch dialog fills in a branch name and the branch
 to start from. The rules behind that come in four layers, strongest first:
 
-1. **the repository** — what it declares itself (`.agent-fleet/branches`, git-flow, a Bitbucket
+1. **the repository**: what it declares itself (`.agent-fleet/branches`, git-flow, a Bitbucket
    branching model);
-2. **the member** — their own template in the work-items settings, and their own rules;
-3. **the tenant** — the rules on this screen;
-4. **the built-in default** — `{prefix}{ref}-{slug}` off the current branch, e.g.
+2. **the member**: their own template in the work-items settings, and their own rules;
+3. **the tenant**: the rules on this screen;
+4. **the built-in default**: `{prefix}{ref}-{slug}` off the current branch, e.g.
    `feature/45-empty-list`.
 
 The layers merge **field by field**: a repository that declares only where branches start keeps

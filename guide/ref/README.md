@@ -8,8 +8,8 @@ updated: "2026-08"
 
 English | [日本語](README.ja.md)
 
-Every other shelf links here instead of restating what the product supports. One copy
-of each fact, readable from four directions.
+Every other shelf links here instead of restating what the product supports, so each
+fact has one copy, readable from four directions.
 
 | Table | Ask it |
 |---|---|

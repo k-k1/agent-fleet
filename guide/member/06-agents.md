@@ -12,17 +12,17 @@ be running).
 
 ## Supported agents and how to choose
 
-Six major CLI coding agents are compared in the table below. Two more run Managed only —
+Six major CLI coding agents are compared in the table below. Two more run Managed only:
 **Muse Code** (muse, [below](#muse-code)) and the fleet's own llama.cpp engine
-(**lcpp**, [below](#lcpp)) — and the experimental Antigravity (agy) slot is covered in
-[08](10-integrations.md); all of them have a column in the
+(**lcpp**, [below](#lcpp)). The experimental Antigravity (agy) slot is covered in
+[08](10-integrations.md). All of them have a column in the
 [feature matrix](#feature-matrix-all-agent-kinds). Connection changes take effect
 immediately; behavior settings apply **from each agent's new sessions**.
 
 | | claude | codex | opencode | copilot | cursor | kiro |
 |--|--------|-------|----------|---------|--------|------|
-| Authentication | OAuth connection (paste a code) | ChatGPT subscription / API key | Provider API keys (env) | Rides the GitHub connection (no separate sign-in) | Sign in with a Cursor account (browser approval only) | Device-flow sign-in (Builder ID / Google / GitHub — browser approval only) |
-| Model choice at launch | Yes | Yes | Yes | Yes (plan-dependent — Free is Auto only) | Yes (tied to the account) | Yes (named models even on Free) |
+| Authentication | OAuth connection (paste a code) | ChatGPT subscription / API key | Provider API keys (env) | Rides the GitHub connection (no separate sign-in) | Sign in with a Cursor account (browser approval only) | Device-flow sign-in (Builder ID / Google / GitHub; browser approval only) |
+| Model choice at launch | Yes | Yes | Yes | Yes (plan-dependent; Free is Auto only) | Yes (tied to the account) | Yes (named models even on Free) |
 | States | Working / Question / Plan ready / Awaiting permission / Ready | Working / Question / Plan ready / Ready | Working / Question / Ready | Working / Awaiting permission / Ready | Working / Ready | Working / Awaiting permission / Ready |
 | Chat view & history | Yes | Yes | Yes | Yes | Live: yes (simplified tool output). Stopped: no history under Managed | Yes (readable history even under Managed) |
 | Plan mode | Yes | Yes | Yes | Set at launch + switchable from managed settings | Yes | Not supported |
@@ -40,14 +40,14 @@ GitHub Copilot subscription, pick **copilot**; if you have a Cursor plan, pick
 the conversation view, answering questions, and handing a conversation off to another
 agent; the context gauge is on claude / codex / opencode / kiro / lcpp / muse. Beyond those
 six: if you have a Meta account (or a Meta Model API key), pick **muse**; if you want a model
-that needs no vendor account at all, pick **lcpp** — it runs on your organization's own
+that needs no vendor account at all, pick **lcpp**. It runs on your organization's own
 engine (or a llama-server on your network), so there is no sign-in and no subscription limit.
 
 **Managed execution** for Codex / opencode / copilot / cursor / kiro lets you handle your everyday
 work entirely from the conversation view (Codex / opencode carry no extra per-session
 process, which makes them well suited to parallel work; copilot / cursor / kiro run a dedicated
 per-session process even when Managed). Pick **Terminal (CLI)** only when you need the
-CLI's own black screen. lcpp and muse run Managed only — there is no Terminal (CLI) to pick;
+CLI's own black screen. lcpp and muse run Managed only, so there is no Terminal (CLI) to pick;
 lcpp needs no per-session process either, while muse runs one per session. For details, see
 [02 Sessions](02-sessions.md#execution-method-managed-and-terminal-cli).
 The Managed chat view is separate from the assistant chat in the left pane, which doesn't use a repository.
@@ -61,7 +61,7 @@ new session ([02](02-sessions.md)).
 
 The table at the top compares the six main CLI agents. This one adds Antigravity (agy),
 the Managed-only agents (lcpp and muse), and the non-agent session kinds (shell / SSM),
-and rolls in the cross-cutting features covered elsewhere in this guide — worktrees
+and rolls in the cross-cutting features covered elsewhere in this guide: worktrees
 ([04](03-code.md)), scheduled runs and the chat bridge ([11](08-organising.md),
 [08](10-integrations.md)). ✓ = supported, — = not applicable / not supported.
 
@@ -90,46 +90,46 @@ control. kiro accepts a `--effort` flag but exposes no per-model effort picker.
 
 The model lists show each model's **API list price** (input / output per 1M tokens) and context
 window, and the line under the chosen model adds the cache-read price and release date. The
-numbers are models.dev's published **pay-as-you-go API prices** — not what a claude, codex or agy
+numbers are models.dev's published **pay-as-you-go API prices**, not what a claude, codex or agy
 subscription is charged (for opencode they are the price opencode actually bills). A model codex
 has announced it will retire, or one models.dev marks deprecated, is tagged "Retiring". Nothing is
 shown for cursor, muse and lcpp, or for claude's tier aliases (Opus and so on): there is no price
 source for the first three, and which model an alias runs depends on the CLI version. A full claude
 id you registered does get one.
 
-³ cursor's managed (default) execution keeps no local transcript — a **stopped** cursor
+³ cursor's managed (default) execution keeps no local transcript: a **stopped** cursor
 session has no history to show (the live mirror works while running, and running cursor
 as Terminal (CLI) does persist a readable history). kiro, by contrast, persists a readable
 transcript even under Managed, so a stopped kiro session still shows its history.
 
-⁴ lcpp and muse have no Terminal (CLI) route — lcpp has no vendor CLI to put in a pane;
+⁴ lcpp and muse have no Terminal (CLI) route: lcpp has no vendor CLI to put in a pane;
 muse drives the session protocol directly. Sessions of either kind default to Managed.
 
 ⁵ As the assistant, muse answers one prompt per turn as its own headless run and remembers
 the conversation; it answers rather than acts (shell, file writing and web tools are off for
-those turns). It needs Muse Code installed and signed in first — see the connection card below.
+those turns). It needs Muse Code installed and signed in first; see the connection card below.
 Every muse row was ticked only after it was observed working on a real session.
 
 Usage chips add up, so the bar keeps only the **two agents you used most recently**. The
 rest fold into a **"+N"** chip on the right and open from inside it (a folded chip keeps
 reading its usage, so opening the popover costs no fresh fetch). A chip near its cap
 (95% or more, or holding a Full reset) comes back onto the bar even if you have not run
-that agent lately. Each chip's dropdown has an **"On the WS bar"** control — **Always
-show** / **Auto** (default) / **Always fold**: pin a third agent if you want it on the bar
+that agent lately. Each chip's dropdown has an **"On the WS bar"** control (**Always
+show** / **Auto** (default) / **Always fold**). Pin a third agent if you want it on the bar
 permanently, and note that "Always fold" keeps it folded even near its cap. On a phone the
 chips already sit in the ⋯ overflow as a list, so nothing is folded there.
 
-The WS-bar usage chip needs an account-level limit to show — opencode
+The WS-bar usage chip needs an account-level limit to show: opencode
 (bring-your-own provider API keys), cursor, and kiro expose none. **lcpp** and **muse**
-have no Terminal (CLI) route — sessions of either kind default to Managed. **muse**
+have no Terminal (CLI) route; sessions of either kind default to Managed. **muse**
 requires on-demand installation (~299 MB) and a sign-in before it appears in the launch
-menu. 🔴 A muse session asks for no tool approvals — every tool call is allowed before any
+menu. 🔴 A muse session asks for no tool approvals: every tool call is allowed before any
 approval is considered, giving it the same reach over this workspace as `shell` (read the
 autonomous execution note above with that in mind). **shell** is a raw shell and **ssm**
-is a remote login over AWS SSM — both are terminal-only with no conversation, state model,
+is a remote login over AWS SSM; both are terminal-only with no conversation, state model,
 or notifications.
 
-**Default model for the assistant chat** — each assistant can pin its own model, and
+**Default model for the assistant chat**: each assistant can pin its own model, and
 claude's default is settable deployment-wide via `AF_CHAT_MODEL`. Fast, low-cost tiers are
 the defaults because the assistant is conversational: claude → Sonnet 5 · codex → the newest
 Luna it lists (`gpt-6-luna` at the time of writing) · opencode → `opencode-go/glm-5.2` when the account lists it, otherwise `opencode/nemotron-3-ultra-free` · agy → Gemini 3.5 Flash ·
@@ -137,7 +137,7 @@ cursor → its own default (Auto). cursor's assistant runs **read-only** (`--mod
 kiro is **not** available as an assistant chat (it has no headless chat mode).
 
 > **A note on autonomous execution.** Agents run commands, edit files, and push on your
-> behalf — including unattended (scheduled runs) and, in permission-bypassing modes,
+> behalf, including unattended (scheduled runs) and, in permission-bypassing modes,
 > without asking each time. shell / SSM sessions run the string you send **verbatim**.
 > These actions can be destructive or irreversible. Keep backups, use least-privilege
 > credentials, and lean on the approval gates (shell-command confirmation, chat-bridge
@@ -152,16 +152,16 @@ connected, the email and plan (e.g. `…@gmail.com · pro`) are shown.
 
 Claude's behavior can be adjusted on the same screen.
 
-- **Default model** — the model initially selected when launching a claude session. Tier aliases such as Opus / Sonnet / Haiku follow the newest release in that tier; a registered full model ID pins one release.
-- **Additional Claude models** — register a full ID such as `claude-opus-4-8` to make an older release a normal choice in launch dialogs, default-model settings, and MCP `list_models`. Claude Code's OAuth subscription has no account-aware catalog endpoint, so it checks whether your account can still use that model only when the session starts. Removing an entry removes it from the catalog but does not rewrite existing sessions.
-- **Models to exclude** — take a model out of circulation. An excluded model disappears from the launch dialog, from settings, and from the list an assistant picks from (MCP `list_models`), and any launch that names it explicitly — including a scheduled run's model field or one an assistant starts — is refused. Use it to avoid accidentally picking a model your plan bills extra for (Fable on a Claude Team plan draws on API credit, for example). It is per agent, and excluding a model also clears it from your default model and from any repository's last-used value. Excluding one model affects only that model (`gpt-5.4-mini` stays available after you exclude `gpt-5.4`) — except for claude's tier names (`fable` and friends), which are aliases and so also cover the full model ids that contain them. It cannot stop the CLI's own controls, such as typing `/model` inside the terminal — this prevents accidental selection, it is not a hard billing guard.
-- **Show thinking expanded** — the session view's "Thinking" block starts expanded. Off by default (collapsed; click the heading to read it). Claude's thinking is the short note on what it is doing right now, written between tool runs — the same text the terminal shows, and sometimes the only prose there is in the middle of a long autonomous stretch. Display only — it doesn't change how the agent works (independent of the same setting on codex / opencode).
-- **Stream replies in the chat view** — how the session view shows a reply while Claude is still writing it, in a "Writing…" block that gives way to the finished reply once Claude has written it. Three choices. **Typewriter** (the default) types the new text out character by character, the way a chat app reveals a reply. **Line by line** shows each line whole as soon as it arrives. **Off** shows a reply only when it is complete. Either way the session view receives a line once it ends, so a long paragraph arrives in one piece, and prose written between tool runs still appears when it is complete. On a device set to reduce motion, Typewriter behaves like Line by line. Display only — the terminal and the agent are unaffected.
-- **Remote control** — turns on / off the ability to remotely drive running sessions from your local Claude app and the like. Off by default in new workspaces (turn it on here if you need it).
-- **Notifications** — whether to notify you of session state changes.
-- **RTK (token savings)** — see below.
+- **Default model**: the model initially selected when launching a claude session. Tier aliases such as Opus / Sonnet / Haiku follow the newest release in that tier; a registered full model ID pins one release.
+- **Additional Claude models**: register a full ID such as `claude-opus-4-8` to make an older release a normal choice in launch dialogs, default-model settings, and MCP `list_models`. Claude Code's OAuth subscription has no account-aware catalog endpoint, so it checks whether your account can still use that model only when the session starts. Removing an entry removes it from the catalog but does not rewrite existing sessions.
+- **Models to exclude**: take a model out of circulation. An excluded model disappears from the launch dialog, from settings, and from the list an assistant picks from (MCP `list_models`), and any launch that names it explicitly (including a scheduled run's model field or one an assistant starts) is refused. Use it to avoid accidentally picking a model your plan bills extra for (Fable on a Claude Team plan draws on API credit, for example). It is per agent, and excluding a model also clears it from your default model and from any repository's last-used value. Excluding one model affects only that model (`gpt-5.4-mini` stays available after you exclude `gpt-5.4`), except for claude's tier names (`fable` and friends), which are aliases and so also cover the full model ids that contain them. It cannot stop the CLI's own controls, such as typing `/model` inside the terminal: this prevents accidental selection and is not a hard billing guard.
+- **Show thinking expanded**: the session view's "Thinking" block starts expanded. Off by default (collapsed; click the heading to read it). Claude's thinking is the short note on what it is doing right now, written between tool runs. It is the same text the terminal shows, and sometimes the only prose there is in the middle of a long autonomous stretch. Display only: it doesn't change how the agent works (independent of the same setting on codex / opencode).
+- **Stream replies in the chat view**: how the session view shows a reply while Claude is still writing it, in a "Writing…" block that gives way to the finished reply once Claude has written it. Three choices. **Typewriter** (the default) types the new text out character by character, the way a chat app reveals a reply. **Line by line** shows each line whole as soon as it arrives. **Off** shows a reply only when it is complete. Either way the session view receives a line once it ends, so a long paragraph arrives in one piece, and prose written between tool runs still appears when it is complete. On a device set to reduce motion, Typewriter behaves like Line by line. Display only: the terminal and the agent are unaffected.
+- **Remote control**: turns on / off the ability to remotely drive running sessions from your local Claude app and the like. Off by default in new workspaces (turn it on here if you need it).
+- **Notifications**: whether to notify you of session state changes.
+- **RTK (token savings)**: see below.
 
-> **If "Select login method" or a login screen shows up** → it's almost always a
+> **If "Select login method" or a login screen shows up**, it's almost always a
 > transient session-side state, and the connection itself is still alive. For the fix, see
 > [11 Troubleshooting](11-troubleshooting.md). The traditional approach of running
 > `/login` manually inside the terminal also still works.
@@ -170,22 +170,22 @@ Claude's behavior can be adjusted on the same screen.
 
 **Codex** can be connected in two ways.
 
-- **Connect with a ChatGPT subscription** (recommended) — uses your Plus / Pro quota, no extra charge. It's a device-code flow. Beforehand you must **turn on "Enable device-code authentication for Codex" in ChatGPT's "Settings > Security"** (if this is off, approving won't advance).
-- **Connect with an API key** — OpenAI API pay-as-you-go (`sk-…`).
+- **Connect with a ChatGPT subscription** (recommended): uses your Plus / Pro quota, no extra charge. It's a device-code flow. Beforehand you must **turn on "Enable device-code authentication for Codex" in ChatGPT's "Settings > Security"** (if this is off, approving won't advance).
+- **Connect with an API key**: OpenAI API pay-as-you-go (`sk-…`).
 
 The connection flow is the same 3 steps as GitHub (copy the code → open the link and
 paste it → wait for approval).
 
 **Behavior** also covers how codex's thinking (chain-of-thought) is shown.
 
-- **Show thinking expanded** — the session view's "Thinking" block starts expanded. Off by default (collapsed; click the heading to read it). Display only — it doesn't change how the agent works. It's per agent, and claude / opencode have the same setting.
+- **Show thinking expanded**: the session view's "Thinking" block starts expanded. Off by default (collapsed; click the heading to read it). Display only: it doesn't change how the agent works. It's per agent, and claude / opencode have the same setting.
 
 ## OpenCode
 
 The card has two controls, and they decide different things.
 
 **"Use opencode"** is the switch for the whole agent. While it is **Off**, opencode never
-launches — not with a stored API key, not with a signed-in account, not if a key is added
+launches: not with a stored API key, not with a signed-in account, not if a key is added
 later. A fresh workspace starts here, so nothing reaches opencode.ai until you say so.
 
 **"opencode.ai billing"** appears once it is On, and decides **only how opencode.ai is used**.
@@ -199,33 +199,33 @@ fleet's own engines stay in the launch list.
 | **Go (subscription)** | The subscription ids (`opencode-go/…`). | An API key (signing in is optional) |
 | **Zen (metered)** | The pay-per-request ids (`opencode/…`), plus Go's when you have both. | An account sign-in or an API key |
 
-If the route you picked has no model at all — Go without a Go contract, say — the launch list
+If the route you picked has no model at all (Go without a Go contract, say), the launch list
 falls back to Zen, and the card tells you it did. Check the sign-in or the plan if you meant
 to be billed the other way.
 
 **API keys.** Picking a preset fills in the env name automatically.
 
-- **opencode.ai** (`OPENCODE_API_KEY` — the same key pays for both Go and Zen) / **Anthropic** / **OpenAI** / **OpenRouter** / **Google Gemini** / **Sakana AI** (`SAKANA_API_KEY` · Fugu / Fugu Ultra) / **Custom…** (specify the env name yourself)
+- **opencode.ai** (`OPENCODE_API_KEY`; the same key pays for both Go and Zen) / **Anthropic** / **OpenAI** / **OpenRouter** / **Google Gemini** / **Sakana AI** (`SAKANA_API_KEY` · Fugu / Fugu Ultra) / **Custom…** (specify the env name yourself)
 
 Paste the key and press **"Connect"** to save it; it's injected when opencode launches. You
 can register multiple keys, and choose from the connected providers' models at launch. A key
 the current route does not inject is kept but marked as such rather than deleted.
 
-Changing a key or the billing route does **not** reach a running opencode serve on its own —
+Changing a key or the billing route does **not** reach a running opencode serve on its own:
 serve keeps the configuration it started with. When a change needs applying, the card says so
 and offers **"Restart opencode serve to apply"**. A restart waits for opencode sessions to
 finish answering and cuts short any that do not, so press it when nothing is mid-turn.
 
 **Behavior** also lets you choose how opencode's thinking (chain-of-thought) is shown.
 
-- **Show thinking expanded** — the session view's "Thinking" block starts expanded. Off by default (collapsed; click the heading to read it). Display only — it doesn't change how the agent works (independent of the same setting on claude / codex).
+- **Show thinking expanded**: the session view's "Thinking" block starts expanded. Off by default (collapsed; click the heading to read it). Display only: it doesn't change how the agent works (independent of the same setting on claude / codex).
 
 ## GitHub Copilot
 
 **copilot** (GitHub Copilot CLI) has no separate sign-in. **Connecting GitHub as a git
 provider automatically makes it "Connected"** (Git hosting tab > GitHub; disconnecting
 follows the GitHub side too). As a prerequisite, that GitHub account needs a **Copilot
-subscription** (including the Free plan) — without one, the first instruction fails with an error.
+subscription** (including the Free plan); without one, the first instruction fails with an error.
 
 - The model choices at launch **switch automatically based on your plan**. The Free plan
   offers only "Auto (Copilot picks)", while paid plans list the models available to that account.
@@ -233,9 +233,9 @@ subscription** (including the Free plan) — without one, the first instruction 
 
 ## Cursor
 
-**cursor** (Cursor CLI) — on the **Cursor** card in the "Agents" tab, press
+**cursor** (Cursor CLI): on the **Cursor** card in the "Agents" tab, press
 **"Sign in to Cursor"**. An authorize link is shown; just open it in your browser and
-approve (**there is no code to paste** — once you approve, the card automatically shows
+approve (**there is no code to paste**: once you approve, the card automatically shows
 "Connected"). A Cursor account is required. Connecting with an API key is not
 supported.
 
@@ -246,14 +246,14 @@ supported.
 
 ## Kiro
 
-**kiro** (Kiro — formerly Amazon Q Developer CLI) — on the **Kiro** card in the
+**kiro** (Kiro, formerly Amazon Q Developer CLI): on the **Kiro** card in the
 "Agents" tab, press **"Sign in to Kiro"**. It's a **device-flow** sign-in: an authorize
 link with a confirmation code is shown; open it in your browser and approve (Builder ID /
 Google / GitHub etc.). Once you approve, the card shows "Connected" with your account
 email. Connecting with an API key is not supported.
 
 - **On-demand install.** Kiro's CLI is large (~855 MB) and is **not baked into the image**
-  by default. The first time you use it, it's downloaded into your home directory — the
+  by default. The first time you use it, it's downloaded into your home directory. The
   connection card shows an **"Install"** button with progress before you can sign in.
   (Deployments that set `BAKE_AGENT_CLIS=1` ship it pre-installed.)
 - The model choices at launch are fetched live; **named models are available even on the
@@ -272,26 +272,26 @@ things must be true:
 
 1. On the **Muse Code** card in ⚙Settings → "Agents", press **"Install Muse Code"** (about 299 MB
    into your home, once; the sign-in screen appears by itself when it finishes). When a newer
-   pinned build is available the card says so and offers **"Update Muse Code"** — until you press
+   pinned build is available the card says so and offers **"Update Muse Code"**; until you press
    it the installed build keeps being used, and running muse sessions stay on the old build until
    they are restarted.
 2. Then sign in. **"Sign in with your Meta account"** shows an authorize link and a code to approve
-   in your browser — nothing to paste back; this is the subscription route. **"Use an API key"** is
+   in your browser, with nothing to paste back; this is the subscription route. **"Use an API key"** is
    the pay-as-you-go route: saving a key removes a stored account sign-in and moves you onto
    per-use billing, so disconnect first if you are signed in with an account.
 
 The **Behaviour** settings on the same card let you set the model (Agent Fleet selects the
-newest model without the "-contributor" clause by default — see
+newest model without the "-contributor" clause by default; see
 [Agents reference](../ref/agents.md) for what the `-contributor` models mean) and the
 reasoning effort.
 
-In a running muse session the **`/`** button beside the input lists the session's own skills —
+In a running muse session the **`/`** button beside the input lists the session's own skills:
 Muse Code's bundled ones, plugin skills, yours under `~/.config/muse/skills`, and the working
-copy's `.agents/skills/` — and picking one runs it
+copy's `.agents/skills/`. Picking one runs it
 ([07](07-chat-memo.md#calling-a-skill-or-a-command)).
 
 > 🔴 **A muse session asks for no tool approvals.** Every tool call is allowed before any
-> approval is considered — the sandbox cannot be built inside this Workspace container.
+> approval is considered: the sandbox cannot be built inside this Workspace container.
 > Treat a muse session as having the same reach over this workspace as a `shell` session.
 
 For details on what Agent Fleet cannot see inside a muse session (its own scheduled runs,
@@ -299,8 +299,7 @@ cross-session messaging, and session list), see [Agents reference](../ref/agents
 
 ## lcpp
 
-**lcpp** is the fleet's own llama.cpp engine — no sign-in or separate installation is
-needed. Launch it like any other session kind from the session dialog.
+**lcpp** is the fleet's own llama.cpp engine, and needs no sign-in or separate installation. Launch it like any other session kind from the session dialog.
 
 Its card in ⚙Settings → "Agents" has two controls. **"Use llama.cpp"** (On by default) is the
 switch: Off takes it out of the launch menus and refuses a launch by any other route, while
@@ -308,7 +307,7 @@ sessions already running keep going. **"Your own connection"** points your sessi
 llama-server on your own network instead of the deployment's engine: enter its URL (and an API
 key if it wants one), press **"Check connection"** to see its build, context window and models,
 and the launch dialog's model list becomes that server's. While it is set, lcpp sessions connect
-straight to it — the tenant administrator's engine permission does not apply — and the **Chat**
+straight to it (the tenant administrator's engine permission does not apply), and the **Chat**
 pill in the top bar reports that connection (**Connected** / **Not reachable** / **Checking**,
 and the model it found) rather than the deployment's engine
 ([badges](badges-and-menus.md#the-engine-pills-in-the-top-bar)). Clear the fields to go back to
@@ -324,8 +323,8 @@ What to expect before your first session:
 - **Stick to a verified model family.** Qwen3, GPT-OSS, and Gemma are confirmed to work;
   `llama-3.1-8b-instruct` does not (no Llama-specific tool-call parser in this build).
 
-For full details — measured turn counts by model family, cold-start timings, and the
-reasoning behind the window guidance — see [Agents reference](../ref/agents.md#lcpp-what-hardware-measurement-found).
+For full details (measured turn counts by model family, cold-start timings, and the
+reasoning behind the window guidance), see [Agents reference](../ref/agents.md#lcpp-what-hardware-measurement-found).
 
 ## Checking remaining context
 
@@ -338,29 +337,29 @@ shows the per-turn token-spend trend.
 
 ## RTK (token savings)
 
-Five agents — claude / codex / opencode / GitHub Copilot / agy — have an on / off setting
+Five agents (claude / codex / opencode / GitHub Copilot / agy) have an on / off setting
 for **"RTK (token savings)"** (cursor and Kiro don't have it yet). It smartly
 rewrites the commands the agent runs to keep token consumption down. If this workspace's
 image doesn't include RTK, "This workspace has no rtk." is shown.
 
 How it takes effect differs a little by agent.
 
-- **claude / opencode** — commands are rewritten transparently, so it works without you noticing.
-- **copilot** — shell commands are routed through rtk by a hook, so it takes effect deterministically, like claude / opencode (applies to new sessions).
-- **codex / agy** — they have no command-rewrite mechanism, so it's **instruction-based (best effort)**. It only nudges the agent to "please use rtk"; it isn't enforced.
+- **claude / opencode**: commands are rewritten transparently, so it works without you noticing.
+- **copilot**: shell commands are routed through rtk by a hook, so it takes effect deterministically, like claude / opencode (applies to new sessions).
+- **codex / agy**: they have no command-rewrite mechanism, so it's **instruction-based (best effort)**. It only nudges the agent to "please use rtk"; it isn't enforced.
 
 ## Agent instructions (write down how you work, once)
 
 Whatever you write under **⚙Settings → "Agent instructions"** is added to the instructions of
 every agent you start in this workspace from then on. The language and tone of reports, when
-you want to be asked before something happens, which tools to prefer — anything you find
+you want to be asked before something happens, which tools to prefer: anything you find
 yourself **retyping into every prompt** can move here.
 
 Instructions come in three layers, and this setting is the **middle** one.
 
 | Layer | Whose it is | Can you change it? |
 |-------|-------------|--------------------|
-| Workspace guide | The whole fleet (your operator) | Not from here — and it wins if the two conflict |
+| Workspace guide | The whole fleet (your operator) | Not from here, and it wins if the two conflict |
 | **Agent instructions** | **You** | **This setting** |
 | Repository instructions (`CLAUDE.md` / `AGENTS.md`) | The whole team (committed) | Edit them in the repository |
 

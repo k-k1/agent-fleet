@@ -23,7 +23,7 @@ shown as text as well, not just an icon.
 | Plan ready | Waiting for the plan to be approved or rejected |
 | Awaiting permission | Waiting for permission for a command run, an edit, etc. |
 | Waiting for limit reset · 19:50 | A usage limit stopped the turn. The time is when the automatic resume is booked (omitted when none is) |
-| Spend limit — needs a raise | The spend / credit limit was reached. Waiting will not clear it — the limit has to be raised or credit added |
+| Spend limit — needs a raise | The spend / credit limit was reached. Waiting will not clear it; the limit has to be raised or credit added |
 | Ready | Ready to take the next instruction |
 | Ready · running in background | Accepts input, but background processing is still running |
 | Ready · handoff to launch | The **last** next-session prompt this session proposed has not been launched. Open the conversation and start it (or discard it) from the handoff card ([02](02-sessions.md)). An older proposal that a newer, launched one replaced does not raise it |
@@ -41,12 +41,12 @@ shows it for anything folded inside. It clears when the session is on screen (a 
 conversation is), or with **"Mark all as read"** in the notification centre
 ([02](02-sessions.md#reading-state-badges-and-notifications)).
 
-A row can also carry **"Shared"** (visible to another member —
-[02](02-sessions.md#sharing-a-conversation-shared-sessions)) and **"Delete-locked"** (excluded from deletion and
-automatic tidying — [02](02-sessions.md#tidying-up-in-bulk-cleanup)).
+A row can also carry **"Shared"** (visible to another member;
+see [02](02-sessions.md#sharing-a-conversation-shared-sessions)) and **"Delete-locked"** (excluded from deletion and
+automatic tidying; see [02](02-sessions.md#tidying-up-in-bulk-cleanup)).
 
 A row can grow a **second line** with links. The first is the GitHub pull request of the
-branch the session works on — the icon says open, draft, merged or closed, and an open one
+branch the session works on. The icon says open, draft, merged or closed, and an open one
 carries its CI result (passed / failing / running; nothing when no check ran). Click it to open
 the PR on GitHub. It appears only for a working copy whose origin is on github.com while GitHub
 is connected (Settings > Connections), never for the repository's default branch, and it is
@@ -54,7 +54,7 @@ refreshed every couple of minutes, so a merge can take that long to show. The ot
 ports the session's own processes listen on (`:5173`): click one to open it in a browser pane,
 Ctrl / middle-click for a new pane ([browser pane](../ref/browser-pane.md)); on a deployment with no
 browser pane (Kubernetes, a preview runtime) it opens in the lightweight preview instead. Only servers bound
-to `127.0.0.1` or every interface count — the pane opens `http://127.0.0.1:{port}` — and another
+to `127.0.0.1` or every interface count (the pane opens `http://127.0.0.1:{port}`), and another
 session's servers never show; tool commands run by the shared codex / opencode Managed servers
 are not attributed to any session.
 
@@ -78,30 +78,30 @@ A collapsed parent repository also aggregates the sessions of the worktrees unde
 ## The engine pills in the top bar
 
 Where the deployment runs or borrows inference engines, the top bar carries **one pill per
-role** — **Chat** and **Images** — that every member sees. The pill names the role's state
+role**, **Chat** and **Images**, that every member sees. The pill names the role's state
 (**In use**, **Ready**, **Running**, **Starting**, **Stopping**, **Stopped**, or **Available**
 for an engine that is external or borrowed), with **×N** when several engines serve the role,
 **"in 12m"** while a countdown to the automatic stop is running, and **"N queued"** when
 something is waiting.
 
-**In use** means this deployment is holding somebody's request right now — a session is waiting
+**In use** means this deployment is holding somebody's request right now: a session is waiting
 for an answer. **Ready** means the model is in VRAM and can answer at once, with nobody using it.
 **Running** is the step before that: the instance is up, but the model is still loading, so a request
 would wait.
 
 Press the pill and a popover opens. Where the role has one engine, its state sits at the right of
 the popover's heading and everything below is detail. Only where several engines serve one role
-does each line carry the engine's own name and state — that name is the only thing telling those
+does each line carry the engine's own name and state; that name is the only thing telling those
 lines apart. The lines are: its state, **External** or
-**Borrowed** where that applies (hover for what it means — those cannot be started or stopped
+**Borrowed** where that applies (hover for what it means; those cannot be started or stopped
 from this deployment), what is in VRAM right now (**"Model: Qwen3.8 27B IQ4_XS"**, or the id when
 the catalogue has no readable name), **"Last used 2m ago"** when nobody is using it, **"Stops at
 19:50 · in 12m"** when a stop is booked, **"Stops automatically after 15m with nobody using it"**
 for the idle rule, and **"The engine starts on the next request. That can take a few minutes."**
 for one that is asleep. A line without a countdown means none is booked, not that the number is
 unknown. No model line means the engine is holding nothing (it is asleep). Where a role has two
-models, only one is loaded at a time, and whoever asks for the other one waits for it to load —
-the popover says so before you ask. The image-generation pane's
+models, only one is loaded at a time, and whoever asks for the other one waits for it to load.
+The popover says so before you ask. The image-generation pane's
 header says the same four things for the engine it is about to use
 ([04](04-files.md#image-generation)).
 
@@ -113,27 +113,27 @@ connection. Not this deployment's engine."** together with the model the last ch
 
 ## Other badges
 
-- **The AWS and Google Cloud badges** in the WS bar (the AWS mark, the Google mark) — your Settings profiles' logins,
+- **The AWS and Google Cloud badges** in the WS bar (the AWS mark, the Google mark): your Settings profiles' logins,
   shown only while the workspace runs and you have such profiles. The badge names the one logged-in profile, or
   counts them ("1/3"); green when something is logged in, plain when nothing is, amber when an AWS login ends soon
   or an agent waits for a Google Cloud login. Press it for each profile's state and its **Log in** button (AWS:
   **Log out** too; Google Cloud: **Log in again**). Neither picks a default profile: each command names one
   ([10](10-integrations.md#the-google-cloud-badge-in-the-ws-bar)).
-- Colored `1`, `2`… — the number of the pane it is shown in. Press to jump to that pane.
-- "Untracked", "Added", "Modified", "Renamed", "Deleted" — the file's Git change type.
-- The number on an assistant row — the conversation's message count.
-- The spinning icon / check on an assistant row — generating an answer / waiting.
-- "Awaiting approval", "Approved", "Rejected" on a plan card — the decision on the plan.
-- "LFS pointer" — a file with only the Git LFS pointer present, not the actual content.
-- **"From the operator", "Scheduled", "Manual run", "Auto-resume", "From <name>"** in the chat view — where a
+- Colored `1`, `2`…: the number of the pane it is shown in. Press to jump to that pane.
+- "Untracked", "Added", "Modified", "Renamed", "Deleted": the file's Git change type.
+- The number on an assistant row: the conversation's message count.
+- The spinning icon / check on an assistant row: generating an answer / waiting.
+- "Awaiting approval", "Approved", "Rejected" on a plan card: the decision on the plan.
+- "LFS pointer": a file with only the Git LFS pointer present, not the actual content.
+- **"From the operator", "Scheduled", "Manual run", "Auto-resume", "From <name>"** in the chat view: where a
   prompt you did not type came from: the fleet operator, a schedule, an auto-resume after an interruption, and
   [a message from another session](02-sessions.md#messages-between-sessions).
-- **"Paused"** on a schedule row — that schedule is suspended ([11](08-organising.md)).
-- **The budget mark** (a pulse icon) on a stopped session — its estimated spend reached its budget and it was
+- **"Paused"** on a schedule row: that schedule is suspended ([11](08-organising.md)).
+- **The budget mark** (a pulse icon) on a stopped session: its estimated spend reached its budget and it was
   stopped; **"Raise budget & resume…"** in its menu carries on ([02](02-sessions.md#a-spend-budget-pausing-a-session-that-spends-too-much)).
-- **"N awaiting approval"** on shared sessions — proposals from a recipient are waiting for you
+- **"N awaiting approval"** on shared sessions: proposals from a recipient are waiting for you
   ([02](02-sessions.md#sharing-a-conversation-shared-sessions)).
-- **"Safe" / "Review" / "Keep"** in the cleanup modal — whether it is fine to tidy away
+- **"Safe" / "Review" / "Keep"** in the cleanup modal: whether it is fine to tidy away
   ([02](02-sessions.md#tidying-up-in-bulk-cleanup)).
 
 ## Right-click menus
@@ -146,7 +146,7 @@ archive / delete, and recreate. For a session that doesn't belong to a repositor
 set** appears here too (an item shown ticked but unclickable is one that follows its repository or conversation
 automatically).
 If the session has made images with `generate_image`, **"Generated images (N)"** appears too (N is how many;
-absent for sessions that have not, and while the workspace is stopped — [04](04-files.md#image-gallery)).
+absent for sessions that have not, and while the workspace is stopped; see [04](04-files.md#image-gallery)).
 **"Spend budget…"** sets the session's budget; on a session its budget stopped it reads **"Raise budget &
 resume…"** ([02](02-sessions.md#a-spend-budget-pausing-a-session-that-spends-too-much)).
 Archive keeps the conversation but hides it from the list; recreate archives the current conversation and starts
@@ -168,7 +168,7 @@ Ctrl / ⌘+click or middle-click opens the commit graph in a new pane.
 You can create a new file, create a new folder, copy the name, copy the relative path, rename, and delete.
 Files additionally show "Open in reader" and "Download". Folders and **image files** also show
 **"Open in gallery"** (never other file types; from an image it opens the parent folder's gallery with that
-image enlarged — [04](04-files.md#image-gallery)). To hand a file to a session or an assistant, open the
+image enlarged; see [04](04-files.md#image-gallery)). To hand a file to a session or an assistant, open the
 file and use "Send" in the viewer.
 
 ### Cards in the image gallery
@@ -176,7 +176,7 @@ file and use "Send" in the viewer.
 A picture's card offers **"Send to a session / assistant…"** (the same send as the file viewer's:
 a session gets the file's path, an assistant opens a chat with the file attached and your comment
 drafted), **copy the path**, **copy the file name**, **rename the file** (within the same
-folder — a slash is refused) and **delete the file** (through a confirmation). A folder's card offers the
+folder; a slash is refused) and **delete the file** (through a confirmation). A folder's card offers the
 same for the folder, plus **"Open in another pane"** (a plain click moves this pane into it), and deleting
 a folder takes everything in it. Where the folder holds a session's generated images, **"Open …, the
 session that generated this"** jumps to that conversation, and the same name sits in the breadcrumb row
@@ -210,7 +210,7 @@ workspace is stopped, keep the browser's own menu.
 ### Cards in the sessions overview
 
 A card in the sessions overview pane ([02](02-sessions.md#seeing-every-running-session-at-once-the-sessions-overview))
-gives the same menu again — from a right-click, its ⋯ button, or the Menu key while the card has focus.
+gives the same menu again, from a right-click, its ⋯ button, or the Menu key while the card has focus.
 
 ## When a menu doesn't appear
 

@@ -27,7 +27,7 @@ value you set is not the value in force, look one layer out.
 |---|---|
 | Display | language, theme, density |
 | Keyboard | shortcuts and rebinding |
-| Agents | connecting each agent, its default model, models to exclude, per-agent behaviour; llama.cpp on / off and your own llama-server connection; Muse Code install and sign-in; the Session group — messages between sessions, starting sessions from sessions and children per session, past-session search, image generation |
+| Agents | connecting each agent, its default model, models to exclude, per-agent behaviour; llama.cpp on / off and your own llama-server connection; Muse Code install and sign-in; the Session group (messages between sessions, starting sessions from sessions and children per session, past-session search, image generation) |
 | Agent instructions | text added to every agent you start in this workspace |
 | Agent memory | version management, rollback, import / export of an agent's memory; the change list of Agent Fleet's own shared memory, with revert and forget |
 | Assistant | the assistant chat's agent and model |
@@ -59,15 +59,15 @@ value you set is not the value in force, look one layer out.
 | Tab | Configures |
 |---|---|
 | Members | the roster; per-member resources, sessions and operations |
-| Engine access | per role (chat `llm`, image generation `image`) of the deployment's self-hosted engines: every member, or only the members you tick — within what the deployment administrator allows the tenant |
+| Engine access | per role (chat `llm`, image generation `image`) of the deployment's self-hosted engines: every member, or only the members you tick, within what the deployment administrator allows the tenant |
 | Sessions | everything running in the tenant right now |
-| Limits & idle | the limits in force (read-only — a deployment administrator sets them) |
+| Limits & idle | the limits in force (read-only; a deployment administrator sets them) |
 | Sign-in methods | your own IdP or GitHub organisation as a way in (needs approval) |
 | Login rules | join mode and domains in force (read-only) |
 | Allowed networks | where members may connect from |
 | Integration OAuth apps | your tenant's own OAuth apps for GitHub / Bitbucket |
 | MCP distribution | integration servers handed to every member |
-| Branch naming rules | the tenant's default for naming new branches and choosing their base, per repository pattern (a JSON list); members' Workspaces pick it up within five minutes. Advice only — a name that does not follow it gets a warning, never a refusal |
+| Branch naming rules | the tenant's default for naming new branches and choosing their base, per repository pattern (a JSON list); members' Workspaces pick it up within five minutes. Advice only: a name that does not follow it gets a warning, never a refusal |
 | Audit | who changed what, when |
 | Running time | per-member workspace uptime, exportable, plus an hour-by-hour heatmap of the whole tenant |
 | Cloud cost | the tenant's cloud spend |
@@ -82,9 +82,9 @@ else:
 
 | Variable | Decides |
 |---|---|
-| `AF_RUNTIME` | the deployment target — see [deploy-targets.md](deploy-targets.md). Rejected at boot if unknown |
+| `AF_RUNTIME` | the deployment target; see [deploy-targets.md](deploy-targets.md). Rejected at boot if unknown |
 | `AUTH` | how people sign in: `dev` (single user), `oauth` (the Control Plane's own), `proxy` (an upstream gateway) |
-| `DATA_DIR` | where all persistent state lives — the thing to back up |
+| `DATA_DIR` | where all persistent state lives (the thing to back up) |
 | `AF_MASTER_KEY` | the root of at-rest encryption. Lose it and the stored credentials are unrecoverable |
 | `AF_KEY_CUSTODIAN` | who holds the at-rest keys: `local` (the default, derived from `AF_MASTER_KEY`) or `kms` (AWS KMS, with `AF_KMS_KEY_ID`; [operate/04](../operate/04-secure.md#keys-at-rest-on-aws-kms)). Rejected at boot if unknown or incomplete |
 | `SUPER_ADMIN_EMAILS` | who is a deployment administrator |
@@ -94,6 +94,6 @@ else:
 ## Status
 
 The tab rows come from the Console's own labels, so this table cannot silently miss a
-screen. What each tab means in practice is the reader's shelf —
-[use/](../member/README.md) and [admin/](../admin/README.md) — and the procedures for the
-variables are [operate/](../operate/README.md).
+screen. What each tab means in practice is covered on the reader's shelves,
+[use/](../member/README.md) and [admin/](../admin/README.md); the procedures for the
+variables are in [operate/](../operate/README.md).

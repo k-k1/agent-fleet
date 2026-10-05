@@ -8,8 +8,8 @@ updated: "2026-10"
 
 English | [日本語](01-choose.ja.md)
 
-One company runs one deployment. This page is about deciding **what it runs on** —
-which is a choice you can revisit later, but not for free, so it is worth twenty
+One company runs one deployment. This page is about deciding **what it runs on**.
+You can revisit the choice later, but not for free, so it is worth twenty
 minutes now.
 
 What each target can actually do is
@@ -26,7 +26,7 @@ Reasons to choose something else:
 
 | If | Then | Why |
 |---|---|---|
-| Docker cannot be installed on the machine | **native** | Containerless. **Single user only** — without container isolation it refuses to run in a shared mode |
+| Docker cannot be installed on the machine | **native** | Containerless. **Single user only**: without container isolation it refuses to run in a shared mode |
 | You want it on AWS, small team, cost matters | **ec2-single** | It *is* compose, on a VM. Not a separate runtime |
 | You need task-level isolation, per-user fault isolation, rolling image replacement | **ecs** | You are buying isolation, not saving money |
 | You need the above, plus fast starts and disk performance | **ecs-ec2** | A pool of instances with a persistent per-user disk |
@@ -34,18 +34,18 @@ Reasons to choose something else:
 
 ## What ECS actually costs you
 
-Be clear-eyed about this, because the usual assumption is backwards.
+The usual assumption here is backwards.
 
 | Team size | ec2-single | ECS (weekdays, 8h/day) | Verdict |
 |---|---|---|---|
-| up to 5 | **$67** (t3.large) | $154 | **ec2-single, no contest** — ECS cannot earn back its $110 floor |
+| up to 5 | **$67** (t3.large) | $154 | **ec2-single, no contest**: ECS cannot earn back its $110 floor |
 | up to 15 | $283 (8 vCPU / 32 GB) | $240 | roughly even; decide on operational effort and isolation needs |
-| 20 | $283–368 | **$285** | **about the same** — this is the crossover, and past it non-cost factors dominate |
+| 20 | $283–368 | **$285** | **about the same**: this is the crossover, and past it non-cost factors dominate |
 | 20, running 24/7 | $283 | $830 | if it never idles, consolidating onto a VM wins by a mile |
 
 **There is almost no case where ECS wins on cost.** You choose ECS for task-level
 isolation, per-user fault isolation, rolling image replacement, and a tighter instance
-metadata / role posture. Scale-to-zero is not what makes it cheap — it is what dilutes
+metadata / role posture. Scale-to-zero is not what makes it cheap; it is what dilutes
 the premium down to "about the same as a VM, at twenty people".
 
 So:
@@ -69,7 +69,7 @@ Choose **kubernetes** when a Kubernetes cluster is already how your organisation
 or when you are on Google Cloud and want what ECS gives on AWS: a pod per workspace, isolated by
 the cluster, with capacity only while it runs. It brings what a cluster brings: Terraform and
 kustomize to learn if you do not use them yet, a node pool, a managed database, a load
-balancer — the same kind of floor as ECS's — and a list of preconditions the cluster must meet
+balancer (the same kind of floor as ECS's), and a list of preconditions the cluster must meet
 for workspaces to be isolated, which the runbook checks off one by one.
 
 Do not choose it to save money on a small team (one VM is cheaper on any cloud), on a cluster
@@ -94,7 +94,7 @@ Inside a workspace, the same files are staged under `operate/runbooks/` beside t
 shelf.
 
 **This shelf does not repeat those commands.** It tells you what each step decides and
-what to watch for — [02 Install](02-install.md) walks the compose path in that spirit.
+what to watch for. [02 Install](02-install.md) walks the compose path in that spirit.
 If a command here ever contradicts the script it describes, the script is right and
 this page has a bug.
 
@@ -106,5 +106,5 @@ this page has a bug.
   procedure, not an edit.
 - **Upgrades are one-way.** There is no downgrade. Back up first, every time.
 
-Everything else — the domain, the sign-in providers, limits, sizing — is ordinary
+Everything else (the domain, the sign-in providers, limits, sizing) is ordinary
 configuration.

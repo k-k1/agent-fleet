@@ -50,7 +50,7 @@ settings**. Only a deployment administrator sees the shield-icon **Admin** item.
 ¹ Visible, but read-only. The panel exists so an administrator can see *why* something
 was refused without having to ask.
 
-² Registering is not enough — a deployment administrator approves it, and a later
+² Registering is not enough: a deployment administrator approves it, and a later
 change (adding an organisation, changing how the same account is recognised) sends the
 row back for approval.
 
@@ -60,10 +60,10 @@ modes, the use gate and the API tokens stay with the deployment administrator.
 
 ## Where a tenant administrator has to ask
 
-The split is not a hierarchy of trust; it is a split of blast radius. Anything whose
+The split follows blast radius. Anything whose
 effect crosses tenants, or that could lock people out of the deployment, sits with the
-deployment administrator — creating tenants, granting rights, the login rules,
-approving a sign-in method, egress. Anything scoped to one team sits with its own
+deployment administrator (creating tenants, granting rights, the login rules,
+approving a sign-in method, egress). Anything scoped to one team sits with its own
 administrator, including the whole offboarding sequence.
 
 Backups, upgrades and host incident response are the deployment administrator's too,
@@ -74,7 +74,7 @@ and in most organisations that is the same person as IT or SRE.
 The same guide, whatever the role: every container receives [member/](../member/README.md),
 [admin/](../admin/README.md), [operate/](../operate/README.md) and [ref/](README.md).
 The shelves are cut by reader so that each reader knows where to start, not to hide
-anything — and a link inside the guide has to work for everyone who follows it.
+anything. A link inside the guide has to work for everyone who follows it.
 
 The developer documentation (design notes, decision records, work journals) is shipped
 to nobody.

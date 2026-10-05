@@ -13,16 +13,16 @@ follow the breadcrumb at the top of the panel (Members › the person).
 
 ## Finding your way around
 
-**The tenant's numbers** — **Tenant › Limits & idle** in the rail shows this tenant's display
+**The tenant's numbers**: **Tenant › Limits & idle** in the rail shows this tenant's display
 name, its member count, the number of workspaces currently running ("N running"), and the
 tenant-wide limits ("Limits — Workspace: X / Session: Y"). This is **read-only** (a super_admin
-sets the caps — see [02-limits.md](02-limits.md)).
+sets the caps; see [02-limits.md](02-limits.md)).
 
-**Roster** — each member row shows a dot indicating running state, the internal identifier
+**Roster**: each member row shows a dot indicating running state, the internal identifier
 (`user_key`), the email address, and the role (`member` / `tenant_admin`). Clicking a row takes you
 to the member detail.
 
-**Member detail** — the screen that gathers that member's workspace resources, running sessions,
+**Member detail**: the screen that gathers that member's workspace resources, running sessions,
 and the various operations. Resources and sessions, force-stop, and limit settings are covered in
 [02-limits.md](02-limits.md).
 
@@ -33,8 +33,8 @@ At the very bottom of the roster there is an **"Add member"** form.
 1. Enter the email address the member signs in with in the "email" field. Alternatively you
    can enter a key directly in the "or user_key" (internal identifier) field (if you enter an email,
    the key is derived from it automatically). A key entered directly must already be in that
-   derived form — lowercase letters and digits separated by single hyphens, at most 40
-   characters — because it becomes the name of the member's home directory; anything else is
+   derived form (lowercase letters and digits separated by single hyphens, at most 40
+   characters) because it becomes the name of the member's home directory; anything else is
    refused with a message that suggests the accepted form. Keys the server generated itself, as
    shown in member rows, are accepted even when they run past 40 characters.
 2. As tenant_admin, you can only add **`member` (regular members)**. The role selector is shown
@@ -50,8 +50,8 @@ Point the newly added person to [member/](../member/README.md) in this guide.
 
 Members are identified internally by a **user_key** (a short identifier derived from the email).
 That is the monospace string you see in member rows and session lists. Normally you don't need to
-think about it — entering an email determines the key automatically — but in audit logs and the
-sessions overview the internal identifier takes center stage, so knowing the mapping of
+think about it, since entering an email determines the key automatically, but in audit logs and the
+sessions overview the internal identifier is what is shown, so knowing the mapping of
 "this identifier = this person" makes them easier to read. Even for the same person, membership
 (and the workspace) is treated completely separately per tenant.
 
@@ -59,12 +59,12 @@ sessions overview the internal identifier takes center stage, so knowing the map
 
 There are two ways, depending on deployment settings, for a new person to enter this tenant.
 
-- **Invite-only (`AF_PROVISION=invite`, what new installs start with)** — only people registered by
+- **Invite-only (`AF_PROVISION=invite`, what new installs start with)**: only people registered by
   an administrator via "Add member" can enter. Anyone else still signs in fine and lands on a
-  **"you haven't been invited yet"** page. That page shows the address they signed in with — use
+  **"you haven't been invited yet"** page. That page shows the address they signed in with; use
   exactly that address when they ask to be added (it is not necessarily their display name, or the
   address they usually give out).
-- **Auto-join (`AF_PROVISION=auto`)** — anyone with an email address permitted to log
+- **Auto-join (`AF_PROVISION=auto`)**: anyone with an email address permitted to log
   in automatically becomes a member of the default tenant on first login. You don't need to add
   people one by one.
 
@@ -82,15 +82,15 @@ Offboarding is **entirely yours to do**. The department is the one that knows wh
 sequence isn't half a ticket to IT. From the "Operations" section of the member detail, in this
 order:
 
-1. **Remove member** — takes them off the roster and stops access. **Do this first**: the signed
-   session cookie cannot be revoked individually, so this — effective from the next request — is
+1. **Remove member**: takes them off the roster and stops access. **Do this first**: the signed
+   session cookie cannot be revoked individually, so this, effective from the next request, is
    what actually cuts access. The workspace, its home and stored credentials are kept, so a mistake
    is undone by adding the same email address again.
-2. **Force-stop the workspace** — stop what is running ([02-limits.md](02-limits.md)).
-3. **Clean home** — erase everything in their home **except their logins and connections** (git
+2. **Force-stop the workspace**: stop what is running ([02-limits.md](02-limits.md)).
+3. **Clean home**: erase everything in their home **except their logins and connections** (git
    credentials, SSH keys, the encrypted connection store, Claude and Codex logins). **This cannot be
    undone.** Those logins and connections go only when the workspace is destroyed (below).
-4. **Delete backups** — shown only where the deployment keeps backup copies of homes, and only
+4. **Delete backups**: shown only where the deployment keeps backup copies of homes, and only
    when this member has some. Clean home leaves them, and each one still holds the home as it was
    when it was taken. Do it after Clean home: while the home still exists, the tenant's backup
    schedule goes on taking copies of it. **This cannot be undone.**
@@ -104,7 +104,7 @@ answers the same way. If the Control Plane restarts meanwhile, the outcome entry
 see [ref/deploy-targets](../ref/deploy-targets.md) for how to tell how it ended.
 
 Someone you removed stays on the roster marked "removed". That is so steps 2 to 4 remain reachable
-afterwards — they have not vanished.
+afterwards; they have not vanished.
 
 **Deleting the row for good.** After you have destroyed a removed member's workspace, the same
 "Operations" box offers **Delete this member**. It appears only once the workspace is gone: while
@@ -121,8 +121,8 @@ There is no undo. Inviting the same person again starts a brand new member.
 ## Rotating a member's git token
 
 Each member reaches the tenant's internal git repositories (the "Internal repos" tab) with a token
-their workspace holds for them. If that token may have leaked out of the workspace — pasted into a
-log, copied to another machine — press **Rotate git token** in the "Operations" section of the
+their workspace holds for them. If that token may have leaked out of the workspace (pasted into a
+log, copied to another machine), press **Rotate git token** in the "Operations" section of the
 member detail. The current token stops working at once, for anyone holding it, and the member gets
 a new one; nothing else about the member changes.
 
@@ -140,14 +140,14 @@ changes the deployment's master key instead.
 
 Agent Fleet has 3 roles. The ones that mainly concern you (tenant_admin) are the first two below.
 
-- **member (regular member)** — someone who writes code in their own workspace and runs sessions.
+- **member (regular member)**: someone who writes code in their own workspace and runs sessions.
   They cannot enter tenant settings.
-- **tenant_admin (tenant administrator)** — can manage members within this tenant, view resources,
+- **tenant_admin (tenant administrator)**: can manage members within this tenant, view resources,
   force-stop workspaces, set session limits, rotate a member's git token, remove members, clean
   their home and delete its backups. **They cannot
   touch other tenants at all.** They cannot create tenants, change tenant-wide limits, grant admin
-  rights, or change the login rules. = You.
-- **super_admin** — the deployment-wide administrator. Sees all tenants and can create tenants,
+  rights, or change the login rules. This is you.
+- **super_admin**: the deployment-wide administrator. Sees all tenants and can create tenants,
   set limits, and grant rights such as "make someone a tenant_admin". super_admins are determined
   by environment configuration (`SUPER_ADMIN_EMAILS`) and are marked with a star in the member
   roster.

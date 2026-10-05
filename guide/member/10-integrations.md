@@ -17,16 +17,16 @@ on the spot, **with no extra port publishing and no container rebuild**. There a
 Enter a port number in the **port input field** on the right of the workspace action bar, and you can choose
 **"Open in pane"** (browser pane) or **"Lightweight preview"** (both only while the workspace is running).
 
-- **Browser pane ("Open in pane")** — a browser inside the workspace opens `127.0.0.1:{port}` directly, and
+- **Browser pane ("Open in pane")**: a browser inside the workspace opens `127.0.0.1:{port}` directly, and
   **only its rendering and input** are mirrored into a Console pane. You can click, scroll, type ASCII/Japanese,
   go back/forward, reload, and navigate paths, and **HMR (hot reload), WebSocket, SSE, cookies, redirects, and
   absolute-path assets** all work just like ordinary localhost. Use this when you want to touch the screen and
   verify it.
-- **Lightweight preview** — opens the port in a **new tab**. **WebSocket and SSE do pass through** (HMR works
+- **Lightweight preview**: opens the port in a **new tab**. **WebSocket and SSE do pass through** (HMR works
   too, depending on the app's own configuration), but the URL is a **sub-path** (`/preview/{port}/`), so an app
   that emits **absolute paths** like `/static/...`, or a screen that depends on the root path or a cookie path,
   will break.
-- **Preview subdomains** — on some deployments a URL such as
+- **Preview subdomains**: on some deployments a URL such as
   `https://xxxxxxxx-3000.<preview domain>/` is **issued automatically every time the workspace starts**. The app
   is served **at the root**, so the sub-path problem above cannot happen, and **several ports** (3000 and 8080,
   say) are open at the same time. See "Preview subdomains" below.
@@ -48,7 +48,7 @@ A pinch re-lays the page out at a narrower width rather than stretching the pict
 its own size, and pinching back returns you to the original view. **Double-tap** jumps between the fit-to-width
 view and life size.
 
-A tap does **not** raise the keyboard — it would appear every time you pressed a link or a button. To type
+A tap does **not** raise the keyboard, because it would appear every time you pressed a link or a button. To type
 into a field on the page, tap the field and then open the keyboard with the **keyboard button** at the bottom
 left of the pane; it stays open while you keep tapping the page.
 
@@ -73,13 +73,13 @@ https://k7f2q9x1w3ub5nzt0abc-3000.pv.example.com/   → port 3000 (e.g. React / 
 https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com/   → port 8080 (e.g. Spring Boot)
 ```
 
-- **Where to find them** — open "Preview" on the workspace action bar; they are listed per port under
+- **Where to find them**: open "Preview" on the workspace action bar; they are listed per port under
   **Preview URLs (this start)**. Click to open in a new tab, or use "Copy" to take the URL.
 - **They change on every start**, and stop working when the workspace stops (the old URL returns 404). Assume
   any document you paste one into goes stale quickly.
 - **Signing in is required by default.** The first visit bounces through the Console login once and comes back.
 - **You choose which ports are exposed.** The default is `3000, 8080`; change it under Settings ›
-  **Preview subdomains**. A port that is not listed has no URL — the list is what keeps an admin console you
+  **Preview subdomains**. A port that is not listed has no URL; the list is what keeps an admin console you
   did not mean to expose off the internet.
 
 #### What the app has to get right
@@ -89,7 +89,7 @@ https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com/   → port 8080 (e.g. Spring B
   (Vite's `server.proxy`, Next.js's `rewrites()`), and the same configuration works both on your own PC and in
   the preview.
 - ⚠️ **Leave the proxy's target (`destination` / `target`) as `http://127.0.0.1:8080`.** Rewriting it to the
-  preview URL — the natural move if you assume the frontend "cannot see" 8080 — makes **every API call return
+  preview URL (the natural move if you assume the frontend "cannot see" 8080) makes **every API call return
   401 (`preview requires sign-in`)**. The proxy is a **server-side** call made by the dev server inside the
   container, and it does not carry the login state your browser has.
 - If the page on 3000 really must call 8080 **directly**, turn on **"Allow calls between ports"** in the
@@ -98,7 +98,7 @@ https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com/   → port 8080 (e.g. Spring B
   correctly over this path as well.
 - ⚠️ **Next.js (15.2 and later, including 16.x) needs `allowedDevOrigins`.** The dev server **blocks
   cross-origin access to `/_next/*` by default**, so on a preview subdomain **only the layout shell renders and
-  none of the data fetched from the API appears** — not blank, no error, so it looks like a bug in your own app.
+  none of the data fetched from the API appears** (not blank, no error), so it looks like a bug in your own app.
   The giveaway is `⚠ Blocked cross-origin request to Next.js dev resource` in the dev server log.
   **The URL changes on every start, so use a wildcard.**
 
@@ -113,23 +113,23 @@ https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com/   → port 8080 (e.g. Spring B
 
 What you use depends on who you want to show it to. **Each step opens it wider.**
 
-1. **Only you** — do nothing (the default).
-2. **Colleagues in the same tenant** — turn on **"Show it to your tenant"** under
+1. **Only you**: do nothing (the default).
+2. **Colleagues in the same tenant**: turn on **"Show it to your tenant"** under
    Settings › Preview subdomains.
    - They open it **after signing in to the Console** (nobody outside the tenant can see it).
    - **This does NOT return to off when the workspace stops or restarts.** Turn it off yourself
      when you are done.
-   - Hand them the link from the **"Share"** button. **That link keeps working across restarts** —
+   - Hand them the link from the **"Share"** button. **That link keeps working across restarts**:
      a raw `https://xxxx-3000.…` URL starts returning 404 the next time your workspace starts.
    - In their Console it appears under **"Shared with you"** in the preview popover. **While your
-     workspace is stopped it shows "Stopped" and cannot be opened** — they cannot start your
+     workspace is stopped it shows "Stopped" and cannot be opened**. They cannot start your
      workspace, so ask them to ping you if they need it running.
    - ⚠️ **Your workspace will not idle-stop while someone has it open, and that running time is
      billed to you.** (A page left open and untouched does eventually stop.)
-3. **People outside the tenant** — **Open without signing in** lets anyone with the URL open it. It
+3. **People outside the tenant**: **Open without signing in** lets anyone with the URL open it. It
    **always returns to off when the workspace stops or restarts** (and the URL changes).
 - **The URL you currently have is shown under Settings › Preview subdomains, as
-  "Current URL".** While the workspace is stopped it says none is issued — but the domain it will
+  "Current URL".** While the workspace is stopped it says none is issued, but the domain it will
   use is written just below.
 - If a URL went to the wrong place, press **"Discard and mint a new one"**. Tabs that are open now start
   returning 404 immediately. ⚠️ **Pressing it while the workspace is stopped does nothing**, because
@@ -143,9 +143,9 @@ What you use depends on who you want to show it to. **Each step opens it wider.*
 | **Spring Boot** | `8080` + `/` or `/actuator/health` | Screens involving redirects, absolute `/assets/*`, and cookies: **browser pane**. Just a one-time look at the health JSON: lightweight preview. |
 | **API only** | `8080` + `/api/health` | One-time JSON / status checks: **lightweight preview**. SSE, auth cookies, redirects, and interactive checks: **browser pane**. |
 | **Frontend + API (multiple ports)** | frontend `5173` / API `8080` | **Preview subdomains are the best fit if you have them** (each port gets its own URL). Otherwise open the frontend's `5173` in a **browser pane**; fetch / WebSocket / SSE to another port (`8080`) works from there (as in a normal browser, CORS configuration is required). |
-| **React 3000 + Spring Boot 8080** | `3000` / `8080` | Preview subdomains serve both at the root. Routing the API through the dev server's proxy onto `/api` is the least trouble — the same configuration then works on your own PC too. |
+| **React 3000 + Spring Boot 8080** | `3000` / `8080` | Preview subdomains serve both at the root. Routing the API through the dev server's proxy onto `/api` is the least trouble, and the same configuration then works on your own PC too. |
 
-> **Spring Boot links / redirects** — to have them resolve correctly, set
+> **Spring Boot links / redirects**: to have them resolve correctly, set
 > `server.forward-headers-strategy=framework` (or `native`) on the app side.
 
 ### Status display and recovery
@@ -175,26 +175,26 @@ workspace is running.
   Sources. The pane's "Console" lets you view and copy that page's `error` / `warn` logs and the like
   (up to 200 entries; not stored persistently).
 
-> **On a smartphone**, the action bar has no "Preview" button: tap **⋯** at its right end instead — the port
+> **On a smartphone**, the action bar has no "Preview" button: tap **⋯** at its right end instead; the port
 > and path fields and "Open in pane" are in the popover it opens.
 
 ## Operating a browser the agent opened
 
 When an agent is driving its own browser (Chromium) inside the workspace and reaches something
-**only a person can do** — signing in, a one-time code, ticking a consent box — it can hand that
+**only a person can do** (signing in, a one-time code, ticking a consent box), it can hand that
 page over to you. This is a different thing from the browser pane above: there you open your own
 local web app, here you take over a page the agent already has open. Like the browser pane, it does not
 exist on a deployment that runs workspaces on Kubernetes (a preview runtime).
 
 - A link appears in the agent's message: **"Open the browser and operate it (opens as a pane in this
-  tab)"**. **You are the one who clicks it** — nothing opens until you do, and it opens as a pane in
+  tab)"**. **You are the one who clicks it**: nothing opens until you do, and it opens as a pane in
   the tab you are already in, not in a new one.
 - It starts in **View only**. The picture is live, but clicks, scrolling and keystrokes are not
   delivered. Once the agent hands control over it becomes **User control** and you can operate it.
-  (**If it feels unresponsive, this is why** — the pane says so at the top.)
+  (**If it feels unresponsive, this is why**: the pane says so at the top.)
 - What you are being asked to do is shown as a **Requested browser action**. **Action complete** or
   **Cancel action** tells the agent how it ended. Pressing them reports *what you did*, not that the
-  site's own processing succeeded — which is also why an agent must not make the final send, buy or
+  site's own processing succeeded. That is also why an agent must not make the final send, buy or
   consent click for you.
 - **Close view** only stops showing it. **The agent's browser, its page and its session stay open.**
 - You can reopen an attachment from **Preview** in the workspace action bar, under **Attached
@@ -209,7 +209,7 @@ next instruction". Issue the token for this in **⚙ Settings → the "MCP token
 1. Choose a **name** (e.g. `laptop-claude`), a **scope**, and an **expiry**, then press **"Issue token"**.
    - Scopes are **read (view only)** / **write (drive sessions; the default)** / **admin:dangerous (elevated / admin)**. You cannot pick a scope beyond your own permissions. If all you want is to drive sessions remotely, write is enough.
    - Expiry is 90 days (default) / 30 days / 365 days / no expiry.
-2. On issue you'll see **"Token issued (you can't see it again once you close this)."** — **the token is shown
+2. On issue you'll see **"Token issued (you can't see it again once you close this)."**: **the token is shown
    only this once**. Save it with "Copy token".
 3. The same screen also shows a **`.mcp.json`** template for your local Claude Code. Copy it with
    "Copy .mcp.json" and save it at the project root (or add `agent-fleet` to an existing file). The endpoint is
@@ -221,25 +221,25 @@ that token are rejected from the next attempt).
 ## Connecting Discord / Slack (chat bridge)
 
 Connect your own Discord / Slack bot from ⚙ Settings → the **"Chat"** tab in the Connections group, and session
-progress reaches your chat even while you're away from your desk — and you can steer sessions right from your
+progress reaches your chat even while you're away from your desk, and you can steer sessions right from your
 replies.
 
-- **Connecting** — Discord takes **a single Bot token** (the card's wizard walks you through validation →
+- **Connecting**: Discord takes **a single Bot token** (the card's wizard walks you through validation →
   inviting it to your server → picking a channel, and a test notification arrives on connect). Slack takes two:
   a Bot token (`xoxb-…`) and, if you want two-way operation, an App-level token (`xapp-…`).
   You can also connect both at the same time.
-- **What arrives** — a thread is created per session, and you receive "Answer ready", "Questions & plan
+- **What arrives**: a thread is created per session, and you receive "Answer ready", "Questions & plan
   approvals", "Permission requests", "Abnormal exits", and "Session reports" (each type has its own toggle).
   With the opt-in **full-text mode**, the response body itself is delivered (secrets such as tokens are
   automatically redacted).
-- **Driving from chat** — turn on **"Reply to steer"** (opt-in) and replies in the thread become input to that
+- **Driving from chat**: turn on **"Reply to steer"** (opt-in) and replies in the thread become input to that
   session as-is. Questions can be answered with choice buttons, plan approvals with "Approve / Reject" buttons,
   and permission requests with "Allow / Deny" buttons (button coverage varies by agent kind).
-- **Fleet operator** — write in the standing thread "🛰 Fleet Operator" to talk with the
+- **Fleet operator**: write in the standing thread "🛰 Fleet Operator" to talk with the
   [08 fleet operator](08-organising.md) from chat (the same conversation as the operator on the Console
   side). Destructive operations initiated from chat (deletion etc.) pause for an "Approve / Reject" button
   before executing.
-- **Just want to silence notifications** — under Personal → the "Notifications" tab, **Service notifications**
+- **Just want to silence notifications**: under Personal → the "Notifications" tab, **Service notifications**
   lets you turn off delivery without disconnecting.
 
 ## Logging in to another in-house host (SSM)
@@ -247,8 +247,8 @@ replies.
 You can log in to EC2 instances in your company's AWS via AWS SSM Session Manager. Configuration lives in
 **⚙ Settings → the "AWS profiles/SSM" tab**, split into **two layers**.
 
-- **Profile (shared settings)** — the access portal (IAM Identity Center) and account/role. A bundle of SSO settings reused across multiple hosts. Create one of these first.
-- **SSM host (individual)** — an alias for the login target → instance ID. For authentication you just pick a profile.
+- **Profile (shared settings)**: the access portal (IAM Identity Center) and account/role. A bundle of SSO settings reused across multiple hosts. Create one of these first.
+- **SSM host (individual)**: an alias for the login target → instance ID. For authentication you just pick a profile.
 
 Each profile row has **Log in**, which signs you in to IAM Identity Center for that profile without leaving the
 Console. It opens a login window; the sign-in code is created only when you press **Log in** there, and only that
@@ -258,7 +258,7 @@ Beside the label, a badge shows the login state: **Signed in**, **Renews on use*
 while the portal session is open, the next use renews it) or **Not signed in**. It shows no time left: the
 workspace knows only the access token's expiry (about an hour), not when the portal session ends.
 
-**Before a login ends — only for a login that cannot renew.** A normal login from Settings renews itself on use
+**Before a login ends: only for a login that cannot renew.** A normal login from Settings renews itself on use
 until the portal session ends, and that end is recorded nowhere the workspace can read, so such a login is **not
 warned about in advance**: when the portal ends it, the next command asks for a login as below. Only when the cached
 login has nothing to renew it with (no refresh token, or its sign-in client registration has expired) is its end
@@ -270,22 +270,22 @@ never warned about.
 **Logging out of one profile.** A row that is signed in (or renews on use) has **Log out**, both here and in the
 popover of the WS bar's AWS badge. After you confirm, the workspace ends that profile's login with AWS and deletes
 its cached login and role credentials; your other profiles stay signed in. Credentials a running command already
-received stay valid until they expire — AWS cannot recall them — so stop that command if it matters. If AWS cannot
+received stay valid until they expire (AWS cannot recall them), so stop that command if it matters. If AWS cannot
 be reached or refuses (it does when the access token has already expired, as for a **Renews on use** row), the
 workspace is signed out all the same and the Console says so; the login may then stay valid at AWS
 until it ends. Do not use `aws sso logout` for this: it signs out every profile at once, whatever `--profile` says.
 
 Every profile and host row has **Edit**, which opens the same form filled in and saves it in place. Edit rather
 than delete and re-add: a host refers to its profile by an internal ID, so a re-added profile is a new one.
-A profile that hosts still use cannot be deleted — the page names those hosts; edit them to pick another
+A profile that hosts still use cannot be deleted: the page names those hosts; edit them to pick another
 profile, or delete them, first. A host that was left without a profile before this rule (its row says so) is
 fixed the same way: edit it and pick a profile.
 A profile's workspace name comes from its label, and the login belongs to that name: changing the label, or the
 start URL / SSO region, means logging in again: the form warns you, and the row shows **Log in again** until you log in from it. The workspace's `~/.aws/config` picks up
 the change within 5 minutes, or at once when you press **Log in**; sessions already open keep the old settings.
 
-**No AWS secrets are stored in Agent Fleet.** Login happens at session start via the device-code flow — you
-approve the **`aws sso login`** URL shown in the terminal in your browser — and short-lived credentials are held
+**No AWS secrets are stored in Agent Fleet.** Login happens at session start via the device-code flow: you
+approve the **`aws sso login`** URL shown in the terminal in your browser, and short-lived credentials are held
 only inside the workspace.
 
 Once registered, connect from the workspace action bar via **"Start" → "SSM — log in to another host"**,
@@ -302,11 +302,11 @@ friends) win over `AWS_PROFILE`, so it does not pin who a command runs as.
 
 - **The name** is the profile's label with every character other than letters, digits and `._@-` replaced by
   `-` (label `prod app` → profile `prod-app`). `af-aws-exec --list` prints each name with its account, role and
-  label — pick by those, not by the name alone.
+  label; pick by those, not by the name alone.
 - If two labels map to the same name (`prod app` and `prod-app`), **neither is exported** and `--list` says so:
   either one could be the wrong account. Rename one of them in Settings.
 - The profiles sit in a **managed block** at the end of the file, between two `# agent-fleet` marker lines. Edit
-  them in Settings, not inside the block — the block is rewritten, and so is anything `aws configure set` writes
+  them in Settings, not inside the block: the block is rewritten, and so is anything `aws configure set` writes
   into it. Everything outside it is yours and is kept.
   Only profiles with both an **account and a role** are exported. With neither, `aws --profile <name>` would not
   use SSO at all and would quietly run as the workspace's own role; with only one it would fail. `--list` says
@@ -327,7 +327,7 @@ your browser cannot reach. Use the device-code flow instead:
 aws sso login --profile <name> --use-device-code --no-browser
 ```
 
-Open the URL it prints and approve the code — only a code you started yourself just now. The login is shared with
+Open the URL it prints and approve the code. Approve only a code you started yourself just now. The login is shared with
 SSM sessions of the same profile, so logging in once covers both.
 
 **Running one command as you: `af-aws-exec`.** The workspace can have an AWS identity of its own (a *workload
@@ -338,8 +338,8 @@ A tool that ignores that variable is stopped only by the host's network block, w
 finished the 0.26.0 migration ([operator guide 04](../operate/04-secure.md), "Other operational controls"). (A
 workspace that runs directly on your own machine is left as it is: an instance role there is your machine's, and the
 SDKs still find it.) So a
-command that names no profile at all — a bare `aws …`, an SDK's default credential chain, a build tool with no
-profile setting — fails with "Unable to locate credentials" (or its SDK's wording) instead of running as the
+command that names no profile at all (a bare `aws …`, an SDK's default credential chain, a build tool with no
+profile setting) fails with "Unable to locate credentials" (or its SDK's wording) instead of running as the
 workspace. (A named profile that is misspelled or logged out fails with its own error.) Your administrator can let
 the workspace use its own task role again (on AWS ECS); then such a command quietly runs as that role, in another
 account. Either way, "Unable to locate credentials" means "name your profile", not "configure credentials": do not
@@ -386,8 +386,8 @@ then echo isolated; else echo not-isolated; fi; unset err st
 
 `isolated` means `AWS_EC2_METADATA_DISABLED=true` is exported, so the CLI does not ask instance metadata, the environment holds no workload credentials and no AWS
 config-file or endpoint overrides, and the CLI's default chain (with `AWS_PROFILE` set aside and configured endpoints
-ignored) ended in its own "no credentials" error (exit 253), so a misspelled or logged-out profile fails instead of answering for another account. Anything else — your
-own default credentials, an expired session, a failing `credential_process`, a network error — prints `not-isolated`, and so normally do a workspace
+ignored) ended in its own "no credentials" error (exit 253), so a misspelled or logged-out profile fails instead of answering for another account. Anything else (your
+own default credentials, an expired session, a failing `credential_process`, a network error) prints `not-isolated`, and so normally do a workspace
 on your own machine, a deployment that hands the task role back and a workspace not started again since the upgrade.
 The check reads what this shell would hand the CLI; it does not prove the runtime, the version or the host's network
 block. Where it prints `not-isolated`, run lookups through `af-aws-exec` too. Where it prints `isolated`, a direct
@@ -408,7 +408,7 @@ lookup still needs all of these, or it goes through `af-aws-exec`:
 
 Agents in the workspace follow the same rule.
 
-- It passes the profile's **short-lived** credentials to that one command through its environment only —
+- It passes the profile's **short-lived** credentials to that one command through its environment only.
   `af-aws-exec` itself writes them nowhere and prints nothing but the identity the command runs as. (The AWS CLI
   keeps its own login and role caches under `~/.aws`, as it always does.)
 - The profile must have an **account and role** set in Settings. A profile that also carries `role_arn` (even
@@ -419,8 +419,8 @@ Agents in the workspace follow the same rule.
   so the one name would mean different identities to different tools. A tool that syncs credentials into
   `~/.aws/credentials` under the same name (yawsso, for example) causes this; sync to another name. Keys under a
   `[DEFAULT]` section count, since the CLI applies them to every profile, and so does an empty value. The credentials
-  are obtained through the profile's SSO login alone — from a minimal config holding only its SSO settings, with
-  endpoint overrides ignored — and then checked with AWS to be a session of that profile's permission-set role in
+  are obtained through the profile's SSO login alone (from a minimal config holding only its SSO settings, with
+  endpoint overrides ignored) and then checked with AWS to be a session of that profile's permission-set role in
   that account. `--profile default` is refused: name the SSO profile.
 - **A profile that is not SSO.** Some accounts are reached only through a profile of your own in `~/.aws`: one that
   assumes a role from a `source_profile` (`role_arn` + `source_profile`), or one with a `credential_process`.
@@ -463,8 +463,8 @@ Agents in the workspace follow the same rule.
   yourself, or with `--no-login`, the command exits with code 3 and the login command to run in a terminal.
 - The command gets an AWS config that defines **only the profile you chose** (it hands back the same short-lived
   credentials), no credentials file, and no `AWS_ENDPOINT_URL*` overrides. A tool that names that same profile
-  works. A tool that names a different one — Terraform's `profile = "staging"`, `cdk deploy --profile staging`,
-  `AWS_PROFILE=staging` in a script — fails with "The config profile (staging) could not be found" instead of
+  works. A tool that names a different one (Terraform's `profile = "staging"`, `cdk deploy --profile staging`,
+  `AWS_PROFILE=staging` in a script) fails with "The config profile (staging) could not be found" instead of
   quietly running as that other profile. If `af-aws-exec` cannot keep that config private (a home directory other
   users can write to, for example) it gives the command an empty AWS config instead, with a warning: still isolated,
   only a tool naming the same profile will not find it. If a script inside the command
@@ -489,7 +489,7 @@ Agents in the workspace follow the same rule.
 ### Trying AWS code against a local emulator (MiniStack)
 
 To try code, a template or a script without touching a real account, you can run
-[MiniStack](https://github.com/ministackorg/ministack) — an open-source AWS API emulator — inside the workspace.
+[MiniStack](https://github.com/ministackorg/ministack), an open-source AWS API emulator, inside the workspace.
 It needs no Docker when installed from PyPI, starts in seconds and stays small. It is not part of the image, so
 install it yourself:
 
@@ -502,7 +502,7 @@ Ports are shared with your other sessions: pick a free one (the default 4566 may
 when you are done.
 
 **Point a dedicated profile at it, and name that profile every time.** Pick a profile name that is used nowhere
-yet — not in `aws configure list-profiles`, not in `af-aws-exec --list`, not in `~/.aws/credentials` — because a
+yet (not in `aws configure list-profiles`, not in `af-aws-exec --list`, not in `~/.aws/credentials`), because a
 `[ministack]` entry in `~/.aws/credentials` would win over the keys below and send real credentials to the
 emulator, and a Settings profile of the same name stops being exported. Then add a new section outside the managed
 block of `~/.aws/config`:
@@ -527,7 +527,7 @@ forgets `--endpoint-url` sends its request to real AWS (where the dummy keys are
 with "Unable to locate credentials" before anything leaves the workspace. How much a forgotten profile protects
 you depends on the workspace: where a command without a profile stops with that error (see `af-aws-exec` above),
 it stops; where the workspace's own role is handed back (`AF_WS_WORKLOAD_AWS=1`) or on the native runtime with
-the machine's own credentials, a command without a profile runs as that identity against real AWS — so there,
+the machine's own credentials, a command without a profile runs as that identity against real AWS. There,
 never leave the profile out. MiniStack is never run through `af-aws-exec`, which removes endpoint settings on
 purpose.
 
@@ -537,7 +537,7 @@ purpose.
   keep two sessions apart.
 - **What does not work here.** RDS, ElastiCache and ECS start real Docker containers, and a workspace has no
   Docker. RDS still answers `available` with an endpoint such as `localhost:5432` that no database of its own
-  is behind — another Postgres in the workspace may be listening there. For a database, use `af-db`
+  is behind; another Postgres in the workspace may be listening there. For a database, use `af-db`
   ([Running database-backed tests](03-code.md#running-database-backed-tests)).
 - **State** is in memory and lost when the server stops. `PERSIST_STATE=1` keeps service state but not S3
   object contents, which need `S3_PERSIST=1` as well; both default to directories under `/tmp`, so set
@@ -550,18 +550,18 @@ purpose.
 Your Google Cloud profiles live in **⚙ Settings → the "Google Cloud" tab**. A profile says which project a
 command points at and as whom it acts:
 
-- **Label** — the display name. The profile's **name**, the one commands use, is made from it and shown next to
+- **Label**: the display name. The profile's **name**, the one commands use, is made from it and shown next to
   it: lowercase letters, digits and `-` (every other run of characters becomes `-`, a name that would start with
   a digit gets `p` in front, and a label with nothing usable in it, such as a Japanese one, gets `p-` and a short
   code). If two labels make the same name (`Prod` and `prod`), **neither is available** in the workspace and the
   row says so; rename one.
-- **Login method** — a Google account, including Google Workspace and Cloud Identity accounts.
-- **Project** — the project ID (not the number) commands point at by default.
-- **Quota project** (optional) — the project billed for API quota; the project itself when left blank. Some
+- **Login method**: a Google account, including Google Workspace and Cloud Identity accounts.
+- **Project**: the project ID (not the number) commands point at by default.
+- **Quota project** (optional): the project billed for API quota; the project itself when left blank. Some
   APIs need one with a personal login, and your account needs permission to use services on it.
-- **Account** (optional) — the Google account to sign in as; a sign-in as anyone else is refused. Left blank,
+- **Account** (optional): the Google account to sign in as; a sign-in as anyone else is refused. Left blank,
   you choose at the first login.
-- **Impersonate service account** (optional) — commands act as this service account through your login. Your
+- **Impersonate service account** (optional): commands act as this service account through your login. Your
   account needs the Service Account Token Creator role on it. This is the way to act as a service account:
   service-account keys are not accepted anywhere.
 - **Region / Zone** (optional).
@@ -618,7 +618,7 @@ af-gcloud-exec --profile <name> --project <project-id> -- kubectl get pods
 
 A program built on a client library stops with an error such as "File … was not found" or "no such file or
 directory" for its default credentials. That is deliberate: it would otherwise find another identity (your own
-gcloud login, or the machine's). The program has to take the token itself — in Python
+gcloud login, or the machine's). The program has to take the token itself: in Python
 `google.oauth2.credentials.Credentials(os.environ["GOOGLE_OAUTH_ACCESS_TOKEN"])`, in Go
 `option.WithTokenSource(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: os.Getenv("GOOGLE_OAUTH_ACCESS_TOKEN")}))`
 (Go's libraries then use the profile's quota project, which `af-gcloud-exec` sets in `GOOGLE_CLOUD_QUOTA_PROJECT`;
@@ -635,13 +635,13 @@ login window that shows the profile, its project and its account and starts noth
 when you press **Log in** (or **Log in again**) in that window, and only that window then shows the sign-in.
 
 1. Press **Open Google sign-in**. Google's sign-in page opens in a new tab (the window also shows its address,
-   which is always on `accounts.google.com`: the workspace refuses to show any other). Sign in — as the profile's
+   which is always on `accounts.google.com`: the workspace refuses to show any other). Sign in as the profile's
    account, if it names one; a sign-in as anyone else is refused.
 2. Google shows a **verification code**. Paste it into **Verification code** in the same login window and press
    **Submit code**. The window says "Logged in" once the workspace has checked that the login gives a token.
 
 **Paste a code only into a login you started yourself, here, just now.** A code works only for the sign-in whose
-page produced it, and the Console shows the code field only in the window where you pressed **Log in** — but
+page produced it, and the Console shows the code field only in the window where you pressed **Log in**, but
 nothing proves who started a sign-in: any program in your workspace, an agent included, can start one. So never
 paste a code into a field, a terminal or a chat message someone else put in front of you.
 
@@ -668,7 +668,7 @@ request too.
 a URL: open it in your browser, sign in, and paste the verification code the page shows back into **that**
 terminal. The same rule holds: paste only a code from a sign-in you started yourself just now. A command that
 cannot ask the Console (with `--no-login`, or outside a workspace) exits with code 3 and prints the command to run
-in a terminal of your own — a shell session, or in Claude Code type it after `!` at the prompt:
+in a terminal of your own (a shell session, or in Claude Code type it after `!` at the prompt):
 
 ```sh
 af-gcloud-exec --profile <name> --project <project-id> --login -- true
@@ -689,7 +689,7 @@ the end.
 
 While the workspace is running and you have at least one Google Cloud profile, the WS bar shows a badge with the
 Google mark beside the AWS one. It names your logged-in profile when there is exactly one, and otherwise counts
-them ("1/3" — one of three logged in). It is green when something is logged in, plain when nothing is, and amber
+them ("1/3", one of three logged in). It is green when something is logged in, plain when nothing is, and amber
 while an agent's command is waiting for a profile's login. Press it for the list: each profile with **Logged in**
 or **Not logged in**, its name, project and account, **"An agent is waiting for this login"** on the row an agent
 is waiting for, and **Log in** / **Log in again**, which open the login window above. There is no default profile:
@@ -697,7 +697,7 @@ every logged-in profile can be used at the same time, and each command picks one
 `af-gcloud-exec --profile <name>`. **Google Cloud settings** at the bottom opens the Settings tab.
 
 **Logged in** means only that a Google login for the profile's account is stored in the workspace. The workspace
-does not check it with Google, and keeps it when Google refuses it, so a revoked login stays **Logged in** — also
+does not check it with Google, and keeps it when Google refuses it, so a revoked login stays **Logged in**, even
 after a command has found out. While that command's login request waits, the badge is amber; once the request is
 cancelled or expires (after 15 minutes), the badge is green again although the login no longer works.
 **Log in again** signs in afresh and fixes it. The badge does not poll: it asks the workspace when it comes up,
@@ -732,27 +732,26 @@ In **⚙ Settings → the "Toolchains" tab** you can adjust the workspace enviro
 shells started afterwards** (running ones and existing processes pick them up after you stop and then start the
 workspace again).
 
-- **Time zone (TZ)** — the default is Japan time. Applying a change requires stopping and starting the workspace.
-- **Node.js / Java (JAVA_HOME)** — pick the versions to use. The Java list also offers versions that are
+- **Time zone (TZ)**: the default is Japan time. Applying a change requires stopping and starting the workspace.
+- **Node.js / Java (JAVA_HOME)**: pick the versions to use. The Java list also offers versions that are
   **not in this workspace yet**; picking one shows an **Install** button that fetches it right there (about
   200MB, into your home volume, so it survives restarts). Sessions started after it finishes get it as
-  `JAVA_HOME` — no stop and start needed.
-- **Agent CLI updates** — "Update the agent CLIs and rtk to the latest on start" (covers claude / opencode / codex / cursor / GitHub Copilot / Antigravity (agy) / rtk). Default is OFF (pinned to the versions baked into the image). Kiro is not part of this toggle — its version is fixed by the image rebuild / on-demand install and its own auto-update is kept off. Neither is Muse Code: it is installed from its card at the build this image pins and never updates itself; when a newer pinned build arrives with the image, the card offers **"Update Muse Code"** ([06](06-agents.md#muse-code)). lcpp has no CLI in the workspace to update — its engine belongs to the deployment.
+  `JAVA_HOME`, with no stop and start needed.
+- **Agent CLI updates**: "Update the agent CLIs and rtk to the latest on start" (covers claude / opencode / codex / cursor / GitHub Copilot / Antigravity (agy) / rtk). Default is OFF (pinned to the versions baked into the image). Kiro is not part of this toggle; its version is fixed by the image rebuild / on-demand install and its own auto-update is kept off. Neither is Muse Code: it is installed from its card at the build this image pins and never updates itself; when a newer pinned build arrives with the image, the card offers **"Update Muse Code"** ([06](06-agents.md#muse-code)). lcpp has no CLI in the workspace to update: its engine belongs to the deployment.
 
 ### Recreating the workspace (danger zone)
 
 In **⚙ Settings → the "Danger zone" tab** is **"Recreate the workspace"**. It discards the
-container and rebuilds it from the latest image; pressing **"Recreate"** shows a confirmation. What stays and
-what goes is as follows.
+container and rebuilds it from the latest image; pressing **"Recreate"** shows a confirmation.
 
 Not every deployment offers this tab. Recreating and cleaning home remove files from the home
 itself, and on some deployments the home is out of the control plane's reach
 ([ref/deploy-targets](../ref/deploy-targets.md)); there the tab is not shown. Stopping and starting
 the workspace from the workspace bar works everywhere.
 
-- **What is lost** — running sessions, and **cloned repositories (`~/repos`, including uncommitted changes)**.
+- **What is lost**: running sessions, and **cloned repositories (`~/repos`, including uncommitted changes)**.
   `~/repos` is the **only** thing deleted.
-- **What stays** — everything else in your home (`~`) remains. Logins and connections (GitHub / Bitbucket /
+- **What stays**: everything else in your home (`~`) remains. Logins and connections (GitHub / Bitbucket /
   Claude etc.), `~/.local` (claude / node etc.), and your settings and caches are preserved, because the home
   volume is reattached to the recreated container.
 
@@ -765,10 +764,10 @@ environment is broken. **Uncommitted changes are lost**, so push / commit before
 Since recreating deletes only `~/repos`, it won't fix problems on the home side (a broken claude install in
 `~/.local`, corrupted caches or config files, and so on). In that case use **"Clean home"**, in the same
 "Danger zone" tab. It deletes **your entire home except logins and connections** (`~/repos`, `~/.local`, caches,
-settings) and rebuilds from the latest image — a deeper reset.
+settings) and rebuilds from the latest image, a deeper reset.
 
-- **What stays** — logins and connections (GitHub / Bitbucket / Claude) **only**.
-- **What is lost** — running sessions, cloned repositories, and **everything else in home**, including
+- **What stays**: logins and connections (GitHub / Bitbucket / Claude) **only**.
+- **What is lost**: running sessions, cloned repositories, and **everything else in home**, including
   `~/.local`, caches, and settings.
 
 Try "Recreate" first to see if it fixes things, and use "Clean" only when that doesn't.

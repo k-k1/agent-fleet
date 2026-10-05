@@ -17,7 +17,7 @@ using Agent Fleet that never require opening that black screen.
 
 This guide describes the "how" of the operations. It doesn't get into the "why it works that way"
 mechanics (if you're curious, that is in the developer documentation).
-Guides for other roles and the glossary are in the index [README.md](README.md). If you ever need
+See the index [README.md](README.md) for guides for other roles and the glossary. If you ever need
 to go a step further (write code yourself, edit files, and so on), move on to the developer-facing
 [member/README.md](README.md).
 
@@ -50,11 +50,11 @@ administrator for the URL and login method and you'll be fine.
 After logging in you'll see a screen (the Console) divided into several areas. You don't need
 to understand all of it. **All you need to remember is the following list on the left side.**
 
-- **Assistants** — the list of AI chats and "+ New chat". This is your entrance for questions and translations.
-- **Memo queue** — the list of request memos you've collected. It shows a count badge.
-- **Files (the repository tree)** — where the dev team's documents and slides live.
-- **Sessions** — the list of development AI work. Status badges (colored marks) show progress at a glance.
-- **Shared sessions** — work a developer has shown you. It doesn't appear when nothing is shared (chapter 7).
+- **Assistants**: the list of AI chats and "+ New chat". This is your entrance for questions and translations.
+- **Memo queue**: the list of request memos you've collected. It shows a count badge.
+- **Files (the repository tree)**: where the dev team's documents and slides live.
+- **Sessions**: the list of development AI work. Status badges (colored marks) show progress at a glance.
+- **Shared sessions**: work a developer has shown you. It doesn't appear when nothing is shared (chapter 7).
 
 It also works on a narrow smartphone screen. In that case the left-side list starts out
 collapsed; press the three-line (menu) button near the top to open it. It closes automatically
@@ -68,9 +68,9 @@ The first time you open it, a guidance card appears saying "**Welcome to Agent F
 Two steps first, then just pick your goal**". It's a to-do list where items get checked off in
 order. There are only two things to do.
 
-1. **Start workspace** — brings up your own private work area. Just press the "Start" button
+1. **Start workspace**: brings up your own private work area. Just press the "Start" button
    and wait for the "Starting…" indicator to settle. This one is a must.
-2. **Connect an agent** — sign in to the AI (such as Claude). Chat needs this, so press
+2. **Connect an agent**: sign in to the AI (such as Claude). Chat needs this, so press
    "Connect" and follow the on-screen instructions to sign in.
 
 Next, two cards appear asking "**Where do you want to start?**". You should press
@@ -84,7 +84,7 @@ automatically. If you want to see it again after closing it, you can always reop
 "**Getting-started guide**" in the menu under your name at the top right. You can stop the
 workspace when you're done with it; press "Start" again next time and it comes back.
 
-**When to ask your administrator** — don't struggle on your own in these cases: you don't know
+**When to ask your administrator.** Don't struggle on your own in these cases: you don't know
 the login method or the URL / signing in at "Connect an agent" isn't working / you're not sure
 what your account can use in the first place. These are configuration and permission matters,
 so asking your administrator is the fastest and surest route.
@@ -114,13 +114,13 @@ this", "summarize this", "make this text easier to read".
 
 A common question. Roughly speaking:
 
-- **Chat (assistants)** = for repository-free Q&A and translation. Your help desk — ask casually,
+- **Chat (assistants)** = for repository-free Q&A and translation. Your help desk: ask casually,
   as often as you like. It only answers within the conversation; it doesn't create files or take on big jobs.
 - **Session** = where developers have the AI do serious work (writing code, fixing lots of files).
 
 So it's enough to remember: "short questions, translation, text cleanup" go to chat, and "big
-work that rewrites files" goes to a session. **Big jobs that produce file output** — like
-translating a long document and saving it as a separate file — are better handed to a session
+work that rewrites files" goes to a session. **Big jobs that produce file output**, like
+translating a long document and saving it as a separate file, are better handed to a session
 (i.e. the dev team) rather than chat. Chat runs out of steam when it takes on too much work at
 once, which is why the roles are kept separate.
 
@@ -162,10 +162,10 @@ and hand them to development later, all at once**.
   "**No memos yet.**"
 - The "**Send**" button on an open file can also "**Add to queue**" a request about that
   document (see the previous chapter).
-- Piled-up memos can stay rough — that's fine. Use "**Organize the selected memos with an
+- Piled-up memos can stay rough; that's fine. Use "**Organize the selected memos with an
   assistant**" at the top and the AI will polish the wording and even suggest a categorization.
   You review the result in a preview (the "**Tidy with assistant**" screen), and nothing is
-  rewritten until you press "**Apply**" (it never overwrites on its own).
+  rewritten until you press "**Apply**".
 - To hand them over, tick the checkboxes and press "**Send selection**", or press "**Send**" on
   a category header (= send this category together), then choose the destination session. The
   selected memos arrive **combined into a single message**.
@@ -173,9 +173,9 @@ and hand them to development later, all at once**.
 ### "Who receives my memos?"
 
 Memos don't automatically fly off into someone's email. When you perform the send operation,
-they go to **the running session you chose — that development AI's work**. In other words, you
+they go to **the running session you chose** (that development AI's work). In other words, you
 choose the destination. If there is no session you can send to, it says "**No running session
-to send to.**" — in that case, ask the developer in charge to get a session running, then send.
+to send to.**" In that case, ask the developer in charge to get a session running, then send.
 Sent memos aren't deleted; they remain marked "**Sent**" for a while, so you can look back at
 them later. You can also just keep collecting and send them another day.
 
@@ -197,7 +197,7 @@ on each row (the status badge) tells you at a glance what state it's in. Read th
 Open a row and a "**Chat / Terminal**" toggle appears at the top. **Choose the "Chat" side**
 to follow that work's **conversation** in a readable form (formatted turn by turn). "Terminal"
 is the black screen for developers, so looking at "Chat" alone is enough for you. While you're
-watching, it shows "**Viewing history (resume to type)**" — you're essentially in read-only mode.
+watching, it shows "**Viewing history (resume to type)**"; you're essentially in read-only mode.
 
 ### Reading work that was shared with you
 
@@ -207,14 +207,14 @@ opens independently of your own workspace, so you don't need to have any reposit
 
 - Only with the **may-propose** permission can you **propose** something to send from the field
   below. A proposal reaches the AI **only after the owner (the developer who shared it) approves
-  it** — nothing starts moving on its own.
+  it**. Nothing starts moving on its own.
 - **While the owner's workspace is stopped**, the history can't be read. It says so; ask the
   developer to start it.
 - If the list looks out of date, press **"Refresh"**.
 
 ### An important ground rule
 
-When the AI is **waiting for someone's reply** — as in "Question" or "Awaiting permission" —
+When the AI is **waiting for someone's reply** (as in "Question" or "Awaiting permission"),
 please don't answer in their place just because you happen to be watching. That question is
 addressed to the developer in charge. Stick to **watching** the progress, and if you notice
 something, speak to the person in charge or write it into the memo queue. Replying on your own
@@ -227,11 +227,11 @@ can send the work off in a direction the developer never intended.
 ### First moves when something goes wrong
 
 1. **If items disappeared from the left**, check that the button at the very top of the left pane
-   still says **"All"**. When it shows another name (a working set), only that group is listed —
+   still says **"All"**. When it shows another name (a working set), only that group is listed;
    nothing was deleted.
 2. Try **reloading** the page (browser refresh).
 3. If you haven't pressed "Start workspace", most features won't work. Check that it's started.
-4. If it still doesn't work, don't push through — **ask your administrator**. Login, connections,
+4. If it still doesn't work, don't push through; **ask your administrator**. Login, connections,
    and permissions are the administrator's territory.
 
 ### FAQ

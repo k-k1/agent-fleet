@@ -17,14 +17,14 @@ answering small questions.
 
 Here's how to think about **choosing between it and a session**.
 
-- **Chat** — short-to-medium questions, translations, summaries. Things like "translate this text into Japanese" or "what does this function do?", where an answer on the spot is all you need.
-- **Session** — work that actually reads and writes files, code changes, bulk processing of large files. If file output is involved, go to a session (you can hand over files with "Send" in [04 Files](04-files.md)).
+- **Chat**: short-to-medium questions, translations, summaries. Things like "translate this text into Japanese" or "what does this function do?", where an answer on the spot is all you need.
+- **Session**: work that actually reads and writes files, code changes, bulk processing of large files. If file output is involved, go to a session (you can hand over files with "Send" in [04 Files](04-files.md)).
 
 Start a conversation with **+ (New chat)** in the **Assistants** section. Send with Ctrl+Enter
 (you can switch to Enter-to-send in settings). The other side's messages are labeled
 "Assistant", yours "You", and "Thinking…" appears while it's working. You can also
 **paste an image** into the input field and send it along (for example, showing a
-screenshot and asking about it). Its thumbnail — before you send, and in the sent message —
+screenshot and asking about it). Its thumbnail, both before you send and in the sent message,
 opens enlarged in the same lightbox the gallery uses.
 
 ### Purpose-built assistants and translation
@@ -39,7 +39,7 @@ configure a name, a description (the greeting when a conversation starts), a per
 
 If you leave the model blank, new conversations use the model set for that agent under ⚙ Settings →
 Assistant → **Assistant models** ([12](12-settings.md)); when that is "Recommended", each agent's own
-default rule picks a fast, low-cost model — usually the newest Luna for codex, and for opencode GLM
+default rule picks a fast, low-cost model, usually the newest Luna for codex, and for opencode GLM
 when your account lists it, otherwise Nemotron. Models you excluded are skipped, and when nothing
 qualifies the CLI's own default is used (details in [06](06-agents.md)). If you specify
 a model here, that choice wins, and the model of a conversation you've already started
@@ -49,14 +49,14 @@ Each reply carries the model that produced it next to the agent name (e.g. `sonn
 same way a session's mirror labels its turns. It is recorded per reply, so earlier answers
 keep the model they were actually written with even if the conversation later switches model
 or falls back to another agent. When a reply shows no model, the CLI ran on its own default
-and does not tell us which model that was (cursor's Auto, for instance) — we leave it blank
+and does not tell us which model that was (cursor's Auto, for instance); we leave it blank
 rather than print a guess.
 
-- **None** — answers within the chat alone, with no external tools. This is plenty for translation and summarization.
-- **AF read** — can read your workspace's session list, statuses, and output, plus agent usage / limits (claude / codex / muse usage rates and reset times, agy's quota) and each session's context size and cumulative token spend (no writing).
-- **AF write** — in addition to reading, can send prompts to sessions (doing work on your behalf). Grant this only for trusted uses.
+- **None**: answers within the chat alone, with no external tools. This is plenty for translation and summarization.
+- **AF read**: can read your workspace's session list, statuses, and output, plus agent usage / limits (claude / codex / muse usage rates and reset times, agy's quota) and each session's context size and cumulative token spend (no writing).
+- **AF write**: in addition to reading, can send prompts to sessions (doing work on your behalf). Grant this only for trusted uses.
 
-The built-in **Fleet Operator** is the flagship example of "AF write": from chat it can
+The built-in **Fleet Operator** is the main example of "AF write": from chat it can
 direct everything from launching sessions to giving instructions and receiving completion
 reports. See [08 Fleet Operator](08-organising.md) for details.
 
@@ -76,31 +76,30 @@ chat header (e.g. `Claude ▾`) and pick another one.
 - The model is re-resolved from the **row of the CLI you switched to** on ⚙Settings → the
   "Assistant" tab (a model you had pinned for the previous agent is not carried over).
 - CLIs you have not connected can't be selected (sign in under Settings → Connections and
-  they appear). You also can't switch while a reply is being generated — stop it first.
+  they appear). You also can't switch while a reply is being generated; stop it first.
 - You can switch back. That agent resumes from where it last answered and only receives the
   part of the conversation it missed.
 
 The chat's **reply language** is set with "Reply language" on ⚙Settings → the
 "Assistant" tab. "Match input" replies in the language of the text you hand over, while
 choosing 日本語 / English answers in that language even for text in other languages
-(the file right-click "Translate with assistant" is exempt — it always translates according to the source text).
+(the file right-click "Translate with assistant" is exempt: it always translates according to the source text).
 
 ### When a conversation gets long (a context rule of thumb)
 
 The more exchanges you pile up, the more context keeps flowing to the model. Once the
-first response comes back, a **context bar** (usage / limit · %) — the same one as a
-session's mirror — appears under the chat header. When usage passes **80%** the bar
+first response comes back, a **context bar** (usage / limit · %), the same one as a
+session's mirror, appears under the chat header. When usage passes **80%** the bar
 turns a warning color, and a one-time notice arrives in the conversation (it also shows
 up in the notification center).
 
 There are two ways to deal with it.
 
-- **Compact (keep going as is)** — press **"Compact"** at the right end of the context
+- **Compact (keep going as is)**: press **"Compact"** at the right end of the context
   bar to summarize the conversation so far and **hand only the summary to a fresh
   session**, continuing in the same chat. The on-screen history stays intact; only the
-  summary carries over (producing the summary costs one turn's worth of tokens). Good
-  when you want to keep a long conversation going as is.
-- **Open a new chat** — if you're at a natural break, opening a new chat and writing out
+  summary carries over (producing the summary costs one turn's worth of tokens).
+- **Open a new chat**: if you're at a natural break, opening a new chat and writing out
   just the key points yourself is the surest way.
 
 Either way, the longer you push on with a bloated conversation, the more you invite
@@ -109,19 +108,19 @@ degraded response quality, failed turns, and ballooning token spend.
 There's also a safety net if you leave it alone. If usage is still above **90%** when
 you start the next exchange, it auto-compacts first (summary handoff) before responding
 (can be turned OFF with "Auto-compact chat context" on ⚙Settings → the "Assistant" tab).
-Furthermore, even if the context blows past the limit before compacting, the system
+Even if the context blows past the limit before compacting, the system
 automatically attempts a summary handoff and then retries the reply. If it was exceeded
 too far to recover, a notice to that effect appears in the conversation (and the
 notification center), so deal with it via "Compact" or a new chat.
 
 ### Put what must not be forgotten in the work plan
 
-There is one slot that is **carried forward verbatim, never summarised** — through compaction
+There is one slot that is **carried forward verbatim, never summarised**, through compaction
 and into every new session: the **work plan**, next to the context bar. Write down the
 constraints (assumptions that hold from here on), the givens (facts the next move depends on)
 and what comes next (order, dependencies), and a long conversation stops drifting off its base.
 
-- **"Edit"** writes it directly. **"Refresh"** re-derives it from the recent conversation — press
+- **"Edit"** writes it directly. **"Refresh"** re-derives it from the recent conversation: press
   it right after a discussion changes the direction.
 - On compaction it is updated automatically to match the recent conversation.
 - **"Clear"** empties it (the conversation history and the handoff summary are untouched).
@@ -139,9 +138,9 @@ following progress on your phone and firing back short replies.
 When the agent is waiting on your judgment, a corresponding card appears. Which cards and
 choices are available depends on the agent and the state.
 
-- **Question** — pick a choice (or type a free-form answer), then press **"Submit answer"**. Clicking a choice only selects it, so you can change your mind — and compare the previews some choices come with — before anything is sent. What you have picked and typed is kept while you go and look something up: switching to another tab, or to the terminal, brings the card back as you left it. It is cleared once the answer is sent, or when you cancel the question.
-- **Plan awaiting approval** — either "Approve and run" the proposed plan or "Reject (keep going)".
-- **Awaiting permission** — "Allow" / "Deny" the edit or command run (you can also choose to auto-allow for the rest of this session).
+- **Question**: pick a choice (or type a free-form answer), then press **"Submit answer"**. Clicking a choice only selects it, so you can change your mind (and compare the previews some choices come with) before anything is sent. What you have picked and typed is kept while you go and look something up: switching to another tab, or to the terminal, brings the card back as you left it. It is cleared once the answer is sent, or when you cancel the question.
+- **Plan awaiting approval**: either "Approve and run" the proposed plan or "Reject (keep going)".
+- **Awaiting permission**: "Allow" / "Deny" the edit or command run (you can also choose to auto-allow for the rest of this session).
 
 Sending a prompt from the input field below works just like typing into the terminal
 (image paste included). The **mode toggle** lets you pick Plan ⇄ Build, and while it's
@@ -160,8 +159,8 @@ What **"Stop"** does with messages that are waiting in the queue depends on the 
 
 **Managed** sessions stop in two stages:
 
-- **The first stop ends the running turn only.** What is queued — your own follow-ups and other
-  sessions' messages alike — then runs, one message per turn, in order. This is what you want when
+- **The first stop ends the running turn only.** What is queued (your own follow-ups and other
+  sessions' messages alike) then runs, one message per turn, in order. This is what you want when
   you queued a correction ("no, do X instead") and stop the turn so the correction takes effect
   now. On **codex** and **muse** a message you send while a turn runs is not queued: the agent takes
   it into the running turn at once, so there is usually no need to stop. If you stop anyway, it
@@ -212,11 +211,11 @@ commit to it.
 
 - **Ctrl+R** goes further back, **Ctrl+S** comes forward (**↑↓** do the same). The "3/12" on the
   right is where you are in the matches.
-- **Enter** (or **Tab**) **only puts it in the input — nothing is sent**, so you can edit it first.
+- **Enter** (or **Tab**) **only puts it in the input; nothing is sent**, so you can edit it first.
 - **Esc** (or **Ctrl+G**) cancels and gives you back whatever you were typing before the search.
 - When nothing matches any more it says "No match" and the last match stays in the input.
 - Phones have no Ctrl key: open it from the **magnifier button** to the left of the input.
-- What is searchable is exactly what **↑↓** recall — the prompts you sent in this conversation,
+- What is searchable is exactly what **↑↓** recall: the prompts you sent in this conversation,
   `/commands` included. Other sessions' inputs are not in it.
 
 ### Writing comments on a plan
@@ -226,14 +225,14 @@ retype. **"Open in pane"** on the plan card opens the body in a pane marked for 
 **selecting a passage lets you attach a comment to it**.
 
 The plan card then sends them all at once with **"Send comments (N)"**. For a plan awaiting
-approval it reads **"Send comments and reject (N)"** — delivering the body requires closing the
+approval it reads **"Send comments and reject (N)"**; delivering the body requires closing the
 approval dialog, so the two go together. The agent comes back with a revised plan that takes
 your comments into account.
 
 ### Having another session review the plan
 
 Instead of reading it yourself, you can have **another agent read it**. **"Review in another
-session"** on a plan awaiting approval opens the usual launch dialog — the only difference is
+session"** on a plan awaiting approval opens the usual launch dialog; the only difference is
 that the prompt asking for a review is already filled in. You pick the agent and the model
 there, so you can show the plan to a different model than the one that wrote it.
 
@@ -248,19 +247,19 @@ there, so you can show the plan to a different model than the one that wrote it.
 
 ### Calling a skill or a command
 
-The button beside the input field — it shows the trigger character, **`/`** or **`$`** (**✦** for an
-agent that has no trigger) — opens **the skills and commands this session can actually call**.
+The button beside the input field (it shows the trigger character, **`/`** or **`$`**, or **✦** for an
+agent that has no trigger) opens **the skills and commands this session can actually call**.
 Typing the trigger at the head of an empty input opens the same list (`/` for claude, cursor and
 opencode, `$` for codex; the full-width `／` and `＄` a Japanese IME produces are accepted too).
 
-- Each entry carries its description, an argument hint, and where it came from — **user**, **CLI**
+- Each entry carries its description, an argument hint, and where it came from: **user**, **CLI**
   or **shared**.
 - Picking one **only inserts it into the input; nothing is sent.** Add the arguments, then send.
 - From the keyboard: **↑↓** to move, **Enter** (or **Tab**) to insert, **Esc** to close.
 - **Skills written for another agent** and left in the repository are listed too. Picking one
   inserts "read that file and follow its instructions", so the content is usable even by an agent
   that has no skill mechanism of its own.
-- Which agents offer the picker is in [agents.md](../ref/agents.md).
+- See [agents.md](../ref/agents.md) for which agents offer the picker.
 
 ### Reply suggestions
 
@@ -284,13 +283,13 @@ bubble. Pressing it creates a **new session** carrying the conversation up to th
 **The current session is left exactly as it is.**
 
 Use it for "I want to try a different approach from that instruction" or "I took a wrong
-turn back there and want to redo it" — without copying and pasting the conversation. There
+turn back there and want to redo it", without copying and pasting the conversation. There
 are two ways to branch:
 
-- **Redo this message** (default) — the message itself is left out. The branch opens in the
+- **Redo this message** (default): the message itself is left out. The branch opens in the
   state you were in just before sending it, with your original wording waiting in the
   composer as a **draft**. Editing and resending, or just resending, is one action either way.
-- **Continue after it** — the message and the reply it got are both carried over. Use this
+- **Continue after it**: the message and the reply it got are both carried over. Use this
   when you want to head in a different direction from a point that went well.
 
 The confirmation dialog shows the branch point, how many exchanges are carried over, and
@@ -312,8 +311,8 @@ flushing them to a session together later** (the **Memo queue** in the left pane
 say, jot down "want to fix that" items on your phone during the commute, then hand them
 over in one go at your PC.
 
-- **Capture** — write into "Add a quick memo… (send them together later)" and press "Add". You can also open a file and capture from "Send" in [05](04-files.md). Memos are grouped by repository and category.
-- **Capture straight into a category** — the **+** at the right of a category heading opens the input under that heading, and what you write lands in that category (and repository). No need to type the category name again.
-- **Read a long memo, then close it again** — a memo body is clamped to two lines; click it to open the full text (a long one stops at half the pane and scrolls inside the memo from there). **Collapse**, under the body — or the row's **⋯** menu — puts it back to two lines. Clicking the body again while it is open starts editing. The same **⋯** menu also has **Copy**, which puts the memo's text on the clipboard as written.
-- **Tidy up with AI** — select memos and hit **"Organize the selected memos with an assistant"**: it turns scribbles into clear instructions and suggests categories. The result is **always previewed** and nothing is applied until you approve with "Apply N item(s)" (nothing gets rewritten behind your back).
-- **Send** — pick a running destination session and send in bulk with **"Send selection"**. You can also send a whole category at once ("Send this category together"). If there's no running session to send to, start one first. Sending several memos together adds the category headings (`## …`) and the `1.` numbering; **a single memo goes out as its bare text**. Either way you can edit the message before it leaves.
+- **Capture**: write into "Add a quick memo… (send them together later)" and press "Add". You can also open a file and capture from "Send" in [05](04-files.md). Memos are grouped by repository and category.
+- **Capture straight into a category**: the **+** at the right of a category heading opens the input under that heading, and what you write lands in that category (and repository). No need to type the category name again.
+- **Read a long memo, then close it again**: a memo body is clamped to two lines; click it to open the full text (a long one stops at half the pane and scrolls inside the memo from there). **Collapse**, under the body or in the row's **⋯** menu, puts it back to two lines. Clicking the body again while it is open starts editing. The same **⋯** menu also has **Copy**, which puts the memo's text on the clipboard as written.
+- **Tidy up with AI**: select memos and hit **"Organize the selected memos with an assistant"**; it turns scribbles into clear instructions and suggests categories. The result is **always previewed** and nothing is applied until you approve with "Apply N item(s)".
+- **Send**: pick a running destination session and send in bulk with **"Send selection"**. You can also send a whole category at once ("Send this category together"). If there's no running session to send to, start one first. Sending several memos together adds the category headings (`## …`) and the `1.` numbering; **a single memo goes out as its bare text**. Either way you can edit the message before it leaves.

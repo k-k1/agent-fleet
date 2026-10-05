@@ -35,7 +35,7 @@ the review flow can offer at all.
 | Write back to the item (comment) | ✓ | —⁸ | — | — | — |
 
 ¹ The internal provider is hosted by the deployment itself, and credentials are
-derived per membership rather than stored — there is nothing for you to connect.
+derived per membership rather than stored; there is nothing for you to connect.
 
 ² A URL plus basic authentication. Self-signed certificates can be trusted explicitly
 per checkout.
@@ -43,7 +43,7 @@ per checkout.
 ³ GitHub also carries the Copilot agent connection: connecting GitHub connects it, and
 disconnecting takes it away too.
 
-⁴ "Local" means a working copy that is not backed by a remote — a new folder you
+⁴ "Local" means a working copy that is not backed by a remote: a new folder you
 started here, or a clone you made yourself. It works, but nothing is pushed anywhere.
 
 ⁵ SVN checkouts are flat working copies. The branch, worktree and commit-graph views
@@ -54,7 +54,7 @@ list and per-revision diff) and **Local changes** (`svn status`) instead.
 
 ⁷ Bitbucket has no cross-repository search API, so a query has to name the workspace
 (and usually the repository) it applies to. The Console builds those queries for you
-rather than asking you to write them — a query with no workspace comes back empty,
+rather than asking you to write them. A query with no workspace comes back empty,
 which is easy to mistake for "there is nothing assigned to me".
 
 ⁸ Reading was added without writing on purpose: posting a comment needs a broader
@@ -80,5 +80,5 @@ silently under-reports.
 ## Not in this table
 
 Whether a *deployment* can reach a provider at all is an egress question, not a
-provider capability — see [deploy-targets.md](deploy-targets.md) and the tenant
+provider capability; see [deploy-targets.md](deploy-targets.md) and the tenant
 settings.
