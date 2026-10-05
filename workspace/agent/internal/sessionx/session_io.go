@@ -893,6 +893,11 @@ func typePromptText(name, pane, text string) error {
 	// literal-keys send-keys is eaten by the paste coalescing and the prompt is never
 	// submitted.
 	if kind != session.KindCodex && kind != session.KindOpencode && kind != session.KindCopilot && kind != session.KindCursor && kind != session.KindKiro {
+		if kind == session.KindClaude {
+			// A long prompt reaches claude as one paste-sized chunk, and its paste handler
+			// would turn the attached image paths into [Image #N] and split the text.
+			text = claude.QuoteImagePaths(text)
+		}
 		if out, err := tmuxx.Cmd("send-keys", "-t", pane, "-l", "--", text).CombinedOutput(); err != nil {
 			return fmt.Errorf("%v: %s", err, out)
 		}
