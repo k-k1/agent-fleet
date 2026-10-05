@@ -373,8 +373,16 @@ toggle** to select SVN, then enter the **Repository URL** and, if needed, a **su
   If the working copy gets locked (an error prompting `svn cleanup`), e.g. after an interruption,
   checkout / update automatically attempts one recovery. If the lock remains, use
   **"Clean up lock"** from the row menu.
-- The svn row shows the current revision (`r1234`). Branch switch and the commit graph view
-  (stage / commit) are git-only, so commit with `svn commit` inside a session — **the saved
+- **Show log and local changes** — the svn row menu has **"Show log"** (revision list, newest
+  first, with a path filter and "Load more"; a revision newer than the working copy is marked
+  "not updated yet", and selecting one shows its changed paths and diff) and **"Local changes"**
+  (the entries of `svn status`; a click opens the file's diff). Right-click a folder or file
+  under the working copy in the Files tree and choose **"Show log"** to filter the log to it.
+  The log is read from the server when you open it or press "Load more" — it is not refreshed
+  in the background — and if the server needs a password you get the re-authenticate dialog.
+  Both views are read-only.
+- The svn row shows the current revision (`r1234`). Branch switch and the stage / commit
+  workbench are git-only, so commit with `svn commit` inside a session — **the saved
   credentials apply there too**, so `svn update` / `svn commit -m "…"` typed in a session
   authenticate without a `--username`. Two cases still ask for the password themselves: a
   `commit` with no `-m` (svn opens an editor and keeps the terminal), and a command you gave an

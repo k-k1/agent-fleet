@@ -524,3 +524,119 @@
 .scm-staged-tag {
   color: var(--ok);
 }
+
+/* SVN Show log (issue #1705). */
+.svnlog-filter {
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border2);
+}
+.svnlog-filter input {
+  flex: 1;
+  min-width: 0;
+}
+.svnlog {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.svnlog-row.active {
+  background: var(--active-bg);
+}
+.svnlog-row:hover {
+  background: var(--hover-bg);
+}
+.svnlog-btn {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas: "rev msg tag" "meta meta meta";
+  gap: 0 8px;
+  width: 100%;
+  padding: 5px 10px;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.svnlog-rev {
+  grid-area: rev;
+  color: var(--accent);
+  font-size: 12px;
+}
+.svnlog-msg {
+  grid-area: msg;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.svnlog-meta {
+  grid-area: meta;
+  color: var(--muted);
+  font-size: 11px;
+}
+.svnlog-tag {
+  grid-area: tag;
+  font-size: 11px;
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  padding: 0 6px;
+  color: var(--muted);
+}
+.svnlog-tag.newer {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+}
+.svnlog-tag.current {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+}
+.svnlog-row.newer .svnlog-msg {
+  font-style: italic;
+}
+.svnlog-more {
+  display: block;
+  margin: 8px auto;
+}
+.svnlog-loading,
+.svnlog-note {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 6px 10px;
+}
+.svnlog-err {
+  color: var(--err);
+  font-size: 12px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+}
+.chg.conflict {
+  color: var(--err);
+}
+.cd-paths {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--border2);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.cd-act {
+  display: inline-block;
+  width: 14px;
+  font-weight: 700;
+  color: var(--warn);
+}
+.cd-act.act-A {
+  color: var(--ok);
+}
+.cd-act.act-D {
+  color: var(--err);
+}
+.cd-copy {
+  color: var(--muted);
+}

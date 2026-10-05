@@ -26,6 +26,8 @@ import { useFilesStore } from "../files/store.ts";
 import { REVALIDATE_GAP_MS } from "../files/refreshPolicy.ts";
 import { MiddleEllipsis } from "../files/MiddleEllipsis.tsx";
 import { useReposStore } from "../repos/store.ts";
+import { openRepoLog } from "../scm/open.ts";
+import { splitRepoPath } from "../scm/svnLog.ts";
 import { useFilesFilter } from "./filesFilter.ts";
 import { normQuery } from "./filter.ts";
 import { useActiveWorkingSet, folderBase, autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
@@ -1017,6 +1019,10 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   // a second extension table here would make a file the viewer shows as an image invisible
   // in the gallery. A file row opens menuDir (already its parent) focused on itself.
   const galleryRow = menu && (menu.row.type === "dir" || !!imageFormat(menu.row.path)) ? menu.row : null;
+  // Show log for a folder or file inside an SVN working copy (#1705): the path becomes the
+  // log's path filter. A row outside ~/repos, or in a git copy, offers nothing.
+  const menuRepoPath = menu ? splitRepoPath(menu.row.path) : null;
+  const svnLogTarget = menuRepoPath && repos.find((r) => r.name === menuRepoPath.repo)?.vcs === "svn" ? menuRepoPath : null;
   const openGalleryFromMenu = (e: RMouseEvent) => {
     // Modifier / middle click lands in another pane, the same rule the tree rows follow.
     const newPane = e.ctrlKey || e.metaKey || e.button === 1;
@@ -1228,6 +1234,17 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
                 <Icon name="copy" /> {tr("proj.copy_rel_path")}
               </button>
             </li>
+            {svnLogTarget && (
+              <li>
+                <button
+                  type="button"
+                  className="ui-menu-item"
+                  onClick={() => runMenu(() => openRepoLog(svnLogTarget.repo, svnLogTarget.sub))}
+                >
+                  <Icon name="history" /> {tr("proj.svn_show_log")}
+                </button>
+              </li>
+            )}
             {galleryRow && (
               <li>
                 <button
