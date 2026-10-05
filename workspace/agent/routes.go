@@ -341,6 +341,13 @@ func buildMux() *http.ServeMux {
 	// come from the working copy, never from the browser.
 	mux.HandleFunc("GET /repos/{name}/svn-auth", handleGetSvnAuth)
 	mux.HandleFunc("POST /repos/{name}/svn-auth", handleSvnAuth)
+	// Read-only SVN history and local changes (#1705). svn-log / svn-show are NETWORK calls
+	// (stored credential injected, 401 svn_auth_required on refusal); svn-changes / svn-diff are
+	// local and need no credential. The git /log /show /changes /diff handlers stay git-only.
+	mux.HandleFunc("GET /repos/{name}/svn-log", handleSvnLog)
+	mux.HandleFunc("GET /repos/{name}/svn-show", handleSvnShow)
+	mux.HandleFunc("GET /repos/{name}/svn-changes", handleSvnChanges)
+	mux.HandleFunc("GET /repos/{name}/svn-diff", handleSvnDiff)
 	// Launch prompt templates (repo launch modal): .claude/commands, .claude/skills,
 	// .agent-fleet/launch-prompts.md — aggregated read-only from the working copy.
 	mux.HandleFunc("GET /repos/{name}/prompt-templates", handleRepoPromptTemplates)
