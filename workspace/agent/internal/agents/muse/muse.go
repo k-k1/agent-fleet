@@ -90,7 +90,7 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	// The status file only ever holds what MarkTurnStart/End wrote, so a prompt waiting on the
 	// member reads "working" until the turn ends: the chip says in progress and no question
 	// notification fires. The handle's Interaction is the truth, as for managed codex.
-	if st := pendingState(m.Name); st != "" {
+	if st := PendingState(m.Name); st != "" {
 		li.State = st
 	}
 	// A tool call left running by an earlier turn is work behind the idle prompt, the case
@@ -106,9 +106,10 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	return li
 }
 
-// pendingState is "question" or "permission" while the live handle holds a prompt of that
-// channel, "" otherwise.
-func pendingState(name string) string {
+// PendingState is "question" or "permission" while the live handle holds a prompt of that
+// channel, "" otherwise. The list badge (WireLive) and the mirror/chat chip
+// (sessionx.DriveState) both ask it, so the two never disagree.
+func PendingState(name string) string {
 	h := handleFor(name)
 	if h == nil {
 		return ""
