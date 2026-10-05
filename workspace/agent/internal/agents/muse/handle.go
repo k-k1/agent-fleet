@@ -114,6 +114,10 @@ type threadHandle struct {
 	holding bool
 	held    []record
 
+	// comm reads the commentary the wire omits (commentary.go); nil until the session's
+	// runtime log path is known.
+	comm *commentaryReader
+
 	// Live context fill (session/contextUsage). Separate lock from mu so onNotify
 	// can record context without contending with turn plumbing. Read by ManagedContext.
 	ctxMu       sync.Mutex
@@ -565,6 +569,9 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 // once and never fails the turn: the host owns the conversation of record, and refusing to
 // carry on because AF could not mirror a line would trade a rendering gap for a dead session.
 func (h *threadHandle) onItem(it msp.Item) {
+	// Taken before h.mu: it reads a file, and the text it returns has to land ahead of the
+	// tool call it introduced.
+	extra := commentaryItems(h.commentary(), it)
 	h.mu.Lock()
 	delete(h.streaming, it.ItemID)
 	sid, model := h.slotSid, h.turnModel
@@ -578,17 +585,38 @@ func (h *threadHandle) onItem(it msp.Item) {
 		images = h.sentImages[*it.CommandID]
 		delete(h.sentImages, *it.CommandID)
 	}
-	r := record{Item: it, Model: model, Images: images}
+	recs := make([]record, 0, len(extra)+1)
+	for _, e := range extra {
+		recs = append(recs, record{Item: e, Model: model})
+	}
+	recs = append(recs, record{Item: it, Model: model, Images: images})
 	if h.holding {
-		h.held = append(h.held, r)
+		h.held = append(h.held, recs...)
 		h.mu.Unlock()
 		return
 	}
 	h.trackBgLocked(it)
 	h.mu.Unlock()
-	if err := openStore(sid).appendRecord(r); err != nil {
-		log.Printf("muse: %s: transcript append: %v", h.name, err)
+	st := openStore(sid)
+	for _, r := range recs {
+		if err := st.appendRecord(r); err != nil {
+			log.Printf("muse: %s: transcript append: %v", h.name, err)
+		}
 	}
+}
+
+// commentary returns the reader for the session.jsonl the host reported, opening it on first
+// use and again if the handle moved to another session; nil while no path is known.
+func (h *threadHandle) commentary() *commentaryReader {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.path == "" {
+		return nil
+	}
+	if h.comm == nil || h.comm.path != h.path {
+		h.comm = newCommentaryReader(h.path)
+	}
+	return h.comm
 }
 
 // holdItems makes onItem keep live items in memory instead of writing them, from before

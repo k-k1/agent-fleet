@@ -8,7 +8,8 @@
 // `started`, `model_request_configured`, `assistant_message_committed`, `terminal`,
 // `goal_usage_attribution`, …), not a list of wire `Item`s. A reader for it would be exactly
 // the transcript reverse-engineering this kind was supposed to get for free, against an
-// internal format with no stability promise.
+// internal format with no stability promise. The one narrow exception is the commentary the
+// wire omits (commentary.go).
 //
 // The protocol's own answer is `session/read`, which returns `SessionHistory.items` — the
 // stable surface. But it needs a running host, and `Transcript` is called from the usage
