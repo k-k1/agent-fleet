@@ -186,9 +186,51 @@ func TestAgyPassesAspectRatioAndKeepsThePromptOffArgv(t *testing.T) {
 	}
 }
 
+// agy 1.2.16+ never offers the main agent generate_image; the prompt has to ask for the
+// image-generator subagent, or the driver answers "the tool is unavailable" and stops. Each
+// phrase below is an operative instruction: delegate once, never run both paths, carry the ratio
+// into the subagent's prompt, and keep the direct call as the fallback.
+func TestAgyPromptDelegatesToTheImageSubagent(t *testing.T) {
+	got := agyPrompt(Request{Prompt: "a cat"}, "16:9")
+	for _, want := range []string{
+		"image-generator subagent with the invoke_subagent tool, exactly once",
+		"put the full description in the subagent's prompt",
+		"never both",
+		"directly (exactly once) only if invoke_subagent or the image-generator subagent is not available",
+		"If you call generate_image directly, set ImageName to",
+		"Set AspectRatio to 16:9 (state it in the subagent's prompt",
+		"Never draw, script or otherwise fabricate",
+		"a cat",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("prompt lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(agyPrompt(Request{Prompt: "a cat"}, ""), "AspectRatio") {
+		t.Fatal("the ratio line was written without a ratio")
+	}
+}
+
+// The subagent cannot open a reference image under this route's allow-list (measured: its
+// view_file came back denied and the run produced no picture), so the route must not advertise
+// edit or accept inputs — a caller is sent to a provider that can.
+func TestAgyDoesNotOfferEditOrReferenceImages(t *testing.T) {
+	p := newAgyTestProvider(t, "agy")
+	if c := p.Caps(""); c.Supports(OpEdit) || c.MaxInputs != 0 {
+		t.Fatalf("caps = %+v, want generate only and no inputs", c)
+	}
+	if _, err := p.Generate(context.Background(), Request{Op: OpEdit, Prompt: "a cat", Inputs: []string{"/x/ref.png"}}); err == nil {
+		t.Fatal("an edit request was accepted")
+	}
+	if _, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a cat", Inputs: []string{"/x/ref.png"}}); err == nil {
+		t.Fatal("a reference image was accepted on generate")
+	}
+}
+
 // The isolated home IS the sandbox: an empty MCP config so one picture does not spawn the
-// user's whole materialized MCP fleet, and an allow-list of exactly one tool so print mode
-// auto-denies everything else (measured: run_command comes back as a denied action).
+// user's whole materialized MCP fleet, and an allow-list of only the image tool and the subagent
+// hand-off so print mode auto-denies everything else (measured: run_command comes back as a
+// denied action).
 func TestAgyIsolatedHomeIsTheSandbox(t *testing.T) {
 	p := newAgyTestProvider(t, "agy")
 	home, err := p.prepareHome()
@@ -222,8 +264,10 @@ func TestAgyIsolatedHomeIsTheSandbox(t *testing.T) {
 	if settings.Telemetry {
 		t.Fatal("telemetry was left on")
 	}
-	if len(settings.Permissions.Allow) != 1 || settings.Permissions.Allow[0] != "generate_image" {
-		t.Fatalf("allow = %v, want exactly the image tool", settings.Permissions.Allow)
+	// invoke_subagent is the hand-off to agy 1.2.16+'s image-generator; without it the
+	// delegation is auto-denied and the route produces nothing.
+	if got := strings.Join(settings.Permissions.Allow, ","); got != "generate_image,invoke_subagent" {
+		t.Fatalf("allow = %v, want exactly the image tool and the subagent hand-off", settings.Permissions.Allow)
 	}
 	if len(settings.Trusted) != 1 || settings.Trusted[0] != filepath.Join(home, "wd") {
 		t.Fatalf("trusted workspaces = %v, want only the empty working dir", settings.Trusted)
