@@ -33,7 +33,7 @@ export function useProfileLogout(): (p: Pick<AwsLoginTarget, "name" | "label">) 
         toast(key ? tr(key) : tr("awslogin.logout_failed", { msg: r.message || r.code }));
         return false;
       }
-      if (r.revoked || r.noToken) toast(tr("awslogin.logout_done", { profile }), { kind: "success" });
+      if (r.revoked || r.alreadyEnded || r.noToken) toast(tr("awslogin.logout_done", { profile }), { kind: "success" });
       // Signed out here; only the session at AWS was not ended.
       else toast(tr("awslogin.logout_not_revoked", { profile, msg: r.message }), { kind: "warn", persist: true });
       return true;

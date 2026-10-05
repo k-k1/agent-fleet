@@ -546,3 +546,181 @@ func TestProfileLogoutHoldsTheGateOnlyUntilTheTokenIsOff(t *testing.T) {
 	}
 	assertGone(t, mine, nil)
 }
+
+// oidc stands in for the SSO OIDC CreateToken endpoint and records every call.
+type oidc struct {
+	mu     sync.Mutex
+	bodies []map[string]string
+	status int
+	region string
+}
+
+func fakeOIDC(t *testing.T) *oidc {
+	t.Helper()
+	o := &oidc{status: http.StatusOK}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		var b map[string]string
+		json.NewDecoder(r.Body).Decode(&b)
+		o.bodies = append(o.bodies, b)
+		w.WriteHeader(o.status)
+		if o.status == http.StatusOK {
+			w.Write([]byte(`{"accessToken":"fresh-access","expiresIn":3600}`))
+		} else {
+			w.Write([]byte(`{"error":"invalid_grant"}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	old := ssoOIDCURL
+	ssoOIDCURL = func(r string) string { o.region = r; return srv.URL }
+	t.Cleanup(func() { ssoOIDCURL = old })
+	return o
+}
+
+func (o *oidc) count() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return len(o.bodies)
+}
+
+// refreshableCache writes a login whose access token ends at expires and that the CLI could renew.
+func refreshableCache(t *testing.T, expires time.Time) {
+	t.Helper()
+	writeSSOCacheDoc(t, map[string]string{
+		"accessToken": "stale-access", "expiresAt": expires.UTC().Format(time.RFC3339),
+		"refreshToken": "secret-refresh", "clientId": "cid", "clientSecret": "secret-client",
+		"registrationExpiresAt": time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
+	})
+}
+
+func TestProfileLogoutRenewsAnExpiredTokenInMemoryThenRevokes(t *testing.T) {
+	p := fakePortal(t)
+	o := fakeOIDC(t)
+	mine, others := logoutFixture(t)
+	refreshableCache(t, time.Now().Add(-2*time.Hour))
+
+	rec, out := profileLogout(t, "prod")
+	if rec.Code != http.StatusOK || !out.Revoked || out.AlreadyEnded || out.Message != "" {
+		t.Fatalf("logout = %d %s", rec.Code, rec.Body.String())
+	}
+	if o.count() != 1 || o.bodies[0]["grantType"] != "refresh_token" || o.bodies[0]["refreshToken"] != "secret-refresh" ||
+		o.bodies[0]["clientId"] != "cid" || o.bodies[0]["clientSecret"] != "secret-client" || o.region != "ap-northeast-1" {
+		t.Fatalf("oidc calls = %v region %s", o.bodies, o.region)
+	}
+	if got := p.seen(); len(got) != 1 || got[0] != "POST /logout ap-northeast-1 fresh-access" {
+		t.Fatalf("portal calls = %q", got)
+	}
+	if strings.Contains(rec.Body.String(), "access") || strings.Contains(rec.Body.String(), "secret-") {
+		t.Fatalf("a token left the Agent: %s", rec.Body.String())
+	}
+	assertGone(t, mine, others) // nothing written back
+}
+
+func TestProfileLogoutReportsASessionAWSWillNotRenewAsEnded(t *testing.T) {
+	p := fakePortal(t)
+	o := fakeOIDC(t)
+	o.status = http.StatusBadRequest
+	mine, others := logoutFixture(t)
+	refreshableCache(t, time.Now().Add(-2*time.Hour))
+
+	rec, out := profileLogout(t, "prod")
+	if rec.Code != http.StatusOK || !out.AlreadyEnded || out.Revoked || out.Message != "" {
+		t.Fatalf("logout = %d %s", rec.Code, rec.Body.String())
+	}
+	if got := p.seen(); len(got) != 0 {
+		t.Fatalf("portal called: %q", got)
+	}
+	assertGone(t, mine, others)
+}
+
+// Positive control: a token that has not expired is revoked as is, with no renewal.
+func TestProfileLogoutSkipsTheRenewalForAnUnexpiredToken(t *testing.T) {
+	p := fakePortal(t)
+	o := fakeOIDC(t)
+	logoutFixture(t)
+	refreshableCache(t, time.Now().Add(30*time.Minute))
+
+	_, out := profileLogout(t, "prod")
+	if !out.Revoked || o.count() != 0 {
+		t.Fatalf("out = %+v, oidc calls = %d", out, o.count())
+	}
+	if got := p.seen(); len(got) != 1 || got[0] != "POST /logout ap-northeast-1 stale-access" {
+		t.Fatalf("portal calls = %q", got)
+	}
+}
+
+func TestProfileLogoutRenewsAfterA401OnATokenThatLooksFresh(t *testing.T) {
+	var calls []string
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		tok := r.Header.Get("x-amz-sso_bearer_token")
+		calls = append(calls, tok)
+		if tok != "fresh-access" {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"message":"Session token not found or invalid"}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	old := ssoPortalURL
+	ssoPortalURL = func(string) string { return srv.URL }
+	t.Cleanup(func() { ssoPortalURL = old })
+	o := fakeOIDC(t)
+	logoutFixture(t)
+	refreshableCache(t, time.Now().Add(30*time.Minute))
+
+	_, out := profileLogout(t, "prod")
+	if !out.Revoked || o.count() != 1 || len(calls) != 2 {
+		t.Fatalf("out = %+v, oidc = %d, portal = %q", out, o.count(), calls)
+	}
+}
+
+func TestProfileLogoutStillWarnsWhenAWSFailsAfterTheRenewal(t *testing.T) {
+	p := fakePortal(t)
+	p.status = http.StatusBadGateway
+	fakeOIDC(t)
+	logoutFixture(t)
+	refreshableCache(t, time.Now().Add(-2*time.Hour))
+
+	_, out := profileLogout(t, "prod")
+	if out.Revoked || out.AlreadyEnded || !strings.Contains(out.Message, "502") {
+		t.Fatalf("out = %+v", out)
+	}
+}
+
+func TestProfileLogoutStillWarnsWhenTheRenewalFailsWith5xx(t *testing.T) {
+	p := fakePortal(t)
+	o := fakeOIDC(t)
+	o.status = http.StatusServiceUnavailable
+	logoutFixture(t)
+	refreshableCache(t, time.Now().Add(-2*time.Hour))
+
+	_, out := profileLogout(t, "prod")
+	if out.Revoked || out.AlreadyEnded || !strings.Contains(out.Message, "503") || len(p.seen()) != 0 {
+		t.Fatalf("out = %+v, portal = %q", out, p.seen())
+	}
+	if strings.Contains(out.Message, "secret-") {
+		t.Fatalf("message leaks a token: %s", out.Message)
+	}
+}
+
+// Without a usable registration the renewal is impossible, so the expired token is sent as
+// before and a 401 keeps the warning: a live session may remain.
+func TestProfileLogoutWarnsWhenTheRegistrationExpiredToo(t *testing.T) {
+	p := fakePortal(t)
+	p.status = http.StatusUnauthorized
+	o := fakeOIDC(t)
+	logoutFixture(t)
+	writeSSOCacheDoc(t, map[string]string{
+		"accessToken": "stale-access", "expiresAt": time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339),
+		"refreshToken": "secret-refresh", "clientId": "cid", "clientSecret": "secret-client",
+		"registrationExpiresAt": time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
+	})
+
+	_, out := profileLogout(t, "prod")
+	if out.Revoked || out.AlreadyEnded || !strings.Contains(out.Message, "401") || o.count() != 0 {
+		t.Fatalf("out = %+v, oidc = %d", out, o.count())
+	}
+}

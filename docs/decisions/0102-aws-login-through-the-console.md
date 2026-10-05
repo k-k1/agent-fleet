@@ -391,3 +391,14 @@ whether a refresh is allowed, and a refresh just before it yields an access toke
    press), and polls once a minute only while such a toast is up. A notification opens the modal only for a
    profile the list shows as expiring; once open, the modal is a snapshot that a passing end does not close. No CP
    change.
+
+## Note — logout renews an expired access token first (2026-10-05)
+
+The per-profile logout used to send the cached access token to the portal's Logout call as is. That token lives
+about an hour and the CLI renews it only on use, so a logout long after the last use got `401` and left the portal
+session running (#1689). The Agent now renews an expired token (or one the portal answers 401) in memory through
+SSO OIDC `CreateToken` (`grant_type=refresh_token`), when the cache holds the refresh token, client id and secret
+and an unexpired registration, and revokes with the fresh token. Nothing is written back to the cache. If AWS
+refuses the renewal (400/401) the portal session is already over: the answer carries `alreadyEnded: true` and the
+Console shows the normal "logged out" toast. The "AWS could not be told" warning stays for network failures, 5xx
+and a renewal that is impossible. The decision above is unchanged.
