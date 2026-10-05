@@ -1443,6 +1443,29 @@ describe("WorkItemModalHost — opened from a ticket link outside the rail (#165
       expect(modal.textContent).not.toContain(t("wi.detail_merge"));
     });
 
+    const startReview = () =>
+      [...document.querySelectorAll<HTMLButtonElement>(".wi-dfold button")].find((b) => b.textContent?.includes(t("wi.start_review")))!;
+
+    it("launches a resolved open pull request as a review of its head branch", async () => {
+      useReposStore.setState({ repos: [{ name: "web", path: "/home/dev/repos/web" }] });
+      workItemDetail.mockResolvedValue(live({ kind: "pr", state: "open", headBranch: "feature/x", baseBranch: "develop", title: "Add thing" }));
+      await openRef("acme/web#7");
+      await act(async () => startReview().click());
+      expect(useLaunchTarget.getState().existingBranch).toBe("feature/x");
+      const seed = useLaunchSeed.getState();
+      expect(seed.prompt).toContain(t("wi.prompt_review"));
+      expect(seed.prompt).toContain(t("wi.prompt_review_branch", { branch: "feature/x" }));
+      expect(seed.prompt).toContain("Add thing");
+    });
+
+    it("does not try to check out the branch of a merged pull request", async () => {
+      useReposStore.setState({ repos: [{ name: "web", path: "/home/dev/repos/web" }] });
+      workItemDetail.mockResolvedValue(live({ kind: "pr", merged: true, headBranch: "feature/x" }));
+      await openRef("acme/web#7");
+      await act(async () => startReview().click());
+      expect(useLaunchTarget.getState().existingBranch).toBe("");
+    });
+
     it("falls back to the reference note when GitHub has no such item", async () => {
       workItemDetail.mockResolvedValue({ error: { code: "provider_error", message: "github has no acme/web#7 visible to this connection" } });
       const modal = await openRef();

@@ -132,6 +132,13 @@ func handleWorkItemsDetail(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "key is required")
 		return
 	}
+	kind := strings.TrimSpace(in.Kind)
+	switch kind {
+	case "", "pr", "issue":
+	default:
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "kind must be empty, pr or issue")
+		return
+	}
 	s, err := secrets.Load()
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
@@ -145,7 +152,7 @@ func handleWorkItemsDetail(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", "GitHub is not connected")
 			return
 		}
-		if strings.TrimSpace(in.Kind) == "pr" {
+		if kind == "pr" {
 			out, err = githubPullRequestDetail(e.Token, key)
 		} else {
 			out, err = githubReferenceDetail(e.Token, key)

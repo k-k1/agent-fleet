@@ -156,10 +156,10 @@ interface Props {
    * request's head branch, when the live read resolved one — the caller checks it out in a
    * fresh worktree instead of cutting a new branch from it ("" = nothing to check out, or
    * not a pull request: the usual new-branch flow applies). */
-  onPick(target: Repo, inPlace: boolean, reviewBranch: string): void;
+  onPick(target: Repo, inPlace: boolean, reviewBranch: string, resolved: WorkItem): void;
   /** Called when there is no working copy at all: defer to the start hub, which has the clone
    * path. */
-  onStartHub(): void;
+  onStartHub(resolved: WorkItem): void;
   /** What each started slug is now: its display name, and whether it is live, archived or gone
    * (#1108). */
   sessionRef(name: string): ResolvedSessionRef;
@@ -185,12 +185,12 @@ export function WorkItemDetailModal({
   // A pull request's panel is a place to decide whether to pick the review up, so the live read
   // leads and the cached row is the fallback — never the other way round.
   const view = live.detail || item;
-  const isPR = item.kind === "pr";
   // A GitHub number names an issue or a pull request alike, and a stand-in cannot tell which —
-  // until the live read has answered. `isPR` stays the item's own kind on purpose: it picks the
-  // launch flow, and a stand-in keeps the plain one.
+  // until the live read has answered, after which the answer decides the kind (and with it the
+  // review launch flow), exactly as for a cached row.
   const kindKnown = !reference || item.provider !== "github" || !!live.detail;
-  const shownPR = live.detail ? live.detail.kind === "pr" : isPR;
+  const isPR = live.detail && reference ? live.detail.kind === "pr" : item.kind === "pr";
+  const shownPR = isPR;
   const providerName = PROVIDER_NAMES[item.provider] || item.provider;
   const bases = useMemo(() => repos.filter((r) => !r.worktree), [repos]);
   // Default repository: the query's hint, then the item's repo, then the first one. A worktree
@@ -218,7 +218,15 @@ export function WorkItemDetailModal({
   // Only a fresh worktree checks the head branch out — an existing copy the user picked by
   // hand keeps whatever branch it is already on (§80.24.4: never launch off a value the user
   // cannot see). "" when the live read never resolved one (stopped, failed, or not a PR).
-  const reviewBranch = isPR ? d?.headBranch || "" : "";
+  // A merged or closed pull request's branch is usually deleted, and checking it out would fail.
+  const reviewBranch = isPR && d?.state !== "done" ? d?.headBranch || "" : "";
+  // What the launch is seeded from: a stand-in carries only the key, so once the live read has
+  // resolved it the resolved fields go with it (kind, title, url, ...).
+  const launchItem: WorkItem =
+    reference && d
+      ? { ...item, kind: d.kind, title: d.title || item.title, state: d.state, url: d.url || item.url, assignee: d.assignee,
+          labels: d.labels, labelColors: d.labelColors, repo: d.repo || item.repo, updatedAt: d.updatedAt }
+      : item;
   // A stand-in's own state is unread, so the dot and the State row come from the live answer.
   const stateText = d ? detailStateLabel(d) : view.state ? stateLabel(view.state) : "";
 
@@ -236,16 +244,16 @@ export function WorkItemDetailModal({
     // With no working copy yet there is nothing to choose here, so hand over to the start hub,
     // which guides from a clone (the caller has already seeded the prompt).
     if (bases.length === 0) {
-      onStartHub();
+      onStartHub(launchItem);
       return;
     }
     if (!baseRepo) return;
     if (where === NEW_WORKTREE && canWorktree) {
-      onPick(baseRepo, false, reviewBranch);
+      onPick(baseRepo, false, reviewBranch, launchItem);
       return;
     }
     const chosen = repos.find((r) => r.name === where) || baseRepo;
-    onPick(chosen, true, reviewBranch);
+    onPick(chosen, true, reviewBranch, launchItem);
   };
 
   // "Can this be merged" in one phrase. Draft comes before the merge check because a draft is

@@ -317,3 +317,18 @@ func TestGitHubKindPRSkipsIssuesLookup(t *testing.T) {
 		}
 	}
 }
+
+// A kind outside the contract is refused before any GitHub read.
+func TestWorkItemsDetailRejectsUnknownKind(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	hits := fakeGitHub(t, nil)
+	req := httptest.NewRequest("POST", "/work-items/detail", strings.NewReader(`{"provider":"github","key":"o/r#1","kind":"banana"}`))
+	w := httptest.NewRecorder()
+	handleWorkItemsDetail(w, req)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "kind must be") {
+		t.Fatalf("got %d %s, want 400 about kind", w.Code, w.Body.String())
+	}
+	if len(*hits) != 0 {
+		t.Errorf("GitHub was reached: %v", *hits)
+	}
+}

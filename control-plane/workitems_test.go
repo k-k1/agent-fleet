@@ -458,6 +458,21 @@ func TestWorkItemDetailRelaysKind(t *testing.T) {
 	}
 }
 
+// An unknown kind is refused here, before the Agent is reached.
+func TestWorkItemDetailRejectsUnknownKind(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	req := httptest.NewRequest("POST", "/api/work-items/detail",
+		strings.NewReader(`{"provider":"github","key":"acme/web#7","kind":"banana"}`))
+	w := httptest.NewRecorder()
+	env.api.detail(w, req, env.res)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if *env.hits != 0 {
+		t.Errorf("reached the agent %d times", *env.hits)
+	}
+}
+
 func TestWorkItemWireNeverCarriesNullArrays(t *testing.T) {
 	if got := splitLabels(""); got == nil {
 		t.Error("splitLabels(\"\") returned nil — it marshals as JSON null")

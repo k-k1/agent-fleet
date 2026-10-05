@@ -571,6 +571,14 @@ func (a workItemsAPI) detail(w http.ResponseWriter, r *http.Request, res *resolv
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "key is required"})
 		return
 	}
+	// The wire contract: empty, "pr" or "issue". The Agent applies the same check; a typo must not
+	// be read as "unknown reference" and answered as a success.
+	switch in.Kind {
+	case "", "pr", "issue":
+	default:
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "kind must be empty, pr or issue"})
+		return
+	}
 	ctx := r.Context()
 	if res.rt.State(ctx) != "running" {
 		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_stopped",

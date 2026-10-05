@@ -151,8 +151,8 @@ export function WorkItemModalHost() {
         defaultRepo={repoForItem(item, detail.repoHint || queryHint, folders)}
         started={sessionsForItem(ledger, item.key)}
         onClose={close}
-        onPick={(target, inPlace, reviewBranch) => pickTarget(item, target, inPlace, reviewBranch)}
-        onStartHub={() => toStartHub(item)}
+        onPick={(target, inPlace, reviewBranch, resolved) => pickTarget(resolved, target, inPlace, reviewBranch)}
+        onStartHub={(resolved) => toStartHub(resolved)}
         sessionRef={sessionRef}
         onOpenSession={(name) => {
           close();
