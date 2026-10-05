@@ -187,18 +187,43 @@ func TestAgyPassesAspectRatioAndKeepsThePromptOffArgv(t *testing.T) {
 }
 
 // agy 1.2.16+ never offers the main agent generate_image; the prompt has to ask for the
-// image-generator subagent, or the driver answers "the tool is unavailable" and stops.
+// image-generator subagent, or the driver answers "the tool is unavailable" and stops. Each
+// phrase below is an operative instruction: delegate once, never run both paths, carry the ratio
+// into the subagent's prompt, and keep the direct call as the fallback.
 func TestAgyPromptDelegatesToTheImageSubagent(t *testing.T) {
-	got := agyPrompt(Request{Prompt: "a cat", Inputs: []string{"/x/ref.png"}}, "16:9")
+	got := agyPrompt(Request{Prompt: "a cat"}, "16:9")
 	for _, want := range []string{
-		"image-generator subagent with the invoke_subagent tool",
-		"Set AspectRatio to 16:9",
-		"/x/ref.png",
+		"image-generator subagent with the invoke_subagent tool, exactly once",
+		"put the full description in the subagent's prompt",
+		"never both",
+		"directly (exactly once) only if invoke_subagent or the image-generator subagent is not available",
+		"If you call generate_image directly, set ImageName to",
+		"Set AspectRatio to 16:9 (state it in the subagent's prompt",
+		"Never draw, script or otherwise fabricate",
 		"a cat",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("prompt lacks %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(agyPrompt(Request{Prompt: "a cat"}, ""), "AspectRatio") {
+		t.Fatal("the ratio line was written without a ratio")
+	}
+}
+
+// The subagent cannot open a reference image under this route's allow-list (measured: its
+// view_file came back denied and the run produced no picture), so the route must not advertise
+// edit or accept inputs — a caller is sent to a provider that can.
+func TestAgyDoesNotOfferEditOrReferenceImages(t *testing.T) {
+	p := newAgyTestProvider(t, "agy")
+	if c := p.Caps(""); c.Supports(OpEdit) || c.MaxInputs != 0 {
+		t.Fatalf("caps = %+v, want generate only and no inputs", c)
+	}
+	if _, err := p.Generate(context.Background(), Request{Op: OpEdit, Prompt: "a cat", Inputs: []string{"/x/ref.png"}}); err == nil {
+		t.Fatal("an edit request was accepted")
+	}
+	if _, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a cat", Inputs: []string{"/x/ref.png"}}); err == nil {
+		t.Fatal("a reference image was accepted on generate")
 	}
 }
 
