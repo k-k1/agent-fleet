@@ -1463,6 +1463,10 @@ func reasoningEffort(s string) *msp.ReasoningEffort {
 	return nil
 }
 
+// userInputCancelReason is what a declined question tells the host. Free text: the host
+// records it, and nothing in AF reads it back.
+const userInputCancelReason = "declined by the user"
+
 // Respond answers whichever prompt is pending.
 //
 // Both channels re-deliver and both refuse a second answer with their own "already settled"
@@ -1490,10 +1494,13 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 		// Declining a question is the runtime's own refusal (ADR 0105 decision 7): the tool call
 		// resolves as cancelled and the turn goes on, so the queue is not touched. Answering
 		// every question with nothing instead would read to the model as a real answer.
+		// `reason` is optional in the schema but required by the host: measured on
+		// 1.4.2-R4684.1, a cancel without it is refused -32602 "missing field `reason`".
 		err = cl.CallInto(msp.MethodUserInputCancel, msp.UserInputCancelParams{
 			CommandID:   msp.NewCommandID(),
 			SessionID:   sid,
 			UserInputID: ask.userInputID,
+			Reason:      strPtr(userInputCancelReason),
 		}, callTimeout, nil)
 	default:
 		err = h.answerUserInput(cl, sid, ask, reply)
