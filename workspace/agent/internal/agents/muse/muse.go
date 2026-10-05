@@ -154,7 +154,13 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	if err != nil {
 		return agents.TranscriptData{}, false
 	}
-	td := agents.TranscriptData{Turns: turnsFromItems(items), Path: st.Path(), Mode: "normal"}
+	// The log path comes from the slot's record, not the live handle, so a stopped session
+	// shows its commentary too.
+	var cs *commentarySet
+	if ms, ok := readSession(slotSid(m)); ok {
+		cs = commentaryFor(ms.Path)
+	}
+	td := agents.TranscriptData{Turns: turnsWithCommentary(items, cs), Path: st.Path(), Mode: "normal"}
 	// An assistant turn is labelled with the model of its first item. session/setModel takes
 	// effect at the next model call, so a turn that spans a switch shows the model it began on.
 	for i := range td.Turns {

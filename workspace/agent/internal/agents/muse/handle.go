@@ -114,12 +114,6 @@ type threadHandle struct {
 	holding bool
 	held    []record
 
-	// comm reads the commentary the wire omits (commentary.go); nil until the session's
-	// runtime log path is known. pendingCalls are the tool calls of this turn the log had not
-	// recorded yet when they arrived; each later item asks again, and the turn's end gives up.
-	comm         *commentaryReader
-	pendingCalls []msp.Item
-
 	// Live context fill (session/contextUsage). Separate lock from mu so onNotify
 	// can record context without contending with turn plumbing. Read by ManagedContext.
 	ctxMu       sync.Mutex
@@ -238,13 +232,6 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 	if prev, ok := readSession(h.slotSid); ok && prev.ID != "" {
 		h.holdItems()
 		defer h.releaseItems()
-		// The path is known from the store, so it is set before the resume: a live item the
-		// resume lets through ahead of its answer still finds the log, and the catch-up read of
-		// the history happens here rather than on the MSP reader.
-		h.mu.Lock()
-		h.path = prev.Path
-		h.mu.Unlock()
-		h.commentary().scan()
 		var res msp.SessionResumeResult
 		err := cl.CallInto(msp.MethodSessionResume, msp.SessionResumeParams{
 			CommandID: msp.NewCommandID(),
@@ -260,7 +247,6 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 			if ok {
 				h.backfillMirror(items)
 			}
-			h.attachLoggedCommentary()
 			return nil
 		}
 		if !msp.HasCode(err, msp.ErrCodeSessionNotFound) {
@@ -579,8 +565,6 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 // once and never fails the turn: the host owns the conversation of record, and refusing to
 // carry on because AF could not mirror a line would trade a rendering gap for a dead session.
 func (h *threadHandle) onItem(it msp.Item) {
-	// Taken before h.mu: it reads a file.
-	recs := h.recoverCommentary(&it)
 	h.mu.Lock()
 	delete(h.streaming, it.ItemID)
 	sid, model := h.slotSid, h.turnModel
@@ -594,128 +578,17 @@ func (h *threadHandle) onItem(it msp.Item) {
 		images = h.sentImages[*it.CommandID]
 		delete(h.sentImages, *it.CommandID)
 	}
-	recs = append(recs, record{Item: it, Model: model, Images: images})
+	r := record{Item: it, Model: model, Images: images}
 	if h.holding {
-		h.held = append(h.held, recs...)
+		h.held = append(h.held, r)
 		h.mu.Unlock()
 		return
 	}
 	h.trackBgLocked(it)
 	h.mu.Unlock()
-	st := openStore(sid)
-	for _, r := range recs {
-		if err := st.appendRecord(r); err != nil {
-			log.Printf("muse: %s: transcript append: %v", h.name, err)
-		}
+	if err := openStore(sid).appendRecord(r); err != nil {
+		log.Printf("muse: %s: transcript append: %v", h.name, err)
 	}
-}
-
-// recoverCommentary asks the runtime log about the tool calls still waiting for an answer and,
-// when call is a tool call, about it too; it returns the commentary records to write. Every
-// item asks, not only tool calls, because the log may record a call after the item arrived.
-func (h *threadHandle) recoverCommentary(call *msp.Item) []record {
-	comm := h.commentary()
-	if comm == nil {
-		return nil
-	}
-	h.mu.Lock()
-	model := h.turnModel
-	if model == "" {
-		model = h.model
-	}
-	calls := h.pendingCalls
-	h.pendingCalls = nil
-	h.mu.Unlock()
-	if call != nil && call.Kind == msp.ItemKindToolCall && call.CallID != nil {
-		calls = append(calls, *call)
-	}
-	var out []record
-	var still []msp.Item
-	for _, c := range calls {
-		recs, known := commentaryRecords(comm, c, model)
-		out = append(out, recs...)
-		if !known {
-			still = append(still, c)
-		}
-	}
-	if len(still) > 0 {
-		h.mu.Lock()
-		h.pendingCalls = append(still, h.pendingCalls...)
-		h.mu.Unlock()
-	}
-	return out
-}
-
-// endTurnCommentary asks once more for the calls still waiting, then drops what the reader
-// held for the turn: nothing of an ended turn is attached afterwards.
-func (h *threadHandle) endTurnCommentary() {
-	recs := h.recoverCommentary(nil)
-	h.mu.Lock()
-	h.pendingCalls = nil
-	sid := h.slotSid
-	if h.holding {
-		h.held = append(h.held, recs...)
-		recs = nil
-	}
-	comm := h.comm
-	h.mu.Unlock()
-	st := openStore(sid)
-	for _, r := range recs {
-		if err := st.appendRecord(r); err != nil {
-			log.Printf("muse: %s: transcript append: %v", h.name, err)
-		}
-	}
-	comm.forgetTurn()
-}
-
-// attachLoggedCommentary gives every tool call in the mirror the commentary that introduced
-// it, where the mirror lacks it: what a resume brings back (a turn the Agent missed, or one
-// it saw while the log was unreadable) and the history of sessions from before this existed.
-// It then drops what the history settled, keeping only a response still being produced.
-func (h *threadHandle) attachLoggedCommentary() {
-	comm := h.commentary()
-	if comm == nil {
-		return
-	}
-	st := openStore(h.slotSid)
-	items, meta, err := st.itemsWithMeta()
-	if err != nil {
-		return
-	}
-	have := make(map[string]bool, len(items))
-	for _, it := range items {
-		have[it.ItemID] = true
-	}
-	for _, it := range items {
-		if it.Kind != msp.ItemKindToolCall {
-			continue
-		}
-		recs, _ := commentaryRecords(comm, it, meta[it.ItemID].model)
-		for _, r := range recs {
-			if have[r.Item.ItemID] {
-				continue
-			}
-			if err := st.appendRecord(r); err != nil {
-				log.Printf("muse: %s: transcript append: %v", h.name, err)
-				return
-			}
-		}
-	}
-	comm.forgetSettled()
-}
-
-// commentary returns the reader for the session.jsonl the host reported, opening it on first
-// use and again if the handle moved to another session; nil while no path is known.
-func (h *threadHandle) commentary() *commentaryReader {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.path == "" {
-		return nil
-	}
-	if h.comm == nil || h.comm.path != h.path {
-		h.comm = newCommentaryReader(h.path)
-	}
-	return h.comm
 }
 
 // holdItems makes onItem keep live items in memory instead of writing them, from before
@@ -895,7 +768,6 @@ func (h *threadHandle) finishTurn(p msp.TurnCompletedParams) {
 	h.dropResumedLocked(true)
 	h.running, h.state, h.turnID = false, st, ""
 	h.mu.Unlock()
-	h.endTurnCommentary()
 	agents.MarkTurnEndErr(h.slotSid, st, failure)
 	h.emit(agents.Event{Kind: "turn_state", TurnState: st})
 	// Never on this goroutine: finishTurn runs on the client's reader, and pump waits for the
@@ -1764,9 +1636,5 @@ func (h *threadHandle) forkSession(cl *msp.Client) error {
 	if err := openStore(h.forkFrom).ForkAt(h.slotSid, h.forkAt); err != nil {
 		log.Printf("muse: %s: fork: transcript copy failed: %v", h.name, err)
 	}
-	// The fork's log starts with the copied history; catching up on it here keeps that read off
-	// the MSP reader, and the copied mirror already carries its commentary.
-	h.commentary().scan()
-	h.commentary().forgetSettled()
 	return nil
 }

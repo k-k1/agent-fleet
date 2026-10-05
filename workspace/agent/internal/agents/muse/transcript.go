@@ -9,7 +9,7 @@
 // `goal_usage_attribution`, …), not a list of wire `Item`s. A reader for it would be exactly
 // the transcript reverse-engineering this kind was supposed to get for free, against an
 // internal format with no stability promise. The one narrow exception is the commentary the
-// wire omits (commentary.go).
+// wire omits, which the read layer splices in beside its tool call (commentary.go).
 //
 // The protocol's own answer is `session/read`, which returns `SessionHistory.items` — the
 // stable surface. But it needs a running host, and `Transcript` is called from the usage
@@ -29,7 +29,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -55,11 +54,6 @@ type record struct {
 	// Order, on a line with no item, is the host's own item order as of a resume backfill
 	// (backfill.go). An older Agent skips the line as an item without an id.
 	Order []string `json:"order,omitempty"`
-	// Before, on an item AF recovered rather than received (commentary.go), is the item it
-	// belongs in front of. First-seen order would otherwise put text that was recovered late
-	// (the log not yet written when its tool call arrived, or a resume) under whatever
-	// followed the call.
-	Before string `json:"before,omitempty"`
 }
 
 // store is one session's append-only item log.
@@ -174,7 +168,7 @@ func (s *store) itemsWithMeta() ([]msp.Item, map[string]itemMeta, error) {
 		}
 		prev, seen := byID[r.Item.ItemID]
 		if !seen {
-			order = insertBefore(order, r.Item.ItemID, r.Before)
+			order = append(order, r.Item.ItemID)
 		}
 		if seen && r.Item.Revision < prev.Revision {
 			continue
@@ -196,16 +190,6 @@ func (s *store) itemsWithMeta() ([]msp.Item, map[string]itemMeta, error) {
 		items = append(items, byID[id])
 	}
 	return items, meta, sc.Err()
-}
-
-// insertBefore appends id, or places it in front of anchor when anchor is already in order.
-func insertBefore(order []string, id, anchor string) []string {
-	if anchor != "" {
-		if i := slices.Index(order, anchor); i >= 0 {
-			return slices.Insert(order, i, id)
-		}
-	}
-	return append(order, id)
 }
 
 // mergeOrder puts the items in the host's order where the host has spoken, and keeps every
@@ -290,7 +274,20 @@ func withImagePaths(t *transcript.Turn, images []string) {
 // `turnId`, but it is not the grouping key — a turn that was steered carries items from
 // before and after the injection, and the host also emits items with no turn id at all
 // (a compaction between turns), so grouping on it would drop them.
-func turnsFromItems(items []msp.Item) []transcript.Turn {
+func turnsFromItems(items []msp.Item) []transcript.Turn { return turnsWithCommentary(items, nil) }
+
+// turnsWithCommentary is turnsFromItems with the runtime log's commentary (commentary.go) put
+// in front of the tool call it introduced. A commentary the wire did deliver — an agentMessage
+// with the same id, which is the commit's message_id — is not added a second time.
+func turnsWithCommentary(items []msp.Item, cs *commentarySet) []transcript.Turn {
+	delivered := map[string]bool{}
+	if cs != nil {
+		for _, it := range items {
+			if it.Kind == msp.ItemKindAgentMessage {
+				delivered[it.ItemID] = true
+			}
+		}
+	}
 	var turns []transcript.Turn
 	assistant := -1 // index of the open assistant turn, -1 when none
 
@@ -365,6 +362,14 @@ func turnsFromItems(items []msp.Item) []transcript.Turn {
 
 		case msp.ItemKindToolCall:
 			t := openAssistant(it)
+			if it.CallID != nil {
+				for _, c := range cs.take(*it.CallID) {
+					if !delivered[c.id] {
+						t.Parts = append(t.Parts, transcript.Part{Kind: "text", Text: c.text})
+						t.Text = joinText(t.Text, c.text)
+					}
+				}
+			}
 			t.Parts = append(t.Parts, toolPart(it))
 			applyUsage(t, it)
 

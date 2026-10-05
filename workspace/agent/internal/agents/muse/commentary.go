@@ -14,6 +14,12 @@ package muse
 // narrow on purpose: two event kinds, read forward from an offset, only to add text beside the
 // tool call it introduced. When the format moves, the commentary disappears again and nothing
 // else breaks — every failure here is silent and the wire items still render.
+//
+// It is spliced in when the transcript is READ, never written to AF's store. Placing it by its
+// call at render time is what keeps it right across everything that reorders or rebuilds the
+// store (a resume backfill, the host's order, a fork), and a read is also what notices a log
+// line written after the call's item arrived — the mirror polls, so the proposal appears while
+// the question still waits. Nothing here follows the turn's lifecycle.
 
 import (
 	"bufio"
@@ -24,42 +30,109 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
 )
 
 type commentaryMsg struct {
-	id, text, at string
+	id, text string
 }
 
-// commentaryReader tails one session.jsonl. What it holds is scoped to the turn in flight:
-// forgetTurn drops it when the turn ends, and a resume drops what the history already settled
-// (forgetSettled), so a long session costs one turn's worth, not its whole history.
-type commentaryReader struct {
-	mu       sync.Mutex
-	path     string
-	ident    os.FileInfo // the file the offset belongs to; a replaced file is read from 0
-	off      int64
-	partial  []byte
-	byResp   map[string][]commentaryMsg // response id → commentary not yet attached
-	callResp map[string]string          // call id → response id, for every call seen this turn
+// commentaryLog is what one session.jsonl has said so far, kept between reads so each read
+// only decodes what was appended. It holds the commentary of responses that issued tool
+// calls (keyed by response, with every call of that response pointing at it), plus, per
+// stream, the one response whose tool calls are not logged yet. A response that never logs
+// tool calls — it was interrupted, or answered without tools — is dropped as soon as another
+// response of its stream speaks, so its text never accumulates. Per stream because subagent
+// records are interleaved into the same file under their own stream id.
+type commentaryLog struct {
+	mu      sync.Mutex
+	path    string
+	ident   os.FileInfo // the file the offset belongs to; a replaced file is read from 0
+	off     int64
+	partial []byte
+	pending map[string]pendingResp // stream id → response waiting for its tool calls
+	byResp  map[string][]commentaryMsg
+	byCall  map[string]string // call id → response id, only for responses with commentary
+	used    time.Time
 }
 
-func newCommentaryReader(path string) *commentaryReader {
-	r := &commentaryReader{path: path}
-	r.resetMaps()
-	return r
+// commentaryLogCap bounds how many logs stay cached. A read past it costs one re-read of that
+// session's log, not a wrong answer.
+const commentaryLogCap = 64
+
+type pendingResp struct {
+	resp string
+	msgs []commentaryMsg
 }
 
-func (r *commentaryReader) resetMaps() {
-	r.byResp = map[string][]commentaryMsg{}
-	r.callResp = map[string]string{}
+var (
+	commentaryLogsMu sync.Mutex
+	commentaryLogs   = map[string]*commentaryLog{}
+)
+
+// commentaryFor returns what path's log holds now, as a set the caller owns. Empty for an
+// empty path or an unreadable file.
+func commentaryFor(path string) *commentarySet {
+	if path == "" {
+		return nil
+	}
+	commentaryLogsMu.Lock()
+	l := commentaryLogs[path]
+	if l == nil {
+		l = &commentaryLog{path: path}
+		l.reset()
+		commentaryLogs[path] = l
+		if len(commentaryLogs) > commentaryLogCap {
+			evictOldestLog()
+		}
+	}
+	l.used = time.Now()
+	commentaryLogsMu.Unlock()
+	return l.snapshot()
+}
+
+// evictOldestLog drops the least recently read log. Caller holds commentaryLogsMu.
+func evictOldestLog() {
+	var oldest string
+	var at time.Time
+	for p, l := range commentaryLogs {
+		if oldest == "" || l.used.Before(at) {
+			oldest, at = p, l.used
+		}
+	}
+	delete(commentaryLogs, oldest)
+}
+
+func (l *commentaryLog) reset() {
+	l.off, l.partial = 0, nil
+	l.pending = map[string]pendingResp{}
+	l.byResp = map[string][]commentaryMsg{}
+	l.byCall = map[string]string{}
+}
+
+func (l *commentaryLog) snapshot() *commentarySet {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.scanLocked()
+	cs := &commentarySet{
+		byResp: make(map[string][]commentaryMsg, len(l.byResp)),
+		byCall: make(map[string]string, len(l.byCall)),
+		done:   map[string]bool{},
+	}
+	for k, v := range l.byResp {
+		cs.byResp[k] = v
+	}
+	for k, v := range l.byCall {
+		cs.byCall[k] = v
+	}
+	return cs
 }
 
 // runtimeEvent is the slice of a session.jsonl record this file reads.
 type runtimeEvent struct {
-	RecordedAt int64 `json:"recorded_at"` // microseconds since the epoch
-	Payload    struct {
+	Stream struct {
+		ID string `json:"id"`
+	} `json:"stream"`
+	Payload struct {
 		Event struct {
 			Kind       string `json:"kind"`
 			MessageID  string `json:"message_id"`
@@ -74,70 +147,15 @@ type runtimeEvent struct {
 }
 
 var (
-	kindCommentary = []byte(`"assistant_message_committed"`)
-	kindToolCalls  = []byte(`"assistant_tool_calls_committed"`)
+	kindMessage   = []byte(`"assistant_message_committed"`)
+	kindToolCalls = []byte(`"assistant_tool_calls_committed"`)
 )
 
-// lookup reads what was appended and answers for one call. known is false while the log has
-// not yet recorded the call (the host writes it around the time the item goes out, so it may
-// be late): the caller asks again later. Once known, the commentary is handed out once — a
-// sibling call of the same response, or a later revision, gets none.
-func (r *commentaryReader) lookup(callID string) (msgs []commentaryMsg, known bool) {
-	if r == nil || callID == "" {
-		return nil, false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.scanLocked()
-	resp, ok := r.callResp[callID]
-	if !ok {
-		return nil, false
-	}
-	msgs = r.byResp[resp]
-	delete(r.byResp, resp)
-	return msgs, true
-}
-
-// scan reads what was appended without answering anything: a resume's catch-up, so the first
-// live item does not pay for the whole history on the MSP reader.
-func (r *commentaryReader) scan() {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.scanLocked()
-}
-
-// forgetTurn drops everything held: nothing of an ended turn is attached any more.
-func (r *commentaryReader) forgetTurn() {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.resetMaps()
-}
-
-// forgetSettled keeps only commentary whose tool calls the log has not recorded yet — a
-// response still being produced — and drops the rest, which a resume has already attached.
-func (r *commentaryReader) forgetSettled() {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, resp := range r.callResp {
-		delete(r.byResp, resp)
-	}
-	r.callResp = map[string]string{}
-}
-
-// scanLocked reads whatever was appended since the last call. A line still being written is
+// scanLocked reads whatever was appended since the last read. A line still being written is
 // kept in partial until its newline arrives. A file that is not the one the offset was taken
 // on, or that shrank, is read again from the start with nothing carried over.
-func (r *commentaryReader) scanLocked() {
-	f, err := os.Open(r.path)
+func (l *commentaryLog) scanLocked() {
+	f, err := os.Open(l.path)
 	if err != nil {
 		return
 	}
@@ -146,34 +164,32 @@ func (r *commentaryReader) scanLocked() {
 	if err != nil {
 		return
 	}
-	if r.ident != nil && (!os.SameFile(r.ident, fi) || fi.Size() < r.off) {
-		r.off, r.partial = 0, nil
-		r.resetMaps()
+	if l.ident != nil && (!os.SameFile(l.ident, fi) || fi.Size() < l.off) {
+		l.reset()
 	}
-	r.ident = fi
-	if _, err := f.Seek(r.off, io.SeekStart); err != nil {
+	l.ident = fi
+	if _, err := f.Seek(l.off, io.SeekStart); err != nil {
 		return
 	}
 	br := bufio.NewReaderSize(f, 256*1024)
 	for {
 		chunk, err := br.ReadBytes('\n')
-		r.off += int64(len(chunk))
+		l.off += int64(len(chunk))
 		if err != nil {
-			r.partial = append(r.partial, chunk...)
+			l.partial = append(l.partial, chunk...)
 			return
 		}
 		line := chunk
-		if len(r.partial) > 0 {
-			line = append(r.partial, chunk...)
-			r.partial = nil
+		if len(l.partial) > 0 {
+			line = append(l.partial, chunk...)
+			l.partial = nil
 		}
-		r.consume(line)
+		l.consume(line)
 	}
 }
 
-func (r *commentaryReader) consume(line []byte) {
-	isComm := bytes.Contains(line, kindCommentary)
-	if !isComm && !bytes.Contains(line, kindToolCalls) {
+func (l *commentaryLog) consume(line []byte) {
+	if !bytes.Contains(line, kindMessage) && !bytes.Contains(line, kindToolCalls) {
 		return // the prefilter: almost every line is neither, and is never decoded
 	}
 	var ev runtimeEvent
@@ -181,49 +197,55 @@ func (r *commentaryReader) consume(line []byte) {
 		return
 	}
 	e := ev.Payload.Event
-	switch {
-	case e.Kind == "assistant_message_committed" && e.Phase == "commentary":
-		if e.ResponseID == "" || e.MessageID == "" || strings.TrimSpace(e.Text) == "" {
-			return
+	if e.ResponseID == "" {
+		return
+	}
+	stream := ev.Stream.ID
+	p := l.pending[stream]
+	if p.resp != e.ResponseID {
+		// Another response of this stream spoke: the held one will never log tool calls.
+		p = pendingResp{resp: e.ResponseID}
+	}
+	switch e.Kind {
+	case "assistant_message_committed":
+		if e.Phase == "commentary" && e.MessageID != "" && strings.TrimSpace(e.Text) != "" {
+			p.msgs = append(p.msgs, commentaryMsg{id: e.MessageID, text: e.Text})
 		}
-		at := ""
-		if ev.RecordedAt > 0 {
-			at = time.UnixMicro(ev.RecordedAt).UTC().Format(time.RFC3339Nano)
-		}
-		r.byResp[e.ResponseID] = append(r.byResp[e.ResponseID], commentaryMsg{id: e.MessageID, text: e.Text, at: at})
-	case e.Kind == "assistant_tool_calls_committed":
-		for _, c := range e.ToolCalls {
-			if c.CallID != "" {
-				r.callResp[c.CallID] = e.ResponseID
+	case "assistant_tool_calls_committed":
+		if len(p.msgs) > 0 {
+			l.byResp[e.ResponseID] = p.msgs
+			for _, c := range e.ToolCalls {
+				if c.CallID != "" {
+					l.byCall[c.CallID] = e.ResponseID
+				}
 			}
 		}
+		p = pendingResp{}
+	}
+	if len(p.msgs) > 0 {
+		l.pending[stream] = p
+	} else {
+		delete(l.pending, stream)
 	}
 }
 
-// commentaryRecords turns the commentary that introduced call into store records anchored in
-// front of it, and reports whether the log has answered for the call yet.
-func commentaryRecords(r *commentaryReader, call msp.Item, model string) ([]record, bool) {
-	if call.CallID == nil {
-		return nil, true
+// commentarySet is one read's view of a log, consumed while one transcript is built.
+type commentarySet struct {
+	byResp map[string][]commentaryMsg
+	byCall map[string]string
+	done   map[string]bool
+}
+
+// take returns the commentary that introduced callID, once per response: the response's
+// other calls, and every later revision of the same call, get none.
+func (c *commentarySet) take(callID string) []commentaryMsg {
+	if c == nil {
+		return nil
 	}
-	msgs, known := r.lookup(*call.CallID)
-	var out []record
-	for _, c := range msgs {
-		it := msp.Item{
-			// The commit's message_id is exactly the itemId the wire gives an agentMessage, so
-			// should a host start sending commentary itself, the store folds both into one item
-			// rather than showing the text twice.
-			ItemID:   c.id,
-			Kind:     msp.ItemKindAgentMessage,
-			Revision: 1,
-			Status:   msp.ItemStatusCompleted,
-			Text:     strPtr(c.text),
-			TurnID:   call.TurnID,
-		}
-		if c.at != "" {
-			it.RecordedAt = strPtr(c.at)
-		}
-		out = append(out, record{Item: it, Model: model, Before: call.ItemID})
+	resp, ok := c.byCall[callID]
+	if !ok || c.done[resp] {
+		return nil
 	}
-	return out, known
+	c.done[resp] = true
+	return c.byResp[resp]
 }
