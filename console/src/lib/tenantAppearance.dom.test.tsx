@@ -152,6 +152,15 @@ describe("per-tenant appearance", () => {
     expect(s.getSettings().theme).toBe("dark"); // b's snapshot survived the off period
   });
 
+  it("applying again for the same owner keeps edits made in between", async () => {
+    const { s } = await fresh();
+    s.setSetting("appearancePerTenant", true);
+    s.applyTenantAppearance();
+    s.setSetting("theme", "light");
+    s.applyTenantAppearance(); // boot, per-tenant effect and identity effect may all call this
+    expect(s.getSettings().theme).toBe("light");
+  });
+
   it("does nothing while the owner is unknown", async () => {
     const { s, setOwner } = await fresh();
     setOwner("");

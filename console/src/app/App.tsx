@@ -334,6 +334,8 @@ export function App() {
       await hydrateUIPrefs();
       if (!alive) return;
       prefsReady = true;
+      // The owner may have resolved while the hydrate above was waiting.
+      applyTenantAppearance();
       setBooted(true);
     })();
     // Chat-bridge notification links (?session=<name>) open that session's pane.
@@ -375,7 +377,6 @@ export function App() {
     // tenant's copy.
     if (prefsSyncedTenantRef.current !== null && prefsSyncedTenantRef.current !== tenant) {
       void resyncAccumulatedForIdentitySwitch();
-      applyTenantAppearance();
       // The rail's repos are the previous tenant's workspace. When both workspaces are running
       // no running edge fires, so nothing else drops them; ProjectTree reloads on the switch.
       useReposStore.getState().clear();
@@ -395,6 +396,9 @@ export function App() {
       profilesReloadRef.current = true; // the retrying load below asks for the profiles
     }
     prefsSyncedTenantRef.current = tenant;
+    // Unconditional (idempotent per owner): the first run skips the branch above, yet a whoami
+    // retry or tenant re-selection can have moved the owner while the boot hydrate was waiting.
+    applyTenantAppearance();
     // pane ids are tab-local, not tenant-global. Never carry an ephemeral Page
     // owned by the previous membership into a same-named pane in the next tenant.
     disposeAllBrowsers();
