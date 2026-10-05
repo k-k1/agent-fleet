@@ -8,7 +8,8 @@
 // `started`, `model_request_configured`, `assistant_message_committed`, `terminal`,
 // `goal_usage_attribution`, …), not a list of wire `Item`s. A reader for it would be exactly
 // the transcript reverse-engineering this kind was supposed to get for free, against an
-// internal format with no stability promise.
+// internal format with no stability promise. The one narrow exception is the commentary the
+// wire omits, which the read layer splices in beside its tool call (commentary.go).
 //
 // The protocol's own answer is `session/read`, which returns `SessionHistory.items` — the
 // stable surface. But it needs a running host, and `Transcript` is called from the usage
@@ -273,7 +274,20 @@ func withImagePaths(t *transcript.Turn, images []string) {
 // `turnId`, but it is not the grouping key — a turn that was steered carries items from
 // before and after the injection, and the host also emits items with no turn id at all
 // (a compaction between turns), so grouping on it would drop them.
-func turnsFromItems(items []msp.Item) []transcript.Turn {
+func turnsFromItems(items []msp.Item) []transcript.Turn { return turnsWithCommentary(items, nil) }
+
+// turnsWithCommentary is turnsFromItems with the runtime log's commentary (commentary.go) put
+// in front of the tool call it introduced. A commentary the wire did deliver — an agentMessage
+// with the same id, which is the commit's message_id — is not added a second time.
+func turnsWithCommentary(items []msp.Item, cs *commentarySet) []transcript.Turn {
+	delivered := map[string]bool{}
+	if cs != nil {
+		for _, it := range items {
+			if it.Kind == msp.ItemKindAgentMessage {
+				delivered[it.ItemID] = true
+			}
+		}
+	}
 	var turns []transcript.Turn
 	assistant := -1 // index of the open assistant turn, -1 when none
 
@@ -348,6 +362,14 @@ func turnsFromItems(items []msp.Item) []transcript.Turn {
 
 		case msp.ItemKindToolCall:
 			t := openAssistant(it)
+			if it.CallID != nil {
+				for _, c := range cs.take(*it.CallID) {
+					if !delivered[c.id] {
+						t.Parts = append(t.Parts, transcript.Part{Kind: "text", Text: c.text})
+						t.Text = joinText(t.Text, c.text)
+					}
+				}
+			}
 			t.Parts = append(t.Parts, toolPart(it))
 			applyUsage(t, it)
 

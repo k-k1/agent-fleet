@@ -2,12 +2,14 @@ package muse
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp/msptest"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 func approvalParams() msp.ApprovalRequestParams {
@@ -719,6 +721,45 @@ func TestTranscriptKeepsUserInputAQuestion(t *testing.T) {
 	}
 }
 
+// The Console replies with the id of the card's first question (`pending[0].id`), not with the
+// Interaction's. When that was the model's own question id ("apply-labels"), Respond refused
+// both the answer and the cancel, and the card could not be dismissed.
+func TestQuestionAnswersByTheIDTheCardCarries(t *testing.T) {
+	for _, d := range []agents.Decision{agents.DecisionCancel, agents.DecisionAnswer} {
+		t.Run(string(d), func(t *testing.T) {
+			h := &threadHandle{}
+			host := newTestHandle(t, h)
+			host.Handle(msp.MethodUserInputCancel, func(m msptest.Message) (any, *msp.Error) {
+				return msp.CommandAcceptedResult{}, nil
+			})
+			host.Handle(msp.MethodUserInputAnswer, func(m msptest.Message) (any, *msp.Error) {
+				return msp.CommandAcceptedResult{}, nil
+			})
+			host.Notify(msp.NotificationUserInputRequested, msp.UserInputRequestParams{
+				UserInputID: "ui-card", SessionID: h.sid,
+				Questions: []msp.UserInputQuestion{{ID: "apply-labels", Question: "apply?",
+					Options: []msp.UserInputOption{{Label: "yes"}}}},
+			})
+			inter := waitInteraction(t, h)
+			reply := agents.InteractionReply{ID: inter.Questions[0].ID, Decision: d}
+			if d == agents.DecisionAnswer {
+				reply.Answers = []agents.InteractionAnswer{{Options: []int{0}}}
+			}
+			if err := h.Respond(reply); err != nil {
+				t.Fatalf("respond with the card's id %q: %v", reply.ID, err)
+			}
+			if d == agents.DecisionAnswer {
+				m := waitSent(t, host, isMethod(msp.MethodUserInputAnswer))
+				if !strings.Contains(string(m.Params), `"questionId":"apply-labels"`) {
+					t.Errorf("the answer lost the model's question id: %s", m.Params)
+				}
+			} else {
+				waitSent(t, host, isMethod(msp.MethodUserInputCancel))
+			}
+		})
+	}
+}
+
 // Declining a question is the runtime's own refusal (ADR 0105 decision 7): cancel and deny go out
 // as userInput/cancel, never as an empty userInput/answer, and they leave the queue alone.
 func TestCancelledQuestionSendsUserInputCancelAndKeepsTheQueue(t *testing.T) {
@@ -765,5 +806,46 @@ func TestCancelledQuestionSendsUserInputCancelAndKeepsTheQueue(t *testing.T) {
 					pending != nil, queued, running)
 			}
 		})
+	}
+}
+
+// The status file holds the "working" turn/started wrote for the whole turn, so the session
+// list read "in progress" while a question card was waiting. The live prompt decides instead,
+// and the state goes back to working once it is answered.
+func TestWireLiveReportsAPendingPromptOverWorking(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Kind: session.KindMuse, Name: "wl-" + t.Name(), Dir: t.TempDir(), Driver: session.DriverManaged}
+	h := &threadHandle{name: m.Name, slotSid: slotSid(m)}
+	host := newTestHandle(t, h)
+	registerHandle(t, m.Name, h)
+	host.Handle(msp.MethodUserInputCancel, func(msptest.Message) (any, *msp.Error) {
+		return msp.CommandAcceptedResult{}, nil
+	})
+
+	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{TurnID: "t-1", SessionID: h.sid})
+	waitEvent(t, h, agents.TurnRunning)
+	if st := New().WireLive(m, true).State; st != "working" {
+		t.Fatalf("state during the turn = %q, want working", st)
+	}
+
+	host.Notify(msp.NotificationUserInputRequested, msp.UserInputRequestParams{
+		UserInputID: "ui-wl", SessionID: h.sid,
+		Questions: []msp.UserInputQuestion{{ID: "q1", Question: "which?"}},
+	})
+	inter := waitInteraction(t, h)
+	if st := New().WireLive(m, true).State; st != "question" {
+		t.Errorf("state with a question waiting = %q, want question", st)
+	}
+	if err := h.Respond(agents.InteractionReply{ID: inter.ID, Decision: agents.DecisionCancel}); err != nil {
+		t.Fatal(err)
+	}
+	if st := New().WireLive(m, true).State; st != "working" {
+		t.Errorf("state after the cancel = %q, want working", st)
+	}
+
+	host.Notify(msp.NotificationApprovalRequested, approvalParams())
+	waitInteraction(t, h)
+	if st := New().WireLive(m, true).State; st != "permission" {
+		t.Errorf("state with an approval waiting = %q, want permission", st)
 	}
 }
