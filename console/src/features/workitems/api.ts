@@ -54,7 +54,7 @@ export function workItemComment(rec: { provider: string; key: string; body: stri
 /** Read one pull request live, for the detail panel (docs/log/80 §80.24). The CP relays it to
  * the Agent and stores nothing; a stopped workspace answers 409 rather than being started,
  * and the panel then keeps showing the cached row. */
-export function workItemDetail(rec: { provider: string; key: string }): Promise<unknown> {
+export function workItemDetail(rec: { provider: string; key: string; kind?: string }): Promise<unknown> {
   return apiJSON("api/work-items/detail", "POST", rec);
 }
 

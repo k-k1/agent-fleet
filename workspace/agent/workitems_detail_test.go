@@ -230,3 +230,105 @@ func TestWorkItemsDetailRejectsProvidersWithoutPullRequests(t *testing.T) {
 		}
 	}
 }
+
+// fakeGitHub serves the three reads a reference lookup can make and counts the paths asked for.
+func fakeGitHub(t *testing.T, routes map[string]string) *[]string {
+	t.Helper()
+	var hits []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits = append(hits, r.URL.Path)
+		body, ok := routes[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	old := githubAPIBase
+	githubAPIBase = srv.URL
+	t.Cleanup(func() { githubAPIBase = old; srv.Close() })
+	return &hits
+}
+
+func TestGitHubReferenceDetailIssue(t *testing.T) {
+	hits := fakeGitHub(t, map[string]string{"/repos/o/r/issues/7": `{
+		"title":"Crash on save","state":"closed","state_reason":"not_planned",
+		"html_url":"https://github.com/o/r/issues/7","updated_at":"2026-10-01T00:00:00Z",
+		"body":"SECRET BODY","user":{"login":"alice"},
+		"assignees":[{"login":"bob"},{"login":"carol"}],"labels":[{"name":"bug","color":"d73a4a"}]}`})
+	out, err := githubReferenceDetail("tok", "o/r#7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Kind != "issue" || out.Title != "Crash on save" || out.State != "done" || out.StateReason != "not_planned" {
+		t.Errorf("issue row wrong: %+v", out)
+	}
+	if strings.Join(out.Assignees, ",") != "bob,carol" || out.Assignee != "bob" || out.Repo != "o/r" {
+		t.Errorf("assignees/repo wrong: %+v", out)
+	}
+	if len(*hits) != 1 {
+		t.Errorf("an issue needs exactly one call, got %v", *hits)
+	}
+	raw, _ := json.Marshal(out)
+	if strings.Contains(string(raw), "SECRET BODY") {
+		t.Error("the body must never reach the response")
+	}
+}
+
+func TestGitHubReferenceDetailChainsIntoPullRequest(t *testing.T) {
+	hits := fakeGitHub(t, map[string]string{
+		"/repos/o/r/issues/9": `{"title":"x","state":"closed","pull_request":{"url":"u"}}`,
+		"/repos/o/r/pulls/9": `{"title":"Add thing","state":"closed","merged":true,
+			"html_url":"https://github.com/o/r/pull/9","base":{"ref":"develop","repo":{"full_name":"o/r"}},
+			"head":{"ref":"feat","sha":"abc"}}`,
+	})
+	out, err := githubReferenceDetail("tok", "o/r#9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Kind != "pr" || !out.Merged || out.Title != "Add thing" || out.HeadBranch != "feat" {
+		t.Errorf("pull request row wrong: %+v", out)
+	}
+	if len(*hits) < 2 || (*hits)[0] != "/repos/o/r/issues/9" || (*hits)[1] != "/repos/o/r/pulls/9" {
+		t.Errorf("want issues then pulls, got %v", *hits)
+	}
+}
+
+// A guessed `#N` that does not exist must come back as an error the panel can degrade on.
+func TestGitHubReferenceDetailMissing(t *testing.T) {
+	fakeGitHub(t, nil)
+	if _, err := githubReferenceDetail("tok", "o/r#404"); err == nil || !strings.Contains(err.Error(), "no o/r#404 visible") {
+		t.Fatalf("want a not-visible error, got %v", err)
+	}
+	if _, err := githubReferenceDetail("tok", "nonsense"); err == nil {
+		t.Fatal("a malformed key must be refused")
+	}
+}
+
+// A cached pull request row (kind "pr") keeps the direct read: no extra issues call.
+func TestGitHubKindPRSkipsIssuesLookup(t *testing.T) {
+	hits := fakeGitHub(t, map[string]string{"/repos/o/r/pulls/3": `{"title":"p","state":"open","base":{"repo":{"full_name":"o/r"}},"head":{}}`})
+	if _, err := githubPullRequestDetail("tok", "o/r#3"); err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range *hits {
+		if strings.Contains(h, "/issues/") {
+			t.Errorf("unexpected issues call: %v", *hits)
+		}
+	}
+}
+
+// A kind outside the contract is refused before any GitHub read.
+func TestWorkItemsDetailRejectsUnknownKind(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	hits := fakeGitHub(t, nil)
+	req := httptest.NewRequest("POST", "/work-items/detail", strings.NewReader(`{"provider":"github","key":"o/r#1","kind":"banana"}`))
+	w := httptest.NewRecorder()
+	handleWorkItemsDetail(w, req)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "kind must be") {
+		t.Fatalf("got %d %s, want 400 about kind", w.Code, w.Body.String())
+	}
+	if len(*hits) != 0 {
+		t.Errorf("GitHub was reached: %v", *hits)
+	}
+}

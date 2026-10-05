@@ -7,6 +7,7 @@ English | [日本語](0061-work-item-inbox.ja.md)
   **2026-08-27: Bitbucket pull requests added, with decisions 17–19** ([docs/80](../log/80-work-item-inbox.md) §80.19). The design and the background are in [docs/80](../log/80-work-item-inbox.md).
   Status update (2026-09-25): the query composer, the sort UI and grouping that decision 14 left unbuilt are not planned (decision 14; docs/log/80 §80.18.5). The detail pane was superseded by decision 20's detail modal.
   **2026-09-28: decision 25 added** — say when a query's page left matches out, and search the tracker on a press only (#1095). It departs narrowly from decision 14's line.
+  **2026-10-05: decision 26 added** — a reference that is not in the inbox is read live too, GitHub only (#1697). It departs narrowly from decision 20.1's "no single-item read for an issue".
 - See also: [0031-mcp-registry.md](0031-mcp-registry.md) (MCP means "each CLI speaks it directly and af only distributes the definitions"; OAuth MCP is a non-goal) / [0036-working-sets.md](0036-working-sets.md) (the unit of "a piece of work") /
   [0055-idle-stop-and-carried-interactions.md](0055-idle-stop-and-carried-interactions.md) (do not keep it warm) / [0052-tenant-git-oauth.md](0052-tenant-git-oauth.md) (the CP passes secrets through and does not hold them) / [0059-repo-import-jobs.md](0059-repo-import-jobs.md) (the relationship between self-running work and the busy check)
 
@@ -376,6 +377,25 @@ confirmed. Three changes, each the smallest that closes it:
 Rejected: **paging with "show more" from the provider.** The 5-minute refresh replaces the cache with
 the first page, so kept pages would either vanish or have to be re-fetched every time; a stopped
 workspace cannot fetch them at all; and rows sorted by update shift between requests.
+
+**26 (#1697). A reference that is not in the inbox is read live as well — GitHub only.** The inbox
+holds open items only, so the merged PRs and closed issues that status tables in the mirror cite are
+never in it, and their stand-in panel showed no title and no state. `POST /work-items/detail` now
+accepts a `kind` that is empty for such a reference: the Agent asks `GET /repos/{o}/{r}/issues/{n}`
+(it answers for both kinds); with `pull_request` it chains into decision 24's pull request read,
+otherwise it returns an issue row (title, state, `state_reason`, assignees, labels, updated). The
+panel tells Merged from Closed, and Closed (completed) from Closed (not planned). This departs from
+decision 20.1's line (no single-item read for an issue) on purpose and narrowly, and keeps decision
+24's promises: **a human opening the panel is the only trigger**, **no body is fetched** (the issue
+object's `body` is never decoded), **nothing is stored** in the CP, and **a stopped workspace is not
+started** (409 → the old "af has no details" note). A 404 (a guessed `#N`), a missing token, a rate
+limit and an Agent from before this change all land on that same note. Jira and Bitbucket keep
+today's behaviour: a Jira key is already in the inbox when it matters, and a bare `#N` is only
+ambiguous on GitHub.
+
+Rejected: **storing the answer in the cache so the next click is free.** It would put a panel's look
+into the rail's history (the same reason as decision 24), and a closed item would then sit among the
+open ones the query asked for.
 
 ## Options rejected
 

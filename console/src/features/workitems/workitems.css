@@ -143,6 +143,10 @@
 .wi-dot.tone-muted {
   color: var(--muted);
 }
+/* A merged pull request is finished work, not a muted "closed". */
+.wi-dot.tone-merged {
+  color: var(--merged, #a371f7);
+}
 
 /* CI / conflict marker on a pull request row, between the title and the age. */
 .wi-flag {

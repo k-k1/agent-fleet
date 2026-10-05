@@ -140,6 +140,7 @@ function normalizeItem(raw: unknown): WorkItem {
 }
 
 const CHECK_STATES = ["success", "failure", "pending"] as const;
+const STATE_REASONS = ["completed", "not_planned"] as const;
 const MERGEABLE = ["clean", "conflict", "unknown"] as const;
 
 /** The value when it is one of `known`, else "". Both of these pick a class name and an icon, so
@@ -186,6 +187,10 @@ export interface WorkItemDetail {
   updatedAt: string;
   draft: boolean;
   merged: boolean;
+  /** An issue's close reason: "completed" | "not_planned" | "" (open, a pull request, unknown). */
+  stateReason: string;
+  /** Every assignee of an issue; `assignee` stays the first, as on the rail rows. */
+  assignees: string[];
   /** "clean" | "conflict" | "unknown" — GitHub answers null while it is still computing. */
   mergeable: string;
   baseBranch: string;
@@ -222,6 +227,8 @@ export function readWorkItemDetail(res: unknown): { detail: WorkItemDetail | nul
       updatedAt: str(d.updatedAt),
       draft: !!d.draft,
       merged: !!d.merged,
+      stateReason: oneOf(d.stateReason, STATE_REASONS),
+      assignees: Array.isArray(d.assignees) ? d.assignees.filter((a): a is string => typeof a === "string" && a !== "") : [],
       mergeable: str(d.mergeable) || "unknown",
       baseBranch: str(d.baseBranch),
       headBranch: str(d.headBranch),
@@ -269,9 +276,33 @@ export function readWorkItemSearch(res: unknown): { result: WorkItemSearchResult
 }
 
 /** Which rows get a live read: pull requests on the two providers that have one. A Jira key has
- * no pull request behind it, and an issue's cached row already says everything the panel shows. */
-export function canReadLive(item: { kind: string; provider: string }): boolean {
+ * no pull request behind it, and an issue's cached row already says everything the panel shows.
+ *
+ * `reference` is a stand-in for an item that is not in the inbox (#1697): its kind is unknown,
+ * and only GitHub can resolve a bare `#N` to an issue or a pull request. */
+export function canReadLive(item: { kind: string; provider: string }, reference = false): boolean {
+  if (reference) return item.provider === "github";
   return item.kind === "pr" && (item.provider === "github" || item.provider === "bitbucket");
+}
+
+/** The state a live read reports, in words that keep "merged" apart from "closed" and "closed as
+ * not planned" apart from "closed as completed" — `state` alone ("done") cannot. */
+export function detailStateLabel(d: Pick<WorkItemDetail, "kind" | "state" | "merged" | "draft" | "stateReason">): string {
+  if (d.kind === "pr") {
+    if (d.merged) return t("wi.detail_merge_merged");
+    if (d.state === "done") return t("wi.state_closed");
+    if (d.draft) return t("wi.detail_merge_draft_short");
+    return stateLabel(d.state);
+  }
+  if (d.state === "done") {
+    return d.stateReason === "not_planned" ? t("wi.state_closed_not_planned") : t("wi.state_closed_completed");
+  }
+  return stateLabel(d.state);
+}
+
+/** Dot tone for a live read: a merged pull request is its own tone, not the muted "closed". */
+export function detailStateTone(d: Pick<WorkItemDetail, "kind" | "state" | "merged">): "ok" | "warn" | "muted" | "merged" {
+  return d.kind === "pr" && d.merged ? "merged" : stateTone(d.state);
 }
 
 /** The reviews line: "2 approved, 1 change requested, 1 pending" as counts the caller renders.
