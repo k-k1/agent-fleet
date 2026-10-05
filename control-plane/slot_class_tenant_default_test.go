@@ -101,6 +101,10 @@ func TestAdminMembersReportTheEffectiveSlotClass(t *testing.T) {
 		t.Fatal(err)
 	}
 	row := memberRows(t, mgr, "boss@acme.co.jp")["yamada-acme-co-jp"]
+	// The "follow the tenant default" target does not depend on what is stored.
+	if row["slot_class_default"] != "arm" {
+		t.Fatalf("explicit class: slot_class_default = %v, want the tenant default", row["slot_class_default"])
+	}
 	if row["slot_class"] != "standard" || row["slot_class_effective"] != "standard" {
 		t.Fatalf("explicit class: slot_class=%v effective=%v", row["slot_class"], row["slot_class_effective"])
 	}

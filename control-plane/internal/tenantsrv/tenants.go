@@ -347,6 +347,11 @@ func (a Admin) ListMembers(w http.ResponseWriter, r *http.Request) {
 			// default. "" when the deployment declares no classes.
 			row["slot_class_effective"], _ = a.cp.ResolveSlotClass(r.Context(),
 				store.Workspace{MembershipID: m.MembershipID, TenantID: t.ID})
+			// What "" (follow the tenant default) resolves to for this member, whatever is
+			// stored: with no membership there is no per-user value to find, so the chain
+			// answers with its fallback alone. The editor needs it to draw and warn about
+			// the "tenant default" choice, which the client cannot derive.
+			row["slot_class_default"], _ = a.cp.ResolveSlotClass(r.Context(), store.Workspace{TenantID: t.ID})
 			if ul, ok, _ := a.cp.Store().GetUserLimit(r.Context(), m.MembershipID); ok {
 				row["max_sessions"] = ul.MaxSessions
 				row["mem_limit"] = ul.MemLimit

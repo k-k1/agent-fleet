@@ -46,7 +46,10 @@ const MEMBER = {
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-async function mount(member: typeof MEMBER & { state?: string } = MEMBER, onRemoved = () => {}) {
+async function mount(
+  member: typeof MEMBER & { state?: string; slot_class?: string; slot_class_effective?: string; slot_class_default?: string } = MEMBER,
+  onRemoved = () => {},
+) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -340,7 +343,7 @@ describe("member machine class", () => {
   // baseline of the warning and the ladder shown for "tenant default" are the effective class.
   it("takes the baseline from the effective class when none is stored", async () => {
     useSizing(SIZING_CLASSES);
-    const follower = { ...MEMBER, slot_class: "", slot_class_effective: "arm" };
+    const follower = { ...MEMBER, slot_class: "", slot_class_effective: "arm", slot_class_default: "arm" };
     await mount(follower);
     await openEditor();
     const warned = () => !!document.querySelector(".limit-edit .admin-hint.warn");
@@ -353,6 +356,37 @@ describe("member machine class", () => {
 
     await act(async () => buttonWith("標準（Intel）")!.click()); // arm64 → x86_64
     expect(warned()).toBe(true);
+  });
+
+  // "" means the TENANT default whatever is stored, so its target comes from the CP.
+  it("draws and warns about the tenant default when a different class is stored", async () => {
+    useSizing(SIZING_CLASSES);
+    await mount({ ...MEMBER, slot_class: "standard", slot_class_effective: "standard", slot_class_default: "arm" });
+    await openEditor();
+    const warned = () => !!document.querySelector(".limit-edit .admin-hint.warn");
+    const units = () => Array.from(document.querySelectorAll(".limit-edit .af-unit")).map((e) => (e.textContent || "").trim());
+    expect(warned()).toBe(false);
+    await act(async () => buttonWith("テナントの既定")!.click()); // x86_64 → arm64
+    expect(units()).toContain("→ m7g.large（2 vCPU / 8 GiB・専有）");
+    expect(warned()).toBe(true);
+  });
+
+  it("does not warn when the stored class is already the tenant default's", async () => {
+    useSizing(SIZING_CLASSES);
+    await mount({ ...MEMBER, slot_class: "arm", slot_class_effective: "arm", slot_class_default: "arm" });
+    await openEditor();
+    await act(async () => buttonWith("テナントの既定")!.click()); // arm64 → arm64
+    expect(!!document.querySelector(".limit-edit .admin-hint.warn")).toBe(false);
+  });
+
+  // A stored id the deployment no longer offers is substituted by the CP; the editor must show
+  // the box the member really gets, not the one the dead id would map to.
+  it("draws an unchanged stored class from the effective one", async () => {
+    useSizing(SIZING_CLASSES);
+    await mount({ ...MEMBER, slot_class: "retired", slot_class_effective: "arm", slot_class_default: "arm" });
+    await openEditor();
+    const units = Array.from(document.querySelectorAll(".limit-edit .af-unit")).map((e) => (e.textContent || "").trim());
+    expect(units).toContain("→ m7g.large（2 vCPU / 8 GiB・専有）");
   });
 });
 

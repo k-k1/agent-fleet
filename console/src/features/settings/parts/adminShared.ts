@@ -71,6 +71,8 @@ export interface Member {
    *  when the deployment declares no classes. What the roster draws — the stored
    *  slot_class alone cannot say which box a member who follows the tenant default gets. */
   slot_class_effective?: string | null;
+  /** What "" (follow the tenant default) resolves to for this member, whatever is stored. */
+  slot_class_default?: string | null;
   /** "active" | "removed". A removed member is off the roster and can no longer
    *  sign in, but stays on THIS list so the rest of the offboarding sequence
    *  (stop workspace → clean home) is still reachable (docs/log/61 §61.10.6). */
