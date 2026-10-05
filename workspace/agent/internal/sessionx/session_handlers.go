@@ -1728,12 +1728,13 @@ func RestoreSession(name string) (session.Meta, bool) {
 	return m, true
 }
 
-// HandleListArchived returns archived sessions (for the restore modal).
+// HandleListArchived returns archived sessions (for the restore modal) as slim rows built from
+// the meta (wireArchivedRow), not the full live wire.
 func HandleListArchived(w http.ResponseWriter, r *http.Request) {
 	sessions := []session.Session{}
 	for _, m := range session.ListMetas() {
 		if m.Archived {
-			sessions = append(sessions, wireSession(m, false))
+			sessions = append(sessions, wireArchivedRow(m))
 		}
 	}
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })

@@ -575,6 +575,12 @@
 /* Populated archive list: pin the panel to a stable height and let only the list
    scroll, so filtering doesn't resize/recenter the modal on each keystroke. The
    search toolbar stays put; the panel still clamps to the viewport on short screens. */
+/* Wider than the stock modal in both states: group headings (repo + branch) and row titles
+   are long, and the stock 520px cut them off with an ellipsis. */
+.arch-modal.ui-modal {
+  width: min(880px, 96vw);
+  max-width: min(960px, 96vw);
+}
 .arch-modal-tall.ui-modal {
   height: min(88dvh, 820px);
 }

@@ -57,14 +57,54 @@ func fleetGraphResolveConv(m session.Meta) string {
 // session_tmux.go; the HTTP handlers in session_handlers.go; claude's CLI launch command
 // in internal/agents/claude/program.go (docs/log/23 remaining item 1 Wave F).
 
+// startedLabel is the short local "MM/DD HH:MM" form of the meta's creation time ("" when
+// unset or unparseable).
+func startedLabel(m session.Meta) string {
+	if m.CreatedAt == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, m.CreatedAt)
+	if err != nil {
+		return ""
+	}
+	return t.Local().Format("01/02 15:04")
+}
+
+// stoppedResumable is the Resumable verdict every kind's WireLive gives a STOPPED session:
+// the working dir still exists (shell and ssm are always resumable — they fall back to home).
+// It is the cheap half of WireLive that the archived listing needs without the transcript
+// reads; TestStoppedResumableMatchesWireLive pins it to each kind's own answer, so a kind
+// that changes its rule fails there instead of drifting silently.
+func stoppedResumable(m session.Meta) bool {
+	switch NormalizeKind(m.Kind) {
+	case session.KindShell, session.KindSSM:
+		return true
+	}
+	return session.DirExists(m.Dir)
+}
+
+// wireArchivedRow is the slim row of the archived shelf (GET /sessions/archived), built from
+// the meta alone. The restore modal reads only identity, placement, Resumable and Locked;
+// everything wireSession adds on top (transcript tails, overview facts, the working-copy
+// marker, status / handoff / image files) is per-row I/O that scales with the number of
+// archived sessions and the size of their transcripts. Never call wireSession,
+// overviewFactsFor or gitx.WorkingCopyID from here: the listing is read-only, and
+// WorkingCopyID may write a marker into the working copy.
+func wireArchivedRow(m session.Meta) session.Session {
+	return session.Session{
+		Name: m.Name, Tmux: session.TmuxName(m.Name), Dir: m.Dir, Subdir: m.Subdir, Kind: m.Kind, Driver: m.Driver,
+		Repo: m.Repo, Title: m.Title, TitleSetBy: m.TitleSetBy,
+		Display: session.Display(m), Color: m.Color, Label: m.Label,
+		Started: startedLabel(m), CreatedAt: m.CreatedAt, Branch: m.Branch,
+		Resumable: stoppedResumable(m),
+		Locked:    m.Locked, Archived: m.Archived,
+		Origin: session.OriginOf(m), OriginSession: m.OriginSession,
+	}
+}
+
 // wireSession builds the API representation from a meta and liveness.
 func wireSession(m session.Meta, alive bool) session.Session {
-	started := ""
-	if m.CreatedAt != "" {
-		if t, err := time.Parse(time.RFC3339, m.CreatedAt); err == nil {
-			started = t.Local().Format("01/02 15:04")
-		}
-	}
+	started := startedLabel(m)
 	// The live-dependent fields (state / remote URL / context / resumable / bg-busy)
 	// diverge by kind — the agent computes them (see WireLive per implementation).
 	li := AgentOf(m.Kind).WireLive(m, alive)
