@@ -1073,3 +1073,16 @@ to run a shell command was refused by the driver itself, so it says nothing abou
 subagent could be allowed to read reference images from the working directory (#1718).
 
 Follow-ups: #1716 (the report), #1718 (readiness, and the reference-image measurement).
+
+## Follow-up — the Codex driver is discovered, not pinned (2026-10-05)
+
+The pinned driver `gpt-5.4-mini` is rejected by a ChatGPT-account login: `codex exec -m gpt-5.4-mini`
+ends in HTTP 400 "The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT
+account", so every Codex image call failed before any image was requested. The driver is now the
+newest `-luna` in the signed-in account's own catalog (`codex debug models`, via
+`codex.Models()`, the same newest-`-luna` selection the assistant chat uses, minus models the catalog marks retiring), with `modelfallback.ChatCodex` as the
+last resort when the catalog cannot be read; `AF_IMAGEGEN_CODEX_MODEL` still overrides both.
+`modelfallback.ImagegenCodexDriver` is gone. A 400 "model not supported" now ends with a hint
+naming `AF_IMAGEGEN_CODEX_MODEL`. Measured 2026-10-05, codex-cli 0.160.0, `auth_mode=chatgpt`: a
+tiny non-image turn on `gpt-6-luna` is accepted; the same turn on `gpt-5.4-mini` reproduces the
+400. A real image through the new driver was not generated (plan quota). Follow-ups: #1722.

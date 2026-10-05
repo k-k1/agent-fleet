@@ -43,6 +43,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -52,11 +53,35 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
-// defaultCodexModel is the driver model, not the image model: `image_gen` is backed by
-// gpt-image-2 whatever runs the turn, so the cheapest capable tier is the right default.
-// Measured on 2026-09-06; override deployment-wide with AF_IMAGEGEN_CODEX_MODEL, because
-// model ids move and nothing here may depend on one staying valid.
-const defaultCodexModel = modelfallback.ImagegenCodexDriver
+// codexCatalog lists the models the signed-in Codex account offers. A var so a test can
+// drive the discovery branch without a CLI.
+var codexCatalog = codex.Models
+
+// codexRetiring is a var for the same reason; in production it is the catalog's own notice.
+var codexRetiring = codex.Retiring
+
+// codexDriver picks the model that runs the turn: AF_IMAGEGEN_CODEX_MODEL when set, else the
+// newest "-luna" the account's own catalog lists, else modelfallback.ChatCodex. It is the
+// DRIVER, not the image model (`image_gen` is backed by gpt-image-2 whatever runs the turn).
+// The luna tier is the one the account's catalog is known to serve for ordinary turns; that it
+// can drive `image_gen` is not proven by the catalog. It is discovered rather than pinned
+// because a pinned id goes stale per account: gpt-5.4-mini is rejected with HTTP 400 on a
+// ChatGPT login (#1711). A model codex says is retiring is skipped, as the assistant chat does.
+// Never call this on the status path: codex.Models() may spawn the CLI for up to 15 s.
+func codexDriver() string {
+	if m := os.Getenv("AF_IMAGEGEN_CODEX_MODEL"); m != "" {
+		return m
+	}
+	var ids []string
+	for _, c := range codexCatalog() {
+		ids = append(ids, c.ID)
+	}
+	ids = slices.DeleteFunc(ids, codexRetiring)
+	if m := codex.NewestTierModel(ids, "gpt-", "luna"); m != "" {
+		return m
+	}
+	return modelfallback.ChatCodex
+}
 
 // codexGenerateTimeout bounds one turn. It sits below the 600 s tool_timeout_sec the codex
 // materializer stamps on the af server, so a slow run is reported by us with a real reason
@@ -66,6 +91,7 @@ const defaultCodexModel = modelfallback.ImagegenCodexDriver
 const codexGenerateTimeout = 8 * time.Minute
 
 type codexProvider struct {
+	// model is the explicit driver (tests); empty means codexDriver() decides per call.
 	model string
 	// home is $CODEX_HOME. Held rather than read per call so a test can point the whole
 	// provider at a temporary tree.
@@ -75,18 +101,19 @@ type codexProvider struct {
 }
 
 func newCodexProvider() *codexProvider {
-	model := os.Getenv("AF_IMAGEGEN_CODEX_MODEL")
-	if model == "" {
-		model = defaultCodexModel
-	}
-	return &codexProvider{model: model, home: paths.CodexHome(), exe: "codex"}
+	return &codexProvider{home: paths.CodexHome(), exe: "codex"}
 }
 
 func (p *codexProvider) ID() string { return ProviderCodex }
 
 // DefaultModel is the DRIVER model, which is what this route can name: the image model behind
 // the built-in tool is gpt-image-2 whatever runs the turn, and nothing in the CLI reports it.
-func (p *codexProvider) DefaultModel() string { return p.model }
+func (p *codexProvider) DefaultModel() string {
+	if p.model != "" {
+		return p.model
+	}
+	return codexDriver()
+}
 
 // Caps for the Codex route. Sizes and Backgrounds are deliberately EMPTY: measured twice on
 // 2026-09-06, once with the size in the prose and once with size/quality/background spelled
@@ -169,7 +196,7 @@ func (p *codexProvider) Generate(ctx context.Context, req Request) (Result, erro
 
 	model := req.Model
 	if model == "" {
-		model = p.model
+		model = p.DefaultModel()
 	}
 	args := []string{
 		"-a", "never", "-s", "read-only", "exec", "--json",
@@ -208,10 +235,10 @@ func (p *codexProvider) Generate(ctx context.Context, req Request) (Result, erro
 		},
 	}
 	if runErr != nil && ev.threadID == "" {
-		return res, fmt.Errorf("codex exec failed: %w: %s", runErr, tail(stderr.String(), 400))
+		return res, fmt.Errorf("codex exec failed: %w: %s%s", runErr, tail(stderr.String(), 400), modelHint(stderr.String(), model, req.Model != ""))
 	}
 	if ev.err != "" {
-		return res, fmt.Errorf("codex returned an error: %s", ev.err)
+		return res, fmt.Errorf("codex returned an error: %s%s", ev.err, modelHint(ev.err, model, req.Model != ""))
 	}
 	if ev.threadID == "" {
 		// Without the thread id there is no directory that is provably OURS, and picking the
@@ -463,6 +490,20 @@ func tail(s string, n int) string {
 	return s
 }
 
-// codexDriverModel is what the status endpoint reports as the model a generation would run
-// on, so the answer is not duplicated from the env lookup.
-func codexDriverModel() string { return newCodexProvider().model }
+// codexDriverModel is what the status endpoint reports: the explicit override, or "" when the
+// driver is picked from the account's catalog at generation time. Status is polled under the
+// MCP tools/list budget (3 s), so it must not read the catalog (a CLI spawn).
+func codexDriverModel() string { return os.Getenv("AF_IMAGEGEN_CODEX_MODEL") }
+
+// modelHint names the way out when codex rejects the driver model: the 400 text alone ("not
+// supported when using Codex with a ChatGPT account") does not say that a setting exists.
+func modelHint(msg, model string, explicit bool) string {
+	l := strings.ToLower(msg)
+	if !strings.Contains(l, "model") || !strings.Contains(l, "not supported") {
+		return ""
+	}
+	if explicit {
+		return fmt.Sprintf(" (the requested model %q was rejected; use a model this Codex login accepts, see `codex debug models`)", model)
+	}
+	return fmt.Sprintf(" (the driver model %q was rejected; set AF_IMAGEGEN_CODEX_MODEL to a model this Codex login accepts, see `codex debug models`)", model)
+}
