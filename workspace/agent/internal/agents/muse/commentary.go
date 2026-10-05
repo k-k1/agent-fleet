@@ -3,10 +3,10 @@ package muse
 // commentary.go recovers the text the model writes BEFORE a tool call ("13 unlabelled issues;
 // here is the proposal: …"), which the host never puts on the wire.
 //
-// Measured on 1.4.0: the host's runtime log records it as `assistant_message_committed` with
-// `phase: "commentary"`, but no `item/*` notification and no `session/read` item carries it —
-// 83 commentary messages across every local session, 0 of them in AF's store, and the MSP
-// schema has no phase field on Item. Without it a question that says "apply the proposal
+// Measured on 1.4.0 and again on 1.4.2-R4684.1: the host's runtime log records it as
+// `assistant_message_committed` with `phase: "commentary"`, but no `item/*` notification and no
+// `session/read` item carries it — 83 commentary messages across every local session, 0 of them
+// in AF's store, and neither version's MSP schema has a phase field on Item. Without it a question that says "apply the proposal
 // above?" points at nothing.
 //
 // This reads muse's internal session.jsonl, which transcript.go's header rules out as the
@@ -27,10 +27,6 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
 )
-
-// commentaryIDPrefix marks a synthetic agentMessage built from the runtime log. The host
-// never lists these ids, so a resume backfill's mergeOrder keeps them where they were seen.
-const commentaryIDPrefix = "commentary-"
 
 type commentaryMsg struct {
 	id, text, at string
@@ -171,7 +167,11 @@ func commentaryItems(r *commentaryReader, call msp.Item) []msp.Item {
 	var out []msp.Item
 	for _, c := range r.take(*call.CallID) {
 		it := msp.Item{
-			ItemID:   commentaryIDPrefix + c.id,
+			// The commit's message_id is exactly the itemId the wire gives an agentMessage, so
+			// should a host start sending commentary itself, the store folds both into one item
+			// rather than showing the text twice. Until then the host never lists the id, and a
+			// resume backfill's mergeOrder keeps it where it was seen.
+			ItemID:   c.id,
 			Kind:     msp.ItemKindAgentMessage,
 			Revision: 1,
 			Status:   msp.ItemStatusCompleted,

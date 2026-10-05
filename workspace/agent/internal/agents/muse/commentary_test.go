@@ -93,7 +93,7 @@ func TestToolCallItemBringsItsCommentaryIntoTheMirror(t *testing.T) {
 	done.Revision, done.Status = 2, msp.ItemStatusCompleted
 	h.onItem(done) // a later revision must not add the text a second time
 
-	wantOrder(t, st, "u1", "commentary-m1", "tc1")
+	wantOrder(t, st, "u1", "m1", "tc1")
 	items, err := st.Items()
 	if err != nil {
 		t.Fatal(err)
