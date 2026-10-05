@@ -2,6 +2,7 @@ package muse
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -851,5 +852,78 @@ func TestWireLiveReportsAPendingPromptOverWorking(t *testing.T) {
 	waitInteraction(t, h)
 	if st := New().WireLive(m, true).State; st != "permission" {
 		t.Errorf("state with an approval waiting = %q, want permission", st)
+	}
+}
+
+// The host refuses an answer that carries more than one of selectedLabel, selectedLabels and
+// freeText (-32057 userInputAnswerInvalid, reason invalid_target — measured when a single pick
+// went out as both label fields). Every shape the Console can send must come out as exactly
+// one, matched to the question's selection mode.
+func TestUserInputAnswerCarriesExactlyOneValue(t *testing.T) {
+	single := msp.UserInputQuestion{ID: "q", Options: []msp.UserInputOption{{Label: "a"}, {Label: "b"}},
+		Selection: msp.UserInputSelection{Mode: msp.UserInputSelectionModeSingle}}
+	multi := single
+	multi.Selection.Mode = msp.UserInputSelectionModeMultiple
+	for _, c := range []struct {
+		name       string
+		q          msp.UserInputQuestion
+		r          agents.InteractionAnswer
+		label      string
+		labels     []string
+		free, note string
+	}{
+		{"single pick", single, agents.InteractionAnswer{Options: []int{1}}, "b", nil, "", ""},
+		{"single pick with text", single, agents.InteractionAnswer{Options: []int{0}, Text: "why"}, "a", nil, "", "why"},
+		{"text only", single, agents.InteractionAnswer{Text: " typed "}, "", nil, "typed", ""},
+		{"multi one pick", multi, agents.InteractionAnswer{Options: []int{0}}, "", []string{"a"}, "", ""},
+		{"multi picks with text", multi, agents.InteractionAnswer{Options: []int{0, 1}, Text: "and"}, "", []string{"a", "b"}, "", "and"},
+		{"out of range pick", single, agents.InteractionAnswer{Options: []int{7}}, "", nil, "", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a := userInputAnswer(c.q, c.r)
+			n := 0
+			if a.SelectedLabel != nil {
+				n++
+			}
+			if a.SelectedLabels != nil {
+				n++
+			}
+			if a.FreeText != nil {
+				n++
+			}
+			if n > 1 {
+				t.Fatalf("answer carries %d values, the host takes one: %+v", n, a)
+			}
+			if a.QuestionID != "q" || deref(a.SelectedLabel) != c.label || !slices.Equal(a.SelectedLabels, c.labels) ||
+				deref(a.FreeText) != c.free || deref(a.Note) != c.note {
+				t.Errorf("answer = {label %q labels %v free %q note %q}, want {%q %v %q %q}",
+					deref(a.SelectedLabel), a.SelectedLabels, deref(a.FreeText), deref(a.Note), c.label, c.labels, c.free, c.note)
+			}
+		})
+	}
+}
+
+func deref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+// The pending card is multi-select when the host says so; drawn as single-select, the member
+// could pick only one option of a question that wants several.
+func TestPendingCardFollowsTheSelectionMode(t *testing.T) {
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	host.Notify(msp.NotificationUserInputRequested, msp.UserInputRequestParams{
+		UserInputID: "ui-mode", SessionID: h.sid,
+		Questions: []msp.UserInputQuestion{
+			{ID: "one", Question: "one?", Selection: msp.UserInputSelection{Mode: msp.UserInputSelectionModeSingle}},
+			{ID: "many", Question: "many?", Selection: msp.UserInputSelection{Mode: msp.UserInputSelectionModeMultiple}},
+		},
+	})
+	inter := waitInteraction(t, h)
+	if inter.Questions[0].MultiSelect || !inter.Questions[1].MultiSelect {
+		t.Errorf("multiSelect = %v, %v; want false, true", inter.Questions[0].MultiSelect, inter.Questions[1].MultiSelect)
 	}
 }
