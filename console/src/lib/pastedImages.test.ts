@@ -64,6 +64,13 @@ describe("splitPastedImages", () => {
     expect(samePastedPrompt(landed, "sticky にできないか")).toBe(true);
     expect(splitPastedImages(P1)).toEqual({ text: "", images: ["paste-1.png"], files: [] });
   });
+  it("reads a claude turn whose attachment paths the Agent wrapped in backticks", () => {
+    // The Agent quotes them before typing so claude's paste handler leaves them as text
+    // (agents/claude QuoteImagePaths); the echo the Console holds has them bare.
+    const landed = `見て ${FILE_PROMPT} \`${P1}\` \`${P2}\``;
+    expect(splitPastedImages(landed)).toEqual({ text: "見て", images: ["paste-1.png", "paste-2.jpg"], files: [] });
+    expect(samePastedPrompt(landed, buildImagePrompt("見て", [P1, P2]))).toBe(true);
+  });
   it("matches a Codex image-bearing rollout turn to its optimistic echo", () => {
     const landed = `確認して <image name=[Image #1] path="${P1}">`;
     expect(samePastedPrompt(landed, "確認して")).toBe(true);
