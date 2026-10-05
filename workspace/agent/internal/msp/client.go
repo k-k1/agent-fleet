@@ -42,7 +42,7 @@ type Client struct {
 
 // Handler receives everything the server initiates.
 type Handler struct {
-	// OnNotification is called for each of the 31 notification methods. params is the
+	// OnNotification is called for each notification the schema declares (and any undeclared one the host sends). params is the
 	// method's own params object, undecoded.
 	OnNotification func(method string, params json.RawMessage)
 	// OnRequest is called for a must-answer server request. The handler is responsible for

@@ -403,7 +403,8 @@ func (h *threadHandle) hostLost(cl *msp.Client) {
 // The declared notification table is a decode map, not an allow-list: a host can emit a
 // notification its bundle does not declare (1.3.0-R3401.1 sends `session/started` before the
 // `session/start` response), so an unknown method is dropped rather than treated as a protocol
-// error.
+// error. `turn/foregroundCompleted` (explicitly non-terminal; `turn/completed` ends the turn) and
+// `userInput/engaged` (a host-side countdown release with no timer on our side) are dropped the same way, on purpose.
 func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 	switch method {
 	case msp.NotificationTurnStarted:
