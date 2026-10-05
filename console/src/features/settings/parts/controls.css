@@ -15,8 +15,10 @@
   padding: 6px 0;
 }
 
+/* 160px holds the common Japanese labels (about 12 characters at 13px) on one line; at 120px
+   labels such as the assistant's auto-reply rows wrapped to two or three lines. */
 .ds-label {
-  width: 120px;
+  width: 160px;
   flex-shrink: 0;
   font-size: 13px;
 }
@@ -134,6 +136,24 @@
   .ps-row .choice-seg,
   .ps-row .ds-select {
     width: 100%;
+    max-width: none;
+  }
+
+  /* The modal's own rows stack the same way: label 160 + gap + a 200px select is wider than
+     a phone's content column. */
+  .ds-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .ds-label {
+    width: auto;
+  }
+
+  .ds-row .ds-select,
+  .ds-row input[type="text"] {
+    min-width: 0;
     max-width: none;
   }
 

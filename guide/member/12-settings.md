@@ -17,7 +17,7 @@ How each setting is *used* belongs to the other chapters, so read this one as a
 | Group | What is in it |
 |---|---|
 | **Personal** | Display / Account / Keys / Speech / Notifications / Assistant / AI assistance / Agent instructions / Agent memory |
-| **Connections** | Agents / Git hosting / Ops & monitoring / Issue tracker / Chat integration / MCP servers / MCP tokens / AWS profiles/SSM |
+| **Connections** | Agents / Git hosting / Ops & monitoring / Issue tracker / Chat integration / MCP servers / MCP tokens / AWS profiles/SSM / Google Cloud |
 | **Workspace** | Agent usage / Cloud cost / Running time / Machine / Toolchain / Databases / Preview subdomains / Internal repositories / Export & import / Danger zone |
 
 - It remembers the tab you opened last and reopens there.
@@ -34,7 +34,7 @@ Getting this wrong is what makes a setting look like it "didn't work".
 | Timing | What |
 |---|---|
 | **Immediately** | Display, keys, speech, notifications; adding and removing connections; the stopped-session archive period (on the next session-list refresh) |
-| **From the next session you start** | Agent behaviour settings, agent instructions, session-to-session messaging, starting sessions from sessions, fleet observation, image generation, MCP servers |
+| **From the next session you start** | Agent behaviour settings, agent instructions, session-to-session messaging, starting sessions from sessions, fleet observation, past-session search (turning it off also refuses running sessions' searches at once), Agent Fleet memory (likewise), image generation, MCP servers |
 | **From the next chat message** | Assistant settings; ops & monitoring connections (when used from an assistant) |
 | **After stopping and starting the workspace** | Toolchain (timezone, language versions); Machine (a size or class your admin changed) |
 
@@ -112,17 +112,47 @@ Reads out replies from sessions and assistants.
 - **How it reads** — abbreviate code fragments, pause after particles, read English as kana, and a
   **pronunciation dictionary** (`written=reading`, one per line).
 - **Advanced** — background playback and volume, panning to match the pane position, audio cache.
-- **Audio notifications** — announce session state changes and rate-limit resets by voice.
+- **Audio notifications** — announce session state changes and usage-limit resets by voice; which ones is
+  chosen in the Notifications tab.
 - **Read-aloud language** — Auto (follows the display language) / Japanese / English. With the engine on
   "auto", English switches to a Polly English voice. This is separate from the assistant's **Output language**.
 - "Reset to defaults" resets the speech settings only (the pronunciation dictionary is kept).
 
 ### Notifications
 
-- **Audio notifications** on / off (the entry point into the speech tab's detail).
-- **Service notifications** — stop sending to Discord / Slack **without disconnecting**. The connection itself
-  lives in the "Chat integration" tab ([08](10-integrations.md)).
-- **Allow desktop notifications** — asks the browser for permission.
+- **Allow desktop notifications** — shown while the browser has not been asked yet; it asks for permission.
+  If the browser blocked notifications for this site, the tab says so: only the site settings can undo it.
+- **Session voice notifications** on / off — the master switch for the "Read aloud" column below (also the
+  speaker button in the notification centre).
+- **The notification table** — one row per kind of notification, one switch per effect:
+
+  | Row | Covers |
+  |---|---|
+  | Turn finished | a session finished its turn and waits for you |
+  | Turn finished (child session) | the same, for a session another session started with `create_session` |
+  | Needs your answer | a question, a plan approval, a permission request |
+  | Usage limit reset | a Claude / Codex 5-hour or weekly limit you had hit has reset |
+  | Session report | a session reported to an assistant conversation |
+  | Rate limit | a session hit a rate limit, or resumed after one |
+  | Scheduled runs | a scheduled run finished, failed or was skipped |
+  | Handoffs | a handoff offered to you, accepted or expired |
+  | Cloud sign-in | AWS or Google Cloud needs you to sign in, or an SSO session is about to expire |
+  | Terminal notifications | a program in a session sent OSC 9 / 99 / 777 |
+  | Other notices | assistant chat paused or near its context limit, submodule sync, stop after turn, a workspace start that was stopped, and any kind added later |
+
+  - **Unread dot** — off marks the notification read the moment it arrives: no red dot on the session and no
+    unread count, while the notification centre keeps it as a read row. This column follows you to your
+    other devices (the read mark does anyway). It cannot be turned off for "Needs your answer", "Handoffs"
+    and "Cloud sign-in", which wait for a person.
+  - **OS notification** and **Read aloud** — this device only, so a phone and a desk can differ. Read aloud
+    also needs "Session voice notifications" on; a usage-limit reset speaks whenever "Read aloud" is on in
+    the speech tab instead.
+  - Everything is on by default, which is how notifications behaved before the table. The two switches it
+    replaced carry over as they were: "Notify when a child session is waiting for input" became the
+    child-session row (all three cells), "Limit-reset notifications" the usage-limit row.
+  - Nothing pops up or speaks for the session in the pane you are working in, whatever the table says.
+- **Service notifications** — stop sending to Discord / Slack **without disconnecting**. The connection itself,
+  and which events each service receives, live in the "Chat integration" tab ([08](10-integrations.md)).
 - History is in the **notification centre** (last 7 days), opened from the bell in the top bar. An entry
   you have not read puts a red dot on its session; **"Mark all as read"** clears them all at once
   ([02](02-sessions.md#reading-state-badges-and-notifications)).
@@ -206,6 +236,29 @@ See [06 Agents](06-agents.md#agent-instructions-write-down-how-you-work-once).
 Version control over the memory an agent accumulates by itself (claude's auto-memory, codex's memories), so
 "it learned something it shouldn't have" and "when did this go wrong" are fixable after the fact.
 
+- **Agent Fleet memory (shared by every agent)** — memory Agent Fleet keeps itself, which every kind of agent
+  reads and writes with the af tools `memory_index` / `memory_search` / `memory_read` / `memory_save` /
+  `memory_forget`. It is per project (a worktree shares its repository's), plus one user-wide scope, so what one
+  agent learns survives a switch of kind, a handoff and a child of another kind. **It is off by default**: turn on
+  Agent Fleet memory under Settings > Agents first. A save is shared at once,
+  **without your approval**; text that looks like a secret is refused. The list shows every change — when, which
+  agent and session, what — newest first. On a memory's newest change you can **revert it** (the earlier text
+  comes back) or **forget the memory**; either is recorded as a new change, so it can be undone too. If the text
+  you bring back looks like a secret, you are shown the masked findings and asked to confirm.
+  - **Import from Claude Code** — below the list, brings the memory Claude Code kept for a project into Agent
+    Fleet memory, once. Pick a project and you see what would happen before anything is written: **new**,
+    **newer in Claude** (will overwrite the Agent Fleet copy, even one you edited since — both times are shown),
+    **unchanged**, **forgotten** (a memory you forgot, or whose import you reverted, is never brought back),
+    **possible secrets** (skipped, with masked findings — fix the Claude file and preview again; there is no
+    way to import it anyway) and **cannot import** (with the reason). A description over 300 bytes is
+    shortened and its full text becomes the first paragraph of the memory. A Claude project is matched to a
+    working copy under `~/repos`; one with no match, or two, is listed but cannot be imported. Importing needs
+    Agent Fleet memory to be on; the preview works either way. The imported memories show in the list as
+    **imported**, with the author unknown, and each can be reverted like any other change.
+  - **From a terminal** — `af-memory import-sources`, `af-memory import --project <slug> --dry-run` (preview) and
+    `af-memory import --project <slug>` (import); `af-memory changes` lists the latest changes. The import is
+    gated by the same switch and the same secret scan as the Console.
+
 - **Targets** — what can be versioned, with file count, size and the last snapshot. codex has memory disabled by
   default, so enable it here if you want it.
 - **Automatic snapshots** — taken a few minutes after an agent stops (nothing is stored if nothing changed).
@@ -229,8 +282,11 @@ Antigravity): default model, **models you don't use**, **extra Claude models**, 
 **llama.cpp** card holds its on / off switch and **your own connection** to a llama-server on your network;
 the **Muse Code** card holds its one-time install, the sign-in and the model / effort choice. The
 **Sessions** group holds **when stopped sessions are archived** (Default — the deployment's period, 7 days unless the deployment changed it — 1 / 3 / 7 / 14 / 30 days, or Off), **session-to-session messaging**, **starting sessions from sessions** (with
-**children per session**), **fleet observation from sessions**,
-**image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes), auto-resume after a rate
+**children per session**), **fleet observation from sessions**, **past-session search** (on by default: lets a
+session search this workspace's past conversations with the `search_sessions` tool; the command palette's
+"Conversations" mode works either way, see [05](05-terminal.md#command-palette)),
+**Agent Fleet memory** (off by default: lets sessions read and write the memory every kind shares, see
+[Agent memory](#agent-memory)), **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes), auto-resume after a rate
 limit resets, and auto-resume of an interrupted turn.
 → [06 Agents](06-agents.md), [02 Sessions](02-sessions.md#messages-between-sessions),
 [02 Sessions](02-sessions.md#starting-sessions-from-a-session-child-sessions),
@@ -287,9 +343,9 @@ This is where you add tools Agent Fleet does not ship with — an internal wiki,
 search.
 
 - **Transport** — **stdio** (run an executable inside the workspace: command, arguments, environment variables)
-  or **remote (HTTP)** (URL and headers). **Environment variable and header values are stored encrypted** and
-  handed to the server only when it starts, so they never sit in a config file in the clear. Put credentials in
-  a header, not in the URL.
+  or **remote (HTTP)** (URL and headers). **Environment variable and header values are stored encrypted**. The
+  configuration handed to the CLI that runs the server can still contain them (in an owner-only file in your
+  home, never in a repository). Put credentials in a header, not in the URL.
 - **Targets** — whether it is handed to **assistants**, **sessions**, or both (clear both and the entry stays
   but goes nowhere). Leave **target agents** empty to cover every agent.
 - **Connection test** — reports the server name, version, tool count and round-trip time.
@@ -317,8 +373,21 @@ Tokens for driving your workspace remotely from Claude Code / Claude Desktop on 
 
 Your AWS profiles (shared settings), which `af-aws-exec` and SSM sessions sign in with, and SSM hosts (individual)
 for logging in to another in-house host. Each profile row has **Log in** to sign in to IAM Identity Center from the
-Console.
+Console, and a signed-in row has **Log out** to end that profile's login only.
 → [10 Going further](10-integrations.md#logging-in-to-another-in-house-host-ssm)
+
+### Google Cloud
+
+Your Google Cloud profiles, which `af-gcloud-exec` runs commands with: a label (the profile's name is made from
+it and shown beside it), the project, and optionally a quota project, the Google account to sign in as, a
+service account to impersonate, a region and a zone. No Google credentials are stored here, and
+service-account keys are not accepted. Two labels that make the same name are not available in the workspace
+until you rename one; the row says so. Each available row has **Log in** to sign the workspace in to Google for
+that profile from the Console: it opens a login window, the sign-in starts only when you press **Log in** there, and
+you paste the verification code Google shows into that same window — and only into a login you started yourself.
+A logged-in row says **"Logged in as <account>"** and offers **Log in again**, which signs in afresh for a login you
+know was revoked. The WS bar's Google Cloud badge lists the same logins.
+→ [10 Going further](10-integrations.md#running-commands-in-google-cloud-as-you-af-gcloud-exec)
 
 ---
 
@@ -463,14 +532,15 @@ is stopped). → [03 Repositories and git](03-code.md)
 ### Export / import
 
 Collect your own settings into **a single file**, take it away, and read it back on another deployment or
-account. It carries three things: **personal settings** (display, keys, notifications, agent defaults, …),
-your **AWS profiles/SSM** registrations, and your **agent instructions**.
+account. It carries four things: **personal settings** (display, keys, notifications, agent defaults, …),
+your **AWS profiles/SSM** registrations, your **Google Cloud** profiles, and your **agent instructions**.
 
-- **Connections (Git / agent / AWS tokens and API keys) are NOT included.** Sign in again wherever you
+- **Connections (Git / agent / AWS tokens and API keys, Google logins) are NOT included.** Sign in again wherever you
   import. The flip side is that **this file is safe to hand to someone else** — handing a team the whole
   set of SSM registrations works.
 - Importing only **adds**. A profile with the same name, or the same host (alias + instance), is left as it
-  is and reported back as "already there".
+  is and reported back as "already there". A Google Cloud profile counts as already there when one with the
+  same label (ignoring case) exists; one without a label or project is skipped.
 - Personal settings are **merged onto** what you have now. Things that accumulate — learned quick replies,
   key bindings — are never emptied just because the imported file has none.
 - Agent instructions are the one exception: they **replace** the text you have now (you are asked to
@@ -506,6 +576,8 @@ appears only on deployments that can perform them.
 | Stop a model that bills extra from being picked | Agents (models you don't use) |
 | Keep stopped sessions in the list longer, or out of it sooner | Agents (archive stopped sessions after) |
 | Let sessions talk to each other | Agents (session-to-session messaging) |
+| Stop sessions from searching past conversations | Agents (past-session search) |
+| Let agents share what they learn across kinds | Agents (Agent Fleet memory) |
 | Let a session see what the other sessions are doing | Agents (fleet observation from sessions) |
 | Have a session leave you a note about what it noticed | Agents (fleet observation from sessions) |
 | Clone a private repository | Git hosting |
@@ -522,6 +594,7 @@ appears only on deployments that can perform them.
 | Run a test suite that needs a database | Databases |
 | Show the app you are building to someone | Preview subdomains |
 | Get into another server | AWS profiles/SSM |
+| Run commands in my Google Cloud projects | Google Cloud |
 | Keep code that cannot leave the building | Internal repositories |
 | Take my settings to another environment | Export / import |
 | The environment is broken | Danger zone |

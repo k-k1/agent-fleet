@@ -558,6 +558,10 @@ func (a workItemsAPI) detail(w http.ResponseWriter, r *http.Request, res *resolv
 	var in struct {
 		Provider string `json:"provider"`
 		Key      string `json:"key"`
+		// Kind is relayed untouched: "pr" for a cached row, empty for a reference that is not in
+		// the inbox, which the Agent resolves (#1697). Dropping it here turns every lookup into a
+		// pull request read.
+		Kind string `json:"kind"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
@@ -565,6 +569,14 @@ func (a workItemsAPI) detail(w http.ResponseWriter, r *http.Request, res *resolv
 	}
 	if strings.TrimSpace(in.Key) == "" {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "key is required"})
+		return
+	}
+	// The wire contract: empty, "pr" or "issue". The Agent applies the same check; a typo must not
+	// be read as "unknown reference" and answered as a success.
+	switch in.Kind {
+	case "", "pr", "issue":
+	default:
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "kind must be empty, pr or issue"})
 		return
 	}
 	ctx := r.Context()

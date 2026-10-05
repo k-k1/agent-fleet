@@ -18,7 +18,9 @@ package agy
 import (
 	"bytes"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
+	"math"
 	"path/filepath"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (registers "sqlite"), as in opencode
@@ -28,18 +30,42 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// Measured steps.status values (v1.1.4 — docs/log/32). The last step's status is exactly where
-// the conversation stands: running / done / awaiting user input.
+// Measured steps.status values (v1.1.4 — docs/log/32; 8 and 6 on v1.2.14). A step's status is
+// about that step alone: "done" on the last row does NOT mean the turn is over (see turnEnd).
 const (
 	stepStatusRunning      = 2
 	stepStatusDone         = 3
+	stepStatusCanceled     = 6
+	stepStatusStreaming    = 8
 	stepStatusAwaitingUser = 9
 )
 
-// lastStep returns the newest step's status and payload for the slot's
-// conversation. ok=false when the conversation isn't adopted yet or the DB is
-// unreadable — callers treat that as "no opinion", never as a state.
-func lastStep(m session.Meta) (int, []byte, bool) {
+// lastStepRow is the newest steps row plus where the newest finished turn stopped.
+type lastStepRow struct {
+	status  int
+	payload []byte
+	idx     int
+	// turnEnd is the step idx the newest executor_metadata row ended at, -1 when no turn has
+	// ended yet; meaningful only when turnLog is turnLogRead.
+	turnEnd int
+	turnLog turnLogState
+}
+
+// turnLogState says what executor_metadata could tell. Only turnLogAbsent (builds before the
+// table existed) may fall back to the last step's status: on a DB that has the table, that
+// status reads "done" mid-turn, so a failed read must stay "no opinion" rather than idle.
+type turnLogState int
+
+const (
+	turnLogAbsent turnLogState = iota
+	turnLogRead
+	turnLogUnreadable
+)
+
+// lastStep returns the newest step for the slot's conversation. ok=false when the
+// conversation isn't adopted yet or the DB is unreadable — callers treat that as "no
+// opinion", never as a state.
+func lastStep(m session.Meta) (lastStepRow, bool) {
 	// The conversation UUID may not be adopted yet when the mirror polls before
 	// any sessions-list poll ran (capture normally fires in WireLive) — a first
 	// prompt straight into a question would then stay invisible. Capture is
@@ -47,44 +73,137 @@ func lastStep(m session.Meta) (int, []byte, bool) {
 	captureConversation(m)
 	conv := sids.Read(session.UUID(m.Dir, m.Name))
 	if conv == "" {
-		return 0, nil, false
+		return lastStepRow{}, false
 	}
 	db, err := sql.Open("sqlite", "file:"+conversationDBPath(conv)+"?mode=ro&_pragma=busy_timeout(3000)")
 	if err != nil {
-		return 0, nil, false
+		return lastStepRow{}, false
 	}
 	defer db.Close()
-	var st int
-	var payload []byte
-	if err := db.QueryRow(`SELECT status, step_payload FROM steps ORDER BY idx DESC LIMIT 1`).
-		Scan(&st, &payload); err != nil {
-		return 0, nil, false
+	r := lastStepRow{turnEnd: -1}
+	if err := db.QueryRow(`SELECT idx, status, step_payload FROM steps ORDER BY idx DESC LIMIT 1`).
+		Scan(&r.idx, &r.status, &r.payload); err != nil {
+		return lastStepRow{}, false
 	}
-	return st, payload, true
+	r.turnEnd, r.turnLog = turnEnd(db)
+	return r, true
+}
+
+// turnEnd reads where the newest finished turn stopped. agy writes one executor_metadata row
+// each time a turn's executor run ends — completed or canceled by Esc — and its top-level
+// field 3 is the idx of the last step of that run (measured on v1.2.14, every conversation on
+// the machine: the newest row's field 3 equals the final step's idx, and field 1 is 4 for a
+// completed run, 2 for a canceled one). Nothing else marks the end of a turn: the model's step
+// row only appears once its response is complete, so mid-turn the last row is regularly a
+// finished user, tool or background-task-notification step, and a text-only reply can still be
+// followed by more work when a background command finishes.
+func turnEnd(db *sql.DB) (int, turnLogState) {
+	var one int
+	switch err := db.QueryRow(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='executor_metadata'`).Scan(&one); {
+	case err == sql.ErrNoRows:
+		return -1, turnLogAbsent
+	case err != nil:
+		return -1, turnLogUnreadable
+	}
+	var data []byte
+	switch err := db.QueryRow(`SELECT data FROM executor_metadata ORDER BY idx DESC LIMIT 1`).Scan(&data); {
+	case err == sql.ErrNoRows:
+		return -1, turnLogRead
+	case err != nil || len(data) == 0:
+		return -1, turnLogUnreadable
+	}
+	v, found, ok := protoVarintField(data, 3)
+	if !ok || v > math.MaxInt32 {
+		return -1, turnLogUnreadable
+	}
+	// proto3 leaves a zero out of the wire, so a turn ending at step 0 (the first prompt
+	// canceled before any reply — measured) has no field 3 at all.
+	if !found {
+		v = 0
+	}
+	return int(v), turnLogRead
+}
+
+// protoVarintField returns the first top-level varint field num of a protobuf message,
+// walking the whole message so a malformed one is reported (ok=false) rather than read as
+// "field absent" (found=false).
+func protoVarintField(b []byte, num uint64) (v uint64, found, ok bool) {
+	for len(b) > 0 {
+		key, n := binary.Uvarint(b)
+		// Field numbers run 1..2^29-1; a zero tag is how garbage most often decodes.
+		if n <= 0 || key>>3 == 0 || key>>3 > 1<<29-1 {
+			return 0, false, false
+		}
+		b = b[n:]
+		switch key & 7 {
+		case 0:
+			x, n := binary.Uvarint(b)
+			if n <= 0 {
+				return 0, false, false
+			}
+			if key>>3 == num && !found {
+				v, found = x, true
+			}
+			b = b[n:]
+		case 1:
+			if len(b) < 8 {
+				return 0, false, false
+			}
+			b = b[8:]
+		case 2:
+			l, n := binary.Uvarint(b)
+			if n <= 0 || uint64(len(b)-n) < l {
+				return 0, false, false
+			}
+			b = b[n+int(l):]
+		case 5:
+			if len(b) < 4 {
+				return 0, false, false
+			}
+			b = b[4:]
+		default:
+			return 0, false, false
+		}
+	}
+	return v, found, true
 }
 
 // LiveState is agy's session state derived from the conversation DB, mirroring
 // opencode.LiveState: "question"/"permission" while blocked on the user,
-// "working" mid-turn, "idle" once the last step completed, "" when the DB has
+// "working" mid-turn, "idle" once the turn has ended (turnEnd), "" when the DB has
 // no opinion yet. agy ships no status hooks, so this is the ONLY turn-end
 // signal — /input persists an optimistic "working" that nothing else clears,
 // which left the operator's completion-report arm unconsumed forever (docs/log/30 item 2).
 // Callers gate on liveness themselves: a killed session's DB keeps its last
 // status, which must not surface as live state on a stopped session.
 func LiveState(m session.Meta) string {
-	st, payload, ok := lastStep(m)
+	r, ok := lastStep(m)
 	if !ok {
 		return ""
 	}
-	switch st {
+	switch r.status {
 	case stepStatusAwaitingUser:
-		if qs := parseAskQuestions(payload); len(qs) > 0 {
+		if qs := parseAskQuestions(r.payload); len(qs) > 0 {
 			return "question"
 		}
 		return "permission"
-	case stepStatusRunning:
+	case stepStatusRunning, stepStatusStreaming:
 		return "working"
-	case stepStatusDone:
+	}
+	switch r.turnLog {
+	case turnLogUnreadable:
+		return ""
+	case turnLogRead:
+		// Reading a finished last step as idle put a session that was thinking after a tool
+		// call (or after the prompt itself) into waiting-for-input, and fired a completion
+		// report mid-turn.
+		if r.turnEnd >= r.idx {
+			return "idle"
+		}
+		return "working"
+	}
+	switch r.status {
+	case stepStatusDone, stepStatusCanceled:
 		return "idle"
 	}
 	return ""
@@ -101,14 +220,14 @@ func conversationDBPath(conv string) string {
 // keep a stale status=9 last step, which must not surface as pending on a
 // stopped session.
 func Probe(m session.Meta) (string, []transcript.Question) {
-	st, payload, ok := lastStep(m)
-	if !ok || st != stepStatusAwaitingUser {
+	r, ok := lastStep(m)
+	if !ok || r.status != stepStatusAwaitingUser {
 		return "", nil
 	}
-	if qs := parseAskQuestions(payload); len(qs) > 0 {
+	if qs := parseAskQuestions(r.payload); len(qs) > 0 {
 		return "question", qs
 	}
-	return "permission", permissionQuestions(payload)
+	return "permission", permissionQuestions(r.payload)
 }
 
 // PendingModal hands the wait-for-a-human state, as it stood just before the pane was folded

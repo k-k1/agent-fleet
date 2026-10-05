@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/datalayout"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -24,7 +25,10 @@ import (
 
 // cloneURL builds the clone URL a workspace container uses. It is the public
 // base (Caddy TLS terminus, reachable from the container via hairpin NAT) so the
-// unified cred helper's token injection authenticates it transparently.
+// unified cred helper's token injection authenticates it transparently. Where the CP
+// also has an internal URL, the Agent points the workspace's git at it with
+// url.<internal>.insteadOf (ADR 0106 decision 8); the URL here stays the one a person
+// can clone with.
 func (a gitServerAPI) cloneURL(slug, name string) string {
 	return strings.TrimRight(a.publicBaseURL, "/") + "/git/" + slug + "/" + name + ".git"
 }
@@ -146,7 +150,7 @@ func (a gitServerAPI) repoCreate(w http.ResponseWriter, r *http.Request, ident s
 		return
 	}
 
-	dir := filepath.Join(a.dataRoot, "git", mv.TenantSlug, name+".git")
+	dir := filepath.Join(a.dataRoot, datalayout.GitDir, mv.TenantSlug, name+".git")
 	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -242,7 +246,7 @@ func (a gitServerAPI) repoDelete(w http.ResponseWriter, r *http.Request, ident s
 		refuseIrreversible(w, r, in, internalErr(err))
 		return
 	}
-	dir := filepath.Join(a.dataRoot, "git", mv.TenantSlug, name+".git")
+	dir := filepath.Join(a.dataRoot, datalayout.GitDir, mv.TenantSlug, name+".git")
 	outcome := ""
 	if err := os.RemoveAll(dir); err != nil {
 		log.Printf("internal git: delete %s: ledger rows removed but the bare remains: %v", dir, err)
@@ -304,8 +308,8 @@ func (a gitServerAPI) repoRename(w http.ResponseWriter, r *http.Request, ident s
 	if !ok {
 		return
 	}
-	oldDir := filepath.Join(a.dataRoot, "git", mv.TenantSlug, oldName+".git")
-	newDir := filepath.Join(a.dataRoot, "git", mv.TenantSlug, newName+".git")
+	oldDir := filepath.Join(a.dataRoot, datalayout.GitDir, mv.TenantSlug, oldName+".git")
+	newDir := filepath.Join(a.dataRoot, datalayout.GitDir, mv.TenantSlug, newName+".git")
 	if err := os.Rename(oldDir, newDir); err != nil {
 		refuseIrreversible(w, r, in, &apiError{http.StatusInternalServerError, "rename_failed", err.Error()})
 		return
@@ -339,7 +343,7 @@ func (a gitServerAPI) branches(w http.ResponseWriter, r *http.Request, _ store.I
 		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "no such repo"})
 		return
 	}
-	dir := filepath.Join(a.dataRoot, "git", mv.TenantSlug, name+".git")
+	dir := filepath.Join(a.dataRoot, datalayout.GitDir, mv.TenantSlug, name+".git")
 	out, err := exec.CommandContext(r.Context(), "git", "--git-dir", dir,
 		"for-each-ref", "--format=%(refname:short)", "refs/heads").Output()
 	if err != nil {

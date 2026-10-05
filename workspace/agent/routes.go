@@ -4,6 +4,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/awsx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
@@ -75,6 +77,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/recreate", sessionx.HandleRecreateSession)
 	mux.HandleFunc("GET /sessions/archived", sessionx.HandleListArchived)
 	mux.HandleFunc("GET /sessions/usage", sessionx.HandleSessionsUsage)
+	// Past-session search (ADR 0110). Top-level rather than under /sessions/ so no session name
+	// can collide with it.
+	mux.HandleFunc("GET /session-search", sessionsearch.HandleSearch)
+	mux.HandleFunc("GET /session-search/turns", sessionsearch.HandleWindow)
 	// Per-feature usage time series (docs/log/46 P3 / ADR0029), aggregated server-side.
 	// control-plane/routes.go needs the same path registered: the CP is an explicit allowlist.
 	mux.HandleFunc("GET /usage/series", handleUsageSeries)
@@ -105,10 +111,14 @@ func buildMux() *http.ServeMux {
 	// away at the end of the turn it is running. control-plane/routes.go needs the same path
 	// registered (the CP proxies by allowlist).
 	mux.HandleFunc("POST /sessions/{name}/stop-after-turn", sessionx.HandleSessionStopAfterTurn)
+	mux.HandleFunc("POST /sessions/{name}/spend-cap", sessionx.HandleSessionSpendCap)
+	mux.HandleFunc("GET /sessions/{name}/spend", sessionx.HandleSessionSpend)
 	mux.HandleFunc("POST /sessions/{name}/archive", sessionx.HandleArchiveSession)
 	mux.HandleFunc("POST /sessions/{name}/restore", sessionx.HandleRestoreSession)
 	// Programmatic drive I/O for the MCP tools (docs/0006 P3-6 E).
 	mux.HandleFunc("POST /sessions/{name}/input", sessionx.HandleSessionInput)
+	// Drop one peer message queued behind the user's answer (#1031).
+	mux.HandleFunc("DELETE /sessions/{name}/pending-peer/{id}", sessionx.HandleDropPendingPeer)
 	// Semantic turn ops + Interaction reply (docs/log/27 P1.5/P2) — the entry point of the
 	// driver abstraction. tui delegates to the tmux path, managed to a ThreadHandle
 	// (P2: opencode / P3: codex).
@@ -185,7 +195,18 @@ func buildMux() *http.ServeMux {
 	// The Settings row's "Log in" (#1028): the same attempts, without a request.
 	mux.HandleFunc("GET /aws-login/profiles", awsx.HandleProfileLoginStates)
 	mux.HandleFunc("POST /aws-login/profiles/{name}/start", awsx.HandleProfileLoginStart)
+	mux.HandleFunc("POST /aws-login/profiles/{name}/logout", awsx.HandleProfileLogout)
 	mux.HandleFunc("GET /aws-login/profiles/{name}/attempts/{attempt}", awsx.HandleProfileLoginAttempt)
+	// af-gcloud-exec's Console login (ADR 0107 decision 3): the same lifecycle; every attempt
+	// is read and given its code through its profile's routes. CP allowlist:
+	// registerSessionRoutes.
+	mux.HandleFunc("GET /gcp-login", gcpx.HandleLoginList)
+	mux.HandleFunc("POST /gcp-login/{id}/start", gcpx.HandleLoginStart)
+	mux.HandleFunc("POST /gcp-login/{id}/cancel", gcpx.HandleLoginCancel)
+	mux.HandleFunc("GET /gcp-login/profiles", gcpx.HandleProfileLoginStates)
+	mux.HandleFunc("POST /gcp-login/profiles/{name}/start", gcpx.HandleProfileLoginStart)
+	mux.HandleFunc("GET /gcp-login/profiles/{name}/attempts/{attempt}", gcpx.HandleProfileLoginAttempt)
+	mux.HandleFunc("POST /gcp-login/profiles/{name}/attempts/{attempt}/code", gcpx.HandleProfileLoginCode)
 	mux.HandleFunc("POST /ssm/instances", handleSSMInstances)
 	mux.HandleFunc("POST /sessions/{name}/start", sessionx.HandleStartSession)
 	// Structured transcript (role + text + timestamp) for the Console chat view.
@@ -320,9 +341,19 @@ func buildMux() *http.ServeMux {
 	// come from the working copy, never from the browser.
 	mux.HandleFunc("GET /repos/{name}/svn-auth", handleGetSvnAuth)
 	mux.HandleFunc("POST /repos/{name}/svn-auth", handleSvnAuth)
+	// Read-only SVN history and local changes (#1705). svn-log / svn-show are NETWORK calls
+	// (stored credential injected, 401 svn_auth_required on refusal); svn-changes / svn-diff are
+	// local and need no credential. The git /log /show /changes /diff handlers stay git-only.
+	mux.HandleFunc("GET /repos/{name}/svn-log", handleSvnLog)
+	mux.HandleFunc("GET /repos/{name}/svn-show", handleSvnShow)
+	mux.HandleFunc("GET /repos/{name}/svn-changes", handleSvnChanges)
+	mux.HandleFunc("GET /repos/{name}/svn-diff", handleSvnDiff)
 	// Launch prompt templates (repo launch modal): .claude/commands, .claude/skills,
 	// .agent-fleet/launch-prompts.md — aggregated read-only from the working copy.
 	mux.HandleFunc("GET /repos/{name}/prompt-templates", handleRepoPromptTemplates)
+	// The launch modal's skill picker: the mirror's list for a session not started yet
+	// (?kind=, ?subdir=). Registered in control-plane/routes.go too.
+	mux.HandleFunc("GET /repos/{name}/skills", sessionx.HandleRepoSkills)
 	// Branch naming resolver (ADR 0103 decision 7): the effective rule, a name for an item or
 	// a session, and the advisory check of a typed name.
 	mux.HandleFunc("GET /repos/{name}/branch-rule", handleGetBranchRule)
@@ -373,6 +404,10 @@ func buildMux() *http.ServeMux {
 	// that never touches the fs.
 	mux.HandleFunc("POST /fs/suggest-edit", httpx.HeldOpen(handleFSSuggestEdit))
 	mux.HandleFunc("GET /fs/download", handleFSDownload)
+	// A picture's width and height from its header, many paths per request (fs_imagesize.go).
+	mux.HandleFunc("POST /fs/imagesize", handleFSImageSize)
+	// Every picture under a folder, a bounded walk, flattened into one list (fs_images.go).
+	mux.HandleFunc("GET /fs/images", handleFSImages)
 	mux.HandleFunc("POST /fs/upload", handleFSUpload)
 	mux.HandleFunc("GET /fs/changes", handleFSChanges)
 	mux.HandleFunc("GET /fs/linemarks", handleFSLineMarks)
@@ -425,6 +460,23 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /agents/memory/export", memoryx.HandleMemoryExport)
 	mux.HandleFunc("POST /agents/memory/import", memoryx.HandleMemoryImport)
 	mux.HandleFunc("POST /agents/memory/import/apply", memoryx.HandleMemoryImportApply)
+	// AF-owned agent memory (ADR 0108): what the af MCP memory tools call. Not proxied by the
+	// CP: agents reach it on loopback, and the Console's view of it is a separate set of routes.
+	mux.HandleFunc("GET /agents/memory/entries", memoryx.HandleAgentMemoryIndex)
+	mux.HandleFunc("GET /agents/memory/entries/search", memoryx.HandleAgentMemorySearch)
+	mux.HandleFunc("GET /agents/memory/entries/read", memoryx.HandleAgentMemoryRead)
+	mux.HandleFunc("POST /agents/memory/entries", memoryx.HandleAgentMemorySave)
+	mux.HandleFunc("POST /agents/memory/entries/forget", memoryx.HandleAgentMemoryForget)
+	// The member's after-the-fact view of those writes (ADR 0108 decision 8). These two are
+	// for the Console, so control-plane/routes.go relays them.
+	mux.HandleFunc("GET /agents/memory/entries/changes", memoryx.HandleAgentMemoryChanges)
+	mux.HandleFunc("GET /agents/memory/entries/diff", memoryx.HandleAgentMemoryChangeDiff)
+	mux.HandleFunc("POST /agents/memory/entries/revert", memoryx.HandleAgentMemoryRevert)
+	// One-time import of claude's own auto-memory (ADR 0108 decision 6 step 1). Not
+	// /agents/memory/import: that is the bundle import of the 0022 history.
+	mux.HandleFunc("GET /agents/memory/claude-import", memoryx.HandleAgentMemoryClaudeSources)
+	mux.HandleFunc("GET /agents/memory/claude-import/preview", memoryx.HandleAgentMemoryClaudePreview)
+	mux.HandleFunc("POST /agents/memory/claude-import", memoryx.HandleAgentMemoryClaudeApply)
 
 	// Toolchain selection (node via nvm / java via pre-baked Temurin) — Console.
 	mux.HandleFunc("GET /env/toolchains", handleToolchainsGet)
@@ -476,6 +528,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /connections/git/{host}/repos", gitx.HandleListRemoteRepos)
 	mux.HandleFunc("GET /connections/git/{host}/branches", gitx.HandleListRemoteBranches)
 	mux.HandleFunc("PUT /connections/git/{host}", handlePutGitConn)
+	// The CP pushes a rotated internal git token here (issue #1199). The Console proxy does
+	// not route it, but any holder of the Agent bearer can call it: see the handler for why
+	// that is the same boundary as PUT /connections/git.
+	mux.HandleFunc("PUT /internal-git/token", handlePutInternalGitToken)
 	mux.HandleFunc("PUT /connections/git/{host}/identity", gitx.HandleGitProviderIdentityPut)
 	mux.HandleFunc("DELETE /connections/git/{host}", handleDeleteGitConn)
 	// There is no /connections/git/github/oauth/{start,poll}: both providers' OAuth flows

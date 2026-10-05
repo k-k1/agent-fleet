@@ -68,6 +68,9 @@ type Config struct {
 	// value would keep re-basing against the empty one — silently handing a workspace
 	// the wrong home directory. Use StaticRootDataDir when the values really are fixed.
 	RootDataDir func(Workspace) string
+	// HomeLeases is the CP's store, through which ecs-ec2 serialises a workspace's home
+	// across CP replicas. nil serialises it within one process only.
+	HomeLeases HomeLeaseStore
 }
 
 // rootedDataDir is the adapters' way in. A nil RootDataDir means "the stored path is

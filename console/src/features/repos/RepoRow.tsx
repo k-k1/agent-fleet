@@ -26,8 +26,9 @@ import { ShareCreateModal } from "../sharing/ShareCreateModal.tsx";
 import { useMySharesStore } from "../sharing/store.ts";
 import { openRepoScm } from "../scm/open.ts";
 import { LaunchModal } from "./LaunchModal.tsx";
+import { AheadBehind } from "./AheadBehind.tsx";
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
-import { canFastForwardFromParent, parentSyncLabel, parentSyncTitle } from "./parentSync.ts";
+import { canFastForwardFromParent, parentFFMenuLabel, parentSyncLabel, parentSyncTitle } from "./parentSync.ts";
 import type { Repo } from "./store.ts";
 import { useImagegenAvailable } from "../imagegen/available.ts";
 
@@ -65,7 +66,7 @@ export interface RepoRowProps {
   onOpenFolder?: () => void;
   onOpenChanges?: () => void;
   onFF?: () => void;
-  /** Advances this WT to the parent working copy's HEAD when it is a strict FF. */
+  /** Advances this WT to the parent branch's upstream (else the parent's HEAD) when it is a strict FF. */
   onParentFF?: () => void;
   onDelete?: () => void;
   /** Archive every stopped session (right-click menu). Only sessions directly under this
@@ -164,6 +165,21 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
   useDismiss([wrapRef, launchMenuRef], showLaunch, () => setShowLaunch(false));
   useDismiss([wrapRef, menuRef], !!menu, () => setMenu(null));
   useMenuRoving(menuRef, !!menu);
+  // Closing the menu unmounts the item that had focus, and focus would fall to <body>: after a
+  // Menu-key open, or a reveal from the session menu, the user is left nowhere to arrow from.
+  // Hand it back to whatever opened the menu, but only if nothing else took it meanwhile (a
+  // click on another control keeps the focus the user chose). A layout effect so the opener is
+  // read before useMenuRoving's passive effect moves focus onto the first item.
+  const menuOpen = !!menu;
+  useLayoutEffect(() => {
+    if (!menuOpen) return;
+    const opener = document.activeElement as HTMLElement | null;
+    if (!opener || opener === document.body) return;
+    return () => {
+      const now = document.activeElement;
+      if ((!now || now === document.body) && opener.isConnected) opener.focus();
+    };
+  }, [menuOpen]);
 
   return (
     <li
@@ -258,10 +274,8 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                       : tr("repo.origin.ahead", { ahead: r.ahead ?? 0 })
                   }
                 >
-                  {r.ahead ? `↑${r.ahead}` : ""}
-                  {r.ahead && r.behind ? " " : ""}
-                  {r.behind ? `↓${r.behind}` : ""}
-                  {r.behind ? (r.ahead ? tr("repo.need_merge") : tr("repo.ff_ok")) : ""}
+                  <AheadBehind ahead={r.ahead} behind={r.behind} />
+                  {r.behind ? <span>{r.ahead ? tr("repo.need_merge") : tr("repo.ff_ok")}</span> : null}
                 </span>
               )}
             </span>
@@ -383,11 +397,19 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
       {menu &&
         createPortal(
           <ul className="ui-menu repo-ctxmenu" ref={menuRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
-            {/* Source Control view + git-only ops — hidden for svn (flat working copy). */}
+            {/* Source Control view + git-only ops — hidden for svn (flat working copy), which
+                gets the read-only Show log and local-changes panes instead (#1705). */}
             {!isSvn && (
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpen(); }}>
                   <Icon name="source-control" /> {tr("repo.open_scm")}
+                </button>
+              </li>
+            )}
+            {isSvn && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpen(); }}>
+                  <Icon name="history" /> {tr("repo.svn_show_log")}
                 </button>
               </li>
             )}
@@ -402,6 +424,13 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpenChanges(); }}>
                   <Icon name="git-commit" /> {tr("repo.commit_changes")}
+                </button>
+              </li>
+            )}
+            {isSvn && onOpenChanges && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpenChanges(); }}>
+                  <Icon name="git-commit" /> {tr("repo.svn_changes")}
                 </button>
               </li>
             )}
@@ -434,7 +463,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
             {!isSvn && onParentFF && canFastForwardFromParent(r) && (
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onParentFF(); }}>
-                  <Icon name="arrow-up" /> {tr("repo.ff_parent")}
+                  <Icon name="arrow-up" /> {parentFFMenuLabel(r)}
                 </button>
               </li>
             )}

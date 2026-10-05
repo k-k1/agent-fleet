@@ -269,6 +269,14 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// puts both in the envelope (docs/log/58 §58.14) — the sender picks what it is, never
 		// what the receiver owes back.
 		PeerIntent string `json:"peer_intent"`
+		// ScheduleID and ScheduleSlot name the scheduled run a CP scheduler send belongs to,
+		// so a Managed session that drops the prompt before it runs can record that run as not
+		// executed (#1257). Read only alongside a schedule source.
+		ScheduleID   string `json:"schedule_id"`
+		ScheduleSlot string `json:"schedule_slot"`
+		// ScheduleDelivery is the run's own targets and silent sentinel (#1560), sent only
+		// when the schedule asks for more than its report to report_to.
+		ScheduleDelivery *chatx.ScheduleDelivery `json:"schedule_delivery"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
@@ -318,7 +326,8 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			writePeerErr(w, err)
 			return
 		}
-		if _, err := peerPolicy(body.PeerFrom, name); err != nil {
+		dst, err := peerPolicy(body.PeerFrom, name)
+		if err != nil {
 			writePeerErr(w, err)
 			return
 		}
@@ -327,17 +336,48 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			writePeerErr(w, err)
 			return
 		}
-		if err := peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), time.Now()); err != nil {
+		delivery, isDelivery := pendingDeliveryOf(r)
+		if isDelivery {
+			// A queued message (peer_pending.go) was counted when it was queued; the rate is
+			// re-checked here, not counted again.
+			err = peerRate.check(body.PeerFrom, time.Now())
+		} else {
+			// A target waiting on its user takes the message into its pending spool rather than
+			// refusing it, and so does one that already holds queued messages, which keeps
+			// them in order (peer_pending.go).
+			blockedOn, n, qerr := enqueueDecision(name, dst, body.PeerFrom, strings.TrimSpace(body.PeerIntent), body.Prompt,
+				func() error {
+					return peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), time.Now())
+				})
+			if _, ok := qerr.(*peerRejection); ok {
+				writePeerErr(w, qerr)
+				return
+			} else if qerr != nil {
+				httpx.WriteErr(w, http.StatusInternalServerError, "peer_queue_failed", qerr.Error())
+				return
+			}
+			if blockedOn != "" {
+				writePendingQueued(w, name, blockedOn, n)
+				return
+			}
+			err = peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), time.Now())
+		}
+		if err != nil {
 			writePeerErr(w, err)
 			return
 		}
 		// Fleet graph write site ⑥ (ADR 0041 / 0096 decision 4): recorded on the RAW message,
 		// before the envelope wraps it — the excerpt is for a human reading the graph, not
 		// the delivery machinery.
-		fleetgraph.RecordPeer(body.PeerFrom, name, strings.TrimSpace(body.PeerIntent), body.Prompt)
+		if !isDelivery { // a queued message is recorded once it is delivered (peer_pending.go)
+			fleetgraph.RecordPeer(body.PeerFrom, name, strings.TrimSpace(body.PeerIntent), body.Prompt)
+		}
 		// The server builds the envelope; the caller never does, so it can neither be
 		// forgotten nor forged.
 		body.Prompt = peerEnvelope(body.PeerFrom, strings.TrimSpace(body.PeerIntent), reply, body.Prompt)
+		if isDelivery {
+			body.Prompt = agents.MarkHeldEnvelope(body.Prompt, delivery.queuedAt)
+		}
 		// Unattended path, so delivery confirmation is mandatory. Answering 200 on the
 		// keystroke alone would let the sending model proceed as if the message landed.
 		body.Confirm = true
@@ -346,10 +386,14 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// (one carrying report_to) gets the extra "call af_report when you are done" line. It
 	// sits before the managed/tui split so both paths get the same line — after the split
 	// one of them would miss it.
-	if body.ReportTo != "" {
+	delivery := scheduleDeliveryOf(body.Source, body.ScheduleID, body.ScheduleSlot, body.ScheduleDelivery)
+	if body.ReportTo != "" || delivery != nil {
 		if m, ok := session.ReadMeta(name); ok {
 			body.Prompt = withSelfReportHint(body.Prompt, m)
 		}
+	}
+	if delivery != nil {
+		delivery.PromptSum = chatx.PromptSum(body.Prompt) // the text as it lands in the transcript
 	}
 	// A managed session's {prompt} has no tmux pane (it goes through app-server), so route
 	// it to ThreadHandle.Send before the tmux existence check. Callers that hit /input
@@ -358,7 +402,8 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// reason as /turn's handleManagedTurn. {keys}/{seq} (raw TUI driving) stays tui-only.
 	if len(body.Keys) == 0 && len(body.Seq) == 0 {
 		if meta, ok := session.ReadMeta(name); ok && meta.DriverKind() == session.DriverManaged {
-			handleManagedInputPrompt(w, meta, body.Prompt, body.ReportTo, body.Source, body.PeerFrom)
+			handleManagedInputPrompt(w, meta, body.Prompt, body.ReportTo, body.Source, body.PeerFrom,
+				scheduleRefOf(body.Source, body.ScheduleID, body.ScheduleSlot), delivery)
 			return
 		}
 	}
@@ -577,8 +622,8 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// done before delivery. It is not mirrored to Discord either: that mirror exists
 		// to reflect input a USER typed in the Console into the thread, and peer is not
 		// that.
-	case body.ReportTo != "":
-		chatx.AddInstruction(name, body.ReportTo, injectionSource(body.Source))
+	case body.ReportTo != "" || delivery != nil:
+		chatx.AddScheduledInstruction(name, body.ReportTo, injectionSource(body.Source), delivery, false)
 	case scheduleInjectionSource(body.Source) != "":
 		// A scheduled injection with completion reporting off (report_to is empty, so it
 		// misses the branch above). It does not go on the ledger — there is no report
@@ -632,12 +677,14 @@ func writePeerErr(w http.ResponseWriter, err error) {
 	}
 	status := http.StatusBadRequest
 	switch rej.Code {
-	case "peer_rate_limited", "peer_duplicate":
+	case "peer_rate_limited", "peer_duplicate", "peer_queue_full", "peek_rate_limited":
 		status = http.StatusTooManyRequests
-	case "peer_from_forbidden", "peer_target_forbidden":
+	case "peer_from_forbidden", "peer_target_forbidden", "peek_disabled", "peek_from_forbidden", "peek_target_forbidden":
 		status = http.StatusForbidden
-	case "peer_from_unknown", "peer_target_unknown":
+	case "peer_from_unknown", "peer_target_unknown", "peek_from_unknown", "peek_target_unknown":
 		status = http.StatusNotFound
+	case "peek_target_auth":
+		status = http.StatusConflict
 	}
 	httpx.WriteErr(w, status, rej.Code, rej.Msg)
 }
@@ -646,7 +693,7 @@ func writePeerErr(w http.ResponseWriter, err error) {
 // start op (session_turn.go) — same ThreadHandle.Send delivery, but keeps /input's
 // report_to contract (addInstruction / recordOperatorInjection) that /turn doesn't
 // carry, so send_to_session's docs/log/30 auto-report keeps working for managed sessions.
-func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, reportTo, source, peerFrom string) {
+func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, reportTo, source, peerFrom string, sched agents.ScheduleRef, delivery *chatx.ScheduleDelivery) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
@@ -678,7 +725,14 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	}
 	// The origin is what the stop rules read (ADR 0105): only member input ends a stop episode,
 	// and a discard lists the rest by origin rather than putting it back in the input box.
-	in := agents.TurnInput{Prompt: prompt, Origin: turnOrigin(badgeOriginOf(peerFrom, reportTo, source), peerFrom)}
+	in := agents.TurnInput{Prompt: prompt, Origin: turnOrigin(badgeOriginOf(peerFrom, reportTo, source), peerFrom),
+		Schedule: sched}
+	// The ledger row is raised BEFORE the send, marked sending, and the prompt carries its id
+	// (#1257): the queue may hold the prompt behind a turn and drop it, during the send or
+	// long after, and the drop names the row. The send's outcome settles the sending mark.
+	if peerFrom == "" && (reportTo != "" || delivery != nil) {
+		in.Instr = chatx.AddScheduledInstruction(meta.Name, reportTo, injectionSource(source), delivery, true)
+	}
 	queued := false
 	if qs, ok := h.(agents.QueueingSender); ok {
 		queued, err = qs.SendQueued(in)
@@ -686,6 +740,7 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 		err = h.Send(in)
 	}
 	if err != nil {
+		chatx.WithdrawInstruction(meta.Name, in.Instr)
 		if errors.Is(err, agents.ErrQuestionPending) {
 			httpx.WriteErr(w, http.StatusConflict, "question_pending",
 				"a question is awaiting an answer; answer it via the question card, not free text")
@@ -694,6 +749,7 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 		writeRuntimeErr(w, err)
 		return
 	}
+	chatx.MarkInstrSent(meta.Name, in.Instr)
 	markSessionWorking(meta.Name)
 	cancelStopArmOnNewPrompt(meta.Name) // new work supersedes a stop-after-turn arm (docs/log/85)
 	// The usage-limit auto-resume's "resumed" notice, same as the TUI path above: Send having
@@ -704,8 +760,8 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	switch {
 	case peerFrom != "":
 		// Not on the ledger (ADR 0041 decision 4). The origin was recorded above.
-	case reportTo != "":
-		chatx.AddInstruction(meta.Name, reportTo, injectionSource(source))
+	case reportTo != "" || delivery != nil:
+		// Raised before the send, above.
 	case scheduleInjectionSource(source) != "":
 		// Scheduled execution with reporting off (as on the TUI path) — no ledger row,
 		// no Discord mirror.
@@ -837,6 +893,11 @@ func typePromptText(name, pane, text string) error {
 	// literal-keys send-keys is eaten by the paste coalescing and the prompt is never
 	// submitted.
 	if kind != session.KindCodex && kind != session.KindOpencode && kind != session.KindCopilot && kind != session.KindCursor && kind != session.KindKiro {
+		if kind == session.KindClaude {
+			// A long prompt reaches claude as one paste-sized chunk, and its paste handler
+			// would turn the attached image paths into [Image #N] and split the text.
+			text = claude.QuoteImagePaths(text)
+		}
 		if out, err := tmuxx.Cmd("send-keys", "-t", pane, "-l", "--", text).CombinedOutput(); err != nil {
 			return fmt.Errorf("%v: %s", err, out)
 		}
@@ -1107,9 +1168,20 @@ var kindModalProbes = map[string]func(session.Meta) string{
 	// opencode's store) and cursor's approval and build menus (the pane) are read where they
 	// live. Terminal route only: their managed drivers refuse free text themselves
 	// (ErrQuestionPending).
-	session.KindCodex:    codex.TerminalModal,
+	session.KindCodex:    codexModal,
 	session.KindOpencode: opencode.TerminalModal,
 	session.KindCursor:   cursor.TerminalModal,
+}
+
+// codexModal adds to codex's question the screens its Terminal pane draws outside the
+// conversation — the update menu, the lock screen, the model-switch nudge — which take a typed
+// line's keys just the same (codex.PaneScreen). They stay out of codex.TerminalModal, which the
+// chat chip reads as "question".
+func codexModal(m session.Meta) string {
+	if q := codex.TerminalModal(m); q != "" {
+		return q
+	}
+	return codex.TerminalScreen(m)
 }
 
 // blockingState maps a live state to "" (free) or the state itself (blocking). An
@@ -1148,6 +1220,12 @@ func blockedErrMessage(state string) string {
 		return "a plan is awaiting approval; decide it from the plan card, or in the terminal when there is none (typed text would be swallowed by the dialog and the Enter would approve it)"
 	case "permission":
 		return "a permission prompt is awaiting a decision; answer it from the permission card, or in the terminal when there is none (typed text would be swallowed by the menu and the Enter would allow it)"
+	case "update":
+		return "codex is showing its update menu; choose Skip from the Console's notice or in the terminal (typed text would be taken by the menu, whose first row, Update now, exits the session)"
+	case "locked":
+		return "codex cannot open this conversation because another app holds it; close it there, then press r in the terminal (typed keys act on the lock screen: f forks the conversation, q exits)"
+	case "model_switch":
+		return "codex is offering to switch to a smaller model near the usage limit; answer it in the terminal (typed text would be taken by the menu and the Enter would switch the model)"
 	case agents.StateAuth:
 		return "the claude login for this workspace has expired; re-authenticate from 設定 > エージェント (a prompt sent now would be accepted by the TUI but never start a turn)"
 	}
@@ -1246,6 +1324,11 @@ func HandleSessionStatus(w http.ResponseWriter, r *http.Request) {
 			resp["plan"] = plan
 		}
 	}
+	// Peer messages queued behind the user's answer (#1031), so a sender can see its message
+	// still waits.
+	if n := len(agents.PendingPeers(name)); n > 0 {
+		resp["pendingPeerMessages"] = n
+	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -1282,18 +1365,34 @@ func sessionInputReady(meta session.Meta, alive bool) bool {
 
 // HandleSessionOutput (GET /sessions/{name}/output?since=<cursor>) returns the
 // session's assistant text appended since the cursor, plus a new cursor and the
-// current status. Phase 1: claude only (its jsonl transcript). cursor is a line
-// index into the transcript.
+// current status. cursor is a line index into claude's jsonl transcript, or a turn
+// count for the other transcript-capable kinds.
+//
+// peek_from=<session> makes it a peer peek (session_peek.go): the policy, the caps, the
+// rate limit and the audit record are all applied here, not by the caller.
 func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
+	peekFrom := r.URL.Query().Get("peek_from")
+	if peekFrom != "" {
+		if err := peekPolicy(peekFrom, name); err != nil {
+			writePeerErr(w, err)
+			return
+		}
+	}
 	meta, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
+	}
+	if peekFrom != "" {
+		if err := peekAuthAllowed(meta); err != nil {
+			writePeerErr(w, err)
+			return
+		}
 	}
 	alive := SessionAlive(meta)
 	// /output opts out of the idle-heal (heal=false) to preserve its historical behavior.
@@ -1311,13 +1410,28 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 	// tail=<bytes>: return only the TAIL of the output (when clipped, an elision marker is
 	// prepended and clipped=true). The caller is an LLM (the MCP get_session_output tool)
 	// and tool results accumulate in the conversation context, so an unbounded full dump
-	// makes every later turn more expensive.
+	// makes every later turn more expensive. lines=<n> clips to the last n lines first.
 	tail := 0
 	if v := r.URL.Query().Get("tail"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			tail = n
 		}
 	}
+	lines := 0
+	if v := r.URL.Query().Get("lines"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			lines = n
+		}
+	}
+	if peekFrom != "" {
+		if err := peekRate.allow(peekFrom, time.Now()); err != nil {
+			writePeerErr(w, err)
+			return
+		}
+		tail, lines = peekCaps(tail, lines)
+	}
+	var raw string
+	var cursor int
 	// codex/opencode: their stores aren't claude's jsonl — build the flattened assistant
 	// output from the generic Transcript() turns instead (cursor = turn count), so the
 	// drive tools (MCP get_session_output) work for every transcript-capable kind.
@@ -1333,33 +1447,33 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 				gb.WriteString(t.Text)
 			}
 		}
-		out, clipped := clipOutputTail(gb.String(), tail)
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"name": name, "output": out, "cursor": len(td.Turns),
-			"status": state, "alive": alive, "clipped": clipped,
-		})
-		return
-	}
-	sid := session.UUID(meta.Dir, name)
-	lines := claude.TranscriptLines(sid)
-	var sb strings.Builder
-	cursor := len(lines)
-	for i := since; i < len(lines); i++ {
-		if t := claude.AssistantText(lines[i]); t != "" {
-			if sb.Len() > 0 {
-				sb.WriteString("\n")
+		raw, cursor = gb.String(), len(td.Turns)
+	} else {
+		sid := session.UUID(meta.Dir, name)
+		tlines := claude.TranscriptLines(sid)
+		var sb strings.Builder
+		cursor = len(tlines)
+		for i := since; i < len(tlines); i++ {
+			if t := claude.AssistantText(tlines[i]); t != "" {
+				if sb.Len() > 0 {
+					sb.WriteString("\n")
+				}
+				sb.WriteString(t)
 			}
-			sb.WriteString(t)
+			// With tail set, do not paginate: making the caller walk 1 MiB forward pages when
+			// it asked for the tail defeats the point. TranscriptLines already holds every
+			// line in memory, so building the whole thing does not change the memory order.
+			if tail <= 0 && sb.Len() > 1<<20 { // cap at 1 MiB — the next poll resumes at i+1
+				cursor = i + 1
+				break
+			}
 		}
-		// With tail set, do not paginate: making the caller walk 1 MiB forward pages when
-		// it asked for the tail defeats the point. TranscriptLines already holds every
-		// line in memory, so building the whole thing does not change the memory order.
-		if tail <= 0 && sb.Len() > 1<<20 { // cap at 1 MiB — the next poll resumes at i+1
-			cursor = i + 1
-			break
-		}
+		raw = sb.String()
 	}
-	out, clipped := clipOutputTail(sb.String(), tail)
+	out, clipped := clipOutput(raw, tail, lines)
+	if peekFrom != "" {
+		recordPeek(peekFrom, name, since, len(out))
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"name": name, "output": out, "cursor": cursor,
 		"status": state, "alive": alive, "clipped": clipped,
@@ -1369,6 +1483,37 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 // sessionOutputClipNote is prepended to a tail-clipped output. The reader is the operator
 // (an LLM), so the body itself has to say that it was clipped and where the full text is.
 const sessionOutputClipNote = "【先頭を省略】出力が長いため末尾のみを表示しています（全文は Console のミラーで確認できます）。\n\n"
+
+// clipOutput keeps the last `lines` lines of s, then the last `tail` bytes of that, with
+// sessionOutputClipNote prepended once when either cut anything. Zero disables a cut.
+func clipOutput(s string, tail, lines int) (string, bool) {
+	lineClipped := false
+	if lines > 0 {
+		if s, lineClipped = clipOutputLines(s, lines); lineClipped && tail <= 0 {
+			return sessionOutputClipNote + s, true
+		}
+	}
+	out, byteClipped := clipOutputTail(s, tail)
+	if lineClipped && !byteClipped {
+		return sessionOutputClipNote + out, true
+	}
+	return out, lineClipped || byteClipped
+}
+
+// clipOutputLines keeps the last n lines of s (no note; clipOutput adds it). Trailing
+// newlines are dropped first so they do not count as empty last lines.
+func clipOutputLines(s string, n int) (string, bool) {
+	s = strings.TrimRight(s, "\n")
+	at := len(s)
+	for i := 0; i < n; i++ {
+		j := strings.LastIndexByte(s[:at], '\n')
+		if j < 0 {
+			return s, false
+		}
+		at = j
+	}
+	return s[at+1:], true
+}
 
 // clipOutputTail keeps the LAST max bytes of s (rune-safe: the cut point is advanced to
 // the next rune boundary), prepending sessionOutputClipNote when it actually clipped.

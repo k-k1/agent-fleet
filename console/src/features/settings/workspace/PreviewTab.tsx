@@ -148,7 +148,7 @@ function PreviewSection({
           the port list and reissue act on something invisible, and pressing them shows no
           change (reissue was reported as doing nothing). */}
       <Row label={tr("env.preview_current_label")}>
-        <span className="ds-sub pv-current">
+        <span className="ds-note pv-current">
           {issuedPorts.length > 0 ? (
             issuedPorts.map((p) => (
               <a key={p} className="pv-current-url" href={au.previewUrls[p]} target="_blank" rel="noreferrer noopener">
@@ -160,7 +160,7 @@ function PreviewSection({
           )}
         </span>
       </Row>
-      <p className="muted ds-sub">
+      <p className="muted ds-note">
         {/* The domain is shown even while stopped: which domain the workspace maps to is
             the premise of every setting here and does not depend on a URL being issued. */}
         {tr("env.preview_current_note", { domain: au.previewDomain || "" })}
@@ -177,32 +177,32 @@ function PreviewSection({
           spellCheck={false}
         />
       </Row>
-      <p className="muted ds-sub">{tr("env.preview_ports_note", { n: au.previewMaxPorts || 8 })}</p>
+      <p className="muted ds-note">{tr("env.preview_ports_note", { n: au.previewMaxPorts || 8 })}</p>
       <Row label={tr("env.preview_fixed_label")}>
         <OnOff value={!!au.previewFixedSlug} onChange={(on) => save({ previewFixedSlug: on })} />
       </Row>
-      <p className="muted ds-sub">{tr("env.preview_fixed_note")}</p>
+      <p className="muted ds-note">{tr("env.preview_fixed_note")}</p>
       {/* Sharing within the same tenant (docs/log/81 §14). Placed before the public
           toggle so that someone who only wants to show colleagues does not reach for
           public mode to do it. */}
       <Row label={tr("env.preview_share_label")}>
         <OnOff value={!!au.previewTenantShare} onChange={(on) => save({ previewTenantShare: on })} />
       </Row>
-      <p className="muted ds-sub">{tr("env.preview_share_note")}</p>
+      <p className="muted ds-note">{tr("env.preview_share_note")}</p>
       <Row label={tr("env.preview_public_label")}>
         <OnOff value={!!au.previewPublic} onChange={(on) => save({ previewPublic: on })} />
       </Row>
-      <p className="muted ds-sub">{tr("env.preview_public_note")}</p>
+      <p className="muted ds-note">{tr("env.preview_public_note")}</p>
       <Row label={tr("env.preview_cross_origin_label")}>
         <OnOff value={!!au.previewCrossOrigin} onChange={(on) => save({ previewCrossOrigin: on })} />
       </Row>
-      <p className="muted ds-sub">{tr("env.preview_cross_origin_note")}</p>
+      <p className="muted ds-note">{tr("env.preview_cross_origin_note")}</p>
       <Row label={tr("env.preview_reissue_label")}>
         <button className="ghost" onClick={reissue}>
           {tr("env.preview_reissue")}
         </button>
       </Row>
-      <p className="muted ds-sub">{tr("env.preview_reissue_note")}</p>
+      <p className="muted ds-note">{tr("env.preview_reissue_note")}</p>
     </section>
   );
 }

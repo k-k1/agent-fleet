@@ -1,8 +1,11 @@
 import { useSyncExternalStore } from "react";
+import { pinSyncedFallbacks } from "../features/notifications/prefs.ts";
 import { api, apiJSON } from "../core/api/client.ts";
 import { setLocale } from "./i18n/index.ts";
 import type { MsgKey } from "./i18n/index.ts";
 import type { WorkingSet } from "./workingSets.ts";
+import type { LaunchTemplateStore } from "./launchTemplates.ts";
+import type { PromptHistoryStore } from "./promptHistory.ts";
 
 // Display settings (theme / fonts / file-viewer options / icon set). Persisted in
 // localStorage for instant load + offline, AND mirrored to the server per-user
@@ -308,6 +311,9 @@ export interface Settings {
   chatColor: string;
   sharedColor: string;
   assistantColor: string;
+  // Keep a separate appearance (APPEARANCE_KEYS) per tenant on this device. Device-local, off by
+  // default; only offered to members with two or more memberships.
+  appearancePerTenant: boolean;
   mirrorSend: string;
   // Default claude model for new sessions (launch dialog + repo launch). Usually a tier
   // alias (opus/sonnet/haiku), but may be a user-registered full id to pin a release.
@@ -356,6 +362,16 @@ export interface Settings {
   // Default FALSE — this is the one that spends the shared host with nobody watching. (It used
   // to be offered only once observation was on; that prerequisite went with the switch.)
   sessionFleetSpawn: boolean;
+  // Past-session search for sessions (ADR 0110): whether the session-side MCP server offers
+  // search_sessions. Default TRUE, unlike the switches above, and matching the Agent's own
+  // missing-key answer: it only reads this user's transcripts, which a session's shell can
+  // already open. The Console's own search (the palette's conversations mode) ignores it.
+  sessionSearch: boolean;
+  // AF-owned agent memory for sessions (ADR 0108): whether the session-side MCP server offers the
+  // memory_* tools, and whether the Agent answers them. Default FALSE, like the Agent's own
+  // missing-key answer: what one session saves is read by every kind in later sessions, so it is
+  // turned on knowingly. The Console's change list works whatever this is set to.
+  agentMemory: boolean;
   // How many children ONE session may have at a time (ADR 0073 decision 6, AgentsTab > Session).
   // Per parent, not per workspace: two parents at the ceiling is twice that many agents.
   //
@@ -369,6 +385,10 @@ export interface Settings {
   // than 7 so the deployment's env var still applies to a user who never picked a period. The
   // Agent reads it on every session list, so a change applies on the next list with no restart.
   sessionStoppedArchiveDays: number;
+  // The spend budget a new session gets when its launch names none (#1054, AgentsTab > Session),
+  // in USD; 0 = none. The Agent reads it at create time, so MCP and scheduled launches get it
+  // too. One of SPEND_CAP_DEFAULTS — the spend is an estimate, and round figures say so.
+  sessionSpendCapUsd: number;
   // Which image provider generate_image tries first (AgentsTab > Sessions, ADR 0069). The
   // Agent normalizes whatever is stored into a TOTAL order — unknown ids and duplicates drop,
   // unmentioned providers append in the built-in order — so a list saved before a provider
@@ -673,6 +693,14 @@ export interface Settings {
   // notification read on arrival (no dot, no unread count; the row stays). Questions and
   // permission requests from a child still notify: nobody but a person can answer those.
   childIdleNotify: boolean;
+  // The notification settings table (features/notifications/prefs.ts): per-row overrides of the
+  // unread dot, sparse, row -> false. Absent means the row's legacy key or ON, so an empty map is
+  // exactly the behaviour before the table existed. Synced, because unread is the CP's per-member
+  // seen mark: a device that muted a row marks it read for every device.
+  notifyUnread: Record<string, boolean>;
+  // The same table's "row.os" / "row.voice" overrides. Device-local like ttsSessionNotify:
+  // whether this device interrupts depends on where it is.
+  notifyDevice: Record<string, boolean>;
   // Convert English words to katakana before handing them to VOICEVOX (docs/log/24, the CP's
   // enkana preprocessing), so English is read plausibly in a Japanese accent without leaving
   // Zundamon's voice. It is a transliteration based on the CMU pronouncing dictionary, so a word
@@ -785,6 +813,15 @@ export interface Settings {
   // (previous history) and the rest reach xterm/PTY unchanged: a pure terminal. Only shell/ssm
   // are affected; agent terminals behave as before. Default OFF. Click elsewhere to leave it.
   shellTermPassthrough: boolean;
+  // The launch modal's personal first-prompt templates (#1469): every repository, or one base
+  // repository when `repo` is set. Synced so they follow the user across devices; size-capped by
+  // lib/launchTemplates.ts, because one PUT over the Agent's 64 KiB limit fails every key's sync.
+  // Wrapped in an object that is never empty once written, so a deliberate "deleted the last one"
+  // reaches other devices instead of being restored by the ACCUMULATED empty-server rule.
+  launchTemplates: LaunchTemplateStore;
+  // The launch modal's recent first prompts, newest first, keyed by base repository. Capped and
+  // wrapped by lib/promptHistory.ts for the same reasons.
+  launchHistory: PromptHistoryStore;
 }
 
 // The pinned fallback model. Used as the seeded global default and as resolveModel's
@@ -1116,7 +1153,7 @@ const DEFAULTS: Settings = {
   markdownCodeWrap: true,
   iconSet: "vscode",
   theme: "dark",
-  paneLayout: "split",
+  paneLayout: "tabs",
   locale: detectLocale(),
   mirrorTheme: "inherit",
   sharedTheme: "inherit",
@@ -1127,6 +1164,7 @@ const DEFAULTS: Settings = {
   chatColor: "default",
   sharedColor: "default",
   assistantColor: "default",
+  appearancePerTenant: false,
   // Markdown mirror composer: "mod-enter" = Ctrl/⌘+Enter submits, Enter inserts a
   // newline (phone-friendly default); "enter" = Enter submits, Shift+Enter newline.
   mirrorSend: "mod-enter",
@@ -1142,8 +1180,11 @@ const DEFAULTS: Settings = {
   peerMessaging: false, // opt-in (docs/log/58 / ADR 0041) — not a surface to widen by default
   imageGeneration: false, // opt-in (ADR 0069) — it spends the ChatGPT plan quota
   sessionFleetSpawn: false, // opt-in (ADR 0073) — lets a session spend host resources unattended
+  sessionSearch: true, // opt-out (ADR 0110) — read-only, and the Agent treats a missing key as on
+  agentMemory: false, // opt-in (ADR 0108) — what one session saves reaches every kind later
   sessionSpawnChildLimit: 3, // the value the limit had while it was a constant (ADR 0073 decision 6)
   sessionStoppedArchiveDays: 0, // the deployment default (ADR 0097)
+  sessionSpendCapUsd: 0, // no budget (#1054)
   imageProviderOrder: [...IMAGE_PROVIDERS],
   opencodeCatalog: "off",
   lcppEnabled: true, // opt-out (docs/log/105 §106.2) — an existing deployment launches lcpp today
@@ -1216,6 +1257,8 @@ const DEFAULTS: Settings = {
   ttsSessionNotify: false,
   usageResetNotify: true,
   childIdleNotify: true,
+  notifyUnread: {},
+  notifyDevice: {},
   ttsEnglishKana: true,
   ttsUserDict: "",
   ttsCacheSec: 900, // 15 minutes
@@ -1253,6 +1296,8 @@ const DEFAULTS: Settings = {
   workItemBranchTemplate: "",
   workingSets: [],
   workingSetActive: "",
+  launchTemplates: {},
+  launchHistory: {},
 };
 
 // VOICEVOX Zundamon styles (speaker number → label), used by the speaker picker in the settings UI.
@@ -1478,10 +1523,16 @@ function load(): Settings {
       agentLaunchDefaults: normalizeAgentLaunchDefaults(rows, legacyClaudeModel),
       // Map the legacy model-list values (go-first / hide-zen / all) onto the three billing routes.
       opencodeCatalog: migrateOpencodeCatalog(saved.opencodeCatalog),
+      agentMemory: normalizeAgentMemory(saved.agentMemory),
     };
   } catch {
     return { ...DEFAULTS };
   }
+}
+
+/** AF memory is on only for a boolean true, the Agent's own reading (uiprefs.AgentMemory). */
+export function normalizeAgentMemory(value: unknown): boolean {
+  return value === true;
 }
 
 export function normalizeClaudeCustomModels(value: unknown): string[] {
@@ -1667,6 +1718,12 @@ function setSyncState(next: PrefsSyncState): void {
 
 export const prefsSyncState = (): PrefsSyncState => syncState;
 
+/** Called on every sync-state change; returns the unsubscribe. */
+export function subscribePrefsSync(fn: () => void): () => void {
+  syncSubs.add(fn);
+  return () => void syncSubs.delete(fn);
+}
+
 export function usePrefsSyncState(): PrefsSyncState {
   return useSyncExternalStore(
     (fn) => {
@@ -1828,6 +1885,7 @@ const DEVICE_LOCAL = new Set<keyof Settings>([
   "ttsEnabled", // read-aloud ON/OFF
   "ttsSessionNotify", // voice notification ON/OFF
   "usageResetNotify", // limit-reset notification ON/OFF (does this device make the sound)
+  "notifyDevice", // notification table's OS / read-aloud cells (does this device interrupt)
   "theme", // dark/light
   "mirrorTheme", // session mirror theme (per-device presentation)
   "sharedTheme", // shared session theme (per-device presentation)
@@ -1838,12 +1896,24 @@ const DEVICE_LOCAL = new Set<keyof Settings>([
   "chatColor",
   "sharedColor",
   "assistantColor",
+  "appearancePerTenant", // per-tenant appearance switch (the snapshots it governs are local too)
   "workingSetActive", // working set currently shown (docs/log/52 — a different one per device)
 ]);
 
 /** Exported as a policy seam so persistence tests can pin which preferences
  * must never cross the device boundary. */
 export const isDeviceLocalSetting = (key: keyof Settings): boolean => DEVICE_LOCAL.has(key);
+
+// Keys the Agent itself reads from ui-prefs with a default of its own when the key is missing, the
+// DEFAULTS here being that same default. A missing key is therefore not "never saved" but "the
+// Agent's default is in force", and hydrate keeps the two sides from disagreeing about it.
+const AGENT_DEFAULTED = new Set<keyof Settings>([
+  "sessionSearch", // ADR 0110: missing ⇒ on (uiprefs.SessionSearch)
+  // ADR 0108: missing ⇒ off (uiprefs.AgentMemory). Without this a browser that had it on for one
+  // account would show it on for another whose server copy lacks the key, and the next save of
+  // any setting would switch it on there.
+  "agentMemory",
+]);
 
 // Accumulated data — unlike toggles and colors these settings build up over time and cannot be
 // recovered once lost (learned reply suggestions, pins, SSM usage tallies, keybindings, working
@@ -1867,6 +1937,8 @@ const ACCUMULATED = new Set<keyof Settings>([
   "workingSets",
   "ttsVoicePool",
   "ttsUserDict",
+  "launchTemplates",
+  "launchHistory",
 ]);
 
 /** Exported as a policy seam so tests can pin which preferences must never be
@@ -1880,6 +1952,19 @@ export function isEmptyPref(v: unknown): boolean {
   if (Array.isArray(v)) return v.length === 0;
   if (typeof v === "object") return Object.keys(v as object).length === 0;
   return false;
+}
+
+// The Agent's cap on the ui-prefs blob (uiprefs.MaxBytes). A PUT over it is refused whole, so
+// every synced setting stops saving — not just the one that grew.
+export const SERVER_PREFS_MAX_BYTES = 64 * 1024;
+// Room left for the keys that grow without a check of their own (counters, learned suggestions).
+const SERVER_PREFS_HEADROOM = 2 * 1024;
+
+/** Whether the server copy would still fit the Agent's cap with `patch` applied. For writers of
+ *  user-sized content to refuse a change before it breaks the sync of everything else. */
+export function serverPrefsFit(patch: Partial<Settings>): boolean {
+  const body = JSON.stringify(serverPrefs({ ...state, ...patch }));
+  return new TextEncoder().encode(body).length <= SERVER_PREFS_MAX_BYTES - SERVER_PREFS_HEADROOM;
 }
 
 // serverPrefs is a shallow copy of only the settings that may be stored on the server, i.e.
@@ -1994,6 +2079,17 @@ export async function hydrateUIPrefs(): Promise<boolean> {
       // A key the server has never held while this device holds a non-default value — say,
       // hidden models set while every save failed. Pushed back only for the recorded owner.
       if (unsaved.has(key) || (sameOwner && isAccumulatedSetting(key) && !sameValue((merged as any)[k], DEFAULTS[key]))) restore = true;
+      // A key the Agent reads with its own default when absent: showing this device's value while
+      // the server holds none would show one thing and enforce another. The recorded owner's
+      // choice goes back to the server; a known other owner's device takes the Agent's answer.
+      // With the owner not known yet, neither — the next hydrate decides.
+      else if (AGENT_DEFAULTED.has(key) && !sameValue((merged as any)[k], DEFAULTS[key])) {
+        if (sameOwner) restore = true;
+        else if (owner) {
+          (merged as any)[k] = DEFAULTS[key];
+          changed = true;
+        }
+      }
       continue;
     }
     if (sameValue(srv[k], (merged as any)[k])) {
@@ -2030,6 +2126,18 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   const normalized = normalizeAgentLaunchDefaults(rows, legacyClaudeModel);
   if (JSON.stringify(normalized) !== JSON.stringify(merged.agentLaunchDefaults)) {
     merged.agentLaunchDefaults = normalized;
+    changed = true;
+  }
+  // The notification table's device-local cells must not follow a synced key from here on.
+  const pinned = pinSyncedFallbacks(merged);
+  if (pinned) {
+    merged.notifyDevice = pinned;
+    changed = true;
+  }
+  // The Agent enables AF memory only on a boolean true (uiprefs.AgentMemory); anything else shown
+  // as on would show one thing and enforce another.
+  if (merged.agentMemory !== normalizeAgentMemory(merged.agentMemory)) {
+    merged.agentMemory = normalizeAgentMemory(merged.agentMemory);
     changed = true;
   }
   const customClaude = normalizeClaudeCustomModels(merged.claudeCustomModels);
@@ -2101,6 +2209,66 @@ export function resyncAccumulatedForIdentitySwitch(): Promise<boolean> {
   return hydrateUIPrefs();
 }
 
+// Per-tenant appearance. The snapshots live in localStorage under "<tenant>|<user>" (the same
+// owner string as the prefs record) and never reach ui-prefs: putting them on the server would
+// make them follow the member onto every device, and unreadable while the workspace is stopped.
+// An empty owner (user not resolved yet) means "unknown": every step below does nothing then,
+// rather than filing a look under the wrong tenant.
+const APPEARANCE_KEYS = [
+  "theme", "mirrorTheme", "sharedTheme", "assistantTheme",
+  "topbarColor", "leftpaneColor", "viewerColor", "chatColor", "sharedColor", "assistantColor",
+] as const satisfies readonly (keyof Settings)[];
+const APPEARANCE_SNAPSHOT_PREFIX = "af-appearance-tenant:";
+
+function readAppearanceSnapshot(owner: string): Partial<Settings> | null {
+  try {
+    const raw = JSON.parse(localStorage.getItem(APPEARANCE_SNAPSHOT_PREFIX + owner) || "null");
+    if (!raw || typeof raw !== "object") return null;
+    const out: Record<string, string> = {};
+    for (const k of APPEARANCE_KEYS) if (typeof raw[k] === "string") out[k] = raw[k];
+    return Object.keys(out).length ? (out as Partial<Settings>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeAppearanceSnapshot(owner: string): void {
+  const snap: Record<string, unknown> = {};
+  for (const k of APPEARANCE_KEYS) snap[k] = state[k];
+  try {
+    localStorage.setItem(APPEARANCE_SNAPSHOT_PREFIX + owner, JSON.stringify(snap));
+  } catch {}
+}
+
+/** Show the current tenant's saved appearance (boot, tenant switch). A tenant with no snapshot
+ * keeps what is shown and files it as its first snapshot. Does nothing with the switch off. */
+export function applyTenantAppearance(): void {
+  if (!syncAppearanceOwner(ownerSource())) return;
+  try {
+    localStorage.setItem(KEY, JSON.stringify(state));
+  } catch {}
+  applyTheme(state);
+  subs.forEach((fn) => fn());
+}
+
+// Whose snapshot the appearance in `state` currently is. The tenant API's owner changes the
+// moment setTenant runs, but App re-applies in a later effect; a write in between (a theme
+// hotkey) must not file the previous tenant's look under the new owner, so setSettings swaps
+// the owner first through this function. Returns whether `state` changed.
+let appearanceOwner = "";
+
+function syncAppearanceOwner(owner: string): boolean {
+  if (!state.appearancePerTenant || !owner || owner === appearanceOwner) return false;
+  appearanceOwner = owner;
+  const snap = readAppearanceSnapshot(owner);
+  if (!snap) {
+    writeAppearanceSnapshot(owner);
+    return false;
+  }
+  state = { ...state, ...snap };
+  return true;
+}
+
 // The generic signature ties key and value together in the type system, preventing mismatches
 // such as passing a boolean for "theme".
 export function setSetting<K extends keyof Settings>(key: K, value: Settings[K]): void {
@@ -2111,7 +2279,23 @@ export function setSetting<K extends keyof Settings>(key: K, value: Settings[K])
 // save. Used where many keys change together, such as a reset: calling setSetting 17 times would
 // run that many re-renders and debounced saves.
 export function setSettings(patch: Partial<Settings>): void {
+  // Turning the switch on brings back this tenant's earlier snapshot, if any, over the shared
+  // look; with none, the look shown becomes the snapshot (written below).
+  const owner = ownerSource();
+  if (patch.appearancePerTenant && !state.appearancePerTenant && owner) {
+    patch = { ...readAppearanceSnapshot(owner), ...patch };
+    appearanceOwner = owner;
+  } else if (patch.appearancePerTenant === false) {
+    appearanceOwner = "";
+  } else {
+    syncAppearanceOwner(owner);
+  }
   state = { ...state, ...patch };
+  if (state.appearancePerTenant && owner && (
+    "appearancePerTenant" in patch || APPEARANCE_KEYS.some((k) => k in patch)
+  )) {
+    writeAppearanceSnapshot(owner);
+  }
   for (const k of Object.keys(patch) as (keyof Settings)[]) {
     if (!isDeviceLocalSetting(k)) unsaved.set(k, ++changeSeq);
   }

@@ -1,7 +1,7 @@
 ---
 audience: "someone building this repository for the first time"
 source_of_truth: "the code and the CI definitions"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # 10. Development — building, reflecting a change, testing, conventions
@@ -19,7 +19,7 @@ English | [日本語](10-development.ja.md)
 | `e2e/` | Fleet end-to-end tests (a separate Go module, standard library only) — the CP against real containers (§10.4) |
 | `console-e2e/` | Console UI end-to-end tests (Playwright) — browser through CP to a real container (§10.4) |
 | `guide/` · `docs/` | The user guide that ships inside every container, and the developer documentation. The norms for both are [CONVENTIONS](../CONVENTIONS.md) |
-| `scripts/` | Repository checks: `docs-check.py` (links, front matter, the `guide/ref` tables) and `vet-build-tags.sh` |
+| `scripts/` | Repository checks: `docs-check.py` (links, front matter, the `guide/ref` tables), `vet-build-tags.sh` and `model-id-lint/` (model ids outside the fallback registry) |
 
 The file-level map is [90-code-map](90-code-map.md).
 
@@ -251,6 +251,14 @@ af-db down    # stop it before the next heavy build
   disposable Postgres you run yourself. On a shared host, a unix socket avoids port
   collisions. With trust auth, expect 3 PASS and 1 SKIP.
 
+  The tests never touch `public`: every test that migrates or writes rows takes a fresh,
+  uniquely named schema from `pgtest.Schema` (`control-plane/internal/pgtest`), whose
+  connections have `search_path` set to it alone, and drops it when the test ends. So
+  overlapping runs — two sessions on one database, or `go test ./...` running packages in
+  parallel — cannot drop each other's tables, and a schema left behind fails the test. A new
+  Postgres test goes through that helper rather than reading `AF_TEST_DATABASE_URL` itself,
+  and the URL must not set `search_path`.
+
 - **Console**, from the repository root:
 
 ```bash
@@ -274,10 +282,18 @@ npm --prefix console run build
   | Job | What it checks |
   |---|---|
   | `control-plane`, `workspace-agent` | `gofmt -l`, `go vet`, `go build` (also cross-compiled for arm64), `go test`, and `go vet` over the build-tagged files. The agent job also syntax-checks `entrypoint.sh` |
-  | `console` | typecheck, lint, the i18n lint, vitest, two real-browser checks (`pdf:check`, `doc:check`) and the production build |
+  | `console` | typecheck, lint, the i18n lint, the model-id lint, vitest, two real-browser checks (`pdf:check`, `doc:check`) and the production build |
   | `deploy-scripts` | the deployment scripts and the release watcher's decisions against stubbed `aws` / `npm` / `curl` / `gh`, and that the CloudFormation templates are ASCII-only |
   | `secret-scan` | credential leaks over the whole history (below) |
   | `release-scan` | the forbidden-token gate over the tracked tree — the same scanner the pre-commit hook runs over staged content |
+  | `model-id-lint` | no model-id-shaped string literal in either Go module outside `workspace/agent/internal/modelfallback`; `// model-id-lint:allow <reason>` marks one that chooses no model |
+
+  On a pull request, the `changes` job skips `control-plane`, `workspace-agent`,
+  `deploy-scripts` and `console` when every changed path is inert — `docs/` and `guide/`
+  (except the files a test reads: `guide/ref/agents{,.ja}.md` and
+  `docs/decisions/0029-usage-accounting{,.ja}.md`), the top-level `*.md`
+  files and the docs checker. The list and the reason are in `scripts/ci-changes.sh`.
+  Pushes to `main` / `develop` always run every job.
 
   `docs.yml` runs `scripts/docs-check.py` on the same triggers. The end-to-end
   workflow is separate because building images is heavy. Upstream CLI breakage is a
@@ -349,6 +365,16 @@ does not go red. It keeps a single tracking issue up to date and closes it when 
 drift clears. The rows it checks are `TARGETS` in `deploy/local/cli-drift-check.sh`:
 every agent CLI whose version is pinned, plus `rtk`. lcpp is not among them: it runs
 in-process against a self-hosted engine and has no upstream CLI.
+
+The same workflow's `apt-pins` job checks the Debian package pins with
+`deploy/local/apt-pin-check.sh`. It reads them out of every `apt-get install` in
+`workspace/Dockerfile` (today only `ARG CHROMIUM_VERSION`): every package of a pin must still be listed for
+amd64 **and** arm64 in trixie, trixie-updates or trixie-security. trixie-security keeps
+only the current build, so a pin disappears as soon as Debian ships the next update — for
+one architecture first, sometimes — and the next uncached image build fails. That is a
+broken build, not steady-state drift, so this job goes red; its output names the newest
+version served on both architectures, which is what the ARG is bumped to by hand.
+`deploy/local/apt-pin-check-test.sh` pins its verdicts.
 
 A second workflow, `cli-release-watch.yml`, compares the published versions daily and
 dispatches a contract **only for the CLIs whose version actually changed** (the kinds

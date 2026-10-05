@@ -31,18 +31,30 @@ import (
 )
 
 // memoryTestRoutes is the same (method, path) -> handler mapping as the memory section of
-// routes.go (10 routes).
+// routes.go (21 routes).
 var memoryTestRoutes = map[string]http.HandlerFunc{
-	"GET /agents/memory/roots":         HandleMemoryRoots,
-	"GET /agents/memory/snapshots":     HandleMemorySnapshots,
-	"POST /agents/memory/snapshots":    HandleMemorySnapshotCreate,
-	"GET /agents/memory/diff":          HandleMemoryDiff,
-	"GET /agents/memory/tree":          HandleMemoryTree,
-	"POST /agents/memory/restore":      HandleMemoryRestore,
-	"PUT /agents/memory/settings":      HandleMemorySettings,
-	"GET /agents/memory/export":        HandleMemoryExport,
-	"POST /agents/memory/import":       HandleMemoryImport,
-	"POST /agents/memory/import/apply": HandleMemoryImportApply,
+	"GET /agents/memory/roots":           HandleMemoryRoots,
+	"GET /agents/memory/snapshots":       HandleMemorySnapshots,
+	"POST /agents/memory/snapshots":      HandleMemorySnapshotCreate,
+	"GET /agents/memory/diff":            HandleMemoryDiff,
+	"GET /agents/memory/tree":            HandleMemoryTree,
+	"POST /agents/memory/restore":        HandleMemoryRestore,
+	"PUT /agents/memory/settings":        HandleMemorySettings,
+	"GET /agents/memory/export":          HandleMemoryExport,
+	"POST /agents/memory/import":         HandleMemoryImport,
+	"POST /agents/memory/import/apply":   HandleMemoryImportApply,
+	"GET /agents/memory/entries":         HandleAgentMemoryIndex,
+	"GET /agents/memory/entries/search":  HandleAgentMemorySearch,
+	"GET /agents/memory/entries/read":    HandleAgentMemoryRead,
+	"POST /agents/memory/entries":        HandleAgentMemorySave,
+	"POST /agents/memory/entries/forget": HandleAgentMemoryForget,
+	"GET /agents/memory/entries/changes": HandleAgentMemoryChanges,
+	"GET /agents/memory/entries/diff":    HandleAgentMemoryChangeDiff,
+	"POST /agents/memory/entries/revert": HandleAgentMemoryRevert,
+
+	"GET /agents/memory/claude-import":         HandleAgentMemoryClaudeSources,
+	"GET /agents/memory/claude-import/preview": HandleAgentMemoryClaudePreview,
+	"POST /agents/memory/claude-import":        HandleAgentMemoryClaudeApply,
 }
 
 func buildMux() *http.ServeMux {

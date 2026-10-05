@@ -50,6 +50,11 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     else `AF_SESSION_STOPPED_TTL`, else 7 days (`session.StoppedTTL`).
   - Locked sessions are exempt.
   - The sweep runs inside the list handler; there is no timer.
+- **A session can carry a spend budget** (`Meta.SpendCapUSD`, #1054). The report reconciler's tick
+  prices each live capped session's transcript (`usage_spend.go`, cached 10 s), arms
+  stop-after-turn when the estimate reaches the cap, and halts at once at 2× (`SpendCapHardFactor`).
+  The default for a launch that names none is ui-prefs `sessionSpendCapUsd`
+  ([ADR 0029 addendum](../decisions/0029-usage-accounting.md)).
 - **The list is metadata-driven, merged with per-driver liveness**: the runtime handle
   for managed, tmux for tui (`HandleListSessions`).
   - Orphaned `claude_*` tmux sessions with no metadata are listed too. Their kind is
@@ -267,7 +272,9 @@ flows are [08](08-integrations.md).
     host, and the host's on-disk log is an internal runtime format with no stability
     promise. A failure to write the mirror is never fatal to the session. A turn that ran
     while the agent was not watching (it died mid-turn) is still on the host but missing
-    from the mirror; backfilling it from the host's `session/read` is #1197.
+    from the mirror until the next resume, which appends what the mirror lacks from the
+    host's folded history — the one `session/resume` carries, or `session/read` when the
+    resume served none (`muse/backfill.go`). The backfill is never fatal either.
 - **Live state** is normalised into the status store (§4.4) from whatever the kind
   emits.
   - claude: hooks plus a tmux probe.
@@ -399,7 +406,31 @@ What each kind can emit, read from its binary (2026-09-27; no kind was captured 
 | copilot, cursor, kiro | none found | — |
 | shell | whatever the user runs | The main beneficiary. |
 
-Follow-ups: #1069 (claude's `PushNotification` tool, which only notifies over OSC).
+**claude's `PushNotification` tool comes through a hook instead.** The tool (2.1.286, behind
+the `tengu_kairos_push_notifications` flag, off by default) raises its local notification only
+through `preferredNotifChannel` — an OSC sequence, dropped above — and claude's Notification hook
+does not fire for it. `EnsureStatusHooks` therefore adds a `PostToolUse` entry on matcher
+`PushNotification` running `workspace-agent session-push-notification`, which puts
+`tool_input.message` in the outbox
+as a `terminal-notification` with `proto: "claude-push"` (`sessionx.recordPushNotification`).
+The same approach as cmux.
+
+- **Skipped** when `tool_response.disabledReason` is `user_present` or `config_off`: claude
+  returns before notifying anything. `no_transport` means no *mobile* push only — the local
+  notification went out — so it is forwarded.
+- **Delivered once.** The OSC route drops claude, so the two routes never both deliver; a hook
+  that fires twice for one call, even in parallel processes, is absorbed by `notice.PutOnce` keyed
+  on `tool_use_id` (check, Put and marker run under a file lock, and the marker is written
+  after the Put, so a process killed midway leaves a retry, not a lost event).
+- **A subcommand of its own, not a `session-status` state.** `settings.json` can point at an
+  older agent (`paths.ConfigExePath` prefers the installed binary), and an older `session-status`
+  persists any unknown word as the session's state — measured: `state:"push"`. An older
+  dispatcher rejects the unknown subcommand with exit 2 and writes nothing.
+- **Inert on an unexpected payload**: no message, no event. The payload shape (`tool_input`
+  `{message, status}`, `tool_response` `{message, pushSent, localSent, disabledReason, sentAt}`)
+  was read from the binary, not captured from a live call.
+- It never changes the session status; the catch-all `PostToolUse` heartbeat fires for the same
+  tool as for any other.
 
 ## 4.5 Chat and assistants (a headless CLI)
 
@@ -436,9 +467,15 @@ Follow-ups: #1069 (claude's `PushNotification` tool, which only notifies over OS
   - It always advertises the self-report tools: `af_report`, `af_stop_after_turn` and
     `propose_session_handoff`.
   - It also always advertises a small observation set: session status and usage, and
-    the memo tools. The seven Chromium attach tools come with `--chromium-attach`.
-  - The user's preferences add `--peer-messaging`, `--image-gen` and `--fleet-spawn`
-    (`builtinRunArgsFor`).
+    the memo tools, and `branch_name`, which asks the branch-name resolver
+    (`POST /repos/{name}/branch-name`) about the caller's own working copy unless told
+    another. The seven Chromium attach tools come with `--chromium-attach`.
+  - The user's preferences add `--peer-messaging`, `--image-gen`, `--fleet-spawn`,
+    `--session-search` and `--agent-memory` (`builtinRunArgsFor`). `--session-search` defaults
+    on and advertises `search_sessions` (ADR 0110). `--agent-memory` defaults off and advertises
+    the five `memory_*` tools (ADR 0108): they call the Agent's loopback-only
+    `/agents/memory/entries` routes with the caller's session name, which decides the author
+    recorded and the project scope, and those routes refuse while the switch is off.
   - Anything not advertised is refused on call too (`mcpAdvertised`).
 - **Unattended approval for codex**: a headless chat has no approval UI. Besides
   `-a never`, the attached MCP servers are set to

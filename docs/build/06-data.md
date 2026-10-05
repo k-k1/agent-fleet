@@ -57,6 +57,7 @@ English | [日本語](06-data.ja.md)
 | `identity_provider` | (provider, subject) → identity. This is the key that **keeps the home directory still when the IdP changes someone's email**, so `user_key` need not derive from the current address. A single row means "this identity has signed in at least once", which one of the tenant-IdP rules keys off. `realm` (the issuer, or `https://github.com`), together with `realm_claim` / `realm_subject` (a stable claim such as Entra's `oid`, by name and value), lets the same IdP account reached through two buttons resolve to one identity. The claim value always comes from the signed token, never from a tenant's row |
 | `tenant_idp` | A tenant-defined sign-in method. `kind` is `oidc` (`issuer`, `trust`, `allowed_tids`) or `github` (`allowed_orgs`). It also has a sealed `secret_enc`, **mandatory** `allowed_domains`, `link_claim`, and `status` (`pending` \| `active` \| `suspended`). **A tenant administrator writes the row; only a deployment administrator may make it active.** Registering an IdP is the power to declare *who someone is*, and an identity is one per deployment, keyed by email. Changing what was approved on an active row sends it back to `pending`: the issuer, client id, trust, kind or `link_claim`, or widening the domains, tenant ids or orgs (`repend`). The CP sees the provider as `t:<tenant-slug>:<name>`, so it cannot collide with an environment-configured one |
 | `tenant_git_oauth` | A tenant's own OAuth app for a git provider (`github` \| `bitbucket`), one per (tenant, provider), sealed in the same envelope. **Unlike `tenant_idp`, it has no status column.** A clone-time OAuth app does not declare who anyone is, the callback is fixed by the CP, and the token only ever reaches the owner's workspace. So a tenant administrator's save takes effect immediately ([decisions/0052](../decisions/0052-tenant-git-oauth.md)). A GitHub row's secret is empty on purpose, because the device flow needs none. **The environment is not read for these at all**: `GITHUB_OAUTH_CLIENT_ID` now means the sign-in app only |
+| `tenant_branch_rules` | A tenant's branch naming rules, one row per tenant holding the whole list as JSON in the Agent's rule shape (`{match, name, base, types}`), checked on save with the Agent's own checks. The Agent polls it through `/internal/branch-rules` as the tenant layer ([decisions/0103](../decisions/0103-branch-naming-rules.md) decision 10). No row is no rules |
 | `user_limit` | Per-membership limits, set by an administrator within the tenant's allowance: `max_sessions`, `disk_gb`, `mem_limit` (bytes), `cpu_limit` (Fargate CPU units), and `slot_class` (a deployment-declared class id, which only `ecs-ec2` acts on). 0 or empty means the tenant or deployment default |
 
 **Workspaces and sessions.** A workspace is **per membership**, so the same person is
@@ -172,7 +173,9 @@ elsewhere:
 
 - **The workspace's own state** is on its home: the session metadata (the trash
   included), transcripts and the usage records ([04 §4.2](04-agent.md),
-  [04 §4.7](04-agent.md)). **User secrets** are in the encrypted store on the same home
+  [04 §4.7](04-agent.md)), and the past-session search index, which is a rebuildable copy
+  of the transcripts' conversation text
+  ([decisions/0110](../decisions/0110-past-session-search.md)). **User secrets** are in the encrypted store on the same home
   ([07 §7.6](07-security.md)).
 - **Where the home physically lives** depends on the deployment target
   ([09](09-deploy.md)).

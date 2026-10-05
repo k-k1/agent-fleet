@@ -13,6 +13,7 @@ import {
   parentPath,
   hasTimes,
   sortImages,
+  tileEdge,
   visibleImages,
   type FsEntry,
 } from "./gallery.ts";
@@ -154,6 +155,29 @@ describe("ペイン種別 gallery の定型", () => {
     });
   });
 
+  it("tile は S/M/L の 3 値だけ残し、それ以外は欄ごと落とす", () => {
+    expect(validateStoredContent({ kind: "gallery", galleryPath: "d", tile: "l" })).toEqual({
+      kind: "gallery",
+      galleryPath: "d",
+      tile: "l",
+    });
+    expect(validateStoredContent({ kind: "gallery", galleryPath: "d", tile: "xl" })).toEqual({
+      kind: "gallery",
+      galleryPath: "d",
+    });
+  });
+
+  it("flat は true だけ残し、それ以外は欄ごと落とす", () => {
+    expect(validateStoredContent({ kind: "gallery", galleryPath: "d", flat: true })).toEqual({
+      kind: "gallery",
+      galleryPath: "d",
+      flat: true,
+    });
+    for (const flat of ["true", 1, false, null]) {
+      expect(validateStoredContent({ kind: "gallery", galleryPath: "d", flat })).toEqual({ kind: "gallery", galleryPath: "d" });
+    }
+  });
+
   it("空白を含むふつうのフォルダ名は通す（弾きすぎない）", () => {
     expect(validateStoredContent({ kind: "gallery", galleryPath: "repos/my images" })).toEqual({
       kind: "gallery",
@@ -281,5 +305,22 @@ describe("フォルダと、その行き来", () => {
     expect(validateStoredContent({ kind: "gallery", galleryPath: "" })).toEqual({ kind: "gallery", galleryPath: "" });
     // 鍵ごと無いのは今までどおり拒む。
     expect(validateStoredContent({ kind: "gallery" })).toEqual({ kind: "terminal", chat: false });
+  });
+});
+
+describe("タイルの大きさとサムネイルの辺", () => {
+  it("辺は 256 と 512 の 2 つだけ（どちらも生成時に温めてある）", () => {
+    for (const tile of ["s", "m", "l", undefined] as const) {
+      for (const dpr of [1, 1.25, 2, 3]) expect([256, 512]).toContain(tileEdge(tile, dpr));
+    }
+  });
+
+  it("S は常に 256、L は常に 512、M（既定）は密度で 256 / 512", () => {
+    expect(tileEdge("s", 3)).toBe(256);
+    expect(tileEdge("l", 1)).toBe(512);
+    expect(tileEdge("m", 1)).toBe(256);
+    expect(tileEdge(undefined, 1)).toBe(256);
+    expect(tileEdge("m", 2)).toBe(512);
+    expect(tileEdge(undefined, 0)).toBe(256);
   });
 });

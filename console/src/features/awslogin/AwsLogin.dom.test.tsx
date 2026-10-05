@@ -12,6 +12,7 @@ let listed: Json[] = [];
 let attemptReplies: Json[] = [];
 
 vi.mock("../../core/api/client.ts", () => ({
+  getTenant: () => "",
   api: vi.fn(async (path: string) => {
     calls.push({ path, method: "GET" });
     if (path === "api/aws-login") return { requests: listed };
@@ -139,6 +140,17 @@ describe("AWS login toast and modal", () => {
     await tick(5000);
     expect(calls.some((c) => c.path.startsWith(`api/aws-login/${other.id}/attempts/`))).toBe(false);
     expect(() => button("Log in", document.querySelector(".ui-modal-foot")!)).not.toThrow();
+  });
+
+  it("refreshes the profiles' sign-in states when the request's login is done", async () => {
+    await mount();
+    await act(async () => useAwsLoginStore.getState().open(prod.id as string));
+    const asks = () => calls.filter((c) => c.path === "api/aws-login/profiles").length;
+    const before = asks();
+    attemptReplies = [{ phase: "done" }];
+    await act(async () => button("Log in", document.querySelector(".ui-modal-foot")!).click());
+    await tick(400);
+    expect(asks()).toBe(before + 1);
   });
 
   it("says why an unexpected sign-in URL was refused", async () => {

@@ -275,6 +275,14 @@
   font-size: 11px;
 }
 
+/* Spend budget (#1054): the session was stopped by its budget, and stays stopped until
+   someone raises it. Warning colour: it is waiting on a person's decision. */
+.sess-budget {
+  flex: none;
+  color: var(--warn);
+  font-size: 11px;
+}
+
 /* Session sharing: badge marking that this session is currently shared with someone.
    Treated like .sess-lock (muted, no warning colour). */
 .sess-shared {
@@ -323,6 +331,90 @@
   flex: none;
   display: flex;
   align-items: center;
+}
+/* A row with a link line (#1062) wraps it onto a second line. The ⋯ button stays centred on
+   the first line, where the state chip it replaces on hover sits; centred on the whole row it
+   would land between the two lines. 28px = the button row's height (measured in headless
+   Chromium: 4px padding each side around the 13px title's line box). */
+.sess-row.sess-has-links {
+  flex-wrap: wrap;
+}
+.sess-row.sess-has-links .sess-menu-wrap {
+  bottom: auto;
+  height: 28px;
+}
+/* Indented to the title's left edge (8px button padding + 17px kind icon + 6px gap), so the
+   line reads as belonging to the title above it rather than as a row of its own. */
+.sess-links {
+  flex: 1 0 100%;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  padding: 0 6px 3px 31px;
+  margin-top: -2px;
+  font-size: 11px;
+  line-height: 16px;
+}
+.sess-pr,
+.sess-port {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 3px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sess-pr:hover,
+.sess-port:hover {
+  background: var(--btn);
+  color: var(--fg);
+}
+.sess-pr > .codicon,
+.sess-ports > .codicon {
+  font-size: 12px;
+}
+/* One globe for the group rather than one per port: at the rail's narrowest a per-port icon
+   pushed the third port onto a line of its own. */
+.sess-ports {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 1px;
+  color: var(--muted);
+}
+.sess-ports > .codicon {
+  margin-right: 1px;
+}
+/* GitHub's own reading of a PR's state: green open, grey draft, purple merged, red closed. The
+   colour is on the icon only, so the number stays at the muted text contrast in both themes. */
+.sess-pr.pr-open > .codicon:first-child {
+  color: var(--ok);
+}
+.sess-pr.pr-merged > .codicon:first-child {
+  color: var(--pr-merged);
+}
+.sess-pr.pr-closed > .codicon:first-child {
+  color: var(--err);
+}
+.sess-pr-ci {
+  margin-left: 2px;
+}
+.sess-pr-ci.ci-success {
+  color: var(--ok);
+}
+.sess-pr-ci.ci-failure {
+  color: var(--err);
+}
+.sess-pr-ci.ci-pending {
+  color: var(--warn);
 }
 .sess-menu-btn {
   background: none;
@@ -409,6 +501,29 @@
   font-family: var(--mono);
   overflow-wrap: anywhere;
 }
+/* af-gcloud-exec's login modal (ADR 0107): the checked sign-in URL, shown in full so the member
+   can see the host before opening it, and the one code field. */
+.gcp-login-authorize {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gcp-login-url {
+  margin: 0;
+  font-size: 12px;
+  max-height: 4.5em;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.gcp-login-code {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.gcp-login-code .cinput {
+  flex: 1;
+  font-family: var(--mono);
+}
 .ssm-code-row {
   display: flex;
   align-items: center;
@@ -460,6 +575,12 @@
 /* Populated archive list: pin the panel to a stable height and let only the list
    scroll, so filtering doesn't resize/recenter the modal on each keystroke. The
    search toolbar stays put; the panel still clamps to the viewport on short screens. */
+/* Wider than the stock modal in both states: group headings (repo + branch) and row titles
+   are long, and the stock 520px cut them off with an ellipsis. */
+.arch-modal.ui-modal {
+  width: min(880px, 96vw);
+  max-width: min(960px, 96vw);
+}
 .arch-modal-tall.ui-modal {
   height: min(88dvh, 820px);
 }
@@ -742,3 +863,12 @@
 }
 /* A cache row's size, after its name. */
 .clean-size { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 8px; font-variant-numeric: tabular-nums; }
+
+/* Spend budget dialog (#1054): two short lines above the field, not paragraphs. */
+.spend-budget-lead,
+.spend-budget-spent {
+  margin: 0 0 6px;
+}
+.spend-budget-spent {
+  color: var(--muted);
+}

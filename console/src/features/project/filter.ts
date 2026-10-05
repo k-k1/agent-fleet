@@ -5,9 +5,11 @@
 // (SVN) URL; for a session its display name, slug, label, working-copy folder,
 // branch (launch-time and current) and working-dir basename — so a slug, a
 // branch or a directory name finds both the repo node and the session rows in
-// it, even when every session carries a hand-written title.
+// it, even when every session carries a hand-written title. A query shaped like a ticket
+// reference (`#1662`, `PROJ-123`) also finds the session tied to it (sessions/refSearch).
 import { create } from "zustand";
 import { displayName } from "../../lib/sessionview.ts";
+import { matchSessionRef, refQuery, type RefIndex } from "../sessions/refSearch.ts";
 import type { Session } from "../../types/session.ts";
 import type { Repo } from "../repos/store.ts";
 
@@ -27,8 +29,9 @@ export const normQuery = (q: string) => q.trim().toLowerCase();
 /** Last path segment — full paths would make every row match "repos" or "home". */
 const pathTail = (p: string | null | undefined) => (p || "").split("/").filter(Boolean).pop() || "";
 
-export function sessionMatches(s: Session, nq: string): boolean {
+export function sessionMatches(s: Session, nq: string, refs: RefIndex = new Map()): boolean {
   if (!nq) return true;
+  if (matchSessionRef(s, refs, refQuery(nq))) return true;
   const hay = [
     displayName(s),
     s.name,

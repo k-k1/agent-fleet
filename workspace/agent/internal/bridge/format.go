@@ -23,6 +23,7 @@ func (m Message) Text(lang string) string {
 			b.WriteString("\n「" + m.DisplayName + "」（" + kindLabel(m.SessionKind) + "）")
 		}
 	}
+	// The public base, never AF_CP_INTERNAL_URL: a person's browser opens this link.
 	if base := os.Getenv("AF_CP_BASE_URL"); base != "" && m.SessionName != "" {
 		// <…> suppresses Discord's link-preview embed (keeps the message compact).
 		b.WriteString("\n<" + strings.TrimRight(base, "/") + "/?session=" + m.SessionName + ">")
@@ -71,6 +72,11 @@ func (m Message) headline(en bool) string {
 			return "Session exited abnormally (" + exitLabelEN(m.Detail) + ")"
 		case "bridge-test":
 			return "Connection test — if this arrived, you're all set"
+		case KindScheduleResult:
+			if m.Detail != "" {
+				return "Scheduled run did not finish cleanly (" + m.Detail + ")"
+			}
+			return "Scheduled run result"
 		}
 		return "State changed (" + m.Kind + ")"
 	}
@@ -89,6 +95,11 @@ func (m Message) headline(en bool) string {
 		return "セッションが異常終了しました（" + exitLabel(m.Detail) + "）"
 	case "bridge-test":
 		return "接続テスト — この通知が届けば設定完了です"
+	case KindScheduleResult:
+		if m.Detail != "" {
+			return "定時実行が正常に終わりませんでした（" + m.Detail + "）"
+		}
+		return "定時実行の結果です"
 	}
 	return "状態が変化しました（" + m.Kind + "）"
 }

@@ -148,7 +148,17 @@ The Agent reads the verification URL and the code from the command's output, wit
 - **The URL is checked before it is shown.** Its host must be exactly equal — as a whole host name, not a
   substring or a suffix — to one of a fixed list built from the profile's Settings: the
   device-authorization host of its `sso_region` in that region's partition (`amazonaws.com`, or
-  `amazonaws.com.cn` for China), or the host of its start URL. Anything else ends the attempt as failed,
+  `amazonaws.com.cn` for China), or the host of its start URL. **Amended 2026-10-01 (#1408):** an
+  issuer-form start URL (`https://identitycenter.amazonaws.com/ssoins-<id>`) gets its instance's access
+  portal back instead (measured: `d-<id>.awsapps.com/start/#/device` for both start URL forms of one
+  instance), so for that form only the instance's documented portal endpoints are added. The classic
+  `d-<id>` or alias label cannot be derived from `ssoins-<id>`, so exactly one DNS label in front of
+  `.awsapps.com` is admitted (`evil-awsapps.com` and `a.b.awsapps.com` stay out); the derivable
+  alternative IPv4 portal `ssoins-<id>.<sso_region>.portal.amazonaws.com` and dual-stack portal
+  `ssoins-<id>.portal.<sso_region>.app.aws` are compared whole. China has no per-instance `awsapps.cn`
+  host: there the exact hosts are `start.home.awsapps.cn`, `start.<sso_region>.home.awsapps.cn`,
+  `ssoins-<id>.<sso_region>.portal.amazonaws.com.cn` and
+  `ssoins-<id>.portal.<sso_region>.app.amazonwebservices.com.cn`. Anything else ends the attempt as failed,
   and the modal says why ("unexpected sign-in URL"). `parseSSMLogin`'s patterns accept any https host, and
   `device\.sso\.` matches inside `device.sso.evil.example` too, so the check is a separate step and not the
   pattern.
@@ -353,3 +363,44 @@ cancel, the member's only way was the terminal command.
    holds only the access token's expiry, about an hour, and the CLI renews that token until the portal session
    ends, which the cache does not record. "40 minutes left" would be wrong by hours. Knowing when the session
    really ends is what #1029 has to measure first. The route returns names and states only, never a token.
+
+## Note — warning before a login ends (2026-10-02)
+
+Issue #1029. Nothing above is changed; this records what the warning can and cannot cover.
+
+**The normal case is not covered.** A Settings login holds a refresh token, client id, client secret and an
+unexpired client registration, so the CLI renews it on use until the portal session ends, and that end is still
+not in the cache (revision 2026-09-29 §6). Such a login gets **no** advance warning; af-aws-exec's request
+(decision 1) covers it when the portal ends it. `registrationExpiresAt` is not that end either: it only decides
+whether a refresh is allowed, and a refresh just before it yields an access token that outlives it (botocore
+`tokens.py`). #1029's goal for renewable logins stays open until that end can be read or measured.
+
+1. **What is warned about.** A cache that cannot renew (any of the four missing, or the registration expired):
+   its access token's `expiresAt` is the real end. `GET /api/aws-login/profiles` returns it as `expiresAt` (RFC 3339
+   UTC; the older `…UTC` form is read as UTC) with `expiring` (no more than 15 minutes ahead, on the Agent's clock),
+   plus Settings' label, account and role so the Console can open the row's login modal. A renewable login gets
+   neither field. Never a token. A missing or unreadable cache is no expiry, not an error; an ended login is not
+   "expiring".
+2. **Which profiles.** Only those in the managed block of `~/.aws/config` (`ExportedIn`): a profile shadowed by the
+   member's own `~/.aws`, held back by `[DEFAULT]` or incomplete may have an `af-<name>` cache that is not
+   Settings', and the row's login refuses it as `not_exported`. The cache is the `af-<name>` file (SHA-1 of the
+   sso-session name); Settings profiles never use the start-URL key.
+3. **Delivery.** After each five-minute Settings poll the Agent files an `aws-sso-expiring` notification once per
+   profile and end; its payload names the profile only. The Console asks the list on start and on that
+   notification, shows one toast per profile and end with **Log in** (the row's modal, nothing started until the
+   press), and polls once a minute only while such a toast is up. A notification opens the modal only for a
+   profile the list shows as expiring; once open, the modal is a snapshot that a passing end does not close. No CP
+   change.
+
+## Note — logout renews an expired access token first (2026-10-05)
+
+The per-profile logout used to send the cached access token to the portal's Logout call as is. That token lives
+about an hour and the CLI renews it only on use, so a logout long after the last use got `401` and left the portal
+session running (#1689). The Agent now renews an expired token (or one the portal answers 401) in memory through
+SSO OIDC `CreateToken` (`grant_type=refresh_token`), when the cache holds the refresh token, client id and secret
+and an unexpired registration, and revokes with the fresh token. Nothing is written back to the cache. If AWS
+answers the renewal with `invalid_grant` or `expired_token` (400/401) the portal session is already over: the
+answer carries `alreadyEnded: true` and the Console shows the normal "logged out" toast. Other refusals
+(`invalid_client`, `invalid_request`, `slow_down`, an unreadable body) say nothing about the session and keep the
+warning. Redirects from the AWS endpoints are not followed. The "AWS could not be told" warning stays for network failures, 5xx
+and a renewal that is impossible. The decision above is unchanged.

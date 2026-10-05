@@ -16,17 +16,25 @@ interface Entry {
 
 let served: Entry[] = [];
 let listings = 0;
+/** The bodies of every POST fs/imagesize, so a test can count the batches. */
+let sizeAsks: string[][] = [];
 
 // The api client talks to global fetch; stubbing there (rather than mocking the module)
 // keeps the stores this view reads — layout, workspace, sessions — the real ones.
-const fetchMock = vi.fn(async (url: string) => {
+const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
   if (String(url).includes("fs/tree")) listings++;
+  let body: unknown = { entries: served };
+  if (String(url).includes("fs/imagesize")) {
+    const paths = JSON.parse(String(opts?.body)).paths as string[];
+    sizeAsks.push(paths);
+    body = { sizes: Object.fromEntries(paths.map((p) => [p, { w: 832, h: 1216 }])) };
+  }
   return {
     ok: true,
     status: 200,
     statusText: "OK",
     headers: { get: () => null },
-    text: async () => JSON.stringify({ entries: served }),
+    text: async () => JSON.stringify(body),
   } as unknown as Response;
 });
 vi.stubGlobal("fetch", fetchMock);
@@ -41,6 +49,7 @@ const { allViews, freshLayout } = await import("../../layout/ops.ts");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { WORKING_TICK_MS } = await import("../files/refreshPolicy.ts");
 const { clearGalleryCache, readGallery } = await import("./galleryCache.ts");
+const { clearImageSizeCache } = await import("../viewer/imageSize.ts");
 
 let host: HTMLDivElement;
 let root: Root;
@@ -115,6 +124,8 @@ beforeEach(() => {
   setLocale("ja");
   setDPR(2);
   listings = 0;
+  sizeAsks = [];
+  clearImageSizeCache();
   fetchMock.mockClear();
   // The folder cache is module-level and deliberately outlives a mount (that is what makes
   // walking back into a folder free) — so it also outlives a TEST unless it is cleared, and the
@@ -522,6 +533,11 @@ describe("画像ギャラリーのペイン", () => {
       expect(thumbs()).toHaveLength(0);
       expect(host.querySelector(".gal-thumb")).not.toBeNull();
       expect(observers).toHaveLength(1);
+      // Its W×H waits behind the same gate: a card nobody is near asks for nothing.
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 60));
+      });
+      expect(sizeAsks).toHaveLength(0);
 
       await act(async () => {
         observers[0].cb(
@@ -532,6 +548,10 @@ describe("画像ギャラリーのペイン", () => {
       expect(thumbs()).toHaveLength(1);
       expect(thumbs()[0].src).toContain("thumb=512");
       expect(thumbs()[0].getAttribute("fetchpriority")).toBe("high");
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 60));
+      });
+      expect(sizeAsks).toEqual([["gen/a.png"]]);
     } finally {
       vi.stubGlobal("IntersectionObserver", realIO);
     }
@@ -750,5 +770,65 @@ describe("画像ギャラリーのペイン", () => {
       await new Promise((r) => setTimeout(r, 50));
     });
     expect(listings).toBe(1);
+  });
+
+  it("タイルの大きさは pane の content に残り、フォルダを移っても持ち越す", async () => {
+    served = [img("a.png", 100), { name: "sub", type: "dir" }];
+    const paneId = await render({ path: "gen" });
+    const content = () => allViews(useLayoutStore.getState().layout).find((v) => v.id === paneId)!.content;
+    const tileBtn = (label: string) => host.querySelector<HTMLButtonElement>(`.gal-tile button[aria-label="${label}"]`);
+    // Nothing chosen yet reads as M.
+    expect(tileBtn("中くらいのタイル")?.getAttribute("aria-pressed")).toBe("true");
+    expect(host.querySelector(".gal-grid.tile-m")).not.toBeNull();
+    await click(tileBtn("大きいタイル"));
+    expect(content()).toEqual({ kind: "gallery", galleryPath: "gen", tile: "l" });
+    await click(tileBtn("中くらいのタイル"));
+    expect(content()).toEqual({ kind: "gallery", galleryPath: "gen" }); // the default is written as absent
+
+    await act(async () => root.unmount());
+    await render({ path: "gen", paneId, tile: "s", sort: "name" });
+    expect(host.querySelector(".gal-grid.tile-s")).not.toBeNull();
+    await click(folderCards()[1].querySelector(".gal-enter"));
+    expect(content()).toEqual({ kind: "gallery", galleryPath: "gen/sub", sort: "name", tile: "s" });
+  });
+
+  it("サムネイルの辺はタイルの大きさで決まり、256 と 512 の 2 つしか使わない", async () => {
+    served = [img("a.png", 100), { name: "sub", type: "dir", images: 1, preview: [{ name: "c.png", mtime: 5 }] } as unknown as Entry];
+    const at = async (tile: "s" | "m" | "l", dpr: number) => {
+      setDPR(dpr);
+      clearGalleryCache();
+      fetchMock.mockClear();
+      await render({ path: "root", tile });
+      const edges = thumbs().map((t) => new URL(t.src, "http://x").searchParams.get("thumb"));
+      const warm = new URL(String(fetchMock.mock.calls.find((c) => String(c[0]).includes("fs/tree"))![0]), "http://x").searchParams.get("warm");
+      await act(async () => root.unmount());
+      // The cover and the card share the edge, and the listing warms that same edge.
+      expect(new Set([...edges, warm]).size).toBe(1);
+      return edges[0];
+    };
+    expect(await at("s", 2)).toBe("256");
+    expect(await at("m", 1)).toBe("256");
+    expect(await at("m", 2)).toBe("512");
+    expect(await at("l", 1)).toBe("512");
+  });
+
+  it("W×H は見えているカードぶんを 1 本で聞き、カードと拡大の (i) に出す", async () => {
+    served = [img("a.png", 100), img("b.png", 200), img("c.png", 300)];
+    await render();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 60));
+    });
+    expect(sizeAsks).toEqual([["gen/c.png", "gen/b.png", "gen/a.png"]]);
+    const dims = [...host.querySelectorAll(".gal-dims")].map((d) => d.textContent);
+    expect(dims).toEqual(["832×1216", "832×1216", "832×1216"]);
+
+    // The lightbox's info panel shows it too, from the memo: no second request.
+    await click(cards()[0].querySelector(".gal-zoom"));
+    await click(document.querySelector(".mirror-lightbox-props"));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 60));
+    });
+    expect(document.querySelector(".imgprops-dims")?.textContent).toContain("832×1216");
+    expect(sizeAsks.length).toBe(1);
   });
 });

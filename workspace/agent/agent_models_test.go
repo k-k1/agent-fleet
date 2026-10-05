@@ -4,9 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/modelfallback"
 )
 
 // TestAgentModelsClaudeFixedAliases pins the claude branch of /agents/{kind}/models:
@@ -119,5 +124,58 @@ func TestAgentModelsSaysNothingWhenTheMenuWorks(t *testing.T) {
 	}
 	if _, ok := got["reason"]; ok {
 		t.Errorf("reason = %v on a working menu; the picker would show it instead of the models", got["reason"])
+	}
+}
+
+// When codex's catalog cannot be read (a CLI that is not signed in yet, say), the chat
+// recommendation is the pinned modelfallback.ChatCodex, and the answer has to say so:
+// list_models is what an assistant reads before naming a model, and an id the account never
+// confirmed should not look like one it did. The fake codex fails like a signed-out one; the
+// package caches only successful reads, and nothing else in this package reads codex's
+// catalog, so the cache is still empty here.
+func TestAgentModelsSaysWhenTheRecommendationIsAFallback(t *testing.T) {
+	writeUIPrefs(t, `{"hiddenModels":{}}`)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	req := httptest.NewRequest(http.MethodGet, "/agents/codex/models", nil)
+	req.SetPathValue("kind", "codex")
+	rec := httptest.NewRecorder()
+	handleAgentModels(rec, req)
+	var got struct {
+		Models      []agents.ModelChoice `json:"models"`
+		Recommended chatx.RecommendedSet `json:"recommended"`
+		FromFB      []string             `json:"recommendedFromFallback"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Models) != 0 {
+		t.Fatalf("models = %+v, want none from a codex that cannot list", got.Models)
+	}
+	if got.Recommended.Chat != modelfallback.ChatCodex {
+		t.Fatalf("recommended.chat = %q, want the fallback %q", got.Recommended.Chat, modelfallback.ChatCodex)
+	}
+	// prose follows the same newest-luna rule as chat, so it lands on the same fallback.
+	if strings.Join(got.FromFB, ",") != "chat,prose" {
+		t.Fatalf("recommendedFromFallback = %v, want [chat prose]; body = %s", got.FromFB, rec.Body.String())
+	}
+}
+
+func TestRecommendedFromFallback(t *testing.T) {
+	rec := chatx.RecommendedSet{Chat: modelfallback.ChatCodex, Prose: "gpt-test-mini", Short: ""}
+	if got := recommendedFromFallback(rec, map[string]bool{}); len(got) != 1 || got[0] != "chat" {
+		t.Errorf("unlisted fallback: got %v, want [chat]", got)
+	}
+	// The same id is not a fallback once the catalog lists it: it was confirmed by the account.
+	if got := recommendedFromFallback(rec, map[string]bool{modelfallback.ChatCodex: true}); got != nil {
+		t.Errorf("listed fallback id: got %v, want nil", got)
+	}
+	// A catalog-derived id the catalog does not list (a hidden one, say) is not a fallback either.
+	if got := recommendedFromFallback(chatx.RecommendedSet{Short: "sonnet"}, nil); got != nil {
+		t.Errorf("non-registry id: got %v, want nil", got)
 	}
 }

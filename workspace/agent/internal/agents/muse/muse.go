@@ -87,6 +87,17 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	}
 	sid := slotSid(m)
 	li.State = status.EffectiveModal(sid, status.LiveState(sid))
+	// The status file only ever holds what MarkTurnStart/End wrote, so a prompt waiting on the
+	// member reads "working" until the turn ends: the chip says in progress and no question
+	// notification fires. The handle's Interaction is the truth, as for managed codex.
+	if st := PendingState(m.Name); st != "" {
+		li.State = st
+	}
+	// A tool call left running by an earlier turn is work behind the idle prompt, the case
+	// claude's badge covers with its process scans; here it is an in-memory read.
+	if li.State == "idle" {
+		li.BackgroundBusy, li.BackgroundBusyReason = agentImpl{}.BackgroundWork(m)
+	}
 	// The overview card's gauge and trend come from the live handle, never from Transcript():
 	// AF's item store carries no usage, so sessionx's transcript fold finds nothing for muse.
 	// Both are in-memory reads — no MSP round trip on the 4 s list poll.
@@ -94,6 +105,30 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	li.TokenSpends = ManagedSpends(m.Name)
 	return li
 }
+
+// PendingState is "question" or "permission" while the live handle holds a prompt of that
+// channel, "" otherwise. The list badge (WireLive) and the mirror/chat chip
+// (sessionx.DriveState) both ask it, so the two never disagree.
+func PendingState(name string) string {
+	h := handleFor(name)
+	if h == nil {
+		return ""
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	switch {
+	case h.inter == nil:
+		return ""
+	case h.inter.Kind == agents.InteractionApproval:
+		return "permission"
+	default:
+		return "question"
+	}
+}
+
+// BackgroundWork is the agents.BackgroundReporter read: a tool call an earlier turn left
+// running (background.go).
+func (agentImpl) BackgroundWork(m session.Meta) (bool, string) { return BackgroundWork(m.Name) }
 
 // ClearResume forgets the muse session id captured for this slot, so a recreate starts a
 // fresh conversation instead of trying to reload one.
@@ -120,7 +155,13 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	if err != nil {
 		return agents.TranscriptData{}, false
 	}
-	td := agents.TranscriptData{Turns: turnsFromItems(items), Path: st.Path(), Mode: "normal"}
+	// The log path comes from the slot's record, not the live handle, so a stopped session
+	// shows its commentary too.
+	var cs *commentarySet
+	if ms, ok := readSession(slotSid(m)); ok {
+		cs = commentaryFor(ms.Path)
+	}
+	td := agents.TranscriptData{Turns: turnsWithCommentary(items, cs), Path: st.Path(), Mode: "normal"}
 	// An assistant turn is labelled with the model of its first item. session/setModel takes
 	// effect at the next model call, so a turn that spans a switch shows the model it began on.
 	for i := range td.Turns {

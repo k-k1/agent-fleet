@@ -15,6 +15,8 @@ export interface FoldSignal {
 
 export interface CommitData {
   error?: boolean;
+  /** The refusal's own wording, shown instead of the generic "could not load". */
+  message?: string;
   subject?: string;
   body?: string;
   author?: string;
@@ -22,6 +24,8 @@ export interface CommitData {
   short?: string;
   diff?: string;
   truncated?: boolean;
+  /** SVN revisions: every changed path with its action (git's diff already lists its files). */
+  paths?: { action: string; path: string; copyFromPath?: string; copyFromRev?: string }[];
 }
 interface DiffFile {
   lines: string[];
@@ -227,7 +231,7 @@ export function CommitDetail({ commit, wrap, fold }: { commit: CommitData | null
   const tr = useT();
   const [bodyOpen, setBodyOpen] = useState(false);
   if (!commit) return <pre className="diff muted">{tr("scm.loading")}</pre>;
-  if (commit.error) return <pre className="diff muted">{tr("scm.commit_load_failed")}</pre>;
+  if (commit.error) return <pre className="diff muted">{commit.message || tr("scm.commit_load_failed")}</pre>;
   // Show the first 5 lines of the message body; the rest folds behind "show more".
   const bodyLines = commit.body ? commit.body.split("\n") : [];
   const clampBody = bodyLines.length > 5 && !bodyOpen;
@@ -247,6 +251,16 @@ export function CommitDetail({ commit, wrap, fold }: { commit: CommitData | null
           </button>
         )}
       </div>
+      {commit.paths && commit.paths.length > 0 && (
+        <ul className="cd-paths">
+          {commit.paths.map((p) => (
+            <li key={p.path}>
+              <span className={"cd-act act-" + p.action}>{p.action}</span> <span className="cd-path">{p.path}</span>
+              {p.copyFromPath ? <span className="cd-copy"> {tr("svn.copied_from", { path: p.copyFromPath, rev: p.copyFromRev || "?" })}</span> : null}
+            </li>
+          ))}
+        </ul>
+      )}
       <Diff text={commit.diff} embedded truncated={commit.truncated} wrap={wrap} fold={fold} />
     </div>
   );

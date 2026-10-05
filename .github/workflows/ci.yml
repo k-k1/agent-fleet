@@ -40,6 +40,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Whether this PR touches anything the build/test jobs below read (#1573). A docs-only PR
+  # skips control-plane, workspace-agent, deploy-scripts and console; the scans above them
+  # and docs.yml still run. Pushes to main/develop and manual runs always run everything, so
+  # whatever a PR skipped is still built after the merge.
+  #
+  # The gated jobs test `!= 'false'`, not `== 'true'`: if this job fails, its output is
+  # empty and the jobs run instead of skipping. A job skipped through `if:` reports
+  # "skipped", which a required check accepts — a workflow-level `paths-ignore` would leave
+  # the check pending forever instead.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # A pull_request run checks out the PR's merge commit, whose first parent is the
+          # base tip: HEAD^1..HEAD is exactly what the PR changes.
+          fetch-depth: 2
+      - name: classifier self-test
+        run: ./scripts/ci-changes-test.sh
+      - id: classify
+        name: classify the changed paths
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != pull_request ]; then
+            echo "code=true" | tee -a "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # --no-renames lists both sides of a move, so moving a file out of console/ into
+          # docs/ still counts as touching console/.
+          git diff --name-only --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/changed.txt"
+          cat "$RUNNER_TEMP/changed.txt"
+          ./scripts/ci-changes.sh < "$RUNNER_TEMP/changed.txt" | tee -a "$GITHUB_OUTPUT"
+
   # Credential-leak detection. In a public repository "committed" means "published" and
   # there is no taking it back, so this scans the whole history every time rather than a
   # diff (12 s for 2436 commits / 64 MB — cheap enough).
@@ -102,7 +139,36 @@ jobs:
           git archive --format=tar HEAD > /tmp/src.tar
           deploy/release/scan-forbidden.sh /tmp/src.tar
 
+  # Model-id-shaped literals in the product Go code outside the fallback registry
+  # (workspace/agent/internal/modelfallback, issue #1084). Its own module, like the release
+  # scanner, so it scans both product modules at once; its tests carry the positive and
+  # negative controls.
+  model-id-lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: scripts/model-id-lint
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: scripts/model-id-lint/go.mod
+          # No dependencies, so no go.sum and nothing to cache (see release-scan).
+          cache: false
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...
+      - name: lint the product modules
+        run: go run .
+
   control-plane:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -132,6 +198,17 @@ jobs:
         run: go build ./...
       - name: go test
         run: go test ./...
+      # The kubernetes adapter's envtest cases skip without kube-apiserver, etcd and
+      # kube-controller-manager, so the step above does not run them. This one installs the
+      # pinned binaries and makes their absence a failure: without it the controller timing,
+      # the `restricted` admission and the CP's RBAC would never be checked in CI.
+      - name: go test (kubernetes adapter against a real control plane)
+        env:
+          AF_K8S_TEST_REQUIRED: "1"
+          AF_K8S_TEST_BIN_DIR: ${{ runner.temp }}/af-k8s-test
+        run: |
+          ../deploy/local/k8s-test-binaries.sh
+          go test -count=1 -v -run 'TestKubernetesEnv' ./internal/runtime/
       # control-plane currently has no build-tagged files. Passing no argument declares
       # "there should be none", so this goes red as soon as a single tag appears — which is
       # how anyone notices. Do not turn it into "add the tag when one shows up": who
@@ -142,6 +219,8 @@ jobs:
         run: cd control-plane && ../scripts/vet-build-tags.sh
 
   workspace-agent:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -194,6 +273,8 @@ jobs:
   # the script). Zero CFN create/delete/update calls: there are 198 invocations, but every
   # one is a read against the fake `aws` (180 `describe-stacks`, among others).
   deploy-scripts:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -216,6 +297,31 @@ jobs:
       # diffs a deployed stack against the repo (which is how it was found).
       - name: CloudFormation templates are ASCII-only
         run: ./deploy/local/cfn-ascii-test.sh
+      # The workspace egress policy is 47 generated blocks; a hand edit that lets one cover a
+      # node address reopens every node to workspaces on GKE (ADR 0106, 2026-10-03 addendum).
+      - name: workspace egress blocks match their generator
+        run: python3 ./deploy/kubernetes/egress-blocks.py
+      # The CP task role may write EC2 tags only where the SendCommand fence stays intact,
+      # and a call site the policy refuses fails with AccessDenied on a real deployment
+      # only: the live E2E runs as the deployer. This holds every call site against the
+      # template, offline.
+      - name: CP role tag-write fence (inventory vs template)
+        run: python3 ./deploy/local/cfn-cp-tag-fence-test.py
+      # The same role's EC2 writes (af-pool fence), slot-role PassRole and ECS / EFS tag
+      # writes: every call site and the resources it names, held against the templates.
+      - name: CP role EC2 / PassRole / TagResource scope (inventory vs template)
+        run: python3 ./deploy/local/cfn-cp-ec2-scope-test.py
+      # The kms key custodian's grant and key policy name the encryption context the Go
+      # sends; a rename on either side is AccessDenied on every seal, on a real deployment
+      # only, and a widened grant decrypts with keys the CP has no business with.
+      - name: CP role KMS custodian grant (template vs Go)
+        run: python3 ./deploy/local/cfn-cp-kms-scope-test.py
+      # IAM caps a role's inline policies at 10,240 characters in total and each managed one
+      # at 6,144, and four stacks attach to the CP task role, so no one template shows the
+      # total. Passing it is a ServiceLimitExceeded and a rolled-back stack on a real
+      # deployment only (#1576). Every role's sizes, with every optional policy present.
+      - name: IAM policy size per role (inline total / managed / count)
+        run: python3 ./deploy/local/cfn-iam-policy-size-test.py
       # The release watcher's own branches. They run once a day against live registries,
       # so the only feedback on a bad one is a dispatch that silently did not happen —
       # which is exactly how one unreadable source came to drop all seven contracts for
@@ -226,8 +332,18 @@ jobs:
       # accepted is decided here, so it is tested here.
       - name: CLI pin bump decisions (real script, stub drift/gh/curl)
         run: ./deploy/local/cli-pin-bump-stub-test.sh
+      # The daily apt-pins job in cli-drift.yml reads live Debian indexes; its verdicts
+      # (missing for one architecture, unreadable index) are pinned here on fixtures.
+      - name: Debian package pin check (real script, fixture indexes)
+        run: ./deploy/local/apt-pin-check-test.sh
+      # The LAN ComfyUI helper runs on an operator's GPU host, where no CI reaches; its
+      # docker calls, refusals and re-run behaviour are pinned against a stateful fake docker.
+      - name: LAN ComfyUI helper (real script, stub docker / nvidia-smi)
+        run: ./deploy/local/comfyui-lan-stub-test.sh
 
   console:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -249,6 +365,10 @@ jobs:
         run: npm run lint
       - name: i18n-lint
         run: npm run i18n:lint
+      # Model ids outside src/lib/modelFallbacks.ts (issue #1084). The Go half runs in the
+      # model-id-lint job; both read scripts/model-id-lint/patterns.txt.
+      - name: model-id-lint
+        run: npm run models:lint
       - name: vitest
         run: npm test
       # Real-browser checks (docs/log/82). This is the only place that covers what jsdom

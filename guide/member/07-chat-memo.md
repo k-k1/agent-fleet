@@ -37,8 +37,11 @@ You can also set up your own purpose-built assistant with **"Create assistant"**
 configure a name, a description (the greeting when a conversation starts), a persona
 (instructions on role and tone), the agent / model to use, and **tool permissions**.
 
-If you leave the model blank, new conversations use the default model that fits the chosen
-agent. Currently the defaults are **Luna for codex** and **Nemotron for opencode**. If you specify
+If you leave the model blank, new conversations use the model set for that agent under ⚙ Settings →
+Assistant → **Assistant models** ([12](12-settings.md)); when that is "Recommended", each agent's own
+default rule picks a fast, low-cost model — usually the newest Luna for codex, and for opencode GLM
+when your account lists it, otherwise Nemotron. Models you excluded are skipped, and when nothing
+qualifies the CLI's own default is used (details in [06](06-agents.md)). If you specify
 a model here, that choice wins, and the model of a conversation you've already started
 doesn't change afterwards.
 

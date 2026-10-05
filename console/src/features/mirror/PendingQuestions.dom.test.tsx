@@ -230,3 +230,140 @@ describe("PendingQuestions translation", () => {
     expect(pressed).toBe(1);
   });
 });
+
+// A single-select pick and free text are mutually exclusive answers, but the pick must not
+// erase what was typed: a user still weighing the options loses the text to one click.
+describe("PendingQuestions free text kept under a pick", () => {
+  const ONE: Question[] = [{ question: "どっち？", options: [{ label: "A" }, { label: "B" }] }];
+  const inactive = () => texts()[0].classList.contains("inactive");
+
+  it("a pick greys the typed text out instead of erasing it, and sends only the pick", async () => {
+    mount(ONE);
+    type(texts()[0], "迷い中のメモ");
+    click(opts()[1]); // B
+    expect(texts()[0].value).toBe("迷い中のメモ");
+    expect(inactive()).toBe(true);
+    expect(document.querySelector(".mq-freetext-note")).not.toBeNull();
+
+    click(document.querySelector(".mq-submit"));
+    await act(async () => {});
+    expect(sent).toEqual([["Down", "Enter"]]);
+  });
+
+  it("editing the kept text makes it the answer again and drops the pick", async () => {
+    mount(ONE);
+    type(texts()[0], "迷い中のメモ");
+    click(opts()[1]);
+    type(texts()[0], "やっぱりこれ");
+    expect(picked()).toEqual([false, false]);
+    expect(inactive()).toBe(false);
+
+    click(document.querySelector(".mq-submit"));
+    await act(async () => {});
+    expect(JSON.stringify(sent)).toContain("やっぱりこれ");
+  });
+
+  it("un-picking the option makes the kept text the answer again", () => {
+    mount(ONE);
+    type(texts()[0], "迷い中のメモ");
+    click(opts()[1]);
+    click(opts()[1]); // toggle B off
+    expect(inactive()).toBe(false);
+    expect(texts()[0].value).toBe("迷い中のメモ");
+  });
+
+  it("both survive the card being unmounted", () => {
+    mount(ONE);
+    type(texts()[0], "迷い中のメモ");
+    click(opts()[0]);
+    unmount();
+    mount(ONE);
+    expect(picked()).toEqual([true, false]);
+    expect(texts()[0].value).toBe("迷い中のメモ");
+    expect(inactive()).toBe(true);
+  });
+
+  // Every submit path must see the same "pick wins" rule: the builders on their own still
+  // let text beat a pick (questionKeys.test.ts), so only the card's activeFree keeps the
+  // greyed-out text from being sent.
+  function mountWith(qs: Question[], extra: Partial<Parameters<typeof PendingQuestions>[0]>) {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() =>
+      root!.render(
+        <PendingQuestions
+          questions={qs}
+          draftKey={null}
+          sending={false}
+          onSubmitKeys={(keys) => {
+            sent.push(keys);
+          }}
+          onSubmitSeq={(seq) => {
+            sent.push(seq);
+          }}
+          {...extra}
+        />,
+      ),
+    );
+  }
+  const submitNow = async () => {
+    click(document.querySelector(".mq-submit"));
+    await act(async () => {});
+  };
+
+  it("a carried answer carries the pick without the inactive text as notes", async () => {
+    const answers: unknown[] = [];
+    mountWith(ONE, { onSubmitAnswers: (a) => void answers.push(a) });
+    type(texts()[0], "迷い中のメモ");
+    click(opts()[0]);
+    await submitNow();
+    expect(answers).toEqual([[{ labels: ["A"], notes: "" }]]);
+  });
+
+  it("a managed answer carries the pick without the inactive text", async () => {
+    const answers: unknown[] = [];
+    mountWith(ONE, { onRespond: (a) => void answers.push(a) });
+    type(texts()[0], "迷い中のメモ");
+    click(opts()[1]);
+    await submitNow();
+    expect(answers).toEqual([[{ options: [1] }]]);
+  });
+
+  it("an agy write-in menu sends the option, not the inactive text", async () => {
+    mountWith(ONE, { answerMode: "menu", writeIn: true });
+    type(texts()[0], "迷い中のメモ");
+    click(opts()[1]);
+    await submitNow();
+    expect(JSON.stringify(sent)).not.toContain("迷い中のメモ");
+    expect(sent).toEqual([[{ k: "Down" }, { k: "Enter" }]]);
+  });
+
+  it("multi-select still sends checked options AND the text", async () => {
+    const answers: unknown[] = [];
+    mountWith([{ question: "どれ？", multiSelect: true, options: [{ label: "X" }, { label: "Y" }] }], {
+      onRespond: (a) => void answers.push(a),
+    });
+    type(texts()[0], "ほかにも");
+    click(opts()[0]);
+    expect(inactive()).toBe(false);
+    await submitNow();
+    expect(answers).toEqual([[{ options: [0], text: "ほかにも" }]]);
+  });
+
+  it("whitespace-only text is not shown as kept", () => {
+    mount(ONE);
+    type(texts()[0], "  \n");
+    click(opts()[0]);
+    expect(inactive()).toBe(false);
+    expect(document.querySelector(".mq-freetext-note")).toBeNull();
+  });
+
+  it("the note is announced on the greyed-out field", () => {
+    mount(ONE);
+    type(texts()[0], "迷い中のメモ");
+    click(opts()[0]);
+    const id = texts()[0].getAttribute("aria-describedby");
+    expect(id && document.getElementById(id)?.classList.contains("mq-freetext-note")).toBe(true);
+  });
+});

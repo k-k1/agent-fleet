@@ -1,0 +1,40 @@
+
+  ┃
+  ┃  Use the read tool to read the file /home/dev/.af-work/s7jxd4o/probe/outside/note.txt and
+  ┃  tell me its content.
+  ┃
+
+     → Read /home/dev/.af-work/s7jxd4o/probe/outside/note.txt
+
+     ▣  Build · Big Pickle
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · Big Pickle OpenCode Zen
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   /home/dev/.af-work/s7jxd4o/probe/occwd                               8.3K (4%)  ctrl+p commands
+

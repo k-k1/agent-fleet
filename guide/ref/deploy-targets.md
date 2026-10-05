@@ -1,7 +1,7 @@
 ---
 audience: "everyone; decisive for operate/"
 source_of_truth: "this table; the rows are checked against the runtime profiles the Control Plane accepts"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # Deployment targets — what exists where
@@ -18,8 +18,16 @@ deployment" is the most expensive kind of documentation error here.
 | native | sandboxed host processes, no Docker at all | a directory on the host | Docker cannot be installed (a plain WSL2 machine). **Single user only** — without container isolation it refuses to run in a shared mode |
 | ecs | a task on AWS ECS / Fargate | EFS | AWS, without managing instances |
 | ecs-ec2 | a task on an EC2 slot taken from a pool | a per-user EBS volume | AWS, when start latency and disk performance matter enough to manage instances |
+| kubernetes | a pod of its own StatefulSet on a Kubernetes cluster | a per-user persistent volume (block storage), plus a second one for logins and Claude's state | **Preview.** You already run Kubernetes, or want Agent Fleet on Google Cloud with workspaces that scale to zero. GKE Standard is the first cluster it is verified on |
 
-`docker` also answers to `local`, `ecs` to `aws`, and `native` to `wsl`. Anything else
+> **Preview.** The `kubernetes` runtime is a preview: it has been accepted on a GKE Standard
+> cluster but is not yet supported for production. Known limits: there are no browser features
+> on this runtime (no browser pane, no headless Chromium), and on GKE the region's SSD disk quota
+> has to hold the deployment before you start ([Preconditions](../../deploy/kubernetes/README.md#preconditions)). Still being
+> measured: what it costs ([The bill](../../deploy/kubernetes/README.md#the-bill)) and how the load balancer's 24-hour
+> WebSocket cut affects day-long sessions ([7. The load balancer](../../deploy/kubernetes/README.md#7-the-load-balancer)).
+
+`docker` also answers to `local`, `ecs` to `aws`, `native` to `wsl`, and `kubernetes` to `k8s`. Anything else
 is rejected at boot rather than quietly defaulting. `ecs` and `ecs-ec2` are separate
 profiles on purpose, not a flag: the EC2 pool trades a proven two-resource workspace
 for a six-resource one, so a deployment opts in and can fall back by changing this one
@@ -27,21 +35,22 @@ value instead of reverting code.
 
 ## Capability differences
 
-| Capability | docker | native | ecs | ecs-ec2 |
-|---|:--:|:--:|:--:|:--:|
-| Several users, mutually invisible | ✓ | — | ✓ | ✓ |
-| Per-user CPU / memory limits | ✓ | — | ✓ | ✓ |
-| Per-user disk sizing | — | — | ✓ | ✓ |
-| Idle auto-stop | ✓ | ✓ | ✓ | ✓ |
-| Stop / start preserving home | ✓ | ✓ | ✓ | ✓ |
-| The user guide inside the container | ✓¹ | ✓¹ | ✓² | ✓² |
-| Browser pane | ✓ | ✓³ | ✓ | ✓ |
-| Cost attribution per member | — | — | ✓ | ✓ |
-| An image engine the deployment provides | ✓⁴ | ✓⁴ | — | ✓⁵ |
-| A chat engine the deployment provides | ✓⁶ | ✓⁶ | — | ✓⁶ |
-| A member's Recreate and Clean home (Danger zone) | ✓ | ✓ | —⁷ | ✓¹⁰ |
-| Clean home by an administrator (offboarding) | ✓ | ✓ | —⁷ | ✓⁸ |
-| Deleting the backup copies of a member's home | — | — | — | ✓⁹ |
+| Capability | docker | native | ecs | ecs-ec2 | kubernetes (preview) |
+|---|:--:|:--:|:--:|:--:|:--:|
+| Several users, mutually invisible | ✓ | — | ✓ | ✓ | ✓ |
+| Per-user CPU / memory limits | ✓ | — | ✓ | ✓ | ✓ |
+| Per-user disk sizing | — | — | ✓ | ✓ | ✓¹¹ |
+| Idle auto-stop | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Stop / start preserving home | ✓ | ✓ | ✓ | ✓ | ✓ |
+| The user guide inside the container | ✓¹ | ✓¹ | ✓² | ✓² | ✓² |
+| Browser pane | ✓ | ✓³ | ✓ | ✓ | —¹² |
+| Cost attribution per member | — | — | ✓ | ✓ | — |
+| An image engine the deployment provides | ✓⁴ | ✓⁴ | — | ✓⁵ | ✓⁴ |
+| A chat engine the deployment provides | ✓⁶ | ✓⁶ | — | ✓⁶ | ✓⁶ |
+| A member's Recreate and Clean home (Danger zone) | ✓ | ✓ | ✓⁷ | ✓¹⁰ | ✓¹³ |
+| Clean home by an administrator (offboarding) | ✓ | ✓ | ✓⁷ | ✓⁸ | ✓¹³ |
+| Deleting the backup copies of a member's home | — | — | — | ✓⁹ | — |
+| Secrets the Control Plane seals, protected by a cloud key service (AWS KMS) | — | — | ✓¹⁴ | ✓¹⁴ | — |
 
 ¹ Staged on the host and bind-mounted at start.
 
@@ -60,14 +69,44 @@ OpenAI-compatible server ([operate/07](../operate/07-image-engine.md)).
 Fargate. On every target a session can also generate images on **the member's own CLI
 plan** (Codex / Antigravity); this row is about an engine the deployment provides.
 
-⁶ On `ecs-ec2`, the fleet's own GPU. On `docker` and `native`, a llama.cpp **already running
-on your own network**, pointed at with one environment variable
+⁶ On `ecs-ec2`, the fleet's own GPU. On `docker`, `native` and `kubernetes`, a llama.cpp
+**already running on your own network**, pointed at with one environment variable
 ([operate/09](../operate/09-llm-lan.md)).
 
-⁷ Removing part of a home needs the home mounted, and on `ecs` nothing the Control Plane
-runs can mount the member's EFS home. The Console does not show these buttons where the
-deployment cannot perform them, and the Control Plane refuses them before it stops
-anything.
+⁷ The Control Plane cannot mount the member's EFS home itself, so it starts a short task the
+stack declares (`HomeOpsTaskDef` in `30-ingress`) that mounts the file system and removes the
+files. A Fargate task takes a few minutes to start, so these finish after the button has been
+answered. A member's Recreate and Clean home show the starting dialog ("removing what Recreate /
+Clean home deletes") until the workspace is up again; if the removal fails the workspace stays
+stopped and the reason is shown, to the member and on their row in the administrator's member
+list, until the next start (a Control Plane restart after the failure does not lose it). An
+administrator's Clean home and **Destroy workspace** answer straight away, and their outcome is
+written to the audit log when the task has finished. Destroy now removes the member's EFS
+directories as well, instead of listing them as left over. A stack from before this task (no
+`AF_ECS_HOME_TASK`) does not offer these buttons, as before. On `ecs-ec2` the home itself is on
+EBS, but the Claude state and the kept logins and connections are on EFS: **Destroy workspace**
+removes those with the same task, so there too it answers straight away and writes its outcome
+to the audit log.
+While a task runs, a start and any second operation on that home are refused, even across a
+Control Plane restart. Each operation is recorded in the Control Plane's database before its
+task starts, so a restart in the middle loses nothing: within a minute or two of coming back, a
+Control Plane picks the operation up, waits for the task — or asks ECS to start it again under the
+same request token if the answer to starting it was lost, which returns the task already started
+rather than a second one — and then finishes it: the member's workspace is started (not if the
+member has been removed in the meantime), the reason for a failure is shown, the audit outcome is
+written, and a Destroy removes the workspace row. A start in between is refused as above. The
+task's own log (the workspace log group, stream prefix `home-ops`) says how it ended.
+The home is released only when the Control Plane sees its task stopped. If ECS no longer reports
+the task, or the answer to starting it was lost, the Control Plane asks ECS again under the same
+token; within 23 hours of the first request that returns the task already started (or runs the
+removal again once it is gone, which is safe: it removes only what the operation removes, on a home
+nothing could start in between). Two cases need an operator, and the Control Plane log names them:
+a refusal left by a Control Plane from before this version, which has no record behind it, and a
+task not seen stopped more than 23 hours after it was requested (ECS no longer guarantees that
+asking again returns the same task rather than starting a second one). An operator who has checked
+in ECS that no task started by `af-home/<membership>` is running deletes the SSM parameter
+`/af-ws/<workspace>/home-task`; in the second case the Control Plane then finishes the operation by
+itself.
 
 ⁸ Deletes the member's home volume and its hibernation copies; the next start builds a
 fresh home, as for a new member. On this target the logins, connections and Claude state
@@ -89,6 +128,28 @@ progress both are refused without stopping anything; press again once it has sta
 Clean home keeps the logins and connections by name, including one a tool replaced since
 the last start. After Clean home the first start reinstalls the agent CLIs, as on `docker`.
 
+¹¹ The size of the home volume. It can grow, never shrink.
+
+¹² No browser features at all — no browser pane, no Chromium attachments, no headless Chromium.
+The workspace pod's Pod Security `restricted` level leaves Chromium's sandbox neither its setuid
+helper nor user namespaces, and running Chromium unsandboxed was decided against (ADR 0106,
+addendum 2026-10-04). The Console greys the entry points out and says why; the lightweight preview
+still works ([browser-pane.md](browser-pane.md#where-there-is-no-browser-pane)).
+
+¹³ A member's Recreate and Clean home mark the home and return; the next start removes the files
+before the workspace runs, as on `ecs-ec2`. An administrator's Clean home removes them at once,
+with the workspace stopped. Both keep the logins, connections and Claude's state, which live on a
+second volume of their own. The home volume itself is kept.
+
+¹⁴ Off by default; the operator turns it on in the stack ([operate/04](../operate/04-secure.md#keys-at-rest-on-aws-kms)).
+The secrets the Control Plane itself seals after the switch (MCP connection headers, sign-in
+client secrets, engine tokens, session handoffs and shares) are then sealed with keys from AWS
+KMS, so disabling the KMS key makes them unreadable. The key to a member's stored credentials is
+wrapped by KMS only for a workspace whose key is first stored after the switch, and it is still
+derived from `AF_MASTER_KEY` so that existing stores keep opening: for those, the master key
+remains enough. `AF_MASTER_KEY` stays required on
+every target.
+
 ## Where the procedure lives
 
 Until [operate/](../operate/README.md) is written, the runbooks are still in the
@@ -100,6 +161,7 @@ repository next to what they operate:
 | native | [deploy/native/README.md](../../deploy/native/README.md), and [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) for a personal WSL2 machine |
 | ecs / ecs-ec2 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
 | a single EC2 VM running compose | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
+| kubernetes (preview; GKE, and other clusters) | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 `ec2-single` is not a separate runtime profile — it is `docker` on a VM, and it exists
 because "AWS" and "manage instances yourself" are independent choices.

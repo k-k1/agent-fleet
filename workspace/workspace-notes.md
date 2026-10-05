@@ -92,6 +92,9 @@ directory belongs to someone else.
   with `ls … | head -1`, `amd64` sorts before `arm64`): `notes/build.md`.
 
 ## Browsers
+- **`$AF_BROWSER_UNAVAILABLE` set (e.g. `kubernetes`) means no browser at all** — no headless
+  Chromium, no `attach_chromium`, no pane; never add `--no-sandbox`. `notes/browser.md` says what
+  to do instead. The rest of this section applies only where it is empty.
 - Headless `chromium` is baked in (`/usr/bin/chromium`); no display, keep runs short and close
   it. **Headless reports a coarse pointer**, so hover styles never apply — force desktop input
   with `--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4`
@@ -138,12 +141,23 @@ directory belongs to someone else.
   binary.
 - The clock is the workspace's local timezone (`date`), not UTC. Outbound network may be
   restricted; an unreachable host is not necessarily an error.
-- **AWS: the default credential chain may not be the user.** The container can have a workload
-  role that a bare `aws` / SDK / build-tool call silently falls back to, in another account. Any
-  AWS command about the user's accounts or resources — **reads included** — goes through
-  `af-aws-exec --profile <name> --account <id> -- <command>`; never retry a refused run without
-  it, and never add `--keep-aws-config` to get past an error. Procedure, exit codes and who fixes
-  what: `notes/aws.md`.
+- **AWS: the default credential chain is not the user.** A bare `aws` / SDK / build-tool call
+  normally fails with "Unable to locate credentials": the workspace's own role is withheld from
+  your shell. That means "use `af-aws-exec`", never "configure credentials" — no
+  `aws configure` / `aws login`, no `[default]` keys, no hunting elsewhere. Where a deployment hands the role back, or on the
+  native runtime, the same call silently runs as another identity, in another account. Deploys,
+  writes and anything whose account matters go through
+  `af-aws-exec --profile <name> --account <id> -- <command>`; a read-only `aws --profile <name>`
+  lookup is allowed only after the isolation self-check in `notes/aws.md` says so. Never retry a
+  refused run without it, and never add `--keep-aws-config` to get past an error. Procedure, exit
+  codes and who fixes what: `notes/aws.md`.
+- **Google Cloud: the default credentials are not the user either.** A bare `gcloud`, client
+  library or Terraform call finds no login of the user's, or the VM's / node's identity. Anything
+  about their projects goes through
+  `af-gcloud-exec --profile <name> --project <id> -- <command>` (`af-gcloud-exec --list` names the
+  profiles). Never run `gcloud auth login`, `gcloud config set` or anything else against the
+  Agent's gcloud store yourself, never print a token, and exit 3 means the user has to log in:
+  hand them the command it printed. Which tools the token reaches: `notes/gcp.md`.
 
 ## Answering questions about this Workspace
 The user guide is at `/usr/local/share/agent-fleet/docs` (`member/` for people running agents,
@@ -162,7 +176,8 @@ All under `/usr/local/share/agent-fleet/notes/`:
 | touch a working copy that is not yours, integrate or fast-forward, install or share dependencies in a worktree | `/usr/local/share/agent-fleet/notes/worktrees.md` |
 | run a JVM or Node build/test, need a JDK or `JAVA_HOME`, or a build died with 137 | `/usr/local/share/agent-fleet/notes/build.md` |
 | screenshot or verify a UI, hand a Chromium page to the user, explain the browser pane | `/usr/local/share/agent-fleet/notes/browser.md` |
-| run any AWS command about the user's accounts or resources (reads included), or an AWS command failed with an SSO/token error, "could not be found" or `af-aws-exec` exit 3 | `/usr/local/share/agent-fleet/notes/aws.md` |
+| run any AWS command about the user's accounts or resources (reads included), or an AWS command failed with "Unable to locate credentials", an SSO/token error, "could not be found" or `af-aws-exec` exit 3 | `/usr/local/share/agent-fleet/notes/aws.md` |
+| run any Google Cloud command about the user's projects (`gcloud`, Terraform's Google provider, `kubectl` against GKE, a client library), or one failed with no credentials, a reauthentication error, or `af-gcloud-exec` exit 3 | `/usr/local/share/agent-fleet/notes/gcp.md` |
 | act on an `[agent-fleet…]` note or peer envelope, hand off, message a peer, generate an image, add MCP or change agent configuration | `/usr/local/share/agent-fleet/notes/agent-fleet.md` |
 
 Any guide path named here or in a topic file has to exist in the shipped guide, and any topic file

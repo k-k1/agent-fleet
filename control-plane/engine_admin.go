@@ -152,6 +152,11 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	mux.HandleFunc("GET /api/admin/engines/civitai-token", a.withSuperAdmin(a.getCivitaiToken))
 	mux.HandleFunc("PUT /api/admin/engines/civitai-token", a.withSuperAdmin(a.putCivitaiToken))
 	mux.HandleFunc("DELETE /api/admin/engines/civitai-token", a.withSuperAdmin(a.deleteCivitaiToken))
+	// The LAN ComfyUI's URL and key (engine_comfy_panel.go, #957). Super_admin like the tokens:
+	// it decides where every member's images are sent, and the key is a credential. Read through
+	// GET /api/admin/engines' `comfy_lan`; there is no GET of its own.
+	mux.HandleFunc("PUT /api/admin/engines/comfy-lan", a.withSuperAdmin(a.putComfyLan))
+	mux.HandleFunc("DELETE /api/admin/engines/comfy-lan", a.withSuperAdmin(a.deleteComfyLan))
 	// Whether the catalogue's search offers Civitai Red at all (engine_civitai_red.go). Under
 	// engines rather than beside the egress mode because it is a property of this panel's own
 	// search, and super_admin like every other deployment-wide write — a granted tenant_admin
@@ -191,8 +196,14 @@ func (a engineAdminAPI) get(w http.ResponseWriter, r *http.Request, g engineInge
 	// (engine_civitai_red.go). It rides here because every screen with a source tab strip already
 	// reads this route, and because the list has to be known before the first search rather than
 	// discovered by being refused one.
-	writeJSON(w, http.StatusOK, map[string]any{"engines": out, "super_admin": g.super,
-		"catalog_sources": a.civitaiRed().sources(r.Context())})
+	body := map[string]any{"engines": out, "super_admin": g.super,
+		"catalog_sources": a.civitaiRed().sources(r.Context())}
+	// The LAN ComfyUI panel's state rides here rather than on a read of its own, so opening the
+	// engines screen stays one request (engine_comfy_panel.go). Operator-only, like the panel.
+	if g.super {
+		body["comfy_lan"] = a.comfyLanStatus(r.Context())
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 // row is one engine's status line. `ready` is deliberately NOT here: answering it means a health

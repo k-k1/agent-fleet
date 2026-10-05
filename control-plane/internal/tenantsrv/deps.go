@@ -57,6 +57,16 @@ type CP interface {
 	CountRunningInTenant(ctx context.Context, tenantID string) (int, error)
 	WorkspaceStateByMembership(ctx context.Context, membershipID string) (container, state string)
 	StopWorkspaceByMembership(ctx context.Context, membershipID string) error
+	// StopRemovedMemberWorkspace is StopWorkspaceByMembership for a removal: it re-reads
+	// the membership once it holds the workspace's locks and leaves the workspace alone
+	// (stopped=false, err=nil) when the person has been re-invited in the meantime.
+	StopRemovedMemberWorkspace(ctx context.Context, membershipID string) (stopped bool, err error)
+	// CloseMembershipConnections ends this CP's in-flight requests of a membership — the
+	// WebSockets and streams opened before it was removed — and reports how many.
+	CloseMembershipConnections(membershipID string) int
+	// ResumeSchedulesHeldByRemoval re-enables the schedules the scheduler paused because
+	// their owner had been removed, and only those; it returns how many it resumed.
+	ResumeSchedulesHeldByRemoval(ctx context.Context, membershipID string) (int, error)
 	// CleanHomeByMembership returns runtime.ErrHomeWipeUnsupported, having stopped
 	// nothing, on a runtime that cannot reach the workspace home.
 	CleanHomeByMembership(ctx context.Context, membershipID string) error
@@ -72,9 +82,24 @@ type CP interface {
 	// grow, which is every runtime but the EC2 slot pool.
 	ResizeHomeByMembership(ctx context.Context, membershipID string) (runtime.HomeResize, error)
 	DestroyWorkspaceByMembership(ctx context.Context, membershipID string) ([]string, error)
+	// HomeOpsInBackground is true where Clean home runs a task on the home that takes
+	// minutes (ecs: runtime.HomeWipeInBackground), DestroyInBackground where Destroy does
+	// (ecs and ecs-ec2: runtime.DestroyInBackground). The handlers then call the Start*
+	// variants, answer once the refusals are past, and hand over the outcome entry the
+	// action owes (store.HomeOpAudit): the CP writes it once the task has finished, after a
+	// CP restart as well (#1544).
+	HomeOpsInBackground() bool
+	DestroyInBackground() bool
+	StartCleanHomeByMembership(ctx context.Context, membershipID string, audit store.HomeOpAudit) error
+	StartDestroyWorkspaceByMembership(ctx context.Context, membershipID string, audit store.HomeOpAudit) error
 	ResolveWorkspaceSize(ctx context.Context, ws store.Workspace) (memBytes int64, cpuUnits, diskGB int)
 	ResolveSlotClass(ctx context.Context, ws store.Workspace) (id, note string)
 	EvictMembershipCache(membershipID string)
+	// RotateGitToken bumps the membership's internal git token epoch, which kills the
+	// old token at once, and pushes the new one to its running workspace (issue #1199).
+	// push is the outcome of that push (updated | not_running | disabled | pending |
+	// failed). found=false when there is no such membership.
+	RotateGitToken(ctx context.Context, membershipID string) (epoch int64, push string, found bool, err error)
 	EvictTenantCache(tenantID string)
 	// PushEngineCatalogChanged tells the tenant's running workspaces at once that its
 	// engine catalogue view moved (ADR 0084 decision 9) — the tenant-scoped counterpart
@@ -99,6 +124,10 @@ type CP interface {
 	// quarantined, so the audit entry outlives the instance and its tags. ok=false
 	// where there is no pool, exactly as PoolStatus reports it.
 	TerminateQuarantinedSlot(ctx context.Context, instanceID string) (reason string, ok bool, err error)
+	// ReserveSlotReplacement sets or clears a slot's replacement reservation (#1473);
+	// onlyOutdated refuses a slot that is not below the launch template's $Latest. ok=false
+	// where there is no pool.
+	ReserveSlotReplacement(ctx context.Context, instanceID string, reserve, onlyOutdated bool) (res runtime.SlotReservation, ok bool, err error)
 	WorkspaceSizing() runtime.WorkspaceSizing
 
 	// --- HTTP authorization (memberAuth and admin_stats.go) ---------------------

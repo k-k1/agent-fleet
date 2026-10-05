@@ -1,0 +1,21 @@
+› Reply with the single word ok.
+
+• ok
+
+  Worked for 2s • 17:41
+                          ⚠ weekly 8% left
+
+  Approaching rate limits
+  Switch to gpt-6.1-sol-mini for lower
+  credit usage?
+
+› 1. Switch to gpt-6.1-sol-mini
+     Uses fewer credits for upcoming
+     turns
+  2. Keep current model
+  3. Keep current model (never show
+     again)
+     Hide future rate limit reminders
+     about switching models
+
+  enter confirm · esc back

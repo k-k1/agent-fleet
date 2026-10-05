@@ -283,5 +283,157 @@ class AnchorTests(unittest.TestCase):
         self.assertIn("anchor with no matching heading", self.errors(heading, "02-target.md#syntax-label"))
 
 
+class SettingTabsTests(unittest.TestCase):
+    """ref/settings*.md rows against the Console's per-domain tab labels."""
+
+    SETTINGS = (
+        "export const settings = {\n"
+        '  "set.tab_display": "Displ\\u0061y",\n'
+        "  'set.tab_keys': 'Key\\'s',\n"
+        "  \"set.tab_tts\": `Read aloud`,\n"
+        '  // "set.tab_ghost": "Ghost" in a line comment\n'
+        '  /* "set.tab_ghost": "Ghost" in a block comment */\n'
+        "  \"set.help\": 'Example: \"set.tab_ghost\": \"Ghost\"',\n"
+        '  "set.link": "https://example.com/a//b", // trailing comment\n'
+        '  "set.tabs_title": "Not a tab",\n'
+        "};\n"
+    )
+    ROWS = ["Display", "Key's", "Read aloud", "Engine access"]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.locales = self.root / "console/src/lib/i18n/locales"
+        for locale in ("en", "ja"):
+            (self.locales / locale).mkdir(parents=True)
+            # The composition file holds no key, as in the real tree.
+            (self.locales / f"{locale}.ts").write_text(f"export const {locale} = {{ ...settings }};\n")
+            (self.locales / locale / "settings.ts").write_text(self.SETTINGS)
+            (self.locales / locale / "admin.ts").write_text(
+                'export const admin = {\n  "tenant.tab_engine_access":\n    "Engine access",\n};\n'
+            )
+        self.ref = self.root / "guide/ref"
+        self.ref.mkdir(parents=True)
+        self.write_rows(self.ROWS)
+        self.addCleanup(patch.stopall)
+        patch.object(check, "ROOT", str(self.root)).start()
+        patch.object(check, "GUIDE", str(self.root / "guide")).start()
+
+    def write_rows(self, rows):
+        for name in ("settings.md", "settings.ja.md"):
+            table = ["| Tab | Configures |", "|---|---|"] + [f"| {r} | x |" for r in rows]
+            (self.ref / name).write_text("\n".join(table) + "\n")
+
+    def errors(self):
+        check._cache.clear()
+        findings = check.Findings()
+        check.check_ref(findings)
+        return "\n".join(findings.errors)
+
+    def test_reads_only_real_tab_entries_and_decodes_them(self):
+        check._cache.clear()
+        tabs, problems = check.source_setting_tabs("en")
+        self.assertEqual(
+            tabs,
+            {
+                "set.tab_display": "Display",
+                "set.tab_keys": "Key's",
+                "set.tab_tts": "Read aloud",
+                "tenant.tab_engine_access": "Engine access",
+            },
+        )
+        self.assertEqual(problems, [])
+        self.assertEqual(self.errors(), "")
+
+    def test_url_in_a_value_survives(self):
+        values = [v for k, v, _ in check.ts_tokens(self.SETTINGS) if k == "str"]
+        self.assertIn("https://example.com/a//b", values)
+        self.assertNotIn("set.tab_ghost", values)
+
+    def test_unreadable_tab_value_is_an_error_with_its_place(self):
+        (self.locales / "en" / "admin.ts").write_text(
+            "export const admin = {\n"
+            '  "tenant.tab_engine_access": `Engine ${x}`,\n'
+            '  "tenant.tab_cost": COST_LABEL,\n'
+            '  "tenant.note": `fine ${x}`,\n'
+            '  "tenant.tab_members": "Members" + " list",\n'
+            '  "tenant.tab_audit": "Audit" ? "Actual" : "Other",\n'
+            '  "tenant.tab_usage": "Usage"}\n'
+        )
+        out = self.errors()
+        self.assertIn("locales/en/admin.ts:2: 'tenant.tab_engine_access' is not a plain string", out)
+        self.assertIn("locales/en/admin.ts:3: 'tenant.tab_cost' is not a plain string", out)
+        self.assertIn("locales/en/admin.ts:5: 'tenant.tab_members' is not a plain string", out)
+        self.assertIn("locales/en/admin.ts:6: 'tenant.tab_audit' is not a plain string", out)
+        self.assertNotIn("tenant.note", out)
+        check._cache.clear()
+        tabs, _ = check.source_setting_tabs("en")
+        self.assertNotIn("tenant.tab_members", tabs)
+        self.assertNotIn("tenant.tab_audit", tabs)
+        # A literal closed by `}` with no trailing comma is still a plain value.
+        self.assertEqual(tabs["tenant.tab_usage"], "Usage")
+
+    def test_missing_row_is_an_error(self):
+        self.write_rows(self.ROWS[:-1])
+        self.assertIn("missing from the table -> Engine access", self.errors())
+
+    def test_no_labels_is_an_error_not_a_skip(self):
+        for f in (self.locales / "en").iterdir():
+            f.unlink()
+        out = self.errors()
+        self.assertIn("locales/en/: no settings tab labels", out)
+        self.assertIn("so ref/settings.md cannot be checked", out)
+        self.assertNotIn("locales/ja/", out)
+
+    def test_missing_locale_dir_is_an_error(self):
+        for f in (self.locales / "ja").iterdir():
+            f.unlink()
+        (self.locales / "ja").rmdir()
+        self.assertIn("locales/ja/: no settings tab labels", self.errors())
+
+
+def rail_tab_keys(path):
+    """The i18n keys of the `[section, key]` items in a settings rail source."""
+    toks = check.ts_tokens(Path(path).read_text())
+    keys = set()
+    for i in range(len(toks) - 4):
+        shape = [t[:2] if t[0] == "punct" else (t[0],) for t in toks[i : i + 5]]
+        if shape == [("punct", "["), ("str",), ("punct", ","), ("str",), ("punct", "]")]:
+            if check.SETTING_TAB_KEY_RE.fullmatch(toks[i + 3][1]):
+                keys.add(toks[i + 3][1])
+    return keys
+
+
+class RealSettingTabsTests(unittest.TestCase):
+    """The real catalogue against the items the two settings rails define."""
+
+    RAILS = ("console/src/features/settings/SettingsDialog.tsx", "console/src/features/settings/tenant/tenantScope.tsx")
+
+    def test_rail_reader_accepts_either_quote_and_skips_comments(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp, "rail.tsx")
+            src.write_text(
+                "const a = [\n  ['display', 'set.tab_display'],\n  [\"keys\", \"set.tab_keys\"],\n"
+                '  // ["ghost", "set.tab_ghost"],\n  tr("set.tab_other"),\n];\n'
+            )
+            self.assertEqual(rail_tab_keys(src), {"set.tab_display", "set.tab_keys"})
+
+    def test_catalogue_matches_the_rail_items(self):
+        # A non-tab key the parser picks up, or a tab it misses, breaks the equality. So does
+        # a rail whose items move out of `[section, key]` literals in these two files (a
+        # constant, another module): then extend rail_tab_keys, do not pin a key list.
+        used = set()
+        for rail in self.RAILS:
+            keys = rail_tab_keys(Path(check.ROOT, rail))
+            self.assertTrue(keys, f"{rail}: no [section, key] rail items found; the rail moved")
+            used |= keys
+        for locale in ("en", "ja"):
+            with self.subTest(locale=locale):
+                tabs, problems = check.source_setting_tabs(locale)
+                self.assertEqual(problems, [])
+                self.assertEqual(set(tabs), used)
+
+
 if __name__ == "__main__":
     unittest.main()

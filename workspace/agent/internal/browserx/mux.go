@@ -42,9 +42,10 @@ func Routes() []Route {
 	}
 }
 
-// RegisterRoutes registers browserx's routes on the Agent's mux.
+// RegisterRoutes registers browserx's routes on the Agent's mux, each behind availableOnly
+// so a workspace without browser features answers browser_unavailable on all of them.
 func RegisterRoutes(mux *http.ServeMux) {
 	for _, r := range Routes() {
-		mux.HandleFunc(r.Pattern, r.Handler)
+		mux.HandleFunc(r.Pattern, availableOnly(r.Handler))
 	}
 }

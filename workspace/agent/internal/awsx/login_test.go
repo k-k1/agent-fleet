@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudlogin"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 )
 
@@ -33,29 +34,41 @@ func fastPoll(t *testing.T) {
 // writeSSOCache writes the token cache of sso-session af-prod the way botocore does.
 func writeSSOCache(t *testing.T, token string, expires time.Time) {
 	t.Helper()
+	if err := putSSOCache(token, expires); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// putSSOCache is writeSSOCache for a helper goroutine, which may not call t.Fatal.
+func putSSOCache(token string, expires time.Time) error {
 	path := ssoCachePath("af-prod")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
+		return err
 	}
 	b, _ := json.Marshal(map[string]string{"accessToken": token, "expiresAt": expires.UTC().Format(time.RFC3339)})
-	if err := os.WriteFile(path, b, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	return os.WriteFile(path, b, 0o600)
 }
 
 func waitForFile(t *testing.T, path string) {
 	t.Helper()
+	if !fileAppears(path) {
+		t.Fatalf("%s never appeared", path)
+	}
+}
+
+// fileAppears is waitForFile for a helper goroutine, which may not call t.Fatal.
+func fileAppears(path string) bool {
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
 		if _, err := os.Stat(path); err == nil {
-			return
+			return true
 		}
 	}
-	t.Fatalf("%s never appeared", path)
+	return false
 }
 
 func onlyRequest(t *testing.T) LoginRequest {
 	t.Helper()
-	r, ok := readRequest("af-prod")
+	r, ok := logins.Read("af-prod")
 	if !ok {
 		t.Fatal("no login request was filed")
 	}
@@ -65,12 +78,22 @@ func onlyRequest(t *testing.T) LoginRequest {
 func TestConsoleLoginWaitsForTheMembersApproval(t *testing.T) {
 	bin, state := fakeAWS(t, ssoProfile)
 	fastPoll(t)
+	helper := make(chan struct{})
 	go func() {
-		waitForFile(t, requestPath("af-prod"))
+		defer close(helper)
+		if path := logins.RequestPath("af-prod"); !fileAppears(path) {
+			t.Errorf("%s never appeared", path)
+			return
+		}
 		// The member approves in the Console: the token lands and the CLI accepts it.
-		writeSSOCache(t, "fresh", time.Now().Add(time.Hour))
+		if err := putSSOCache("fresh", time.Now().Add(time.Hour)); err != nil {
+			t.Errorf("writing the SSO cache: %v", err)
+			return
+		}
 		os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600)
 	}()
+	// Joined before HOME is restored: the helper writes the SSO cache from HOME.
+	t.Cleanup(func() { <-helper })
 	var stderr bytes.Buffer
 	_, _, env, err := PlanExec(bin, workloadEnv, consoleOpts(&stderr, 5*time.Second))
 	if err != nil {
@@ -131,7 +154,7 @@ func TestConsoleLoginOnlyForASettingsProfileRunUnattended(t *testing.T) {
 			if err == nil {
 				t.Fatal("ran without a login")
 			}
-			if _, ok := readRequest("af-prod"); ok {
+			if _, ok := logins.Read("af-prod"); ok {
 				t.Fatal("filed a Console login request")
 			}
 		})
@@ -141,14 +164,21 @@ func TestConsoleLoginOnlyForASettingsProfileRunUnattended(t *testing.T) {
 func TestConsoleLoginCancelEndsTheWaitAndHoldsNewRuns(t *testing.T) {
 	bin, _ := fakeAWS(t, ssoProfile)
 	fastPoll(t)
+	helper := make(chan struct{})
 	go func() {
-		waitForFile(t, requestPath("af-prod"))
-		r, _ := readRequest("af-prod")
+		defer close(helper)
+		if path := logins.RequestPath("af-prod"); !fileAppears(path) {
+			t.Errorf("%s never appeared", path)
+			return
+		}
+		r, _ := logins.Read("af-prod")
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/aws-login/"+r.ID+"/cancel", nil)
 		req.SetPathValue("id", r.ID)
 		HandleLoginCancel(rec, req)
 	}()
+	// Joined before HOME is restored: the cancel resolves its paths from HOME.
+	t.Cleanup(func() { <-helper })
 	var stderr bytes.Buffer
 	withSettingsCache(t)
 	start := time.Now()
@@ -159,7 +189,7 @@ func TestConsoleLoginCancelEndsTheWaitAndHoldsNewRuns(t *testing.T) {
 	if time.Since(start) > 3*time.Second {
 		t.Fatal("the cancel did not end the wait at once")
 	}
-	if _, ok := readRequest("af-prod"); ok {
+	if _, ok := logins.Read("af-prod"); ok {
 		t.Fatal("the cancelled request is still there")
 	}
 	// Within the hold a new run files nothing and says how to log in instead.
@@ -168,12 +198,12 @@ func TestConsoleLoginCancelEndsTheWaitAndHoldsNewRuns(t *testing.T) {
 	if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "aws sso login --profile 'prod'") {
 		t.Fatalf("held run: %v", err)
 	}
-	if _, ok := readRequest("af-prod"); ok || len(notice.List()) != before {
+	if _, ok := logins.Read("af-prod"); ok || len(notice.List()) != before {
 		t.Fatal("a run during the hold filed a request")
 	}
 	// A login elsewhere makes the marker moot.
 	writeSSOCache(t, "fresh", time.Now().Add(time.Hour))
-	if _, held := liveMarker("af-prod", time.Now()); held {
+	if logins.Held("af-prod", time.Now()) {
 		t.Fatal("the marker still holds after the cache changed")
 	}
 }
@@ -190,7 +220,7 @@ func TestConsoleLoginDoesNotTakeARejectedTokenForALogin(t *testing.T) {
 	if !errors.Is(err, ErrLoginRequired) {
 		t.Fatalf("err = %v", err)
 	}
-	if got := sweepLoginRequests(time.Now()); len(got) != 1 {
+	if got := logins.Sweep(time.Now()); len(got) != 1 {
 		t.Fatalf("pending = %+v, want the request still there", got)
 	}
 }
@@ -211,7 +241,7 @@ func TestConsoleLoginRetriesWhenALoginLandsDuringTheCheck(t *testing.T) {
 	if _, _, _, err := PlanExec(bin, workloadEnv, consoleOpts(&stderr, 2*time.Second)); err != nil {
 		t.Fatalf("err = %v", err)
 	}
-	if _, ok := readRequest("af-prod"); ok {
+	if _, ok := logins.Read("af-prod"); ok {
 		t.Fatal("filed a request although the login had landed")
 	}
 }
@@ -253,15 +283,16 @@ func TestLoginListShowsSettingsNotTheCallersText(t *testing.T) {
 }
 
 // The request file is writable by every agent, so the list cleans what it shows even when
-// the file was written around FileLoginRequest.
+// the file was written around cloudlogin's File.
 func TestLoginListCleansAWaiterWrittenStraightIntoTheFile(t *testing.T) {
 	fakeAWS(t, ssoProfile)
 	withSettingsCache(t)
-	os.MkdirAll(loginDir(), 0o700)
+	os.MkdirAll(filepath.Dir(logins.RequestPath("af-prod")), 0o700)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	raw := LoginRequest{ID: "0123456789abcdef01234567", Profile: "prod", SSOSession: "af-prod", FirstAt: now, LastAt: now,
+	raw := LoginRequest{ID: "0123456789abcdef01234567", Profile: "prod", Key: "af-prod", FirstAt: now, LastAt: now,
 		Waiters: []LoginWaiter{{Session: "account 999999999999 — enter code XXXX-XXXX", Command: strings.Repeat("y", 200), At: now}}}
-	if err := writeJSONFile(requestPath("af-prod"), raw); err != nil {
+	b, _ := json.Marshal(raw)
+	if err := os.WriteFile(logins.RequestPath("af-prod"), b, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
@@ -296,6 +327,64 @@ func TestDeviceURLHostIsComparedWhole(t *testing.T) {
 	cn := allowedDeviceHosts(Profile{SSORegion: "cn-north-1", StartURL: "https://x.awsapps.cn/start"})
 	if cn[0] != "device.sso.cn-north-1.amazonaws.com.cn" || cn[1] != "x.awsapps.cn" {
 		t.Fatalf("cn hosts = %v", cn)
+	}
+}
+
+func TestDeviceURLForIssuerStartURLAdmitsOnlyThePortal(t *testing.T) {
+	const ins = "ssoins-0123456789abcdef"
+	check := func(sp Profile, cases map[string]bool) {
+		t.Helper()
+		allowed := allowedDeviceHosts(sp)
+		for url, want := range cases {
+			if got := deviceURLAllowed(url, allowed); got != want {
+				t.Errorf("%s: allowed = %v, want %v (hosts %v)", url, got, want, allowed)
+			}
+		}
+	}
+	check(Profile{SSORegion: "ap-northeast-1", StartURL: "https://identitycenter.amazonaws.com/" + ins}, map[string]bool{
+		"https://d-0123456789.awsapps.com/start/#/device?user_code=ABCD-EFGH":             true,
+		"https://my-alias.awsapps.com/start/#/device?user_code=ABCD-EFGH":                 true,
+		"https://" + ins + ".ap-northeast-1.portal.amazonaws.com/#/device?user_code=ABCD": true,
+		"https://" + ins + ".portal.ap-northeast-1.app.aws/#/device?user_code=ABCD-EFGH":  true,
+		"https://device.sso.ap-northeast-1.amazonaws.com/?user_code=ABCD-EFGH":            true,
+		"https://evil-awsapps.com/start/#/device":                                         false,
+		"https://awsapps.com/start/#/device":                                              false,
+		"https://evil.example.awsapps.com/start/#/device":                                 false,
+		"https://d-0123456789.awsapps.com.evil.example/start/#/device":                    false,
+		"https://evil.example/d-0123456789.awsapps.com/start":                             false,
+		"https://ssoins-other.portal.ap-northeast-1.app.aws/#/device":                     false,
+		"https://" + ins + ".portal.us-east-1.app.aws/#/device":                           false,
+		"https://ssoins-other.ap-northeast-1.portal.amazonaws.com/#/device":               false,
+		"https://" + ins + ".us-east-1.portal.amazonaws.com/#/device":                     false,
+		"https://" + ins + ".ap-northeast-1.portal.amazonaws.com.evil.example/#/device":   false,
+		"https://" + ins + ".ap-northeast-1.portal.amazonaws.com.cn/#/device":             false,
+		"https://start.home.awsapps.cn/directory/x":                                       false,
+		"http://d-0123456789.awsapps.com/start/#/device":                                  false,
+	})
+	check(Profile{SSORegion: "cn-north-1", StartURL: "https://identitycenter.amazonaws.com.cn/" + ins}, map[string]bool{
+		"https://start.home.awsapps.cn/directory/x/#/device?user_code=ABCD-EFGH":          true,
+		"https://start.cn-north-1.home.awsapps.cn/directory/x/#/device":                   true,
+		"https://" + ins + ".cn-north-1.portal.amazonaws.com.cn/#/device":                 true,
+		"https://" + ins + ".portal.cn-north-1.app.amazonwebservices.com.cn/#/device":     true,
+		"https://device.sso.cn-north-1.amazonaws.com.cn/?user_code=ABCD-EFGH":             true,
+		"https://d-0123456789.awsapps.cn/start/#/device":                                  false,
+		"https://d-0123456789.awsapps.com/start/#/device":                                 false,
+		"https://" + ins + ".portal.cn-north-1.app.aws/#/device":                          false,
+		"https://" + ins + ".cn-north-1.portal.amazonaws.com/#/device":                    false,
+		"https://start.cn-northwest-1.home.awsapps.cn/directory/x":                        false,
+		"https://ssoins-other.cn-north-1.portal.amazonaws.com.cn/#/device":                false,
+		"https://" + ins + ".portal.cn-northwest-1.app.amazonwebservices.com.cn/#/device": false,
+		"https://evil.start.home.awsapps.cn/":                                             false,
+	})
+	// A portal-form start URL keeps the exact host: another instance's portal is refused.
+	portal := allowedDeviceHosts(prodSettings["prod"])
+	if deviceURLAllowed("https://d-0123456789.awsapps.com/start/#/device", portal) {
+		t.Fatalf("a portal start URL admitted another portal: %v", portal)
+	}
+	// A path that is not one label never reaches a host name.
+	odd := allowedDeviceHosts(Profile{SSORegion: "ap-northeast-1", StartURL: "https://identitycenter.amazonaws.com/ssoins-1.evil.example"})
+	if deviceURLAllowed("https://ssoins-1.evil.example.portal.ap-northeast-1.app.aws/", odd) || len(odd) != 3 {
+		t.Fatalf("hosts = %v", odd)
 	}
 }
 
@@ -366,16 +455,16 @@ mkdir -p "$(dirname "`+cache+`")"
 printf '{"accessToken":"fresh","expiresAt":"2099-01-01T00:00:00Z"}' > "`+cache+`"
 `)
 	first := startAttempt(t, r.ID)
-	v := waitPhase(t, r.ID, first, attemptAuthorize)
+	v := waitPhase(t, r.ID, first, cloudlogin.PhaseAuthorize)
 	if v["code"] != "ABCD-EFGH" || !strings.HasPrefix(v["url"], "https://device.sso.ap-northeast-1.amazonaws.com/") {
 		t.Fatalf("attempt = %v", v)
 	}
 	// A second press (anyone's) replaces the first; the first never shows another code.
 	second := startAttempt(t, r.ID)
-	if v := waitPhase(t, r.ID, first, attemptReplaced); v["url"] != "" || v["code"] != "" {
+	if v := waitPhase(t, r.ID, first, cloudlogin.PhaseReplaced); v["url"] != "" || v["code"] != "" {
 		t.Fatalf("the replaced attempt still shows a code: %v", v)
 	}
-	waitPhase(t, r.ID, second, attemptAuthorize)
+	waitPhase(t, r.ID, second, cloudlogin.PhaseAuthorize)
 	// The replaced attempt's process is really gone, not only hidden.
 	pids, _ := os.ReadFile(filepath.Join(state, "pids"))
 	var firstPid int
@@ -388,12 +477,12 @@ printf '{"accessToken":"fresh","expiresAt":"2099-01-01T00:00:00Z"}' > "`+cache+`
 			t.Fatalf("the replaced attempt's process %d is still running", firstPid)
 		}
 	}
-	if v := attemptView(t, "000000000000000000000000", second); v["phase"] != attemptGone {
+	if v := attemptView(t, "000000000000000000000000", second); v["phase"] != cloudlogin.PhaseGone {
 		t.Fatalf("an attempt answered under another request id: %v", v)
 	}
 	os.WriteFile(filepath.Join(state, "approve"), nil, 0o600)
-	waitPhase(t, r.ID, second, attemptDone)
-	if got := sweepLoginRequests(time.Now()); len(got) != 0 {
+	waitPhase(t, r.ID, second, cloudlogin.PhaseDone)
+	if got := logins.Sweep(time.Now()); len(got) != 0 {
 		t.Fatalf("the request did not resolve after the login: %+v", got)
 	}
 }
@@ -402,7 +491,7 @@ func TestLoginAttemptRefusesAnUnexpectedSignInURL(t *testing.T) {
 	r, _ := fileRequest(t, `echo "Open https://device.sso.ap-northeast-1.amazonaws.com.evil.example/?user_code=ABCD-EFGH"; sleep 5
 `)
 	a := startAttempt(t, r.ID)
-	v := waitPhase(t, r.ID, a, attemptFailed)
+	v := waitPhase(t, r.ID, a, cloudlogin.PhaseFailed)
 	if v["url"] != "" || v["code"] != "" || v["message"] != "unexpected sign-in URL" {
 		t.Fatalf("attempt = %v", v)
 	}
@@ -412,16 +501,13 @@ func TestLoginRequestExpiresButNotUnderALiveAttempt(t *testing.T) {
 	r, _ := fileRequest(t, `echo "Open https://device.sso.ap-northeast-1.amazonaws.com/?user_code=ABCD-EFGH"; sleep 5
 `)
 	a := startAttempt(t, r.ID)
-	waitPhase(t, r.ID, a, attemptAuthorize)
-	later := time.Now().Add(loginRequestTTL + time.Minute)
-	if got := sweepLoginRequests(later); len(got) != 1 {
+	waitPhase(t, r.ID, a, cloudlogin.PhaseAuthorize)
+	later := time.Now().Add(cloudlogin.RequestTTL + time.Minute)
+	if got := logins.Sweep(later); len(got) != 1 {
 		t.Fatal("the request expired under a live attempt")
 	}
-	loginAttempts.Lock()
-	cur := loginAttempts.current["af-prod"]
-	loginAttempts.Unlock()
-	cur.end(attemptFailed, "")
-	if got := sweepLoginRequests(later); len(got) != 0 {
+	logins.Current("af-prod").End(cloudlogin.PhaseFailed, "")
+	if got := logins.Sweep(later); len(got) != 0 {
 		t.Fatal("the request did not expire")
 	}
 }
@@ -493,25 +579,25 @@ printf '{"accessToken":"fresh","expiresAt":"2099-01-01T00:00:00Z"}' > "`+cache+`
 	creq := httptest.NewRequest(http.MethodPost, "/aws-login/"+r.ID+"/cancel", nil)
 	creq.SetPathValue("id", r.ID)
 	HandleLoginCancel(rec, creq)
-	if _, ok := liveMarker("af-prod", time.Now()); !ok {
+	if !logins.Held("af-prod", time.Now()) {
 		t.Fatal("the cancel left no hold to test against")
 	}
 
 	a := startProfileAttempt(t, "prod")
-	v := waitProfilePhase(t, "prod", a, attemptAuthorize)
+	v := waitProfilePhase(t, "prod", a, cloudlogin.PhaseAuthorize)
 	if v["code"] != "WXYZ-1234" {
 		t.Fatalf("profile attempt = %v", v)
 	}
 	// Neither route reads the other's code: not the request route, not another name.
-	if v := attemptView(t, r.ID, a); v["phase"] != attemptGone {
+	if v := attemptView(t, r.ID, a); v["phase"] != cloudlogin.PhaseGone {
 		t.Fatalf("the request route answered for a row's attempt: %v", v)
 	}
-	if v := profileAttemptView("other", a); v["phase"] != attemptGone {
+	if v := profileAttemptView("other", a); v["phase"] != cloudlogin.PhaseGone {
 		t.Fatalf("another profile name answered for prod's attempt: %v", v)
 	}
 	os.WriteFile(filepath.Join(state, "approve"), nil, 0o600)
-	waitProfilePhase(t, "prod", a, attemptDone)
-	if _, ok := liveMarker("af-prod", time.Now()); ok {
+	waitProfilePhase(t, "prod", a, cloudlogin.PhaseDone)
+	if logins.Held("af-prod", time.Now()) {
 		t.Fatal("the login did not void the cancel hold")
 	}
 }
@@ -521,13 +607,13 @@ func TestProfileLoginSharesTheAttemptSlotAndOutlivesACancel(t *testing.T) {
 `)
 	exportedProd(t)
 	fromToast := startAttempt(t, r.ID)
-	waitPhase(t, r.ID, fromToast, attemptAuthorize)
-	if v := profileAttemptView("prod", fromToast); v["phase"] != attemptGone {
+	waitPhase(t, r.ID, fromToast, cloudlogin.PhaseAuthorize)
+	if v := profileAttemptView("prod", fromToast); v["phase"] != cloudlogin.PhaseGone {
 		t.Fatalf("the row route answered for a request's attempt: %v", v)
 	}
 	fromRow := startProfileAttempt(t, "prod")
-	waitPhase(t, r.ID, fromToast, attemptReplaced)
-	waitProfilePhase(t, "prod", fromRow, attemptAuthorize)
+	waitPhase(t, r.ID, fromToast, cloudlogin.PhaseReplaced)
+	waitProfilePhase(t, "prod", fromRow, cloudlogin.PhaseAuthorize)
 
 	rec := httptest.NewRecorder()
 	creq := httptest.NewRequest(http.MethodPost, "/aws-login/"+r.ID+"/cancel", nil)
@@ -536,13 +622,10 @@ func TestProfileLoginSharesTheAttemptSlotAndOutlivesACancel(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("cancel = %d %s", rec.Code, rec.Body.String())
 	}
-	if v := profileAttemptView("prod", fromRow); v["phase"] != attemptAuthorize {
+	if v := profileAttemptView("prod", fromRow); v["phase"] != cloudlogin.PhaseAuthorize {
 		t.Fatalf("cancelling the request ended the row's login: %v", v)
 	}
-	loginAttempts.Lock()
-	cur := loginAttempts.byID[fromRow]
-	loginAttempts.Unlock()
-	cur.end(attemptFailed, "")
+	logins.Attempt(fromRow).End(cloudlogin.PhaseFailed, "")
 }
 
 func TestProfileLoginRefusesWhatWasNotExported(t *testing.T) {
@@ -568,10 +651,8 @@ func TestProfileLoginRefusesWhatWasNotExported(t *testing.T) {
 			t.Errorf("start %s = %d %s, want %s", name, rec.Code, rec.Body.String(), want)
 		}
 	}
-	loginAttempts.Lock()
-	defer loginAttempts.Unlock()
 	for _, s := range []string{"af-nope", "af-mine", "af-half"} {
-		if loginAttempts.current[s] != nil {
+		if logins.Current(s) != nil {
 			t.Errorf("a refused press started an attempt for %s", s)
 		}
 	}
@@ -643,13 +724,10 @@ func TestARowLoginDoesNotKeepARequestPastItsTTL(t *testing.T) {
 `)
 	exportedProd(t)
 	a := startProfileAttempt(t, "prod")
-	waitProfilePhase(t, "prod", a, attemptAuthorize)
-	later := time.Now().Add(loginRequestTTL + time.Minute)
-	if got := sweepLoginRequests(later); len(got) != 0 {
+	waitProfilePhase(t, "prod", a, cloudlogin.PhaseAuthorize)
+	later := time.Now().Add(cloudlogin.RequestTTL + time.Minute)
+	if got := logins.Sweep(later); len(got) != 0 {
 		t.Fatalf("a row's login kept request %s past its TTL", r.ID)
 	}
-	loginAttempts.Lock()
-	cur := loginAttempts.byID[a]
-	loginAttempts.Unlock()
-	cur.end(attemptFailed, "")
+	logins.Attempt(a).End(cloudlogin.PhaseFailed, "")
 }

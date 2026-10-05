@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
 )
 
 const (
@@ -277,8 +279,10 @@ func forbiddenBrowserResource(rawURL string) bool {
 	case "host.docker.internal", "gateway.docker.internal", "metadata.google.internal", "instance-data.ec2.internal", "kubernetes.default.svc":
 		return true
 	}
-	if base, err := url.Parse(os.Getenv("AF_CP_BASE_URL")); err == nil && base.Hostname() != "" {
-		if sameBrowserEndpoint(u, base) {
+	// Both addresses of the CP: the public one, and the workspace listener's where the CP
+	// injected one (ADR 0106 decision 8).
+	for _, b := range cpurl.All() {
+		if base, err := url.Parse(b); err == nil && base.Hostname() != "" && sameBrowserEndpoint(u, base) {
 			return true
 		}
 	}

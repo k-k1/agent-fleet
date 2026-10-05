@@ -22,6 +22,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/netip"
 
@@ -81,6 +82,10 @@ func (a adminAPI) stopWorkspace(w http.ResponseWriter, r *http.Request) { a.srv(
 
 func (a adminAPI) cleanHome(w http.ResponseWriter, r *http.Request) { a.srv().CleanHome(w, r) }
 
+func (a adminAPI) rotateGitToken(w http.ResponseWriter, r *http.Request) {
+	a.srv().RotateGitToken(w, r)
+}
+
 func (a adminAPI) homeBackups(w http.ResponseWriter, r *http.Request) { a.srv().HomeBackups(w, r) }
 
 func (a adminAPI) deleteHomeBackups(w http.ResponseWriter, r *http.Request) {
@@ -125,6 +130,14 @@ func (a adminAPI) poolStatus(w http.ResponseWriter, r *http.Request, ident store
 
 func (a adminAPI) terminatePoolSlot(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	a.srv().TerminatePoolSlot(w, r, ident)
+}
+
+func (a adminAPI) reservePoolSlot(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	a.srv().ReservePoolSlot(w, r, ident)
+}
+
+func (a adminAPI) reserveOutdatedPoolSlots(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	a.srv().ReserveOutdatedPoolSlots(w, r, ident)
 }
 
 func (a adminAPI) tenantNetwork(w http.ResponseWriter, r *http.Request) { a.srv().TenantNetwork(w, r) }
@@ -219,8 +232,38 @@ func (d cpTenant) StopWorkspaceByMembership(ctx context.Context, mid string) err
 	return d.m.stopWorkspaceByMembership(ctx, mid)
 }
 
+func (d cpTenant) StopRemovedMemberWorkspace(ctx context.Context, mid string) (bool, error) {
+	err := d.m.stopWorkspaceOfRemovedMember(ctx, mid)
+	if errors.Is(err, errMembershipActive) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (d cpTenant) CloseMembershipConnections(mid string) int { return d.m.memberConns.cancel(mid) }
+
+func (d cpTenant) ResumeSchedulesHeldByRemoval(ctx context.Context, mid string) (int, error) {
+	return d.m.resumeSchedulesHeldByRemoval(ctx, mid)
+}
+
+func (d cpTenant) RotateGitToken(ctx context.Context, mid string) (int64, string, bool, error) {
+	return d.m.rotateGitToken(ctx, mid)
+}
+
 func (d cpTenant) CleanHomeByMembership(ctx context.Context, mid string) error {
 	return d.m.cleanHomeByMembership(ctx, mid)
+}
+
+func (d cpTenant) HomeOpsInBackground() bool { return d.m.homeOperations().Background }
+
+func (d cpTenant) DestroyInBackground() bool { return d.m.homeOperations().DestroyBackground }
+
+func (d cpTenant) StartCleanHomeByMembership(ctx context.Context, mid string, audit store.HomeOpAudit) error {
+	return d.m.startCleanHomeByMembership(ctx, mid, audit)
+}
+
+func (d cpTenant) StartDestroyWorkspaceByMembership(ctx context.Context, mid string, audit store.HomeOpAudit) error {
+	return d.m.startDestroyWorkspaceByMembership(ctx, mid, audit)
 }
 
 func (d cpTenant) HomeBackupsByMembership(ctx context.Context, mid string) (runtime.HomeBackups, bool, error) {
@@ -261,6 +304,10 @@ func (d cpTenant) HasSlotPool() bool {
 
 func (d cpTenant) TerminateQuarantinedSlot(ctx context.Context, instanceID string) (string, bool, error) {
 	return d.m.terminateQuarantinedSlot(ctx, instanceID)
+}
+
+func (d cpTenant) ReserveSlotReplacement(ctx context.Context, instanceID string, reserve, onlyOutdated bool) (runtime.SlotReservation, bool, error) {
+	return d.m.reserveSlotReplacement(ctx, instanceID, reserve, onlyOutdated)
 }
 
 func (d cpTenant) TenantAdminFor(w http.ResponseWriter, r *http.Request, slug string) (store.Identity, store.Tenant, bool) {

@@ -2,35 +2,10 @@
    pixel parity (docs/log/22 P6a). The .spark base rules from that region live in
    ui/ui.css (owned by ui/Sparkline). Trimmed at P8. */
 
-/* Legacy control styles (old element globals), scoped to the bar — the verbatim-
-   ported WsBar keeps raw <button className="ghost">/<input> markup. :where()
-   keeps the old 0-0-1 specificity so class rules still win (see mirror.css). */
-:where(.wsbar) button {
-  background: var(--btn);
-  color: var(--fg);
-  border: 1px solid var(--btn-border);
-  border-radius: 4px;
-  padding: 4px 10px;
-  cursor: pointer;
-  font: inherit;
-}
-:where(.wsbar) button:hover:not(:disabled) {
-  background: var(--btn-h);
-}
-:where(.wsbar) button:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-:where(.wsbar) button.ghost {
-  background: transparent;
-  border-color: transparent;
-  color: var(--muted);
-  padding: 2px 6px;
-}
-:where(.wsbar) button.ghost:hover:not(:disabled) {
-  background: var(--btn);
-  color: var(--fg);
-}
+/* Legacy input styles (old element global), scoped to the bar — the preview popover's
+   port and path fields are raw <input>s: console/src/ui has no input primitive yet.
+   :where() keeps the old 0-0-1 specificity so class rules still win (see mirror.css).
+   Every button in the bar and in the chips it hosts is a ui/Button. */
 :where(.wsbar) input {
   background: var(--btn);
   color: var(--fg);
@@ -42,6 +17,12 @@
 :where(.wsbar) input:focus {
   outline: 1px solid var(--accent);
   border-color: var(--accent);
+}
+/* ui/Button rings keyboard focus in --accent at a 1px offset; the bar keeps the app-wide
+   ring (base.css :focus-visible) its controls have always had. */
+:where(.wsbar) .ui-btn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .wsbar {
@@ -342,6 +323,7 @@ button.wu-reload {
 }
 .wu-place-seg button {
   flex: 1;
+  justify-content: center; /* the label sits mid-segment, as in a plain button */
   margin: 0;
   padding: 2px 8px;
   border: 0;
@@ -515,6 +497,9 @@ button.wu-manage {
 /* An attachment is listed by its page title, which is arbitrary length — let the
    row give it the full width and ellipsize instead of widening the popover. */
 .pv-attachment {
+  /* Block, not ui/Button's inline-flex: as a flex box the title would be an anonymous item
+     and the ellipsis below would never draw. */
+  display: block;
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -698,6 +683,10 @@ button.wu-manage {
 .ws-preview {
   position: relative;
 }
+/* Inline flow, not ui/Button's inline-flex, so it keeps its neighbours' height (as .ws-more-btn). */
+.ws-preview-btn {
+  display: inline-block;
+}
 .ws-preview-pop {
   position: absolute;
   top: calc(100% + 6px);
@@ -745,6 +734,11 @@ button.wu-manage {
 .ws-more {
   position: relative;
 }
+/* Inline flow, not ui/Button's inline-flex: the lone glyph then sits in the bar's line box and
+   the button keeps the height of its neighbours (27.6px; 24px as a flex box). */
+.ws-more-btn {
+  display: inline-block;
+}
 .ws-more-pop {
   position: absolute;
   top: calc(100% + 6px);
@@ -769,6 +763,44 @@ button.wu-manage {
    show nothing but padding inside the popover, so collapse it here — WsBar cannot tell. */
 .ws-more-stats:empty {
   display: none;
+}
+
+/* Desktop fold steps, set as attributes on the bar by app/wsBarFold.ts as the content stops
+   fitting. Nothing on the desktop bar shrinks: a label that could wrap is what turned each
+   pane button into a one-character column on a crowded bar (a CJK label breaks after any
+   character), and the fold logic measures natural widths — a shrunk item would always fit.
+   The phone keeps its own layout above. */
+.ws-more-desk {
+  display: none;
+}
+@media (min-width: 761px) {
+  .wsbar > * {
+    flex-shrink: 0;
+  }
+  .wsbar[data-fold-labels] > :is(.ws-split:not(.ws-newsession), .ws-closeall) .lbl {
+    display: none;
+  }
+  .wsbar[data-fold-more] > :is(.ws-aws, .ws-res, .ws-preview) {
+    display: none;
+  }
+  .wsbar[data-fold-more] > .ws-more-desk {
+    display: block;
+  }
+  .wsbar[data-fold-tight] > :is(.ws-newsession, .ws-stale) .lbl,
+  .wsbar[data-fold-tight] > .ws-label .lbl {
+    display: none;
+  }
+  .wsbar[data-fold-tight] > .ws-label .lbl-short {
+    display: inline;
+  }
+  /* Last resort: whatever still does not fit squeezes the state text, never the controls. */
+  .wsbar[data-fold-tight] > .ws-state {
+    flex-shrink: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 /* ---- left pane ---- */
@@ -806,4 +838,128 @@ button.wu-manage {
 .ws-starting-hint {
   font-size: 12px;
   color: var(--muted);
+}
+
+/* AWS profiles chip (#1477). It carries the usage chips' own classes (kind-tag +
+   ws-usage-btn), so its font, padding and height are theirs by construction rather than a
+   copy that drifts; only the colour is its own. Tinted by state rather than by brand:
+   ok = something is signed in (the "Signed in" pill's colour), warn = a login ends soon,
+   muted = none signed in. Not AWS orange: it sits next to --warn and would say nothing about
+   the state. */
+button.ws-aws-btn {
+  --aws-tone: var(--muted);
+  border: 1px solid color-mix(in srgb, var(--aws-tone) 45%, transparent);
+  background: color-mix(in srgb, var(--aws-tone) 14%, transparent);
+  color: var(--aws-tone);
+  font-variant-numeric: tabular-nums;
+}
+button.ws-aws-btn.ok {
+  --aws-tone: var(--ok);
+}
+button.ws-aws-btn.warn {
+  --aws-tone: var(--warn);
+}
+/* No fill when nothing is signed in: the frame says "there is a chip", the empty inside says
+   "nothing in it". */
+button.ws-aws-btn.muted {
+  background: transparent;
+  border-color: var(--btn-border);
+}
+/* Light: the tint is laid on --bg, not on the bar. Over --panel2 the light --warn never
+   reaches 4.5:1 at any tint (measured 4.47 at 8%); on --bg at 10% it is 5.1 (--ok 5.6). */
+[data-theme="light"] button.ws-aws-btn:not(.muted) {
+  background: color-mix(in srgb, var(--aws-tone) 10%, var(--bg));
+  border-color: color-mix(in srgb, var(--aws-tone) 55%, transparent);
+}
+/* The AWS mark is a wide wordmark: at kind-tag's 0.85em glyph size it is an unreadable smudge.
+   15px with line-height 1 is the largest that keeps the tag at its neighbours' height; the
+   element in the selector is what outranks `.kind-tag .codicon`. */
+button.ws-aws-btn .codicon:not(.codicon-chevron-down) {
+  font-size: 15px;
+  line-height: 1;
+}
+/* The Google Cloud chip (gcplogin/GcpProfilesChip) wears these same ws-aws-* classes so the
+   two badges cannot drift apart; only what differs is ws-gcp-*. The Google Cloud mark fills a
+   square, not a wordmark's strip: at 15px it outweighs the label beside it. */
+button.ws-aws-btn.ws-gcp-btn .codicon:not(.codicon-chevron-down) {
+  font-size: 13px;
+}
+.ws-aws-btn .codicon-chevron-down {
+  font-size: 9px;
+  opacity: 0.7;
+}
+.ws-aws-label {
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-aws-pop {
+  width: min(88vw, 320px);
+}
+.ws-aws-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ws-aws-row + .ws-aws-row {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border2, var(--border));
+}
+.ws-aws-head,
+.ws-aws-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+.ws-aws-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.ws-aws-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.ws-aws-foot {
+  margin-top: 4px;
+  font-size: 11px;
+}
+.ws-aws-foot .warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+.ws-aws-state {
+  flex: none;
+  font-size: 10.5px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.ws-aws-state.signed_in {
+  color: var(--ok);
+  border-color: currentColor;
+}
+/* The command is one token to copy; a break inside "--profile" reads as two flags. */
+.ws-aws-cmd {
+  display: inline-block;
+  margin-top: 2px;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+.ws-aws-actions {
+  display: flex;
+  gap: 4px;
+}
+button.ws-aws-login,
+button.ws-aws-logout {
+  font-size: 11px;
+  padding: 1px 8px;
 }

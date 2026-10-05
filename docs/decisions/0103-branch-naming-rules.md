@@ -9,6 +9,9 @@ English | [日本語](0103-branch-naming-rules.ja.md)
   and rules being advisory only (decision 8). The user also chose `{ref}` for the Jira default and
   switching users with an empty template to the new default without a compatibility shim.
 - Amended 2026-09-30 (#1329): decision 9 may create a local branch tracking an origin branch.
+- Implementation note 2026-10-01 (#1129): how decision 4's English slug was built; see the note under decision 4.
+- Amended 2026-10-02 (#1440): under decision 4 the launch modal asks a provisional name again a few times, not once.
+- Implementation note 2026-10-01 (#1127): how decision 10's tenant layer was built; see the note under decision 10.
 - Follow-ups: #1124, #1125, #1126 (P0) / #1127 (P1) / #1128, #1129 (P2)
 - Related: [0061](0061-work-item-inbox.md) decision 12 (the work-item default `feature/{key}`, replaced
   here) / [0031](0031-mcp-registry.md) (the tenant distribution this ADR's tenant layer copies)
@@ -253,6 +256,29 @@ User and tenant rules and the `gitflow.*` keys go through the same key and ref-n
   resolver never waits for it: it answers with the deterministic slug and marks the name `provisional`,
   and the Console may ask again once. Without an AI assist the deterministic slug is final.
 
+#### Implementation note (2026-10-01, #1129): the English slug
+
+This records how P2 was built; the decision above is unchanged.
+
+- "Non-ASCII title" means any non-ASCII character in it (an emoji or a curly quote counts too). A mixed title such as `ログイン fix` keeps its
+  deterministic slug (`fix`) in the provisional answer, and the English slug replaces it once made.
+- It is asked for only when the caller gave no `slug` and the slug reaches the name, through `{slug}`
+  in the template or the prefix-only fallback.
+- "An AI assist" is the branch-name suggestion feature (`branch.suggest`): its on/off, agent and model.
+  The one-shot gets the title as a quoted string it is told to translate and never obey.
+- The reply must be 2–5 lowercase ASCII words joined by hyphens, at most 32 bytes, and must not repeat
+  the instructions; anything else, or a failed call, makes the deterministic slug final for that title.
+- The answer is cached per title and per AI-assist setting; a reply whose settings changed while it was
+  being made is not cached. `sources.slug` is `ai` when it was used.
+
+#### Amendment (2026-10-02, #1440): the launch modal asks again with back-off
+
+Decision 4 let the Console ask again once. Measured on a deployed Agent, the English slug arrived 20–80 s
+after the first ask, so one re-ask at 8 s almost always got the provisional name again. The launch modal
+now asks again 8, 20 and 45 s after the first answer and stops at the first final answer, when the
+person edits the name, or when the modal closes or moves to another item. A name still provisional after
+the last ask stays as it is. While asks remain, the field says the name may still change.
+
 ### Decision 5: base
 
 The base is picked in this order:
@@ -411,6 +437,24 @@ start` still refused after the keys were written, and a hint telling the person 
 - The Agent polls `GET /internal/branch-rules` every five minutes and keeps the last copy when the CP is
   unreachable, the same fail-open cache as tenant MCP servers (`mcp-tenant.json`).
 - There is no "enforce" flag (decision 8).
+
+#### Implementation note (2026-10-01, #1127): the tenant layer
+
+This records how P1 was built; the decision above is unchanged.
+
+- The CP keeps one row per tenant (`tenant_branch_rules`) holding the list as JSON in the Agent's rule
+  shape. A tenant admin replaces it whole through `GET/PUT /api/admin/tenants/{slug}/branch-rules`
+  (Tenant settings → Branch naming rules, a JSON editor); a save is audited as `tenant.branch_rules`.
+- The CP refuses a rule with the Agent's checks (decision 3), running the same `git check-ref-format`,
+  and refuses unknown fields. A tenant `*` rule may set `name`: the bare-`*` refusal guards the user's
+  template and has no meaning for the tenant. A case table shared by both modules' tests keeps the
+  two sets of checks in step, and the Agent still checks on receipt, dropping only the rules it refuses.
+- `/internal/branch-rules` is authenticated by its own per-membership token, `AF_BRANCH_RULES_TOKEN`,
+  like every other bridge; the tenant comes from the token's membership.
+- The Agent's copy is `branch-rules-tenant.json` next to the user store. An error, a non-200 answer or
+  a body without a `rules` list keeps it; a `rules: []` answer empties it. `sources` names a tenant
+  field `tenant: <match>` and carries `tenant_fetched_at`.
+- The work-items settings preview resolves over the user, tenant and built-in layers.
 
 ### Out of scope
 

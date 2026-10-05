@@ -328,9 +328,10 @@
   max-width: 9em;
 }
 
+/* A standalone paragraph (Instructions, Memory). It once sat under a wrapped row, indented to
+   the control column; as a paragraph that indent left a blank 132px column beside it. */
 .ds-hint {
-  flex-basis: 100%;
-  margin-left: 132px;
+  margin: 6px 0 10px;
   font-size: 11px;
   line-height: 1.4;
   color: var(--muted);
@@ -574,6 +575,16 @@
 
 .admin-panel h4 {
   margin: 0 0 10px;
+}
+
+/* A heading inside a panel (one per role in engine access, "add member"). It used to be a
+   second h4 with exactly the panel title's look, or an unstyled div, so the levels could not
+   be told apart. */
+.admin-subhead {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dialog-muted, var(--muted));
 }
 
 .admin-panel h4 .af-note {

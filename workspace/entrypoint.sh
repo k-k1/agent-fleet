@@ -819,10 +819,11 @@ if [ -d "$OC_PLUG_SRC" ]; then
 fi
 
 # opencode permission config: run fully unattended like claude/codex (the container IS
-# the sandbox). The `--auto` launch flag auto-approves most permissions, but NOT
-# `external_directory` (access outside the project dir, e.g. ~/repos siblings) — that
-# stays "ask" and stalls the TUI on a prompt the Console user can't answer. Set every
-# permission to "allow" in ~/.config/opencode/opencode.jsonc, preserving any other keys.
+# the sandbox). The `--auto` launch flag approves every permission on 1.18.33, including
+# `external_directory` (access outside the project dir, e.g. ~/repos siblings; measured),
+# but a pane launched without it, or with auto turned off in the TUI, stalls
+# on a prompt the Console user can't answer. Set every permission to "allow" in
+# ~/.config/opencode/opencode.jsonc, preserving any other keys.
 # Best-effort: skips if the file isn't plain JSON (e.g. the user added comments).
 OC_CFG="$HOME/.config/opencode/opencode.jsonc"
 mkdir -p "$HOME/.config/opencode"

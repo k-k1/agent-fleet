@@ -160,15 +160,17 @@ async function openCatalog(
     return route.abort();
   });
   await page.addInitScript(({ key, theme, registered, tabs }) => {
-    localStorage.setItem("af-display-settings", JSON.stringify({ locale: "en", theme, ...(tabs ? { paneLayout: "tabs" } : {}) }));
+    // paneLayout picks which stored layout boot reads, so the split seed below needs "split"
+    // spelled out: left to the default (tabs) it is never read and the catalogue never opens.
+    localStorage.setItem("af-display-settings", JSON.stringify({ locale: "en", theme, paneLayout: tabs ? "tabs" : "split" }));
     localStorage.setItem("af-tenant", "demo");
     const catalogue = {
       id: "catalog", session: null, wrap: null,
       content: { kind: "engineAdd", engineKey: key, lora: false, view: registered ? "registered" : "search" },
     };
     if (tabs) {
-      // One cell, two tabs. `.tabs` is its own stored layout (LKEY_NEW), and the mode comes from
-      // the display setting above — seeding one without the other opens the split layout instead.
+      // One cell, two tabs. `.tabs` is its own stored layout (LKEY_NEW), and boot reads only the
+      // layout of the paneLayout set above, so the two must name the same mode.
       localStorage.setItem("af.layout2.demo@example.com.demo.tabs", JSON.stringify({
         version: 3, mode: "tabs",
         cols: [{ id: "catalog-col", rowRatio: 0.5, cells: [{ id: "cell", selectedViewId: "catalog", views: [

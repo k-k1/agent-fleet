@@ -2,12 +2,15 @@ package muse
 
 import (
 	"encoding/json"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp/msptest"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 func approvalParams() msp.ApprovalRequestParams {
@@ -719,6 +722,45 @@ func TestTranscriptKeepsUserInputAQuestion(t *testing.T) {
 	}
 }
 
+// The Console replies with the id of the card's first question (`pending[0].id`), not with the
+// Interaction's. When that was the model's own question id ("apply-labels"), Respond refused
+// both the answer and the cancel, and the card could not be dismissed.
+func TestQuestionAnswersByTheIDTheCardCarries(t *testing.T) {
+	for _, d := range []agents.Decision{agents.DecisionCancel, agents.DecisionAnswer} {
+		t.Run(string(d), func(t *testing.T) {
+			h := &threadHandle{}
+			host := newTestHandle(t, h)
+			host.Handle(msp.MethodUserInputCancel, func(m msptest.Message) (any, *msp.Error) {
+				return msp.CommandAcceptedResult{}, nil
+			})
+			host.Handle(msp.MethodUserInputAnswer, func(m msptest.Message) (any, *msp.Error) {
+				return msp.CommandAcceptedResult{}, nil
+			})
+			host.Notify(msp.NotificationUserInputRequested, msp.UserInputRequestParams{
+				UserInputID: "ui-card", SessionID: h.sid,
+				Questions: []msp.UserInputQuestion{{ID: "apply-labels", Question: "apply?",
+					Options: []msp.UserInputOption{{Label: "yes"}}}},
+			})
+			inter := waitInteraction(t, h)
+			reply := agents.InteractionReply{ID: inter.Questions[0].ID, Decision: d}
+			if d == agents.DecisionAnswer {
+				reply.Answers = []agents.InteractionAnswer{{Options: []int{0}}}
+			}
+			if err := h.Respond(reply); err != nil {
+				t.Fatalf("respond with the card's id %q: %v", reply.ID, err)
+			}
+			if d == agents.DecisionAnswer {
+				m := waitSent(t, host, isMethod(msp.MethodUserInputAnswer))
+				if !strings.Contains(string(m.Params), `"questionId":"apply-labels"`) {
+					t.Errorf("the answer lost the model's question id: %s", m.Params)
+				}
+			} else {
+				waitSent(t, host, isMethod(msp.MethodUserInputCancel))
+			}
+		})
+	}
+}
+
 // Declining a question is the runtime's own refusal (ADR 0105 decision 7): cancel and deny go out
 // as userInput/cancel, never as an empty userInput/answer, and they leave the queue alone.
 func TestCancelledQuestionSendsUserInputCancelAndKeepsTheQueue(t *testing.T) {
@@ -752,6 +794,10 @@ func TestCancelledQuestionSendsUserInputCancelAndKeepsTheQueue(t *testing.T) {
 			if p.UserInputID != "ui-9" || p.SessionID != h.sid {
 				t.Fatalf("userInput/cancel params = %+v", p)
 			}
+			// Optional in the schema, required by the real host (-32602 without it).
+			if p.Reason == nil || *p.Reason == "" {
+				t.Errorf("userInput/cancel went out without a reason: %s", m.Params)
+			}
 			for _, m := range host.Received() {
 				if m.Method == msp.MethodUserInputAnswer || m.Method == msp.MethodTurnInterrupt {
 					t.Fatalf("declining the question sent %s", m.Method)
@@ -765,5 +811,119 @@ func TestCancelledQuestionSendsUserInputCancelAndKeepsTheQueue(t *testing.T) {
 					pending != nil, queued, running)
 			}
 		})
+	}
+}
+
+// The status file holds the "working" turn/started wrote for the whole turn, so the session
+// list read "in progress" while a question card was waiting. The live prompt decides instead,
+// and the state goes back to working once it is answered.
+func TestWireLiveReportsAPendingPromptOverWorking(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Kind: session.KindMuse, Name: "wl-" + t.Name(), Dir: t.TempDir(), Driver: session.DriverManaged}
+	h := &threadHandle{name: m.Name, slotSid: slotSid(m)}
+	host := newTestHandle(t, h)
+	registerHandle(t, m.Name, h)
+	host.Handle(msp.MethodUserInputCancel, func(msptest.Message) (any, *msp.Error) {
+		return msp.CommandAcceptedResult{}, nil
+	})
+
+	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{TurnID: "t-1", SessionID: h.sid})
+	waitEvent(t, h, agents.TurnRunning)
+	if st := New().WireLive(m, true).State; st != "working" {
+		t.Fatalf("state during the turn = %q, want working", st)
+	}
+
+	host.Notify(msp.NotificationUserInputRequested, msp.UserInputRequestParams{
+		UserInputID: "ui-wl", SessionID: h.sid,
+		Questions: []msp.UserInputQuestion{{ID: "q1", Question: "which?"}},
+	})
+	inter := waitInteraction(t, h)
+	if st := New().WireLive(m, true).State; st != "question" {
+		t.Errorf("state with a question waiting = %q, want question", st)
+	}
+	if err := h.Respond(agents.InteractionReply{ID: inter.ID, Decision: agents.DecisionCancel}); err != nil {
+		t.Fatal(err)
+	}
+	if st := New().WireLive(m, true).State; st != "working" {
+		t.Errorf("state after the cancel = %q, want working", st)
+	}
+
+	host.Notify(msp.NotificationApprovalRequested, approvalParams())
+	waitInteraction(t, h)
+	if st := New().WireLive(m, true).State; st != "permission" {
+		t.Errorf("state with an approval waiting = %q, want permission", st)
+	}
+}
+
+// The host refuses an answer that carries more than one of selectedLabel, selectedLabels and
+// freeText (-32057 userInputAnswerInvalid, reason invalid_target — measured when a single pick
+// went out as both label fields). Every shape the Console can send must come out as exactly
+// one, matched to the question's selection mode.
+func TestUserInputAnswerCarriesExactlyOneValue(t *testing.T) {
+	single := msp.UserInputQuestion{ID: "q", Options: []msp.UserInputOption{{Label: "a"}, {Label: "b"}},
+		Selection: msp.UserInputSelection{Mode: msp.UserInputSelectionModeSingle}}
+	multi := single
+	multi.Selection.Mode = msp.UserInputSelectionModeMultiple
+	for _, c := range []struct {
+		name       string
+		q          msp.UserInputQuestion
+		r          agents.InteractionAnswer
+		label      string
+		labels     []string
+		free, note string
+	}{
+		{"single pick", single, agents.InteractionAnswer{Options: []int{1}}, "b", nil, "", ""},
+		{"single pick with text", single, agents.InteractionAnswer{Options: []int{0}, Text: "why"}, "a", nil, "", "why"},
+		{"text only", single, agents.InteractionAnswer{Text: " typed "}, "", nil, "typed", ""},
+		{"multi one pick", multi, agents.InteractionAnswer{Options: []int{0}}, "", []string{"a"}, "", ""},
+		{"multi picks with text", multi, agents.InteractionAnswer{Options: []int{0, 1}, Text: "and"}, "", []string{"a", "b"}, "", "and"},
+		{"out of range pick", single, agents.InteractionAnswer{Options: []int{7}}, "", nil, "", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a := userInputAnswer(c.q, c.r)
+			n := 0
+			if a.SelectedLabel != nil {
+				n++
+			}
+			if a.SelectedLabels != nil {
+				n++
+			}
+			if a.FreeText != nil {
+				n++
+			}
+			if n > 1 {
+				t.Fatalf("answer carries %d values, the host takes one: %+v", n, a)
+			}
+			if a.QuestionID != "q" || deref(a.SelectedLabel) != c.label || !slices.Equal(a.SelectedLabels, c.labels) ||
+				deref(a.FreeText) != c.free || deref(a.Note) != c.note {
+				t.Errorf("answer = {label %q labels %v free %q note %q}, want {%q %v %q %q}",
+					deref(a.SelectedLabel), a.SelectedLabels, deref(a.FreeText), deref(a.Note), c.label, c.labels, c.free, c.note)
+			}
+		})
+	}
+}
+
+func deref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+// The pending card is multi-select when the host says so; drawn as single-select, the member
+// could pick only one option of a question that wants several.
+func TestPendingCardFollowsTheSelectionMode(t *testing.T) {
+	h := &threadHandle{}
+	host := newTestHandle(t, h)
+	host.Notify(msp.NotificationUserInputRequested, msp.UserInputRequestParams{
+		UserInputID: "ui-mode", SessionID: h.sid,
+		Questions: []msp.UserInputQuestion{
+			{ID: "one", Question: "one?", Selection: msp.UserInputSelection{Mode: msp.UserInputSelectionModeSingle}},
+			{ID: "many", Question: "many?", Selection: msp.UserInputSelection{Mode: msp.UserInputSelectionModeMultiple}},
+		},
+	})
+	inter := waitInteraction(t, h)
+	if inter.Questions[0].MultiSelect || !inter.Questions[1].MultiSelect {
+		t.Errorf("multiSelect = %v, %v; want false, true", inter.Questions[0].MultiSelect, inter.Questions[1].MultiSelect)
 	}
 }

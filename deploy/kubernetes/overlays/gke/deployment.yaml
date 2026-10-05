@@ -1,0 +1,23 @@
+# The values that differ per deployment. `terraform output -raw kustomize_deployment` in
+# deploy/gcp/gke prints this file filled in; the values below are examples.
+# components/params and components/gke write them into the manifests; kustomize drops
+# this object from the output (local-config).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: af-deployment
+  annotations:
+    config.kubernetes.io/local-config: "true"
+data:
+  # Both namespaces start with this deployment's prefix (Terraform's name_prefix): Workload
+  # Identity treats equal names in any cluster of the project as one identity.
+  cpNamespace: af-example-cp
+  wsNamespace: af-example-ws
+  storageClass: af-example-workspace
+  workspaceImage: europe-west1-docker.pkg.dev/example-project/agent-fleet/workspace:VERSION
+  cpGoogleServiceAccount: af-example-cp@example-project.iam.gserviceaccount.com
+  # The IAM database user: the service account's email without ".gserviceaccount.com".
+  cloudSqlUser: af-example-cp@example-project.iam
+  cloudSqlInstance: example-project:europe-west1:af-example-pg
+  gatewayAddressName: af-example-lb
+  certificateMapName: af-example-certmap

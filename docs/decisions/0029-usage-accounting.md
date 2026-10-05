@@ -281,3 +281,57 @@ skill). The frozen rules:
   different axis (the ledger measures actual consumption *after* rtk is applied). copilot has only
   `outTok`, and kiro/cursor/agy have no tokens in the transcript — reported honestly via `measured`.
 - **Privacy**: no content is recorded. The ledger stays inside the workspace.
+
+## Addendum (2026-10-04) — opencode sessions fill `cost_usd` with the cost opencode reports
+
+§7-1 limited `cost_usd` to claude's measurement. opencode reports a cost of its own on every
+assistant message (`message.cost`, measured on 1.18.34: per message, i.e. per LLM call, final at
+`time.completed`; `session.cost` is the running total; a free model reports 0). It is opencode's
+catalog price times that call's tokens — the same kind of figure as claude's `total_cost_usd`,
+not a provider bill. So for `kind=opencode`, `feature=session` rows:
+
+- the fold sums the messages of a logical turn into that row's `cost_usd` — once per message,
+  because each message is its own call (unlike the input tokens, which keep their
+  replace-not-add rule). A fork's copies of earlier messages (new ids, original `time_created`,
+  so older than the session holding them) carry no cost: the session that made the call already
+  reported it. A billed message with nothing to display (an empty text, step parts only) still
+  counts: the usage read returns it as a cost-only turn, whose cost joins the logical turn on its
+  side, else the next one before the next user turn, else becomes a cost-only row at that boundary
+  or at the settle on archive/delete. Such a row has `idx` 0, so it never renumbers the logical
+  turns, and is identified by its message id instead: the fold's watermark keeps the folded ids
+  (a session that moves to another conversation still folds its new ones), and the row's `key`
+  makes the aggregation count it once even when a crash before the watermark write re-appends it;
+- `cost_est_usd` is still computed from the tokens and **never** added to, replaced by or
+  back-filled from `cost_usd`. The two legitimately differ: opencode prices every call of a
+  multi-step turn, while the fold keeps one input snapshot per turn;
+- rows folded before this change keep an empty `cost_usd` (the watermark does not re-fold), and
+  a 0 is not written. Other kinds are unchanged.
+
+## Addendum (2026-10-04) — the per-session spend budget prices the transcript, not the ledger
+
+[#1054](https://github.com/k-k1/agent-fleet/issues/1054) adds a per-session spend budget: when a
+session's estimated spend reaches its cap it is stopped after its turn (the stop-after-turn arm),
+and at `SpendCapHardFactor` (2) × the cap it is halted mid-turn. The decisions that touch this
+ADR:
+
+- **The budget does not read the ledger.** It prices the session's own transcript through the same
+  turn fold (`foldTurnRows`) and price table (`usageEstCostUSD`) the ledger and the usage view use
+  (`usage_spend.go`). The ledger has no per-session query, folds lazily on read, and adding its rows
+  to a transcript sum would count every turn twice.
+- **Per logical turn, one price.** A turn the CLI reported a cost for is charged that cost
+  (`cost_usd`); any other turn is charged the list-price estimate of its tokens. The two are never
+  added. A turn with tokens but no price is left out and flagged `unpriced`; no 0 is invented.
+- **Only the session's own turns.** Turns stamped before the session's start are not charged: a
+  fork starts from a copy of its source's history with the source's timestamps. A fork's start is
+  `SpendFrom`, the sub-second instant it was made — `CreatedAt` keeps whole seconds, and history
+  copied from the same second would otherwise be charged to the fork.
+- **The stop is armed at the end of the last turn that stayed under the cap**
+  (`session.SpendCrossingBound`), not at the tick that noticed the crossing: the arm's instant
+  is the lower bound the end-of-turn evidence is cut by, and the turn that crossed has often
+  ended before the tick sees it. The budget releases only an arm it wrote itself
+  (`SpendCapArmAt`); a user's or schedule's arm it displaced comes back when the cap is raised.
+- **Children are shown, not charged.** The parent's spend view lists its `create_session`
+  descendants' spend beside its own; each child has its own budget.
+
+The figure is an estimate at list price, and the Console writes it with "≈" and says it is not the
+bill. Where it lives: `internal/session/spend_cap.go`, `internal/sessionx/session_spend_cap.go`.

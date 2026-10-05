@@ -31,7 +31,7 @@ platform changes:
 | File | Status | Contents |
 |------|--------|----------|
 | `cfn/00-network.yaml` | **proven** (deploy→verify→teardown in sandbox) | VPC, 2×AZ public+private subnets, IGW, NAT, S3 gateway endpoint, base SGs (`alb`/`cp`/`ws`) |
-| `cfn/10-data.yaml` | **proven** (EFS 2 mount targets available, RDS pg18 available/private/encrypted) | EFS filesystem + mount targets, RDS(Postgres, single-AZ t4g.micro, RDS-managed master secret) |
+| `cfn/10-data.yaml` | **proven** (EFS 2 mount targets available, RDS pg18 available/private/encrypted) | EFS filesystem + mount targets, RDS(Postgres, single-AZ t4g.micro, RDS-managed master secret), optionally the KMS key of the CP's key custodian (`CustodianKmsKey=create`) |
 | `cfn/20-platform.yaml` | **proven** (ECR×2, cluster ACTIVE w/ SC default, 3 IAM roles) | ECR (cp+workspace, plus an empty `af-voicevox` for the optional speech engine and `af-llamacpp` / `af-comfyui` / `af-engine-tools` for the optional inference engines — the last two self-built, by `comfyui-image.yml` and `engine-tools-image.yml`), ECS cluster, Service Connect namespace (`af.internal`), IAM roles (`cp-task`/`exec`/`ws-task`) |
 | `cfn/30-ingress.yaml` | **proven** (CP boots on Fargate, `/healthz` 200, `/oauth2/login` → Google w/ correct redirect_uri) | ACM(DNS-validated), ALB (TLS-termination only — auth is CP-native `AUTH=oauth`, no ALB OIDC), CP/Console Fargate service (Service Connect client), Route53 alias |
 | `cfn/40-ec2-pool.yaml` | **proven in a sandbox** (deployed as a stack and driven end to end, in a public subnet and behind a NAT — docs/log/64 §64.16, §64.17, §64.19; never at scale) | **Optional — only for `WsRuntime=ecs-ec2`.** Launch template for a workspace *slot* (ECS-optimized AMI, cluster-join user-data, `af-mount`/`af-umount`), slot instance role + profile, slot SG. Creates **no instances**: the CP runs them on demand. One template covers both architectures — `SlotAmiIdArm64` is passed through as an ImageId override (docs/log/70 §70.8) |
@@ -132,6 +132,21 @@ for why they live outside the template).
     --template-file cfn/20-platform.yaml --capabilities CAPABILITY_NAMED_IAM \
     --profile af-sandbox --region ap-northeast-1
   ```
+  So do `40-ec2-pool`, `60-engines` and `30-ingress`: each attaches a named managed policy to
+  the CP task role (`30-ingress`'s is the home-ops `RunTask` grant). Without it the change set
+  is refused with `InsufficientCapabilitiesException … Requires capabilities : [CAPABILITY_IAM]`.
+- **The CP task role's policy budget.** IAM caps a role's inline policies at 10,240
+  characters together (whitespace not counted) and each managed policy at 6,144; how many
+  managed policies a role may carry is an adjustable quota. 20-platform's inline `cp-runtime`
+  is about 7,000 of those; every grant another stack adds to the role (`40-ec2-pool`'s slot
+  launch, `60-engines`' ingest, `30-ingress`'s home ops) is an `AWS::IAM::ManagedPolicy` of
+  its own, because inline they came to ~10,500 and `30-ingress` rolled back with
+  `ServiceLimitExceeded` (#1576). Managed policy names are account-wide, so these carry the
+  region (`af-<stack>-cp-ingest-<region>`, …). `deploy/local/cfn-iam-policy-size-test.py`
+  renders every template, each stack name as long as its physical names allow, and fails CI
+  past 9,500 inline characters per role, 5,800 per managed policy or 8 managed policies per
+  role (held under the older default quota of 10); `--upgrade-from <git-ref>` replays
+  `update.sh`'s order from a deployed release and prints the inline total at every step.
 
 ### 30-ingress stand-up (milestone: CP boots + Google login)
 
@@ -173,7 +188,7 @@ from `10-data`'s exports, so that stack must already be up. Prerequisites:
    fqdn/zone + client id + allowed/super-admin emails as parameters at deploy:
    ```bash
    aws cloudformation deploy --stack-name af-ecs-ingress \
-     --template-file cfn/30-ingress.yaml \
+     --template-file cfn/30-ingress.yaml --capabilities CAPABILITY_NAMED_IAM \
      --parameter-overrides GoogleClientId=<id> \
        Fqdn=af.example.com HostedZoneId=<your-zone-id> \
        AllowedEmails=you@example.com SuperAdminEmails=you@example.com \
@@ -247,6 +262,21 @@ reason to re-issue the Console's TLS to add a preview.
 - Members choose which ports are exposed, whether the URL stays stable across starts,
   and whether it is readable without signing in (off by default, and it returns to off
   on every start).
+
+### Keys at rest on KMS (optional, off by default)
+
+```bash
+# 10-data: make the key (it follows Persistence, like RDS)
+--parameter-overrides CustodianKmsKey=create ...
+# 30-ingress: hand the CP the key from 10-data's CustodianKmsKeyArn output
+--parameter-overrides CustodianKmsKeyArn=arn:aws:kms:<region>:<account>:key/<key-id> ...
+```
+
+The CP's key custodian (ADR 0005) then seals with data keys from KMS instead of a key derived
+from `AF_MASTER_KEY`. Nothing stored before is re-encrypted and `AF_MASTER_KEY` stays
+required; KMS errors fail closed. The trade-offs are in
+[`cfn/PARAMETERS.md`](cfn/PARAMETERS.md#custodiankmskeyarn) and the operator's view in
+`guide/operate/04-secure.md`.
 
 ### Alarms — the Control Plane cannot reach its database (set this one)
 
@@ -396,7 +426,7 @@ the adapter launches. To move a deployment to a new release:
    their previous values):
    ```bash
    aws cloudformation deploy --stack-name af-ecs-ingress \
-     --template-file cfn/30-ingress.yaml \
+     --template-file cfn/30-ingress.yaml --capabilities CAPABILITY_NAMED_IAM \
      --parameter-overrides ImageTag=<v> \
      --profile <p> --region <r>
    ```
@@ -433,6 +463,14 @@ It does the things the hand-typed sequence gets wrong:
   "No changes to deploy" and the CP keeps running the old image forever. The
   script falls back to `ecs update-service --force-new-deployment` in that case
   (`--force` does it unconditionally), then waits for the service to stabilise.
+- **Redeploys the slot pool (`40-ec2-pool`) on ecs-ec2.** Its user data carries
+  security settings, and a pool left on an old template launches every future slot
+  without them. It only adds a launch template version; running and retained slots keep
+  the user data they were launched with (§Moving retained slots onto new user data). On
+  `WsRuntime=ecs-ec2` it **stops** when it cannot find the pool stack (the lookup goes
+  through the `<stack>-SlotLaunchTemplateId` export, so it needs
+  `cloudformation:ListExports`); name it with `--pool-stack <stack>`, which is checked to
+  own the deployment's launch template.
 - **Lists the workspaces that are still on the old image**, because nothing moves
   them automatically. It never stops one: stopping kills that user's sessions, and
   when to take that is their call.
@@ -703,12 +741,13 @@ service supports it:
 | servicediscovery | Service Connect namespace | Create/Delete/Get namespace |
 | efs | 10-data filesystem + mount targets | CreateFileSystem/DeleteFileSystem/CreateMountTarget/DeleteMountTarget/Describe* |
 | backup | 10-data EFS backup vault + plan (`Persistence=retain`), the runbook's backup/restore, teardown | CreateBackupVault/DescribeBackupVault/DeleteBackupVault/ListBackupVaults, Create/Get/Update/Delete BackupPlan, Create/Get/Delete BackupSelection, ListBackupPlans; `backup-storage:MountCapsule` and `kms:CreateGrant`/`DescribeKey` on the default `aws/backup` key; StartBackupJob/StartRestoreJob/DescribeRestoreJob, ListRecoveryPointsByBackupVault/DeleteRecoveryPoint, and `iam:PassRole` on the 10-data backup role |
+| kms | 10-data custodian key (`CustodianKmsKey=create` only) | CreateKey, PutKeyPolicy, EnableKeyRotation, DescribeKey, TagResource, CreateAlias/DeleteAlias, ScheduleKeyDeletion (stack deletion with `Persistence=delete`) |
 | rds | 10-data instance | CreateDBInstance/DeleteDBInstance/CreateDBSubnetGroup/Describe* (ManageMasterUserPassword also needs `secretsmanager:*` on the RDS-managed secret + `kms:DescribeKey`) |
 | elasticloadbalancing | 30-ingress ALB/TG/listeners | Create/Delete/Describe/Modify load balancers, target groups, listeners |
 | acm | 30-ingress cert | RequestCertificate/DeleteCertificate/DescribeCertificate |
 | route53 | DNS validation + alias | ChangeResourceRecordSets/GetHostedZone/ListResourceRecordSets (on the zone) |
 | logs | log groups | CreateLogGroup/DeleteLogGroup/PutRetentionPolicy/Describe* |
-| iam | 20-platform named roles, 10-data's EFS backup role | CreateRole/DeleteRole/Get/PassRole, Put/Delete/AttachRolePolicy (→ `CAPABILITY_NAMED_IAM`; `CAPABILITY_IAM` for 10-data) |
+| iam | 20-platform named roles, 10-data's EFS backup role, the managed policies 30/40/60 attach to the CP task role | CreateRole/DeleteRole/Get/PassRole, Put/Delete/Attach/DetachRolePolicy, CreatePolicy/DeletePolicy/GetPolicy, Create/Delete/ListPolicyVersions (→ `CAPABILITY_NAMED_IAM`; `CAPABILITY_IAM` for 10-data) |
 | ssm | CP secrets (out-of-band) | PutParameter/DeleteParameter under `/af-cp/*` |
 | sts | account resolution in release-ecr.sh | GetCallerIdentity |
 
@@ -1255,7 +1294,7 @@ aws cloudformation deploy --stack-name af-ecs-ec2-pool \
   --parameter-overrides NetworkStackName=af-ecs-network PlatformStackName=af-ecs-platform
 # then point the CP at it (this is the whole switch, and the whole rollback):
 aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ingress.yaml \
-  --parameter-overrides WsRuntime=ecs-ec2 Ec2SlotLaunchTemplate=lt-0123456789abcdef0 ...
+  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides WsRuntime=ecs-ec2 Ec2SlotLaunchTemplate=lt-0123456789abcdef0 ...
 ```
 
 | Parameter | Env | Default | Notes |
@@ -1553,12 +1592,54 @@ they survive, and keep billing. The response and the audit entry list what was l
   5m, but the image cache and container write layers are genuinely shared.
 - **Patching slots = updating this stack** (the AMI parameter resolves at update time)
   and letting the old slots go. That is the operational cost the EC2 launch type adds.
+  The same holds for the user data (§Moving retained slots onto new user data).
 - **Credentials still live on EFS.** The auth/identity set (`homeKeep`: `.config`,
   `.ssh`, `.git-credentials`, `.gitconfig`, `.claude`, `.claude.json`, `.codex` — under
   100 MiB) is kept on an EFS access point and symlinked into home by the entrypoint, so
   losing one single-AZ volume does not take the user's logins with it.
 - **The working disk (`WsDiskGiB`) does not apply.** `AF_WS_SCRATCH` is not injected on
   this profile: home is already local EBS, so there is nothing to relocate off EFS.
+
+### Moving retained slots onto new user data
+
+`ECS_AWSVPC_BLOCK_IMDS=true` in the slot's `ecs.config` is what keeps a workspace task off the
+slot's instance profile (`SlotRole`) through IMDS; the launch template's hop limit does not,
+because an `awsvpc` task's ENI reaches IMDS directly. The ECS agent reads `ecs.config` when the
+slot is launched, so **a slot launched before the template carried it stays open until it is
+replaced**, and nothing replaces one by itself: a workspace **Stop → Start goes back to the
+same slot** (its home stays attached, see "A workspace keeps its slot while it is stopped" above).
+Until then the Agent's own isolation still holds for every SDK that honours
+`AWS_EC2_METADATA_DISABLED`, but not for a tool that calls IMDS directly. To finish the move:
+
+1. **Update the pool stack.** `update.sh` does it (§One command). By hand:
+   `aws cloudformation deploy --stack-name <pool stack> --template-file cfn/40-ec2-pool.yaml
+   --capabilities CAPABILITY_NAMED_IAM` (parameters keep their previous values). The CP
+   launches slots from the template's `$Latest`, so only new slots change.
+2. **Reserve the old slots for replacement** in the Console: Settings → Admin → the Slots tab
+   (super_admin). Each slot shows the launch template version it was launched from and
+   whether that is older than `$Latest`; "Reserve all N for replacement…" lists the slots
+   and the workspaces on them before it reserves exactly those below `$Latest` (each one is
+   re-checked when it is written, and each reservation is in the audit log as
+   `pool.slot_replace_reserve`). "Replace at next start" / "Cancel replacement" on a row does
+   one slot. The reservation is a tag on the instance (`af-slot-replace`); it moves nobody
+   by itself and touches no running session.
+3. **Users stop and start their workspaces** when it suits them. Their WS bar says the next
+   start moves to a new slot. That Start launches a new slot of the workspace's class from
+   the template's `$Latest` first, then moves the home off the reserved slot through the
+   same release the sweeper uses (unmount before detach; refused while a task runs) and
+   terminates the old instance; the home volume is never deleted. If the new slot cannot
+   be launched (capacity, quota) the Start fails with the reason, the home stays where it
+   was and the reservation stays: it never falls back to the reserved slot. A reserved
+   slot with no home is never handed to anybody and the sweeper terminates it.
+   Do not terminate slot instances by hand while a home is attached.
+   `Ec2SlotTerminateAfterSec` is not needed for this; it is a standing cost trade-off
+   (see `cfn/PARAMETERS.md`), not a migration tool.
+4. **Verify from a shell session in a workspace on a new slot**: the IMDSv2 token request
+   `curl -s -o /dev/null -m 3 -w '%{http_code}' -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token`
+   must not answer `200` (it times out: `000`), also with a clean environment
+   (`env -i`), and `aws sts get-caller-identity` must fail with "Unable to locate
+   credentials". Check that slots still join the cluster and SSM still reaches them (the
+   Slots tab, a workspace Start, the home mount), and that the workspace's logs still arrive.
 
 ## Known behavior: a cold Start answers `starting`, not `running`
 

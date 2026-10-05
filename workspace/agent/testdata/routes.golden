@@ -1,8 +1,19 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd workspace/agent && go test -run TestRouteTableGolden -update-routes-golden .
 # ANY = registered without a method.
-# count: 321
+# count: 353
+GET /agents/memory/claude-import
+POST /agents/memory/claude-import
+GET /agents/memory/claude-import/preview
 GET /agents/memory/diff
+GET /agents/memory/entries
+POST /agents/memory/entries
+GET /agents/memory/entries/changes
+GET /agents/memory/entries/diff
+POST /agents/memory/entries/forget
+GET /agents/memory/entries/read
+POST /agents/memory/entries/revert
+GET /agents/memory/entries/search
 GET /agents/memory/export
 POST /agents/memory/import
 POST /agents/memory/import/apply
@@ -26,6 +37,7 @@ PUT /assistants/{id}
 GET /aws-login
 GET /aws-login/profiles
 GET /aws-login/profiles/{name}/attempts/{attempt}
+POST /aws-login/profiles/{name}/logout
 POST /aws-login/profiles/{name}/start
 GET /aws-login/{id}/attempts/{attempt}
 POST /aws-login/{id}/cancel
@@ -166,6 +178,8 @@ DELETE /fs/delete
 GET /fs/download
 GET /fs/file
 PUT /fs/file
+GET /fs/images
+POST /fs/imagesize
 GET /fs/linemarks
 POST /fs/mkdir
 POST /fs/newfile
@@ -175,6 +189,13 @@ GET /fs/search
 POST /fs/suggest-edit
 GET /fs/tree
 POST /fs/upload
+GET /gcp-login
+GET /gcp-login/profiles
+GET /gcp-login/profiles/{name}/attempts/{attempt}
+POST /gcp-login/profiles/{name}/attempts/{attempt}/code
+POST /gcp-login/profiles/{name}/start
+POST /gcp-login/{id}/cancel
+POST /gcp-login/{id}/start
 GET /git/identity
 PUT /git/identity
 GET /healthz
@@ -200,6 +221,7 @@ GET /imagegen/studios/{id}/draft-log
 GET /imagegen/studios/{id}/persona
 POST /imagegen/studios/{id}/press
 POST /imagegen/studios/{id}/rewind
+PUT /internal-git/token
 GET /mcp-servers
 POST /mcp-servers
 POST /mcp-servers/tenant-refresh
@@ -249,14 +271,21 @@ GET /repos/{name}/prompt-templates
 GET /repos/{name}/recreate
 POST /repos/{name}/recreate
 GET /repos/{name}/show
+GET /repos/{name}/skills
 POST /repos/{name}/stage
 GET /repos/{name}/status
 GET /repos/{name}/submodules
 GET /repos/{name}/svn-auth
 POST /repos/{name}/svn-auth
+GET /repos/{name}/svn-changes
 POST /repos/{name}/svn-cleanup
+GET /repos/{name}/svn-diff
+GET /repos/{name}/svn-log
+GET /repos/{name}/svn-show
 POST /repos/{name}/svn-update
 POST /repos/{name}/unstage
+GET /session-search
+GET /session-search/turns
 GET /sessions
 POST /sessions
 GET /sessions-idempotency/{key}
@@ -286,6 +315,7 @@ GET /sessions/{name}/messages
 GET /sessions/{name}/output
 POST /sessions/{name}/paste-image
 GET /sessions/{name}/pasted/{file}
+DELETE /sessions/{name}/pending-peer/{id}
 GET /sessions/{name}/plan-file
 POST /sessions/{name}/plan-respond
 POST /sessions/{name}/recreate
@@ -295,6 +325,8 @@ POST /sessions/{name}/restore
 GET /sessions/{name}/settings
 POST /sessions/{name}/settings
 GET /sessions/{name}/skills
+GET /sessions/{name}/spend
+POST /sessions/{name}/spend-cap
 GET /sessions/{name}/ssm-login
 POST /sessions/{name}/start
 GET /sessions/{name}/status

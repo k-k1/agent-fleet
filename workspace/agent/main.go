@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
@@ -26,6 +27,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
@@ -34,6 +36,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/statemig"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // buildVersion is stamped by the release pipeline via
@@ -72,6 +75,17 @@ func runAFDB(args []string) {
 
 func serve() {
 	addr := envOr("AGENT_ADDR", ":7700")
+
+	// First, before anything is spawned: every child inherits this process's environment,
+	// and the workload identity must not reach a session or terminal.
+	removed := awsx.IsolateWorkloadChain()
+	if awsx.IsolationActive() {
+		tmuxx.SetLaunchEnv(awsx.WorkloadChainVars(), []string{awsx.MetadataDisabled})
+	}
+	if len(removed) > 0 {
+		log.Printf("aws: workload credentials withheld from sessions (%s unset, IMDS disabled; %s=1 keeps them)",
+			strings.Join(removed, ", "), awsx.WorkloadOptIn)
+	}
 
 	// Take the listening socket BEFORE any of the boot work below, and die if it is busy.
 	// Every step from here to Serve mutates container-wide state — the credential store, the
@@ -114,6 +128,9 @@ func serve() {
 	// into the cred store so clone/push against the tenant's self-hosted repos auth
 	// transparently. No-op when the CP didn't inject one.
 	seedInternalGit()
+	// Point the workspace's git at the CP's workspace listener where it has one (ADR 0106
+	// decision 8); remove the rewrite where it no longer does.
+	syncInternalGitRewrite()
 	// Record where the git OAuth refresh bridge lives (docs/log/71 §71.8) so the separate
 	// `workspace-agent cred` process can reach it without depending on its own env.
 	seedGitOAuthBridge()
@@ -157,7 +174,14 @@ func serve() {
 	// `aws --profile <name>`, an SDK or a build tool can select them (issue #998).
 	// Backgrounded and fail-open like the MCP pull.
 	awsx.StartSync()
+	// The member's Google Cloud profiles become configurations in the Agent's own gcloud
+	// root (ADR 0107 decision 1). Backgrounded and fail-open like the AWS pull.
+	gcpx.StartSync()
+	// Pull the tenant's branch naming rules (ADR 0103 decision 10). Backgrounded and
+	// fail-open like the MCP pull: an unreachable CP keeps the last copy.
+	startBranchRulesTenantSync()
 	awsx.LoginAWSBin = ensureAWSCLI
+	gcpx.LoginGCloudBin = ensureGCloud
 	startTerminalHistoryJanitor()
 	// Route a managed driver's turn completion (it has no hooks) into the same
 	// notification/report path the hook route uses (the "answered" notice plus the
@@ -165,6 +189,7 @@ func serve() {
 	// package main, so the single implementation of that decision is registered on the
 	// seam here. Must be installed before the app-server start and the reconcilers below.
 	agents.SetStateNotifier(sessionx.RecordSessionNotification)
+	agents.SetTurnEndRecorder(sessionx.RecordTurnOutcome)
 	// The decision that an instruction's report has been consumed (docs/log/51 Phase 1 /
 	// ADR 0035). The hooks, the notify seam and record-exit's kick are wake-up hints only;
 	// whether an instruction is complete is decided by this reconciler's tick alone. A
@@ -213,6 +238,14 @@ func serve() {
 	// restart feels like the tmux tui sessions surviving one (§6, reconciliation). Ensure
 	// starts a runtime if one is needed; with no managed metadata this is an immediate
 	// no-op.
+	//
+	// Held inputs no start will deliver are swept before reconciliation delivers the rest
+	// (#1255): a crash can leave them behind a deleted or archived session. The drop hook goes
+	// in first, so an operator or scheduled prompt swept here is reported (#1257).
+	sessionx.InstallHeldDropHook()
+	agents.SweepHeld()
+	// Peer messages waiting for a user's answer (#1031) get their delivery loops back.
+	sessionx.ResumePendingPeers()
 	go opencode.ReconcileManaged("agent boot")
 	go codex.ReconcileManaged("agent boot")
 	go copilot.ReconcileManaged("agent boot")

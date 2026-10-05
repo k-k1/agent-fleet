@@ -213,3 +213,49 @@ describe("LcppCard — Behavior disclosure's default-model row auto-picks (docs/
     expect(getSettings().agentLaunchDefaults.lcpp?.model).toBe("m1");
   });
 });
+
+// Layout (#1480): .ps-row / .ps-note carry no inset of their own, so anything placed directly
+// in the card starts on its border. Every direct child other than the head and the behaviour
+// disclosure has to be a padded .p-body.
+describe("LcppCard — layout", () => {
+  const strayChildren = () =>
+    Array.from(host!.querySelector(".p-card")!.children)
+      .filter((el) => !el.matches(".p-head, .p-settings, .p-body"))
+      .map((el) => el.className);
+
+  it("keeps the enable switch and the connection form inside .p-body", async () => {
+    await mount({ enabled: true, connected: false });
+    expect(strayChildren()).toEqual([]);
+    expect(host!.querySelector(".p-body .ps-row")).not.toBeNull();
+    expect(host!.querySelector(".p-body input.cinput")).not.toBeNull();
+  });
+
+  it("keeps the connected URL row inside .p-body without a second inset", async () => {
+    await mount({ enabled: true, connected: true, url: "http://box:9931", reachable: true });
+    expect(strayChildren()).toEqual([]);
+    expect(host!.querySelector(".p-body > .p-who.p-who-flush")).not.toBeNull();
+  });
+});
+
+// An empty catalog (no engine reachable) used to draw a segmented control with no segments —
+// a bare frame next to "Default model". It must say there is nothing to choose instead.
+describe("LcppCard — default-model row with an empty catalog", () => {
+  it("shows a note instead of an empty control", async () => {
+    lcppModels = [];
+    const { t } = await import("../../../lib/i18n/index.ts");
+    await mount(undefined);
+    const disclosure = [...(host?.querySelectorAll("button") ?? [])].find((b) => /behavior/i.test(b.textContent || ""));
+    await act(async () => {
+      disclosure!.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const row = [...host!.querySelectorAll(".p-settings .ps-row")].find((r) =>
+      r.querySelector(".ps-label")?.textContent?.startsWith(t("agents.default_model")),
+    )!;
+    expect(row.textContent).toContain(t("agents.default_model_none"));
+    expect(row.querySelector(".choice-seg")).toBeNull();
+  });
+});

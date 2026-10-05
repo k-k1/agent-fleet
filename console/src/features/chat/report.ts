@@ -38,10 +38,12 @@ export function reportText(m: ReportFields): string {
   const key = m.notice_key;
   if (!key) return m.content; // written before P6 — the stored sentence is all there is
   const args = m.notice_args ?? {};
-  // An exit reason we have no label for is shown raw rather than blank: a newer Agent
-  // may report a reason this Console has never heard of.
+  // A reason we have no label for is shown raw rather than blank: a newer Agent may
+  // report a reason this Console has never heard of. A not-run report's reason is why its
+  // queued instruction was dropped; every other kind's is an exit reason.
   const reason = m.report_reason ?? "";
-  const label = tMaybe(`chat.report.exit_reason.${reason}`) ?? reason;
+  const labels = m.report_kind === "not-run" ? "chat.report.not_run_reason" : "chat.report.exit_reason";
+  const label = tMaybe(`${labels}.${reason}`) ?? reason;
   const head = tMaybe(key, { ...args, label });
   if (head === undefined) return m.content; // unknown key (newer Agent) — keep the fallback
 

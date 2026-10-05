@@ -62,6 +62,10 @@ Resources:
       InstanceType: !Ref InstanceType
       ImageId: !Ref LatestUbuntuAmi
       KeyName: !Ref KeyPair
+      # IMDSv2 with hop limit 1: the host-network Control Plane is one hop and can still
+      # read an instance profile attached later; a workspace on a docker bridge is two and
+      # cannot (ADR 0099 decision 5). Stricter than 40-ec2-pool on purpose.
+      MetadataOptions: { HttpTokens: required, HttpPutResponseHopLimit: 1 }
       SecurityGroupIds: [!Ref SecurityGroup]
       BlockDeviceMappings:
         - DeviceName: /dev/sda1

@@ -14,6 +14,7 @@ import { useT, getLocale } from "../lib/i18n/index.ts";
 import { useIsMobile, isStandalonePWA } from "../lib/device.ts";
 import { buildInfo, buildLabel } from "../lib/version.ts";
 import { useBrandStore } from "../lib/brand.ts";
+import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/Icon.tsx";
 import { SwatchGrid } from "../ui/SwatchGrid.tsx";
 import { useDismiss } from "../lib/useDismiss.ts";
@@ -161,13 +162,13 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   return (
     <header className="topbar">
       <div className="topbar-left">
-        <button
+        <Button
           className="nav-toggle"
           title={tr("topbar.nav_toggle") + hintSuffix("workspace.toggleRail")}
           onClick={onHamburger}
         >
           <Icon name="menu" />
-        </button>
+        </Button>
         {/* brand-stacked only when there IS a label: on a phone the chip and the wordmark
             do not fit on one line, and left alone the name wraps mid-word ("Agent" /
             "Fleet") and the whole bar grows by a line. Stacked, they are two short lines
@@ -194,7 +195,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
         {/* Engine indicator (ADR 0084): one pill per role (llm/image), beside the TTS pill —
             decision 10. Renders nothing when no role is visible to this tenant/deployment. */}
         <EnginesPill />
-        <button
+        <Button
           className={"tts-status" + (ttsBusy ? " speaking" : s.ttsEnabled ? "" : " off")}
           title={
             ttsBusy
@@ -222,17 +223,17 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
               <Icon name="debug-stop" />
             </>
           )}
-        </button>
-        <button
+        </Button>
+        <Button
           className="gear fs-toggle"
           title={fullscreen ? tr("topbar.fullscreen_exit") : tr("topbar.fullscreen_enter")}
           onClick={toggleFullscreen}
         >
           <Icon name={fullscreen ? "screen-normal" : "screen-full"} />
-        </button>
+        </Button>
         {/* Launched as a standalone PWA there is no browser reload UI, so offer one here. */}
         {isStandalonePWA() && (
-          <button
+          <Button
             className="gear reload-toggle"
             title={tr("topbar.reload")}
             onClick={() => {
@@ -242,23 +243,22 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
             }}
           >
             <Icon name="refresh" />
-          </button>
+          </Button>
         )}
         {/* Appearance: a light popover so colors preview live on the panes behind it. */}
         <div className="acct appr" ref={apprRef}>
-          <button
+          <Button
             className="gear appr-btn"
             title={tr("topbar.appearance_title")}
             onClick={() => setApprOpen((o) => !o)}
           >
             <Icon name="paintcan" />
-          </button>
+          </Button>
           {apprOpen && (
             <div className="acct-menu appr-menu" role="menu">
               <div className="appr-head">
                 <div className="acct-email appr-head-title">{tr("topbar.appearance")}</div>
-                <button
-                  type="button"
+                <Button
                   className="appr-details"
                   role="menuitem"
                   title={tr("topbar.appearance_details_title")}
@@ -268,7 +268,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                   }}
                 >
                   {tr("topbar.appearance_details")}
-                </button>
+                </Button>
               </div>
               <div className="acct-theme">
                 <div className="appr-seg-row">
@@ -321,6 +321,23 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     ))}
                   </div>
                 </div>
+                {showPicker && (
+                  <div className="appr-seg-row">
+                    <span className="appr-seg-lbl" title={tr("display.per_tenant_note")}>{tr("display.per_tenant")}</span>
+                    <div className="ui-seg choice-seg acct-theme-seg">
+                      {([true, false] as const).map((on) => (
+                        <button
+                          key={String(on)}
+                          type="button"
+                          className={"seg-btn" + (!!s.appearancePerTenant === on ? " active" : "")}
+                          onClick={() => setSetting("appearancePerTenant", on)}
+                        >
+                          {tr(on ? "common.on" : "common.off")}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {SURFACE_TARGETS.map((t) => (
                   <SwatchRow key={t.key} label={tr(t.shortKey)} theme={s.theme} value={s[t.key]} onPick={(v) => setSetting(t.key, v)} />
                 ))}
@@ -330,7 +347,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
         </div>
         <NotificationCenter />
         <div className="acct" ref={acctRef}>
-            <button
+            <Button
               className={"whoami acct-btn" + (updateReady ? " has-update" : "")}
               title={updateReady ? tr("topbar.update_ready", { v: hostUpdate!.installed }) : me || tr("topbar.menu")}
               onClick={() => setMenuOpen((o) => !o)}
@@ -344,7 +361,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                   aria-label={tr("topbar.update_ready", { v: hostUpdate!.installed })}
                 />
               )}
-            </button>
+            </Button>
             {menuOpen && (
               <div className="acct-menu" role="menu">
                 {me && <div className="acct-email" title={me}>{me}</div>}
@@ -364,16 +381,16 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     <div className="acct-sep" />
                   </>
                 )}
-                <button className="acct-item" role="menuitem" onClick={() => run(openUserGuide)}>
+                <Button className="acct-item" role="menuitem" onClick={() => run(openUserGuide)}>
                   <Icon name="book" /> {tr("topbar.user_guide")}
-                </button>
+                </Button>
                 {/* Way back in after dismissing the first-run card with "later" (launch flow Ph1). */}
-                <button className="acct-item" role="menuitem" onClick={() => run(openGuide)}>
+                <Button className="acct-item" role="menuitem" onClick={() => run(openGuide)}>
                   <Icon name="rocket" /> {tr("topbar.guide")}
-                </button>
-                <button className="acct-item" role="menuitem" onClick={() => run(() => openSettings())}>
+                </Button>
+                <Button className="acct-item" role="menuitem" onClick={() => run(() => openSettings())}>
                   <Icon name="gear" /> {tr("topbar.settings")}
-                </button>
+                </Button>
                 {/* Tenant settings are the surface for tenants you administer, so membership
                     normally decides the entry point — but super_admin gets it too. The server
                     has always let super_admin through as an admin of any tenant
@@ -382,9 +399,9 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     restriction, docs/log/66) for a super_admin with no membership. With more
                     than one tenant the modal shows its own picker (TenantDialog). */}
                 {(superAdmin || tenants?.some((t) => t.role === "tenant_admin")) && (
-                  <button className="acct-item" role="menuitem" onClick={() => run(() => openTenantSettings())}>
+                  <Button className="acct-item" role="menuitem" onClick={() => run(() => openTenantSettings())}>
                     <Icon name="organization" /> {tr("topbar.tenant_settings")}
-                  </button>
+                  </Button>
                 )}
                 {/* Admin is the deployment-wide surface (creating tenants, limits, login
                     rules, egress, hosts, the TTS dictionary) and the CP pins every one of
@@ -393,14 +410,14 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     tenant settings, so super_admin alone is right here. Hiding it is not the
                     permission check: the server has always returned 403. */}
                 {superAdmin && (
-                  <button className="acct-item" role="menuitem" onClick={() => run(openAdmin)}>
+                  <Button className="acct-item" role="menuitem" onClick={() => run(openAdmin)}>
                     <Icon name="shield" /> {tr("topbar.admin")}
-                  </button>
+                  </Button>
                 )}
                 {canLogout && (
                   <>
                     <div className="acct-sep" />
-                    <button
+                    <Button
                       className="acct-item"
                       role="menuitem"
                       onClick={() => {
@@ -415,7 +432,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                       }}
                     >
                       <Icon name="sign-out" /> {tr("topbar.logout")}
-                    </button>
+                    </Button>
                   </>
                 )}
                 {/* Version zone. Native host self-update (docs/log/42) sits above the FE
@@ -426,7 +443,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                 <div className="acct-sep" />
                 {hostUpdate &&
                   (updateReady ? (
-                    <button
+                    <Button
                       className="acct-item acct-update"
                       role="menuitem"
                       onClick={() => run(() => openSettings("env"))}
@@ -434,7 +451,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                       <Icon name="cloud-download" />
                       <span className="acct-update-txt">{tr("topbar.update_ready", { v: hostUpdate.installed })}</span>
                       <span className="acct-update-badge">{tr("topbar.update_badge")}</span>
-                    </button>
+                    </Button>
                   ) : (
                     <div className="acct-build">
                       <Icon name="rocket" /> {tr("topbar.host_version", { v: hostUpdate.current })}
@@ -472,15 +489,14 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     digest off a phone screen is how reports end up without one). */}
                 <div className="acct-build" title={buildInfo.sha ? `commit ${buildInfo.sha}` : undefined}>
                   <Icon name="tag" /> {tr("topbar.build", { label: buildLabel() })}
-                  <button
-                    type="button"
+                  <Button
                     className="acct-ver-copy"
                     title={tr("topbar.copy_version")}
                     aria-label={tr("topbar.copy_version")}
                     onClick={copyVersions}
                   >
                     <Icon name={verCopied ? "check" : "copy"} />
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}

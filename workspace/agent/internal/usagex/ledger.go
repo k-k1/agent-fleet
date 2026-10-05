@@ -104,13 +104,18 @@ type Record struct {
 	// watermark live in separate files and cannot be written atomically together — a crash
 	// in between re-appends — so the aggregation reads (ref, Idx) to drop duplicates
 	// (usage_dedup.go). It is not a dimension, so it stays out of usageKey.
-	Idx         int     `json:"idx,omitempty"`
+	Idx int `json:"idx,omitempty"`
+	// Key is the stable accounting identity of a row outside the (ref, Idx) sequence — a
+	// cost-only session row, keyed by the agent's own message id. The aggregation counts one row
+	// per Key, so a re-append after a crash before the watermark write is dropped like a
+	// repeated (ref, Idx).
+	Key         string  `json:"key,omitempty"`
 	In          int     `json:"in"`
 	Out         int     `json:"out"`
 	CacheRead   int     `json:"cread"`
 	CacheCreate int     `json:"ccreate"`
 	Spend       int     `json:"spend"`              // = in + ccreate + out (cache_read excluded)
-	CostUSD     float64 `json:"cost_usd,omitempty"` // only when actually measured (claude)
+	CostUSD     float64 `json:"cost_usd,omitempty"` // only when the agent reports it (claude aux calls, opencode sessions)
 	MS          int     `json:"ms,omitempty"`
 	OK          bool    `json:"ok"`
 	Measured    string  `json:"measured"`

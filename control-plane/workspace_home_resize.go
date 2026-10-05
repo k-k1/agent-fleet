@@ -45,7 +45,7 @@ func (m *manager) resizeHomeByMembership(ctx context.Context, membershipID strin
 	// as a start does. Without it ws.DiskGB is the stored workspace row's stale copy, the
 	// adapter's homeGiB() falls back to the deployment default, and the resize would push
 	// every member back to 50 GiB instead of to what was just saved.
-	ws.MemBytes, ws.CPUUnits, ws.DiskGB = m.resolveWorkspaceSize(ctx, ws)
+	ws = m.withResolvedSize(ctx, ws)
 	rt := m.runtimeFor(ws, "")
 	hr, ok := rt.(homeResizer)
 	if !ok {

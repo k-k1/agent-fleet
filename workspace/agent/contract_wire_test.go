@@ -34,6 +34,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -76,6 +77,19 @@ func agentContractFamilies() []contractFamily {
 			goOnly: map[string]string{},
 		},
 
+		// One past-session search hit (ADR 0110): the palette's conversations mode renders it,
+		// and a renamed key leaves rows without a session to open.
+		{
+			name:    "sessionsearch.Hit",
+			goType:  reflect.TypeOf(sessionsearch.Hit{}),
+			binding: sessionSearchHitBinding,
+			tsPath:  "../../console/src/features/keys/talkSearch.ts",
+			tsName:  "SessionSearchHit",
+			tsKeys:  keySet("session", "display", "kind", "repo", "archived", "idx", "role", "ts", "snippet", "score"),
+			tsOnly:  map[string]string{},
+			goOnly:  map[string]string{},
+		},
+
 		// The cleanup safety net (archive).
 		{
 			name:    "cleanupManifest",
@@ -101,6 +115,21 @@ func agentContractFamilies() []contractFamily {
 				"openUrl": "[gap] the URL that opens the attachment. Not declared in the Console's BrowserAttachmentStatus.",
 				"viewer":  "[gap] likewise.",
 			},
+		},
+
+		// One row of the AF memory change list (ADR 0108).
+		// AST route: `agentMemChangeView` is an unexported type in internal/memoryx.
+		{
+			name:    "agentMemChangeView",
+			goPath:  "internal/memoryx/agent_memory_changes.go",
+			goName:  "agentMemChangeView",
+			binding: agentMemChangeViewBinding,
+			tsPath:  "../../console/src/features/settings/memory/memoryTypes.ts",
+			tsName:  "MemoryChange",
+			tsKeys: keySet("commit", "at", "op", "scope", "project", "name", "authorKind",
+				"authorSession", "revertOf", "latest", "live", "revertible"),
+			tsOnly: map[string]string{},
+			goOnly: map[string]string{},
 		},
 
 		// The preview of a memory import.
@@ -200,6 +229,12 @@ var transcriptTurnBinding = map[string]string{
 	"TS": "ts", "Idx": "idx", "AnchorID": "anchorId", "EndTS": "endTs", "Compact": "compact",
 }
 
+var agentMemChangeViewBinding = map[string]string{
+	"Commit": "commit", "At": "at", "Op": "op", "Scope": "scope", "Project": "project",
+	"Name": "name", "AuthorKind": "authorKind", "AuthorSession": "authorSession",
+	"RevertOf": "revertOf", "Latest": "latest", "Live": "live", "Revertible": "revertible",
+}
+
 var memoryImportPreviewBinding = map[string]string{
 	"ImportID": "importId", "Format": "format", "Ref": "ref", "Head": "head",
 	"HeadTs": "headTs", "Snapshots": "snapshots", "Kinds": "kinds", "Projects": "projects",
@@ -228,6 +263,11 @@ var cleanupManifestBinding = map[string]string{
 	"Branches": "branches", "Worktree": "worktree", "Bytes": "bytes",
 }
 
+var sessionSearchHitBinding = map[string]string{
+	"Session": "session", "Display": "display", "Kind": "kind", "Repo": "repo", "Archived": "archived",
+	"Idx": "idx", "Role": "role", "TS": "ts", "Snippet": "snippet", "Score": "score",
+}
+
 var browserAttachmentBinding = map[string]string{
 	"ID": "id", "State": "state", "Title": "title", "URL": "url", "OpenURL": "openUrl",
 	"ExpiresAt": "expiresAt", "Viewer": "viewer", "ControlMode": "controlMode", "Handoff": "handoff",
@@ -237,7 +277,7 @@ func TestContractFamilies(t *testing.T) {
 	fams := agentContractFamilies()
 	// Guard the population being scanned (the #320 shape): a family that silently
 	// disappears is caught here.
-	if len(fams) != 8 {
+	if len(fams) != 10 {
 		t.Fatalf("only %d families - one has dropped out of the table (if you added one, fix the count too)", len(fams))
 	}
 	for _, f := range fams {

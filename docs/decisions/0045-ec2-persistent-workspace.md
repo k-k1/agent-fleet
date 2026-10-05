@@ -1473,6 +1473,70 @@ Code: `control-plane/internal/runtime/home_wipe.go`, `control-plane/internal/run
 `control-plane/internal/tenantsrv/tenants.go`, `console/src/features/settings/workspace/DangerTab.tsx`,
 `console/src/features/settings/tenant/tenantMemberDetail.tsx`.
 
+**Note (2026-10-03, #1260): Fargate now has a place to run the removal.** The stack declares a one-shot task
+(`HomeOpsTaskDef` in `30-ingress`) that mounts the EFS root as uid 0 and runs `af-cp efs-home-op` from the CP
+image, so `homeKeep` has one definition. The CP starts it with `ecs:RunTask` (granted only for that family in
+this cluster, `CpHomeOpsPolicy`) and reads the exit code with `DescribeTasks`. A marker parameter,
+`/af-ws/<workspace>/home-task`, written before `RunTask` and holding the ARN after it, is the record of a task in
+flight (RunTask, ListTasks and DescribeTasks are eventually consistent; GetParameter is not), so a Start or a
+second operation is refused while one may run, across a CP restart. Only a task seen STOPPED releases it:
+MISSING, errors and elapsed time prove nothing, so a marker that can never resolve is the operator's to delete. The wait for the workspace's own task needs
+the service to count nothing running and every task it has seen (captured at Stop, or listed) described as
+STOPPED; the running count alone drops while a task is still stopping, and a listing can lag. The root rather than the member's access point: a task definition's volumes cannot be overridden
+per run, uid 1000 cannot remove read-only toolchain trees, and Destroy removes the access point's own root. The
+command confines itself instead (a one-element membership id, a real mount, only `/home/<id>` and
+`/claude-config/<id>`). A task takes minutes, so the member's Recreate and Clean home answer `starting` and
+finish stop → task → start in the background under the lifecycle lease, and the administrator's Clean home and
+Destroy answer 202 and write the audit outcome when the task ends. Destroy now removes both EFS directories
+instead of returning them as leftovers, and a failed task keeps the workspace row for the retry. A stack
+without the task keeps the old refusal, and `ecs-ec2` (whose Destroy runs this adapter's) never uses it. What
+follows the task — the member's start, the audit outcome, Destroy's row deletion — lives in the CP process and
+is lost if it restarts mid-task; the guide says how to finish by hand. Code: `control-plane/internal/runtime/runtime_ecs_home_task.go`,
+`home_task.go`, `control-plane/workspace_handlers.go` (`memberHomeWipe`), `control-plane/workspace_lifecycle.go`.
+
+**Note (2026-10-03, #1536 #1537 #1538): the same task on `ecs-ec2`, a failure that survives a restart, and its
+cost tags.** `ecs-ec2` builds its runtime on the Fargate adapter and its Destroy ends in `base.Destroy`, so the
+task was first switched off on its base: that Destroy was waited for inside the administrator's request, and the
+task did not know the keep-list. Both are now handled and the switch is gone: the task also removes
+`/home-keep/<id>`, Destroy on `ecs-ec2` answers 202 like `ecs` (`runtime.DestroyInBackground`; its own wipe and
+erase still fit in the request), and only directories the task did not remove are still reported as leftovers.
+The IAM is unchanged for that: `ecs-ec2` uses the same family and cluster. A member's background wipe that fails
+is written to `workspace_auto_stop` (kind `home-wipe-failed`) instead of CP memory: that row already means "the
+CP left this workspace stopped, and why", the tenant admins already read it, and the next start already deletes
+it, so no migration was needed. The task's `RunTask` carries the workspace service's cost tags (`af-membership`,
+`af-role=workspace`, `af-tenant`), granted as `ecs:TagResource` on a new task in this cluster only with
+`ecs:CreateAction=RunTask` and the service's key list (`TagHomeOpsTaskOnRun`).
+
+**Note (2026-10-03, #1544): the step after the task survives a CP restart.** Each home operation that runs the
+task is now a row in `home_operation` (migrations 0082 / pg 0067), written under the lifecycle lease before
+anything is stopped and holding its kind, the membership and workspace, the audit outcome an administrator's
+action still owes, and the task's ARN once `RunTask` has answered. The row's id is the `RunTask` `clientToken`:
+ECS keeps a token for 24 hours or the task's lifetime plus one hour, whichever is shorter, and answers a repeat
+with the same parameters with the task the first call started (a repeat with other parameters gets a
+`ConflictException` naming that task, read the same way). The step after the task begins by deleting the row in the
+transaction that writes the audit outcome and, for Destroy, deletes the workspace row, so it is applied once. A
+member's wipe that succeeded first moves the row to phase `start` (a claimed update), then starts the workspace
+through a gate only its own row opens, and then deletes the row; a failure, of the wipe or of that start, is
+written to `workspace_auto_stop` in the deleting transaction. A CP lost in between leaves the reconciler a start to
+make, never the wipe to repeat. A reconciler on every CP (at boot, then every minute) takes each open row's
+member lifecycle lease — the starter holds it for the whole operation and loses it within the lease's 30 s of
+dying, which is what keeps the two from running together — and runs the operation again bound to the row: it
+adopts the recorded task, or the one its own marker names (the marker carries the token, so a marker of another
+operation or of a CP before this is never adopted, only waited for), asks `RunTask` again under the token when there
+is none or ECS has forgotten it, and applies the step after it. It sends `RunTask` again only while no task started
+by `af-home/<membership>` is listed running and, whether the answer was lost or the recorded task reads MISSING
+(neither proves it stopped), while the first call is under 23 hours
+old (`task_sent_at`, written before it): past that the token may start a second task beside the first, so the
+operation stays open until an operator who has checked ECS deletes its marker (which this CP only ever drops when
+nothing of it can run), and the log says so. A member's start is re-checked against an active
+membership and the same workspace row. A start is refused while a row is open. An outcome the starter cannot read
+(`runtime.ErrHomeTaskUnresolved`: a `RunTask` that may have placed a task, a wait that never saw it stop) leaves
+the row to the reconciler instead of being reported as a failure. The SSM marker stays: the adapter has no
+database and every Start passes through it, so it remains the guard; the row is what resolves it, and only a
+marker no row covers (left by a CP before this) is still an operator's to delete. Code: `control-plane/home_operation.go`,
+`control-plane/internal/store/store_home_operation.go`, `control-plane/internal/runtime/runtime_ecs_home_task.go`
+(`HomeTaskBinding`, `runHomeTask`).
+
 ## Decision 32 — A member's Recreate and Clean home mark the home, and the next Start removes it (2026-09-30)
 
 This replaces decision 31's "a member's Recreate and Clean home are not offered on this target yet". The shape
@@ -1539,3 +1603,135 @@ Code: `control-plane/internal/runtime/runtime_ecs_ec2_home_wipe.go` (`WipeHome`,
 `homeWipeCommand`), `control-plane/internal/runtime/runtime_ecs_ec2.go` (`Start`, `placeHome`, `launch`,
 `hibernate`, `createHomeVolume`, `restoreSource`), `control-plane/internal/runtime/home_wipe.go`,
 `console/src/app/WsStartingDialog.tsx`.
+
+## Decision 33 — A slot can be reserved for replacement, and its workspace's next Start replaces it (2026-10-03)
+
+A slot reads its user data only at launch, and a Stop → Start goes back to the same slot (decision 10's
+affinity), so a change to the slot launch template never reaches a retained slot. The only route was
+`Ec2SlotTerminateAfterSec` (decision 23), which is a standing, deployment-wide cost knob — not a one-off
+migration tool: every stopped workspace then pays a new slot and loses the slot's caches, for good (#1473).
+
+- **The mark is a tag on the instance, `af-slot-replace`**, set by a super_admin from the Slots tab — one slot,
+  or every slot whose launch template version is below `$Latest` (a slot from another template counts as
+  older; `$Default` plays no part, because the CP launches with `$Latest`; a slot whose version cannot be read
+  is never selected). Each reservation is an intent-first audit pair naming the workspace it moves. The tag
+  fits the existing `Ec2TagPoolResources` statement; the IAM changes are `ec2:DescribeLaunchTemplates` (in
+  `Ec2SlotPoolRead`) and one create-time tag key, `af-replaces-home` (below).
+- **Act at the next Start, as decision 32 does.** A reserved slot of a running workspace is untouched. On Start,
+  `placeHome` launches a new slot of the workspace's class in the home's AZ **first** — so a failed launch
+  (capacity, quota) fails the Start with the reason, leaves the home where it was and keeps the mark — and
+  **claims the home for it at once**, so no other Start attaches there while this one waits. Then it releases
+  the home with `releaseSlot` (unmount before detach, refused while a task runs) and confirms it is detached,
+  and terminates the old instance after re-reading that nothing holds it. **It never falls back to the
+  reserved slot**: the usual reason for a reservation is security. The reserved slot does not count against
+  the cap during the swap. If the release fails, the new slot — holding nothing but that claim — is terminated
+  before the claim is dropped, so the pool is back under its cap and the next Start can try again. **The claim
+  is dropped only once the new slot is confirmed terminated or reserved**; on an unknown outcome it is kept
+  (the workspace reads `starting` until the claim expires), because it is the link the next Start follows.
+  The new slot also carries `af-replaces-home=<volume>` from `RunInstances` itself, so a slot whose launch
+  answered — or was accepted with the answer lost — before the claim was written is still found and reused,
+  never launched again over the cap. While that home is still on its reserved slot, the tagged slot is **kept
+  out of every other placement** (`slotsOfMyType`, `makeRoom`), claim or no claim; once the home has moved,
+  detached or gone, the link means nothing and the slot is ordinary again, so a stale tag cannot hold a box out
+  of the pool (a successful launch also clears it). An earlier replacement is reused only if it is from the
+  template's current `$Latest`, read authoritatively on every attempt: one from before a template change is
+  terminated to give its place back, and one whose version cannot be judged is left alone.
+- **A reserved slot takes nobody new.** `slotsOfMyType` drops it, so neither a free-slot placement nor an
+  eviction picks it; `makeRoom` treats a reserved slot of the right size like one of the wrong size; and the
+  sweeper terminates a free reserved slot with no grace, behind its usual fences (fresh occupancy, ECS tasks,
+  task ENIs), even with both timers off. Because candidate lists are read before the attach, placement re-reads
+  the reservation just before the attach and again after the claim, stepping off a slot reserved in between;
+  the reservation endpoint reads the occupant only after writing its tag. So either the placement sees the
+  reservation, or the reservation sees (and audits) the placement, which then moves at its next Start.
+- **Rejected: terminate first, then launch.** Then a launch that fails leaves the home attached to nothing and
+  the mark gone with the instance, and "the Start fails and the mark stays" cannot hold.
+- **Not done here:** retiring a free or stopped slot on an operator's word right away. A reservation already
+  covers the security case.
+
+Follow-ups: #1473 (acceptance on a real ecs-ec2 deployment, both slot architectures).
+
+Code: `control-plane/internal/runtime/runtime_ecs_ec2_slot_replace.go` (`replaceReservedSlot`,
+`ReserveSlotReplacement`, `slotTemplateOutdated`, `SlotReplacePending`), `control-plane/internal/runtime/runtime_ecs_ec2.go`
+(`placeHome`, `slotsOfMyType`, `makeRoom`, `sweepFreeSlots`, `PoolStatus`),
+`control-plane/internal/tenantsrv/pool_slot_reserve.go`, `console/src/features/settings/tenant/ec2Pool.tsx`,
+`console/src/app/WsBar.tsx` (`SlotMoveNotice`).
+
+**Note (2026-10-03, #1592): decision 8's "umount before detach" now holds against a concurrent mount, and a
+dead mount no longer quarantines a slot.** On a sandbox pool a golden seed's release and the next start of the
+same seed drove one slot at once: the release's umount ran before the start's mount and answered "not mounted",
+the mount landed, and the release's DetachVolume pulled it a second later. The mount left behind answers every
+stat of `/af-home/<membership>` with EIO, so the next mount of that membership on that slot failed and decision 20
+quarantined a healthy box (two slots, same membership). Three changes. A per-workspace lock in the CP holds every
+mount of a home out of a release's umount-to-detach window, and a mount that gets the lock after the release
+re-reads the attachment and fails without touching (or quarantining) the slot; the lock is process-local like
+`startGen`, so two CP replicas are not serialised by it. The umount the CP sends succeeds only once nothing at all
+is mounted at the path: the slot's `af-umount` took off one mount and treated a path whose stat failed as "not
+mounted", so a stacked second mount or a dead one passed as success. And both the CP's mount and umount scripts,
+and the slot's own `af-mount`, first lazily unmount a dead XFS mount at that exact path (its device confirmed gone
+from `/sys/dev/block`), never one whose device is still there — even with an unreadable root, which may be an
+attached home still in use — and never another path. The CP sends those lines itself,
+so slots launched from an older template heal at their next mount without being replaced. Quarantine now also
+unmounts (bounded, best-effort) before its detach. Code: `control-plane/internal/runtime/runtime_ecs_ec2_home_mount.go`,
+`runtime_ecs_ec2.go` (`mountHome`, `releaseSlotSince`, `launch`, `quarantineSlot`), `deploy/aws/ecs/cfn/40-ec2-pool.yaml`.
+
+**Note (2026-10-04, #1603): every Destroy that runs the home task has a record, and the golden auto-bake is
+stepped by one CP.** During a rolling CP replacement on a sandbox pool, the old CP ran the golden seed's Destroy
+through the home task and was stopped before it recorded the answer. The seed then stayed refused every minute by its
+pending marker. The golden pipeline destroys in the tick (`destroyWorkspaceByMembership`), and only the background
+Destroy opened a `home_operation` row. Now `beginDestroyWorkspace` opens one wherever the runtime runs the home task,
+in the request or not, so the #1544 reconciler of the next CP finishes the seed's and the probe's Destroy too. Every
+path that runs the home task now writes a marker carrying its record's token.
+
+**Rejected: releasing a token-less pending marker on ECS's evidence.** ECS does not return a task's clientToken, so
+the only link between such a marker and a stopped task is time: the task's `createdAt` (ECS's clock) against the
+marker's `LastModifiedDate` (SSM's clock). The marker is written immediately before `RunTask`, so the marker's own task
+is created within about a second of it. An earlier operation's task created shortly before the marker reads as
+created after it once ECS's clock runs a few seconds ahead. A margin on both sides wide enough to absorb that also
+excludes every legitimate task, and nothing bounds the skew. Such markers come only from a CP before #1544 or one
+before this change, and they stay the operator's to release as before. Linking marker and task by the operation's id
+(for example a task tag carrying the token, which needs an IAM tag-key change) would make that proof possible.
+
+All the listings of a member's running home tasks now read every page: ECS may answer an empty page with a
+`NextToken`.
+
+Both CPs had also run the auto-bake at once (one created the seed's volume while the other released its slot), so
+the loop now steps only under a lease (`cp_lease`, migrations 0086 / pg 0071). Its expiry is computed and compared by
+the database's own clock, so CP clocks never enter it.
+- The holder renews it every tick, and every third of its 3-tick lifetime while a step runs.
+- A renewal succeeds only while the lease is still live.
+- The holder counts its deadline from when it sent the request, so a slow answer cannot extend it.
+- A timer separate from the renewals cancels the step at that deadline, so a renewal stuck on the database does not
+  keep it running.
+
+This guarantees less than "one CP only": it stops a second CP from starting golden steps. Cancelling a step does not
+withdraw what the earlier holder already handed off: an AWS call already accepted, or ecs-ec2's background completion
+of a seed or probe Start, which deliberately outlives its caller (`backgroundWithin`) up to its own bound. A process
+paused past its lease also keeps acting until its timer fires. Those overlap with a new holder's steps the way any two
+CPs' operations on one slot do, which is #1601's to close. Code: `control-plane/workspace_lifecycle.go`
+(`beginDestroyWorkspace`), `control-plane/internal/runtime/runtime_ecs_home_task.go` (`runningHomeTask`),
+`control-plane/golden_bake.go` (`tick`, `keepLease`), `control-plane/internal/store/store_cp_lease.go`.
+
+**Note (2026-10-04, #1601): a home's mount, umount and detach are serialised across CP replicas.** The #1592
+lock and the Start count it is checked against (`startGen`) were held in each CP process. A release on one replica
+therefore neither kept another replica's mount out of its umount-to-detach window, nor saw a Start made on that
+replica, and could detach the home a workspace was coming up on. Both now live in the store: each of the two
+per-workspace locks (the mount lock, and the lock between a Start's count and a failed launch's claim delete) is also
+a `cp_lease` row, and the Start count is a `cp_counter` row (migrations 0087 / pg 0072) that every replica bumps and
+every release reads. A lease expires on the database clock (90 s past its last confirmed renewal, renewed every
+30 s), so a CP that died holding one blocks the home for at most that long. The work under a lock runs on a context
+that ends when its lease is lost, and a release checks it once more before `DetachVolume`; a mount cut off that way
+fails like a mount that found the home gone (no quarantine, the claim dropped). Every replica now behaves alike: a
+Start counted before a release's last check makes the release re-mount instead of detaching, and a Start's mount
+that waits on a release finds the home gone and fails cleanly. This also covers the golden overlap the #1603 note
+leaves here (a background seed or probe Start of the previous lease holder against the new holder's release). Every
+irreversible step under a lock (a slot command, `DetachVolume`, a claim delete) first checks the lease's deadline by
+the clock, not only the context a timer ends, so a process resumed from a pause past it sends nothing new; a mount
+that answers success after its lease was lost reports the loss. A slot command whose caller stopped waiting keeps
+the lock, renewed for up to five minutes, until SSM shows it ended, and one whose `SendCommand` answer was lost keeps
+the lease until it expires: an `af-mount` still queued on the slot must not land between another holder's umount and
+detach. What stays open: an AWS call already sent when a lease is lost is not withdrawn, and a slot command that runs
+later than all of that has no fence on the slot itself. A quarantine waits at most 30 s for the lock; without it the
+home stays attached to the box, which is still stopped. Code:
+`control-plane/internal/runtime/runtime_ecs_ec2_home_lease.go` (`lockHome`, `startedSince`),
+`runtime_ecs_ec2_home_mount.go` (`beginStart`, `unclaimIfOurs`), `runtime_ecs_ec2.go` (`mountHome`,
+`releaseSlotSince`, `quarantineSlot`), `control-plane/internal/store/store_cp_lease.go`.

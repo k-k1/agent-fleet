@@ -106,6 +106,14 @@ type threadHandle struct {
 	// by path, so without this the member's own screenshots vanish from the bubble.
 	sentImages map[string][]string
 
+	// bg is the tool calls still running, by item id, for BackgroundWork (background.go).
+	bg map[string]bgEntry
+
+	// holding and held keep live items out of the mirror while a resume backfills it
+	// (holdItems).
+	holding bool
+	held    []record
+
 	// Live context fill (session/contextUsage). Separate lock from mu so onNotify
 	// can record context without contending with turn plumbing. Read by ManagedContext.
 	ctxMu       sync.Mutex
@@ -222,16 +230,23 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 // worse, and the old session.jsonl is still on disk either way.
 func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) error {
 	if prev, ok := readSession(h.slotSid); ok && prev.ID != "" {
+		h.holdItems()
+		defer h.releaseItems()
 		var res msp.SessionResumeResult
 		err := cl.CallInto(msp.MethodSessionResume, msp.SessionResumeParams{
 			CommandID: msp.NewCommandID(),
 			SessionID: prev.ID,
 		}, callTimeout, &res)
 		if err == nil {
+			items, ok := h.resumeHistory(cl, prev.ID, res.History)
 			h.mu.Lock()
 			h.sid, h.path = prev.ID, prev.Path
 			h.setModelLocked(res.Session.ModelID)
+			h.rebuildBgLocked(items)
 			h.mu.Unlock()
+			if ok {
+				h.backfillMirror(items)
+			}
 			return nil
 		}
 		if !msp.HasCode(err, msp.ErrCodeSessionNotFound) {
@@ -240,6 +255,9 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 		log.Printf("muse: %s: stored session %s is gone; starting a fresh one", h.name, prev.ID)
 	}
 	h.resetUsage() // a different conversation from here on
+	h.mu.Lock()
+	h.bg = nil
+	h.mu.Unlock()
 
 	// A slot born from a fork opens by copying the source rather than starting empty. It is
 	// tried once, at birth: after this the slot has a stored session and takes the resume
@@ -368,6 +386,7 @@ func (h *threadHandle) hostLost(cl *msp.Client) {
 	h.alive, h.running, h.cl = false, false, nil
 	h.starting = ""
 	h.sentImages = nil // nothing this host was sent can be echoed any more
+	h.bg = nil         // its tasks went with it; a resume rebuilds from the next host's fold
 	h.mu.Unlock()
 	if wasRunning {
 		// A turn cut off by a dead host is aborted, not failed: a resend fixes it, and the
@@ -402,10 +421,13 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 		// The head's turn/started is where the host holds that input (ADR 0105 decision 3): a
 		// stop that found it committed left the delivery to this point.
 		stop := false
+		var run *agents.TurnInput
 		if h.starting != "" && (p.CommandID == "" || p.CommandID == h.starting || p.TurnID == h.starting) {
 			h.starting = ""
 			if t := h.tq().Head(); t != nil {
 				stop = h.tq().Received(t)
+				in := t.In
+				run = &in
 			}
 		}
 		if stop {
@@ -413,7 +435,11 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 		}
 		st := h.state
 		h.mu.Unlock()
-		agents.MarkTurnStart(h.slotSid)
+		if run != nil {
+			agents.MarkTurnStartRun(h.slotSid, *run) // our head's turn: its input is the run
+		} else {
+			agents.MarkTurnStart(h.slotSid)
+		}
 		h.emit(agents.Event{Kind: "turn_state", TurnState: st})
 		if stop {
 			// Off the read goroutine: interrupt waits for the host's answer.
@@ -428,6 +454,19 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 		h.finishTurn(p)
 		h.mu.Lock()
 		h.turnModel = ""
+		h.mu.Unlock()
+
+	case msp.NotificationSessionClosed:
+		// An orderly unload: nothing of the session runs any more. It is broadcast to every
+		// connection, so it is checked against this handle's own session.
+		var p msp.SessionClosedParams
+		if json.Unmarshal(params, &p) != nil {
+			return
+		}
+		h.mu.Lock()
+		if p.SessionID == h.sid {
+			h.bg = nil
+		}
 		h.mu.Unlock()
 
 	case msp.NotificationSessionStatusChanged:
@@ -539,10 +578,43 @@ func (h *threadHandle) onItem(it msp.Item) {
 		images = h.sentImages[*it.CommandID]
 		delete(h.sentImages, *it.CommandID)
 	}
+	r := record{Item: it, Model: model, Images: images}
+	if h.holding {
+		h.held = append(h.held, r)
+		h.mu.Unlock()
+		return
+	}
+	h.trackBgLocked(it)
 	h.mu.Unlock()
-	if err := openStore(sid).appendRecord(record{Item: it, Model: model, Images: images}); err != nil {
+	if err := openStore(sid).appendRecord(r); err != nil {
 		log.Printf("muse: %s: transcript append: %v", h.name, err)
 	}
+}
+
+// holdItems makes onItem keep live items in memory instead of writing them, from before
+// session/resume is sent until the backfill has written the host's fold (releaseItems). The
+// resume subscribes the connection, so a live item can reach the store before the fold does;
+// first seen ahead of the history it follows, it would read as older than all of it.
+func (h *threadHandle) holdItems() {
+	h.mu.Lock()
+	h.holding = true
+	h.mu.Unlock()
+}
+
+// releaseItems writes the held items in arrival order and resumes direct writes. It writes
+// under h.mu so an item arriving meanwhile cannot overtake them, and it tracks their
+// background work only now, after the resume's rebuild would have replaced it.
+func (h *threadHandle) releaseItems() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st := openStore(h.slotSid)
+	for _, r := range h.held {
+		h.trackBgLocked(r.Item)
+		if err := st.appendRecord(r); err != nil {
+			log.Printf("muse: %s: transcript append: %v", h.name, err)
+		}
+	}
+	h.held, h.holding = nil, false
 }
 
 // onDelta accumulates a streaming fragment. Deltas are NOT persisted: the `item/completed`
@@ -657,6 +729,7 @@ func (h *threadHandle) settleIdle(gen uint64) {
 	h.running, h.turnID, h.turnModel = false, "", ""
 	h.state = agents.TurnCompleted
 	h.settleHeadLocked()
+	h.dropResumedLocked(true)
 	h.mu.Unlock()
 	agents.MarkTurnEnd(h.slotSid, agents.TurnCompleted)
 	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnCompleted})
@@ -692,6 +765,7 @@ func (h *threadHandle) finishTurn(p msp.TurnCompletedParams) {
 		h.starting = "" // ended before it was ever reported started
 	}
 	h.settleHeadLocked()
+	h.dropResumedLocked(true)
 	h.running, h.state, h.turnID = false, st, ""
 	h.mu.Unlock()
 	agents.MarkTurnEndErr(h.slotSid, st, failure)
@@ -798,7 +872,11 @@ func (h *threadHandle) onUserInput(p msp.UserInputRequestParams) {
 	}
 	inter := &agents.Interaction{ID: "ask-" + p.UserInputID, Kind: agents.InteractionQuestion}
 	for _, q := range p.Questions {
-		tq := transcript.Question{ID: q.ID, Header: q.Header, Question: q.Question}
+		// Every question carries the INTERACTION id, not the model's own question id: the
+		// Console answers and cancels with `pending[0].id`, and Respond refuses anything but
+		// inter.ID. The wire answer is keyed by ask.questions, so the model's id is not lost.
+		tq := transcript.Question{ID: inter.ID, Header: q.Header, Question: q.Question,
+			MultiSelect: q.Selection.Mode == msp.UserInputSelectionModeMultiple}
 		for _, o := range q.Options {
 			opt := transcript.Option{Label: o.Label}
 			if o.Description != nil {
@@ -901,8 +979,11 @@ func (h *threadHandle) accept(in agents.TurnInput, steer bool) (queued bool, err
 		return true, nil
 	}
 	t := h.tq().Take()
-	id := h.commitLocked(t)
+	id, ok := h.commitLocked(t)
 	h.mu.Unlock()
+	if !ok {
+		return false, nil // a drop reported it as not run (TurnQueue.Commit)
+	}
 
 	queued, err = h.launch(t, id)
 	if err != nil {
@@ -915,12 +996,15 @@ func (h *threadHandle) accept(in agents.TurnInput, steer bool) (queued bool, err
 
 // commitLocked commits the taken head and marks its turn/start out, returning the commandId.
 // Nothing waits between taking and sending, so the two share one critical section: from here a
-// stop reaches the input only through the turn it becomes. Caller holds h.mu.
-func (h *threadHandle) commitLocked(t *agents.Taken) string {
-	h.tq().Commit(t)
+// stop reaches the input only through the turn it becomes. false: Commit refused it (a drop
+// reported it as not run), and nothing is out. Caller holds h.mu.
+func (h *threadHandle) commitLocked(t *agents.Taken) (string, bool) {
+	if !h.tq().Commit(t) {
+		return "", false
+	}
 	h.starting = msp.NewCommandID()
 	h.calling = true
-	return h.starting
+	return h.starting, true
 }
 
 // launch sends the head's turn/start and records the host's answer. queued is the host's own
@@ -1078,8 +1162,11 @@ func (h *threadHandle) pump() {
 			h.mu.Unlock()
 			return
 		}
-		id := h.commitLocked(t)
+		id, ok := h.commitLocked(t)
 		h.mu.Unlock()
+		if !ok {
+			continue
+		}
 		_, err := h.launch(t, id)
 		if err == nil {
 			return
@@ -1377,6 +1464,10 @@ func reasoningEffort(s string) *msp.ReasoningEffort {
 	return nil
 }
 
+// userInputCancelReason is what a declined question tells the host. Free text: the host
+// records it, and nothing in AF reads it back.
+const userInputCancelReason = "declined by the user"
+
 // Respond answers whichever prompt is pending.
 //
 // Both channels re-deliver and both refuse a second answer with their own "already settled"
@@ -1404,10 +1495,13 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 		// Declining a question is the runtime's own refusal (ADR 0105 decision 7): the tool call
 		// resolves as cancelled and the turn goes on, so the queue is not touched. Answering
 		// every question with nothing instead would read to the model as a real answer.
+		// `reason` is optional in the schema but required by the host: measured on
+		// 1.4.2-R4684.1, a cancel without it is refused -32602 "missing field `reason`".
 		err = cl.CallInto(msp.MethodUserInputCancel, msp.UserInputCancelParams{
 			CommandID:   msp.NewCommandID(),
 			SessionID:   sid,
 			UserInputID: ask.userInputID,
+			Reason:      strPtr(userInputCancelReason),
 		}, callTimeout, nil)
 	default:
 		err = h.answerUserInput(cl, sid, ask, reply)
@@ -1457,24 +1551,11 @@ func approved(reply agents.InteractionReply) bool {
 func (h *threadHandle) answerUserInput(cl *msp.Client, sid string, ask *pendingAsk, reply agents.InteractionReply) error {
 	answers := make([]msp.UserInputAnswer, 0, len(ask.questions))
 	for i, q := range ask.questions {
-		a := msp.UserInputAnswer{QuestionID: q.ID}
+		var r agents.InteractionAnswer
 		if i < len(reply.Answers) {
-			r := reply.Answers[i]
-			if r.Text != "" {
-				a.FreeText = strPtr(r.Text)
-			}
-			// The wire takes LABELS, not indexes, so an out-of-range index is dropped
-			// rather than sent as a label the host would refuse.
-			for _, idx := range r.Options {
-				if idx >= 0 && idx < len(q.Options) {
-					a.SelectedLabels = append(a.SelectedLabels, q.Options[idx].Label)
-				}
-			}
-			if len(a.SelectedLabels) == 1 {
-				a.SelectedLabel = strPtr(a.SelectedLabels[0])
-			}
+			r = reply.Answers[i]
 		}
-		answers = append(answers, a)
+		answers = append(answers, userInputAnswer(q, r))
 	}
 	return cl.CallInto(msp.MethodUserInputAnswer, msp.UserInputAnswerParams{
 		CommandID:   msp.NewCommandID(),
@@ -1482,6 +1563,39 @@ func (h *threadHandle) answerUserInput(cl *msp.Client, sid string, ask *pendingA
 		UserInputID: ask.userInputID,
 		Answers:     answers,
 	}, callTimeout, nil)
+}
+
+// userInputAnswer builds one question's answer. The host takes EXACTLY ONE of selectedLabel
+// (single mode), selectedLabels (multiple mode) or freeText, plus an optional note, and refuses
+// anything else -32057 userInputAnswerInvalid — the schema leaves all four optional, so only the
+// host's own field docs say so (read out of 1.4.2-R4684.1; sending both label fields was refused
+// with reason invalid_target). Typed text beside a pick therefore rides as the note.
+func userInputAnswer(q msp.UserInputQuestion, r agents.InteractionAnswer) msp.UserInputAnswer {
+	a := msp.UserInputAnswer{QuestionID: q.ID}
+	// The wire takes LABELS, not indexes, so an out-of-range index is dropped rather than sent
+	// as a label the host would refuse.
+	var labels []string
+	for _, idx := range r.Options {
+		if idx >= 0 && idx < len(q.Options) {
+			labels = append(labels, q.Options[idx].Label)
+		}
+	}
+	text := strings.TrimSpace(r.Text)
+	switch {
+	case len(labels) == 0:
+		if text != "" {
+			a.FreeText = strPtr(text)
+		}
+		return a
+	case q.Selection.Mode == msp.UserInputSelectionModeMultiple:
+		a.SelectedLabels = labels
+	default:
+		a.SelectedLabel = strPtr(labels[0])
+	}
+	if text != "" {
+		a.Note = strPtr(text)
+	}
+	return a
 }
 
 func (h *threadHandle) Events() <-chan agents.Event { return h.events }

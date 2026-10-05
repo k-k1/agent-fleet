@@ -195,6 +195,10 @@ func NewTurnQueue(name string, ledger *MsgLedger, at LedgerPoint) *TurnQueue {
 // input of any other origin.
 func (q *TurnQueue) Accept(in TurnInput) (id string, dup bool) {
 	in.ClientMessageID = NormalizeMsgID(in.ClientMessageID)
+	if in.restored {
+		return q.acceptRestored(in)
+	}
+	q.adoptHeld()
 	switch q.at {
 	case LedgerAtAccept:
 		if q.ledger != nil && q.ledger.SeenOrRecord(q.name, in.ClientMessageID) {
@@ -208,8 +212,64 @@ func (q *TurnQueue) Accept(in TurnInput) (id string, dup bool) {
 		}
 	}
 	q.queue = append(q.queue, in)
+	q.holdInput(&q.queue[len(q.queue)-1])
 	q.noteAccepted(in)
 	return in.ClientMessageID, false
+}
+
+// acceptRestored queues a held input DeliverHeld sends again. The ledger is not asked:
+// the id was recorded when the message was first accepted (LedgerAtAccept), or by a Take whose
+// commit a crash cut short (LedgerAtTake), and either way the message never reached the
+// runtime — its file is the proof. A second delivery is refused here, under the handle lock:
+// one already queued or taken, and one whose file is gone because it was committed meanwhile.
+func (q *TurnQueue) acceptRestored(in TurnInput) (string, bool) {
+	id := in.ClientMessageID
+	if q.holds(id) || !heldExists(q.name, id) {
+		return id, true
+	}
+	q.queue = append(q.queue, in)
+	if q.at == LedgerAtTake {
+		if q.recorded == nil {
+			q.recorded = map[string]bool{}
+		}
+		q.recorded[id] = true
+	}
+	return id, false
+}
+
+// adoptHeld queues the session's held inputs this queue does not hold yet, ahead of the
+// input being accepted. DeliverHeld alone cannot promise that order: a send it made can be
+// refused (a question pending), and the guard can lift (an answer) before the caller of Resume
+// sends, which would then start first while the held message waits on disk for a Resume that
+// may never come. Doing it here, under the lock the caller's input is accepted under, ties the
+// order to the queue rather than to how long a guard lasts.
+func (q *TurnQueue) adoptHeld() {
+	for _, hp := range loadHeld(q.name) {
+		q.acceptRestored(restoredInput(hp))
+	}
+}
+
+// holdInput writes a newly queued peer, operator or scheduled input through to disk
+// (heldpeers.go). Written at accept rather than at teardown, so a crash that runs no teardown
+// does not lose it.
+func (q *TurnQueue) holdInput(in *TurnInput) {
+	if !isHeld(*in) || in.restored {
+		return
+	}
+	if in.queuedAt.IsZero() {
+		in.queuedAt = q.now()
+	}
+	in.onDisk = putHeld(q.name, *in)
+}
+
+// releaseInput claims a held input's file once it no longer waits: handed to the runtime,
+// discarded by a stop, or removed by id. False: a drop claimed it first (claimHeld), so it was
+// reported as not run already and must neither run nor be reported again.
+func (q *TurnQueue) releaseInput(in TurnInput) bool {
+	if !isHeld(in) || !in.onDisk {
+		return true
+	}
+	return claimHeld(q.name, in.ClientMessageID)
 }
 
 // AcceptRecorded queues input AcceptOutside has already recorded (codex: a native turn/steer
@@ -217,6 +277,7 @@ func (q *TurnQueue) Accept(in TurnInput) (id string, dup bool) {
 func (q *TurnQueue) AcceptRecorded(in TurnInput) string {
 	in.ClientMessageID = NormalizeMsgID(in.ClientMessageID)
 	q.queue = append(q.queue, in)
+	q.holdInput(&q.queue[len(q.queue)-1])
 	return in.ClientMessageID
 }
 
@@ -226,6 +287,7 @@ func (q *TurnQueue) AcceptRecorded(in TurnInput) string {
 // however it is delivered; a resend does not.
 func (q *TurnQueue) AcceptOutside(in TurnInput) (id string, dup bool) {
 	in.ClientMessageID = NormalizeMsgID(in.ClientMessageID)
+	q.adoptHeld()
 	if q.holds(in.ClientMessageID) {
 		return in.ClientMessageID, true
 	}
@@ -257,6 +319,9 @@ func (q *TurnQueue) holds(id string) bool {
 	return false
 }
 
+// Name is the session the queue belongs to.
+func (q *TurnQueue) Name() string { return q.name }
+
 // Len is the number of entries waiting in the queue, the taken one excluded.
 func (q *TurnQueue) Len() int { return len(q.queue) }
 
@@ -278,7 +343,13 @@ func (q *TurnQueue) Take() *Taken {
 		q.queue = q.queue[1:]
 		if q.recorded[in.ClientMessageID] {
 			delete(q.recorded, in.ClientMessageID)
+			// Recorded either way: a restored entry may never have been taken before, and the
+			// ledger must know it once it runs, or a resend under its id would run again.
+			if q.ledger != nil {
+				q.ledger.SeenOrRecord(q.name, in.ClientMessageID)
+			}
 		} else if q.at == LedgerAtTake && q.ledger != nil && q.ledger.SeenOrRecord(q.name, in.ClientMessageID) {
+			q.releaseInput(in)
 			continue
 		}
 		q.head = &Taken{In: in}
@@ -311,9 +382,15 @@ func (q *TurnQueue) Hold(t *Taken, held bool) (redirect bool) {
 }
 
 // Commit is the pump's last act under the lock before it hands t to the runtime. false: a stop
-// or a removal cancelled t (or t is stale); the pump must not send it.
+// or a removal cancelled t (or t is stale), or a drop claimed its held file (an archive racing a
+// Resume) and reported it as not run; the pump must not send it.
 func (q *TurnQueue) Commit(t *Taken) bool {
 	if t != q.head {
+		return false
+	}
+	if !q.releaseInput(t.In) {
+		q.head, q.stopPending, q.pendingFirst = nil, false, false
+		q.maybeEndEpisode()
 		return false
 	}
 	t.phase = phaseCommitted
@@ -355,6 +432,9 @@ func (q *TurnQueue) Requeue(t *Taken) bool {
 		return false
 	}
 	q.queue = append([]TurnInput{t.In}, q.queue...)
+	if isHeld(t.In) {
+		q.queue[0].onDisk = putHeld(q.name, t.In) // Commit released it; it waits again
+	}
 	if q.at == LedgerAtTake {
 		if q.recorded == nil {
 			q.recorded = map[string]bool{}
@@ -390,7 +470,7 @@ func (q *TurnQueue) Interrupt(opts InterruptOpts, busy bool) InterruptOutcome {
 			out.Head = HeadCancelled
 		}
 		if stopped != nil {
-			out.Result.Discard = q.keepDiscard(DiscardFirstStop, []QueueItem{itemOf(*stopped, "")})
+			out.Result.Discard = q.keepDiscard(DiscardFirstStop, []TurnInput{*stopped})
 		}
 		q.episode = len(q.queue) > 0 || out.Head == HeadKept
 		return out
@@ -400,14 +480,12 @@ func (q *TurnQueue) Interrupt(opts InterruptOpts, busy bool) InterruptOutcome {
 	if opts.DiscardQueue {
 		out.Result.Stop, reason = StopDiscard, DiscardQueue
 	}
-	var items []QueueItem
+	var items []TurnInput
 	if h := q.head; h != nil && h.phase == phaseTaken {
-		items = append(items, itemOf(h.In, ""))
+		items = append(items, h.In)
 	}
 	out.Head = q.stopHead(true)
-	for _, in := range q.queue {
-		items = append(items, itemOf(in, ""))
-	}
+	items = append(items, q.queue...)
 	q.queue = nil
 	q.episode = false
 	if len(items) > 0 {
@@ -416,10 +494,21 @@ func (q *TurnQueue) Interrupt(opts InterruptOpts, busy bool) InterruptOutcome {
 	return out
 }
 
-// keepDiscard records a discard for return (decision 4), keeping the last maxDiscards.
-func (q *TurnQueue) keepDiscard(reason string, items []QueueItem) *Discard {
-	for _, it := range items {
-		q.recordGone(it.ID)
+// keepDiscard records a discard for return (decision 4), keeping the last maxDiscards. A held
+// input's file goes with it, so a restart does not bring back what the member discarded, and an
+// operator or scheduled prompt is reported as not run.
+func (q *TurnQueue) keepDiscard(reason string, ins []TurnInput) *Discard {
+	drop := DropDiscarded
+	if reason == DiscardFirstStop {
+		drop = DropStopped
+	}
+	items := make([]QueueItem, 0, len(ins))
+	for _, in := range ins {
+		q.recordGone(in.ClientMessageID)
+		if q.releaseInput(in) {
+			dropQueued(q.name, in, drop)
+		}
+		items = append(items, itemOf(in, ""))
 	}
 	d := Discard{ID: mintID("dsc_"), At: q.now().Format(time.RFC3339), Reason: reason, Items: items}
 	q.discards = append(q.discards, d)
@@ -473,6 +562,9 @@ func (q *TurnQueue) Remove(id string) (QueueItem, error) {
 		q.dropQueued(id)
 		q.maybeEndEpisode()
 		q.recordGone(id)
+		if q.releaseInput(h.In) {
+			dropQueued(q.name, h.In, DropRemoved)
+		}
 		return itemOf(h.In, ""), nil
 	}
 	for _, in := range q.queue {
@@ -480,6 +572,9 @@ func (q *TurnQueue) Remove(id string) (QueueItem, error) {
 			q.dropQueued(id)
 			q.maybeEndEpisode()
 			q.recordGone(id)
+			if q.releaseInput(in) {
+				dropQueued(q.name, in, DropRemoved)
+			}
 			return itemOf(in, ""), nil
 		}
 	}
@@ -498,6 +593,8 @@ func (q *TurnQueue) dropQueued(id string) {
 
 // DropAll is teardown (decision 8): everything unsent goes, nothing is kept for return, and
 // the episode ends. A committed or received head is left for the driver's own teardown.
+// Held inputs (peer, operator, scheduled) keep their files: DeliverHeld hands them to the
+// session's next start (#1255, #1257).
 func (q *TurnQueue) DropAll() {
 	q.queue = nil
 	if h := q.head; h != nil && h.phase == phaseTaken {

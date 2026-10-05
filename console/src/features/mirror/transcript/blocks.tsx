@@ -197,12 +197,14 @@ export function CompactBlock({
   after,
   repo,
   onOpenFile,
+  workItemRefs,
 }: {
   turn: Group;
   before?: number;
   after?: number;
   repo?: string | null;
   onOpenFile?: (path: string, line?: number, column?: number) => void;
+  workItemRefs?: boolean;
 }) {
   // Show the reduction only once both sides are real: `after` is 0 until the first
   // post-compaction turn's usage lands, so the effect appears a beat after compaction finishes.
@@ -241,7 +243,7 @@ export function CompactBlock({
             </div>
           </div>
         )}
-        <MarkdownView source={turn.text} baseDir={turn.cwd} repo={repo} onOpenFile={onOpenFile} />
+        <MarkdownView source={turn.text} baseDir={turn.cwd} repo={repo} onOpenFile={onOpenFile} workItemRefs={workItemRefs} />
       </div>
     </details>
   );
@@ -265,12 +267,14 @@ export function ThinkingBlock({
   baseDir,
   repo,
   onOpenFile,
+  workItemRefs,
 }: {
   text?: string;
   defaultOpen: boolean;
   baseDir?: string;
   repo?: string | null;
   onOpenFile?: (path: string, line?: number, column?: number) => void;
+  workItemRefs?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const head = useRef<HTMLButtonElement>(null);
@@ -297,7 +301,7 @@ export function ThinkingBlock({
       </button>
       <DisclosureContent open={open} className="mirror-thinking-body">
         <div ref={body}>
-          <MarkdownView source={text} baseDir={baseDir} repo={repo} onOpenFile={onOpenFile} />
+          <MarkdownView source={text} baseDir={baseDir} repo={repo} onOpenFile={onOpenFile} workItemRefs={workItemRefs} />
         </div>
         {long && (
           <DisclosureFoot
@@ -955,7 +959,7 @@ export function QuestionBlock({
               {qn.multiSelect && <span className="mq-multi muted">{tr("mirror.multi_select_ok")}</span>}
               {answered && (
                 <span className={"mq-done muted" + (declined ? " declined" : "")}>
-                  {declined ? tr("mirror.rejected") : tr("mirror.answered")}
+                  {declined ? tr("mirror.question_cancelled") : tr("mirror.answered")}
                 </span>
               )}
             </div>
@@ -979,8 +983,9 @@ export function QuestionBlock({
               })}
             </div>
             {answered && declined && qi === 0 && (
-              // One note for the whole card (not per question) — claude declines the
-              // WHOLE AskUserQuestion call, not individual questions within it.
+              // One note for the whole card (not per question) — the user's Escape dismisses
+              // the WHOLE AskUserQuestion call, not individual questions within it. The
+              // wording must not blame the agent: the agent declined nothing.
               <div className="mq-answer mq-declined-note muted">{tr("mirror.question_declined")}</div>
             )}
             {answered && !declined && extras.length > 0 && (
@@ -1248,25 +1253,27 @@ function FileCard({
   onOpen,
   fileURL,
   thumbURL,
+  previewURL,
   onZoom,
 }: {
   path: string;
   onOpen: (path: string) => void;
   fileURL?: (path: string) => string;
   thumbURL?: (path: string) => string;
+  previewURL?: (path: string) => string;
   onZoom?: (url: string, path?: string) => void;
 }) {
   const [thumbFailed, setThumbFailed] = useState(false);
   const full = fileURL && imageFormat(path) ? fileURL(path) : "";
-  // The card paints a downscaled copy; the lightbox always gets the real file. A shared
-  // render is megabytes, and letting the browser shrink it to 190x240 px would download
-  // every one of them before the panel could paint.
+  // The card paints a downscaled copy and the lightbox a screen-sized one. A shared render is
+  // megabytes, and letting the browser shrink it to 190x240 px would download every one of
+  // them before the panel could paint. The real bytes stay one click away in the pane.
   const src = full && thumbURL ? thumbURL(path) : full;
   const showThumb = !!src && !thumbFailed;
   // The path travels with the URL so the lightbox can offer this file's folder. A third
   // button on the card is not an option: the body enlarges and the corner opens the pane,
   // and a third target would make that split unreadable (ADR 0080 decision 5).
-  const zoom = showThumb && onZoom ? () => onZoom(full, path) : null;
+  const zoom = showThumb && onZoom ? () => onZoom(previewURL ? previewURL(path) : full, path) : null;
   const body = (
     <>
       {showThumb && <FileThumb path={path} src={src} onFail={() => setThumbFailed(true)} />}
@@ -1315,6 +1322,7 @@ export function UserFileBlock({
   onOpen,
   fileURL,
   thumbURL,
+  previewURL,
   onZoom,
 }: {
   files?: string[];
@@ -1322,6 +1330,7 @@ export function UserFileBlock({
   onOpen: (path: string) => void;
   fileURL?: (path: string) => string;
   thumbURL?: (path: string) => string;
+  previewURL?: (path: string) => string;
   onZoom?: (url: string, path?: string) => void;
 }) {
   const list = files || [];
@@ -1336,7 +1345,7 @@ export function UserFileBlock({
       {caption && <div className="mt-files-caption">{caption}</div>}
       <div className={"mt-files-list" + (list.length > 1 ? " grid" : "")}>
         {list.map((p, i) => (
-          <FileCard key={p + i} path={p} onOpen={onOpen} fileURL={fileURL} thumbURL={thumbURL} onZoom={onZoom} />
+          <FileCard key={p + i} path={p} onOpen={onOpen} fileURL={fileURL} thumbURL={thumbURL} previewURL={previewURL} onZoom={onZoom} />
         ))}
       </div>
     </div>

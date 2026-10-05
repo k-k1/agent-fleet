@@ -175,9 +175,9 @@ A. 正常です。Workspace（`af-ws-*`）は compose 管理外で、CP が `doc
 `docker stop` します（[02](03-run.ja.md)）。
 
 **Q. 複数ホストに分散（HA・水平スケール）できる？**
-A. 提供モデルは 1 社 = 1 デプロイ = 1 ホストです。CP はホストの Docker デーモンを駆動する前提で、
-複数ホストへの分散や HA 構成は現行の対象外です。大規模化の設計方向は `docs/build/09-deploy.ja.md`
-（aws ターゲットは実装済みだが実運用実績なし）を参照してください。
+A. 提供モデルは 1 社 = 1 デプロイです。compose では CP が 1 台のホストの Docker デーモンを駆動するので、
+Workspace は複数ホストに分散しません。ecs / ecs-ec2 ターゲットでは Workspace を AWS 上に配置します
+（[01](01-choose.ja.md)）。Control Plane 自体はどのターゲットでも 1 インスタンスで動き、HA 構成はありません。
 
 **Q. Google 以外の認証（Microsoft 365 / LDAP / SAML など）を使いたい。**
 A. CP ネイティブ（`AUTH=oauth`）は OIDC を話すので、**Microsoft Entra ID・Okta・Keycloak・Auth0・

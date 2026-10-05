@@ -157,3 +157,26 @@ func TestSettingsProfileListNamesMatchTheBridge(t *testing.T) {
 		t.Errorf("name = %q", got[2].Name)
 	}
 }
+
+// The Agent's opt-in for the workload AWS identity is a deployment setting, and on ECS
+// nothing but workspaceExtraEnv reaches the container: without this the switch is inert.
+func TestWorkspaceEnvCarriesTheWorkloadAWSOptIn(t *testing.T) {
+	_, mgr, mv := bridgeEnv(t)
+	ws := store.Workspace{ID: "ws1", TenantID: mv.TenantID, MembershipID: mv.MembershipID}
+	has := func() bool {
+		for _, kv := range mgr.workspaceExtraEnv(context.Background(), ws) {
+			if kv == "AF_WS_WORKLOAD_AWS=1" {
+				return true
+			}
+		}
+		return false
+	}
+	t.Setenv("AF_WS_WORKLOAD_AWS", "")
+	if has() {
+		t.Error("opt-in injected while the CP has it off")
+	}
+	t.Setenv("AF_WS_WORKLOAD_AWS", "1")
+	if !has() {
+		t.Error("AF_WS_WORKLOAD_AWS=1 on the CP does not reach the workspace")
+	}
+}

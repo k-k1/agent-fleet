@@ -59,6 +59,7 @@ RUNBOOKS=(
   "wsl:deploy/local/README-wsl.md"
   "aws-ecs:deploy/aws/ecs/README.md"
   "aws-ec2-single:deploy/aws/ec2-single/README.md"
+  "kubernetes:deploy/kubernetes/README.md"
 )
 mkdir -p "$DEST/operate/runbooks"
 for entry in "${RUNBOOKS[@]}"; do
@@ -82,6 +83,7 @@ The command procedures, copied here so they are readable from inside a workspace
 | [wsl.md](wsl.md) | a personal WSL2 machine | `deploy/local/README-wsl.md` |
 | [aws-ecs.md](aws-ecs.md) | ecs / ecs-ec2 | `deploy/aws/ecs/README.md` |
 | [aws-ec2-single.md](aws-ec2-single.md) | compose on a single EC2 VM | `deploy/aws/ec2-single/README.md` |
+| [kubernetes.md](kubernetes.md) | kubernetes (GKE first) | `deploy/kubernetes/README.md` |
 
 These are **copies**. Edit them at the source path above, next to the scripts and
 templates they operate — that adjacency is what keeps them true. The copy is made when
@@ -104,6 +106,7 @@ rewrite_runbook_links() {  # <dir> <prefix>
       -e "s#\.\./\.\./deploy/local/README-wsl\.md#${prefix}wsl.md#g" \
       -e "s#\.\./\.\./deploy/aws/ecs/README\.md#${prefix}aws-ecs.md#g" \
       -e "s#\.\./\.\./deploy/aws/ec2-single/README\.md#${prefix}aws-ec2-single.md#g" \
+      -e "s#\.\./\.\./deploy/kubernetes/README\.md#${prefix}kubernetes.md#g" \
       "$f"
   done < <(find "$dir" -maxdepth 1 -name "*.md" -print0)
 }

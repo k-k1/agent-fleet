@@ -69,7 +69,11 @@ func drainWith(provs []Provider) {
 		allOK := true
 		progressed := false
 		for _, p := range provs {
-			if !p.Wants(key) {
+			if q.Target != "" {
+				if p.Name() != q.Target {
+					continue
+				}
+			} else if !p.Wants(key) {
 				continue
 			}
 			if rs, ok := p.(ResumableSender); ok {
@@ -107,6 +111,30 @@ func drainWith(provs []Provider) {
 		}
 		rewriteQueued(path, q)
 	}
+}
+
+// TargetReady reports whether a scheduled run may post to the named provider (#1560): the
+// connection exists, is not muted, and is bound to its member's own account on that service
+// (ADR 0020 decision 5). The binding is what makes the destination the member's: an unbound
+// connection posts somewhere nobody has shown to be theirs, so a schedule does not use it.
+func TargetReady(name string) bool {
+	s, err := secrets.Load()
+	if err != nil {
+		return false
+	}
+	return targetReady(s, name)
+}
+
+func targetReady(s *secrets.Data, name string) bool {
+	switch name {
+	case "discord":
+		d := s.Discord
+		return d != nil && d.Token != "" && !d.NotifyOff && (d.MentionUserID != "" || d.UserID != "")
+	case "slack":
+		sl := s.Slack
+		return sl != nil && sl.BotToken != "" && !sl.NotifyOff && sl.UserID != ""
+	}
+	return false
 }
 
 // rewriteQueued persists the bumped attempt count; if the rewrite fails the

@@ -110,6 +110,10 @@ func confirmPromptDelivery(m session.Meta, pane, prompt string, base deliverySna
 	if base.logs == nil {
 		return nil
 	}
+	// Compare what was actually typed: typePromptText quotes claude's image paths, which is
+	// what the transcript and the composer then hold. Retyping it is safe because the
+	// quoting is idempotent.
+	prompt = claude.QuoteImagePaths(prompt)
 	if awaitDeliveryEvidence(m, base, prompt, deliveryConfirmWindow) {
 		return nil
 	}

@@ -1,7 +1,7 @@
 // Repos store (zustand): working copies under ~/repos. Replaces the old
 // reposKey bump counter — sections call refresh() directly.
 import { create } from "zustand";
-import { api, isTransientErr } from "../../core/api/client.ts";
+import { api, getTenant, isTransientErr } from "../../core/api/client.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 
 // A working copy from GET /api/repos.
@@ -43,6 +43,8 @@ export interface Repo {
    * independent of ahead/behind above, which are relative to the upstream. */
   integration?: {
     targetBranch?: string;
+    /** targetBranch is the parent branch's upstream (e.g. origin/develop), not the parent's HEAD. */
+    targetUpstream?: boolean;
     targetUnique: number;
     worktreeUnique: number;
     relation: "same" | "contained" | "unmerged" | "diverged" | "unknown";
@@ -70,12 +72,16 @@ interface ReposStore {
 export const useReposStore = create<ReposStore>((set) => ({
   repos: [],
   async refresh() {
+    const tenant = getTenant();
     let d: { repos?: Repo[] };
     try {
       d = await api("api/repos");
     } catch {
       return false; // network drop — transient; keep what the rail has.
     }
+    // The answer describes the workspace of the tenant that was active when it was asked; one
+    // landing after a tenant switch would put the previous tenant's repos back on the rail.
+    if (getTenant() !== tenant) return false;
     if (isTransientErr(d)) return false;
     set({ repos: d.repos || [] });
     return true;

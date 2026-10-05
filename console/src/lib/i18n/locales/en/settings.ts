@@ -28,6 +28,9 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "display.assistant_theme": "Assistant theme",
   "display.region_theme_note":
     "The session chat and the assistant chat can use their own theme (dark/light), separate from the app itself (“Match app” follows the app). You can also set each one's background color below.",
+  "display.per_tenant": "Separate appearance per tenant",
+  "display.per_tenant_note":
+    "Remember the theme and surface colors separately for each tenant on this device and switch to them with the tenant. Off keeps the look you see now for every tenant; saved looks are kept.",
   "display.cjk_font": "Japanese font",
   "display.cjk_font_sample": "①②③⑩ ㈱ ㍻ Ⅰ Ⅱ Ⅲ と漢字とかなの並び",
   "display.cjk_font_note":
@@ -124,10 +127,12 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "backup.import_title": "Import",
   "backup.cat_prefs": "Personal settings",
   "backup.cat_ssm": "AWS profiles/SSM",
+  "backup.cat_gcp": "Google Cloud profiles",
   "backup.cat_instructions": "Agent instructions",
   "backup.n_keys_one": "{count} setting",
   "backup.n_keys_other": "{count} settings",
   "backup.n_ssm": "profiles {profiles} / hosts {hosts}",
+  "backup.n_gcp": "profiles {profiles}",
   "backup.n_bytes_one": "{count} byte",
   "backup.n_bytes_other": "{count} bytes",
   "backup.needs_ws": "Only while the workspace is running",
@@ -144,6 +149,8 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "backup.res_prefs": "Personal settings: {applied} applied ({skipped} skipped)",
   "backup.res_ssm": "AWS profiles/SSM: added profiles {profiles} / hosts {hosts} ({skipped} already there or skipped)",
   "backup.res_ssm_failed": "AWS profiles/SSM: {n} entries could not be registered",
+  "backup.res_gcp": "Google Cloud profiles: added {profiles} ({skipped} already there or skipped)",
+  "backup.res_gcp_failed": "Google Cloud profiles: {n} entries could not be registered",
   "backup.res_instructions": "Agent instructions: saved {bytes} bytes",
   "backup.res_instructions_failed": "Agent instructions: could not save ({msg})",
   "backup.err_bad_json": "Could not read the file (not JSON)",
@@ -160,6 +167,9 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.stopped_archive_never": "Off",
   "agents.note_stopped_archive":
     "How long a session left stopped stays in the session list before it moves to the archive. Nothing is deleted — restore it from the archive at any time — and a session locked against deletion stays in the list. A stopped child session holds its slot until then; with Off, until you archive or delete it. Applies from the next list refresh, so shortening it moves sessions already past the new period to the archive at once. Default is the deployment's period: 7 days unless the deployment changed it.",
+  "agents.spend_cap_default": "Budget for new sessions",
+  "agents.spend_cap_none": "None",
+  "agents.note_spend_cap_default": "The spend budget a session gets when its launch names none — including sessions started by create_session or a schedule. When its estimated spend (at list price; not your bill) reaches the budget, the session stops after its turn. Change one session's budget from its menu (Spend budget…)",
   "agents.peer_messaging": "Messages between sessions",
   "agents.note_peer_messaging":
     "Lets a session send a short message to another session in this workspace. It reaches a stopped session by resuming it, and the recipient is told this is not an instruction from you. Applies to sessions started from now on. Default OFF.",
@@ -169,6 +179,11 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.spawn_child_limit": "Children per session",
   "agents.note_spawn_child_limit":
     "How many children one session may have at a time. It is per parent, not per workspace, so more parents mean more sessions. Each child is a whole agent's memory. 1–10, default 3.",
+  "agents.session_search": "Past-session search",
+  "agents.note_session_search":
+    "Lets a session search what was said in this workspace's past sessions — every kind, stopped and archived included (search_sessions). Read-only, and only conversation text is indexed: no tool output or thinking. The command palette's Conversations mode works whatever this is set to. Turning it on reaches sessions started from now on; turning it off refuses running sessions' searches as soon as it is saved. Default ON.",
+  "agents.agent_memory": "Agent Fleet memory",
+  "agents.note_agent_memory": "Lets sessions read and write a memory every kind of agent shares, with af's memory_* tools. What one session saves is read by every kind in later sessions, without approval (text that looks like a secret is refused). Turning it on reaches sessions started from now on; turning it off refuses running sessions' reads and writes as soon as it is saved. Saved memories are kept, and Settings > Agent memory still lists and reverts them. Default OFF.",
   "agents.image_generation": "Image generation",
   "agents.note_image_generation":
     "Lets a session generate an image from a prompt (the generate_image tool). It uses a connected CLI's own image generation, spending that plan's usage each time. Applies to sessions started from now on. Default OFF.",
@@ -192,6 +207,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.note_apply": "Connection changes are immediate. See each behavior setting for when it takes effect.",
   "agents.rtk_unsupported":
     "This workspace's image doesn't support the agent-settings API (rtk). Rebuild the image and “Recreate” to enable it.",
+  "agents.default_model_none": "No models available",
   "agents.default_model": "Default model",
   "agents.default_effort": "Default effort",
   "agents.start_mode": "Start mode",
@@ -530,6 +546,17 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "keys.palette.file_searching": "Searching…",
   "keys.palette.open_here": "Open in active pane",
   "keys.palette.open_split": "Open in new pane",
+  "keys.palette.mode_talk": "Conversations",
+  "keys.palette.placeholder_talk": "Search past sessions' conversations…",
+  "keys.palette.talk_hint": "Type to search every session's conversation, stopped and archived included",
+  "keys.palette.talk_empty": "No matching conversation",
+  "keys.palette.talk_indexing": "Building the index ({indexed}/{total} sessions). Results may be incomplete",
+  "keys.palette.talk_archived": "This session is archived. Restore it from the archive, then open it from the list and it opens at that point",
+  "keys.palette.talk_failed": "Could not search ({reason})",
+  "keys.palette.talk_retry": "Retry",
+  "keys.palette.talk_archived_badge": "Archived",
+  "keys.palette.talk_role_user": "You",
+  "keys.palette.talk_role_agent": "Agent",
   "keys.item.command": "Command",
   "keys.item.session": "Session",
   "keys.item.repo": "Repository",
@@ -604,6 +631,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "set.tab_notifications": "Notifications",
   "set.tab_git": "Git hosting",
   "set.tab_ssm": "AWS profiles/SSM",
+  "set.tab_gcp": "Google Cloud",
   "set.tab_internalrepos": "Internal repos",
   "set.tab_backup": "Export / import",
   "set.tab_danger": "Danger zone",

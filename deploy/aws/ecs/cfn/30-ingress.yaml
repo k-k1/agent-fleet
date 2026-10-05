@@ -23,6 +23,11 @@ Parameters:
     Type: String
     Default: af-ecs-data
     Description: Name of the 10-data stack (EFS filesystem for workspace homes).
+  CustodianKmsKeyArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^(arn:aws[a-z-]*:kms:[a-z0-9-]+:[0-9]{12}:key/[A-Za-z0-9-]+)?$"
+    Description: Empty = the local key custodian. A KMS key ARN = the kms one (PARAMETERS.md).
   ImageTag:
     Type: String
     Default: dev
@@ -111,8 +116,9 @@ Parameters:
     Description: >-
       The step after Ec2SlotSleepSec on the same clock, and the only one that gives the ROOT
       VOLUME back. 0 (default) = never terminate, so retained roots only grow to Ec2MaxSlots
-      x SlotRootVolumeGiB of gp3. 14400 (4h) is the recommended value; it costs the next
-      arrival 25s. Must be >= Ec2SlotSleepSec. PARAMETERS.md.
+      x SlotRootVolumeGiB of gp3. 14400 (4h) bounds that cost, at 25s and the slot's caches
+      for the next arrival; keep 0 for fast restarts. Not a migration tool: reserve slots in
+      the admin Slots tab to replace them. Must be >= Ec2SlotSleepSec. PARAMETERS.md.
   Ec2HibernateAfterSec:
     Type: String
     Default: "0"
@@ -428,6 +434,7 @@ Conditions:
   # CpuArchitecture would reject the value every deployed stack carries on its next
   # update, which is the one thing a captured parameter must survive. TaskDef below.
   CpArm: !Equals [ !Ref CpArch, arm64 ]
+  UseKmsCustodian: !Not [ !Equals [ !Ref CustodianKmsKeyArn, "" ] ]
   HasCpAlarms: !Not [ !Equals [ !Ref CpAlarmEmail, "" ] ]
   HasWaf: !Not [ !Equals [ !Ref WafRateLimitPer5Min, 0 ] ]
   HasWafReputation: !And [ !Condition HasWaf, !Equals [ !Ref WafIpReputation, "on" ] ]
@@ -594,20 +601,11 @@ Resources:
       RetentionInDays: 7
 
   # --- "the Control Plane cannot reach its database", made visible -------------
-  #
-  # The 2026-09-01 outage was not a monitoring gap in the sense of "we had no
-  # metric". Every metric was green: the process was up, so /healthz returned 200,
-  # so the ALB target was healthy, so ECS was at steady state. The product was
-  # entirely broken and every instrument agreed it was fine. The only signal that
-  # existed at all was a line in this log group.
-  #
-  # So: turn that line into a metric. The marker is a constant shared with
-  # control-plane/store_postgres_secret.go (logDBUnavailable) - change one and you
-  # change the other, and nothing will tell you if you don't.
-  #
-  # Unconditional on purpose. A filter that matches nothing publishes nothing and
-  # therefore costs nothing, and the point of an incident like this is that you want
-  # the history to already exist by the time you think to look.
+  # In the 2026-09-01 outage every instrument was green and the only signal was a line in
+  # this log group (README, "Alarms"). The marker is a constant shared with
+  # control-plane/store_postgres_secret.go (logDBUnavailable): change both or neither.
+  # Unconditional on purpose: a filter that matches nothing costs nothing, and the history
+  # should already exist by the time anyone looks.
   CpDbUnavailableFilter:
     Type: AWS::Logs::MetricFilter
     Properties:
@@ -668,27 +666,146 @@ Resources:
       LogGroupName: !Sub "/af/${AWS::StackName}/ws"
       RetentionInDays: 7
 
+  # --- The home task: Recreate, Clean home and Destroy on an EFS home (ecs; #1260) ---
+  # The CP cannot mount EFS (the EFS SG admits only the workspace SG), so these run as a
+  # one-shot task the CP starts with RunTask: `af-cp efs-home-op`, from the CP's own image so
+  # the keep-list is the CP's (control-plane/internal/runtime/home_task.go). The operation
+  # and the membership arrive as environment overrides; the CP reads the exit code back
+  # with DescribeTasks.
+  #
+  # !! The file system ROOT, as uid 0, not the member's access point. A task definition's
+  # volumes cannot be overridden per RunTask, so one declared here cannot name a member's
+  # access point, and registering one per run would put RegisterTaskDefinition on this
+  # path and leave the RunTask grant below fencing nothing. The access point would also be
+  # too little: it pins uid 1000, which cannot remove the read-only trees toolchains leave
+  # (Go's module cache is 0555), and Destroy has to remove the access point's own root
+  # directory. The confinement is in the command instead: it refuses a membership id that
+  # is not one path element, refuses unless /mnt/efs is a mount, and only ever removes under
+  # /home/<id> and /claude-config/<id>.
+  #
+  # No task role: the command calls no AWS API. The execution role pulls the image and
+  # writes the log; the CP may already pass it (PassTaskRoles, 20-platform).
+  HomeOpsTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "af-${AWS::StackName}-home-ops"
+      RequiresCompatibilities: [ FARGATE ]
+      NetworkMode: awsvpc
+      Cpu: "256"
+      Memory: "512"
+      # The CP image, so the CP's architecture (see TaskDef below).
+      RuntimePlatform:
+        CpuArchitecture: !If [ CpArm, ARM64, X86_64 ]
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn:
+        Fn::ImportValue: !Sub "${PlatformStackName}-ExecRoleArn"
+      Volumes:
+        - Name: efs
+          EFSVolumeConfiguration:
+            FilesystemId: !ImportValue { "Fn::Sub": "${DataStackName}-EfsId" }
+            RootDirectory: /
+            TransitEncryption: ENABLED
+      ContainerDefinitions:
+        - Name: home-ops
+          Essential: true
+          Image: !Sub
+            - "${Uri}:${Tag}"
+            - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrControlPlaneUri" }
+              Tag: !Ref ImageTag
+          User: "0"
+          Command: [ efs-home-op ]
+          # Placeholders; the CP overrides both on every RunTask. Empty is refused (exit 2).
+          Environment:
+            - { Name: AF_HOME_OP, Value: "" }
+            - { Name: AF_HOME_MEMBERSHIP, Value: "" }
+          MountPoints: [ { SourceVolume: efs, ContainerPath: /mnt/efs } ]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref WsLogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: home-ops
+
+  # The CP's grant for the task above, in this stack because only this stack can name the
+  # family. RunTask is fenced to that family (any revision: a stack update deregisters the
+  # old one, and the CP runs the family by name) in this deployment's cluster. The task's
+  # roles need no new PassRole: it names only the execution role, which PassTaskRoles in
+  # 20-platform already lets the CP pass to ecs-tasks. ListTasks (is a home task still
+  # running) and DescribeTasks (its exit code) are EcsDrive's, unscoped there already.
+  # The task's cost tags (af-membership, af-role, af-tenant, as on the workspace service)
+  # are authorized as ecs:TagResource on the new task: only as part of a RunTask
+  # (ecs:CreateAction), so no task that exists can be retagged, only in this cluster, and
+  # only the keys EcsTagServiceOnCreate (20-platform) allows on a workspace service.
+  # deploy/local/cfn-cp-ec2-scope-test.py holds the allowed calls and the denied ones.
+  # Managed (inline total is capped, #1576); names are account-wide, hence the region.
+  CpHomeOpsManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "af-${AWS::StackName}-cp-home-ops-${AWS::Region}"
+      Roles:
+        - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-CpTaskRoleArn" } ] ]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: RunHomeOpsTask
+            Effect: Allow
+            Action: [ ecs:RunTask ]
+            Resource: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/af-${AWS::StackName}-home-ops:*"
+            Condition:
+              ArnEquals: { "ecs:cluster": !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" } }
+          - Sid: TagHomeOpsTaskOnRun
+            Effect: Allow
+            Action: ecs:TagResource
+            Resource: !Sub
+              - "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task/${ClusterName}/*"
+              - ClusterName: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
+            Condition:
+              StringEquals:
+                ecs:CreateAction: RunTask
+              "Null":
+                aws:TagKeys: "false"
+              ForAllValues:StringEquals:
+                aws:TagKeys: [ af-membership, af-role, af-tenant ]
+
+  # The kms key custodian's grant (ADR 0005): this key, its two calls, its encryption
+  # context only. deploy/local/cfn-cp-kms-scope-test.py.
+  CpCustodianKmsPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: UseKmsCustodian
+    Properties:
+      ManagedPolicyName: !Sub "af-${AWS::StackName}-cp-custodian-kms-${AWS::Region}"
+      Roles:
+        - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-CpTaskRoleArn" } ] ]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CustodianDataKeys
+            Effect: Allow
+            Action: [ kms:GenerateDataKey, kms:Decrypt ]
+            Resource: !Ref CustodianKmsKeyArn
+            Condition:
+              StringEquals:
+                kms:EncryptionContext:af:purpose: agent-fleet-custodian
+              "Null":
+                kms:EncryptionContext:af:key_ref: "false"
+              ForAllValues:StringEquals:
+                kms:EncryptionContextKeys: [ af:purpose, af:key_ref ]
+
   TaskDef:
     Type: AWS::ECS::TaskDefinition
+    # AF_ECS_HOME_TASK names the family as a string, which CloudFormation does not order by:
+    # without this a fresh CP could offer Recreate before the family or its grant exists.
+    DependsOn: [ HomeOpsTaskDef, CpHomeOpsManagedPolicy ]
     Properties:
       Family: !Sub "af-${AWS::StackName}-cp"
       RequiresCompatibilities: [ FARGATE ]
       NetworkMode: awsvpc
       Cpu: !Ref CpCpu
       Memory: !Ref CpMemory
-      # Declared, not inferred (docs/log/72). Fargate defaults an omitted cpuArchitecture
-      # to X86_64 - which is why leaving this out has worked so far - but that default
-      # is applied when the TASK STARTS, not when the definition is registered, so
-      # `describe-task-definition` shows runtimePlatform: null and the architecture the
-      # CP actually runs on is nowhere in the template. Stating it also makes the value
-      # part of the definition's identity, so switching CpArch produces a new revision
-      # and a rolling deployment rather than a no-op.
-      # !! EC2 does NOT share this default (docs/log/70 sec.70.8): there an omitted
-      # runtimePlatform stays null and placement decides. Only Fargate fills it in.
-      # !! The value written here is the ECS enum's own spelling, not CpArch's - see the
-      # CpArm condition. Because it is part of the identity, a stack standing on the
-      # lowercase spelling gets ONE new revision on its next update (a rolling deployment,
-      # not an outage: old and new overlap for ~51 seconds, measured in docs/log/72).
+      # Declared, not inferred (docs/log/72): Fargate applies its X86_64 default at task
+      # start, so an omitted value is nowhere in the definition, and stating it makes a
+      # CpArch switch a new revision rather than a no-op. EC2 has no such default
+      # (docs/log/70 sec.70.8). The ECS enum's spelling, not CpArch's (see CpArm).
       RuntimePlatform:
         CpuArchitecture: !If [ CpArm, ARM64, X86_64 ]
         OperatingSystemFamily: LINUX
@@ -717,6 +834,8 @@ Resources:
             - { Name: AF_DB_HOST, Value: !ImportValue { "Fn::Sub": "${DataStackName}-DbEndpoint" } }
             - { Name: AF_DB_PORT, Value: !ImportValue { "Fn::Sub": "${DataStackName}-DbPort" } }
             - { Name: AF_DB_NAME, Value: agentfleet }
+            - { Name: AF_KEY_CUSTODIAN, Value: !If [ UseKmsCustodian, kms, local ] }
+            - !If [ UseKmsCustodian, { Name: AF_KMS_KEY_ID, Value: !Ref CustodianKmsKeyArn }, !Ref "AWS::NoValue" ]
             - { Name: AF_DB_USER, Value: afadmin }
             # ...and where to go and read the password AGAIN when the injected one stops
             # working, because RDS rotates it every 7 days and `secrets` below is
@@ -765,15 +884,11 @@ Resources:
             - { Name: GITHUB_OAUTH_CLIENT_ID, Value: !Ref GithubClientId }
             - { Name: AF_GITHUB_ALLOWED_ORGS, Value: !Ref GithubAllowedOrgs }
             - { Name: AF_GITHUB_ALLOWED_DOMAINS, Value: !Ref GithubAllowedDomains }
-            # * No BITBUCKET_OAUTH_* and no workspace GITHUB_OAUTH_CLIENT_ID: the git
-            # providers' OAuth apps are per-tenant rows since docs/log/71, registered in the
-            # Console under Tenant settings -> Integrations -> Git provider OAuth. The CP
-            # still owns the Bitbucket callback and derives it from PUBLIC_BASE_URL above.
-            # AF_RUNTIME=ecs = the P3-7 stage-2 adapter (Fargate). AF_RUNTIME=ecs-ec2
-            # keeps the same substrate but puts workspaces on a pool of EC2 slots with a
-            # persistent per-user EBS home (docs/log/64, ADR 0045 decision 10) - deploy the
-            # 40-ec2-pool stack and set WsRuntime=ecs-ec2 + Ec2SlotLaunchTemplate.
-            # Rolling back is this one parameter. The AF_ECS_* below are shared by both.
+            # No BITBUCKET_OAUTH_* / workspace GITHUB_OAUTH_CLIENT_ID: git OAuth apps are
+            # per-tenant rows (docs/log/71); the Bitbucket callback derives from PUBLIC_BASE_URL.
+            # AF_RUNTIME: ecs = Fargate, ecs-ec2 = EC2 slots with a per-user EBS home (needs
+            # 40-ec2-pool + Ec2SlotLaunchTemplate; docs/log/64, ADR 0045 decision 10). Rolling
+            # back is this one parameter. The AF_ECS_* below are shared by both.
             - { Name: AF_RUNTIME, Value: !Ref WsRuntime }
             - { Name: AF_ECS_REGION, Value: !Ref "AWS::Region" }
             - { Name: AF_ECS_CLUSTER, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
@@ -787,6 +902,8 @@ Resources:
             - { Name: AF_ECS_TASK_CPU, Value: !Ref WsTaskCpu }
             - { Name: AF_ECS_TASK_MEMORY, Value: !Ref WsTaskMemory }
             - { Name: AF_ECS_WS_DISK_GB, Value: !Ref WsDiskGiB }
+            # The home task above, by FAMILY: a revision would go inactive at the next update.
+            - { Name: AF_ECS_HOME_TASK, Value: !Sub "af-${AWS::StackName}-home-ops" }
             # --- EC2 slot pool (only read when WsRuntime=ecs-ec2) ---
             - { Name: AF_ECS_EC2_LAUNCH_TEMPLATE, Value: !Ref Ec2SlotLaunchTemplate }
             - { Name: AF_ECS_EC2_SLOT_TYPES, Value: !Ref Ec2SlotTypes }

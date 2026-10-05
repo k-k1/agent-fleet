@@ -10,6 +10,8 @@ import {
   specSummary,
   formatInterval,
   sortSchedules,
+  scheduleTargets,
+  canonicalTargets,
 } from "./read.ts";
 
 const base: ScheduleDTO = { id: "sch_1", spec_kind: "cron", spec: "0 9 * * *", enabled: true };
@@ -43,6 +45,25 @@ describe("runStatusLabelKey", () => {
     expect(runStatusLabelKey("error:boom")).toBe("sched.status_fail");
     expect(runStatusLabelKey("")).toBe("sched.status_pending");
     expect(runStatusLabelKey(undefined)).toBe("sched.status_pending");
+  });
+
+  // #1560: a run that answered with the silent sentinel succeeded and said nothing; the history
+  // says so instead of a plain "success" that would read as a missing report.
+  it("labels a silent run apart from a plain success, with the same tone", () => {
+    expect(runStatusLabelKey("fired_silent")).toBe("sched.status_silent");
+    expect(statusTone("fired_silent")).toBe("ok");
+  });
+});
+
+describe("delivery targets", () => {
+  it("reads an absent or empty list as the operator alone (an older CP)", () => {
+    expect(scheduleTargets({ id: "a", spec_kind: "cron", spec: "x", enabled: true })).toEqual(["operator"]);
+    expect(scheduleTargets({ id: "a", spec_kind: "cron", spec: "x", enabled: true, deliver_to: [] })).toEqual(["operator"]);
+    expect(scheduleTargets({ id: "a", spec_kind: "cron", spec: "x", enabled: true, deliver_to: ["slack"] })).toEqual(["slack"]);
+  });
+
+  it("orders targets canonically and drops unknown words", () => {
+    expect(canonicalTargets(["slack", "operator", "webhook"])).toEqual(["operator", "slack"]);
   });
 });
 

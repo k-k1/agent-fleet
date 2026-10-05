@@ -30,6 +30,7 @@ import { useKeysStore } from "./store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useNotificationStore } from "../notifications/store.ts";
 import { useReposStore } from "../repos/store.ts";
+import { useWorkItemStore } from "../workitems/store.ts";
 import { resetWaitingLedgerForTest } from "../sessions/waiting.ts";
 import type { Session } from "../../types/session.ts";
 
@@ -157,5 +158,99 @@ describe("command palette — sessions mode", () => {
       (r) => r.querySelector(".cp-title")?.textContent === "busy",
     )!;
     expect(busy.querySelector(".session-state")?.className).toContain("question");
+  });
+});
+
+describe("command palette — ticket references (#1665)", () => {
+  const type = (text: string) => {
+    const input = document.querySelector<HTMLInputElement>(".cp-input")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+  const refOf = (title: string) =>
+    [...document.querySelectorAll<HTMLElement>(".cp-item")]
+      .find((r) => r.querySelector(".cp-title")?.textContent === title)
+      ?.querySelector(".cp-ref")?.textContent;
+
+  beforeEach(() => {
+    act(() => {
+      useSessionsStore.setState({
+        sessions: [
+          session("busy", { state: "working", pr: { number: 1662, state: "open", url: "https://github.com/acme/app/pull/1662" } }),
+          session("askedFirst", { state: "question" }),
+          session("feature1662", { branch: "feature/1662-x" }),
+        ],
+      });
+      useWorkItemStore.setState({
+        loaded: true,
+        payload: {
+          items: [],
+          queries: [],
+          fetchedAt: "",
+          running: false,
+          sessions: [{ id: "1", provider: "github", itemKey: "acme/app#45", sessionName: "askedFirst", repo: "", branch: "", createdAt: "" }],
+        },
+      });
+    });
+  });
+  afterEach(() => {
+    act(() => useWorkItemStore.getState().reset());
+  });
+
+  it("finds the session by its PR number and shows the reference that matched", () => {
+    mount();
+    type("#1662");
+    expect(titles()).toEqual(["busy"]);
+    expect(refOf("busy")).toBe("PR #1662");
+  });
+
+  it("finds the session by the issue it was launched from", () => {
+    mount();
+    type("#45");
+    expect(titles()).toEqual(["askedFirst"]);
+    expect(refOf("askedFirst")).toBe("acme/app#45");
+  });
+
+  it("puts reference hits first and still fuzzy-matches the rest", () => {
+    mount();
+    type("1662");
+    expect(titles()[0]).toBe("busy");
+    expect(titles()).toContain("feature1662");
+    expect(refOf("feature1662")).toBeUndefined();
+  });
+
+  it("keeps the highlighted row when a reference arrives and re-sorts the list under it", () => {
+    act(() => {
+      useSessionsStore.setState({ sessions: [session("busy"), session("ticketText", { title: "PROJ-123-notes" })] });
+    });
+    mount();
+    type("PROJ-123");
+    expect(titles()).toEqual(["PROJ-123-notes"]);
+    // The ledger lands after the query was typed: busy becomes a reference hit and goes first.
+    act(() => {
+      useWorkItemStore.setState({
+        loaded: true,
+        payload: {
+          items: [],
+          queries: [],
+          fetchedAt: "",
+          running: false,
+          sessions: [{ id: "2", provider: "jira", itemKey: "PROJ-123", sessionName: "busy", repo: "", branch: "", createdAt: "" }],
+        },
+      });
+    });
+    expect(titles()).toEqual(["busy", "PROJ-123-notes"]);
+    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("PROJ-123-notes");
+    // A new query starts again at the top.
+    type("PROJ-123 ");
+    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("busy");
+  });
+
+  it("does not let a prefix of the number match", () => {
+    mount();
+    type("#166");
+    expect(titles()).toEqual([]);
   });
 });

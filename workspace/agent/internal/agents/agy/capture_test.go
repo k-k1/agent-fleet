@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -110,6 +111,34 @@ func TestCaptureConversationBrainDirDiff(t *testing.T) {
 	}
 	if brainPrelaunch.Read(slotSid) != "" {
 		t.Fatal("snapshot not cleaned up after adoption")
+	}
+}
+
+// A snapshot write killed between staging and the rename leaves an orphan behind. It is not
+// another slot waiting to adopt: with one real snapshot the fresh conversation is adopted.
+func TestCaptureConversationIgnoresAnOrphanedStagedWrite(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := "/home/dev/repos/proj"
+	m := session.Meta{Dir: dir, Name: "slot05", Kind: session.KindAgy}
+	slotSid := session.UUID(dir, "slot05")
+
+	prelaunch.Write(slotSid, "")
+	brainPrelaunch.Write(slotSid, "")
+	staging := filepath.Join(filepath.Dir(brainPrelaunch.Path(slotSid)), fstore.StagingSubdir)
+	orphan, err := os.CreateTemp(staging, session.UUID(dir, "slot06")+".*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	orphan.Close()
+	if n := pendingBrainSnapshots(); n != 1 {
+		t.Fatalf("pendingBrainSnapshots = %d with one snapshot and an orphan, want 1", n)
+	}
+	if err := os.MkdirAll(filepath.Join(brainDir(), "conv-new"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	captureConversation(m)
+	if got := sids.Read(slotSid); got != "conv-new" {
+		t.Fatalf("got %q, want conv-new", got)
 	}
 }
 

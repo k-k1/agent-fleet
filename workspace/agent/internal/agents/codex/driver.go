@@ -138,6 +138,17 @@ func bypassPolicies() map[string]any {
 // resolve the thread (resume/fork/start) → re-assert the policies → apply the snapshot.
 // Live subscription is permanent per generation on the writer connection.
 func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
+	h, err := managedDriver{}.resume(m)
+	if err != nil {
+		return nil, err
+	}
+	// Peer messages a halt, a shutdown or a crash left held become the first turns (#1255).
+	agents.DeliverHeld(m.Name, h)
+	return h, nil
+}
+
+// resume is Resume without the held peer messages.
+func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	if m.Kind != session.KindCodex {
 		return nil, errors.New("codex driver は codex セッション専用です")
 	}
@@ -602,6 +613,8 @@ type threadHandle struct {
 	events   chan agents.Event
 	lastErr  *codexError // failure detail of the last turn (errors.go); managedEnrich appends
 	// it as a synthetic trailing error turn until clearLastError runs at the next turn start.
+
+	bg bgCache // the thread's background terminals, for BackgroundWork (background.go)
 }
 
 // tq returns the handle's queue, creating it on first use. Caller holds h.mu.
@@ -792,7 +805,11 @@ func (h *threadHandle) pump() {
 		}
 		// Nothing waits between taking and sending, so the entry is committed at once: from
 		// here a stop can only reach it through the turn it becomes (runTurn's Received).
-		h.tq().Commit(t)
+		// Refused: a drop reported it as not run (TurnQueue.Commit), so it never starts.
+		if !h.tq().Commit(t) {
+			h.mu.Unlock()
+			continue
+		}
 		h.running = true
 		gen := h.gen
 		h.mu.Unlock()
@@ -814,7 +831,7 @@ func (h *threadHandle) pump() {
 // only the optimistic working mark is written ahead of it.
 func (h *threadHandle) runTurn(t *agents.Taken, gen int) {
 	in := t.In
-	agents.MarkTurnStart(h.slotSid)
+	agents.MarkTurnStartRun(h.slotSid, in)
 	h.clearLastError() // a new turn starting means the previous turn's synthetic error is done
 	h.setState(agents.TurnStarting)
 	h.mu.Lock()
@@ -1313,8 +1330,16 @@ func dispatchNotification(msg rpcMsg) {
 		if h := handleByTid(p.ThreadID); h != nil {
 			h.mu.Lock()
 			h.turnID = p.Turn.ID
+			// The pump's own turn already named its input in runTurn; only a turn no pump
+			// started (taken over across an Agent restart) starts here without one.
+			head := h.tq().Head()
+			pumped := h.turnEnd != nil
 			h.mu.Unlock()
-			agents.MarkTurnStart(h.slotSid)
+			if pumped && head != nil {
+				agents.MarkTurnStartRun(h.slotSid, head.In)
+			} else {
+				agents.MarkTurnStart(h.slotSid)
+			}
 		}
 	case "turn/completed":
 		var p struct {
@@ -1355,6 +1380,7 @@ func dispatchNotification(msg rpcMsg) {
 				return
 			}
 			agents.MarkTurnEndErr(h.slotSid, st, failure)
+			h.kickBg()
 			h.mu.Lock()
 			end := h.turnEnd
 			if h.turnID == p.Turn.ID {

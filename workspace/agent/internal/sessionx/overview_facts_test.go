@@ -10,7 +10,9 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/branchpr"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -21,10 +23,17 @@ import (
 // It also hides a real shared codex app-server the workspace may advertise
 // (AF_CODEX_APP_SERVER_ADDR): a codex Terminal launch probes it (codex/release.go), and no test
 // may reach it. The ones that need a server start a fake and set the address themselves.
+//
+// The row links (#1062) are off too: a listed session whose working copy points at github.com
+// would start a background refresh that reads the credential store and calls GitHub, and the
+// port scan would attribute this machine's real listeners. session_links_test.go stubs them.
 func TestMain(m *testing.M) {
-	overviewFactsRead = func(session.Meta) ([]transcript.Turn, bool) { return nil, false }
-	_ = os.Unsetenv("AF_CODEX_APP_SERVER_ADDR")
-	os.Exit(m.Run())
+	os.Exit(testguard.Run(m, func() {
+		overviewFactsRead = func(session.Meta) ([]transcript.Turn, bool) { return nil, false }
+		lookupPRs = func([]branchpr.Key, time.Time) map[branchpr.Key]*branchpr.PR { return nil }
+		lookupPorts = func(time.Time) map[string][]int { return nil }
+		_ = os.Unsetenv("AF_CODEX_APP_SERVER_ADDR")
+	}))
 }
 
 func userTurn(text string) transcript.Turn { return transcript.Turn{Role: "user", Text: text} }

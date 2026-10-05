@@ -11,6 +11,8 @@ English | [日本語](0100-image-generation-studio.ja.md)
   Status update (2026-09-27): decision 10 is revised (revision 10) — the studio-less pane is gone. Its draft lived in one browser's `localStorage`, so what the member wrote on a PC never reached their phone; a studio needs no agent to exist (decision 2, step ①), so every pane now edits one and the draft follows the member across devices. Decision 2's "without a session the pane keeps working on the `localStorage` draft" no longer holds; the attach order ①–③ is unchanged except that ① is skipped (the pane already has its studio).
   Status update (2026-09-28): decision 6's outline is narrowed (see the note under decision 6). A press clears the outlines, and a sampler knob is outlined alone, not with the whole `params` group its lock covers.
   Status update (2026-09-28): the P0 acceptance run is recorded in [docs/log/124](../log/124-imagegen-studio-p0-acceptance.md); Unresolved 1 and 4 are answered there. Follow-ups: #1131, #1132.
+  Status update (2026-10-03): `run_image_trial` is now advertised to every studio session whether or not the studio allows agent trials, and the call is what refuses it (see the note under decision 3, #1132). codex never re-lists its tools, so a toggle that changed the list never reached a running codex Managed thread.
+  Status update (2026-10-04): decision 11's canvas is built (#956) as a modal, not in the middle column: "fix this part" on result cards, in history and in the lightbox opens it on that picture, and so does "Paint mask" in the mask row (ComfyUI engines whose model declares inpaint only; openai_compat keeps the path field). **Stroke persistence in `mask_strokes` is staged for later**: what persists is the saved PNG in `generated/console/masks/`, reopened as the underlay, so per-stroke undo lasts one opening. Choices and evidence: [docs/log/111](../log/111-inpaint-mask-canvas-p2.md) §11.
 - Follow-ups: #949, #956, #959, #960
 - **Revision 1 (2026-09-23)**: folds in the ADR review by another session, `semvs2b` (codex /
   gpt-6-sol), [113-adr-review](../log/113-adr-review.md) (9 red, 12 yellow, 1 blue). Decisions 3, 4,
@@ -189,6 +191,19 @@ studio id. Versions and the edit log live in a separate file (decision 9).
   The agent may run a trial because the user's complaint about `generate_image` was "the prompt is
   invisible": with an argument-less tool, what runs is always what is on screen. Per studio, "let the
   agent run trials" (default on).
+
+  **Note (2026-10-03)**: the "let the agent run trials" switch no longer changes the advertised set.
+  `run_image_trial` is listed to every studio session (the identity states below decide that, as for
+  the other three tools), and while the switch is off a call is refused with a message saying the
+  member has to turn it on. The guarantee is the call-time check, twice over: the MCP child re-reads
+  the studio's file on every call, and the Agent's `agent_trial` press answers 403 `agent_trial_off`.
+  Withholding the tool depended on the client re-listing when the switch moved, and codex Managed
+  never does — neither `list_changed` nor a resume, because the shared app-server keeps the thread's
+  af child ([docs/log/124](../log/124-imagegen-studio-p0-acceptance.md) §2). The app-server's
+  `config/mcpServer/reload` (0.160.0) takes no thread and reloads every loaded thread on the shared
+  server, so it was not used. The price is one short tool description per turn in a studio whose
+  switch is off. Other list changes for a running codex Managed thread (`generate_image`'s model
+  enum) are not covered by this.
 - Three identity states: owning session **resolved and bound to a studio** → advertise; **resolved
   and not bound** → do not advertise; **unresolvable** (ambiguous cwd guess, decision 8) → advertise
   the studio tools and **refuse with a reason when called** (if they vanished, the agent would only

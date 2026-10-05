@@ -779,7 +779,7 @@ as an error code in the `CreateFleet` response instead of a service event, and t
 it the same way.
 
 **Permissions.** `ec2:CreateFleet` / `DescribeFleets` / `DeleteFleets` and `iam:PassRole` on the
-engine instance role, all in this stack's own `CpIngestPolicy`
+engine instance role, all in this stack's own `CpIngestManagedPolicy`
 ([the ingest permissions](#the-ingest-permissions)). The three ECS capacity-provider grants the
 ladder used to need — `DescribeCapacityProviders`, `UpdateCapacityProvider` and the
 cluster-scoped `PutClusterCapacityProviders` nobody could find in the code — are **gone**.
@@ -1743,7 +1743,7 @@ container's `Secrets` before the container exists — and 20-platform scopes tha
 grant the task dies at startup with `ResourceInitializationError: unable to pull secrets` — not
 a 401 on the download, and nothing in the ingest log, because no container ever ran.
 `ExecHfTokenPolicy` closes it, scoped to this one secret and attached to the imported exec role
-by name the same way `CpIngestPolicy` attaches to the CP's.
+by name the same way `CpIngestManagedPolicy` attaches to the CP's.
 
 The secret's value is the token and nothing else — no `{"HF_TOKEN":"…"}` wrapper and no trailing
 newline, since `ValueFrom` with no JSON key passes the whole string through as the environment
@@ -1814,7 +1814,13 @@ with room for the filesystem.
 ### The ingest permissions
 
 The Control Plane's ONLY new IAM in this repository (ADR 0072 decision 6), and it lives in this
-stack so that a deployment which does not adopt 60-engines gains nothing:
+stack so that a deployment which does not adopt 60-engines gains nothing. It is a **managed**
+policy (`CpIngestManagedPolicy`, named `af-<stack>-cp-ingest-<region>` because managed
+policy names are account-wide) attached to the CP task role by name: as an inline policy it
+counted toward IAM's 10,240-character aggregate for the role's inline policies, which the
+role passed once 30-ingress added its own (#1576). The update that
+converts it creates the managed policy before it deletes the inline one, so the role is never
+without the grant; `deploy/local/cfn-iam-policy-size-test.py` holds every role's sizes:
 
 | Action | Scope | Why |
 |---|---|---|
@@ -1822,15 +1828,27 @@ stack so that a deployment which does not adopt 60-engines gains nothing:
 | `iam:PassRole` | `IngestTaskRole` only | a task cannot be started without passing its role |
 | `logs:GetLogEvents` / `DescribeLogStreams` | this stack's log group | WHY a job failed |
 | `secretsmanager:PutSecretValue` | `HfTokenSecret` and `CivitaiTokenSecret` only | carrying a registered token to the ingest task |
-| `ec2:CreateFleet` / `DescribeFleets` / `DeleteFleets` | `*` | buying the engine box (ADR 0077 decision 10). A fleet has no ARN to scope to; the fence is the launch template the call may name and the `iam:PassRole` below |
-| `iam:PassRole` | `EngineInstanceRole` only, `PassedToService: ec2.amazonaws.com` | the launch template carries the instance profile, so the purchase passes that role — the shape of 20-platform's `PassSlotRole` |
+| `ec2:DescribeFleets` / `DeleteFleets` | `*` | buying the engine box (ADR 0077 decision 10) |
+| `ec2:CreateFleet` | every resource but `image/*`; `image/*` only when `ec2:Owner` = `amazon` or `ec2:Public` = `true` (#1522) | the purchase. The fleet ARN is the one the call creates, so it fences nothing, and the call may name any launch template; the image fence refuses an `ImageId` override of a private image. The rest of the launch is fenced by what the instant fleet's launch is authorized against (20-platform's `RunInstances` statements, below) and the `iam:PassRole` below |
+| `iam:PassRole` | `EngineInstanceRole` only, `PassedToService: ec2.amazonaws.com` | the launch template carries the instance profile, so the purchase passes that role — the shape of 40-ec2-pool's `PassSlotRole` |
 | `iam:CreateServiceLinkedRole` | `iam:AWSServiceName` in `[spot.amazonaws.com, ec2fleet.amazonaws.com]` | the CP's own way out on an account where `standup.sh` never ran |
 
 **What left this policy in ADR 0077**: `ecs:DescribeCapacityProviders`, `ecs:UpdateCapacityProvider`,
 the cluster-scoped `ecs:PutClusterCapacityProviders`, and `iam:PassRole` on the Managed Instances
 `InfraRole` / `InstanceRole`. `ec2:RunInstances` / `TerminateInstances` / `DescribeInstances` /
 `CreateTags` and the three container-instance actions are **not repeated here**: 20-platform
-grants them unconditionally, on every flavour (Sids `Ec2SlotPool` and `EcsContainerInstances`).
+grants them on every flavour (Sids `Ec2RunInPool` / `Ec2RunAmazonImage` / `Ec2RunPublicImage` /
+`Ec2RunForeignOwnedSnapshot` / `Ec2LaunchSupport`, `Ec2SlotPool`, `Ec2TagOnCreate`,
+`Ec2SlotPoolRead` and `EcsContainerInstances`). The EC2 writes are fenced to `af-pool` = this
+deployment's cluster, which the engine boxes carry from `CreateFleet`'s `TagSpecifications`
+(`engine_fleet.go` `tags`); a box bought without it could be neither launched nor terminated by
+the CP. The launch is also fenced on what it boots from (#1522): the image must be Amazon's
+(`ec2:Owner` = `amazon` or public), which the GPU parameter the launch templates resolve is, and
+no snapshot this account owns may be mapped. Pointing a launch template's `ImageId` at an AMI of
+your own makes every purchase fail with `UnauthorizedOperation`. `CreateFleet` checks the image
+itself; everything else, a mapping override's snapshot included, holds only if an instant fleet
+authorizes its launch against the caller's `RunInstances`, which ADR 0077 assumes and no run
+under the real role has confirmed yet.
 
 🔴 **`ssm:GetParameters` on `arn:aws:ssm:<region>::parameter/aws/service/ecs/optimized-ami/*` is
 required of the CALLER**, and it is in the policy unconditionally. Measured 2026-09-12 (ADR 0077

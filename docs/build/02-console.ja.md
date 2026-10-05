@@ -297,6 +297,10 @@ CSS を持つ。一覧は `ls console/src/features`。製品が画面ごとに�
   `npm run i18n:lint` は JSX のテキストや文字列リテラルに生の日本語があると落ちる。
   `scripts/i18n-lint-pending.json` に載ったファイルは警告だけの積み残しで、きれいになったファイルは
   そこから外れる。`// i18n-exempt` は訳さない文言の印。
+- 具体的なモデル ID は `src/lib/modelFallbacks.ts` にだけ置き、持ち主・出所・ライブカタログで
+  代えられない理由を添える。`npm run models:lint` は `src/` のほかの場所にモデル ID の形の
+  リテラルがあると落ちる。モデルを選ばないものは `// model-id-lint:allow <理由>` で印を付ける。
+  Agent 側の対応物は `workspace/agent/internal/modelfallback`。
 
 ## 2.9 テストと検査
 

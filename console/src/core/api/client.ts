@@ -450,6 +450,33 @@ export interface QueueItem {
   state?: QueueState;
 }
 
+/** A peer message waiting for the member to answer the session's question, plan or
+ *  permission prompt (#1031). The Agent delivers it after the answer, once that turn ends. */
+export interface PendingPeer {
+  id: string;
+  from: string;
+  intent?: string;
+  blockedOn?: string;
+  queuedAt: string;
+  excerpt: string;
+}
+
+/** sessionDropPendingPeer drops one waiting peer message so it is never delivered. code
+ *  "not_pending" means it was already delivered or dropped. */
+export async function sessionDropPendingPeer(
+  session: string,
+  id: string,
+): Promise<{ ok: boolean; code?: string; message?: string }> {
+  const r = await apiJSON(
+    `api/sessions/${encodeURIComponent(session)}/pending-peer/${encodeURIComponent(id)}`,
+    "DELETE",
+  ).catch(() => ({ error: { message: t("err.network") } }));
+  const err = r?.error as ApiError | undefined;
+  if (!err) return { ok: true };
+  const code = typeof err.code === "string" ? err.code : "";
+  return { ok: false, message: errText(err) || t("err.send_failed"), ...(code ? { code } : {}) };
+}
+
 /** What one second stop (or stop-and-discard) threw away, kept by the driver until a tab
  *  restores or dismisses it (decision 4). `items` carry no state: all were still queued. */
 export interface Discard {
@@ -1065,6 +1092,38 @@ export const sessionStopAfterTurn = (
   on: boolean,
 ): Promise<{ stopAfterTurnAt?: string; error?: ApiError }> =>
   apiJSON(`api/sessions/${encodeURIComponent(name)}/stop-after-turn`, "POST", { on });
+
+// Spend budget (#1054). The spend is an estimate at list price (the CLI's own reported cost
+// where it gives one); a cap at or under it pauses the session after its turn, and past
+// hardFactor × the cap the session is halted mid-turn.
+export interface SessionSpendChild {
+  name: string;
+  display: string;
+  kind: string;
+  alive: boolean;
+  spendCapUsd?: number;
+  spendUsd: number;
+  priced: boolean;
+}
+export interface SessionSpend {
+  name: string;
+  spendCapUsd?: number;
+  spendCapHitAt?: string;
+  hardFactor: number;
+  spendUsd: number;
+  priced: boolean;
+  unpriced?: boolean;
+  reported?: boolean;
+  children: SessionSpendChild[];
+  childrenUsd: number;
+}
+export const sessionSpend = (name: string): Promise<SessionSpend & { error?: ApiError }> =>
+  api(`api/sessions/${encodeURIComponent(name)}/spend`);
+export const sessionSetSpendCap = (
+  name: string,
+  usd: number,
+): Promise<{ spendCapUsd?: number; spendCapHitAt?: string; spendUsd?: number; error?: ApiError }> =>
+  apiJSON(`api/sessions/${encodeURIComponent(name)}/spend-cap`, "POST", { usd });
 export const repoSetLock = (name: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>
   apiJSON(`api/repos/${encodeURIComponent(name)}/lock`, "POST", { locked });
 export const chatSetLock = (id: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>
@@ -1122,6 +1181,11 @@ export interface SessionSkill {
 }
 export const sessionSkills = (session: string): Promise<{ skills: SessionSkill[] }> =>
   api(`api/sessions/${encodeURIComponent(session)}/skills`);
+// The same list for a session not started yet (the launch modal): what `kind` would see in
+// the working copy, or in `subdir` beneath it. A worktree launch is answered from this
+// working copy's tree, since the worktree does not exist until the launch creates it.
+export const repoSkills = (repo: string, kind: string, subdir: string): Promise<{ skills: SessionSkill[] }> =>
+  api(`api/repos/${encodeURIComponent(repo)}/skills?${new URLSearchParams({ kind, subdir })}`);
 
 // --- memo queue (docs/log/21) ---
 // Per-membership notes accumulated across devices, then flushed to a session as one

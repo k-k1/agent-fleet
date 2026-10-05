@@ -302,6 +302,25 @@
   outline-offset: 0;
 }
 
+/* Delivery targets: one row of checkboxes under the report toggle. A fieldset drops its
+   browser border and padding so it lines up with the other fields. */
+.sched-detail-modal .sched-targets {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.sched-detail-modal .sched-target-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+.sched-detail-modal .sched-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 /* Read-only advanced fields — a two-column label/value grid under a muted heading. */
 .sched-readonly {
   margin-top: 14px;

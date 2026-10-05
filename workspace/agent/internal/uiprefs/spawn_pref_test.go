@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -89,6 +91,55 @@ func TestFleetSpawnDefaultsOff(t *testing.T) {
 		writePrefs(t, obj)
 		if FleetSpawn() {
 			t.Fatalf("FleetSpawn() = true for %v", obj)
+		}
+	}
+}
+
+// Past-session search defaults ON (ADR 0110 decision 6); only an explicit false turns it off.
+func TestSessionSearchDefaultsOn(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		prefs map[string]any
+		want  bool
+	}{
+		{"missing", map[string]any{}, true},
+		{"on", map[string]any{"sessionSearch": true}, true},
+		{"off", map[string]any{"sessionSearch": false}, false},
+		{"malformed", map[string]any{"sessionSearch": "false"}, true},
+	} {
+		writePrefs(t, c.prefs)
+		if got := SessionSearch(); got != c.want {
+			t.Errorf("%s: SessionSearch() = %v, want %v", c.name, got, c.want)
+		}
+		// End to end: the hook mcpreg builds the af server's argv from must be this reader.
+		if mcpreg.SessionSearchEnabled == nil || mcpreg.SessionSearchEnabled() != c.want {
+			t.Errorf("%s: mcpreg.SessionSearchEnabled is not wired to the preference", c.name)
+		}
+	}
+}
+
+// AF memory (ADR 0108) defaults OFF: a memory one session saves is read by every kind later, so
+// it is turned on knowingly. Both gates — the af server's argv and the Agent routes — read it.
+func TestAgentMemoryDefaultsOff(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		prefs map[string]any
+		want  bool
+	}{
+		{"missing", map[string]any{}, false},
+		{"on", map[string]any{"agentMemory": true}, true},
+		{"off", map[string]any{"agentMemory": false}, false},
+		{"malformed", map[string]any{"agentMemory": "true"}, false},
+	} {
+		writePrefs(t, c.prefs)
+		if got := AgentMemory(); got != c.want {
+			t.Errorf("%s: AgentMemory() = %v, want %v", c.name, got, c.want)
+		}
+		if mcpreg.AgentMemoryEnabled == nil || mcpreg.AgentMemoryEnabled() != c.want {
+			t.Errorf("%s: mcpreg.AgentMemoryEnabled is not wired to the preference", c.name)
+		}
+		if memoryx.AgentMemoryEnabled == nil || memoryx.AgentMemoryEnabled() != c.want {
+			t.Errorf("%s: memoryx.AgentMemoryEnabled is not wired to the preference", c.name)
 		}
 	}
 }

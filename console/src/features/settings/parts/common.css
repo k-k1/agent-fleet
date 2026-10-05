@@ -14,7 +14,15 @@
  */
 /* display settings tab */
 .ds-group {
-  margin-bottom: 22px;
+  margin-bottom: 28px;
+}
+
+/* A group right after a tab's intro paragraph (AWS profiles/SSM, export/import) would
+   otherwise start its heading at the paragraph's own 10px bottom margin, closer than any two
+   groups are. Scoped to the intro class: a bare `:not(.ds-group) +` also matched the hidden
+   mobile breadcrumb and pushed the first group of fragment-rendered tabs down. */
+.field-help + .ds-group {
+  margin-top: 18px;
 }
 
 /* Reset section (TTS tab bottom): a separator above the lone reset button so it
@@ -29,18 +37,35 @@
   margin-top: 8px;
 }
 
+/* A section heading has to out-rank the 13px row labels under it: at 12px muted it read as a
+   caption, and the user could not tell which block a setting belonged to. */
 .ds-title {
-  margin: 0 0 10px;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
   border-bottom: 1px solid var(--border2);
   padding-bottom: 6px;
 }
 
+/* A heading that follows other content in the same group (AI assist's model tiers, the
+   toolchain's update block) gets the gap a new group would have; without it the heading sits
+   6px under the previous row. */
+* + .ds-title {
+  margin-top: 28px;
+}
+
 .ds-note {
   margin-top: 8px;
+}
+
+/* Help text under a section or form (AWS profiles/SSM, Git commit identity, export/import).
+   Without a rule it rendered at body size in --fg, louder than the heading above it. */
+.field-help {
+  margin: 4px 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dialog-muted, var(--muted));
 }
 
 .ds-note span {
@@ -69,12 +94,6 @@
 .ds-userdict:focus {
   outline: 1px solid var(--accent);
   border-color: var(--accent);
-}
-
-/* A wrapping row whose sub-note (ds-hint) drops to its own line, aligned under
-   the control (ds-label width 120 + row gap 12). Used by the codex RTK toggle. */
-.ds-row-wrap {
-  flex-wrap: wrap;
 }
 
 .pat-table {
@@ -303,19 +322,6 @@
   gap: 4px;
 }
 
-.conn-cat {
-  margin-top: 10px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-}
-
-.conn-cat:first-child {
-  margin-top: 0;
-}
-
 .p-desc {
   padding: 0 13px 11px;
   color: var(--muted);
@@ -331,6 +337,17 @@
 /* stack body children (hint / key list / flow / steps) with breathing room */
 .p-body > * + * {
   margin-top: 10px;
+}
+
+/* .p-desc carries the card's 13px inset and no top padding, both meant for a description right
+   under the card head. Inside .p-body the inset is already there (OpenCode's workspace and
+   account blocks doubled it to 26px); after a .p-body the text sat on the tinted body's edge. */
+.p-body > .p-desc {
+  padding: 0;
+}
+
+.p-body + .p-desc {
+  padding-top: 11px;
 }
 
 /* Repo commit-identity line under the commit box (SourceControlView). */
@@ -544,7 +561,6 @@
   flex-wrap: wrap;
   gap: 8px;
   flex-basis: 100%;
-  padding-left: 18px;
 }
 
 /* Inline text button that reads as a link (used in help text). */
@@ -642,6 +658,71 @@
 .ssm-del {
   font-size: 11.5px;
   padding: 2px 9px;
+}
+
+/* a profile edited to a new name or portal: the Agent's badge would be stale (#1409) */
+.ssm-login-state.relogin {
+  color: var(--warn);
+  border-color: currentColor;
+}
+
+/* the form's inputs lock while its save is in flight; the fieldset itself draws nothing */
+.ssm-fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+/* row "Edit": the host row has no Log in to push it right, so it pushes itself */
+.ssm-edit {
+  font-size: 11.5px;
+  padding: 2px 9px;
+}
+
+.ssm-edit.push {
+  margin-left: auto;
+}
+
+/* what an edit changes outside the page (sign-in, ~/.aws/config, open sessions) */
+.ssm-edit-notes {
+  margin: 0;
+}
+
+.ssm-edit-notes p {
+  margin: 0 0 4px;
+}
+
+.ssm-edit-warn {
+  color: var(--warn);
+}
+
+/* The CP-computed profile name next to a Google Cloud profile's label (GcpTab). */
+.gcp-name {
+  font-size: 12px;
+  color: var(--muted2);
+}
+
+/* The row's Google login state (GcpTab, ADR 0107 decision 3). */
+.gcp-login-state {
+  font-size: 12px;
+}
+
+.gcp-conflict {
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+
+/* a list GET that failed: the section keeps the last list that loaded */
+.ssm-load-err {
+  color: var(--warn);
+  font-size: 12px;
+  margin: 6px 0;
+}
+
+/* a host whose profile id no longer exists */
+.ssm-missing {
+  color: var(--warn);
 }
 
 /* profile row login state (#1028), beside the label */
@@ -781,13 +862,6 @@
 }
 
 /* egress allowlist management (docs/log/20 M3) */
-.egress-h {
-  margin: 0 0 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-}
-
 .allow-acts {
   display: flex;
   gap: 6px;

@@ -40,6 +40,7 @@ updated: "2026-08"
 | 個人の WSL2 | [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
 | ecs / ecs-ec2 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
 | ec2-single | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
+| kubernetes（プレビュー） | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 ワークスペースの中では、同じファイルがこのセクションと並んで `operate/runbooks/*.md` として
 置かれます。**コンテナからも読めます**。障害対応の最中に欲しくなるのはそこだからです。
@@ -70,7 +71,8 @@ updated: "2026-08"
 
 **提供モデルと防御の姿勢。** 1 社 1 配備、各社が自社の基盤に独立して建てます。
 会社間の隔離は**配備が別であること**で保証され、プロセス内の境界ではありません。
-だから侵害の影響範囲は**その 1 配備の中に閉じます**。ワークスペースの中の境界は、
+だから侵害の影響範囲は**その 1 配備の中に閉じます**。AWS では、配備ごとに AWS アカウントを
+分けている場合に限ります（[04 守る](04-secure.ja.md)）。ワークスペースの中の境界は、
 エージェントが**任意のコードを実行する**前提で設計してあります。守っているのは、
 他ユーザーのデータ・コントロールプレーンとホスト・秘密・持ち出しです。
 

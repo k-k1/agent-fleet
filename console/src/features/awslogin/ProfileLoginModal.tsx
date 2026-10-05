@@ -17,19 +17,35 @@ export interface LoginProfile {
 }
 
 // The refusals the Agent names, in the member's words; anything else shows the server's text.
-const REFUSALS: Record<string, MsgKey> = {
+export const REFUSALS: Record<string, MsgKey> = {
   not_a_settings_profile: "awslogin.err_not_found",
   not_exported: "awslogin.err_not_exported",
   incomplete_profile: "awslogin.err_incomplete",
   settings_unavailable: "awslogin.err_settings_unavailable",
 };
 
-export function ProfileLoginModal({ profile, onClose }: { profile: LoginProfile; onClose: () => void }) {
+// onLoggedIn fires when this modal's own attempt finishes signed in. The Agent re-reads Settings
+// before it starts one, so the login is for the row as saved, not for the last poll's copy.
+export function ProfileLoginModal({
+  profile,
+  onClose,
+  onLoggedIn,
+}: {
+  profile: LoginProfile;
+  onClose: () => void;
+  onLoggedIn?: () => void;
+}) {
   const tr = useT();
   const refresh = useAwsLoginStore((s) => s.refresh);
+  const refreshExpiry = useAwsLoginStore((s) => s.refreshExpiry);
   const base = `api/aws-login/profiles/${encodeURIComponent(profile.name)}`;
-  // A login here settles any request for the same profile, so its toast can go now.
-  const a = useLoginAttempt(`${base}/start`, (att) => `${base}/attempts/${encodeURIComponent(att)}`, () => void refresh());
+  // A login here settles any request for the same profile and moves its end, so both
+  // toasts can go now.
+  const a = useLoginAttempt(`${base}/start`, (att) => `${base}/attempts/${encodeURIComponent(att)}`, () => {
+    void refresh();
+    void refreshExpiry();
+    onLoggedIn?.();
+  });
   const refusal = a.phase === "failed" ? REFUSALS[a.errorCode] : undefined;
   return (
     <Modal title={tr("awslogin.modal_title", { profile: profile.label || profile.name })} onClose={onClose}>

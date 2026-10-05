@@ -184,7 +184,10 @@ workspace is stopped.
   or a Bitbucket branching model gets its own prefixes and base, and the dialog says where the
   base came from. A repository whose `origin` has `develop` but declares nothing gets an offer to
   [initialize Git Flow](03-code.md#initialize-git-flow). A name outside the rules only gets a note; nothing is refused. The template is
-  in the settings tab. A pull request launches on its own head branch instead (below).
+  in the settings tab; your tenant administrator may also set team defaults, which a repository's
+  declaration and your own template override. A pull request launches on its own head branch instead (below).
+  An agent asks the same rules through the af tool `branch_name`, so a skill that creates
+  branches gets the name the dialog would show instead of inventing its own.
 - Once work is under way, **Comment the work back** appears in the details. The draft holds the
   branch and the changed files, and **the sentence is yours**: it is posted exactly as written and
   nothing is written for you. Bitbucket items have no such button — Agent Fleet only reads from
@@ -211,6 +214,24 @@ five-minute refreshes, and a stale copy of them is worse than none.
   **where to work** defaults to it; a copy you pick by hand keeps whatever branch it is on. The
   started badge keeps working for it.
 - **The description is still not shown here.**
+
+### From a ticket number in the conversation
+
+In the mirror and the assistant chat, **ticket references the agent writes become links** that open
+the same details panel — even with the left pane collapsed. Ctrl/⌘-click or a middle click goes
+straight to the tracker instead.
+
+- A `#956` in running text links, merged and closed ones included.
+- **A number in backticks, such as `` `#166` ``,** links only when your Issue tracker list holds it,
+  so a number quoted as something you typed does not turn into a link to an unrelated issue.
+- `#956` is read as a number in the session's own repository (its origin on github.com or
+  bitbucket.org). The chat has no working copy, so there only the `owner/name#956` form links.
+- A Jira key (`PROJ-123`) links when the list holds an issue of that project (in backticks, only
+  when it holds that issue); look-alikes such as `UTF-8` or `SHA-256` stay text. In a Bitbucket
+  working copy, `#N` links only the pull requests the list holds.
+- A ticket that is not in the list opens with just its key and a link to the original page; a session can still be started from it. **Nothing is fetched for it** — as with
+  the list, opening it never starts a stopped workspace.
+- Someone reading a shared session sees these as plain text.
 
 ## Reading state — badges and notifications
 
@@ -242,7 +263,8 @@ When a state changes while you're not watching, a **browser notification** appea
 while you have that screen open). When the work pauses — the session becomes Ready — you're
 notified with **"A reply is ready"**; when a question arrives, with **"A question is waiting"** —
 the session name is included in the body. This suits use cases like waiting for a reply on your
-phone during a commute (shell / ssm don't notify).
+phone during a commute (shell / ssm don't notify). Which kinds of notification pop up, speak, or
+leave an unread dot is chosen per kind in [Settings › Notifications](12-settings.md#notifications).
 
 When a program running in a session **asks its terminal for a notification** (the OSC 9 / 99 /
 777 escape sequences — you can emit one yourself, e.g. `printf '\e]9;Build done\a'`), it
@@ -250,7 +272,9 @@ arrives in the notification center as **"Terminal notification"**, with a browse
 too (not while that session is in the active pane, nor when the browser has not been allowed to notify).
 That lets a shell session tell you when a long build finishes. claude / codex / opencode already
 report the same moments through their own channel, so their terminal notifications are not used,
-to avoid duplicates.
+to avoid duplicates. The exception is claude's own notification tool (`PushNotification`, off by
+default in claude): when claude decides to notify you, that message arrives as a terminal
+notification too, unless claude held it back because you were active in that terminal.
 
 **A red dot on a session marks a notification you have not read yet.** It sits on the session's
 row in the left pane (on the corner of its icon) and on its tab, and rolls up onto a collapsed
@@ -373,6 +397,33 @@ go to the archive, shell / SSM to the trash).
   origin as well — **that one cannot be undone**. A branch that is not in the parent's history
   cannot be deleted through this route at all.
 
+### A spend budget — pausing a session that spends too much
+
+A session can carry a **spend budget** in US dollars. When its **estimated** spend reaches the
+budget, the session **stops after the turn it is running** (the same resumable stop as "stop after
+this turn") and the notification centre says so (**"Stopped by its budget"**). If one turn alone
+runs on to **twice** the budget, the session is halted at once, mid-turn, and the notification says
+**halted mid-turn**.
+
+- **Setting it.** In the start dialog under **Advanced → Budget (USD)**; later from the session's
+  menu, **"Spend budget…"**. Settings › Agents › **"Budget for new sessions"** is the default for
+  every launch that names none — including sessions started by `create_session` and by schedules.
+  0 means no budget.
+- **Seeing it.** The chat's context row shows **"≈$1.84 / $5.00"** — amber from 80%, red at the
+  budget. Press it to change the budget. For a session that started others with `create_session`,
+  **"children ≈$X"** sits beside it: their spend is shown here but **not** counted against this
+  session's budget — each child has its own.
+- **Carrying on.** A stopped row shows the budget mark. **"Raise budget & resume…"** (in the row's
+  menu and on the notification) sets a higher budget and resumes in one step; it only accepts a
+  budget above what is already spent. Resuming without raising it gives the session one more turn,
+  after which it stops again.
+- **What the figure is.** An estimate at list price from the session's own transcript — or the
+  CLI's own reported cost where it gives one (opencode) — **not your bill**. On a subscription plan
+  it is the API-equivalent figure. A model with no price cannot be estimated, so a budget has no
+  effect on it (the dialog says so); kinds that record no token counts (Kiro, Cursor, Antigravity)
+  and the self-hosted engine ($0) are never stopped by one. A fork starts from $0: the history it
+  copied is not charged to it.
+
 ## When you can — and can't — resume
 
 Stopped sessions can be opened and resumed with a click. However, claude / codex / cursor / copilot / kiro / agy / opencode / lcpp / muse
@@ -453,7 +504,7 @@ colour the whole card, so they can be spotted from across the room.
   and all. **Ctrl (⌘) + click and middle-click open another pane at any width.** In the tabbed
   layout a tap opens a new tab even on a phone, and the grid stays one tab away.
 - **What one card shows**: the state at the top right (Ready / Working… / stopped), the project
-  and branch on the line below with **the distance from the parent working copy** right of it
+  and branch on the line below with **the distance from the parent** right of it
   ("親+2・FF可", "3 unmerged" — the same chip as the repo row in the left pane), under that
   **how full the context is and a graph of the tokens each reply spent** (the same strip the
   chat view shows), and at the bottom **the model that answered last**, time since it started
@@ -461,8 +512,8 @@ colour the whole card, so they can be spotted from across the room.
   That last one is read from notifications and this device's own observations, so it stays blank
   when neither saw the change. Which agent it is (Claude, Codex, …) is the coloured icon at the
   top left.
-- **The very bottom of a card is the opening of the last thing that session said** (Claude only;
-  shown for stopped sessions too). A long line is cut off, and hovering shows it in full. On a
+- **The very bottom of a card is the opening of the last thing that session said** (shown for
+  stopped sessions too). A long line is cut off, and hovering shows it in full. On a
   session that has not said anything yet, the line is not there at all.
 - **Right-click, the ⋯ button, or the Menu key on a card gives the same menu as the row in the
   left pane** — stop, rename, hand off, share, lock, keep awake, archive, and the rest
@@ -609,9 +660,10 @@ this in parallel").
   one, and rename one. **Once you rename a child yourself, your name stays** and the parent can
   no longer change it.
 - **What it may not do**: add instructions to a child, answer its questions or approve its plans
-  or permission prompts on your behalf, or delete or archive it — and nothing at all with
-  sessions it did not start. Removing a child is done by you, in the Console, like any other
-  session. To give a child more work, the parent sends it a message (next section).
+  or permission prompts on your behalf, or delete or archive it — and nothing with sessions it
+  did not start beyond the messages and the read-only output peek of the next section. Removing
+  a child is done by you, in the Console, like any other session. To give a child more work, the
+  parent sends it a message (next section).
 - **No grandchildren.** A child cannot start sessions of its own; only a session you started
   yourself can. Sessions on their own extend the chain by exactly one generation, and nothing
   grows further without you launching something.
@@ -660,12 +712,33 @@ one ("tell the session next door what we just did").
 - **They reach a stopped session** — it is resumed first, then the message is delivered.
 - **Delivery is confirmed; being read or acted on is not.** A reply is not guaranteed either.
   A **Managed** session that is in the middle of a turn gets the message as its next turn, once
-  the current one ends. Stopping that run does not throw the message away; stopping the session
-  or the workspace before then does.
+  the current one ends. Stopping that run does not throw the message away, and neither does
+  stopping the session or the workspace, or the Agent restarting: the message waits on disk and
+  becomes the session's first turn when it next starts, stamped with the time it was queued.
+  Archiving or deleting the session, or switching it to Terminal (CLI), drops it.
+- **A session waiting on your answer gets it after you answer.** While a session shows a
+  question, a plan to approve or a permission prompt, a message sent to it waits instead of
+  being refused (typed into the dialog, it would pick an answer for you). Its chat view says how
+  many messages from which session will be delivered after you answer, and **Drop** discards one
+  so it is never delivered. Once you have answered and the turn that answer started has ended,
+  they arrive one at a time, oldest first, stamped with the time they were queued; the sender is
+  told its message is waiting and does not resend. They wait up to 24 hours (20 per session),
+  survive the session or the Agent stopping, and are dropped when the session is archived or
+  deleted. Expired login and the usage-limit menu still refuse: those can last for hours, and
+  the sender is better off knowing.
 - **Only plain text travels.** No conversation history, no files. To pass the context itself,
   use the handoff or the branch above.
 - **Raw shell sessions (shell / ssm) can neither send nor receive**, because the text sent to
   them would run verbatim as a command.
+- **A session can also read another session's recent output**, without sending anything. The
+  same switch turns it on. It is read-only and silent: the other session is not interrupted or
+  told, but every read is recorded in the Agent log and in the fleet graph's record (the graph
+  does not draw it). A session gets at most the last 200 lines (16 KiB) at a time, cannot read
+  itself, and cannot read shell / ssm sessions, or claude sessions while this workspace's claude
+  login has expired. It only ever sees sessions in this workspace, never sessions other people
+  shared with you. Turning the switch on exposes what your sessions' agents wrote to your other
+  sessions **as is — nothing is masked**, so a secret or a sign-in code an agent quoted in its
+  reply can be read too.
 
 Messages are deliberately curt. Every one of them costs the receiving session a whole turn, so
 sessions are told to drop greetings and thanks and to lead with the point. Each message also
@@ -694,7 +767,7 @@ is why `/list-agents` does nothing here; use the Agent Fleet version above inste
 | A stopped session | Can't be reached | **Resumed, then delivered** |
 | Record of it | One collapsed line in the terminal | A badge with the sender in the chat view |
 | Sessions on another machine or the web | Can reply to them | **Not supported** (same workspace only) |
-| Holding or refusing on the receiving side | Available | Not yet — only the workspace-wide on/off |
+| Holding or refusing on the receiving side | Available | Not offered — every session in a workspace is yours, so there is no one to refuse; only the workspace-wide on/off |
 
 The block is applied **through the launch settings** (a version shipped where environment variables
 no longer closed it). If something does arrive over Claude's own channel anyway, **it shows up in

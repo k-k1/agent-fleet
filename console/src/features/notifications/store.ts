@@ -18,8 +18,10 @@ import { openSharedSession } from "../sharing/open.ts";
 import { useSchedulesStore } from "../schedules/store.ts";
 import { destinationShown, opensConversation, unseenConversationEventIDs, unseenSessionEventIDs } from "./read.ts";
 import { notificationWording } from "./wording.ts";
-import { childIdleMuted } from "./childIdle.ts";
+import { notificationEffectOn, notificationRow } from "./effects.ts";
+import { notifyCell } from "./prefs.ts";
 import { useAwsLoginStore } from "../awslogin/store.ts";
+import { useGcpLoginStore } from "../gcplogin/store.ts";
 
 export type NotificationSourceState = "unknown" | "ready" | "offline" | "unsupported";
 export interface FleetNotification {
@@ -68,12 +70,12 @@ async function deliver(n: FleetNotification): Promise<void> {
   if (destinationShown(n, activePane(useLayoutStore.getState().layout), useSessionsStore.getState().sessions)) {
     return;
   }
-  // A muted child's idle interrupts nobody; wireNotificationReadOnVisibleSessions marks it read.
-  if (n.kind === "answer-ready" && n.target.type === "session" && childIdleMuted(n.target.id)) return;
+  // Each effect is its own cell of the notification table (prefs.ts). A row whose unread dot is
+  // off is marked read by wireNotificationReadOnVisibleSessions, not here.
   const text = notificationWording(n);
   const s = getSettings();
-  const deviceDelivery = n.kind !== "usage-reset" || s.usageResetNotify;
-  if (deviceDelivery && "Notification" in window && Notification.permission === "granted") {
+  const row = notificationRow(n);
+  if (notifyCell(s, row, "os") && "Notification" in window && Notification.permission === "granted") {
     try {
       const osn = new Notification(text.title, { body: text.body, tag: n.id });
       osn.onclick = () => {
@@ -84,8 +86,11 @@ async function deliver(n: FleetNotification): Promise<void> {
       };
     } catch {}
   }
-  if (n.kind === "usage-reset") {
-    if (s.usageResetNotify && s.ttsEnabled) announce(text.speech, text.body, undefined, "", "usage-notification");
+  if (!notifyCell(s, row, "voice")) return;
+  // The two read-aloud masters differ on purpose: a usage reset has always spoken whenever
+  // read-aloud is on, every other row only under the session voice notification switch.
+  if (row === "usage-reset") {
+    if (s.ttsEnabled) announce(text.speech, text.body, undefined, "", "usage-notification");
   } else if (s.ttsSessionNotify) {
     // The voice is looked up from target.id as one of our own session names, so a notification
     // aimed at a shared session (a handoff) must not take it: looking up a voice by someone
@@ -169,6 +174,20 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
     const aws = useAwsLoginStore.getState();
     void aws.refresh();
     aws.open(n.payload.requestId);
+    return { opened: true };
+  }
+  // af-gcloud-exec's login request (ADR 0107 decision 3): the same as AWS's. Only the id is
+  // read, and the modal it opens shows no sign-in link or code field until its own press.
+  if (n.kind === "gcp-login-required" && typeof n.payload.requestId === "string" && n.payload.requestId) {
+    const gcp = useGcpLoginStore.getState();
+    void gcp.refresh();
+    gcp.open(n.payload.requestId);
+    return { opened: true };
+  }
+  // The SSO expiry warning (#1029): its destination is the profile's login modal. Only the
+  // profile name is read, and the modal opens only if the Agent lists that profile as expiring.
+  if (n.kind === "aws-sso-expiring" && typeof n.payload.profile === "string" && n.payload.profile) {
+    void useAwsLoginStore.getState().openProfile(n.payload.profile);
     return { opened: true };
   }
   if (n.kind === "handoff-offer" && typeof n.payload.catalogId === "string" && n.payload.catalogId) {
@@ -287,10 +306,10 @@ export function wireNotificationReadOnVisibleSessions(): () => void {
         ...unseenSessionEventIDs(items, shownSession(p, sessions)),
         ...(p.content.kind === "chat" ? unseenConversationEventIDs(items, p.content.conversationId || "") : []),
       ]),
-      // A muted child's idle is acknowledged on arrival too, so it raises no dot and no count.
-      // Here rather than in deliver(): deliver sees only rows newer than the first load, and
-      // runs before the session list may have arrived to say which sessions are children.
-      ...mutedChildIdleIDs(items),
+      // A row whose unread cell is off is acknowledged on arrival, so it raises no dot and no
+      // count. Here rather than in deliver(): deliver sees only rows newer than the first load,
+      // and runs before the session list may have arrived to say which sessions are children.
+      ...unreadMutedIDs(items),
     ])].filter((id) => !pending.has(id));
     checkGoneReports(items, sessions);
     if (!ids.length) return;
@@ -351,8 +370,8 @@ export function wireNotificationReadOnVisibleSessions(): () => void {
   };
 }
 
-const mutedChildIdleIDs = (items: FleetNotification[]): string[] =>
-  items.filter((n) => !n.seen && n.kind === "answer-ready" && n.target.type === "session" && childIdleMuted(n.target.id)).map((n) => n.id);
+const unreadMutedIDs = (items: FleetNotification[]): string[] =>
+  items.filter((n) => !n.seen && !notificationEffectOn(n, "unread")).map((n) => n.id);
 
 // applyPushedNotifications adopts a pushed api/events frame. Bumping the
 // request/applied counters marks any in-flight poll as stale so its (older)

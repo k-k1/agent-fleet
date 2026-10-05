@@ -87,6 +87,17 @@ func (managedDriver) Capabilities() agents.Capabilities {
 // creating/loading the copilot session when needed (the Driver interface: start a new one when
 // there is none). It doubles as the shared §6 reconciliation procedure.
 func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
+	h, err := managedDriver{}.resume(m)
+	if err != nil {
+		return nil, err
+	}
+	// Peer messages a halt, a shutdown or a crash left held become the first turns (#1255).
+	agents.DeliverHeld(m.Name, h)
+	return h, nil
+}
+
+// resume is Resume without the held peer messages.
+func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	if m.Kind != session.KindCopilot {
 		return nil, errors.New("copilot driver は copilot セッション専用です")
 	}
@@ -701,7 +712,7 @@ func (h *threadHandle) resumePump() {
 // The turn-boundary MarkTurnStart/End drive the status store and the docs/log/30 completion
 // report (the notify seam).
 func (h *threadHandle) runTurn(t *agents.Taken) {
-	agents.MarkTurnStart(h.slotSid)
+	agents.MarkTurnStartRun(h.slotSid, t.In)
 	defer func() { agents.MarkTurnEnd(h.slotSid, h.currentState()) }()
 	h.setState(agents.TurnStarting)
 	if h.beforeCommit != nil {

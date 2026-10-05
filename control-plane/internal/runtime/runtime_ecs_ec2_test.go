@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -77,6 +78,16 @@ type fakeEC2 struct {
 	// deleteTagsErr makes DeleteTags fail, without deleting anything, for a request that
 	// names this tag key.
 	deleteTagsErr map[string]error
+	// ltLatest is the slot launch template's $Latest version number; 0 makes
+	// DescribeLaunchTemplates fail, the way it does for a role without the permission.
+	ltLatest int64
+	// afterDescribeVolumes / onAttach run after the call has answered and the fake's lock is
+	// released, so a test can change the world between two reads of a placement — the way
+	// an operator's reservation lands while a Start is under way.
+	afterDescribeVolumes func()
+	onAttach             func(instID string)
+	// terminateErr makes TerminateInstances fail without terminating anything.
+	terminateErr error
 }
 
 func newFakeEC2() *fakeEC2 {
@@ -224,6 +235,9 @@ func filterMatch(filters []ec2types.Filter, get func(name string) []string) bool
 }
 
 func (f *fakeEC2) DescribeVolumes(_ context.Context, in *ec2.DescribeVolumesInput, _ ...func(*ec2.Options)) (*ec2.DescribeVolumesOutput, error) {
+	if hook := f.afterDescribeVolumes; hook != nil {
+		defer hook()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.describeVolumesErr != nil {
@@ -245,6 +259,9 @@ func (f *fakeEC2) DescribeVolumes(_ context.Context, in *ec2.DescribeVolumesInpu
 		if !filterMatch(in.Filters, func(name string) []string {
 			if strings.HasPrefix(name, "tag:") {
 				return []string{ec2TagValue(v.Tags, strings.TrimPrefix(name, "tag:"))}
+			}
+			if name == "volume-id" {
+				return []string{id}
 			}
 			return nil
 		}) {
@@ -446,6 +463,9 @@ func (f *fakeEC2) DeleteSnapshot(_ context.Context, in *ec2.DeleteSnapshotInput,
 }
 
 func (f *fakeEC2) AttachVolume(_ context.Context, in *ec2.AttachVolumeInput, _ ...func(*ec2.Options)) (*ec2.AttachVolumeOutput, error) {
+	if hook := f.onAttach; hook != nil {
+		defer hook(aws.ToString(in.InstanceId))
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	inst := aws.ToString(in.InstanceId)
@@ -591,9 +611,38 @@ func (f *fakeEC2) RunInstances(_ context.Context, in *ec2.RunInstancesInput, _ .
 		State:        &ec2types.InstanceState{Name: ec2types.InstanceStateNamePending},
 		Placement:    &ec2types.Placement{AvailabilityZone: aws.String(f.subnetAZ[aws.ToString(in.SubnetId)])},
 	}
+	// EC2 stamps the RESOLVED version, never "$Latest" — which is what slotTemplateOutdated
+	// compares.
+	if lt := in.LaunchTemplate; lt != nil && f.ltLatest > 0 {
+		f.instances[id].Tags = []ec2types.Tag{
+			{Key: aws.String(ec2TagLaunchTemplateID), Value: lt.LaunchTemplateId},
+			{Key: aws.String(ec2TagLaunchTemplateVersion), Value: aws.String(strconv.FormatInt(f.ltLatest, 10))},
+		}
+	}
+	// The request's own tags land on the instance too — af-pool / af-role among them — so a
+	// new slot counts toward poolSize and shows up as a free slot, as on EC2.
+	for _, ts := range in.TagSpecifications {
+		if ts.ResourceType == ec2types.ResourceTypeInstance {
+			f.instances[id].Tags = append(f.instances[id].Tags, ts.Tags...)
+		}
+	}
 	f.ranAMI = append(f.ranAMI, aws.ToString(in.ImageId))
 	f.log("RunInstances %s type=%s subnet=%s ami=%s", id, in.InstanceType, aws.ToString(in.SubnetId), aws.ToString(in.ImageId))
 	return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{{InstanceId: aws.String(id)}}}, nil
+}
+
+func (f *fakeEC2) DescribeLaunchTemplates(_ context.Context, in *ec2.DescribeLaunchTemplatesInput, _ ...func(*ec2.Options)) (*ec2.DescribeLaunchTemplatesOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.ltLatest == 0 {
+		return nil, fmt.Errorf("UnauthorizedOperation: ec2:DescribeLaunchTemplates")
+	}
+	if len(in.LaunchTemplateIds) != 1 || in.LaunchTemplateIds[0] != "lt-1" {
+		return &ec2.DescribeLaunchTemplatesOutput{}, nil
+	}
+	return &ec2.DescribeLaunchTemplatesOutput{LaunchTemplates: []ec2types.LaunchTemplate{{
+		LaunchTemplateId: aws.String("lt-1"), LatestVersionNumber: aws.Int64(f.ltLatest), DefaultVersionNumber: aws.Int64(1),
+	}}}, nil
 }
 
 func (f *fakeEC2) StartInstances(_ context.Context, in *ec2.StartInstancesInput, _ ...func(*ec2.Options)) (*ec2.StartInstancesOutput, error) {
@@ -626,9 +675,18 @@ func (f *fakeEC2) StopInstances(_ context.Context, in *ec2.StopInstancesInput, _
 // the root device, so a home left attached would come back `available`, not disappear).
 // A fake that only flipped the state would let a test "prove" a release-then-terminate
 // ordering that AWS does not actually give us.
-func (f *fakeEC2) TerminateInstances(_ context.Context, in *ec2.TerminateInstancesInput, _ ...func(*ec2.Options)) (*ec2.TerminateInstancesOutput, error) {
+func (f *fakeEC2) TerminateInstances(ctx context.Context, in *ec2.TerminateInstancesInput, _ ...func(*ec2.Options)) (*ec2.TerminateInstancesOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// The SDK refuses to send on a cancelled context; a terminate is the call whose loss
+	// strands a box, so the fake models that here.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if f.terminateErr != nil {
+		f.log("TerminateInstances REFUSED (%v)", f.terminateErr)
+		return nil, f.terminateErr
+	}
 	for _, id := range in.InstanceIds {
 		f.log("TerminateInstances %s", id)
 		if i := f.instances[id]; i != nil {
@@ -647,8 +705,11 @@ func (f *fakeEC2) TerminateInstances(_ context.Context, in *ec2.TerminateInstanc
 }
 
 type fakeSSMCmd struct {
-	mu       sync.Mutex
+	mu sync.Mutex
+	// commands is what each script runs on the slot, by its helper line (ssmHelperLine);
+	// scripts is the full text sent.
 	commands []string
+	scripts  []string
 	fail     map[string]bool // substring of the command -> fail it
 	// sink shares the EC2 fake's call log so a test can assert the ORDER of an SSM
 	// command against an EC2 call — "umount before detach" spans both.
@@ -661,7 +722,9 @@ type fakeSSMCmd struct {
 func (f *fakeSSMCmd) SendCommand(_ context.Context, in *ssm.SendCommandInput, _ ...func(*ssm.Options)) (*ssm.SendCommandOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	cmd := in.Parameters["commands"][0]
+	script := in.Parameters["commands"][0]
+	cmd := ssmHelperLine(script)
+	f.scripts = append(f.scripts, script)
 	f.commands = append(f.commands, cmd)
 	if f.sink != nil {
 		f.sink.log("SSM %s", cmd)
@@ -672,6 +735,18 @@ func (f *fakeSSMCmd) SendCommand(_ context.Context, in *ssm.SendCommandInput, _ 
 	// The command id carries the command text so GetCommandInvocation can decide
 	// whether this particular step is the one the test wants to fail.
 	return &ssm.SendCommandOutput{Command: &ssmtypes.Command{CommandId: aws.String(cmd)}}, nil
+}
+
+// ssmHelperLine is the line of a slot script that calls af-mount or af-umount, or the
+// whole script when it calls neither. The mount and umount scripts wrap the helper in
+// dead-mount handling (homeMountCommand); what most tests assert is which helper ran.
+func ssmHelperLine(script string) string {
+	for _, l := range strings.Split(script, "\n") {
+		if l = strings.TrimSpace(l); strings.HasPrefix(l, "af-mount ") || strings.HasPrefix(l, "af-umount ") {
+			return strings.TrimSuffix(l, " || exit 1")
+		}
+	}
+	return script
 }
 
 func (f *fakeSSMCmd) GetCommandInvocation(_ context.Context, in *ssm.GetCommandInvocationInput, _ ...func(*ssm.Options)) (*ssm.GetCommandInvocationOutput, error) {

@@ -2,11 +2,12 @@ package store
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
 )
 
 // TestSchemaDialectParity measures that the two migration series land on the same schema.
@@ -22,8 +23,8 @@ import (
 //
 // Skipped without AF_TEST_DATABASE_URL, like the other Postgres tests.
 func TestSchemaDialectParity(t *testing.T) {
-	url := os.Getenv("AF_TEST_DATABASE_URL")
-	if url == "" {
+	url, ok := pgtest.Schema(t)
+	if !ok {
 		t.Skip("set AF_TEST_DATABASE_URL to compare the two migration series")
 	}
 	ctx := context.Background()
@@ -41,9 +42,6 @@ func TestSchemaDialectParity(t *testing.T) {
 		t.Fatalf("open postgres: %v", err)
 	}
 	defer pg.Close()
-	if _, err := pg.db.ExecContext(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
-		t.Fatalf("reset schema: %v", err)
-	}
 	if err := pg.Migrate(ctx); err != nil {
 		t.Fatalf("migrate postgres: %v", err)
 	}
@@ -98,7 +96,7 @@ func sqliteSchema(t *testing.T, ctx context.Context, s *SQL) map[string]map[stri
 func postgresSchema(t *testing.T, ctx context.Context, s *SQL) map[string]map[string]bool {
 	t.Helper()
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT table_name, column_name FROM information_schema.columns WHERE table_schema='public'`)
+		`SELECT table_name, column_name FROM information_schema.columns WHERE table_schema=current_schema()`)
 	if err != nil {
 		t.Fatalf("read postgres schema: %v", err)
 	}

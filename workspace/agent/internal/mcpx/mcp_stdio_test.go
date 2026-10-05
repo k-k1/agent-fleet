@@ -1069,6 +1069,17 @@ func TestSendToPeerSessionReportsQueuedAsNotDelivered(t *testing.T) {
 		t.Errorf("queued send carries no note: %v", got)
 	}
 
+	// A peer waiting on its user's answer (#1031): queued with the state it waits on, and told
+	// not to resend.
+	answer = `{"queued":"child1","blocked_on":"plan","pending":1}`
+	got = send()
+	if got["delivered"] != false || got["queued"] != true || got["blocked_on"] != "plan" {
+		t.Errorf("send to a peer waiting on its user = %v, want delivered=false queued=true blocked_on=plan", got)
+	}
+	if note, _ := got["note"].(string); note != peerBlockedNote {
+		t.Errorf("note = %q, want peerBlockedNote", note)
+	}
+
 	answer = `{"sent":"child1"}`
 	got = send()
 	if got["delivered"] != true {
@@ -1085,8 +1096,10 @@ func TestSendToPeerSessionReportsQueuedAsNotDelivered(t *testing.T) {
 // so a condition wired to the wrong flag on either side fails.
 func TestMCPStdioInstructionsFollowSessionSurface(t *testing.T) {
 	withMCPFlags(t, false, true, false)
-	oldPeer, oldSpawn := mcpPeerMessagingEnabled, mcpFleetSpawnEnabled
-	t.Cleanup(func() { mcpPeerMessagingEnabled, mcpFleetSpawnEnabled = oldPeer, oldSpawn })
+	oldPeer, oldSpawn, oldMemory := mcpPeerMessagingEnabled, mcpFleetSpawnEnabled, mcpAgentMemoryEnabled
+	t.Cleanup(func() {
+		mcpPeerMessagingEnabled, mcpFleetSpawnEnabled, mcpAgentMemoryEnabled = oldPeer, oldSpawn, oldMemory
+	})
 
 	groups := []struct{ tool, phrase string }{
 		{"af_report", "completion report"},
@@ -1095,14 +1108,17 @@ func TestMCPStdioInstructionsFollowSessionSurface(t *testing.T) {
 		{"get_session_status", "session status"},
 		{"get_session_usage", "usage"},
 		{"add_memo", "memos"},
+		{"branch_name", "branch names"},
+		{"memory_index", "agent memory"},
 		{"list_chromium_targets", "Chromium"},
 		{"send_to_peer_session", "peer sessions"},
 		{"create_session", "child sessions"},
 	}
-	for mask := 0; mask < 8; mask++ {
+	for mask := 0; mask < 16; mask++ {
 		chromium, peer, spawn := mask&1 != 0, mask&2 != 0, mask&4 != 0
 		setSessionChromiumEnabled(chromium)
 		mcpPeerMessagingEnabled, mcpFleetSpawnEnabled = peer, spawn
+		mcpAgentMemoryEnabled = mask&8 != 0
 
 		advertised := map[string]bool{}
 		for _, tool := range mcpStdioToolList() {

@@ -23,11 +23,13 @@ export interface LifecycleFailure {
 }
 
 // The refusals the CP sends before it stops the workspace (control-plane/workspace_handlers.go):
-// not available on this deployment, a start still converging, another lifecycle operation
-// holding the lease, and a stop that failed while the workspace kept running.
+// not available on this deployment, a start still converging, a task still operating on the
+// home (ecs), another lifecycle operation holding the lease, and a stop that failed while the
+// workspace kept running.
 const UNTOUCHED_CODES = new Set([
   "home_wipe_unsupported",
   "home_wipe_while_starting",
+  "home_operation_in_progress",
   "workspace_operation_in_progress",
   "stop_failed",
 ]);
@@ -55,18 +57,38 @@ interface WorkspaceStore {
    * back on the current build, so this is a STATE (the WS-bar restart-needed badge), not an
    * event. False whenever the CP can't tell — never guessed client-side. */
   stale: boolean;
+  /** ecs-ec2 only: an administrator has reserved the slot this workspace's home is on for
+   * replacement, so the next start moves it to a new slot and takes longer (#1473). A state
+   * the CP clears once the move has happened. */
+  slotReplace: boolean;
   /** Error code explaining why the state could not be read ("" = read fine). "unknown" says
    * no more than "the fetch failed", which leaves a not-yet-invited super_admin with an
    * unexplained "unknown" and a start button that does nothing (anyone not invited lands on
    * NotProvisioned instead, so only the person creating the first tenant gets here). Keeping
    * the code lets the bar show the real reason. */
   reason: string;
+  /** Why a Recreate / Clean home that finished in the background (ecs: minutes, after the
+   * POST was answered `starting`) left the workspace stopped. The CP carries it on the
+   * workspace payload until the next start; "" = none. */
+  homeWipeFailed: string;
+  /** The runtime id that withholds browser features from this workspace ("kubernetes"), or
+   * "" when they are available. Decided by the CP's runtime adapter and sent in every state
+   * (control-plane/internal/runtime/browser_support.go); the browser entry points read it
+   * through features/browser/availability.ts. */
+  browserUnavailable: string;
   refresh(): Promise<void>;
   /** Apply a pushed workspace payload (api/events). Poll parity: an optimistic
    * "…" transition is never clobbered — while busy only bootPhase updates (the
    * same thing start()'s transient 2s poll does); the settle refresh() after the
    * POST is what clears the busy state. */
-  applyPush(w: { state?: string; bootPhase?: string; stale?: boolean }): void;
+  applyPush(w: {
+    state?: string;
+    bootPhase?: string;
+    stale?: boolean;
+    slotReplace?: boolean;
+    homeWipeFailed?: string;
+    browserUnavailable?: string;
+  }): void;
   start(): Promise<void>;
   stop(): Promise<void>;
   /** Stop then start, keeping everything on disk — how a backend update is applied
@@ -89,7 +111,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   state: "…",
   bootPhase: "",
   stale: false,
+  slotReplace: false,
   reason: "",
+  homeWipeFailed: "",
+  browserUnavailable: "",
 
   async refresh() {
     const stamp = pushStamp("workspace");
@@ -108,10 +133,19 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         // would wedge busy instead (the 4s poll skips while busy), so during that, and on a
         // terminal error, fall to unknown as before.
         if (isTransientErr(w) && !wsBusy(get().state)) return;
-        set({ state: "unknown", bootPhase: "", stale: false, reason: String(w.error.code || "") });
+        set({ state: "unknown", bootPhase: "", stale: false, slotReplace: false, reason: String(w.error.code || "") });
         return;
       }
-      set({ state: w.state || "unknown", bootPhase: w.bootPhase || "", stale: !!w.stale, reason: "" });
+      noteHomeWipeFailed(get().homeWipeFailed, w.homeWipeFailed);
+      set({
+        state: w.state || "unknown",
+        bootPhase: w.bootPhase || "",
+        stale: !!w.stale,
+        slotReplace: !!w.slotReplace,
+        reason: "",
+        homeWipeFailed: w.homeWipeFailed || "",
+        browserUnavailable: typeof w.browserUnavailable === "string" ? w.browserUnavailable : "",
+      });
     } catch {
       set({ state: "unknown" }); // network drop: keep the previous reason; the next poll settles it
     }
@@ -119,11 +153,20 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 
   applyPush(w) {
     const cur = get().state;
+    // A property of the runtime, not of the lifecycle, so it lands even while busy.
+    set({ browserUnavailable: typeof w.browserUnavailable === "string" ? w.browserUnavailable : "" });
     if (wsBusy(cur)) {
       if (cur === "starting…" || cur === "recreating…") set({ bootPhase: w.bootPhase || "" });
       return;
     }
-    set({ state: w.state || "unknown", bootPhase: w.bootPhase || "", stale: !!w.stale });
+    noteHomeWipeFailed(get().homeWipeFailed, w.homeWipeFailed);
+    set({
+      state: w.state || "unknown",
+      bootPhase: w.bootPhase || "",
+      stale: !!w.stale,
+      slotReplace: !!w.slotReplace,
+      homeWipeFailed: w.homeWipeFailed || "",
+    });
   },
 
   async start() {
@@ -212,6 +255,18 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     return err;
   },
 }));
+
+// The background wipe's failure reaches the member through the workspace payload alone, and
+// that payload arrives every few seconds: toast each reason once. Remembered apart from the
+// store's value because with several CP replicas only the one that ran the wipe carries it,
+// so the value flips between the reason and "" as polls land on different replicas.
+let lastHomeWipeToast = "";
+function noteHomeWipeFailed(_prev: string, next: string | undefined): void {
+  if (next && next !== lastHomeWipeToast) {
+    lastHomeWipeToast = next;
+    toast(t("ws.home_wipe_failed", { reason: next }), { kind: "error" });
+  }
+}
 
 /** True while a start/stop transition is in flight (or state not yet fetched). */
 export const wsBusy = (state: string): boolean => state.endsWith("…");

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -44,8 +45,11 @@ func TestNewRuntimeFactory(t *testing.T) {
 		}
 	}
 
-	if _, err := NewFactory("kubernetes", m); err == nil {
-		t.Fatal("NewFactory(unknown profile): expected error, got nil")
+	// kubernetes / k8s have their own case (TestNewFactoryKubernetes): it needs the
+	// service account files of a pod.
+	err := error(nil)
+	if _, err = NewFactory("gke", m); err == nil || !strings.Contains(err.Error(), "unknown AF_RUNTIME profile") {
+		t.Fatalf("NewFactory(unknown profile) = %v, want the unknown-profile error", err)
 	}
 }
 

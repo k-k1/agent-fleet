@@ -238,7 +238,7 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	if len(lines) > 0 {
 		head = lines[0]
 	}
-	files := sessionFileTouches(name, jpath, fileAggHead(head), len(lines), len(lines),
+	files := sessionFileTouches(name, meta.Dir, jpath, fileAggHead(head), len(lines), len(lines),
 		func(from, to int) []transcript.FileEdit { return claude.CollectFileEdits(lines[:to], from) },
 	)
 	// answers / tasks / files are the three WHOLE-TRANSCRIPT aggregates: recomputed on every poll,
@@ -297,6 +297,11 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 			resp["backgroundBusy"] = busy
 			resp["backgroundBusyReason"] = reason
 		}
+	}
+	// Peer messages queued behind the user's answer (#1031): the mirror says they will follow
+	// and lets the member drop one.
+	if pp := pendingPeersWire(name); len(pp) > 0 {
+		resp["pendingPeers"] = pp
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
@@ -404,7 +409,7 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	// its edits — it is re-folded into a copy on every poll instead.
 	if total > 0 {
 		head := all[0].TS + "|" + all[0].AnchorID + "|" + strconv.Itoa(all[0].Idx)
-		if files := sessionFileTouches(meta.Name, path, head, total, total-1,
+		if files := sessionFileTouches(meta.Name, meta.Dir, path, head, total, total-1,
 			func(from, to int) []transcript.FileEdit {
 				var out []transcript.FileEdit
 				for i := from; i < to; i++ {
@@ -456,10 +461,18 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	if len(td.Discards) > 0 {
 		resp["discardedInputs"] = td.Discards
 	}
-	// Compaction in flight (opencode session.time_compacting): reuse the chat's claude
-	// compacting block (spinner-only — opencode reports no progress percentage).
+	// Compaction in flight (opencode's compaction summary message, agents/opencode
+	// sessionCompacting): reuse the chat's claude compacting block (spinner-only — opencode reports no progress percentage).
 	if alive && td.Compacting {
 		resp["terminalState"] = "compacting"
+	}
+	// Work an earlier turn left running, for the header's "background running" — the same
+	// answer the kind's WireLive gives the session list, and under claude's gate: only when
+	// not already working.
+	if br, ok := AgentOf(meta.Kind).(agents.BackgroundReporter); ok && alive && (state == "idle" || state == "") {
+		busy, reason := br.BackgroundWork(meta)
+		resp["backgroundBusy"] = busy
+		resp["backgroundBusyReason"] = reason
 	}
 	// Session-level context fill for agents with no per-turn token usage in their
 	// transcript (agy): the ContextBar's fallback source. Cached agent-side; the
@@ -508,6 +521,10 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 				resp["mode"] = pm
 			}
 		}
+	}
+	// Peer messages queued behind the user's answer (#1031), as on claude's path.
+	if pp := pendingPeersWire(meta.Name); len(pp) > 0 {
+		resp["pendingPeers"] = pp
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }

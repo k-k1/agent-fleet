@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...
 # ANY = registered without a method. Taken with every routeSwitch on (routes_golden_test.go).
-# count: 568
+# count: 610
 ANY /
 ANY /agent-fleet
 ANY /agent-fleet/
@@ -12,7 +12,10 @@ PUT /api/admin/brand
 POST /api/admin/clean-home
 GET /api/admin/cloud-cost
 GET /api/admin/ec2-pool
+POST /api/admin/ec2-pool/reserve-outdated
 DELETE /api/admin/ec2-pool/slots/{id}
+DELETE /api/admin/ec2-pool/slots/{id}/replace
+PUT /api/admin/ec2-pool/slots/{id}/replace
 GET /api/admin/egress
 GET /api/admin/egress/allowlist
 POST /api/admin/egress/allowlist
@@ -25,6 +28,8 @@ PUT /api/admin/engines/civitai-red
 DELETE /api/admin/engines/civitai-token
 GET /api/admin/engines/civitai-token
 PUT /api/admin/engines/civitai-token
+DELETE /api/admin/engines/comfy-lan
+PUT /api/admin/engines/comfy-lan
 DELETE /api/admin/engines/hf-token
 GET /api/admin/engines/hf-token
 PUT /api/admin/engines/hf-token
@@ -63,11 +68,14 @@ PUT /api/admin/membership-role
 DELETE /api/admin/memberships
 POST /api/admin/memberships
 GET /api/admin/providers
+POST /api/admin/rotate-git-token
 GET /api/admin/sessions
 POST /api/admin/stop-workspace
 GET /api/admin/tenants
 POST /api/admin/tenants
 DELETE /api/admin/tenants/{slug}
+GET /api/admin/tenants/{slug}/branch-rules
+PUT /api/admin/tenants/{slug}/branch-rules
 GET /api/admin/tenants/{slug}/engine-access
 PUT /api/admin/tenants/{slug}/engine-access
 PUT /api/admin/tenants/{slug}/engine-access/members
@@ -101,7 +109,13 @@ GET /api/admin/usage/hourly
 PUT /api/admin/user-limits
 GET /api/admin/workspace-sizing
 DELETE /api/admin/workspaces
+GET /api/agents/memory/claude-import
+POST /api/agents/memory/claude-import
+GET /api/agents/memory/claude-import/preview
 GET /api/agents/memory/diff
+GET /api/agents/memory/entries/changes
+GET /api/agents/memory/entries/diff
+POST /api/agents/memory/entries/revert
 GET /api/agents/memory/export
 POST /api/agents/memory/import
 POST /api/agents/memory/import/apply
@@ -124,6 +138,7 @@ PUT /api/assistants/{id}
 GET /api/aws-login
 GET /api/aws-login/profiles
 GET /api/aws-login/profiles/{name}/attempts/{attempt}
+POST /api/aws-login/profiles/{name}/logout
 POST /api/aws-login/profiles/{name}/start
 GET /api/aws-login/{id}/attempts/{attempt}
 POST /api/aws-login/{id}/cancel
@@ -274,6 +289,8 @@ DELETE /api/fs/delete
 GET /api/fs/download
 GET /api/fs/file
 PUT /api/fs/file
+GET /api/fs/images
+POST /api/fs/imagesize
 GET /api/fs/linemarks
 POST /api/fs/mkdir
 POST /api/fs/newfile
@@ -283,6 +300,17 @@ GET /api/fs/search
 POST /api/fs/suggest-edit
 GET /api/fs/tree
 POST /api/fs/upload
+GET /api/gcp-login
+GET /api/gcp-login/profiles
+GET /api/gcp-login/profiles/{name}/attempts/{attempt}
+POST /api/gcp-login/profiles/{name}/attempts/{attempt}/code
+POST /api/gcp-login/profiles/{name}/start
+POST /api/gcp-login/{id}/cancel
+POST /api/gcp-login/{id}/start
+GET /api/gcp/profiles
+POST /api/gcp/profiles
+DELETE /api/gcp/profiles/{id}
+PUT /api/gcp/profiles/{id}
 GET /api/git-oauth
 GET /api/git/identity
 PUT /api/git/identity
@@ -381,12 +409,17 @@ GET /api/repos/{name}/prompt-templates
 GET /api/repos/{name}/recreate
 POST /api/repos/{name}/recreate
 GET /api/repos/{name}/show
+GET /api/repos/{name}/skills
 POST /api/repos/{name}/stage
 GET /api/repos/{name}/status
 GET /api/repos/{name}/submodules
 GET /api/repos/{name}/svn-auth
 POST /api/repos/{name}/svn-auth
+GET /api/repos/{name}/svn-changes
 POST /api/repos/{name}/svn-cleanup
+GET /api/repos/{name}/svn-diff
+GET /api/repos/{name}/svn-log
+GET /api/repos/{name}/svn-show
 POST /api/repos/{name}/svn-update
 POST /api/repos/{name}/unstage
 GET /api/schedules
@@ -402,6 +435,8 @@ GET /api/session-handoff-offers/received
 DELETE /api/session-handoff-offers/{id}
 POST /api/session-handoff-offers/{id}/accept
 POST /api/session-handoff-offers/{id}/decline
+GET /api/session-search
+GET /api/session-search/turns
 GET /api/session-share-proposals
 POST /api/session-share-proposals/{id}/approve
 POST /api/session-share-proposals/{id}/reject
@@ -436,6 +471,7 @@ GET /api/sessions/{name}/messages
 GET /api/sessions/{name}/output
 POST /api/sessions/{name}/paste-image
 GET /api/sessions/{name}/pasted/{file}
+DELETE /api/sessions/{name}/pending-peer/{id}
 GET /api/sessions/{name}/plan-file
 POST /api/sessions/{name}/plan-respond
 POST /api/sessions/{name}/recreate
@@ -445,6 +481,8 @@ POST /api/sessions/{name}/restore
 GET /api/sessions/{name}/settings
 POST /api/sessions/{name}/settings
 GET /api/sessions/{name}/skills
+GET /api/sessions/{name}/spend
+POST /api/sessions/{name}/spend-cap
 GET /api/sessions/{name}/ssm-login
 POST /api/sessions/{name}/start
 GET /api/sessions/{name}/status
@@ -526,11 +564,13 @@ GET /git/{slug}/{repo}/info/lfs/objects/{oid}
 PUT /git/{slug}/{repo}/info/lfs/objects/{oid}
 GET /healthz
 GET /internal/aws-profiles
+GET /internal/branch-rules
 GET /internal/docs
 POST /internal/egress
 GET /internal/egress/policy
 GET /internal/engine/catalog
 POST /internal/engine/token
+GET /internal/gcp-profiles
 POST /internal/git-oauth/bitbucket/refresh
 POST /internal/git-oauth/jira/refresh
 GET /internal/mcp-servers
@@ -551,6 +591,8 @@ POST /internal/schedules/{id}/pause
 POST /internal/schedules/{id}/resume
 POST /internal/schedules/{id}/run-now
 GET /internal/schedules/{id}/runs
+POST /internal/schedules/{id}/runs/not-executed
+POST /internal/schedules/{id}/runs/silent
 GET /login
 GET /login/{slug}
 GET /manifest.webmanifest

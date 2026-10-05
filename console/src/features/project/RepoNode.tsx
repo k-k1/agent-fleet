@@ -24,8 +24,10 @@ import { sessionsInFolder } from "../../lib/project.ts";
 import type { RepoTreeNode } from "../../lib/project.ts";
 import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
+import { useRefIndex } from "../sessions/useRefIndex.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useUnreadSessions } from "../notifications/unread.ts";
+import { usePublishedHeight } from "../../lib/usePublishedHeight.ts";
 
 /** Deepest level that still adds indentation; below it nodes stay at this inset. */
 const MAX_INDENT_DEPTH = 3;
@@ -47,6 +49,7 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
   const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const nq = normQuery(useProjectFilter((f) => f.q));
+  const refs = useRefIndex();
   const mine = sessionsInFolder(sessions, r.name);
   const below = descendantFolders(n);
   // Empty repos (no sessions anywhere under them, worktrees included) default
@@ -80,7 +83,7 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
   // While filtering, every visible node is forced open (the parent already
   // pruned the tree to matches) and only matching sessions render.
   const open = nq ? true : openState.open;
-  const shownSessions = nq ? mine.filter((s) => sessionMatches(s, nq)) : mine;
+  const shownSessions = nq ? mine.filter((s) => sessionMatches(s, nq, refs)) : mine;
   // Session tally for the repo row's badge — real counts, not the filtered view:
   // own folder while open (the rows are visible right below); the whole subtree folds
   // in while collapsed, so a folded project still shows what's running inside.
@@ -105,6 +108,9 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
   const unread =
     !open &&
     [...mine, ...below.flatMap((f) => sessionsInFolder(sessions, f))].some((s) => unreadSessions.has(s.name));
+  // A root's header height sets where its worktrees' headers pin (project.css). Only roots:
+  // deeper worktree headers do not pin, and a nested value would shadow the root's.
+  const headRef = usePublishedHeight<HTMLDivElement>("--proj-base-head-h", depth === 0);
   const row = (s: Session) => (
     <SessionRow
       key={s.name}
@@ -127,7 +133,7 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
       // The spine reads this; a node without a family leaves the default accent alone.
       style={n.spine ? ({ "--proj-lineage": n.spine } as CSSProperties) : undefined}
     >
-      <div className="proj-node-head">
+      <div ref={headRef} className="proj-node-head">
         <button
           type="button"
           className="proj-node-caret"

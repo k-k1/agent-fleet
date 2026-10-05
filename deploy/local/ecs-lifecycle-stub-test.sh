@@ -102,7 +102,18 @@ echo "aws $*" >> "$STUB_LOG"
 args="$*"
 case "$args" in
   *"sts get-caller-identity"*) echo "123456789012" ;;
-  *"cloudformation list-exports"*"SlotLaunchTemplateId"*) echo "t-pool-SlotLaunchTemplateId" ;;
+  # STUB_POOL_DEPLOY_FAIL=1: the slot pool's stack update fails (a rollback, a refused
+  # capability). update.sh must then leave 20-platform untouched.
+  *"cloudformation deploy --stack-name t-pool"*)
+    if [ "${STUB_POOL_DEPLOY_FAIL:-0}" = 1 ]; then
+      echo "Failed to create/update the stack. Status: UPDATE_ROLLBACK_COMPLETE" >&2; exit 255
+    fi ;;
+  *"cloudformation list-exports"*"SlotLaunchTemplateId"*)
+    case "${STUB_POOL_EXPORT:-ok}" in
+      fail) echo "An error occurred (AccessDenied) when calling the ListExports operation" >&2; exit 254 ;;
+      none) echo "" ;;
+      *)    echo "t-pool-SlotLaunchTemplateId" ;;
+    esac ;;
   # How update.sh finds the engine stack: the ingress stack's EnginesSsmParam, then the export
   # that carries the same value. Answer the generic list-exports here and update.sh never sees
   # an engine stack at all, so the P6 gate below cannot be tested. Behind a flag because
@@ -114,7 +125,7 @@ case "$args" in
   *"--profile p2"*"describe-stack-resource"*) echo "t-db" ;;
   *"describe-stack-resource"*) echo "None" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EfsId']"*) echo "fs-1" ;;
-  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotLaunchTemplateId']"*) echo "lt-NEW" ;;
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotLaunchTemplateId']"*) echo "${STUB_POOL_LT_OUTPUT:-lt-NEW}" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='CfnTemplatesBucket']"*) echo "t-cfn-bucket" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotAmiIdArm64']"*) echo "None" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='Url']"*) echo "https://af.example.test" ;;
@@ -185,7 +196,7 @@ case "$args" in
   *"--profile p5"*"ParameterKey=='DataStackName'"*) echo "t-data-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ;;
   *"ParameterKey=='DataStackName'"*) echo "t-data" ;;
   *"ParameterKey=='PlatformStackName'"*) echo "t-platform" ;;
-  *"ParameterKey=='WsRuntime'"*) echo "ecs-ec2" ;;
+  *"ParameterKey=='WsRuntime'"*) echo "${STUB_WS_RUNTIME:-ecs-ec2}" ;;
   *"ParameterKey=='ImageTag'"*) echo "9.9.9-dev-test" ;;
   *"--profile p2"*"ParameterKey=='Persistence'"*) echo "retain" ;;
   *"ParameterKey=='Persistence'"*) echo "delete" ;;
@@ -344,6 +355,26 @@ order_again() { # order_again <earlier> <repeated-later>
   [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ] || fail "order: '$2' must be re-read after '$1' (a=${a:-?} b=${b:-?})"
 }
 
+# Every deploy of a template that holds IAM resources must carry the capability, or
+# CreateChangeSet refuses it (InsufficientCapabilitiesException) - on real AWS only, which is
+# how 30-ingress went on being deployed without one after it gained an IAM policy (#1576).
+# A template that names a role or policy needs CAPABILITY_NAMED_IAM, any other CAPABILITY_IAM.
+iam_caps() {
+  local line tpl n=0
+  while IFS= read -r line; do
+    tpl="$(printf '%s\n' "$line" | sed -n 's/.*--template-file \([^ ]*\).*/\1/p')"
+    [ -n "$tpl" ] && [ -r "$tpl" ] || continue
+    grep -q 'Type: AWS::IAM::' "$tpl" || continue
+    n=$((n + 1))
+    if grep -qE '^ +(RoleName|ManagedPolicyName|InstanceProfileName|PolicyName):' "$tpl"; then
+      case "$line" in *CAPABILITY_NAMED_IAM*) ;; *) fail "IAM template deployed without CAPABILITY_NAMED_IAM: $line" ;; esac
+    else
+      case "$line" in *CAPABILITY_IAM*|*CAPABILITY_NAMED_IAM*) ;; *) fail "IAM template deployed without CAPABILITY_IAM: $line" ;; esac
+    fi
+  done < <(grep -F "cloudformation deploy " "$LOG" || true)
+  [ "$n" -gt 0 ] || fail "iam_caps: no deploy of a template with IAM resources in the log (the check saw nothing)"
+}
+
 echo "== case 1: teardown without --yes touches nothing =="
 : > "$LOG"
 "$ECS/teardown.sh" --profile p --region ap-northeast-1 --stack t-ingress > "$WORK/out1" </dev/null
@@ -414,6 +445,8 @@ grep -q "deploy --stack-name t-pool .*CAPABILITY_NAMED_IAM" "$LOG" || fail "40-e
 grep -q "deploy --stack-name t-ingress .*Ec2SlotLaunchTemplate=lt-NEW" "$LOG" || fail "30-ingress got a stale launch template"
 hasnt "Ec2SlotLaunchTemplate=lt-OLD"
 grep -q "deploy --stack-name t-ingress .*ImageTag=9.9.9-dev-test" "$LOG" || fail "30-ingress did not get the deployed tag"
+grep -q "deploy --stack-name t-ingress .*CAPABILITY_NAMED_IAM" "$LOG" || fail "30-ingress needs CAPABILITY_NAMED_IAM (its home-ops policy)"
+iam_caps
 # Speech is opt-in and this capture did not opt in, so nothing about it may happen. This is
 # also the control for case 3f below: without it, a 50-tts step that never ran and a 50-tts
 # step that ran for everyone would look the same.
@@ -794,6 +827,10 @@ echo "== case 3h: update.sh carries a pre-P6 role over instead of deleting it ==
 VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ENGINES_PRE_P6=1 \
   "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3h" 2>&1 \
   || { cat "$WORK/out3h"; fail "update.sh failed against a pre-P6 engine stack"; }
+# The slot pool rides every release too: its user data carries ECS_AWSVPC_BLOCK_IMDS, and a
+# pool left on an old template launches every future slot without it.
+grep -q "deploy --stack-name t-pool .*40-ec2-pool.yaml.*CAPABILITY_NAMED_IAM" "$LOG" \
+  || fail "update.sh did not redeploy the slot pool (new slots would miss the IMDS block)"
 grep -q "deploy --stack-name af-ecs-engines .*--parameter-overrides LlmEnabled=true ImageEnabled=true" "$LOG" \
   || fail "update.sh did not carry the roles over (this update would delete both engine services)"
 grep -q "LlmEnabled=true (it was implied by LlmModelS3Key" "$WORK/out3h" \
@@ -807,6 +844,9 @@ fi
 # call the comment above it says never to add a parameter to.
 grep -q "deploy --stack-name t-ingress .*--parameter-overrides ImageTag=9.9.9-dev-test --no-fail" "$LOG" \
   || fail "the ingress deploy no longer overrides ImageTag alone"
+grep -q "deploy --stack-name t-ingress .*CAPABILITY_NAMED_IAM" "$LOG" \
+  || fail "update.sh deploys 30-ingress without CAPABILITY_NAMED_IAM (InsufficientCapabilitiesException)"
+iam_caps
 
 # A deployment already through P6 has no model key to read, and then this is byte for byte the
 # update it always was. Without this the gate could pass by always sending the parameter, which
@@ -829,6 +869,40 @@ VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ENGINES_PRE_P6=1 
 grep -q "DRY: aws cloudformation deploy --stack-name af-ecs-engines .*--parameter-overrides LlmEnabled=true ImageEnabled=true" "$WORK/out3h3" \
   || fail "--dry-run did not show the planned translation"
 hasnt "cloudformation deploy --stack-name af-ecs-engines --template-file"   # nothing was run
+
+echo "== case 3h-pool: update.sh never skips the slot pool on ecs-ec2 without saying so =="
+#
+# The pool's user data carries ECS_AWSVPC_BLOCK_IMDS. A lookup that fails (no
+# cloudformation:ListExports) or finds nothing must stop the update, not read as "no pool".
+for mode in fail none; do
+  : > "$LOG"
+  if VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_POOL_EXPORT=$mode \
+    "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3hp" 2>&1; then
+    cat "$WORK/out3hp"; fail "update.sh succeeded on ecs-ec2 with the pool lookup '$mode'"
+  fi
+  grep -q "slot pool stack (40-ec2-pool)" "$WORK/out3hp" || { cat "$WORK/out3hp"; fail "pool lookup '$mode': no explanation"; }
+  hasnt "deploy --stack-name t-ingress"
+done
+# The explicit override, checked against the launch template it must own.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_POOL_EXPORT=fail STUB_POOL_LT_OUTPUT=lt-OLD \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --pool-stack t-pool > "$WORK/out3hp" 2>&1 \
+  || { cat "$WORK/out3hp"; fail "update.sh --pool-stack failed"; }
+grep -q "deploy --stack-name t-pool .*40-ec2-pool.yaml" "$LOG" || fail "--pool-stack did not deploy the named pool"
+: > "$LOG"
+if VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_POOL_EXPORT=fail STUB_POOL_LT_OUTPUT=lt-OTHER \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --pool-stack t-pool > "$WORK/out3hp" 2>&1; then
+  fail "update.sh accepted a --pool-stack that owns another launch template"
+fi
+grep -q "owns launch template 'lt-OTHER'" "$WORK/out3hp" || { cat "$WORK/out3hp"; fail "wrong --pool-stack: no explanation"; }
+# Fargate has no pool: the same failing lookup is never made and the update goes through.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_POOL_EXPORT=fail STUB_WS_RUNTIME=ecs \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3hp" 2>&1 \
+  || { cat "$WORK/out3hp"; fail "update.sh failed on a Fargate deployment without a pool"; }
+hasnt "40-ec2-pool.yaml"
+grep -q "deploy --stack-name t-ingress" "$LOG" || fail "the Fargate update did not deploy 30-ingress"
+iam_caps
 
 echo "== case 3h-2: update.sh repairs an OfferBudgetSec left on the OLD meaning's default =="
 #
@@ -911,6 +985,39 @@ order "$ET_GHCR" "cloudformation deploy --stack-name af-ecs-engines"
 # owns the repositories, the cluster and the task roles is not something a release does.
 grep -q "· Add EcrEngineTools" "$WORK/out3i" || fail "the 20-platform change set was executed without showing it"
 order "cloudformation describe-change-set" "cloudformation execute-change-set"
+
+echo "== case 3i-pool: the slot pool goes in BEFORE 20-platform, and its failure stops the update =="
+#
+# 40-ec2-pool carries the CP's iam:PassRole for the slot role; 20-platform's template no longer
+# grants any. 20-platform first would leave every slot grow on AccessDenied whenever the
+# update stops between the two (a missing image, a refused change set, a pool rollback).
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3ip" 2>&1 \
+  || { cat "$WORK/out3ip"; fail "update.sh failed on the ordinary ecs-ec2 path"; }
+order "cloudformation deploy --stack-name t-pool" "cloudformation deploy --stack-name t-platform"
+order "cloudformation deploy --stack-name t-pool" "cloudformation execute-change-set"
+# The pool's deploy failing: 20-platform is neither change-setted nor executed, and nothing
+# after it runs, so the live 20-platform keeps whatever PassRole it had.
+: > "$LOG"
+rc=0
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_POOL_DEPLOY_FAIL=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3ip2" 2>&1 || rc=$?
+[ "$rc" != 0 ] || { cat "$WORK/out3ip2"; fail "update.sh carried on after the slot pool's deploy failed"; }
+has "cloudformation deploy --stack-name t-pool"
+hasnt "cloudformation deploy --stack-name t-platform"
+hasnt "cloudformation execute-change-set"
+hasnt "cloudformation deploy --stack-name t-ingress"
+# A missing release image stops the update after the pool and 20-platform: the pool's grant is
+# already in place by then (the order above), so the slot grow survives that stop too.
+: > "$LOG"
+rc=0
+VERSION=9.9.9-dev-test STUB_ECR_HAS=0 STUB_ENGINES_LIVE=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3ip3" 2>&1 || rc=$?
+[ "$rc" != 0 ] || { cat "$WORK/out3ip3"; fail "update.sh carried on with the release image missing"; }
+grep -q "not in ECR" "$WORK/out3ip3" || { cat "$WORK/out3ip3"; fail "the missing image was not the stop"; }
+has "cloudformation deploy --stack-name t-pool"
+hasnt "cloudformation deploy --stack-name t-ingress"
 
 echo "== case 3i-2: a tag that is already in ECR is not copied again =="
 # The control for the case above. A step that copies on every run passes 3i and is still wrong:

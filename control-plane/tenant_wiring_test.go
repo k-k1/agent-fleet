@@ -65,8 +65,12 @@ var cpTenantDelegates = map[string]string{
 	"MembershipsFor":                "membershipsFor",
 	"CountRunningInTenant":          "countRunningInTenant",
 	"WorkspaceStateByMembership":    "workspaceStateByMembership",
-	"StopWorkspaceByMembership":     "stopWorkspaceByMembership",    // ↕ same type; swap = wiped home
-	"CleanHomeByMembership":         "cleanHomeByMembership",        // ↕
+	"StopWorkspaceByMembership":     "stopWorkspaceByMembership", // ↕ same type; swap = wiped home
+	"CleanHomeByMembership":         "cleanHomeByMembership",     // ↕
+	"ResumeSchedulesHeldByRemoval":  "resumeSchedulesHeldByRemoval",
+	"RotateGitToken":                "rotateGitToken",
+	"StopRemovedMemberWorkspace":    "stopWorkspaceOfRemovedMember",
+	"CloseMembershipConnections":    "memberConns",
 	"DestroyWorkspaceByMembership":  "destroyWorkspaceByMembership", // ↕
 	"HomeBackupsByMembership":       "homeBackupsByMembership",
 	"DeleteHomeBackupsByMembership": "deleteHomeBackupsByMembership",
@@ -77,6 +81,7 @@ var cpTenantDelegates = map[string]string{
 	"PoolStatus":                    "poolStatus",
 	"HasSlotPool":                   "hasSlotPool",
 	"TerminateQuarantinedSlot":      "terminateQuarantinedSlot",
+	"ReserveSlotReplacement":        "reserveSlotReplacement",
 	"TenantAdminFor":                "tenantAdminFor",
 	"ResolveMember":                 "resolveMember",
 	"ClientIPFrom":                  "clientIPFrom",
@@ -84,6 +89,12 @@ var cpTenantDelegates = map[string]string{
 	"ParseLimits":                   "parseLimits",
 	"LimitsFor":                     "GetTenant",
 	"StoreTenantLimits":             "SetTenantLimits",
+
+	// The background halves of Clean home and Destroy (ecs: a task that takes minutes).
+	"HomeOpsInBackground":               "homeOperations",
+	"DestroyInBackground":               "DestroyBackground",
+	"StartCleanHomeByMembership":        "startCleanHomeByMembership",
+	"StartDestroyWorkspaceByMembership": "startDestroyWorkspaceByMembership",
 }
 
 // bodyNames returns every identifier and selector-field name mentioned in a body.

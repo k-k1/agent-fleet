@@ -15,6 +15,36 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
+// launchUnset / launchSet patch the server's global environment ahead of every new-session
+// (SetLaunchEnv).
+var launchUnset, launchSet []string
+
+// SetLaunchEnv makes every new-session first unset the named variables in the tmux server's
+// global environment and set the given NAME=VALUE pairs there. A pane takes its environment
+// from the server, not from the client that asked for it, so a server started before the
+// Agent dropped a variable (an in-place Agent restart, an operator's own tmux) would keep
+// handing it to new sessions and to every window a member opens in them. It rides the same
+// tmux invocation as the new-session, so it also covers a server that invocation starts.
+// Call once at boot, before any session is launched.
+func SetLaunchEnv(unset, set []string) {
+	launchUnset, launchSet = unset, set
+}
+
+func withLaunchEnv(args []string) []string {
+	if len(launchUnset) == 0 && len(launchSet) == 0 {
+		return args
+	}
+	var out []string
+	for _, k := range launchUnset {
+		out = append(out, "set-environment", "-g", "-u", k, ";")
+	}
+	for _, kv := range launchSet {
+		k, v, _ := strings.Cut(kv, "=")
+		out = append(out, "set-environment", "-g", k, v, ";")
+	}
+	return append(out, args...)
+}
+
 // Cmd is the single funnel for every tmux invocation in the agent (enforced by
 // tmux_guard_test.go — exec tmux only through here). It scopes
 // the invocation to this instance's tmux server: AF_TMUX_SOCKET=<name> maps to
@@ -28,6 +58,9 @@ import (
 // (docs/log/32 M1 E2E incident, 2026-07-20). Socket scoping here plus the
 // owned-sessions-only shutdown (shutdown.go) are the two halves of the fix.
 func Cmd(args ...string) *exec.Cmd {
+	if len(args) > 0 && args[0] == "new-session" {
+		args = withLaunchEnv(args)
+	}
 	if s := os.Getenv("AF_TMUX_SOCKET"); s != "" {
 		return exec.Command("tmux", append([]string{"-L", s}, args...)...)
 	}

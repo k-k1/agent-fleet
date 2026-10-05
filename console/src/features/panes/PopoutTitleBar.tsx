@@ -22,6 +22,9 @@ const BASE_TITLE = appTitle;
 export function PopoutTitleBar() {
   const tr = useT();
   const layout = useLayoutStore((s) => s.layout);
+  // Until boot has restored this tab's layout there is nothing to expand: expanding first makes
+  // boot load the full console's profile, and the popped pane saved under the split one is lost.
+  const hydrated = useLayoutStore((s) => s.hydrated);
   const sessions = useSessionsStore((s) => s.sessions);
   const sharedSessions = useSharedSessionsStore((s) => s.sessions);
   const pane = activePane(layout);
@@ -54,7 +57,7 @@ export function PopoutTitleBar() {
         {title}
       </span>
       <span className="popout-spacer" />
-      <IconButton icon="screen-full" label={tr("ui.popout_expand")} onClick={() => setPopoutMode("full")} />
+      <IconButton icon="screen-full" label={tr("ui.popout_expand")} disabled={!hydrated} onClick={() => setPopoutMode("full")} />
     </div>
   );
 }

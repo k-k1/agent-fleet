@@ -94,9 +94,10 @@ The **▾** to the right of "Launch" lets you pick a kind (claude / codex / curs
 Rows also show status indicators. Learning to read them helps you catch things before pushing.
 
 - **Uncommitted** — there are changes that have not been committed.
-- Worktree **= parent** — same commit as the parent working copy.
+- On a worktree's chip, "parent" is the upstream of the parent working copy's branch (e.g. `origin/develop`). A PR merged on GitHub shows up after the next fetch (automatic, every 10 minutes) without fast-forwarding the parent working copy. With no upstream, the chip compares with the parent working copy's HEAD. The chip's tooltip names the target. Commits the parent working copy has not pushed are not compared and are not brought in by the fast-forward item (they reach the comparison target only once pushed).
+- Worktree **= parent** — same commit as the parent.
 - Worktree **unmerged N** — there are N commits unique to the worktree not yet in the parent.
-- Worktree **parent+N, FF ok** — the worktree's HEAD is contained in the parent, and **the parent is N commits ahead**. **"Fast-forward from the parent"** in the right-click menu brings those changes straight into this worktree (no merge commit).
+- Worktree **parent+N, FF ok** — the worktree's HEAD is contained in the parent, and **the parent is N commits ahead**. **"Fast-forward from origin/develop"** in the right-click menu (**"Fast-forward from parent"** without an upstream) brings those changes straight into this worktree (no merge commit).
 - Worktree **diverged N↕M, no FF** — both the worktree and the parent have unique commits; a merge or rebase is needed.
 - Worktree **n/a** — the relationship cannot be determined, e.g. detached HEAD or a repository with no commits.
 - **↑N** (ahead) — N commits ahead of origin (not pushed).
@@ -113,13 +114,38 @@ of stopped sessions. When a repository is collapsed, this includes sessions of i
 colored number is the pane number showing that repository's commit graph. See
 [Icons, badges, and menus](badges-and-menus.md) for details.
 
+### First-prompt templates
+
+The **"Templates"** button above the first prompt opens a searchable list of three kinds of
+starting text:
+
+- **My templates** — your own. **"New template"** creates one (name, prompt, and where it shows:
+  every repository, or only this one). Pick one and use **"Edit"** to change or rename it, or
+  **"Delete"** to remove it.
+- **This repository** — the entries of `.agent-fleet/launch-prompts.md` committed in the
+  repository (one per `## heading`), shared with everyone who clones it. Read-only here.
+- **History** — the first prompts you launched in this repository recently (8 at most), shown by
+  their first line. **"Delete"** forgets one; **"Save as template"** keeps it as one of yours.
+
+Type to filter, **↑ / ↓** to move, **Enter** to insert, **Esc** to close. The highlighted entry's
+full text shows in the preview beside the list (on a phone, the first tap previews and
+**"Insert"** inserts). `{{repo}}`, `{{branch}}` and `{{path}}` are filled in for the row you
+launch from. If the first prompt already has text, you are asked whether to **insert at the
+cursor** or **replace all** — typed text is never dropped silently.
+
+Your templates and history are saved with your settings, so they follow you to every browser and
+device. They have a size budget (40 templates, 16 KB in total, 8 KB each); a prompt larger than
+3 KB (or one that would push your synced settings past their 64 KB limit) is kept in history on
+that device only. To invoke a repository's `.claude` commands or
+skills, use the skill button (**/**) next to "Templates" instead — they are no longer listed here.
+
 ### What you can do with right-click
 
 Right-clicking a repository or worktree row shows the following actions. Some items are hidden
 depending on state and location.
 
 - **Open commit graph** / **Open the folder** / **Commit changes**
-- **Switch branch** / **Copy the branch name** / **Fast-Forward** (on a worktree, **"Fast-forward from the parent"**)
+- **Switch branch** / **Copy the branch name** / **Fast-Forward** (on a worktree, **"Fast-forward from origin/develop"** or similar)
 - **Initialize Git Flow** (a git repository's base copy only) — see [below](#initialize-git-flow)
 - **Project settings** — the MCP definitions committed in that repository, with per-agent status and warnings ([12](12-settings.md#mcp-servers))
 - **Share…** — share this working copy's (project's) sessions with another member ([02](02-sessions.md#sharing-a-conversation-shared-sessions))
@@ -347,8 +373,16 @@ toggle** to select SVN, then enter the **Repository URL** and, if needed, a **su
   If the working copy gets locked (an error prompting `svn cleanup`), e.g. after an interruption,
   checkout / update automatically attempts one recovery. If the lock remains, use
   **"Clean up lock"** from the row menu.
-- The svn row shows the current revision (`r1234`). Branch switch and the commit graph view
-  (stage / commit) are git-only, so commit with `svn commit` inside a session — **the saved
+- **Show log and local changes** — the svn row menu has **"Show log"** (revision list, newest
+  first, with a path filter and "Load more"; a revision newer than the working copy is marked
+  "not updated yet", and selecting one shows its changed paths and diff) and **"Local changes"**
+  (the entries of `svn status`; a click opens the file's diff). Right-click a folder or file
+  under the working copy in the Files tree and choose **"Show log"** to filter the log to it.
+  The log is read from the server when you open it or press "Load more" — it is not refreshed
+  in the background — and if the server needs a password you get the re-authenticate dialog.
+  Both views are read-only.
+- The svn row shows the current revision (`r1234`). Branch switch and the stage / commit
+  workbench are git-only, so commit with `svn commit` inside a session — **the saved
   credentials apply there too**, so `svn update` / `svn commit -m "…"` typed in a session
   authenticate without a `--username`. Two cases still ask for the password themselves: a
   `commit` with no `-m` (svn opens an editor and keeps the terminal), and a command you gave an

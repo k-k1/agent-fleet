@@ -329,6 +329,9 @@ func (sp *slackProvider) buildSlackMessages(m Message) []slackMsg {
 	if sp.creds.FullText && m.Body != "" {
 		content = withDivider(renderBodyForSlack(m.Body))
 	}
+	if m.Kind == KindScheduleResult && m.Body != "" {
+		content = withDivider(m.textSlack(sp.creds.Lang) + "\n\n" + renderBodyForSlack(m.Body))
+	}
 	prefix := ""
 	if sp.creds.ChannelID != "" && sp.creds.UserID != "" && sp.shouldMention(m) {
 		prefix = "<@" + sp.creds.UserID + "> "

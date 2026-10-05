@@ -101,24 +101,26 @@ export function LcppCard({ running, st, reload }: { running: boolean; st: Provid
         </StatusPill>
       }
     >
-      <SettingRow label={tr("agents.lcpp_enabled")}>
-        <Choice
-          value={enabled ? "on" : "off"}
-          options={[
-            ["off", tr("agents.lcpp_enabled_off")],
-            ["on", tr("agents.lcpp_enabled_on")],
-          ]}
-          onChange={(v) => setSetting("lcppEnabled", v === "on")}
-        />
-      </SettingRow>
-      <p className="ps-note">{tr(enabled ? "agents.lcpp_enabled_note_on" : "agents.lcpp_enabled_note_off")}</p>
+      <div className="p-body">
+        <SettingRow label={tr("agents.lcpp_enabled")}>
+          <Choice
+            value={enabled ? "on" : "off"}
+            options={[
+              ["off", tr("agents.lcpp_enabled_off")],
+              ["on", tr("agents.lcpp_enabled_on")],
+            ]}
+            onChange={(v) => setSetting("lcppEnabled", v === "on")}
+          />
+        </SettingRow>
+        <p className="ps-note">{tr(enabled ? "agents.lcpp_enabled_note_on" : "agents.lcpp_enabled_note_off")}</p>
+      </div>
 
       {running && (
-        <>
-          <p className="p-desc">{tr("agents.lcpp_conn_title")}</p>
+        <div className="p-body">
+          <p className="ps-title">{tr("agents.lcpp_conn_title")}</p>
           {connected ? (
             <>
-              <div className="p-who">
+              <div className="p-who p-who-flush">
                 <span className="p-em">{st?.url}</span>
                 <DisconnectButton onClick={disconnect} />
               </div>
@@ -143,30 +145,28 @@ export function LcppCard({ running, st, reload }: { running: boolean; st: Provid
                   )}
                 </p>
               )}
-              <div className="p-body">
-                <div className="p-opts">
-                  <button type="button" className="p-opt" disabled={check?.state === "checking"} onClick={runCheck}>
-                    <span className="p-opt-t">
-                      {check?.state === "checking" ? tr("agents.lcpp_conn_checking") : tr("agents.lcpp_conn_check")}
-                    </span>
-                  </button>
-                </div>
-                {check?.state === "ok" && (
-                  <p className="ps-note">
-                    {tr("agents.lcpp_conn_check_result", {
-                      build: check.build || "?",
-                      nctx: String(check.nctx || "?"),
-                      models: check.models.length ? check.models.join(", ") : "?",
-                    })}
-                  </p>
-                )}
-                {check?.state === "error" && (
-                  <p className="ps-note ps-note-warn">{tr("agents.lcpp_conn_check_failed", { msg: check.msg })}</p>
-                )}
+              <div className="p-opts">
+                <button type="button" className="p-opt" disabled={check?.state === "checking"} onClick={runCheck}>
+                  <span className="p-opt-t">
+                    {check?.state === "checking" ? tr("agents.lcpp_conn_checking") : tr("agents.lcpp_conn_check")}
+                  </span>
+                </button>
               </div>
+              {check?.state === "ok" && (
+                <p className="ps-note">
+                  {tr("agents.lcpp_conn_check_result", {
+                    build: check.build || "?",
+                    nctx: String(check.nctx || "?"),
+                    models: check.models.length ? check.models.join(", ") : "?",
+                  })}
+                </p>
+              )}
+              {check?.state === "error" && (
+                <p className="ps-note ps-note-warn">{tr("agents.lcpp_conn_check_failed", { msg: check.msg })}</p>
+              )}
             </>
           ) : (
-            <div className="p-body">
+            <>
               <div className="flow">
                 <input
                   className="cinput"
@@ -189,9 +189,9 @@ export function LcppCard({ running, st, reload }: { running: boolean; st: Provid
                 </button>
               </div>
               <Hint>{tr("agents.lcpp_conn_note")}</Hint>
-            </div>
+            </>
           )}
-        </>
+        </div>
       )}
 
       <CardSettings>

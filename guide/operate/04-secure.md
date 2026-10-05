@@ -67,10 +67,46 @@ risks", grouped by deployment target (every target, `docker` and `native`, `ecs`
 - **Backups**: strictly control who can access where they are stored, and enforce at-rest
   encryption there.
 
-A caveat on limits: in the current localCustodian, the KEK is derived from the master key, so
-the effective strength is equivalent to the single `AF_MASTER_KEY`. **True per-tenant
-crypto-shred via tenant key revocation will be achieved when a Vault/KMS custodian is adopted
-in the future** (currently design only). Details in `docs/build/07-security.md` §7.6.
+A caveat on limits: by default the key that protects each workspace's credentials is derived
+from the master key, so the effective strength is equivalent to the single `AF_MASTER_KEY`. On
+AWS that key can be held by KMS instead (next section). Details in `docs/build/07-security.md`
+§7.6.
+
+### Keys at rest on AWS KMS
+
+On `ecs` / `ecs-ec2` the Control Plane can have AWS KMS hold the keys for what it seals: MCP
+connection headers, sign-in client secrets, engine tokens, session handoffs and shares, and the
+key of each workspace's credential store. Each value is sealed with a fresh data key from KMS,
+bound to its tenant, so it cannot be opened under another tenant's name. Turning it on:
+
+1. Deploy `10-data` with `CustodianKmsKey=create` (or bring a symmetric KMS key of your own in
+   the same account), and read the `CustodianKmsKeyArn` output.
+2. Deploy `30-ingress` with `CustodianKmsKeyArn=<that ARN>`. The Control Plane gets
+   `AF_KEY_CUSTODIAN=kms` and `AF_KMS_KEY_ID`, and its task role gets `kms:GenerateDataKey` and
+   `kms:Decrypt` on that key only, and only with the Control Plane's encryption context.
+
+What to know before you switch:
+
+- **`AF_MASTER_KEY` stays required.** It still opens everything stored before the switch, and
+  other keys are derived from it. Keep it exactly as before.
+- **Nothing is re-encrypted.** Values stored before the switch stay readable and stay protected
+  by the master key alone; only what is stored afterwards is protected by KMS.
+- **Members' stored credentials are not shredded by KMS.** Only a workspace whose key is stored
+  for the first time after the switch has it wrapped by KMS; a workspace that already had one
+  keeps the master-key wrapping, and restarting it changes nothing. Either way the key itself is
+  still derived from `AF_MASTER_KEY` and the member, so that stores written before keep opening,
+  and anyone with the master key can still derive it. Protect the master key as before.
+- **No fallback.** If KMS cannot be reached or refuses, sealing and opening fail with an error
+  that names KMS. The Control Plane never quietly uses the master key for a value KMS sealed.
+- **Opened keys are cached in memory for 5 minutes** (`AF_KMS_DATA_KEY_CACHE_TTL`, `0` turns it
+  off), so disabling the key takes effect within that time, not at once.
+- **Disabling or scheduling deletion of the KMS key makes everything sealed after the switch
+  unreadable to the Control Plane**, for every tenant at once. That is the crypto-shred lever, so restrict who can
+  administer the key. To cut off one tenant, add a statement to the key policy that denies
+  `kms:Decrypt` when `kms:EncryptionContext:af:key_ref` is that tenant's id; that is a
+  revocation an administrator of the key can undo, not a shred.
+- **Do not switch back to `local`** while values sealed by KMS exist: the local custodian refuses
+  them with an error that says so.
 
 ## Operating egress control
 
@@ -93,9 +129,15 @@ in the Console.
    you to confirm reality in log-only first before switching.
 
 > Current implementation scope: **observation (log-only) and allowlist management work, and the
-> proxy itself can block (enforce)**. The always-on container-side wiring that routes workspace
-> traffic through the proxy (internal network + proxy env injection) is **not built yet**, so
-> **switching to enforce does not yet constrain a workspace**.
+> proxy itself can block (enforce)**. On the compose (Docker) target, setting `AF_EGRESS_PROXY_ADDR`
+> on the Control Plane injects `http_proxy` / `https_proxy` / `no_proxy` (and their upper-case forms)
+> into every workspace container (off by default), so programs that honour those variables go through
+> the proxy. The ecs / ecs-ec2 targets do not pass this setting on to workspaces. What is **not built
+> yet** is forcing
+> traffic through it — an internal network or security-group egress rule that leaves the proxy as
+> the only way out, and templates that run the proxy — so a process that ignores the variables
+> still goes straight out, and **switching to enforce does not yet constrain a workspace**
+> ([#1181](https://github.com/k-k1/agent-fleet/issues/1181)).
 > For now, understand that you can operate up to the "observe and grow the allowlist" stage.
 > The full design picture is in `docs/build/07-security.md` §7.8.
 
@@ -164,6 +206,47 @@ into answers, logs or commits is part of the agent-side instructions as well.
   plaintext, and does not emit it into logs. The unified cred helper decrypts on demand and
   hands it over, so no plaintext files are ever created
   (`docs/build/07-security.md` §7.6).
+- **Workspaces do not get the host's cloud identity.** A workspace container can reach the
+  cloud metadata endpoint (`169.254.169.254`) of the machine it runs on, and an AWS SDK with no
+  member credentials falls back to whatever role it finds there — on an EC2 host with an
+  instance profile, that role, in every session, without an error. The Control Plane starts
+  every workspace with `AWS_EC2_METADATA_DISABLED=true` (docker) or withholds the task role
+  and sets it (ECS), which stops the SDKs from asking; the network block is the host's job:
+  - **EC2 host for compose** (`deploy/aws/ec2-single`): IMDSv2 with hop limit 1
+    (`HttpTokens: required`, `HttpPutResponseHopLimit: 1`). The host-network Control Plane is
+    one hop and can still use an instance profile; a workspace on a docker bridge is two and
+    gets no token. For an instance that already exists, apply it with
+    `aws ec2 modify-instance-metadata-options --instance-id <id> --http-tokens required
+    --http-put-response-hop-limit 1` — a stack update can replace the instance when the
+    Ubuntu AMI parameter has moved.
+  - **Any other docker host in a cloud**: the same metadata settings, or a host firewall rule
+    in Docker's `DOCKER-USER` chain that rejects `169.254.169.254` from the workspace bridges
+    (it needs root on the host; compose itself needs nothing new).
+  - **ecs-ec2**: the slot user data sets `ECS_AWSVPC_BLOCK_IMDS=true`; retained slots have to
+    be replaced — reserve them in Settings → Admin → Slots ([03-run](03-run.md), "ecs-ec2:
+    replacing slots after a launch template change").
+
+  `AF_WS_WORKLOAD_AWS=1` on the Control Plane hands the ECS task role back to workspaces and
+  stops suppressing the SDKs' metadata lookup. It removes none of the network protections above,
+  so a docker workspace still cannot reach the host's instance profile; giving it one needs a
+  credential path you permit separately. Keep the network protection as the default.
+
+  **Rolling it out.** A running docker workspace keeps the environment it was created with:
+  `docker compose up -d` and a Docker restart do not change it. After upgrading the Control
+  Plane and the workspace image (or changing `AF_WS_WORKLOAD_AWS`), have every workspace
+  **Stopped and Started** in the Console, which recreates its container, and apply the host
+  metadata settings above. Check from a session shell, without printing the environment. With
+  the opt-in off (the default):
+  `echo ${AWS_EC2_METADATA_DISABLED:-unset}` prints `true`; `aws sts get-caller-identity`
+  with no profile fails with "Unable to locate credentials"; and the IMDSv2 token request
+  (`curl -s -o /dev/null -m 3 -w '%{http_code}' -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token`)
+  does not print `200`. With `AF_WS_WORKLOAD_AWS=1` the first two are expected to differ (the
+  variable is unset on docker, and ECS resolves the task role); the token request must still
+  not print `200` wherever the host blocks metadata.
+
+  A workspace on the native runtime runs directly on the member's machine and is left alone:
+  an instance role there is that machine's own.
+  Members run AWS commands as themselves with `af-aws-exec` ([member guide 10](../member/10-integrations.md)).
 
 ## Offboarding: how access is actually revoked
 

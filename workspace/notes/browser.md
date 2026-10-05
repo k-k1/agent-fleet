@@ -8,6 +8,27 @@ user-invocable: false
 Read when: you are about to take a screenshot or verify a UI, hand an automation-owned page to
 the user (the `attach_chromium` tools), or tell the user how to look at a web app you started.
 
+## First: does this workspace have a browser at all?
+
+`echo "$AF_BROWSER_UNAVAILABLE"` — when it prints a runtime id (`kubernetes`), **this workspace
+has no browser features**: no headless Chromium, no `attach_chromium` hand-off, and the user has
+no browser pane (theirs is greyed out with the reason). The workspace pod runs under Pod Security
+`restricted`: NoNewPrivs stops the setuid `chrome-sandbox`, and the default seccomp profile
+refuses user namespaces (`unshare -U` → Operation not permitted), so a sandboxed `chromium`
+dies at startup (`The setuid sandbox is not running as root` / `Zygote process exited
+prematurely`). Running it unsandboxed was decided against (ADR 0106, addendum 2026-10-04):
+**never add `--no-sandbox` or set `AF_CHROMIUM_NO_SANDBOX` to get past it**, and do not retry
+the browser tools, which answer `browser_unavailable`. Instead:
+
+- verify with the project's own tests (jsdom / vitest dom tests, unit tests) and with HTTP checks
+  (`curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:<port>/<path>`, reading the HTML or
+  JSON);
+- point the user at **Preview → the lightweight preview** (軽量プレビュー), which still works, or at
+  a preview subdomain if the deployment issues one;
+- say plainly that nothing was checked visually — never "verified the UI".
+
+Everything below applies only where the variable is empty.
+
 ## Headless browser (UI verification / screenshots)
 
 The fixed-version `chromium` binary, its libraries and fonts (DejaVu + Noto CJK — Japanese renders
@@ -79,8 +100,8 @@ what it shows, and never claim a page "looks right" based on it.
   `target-unreachable` = the port isn't listening yet (start the server, then Reload);
   `crashed` / `disconnected` = the in-container Chromium died or the socket dropped, and they
   reconnect from the toolbar. The full table is `ref/browser-pane.md` in the shipped guide.
-- The **smartphone layout doesn't expose this flow yet** (desktop and tablet do), so don't tell a
-  phone user to open the pane.
+- On a **smartphone** the action bar has no Preview button; the same port / path fields and
+  "Open in pane" are in the popover behind **⋯** at the right end of the bar.
 - **Verification honesty:** only say you "verified" / 「確認しました」 a UI when **you** drove it
   with your own headless Chromium and saw the result — never on the basis of a pane you cannot
   see. Stop the dev server when done, and never copy secrets surfacing in the app (API keys,

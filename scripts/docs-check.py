@@ -386,6 +386,7 @@ CLOSURE_EXEMPT: dict[str, str] = {
     "deploy/local/README-wsl.md": _RUNBOOK_REASON,
     "deploy/aws/ecs/README.md": _RUNBOOK_REASON,
     "deploy/aws/ec2-single/README.md": _RUNBOOK_REASON,
+    "deploy/kubernetes/README.md": _RUNBOOK_REASON,
     "deploy/release/notes/SUMMARY.md": _RELEASES_REASON,
     "deploy/release/notes/SUMMARY.ja.md": _RELEASES_REASON,
 }
@@ -816,23 +817,116 @@ def table_first_column(path: str) -> set[str]:
     return out
 
 
-def source_setting_tabs(locale: str) -> dict[str, str]:
-    """Console settings tab labels (key -> displayed string).
+SETTING_TAB_KEY_RE = re.compile(r"(?:set|tenant)\.tab_[a-z0-9_]+")
+
+_JS_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "v": "\v", "0": "\0"}
+
+
+def ts_tokens(text: str) -> list[tuple[str, str | None, int]]:
+    """A TypeScript source as (kind, value, offset) tokens, enough to read object literals.
+
+    kind is "str" (a quoted string or a backtick literal without `${`, value decoded),
+    "tmpl" (a backtick literal with `${`, value None), "punct" (one character) or "word"
+    (anything else). Comments are dropped and a string is never rescanned, so a key named
+    in a comment or quoted inside another value is not a key. Regex literals are not
+    recognised; the files read with this hold none.
+    """
+    out: list[tuple[str, str | None, int]] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c.isspace():
+            i += 1
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+        elif c in "\"'`":
+            start, i, buf, interp = i, i + 1, [], False
+            while i < n and text[i] != c:
+                ch = text[i]
+                if ch == "\\" and i + 1 < n:
+                    e = text[i + 1]
+                    i += 2
+                    if e == "u" and text.startswith("{", i):
+                        j = text.index("}", i)
+                        buf.append(chr(int(text[i + 1 : j], 16)))
+                        i = j + 1
+                    elif e == "u":
+                        buf.append(chr(int(text[i : i + 4], 16)))
+                        i += 4
+                    elif e == "x":
+                        buf.append(chr(int(text[i : i + 2], 16)))
+                        i += 2
+                    elif e == "\r" and text.startswith("\n", i):
+                        i += 1  # a line continuation adds nothing
+                    elif e != "\n":
+                        buf.append(_JS_ESCAPES.get(e, e))
+                    continue
+                if c == "`" and text.startswith("${", i):
+                    interp = True
+                buf.append(ch)
+                i += 1
+            i += 1
+            out.append(("tmpl", None, start) if interp else ("str", "".join(buf), start))
+        elif c.isalnum() or c in "_$":
+            start = i
+            while i < n and (text[i].isalnum() or text[i] in "_$"):
+                i += 1
+            out.append(("word", text[start:i], start))
+        else:
+            out.append(("punct", c, i))
+            i += 1
+    return out
+
+
+def source_setting_tabs(locale: str) -> tuple[dict[str, str], list[str]]:
+    """Console settings tab labels (key -> displayed string), and the entries it could not read.
 
     A user looks for the name shown on screen, so a row of ref/settings.md must be the
     Console label verbatim. A new tab means a new row.
+
+    The entries live per domain in `locales/<locale>/*.ts`; `locales/<locale>.ts` only
+    spreads them together and holds no key, so reading it yields nothing. An empty result
+    is the caller's error, never a skip: a skipped check reads exactly like a passing one.
+    A tab key whose value is not a plain string (interpolated, a constant) is reported
+    rather than dropped, for the same reason.
     """
-    path = os.path.join(
-        ROOT, "console", "src", "lib", "i18n", "locales", f"{locale}.ts"
-    )
-    if not os.path.exists(path):
-        return {}
-    return {
-        m.group(1): m.group(2)
-        for m in re.finditer(
-            r'"((?:set|tenant)\.tab_[a-z_]+)":\s*"([^"]+)"', read(path)
-        )
-    }
+    folder = os.path.join(ROOT, "console", "src", "lib", "i18n", "locales", locale)
+    if not os.path.isdir(folder):
+        return {}, []
+    out: dict[str, str] = {}
+    problems: list[str] = []
+    for name in sorted(os.listdir(folder)):
+        if not name.endswith(".ts") or name.endswith(".test.ts"):
+            continue
+        text = read(os.path.join(folder, name))
+        toks = ts_tokens(text)
+        for k in range(1, len(toks) - 2):
+            kind, key, _ = toks[k]
+            # A property: a key string right after `{` or `,`, then `:`.
+            if (
+                kind != "str"
+                or not SETTING_TAB_KEY_RE.fullmatch(key or "")
+                or toks[k - 1][:2] not in (("punct", "{"), ("punct", ","))
+                or toks[k + 1][:2] != ("punct", ":")
+            ):
+                continue
+            vkind, value, voff = toks[k + 2]
+            # The literal must be the whole value: `"A" + "B"` or `"A" ? "B" : "C"` start
+            # with a string too, and taking "A" would pass a row the screen never shows.
+            end = toks[k + 3][:2] if k + 3 < len(toks) else None
+            if vkind == "str" and end in (("punct", ","), ("punct", "}")):
+                out[key] = value
+            else:
+                line = text.count("\n", 0, voff) + 1
+                problems.append(
+                    f"console/src/lib/i18n/locales/{locale}/{name}:{line}: '{key}' is not"
+                    " a plain string literal, so its label cannot be read"
+                )
+    return out, problems
 
 
 def table_mark_shape(path: str) -> list[tuple[str, ...]]:
@@ -1327,8 +1421,17 @@ def check_ref(f: Findings) -> None:
     # silently undocumented.
     for locale, name in (("en", "settings.md"), ("ja", "settings.ja.md")):
         path = os.path.join(GUIDE, "ref", name)
-        tabs = source_setting_tabs(locale)
-        if not os.path.exists(path) or not tabs:
+        if not os.path.exists(path):
+            continue
+        tabs, problems = source_setting_tabs(locale)
+        for problem in problems:
+            f.error(problem)
+        if not tabs:
+            f.error(
+                f"console/src/lib/i18n/locales/{locale}/: no settings tab labels"
+                f" ('set.tab_*' / 'tenant.tab_*') could be read, so ref/{name} cannot be"
+                " checked (the catalogue moved or its key format changed)"
+            )
             continue
         rows = table_first_column(path)
         missing = sorted({v for v in tabs.values()} - rows)

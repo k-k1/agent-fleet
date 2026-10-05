@@ -35,7 +35,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -73,6 +75,12 @@ type reportSignals struct {
 	PendingQuestion   bool // waiting on a question (interim — not a completion at all)
 	PendingPlan       bool // waiting on plan approval
 	PendingPermission bool // waiting on tool permission
+
+	// StopContinued means another Stop hook blocked the Stop that wrote this idle marker, so
+	// the turn went on (#1600): the marker is that stop's, not the turn's end. Read only
+	// for claude and codex Terminal sessions, whose idle comes from our own Stop hook running
+	// alongside the user's (reportStopContinued).
+	StopContinued bool
 
 	SubagentBusy   bool // freshness of the BG subagent / Workflow jsonl (claude)
 	TranscriptBusy bool // freshness of the main transcript (claude — covers thinking gaps)
@@ -183,6 +191,9 @@ func (s reportSignals) busyEvidence() []string {
 	}
 	if s.PendingPermission {
 		ev = append(ev, "pending-permission")
+	}
+	if s.StopContinued {
+		ev = append(ev, "stop-continued")
 	}
 	if s.SubagentBusy {
 		ev = append(ev, "subagent-busy")
@@ -390,6 +401,9 @@ func collectReportSignals(m session.Meta, since, hintReason, selfAt string) repo
 		s.TranscriptBusy = reportTranscriptBusy(sid, markerAt)
 		collectAbortSignal(&s, m.Name, sid, since)
 	}
+	if s.markerIdle() && !s.TailAborted {
+		s.StopContinued = reportStopContinued(m, sid, markerAt)
+	}
 	if e, ok := status.ReadExit(m.Name); ok {
 		switch e.Reason {
 		case "oom", "crashed", "killed":
@@ -495,6 +509,23 @@ func reportTranscriptBusy(sid string, marker time.Time) bool {
 	return at.After(marker.Add(reportMarkerGrace))
 }
 
+// reportStopContinued asks the kind whether the Stop behind an idle marker was blocked by
+// another Stop hook (#1600). Only the kinds whose idle comes from our Stop hook running beside
+// the user's can be fooled that way: a managed codex ends on turn/completed, which the
+// app-server sends after every Stop hook has decided, and the other kinds have no Stop hook.
+// It runs only when the marker is idle, so the transcript or rollout read stays off the busy
+// sessions. An abort at the tail is excluded by the caller: that is how the continued turn
+// ended, with no further Stop.
+func reportStopContinued(m session.Meta, sid string, marker time.Time) bool {
+	switch normalizeKind(m.Kind) {
+	case session.KindClaude:
+		return claude.StopContinued(sid, marker)
+	case session.KindCodex:
+		return m.DriverKind() != session.DriverManaged && codex.StopContinued(m, marker)
+	}
+	return false
+}
+
 // reportPaneBusy checks the pane's interrupt affordance (the same grounds as the reverse heal).
 // It hits tmux, so it runs only for a settle candidate (docs/log/51: keep the tmux load down).
 // It is limited to claude's TUI because tmuxx.IsBusy reads claude's spinner contract (the same
@@ -541,7 +572,45 @@ type reportSink func(name, convID, kind, reason string, rows []instrRow) reportS
 // failure can be returned), while the operator's automatic turn goes to the debouncer
 // (chat_report_autoturn.go — it bundles nearby reports into one turn). It fires on the timer
 // goroutine, so a provider call taking minutes does not block the reconciler's single goroutine.
+//
+// A scheduled run's row that carries its own delivery (#1560) is routed to its targets by
+// deliverScheduledRow instead, one row at a time: two runs of one schedule are two results.
 func deliverReportCard(name, convID, kind, reason string, rows []instrRow) reportSinkResult {
+	var plain []instrRow
+	var results []reportSinkResult
+	for _, r := range rows {
+		if r.Delivery == nil {
+			plain = append(plain, r)
+			continue
+		}
+		results = append(results, deliverScheduledRow(name, convID, kind, reason, r))
+	}
+	if len(plain) > 0 {
+		results = append(results, deliverConvReport(name, convID, kind, reason, plain))
+	}
+	return foldSinkResults(results)
+}
+
+// foldSinkResults folds per-part sink results: a retry anywhere keeps every row open, and the
+// rows are dropped only when no part was delivered at all.
+func foldSinkResults(results []reportSinkResult) reportSinkResult {
+	drops := 0
+	for _, r := range results {
+		switch r {
+		case reportSinkRetry:
+			return reportSinkRetry
+		case reportSinkDrop:
+			drops++
+		}
+	}
+	if len(results) > 0 && drops == len(results) {
+		return reportSinkDrop
+	}
+	return reportSinkOK
+}
+
+// deliverConvReport is the report card in the operator conversation.
+func deliverConvReport(name, convID, kind, reason string, rows []instrRow) reportSinkResult {
 	res := recordSessionReport(name, convID, kind, reason, rows)
 	if res == reportSinkOK {
 		// Fleet graph write site ⑧ (ADR 0096): a report actually left the session for the
@@ -773,6 +842,9 @@ func (rc *reportReconciler) sweep(now time.Time) {
 	// that owes a report is stopped only after that report has gone out. Stopping first parks
 	// the report until somebody resumes the session, which for the operator waiting on it is
 	// indistinguishable from never being told.
+	// The spend budget (#1054) only ARMS (or, past its hard limit, halts); the arm it sets is
+	// then consumed below like any other.
+	sweepSpendCaps(now)
 	rc.sweepStopArms(now)
 }
 
@@ -812,7 +884,9 @@ func (rc *reportReconciler) prune(armed []string) {
 // row stays pending and is reported at the end of the next turn — gap A, where v1 overwrote the
 // arm and lost it, falls out of the definition here as "a row that cannot disappear".
 func (rc *reportReconciler) evaluate(name string, now time.Time) {
-	open := openInstrRows(name)
+	held := agents.HeldInstrs(name)
+	open := rc.reportNotRun(name, openInstrRows(name), held, now)
+	open = withoutHeldInstr(name, open, held)
 	if len(open) == 0 {
 		return
 	}
@@ -845,9 +919,12 @@ func (rc *reportReconciler) evaluate(name string, now time.Time) {
 	if !v.Terminal && !v.Fast && !rc.debounce(name, now) {
 		return // not yet two consecutive ticks
 	}
+	if v.Kind == ReportKindAnswerReady {
+		rememberTurnVerdict(m, covered, v.Reason != "")
+	}
 	retry := false
 	delivered := false
-	for _, conv := range instrConvs(covered) {
+	for _, conv := range instrSinkConvs(covered) {
 		rows := instrRowsForConv(covered, conv)
 		switch rc.sink(name, conv, v.Kind, v.Reason, rows) {
 		case reportSinkRetry:
@@ -880,6 +957,61 @@ func (rc *reportReconciler) evaluate(name string, now time.Time) {
 	if !retry {
 		rc.forget(name)
 	}
+}
+
+// reportNotRun delivers the not-run report of every row whose prompt was dropped before it ran
+// (#1257) and returns the other rows. It needs no quiet evidence: the drop is a terminal fact,
+// and the session may be archived or gone. It runs ahead of the meta check for that reason. A
+// row whose delivery must be retried stays open and is left out of this sweep's settle
+// decision, so the session's quiet period cannot report it as done meanwhile.
+//
+// A row left sending by an Agent that is gone (another boot id) is settled here too. Its held file, when there
+// is one, proves the driver accepted the prompt: the row stops being sending and is judged like
+// any queued instruction. Without one nothing shows whether the prompt reached the session (the
+// Agent died before the accept, or after it and before the send returned, with the prompt
+// started at once): it is reported as unconfirmed, never as done and never as not run.
+func (rc *reportReconciler) reportNotRun(name string, open []instrRow, held map[string]bool, now time.Time) []instrRow {
+	var rest []instrRow
+	for _, r := range open {
+		kind, reason, state := reportKindNotRun, r.Dropped, instrNotRun
+		switch {
+		case r.Dropped != "":
+		case sentByGoneAgent(r) && held[r.ID]:
+			MarkInstrSent(name, r.ID)
+			r.Sending = ""
+			rest = append(rest, r)
+			continue
+		case sentByGoneAgent(r):
+			kind, reason, state = reportKindUnconfirmed, "", instrUnconfirmed
+		default:
+			rest = append(rest, r)
+			continue
+		}
+		switch rc.sink(name, r.Conv, kind, reason, []instrRow{r}) {
+		case reportSinkRetry:
+			continue
+		case reportSinkDrop:
+			log.Printf("session-report: %s: target conversation %s is gone — folding row %s", name, r.Conv, r.ID)
+		}
+		markInstrNotRunReported(name, r.ID, state, now)
+		log.Printf("session-report: %s: instruction %s %s (%s)", name, r.ID, state, reason)
+	}
+	return rest
+}
+
+// withoutHeldInstr drops the rows whose prompt has not started (#1257): still being sent, or
+// waiting in the session's queue (held, from agents.HeldInstrs). An instruction that has not
+// started cannot have completed, whatever the session's earlier turn did. Such a row stays
+// pending until its prompt is handed to the runtime, and is then judged like any other.
+func withoutHeldInstr(name string, rows []instrRow, held map[string]bool) []instrRow {
+	var out []instrRow
+	for _, r := range rows {
+		if held[r.ID] || r.Sending != "" {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // reportReopenGrace is how long a reported row stays under compensation watch
@@ -930,7 +1062,7 @@ func (rc *reportReconciler) compensate(name string, now time.Time) {
 	}
 	why := strings.Join(resumed, ",")
 	reopened := false
-	for _, conv := range instrConvs(cands) {
+	for _, conv := range instrSinkConvs(cands) {
 		var reopen, capped []instrRow
 		for _, r := range instrRowsForConv(cands, conv) {
 			if r.ReopenCount >= instrReopenMax {
@@ -983,4 +1115,32 @@ func InstallReconcilerForTest(interval time.Duration) (stop func()) {
 		<-done
 		reportRec = old
 	}
+}
+
+// AwaitReconcilerSweepsForTest blocks until the live reconciler has completed at least n sweeps
+// after this call AND at least min has elapsed, or until timeout (then it returns false). It is
+// how a negative test proves the reconciler actually looked at a state: a bare sleep passes
+// vacuously when a loaded runner never schedules the sweep goroutine inside it.
+//
+// The leftover notification is drained first, but `swept` has capacity 1 and does not say which
+// sweep it came from, so the first completion counted may belong to a sweep that started before
+// the caller's write — callers ask for one more than the sweeps they need to have seen the state.
+// min covers the settle debounce's time condition (quiet must also span one interval).
+func AwaitReconcilerSweepsForTest(n int, min, timeout time.Duration) bool {
+	rc := reportRec
+	select {
+	case <-rc.swept:
+	default:
+	}
+	start := time.Now()
+	deadline := time.After(timeout)
+	for seen := 0; seen < n || time.Since(start) < min; {
+		select {
+		case <-rc.swept:
+			seen++
+		case <-deadline:
+			return false
+		}
+	}
+	return true
 }

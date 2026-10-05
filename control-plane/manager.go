@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"path/filepath"
 	"sync"
@@ -19,6 +20,11 @@ import (
 // (MetadataStore) is the source of truth; `rts` is an in-memory cache of built
 // runtimes keyed by membership id. The Agent contract is unchanged.
 type manager struct {
+	// memberConns has its own lock: in-flight requests per membership, closed on removal.
+	memberConns memberConnRegistry
+	// removalStops: workspace ids with a removed-member sweep stop in flight.
+	removalStops sync.Map
+
 	// mu guards ONLY the in-memory maps below (runtime/lock/activity caches) — it is
 	// never held across store/docker I/O (docs/log/23 P2-W2). The I/O of a first resolve
 	// is serialized per membership by buildLocks instead (buildResolved, resolver.go).
@@ -76,8 +82,11 @@ type manager struct {
 	// (<dataRoot>/<key>) default-tenant path from a nested (<dataRoot>/<slug>/<key>)
 	// one without a per-call store lookup.
 	defaultTenantID string
-	agentHost       string
-	memory          string
+	// githubBuiltinOff is the operator's AF_GITHUB_BUILTIN_APPS=off: no tenant may send
+	// its members to the GitHub apps compiled into this binary (github_builtin_apps.go).
+	githubBuiltinOff bool
+	agentHost        string
+	memory           string
 	// memMaxBytes is the deployment-wide HARD ceiling for a per-workspace RAM cap
 	// (AF_MAX_WORKSPACE_MEM, bytes; 0 = no extra ceiling). It bounds a tenant_admin's
 	// per-user mem_limit on top of the per-tenant cap so no single workspace can be
@@ -147,6 +156,16 @@ type manager struct {
 	// (no PUBLIC_BASE_URL) = the memo bridge is not reachable, so it is not injected.
 	publicBaseURL string
 
+	// internalBaseURL is AF_CP_INTERNAL_URL without a trailing slash: the base a workspace
+	// uses for its own requests to the CP where it cannot use the public one (ADR 0106
+	// decision 8). Injected next to AF_CP_BASE_URL, which stays the public base because
+	// links built for a person are opened by a browser. Empty = workspaces use
+	// AF_CP_BASE_URL for everything.
+	internalBaseURL string
+
+	// homeOpWG counts the reconciler's resumes (home_operation.go), for tests to wait on.
+	homeOpWG sync.WaitGroup
+
 	// previewDomain is AF_PREVIEW_DOMAIN — the parent of the per-start preview
 	// subdomains (docs/log/81). Empty = host-mode preview is off for this deployment
 	// (no wildcard DNS / certificate), and only the path-mode /preview/{port}
@@ -166,10 +185,25 @@ func internalErr(err error) *apiError {
 	return &apiError{status: http.StatusInternalServerError, code: "internal", message: err.Error()}
 }
 
+// membershipErr is internalErr for an EnsureMembership failure, except the store's
+// data-root name refusals, which are a state an administrator has to resolve and say so.
+func membershipErr(err error) *apiError {
+	switch {
+	case errors.Is(err, store.ErrDataRootNameReserved):
+		return &apiError{status: http.StatusConflict, code: errCodeUserKeyReserved, message: err.Error()}
+	case errors.Is(err, store.ErrDataRootNameTaken):
+		return &apiError{status: http.StatusConflict, code: errCodeUserKeyConflict, message: err.Error()}
+	}
+	return internalErr(err)
+}
+
 // cachedRT memoizes a built runtime + its workspace record per membership.
 type cachedRT struct {
 	rt runtime.Runtime
 	ws store.Workspace
+	// gitEpoch is the internal git token epoch read before rt's env was built (-1 when
+	// it could not be read). refreshGitTokenForStart compares it with the live one.
+	gitEpoch int64
 }
 
 // resolved is the full per-request resolution: runtime + workspace record +
@@ -179,6 +213,8 @@ type resolved struct {
 	ws    store.Workspace
 	ident store.Identity
 	mv    store.MembershipView
+	// gitEpoch: see cachedRT.gitEpoch.
+	gitEpoch int64
 }
 
 // workspaceNames derives the container/network/home for a (tenant, user). The

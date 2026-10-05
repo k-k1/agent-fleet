@@ -119,20 +119,22 @@ func memoryScanContent(path string, b []byte) []memorySecretFinding {
 	var out []memorySecretFinding
 	seen := map[string]bool{}
 	for i, line := range strings.Split(string(b), "\n") {
-		if len(line) > 8192 {
-			line = line[:8192] // absurdly long line (minified and the like): look at the head only
-		}
+		// The whole line, every match: a key after 8 KiB of padding, or after a placeholder
+		// that matches the same rule earlier on the line, is still a key.
 		for _, rule := range memorySecretRules {
-			m := rule.Re.FindStringSubmatch(line)
-			if m == nil {
-				continue
+			val := ""
+			for _, m := range rule.Re.FindAllStringSubmatch(line, -1) {
+				// The capture group when there is one, otherwise the whole match, is the candidate.
+				v := m[0]
+				if len(m) > 1 && m[1] != "" {
+					v = m[1]
+				}
+				if !memoryLooksPlaceholder(v) {
+					val = v
+					break
+				}
 			}
-			// The capture group when there is one, otherwise the whole match, is the candidate.
-			val := m[0]
-			if len(m) > 1 && m[1] != "" {
-				val = m[1]
-			}
-			if memoryLooksPlaceholder(val) {
+			if val == "" {
 				continue
 			}
 			key := rule.Name + "\x00" + strconv.Itoa(i)

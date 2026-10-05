@@ -14,9 +14,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudexec"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -84,18 +84,14 @@ var scrubbedEnv = []string{
 // baseEnv is environ minus scrubbedEnv, with IMDS turned off for every SDK that honours
 // the variable (the CLI, boto3, the Go/JS/Java SDKs).
 func baseEnv(environ []string) []string {
-	drop := map[string]bool{}
-	for _, k := range scrubbedEnv {
-		drop[k] = true
-	}
-	out := make([]string, 0, len(environ)+1)
-	for _, kv := range environ {
-		k, _, _ := strings.Cut(kv, "=")
-		if !drop[k] {
-			out = append(out, kv)
-		}
-	}
-	return append(out, "AWS_EC2_METADATA_DISABLED=true")
+	return append(cloudexec.Scrub(environ, cloudexec.DropNames(scrubbedEnv...)), "AWS_EC2_METADATA_DISABLED=true")
+}
+
+// fileAndEndpointVars says which variables pick the AWS files and endpoints: the ones
+// the verifier's and the child's environments replace or drop.
+func fileAndEndpointVars(k string) bool {
+	return k == "AWS_CONFIG_FILE" || k == "AWS_SHARED_CREDENTIALS_FILE" || k == "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS" ||
+		strings.HasPrefix(k, "AWS_ENDPOINT_URL")
 }
 
 // steerIsolatedConfig replaces an AWS_CONFIG_FILE that points at one of the Agent's own
@@ -156,17 +152,6 @@ func expandHome(p string) string {
 	return p
 }
 
-// envValue is getenv over env: the FIRST entry of a duplicated key, as C, Python and
-// Go's own os.Getenv resolve it, so this reads what the aws CLI will read.
-func envValue(env []string, key string) string {
-	for _, kv := range env {
-		if k, val, _ := strings.Cut(kv, "="); k == key {
-			return val
-		}
-	}
-	return ""
-}
-
 // profileKeys returns the keys the CLI would merge for profile: its section of the
 // config file ([profile X], or [default]) and its section of the credentials file
 // ([X]), both located the way the CLI locates them from env. Read here rather than
@@ -193,11 +178,11 @@ func profileKeysFrom(env []string, profile string) (map[string]string, map[strin
 // profileFiles is the config and credentials files the CLI reads under env, as the
 // variables spell them (a leading "~/" not yet expanded).
 func profileFiles(env []string) (cfg, creds string) {
-	cfg = envValue(env, "AWS_CONFIG_FILE")
+	cfg = cloudexec.EnvValue(env, "AWS_CONFIG_FILE")
 	if cfg == "" {
 		cfg = ConfigPath()
 	}
-	creds = envValue(env, "AWS_SHARED_CREDENTIALS_FILE")
+	creds = cloudexec.EnvValue(env, "AWS_SHARED_CREDENTIALS_FILE")
 	if creds == "" {
 		creds = filepath.Join(filepath.Dir(ConfigPath()), "credentials")
 	}
@@ -285,34 +270,6 @@ func checkSSOProfile(keys map[string]string, profile string) error {
 		}
 	}
 	return nil
-}
-
-// setEnv sets each KEY=value in env, removing every earlier entry for that key. Never
-// append a variable that may already be there: getenv in C, Python and the AWS CLI
-// returns the FIRST entry of a duplicated key, so an appended AWS_REGION loses to the
-// caller's (measured with aws-cli 2.36.46: --region was ignored).
-func setEnv(env []string, kvs ...string) []string {
-	drop := map[string]bool{}
-	for _, kv := range kvs {
-		k, _, _ := strings.Cut(kv, "=")
-		drop[k] = true
-	}
-	out := make([]string, 0, len(env)+len(kvs))
-	for _, kv := range env {
-		if k, _, _ := strings.Cut(kv, "="); !drop[k] {
-			out = append(out, kv)
-		}
-	}
-	return append(out, kvs...)
-}
-
-func envHas(environ []string, key string) bool {
-	for _, kv := range environ {
-		if k, v, _ := strings.Cut(kv, "="); k == key && v != "" {
-			return true
-		}
-	}
-	return false
 }
 
 // awsRunner runs the aws CLI with env and returns stdout. Stderr is captured for the
@@ -426,7 +383,7 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	// Read before the check, not after: a login landing between the two must not be
 	// recorded as the cache that failed (ADR 0102 decision 1).
 	snap := ReadCacheState(sso.Session)
-	creds, err := exportCreds(aws, ssoOnlyProfile)
+	creds, err := exportSSOCreds(aws, sso.Session)
 	if err != nil && !loginNeeded(err.Error()) {
 		return "", nil, nil, fmt.Errorf("could not get credentials for profile %q: %v", o.Profile, err)
 	}
@@ -444,7 +401,7 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 			if lerr := deviceLogin(awsBin, aws.env, ssoOnlyProfile, o.Stderr); lerr != nil {
 				return "", nil, nil, fmt.Errorf("aws sso login for profile %s: %w", o.Profile, lerr)
 			}
-			if creds, err = exportCreds(aws, ssoOnlyProfile); err != nil {
+			if creds, err = exportSSOCreds(aws, sso.Session); err != nil {
 				return "", nil, nil, fmt.Errorf("credentials for profile %q after login: %w", o.Profile, err)
 			}
 		case consoleEligible(sso, o):
@@ -473,7 +430,7 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 // when nothing else names one, rather than run the command with no region at all (and a
 // tool's own default).
 func checkRegion(env []string, keys map[string]string, o ExecOptions) error {
-	if r, set := keys["region"]; set && r != "" && scalar(r) == "" && o.Region == "" && !envHas(env, "AWS_REGION") && !envHas(env, "AWS_DEFAULT_REGION") {
+	if r, set := keys["region"]; set && r != "" && scalar(r) == "" && o.Region == "" && !cloudexec.EnvHas(env, "AWS_REGION") && !cloudexec.EnvHas(env, "AWS_DEFAULT_REGION") {
 		return fmt.Errorf("profile %q has a region that spans several lines; fix it or pass --region", o.Profile)
 	}
 	return nil
@@ -494,15 +451,15 @@ func planChild(awsBin string, env []string, keys map[string]string, creds proces
 	region := o.Region
 	switch {
 	case region != "":
-	case envHas(env, "AWS_REGION"):
-		region = envValue(env, "AWS_REGION")
-	case envHas(env, "AWS_DEFAULT_REGION"):
-		region = envValue(env, "AWS_DEFAULT_REGION")
+	case cloudexec.EnvHas(env, "AWS_REGION"):
+		region = cloudexec.EnvValue(env, "AWS_REGION")
+	case cloudexec.EnvHas(env, "AWS_DEFAULT_REGION"):
+		region = cloudexec.EnvValue(env, "AWS_DEFAULT_REGION")
 	default:
 		region = scalar(keys["region"])
 	}
 	if region != "" {
-		env = setEnv(env, "AWS_REGION="+region, "AWS_DEFAULT_REGION="+region)
+		env = cloudexec.SetEnv(env, "AWS_REGION="+region, "AWS_DEFAULT_REGION="+region)
 	}
 	if !o.KeepConfig {
 		var warn string
@@ -513,17 +470,17 @@ func planChild(awsBin string, env []string, keys map[string]string, creds proces
 			fmt.Fprintln(o.Stderr, warn)
 		}
 	}
-	env = setEnv(env,
+	env = cloudexec.SetEnv(env,
 		execKeyIDVar+"="+creds.AccessKeyID,
 		"AWS_ACCESS_KEY_ID="+creds.AccessKeyID,
 		"AWS_SECRET_ACCESS_KEY="+creds.SecretAccessKey,
 		"AWS_SESSION_TOKEN="+creds.SessionToken)
 	if creds.Expiration != "" {
-		env = setEnv(env, "AWS_CREDENTIAL_EXPIRATION="+creds.Expiration)
+		env = cloudexec.SetEnv(env, "AWS_CREDENTIAL_EXPIRATION="+creds.Expiration)
 	}
 
 	who := awsRunner{bin: awsBin, env: verifierEnv(env, verifierCfg)}
-	who.env = setEnv(who.env,
+	who.env = cloudexec.SetEnv(who.env,
 		"AWS_ACCESS_KEY_ID="+creds.AccessKeyID,
 		"AWS_SECRET_ACCESS_KEY="+creds.SecretAccessKey,
 		"AWS_SESSION_TOKEN="+creds.SessionToken)
@@ -539,7 +496,7 @@ func planChild(awsBin string, env []string, keys map[string]string, creds proces
 		if creds.Expiration != "" {
 			exp = " (expires " + creds.Expiration + ")"
 		}
-		reg := envValue(env, "AWS_REGION")
+		reg := cloudexec.EnvValue(env, "AWS_REGION")
 		if reg == "" {
 			reg = "(none)"
 		}
@@ -651,15 +608,7 @@ var childConfigName = regexp.MustCompile(`^[A-Za-z0-9._@+ -]{1,64}$`)
 // Endpoint overrides are dropped: an AWS_ENDPOINT_URL left in the shell would receive
 // the new credentials with every signed call (verified with aws-cli 2.36.46).
 func childEnv(env []string, profile, helper string) ([]string, string, error) {
-	out := make([]string, 0, len(env)+2)
-	for _, kv := range env {
-		k, _, _ := strings.Cut(kv, "=")
-		if k == "AWS_CONFIG_FILE" || k == "AWS_SHARED_CREDENTIALS_FILE" || k == "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS" ||
-			strings.HasPrefix(k, "AWS_ENDPOINT_URL") {
-			continue
-		}
-		out = append(out, kv)
-	}
+	out := cloudexec.Scrub(env, fileAndEndpointVars)
 	cfg, warn := os.DevNull, ""
 	if helper != "" {
 		// Without a private place for it the child gets an empty config instead: it
@@ -677,7 +626,7 @@ func childEnv(env []string, profile, helper string) ([]string, string, error) {
 // ChildConfigDir holds the one-profile configs of af-aws-exec's children. It is in the
 // Agent's state directory, not under ~/.aws, so a ~/.aws linked onto other storage is
 // never followed to write it.
-func ChildConfigDir() string { return filepath.Join(paths.AgentStateDir(), "aws-exec") }
+func ChildConfigDir() string { return cloudexec.StateDir("aws-exec") }
 
 // writeChildConfig writes the one-profile config for profile and returns its path. The
 // header is quoted (botocore shlex-splits it), so a name with spaces works; the
@@ -687,7 +636,7 @@ func writeChildConfig(profile, helper string) (string, error) {
 	if !childConfigName.MatchString(profile) || !iniValueRe.MatchString(strings.ReplaceAll(helper, " ", "")) {
 		return "", fmt.Errorf("profile name %q cannot be written into an AWS config header", profile)
 	}
-	dir, err := privateDir(ChildConfigDir())
+	dir, err := cloudexec.PrivateDir(ChildConfigDir())
 	if err != nil {
 		return "", err
 	}
@@ -701,56 +650,6 @@ func writeChildConfig(profile, helper string) (string, error) {
 	return cfg, nil
 }
 
-// privateDir makes dir (0700) and insists it is a real directory owned by this user,
-// reached through directories nobody else can change: the child's credential_process
-// is read from it, so if another user could replace it (a group-writable directory, or
-// one under a world-writable parent that ~/.aws links to) they would decide what the
-// child runs and receive its credentials. It returns the resolved path, so the writes
-// that follow do not pass through a link again.
-func privateDir(dir string) (string, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
-	}
-	fi, err := os.Lstat(dir)
-	if err != nil {
-		return "", err
-	}
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() || !ok || int(st.Uid) != os.Getuid() {
-		return "", fmt.Errorf("%s must be a directory of your own, not a link; remove it and run again", dir)
-	}
-	if fi.Mode().Perm()&0o077 != 0 {
-		if err := os.Chmod(dir, 0o700); err != nil {
-			return "", err
-		}
-	}
-	real, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		return "", err
-	}
-	// Every directory above must be this user's or root's (an owner can always give
-	// themselves write access and rename what is inside), and writable by others only
-	// with the sticky bit (as /tmp is), under which they cannot rename what they do not
-	// own.
-	for p := filepath.Dir(real); ; p = filepath.Dir(p) {
-		pi, err := os.Stat(p)
-		if err != nil {
-			return "", err
-		}
-		ps, ok := pi.Sys().(*syscall.Stat_t)
-		if !ok || (int(ps.Uid) != os.Getuid() && ps.Uid != 0) {
-			return "", fmt.Errorf("%s belongs to another user, so %s under it is not private (it has to sit under directories you or root own)", p, dir)
-		}
-		if pi.Mode().Perm()&0o022 != 0 && pi.Mode()&os.ModeSticky == 0 {
-			return "", fmt.Errorf("%s is writable by its group or other users, so %s under it is not private (`chmod go-w %s` fixes that)", p, dir, p)
-		}
-		if p == filepath.Dir(p) {
-			break
-		}
-	}
-	return real, nil
-}
-
 // execKeyIDVar pins the child's profile to the credentials af-aws-exec handed over: it
 // holds their access key id (an identifier, not a secret). EnvCredentials refuses once
 // AWS_ACCESS_KEY_ID no longer matches it, so a script that exports another account's
@@ -762,9 +661,9 @@ const execKeyIDVar = "AF_AWS_EXEC_KEY_ID"
 // for `workspace-agent aws-env-credentials`.
 func EnvCredentials(environ []string) ([]byte, error) {
 	c := processCreds{Version: 1,
-		AccessKeyID: envValue(environ, "AWS_ACCESS_KEY_ID"), SecretAccessKey: envValue(environ, "AWS_SECRET_ACCESS_KEY"),
-		SessionToken: envValue(environ, "AWS_SESSION_TOKEN"), Expiration: envValue(environ, "AWS_CREDENTIAL_EXPIRATION")}
-	pinned := envValue(environ, execKeyIDVar)
+		AccessKeyID: cloudexec.EnvValue(environ, "AWS_ACCESS_KEY_ID"), SecretAccessKey: cloudexec.EnvValue(environ, "AWS_SECRET_ACCESS_KEY"),
+		SessionToken: cloudexec.EnvValue(environ, "AWS_SESSION_TOKEN"), Expiration: cloudexec.EnvValue(environ, "AWS_CREDENTIAL_EXPIRATION")}
+	pinned := cloudexec.EnvValue(environ, execKeyIDVar)
 	if pinned == "" || c.AccessKeyID == "" || c.SecretAccessKey == "" || c.SessionToken == "" {
 		return nil, errors.New("no af-aws-exec credentials in the environment; run the command under af-aws-exec")
 	}
@@ -843,7 +742,7 @@ func resolveSSO(env []string, keys, origin map[string]string) (ssoInfo, error) {
 		return sso, nil
 	}
 	sess, sessOrigin := map[string]string{}, map[string]string{}
-	cfg := envValue(env, "AWS_CONFIG_FILE")
+	cfg := cloudexec.EnvValue(env, "AWS_CONFIG_FILE")
 	if cfg == "" {
 		cfg = ConfigPath()
 	}
@@ -938,16 +837,7 @@ func loginNeeded(msg string) bool {
 // (verified with aws-cli 2.36.46: a local server's forged ARN came back with exit 0).
 // The child command keeps the member's own settings.
 func verifierEnv(env []string, cfg string) []string {
-	out := make([]string, 0, len(env)+3)
-	for _, kv := range env {
-		k, _, _ := strings.Cut(kv, "=")
-		if k == "AWS_CONFIG_FILE" || k == "AWS_SHARED_CREDENTIALS_FILE" || k == "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS" ||
-			strings.HasPrefix(k, "AWS_ENDPOINT_URL") {
-			continue
-		}
-		out = append(out, kv)
-	}
-	return append(out, "AWS_CONFIG_FILE="+cfg, "AWS_SHARED_CREDENTIALS_FILE="+os.DevNull,
+	return append(cloudexec.Scrub(env, fileAndEndpointVars), "AWS_CONFIG_FILE="+cfg, "AWS_SHARED_CREDENTIALS_FILE="+os.DevNull,
 		"AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true")
 }
 

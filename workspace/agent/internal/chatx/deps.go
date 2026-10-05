@@ -24,6 +24,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
@@ -122,11 +124,19 @@ type Deps struct {
 	// turn ended"; the fold itself stays on the session side, where the halt promotes a
 	// pending interaction out of the doomed process first and consumes the arm.
 	StopArmedSession func(name string) error
+	// SweepSpendCaps checks every capped session's spend against its budget (#1054) and arms
+	// or forces the stop. It runs on this tick, just before the arms are swept, so an arm it
+	// sets is consumed by the same evidence and the same debounce as one the user set.
+	SweepSpendCaps func(now time.Time)
 	// RateLimitState reads the reservation of a rate-limit episode (the fstore handle in
 	// rate_limit_resume.go). An accessor rather than the value, so the var is not copied: the
 	// far side is a var, and receiving it into an alias variable makes a copy (hit twice in
 	// wave A and once in wave B).
 	RateLimitState func(name string) (scheduleID, resumeAt string, ok bool)
+	// SessionTurns reads a session's transcript, whatever its kind and driver (sessionx's agent
+	// registry): where a scheduled run's own answer is found (#1560). A Managed driver hands its
+	// turn end over without the answer, so the transcript is the one source every kind shares.
+	SessionTurns func(m session.Meta) ([]transcript.Turn, bool)
 }
 
 var deps Deps

@@ -612,30 +612,38 @@
   flex: none;
 }
 
-/* EC2 slot pool (ecs-ec2 only; features/settings/ec2Pool.tsx) */
-.pool-table {
+/* Data tables in the tenant dialog: the EC2 slot pool (ec2Pool.tsx) and the engine-access
+   matrix (tenantEngineAccess.tsx). Both carry .admin-table; the matrix had no table rule of
+   its own and rendered as a bare browser table. */
+.admin-table {
   width: 100%;
   border-collapse: collapse;
   margin-top: 10px;
   font-size: 12px;
 }
 
-.pool-table th {
+.admin-table th {
   text-align: left;
   font-weight: 500;
   color: var(--muted);
   border-bottom: 1px solid var(--border);
   padding: 4px 8px 6px;
+}
+
+/* The pool's headers are short codes that read wrong when broken. The engine-access matrix's
+   are long localized role names and must wrap, or the table overflows a phone-width dialog
+   (measured at 375px, English: 346px of table in 287px). */
+.pool-table th {
   white-space: nowrap;
 }
 
-.pool-table td {
+.admin-table td {
   padding: 6px 8px;
   border-bottom: 1px solid var(--border2);
   vertical-align: middle;
 }
 
-.pool-table tr:last-child td {
+.admin-table tr:last-child td {
   border-bottom: none;
 }
 
@@ -658,6 +666,34 @@
 .pool-badge.bake {
   margin-left: 6px;
   font-family: var(--sans);
+}
+
+/* Replacement reservations (#1473). An older template version is the thing to act on, so it
+   takes the warning colour; a reservation is the action already taken, so it stays muted. */
+.pool-badge.outdated,
+.pool-badge.reserved {
+  margin-left: 6px;
+  font-family: var(--sans);
+}
+
+.pool-badge.outdated {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.pool-outdated {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.pool-bulk-list {
+  max-height: 240px;
+  overflow: auto;
+  margin: 8px 0;
+  padding-left: 18px;
+  font-size: 12px;
 }
 
 /* The golden bake (docs/log/64 §64.30). One block per architecture. */
@@ -733,4 +769,20 @@
   padding-left: 18px;
   font-size: 12px;
   line-height: 1.7;
+}
+
+/* The tenant branch rules are edited as JSON (ADR 0103 decision 10): monospace so nesting
+   lines up, and full width because a rule's types object is the widest line. */
+.branch-rules-json {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--mono);
+  font-size: 12px;
+  resize: vertical;
+}
+
+/* Intro line of the tenant usage panel: the toolbar under it needs the gap a heading would
+   give, which an inline style used to supply. */
+.usage-intro {
+  margin: 0 0 12px;
 }

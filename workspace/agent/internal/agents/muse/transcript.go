@@ -8,7 +8,8 @@
 // `started`, `model_request_configured`, `assistant_message_committed`, `terminal`,
 // `goal_usage_attribution`, …), not a list of wire `Item`s. A reader for it would be exactly
 // the transcript reverse-engineering this kind was supposed to get for free, against an
-// internal format with no stability promise.
+// internal format with no stability promise. The one narrow exception is the commentary the
+// wire omits, which the read layer splices in beside its tool call (commentary.go).
 //
 // The protocol's own answer is `session/read`, which returns `SessionHistory.items` — the
 // stable surface. But it needs a running host, and `Transcript` is called from the usage
@@ -17,8 +18,8 @@
 // lcpp. The difference from lcpp is worth stating: there the store IS the conversation, here
 // the host owns it and this is a MIRROR of what AF saw. What that costs is a turn that ran
 // while AF was not watching, which under decision 2 (managed-only, AF is the only writer) can
-// only happen if the Agent died mid-turn — and `session/read` on the next Resume is the
-// documented way to backfill it.
+// only happen if the Agent died mid-turn — and the next Resume backfills it from the host's
+// folded history (backfill.go).
 package muse
 
 import (
@@ -50,6 +51,9 @@ type record struct {
 	// Images are the paths of the attachments AF sent as `image` parts, on a `userMessage`
 	// only. The wire echoes their metadata but never the path (handle.go's sentImages).
 	Images []string `json:"images,omitempty"`
+	// Order, on a line with no item, is the host's own item order as of a resume backfill
+	// (backfill.go). An older Agent skips the line as an item without an id.
+	Order []string `json:"order,omitempty"`
 }
 
 // store is one session's append-only item log.
@@ -150,8 +154,17 @@ func (s *store) itemsWithMeta() ([]msp.Item, map[string]itemMeta, error) {
 	sc.Buffer(make([]byte, 0, 256*1024), 16*1024*1024)
 	for sc.Scan() {
 		var r record
-		if json.Unmarshal(sc.Bytes(), &r) != nil || r.Item.ItemID == "" {
+		if json.Unmarshal(sc.Bytes(), &r) != nil {
 			continue // a torn last line after a crash must not lose the whole history
+		}
+		if r.Item.ItemID == "" {
+			// Applied where it stands, to the order built so far: a later, shorter fold (an
+			// anchored snapshot) must not undo what an earlier one put right before its anchor,
+			// and an item first seen after the line lands after the fold it describes.
+			if len(r.Order) > 0 {
+				order = mergeOrder(order, r.Order, byID)
+			}
+			continue
 		}
 		prev, seen := byID[r.Item.ItemID]
 		if !seen {
@@ -177,6 +190,52 @@ func (s *store) itemsWithMeta() ([]msp.Item, map[string]itemMeta, error) {
 		items = append(items, byID[id])
 	}
 	return items, meta, sc.Err()
+}
+
+// mergeOrder puts the items in the host's order where the host has spoken, and keeps every
+// other item where AF saw it. First-seen order is the conversation's order only when nothing
+// was missed: an item backfilled after a failed mirror write or a lost notification is
+// first seen at the end, and turnsFromItems would fold a missed reply into the NEXT user
+// message's turn. So the host's order wins for the items it lists. An item it does not list
+// follows the latest-placed host item it followed in seen: one from before a compaction
+// anchor (preceding every listed item) stays in front. A live item newer than the fold is
+// never in seen here — the resume holds live items until the order line is written
+// (holdItems), so they are first seen after it.
+func mergeOrder(seen, host []string, byID map[string]msp.Item) []string {
+	if len(host) == 0 {
+		return seen
+	}
+	idx := make(map[string]int, len(host))
+	for i, id := range host {
+		if _, ok := byID[id]; ok {
+			if _, dup := idx[id]; !dup {
+				idx[id] = i
+			}
+		}
+	}
+	var front []string
+	after := make(map[int][]string)
+	last := -1
+	for _, id := range seen {
+		if i, ok := idx[id]; ok {
+			last = max(last, i)
+			continue
+		}
+		if last < 0 {
+			front = append(front, id)
+		} else {
+			after[last] = append(after[last], id)
+		}
+	}
+	out := make([]string, 0, len(seen))
+	out = append(out, front...)
+	for i, id := range host {
+		if j, ok := idx[id]; ok && j == i {
+			out = append(out, id)
+		}
+		out = append(out, after[i]...)
+	}
+	return out
 }
 
 // Remove drops the stored conversation (a slot whose identity is being discarded).
@@ -215,7 +274,20 @@ func withImagePaths(t *transcript.Turn, images []string) {
 // `turnId`, but it is not the grouping key — a turn that was steered carries items from
 // before and after the injection, and the host also emits items with no turn id at all
 // (a compaction between turns), so grouping on it would drop them.
-func turnsFromItems(items []msp.Item) []transcript.Turn {
+func turnsFromItems(items []msp.Item) []transcript.Turn { return turnsWithCommentary(items, nil) }
+
+// turnsWithCommentary is turnsFromItems with the runtime log's commentary (commentary.go) put
+// in front of the tool call it introduced. A commentary the wire did deliver — an agentMessage
+// with the same id, which is the commit's message_id — is not added a second time.
+func turnsWithCommentary(items []msp.Item, cs *commentarySet) []transcript.Turn {
+	delivered := map[string]bool{}
+	if cs != nil {
+		for _, it := range items {
+			if it.Kind == msp.ItemKindAgentMessage {
+				delivered[it.ItemID] = true
+			}
+		}
+	}
 	var turns []transcript.Turn
 	assistant := -1 // index of the open assistant turn, -1 when none
 
@@ -290,7 +362,27 @@ func turnsFromItems(items []msp.Item) []transcript.Turn {
 
 		case msp.ItemKindToolCall:
 			t := openAssistant(it)
-			t.Parts = append(t.Parts, toolPart(it))
+			if it.CallID != nil {
+				for _, c := range cs.take(*it.CallID) {
+					if !delivered[c.id] {
+						t.Parts = append(t.Parts, transcript.Part{Kind: "text", Text: c.text})
+						t.Text = joinText(t.Text, c.text)
+					}
+				}
+			}
+			if str(it.Tool) == "request_user_input" {
+				// A question stays in the history as a question, the way claude's and codex's
+				// do, rather than as a raw tool line. While it waits it adds nothing: the
+				// pending card stands for it, and the host settles every prompt with an output
+				// (answered, cancelled, or aborted with its run), so none is left out.
+				if qp, ok := questionPart(it); ok {
+					t.Parts = append(t.Parts, qp)
+				} else if strings.TrimSpace(str(it.VisibleOutput)) != "" {
+					t.Parts = append(t.Parts, toolPart(it))
+				}
+			} else {
+				t.Parts = append(t.Parts, toolPart(it))
+			}
 			applyUsage(t, it)
 
 		case msp.ItemKindSubagent, msp.ItemKindWorkflow, msp.ItemKindReminderChild:
@@ -540,4 +632,149 @@ func turnOrder(items []msp.Item) []string {
 		out = append(out, *it.TurnID)
 	}
 	return out
+}
+
+// questionPart renders a settled request_user_input call as the mirror's question block. ok is
+// false while the call has no output yet, or when its arguments carry no question.
+func questionPart(it msp.Item) (transcript.Part, bool) {
+	out := strings.TrimSpace(str(it.VisibleOutput))
+	if out == "" {
+		return transcript.Part{}, false
+	}
+	qs, ids := userInputQuestions(str(it.Args))
+	if len(qs) == 0 {
+		return transcript.Part{}, false
+	}
+	p := transcript.Part{Kind: "question", Tool: "request_user_input", Questions: qs, QID: str(it.CallID)}
+	p.Answer, p.Declined = userInputOutcome(out, qs, ids)
+	return p, true
+}
+
+// userInputQuestions reads the model-authored arguments. Muse's own selection shape
+// (`selection.mode`) and the AskUserQuestion-style `multiSelect` are both accepted, since the
+// arguments are whatever the model wrote. The ids are dropped: a question with an id is one the
+// Console offers to answer, and this one is history; they come back separately, for matching
+// the answers.
+func userInputQuestions(args string) ([]transcript.Question, []string) {
+	var a struct {
+		Questions []struct {
+			transcript.Question
+			Selection struct {
+				Mode string `json:"mode"`
+			} `json:"selection"`
+		} `json:"questions"`
+	}
+	if json.Unmarshal([]byte(args), &a) != nil {
+		return nil, nil
+	}
+	qs := make([]transcript.Question, 0, len(a.Questions))
+	ids := make([]string, 0, len(a.Questions))
+	for _, q := range a.Questions {
+		tq := q.Question
+		ids = append(ids, tq.ID)
+		tq.ID = ""
+		if q.Selection.Mode == string(msp.UserInputSelectionModeMultiple) {
+			tq.MultiSelect = true
+		}
+		qs = append(qs, tq)
+	}
+	return qs, ids
+}
+
+// userInputOutcome turns the tool's output into the answer text the question block reads, and
+// whether the prompt was declined rather than answered.
+//
+// Measured on 1.4.2-R4684.1, an answered prompt reads
+// {"status":"answered","answers":[{"id":"color","selected_label":"Red"},…]} — keyed by `id`,
+// snake_case — and a declined or aborted one {"status":"cancelled"|"aborted","answers":[],
+// "reason":"…"}. The camelCase keys of the wire's own UserInputAnswer are read too, in case a
+// release aligns the two. A declined block still needs a
+// non-empty answer to show as settled, so it carries the reason. An output this cannot read is
+// shown verbatim rather than dropped.
+func userInputOutcome(out string, qs []transcript.Question, ids []string) (string, bool) {
+	var o struct {
+		Status  string            `json:"status"`
+		Reason  string            `json:"reason"`
+		Answers []json.RawMessage `json:"answers"`
+	}
+	if json.Unmarshal([]byte(out), &o) != nil {
+		return out, false
+	}
+	if len(o.Answers) == 0 {
+		why := o.Reason
+		if why == "" {
+			why = o.Status
+		}
+		if why == "" {
+			why = out
+		}
+		return why, true
+	}
+	per := make([]string, len(qs))
+	byID := map[string]int{}
+	for i, id := range ids {
+		if id != "" {
+			byID[id] = i
+		}
+	}
+	for i, raw := range o.Answers {
+		id, text := userInputAnswerText(raw)
+		at := i
+		if j, ok := byID[id]; ok {
+			at = j
+		}
+		if at < len(per) && text != "" {
+			per[at] = text
+		}
+	}
+	if len(qs) == 1 {
+		return per[0], false
+	}
+	// The anchored form claude's AskUserQuestion result uses, which the Console splits per
+	// question (questionAnswers.ts).
+	pairs := make([]string, 0, len(qs))
+	for i, q := range qs {
+		pairs = append(pairs, `"`+q.Question+`"="`+per[i]+`"`)
+	}
+	return strings.Join(pairs, ", "), false
+}
+
+// userInputAnswerText reads one answer: the question it belongs to, and its picks and typed
+// text joined the way the question block resolves them (labels it knows become picks, the
+// rest is the member's own words).
+func userInputAnswerText(raw json.RawMessage) (string, string) {
+	var a struct {
+		ID             string   `json:"id"`
+		QuestionID     string   `json:"questionId"`
+		QuestionIDSn   string   `json:"question_id"`
+		SelectedLabel  string   `json:"selectedLabel"`
+		SelectedLabelS string   `json:"selected_label"`
+		Labels         []string `json:"selectedLabels"`
+		LabelsS        []string `json:"selected_labels"`
+		FreeText       string   `json:"freeText"`
+		FreeTextS      string   `json:"free_text"`
+	}
+	if json.Unmarshal(raw, &a) != nil {
+		return "", strings.TrimSpace(string(raw))
+	}
+	id := firstNonEmpty(a.ID, a.QuestionID, a.QuestionIDSn)
+	labels := append(a.Labels, a.LabelsS...)
+	if len(labels) == 0 {
+		if l := firstNonEmpty(a.SelectedLabel, a.SelectedLabelS); l != "" {
+			labels = []string{l}
+		}
+	}
+	if t := strings.TrimSpace(firstNonEmpty(a.FreeText, a.FreeTextS)); t != "" {
+		labels = append(labels, t)
+	}
+	return id, strings.Join(labels, ", ")
+}
+
+func firstNonEmpty(ss ...string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
 }

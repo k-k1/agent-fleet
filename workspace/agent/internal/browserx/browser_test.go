@@ -51,6 +51,9 @@ type fakeBrowserCDP struct {
 	// caused it has returned. This hook is the only way to pin that ordering down
 	// deterministically instead of racing for it.
 	onCall map[string]func()
+	// navigateErrorText is Page.navigate's errorText: how Chromium reports a
+	// navigation that failed or was aborted without committing.
+	navigateErrorText string
 }
 
 func newFakeBrowserCDP() *fakeBrowserCDP {
@@ -92,6 +95,10 @@ func (f *fakeBrowserCDP) Call(_ context.Context, method string, params any, sess
 			sessionID = f.attachSessionID
 		}
 		response = map[string]any{"sessionId": sessionID}
+	case "Page.navigate":
+		if f.navigateErrorText != "" {
+			response = map[string]any{"loaderId": "L1", "errorText": f.navigateErrorText}
+		}
 	case "Page.getFrameTree":
 		response = map[string]any{"frameTree": map[string]any{"frame": map[string]any{"id": "frame-1"}}}
 	case "Page.getLayoutMetrics":
@@ -666,7 +673,7 @@ func TestBrowserNavigationPolicyAtFetchBoundary(t *testing.T) {
 	if call, ok := cdp.last("Fetch.continueRequest"); !ok || call.Params["requestId"] != "r2" {
 		t.Fatalf("loopback subresource was not continued: %+v", call)
 	}
-	m.handleRequestedNavigation(cdp, p, json.RawMessage(`{"frameId":"frame-1","url":"data:text/html,escape"}`))
+	m.handleRequestedNavigation(cdp, p, json.RawMessage(`{"frameId":"frame-1","url":"data:text/html,escape"}`), false)
 	if _, ok := cdp.last("Page.stopLoading"); !ok {
 		t.Fatal("non-network external top navigation was not stopped")
 	}
@@ -852,4 +859,20 @@ func waitFor(timeout time.Duration, fn func() bool) bool {
 		time.Sleep(time.Millisecond)
 	}
 	return fn()
+}
+
+// Where the CP injected its workspace listener's address (ADR 0106 decision 8), the browser
+// may be pointed at neither of the CP's addresses.
+func TestBrowserForbidsBothControlPlaneURLs(t *testing.T) {
+	t.Setenv("AF_CP_BASE_URL", "https://cp.example")
+	t.Setenv("AF_CP_INTERNAL_URL", "")
+	if forbiddenBrowserResource("http://af-cp-internal.ns.svc:8098/internal/docs") {
+		t.Fatal("blocked the internal address before it was configured: the check below proves nothing")
+	}
+	t.Setenv("AF_CP_INTERNAL_URL", "http://af-cp-internal.ns.svc:8098")
+	for _, raw := range []string{"https://cp.example/api", "http://af-cp-internal.ns.svc:8098/internal/docs"} {
+		if !forbiddenBrowserResource(raw) {
+			t.Errorf("resource %q was not blocked", raw)
+		}
+	}
 }

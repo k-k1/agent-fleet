@@ -11,6 +11,8 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // A new worktree must start at origin/<base>'s tip, not at the parent's local base. Nothing in
@@ -160,6 +162,7 @@ func TestCreateSessionWorktreeStartsAtOriginTip(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
+	testguard.IsolateTmux(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
@@ -192,7 +195,7 @@ func TestCreateSessionWorktreeStartsAtOriginTip(t *testing.T) {
 		// no branch sent = "the default base"; the parent's current branch (main) is the start.
 		"worktree": true, "dir": parent, "new_branch": "feat-fresh", "kind": "shell",
 	}, http.StatusCreated, &created)
-	defer exec.Command("tmux", "kill-session", "-t", session.TmuxName(created.Name)).Run()
+	defer tmuxx.Cmd("kill-session", "-t", session.TmuxName(created.Name)).Run()
 
 	if got := gitRev(t, created.Dir, "HEAD"); got != tip {
 		t.Errorf("session started at %s, want origin's tip %s", got, tip)

@@ -223,8 +223,20 @@ Resources:
                   - ecs:DescribeTaskDefinition
                   - ecs:DescribeTasks
                   - ecs:ListTasks
-                  - ecs:TagResource
                 Resource: "*"          # ECS actions are not tightly resource-scopable; dev-acceptable
+              # Tag-on-create of a Fargate workspace service (runtime_ecs.go CreateService
+              # Tags, for cost attribution): ECS authorizes those tags as ecs:TagResource on
+              # the new service. Nothing else in the CP writes ECS tags, so the grant is this
+              # cluster's services and the keys that call writes.
+              - Sid: EcsTagServiceOnCreate
+                Effect: Allow
+                Action: ecs:TagResource
+                Resource: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:service/${Cluster}/*"
+                Condition:
+                  "Null":
+                    aws:TagKeys: "false"
+                  ForAllValues:StringEquals:
+                    aws:TagKeys: [ af-membership, af-role, af-tenant ]
               # --- Backend drift ("restart required" badge; control-plane/runtime_ecs_stale.go) ---
               # Read-only, one repository: resolve the workspace image TAG to the content
               # it points at now, so the CP can tell that a running workspace was launched
@@ -249,8 +261,26 @@ Resources:
                   - elasticfilesystem:CreateAccessPoint
                   - elasticfilesystem:DeleteAccessPoint
                   - elasticfilesystem:DescribeAccessPoints
-                  - elasticfilesystem:TagResource
                 Resource: "*"
+              # Two EFS tag writes, both on access points: CreateAccessPoint's Tags
+              # (af-membership, af-role, Name, af-tenant), and the erase record a Clean home
+              # keeps on the member's keep access point (af-home-erased-volumes,
+              # runtime_ecs_ec2.go writeEraseRecord). The key list is the fence: it is exactly
+              # what those two calls write, so the role can no longer put an arbitrary tag on
+              # any EFS resource in the account. It does not tell this deployment's access
+              # points from another's (they carry no af-pool). file-system/* is listed only
+              # because which ARN EFS authorizes a tag-on-create against is not documented.
+              - Sid: EfsTagAccessPoints
+                Effect: Allow
+                Action: elasticfilesystem:TagResource
+                Resource:
+                  - !Sub "arn:aws:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:access-point/*"
+                  - !Sub "arn:aws:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/*"
+                Condition:
+                  "Null":
+                    aws:TagKeys: "false"
+                  ForAllValues:StringEquals:
+                    aws:TagKeys: [ af-membership, af-role, Name, af-tenant, af-home-erased-volumes ]
               - Sid: SsmWorkspaceParams
                 Effect: Allow
                 Action:
@@ -282,19 +312,55 @@ Resources:
               # --- EC2 slot pool (AF_RUNTIME=ecs-ec2 only; harmless on Fargate) ---
               # The CP owns the whole swap: find slots and volumes by tag, attach the
               # user's home, mount it over SSM, and hand the slot back. docs/log/64 sec.64.15.8.
-              - Sid: Ec2SlotPool
+              # Reads are unconditioned (Describe* cannot be resource-scoped). Every write is
+              # fenced to this pool's af-pool tag, the same value the SendCommand fence uses:
+              # on a resource that exists, ec2:ResourceTag; on the one a create call makes,
+              # aws:RequestTag (it has no tags yet). Without the fence this role could detach
+              # any volume in the account and region - another instance's root volume included
+              # - attach it to a slot of its own and read or rewrite it there, and stop,
+              # terminate or delete anything EC2 holds.
+              #
+              # Each action is authorized once per resource it names, and EVERY one must be
+              # allowed: AttachVolume / DetachVolume name the instance and the volume,
+              # CreateSnapshot the source volume and the new snapshot, CreateVolume the new
+              # volume and, when restoring, the source snapshot. The create statements below
+              # are one action and one resource type each on purpose: if AWS presented the
+              # request's tags when it evaluates the source too (the Service Authorization
+              # Reference does not list aws:RequestTag there, so it probably does not), a
+              # CreateVolume statement that also listed snapshot/* would let any snapshot in
+              # the account be restored into this pool. One type each holds either way.
+              #
+              # Every resource the CP mutates is found through af-pool, or through
+              # af-membership, which only ever lands together with af-pool; the inventory is
+              # deploy/local/cfn-cp-ec2-scope-test.py, which fails CI when a call site appears
+              # that it does not know. A missed one is an AccessDenied that only a deployment
+              # sees: the live E2E runs as the deployer, not as this role.
+              - Sid: Ec2SlotPoolRead
                 Effect: Allow
                 Action:
                   - ec2:DescribeInstances
                   - ec2:DescribeVolumes
                   - ec2:DescribeSubnets
-                  - ec2:CreateVolume
-                  - ec2:DeleteVolume
-                  - ec2:AttachVolume
-                  - ec2:DetachVolume
-                  - ec2:CreateTags
-                  - ec2:DeleteTags
-                  - ec2:RunInstances
+                  # The slot launch template's $Latest, which the admin pool screen
+                  # compares every slot's version against before an operator reserves
+                  # old slots for replacement (#1473). Read-only; without it no slot is
+                  # reported outdated and the bulk reservation refuses everything.
+                  - ec2:DescribeLaunchTemplates
+                  # !! Snapshots were MISSING here until 2026-08-16, and nothing caught it:
+                  # the live E2E runs with a deployer credential, not with this role. Every
+                  # snapshot path would have failed with AccessDenied on a real deployment -
+                  # and not only the optional ones. createHomeVolume asks for the user's
+                  # hibernation snapshot FIRST, so a brand-new user's Start would have failed
+                  # outright, not merely started slowly. (docs/log/64 sec.64.22.)
+                  #   DescribeSnapshots - restore (decision 4), golden lookup (decision 9), backups (decision 17)
+                  #   CreateSnapshot    - hibernation and backups (Ec2SlotPool, Ec2CreateSnapshotInPool)
+                  #   DeleteSnapshot    - retention, superseded captures, Destroy (Ec2SlotPool)
+                  - ec2:DescribeSnapshots
+                  - ec2:DescribeVolumesModifications
+                Resource: "*"          # Describe* cannot be resource-scoped
+              - Sid: Ec2SlotPool
+                Effect: Allow
+                Action:
                   - ec2:StartInstances
                   - ec2:StopInstances
                   # TerminateInstances is the dormancy series' last step
@@ -304,27 +370,229 @@ Resources:
                   # sweeper's terminate stage fails with AccessDenied on every pass -
                   # visible only in the CP log, while the bill keeps growing to
                   # Ec2MaxSlots x SlotRootVolumeGiB (docs/log/64 sec.64.32).
+                  # Engine boxes (60-engines) are terminated through this grant too; they
+                  # carry af-pool from CreateFleet's TagSpecifications.
                   - ec2:TerminateInstances
-                  # !! Snapshots were MISSING here until 2026-08-16, and nothing caught it:
-                  # the live E2E runs with a deployer credential, not with this role. Every
-                  # snapshot path would have failed with AccessDenied on a real deployment -
-                  # and not only the optional ones. createHomeVolume asks for the user's
-                  # hibernation snapshot FIRST, so a brand-new user's Start would have failed
-                  # outright, not merely started slowly. (docs/log/64 sec.64.22.)
-                  #   DescribeSnapshots - restore (decision 4), golden lookup (decision 9), backups (decision 17)
-                  #   CreateSnapshot    - hibernation and backups
-                  #   DeleteSnapshot    - retention, superseded captures, Destroy
-                  - ec2:DescribeSnapshots
-                  - ec2:CreateSnapshot
-                  - ec2:DeleteSnapshot
-                  # Growing a member's home in place (ResizeHome). Without these a tenant
+                  - ec2:AttachVolume
+                  - ec2:DetachVolume
+                  - ec2:DeleteVolume
+                  # Growing a member's home in place (ResizeHome). Without this a tenant
                   # admin's "make my home bigger" saves the number, reports that the volume
                   # is growing, and grows nothing - the same shape of silent AccessDenied
                   # the snapshot note above is about, and for the same reason: the live E2E
                   # runs as a deployer, not as this role.
                   - ec2:ModifyVolume
-                  - ec2:DescribeVolumesModifications
-                Resource: "*"          # Describe* cannot be resource-scoped; tags are the fence
+                  - ec2:DeleteSnapshot
+                  # The SOURCE side of the two create calls: the volume CreateSnapshot reads
+                  # and the snapshot CreateVolume restores from (a hibernated home or the
+                  # pool's golden). The side being created is Ec2Create* below.
+                  - ec2:CreateSnapshot
+                  - ec2:CreateVolume
+                Resource:
+                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
+                  - !Sub "arn:aws:ec2:${AWS::Region}::snapshot/*"
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/af-pool: !Ref Cluster
+              - Sid: Ec2CreateVolumeInPool
+                Effect: Allow
+                Action: ec2:CreateVolume
+                Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/af-pool: !Ref Cluster
+              - Sid: Ec2CreateSnapshotInPool
+                Effect: Allow
+                Action: ec2:CreateSnapshot
+                Resource: !Sub "arn:aws:ec2:${AWS::Region}::snapshot/*"
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/af-pool: !Ref Cluster
+              # RunInstances: the slot grow, and the engine boxes, which an instant CreateFleet
+              # launches with this role's RunInstances permission. Three resource types are
+              # fenced: the instance (af-pool), the image and the snapshot (both below), because
+              # an image or a block-device snapshot is what would let a compromised CP boot a
+              # slot of its own from a copy of someone else's volume and read it over
+              # SendCommand (#1522). Every other type (subnet, security group, network
+              # interface, launch template, the root volume it creates, a spot request, ...)
+              # is in Ec2LaunchSupport. A foreign launch template also carries user data, network
+              # settings and metadata options; none is constrained by IAM here, and a request
+              # on this pool's own template can set each of them directly, so a foreign one
+              # grants nothing more. Its image, snapshots and instance profile are fenced on
+              # their own (PassRole names only this deployment's roles).
+              # Listing the support types one by one would turn a type AWS adds to
+              # RunInstances into a silent AccessDenied on every slot grow.
+              - Sid: Ec2RunInPool
+                Effect: Allow
+                Action: ec2:RunInstances
+                Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/af-pool: !Ref Cluster
+              # The image: Amazon's, by either of two keys the Service Authorization Reference
+              # lists for image (ec2:Owner = amazon | aws-marketplace | account id; ec2:Public).
+              # Every AMI a launch uses is an Amazon ECS-optimized one from a public SSM
+              # parameter (40-ec2-pool SlotAmiId / SlotAmiIdArm64, the engines' resolve:ssm,
+              # which resolves at launch and so has no id to name here). Two statements,
+              # because a launch is denied only if both keys read differently from the
+              # documented values; 40-ec2-pool also names the slot AMIs exactly.
+              # A public image is no leak: its data is public already, and code on a slot of
+              # this pool is what SendCommand gives this role anyway. What stays out is a
+              # private image of this account, e.g. one registered from a home snapshot.
+              - Sid: Ec2RunAmazonImage
+                Effect: Allow
+                Action: ec2:RunInstances
+                Resource: !Sub "arn:aws:ec2:${AWS::Region}::image/*"
+                Condition:
+                  StringEquals:
+                    ec2:Owner: amazon
+              - Sid: Ec2RunPublicImage
+                Effect: Allow
+                Action: ec2:RunInstances
+                Resource: !Sub "arn:aws:ec2:${AWS::Region}::image/*"
+                Condition:
+                  StringEquals:
+                    ec2:Public: "true"
+              # Snapshots: no launch names one of its own (no block device mapping in the
+              # calls; the templates' mappings have no SnapshotId), but whether IAM evaluates
+              # the AMI's backing snapshot is not documented. So this is the negated form: an
+              # absent ec2:Owner, Amazon's owner, or no snapshot evaluated at all still
+              # launches; what is refused is a snapshot this account owns - another
+              # deployment's hibernated home or backup. A slot AMI this account owns would be
+              # refused too, if IAM does evaluate its snapshot (40-ec2-pool SlotAmiId).
+              - Sid: Ec2RunForeignOwnedSnapshot
+                Effect: Allow
+                Action: ec2:RunInstances
+                Resource: !Sub "arn:aws:ec2:${AWS::Region}::snapshot/*"
+                Condition:
+                  StringNotEquals:
+                    # !Sub, not !Ref: harness/setup.sh resolves only !Sub pseudo-parameters.
+                    ec2:Owner: !Sub "${AWS::AccountId}"
+              # The excluded ARNs are every instance, image and snapshot in every region and
+              # account, not this region's: NotResource matches everything it does not name,
+              # so excluding only this region's would let a launch in another region create
+              # an untagged instance, or boot from any image, through this statement alone.
+              - Sid: Ec2LaunchSupport
+                Effect: Allow
+                Action: ec2:RunInstances
+                NotResource:
+                  - "arn:aws:ec2:*:*:instance/*"
+                  # Image and snapshot ARNs have no account field (the Service
+                  # Authorization Reference format), so none is written here.
+                  - "arn:aws:ec2:*::image/*"
+                  - "arn:aws:ec2:*::snapshot/*"
+              # --- Tag writes: the fence under the SendCommand fence ---
+              # SsmSlotCommandInstances trusts af-pool + af-role=slot, so whoever may write
+              # those two tags decides where this role gets a root shell. An unconditioned
+              # CreateTags would let it stamp them onto any SSM-managed box in the account
+              # and region. Tags are therefore writable in exactly two ways:
+              #   1. at creation, by this role's own create call, and only into this pool;
+              #   2. on a resource that ALREADY carries af-pool=<pool>, never touching af-pool,
+              #      and af-role only to the values the CP really moves things to.
+              # Every CP call site and the key it writes is inventoried in
+              # deploy/local/cfn-cp-tag-fence-test.py, which fails CI when a new one appears
+              # or one of them stops matching these statements. A new tag write on an
+              # existing resource that is outside the pool gets AccessDenied here, and the live
+              # E2E will not show it: it runs as the deployer, not as this role.
+              # The pool value is the same AF_ECS_EC2_POOL / Cluster as SsmSlotCommandInstances.
+              #
+              # CreateFleet is the engine boxes (60-engines). Both it and RunInstances get
+              # their launch template's tags merged into the request; af-pool comes from the
+              # call, so the RequestTag condition still holds.
+              - Sid: Ec2TagOnCreate
+                Effect: Allow
+                Action: ec2:CreateTags
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    ec2:CreateAction:
+                      - RunInstances
+                      - CreateFleet
+                      - CreateVolume
+                      - CreateSnapshot
+                    # Without this a compromised CP could plant a "slot" or a "home" into
+                    # ANOTHER deployment's pool in the same account, which that CP would
+                    # then trust.
+                    aws:RequestTag/af-pool: !Ref Cluster
+                  # The exact, case-sensitive keys the CP's create calls and launch
+                  # templates write. IAM binds RequestTag/af-pool case-insensitively, so
+                  # without this list af-pool=<other> beside AF-POOL=<this pool> could
+                  # pass the condition above and still be found by the other CP's
+                  # (case-sensitive) tag:af-pool filter. A create call that adds a key
+                  # not listed here fails with AccessDenied; cfn-cp-tag-fence-test.py
+                  # holds the same list against its inventory. aws:* covers the tags EC2
+                  # adds itself (launch template, fleet id), which no caller can set.
+                  ForAllValues:StringLike:
+                    aws:TagKeys:
+                      - af-pool
+                      - af-role
+                      - Name
+                      - af-managed-by
+                      - af-slot-size
+                      - af-engine-offer
+                      - af-engine-buy
+                      - af-membership
+                      - af-workspace
+                      - af-tenant
+                      - af-home-wipe-repos
+                      - af-home-wipe-clean
+                      - af-backup-at
+                      - af-arch
+                      - af-bake-started
+                      - af-image
+                      - af-image-fp
+                      # A replacement slot names the home it was launched for (#1473).
+                      - af-replaces-home
+                      - "aws:*"
+              # Bookkeeping on pool resources: claim, idle and hibernation marks, owner and
+              # tenant tags, home-wipe marks, bake marks. None of them is af-pool or af-role.
+              # Null=false: a DeleteTags that names no key deletes EVERY tag, af-pool and
+              # af-role included, and ForAllValues alone is true for an absent key.
+              # IgnoreCase: IAM matches tag-key condition names case-insensitively while EC2
+              # keeps AF-ROLE beside af-role, so a case variant must count as the key itself.
+              - Sid: Ec2TagPoolResources
+                Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                  - ec2:DeleteTags
+                Resource:
+                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
+                  - !Sub "arn:aws:ec2:${AWS::Region}::snapshot/*"
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/af-pool: !Ref Cluster
+                  "Null":
+                    aws:TagKeys: "false"
+                  ForAllValues:StringNotEqualsIgnoreCase:
+                    aws:TagKeys: [ af-pool, af-role ]
+              # The only role changes the CP makes after creation, each on the one resource
+              # type it applies to: a slot that failed is quarantined, a golden candidate is
+              # published or rejected. Moving a box TO af-role=slot is never allowed - that
+              # is the step that would hand an engine box (af-pool too) to SendCommand.
+              # The key lists are exact and case-sensitive (the RequestTag condition is not),
+              # so no case variant of af-pool or af-role can ride along.
+              - Sid: Ec2TagQuarantineSlot
+                Effect: Allow
+                Action: ec2:CreateTags
+                Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/af-pool: !Ref Cluster
+                    aws:RequestTag/af-role: quarantined
+                  ForAllValues:StringEquals:
+                    aws:TagKeys: [ af-role, af-quarantine-reason, af-quarantine-at ]
+              - Sid: Ec2TagGoldenRole
+                Effect: Allow
+                Action: ec2:CreateTags
+                Resource: !Sub "arn:aws:ec2:${AWS::Region}::snapshot/*"
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/af-pool: !Ref Cluster
+                    aws:RequestTag/af-role: [ golden, golden-rejected ]
+                  ForAllValues:StringEquals:
+                    aws:TagKeys: [ af-role, Name, af-bake-reason ]
               - Sid: EcsContainerInstances
                 Effect: Allow
                 Action:
@@ -366,16 +634,11 @@ Resources:
                 Effect: Allow
                 Action: ssm:GetCommandInvocation
                 Resource: "*"
-              - Sid: PassSlotRole
-                Effect: Allow
-                Action: iam:PassRole
-                # The launch template carries the slot instance profile, so RunInstances
-                # needs to pass that role. Named by convention (the 40-ec2-pool stack
-                # creates af-<stack>-slot) to avoid a circular stack import.
-                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/af-*-slot"
-                Condition:
-                  StringEquals:
-                    iam:PassedToService: ec2.amazonaws.com
+              # iam:PassRole for the slot role is NOT here: 40-ec2-pool attaches it to this
+              # role (CpSlotLaunchManagedPolicy), naming its own SlotRole. A pattern here such as
+              # role/af-*-slot also matched every other deployment's slot role in the account,
+              # and this stack cannot name the real one: the pool stack's name is chosen at
+              # stand-up, and importing from it would make the two stacks import each other.
               - Sid: ServiceConnectDiscovery
                 Effect: Allow
                 Action:

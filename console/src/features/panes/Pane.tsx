@@ -13,6 +13,7 @@ import { SessionMenu } from "../sessions/SessionMenu.tsx";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
 import { useUnreadSessions } from "../notifications/unread.ts";
 import { isWaiting } from "../sessions/waiting.ts";
+import { ScmPane } from "../scm/ScmPane.tsx";
 import { shownSession } from "../sessions/shown.ts";
 import { isContextMenuKey, synthContextMenu } from "../project/contextMenuKey.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
@@ -20,10 +21,6 @@ import { placeFixed } from "../../lib/placeFixed.ts";
 import { TerminalView } from "../terminal/TerminalView.tsx";
 import { MirrorView } from "../mirror/MirrorView.tsx";
 import { agentOf } from "../../agents/registry.ts";
-import { SourceControlView } from "../scm/SourceControlView.tsx";
-import { ChangesView } from "../scm/ChangesView.tsx";
-import { CommitDetailView } from "../scm/CommitDetailView.tsx";
-import { WorkingDiffView } from "../scm/WorkingDiffView.tsx";
 import { FileView } from "../viewer/FileView.tsx";
 import { ReaderView } from "../viewer/ReaderView.tsx";
 import { DocView } from "../viewer/DocView.tsx";
@@ -44,6 +41,8 @@ import type { Session } from "../../types/session.ts";
 import { PaneFind } from "./PaneFind.tsx";
 import { BrowserPane } from "../browser/BrowserPane.tsx";
 import { BrowserAttachPane } from "../browser/BrowserAttachPane.tsx";
+import { BrowserUnavailable } from "../browser/BrowserUnavailable.tsx";
+import { useBrowserUnavailable } from "../browser/availability.ts";
 import { EngineAddView } from "../settings/admin/adminEngineAdd.tsx";
 import { SessionsOverview } from "../overview/SessionsOverview.tsx";
 import { GalleryView } from "../gallery/GalleryView.tsx";
@@ -159,6 +158,7 @@ function PopulatedPane({
   const tr = useT();
   const paneRef = useRef<HTMLDivElement>(null);
   const isTerm = pane.content.kind === "terminal";
+  const browserUnavailable = useBrowserUnavailable();
   // Minimal pop-out tab: hide the pop-out button (the pane already IS its own
   // tab); reappears after expanding (「展開」) to full-console mode.
   const popoutTabMode = usePopoutMode();
@@ -753,28 +753,10 @@ function PopulatedPane({
           headerActions={tabHeaderActions}
         />
       )}
-      {pane.content.kind === "scm" && (
-        <SourceControlView repo={pane.content.scmRepo} path={pane.content.scmPath} headerActions={tabHeaderActions} />
-      )}
-      {pane.content.kind === "changes" && <ChangesView repo={pane.content.scmRepo} headerActions={tabHeaderActions} />}
-      {pane.content.kind === "commit" && (
-        <CommitDetailView
-          repo={pane.content.scmRepo}
-          path={pane.content.scmPath}
-          sha={pane.content.commitSha}
-          wrap={wrapOn}
-          headerActions={tabHeaderActions}
-        />
-      )}
-      {pane.content.kind === "wtdiff" && (
-        <WorkingDiffView
-          repo={pane.content.scmRepo}
-          path={pane.content.filePath}
-          staged={pane.content.diffStaged}
-          wrap={wrapOn}
-          headerActions={tabHeaderActions}
-        />
-      )}
+      {(pane.content.kind === "scm" ||
+        pane.content.kind === "changes" ||
+        pane.content.kind === "commit" ||
+        pane.content.kind === "wtdiff") && <ScmPane content={pane.content} wrap={wrapOn} headerActions={tabHeaderActions} />}
       {pane.content.kind === "file" && (
         <FileView
           key={pane.content.filePath}
@@ -814,12 +796,20 @@ function PopulatedPane({
           headerActions={tabHeaderActions}
         />
       )}
-      {pane.content.kind === "browser" && (
+      {pane.content.kind === "browser" && (browserUnavailable ? (
+        <BrowserUnavailable
+          runtime={browserUnavailable}
+          target={{ port: pane.content.port, path: pane.content.path }}
+          headerActions={tabHeaderActions}
+        />
+      ) : (
         <BrowserPane paneId={pane.id} port={pane.content.port} path={pane.content.path} headerActions={tabHeaderActions} />
-      )}
-      {pane.content.kind === "browserAttach" && (
+      ))}
+      {pane.content.kind === "browserAttach" && (browserUnavailable ? (
+        <BrowserUnavailable runtime={browserUnavailable} headerActions={tabHeaderActions} />
+      ) : (
         <BrowserAttachPane paneId={pane.id} attachmentId={pane.content.attachmentId} headerActions={tabHeaderActions} />
-      )}
+      ))}
       {pane.content.kind === "sharedSession" && (
         <SharedSessionView sharedSessionId={pane.content.sharedSessionId} headerActions={tabHeaderActions} />
       )}
@@ -845,6 +835,8 @@ function PopulatedPane({
           paneId={pane.id}
           path={pane.content.galleryPath}
           sort={pane.content.sort}
+          tile={pane.content.tile}
+          flat={pane.content.flat}
           focus={pane.content.galleryFocus}
           sessionName={pane.content.gallerySession}
           headerActions={tabHeaderActions}

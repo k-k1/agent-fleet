@@ -78,7 +78,53 @@ node console/scripts/shots/capture.mjs --locale en --only overview,fleetgraph --
 
 The container is shared, so pass `--port` / `--cdp-port` that nothing else is listening on.
 
+## Demo recordings
+
+Scripted scenarios played through the real Console, written as animated WebP to
+`docs/img/demo-<scenario>-<locale>.webp`:
+
+| Scenario | Shows | Used by |
+|---|---|---|
+| `day` | the README's "A day with Agent Fleet": two issues to Claude Code and Codex in worktrees, a permission allowed from Slack on a phone, the overview and a worktree's diff (~45 s) | README |
+| `phone` | the Console in a phone's browser: answer a waiting session's question with a tap (portrait, ~18 s) | landing page |
+| `review` | a session starts a reviewer of another kind, gets one report back, and the fleet graph draws it (~27 s) | landing page |
+| `plan` | approve a plan card, then stage and commit from the Changes pane (~24 s) | landing page |
+| `unattended` | a schedule wakes a stopped workspace; a usage limit is waited out and resumed (~27 s) | landing page |
+| `orchestrate` | one Claude session splits a design review across Codex, Antigravity and Muse Code, gathers three reports, and the fleet graph draws four lanes (~31 s) | landing page (features) |
+| `sre` | the SRE assistant reads PagerDuty and CloudWatch (read-only); the fleet operator starts the fix session (~33 s) | landing page (features) |
+
+```bash
+npm --prefix console run build          # console/dist must exist (the real bundle)
+pip install --user pillow               # the encoder; there is no ffmpeg in the workspace
+node console/scripts/shots/demo.mjs --scenario day --locale en    # and ja, and each scenario
+```
+
+- A scenario is one file, `demo/<scenario>.mjs`. Its `fixtures()` half runs inside
+  `server.mjs --demo <scenario>`: a fleet with state that answers only the routes the story
+  changes (the rest falls through to `fixtures.mjs`), moved on by the requests the Console
+  really sends (a launch, an answer, an approval, a commit) and by `POST /__demo/phase`. Its
+  `meta` / `seed()` / `script()` half runs in `demo.mjs`: the viewport, the browser state a
+  returning user would have, and the steps. `demo/kit.mjs` holds what they share.
+- `demo.mjs` drives the page with CDP input, records it with `Page.startScreencast`, and hands
+  the frames to `demo-encode.py`. A step whose control never appears fails the run instead of
+  recording a skipped step.
+- `demo-overlay.js` draws what the Console cannot: a cursor or a finger (headless has none), the
+  caption band under the Console, a clock for stories that span hours, and the phone in `day`.
+  That phone's Slack thread is **redrawn**, not recorded: its texts and buttons are the chat
+  bridge's own strings (`workspace/agent/internal/bridge/format.go`, `slack_interact.go`,
+  `workspace/agent/internal/sessionx/bridge_answer.go`), so update them together.
+- `sre` streams the assistants' replies: a scenario's `stream()` answers a route as Server-Sent
+  Events (the chat's `POST …/stream`), frame by frame.
+- `orchestrate` and `sre` press the rail's repos Refresh behind the scenes after a worktree is
+  created: the Console otherwise picks new worktrees up on its 60-second poll, and until then a
+  new session sits under "other sessions".
+- `unattended` runs the page on a story clock (its `seed().init` replaces `Date`), so relative
+  labels such as "started 2 hours ago" agree with the scene rather than with the machine.
+- `--keep-frames` leaves the raw PNG frames in the temp directory it prints, for checking a
+  single moment.
+
 ## Publishing
 
 `deploy/release/publish-dist.sh --seed` pushes `docs/img/*.webp` to the dist repo
-under the same path, so both READMEs reference them relatively.
+under the same path, so both READMEs reference them relatively. The demo recordings
+(`demo-*.webp`) are left out: the dist READMEs do not show them.

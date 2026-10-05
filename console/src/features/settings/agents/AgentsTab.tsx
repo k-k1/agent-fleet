@@ -17,6 +17,7 @@ import {
   type ImageFleetRow,
 } from "../../../lib/settings.ts";
 import { agentOf } from "../../../agents/registry.ts";
+import { SPEND_CAP_DEFAULTS } from "../../sessions/spendBudget.ts";
 import { useConnections } from "../parts/useConnections.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
 import { tCount, useT } from "../../../lib/i18n/index.ts";
@@ -170,6 +171,16 @@ export function AgentsTab() {
         />
       </Row>
       <p className="muted ds-note">{tr("agents.note_stopped_archive")}</p>
+      {/* The default spend budget (#1054): every session, spawned or not, so it sits with the
+          archive period. Fixed choices for the same reason as the child limit below. */}
+      <Row label={tr("agents.spend_cap_default")}>
+        <Choice
+          value={SPEND_CAP_DEFAULTS.includes(s.sessionSpendCapUsd) ? s.sessionSpendCapUsd : 0}
+          options={SPEND_CAP_DEFAULTS.map((n): [number, string] => [n, n === 0 ? tr("agents.spend_cap_none") : "$" + n])}
+          onChange={(v) => setSetting("sessionSpendCapUsd", v)}
+        />
+      </Row>
+      <p className="muted ds-note">{tr("agents.note_spend_cap_default")}</p>
       {/* Automatic title suggestions (autoTitleSuggest) moved to Settings > AI assist
           (docs/log/84). Here it looked like a session setting, but the one key also disabled the
           AI branch-name suggestion; each AI-generation on/off now has a single home. */}
@@ -204,6 +215,17 @@ export function AgentsTab() {
           <p className="muted ds-note">{tr("agents.note_spawn_child_limit")}</p>
         </>
       )}
+      {/* Past-session search (ADR 0110): the same kind of switch — one af MCP tool every kind
+          gets — so it sits with the others rather than in any agent's card. */}
+      <Row label={tr("agents.session_search")}>
+        <OnOff value={s.sessionSearch} onChange={(v) => setSetting("sessionSearch", v)} />
+      </Row>
+      <p className="muted ds-note">{tr("agents.note_session_search")}</p>
+      {/* AF memory (ADR 0108): one more af MCP tool set every kind gets, so it sits here too. */}
+      <Row label={tr("agents.agent_memory")}>
+        <OnOff value={s.agentMemory} onChange={(v) => setSetting("agentMemory", v)} />
+      </Row>
+      <p className="muted ds-note">{tr("agents.note_agent_memory")}</p>
       {/* Image generation (ADR 0069) sits next to it for the same reason: one tool distributed
           to every kind through af's own MCP server, not any one agent's setting. */}
       <Row label={tr("agents.image_generation")}>
@@ -279,7 +301,7 @@ export function AgentsTab() {
           />
           <LcppCard running={running} st={conns?.lcpp} reload={reload} />
           <MuseCard running={running} st={conns?.muse} reload={reload} />
-          {running && agents === false && <p className="ps-note">{tr("agents.rtk_unsupported")}</p>}
+          {running && agents === false && <p className="muted ds-note">{tr("agents.rtk_unsupported")}</p>}
         </>
       )}
     </div>

@@ -88,6 +88,15 @@ type browserPage struct {
 	castEpoch     atomic.Uint64 // monotonic source for castGen values
 	unreachable   bool
 	topRequestID  string
+	// topRequestURL is topRequestID's URL. A failed request commits its error
+	// page only ~30-40 ms after Network.loadingFailed; until then p.url must
+	// already name the failed URL, or a pane navigate resolves against the
+	// document that is about to be replaced.
+	topRequestURL string
+	// blockedRequestURL is the off-loopback URL of a renderer-initiated
+	// navigation just blocked on Page.frameRequestedNavigation. Chromium may
+	// still report its start, which must not repeat the notice.
+	blockedRequestURL string
 	// loaderID is the loader of the current top-level navigation, pending or
 	// committed. Only its load/networkIdle may mark the page ready: the initial
 	// about:blank and the previous document both go network-idle while the next
@@ -212,12 +221,10 @@ func (m *browserManager) Create(req browserCreateRequest) (browserPageResponse, 
 		p.loaderID = nav.LoaderID
 	}
 	p.mu.Unlock()
-	if nav.ErrorText != "" {
-		p.mu.Lock()
-		p.unreachable = true
-		p.mu.Unlock()
-		p.setState("target-unreachable")
-	}
+	// An aborted initial navigation leaves the tab on its about:blank, a live
+	// document, so it reads ready; p.url keeps the requested target so a
+	// reload retries it.
+	p.settleNavigateError(nav.LoaderID, nav.ErrorText)
 	m.scheduleExpiry(p)
 	return browserPageResponse{ID: p.id, Port: p.port, URL: target, State: "starting"}, nil
 }
@@ -607,10 +614,10 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 	case "Fetch.requestPaused":
 		m.handleRequestPaused(cdp, p, ev.Params)
 	case "Page.frameRequestedNavigation":
-		m.handleRequestedNavigation(cdp, p, ev.Params)
+		m.handleRequestedNavigation(cdp, p, ev.Params, false)
 	case "Page.frameStartedNavigating":
 		p.trackStartedNavigation(ev.Params)
-		m.handleRequestedNavigation(cdp, p, ev.Params)
+		m.handleRequestedNavigation(cdp, p, ev.Params, true)
 	case "Page.screencastFrame":
 		var v struct {
 			Data      string `json:"data"`
@@ -641,7 +648,14 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 			// describe the error page it replaced.
 			p.committedUnreachable = v.Frame.UnreachableURL != ""
 			p.unreachable = p.committedUnreachable
-			if u, err := url.Parse(v.Frame.URL); err == nil && allowedTopLevelBrowserURL(u) {
+			committed := v.Frame.URL
+			if v.Frame.UnreachableURL != "" {
+				// Chromium's own error page (chrome-error://chromewebdata/) for a
+				// loopback URL that failed: the page is target-unreachable at that
+				// URL, not a navigation away from loopback.
+				committed = v.Frame.UnreachableURL
+			}
+			if u, err := url.Parse(committed); err == nil && allowedTopLevelBrowserURL(u) {
 				p.url = normalizeLoopbackURL(u).String()
 				p.mu.Unlock()
 				// A document restored from the back/forward cache is already
@@ -654,7 +668,12 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 				safeURL := p.url
 				p.mu.Unlock()
 				p.notifyJSON(map[string]any{"type": "page-error", "text": "top-level navigation outside loopback was blocked"})
-				_ = m.call(cdp, p.sessionID, "Page.navigate", map[string]any{"url": safeURL}, nil)
+				// Sent, never awaited: Page.navigate answers only once the
+				// navigation commits, and its document request waits for
+				// Fetch.requestPaused, which only this loop handles. Not deferred
+				// to a goroutine either: it must reach Chromium before any later
+				// event is handled, or it could undo a newer loopback navigation.
+				_ = cdp.Send("Page.navigate", map[string]any{"url": safeURL}, p.sessionID)
 			}
 		}
 	case "Network.responseReceived":
@@ -685,6 +704,9 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 			}
 			if !v.Canceled {
 				p.unreachable = true
+				if p.topRequestURL != "" {
+					p.url = p.topRequestURL
+				}
 				p.mu.Unlock()
 				p.setState("target-unreachable")
 				return
@@ -802,6 +824,7 @@ func (m *browserManager) handleRequestPaused(cdp browserCDP, p *browserPage, raw
 			p.mu.Lock()
 			p.unreachable = false
 			p.topRequestID = v.NetworkID
+			p.topRequestURL = normalizeLoopbackURL(u).String()
 			p.mu.Unlock()
 			p.setState("loading")
 		}
@@ -817,7 +840,11 @@ func (m *browserManager) handleRequestPaused(cdp browserCDP, p *browserPage, raw
 	_ = m.call(cdp, p.sessionID, "Fetch.continueRequest", params, nil)
 }
 
-func (m *browserManager) handleRequestedNavigation(cdp browserCDP, p *browserPage, raw json.RawMessage) {
+// handleRequestedNavigation stops a main-frame navigation away from loopback.
+// A renderer-initiated one is reported twice, requested and then started
+// (measured: a link click and a location assignment both are), and the
+// notice is sent once per navigation.
+func (m *browserManager) handleRequestedNavigation(cdp browserCDP, p *browserPage, raw json.RawMessage, started bool) {
 	var v struct {
 		FrameID string `json:"frameId"`
 		URL     string `json:"url"`
@@ -827,12 +854,25 @@ func (m *browserManager) handleRequestedNavigation(cdp browserCDP, p *browserPag
 	}
 	p.mu.Lock()
 	mainFrameID := p.mainFrameID
+	repeated := false
+	if v.FrameID == mainFrameID && started {
+		repeated = p.blockedRequestURL != "" && p.blockedRequestURL == v.URL
+		p.blockedRequestURL = ""
+	}
 	p.mu.Unlock()
 	u, err := url.Parse(v.URL)
 	if v.FrameID != mainFrameID || (err == nil && allowedTopLevelBrowserURL(u)) {
 		return
 	}
 	_ = m.call(cdp, p.sessionID, "Page.stopLoading", nil, nil)
+	if repeated {
+		return
+	}
+	if !started {
+		p.mu.Lock()
+		p.blockedRequestURL = v.URL
+		p.mu.Unlock()
+	}
 	p.notifyJSON(map[string]any{"type": "page-error", "text": "top-level navigation outside loopback was blocked"})
 }
 
@@ -854,6 +894,48 @@ func (p *browserPage) trackStartedNavigation(raw json.RawMessage) {
 		p.loaderID = v.LoaderID
 	}
 	p.mu.Unlock()
+}
+
+// settleNavigateError applies the errorText Page.navigate answered with for
+// the navigation of loaderID, only while that loader is still the tracked one:
+// Page.navigate answers after the event loop may already track a newer
+// navigation, pending or committed, whose own events end it. net::ERR_ABORTED
+// (a 204, a denied download) ended without committing, so the committed
+// document is still live and reads as it did; Network.loadingFailed usually
+// restored it first, and then the loader is no longer this one. Any other
+// errorText is target-unreachable.
+//
+// The handler calls this off the event loop, so the loader check and the
+// state it decides are one critical section, the notice included: released in
+// between, the loop could start the newer navigation and this would then
+// overwrite its loading, or send a stale state after the loop's.
+func (p *browserPage) settleNavigateError(loaderID, errorText string) {
+	if errorText == "" {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.loaderID != loaderID {
+		return
+	}
+	if errorText == "net::ERR_ABORTED" {
+		p.topRequestID = ""
+		p.loaderID = p.committedLoaderID
+		p.unreachable = p.committedUnreachable
+	} else {
+		p.unreachable = true
+	}
+	state := "ready"
+	if p.unreachable {
+		state = "target-unreachable"
+	}
+	if p.state == state {
+		return
+	}
+	p.state = state
+	if p.viewer != nil {
+		p.viewer.enqueueText(mustBrowserJSON(map[string]any{"type": "state", "state": state}))
+	}
 }
 
 func (p *browserPage) markLoaded() {

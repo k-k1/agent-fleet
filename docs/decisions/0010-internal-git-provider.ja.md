@@ -53,3 +53,11 @@ Connections のみで、外部アカウント前提・コードが外に出る�
 - CP イメージに `git`（http-backend）依存が入る（`control-plane/Dockerfile`）。token 用のテーブルは
   作らず（決定的 HMAC）、新規 migration は `git_repo` のみ。clone URL は `PUBLIC_BASE_URL` 由来。
 - 将来 PR/CI が必要になれば ② へ載せ替え可能（本決定は最小の土台に留める）。
+
+## メンバーシップ単位の再発行（2026-10-03 追記）
+
+「テーブルを持たない決定的トークン」は維持し、整数を 1 つだけ足した。トークンの HMAC 入力に
+`membership.git_token_epoch` を含め、管理者の「git トークンを再発行」がそれを進める（#1199）。
+epoch 0 は従来とまったく同じトークンになるので、更新で失効したものはない。起動中のワークスペースには
+CP が Agent へ新しいトークンを渡す。詳細と限界は
+[docs/build/91-internal-git.ja.md §91.5](../build/91-internal-git.ja.md#915-認証とトークンモデル)。

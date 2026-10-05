@@ -5,8 +5,8 @@
 // that history, its diffs and its rollbacks; the substance (a bare git repo) lives on the
 // Agent side and this file only calls REST.
 //
-// Top to bottom: 1. root overview + auto-capture toggle + manual snapshot;
-// 2. snapshot history (left) and the selected row's diff (right); 3. restore (pick a scope,
+// Top to bottom: 1. root overview + auto-capture toggle + manual snapshot; 1.5 the AF-owned
+// memory's change list (memoryChanges.tsx); 2. snapshot history (left) and the selected row's diff (right); 3. restore (pick a scope,
 // then a confirm dialog); 4. export / import (P3: bundle = full history, tar.gz = latest only;
 // import replaces the selected scope). The diff uses the same <Diff> as the SCM commit pane,
 // so there is one way a diff looks rather than two.
@@ -33,8 +33,9 @@ import type { RestoreBody } from "./memoryRestore.tsx";
 import type { RestoreScopeState } from "./memoryRestore.tsx";
 import { RestorePanel } from "./memoryRestore.tsx";
 import { TransferSection } from "./memoryTransfer.tsx";
+import { AgentMemorySection } from "./memoryChanges.tsx";
 
-// Trigger label. The trailer value the Agent returns (auto/manual/pre-restore/restore/import)
+// Trigger label. The trailer value the Agent returns (auto/manual/pre-restore/restore/import/agent-memory)
 // is used as the key directly and an unknown value is printed raw, so adding a new trigger
 // upstream does not break this screen.
 const triggerLabel = (trigger: string): string =>
@@ -297,6 +298,9 @@ export function MemoryTab() {
           {data?.autoLocked ? tr("mem.auto_locked") : tr("mem.auto_hint")}
         </p>
       </section>
+
+      {/* 1.5 AF-owned memory every kind shares (ADR 0108): who changed what, and the way back */}
+      <AgentMemorySection reload={reload} onChanged={() => setReload((n) => n + 1)} />
 
       {/* 2. History and diffs */}
       <section className="mem-section">

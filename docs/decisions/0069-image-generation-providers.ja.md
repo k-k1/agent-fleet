@@ -11,6 +11,7 @@
   軸・優先順位の設定 UI・「別のエージェント CLI は筋が悪い」という余談への訂正が入り、P3 で
   呼び出し側が provider を名指しできるようにした（`generate_image` の `provider` 引数）**。
   各段階が意図して落としたものは末尾の各「実装メモ」にある。第 2・第 3 層（決定 3）は未着手。
+- Follow-ups: #1716, #1718
 - 関連: [0013-tts-zundamon.ja.md](0013-tts-zundamon.ja.md)（写した前例。`ttsProvider` と
   `chooseTTSProvider`、そして「前処理は provider の外」）/
   [0031-mcp-registry.ja.md](0031-mcp-registry.ja.md)（レジストリは 1 本のリスト。`af`
@@ -962,3 +963,101 @@ vendor の API が公開している欄ではない。sdcpp は受けない―�
 **実機未検証。** 7 ファミリーが `sampler_name` を受けることは `comfy_workflows_test.go` が固定して
 いる。実機で見るなら、モデル 1 つ・seed 1 つ・sampler を離した 2 点（`euler` と `dpmpp_2m`）
 ＝画像 2 枚と、klein に `scheduler` を渡して warning が出ることの 1 回である。
+
+## 追記 — agy 1.2.16 以降の agy 経路（2026-10-05）
+
+焼き込みの agy が 1.1.x から 1.2.16 に上がったあと、この経路は画像を作らなくなった。毎回
+`agy generated no image (The image generation tool is unavailable.)` が返る。
+
+**根本原因。** agy の 1.2.16 の変更履歴に、エージェントが画像の依頼を内蔵の `image-generator`
+サブエージェントへ渡すようになったとある。1.2.16 と 1.2.17 で、隔離ホストでも本物のホストでも
+測った結果：CLI の `init` イベントは今も `generate_image` を列挙するが、呼べるツールを尋ねると
+ドライバーは `run_command`・`view_file`・`invoke_subagent` などを挙げ、`generate_image` は挙げない。
+画像を頼むと、ツールの手順を踏まずに約 3 秒で「ツールは使えない」と答える。別のドライバー
+（`gemini-3.8-flash-medium`）でも同じだった。
+
+**修正。** `permissions.allow` に `invoke_subagent` を足し、プロンプトでサブエージェントを頼む
+（`generate_image` を今も出す CLI のために、直接呼びは未検証の代替として残し、どちらか一方だけを
+行い両方はしない、と指示する）。回収は変えない：画像は
+**親**会話の `brain/<conversation_id>/` の直下にサブエージェントが付けた名前
+（`red_circle_<epoch_ms>.jpg`）で置かれ、`agyOutputFiles` が拡張子で既に拾う。
+
+**2026-10-05 の実測（agy 1.2.17・`gemini-3.8-flash-low`）。** 許可 2 件で手動のプローブを回すと、
+`invoke_subagent` の手順が 1 つ（`type_name: image-generator`）と 1024x1024 の JPEG が約 42 秒で
+でき、そのターンは約 3.7 万トークン。経路そのものを通すと、プロンプトに書いた
+`AspectRatio: 16:9` は **1376x768**・warning なし・49 秒・入力約 5 万トークンで返った：
+縦横比は、1.1.5 でドライバーを越えたのと同じく、サブエージェントを越える。
+
+**参照画像は使えないので、経路は edit を提供しなくなった。** 委譲先のプロンプトに参照画像のパスを
+書くと、サブエージェントはそれに `view_file` を試みた。実行は `SUCCESS` で終わるが
+`denied_actions: [{action: read_file, display_name: ViewFile}]` が付き、画像は出ない。これは、
+サブエージェントがこの経路の許可リストの下で動くこと、その拒否が print の結果の `denied_actions`
+に届くこと（`Generate` が既にエラーにしている）も示す。サブエージェントにシェルコマンドを実行させる
+2 つ目のプローブは、ドライバー自身が断ったので、サブエージェントについては何も言えない。
+そのため `Caps` は `generate` のみ・入力なしになり、edit はそれができるプロバイダへ回る。
+
+**未測定。** 1.2.16 より前の CLI での `generate_image` 直接呼びの代替、および作業ディレクトリ内の
+参照画像をサブエージェントに読ませる許可が可能か（#1718）。
+
+Follow-ups: #1716（報告）、#1718（readiness と参照画像の測定）。
+
+## 追記 — Codex のドライバーはピン留めでなく発見する（2026-10-05）
+
+ピン留めしていたドライバー `gpt-5.4-mini` は ChatGPT アカウントのログインでは拒否される。
+`codex exec -m gpt-5.4-mini` は HTTP 400「The 'gpt-5.4-mini' model is not supported when using
+Codex with a ChatGPT account」で終わり、Codex の画像呼び出しは画像を要求する前にすべて失敗していた。
+ドライバーは、サインイン中のアカウント自身のカタログ（`codex debug models`、`codex.Models()` 経由。
+アシスタントチャットと同じ規則）で最新の `-luna` とし、カタログが読めないときの最後の手段は
+`modelfallback.ChatCodex`。`AF_IMAGEGEN_CODEX_MODEL` は引き続き両方に優先する。
+`modelfallback.ImagegenCodexDriver` は廃止した。400「model not supported」には
+`AF_IMAGEGEN_CODEX_MODEL` を名指しする案内を付ける。2026-10-05 実測（codex-cli 0.160.0、
+`auth_mode=chatgpt`）: 画像を作らない小さなターンは `gpt-6-luna` で受理され、`gpt-5.4-mini` では
+同じ 400 を再現した。新しいドライバーでの実画像生成は未実施（プラン枠のため）。Follow-ups: #1722。
+
+## 追記 — 参照画像の復活と、画像生成が提供されないアカウント（2026-10-05）
+
+**スコープ付きの読み取りは通り、edit を再び提供する。** サブエージェントの `view_file` はこの経路の
+許可リストで検査される。参照画像を使い捨てホームの `wd` にコピーし、`permissions.allow` に
+`read_file(<wd>/*)` を 1 件足すと（規則の書式は CLI 自身の文字列に `read_file(*)` / `command(*)` と
+ある）、agy 1.2.17・`gemini-3.8-flash-low` で次のとおりだった：
+
+- 参照 1 枚：サブエージェントがそれに `view_file` を実行し（拒否なし）、続けて
+  `ImagePaths: [<wd>/ref_1.png]` 付きで `generate_image`。`SUCCESS`・`denied_actions` なし・
+  1024x1024 の JPEG・43 秒・入力約 3.7 万トークン。
+- 経路そのものを通して参照 2 枚（赤い円・市松模様）と「円を市松の上に置く」指示：両方を使った 1 枚
+  （1024x1024・warning なし・43 秒・入力約 3.8 万トークン）。JPEG の C2PA に入力 ingredient が 2 件ある。
+- 陰性対照（画像は生成しない）：同じ許可リストで `wd` の外の参照を、サブエージェントに `view_file`
+  だけさせた。結果に `denied_actions: [{action: read_file, display_name: ViewFile}]` が付いた。
+  許可は `wd` に限られ、それ以上は開いていない。
+
+サブエージェントの拒否の見え方：実行は `SUCCESS` で終わり、拒否は print 結果の `denied_actions` に
+`action`（`read_file`）と `display_name`（`ViewFile`）で載る。ドライバー自身の返答は委譲が成功したと
+述べるため、`Generate` がこの一覧をエラーにする。
+
+`Caps` は `generate` と `edit` を再び挙げ、`MaxInputs` はツール自身の `ImagePaths` 上限の 3。
+`Generate` は入力を `wd` に `ref_<n><拡張子>`（中立な名前・画像拡張子のみ）でコピーし、読み取りの
+許可は入力があるときだけ足す。プロンプトはコピーを列挙し、開くのはサブエージェントに任せるよう
+ドライバーへ指示する。この追記に費やした実生成は、参照 1 枚のプローブ 1 回と、参照 2 枚の経路実行
+1 回の計 2 回（対照は生成なし）。
+
+**Readiness。** CLI の `init` イベントはアカウントが何を提供されるかに関係なく `generate_image` を
+挙げるので、`Ready()` には分からない。実行がファイルなしで終わり、ドライバーの返答が画像ツール／
+サブエージェントは使えないと言っている場合（画像を指す語と使えないを指す語の両方が必要で、それ以上
+緩くしない）、`Generate` は汎用の `agy generated no image` でなく「サインイン中の Antigravity/Gemini
+アカウントは画像生成が提供されていない」で失敗する。`Ready()` への事前プローブは入れなかった：
+知る手段がモデルのターン（数秒・ドライバーモデルの呼び出し）しかなく、それを状態確認のたびに行うのは
+`Ready()` の契約が許さない。
+
+**未測定。** 画像生成が本当に提供されないアカウントでの「使えない」返答（判定は前の追記で測った
+1.2.16 の文言に対して試験したもので、そのようなアカウントでは試していない）、および 1.2.16 より前の
+CLI での `generate_image` 直接呼びの代替。
+
+**補遺（2026-10-05・#1721 のレビュー）— `..` セグメントでは許可は広がらない。** 画像を生成しない 2 つ目の
+対照で、サブエージェントに `<wd>/../.gemini/antigravity-cli/<ファイル>`（OAuth トークンのリンクがある
+ディレクトリ）を `view_file` させた。パスは検査前に正規化されて拒否された：「Permission denied for
+read_file(<home>/.gemini/antigravity-cli/<ファイル>). Matches hardcoded system protection boundary
+rule」— CLI は許可リストとは別に自分の `.gemini` を保護している。この拒否は結果の `denied_actions` に
+**載らなかった**（実行は `SUCCESS`・一覧なし）。サブエージェントの転写にあるステップのエラー文にだけ
+出た。つまり `denied_actions` が報告するのは許可リストによる拒否で、拒否された読み取りの全部ではない。
+`wd` から外へ向かう symlink は未測定：`Generate` が `wd` に置くのは通常ファイルのコピーだけで、
+`readRequestFile` を通して読む（symlink の元は拒否される）。

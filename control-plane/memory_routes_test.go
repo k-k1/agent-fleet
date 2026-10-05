@@ -24,6 +24,12 @@ func TestMemoryRoutesProxiedByCP(t *testing.T) {
 		{"GET", "/api/agents/memory/export", "GET /api/agents/memory/export"},
 		{"POST", "/api/agents/memory/import", "POST /api/agents/memory/import"},
 		{"POST", "/api/agents/memory/import/apply", "POST /api/agents/memory/import/apply"},
+		{"GET", "/api/agents/memory/entries/changes", "GET /api/agents/memory/entries/changes"},
+		{"GET", "/api/agents/memory/entries/diff", "GET /api/agents/memory/entries/diff"},
+		{"POST", "/api/agents/memory/entries/revert", "POST /api/agents/memory/entries/revert"},
+		{"GET", "/api/agents/memory/claude-import", "GET /api/agents/memory/claude-import"},
+		{"GET", "/api/agents/memory/claude-import/preview", "GET /api/agents/memory/claude-import/preview"},
+		{"POST", "/api/agents/memory/claude-import", "POST /api/agents/memory/claude-import"},
 		// Must not be swallowed by the existing pattern route /api/agents/{kind}/models.
 		{"GET", "/api/agents/codex/models", "GET /api/agents/{kind}/models"},
 	} {
@@ -67,8 +73,31 @@ func TestMemorySnapshotIsAudited(t *testing.T) {
 	if !ok || action != "memory.export" || target != "bundle" {
 		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.export/bundle", action, target, ok)
 	}
+	// Reverting an AF memory change is audited, with the commit from the query hint.
+	req = httptest.NewRequest(http.MethodPost, "/api/agents/memory/entries/revert?commit=abc1234", nil)
+	action, target, ok = auditActionTarget(req)
+	if !ok || action != "memory.entry.revert" || target != "abc1234" {
+		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.entry.revert/abc1234", action, target, ok)
+	}
+	// A hint that is not a commit id is not copied into the ledger; the event is still kept.
+	req = httptest.NewRequest(http.MethodPost, "/api/agents/memory/entries/revert?commit=not-a-commit+value", nil)
+	action, target, ok = auditActionTarget(req)
+	if !ok || action != "memory.entry.revert" || target != "" {
+		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.entry.revert with an empty target", action, target, ok)
+	}
+	// The claude-memory import is audited; only an id-shaped project hint reaches the ledger.
+	req = httptest.NewRequest(http.MethodPost, "/api/agents/memory/claude-import?project=agent-fleet-0123456789ab", nil)
+	action, target, ok = auditActionTarget(req)
+	if !ok || action != "memory.claude_import" || target != "agent-fleet-0123456789ab" {
+		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.claude_import/agent-fleet-0123456789ab", action, target, ok)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/agents/memory/claude-import?project=%2Fhome%2Fdev%2Frepos", nil)
+	action, target, ok = auditActionTarget(req)
+	if !ok || action != "memory.claude_import" || target != "" {
+		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.claude_import with an empty target", action, target, ok)
+	}
 	// The other read-only routes are not audited.
-	for _, p := range []string{"/api/agents/memory/snapshots", "/api/agents/memory/tree", "/api/agents/memory/diff"} {
+	for _, p := range []string{"/api/agents/memory/snapshots", "/api/agents/memory/tree", "/api/agents/memory/diff", "/api/agents/memory/claude-import", "/api/agents/memory/claude-import/preview"} {
 		if _, _, ok := auditActionTarget(httptest.NewRequest(http.MethodGet, p, nil)); ok {
 			t.Errorf("GET %s should not be audited", p)
 		}

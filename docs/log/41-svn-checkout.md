@@ -160,3 +160,44 @@ Agent プロセスにも効くので、放っておくと自分の注入済み�
   `control-plane/{routes.go,proxy.go}`（`repo.svn.auth`）,
   `console/src/features/repos/{RepoRow,RepoRowConnected}.tsx`,
   `console/src/features/settings/connect/GitTab.tsx`（Subversion カード＝一覧・追加・失効）
+
+## 10. 追補（2026-10-05）— 履歴と手元の変更の読み取りビュー（#1705）
+
+SVN 作業コピーにはコミット履歴も手元の変更も見る画面が無かった（git の SCM / Changes は
+`!isSvn` で隠れ、`/show` は sha を 16 進で検証するので revision は通らない）。読み取り専用の
+4 経路と Console の 2 ペインを足した。コミット・revert・add・blame・branch/tag は対象外。
+
+| ルート | 実体 | 通信 |
+|---|---|---|
+| `GET /repos/{name}/svn-log?limit=&path=&from=` | `svn log --xml -v -r HEAD:1 -l N+1` | **ネットワーク**（保存済み creds を注入）|
+| `GET /repos/{name}/svn-show?rev=&path=` | `svn log --xml -v -r REV <repos-root>` ＋ `svn diff -c REV <url>` | **ネットワーク** |
+| `GET /repos/{name}/svn-changes` | `svn status --xml .` | ローカル・認証なし |
+| `GET /repos/{name}/svn-diff?path=` | `svn diff <path>` | ローカル・認証なし |
+
+- 登録は Agent の `routes.go` と CP 許可リストの 2 か所。監査分類（`auditActionTarget`）には
+  **載せない**（変更操作だけを数え、読み取りは `ok=false`）。Agent のルート表ゴールデンは更新した。
+- 認証失敗は既存の 401 `svn_auth_required`（`svnAuthFailure`）。**E170013 は数えない**（到達不能でも出る）。
+  Console は `svn-log` / `svn-show` の 401 で `SvnAuthModal` を開き、保存後に取り直す。
+- **ネットワーク呼び出しは開いたとき・絞り込み・「さらに読み込む」だけ**。自動更新の tick からは
+  呼ばない。ローカルの 2 本（`svn-changes` / `svn-diff`）だけが git の Changes と同じ契機で読み直せる。
+- ページングは `from`＝直前のページの最古 revision（次は `-r from-1:1`）。`-l` は limit+1 を頼み、
+  余りの有無で `hasMore` を正確に出す。`wcRevision`（`svn info --show-item revision`）を一緒に返し、
+  Console は「作業コピーより新しい revision」に「未更新」を付ける。
+- **`svn-show` の diff は作業コピーではなくリポジトリルート URL に対して取る**。作業コピーの
+  peg に存在しない（＝作業コピーより新しい）revision も開けるようにするため。
+- stdout と stderr は**分けて**読む（`runSvnView`）。`runSvn*` は両方を混ぜるので、stderr の警告が
+  `--xml` の前に付くと XML が壊れる。出力は上限（2 MiB）で切って svn を止める。
+- 検証: `rev` は正の整数のみ（`HEAD` / `5:9` / `{date}` は svn の revision 構文なので通さない）。
+  `path` は作業コピー外・`-` 始まり・`.svn` を拒否。
+- **実測（svn 1.14）**: ① `svn diff --git` は `a/trunk/x` のようにリポジトリ相対のパスを出し、
+  変更一覧の作業コピー相対パスと一致しない。クラシック形式の `Index:` / `====` を
+  `diff --git` 形式へ書き換える（`svnDiffToGit`）。② フォルダ名に `@` を含む作業コピー
+  （`ResolveRepoDir` は許す）では、`svn info <dir>` も `svn log <path>` も `@` 以降を peg revision と
+  読む。`svnInfoItem` は末尾に `@` を足す。`svn log` の対象にも末尾 `@` が要るが、**作業コピーに対する
+  素の `svn diff` は対象をそのまま読み、末尾 `@` を付けると「見つからない」になる**。
+- Console は新しいペイン種別を作らず、既存の `scm` / `changes` / `commit` / `wtdiff` を
+  作業コピーの `vcs` で振り分ける（`ScmPane`）。SVN では `commitSha`＝revision 番号、`scmPath`＝
+  ログのパス絞り込み。Files ツリーの右クリックに「ログを表示」（作業コピー内のパスで絞り込み）。
+- テスト: 認証付き `svnserve` に対する `TestSvnViewEndToEnd`（**陽性対照**＝creds 保存前の
+  `svn-log` / `svn-show` が `svn_auth_required` で落ちる）、XML パーサ・パス検証・diff 変換の単体、
+  Console の `svnLog.test.ts` / `SvnLogView.dom.test.tsx`。

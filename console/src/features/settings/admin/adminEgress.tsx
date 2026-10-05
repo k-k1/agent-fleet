@@ -115,7 +115,7 @@ export function EgressView() {
       {/* agent-proposed entries awaiting approval (docs/log/20 M4) */}
       {proposed.length > 0 && (
         <section className="admin-panel">
-          <h4 className="egress-h">{tr("admin.egress_proposed")}</h4>
+          <h4>{tr("admin.egress_proposed")}</h4>
           {proposed.map((e: any) => (
             <div key={e.id} className="adm-allow-row">
               <span className="as-name mono" title={e.entry}>{e.entry}</span>
@@ -132,7 +132,7 @@ export function EgressView() {
 
       {/* active allowlist + add */}
       <section className="admin-panel">
-        <h4 className="egress-h">{tr("admin.egress_allowlist")}</h4>
+        <h4>{tr("admin.egress_allowlist")}</h4>
         <form className="egress-add" onSubmit={addEntry}>
           <input
             type="text"
@@ -167,7 +167,7 @@ export function EgressView() {
       {/* observed destinations */}
       <section className="admin-panel">
         <div className="usage-toolbar">
-          <h4 className="egress-h">{tr("admin.egress_observed")}</h4>
+          <h4>{tr("admin.egress_observed")}</h4>
           <label>
             {tr("admin.period")}
             <select value={days} onChange={(e) => setDays(Number(e.target.value))}>

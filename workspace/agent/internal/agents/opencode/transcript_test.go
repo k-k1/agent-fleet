@@ -355,22 +355,6 @@ func TestOpencodeSidechain(t *testing.T) {
 	}
 }
 
-func TestOpencodeCompacting(t *testing.T) {
-	db := newOpencodeTestDB(t)
-	if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created,time_compacting) VALUES('ses_c',NULL,'/d',1,12345)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created,time_compacting) VALUES('ses_n',NULL,'/d',1,NULL)`); err != nil {
-		t.Fatal(err)
-	}
-	if !compacting(db, "ses_c") {
-		t.Fatal("ses_c: want compacting=true")
-	}
-	if compacting(db, "ses_n") || compacting(db, "ses_missing") {
-		t.Fatal("ses_n/missing: want compacting=false")
-	}
-}
-
 func TestOpencodeLiveStateQuestion(t *testing.T) {
 	// LiveState opens the db at $HOME/.local/share/opencode/opencode.db — build one
 	// there (like TestOpencodeSessionResumable) so the real path resolves.

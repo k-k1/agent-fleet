@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
@@ -32,6 +33,10 @@ type Event struct {
 	DisplayName string         `json:"displayName"`
 	CreatedAt   string         `json:"createdAt"`
 	Payload     map[string]any `json:"payload"`
+	// NoBridge keeps the event out of the chat bridge: it goes to the notification center only.
+	// For an event whose chat delivery is decided elsewhere (a scheduled run that named its own
+	// targets, #1560). Not persisted: it only steers Put.
+	NoBridge bool `json:"-"`
 }
 
 func dir() string { return filepath.Join(paths.AgentStateDir(), "notification-outbox") }
@@ -62,6 +67,9 @@ func Put(e Event) error {
 	// the chat bridge. Enqueue writes a single file (the network side is the daemon's
 	// sender) and swallows its error, so a bridge outage structurally cannot take the
 	// Console notification down with it.
+	if e.NoBridge {
+		return nil
+	}
 	body, _ := e.Payload["body"].(string) // full-text bridge: the answer body (answer-ready only)
 	// P2b: the pending AskUserQuestion payload rides the "question" event so an
 	// interact-capable provider can render option buttons. Stored as raw JSON.
@@ -78,6 +86,12 @@ func Put(e Event) error {
 // PutOnce persists an event only once for a stable source key. The marker is
 // separate from the acked outbox file, so a still-open prompt is not re-enqueued
 // on every Control Plane poll.
+//
+// Check, Put and marker run under an exclusive flock: two processes racing on one key
+// (claude runs hooks in parallel) would otherwise both pass the check and both deliver.
+// The marker is written only after the Put, so a process killed in between leaves no
+// marker and the next call delivers — a duplicate at worst, never a lost event. The
+// kernel drops the lock with the process, so a kill cannot wedge later calls.
 func PutOnce(key string, e Event) error {
 	sum := sha256.Sum256([]byte(key))
 	markerDir := filepath.Join(paths.AgentStateDir(), "notification-markers")
@@ -85,14 +99,44 @@ func PutOnce(key string, e Event) error {
 		return err
 	}
 	pruneMarkers(markerDir)
+	unlock, err := lockMarkers(markerDir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	marker := filepath.Join(markerDir, hex.EncodeToString(sum[:])+".seen")
 	if _, err := os.Stat(marker); err == nil {
 		return nil
+	}
+	if beforePutOnce != nil {
+		beforePutOnce()
 	}
 	if err := Put(e); err != nil {
 		return err
 	}
 	return os.WriteFile(marker, []byte(e.CreatedAt), 0o600)
+}
+
+// beforePutOnce is a test seam: it runs after the marker check, before the Put.
+var beforePutOnce func()
+
+// lockMarkers takes the exclusive lock every PutOnce shares. One lock file for all
+// keys: the critical section is two small file writes, and a per-key lock file would
+// need pruning, which cannot be done safely — every caller must lock the same inode,
+// so the file is never removed.
+func lockMarkers(markerDir string) (func(), error) {
+	f, err := os.OpenFile(filepath.Join(markerDir, "putonce.lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
 }
 
 // Marker pruning: without it the markers grow monotonically (List() prunes only the

@@ -14,6 +14,11 @@ import (
 // user through launchPipeCDP, whose production path has no no-sandbox switch, so
 // a missing/unusable Debian setuid sandbox fails exactly as it does in product.
 func RunBrowserImageSmoke() error {
+	// Fails with the reason rather than with Chromium's EOF, so a live check on such a
+	// runtime reads the decision instead of a crash.
+	if id := Unavailable(); id != "" {
+		return fmt.Errorf("%s: %s", UnavailableCode, UnavailableMessage(id))
+	}
 	return runBrowserSmoke(true)
 }
 

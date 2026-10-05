@@ -75,7 +75,11 @@ func (a memberAuth) withResolved(h func(http.ResponseWriter, *http.Request, *res
 			writeAPIErr(w, aerr)
 			return
 		}
-		h(w, r, res)
+		// Filed under the membership so that removing it ends this request too — a
+		// terminal or event stream opened before the removal (member_removal.go).
+		ctx, untrack := a.mgr.memberConns.track(r.Context(), res.mv.MembershipID)
+		defer untrack()
+		h(w, r.WithContext(ctx), res)
 	}
 }
 

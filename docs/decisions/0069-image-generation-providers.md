@@ -12,6 +12,7 @@ English | [日本語](0069-image-generation-providers.ja.md)
   correction to the "another agent CLI is not the way" aside**; **P3 let the caller NAME a
   provider (`generate_image`'s `provider` argument) and settled the default order on the merits**.
   What each phase deliberately left out is in its *Implementation notes* at the end. Tiers 2 and 3 (Decision 3) are not started.
+- Follow-ups: #1716, #1718
 - Related: [0013-tts-zundamon.md](0013-tts-zundamon.md) (the provider-abstraction precedent
   this copies: `ttsProvider` + `chooseTTSProvider`, and "pre-processing belongs outside the
   provider") / [0031-mcp-registry.md](0031-mcp-registry.md) (the registry is one list; the
@@ -1035,3 +1036,104 @@ right. The enum is, and a name outside it is refused as `bad_params` with the li
 `comfy_workflows_test.go`. A live check wants one model, one seed and two samplers far apart
 (`euler` and `dpmpp_2m`), which is two images, plus one call putting a `scheduler` on klein to see
 the warning.
+
+## Follow-up — the agy route after agy 1.2.16 (2026-10-05)
+
+The route stopped producing images when the baked-in agy moved from 1.1.x to 1.2.16: every call
+came back `agy generated no image (The image generation tool is unavailable.)`.
+
+**Root cause.** agy's changelog for 1.2.16 says the agent now hands image requests to a built-in
+`image-generator` subagent. Measured on 1.2.16 and 1.2.17, under the isolated home and under the
+real one: the CLI's `init` event still lists `generate_image`, but asked for its callable tools
+the driver names `run_command`, `view_file`, `invoke_subagent` and others — not `generate_image` —
+and answers an image request with "the tool is unavailable" in about 3 s, without a tool step.
+A second driver (`gemini-3.8-flash-medium`) behaved the same.
+
+**Fix.** `permissions.allow` gains `invoke_subagent`, and the prompt asks for the subagent (with a
+direct `generate_image` call kept as an untested fallback for a CLI that still offers it, and an
+instruction to do one of the two, never both). Collection is unchanged:
+the picture lands at the top level of the PARENT conversation's `brain/<conversation_id>/`, named
+by the subagent (`red_circle_<epoch_ms>.jpg`), which `agyOutputFiles` already reads by extension.
+
+**Measured 2026-10-05 (agy 1.2.17, `gemini-3.8-flash-low`).** A hand-driven probe with the two
+allow entries produced one `invoke_subagent` step (`type_name: image-generator`) and a 1024x1024
+JPEG in about 42 s, ~37k tokens for the turn. Through the provider itself, `AspectRatio: 16:9`
+stated in the prompt came back **1376x768**, no warnings, 49 s, ~50k input tokens: the ratio
+survives the subagent, as it survived the driver on 1.1.5.
+
+**Reference images do not work, so the route no longer offers edit.** With a reference image path
+in the delegated prompt, the subagent tried `view_file` on it; the run ended `SUCCESS` with
+`denied_actions: [{action: read_file, display_name: ViewFile}]` and no picture. That also shows the
+subagent runs under the route's allow-list and that its denials reach the print result's
+`denied_actions`, which `Generate` already turns into an error. A second probe asking the subagent
+to run a shell command was refused by the driver itself, so it says nothing about the subagent.
+`Caps` therefore lists `generate` only, with no inputs; an edit goes to a provider that can do it.
+
+**Not measured.** The direct `generate_image` fallback on a pre-1.2.16 CLI, and whether the
+subagent could be allowed to read reference images from the working directory (#1718).
+
+Follow-ups: #1716 (the report), #1718 (readiness, and the reference-image measurement).
+
+## Follow-up — the Codex driver is discovered, not pinned (2026-10-05)
+
+The pinned driver `gpt-5.4-mini` is rejected by a ChatGPT-account login: `codex exec -m gpt-5.4-mini`
+ends in HTTP 400 "The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT
+account", so every Codex image call failed before any image was requested. The driver is now the
+newest `-luna` in the signed-in account's own catalog (`codex debug models`, via
+`codex.Models()`, the same newest-`-luna` selection the assistant chat uses, minus models the catalog marks retiring), with `modelfallback.ChatCodex` as the
+last resort when the catalog cannot be read; `AF_IMAGEGEN_CODEX_MODEL` still overrides both.
+`modelfallback.ImagegenCodexDriver` is gone. A 400 "model not supported" now ends with a hint
+naming `AF_IMAGEGEN_CODEX_MODEL`. Measured 2026-10-05, codex-cli 0.160.0, `auth_mode=chatgpt`: a
+tiny non-image turn on `gpt-6-luna` is accepted; the same turn on `gpt-5.4-mini` reproduces the
+400. A real image through the new driver was not generated (plan quota). Follow-ups: #1722.
+
+## Follow-up — reference images return, and an account without image generation (2026-10-05)
+
+**Scoped read works; edit is offered again.** The subagent's `view_file` is checked against the
+route's allow-list. With the reference image copied into the throwaway home's `wd` and one extra
+entry `read_file(<wd>/*)` in `permissions.allow` (the rule syntax the CLI's own strings show as
+`read_file(*)` / `command(*)`), measured on agy 1.2.17 with `gemini-3.8-flash-low`:
+
+- One reference: the subagent ran `view_file` on it (a step with the file's contents, no denial),
+  then `generate_image` with `ImagePaths: [<wd>/ref_1.png]`; `SUCCESS`, no `denied_actions`, a
+  1024x1024 JPEG in 43 s, ~37k input tokens.
+- Through the provider itself, two references (a red circle, a checkerboard) and a prompt to put
+  the circle on the checkerboard: one picture with both, 1024x1024, no warnings, 43 s, ~38k input
+  tokens. The JPEG's C2PA block lists two input ingredients.
+- Negative control (no image generated): the same allow-list, a reference outside `wd`, the
+  subagent asked only to `view_file` it. The result carried
+  `denied_actions: [{action: read_file, display_name: ViewFile}]`. So the grant is scoped to `wd`;
+  nothing broader was allowed.
+
+How a denied subagent action shows up: the run still ends `SUCCESS`, the denial is listed in the
+print result's `denied_actions` with `action` (`read_file`) and `display_name` (`ViewFile`), and the
+driver's own reply claims the delegation went fine; `Generate` turns the list into an error.
+
+`Caps` lists `generate` and `edit` again with `MaxInputs` 3 (the tool's own cap on `ImagePaths`).
+`Generate` copies each input into `wd` as `ref_<n><ext>` (neutral name, image extensions only), and
+adds the read entry only when the request has inputs; the prompt lists the copies and tells the
+driver to leave opening them to the subagent. Two real generations were spent in total across
+this follow-up: one single-reference probe and one provider run with two references (the control
+generated nothing).
+
+**Readiness.** The CLI's `init` event lists `generate_image` whatever the account is offered, so
+`Ready()` cannot know. When a run ends with no file and the driver's reply says the image
+tool/subagent is unavailable (an image word plus an unavailability word, nothing looser),
+`Generate` now fails with "the signed-in Antigravity/Gemini account is not offered image
+generation" instead of the generic `agy generated no image`. An up-front probe in `Ready()` was
+not added: the only way to learn it is a model turn (seconds, a driver-model call) on every status
+poll, which `Ready()`'s contract rules out.
+
+**Not measured.** The unavailable reply on an account that really lacks image generation (the
+recogniser is tested against the measured 1.2.16 wording from the earlier follow-up, not against
+such an account), and the pre-1.2.16 direct `generate_image` fallback.
+
+**Addendum (2026-10-05, review of #1721) — a `..` segment does not widen the grant.** A second
+no-generation control asked the subagent to `view_file` `<wd>/../.gemini/antigravity-cli/<file>`
+(the directory holding the OAuth token link). The path was cleaned before the check and refused:
+"Permission denied for read_file(<home>/.gemini/antigravity-cli/<file>). Matches hardcoded system
+protection boundary rule" — the CLI protects its own `.gemini` directory independently of the allow
+list. This denial did NOT appear in the result's `denied_actions` (the run was `SUCCESS` with none);
+it surfaced only as the step's error text in the subagent's transcript. So `denied_actions` reports
+allow-list denials, not every refused read. Symlinks out of `wd` were not measured: `Generate`
+only places regular copies there, read through `readRequestFile`, which refuses a symlink source.

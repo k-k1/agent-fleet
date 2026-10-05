@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
+	"github.com/k-k1/agent-fleet/control-plane/internal/datalayout"
 	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -99,6 +100,13 @@ func main() {
 		runDrawioPreseed(os.Args[2:])
 		return
 	}
+	// Subcommand: `control-plane efs-home-op` is the inside of the stack's home-ops task on
+	// Fargate (internal/runtime/home_task.go): Recreate, Clean home and Destroy on an EFS
+	// home the CP itself cannot mount. It reuses this image so the keep-list is the CP's own.
+	if len(os.Args) > 1 && os.Args[1] == "efs-home-op" {
+		runEFSHomeOp()
+		return
+	}
 
 	portBase, _ := strconv.Atoi(envx.Or("WS_AGENT_PORT", "7700"))
 	mgr := &manager{
@@ -133,9 +141,19 @@ func main() {
 	if mk := os.Getenv("AF_MASTER_KEY"); mk != "" {
 		sum := sha256.Sum256([]byte(mk))
 		mgr.master32 = sum[:]
-		// P3-3: envelope key custodian (on-prem default). Vault/KMS adapters
-		// implement the same interface for true per-tenant crypto-shred.
-		mgr.custodian = newLocalCustodian(mgr.master32)
+	}
+	// Envelope key custodian (ADR 0005): local by default, KMS on AWS. A misconfigured
+	// kms stops the CP here rather than starting one that cannot open what it stored.
+	{
+		kind := envx.Or("AF_KEY_CUSTODIAN", "local")
+		c, err := newKeyCustodian(context.Background(), kind, mgr.master32, os.Getenv)
+		if err != nil {
+			log.Fatalf("key custodian: %v", err)
+		}
+		if c != nil {
+			mgr.custodian = c
+			log.Printf("key custodian: %s", kind)
+		}
 	}
 	if mgr.plaintextSecrets() {
 		log.Printf(plaintextSecretsLog, mgr.authMode)
@@ -147,7 +165,7 @@ func main() {
 	// default tenant without recreating containers.
 	// Postgres (AF_DATABASE_URL) is the RDS backend for a redeployable ECS CP whose
 	// state must outlive task replacement (P3-7 stage 3a); SQLite is the on-prem default.
-	dbPath := envx.Or("AF_DB", filepath.Join(mgr.dataRoot, "control-plane.db"))
+	dbPath := envx.Or("AF_DB", filepath.Join(mgr.dataRoot, datalayout.DBFile))
 	var st *store.SQL
 	var err error
 	if dburl := store.PGURLFromEnv(); dburl != "" {
@@ -230,6 +248,8 @@ func main() {
 	// public base's host (Caddy TLS terminus). Recorded on the manager so each
 	// workspace start injects a token for it (docs/reference/internal-git-provider).
 	mgr.internalGitHost = internalGitCredentialHost(publicBaseURL)
+	// Where workspaces reach the CP by an internal address instead (ADR 0106 decision 8).
+	mgr.internalBaseURL = strings.TrimRight(strings.TrimSpace(os.Getenv("AF_CP_INTERNAL_URL")), "/")
 	if u, err := url.Parse(publicBaseURL); err == nil {
 		wsAllowedOriginHost = u.Host // WS origin allowlist (checkWSOrigin)
 	}
@@ -238,6 +258,7 @@ func main() {
 	// docs/log/81: the parent of the preview subdomains (e.g. pv.example.com). A leading
 	// "." and upper case are normalised away so it can be compared — reading a slightly
 	// mistyped setting charitably beats having the whole feature go dead.
+	mgr.githubBuiltinOff = githubBuiltinOffFromEnv(os.Getenv("AF_GITHUB_BUILTIN_APPS"))
 	mgr.previewDomain = strings.ToLower(strings.Trim(strings.TrimSpace(os.Getenv("AF_PREVIEW_DOMAIN")), "."))
 	cfg := config{
 		addr:          envx.Or("CP_ADDR", ":8080"),
@@ -318,6 +339,13 @@ func main() {
 		backupDef := time.Duration(runtime.EnvInt("AF_ECS_EC2_BACKUP_EVERY_SEC", 0)) * time.Second
 		go newReaper(mgr, iv, sessDef, interDef, wsDef, hibDef, backupDef).run(context.Background())
 	}
+	// Not behind AF_IDLE_SWEEP_INTERVAL: switching idle-stop off must not leave a removed
+	// member's workspace running (member_removal.go).
+	go mgr.runRemovedMemberSweep(context.Background(), removedMemberSweepInterval)
+	// Home operations a CP restart interrupted (ecs, home_operation.go): their task may
+	// still be running, and the step after it is owed. Not behind any switch either: an
+	// unfinished record keeps the workspace from starting until it is finished.
+	go mgr.runHomeOpReconciler(context.Background(), homeOpReconcileEvery)
 
 	// Golden snapshot auto-bake (ecs-ec2 only — ADR 0045 decision 9 / docs/log/64 §64.28).
 	// The CP already refuses a golden stamped with another image; this is the CP acting
@@ -518,6 +546,13 @@ func main() {
 	// below reads the resolved client IP for the tenant network check, so it has to
 	// sit inside it.
 	served := newPreviewHostAPI(cfg).dispatch(gzipMiddleware(etagJSON(handler)))
+	// The workspace-only listener (ADR 0106 decision 8). Unset = no second port, today's
+	// behaviour.
+	if addr := strings.TrimSpace(os.Getenv("AF_CP_INTERNAL_LISTEN")); addr != "" {
+		serveWorkspaceListener(addr, mux, cfg.mgr.emailHeader)
+	} else if mgr.internalBaseURL != "" {
+		log.Printf("WARNING: AF_CP_INTERNAL_URL is set without AF_CP_INTERNAL_LISTEN — workspaces are sent to an address this CP does not serve")
+	}
 	srv := &http.Server{Addr: cfg.addr, Handler: withClientIP(logRequests(served)), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)

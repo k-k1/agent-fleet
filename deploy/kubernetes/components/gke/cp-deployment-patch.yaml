@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: af-cp
+  namespace: af-placeholder-cp
+spec:
+  template:
+    spec:
+      # The system pool, which Terraform labels; workspaces have a pool of their own.
+      nodeSelector:
+        agent-fleet.io/pool: system
+      initContainers:
+        # A native sidecar (an init container that keeps running): it starts, and
+        # passes its startup probe, before the CP does, and stops after it. It
+        # authorises with the CP's Workload Identity and logs in as the IAM database
+        # user bound to it, so the CP's DSN has no password (ADR 0106 decision 8).
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.26.0
+          restartPolicy: Always
+          args:
+            - --auto-iam-authn
+            - --private-ip
+            - --port=5432
+            - --health-check
+            - --http-address=0.0.0.0
+            - --structured-logs
+            - project:region:instance
+          ports:
+            - name: proxy-health
+              containerPort: 9090
+          startupProbe:
+            httpGet:
+              path: /startup
+              port: proxy-health
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /liveness
+              port: proxy-health
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: cp
+          env:
+            # The sidecar on loopback. sslmode=disable is the hop inside the pod; the
+            # proxy encrypts to the instance.
+            - name: AF_DB_HOST
+              value: "127.0.0.1"
+            - name: AF_DB_PORT
+              value: "5432"
+            - name: AF_DB_NAME
+              value: agentfleet
+            - name: AF_DB_USER
+              value: af-placeholder@example.iam
+            - name: AF_DB_SSLMODE
+              value: disable
+            # The workspace pool's label (deploy/gcp/gke, gke.tf). Every pool that can
+            # run a workspace serves the GKE metadata server.
+            - name: AF_K8S_NODE_SELECTOR
+              value: agent-fleet.io/pool=workspace

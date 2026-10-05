@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/afmemory"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
@@ -54,12 +55,28 @@ var subcommands = []subcommand{
 		run:      runAFDB,
 	},
 	{
+		// Behind the af-memory PATH shim (ADR 0108): the command-line side of AF memory, talking
+		// to this workspace's own Agent.
+		name:     "af-memory",
+		operands: "<verb>",
+		summary:  "AF agent memory: changes|import-sources|import --project <slug> [--dry-run]",
+		run:      afmemory.Run,
+	},
+	{
 		// Behind the af-aws-exec PATH shim (issue #998): one command under one SSO
 		// profile's short-lived credentials, never the container's workload role.
 		name:     "aws-exec",
 		operands: "--profile <name> -- <command>",
 		summary:  "run a command with one SSO profile's short-lived credentials",
 		run:      runAWSExec,
+	},
+	{
+		// Behind the af-gcloud-exec PATH shim (ADR 0107 decision 2): one command with one
+		// Google Cloud profile's access token, never the VM's or node's identity.
+		name:     "gcloud-exec",
+		operands: "--profile <name> --project <id> -- <command>",
+		summary:  "run a command with one Google Cloud profile's access token",
+		run:      runGCloudExec,
 	},
 	{
 		// credential_process of the one-profile config af-aws-exec writes for its child.
@@ -98,6 +115,13 @@ var subcommands = []subcommand{
 		name:    "install-awscli",
 		summary: "download the AWS CLI + Session Manager plugin",
 		run:     runInstallAWSCLI,
+	},
+	{
+		// The Google Cloud SDK (~0.5 GB unpacked) is installed on demand, never baked
+		// (ADR 0107 decision 4).
+		name:    "install-gcloud",
+		summary: "download the pinned Google Cloud SDK (core + gke-gcloud-auth-plugin)",
+		run:     runInstallGCloud,
 	},
 	{
 		// kiro is ~855MB extracted, so unlike the other agent CLIs it is not baked for
@@ -168,6 +192,12 @@ var subcommands = []subcommand{
 		summary: "claude hook: record working/idle/question state",
 		hidden:  true,
 		run:     sessionx.RunSessionStatusHook,
+	},
+	{
+		name:    claude.PushHookSubcommand,
+		summary: "claude hook: forward a PushNotification to the notification center",
+		hidden:  true,
+		run:     sessionx.RunPushNotificationHook,
 	},
 	{
 		// Appended after the agent CLI by startSessionTmux, so a crash / OOM is recorded.

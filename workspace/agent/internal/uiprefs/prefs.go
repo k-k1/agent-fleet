@@ -9,6 +9,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -54,6 +55,8 @@ var accumulatedPrefKeys = []string{
 	"workingSets",
 	"ttsVoicePool",
 	"ttsUserDict",
+	"launchTemplates",
+	"launchHistory",
 }
 
 // emptyPref reports "there is nothing in it": missing, null, empty string, empty array or
@@ -237,6 +240,24 @@ func FleetSpawn() bool {
 	return v
 }
 
+// SessionSearch is the ON/OFF for the af MCP's search_sessions (ADR 0110 decision 6, ui-prefs
+// sessionSearch). Missing/invalid ⇒ **true**, unlike the switches above: it only reads, and what
+// it reads — this user's own transcripts — a session's shell can already open as the same uid.
+// The switches that default off guard writing into other sessions or spending quota and host
+// resources, which this does not. The Console's own search ignores it.
+func SessionSearch() bool {
+	v, ok := Read()["sessionSearch"].(bool)
+	return !ok || v
+}
+
+// AgentMemory is the ON/OFF for the af MCP's memory_* tools (ADR 0108, ui-prefs agentMemory).
+// Missing/invalid ⇒ **false**: a memory one session saves is read by every kind in later
+// sessions, so a member turns that on knowingly rather than finding it on after an upgrade.
+func AgentMemory() bool {
+	v, _ := Read()["agentMemory"].(bool)
+	return v
+}
+
 // SpawnChildLimit is how many children the user lets one session have at a time (ADR 0073
 // decision 6, ui-prefs sessionSpawnChildLimit). It returns the stored number RAW — 0 for missing
 // or malformed — because the range and the fallback belong to session.NormalizeSpawnChildLimit,
@@ -264,6 +285,15 @@ func StoppedArchiveDays() int {
 	return int(v)
 }
 
+// SessionSpendCapUSD is the user's default spend budget for new sessions, in US dollars
+// (#1054, ui-prefs sessionSpendCapUsd). RAW, 0 for missing or malformed — the range belongs to
+// session.NormalizeSpendCap. Read in-process so a session started over MCP or by a schedule
+// gets the same default as one started from the Console.
+func SessionSpendCapUSD() float64 {
+	v, _ := Read()["sessionSpendCapUsd"].(float64)
+	return v
+}
+
 // mcpreg builds the session-side af server's launch args and must not read main's
 // config files itself, so it takes the answer as a hook (same shape as opencode.UsagePref).
 //
@@ -274,8 +304,10 @@ func StoppedArchiveDays() int {
 func init() {
 	mcpreg.PeerMessagingEnabled = PeerMessaging
 	mcpreg.FleetSpawnEnabled = FleetSpawn
+	mcpreg.SessionSearchEnabled = SessionSearch
 	session.SpawnChildLimitPref = SpawnChildLimit
 	session.StoppedArchiveDaysPref = StoppedArchiveDays
+	session.SpendCapDefaultPref = SessionSpendCapUSD
 }
 
 // imagegen needs the same answer twice over: mcpreg to decide the af server's launch args,
@@ -286,6 +318,9 @@ func init() {
 func init() {
 	mcpreg.ImageGenEnabled = ImageGeneration
 	imagegen.Enabled = ImageGeneration
+	// AF memory (ADR 0108) takes the same double gate: the tool set and the Agent routes.
+	mcpreg.AgentMemoryEnabled = AgentMemory
+	memoryx.AgentMemoryEnabled = AgentMemory
 	imagegen.ProviderOrderPref = ImageProviderOrder
 }
 

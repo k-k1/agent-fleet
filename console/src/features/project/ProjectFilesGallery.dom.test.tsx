@@ -21,6 +21,7 @@ interface Entry {
 let served: Record<string, Entry[]> = {};
 
 vi.mock("../../core/api/client.ts", () => ({
+  getTenant: () => "",
   api: vi.fn(async (url: string) => {
     const p = decodeURIComponent(new URL(url, "http://x/").searchParams.get("path") || "");
     return { entries: served[p] || [] };

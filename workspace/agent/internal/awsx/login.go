@@ -1,40 +1,26 @@
 package awsx
 
 import (
-	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
-	"syscall"
 	"time"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudlogin"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // Console login requests (ADR 0102). af-aws-exec files one when an SSO login is needed
 // and nobody is at a terminal; the Console shows a toast, and the device code starts
-// only when the member presses "Log in" there (login_agent.go). The files are written
-// by the CLI and the Agent alike, both running as the member, under one lock.
+// only when the member presses "Log in" there (login_agent.go). The request and attempt
+// lifecycle is cloudlogin's; this file says what a login is for an sso-session.
 
-const (
-	// loginRequestTTL is how long a request stays after the last run asked for it.
-	loginRequestTTL = 15 * time.Minute
-	// loginCancelHold is how long a cancel keeps new runs from filing again: without it an
-	// agent that reruns at once would put the toast straight back. Short, because nothing
-	// in the Console can lift it: a member who cancelled on the wrong device and wants to
-	// log in from another one waits this long (ADR 0102, revision of 2026-09-27).
-	loginCancelHold = time.Minute
-	// NoticeKindAWSLogin is the notification kind that carries a request id to the Console.
-	NoticeKindAWSLogin = "aws-login-required"
-)
+// NoticeKindAWSLogin is the notification kind that carries a request id to the Console.
+const NoticeKindAWSLogin = "aws-login-required"
 
 // CacheState is what the SSO token cache of one sso-session held at one moment. Two
 // states are compared, never interpreted: a cache that holds an unexpired token AWS
@@ -88,200 +74,52 @@ func ReadCacheState(ssoSession string) CacheState {
 	return st
 }
 
-// LoginWaiter is one run waiting on a request. Both fields are text an agent wrote, so
-// they are cut down before they are stored (see cleanWaiterText).
-type LoginWaiter struct {
-	Session string `json:"session,omitempty"`
-	Command string `json:"command,omitempty"`
-	At      string `json:"at"`
-}
+// LoginWaiter is one run waiting on a request.
+type LoginWaiter = cloudlogin.Waiter
 
 // LoginRequest is one pending request, one file per sso-session.
-type LoginRequest struct {
-	ID         string        `json:"id"`
-	Profile    string        `json:"profile"`
-	SSOSession string        `json:"ssoSession"`
-	FirstAt    string        `json:"firstAt"`
-	LastAt     string        `json:"lastAt"`
-	Cache      CacheState    `json:"cache"`
-	Waiters    []LoginWaiter `json:"waiters,omitempty"`
+type LoginRequest = cloudlogin.Request[CacheState]
+
+// cacheBackend tells cloudlogin what a login is on AWS: a request is resolved once the
+// token cache changed from the state it recorded and holds an unexpired token, however
+// the login happened.
+type cacheBackend struct{}
+
+func (cacheBackend) State(ssoSession string) CacheState { return ReadCacheState(ssoSession) }
+
+func (cacheBackend) Landed(cur, recorded CacheState, now time.Time) bool {
+	return cur != recorded && cur.Unexpired(now)
 }
 
-// cancelMarker is written by the Agent when a request is cancelled, before the request
-// file goes. Waiters react only to the marker naming their own request.
-type cancelMarker struct {
-	RequestID string     `json:"requestId"`
-	Profile   string     `json:"profile"`
-	At        string     `json:"at"`
-	Cache     CacheState `json:"cache"`
-}
-
-func loginDir() string { return filepath.Join(paths.AgentStateDir(), "aws-login") }
-
-// loginFileKey turns an sso-session name into a file name that cannot escape the
-// directory, whatever the name holds.
-func loginFileKey(ssoSession string) string {
-	sum := sha256.Sum256([]byte(ssoSession))
-	return hex.EncodeToString(sum[:12])
-}
-
-func requestPath(ssoSession string) string {
-	return filepath.Join(loginDir(), loginFileKey(ssoSession)+".request.json")
-}
-
-func markerPath(ssoSession string) string {
-	return filepath.Join(loginDir(), loginFileKey(ssoSession)+".cancel.json")
-}
-
-// lockLogin takes the one lock every reader-writer of the directory shares.
-func lockLogin() (func(), error) {
-	if err := os.MkdirAll(loginDir(), 0o700); err != nil {
-		return nil, err
-	}
-	f, err := os.OpenFile(filepath.Join(loginDir(), ".lock"), os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		f.Close()
-		return nil, err
-	}
-	return func() {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		f.Close()
-	}, nil
-}
+// logins holds the Console login requests and attempts of the AWS profiles, keyed by
+// sso-session.
+var logins = &cloudlogin.Store[CacheState]{Dir: "aws-login", NoticeKind: NoticeKindAWSLogin, NoticeKey: "aws-login",
+	LogPrefix: "aws-login", Backend: cacheBackend{}}
 
 func readJSON(path string, v any) bool {
 	b, err := os.ReadFile(path)
 	return err == nil && json.Unmarshal(b, v) == nil
 }
 
-func writeJSONFile(path string, v any) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(b); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
+// exportSSOCreds is exportCreds for the SSO-only profile of ssoSession, under that session's
+// shared credential lock (cloudlogin's LockKey).
+func exportSSOCreds(aws awsRunner, ssoSession string) (processCreds, error) {
+	return exportLocked(aws, ssoOnlyProfile, ssoSession)
 }
 
-func readRequest(ssoSession string) (LoginRequest, bool) {
-	var r LoginRequest
-	ok := readJSON(requestPath(ssoSession), &r) && r.ID != "" && r.SSOSession == ssoSession
-	return r, ok
-}
-
-// liveMarker returns the cancel marker of ssoSession while it still holds new runs back:
-// younger than loginCancelHold, and not made moot by a cache that changed since.
-func liveMarker(ssoSession string, now time.Time) (cancelMarker, bool) {
-	var m cancelMarker
-	if !readJSON(markerPath(ssoSession), &m) {
-		return m, false
-	}
-	at, err := time.Parse(time.RFC3339Nano, m.At)
-	if err != nil || now.Sub(at) >= loginCancelHold || ReadCacheState(ssoSession) != m.Cache {
-		return m, false
-	}
-	return m, true
-}
-
-func newRequestID() string {
-	b := make([]byte, 12)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-var waiterTextRe = regexp.MustCompile(`[^A-Za-z0-9._@:/+-]`)
-
-// cleanWaiterText keeps what a waiter field may show: a short run of plain characters.
-// The Console prints it next to Settings' account and role, so it must not be able to
-// look like either.
-func cleanWaiterText(s string) string {
-	s = waiterTextRe.ReplaceAllString(strings.TrimSpace(s), "")
-	if len(s) > 40 {
-		s = s[:40]
-	}
-	return s
-}
-
-// ErrLoginHeld means a cancel in the Console still holds new requests back.
-var ErrLoginHeld = errors.New("the login request was cancelled in the Console")
-
-// FileLoginRequest files (or joins) the request of ssoSession for profile, recording
-// snap: the cache state this run saw before its failing check. A new request also
-// writes the notification that carries its id to the Console.
-func FileLoginRequest(profile, ssoSession string, snap CacheState, w LoginWaiter) (LoginRequest, bool, error) {
-	unlock, err := lockLogin()
-	if err != nil {
-		return LoginRequest{}, false, err
-	}
-	defer unlock()
-	now := time.Now().UTC()
-	if _, held := liveMarker(ssoSession, now); held {
-		return LoginRequest{}, false, ErrLoginHeld
-	}
-	w.Session, w.Command = cleanWaiterText(w.Session), cleanWaiterText(w.Command)
-	w.At = now.Format(time.RFC3339Nano)
-	r, exists := readRequest(ssoSession)
-	created := !exists
-	if created {
-		r = LoginRequest{ID: newRequestID(), Profile: profile, SSOSession: ssoSession, FirstAt: w.At}
-	}
-	r.LastAt = w.At
-	// Joining: the record must describe a cache this run found unusable.
-	r.Cache = snap
-	r.Waiters = append(r.Waiters, w)
-	if len(r.Waiters) > 20 {
-		r.Waiters = r.Waiters[len(r.Waiters)-20:]
-	}
-	if err := writeJSONFile(requestPath(ssoSession), r); err != nil {
-		return LoginRequest{}, false, err
-	}
-	if created {
-		ev := notice.New(NoticeKindAWSLogin, "", "", "")
-		ev.TargetType = "workspace"
-		if session.ValidName(w.Session) {
-			if m, ok := session.ReadMeta(w.Session); ok {
-				ev.TargetType, ev.SessionName, ev.SessionKind = "session", m.Name, m.Kind
-			}
+// exportLocked is exportCreds for profile, whose credentials come from ssoSession's cached
+// login ("" when they come from no sso-session), under that session's shared credential
+// lock, so a logout cannot delete the login while this run turns it into role credentials
+// and writes them back. A lock that cannot be taken fails the run: going on would reopen
+// that race unseen. The member's own `aws` calls do not take it; the revoke at AWS is what
+// stops those.
+func exportLocked(aws awsRunner, profile, ssoSession string) (processCreds, error) {
+	if ssoSession != "" {
+		unlock, err := logins.LockKey(ssoSession, true)
+		if err != nil {
+			return processCreds{}, fmt.Errorf("could not lock the cached login of sso-session %s: %w", ssoSession, err)
 		}
-		// The Console reads nothing but this id from the payload: the outbox is writable
-		// by every agent, so anything else here would be text it could forge.
-		ev.Payload["requestId"] = r.ID
-		_ = notice.PutOnce("aws-login:"+r.ID, ev)
+		defer unlock()
 	}
-	return r, created, nil
-}
-
-// loginRequestState is what a waiter reads every poll.
-type loginRequestState int
-
-const (
-	requestPending loginRequestState = iota
-	requestCancelled
-	requestGone
-)
-
-// requestStateFor reports what became of the request id of ssoSession.
-func requestStateFor(ssoSession, id string) loginRequestState {
-	var m cancelMarker
-	if readJSON(markerPath(ssoSession), &m) && m.RequestID == id {
-		return requestCancelled
-	}
-	if r, ok := readRequest(ssoSession); ok && r.ID == id {
-		return requestPending
-	}
-	return requestGone
+	return exportCreds(aws, profile)
 }

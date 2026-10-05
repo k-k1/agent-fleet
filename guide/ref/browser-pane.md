@@ -1,7 +1,7 @@
 ---
 audience: "everyone, and specifically an agent deciding how to show a running web app to a person"
 source_of_truth: "this file for terminology, flow, states and limits; the Console for what a button is called"
-updated: "2026-08"
+updated: "2026-10"
 ---
 
 # Browser pane — the usage contract
@@ -35,6 +35,10 @@ exception for "I just need to see one HTTP response".
 6. If an overlay appears, follow the state table below. If the server was started
    afterwards, **Reload** first; **Reconnect** rebuilds the connection or Chromium.
 7. Check the **Console** drawer's badge for `warn` and `error` from the page.
+
+Shortcut: when the server was started by a session, its row in the left pane lists the port
+(`:5173`) on a second line — clicking it opens the pane at that port and `/`
+([badges](../member/badges-and-menus.md#session-display)).
 
 Reconnect, a Console reload and a Workspace stop/start all create a *new* Page at the
 current port and path. Cookies, storage and half-typed input are not restored.
@@ -83,11 +87,34 @@ until it is running, then reconnect.
   not a substitute for DevTools — there is no DOM, Network, Sources or Storage.
 - Upload and download, clipboard, drag and drop, audio, video, WebRTC, permission
   prompts and multiple tabs are all out of scope.
-- **Smartphones cannot start this flow.** At a 390×844 viewport the `⋯` in the
-  workspace action bar overflows and overlaps other controls, so it cannot be tapped.
-  Everything after that point works — the toolbar, tapping the canvas, Japanese input,
-  the Console drawer — but there is no way in, so do not tell a phone user to open the
-  pane. Desktop and tablet only.
+- **On a smartphone the entry point moves into `⋯`.** At phone widths the workspace
+  action bar has no Preview button; `⋯` at its right end opens a popover that holds the
+  same port / path fields and "Open in pane". From there it is the same flow — the
+  toolbar, tapping the canvas, Japanese input, the Console drawer.
+
+## Where there is no browser pane
+
+A deployment that runs workspaces on the `kubernetes` runtime (a preview, see
+[deployment targets](deploy-targets.md)) offers **no browser features at
+all**: no browser pane, no Chromium attachments for agents, no headless Chromium. A workspace pod
+there runs under the Pod Security `restricted` level, which sets NoNewPrivs (the setuid
+`chrome-sandbox` cannot elevate) and the runtime's default seccomp profile (no user namespaces),
+so Chromium's sandbox cannot start; running Chromium without its sandbox was decided against
+(ADR 0106, addendum 2026-10-04).
+
+What you see instead:
+
+- In **Preview**, "open in pane" is greyed out; its tooltip and the hint under it name the reason.
+  The **lightweight preview** works as everywhere else.
+- A port in a session row opens in the lightweight preview (a new tab), not in a pane.
+- A browser pane restored from a saved layout shows the reason in place of the page, with a
+  button that opens the same port and path in the lightweight preview. A Chromium attachment
+  pane restored the same way shows the reason only, since it has no local port to open.
+- Agents are not offered the browser tools at all; one that calls them by name anyway gets
+  `browser_unavailable` with the same explanation.
+
+The decision comes from the deployment's runtime, so it is the same for every member of it and
+shows even while the workspace is stopped.
 
 ## For agents working inside a Workspace
 
@@ -95,3 +122,6 @@ You have no tool that opens, drives or sees this pane; it belongs to the person.
 them the exact port and path and point them at Preview → open in pane. Never claim a
 UI "looks right" on the basis of a pane you cannot see — if you need to verify
 something yourself, drive your own headless Chromium and say that is what you did.
+Where `AF_BROWSER_UNAVAILABLE` is set in your environment there is neither a pane nor a headless
+Chromium ([above](#where-there-is-no-browser-pane)): verify with tests and HTTP checks, offer the
+person the lightweight preview, and say plainly that nothing was checked visually.

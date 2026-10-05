@@ -1,7 +1,7 @@
 ---
 audience: "認証・暗号・隔離・監査・egress に触れる人"
 source_of_truth: "コード（本書は境界と設計意図）"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # 07. セキュリティ — 脅威モデル・認証・暗号・監査
@@ -40,10 +40,50 @@ CLI 自身の設定経路まで塞いではいない。つまり承認確認は*
   SSM パラメータの書き込み、home ボリュームの付け替え、`ssm:SendCommand` によるスロット上での
   シェル実行、（エンジンのスタックがあれば）GPU インスタンスの購入を行える。`SendCommand` は
   `AWS-RunShellScript` ドキュメントで、このプールの `af-pool` と `af-role=slot` のタグを持つ
-  インスタンスに対してだけ許される。アカウント内のほかのインスタンス（エンジン機を含む）には届かない。
+  インスタンスに対してだけ許される（[#1182](https://github.com/k-k1/agent-fleet/issues/1182)）。
+  そしてこのロールは既存のインスタンスをその集合へ移せない。タグの書き込みにも柵がある
+  （`Ec2Tag*` の statement）。作成時のタグ付けは自分の `RunInstances` / `CreateFleet` /
+  `CreateVolume` / `CreateSnapshot` 経由で、このプールの `af-pool` を付ける場合に限る。作成後は、
+  すでにこのプールの `af-pool` を持つリソースに限り、`af-pool` キー自体には触れられず、`af-role` は
+  `quarantined`（インスタンス）か `golden` / `golden-rejected`（スナップショット）にしか変えられない
+  （`slot` へは不可）。`AF-ROLE` のような大文字小文字違いもそのキーとして扱う。したがって CP の不具合でも
+  侵害された CP でも、自分のプールへ自分で起動したインスタンス以外へ `ssm:SendCommand` を送れない。アカウント内のほかの SSM 管理下の機械、
+  別デプロイのスロット、このデプロイのエンジン機は宛先にならない
+  （[#1419](https://github.com/k-k1/agent-fleet/issues/1419)）。ほかの EC2 の書き込みにも同じ柵がある
+  （[#1423](https://github.com/k-k1/agent-fleet/issues/1423)）。起動・停止・終了・付け替え・切り離し・
+  拡張・削除は、このプールの `af-pool` を持つインスタンス・ボリューム・スナップショットにだけ効き、
+  2 つのリソースを名指す呼び出しでは両側とも要る。だから他人のインスタンスからボリュームを外すことも、
+  よそのボリュームを自分のスロットに付けることもできない。作るものにはこのプールの `af-pool` が要り
+  （`aws:RequestTag`）、複製の元もすでにプールのものでなければならない。よそのボリュームの
+  スナップショットも、よそのスナップショットからの復元もできない。`iam:PassRole` が名指すのは
+  自分の `40-ec2-pool` スタックのスロットロールだけだ。起動の元にも柵がある
+  （[#1522](https://github.com/k-k1/agent-fleet/issues/1522)）。イメージは Amazon の所有
+  （`ec2:Owner` = `amazon`）か公開のもの、または `40-ec2-pool` が名指すスロット AMI に限られる。
+  だからこのアカウントのものも他アカウントのものも、非公開イメージはそのスロット AMI でない限り起動できない。
+  ブロックデバイスマッピングにはこのアカウントが持つスナップショットを指定できないので、別デプロイの
+  休止中の home やバックアップから、あるいはそれから作った非公開イメージからスロットを起動することもできない。
+  エンジン機の購入である `CreateFleet` にも、`ImageId` の上書きに対して同じイメージの柵がある。
+  残るものが 3 つある。他アカウントが所有しこのアカウントへ共有されたスナップショットは、追加ディスクとして
+  指定できる。スナップショットの柵は否定形（アカウントに対する `StringNotEquals`）で、AMI 自身の
+  スナップショットを IAM が評価するかが文書に無く、肯定形だとそのときすべての起動を拒むから選んだ。
+  AWS がこのアカウントのスナップショットに所有者を示さなければ、柵は黙って効かない。そして `CreateFleet` の
+  マッピングの上書きに柵が効くのは、instant フリートが起動を呼び出し元の `RunInstances` で認可するとき
+  （ADR 0077 の前提）だけだ。`CreateFleet` はスナップショットを名指さず、作られるボリュームの
+  `ec2:ParentSnapshot` は所有者を含まない ARN だからである。これを確かめる実機確認は #1522 の PR に挙げてある。
 - どのターゲットでも CP が DEK を unwrap して平文で注入する（§7.6）。
 
 会社間は別デプロイゆえ波及しない——これが提供モデルの強み（[decisions/0001](../decisions/0001-self-host-vs-saas.ja.md)）。
+**`ecs` / `ecs-ec2` では、デプロイごとに AWS アカウントを分けている場合に限る。** `CpTaskRole` の範囲は
+デプロイではなくアカウントだ。`EcsDrive`・`EcsContainerInstances` は条件なしの `Resource: "*"` で、
+`SsmWorkspaceParams` の `parameter/af-ws/*` はアカウント全体で 1 つの接頭辞（パスにデプロイを含まない）。
+したがって侵害された CP は、同じアカウントの別デプロイのサービスを更新・削除し、その Workspace の
+`AGENT_TOKEN` と DEK を読み書きできる。できないのは、そのデプロイのインスタンスのタグを
+付け替えること、そのプールへリソースを紛れ込ませること、そのインスタンス・ボリューム・スナップショットを
+停止・終了・付け替え・切り離し・スナップショット・削除すること（EC2 の書き込みは書き手自身の
+`af-pool` に縛られている）、そしてその home のスナップショットからスロットを起動すること（上の
+`RunInstances` のイメージとスナップショットの柵。実機確認待ち）だ。ECS と EFS のタグ書き込みはこのクラスターのサービスと CP が書くキーに
+限られるが、EFS のアクセスポイントは `af-pool` を持たないので、その限定はキーによるもので
+デプロイによるものではない。
 緩和候補: rootless Docker / socket-proxy / CP ロールの絞り込み。
 
 ## 7.2 隔離コントロール
@@ -51,14 +91,21 @@ CLI 自身の設定経路まで塞いではいない。つまり承認確認は*
 各ターゲットで Workspace が**何であるか**は [ref/deploy-targets](../../guide/ref/deploy-targets.ja.md)。
 この表は、あるメンバーの Workspace を他のメンバーのもの、そして CP から隔てているものである。
 
-| 対象 | docker（既定） | ecs（Fargate） | ecs-ec2（本番） |
-|------|----------------|----------------|-----------------|
-| ユーザー間ファイル | そのメンバーの home を `<WS_DATA>/[<slug>/]<key>/home` から bind mount。**他ユーザーの home はマウントされない** | membership ごとの EFS アクセスポイント（`/home/<membership>`・`/claude-config/<membership>`）で root dir を固定。uid/gid は全員共通（`AF_ECS_POSIX_UID` / `_GID`） | メンバー専用の EBS ボリューム。**同時に 1 メンバーだけ**に仕えるスロットへ付け（[decisions/0045](../decisions/0045-ec2-persistent-workspace.ja.md) 決定 8）、CP が SSM でマウントする。Claude の状態と保持する dotfile は EFS アクセスポイントに残る |
-| プロセス / メモリ | 1 membership = 1 コンテナ。`--memory`（`WS_MEMORY` 既定 `1g`・Workspace ごとに上書き可）、指定時は `--cpus` | 1 タスク。Fargate はタスク間でカーネルを共有しない | スロット 1 台に 1 タスク。メモリはスロットの容量より下で頭打ち（`AF_ECS_EC2_HOST_RESERVE_MB`）。スロットのルートボリュームは前のメンバーより長生きするので `/tmp` は tmpfs |
-| ネットワーク | Workspace ごとの network（`af-net-…`）で相互到達を遮断。Agent はホストの loopback にだけ publish | `awsvpc`: タスクごとに ENI を持ち Workspace 用 SG に入る。SG は CP の SG からの Agent ポートだけを通し、他の Workspace からは通さない。公開 IP は付けない。外向きは開いている（§7.8） | ecs と同じ。スロット自身の SG は ingress なし |
-| 権限 | 非特権・`dev` で動く。Chromium の setuid サンドボックスが namespace を作れるよう **bounding set に `SYS_ADMIN` を足す**。他の setuid/setgid バイナリが残るとイメージのビルドが失敗するので、`dev` 自身は実効 capability を持たない | 特権モードなし・capability の追加なし | ecs と同じ |
-| クラウドの権限 | なし | タスクロール `WsTaskRole` は**ポリシーを 1 つも持たない**。`AGENT_TOKEN` と DEK はタスク定義の `secrets`（SSM・実行ロールが読む）で届く | 同じタスクロール。スロットのインスタンスロールは ECS 登録・SSM 管理・イメージ取得・ログだけ |
-| 機微状態の退避 | Agent の平文状態は 2nd mount（`CLAUDE_CONFIG_DIR=/var/lib/af/claude`）で**ファイルブラウザの範囲外**へ。暗号化ストアは home 据置で Agent の denylist（`fsDeny`）の内側 | 同左（イメージ・Agent は共通） | 同左 |
+| 対象 | docker（既定） | ecs（Fargate） | ecs-ec2（本番） | kubernetes |
+|------|----------------|----------------|-----------------|---|
+| ユーザー間ファイル | そのメンバーの home を `<WS_DATA>/[<slug>/]<key>/home` から bind mount。**他ユーザーの home はマウントされない** | membership ごとの EFS アクセスポイント（`/home/<membership>`・`/claude-config/<membership>`）で root dir を固定。uid/gid は全員共通（`AF_ECS_POSIX_UID` / `_GID`） | メンバー専用の EBS ボリューム。**同時に 1 メンバーだけ**に仕えるスロットへ付け（[decisions/0045](../decisions/0045-ec2-persistent-workspace.ja.md) 決定 8）、CP が SSM でマウントする。Claude の状態と保持する dotfile は EFS アクセスポイントに残る | Workspace ごとに claim 2 本。参照するのはその Workspace の StatefulSet だけで、ストレージドライバが対応すれば `ReadWriteOncePod`。メンバーは Workspace の名前空間に Kubernetes API で触れない — そこで Pod を作れる者はどの claim でもマウントできる |
+| プロセス / メモリ | 1 membership = 1 コンテナ。`--memory`（`WS_MEMORY` 既定 `1g`・Workspace ごとに上書き可）、指定時は `--cpus` | 1 タスク。Fargate はタスク間でカーネルを共有しない | スロット 1 台に 1 タスク。メモリはスロットの容量より下で頭打ち（`AF_ECS_EC2_HOST_RESERVE_MB`）。スロットのルートボリュームは前のメンバーより長生きするので `/tmp` は tmpfs | 1 Workspace = 1 Pod。CPU・メモリ・ephemeral-storage の request と limit は Workspace のサイジングから。`/tmp` はサイズ上限付きの `emptyDir`。ephemeral-storage の limit は事後の退避で効くので、ノードのディスクの余裕と disk-pressure の警報が残りを受け持つ |
+| ネットワーク | Workspace ごとの network（`af-net-…`）で相互到達を遮断。Agent はホストの loopback にだけ publish | `awsvpc`: タスクごとに ENI を持ち Workspace 用 SG に入る。SG は CP の SG からの Agent ポートだけを通し、他の Workspace からは通さない。公開 IP は付けない。外向きは開いている（§7.8） | ecs と同じ。スロット自身の SG は ingress なし | NetworkPolicy（実装する CNI でだけ効く）: Agent のポートは CP の Pod からだけ。egress はクラスタ DNS、CP の Workspace 専用リスナ、私設・リンクローカル・クラスタ自身のレンジを除くインターネット。それ以外の外向きは開いている（§7.8） |
+| 権限 | 非特権・`dev` で動く。Chromium の setuid サンドボックスが namespace を作れるよう **bounding set に `SYS_ADMIN` を足す**。他の setuid/setgid バイナリが残るとイメージのビルドが失敗するので、`dev` 自身は実効 capability を持たない | 特権モードなし・capability の追加なし | ecs と同じ | 名前空間に `restricted` の Pod Security Standard を強制（CP には変えられないラベル）: 非特権・非 root・能力の追加なし・ホストの名前空間なし・`hostPath` なし — Fargate の水準で、Chromium 用の `SYS_ADMIN` も無い |
+| クラウドの権限 | なし | タスクロール `WsTaskRole` は**ポリシーを 1 つも持たない**。`AGENT_TOKEN` と DEK はタスク定義の `secrets`（SSM・実行ロールが読む）で届く | 同じタスクロール。スロットのインスタンスロールは ECS 登録・SSM 管理・イメージ取得・ログだけ | なし: サービスアカウントのトークンはマウントせず、名前空間とそのサービスアカウントを名指す IAM 付与は無い。GKE では Workspace を載せるプールはすべて GKE メタデータサーバを使い、`169.254.0.0/16` への egress は拒否。`AGENT_TOKEN`・DEK・発行したトークンは Workspace ごとの Secret から `envFrom` で届き、Secret は etcd 内で暗号化（GKE では Cloud KMS） |
+| 機微状態の退避 | Agent の平文状態は 2nd mount（`CLAUDE_CONFIG_DIR=/var/lib/af/claude`）で**ファイルブラウザの範囲外**へ。暗号化ストアは home 据置で Agent の denylist（`fsDeny`）の内側 | 同左（イメージ・Agent は共通） | 同左 | 同じ。2 本目の claim の上 |
+
+**`kubernetes` の列は、runbook の前提条件を満たすクラスタでだけ成り立つ**（NetworkPolicy を
+強制する CNI・Secret の暗号化・private か承認済みネットワークに限った control plane・kubelet の
+読み取り専用ポートの無効化）。CP からはそれが見えない
+（[deploy/kubernetes/README.md](../../deploy/kubernetes/README.md)・[decisions/0106](../decisions/0106-kubernetes-runtime.ja.md) 決定 7）。
+そこで CP が乗っ取られた場合に届くのは Workspace の名前空間 — すべての Workspace の Secret と、
+作れるが特権にはできない Pod — で、読み取り専用のクラスタロールを通じてもそれ以上には届かない。
 
 **`native` にはこのどれも無い。** Agent をサンドボックスしたホストのプロセスとして動かし、
 コンテナ境界もメモリ上限も無いので**単一ユーザー専用**: CP は `AUTH` が `dev` 以外なら起動を拒む
@@ -240,6 +287,10 @@ membership の 2 段（[06 §6.2](06-data.ja.md)）。
   （authGate が識別ヘッダを 1 箇所で消すのと同じ理由）。
 - **Workspace が呼ぶ面は対象外**——`/mcp`・`/git/`・`/engine/`・`/internal/`。送信元は本人の
   Workspace であり、人の所在を表さない。入れると自分の Workspace からの呼び出しを全部塞ぐ。
+- **Workspace 専用リスナーは転送ヘッダを一切読まない**（`AF_CP_INTERNAL_LISTEN`・
+  [09 §9.3](09-deploy.ja.md)）。ホップ数の設定にかかわらず接続そのもののアドレスを送信元とし、
+  識別ヘッダと forwarded-for/-host/-proto 系のヘッダをハンドラの前で全部消す——そこへ接続した
+  Workspace は利用者も送信元も名乗れない。配るのはトークンで認証する上記の面だけ。
 - **締め出しの逃げ道**: デプロイ管理者は対象外。編集者の現在のアドレスを締め出す保存は拒否
   （`would_lock_out`）。プロキシのホップ未申告なのに forwarded-for が届いた場合
   （`proxy_not_configured`）と、チェーンが申告より短い場合（`client_ip_unknown`）も保存を拒否する。
@@ -297,12 +348,16 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
 
 - Workspace ごとの DEK をテナントごとの KEK で wrap して保存（`wrapped_dek`）。CP が Workspace
   起動時に unwrap して `AF_SECRET_KEY` として注入する。**Agent は暗号方式に無関心。**
-- custodian は interface（`KeyCustodian`）。現実装（`localCustodian`）は KEK をマスター鍵から
-  導出する。同じ custodian が上のテナントの秘密と、セッションの引き継ぎ・共有のペイロードも封印する。
-- ⚠️ **正直な限界**: KEK がマスター鍵由来で——DEK 自体もマスター鍵とユーザーキーから導出する
-  （封筒保存より前に書かれたストアを開けるため）——実効強度は単一のマスター鍵と同等。
-  **真のテナント単位の crypto-shred は Vault / KMS の custodian を採ったとき**で、📋——継ぎ目が
-  あるだけ。
+- custodian は interface（`KeyCustodian`）。既定（`localCustodian`）は KEK をマスター鍵から
+  導出する。`kmsCustodian`（`AF_KEY_CUSTODIAN=kms`、AWS）は値ごとに KMS の新しいデータ鍵で封じ、
+  暗号化コンテキストで key ref に結び付け、KMS が失敗すれば失敗する（フェイルクローズ）。同じ custodian が
+  上のテナントの秘密と、セッションの引き継ぎ・共有のペイロードも封印する。KMS へ切り替える前に封じた値は
+  形式で見分けて local の custodian が開き、KMS の失敗で振り分けることは無い。
+- ⚠️ **正直な限界**: local の custodian では KEK がマスター鍵由来で、実効強度は単一のマスター鍵と同等。
+  KMS では鍵の無効化で切り替え後に封じたものが shred されるが、ワークスペースの DEK 自体は今もマスター鍵と
+  ユーザーキーから導出する（封筒保存より前に書かれたストアを開けるため）ので、メンバーの資格情報ストアは
+  それでは shred されない。ワークスペースごとのランダムな DEK と Vault は 📋
+  （[decisions/0005](../decisions/0005-envelope-custodian.ja.md) の 2026-10-04 追記）。
 
 ## 7.7 監査
 
@@ -350,10 +405,10 @@ enforce へ切り替える。
 1. **承認確認スキップの既定運用** — Workspace の境界が唯一の砦なので §7.2 を厳格に。利用者は
    オフにできる（[decisions/0056](../decisions/0056-tool-permission-choice.ja.md)）が、隔離の代わり
    にはならない（§7.1）。
-2. **CP/ホスト侵害 = デプロイ内一括崩壊**（§7.1）。会社間非波及が緩和。CP の AWS ロールには
+2. **CP/ホスト侵害 = デプロイ内一括崩壊**（§7.1）。会社間非波及が緩和（AWS ではアカウントを分けた場合だけ）。CP の AWS ロールには
    まだ絞る余地がある（[#1182](https://github.com/k-k1/agent-fleet/issues/1182)）。
 3. **長期保持するエージェント資格情報の失効・ローテーション** — 枠組みはあるが、真の失効は
-   Vault / KMS 待ち（§7.6）。
+   ワークスペースの DEK をランダムにするまで待ち（§7.6）。
 4. **サプライチェーン** — Workspace イメージ同梱ツールの出所管理・定期更新（[04](04-agent.ja.md)）。
 5. **egress の enforce はまだ Workspace を縛らない** — proxy は遮断するが、Workspace を proxy に
    通す柵が無い（§7.8・[#1181](https://github.com/k-k1/agent-fleet/issues/1181)）。

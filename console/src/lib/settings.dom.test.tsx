@@ -225,6 +225,10 @@ describe("device-local settings", () => {
     expect(isDeviceLocalSetting("paneLayout")).toBe(true);
   });
 
+  it("opens a device with nothing stored in the tabbed grid", () => {
+    expect(getSettings().paneLayout).toBe("tabs");
+  });
+
   it("continues syncing personal content preferences", () => {
     expect(isDeviceLocalSetting("viewerFont")).toBe(false);
     expect(isDeviceLocalSetting("locale")).toBe(false);

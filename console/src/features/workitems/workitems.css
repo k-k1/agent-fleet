@@ -143,6 +143,10 @@
 .wi-dot.tone-muted {
   color: var(--muted);
 }
+/* A merged pull request is finished work, not a muted "closed". */
+.wi-dot.tone-merged {
+  color: var(--merged, #a371f7);
+}
 
 /* CI / conflict marker on a pull request row, between the title and the age. */
 .wi-flag {
@@ -645,7 +649,8 @@
 /* The live-read line (§80.24). One line, always present on a pull request panel: "this is the
    pull request right now" and "this is a copy from the last fetch" look identical otherwise, and
    the difference is what the whole live read is for. */
-.wi-dlive {
+.wi-dlive,
+.wi-dref {
   display: flex;
   align-items: center;
   gap: 6px;

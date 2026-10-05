@@ -11,8 +11,10 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetskills"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/pathguard"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -71,24 +73,60 @@ func HandleSessionSkills(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"skills": enumerateSkills(meta.Kind, meta.Dir, meta.CWD(), meta.Name)})
+}
+
+// HandleRepoSkills is the same list for a session that does not exist yet: the launch modal's
+// first prompt offers what a session of ?kind= would see when started in the working
+// copy (plus ?subdir=). A worktree launch is answered from the repository's own tree, since
+// the worktree is only created by the launch. The kinds whose native list lives in a running
+// process (cursor's advertised commands, muse's skill/list) fall back exactly as a stopped
+// session of theirs does.
+func HandleRepoSkills(w http.ResponseWriter, r *http.Request) {
+	dir, ok := gitx.ResolveRepoDir(r.PathValue("name"))
+	if !ok {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_repo", "invalid repo name")
+		return
+	}
+	if !session.DirExists(dir) {
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such repo: "+r.PathValue("name"))
+		return
+	}
+	sub, ok := session.CleanSubdir(r.URL.Query().Get("subdir"))
+	// CleanSubdir is lexical: a symlink inside the repo pointing elsewhere would otherwise list
+	// that tree's skills. A subdir that does not exist yet still passes (CWD falls back to dir).
+	if ok && sub != "" {
+		_, ok = pathguard.ResolveUnder(filepath.Join(dir, filepath.FromSlash(sub)), dir)
+	}
+	if !ok {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_subdir", "subdir must be a relative path inside the working copy")
+		return
+	}
+	cwd := session.Meta{Dir: dir, Subdir: sub}.CWD()
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"skills": enumerateSkills(r.URL.Query().Get("kind"), dir, cwd, "")})
+}
+
+// enumerateSkills is the list for a kind running in cwd beneath the working copy dir. live
+// names the session whose running process can be asked for its native list; "" means there is
+// none, and those kinds answer from the filesystem alone.
+func enumerateSkills(kind, dir, cwd, live string) []sessionSkill {
 	// Native enumeration (what the kind's own CLI can discover and invoke) plus the other
 	// conventions' SKILL.md trees as foreign entries (the injection route — §8). shell/ssm have
 	// no chat, so they come back empty; the Console's caps gate is the first line of defence.
 	skills := []sessionSkill{}
 	var nativeConvs []string
-	cwd := meta.CWD()
-	switch meta.Kind {
+	switch kind {
 	case session.KindClaude:
-		skills = claudeSkills(cwd, meta.Dir)
+		skills = claudeSkills(cwd, dir)
 		skills = appendBundledSkills(skills, claudeBundledSkills())
 		nativeConvs = []string{".claude/skills"}
 	case session.KindCodex:
-		skills = codexSkills(cwd, meta.Dir)
+		skills = codexSkills(cwd, dir)
 		nativeConvs = []string{".codex/skills", ".agents/skills"}
 	case session.KindOpencode:
-		skills = opencodeSkills(meta.Dir)
+		skills = opencodeSkills(dir)
 	case session.KindCursor:
-		skills = cursorSkills(meta)
+		skills = cursorSkills(live, dir)
 	case session.KindMuse:
 		// Native enumeration over MSP (ADR 0095 P2-23): the session's own host answers
 		// `skill/list`, which covers muse's bundled skills, the member's own under
@@ -98,7 +136,7 @@ func HandleSessionSkills(w http.ResponseWriter, r *http.Request) {
 		// is no session to ask, and `.agents/skills` must then go back to being offered as a
 		// foreign entry (a plain "read this and follow it" prompt) rather than disappearing
 		// from the picker because a native list that does not exist claims to own it.
-		skills = museSkills(meta)
+		skills = museSkills(live)
 		if len(skills) > 0 {
 			nativeConvs = []string{".agents/skills"}
 		}
@@ -110,22 +148,21 @@ func HandleSessionSkills(w http.ResponseWriter, r *http.Request) {
 		// same SKILL.md trees) must agree on what this kind can offer.
 		//
 	default:
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"skills": skills})
-		return
+		return skills
 	}
 	ownNative := len(skills) > 0 // claude/codex scan their own root; muse's is in skill/list when live
 	// lcpp's own file tools refuse any path outside the session's CWD (harness resolvePath), so
 	// a tree above a Subdir CWD, a SKILL.md symlinked out of it or a user root would be offered
 	// and then fail to open. Every other kind reads through its CLI, which has no such fence.
 	var readable func(string) bool
-	if meta.Kind == session.KindLcpp {
+	if kind == session.KindLcpp {
 		readable = func(p string) bool { return harness.Readable(cwd, p) }
 	}
-	skills = appendForeignSkills(skills, chainUp(cwd, meta.Dir), cwd, nativeConvs, readable)
-	if meta.Kind != session.KindLcpp {
-		skills = appendUserForeignSkills(skills, meta.Kind, ownNative)
+	skills = appendForeignSkills(skills, chainUp(cwd, dir), cwd, nativeConvs, readable)
+	if kind != session.KindLcpp {
+		skills = appendUserForeignSkills(skills, kind, ownNative)
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"skills": skills})
+	return skills
 }
 
 // museSkills is the native half for muse: MSP's `skill/list`, asked of the session's own live
@@ -136,8 +173,11 @@ func HandleSessionSkills(w http.ResponseWriter, r *http.Request) {
 // through: `bundled` and `plugin` are both "came with the tool, not with your repository",
 // which is what this column means to a reader, and an unknown future scope lands there too
 // rather than inventing a fourth label the Console has no string for.
-func museSkills(meta session.Meta) []sessionSkill {
-	native := museNativeSkills(meta.Name)
+func museSkills(live string) []sessionSkill {
+	if live == "" {
+		return nil
+	}
+	native := museNativeSkills(live)
 	out := make([]sessionSkill, 0, len(native))
 	for _, s := range native {
 		if s.Selector == "" || len(out) >= maxSessionSkills {
@@ -512,8 +552,8 @@ func opencodeSkills(dir string) []sessionSkill {
 // through agents.PublishCommands) is the only complete source — builtin skills, global, and the
 // project's commands/skills, all of it (measured 2026-07-28). Until it arrives (runtime not
 // started, or just after an agent restart) fall back to the project's filesystem conventions.
-func cursorSkills(meta session.Meta) []sessionSkill {
-	if adv := agents.AdvertisedCommands(meta.Name); len(adv) > 0 {
+func cursorSkills(live, dir string) []sessionSkill {
+	if adv := agents.AdvertisedCommands(live); len(adv) > 0 {
 		out := make([]sessionSkill, 0, len(adv))
 		for _, c := range adv {
 			if c.Name == "" || len(out) >= maxSessionSkills {
@@ -531,8 +571,8 @@ func cursorSkills(meta session.Meta) []sessionSkill {
 		return out
 	}
 	return scanSkillRoots([]skillRoot{
-		{filepath.Join(meta.Dir, ".cursor", "commands"), "project", "commands"},
-		{filepath.Join(meta.Dir, ".cursor", "skills"), "project", "skills"},
+		{filepath.Join(dir, ".cursor", "commands"), "project", "commands"},
+		{filepath.Join(dir, ".cursor", "skills"), "project", "skills"},
 	}, "/")
 }
 

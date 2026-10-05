@@ -10,16 +10,25 @@ package sessionx
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
+
+// convSlotSeq keeps the slot names of a -count=N round apart from the previous round's:
+// fleetgraph remembers the last conv per name for the life of the process, so a reused name
+// sees "unchanged" and writes nothing.
+var convSlotSeq atomic.Int64
+
+func convSlotName(base string) string { return fmt.Sprintf("%s_%d", base, convSlotSeq.Add(1)) }
 
 // fakeTmuxListSessionsAlive makes `tmux list-sessions` report tn alive — what
 // tmuxx.LiveSessionNames() (HandleListSessions' liveness source) actually shells out to.
@@ -84,7 +93,7 @@ func lineageConvEvents(t *testing.T, name string) []string {
 // ForkSource resolves nothing at create time) must get a convid line the first time the
 // list handler observes a resolvable conversation, with no relaunch-drift tracker involved.
 func TestHandleListSessions_ObservesConvIDForNonClaudeKind(t *testing.T) {
-	const name = "slot_conv_codex"
+	name := convSlotName("slot_conv_codex")
 	fakeTmuxListSessionsAlive(t, session.TmuxName(name))
 	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex}
 	session.WriteMeta(m)
@@ -112,7 +121,7 @@ func TestHandleListSessions_ObservesConvIDForNonClaudeKind(t *testing.T) {
 // TestHandleListSessions_ObservesConvIDChange: a THIRD poll with a genuinely different
 // conv (the process relaunched onto a new one) must append a second convid line.
 func TestHandleListSessions_ObservesConvIDChange(t *testing.T) {
-	const name = "slot_conv_codex_change"
+	name := convSlotName("slot_conv_codex_change")
 	fakeTmuxListSessionsAlive(t, session.TmuxName(name))
 	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex}
 	session.WriteMeta(m)

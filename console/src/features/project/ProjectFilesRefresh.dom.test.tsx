@@ -22,6 +22,7 @@ let failing = new Set<string>(); // paths that return a 5xx (transient failure)
 let calls: string[] = [];
 
 vi.mock("../../core/api/client.ts", () => ({
+  getTenant: () => "",
   api: vi.fn(async (url: string) => {
     const p = decodeURIComponent(new URL(url, "http://x/").searchParams.get("path") || "");
     calls.push(p);

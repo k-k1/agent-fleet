@@ -1,0 +1,25 @@
+# Two namespaces per deployment, both named with the deployment's prefix: Workload
+# Identity treats the same namespace and service account names in any cluster of a
+# project as one identity (ADR 0106 decision 7), so "agent-fleet-ws" in two clusters
+# would be one principal.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: af-placeholder-cp
+  labels:
+    # The CP's pods meet `restricted` too; nothing in this namespace needs more.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: af-placeholder-ws
+  labels:
+    # The API server refuses a privileged, hostPath or root pod here whoever asks,
+    # including a compromised CP, which can create pods in this namespace. The CP has
+    # no right to change this label (cp-rbac.yaml grants nothing on Namespaces).
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted

@@ -103,6 +103,23 @@
   min-width: 0;
 }
 
+/* RegionSelect: the dropdown, plus the code input when "Other" is picked. Stacked inside a
+   form field; side by side in a .flow row, where the long region names need a cap. */
+.region-select {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.ssm-fld .region-select {
+  flex-direction: column;
+}
+
+.flow .region-select .cinput {
+  max-width: 22em;
+}
+
 .ssm-fld .hint {
   font-size: 11px;
   color: var(--faint, var(--muted));
@@ -212,4 +229,44 @@
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
   }
 
+}
+
+/* The GitHub app picker (tenant settings, issue #1667): one radio per source, each with a
+   line saying what the member will go through. A source this deployment cannot offer stays
+   visible but dimmed when it is the one selected, so the screen explains the missing button. */
+.gh-src {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 6px 0 4px;
+}
+
+.gh-src label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.gh-src label.off {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.gh-src input {
+  margin-top: 2px;
+  flex: none;
+}
+
+.gh-src-t {
+  display: block;
+  font-size: 12.5px;
+  color: var(--fg);
+}
+
+.gh-src-s {
+  display: block;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
 }

@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -29,7 +31,20 @@ import (
 // loop (claude.BackgroundShellBusy, the Monitor-poll case BackgroundBusy's R/D-only test
 // misses). Both hit tmux + /proc, so — like reportPaneBusy — this is only worth paying once
 // the cheap evidence is already quiet.
+//
+// muse and a managed codex answer from their own drivers instead (in memory, no pane): the
+// halt stops their host or thread, and the command an earlier turn left running goes with it.
 func stopArmBackgroundBusy(m session.Meta) bool {
+	switch normalizeKind(m.Kind) {
+	case session.KindMuse:
+		busy, _ := muse.BackgroundWork(m.Name)
+		return busy
+	case session.KindCodex:
+		if m.DriverKind() == session.DriverManaged {
+			busy, _ := codex.BackgroundWork(m.Name)
+			return busy
+		}
+	}
 	if m.DriverKind() == session.DriverManaged || normalizeKind(m.Kind) != session.KindClaude {
 		return false // no tmux pane / process tree to read (same gate as reportPaneBusy)
 	}

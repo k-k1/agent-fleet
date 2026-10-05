@@ -13,6 +13,124 @@
 
 ---
 
+## [0.28.0](0.28.0.ja.md) — 2026-10-04
+
+**New / Improved**
+
+- **[セッション]** コマンドパレットの「会話」と `search_sessions` で過去の会話を検索 ([#1558](https://github.com/k-k1/agent-fleet/issues/1558))
+- **[セッション]** 左ペインの絞り込みとパレットで Issue・PR・Jira のキーからセッションを探す ([#1665](https://github.com/k-k1/agent-fleet/issues/1665))
+- **[ミラー]** ミラーとアシスタントのチャットのチケット番号から作業項目を開く ([#1659](https://github.com/k-k1/agent-fleet/issues/1659))
+- **[使用量]** セッションごとの費用の予算。達したらターン後に停止、「予算を上げて再開」 ([#1054](https://github.com/k-k1/agent-fleet/issues/1054))
+- **[メモリ管理]** 全種別で共有する Agent Fleet のメモリ。既定はオフ、変更一覧から元に戻す・消す ([#1569](https://github.com/k-k1/agent-fleet/issues/1569))
+- **[git]** 組み込みの OAuth App／GitHub App で GitHub に接続。テナント自前のアプリの種類は自動で判別 ([#1667](https://github.com/k-k1/agent-fleet/issues/1667))
+- **[画像生成]** インペイントのマスクを画像に重ねたキャンバスで塗る ([#956](https://github.com/k-k1/agent-fleet/issues/956))
+- **[ギャラリー]** サブフォルダーを含める、画像をセッションへ送る、向きを反映した幅×高さ ([#961](https://github.com/k-k1/agent-fleet/issues/961))
+- **[エンジン]** 管理 › 推論エンジン で LAN の ComfyUI の URL とキー。`comfyui-lan.sh` で固定版のイメージを LAN のホストで動かす ([#957](https://github.com/k-k1/agent-fleet/issues/957), [#958](https://github.com/k-k1/agent-fleet/issues/958))
+- **[AWS]** メンバーの秘密情報を封印する KMS のキー管理（任意） ([#969](https://github.com/k-k1/agent-fleet/issues/969))
+- **[通知]** 設定を 1 つの表に。種類 × 未読の印／OS の通知／読み上げ ([#1085](https://github.com/k-k1/agent-fleet/issues/1085))
+- **[Console]** WS バーは折り返さず幅に合わせて畳む ([#1642](https://github.com/k-k1/agent-fleet/issues/1642))
+- **[エージェント]** codex のターミナルと OpenCode でコンパクト化中を表示。OpenCode の報告費用を使用量に ([#1139](https://github.com/k-k1/agent-fleet/issues/1139), [#1082](https://github.com/k-k1/agent-fleet/issues/1082))
+
+**Fixed**
+
+- **[エージェント]** 使用量の上限で断られた最初の依頼を、自動再開で断っていた ([#1658](https://github.com/k-k1/agent-fleet/issues/1658))
+- **[質問カード]** 単一選択で選択肢を選ぶと自由入力の文字が消えた ([#1653](https://github.com/k-k1/agent-fleet/issues/1653))
+- **[セッション状態]** 自分の Stop フックが停止を止めるとターンが早く終わったと報告された ([#1600](https://github.com/k-k1/agent-fleet/issues/1600))
+- **[ミラー]** `~/repos`・`~/.af-work` がシンボリックリンクだと変更ファイルの分類がずれた ([#1610](https://github.com/k-k1/agent-fleet/issues/1610))
+
+## [0.27.0](0.27.0.ja.md) — 2026-10-03
+
+**CLI ピン** — Claude Code 2.1.288 / Codex 0.160.0 / Copilot 1.0.91 / Antigravity 1.2.16 / Cursor 2026.10.01-e373342 / Kiro 2.27.1 / Muse Code 1.4.2-R4684.1
+
+**New / Improved**
+
+- **[Google Cloud]** 設定のプロファイル、Console でログインする `af-gcloud-exec`、WS バーのバッジ ([#1495](https://github.com/k-k1/agent-fleet/issues/1495), [#1496](https://github.com/k-k1/agent-fleet/issues/1496), [#1497](https://github.com/k-k1/agent-fleet/issues/1497), [#1498](https://github.com/k-k1/agent-fleet/issues/1498), [#1511](https://github.com/k-k1/agent-fleet/issues/1511), [#1517](https://github.com/k-k1/agent-fleet/issues/1517))
+- **[AWS]** WS バーにプロファイルのサインイン状態、プロファイルごとのログアウト、ログインが切れる前の警告、リージョンの一覧 ([#1477](https://github.com/k-k1/agent-fleet/issues/1477), [#1502](https://github.com/k-k1/agent-fleet/issues/1502), [#1483](https://github.com/k-k1/agent-fleet/issues/1483), [#1029](https://github.com/k-k1/agent-fleet/issues/1029), [#1506](https://github.com/k-k1/agent-fleet/issues/1506))
+- **[セッション]** セッションの行にブランチの PR と待ち受けポート ([#1062](https://github.com/k-k1/agent-fleet/issues/1062))
+- **[スケジュール]** 届け先（アシスタント・通知・Discord・Slack）と `[SILENT]` の答えで黙る ([#1560](https://github.com/k-k1/agent-fleet/issues/1560))
+- **[起動導線]** 最初のプロンプトにテンプレートと履歴、スキルピッカー、どの種類のファイルも添付。仮のブランチ名は最大 45 秒まで聞き直す ([#1469](https://github.com/k-k1/agent-fleet/issues/1469), [#1448](https://github.com/k-k1/agent-fleet/issues/1448), [#1447](https://github.com/k-k1/agent-fleet/issues/1447), [#1440](https://github.com/k-k1/agent-fleet/issues/1440))
+- **[セッション]** セッションのメニューから無くなったワークツリーを作り直す・レポのメニューを開く。セッションのリンクからメニュー ([#1445](https://github.com/k-k1/agent-fleet/issues/1445), [#1557](https://github.com/k-k1/agent-fleet/issues/1557), [#1553](https://github.com/k-k1/agent-fleet/issues/1553))
+- **[MCP]** `peek_session_output` でピアの最近の出力を読む ([#1061](https://github.com/k-k1/agent-fleet/issues/1061))
+- **[セッション間メッセージ]** ユーザーの判断を待つセッションへのピアメッセージは回答までキューに入る ([#1031](https://github.com/k-k1/agent-fleet/issues/1031))
+- **[ecs-ec2/スロットプール]** 次の起動でのスロットの置き換えを予約（設定 › 管理 › スロット） ([#1473](https://github.com/k-k1/agent-fleet/issues/1473))
+- **[内部 git]** テナント管理者がメンバー 1 人の git トークンを再発行 ([#1199](https://github.com/k-k1/agent-fleet/issues/1199))
+- **[ECS]** 「作り直し」「ホームを掃除」「破棄」が EFS のホームに届く。途切れたホームの操作は CP の再起動後に完了 ([#1260](https://github.com/k-k1/agent-fleet/issues/1260), [#1536](https://github.com/k-k1/agent-fleet/issues/1536), [#1537](https://github.com/k-k1/agent-fleet/issues/1537), [#1544](https://github.com/k-k1/agent-fleet/issues/1544))
+- **[管理]** メンバーを外すとワークスペースを止めスケジュールを一時停止、招待し直すと再開 ([#1087](https://github.com/k-k1/agent-fleet/issues/1087))
+- **[ミラー]** 変更ファイルで作業用の一時領域と他の作業コピーを分ける ([#1607](https://github.com/k-k1/agent-fleet/issues/1607))
+- **[表示]** 新しいユーザーと端末の既定レイアウトはタブ付きグリッド ([#1481](https://github.com/k-k1/agent-fleet/issues/1481))
+- **[モバイル]** スワイプは左レールの順、シェル／SSM は飛ばす ([#1595](https://github.com/k-k1/agent-fleet/issues/1595))
+- **[設定モーダル]** 設定と管理のダイアログの見出し・節・余白をそろえた ([#1480](https://github.com/k-k1/agent-fleet/issues/1480), [#1491](https://github.com/k-k1/agent-fleet/issues/1491))
+- **[ECS]** CP タスクロールをこの配備のインスタンスと Amazon 所有／公開のイメージに限定 ([#1423](https://github.com/k-k1/agent-fleet/issues/1423), [#1522](https://github.com/k-k1/agent-fleet/issues/1522), [#1576](https://github.com/k-k1/agent-fleet/issues/1576))
+
+**Fixed**
+
+- **[セッション]** キューのピア・オペレーター・スケジュールのメッセージが停止や Agent の再起動で消えていた。キューのピアが再開したターンに入ることがあった ([#1255](https://github.com/k-k1/agent-fleet/issues/1255), [#1257](https://github.com/k-k1/agent-fleet/issues/1257), [#1550](https://github.com/k-k1/agent-fleet/issues/1550))
+- **[AWS]** SSM の強制再ログインがすべての AWS プロファイルをサインアウトしていた ([#1484](https://github.com/k-k1/agent-fleet/issues/1484))
+- **[ecs-ec2]** 同じホームのマウントで解放と起動がぶつかるとスロットが隔離されることがあった ([#1592](https://github.com/k-k1/agent-fleet/issues/1592))
+- **[画像生成]** 後からスイッチを入れたスタジオの試走ツールが codex の Managed に見えなかった ([#1132](https://github.com/k-k1/agent-fleet/issues/1132))
+- **[codex]** 読み込み済みスレッドの遅い走査が終わらなかった ([#1147](https://github.com/k-k1/agent-fleet/issues/1147))
+- **[ミラー]** キャンセルした質問がエージェントが断ったと出た、チップのメニューが閉じたタップで開き直した、開き直すと翻訳が押せない ([#1604](https://github.com/k-k1/agent-fleet/issues/1604), [#1556](https://github.com/k-k1/agent-fleet/issues/1556), [#1589](https://github.com/k-k1/agent-fleet/issues/1589))
+- **[Console]** 概要のカードのメニューが Esc で閉じない、折り返したレポの見出しの下にワークツリーの見出しが隠れる、先行／遅れのチップの間隔 ([#1449](https://github.com/k-k1/agent-fleet/issues/1449), [#1584](https://github.com/k-k1/agent-fleet/issues/1584), [#1509](https://github.com/k-k1/agent-fleet/issues/1509))
+- **[管理]** メンバーのキーやテナントのスラッグがデータルートの別のディレクトリを指せた ([#1455](https://github.com/k-k1/agent-fleet/issues/1455), [#1214](https://github.com/k-k1/agent-fleet/issues/1214))
+
+## [0.26.0](0.26.0.ja.md) — 2026-10-01
+
+**CLI ピン** — Claude Code 2.1.286 / Codex 0.159.3 / OpenCode 1.18.34 / Copilot 1.0.90 / Antigravity 1.2.14 / Kiro 2.26.1 / Muse Code 1.4.1-R4503.1
+
+**Security**
+
+- **[AWS]** ワークスペースやホストの AWS 認証情報をエージェントのセッションに渡さない。運用者の作業はノートに
+
+**New / Improved**
+
+- **[配布]** 1 バージョン 1 つの GitHub Release に rootfs も載る。arm64 の Linux 向けネイティブパッケージ ([#1345](https://github.com/k-k1/agent-fleet/issues/1345))
+- **[停止]** Managed セッションの 2 段停止。1 回目はターンだけ止めてキューを残し、2 回目（か「停止してキューも捨てる」）で捨てる。戻す／入力欄へ戻す／取り除く ([#1289](https://github.com/k-k1/agent-fleet/issues/1289), [#1292](https://github.com/k-k1/agent-fleet/issues/1292), [#1293](https://github.com/k-k1/agent-fleet/issues/1293), [#1294](https://github.com/k-k1/agent-fleet/issues/1294), [#1244](https://github.com/k-k1/agent-fleet/issues/1244), [#1256](https://github.com/k-k1/agent-fleet/issues/1256))
+- **[ミラー]** claude の返答を書いている途中から表示。オフ／行ごと／文字送り（既定） ([#1250](https://github.com/k-k1/agent-fleet/issues/1250), [#1274](https://github.com/k-k1/agent-fleet/issues/1274), [#1396](https://github.com/k-k1/agent-fleet/issues/1396))
+- **[ブランチ名]** Console から Git Flow を初期化。ローカル追跡ブランチも作る ([#1126](https://github.com/k-k1/agent-fleet/issues/1126), [#1329](https://github.com/k-k1/agent-fleet/issues/1329))
+- **[ワークスペース]** 30 分を過ぎても起動中のままなら止め、メンバーに通知し管理者に理由を示す（`AF_WORKSPACE_START_DEADLINE`） ([#1240](https://github.com/k-k1/agent-fleet/issues/1240), [#1298](https://github.com/k-k1/agent-fleet/issues/1298), [#1384](https://github.com/k-k1/agent-fleet/issues/1384))
+- **[ブランチ名]** テナント設定 › ブランチ命名ルール でテナントの規則 ([#1127](https://github.com/k-k1/agent-fleet/issues/1127), [#1120](https://github.com/k-k1/agent-fleet/issues/1120))
+- **[ブランチ名]** 英字以外の題名に AI 提案の英語スラッグ ([#1129](https://github.com/k-k1/agent-fleet/issues/1129))
+- **[MCP]** セッション向けの `branch_name` ツール ([#1128](https://github.com/k-k1/agent-fleet/issues/1128))
+- **[通知]** Claude Code のプッシュ通知が通知センターに届く ([#1069](https://github.com/k-k1/agent-fleet/issues/1069))
+- **[AWS]** プロファイルと SSM ホストをその場で編集。使用中のプロファイルは削除できない ([#1409](https://github.com/k-k1/agent-fleet/issues/1409), [#1411](https://github.com/k-k1/agent-fleet/issues/1411))
+- **[画像ギャラリー]** タイルの大きさ（小・中・大）、幅×高さ、新しい画像が速く開く ([#961](https://github.com/k-k1/agent-fleet/issues/961))
+- **[ワークツリー]** 同期チップと親の取り込みは親ブランチの upstream と比べる ([#1415](https://github.com/k-k1/agent-fleet/issues/1415))
+- **[エンジン]** テナント管理者が LLM／画像エンジンを許可したメンバーだけに絞れる ([#1215](https://github.com/k-k1/agent-fleet/issues/1215))
+- **[ワークツリー]** 作り直しが squash／rebase マージされた PR の head を出す。使い回したブランチは最新のマージ ([#1043](https://github.com/k-k1/agent-fleet/issues/1043), [#1397](https://github.com/k-k1/agent-fleet/issues/1397))
+- **[概要]** すべてのエージェント種別でコンテキストのゲージ・トークンの推移・モデル・最後の行 ([#1342](https://github.com/k-k1/agent-fleet/issues/1342), [#1362](https://github.com/k-k1/agent-fleet/issues/1362))
+- **[スキル]** スキルピッカーが他のエージェントの個人スキルも出す ([#1351](https://github.com/k-k1/agent-fleet/issues/1351))
+- **[指示]** エージェントへの指示に llama.cpp ([#1202](https://github.com/k-k1/agent-fleet/issues/1202))
+- **[ECS]** `Persistence=retain` で EFS を毎日バックアップ ([#1195](https://github.com/k-k1/agent-fleet/issues/1195), [#1235](https://github.com/k-k1/agent-fleet/issues/1235))
+- **[ECS]** `standup.sh`／`update.sh` の `--comfy-digest` で ComfyUI のコピーを固定 ([#966](https://github.com/k-k1/agent-fleet/issues/966), [#1319](https://github.com/k-k1/agent-fleet/issues/1319))
+- **[muse]** 再開時にミラーを補う、画像のサムネイル、バックグラウンドのコマンドを実行中と示す（codex の Managed も） ([#1197](https://github.com/k-k1/agent-fleet/issues/1197), [#1350](https://github.com/k-k1/agent-fleet/issues/1350), [#1358](https://github.com/k-k1/agent-fleet/issues/1358))
+- **[codex]** Managed → ターミナルの切り替えは先にセッションを止める ([#1148](https://github.com/k-k1/agent-fleet/issues/1148), [#1147](https://github.com/k-k1/agent-fleet/issues/1147))
+- **[管理]** 取り消せない管理操作は実行前に監査ログへ記録し、記録できなければ断る ([#1266](https://github.com/k-k1/agent-fleet/issues/1266), [#1334](https://github.com/k-k1/agent-fleet/issues/1334))
+- **[内部 git]** 名前変更と削除は作成者かテナント管理者だけ ([#1200](https://github.com/k-k1/agent-fleet/issues/1200))
+- **[課題管理]** レールが畳んでも飛ばない、絞り込みを固定、折りたたみボタンのフォーカスを保つ ([#1348](https://github.com/k-k1/agent-fleet/issues/1348), [#1360](https://github.com/k-k1/agent-fleet/issues/1360))
+- **[配備]** `AF_MASTER_KEY` なしでサインインさせる配備に警告とバナー ([#1080](https://github.com/k-k1/agent-fleet/issues/1080))
+
+**Fixed**
+
+- **[muse]** Muse Code 1.4 でモデル未指定のセッションが contributor モデルで動き、ピッカーは「既定」だけだった ([#1344](https://github.com/k-k1/agent-fleet/issues/1344))
+- **[AWS]** 作り直しとホームの掃除が何も消していなかった。ecs-ec2 で動き、ecs では断る ([#1225](https://github.com/k-k1/agent-fleet/issues/1225), [#1259](https://github.com/k-k1/agent-fleet/issues/1259), [#1260](https://github.com/k-k1/agent-fleet/issues/1260))
+- **[エージェント]** Codex／OpenCode／Cursor のターミナルの質問・許可・更新・ロック画面にプロンプトが打ち込まれていた ([#1227](https://github.com/k-k1/agent-fleet/issues/1227), [#1263](https://github.com/k-k1/agent-fleet/issues/1263))
+- **[エージェント]** 「作業中」のまま: codex の Esc、kill 後の opencode、ランタイムを失った後の Managed のキュー ([#1264](https://github.com/k-k1/agent-fleet/issues/1264), [#1265](https://github.com/k-k1/agent-fleet/issues/1265), [#1258](https://github.com/k-k1/agent-fleet/issues/1258))
+- **[agy]** ターンの途中で「入力待ち」と表示されていた ([#1424](https://github.com/k-k1/agent-fleet/issues/1424))
+- **[AWS]** issuer 形式の開始 URL で Console のログインが「unexpected sign-in URL」で止まっていた ([#1408](https://github.com/k-k1/agent-fleet/issues/1408))
+- **[ワークツリー]** 削除とブランチ切り替えが実行中の Managed セッションを見ていなかった ([#1169](https://github.com/k-k1/agent-fleet/issues/1169))
+- **[ブラウザペイン]** 早すぎる「準備完了」、中断したナビゲーション後の「到達できない」、読み込み失敗での固まり、ループバック外の通知の重複 ([#1353](https://github.com/k-k1/agent-fleet/issues/1353), [#1377](https://github.com/k-k1/agent-fleet/issues/1377), [#1381](https://github.com/k-k1/agent-fleet/issues/1381), [#1386](https://github.com/k-k1/agent-fleet/issues/1386), [#1406](https://github.com/k-k1/agent-fleet/issues/1406))
+- **[AWS]** 圧縮・計画の更新・質問・編集提案が 1 分を超えると失敗していた ([#1151](https://github.com/k-k1/agent-fleet/issues/1151))
+- **[ソース管理]** 「コミット済み」の印とサブモジュールの一覧が読めていなかった ([#1183](https://github.com/k-k1/agent-fleet/issues/1183))
+- **[ミラー]** ピアメッセージが自分の吹き出しにまとまる、マーカーのピルが隣のペインに塗る、スキルピッカーのタップ・閉じ方・ダークモードの見づらさ ([#1369](https://github.com/k-k1/agent-fleet/issues/1369), [#1286](https://github.com/k-k1/agent-fleet/issues/1286), [#1217](https://github.com/k-k1/agent-fleet/issues/1217), [#1220](https://github.com/k-k1/agent-fleet/issues/1220), [#1226](https://github.com/k-k1/agent-fleet/issues/1226))
+- **[差分]** 最後の行の後の番号付き空行 ([#1160](https://github.com/k-k1/agent-fleet/issues/1160))
+- **[ecs-ec2]** 起動した後に「起動できません」と出ていた ([#1271](https://github.com/k-k1/agent-fleet/issues/1271))
+- **[画像生成]** Qwen-Image-Edit のインペイントの再利用が画像全体の編集になっていた ([#955](https://github.com/k-k1/agent-fleet/issues/955))
+- **[lcpp]** サブディレクトリで開けないスキルが出ていた ([#1361](https://github.com/k-k1/agent-fleet/issues/1361))
+- **[内部 git]** `PUBLIC_BASE_URL` にポートがあるとクローン失敗、LFS の GC が使用中のオブジェクトを消しうる、LFS 使用量のずれ、`PUBLIC_BASE_URL` なしでは `/git/` を断る ([#1198](https://github.com/k-k1/agent-fleet/issues/1198), [#1210](https://github.com/k-k1/agent-fleet/issues/1210), [#1211](https://github.com/k-k1/agent-fleet/issues/1211), [#1335](https://github.com/k-k1/agent-fleet/issues/1335), [#1212](https://github.com/k-k1/agent-fleet/issues/1212))
+- **[配備]** `0` で 4 つの周期処理が止まらなかった。ソースからビルドした CP イメージにユーザーガイドがなかった ([#1186](https://github.com/k-k1/agent-fleet/issues/1186), [#1176](https://github.com/k-k1/agent-fleet/issues/1176))
+- **[MCP]** 他メンバーのセッションを止める管理者ツールが動いていなかった。`stop_user_session` に ([#1188](https://github.com/k-k1/agent-fleet/issues/1188))
+- **[ECS]** CP の SSM コマンドとタグの書き込みを自分のスロットのインスタンスに限定 ([#1182](https://github.com/k-k1/agent-fleet/issues/1182), [#1419](https://github.com/k-k1/agent-fleet/issues/1419))
+
 ## [0.25.0](0.25.0.ja.md) — 2026-09-29
 
 **CLI ピン** — Claude Code 2.1.284 / Codex 0.158.0 / OpenCode 1.18.33 / Copilot 1.0.89 / Antigravity 1.2.12 / Cursor 2026.09.28-64d2043 / Muse Code 1.4.0-R4302.1

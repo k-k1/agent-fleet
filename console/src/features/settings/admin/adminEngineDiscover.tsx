@@ -111,7 +111,7 @@ export function EngineDiscoverPanel({
             return (
               <li key={rowKey} className="engines-discover-row">
                 <span className="mono engines-discover-name">{c.name}</span>
-                {c.base_model_suggest && <span className="tag">{c.base_model_suggest}</span>}
+                {c.base_model_suggest && <span className="engines-discover-tag">{c.base_model_suggest}</span>}
                 <button
                   type="button"
                   className="sm"
@@ -120,7 +120,7 @@ export function EngineDiscoverPanel({
                 >
                   {tr(added[rowKey] ? "admin.engines_discover_added" : "admin.engines_discover_add")}
                 </button>
-                {addErr[rowKey] && <p className="form-err">{addErr[rowKey]}</p>}
+                {addErr[rowKey] && <p className="form-err engines-discover-err">{addErr[rowKey]}</p>}
               </li>
             );
           })}

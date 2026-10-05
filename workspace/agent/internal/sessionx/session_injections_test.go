@@ -152,3 +152,21 @@ func TestInjectionSourceWhitelist(t *testing.T) {
 		}
 	}
 }
+
+// claude is typed its image paths backticked (claude.QuoteImagePaths), so its turn records
+// that form; an injected image-bearing prompt must still carry its source badge.
+func TestInjectionTaggingQuotedImagePaths(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const p = "/home/dev/.cache/agent-fleet/pasted/sid/paste-1.png"
+	recordInjection("slot05", "確認して Open the following file(s) with the Read tool: "+p, TurnSourceSchedule)
+	turns := []transcript.Turn{
+		{Role: "user", Text: "確認して Open the following file(s) with the Read tool: `" + p + "`"}, // claude
+		{Role: "user", Text: "確認して Open the following file(s) with the Read tool: " + p},        // other kinds, older turns
+	}
+	tagInjectedTurns("slot05", turns)
+	for i, tr := range turns {
+		if tr.Source != TurnSourceSchedule {
+			t.Errorf("turn %d: Source = %q, want %q", i, tr.Source, TurnSourceSchedule)
+		}
+	}
+}

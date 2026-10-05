@@ -92,3 +92,40 @@ restarts) all reduce to one of **identity (1 bit), detection (a one-shot edge in
   receiving end are unchanged, and the decision that "the advertised set is the scope boundary", so
   that other fleet tools cannot be called by guesswork, is maintained. `--self-report` on its own
   still advertises exactly one tool.
+
+## Addendum (2026-10-03) — an instruction whose prompt never ran
+
+On a Managed session an instruction's prompt can wait in the session's queue behind a running turn, survive a halt,
+and be dropped before it runs (#1257, [0105](0105-stop-continues-into-the-queue.md) addendum 2026-10-03). The row is
+raised before the send, marked `sending`, and the prompt carries the row id (`TurnInput.Instr`, kept in its held
+file), not a message id: a driver may rewrite the id it is given (opencode does). The send's outcome clears
+`sending`, or withdraws the row when the driver refused the prompt.
+
+- While the row is `sending` or its prompt waits (`agents.HeldInstrs`), the row is left out of the settle decision:
+  the turn it queued behind ending, or being stopped, is not its completion, and a report delivered for a prompt
+  the driver then refuses could not be taken back.
+- `sending` holds the boot id of the Agent process sending it, so a row left `sending` by an Agent that is gone
+  (another boot id) is told apart from this process's own send however a sweep interleaves with it. Such a row
+  is settled by evidence, not by time. With a held file the driver had accepted the prompt, and the row becomes an ordinary queued row. Without
+  one nothing shows whether the prompt reached the session, so it gets an `unconfirmed` report and is closed as
+  `unconfirmed`: neither a completion nor a not-run is asserted, and the operator is told to look before resending.
+- When the prompt is dropped, the row records why (`dropped`), and the next sweep delivers a `not-run` report with
+  that reason, without waiting for quiet evidence and even when the session's meta is gone. Delivered, the row is
+  closed as `not_run`, which is never a reopen candidate. A retry keeps the row open, as for every report.
+- The operator's `stop_session` cancels the rows first, so the prompts it withdraws are not reported back to it.
+
+## Addendum (2026-10-04) — a Stop another hook blocked
+
+claude and codex run all of a Stop event's hooks in parallel, so ours writes the end-of-turn marker before it can know
+that a user's Stop hook answered `decision:"block"` and the turn goes on (#1600; measured on claude 2.1.288, read in
+codex's source). When the continued turn stays quiet past the transcript's freshness window and the pane is not read
+as busy, two sweeps deliver the report at the blocked stop. Compensation cannot take it back, because an idle marker
+reads as "the turn ended", so the real end is never reported (reproduced in the reconciler test).
+
+- A marker whose stop was blocked is busy evidence (`stop-continued`), read off what the CLI records rather than
+  off the hook. claude: the newest `stop_hook_summary` in the transcript tail is preceded by a Stop
+  `hook_blocking_error`, with no interruption after it. codex (Terminal): the rollout's newest lifecycle event is
+  an unended `task_started`, since codex writes `task_complete` only after the last Stop.
+- When that evidence is missing or unclear, the old behaviour applies. An abort at the transcript tail also ends
+  the continued turn. Managed codex ends on `turn/completed` and the other kinds have no Stop hook, so they are
+  unchanged.

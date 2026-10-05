@@ -3,7 +3,9 @@
 package httpx
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -196,6 +199,35 @@ func LogRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		log.Printf("%s %s %s", r.Method, r.URL.RequestURI(), time.Since(start).Round(time.Millisecond))
+		log.Printf("%s %s %s", r.Method, LogURI(r.URL), time.Since(start).Round(time.Millisecond))
 	})
+}
+
+// LogURI is a request's URI as the access log may show it. A login attempt id (the segment
+// after "attempts") is a capability: whoever holds it can read the attempt's sign-in URL
+// and, for a Google Cloud login, post its code. Any process that can read the Agent's log
+// could otherwise lift it, so it is replaced by its reference (the same SHA-256 prefix the
+// login's own log lines and the CP's audit use). The query of a cloud login route is left
+// out: nothing there is needed in an access log.
+func LogURI(u *url.URL) string {
+	p := u.EscapedPath()
+	segs := strings.Split(p, "/")
+	login := false
+	for i, s := range segs {
+		if s == "aws-login" || s == "gcp-login" {
+			login = true
+		}
+		if s == "attempts" && i+1 < len(segs) && segs[i+1] != "" {
+			sum := sha256.Sum256([]byte(segs[i+1]))
+			segs[i+1] = "ref:" + hex.EncodeToString(sum[:4])
+		}
+	}
+	p = strings.Join(segs, "/")
+	if u.RawQuery != "" {
+		if login {
+			return p + "?…"
+		}
+		return p + "?" + u.RawQuery
+	}
+	return p
 }

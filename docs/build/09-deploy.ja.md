@@ -1,7 +1,7 @@
 ---
 audience: "デプロイ形態やアダプタを足す人"
 source_of_truth: "コード ＋ 各 runbook（`deploy/*/README.md`）"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # 09. デプロイ — 形態・ポート&アダプタ・env 索引
@@ -23,8 +23,12 @@ updated: "2026-09"
 | **compose** | セルフホスト本命。CP コンテナ + Caddy（自動 TLS）。CP は loopback に bind し、コンテナからホストの Docker デーモンを駆動するための **3 制約**（host ネットワーク・`DATA_DIR` を同じ絶対パスでマウント・docker グループ id）を compose 定義が封じ込める | ✅ | [deploy/compose/README.md](../../deploy/compose/README.md) |
 | **aws — ECS** | 静的基盤は CloudFormation、Workspace ごとのリソースは CP 自身の ECS アダプタが作る。Workspace は Fargate 上のタスク（`ecs`・テンプレートの既定）か、プールから取った EC2 スロット上のタスク（`ecs-ec2`） | ✅ 本番デプロイは `ecs-ec2` で稼働。`ecs` は sandbox で deploy → E2E → teardown まで実証 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
 | **aws — ec2-single** | compose を EC2 VM 1 台に載せる | ✅ 「clean host でリリースバンドルから起動」ゲートの実施環境 | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
+| **kubernetes** | CP はクラスタ内の Deployment。Workspace は 0 か 1 レプリカの StatefulSet と PersistentVolumeClaim 2 本で、CP 自身の `kubernetes` アダプタが標準 API で作る。kustomize の base を持つ素のマニフェスト（`deploy/kubernetes/`）と、GKE の配備がクラスタの周りに要るものの Terraform（`deploy/gcp/gke/`） | ◐ できているが実クラスタではまだ動かしていない。GKE Standard での受け入れは #1468 | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 - **ec2-single は VM 上の compose** — ランタイムは `docker` で、別のプロファイルではない。
+- **kubernetes はどのクラスタにも 1 つのプロファイル。** クラウドの API を名指さない。GKE 固有のもの
+  — ディスクの種類・ノードプール・Workload Identity・ロードバランサ — は StorageClass・Terraform・
+  GKE のオーバーレイが選ぶ（[decisions/0106](../decisions/0106-kubernetes-runtime.ja.md) 決定 2）。
 - 認証モードの中身は [07 §7.3](07-security.ja.md) が正。ここでは繰り返さない。
 
 ## 9.2 ポート&アダプタ — 何をどのノブで差し替えるか
@@ -34,12 +38,12 @@ updated: "2026-09"
 
 | ポート（seam） | 切替ノブ | 選択肢 |
 |---------------|----------|--------|
-| `Runtime` / `RuntimeFactory` | `AF_RUNTIME` | 空・`local`・`docker` = Docker Engine（既定）/ `ecs`・`aws` = Fargate 上の ECS / `ecs-ec2` = プールの EC2 スロット上の ECS（別名なし）/ `native`・`wsl` = サンドボックス化したホストプロセス（**`AUTH=dev` 必須**）。**未知値は起動時に fail-fast**（`unknown AF_RUNTIME profile`・`runtime.NewFactory`） |
+| `Runtime` / `RuntimeFactory` | `AF_RUNTIME` | 空・`local`・`docker` = Docker Engine（既定）/ `ecs`・`aws` = Fargate 上の ECS / `ecs-ec2` = プールの EC2 スロット上の ECS（別名なし）/ `native`・`wsl` = サンドボックス化したホストプロセス（**`AUTH=dev` 必須**）/ `kubernetes`・`k8s` = Kubernetes クラスタ上の Workspace ごとの StatefulSet。**未知値は起動時に fail-fast**（`unknown AF_RUNTIME profile`・`runtime.NewFactory`） |
 | `Store` | `AF_DB`（SQLite のパス）/ `AF_DATABASE_URL`、または `AF_DB_HOST` ほか `AF_DB_*` | SQLite（既定・pure Go）/ Postgres |
-| `KeyCustodian` | `AF_MASTER_KEY` の有無 | 設定時 = ローカル custodian / 未設定 = 暗号化なし（開発専用）。KMS / Vault は 📋（[decisions/0005](../decisions/0005-envelope-custodian.ja.md)・#969） |
+| `KeyCustodian` | `AF_MASTER_KEY`、次に `AF_KEY_CUSTODIAN` | 鍵あり = ローカル custodian、または `AF_KEY_CUSTODIAN=kms` + `AF_KMS_KEY_ID` で AWS KMS（master 鍵は引き続き必須）/ 未設定 = 暗号化なし（開発専用）。Vault は 📋（[decisions/0005](../decisions/0005-envelope-custodian.ja.md)） |
 | `AuthGateway` | `AUTH` | `dev`（未設定時の既定）/ `oauth`（compose と AWS のテンプレートが設定する）/ `proxy`（[07 §7.3](07-security.ja.md)） |
 | エンジン | エンジン表: `AF_ENGINES_SSM_PARAM` か `AF_ENGINES_JSON`、加えて `AF_LLM_URL` / `AF_COMFY_URL` からの役割ごとの 1 行 | AWS では CP が要求時に起動するエンジン。どこでも、ネットワーク上で既に動いているサーバを URL で指せる |
-| Ingress / TLS | CP 外 | Caddy（compose）/ Tailscale Funnel（local）/ ALB + ACM（aws） |
+| Ingress / TLS | CP 外 | Caddy（compose）/ Tailscale Funnel（local）/ ALB + ACM（aws）/ クラスタの入口。GKE では Gateway API によるグローバル外部アプリケーションロードバランサ + Certificate Manager（kubernetes） |
 
 ## 9.3 入口（ingress）の選択肢と「入口からしか届かない」不変条件
 
@@ -47,7 +51,20 @@ updated: "2026-09"
 イメージと compose は `CP_ADDR=127.0.0.1:8099` を設定する。コードの既定（`:8080`）と
 `run-dev.sh` の既定（`:8099`）は全インタフェースに bind するので、開発ホストで 1 人使うなら
 よいが、共有するなら誤り。AWS では CP タスクは自分のネットワークインタフェース内で `0.0.0.0` に
-bind し、そのセキュリティグループはロードバランサのものだけを通す。
+bind し、そのセキュリティグループはロードバランサのものだけを通す。`kubernetes` でも CP の Pod は
+全インタフェースに bind し、ロードバランサが届くのはメインの Service。GKE ではそのポートに
+ロードバランサだけを通す NetworkPolicy を置く。
+
+**唯一の例外は Workspace 専用リスナー**（[decisions/0106](../decisions/0106-kubernetes-runtime.ja.md) 決定 8）。
+Workspace が入口経由で CP に届かない構成——`kubernetes` ではクラスタ内のアドレスで CP を呼び戻す——では、
+CP は Workspace 専用の 2 本目のポート `AF_CP_INTERNAL_LISTEN`（`deploy/kubernetes/` では `:8098`）で
+応え、内部 Service（`af-cp-internal`）はそのポートだけを向く。CP はそのアドレスを `AF_CP_INTERNAL_URL`
+として変更しない `AF_CP_BASE_URL` と並べて注入する。載るのは Agent が呼ぶ経路だけで、それぞれが
+メンバーシップ単位の専用 bearer トークンで認証し（`control-plane/workspace_listener.go` の
+`workspaceRoutes`）、それ以外——Console・管理 API・ログイン経路・egress プロキシの `/internal/egress*`——は
+404 を返す。認証ゲートは無く、識別ヘッダと転送ヘッダをすべて捨て、`AF_TRUSTED_PROXY_HOPS` に
+かかわらず接続そのもののアドレスを送信元とする。ブラウザや管理者が使うものに、ほかの道から届く
+ことはない。未設定なら 2 本目のポートは無く、何も変わらない。
 
 入口の仕事は TLS 終端と転送。`AUTH=oauth` では認証も CP 自身が担い、`AUTH=proxy` のときだけ
 入口側が identity ヘッダを注入する。
@@ -57,6 +74,7 @@ bind し、そのセキュリティグループはロードバランサのもの
 | **Caddy** | compose 標準 | `PUBLIC_DOMAIN` の DNS を向けるだけで Let's Encrypt 自動取得・更新（WS も透過）。CP と両方 host-net で loopback に到達。既存プロキシで前段する社は外せる（Caddyfile 代替2）|
 | **Tailscale Funnel** | local 運用の一形態 | Funnel → `127.0.0.1:8099` 直結 |
 | **ALB + ACM** | aws | TLS 終端のみ — 認証は CP に残る。`30-ingress.yaml` の `AuthMode` は `oauth`（既定）か `dev` だけを許し、テンプレートはロードバランサの OIDC を設定しない |
+| **グローバル外部アプリケーションロードバランサ + Certificate Manager** | GKE 上の kubernetes | GKE の Gateway コントローラが作る（クラス `gke-l7-global-external-managed`。従来型は動いている WebSocket でもバックエンドのタイムアウトで切る）。アドレス・証明書・DNS は `deploy/gcp/gke`。`AF_TRUSTED_PROXY_HOPS` は 2（`<client>, <load balancer>` を足す）。アイドルな端末が 30 秒で切られないようバックエンドのタイムアウトを上げる |
 
 - **入口を変えたら `PUBLIC_BASE_URL` を必ず合わせる** — OAuth の redirect の素であり、
   `https` 前置きが Secure cookie の前提。
@@ -74,21 +92,24 @@ bind し、そのセキュリティグループはロードバランサのもの
 | グループ | 変数 | 役割 | 詳細 |
 |----------|------|------|------|
 | CP コア | `CP_ADDR`（`:8080`）・`CONSOLE_DIR`・`AF_RUNTIME`（`local`）・`AF_DB`（`<WS_DATA>/control-plane.db`）・`PUBLIC_BASE_URL`・`AF_PREVIEW_DOMAIN`・`AF_TRUSTED_PROXY_HOPS`（0） | bind 先・配る Console・アダプタの選択・外部 URL・プレビューのサブドメイン・送信元アドレス | 本章 |
+| Workspace 専用リスナー | `AF_CP_INTERNAL_LISTEN`（未設定 = 無し）・`AF_CP_INTERNAL_URL`（未設定 = Workspace は `AF_CP_BASE_URL` を使う） | Workspace 専用のポートと、Workspace がそこへ届く URL（`deploy/kubernetes/` では `:8098` と `http://af-cp-internal.<cp-ns>.svc:8098`）。clone URL と `AF_INTERNAL_GIT_HOST` は公開のままで、Agent が Workspace の git をこの URL へ書き換え（`url.<internal>/git/.insteadOf`）、git の認証情報を両方のホストに保存し、Workspace 専用リスナーで答える LFS の転送先もこの URL を指す。`PUBLIC_BASE_URL` があるときだけ効き、反映は次の Workspace 起動から | §9.3 / [decisions/0106](../decisions/0106-kubernetes-runtime.ja.md) |
 | Workspace 起動テンプレ | `WS_IMAGE`・`WS_DATA`（`/tmp/af-data`）・`WS_MEMORY`（`1g`）・`AF_MAX_WORKSPACE_MEM`・`WS_AGENT_PORT`（7700・Workspace ごとのポートの起点）・`WS_AGENT_HOST`（`127.0.0.1`）・`WS_JVM_DIR`・`WS_ENV`・`WS_SESSION_CMD` | CP が Workspace を起動するときに流し込む共通テンプレ。`WS_ENV` が届くのは `docker` と `native` の Workspace だけで、ECS 系ランタイムは渡さない | [04](04-agent.ja.md) |
 | L1 認証 | `AUTH`（`dev`）・`DEV_USER`（`dev`）・`AUTH_EMAIL_HEADER`（`X-Forwarded-Email`）・`GOOGLE_OAUTH_CLIENT_ID/SECRET`・`AF_GITHUB_LOGIN_CLIENT_ID/SECRET`（または `GITHUB_OAUTH_CLIENT_ID/SECRET`）と `AF_GITHUB_ALLOWED_ORGS` ほか `AF_GITHUB_*`・`AF_OIDC_PROVIDERS` ＋ `AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST,LABEL_JA,LABEL_EN,SCOPES,PROMPT,LINK_CLAIM,ALLOWED_EMAILS,ALLOWED_DOMAINS,ALLOWED_TIDS}`・`AF_COOKIE_SECRET`・`AF_SESSION_TTL`（168h）・`AF_OAUTH_ALLOWED_{EMAILS,DOMAINS,EMAILS_FILE}` | Console ログイン。`AUTH=oauth` は有効な provider が無いと起動しない。OIDC の provider は `TRUST` の宣言が、GitHub は `AF_GITHUB_ALLOWED_ORGS` が必要で、無ければその provider は無効になる。**どの入口も受け入れないサインインは拒否される**: 入口はこれらの許可リスト・テナントの名簿・テナントの auto-join ドメイン・承認済みのテナント IdP。どれも無ければ全ログインが拒否される | [07 §7.3](07-security.ja.md) / [decisions/0043](../decisions/0043-login-idp.ja.md) |
 | プロビジョン / 権限 | `AF_PROVISION`（`auto`）・`SUPER_ADMIN_EMAILS` | 未知の identity をどう受け入れるか / 誰がデプロイ管理者か | [06](06-data.ja.md) |
 | at-rest 暗号 | `AF_MASTER_KEY` | 未設定 = 平文（開発専用）。**紛失 = crypto-shred** — データとは別の金庫に置く | [07 §7.6](07-security.ja.md) |
-| git プロバイダ OAuth | **env は無い** | テナント管理者が Console で登録する。`BITBUCKET_OAUTH_KEY/SECRET` はもう読まれず、`GITHUB_OAUTH_CLIENT_ID` はサインイン専用 | [decisions/0052](../decisions/0052-tenant-git-oauth.ja.md) |
+| git プロバイダ OAuth | `AF_GITHUB_BUILTIN_APPS`（on。`off` で GitHub の組み込みアプリを外す） | テナント管理者が Console で選ぶ・登録する。`BITBUCKET_OAUTH_KEY/SECRET` はもう読まれず、`GITHUB_OAUTH_CLIENT_ID` はサインイン専用 | [decisions/0052](../decisions/0052-tenant-git-oauth.ja.md) |
 | scale-to-zero / showback | `AF_AUTOSTART`（on）・`AF_SESSION_IDLE_TIMEOUT`（1h）・`AF_INTERACTION_IDLE_TIMEOUT`（session の値）・`AF_WS_IDLE_TIMEOUT`（2h）・`AF_PRESENCE_IDLE_TIMEOUT`（30m）・`AF_IDLE_SWEEP_INTERVAL`（1m）・`AF_STOP_GRACE_SEC`（30・上限 120）・`AF_USAGE_SAMPLE_INTERVAL`（5m） | 自動起動・アイドル停止・停止猶予・利用量サンプリング。アイドルのタイムアウト・掃引・usage サンプラーは `0` で無効 | [03](03-control-plane.ja.md) |
 | MCP | `AF_MCP_ENABLED` | `/mcp` がそもそも存在するか。有効になるのは文字列がちょうど `true` のときだけ | [08](08-integrations.ja.md) |
 | egress | `AF_EGRESS_LISTEN`（`:3128`）・`AF_EGRESS_TOKEN`・`AF_EGRESS_{INGEST,POLICY}_URL`・`AF_EGRESS_PROXY_ADDR`・`AF_EGRESS_ENFORCE`・`AF_EGRESS_ALLOWLIST` | forward proxy サブコマンドと CP の集約。`AF_EGRESS_PROXY_ADDR` がプロキシ変数を注入するのは `docker` と `native` の Workspace だけ | [07 §7.8](07-security.ja.md) |
 | Postgres | `AF_DATABASE_URL`、または `AF_DB_{HOST,PORT,USER,PASSWORD,NAME,SSLMODE}`、それと**パスワードの真値が居る場所** `AF_DB_PASSWORD_SECRET_ARN` / `AF_DB_PASSWORD_SECRET_KEY` | Store が Postgres のときだけ。部品から DSN を組む。ARN は、ローテートされたパスワードを**タスクを作り直さずに**拾うためのもの（§9.9） | [06](06-data.ja.md) |
 | ECS アダプタ | `AF_ECS_{CLUSTER,REGION,SUBNETS,SECURITY_GROUP,NAMESPACE_ARN,EFS_ID,EXEC_ROLE,TASK_ROLE,INFRA_ROLE,LOG_GROUP,WORKSPACE_IMAGE,TASK_CPU,TASK_MEMORY,WS_DISK_GB,POSIX_UID,POSIX_GID,START_TIMEOUT_SEC}` | テンプレートが作った静的基盤の座標。`ecs` も `ecs-ec2` も読む | [ecs runbook](../../deploy/aws/ecs/README.md) |
 | EC2 スロットプール | `AF_ECS_EC2_LAUNCH_TEMPLATE`（必須）・`AF_ECS_EC2_SLOT_TYPES`・`AF_ECS_EC2_DEFAULT_SLOT_CLASS`・`AF_ECS_EC2_AMI_ARM64`・`AF_ECS_EC2_MAX_SLOTS`（8）・`AF_ECS_EC2_HOME_GB`（50）・`AF_ECS_EC2_SLOT_SLEEP_SEC`（900）・`AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC`（0 = しない）・`AF_ECS_EC2_HIBERNATE_AFTER_SEC`（0 = 無効）・`AF_ECS_EC2_BACKUP_EVERY_SEC`（0 = 無効）・`AF_ECS_EC2_BACKUP_KEEP`（3）・`AF_ECS_EC2_GOLDEN_AUTOBAKE`（on）、ほかに掃引とタイミングのノブ `AF_ECS_EC2_*_SEC` | `ecs-ec2` 専用: スロットの型と上限・home の大きさ・§9.5 のアイドル段 | [ecs runbook](../../deploy/aws/ecs/README.md) §Optional: EC2 slot pool / [decisions/0045](../decisions/0045-ec2-persistent-workspace.ja.md) |
+| ワークロードの AWS 身元 | `AF_WS_WORKLOAD_AWS`（オフ） | `1` で ECS のタスクロールをセッションとターミナルに戻し、SDK のインスタンスメタデータ参照の抑止をやめる。ネットワークの防護（`ECS_AWSVPC_BLOCK_IMDS`、IMDS のホップ数 1、`DOCKER-USER` の拒否）は外さないので、docker のワークスペースがホストのインスタンスプロファイルを得ることはない。それには運用者が別に許した資格情報の経路が要る。オフなら Agent は起動するものすべてで `AWS_CONTAINER_CREDENTIALS_*` / `AWS_CONTAINER_AUTHORIZATION_TOKEN*` を外し `AWS_EC2_METADATA_DISABLED=true` を立てる（docker では CP がそれを付けてコンテナを起動する）ので、メンバーのプロファイルを持たないツールはワークロードとして動かずに失敗する。CP に設定し、次のワークスペース起動ですべてのランタイムに届く（docker では動作中のコンテナは Stop → Start まで環境を保つ） | [guide member/10](../../guide/member/10-integrations.ja.md) |
 | エンジン | `AF_ENGINES_SSM_PARAM` / `AF_ENGINES_JSON`・`AF_LLM_URL`・`AF_COMFY_URL` / `AF_COMFY_API_KEY`・`AF_ENGINE_API_KEY_<KEY>`・`AF_ENGINE_<KEY>_{CONTROL_INTERVAL_SEC,WINDOW_SEC,IDLE_SEC,START_DEADLINE_SEC,FAIL_COOLDOWN_SEC}`・`AF_ENGINE_ECS_CLUSTER`・`AF_ENGINE_WAKE_TIMEOUT`（900 秒）・`AF_ENGINE_PLAIN_HOLD`・`AF_REMOTE_ENGINE_{URL,TOKEN,KEYS}` | エンジン表・エンジンの制御器・冷えたエンジンに対するゲートウェイの保留・別デプロイのエンジンの借用 | [decisions/0071](../decisions/0071-self-hosted-inference-engines.ja.md) / [0076](../decisions/0076-external-image-engine-on-lan.ja.md) / [0077](../decisions/0077-engine-boxes-bought-by-cp.ja.md) / [0079](../decisions/0079-remote-engine-from-another-deployment.ja.md) |
 | 音声 | `AF_VOICEVOX_URL`（`http://127.0.0.1:50021`）・`AF_TTS_ECS_SERVICE` ほか `AF_TTS_ECS_*`・`AF_TTS_MAX_CHARS`（300）・`AF_POLLY_{REGION,ENGINE}` | URL で指す VOICEVOX、または CP がゼロから起こす ECS 上の VOICEVOX。Amazon Polly | [decisions/0070](../decisions/0070-tts-ondemand-engine.ja.md) |
 | コンテナレスアダプタ | `AF_NATIVE_AGENT_BIN`（`PATH` 上の `workspace-agent`）・`AF_NATIVE_ROOTFS`・`AF_NATIVE_BWRAP` | Agent バイナリの所在・bubblewrap サンドボックスを有効にする rootfs | [native runbook](../../deploy/native/README.md) |
-| Workspace 内（CP が注入・**運用者は設定しない**） | `AGENT_TOKEN`・`AF_SECRET_KEY`・`AGENT_STOP_GRACE_SEC`・`AGENT_SESSION_CMD`・`CLAUDE_CONFIG_DIR`・`AF_AGENT_SELF_UPDATE_ALLOWED`・`AF_CP_BASE_URL` と機能ごとのトークン（`AF_DOCS_TOKEN`・`AF_MCP_TOKEN`・`AF_MEMO_TOKEN` …）・`native` ではさらに `AGENT_ADDR`・`AF_TMUX_SOCKET`・`AGENT_DOCS_DIR` | CP↔Agent 認証・DEK・停止猶予・Agent から CP への経路（`manager.workspaceExtraEnv`）。トークンと DEK は `docker` では 0600 の env ファイル、ECS では SSM SecureString のタスクシークレットで渡る | [04](04-agent.ja.md) / [07 §7.5](07-security.ja.md) |
+| Kubernetes アダプタ | `AF_K8S_NAMESPACE`・`AF_K8S_WORKSPACE_IMAGE`・`AF_K8S_STORAGE_CLASS`・`AF_K8S_HOME_GIB`・`AF_K8S_STATE_GIB`・`AF_K8S_IMAGE_PULL_SECRET`・`AF_K8S_NODE_SELECTOR`・`AF_K8S_SERVICE_ACCOUNT`（`default`） | `kubernetes` のみ: Workspace の名前空間・イメージ・StorageClass、claim の既定サイズ、ノードプール、Workspace から CP への道（Workspace 専用リスナーの行・§9.3） | [kubernetes runbook](../../deploy/kubernetes/README.md) / [decisions/0106](../decisions/0106-kubernetes-runtime.ja.md) |
+| Workspace 内（CP が注入・**運用者は設定しない**） | `AGENT_TOKEN`・`AF_SECRET_KEY`・`AGENT_STOP_GRACE_SEC`・`AGENT_SESSION_CMD`・`CLAUDE_CONFIG_DIR`・`AF_AGENT_SELF_UPDATE_ALLOWED`・`AF_CP_BASE_URL` と機能ごとのトークン（`AF_DOCS_TOKEN`・`AF_MCP_TOKEN`・`AF_MEMO_TOKEN` …）・`native` ではさらに `AGENT_ADDR`・`AF_TMUX_SOCKET`・`AGENT_DOCS_DIR`・設定時（`kubernetes`）はさらに `AF_CP_INTERNAL_URL`（要求はこちらを優先し、人が開くリンクは公開 URL のまま） | CP↔Agent 認証・DEK・停止猶予・Agent から CP への経路（`manager.workspaceExtraEnv`）。トークンと DEK は `docker` では 0600 の env ファイル、ECS では SSM SecureString のタスクシークレットで渡る | [04](04-agent.ja.md) / [07 §7.5](07-security.ja.md) |
 
 網羅性の確認方法: **変数名そのものが grep アンカー。** CP の読み値（`envx.Or`・`envx.DurationOr`・
 `runtime.EnvInt`・`os.Getenv`）と例示 env ファイルを突き合わせる。`run-dev.sh` は渡すものを
@@ -169,13 +190,13 @@ runbook の「Stack decomposition」。
 Workspace イメージと Agent は全ターゲットで同一物 — それが分割の要点。能力の一覧は
 [ref/deploy-targets](../../guide/ref/deploy-targets.ja.md) が正で、以下はその下にある基盤の違い。
 
-| 観点 | docker / compose | native | ecs（Fargate） | ecs-ec2 |
-|------|------------------|--------|----------------|---------|
-| scale-to-zero | コンテナの stop / start | プロセスの stop / start | desired 0/1 | desired 0/1、その先は §9.5 のアイドル段 |
-| 隔離 | コンテナ境界（カーネル共有） | bubblewrap サンドボックス・1 人 | ホストを共有しないタスク | 同時には他の誰も使わないインスタンス上のタスク |
-| egress | コンテナのネットワーク、任意で forward proxy（[07 §7.8](07-security.ja.md)） | ホストのもの | セキュリティグループ | セキュリティグループ |
-| home の置き場 | ローカルディレクトリ（速い） | ローカルディレクトリ | EFS: **git のようにメタデータ操作の多い作業は遅い** | EBS。資格情報は EFS |
-| 基盤権限 | Docker ソケットはホスト root 相当（[07 §7.1](07-security.ja.md)） | 利用者自身のアカウント | 最小のタスクロール・インスタンスメタデータ無し | 最小のタスクロール |
+| 観点 | docker / compose | native | ecs（Fargate） | ecs-ec2 | kubernetes |
+|------|------------------|--------|----------------|---------|---|
+| scale-to-zero | コンテナの stop / start | プロセスの stop / start | desired 0/1 | desired 0/1、その先は §9.5 のアイドル段 | replicas 0/1 |
+| 隔離 | コンテナ境界（カーネル共有） | bubblewrap サンドボックス・1 人 | ホストを共有しないタスク | 同時には他の誰も使わないインスタンス上のタスク | `restricted` の Pod Security Standard 下の Pod。ノードのカーネルを他の Workspace と共有 |
+| egress | コンテナのネットワーク、任意で forward proxy（[07 §7.8](07-security.ja.md)） | ホストのもの | セキュリティグループ | セキュリティグループ | NetworkPolicy、その先はクラスタの NAT（GKE では Cloud NAT） |
+| home の置き場 | ローカルディレクトリ（速い） | ローカルディレクトリ | EFS: **git のようにメタデータ操作の多い作業は遅い** | EBS。資格情報は EFS | Workspace ごとのブロックストレージのボリューム（ゾーン単位）。ログインと Claude の状態は 2 本目 |
+| 基盤権限 | Docker ソケットはホスト root 相当（[07 §7.1](07-security.ja.md)） | 利用者自身のアカウント | 最小のタスクロール・インスタンスメタデータ無し | 最小のタスクロール | Workspace の名前空間の Role と読み取り専用の ClusterRole。Workspace にクラウドの身元は無い |
 
 **アイドル判定のロジックは共通**で、「停止」の実体の差は各 Runtime が吸収する。
 

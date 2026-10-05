@@ -756,11 +756,10 @@ func TestBrowserAttachmentTargetCloseAndTTL(t *testing.T) {
 }
 
 func TestBrowserAttachmentViewerUsesWorkspaceWideLeaseLimit(t *testing.T) {
-	previous := workspaceBrowserViewerLeases
-	workspaceBrowserViewerLeases = &browserViewerLeasePool{limit: 1, owners: make(map[string]struct{})}
-	t.Cleanup(func() { workspaceBrowserViewerLeases = previous })
+	leases := &browserViewerLeasePool{limit: 1, owners: make(map[string]struct{})}
 	m1 := fakeAttachmentManager(newFakeBrowserCDP(), 0)
 	m2 := fakeAttachmentManager(newFakeBrowserCDP(), 0)
+	m1.config.ViewerLeases, m2.config.ViewerLeases = leases, leases
 	r1 := createFakeAttachment(t, m1)
 	r2 := createFakeAttachment(t, m2)
 	a1, err := m1.reserveViewer(r1.ID)
@@ -827,6 +826,17 @@ func TestCDPDiscoveryRejectsRedirectAndReservedPort(t *testing.T) {
 	t.Setenv("AF_CP_BASE_URL", "http://127.0.0.1:8443")
 	if err := validateCDPPort(8443); asAttachmentAPIError(err).Code != "bad_cdp_port" {
 		t.Fatalf("Control Plane port error = %v", err)
+	}
+	// The CP's workspace listener (ADR 0106 decision 8) is reserved the same way.
+	if err := validateCDPPort(8098); err != nil {
+		t.Fatalf("port 8098 refused before any internal URL: %v", err)
+	}
+	t.Setenv("AF_CP_INTERNAL_URL", "http://127.0.0.1:8098")
+	if err := validateCDPPort(8098); asAttachmentAPIError(err).Code != "bad_cdp_port" {
+		t.Fatalf("Control Plane workspace listener port error = %v", err)
+	}
+	if err := validateCDPPort(8443); asAttachmentAPIError(err).Code != "bad_cdp_port" {
+		t.Fatalf("Control Plane public port no longer reserved: %v", err)
 	}
 }
 

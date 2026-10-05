@@ -17,6 +17,7 @@ import (
 	"sync"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -246,6 +247,10 @@ func tagInjectedTurns(name string, turns []transcript.Turn) {
 	bySource := make(map[string]string, len(list))
 	for _, e := range list {
 		bySource[e.Text] = e.Source
+		// claude is typed the image-path-quoted form, so that is what its turn records.
+		if q := claude.QuoteImagePaths(e.Text); q != e.Text {
+			bySource[q] = e.Source
+		}
 	}
 	for i := range turns {
 		if turns[i].Role != "user" {
@@ -256,6 +261,13 @@ func tagInjectedTurns(name string, turns []transcript.Turn) {
 		if !hit {
 			if slash := commandSlashForm(text); slash != "" {
 				src, hit = bySource[slash]
+			}
+		}
+		if !hit {
+			// A held operator or scheduled prompt delivered after a restart carries a queue-time
+			// mark the recorded text does not (agents.MarkHeldInstruction).
+			if orig, ok := agents.StripHeldMark(text); ok {
+				src, hit = bySource[strings.TrimSpace(orig)]
 			}
 		}
 		if hit {

@@ -49,6 +49,7 @@ func TestSessionWiringIsLive(t *testing.T) {
 
 		"BrowseRoot":     func(t *testing.T) { sameSessionFunc(t, w.BrowseRoot, browseRoot) },
 		"MaxUploadBytes": func(t *testing.T) { sameSessionFunc(t, w.MaxUploadBytes, maxUploadBytes) },
+		"ReadRoots":      func(t *testing.T) { sameSessionFunc(t, w.ReadRoots, allowedReadRoots) },
 
 		"IsSvnRepo":       func(t *testing.T) { sameSessionFunc(t, w.IsSvnRepo, isSvnRepo) },
 		"RepoJobsRunning": func(t *testing.T) { sameSessionFunc(t, w.RepoJobsRunning, repoJobsRunning) },
@@ -59,6 +60,7 @@ func TestSessionWiringIsLive(t *testing.T) {
 
 		"RemoveTerminalHistory": func(t *testing.T) { sameSessionFunc(t, w.RemoveTerminalHistory, removeTerminalHistory) },
 		"TrashSession":          func(t *testing.T) { sameSessionFunc(t, w.TrashSession, trashSession) },
+		"SessionSpend":          func(t *testing.T) { sameSessionFunc(t, w.SessionSpend, sessionSpend) },
 		"ToolchainShellPrefix":  func(t *testing.T) { sameSessionFunc(t, w.ToolchainShellPrefix, toolchainShellPrefix) },
 
 		"RunOperatorTurn": func(t *testing.T) { sameSessionFunc(t, w.RunOperatorTurn, runOperatorTurn) },

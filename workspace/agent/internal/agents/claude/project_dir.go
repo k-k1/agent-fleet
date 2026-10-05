@@ -28,6 +28,11 @@ func projectKey(cwd string) string {
 	}, cwd)
 }
 
+// ProjectKey is projectKey for callers outside the package. It is a forward mapping only: the
+// import of claude's memory computes the key of every working copy it knows and matches slugs
+// against those, because a slug cannot be turned back into a path.
+func ProjectKey(cwd string) string { return projectKey(cwd) }
+
 // guessProjectPath returns ConfigDir()/projects/<projectKey(cwd)>/<rest…> when that path
 // exists, and "" otherwise (including when cwd is unknown). One Lstat in place of the
 // (1 + number of projects) directory reads filepath.Glob costs — measured at 158 syscalls

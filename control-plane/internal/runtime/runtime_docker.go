@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -337,12 +338,7 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 		defer os.Remove(ef)
 		args = append(args, "--env-file", ef)
 	}
-	if d.sessionCmd != "" {
-		args = append(args, "-e", "AGENT_SESSION_CMD="+d.sessionCmd)
-	}
-	for _, e := range d.extraEnv {
-		args = append(args, "-e", e)
-	}
+	args = append(args, d.envArgs()...)
 	args = append(args, d.image)
 	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("docker run: %v: %s", err, out)
@@ -437,6 +433,29 @@ func (d *dockerRuntime) startHealthWait() time.Duration {
 		}
 	}
 	return dockerStartGrace
+}
+
+// envArgs are the plain `-e` variables of `docker run`, the deployment's and the start's.
+//
+// AWS_EC2_METADATA_DISABLED comes first so an operator's WS_ENV can still override it. A
+// workspace container on a bridge network reaches the host's instance metadata service
+// whenever the host's hop limit allows it, so on an EC2 host with an instance profile every
+// SDK in every session would fall back to that role. The variable makes the SDKs stop
+// asking; the host's MetadataOptions (hop limit 1, ec2-single/cfn.yaml) are what block a
+// tool that ignores it. AF_WS_WORKLOAD_AWS=1 (the CP's opt-in, which arrives here through
+// extraEnv) leaves the default chain alone, as on ECS.
+func (d *dockerRuntime) envArgs() []string {
+	var args []string
+	if !slices.Contains(d.extraEnv, "AF_WS_WORKLOAD_AWS=1") {
+		args = append(args, "-e", "AWS_EC2_METADATA_DISABLED=true")
+	}
+	if d.sessionCmd != "" {
+		args = append(args, "-e", "AGENT_SESSION_CMD="+d.sessionCmd)
+	}
+	for _, e := range d.extraEnv {
+		args = append(args, "-e", e)
+	}
+	return args
 }
 
 // ensureNetwork creates the per-user network if it does not already exist.
@@ -564,7 +583,12 @@ var homeKeep = map[string]bool{
 // CP, on ECS, the same call answers success for a directory that does not exist
 // (home_wipe.go).
 func cleanHomeContext(ctx context.Context, dataDir string) error {
-	home := filepath.Join(dataDir, "home")
+	return cleanHomeDir(ctx, filepath.Join(dataDir, "home"))
+}
+
+// cleanHomeDir removes every top-level entry of home except homeKeep. Shared by the local
+// adapters and the EFS home task (home_task.go), so the keep-list has one definition.
+func cleanHomeDir(ctx context.Context, home string) error {
 	entries, err := os.ReadDir(home)
 	if err != nil {
 		if os.IsNotExist(err) {

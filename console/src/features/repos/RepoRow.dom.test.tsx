@@ -30,7 +30,7 @@ let host: HTMLDivElement;
 
 const WT: Repo = { name: "app@wip-x", path: "/home/dev/repos/app@wip-x", branch: "temp/x", worktree: true, parent: "app" };
 
-async function render(r: Repo, extra: { onGitflowInit?: () => void } = {}): Promise<void> {
+async function render(r: Repo, extra: { onGitflowInit?: () => void; onOpenChanges?: () => void } = {}): Promise<void> {
   await act(async () => {
     root!.render(
       <RepoRow
@@ -137,5 +137,45 @@ describe("RepoRow Initialize Git Flow", () => {
     await render({ ...CLONE, vcs: "svn" }, { onGitflowInit: () => {} });
     await openMenu();
     expect(itemFor("Git Flow を初期化")).toBeUndefined();
+  });
+});
+
+describe("RepoRow svn history entries (#1705)", () => {
+  const CLONE: Repo = { name: "app", path: "/home/dev/repos/app", branch: "main", vcs: "git" };
+  it("offers Show log and local changes on an svn row, and keeps the git entries off it", async () => {
+    await render({ ...CLONE, vcs: "svn" }, { onOpenChanges: () => {} });
+    await openMenu();
+    expect(itemFor("ログを表示")).toBeDefined();
+    expect(itemFor("ローカルの変更")).toBeDefined();
+    expect(itemFor("コミットグラフを開く")).toBeUndefined();
+    expect(itemFor("変更をコミット")).toBeUndefined();
+  });
+
+  it("leaves a git row as it was", async () => {
+    await render(CLONE, { onOpenChanges: () => {} });
+    await openMenu();
+    expect(itemFor("コミットグラフを開く")).toBeDefined();
+    expect(itemFor("変更をコミット")).toBeDefined();
+    expect(itemFor("ログを表示")).toBeUndefined();
+    expect(itemFor("ローカルの変更")).toBeUndefined();
+  });
+});
+
+describe("RepoRow origin ahead/behind chip", () => {
+  // The chip's flex gap is the only spacing between its parts; a part that falls back to
+  // text-with-spaces is spaced by the font instead, which is what made the gaps uneven.
+  const parts = () => [...host.querySelectorAll(".repo-chip.ab > span")].map((s) => s.textContent);
+
+  it("renders each part as its own element with no literal spaces", async () => {
+    await render({ ...WT, ahead: 4, behind: 4 });
+    expect(parts()).toEqual(["↑4", "↓4", "要マージ"]);
+    expect(host.querySelector(".repo-chip.ab")!.childNodes.length).toBe(3);
+  });
+
+  it("shows only the parts that apply", async () => {
+    await render({ ...WT, behind: 2 });
+    expect(parts()).toEqual(["↓2", "FF可"]);
+    await render({ ...WT, ahead: 3 });
+    expect(parts()).toEqual(["↑3"]);
   });
 });

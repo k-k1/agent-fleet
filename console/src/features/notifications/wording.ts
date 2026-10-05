@@ -20,14 +20,18 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "submodule-sync": "noti.kind_submodule_sync",
   "schedule-failed": "noti.kind_schedule_failed",
   "schedule-skipped": "noti.kind_schedule_skipped",
+  "schedule-result": "noti.kind_schedule_result",
   "carried-interaction": "noti.kind_carried_interaction",
   "stop-after-turn": "noti.kind_stop_after_turn",
+  "spend-budget": "noti.kind_spend_budget",
   "handoff-offer": "noti.kind_handoff_offer",
   "handoff-accepted": "noti.kind_handoff_accepted",
   "handoff-expired": "noti.kind_handoff_expired",
   "arch-residue": "noti.kind_arch_residue",
   "start-deadline": "noti.kind_start_deadline",
   "aws-login-required": "noti.kind_aws_login_required",
+  "aws-sso-expiring": "noti.kind_aws_sso_expiring",
+  "gcp-login-required": "noti.kind_gcp_login_required",
   "terminal-notification": "noti.kind_terminal_notification",
 };
 
@@ -55,6 +59,18 @@ export function notificationRowSubtitle(n: NotificationWordingInput): string {
     return text ? `${n.displayName} — ${text}` : n.displayName;
   }
   return n.displayName;
+}
+
+// startDeadlineBody words why the start deadline stopped a launch: the limit, then the last
+// boot phase. The tenant admin's member view (#1384) reads the same record the member's
+// notification carries, so both go through here and cannot word one stop two ways.
+export function startDeadlineBody(limitMinutes: unknown, rawPhase: unknown): string {
+  const minutes = Number(limitMinutes) || 0;
+  const raw = typeof rawPhase === "string" ? rawPhase.trim() : "";
+  const key = raw ? phaseKey(raw) : "wsstart.generic";
+  const phase = key === "wsstart.generic" ? raw : `${t(key)} — ${raw}`;
+  const limit = minutes > 0 ? t("notif.start_deadline.body_limit", { minutes }) : t("notif.start_deadline.body_generic");
+  return phase ? t("notif.start_deadline.body_phase", { limit, phase }) : limit;
 }
 
 // Notification wording is deliberately browser-state free: the center, desktop
@@ -165,6 +181,17 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
       speech: t("notif.stop_after_turn.speech", { name }),
     };
   }
+  if (n.kind === "spend-budget") {
+    // The budget stopped the session (#1054): after its turn, or mid-turn past the hard limit.
+    // The spend is an estimate, so the message says "about", and it names the one way on.
+    const cap = typeof n.payload.capUsd === "number" ? "$" + n.payload.capUsd.toFixed(2) : "";
+    const midTurn = n.payload.midTurn === true;
+    return {
+      title: midTurn ? t("notif.spend_budget.title_mid_turn") : t("notif.spend_budget.title"),
+      body: t("notif.spend_budget.body", { name, cap }),
+      speech: t("notif.spend_budget.speech", { name }),
+    };
+  }
   if (n.kind === "handoff-offer") {
     // A handoff arrived from another member (docs/log/77); the body is the handoff's display name
     // and clicking goes to the shared view.
@@ -193,6 +220,22 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
         : t("notif.schedule_skipped.speech", { name: label });
     return { title, body: reason ? t("notif.schedule.body_reason", { name: label, reason }) : label, speech };
   }
+  if (n.kind === "schedule-result") {
+    // A scheduled run's result, raised because its schedule named the notification center, or
+    // because it failed, or because a chosen chat connection could not take it (#1560). The
+    // body is the answer's opening (a failure carries none), plus the connections it missed.
+    const label = String(n.payload.spec_label || name);
+    const reason = String(n.payload.report_reason || "");
+    const failed = reason !== "" || (n.payload.report_kind !== undefined && n.payload.report_kind !== "answer-ready");
+    const excerpt = typeof n.payload.excerpt === "string" ? n.payload.excerpt : "";
+    const missed = Array.isArray(n.payload.undelivered) ? n.payload.undelivered.map(String).join(", ") : "";
+    const detail = failed ? reason || String(n.payload.report_kind || "") : excerpt;
+    let body = detail ? t("notif.schedule.body_reason", { name: label, reason: detail }) : label;
+    if (missed) body += " " + t("notif.schedule_result.undelivered", { targets: missed });
+    return failed
+      ? { title: t("notif.schedule_result.failed_title"), body, speech: t("notif.schedule_result.failed_speech", { name: label }) }
+      : { title: t("notif.schedule_result.title"), body, speech: t("notif.schedule_result.speech", { name: label }) };
+  }
   if (n.kind === "rate-limit-reached") {
     return {
       title: t("notif.rate_limit_reached.title"),
@@ -211,6 +254,14 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
     // Fixed text only: the payload is written by whoever filed the request, so nothing from it
     // is shown. The profile, account and role are in the toast and the modal, from the Agent.
     return { title: t("notif.aws_login.title"), body: t("notif.aws_login.body"), speech: t("notif.aws_login.speech") };
+  }
+  if (n.kind === "gcp-login-required") {
+    // Fixed text, as for AWS: the profile and project come from the Agent's list, never the payload.
+    return { title: t("notif.gcp_login.title"), body: t("notif.gcp_login.body"), speech: t("notif.gcp_login.speech") };
+  }
+  if (n.kind === "aws-sso-expiring") {
+    // Fixed text for the same reason: the profile, account and role come from the Agent's list.
+    return { title: t("notif.aws_expiring.title"), body: t("notif.aws_expiring.body"), speech: t("notif.aws_expiring.speech") };
   }
   if (n.kind === "terminal-notification") {
     // A program in the session asked its terminal to raise a desktop notification (OSC 9 / 99 /
@@ -242,14 +293,9 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
     // words it, with the raw text kept beside it: for "blocked:" that raw ECS sentence is the
     // actual cause. An unknown phase is shown as is. Clicking opens nothing: the workspace is
     // the subject.
-    const minutes = Number(n.payload.limitMinutes) || 0;
-    const raw = typeof n.payload.phase === "string" ? n.payload.phase.trim() : "";
-    const key = raw ? phaseKey(raw) : "wsstart.generic";
-    const phase = key === "wsstart.generic" ? raw : `${t(key)} — ${raw}`;
-    const limit = minutes > 0 ? t("notif.start_deadline.body_limit", { minutes }) : t("notif.start_deadline.body_generic");
     return {
       title: t("notif.start_deadline.title"),
-      body: phase ? t("notif.start_deadline.body_phase", { limit, phase }) : limit,
+      body: startDeadlineBody(n.payload.limitMinutes, n.payload.phase),
       speech: t("notif.start_deadline.speech"),
     };
   }

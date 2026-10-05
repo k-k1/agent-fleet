@@ -70,8 +70,18 @@ The order is fixed at the moment you open the palette, so a session that changes
 you are reading does not move under your cursor — only its badge follows.
 
 - **↑ ↓ / Enter** — pick a result and run / open it. For sessions, files and changed files, **Ctrl+Enter** (macOS: **⌘Enter**) opens them in another pane.
-- **Tab**, or **Ctrl+P / ⌘P** again — switches the search scope between "Sessions", "Commands", "Changed files", and "Files".
+- **Tab**, or **Ctrl+P / ⌘P** again — switches the search scope between "Sessions", "Commands", "Changed files", "Files" and "Conversations".
 - **Esc** — closes it and returns to where you were working before opening it.
+
+**"Conversations"** searches what was said in every session of this workspace — any agent kind,
+running, stopped and archived. Type a few words (all of them must occur; Japanese works from two
+characters) and each hit shows the session, who said it and when, and the matching text.
+**Enter** opens that session scrolled to the turn. Only the conversation itself is searched, not
+tool output or the agent's thinking. A hit in an archived session opens the archive: restore it there, then open it from the list
+and it opens at the same turn. The first search after an update can take a minute or
+two to cover every session — the palette says "Building the index" until it has.
+A turn older than the part of the conversation the mirror loads lands at the end instead. If the
+search itself fails, the palette says why and offers to retry, rather than reporting no match.
 
 When the terminal has focus and **"Terminal input priority"** is turned on in settings, Ctrl+P is
 passed to the terminal. In that case, open it with the default **Ctrl+K → ;** (macOS: **⌘K → ;**).
@@ -94,8 +104,8 @@ forward while keeping an eye on another.
 **There are two ways to arrange them**, switched from **Appearance** (the paint can) in the top bar,
 or in ⚙ Settings → Display → **main area layout**.
 
-- **Split panes** (default) — arranged side by side, with draggable dividers for size.
-- **Tabbed grid** — each cell switches by tab, so a lot of open items fit without adding cells.
+- **Split panes** — arranged side by side, with draggable dividers for size.
+- **Tabbed grid** (default) — each cell switches by tab, so a lot of open items fit without adding cells.
   Closing the tab you are on brings back **the tab you were on before it**, not the one next to it
   in the strip: open a file from a chat, close it again, and you are back on that chat.
   **Right-clicking a session's tab** (or the **Menu key** / **Shift+F10** while it has focus) opens
@@ -132,7 +142,7 @@ On phones, the left pane is hidden to make the most of the screen.
 - **Show the left pane** — pull it out with **≡ (menu)** at the top left of the screen. It closes automatically when you pick an item. The back gesture opens it again.
 - **Control key row** — below the terminal sits a row of keys that are hard to press on a soft keyboard: **`Esc` `Tab` `←` `↑` `↓` `→` `^C` `⏎`**. You can send these without bringing up the keyboard.
 - **Scrolling back through past output** — **swipe vertically with one finger** on the terminal to go back through past output (drag down for older lines, up for newer). In apps that use the whole terminal, like vim, this becomes that app's own scrolling.
-- **Stepping through the running sessions** — **swipe left** for the next running session and **swipe right** for the previous one, wrapping around at either end. Each switch briefly shows where you landed, as in "2/3 session name". While a working set is selected, the rotation stays inside that set. **A right swipe that starts at the very left edge** still pulls out the left pane, as before — start away from the edge when you mean to go back a session. A left swipe with the left pane open still closes it. Over a text field, the browser pane, or anything that scrolls sideways (a code block, say), that surface keeps the gesture and no switch happens.
+- **Stepping through the running sessions** — **swipe right** for the running session one row below the current one in the left pane, and **swipe left** for the one above, wrapping around at either end. The order is the left pane's, including worktrees nested under the session that started them; shell and SSM sessions are skipped. Each switch briefly shows where you landed, as in "2/3 session name". While a working set is selected, the rotation stays inside that set. **A right swipe that starts at the very left edge** still pulls out the left pane, as before — start away from the edge when you mean to move down a row. A left swipe with the left pane open still closes it. Over a text field, the browser pane, or anything that scrolls sideways (a code block, say), that surface keeps the gesture and no switch happens.
 
 - **Notifications (toasts)** — on a phone they sit just below the bars at the top, never over the composer, and a tap outside dismisses them. Ones with a button, such as **Update** or an AWS login, close only with their ×.
 

@@ -10,13 +10,18 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"strings"
 )
 
 // KeyCustodian wraps/unwraps per-workspace data encryption keys (DEKs) with a
 // per-tenant key-encryption key (KEK). It is the envelope-encryption seam
-// (docs/15 P3-3): the on-prem default is localCustodian; Vault transit / AWS KMS
-// implement the same interface so a tenant's KEK can be disabled for true
-// crypto-shred. keyRef selects the tenant key (localCustodian uses the tenant id).
+// (ADR 0005): the on-prem default is localCustodian, kmsCustodian (custodian_kms.go)
+// is the AWS one, selected by AF_KEY_CUSTODIAN. keyRef selects the tenant key (the
+// tenant id, or "deployment" for deployment-wide values).
+//
+// internal/mcpsrv declares a copy of this interface; mcp_wiring.go's cpDeps.Custodian
+// returns this one as that one, so a method the copy gains that this one lacks is a
+// compile error.
 type KeyCustodian interface {
 	Wrap(ctx context.Context, keyRef string, dek []byte) (string, error)
 	Unwrap(ctx context.Context, keyRef, ciphertext string) ([]byte, error)
@@ -56,6 +61,10 @@ func (c *localCustodian) Wrap(_ context.Context, keyRef string, dek []byte) (str
 }
 
 func (c *localCustodian) Unwrap(_ context.Context, keyRef, ciphertext string) ([]byte, error) {
+	// Without this a deployment switched back from kms reads as a base64 error.
+	if strings.HasPrefix(ciphertext, kmsSealPrefix) {
+		return nil, errors.New("value was sealed by the KMS key custodian; set AF_KEY_CUSTODIAN=kms and AF_KMS_KEY_ID to open it")
+	}
 	raw, err := base64.StdEncoding.DecodeString(ciphertext)
 	if err != nil {
 		return nil, err

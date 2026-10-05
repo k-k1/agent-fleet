@@ -69,7 +69,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.permission_pending":
     "The agent is waiting for a permission decision. Allow or deny it from the permission card (or in the terminal when there is none) before sending — typed text would be swallowed by the menu and allow it.",
   "err.interaction_pending":
-    "The agent is showing an interactive prompt. Answer it from its card before sending.",
+    "The agent is showing an interactive prompt. Answer it from its card (or in the terminal when there is none) before sending.",
   "err.auth_expired":
     "This workspace's Claude login has expired. Re-authenticate from Settings > Agents before sending (sent now, the terminal would take the text but no turn would ever start).",
   "err.codex_releasing":
@@ -99,6 +99,11 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.domain_not_allowed": "That email domain can't be invited to this tenant.",
   "err.email_required": "This tenant restricts invites by domain. Invite by email address.",
   "err.auto_join_conflict": "That auto-join domain already belongs to another tenant.",
+  // A tenant slug or a default-tenant user key would share a directory under the data root.
+  "err.tenant_slug_reserved": "That slug is a name the Control Plane uses for its own files. Choose another slug.",
+  "err.tenant_slug_conflict": "That slug is already the home directory of a default-tenant member. Choose another slug.",
+  "err.user_key_reserved": "This user key is a name the Control Plane uses for its own files, so it cannot be added to the default tenant.",
+  "err.user_key_conflict": "This user key is already a tenant's directory, so it cannot be added to the default tenant. Ask an administrator.",
   "err.unknown_provider": "That sign-in method isn't enabled on this deployment.",
   "err.self_removal": "You can't remove your last membership — it is the way back in. Ask another administrator.",
   "err.bad_share": "That share request is invalid.",
@@ -208,6 +213,10 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.memory_bad_import": "That file can't be imported (pick a file exported from another environment).",
   "err.memory_secret_detected": "The contents to export contain possible secrets.",
   "err.memory_too_large": "The file is too large.",
+  "err.memory_not_found": "That memory does not exist.",
+  "err.memory_conflict": "The memory was changed first. Read it again and retry.",
+  "err.memory_no_project": "This session has no working copy, so it has no project memory.",
+  "err.memory_disabled": "Agent Fleet memory is turned off in Settings > Agents.",
   "err.tenant_idp_link_claim_required":
     "This deployment already has a sign-in method for the same issuer. That issuer gives each app registration a different subject for the same person, so without \"how the same account is recognised\", everybody already using this deployment would be refused at login as a duplicate address.",
 
@@ -294,6 +303,11 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.ingest_job_unknown": "This engine has no such ingest job.",
   "err.ingest_job_live": "That ingest is still running, so its history row cannot be forgotten yet.",
   "err.engine_plan_stale": "The plan on screen is not what taking this model in would do now. Take it in again from the fresh plan.",
+  "err.engine_comfy_url_invalid": "Enter an http:// or https:// URL with a host (no query or fragment).",
+  "err.engine_comfy_url_credentials": "The URL contains a user name or password. Put the bearer in the key field instead.",
+  "err.engine_comfy_managed": "The image engine is managed by this deployment's engine stack, which takes precedence over the panel.",
+  "err.engine_comfy_unsupported": "This Control Plane has nowhere to keep a ComfyUI URL.",
+  "err.engine_comfy_store_failed": "The ComfyUI settings could not be saved or read.",
   "err.hf_token_unsupported": "This deployment's engine stack has nowhere to keep the token — update 60-engines.",
   "err.hf_token_empty": "The token is empty.",
   "err.hf_token_store_failed": "The token could not be saved.",
@@ -329,6 +343,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.imagegen_unknown_provider": "This deployment has no such image engine.",
   "err.home_wipe_unsupported": "Not available on this deployment: its workspace homes are out of the control plane's reach, so nothing was stopped.",
   "err.home_wipe_while_starting": "The workspace is still starting, so nothing was stopped. Try again once it has started.",
+  "err.home_operation_in_progress": "An earlier operation on this workspace's home is still running, so nothing was stopped. Try again in a few minutes.",
   "err.home_backups_unsupported": "This deployment keeps no backups of workspace homes.",
   "err.audit_unavailable": "Nothing was done: the audit log could not record who asked for it. Try again once the database is back.",
   "err.git_repo_create_forbidden": "Your role in this tenant cannot create repositories.",

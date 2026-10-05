@@ -68,7 +68,7 @@ export const errors = {
   "err.permission_pending":
     "エージェントが許可の判断待ちです。許可カード（無いときは端末）から許可・拒否してから送信してください（テキストは許可メニューに飲まれ、そのまま許可になります）。",
   "err.interaction_pending":
-    "エージェントが対話中のプロンプトを表示しています。カードから回答してから送信してください。",
+    "エージェントが対話中のプロンプトを表示しています。カード（無いときは端末）から回答してから送信してください。",
   "err.auth_expired":
     "このワークスペースの Claude のログインが期限切れです。設定 > エージェント から再認証してから送信してください（この状態で送るとターミナルは文字を受け取りますが、ターンは一つも始まりません）。",
   "err.codex_releasing":
@@ -98,6 +98,11 @@ export const errors = {
   "err.domain_not_allowed": "このテナントに招待できるメールアドレスのドメインではありません。",
   "err.email_required": "このテナントはドメインで招待を制限しています。メールアドレスで招待してください。",
   "err.auto_join_conflict": "その自動参加ドメインは既に別のテナントが使っています。",
+  // A tenant slug or a default-tenant user key would share a directory under the data root.
+  "err.tenant_slug_reserved": "そのスラグは Control Plane が自身のファイルに使う名前です。別のスラグを選んでください。",
+  "err.tenant_slug_conflict": "そのスラグは既定テナントのメンバーのホームディレクトリと同じ名前です。別のスラグを選んでください。",
+  "err.user_key_reserved": "このユーザーキーは Control Plane が自身のファイルに使う名前のため、既定テナントに追加できません。",
+  "err.user_key_conflict": "このユーザーキーは既にテナントのディレクトリ名として使われているため、既定テナントに追加できません。管理者に相談してください。",
   "err.unknown_provider": "そのサインイン方法はこのデプロイで有効になっていません。",
   "err.self_removal": "自分の最後のメンバーシップは外せません（戻る道が無くなるため）。他の管理者に依頼してください。",
   "err.bad_share": "共有リクエストが不正です。",
@@ -206,6 +211,10 @@ export const errors = {
   "err.memory_bad_import": "取り込めない形式のファイルです（別環境の書き出しファイルを選んでください）",
   "err.memory_secret_detected": "書き出す内容に秘密情報らしき記述があります",
   "err.memory_too_large": "ファイルが大きすぎます",
+  "err.memory_not_found": "そのメモリはありません",
+  "err.memory_conflict": "メモリが先に更新されています。読み直してからやり直してください",
+  "err.memory_no_project": "このセッションには作業コピーが無いため、プロジェクトのメモリを使えません",
+  "err.memory_disabled": "Agent Fleet のメモリは設定でオフになっています（設定 → エージェント）",
   "err.tenant_idp_link_claim_required":
     "このデプロイには、同じ発行元のサインイン方法がすでにあります。この発行元はアプリ登録ごとに同じ人へ違う subject を割り当てるため、" +
     "「同一アカウントの見分け方」を指定しないと、すでにこのデプロイを使っている人が全員ログインできなくなります（メールアドレス重複として拒否されます）。",
@@ -292,6 +301,11 @@ export const errors = {
   "err.ingest_job_unknown": "その取り込み履歴はこのエンジンにありません",
   "err.ingest_job_live": "その取り込みはまだ走っているので、履歴だけを消すことはできません",
   "err.engine_plan_stale": "画面の取り込み計画は最新ではありません。新しい計画で取り込み直してください",
+  "err.engine_comfy_url_invalid": "ホストを含む http:// または https:// の URL を入力してください（クエリやフラグメントは不可）",
+  "err.engine_comfy_url_credentials": "URL にユーザー名やパスワードが含まれています。Bearer はキーの欄に入れてください",
+  "err.engine_comfy_managed": "画像エンジンはこの配備のエンジンスタックが管理しており、パネルより優先されます",
+  "err.engine_comfy_unsupported": "この Control Plane には ComfyUI の URL を保存する場所がありません",
+  "err.engine_comfy_store_failed": "ComfyUI の設定を保存または読み込みできませんでした",
   "err.hf_token_unsupported": "この配備のエンジンスタックにはトークンの置き場がありません。60-engines を更新してください",
   "err.hf_token_empty": "トークンが空です",
   "err.hf_token_store_failed": "トークンを保存できませんでした",
@@ -326,6 +340,7 @@ export const errors = {
   "err.imagegen_unknown_provider": "その画像エンジンはこの配備にありません。",
   "err.home_wipe_unsupported": "この配備では使えない操作です。ホームが Control Plane から届かない場所にあるため、何も停止せずに断りました。",
   "err.home_wipe_while_starting": "ワークスペースがまだ起動中です。何も停止していません。起動し終わってからもう一度実行してください。",
+  "err.home_operation_in_progress": "このワークスペースの home に対する前の操作がまだ実行中です。何も停止していません。数分後にもう一度実行してください。",
   "err.home_backups_unsupported": "この配備はホームのバックアップを取っていません。",
   "err.audit_unavailable": "何もしませんでした。誰が依頼したかを監査ログに記録できなかったためです。データベースが復旧してから再度お試しください。",
   "err.git_repo_create_forbidden": "このテナントでのあなたの役割では、リポジトリを作成できません。",

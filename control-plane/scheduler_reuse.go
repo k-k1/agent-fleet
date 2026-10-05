@@ -419,12 +419,20 @@ func reuseCreateTitle(sch store.Schedule, pinned bool) string {
 // delivery_unconfirmed — which lands here as an error: status plus a notification,
 // never a bogus "fired".
 func reuseSendBody(sch store.Schedule, slot time.Time) []byte {
-	b, _ := json.Marshal(map[string]any{
-		"prompt":    expandSchedulePrompt(sch, slot),
-		"report_to": scheduleReportTo(sch),
+	body := map[string]any{
+		"prompt":    schedulePrompt(sch, slot),
+		"report_to": scheduleReportToFor(sch),
 		"confirm":   true,
 		"source":    scheduleSource(sch), // mirror badge: scheduled vs manual fire
-	})
+		// The run's identity, so an Agent that drops the prompt before it runs can record
+		// the run as not executed (#1257).
+		"schedule_id":   sch.ID,
+		"schedule_slot": slot.UTC().Format(time.RFC3339),
+	}
+	if d := scheduleDelivery(sch); d != nil {
+		body["schedule_delivery"] = d
+	}
+	b, _ := json.Marshal(body)
 	return b
 }
 
@@ -437,12 +445,17 @@ func buildReuseCreateBody(sch store.Schedule, slot time.Time, title string) []by
 		"title":           title,
 		"kind":            kind,
 		"model":           sch.Model,
-		"initial_prompt":  expandSchedulePrompt(sch, slot),
+		"initial_prompt":  schedulePrompt(sch, slot),
 		"driver":          injectDriver(kind),
-		"report_to":       scheduleReportTo(sch),
+		"report_to":       scheduleReportToFor(sch),
 		"idempotency_key": scheduleIdempotencyKey(sch.ID, slot),
 		"source":          scheduleSource(sch), // mirror badge: scheduled vs manual fire
 		"stop_after_turn": sch.StopAfterRun,    // docs/log/85 — see buildInjectBody
+		"schedule_id":     sch.ID,              // see reuseSendBody
+		"schedule_slot":   slot.UTC().Format(time.RFC3339),
+	}
+	if d := scheduleDelivery(sch); d != nil {
+		body["schedule_delivery"] = d
 	}
 	b, _ := json.Marshal(body)
 	return b

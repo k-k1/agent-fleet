@@ -18,6 +18,12 @@ import {
   type SlashToken,
 } from "../skillPicker.ts";
 
+/** A skill list not tied to a running session. A change of key refetches; "" asks nothing. */
+export interface SkillListSource {
+  key: string;
+  load: () => Promise<{ skills: SessionSkill[] }>;
+}
+
 /**
  * Skill picker (docs/log/50 / ADR0034, v2 cross-agent + §8 cross-skill injection): the completion
  * list of skills/commands callable in the session. Besides native invocation (invoke - "/name", or
@@ -38,9 +44,13 @@ import {
  *
  * Reads composerLocked, so call this after composerLocked has been decided (i.e. after the
  * composer's setup).
+ *
+ * The list is the running session's by default; `source` replaces it for a composer that has
+ * no session yet (the launch modal's first prompt).
  */
 export function useSkillPicker({
-  session,
+  session = "",
+  source,
   agent,
   managed,
   draft,
@@ -49,7 +59,8 @@ export function useSkillPicker({
   inputRef,
   composerLocked,
 }: {
-  session: string;
+  session?: string;
+  source?: SkillListSource;
   agent: AgentDescriptor;
   managed: boolean;
   draft: string;
@@ -109,28 +120,32 @@ export function useSkillPicker({
   const skillInsertText = (s: SessionSkill): string =>
     s.invoke || tr("mirror.skills_use_foreign", { path: s.path ?? "" }) + " ";
 
-  // Fetch on open (reset when the session changes). Fetched every time: having the session create
+  // Fetch on open (reset when the session or source changes). Fetched every time: having the session create
   // a SKILL.md mid-conversation is a normal way to work, so each open pulls a fresh list (the scan
   // is cheap).
+  const listKey = source ? source.key : session;
   useEffect(() => {
     setSkills(null);
     setCliOpen(false);
-  }, [session]);
+  }, [listKey]);
   // Fold the second tier again whenever the list closes, so each open starts with the user's
   // own entries on top.
   useEffect(() => {
     if (!skillsOpen) setCliOpen(false);
   }, [skillsOpen]);
+  // Keyed on listKey alone: a source's load is a fresh closure on every render, and what it
+  // asks for is exactly what its key names.
   useEffect(() => {
-    if (!skillsOpen || !session) return;
+    if (!skillsOpen || !listKey) return;
     let live = true;
-    sessionSkills(session)
+    (source ? source.load() : sessionSkills(session))
       .then((d) => live && setSkills(d.skills || []))
       .catch(() => live && setSkills((s) => s ?? [])); // on failure: keep what was fetched, treat unfetched as empty
     return () => {
       live = false;
     };
-  }, [skillsOpen, session]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skillsOpen, listKey]);
 
   // Close when the draft drifts from the token we hold (cleared on send, history recall and other
   // direct setDraft writes). The head also accepts full-width aliases (／ and ＄ from a Japanese
@@ -255,6 +270,12 @@ export function useSkillPicker({
       if (skillMore > 0 && skillSel === skillItems.length) {
         e.preventDefault();
         unfoldCli();
+        return true;
+      }
+      // Still loading: there is no row to pick yet, and letting a bare Enter through would send
+      // the half-typed "/sco" under the send-on-Enter setting. Ctrl/⌘/Shift+Enter still pass.
+      if (skills === null && e.key === "Enter") {
+        e.preventDefault();
         return true;
       }
     }

@@ -32,7 +32,11 @@ At the very bottom of the roster there is an **"Add member"** form.
 
 1. Enter the email address the member signs in with in the "email" field. Alternatively you
    can enter a key directly in the "or user_key" (internal identifier) field (if you enter an email,
-   the key is derived from it automatically).
+   the key is derived from it automatically). A key entered directly must already be in that
+   derived form — lowercase letters and digits separated by single hyphens, at most 40
+   characters — because it becomes the name of the member's home directory; anything else is
+   refused with a message that suggests the accepted form. Keys the server generated itself, as
+   shown in member rows, are accepted even when they run past 40 characters.
 2. As tenant_admin, you can only add **`member` (regular members)**. The role selector is shown
    only to super_admin. If you want to make someone an administrator, ask a super_admin as
    described below.
@@ -93,7 +97,11 @@ order:
 
 Clean home is not offered on every deployment ([ref/deploy-targets](../ref/deploy-targets.md)).
 Where it is missing, the home is removed by **Destroy workspace** instead, which lists anything it
-could not delete.
+could not delete. On Fargate (`ecs`) Clean home and Destroy run as a task that takes a few
+minutes: the button answers at once, and the outcome is written to the audit log when it is done.
+On the EC2 slot pool (`ecs-ec2`) Destroy runs the same task for what the member keeps on EFS, and
+answers the same way. If the Control Plane restarts meanwhile, the outcome entry is not written;
+see [ref/deploy-targets](../ref/deploy-targets.md) for how to tell how it ended.
 
 Someone you removed stays on the roster marked "removed". That is so steps 2 to 4 remain reachable
 afterwards — they have not vanished.
@@ -110,6 +118,24 @@ pointing at them, and the server refuses for the same reason.
 
 There is no undo. Inviting the same person again starts a brand new member.
 
+## Rotating a member's git token
+
+Each member reaches the tenant's internal git repositories (the "Internal repos" tab) with a token
+their workspace holds for them. If that token may have leaked out of the workspace — pasted into a
+log, copied to another machine — press **Rotate git token** in the "Operations" section of the
+member detail. The current token stops working at once, for anyone holding it, and the member gets
+a new one; nothing else about the member changes.
+
+- **A running workspace** is handed the new token straight away, and the member carries on without
+  noticing. If the message says the workspace did not take it, restart the workspace: until then,
+  clones in it cannot fetch or push.
+- **A stopped workspace** gets the new token at its next start.
+- A removed member can be rotated too. Do it before inviting them back if their old token may be
+  out there: coming back restores the same membership, and with it the same token.
+
+The rotation is recorded in the audit log. To change every member's token at once, the operator
+changes the deployment's master key instead.
+
 ## What the roles mean
 
 Agent Fleet has 3 roles. The ones that mainly concern you (tenant_admin) are the first two below.
@@ -117,8 +143,8 @@ Agent Fleet has 3 roles. The ones that mainly concern you (tenant_admin) are the
 - **member (regular member)** — someone who writes code in their own workspace and runs sessions.
   They cannot enter tenant settings.
 - **tenant_admin (tenant administrator)** — can manage members within this tenant, view resources,
-  force-stop workspaces, set session limits, remove members, clean their home and delete its
-  backups. **They cannot
+  force-stop workspaces, set session limits, rotate a member's git token, remove members, clean
+  their home and delete its backups. **They cannot
   touch other tenants at all.** They cannot create tenants, change tenant-wide limits, grant admin
   rights, or change the login rules. = You.
 - **super_admin** — the deployment-wide administrator. Sees all tenants and can create tenants,

@@ -191,11 +191,14 @@ function contentFromFlat(p: any): PaneContent {
       const galleryFocus = str(p.galleryFocus);
       const gallerySession = str(p.gallerySession);
       const sort = p.sort === "new" || p.sort === "name" ? p.sort : undefined;
+      const tile = p.tile === "s" || p.tile === "m" || p.tile === "l" ? p.tile : undefined;
       return galleryPath !== null && validGalleryPath(galleryPath)
         ? {
             kind: "gallery",
             galleryPath,
             ...(sort ? { sort } : {}),
+            ...(tile ? { tile } : {}),
+            ...(p.flat === true ? { flat: true } : {}),
             ...(galleryFocus && validGalleryPath(galleryFocus) ? { galleryFocus } : {}),
             ...(gallerySession && SESSION_NAME_RE.test(gallerySession) ? { gallerySession } : {}),
           }

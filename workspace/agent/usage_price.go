@@ -2,9 +2,11 @@ package main
 
 // The price table and the estimated API-equivalent cost (docs/log/46 §9-2).
 //
-// Only claude's auxiliary calls return a measured cost (`total_cost_usd`). A session's own
-// consumption is folded from the transcript, so it carries tokens and nothing else, and its
-// money column stayed empty. The ledger does hold in / out / cache_read / cache_create per
+// Only claude's auxiliary calls (`total_cost_usd`) and opencode sessions (each message's
+// `cost`) report a cost of their own. Every other session's consumption is folded from the
+// transcript as tokens and nothing else, so its money column stays empty. opencode's figure is
+// still kept in CostUSD, not in the estimate: it prices every LLM call of a turn, while the fold
+// keeps one input snapshot per turn, so the two legitimately differ. The ledger does hold in / out / cache_read / cache_create per
 // model, so multiplying by the published prices yields an estimate. This file is that
 // multiplication and nothing else.
 //
@@ -74,6 +76,7 @@ const (
 //
 // A raw versioned id (claude-haiku-4-5-20251001) or a provider-prefixed one
 // (anthropic/claude-sonnet-5) is folded by usageNormalizeModel before it reaches this table.
+// model-id-lint:allow-file the price table is keyed by the ids it prices; it picks no model.
 var usagePrices = map[string]usagePrice{
 	// Current generation.
 	// fable 5.1 costs the same as 5 ($10/$50) except for its cache read, $0.25/MTok rather

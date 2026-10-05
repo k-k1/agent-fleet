@@ -1,0 +1,23 @@
+# GKE Standard built by deploy/gcp/gke. Copy this directory per deployment, replace
+# deployment.yaml with Terraform's output and edit cp.env (README, "GKE").
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - deployment.yaml
+
+configMapGenerator:
+  - name: af-cp-env
+    namespace: af-placeholder-cp
+    envs: [cp.env]
+
+images:
+  - name: ghcr.io/k-k1/agent-fleet/control-plane
+    newName: europe-west1-docker.pkg.dev/example-project/agent-fleet/control-plane
+    newTag: VERSION
+
+# Order matters: components/gke patches in placeholders that components/params replaces.
+components:
+  - ../../components/gke
+  - ../../components/params

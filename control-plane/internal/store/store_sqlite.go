@@ -347,7 +347,12 @@ func (s *SQL) EnsureDefaultTenant(ctx context.Context) (Tenant, error) {
 	return s.getTenant(ctx, "default")
 }
 
+// CreateTenant refuses a slug that would share a directory under the data root
+// (checkTenantSlugFree); the error wraps ErrDataRootNameReserved or ErrDataRootNameTaken.
 func (s *SQL) CreateTenant(ctx context.Context, slug, name string) (Tenant, error) {
+	if err := s.checkTenantSlugFree(ctx, slug); err != nil {
+		return Tenant{}, err
+	}
 	id := NewID()
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO tenant(id, slug, name, status, limits, isolation, created_at)
@@ -987,7 +992,31 @@ func (s *SQL) disambiguateUserKey(ctx context.Context, email, key string) (strin
 		return key, nil // same person (or an invite-by-key row being claimed)
 	}
 	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email))))
-	return key + "-" + hex.EncodeToString(sum[:4]), nil
+	return key + disambiguatedKeySep + hex.EncodeToString(sum[:4]), nil
+}
+
+// disambiguatedKeySep and disambiguatedKeyHex are the suffix disambiguateUserKey appends;
+// SplitDisambiguatedUserKey parses the same shape, so change them together.
+const (
+	disambiguatedKeySep = "-"
+	disambiguatedKeyHex = 8
+)
+
+// SplitDisambiguatedUserKey splits a key of disambiguateUserKey's shape,
+// "<key>-<8 lowercase hex>", into its prefix. The admin API uses it to accept a stored key
+// that runs past sanitizeUser's 40 characters; whether the prefix is itself a sanitized
+// key is the caller's check, since sanitizeUser lives outside this package.
+func SplitDisambiguatedUserKey(key string) (prefix string, ok bool) {
+	i := len(key) - disambiguatedKeyHex - len(disambiguatedKeySep)
+	if i < 1 || key[i:i+len(disambiguatedKeySep)] != disambiguatedKeySep {
+		return "", false
+	}
+	for _, c := range key[i+len(disambiguatedKeySep):] {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return "", false
+		}
+	}
+	return key[:i], true
 }
 
 func (s *SQL) GetIdentityByUserKey(ctx context.Context, key string) (Identity, bool, error) {
@@ -1109,6 +1138,35 @@ func (s *SQL) GetMembershipByID(ctx context.Context, membershipID string) (Membe
 	return v, true, nil
 }
 
+func (s *SQL) GitTokenEpoch(ctx context.Context, membershipID string) (int64, bool, error) {
+	var epoch int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT git_token_epoch FROM membership WHERE id=? AND status='active'`, membershipID).Scan(&epoch)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return epoch, true, nil
+}
+
+func (s *SQL) BumpGitTokenEpoch(ctx context.Context, membershipID string) (int64, bool, error) {
+	// One statement, so two concurrent rotations each move the epoch rather than both
+	// writing the same next value.
+	var epoch int64
+	err := s.db.QueryRowContext(ctx,
+		`UPDATE membership SET git_token_epoch = git_token_epoch + 1 WHERE id=? RETURNING git_token_epoch`,
+		membershipID).Scan(&epoch)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return epoch, true, nil
+}
+
 func (s *SQL) IdentityIDForMembership(ctx context.Context, membershipID string) (string, bool, error) {
 	var id string
 	err := s.db.QueryRowContext(ctx,
@@ -1132,7 +1190,19 @@ func (s *SQL) IdentityIDForMembership(ctx context.Context, membershipID string) 
 // precisely the offboarding docs/log/61 §61.10.6 exists to make work. Coming back onto
 // a roster is an explicit act — the invite API reactivates deliberately
 // (adminAPI.addMembership).
+//
+// A NEW default-tenant membership is refused when the identity's user key would share a
+// directory under the data root (checkDefaultMemberKeyFree); an existing row is returned
+// as it is, so a person who already has such a home keeps it.
 func (s *SQL) EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error) {
+	if m, ok, err := s.GetMembership(ctx, identityID, tenantID); err != nil {
+		return Membership{}, err
+	} else if ok {
+		return m, nil
+	}
+	if err := s.checkDefaultMemberKeyFree(ctx, identityID, tenantID); err != nil {
+		return Membership{}, err
+	}
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO membership(id, identity_id, tenant_id, role, status, created_at)
 		 VALUES(?, ?, ?, ?, 'active', ?) ON CONFLICT(identity_id, tenant_id) DO NOTHING`,
@@ -1216,11 +1286,18 @@ func membershipCascade(membershipID string) []struct {
 		{`DELETE FROM user_limit WHERE membership_id=?`, id},
 		{`DELETE FROM engine_access_grant WHERE membership_id=?`, id},
 		{`DELETE FROM pat WHERE membership_id=?`, id},
-		{`DELETE FROM ssm_host WHERE membership_id=?`, id},
 		// sso_session was dropped by 0011 (ssm_profile replaced it). Deleting from a
 		// table that does not exist only fails at run time in SQLite, so list tables
 		// that really exist and nothing else.
+		//
+		// Profiles before hosts: a host write locks its profile and then the host
+		// (lockSSMProfile), so the other order deadlocks with an in-flight host PUT
+		// (measured on Postgres: SQLSTATE 40P01, cascade aborted). In this order a host
+		// write either commits before the profile DELETE takes its lock, and the host
+		// DELETE below sees the host, or waits and then finds its profile gone.
 		{`DELETE FROM ssm_profile WHERE membership_id=?`, id},
+		{`DELETE FROM ssm_host WHERE membership_id=?`, id},
+		{`DELETE FROM gcp_profiles WHERE membership_id=?`, id},
 		{`DELETE FROM schedule_run WHERE membership_id=?`, id},
 		{`DELETE FROM schedule WHERE membership_id=?`, id},
 		{`DELETE FROM memo WHERE membership_id=?`, id},
@@ -1241,6 +1318,7 @@ func membershipCascade(membershipID string) []struct {
 		{`DELETE FROM shared_session_catalog WHERE owner_membership_id=?`, id},
 		{`DELETE FROM session_share_owner_lease WHERE owner_membership_id=?`, id},
 		{`DELETE FROM workspace_stop_intent WHERE owner_membership_id=?`, id},
+		{`DELETE FROM home_operation WHERE membership_id=?`, id},
 		// The parent goes last: with foreign keys on, deleting it before its children
 		// fails.
 		{`DELETE FROM membership WHERE id=?`, id},
@@ -1320,6 +1398,7 @@ func (s *SQL) DeleteTenant(ctx context.Context, tenantID string) error {
 		// A grant written for a membership deleted between the roster check and the insert
 		// has no membership left to cascade from; the tenant id still reaches it.
 		`DELETE FROM engine_access_grant WHERE tenant_id=?`,
+		`DELETE FROM tenant_branch_rules WHERE tenant_id=?`,
 		// The login rules and allowed_cidrs are columns on tenant, so this one
 		// statement takes them with it.
 		`DELETE FROM tenant WHERE id=?`,
@@ -1410,6 +1489,14 @@ func (s *SQL) SetWorkspaceState(ctx context.Context, workspaceID, state string) 
 		return err
 	}
 	defer tx.Rollback()
+	if err = setWorkspaceStateTx(ctx, tx, workspaceID, state); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// setWorkspaceStateTx is SetWorkspaceState inside a caller's transaction.
+func setWorkspaceStateTx(ctx context.Context, tx *sqlTx, workspaceID, state string) (err error) {
 	if err = lockWorkspace(ctx, tx, workspaceID); err != nil {
 		return err
 	}
@@ -1427,10 +1514,15 @@ func (s *SQL) SetWorkspaceState(ctx context.Context, workspaceID, state string) 
 			return err
 		}
 	}
+	if state == "running" {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM workspace_auto_stop WHERE workspace_id=?`, workspaceID); err != nil {
+			return err
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM workspace_stop_intent WHERE workspace_id=?`, workspaceID); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 // RecordWorkspaceActivity merges a monotonic activity watermark and connection
@@ -1558,22 +1650,31 @@ func (s *SQL) DeleteWorkspace(ctx context.Context, workspaceID string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if err = lockWorkspace(ctx, tx, workspaceID); err != nil {
+	if err = deleteWorkspaceTx(ctx, tx, workspaceID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// deleteWorkspaceTx is DeleteWorkspace inside a caller's transaction.
+func deleteWorkspaceTx(ctx context.Context, tx *sqlTx, workspaceID string) error {
+	if err := lockWorkspace(ctx, tx, workspaceID); err != nil {
 		return err
 	}
 	for _, stmt := range []string{
 		`DELETE FROM workspace_stop_intent WHERE workspace_id=?`,
+		`DELETE FROM workspace_auto_stop WHERE workspace_id=?`,
 		`DELETE FROM workspace_activity WHERE workspace_id=?`,
 		`DELETE FROM shared_session_catalog WHERE workspace_id=?`,
 		`DELETE FROM session WHERE workspace_id=?`,
 		`DELETE FROM wrapped_dek WHERE workspace_id=?`,
 		`DELETE FROM workspace WHERE id=?`,
 	} {
-		if _, err = tx.ExecContext(ctx, stmt, workspaceID); err != nil {
+		if _, err := tx.ExecContext(ctx, stmt, workspaceID); err != nil {
 			return fmt.Errorf("%s: %w", stmt, err)
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // AcquireWorkspaceOperationFence holds a Postgres session advisory lock across
@@ -1672,6 +1773,44 @@ func (s *SQL) SetWorkspaceSettings(ctx context.Context, workspaceID, settingsJSO
 func (s *SQL) SetWorkspacePreviewSlug(ctx context.Context, workspaceID, slug string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE workspace SET preview_slug=? WHERE id=?`, slug, workspaceID)
 	return err
+}
+
+// SetWorkspaceAutoStop records why the Control Plane stopped the workspace, replacing the
+// previous record.
+func (s *SQL) SetWorkspaceAutoStop(ctx context.Context, workspaceID string, a WorkspaceAutoStop) error {
+	return setWorkspaceAutoStopTx(ctx, s.db, workspaceID, a)
+}
+
+// setWorkspaceAutoStopTx is SetWorkspaceAutoStop on q, a caller's transaction or the pool.
+func setWorkspaceAutoStopTx(ctx context.Context, q sqlExecQuery, workspaceID string, a WorkspaceAutoStop) error {
+	_, err := q.ExecContext(ctx, `INSERT INTO workspace_auto_stop(workspace_id, kind, phase, limit_minutes, stopped_at)
+		VALUES(?, ?, ?, ?, ?)
+		ON CONFLICT(workspace_id) DO UPDATE SET kind=excluded.kind, phase=excluded.phase,
+		  limit_minutes=excluded.limit_minutes, stopped_at=excluded.stopped_at`,
+		workspaceID, a.Kind, a.Phase, a.LimitMinutes, a.StoppedAt)
+	return err
+}
+
+// ClearWorkspaceAutoStop deletes the automatic-stop record, if any.
+func (s *SQL) ClearWorkspaceAutoStop(ctx context.Context, workspaceID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM workspace_auto_stop WHERE workspace_id=?`, workspaceID)
+	return err
+}
+
+// GetWorkspaceAutoStopByMembership returns the automatic-stop record of the membership's
+// workspace; ok is false when there is none.
+func (s *SQL) GetWorkspaceAutoStopByMembership(ctx context.Context, membershipID string) (WorkspaceAutoStop, bool, error) {
+	var a WorkspaceAutoStop
+	err := s.db.QueryRowContext(ctx, `SELECT a.kind, a.phase, a.limit_minutes, a.stopped_at
+		FROM workspace_auto_stop a JOIN workspace w ON w.id = a.workspace_id
+		WHERE w.membership_id=?`, membershipID).Scan(&a.Kind, &a.Phase, &a.LimitMinutes, &a.StoppedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return a, false, nil
+	}
+	if err != nil {
+		return a, false, err
+	}
+	return a, true, nil
 }
 
 // GetWorkspaceByPreviewSlug resolves a preview request's host label back to the
@@ -2558,10 +2697,60 @@ func (s *SQL) UpdateSSMProfile(ctx context.Context, p SSMProfile) error {
 	return err
 }
 
+// lockSSMProfile takes the profile row's write lock for the rest of tx and reports whether
+// the member owns such a profile. The profile delete and every host write that names a
+// profile go through it, so on Postgres (READ COMMITTED, ten connections) a host saved
+// against a profile being deleted either commits first and is seen by the delete's host
+// query, or waits and then finds the profile gone. Without it the delete's "no hosts" read
+// and the host's "profile exists" read both pass and the host is stranded. SQLite has one
+// connection, so there the transaction alone serializes them.
+func lockSSMProfile(ctx context.Context, q sqlExecQuery, id, membershipID string) (bool, error) {
+	res, err := q.ExecContext(ctx, `UPDATE ssm_profile SET id=id WHERE id=? AND membership_id=?`, id, membershipID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// DeleteSSMProfile refuses with *SSMProfileInUseError while any host references the
+// profile: ssm_host.profile_id has no foreign key, so this is the only thing that keeps a
+// host from being left on a dead profile. Deleting a profile that is not there is a no-op.
 func (s *SQL) DeleteSSMProfile(ctx context.Context, id, membershipID string) error {
-	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM ssm_profile WHERE id=? AND membership_id=?`, id, membershipID)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	found, err := lockSSMProfile(ctx, tx, id, membershipID)
+	if err != nil || !found {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, ssmHostCols+` WHERE profile_id=? ORDER BY alias`, id)
+	if err != nil {
+		return err
+	}
+	var using []SSMHost
+	for rows.Next() {
+		h, err := scanSSMHost(rows)
+		if err != nil {
+			rows.Close()
+			return err
+		}
+		using = append(using, h)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(using) > 0 {
+		return &SSMProfileInUseError{Hosts: using}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM ssm_profile WHERE id=? AND membership_id=?`, id, membershipID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 const ssmHostCols = `SELECT id, membership_id, alias, profile_id, region, instance_id, document_name, created_at FROM ssm_host`
@@ -2598,20 +2787,39 @@ func (s *SQL) GetSSMHost(ctx context.Context, id string) (SSMHost, bool, error) 
 	return h, err == nil, err
 }
 
+// writeSSMHost runs one host write under the lock of the profile it names (lockSSMProfile),
+// and returns ErrSSMProfileNotFound instead when the member has no such profile.
+func (s *SQL) writeSSMHost(ctx context.Context, h SSMHost, q string, args ...any) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	found, err := lockSSMProfile(ctx, tx, h.ProfileID, h.MembershipID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ErrSSMProfileNotFound
+	}
+	if _, err := tx.ExecContext(ctx, q, args...); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *SQL) CreateSSMHost(ctx context.Context, h SSMHost) error {
-	_, err := s.db.ExecContext(ctx,
+	return s.writeSSMHost(ctx, h,
 		`INSERT INTO ssm_host(id, membership_id, alias, profile_id, region, instance_id, document_name, created_at)
 		 VALUES(?,?,?,?,?,?,?,?)`,
 		h.ID, h.MembershipID, h.Alias, h.ProfileID, h.Region, h.InstanceID, h.DocumentName, h.CreatedAt)
-	return err
 }
 
 func (s *SQL) UpdateSSMHost(ctx context.Context, h SSMHost) error {
-	_, err := s.db.ExecContext(ctx,
+	return s.writeSSMHost(ctx, h,
 		`UPDATE ssm_host SET alias=?, profile_id=?, region=?, instance_id=?, document_name=?
 		   WHERE id=? AND membership_id=?`,
 		h.Alias, h.ProfileID, h.Region, h.InstanceID, h.DocumentName, h.ID, h.MembershipID)
-	return err
 }
 
 func (s *SQL) DeleteSSMHost(ctx context.Context, id, membershipID string) error {
@@ -2876,21 +3084,23 @@ const scheduleCols = `SELECT id, membership_id, tenant_id, owner_conv, spec_kind
 	wake_policy, session_mode, reuse_target, agent_kind, model, repo, worktree, new_branch, prompt,
 	overlap_policy, enabled, next_run, last_run, last_status, created_at, updated_at,
 	reuse_session, reuse_started_at, reuse_run_count, rotation, missing_target_policy,
-	manual_fire_pending, report, stop_after_run FROM schedule`
+	manual_fire_pending, report, stop_after_run, held_by_removal, deliver_to, silent FROM schedule`
 
 func scanSchedule(row scanner) (Schedule, error) {
 	var s Schedule
-	var newBranch, enabled, manualFire, report, stopAfterRun int
+	var newBranch, enabled, manualFire, report, stopAfterRun, held, silent int
 	err := row.Scan(&s.ID, &s.MembershipID, &s.TenantID, &s.OwnerConv, &s.SpecKind, &s.Spec, &s.SpecLabel, &s.TZ,
 		&s.WakePolicy, &s.SessionMode, &s.ReuseTarget, &s.AgentKind, &s.Model, &s.Repo, &s.Worktree, &newBranch, &s.Prompt,
 		&s.OverlapPolicy, &enabled, &s.NextRun, &s.LastRun, &s.LastStatus, &s.CreatedAt, &s.UpdatedAt,
 		&s.ReuseSession, &s.ReuseStartedAt, &s.ReuseRunCount, &s.Rotation, &s.MissingTargetPolicy,
-		&manualFire, &report, &stopAfterRun)
+		&manualFire, &report, &stopAfterRun, &held, &s.DeliverTo, &silent)
 	s.NewBranch = newBranch != 0
 	s.Enabled = enabled != 0
 	s.ManualFirePending = manualFire != 0
 	s.Report = report != 0
 	s.StopAfterRun = stopAfterRun != 0
+	s.HeldByRemoval = held != 0
+	s.Silent = silent != 0
 	return s, err
 }
 
@@ -2900,13 +3110,13 @@ func (s *SQL) CreateSchedule(ctx context.Context, sc Schedule) error {
 		   wake_policy, session_mode, reuse_target, agent_kind, model, repo, worktree, new_branch, prompt,
 		   overlap_policy, enabled, next_run, last_run, last_status, created_at, updated_at,
 		   reuse_session, reuse_started_at, reuse_run_count, rotation, missing_target_policy, report,
-		   stop_after_run)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		   stop_after_run, deliver_to, silent)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		sc.ID, sc.MembershipID, sc.TenantID, sc.OwnerConv, sc.SpecKind, sc.Spec, sc.SpecLabel, sc.TZ,
 		sc.WakePolicy, sc.SessionMode, sc.ReuseTarget, sc.AgentKind, sc.Model, sc.Repo, sc.Worktree, b2i(sc.NewBranch), sc.Prompt,
 		sc.OverlapPolicy, b2i(sc.Enabled), sc.NextRun, sc.LastRun, sc.LastStatus, sc.CreatedAt, sc.UpdatedAt,
 		sc.ReuseSession, sc.ReuseStartedAt, sc.ReuseRunCount, sc.Rotation, sc.MissingTargetPolicy, b2i(sc.Report),
-		b2i(sc.StopAfterRun))
+		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent))
 	return err
 }
 
@@ -2962,12 +3172,12 @@ func (s *SQL) UpdateSchedule(ctx context.Context, sc Schedule) error {
 		`UPDATE schedule SET owner_conv=?, spec_kind=?, spec=?, spec_label=?, tz=?, wake_policy=?,
 		   session_mode=?, reuse_target=?, agent_kind=?, model=?, repo=?, worktree=?, new_branch=?, prompt=?,
 		   overlap_policy=?, enabled=?, next_run=?, updated_at=?, rotation=?, missing_target_policy=?, report=?,
-		   stop_after_run=?
+		   stop_after_run=?, deliver_to=?, silent=?, held_by_removal=0
 		 WHERE id=? AND membership_id=?`,
 		sc.OwnerConv, sc.SpecKind, sc.Spec, sc.SpecLabel, sc.TZ, sc.WakePolicy,
 		sc.SessionMode, sc.ReuseTarget, sc.AgentKind, sc.Model, sc.Repo, sc.Worktree, b2i(sc.NewBranch), sc.Prompt,
 		sc.OverlapPolicy, b2i(sc.Enabled), sc.NextRun, sc.UpdatedAt, sc.Rotation, sc.MissingTargetPolicy, b2i(sc.Report),
-		b2i(sc.StopAfterRun), sc.ID, sc.MembershipID)
+		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.ID, sc.MembershipID)
 	return err
 }
 
@@ -2985,7 +3195,7 @@ func (s *SQL) SetScheduleReuse(ctx context.Context, id, reuseSession, reuseStart
 
 func (s *SQL) SetScheduleEnabled(ctx context.Context, id, membershipID string, enabled bool, nextRun, updatedAt string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE schedule SET enabled=?, next_run=?, updated_at=? WHERE id=? AND membership_id=?`,
+		`UPDATE schedule SET enabled=?, next_run=?, updated_at=?, held_by_removal=0 WHERE id=? AND membership_id=?`,
 		b2i(enabled), nextRun, updatedAt, id, membershipID)
 	return err
 }
@@ -2999,9 +3209,45 @@ func (s *SQL) RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, n
 	// Clear manual_fire_pending on every fire: the run-now signal is consumed once the
 	// fire it requested has happened (the scheduler already read it to tag the run).
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE schedule SET last_run=?, last_status=?, next_run=?, enabled=?, updated_at=?, manual_fire_pending=0 WHERE id=?`,
+		`UPDATE schedule SET last_run=?, last_status=?, next_run=?, enabled=?, updated_at=?, manual_fire_pending=0, held_by_removal=0 WHERE id=?`,
 		lastRun, lastStatus, nextRun, b2i(enabled), updatedAt, id)
 	return err
+}
+
+// HoldScheduleForRemoval records a slot that came due while the owner's membership was
+// inactive: the fire is stamped as skipped and the row paused and marked held_by_removal,
+// in one statement that applies only while the membership is still not active AND the row
+// is still the enabled one the scheduler listed at slot (enabled=1, next_run=slot). held=
+// false means nothing was written: the person was re-invited first, or the owner paused,
+// edited or re-ran the row after it was listed — a hold must never be stamped on top of
+// the owner's own change, or the next re-invite would resume what they stopped.
+func (s *SQL) HoldScheduleForRemoval(ctx context.Context, id, slot, lastRun, lastStatus, updatedAt string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE schedule SET last_run=?, last_status=?, next_run='', enabled=0, updated_at=?,
+		   manual_fire_pending=0, held_by_removal=1
+		 WHERE id=? AND enabled=1 AND next_run=?
+		   AND NOT EXISTS (SELECT 1 FROM membership m WHERE m.id=schedule.membership_id AND m.status='active')`,
+		lastRun, lastStatus, updatedAt, id, slot)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// ResumeScheduleHeldByRemoval re-enables a row only while it still carries
+// held_by_removal, so an owner's pause landing between the caller's read and this write
+// wins. resumed=false means there was nothing to resume.
+func (s *SQL) ResumeScheduleHeldByRemoval(ctx context.Context, id, membershipID, nextRun, updatedAt string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE schedule SET enabled=1, next_run=?, updated_at=?, held_by_removal=0
+		 WHERE id=? AND membership_id=? AND held_by_removal=1`,
+		nextRun, updatedAt, id, membershipID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // MarkManualFirePending flags a run-now request: it sets next_run so the ticker fires the
@@ -3010,15 +3256,15 @@ func (s *SQL) RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, n
 // true (run-now on a paused schedule is rejected earlier). membership_id scopes the write.
 func (s *SQL) MarkManualFirePending(ctx context.Context, id, membershipID, nextRun, updatedAt string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE schedule SET enabled=1, next_run=?, manual_fire_pending=1, updated_at=? WHERE id=? AND membership_id=?`,
+		`UPDATE schedule SET enabled=1, next_run=?, manual_fire_pending=1, updated_at=?, held_by_removal=0 WHERE id=? AND membership_id=?`,
 		nextRun, updatedAt, id, membershipID)
 	return err
 }
 
 func (s *SQL) AppendScheduleRun(ctx context.Context, run ScheduleRun, keepN int) error {
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO schedule_run(id, schedule_id, membership_id, fired_at, status, detail, session, trigger_kind) VALUES(?,?,?,?,?,?,?,?)`,
-		run.ID, run.ScheduleID, run.MembershipID, run.FiredAt, run.Status, run.Detail, run.Session, run.Trigger); err != nil {
+		`INSERT INTO schedule_run(id, schedule_id, membership_id, fired_at, status, detail, session, trigger_kind, slot) VALUES(?,?,?,?,?,?,?,?,?)`,
+		run.ID, run.ScheduleID, run.MembershipID, run.FiredAt, run.Status, run.Detail, run.Session, run.Trigger, run.Slot); err != nil {
 		return err
 	}
 	if keepN <= 0 {
@@ -3033,12 +3279,56 @@ func (s *SQL) AppendScheduleRun(ctx context.Context, run ScheduleRun, keepN int)
 	return err
 }
 
+func (s *SQL) MarkScheduleRunNotExecuted(ctx context.Context, scheduleID, membershipID, session, slot, status, detail string) (bool, bool, error) {
+	if slot == "" {
+		return false, false, nil
+	}
+	// The status condition sits in the UPDATE, not in choosing the run: a repeated report
+	// must find the run it already marked and change nothing, never move on to a later run.
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE schedule_run SET status=?, detail=?
+		 WHERE schedule_id=? AND membership_id=? AND session=? AND slot=? AND status LIKE 'fired%'`,
+		status, detail, scheduleID, membershipID, session, slot)
+	if err != nil {
+		return false, false, err
+	}
+	if n, err := res.RowsAffected(); err != nil || n > 0 {
+		return n > 0, n > 0, err
+	}
+	var n int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM schedule_run WHERE schedule_id=? AND membership_id=? AND session=? AND slot=?`,
+		scheduleID, membershipID, session, slot).Scan(&n)
+	return n > 0, false, err
+}
+
+func (s *SQL) MarkScheduleRunSilent(ctx context.Context, scheduleID, membershipID, session, slot string) (bool, bool, error) {
+	if slot == "" {
+		return false, false, nil
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE schedule_run SET status=?
+		 WHERE schedule_id=? AND membership_id=? AND session=? AND slot=? AND status='fired'`,
+		ScheduleStatusFiredSilent, scheduleID, membershipID, session, slot)
+	if err != nil {
+		return false, false, err
+	}
+	if n, err := res.RowsAffected(); err != nil || n > 0 {
+		return n > 0, n > 0, err
+	}
+	var n int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM schedule_run WHERE schedule_id=? AND membership_id=? AND session=? AND slot=?`,
+		scheduleID, membershipID, session, slot).Scan(&n)
+	return n > 0, false, err
+}
+
 func (s *SQL) ListScheduleRuns(ctx context.Context, scheduleID, membershipID string, limit int) ([]ScheduleRun, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, schedule_id, membership_id, fired_at, status, detail, session, trigger_kind FROM schedule_run
+		`SELECT id, schedule_id, membership_id, fired_at, status, detail, session, trigger_kind, slot FROM schedule_run
 		 WHERE schedule_id=? AND membership_id=? ORDER BY fired_at DESC LIMIT ?`,
 		scheduleID, membershipID, limit)
 	if err != nil {
@@ -3048,7 +3338,7 @@ func (s *SQL) ListScheduleRuns(ctx context.Context, scheduleID, membershipID str
 	var out []ScheduleRun
 	for rows.Next() {
 		var r ScheduleRun
-		if err := rows.Scan(&r.ID, &r.ScheduleID, &r.MembershipID, &r.FiredAt, &r.Status, &r.Detail, &r.Session, &r.Trigger); err != nil {
+		if err := rows.Scan(&r.ID, &r.ScheduleID, &r.MembershipID, &r.FiredAt, &r.Status, &r.Detail, &r.Session, &r.Trigger, &r.Slot); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -3261,11 +3551,13 @@ func (s *SQL) DeleteTenantIdP(ctx context.Context, tenantID, id string) error {
 // --- tenant-owned git provider OAuth apps (docs/log/71 + ADR0052) ------------------
 
 const tenantGitOAuthCols = `SELECT id, tenant_id, provider, client_id, secret_enc, key_ref,
+       source, app_type, app_type_by, install_url,
        updated_by, created_at, updated_at FROM tenant_git_oauth`
 
 func scanTenantGitOAuth(sc scanner) (TenantGitOAuth, error) {
 	var g TenantGitOAuth
 	err := sc.Scan(&g.ID, &g.TenantID, &g.Provider, &g.ClientID, &g.SecretEnc, &g.KeyRef,
+		&g.Source, &g.AppType, &g.AppTypeBy, &g.InstallURL,
 		&g.UpdatedBy, &g.CreatedAt, &g.UpdatedAt)
 	return g, err
 }
@@ -3301,13 +3593,24 @@ func (s *SQL) GetTenantGitOAuth(ctx context.Context, tenantID, provider string) 
 func (s *SQL) PutTenantGitOAuth(ctx context.Context, g TenantGitOAuth) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO tenant_git_oauth(id, tenant_id, provider, client_id, secret_enc, key_ref,
+		   source, app_type, app_type_by, install_url,
 		   updated_by, created_at, updated_at)
-		 VALUES(?,?,?,?,?,?,?,?,?)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(tenant_id, provider) DO UPDATE SET
 		   client_id=excluded.client_id, secret_enc=excluded.secret_enc, key_ref=excluded.key_ref,
+		   source=excluded.source, app_type=excluded.app_type, app_type_by=excluded.app_type_by,
+		   install_url=excluded.install_url,
 		   updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
 		g.ID, g.TenantID, g.Provider, g.ClientID, g.SecretEnc, g.KeyRef,
+		g.Source, g.AppType, g.AppTypeBy, g.InstallURL,
 		g.UpdatedBy, g.CreatedAt, g.UpdatedAt)
+	return err
+}
+
+func (s *SQL) SetTenantGitOAuthAppType(ctx context.Context, tenantID, provider, clientID, appType, by string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tenant_git_oauth SET app_type=?, app_type_by=? WHERE tenant_id=? AND provider=? AND client_id=?`,
+		appType, by, tenantID, provider, clientID)
 	return err
 }
 

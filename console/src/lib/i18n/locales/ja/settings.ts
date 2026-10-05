@@ -25,6 +25,9 @@ export const settings = {
   "display.assistant_theme": "アシスタントのテーマ",
   "display.region_theme_note":
     "セッションのチャットとアシスタントのチャットは、アプリ本体とは別のテーマ（ダーク／ライト）で表示できます（「アプリに合わせる」で本体に追従）。背景色も下でそれぞれ指定できます。",
+  "display.per_tenant": "テナントごとに外観を分ける",
+  "display.per_tenant_note":
+    "テーマと背景色をこの端末でテナントごとに覚え、テナントの切り替えに合わせて切り替えます。オフにすると、今見えている外観がすべてのテナントで使われます（保存済みの外観は残ります）。",
   "display.cjk_font": "和文フォント",
   "display.cjk_font_sample": "①②③⑩ ㈱ ㍻ Ⅰ Ⅱ Ⅲ と漢字とかなの並び",
   "display.cjk_font_note":
@@ -121,10 +124,12 @@ export const settings = {
   "backup.import_title": "取り込む",
   "backup.cat_prefs": "個人設定",
   "backup.cat_ssm": "AWS プロファイル/SSM",
+  "backup.cat_gcp": "Google Cloud プロファイル",
   "backup.cat_instructions": "エージェントへの指示",
   "backup.n_keys_one": "{count}項目",
   "backup.n_keys_other": "{count}項目",
   "backup.n_ssm": "プロファイル{profiles}件・ホスト{hosts}件",
+  "backup.n_gcp": "プロファイル{profiles}件",
   "backup.n_bytes_one": "{count}バイト",
   "backup.n_bytes_other": "{count}バイト",
   "backup.needs_ws": "ワークスペース起動中のみ",
@@ -142,6 +147,8 @@ export const settings = {
   "backup.res_prefs": "個人設定: {applied}項目を反映（対象外 {skipped}）",
   "backup.res_ssm": "AWS プロファイル/SSM: プロファイル{profiles}件・ホスト{hosts}件を追加（既存・対象外 {skipped}）",
   "backup.res_ssm_failed": "AWS プロファイル/SSM: {n}件は登録できませんでした",
+  "backup.res_gcp": "Google Cloud プロファイル: {profiles}件を追加（既存・対象外 {skipped}）",
+  "backup.res_gcp_failed": "Google Cloud プロファイル: {n}件は登録できませんでした",
   "backup.res_instructions": "エージェントへの指示: {bytes}バイトを保存",
   "backup.res_instructions_failed": "エージェントへの指示: 保存できませんでした（{msg}）",
   "backup.err_bad_json": "ファイルを読めませんでした（JSON ではありません）",
@@ -158,6 +165,9 @@ export const settings = {
   "agents.stopped_archive_never": "しない",
   "agents.note_stopped_archive":
     "停止したままのセッションが一覧に残る期間です。過ぎるとアーカイブへ移ります。削除はされず、アーカイブからいつでも戻せます。削除ロック中のセッションは一覧に残ります。停止したままの子セッションはそれまで枠を持ち続け、「しない」ではアーカイブか削除をするまで持ち続けます。反映は次の一覧更新からで、短くすると新しい期間を過ぎているセッションはその場でまとめてアーカイブへ移ります。「既定」は配備の設定値で、配備で変えていなければ 7 日です。",
+  "agents.spend_cap_default": "新しいセッションの予算",
+  "agents.spend_cap_none": "なし",
+  "agents.note_spend_cap_default": "起動時に予算を指定しなかったセッション（create_session やスケジュールで起動したものを含む）に付ける予算です。推定の費用（定価での見積もり。請求額ではありません）が予算に達すると、ターンの終了後に停止します。各セッションの予算はメニューの「予算…」で変えられます",
   "agents.peer_messaging": "セッション間メッセージ",
   "agents.note_peer_messaging":
     "セッションが、同じワークスペースの別のセッションへ短いメッセージを送れるようにします。停止中の相手は再開して届き、受け取った側には「利用者の指示ではない」と伝わります。反映は次に起動するセッションから。既定 OFF。",
@@ -167,6 +177,11 @@ export const settings = {
   "agents.spawn_child_limit": "子セッションの同時本数",
   "agents.note_spawn_child_limit":
     "1 つのセッションが同時に持てる子の数です。ワークスペース全体ではなく親 1 つあたりなので、親が増えればその分だけ増えます。子 1 本がエージェント 1 つ分のメモリを使います。1〜10・既定 3。",
+  "agents.session_search": "過去セッションの検索",
+  "agents.note_session_search":
+    "セッションが、このワークスペースの過去のセッション（停止・アーカイブ済みを含む全種別）の会話を全文検索できるようにします（search_sessions）。読み取りのみで、索引に入るのは会話の本文だけです。ツールの出力や思考は入りません。コマンドパレットの「会話」はこの設定に関係なく使えます。オンにした分は次に起動するセッションから使えるようになり、オフは保存した時点で起動中のセッションの検索も断ります。既定 ON。",
+  "agents.agent_memory": "Agent Fleet のメモリ",
+  "agents.note_agent_memory": "セッションが af の memory_* ツールで、全種類のエージェントが共有するメモリを読み書きできるようにします。あるセッションが保存したことは、承認なしで以後のすべての種類のセッションに読まれます（秘密情報らしき記述は拒否されます）。オンにした分は次に起動するセッションから使えるようになり、オフは保存した時点で起動中のセッションの読み書きも断ります。保存済みのメモリは消えず、設定 → エージェントメモリで確かめたり元に戻したりできます。既定 OFF。",
   "agents.image_generation": "画像生成",
   "agents.note_image_generation":
     "セッションがプロンプトから画像を生成できるようにします（generate_image ツール）。接続済み CLI の画像生成を使い、生成のたびにそのプランの利用枠を消費します。反映は次に起動するセッションから。既定 OFF。",
@@ -190,6 +205,7 @@ export const settings = {
   "agents.note_apply": "接続の変更は即時です。動作設定の反映タイミングは、各項目の説明を確認してください。",
   "agents.rtk_unsupported":
     "このワークスペースのイメージはエージェント設定 API（rtk）に未対応です。イメージを再ビルドして「作り直す」と有効になります。",
+  "agents.default_model_none": "選べるモデルがありません",
   "agents.default_model": "既定モデル",
   "agents.default_effort": "既定 effort",
   "agents.start_mode": "開始モード",
@@ -524,6 +540,17 @@ export const settings = {
   "keys.palette.file_searching": "検索中…",
   "keys.palette.open_here": "アクティブなペインで開く",
   "keys.palette.open_split": "新しいペインで開く",
+  "keys.palette.mode_talk": "会話",
+  "keys.palette.placeholder_talk": "過去のセッションの会話を検索…",
+  "keys.palette.talk_hint": "文字を入力して、全セッションの会話を検索（停止・アーカイブ済みを含む）",
+  "keys.palette.talk_empty": "一致する会話はありません",
+  "keys.palette.talk_indexing": "索引を作成中です（{indexed}/{total} セッション）。結果がまだ揃っていないことがあります",
+  "keys.palette.talk_archived": "アーカイブ済みのセッションです。アーカイブから復元してから一覧で開くと、その位置で開きます",
+  "keys.palette.talk_failed": "検索できませんでした（{reason}）",
+  "keys.palette.talk_retry": "再試行",
+  "keys.palette.talk_archived_badge": "アーカイブ",
+  "keys.palette.talk_role_user": "あなた",
+  "keys.palette.talk_role_agent": "エージェント",
   "keys.item.command": "コマンド",
   "keys.item.session": "セッション",
   "keys.item.repo": "リポジトリ",
@@ -598,6 +625,7 @@ export const settings = {
   "set.tab_notifications": "通知",
   "set.tab_git": "Gitホスティング",
   "set.tab_ssm": "AWS プロファイル/SSM",
+  "set.tab_gcp": "Google Cloud",
   "set.tab_internalrepos": "内部リポジトリ",
   "set.tab_backup": "書き出し / 取り込み",
   "set.tab_danger": "危険な操作",

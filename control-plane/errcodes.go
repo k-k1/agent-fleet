@@ -11,6 +11,13 @@ const (
 	// audit log first (store.BeginIrreversible). internal/tenantsrv emits the same literal.
 	errCodeAuditUnavailable = "audit_unavailable"
 
+	// A new default-tenant membership refused because its user key would share a
+	// directory under the data root (store.ErrDataRootNameReserved / ...Taken).
+	// internal/tenantsrv emits the same literals, and tenant_slug_reserved /
+	// tenant_slug_conflict for the tenant side.
+	errCodeUserKeyReserved = "user_key_reserved"
+	errCodeUserKeyConflict = "user_key_conflict"
+
 	// File editor API (docs/log/44 Phase 1). The CP validates the public envelope
 	// before proxying and preserves the Agent's matching stable codes.
 	errCodeFSBadPath            = "bad_path"
@@ -159,6 +166,14 @@ const (
 	errCodeCivitaiTokenStoreFailed = "civitai_token_store_failed"
 	errCodeCivitaiTokenPutFailed   = "civitai_token_put_failed"
 
+	// The LAN ComfyUI's URL and key entered from the admin panel (#957). A managed table row
+	// holding the role is its own code because the remedy is the stack, not the form.
+	errCodeEngineComfyURLInvalid     = "engine_comfy_url_invalid"
+	errCodeEngineComfyURLCredentials = "engine_comfy_url_credentials"
+	errCodeEngineComfyManaged        = "engine_comfy_managed"
+	errCodeEngineComfyUnsupported    = "engine_comfy_unsupported"
+	errCodeEngineComfyStoreFailed    = "engine_comfy_store_failed"
+
 	// A member's Recreate or Clean home on a deployment whose runtime cannot reach the
 	// workspace home (internal/runtime/home_wipe.go). Its own code because the answer is
 	// "not on this deployment": nothing was stopped, pressing again changes nothing, and the
@@ -167,6 +182,10 @@ const (
 	// The same request while a Start of that workspace is still converging in the
 	// background (ecs-ec2). Nothing was stopped; pressing again once it has started works.
 	errCodeHomeWipeWhileStarting = "home_wipe_while_starting"
+	// A start, a Recreate, a Clean home or a Destroy while a task operating on the same
+	// home is still running (ecs, internal/runtime/runtime_ecs_home_task.go). Nothing was
+	// stopped; it is over in minutes.
+	errCodeHomeOperationInProgress = "home_operation_in_progress"
 
 	// Internal-git repository management refused by role. Create needs a role that
 	// may push; delete and rename also need to be the repository's creator or a

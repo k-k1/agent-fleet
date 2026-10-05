@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { TOAST_ICONS, useToast } from "../../ui/ToastProvider.tsx";
@@ -9,6 +10,8 @@ import { useOpenSignal } from "../../core/store/uiOpen.ts";
 import { relTime } from "../../lib/intl.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { notificationKindLabel, notificationRowSubtitle } from "./wording.ts";
+import { useSessionsStore } from "../sessions/store.ts";
+import { useSessionUI } from "../sessions/ui.ts";
 // Relative time for a notification; delegated to the shared implementation (lib/intl).
 const relative = (at: string): string => relTime(at);
 
@@ -89,31 +92,31 @@ export function NotificationCenter() {
     ...logItems.map((l) => ({ src: "log" as const, at: new Date(l.createdAt).getTime(), l })),
   ].sort((a, b) => b.at - a.at);
   return <div className="notification-wrap" ref={ref}>
-    <button className="gear notification-btn" title={tr("noti.notifications")} aria-label={tr("noti.notifications")} aria-expanded={open} onClick={show}>
+    <Button className="gear notification-btn" title={tr("noti.notifications")} aria-label={tr("noti.notifications")} aria-expanded={open} onClick={show}>
       <Icon name="bell" />{unseen > 0 && <span className="notification-badge">{unseen > 9 ? "9+" : unseen}</span>}
-    </button>
+    </Button>
     {open && <section className="notification-panel" role="dialog" aria-label={tr("noti.center")}>
       <header>
         <div className="notification-titles"><strong>{tr("noti.notifications")}</strong><span>{tr("noti.past_7_days")}</span></div>
         <div className="notification-head-actions">
-          <button type="button" className={"notification-mute" + (s.ttsSessionNotify ? " on" : "")}
+          <Button className={"notification-mute" + (s.ttsSessionNotify ? " on" : "")}
             title={s.ttsSessionNotify ? tr("noti.tts_on") : tr("noti.tts_off")}
             aria-label={tr("noti.tts_aria")} aria-pressed={s.ttsSessionNotify}
             onClick={() => setSetting("ttsSessionNotify", !s.ttsSessionNotify)}>
             <Icon name={s.ttsSessionNotify ? "unmute" : "mute"} /><span>{tr("noti.tts_label")}</span>
-          </button>
+          </Button>
           {/* Icon-only: the panel is 380px wide and the voice toggle beside it already
               carries a word. Disabled rather than hidden, so the control does not appear
               and vanish as notifications arrive. */}
-          <button type="button" className="notification-readall" disabled={unseen === 0}
+          <Button className="notification-readall" disabled={unseen === 0}
             title={tr("noti.mark_all_read")} aria-label={tr("noti.mark_all_read")}
             onClick={markAllSeen}>
             <Icon name="check-all" />
-          </button>
+          </Button>
         </div>
       </header>
       {"Notification" in window && Notification.permission === "default" &&
-        <button className="notification-permission" onClick={() => void Notification.requestPermission()}>{tr("noti.allow_desktop")}</button>}
+        <Button className="notification-permission" onClick={() => void Notification.requestPermission()}>{tr("noti.allow_desktop")}</Button>}
       <div className="notification-list">
         {rows.length === 0 ? <p className="notification-empty">{tr("noti.empty")}</p> : rows.map((row) =>
           row.src === "log"
@@ -135,9 +138,15 @@ function Dot({ seen }: { seen: boolean }) {
 
 function FleetRow({ n, onActivate }: { n: FleetNotification; onActivate: (n: FleetNotification, split: boolean) => void }) {
   const tr = useT();
+  // A budget stop's one action (#1054): raise the cap and resume. Offered only while the session
+  // is still stopped by it — once resumed or raised elsewhere, the button would do nothing new.
+  const budgetSession = useSessionsStore((st) =>
+    n.kind === "spend-budget" && n.target.type === "session" ? st.sessions.find((x) => x.name === n.target.id) : undefined);
+  const openBudget = useSessionUI((u) => u.openBudget);
+  const canRaise = !!budgetSession && !budgetSession.alive && !!budgetSession.spendCapHitAt;
   return <div className={"notification-row" + (n.seen ? "" : " unread")}>
     <Dot seen={n.seen} />
-    <button className="notification-item"
+    <Button className="notification-item"
       onClick={(e) => onActivate(n, e.ctrlKey || e.metaKey)}
       // Enter opens in the active pane; Ctrl/⌘+Enter in a new pane. Handled here (not left
       // to the native click) so the modifier is honored consistently across browsers.
@@ -147,10 +156,11 @@ function FleetRow({ n, onActivate }: { n: FleetNotification; onActivate: (n: Fle
       <Icon name={n.kind === "answer-ready" ? "check"
         : n.kind.startsWith("schedule-") ? "watch" // same glyph as the schedule section in the left rail
           : n.kind.startsWith("handoff-") ? "git-branch" // same glyph as the handoff badge in the sharing rail
-            : ["usage-reset", "rate-limit-reached", "rate-limit-resumed"].includes(n.kind) ? "pulse" : "comment-discussion"} />
+            : ["usage-reset", "rate-limit-reached", "rate-limit-resumed", "spend-budget"].includes(n.kind) ? "pulse" : "comment-discussion"} />
       <span><b>{notificationKindLabel(n.kind)}</b><small>{notificationRowSubtitle(n)} · {relative(n.createdAt)}</small></span>
-    </button>
-    <button className="notification-replay" title={tr("noti.replay")} aria-label={tr("noti.replay")} onClick={() => replayNotification(n)}><Icon name="unmute" /></button>
+    </Button>
+    {canRaise && <Button className="notification-action" small onClick={() => budgetSession && openBudget(budgetSession)}>{tr("noti.budget_action")}</Button>}
+    <Button className="notification-replay" title={tr("noti.replay")} aria-label={tr("noti.replay")} onClick={() => replayNotification(n)}><Icon name="unmute" /></Button>
   </div>;
 }
 
@@ -164,6 +174,6 @@ function LogRow({ l }: { l: ToastLogItem }) {
       <Icon name={TOAST_ICONS[l.kind]} />
       <span><b>{l.message}</b><small>{relative(l.createdAt)}</small></span>
     </div>
-    <button className="notification-dismiss" title={tr("noti.dismiss")} aria-label={tr("noti.dismiss")} onClick={() => useToastLog.getState().remove(l.id)}><Icon name="close" /></button>
+    <Button className="notification-dismiss" title={tr("noti.dismiss")} aria-label={tr("noti.dismiss")} onClick={() => useToastLog.getState().remove(l.id)}><Icon name="close" /></Button>
   </div>;
 }

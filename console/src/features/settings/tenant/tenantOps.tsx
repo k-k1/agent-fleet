@@ -325,7 +325,7 @@ export function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
     <div className="admin-stage usage-view">
       <section className="admin-panel">
         <h4>{tr("admin.usage_title")}</h4>
-        <p className="muted" style={{ margin: "0 0 12px" }}>{tr("admin.usage_intro")}</p>
+        <p className="muted usage-intro">{tr("admin.usage_intro")}</p>
         <div className="usage-toolbar">
           <label>
             {tr("admin.from")}

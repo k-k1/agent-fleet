@@ -130,6 +130,17 @@ func RecordPeer(from, to, intent, excerpt string) {
 	})
 }
 
+// RecordPeek appends a read of `to`'s output by `from` (#1061). It stays in the ledger only:
+// toDTOActivity has no "peek" case, so the fleet-graph wire and the Console are unchanged.
+func RecordPeek(from, to string) {
+	if from == "" || to == "" {
+		return
+	}
+	appendLine(&activityMu, activityPath(utcDay(clockNow())), activityLine{
+		Ev: "peek", Ts: stampNow(), From: from, To: to,
+	})
+}
+
 // --- Live-state observation (ADR 0096 decision 3) ---------------------------------------
 
 // stateMu guards lastState AND serialises the state-line append that follows a change, so

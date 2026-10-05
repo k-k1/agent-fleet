@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/branchpr"
 )
 
 // Canonical kind list. These are the persisted Meta.Kind / wire Session.Kind
@@ -214,14 +216,16 @@ type Session struct {
 	State      string `json:"state"`     // claude live state: working | idle | question | ""
 	Alive      bool   `json:"alive"`     // true = live tmux session; false = stopped
 	Resumable  bool   `json:"resumable"` // false = stopped agent session whose working dir is gone (shell/ssm stay true)
-	// BackgroundBusy: state is idle (turn done) but a run_in_background task is still
-	// running under the pane. Lets the Console mark a session that is waiting for input
-	// as "still working in bg".
+	// BackgroundBusy: state is idle (turn done) but work an earlier turn started is still
+	// running — claude: a run_in_background task under the pane; muse: a tool call still in
+	// progress; managed codex: a background terminal. Lets the Console mark a session that is
+	// waiting for input as "still working in bg".
 	BackgroundBusy bool `json:"backgroundBusy"`
 	// BackgroundBusyReason: WHAT is running behind the idle prompt — "process" (a
-	// run_in_background worker), "subagent" (a background Task/Workflow agent, which
-	// spawns no process), "shell" (a Monitor / waiting background shell). Display only:
-	// the badge lights on BackgroundBusy, this only chooses its wording, so an unknown
+	// run_in_background worker, or a muse tool other than bash), "subagent" (a background
+	// Task/Workflow agent, which spawns no process), "shell" (a Monitor / waiting background
+	// shell, a muse bash, a codex background terminal). Display only: the badge lights on
+	// BackgroundBusy, this only chooses its wording, so an unknown
 	// (or dropped) value falls back to the generic "running in background".
 	BackgroundBusyReason string `json:"backgroundBusyReason,omitempty"`
 	// RateLimitResumeAt is set ONLY when State == agents.StateLimited: the time (RFC3339) of
@@ -324,12 +328,27 @@ type Session struct {
 	// block, so the two sides must fold it the same way or the card and the chat would draw
 	// different trends for one session. Display only.
 	TokenSpends []int `json:"tokenSpends,omitempty"`
+	// PR is the newest GitHub pull request whose head is the branch this session works on, with
+	// its state and the CI rollup of its head commit (#1062). Absent for other providers, for a
+	// Workspace without a GitHub connection, for the repository's default branch, and until the
+	// background refresh has answered — the list itself never waits on GitHub (internal/branchpr).
+	PR *branchpr.PR `json:"pr,omitempty"`
+	// Ports are the TCP ports this session's own processes listen on, reachable on
+	// http://127.0.0.1 — what the row offers to open in the browser pane (#1062). Live sessions
+	// only, attributed by the process's AF_SESSION_NAME, so another session's server never
+	// shows here (internal/listenports).
+	Ports []int `json:"ports,omitempty"`
 	// StopAfterTurnAt mirrors Meta.StopAfterTurnAt: the session is armed to stop itself at
 	// the end of the running turn (docs/log/85). The row has to say so, because the arm is
 	// usually set from inside the conversation (the MCP tool) where the user only sees prose
 	// claiming it was set, and because a session that is about to fold itself away must be
 	// cancellable before it does.
 	StopAfterTurnAt string `json:"stopAfterTurnAt,omitempty"`
+	// SpendCapUSD / SpendCapHitAt mirror Meta's spend budget (#1054): the row's "paused:
+	// budget" badge and the budget dialog's starting value. The spend itself is NOT here —
+	// it is a whole-transcript read, kept off this 4 s poll (GET /sessions/{name}/spend).
+	SpendCapUSD   float64 `json:"spendCapUsd,omitempty"`
+	SpendCapHitAt string  `json:"spendCapHitAt,omitempty"`
 	// GeneratedImages / GeneratedImagesPath: how many images generate_image has stored for
 	// this session, and the folder they are in, browse-root relative (ADR 0080 decision 8).
 	// Both absent when there are none, which is what the Console's "Generated images (N)"
@@ -473,6 +492,27 @@ type Meta struct {
 	// (stopArmMaxAge) instead of folding a session away hours later, in the middle of
 	// unrelated work.
 	StopAfterTurnAt string `json:"stopAfterTurnAt,omitempty"`
+	// SpendCapUSD is the session's spend budget in US dollars (#1054); 0 = none. The spend it
+	// is compared with is an estimate (spend_cap.go), so this is a guard against a runaway
+	// session, not a billing limit.
+	SpendCapUSD float64 `json:"spendCapUsd,omitempty"`
+	// SpendCapHitAt is the instant (RFC3339) the spend was first seen at or over the cap. While
+	// it is set, a new prompt re-arms the stop-after-turn instead of releasing it, so every
+	// further turn ends in a stop until the cap is raised above the spend (which clears it).
+	SpendCapHitAt string `json:"spendCapHitAt,omitempty"`
+	// SpendCapArmAt is the StopAfterTurnAt value the budget itself wrote. The arm is the budget's
+	// exactly while the two are equal (SpendCapOwnsArm); a user or schedule arm has its own
+	// instant, so the budget never releases a stop it did not set.
+	SpendCapArmAt string `json:"spendCapArmAt,omitempty"`
+	// SpendCapArmPrev is the arm the budget's earlier one displaced — a user's or schedule's stop
+	// whose instant came after the crossing turn ended and so would have missed it. Lifting the
+	// crossing puts it back, so raising the cap never cancels a stop someone else asked for.
+	SpendCapArmPrev string `json:"spendCapArmPrev,omitempty"`
+	// SpendFrom is the instant (RFC3339Nano) the session's own spend starts from, set on a fork.
+	// CreatedAt keeps whole seconds, and a fork's copied history can end in the same second it
+	// was made: cut at CreatedAt, those copied turns would be charged to the fork. Empty = from
+	// CreatedAt (a fresh session has no copied history to exclude).
+	SpendFrom string `json:"spendFrom,omitempty"`
 	// ForkFrom is the SOURCE conversation id this session was forked from, in the
 	// kind's own id space: claude = the source slot's sid (jsonl), opencode = its
 	// ses_… id, codex = its session uuid. It only affects the FIRST launch — each

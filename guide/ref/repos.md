@@ -47,7 +47,8 @@ disconnecting takes it away too.
 started here, or a clone you made yourself. It works, but nothing is pushed anywhere.
 
 ⁵ SVN checkouts are flat working copies. The branch, worktree and commit-graph views
-are git-shaped and do not apply.
+are git-shaped and do not apply; an svn row has a read-only **Show log** (linear revision
+list and per-revision diff) and **Local changes** (`svn status`) instead.
 
 ⁶ Bitbucket contributes **pull requests only**; its issue tracker is not read.
 

@@ -37,7 +37,8 @@ usage() {
 usage: VERSION=<v> update.sh --profile <p> --region <r>
                              [--stack <af-ecs-ingress>] [--template <cfn/30-ingress.yaml>]
                              [--push] [--images-tar <B.tar.gz>] [--registry <prefix>]
-                             [--comfy-digest <sha256:…>] [--force] [--dry-run]
+                             [--comfy-digest <sha256:…>] [--pool-stack <name>]
+                             [--force] [--dry-run]
   --profile     aws cli profile (required)
   --region      region of the deployment (required)
   --stack       ingress stack name (default af-ecs-ingress) — the one with ImageTag
@@ -49,6 +50,8 @@ usage: VERSION=<v> update.sh --profile <p> --region <r>
                 earlier default to this digest of GHCR's comfyui (sha256:<64 hex>). Same
                 contract as standup.sh --comfy-digest; ignored (with a warning) when no
                 ComfyUI image is copied
+  --pool-stack  the 40-ec2-pool stack (ecs-ec2 only), when it cannot be found from the launch
+                template's export; it is checked to own that launch template
   --force       force a new CP deployment even when CloudFormation reports a change
   --dry-run     print what would happen; touch nothing
 EOF
@@ -56,7 +59,7 @@ EOF
 
 VERSION="${VERSION:?set VERSION=<tag> (the ImageTag both images are pushed under)}"
 PROFILE=""; REGION=""; STACK="af-ecs-ingress"; TEMPLATE=""
-PUSH=0; IMAGES_TAR=""; LOCAL_REGISTRY=""; FORCE=0; DRY=0; COMFY_DIGEST=""
+PUSH=0; IMAGES_TAR=""; LOCAL_REGISTRY=""; FORCE=0; DRY=0; COMFY_DIGEST=""; POOL_STACK_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile)    PROFILE="${2:?--profile needs a value}"; shift ;;
@@ -67,6 +70,7 @@ while [ $# -gt 0 ]; do
     --images-tar) IMAGES_TAR="${2:?--images-tar needs a path}"; shift ;;
     --registry)   LOCAL_REGISTRY="${2:?--registry needs a value}"; shift ;;
     --comfy-digest) COMFY_DIGEST="${2:?--comfy-digest needs a sha256:<64 hex> value}"; shift ;;
+    --pool-stack) POOL_STACK_ARG="${2:?--pool-stack needs a value}"; shift ;;
     --force)      FORCE=1 ;;
     --dry-run)    DRY=1 ;;
     -h|--help)    usage; exit 0 ;;
@@ -93,6 +97,53 @@ AF_STACK_PLATFORM="$(af_stack_param "$STACK" PlatformStackName)"
 : "${AF_STACK_PLATFORM:=af-ecs-platform}"
 TTS_STACK="$(af_tts_stack || true)"
 ENGINES_STACK="$(af_engines_stack || true)"
+# The pool stack is not optional on ecs-ec2: its user data carries security settings
+# (ECS_AWSVPC_BLOCK_IMDS), so an update that cannot find it must stop rather than report
+# success while every future slot keeps the old template. af_pool_stack answers "none" for
+# a failed lookup too, which is right for env.sh's discovery and wrong here, so the reads
+# below do not swallow errors.
+stack_param_strict() {
+  local v
+  v="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$1" \
+    --query "Stacks[0].Parameters[?ParameterKey=='$2'].ParameterValue" --output text)" || return 1
+  case "$v" in None) v="" ;; esac
+  echo "$v"
+}
+pool_fail() {
+  echo "ERROR: $STACK runs WsRuntime=ecs-ec2, but its slot pool stack (40-ec2-pool) $1." >&2
+  echo "       This update must redeploy it: the slot user data blocks IMDS for workspace" >&2
+  echo "       tasks, and a pool left behind launches every new slot without that." >&2
+  echo "       Name it with --pool-stack <stack> (checked against the launch template)." >&2
+  exit 1
+}
+POOL_STACK=""
+WS_RUNTIME="$(stack_param_strict "$STACK" WsRuntime)" \
+  || { echo "ERROR: cannot read WsRuntime of $STACK" >&2; exit 1; }
+if [ "$WS_RUNTIME" = ecs-ec2 ]; then
+  pool_lt="$(stack_param_strict "$STACK" Ec2SlotLaunchTemplate)" \
+    || pool_fail "cannot be found (reading Ec2SlotLaunchTemplate failed)"
+  [ -n "$pool_lt" ] || pool_fail "cannot be found (Ec2SlotLaunchTemplate is empty)"
+  if [ -n "$POOL_STACK_ARG" ]; then
+    owned="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$POOL_STACK_ARG" \
+      --query "Stacks[0].Outputs[?OutputKey=='SlotLaunchTemplateId'].OutputValue" --output text)" \
+      || pool_fail "named with --pool-stack ($POOL_STACK_ARG) cannot be read"
+    [ "$owned" = "$pool_lt" ] \
+      || pool_fail "named with --pool-stack ($POOL_STACK_ARG) owns launch template '$owned', not '$pool_lt'"
+    POOL_STACK="$POOL_STACK_ARG"
+  else
+    exports="$("${AWS[@]}" cloudformation list-exports \
+      --query "Exports[?Value=='$pool_lt'&&ends_with(Name,'-SlotLaunchTemplateId')].Name" \
+      --output text)" || pool_fail "cannot be looked up (cloudformation list-exports failed)"
+    export_name="${exports%%[[:space:]]*}"
+    case "$export_name" in
+      ?*-SlotLaunchTemplateId) POOL_STACK="${export_name%-SlotLaunchTemplateId}" ;;
+      *) pool_fail "cannot be found (no export <stack>-SlotLaunchTemplateId holds $pool_lt)" ;;
+    esac
+  fi
+elif [ -n "$POOL_STACK_ARG" ]; then
+  echo "ERROR: --pool-stack given, but $STACK runs WsRuntime=${WS_RUNTIME:-ecs} (no slot pool)" >&2
+  exit 2
+fi
 ACCOUNT="$("${AWS[@]}" sts get-caller-identity --query Account --output text)"
 ECR_HOST="$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
 
@@ -162,6 +213,7 @@ if [ -n "$ENGINES_STACK" ]; then
   [ "$comfy_on" = true ] && COMFY_PULLED=1
 fi
 echo "==> plan for $STACK (ImageTag=$VERSION):"
+[ -n "$POOL_STACK" ] && echo "      0. $POOL_STACK (40-ec2-pool — before 20-platform: it carries the CP's slot PassRole)"
 echo "      1. $AF_STACK_PLATFORM (20-platform — it owns the ECR repositories)"
 [ "$PUSH" = 1 ] && echo "      2. release-ecr.sh (push af-control-plane / af-workspace :$VERSION)"
 [ -n "$TTS_STACK" ] && echo "      3. $TTS_STACK (50-tts)"
@@ -206,6 +258,32 @@ ERROR: $ENGINES_STACK still imports $sdcpp_export (ADR 0083 retired it from 20-p
        Deploying 20-platform first would try to delete an export still in use and roll back.
 EOF
     exit 1
+  fi
+fi
+
+# --- 1a-0) the EC2 slot pool, when this deployment has one (ecs-ec2) ------------------
+# Kept in step for the same reason as 50-tts: the slot user data carries security settings
+# (ECS_AWSVPC_BLOCK_IMDS keeps workspace tasks off the slot's instance profile), and a pool
+# left on an old template launches every future slot without them. It only adds a launch
+# template version; the CP takes $Latest when it launches a slot, so running slots and
+# their homes are untouched, and slots launched before it keep the old user data until
+# they are replaced (README "Patching slots"). SlotAmiId resolves at this update, which is
+# how slots get patched anyway.
+#
+# BEFORE 20-platform, the reverse of this script's usual order: this stack carries the CP's
+# iam:PassRole for its slot role (CpSlotLaunchManagedPolicy), and the 20-platform template no
+# longer grants any. Deployed second, any stop in between - a failed image check, a refused
+# change set, this deploy rolling back - leaves a CP that cannot grow a slot (AccessDenied
+# on PassRole) until somebody notices. Deployed first, a failure here leaves 20-platform
+# untouched, and a failure after it leaves both grants in place. It needs nothing new from
+# 20-platform: CpTaskRoleArn and the other imports are exports every 20-platform has.
+if [ -n "$POOL_STACK" ]; then
+  echo "==> cloudformation deploy $POOL_STACK (40-ec2-pool, parameters unchanged)"
+  if [ "$DRY" = 1 ]; then
+    echo "DRY: aws cloudformation deploy --stack-name $POOL_STACK --template-file $HERE/cfn/40-ec2-pool.yaml --capabilities CAPABILITY_NAMED_IAM"
+  else
+    af_cfn_deploy "$POOL_STACK" "$HERE/cfn/40-ec2-pool.yaml" --no-fail-on-empty-changeset \
+      --capabilities CAPABILITY_NAMED_IAM
   fi
 fi
 
@@ -535,12 +613,15 @@ fi
 echo "==> cloudformation deploy $STACK (ImageTag=$VERSION)"
 deploy_out=""
 if [ "$DRY" = 1 ]; then
-  echo "DRY: aws cloudformation deploy --stack-name $STACK --template-file $TEMPLATE --parameter-overrides ImageTag=$VERSION"
+  echo "DRY: aws cloudformation deploy --stack-name $STACK --template-file $TEMPLATE --capabilities CAPABILITY_NAMED_IAM --parameter-overrides ImageTag=$VERSION"
 else
   set +e
   # Always go through af_cfn_deploy (env.sh): it switches to S3 once a template passes 51,200
   # bytes. 30-ingress crossed that line once and every release deployment stopped dead.
+  # CAPABILITY_NAMED_IAM: the stack holds a named IAM policy (CpHomeOpsManagedPolicy), and
+  # without it CreateChangeSet fails with InsufficientCapabilitiesException (#1576).
   deploy_out="$(af_cfn_deploy "$STACK" "$TEMPLATE" \
+    --capabilities CAPABILITY_NAMED_IAM \
     --parameter-overrides "ImageTag=$VERSION" \
     --no-fail-on-empty-changeset 2>&1)"
   rc=$?

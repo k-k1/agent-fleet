@@ -159,3 +159,34 @@ func TestLiveSessionStartRefusesANonV7(t *testing.T) {
 		t.Errorf("err = %v, want invalidParams", err)
 	}
 }
+
+// userInput/cancel's `reason` is optional in the schema, but the host refuses a cancel without
+// it at deserialization (-32602 "missing field `reason`", measured on 1.4.2-R4684.1). A cancel
+// for an unknown prompt shows which side of that line a request is on without spending a turn:
+// with a reason it gets as far as userInputNotFound.
+func TestLiveUserInputCancelNeedsAReason(t *testing.T) {
+	bin := liveGate(t)
+	client, _ := startServe(t, bin)
+	if _, err := msp.Handshake(client, "0.1.0", nil); err != nil {
+		t.Fatalf("handshake: %v", err)
+	}
+	sid := msp.NewCommandID()
+	ws := os.Getenv("AF_MUSE_LIVE_WS")
+	var res msp.SessionStartResult
+	if err := client.CallInto(msp.MethodSessionStart, msp.SessionStartParams{CommandID: msp.NewCommandID(), SessionID: &sid, WorkspaceRoot: &ws}, 30*time.Second, &res); err != nil {
+		t.Fatalf("session/start: %v", err)
+	}
+	cancel := func(reason *string) error {
+		_, err := client.Call(msp.MethodUserInputCancel, msp.UserInputCancelParams{
+			CommandID: msp.NewCommandID(), SessionID: sid, UserInputID: msp.NewCommandID(), Reason: reason,
+		}, 30*time.Second)
+		return err
+	}
+	if err := cancel(nil); !msp.HasCode(err, msp.ErrCodeInvalidParams) {
+		t.Logf("a cancel without a reason now gets %v; the driver's always-send is no longer required", err)
+	}
+	reason := "declined by the user"
+	if err := cancel(&reason); err == nil || msp.HasCode(err, msp.ErrCodeInvalidParams) {
+		t.Errorf("a cancel with a reason = %v, want it past validation (userInputNotFound)", err)
+	}
+}

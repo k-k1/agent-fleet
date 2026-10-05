@@ -13,6 +13,8 @@ vi.stubGlobal("localStorage", {
   removeItem: (key: string) => values.delete(key),
 });
 vi.stubGlobal("document", { baseURI: "http://localhost/", hidden: false });
+const toastMock = vi.fn();
+vi.mock("../../ui/toast.ts", () => ({ toast: (...args: unknown[]) => toastMock(...args) }));
 const fetchMock = vi.fn<() => Promise<Response>>();
 vi.stubGlobal("window", { fetch: fetchMock });
 vi.stubGlobal("fetch", fetchMock);
@@ -28,6 +30,15 @@ beforeAll(async () => {
 describe("workspace store applyPush", () => {
   beforeEach(() => {
     useWorkspaceStore.setState({ state: "running", bootPhase: "" });
+  });
+
+  it("adopts browserUnavailable from a push, even mid-transition, and clears it when absent", () => {
+    useWorkspaceStore.setState({ state: "starting…", browserUnavailable: "" });
+    useWorkspaceStore.getState().applyPush({ state: "running", browserUnavailable: "kubernetes" });
+    expect(useWorkspaceStore.getState().browserUnavailable).toBe("kubernetes");
+    useWorkspaceStore.setState({ state: "running" });
+    useWorkspaceStore.getState().applyPush({ state: "running" });
+    expect(useWorkspaceStore.getState().browserUnavailable).toBe("");
   });
 
   it("adopts pushed state in steady state", () => {
@@ -53,9 +64,44 @@ describe("workspace store applyPush", () => {
     expect(useWorkspaceStore.getState().state).toBe("unknown");
   });
 
+  // A Recreate / Clean home that ran in the background (ecs) and failed: the POST was
+  // answered long ago, so the payload is the only carrier. Toasted once when it appears, not
+  // on every frame that still holds it, and dropped when the CP drops it.
+  it("toasts a background home wipe failure once and clears it with the CP", () => {
+    toastMock.mockReset();
+    useWorkspaceStore.setState({ state: "starting", homeWipeFailed: "" });
+    useWorkspaceStore.getState().applyPush({ state: "stopped", homeWipeFailed: "exit 1" });
+    useWorkspaceStore.getState().applyPush({ state: "stopped", homeWipeFailed: "exit 1" });
+    expect(toastMock).toHaveBeenCalledTimes(1);
+    expect(String(toastMock.mock.calls[0][0])).toContain("exit 1");
+    expect(useWorkspaceStore.getState().homeWipeFailed).toBe("exit 1");
+    useWorkspaceStore.getState().applyPush({ state: "running" });
+    expect(useWorkspaceStore.getState().homeWipeFailed).toBe("");
+  });
+
+  // Several CP replicas: only the one that ran the wipe carries the reason, so polls
+  // alternate between it and nothing. That is still one failure, toasted once.
+  it("does not toast the same failure again when replicas alternate", () => {
+    toastMock.mockReset();
+    useWorkspaceStore.setState({ state: "stopped", homeWipeFailed: "" });
+    for (const f of ["exit 9", undefined, "exit 9", undefined, "exit 9"]) {
+      useWorkspaceStore.getState().applyPush({ state: "stopped", homeWipeFailed: f });
+    }
+    expect(toastMock).toHaveBeenCalledTimes(1);
+  });
+
   // stale (a backend update not yet picked up) is decided by the CP alone. Hold whatever is
   // pushed and clear it when it goes — remembering it client-side would leave the
   // restart-needed badge up even after a restart resolved it.
+  // ecs-ec2: the slot under this workspace is reserved for replacement (#1473). The CP says
+  // so on running and stopped workspaces alike, and stops saying it once the move happened.
+  it("adopts and clears the CP's slotReplace flag", () => {
+    useWorkspaceStore.getState().applyPush({ state: "stopped", slotReplace: true });
+    expect(useWorkspaceStore.getState().slotReplace).toBe(true);
+    useWorkspaceStore.getState().applyPush({ state: "running" });
+    expect(useWorkspaceStore.getState().slotReplace).toBe(false);
+  });
+
   it("adopts and clears the CP-detected stale flag", () => {
     useWorkspaceStore.getState().applyPush({ state: "running", stale: true });
     expect(useWorkspaceStore.getState().stale).toBe(true);
@@ -150,9 +196,37 @@ describe("workspace store recreate / cleanHome failures", () => {
       expect(fail).toEqual({ message: "remove home/repos: permission denied", untouched: false });
     });
 
+    // ecs: the wipe is a task still running elsewhere; nothing was stopped.
+    it(`${op}: a home task still running is untouched`, async () => {
+      serve(answer(409, { error: { code: "home_operation_in_progress", message: "still running" } }));
+      const fail = await useWorkspaceStore.getState()[op](true);
+      expect(fail?.untouched).toBe(true);
+    });
+
     it(`${op}: success is null`, async () => {
       serve(answer(200, { name: "af-ws-x", state: "running" }));
       expect(await useWorkspaceStore.getState()[op](true)).toBeNull();
     });
   }
+});
+
+describe("workspace store refresh: browserUnavailable", () => {
+  const answer = (body: unknown) =>
+    ({
+      ok: true,
+      status: 200,
+      statusText: "",
+      headers: { get: () => "application/json" },
+      text: () => Promise.resolve(JSON.stringify(body)),
+    }) as unknown as Response;
+
+  it("reads the runtime that withholds browser features, and \"\" when the CP omits it", async () => {
+    useWorkspaceStore.setState({ state: "stopped", browserUnavailable: "" });
+    fetchMock.mockImplementation(() => Promise.resolve(answer({ state: "stopped", browserUnavailable: "kubernetes" })));
+    await useWorkspaceStore.getState().refresh();
+    expect(useWorkspaceStore.getState().browserUnavailable).toBe("kubernetes");
+    fetchMock.mockImplementation(() => Promise.resolve(answer({ state: "running" })));
+    await useWorkspaceStore.getState().refresh();
+    expect(useWorkspaceStore.getState().browserUnavailable).toBe("");
+  });
 });

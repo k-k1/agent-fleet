@@ -168,7 +168,7 @@ func (m *manager) membershipsFor(ctx context.Context, ident store.Identity) ([]s
 	}
 	if t, contested, ok := m.tenantLogin.autoJoinTenant(ctx, ident.Email); ok && !m.hasAnyMembershipRow(ctx, ident.ID, t.ID) {
 		if _, err := m.store.EnsureMembership(ctx, ident.ID, t.ID, "member"); err != nil {
-			return nil, internalErr(err)
+			return nil, membershipErr(err)
 		}
 		// The person now holds a membership, which is also an entry-gate term — the
 		// cached "no" for this address has to go (docs/log/61 §61.9.7).
@@ -198,7 +198,7 @@ func (m *manager) membershipsFor(ctx context.Context, ident store.Identity) ([]s
 		return nil, internalErr(err)
 	}
 	if _, err := m.store.EnsureMembership(ctx, ident.ID, t.ID, "member"); err != nil {
-		return nil, internalErr(err)
+		return nil, membershipErr(err)
 	}
 	m.tenantLogin.invalidate()
 	ms, err = m.store.ListMemberships(ctx, ident.ID)
@@ -367,13 +367,13 @@ func selectMembership(ms []store.MembershipView, tenantSel string) (store.Member
 // change applies at the next container start.
 func (m *manager) buildResolved(ctx context.Context, ident store.Identity, mv store.MembershipView) (*resolved, *apiError) {
 	if c, ok := m.cachedRTFor(mv.MembershipID); ok {
-		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv}, nil
+		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv, gitEpoch: c.gitEpoch}, nil
 	}
 	bl := m.buildLockFor(mv.MembershipID)
 	bl.Lock()
 	defer bl.Unlock()
 	if c, ok := m.cachedRTFor(mv.MembershipID); ok { // built while we waited
-		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv}, nil
+		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv, gitEpoch: c.gitEpoch}, nil
 	}
 	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, mv.MembershipID)
 	if err != nil {
@@ -391,13 +391,14 @@ func (m *manager) buildResolved(ctx context.Context, ident store.Identity, mv st
 	}
 	// Resolve the per-workspace size axes (0 = deployment default) so the factory can
 	// size the next container start; the built runtime captures them by value.
-	ws.MemBytes, ws.CPUUnits, ws.DiskGB = m.resolveWorkspaceSize(ctx, ws)
-	ws.SlotClass, _ = m.resolveSlotClass(ctx, ws)
-	rt := m.runtimeFor(ws, dekHex, m.workspaceExtraEnv(ctx, ws)...)
+	ws = m.withResolvedSize(ctx, ws)
+	env := m.workspaceExtraEnv(ctx, ws)
+	gitEpoch := m.gitEpochOfEnv(ws.MembershipID, env)
+	rt := m.runtimeFor(ws, dekHex, env...)
 	m.mu.Lock()
-	m.rts[mv.MembershipID] = cachedRT{rt: rt, ws: ws}
+	m.rts[mv.MembershipID] = cachedRT{rt: rt, ws: ws, gitEpoch: gitEpoch}
 	m.mu.Unlock()
-	return &resolved{rt: rt, ws: ws, ident: ident, mv: mv}, nil
+	return &resolved{rt: rt, ws: ws, ident: ident, mv: mv, gitEpoch: gitEpoch}, nil
 }
 
 // cachedRTFor reads the runtime cache under the (now cache-only) manager lock.

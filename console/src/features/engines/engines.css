@@ -4,7 +4,9 @@
 .engine-pill-wrap {
   position: relative;
 }
-.engine-pill {
+/* This file loads before ui/ui.css (the component imports it), so the pill's own rules carry a
+   second class to outrank ui/Button's .ui-btn chrome. */
+.engine-pill-wrap .engine-pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -16,7 +18,7 @@
   border-radius: 999px;
   cursor: pointer;
 }
-.engine-pill:hover {
+.engine-pill-wrap .engine-pill:hover {
   background: var(--btn-h);
 }
 .engine-pill-dot {
@@ -26,7 +28,7 @@
   border-radius: 50%;
   background: var(--muted);
 }
-.engine-pill-on {
+.engine-pill.engine-pill-on {
   color: var(--ok, #4caf82);
   background: color-mix(in srgb, var(--ok, #4caf82) 14%, transparent);
   border-color: color-mix(in srgb, var(--ok, #4caf82) 40%, transparent);
@@ -37,7 +39,7 @@
 /* In use: the same green as `on` — the engine is healthy either way — with the dot breathing,
    because the difference from `on` is that something is happening right now. Colour alone would
    have to be a hue nobody else uses; motion says "in progress" without inventing one. */
-.engine-pill-busy {
+.engine-pill.engine-pill-busy {
   color: var(--ok, #4caf82);
   background: color-mix(in srgb, var(--ok, #4caf82) 14%, transparent);
   border-color: color-mix(in srgb, var(--ok, #4caf82) 40%, transparent);
@@ -56,7 +58,7 @@
     animation: none;
   }
 }
-.engine-pill-lead {
+.engine-pill.engine-pill-lead {
   color: var(--accent, #6b8fc4);
   background: color-mix(in srgb, var(--accent, #6b8fc4) 14%, transparent);
   border-color: color-mix(in srgb, var(--accent, #6b8fc4) 40%, transparent);
@@ -64,7 +66,7 @@
 .engine-pill-lead .engine-pill-dot {
   background: var(--accent, #6b8fc4);
 }
-.engine-pill-warn {
+.engine-pill.engine-pill-warn {
   color: var(--warn, #d8963c);
   background: color-mix(in srgb, var(--warn, #d8963c) 14%, transparent);
   border-color: color-mix(in srgb, var(--warn, #d8963c) 40%, transparent);
@@ -174,7 +176,7 @@
    the brand wraps to two lines (see the brand-stacked note in topbar.css). Everything else
    moves to the popover, opened by the same tap. */
 @media (max-width: 760px) {
-  .engine-pill {
+  .engine-pill-wrap .engine-pill {
     padding: 4px 7px;
   }
   .engine-pill-state,

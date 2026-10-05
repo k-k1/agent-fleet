@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -119,6 +120,18 @@ func testDeps() Deps {
 			return homeDir()
 		},
 
+		// A copy of fs.go's allowedReadRoots. The docs root is the fixed container path; no
+		// test edits a file there.
+		ReadRoots: func() []string {
+			p("ReadRoots")
+			browse := os.Getenv("AF_BROWSE_ROOT")
+			if browse == "" {
+				browse = homeDir()
+			}
+			return []string{browse, filepath.Join(os.TempDir(), "claude-"+strconv.Itoa(os.Getuid())),
+				"/usr/local/share/agent-fleet/docs"}
+		},
+
 		// A copy of svn.go.
 		IsSvnRepo: func(dir string) bool {
 			p("IsSvnRepo")
@@ -168,6 +181,7 @@ func testDeps() Deps {
 		MaxUploadBytes:        func() int64 { unreached("MaxUploadBytes"); return 0 },
 		FinalizeSessionUsage:  func(session.Meta) { unreached("FinalizeSessionUsage") },
 		MaybeFoldSessionUsage: func() { unreached("MaybeFoldSessionUsage") },
+		SessionSpend:          func(m session.Meta) session.Spend { return fakeSessionSpend(m) },
 		RemoveTerminalHistory: func(string) { unreached("RemoveTerminalHistory") },
 		TrashSession: func(session.Meta, bool) (string, string, error) {
 			unreached("TrashSession")

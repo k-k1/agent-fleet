@@ -1,83 +1,28 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, ReactNode } from "react";
-import {
-  api,
-  apiJSON,
-  raw,
-  errText,
-  pasteImage,
-  sessionTurn,
-  sessionInterrupt,
-  sessionRemoveQueued,
-  sessionDismissDiscard,
-  sessionCancelInteraction,
-  isMemberOrigin,
-  parseQueueItems,
-  parseDiscards,
-  sessionRespond,
-  sessionApprove,
-  sessionPlanRespond,
-  sessionPlanFile,
-  sessionSettings,
-  downloadURL,
-} from "../../core/api/client.ts";
-import type {
-  CarriedInteraction,
-  Discard,
-  InteractionAnswer,
-  ManagedThreadSettings,
-  QueueItem,
-  TurnResult,
-} from "../../core/api/client.ts";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { isManagedSession } from "../../types/session.ts";
 import type { Session } from "../../types/session.ts";
-import { composerSend } from "./composerSend.ts";
-import { MEMO_DND_MIME } from "../memo/dnd.ts";
 import {
   useSettings,
-  setSetting,
   chatFontStack,
   surfaceBg,
   surfaceAccent,
   effectiveTheme,
-  expandThinking,
-  streamReplies,
 } from "../../lib/settings.ts";
-import { isQuickReplyCandidate, isQuickReplyPinned, recordQuickReply, unhideQuickReply } from "../../lib/quickReplies.ts";
-import { SuggestChipMenu } from "./SuggestChipMenu.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
-// Used by the failure block's re-auth link to open Settings > Agents (ErrorBlock).
-import { useSettingsUI } from "../settings/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { Icon } from "../../ui/Icon.tsx";
-import { useDraft, writeDraft } from "../../lib/draft.ts";
-import { makeAttachment, useAttachDraft } from "../../lib/attachDraft.ts";
-import type { Attachment } from "../../lib/attachDraft.ts";
 import { autoGrowTextarea } from "../../lib/autoGrow.ts";
-import { scrollComposerViewport } from "../../lib/keyScroll.ts";
-import { useBackClose } from "../../lib/backClose.ts";
-import { dirName } from "../../lib/filemeta.ts";
-import { openGallery } from "../gallery/open.ts";
 import { prettyModel } from "../../lib/modelName.ts";
-import { useTtsStore } from "../../core/store/tts.ts";
 import { MirrorToggle } from "./MirrorToggle.tsx";
-import { MIRROR_POLL_FAST, pollDelay } from "./pollCadence.ts";
 import { MirrorBanners } from "./parts/MirrorBanners.tsx";
 import { useMirrorTts } from "./parts/useMirrorTts.tsx";
 import { useMirrorScroll } from "./parts/useMirrorScroll.ts";
 import { useSkillPicker } from "./parts/useSkillPicker.ts";
 import { useReplySuggest } from "./parts/useReplySuggest.ts";
 import { JumpPills } from "./parts/JumpPills.tsx";
-import { AttachChips } from "./parts/AttachChips.tsx";
-import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
-import { HistoryNav, HistorySearchButton } from "./parts/HistoryNav.tsx";
-import { HistorySearchBar } from "./parts/HistorySearchBar.tsx";
 import { useHistorySearch } from "./parts/useHistorySearch.ts";
-import { SendColumn } from "./parts/SendColumn.tsx";
-import { SkillButton, SkillList } from "./parts/SkillList.tsx";
-import { SuggestRow } from "./parts/SuggestRow.tsx";
 import {
   DirGoneNotice,
   ResumeNotice,
@@ -87,82 +32,53 @@ import {
   WsStoppedNotice,
 } from "./parts/ComposerNotices.tsx";
 import { ContextBar } from "./ContextBar.tsx";
+import { SpendChip } from "./SpendChip.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { t as tr, useLocale, useT } from "../../lib/i18n/index.ts";
 import { agentOf } from "../../agents/registry.ts";
-import { takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { stateInfo } from "../../lib/sessionview.ts";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { PaneSessionChip } from "../panes/PaneSessionChip.tsx";
 // workSplit lives in transcript/ alongside the turn rendering (owned by TranscriptTurn).
 import { awaitingReply, latestWorkPromptIndex, textOfParts } from "./mirrorParts.ts";
-import { echoLanded, echoNeedsResync, withoutDiscarded } from "./pendingEcho.ts";
-import { echoStore, nextEchoId, sweptDiscards, type SendEcho } from "./parts/sendEcho.ts";
-import { findDiffPane, findPane, findPlanPane } from "./parts/panes.ts";
-import { PLAN_APPROVE_KEYS } from "./planDecision.ts";
-import { deliverPlanComments, planKey } from "./planComments.ts";
-import { reviewPrompt, reviewTitle } from "./planReview.ts";
-import { handoffLaunchTarget } from "./handoffLaunch.ts";
-import { useLaunchSeed, useLaunchTarget, useReposStore } from "../repos/store.ts";
-import { type InteractionAnswerWire, patchAnswers } from "./interactionAnswers.ts";
+import { echoLanded } from "./pendingEcho.ts";
 import { coarsePointer } from "../../lib/device.ts";
-import { ManagedSettingsModal } from "./ManagedSettingsModal.tsx";
-import { ForkAtModal } from "./ForkAtModal.tsx";
-import type { ForkAtTarget } from "./ForkAtModal.tsx";
 import { canBranchFrom, canBranchInSession, carriedUserTurns } from "./forkAt.ts";
-import { HandoffProposal, useHandoffProposals, type Proposal as HandoffProposalT } from "./HandoffProposal.tsx";
-import { ApprovalCard, LiveReplyCard, PlanPendingCard, PermissionCard, QuestionCard, TypingRow } from "./parts/pendingCards.tsx";
-import { CarriedBlock } from "./CarriedBlock.tsx";
+import { HandoffProposal } from "./HandoffProposal.tsx";
 import { DiscardNotice } from "./parts/DiscardNotice.tsx";
-import {
-  actionable,
-  closeStep,
-  emptyDiscardNotices,
-  injectionSource,
-  inQueueOrder,
-  queueEntries,
-  restorable,
-  restoreStep,
-  stopRowVisible,
-  visibleDiscards,
-  type DiscardNoticeState,
-} from "./stopQueue.ts";
+import { PendingPeersNotice } from "./parts/PendingPeersNotice.tsx";
 import { FileChangeStrip } from "./FileChangeStrip.tsx";
-import { useSessionFilesStore, type SessionFile } from "./sessionFiles.ts";
+import { useSessionFilesStore } from "./sessionFiles.ts";
 // The transcript rendering layer, shared with the shared-session view (docs/log/59). What the
 // reader may DO here is expressed as TranscriptCaps — the mirror is the owner, so it fills
 // in every capability; a recipient fills in almost none. See transcript/capabilities.ts.
 import { TranscriptView } from "./transcript/TranscriptView.tsx";
 import { useStableBlockIds } from "./transcript/blockIdentity.ts";
 import type { TranscriptCaps } from "./transcript/capabilities.ts";
-import type { Group, Part, PendingApproval, Question, TaskItem, Turn } from "./transcript/types.ts";
-import { isPendingApproval } from "./transcript/types.ts";
-import { coalesceUserActions, composerHistory, groupTurns, isNoise, latestContext, spendOf } from "./transcript/model.ts";
-import { TaskChecklist, planTitle } from "./transcript/blocks.tsx";
+import type { Group } from "./transcript/types.ts";
+import { composerHistory, isNoise, latestContext, spendOf } from "./transcript/model.ts";
+import { TaskChecklist } from "./transcript/blocks.tsx";
 import { useMarksController } from "./transcript/useMarks.ts";
 import { MarkStrip } from "./transcript/MarkStrip.tsx";
 import { targetLang } from "./translate.ts";
 import { useTranslate } from "./useTranslate.ts";
+import { SessionLinkMenuHost } from "../sessions/SessionLinkMenu.tsx";
+import { useMirrorState } from "./parts/useMirrorState.ts";
+import { useOlderHistory, useTranscriptPoll } from "./parts/useTranscriptPoll.ts";
+import { useMirrorActions } from "./parts/useMirrorActions.ts";
+import { composerInput, composerKeys, type MirrorSignal } from "./parts/composerInput.ts";
+import { titleActions } from "./parts/titleActions.ts";
+import { usePlanActions } from "./parts/usePlanActions.ts";
+import { groupWithQueue } from "./parts/mirrorGroups.ts";
+import { useFinalizeHold } from "./parts/useFinalizeHold.ts";
+import { useTranscriptCaps } from "./parts/useTranscriptCaps.ts";
+import { MirrorPendingCards } from "./parts/MirrorPendingCards.tsx";
+import { MirrorComposer } from "./parts/MirrorComposer.tsx";
+import { MirrorOverlays } from "./parts/MirrorOverlays.tsx";
 
 const q = encodeURIComponent;
 
-/** What a host that owns a signal line hands the composer (see MirrorView's `signal`). */
-export interface MirrorSignal {
-  /** The line to append now, or "" for none. */
-  line: () => string;
-  /** The send carrying it was accepted. */
-  sent: () => void;
-}
-
-// Transcript window size (jsonl lines) for the initial tail load and each backward page.
-// The server clamps it; matches docs/decisions/0009 (P2).
-const WINDOW = 400;
-
-// How long the "working" indicator is held after a turn reads idle while its reply is
-// still not in the transcript (the idle→reply-renders gap). Long enough to cover the
-// jsonl-write / poll-cadence lag, short enough that a genuinely reply-less turn (e.g. an
-// interrupt) doesn't leave a phantom spinner. See `finalizing`.
-const FINALIZE_GRACE_MS = 8000;
+export type { MirrorSignal } from "./parts/composerInput.ts";
 
 // MirrorView (user-facing: "chat") is a read-mostly Markdown view of a claude
 // session, built on the same Agent endpoints the MCP drive tools use: GET
@@ -174,7 +90,16 @@ const FINALIZE_GRACE_MS = 8000;
 // Limits (case-A): the transcript is written per turn, so turns appear per response,
 // not token-by-token. Prompts typed in the raw terminal DO appear (they're logged as
 // user turns), just at the next poll.
-export function MirrorView({
+export function MirrorView(props: Parameters<typeof MirrorViewBody>[0]) {
+  // Session slugs in the transcript open the session context menu (SessionLinkMenu.tsx).
+  return (
+    <SessionLinkMenuHost>
+      <MirrorViewBody {...props} />
+    </SessionLinkMenuHost>
+  );
+}
+
+function MirrorViewBody({
   paneId,
   session,
   sessionMeta,
@@ -220,13 +145,13 @@ export function MirrorView({
   // is rendered, and answers go out as Interaction responses (/respond) rather than keys/seq.
   const managed = isManagedSession(sessionMeta);
   const agentName = agent.assistantName;
-  const canPasteImage = agent.caps.imagePaste;
   // Store bridge (old context values): plans open as doc panes, edit-diffs as
   // diff panes; bumpSessions refreshes the shared list; wsState gates attach.
   const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
   const setPaneTarget = useLayoutStore((s) => s.setPaneTarget);
   const setActivePane = useLayoutStore((s) => s.setActive);
   const refreshSessions = useSessionsStore((s) => s.refresh);
+  const sessionRow = useSessionsStore((st) => st.sessions.find((x) => x.name === session));
   const bumpSessions = () => void refreshSessions();
   const wsState = useWorkspaceStore((s) => s.state);
   const toast = useToast();
@@ -236,198 +161,14 @@ export function MirrorView({
   // "mod-enter" (default): Ctrl/⌘+Enter submits, plain Enter newlines (phone-safe).
   // "enter": Enter submits, Shift+Enter newlines.
   const modSend = settings.mirrorSend !== "enter";
-  const [turns, setTurns] = useState<Turn[]>([]); // {role:'user'|'assistant', text, ts, idx}
-  // Which session the accumulated view state (turns / alive / mode / echoes …) belongs to.
-  // A pane keeps this component mounted while its `session` prop changes (PaneHost keys a
-  // cell, not a session), and the per-session reset is a layout effect — so on that one
-  // commit every piece of state below is still the PREVIOUS session's. Anything that reads
-  // state to decide something about the NEW session must wait for `stateSession === session`.
-  const [stateSession, setStateSession] = useState(session);
-  // Optimistic local echoes of just-sent prompts. While claude is working it queues a new
-  // prompt WITHOUT logging it to the jsonl until the current turn finishes, so the mirror
-  // (transcript-only) would show nothing — the message looks lost. We render these until
-  // the matching real user turn appears, then reconcile them away. sinceIdx = the newest
-  // real turn idx at send time, so we only match a turn that arrives AFTER the send.
-  const [pendingSends, setPendingSends] = useState<SendEcho[]>(() => echoStore.get(session) ?? []);
-  // Every echo update goes through here so the module stash stays in sync (write-through)
-  // and a remounted view can restore the un-landed ones.
-  // …and the poll loop (a [session]-only effect) reads them through a ref, so its
-  // stuck-echo self-heal never works off a stale closure.
-  const pendingSendsRef = useRef<SendEcho[]>(echoStore.get(session) ?? []);
-  const applyEchoes = (fn: (prev: SendEcho[]) => SendEcho[]) =>
-    setPendingSends((prev) => {
-      const next = fn(prev);
-      echoStore.set(session, next);
-      pendingSendsRef.current = next;
-      return next;
-    });
-  const [loaded, setLoaded] = useState(false); // false until the first transcript fetch returns
-  // This session's outstanding handoff proposals (possibly more than one — a single turn
-  // can fan a task out into several parallel follow-ups). Owned here (not inside the
-  // card) because each card is placed at its created_at inside the transcript, not
-  // pinned to the bottom.
-  const [handoffs, setHandoffs] = useHandoffProposals(session);
-  const updateHandoff = (id: string, next: HandoffProposalT | null) =>
-    setHandoffs(next ? handoffs.map((h) => (h.id === id ? next : h)) : handoffs.filter((h) => h.id !== id));
-  const [termState, setTermState] = useState(""); // terminal-only state: "resume" | "compacting" | "update" | ""
-  // Compaction progress (parsed from the pane) so the "compacting" block shows a bar, not just a spinner.
-  const [compactProg, setCompactProg] = useState<{ pct: number; elapsed?: string } | null>(null);
-  const [status, setStatus] = useState("");
-  const [bgBusy, setBgBusy] = useState(false); // idle but a run_in_background task lingers
-  const [bgBusyReason, setBgBusyReason] = useState(""); // WHAT lingers: process | subagent | shell
-  // "Finalizing" bridges the gap between claude finishing (status flips to idle — its
-  // Stop hook, or the TUI heal firing once the spinner clears during answer streaming)
-  // and the reply actually landing in the transcript jsonl a poll later. In that window
-  // the naive indicator would blink off over an empty mirror, so the user sees the
-  // spinner vanish with no answer yet and thinks it stalled. While finalizing we keep the
-  // typing indicator up and keep polling fast until the reply renders (or a grace lapses).
-  const [finalizing, setFinalizing] = useState(false);
-  const finalizingRef = useRef(false);
-  const wasWorkingRef = useRef(false); // saw "working" since the last landed reply
-  // The exchange is still in flight. Everything that reacts to "is a turn running" must use
-  // THIS, not the bare polled status: the status alone drops to idle mid-answer (Stop hook /
-  // TUI heal) and says nothing about a background run. The typing indicator, the bottom
-  // follow and the work-steps fold all read it, so they can't disagree — a fold that flips
-  // while the spinner is still up is exactly what shifts the text under a reader.
-  const busy = status === "working" || bgBusy || finalizing;
-  const [tasks, setTasks] = useState<TaskItem[]>([]); // current ToDo list (Task tool calls)
-  // Files this session's agent edited (docs/log/68). Aggregated server-side over the WHOLE
-  // transcript and delivered on this same poll — deriving it from `turns` would count
-  // only the window the mirror happens to hold and grow as the reader scrolls up.
-  const [files, setFiles] = useState<SessionFile[]>([]);
-  // Prompts claude reports queued into the RUNNING turn (queue-operation events) — sent
-  // mid-run from this composer or typed in the raw terminal, not yet injected. Matching
-  // echoes get a "queued" badge; the rest render as synthetic queued bubbles.
-  const [queuedPrompts, setQueuedPrompts] = useState<string[]>([]);
-  // The same queue with ids, origins and states (ADR 0105), sent only by a Managed session on
-  // an Agent that has it. null = not sent: the bubbles then come from queuedPrompts and carry
-  // no actions.
-  const [queuedItems, setQueuedItems] = useState<QueueItem[] | null>(null);
-  // What second stops threw away and the driver still keeps (decision 4), and this tab's own
-  // progress through them — see stopQueue.ts for why a restored discard is held locally.
-  const [discards, setDiscards] = useState<Discard[]>([]);
-  const [discardNotices, setDiscardNotices] = useState<DiscardNoticeState>(emptyDiscardNotices);
-  // Queue entries with a remove request in flight, so a double click sends one request.
-  const queueOpsRef = useRef<Set<string>>(new Set());
-  const queueShown = useMemo(() => queueEntries(queuedItems, queuedPrompts), [queuedItems, queuedPrompts]);
-  const queuedCount = queueShown.length;
-  const discardView = useMemo(() => visibleDiscards(discards, discardNotices), [discards, discardNotices]);
-  const [alive, setAlive] = useState(!!sessionMeta?.alive); // live session ⇒ composer usable
-  // The working dir was removed (repo/worktree deleted): the transcript survives
-  // (stored under the agent's home), so history stays readable, but resume is
-  // impossible — BuildLaunch refuses a gone dir. Offer a note, not a resume button.
-  const dirGone = sessionMeta?.resumable === false && !alive;
-  const [pending, setPending] = useState<Question[] | null>(null); // currently-awaiting AskUserQuestion
-  const [pendingText, setPendingText] = useState<string>(""); // prose streamed just before the pending question
-  // The reply claude is still writing (#1250), sent by the Agent only while a turn runs and only
-  // when this poll asked for it (?live=1). Only claude's route streams it; the per-kind setting
-  // turns it off. Line by line and typewriter (#1274) differ only in how LiveReplyCard shows it:
-  // the request is the same. Read through a ref inside the poll loop, which outlives renders.
-  const liveMode = sessionMeta?.kind === "claude" ? streamReplies(settings, sessionMeta?.kind) : "off";
-  const liveOn = liveMode !== "off";
-  const liveOnRef = useRef(liveOn);
-  liveOnRef.current = liveOn;
-  const [liveText, setLiveText] = useState("");
-  useEffect(() => {
-    if (!liveOn) setLiveText(""); // switched off: drop what is shown now, not at the next poll
-  }, [liveOn]);
-  const [pendingPlan, setPendingPlan] = useState<string | null>(null); // ExitPlanMode plan awaiting approval
-  const [pendingPerm, setPendingPerm] = useState<string | null>(null); // tool-permission prompt awaiting allow/deny
-  // A MANAGED session's tool approval. Kept apart from pendingPerm because the two are
-  // answered by different mechanisms — keystrokes into a pane versus /respond by id — and a
-  // managed session has no pane for the first one.
-  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
-  // Carried interaction (docs/log/75): what was on screen when the session was torn down.
-  // Unlike the three pending states above there is no modal left, so the answer is delivered
-  // as prose rather than keys. The server withholds `carried` while anything is pending, so
-  // the two are never set at once.
-  const [carried, setCarried] = useState<CarriedInteraction | null>(null);
-  // Plans the user just rejected (keyed by plan text). Lets the historical plan badge read
-  // "rejected" immediately, before the interrupt tool_result (its real signal) lands a poll
-  // or two later — otherwise it sits at the neutral "decided" until then.
-  const rejectedPlansRef = useRef<Set<string>>(new Set());
-  // Bumped whenever that set is written. The badge is READ while a turn renders, and the turns are
-  // memoized, so a silent mutation would not reach the card until the next transcript change —
-  // which is exactly the poll or two this optimism exists to cover. markRejected is the only
-  // writer, the session reset aside — that one changes `session`, which rebuilds caps anyway.
-  const [rejectedGen, setRejectedGen] = useState(0);
-  const markRejected = (plan: string, rejected: boolean) => {
-    if (rejected) rejectedPlansRef.current.add(plan.trim());
-    else rejectedPlansRef.current.delete(plan.trim());
-    setRejectedGen((n) => n + 1);
-  };
-  const [mode, setMode] = useState(""); // session permission mode ("plan" | …)
-  // The last non-plan mode name the terminal reported, used as the optimistic label when
-  // leaving plan mode (docs/log/76).
-  const lastNonPlanMode = useRef("");
-  // Session-level context fill reported by the agent itself (agy /context scrape) —
-  // the ContextBar's fallback when the transcript has no per-turn token usage.
-  const [agentCtx, setAgentCtx] = useState<{ tokens: number; window: number } | null>(null);
-  const [suggestedTitle, setSuggestedTitle] = useState(""); // headless-LLM title candidate, "" = none
-  const [titleActing, setTitleActing] = useState(false); // accept/dismiss request in flight
-  const [managedSettingsOpen, setManagedSettingsOpen] = useState(false);
-  const [managedSettings, setManagedSettings] = useState<ManagedThreadSettings | null>(null);
-  // Pending confirmation for "fork from here" (docs/log/55). null = closed.
-  const [forkAtTarget, setForkAtTarget] = useState<ForkAtTarget | null>(null);
-  // Composer draft, persisted per session so switching terminal/chat (which unmounts this
-  // view) — or a reload — keeps what you were typing. Key by session.
-  const draftKey = session ? "af.mirror-draft." + session : null;
-  const [draft, setDraft] = useDraft(draftKey);
-  const [sending, setSending] = useState(false);
-  // sendingRef mirrors `sending` for a synchronous re-entrancy check. `sending` alone
-  // (React state) isn't enough: two send() invocations arriving in the same task (Enter
-  // auto-repeat, an IME compositionend immediately followed by its own keydown, or a
-  // stray double click before the button's `disabled` re-render commits) both read the
-  // stale pre-update value and both pass the `sending` guard in sendPrompt — producing
-  // two real POST /turn calls for what was one user action. The duplicate then depends on
-  // codex's own handling of an immediate identical resubmission (observed: silently
-  // absorbed into nothing), leaving the second optimistic echo with no turn to reconcile
-  // against — stuck awaiting reconciliation forever. Set/read synchronously, before any state commit.
-  const sendingRef = useRef(false);
-  // Pasted images awaiting send: {path} is the session-saved absolute path (referenced in
-  // the prompt), {url} an object URL for the local chip preview, {name} the basename.
-  // Persisted per session (lib/attachDraft) like the text draft above — switching to
-  // another session or to the terminal and back unmounts this view, and until the draft
-  // existed that silently threw away everything staged for the turn.
-  const attach = useAttachDraft(session ? "af.mirror-attach." + session : null);
-  const attachments = attach.items;
-  const [pasting, setPasting] = useState(false); // an attachment upload is in flight
-  const [dragging, setDragging] = useState(false); // an OS file drag is hovering the pane
-  const dragDepth = useRef(0); // dragenter/leave nesting counter (leave fires per child)
-  const filePickRef = useRef<HTMLInputElement>(null); // the attach button's hidden picker
-  // The enlarged image: its URL (a blob for a pasted image, the download URL for a shared
-  // file) plus, when the image is a file, the path it came from — that is what lets the
-  // lightbox bar offer its folder's gallery (ADR 0080 decision 7).
-  const [lightbox, setLightbox] = useState<{ src: string; path?: string } | null>(null);
-  // Close the enlarged-image lightbox with the device/browser Back button or a back gesture
-  // (phones foremost): opening it pushes a throwaway history entry, so Back pops that instead
-  // of navigating away from the Console; a tap on the backdrop consumes the entry on cleanup.
-  useBackClose(lightbox ? () => setLightbox(null) : undefined, !!lightbox);
-  const [histIdx, setHistIdx] = useState<number | null>(null); // position in composer history, or null
-  const cursorRef = useRef(0);
-  // Backward paging (P2): firstLineRef = oldest jsonl line currently held; hasMore = there
-  // is older history above it to page in. loadingOlderRef guards against overlapping loads
-  // (useMirrorScroll owns the height bookkeeping that keeps the viewport across a prepend).
-  const firstLineRef = useRef(0);
-  const [hasMore, setHasMore] = useState(false);
-  const [loadingOlder, setLoadingOlder] = useState(false);
-  const loadingOlderRef = useRef(false);
-  const topSentinelRef = useRef<HTMLDivElement>(null);
-  const diagRef = useRef(""); // last transcript-diagnostic signature (warn once per change)
-  const statusRef = useRef("");
-  const bgBusyRef = useRef(false); // mirrors bgBusy for the poll-cadence closure (fast-poll while BG runs)
-  // Last transcript payload, verbatim, and how many polls in a row have returned exactly it.
-  // Together they are the "nothing moved" signal: it suppresses a re-render that would change
-  // nothing (see the poll) and it drives the cadence ladder (pollCadence.ts).
-  const lastPayloadRef = useRef("");
-  const unchangedRef = useRef(0);
-  const lastPollAtRef = useRef(0);
-  // Digest of the whole-transcript aggregates (files / tasks / answers) we already hold. Sent
-  // back on each steady-state poll so the Agent can leave them out of the response instead of
-  // rebuilding and re-sending them every tick (session_transcript_agg.go).
-  const aggSigRef = useRef("");
-  const tickRef = useRef<(() => void) | null>(null); // lets send() trigger an immediate refresh
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const st = useMirrorState({ session, sessionMeta, settings });
+  const {
+    turns, pendingSends, applyEchoes, loaded, handoffs, updateHandoff, termState, compactProg, status, bgBusy,
+    bgBusyReason, finalizing, busy, tasks, files, queuedPrompts, pendingPeers, queueShown, discardView, alive,
+    dirGone, pending, liveText, pendingPlan, pendingPerm, pendingApproval, carried, mode, agentCtx,
+    suggestedTitle, titleActing, setManagedSettingsOpen, managedSettings, setForkAtTarget, draft, setDraft,
+    dragging, setHistIdx, hasMore, loadingOlder, topSentinelRef, statusRef, tickRef, inputRef,
+  } = st;
   // All transcript scroll positioning (bottom follow, scroll-to-top of a finished turn,
   // position restore, floating pills, prepending older history) lives in parts/useMirrorScroll.
   // Called before the TTS hook because that needs bodyRef.
@@ -436,8 +177,8 @@ export function MirrorView({
 
   // --- Karaoke read-aloud (turnTts, docs/log/24) -------------------------------------
   // The whole TTS set (karaoke highlighting, auto read-aloud, the quiet reading of work
-  // steps, confirmation announcements, "read from here") lives in parts/useMirrorTts; only
-  // the two reset call sites below remain here.
+  // steps, confirmation announcements, "read from here") lives in parts/useMirrorTts; its two
+  // reset calls sit in useTranscriptPoll.
   const tts = useMirrorTts({
     session,
     sessionMeta,
@@ -454,7 +195,7 @@ export function MirrorView({
   });
   // Marks drawn on the conversation (docs/log/69 / ADR 0050). This is the owner's view, so it
   // may delete anyone's mark. Do not add a poll for them — reload() rides the transcript load
-  // (see the effect below).
+  // (see useTranscriptPoll).
   const marks = useMarksController({
     path: session ? `api/sessions/${q(session)}/marks` : "",
     canEdit: true,
@@ -476,312 +217,7 @@ export function MirrorView({
     auto: settings.mirrorAutoTranslate === true,
   });
 
-
-  // Reset accumulated turns when the session changes (cursor is a line index into
-  // that session's jsonl, meaningless across sessions).  This MUST be a layout
-  // effect: a pane can keep MirrorView mounted while its session prop changes. A
-  // passive effect then leaves the old transcript and its scrolled-up `atBottom`
-  // state in place for one paint, so the incoming session can inherit an arbitrary
-  // middle position instead of taking its normal initial-bottom path.
-  useLayoutEffect(() => {
-    setStateSession(session); // …and from the next render on, the state below is this session's
-    cursorRef.current = 0;
-    firstLineRef.current = 0;
-    loadingOlderRef.current = false;
-    scroll.resetPrepend();
-    setHasMore(false);
-    setLoadingOlder(false);
-    diagRef.current = "";
-    statusRef.current = "";
-    lastPayloadRef.current = ""; // another session's payload must never read as "unchanged"
-    unchangedRef.current = 0;
-    aggSigRef.current = ""; // the aggregates belong to the session being left
-    setTurns([]);
-    setPendingSends(echoStore.get(session) ?? []); // restore this session's un-landed echoes
-    pendingSendsRef.current = echoStore.get(session) ?? [];
-    rejectedPlansRef.current = new Set(); // optimistic reject marks belong to the old session
-    setLoaded(false);
-    setTermState("");
-    setStatus("");
-    setBgBusy(false);
-    setFinalizing(false); // the idle→reply bridge belongs to the old session
-    finalizingRef.current = false;
-    wasWorkingRef.current = false;
-    setTasks([]);
-    setFiles([]);
-    setQueuedPrompts([]);
-    setQueuedItems(null);
-    setDiscards([]);
-    setDiscardNotices(emptyDiscardNotices);
-    queueOpsRef.current = new Set();
-    setAlive(!!sessionMeta?.alive);
-    setPending(null);
-    setLiveText(""); // the reply being written belongs to the session being left
-    setPendingPlan(null);
-    setPendingPerm(null);
-    setMode("");
-    lastNonPlanMode.current = "";
-    setSuggestedTitle("");
-    setTitleActing(false);
-    setManagedSettingsOpen(false);
-    setManagedSettings(null);
-    setHistIdx(null);
-    setPasting(false);
-    setLightbox(null);
-    // Attachments belong to useAttachDraft: the key changes with the session, which releases
-    // the old session's preview URLs and reloads the new session's draft.
-    scroll.resetForSession(session); // re-take the bottom pin, restore anchor, pills, done anchor
-    tts.resetForSession(); // re-baseline auto read-aloud / quiet reading / announcements (no history)
-    // On leaving (switching session, switching to the terminal, closing the pane) record the
-    // position being read. The session and DOM this cleanup sees belong to the OUTGOING view:
-    // React runs it after the render with the new props hits the DOM but before the next
-    // layout effect, and the transcript's content is state (turns), so the old session's turns
-    // are still mounted and scrollTop has not moved.
-    return () => {
-      scroll.saveMarkFor(session);
-    };
-  }, [session]);
-
-  // Poll the transcript since our cursor while this view is mounted (Pane only mounts
-  // it while visible). Faster while claude is working, slower at rest, and easing off
-  // further the longer the payload repeats itself (pollCadence.ts). New turns are
-  // appended; the cursor advances by the transcript's line count.
-  useEffect(() => {
-    if (!session) return;
-    let alive = true;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const tick = async () => {
-      // Hidden tab: skip the fetch entirely (mobile data / battery); the
-      // visibilitychange listener below re-polls immediately on return.
-      if (document.hidden) {
-        timer = setTimeout(tick, 15000);
-        return;
-      }
-      lastPollAtRef.current = Date.now(); // gap the reader's bump measures against
-      try {
-        // First poll: fetch only the TAIL window (fast on huge transcripts); the server
-        // returns firstLine/hasMore so we can page older history in on scroll. Subsequent
-        // polls are plain since=<cursor> increments (unchanged).
-        const first = cursorRef.current === 0;
-        // agg=<digest>: "I already hold these aggregates". Only on the incremental poll — a
-        // windowed read brings turns we have never patched with answers, and the Agent ignores
-        // the parameter there for that reason.
-        const agg = !first && aggSigRef.current ? `&agg=${encodeURIComponent(aggSigRef.current)}` : "";
-        // live=1 asks for the reply still being written. Left off when the setting is, so the
-        // request and its response stay exactly what they were before the setting existed.
-        const live = liveOnRef.current ? "&live=1" : "";
-        const url = first
-          ? `api/sessions/${q(session)}/messages?since=0&tail=1&limit=${WINDOW}${live}`
-          : `api/sessions/${q(session)}/messages?since=${cursorRef.current}${agg}${live}`;
-        const d = await api(url);
-        if (!alive) return;
-        // Refreshing marks rides the transcript poll rather than adding a cycle of its own;
-        // useMarksController throttles the actual round trips.
-        marksReloadRef.current();
-        if (d && !d.error) {
-          // Nothing moved since the last poll. Applying the payload anyway is what made a
-          // mirror re-render once a second while the agent merely thought: setTasks/setFiles/
-          // setQueuedPrompts hand React a NEW array every time, so the state always "changes"
-          // and the whole conversation is regrouped and re-rendered for no difference at all.
-          // Comparing the payload verbatim is what makes the skip safe — the block below is
-          // pure state application, so replaying identical bytes cannot produce a different
-          // result. The liveness self-heal after it is time-based, so it stays outside.
-          const payload = JSON.stringify(d);
-          if (payload === lastPayloadRef.current) {
-            unchangedRef.current++; // eases the cadence off (pollCadence.ts)
-          } else {
-            lastPayloadRef.current = payload;
-            unchangedRef.current = 0;
-            if (typeof d.cursor === "number") cursorRef.current = d.cursor;
-            // reset: the server's jsonl shrank or was replaced (compaction, or a
-            // different <sid>.jsonl became live), so our line cursor was stale and it
-            // re-sent from the top — replace, don't append. Otherwise append new turns.
-            // Late interaction answers (AskUserQuestion/ExitPlanMode/Agent), keyed by
-            // tool_use id — see patchAnswers. Sent every poll; applied to whatever turns we
-            // hold after the append/reset below.
-            const answers =
-              d.answers && typeof d.answers === "object" ? (d.answers as Record<string, InteractionAnswerWire>) : null;
-            if (d.reset) {
-              setTurns(patchAnswers(Array.isArray(d.messages) ? d.messages : [], answers));
-              // Servers now resend a TAIL window on reset and set firstLine/hasMore
-              // (handled by the shared block below); 0/false is the fallback for a
-              // whole-file reset from an older server (fork preview still sends one).
-              firstLineRef.current = 0;
-              setHasMore(false);
-              tts.resetForTranscript(); // body DOM was replaced: re-baseline without stopping playback
-            } else if (Array.isArray(d.messages) && d.messages.length) {
-              // Idempotent merge: normally a poll only appends turns. Store-backed agents
-              // (notably OpenCode) also update the parts of their current assistant turn
-              // while its stable idx stays the same, so replace that overlapping turn.
-              // A quick re-poll after sending can likewise overlap safely.
-              setTurns((t) => {
-                const byIdx = new Map<number, number>();
-                for (let i = 0; i < t.length; i++) {
-                  if (t[i].idx !== undefined) byIdx.set(t[i].idx as number, i);
-                }
-                let next = t;
-                for (const incoming of d.messages as Turn[]) {
-                  const at = incoming.idx === undefined ? undefined : byIdx.get(incoming.idx);
-                  if (at === undefined) {
-                    if (next === t) next = [...t];
-                    next.push(incoming);
-                    if (incoming.idx !== undefined) byIdx.set(incoming.idx, next.length - 1);
-                  } else if (JSON.stringify(next[at]) !== JSON.stringify(incoming)) {
-                    if (next === t) next = [...t];
-                    next[at] = incoming;
-                  }
-                }
-                return patchAnswers(next, answers);
-              });
-            } else if (answers) {
-              // No new turns this poll, but an answer may have just landed for a question/plan/
-              // delegation turn we already hold (its tool_result line carries no displayable turn
-              // of its own). Patch in place; patchAnswers no-ops when nothing changed.
-              setTurns((t) => patchAnswers(t, answers));
-            }
-            // Windowed (initial tail) response carries the oldest line we now hold.
-            if (typeof d.firstLine === "number") {
-              firstLineRef.current = d.firstLine;
-              setHasMore(!!d.hasMore);
-            }
-            // Diagnostic: surface the anomalies behind "sent but nothing shows" — no
-            // jsonl found, multiple <sid>.jsonl siblings (a stub may shadow the real
-            // log), or a cursor reset. Logged once per distinct situation (not every
-            // poll) so it's quiet in the normal case.
-            if (d.reset || d.jsonlMatches > 1 || (d.alive && !d.jsonlPath)) {
-              const sig = `${d.reset ? 1 : 0}|${d.jsonlPath || ""}|${d.jsonlMatches || 0}`;
-              if (sig !== diagRef.current) {
-                diagRef.current = sig;
-                // eslint-disable-next-line no-console
-                console.warn("[mirror] transcript diagnostic", {
-                  session,
-                  reset: !!d.reset,
-                  jsonlPath: d.jsonlPath,
-                  jsonlLines: d.jsonlLines,
-                  jsonlMtime: d.jsonlMtime,
-                  jsonlMatches: d.jsonlMatches,
-                });
-              }
-            }
-            if (d.status) {
-              statusRef.current = d.status;
-              setStatus(d.status);
-            }
-            // Track liveness so a read-only (history) view can enable its composer the
-            // moment a background resume brings the session up.
-            setAlive(!!d.alive);
-            bgBusyRef.current = !!d.backgroundBusy;
-            setBgBusy(!!d.backgroundBusy);
-            setBgBusyReason(typeof d.backgroundBusyReason === "string" ? d.backgroundBusyReason : "");
-            // aggSame: the Agent confirmed the aggregates we hold are current and sent none of
-            // them, so leaving the state alone IS applying the response. Overwriting with the
-            // absent fields would clear the file strip and the ToDo list on every poll.
-            if (typeof d.aggSig === "string") aggSigRef.current = d.aggSig;
-            if (d.aggSame !== true) {
-              setTasks(Array.isArray(d.tasks) ? d.tasks : []);
-              setFiles(Array.isArray(d.files) ? d.files : []);
-            }
-            setQueuedPrompts(Array.isArray(d.queuedPrompts) ? d.queuedPrompts : []);
-            setQueuedItems(parseQueueItems(d.queuedItems));
-            // The poll, not the interrupt's answer, is what the notice trusts: an answer lost
-            // to a closed tab or a dropped connection comes back here (decision 4).
-            setDiscards(parseDiscards(d.discardedInputs));
-            setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
-            setPendingText(typeof d.pendingText === "string" ? d.pendingText : "");
-            setLiveText(liveOnRef.current && typeof d.liveText === "string" ? d.liveText : "");
-            setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
-            setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
-            setPendingApproval(isPendingApproval(d.pendingApproval) ? d.pendingApproval : null);
-            setCarried(d.carried && typeof d.carried === "object" ? (d.carried as CarriedInteraction) : null);
-            // Mode comes from the terminal (paneMode) in real time, so trust every poll —
-            // the optimistic set on click just gives instant feedback until this confirms.
-            const nextMode = typeof d.mode === "string" ? d.mode : "";
-            // Remember the real non-plan mode name for the optimistic label when plan mode is
-            // left. Using the kind's default label instead shows "Bypass" for a claude started
-            // with permission prompts on (docs/log/76); the terminal-reported value cannot make
-            // that mistake.
-            if (nextMode && nextMode.toLowerCase() !== "plan") lastNonPlanMode.current = nextMode;
-            setMode(nextMode);
-            setAgentCtx(
-              d.context && typeof d.context.tokens === "number" && typeof d.context.window === "number" && d.context.window > 0
-                ? { tokens: d.context.tokens, window: d.context.window }
-                : null,
-            );
-            setTermState(typeof d.terminalState === "string" ? d.terminalState : "");
-            setCompactProg(
-              d.compactProgress && typeof d.compactProgress.pct === "number"
-                ? { pct: d.compactProgress.pct, elapsed: d.compactProgress.elapsed }
-                : null,
-            );
-            setSuggestedTitle(typeof d.suggestedTitle === "string" ? d.suggestedTitle : "");
-            setLoaded(true); // first (and every) successful fetch: drop the loading spinner
-          }
-          // Self-heal an unreconciled echo that can no longer land because the turn it
-          // should match never reached us (a cursor handed out past a turn we then never
-          // asked for again). Only while the session is at rest — a pending echo is
-          // normal and expected mid-turn — and once per echo: rewind the cursor so the
-          // next tick re-reads the tail window from scratch, which fills the hole and lets
-          // the echo land. If the prompt genuinely never arrived, nothing changes and the
-          // badge keeps telling the truth. Runs on an unchanged poll too: the condition is
-          // elapsed time, and an echo stuck behind a hole is exactly a payload that repeats.
-          const stuck = pendingSendsRef.current[0];
-          if (
-            stuck &&
-            statusRef.current !== "working" &&
-            !bgBusyRef.current &&
-            !finalizingRef.current &&
-            echoNeedsResync(stuck, Date.now())
-          ) {
-            cursorRef.current = 0;
-            const stampedAt = Date.now();
-            applyEchoes((p) => p.map((e) => (e.id === stuck.id ? { ...e, resyncedAt: stampedAt } : e)));
-          }
-        }
-      } catch {
-        /* transient; retry on the next tick */
-      }
-      if (!alive) return;
-      timer = setTimeout(
-        tick,
-        pollDelay({
-          working: statusRef.current === "working" || bgBusyRef.current || finalizingRef.current,
-          unchanged: unchangedRef.current,
-        }),
-      );
-    };
-    tickRef.current = () => {
-      if (timer) clearTimeout(timer);
-      tick();
-    };
-    const onVisible = () => {
-      if (!document.hidden) tickRef.current?.();
-    };
-    // Someone touching the pane is the one signal the payload cannot give: they are watching
-    // THIS session now, so drop back to the fast rung and re-read immediately. Guarded by a
-    // minimum gap so a scroll or a burst of typing cannot turn into a request per event, and
-    // by the streak so the common case (already fast) costs nothing.
-    const bump = () => {
-      if (unchangedRef.current === 0) return;
-      if (Date.now() - lastPollAtRef.current < MIRROR_POLL_FAST) return;
-      unchangedRef.current = 0;
-      tickRef.current?.();
-    };
-    const root = scroll.mirrorRef.current;
-    document.addEventListener("visibilitychange", onVisible);
-    root?.addEventListener("pointerdown", bump, { passive: true });
-    root?.addEventListener("keydown", bump);
-    root?.addEventListener("scroll", bump, { passive: true, capture: true });
-    tick();
-    return () => {
-      alive = false;
-      if (timer) clearTimeout(timer);
-      tickRef.current = null;
-      document.removeEventListener("visibilitychange", onVisible);
-      root?.removeEventListener("pointerdown", bump);
-      root?.removeEventListener("keydown", bump);
-      root?.removeEventListener("scroll", bump, { capture: true });
-    };
-  }, [session]);
+  useTranscriptPoll({ session, sessionMeta, st, scroll, tts, marksReloadRef });
 
   // Reconcile optimistic echoes: once a sent prompt's real user turn lands in the
   // transcript (a matching non-noise user turn; managed attachments also have a unique
@@ -805,60 +241,12 @@ export function MirrorView({
   // closure is fresh each time; leaving them out of the deps keeps unrelated re-renders (every
   // keystroke in the composer) from re-firing it.
   useLayoutEffect(() => {
-    scroll.applyFollow({ groups, loaded, busy, pending, pendingPlan, pendingPerm: pendingPerm || (pendingApproval ? pendingApproval.id : null) });
+    scroll.applyFollow({ groups, loaded, busy, live: !!liveText, pending, pendingPlan, pendingPerm: pendingPerm || (pendingApproval ? pendingApproval.id : null) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turns, pending, pendingPlan, pendingPerm, pendingApproval, status, bgBusy, finalizing, pendingSends, queuedPrompts, liveText]);
 
 
-
-  // Page older history in (P2): fetch the window before the oldest line we hold and
-  // prepend it. Guard via refs so overlapping triggers (button + observer) can't double it.
-  const loadOlder = async () => {
-    if (loadingOlderRef.current || firstLineRef.current <= 0) return;
-    loadingOlderRef.current = true;
-    setLoadingOlder(true);
-    try {
-      const before = firstLineRef.current;
-      const d = await api(`api/sessions/${q(session)}/messages?before=${before}&limit=${WINDOW}`);
-      if (d && !d.error && Array.isArray(d.messages)) {
-        if (d.messages.length) {
-          scroll.capturePrependAnchor(); // keep the viewport steady across the prepend
-          const older = d.messages;
-          setTurns((t) => [...older, ...t]);
-        }
-        if (typeof d.firstLine === "number") firstLineRef.current = d.firstLine;
-        setHasMore(!!d.hasMore);
-      }
-    } catch {
-      /* transient — the user can trigger again */
-    } finally {
-      loadingOlderRef.current = false;
-      setLoadingOlder(false);
-    }
-  };
-
-  // Put the reader back on the turn they were reading across the prepend. The hold then stays
-  // armed inside useMirrorScroll, because at this point the prepended turns have no content yet.
-  useLayoutEffect(() => {
-    scroll.applyPrependAdjust();
-  }, [turns]);
-
-  // Auto-load older history when the top sentinel scrolls into view (prefetch a little
-  // early via rootMargin). Only active while there's more above.
-  useEffect(() => {
-    const el = topSentinelRef.current;
-    const root = bodyRef.current;
-    if (!el || !root || !hasMore) return;
-    const ob = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) loadOlder();
-      },
-      { root, rootMargin: "240px 0px 0px 0px" },
-    );
-    ob.observe(el);
-    return () => ob.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasMore, session]);
+  const loadOlder = useOlderHistory({ session, st, scroll });
 
   // Auto-grow the composer to fit its content (up to ~10 lines via the CSS max-height,
   // then it scrolls). Runs on every draft change, including the per-session draft restored
@@ -873,7 +261,7 @@ export function MirrorView({
   // Focus the composer when this pane becomes the active chat — but not on touch
   // devices, where auto-focus would pop the on-screen keyboard just from switching
   // to read the chat. There the user taps the composer to type. (The other focus
-  // calls below are keystroke-driven — send / history nav — so the keyboard is
+  // calls are keystroke-driven — send / history nav — so the keyboard is
   // already up and refocusing is fine.)
   useEffect(() => {
     if (active && !coarsePointer()) inputRef.current?.focus();
@@ -891,527 +279,11 @@ export function MirrorView({
     }
   }, [readOnly, alive, termState]);
 
-  // Low-level: submit one prompt as a semantic turn op — start when idle, steer when a
-  // turn is already running (docs/log/27 §4). The Agent adapts it per driver: tui = the same
-  // tmux typing as before (sessionTurn falls back to /input against an old Agent),
-  // managed = the turn/start and turn/steer RPCs (P2). The result carries the rejection
-  // reason so the caller can drop its optimistic echo AND tell the user why.
-  // Only managed sessions pass attachments; the driver turns them into API attachments
-  // (docs/log/27 §10.2-3).
-  const postInput = (text: string, op: "start" | "steer", attachments?: string[]): Promise<TurnResult> =>
-    sessionTurn(session, op, text, attachments);
+  const actions = useMirrorActions({ session, running, managed, toast, st, scroll });
+  const { wsDown, postKeys, draftBusy, dropPendingPeer, restoreDiscard, closeDiscard } = actions;
 
-  // wsDown: the workspace isn't running, so nothing can receive an agent-bound action —
-  // it would just 502, and helpers that optimistically flip the UI to "working" would leave
-  // that spinner stuck (the poll is frozen while stopped). Every send helper funnels through
-  // here: the live composer is already hidden while stopped (the !running branch below), but
-  // the pending permission/question/plan cards and the stop button render OUTSIDE that branch,
-  // so each must self-guard. Returns true (and toasts once) when the action must be dropped.
-  const wsDown = (): boolean => {
-    if (running) return false;
-    toast(tr("mirror.ws_stopped"));
-    return true;
-  };
-
-  // Low-level: send named keys with NO "working" status and NO quick re-poll — used by
-  // the plan-mode toggle, which isn't a turn. (The quick re-poll of sendKeys/sendPrompt
-  // would fire before the mode actually changed and momentarily revert the optimistic
-  // indicator; the regular poll picks up the real mode via paneMode.)
-  const postKeys = async (keys: string[]) => {
-    if (wsDown()) return; // plan-mode toggle / codex update-menu skip: no agent to key while stopped
-    try {
-      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { keys });
-    } catch {
-      /* next poll reconciles */
-    }
-  };
-
-  // Newest real (jsonl-backed) turn idx currently held, or -1. Used to anchor an
-  // optimistic echo so it only reconciles against a turn that arrives after the send.
-  const newestIdx = (): number => {
-    for (let i = turns.length - 1; i >= 0; i--) {
-      if (turns[i].idx !== undefined) return turns[i].idx as number;
-    }
-    return -1;
-  };
-
-  // sendPrompt submits one prompt (the composer). Never used to answer an AUQ —
-  // the modal ignores typed text, so a text send would confirm option 1 (docs/build/92).
-  // attachments are the API attachments of a managed session (send() chooses between them and
-  // weaving paths into the text). The return value says whether the session accepted the send.
-  // Most callers can ignore it, but the plan-comment "sent" marker must not: returning void and
-  // only toasting the failure folded away comments that never arrived, leaving them impossible
-  // to retype (a comment rejected with permission_pending was immediately marked as sent).
-  // restoreText is what to write back into the composer on failure. It defaults to the text
-  // that was sent, but under tui that text has the attachment-path instructions woven in
-  // (buildImagePrompt), so composer sends pass the text the user actually typed — the
-  // attachment chips come back too, and restoring the path-bearing text would duplicate the
-  // paths on the next attempt.
-  const sendPrompt = async (
-    text: string,
-    attachments?: string[],
-    restoreText?: string,
-    wire?: string,
-  ): Promise<boolean> => {
-    const t = (text || "").trim();
-    // sendingRef (not the `sending` state alone) guards re-entrancy: two invocations
-    // arriving in the same task both read `sending` before either commit lands, but the
-    // ref is set synchronously right here, so the second call sees it immediately.
-    if ((!t && !attachments?.length) || sendingRef.current) return false;
-    // WS down: nothing can receive the prompt (a send would 502). The composer is already
-    // hidden while stopped, but other callers (seed prompt, file drop) reach here too — bail
-    // before the optimistic echo so a send never looks accepted when it can't be.
-    if (wsDown()) return false;
-    sendingRef.current = true;
-    setSending(true);
-    // start = a new turn, steer = a follow-up into the running one. Decided from the real
-    // status, before the optimistic flip to "working". Under tui both collapse to the same
-    // typing, but managed's turn/start vs turn/steer (P2) depends on the distinction.
-    const op = statusRef.current === "working" ? "steer" : "start";
-    statusRef.current = "working";
-    setStatus("working");
-    // Sending is an explicit "take me to the conversation": re-arm auto-follow so the
-    // optimistic echo below and the incoming reply are surfaced, even if the user had
-    // scrolled up to read history.
-    scroll.armFollow();
-    // Show the message immediately (optimistic echo) so it never looks lost while claude
-    // is busy — reconciled away once its real user turn appears in the transcript.
-    const echoId = nextEchoId();
-    applyEchoes((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx(), attachmentPaths: attachments, at: Date.now() }]);
-    // The echo keeps the member's words; only the wire carries the studio signal, which the
-    // transcript strips again before the echo is reconciled against it (composerSend).
-    const res = await postInput(wire || t, op, attachments);
-    if (!res.ok) {
-      // The send was not accepted: keeping the echo would make it look sent, so drop it,
-      // toast the reason and restore the draft that send() already cleared — without
-      // clobbering anything the user has started retyping.
-      applyEchoes((p) => p.filter((e) => e.id !== echoId));
-      toast(res.message || tr("mirror.send_failed"));
-      setDraft((d) => d || restoreText || t);
-    }
-    sendingRef.current = false;
-    setSending(false);
-    // Pick up the just-logged user turn quickly rather than waiting a full interval.
-    setTimeout(() => tickRef.current?.(), 250);
-    return res.ok;
-  };
-
-  // Launch seed: a session started from "start work" carries a first prompt. The mirror no
-  // longer SENDS it — the Agent does, from the create call's initial_prompt (or /input
-  // {when_ready} when attachments made the text final only after create; useStartWork.ts).
-  // That matters because this view is mounted only while its tab is the selected one:
-  // typing it from here meant a session launched into a background tab sat idle until the
-  // user came back to it, and then looked as if opening the tab is what sent the message.
-  //
-  // What is left here is display: show the sent text as an optimistic echo so the chat
-  // isn't empty for the seconds between launch and the first turn reaching the transcript.
-  // It is dropped by the normal reconciliation once that turn lands.
-  //
-  // sinceIdx is -1 on purpose. An echo's anchor exists to keep it from matching a turn
-  // that predates the send, but this one can only ever match the first turn of a brand-new
-  // session — while an anchor taken from newestIdx() would strand it forever whenever the
-  // turn is ALREADY in the transcript (delivery won the race, or the pane was opened
-  // later). stateSession likewise: on the commit where the `session` prop changes this
-  // component still holds the PREVIOUS session's state (the reset below is a layout effect,
-  // so it lands one render later), and appending an echo there would both anchor it against
-  // a foreign transcript and copy the old session's pending echoes into the new one's stash.
-  const seededRef = useRef(false);
-  useEffect(() => {
-    seededRef.current = false; // new session → allow its own seed
-  }, [session]);
-  useEffect(() => {
-    if (seededRef.current || stateSession !== session) return;
-    const seed = takeLaunchSeed(session);
-    if (!seed) return;
-    seededRef.current = true;
-    const echoId = nextEchoId();
-    applyEchoes((p) => [...p, { id: echoId, text: seed.trim(), sinceIdx: -1, launch: true, at: Date.now() }]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, stateSession]);
-
-  // driveInput posts one modal-driving body ({keys} or {seq}) and — this is the point —
-  // does NOT swallow a rejection. api() resolves non-2xx as a value ({error:{code}}), so
-  // a `try/await/catch {}` here would never run its catch: a 400 (bad_key, view-nav
-  // guard, rate-limit modal) left the card sitting there with no keystroke delivered and
-  // no message — pressing the button appeared to do nothing. Answering is the one place where silence is
-  // indistinguishable from success, so failures speak — same treatment as sendRespond's
-  // managed path. The optimistic 'working' is rolled back too, or the chip claims a turn
-  // that never started until the next poll.
-  // The boolean says whether the keystrokes actually went out — the question card restores
-  // the draft it cleared when they did not (PendingQuestions.fire).
-  const driveInput = async (body: { keys?: string[]; seq?: Array<{ k?: string; t?: string }> }): Promise<boolean> => {
-    if (sending) return false;
-    if (wsDown()) return false; // WS stopped: no agent to receive the keys
-    const prev = statusRef.current;
-    setSending(true);
-    statusRef.current = "working";
-    setStatus("working");
-    const res = await apiJSON(`api/sessions/${q(session)}/input`, "POST", body).catch(() => null);
-    const ok = !!res && !res.error;
-    if (!ok) {
-      statusRef.current = prev;
-      setStatus(prev);
-      toast(res?.error ? errText(res.error) : tr("mirror.answer_send_failed"));
-    }
-    setSending(false);
-    setTimeout(() => tickRef.current?.(), 400);
-    return ok;
-  };
-
-  // sendKeys drives the AskUserQuestion modal via named keys (Down/Space/Enter), the
-  // only way to answer multi-select / multi-question forms (free text can't).
-  const sendKeys = async (keys: string[]): Promise<boolean> => {
-    if (!keys || !keys.length) return false;
-    return await driveInput({ keys });
-  };
-
-  // sendSeq drives the modal with an ORDERED mix of named keys and literal text — the
-  // path for answering a question via its "Type something" free-text row (move down to
-  // it, type, Enter). Built by PendingQuestions.submit for multi-question / multi-select
-  // forms where free text and option navigation are interleaved.
-  const sendSeq = async (seq: Array<{ k?: string; t?: string }>): Promise<boolean> => {
-    if (!seq || !seq.length) return false;
-    return await driveInput({ seq });
-  };
-
-  // sendInterrupt stops the running turn — the equivalent of turn/interrupt, which under tui
-  // becomes Escape (opencode's sub-agent detail-view special case is handled server-side in
-  // /turn). The next poll resyncs the real state, so no optimistic state change is needed.
-  //
-  // It neither checks nor sets `sending`: a stop must stay pressable while an earlier stop is
-  // still in flight, because on a Managed session that is exactly when the second stop — the
-  // one that ends what the queue started — is needed (ADR 0105 decision 2). discardQueue is the
-  // menu's "stop and discard the queue" (decision 3), which only a Managed session offers.
-  const sendInterrupt = async (discardQueue = false) => {
-    if (wsDown()) return; // WS stopped: no live turn to interrupt (also plan-reject / question-cancel)
-    // An explicit stop (also plan-reject / question-cancel) means the user does NOT expect
-    // a reply to render, so disarm the idle→reply bridge — otherwise the spinner would
-    // linger over an interrupted, reply-less turn until the grace lapsed.
-    wasWorkingRef.current = false;
-    finalizingRef.current = false;
-    setFinalizing(false);
-    const res = await sessionInterrupt(session, discardQueue && managed);
-    if (!res.ok) toast(res.message || tr("mirror.stop_failed"));
-    // A first stop lets the queue go on, which looks like the stop did nothing unless said.
-    else if (managed && res.stop === "first" && queuedCount > 0) toast(tr("mirror.stop_first_continues"));
-    setTimeout(() => tickRef.current?.(), 400);
-  };
-
-  // cancelQuestion declines a Managed session's pending question (see the QuestionCard's
-  // onCancel). Failures speak, as in sendRespond: silence would leave the card looking dead.
-  const cancelQuestion = async (id: string) => {
-    if (wsDown()) return;
-    const res = await sessionCancelInteraction(session, id);
-    if (!res.ok) toast(res.message || tr("mirror.answer_send_failed"));
-    setTimeout(() => tickRef.current?.(), 400);
-  };
-
-  // An echo whose input a discard threw away never lands, so it is swept when the discard is
-  // first seen (withoutDiscarded / sweptDiscards). Waits for stateSession: on the commit where
-  // `session` changes, `discards` still belongs to the session being left.
-  useEffect(() => {
-    if (stateSession !== session || !discards.length) return;
-    let swept = sweptDiscards.get(session);
-    if (!swept) sweptDiscards.set(session, (swept = new Set()));
-    const fresh = discards.filter((d) => !swept!.has(d.id));
-    if (!fresh.length) return;
-    for (const d of fresh) swept.add(d.id);
-    const texts = fresh.flatMap((d) => d.items.map((i) => i.text));
-    applyEchoes((p) => withoutDiscarded(p, texts));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [discards, session, stateSession]);
-
-  // The input box is taken: putting queued or discarded text there would overwrite it.
-  const draftBusy = !!draft.trim() || attachments.length > 0;
-
-  // intoDraft puts a queued or discarded input back into the composer. It is never sent from
-  // here: sending it again is the member's own act, and a new send gets a new message id —
-  // the old entry's id is never reused, or a driver that records ids at accept time would
-  // drop the resend as a duplicate (decision 5).
-  const intoDraft = (item: QueueItem) => {
-    setHistIdx(null);
-    setDraft(item.text);
-    if (item.attachments?.length) {
-      attach.revive(
-        item.attachments.map(
-          (p): Attachment => ({ id: "", name: p.split("/").pop() || p, type: "", image: false, path: p, url: "" }),
-        ),
-      );
-    }
-    inputRef.current?.focus();
-  };
-
-  // takeQueued removes one still-queued entry (decision 5) and, for "back to input", puts it
-  // into the composer — only once the removal succeeded, so the text is never both queued and
-  // in the draft. already_started is the normal loss of a race with the pump, not an error.
-  const takeQueued = async (id: string, restore: boolean) => {
-    if (wsDown()) return;
-    if (restore && draftBusy) {
-      toast(tr("mirror.queued_restore_busy"));
-      return;
-    }
-    if (queueOpsRef.current.has(id)) return;
-    queueOpsRef.current.add(id);
-    const res = await sessionRemoveQueued(session, id);
-    queueOpsRef.current.delete(id);
-    if (res.ok) {
-      const gone = res.removed;
-      if (gone) {
-        // The optimistic echo of this input would otherwise wait forever for a turn that will
-        // never come.
-        const text = gone.text.trim();
-        applyEchoes((p) => {
-          const i = p.findIndex((e) => e.text.trim() === text);
-          return i < 0 ? p : [...p.slice(0, i), ...p.slice(i + 1)];
-        });
-        // The bubble offers "back to input" on member input only; this keeps a stale bubble
-        // from putting a peer's envelope into the draft all the same (decision 4).
-        if (restore && isMemberOrigin(gone.origin)) intoDraft(gone);
-      }
-    } else if (res.code === "already_started") toast(tr("mirror.queued_already_started"));
-    else if (res.code === "not_queued") toast(tr("mirror.queued_gone"));
-    else toast(res.message || tr("mirror.send_failed"));
-    setTimeout(() => tickRef.current?.(), 250);
-  };
-
-  // The discard notice's two actions (decision 4). Restoring the last member entry and a close
-  // both tell the driver to drop the discard, so other tabs stop offering it; a failure there only
-  // leaves it offered elsewhere, and nothing is ever sent twice, so it is not reported.
-  const restoreDiscard = (d: Discard) => {
-    if (draftBusy) {
-      toast(tr("mirror.discarded_restore_busy"));
-      return;
-    }
-    const step = restoreStep(discardNotices, d);
-    if (!step.item) return;
-    setDiscardNotices(step.next);
-    if (step.dismiss) void sessionDismissDiscard(session, d.id);
-    intoDraft(step.item);
-  };
-  const closeDiscard = (id: string) => {
-    const step = closeStep(discardNotices, id);
-    setDiscardNotices(step.next);
-    if (step.dismiss) void sessionDismissDiscard(session, id);
-  };
-
-  // sendApproval answers a MANAGED session's pending tool approval. It mirrors sendRespond,
-  // including the rollback: a rejection must leave the card alive rather than clear it, because
-  // the tool is still blocked and the member would have no way back to it.
-  const sendApproval = async (id: string, allow: boolean): Promise<boolean> => {
-    if (sending) return false;
-    if (wsDown()) return false;
-    setSending(true);
-    const prev = statusRef.current;
-    statusRef.current = "working";
-    setStatus("working");
-    const res = await sessionApprove(session, id, allow).catch((): TurnResult => ({ ok: false }));
-    if (!res.ok) {
-      statusRef.current = prev;
-      setStatus(prev);
-      toast(res.message || tr("mirror.answer_send_failed"));
-    }
-    setSending(false);
-    setTimeout(() => tickRef.current?.(), 400);
-    return res.ok;
-  };
-
-  // sendRespond answers a MANAGED session's pending question by interaction id —
-  // a structured answer (docs/log/27 §5). A tui question is still answered by navigating the
-  // TUI modal with sendKeys/sendSeq; the server rejects /respond for tui anyway.
-  const sendRespond = async (id: string, answers: InteractionAnswer[]): Promise<boolean> => {
-    if (sending) return false;
-    if (wsDown()) return false; // WS stopped: the managed session's structured answer can't be delivered
-    setSending(true);
-    const prev = statusRef.current;
-    statusRef.current = "working";
-    setStatus("working");
-    const res = await sessionRespond(session, id, answers).catch((): TurnResult => ({ ok: false }));
-    if (!res.ok) {
-      // Never swallow a rejection (unknown id, driver not implemented, connection lost):
-      // roll the status back, keep the question card alive and show the reason if there is
-      // one. The next poll resyncs the real state.
-      statusRef.current = prev;
-      setStatus(prev);
-      toast(res.message || tr("mirror.answer_send_failed"));
-    }
-    setSending(false);
-    setTimeout(() => tickRef.current?.(), 400);
-    return res.ok;
-  };
-
-  // addFiles uploads files to the session and holds each as an attachment chip —
-  // shared by clipboard paste, drag&drop onto the pane, and the attach picker. Upload +
-  // saved path referenced in the prompt (kind-worded by buildImagePrompt).
-  const addFiles = async (files: File[]) => {
-    if (!files.length) return;
-    setPasting(true);
-    for (const f of files) {
-      try {
-        const res = await pasteImage(session, f);
-        if (res.status < 300 && res.path && res.name) {
-          const path = res.path;
-          const nm = res.name;
-          // Non-images get no preview URL — the chip shows an icon + name instead.
-          attach.add([makeAttachment(f, { name: nm, path })]);
-        } else {
-          toast(res.error ? errText(res.error) : tr("mirror.attach_failed"));
-        }
-      } catch {
-        toast(tr("mirror.attach_failed_net"));
-      }
-    }
-    setPasting(false);
-    inputRef.current?.focus();
-  };
-
-  // Paste file(s) from the clipboard into the composer. Non-file pastes fall through
-  // to the default (text). Agents without the cap let everything fall through.
-  const onPaste = async (e: RClipboardEvent<HTMLTextAreaElement>) => {
-    if (!canPasteImage) return;
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    const files: File[] = [];
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i];
-      if (it.kind === "file") {
-        const f = it.getAsFile();
-        if (f) files.push(f);
-      }
-    }
-    if (!files.length) return; // ordinary text paste — let it happen
-    e.preventDefault();
-    await addFiles(files);
-  };
-
-  const removeAttachment = (i: number) => attach.remove(i);
-  // Discard the draft only once the send succeeded, i.e. the paths made it into the prompt.
-  const clearAttachments = () => attach.clear();
-
-  // An AskUserQuestion can't be answered by the composer's free text — verified against
-  // the terminal (v2.1.204, docs/build/92): the modal IGNORES typed text on option rows
-  // entirely (the older "option filter" behavior is gone), so the trailing Enter just
-  // confirms the highlighted (first) option — a silent wrong answer. Digit keys 1-9 even
-  // select-and-submit instantly, so stray text is doubly dangerous. Lock the composer for
-  // ANY pending question and steer the user to the card — its options key-drive the modal
-  // (Down×i, Enter) and its free-text row uses the still-working "Type something" path.
-  // An empty array (no questions) must not lock: the card only renders for pending.length > 0,
-  // so `!!pending` alone would kill the composer with no card to answer in.
-  const auqLocksComposer = !!pending?.length;
-  // A pending plan approval or permission prompt is a menu decision, NOT a free-text turn:
-  // sending would type text + Enter, and that Enter selects the menu's default (approve /
-  // allow), silently confirming it. A mode toggle would likewise mis-key the menu. So lock
-  // the composer AND the mode chip while one is pending; act via the card's buttons.
-  const decisionPending = !!pendingPlan || !!pendingPerm || !!pendingApproval;
-  const composerLocked = auqLocksComposer || decisionPending;
-
-  // OS drag&drop anywhere on the pane attaches the dropped files (the composer is a
-  // small target — the whole chat area accepts). dragenter/leave nest per child, so a
-  // depth counter drives the highlight; drop is ignored while the composer is hidden
-  // (read-only history) or locked.
-  const canDropFiles = canPasteImage && !readOnly && !composerLocked;
-  // A memo dragged from the left-pane queue drops its text into the composer — but ONLY
-  // when this session is awaiting input (alive and idle: not working, no lingering background run,
-  // not mid-finalize, composer not locked by an AUQ/plan). A busy session would just queue
-  // the text unseen, so we refuse the drop there.
-  const sessionIdle = alive && !readOnly && !composerLocked && !busy;
-  const canDropMemo = sessionIdle;
-  // Which kind of drop, if any, this drag offers here (types are readable on enter/over;
-  // getData is not, so the branch is decided from the type list).
-  const dragIntent = (e: RDragEvent): "file" | "memo" | null => {
-    const types = e.dataTransfer?.types;
-    if (!types) return null;
-    if (canDropFiles && types.includes("Files")) return "file";
-    if (canDropMemo && types.includes(MEMO_DND_MIME)) return "memo";
-    return null;
-  };
-  const onDragEnter = (e: RDragEvent) => {
-    if (!dragIntent(e)) return;
-    e.preventDefault();
-    dragDepth.current++;
-    setDragging(true);
-  };
-  const onDragOver = (e: RDragEvent) => {
-    if (!dragIntent(e)) return;
-    e.preventDefault();
-  };
-  const onDragLeave = (e: RDragEvent) => {
-    if (!dragIntent(e)) return;
-    e.preventDefault();
-    if (--dragDepth.current <= 0) {
-      dragDepth.current = 0;
-      setDragging(false);
-    }
-  };
-  const onDrop = async (e: RDragEvent) => {
-    const intent = dragIntent(e);
-    if (!intent) return;
-    e.preventDefault();
-    dragDepth.current = 0;
-    setDragging(false);
-    if (intent === "memo") {
-      const text = e.dataTransfer.getData(MEMO_DND_MIME);
-      if (text) insertMemoText(text); // the memo stays queued — this is a copy
-      return;
-    }
-    const files = Array.from(e.dataTransfer?.files || []);
-    await addFiles(files);
-  };
-
-  // Drop a dragged memo's text into the composer: append below any existing draft, then
-  // focus and park the caret at the end. Never sends — the user reviews and submits.
-  const insertMemoText = (text: string) => {
-    setDraft((d) => (d ? d.replace(/\s*$/, "") + "\n" + text : text));
-    setHistIdx(null);
-    requestAnimationFrame(() => {
-      const el = inputRef.current;
-      if (el) {
-        el.focus();
-        el.setSelectionRange(el.value.length, el.value.length);
-      }
-    });
-  };
-
-  // With an override, send that text (a suggestion chip's Alt-click instant send); otherwise
-  // send the composer's draft.
-  const send = async (override?: string) => {
-    if (composerLocked) return;
-    const text = (override ?? draft).trim();
-    if (!text && !attachments.length) return;
-    // Short plain text feeds the reply-suggestion learning. Only sends through here count, so
-    // AUQ/plan answers are naturally excluded. Re-sending a phrase that was hidden from the
-    // menu says the user wants it back, so unhide it.
-    if (text && isQuickReplyCandidate(text, attachments.length > 0)) {
-      setSetting("quickReplies", recordQuickReply(settings.quickReplies || {}, text, Date.now()));
-      const hidden = settings.quickRepliesHidden || [];
-      const unhidden = unhideQuickReply(hidden, text);
-      if (unhidden !== hidden) setSetting("quickRepliesHidden", unhidden);
-    }
-    // Sending from the composer while this session is being read aloud stops that playback:
-    // the user is interrupting or following up, so hearing the old answer out is only
-    // confusing. Matched by sessionName, so playback from another session keeps running.
-    const ts = useTtsStore.getState();
-    if (ts.active && ts.sessionName === session) ts.stop();
-    const staged = attachments; // restored on failure (revive, below)
-    const paths = attachments.map((a) => a.path);
-    // managed passes them as wire attachments (the driver converts them into API attachments,
-    // docs/log/27 §10.2-3); tui weaves the paths into the prompt body, and the studio signal
-    // follows as the last line (composerSend).
-    const line = signal?.line() || "";
-    const out = composerSend(text, paths, agent.id, managed, line);
-    setHistIdx(null);
-    setDraft("");
-    clearAttachments();
-    // On touch devices, drop focus so the soft keyboard (GBoard) retracts once the
-    // turn is sent — the reply is what the user wants to read, not keep typing. Desktop
-    // keeps focus (and refocuses below) so typing the next turn needs no extra click.
-    if (coarsePointer()) inputRef.current?.blur();
-    // Restore the attachments too when the send is refused. Restoring only the text is the
-    // worst outcome: the message is back, so the user re-sends believing it is the same turn,
-    // and sends one with no images.
-    if (!(await sendPrompt(out.echo, out.attachments, text, out.wire))) attach.revive(staged);
-    else if (line) signal?.sent();
-    if (!coarsePointer()) inputRef.current?.focus();
-  };
+  const input = composerInput({ session, settings, signal, agent, managed, readOnly, toast, st, sendPrompt: actions.sendPrompt });
+  const { composerLocked, onDragEnter, onDragOver, onDragLeave, onDrop, send } = input;
 
 
   // --- Skill picker (docs/log/50) --- implemented in parts/useSkillPicker; called here
@@ -1428,166 +300,18 @@ export function MirrorView({
   });
 
 
-  // Open a plan's Markdown in its own pane (manual — via a button, not automatic).
-  // The pane carries docSession so it becomes a REVIEW surface (select → comment);
-  // the comments are keyed by session + plan text, which is what makes the card below
-  // able to collect them again.
-  //
-  // Why not plain showDoc: doc panes are identified by TITLE alone (layout/ops
-  // sameTarget), so a revised plan re-presented under the same heading would just
-  // FOCUS the pane still showing the OLD text — and comments would then be written
-  // against text the agent no longer proposes. Replace the content of an already-open
-  // plan pane for this session instead, and fall back to opening a new one.
-  const openPlan = (plan: string) => {
-    const target = {
-      content: { kind: "doc" as const, docTitle: planTitle(plan), docContent: plan, docSession: session },
-    };
-    const open = findPlanPane(session);
-    if (open) {
-      setPaneTarget(open, target);
-      setActivePane(open);
-      return;
-    }
-    openTargetInNew(target);
-  };
-
-  // Review this plan in another session: reject it, then open the ordinary launch dialog
-  // seeded with a prompt that points the reviewer at the plan FILE.
-  //
-  // The order is forced. The findings come back as a peer message, and a session waiting on
-  // plan approval refuses free text of every kind (409 plan_pending) — because the approval
-  // modal would swallow the text and turn its Enter into an approval of the plan under
-  // review. Rejected, the planner sits idle in plan mode and the message lands.
-  //
-  // The path is fetched BEFORE anything is rejected: a launch with no plan to review is
-  // worse than no launch, and this way a failure leaves the plan exactly as it was.
-  const reviewPlanElsewhere = async (plan: string) => {
-    if (planSendBlocked) {
-      toast(planSendBlocked);
-      return;
-    }
-    if (wsDown()) return;
-    const res = await sessionPlanFile(session);
-    if (!res.ok || !res.path) {
-      toast(tr("plan.review_launch_failed", { err: res.message || "" }));
-      return;
-    }
-    const target = handoffLaunchTarget(sessionMeta, useReposStore.getState().repos, false);
-    if ("error" in target) {
-      toast(tr(target.error === "no_parent" ? "mirror.handoff_no_parent" : "mirror.handoff_no_dir"));
-      return;
-    }
-    markRejected(plan, true); // optimistic "rejected" badge; planOutcome reconciles it
-    wasWorkingRef.current = false; // as with an interrupt: no reply is being waited for
-    await sendInterrupt();
-    // Only the prompt and the title: the lineage fields belong to a handoff PROPOSAL, and
-    // StartHost would try to badge one that does not exist.
-    useLaunchSeed.getState().set(
-      reviewPrompt({ parent: session, path: res.path, dir: target.repo.path || "" }),
-      reviewTitle(planTitle(plan)),
-    );
-    // inPlace: the reviewer reads the working copy this plan is about, uncommitted work
-    // included. A worktree would show it the base instead — the dialog still offers one.
-    useLaunchTarget.getState().open(target.repo, "", true);
-  };
-
-  // Why plan comments cannot be sent ("" = they can). The composer disappears entirely while
-  // stopped, but the plan card stays in the history, so its send button must block itself.
-  // Collecting comments while stopped is still allowed — they go out after a resume.
-  const planSendBlocked = !running
-    ? tr("mirror.ws_stopped")
-    : !alive || readOnly
-      ? tr("plan.send_needs_running")
-      : "";
-
-  // When reject → revise → re-present replaces the plan text, follow it in the open review
-  // pane too. Without this the reader comments against the old text and only discovers after
-  // sending that the passage is gone — a doc pane is a snapshot and stays stale silently.
-  useEffect(() => {
-    if (!pendingPlan) return;
-    const id = findPlanPane(session);
-    if (!id) return;
-    const pane = findPane(id);
-    if (pane?.content.kind !== "doc" || pane.content.docContent === pendingPlan) return;
-    setPaneTarget(id, {
-      content: { kind: "doc", docTitle: planTitle(pendingPlan), docContent: pendingPlan, docSession: session },
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingPlan, session]);
-
-  // Deliver comments on a plan. Which route to send by, and when to mark them sent, is
-  // decided by deliverPlanComments (planComments.ts): this component is too large to have a
-  // rendering test, so the decision is lifted out and pinned by unit tests. What stays here
-  // is the React housekeeping — press guard, optimistic "rejected" badge, toast, echo.
-  const sendPlanComments = async (plan: string) => {
-    if (sending) return;
-    // Nothing reaches a stopped session. The plan card also renders in the history, so it
-    // does not get the composer's "hidden while stopped" protection and must refuse here.
-    // The button is disabled via planSendBlocked too — this is the second layer, for a press
-    // that races the stop.
-    if (planSendBlocked) {
-      toast(planSendBlocked);
-      return;
-    }
-    if (wsDown()) return;
-    const isPending = !!pendingPlan && pendingPlan.trim() === plan.trim();
-    if (isPending) {
-      // The route that carries a rejection: block the send button and clear the badge and
-      // awaiting-reply state up front. (sendPrompt manages `sending` itself, so the
-      // speak-only route leaves it alone.)
-      setSending(true);
-      markRejected(plan, true); // optimistic "rejected" badge; planOutcome reconciles it
-      wasWorkingRef.current = false; // as with an interrupt: no reply is being waited for
-      finalizingRef.current = false;
-      setFinalizing(false);
-    }
-    const res = await deliverPlanComments(planKey(session, plan), {
-      pending: isPending,
-      respond: (feedback) => sessionPlanRespond(session, "reject", feedback),
-      say: (feedback) => sendPrompt(feedback),
-    });
-    if (isPending) setSending(false);
-    if (!res) return; // nothing to send
-    if (!res.ok) {
-      // Undelivered means the comments were not folded away, so state the reason and make it
-      // clear they can be re-sent (undelivered = the rejection went through but the text did
-      // not). A failure on the say route is not re-toasted: sendPrompt has already given the
-      // concrete reason (awaiting permission, stopped, …) and a generic "send failed" on top
-      // of it would obscure what happened.
-      if (res.reason !== "say") {
-        toast(res.message || tr(res.reason === "undelivered" ? "plan.feedback_undelivered" : "mirror.send_failed"));
-      }
-      return;
-    }
-    if (res.via === "reject") {
-      const echoId = nextEchoId(); // optimistic echo until the real turn lands (as in sendPrompt)
-      applyEchoes((p) => [...p, { id: echoId, text: res.feedback, sinceIdx: newestIdx(), at: Date.now() }]);
-      setTimeout(() => tickRef.current?.(), 400);
-    }
-  };
-
-  // Open a SendUserFile entry in its own split pane (same as the file tree's split-open).
-  const openFile = (path: string, line?: number, column?: number) =>
-    openTargetInNew(
-      { content: { kind: "file", filePath: path, targetLine: line, targetColumn: column } },
-      true,
-    );
-
-  // Open an edit trace's captured before/after in a diff pane. The mirror HAS panes, so
-  // it must pass this capability: without it ToolTrace silently takes the degraded path
-  // meant for the pane-less shared view (transcript/capabilities.ts) and an edit becomes
-  // an inline expansion with nothing to open — which is how it behaved until docs/log/68.
-  const openDiff = (p: Part) => {
-    const title = p.file ? p.file.split("/").pop() || p.file : p.tool || tr("view.diff");
-    const target = { content: { kind: "diff" as const, docTitle: title, diffTool: p.tool || "", diffEdits: p.edits || [] } };
-    const open = findDiffPane();
-    if (open) {
-      setPaneTarget(open, target);
-      setActivePane(open);
-      return;
-    }
-    openTargetInNew(target, true);
-  };
+  const plan = usePlanActions({
+    session,
+    sessionMeta,
+    running,
+    readOnly,
+    toast,
+    st,
+    actions,
+    openTargetInNew,
+    setPaneTarget,
+    setActivePane,
+  });
 
   // Publish the edited-file list for readers outside this pane (the command palette's
   // "changes in this session" mode), so they don't have to poll the transcript themselves.
@@ -1595,172 +319,21 @@ export function MirrorView({
     if (session) useSessionFilesStore.getState().set(session, files);
   }, [session, files]);
 
-  // Auto-suggested title (session_title.go): accepting promotes it to the session's real
-  // title (bumpSessions so the left-pane label updates without waiting for its own
-  // poll); dismissing discards it. Either way the server never offers one again.
-  const acceptTitle = async () => {
-    if (!session || titleActing) return;
-    if (wsDown()) return; // title accept/dismiss is agent-served (session_title.go) → 502 while stopped
-    setTitleActing(true);
-    try {
-      const res = await raw(`api/sessions/${q(session)}/title/accept`, { method: "POST" });
-      if (res.ok) {
-        setSuggestedTitle("");
-        bumpSessions();
-      }
-    } catch {
-      /* transient — next poll re-syncs suggestedTitle either way */
-    } finally {
-      setTitleActing(false);
-    }
-  };
-  const dismissTitle = async () => {
-    if (!session || titleActing) return;
-    if (wsDown()) return;
-    setTitleActing(true);
-    try {
-      const res = await raw(`api/sessions/${q(session)}/title/dismiss`, { method: "POST" });
-      if (res.ok) setSuggestedTitle("");
-    } catch {
-      /* same as above */
-    } finally {
-      setTitleActing(false);
-    }
-  };
+  const { acceptTitle, dismissTitle } = titleActions({ session, st, wsDown, bumpSessions });
   // Composer history = the user's own prompts in this conversation (so ↑ works even
   // after a reload, not just for prompts typed since mount). Injected turns — operator,
   // schedule, peer, auto-resume … — are left out; see composerHistory.
   const history = composerHistory(turns);
 
-  // Recall the previous / next prompt from history (shared by ↑/↓ and the on-screen
-  // buttons shown on phones, which have no arrow keys).
-  const recallPrev = () => {
-    if (!history.length) return;
-    const ni = histIdx !== null ? Math.max(0, histIdx - 1) : history.length - 1;
-    setHistIdx(ni);
-    setDraft(history[ni]);
-    inputRef.current?.focus();
-  };
-  const recallNext = () => {
-    if (histIdx === null) return;
-    const ni = histIdx + 1;
-    if (ni >= history.length) {
-      setHistIdx(null);
-      setDraft("");
-    } else {
-      setHistIdx(ni);
-      setDraft(history[ni]);
-    }
-    inputRef.current?.focus();
-  };
-
   // Ctrl+R: bash's reverse-i-search over the same history ↑/↓ walks (parts/useHistorySearch).
   // ↑ is a fine way back through the last few prompts and a poor one through fifty.
   const histSearch = useHistorySearch({ history, draft, setDraft, setHistIdx, inputRef, composerLocked });
 
-  const onKeyDown = (e: RKeyboardEvent) => {
-    if (histSearch.handleKeyDown(e)) return; // Ctrl+R opens the history search
-    if (skillPicker.handleKeyDown(e)) return; // while the skill picker is open it takes ↑↓/Enter/Tab/Esc
-    if (suggest.handleKeyDown(e)) return; // Tab: enter the chip row / cycle completions
-    // Scroll the transcript without leaving the composer: Ctrl/⌘+↑/↓ nudges, PageUp/PageDown
-    // (and Ctrl/⌘+[ / ]) page, Ctrl/⌘+End snaps to the newest turn and re-arms auto-follow.
-    // Checked before history recall so the modified arrows don't get swallowed by the ↑/↓
-    // recall path below.
-    if (!e.nativeEvent.isComposing && scrollComposerViewport(e, bodyRef.current, scroll.jumpToBottom)) return;
-    // Shell-style history: ↑/↓ recall past prompts when the field is empty (or once
-    // recall is underway). With text present, arrows move the caret as usual. Only the BARE
-    // arrows recall — Shift+↑/↓ must stay the textarea's select-by-line (it no longer scrolls
-    // the transcript, so without this guard it would fall through to recall here).
-    if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.nativeEvent.isComposing && !e.shiftKey && !e.altKey) {
-      if (e.key === "ArrowUp" && (draft === "" || histIdx !== null) && history.length) {
-        e.preventDefault();
-        recallPrev();
-        return;
-      }
-      if (e.key === "ArrowDown" && histIdx !== null) {
-        e.preventDefault();
-        recallNext();
-        return;
-      }
-    }
-    // Don't intercept Enter while an IME candidate window is open (JP/CJK input).
-    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
-    const mod = e.ctrlKey || e.metaKey;
-    if (modSend) {
-      // Ctrl/⌘+Enter submits; plain Enter falls through to insert a newline.
-      if (mod) {
-        e.preventDefault();
-        send();
-      }
-    } else if (!e.shiftKey && !mod) {
-      // Enter submits; Shift+Enter falls through to insert a newline.
-      e.preventDefault();
-      send();
-    }
-  };
-
-  // claude writes one logical response as several assistant events (text split by
-  // tool calls), so merge consecutive same-role turns into one block and drop the
-  // system-injected user lines (bash i/o, task notifications, slash-command echoes).
-  // Append any optimistic echoes as synthetic user turns (idx past any real line so keys
-  // stay unique and they sort last) — the mirror then shows a just-sent prompt at once.
-  // A queued prompt that matches a pending echo upgrades that echo's badge to "queued"
-  // (no second bubble); whatever remains was typed straight into the terminal, so it gets
-  // its own synthetic queued bubble. Multiset take: duplicate texts consume one entry each.
-  // The bubbles follow the queue's own order, so a peer message queued after the member's
-  // prompt is drawn after it.
-  //
   // Memoized on the three states it reads: this walks every turn in the window and rebuilds every
   // block, and MirrorView re-renders for reasons that have nothing to do with the conversation —
   // a keystroke in the composer, a scroll flag, a chip. Recomputing then also hands every block a
   // new identity, which is what makes the memoized TranscriptTurn below actually skip.
-  //
-  // With queuedItems (ADR 0105) each entry also brings its id — the bubble's actions act on it —
-  // and its origin, so a queued peer or schedule input wears the badge it will wear once it runs.
-  const grouped = useMemo(() => {
-    const queuedLeft = [...queueShown];
-    const takeQueued = (text: string) => {
-      const i = queuedLeft.findIndex((q) => q.text.trim() === text);
-      if (i < 0) return null;
-      return queuedLeft.splice(i, 1)[0];
-    };
-    const echoRows = pendingSends
-      .filter((e) => !echoLanded(e, turns, isNoise)) // hide at render the instant the real turn lands
-      .map((e) => {
-        const q = takeQueued(e.text);
-        const turn: Turn = {
-          role: "user",
-          text: e.text,
-          idx: 1e9 + e.id,
-          pending: true,
-          queued: !!q,
-          ...(q?.item
-            ? { queueId: q.item.id, queueActionable: actionable(q.item), queueRestorable: restorable(q.item) }
-            : {}),
-        };
-        return { turn, entry: q };
-      });
-    const queuedRows = queuedLeft.map((q, i) => {
-      const turn: Turn = {
-        role: "user",
-        text: q.text,
-        idx: 2e9 + i,
-        queued: true,
-        ...(q.item
-          ? {
-              queueId: q.item.id,
-              queueActionable: actionable(q.item),
-              queueRestorable: restorable(q.item),
-              ...injectionSource(q.item),
-            }
-          : {}),
-      };
-      return { turn, entry: q };
-    });
-    const extras = inQueueOrder([...queuedRows, ...echoRows], queueShown);
-    const baseTurns = coalesceUserActions(turns);
-    return groupTurns(extras.length ? [...baseTurns, ...extras] : baseTurns);
-  }, [turns, pendingSends, queueShown]);
+  const grouped = useMemo(() => groupWithQueue(turns, pendingSends, queueShown), [turns, pendingSends, queueShown]);
   // useStableBlockIds, not groupTurns' own numbering: a backward page can prepend older rows of
   // the block the reader is IN, and the block must not change its name (React key / data-turn-idx)
   // under them when it does. See blockIdentity.ts.
@@ -1815,47 +388,18 @@ export function MirrorView({
     wsDown,
   });
 
-  // Hold the "working" indicator across the idle→reply-renders gap (see `finalizing`).
-  // finalizingRef is set SYNCHRONOUSLY alongside the state so the poll loop's next-tick
-  // cadence sees it immediately; entering the hold also kicks a fast re-poll, because the
-  // tick that first read idle already scheduled the slow (3s) interval before this ran.
-  const setFinalize = (on: boolean) => {
-    finalizingRef.current = on;
-    setFinalizing(on);
-  };
-  useEffect(() => {
-    if (status === "working" || bgBusy) {
-      wasWorkingRef.current = true; // a turn is (or was just) running
-      setFinalize(false);
-      return;
-    }
-    if (!replyPending) {
-      // The reply has landed (or there's nothing to wait for): clear, and re-arm so the
-      // bridge only ever applies to a turn we actually watched run.
-      wasWorkingRef.current = false;
-      setFinalize(false);
-      return;
-    }
-    if (!wasWorkingRef.current) {
-      // replyPending but we never saw work this cycle (a plain history view whose last
-      // turn is an interrupted, reply-less prompt) — don't invent a spinner.
-      setFinalize(false);
-      return;
-    }
-    if (!finalizingRef.current) {
-      setFinalize(true);
-      tickRef.current?.(); // re-poll now instead of waiting out the slow interval
-    }
-    // Safety valve: an interrupted turn can end with no reply at all, so never hold
-    // forever — drop the indicator after a grace even if nothing lands.
-    const id = setTimeout(() => {
-      wasWorkingRef.current = false;
-      setFinalize(false);
-    }, FINALIZE_GRACE_MS);
-    return () => clearTimeout(id);
-    // setFinalize / refs are stable enough; re-run only on the signals that change the hold.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, bgBusy, replyPending]);
+  const { recallPrev, recallNext, onKeyDown } = composerKeys({
+    st,
+    history,
+    modSend,
+    send,
+    histSearch,
+    skillPicker,
+    suggest,
+    scroll,
+  });
+
+  useFinalizeHold({ st, replyPending });
 
   // Auto read-aloud of a new reply (P2). The decision lives in parts/useMirrorTts.syncAutoRead;
   // all that stays here is when to re-evaluate it — the deps, which the hook cannot subscribe
@@ -1882,97 +426,24 @@ export function MirrorView({
   const spends = groups.filter((g) => g.role !== "user").map(spendOf).filter((n) => n > 0);
   const maxSpend = spends.length ? Math.max(...spends) : 0;
 
-  const thinkingOpen = expandThinking(settings, sessionMeta?.kind);
-  // Everything the transcript CALLS. These close over this render's state, so they cannot be
-  // memoized — but a block only ever invokes them from a click, so they are routed through a ref
-  // and `caps` below keeps its identity without any block ever holding a stale handler.
-  const actsRef = useRef<TranscriptCaps>(null as unknown as TranscriptCaps);
-  actsRef.current = {
+  const caps = useTranscriptCaps({
+    session,
+    sessionMeta,
+    settings,
+    managed,
+    readOnly,
     agentName,
-    loadPastedImage: (name) =>
-      raw(`api/sessions/${q(session)}/pasted/${encodeURIComponent(name)}`).then((r) => (r.ok ? r.blob() : null)),
-    fileURL: downloadURL,
-    // 512 is twice the card's 240 px cap, so it still looks right on a HiDPI screen.
-    thumbURL: (p: string) => downloadURL(p, 512),
-    openFile,
-    openImage: (url, path) => setLightbox({ src: url, path }),
-    openDiff,
-    openPlan,
-    sendPlanComments: (plan: string) => void sendPlanComments(plan),
-    forkAt: openForkAt,
-    onReauth: () => useSettingsUI.getState().openSettings("agents"),
-    isRejectedPlan: (p: string) => rejectedPlansRef.current.has(p.trim()),
-    queue: { restore: (id) => void takeQueued(id, true), remove: (id) => void takeQueued(id, false) },
-  };
-
-  // What this reader may DO with the transcript. The mirror is the session's owner inside
-  // its own Workspace, so it supplies every capability — the shared-session view supplies
-  // almost none and the same blocks quietly drop those affordances (transcript/capabilities.ts).
-  //
-  // Memoized because every turn holds this object: a fresh one per render would re-render the
-  // whole conversation on every keystroke in the composer, whatever TranscriptTurn does. So what
-  // a block READS while rendering is a dependency here, and what it CALLS goes through actsRef.
-  const caps: TranscriptCaps = useMemo(
-    (): TranscriptCaps => ({
-      agentName,
-      repo: sessionMeta?.repo ?? null,
-      loadPastedImage: (name) => actsRef.current.loadPastedImage!(name),
-      fileURL: (p) => actsRef.current.fileURL!(p),
-      thumbURL: (p) => actsRef.current.thumbURL!(p),
-      openFile: (p, line, column) => actsRef.current.openFile!(p, line, column),
-      openImage: (url, path) => actsRef.current.openImage!(url, path),
-      openDiff: (p) => actsRef.current.openDiff!(p),
-      openPlan: (plan) => actsRef.current.openPlan!(plan),
-      session,
-      sendPlanComments: (plan) => actsRef.current.sendPlanComments!(plan),
-      planSendDisabled: planSendBlocked,
-      // Presence is what decides whether the affordance renders at all, so it stays reactive;
-      // only the call behind it is routed.
-      forkAt: canForkAt ? (turn) => actsRef.current.forkAt!(turn) : undefined,
-      onReauth: () => actsRef.current.onReauth!(),
-      // Lets an auth error block see that the login was renewed after the turn it killed, so it
-      // reports that instead of asking for a re-authentication that has already happened. Polled
-      // with the rest of the meta, so the card flips on its own once the user comes back from
-      // Settings > Agents — no reload, and it survives one (docs/log/47 §4-11).
-      authOkAt: sessionMeta?.authOkAt,
-      tts: tts.wiring,
-      expandThinking: thinkingOpen,
-      // Read while a turn renders, so its backing set cannot change silently: every write goes
-      // through markRejected, which bumps rejectedGen below.
-      isRejectedPlan: (p) => actsRef.current.isRejectedPlan!(p),
-      maxSpend,
-      marks,
-      // Read while a turn renders (which button, whose translation), so the wiring is a
-      // dependency: it only changes identity on a press or the one fetch per open, which is
-      // also the only time the conversation has to repaint for it.
-      translate,
-      // Read while a turn renders; the host hands a new one exactly when what it draws changed.
-      toolCard,
-      // Only the owner of a Managed session can edit its queue; a Terminal (CLI) session's
-      // queue lives in the CLI (ADR 0105 decision 6).
-      queue:
-        managed && !readOnly
-          ? { restore: (id) => actsRef.current.queue!.restore(id), remove: (id) => actsRef.current.queue!.remove(id) }
-          : undefined,
-    }),
-    [
-      rejectedGen,
-      agentName,
-      sessionMeta?.repo,
-      sessionMeta?.authOkAt,
-      session,
-      planSendBlocked,
-      canForkAt,
-      tts.wiring,
-      thinkingOpen,
-      maxSpend,
-      marks,
-      translate,
-      toolCard,
-      managed,
-      readOnly,
-    ],
-  );
+    st,
+    actions,
+    plan,
+    openForkAt,
+    canForkAt,
+    tts,
+    marks,
+    translate,
+    toolCard,
+    maxSpend,
+  });
 
   // Whether the session is in Plan mode. Case-insensitive so it holds against either the
   // labeled agent ("Plan") or an older one ("plan") — so the toggle direction (enter vs
@@ -2056,7 +527,14 @@ export function MirrorView({
         )}
       </ViewHead>
 
-      {ctxUsage && <ContextBar {...ctxUsage} spends={spends} maxSpend={maxSpend} />}
+      {ctxUsage && (
+        <ContextBar
+          {...ctxUsage}
+          spends={spends}
+          maxSpend={maxSpend}
+          action={running && !readOnly && sessionRow ? <SpendChip s={sessionRow} /> : undefined}
+        />
+      )}
       {/* These keys exist to rebuild each strip per session, and siblings must never share one.
           When the key changes, React collects the leftover fibers in a Map keyed by key; a
           duplicate is overwritten last-wins, so the earlier one (ToDo) falls out of the Map and
@@ -2171,126 +649,17 @@ export function MirrorView({
             }))}
           />
         )}
-        {carried && (
-          // Carried interaction (docs/log/75). Unlike the pending card this sends no keys at
-          // all: there is no modal left to aim at, and the Agent delivers the answer as prose
-          // after resuming.
-          <CarriedBlock
-            carried={carried}
-            session={session}
-            agentName={agentName}
-            onOpenPlan={openPlan}
-            onError={(m) => toast(m)}
-            onDone={() => setCarried(null)}
-            translate={translate}
-          />
-        )}
-        {pendingPlan && (
-          <PlanPendingCard
-            agentName={agentName}
-            plan={pendingPlan}
-            session={session}
-            sending={sending}
-            sendDisabled={planSendBlocked}
-            onOpen={() => openPlan(pendingPlan)}
-            onSendComments={() => void sendPlanComments(pendingPlan)}
-            onApprove={() => {
-              // A rejected plan may be refined and re-presented with identical Markdown.
-              // The optimistic marker is keyed by that Markdown (the pending payload has
-              // no tool-use id), so it belongs only until the next decision. Clear it
-              // before approving the new presentation; its real tool_result still keeps
-              // the older historical card correctly badged as rejected.
-              markRejected(pendingPlan, false);
-              void sendKeys([...PLAN_APPROVE_KEYS]);
-            }}
-            // Reject = interrupt (Escape), which falls back to keep-planning. The number and
-            // order of the ExitPlanMode menu's options depend on the claude version, so a
-            // position-fixed key sequence (aiming at "4. Tell Claude what to change" with
-            // Down×3) wraps around to the leading "Yes" row on a shorter menu and approves the
-            // plan the user meant to reject — a real incident. An interrupt closes the modal
-            // independently of layout, returns to plan mode and releases the composer; the
-            // tool_result becomes an interrupt, which planDecision.isRejected picks up. See
-            // planDecision.ts.
-            onReject={() => {
-              markRejected(pendingPlan, true); // optimistic "rejected" badge; planOutcome reconciles it
-              void sendInterrupt();
-            }}
-            onReview={() => void reviewPlanElsewhere(pendingPlan)}
-          />
-        )}
-        {pendingApproval && !pending && !pendingPlan && (
-          <ApprovalCard
-            agentName={agentName}
-            approval={pendingApproval}
-            sending={sending}
-            onAllow={() => void sendApproval(pendingApproval.id, true)}
-            onDeny={() => void sendApproval(pendingApproval.id, false)}
-          />
-        )}
-        {pendingPerm && !pendingApproval && !pending && !pendingPlan && (
-          // Defense-in-depth: a question/plan always wins over a generic permission
-          // dialog (the server already suppresses the permission in that case). This
-          // guards against a poll race ever showing allow/deny over an AskUserQuestion,
-          // whose buttons would send keystrokes that mis-answer the question underneath.
-          <PermissionCard
-            agentName={agentName}
-            message={pendingPerm}
-            sending={sending}
-            onAllow={() => sendKeys(["Enter"])}
-            onAlwaysAllow={() => sendKeys(["Down", "Enter"])}
-            onDeny={() => sendKeys(["Down", "Down", "Enter"])}
-          />
-        )}
-        {pending && pending.length > 0 && (
-          <QuestionCard
-            agentName={agentName}
-            session={session}
-            questions={pending}
-            pendingText={pendingText}
-            repo={sessionMeta?.repo ?? null}
-            sending={sending}
-            answerMode={sessionMeta?.kind === "claude" ? "claude" : "menu"}
-            multiPage={sessionMeta?.kind === "codex"}
-            writeIn={sessionMeta?.kind === "agy"}
-            onOpenFile={openFile}
-            onSubmitKeys={sendKeys}
-            onSubmitSeq={sendSeq}
-            onRespond={
-              // A managed session is pinned to the semantic route whether or not an id is
-              // present: falling back to keys/seq would drive a tmux pane that does not
-              // exist. A question missing its id (a transitional or resyncing case up to P2)
-              // is rejected server-side with bad_interaction, and sendRespond toasts that.
-              managed ? (answers) => sendRespond(pending[0]?.id || "", answers) : undefined
-            }
-            // Managed: decline the question through /respond, which every driver answers with the
-            // runtime's own rejection (codex alone turns it into a stop, ADR 0105 decision 7). A
-            // stop here would be a second stop inside an episode and discard the queue. Terminal
-            // (CLI): the card's Cancel is the Esc, as before.
-            onCancel={() => void (managed ? cancelQuestion(pending[0]?.id || "") : sendInterrupt())}
-            translate={translate}
-          />
-        )}
-        {liveText && busy && !pending && !pendingPlan && !pendingPerm && !pendingApproval && (
-          // Above the typing row: that row keeps the stop button and says the turn is still
-          // running; this is what the turn has written so far.
-          <LiveReplyCard
-            agentName={agentName}
-            text={liveText}
-            repo={sessionMeta?.repo ?? null}
-            onOpenFile={openFile}
-            mode={liveMode === "typewriter" ? "typewriter" : "lines"}
-          />
-        )}
-        {stopRowVisible({ managed, busy, queued: queuedCount > 0, question: !!pending, approval: !!pendingApproval }) && (
-          <TypingRow
-            agentName={agentName}
-            typing={busy && !pending}
-            managed={managed}
-            queuedCount={queuedCount}
-            onStop={() => void sendInterrupt()}
-            onDiscard={() => void sendInterrupt(true)}
-          />
-        )}
+        <MirrorPendingCards
+          session={session}
+          sessionMeta={sessionMeta}
+          managed={managed}
+          agentName={agentName}
+          toast={toast}
+          translate={translate}
+          st={st}
+          actions={actions}
+          plan={plan}
+        />
         </div>
         <JumpPills
           showJump={scroll.showJump}
@@ -2301,6 +670,7 @@ export function MirrorView({
       </div>
 
       {aboveComposer}
+      <PendingPeersNotice items={pendingPeers} onDrop={(id) => void dropPendingPeer(id)} />
       {managed && !readOnly && running && !composerBlock && (
         <DiscardNotice notices={discardView} draftBusy={draftBusy} onRestore={restoreDiscard} onClose={closeDiscard} />
       )}
@@ -2344,231 +714,34 @@ export function MirrorView({
       ) : !alive ? (
         <ResumingNotice />
       ) : (
-        <div className="mirror-compose">
-          {/* Reply suggestions: frequently used short replies plus candidates derived from the
-              latest answer (Layer A), plus LLM candidates fetched with ✨ (v2). A click inserts
-              one, ⌥+click sends it immediately. Full-width flex (.mirror-suggest) above the
-              input row. */}
-          {!composerLocked && (suggest.chips.length > 0 || settings.replySuggestEnabled) && (
-            <SuggestRow
-              rowRef={suggest.rowRef}
-              chips={suggest.chips}
-              pinned={settings.quickRepliesPinned}
-              cycledText={suggest.cycledText}
-              aiEnabled={!!settings.replySuggestEnabled}
-              suggesting={suggest.suggesting}
-              running={running}
-              onFetchLlm={suggest.fetchLlmSuggestions}
-              onNav={suggest.onNav}
-              onChipKeyDown={suggest.onChipKeyDown}
-              onChipClick={(e, text) => {
-                if (suggest.chipMenu.clickSwallowed()) return; // release of the long-press that opened the menu
-                suggest.applySuggestion(text, e.ctrlKey || e.altKey || e.metaKey);
-              }}
-              chipProps={suggest.chipMenu.chipProps}
-            />
-          )}
-          {suggest.chipMenu.menu && (
-            <SuggestChipMenu
-              menu={suggest.chipMenu.menu}
-              pinned={isQuickReplyPinned(settings.quickRepliesPinned, suggest.chipMenu.menu.text)}
-              onClose={suggest.chipMenu.close}
-              onTogglePin={suggest.togglePin}
-              onForget={suggest.forgetSuggestion}
-            />
-          )}
-          <AttachChips
-            attachments={attachments}
-            pasting={pasting}
-            onRemove={removeAttachment}
-            onOpen={(url) => setLightbox({ src: url })}
-          />
-          {/* Ctrl+R history search. Full-width band above the input row; the match it is on is
-              previewed in the textarea itself, so the two have to be read together. */}
-          {histSearch.open && (
-            <HistorySearchBar
-              inputRef={histSearch.queryRef}
-              query={histSearch.query}
-              count={histSearch.count}
-              pos={histSearch.pos}
-              failed={histSearch.failed}
-              onQuery={histSearch.onQuery}
-              onKeyDown={histSearch.onQueryKeyDown}
-              onBlur={histSearch.onQueryBlur}
-              onCancel={histSearch.cancel}
-            />
-          )}
-          <HistoryNav
-            canPrev={history.length > 0}
-            canNext={histIdx !== null}
-            onPrev={recallPrev}
-            onNext={recallNext}
-          />
-          {/* Skill picker (docs/log/50): a completion list floating over the composer. The mouse
-              tracks the selection via onMouseMove and commits on click (mousedown calls
-              preventDefault so focus is not stolen — same shape as CommandPalette), a tap commits
-              directly, and the keyboard is driven by onKeyDown. While arguments are being typed
-              (skillArgs) the list is passive: it has no keyboard selection, so no `sel` is set and
-              only clicking works (which swaps the command while keeping the arguments). */}
-          {skillPicker.listVisible && (
-            <SkillList
-              popRef={skillPicker.popRef}
-              selRef={skillPicker.selRef}
-              passive={skillPicker.passive}
-              skills={skillPicker.skills}
-              items={skillPicker.items}
-              more={skillPicker.more}
-              trigger={skillPicker.trigger}
-              sel={skillPicker.sel}
-              query={skillPicker.query}
-              onHover={skillPicker.setSel}
-              onPick={skillPicker.pick}
-              onMore={skillPicker.unfold}
-            />
-          )}
-          <HistorySearchButton open={histSearch.open} disabled={!histSearch.canOpen} onOpen={histSearch.openSearch} />
-          {skillPicker.canSkills && (
-            <SkillButton
-              btnRef={skillPicker.btnRef}
-              open={skillPicker.listVisible}
-              disabled={composerLocked}
-              trigger={skillPicker.trigger}
-              onToggle={skillPicker.toggleFromButton}
-            />
-          )}
-          {/* + attach: the drag&drop-less path (phones foremost, handy everywhere).
-              Any file type; the same addFiles upload the paste/drop paths use. */}
-          {canPasteImage && (
-            <>
-              <input
-                ref={filePickRef}
-                type="file"
-                multiple
-                hidden
-                onChange={(e) => {
-                  const files = Array.from(e.target.files || []);
-                  e.target.value = ""; // allow re-picking the same file
-                  void addFiles(files);
-                }}
-              />
-              <button
-                type="button"
-                className="ghost mirror-attach-btn"
-                title={tr("mirror.attach_file")}
-                disabled={composerLocked || pasting}
-                onClick={() => filePickRef.current?.click()}
-              >
-                <Icon name="add" />
-              </button>
-            </>
-          )}
-          <textarea
-            ref={inputRef}
-            className="mirror-input"
-            rows={2}
-            placeholder={
-              decisionPending
-                ? pendingPlan
-                  ? tr("mirror.ph_plan_wait")
-                  : tr("mirror.ph_perm_wait")
-                : auqLocksComposer
-                  ? tr("mirror.ph_question")
-                  : modSend
-                    ? tr("mirror.ph_mod")
-                    : tr("mirror.ph_enter")
-            }
-            disabled={composerLocked}
-            value={draft}
-            onChange={(e) => {
-              setDraft(e.target.value);
-              setHistIdx(null); // typing leaves history-recall mode
-              skillPicker.trackTyping(e.target.value, e.target.selectionStart ?? e.target.value.length);
-            }}
-            onSelect={(e) => skillPicker.trackCaret(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
-            onKeyDown={onKeyDown}
-            onPaste={onPaste}
-          />
-          <SendColumn
-            showMode={!!(agent.caps.planMode && agent.planCycleKey)}
-            isPlan={isPlan}
-            modeLabel={mode}
-            modeDisabled={sending || decisionPending}
-            sendDisabled={(!draft.trim() && !attachments.length) || sending || composerLocked}
-            onToggleMode={() => {
-              const toPlan = !isPlan;
-              // Optimistic label (codex/opencode only report the new mode after a turn);
-              // the poll reconciles from the terminal via paneMode.
-              setMode(toPlan ? "Plan" : lastNonPlanMode.current || agent.defaultModeLabel);
-              // For a managed session the mode switch is a ThreadSettings update (POST
-              // /settings → UpdateSettings, docs/log/27 §9.4-3), which takes effect on the
-              // next turn's agent/mode. tui stays key-driven (planEnterCmd / planCycleKey).
-              if (managed) {
-                void sessionSettings(session, { mode: toPlan ? "plan" : "normal" });
-                return;
-              }
-              // Low-level sends (no working status / no quick re-poll) so the optimistic
-              // label holds until the regular poll reads the real mode.
-              // A slash command starts no turn (the server's slashCmdRe keeps it out of
-              // "working"), so the op is sent as start purely as a formality.
-              if (toPlan && agent.planEnterCmd) postInput(agent.planEnterCmd, "start");
-              else postKeys([agent.planCycleKey!]);
-            }}
-            onSend={() => send()}
-          />
-        </div>
-      )}
-      {lightbox &&
-        createPortal(
-          <ImageLightbox
-            src={lightbox.src}
-            // The card's thumbnail is on screen already, so the enlarged view has something
-            // to show while the original (megabytes) downloads. A pasted image has no path
-            // and no thumbnail — it opens as it always did.
-            placeholder={lightbox.path ? downloadURL(lightbox.path, 512) : undefined}
-            // A pasted image has no path, so it gets no properties toggle either — the
-            // same rule the folder button already follows (ADR 0081 decision 3).
-            path={lightbox.path || undefined}
-            onClose={() => setLightbox(null)}
-            // Only a shared FILE has a folder; a pasted image has no path and so gets no
-            // item. Closing first keeps the overlay from surviving the pane change.
-            onOpenFolder={
-              lightbox.path
-                ? () => {
-                    const path = lightbox.path!;
-                    setLightbox(null);
-                    openGallery(dirName(path), { focus: path });
-                  }
-                : undefined
-            }
-          />,
-          document.body,
-        )}
-      {managedSettingsOpen && (
-        <ManagedSettingsModal
+        <MirrorComposer
           session={session}
-          kind={sessionMeta?.kind || "codex"}
-          working={status === "working"}
-          onApplied={setManagedSettings}
-          onClose={() => setManagedSettingsOpen(false)}
+          settings={settings}
+          agent={agent}
+          managed={managed}
+          running={running}
+          modSend={modSend}
+          isPlan={isPlan}
+          history={history}
+          recallPrev={recallPrev}
+          recallNext={recallNext}
+          onKeyDown={onKeyDown}
+          st={st}
+          actions={actions}
+          input={input}
+          suggest={suggest}
+          skillPicker={skillPicker}
+          histSearch={histSearch}
         />
       )}
-      {forkAtTarget && (
-        <ForkAtModal
-          session={session}
-          target={forkAtTarget}
-          onDone={(name, { draft }) => {
-            // In redo mode, seed the new session's draft with the fork point's message before
-            // opening it: the point is being able to retype straight away, which is lost if the
-            // user has to hunt down the original and paste it back. In continue mode the message
-            // is still in the forked conversation, so the draft arrives empty.
-            writeDraft("af.mirror-draft." + name, draft);
-            bumpSessions();
-            openTargetInNew({ content: { kind: "terminal", chat: true }, session: name });
-            toast(tr("mirror.fork_at_done"));
-          }}
-          onClose={() => setForkAtTarget(null)}
-        />
-      )}
+      <MirrorOverlays
+        session={session}
+        sessionMeta={sessionMeta}
+        toast={toast}
+        bumpSessions={bumpSessions}
+        openTargetInNew={openTargetInNew}
+        st={st}
+      />
       {tts.pillPortal}
     </div>
   );

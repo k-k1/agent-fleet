@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 )
 
 // The whole point of the table: an argument nobody recognises costs an exit code, not an Agent.
@@ -164,6 +166,16 @@ func TestContainerCallersSpellKnownSubcommands(t *testing.T) {
 					t.Errorf("%s:%d calls `workspace-agent %s`, which no subcommand answers", filepath.Base(path), i+1, m[1])
 				}
 			}
+		}
+	}
+}
+
+// The hooks the agent writes into claude's settings name subcommands too; one the table
+// does not answer exits 2 on every hook and the hook silently does nothing.
+func TestClaudeHookSubcommandsAreKnown(t *testing.T) {
+	for _, name := range []string{"session-status", claude.PushHookSubcommand} {
+		if _, ok := lookupSubcommand(name); !ok {
+			t.Errorf("claude hook subcommand %q is not in the table", name)
 		}
 	}
 }

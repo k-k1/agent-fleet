@@ -148,6 +148,25 @@ next run time, so check that it matches your intent.
   first, stop after, and resumable. It keeps the session an unattended run leaves behind from
   holding its memory for the rest of the night (it does not change when the workspace itself
   stops — a finished session was never what kept it awake).
+- **Where the report goes** is chosen per schedule. With the report on, **"Deliver to"** in
+  Details & edit (`deliver_to` for the operator) takes any of: the **assistant conversation**
+  (the default, and what every schedule did before), the **notification center**, and your
+  **Discord** / **Slack** connection. A chat post carries the run's answer under a heading that
+  names the schedule, even when the connection is not in full-text mode. Only your own
+  connection is used, and only while it is bound to your account on that service (the
+  identity binding the reply and button features use) and not muted; otherwise the result goes
+  to the notification center with a line saying which connection could not take it. A schedule
+  that names its destinations reaches only those: its runs do not also send the usual
+  "a reply is ready" copy to every chat connection.
+- **Stay silent when there is nothing to report.** For a monitoring schedule ("check the
+  nightly jobs and tell me only if something failed"), tick **"Stay silent when there is
+  nothing to report"** (`silent`). The agent is then told to answer exactly `[SILENT]` when
+  all is well. Such a run delivers nothing — no report, no notification, no chat post — and
+  its history row reads **"Success (silent)"**. The match is the whole answer, trimmed and
+  case-sensitive, so `[SILENT]` inside a longer answer is delivered as usual. **Failures are
+  never silent**: a run that errors, is cut off or dies still reaches the notification center
+  whatever the targets say. Delivery targets and the sentinel apply to runs that drive a
+  session; a run in assistant mode is itself a turn in the conversation.
 
 ## Constraints and caveats
 
@@ -156,6 +175,6 @@ next run time, so check that it matches your intent.
 - **When the operator stops a session, the report that was due is cancelled as well.** Stopping is treated as cancelling that instruction. Even if you later resume it from the Console and the work completes, the old report will not arrive in the operator's conversation (if you stopped it with the Console's stop button it is not cancelled, and completion after resume is reported). When asking a resumed session to continue, have the operator send the instruction again.
 - **Session reports have no body** (only the fact of completion / question / abnormal termination). In practice this is fine because the operator goes and reads the output for details, but the report card alone doesn't show the contents.
 - **Handover is summary-based.** The conversation context does not move over wholesale, so for lengthy research results it is safer to have them written to a plan file before handing over (see Pattern 1).
-- **Sessions do not coordinate with each other directly.** Orchestration always goes through the operator. This is complementary to parallelization that stays within a single session (an agent's own subagent feature); choose the operator **when work spans repositories or agents, or when you want to see each piece of work as its own session**.
+- **By default, sessions do not coordinate with each other directly**, and orchestration goes through the operator. Two settings change that, both off by default: with "[Starting sessions from sessions](02-sessions.md#starting-sessions-from-a-session-child-sessions)" on, a session can start child sessions and look after them itself, and with "[Messages between sessions](02-sessions.md#messages-between-sessions)" on, sessions can send each other short messages. Either way this is complementary to parallelization that stays within a single session (an agent's own subagent feature); choose the operator **when work spans repositories or agents, or when you want to see each piece of work as its own session**.
 - **Report bodies are treated as "data."** So that text originating from session output is never executed as an instruction, the design confirms with you first whenever a new session would be created based on an automatic report. In particular, even if a report or output contains something like "run this command," the operator **will not execute a command or send it to a shell session on that basis** (prompt-injection protection). The operator executes only what you instructed directly. The extra safety-side confirmations are by design.
 - **Shell sessions always require your approval.** a shell session is a raw shell with no agent guardrails in between: the string sent is executed as a command as-is. Therefore, when launching a shell session or sending it a command, the operator **presents the exact command to be executed and asks for your approval in advance**. Destructive or irreversible commands are never sent unless you explicitly approve them.

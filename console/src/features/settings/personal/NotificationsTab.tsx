@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { apiJSON } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useSettings, setSetting } from "../../../lib/settings.ts";
@@ -7,12 +7,14 @@ import { useConnections } from "../parts/useConnections.ts";
 import { useSettingsUI } from "../store.ts";
 import { OnOff, Row } from "../parts/controls.tsx";
 import { getLocale, useT } from "../../../lib/i18n/index.ts";
+import { NotificationTable } from "./NotificationTable.tsx";
 
-// NotificationsTab — notification preferences. The first section filters which session events
-// interrupt at all (childIdleNotify). The next is the device-side audio
-// notification (ttsSessionNotify / usageResetNotify, split off from text-to-speech). The lower
-// one is the master on/off for notifications to the chat integrations (Discord / Slack): only
-// a connected service is operable, and an unconnected one offers a link to the chat settings.
+// NotificationsTab — notification preferences. The top section is the notification table
+// (NotificationTable: kinds × unread dot / OS notification / read aloud) under its two column
+// masters, the browser's notification permission and the session voice notification switch. The
+// lower one is the master on/off for notifications to the chat integrations (Discord / Slack):
+// they are configured per connection on the server, so they stay out of the table; only a
+// connected service is operable, and an unconnected one offers a link to the chat settings.
 // The master toggles the connection's notifyOff on the backend, which stops sending without
 // disconnecting. To avoid wiping the other detailed settings, the whole payload is rebuilt
 // from the current status and only notifyOff is replaced.
@@ -59,23 +61,14 @@ export function NotificationsTab() {
   return (
     <div className="display-settings">
       <section className="ds-group">
-        <h4 className="ds-title">{tr("noti.session_title")}</h4>
-        <Row label={tr("noti.child_idle_notify")}>
-          <OnOff value={s.childIdleNotify} onChange={(v) => setSetting("childIdleNotify", v)} />
-        </Row>
-        <p className="muted ds-note">{tr("noti.note_child_idle_notify")}</p>
-      </section>
-
-      <section className="ds-group">
-        <h4 className="ds-title">{tr("noti.audio_title")}</h4>
+        <h4 className="ds-title">{tr("noti.table_title")}</h4>
+        <OsPermission />
         <Row label={tr("tts.session_notify")}>
           <OnOff value={s.ttsSessionNotify} onChange={(v) => setSetting("ttsSessionNotify", v)} />
         </Row>
         <p className="muted ds-note">{tr("tts.note_session_notify")}</p>
-        <Row label={tr("tts.usage_reset_notify")}>
-          <OnOff value={s.usageResetNotify} onChange={(v) => setSetting("usageResetNotify", v)} />
-        </Row>
-        <p className="muted ds-note">{tr("tts.note_usage_reset_notify")}</p>
+        <NotificationTable />
+        <p className="muted ds-note">{tr("noti.table_note")}</p>
       </section>
 
       <section className="ds-group">
@@ -103,5 +96,22 @@ export function NotificationsTab() {
         <p className="muted ds-note">{tr("noti.svc_note")}</p>
       </section>
     </div>
+  );
+}
+
+// OsPermission is the OS-notification column's master: the browser permission. The request is
+// only offered while the browser would still ask; once denied, only the site settings can undo it.
+function OsPermission() {
+  const tr = useT();
+  const [perm, setPerm] = useState(() => ("Notification" in window ? Notification.permission : "unsupported"));
+  if (perm === "granted") return null;
+  if (perm === "unsupported") return <p className="muted ds-note">{tr("noti.os_unsupported")}</p>;
+  if (perm === "denied") return <p className="muted ds-note">{tr("noti.os_permission_denied")}</p>;
+  return (
+    <Row label={tr("noti.col_os")}>
+      <button type="button" onClick={() => void Notification.requestPermission().then(setPerm, () => {})}>
+        {tr("noti.allow_desktop")}
+      </button>
+    </Row>
   );
 }

@@ -21,7 +21,6 @@ const click = async (el: Element | null | undefined) => {
 
 describe("ChatAttachStrip lightbox wiring", () => {
   it("clicking a chip's thumbnail opens it, clicking the remove button does not", async () => {
-    const { ChatAttachStrip } = await import("./parts/ChatAttachStrip.tsx");
     const opened: string[] = [];
     const removed: number[] = [];
     const host = document.createElement("div");
@@ -85,10 +84,14 @@ vi.mock("../../core/api/client.ts", async (orig) => ({
 vi.mock("../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 vi.mock("../../ui/ConfirmProvider.tsx", () => ({ useConfirm: () => () => Promise.resolve(true) }));
 
+// Loaded at module level, after the mocks: ChatView's module graph takes ~2 s to load, and
+// inside a test body that counts against the 5 s timeout, so a busy host turned it red.
+const { ChatAttachStrip } = await import("./parts/ChatAttachStrip.tsx");
+const { ChatView } = await import("./ChatView.tsx");
+const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
+
 describe("already-sent pasted image lightbox", () => {
   it("clicking the thumbnail mounts ImageLightbox on a blob URL, closing unmounts it", async () => {
-    const { ChatView } = await import("./ChatView.tsx");
-    const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
     useWorkspaceStore.setState({ state: "running" });
 
     const host = document.createElement("div");

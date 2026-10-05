@@ -170,7 +170,7 @@ func TestOpenSessionResetsUsageOnlyForANewConversation(t *testing.T) {
 				if !tc.found {
 					return nil, &msp.Error{Code: msp.ErrCodeSessionNotFound, Message: "gone"}
 				}
-				return map[string]any{"session": sess, "history": map[string]any{}, "pendingRequests": []any{}, "viewCursor": "c1"}, nil
+				return map[string]any{"session": sess, "history": map[string]any{"mode": "inline"}, "pendingRequests": []any{}, "viewCursor": "c1"}, nil
 			})
 			host.Handle(msp.MethodSessionStart, func(msptest.Message) (any, *msp.Error) {
 				return map[string]any{"session": sess, "viewCursor": "c1"}, nil

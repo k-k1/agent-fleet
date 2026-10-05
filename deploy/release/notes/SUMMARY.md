@@ -14,6 +14,124 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 
 ---
 
+## [0.28.0](0.28.0.md) — 2026-10-04
+
+**New / Improved**
+
+- **[sessions]** Search past conversations from the command palette (Conversations) and with `search_sessions` ([#1558](https://github.com/k-k1/agent-fleet/issues/1558))
+- **[sessions]** Find a session by its issue, PR or Jira key in the left-pane filter and the palette ([#1665](https://github.com/k-k1/agent-fleet/issues/1665))
+- **[mirror]** Ticket references in the mirror and the assistant chat open the work item ([#1659](https://github.com/k-k1/agent-fleet/issues/1659))
+- **[usage]** Per-session spend budget: stop after the turn at the budget, Raise budget & resume ([#1054](https://github.com/k-k1/agent-fleet/issues/1054))
+- **[agent memory]** Agent Fleet memory shared by every kind, off by default, with a change list to revert or forget ([#1569](https://github.com/k-k1/agent-fleet/issues/1569))
+- **[git]** Connect GitHub through a built-in OAuth App or GitHub App; a tenant's own app kind is detected ([#1667](https://github.com/k-k1/agent-fleet/issues/1667))
+- **[image generation]** Paint the inpaint mask on a canvas over the picture ([#956](https://github.com/k-k1/agent-fleet/issues/956))
+- **[gallery]** Include subfolders, send a picture to a session, EXIF-aware width × height ([#961](https://github.com/k-k1/agent-fleet/issues/961))
+- **[engines]** LAN ComfyUI URL and key in Admin › Inference engines; `comfyui-lan.sh` runs the pinned image on a LAN host ([#957](https://github.com/k-k1/agent-fleet/issues/957), [#958](https://github.com/k-k1/agent-fleet/issues/958))
+- **[AWS]** Opt-in KMS key custodian for member secrets ([#969](https://github.com/k-k1/agent-fleet/issues/969))
+- **[notifications]** One settings table: kinds × dot / OS notification / read-aloud ([#1085](https://github.com/k-k1/agent-fleet/issues/1085))
+- **[console]** The WS bar folds by width instead of wrapping ([#1642](https://github.com/k-k1/agent-fleet/issues/1642))
+- **[agents]** Live compacting for codex Terminal and OpenCode; OpenCode's reported cost in usage ([#1139](https://github.com/k-k1/agent-fleet/issues/1139), [#1082](https://github.com/k-k1/agent-fleet/issues/1082))
+
+**Fixed**
+
+- **[agents]** Auto-resume declined a first request the usage limit had refused ([#1658](https://github.com/k-k1/agent-fleet/issues/1658))
+- **[question cards]** Picking a single-choice option erased the free text ([#1653](https://github.com/k-k1/agent-fleet/issues/1653))
+- **[session state]** A turn reported finished early when a user Stop hook blocked the stop ([#1600](https://github.com/k-k1/agent-fleet/issues/1600))
+- **[mirror]** Changed files misplaced files under a symlinked `~/repos` or `~/.af-work` ([#1610](https://github.com/k-k1/agent-fleet/issues/1610))
+
+## [0.27.0](0.27.0.md) — 2026-10-03
+
+**CLI pins** — Claude Code 2.1.288, Codex 0.160.0, Copilot 1.0.91, Antigravity 1.2.16, Cursor 2026.10.01-e373342, Kiro 2.27.1, Muse Code 1.4.2-R4684.1
+
+**New / Improved**
+
+- **[Google Cloud]** Profiles in Settings, `af-gcloud-exec` with a Console login, WS bar badge ([#1495](https://github.com/k-k1/agent-fleet/issues/1495), [#1496](https://github.com/k-k1/agent-fleet/issues/1496), [#1497](https://github.com/k-k1/agent-fleet/issues/1497), [#1498](https://github.com/k-k1/agent-fleet/issues/1498), [#1511](https://github.com/k-k1/agent-fleet/issues/1511), [#1517](https://github.com/k-k1/agent-fleet/issues/1517))
+- **[AWS]** WS bar chip for profile sign-in, per-profile Log out, warning before a login ends, region list ([#1477](https://github.com/k-k1/agent-fleet/issues/1477), [#1502](https://github.com/k-k1/agent-fleet/issues/1502), [#1483](https://github.com/k-k1/agent-fleet/issues/1483), [#1029](https://github.com/k-k1/agent-fleet/issues/1029), [#1506](https://github.com/k-k1/agent-fleet/issues/1506))
+- **[sessions]** Session rows show the branch's PR and listening ports ([#1062](https://github.com/k-k1/agent-fleet/issues/1062))
+- **[schedules]** Delivery targets (assistant, notifications, Discord, Slack) and a silent `[SILENT]` answer ([#1560](https://github.com/k-k1/agent-fleet/issues/1560))
+- **[start flow]** First-prompt templates and history, skill picker, any file type; provisional branch names re-asked for up to 45 s ([#1469](https://github.com/k-k1/agent-fleet/issues/1469), [#1448](https://github.com/k-k1/agent-fleet/issues/1448), [#1447](https://github.com/k-k1/agent-fleet/issues/1447), [#1440](https://github.com/k-k1/agent-fleet/issues/1440))
+- **[sessions]** Session menu: recreate a missing worktree, open the repository menu; session links open the session menu ([#1445](https://github.com/k-k1/agent-fleet/issues/1445), [#1557](https://github.com/k-k1/agent-fleet/issues/1557), [#1553](https://github.com/k-k1/agent-fleet/issues/1553))
+- **[MCP]** `peek_session_output` reads a peer's recent output ([#1061](https://github.com/k-k1/agent-fleet/issues/1061))
+- **[session-to-session messages]** A peer message to a session waiting on its user is queued until the answer ([#1031](https://github.com/k-k1/agent-fleet/issues/1031))
+- **[ecs-ec2 › slot pool]** Reserve slots for replacement at their next start (Settings › Admin › Slots) ([#1473](https://github.com/k-k1/agent-fleet/issues/1473))
+- **[internal git]** Tenant admins rotate one member's git token ([#1199](https://github.com/k-k1/agent-fleet/issues/1199))
+- **[ECS]** Recreate, Clean home and Destroy reach the EFS home; interrupted home operations finish after a CP restart ([#1260](https://github.com/k-k1/agent-fleet/issues/1260), [#1536](https://github.com/k-k1/agent-fleet/issues/1536), [#1537](https://github.com/k-k1/agent-fleet/issues/1537), [#1544](https://github.com/k-k1/agent-fleet/issues/1544))
+- **[admin]** Removing a member stops their workspace and pauses schedules; a re-invite resumes them ([#1087](https://github.com/k-k1/agent-fleet/issues/1087))
+- **[mirror]** Changed files separates session scratch and other working copies ([#1607](https://github.com/k-k1/agent-fleet/issues/1607))
+- **[display]** Tabbed grid is the default layout for new users and devices ([#1481](https://github.com/k-k1/agent-fleet/issues/1481))
+- **[mobile]** Swipes follow left-rail order and skip shell / SSM ([#1595](https://github.com/k-k1/agent-fleet/issues/1595))
+- **[settings modal]** Consistent headings, sections and spacing in Settings and the admin dialogs ([#1480](https://github.com/k-k1/agent-fleet/issues/1480), [#1491](https://github.com/k-k1/agent-fleet/issues/1491))
+- **[ECS]** The CP task role is fenced to this deployment's instances and Amazon-owned or public images ([#1423](https://github.com/k-k1/agent-fleet/issues/1423), [#1522](https://github.com/k-k1/agent-fleet/issues/1522), [#1576](https://github.com/k-k1/agent-fleet/issues/1576))
+
+**Fixed**
+
+- **[sessions]** Queued peer, operator and scheduled messages were lost on a stop or Agent restart; a queued peer could enter a resumed turn ([#1255](https://github.com/k-k1/agent-fleet/issues/1255), [#1257](https://github.com/k-k1/agent-fleet/issues/1257), [#1550](https://github.com/k-k1/agent-fleet/issues/1550))
+- **[AWS]** SSM Force re-login signed out every AWS profile ([#1484](https://github.com/k-k1/agent-fleet/issues/1484))
+- **[ecs-ec2]** A slot could be quarantined after a release and a start raced on one home mount ([#1592](https://github.com/k-k1/agent-fleet/issues/1592))
+- **[image generation]** codex Managed never saw the studio's trial tool when the switch was turned on later ([#1132](https://github.com/k-k1/agent-fleet/issues/1132))
+- **[codex]** A slow scan of loaded threads never finished ([#1147](https://github.com/k-k1/agent-fleet/issues/1147))
+- **[mirror]** A cancelled question read as declined by the agent; chip menu reopened on dismiss; Translate stuck after a remount ([#1604](https://github.com/k-k1/agent-fleet/issues/1604), [#1556](https://github.com/k-k1/agent-fleet/issues/1556), [#1589](https://github.com/k-k1/agent-fleet/issues/1589))
+- **[console]** Escape on overview card menus, pinned worktree header under a wrapped repo header, ahead/behind chip spacing ([#1449](https://github.com/k-k1/agent-fleet/issues/1449), [#1584](https://github.com/k-k1/agent-fleet/issues/1584), [#1509](https://github.com/k-k1/agent-fleet/issues/1509))
+- **[admin]** Member keys and tenant slugs could name another directory under the data root ([#1455](https://github.com/k-k1/agent-fleet/issues/1455), [#1214](https://github.com/k-k1/agent-fleet/issues/1214))
+
+## [0.26.0](0.26.0.md) — 2026-10-01
+
+**CLI pins** — Claude Code 2.1.286, Codex 0.159.3, OpenCode 1.18.34, Copilot 1.0.90, Antigravity 1.2.14, Kiro 2.26.1, Muse Code 1.4.1-R4503.1
+
+**Security**
+
+- **[AWS]** AWS credentials of the workspace or its host are no longer handed to agent sessions; operator steps in the notes
+
+**New / Improved**
+
+- **[distribution]** One GitHub Release per version carries the rootfs; native package for arm64 Linux ([#1345](https://github.com/k-k1/agent-fleet/issues/1345))
+- **[stop]** Two-stage Stop for Managed sessions: the first ends the turn and keeps the queue, a second (or "Stop and discard the queue") discards it, with Put back / Back to input / Remove ([#1289](https://github.com/k-k1/agent-fleet/issues/1289), [#1292](https://github.com/k-k1/agent-fleet/issues/1292), [#1293](https://github.com/k-k1/agent-fleet/issues/1293), [#1294](https://github.com/k-k1/agent-fleet/issues/1294), [#1244](https://github.com/k-k1/agent-fleet/issues/1244), [#1256](https://github.com/k-k1/agent-fleet/issues/1256))
+- **[mirror]** A claude reply shows while it is being written: Off / Line by line / Typewriter (default) ([#1250](https://github.com/k-k1/agent-fleet/issues/1250), [#1274](https://github.com/k-k1/agent-fleet/issues/1274), [#1396](https://github.com/k-k1/agent-fleet/issues/1396))
+- **[branch names]** Initialize Git Flow from the Console, creating local tracking branches ([#1126](https://github.com/k-k1/agent-fleet/issues/1126), [#1329](https://github.com/k-k1/agent-fleet/issues/1329))
+- **[workspace]** A start stuck past 30 min is stopped; the member is notified and admins see why (`AF_WORKSPACE_START_DEADLINE`) ([#1240](https://github.com/k-k1/agent-fleet/issues/1240), [#1298](https://github.com/k-k1/agent-fleet/issues/1298), [#1384](https://github.com/k-k1/agent-fleet/issues/1384))
+- **[branch names]** Tenant naming rules under Tenant settings › Branch naming rules ([#1127](https://github.com/k-k1/agent-fleet/issues/1127), [#1120](https://github.com/k-k1/agent-fleet/issues/1120))
+- **[branch names]** English slug for non-ASCII titles from the AI suggestion ([#1129](https://github.com/k-k1/agent-fleet/issues/1129))
+- **[MCP]** `branch_name` tool for sessions ([#1128](https://github.com/k-k1/agent-fleet/issues/1128))
+- **[notifications]** Claude Code's push notifications reach the notification center ([#1069](https://github.com/k-k1/agent-fleet/issues/1069))
+- **[AWS]** Edit profiles and SSM hosts in place; a profile in use cannot be deleted ([#1409](https://github.com/k-k1/agent-fleet/issues/1409), [#1411](https://github.com/k-k1/agent-fleet/issues/1411))
+- **[image gallery]** S / M / L tiles, width × height, faster opening of new pictures ([#961](https://github.com/k-k1/agent-fleet/issues/961))
+- **[worktrees]** The sync chip and parent fast-forward compare against the parent's upstream ([#1415](https://github.com/k-k1/agent-fleet/issues/1415))
+- **[engines]** Tenant admins can limit LLM / image engines to granted members ([#1215](https://github.com/k-k1/agent-fleet/issues/1215))
+- **[worktrees]** Recreate offers a squash/rebase-merged PR's head; a reused branch takes its newest merge ([#1043](https://github.com/k-k1/agent-fleet/issues/1043), [#1397](https://github.com/k-k1/agent-fleet/issues/1397))
+- **[overview]** Context gauge, token trend, model and last line for every agent kind ([#1342](https://github.com/k-k1/agent-fleet/issues/1342), [#1362](https://github.com/k-k1/agent-fleet/issues/1362))
+- **[skills]** The skill picker offers the other agents' personal skills ([#1351](https://github.com/k-k1/agent-fleet/issues/1351))
+- **[instructions]** llama.cpp listed in Agent instructions ([#1202](https://github.com/k-k1/agent-fleet/issues/1202))
+- **[ECS]** Daily EFS backup under `Persistence=retain` ([#1195](https://github.com/k-k1/agent-fleet/issues/1195), [#1235](https://github.com/k-k1/agent-fleet/issues/1235))
+- **[ECS]** `--comfy-digest` pins the ComfyUI copy in `standup.sh` / `update.sh` ([#966](https://github.com/k-k1/agent-fleet/issues/966), [#1319](https://github.com/k-k1/agent-fleet/issues/1319))
+- **[muse]** Mirror backfilled on resume, image thumbnails, background commands show as busy (codex Managed too) ([#1197](https://github.com/k-k1/agent-fleet/issues/1197), [#1350](https://github.com/k-k1/agent-fleet/issues/1350), [#1358](https://github.com/k-k1/agent-fleet/issues/1358))
+- **[codex]** Managed → Terminal switch needs the session stopped first ([#1148](https://github.com/k-k1/agent-fleet/issues/1148), [#1147](https://github.com/k-k1/agent-fleet/issues/1147))
+- **[admin]** Irreversible admin actions are audited before they run and refused without the log ([#1266](https://github.com/k-k1/agent-fleet/issues/1266), [#1334](https://github.com/k-k1/agent-fleet/issues/1334))
+- **[internal git]** Rename / delete only by the creator or a tenant admin ([#1200](https://github.com/k-k1/agent-fleet/issues/1200))
+- **[issue tracker]** The rail stays put on collapse, pins its filter, keeps fold-toggle focus ([#1348](https://github.com/k-k1/agent-fleet/issues/1348), [#1360](https://github.com/k-k1/agent-fleet/issues/1360))
+- **[deploy]** Warning and banner when signing people in without `AF_MASTER_KEY` ([#1080](https://github.com/k-k1/agent-fleet/issues/1080))
+
+**Fixed**
+
+- **[muse]** Muse Code 1.4 sessions without a model ran on the contributor model; the picker showed only "Default" ([#1344](https://github.com/k-k1/agent-fleet/issues/1344))
+- **[AWS]** Recreate and Clean home removed nothing; now work on ecs-ec2, refused on ecs ([#1225](https://github.com/k-k1/agent-fleet/issues/1225), [#1259](https://github.com/k-k1/agent-fleet/issues/1259), [#1260](https://github.com/k-k1/agent-fleet/issues/1260))
+- **[agents]** Prompts were typed into Codex / OpenCode / Cursor Terminal question, permission, update and lock screens ([#1227](https://github.com/k-k1/agent-fleet/issues/1227), [#1263](https://github.com/k-k1/agent-fleet/issues/1263))
+- **[agents]** Stuck "working": codex Esc, opencode after a kill, Managed queues after a lost runtime ([#1264](https://github.com/k-k1/agent-fleet/issues/1264), [#1265](https://github.com/k-k1/agent-fleet/issues/1265), [#1258](https://github.com/k-k1/agent-fleet/issues/1258))
+- **[agy]** "Waiting for input" shown mid-turn ([#1424](https://github.com/k-k1/agent-fleet/issues/1424))
+- **[AWS]** Console login stopped at "unexpected sign-in URL" for issuer-form start URLs ([#1408](https://github.com/k-k1/agent-fleet/issues/1408))
+- **[worktrees]** Delete and branch switch ignored running Managed sessions ([#1169](https://github.com/k-k1/agent-fleet/issues/1169))
+- **[browser pane]** Early "ready", "unreachable" after an aborted navigation, a freeze on a failed load, a doubled off-loopback notice ([#1353](https://github.com/k-k1/agent-fleet/issues/1353), [#1377](https://github.com/k-k1/agent-fleet/issues/1377), [#1381](https://github.com/k-k1/agent-fleet/issues/1381), [#1386](https://github.com/k-k1/agent-fleet/issues/1386), [#1406](https://github.com/k-k1/agent-fleet/issues/1406))
+- **[AWS]** Compaction, plan refresh, Ask and edit suggestions failed past a minute ([#1151](https://github.com/k-k1/agent-fleet/issues/1151))
+- **[source control]** "Committed" marks and the submodule list never loaded ([#1183](https://github.com/k-k1/agent-fleet/issues/1183))
+- **[mirror]** Peer message merged into the member's bubble; marker pill painted the neighbouring pane; skill picker tap, close and dark-mode contrast ([#1369](https://github.com/k-k1/agent-fleet/issues/1369), [#1286](https://github.com/k-k1/agent-fleet/issues/1286), [#1217](https://github.com/k-k1/agent-fleet/issues/1217), [#1220](https://github.com/k-k1/agent-fleet/issues/1220), [#1226](https://github.com/k-k1/agent-fleet/issues/1226))
+- **[diff]** Empty numbered row after the last line ([#1160](https://github.com/k-k1/agent-fleet/issues/1160))
+- **[ecs-ec2]** "Cannot start" shown after the workspace started ([#1271](https://github.com/k-k1/agent-fleet/issues/1271))
+- **[image generation]** Reusing a Qwen-Image-Edit inpaint ran a whole-picture edit ([#955](https://github.com/k-k1/agent-fleet/issues/955))
+- **[lcpp]** Skills it could not open were offered in a subdirectory ([#1361](https://github.com/k-k1/agent-fleet/issues/1361))
+- **[internal git]** Clone failed with a port in `PUBLIC_BASE_URL`; LFS GC could delete objects in use; LFS quota drift; `/git/` refused without `PUBLIC_BASE_URL` ([#1198](https://github.com/k-k1/agent-fleet/issues/1198), [#1210](https://github.com/k-k1/agent-fleet/issues/1210), [#1211](https://github.com/k-k1/agent-fleet/issues/1211), [#1335](https://github.com/k-k1/agent-fleet/issues/1335), [#1212](https://github.com/k-k1/agent-fleet/issues/1212))
+- **[deploy]** `0` did not turn off four interval loops; a CP image built from source had no user guide ([#1186](https://github.com/k-k1/agent-fleet/issues/1186), [#1176](https://github.com/k-k1/agent-fleet/issues/1176))
+- **[MCP]** The admin tool to stop another member's session never ran; now `stop_user_session` ([#1188](https://github.com/k-k1/agent-fleet/issues/1188))
+- **[ECS]** CP's SSM commands and its tag writes scoped to its own slot instances ([#1182](https://github.com/k-k1/agent-fleet/issues/1182), [#1419](https://github.com/k-k1/agent-fleet/issues/1419))
+
 ## [0.25.0](0.25.0.md) — 2026-09-29
 
 **CLI pins** — Claude Code 2.1.284, Codex 0.158.0, OpenCode 1.18.33, Copilot 1.0.89, Antigravity 1.2.12, Cursor 2026.09.28-64d2043, Muse Code 1.4.0-R4302.1

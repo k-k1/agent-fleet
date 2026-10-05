@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -324,6 +325,11 @@ func (a Admin) ListMembers(w http.ResponseWriter, r *http.Request) {
 				"container":   container, "state": state,
 				"status": status,
 			}
+			// Why the CP itself stopped it (#1384): the member was notified, but a notification
+			// never reaches the admin, who would otherwise see plain "stopped".
+			if as := store.CurrentAutoStop(r.Context(), a.cp.Store(), m.MembershipID, state); as != nil {
+				row["auto_stop"] = as
+			}
 			// The idle forecast (docs/log/75 P4): the reaper's last observation of
 			// when this stops and who is holding it open. The point is that nothing
 			// is recomputed here — a screen that derived it itself would drift from
@@ -335,6 +341,17 @@ func (a Admin) ListMembers(w http.ResponseWriter, r *http.Request) {
 					row["idle"] = f
 				}
 			}
+			// The class the member's next start lands on (user → tenant default →
+			// deployment default), for every row including those with no stored limits:
+			// the stored slot_class alone cannot show a member who follows the tenant
+			// default. "" when the deployment declares no classes.
+			row["slot_class_effective"], _ = a.cp.ResolveSlotClass(r.Context(),
+				store.Workspace{MembershipID: m.MembershipID, TenantID: t.ID})
+			// What "" (follow the tenant default) resolves to for this member, whatever is
+			// stored: with no membership there is no per-user value to find, so the chain
+			// answers with its fallback alone. The editor needs it to draw and warn about
+			// the "tenant default" choice, which the client cannot derive.
+			row["slot_class_default"], _ = a.cp.ResolveSlotClass(r.Context(), store.Workspace{TenantID: t.ID})
 			if ul, ok, _ := a.cp.Store().GetUserLimit(r.Context(), m.MembershipID); ok {
 				row["max_sessions"] = ul.MaxSessions
 				row["mem_limit"] = ul.MemLimit
@@ -364,9 +381,17 @@ func (a Admin) StopWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ident, err := a.cp.Store().UpsertIdentity(r.Context(), "", body.UserKey, "")
+	if body.UserKey == "" {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "user_key required"})
+		return
+	}
+	ident, found, err := a.cp.Store().GetIdentityByUserKey(r.Context(), body.UserKey)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
 		return
 	}
 	mem, ok, err := a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)
@@ -407,6 +432,10 @@ func (a Admin) StopWorkspace(w http.ResponseWriter, r *http.Request) {
 //
 // A runtime that cannot reach the home is refused with home_wipe_unsupported before
 // anything is stopped; its outcome entry says so.
+//
+// Where the erase is a Fargate task (ecs, HomeOpsInBackground) it takes minutes: the
+// request is answered 202 {pending: true} once the workspace is stopped, and the outcome
+// entry is written when the task has finished.
 func (a Admin) CleanHome(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UserKey    string `json:"user_key"`
@@ -420,9 +449,17 @@ func (a Admin) CleanHome(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ident, err := a.cp.Store().UpsertIdentity(r.Context(), "", body.UserKey, "")
+	if body.UserKey == "" {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "user_key required"})
+		return
+	}
+	ident, found, err := a.cp.Store().GetIdentityByUserKey(r.Context(), body.UserKey)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
 		return
 	}
 	mem, ok, err := a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)
@@ -442,21 +479,113 @@ func (a Admin) CleanHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := context.WithoutCancel(r.Context())
+	if a.cp.HomeOpsInBackground() {
+		err := a.cp.StartCleanHomeByMembership(ctx, mem.ID, store.HomeOpAudit{Base: in.Outcome(),
+			OK: "home erased", OKStatus: http.StatusOK,
+			FailPrefix: "error: ", FailStatus: http.StatusInternalServerError})
+		if err != nil {
+			refuseIrreversible(w, r, in, a.homeOpRefusal(err, "clean home"))
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"cleaned": body.UserKey, "tenant": t.Slug, "pending": true})
+		return
+	}
 	if err := a.cp.CleanHomeByMembership(ctx, mem.ID); err != nil {
-		if errors.Is(err, store.ErrSessionShareOwnerBusy) {
-			refuseIrreversible(w, r, in, a.cp.WorkspaceLifecycleLeaseError(err))
-			return
-		}
-		if errors.Is(err, runtime.ErrHomeWipeUnsupported) {
-			refuseIrreversible(w, r, in, &APIError{http.StatusNotImplemented, "home_wipe_unsupported",
-				"clean home is not available on this deployment: its runtime cannot reach the workspace home"})
-			return
-		}
-		refuseIrreversible(w, r, in, internalErr(err))
+		refuseIrreversible(w, r, in, a.homeOpRefusal(err, "clean home"))
 		return
 	}
 	in.Done(ctx, "home erased", http.StatusOK)
 	writeJSON(w, http.StatusOK, map[string]any{"cleaned": body.UserKey, "tenant": t.Slug})
+}
+
+// RotateGitToken (POST /api/admin/rotate-git-token {tenant_slug,user_key}) gives a member a
+// new internal git token (issue #1199, docs/build/91-internal-git.md §91.5): for a token that
+// leaked out of a workspace, without deactivating the membership and without changing the
+// deployment's signing master, which would rotate everybody's.
+//
+// tenant_admin of the member's tenant, or super_admin anywhere: the same gate as
+// stop-workspace and clean-home (TenantAdminFor), and the member is looked up inside that
+// tenant only, so neither a tenant_admin of another tenant nor a member can reach it.
+//
+// Audited intent-first like the other actions an admin cannot undo: once the epoch moves,
+// the old token never verifies again. A removed member can be rotated too, because
+// re-inviting them reactivates the same membership and with it the old token.
+func (a Admin) RotateGitToken(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		UserKey    string `json:"user_key"`
+		TenantSlug string `json:"tenant_slug"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid json"})
+		return
+	}
+	caller, t, ok := a.cp.TenantAdminFor(w, r, body.TenantSlug)
+	if !ok {
+		return
+	}
+	if body.UserKey == "" {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "user_key required"})
+		return
+	}
+	ident, found, err := a.cp.Store().GetIdentityByUserKey(r.Context(), body.UserKey)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
+		return
+	}
+	mem, ok, err := a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
+		return
+	}
+	in, ok := a.beginIrreversible(w, r, store.AuditLog{
+		TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
+		Action: "membership.rotate_git_token", Target: ident.UserKey,
+	})
+	if !ok {
+		return
+	}
+	ctx := context.WithoutCancel(r.Context())
+	epoch, push, found, err := a.cp.RotateGitToken(ctx, mem.ID)
+	if err != nil {
+		refuseIrreversible(w, r, in, internalErr(err))
+		return
+	}
+	if !found {
+		refuseIrreversible(w, r, in, &APIError{http.StatusNotFound, "no_membership", "not a member"})
+		return
+	}
+	in.Done(ctx, fmt.Sprintf("epoch %d, workspace %s", epoch, push), http.StatusOK)
+	writeJSON(w, http.StatusOK, rotateGitTokenAnswer{Rotated: body.UserKey, Tenant: t.Slug, Workspace: push})
+}
+
+// rotateGitTokenAnswer is what POST /api/admin/rotate-git-token answers. Workspace is how the
+// member's running workspace took the new token (control-plane git_token_rotate.go).
+type rotateGitTokenAnswer struct {
+	Rotated   string `json:"rotated"`
+	Tenant    string `json:"tenant"`
+	Workspace string `json:"workspace"`
+}
+
+// homeOpRefusal maps what refused a Clean home or a Destroy to its answer.
+func (a Admin) homeOpRefusal(err error, op string) *APIError {
+	switch {
+	case errors.Is(err, store.ErrSessionShareOwnerBusy):
+		return a.cp.WorkspaceLifecycleLeaseError(err)
+	case errors.Is(err, runtime.ErrHomeWipeUnsupported):
+		return &APIError{http.StatusNotImplemented, "home_wipe_unsupported",
+			op + " is not available on this deployment: its runtime cannot reach the workspace home"}
+	case errors.Is(err, runtime.ErrHomeTaskInFlight):
+		return &APIError{http.StatusConflict, "home_operation_in_progress", err.Error()}
+	}
+	return internalErr(err)
 }
 
 // HomeBackups (GET /api/admin/tenants/{slug}/members/{key}/home-backups) counts the copies
@@ -551,6 +680,10 @@ func homeBackupsUnsupported() *APIError {
 //
 // tenant_admin (their own tenant) or super_admin — the same gate as clean-home, which is
 // already "destroy this person's work" in every sense except the billing.
+//
+// On ecs and ecs-ec2 with the home task (DestroyInBackground) removing the EFS directories
+// takes minutes: answered 202 {pending: true}, the outcome entry written when it has
+// finished.
 func (a Admin) DestroyWorkspace(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UserKey    string `json:"user_key"`
@@ -594,13 +727,21 @@ func (a Admin) DestroyWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	leftovers, err := a.cp.DestroyWorkspaceByMembership(r.Context(), mem.ID)
-	if err != nil {
-		if errors.Is(err, store.ErrSessionShareOwnerBusy) {
-			refuseIrreversible(w, r, in, a.cp.WorkspaceLifecycleLeaseError(err))
+	if a.cp.DestroyInBackground() {
+		ctx := context.WithoutCancel(r.Context())
+		err := a.cp.StartDestroyWorkspaceByMembership(ctx, mem.ID, store.HomeOpAudit{Base: in.Outcome(),
+			OK: "workspace destroyed (home and runtime resources deleted)", Leftovers: true, OKStatus: http.StatusOK,
+			FailPrefix: "error: ", FailStatus: http.StatusInternalServerError})
+		if err != nil {
+			refuseIrreversible(w, r, in, a.homeOpRefusal(err, "destroy"))
 			return
 		}
-		refuseIrreversible(w, r, in, internalErr(err))
+		writeJSON(w, http.StatusAccepted, map[string]any{"destroyed": ident.UserKey, "tenant": t.Slug, "pending": true})
+		return
+	}
+	leftovers, err := a.cp.DestroyWorkspaceByMembership(r.Context(), mem.ID)
+	if err != nil {
+		refuseIrreversible(w, r, in, a.homeOpRefusal(err, "destroy"))
 		return
 	}
 	in.Done(r.Context(), destroyedDetail("workspace destroyed (home and runtime resources deleted)", leftovers), http.StatusOK)
@@ -609,15 +750,10 @@ func (a Admin) DestroyWorkspace(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// destroyedDetail appends what could NOT be deleted — the part of a destroy's audit entry that
-// matters. On Fargate the EFS directories survive their access points and keep billing
-// (docs/log/64 §64.18.4); if that only ever appeared in an HTTP response nobody would ever
-// find it again.
+// destroyedDetail is store.DestroyedDetail: a Destroy finished by the CP's reconciler
+// (#1544) has to write the same entry.
 func destroyedDetail(detail string, leftovers []string) string {
-	if len(leftovers) > 0 {
-		detail += "; NOT deleted: " + strings.Join(leftovers, ", ")
-	}
-	return detail
+	return store.DestroyedDetail(detail, leftovers)
 }
 
 // CreateTenant (POST /api/admin/tenants {slug,name}).
@@ -648,10 +784,59 @@ func (a Admin) CreateTenant(w http.ResponseWriter, r *http.Request, _ store.Iden
 	}
 	t, err := a.cp.Store().CreateTenant(r.Context(), slug, name)
 	if err != nil {
-		writeAPIErr(w, internalErr(err))
+		writeAPIErr(w, dataRootNameErr(err, http.StatusBadRequest, "tenant_slug_reserved", "tenant_slug_conflict"))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"slug": t.Slug, "name": t.Name})
+}
+
+// userKeyErr refuses a client-supplied user_key that a new identity must not get. The key
+// is the home directory name (workspaceNames joins it under the data root), and only the
+// docker runtime refuses `/`, `..` or upper case on its own; the native runtime would let
+// such a key leave <WS_DATA>/<slug>/. Accepted are the two forms the server mints itself:
+// sanitizeUser's fixed points, and disambiguateUserKey's "<fixed point>-<8 hex>", which
+// can run past sanitizeUser's 40 characters. Only AddMembership needs it: the other
+// member handlers look the key up and never mint one.
+func (a Admin) userKeyErr(key string) *APIError {
+	if key == a.cp.SanitizeUser(key) {
+		return nil
+	}
+	if prefix, ok := store.SplitDisambiguatedUserKey(key); ok && prefix == a.cp.SanitizeUser(prefix) {
+		return nil
+	}
+	msg := "invalid user_key: use lowercase letters and digits, separated by single hyphens, at most 40 characters"
+	if s := a.cp.SanitizeUser(key); s != "" {
+		msg += " (for example " + strconv.Quote(s) + ")"
+	}
+	return &APIError{http.StatusBadRequest, "bad_request", msg}
+}
+
+// memberIdentity returns key's identity when it already holds a membership of t. Only
+// that re-invite may use a key outside userKeyErr's forms: it reuses the stored identity
+// and membership, so no new home is made from the key. Any other tenant is refused. A
+// lookup error answers false.
+func (a Admin) memberIdentity(r *http.Request, t store.Tenant, key string) (store.Identity, bool) {
+	ident, ok, err := a.cp.Store().GetIdentityByUserKey(r.Context(), key)
+	if err != nil || !ok {
+		return store.Identity{}, false
+	}
+	if _, ok, err = a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID); err != nil || !ok {
+		return store.Identity{}, false
+	}
+	return ident, true
+}
+
+// dataRootNameErr maps the store's data-root name refusals (store_dataroot.go) to API
+// errors; a name another party already holds is always a conflict. Anything else stays
+// internal.
+func dataRootNameErr(err error, reservedStatus int, reservedCode, takenCode string) *APIError {
+	switch {
+	case errors.Is(err, store.ErrDataRootNameReserved):
+		return &APIError{reservedStatus, reservedCode, err.Error()}
+	case errors.Is(err, store.ErrDataRootNameTaken):
+		return &APIError{http.StatusConflict, takenCode, err.Error()}
+	}
+	return internalErr(err)
 }
 
 // AddMembership (POST /api/admin/memberships {email|user_key, tenant_slug, role}).
@@ -672,7 +857,26 @@ func (a Admin) AddMembership(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := body.UserKey
-	if key == "" {
+	// reinvite is set when key is outside the minted forms but already a member of t; the
+	// stored identity is then used as is, never passed through UpsertIdentity.
+	var reinvite *store.Identity
+	if key != "" {
+		if aerr := a.userKeyErr(key); aerr != nil {
+			ident, ok := a.memberIdentity(r, t, key)
+			if !ok {
+				writeAPIErr(w, aerr)
+				return
+			}
+			// A different address would send UpsertIdentity's disambiguation to mint
+			// "<key>-<hash>", a new identity on the very key this branch exempts.
+			if body.Email != "" && !strings.EqualFold(strings.TrimSpace(body.Email), ident.Email) {
+				writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request",
+					"this user_key can only be re-invited without an email or with its stored one"})
+				return
+			}
+			reinvite = &ident
+		}
+	} else {
 		key = a.cp.SanitizeUser(body.Email)
 	}
 	if key == "" {
@@ -694,24 +898,38 @@ func (a Admin) AddMembership(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
-	ident, err := a.cp.Store().UpsertIdentity(r.Context(), body.Email, key, "")
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
+	var ident store.Identity
+	if reinvite != nil {
+		ident = *reinvite
+	} else {
+		var err error
+		if ident, err = a.cp.Store().UpsertIdentity(r.Context(), body.Email, key, ""); err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
 	}
 	mem, err := a.cp.Store().EnsureMembership(r.Context(), ident.ID, t.ID, role)
 	if err != nil {
-		writeAPIErr(w, internalErr(err))
+		writeAPIErr(w, dataRootNameErr(err, http.StatusConflict, "user_key_reserved", "user_key_conflict"))
 		return
 	}
 	// ★ Re-inviting somebody who was removed puts them back. EnsureMembership
 	// deliberately does not reactivate (it also serves the auto-provisioning paths,
 	// where that would undo an offboarding on the person's next visit) — so an
 	// invite, which IS an explicit decision, does it here.
+	detail := "role=" + role
 	if mem.Status != "active" {
 		if err := a.cp.Store().SetMembershipStatus(r.Context(), mem.ID, "active"); err != nil {
 			writeAPIErr(w, internalErr(err))
 			return
+		}
+		// The scheduler paused this person's schedules while they were away rather than
+		// deleting them; a restore is meant to give back what the removal took, so they
+		// resume here. A failure is recorded, not answered: the person IS back.
+		n, err := a.cp.ResumeSchedulesHeldByRemoval(r.Context(), mem.ID)
+		detail += "; restored; schedules resumed=" + strconv.Itoa(n)
+		if err != nil {
+			detail += " (resume failed: " + err.Error() + ")"
 		}
 	}
 	// Being on a roster is an entry-gate term now (docs/log/61 §61.9.6) — an invited
@@ -719,7 +937,7 @@ func (a Admin) AddMembership(w http.ResponseWriter, r *http.Request) {
 	a.cp.InvalidateTenantLogin()
 	_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
 		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
-		Action: "membership.add", Target: ident.UserKey, Detail: "role=" + role, At: store.NowTS(),
+		Action: "membership.add", Target: ident.UserKey, Detail: detail, At: store.NowTS(),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"user_key": ident.UserKey, "tenant": t.Slug, "role": role})
 }
@@ -757,11 +975,13 @@ func (a Admin) checkInviteDomain(r *http.Request, t store.Tenant, email, key str
 // (7 days by default) and cannot be revoked individually, so without this the
 // person keeps their access for a week after they leave (decisions 22/27).
 //
-// The delete is LOGICAL (status='inactive'): the workspace, its home and its
+// The delete is LOGICAL (status='inactive'): the workspace row, its home and its
 // encrypted secrets survive, and every resolution path already requires an active
-// membership, so access stops on the very next request. Deleting the row outright
-// would orphan the schedules, audit entries and shares that reference it.
-// Reinstating is just re-inviting — EnsureMembership reactivates.
+// membership, so access stops on the very next request. The running workspace is
+// stopped (stopRemovedWorkspace) and the scheduler pauses the person's schedules.
+// Deleting the row outright would orphan the schedules, audit entries and shares that
+// reference it. Reinstating is re-inviting (AddMembership), which reactivates the row
+// and resumes those schedules.
 //
 // The request is recorded before the status changes (beginIrreversible), purge or not: the
 // deactivation is the offboarding itself, and purge makes it irreversible.
@@ -848,9 +1068,34 @@ func (a Admin) RemoveMembership(w http.ResponseWriter, r *http.Request) {
 	// disk, but nothing should keep serving it from memory for this membership.
 	a.cp.EvictMembershipCache(mem.ID)
 	a.cp.InvalidateTenantLogin()
-	detail := "status=inactive (workspace and home kept)"
+	// Requests already authorised for this membership — a terminal, an event stream, a
+	// shared preview's WebSocket — would otherwise outlive the removal; every other replica
+	// closes its own on the next removed-member sweep.
+	closed := a.cp.CloseMembershipConnections(mem.ID)
+	var detail, workspaceStop string
 	var leftovers []string
-	if body.Purge {
+	if !body.Purge {
+		workspaceStop = a.stopRemovedWorkspace(r.Context(), t.ID, caller.ID, ident.UserKey, mem.ID)
+		detail = "status=inactive (home kept); connections closed=" + strconv.Itoa(closed) +
+			"; workspace stop " + workspaceStop
+	} else if a.cp.DestroyInBackground() {
+		// The membership is inactive now; destroying its workspace takes minutes here, so
+		// the outcome entry waits for it.
+		ctx := context.WithoutCancel(r.Context())
+		err := a.cp.StartDestroyWorkspaceByMembership(ctx, mem.ID, store.HomeOpAudit{Base: in.Outcome(),
+			OK: "status=inactive; workspace destroyed (purge)", Leftovers: true, OKStatus: http.StatusOK,
+			FailPrefix: "status=inactive; purge FAILED: ", FailStatus: http.StatusInternalServerError})
+		if err != nil {
+			in.Done(r.Context(), "status=inactive; purge FAILED: "+err.Error(), http.StatusInternalServerError)
+			writeAPIErr(w, &APIError{http.StatusInternalServerError, "purge_failed",
+				"the membership was deactivated but the workspace could not be destroyed: " + err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"removed": ident.UserKey, "tenant": t.Slug, "purged": true, "pending": true,
+		})
+		return
+	} else {
 		leftovers, err = a.cp.DestroyWorkspaceByMembership(r.Context(), mem.ID)
 		if err != nil {
 			// The membership IS deactivated at this point — say so rather than
@@ -865,8 +1110,100 @@ func (a Admin) RemoveMembership(w http.ResponseWriter, r *http.Request) {
 	in.Done(r.Context(), detail, http.StatusOK)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"removed": ident.UserKey, "tenant": t.Slug,
-		"purged": body.Purge, "leftovers": leftovers,
+		"purged": body.Purge, "leftovers": leftovers, "workspace_stop": workspaceStop,
 	})
+}
+
+// RemovalStopWait is how long RemoveMembership waits for the removed member's workspace to
+// stop before answering. A stop that takes longer carries on in the background and writes
+// its own audit row (membership.remove.stop_workspace): an ECS drain can take minutes, and
+// the administrator's request must not hang on it. A variable so tests can shorten it.
+var RemovalStopWait = 10 * time.Second
+
+// errRestoredBeforeStop marks a removal stop that found the person re-invited by the time
+// it held the workspace's locks, and so stopped nothing.
+var errRestoredBeforeStop = errors.New("membership restored before the stop")
+
+// removalStopBudget bounds the background stop, retries included.
+const removalStopBudget = 10 * time.Minute
+
+// removalStopRetry is the pause between attempts while another lifecycle operation holds
+// the workspace (a start in flight when the member was removed).
+var removalStopRetry = 2 * time.Second
+
+// stopRemovedWorkspace stops the workspace of a membership that was just deactivated and
+// says how that went: "none" (no workspace), "stopped", "skipped: membership restored",
+// "failed: …" or "pending". Whatever happens here, the removed-member sweep stops a
+// workspace this leaves running (a CP restart mid-stop, a stop past its budget).
+//
+// Why removal stops it at all: every CP route a workspace can call already refuses an
+// inactive membership on the next request, but the container itself goes on running. It
+// still holds what it pulled while the person was a member (the tenant's distributed MCP
+// headers, git and cloud logins in the home), its sessions keep spending the tenant's
+// compute, and nobody can see it — the Console, schedules and shares all resolve through
+// an active membership. Only this membership's workspace is touched: the same person
+// keeps their workspace in every other tenant.
+//
+// The stop is the administrator's ordinary stop (StopWorkspaceByMembership), which works
+// on an inactive membership because it looks the row up by id.
+func (a Admin) stopRemovedWorkspace(ctx context.Context, tenantID, actorID, target, membershipID string) string {
+	ctx = context.WithoutCancel(ctx)
+	if _, ok, err := a.cp.Store().GetWorkspaceByMembership(ctx, membershipID); err == nil && !ok {
+		return "none"
+	}
+	done := make(chan error, 1)
+	go func() {
+		bctx, cancel := context.WithTimeout(ctx, removalStopBudget)
+		defer cancel()
+		for {
+			stopped, err := a.cp.StopRemovedMemberWorkspace(bctx, membershipID)
+			if err == nil && !stopped {
+				err = errRestoredBeforeStop
+			}
+			if !errors.Is(err, store.ErrSessionShareOwnerBusy) {
+				done <- err
+				return
+			}
+			select {
+			case <-bctx.Done():
+				done <- err
+				return
+			case <-time.After(removalStopRetry):
+			}
+		}
+	}()
+	outcome := func(err error) string {
+		switch {
+		case errors.Is(err, errRestoredBeforeStop):
+			return "skipped: membership restored"
+		case err != nil:
+			return "failed: " + err.Error()
+		}
+		return "stopped"
+	}
+	timer := time.NewTimer(RemovalStopWait)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return outcome(err)
+	case <-timer.C:
+	}
+	go func() {
+		err := <-done
+		status := http.StatusOK
+		if err != nil && !errors.Is(err, errRestoredBeforeStop) {
+			status = http.StatusInternalServerError
+		}
+		if aerr := a.cp.Store().InsertAudit(ctx, store.AuditLog{
+			ID: store.NewID(), TenantID: tenantID, ActorKind: "user", ActorID: actorID,
+			Action: "membership.remove.stop_workspace", Target: target,
+			Detail: "workspace stop " + outcome(err), HTTPStatus: status, At: store.NowTS(),
+		}); aerr != nil {
+			log.Printf("membership.remove: workspace stop for %s finished (%s) but its audit row was not written: %v",
+				target, outcome(err), aerr)
+		}
+	}()
+	return "pending"
 }
 
 // DeleteMembership (DELETE /api/admin/tenants/{slug}/members/{key}) removes the row
@@ -1249,9 +1586,13 @@ func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "email or user_key required"})
 		return
 	}
-	ident, err := a.cp.Store().UpsertIdentity(r.Context(), "", key, "")
+	ident, found, err := a.cp.Store().GetIdentityByUserKey(r.Context(), key)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "user is not a member of " + t.Slug})
 		return
 	}
 	mem, ok, err := a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)
@@ -1328,9 +1669,17 @@ func (a Admin) SetMembershipRole(w http.ResponseWriter, r *http.Request, _ store
 		writeAPIErr(w, &APIError{http.StatusNotFound, "no_tenant", "unknown tenant"})
 		return
 	}
-	ident, err := a.cp.Store().UpsertIdentity(r.Context(), "", body.UserKey, "")
+	if body.UserKey == "" {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "user_key required"})
+		return
+	}
+	ident, found, err := a.cp.Store().GetIdentityByUserKey(r.Context(), body.UserKey)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member of " + t.Slug})
 		return
 	}
 	mem, ok, err := a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)

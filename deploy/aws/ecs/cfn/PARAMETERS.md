@@ -226,9 +226,15 @@ floor would hold specific people's instances through weekends and shutdowns. The
 IS worth buying belongs to a RUNNING free slot, which costs ~$95/month, not $3.84.
 
 0 (the default) = never terminate, which is what every deployment did before this existed.
-14400 (4h) is the recommended value: come back the same day and you get the 110s path, come
-back tomorrow and you pay 135s. Must be ≥ `Ec2SlotSleepSec` to mean "sleep, then terminate";
-a smaller value simply skips the sleeping stage.
+It is a trade-off, not a recommended setting: a deployment that keeps stopped slots on purpose
+for fast restarts wants 0, and one that wants the root-volume bill bounded picks a value —
+14400 (4h) means come back the same day and you get the 110s path, come back tomorrow and you
+pay 135s and the slot's root-volume caches. Must be ≥ `Ec2SlotSleepSec` to mean "sleep, then
+terminate"; a smaller value simply skips the sleeping stage.
+
+It is not the way to move retained slots onto a changed launch template: reserve them for
+replacement in the Console's Settings → Admin → Slots tab, and each workspace moves to a new
+slot at its next start (`deploy/aws/ecs/README.md`, "Moving retained slots onto new user data").
 
 ### `Ec2HibernateAfterSec`
 
@@ -597,6 +603,27 @@ CP auth mode. `oauth` (default) = the CP-native login (Google and/or OIDC). `dev
 dev identity with NO login — sandbox/E2E gates only: restrict the ALB security group to your
 own IP before using it (an internet-facing ALB with dev auth hands out an authenticated
 session to anyone who reaches it).
+
+## Keys at rest
+
+### `CustodianKmsKeyArn`
+
+Empty (the default) = the local key custodian: the per-tenant keys that wrap every workspace's
+DEK and the other sealed values are derived from `AF_MASTER_KEY`. A KMS **key** ARN = the kms
+custodian (ADR 0005, 2026-10-04 addendum): the CP gets `AF_KEY_CUSTODIAN=kms` and
+`AF_KMS_KEY_ID`, and `CpCustodianKmsPolicy` gives its task role `kms:GenerateDataKey` and
+`kms:Decrypt` on that key only, and only with the custodian's encryption context
+(`af:purpose=agent-fleet-custodian` plus `af:key_ref`). `10-data` with
+`CustodianKmsKey=create` makes such a key and outputs its ARN; a key of your own works too, as
+long as it is symmetric, in this account, and its policy lets the account's IAM grant use.
+
+An alias ARN is refused by the pattern on purpose: IAM matches a key's calls against the key
+ARN, so a grant on an alias would allow nothing.
+
+⚠️ `AF_MASTER_KEY` stays required: values stored before the switch are not re-encrypted and
+open with it. Do not clear this parameter again while KMS-sealed values exist; the local
+custodian refuses them. The operator's side is `guide/operate/04-secure.md`, "Keys at rest on
+AWS KMS".
 
 ## Alarms
 

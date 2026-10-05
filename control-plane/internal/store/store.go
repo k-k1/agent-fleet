@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 )
 
@@ -683,7 +685,14 @@ type Schedule struct {
 	// bring the workspace's own stop forward — a finished session is idle, and idle was
 	// never what kept the workspace awake (holdsWorkspace is machineBusy only). Ignored in
 	// session_mode=assistant, which drives a conversation and never holds a session.
-	StopAfterRun         bool
+	StopAfterRun bool
+	// DeliverTo is where a fire's result goes when Report is on (issue #1560): a
+	// comma-separated subset of operator, notifications, discord and slack. Empty means
+	// operator alone, the meaning Report had before the column existed.
+	DeliverTo string
+	// Silent lets a run whose final answer is exactly the sentinel ([SILENT]) deliver
+	// nothing: the run is recorded as fired_silent instead. Failures are never silent.
+	Silent               bool
 	Enabled              bool
 	NextRun, LastRun     string
 	LastStatus           string
@@ -699,6 +708,10 @@ type Schedule struct {
 	// ManualFirePending is set by run-now and read+cleared by the scheduler on the next
 	// fire to tag that run as manual (docs/log/38). Transient — not part of the schedule DTO.
 	ManualFirePending bool
+	// HeldByRemoval: the scheduler paused this row because its owner had been removed
+	// (issue #1087); a re-invite resumes it. Cleared by any change the owner makes. Not
+	// part of the schedule DTO.
+	HeldByRemoval bool
 }
 
 // ScheduleRun is one fire-attempt history row (docs/log/38 P3 get_schedule_runs).
@@ -713,6 +726,9 @@ type ScheduleRun struct {
 	FiredAt, Status, Detail      string
 	Session                      string
 	Trigger                      string
+	// Slot is the slot the run fired for (RFC 3339 UTC), empty on rows written before it was
+	// recorded. MarkScheduleRunNotExecuted names a run by it.
+	Slot string
 }
 
 // MCPServerRow is one tenant-distributed MCP server definition (docs/log/48 P4 +
@@ -795,6 +811,34 @@ type Workspace struct {
 	// Minted at container start and cleared on stop, so a stopped workspace's URLs
 	// stop resolving and the previous start's URLs die with it.
 	PreviewSlug string
+}
+
+// WorkspaceAutoStop is why the Control Plane itself last stopped a workspace, kept so a
+// tenant admin can see it without the CP log (#1384). Kind is the stop's cause, today only
+// "start-deadline"; Phase is the last boot phase the runtime reported before the stop
+// (on ecs-ec2 the ECS sentence naming why the task cannot be placed), which the stop
+// itself clears everywhere else. The row goes away when the workspace is next marked
+// running.
+type WorkspaceAutoStop struct {
+	Kind         string `json:"kind"`
+	Phase        string `json:"phase"`
+	LimitMinutes int    `json:"limit_minutes"`
+	StoppedAt    string `json:"stopped_at"`
+}
+
+// CurrentAutoStop is the membership's WorkspaceAutoStop when state, the live runtime state,
+// says the workspace is still down, else nil. The row is only deleted when a start reaches
+// SetWorkspaceState("running"), so a launch still in flight must not be shown as stopped.
+// A read error is nil too: the admin views it feeds degrade to plain "stopped".
+func CurrentAutoStop(ctx context.Context, s WorkspaceStore, membershipID, state string) *WorkspaceAutoStop {
+	if state == "running" || state == "starting" {
+		return nil
+	}
+	a, ok, err := s.GetWorkspaceAutoStopByMembership(ctx, membershipID)
+	if err != nil || !ok {
+		return nil
+	}
+	return &a
 }
 
 // SessionRow mirrors one Agent session into the CP DB so the session list can be
@@ -905,6 +949,7 @@ type Store interface {
 	EngineUsageAttributionStore
 	CloudCostStore
 	SSMStore
+	GCPProfileStore
 	MemoStore
 	WorkItemStore
 	NotificationStore
@@ -914,6 +959,9 @@ type Store interface {
 	TenantIdPStore
 	TenantGitOAuthStore
 	EngineAccessStore
+	TenantBranchRulesStore
+	HomeOperationStore
+	CPLeaseStore
 
 	// Ping backs GET /readyz. Not in a sub-interface: "is the database reachable"
 	// belongs to the store as a whole, not to a feature.
@@ -961,6 +1009,9 @@ type TenantStore interface {
 	GetTenantBySlug(ctx context.Context, slug string) (Tenant, bool, error)
 	SetTenantLimits(ctx context.Context, tenantID, limitsJSON string) error
 	ListTenants(ctx context.Context) ([]Tenant, error)
+	// DataRootCollisions lists stored tenant slugs and default-tenant user keys that
+	// already share a directory under the data root (store_dataroot.go). Report-only.
+	DataRootCollisions(ctx context.Context) ([]string, error)
 	// DeleteTenant removes an EMPTY tenant (its leftover inactive memberships, its
 	// configuration rows, and the row itself). Irreversible, super_admin only, and the
 	// emptiness is proved by the handler — see deleteTenant in tenants.go for the five
@@ -1066,10 +1117,17 @@ type TenantIdPStore interface {
 // button talks to — so it takes effect the moment the tenant_admin saves it
 // (ADR0052 decision 3). An empty SecretEnc is normal for GitHub: its device flow
 // authenticates with the client_id alone.
+//
+// Source, AppType, AppTypeBy and InstallURL are GitHub's (migration 0088): which app
+// the row points at — a built-in one compiled into the binary, or the tenant's own —
+// and, for the tenant's own, whether it is an OAuth App or a GitHub App.
 type TenantGitOAuth struct {
 	ID, TenantID, Provider string
 	ClientID               string
 	SecretEnc, KeyRef      string
+	Source                 string
+	AppType, AppTypeBy     string
+	InstallURL             string
 	UpdatedBy              string
 	CreatedAt, UpdatedAt   string
 }
@@ -1086,6 +1144,10 @@ type TenantGitOAuthStore interface {
 	// invite a duplicate row the unique index then refuses.
 	PutTenantGitOAuth(ctx context.Context, row TenantGitOAuth) error
 	DeleteTenantGitOAuth(ctx context.Context, tenantID, provider string) error
+	// SetTenantGitOAuthAppType records what a client_id turned out to be. It writes only
+	// while the row still names clientID: the lesson comes from a token minted earlier,
+	// and an administrator may have pointed the row at another app in the meantime.
+	SetTenantGitOAuthAppType(ctx context.Context, tenantID, provider, clientID, appType, by string) error
 }
 
 // IdentityLink is one proven login, on its way to LinkIdentity. It is a struct
@@ -1223,6 +1285,15 @@ type MembershipStore interface {
 	// its id — used by the internal-git smart-HTTP handler to map a git token back
 	// to (tenant, role) on every request. ok=false when it is missing/inactive.
 	GetMembershipByID(ctx context.Context, membershipID string) (MembershipView, bool, error)
+	// GitTokenEpoch is the epoch the membership's internal git token is minted under
+	// (issue #1199). Only the current epoch verifies, so the git face reads it live on
+	// every request. ok=false when the membership is missing or inactive.
+	GitTokenEpoch(ctx context.Context, membershipID string) (epoch int64, ok bool, err error)
+	// BumpGitTokenEpoch advances the membership's git token epoch by one and returns the
+	// new value, killing every token minted under an earlier one. It works on an inactive
+	// membership too: re-inviting a removed person reactivates the same id, so rotating
+	// before the re-invite is how the old token is kept dead. ok=false when no such row.
+	BumpGitTokenEpoch(ctx context.Context, membershipID string) (epoch int64, ok bool, err error)
 	// IdentityIDForMembership maps a membership id back to its owning identity id —
 	// used by the internal memo-bridge flush to resolve the workspace runtime from a
 	// memo token (which carries only the membership). ok=false when it is missing.
@@ -1280,7 +1351,14 @@ type WorkspaceStore interface {
 	// DeleteWorkspace removes the row and its dependents. Irreversible, and only ever
 	// reached through the explicit destroy operation (ADR 0045 decision 13-2).
 	DeleteWorkspace(ctx context.Context, workspaceID string) error
+	// SetWorkspaceState also deletes the WorkspaceAutoStop row when state is "running":
+	// every start path ends there, so none of them can leave a stale reason behind.
 	SetWorkspaceState(ctx context.Context, workspaceID, state string) error
+	SetWorkspaceAutoStop(ctx context.Context, workspaceID string, a WorkspaceAutoStop) error
+	// ClearWorkspaceAutoStop is called just before a Start: a start that then fails must not
+	// read as the previous launch's stop.
+	ClearWorkspaceAutoStop(ctx context.Context, workspaceID string) error
+	GetWorkspaceAutoStopByMembership(ctx context.Context, membershipID string) (WorkspaceAutoStop, bool, error)
 	RecordWorkspaceActivity(ctx context.Context, workspaceID, lastSeenAt, connectedUntil, now string) (bool, error)
 	WorkspaceHasRecentActivity(ctx context.Context, workspaceID, cutoff, now string) (bool, error)
 	ClaimWorkspaceIdleStop(ctx context.Context, workspaceID, ownerMembershipID, operationID, cutoff, now string) (bool, error)
@@ -1525,6 +1603,18 @@ type CloudCostStore interface {
 	ListCloudCostByRole(ctx context.Context, fromDay, toDay string) ([]CloudCostRoleRow, error)
 }
 
+// ErrSSMProfileNotFound is CreateSSMHost / UpdateSSMHost refusing a host whose profile the
+// member does not have.
+var ErrSSMProfileNotFound = errors.New("ssm profile not found")
+
+// SSMProfileInUseError is DeleteSSMProfile refusing a profile that hosts still reference.
+// Hosts lists them, ordered by alias, so the caller can name them.
+type SSMProfileInUseError struct{ Hosts []SSMHost }
+
+func (e *SSMProfileInUseError) Error() string {
+	return fmt.Sprintf("ssm profile is used by %d host(s)", len(e.Hosts))
+}
+
 // SSMStore is the SSM login config (docs/log/p3-ssm-session.md), personal
 // scope. No AWS secrets stored. Mutations are scoped by membership so a member
 // only touches their own rows. A profile is the common auth bundle; a host
@@ -1629,6 +1719,13 @@ type ScheduleStore interface {
 	// and the recomputed next_run, disabling the row (enabled=0) when next_run is ""
 	// (a spent "once"). The scheduler is the only caller, so no membership scoping.
 	RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, nextRun string, enabled bool, updatedAt string) error
+	// HoldScheduleForRemoval / ResumeScheduleHeldByRemoval are the two halves of member
+	// removal (issue #1087): the scheduler pauses a slot that came due while the owner
+	// was inactive, and a re-invite resumes it. Both are conditional single statements —
+	// the hold only while the membership is not active, the resume only while the row is
+	// still held — and every owner-side write clears the mark.
+	HoldScheduleForRemoval(ctx context.Context, id, slot, lastRun, lastStatus, updatedAt string) (held bool, err error)
+	ResumeScheduleHeldByRemoval(ctx context.Context, id, membershipID, nextRun, updatedAt string) (resumed bool, err error)
 	// SetScheduleReuse persists the reuse ledger (P6): the current long-lived session,
 	// when it started, and the fire count since the last rotation. Only reuse schedules
 	// use it; the firer calls it, so no membership scoping.
@@ -1639,7 +1736,21 @@ type ScheduleStore interface {
 	// ListScheduleRuns returns a schedule's most-recent runs (newest first), scoped by
 	// membership so a member only sees their own schedule's history.
 	ListScheduleRuns(ctx context.Context, scheduleID, membershipID string, limit int) ([]ScheduleRun, error)
+	// MarkScheduleRunNotExecuted rewrites the status and detail of the run that fired into
+	// session for slot, when it is still recorded as fired. found is false when no run has that
+	// session and slot (trimmed, recorded before slots were, or never fired). changed is false
+	// when the run is found but no longer fired: a repeated report, or a run that failed.
+	MarkScheduleRunNotExecuted(ctx context.Context, scheduleID, membershipID, session, slot, status, detail string) (found, changed bool, err error)
+	// MarkScheduleRunSilent records that the run that fired into session for slot answered
+	// with the silent sentinel (issue #1560): its status becomes ScheduleStatusFiredSilent.
+	// Only a run still recorded as plainly fired changes, so a failure is never overwritten.
+	MarkScheduleRunSilent(ctx context.Context, scheduleID, membershipID, session, slot string) (found, changed bool, err error)
 }
+
+// ScheduleStatusFiredSilent is the run status of a fire whose session answered with the
+// silent sentinel and so delivered nothing (issue #1560). It keeps the "fired" prefix, which
+// every reader of the run history treats as a run that happened.
+const ScheduleStatusFiredSilent = "fired_silent"
 
 // MCPServerStore is the tenant-distributed MCP server registry (docs/log/48 P4 +
 // ADR0031). Rows are tenant-scoped: every mutation carries tenant_id in the WHERE so a

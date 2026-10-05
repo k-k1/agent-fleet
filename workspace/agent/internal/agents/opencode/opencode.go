@@ -14,6 +14,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // sids maps our deterministic slot sid to opencode's own session id ("ses_…"):
@@ -138,6 +139,9 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	return readTranscript(m)
 }
 
+// UsageTurns implements agents.UsageReader.
+func (agentImpl) UsageTurns(m session.Meta) []transcript.Turn { return usageTurns(m) }
+
 // PendingModal hands the wait-for-a-human state that existed just before folding up over
 // to the carry-forward (docs/log/75 P5).
 //
@@ -220,6 +224,11 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		} else {
 			li.State = status.LiveState(session.UUID(m.Dir, m.Name))
 		}
+		// Same vocabulary as codex: a turn busy compacting its context shows as such, and
+		// counts as busy everywhere "working" does.
+		if li.State == "working" && isCompacting(m) {
+			li.State = "compacting"
+		}
 	} else if !session.DirExists(m.Dir) {
 		li.Resumable = false
 	}
@@ -227,3 +236,5 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 }
 
 func (agentImpl) ClearResume(sid string) { sids.Remove(sid) }
+
+var _ agents.UsageReader = agentImpl{}

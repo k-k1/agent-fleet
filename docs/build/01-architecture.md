@@ -1,7 +1,7 @@
 ---
 audience: "everyone's first chapter — anyone who wants the shape of the whole thing"
 source_of_truth: "the code (this is a map and a statement of intent)"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # 01. Architecture
@@ -206,15 +206,15 @@ Only interface seams inside the CP change. The mapping and how to choose is
 [09](09-deploy.md); what each target can and cannot do is
 [ref/deploy-targets](../../guide/ref/deploy-targets.md).
 
-| Port | Interface | one host (`docker`, the default; `native`) | AWS (`ecs`, `ecs-ec2`) |
-|---|---|---|---|
-| running workspaces | `RuntimeFactory`, chosen by `AF_RUNTIME` | Docker Engine / sandboxed host processes | an ECS task on Fargate / on an EC2 slot from a pool |
-| the persistent home | inside the Runtime | a bind-mounted directory / a host directory | an EFS access point / a per-user EBS volume |
-| L1 authentication | the `AUTH` switch | `oauth`, `proxy` or `dev` / `dev` only | `oauth` (the template also accepts `dev`) |
-| metadata | `Store` | SQLite (default, pure Go) | Postgres (RDS) |
-| at-rest keys | `KeyCustodian` | a local custodian derived from the master key | the same; a KMS custodian is only a seam ([decisions/0005](../decisions/0005-envelope-custodian.md), #969) |
-| ingress / TLS | outside the CP | Caddy / Funnel | ALB + ACM |
-| engines | the engine table | an engine already running on the network, by URL | started on demand by the CP (the GPU ones on `ecs-ec2` only) |
+| Port | Interface | one host (`docker`, the default; `native`) | AWS (`ecs`, `ecs-ec2`) | Kubernetes (`kubernetes`) |
+|---|---|---|---|---|
+| running workspaces | `RuntimeFactory`, chosen by `AF_RUNTIME` | Docker Engine / sandboxed host processes | an ECS task on Fargate / on an EC2 slot from a pool | a pod of the workspace's own StatefulSet, at 0 or 1 replicas |
+| the persistent home | inside the Runtime | a bind-mounted directory / a host directory | an EFS access point / a per-user EBS volume | two PersistentVolumeClaims per workspace: the home, and the state a home reset keeps |
+| L1 authentication | the `AUTH` switch | `oauth`, `proxy` or `dev` / `dev` only | `oauth` (the template also accepts `dev`) | `oauth` (the manifests' example) |
+| metadata | `Store` | SQLite (default, pure Go) | Postgres (RDS) | Postgres (on GKE, Cloud SQL through the Auth Proxy sidecar) |
+| at-rest keys | `KeyCustodian` | a local custodian derived from the master key | the same, or AWS KMS with `AF_KEY_CUSTODIAN=kms` ([decisions/0005](../decisions/0005-envelope-custodian.md), 2026-10-04 addendum) | the same |
+| ingress / TLS | outside the CP | Caddy / Funnel | ALB + ACM | the cluster's ingress; on GKE a global external Application Load Balancer + Certificate Manager |
+| engines | the engine table | an engine already running on the network, by URL | started on demand by the CP (the GPU ones on `ecs-ec2` only) | an engine already running on the network, by URL |
 
 ## 1.7 What is built, and what is not
 
@@ -224,6 +224,7 @@ What each screen and agent offers is [ref/features](../../guide/ref/features.md)
 | Area | State |
 |---|---|
 | the deployment targets (`docker`, `native`, `ecs`, `ecs-ec2`, and compose on one VM) | ✅ — the production deployment runs `ecs-ec2` ([09](09-deploy.md)) |
+| the `kubernetes` target ([decisions/0106](../decisions/0106-kubernetes-runtime.md)) | ◐ the adapter, the manifests and the GKE Terraform are built; the acceptance run on GKE Standard is #1468 |
 | multi-tenancy (many-to-many identity ↔ tenant, quotas, audit, showback) | ✅ |
 | the internal git provider (bare + smart HTTP + LFS) | ✅ ([91](91-internal-git.md)) |
 | MCP (the CP endpoint plus the in-container stdio servers) | ✅ — the dangerous admin tools are not planned ([decisions/0006](../decisions/0006-mcp-unified.md)) |
@@ -231,5 +232,5 @@ What each screen and agent offers is [ref/features](../../guide/ref/features.md)
 | self-hosted engines | ✅ — started on demand on AWS (the GPU ones on `ecs-ec2` only); on `docker` / `native`, an engine already running on the network (§1.3) |
 | the in-container browser pane | ✅ ([decisions/0018](../decisions/0018-container-browser-pane.md)) |
 | egress control | ◐ observation, a versioned allowlist with human approval, and an enforce switch on the proxy; workspace traffic is not yet forced through the proxy ([07 §7.8](07-security.md)) |
-| a KMS custodian | 📋 seam only (#969) |
+| a KMS custodian | ✅ opt-in on AWS; values stored before the switch stay master-key only ([decisions/0005](../decisions/0005-envelope-custodian.md)) |
 | the Go internal refactor | ✅ done ([decisions/0012](../decisions/0012-go-internal-refactor.md), [0067](../decisions/0067-parallel-refactor.md)); the current layout is [90](90-code-map.md) |

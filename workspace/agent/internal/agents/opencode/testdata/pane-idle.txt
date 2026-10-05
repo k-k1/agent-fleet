@@ -1,0 +1,40 @@
+
+  ┃
+  ┃  Use the read tool to read the file /home/dev/.af-work/s7jxd4o/probe/outside/note.txt and
+  ┃  tell me its content.
+  ┃
+
+     → Read /home/dev/.af-work/s7jxd4o/probe/outside/note.txt
+
+     + Thought: 3.2s
+
+     The file contains a single line:
+
+     secret-ish content 42
+
+     ▣  Build · Big Pickle · 1m 4s
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · Big Pickle OpenCode Zen
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   /home/dev/.af-work/s7jxd4o/probe/occwd                               8.4K (4%)  ctrl+p commands
+

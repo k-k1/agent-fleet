@@ -2183,3 +2183,26 @@ Control Plane 側（CloudFormation 側は使い捨てスタックで実測済み
 未測: 実機で llm 役の Spot を起こしていない。受け入れの経路（設定・API・候補の絞り込み）は
 単体試験と陽性対照で閉じているが、**会話の途中で取り上げられたときに何が見えるか**は
 image 役の実測（ADR 0077 P2）からの類推である。
+
+## 注記 — CP の EC2 権限を `af-pool` で囲った（2026-10-03・#1423）
+
+上の決定はそのまま。名指している statement の形が変わった。エンジンの購入は今も `RunInstances` と
+`TerminateInstances` を 20-platform に頼るが、`Ec2SlotPool` はもうそれを `*` には与えない。
+`RunInstances` はリクエストがこの配備の `af-pool` をインスタンスに付けるときだけ（`Ec2RunInPool`）、
+`TerminateInstances` はそれを持つインスタンスにだけ許される。エンジン機は `CreateFleet` の
+`TagSpecifications`（`engine_fleet.go` の `tags`）で両方を満たす。`PassSlotRole` は 40-ec2-pool へ
+移り、そのスタック自身のスロットロールを名指す。instant フリートの起動がフリートのタグで認可されるかは
+文書に無く、#1423 が挙げる実機確認の 1 つである。
+
+## 注記 — エンジン機のイメージとスナップショットにも柵を掛けた（2026-10-03・#1522）
+
+`RunInstances` はイメージとスナップショットにも柵が掛かった（20-platform の `Ec2RunAmazonImage`・
+`Ec2RunPublicImage`・`Ec2RunForeignOwnedSnapshot`）。決定 7 の `resolve:ssm:` が起動時に選ぶ GPU AMI は
+名指せる ID を持たないので、エンジン機は Amazon のイメージが `ec2:Owner` = `amazon` か
+`ec2:Public` = `true` で通ることに頼る。ブロックデバイスマッピングでこのアカウントが持つスナップショットを
+指せば拒まれる。`CreateFleet` そのものにも同じイメージの柵を掛けた（`CpIngestPolicy` の
+`CreateFleetAmazonImage` / `CreateFleetPublicImage`）ので、`ImageId` の上書きは起動が改めて検査されなくても
+拒まれる。マッピングの上書きに柵が効くのは、instant フリートの起動が呼び出し元の `RunInstances` で
+認可される場合だけで、上の注記と同じ未確認の問いである。サービス認可リファレンスは `CreateFleet` に
+スナップショットのリソースを挙げず、作られるボリュームの `ec2:ParentSnapshot` は所有者を含まない ARN で、
+AMI 自身のルートボリュームにも付くからだ。実機確認は #1522 の PR に挙げてある。

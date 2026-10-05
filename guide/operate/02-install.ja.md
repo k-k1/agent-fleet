@@ -281,6 +281,16 @@ super_admin として Admin パネルから、テナントの作成、メンバ�
 リスト内のメンバーはログインするだけで使い始められます。メンバー管理・上限・監査のブラウザ操作
 そのものは、管理者向けの admin 分冊が扱います。
 
+**テナントの slug に使えない名前。** テナントのディレクトリと既定テナントのメンバーのホームは、
+データディレクトリ（`WS_DATA`）の直下に Control Plane 自身のファイルと並んで置かれます。そのため、
+slug がデプロイがそこで使う名前（`git`・`shared`・`caddy`・`drawio-stencils`・`guide-staged`、
+およびデータベースと鍵のファイル）と同じなら `tenant_slug_reserved`、既存の既定テナントのメンバーの
+ユーザーキー（メールアドレスを整形したもの。例: `alice-example-com`）と同じなら
+`tenant_slug_conflict` でテナント作成を断ります。逆向きも断ります。ユーザーキーがテナントの slug
+や予約名と同じ人は既定テナントに追加できません（`user_key_conflict` / `user_key_reserved`）。
+その人は別のテナントに招待してください。この確認より前に保存された名前はそのまま残し、
+Control Plane の起動時に `data root name collision` としてログに出します。
+
 各メンバーは自分の Workspace を起動したあと、Console から**自分の Claude シートでログイン**します
 （BYO）。運用者がメンバーの Claude 資格情報を代理設定することはありません。
 

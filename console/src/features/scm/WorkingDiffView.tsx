@@ -13,12 +13,15 @@ export function WorkingDiffView({
   repo,
   path,
   staged,
+  vcs = "git",
   wrap,
   headerActions,
 }: {
   repo: string;
   path: string;
   staged?: boolean | null;
+  /** "svn" reads the local `svn diff` (svn-diff); there is no staged side. */
+  vcs?: "git" | "svn";
   wrap?: boolean;
   headerActions?: ReactNode;
 }) {
@@ -31,10 +34,10 @@ export function WorkingDiffView({
       setDiff("");
       return true;
     }
-    const q = `path=${encodeURIComponent(path)}${staged ? "&staged=1" : ""}`;
+    const q = `path=${encodeURIComponent(path)}${staged && vcs !== "svn" ? "&staged=1" : ""}`;
     let d;
     try {
-      d = await api(`api/repos/${encodeURIComponent(repo)}/diff?${q}`);
+      d = await api(`api/repos/${encodeURIComponent(repo)}/${vcs === "svn" ? "svn-diff" : "diff"}?${q}`);
     } catch {
       return false; // network drop — retry
     }
@@ -42,7 +45,7 @@ export function WorkingDiffView({
     if (isTransientErr(d)) return false;
     setDiff(d.diff && d.diff.length ? d.diff : tr("scm.no_diff"));
     return true;
-  }, [repo, path, staged]);
+  }, [repo, path, staged, vcs]);
 
   return (
     <div className="scmview">

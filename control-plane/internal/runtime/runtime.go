@@ -141,6 +141,7 @@ var (
 	_ runtimeDestroyer = (*nativeRuntime)(nil)
 	_ runtimeDestroyer = (*ecsRuntime)(nil)
 	_ runtimeDestroyer = (*ecsEC2Runtime)(nil)
+	_ runtimeDestroyer = (*kubeRuntime)(nil)
 )
 
 // RuntimeFactory is the single construction seam for the Runtime port. Every call
@@ -170,7 +171,9 @@ type DocsMounter interface{ mountsStagedDocs() }
 // "aws" → AWS ECS on Fargate (P3-7); "ecs-ec2" → the same ECS substrate on the EC2
 // launch type with a pool of slots and a persistent per-user EBS home (docs/log/64,
 // ADR 0045 decision 10); "native" / "wsl" → containerless host processes for
-// Docker-less WSL2 / dev hosts (single-user only; docs/log/34). Unknown profiles fail
+// Docker-less WSL2 / dev hosts (single-user only; docs/log/34); "kubernetes" / "k8s" → a
+// StatefulSet per workspace in one namespace of the cluster the CP runs in (ADR 0106).
+// Unknown profiles fail
 // fast at boot rather than silently defaulting to Docker. The docker factory
 // captures the manager's template fields by value, so it MUST be built after
 // those fields are finalized (e.g. extraEnv appends in main.go).
@@ -196,7 +199,9 @@ func NewFactory(profile string, mcfg Config) (RuntimeFactory, error) {
 		return newECSEC2Factory(mcfg)
 	case "native", "wsl":
 		return newNativeFactory(mcfg)
+	case "kubernetes", "k8s":
+		return newKubeFactory(mcfg)
 	default:
-		return nil, fmt.Errorf("unknown AF_RUNTIME profile %q (want local|ecs|ecs-ec2|native)", profile)
+		return nil, fmt.Errorf("unknown AF_RUNTIME profile %q (want local|ecs|ecs-ec2|native|kubernetes)", profile)
 	}
 }

@@ -12,25 +12,26 @@
 // swallowed exactly once.
 import { createPortal } from "react-dom";
 import { useLayoutEffect, useRef, useState } from "react";
-import type { KeyboardEvent as RKeyboardEvent, MouseEvent as RMouseEvent, TouchEvent as RTouchEvent } from "react";
+import type {
+  KeyboardEvent as RKeyboardEvent,
+  MouseEvent as RMouseEvent,
+  PointerEvent as RPointerEvent,
+  TouchEvent as RTouchEvent,
+} from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { isContextMenuKey, menuAnchor } from "../project/contextMenuKey.ts";
-
-// How long a press must last to count as a long press: 500ms, matching the browser's own
-// long-press (selection / callout).
-const LONG_PRESS_MS = 500;
-// Moving further than this makes it a horizontal scroll (swipe) of the chip row, not a long press.
-const MOVE_TOL = 10;
+import { createLongPress } from "../../lib/longPress.ts";
 
 export type ChipMenuState = { text: string; llm: boolean; x: number; y: number };
 
 export type ChipMenuHandlers = {
   onContextMenu: (e: RMouseEvent) => void;
   onMouseDown: () => void;
+  onPointerDown: (e: RPointerEvent) => void;
   onTouchStart: (e: RTouchEvent) => void;
   onTouchMove: (e: RTouchEvent) => void;
   onTouchEnd: (e: RTouchEvent) => void;
@@ -52,17 +53,9 @@ export type ChipMenu = {
 
 export function useChipMenu(): ChipMenu {
   const [menu, setMenu] = useState<ChipMenuState | null>(null);
-  const timer = useRef<number | null>(null);
-  const origin = useRef<{ x: number; y: number } | null>(null);
+  const [press] = useState(createLongPress);
   const swallow = useRef(false);
-
-  const cancelTimer = () => {
-    if (timer.current !== null) {
-      window.clearTimeout(timer.current);
-      timer.current = null;
-    }
-    origin.current = null;
-  };
+  const cancelTimer = press.cancel;
 
   const open = (text: string, llm: boolean, x: number, y: number) => {
     cancelTimer();
@@ -83,23 +76,24 @@ export function useChipMenu(): ChipMenu {
     onMouseDown: () => {
       swallow.current = false;
     },
+    // The press that dismisses an open menu never gets here (useDismiss eats it), which is what
+    // keeps that tap from reopening a menu; see createLongPress.
+    onPointerDown: (e) => press.pointerDown(e.pointerType),
     onTouchStart: (e) => {
       swallow.current = false;
       cancelTimer();
       const t = e.touches[0];
       if (!t || e.touches.length > 1) return;
-      origin.current = { x: t.clientX, y: t.clientY };
       const { clientX, clientY } = t;
-      timer.current = window.setTimeout(() => {
+      press.start(clientX, clientY, () => {
         swallow.current = true; // drop the click fired on lift, which would insert the text
         open(text, llm, clientX, clientY);
-      }, LONG_PRESS_MS);
+      });
     },
+    // Moving makes it a horizontal scroll (swipe) of the chip row, not a long press.
     onTouchMove: (e) => {
       const t = e.touches[0];
-      const o = origin.current;
-      if (!t || !o) return;
-      if (Math.abs(t.clientX - o.x) > MOVE_TOL || Math.abs(t.clientY - o.y) > MOVE_TOL) cancelTimer();
+      if (t) press.move(t.clientX, t.clientY);
     },
     // Once the long press has fired, preventDefault on touchend so no compatibility click /
     // mousedown is synthesised. A synthesised mousedown counts as an outside press for useDismiss
@@ -108,9 +102,9 @@ export function useChipMenu(): ChipMenu {
     // never linger and eat a click.
     onTouchEnd: (e) => {
       if (swallow.current && e.cancelable) e.preventDefault();
-      cancelTimer();
+      press.end();
     },
-    onTouchCancel: cancelTimer,
+    onTouchCancel: press.end,
   });
 
   const onKeyDown = (e: RKeyboardEvent<HTMLButtonElement>, text: string, llm: boolean): boolean => {

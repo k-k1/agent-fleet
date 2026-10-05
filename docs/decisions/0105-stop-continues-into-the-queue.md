@@ -260,3 +260,28 @@ restart instead is #1255's work.
   chapter (07, en/ja), where the Stop button is described, states the two stops.
 - The tests added in #1244 and #1258 that assert "own input is discarded by a stop" are inverted, not deleted: they
   become "own input continues after a first stop, and is discarded (and kept for return) by a second".
+
+## Addendum (2026-10-03) — decision 8 no longer loses peer messages
+
+Decision 8 stands for the in-memory queue, but a peer message's text now outlives it (#1255): the
+queue writes each peer entry to a file when it accepts it, teardown leaves the files, and the next
+`Resume` sends them as the first turns. A discarding stop (decisions 2 and 3) and a removal
+(decision 5) delete the file with the entry, so a message the member discarded does not come back
+after a restart. The kept discards of decision 4 are still memory only. Details in
+[0041](0041-cross-session-messaging.md), addendum 2026-10-03.
+
+## Addendum (2026-10-03) — operator and scheduled prompts are held too
+
+The same holds now for operator prompts (`send_to_session` with `report_to`) and scheduled prompts (#1257): the
+queue writes them through on accept, teardown keeps them, and the next `Resume` delivers them in one FIFO with the
+held peer messages, by accept time. They keep their text, so an operator prompt keeps its `af_report` line; a mark
+`[agent-fleet:held queued=<time>]` is appended to one delivered after a restart. Archive, trash, recreate and the
+switch to Terminal drop them, the operator's `stop_session` drops its own, and a discarding stop and a removal drop
+them as they drop peer messages. The held file is the token for the input: Commit and every drop remove it before
+acting, and only the one whose removal succeeded acts, so an input reported as dropped never runs even when a Resume
+adopted it meanwhile, and one already handed to the runtime is not reported. A removal that fails (EACCES, EIO) is
+no claim: the input stays on disk for the next start. A drop removes only the files it claimed, never the whole
+directory, so an input a live queue accepts during the drop is left to that queue. Unlike a peer message, each dropped
+one is reported: its instruction row is
+reported as not run (see [0035](0035-session-report-v2-ledger.md), addendum 2026-10-03), and its scheduled run is
+recorded as not executed.

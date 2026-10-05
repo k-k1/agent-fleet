@@ -62,6 +62,8 @@ const ROSTER = [
   { user_key: "a", email: "a@x.com", role: "member", max_sessions: 3, mem_limit: 8 * 1073741824, cpu_limit: 2048, slot_class: "arm" },
   { user_key: "b", email: "b@x.com", role: "member", mem_limit: 4 * 1073741824 },
   { user_key: "c", email: "c@x.com", role: "member" },
+  // No stored class, but the tenant default (arm) is what the CP says this member lands on.
+  { user_key: "d", email: "d@x.com", role: "member", mem_limit: 8 * 1073741824, slot_class: "", slot_class_effective: "arm" },
 ];
 
 let root: Root | null = null;
@@ -101,6 +103,13 @@ describe("member roster shows the size actually in effect", () => {
     expect(rowText(0)).toContain("s≤3");
     // No class means the default (standard), where 4 GiB lands on an m7i.large.
     expect(rowText(1)).toContain("m7i.large");
+  });
+
+  it("draws a member who follows the tenant default from the tenant default's class", async () => {
+    await mountRoster(SIZING_CLASSES);
+    // The deployment default (standard) would give an m7i.large; the tenant default is arm.
+    expect(rowText(3)).toContain("m7g.large");
+    expect(rowText(3)).not.toContain("m7i");
   });
 
   it("does not print a CPU number when cpu_effective=false", async () => {

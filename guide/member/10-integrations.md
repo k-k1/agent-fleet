@@ -35,6 +35,13 @@ Enter a port number in the **port input field** on the right of the workspace ac
 "Open in pane" when you want to touch the screen, and the lightweight preview when one look at an HTTP response
 is enough.
 
+> **On a deployment that runs workspaces on Kubernetes (a preview runtime) there is no browser pane.** "Open in pane" is
+> greyed out, and its tooltip and the hint under it say why: Chromium's sandbox cannot start in the
+> restricted pod a workspace runs in, and the deployment does not run Chromium without it. A port in a
+> session row opens in the lightweight preview instead, and a browser pane kept in your layout shows the
+> reason with a button for the same page in the lightweight preview. Agents cannot hand you a browser
+> page there either (next section). Details: [browser-pane.md](../ref/browser-pane.md#where-there-is-no-browser-pane).
+
 On a touch screen such as a tablet, **swipe to scroll** (a flick keeps coasting after you lift your finger),
 **tap to click**, **press and hold to drag** (text selection, sliders), and **pinch with two fingers to zoom**.
 A pinch re-lays the page out at a narrower width rather than stretching the picture, so text stays legible at
@@ -168,15 +175,16 @@ workspace is running.
   Sources. The pane's "Console" lets you view and copy that page's `error` / `warn` logs and the like
   (up to 200 entries; not stored persistently).
 
-> **Smartphones are not supported in the current version.** At around 390px width (phones), the entry point in
-> the action bar overflows off screen and you cannot start. Please use a **desktop or tablet**.
+> **On a smartphone**, the action bar has no "Preview" button: tap **⋯** at its right end instead — the port
+> and path fields and "Open in pane" are in the popover it opens.
 
 ## Operating a browser the agent opened
 
 When an agent is driving its own browser (Chromium) inside the workspace and reaches something
 **only a person can do** — signing in, a one-time code, ticking a consent box — it can hand that
 page over to you. This is a different thing from the browser pane above: there you open your own
-local web app, here you take over a page the agent already has open.
+local web app, here you take over a page the agent already has open. Like the browser pane, it does not
+exist on a deployment that runs workspaces on Kubernetes (a preview runtime).
 
 - A link appears in the agent's message: **"Open the browser and operate it (opens as a pane in this
   tab)"**. **You are the one who clicks it** — nothing opens until you do, and it opens as a pane in
@@ -250,6 +258,32 @@ Beside the label, a badge shows the login state: **Signed in**, **Renews on use*
 while the portal session is open, the next use renews it) or **Not signed in**. It shows no time left: the
 workspace knows only the access token's expiry (about an hour), not when the portal session ends.
 
+**Before a login ends — only for a login that cannot renew.** A normal login from Settings renews itself on use
+until the portal session ends, and that end is recorded nowhere the workspace can read, so such a login is **not
+warned about in advance**: when the portal ends it, the next command asks for a login as below. Only when the cached
+login has nothing to renew it with (no refresh token, or its sign-in client registration has expired) is its end
+known; then the Console warns once per profile, about 10–15 minutes before: a toast "Your AWS login ends at …" (and
+a notification), with **Log in** opening the same login window. The warning goes once you log in again; closing the
+toast hides it for that end in that tab. A profile that is not in the managed block (see `af-aws-exec --list`) is
+never warned about.
+
+**Logging out of one profile.** A row that is signed in (or renews on use) has **Log out**, both here and in the
+popover of the WS bar's AWS badge. After you confirm, the workspace ends that profile's login with AWS and deletes
+its cached login and role credentials; your other profiles stay signed in. Credentials a running command already
+received stay valid until they expire — AWS cannot recall them — so stop that command if it matters. If AWS cannot
+be reached or refuses (it does when the access token has already expired, as for a **Renews on use** row), the
+workspace is signed out all the same and the Console says so; the login may then stay valid at AWS
+until it ends. Do not use `aws sso logout` for this: it signs out every profile at once, whatever `--profile` says.
+
+Every profile and host row has **Edit**, which opens the same form filled in and saves it in place. Edit rather
+than delete and re-add: a host refers to its profile by an internal ID, so a re-added profile is a new one.
+A profile that hosts still use cannot be deleted — the page names those hosts; edit them to pick another
+profile, or delete them, first. A host that was left without a profile before this rule (its row says so) is
+fixed the same way: edit it and pick a profile.
+A profile's workspace name comes from its label, and the login belongs to that name: changing the label, or the
+start URL / SSO region, means logging in again: the form warns you, and the row shows **Log in again** until you log in from it. The workspace's `~/.aws/config` picks up
+the change within 5 minutes, or at once when you press **Log in**; sessions already open keep the old settings.
+
 **No AWS secrets are stored in Agent Fleet.** Login happens at session start via the device-code flow — you
 approve the **`aws sso login`** URL shown in the terminal in your browser — and short-lived credentials are held
 only inside the workspace.
@@ -297,15 +331,82 @@ Open the URL it prints and approve the code — only a code you started yourself
 SSM sessions of the same profile, so logging in once covers both.
 
 **Running one command as you: `af-aws-exec`.** The workspace can have an AWS identity of its own (a *workload
-role*). A command that names no profile at all — a bare `aws …`, an SDK's default credential chain, a build tool
-with no profile setting — then quietly runs as that role instead of as you, in another account. (A named profile
-that is misspelled or logged out fails with an error instead.) For deployments, lookups in your accounts and
-anything else that must use your authorization, pass your credentials explicitly:
+role*), and the machine underneath can have one too. In a container workspace (docker or AWS ECS, Agent Fleet
+0.26.0 or later) your sessions and terminals do not get either: the Agent keeps the workspace's credentials variables
+out of everything it starts, and the SDKs' instance metadata lookup is switched off (`AWS_EC2_METADATA_DISABLED=true`).
+A tool that ignores that variable is stopped only by the host's network block, which holds once your administrator has
+finished the 0.26.0 migration ([operator guide 04](../operate/04-secure.md), "Other operational controls"). (A
+workspace that runs directly on your own machine is left as it is: an instance role there is your machine's, and the
+SDKs still find it.) So a
+command that names no profile at all — a bare `aws …`, an SDK's default credential chain, a build tool with no
+profile setting — fails with "Unable to locate credentials" (or its SDK's wording) instead of running as the
+workspace. (A named profile that is misspelled or logged out fails with its own error.) Your administrator can let
+the workspace use its own task role again (on AWS ECS); then such a command quietly runs as that role, in another
+account. Either way, "Unable to locate credentials" means "name your profile", not "configure credentials": do not
+answer it with `aws configure`, `aws login` (the CLI's own hint) or keys in a `[default]` section of `~/.aws`, and do not look for credentials elsewhere.
+For deployments, writes and anything else whose account matters, pass your credentials explicitly:
 
 ```sh
 af-aws-exec --profile <name> -- ./gradlew deploy
 af-aws-exec --profile <name> -- npx cdk deploy
 ```
+
+**Example: a build tool with an S3 upload plugin.** A Gradle deploy task built on an AWS plugin (an S3 upload
+task, for instance) with no profile in the build script asks the SDK's default chain: environment variables, JVM
+system properties, the `default` profile in `~/.aws`, then the container credentials and instance metadata. In a
+session, `./gradlew uploadArtifact` therefore stops with "Unable to load AWS credentials from any provider in the
+chain" rather than uploading the artifact as the workspace's role. Run it as you, naming the account:
+
+```sh
+af-aws-exec --profile <name> --account <id> --region <region> -- ./gradlew uploadArtifact
+```
+
+The plugin then finds the profile's short-lived credentials in its environment, the first place the chain looks,
+and the "running as" line shows who uploads. If the build script names a profile itself (`profileName = "prod"`,
+say), see "could not be found" below.
+
+**A read-only lookup with `aws --profile`.** `af-aws-exec` stays the way to run deployments, writes, build tools,
+SDK programs and scripts: it checks the account (`--account`), hands short-lived credentials to tools whose SDK cannot
+read an SSO profile (older SDKs such as the AWS SDK for Java v1, common in Gradle/Maven plugins), asks you in the
+Console when a login is missing, refuses a profile name that means different identities to different tools, pins the
+region with `--region` and removes endpoint overrides. A quick look-up with the AWS CLI itself (`describe-*`,
+`list-*`, `s3 ls`) may name one of your Settings profiles directly, but only in a shell where this check prints
+`isolated`. It prints one word and nothing of the environment or of the error:
+
+```sh
+if err=$(env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true \
+           aws sts get-caller-identity 2>&1 >/dev/null); then st=0; else st=$?; fi
+err=${err#"${err%%[![:space:]]*}"}
+if [ "$st" = 253 ] && [ "$(printenv AWS_EC2_METADATA_DISABLED)" = true ] && [ "${AF_WS_WORKLOAD_AWS:-}" != 1 ] \
+   && [ -z "$(env | cut -d= -f1 | grep -E '^AWS_(CONTAINER_|CONFIG_FILE$|SHARED_CREDENTIALS_FILE$|ENDPOINT_URL)')" ] \
+   && case $err in "Unable to locate credentials"* | \
+        "aws: [ERROR]: An error occurred (NoCredentials): Unable to locate credentials"*) true ;; *) false ;; esac
+then echo isolated; else echo not-isolated; fi; unset err st
+```
+
+`isolated` means `AWS_EC2_METADATA_DISABLED=true` is exported, so the CLI does not ask instance metadata, the environment holds no workload credentials and no AWS
+config-file or endpoint overrides, and the CLI's default chain (with `AWS_PROFILE` set aside and configured endpoints
+ignored) ended in its own "no credentials" error (exit 253), so a misspelled or logged-out profile fails instead of answering for another account. Anything else — your
+own default credentials, an expired session, a failing `credential_process`, a network error — prints `not-isolated`, and so normally do a workspace
+on your own machine, a deployment that hands the task role back and a workspace not started again since the upgrade.
+The check reads what this shell would hand the CLI; it does not prove the runtime, the version or the host's network
+block. Where it prints `not-isolated`, run lookups through `af-aws-exec` too. Where it prints `isolated`, a direct
+lookup still needs all of these, or it goes through `af-aws-exec`:
+
+- The profile is one `af-aws-exec --list` shows as exported, chosen there by its account and role (not by the name
+  alone). If you do not know which account, find out first. When `--list` warns that its names come "from an earlier
+  sync; not checked against Settings now", nothing is verified: use `af-aws-exec`. A profile `--list` does not show, marks as not exported,
+  or one you defined yourself (`role_arn`, `credential_process`) → `af-aws-exec`.
+- Name the region and ignore configured endpoints:
+  `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true aws --profile <name> --region <region> ec2 describe-instances`, with no
+  `--endpoint-url`. A stale `AWS_REGION` in your shell beats the profile's region, and an `endpoint_url` in your
+  `~/.aws/config` (left by an emulator setup, say) would send the request somewhere other than AWS.
+- Run it in the same shell you checked.
+- An SSO token error means the login is missing; plain `aws --profile` does not ask the Console. Rerun with
+  `af-aws-exec`, which does.
+- A profile `af-aws-exec` refused is refused here too; plain `--profile` is no way around it.
+
+Agents in the workspace follow the same rule.
 
 - It passes the profile's **short-lived** credentials to that one command through its environment only —
   `af-aws-exec` itself writes them nowhere and prints nothing but the identity the command runs as. (The AWS CLI
@@ -384,6 +485,246 @@ af-aws-exec --profile <name> -- npx cdk deploy
   a Settings profile's name with a different account, role or sign-in portal.
 - Credentials last as long as the SSO role session, or the assumed role's session (often one hour). A longer
   command fails when they expire rather than switching identity.
+
+### Trying AWS code against a local emulator (MiniStack)
+
+To try code, a template or a script without touching a real account, you can run
+[MiniStack](https://github.com/ministackorg/ministack) — an open-source AWS API emulator — inside the workspace.
+It needs no Docker when installed from PyPI, starts in seconds and stays small. It is not part of the image, so
+install it yourself:
+
+```sh
+python3 -m venv ~/.local/ministack && ~/.local/ministack/bin/pip install ministack
+GATEWAY_PORT=14566 ~/.local/ministack/bin/ministack
+```
+
+Ports are shared with your other sessions: pick a free one (the default 4566 may be taken) and stop the server
+when you are done.
+
+**Point a dedicated profile at it, and name that profile every time.** Pick a profile name that is used nowhere
+yet — not in `aws configure list-profiles`, not in `af-aws-exec --list`, not in `~/.aws/credentials` — because a
+`[ministack]` entry in `~/.aws/credentials` would win over the keys below and send real credentials to the
+emulator, and a Settings profile of the same name stops being exported. Then add a new section outside the managed
+block of `~/.aws/config`:
+
+```ini
+[profile ministack]
+region = us-east-1
+endpoint_url = http://127.0.0.1:14566
+aws_access_key_id = 000000000001
+aws_secret_access_key = test
+```
+
+and run `aws --profile ministack …`. The profile carries the endpoint only for clients that read `endpoint_url`
+from a profile: the AWS CLI v2 and current SDKs do; AWS SDK for Java 1.x, JavaScript v2 and Go v1 do not, and
+neither does a tool that sets its own endpoint. Those go to real AWS with the dummy keys unless you give the
+client the endpoint itself (Terraform's `endpoints` block, the SDK's endpoint option). An exported
+`AWS_ENDPOINT_URL*` or `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true` overrides the profile's endpoint too, so
+check your shell for them.
+
+Do **not** export dummy keys (`AWS_ACCESS_KEY_ID=test`) instead. Every command would then carry them, and one that
+forgets `--endpoint-url` sends its request to real AWS (where the dummy keys are rejected) instead of stopping
+with "Unable to locate credentials" before anything leaves the workspace. How much a forgotten profile protects
+you depends on the workspace: where a command without a profile stops with that error (see `af-aws-exec` above),
+it stops; where the workspace's own role is handed back (`AF_WS_WORKLOAD_AWS=1`) or on the native runtime with
+the machine's own credentials, a command without a profile runs as that identity against real AWS — so there,
+never leave the profile out. MiniStack is never run through `af-aws-exec`, which removes endpoint settings on
+purpose.
+
+- **Sharing one server.** A 12-digit access key becomes the account id, and resources are kept apart per
+  account, so sessions that must not see each other's resources use different keys. Separation by region
+  depends on the service (S3 buckets, for one, are visible from every region), so do not rely on a region to
+  keep two sessions apart.
+- **What does not work here.** RDS, ElastiCache and ECS start real Docker containers, and a workspace has no
+  Docker. RDS still answers `available` with an endpoint such as `localhost:5432` that no database of its own
+  is behind — another Postgres in the workspace may be listening there. For a database, use `af-db`
+  ([Running database-backed tests](03-code.md#running-database-backed-tests)).
+- **State** is in memory and lost when the server stops. `PERSIST_STATE=1` keeps service state but not S3
+  object contents, which need `S3_PERSIST=1` as well; both default to directories under `/tmp`, so set
+  `STATE_DIR` and `S3_DATA_DIR` to directories under your home.
+- **It is an emulator.** A template or IAM policy that works against it may still fail on AWS; use it to
+  iterate, and check the real thing through `af-aws-exec` before you rely on it.
+
+## Running commands in Google Cloud as you (af-gcloud-exec)
+
+Your Google Cloud profiles live in **⚙ Settings → the "Google Cloud" tab**. A profile says which project a
+command points at and as whom it acts:
+
+- **Label** — the display name. The profile's **name**, the one commands use, is made from it and shown next to
+  it: lowercase letters, digits and `-` (every other run of characters becomes `-`, a name that would start with
+  a digit gets `p` in front, and a label with nothing usable in it, such as a Japanese one, gets `p-` and a short
+  code). If two labels make the same name (`Prod` and `prod`), **neither is available** in the workspace and the
+  row says so; rename one.
+- **Login method** — a Google account, including Google Workspace and Cloud Identity accounts.
+- **Project** — the project ID (not the number) commands point at by default.
+- **Quota project** (optional) — the project billed for API quota; the project itself when left blank. Some
+  APIs need one with a personal login, and your account needs permission to use services on it.
+- **Account** (optional) — the Google account to sign in as; a sign-in as anyone else is refused. Left blank,
+  you choose at the first login.
+- **Impersonate service account** (optional) — commands act as this service account through your login. Your
+  account needs the Service Account Token Creator role on it. This is the way to act as a service account:
+  service-account keys are not accepted anywhere.
+- **Region / Zone** (optional).
+
+**No Google credentials are stored in Agent Fleet.** The login lives inside your workspace, in a gcloud store
+of the workspace's own. It is separate from the `gcloud` you run in a terminal: logging in to one does not log
+in to the other, and a profile never reads or changes your own gcloud configuration, logins or application
+default credentials. A change in Settings reaches the workspace within about five minutes, or at once when you
+run `af-gcloud-exec`. Changing a profile's account, changing its label so that its name changes, or deleting
+and adding it again, resets which account it uses: unless the account it names is already logged in in the workspace, the next run asks for a
+login. Export and import carry the profiles (see [12 Settings](12-settings.md#export-import)).
+
+### Running a command as a profile
+
+```sh
+af-gcloud-exec --list
+af-gcloud-exec --profile <name> --project <project-id> -- gcloud compute instances list
+af-gcloud-exec --profile <name> --project <project-id> -- terraform plan
+af-gcloud-exec --profile <name> --project <project-id> -- kubectl get pods
+```
+
+- `--list` prints each profile's name, project, account ("chosen at the first login" until then), the service
+  account it impersonates and its label, and names the profiles that are not available, with the reason. Choose
+  by project and account, not by the name alone.
+- `--project` must be the profile's project, or the command is refused. A Google login is not bound to a
+  project, so this only checks that you and the profile agree on where the command points by default: a
+  command's own `--project`, or a project written in a Terraform configuration, still wins.
+- The command gets a short-lived **access token** of the profile and nothing else of yours: no gcloud login, no
+  application default credentials, and nothing from the machine's own Google identity. `af-gcloud-exec` prints
+  "profile … runs as <account> in project …; the token is valid for N more minutes" (`-q` leaves it out); the
+  token itself is never printed.
+- The token lasts what remained when it was handed over: at least ten minutes, at most about an hour. It is
+  **not renewed during the command**, so a long `terraform apply` or a `kubectl` watch that outlives it fails.
+  Split long work into shorter runs.
+- The first run installs the Google Cloud SDK (one pinned version, with the GKE auth plugin) into your home: about
+  85 MB to download and about 510 MB on disk, kept across stops and a Recreate. The first run of each gcloud
+  command after that is a few seconds slower once. The **Toolchain** tab's table of tool versions then shows
+  gcloud. A plain `gcloud` in a terminal is that same program, but with your own login, if any, not a profile's.
+- For `kubectl`, fetch the cluster's entry once through the profile
+  (`af-gcloud-exec --profile <name> --project <project-id> -- gcloud container clusters get-credentials <cluster> --location <location>`),
+  then run `kubectl` through `af-gcloud-exec` too: the GKE auth plugin asks gcloud for the token, and only inside
+  `af-gcloud-exec` does gcloud have one.
+
+**Which tools use the token.**
+
+| Tool | With `af-gcloud-exec` |
+|---|---|
+| `gcloud`, including `gcloud storage` | yes |
+| `kubectl` against a GKE cluster | yes, through the GKE auth plugin |
+| Terraform's Google provider | yes, with the quota project |
+| `bq` | yes. It comes with the SDK but is not on the path: run `~/.local/share/agent-fleet/google-cloud-sdk/bin/bq` |
+| `gsutil` | **no**. It ignores the token: without a gsutil (boto) configuration of your own it sends its requests without any login, so a public bucket answers; with one, it can act as whatever identity that configuration holds. Use `gcloud storage` |
+| Google's client libraries (Go, Python, Node, …) | only when the program hands them the token |
+
+A program built on a client library stops with an error such as "File … was not found" or "no such file or
+directory" for its default credentials. That is deliberate: it would otherwise find another identity (your own
+gcloud login, or the machine's). The program has to take the token itself — in Python
+`google.oauth2.credentials.Credentials(os.environ["GOOGLE_OAUTH_ACCESS_TOKEN"])`, in Go
+`option.WithTokenSource(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: os.Getenv("GOOGLE_OAUTH_ACCESS_TOKEN")}))`
+(Go's libraries then use the profile's quota project, which `af-gcloud-exec` sets in `GOOGLE_CLOUD_QUOTA_PROJECT`;
+in Python pass `quota_project_id=os.environ["GOOGLE_BILLING_PROJECT"]` to `Credentials`). In Node, create the `OAuth2Client` from the same version of `google-auth-library` the client library uses; one
+from another major version is accepted without an error and sends no login at all. Agents ask you before changing
+your code that way.
+
+### Logging in
+
+**In the Console.** Each profile row in **⚙ Settings → Google Cloud** has **Log in**; once the workspace holds a
+login for the profile, the row says **"Logged in as <account>"** and the button becomes **Log in again**. The WS
+bar's Google Cloud badge has the same buttons ([below](#the-google-cloud-badge-in-the-ws-bar)). The button opens a
+login window that shows the profile, its project and its account and starts nothing yet: the sign-in starts only
+when you press **Log in** (or **Log in again**) in that window, and only that window then shows the sign-in.
+
+1. Press **Open Google sign-in**. Google's sign-in page opens in a new tab (the window also shows its address,
+   which is always on `accounts.google.com`: the workspace refuses to show any other). Sign in — as the profile's
+   account, if it names one; a sign-in as anyone else is refused.
+2. Google shows a **verification code**. Paste it into **Verification code** in the same login window and press
+   **Submit code**. The window says "Logged in" once the workspace has checked that the login gives a token.
+
+**Paste a code only into a login you started yourself, here, just now.** A code works only for the sign-in whose
+page produced it, and the Console shows the code field only in the window where you pressed **Log in** — but
+nothing proves who started a sign-in: any program in your workspace, an agent included, can start one. So never
+paste a code into a field, a terminal or a chat message someone else put in front of you.
+
+If the workspace already holds a usable login for the account, **Log in** finishes at once without a sign-in page.
+**Log in again** always signs you in afresh instead of reusing what is stored; use it when you know the login was
+revoked (the workspace cannot see that until a command is refused). If you press **Log in** again in another
+window or device, the first sign-in stops and its code no longer works. A sign-in that is not finished within
+15 minutes ends; **Start again** begins a new one.
+
+**When an agent's command needs the login**, it asks you in the Console: `af-gcloud-exec` prints "Google Cloud
+login for profile … requested in the Agent Fleet Console", and a toast at the bottom of the screen says **"An agent
+is waiting for a Google Cloud login"**, with the profile, its project and which session and command ask. Press
+**Log in** on the toast to open the login window and continue as above. When Google refused the stored login, the
+window says so, and the sign-in starts afresh. The agent's command waits about a minute and a half (a few seconds
+when it is not run by an agent session, such as a script in a shell session) and continues once you are logged in;
+if it has given up by then, it exits with code 3 saying the login is waiting in the Console, and the agent runs it
+again after you tell it you are done. **Close** keeps the request: it stays in the Console on your other devices
+too. **Cancel the request** is for a login you do not want: it withdraws the request, the command exits with
+code 3, and for about a minute that profile is not asked for again. Closing the toast only hides it in that tab.
+**Log in** on the profile's row in Settings, or in the badge, works at any time; a sign-in there settles the
+request too.
+
+**At a terminal**, `af-gcloud-exec` starts the Google sign-in itself when the profile has no usable login. It prints
+a URL: open it in your browser, sign in, and paste the verification code the page shows back into **that**
+terminal. The same rule holds: paste only a code from a sign-in you started yourself just now. A command that
+cannot ask the Console (with `--no-login`, or outside a workspace) exits with code 3 and prints the command to run
+in a terminal of your own — a shell session, or in Claude Code type it after `!` at the prompt:
+
+```sh
+af-gcloud-exec --profile <name> --project <project-id> --login -- true
+```
+
+**On a Compute Engine VM.** On a workspace that runs directly on a Google Cloud VM (the `native` runtime), gcloud
+first asks whether to use a personal account on that VM. The Console login does not answer that question for you:
+the login window ends saying so, and you log in with the terminal command above instead.
+
+**When a login ends.** Google can refuse a stored login: it was revoked, or your organisation requires you to
+sign in again after a set time (session length). The next run that needs a fresh token then asks for a login as
+above, and that login really signs you in again instead of reusing what was stored. The workspace **cannot warn
+you before** such an end: the time is not recorded anywhere it can read. Until the token already handed out has
+less than ten minutes left, runs keep working, so the request for a login can come up to about 50 minutes after
+the end.
+
+### The Google Cloud badge in the WS bar
+
+While the workspace is running and you have at least one Google Cloud profile, the WS bar shows a badge with the
+Google mark beside the AWS one. It names your logged-in profile when there is exactly one, and otherwise counts
+them ("1/3" — one of three logged in). It is green when something is logged in, plain when nothing is, and amber
+while an agent's command is waiting for a profile's login. Press it for the list: each profile with **Logged in**
+or **Not logged in**, its name, project and account, **"An agent is waiting for this login"** on the row an agent
+is waiting for, and **Log in** / **Log in again**, which open the login window above. There is no default profile:
+every logged-in profile can be used at the same time, and each command picks one with
+`af-gcloud-exec --profile <name>`. **Google Cloud settings** at the bottom opens the Settings tab.
+
+**Logged in** means only that a Google login for the profile's account is stored in the workspace. The workspace
+does not check it with Google, and keeps it when Google refuses it, so a revoked login stays **Logged in** — also
+after a command has found out. While that command's login request waits, the badge is amber; once the request is
+cancelled or expires (after 15 minutes), the badge is green again although the login no longer works.
+**Log in again** signs in afresh and fixes it. The badge does not poll: it asks the workspace when it comes up,
+when you open the list, when a login request comes or goes, after a login, when you come back to the tab, and
+after you change a profile in Settings. A profile you add or delete shows there once the workspace has picked up
+the change, within about five minutes.
+
+### When it stops
+
+| What you see | What it means |
+|---|---|
+| exit code 3, "the login was requested in the Agent Fleet Console and is waiting …" | The profile has no login yet, or Google refused the stored one, and the command stopped waiting. Log in from the toast or Settings, then have the command run again. Exit 3 always means a login. |
+| exit code 3, "the login request was cancelled in the Agent Fleet Console" | You cancelled the request. Log in from Settings if you do want it. |
+| exit code 3, "Google Cloud login required … log in from a terminal with:" | The Console could not be asked (`--no-login`, or outside a workspace). Run the printed command in a terminal. |
+| "is for project X, not Y; --project must be the profile's project" | The wrong profile for this project. Check `--list`. |
+| "no Google Cloud profile …" or "not exported: …" | The name is not one of your available profiles: add or fix it in Settings. |
+| "gcloud could not mint a token: …" | Not a login problem: no permission (also on the service account to impersonate), an API not enabled, or the network. The message says which. |
+| "the token gcloud minted is valid for only …" | gcloud could not hand out a token with ten minutes left. Try again in a minute. |
+| "this deployment does not export Google Cloud profiles" | Your deployment does not offer Google Cloud profiles. |
+| "the profile changed in Settings while this run started; run it again" | Run it again; check `--list` if the account or project now differs. |
+| "waiting for another af-gcloud-exec or a profile sync …" | A login in a terminal, or another run, is using the workspace's gcloud store. It continues when that ends. |
+
+**What it does not guarantee.** The command runs as you and can read your home, your own gcloud directory
+included: `af-gcloud-exec` keeps Google's standard ways of finding credentials (gcloud's and the client
+libraries') from finding anything but the token it hands over; it does not make your files unreadable, and a tool
+that looks elsewhere, such as `gsutil` with its own configuration, is not covered. On a workspace that runs directly on a Google Cloud VM, a
+program that ignores those standard ways could still reach the VM's own identity.
 
 ## Environment settings and recreating the workspace
 

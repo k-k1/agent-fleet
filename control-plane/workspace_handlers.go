@@ -147,12 +147,18 @@ func homeWipeUnsupportedErr(op string) *apiError {
 // is stopped (runtime.HomeWipeBlocked). Under the lifecycle lease no Start can begin, so
 // the answer holds until the wipe is recorded.
 func homeWipeBlockedErr(ctx context.Context, rt runtime.Runtime) *apiError {
-	err := runtime.HomeWipeBlocked(ctx, rt)
+	return homeWipeRefusal(runtime.HomeWipeBlocked(ctx, rt))
+}
+
+// homeWipeRefusal maps what refused a member's wipe to its answer.
+func homeWipeRefusal(err error) *apiError {
 	switch {
 	case err == nil:
 		return nil
 	case errors.Is(err, runtime.ErrHomeWipeWhileStarting):
 		return &apiError{http.StatusConflict, errCodeHomeWipeWhileStarting, err.Error()}
+	case errors.Is(err, runtime.ErrHomeTaskInFlight):
+		return &apiError{http.StatusConflict, errCodeHomeOperationInProgress, err.Error()}
 	default:
 		return internalErr(err)
 	}
@@ -223,7 +229,60 @@ func (a workspaceAPI) workspacePayload(ctx context.Context, res *resolved, state
 	if m["state"] == "running" && workspaceStale(ctx, rt) {
 		m["stale"] = true
 	}
+	// The runtime offers no browser features at all (runtime/browser_support.go). Sent in
+	// every state, so the Console can hide its browser entry points before a start rather
+	// than offer a pane that fails. Absent on every runtime that has them.
+	if why := runtime.BrowserUnavailable(rt); why != "" {
+		m["browserUnavailable"] = why
+	}
+	// An administrator has reserved the slot this workspace's home is on for replacement
+	// (ecs-ec2, #1473): the next start moves it to a new slot and takes longer. Emitted only
+	// when true. Not while starting: that start is already the one doing the move.
+	if m["state"] != "starting" && slotReplacePending(ctx, rt) {
+		m["slotReplace"] = true
+	}
+	// Why a background Recreate or Clean home left this workspace stopped (memberHomeWipe):
+	// the member's request was answered `starting` minutes ago, so this is the only place
+	// the failure can still reach them. Read from the row, not from memory: the task takes
+	// minutes, and a CP restarted in between (a deploy) would otherwise show a stopped
+	// workspace with no reason. Asked only where a wipe can fail in the background, so the
+	// other runtimes' event ticks gain no query; CurrentAutoStop reads nothing while running
+	// or starting.
+	if a.mgr == nil || a.mgr.store == nil || !runtime.HomeWipeInBackground(rt) {
+		return m
+	}
+	if as := store.CurrentAutoStop(ctx, a.mgr.store, res.ws.MembershipID, state); as != nil && as.Kind == autoStopHomeWipe {
+		m["homeWipeFailed"] = as.Phase
+	}
 	return m
+}
+
+// autoStopHomeWipe is the workspace_auto_stop kind of a background Recreate or Clean home
+// that left the workspace stopped. That row already means "the CP stopped this workspace
+// and here is why", is shown to the tenant admins, and is deleted by the next start
+// (ClearWorkspaceAutoStop before it, SetWorkspaceState("running") after it).
+const autoStopHomeWipe = "home-wipe-failed"
+
+// recordHomeWipeFailure keeps why a background wipe left ws stopped. Its own context: the
+// lease's may already be cancelled, which is often why the wipe failed.
+func (a workspaceAPI) recordHomeWipeFailure(wsID, why string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rec := store.WorkspaceAutoStop{Kind: autoStopHomeWipe, Phase: why, StoppedAt: store.NowTS()}
+	if err := a.mgr.store.SetWorkspaceAutoStop(ctx, wsID, rec); err != nil {
+		log.Printf("record the home wipe failure of ws %s: %v", wsID, err)
+	}
+}
+
+// slotReplaceRuntime is the optional half of Runtime that knows whether the next Start moves
+// the workspace to a new slot (ecs-ec2's replacement reservation, #1473).
+type slotReplaceRuntime interface {
+	SlotReplacePending(ctx context.Context) bool
+}
+
+func slotReplacePending(ctx context.Context, rt runtime.Runtime) bool {
+	sr, ok := rt.(slotReplaceRuntime)
+	return ok && sr.SlotReplacePending(ctx)
 }
 
 func (a workspaceAPI) get(w http.ResponseWriter, r *http.Request, res *resolved) {
@@ -246,67 +305,7 @@ func (a workspaceAPI) start(w http.ResponseWriter, r *http.Request, res *resolve
 // cannot reach it is refused before anything is stopped, rather than restarted and told
 // its working copies are gone.
 func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *resolved) {
-	if !runtime.CanWipeHome(res.rt) {
-		writeAPIErr(w, homeWipeUnsupportedErr("recreate"))
-		return
-	}
-	// Stop + wipe + restart under the local start lock and distributed owner lease
-	// so neither another process nor another CP replica can enter mid-teardown.
-	lock := a.mgr.startLockFor(res.ws.ID)
-	lock.Lock()
-	defer lock.Unlock()
-	lease, err := acquireWorkspaceLifecycleLease(r.Context(), a.mgr.store, res.mv.MembershipID)
-	if err != nil {
-		writeAPIErr(w, workspaceLifecycleLeaseError(err))
-		return
-	}
-	defer lease.Close()
-	releaseFence, err := a.mgr.acquireWorkspaceOperationFence(lease.Context(), res.ws.ID, res.rt)
-	if err != nil {
-		writeAPIErr(w, workspaceLifecycleLeaseError(err))
-		return
-	}
-	defer releaseFence()
-	if err := lease.checkpoint(r.Context()); err != nil {
-		writeAPIErr(w, workspaceLifecycleLeaseError(err))
-		return
-	}
-	if aerr := homeWipeBlockedErr(lease.Context(), res.rt); aerr != nil {
-		writeAPIErr(w, aerr)
-		return
-	}
-	// Stop tolerates "does not exist yet" and the like (best-effort), but abort when the
-	// workspace is still alive — deleting under a live bind-mount leaves it inconsistent.
-	// "starting" (container up, Agent not answering yet) counts as alive: it is running
-	// and can write to home.
-	if err := res.rt.Stop(lease.Context()); err != nil && runtime.WorkspaceAlive(res.rt.State(r.Context())) {
-		log.Printf("recreate: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
-		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; recreate aborted"})
-		return
-	}
-	if err := lease.checkpoint(r.Context()); err != nil {
-		writeAPIErr(w, workspaceLifecycleLeaseError(err))
-		return
-	}
-	// Clear the working copies while the container is down. Targeted: we keep the
-	// encrypted secrets store and everything else in home.
-	if err := runtime.WipeHome(lease.Context(), res.rt, runtime.HomeWipeRepos); err != nil {
-		if leaseErr := lease.checkpoint(r.Context()); leaseErr != nil {
-			writeAPIErr(w, workspaceLifecycleLeaseError(leaseErr))
-		} else {
-			writeAPIErr(w, internalErr(err))
-		}
-		return
-	}
-	if err := lease.checkpoint(r.Context()); err != nil {
-		writeAPIErr(w, workspaceLifecycleLeaseError(err))
-		return
-	}
-	if aerr := a.ensureWorkspaceStartedRTLocked(lease.Context(), res, res.rt, lease); aerr != nil {
-		writeAPIErr(w, aerr)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.Name(), "state": res.rt.State(r.Context())})
+	a.memberHomeWipe(w, r, res, "recreate", runtime.HomeWipeRepos)
 }
 
 // cleanHome tears the container down, wipes the whole home EXCEPT auth/connection
@@ -322,63 +321,167 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 // freshly-seeded environment.) As with recreate, a runtime that cannot reach the home is
 // refused before anything is stopped.
 func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *resolved) {
+	a.memberHomeWipe(w, r, res, "clean-home", runtime.HomeWipeClean)
+}
+
+// memberHomeWipe is the body of both: stop, remove what, start. Everything runs under the
+// local start lock, the lifecycle lease and the operation fence, so neither another
+// process nor another CP replica can enter mid-teardown.
+//
+// Where the wipe is a Fargate task (ecs, runtime.HomeWipeInBackground) it takes minutes:
+// the refusals and the stop answer the request, which then reports `starting`, and the
+// wipe and the start follow in the background under the same lease. The Console keeps
+// polling and sees `starting` with the "home: clearing" phase until the workspace is up.
+// A failure there leaves the workspace stopped, with the reason in the next workspace
+// payload (homeWipeFailed) because no request is left to carry it.
+func (a workspaceAPI) memberHomeWipe(w http.ResponseWriter, r *http.Request, res *resolved, op string, what runtime.HomeWipe) {
 	if !runtime.CanWipeHome(res.rt) {
-		writeAPIErr(w, homeWipeUnsupportedErr("clean-home"))
+		writeAPIErr(w, homeWipeUnsupportedErr(op))
 		return
+	}
+	background := runtime.HomeWipeInBackground(res.rt)
+	leaseCtx, cancel := r.Context(), context.CancelFunc(func() {})
+	if background {
+		// The lease has to outlive this request: it is what keeps a start or another
+		// operation out until the background half has finished.
+		leaseCtx, cancel = context.WithTimeout(context.WithoutCancel(r.Context()), homeTaskBudget)
 	}
 	lock := a.mgr.startLockFor(res.ws.ID)
 	lock.Lock()
-	defer lock.Unlock()
-	lease, err := acquireWorkspaceLifecycleLease(r.Context(), a.mgr.store, res.mv.MembershipID)
+	lease, err := acquireWorkspaceLifecycleLease(leaseCtx, a.mgr.store, res.mv.MembershipID)
 	if err != nil {
+		lock.Unlock()
+		cancel()
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
 	}
-	defer lease.Close()
 	releaseFence, err := a.mgr.acquireWorkspaceOperationFence(lease.Context(), res.ws.ID, res.rt)
 	if err != nil {
+		lease.Close()
+		lock.Unlock()
+		cancel()
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
 	}
-	defer releaseFence()
-	if err := lease.checkpoint(r.Context()); err != nil {
-		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+	unqueue := func() {}
+	release := func() {
+		unqueue()
+		releaseFence()
+		lease.Close()
+		cancel()
+	}
+	// The record goes first, before anything is stopped: from here on a CP restart leaves
+	// an operation the reconciler finishes rather than one nobody remembers.
+	var record *store.HomeOperation
+	if background {
+		if record, err = a.mgr.openHomeOperation(lease.Context(), res.ws, res.rt, store.HomeOpMemberWipe, what, nil); err != nil {
+			release()
+			lock.Unlock()
+			writeAPIErr(w, homeWipeRefusal(err))
+			return
+		}
+	}
+	if aerr := a.memberHomeWipeStop(r, res, lease, op, background, &unqueue); aerr != nil {
+		a.mgr.dropHomeOperation(record)
+		release()
+		lock.Unlock()
+		writeAPIErr(w, aerr)
 		return
+	}
+	if !background {
+		defer lock.Unlock()
+		defer release()
+		if aerr := a.memberHomeWipeFinish(r.Context(), res, lease, what, unqueue, nil); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.Name(), "state": res.rt.State(r.Context())})
+		return
+	}
+	// The local lock is not held across minutes: a start or a stop that comes in meanwhile
+	// takes it, finds the lease held and is refused, instead of hanging until the end.
+	lock.Unlock()
+	go func() {
+		defer release()
+		aerr := a.memberHomeWipeFinish(lease.Context(), res, lease, what, unqueue, record, lock)
+		if aerr != nil {
+			log.Printf("%s: background wipe of ws %s failed: %s", op, res.ws.ID, aerr.message)
+			a.recordHomeWipeFailure(res.ws.ID, aerr.message)
+		}
+	}()
+	writeJSON(w, http.StatusAccepted, map[string]any{"name": res.rt.Name(), "state": "starting"})
+}
+
+// memberHomeWipeStop is everything that can still refuse: the lease, the runtime's gate,
+// and the stop. In the background the workspace is marked as clearing BEFORE the stop, so
+// the Console never reads `stopped` in between and offers Start.
+func (a workspaceAPI) memberHomeWipeStop(r *http.Request, res *resolved, lease *workspaceLifecycleLeaseGuard, op string, background bool, unqueue *func()) *apiError {
+	if err := lease.checkpoint(r.Context()); err != nil {
+		return workspaceLifecycleLeaseError(err)
 	}
 	if aerr := homeWipeBlockedErr(lease.Context(), res.rt); aerr != nil {
-		writeAPIErr(w, aerr)
-		return
+		return aerr
 	}
-	// As in recreate: abort when Stop failed and the workspace is still alive, to avoid
-	// deleting under a live bind-mount.
-	if err := res.rt.Stop(lease.Context()); err != nil && runtime.WorkspaceAlive(res.rt.State(r.Context())) {
-		log.Printf("clean-home: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
-		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; clean-home aborted"})
-		return
+	if background {
+		*unqueue = runtime.QueueHomeWipe(res.rt)
 	}
-	if err := lease.checkpoint(r.Context()); err != nil {
-		writeAPIErr(w, workspaceLifecycleLeaseError(err))
-		return
-	}
-	// Wipe home (keep-list preserved) while the container is down — deleting under a
-	// live bind-mount risks inconsistency (see cleanHomeContext in runtime_docker.go).
-	if err := runtime.WipeHome(lease.Context(), res.rt, runtime.HomeWipeClean); err != nil {
-		if leaseErr := lease.checkpoint(r.Context()); leaseErr != nil {
-			writeAPIErr(w, workspaceLifecycleLeaseError(leaseErr))
-		} else {
-			writeAPIErr(w, internalErr(err))
+	// Stop tolerates "does not exist yet" and the like (best-effort), but abort when the
+	// workspace is still alive — deleting under a live bind-mount leaves it inconsistent.
+	// "starting" (container up, Agent not answering yet) counts as alive: it is running
+	// and can write to home. The clearing mark is dropped first, or it would read as
+	// "starting" itself.
+	if err := res.rt.Stop(lease.Context()); err != nil {
+		(*unqueue)()
+		if runtime.WorkspaceAlive(res.rt.State(r.Context())) {
+			log.Printf("%s: stop failed for ws %s (still running, aborting wipe): %v", op, res.ws.ID, err)
+			return &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; " + op + " aborted"}
 		}
-		return
+		if background {
+			*unqueue = runtime.QueueHomeWipe(res.rt)
+		}
 	}
 	if err := lease.checkpoint(r.Context()); err != nil {
-		writeAPIErr(w, workspaceLifecycleLeaseError(err))
-		return
+		return workspaceLifecycleLeaseError(err)
 	}
-	if aerr := a.ensureWorkspaceStartedRTLocked(lease.Context(), res, res.rt, lease); aerr != nil {
-		writeAPIErr(w, aerr)
-		return
+	return nil
+}
+
+// memberHomeWipeFinish removes what from the stopped workspace's home and starts it again.
+// lock, when given, is taken for the start: the background half no longer holds it.
+//
+// With a record (home_operation.go) what follows the wipe is the record's, exactly as the
+// reconciler would apply it (finishMemberWipe): the failure, or the start, is written
+// through it, and an outcome still unknown is left to the reconciler. Nothing is returned
+// for the caller to record.
+func (a workspaceAPI) memberHomeWipeFinish(ctx context.Context, res *resolved, lease *workspaceLifecycleLeaseGuard, what runtime.HomeWipe, unqueue func(), record *store.HomeOperation, lock ...*sync.Mutex) *apiError {
+	err := runtime.WipeHome(lease.Context(), res.rt, what)
+	if record != nil {
+		// The clearing mark reads as `starting`, which Start would take for a launch
+		// already under way.
+		unqueue()
+		a.mgr.finishMemberWipe(lease, *record, err)
+		return nil
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.Name(), "state": res.rt.State(r.Context())})
+	if err != nil {
+		if leaseErr := lease.checkpoint(ctx); leaseErr != nil {
+			return workspaceLifecycleLeaseError(leaseErr)
+		}
+		if errors.Is(err, runtime.ErrHomeTaskInFlight) {
+			return &apiError{http.StatusConflict, errCodeHomeOperationInProgress, err.Error()}
+		}
+		return internalErr(err)
+	}
+	if err := lease.checkpoint(ctx); err != nil {
+		return workspaceLifecycleLeaseError(err)
+	}
+	// The clearing mark reads as `starting`, which Start takes for a launch already under
+	// way; it goes before the start, and the start replaces it with the real one.
+	unqueue()
+	for _, l := range lock {
+		l.Lock()
+		defer l.Unlock()
+	}
+	return a.ensureWorkspaceStartedRTLocked(lease.Context(), res, res.rt, lease)
 }
 
 // ensureWorkspaceStarted brings a stopped workspace up, enforcing the same
@@ -481,6 +584,11 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 		// deployment), so return and let the poller observe the transition.
 		return nil
 	}
+	// An unfinished operation on the home (home_operation.go) is the reconciler's to
+	// finish; a start in between would run the workspace on a home its task is removing.
+	if aerr := a.mgr.homeOperationOpenErr(ctx, res.ws, rt); aerr != nil {
+		return aerr
+	}
 	t, err := a.mgr.store.GetTenant(ctx, res.ws.TenantID)
 	if err != nil {
 		return internalErr(err)
@@ -522,8 +630,19 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	// the start.
 	if armed := a.mgr.armPreviewForStart(ctx, res, extraEnv); armed != nil {
 		rt = armed
+	} else if fresh := a.mgr.refreshGitTokenForStart(ctx, res, extraEnv); fresh != nil {
+		rt = fresh // armPreviewForStart built its env just now; this covers the other starts
+	}
+	// The previous automatic stop stops describing this workspace once a new launch is
+	// attempted, whether or not it succeeds: a Start that fails (secrets, home, launch)
+	// would otherwise read as the old deadline stop to the tenant admin.
+	if err := a.mgr.store.ClearWorkspaceAutoStop(ctx, res.ws.ID); err != nil {
+		log.Printf("clear auto-stop (ws=%s): %v", res.ws.ID, err)
 	}
 	if err := rt.Start(ctx); err != nil {
+		if errors.Is(err, runtime.ErrHomeTaskInFlight) {
+			return &apiError{http.StatusConflict, errCodeHomeOperationInProgress, err.Error()}
+		}
 		return internalErr(err)
 	}
 	if err := lease.checkpoint(ctx); err != nil {
@@ -700,6 +819,12 @@ type sessionWire struct {
 	// transcript can see it, or cancel it. No DB-mirror column: a stopped session has no
 	// turn to end, and every fold consumes the arm.
 	StopAfterTurnAt string `json:"stopAfterTurnAt,omitempty"`
+	// SpendCapUSD / SpendCapHitAt: the session's spend budget and when it was crossed
+	// (#1054) — the budget dialog's value and the row's "paused: budget" badge. No DB-mirror
+	// column: the budget is the Agent's (it is what enforces it), and a stopped Workspace's
+	// rows simply show no badge until the Agent answers again.
+	SpendCapUSD   float64 `json:"spendCapUsd,omitempty"`
+	SpendCapHitAt string  `json:"spendCapHitAt,omitempty"`
 	// Carried is the kind of interaction that was waiting for an answer when the session
 	// was folded away (docs/log/75 §75.6.5). A gap in the relay is a silent drop, so it is
 	// needed in BOTH this struct and the DB mirror: while running the list is built from
@@ -729,6 +854,16 @@ type sessionWire struct {
 	// as "this session has no token history" rather than as a missing field. No DB-mirror
 	// column, for the same reason as lastSay: it is read out of the live transcript.
 	TokenSpends []int `json:"tokenSpends,omitempty"`
+	// PR: the GitHub pull request of the branch the session works on, with its state and CI
+	// rollup (#1062). Relayed as raw JSON, like Context: the CP reads nothing in it. Absent here
+	// it is silently dropped and no row shows a PR. No DB-mirror column: the Agent reads it from
+	// a cache it keeps in memory, so while the Workspace is stopped there is nothing current to
+	// show, and an old "open" left on a stopped row would outlive the merge that ended it.
+	PR json.RawMessage `json:"pr,omitempty"`
+	// Ports: the TCP ports the session's own processes listen on, each a link into the browser
+	// pane (#1062). Absent here, every row loses them. No DB-mirror column: a port is only real
+	// while the session runs.
+	Ports []int `json:"ports,omitempty"`
 	// OriginSession: the session this one came from (ADR 0073). The left rail derives its
 	// whole worktree hierarchy and its family colours from this one key (docs/log/94), and
 	// it is the only link there is — a worktree's folder and branch carry a random slug.

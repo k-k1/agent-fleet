@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -220,5 +221,92 @@ func TestSuggestionKindsDoNotWaitForBitbucket(t *testing.T) {
 	case <-started:
 	case <-time.After(5 * time.Second):
 		t.Error("the Bitbucket fetch was not started for the next suggestion")
+	}
+}
+
+// The tenant layer end to end in the Agent: a poll caches the CP's rules, the routes resolve
+// them as layer 3 and say so in sources, and a failed poll keeps the copy (fail-open).
+func TestTenantBranchRulesReachTheRoutes(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	dir := filepath.Join(home, "repos", "app")
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main", dir},
+		{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "init"},
+		{"-C", dir, "branch", "develop"},
+		{"-C", dir, "remote", "add", "origin", "https://github.com/acme/app.git"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	var fail atomic.Bool
+	cp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail.Load() || r.Header.Get("Authorization") != "Bearer afb_m" {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"rules":[{"match":"github.com/acme/*","name":"{prefix}{key}","base":"develop"}]}`))
+	}))
+	defer cp.Close()
+	t.Setenv("AF_CP_BASE_URL", cp.URL)
+	t.Setenv("AF_BRANCH_RULES_TOKEN", "afb_m")
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/{name}/branch-rule", handleGetBranchRule)
+	mux.HandleFunc("POST /repos/{name}/branch-name", handleBranchName)
+	mux.HandleFunc("POST /branch-rules/preview", handleBranchRulesPreview)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	type nameOut struct {
+		Name       string         `json:"name"`
+		BaseBranch string         `json:"base_branch"`
+		Sources    map[string]any `json:"sources"`
+	}
+	item := map[string]any{"item": map[string]any{"provider": "github", "key": "acme/app#12", "title": "Crash"}}
+	var got nameOut
+	do(t, srv, "POST", "/repos/app/branch-name", item, http.StatusOK, &got)
+	if got.Name != "feature/12-crash" || got.Sources["tenant_fetched_at"] != nil {
+		t.Fatalf("before the first poll = %+v", got)
+	}
+
+	syncBranchRulesTenant("test")
+	check := func(when string) {
+		t.Helper()
+		got = nameOut{}
+		do(t, srv, "POST", "/repos/app/branch-name", item, http.StatusOK, &got)
+		if got.Name != "feature/issue-12" || got.BaseBranch != "develop" ||
+			got.Sources["name"] != "tenant: github.com/acme/*" || got.Sources["base"] != "tenant: github.com/acme/*" ||
+			got.Sources["tenant_fetched_at"] == nil {
+			t.Errorf("%s: %+v", when, got)
+		}
+	}
+	check("after a poll")
+	fail.Store(true)
+	syncBranchRulesTenant("test")
+	check("after a failed poll")
+
+	// The user's template still beats the tenant's name.
+	writeHomeUIPrefs(t, home, `{"workItemBranchTemplate":"{type}/{num}"}`)
+	got = nameOut{}
+	do(t, srv, "POST", "/repos/app/branch-name", item, http.StatusOK, &got)
+	if got.Name != "feature/12" || got.BaseBranch != "develop" {
+		t.Errorf("user over tenant: %+v", got)
+	}
+
+	var rule struct {
+		Name    string         `json:"name"`
+		Sources map[string]any `json:"sources"`
+	}
+	writeHomeUIPrefs(t, home, `{}`)
+	do(t, srv, "GET", "/repos/app/branch-rule", nil, http.StatusOK, &rule)
+	if rule.Name != "{prefix}{key}" || rule.Sources["name"] != "tenant: github.com/acme/*" {
+		t.Errorf("branch-rule = %+v", rule)
 	}
 }

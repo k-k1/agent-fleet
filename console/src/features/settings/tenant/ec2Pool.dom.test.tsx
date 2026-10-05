@@ -11,9 +11,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 const api = vi.fn();
+const apiJSON = vi.fn();
 vi.mock("../../../core/api/client.ts", () => ({
   api: (...args: unknown[]) => api(...args),
-  apiJSON: () => Promise.resolve({}),
+  apiJSON: (...args: unknown[]) => apiJSON(...args),
   rawJSON: () => Promise.resolve(new Response("")),
   errText: (e: { message?: string }) => e?.message || "",
   rel: (p: string) => p,
@@ -61,6 +62,8 @@ const POOL = {
 beforeEach(() => {
   api.mockReset();
   api.mockResolvedValue(POOL);
+  apiJSON.mockReset();
+  apiJSON.mockResolvedValue({ reserved: [], skipped: [] });
 });
 
 afterEach(() => {
@@ -293,7 +296,8 @@ describe("the EC2 slot pool surface", () => {
     await mount();
     expect(buttonsIn(rowOf("i-bad")).map((b) => b.textContent)).toEqual(["終了"]);
     // A healthy slot must not carry it: it is not a general "delete this machine" control.
-    expect(buttonsIn(rowOf("i-hot"))).toHaveLength(0);
+    // (Its only action is the replacement reservation.)
+    expect(buttonsIn(rowOf("i-hot")).map((b) => b.textContent)).toEqual(["次回起動で入れ替え"]);
   });
 
   it("asks before terminating, and names the instance and why it was quarantined", async () => {
@@ -334,5 +338,83 @@ describe("the EC2 slot pool surface", () => {
     await mount();
     expect(text()).toContain("使っていません");
     expect(host?.querySelector("table")).toBeNull();
+  });
+});
+
+// Replacing retained slots (#1473). A launch template change reaches a retained slot only when
+// it is replaced, and a stop→start goes back to the same slot. What is pinned: which slots are
+// older than $Latest, that the bulk action takes exactly those not yet reserved and shows the
+// operator who is affected before anything is sent, and that one slot can be reserved and
+// released on its own.
+describe("replacement reservations", () => {
+  const TEMPLATES = {
+    ...POOL,
+    template_latest: "10",
+    slots: [
+      // "9" < "10" numerically, though not as a string — the server's verdict is what counts.
+      { ...POOL.slots[0], template_version: "9", template_outdated: true },
+      { ...POOL.slots[1], template_version: "10" },
+      {
+        instance_id: "i-done", instance_type: "m7i.large", az: "ap-northeast-1a", state: "stopped",
+        registered: false, workspace: "", idle_minutes: 0,
+        template_version: "8", template_outdated: true, replace_reserved: true, replace_reserved_at: "2026-10-02T00:00:00Z",
+      },
+    ],
+  };
+  const rowOf = (id: string) =>
+    Array.from(host!.querySelectorAll("tbody tr")).find((tr) => tr.textContent?.includes(id)) || null;
+
+  it("shows each slot's version, which are older than $Latest, and which are reserved", async () => {
+    api.mockResolvedValue(TEMPLATES);
+    await mount();
+    expect(rowOf("i-hot")?.textContent).toContain("v9");
+    expect(rowOf("i-hot")?.textContent).toContain("$Latest より古い");
+    expect(rowOf("i-zzz")?.textContent).not.toContain("$Latest より古い");
+    expect(rowOf("i-done")?.textContent).toContain("次回起動で入れ替え");
+    expect(rowOf("i-done")?.querySelector("button")?.textContent).toBe("入れ替えを取り消す");
+  });
+
+  it("lists the affected slots and people before the bulk reservation, and sends exactly those", async () => {
+    api.mockResolvedValue(TEMPLATES);
+    await mount();
+    // One outdated slot not reserved yet: i-done already is, i-zzz is on $Latest.
+    const bulkBtn = Array.from(host!.querySelectorAll("button")).find((b) => b.textContent?.includes("1 台すべて"));
+    expect(bulkBtn).toBeTruthy();
+    await act(async () => bulkBtn!.click());
+    const confirm = document.querySelector(".confirm");
+    expect(confirm?.textContent).toContain("i-hot");
+    expect(confirm?.textContent).toContain("af-ws-acme-alice");
+    expect(confirm?.textContent).not.toContain("i-zzz");
+    expect(confirm?.textContent).not.toContain("i-done");
+    expect(apiJSON).not.toHaveBeenCalled();
+    const actions = document.querySelectorAll<HTMLButtonElement>(".confirm-actions button");
+    await act(async () => actions[actions.length - 1].click());
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/ec2-pool/reserve-outdated", "POST", { instance_ids: ["i-hot"] });
+  });
+
+  it("keeps the slots the server skipped on screen", async () => {
+    api.mockResolvedValue(TEMPLATES);
+    apiJSON.mockResolvedValue({ reserved: [], skipped: [{ instance_id: "i-hot", code: "slot_not_outdated", message: "now on $Latest" }] });
+    await mount();
+    const bulkBtn = Array.from(host!.querySelectorAll("button")).find((b) => b.textContent?.includes("1 台すべて"));
+    await act(async () => bulkBtn!.click());
+    const actions = document.querySelectorAll<HTMLButtonElement>(".confirm-actions button");
+    await act(async () => actions[actions.length - 1].click());
+    expect(document.querySelector(".confirm")?.textContent).toContain("now on $Latest");
+  });
+
+  it("offers no bulk action when nothing is older than $Latest", async () => {
+    api.mockResolvedValue({ ...TEMPLATES, slots: [TEMPLATES.slots[1], TEMPLATES.slots[2]] });
+    await mount();
+    expect(text()).not.toContain("すべてを入れ替え予約");
+  });
+
+  it("reserves and releases one slot", async () => {
+    api.mockResolvedValue(TEMPLATES);
+    await mount();
+    await act(async () => rowOf("i-zzz")!.querySelector("button")!.click());
+    expect(api).toHaveBeenCalledWith("api/admin/ec2-pool/slots/i-zzz/replace", { method: "PUT" });
+    await act(async () => rowOf("i-done")!.querySelector("button")!.click());
+    expect(api).toHaveBeenCalledWith("api/admin/ec2-pool/slots/i-done/replace", { method: "DELETE" });
   });
 });

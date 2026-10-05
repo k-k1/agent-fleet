@@ -31,7 +31,8 @@ import (
 // E2E stayed green, because they ran as the deployer. A live test that grants itself
 // more than production has proves the API calls, not the deployment. (docs/log/64 §64.23.)
 //
-// The harness (setup.sh) creates the role from the very statements in 20-platform.yaml
+// The harness (setup.sh) creates the role from the very statements in 20-platform.yaml,
+// lets its 40-ec2-pool stack attach the slot-role PassRole to it as on a real deployment,
 // and writes an AWS profile that assumes it; the SDK re-assumes on expiry by itself,
 // which static STS credentials would not survive an 80-minute run doing.
 func useCPTaskRole(t *testing.T) {

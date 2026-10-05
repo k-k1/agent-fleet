@@ -1,0 +1,39 @@
+# Example caps for the workspace namespace; size them for your fleet. The quota bounds
+# what the running pods and the claims of stopped workspaces take together (ADR 0106
+# decision 7). A Start the quota refuses shows as the boot phase in the start dialog.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: workspaces
+  namespace: af-placeholder-ws
+spec:
+  hard:
+    # Each workspace holds two claims (home and state) whether running or stopped.
+    persistentvolumeclaims: "100"
+    requests.storage: 2Ti
+    # Running workspace pods, plus a one-shot erase pod now and then.
+    pods: "30"
+    requests.cpu: "60"
+    requests.memory: 240Gi
+    limits.memory: 240Gi
+    requests.ephemeral-storage: 600Gi
+    limits.ephemeral-storage: 600Gi
+---
+# Defaults for a container that states nothing. The CP sets requests and limits on the
+# workspace pods it creates from the workspace sizing; this catches anything else, the
+# erase pod included, so the quota above can admit it.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: workspaces
+  namespace: af-placeholder-ws
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+        ephemeral-storage: 256Mi
+      default:
+        memory: 512Mi
+        ephemeral-storage: 1Gi

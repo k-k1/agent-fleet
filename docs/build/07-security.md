@@ -1,7 +1,7 @@
 ---
 audience: "anyone touching authentication, crypto, isolation, audit or egress"
 source_of_truth: "the code (this is the boundaries and the intent)"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # 07. Security — threat model, authentication, crypto, audit
@@ -45,28 +45,80 @@ at once**:
   `AGENT_TOKEN` and DEK, attaches home volumes, runs shell commands on the slots over
   `ssm:SendCommand`, and (with the engines stack) buys GPU instances. `SendCommand` is
   limited to the `AWS-RunShellScript` document on instances tagged with this pool's
-  `af-pool` and `af-role=slot`; other instances in the account, engine boxes included,
-  are out of its reach.
+  `af-pool` and `af-role=slot` ([#1182](https://github.com/k-k1/agent-fleet/issues/1182)),
+  and the role cannot move an existing instance into that set: its tag writes are
+  fenced too (the `Ec2Tag*` statements). It may tag a resource at creation only through
+  its own `RunInstances` / `CreateFleet` / `CreateVolume` / `CreateSnapshot` and only
+  with this pool's `af-pool`; after creation only resources that already carry this
+  pool's `af-pool`, never the `af-pool` key itself, and `af-role` only to `quarantined`
+  (instances) or `golden` / `golden-rejected` (snapshots), never to `slot`; a case
+  variant such as `AF-ROLE` counts as the key itself. So neither a CP bug nor a
+  compromised CP can aim `ssm:SendCommand` at an instance it did not launch into its own
+  pool: other SSM-managed boxes in the account, another deployment's slots and this
+  deployment's engine boxes are never its target
+  ([#1419](https://github.com/k-k1/agent-fleet/issues/1419)). Its other EC2 writes are
+  fenced the same way ([#1423](https://github.com/k-k1/agent-fleet/issues/1423)): start,
+  stop, terminate, attach, detach, resize and delete apply only to instances, volumes and
+  snapshots that carry this pool's `af-pool`, and on both sides of a two-resource call,
+  so it can neither detach a volume from someone else's instance nor attach a foreign
+  volume to its own slot. What it creates must carry this pool's `af-pool`
+  (`aws:RequestTag`), and the source of a copy must already be in the pool: it cannot
+  snapshot a foreign volume or restore a foreign snapshot. `iam:PassRole` names only the
+  slot role of its own `40-ec2-pool` stack. What a launch boots from is fenced as well
+  ([#1522](https://github.com/k-k1/agent-fleet/issues/1522)): the image must be owned by
+  Amazon (`ec2:Owner` = `amazon`), be public, or be one of the slot AMIs `40-ec2-pool` names,
+  so no private image of this or another account can be booted unless it is that exact slot
+  AMI. A block device mapping may not name a snapshot this account owns, so it cannot boot a
+  slot from another deployment's hibernated home or backup, or from a private image made of
+  one. `CreateFleet`, the engine boxes' purchase, carries the same image fence for an
+  `ImageId` override. Three things stay open. A snapshot owned by another account and shared
+  into this one may be mapped as an extra disk. The snapshot fence is the negated form
+  (`StringNotEquals` on the account), chosen because whether IAM evaluates an AMI's own
+  snapshot is undocumented and a positive form would then deny every launch; if AWS
+  presented no owner for this account's snapshots, the fence would be silently void. And a
+  `CreateFleet` mapping override is fenced only if the instant fleet authorizes its launch
+  against the caller's `RunInstances` (ADR 0077's assumption): `CreateFleet` names no
+  snapshot, and the created volume's `ec2:ParentSnapshot` is an ARN without an owner. The
+  live run that settles these is listed in the pull request for #1522.
 - On every target it unwraps the DEKs and injects them in plaintext (§7.6).
 
 It does not spread between companies, because those are separate deployments — which is
 the strength of the delivery model
-([decisions/0001](../decisions/0001-self-host-vs-saas.md)). Candidate mitigations:
-rootless Docker, a socket proxy, a narrower CP role.
+([decisions/0001](../decisions/0001-self-host-vs-saas.md)). **On `ecs` / `ecs-ec2` that
+holds only when each deployment has its own AWS account.** `CpTaskRole` is scoped to the
+account, not to the deployment: `EcsDrive` and `EcsContainerInstances` name
+`Resource: "*"` with no condition, and `SsmWorkspaceParams` covers `parameter/af-ws/*`,
+one prefix for the whole account with no deployment in the path. A compromised CP can
+therefore update or delete another deployment's services, and read or overwrite its
+workspaces' `AGENT_TOKEN` and DEK. What it cannot do is retag that deployment's
+instances, plant a resource in its pool, stop, terminate, attach, detach, snapshot or
+delete its instances, volumes and snapshots (EC2 writes are bound to the writer's own
+`af-pool`), or boot a slot from a snapshot of its homes (the `RunInstances` image and
+snapshot fence above, pending its live check). The ECS and EFS tag writes are bounded to this cluster's services
+and to the keys the CP writes, but EFS access points carry no `af-pool`, so that bound is
+by key, not by deployment. Candidate mitigations: rootless Docker, a socket proxy, a
+narrower CP role.
 
 ## 7.2 Isolation controls
 
 What a workspace *is* on each target is [ref/deploy-targets](../../guide/ref/deploy-targets.md).
 This table is what separates one member's workspace from another's, and from the CP.
 
-| Concern | docker (the default) | ecs (Fargate) | ecs-ec2 (production) |
-|---|---|---|---|
-| Files between users | the member's home, bind-mounted from `<WS_DATA>/[<slug>/]<key>/home`. **No other user's home is mounted at all** | EFS access points per membership (`/home/<membership>`, `/claude-config/<membership>`) fixing the root directory; one uid/gid for everyone (`AF_ECS_POSIX_UID` / `_GID`) | the member's own EBS volume, attached to a slot that serves **one member at a time** ([decisions/0045](../decisions/0045-ec2-persistent-workspace.md) decision 8) and mounted by the CP over SSM. The Claude state and the kept dotfiles stay on EFS access points |
-| Process and memory | one membership, one container: `--memory` (`WS_MEMORY`, default `1g`, overridable per workspace), `--cpus` when set | one task; Fargate shares no kernel between tasks | one task per slot, memory capped below the slot's size (`AF_ECS_EC2_HOST_RESERVE_MB`). `/tmp` is a tmpfs, because the slot's root volume outlives its previous member |
-| Network | a network per workspace (`af-net-…`), so containers cannot reach each other; the agent is published on the host's loopback only | `awsvpc`: each task has its own ENI in the workspace security group, which admits the agent port from the CP's security group only — never from another workspace — and assigns no public IP. Outbound is open (§7.8) | the same as ecs. The slot's own security group has no ingress |
-| Privileges | not privileged; runs as `dev`. **`SYS_ADMIN` is added to the bounding set** so Chromium's setuid sandbox can create namespaces; the image build fails if any other setuid/setgid binary remains, so `dev` itself holds no effective capability | no privileged mode, no added capabilities | the same as ecs |
-| Cloud identity | none | the task role `WsTaskRole` has **no policy at all**; `AGENT_TOKEN` and the DEK arrive through the task definition's `secrets` (SSM, read by the execution role) | the same task role. The slot's instance role carries ECS registration, SSM management, image pull and logs only |
-| Sensitive state | the agent's plaintext state is moved to a second mount (`CLAUDE_CONFIG_DIR=/var/lib/af/claude`) **outside the file browser's reach**; the encrypted store stays in the home behind the agent's denylist (`fsDeny`) | the same — the image and the agent are common | the same |
+| Concern | docker (the default) | ecs (Fargate) | ecs-ec2 (production) | kubernetes |
+|---|---|---|---|---|
+| Files between users | the member's home, bind-mounted from `<WS_DATA>/[<slug>/]<key>/home`. **No other user's home is mounted at all** | EFS access points per membership (`/home/<membership>`, `/claude-config/<membership>`) fixing the root directory; one uid/gid for everyone (`AF_ECS_POSIX_UID` / `_GID`) | the member's own EBS volume, attached to a slot that serves **one member at a time** ([decisions/0045](../decisions/0045-ec2-persistent-workspace.md) decision 8) and mounted by the CP over SSM. The Claude state and the kept dotfiles stay on EFS access points | one pair of claims per workspace, referenced by that workspace's StatefulSet alone, `ReadWriteOncePod` where the storage driver supports it. Members have no Kubernetes API access to the workspace namespace: whoever can create pods there can mount any claim |
+| Process and memory | one membership, one container: `--memory` (`WS_MEMORY`, default `1g`, overridable per workspace), `--cpus` when set | one task; Fargate shares no kernel between tasks | one task per slot, memory capped below the slot's size (`AF_ECS_EC2_HOST_RESERVE_MB`). `/tmp` is a tmpfs, because the slot's root volume outlives its previous member | one pod per workspace, with CPU, memory and ephemeral-storage requests and limits from the workspace sizing. `/tmp` is an `emptyDir` with a size limit. The ephemeral-storage limit is enforced by eviction after the fact, so node disk headroom and a disk-pressure alert do the rest |
+| Network | a network per workspace (`af-net-…`), so containers cannot reach each other; the agent is published on the host's loopback only | `awsvpc`: each task has its own ENI in the workspace security group, which admits the agent port from the CP's security group only — never from another workspace — and assigns no public IP. Outbound is open (§7.8) | the same as ecs. The slot's own security group has no ingress | NetworkPolicies, enforced only by a CNI that implements them: the agent port admits the CP's pods only; egress to cluster DNS, to the CP's workspace-only listener, and to the internet minus private, link-local and the cluster's own ranges. Outbound is open otherwise (§7.8) |
+| Privileges | not privileged; runs as `dev`. **`SYS_ADMIN` is added to the bounding set** so Chromium's setuid sandbox can create namespaces; the image build fails if any other setuid/setgid binary remains, so `dev` itself holds no effective capability | no privileged mode, no added capabilities | the same as ecs | the `restricted` Pod Security Standard, enforced on the namespace by a label the CP cannot change: not privileged, non-root, no added capabilities, no host namespaces, no `hostPath` — Fargate's level, so no `SYS_ADMIN` for Chromium |
+| Cloud identity | none | the task role `WsTaskRole` has **no policy at all**; `AGENT_TOKEN` and the DEK arrive through the task definition's `secrets` (SSM, read by the execution role) | the same task role. The slot's instance role carries ECS registration, SSM management, image pull and logs only | none: no service account token is mounted, and no IAM grant names the namespace or its service account. On GKE every workspace pool serves the GKE metadata server and egress to `169.254.0.0/16` is denied. `AGENT_TOKEN`, the DEK and the minted tokens arrive in a per-workspace Secret through `envFrom`; Secrets are encrypted in etcd (Cloud KMS on GKE) |
+| Sensitive state | the agent's plaintext state is moved to a second mount (`CLAUDE_CONFIG_DIR=/var/lib/af/claude`) **outside the file browser's reach**; the encrypted store stays in the home behind the agent's denylist (`fsDeny`) | the same — the image and the agent are common | the same | the same, on the second claim |
+
+**On `kubernetes` the column holds only on a cluster that meets the runbook's preconditions**
+(a NetworkPolicy-enforcing CNI, Secrets encryption, a private or authorised-network control
+plane, the kubelet's read-only port off), which the CP cannot see
+([deploy/kubernetes/README.md](../../deploy/kubernetes/README.md), [decisions/0106](../decisions/0106-kubernetes-runtime.md) decision 7).
+A compromised CP there reaches the workspace namespace — every workspace's Secret, and pods it
+can create but not make privileged — and, through its read-only cluster role, nothing else.
 
 **`native` has none of this.** It runs the agent as sandboxed host processes with no
 container boundary and no memory limit, so it is **single-user only**: the CP refuses to
@@ -108,7 +160,7 @@ the context window the running engine started with (`engine_gateway.go`):
   itself and never passes the gateway.
 - **The CP buys the GPU instances itself** on `ecs-ec2`
   ([decisions/0077](../decisions/0077-engine-boxes-bought-by-cp.md)). That adds to the
-  CP's role, and only through `CpIngestPolicy` in `60-engines.yaml`:
+  CP's role, and only through `CpIngestManagedPolicy` in `60-engines.yaml`:
   `ec2:CreateFleet` / `DescribeFleets` / `DeleteFleets`, `iam:PassRole` for the engine
   instance role, the service-linked roles for Spot and EC2 Fleet, and, for model ingest,
   `ecs:RunTask` on the ingest task definition plus writes to the Hugging Face and Civitai
@@ -288,6 +340,11 @@ data from a place they should not**.
 - **The surfaces a workspace calls are exempt** — `/mcp`, `/git/`, `/engine/` and
   `/internal/`. Their source is the user's own workspace, which says nothing about where
   the person is. Including them would block every call from your own workspace.
+- **The workspace listener reads no forwarding header at all** (`AF_CP_INTERNAL_LISTEN`,
+  [09 §9.3](09-deploy.md)). Its client is the connection's own address whatever the hop
+  count says, and it removes the identity header and every forwarded-for/-host/-proto
+  header before a handler runs — a workspace that connects to it can name neither a user
+  nor a source address. It serves only the token-authenticated routes listed above.
 - **Escape hatches against locking yourself out**: a deployment administrator is exempt;
   a save that would shut out the editor's current address is refused
   (`would_lock_out`); and so is a save when the forwarded-for header arrives while no
@@ -357,14 +414,18 @@ credentials as exposed and rotate them.
 - A per-workspace DEK is wrapped by a per-tenant KEK and stored (`wrapped_dek`). The CP
   unwraps it when starting the workspace and injects it as `AF_SECRET_KEY`. **The agent
   is indifferent to the scheme.**
-- The custodian is an interface (`KeyCustodian`). The current implementation
-  (`localCustodian`) derives the KEK from the master key; the same custodian seals the
-  tenant secrets above and the session handoff and share payloads.
-- ⚠️ **The honest limit**: because that KEK derives from the master key — and the DEK
-  itself is derived from the master key and the user key, so that stores written before
-  envelope storage still open — the effective strength equals a single master key.
-  **True per-tenant crypto-shredding only arrives with a Vault or KMS custodian**, which
-  is 📋 — the seam exists and nothing more.
+- The custodian is an interface (`KeyCustodian`). The default (`localCustodian`) derives
+  the KEK from the master key; `kmsCustodian` (`AF_KEY_CUSTODIAN=kms`, AWS) seals each value
+  with a fresh KMS data key, bound to the key ref by the encryption context, and fails closed
+  when KMS does. The same custodian seals the tenant secrets above and the session handoff
+  and share payloads. Values sealed before a switch to KMS are opened by the local custodian,
+  chosen by their format, never by a KMS failure.
+- ⚠️ **The honest limit**: with the local custodian the KEK derives from the master key, so
+  the effective strength equals a single master key. With KMS, disabling the key shreds what
+  was sealed after the switch — but the workspace DEK itself is still derived from the master
+  key and the user key (so that stores written before envelope storage still open), so
+  members' credential stores are not shredded by it. A random DEK per workspace and Vault
+  are 📋 ([decisions/0005](../decisions/0005-envelope-custodian.md), 2026-10-04 addendum).
 
 ## 7.7 Audit
 
@@ -421,10 +482,10 @@ from what you measured, and only then switch to enforce.
    ([decisions/0056](../decisions/0056-tool-permission-choice.md)), but that is not a
    substitute for isolation (§7.1).
 2. **Compromise of the CP or host collapses one deployment at once** (§7.1). The
-   mitigation is that it does not spread between companies. The CP's AWS role can
-   still be narrowed ([#1182](https://github.com/k-k1/agent-fleet/issues/1182)).
+   mitigation is that it does not spread between companies — on AWS, only across
+   separate AWS accounts. The CP's AWS role can still be narrowed ([#1182](https://github.com/k-k1/agent-fleet/issues/1182)).
 3. **Revoking and rotating long-lived agent credentials** — the framework is there, but
-   real revocation waits for Vault or KMS (§7.6).
+   real revocation of the workspace DEK waits for random DEKs (§7.6).
 4. **Supply chain** — provenance and regular updates for what is baked into the
    workspace image ([04](04-agent.md)).
 5. **Egress enforcement does not constrain workspaces yet** — the proxy blocks, but no

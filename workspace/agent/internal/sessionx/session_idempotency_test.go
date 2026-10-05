@@ -10,6 +10,8 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // TestCreateLedger exercises the in-memory idempotency ledger's state machine directly:
@@ -104,11 +106,17 @@ func TestCreateSessionDedupeHTTP(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
+	testguard.IsolateTmux(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
 	parent := filepath.Join(home, "repos", "app")
 	gitInit(t, parent)
+
+	// The ledger is process-wide: a previous -count round's "cs_test" would replay here.
+	prevLedger := createLedger
+	createLedger = &createSessionLedger{m: map[string]*createLedgerEntry{}}
+	t.Cleanup(func() { createLedger = prevLedger })
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /sessions", HandleListSessions)
@@ -121,7 +129,7 @@ func TestCreateSessionDedupeHTTP(t *testing.T) {
 
 	var first session.Session
 	do(t, srv, "POST", "/sessions", body, http.StatusCreated, &first)
-	defer exec.Command("tmux", "kill-session", "-t", session.TmuxName(first.Name)).Run()
+	defer tmuxx.Cmd("kill-session", "-t", session.TmuxName(first.Name)).Run()
 
 	// Retry with the same key: the backend already finished, so this must REPLAY (200 +
 	// same session) — not create a second one.

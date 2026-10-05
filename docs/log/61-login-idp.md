@@ -738,6 +738,37 @@ tenant_admin の仕事**とする。情シス（super_admin）に毎回頼む形
 あの文が本当に守っていたのは**履歴**（監査・費用・稼働時間）で、schedules と shares はその人の
 ものだから一緒に消えてよい。条件・消える表・残る表は §61.18.5。
 
+★ **2026-10-03 追記（#1087）: 外した人の「動いている workspace」「開いている接続」「スケジュール」。**
+workspace が持つトークン（AF_MEMO_TOKEN ほか /internal/* の各トークン・内部 git・エンジンの
+発行／セッショントークン）は、どれも検証のたびに `GetMembershipByID`（active のみ）を引くので、
+外した直後の次のリクエストから 401 になる（`workspaceRoutes` 全件の表テスト
+`TestRemovedMemberIsRefusedOnEveryWorkspaceRoute` で固定）。AGENT_TOKEN は CP→Agent 方向の
+共有秘密で、CP 側にこれを受け付けるルートは無い。毎リクエスト判定の外に残っていたのは 3 つ:
+
+- **コンテナ自体が動き続ける**（取得済みのテナント MCP ヘッダや home のログインを抱えたまま、
+  誰にも見えずに計算資源を使う）。→ 外すとそのテナントの workspace を止める。止める直前に
+  （起動ロック・lease・fence を持った状態で）membership を読み直し、その間に招待し直されていれば
+  止めない。他テナントの同じ人の workspace は止めない。10 秒で終わらなければ応答は
+  `workspace_stop:"pending"`、結果は `membership.remove.stop_workspace` として監査に残る。
+  CP の再起動や予算切れで止め損ねた分は、各 CP が 1 分ごとに回す removed-member sweep が
+  「inactive なのに stopped でない workspace」として拾って止める（idle-stop を切っていても回る）。
+- **外す前に認可済みの長い接続**（ターミナル・イベントストリーム・他人の共有プレビューの
+  WebSocket／SSE・発行済みエンジントークンでの生成ストリーム）。認可はリクエスト単位なので、
+  開いたままの接続は残る。→ CP が membership ごとに実行中のリクエストを登録し、外したときに
+  閉じる。他レプリカの分は sweep が閉じる。接続の sweep と workspace 停止は別ループで、停止は
+  workspace ごとの goroutine で走るので、遅い停止が接続の失効や他の停止を待たせない。
+  内部 git（git-http-backend の CGI）と LFS 転送は登録しない — どちらも要求の context を見ないので
+  閉じられず、1 回の転送で終わる。
+  あわせて、ホスト型プレビューは**所有者の membership も毎回確かめる**（所有者の af_pv cookie は
+  所有者だからという理由で素通りしていた）。外された所有者の workspace は公開モードでも配信しない。
+- **スケジュールは消さない。** 外れている間に来た枠は何も起こさず一時停止し、`held_by_removal`
+  の印を付ける（membership がまだ active でなく、行が scheduler の読んだ枠のまま有効なときだけ
+  書く条件付き UPDATE — 読んだ後に本人が止めた行には付けない）。**招待し直すと
+  印の付いたものだけを今から再開**する（印は本人の操作で消えるので本人が止めたものは触らない・
+  過ぎた once は戻さない・逃した枠は再生しない）。一時停止の書き込みと再招待がすれ違った場合は、
+  scheduler が書いた後に membership を読み直して戻す。監査は `membership.add` の detail に
+  `schedules resumed=N`。
+
 ### 61.10.7 `super_admin` の移譲・退職
 
 `super_admin` はホスト側の env（決定 24）なので、**移譲そのものはホストのファイルを書き換えて

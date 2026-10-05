@@ -8,11 +8,10 @@
  *
  * Load order is decided by the @import list in settings.css; rename this file there too.
  */
-/* AgyCard: the always-on "experimental" label sits right under the card head (the quota
-   meters live in the WS bar's Antigravity usage chip). It is a bare ps-note
-   directly inside the card — unlike its usual .p-settings home (13px padding) —
-   so it needs the card's horizontal inset itself or it hugs the border. */
-.p-card .agy-exp {
+/* A ps-note placed directly in a card rather than in .p-body / .p-settings (Antigravity's
+   experimental label, Copilot's "connect GitHub first", Muse's billing warnings). It has no
+   inset of its own, so without this it starts on the card border. */
+.p-card .p-card-note {
   margin: 2px 13px 6px;
 }
 
@@ -133,6 +132,12 @@
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+/* The same row inside .p-body, which already supplies the 13px inset; the plain .p-who
+   there doubles it to 26px. */
+.p-who.p-who-flush {
+  padding: 0;
 }
 
 .p-who .p-em {
@@ -316,3 +321,7 @@
 /* Subversion — the project's own logo blue. Light enough for the default near-black
    monogram (7:1 measured against #0c0c0c). */
 .p-badge.pb-svn { background: #809cc9; }
+
+/* Internal repositories: not a brand, so a neutral grey that still carries the near-black
+   monogram; without a fill the badge was an empty square. */
+.p-badge.pb-internal { background: #9aa3ad; }

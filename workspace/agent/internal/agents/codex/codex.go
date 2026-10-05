@@ -7,8 +7,11 @@
 package codex
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -46,8 +49,53 @@ func IsCompactingThread(threadID string) bool {
 }
 
 func isCompacting(m session.Meta) bool {
-	threadID := sids.Read(session.UUID(m.Dir, m.Name))
-	return IsCompactingThread(threadID)
+	slot := session.UUID(m.Dir, m.Name)
+	if IsCompactingThread(sids.Read(slot)) {
+		return true
+	}
+	// Managed sessions are fed by the driver's contextCompaction events above; a Terminal
+	// session's thread never reaches an app-server, so only its hooks can say.
+	return m.DriverKind() != session.DriverManaged && terminalCompacting(slot)
+}
+
+// compactMarks holds, per slot sid, the turn id of a Terminal session's open PreCompact.
+// The hook runs in its own process, so the mark has to be on disk for the Agent to see it.
+var compactMarks = agents.NewSidStore("codex-compacting")
+
+// unknownCompactTurn marks a PreCompact whose payload named no turn: only the hooks and a
+// relaunch can close it then.
+const unknownCompactTurn = "-"
+
+// MarkCompacting records a Terminal session's PreCompact (active, with the turn_id its
+// payload carries) or PostCompact hook. Called from the session-status hook entrypoint in
+// package sessionx.
+func MarkCompacting(slotSid, turnID string, active bool) {
+	switch {
+	case !active:
+		compactMarks.Remove(slotSid)
+	case turnID == "":
+		compactMarks.Write(slotSid, unknownCompactTurn)
+	default:
+		compactMarks.Write(slotSid, turnID)
+	}
+}
+
+// terminalCompacting reports whether a PreCompact mark is still open. PostCompact removes
+// it, but an Esc during the compaction fires neither PostCompact nor Stop (measured on codex
+// 0.160.0); the rollout's turn_aborted for the mark's turn is then the only end.
+func terminalCompacting(slot string) bool {
+	turn := compactMarks.Read(slot)
+	if turn == "" {
+		return false
+	}
+	if turn == unknownCompactTurn {
+		return true
+	}
+	ended := false
+	withRollout(rolloutPath(sids.Read(slot)), slot, func(p *rolloutParser) {
+		_, ended = p.endedTurns[turn]
+	})
+	return !ended
 }
 
 // RememberSid records the slot sid → codex session id mapping. Called from the
@@ -195,12 +243,16 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if threadHeld(resumeID) {
 		return agents.LaunchPlan{}, ErrThreadReleasing
 	}
+	// A pane killed mid-compaction left its PreCompact mark open, and a resumed rollout
+	// records no end for that turn: drop it, or the fresh pane reads compacting until its
+	// first prompt.
+	compactMarks.Remove(cxSid)
 	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, cxSid, resumeID, forkFrom), Cwd: m.CWD()}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	// State comes from codex's -c-injected status hooks keyed by our sid (the status
-	// store; no idle-heal, no background-busy). Resumable unless the working dir is gone.
+	// store; no idle-heal). Resumable unless the working dir is gone.
 	// Under managed (docs/log/27 P3) there are no hooks; instead the driver writes the turn
 	// boundaries (turn/started, turn/completed notifications) to the same status store, so
 	// the reading side is almost entirely shared.
@@ -238,6 +290,11 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 			if li.State == "idle" && IsRateLimited(m.Name) {
 				li.State = agents.StateLimited
 			}
+			// A command an earlier turn left running is work behind the idle prompt. Managed
+			// only: it is the app-server connection that can ask (background.go).
+			if li.State == "idle" {
+				li.BackgroundBusy, li.BackgroundBusyReason = agentImpl{}.BackgroundWork(m)
+			}
 		} else if li.State == "working" && HasPendingQuestion(m) {
 			// The hooks report only working/idle — a request_user_input dialog keeps
 			// the turn "working" forever. Probe the rollout tail so the sessions list
@@ -249,6 +306,15 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		li.Resumable = false
 	}
 	return li
+}
+
+// BackgroundWork is the agents.BackgroundReporter read: a background terminal on a managed
+// session's thread (background.go). A Terminal session has no app-server connection to ask.
+func (agentImpl) BackgroundWork(m session.Meta) (bool, string) {
+	if m.DriverKind() != session.DriverManaged {
+		return false, ""
+	}
+	return BackgroundWork(m.Name)
 }
 
 // MissedTurnEnd reports whether the status store says "working" for a turn the rollout
@@ -264,7 +330,75 @@ func MissedTurnEnd(m session.Meta) bool {
 	return rolloutCompletedAfter(m, workingSince)
 }
 
-func (agentImpl) ClearResume(sid string) { sids.Remove(sid) }
+// StopContinued reports whether the turn whose Stop wrote the end-of-turn marker (at marker)
+// is still running because another Stop hook blocked that stop (#1600).
+//
+// codex runs a Stop event's handlers concurrently and only then decides (codex-rs
+// hooks/src/engine/dispatcher.rs, FuturesUnordered), so our hook writes idle before it can
+// know a sibling answered `decision:"block"`. On a block codex records the hook's prompt and
+// `continue`s the same turn loop (core/src/session/turn.rs); task_complete is written only
+// when the task finishes after the last Stop. So a rollout whose newest lifecycle event is
+// task_started is a turn the marker did not end. A normal Stop's task_complete lands
+// milliseconds after our hook, so a sweep in between costs one tick, not a report.
+//
+// It reads a bounded tail (rolloutTailLifecycle), not the shared parse: this runs on the
+// report reconciler's synchronous sweep, and a cold withRollout parses the whole rollout
+// (measured 3.9 s for 147 MB in rolloutcache.go) to answer one field.
+//
+// No rollout, or no lifecycle event in the tail, answers false (the pre-#1600 behaviour):
+// holding a finished turn's report on a guess is worse than the early report this prevents.
+func StopContinued(m session.Meta, marker time.Time) bool {
+	if marker.IsZero() {
+		return false
+	}
+	path := rolloutPath(sids.Read(session.UUID(m.Dir, m.Name)))
+	return path != "" && rolloutTailLifecycle(path) == "task_started"
+}
+
+// rolloutLifecycleTail bounds rolloutTailLifecycle's read, as PendingQuestionID's tail does.
+const rolloutLifecycleTail = 256 << 10
+
+// rolloutTailLifecycle returns the newest task_started / task_complete / turn_aborted event in
+// the last rolloutLifecycleTail bytes of path, or "" when the window holds none (one tool
+// output can fill it).
+func rolloutTailLifecycle(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	off := int64(0)
+	if fi, err := f.Stat(); err == nil && fi.Size() > rolloutLifecycleTail {
+		off = fi.Size() - rolloutLifecycleTail
+	}
+	b := make([]byte, rolloutLifecycleTail)
+	n, _ := f.ReadAt(b, off)
+	lines := bytes.Split(b[:n], []byte("\n"))
+	if off > 0 && len(lines) > 0 {
+		lines = lines[1:] // the first line of a mid-file read is likely partial
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		var ev struct {
+			Type    string `json:"type"`
+			Payload struct {
+				Type string `json:"type"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal(lines[i], &ev) != nil || ev.Type != "event_msg" {
+			continue
+		}
+		switch ev.Payload.Type {
+		case "task_started", "task_complete", "turn_aborted":
+			return ev.Payload.Type
+		}
+	}
+	return ""
+}
+
+func (agentImpl) ClearResume(sid string) {
+	sids.Remove(sid)
+	compactMarks.Remove(sid)
+}
 
 // IsRateLimited reports whether a managed codex session's last turn failed with a
 // usage-limit error. The shared live-state helper in package main uses this to

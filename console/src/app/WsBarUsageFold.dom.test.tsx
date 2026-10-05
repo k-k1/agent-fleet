@@ -63,13 +63,13 @@ function foldBtn() {
   return host!.querySelector<HTMLButtonElement>(".ws-fold-btn");
 }
 
-async function mount() {
-  host = document.createElement("div");
+async function mount(props: { squeeze?: boolean; onLayoutChange?: (key: string) => void } = {}) {
+  host ??= document.createElement("div");
   document.body.append(host);
-  root = createRoot(host);
+  root ??= createRoot(host);
   await act(async () => {
     root!.render(
-      <UsageChipFold>
+      <UsageChipFold {...props}>
         <>
           {USAGE_SOURCES.map((s) => (
             <UsageChip key={s.endpoint} src={s} tenant="t" />
@@ -199,6 +199,93 @@ describe("WS bar usage chips: folding", () => {
     await mount();
     await act(async () => useUiOpen.getState().toggle("usage-claude"));
     expect(host!.querySelector(".ws-fold-pop")).toBeNull();
+  });
+
+  // A chip that stops being drawn keeps its state; left "open", its dismiss layer would eat the
+  // next click anywhere on the page (#1651 review). Moving it off the bar — by the user's fold
+  // or by the bar running out of width — and closing the +N it sits in both close it.
+  it("closes a chip's detail when the chip moves into a closed +N", async () => {
+    await mount();
+    const claudeBtn = () =>
+      [...host!.querySelectorAll<HTMLButtonElement>(".ws-usage-btn")].find((b) => b.textContent?.includes("Claude"));
+    await act(async () => claudeBtn()!.click());
+    expect(claudeBtn()!.getAttribute("aria-expanded")).toBe("true");
+    await act(async () => setSettings({ usageChipsFolded: ["claude"] }));
+    expect(claudeBtn()).toBeUndefined(); // in the closed +N: not drawn anywhere
+    await act(async () => setSettings({ usageChipsFolded: [] }));
+    expect(claudeBtn()!.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("closes a folded chip's detail when its +N closes", async () => {
+    await mount();
+    await act(async () => foldBtn()!.click());
+    const museBtn = () => host!.querySelector<HTMLButtonElement>(".ws-fold-list .ws-usage-btn");
+    await act(async () => museBtn()!.click());
+    expect(museBtn()!.getAttribute("aria-expanded")).toBe("true");
+    await act(async () => foldBtn()!.click()); // close +N
+    await act(async () => foldBtn()!.click()); // and open it again
+    expect(museBtn()!.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  // Squeezed by the bar (wsBarFold.ts) and then widened: the +N disappears with its popover
+  // open. Its state must go too — left "open", the dismiss layer eats the next click, and the
+  // next squeeze would bring the popover back by itself.
+  it("drops an open +N when nothing is left to fold", async () => {
+    api.mockImplementation((path: string) => {
+      if (path.startsWith("api/claude/usage")) return Promise.resolve(calm(14, 70));
+      if (path.startsWith("api/codex/usage")) return Promise.resolve(calm(33, 27));
+      return Promise.resolve(signedOut);
+    });
+    await mount({ squeeze: true });
+    expect(foldBtn()!.textContent).toContain("+2");
+    await act(async () => foldBtn()!.click());
+    expect(host!.querySelector(".ws-fold-pop")).not.toBeNull();
+    await mount({ squeeze: false });
+    expect(foldBtn()).toBeNull();
+    await mount({ squeeze: true });
+    expect(foldBtn()!.getAttribute("aria-expanded")).toBe("false");
+    expect(host!.querySelector(".ws-fold-pop")).toBeNull();
+  });
+
+  // The bar re-learns what squeezing saves when this key changes. Pinning a chip that is
+  // already on the roomy bar leaves that layout alone and changes only the squeezed one.
+  it("reports a layout change that only the squeezed bar sees", async () => {
+    const keys: string[] = [];
+    const onLayoutChange = (k: string) => void keys.push(k);
+    await mount({ squeeze: true, onLayoutChange });
+    const layouts = () => keys.at(-1)!.split("|").slice(0, 2).join("|");
+    expect(layouts()).toBe("claude,codex|");
+    await act(async () => setSettings({ usageChipsPinned: ["claude"] }));
+    expect(layouts()).toBe("claude,codex|claude");
+    // And squeezing itself is not a change: the bar's measuring unfold must not re-trigger it.
+    const n = keys.length;
+    await mount({ squeeze: false, onLayoutChange });
+    expect(keys.length).toBe(n);
+  });
+
+  // Same chips in the same places, but a reading inside the closed +N shortens (a reset).
+  // Nothing of it is drawn, so only this report can tell the bar its saving shrank.
+  it("reports a reading change of a chip hidden in the squeezed +N", async () => {
+    let claude = calm(94, 94);
+    api.mockImplementation((path: string) => {
+      if (path.startsWith("api/claude/usage")) return Promise.resolve(claude);
+      if (path.startsWith("api/codex/usage")) return Promise.resolve(calm(33, 27));
+      return Promise.resolve(signedOut);
+    });
+    const keys: string[] = [];
+    await mount({ squeeze: true, onLayoutChange: (k) => void keys.push(k) });
+    expect(foldBtn()!.textContent).toContain("+2");
+    const before = keys.at(-1)!;
+    expect(before).toContain("94% / 94%");
+    claude = calm(0, 0);
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange")); // the chips' own re-read
+      await Promise.resolve();
+    });
+    await act(async () => void (await Promise.resolve()));
+    expect(keys.at(-1)).not.toBe(before);
+    expect(keys.at(-1)).toContain("0% / 0%");
+    expect(foldBtn()!.textContent).toContain("+2"); // still the same layout
   });
 
   it("honours a pin on an agent nobody has run lately", async () => {

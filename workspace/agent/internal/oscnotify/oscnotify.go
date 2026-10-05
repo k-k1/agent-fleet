@@ -347,6 +347,10 @@ func clean(proto, title, body string) (Notification, bool) {
 	return n, n.Title != "" || n.Body != ""
 }
 
+// CleanBody applies the same cleaning to a notification body that reached us by
+// another route than an escape sequence, so both land in the outbox alike.
+func CleanBody(s string) string { return sanitize(s, maxBodyRunes) }
+
 func sanitize(s string, max int) string {
 	s = strings.ToValidUTF8(s, string(utf8.RuneError))
 	var b strings.Builder

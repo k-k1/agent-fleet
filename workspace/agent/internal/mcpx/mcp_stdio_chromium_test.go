@@ -85,14 +85,14 @@ func TestMCPChromiumSessionScopeIsExact(t *testing.T) {
 	legacy := toolNames()
 	for _, want := range []string{
 		"af_report", "propose_session_handoff", "af_stop_after_turn",
-		"get_session_status", "get_session_usage", "list_memos", "add_memo", "update_memo",
+		"get_session_status", "get_session_usage", "list_memos", "add_memo", "update_memo", "branch_name",
 	} {
 		if legacy[want] == nil {
 			t.Fatalf("bare self-report tools = %v, missing %s", sortedChromiumToolMapKeys(legacy), want)
 		}
 	}
-	if len(legacy) != 8 {
-		t.Fatalf("bare self-report tools = %v, want exactly those eight", sortedChromiumToolMapKeys(legacy))
+	if len(legacy) != 9 {
+		t.Fatalf("bare self-report tools = %v, want exactly those nine", sortedChromiumToolMapKeys(legacy))
 	}
 	if resp := callChromiumMCP(t, "list_chromium_targets", map[string]any{"port": 9222}); !mcpCallIsError(t, resp) || !strings.Contains(string(resp), "tools/list に無いツール名") {
 		t.Fatalf("legacy self-report guessed Chromium call was not gated: %s", resp)
@@ -105,7 +105,7 @@ func TestMCPChromiumSessionScopeIsExact(t *testing.T) {
 	found := toolNames()
 	wantNames := append([]string{
 		"af_report", "af_stop_after_turn", "propose_session_handoff",
-		"get_session_status", "get_session_usage", "list_memos", "add_memo", "update_memo",
+		"get_session_status", "get_session_usage", "list_memos", "add_memo", "update_memo", "branch_name",
 	}, chromiumReadToolNames...)
 	wantNames = append(wantNames, chromiumWriteToolNames...)
 	if got, want := sortedChromiumToolMapKeys(found), append([]string(nil), wantNames...); !sameSortedStrings(got, want) {
@@ -428,6 +428,34 @@ func TestMCPChromiumPortCollisionExplainsTheFix(t *testing.T) {
 	// relay whatever the Agent said about it.
 	if strings.Contains(string(resp), "secret-profile") {
 		t.Errorf("collision error leaked the other session's profile: %s", resp)
+	}
+}
+
+// On a workspace runtime without browser features the tools say so in English and tell the
+// model what to do instead, rather than reporting a generic Agent failure it would retry.
+func TestMCPChromiumUnavailableExplainsTheRuntime(t *testing.T) {
+	const msg = "Browser features are not available on this workspace runtime (kubernetes): sandbox."
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"code":"browser_unavailable","message":"` + msg + `"}}`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	for name, args := range map[string]map[string]any{
+		"list_chromium_targets":   {"port": 9222},
+		"get_chromium_attachment": {"attachment_id": "a1"},
+	} {
+		resp := callChromiumMCP(t, name, args)
+		if !mcpCallIsError(t, resp) {
+			t.Fatalf("%s: browser_unavailable must be an error: %s", name, resp)
+		}
+		for _, want := range []string{"code=browser_unavailable", msg, "Do not start Chromium", "--no-sandbox"} {
+			if !strings.Contains(string(resp), want) {
+				t.Errorf("%s: error must mention %q: %s", name, want, resp)
+			}
+		}
 	}
 }
 

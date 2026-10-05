@@ -3,9 +3,10 @@ package store
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
 )
 
 func engineModelStore(t *testing.T) *SQL {
@@ -411,16 +412,13 @@ func TestEngineModelTrainedWordsRoundTrip(t *testing.T) {
 // migrations for these columns.
 func TestEngineModelLayerWidthsSurviveEveryWriter(t *testing.T) {
 	stores := map[string]*SQL{"sqlite": engineModelStore(t)}
-	if url := os.Getenv("AF_TEST_DATABASE_URL"); url != "" {
+	if url, ok := pgtest.Schema(t); ok {
 		pg, err := OpenPostgres(url)
 		if err != nil {
 			t.Fatalf("open postgres: %v", err)
 		}
 		t.Cleanup(func() { pg.Close() })
 		ctx := context.Background()
-		if _, err := pg.db.ExecContext(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
-			t.Fatalf("reset schema: %v", err)
-		}
 		if err := pg.Migrate(ctx); err != nil {
 			t.Fatalf("migrate: %v", err)
 		}

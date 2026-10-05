@@ -128,7 +128,7 @@ const (
 
 // memoryListSnapshots returns snapshots newest first. A non-empty before starts the list at the
 // most recent snapshot at or before that RFC3339 time (what the date-picker UI rests on).
-func memoryListSnapshots(limit int, before string) ([]memorySnapshotInfo, error) {
+func memoryListSnapshots(limit int, before string, nativeOnly ...bool) ([]memorySnapshotInfo, error) {
 	// Validate input before checking for the repo, so a malformed before is a 400 even with no
 	// history at all.
 	if before != "" {
@@ -147,6 +147,12 @@ func memoryListSnapshots(limit int, before string) ([]memorySnapshotInfo, error)
 		"--name-only"}
 	if before != "" {
 		args = append(args, "--before="+before)
+	}
+	if len(nativeOnly) > 0 && nativeOnly[0] {
+		// The CLIs' own memories only (the assistant's snapshot tools): commits that touch
+		// nothing but the AF memory under af/ are left out before the limit applies, and the
+		// paths listed for the rest leave af/ out too.
+		args = append(args, "--", ".", ":(exclude)"+agentMemRepoPrefix)
 	}
 	out, err := memoryGitRun(args...)
 	if err != nil {
@@ -282,7 +288,7 @@ func memoryPathSafe(p string) bool {
 // working tree and mix in the staging contents (= the current live state), which is wrong for
 // browsing history; parent-dependent shorthands such as `<rev>^!` are avoided for the same
 // reason.
-func memoryDiff(from, to, path string) (string, error) {
+func memoryDiff(from, to, path string, nativeOnly ...bool) (string, error) {
 	if !memoryPathSafe(path) {
 		return "", fmt.Errorf("invalid path scope")
 	}
@@ -301,8 +307,13 @@ func memoryDiff(from, to, path string) (string, error) {
 		}
 	}
 	args := []string{"diff", "--no-color", "--find-renames", base, to}
-	if path != "" {
+	switch {
+	case path != "":
 		args = append(args, "--", path)
+	case len(nativeOnly) > 0 && nativeOnly[0]:
+		// The CLIs' own memories only: the AF memory under af/ has its own scanned, switch-gated
+		// routes (ADR 0108), and this diff is what the assistant's snapshot tool reads.
+		args = append(args, "--", ".", ":(exclude)"+agentMemRepoPrefix)
 	}
 	return memoryGitRun(args...)
 }

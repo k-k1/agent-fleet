@@ -39,6 +39,7 @@ func sessionDeps() sessionx.Deps {
 
 		BrowseRoot:     browseRoot,
 		MaxUploadBytes: maxUploadBytes,
+		ReadRoots:      allowedReadRoots,
 
 		IsSvnRepo:       isSvnRepo,
 		RepoJobsRunning: repoJobsRunning,
@@ -46,6 +47,7 @@ func sessionDeps() sessionx.Deps {
 
 		FinalizeSessionUsage:  finalizeSessionUsage,
 		MaybeFoldSessionUsage: maybeFoldSessionUsage,
+		SessionSpend:          sessionSpend,
 
 		RemoveTerminalHistory: removeTerminalHistory,
 		TrashSession:          trashSession,

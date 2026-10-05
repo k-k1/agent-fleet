@@ -71,7 +71,7 @@ export const usage: Record<keyof typeof jaUsage, string> = {
     "An estimate: tokens × published API list prices (cache writes ×1.25, cache reads ×0.1). What this consumption would have cost through the API — on a flat subscription it is not what you are billed.",
   "usage.cost_est_hint":
     "Estimated from tokens × the model's published API list price. Not a measured cost.",
-  "usage.cost_measured": "Measured: {v} (claude auxiliary calls only)",
+  "usage.cost_measured": "Reported by the agent: {v} (claude auxiliary calls and opencode sessions only)",
   "usage.cost_unpriced_hint":
     "No published price is on file for this model, so no amount is estimated (this is not a cost of 0).",
   "usage.price_line": "Rate {in} / {out} per 1M tokens (input/output).",

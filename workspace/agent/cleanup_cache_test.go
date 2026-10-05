@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -214,6 +215,9 @@ func TestRestoreAndPurgeTakeTheCleanupLock(t *testing.T) {
 		httptest.NewRequest(http.MethodDelete, "/cleanup/archives/none", nil),
 	} {
 		done := make(chan struct{})
+		// Joined before HOME is restored: a restore or purge left running would write the
+		// real meta dir or touch the real archives.
+		t.Cleanup(func() { <-done })
 		sessionx.WithCleanupLock(func() {
 			go func() {
 				mux.ServeHTTP(httptest.NewRecorder(), req)
@@ -252,16 +256,20 @@ func TestRestoreLosesToAPurge(t *testing.T) {
 	t.Cleanup(func() { restoreAfterStage = nil })
 
 	var err error
+	letRestoreGo := sync.OnceFunc(func() { close(proceed) })
 	done := make(chan struct{})
 	go func() {
 		_, err = restoreCleanupArchive(id)
 		close(done)
 	}()
+	// Released and joined before HOME and restoreAfterStage are restored, whichever check
+	// fails first.
+	t.Cleanup(func() { letRestoreGo(); <-done })
 	<-staged // the archive has been read and the transcript staged
 	if _, perr := purgeCleanupArchive(id); perr != nil {
 		t.Fatal(perr)
 	}
-	close(proceed)
+	letRestoreGo()
 	<-done
 	if err == nil {
 		t.Fatal("a restore of a purged archive succeeded")

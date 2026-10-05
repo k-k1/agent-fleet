@@ -40,6 +40,7 @@ has them:
 | a personal WSL2 machine | [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
 | ecs / ecs-ec2 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
 | ec2-single | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
+| kubernetes (preview) | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 Inside a workspace the same files are staged as `operate/runbooks/*.md` beside this
 shelf, so they are readable from the container too — which is where you will want them
@@ -74,7 +75,8 @@ and observe outbound destinations, all from the browser. Splitting departments i
 **Delivery model and security posture.** One company, one deployment, on its own
 infrastructure. Isolation between companies is guaranteed by **separate deployments**,
 not by in-process boundaries, so the blast radius of a compromise is confined to one
-deployment. Inside a workspace, the boundaries assume the agent **executes arbitrary
+deployment — on AWS, only when each deployment has its own AWS account
+([04 Securing it](04-secure.md)). Inside a workspace, the boundaries assume the agent **executes arbitrary
 code**; what is protected is other users' data, the control plane and host, the
 secrets, and exfiltration.
 

@@ -273,3 +273,68 @@ were not in the transcript, and neither side was told.
 - **Still open**: halt, archive and an Agent restart still lose a queued message (#1255). What each
   Terminal CLI does with a prompt it queued when the turn is interrupted (#1256). Operator and
   scheduled prompts are discarded by a stop the same way (#1257).
+
+## Addendum (2026-10-03) — a held peer message survives a halt, a shutdown and a crash
+
+#1255 closes the first "Still open" item above. A peer message waiting in a Managed driver's queue
+is written to its own file under the Agent's state directory (`held-peer/<session>/`) when the
+queue accepts it, not at teardown, so a crash or an OOM kill does not lose it either. The file goes
+when the message is handed to the runtime, when a stop discards it (ADR 0105) and when it is
+removed from the queue. Teardown (`DropHandle`, `AbortManaged`, codex's drain) still empties the
+in-memory queue but leaves the files, and every Managed driver's `Resume` sends them again, oldest
+first, before anything else, with `queued=<time>` added to the envelope so the receiver can judge
+staleness. Archive, the trash and a switch to Terminal (CLI) drop them, with a log line naming each, and Agent boot sweeps what a crash left behind a deleted, archived or Terminal session.
+The sender's answer (`delivered` / `queued`) is unchanged. Operator and scheduled prompts are not
+held (#1257). Implementation: `workspace/agent/internal/agents/heldpeers.go`.
+
+## Addendum (2026-10-03) — a peer message to a session waiting on its user is queued, not refused
+
+#1031. A peer send whose target shows a question, a plan approval or a permission prompt used to
+be refused with `409 question_pending` / `plan_pending` / `permission_pending`, leaving the sender
+to poll and resend. It now passes the same policy, intent and rate checks, is written to the
+target's own spool (`pending-peer/<session>/`, the `held-peer` file format in a sibling directory)
+and is answered `202 {"queued", "blocked_on", "pending"}`; `send_to_peer_session` reports
+`queued=true` with `blocked_on` and says not to resend. A per-target loop delivers the spool,
+oldest first, once the blocker is gone **and** the turn the answer started has ended, through
+`/input` itself, so the injection record, delivery confirmation and a re-check of
+the peer policy and rate limit run as for any peer send (the fleet-graph arrow is written once, after a
+successful delivery); `queued=<time>` is added to the envelope.
+It is not `held-peer/`: a held message was already accepted and every Managed `Resume` feeds that
+directory to the runtime, while a pending one must not reach the session before the user answers
+and serves Terminal (CLI) sessions as well. Decisions: only question / plan / permission queue
+(an expired login and the usage-limit menu keep refusing, since they can last hours); the
+Console's own sends, `send_to_session` and schedules keep their 409; TTL 24 h, at most 20 per
+target (past it `429 peer_queue_full`); a message sent while others wait or one is being delivered
+joins the queue so it cannot overtake them, unless the target now shows an expired login or the
+usage-limit menu, which refuse; the queue decision, the claim, the write-back and the drops share
+a per-target lock, and a drop during a delivery stops it being written back; halt keeps the spool, archive / trash / recreate drop it, Agent boot restarts
+the loops. The member sees the waiting messages above the composer and can drop each one. A
+message is claimed by removing its file before the send and written back only when the send left
+it undelivered, so a crash in between loses that one message rather than delivering it twice.
+Expired messages are dropped with a log line; the sender is not told. Implementation:
+`workspace/agent/internal/sessionx/peer_pending.go`, `workspace/agent/internal/agents/pendingpeers.go`.
+
+## Addendum (2026-10-03) — a session may read a peer's recent output (peek)
+
+#1061. The `--peer-messaging` surface (decision 3) could message a peer but not read it. A third peer tool,
+`peek_session_output`, now does exactly that, read-only, under the same peer-messaging switch:
+asking a peer a `question` costs it a whole turn, a read costs it nothing. It is a separate tool
+rather than a widened `get_session_output` so that tool keeps its children-only meaning (ADR 0073
+decision 4) and the peek is advertised only where peer messaging is on. The MCP layer adds only
+`peek_from` = the session it serves (`mcpOwningSession`, never an argument) to
+`GET /sessions/{name}/output`; the Agent applies the rest (`sessionx/session_peek.go`): the
+switch, the same kind allowlist as a send (no shell / ssm, either end), no peeking at yourself,
+no archived target, a refusal of claude targets (running or stopped) while the workspace's
+claude login has expired (the only kind whose expiry the Agent can tell), the last 200 lines of
+the body and at most 16 KiB including the clip notice whatever the caller asks, and its own
+per-reader limit of 30 reads a minute (separate from the send limit). Trust boundary: the Agent
+REST trusts every holder of the shared `AGENT_TOKEN`, as before; `get_session_output`'s
+children-only rule is the MCP layer's. `peek_from` is an attribution, not an authenticated
+identity, so the switch, caps, limit and audit govern the ordinary MCP route, while a token
+holder can still name another reader, or omit `peek_from` and get the unrestricted `/output` the
+Console uses. The output is the same transcript-derived assistant text `get_session_output`
+returns — never the pane — and no redaction is applied, as for that tool. The target is not
+interrupted, notified or state-healed; each read is audited by a log line and an `ev:"peek"` line
+in the fleet-graph activity ledger. The ledger line is not on the `/api/fleet-graph` wire: the
+Console's graph draws a fixed set of event kinds, so the Console is unchanged. Every meta the
+Agent holds belongs to its one user; sessions shared in from other users never reach it.

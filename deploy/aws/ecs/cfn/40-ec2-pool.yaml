@@ -21,7 +21,10 @@ Parameters:
     Default: /aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id
     Description: ECS-optimized AMI. Resolved at stack update, so re-deploying this
       stack is how slots get patched (the one operational cost the EC2 launch type
-      really does add - ADR 0045 decision 7).
+      really does add - ADR 0045 decision 7). Keep it an Amazon-published image. The
+      CP role may launch only Amazon's public images and the two named here, and an image
+      this account owns may still be refused on its snapshot (#1522, 20-platform
+      Ec2RunForeignOwnedSnapshot).
   SlotAmiIdArm64:
     Type: String
     Default: ""
@@ -94,6 +97,54 @@ Resources:
     Properties:
       Roles: [ !Ref SlotRole ]
 
+  # --- The Control Plane may pass THIS stack's slot role, and no other ---
+  # The launch template carries the slot instance profile, so the CP's RunInstances has
+  # to pass SlotRole. The grant lives here, attached to the CP task role the way
+  # 60-engines attaches CpIngestManagedPolicy, because only this stack knows the role's ARN:
+  # 20-platform cannot import from a stack that imports from it, and the pattern it used
+  # to hold (role/af-*-slot) matched every deployment's slot role in the account.
+  # A deployment that has no pool stack has no slot role to pass, and no grant.
+  # !! The live E2E runs as the deployer: losing this policy shows up only as every slot
+  # grow failing with AccessDenied on iam:PassRole, under the real CP role.
+  #
+  # The slot AMIs by exact ARN, in the same policy. 20-platform admits Amazon's public images
+  # by ec2:Owner / ec2:Public and nothing else (#1522); these make a slot grow independent of
+  # how IAM reads those two keys, and admit an image this account owns if an operator points
+  # SlotAmiId at one. Such an image's own snapshot is still refused by 20-platform's snapshot
+  # statement if IAM evaluates it there - see SlotAmiId.
+  #
+  # Deployed before 20-platform by update.sh, so the exact grants exist before the wide one
+  # goes. Managed, not inline: IAM caps a role's inline policies at 10,240 bytes in total,
+  # and the CP task role passed it (#1576); deploy/local/cfn-iam-policy-size-test.py holds
+  # every role's total.
+  CpSlotLaunchManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "af-${AWS::StackName}-cp-slot-launch-${AWS::Region}"
+      Roles:
+        - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-CpTaskRoleArn" } ] ]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PassSlotRole
+            Effect: Allow
+            Action: iam:PassRole
+            Resource: !GetAtt SlotRole.Arn
+            Condition:
+              StringEquals:
+                iam:PassedToService: ec2.amazonaws.com
+          - Sid: RunSlotImage
+            Effect: Allow
+            Action: ec2:RunInstances
+            Resource: !Sub "arn:aws:ec2:${AWS::Region}::image/${SlotAmiId}"
+          - !If
+            - HasArm64Ami
+            - Sid: RunSlotImageArm64
+              Effect: Allow
+              Action: ec2:RunInstances
+              Resource: !Sub "arn:aws:ec2:${AWS::Region}::image/${SlotAmiIdArm64}"
+            - !Ref AWS::NoValue
+
   # --- SG for the instance itself. No ingress at all: the workspace task has its own
   # ENI and the ws SG (awsvpc), so nothing needs to reach the host. Egress covers the
   # image pull, SSM and the agent's control channel. ---
@@ -120,6 +171,8 @@ Resources:
         # public IPv4: a task ENI that survives a stop makes the instance multi-ENI and
         # the address silently stops being assigned - measured as 11 minutes of a
         # disconnected agent (ADR 0045 decision 3-3).
+        # The hop limit does not protect an awsvpc task (its ENI reaches IMDS directly);
+        # ECS_AWSVPC_BLOCK_IMDS below is what keeps workspace tasks off SlotRole.
         MetadataOptions:
           HttpTokens: required
           HttpPutResponseHopLimit: 2
@@ -145,12 +198,16 @@ Resources:
               # slot fail to boot for the NEXT user.
               exec > /var/log/af-userdata.log 2>&1
               set -x
+              # ECS_AWSVPC_BLOCK_IMDS: a workspace task must not reach SlotRole through IMDS.
+              # Nothing in the task uses IMDS (the Agent reads SMBIOS, not IMDS); the ECS and
+              # SSM agents use the host network and keep it. Read at agent start = new slots only.
               cat >> /etc/ecs/ecs.config <<EOF
               ECS_CLUSTER=${Cluster}
               ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION=${Cleanup}
               ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION_JITTER=1m
               ECS_IMAGE_CLEANUP_INTERVAL=30m
               ECS_IMAGE_MINIMUM_CLEANUP_AGE=24h
+              ECS_AWSVPC_BLOCK_IMDS=true
               EOF
               cat > /usr/local/bin/af-mount <<'SH'
               #!/bin/bash
@@ -168,6 +225,27 @@ Resources:
               # Only formats a volume that has NO filesystem, which is what makes it safe
               # for the CP to pass --mkfs on every mount, including retries.
               if [ "$MKFS" = --mkfs ] && ! blkid "$DEV" >/dev/null 2>&1; then mkfs.xfs -q "$DEV"; fi
+              # A home detached while it was still mounted leaves a dead mount here that answers
+              # stat with EIO, and the mkdir -p below would then fail every later mount of this
+              # home on this slot. Lazily unmount such a mount (only once its device is gone),
+              # never one whose device is still there and never any other path. Same lines as staleHomeMountScript in
+              # control-plane/internal/runtime/runtime_ecs_ec2_home_mount.go, which the CP also
+              # sends to slots booted before this was here.
+              MOUNTINFO=/proc/self/mountinfo SYSBLOCK=/sys/dev/block
+              case "$MP" in
+              /af-home/*/*) ;;
+              /af-home/?*)
+              for _ in 1 2 3 4; do
+                top=$(awk -v m="$MP" '$5 == m { d = $3; f = ""; for (i = 7; i < NF; i++) if ($i == "-") { f = $(i + 1); break } } END { print d " " f }' "$MOUNTINFO")
+                devt=$(echo "$top" | cut -d ' ' -f 1)
+                fstype=$(echo "$top" | cut -d ' ' -f 2)
+                [ "$fstype" = xfs ] || break
+                [ -e "$SYSBLOCK/$devt" ] && break
+                echo "dead mount at $MP (device $devt is gone); detaching it lazily"
+                umount -l "$MP" || break
+              done
+              ;;
+              esac
               mkdir -p "$MP"
               mountpoint -q "$MP" || mount -o nouuid "$DEV" "$MP"
               # Take whatever room the volume has now. A home that was grown while it was
@@ -184,16 +262,22 @@ Resources:
               #!/bin/bash
               # af-umount <mountpoint>. Must succeed before the CP detaches: a forced
               # detach of a mounted filesystem corrupts it, and this is someone's home.
+              # Succeeds only once nothing at all is mounted at the path: a second mount
+              # stacked on the first still holds the volume the CP is about to pull.
               set -euo pipefail
               MP=$1
-              mountpoint -q "$MP" || { echo "$MP not mounted"; exit 0; }
-              for i in 1 2 3; do
-                umount "$MP" && { echo "umounted $MP"; exit 0; }
-                sleep 2
+              mounted() { awk -v m="$MP" '$5 == m { found = 1 } END { exit !found }' /proc/self/mountinfo; }
+              mounted || { echo "$MP not mounted"; exit 0; }
+              for _ in 1 2 3 4 5 6; do
+                if umount "$MP"; then echo "umounted $MP"; else sleep 2; fi
+                mounted || exit 0
               done
               fuser -km "$MP" || true
               sleep 2
-              umount "$MP" && echo "umounted $MP (after fuser -k)"
+              if umount "$MP"; then echo "umounted $MP (after fuser -k)"; fi
+              mounted || exit 0
+              echo "$MP is still mounted" >&2
+              exit 1
               SH
               chmod +x /usr/local/bin/af-mount /usr/local/bin/af-umount
             - Cluster:

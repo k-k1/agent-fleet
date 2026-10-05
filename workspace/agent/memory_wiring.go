@@ -32,5 +32,9 @@ func memoryDeps() memoryx.Deps {
 		ErrCodeBadImport:      errCodeMemoryBadImport,
 		ErrCodeSecretDetected: errCodeMemorySecretDetected,
 		ErrCodeTooLarge:       errCodeMemoryTooLarge,
+		ErrCodeNotFound:       errCodeMemoryNotFound,
+		ErrCodeConflict:       errCodeMemoryConflict,
+		ErrCodeNoProject:      errCodeMemoryNoProject,
+		ErrCodeDisabled:       errCodeMemoryDisabled,
 	}
 }

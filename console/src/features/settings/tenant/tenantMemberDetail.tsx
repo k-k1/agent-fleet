@@ -9,7 +9,9 @@
 //
 //	Size and limits   its own card, directly under the meters it explains. Editing a
 //	                  number is not an operation on anybody.
-//	Operations        force-stop, which is a pause and takes the work with it.
+//	Operations        force-stop, which is a pause and takes the work with it, and rotating
+//	                  the internal git token, which breaks nothing that the new token
+//	                  does not mend.
 //	  Cannot be undone   ruled off below it: clean home, delete backups, remove, discard,
 //	                     delete.
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -25,8 +27,8 @@ import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { useTenantStore } from "../../../core/store/tenant.ts";
 import { stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
 import type { HomeResize, Member, WsSizing, WsSlot } from "../parts/adminShared.ts";
-import { fmtG, fmtPct, fmtGbHint, ladderFor, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
-import { MemberIdleDetail, MemberSizeChips } from "./tenantMembers.tsx";
+import { fmtG, fmtPct, fmtGbHint, ladderFor, memberClassID, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
+import { MemberAutoStopDetail, MemberIdleDetail, MemberSizeChips } from "./tenantMembers.tsx";
 import { MemberEngineAccessPanel } from "./tenantEngineAccess.tsx";
 
 // GET …/home-backups: the copies of a member's home kept outside it, and whether the home
@@ -56,6 +58,7 @@ export function MemberView({
   const [sessions, setSessions] = useState<any[] | null>(null);
   const [confirmStop, setConfirmStop] = useState(false);
   const [confirmClean, setConfirmClean] = useState(false);
+  const [confirmRotate, setConfirmRotate] = useState(false);
   const [confirmGrant, setConfirmGrant] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [confirmDestroy, setConfirmDestroy] = useState(false);
@@ -228,14 +231,19 @@ export function MemberView({
   // switching class re-draws them and "you land on" recomputes — the same number can
   // land on a different box in a different class, and that is the whole point.
   const classes = onSlots ? (sizing.slot_classes ?? []) : [];
-  const ladder = onSlots ? ladderFor(sizing, slotClass) : undefined;
+  // The class the editor's current pick lands on. "" is drawn from what the CP says "follow the
+  // tenant default" resolves to; the unchanged stored value is drawn from the effective class,
+  // because a stored id the deployment no longer offers is substituted by the CP.
+  const pickedClass = slotClass === (cur.slot_class ?? "") ? memberClassID(cur) : slotClass || (cur.slot_class_default ?? "");
+  const ladder = onSlots ? ladderFor(sizing, pickedClass) : undefined;
   const landed = onSlots ? slotFor(ladder, +memMb || 0) : null;
   // Warn only when there is a home to migrate. A member who has never started has
   // nothing architecture-dependent on disk yet, so the warning would be noise.
   const classChanged = classes.length > 0 && slotClass !== (cur.slot_class ?? "");
   const archOf = (id: string) => classes.find((c) => c.id === id)?.arch ?? "";
   const archChanged =
-    classChanged && archOf(slotClass || (sizing.default_slot_class ?? "")) !== archOf(cur.slot_class || (sizing.default_slot_class ?? ""));
+    classChanged && archOf(pickedClass || (sizing.default_slot_class ?? "")) !==
+      archOf(memberClassID(cur) || (sizing.default_slot_class ?? ""));
   const memHint = !landed
     ? +memMb > 0
       ? tr("admin.eq_hint", { hint: fmtGbHint(+memMb) })
@@ -273,6 +281,31 @@ export function MemberView({
       setBusy(false);
     }
   };
+  // The CP answers how the running workspace took the new token (control-plane
+  // git_token_rotate.go): the toast says whether anything is left for the admin to do.
+  const rotateGitToken = async () => {
+    setBusy(true);
+    try {
+      const res = await apiJSON("api/admin/rotate-git-token", "POST", { tenant_slug: slug, user_key: key }).catch(
+        () => ({ error: { code: "network" } }),
+      );
+      if (res?.error) {
+        toast(errText(res.error));
+        return;
+      }
+      setConfirmRotate(false);
+      const outcome: Record<string, string> = {
+        updated: tr("admin.rotate_git_updated"),
+        not_running: tr("admin.rotate_git_not_running"),
+        pending: tr("admin.rotate_git_pending"),
+        failed: tr("admin.rotate_git_failed"),
+        disabled: tr("admin.rotate_git_disabled"),
+      };
+      toast(outcome[res?.workspace] ?? tr("admin.rotate_git_not_running"));
+    } finally {
+      setBusy(false);
+    }
+  };
   const cleanHome = async () => {
     setBusy(true);
     try {
@@ -293,6 +326,9 @@ export function MemberView({
         return;
       }
       setConfirmClean(false);
+      // On Fargate the erase is a task that takes minutes: the CP answers once the workspace
+      // is stopped and records the outcome in the audit log, so say that rather than "done".
+      if (res?.pending) toast(tr("admin.clean_home_started"));
       poll();
       onChanged();
       void loadBackups();
@@ -340,6 +376,7 @@ export function MemberView({
       // the substitution (when there is one) is reported separately rather than
       // silently rewritten into the control.
       slot_class: typeof res?.slot_class === "string" ? res.slot_class : slotClass,
+      slot_class_effective: typeof res?.slot_class_effective === "string" ? res.slot_class_effective : undefined,
     });
     setResize(res?.home_resize ?? null);
     setLimitOpen(false);
@@ -361,6 +398,7 @@ export function MemberView({
         return;
       }
       setConfirmRemove(false);
+      if (res?.pending) toast(tr("admin.remove_purge_started"));
       onRemoved();
     } finally {
       setBusy(false);
@@ -381,6 +419,8 @@ export function MemberView({
         return;
       }
       setConfirmDestroy(false);
+      // pending: removing the EFS home is a Fargate task; the outcome goes to the audit log.
+      if (res?.pending) toast(tr("admin.destroy_started"));
       if (res?.leftovers?.length) toast(tr("admin.destroy_leftovers", { list: res.leftovers.join(", ") }));
       onChanged();
       poll();
@@ -445,6 +485,8 @@ export function MemberView({
           lists them all: "s5 is running" and "s3 is pinned" call for different next moves from
           the operator (wait, or ask for the pin to be released). */}
       <MemberIdleDetail idle={member.idle} state={member.state} />
+      {/* From the poll, never from `member`: that snapshot keeps the reason after a restart. */}
+      <MemberAutoStopDetail autoStop={stats?.auto_stop} />
 
       <section className="admin-panel">
         <h4>{tr("admin.ws_resources")}</h4>
@@ -722,6 +764,9 @@ export function MemberView({
           <button disabled={!running} onClick={() => setConfirmStop(true)}>
             <Icon name="debug-stop" /> {tr("admin.force_stop_ws")}
           </button>
+          <button disabled={busy} onClick={() => setConfirmRotate(true)}>
+            <Icon name="key" /> {tr("admin.rotate_git_token")}
+          </button>
         </div>
         <div className="danger-zone">
           <div className="danger-zone-title">
@@ -768,6 +813,18 @@ export function MemberView({
           onConfirm={stop}
         >
           <p>{tr("admin.stop_body", { slug })}</p>
+        </ConfirmDialog>
+      )}
+      {confirmRotate && (
+        <ConfirmDialog
+          title={tr("admin.rotate_git_title", { key })}
+          confirmLabel={tr("admin.rotate_git_confirm")}
+          busy={busy}
+          onCancel={() => setConfirmRotate(false)}
+          onConfirm={rotateGitToken}
+        >
+          <p>{tr("admin.rotate_git_body")}</p>
+          <p className="muted">{tr("admin.rotate_git_breaks")}</p>
         </ConfirmDialog>
       )}
       {confirmClean && (

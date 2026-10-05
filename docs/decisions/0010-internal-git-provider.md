@@ -68,3 +68,11 @@ levels, read and write, for now).
   derives from `PUBLIC_BASE_URL`.
 - If PRs/CI become necessary later, option ② can be swapped in (this decision deliberately stops
   at the minimal foundation).
+
+## Per-membership rotation (2026-10-03 addendum)
+
+The "no table, deterministic token" choice stands, with one integer added: the token's HMAC
+input now includes `membership.git_token_epoch`, and an administrator's "Rotate git token"
+bumps it (#1199). Epoch 0 yields exactly the earlier token, so nothing was invalidated on
+upgrade. The CP pushes the new token to a running workspace's Agent; details and limits are in
+[docs/build/91-internal-git.md §91.5](../build/91-internal-git.md#915-authentication-and-the-token-model).

@@ -47,6 +47,9 @@ const bundle = {
   },
 };
 
+// The CP's Google Cloud rows, as GET /api/gcp/profiles returns them (with id, name, conflict).
+let gcpRows: Record<string, unknown>[] = [];
+
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
@@ -78,12 +81,14 @@ const picks = () => Array.from(document.querySelectorAll<HTMLInputElement>(".bac
 
 beforeEach(() => {
   running = true;
+  gcpRows = [];
   api.mockReset();
   rawJSON.mockReset();
   // Existing state: only the profile "kept" is registered, and there are no hosts.
   api.mockImplementation((path: string) => {
     if (path === "api/ssm/profiles") return Promise.resolve([{ id: "p-kept", label: "kept" }]);
     if (path === "api/ssm/hosts") return Promise.resolve([]);
+    if (path === "api/gcp/profiles") return Promise.resolve(gcpRows);
     if (path === "api/user-notes") return Promise.resolve({ text: "hi", enabled: true, targets: [] });
     return Promise.resolve({});
   });
@@ -104,9 +109,9 @@ describe("BackupTab", () => {
     running = false;
     await mount();
     const boxes = Array.from(document.querySelectorAll<HTMLInputElement>(".ds-group .backup-picks input[type=checkbox]"));
-    expect(boxes).toHaveLength(3);
-    expect(boxes[2].disabled).toBe(true); // the agent instructions
-    expect(boxes[2].checked).toBe(false);
+    expect(boxes).toHaveLength(4);
+    expect(boxes[3].disabled).toBe(true); // the agent instructions
+    expect(boxes[3].checked).toBe(false);
   });
 
   it("offers only the categories present in the file as import options", async () => {
@@ -145,5 +150,86 @@ describe("BackupTab", () => {
     await mount();
     await pickFile(JSON.stringify({ kind: "something-else" }));
     expect(document.querySelector(".backup-preview")).toBeNull();
+  });
+
+  it("exports Google Cloud profiles without id, name or conflict", async () => {
+    gcpRows = [
+      {
+        id: "g1",
+        label: "Prod",
+        loginMethod: "google",
+        project: "my-prod-1",
+        quotaProject: "",
+        account: "me@example.com",
+        region: "asia-northeast1",
+        zone: "",
+        impersonateServiceAccount: "",
+        name: "prod",
+        conflict: { reason: "collision", labels: ["Prod", "prod"] },
+      },
+    ];
+    let blob: Blob | null = null;
+    const create = vi.spyOn(URL, "createObjectURL").mockImplementation((b) => {
+      blob = b as Blob;
+      return "blob:x";
+    });
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    try {
+      await mount();
+      const exp = Array.from(document.querySelectorAll<HTMLButtonElement>(".ds-group button.primary"))[0];
+      await act(async () => {
+        exp.click();
+      });
+      const out = JSON.parse(await blob!.text());
+      expect(out.sections.gcpProfiles).toEqual([
+        {
+          label: "Prod",
+          loginMethod: "google",
+          project: "my-prod-1",
+          quotaProject: "",
+          account: "me@example.com",
+          region: "asia-northeast1",
+          zone: "",
+          impersonateServiceAccount: "",
+        },
+      ]);
+    } finally {
+      create.mockRestore();
+      click.mockRestore();
+    }
+  });
+
+  it("imports Google Cloud profiles add-only", async () => {
+    gcpRows = [{ id: "g-kept", label: "kept", project: "kept-proj-1", name: "kept" }];
+    await mount();
+    await pickFile(
+      JSON.stringify({
+        ...bundle,
+        sections: {
+          gcpProfiles: [
+            { label: "Kept", project: "other-proj-1" },
+            { label: "dev", project: "my-dev-1", loginMethod: "google", region: "asia-northeast1" },
+            { label: "wf", project: "my-wf-1", loginMethod: "workforce" },
+            { label: "", project: "my-x-1" },
+          ],
+        },
+      }),
+    );
+    expect(picks()).toHaveLength(1);
+    const apply = Array.from(document.querySelectorAll<HTMLButtonElement>(".backup-preview button")).find((b) =>
+      b.className.includes("primary"),
+    )!;
+    await act(async () => {
+      apply.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const calls = rawJSON.mock.calls.map((c) => [c[0], c[1], c[2]] as [string, string, any]);
+    expect(calls.map((c) => c[0] + " " + c[1])).toEqual(["api/gcp/profiles POST"]);
+    expect(calls[0][2]).toMatchObject({ label: "dev", project: "my-dev-1", loginMethod: "google", region: "asia-northeast1" });
+    expect(calls[0][2]).not.toHaveProperty("id");
+    expect(calls[0][2]).not.toHaveProperty("name");
   });
 });

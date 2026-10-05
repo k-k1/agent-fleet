@@ -99,6 +99,7 @@ updated: "2026-09"
 | 指示とスキル | `agent_instructions.go`・`internal/userinstr`・`internal/mdblock`・`internal/fleetskills` |
 | ツールチェーンとインストーラ | `env_*.go`・`jdk*.go`・`node_install.go`・`install_*.go`・`*_install_http.go`・`internal/afdb`（`af-db`）|
 | AWS | `internal/awsx`（`aws-exec`）・`ssm_instances.go` |
+| クラウドのプロファイル（プロバイダ非依存） | `internal/cloudbridge`（Settings の取得とそのキャッシュ）・`internal/cloudlogin`（Console ログインの要求と試行）・`internal/cloudexec`（ラッパーの骨格）。`internal/awsx` はその AWS バックエンド |
 | 画像生成 | `internal/imagegen` |
 | 自前エンジン | `engines.go` |
 | フリート俯瞰図 | `internal/fleetgraph` |

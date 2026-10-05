@@ -61,6 +61,8 @@ export const assistant = {
   "assistant.output_tail": "セッション出力の取得上限",
   "assistant.note_output_tail":
     "オペレーターがセッションの出力を確認するとき（get_session_output）に読み込む量の上限です（末尾から）。読んだ内容は会話に蓄積されて以降の全ターンで読み直されるため、上限が大きいほどトークン消費が増えます。全文はミラーでいつでも確認できます。既定 32 KiB。",
+  "assistant.section_automation": "自動応答と自動走行",
+  "assistant.section_context": "コンテキストと出力",
   "assistant.appearance": "外観",
   "assistant.note_appearance":
     "「継承」はアプリのテーマに従います。テーマ・背景色はこの端末のみで保存されます（他の端末には同期されません）。",

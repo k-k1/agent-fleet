@@ -24,10 +24,12 @@ import (
 const mcpStudioNoGenerateImage = "このセッションは画像スタジオに結ばれています。生成は利用者がスタジオのボタンで押します。" +
 	"下書きは set_image_draft で直し、1 枚だけ試すなら run_image_trial を使ってください（許可されている場合）"
 
-// studioOffer is what mcpStdioStudioTools is built from.
-type studioOffer struct {
-	agentTrial bool
-}
+// mcpStudioTrialNotAllowed is run_image_trial's refusal while the studio does not allow agent
+// trials. The tool is listed regardless (mcpStudioAdvertise), so this is the only place the agent
+// learns the switch is the member's, and that calling again before they flip it is pointless.
+const mcpStudioTrialNotAllowed = "このスタジオではエージェントの試走が許可されていません。" +
+	"利用者がスタジオの設定で「エージェントの試走を許す」をオンにするまで呼ばないでください。" +
+	"試したいときは、オンにするよう利用者に頼むか、スタジオの試走ボタンを押してもらってください"
 
 // studioFile is the part of a studio's stored file this process reads. The Agent owns the file
 // (internal/imagegen ImageStudio); these two keys are the ones the session side decides by.
@@ -82,30 +84,27 @@ func sessionStudio(name string) string {
 
 // mcpStudioAdvertise decides whether this session is offered the studio tools, in the three
 // states decision 3 names:
-//   - identified and bound to a studio: offered, run_image_trial only when the studio allows it;
+//   - identified and bound to a studio: offered;
 //   - identified and not bound: not offered;
 //   - not identifiable (the cwd guess is ambiguous): offered, and a call is refused with the
 //     reason — a tool that simply is not there leaves the agent saying "no such tool".
 //
 // The third case is narrowed to a folder where some session IS bound to a studio: anywhere else
 // every call would be refused, and four tool descriptions on every turn buy nothing.
-func mcpStudioAdvertise() (studioOffer, bool) {
+//
+// run_image_trial is offered whatever the studio's "let the agent run a trial" says, and the
+// call refuses it while that is off. Withholding it relied on the client re-reading the list
+// when the member turned trials on, and codex never does (docs/log/124 §2, #1132): neither
+// list_changed nor a resume makes it list again, so the toggle never reached a running thread.
+func mcpStudioAdvertise() bool {
 	if !selfReportOnly() {
-		return studioOffer{}, false
+		return false
 	}
 	self, err := mcpListOwningSession()
 	if err != nil {
-		if studioBoundInThisFolder() {
-			return studioOffer{agentTrial: true}, true
-		}
-		return studioOffer{}, false
+		return studioBoundInThisFolder()
 	}
-	studio := sessionStudio(self)
-	if studio == "" {
-		return studioOffer{}, false
-	}
-	f, _ := readStudioFile(studio)
-	return studioOffer{agentTrial: f.AgentTrial}, true
+	return sessionStudio(self) != ""
 }
 
 func studioBoundInThisFolder() bool {
@@ -139,7 +138,7 @@ func mcpStudioCall(req mcpReq, name string, args json.RawMessage) []byte {
 		return mcpToolErr(req.ID, "このセッションと画像スタジオの結びが変わりました。スタジオのペインから結び直してください")
 	}
 	if name == "run_image_trial" && !f.AgentTrial {
-		return mcpToolErr(req.ID, "このスタジオではエージェントの試走が許可されていません（スタジオの設定で切り替えられます）")
+		return mcpToolErr(req.ID, mcpStudioTrialNotAllowed)
 	}
 	studio := url.PathEscape(bound)
 	var (

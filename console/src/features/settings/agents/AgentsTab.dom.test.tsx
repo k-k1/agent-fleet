@@ -206,3 +206,23 @@ describe("停止中セッションのアーカイブ期間（#982）", () => {
     expect(getSettings().sessionStoppedArchiveDays).toBe(14);
   });
 });
+
+// ADR 0108: the Agent Fleet memory switch defaults OFF (an upgrade must not switch it on) and
+// writes the ui-prefs key the Agent reads (uiprefs.AgentMemory).
+describe("Agent Fleet memory switch", () => {
+  it("is off by default and saves agentMemory when turned on", async () => {
+    setSettings(settingsDefaults());
+    respond();
+    await mount();
+    const row = Array.from(host!.querySelectorAll(".ds-row")).find(
+      (r) => r.querySelector(".ds-label")?.textContent === t("agents.agent_memory"),
+    );
+    expect(row).toBeTruthy();
+    expect(getSettings().agentMemory).toBe(false);
+    const [on, off] = Array.from(row!.querySelectorAll<HTMLButtonElement>(".seg-btn"));
+    expect(off.className).toContain("active");
+    await act(async () => on.click());
+    expect(getSettings().agentMemory).toBe(true);
+  });
+});
+

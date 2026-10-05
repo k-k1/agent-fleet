@@ -17,6 +17,7 @@
 // typed text on option rows and the Enter confirms the highlighted first option
 // (measured on v2.1.204, docs/build/92-driving-a-tui.md).
 
+import { useId } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { t as tr } from "../../lib/i18n/index.ts";
 import type { InteractionAnswer } from "../../core/api/client.ts";
@@ -96,9 +97,10 @@ export function PendingQuestions({
   translate?: QuestionTranslateView;
 }) {
   const qs = questions || [];
-  // The picked labels and the per-question free-text ("Type something"; filled → that
-  // question is answered by free text instead of an option, mutually exclusive with a
-  // selection below). Both survive the card's unmount — switching tab or toggling to the
+  const noteId = useId();
+  // The picked labels and the per-question free-text ("Type something"). On a single-select
+  // question both may be held at once, but only one is the answer (freeInactive below).
+  // Both survive the card's unmount — switching tab or toggling to the
   // terminal takes the whole mirror down, and an answer half made while going to check
   // something is exactly what must not be thrown away (questionDraft).
   const { sel, setSel, freeText, setFreeText, clear: clearDraft, save: saveDraft } = useQuestionDraft(draftKey, qs);
@@ -115,13 +117,7 @@ export function PendingQuestions({
     !!onSubmitAnswers || // a carried interaction fires no keys, so the modal's limits do not apply
     (menu && (single || (multiPage && qs.length > 1 && qs.every((q) => !q.multiSelect))));
 
-  const clearFree = (qi: number) =>
-    setFreeText((prev) => (prev[qi] ? prev.map((v, i) => (i === qi ? "" : v)) : prev));
-
   const toggle = (qi: number, label: string, multi?: boolean) => {
-    // Multi-select COMBINES a custom "Type something" entry with checked options (verified
-    // in the terminal), so only a single-select pick is mutually exclusive with free text.
-    if (!multi) clearFree(qi);
     setSel((prev) => {
       const next = prev.map((a) => a.slice());
       const cur = next[qi] || [];
@@ -138,9 +134,18 @@ export function PendingQuestions({
     if (v && !multi) setSel((prev) => ((prev[qi] || []).length ? prev.map((a, i) => (i === qi ? [] : a)) : prev));
   };
 
+  // Multi-select COMBINES a custom "Type something" entry with checked options (verified
+  // in the terminal), so only a single-select pick is mutually exclusive with free text.
+  // A pick does not erase the text, though: it is kept on screen greyed out, so a user who
+  // typed while still weighing the options does not lose it to one click. What is SENT is
+  // only the active side — every submit path below reads activeFree, never freeText.
+  const freeInactive = (qi: number) =>
+    !qs[qi]?.multiSelect && (sel[qi] || []).length > 0 && (freeText[qi] || "").trim() !== "";
+  const activeFree = qs.map((_, qi) => (freeInactive(qi) ? "" : freeText[qi] || ""));
+
   // A question is answered by a selection OR free text (multi-select may be left empty).
   const canSubmit = qs.every(
-    (q, qi) => (freeText[qi] || "").trim() !== "" || q.multiSelect || (sel[qi] || []).length > 0,
+    (q, qi) => activeFree[qi].trim() !== "" || q.multiSelect || (sel[qi] || []).length > 0,
   );
 
   // Drive the modal with named keys, matching the real AskUserQuestion behavior
@@ -158,12 +163,12 @@ export function PendingQuestions({
   // completes the whole form (no review page, unlike claude's modal).
   // Semantic submit (managed): translate the built selection / free text into
   // structured per-question answers — no TUI key encoding, no modal quirks.
-  const submitRespond = () => onRespond!(buildRespondAnswers(qs, sel, freeText));
+  const submitRespond = () => onRespond!(buildRespondAnswers(qs, sel, activeFree));
 
   // Carried interaction (docs/log/75): pass the selection and free text through as-is, with
   // no conversion to a key sequence.
   const submitCarried = () =>
-    onSubmitAnswers!(qs.map((_, qi) => ({ labels: sel[qi] || [], notes: (freeText[qi] || "").trim() })));
+    onSubmitAnswers!(qs.map((_, qi) => ({ labels: sel[qi] || [], notes: activeFree[qi].trim() })));
 
   // Every submit goes out through here: the draft is dropped as the answer leaves, and put
   // back if the send is refused. Answering is the one place where silence is
@@ -180,7 +185,7 @@ export function PendingQuestions({
     fire(() => {
       if (onSubmitAnswers) return submitCarried();
       if (semantic) return submitRespond();
-      return onSubmitSeq(buildMenuSeq(qs, sel, freeText, writeIn));
+      return onSubmitSeq(buildMenuSeq(qs, sel, activeFree, writeIn));
     });
 
   const submit = () =>
@@ -189,7 +194,7 @@ export function PendingQuestions({
       if (semantic) return submitRespond();
       // Which keys a built selection becomes is the modal's contract, so it lives in
       // questionKeys (and is pinned by its tests); the card only routes the result.
-      const out = buildClaudeSubmit(qs, sel, freeText);
+      const out = buildClaudeSubmit(qs, sel, activeFree);
       if (out.keys) return onSubmitKeys(out.keys);
       return onSubmitSeq(out.seq!);
     });
@@ -244,14 +249,23 @@ export function PendingQuestions({
             // option 1), so this in-card row, driven via submit()'s reliable
             // Down-to-the-row-then-type sequence, is the only working free-text path.
             // Typing here clears a single-select pick — the two are mutually exclusive.
-            <textarea
-              className="mq-freetext"
-              rows={2}
-              placeholder={tr("mirror.freeform_ph")}
-              value={freeText[qi] || ""}
-              disabled={sending}
-              onChange={(e) => setFree(qi, e.target.value, qn.multiSelect)}
-            />
+            // While a pick is active the text stays, greyed out (freeInactive).
+            <>
+              <textarea
+                className={"mq-freetext" + (freeInactive(qi) ? " inactive" : "")}
+                rows={2}
+                placeholder={tr("mirror.freeform_ph")}
+                value={freeText[qi] || ""}
+                disabled={sending}
+                aria-describedby={freeInactive(qi) ? `${noteId}-${qi}` : undefined}
+                onChange={(e) => setFree(qi, e.target.value, qn.multiSelect)}
+              />
+              {freeInactive(qi) && (
+                <div id={`${noteId}-${qi}`} className="mq-freetext-note muted">
+                  {tr("mirror.freeform_inactive")}
+                </div>
+              )}
+            </>
           )}
         </div>
       ))}

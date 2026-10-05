@@ -135,6 +135,11 @@ func LiveState(m session.Meta) string {
 		return ""
 	}
 	defer db.Close()
+	return liveState(db, m)
+}
+
+// liveState is LiveState on an already open store.
+func liveState(db *sql.DB, m session.Meta) string {
 	ses, err := activeSessionErr(db, m)
 	if err != nil {
 		return "" // store contract moved — unknown, not idle
@@ -200,7 +205,7 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 		Pending:    openQuestion(db, ses, m),
 		Mode:       mode(db, ses),
 		Queued:     queued(db, ses),
-		Compacting: compacting(db, ses),
+		Compacting: sessionCompacting(db, m, ses),
 	}
 	// Managed sessions (docs/log/27 P2): merge in the driver's runtime state — the Interaction
 	// id (the address /respond posts to) onto a pending question, and the driver-held queue
@@ -286,16 +291,69 @@ func promptText(raw string) string {
 	return raw
 }
 
-// compacting reports whether opencode is compacting this session's conversation right
-// now — session.time_compacting is set while a compaction runs and cleared after
-// (opencode's own status derives "compacting" from exactly this field).
-func compacting(db *sql.DB, ses string) bool {
-	var v sql.NullInt64
-	if db.QueryRow(`SELECT time_compacting FROM session WHERE id = ?`, ses).Scan(&v) != nil {
+// isCompacting reports whether the session is compacting its conversation right now — the
+// session list's "compacting" state (WireLive).
+func isCompacting(m session.Meta) bool {
+	db, ok := openRO()
+	if !ok {
 		return false
 	}
-	return v.Valid && v.Int64 > 0
+	defer db.Close()
+	ses := activeSession(db, m)
+	return ses != "" && sessionCompacting(db, m, ses)
 }
+
+// sessionCompacting is the store's compaction in flight, confirmed by the side that knows the
+// turn is live: under Managed the driver's event-fed flag, which every turn end, stop, abort and
+// daemon loss clears (driver.go); under Terminal liveState's "working", which already rules out a
+// turn an earlier process left incomplete. Either alone can stick: the store keeps an
+// incomplete message after a SIGKILL, and a missed SSE event keeps the flag.
+func sessionCompacting(db *sql.DB, m session.Meta, ses string) bool {
+	if !compactionInFlight(db, ses) {
+		return false
+	}
+	if m.DriverKind() == session.DriverManaged {
+		h := handleFor(m.Name)
+		return h != nil && h.isCompacting()
+	}
+	return liveState(db, m) == "working"
+}
+
+// compactionInFlight reports whether the session's newest message is a compaction summary
+// still being written. Measured on 1.18.34: /summarize and the automatic overflow compaction
+// both write an assistant message with mode and agent "compaction" (summary: true) that gains
+// time.completed when it ends, an abort included (MessageAbortedError). session.time_compacting
+// is still read in case a later release writes it, but 1.18.34 never does — it only maps the
+// column.
+func compactionInFlight(db *sql.DB, ses string) bool {
+	var tc sql.NullInt64
+	if db.QueryRow(`SELECT time_compacting FROM session WHERE id = ?`, ses).Scan(&tc) == nil && tc.Valid && tc.Int64 > 0 {
+		return true
+	}
+	var data []byte
+	if db.QueryRow(`SELECT data FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`, ses).Scan(&data) != nil {
+		return false
+	}
+	var md compactionProbe
+	return json.Unmarshal(data, &md) == nil && md.inFlight()
+}
+
+// compactionProbe is the part of a message (store row or message.updated info) that says
+// whether it is a compaction summary and whether it has finished.
+type compactionProbe struct {
+	Role  string `json:"role"`
+	Mode  string `json:"mode"`
+	Agent string `json:"agent"`
+	Time  struct {
+		Completed int64 `json:"completed"`
+	} `json:"time"`
+}
+
+func (p compactionProbe) isCompaction() bool {
+	return p.Role == "assistant" && (p.Mode == "compaction" || p.Agent == "compaction")
+}
+
+func (p compactionProbe) inFlight() bool { return p.isCompaction() && p.Time.Completed == 0 }
 
 // mode reports the session's current agent/mode normalized to "plan" | "normal".
 // opencode's "plan" agent is its plan mode; anything else (build, …) is normal. Read from
@@ -398,16 +456,19 @@ func terminalStartedAfter(m session.Meta) time.Time {
 }
 
 // TerminalModal is the modal an opencode Terminal pane shows that typed text would decide:
-// "question" while the question tool waits, "" otherwise. A pasted line is dropped there and
-// the Enter picks the highlighted option (measured 1.18.33). Nothing else on that route waits
-// for a human, since `--auto` answers the permission prompts. A managed session answers "":
-// its driver refuses free text itself (ErrQuestionPending). So does a pane that is not running.
+// "question" while the question tool waits, "permission" while the permission prompt is up
+// (screen.go), "" otherwise. A pasted line is dropped in both and the Enter picks the
+// highlighted option (measured 1.18.33). A managed session answers "": its driver refuses free
+// text itself (ErrQuestionPending). So does a pane that is not running.
 func TerminalModal(m session.Meta) string {
 	if m.DriverKind() == session.DriverManaged || !tmuxx.HasSession(session.TmuxName(m.Name)) {
 		return ""
 	}
 	if LiveState(m) == "question" {
 		return "question"
+	}
+	if terminalPermission(m) {
+		return "permission"
 	}
 	return ""
 }
@@ -518,7 +579,13 @@ func sessionResumable(ses string) bool {
 // Ordering note: rows are stamped time_created at insert, so the merged parent+child
 // sequence is append-only across polls — each turn's ordinal (Idx, the render key and
 // paging cursor unit) stays stable as new messages arrive.
-func readSession(db *sql.DB, ses string) []transcript.Turn {
+func readSession(db *sql.DB, ses string) []transcript.Turn { return readSessionTurns(db, ses, false) }
+
+// readSessionTurns is readSession; with usage set it also returns a CostOnly turn for every
+// assistant message parseMessage drops whose reported cost is its own — a billed call that
+// ended with nothing to display (an empty text, step-start/step-finish only). Only the usage
+// fold reads those (UsageTurns); the chat never sees them.
+func readSessionTurns(db *sql.DB, ses string, usage bool) []transcript.Turn {
 	// Taken once for the whole read: every assistant message asks the same question, and the
 	// answer cannot change inside one poll.
 	win := modelWindowLookup()
@@ -529,24 +596,28 @@ func readSession(db *sql.DB, ses string) []transcript.Turn {
 		args[i] = s
 	}
 	rows, err := db.Query(
-		`SELECT id, session_id, data FROM message WHERE session_id IN (`+ph+`) ORDER BY time_created, id`, args...,
+		`SELECT id, session_id, time_created, data FROM message WHERE session_id IN (`+ph+`) ORDER BY time_created, id`, args...,
 	)
 	if err != nil {
 		return nil
 	}
 	type msgRow struct {
-		id   string
-		ses  string
-		data []byte
+		id      string
+		ses     string
+		created int64
+		data    []byte
 	}
 	var msgs []msgRow
 	for rows.Next() {
 		var mr msgRow
-		if rows.Scan(&mr.id, &mr.ses, &mr.data) == nil {
+		var created sql.NullInt64
+		if rows.Scan(&mr.id, &mr.ses, &created, &mr.data) == nil {
+			mr.created = created.Int64
 			msgs = append(msgs, mr)
 		}
 	}
 	rows.Close()
+	born := sessionsCreated(db, sessions)
 
 	// A batch at a time: the parts are fetched for a whole group of messages (one query
 	// instead of one per message), then those messages are turned into turns and the raw
@@ -563,14 +634,90 @@ func readSession(db *sql.DB, ses string) []transcript.Turn {
 		}
 		byMsg := loadParts(db, ids)
 		for i, mr := range batch {
+			// A fork copies every message into the new session under a new id but keeps its
+			// time_created (measured 1.18.34, fork of a fork included), so a message older than
+			// its own session is a copy: the session it came from already reported that cost.
+			copied := mr.created > 0 && mr.created < born[mr.ses]
+			sidechain := mr.ses != ses
 			t, ok := parseMessage(mr.id, mr.data, byMsg[mr.id], start+i, win)
-			if ok {
-				t.Sidechain = mr.ses != ses
-				turns = append(turns, t)
+			if !ok {
+				if usage && !copied {
+					if cost, ts, model := messageCost(mr.data); cost > 0 {
+						turns = append(turns, transcript.Turn{Role: "assistant", CostOnly: true,
+							CostUSD: cost, TS: ts, Model: model, Idx: start + i, Sidechain: sidechain,
+							AnchorID: mr.id}) // the stable identity a cost-only ledger row is kept by
+					}
+				}
+				continue
 			}
+			t.Sidechain = sidechain
+			if copied {
+				t.CostUSD = 0
+			}
+			turns = append(turns, t)
 		}
 	}
 	return turns
+}
+
+// messageCost is an assistant message row's reported cost (0 for anything else), its creation
+// time as a transcript timestamp, and its model.
+func messageCost(data []byte) (float64, string, string) {
+	var md struct {
+		Role    string  `json:"role"`
+		ModelID string  `json:"modelID"`
+		Cost    float64 `json:"cost"`
+		Time    struct {
+			Created int64 `json:"created"`
+		} `json:"time"`
+	}
+	if json.Unmarshal(data, &md) != nil || md.Role != "assistant" {
+		return 0, "", ""
+	}
+	ts := ""
+	if md.Time.Created > 0 {
+		ts = time.UnixMilli(md.Time.Created).UTC().Format(time.RFC3339)
+	}
+	return md.Cost, ts, md.ModelID
+}
+
+// usageTurns is the conversation as the usage fold reads it: readTranscript's turns plus the
+// CostOnly ones.
+func usageTurns(m session.Meta) []transcript.Turn {
+	db, ok := openRO()
+	if !ok {
+		return nil
+	}
+	defer db.Close()
+	ses := activeSession(db, m)
+	if ses == "" {
+		return nil
+	}
+	return readSessionTurns(db, ses, true)
+}
+
+// sessionsCreated maps each session id to its creation time (store epoch millis). Missing rows
+// map to 0, so nothing is taken for a copy.
+func sessionsCreated(db *sql.DB, ids []string) map[string]int64 {
+	out := make(map[string]int64, len(ids))
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := db.Query(`SELECT id, time_created FROM session WHERE id IN (`+ph+`)`, args...)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var tc sql.NullInt64
+		if rows.Scan(&id, &tc) == nil && tc.Valid {
+			out[id] = tc.Int64
+		}
+	}
+	return out
 }
 
 // partBatch is how many messages one parts query covers. SQLite's variable limit is the
@@ -642,7 +789,11 @@ func parseMessage(msgID string, data []byte, partRows [][]byte, idx int, win win
 		ModelID    string `json:"modelID"`
 		ProviderID string `json:"providerID"` // with ModelID, the key the declared window is filed under
 		Variant    string `json:"variant"`    // opencode's reasoning effort/variant (e.g. "max")
-		Tokens     struct {
+		// Cost is this message's own USD cost, summed over its steps (measured 1.18.34: per
+		// message, not cumulative — session.cost is the running total — filled at each
+		// step-finish and final at time.completed; 0 on a free model).
+		Cost   float64 `json:"cost"`
+		Tokens struct {
 			Input  int `json:"input"`
 			Output int `json:"output"`
 			Cache  struct {
@@ -705,6 +856,7 @@ func parseMessage(msgID string, data []byte, partRows [][]byte, idx int, win win
 		t.Effort = md.Variant
 		t.InTok, t.OutTok = md.Tokens.Input, md.Tokens.Output
 		t.CacheRead, t.CacheCreate = md.Tokens.Cache.Read, md.Tokens.Cache.Write
+		t.CostUSD = md.Cost
 		// The declared window, so the gauge is measured against what opencode itself is
 		// using rather than against usagex.WindowGuess's 200,000 (window.go: a self-hosted
 		// 32k engine read as 13% full while it compacted on every turn).

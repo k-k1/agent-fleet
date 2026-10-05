@@ -102,7 +102,8 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
   const waited = s.alive ? elapsedShort(waitingAt) : "";
   const waitingNow = isWaiting(s);
   const awake = remainingShort(s.keepAwakeUntil);
-  const badges = !!(s.locked || awake || (s.alive && s.stopAfterTurnAt) || isShared);
+  const budgetStopped = !s.alive && !!s.spendCapHitAt;
+  const badges = !!(s.locked || awake || (s.alive && s.stopAfterTurnAt) || budgetStopped || isShared);
 
   // newPane = the modifier was held (or the wheel was clicked): open in another pane whatever
   // the screen. Without it, `beside` decides.
@@ -207,7 +208,11 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
               e.stopPropagation();
               setMenuAt((m) => (m ? null : "button"));
             }}
-            onKeyDown={(e) => e.stopPropagation()}
+            // Enter / Space activate this button, not the card. Escape has to reach the
+            // document, where the open menu's esc layer closes it.
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+            }}
           >
             <Icon name="ellipsis" />
           </button>
@@ -251,6 +256,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
           <Icon name="debug-pause" className="sess-awake" title={tr("srow.keep_awake_badge", { left: remainingShort(s.keepAwakeUntil) })} />
         )}
         {s.alive && s.stopAfterTurnAt && <Icon name="debug-stop" className="sess-stoparm" title={tr("srow.stop_after_turn_badge")} />}
+        {budgetStopped && <Icon name="pulse" className="sess-budget" title={tr("srow.budget_paused_hint")} />}
         {isShared && <Icon name="broadcast" className="sess-shared" title={tr("srow.shared_badge")} />}
       </div>
       )}
@@ -301,12 +307,17 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
           a click on the card: choosing "Stop" opened the session in another pane behind the
           confirmation dialog (reported 2026-09-12). The rail's row never had this because its
           menu is a SIBLING of the clickable button; a card is clickable as a whole, so the
-          boundary has to be explicit. */}
+          boundary has to be explicit. Keys stop only when they are the ones the card acts on
+          (Enter / Space): a React stopPropagation also stops the native event at the root, and
+          Escape has to reach the document, where the menu's and its dialogs' esc layers close
+          them. */}
       <span
         className="ovw-menu-host"
         onClick={(e) => e.stopPropagation()}
         onAuxClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+        }}
         onContextMenu={(e) => e.stopPropagation()}
       >
       <SessionMenu

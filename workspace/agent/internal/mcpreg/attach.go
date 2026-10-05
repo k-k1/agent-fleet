@@ -27,6 +27,7 @@ package mcpreg
 import (
 	"fmt"
 	"hash/fnv"
+	"os"
 	"sort"
 	"strings"
 )
@@ -222,7 +223,23 @@ func CodexOverrides(defs []ServerDef, opts CodexOpts) (args []string, env []stri
 // the muse driver reads these names and sends their VALUES (ADR 0095 P2-14). Two copies of
 // "what the af server needs to reach the Agent" is how a 401 with no symptom but a missing
 // report gets shipped.
+//
+// Every stdio server, a member's own included, also gets AWS_EC2_METADATA_DISABLED when the
+// Agent runs with it (awsx.IsolateWorkloadChain): a host that rebuilds the environment would
+// otherwise drop it, and an AWS SDK server with no profile would fall back to the slot's
+// instance profile on a slot that does not block IMDS at the network.
 func extraEnvVars(d ServerDef) []string {
+	return append(builtinEnvVars(d), isolationEnvVars()...)
+}
+
+func isolationEnvVars() []string {
+	if os.Getenv("AWS_EC2_METADATA_DISABLED") == "" {
+		return nil
+	}
+	return []string{"AWS_EC2_METADATA_DISABLED"}
+}
+
+func builtinEnvVars(d ServerDef) []string {
 	if d.Origin != OriginBuiltin {
 		return nil
 	}
@@ -234,13 +251,15 @@ func extraEnvVars(d ServerDef) []string {
 		//
 		// The memo tools (docs/log/86 stage 1) are the exception to "local Agent REST":
 		// the queue lives in the CP store, so they hairpin out to AF_CP_BASE_URL with the
-		// per-membership AF_MEMO_TOKEN (cpMemoDo). Both are workspace-level env, present
+		// per-membership AF_MEMO_TOKEN (cpMemoDo) — or to AF_CP_INTERNAL_URL where the CP
+		// injected one; without it here they would silently fall back to the public base,
+		// which a Kubernetes workspace cannot reach. Both are workspace-level env, present
 		// for every other kind by inheritance and dropped only by codex's default-deny.
 		// They are listed unconditionally rather than behind the opt-in: this list is
 		// resolved once per boot into codex's config, while the opt-in can be toggled
 		// afterwards, and a var that is merely forwarded grants nothing on its own — the
 		// advertised tool set is still the boundary.
-		return []string{"AGENT_TOKEN", "AGENT_ADDR", "AF_SESSION_NAME", "AF_CP_BASE_URL", "AF_MEMO_TOKEN"}
+		return []string{"AGENT_TOKEN", "AGENT_ADDR", "AF_SESSION_NAME", "AF_CP_BASE_URL", "AF_CP_INTERNAL_URL", "AF_MEMO_TOKEN"}
 	}
 	return []string{"AF_SECRET_KEY"}
 }

@@ -134,6 +134,9 @@ function browserStatus(snapshot: BrowserSnapshot, tr: ReturnType<typeof useT>): 
       browser_page_limit: "browser.page_limit",
       browser_protocol_mismatch: "browser.protocol_mismatch",
       browser_installing: "browser.installing",
+      // Reached only before the workspace payload has said so; Pane.tsx swaps in
+      // BrowserUnavailable once it has.
+      browser_unavailable: "browser.unavailable.title",
     };
     const key = known[snapshot.errorCode];
     return key ? tr(key) : snapshot.errorMessage || tr("browser.disconnected");

@@ -276,10 +276,14 @@ Resources:
                 Resource: !Sub "${ModelsBucket.Arn}/*"
 
   # !! The CP's only new IAM, all pinned to this stack - PARAMETERS, "The ingest permissions".
-  CpIngestPolicy:
-    Type: AWS::IAM::Policy
+  # Managed, not inline: every inline policy on the CP task role counts toward IAM's
+  # 10,240-byte aggregate per role, and this one with 20-platform's cp-runtime and the
+  # other stacks' grants passed it (#1576). deploy/local/cfn-iam-policy-size-test.py
+  # holds every role's total.
+  CpIngestManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
     Properties:
-      PolicyName: !Sub "af-${AWS::StackName}-cp-ingest"
+      ManagedPolicyName: !Sub "af-${AWS::StackName}-cp-ingest-${AWS::Region}"
       Roles:
         - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-CpTaskRoleArn" } ] ]
       PolicyDocument:
@@ -316,10 +320,32 @@ Resources:
               StringLike:
                 "s3:prefix": [ "llm/*", "image/*" ]
           # !! The CP buys the box itself (ADR 0077 decision 10) - PARAMETERS, "The engine boxes".
-          # A fleet has no ARN to scope to; the fence is the launch template it may pass.
+          # The fleet is created by this call, so its ARN fences nothing; the launch is fenced by
+          # 20-platform's RunInstances statements, which an instant fleet is assumed to be
+          # authorized against (ADR 0077, not yet measured under this role).
           - Effect: Allow
-            Action: [ ec2:CreateFleet, ec2:DescribeFleets, ec2:DeleteFleets ]
+            Action: [ ec2:DescribeFleets, ec2:DeleteFleets ]
             Resource: "*"
+          # CreateFleet names an image of its own (an ImageId override, or the template's), so it
+          # gets 20-platform's image fence too (#1522): Amazon-owned or public. Without this an
+          # override could boot a private image of this account even if the RunInstances fence
+          # holds nowhere on the fleet path. A snapshot override cannot be fenced here: the
+          # created volume's ec2:ParentSnapshot is a snapshot ARN, which carries no owner, and an
+          # AMI's own root volume has one too.
+          - Sid: CreateFleetSupport
+            Effect: Allow
+            Action: ec2:CreateFleet
+            NotResource: "arn:aws:ec2:*::image/*"
+          - Sid: CreateFleetAmazonImage
+            Effect: Allow
+            Action: ec2:CreateFleet
+            Resource: !Sub "arn:aws:ec2:${AWS::Region}::image/*"
+            Condition: { StringEquals: { "ec2:Owner": amazon } }
+          - Sid: CreateFleetPublicImage
+            Effect: Allow
+            Action: ec2:CreateFleet
+            Resource: !Sub "arn:aws:ec2:${AWS::Region}::image/*"
+            Condition: { StringEquals: { "ec2:Public": "true" } }
           # !! Without this CreateFleet fails top-level with SsmAccessDenied, naming neither the
           # action nor the parameter (measured, ADR 0077 P0). The launch template's ImageId is
           # resolved by the CALLER. The public parameter has no account id in its ARN.

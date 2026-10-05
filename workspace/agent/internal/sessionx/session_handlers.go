@@ -137,6 +137,8 @@ func removeManagedLedger(m session.Meta) {
 	case session.KindMuse:
 		muse.RemoveLedger(m.Name)
 	}
+	agents.DropHeld(m.Name, agents.DropTrashed)
+	dropPendingPeers(m.Name, "purged from the trash")
 }
 
 // HandleListSessions returns the live claude_* tmux sessions.
@@ -281,10 +283,13 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	// Enrich rows from their working copy (worktree flag + branch-drift). One git call
 	// per unique dir.
+	dirBranch := map[string]string{}
 	annotateSessions(sessions, func(dir string) dirInfo {
 		b, wt := gitx.GitDirInfo(dir)
+		dirBranch[dir] = b
 		return dirInfo{branch: b, worktree: wt}
 	})
+	annotateLinks(sessions, dirBranch, time.Now())
 	// Stable order: newest first by creation time.
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
 	// repoJobs and imageJobs are the only channels telling the CP "no session, but the
@@ -372,10 +377,23 @@ type CreateReq struct {
 	// before the prompt is delivered: an arm set afterwards races that delivery, and a prompt
 	// arriving after an arm is exactly what releases it.
 	StopAfterTurn bool `json:"stop_after_turn"`
+	// SpendCapUSD is the new session's spend budget (#1054). Absent = the user's default
+	// (ui-prefs sessionSpendCapUsd); an explicit 0 = no budget, even when a default is set.
+	SpendCapUSD *float64 `json:"spend_cap_usd"`
 	// Source attributes the initial_prompt injection's origin for the mirror badge
 	// (docs/log/38): "schedule" / "schedule-manual" from the CP scheduler; anything else
 	// (incl. empty — the operator MCP) records as "operator". Whitelisted server-side.
 	Source string `json:"source"`
+	// ScheduleID / ScheduleSlot name the scheduled run a CP scheduler create belongs to, as on
+	// /input (#1257).
+	ScheduleID   string `json:"schedule_id"`
+	ScheduleSlot string `json:"schedule_slot"`
+	// ScheduleDelivery is the run's own targets and silent sentinel, as on /input (#1560).
+	ScheduleDelivery *chatx.ScheduleDelivery `json:"schedule_delivery"`
+	// managed: a Managed create, which raises the instruction row as sending and sends
+	// initial_prompt carrying its id (instr) (#1257). False on the Terminal route.
+	managed bool
+	instr   string
 	// Origin / OriginConv record who STARTED this session (docs/log/46 §2-c, ADR 0029 §6) —
 	// a different axis from Source (which attributes one injected prompt). The MCP
 	// create_session sends "operator" plus its own conversation slug; the Console sends
@@ -439,7 +457,7 @@ type CreateReq struct {
 	SSORegion    string `json:"sso_region"`
 	SSOAccountID string `json:"sso_account_id"`
 	SSORoleName  string `json:"sso_role_name"`
-	// SSMForceLogin: run `aws sso logout` + `aws sso login` unconditionally at launch
+	// SSMForceLogin: drop this profile's cached login and run `aws sso login` at launch
 	// (skip the cached-token short-circuit) so the user re-authenticates. One-shot.
 	SSMForceLogin bool `json:"ssm_force_login"`
 	// Studio binds the new session to an image studio (ADR 0100 decision 2): written onto the
@@ -763,6 +781,12 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if req.Mode != "" && req.Mode != "normal" && req.Mode != "plan" {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_mode", `mode must be "plan" or "normal"`)
 		return
+	}
+	if req.SpendCapUSD != nil {
+		if _, ok := session.NormalizeSpendCap(*req.SpendCapUSD); !ok {
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_spend_cap", spendCapRangeMsg)
+			return
+		}
 	}
 	// "Ask for tool approval" is only accepted for kinds whose pending approvals can be
 	// answered from the Console (docs/log/76). Ignoring it silently would leave the caller
@@ -1089,11 +1113,15 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if req.StopAfterTurn {
 		meta.StopAfterTurnAt = meta.CreatedAt
 	}
+	meta.SpendCapUSD = session.DefaultSpendCap()
+	if req.SpendCapUSD != nil {
+		meta.SpendCapUSD, _ = session.NormalizeSpendCap(*req.SpendCapUSD) // validated above
+	}
 	// docs/log/51 Phase 3, the self-report fast path: add one line to the launch task saying
 	// "call af_report when you are done" — only for an instruction that owes a report, i.e.
 	// one with report_to. Placed before the managed / tui split so both launch paths carry
 	// the same line.
-	if req.ReportTo != "" {
+	if req.ReportTo != "" || req.delivery() != nil {
 		req.InitialPrompt = withSelfReportHint(req.InitialPrompt, meta)
 	}
 	// The studio's own `session` is written BEFORE the session is published or launched (ADR
@@ -1118,9 +1146,13 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 		slot.publish(meta)
 		recordFleetGraphBirth(meta)
+		req.managed = true
 		noteCreateOrigin(name, &req, spawnParent, origin)
+		// The row stays either way: a failed launch task is reported as before.
+		defer chatx.MarkInstrSent(name, req.instr)
 		if p := strings.TrimSpace(req.InitialPrompt); p != "" {
-			if err := h.Send(agents.TurnInput{Prompt: p, Origin: createTurnOrigin(&req, spawnParent)}); err != nil {
+			if err := h.Send(agents.TurnInput{Prompt: p, Origin: createTurnOrigin(&req, spawnParent),
+				Instr: req.instr, Schedule: scheduleRefOf(req.Source, req.ScheduleID, req.ScheduleSlot)}); err != nil {
 				log.Printf("managed initial prompt %s: %v", name, err)
 				meta.InitialPromptState = session.InitialPromptFailed
 			} else {
@@ -1185,11 +1217,20 @@ func createTurnOrigin(req *CreateReq, spawnParent string) agents.Origin {
 	}
 }
 
+// delivery is the scheduled run's own delivery (#1560), or nil.
+func (req *CreateReq) delivery() *chatx.ScheduleDelivery {
+	d := scheduleDeliveryOf(req.Source, req.ScheduleID, req.ScheduleSlot, req.ScheduleDelivery)
+	if d != nil {
+		d.PromptSum = chatx.PromptSum(req.InitialPrompt) // the launch task as it lands in the transcript
+	}
+	return d
+}
+
 func noteCreateOrigin(name string, req *CreateReq, spawnParent, origin string) {
 	hasPrompt := strings.TrimSpace(req.InitialPrompt) != ""
 	switch {
-	case req.ReportTo != "":
-		chatx.AddInstruction(name, req.ReportTo, injectionSource(req.Source))
+	case req.ReportTo != "" || req.delivery() != nil:
+		req.instr = chatx.AddScheduledInstruction(name, req.ReportTo, injectionSource(req.Source), req.delivery(), req.managed)
 		recordInjection(name, req.InitialPrompt, injectionSource(req.Source)) // orchestrated start (docs/log/30 ② / docs/log/38)
 		if hasPrompt {
 			recordFleetGraphInstruct(name, injectionSource(req.Source), req.ReportTo, "", req.InitialPrompt)
@@ -1448,6 +1489,8 @@ func HaltSession(m session.Meta) (session.Meta, error) { return haltSession(m, f
 func ForgetRuntime(m session.Meta) {
 	sid := session.UUID(m.Dir, m.Name)
 	dropManagedRuntime(m)
+	agents.DropHeld(m.Name, agents.DropTrashed)
+	dropPendingPeers(m.Name, "moved to the trash")
 	status.Remove(sid)
 	status.RemoveExit(m.Name)
 	status.RemoveCarried(sid)
@@ -1486,6 +1529,12 @@ func HandleHaltSession(w http.ResponseWriter, r *http.Request) {
 		chatx.DisarmSessionReport(name)
 	}
 	m, err := haltSessionMeta(m)
+	if body.DisarmReport {
+		// The operator withdrew its instructions, so its prompts held for the next start go
+		// too (#1257); peer messages and scheduled prompts stay. After the halt, so the live
+		// queue cannot start one of them in between.
+		agents.DropHeldOrigin(name, agents.OriginOperator, agents.DropWithdrawn)
+	}
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
@@ -1615,6 +1664,9 @@ func ArchiveSession(m session.Meta) {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
 	dropManagedRuntime(m) // managed: drop the runtime handle instead of a pane
+	// A held input waits for the next start, and an archived session has none.
+	agents.DropHeld(name, agents.DropArchived)
+	dropPendingPeers(name, "archived")
 	status.Remove(session.UUID(m.Dir, name))
 	status.RemoveExit(name)
 	if wasAlive {
@@ -1676,12 +1728,13 @@ func RestoreSession(name string) (session.Meta, bool) {
 	return m, true
 }
 
-// HandleListArchived returns archived sessions (for the restore modal).
+// HandleListArchived returns archived sessions (for the restore modal) as slim rows built from
+// the meta (wireArchivedRow), not the full live wire.
 func HandleListArchived(w http.ResponseWriter, r *http.Request) {
 	sessions := []session.Session{}
 	for _, m := range session.ListMetas() {
 		if m.Archived {
-			sessions = append(sessions, wireSession(m, false))
+			sessions = append(sessions, wireArchivedRow(m))
 		}
 	}
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
@@ -1723,6 +1776,8 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
 	dropManagedRuntime(m) // managed: drop the runtime handle instead of a pane
+	agents.DropHeld(m.Name, agents.DropRecreated)
+	dropPendingPeers(m.Name, "recreated: the old session is archived")
 	status.Remove(session.UUID(m.Dir, m.Name))
 	status.RemoveExit(m.Name)
 	if wasAlive {
@@ -1745,7 +1800,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	// recreated managed (docs/log/27 P2).
 	newMeta := session.Meta{
 		Name: allocSessionName(m.Dir), Dir: m.Dir, Subdir: m.Subdir, Model: m.Model, Effort: m.Effort, Mode: m.Mode,
-		Kind: m.Kind, Driver: m.Driver, SkipPermissions: m.SkipPermissions,
+		Kind: m.Kind, Driver: m.Driver, SkipPermissions: m.SkipPermissions, SpendCapUSD: m.SpendCapUSD,
 		Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitx.GitCurrentBranch(m.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
 		// recreate means "make the same slot again, empty", so the origin is inherited (ADR 0029 §6).
@@ -1825,12 +1880,16 @@ func forkSids(src session.Meta) []string {
 // the ancestry the cache orphan scan relies on above all — can be checked without driving a
 // real fork, which needs a real source conversation.
 func forkMeta(src session.Meta, forkName, title, forkFrom, forkAt string) session.Meta {
+	now := time.Now()
 	return session.Meta{
 		Name: forkName, Dir: src.Dir, Subdir: src.Subdir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
 		Kind: src.Kind, Driver: src.Driver, Title: title, SkipPermissions: src.SkipPermissions,
+		// The budget value carries over, the hit does not: the fork's spend starts from the
+		// instant it was made, to the sub-second (SpendFrom), so it has spent nothing yet.
+		SpendCapUSD: src.SpendCapUSD, SpendFrom: now.Format(time.RFC3339Nano),
 		Repo:      filepath.Base(src.Dir),
 		Branch:    gitx.GitCurrentBranch(src.Dir),
-		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
+		CreatedAt: now.Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
 		ForkSids: forkSids(src),
 		// The fork works in the same working copy, so it renames the same branch for the same item.
 		WorkItem: src.WorkItem,

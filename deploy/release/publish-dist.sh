@@ -129,8 +129,12 @@ if [ "$SEED" = 1 ]; then
   # console/scripts/shots — docs/log/35 §35.7.4-1) and are pushed under the same path,
   # so both READMEs can reference them relatively. Binary content rides the same
   # base64 contents API as the text files.
+  # The demo recordings (demo-*.webp, console/scripts/shots/demo.mjs) stay out: the dist
+  # READMEs do not show them, and at ~2 MB each they would be by far the largest payload
+  # this contents-API upload carries.
   shots=()
   for p in "$ROOT"/docs/img/*.webp; do
+    case "$(basename "$p")" in demo-*) continue ;; esac
     [ -f "$p" ] && shots+=("docs/img/$(basename "$p")")
   done
   for f in README.md README.ja.md CHANGELOG.md CHANGELOG.ja.md LICENSE NOTICE \

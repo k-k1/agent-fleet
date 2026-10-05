@@ -158,11 +158,15 @@ A plain click uses the current pane; Ctrl/⌘-click and middle-click open anothe
   off screen is still one click from its parent. Folder navigation is retraced by the browser's
   own **Back button** too — however you got somewhere ("Up", the breadcrumb, or a card), the same
   number of Back presses gets you the same distance back.
+- **Include subfolders** — the button at the end of the breadcrumb row lists **every picture up to
+  three levels down** in one grid, newest first; each card's name shows the subfolder it is in.
+  The walk is bounded, so in a very large tree you get the newest ones and the header says
+  "newest N only". It switches itself off when you move to another folder.
 - **Cards** — click the card to **enlarge** (← / → move through the folder, and "3 / 12" tells you
   where you are; **on a phone, swipe left and right** to move — only at fit, because while you are
   zoomed in a drag pans the picture); the button in the corner **opens it in the file pane**. Just
-  looking never costs you a pane. **Right-click a card** (or press the Menu key) for copy path /
-  copy name, rename and delete — on a folder, also "Open in another pane" — and, in a session's
+  looking never costs you a pane. **Right-click a card** (or press the Menu key) for **send to a
+  session / assistant**, copy path / copy name, rename and delete — on a folder, also "Open in another pane" — and, in a session's
   folder, a jump to the session that generated the pictures
   ([menus](badges-and-menus.md#cards-in-the-image-gallery)).
 - **Refresh** — on open, on returning to the tab, and every 20 seconds while a session is running.
@@ -363,7 +367,8 @@ agent never paints a batch on its own.
 
 - The agent can only **trial**, and only **the draft exactly as it is on screen, one picture** —
   it has no way to pass anything of its own. The studio setting **Allow the agent to trial**
-  (On by default) turns that off.
+  (On by default) turns that off. The switch applies from the agent's next trial, in a session
+  that is already running too; while it is off, the agent is told you have to turn it on.
 - **Enqueueing N pictures is yours alone.**
 - **`generate_image` is not available to a studio's session** (the agent does not see it, and a
   call is refused), so this pane is the one road to a picture. A CLI's own built-in image tool

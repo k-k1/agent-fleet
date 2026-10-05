@@ -25,6 +25,11 @@ export const viewer = {
   "browser.workspace_starting": "ワークスペースを起動中です。準備ができてから再接続してください。",
   "browser.page_limit": "同時に開けるブラウザペイン数の上限に達しました。",
   "browser.protocol_mismatch": "ブラウザペインの通信バージョンが一致しません。",
+  "browser.unavailable.title": "このワークスペースではブラウザ機能を使えません",
+  "browser.unavailable.body":
+    "このワークスペースは {runtime} ランタイムで動いています。ここでは Chromium のサンドボックスが起動できません（ユーザー名前空間か setuid ヘルパーが必要ですが、制限付きの pod が両方とも禁じています）。サンドボックスを外して動かすことはせず、ブラウザペインとエージェントのブラウザツールを止めています。Web アプリは軽量プレビュー（新しいタブ）で開けます。",
+  "browser.unavailable.short": "{runtime} ランタイムでは使えません：制限付きの pod では Chromium のサンドボックスが起動できません",
+  "browser.unavailable.open_light": "軽量プレビューで :{port} を開く",
   "browser.console_empty": "Consoleメッセージはありません。",
   "browser.copy_console": "Consoleメッセージをコピー",
   "browser.copy_selection": "選択したテキストをコピー（Ctrl+C）",
@@ -156,6 +161,8 @@ export const viewer = {
   "view.open_commit": "コミット {sha} を開く",
   "view.commit_not_found": "コミットが見つかりません: {sha}",
   "view.open_session": "セッション {name} を開く",
+  "view.open_work_item": "{key} を開く",
+  "view.session_not_found": "セッションが見つかりません: {name}",
   "view.open_conversation": "チャット {slug} を開く",
   "view.conversation_not_found": "会話が見つかりません: {slug}",
   "view.table_repaired":

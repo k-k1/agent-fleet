@@ -1,7 +1,11 @@
 package imagegen
 
-// The agy route (ADR 0069): drive the Antigravity CLI's built-in `generate_image` tool through
-// one non-interactive print-mode turn and collect the file it wrote.
+// The agy route (ADR 0069): drive the Antigravity CLI's built-in image generation through one
+// non-interactive print-mode turn and collect the file it wrote. Since agy 1.2.16 the main agent
+// is no longer offered `generate_image` as a callable tool (the CLI's init event still lists it);
+// it hands the request to the built-in `image-generator` subagent through `invoke_subagent`.
+// Without that delegation the driver answers "the tool is unavailable" and no file appears
+// (measured 2026-10-05, 1.2.16 and 1.2.17). The direct-call fallback for an older CLI is untested.
 //
 // It is the second Tier-1 provider (decision 3, "existing connection"): it needs no API key and
 // no new Connections card, because the container already holds an Antigravity OAuth token when
@@ -16,11 +20,16 @@ package imagegen
 //     the user's real home would load the whole materialized MCP fleet for one picture — and
 //     hand this turn a generate_image of its own. The same trick chatAgyHome already plays for
 //     the assistant chat.
-//   - NO --dangerously-skip-permissions, and permissions.allow naming exactly one tool. Print
-//     mode cannot prompt, so every tool that is not allow-listed is auto-denied (measured
+//   - NO --dangerously-skip-permissions, and permissions.allow naming only the image tool and
+//     the subagent hand-off. Print mode cannot prompt, so every tool that is not allow-listed is
+//     auto-denied (measured
 //     2026-09-07: `run_command` came back as denied_actions=[command] and the run ended
-//     CANCELED). That is this route's equivalent of codex's `-s read-only`, and it is what makes
-//     "the model could not have fabricated a placeholder PNG" true rather than hoped for.
+//     CANCELED). That is this route's equivalent of codex's `-s read-only`, and it is what keeps
+//     the DRIVER from fabricating a placeholder PNG. The picture itself is now the subagent's
+//     tool output, which this route authenticates only by extension at the top level of a fresh
+//     brain directory; the subagent runs under the same allow-list (measured 2026-10-05: its
+//     view_file outside the working directory came back in the run's denied_actions, which is
+//     why reference images are copied into it and opened by one scoped read grant).
 //   - the prompt on STDIN as one `--input-format stream-json` message. `--print` takes its
 //     prompt as a flag VALUE, which would put it in every process listing on the host.
 //   - the result collected by DIFFING the conversation's own output directory, never by parsing
@@ -56,6 +65,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/modelfallback"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -64,7 +74,7 @@ import (
 // own step store and not on any wire this package reads), so the cheapest capable driver is the
 // right default. Override deployment-wide with AF_IMAGEGEN_AGY_MODEL, because model ids move and
 // nothing here may depend on one staying valid.
-const defaultAgyModel = "gemini-3.8-flash-low"
+const defaultAgyModel = modelfallback.ImagegenAgyDriver
 
 // agyGenerateTimeout bounds one turn, for the same reason the Codex one does: it sits below the
 // 600 s tool_timeout_sec stamped on the af server, so a slow run is reported by us with a real
@@ -74,14 +84,14 @@ const agyGenerateTimeout = 8 * time.Minute
 
 // agyAspectRatios is the built-in tool's own enum, read out of the CLI's embedded JSON schema
 // ("Supported values: '1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9'. Default is '1:1'").
-// Unlike the Codex route's size, this one REACHES the tool: a 16:9 request came back 1376x768
-// (measured 2026-09-07).
+// Unlike the Codex route's size, this one reaches the picture: a 16:9 request came back 1376x768
+// (measured 2026-09-07 on the tool directly; 2026-10-05 through the subagent, one sample).
 var agyAspectRatios = []string{"1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9"}
 
-// agyImageName is the ImageName every generation asks for. The parameter is required and the
-// tool appends its own millisecond stamp, so the value only decides how the file is spelled
+// agyImageName is the ImageName a direct generate_image call (agy before 1.2.16) is told to use.
+// The tool appends its own millisecond stamp, so the value only decides how the file is spelled
 // inside a directory this package deletes; a fixed one keeps the prompt's own words out of a
-// file name.
+// file name. On the subagent path the subagent names the file and nothing depends on it.
 const agyImageName = "af_generated"
 
 type agyProvider struct {
@@ -108,12 +118,12 @@ func (p *agyProvider) ID() string { return ProviderAgy }
 // the caller cannot pick 1024x1024 here any more than on the Codex route.
 func (p *agyProvider) Caps(string) Caps {
 	return Caps{
-		// edit rides on the tool's own ImagePaths parameter ("Images to edit, combine, or use
-		// as references", maxItems 3). That is the tool contract rather than a measurement: the
-		// one live run this was budgeted for produced a picture from text alone.
+		// Edit works through copies of the reference images placed in the throwaway working
+		// directory and one scoped read grant on it (measured 2026-10-05, ADR 0069): the subagent's
+		// view_file is denied anywhere else, so Generate stages the inputs there.
 		Ops:          []Op{OpGenerate, OpEdit},
 		AspectRatios: agyAspectRatios,
-		// 3 is the tool's own cap; a fourth reference image is rejected by its schema.
+		// 3 is the built-in tool's own cap on ImagePaths; a fourth is rejected by its schema.
 		MaxInputs: 3,
 		// One call, one picture (measured). Asking for more would be a second call and a second
 		// unit of the user's plan, so the honest number is 1 and the core reports the shortfall.
@@ -124,6 +134,11 @@ func (p *agyProvider) Caps(string) Caps {
 // Ready is on the tools/list path, which a client calls every turn, so it stays as cheap as the
 // Codex one: the binary on PATH and a token on disk. It deliberately does NOT run `agy models`
 // or any other CLI probe — that would spawn a process per turn for every session.
+//
+// Nor is there a cheap way to learn that the ACCOUNT is not offered image generation: the init
+// event lists generate_image whatever the account gets (measured), so the only probe is a real
+// model turn (~3 s, a driver-model call) on every poll. Generate reports it from the reply
+// instead (agyImageUnavailable).
 //
 // There is no exhaustion check to match codex's PlanExhausted: agy's remaining-quota figure only
 // comes from scraping its TUI (internal/agents/agy, seconds per scrape), which is far too
@@ -147,20 +162,13 @@ func (p *agyProvider) Generate(ctx context.Context, req Request) (Result, error)
 	if len(req.Inputs) > caps.MaxInputs {
 		return Result{}, fmt.Errorf("at most %d reference images (got %d)", caps.MaxInputs, len(req.Inputs))
 	}
-	for _, in := range req.Inputs {
-		// The tool refuses a relative path outright ("image path must be absolute"); saying so
-		// here costs nothing and saves a turn of the user's plan.
-		if !filepath.IsAbs(in) {
-			return Result{}, fmt.Errorf("reference image paths must be absolute: %s", in)
-		}
-	}
 	if req.Mask != "" {
 		// No mask parameter exists on this tool; handing one over as a reference image would
 		// silently produce something else entirely.
 		return Result{}, errors.New("the agy route has no mask input; use a provider that supports inpainting")
 	}
 
-	home, err := p.prepareHome()
+	home, refs, err := p.prepareHome(req.Inputs)
 	if err != nil {
 		return Result{}, err
 	}
@@ -188,7 +196,7 @@ func (p *agyProvider) Generate(ctx context.Context, req Request) (Result, error)
 	cmd := exec.CommandContext(runCtx, p.exe, args...)
 	cmd.Dir = filepath.Join(home, "wd")
 	cmd.Env = envWithHome(home)
-	cmd.Stdin = strings.NewReader(agyStdin(agyPrompt(req, ratio)))
+	cmd.Stdin = strings.NewReader(agyStdin(agyPrompt(req, ratio, refs)))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -234,6 +242,12 @@ func (p *agyProvider) Generate(ctx context.Context, req Request) (Result, error)
 	if len(files) == 0 {
 		// The honest failure the whole defensive shape exists to produce: the model may have
 		// found the tool unavailable and merely said so. Its prose is not evidence of a file.
+		if agyImageUnavailable(ev.reply) {
+			// The CLI lists generate_image in its init event whatever the account is offered
+			// (measured), so this reply is the only place the refusal is visible.
+			return res, fmt.Errorf("the signed-in Antigravity/Gemini account is not offered image generation (agy says: %s)",
+				tail(ev.reply, 300))
+		}
 		return res, fmt.Errorf("agy generated no image (%s)", tail(ev.reply, 300))
 	}
 	if req.Count > 0 && len(files) > req.Count {
@@ -251,6 +265,25 @@ func (p *agyProvider) Generate(ctx context.Context, req Request) (Result, error)
 		res.Warnings = append(res.Warnings, "agy exited with an error after producing the image: "+runErr.Error())
 	}
 	return res, nil
+}
+
+// agyImageUnavailable recognises the driver saying the image tool or subagent is not there, as
+// the prompt tells it to ("the image generation tool is unavailable"). It is deliberately narrow:
+// "generat" (image generation) and an unavailability word must appear, so a reply about an
+// unavailable reference image or shell stays the generic error, and a false negative only leaves the
+// generic "generated no image" error, while a false positive would blame the account for a
+// failure that is not about it.
+func agyImageUnavailable(reply string) bool {
+	r := strings.ToLower(reply)
+	if !strings.Contains(r, "image") || !strings.Contains(r, "generat") {
+		return false
+	}
+	for _, w := range []string{"unavailable", "not available", "isn't available", "is not offered", "not offered"} {
+		if strings.Contains(r, w) {
+			return true
+		}
+	}
+	return false
 }
 
 // pickAspectRatio resolves what will actually be asked for, and says so when that is not what
@@ -329,32 +362,52 @@ func parseRatio(s string) (float64, bool) {
 //     with the user's agy, and it is read, never written through (a rotation is folded back by
 //     foldRotatedToken, which is the one thing a throwaway home would otherwise throw away).
 //   - settings.json / config/config.json — workspace trust for the empty working directory,
-//     telemetry off, and permissions.allow naming ONLY the image tool. Both files carry the
+//     telemetry off, and permissions.allow naming ONLY the image tool, the subagent hand-off and,
+//     when the request has reference images, one read grant scoped to the working directory. Both files carry the
 //     permissions because the effective location has shifted between agy builds (docs/log/32
 //     D-5) and the extra copy is harmless.
 //   - config/mcp_config.json — EMPTY on purpose. agy's MCP config is global-only, so this is the
 //     only way to keep one picture from spawning the user's whole MCP fleet.
-func (p *agyProvider) prepareHome() (string, error) {
-	home, err := os.MkdirTemp("", "af-imagegen-agy-")
+//
+// inputs are copied into the working directory under neutral names and their new paths returned:
+// the subagent's view_file is denied outside it (measured 2026-10-05), and the one allow entry
+// `read_file(<wd>/*)` opens exactly that directory, which holds nothing but these copies. The
+// pattern embeds the temp path verbatim, so it assumes TMPDIR holds no rule metacharacters.
+func (p *agyProvider) prepareHome(inputs []string) (home string, refs []string, err error) {
+	home, err = os.MkdirTemp("", "af-imagegen-agy-")
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
+	defer func() {
+		if err != nil {
+			os.RemoveAll(home)
+			home, refs = "", nil
+		}
+	}()
 	cliDir := filepath.Join(home, ".gemini", "antigravity-cli")
 	cfgDir := filepath.Join(home, ".gemini", "config")
 	// An EMPTY working directory, so that even a driver that ignored the instructions has
 	// nothing of the user's to look at.
 	wd := filepath.Join(home, "wd")
 	for _, d := range []string{cliDir, cfgDir, wd} {
-		if err := os.MkdirAll(d, 0o700); err != nil {
-			os.RemoveAll(home)
-			return "", err
+		if err = os.MkdirAll(d, 0o700); err != nil {
+			return "", nil, err
 		}
 	}
-	if err := os.Symlink(p.token, filepath.Join(cliDir, "antigravity-oauth-token")); err != nil {
-		os.RemoveAll(home)
-		return "", err
+	if err = os.Symlink(p.token, filepath.Join(cliDir, "antigravity-oauth-token")); err != nil {
+		return "", nil, err
 	}
-	allow := []string{mcpImageToolName}
+	allow := []string{mcpImageToolName, agySubagentToolName}
+	for i, in := range inputs {
+		var ref string
+		if ref, err = stageAgyReference(wd, i+1, in); err != nil {
+			return "", nil, err
+		}
+		refs = append(refs, ref)
+	}
+	if len(refs) > 0 {
+		allow = append(allow, "read_file("+wd+"/*)")
+	}
 	files := map[string]any{
 		filepath.Join(cliDir, "settings.json"): map[string]any{
 			"enableTelemetry":   false,
@@ -365,23 +418,62 @@ func (p *agyProvider) prepareHome() (string, error) {
 		filepath.Join(cfgDir, "mcp_config.json"): map[string]any{"mcpServers": map[string]any{}},
 	}
 	for path, v := range files {
-		b, err := json.MarshalIndent(v, "", "  ")
-		if err != nil {
-			os.RemoveAll(home)
-			return "", err
+		var b []byte
+		if b, err = json.MarshalIndent(v, "", "  "); err != nil {
+			return "", nil, err
 		}
-		if err := os.WriteFile(path, append(b, '\n'), 0o600); err != nil {
-			os.RemoveAll(home)
-			return "", err
+		if err = os.WriteFile(path, append(b, '\n'), 0o600); err != nil {
+			return "", nil, err
 		}
 	}
-	return home, nil
+	return home, refs, nil
+}
+
+// stageAgyReference copies one reference image into wd as ref_<n><ext> and returns the new path.
+// The name is neutral on purpose: the original may carry a user's file name, and the path is
+// written into a prompt. Only an image extension is kept, so the copy is never something the tool
+// would not open as a picture.
+func stageAgyReference(wd string, n int, src string) (string, error) {
+	if !filepath.IsAbs(src) {
+		// The tool refuses a relative path outright ("image path must be absolute").
+		return "", fmt.Errorf("reference image paths must be absolute: %s", src)
+	}
+	if !isImageExt(src) {
+		return "", fmt.Errorf("reference image %s is not a png/jpg/gif/webp file", filepath.Base(src))
+	}
+	// Through the gate every provider reads a request's pictures by (refuses a symlink swapped in
+	// after staging). agy.go is not in providerSources because it also reads its own output with
+	// os.ReadFile, which that AST check would flag; this is the one place it reads a request path.
+	data, err := readRequestFile(src)
+	if err != nil {
+		return "", fmt.Errorf("reading reference image: %w", err)
+	}
+	dst := filepath.Join(wd, "ref_"+strconv.Itoa(n)+strings.ToLower(filepath.Ext(src)))
+	// O_EXCL like copyInputInto. The size is bounded by the staging gate (inputMaxBytes), not here.
+	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	return dst, nil
 }
 
 // mcpImageToolName is agy's own name for the built-in tool — the allow-rule and the prompt have
 // to agree on it, and it is not this fleet's `generate_image` MCP tool even though the two are
 // spelled the same.
 const mcpImageToolName = "generate_image"
+
+// agySubagentToolName is how the main agent reaches the built-in image-generator subagent
+// (agy 1.2.16+). It is allow-listed next to the image tool because the delegation is auto-denied
+// in print mode otherwise. The subagent's own calls are checked against the same allow-list:
+// a read outside the throwaway working directory is denied and reported in denied_actions.
+const agySubagentToolName = "invoke_subagent"
 
 // foldRotatedToken copies a refreshed OAuth token back to the user's real one. agy refreshes via
 // tmp+rename, which REPLACES the symlink with a real file inside the throwaway home — where it
@@ -437,24 +529,24 @@ func agyStdin(prompt string) string {
 // agyPrompt is the fixed template. The parameters that DO reach the tool are stated as
 // instructions to set them; nothing that the tool has no parameter for is promised, because
 // promising it only teaches the driver to claim it honoured it.
-func agyPrompt(req Request, ratio string) string {
+func agyPrompt(req Request, ratio string, refs []string) string {
 	var b strings.Builder
-	b.WriteString("Generate the image described below using the generate_image tool, then stop.\n\n")
+	b.WriteString("Generate the image described below, then stop.\n\n")
 	b.WriteString("Rules:\n")
-	b.WriteString("- Call the generate_image tool exactly once. Do not run shell commands, do not write or read any file, do not inspect the working directory.\n")
-	fmt.Fprintf(&b, "- Set ImageName to %s.\n", agyImageName)
+	b.WriteString("- Delegate to the built-in image-generator subagent with the invoke_subagent tool, exactly once, and put the full description in the subagent's prompt. Do exactly one of delegating or calling generate_image directly, never both: call generate_image directly (exactly once) only if invoke_subagent or the image-generator subagent is not available to you. Do not run shell commands, do not write or read any file, do not inspect the working directory.\n")
+	fmt.Fprintf(&b, "- If you call generate_image directly, set ImageName to %s.\n", agyImageName)
 	if ratio != "" {
-		fmt.Fprintf(&b, "- Set AspectRatio to %s.\n", ratio)
+		fmt.Fprintf(&b, "- Set AspectRatio to %s (state it in the subagent's prompt, or pass it to generate_image).\n", ratio)
 	}
-	if len(req.Inputs) > 0 {
-		b.WriteString("- Pass the reference images listed below as ImagePaths, exactly as written.\n")
+	if len(refs) > 0 {
+		b.WriteString("- Use the reference images listed below: tell the subagent to open each one with view_file, then pass the paths exactly as written to generate_image as ImagePaths. Do not open them yourself.\n")
 	}
 	b.WriteString("- If the image generation tool is unavailable, say so in one line and stop. Never draw, script or otherwise fabricate a substitute image.\n")
 	b.WriteString("- Do not report a file path and do not summarise the picture; the file is collected from disk.\n")
-	if len(req.Inputs) > 0 {
+	if len(refs) > 0 {
 		b.WriteString("\nReference images:\n")
-		for _, in := range req.Inputs {
-			b.WriteString("- " + in + "\n")
+		for _, r := range refs {
+			b.WriteString("- " + r + "\n")
 		}
 	}
 	b.WriteString("\nDescription:\n")

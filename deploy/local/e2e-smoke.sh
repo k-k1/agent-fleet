@@ -125,7 +125,7 @@ if [ "${1:-}" = "--inner" ]; then
                 "mcp_grafana=$EXPECT_MCP_GRAFANA" \
                 "cloudwatch_mcp=$EXPECT_CLOUDWATCH_MCP" "aws_mcp_proxy=$EXPECT_AWS_MCP_PROXY" \
                 "awscli=$EXPECT_AWSCLI" \
-                "session_manager_plugin=$EXPECT_SMP"; do
+                "session_manager_plugin=$EXPECT_SMP" "gcloud=$EXPECT_GCLOUD"; do
       k="${pair%%=*}"; want="${pair#*=}"
       got="$(jq -r ".$k" "$VJ" 2>/dev/null)"
       if [ "$got" = "$want" ]; then echo "ok  versions.json $k=$got"
@@ -181,6 +181,18 @@ if [ "${1:-}" = "--inner" ]; then
       echo "ok  versions.json muse_sha256=$got"
     else
       echo "NG  versions.json muse_sha256: ${got:-?} != ${muse_sha_want:-?}"; fail=1
+    fi
+    # gcloud_sha256 is the build arch's archive sum that install-gcloud checks (ADR 0107).
+    case "$(dpkg --print-architecture)" in
+      amd64) gcloud_sha_want="$EXPECT_GCLOUD_SHA_X64" ;;
+      arm64) gcloud_sha_want="$EXPECT_GCLOUD_SHA_ARM64" ;;
+      *)     gcloud_sha_want="" ;;
+    esac
+    got="$(jq -r .gcloud_sha256 "$VJ" 2>/dev/null)"
+    if [ -n "$gcloud_sha_want" ] && [ "$got" = "$gcloud_sha_want" ]; then
+      echo "ok  versions.json gcloud_sha256=$got"
+    else
+      echo "NG  versions.json gcloud_sha256: ${got:-?} != ${gcloud_sha_want:-?}"; fail=1
     fi
   else
     echo "NG  $VJ missing"; fail=1
@@ -341,6 +353,9 @@ EXPECT_CLOUDWATCH_MCP="$(arg_pin CLOUDWATCH_MCP_VERSION)"
 EXPECT_AWS_MCP_PROXY="$(arg_pin AWS_MCP_PROXY_VERSION)"
 EXPECT_AWSCLI="$(arg_pin AWSCLI_VERSION)"
 EXPECT_SMP="$(arg_pin SESSION_MANAGER_PLUGIN_VERSION)"
+EXPECT_GCLOUD="$(arg_pin GCLOUD_VERSION)"
+EXPECT_GCLOUD_SHA_X64="$(arg_pin GCLOUD_SHA256_X64)"
+EXPECT_GCLOUD_SHA_ARM64="$(arg_pin GCLOUD_SHA256_ARM64)"
 EXPECT_RTK="${EXPECT_RTK:-1}" # default = always baked in; pass 0 only to verify a BAKE_RTK=0 build
 # Pass 0 when verifying a lean distribution variant image (BAKE_AGENT_CLIS=0;
 # docs/log/35 §35.7.1-7 — verification switches to CLI absence + versions.json listing all pins).
@@ -378,6 +393,9 @@ exec docker run --rm -i --init --network none --memory "$SMOKE_MEMORY" --cap-add
   -e EXPECT_AWS_MCP_PROXY="$EXPECT_AWS_MCP_PROXY" \
   -e EXPECT_AWSCLI="$EXPECT_AWSCLI" \
   -e EXPECT_SMP="$EXPECT_SMP" \
+  -e EXPECT_GCLOUD="$EXPECT_GCLOUD" \
+  -e EXPECT_GCLOUD_SHA_X64="$EXPECT_GCLOUD_SHA_X64" \
+  -e EXPECT_GCLOUD_SHA_ARM64="$EXPECT_GCLOUD_SHA_ARM64" \
   -e EXPECT_RTK="$EXPECT_RTK" \
   -e EXPECT_AGENT_CLIS="$EXPECT_AGENT_CLIS" \
   --entrypoint /bin/bash "$IMAGE" -s -- --inner < "${BASH_SOURCE[0]}"

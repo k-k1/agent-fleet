@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -79,6 +80,18 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			// rev/at/scope is what actually governs, and what happened is recorded in the
 			// repo's restore commit (AF-Restore-Rev / -Scope).
 			return "memory.restore", q.Get("rev"), true
+		case p == "/api/agents/memory/entries/revert":
+			// ADR 0108: undoing or forgetting one AF memory change. Like restore, the Console
+			// repeats the commit in the query as the audit hint; the body governs.
+			// Only a commit id is copied into the ledger: the hint is free text the Agent never
+			// reads, so anything else is recorded as an empty target.
+			return "memory.entry.revert", auditCommitHint(q.Get("commit")), true
+		case p == "/api/agents/memory/claude-import":
+			// ADR 0108 decision 6: the one-time import of claude's memory writes the store. The
+			// Console repeats the project id in the query; only an id-shaped value is recorded.
+			return "memory.claude_import", auditProjectHint(q.Get("project")), true
+		case strings.HasPrefix(p, "/api/aws-login/profiles/") && strings.HasSuffix(p, "/logout"):
+			return "aws.logout", "profile: " + name, true
 		case strings.HasPrefix(p, "/api/aws-login/profiles/") && strings.HasSuffix(p, "/start"):
 			// #1028: the Settings row's press names the profile in the path, and there is no
 			// request. Matched before the request form, which would take "profiles" for an id.
@@ -90,6 +103,9 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			return "aws.login.start", awsLoginAuditTarget(p, q), true
 		case strings.HasPrefix(p, "/api/aws-login/") && strings.HasSuffix(p, "/cancel"):
 			return "aws.login.cancel", awsLoginAuditTarget(p, q), true
+		case strings.HasPrefix(p, "/api/gcp-login/"):
+			// ADR 0107 decision 3: the press, the cancel and the code, never the code itself.
+			return gcpLoginAudit(r, p, q)
 		case p == "/api/sessions":
 			return "session.create", "", true
 		case name != "" && strings.HasSuffix(p, "/fork"):
@@ -217,7 +233,7 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 		// underlying error distinguishes r.Context() cancellation (browser/ALB
 		// gave up) from a genuine transport failure (connection reset, i/o
 		// timeout) instead of collapsing both into one opaque message.
-		log.Printf("agent proxy: %s %s: %v (ctx err=%v)", r.Method, r.URL.Path, err, r.Context().Err())
+		log.Printf("agent proxy: %s %s: %v (ctx err=%v)", r.Method, relayLogPath(r.URL.Path), relayLogErr(r.URL.Path, err), r.Context().Err())
 		http.Error(w, "workspace agent unreachable (is the workspace running?)", http.StatusBadGateway)
 		return
 	}
@@ -251,6 +267,10 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 		detail := ""
 		if fsPutOutcome == errCodeFSWriteStateUnknown {
 			detail = "write_state_unknown"
+		} else if strings.HasPrefix(action, "gcp.login.") {
+			// ADR 0107 decision 3: the audit says the call came through the relay; the
+			// Agent's log has the same hint (X-AF-Relay), which an agent could also set.
+			detail = "via relay"
 		}
 		_ = a.mgr.store.InsertAudit(context.Background(), store.AuditLog{
 			ID: store.NewID(), TenantID: res.ws.TenantID, ActorKind: "user", ActorID: res.ident.ID,
@@ -446,6 +466,9 @@ func (a agentProxyAPI) terminal(w http.ResponseWriter, r *http.Request, res *res
 		return
 	}
 	defer down.Close()
+	// A hijacked socket does not watch the request context, and removing the member
+	// cancels it (memberConnRegistry): close the socket so the relay below ends.
+	defer context.AfterFunc(r.Context(), func() { down.Close() })()
 
 	errc := make(chan error, 2)
 	go relay(up, down, errc, nil)       // agent -> browser
@@ -503,4 +526,29 @@ func relay(src, dst *websocket.Conn, errc chan<- error, onInput func()) {
 			return
 		}
 	}
+}
+
+// agentMemProjectIDRe is the form of an agent-memory project id: a readable prefix, then 12
+// hex digits of the repository key's hash.
+var agentMemProjectIDRe = regexp.MustCompile(`^[a-z0-9._-]{1,40}-[0-9a-f]{12}$`)
+
+// auditProjectHint keeps a project-id-shaped audit hint and drops anything else.
+func auditProjectHint(s string) string {
+	if agentMemProjectIDRe.MatchString(s) {
+		return s
+	}
+	return ""
+}
+
+// auditCommitHint keeps a commit-id-shaped audit hint and drops anything else.
+func auditCommitHint(s string) string {
+	if len(s) < 7 || len(s) > 64 {
+		return ""
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return ""
+		}
+	}
+	return s
 }

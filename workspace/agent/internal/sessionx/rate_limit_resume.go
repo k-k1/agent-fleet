@@ -38,6 +38,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -570,6 +571,10 @@ func deleteRateLimitSchedule(id string) {
 // instruction, the same policy as the resume text in docs/log/47 §3-4. Its language follows
 // the display language: with no per-conversation language, the language the user reads and
 // writes in is the best estimate.
+//
+// The "no answer yet" clause is what keeps a turn refused at its start from being dropped:
+// with nothing to continue, the "say so instead of starting something new" clause alone made
+// the agent decline the instruction it had never answered.
 func rateLimitResumePrompt() string {
 	return rateLimitResumePromptFor(uiprefs.Locale())
 }
@@ -577,18 +582,37 @@ func rateLimitResumePrompt() string {
 func rateLimitResumePromptFor(locale string) string {
 	if locale == "en" {
 		return "The usage limit has reset. Continue the work that was cut off, from where it stopped. " +
+			"If the limit refused the latest request before you started it and you have done none of it yet, " +
+			"carry it out from the beginning; if you had done part of it, continue from there instead. " +
 			"This is an automatic resume — there is no new instruction. " +
-			"If you cannot tell where it stopped, say so instead of starting something new."
+			"Otherwise, if you cannot tell where it stopped, say so instead of starting something new."
 	}
 	return "利用上限がリセットされました。上限で中断した作業を、止まったところから続けてください。" +
+		"直前の依頼が着手前に上限で断られ、まだ何も実行していない場合は、その依頼を最初から実行してください" +
+		"（途中まで実行していた場合は、その続きから再開してください）。" +
 		"これは自動再開なので新しい指示はありません。" +
-		"どこで止まったか分からない場合は、新しい作業を始めずにその旨を伝えてください。"
+		"それ以外でどこで止まったか分からない場合は、新しい作業を始めずにその旨を伝えてください。"
+}
+
+// legacyRateLimitResumePrompts are wordings older Agents booked. A schedule carries its prompt
+// from booking time, so a resume that spans an upgrade still arrives in the old words and must
+// still count as one - otherwise its "resumed" notice is silently dropped.
+var legacyRateLimitResumePrompts = []string{
+	"The usage limit has reset. Continue the work that was cut off, from where it stopped. " +
+		"This is an automatic resume — there is no new instruction. " +
+		"If you cannot tell where it stopped, say so instead of starting something new.",
+	"利用上限がリセットされました。上限で中断した作業を、止まったところから続けてください。" +
+		"これは自動再開なので新しい指示はありません。" +
+		"どこで止まったか分からない場合は、新しい作業を始めずにその旨を伝えてください。",
 }
 
 func isRateLimitResumePrompt(prompt string) bool {
 	prompt = strings.TrimSpace(prompt)
-	return prompt == strings.TrimSpace(rateLimitResumePromptFor("ja")) ||
-		prompt == strings.TrimSpace(rateLimitResumePromptFor("en"))
+	if prompt == strings.TrimSpace(rateLimitResumePromptFor("ja")) ||
+		prompt == strings.TrimSpace(rateLimitResumePromptFor("en")) {
+		return true
+	}
+	return slices.Contains(legacyRateLimitResumePrompts, prompt)
 }
 
 func rateLimitScheduleLabel(name string) string {

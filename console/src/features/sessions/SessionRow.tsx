@@ -22,6 +22,7 @@ import { lineageColorOf } from "../../lib/project.ts";
 import { useSessionsStore } from "./store.ts";
 import { openSessionFromList } from "./open.ts";
 import { SessionMenu } from "./SessionMenu.tsx";
+import { SessionLinks, hasSessionLinks } from "./SessionLinks.tsx";
 import { useMySharesStore } from "../sharing/store.ts";
 import { useSessionUnread } from "../notifications/unread.ts";
 import { isWaiting } from "./waiting.ts";
@@ -88,6 +89,8 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
   // Waiting on this person's answer (#1057): rings the whole row, the loudest thing in the rail,
   // because unlike the unread dot it does not clear by looking — only by answering.
   const needsYou = isWaiting(s);
+  // The branch's PR and the session's listening ports (#1062), on a second line of their own.
+  const links = hasSessionLinks(s, running);
 
   return (
     <li
@@ -99,7 +102,8 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         (inert ? " dead" : "") +
         (lineage ? " lineage" : "") +
         (needsYou ? " sess-needs-you" : "") +
-        (unread ? " sess-unread" : "")
+        (unread ? " sess-unread" : "") +
+        (links ? " sess-has-links" : "")
       }
       style={lineage ? ({ "--sess-lineage": lineage } as CSSProperties) : undefined}
       onMouseEnter={open ? () => setHover({ session: s.name }) : undefined}
@@ -193,6 +197,11 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         {s.alive && s.stopAfterTurnAt && (
           <Icon name="debug-stop" className="sess-stoparm" title={tr("srow.stop_after_turn_badge")} />
         )}
+        {/* Spend budget (#1054): stopped because the estimate reached the cap. The menu's
+            "raise and resume" is the way back. */}
+        {!s.alive && s.spendCapHitAt && (
+          <Icon name="pulse" className="sess-budget" title={tr("srow.budget_paused_hint")} />
+        )}
         {isShared && <Icon name="broadcast" className="sess-shared" title={tr("srow.shared_badge")} />}
         <span className={"session-state " + st.cls + (loud ? "" : " mini")} title={st.text}>
           <Icon name={st.icon} spin={st.spin} />
@@ -245,6 +254,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
           />
         </div>
       )}
+      {links && <SessionLinks s={s} running={running} />}
     </li>
   );
 }

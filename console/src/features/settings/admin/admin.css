@@ -1754,3 +1754,53 @@ a.engines-model-source:hover {
 }
 
 
+
+/* Model discovery (adminEngineDiscover.tsx): what the engine's model folders hold, one row per
+   file with an "add" button. Without these rules the list was a bare bulleted <ul> with the
+   browser's 40px indent, and the suggested base model was plain text run into the name. */
+.engines-discover-results {
+  margin-top: 10px;
+}
+
+.engines-discover-group + .engines-discover-group {
+  margin-top: 12px;
+}
+
+.engines-discover-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+
+.engines-discover-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border2);
+}
+
+.engines-discover-row:last-child {
+  border-bottom: none;
+}
+
+.engines-discover-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.engines-discover-tag {
+  padding: 1px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--dialog-muted, var(--muted));
+}
+
+.engines-discover-err {
+  flex-basis: 100%;
+  margin: 0;
+}

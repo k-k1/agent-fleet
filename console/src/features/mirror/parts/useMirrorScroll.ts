@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  applyMark, captureMark, captureMarkBelow, saveMark, scrollTopForTurn, loadMark, type ScrollMark,
+  applyMark, captureMark, captureMarkBelow, saveMark, scrollTopForTurn, loadMark, onJump, type ScrollMark,
 } from "../scrollMark.ts";
 import type { Group } from "../transcript/types.ts";
+import { workSplit } from "../mirrorParts.ts";
 
 // The user counts as "stuck to the bottom" (auto-follow on) while within this many px of
 // the end. Above it, following stops and the jump-to-latest button appears. Narrower than
@@ -69,6 +70,8 @@ export function useMirrorScroll() {
   // and "follow was re-armed" (send, jump to latest).
   const restoreMarkRef = useRef<ScrollMark | null>(null);
   const restoringRef = useRef(false);
+  // The session this mirror shows, for the explicit-jump listener below (set by resetForSession).
+  const sessionRef = useRef("");
   // The idx of the latest reply block — what "jump to reply top" targets. Written on every
   // render so the closures built with [] (the ResizeObserver, onScroll) can read the current
   // value, as ttsCaptureRef does.
@@ -83,6 +86,15 @@ export function useMirrorScroll() {
   // (docs/log/24). Kept separate from anchoredIdxRef so the top-anchor and the answer-anchor each
   // fire exactly once per reply.
   const answerAnchoredRef = useRef<number | undefined>(undefined);
+  // How many parts the tracked reply had the last time its in-progress text (the "Writing…"
+  // block, #1250) was on screen; null when it never was. At completion this says whether what
+  // streamed was the FINAL ANSWER: text seen with N parts landed lands at index N or later, so
+  // if the work fold's boundary (workSplit.at) is at or before N, the reader has read the answer
+  // at the tail and the completion anchor would take them away from it (#1396). Text that
+  // streamed and was then followed by more tool runs was narration, not the answer, and the
+  // anchor still applies. Text seen before any row of the reply exists is not recorded for the
+  // same reason: rows of tools then land before it, so it can never be past the boundary.
+  const liveSeenRef = useRef<number | null>(null);
   // False until the first content settle for a session. On open we land at the bottom (as
   // before) and mark the reply already present as "seen", so only replies that arrive while
   // the user is watching get anchored to the top — history isn't retro-scrolled.
@@ -105,6 +117,34 @@ export function useMirrorScroll() {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // An explicit jump (a past-session search hit, scrollMark.requestJump) into the session this
+  // mirror already shows. A mirror reads its mark only on a session switch, and opening a session
+  // that is already on screen switches nothing. Before the first settle the new mark simply
+  // replaces the one being waited on; after it, the jump is a restore like any other — held
+  // through late layout until the reader touches it — or, when the turn is outside the loaded
+  // window, nothing (the view stays where the reader left it).
+  useEffect(
+    () =>
+      onJump((session, mark) => {
+        if (session !== sessionRef.current) return;
+        restoreMarkRef.current = mark;
+        if (!didInitRef.current) return;
+        const el = bodyRef.current;
+        if (el && applyMark(el, mark)) {
+          selfTopRef.current = el.scrollTop;
+          atBottomRef.current = false;
+          restoringRef.current = true;
+          prependAnchorRef.current = null;
+          setShowJump(true);
+          scheduleReplyTopSync();
+        } else {
+          endRestore();
+        }
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the refs are read live; subscribe once
+    [],
+  );
 
   // Re-pin whenever the geometry changes while follow is on: the body's own box resizing
   // (the ToDo / spend / context panels above it, the composer auto-growing, a pane/window
@@ -305,6 +345,7 @@ export function useMirrorScroll() {
     groups,
     loaded,
     busy,
+    live = false,
     pending,
     pendingPlan,
     pendingPerm,
@@ -312,6 +353,8 @@ export function useMirrorScroll() {
     groups: Group[];
     loaded: boolean;
     busy: boolean;
+    /** The in-progress reply (LiveReplyCard) is on screen right now. */
+    live?: boolean;
     pending: unknown;
     pendingPlan: string | null;
     pendingPerm: string | null;
@@ -381,7 +424,9 @@ export function useMirrorScroll() {
       if (replyIdx !== anchoredIdxRef.current) {
         anchoredIdxRef.current = replyIdx;
         answerAnchoredRef.current = undefined; // this reply's final answer hasn't been anchored yet
+        liveSeenRef.current = null;
       }
+      if (live) liveSeenRef.current = reply.parts.length;
       // Still working, a background run (subagent/Workflow) is appending, or we're
       // bridging the idle→reply gap (finalizing) — follow the bottom so the streamed tail
       // (and the typing indicator) stay in view.
@@ -395,7 +440,18 @@ export function useMirrorScroll() {
       // re-anchor once to the FINAL ANSWER's first line at the viewport top, so the user reads
       // it from the start rather than the tail we followed to. Only when work was actually
       // folded; a reply with no foldable work already sits with its answer at the top.
+      //
+      // Not when the answer streamed into view (#1396): the reader followed it at the tail and has
+      // read it, so the fold's shrink is all that happens and the pin keeps them at the end. The
+      // anchor is what a reader who saw nothing of the answer until completion needs — including
+      // one who saw earlier narration stream and then more tools run (liveSeenRef).
       if (answerAnchoredRef.current !== replyIdx) {
+        const split = workSplit(reply.parts);
+        if (liveSeenRef.current !== null && split && split.at <= liveSeenRef.current) {
+          answerAnchoredRef.current = replyIdx;
+          toBottom();
+          return;
+        }
         const body = el.querySelector<HTMLElement>(`[data-turn-idx="${replyIdx}"] .mirror-turn-body`);
         const work = body?.querySelector<HTMLElement>(":scope > .mt-work");
         const answer = work?.nextElementSibling as HTMLElement | null;
@@ -425,6 +481,7 @@ export function useMirrorScroll() {
 
   // Reset on a session switch, run inside MirrorView's layout effect in that effect's order.
   const resetForSession = (session: string) => {
+    sessionRef.current = session;
     atBottomRef.current = true; // a freshly opened session starts pinned to the bottom
     // The old scroller can be reused for another session (pane D&D / opening a row
     // in the current mirror). Clear its physical offset in the same pre-paint phase;
@@ -449,6 +506,7 @@ export function useMirrorScroll() {
     setShowReplyTop(false); // nothing to jump to until the new session's reply is mounted
     anchoredIdxRef.current = undefined; // no reply anchored yet in the new session
     answerAnchoredRef.current = undefined; // …nor its final answer
+    liveSeenRef.current = null;
     didInitRef.current = false; // re-run the "land at bottom on open" settle for this session
   };
 

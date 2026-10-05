@@ -82,6 +82,17 @@ func sidFor(m session.Meta) string { return session.UUID(m.Dir, m.Name) }
 // second call for a name whose handle is already in the map just returns it, matching every
 // other driver's contract ("starts a new thread when there is none").
 func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
+	h, err := managedDriver{}.resume(m)
+	if err != nil {
+		return nil, err
+	}
+	// Peer messages a halt, a shutdown or a crash left held become the first turns (#1255).
+	agents.DeliverHeld(m.Name, h)
+	return h, nil
+}
+
+// resume is Resume without the held peer messages.
+func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	if m.Kind != session.KindLcpp {
 		return nil, errors.New("lcpp driver は lcpp セッション専用です")
 	}
@@ -497,7 +508,7 @@ func (h *threadHandle) pump() {
 // AppendMessage doc comment for why the naive "everything past the old length" is wrong once
 // a compaction fires inside the same Run call).
 func (h *threadHandle) runTurn(t *agents.Taken) {
-	agents.MarkTurnStart(h.sid)
+	agents.MarkTurnStartRun(h.sid, t.In)
 	h.setState(agents.TurnStarting)
 	if h.beforeCommit != nil {
 		h.beforeCommit()

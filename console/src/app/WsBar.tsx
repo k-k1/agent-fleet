@@ -17,10 +17,12 @@ import { useImagegenAvailable } from "../features/imagegen/available.ts";
 import { isBlankPane, MAX_TAB_COLS } from "../layout/ops.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
 import { hintSuffix } from "../features/keys/keyHint.ts";
+import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/Icon.tsx";
 import { Sparkline } from "../ui/Sparkline.tsx";
 import { useConfirm } from "../ui/ConfirmProvider.tsx";
 import { useIsMobile } from "../lib/device.ts";
+import { useWsBarFold } from "./wsBarFold.ts";
 import { machineSummary, type WsMachine } from "../lib/machine.ts";
 import { useDismiss } from "../lib/useDismiss.ts";
 import { listBrowserAttachments } from "../features/browser/attachmentService.ts";
@@ -38,6 +40,9 @@ import { AUTO_INLINE, noteSessionKinds, planUsageChips, readKindStamps, type Kin
 import { setSettings, useSettings } from "../lib/settings.ts";
 import { useSettingsUI } from "../features/settings/store.ts";
 import { browserTarget } from "../features/browser/target.ts";
+import { useBrowserUnavailable } from "../features/browser/availability.ts";
+import { AwsProfilesChip } from "../features/awslogin/AwsProfilesChip.tsx";
+import { GcpProfilesChip } from "../features/gcplogin/GcpProfilesChip.tsx";
 
 const HIST_N = 60; // sparkline ring buffer: ~4 min at the 4s poll cadence
 
@@ -229,8 +234,7 @@ function MachineDetailsLink({ onNavigate }: { onNavigate: () => void }) {
   const tr = useT();
   const openSettings = useSettingsUI((s) => s.openSettings);
   return (
-    <button
-      type="button"
+    <Button
       className="wu-manage"
       onClick={() => {
         onNavigate();
@@ -238,7 +242,7 @@ function MachineDetailsLink({ onNavigate }: { onNavigate: () => void }) {
       }}
     >
       <Icon name="server" /> {tr("wsbar.machine_details")}
-    </button>
+    </Button>
   );
 }
 
@@ -315,8 +319,7 @@ function UsageBreakdownLink({ onNavigate }: { onNavigate: () => void }) {
   const tr = useT();
   const openSettings = useSettingsUI((s) => s.openSettings);
   return (
-    <button
-      type="button"
+    <Button
       className="wu-manage"
       onClick={() => {
         onNavigate();
@@ -324,7 +327,7 @@ function UsageBreakdownLink({ onNavigate }: { onNavigate: () => void }) {
       }}
     >
       <Icon name="graph" /> {tr("wsbar.usage.breakdown")}
-    </button>
+    </Button>
   );
 }
 
@@ -473,6 +476,7 @@ export const USAGE_SOURCES: UsageSource[] = [
 interface ChipReport {
   visible: boolean;
   urgent: boolean;
+  label: string; // what the chip reads; its width is part of what squeezing saves
 }
 interface FoldCtxValue {
   report(kind: string, state: ChipReport): void;
@@ -491,13 +495,24 @@ const FoldCtx = createContext<FoldCtxValue | null>(null);
 // nothing until the popover holding it is open, so toggling it from the keyboard has to
 // open that popover too — otherwise the shortcut silently does nothing for exactly the
 // agents the user reaches for least often, which is where a shortcut is most useful.
-function useChipSlot(kind: string, visible: boolean, urgent: boolean) {
+//
+// `open` / `close` are the chip's own popover. A chip that stops being drawn — moved into a
+// closed +N, or its +N closed — keeps its state, so its popover would stay "open" with a
+// dismiss layer that swallows the next click anywhere. Closed on that transition only: a
+// keyboard reveal opens a folded chip one render before the +N body exists to draw it.
+function useChipSlot(kind: string, visible: boolean, urgent: boolean, label: string, open: boolean, close: () => void) {
   const ctx = useContext(FoldCtx);
   const report = ctx?.report;
   useEffect(() => {
-    report?.(kind, { visible, urgent });
-  }, [report, kind, visible, urgent]);
+    report?.(kind, { visible, urgent, label });
+  }, [report, kind, visible, urgent, label]);
   const slot = ctx ? ctx.slot(kind) : ("bar" as const);
+  const drawn = slot === "bar" || !!ctx?.host;
+  const wasDrawn = useRef(drawn);
+  useEffect(() => {
+    if (wasDrawn.current && !drawn && open) close();
+    wasDrawn.current = drawn;
+  }, [drawn, open, close]);
   return {
     slot,
     host: ctx?.host || null,
@@ -539,16 +554,16 @@ function UsageChipPlace({ kind }: { kind: string }) {
       <span className="wu-label">{tr("wsbar.usage.place_label")}</span>
       <div className="wu-place-seg">
         {PLACE_MODES.map((m) => (
-          <button
+          <Button
             key={m.mode}
-            type="button"
-            className={"ghost" + (mode === m.mode ? " on" : "")}
+            variant="ghost"
+            className={mode === m.mode ? "on" : undefined}
             aria-pressed={mode === m.mode}
             title={tr(m.titleKey)}
             onClick={() => pick(m.mode)}
           >
             {tr(m.key)}
-          </button>
+          </Button>
         ))}
       </div>
     </div>
@@ -566,6 +581,7 @@ export function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | 
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
+  const closePop = useCallback(() => setOpen(false), []);
   // Keyboard: Ctrl/⌘+K g c / g x toggles this agent's usage popover. `reveal` (declared
   // below, once the chip knows where it sits) opens the fold popover first when this chip
   // lives inside it — the callback runs from an effect, so reading it here is safe.
@@ -608,18 +624,18 @@ export function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | 
   // nothing to show has to say so rather than skip its turn. `bind` moved above the return
   // for the same reason — the group promotes a near-cap chip onto the bar.
   const visible = !(unavailable && !usage?.authed);
-  const { slot, host, reveal } = useChipSlot(src.kind, visible, !!bind || !!resetCount);
+  const label = unavailable
+    ? "—"
+    : bind
+      ? resetChipText(bind.resetsAt)
+      : [uh && (uh.stale ? "—" : `${uh.pct}%`), uw && (uw.stale ? "—" : `${uw.pct}%`)].filter(Boolean).join(" / ");
+  const { slot, host, reveal } = useChipSlot(src.kind, visible, !!bind || !!resetCount, label, open, closePop);
   // Hide the chip only when the user isn't signed into this agent (nothing to show, and
   // never will be). If they ARE signed in but the (unofficial, rate-limited) reading is
   // momentarily unavailable, keep a degraded chip so it never vanishes on a transient
   // failure — its dropdown links out to the vendor's own usage page to check manually.
   if (!visible) return null;
 
-  const label = unavailable
-    ? "—"
-    : bind
-      ? resetChipText(bind.resetsAt)
-      : [uh && (uh.stale ? "—" : `${uh.pct}%`), uw && (uw.stale ? "—" : `${uw.pct}%`)].filter(Boolean).join(" / ");
   const chipTitle = unavailable
     ? tr("wsbar.usage.unavailable_title", { name: kindLabel(src.kind) })
     : bind
@@ -638,8 +654,7 @@ export function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | 
     <div className="ws-usage-wrap" ref={ref}>
       {/* Same badge look as the Sessions-list kind badge: reuse kind-tag + the kind
           color, then reset the button chrome (ws-usage-btn). */}
-      <button
-        type="button"
+      <Button
         className={"kind-tag kind-" + kindClass(src.kind) + " ws-usage-btn"}
         title={chipTitle}
         aria-expanded={open}
@@ -655,7 +670,7 @@ export function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | 
           </span>
         )}
         <Icon name="chevron-down" />
-      </button>
+      </Button>
       {open && (
         <div className="ws-usage-pop">
           <div className="wu-title">{tr("wsbar.usage.pop_title", { name: kindLabel(src.kind) })}</div>
@@ -687,9 +702,9 @@ export function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | 
           <div className="wu-foot">
             {!unavailable && <span className="wu-ago muted">{tr("wsbar.usage.fetched", { ago: agoText(usage?.ageSec) })}</span>}
             {src.live && (
-              <button type="button" className="ghost wu-reload" onClick={refresh} disabled={refreshing}>
+              <Button variant="ghost" className="wu-reload" onClick={refresh} disabled={refreshing}>
                 <Icon name="refresh" spin={refreshing} /> {tr("wsbar.usage.refresh")}
-              </button>
+              </Button>
             )}
           </div>
           {!unavailable && src.noteKey && <div className="wu-note muted">{tr(src.noteKey)}</div>}
@@ -720,6 +735,7 @@ export function AgyUsageChip({ tenant }: { tenant: string | null }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
+  const closePop = useCallback(() => setOpen(false), []);
   // Keyboard: Ctrl/⌘+K g a toggles this popover (g c / g x = Claude / Codex). See the
   // generic chip for why `reveal` is read before its declaration.
   useOpenSignal("usage-agy", () => {
@@ -750,9 +766,6 @@ export function AgyUsageChip({ tenant }: { tenant: string | null }) {
 
   // Report before the early return (see useChipSlot), same as the generic chip.
   const visible = !(unavailable && !usage?.authed);
-  const { slot, host, reveal } = useChipSlot("agy", visible, !!bind);
-  if (!visible) return null;
-
   // Chip numbers: the first group (Gemini), 5h% / weekly% — same order as the other chips.
   const g0 = usage?.ok && Array.isArray(usage.groups) ? usage.groups[0] : null;
   const label = unavailable
@@ -762,6 +775,9 @@ export function AgyUsageChip({ tenant }: { tenant: string | null }) {
       : [g0?.fiveHour && `${used(g0.fiveHour.remainingPct)}%`, g0 && `${used(g0.remainingPct)}%`]
           .filter(Boolean)
           .join(" / ");
+  const { slot, host, reveal } = useChipSlot("agy", visible, !!bind, label, open, closePop);
+  if (!visible) return null;
+
   const chipTitle = unavailable
     ? tr("wsbar.usage.unavailable_title", { name: "Antigravity" })
     : bind
@@ -778,8 +794,7 @@ export function AgyUsageChip({ tenant }: { tenant: string | null }) {
     slot,
     host,
     <div className="ws-usage-wrap" ref={ref}>
-      <button
-        type="button"
+      <Button
         className={"kind-tag kind-" + kindClass("agy") + " ws-usage-btn"}
         title={chipTitle}
         aria-expanded={open}
@@ -789,7 +804,7 @@ export function AgyUsageChip({ tenant }: { tenant: string | null }) {
         <span className="ws-usage-name">{kindLabel("agy")}</span>
         <span className={"ws-usage-nums" + (bind ? " crit" : unavailable ? " muted" : "")}>{label}</span>
         <Icon name="chevron-down" />
-      </button>
+      </Button>
       {open && (
         <div className="ws-usage-pop">
           <div className="wu-title">{tr("wsbar.usage.pop_title", { name: "Antigravity" })}</div>
@@ -811,9 +826,9 @@ export function AgyUsageChip({ tenant }: { tenant: string | null }) {
           <div className="wu-note muted">{tr("agents.agy_exp_label")}</div>
           <div className="wu-foot">
             {!unavailable && <span className="wu-ago muted">{tr("wsbar.usage.fetched", { ago: agoText(usage?.ageSec) })}</span>}
-            <button type="button" className="ghost wu-reload" onClick={refresh} disabled={refreshing}>
+            <Button variant="ghost" className="wu-reload" onClick={refresh} disabled={refreshing}>
               <Icon name="refresh" spin={refreshing} /> {tr("wsbar.usage.refresh")}
-            </button>
+            </Button>
           </div>
           <UsageChipPlace kind="agy" />
           <UsageBreakdownLink onNavigate={() => setOpen(false)} />
@@ -834,6 +849,7 @@ export function CopilotUsageChip({ tenant }: { tenant: string | null }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
+  const closePop = useCallback(() => setOpen(false), []);
   useOpenSignal("usage-copilot", () => {
     setOpen((o) => !o);
     reveal();
@@ -862,12 +878,12 @@ export function CopilotUsageChip({ tenant }: { tenant: string | null }) {
 
   // Report before the early return (see useChipSlot), same as the generic chip.
   const visible = !(unavailable && !usage?.authed);
-  const { slot, host, reveal } = useChipSlot("copilot", visible, !!bind);
-  if (!visible) return null;
-
   // Chip number: the primary pool's used% (quotas are pre-ordered by the backend —
   // premium first on paid plans, else chat).
   const label = unavailable ? "—" : bind ? resetChipText(bind.resetsAt!) : `${wins[0].pct}%`;
+  const { slot, host, reveal } = useChipSlot("copilot", visible, !!bind, label, open, closePop);
+  if (!visible) return null;
+
   const chipTitle = unavailable
     ? tr("wsbar.usage.unavailable_title", { name: "GitHub Copilot" })
     : bind
@@ -885,8 +901,7 @@ export function CopilotUsageChip({ tenant }: { tenant: string | null }) {
     slot,
     host,
     <div className="ws-usage-wrap" ref={ref}>
-      <button
-        type="button"
+      <Button
         className={"kind-tag kind-" + kindClass("copilot") + " ws-usage-btn"}
         title={chipTitle}
         aria-expanded={open}
@@ -896,7 +911,7 @@ export function CopilotUsageChip({ tenant }: { tenant: string | null }) {
         <span className="ws-usage-name">{kindLabel("copilot")}</span>
         <span className={"ws-usage-nums" + (bind ? " crit" : unavailable ? " muted" : "")}>{label}</span>
         <Icon name="chevron-down" />
-      </button>
+      </Button>
       {open && (
         <div className="ws-usage-pop">
           <div className="wu-title">{tr("wsbar.usage.pop_title", { name: "GitHub Copilot" })}</div>
@@ -920,9 +935,9 @@ export function CopilotUsageChip({ tenant }: { tenant: string | null }) {
           )}
           <div className="wu-foot">
             {!unavailable && <span className="wu-ago muted">{tr("wsbar.usage.fetched", { ago: agoText(usage?.ageSec) })}</span>}
-            <button type="button" className="ghost wu-reload" onClick={refresh} disabled={refreshing}>
+            <Button variant="ghost" className="wu-reload" onClick={refresh} disabled={refreshing}>
               <Icon name="refresh" spin={refreshing} /> {tr("wsbar.usage.refresh")}
-            </button>
+            </Button>
           </div>
           <UsageChipPlace kind="copilot" />
           <UsageBreakdownLink onNavigate={() => setOpen(false)} />
@@ -945,13 +960,24 @@ const USAGE_CHIP_ORDER: string[] = [...USAGE_SOURCES.map((s) => s.kind as string
 // UsageChipFold: the group that decides which chips keep a slot on the bar. It owns the
 // "+N" chip, the popover the folded chips portal into, and the ranking; the chips
 // themselves only report what they are (see useChipSlot).
-export function UsageChipFold({ children }: { children: ReactElement }) {
+// `squeeze`: the bar is out of width (app/wsBarFold.ts), so no chip keeps an auto-ranked slot;
+// pinned and near-cap chips still do, since those are the user's word and a warning.
+// `onLayoutChange` hears which chips sit on the bar with and without the squeeze, so the bar
+// knows when what squeezing saves has changed.
+export function UsageChipFold({
+  children,
+  squeeze = false,
+  onLayoutChange,
+}: {
+  children: ReactElement;
+  squeeze?: boolean;
+  onLayoutChange?: (key: string) => void;
+}) {
   const tr = useT();
   const [reports, setReports] = useState<Record<string, ChipReport>>({});
   const [open, setOpen] = useState(false);
   const [host, setHost] = useState<HTMLDivElement | null>(null);
   const ref = useRef<HTMLDivElement>(null);
-  useDismiss(ref, open, () => setOpen(false));
   const settings = useSettings();
 
   // Stable identity: a report() that changed every render would re-fire every chip's
@@ -960,7 +986,7 @@ export function UsageChipFold({ children }: { children: ReactElement }) {
   const report = useCallback((kind: string, state: ChipReport) => {
     setReports((cur) => {
       const prev = cur[kind];
-      if (prev && prev.visible === state.visible && prev.urgent === state.urgent) return cur;
+      if (prev && prev.visible === state.visible && prev.urgent === state.urgent && prev.label === state.label) return cur;
       return { ...cur, [kind]: state };
     });
   }, []);
@@ -976,15 +1002,36 @@ export function UsageChipFold({ children }: { children: ReactElement }) {
     setStamps(noteSessionKinds(useSessionsStore.getState().sessions));
   }, [useKey]);
 
-  const plan = planUsageChips({
+  const planInput = {
     order: USAGE_CHIP_ORDER,
     visible: USAGE_CHIP_ORDER.filter((k) => reports[k]?.visible),
     urgent: USAGE_CHIP_ORDER.filter((k) => reports[k]?.urgent),
     pinned: settings.usageChipsPinned,
     folded: settings.usageChipsFolded,
     stamps,
-    inline: AUTO_INLINE,
-  });
+  };
+  const roomy = planUsageChips({ ...planInput, inline: AUTO_INLINE });
+  const tight = planUsageChips({ ...planInput, inline: 0 });
+  const plan = squeeze ? tight : roomy;
+  // Both layouts, whichever is drawn: what squeezing saves is the difference between them,
+  // and a pin or a near-cap chip can change the squeezed one alone. So can a reading: the
+  // chips that squeezing hides sit in a closed +N, drawn nowhere, so a label that shortens
+  // there ("94% / 94%" → "0% / 0%") reaches the bar only through this key. Not keyed on
+  // `squeeze`, or the bar's own measuring unfold/refold would look like a change.
+  const tightSet = new Set(tight.bar);
+  const saved = roomy.bar.filter((k) => !tightSet.has(k));
+  const layoutKey =
+    roomy.bar.join(",") + "|" + tight.bar.join(",") + "|" + saved.map((k) => reports[k]?.label ?? "").join(",");
+  useEffect(() => {
+    onLayoutChange?.(layoutKey);
+  }, [onLayoutChange, layoutKey]);
+  // The +N vanishes when nothing is left to fold (the bar widened, a pin): its popover goes
+  // with it, so its state and dismiss layer must too, or the next click anywhere is eaten.
+  const hasFold = plan.fold.length > 0;
+  useDismiss(ref, open && hasFold, () => setOpen(false));
+  useEffect(() => {
+    if (!hasFold) setOpen(false);
+  }, [hasFold]);
   const foldSet = new Set(plan.fold);
   const value: FoldCtxValue = {
     report,
@@ -998,9 +1045,9 @@ export function UsageChipFold({ children }: { children: ReactElement }) {
       {children}
       {plan.fold.length > 0 && (
         <div className="ws-usage-wrap ws-fold" ref={ref}>
-          <button
-            type="button"
-            className="ghost ws-fold-btn"
+          <Button
+            variant="ghost"
+            className="ws-fold-btn"
             title={tr("wsbar.usage.fold_title", {
               names: plan.fold.map((k) => kindLabel(k as SessionKind)).join(tr("common.list_sep")),
             })}
@@ -1009,7 +1056,7 @@ export function UsageChipFold({ children }: { children: ReactElement }) {
           >
             +{plan.fold.length}
             <Icon name="chevron-down" />
-          </button>
+          </Button>
           {open && (
             <div className="ws-fold-pop">
               <div className="wu-title">{tr("wsbar.usage.fold_pop_title")}</div>
@@ -1117,6 +1164,7 @@ export function WsBar() {
   const stopWs = useWorkspaceStore((s) => s.stop);
   const restartWs = useWorkspaceStore((s) => s.restart);
   const wsStale = useWorkspaceStore((s) => s.stale);
+  const wsSlotReplace = useWorkspaceStore((s) => s.slotReplace);
   const wsReason = useWorkspaceStore((s) => s.reason);
   const tenant = useTenantStore((s) => s.tenant);
   const superAdmin = useTenantStore((s) => s.superAdmin);
@@ -1135,6 +1183,8 @@ export function WsBar() {
   const tr = useT();
   const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
   const isMobile = useIsMobile();
+  const barRef = useRef<HTMLDivElement>(null);
+  const { foldUsage, foldMore, noteUsageLayout } = useWsBarFold(barRef, !isMobile);
   const [port, setPort] = useState("");
   const [previewPath, setPreviewPath] = useState("/");
   const [pvOpen, setPvOpen] = useState(false); // desktop port-preview popover
@@ -1155,10 +1205,21 @@ export function WsBar() {
   // Previews shared by other people in the same tenant (docs/log/81 §14.6).
   const [pvShared, setPvShared] = useState<SharedPreview[]>([]);
   const [staleOpen, setStaleOpen] = useState(false); // "restart required" badge popover
-  const [moreOpen, setMoreOpen] = useState(false); // mobile overflow popover
+  const [moreOpen, setMoreOpen] = useState(false); // ⋯ overflow popover (phone, or a full desktop bar)
   const [resOpen, setResOpen] = useState(false); // desktop resource-tiles popover
-  // Keyboard: Ctrl/⌘+K g r toggles the resource-tiles popover (desktop).
-  useOpenSignal("resources", () => setResOpen((o) => !o));
+  // Keyboard: Ctrl/⌘+K g r toggles the resource-tiles popover (desktop). While the bar has
+  // folded the resources chip into ⋯, the tiles are in there, and a popover anchored on a
+  // hidden chip would open invisibly.
+  useOpenSignal("resources", () => (foldMore ? setMoreOpen((o) => !o) : setResOpen((o) => !o)));
+  // A fold step hides the anchor of whichever popover is on the wrong side of it. A hidden
+  // popover's dismiss layer would still swallow the next click anywhere, so close it.
+  useEffect(() => {
+    if (isMobile) return;
+    if (foldMore) {
+      setResOpen(false);
+      setPvOpen(false);
+    } else setMoreOpen(false);
+  }, [foldMore, isMobile]);
   const machine = useWsMachine(resOpen, tenant, wsState === "running");
   const machineLine = machine ? machineSummary(machine) : "";
   const pvRef = useRef<HTMLDivElement>(null);
@@ -1166,6 +1227,7 @@ export function WsBar() {
   const moreRef = useRef<HTMLDivElement>(null);
   const resRef = useRef<HTMLDivElement>(null);
   const running = wsState === "running";
+  const browserUnavailable = useBrowserUnavailable();
   // Toggle inert while a transition is in flight: the optimistic "…" states AND the
   // server-reported "starting" (ECS cold pull — a second Start click must not
   // re-drive the deployment; the 4s poll flips the bar to "running" on its own).
@@ -1253,6 +1315,9 @@ export function WsBar() {
   useEffect(() => {
     if (!staleShown) setStaleOpen(false);
   }, [staleShown]);
+  // ecs-ec2: an administrator retired the machine this workspace sits on (#1473). Shown
+  // whether running or stopped, hidden while a start (the move itself) runs.
+  const slotMoveShown = wsSlotReplace && !busy;
 
   // Apply the backend update: stop→start, keeping repos and everything on disk
   // (NOT recreate). Sessions stop and are resumable, so name the count up front —
@@ -1280,6 +1345,8 @@ export function WsBar() {
   };
 
   const openBrowserPane = () => {
+    // Enter in the port field still opens something useful where the pane cannot.
+    if (browserUnavailable) return openPreview();
     if (!running) return;
     const target = browserTarget(Number(port.trim()), previewPath.trim());
     if (!target) return;
@@ -1298,10 +1365,14 @@ export function WsBar() {
       return;
     }
     let cancelled = false;
-    void listBrowserAttachments().then(
-      (list) => !cancelled && setAttachments(list),
-      () => !cancelled && setAttachments((prev) => (prev.length ? [] : prev)),
-    );
+    // No attachment can exist where the runtime has no browser features; asking would only
+    // collect a browser_unavailable refusal.
+    if (browserUnavailable) setAttachments((prev) => (prev.length ? [] : prev));
+    else
+      void listBrowserAttachments().then(
+        (list) => !cancelled && setAttachments(list),
+        () => !cancelled && setAttachments((prev) => (prev.length ? [] : prev)),
+      );
     void api("api/env/ws-settings").then(
       (res: any) => {
         if (cancelled) return;
@@ -1322,7 +1393,7 @@ export function WsBar() {
     return () => {
       cancelled = true;
     };
-  }, [pvOpen, moreOpen, running]);
+  }, [pvOpen, moreOpen, running, browserUnavailable]);
 
   // Previews shared within this tenant (docs/log/81 §14.6). Not conditioned on running:
   // what appears here belongs to OTHER people's workspaces, so whether ours is stopped is
@@ -1429,9 +1500,9 @@ export function WsBar() {
     : null;
   const resourcesEl = graphs && (
     <div className="ws-res" ref={resRef}>
-      <button
-        type="button"
-        className="ghost ws-res-btn"
+      <Button
+        variant="ghost"
+        className="ws-res-btn"
         title={tr("wsbar.resources_title")}
         aria-expanded={resOpen}
         onClick={() => setResOpen((o) => !o)}
@@ -1439,7 +1510,7 @@ export function WsBar() {
         <Icon name="pulse" />
         <span className="ws-res-sum">{resSummary || tr("wsbar.resources")}</span>
         <Icon name="chevron-down" />
-      </button>
+      </Button>
       {resOpen && (
         <div className="ws-res-pop">
           {/* What the numbers below are being spent ON. One line, because the popover
@@ -1479,6 +1550,8 @@ export function WsBar() {
           the block's padding, and an unconditional link would defeat it. */}
       {graphs && <MachineDetailsLink onNavigate={() => setMoreOpen(false)} />}
       {usageChips}
+      <AwsProfilesChip />
+      <GcpProfilesChip />
     </>
   );
 
@@ -1508,17 +1581,27 @@ export function WsBar() {
           />
         </div>
         <div className="pv-row pv-actions">
-          <button onClick={openBrowserPane} disabled={!running || !browserTarget(Number(port.trim()), previewPath.trim())}>
+          {/* Disabled rather than hidden where the runtime has no browser features, so the
+              tooltip and the hint below can say why the button everyone else has is off. */}
+          <Button
+            onClick={openBrowserPane}
+            disabled={!!browserUnavailable || !running || !browserTarget(Number(port.trim()), previewPath.trim())}
+            title={browserUnavailable ? tr("browser.unavailable.short", { runtime: browserUnavailable }) : undefined}
+          >
             {tr("wsbar.preview.open_pane")}
-          </button>
+          </Button>
           {/* Disabled by the same browserTarget check openPreview uses, so an out-of-range
               or 7700 port cannot leave a clickable button that does nothing (same shape as
               the open-in-pane button). */}
-          <button onClick={openPreview} disabled={!running || !browserTarget(Number(port.trim()), "/")}>
+          <Button onClick={openPreview} disabled={!running || !browserTarget(Number(port.trim()), "/")}>
             {tr("wsbar.preview.open_light")}
-          </button>
+          </Button>
         </div>
-        <div className="pv-hint">{tr("wsbar.preview.hint")}</div>
+        <div className="pv-hint">
+          {browserUnavailable
+            ? tr("wsbar.preview.hint_unavailable", { runtime: browserUnavailable })
+            : tr("wsbar.preview.hint")}
+        </div>
       </div>
       {/* The issued preview subdomain (docs/log/81). No URL is shown while stopped: the
           slug is issued per start and expires on stop, so the link would only 404 — and a
@@ -1533,7 +1616,7 @@ export function WsBar() {
             .sort((a, b) => Number(a) - Number(b))
             .map((p) => (
               <div className="pv-row pv-actions" key={p}>
-                <button
+                <Button
                   className="pv-host"
                   title={pvHosts.urls[p]}
                   onClick={() => {
@@ -1543,27 +1626,27 @@ export function WsBar() {
                   }}
                 >
                   <Icon name="globe" /> :{p}
-                </button>
-                <button
-                  className="ghost"
+                </Button>
+                <Button
+                  variant="ghost"
                   title={tr("wsbar.preview.copy_url")}
                   onClick={() => void navigator.clipboard?.writeText(pvHosts.urls[p])}
                 >
                   {tr("wsbar.preview.copy")}
-                </button>
+                </Button>
                 {/* Shown only while sharing: the link that survives restarts (docs/log/81
                     §14.6). The raw URL rots on every start, so this is the one to hand
                     to someone. */}
                 {pvHosts.tenantShare && pvHosts.shareLinks[p] && (
-                  <button
-                    className="ghost"
+                  <Button
+                    variant="ghost"
                     title={tr("wsbar.preview.copy_share_url")}
                     onClick={() =>
                       void navigator.clipboard?.writeText(window.location.origin + pvHosts.shareLinks[p])
                     }
                   >
                     {tr("wsbar.preview.copy_share")}
-                  </button>
+                  </Button>
                 )}
               </div>
             ))}
@@ -1583,7 +1666,7 @@ export function WsBar() {
               </span>
               {s.running ? (
                 s.ports.map((p) => (
-                  <button
+                  <Button
                     className="pv-host"
                     key={p}
                     title={s.shareLinks[String(p)]}
@@ -1594,7 +1677,7 @@ export function WsBar() {
                     }}
                   >
                     <Icon name="globe" /> :{p}
-                  </button>
+                  </Button>
                 ))
               ) : (
                 // Keep the row while stopped; removing it would read as "not shared".
@@ -1613,7 +1696,7 @@ export function WsBar() {
           <label className="pv-label">{tr("wsbar.preview.attachments_label")}</label>
           {attachments.map((a) => (
             <div className="pv-row pv-actions" key={a.id}>
-              <button
+              <Button
                 className="pv-attachment"
                 onClick={() => {
                   setPvOpen(false);
@@ -1623,7 +1706,7 @@ export function WsBar() {
                 title={a.url || a.title}
               >
                 {a.title || tr("browser.attach.canvas")}
-              </button>
+              </Button>
             </div>
           ))}
         </div>
@@ -1632,7 +1715,7 @@ export function WsBar() {
   );
 
   return (
-    <div className="wsbar">
+    <div className="wsbar" ref={barRef}>
       <span className="ws-label">
         <span className="lbl">Workspace</span>
         <span className="lbl-short">WS</span>
@@ -1643,7 +1726,7 @@ export function WsBar() {
           externally-changed workspace (admin stop / OOM) reflects without a manual
           refresh. Disabled mid-transition (starting…/stopping…), where it shows a
           spinner instead of the glyph. */}
-      <button
+      <Button
         className={"ws-power " + (running ? "on" : "off") + (staleShown ? " stale" : "")}
         onClick={onToggle}
         disabled={inFlight}
@@ -1676,7 +1759,7 @@ export function WsBar() {
             <path d="M7.3 6.7a7 7 0 1 0 9.4 0" />
           </svg>
         )}
-      </button>
+      </Button>
       <span className={"ws-dot " + (running ? "on" : "off")}>●</span>
       <span
         className={"ws-state" + (wsState === "stopped" && wsStats?.oom_killed ? " warn" : "")}
@@ -1704,7 +1787,7 @@ export function WsBar() {
           stop→start in one click. Label folds away on a phone, tap target stays. */}
       {staleShown && (
         <div className="ws-stale" ref={staleRef}>
-          <button
+          <Button
             className="ws-stale-pill"
             onClick={() => setStaleOpen((o) => !o)}
             aria-expanded={staleOpen}
@@ -1712,27 +1795,29 @@ export function WsBar() {
           >
             <Icon name="refresh" />
             <span className="lbl">{tr("wsbar.stale.badge")}</span>
-          </button>
+          </Button>
           {staleOpen && (
             <div className="ws-stale-pop">
               <div className="ws-stale-txt">{tr("wsbar.stale.body")}</div>
               <div className="ws-stale-actions">
-                <button className="ws-stale-go" onClick={() => void onRestart()}>
+                <Button className="ws-stale-go" onClick={() => void onRestart()}>
                   {tr("wsbar.stale.restart")}
-                </button>
-                <button className="ghost" onClick={() => setStaleOpen(false)}>
+                </Button>
+                <Button variant="ghost" onClick={() => setStaleOpen(false)}>
                   {tr("wsbar.stale.later")}
-                </button>
+                </Button>
               </div>
             </div>
           )}
         </div>
       )}
+      {slotMoveShown && <SlotMoveNotice />}
       {/* The single "start anything" entry (launch flow Ph2): opens the StartModal hub
           (chat / repo / clone / home / other). While the workspace
           is stopped it offers to start it and opens the hub when ready (Ph3). */}
-      <button
-        className="ghost ws-split ws-newsession"
+      <Button
+        variant="ghost"
+        className="ws-split ws-newsession"
         title={
           running
             ? tr("wsbar.start_here.running") + hintSuffix("session.new")
@@ -1740,82 +1825,94 @@ export function WsBar() {
               ? tr("wsbar.start_here.queued")
               : tr("wsbar.start_here.stopped")
         }
+        aria-label={tr("wsbar.start_here")}
         onClick={() => void onStart()}
       >
         <Icon name={startQueued ? "loading" : "add"} spin={startQueued} />
         <span className="lbl">{tr("wsbar.start_here")}</span>
-      </button>
+      </Button>
       {/* Columns are a desktop layout: canSplitRight is false for the whole phone width, so
           the button could only ever sit there disabled — and the bar has no room to spare
           (an overflowing bar widens the page, see wsbar.css). Dropped rather than disabled;
           it returns with the width, since useIsMobile tracks the media query. */}
       {!isMobile && (
-        <button
-          className="ghost ws-split"
+        <Button
+          variant="ghost"
+          className="ws-split"
           title={tr("wsbar.split_right") + hintSuffix("pane.splitRight")}
+          aria-label={tr("wsbar.split_right")}
           disabled={!canSplitRight}
           onClick={() => splitRight()}
         >
           <Icon name="split-horizontal" />
           <span className="lbl">{tr("wsbar.split_right")}</span>
-        </button>
+        </Button>
       )}
-      <button
-        className="ghost ws-split"
+      <Button
+        variant="ghost"
+        className="ws-split"
         title={tr("wsbar.split_down_title") + hintSuffix("pane.splitDown")}
+        aria-label={tr("wsbar.split_down")}
         disabled={!canSplitDown}
         onClick={() => activePaneId && splitDown(activePaneId)}
       >
         <Icon name="split-vertical" />
         <span className="lbl">{tr("wsbar.split_down")}</span>
-      </button>
-      <button
-        className="ghost ws-closeall"
+      </Button>
+      <Button
+        variant="ghost"
+        className="ws-closeall"
         title={tr("wsbar.close_all_title") + hintSuffix("pane.closeAll")}
+        aria-label={tr("wsbar.close_all")}
         disabled={!canCloseAll}
         onClick={() => resetToTerminal()}
       >
         <Icon name="close-all" />
         <span className="lbl">{tr("wsbar.close_all")}</span>
-      </button>
+      </Button>
       {/* The sessions overview (ADR 0078). It sits with the pane buttons because it IS a
           pane; the rail's layout map has the same button, but that map hides itself while
           there is a single pane — which is exactly when someone reaches for the overview. */}
-      <button
-        className="ghost ws-split ws-overview"
+      <Button
+        variant="ghost"
+        className="ws-split ws-overview"
         title={tr("wsbar.overview_title") + hintSuffix("open.sessions")}
+        aria-label={tr("wsbar.overview")}
         onClick={() => openSessionsOverview()}
       >
         <Icon name="dashboard" />
         <span className="lbl">{tr("wsbar.overview")}</span>
-      </button>
+      </Button>
       {/* The image-generation studio (ADR 0081), beside the overview for the same reason:
           it is a pane, and the layout map's copy of this button hides itself while there is
           only one pane. Shown only while the fleet has an image engine to offer (decision 1):
           a button that opens onto "the engine cannot be used" is a promise the bar cannot
           keep, and most fleets have no engine at all. */}
       {imagegenAvailable && (
-        <button
-          className="ghost ws-split ws-imagegen"
+        <Button
+          variant="ghost"
+          className="ws-split ws-imagegen"
           title={tr("wsbar.imagegen_title") + hintSuffix("open.imagegen")}
+          aria-label={tr("wsbar.imagegen")}
           onClick={() => void openImagegen()}
         >
           <Icon name="wand" />
           <span className="lbl">{tr("wsbar.imagegen")}</span>
-        </button>
+        </Button>
       )}
 
       <span className="ws-spacer" />
 
       {isMobile ? (
         <div className="ws-more" ref={moreRef}>
-          <button
-            className="ghost ws-more-btn"
+          <Button
+            variant="ghost"
+            className="ws-more-btn"
             title={tr("wsbar.more_title")}
             onClick={() => setMoreOpen((o) => !o)}
           >
             <Icon name="ellipsis" />
-          </button>
+          </Button>
           {moreOpen && (
             <div className="ws-more-pop">
               {/* statsBlock is always a truthy Fragment (each chip hides itself by returning
@@ -1830,21 +1927,82 @@ export function WsBar() {
         <>
           {/* Desktop only: on a phone these already sit in the ⋯ overflow, a vertical list
               with room for all of them — folding a list into a list would only bury them. */}
-          <UsageChipFold>{usageChips}</UsageChipFold>
+          <UsageChipFold squeeze={foldUsage} onLayoutChange={noteUsageLayout}>
+            {usageChips}
+          </UsageChipFold>
+          {/* Outside the fold: that group ranks agents by use, and these are not agents. */}
+          <AwsProfilesChip hidden={foldMore} />
+          <GcpProfilesChip hidden={foldMore} />
           {resourcesEl}
           <div className="ws-preview" ref={pvRef}>
-            <button
-              className="ghost ws-preview-btn"
+            <Button
+              variant="ghost"
+              className="ws-preview-btn"
               disabled={!running}
               title={tr("wsbar.preview_title")}
               aria-expanded={pvOpen}
               onClick={() => setPvOpen((o) => !o)}
             >
               <Icon name="globe" /> {tr("wsbar.preview")} <Icon name="chevron-down" />
-            </button>
+            </Button>
             {pvOpen && <div className="ws-preview-pop">{previewPop}</div>}
           </div>
+          {/* The same four, folded behind ⋯ once the bar runs out of width (wsBarFold.ts).
+              The chips above stay mounted, hidden by CSS, so nothing re-fetches as the
+              window crosses the boundary; the popover mounts its copies only while open. */}
+          <div className="ws-more ws-more-desk" ref={moreRef}>
+            <Button
+              variant="ghost"
+              className="ws-more-btn"
+              title={tr("wsbar.more_title")}
+              aria-label={tr("wsbar.more_title")}
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen((o) => !o)}
+            >
+              <Icon name="ellipsis" />
+            </Button>
+            {moreOpen && foldMore && (
+              <div className="ws-more-pop">
+                {/* statsBlock without the usage chips: those keep their own +N group. */}
+                <div className="ws-more-stats">
+                  {graphs}
+                  {graphs && <MachineDetailsLink onNavigate={() => setMoreOpen(false)} />}
+                  <AwsProfilesChip passive />
+                  <GcpProfilesChip passive />
+                </div>
+                {previewPop}
+              </div>
+            )}
+          </div>
         </>
+      )}
+    </div>
+  );
+}
+
+// SlotMoveNotice tells a member that the next start moves their workspace to a new slot
+// (ecs-ec2 replacement reservation, #1473). There is nothing for them to do but know why that
+// start takes longer, so it is a notice with no action, styled like the restart-needed pill.
+export function SlotMoveNotice() {
+  const tr = useT();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useDismiss(ref, open, () => setOpen(false));
+  return (
+    <div className="ws-stale ws-slotmove" ref={ref}>
+      <Button className="ws-stale-pill" onClick={() => setOpen((o) => !o)} aria-expanded={open} title={tr("wsbar.slotmove.title")}>
+        <Icon name="info" />
+        <span className="lbl">{tr("wsbar.slotmove.badge")}</span>
+      </Button>
+      {open && (
+        <div className="ws-stale-pop">
+          <div className="ws-stale-txt">{tr("wsbar.slotmove.body")}</div>
+          <div className="ws-stale-actions">
+            <Button variant="ghost" onClick={() => setOpen(false)}>
+              {tr("wsbar.slotmove.ok")}
+            </Button>
+          </div>
+        </div>
       )}
     </div>
   );

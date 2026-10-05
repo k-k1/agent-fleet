@@ -17,6 +17,7 @@ import { useFilesFilter } from "./filesFilter.ts";
 import { ProjectFiles } from "./ProjectFiles.tsx";
 import { FilesChanges } from "./FilesChanges.tsx";
 import { useT } from "../../lib/i18n/index.ts";
+import { usePublishedHeight } from "../../lib/usePublishedHeight.ts";
 
 const KEY = "af-section-files";
 const HOME_KEY = "af-files-home";
@@ -24,6 +25,8 @@ const VIEW_KEY = "af-files-view"; // the old console's tree/changes choice carri
 
 export const FilesSection = memo(function FilesSection() {
   const tr = useT();
+  // Sticky tiers below the filter (repo / worktree headers, file-search groups) offset by this.
+  const filterBarRef = usePublishedHeight<HTMLDivElement>("--proj-filter-h");
   const reveal = useFilesStore((s) => s.reveal);
   const bump = useFilesStore((s) => s.bump);
   const q = useFilesFilter((s) => s.q);
@@ -136,7 +139,7 @@ export const FilesSection = memo(function FilesSection() {
         <FilesChanges />
       ) : (
         <div ref={sectionBodyRef} className={q.trim() ? "files-search-active" : undefined}>
-          <div className="proj-filter-bar">
+          <div ref={filterBarRef} className="proj-filter-bar">
             <div className="proj-filter">
               <Icon name="search" />
               <input

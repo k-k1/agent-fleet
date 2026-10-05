@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
 )
 
 // TestMain wires up deps.go's function variables for the browserx-only test binary.
@@ -27,10 +29,17 @@ import (
 // tests that exercise the real wiring live in package main (see the header comment there).
 // A default here would let a test that forgot to wire it pass silently.
 func TestMain(m *testing.M) {
-	chromiumDefaultPin = func() string { return "" }
-	chromiumPinnedBinary = func() string { return "" }
-	installChromium = func(string) error {
-		return errors.New("browserx tests do not install chromium (reaching here means the wiring assumption is wrong)")
-	}
-	os.Exit(m.Run())
+	os.Exit(testguard.Run(m, func() {
+		// A workspace that runs these tests may itself carry AF_CP_INTERNAL_URL, which would send
+		// the tests' requests past their fake CP (cpurl.Request).
+		_ = os.Unsetenv("AF_CP_INTERNAL_URL")
+		// Likewise a kubernetes workspace carries UnavailableEnv, which would refuse every
+		// browser test; the tests that need it set unavailableRuntime themselves.
+		_ = os.Unsetenv(UnavailableEnv)
+		chromiumDefaultPin = func() string { return "" }
+		chromiumPinnedBinary = func() string { return "" }
+		installChromium = func(string) error {
+			return errors.New("browserx tests do not install chromium (reaching here means the wiring assumption is wrong)")
+		}
+	}))
 }

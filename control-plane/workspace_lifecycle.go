@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -84,6 +85,15 @@ func (m *manager) backfill(ctx context.Context) error {
 		return err
 	}
 	m.defaultTenantID = t.ID
+	// Names stored before the store refused collisions are reported, never rejected: the
+	// deployment has been running with them, and only an administrator can move them.
+	if cs, err := m.store.DataRootCollisions(ctx); err != nil {
+		log.Printf("WARNING: data root name check: %v", err)
+	} else {
+		for _, c := range cs {
+			log.Printf("WARNING: data root name collision under %s: %s (guide/operate/02-install.md §7)", m.dataRoot, c)
+		}
+	}
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -97,6 +107,12 @@ func (m *manager) backfill(ctx context.Context) error {
 			return err
 		}
 		mem, err := m.store.EnsureMembership(ctx, ident.ID, t.ID, "member")
+		if errors.Is(err, store.ErrDataRootNameReserved) || errors.Is(err, store.ErrDataRootNameTaken) {
+			// A directory with a home that is someone else's name (a tenant's, or one the
+			// CP reserves) is not adopted as a member; failing here would stop the boot.
+			log.Printf("WARNING: backfill: %s/home not adopted as a default-tenant member: %v", key, err)
+			continue
+		}
 		if err != nil {
 			return err
 		}
@@ -143,6 +159,13 @@ func (m *manager) workspaceStateByMembership(ctx context.Context, membershipID s
 
 // stopWorkspaceByMembership force-stops a member's workspace (admin action).
 func (m *manager) stopWorkspaceByMembership(ctx context.Context, membershipID string) error {
+	return m.stopWorkspaceByMembershipIf(ctx, membershipID, nil)
+}
+
+// stopWorkspaceByMembershipIf is stopWorkspaceByMembership with a precondition evaluated
+// once the start lock, lifecycle lease and runtime fence are held; a non-nil error from it
+// is returned with nothing stopped.
+func (m *manager) stopWorkspaceByMembershipIf(ctx context.Context, membershipID string, precond func(context.Context) error) error {
 	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, membershipID)
 	if err != nil || !ok {
 		return err
@@ -163,6 +186,11 @@ func (m *manager) stopWorkspaceByMembership(ctx context.Context, membershipID st
 	defer releaseFence()
 	if err := lease.checkpoint(ctx); err != nil {
 		return err
+	}
+	if precond != nil {
+		if err := precond(lease.Context()); err != nil {
+			return err
+		}
 	}
 	if err := rt.Stop(lease.Context()); err != nil {
 		return err
@@ -179,6 +207,11 @@ func (m *manager) stopWorkspaceByMembership(ctx context.Context, membershipID st
 // ends, not for the ordinary case.
 const homeEraseBudget = 5 * time.Minute
 
+// homeTaskBudget bounds an operation that runs a Fargate task on the home (ecs,
+// runtime.HomeWipeInBackground): the workspace's own task draining, a cold pull of the
+// task's image and a removal over NFS, which for a large home is minutes on its own.
+const homeTaskBudget = 30 * time.Minute
+
 // cleanHomeByMembership wipes a member's workspace home except auth/connection state
 // (admin action, the offboarding step). Stops the container first and leaves it stopped;
 // the home is recreated on the next start. The runtime erases the home where it actually
@@ -191,45 +224,124 @@ const homeEraseBudget = 5 * time.Minute
 func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), homeEraseBudget)
 	defer cancel()
+	finish, err := m.beginCleanHome(ctx, membershipID, nil)
+	if err != nil {
+		return err
+	}
+	return finish()
+}
+
+// startCleanHomeByMembership is cleanHomeByMembership where the erase takes minutes
+// (runtime.HomeWipeInBackground): everything up to the stop happens now, so a refusal is
+// still the request's answer, and the erase runs after it. Its outcome is written to the
+// audit log as audit describes, by this process or, after a restart, by the reconciler
+// (home_operation.go); the lifecycle lease is held until then, so no start or second
+// operation can come in between.
+func (m *manager) startCleanHomeByMembership(ctx context.Context, membershipID string, audit store.HomeOpAudit) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), homeTaskBudget)
+	finish, err := m.beginCleanHome(ctx, membershipID, &audit)
+	if err != nil {
+		cancel()
+		return err
+	}
+	go func() {
+		defer cancel()
+		_ = finish()
+	}()
+	return nil
+}
+
+// beginCleanHome is the part of an administrator's Clean home that answers the request:
+// every refusal, then the stop. finish erases and releases what begin took. audit set means
+// in the background: the local start lock is released when begin returns, the lease alone
+// keeps other operations out, and they are refused rather than left waiting on the lock.
+// The outcome then goes to the audit log through the operation's record.
+func (m *manager) beginCleanHome(ctx context.Context, membershipID string, audit *store.HomeOpAudit) (finish func() error, err error) {
+	background := audit != nil
 	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, membershipID)
 	if err != nil || !ok {
-		return err
+		if err == nil && background {
+			return func() error { m.writeHomeOpAudit(*audit, nil, nil); return nil }, nil
+		}
+		return func() error { return nil }, err
 	}
 	rt := m.runtimeFor(ws, "")
 	if !runtime.CanEraseHome(rt) {
-		return runtime.ErrHomeWipeUnsupported
+		return nil, runtime.ErrHomeWipeUnsupported
 	}
 	lock := m.startLockFor(ws.ID)
 	lock.Lock()
-	defer lock.Unlock()
 	lease, err := acquireWorkspaceLifecycleLease(ctx, m.store, membershipID)
 	if err != nil {
-		return err
+		lock.Unlock()
+		return nil, err
 	}
-	defer lease.Close()
 	releaseFence, err := m.acquireWorkspaceOperationFence(lease.Context(), ws.ID, rt)
 	if err != nil {
-		return err
+		lease.Close()
+		lock.Unlock()
+		return nil, err
 	}
-	defer releaseFence()
+	locked := true
+	release := func() {
+		releaseFence()
+		lease.Close()
+		if locked {
+			lock.Unlock()
+		}
+	}
+	var record *store.HomeOperation
+	if background {
+		if record, err = m.openHomeOperation(lease.Context(), ws, rt, store.HomeOpAdminErase, runtime.HomeWipeClean, audit); err != nil {
+			release()
+			return nil, err
+		}
+	}
+	if err := m.cleanHomePreamble(ctx, ws, rt, lease, background); err != nil {
+		m.dropHomeOperation(record)
+		release()
+		return nil, err
+	}
+	if background {
+		lock.Unlock()
+		locked = false
+	}
+	return func() error {
+		defer release()
+		err := runtime.EraseHome(lease.Context(), rt)
+		if record != nil {
+			m.finishHomeOperation(*record, err, nil)
+			return err
+		}
+		if err == nil {
+			if err = lease.checkpoint(ctx); err == nil {
+				err = m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
+			}
+		}
+		if background {
+			m.writeHomeOpAudit(*audit, err, nil)
+		}
+		return err
+	}, nil
+}
+
+func (m *manager) cleanHomePreamble(ctx context.Context, ws store.Workspace, rt runtime.Runtime, lease *workspaceLifecycleLeaseGuard, background bool) error {
 	if err := lease.checkpoint(ctx); err != nil {
 		return err
+	}
+	// A home task still running on this home (ecs) — refused now, while the answer can
+	// still reach the administrator, rather than in the background.
+	if background {
+		if err := runtime.HomeWipeBlocked(lease.Context(), rt); err != nil {
+			return err
+		}
 	}
 	// As in the member's clean-home: a failed Stop is tolerated only when nothing is left
 	// running, because erasing under a live workspace leaves its home inconsistent.
 	if err := rt.Stop(lease.Context()); err != nil && runtime.WorkspaceAlive(rt.State(ctx)) {
 		return fmt.Errorf("stop %s: %w (still running; clean home aborted)", ws.ContainerName, err)
 	}
-	if err := lease.checkpoint(ctx); err != nil {
-		return err
-	}
-	if err := runtime.EraseHome(lease.Context(), rt); err != nil {
-		return err
-	}
-	if err := lease.checkpoint(ctx); err != nil {
-		return err
-	}
-	return m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
+	return lease.checkpoint(ctx)
 }
 
 // homeBackupsByMembership lists the copies the runtime keeps of a member's home outside
@@ -303,8 +415,7 @@ func (m *manager) runtimeForUnattended(ctx context.Context, res *resolved) (runt
 	if err != nil {
 		return nil, err
 	}
-	ws := res.ws
-	ws.MemBytes, ws.CPUUnits, ws.DiskGB = m.resolveWorkspaceSize(ctx, ws)
+	ws := m.withResolvedSize(ctx, res.ws)
 	env := append(m.workspaceExtraEnv(ctx, ws), runtime.UnattendedStartEnv)
 	return m.runtimeFor(ws, dekHex, env...), nil
 }
@@ -334,8 +445,36 @@ func (m *manager) armPreviewForStart(ctx context.Context, res *resolved, extraEn
 	}
 	ws := res.ws
 	ws.PreviewSlug = slug
-	ws.MemBytes, ws.CPUUnits, ws.DiskGB = m.resolveWorkspaceSize(ctx, ws)
-	ws.SlotClass, _ = m.resolveSlotClass(ctx, ws)
+	ws = m.withResolvedSize(ctx, ws)
+	return m.runtimeFor(ws, dekHex, append(m.workspaceExtraEnv(ctx, ws), extraEnv...)...)
+}
+
+// refreshGitTokenForStart returns a runtime rebuilt with the current internal git token
+// when the one about to start was built under an older epoch, else nil (start as is).
+//
+// The memoized runtime's env is fixed when it is built, and a rotation evicts only its
+// own CP's memo: another replica's, or one written by a build that raced the eviction,
+// would otherwise inject the dead token at every start. Called under the start lock and
+// the lifecycle lease, right before Start. A rotation on another replica in the moment
+// between this check and Start still goes unseen (docs/build/91 §91.5). extraEnv is
+// carried over, as armPreviewForStart does.
+func (m *manager) refreshGitTokenForStart(ctx context.Context, res *resolved, extraEnv []string) runtime.Runtime {
+	if m.internalGitHost == "" || res.ws.MembershipID == "" {
+		return nil
+	}
+	epoch, ok, err := m.store.GitTokenEpoch(ctx, res.ws.MembershipID)
+	if err != nil || !ok || epoch == res.gitEpoch {
+		return nil
+	}
+	dekHex, err := m.resolveDEK(ctx, res.ws, res.ident.UserKey)
+	if err != nil {
+		log.Printf("internal git: rebuild for ws %s: resolve DEK: %v (starting with the token it had)", res.ws.ID, err)
+		return nil
+	}
+	ws := res.ws
+	ws = m.withResolvedSize(ctx, ws)
+	// Next resolve rebuilds the memo too, so the stale env is not kept for later starts.
+	m.evictMembershipCache(res.ws.MembershipID)
 	return m.runtimeFor(ws, dekHex, append(m.workspaceExtraEnv(ctx, ws), extraEnv...)...)
 }
 
@@ -423,15 +562,29 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 			"AF_PREVIEW_SLUG="+ws.PreviewSlug,
 			"AF_PREVIEW_PORTS="+strings.Join(strs, ","))
 	}
+	// The Agent withholds the workspace task's AWS identity from sessions unless told
+	// otherwise (awsx.IsolateWorkloadChain). The ECS runtimes do not pass WS_ENV on, so
+	// the deployment's opt-in has to travel from here to reach them.
+	if os.Getenv("AF_WS_WORKLOAD_AWS") == "1" {
+		env = append(env, "AF_WS_WORKLOAD_AWS=1")
+	}
 	// Internal git provider: inject the host + this membership's deterministic git
 	// token so the Agent seeds its cred store (secrets.go seedInternalGit) and
-	// clone/push authenticate transparently. Deterministic, so re-injection on
-	// every start is idempotent. Skipped when PUBLIC_BASE_URL is unset.
+	// clone/push authenticate transparently. Deterministic per epoch, so re-injection
+	// on every start is idempotent. Skipped when PUBLIC_BASE_URL is unset. When the
+	// epoch cannot be read nothing is injected: a token minted under a guessed epoch
+	// would overwrite a working one in the Agent's store with one that fails.
 	if m.internalGitHost != "" && ws.MembershipID != "" {
-		token := mintGitToken(gitSignKey(m.tokenSignMaster()), ws.MembershipID)
-		env = append(env,
-			"AF_INTERNAL_GIT_HOST="+m.internalGitHost,
-			"AF_INTERNAL_GIT_TOKEN="+token)
+		if token, epoch, err := m.currentGitToken(ctx, ws.MembershipID); err != nil {
+			log.Printf("internal git: token for ws %s not injected: %v", ws.ID, err)
+		} else {
+			// The epoch lets the Agent refuse a rotated token's push that arrives after a
+			// later one (handlePutInternalGitToken).
+			env = append(env,
+				"AF_INTERNAL_GIT_HOST="+m.internalGitHost,
+				"AF_INTERNAL_GIT_TOKEN="+token,
+				"AF_INTERNAL_GIT_EPOCH="+strconv.FormatInt(epoch, 10))
+		}
 	}
 	// Memo bridge: inject the CP public base + this membership's memo token so the
 	// in-container fleet operator can read/write the memo queue over the public
@@ -472,7 +625,20 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 			// AWS profiles bridge (issue #998): the agent pulls the member's SSO profiles
 			// into ~/.aws/config. Its own credential; a leak reads that non-secret list
 			// and nothing else.
-			"AF_AWS_PROFILES_TOKEN="+mintAWSProfilesToken(awsProfilesSignKey(m.tokenSignMaster()), ws.MembershipID))
+			"AF_AWS_PROFILES_TOKEN="+mintAWSProfilesToken(awsProfilesSignKey(m.tokenSignMaster()), ws.MembershipID),
+			// Google Cloud profiles bridge (ADR 0107 decision 1): the same pull for Settings →
+			// Google Cloud, under a token of its own so neither bridge opens the other's list.
+			"AF_GCP_PROFILES_TOKEN="+mintGCPProfilesToken(gcpProfilesSignKey(m.tokenSignMaster()), ws.MembershipID),
+			// Branch rules bridge (ADR 0103 decision 10): the agent polls its tenant's branch
+			// naming rules. Its own credential; a leak reads those rules and nothing else.
+			"AF_BRANCH_RULES_TOKEN="+mintBranchRulesToken(branchRulesSignKey(m.tokenSignMaster()), ws.MembershipID))
+		// Where the workspace reaches the CP by an internal address (ADR 0106 decision 8),
+		// the Agent sends its requests there and keeps AF_CP_BASE_URL for links a person
+		// opens. Only alongside the public base: the bridge tokens above are what make it
+		// usable.
+		if m.internalBaseURL != "" {
+			env = append(env, "AF_CP_INTERNAL_URL="+m.internalBaseURL)
+		}
 	}
 	return env
 }
@@ -530,6 +696,17 @@ func (m *manager) resolveWorkspaceSize(ctx context.Context, ws store.Workspace) 
 		}
 	}
 	return memBytes, cpuUnits, diskGB
+}
+
+// withResolvedSize returns ws with every axis the next container start depends on
+// resolved onto it: memory, CPU, disk and machine class. Every path that builds a
+// runtime for a start (or a resize) goes through it; resolving only the size axes
+// leaves SlotClass empty, and ecs-ec2 then places the member on the deployment default
+// class instead of the tenant's.
+func (m *manager) withResolvedSize(ctx context.Context, ws store.Workspace) store.Workspace {
+	ws.MemBytes, ws.CPUUnits, ws.DiskGB = m.resolveWorkspaceSize(ctx, ws)
+	ws.SlotClass, _ = m.resolveSlotClass(ctx, ws)
+	return ws
 }
 
 // resolveSlotClass returns the machine class ws's NEXT container start lands on, and
@@ -623,39 +800,123 @@ func (m *manager) resolveWorkspaceMemBytes(ctx context.Context, ws store.Workspa
 // this operation exists to close. Every adapter's Destroy is idempotent, so the retry
 // after a partial failure is safe.
 func (m *manager) destroyWorkspaceByMembership(ctx context.Context, membershipID string) ([]string, error) {
+	finish, err := m.beginDestroyWorkspace(ctx, membershipID, nil)
+	if err != nil {
+		return nil, err
+	}
+	return finish()
+}
+
+// startDestroyWorkspaceByMembership is destroyWorkspaceByMembership where the runtime's
+// Destroy runs a task on the home and takes minutes (runtime.DestroyInBackground). The
+// refusals answer the request; the teardown runs after it under the lease, and its outcome
+// goes to the audit log as audit describes, by this process or, after a restart, by the
+// reconciler (home_operation.go).
+func (m *manager) startDestroyWorkspaceByMembership(ctx context.Context, membershipID string, audit store.HomeOpAudit) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), homeTaskBudget)
+	finish, err := m.beginDestroyWorkspace(ctx, membershipID, &audit)
+	if err != nil {
+		cancel()
+		return err
+	}
+	go func() {
+		defer cancel()
+		_, _ = finish()
+	}()
+	return nil
+}
+
+// beginDestroyWorkspace takes the lease and answers every refusal; finish tears down. audit
+// set means in the background, as in beginCleanHome: the row's deletion and the outcome
+// entry are then written together through the operation's record.
+func (m *manager) beginDestroyWorkspace(ctx context.Context, membershipID string, audit *store.HomeOpAudit) (finish func() ([]string, error), err error) {
+	background := audit != nil
 	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, membershipID)
 	if err != nil || !ok {
-		return nil, err
+		if err == nil && background {
+			return func() ([]string, error) { m.writeHomeOpAudit(*audit, nil, nil); return nil, nil }, nil
+		}
+		return func() ([]string, error) { return nil, nil }, err
 	}
 	lock := m.startLockFor(ws.ID)
 	lock.Lock()
-	defer lock.Unlock()
 	lease, err := acquireWorkspaceLifecycleLease(ctx, m.store, membershipID)
 	if err != nil {
+		lock.Unlock()
 		return nil, err
 	}
-	defer lease.Close()
 	rt := m.runtimeFor(ws, "")
 	releaseFence, err := m.acquireWorkspaceOperationFence(lease.Context(), ws.ID, rt)
 	if err != nil {
+		lease.Close()
+		lock.Unlock()
 		return nil, err
 	}
-	defer releaseFence()
+	locked := true
+	release := func() {
+		releaseFence()
+		lease.Close()
+		if locked {
+			lock.Unlock()
+		}
+	}
 	if err := lease.checkpoint(ctx); err != nil {
+		release()
 		return nil, err
 	}
-	leftovers, err := runtime.DestroyRuntime(lease.Context(), rt)
+	var record *store.HomeOperation
+	// A Destroy in the request (the golden pipeline's seed and probe) opens the record as
+	// well wherever the home task runs: without one, a CP replaced between RunTask and its
+	// answer leaves a pending marker no reconciler resolves and the workspace refused.
+	if background || runtime.RunsHomeTask(rt) {
+		if record, err = m.openHomeOperation(lease.Context(), ws, rt, store.HomeOpDestroy, "destroy", audit); err != nil {
+			release()
+			return nil, err
+		}
+		if err := runtime.HomeWipeBlocked(lease.Context(), rt); err != nil {
+			m.dropHomeOperation(record)
+			release()
+			return nil, err
+		}
+	}
+	if background {
+		lock.Unlock()
+		locked = false
+	}
+	return func() ([]string, error) {
+		defer release()
+		leftovers, err := runtime.DestroyRuntime(lease.Context(), rt)
+		if record != nil {
+			m.finishHomeOperation(*record, err, leftovers)
+			return leftovers, err
+		}
+		if err == nil {
+			if err = lease.checkpoint(ctx); err == nil {
+				if err = m.store.DeleteWorkspace(ctx, ws.ID); err == nil {
+					m.evictMembershipCache(membershipID)
+				}
+			}
+		}
+		if background {
+			m.writeHomeOpAudit(*audit, err, leftovers)
+		}
+		return leftovers, err
+	}, nil
+}
+
+// writeHomeOpAudit writes the outcome of an administrator's background operation that has
+// no record (a runtime that runs no home task, or no workspace to operate on).
+func (m *manager) writeHomeOpAudit(audit store.HomeOpAudit, err error, leftovers []string) {
+	ctx, cancel := context.WithTimeout(context.Background(), homeOpFinishTimeout)
+	defer cancel()
+	e := audit.Entry(err, leftovers)
 	if err != nil {
-		return nil, err
+		log.Printf("%s of %q failed in the background: %v", e.Action, e.Target, err)
 	}
-	if err := lease.checkpoint(ctx); err != nil {
-		return leftovers, err
+	if werr := m.store.InsertAudit(ctx, e); werr != nil {
+		log.Printf("audit: %s on %q answered %d, but its outcome was not written: %s: %v",
+			e.Action, e.Target, e.HTTPStatus, e.Detail, werr)
 	}
-	if err := m.store.DeleteWorkspace(ctx, ws.ID); err != nil {
-		return leftovers, err
-	}
-	m.evictMembershipCache(membershipID)
-	return leftovers, nil
 }
 
 // runtimePoolStatuser is implemented by the one adapter that has a POOL to report on.
@@ -671,6 +932,22 @@ type runtimePoolStatuser interface {
 // one of them may be assumed from the other's presence.
 type runtimeSlotTerminator interface {
 	TerminateQuarantinedSlot(ctx context.Context, instanceID string) (reason string, err error)
+}
+
+// runtimeSlotReserver marks a slot for replacement at its workspace's next Start (#1473).
+type runtimeSlotReserver interface {
+	ReserveSlotReplacement(ctx context.Context, instanceID string, reserve, onlyOutdated bool) (runtime.SlotReservation, error)
+}
+
+// reserveSlotReplacement sets or clears a slot's replacement reservation; ok=false on every
+// runtime that has no pool.
+func (m *manager) reserveSlotReplacement(ctx context.Context, instanceID string, reserve, onlyOutdated bool) (runtime.SlotReservation, bool, error) {
+	p, ok := m.rtFactory.(runtimeSlotReserver)
+	if !ok {
+		return runtime.SlotReservation{}, false, nil
+	}
+	res, err := p.ReserveSlotReplacement(ctx, instanceID, reserve, onlyOutdated)
+	return res, true, err
 }
 
 // hasSlotPool reports whether terminateQuarantinedSlot has anything to drive.

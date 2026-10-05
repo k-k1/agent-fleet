@@ -131,7 +131,7 @@ type LiveInfo struct {
 	RemoteURL      string                // claude Remote Control URL, "" otherwise
 	Context        *session.ContextUsage // context fill; nil = sessionx derives it from Transcript()
 	Resumable      bool                  // false = stopped agent whose working dir is gone
-	BackgroundBusy bool                  // claude: idle turn but a run_in_background task lingers
+	BackgroundBusy bool                  // idle turn, but work an earlier turn started still runs
 	// BackgroundBusyReason names WHAT is running (claude.BGReason*): "process" | "subagent"
 	// | "shell". "" when nothing is. Display-only — the badge lights on BackgroundBusy.
 	BackgroundBusyReason string
@@ -266,7 +266,7 @@ type TranscriptData struct {
 	QueuedItems []QueueItem
 	Discards    []Discard
 	// Compacting reports the agent is compacting its conversation right now
-	// (opencode session.time_compacting) — surfaced as the mirror's "compacting" badge.
+	// (opencode's in-flight compaction summary) — surfaced as the mirror's "compacting" badge.
 	Compacting bool
 }
 
@@ -327,6 +327,23 @@ func (r RecalledSettings) Apply(m *session.Meta) bool {
 // (expensive, PTY-scrape) refresh. nil = no reading yet.
 type ContextReporter interface {
 	ContextFill(m session.Meta) *transcript.Context
+}
+
+// BackgroundReporter is an optional Agent capability: whether work an earlier turn left
+// running (a command, a task) is still going behind an idle prompt, and what it is — the
+// LiveInfo.BackgroundBusy pair. A kind that reports it in WireLive implements this too, so the
+// /messages handler can put the same answer in the mirror header without running a whole
+// WireLive; the two surfaces must not disagree. Only asked while the session is idle, and it
+// must not block: it runs on the list poll.
+type BackgroundReporter interface {
+	BackgroundWork(m session.Meta) (busy bool, reason string)
+}
+
+// UsageReader is an optional Agent capability: the conversation as the usage fold reads it,
+// when that differs from Transcript's turns — today opencode, whose billed calls with nothing to
+// display come back as transcript.Turn.CostOnly rows so their reported cost is not lost.
+type UsageReader interface {
+	UsageTurns(m session.Meta) []transcript.Turn
 }
 
 // Forker is the optional fork capability behind Caps().CanFork: ForkSource resolves

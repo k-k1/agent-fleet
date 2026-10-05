@@ -32,6 +32,11 @@ and on AWS ECS.
 4. Back at a desk, the session list shows which sessions finished and which are waiting on
    you, and each worktree's changes are a click away.
 
+![A 45-second recording of those four steps: two issues started as a Claude Code and a Codex session, each in its own worktree; the laptop closed; a permission request allowed from the session's Slack thread on a phone; and back at the desk, the sessions overview with one session ready and one waiting on a question, beside the finished session's changed files and diff](docs/img/demo-day-en.webp)
+
+The recording drives the real Console against fictional data. The Slack thread on the phone
+is redrawn from the messages the chat bridge posts.
+
 ## Operate a fleet, not a single chat
 
 - **Many sessions at once** — across agent kinds, each in its own worktree. One list shows

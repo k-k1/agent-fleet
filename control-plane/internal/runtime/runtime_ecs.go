@@ -67,6 +67,8 @@ type efsAPI interface {
 type ssmAPI interface {
 	PutParameter(context.Context, *ssm.PutParameterInput, ...func(*ssm.Options)) (*ssm.PutParameterOutput, error)
 	DeleteParameter(context.Context, *ssm.DeleteParameterInput, ...func(*ssm.Options)) (*ssm.DeleteParameterOutput, error)
+	// GetParameter reads the home task's in-flight marker (runtime_ecs_home_task.go).
+	GetParameter(context.Context, *ssm.GetParameterInput, ...func(*ssm.Options)) (*ssm.GetParameterOutput, error)
 }
 
 // ecsRuntime is the `aws` Runtime adapter (P3-7 stage 2). It maps one per-membership
@@ -107,6 +109,16 @@ type ecsRuntime struct {
 	// stub it out (real path hits HTTP, unavailable in unit tests). Start runs it in
 	// the background (watchReady), never on the caller's thread.
 	waitReady func(ctx context.Context, endpoint string, timeout time.Duration) error
+	// tasks starts and reads the one-shot home task (runtime_ecs_home_task.go). nil, like
+	// an empty cfg.homeTask, leaves the home out of reach.
+	tasks ecsTaskAPI
+	// homeTaskPoll overrides ecsHomeTaskPoll; tests set it to a millisecond.
+	homeTaskPoll time.Duration
+	// homeTaskMissingGrace overrides the constant of that name, for tests.
+	homeTaskMissingGrace time.Duration
+	// homeBinding ties the next home task to the CP's record of the operation
+	// (BindHomeTask). Zero: no record, no clientToken of ours.
+	homeBinding HomeTaskBinding
 }
 
 var _ Runtime = (*ecsRuntime)(nil)
@@ -132,6 +144,10 @@ type ecsConfig struct {
 	posixUID       int64    // EFS access-point owner uid/gid (container dev user)
 	posixGID       int64
 	startTimeout   time.Duration // budget for the background readiness watch (see watchReady)
+	// homeTask is the task definition FAMILY of the stack's home-ops task (AF_ECS_HOME_TASK),
+	// never a revision: a stack update deregisters the old revision. "" on a stack that
+	// declares none, where Recreate, Clean home and the EFS half of Destroy stay refused.
+	homeTask string
 }
 
 // ecsFactory is the `aws` RuntimeFactory. It carries the shared AWS clients and
@@ -142,6 +158,8 @@ type ecsFactory struct {
 	efs efsAPI
 	ssm ssmAPI
 	ecr ecrAPI
+	// tasks is the same ECS client, through the home task's port.
+	tasks ecsTaskAPI
 }
 
 func (f *ecsFactory) New(ws Workspace, secretKey string, extraEnv []string) Runtime {
@@ -173,6 +191,7 @@ func (f *ecsFactory) New(ws Workspace, secretKey string, extraEnv []string) Runt
 		efs:          f.efs,
 		ssm:          f.ssm,
 		ecr:          f.ecr,
+		tasks:        f.tasks,
 		name:         ws.ContainerName,
 		membershipID: ws.MembershipID,
 		tenantSlug:   ws.TenantSlug,
@@ -264,6 +283,7 @@ func newECSFactory(mcfg Config) (RuntimeFactory, error) {
 		// budget shorter than that would just log a false "not ready" every Start.
 		// Same reasoning as runtime_native's 300s health wait.
 		startTimeout: time.Duration(EnvInt("AF_ECS_START_TIMEOUT_SEC", 300)) * time.Second,
+		homeTask:     os.Getenv("AF_ECS_HOME_TASK"),
 	}
 	log.Printf("runtime=ecs region=%s cluster=%s namespace=%s efs=%s", cfg.region, cfg.cluster, cfg.namespaceArn, cfg.efsFileSystem)
 	// A workspace created after the CP task cannot be reached by its Service Connect
@@ -271,12 +291,15 @@ func newECSFactory(mcfg Config) (RuntimeFactory, error) {
 	// again. Cloud Map picks those up instead (agent_dial.go). A failure here is not
 	// fatal — it only falls back to the alias-only behaviour.
 	initAgentResolver(context.Background(), ac, cfg.namespaceArn)
+	ecsClient := ecs.NewFromConfig(ac)
 	return &ecsFactory{
 		cfg: cfg,
-		ecs: ecs.NewFromConfig(ac),
+		ecs: ecsClient,
 		efs: efs.NewFromConfig(ac),
 		ssm: ssm.NewFromConfig(ac),
 		ecr: ecr.NewFromConfig(ac),
+		// The home task's port (runtime_ecs_home_task.go).
+		tasks: ecsClient,
 	}, nil
 }
 
@@ -307,14 +330,21 @@ func (e *ecsRuntime) Endpoint() string {
 // flow silently dropped it).
 func (e *ecsRuntime) State(ctx context.Context) string {
 	s, ok, err := e.describeService(ctx)
-	if err != nil || !ok {
+	if err != nil {
 		return "none"
 	}
 	switch {
-	case s.DesiredCount >= 1 && s.RunningCount >= 1 && serviceRolledOut(s):
+	case ok && s.DesiredCount >= 1 && s.RunningCount >= 1 && serviceRolledOut(s):
 		return "running"
-	case s.DesiredCount >= 1:
+	case ok && s.DesiredCount >= 1:
 		return "starting"
+	case e.clearingHome():
+		// A member's Recreate or Clean home is stopping, wiping and starting this workspace
+		// in the background (runtime_ecs_home_task.go). It will be up again without anyone
+		// pressing Start, and Start must not be offered on it in between.
+		return "starting"
+	case !ok:
+		return "none"
 	default:
 		return "stopped"
 	}
@@ -377,6 +407,13 @@ func (e *ecsRuntime) Stop(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
+	// The home task's wait must see these STOPPED, whatever a later listing shows
+	// (waitServiceTasksGone). Only where the stack declares that task.
+	if e.homePortsReady() {
+		if err := e.captureWorkspaceTasks(ctx); err != nil {
+			return err
+		}
+	}
 	_, err = e.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
 		Cluster:      aws.String(e.cfg.cluster),
 		Service:      aws.String(e.name),
@@ -390,12 +427,14 @@ func (e *ecsRuntime) Stop(ctx context.Context) error {
 // ecsEC2Runtime.Destroy calls it for the same resources (it shares this adapter as a
 // library) after it has released the slot and deleted the EBS home.
 //
-// It CANNOT delete the home itself. The EFS directories the access points pointed at
-// (/home/<membership>, /claude-config/<membership>) survive the access points, and EFS
-// keeps billing for them — deleting them needs a mount, i.e. a throwaway task
-// (docs/log/64 §64.18.4, ADR 0045 decision 13-3). They come back as leftovers rather
-// than an error so the caller can record them; an error here would only make the operator
-// retry a teardown that already did everything it can.
+// The EFS directories the access points pointed at (/home/<membership>,
+// /claude-config/<membership>, and ecs-ec2's /home-keep/<membership>) survive the access
+// points, and EFS keeps billing for them. Where the stack declares the home task, Destroy
+// runs it to remove them, after the workspace's own task is gone, and a failure is an
+// error: the row stays, and the retry runs the task again. On a stack without it they come
+// back as leftovers rather than an error so the caller can record them; an error there
+// would only make the operator retry a teardown that already did everything it can
+// (docs/log/64 §64.18.4).
 //
 // Every step is idempotent (already-gone is success): a partial Destroy must be safe to
 // re-run, which is the normal case after a CP restart mid-teardown.
@@ -408,6 +447,11 @@ func (e *ecsRuntime) Destroy(ctx context.Context) ([]string, error) {
 	if _, ok, err := e.describeService(ctx); err != nil {
 		return nil, err
 	} else if ok {
+		if e.homePortsReady() {
+			if err := e.waitServiceTasksGone(ctx); err != nil {
+				return nil, err
+			}
+		}
 		if _, err := e.ecs.DeleteService(ctx, &ecs.DeleteServiceInput{
 			Cluster: aws.String(e.cfg.cluster),
 			Service: aws.String(e.name),
@@ -420,8 +464,36 @@ func (e *ecsRuntime) Destroy(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	if e.homePortsReady() {
+		if err := e.runHomeTask(ctx, homeWipeDestroy); err != nil {
+			return nil, fmt.Errorf("remove the EFS home: %w", err)
+		}
+		return e.notRemovedByHomeTask(leftovers), nil
+	}
 	return leftovers, nil
 }
+
+// notRemovedByHomeTask drops from leftovers the directories the destroy task has just
+// removed (homeTaskDirs). An access point rooted anywhere else stays reported: nothing
+// removed it, and a leftover silently dropped is one nobody looks for again.
+func (e *ecsRuntime) notRemovedByHomeTask(leftovers []string) []string {
+	var out []string
+	for _, l := range leftovers {
+		removed := false
+		for _, dir := range homeTaskDirs {
+			if l == "efs:"+e.cfg.efsFileSystem+"/"+dir+"/"+e.membershipID {
+				removed = true
+			}
+		}
+		if !removed {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// DestroyRunsHomeTask satisfies homeTaskDestroyer.
+func (e *ecsRuntime) DestroyRunsHomeTask() bool { return e.homePortsReady() }
 
 // accessPoints lists every access point on the deployment's file system, following
 // NextToken. One call returns at most 100 (the API's default page), and one file system
@@ -516,6 +588,16 @@ func (e *ecsRuntime) Start(ctx context.Context) error {
 		// would register a fresh task def and ForceNewDeployment — restarting the
 		// multi-minute cold pull from zero. Let the in-flight launch finish.
 		return nil
+	}
+	// A home task still removing files (a Recreate, a Clean home) must not have the
+	// workspace boot onto the half-removed home. Asked of ECS, not of this process: the
+	// task outlives a CP restart, and another replica never knew of it.
+	if e.homePortsReady() {
+		if busy, err := e.homeTaskInFlight(ctx); err != nil {
+			return err
+		} else if busy {
+			return ErrHomeTaskInFlight
+		}
 	}
 	homeAP, err := e.ensureAccessPoint(ctx, "home", "/home/"+e.membershipID)
 	if err != nil {

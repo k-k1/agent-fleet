@@ -12,7 +12,7 @@
 import { useMemo } from "react";
 import { create } from "zustand";
 import { chatList } from "./api.ts";
-import { isTransientErr } from "../../core/api/client.ts";
+import { getTenant, isTransientErr } from "../../core/api/client.ts";
 import type { Conversation, ConversationMeta, ChatStep } from "../../types/chat.ts";
 import type { SessionKind } from "../../types/session.ts";
 
@@ -35,6 +35,8 @@ interface ChatStore {
   // mounted, ensureConvs() covers surfaces that render before/without it.
   convs: ConversationMeta[] | null;
   setConvs(convs: ConversationMeta[]): void;
+  /** Forgets the list and the titles learned from it: they belong to the previous tenant. */
+  resetConvs(): void;
   // Conversation id → title, published by whichever ChatView has that conversation
   // loaded. `convs` alone can't label a chat pane: it is only refreshed by the rail's
   // 15s poll (so a title the backend just auto-generated for a brand-new conversation
@@ -59,6 +61,10 @@ export const useChatStore = create<ChatStore>((set) => ({
   bumpList: () => set((s) => ({ listTick: s.listTick + 1 })),
   convs: null,
   setConvs: (convs) => set({ convs }),
+  resetConvs: () => {
+    convsLoading = null;
+    set({ convs: null, titles: {} });
+  },
   titles: {},
   setConvTitle: (id, title) =>
     set((s) => (s.titles[id] === title ? s : { titles: { ...s.titles, [id]: title } })),
@@ -94,14 +100,17 @@ let convsLoading: Promise<void> | null = null;
 export function ensureConvs(): Promise<void> {
   if (useChatStore.getState().convs !== null) return Promise.resolve();
   if (!convsLoading) {
-    convsLoading = chatList()
+    const tenant = getTenant();
+    const p: Promise<void> = chatList()
       .then((r) => {
-        if (!isTransientErr(r)) useChatStore.getState().setConvs(r.conversations || []);
+        // An answer for the tenant that was active when it was asked must not land after a switch.
+        if (!isTransientErr(r) && getTenant() === tenant) useChatStore.getState().setConvs(r.conversations || []);
       })
       .catch(() => {})
       .finally(() => {
-        convsLoading = null;
+        if (convsLoading === p) convsLoading = null;
       });
+    convsLoading = p;
   }
   return convsLoading;
 }

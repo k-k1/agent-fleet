@@ -88,6 +88,7 @@ func init() {
 		},
 		CleanTitle:             sessionx.CleanTitle,
 		StopArmedSession:       sessionx.StopArmedSession,
+		SweepSpendCaps:         sessionx.SweepSpendCaps,
 		NormalizeKind:          sessionx.NormalizeKind,
 		SafeBrowsePath:         safeBrowsePath,
 		MaybePushOperatorReply: maybePushOperatorReply,
@@ -101,5 +102,6 @@ func init() {
 			}
 			return st.ScheduleID, st.ResumeAt, true
 		},
+		SessionTurns: sessionx.SessionTurns,
 	})
 }

@@ -2059,3 +2059,26 @@ export function workItemDetail(locale, key) {
     checks: CI_RED,
   };
 }
+
+// GET /api/session-search (ADR 0110). The snippets do not have to contain the query: the palette
+// shows the server's hits as they are, which is what a bigram match looks like too.
+export function sessionSearch(locale, q) {
+  if (!q.trim()) return { hits: [], indexing: false, indexed: 0, total: 0 };
+  const ago = (h) => new Date(Date.now() - h * 3600e3).toISOString().replace(/\.\d+Z$/, "Z");
+  const ja = locale === "ja";
+  return {
+    hits: [
+      { session: "swnd7qa", display: ja ? "決済画面の改修" : "Checkout rework", kind: "claude", repo: "webshop", idx: 412, role: "assistant", ts: ago(3), score: 4.2,
+        snippet: ja ? "…原因はトークンの更新漏れでした。認証エラーは refresh の前に期限切れを判定していたためで、auth.go の判定順を入れ替えて直しました…" : "…the cause was a missed token refresh. The auth error came from checking expiry before refreshing; swapping the order in auth.go fixed it…" },
+      { session: "swnd7qa", display: ja ? "決済画面の改修" : "Checkout rework", kind: "claude", repo: "webshop", idx: 398, role: "user", ts: ago(4), score: 3.1,
+        snippet: ja ? "ログイン直後に認証エラーが出る。前にも同じことがあった気がする" : "Getting an auth error right after login. I think this happened before" },
+      { session: "sk4rq2f", display: ja ? "API クライアントの整理" : "API client cleanup", kind: "codex", repo: "webshop", idx: 57, role: "assistant", ts: ago(30), score: 2.4,
+        snippet: ja ? "認証ヘッダーの付け忘れを防ぐため、クライアント生成時に必ず interceptor を登録するようにしました。" : "To stop requests going out without the auth header, the client now always registers the interceptor when it is built." },
+      { session: "sold001", display: ja ? "セッション切れの調査" : "Session expiry investigation", kind: "opencode", repo: "webshop", archived: true, idx: 12, role: "assistant", ts: ago(24 * 40), score: 1.2,
+        snippet: ja ? "認証エラーの再現手順: 1. 24 時間放置 2. 画面を再読み込み 3. 401 が返る" : "Steps to reproduce the auth error: 1. leave it 24 hours 2. reload 3. a 401 comes back" },
+    ],
+    indexing: true,
+    indexed: 41,
+    total: 44,
+  };
+}

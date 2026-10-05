@@ -3,6 +3,8 @@ package muse
 import (
 	"os"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
 )
 
 // TestMain points HOME at a throwaway directory for the whole package. accept records every
@@ -14,8 +16,7 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	os.Setenv("HOME", home)
-	code := m.Run()
+	code := testguard.Run(m, func() { os.Setenv("HOME", home) })
 	os.RemoveAll(home)
 	os.Exit(code)
 }

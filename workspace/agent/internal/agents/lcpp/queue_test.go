@@ -8,6 +8,7 @@ package lcpp
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -638,4 +639,48 @@ func TestStopWithNothingTakenLeavesNoInterrupting(t *testing.T) {
 	expectNoStart(t, h, c)
 	settled(t, h)
 	waitState(t, h, agents.TurnCancelled)
+}
+
+// #1255: a peer message held behind a turn survives DropHandle (halt, archive's stop, a switch)
+// and becomes the first turn of the next Resume, marked with when it was queued. It runs once:
+// a later Resume does not send it again.
+func TestHeldPeerIsTheFirstTurnOfTheNextResume(t *testing.T) {
+	h, c, m := startHandle(t, "sess-held-peer")
+	mustSend(t, h, member("m1", "long"))
+	expectStarted(t, c, "long")
+	mustSend(t, h, peer("p1", "[agent-fleet:peer from=s-peer intent=notice reply=none] hello"))
+	if done := dropHandle(m.Name); done != nil {
+		select {
+		case <-done:
+		case <-time.After(hangGuard):
+			t.Fatal("the handle was not released")
+		}
+	}
+	if n := agents.HeldCount(m.Name); n != 1 {
+		t.Fatalf("held after DropHandle = %d, want 1", n)
+	}
+
+	h2i, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	h2 := h2i.(*threadHandle)
+	select {
+	case got := <-c.started:
+		if !strings.HasPrefix(got, "[agent-fleet:peer from=s-peer intent=notice reply=none queued=") ||
+			!strings.HasSuffix(got, "] hello") {
+			t.Fatalf("first turn after the restart = %q", got)
+		}
+	case <-time.After(hangGuard):
+		t.Fatal("the held message did not start")
+	}
+	c.answer(t)
+	settled(t, h2)
+	if n := agents.HeldCount(m.Name); n != 0 {
+		t.Fatalf("held after it ran = %d, want 0", n)
+	}
+	if _, err := NewDriver().Resume(m); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	expectNoStart(t, h2, c)
 }

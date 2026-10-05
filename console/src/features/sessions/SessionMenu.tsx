@@ -16,17 +16,22 @@ import { useDismiss } from "../../lib/useDismiss.ts";
 import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { copyText } from "../../lib/clipboard.ts";
 import { sessionFolder } from "../../lib/project.ts";
-import { useSettings } from "../../lib/settings.ts";
-import { workingSetList, toggleWorkingSetMember } from "../../lib/workingSetsStore.ts";
+import { getSettings, useSettings } from "../../lib/settings.ts";
+import { activeWorkingSet, repoInSet, workingSetList, toggleWorkingSetMember } from "../../lib/workingSetsStore.ts";
 import { useReposStore } from "../repos/store.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { displayName, remainingShort, KEEP_AWAKE_HOURS } from "../../lib/sessionview.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { openSessionTerminal, openSessionChat } from "./open.ts";
 import { openGallery } from "../gallery/open.ts";
+import { openRepoMenuInRail } from "../repos/reveal.ts";
+import { useIsMobile } from "../../lib/device.ts";
+import { usePopoutMode } from "../../lib/popoutMode.ts";
 import { useSessionUI } from "./ui.ts";
 import { useSessionsStore } from "./store.ts";
 import { HandoffModal } from "./HandoffModal.tsx";
+import { RecreateWorktreeModal } from "./RecreateWorktreeModal.tsx";
+import { recreatableGroup } from "./ArchivedModal.tsx";
 import { ShareCreateModal } from "../sharing/ShareCreateModal.tsx";
 import type { SessionActions } from "./useSessionActions.tsx";
 import type { Session } from "../../types/session.ts";
@@ -48,12 +53,14 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
   const openRename = useSessionUI((u) => u.openRename);
   const openBranchRename = useSessionUI((u) => u.openBranchRename);
   const openSsmResume = useSessionUI((u) => u.openSsmResume);
+  const openBudget = useSessionUI((u) => u.openBudget);
   const startSession = useSessionsStore((st) => st.start);
   const toast = useToast();
   const tr = useT();
   const menuElRef = useRef<HTMLDivElement>(null);
   const [handoffOpen, setHandoffOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [recreateWtOpen, setRecreateWtOpen] = useState(false);
   useDismiss([menuElRef, ...(keepOpenRefs ?? [])], open, onClose);
   useMenuRoving(menuElRef, open);
   // The dropdown is position:fixed and re-placed every render — a row near the
@@ -109,12 +116,38 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
   };
 
   const dead = !s.alive && s.resumable === false; // dir gone → can't resume
+  // A dead session whose folder was a worktree can have the folder put back at the same path,
+  // after which the ordinary resume finds its conversation again (issue #1040). The Agent
+  // decides the rest — the parent still being there, the path still free.
+  const worktreeGone = dead && running && recreatableGroup(s.dir || "", [s]);
   // Working sets (docs/log/52): direct assignment is for repo-less sessions only —
   // a session living in a working copy inherits that repo's membership instead.
   const wsets = workingSetList(useSettings());
   const repos = useReposStore((st) => st.repos);
   const folder = sessionFolder(s);
   const repoLess = !folder || !repos.some((r) => r.name === folder);
+  // The repository menu is the row's own, opened where the row sits in the rail (#1557). No
+  // rail to open it in: a pop-out has none, and on a phone the rail is a drawer only the App
+  // shell can open.
+  const popout = usePopoutMode() === "popout";
+  const mobile = useIsMobile();
+  const showRepoMenu = running && !repoLess && !popout && !mobile;
+  const openRepoMenu = () => {
+    onClose();
+    const name = folder!;
+    void openRepoMenuInRail(name).then((ok) => {
+      if (ok) return;
+      // Say why when the working set is the reason; otherwise the rail search (or a copy
+      // deleted meanwhile) kept the row out of the tree.
+      const wset = activeWorkingSet(getSettings());
+      const r = useReposStore.getState().repos.find((x) => x.name === name);
+      toast(
+        wset && r && !repoInSet(wset, r)
+          ? tr("srow.repo_menu_outside_wset", { name })
+          : tr("srow.repo_menu_hidden", { name }),
+      );
+    });
+  };
 
   return (
     <>
@@ -212,6 +245,11 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
                 onClick={openGeneratedImages}
               >
                 <Icon name="file-media" /> {tr("srow.generated_images", { n: generated.n })}
+              </button>
+            )}
+            {showRepoMenu && (
+              <button type="button" className="ui-menu-item" onClick={openRepoMenu}>
+                <Icon name="repo" /> {tr("srow.repo_menu", { name: folder! })}
               </button>
             )}
             <button
@@ -349,6 +387,21 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
                 {s.stopAfterTurnAt ? tr("srow.stop_after_turn_off") : tr("srow.stop_after_turn_on")}
               </button>
             )}
+            {/* Spend budget (#1054): only kinds with a transcript can be priced. On a session the
+                budget stopped, the same item is the "raise and resume" action. */}
+            {running && agentOf(s.kind).caps.transcript && (
+              <button
+                type="button"
+                className="ui-menu-item"
+                onClick={() => {
+                  onClose();
+                  openBudget(s);
+                }}
+              >
+                <Icon name="pulse" />{" "}
+                {s.spendCapHitAt && !s.alive ? tr("srow.budget_raise_resume") : tr("srow.budget")}
+              </button>
+            )}
             {agentOf(s.kind).caps.ephemeral ? (
               <button
                 type="button"
@@ -374,6 +427,19 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
                 <Icon name="archive" /> {tr("srow.archive")}
               </button>
             )}
+            {worktreeGone && (
+              <button
+                type="button"
+                className="ui-menu-item"
+                title={tr("arch.recreate_title")}
+                onClick={() => {
+                  onClose();
+                  setRecreateWtOpen(true);
+                }}
+              >
+                <Icon name="repo" /> {tr("srow.recreate_worktree")}
+              </button>
+            )}
             {!dead && (
               <button
                 type="button"
@@ -390,6 +456,16 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
           document.body,
         )}
       {handoffOpen && <HandoffModal session={s} actions={actions} onClose={() => setHandoffOpen(false)} />}
+      {recreateWtOpen && (
+        // This session is still on the active list, so there is nothing to restore: the modal
+        // closes once the folder exists, and the next list refresh makes the row resumable.
+        <RecreateWorktreeModal
+          dir={s.dir || ""}
+          sessions={[]}
+          onClose={() => setRecreateWtOpen(false)}
+          onChanged={() => void useSessionsStore.getState().refresh()}
+        />
+      )}
       {shareOpen && (
         <ShareCreateModal initialTarget={`session:${s.name}`} onClose={() => setShareOpen(false)} />
       )}

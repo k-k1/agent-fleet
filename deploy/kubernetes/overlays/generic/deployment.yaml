@@ -1,0 +1,16 @@
+# The values that differ per deployment. components/params writes them into the
+# manifests; kustomize drops this object from the output (local-config).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: af-deployment
+  annotations:
+    config.kubernetes.io/local-config: "true"
+data:
+  # Both namespaces start with this deployment's own prefix (ADR 0106 decision 7).
+  cpNamespace: af-example-cp
+  wsNamespace: af-example-ws
+  # Must have WaitForFirstConsumer, allowVolumeExpansion and reclaimPolicy Delete.
+  storageClass: af-workspace
+  # A tag; the CP pins the digest at every start.
+  workspaceImage: ghcr.io/k-k1/agent-fleet/workspace:VERSION

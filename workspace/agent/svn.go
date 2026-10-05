@@ -205,7 +205,9 @@ func runSvnAuthedHealingSink(ctx context.Context, sink *repoJobSink, dir string,
 // svnInfoItem returns a single `svn info --show-item <item>` value for a working
 // copy (local, no network/auth). "" on failure.
 func svnInfoItem(dir, item string) string {
-	out, err := runSvn(dir, "info", "--show-item", item, dir)
+	// Trailing "@": a folder name may contain "@" (gitx.ResolveRepoDir allows it), which svn
+	// would otherwise read as a peg revision and answer "not a working copy".
+	out, err := runSvn(dir, "info", "--show-item", item, dir+"@")
 	if err != nil {
 		return ""
 	}

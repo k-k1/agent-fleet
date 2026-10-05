@@ -36,6 +36,7 @@ func buildMux(cfg config) *http.ServeMux {
 	registerAssistantRoutes(mux, cfg)
 	registerTTSRoutes(mux, cfg)
 	registerSSMRoutes(mux, cfg)
+	registerGCPRoutes(mux, cfg)
 	registerMemoRoutes(mux, cfg)
 	registerWorkItemRoutes(mux, cfg)
 	registerScheduleRoutes(mux, cfg)
@@ -195,7 +196,8 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/admin/memberships", adm.removeMembership) // offboarding (docs/log/61 §61.10.6)
 	mux.HandleFunc("DELETE /api/admin/workspaces", adm.destroyWorkspace)  // irreversible; inactive members only (ADR 0045 decision 13)
 	mux.HandleFunc("POST /api/admin/stop-workspace", adm.stopWorkspace)
-	mux.HandleFunc("POST /api/admin/clean-home", adm.cleanHome) // wipe home (tenant_admin, docs/log/61 §61.10.6)
+	mux.HandleFunc("POST /api/admin/clean-home", adm.cleanHome)            // wipe home (tenant_admin, docs/log/61 §61.10.6)
+	mux.HandleFunc("POST /api/admin/rotate-git-token", adm.rotateGitToken) // new internal git token (tenant_admin, issue #1199)
 	// The copies of a member's home the runtime keeps outside it (ecs-ec2 backups). Clean
 	// home leaves them on purpose; deleting them is this separate, audited step.
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/home-backups", adm.homeBackups)
@@ -219,6 +221,12 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/engine-access", adm.tenantEngineAccess)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/engine-access", adm.setTenantEngineAccess)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/engine-access/members", adm.setMemberEngineAccess)
+	// The tenant layer of the branch naming rules (ADR 0103 decision 10). tenant_admin,
+	// gated mid-handler: the rules only advise this tenant's members and reach nothing
+	// outside it. The Agent's poll is the token-authenticated /internal/branch-rules.
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/branch-rules", adm.tenantBranchRules)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/branch-rules", adm.setTenantBranchRules)
+	mux.HandleFunc("GET /internal/branch-rules", branchRulesBridgeAPI{cfg.mgr}.list)
 	// Tenant-defined sign-in methods (docs/log/61 §61.11). The rows are the tenant's, so
 	// these gate on tenant_admin mid-handler; ACTIVATION is checked inside setStatus,
 	// which is the one super_admin step (decision 30). The queue is deployment-wide.
@@ -252,6 +260,11 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// a quarantined slot is stopped and kept as evidence, and no sweeper collects it
 	// (ADR 0045 decision 20 / 23). The adapter refuses anything that is not quarantined.
 	mux.HandleFunc("DELETE /api/admin/ec2-pool/slots/{id}", adm.withSuperAdmin(adm.terminatePoolSlot))
+	// Reserve a slot for replacement at its workspace's next Start, or take that back (#1473),
+	// and the bulk form for every slot below the launch template's $Latest.
+	mux.HandleFunc("PUT /api/admin/ec2-pool/slots/{id}/replace", adm.withSuperAdmin(adm.reservePoolSlot))
+	mux.HandleFunc("DELETE /api/admin/ec2-pool/slots/{id}/replace", adm.withSuperAdmin(adm.reservePoolSlot))
+	mux.HandleFunc("POST /api/admin/ec2-pool/reserve-outdated", adm.withSuperAdmin(adm.reserveOutdatedPoolSlots))
 	mux.HandleFunc("GET /api/admin/workspace-sizing", adm.withIdentity(adm.workspaceSizingProfile)) // what mem/CPU/disk MEAN on this runtime (ADR 0045 decision 21)
 	mux.HandleFunc("GET /api/admin/usage", adm.usage)                                               // showback: occupancy per tenant/member (json|csv)
 	// The same occupancy at hour resolution, for the uptime heatmap (docs/log/83). A
@@ -346,6 +359,10 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// Per-feature usage time series (docs/log/46 P3 / ADR0029) — relayed verbatim; the
 	// Agent has already aggregated it.
 	mux.HandleFunc("GET /api/usage/series", rest)
+	// Past-session search (ADR 0110): the full-text index lives in the workspace, so the
+	// Console's search box reaches it through the relay like every other workspace read.
+	mux.HandleFunc("GET /api/session-search", rest)
+	mux.HandleFunc("GET /api/session-search/turns", rest)
 	mux.HandleFunc("GET /api/sessions/cleanup", rest)
 	// Fleet session graph (ADR 0096): lanes = sessions, x = time. Proxied verbatim like
 	// the other GETs above; the Agent has already assembled the page.
@@ -365,6 +382,8 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// Programmatic drive I/O (docs/0006 P3-6 E) — proxied to the Agent. Also used
 	// by the MCP tools, which call the Agent directly via the resolved runtime.
 	mux.HandleFunc("POST /api/sessions/{name}/input", rest)
+	// Drop a peer message queued behind the user's answer (#1031).
+	mux.HandleFunc("DELETE /api/sessions/{name}/pending-peer/{id}", rest)
 	// Semantic turn ops + Interaction reply (docs/log/27 P1.5) — proxied verbatim.
 	mux.HandleFunc("POST /api/sessions/{name}/turn", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/respond", rest)
@@ -389,6 +408,10 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// Stop-after-turn arm (docs/log/85) — fold this session away once the turn it is
 	// running ends. The pin's mirror image, and proxied the same way.
 	mux.HandleFunc("POST /api/sessions/{name}/stop-after-turn", rest)
+	// Spend budget (#1054) — set the cap, and read the spend against it (with the
+	// session's create_session children beside it). The Agent enforces it; proxied verbatim.
+	mux.HandleFunc("POST /api/sessions/{name}/spend-cap", rest)
+	mux.HandleFunc("GET /api/sessions/{name}/spend", rest)
 	// Read and live-update a managed session's ThreadSettings (docs/log/27 P2 §9.4-3) —
 	// proxied verbatim.
 	mux.HandleFunc("GET /api/sessions/{name}/settings", rest)
@@ -412,7 +435,19 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// The Settings row's "Log in" (#1028): an attempt without a request, and each row's state.
 	mux.HandleFunc("GET /api/aws-login/profiles", rest)
 	mux.HandleFunc("POST /api/aws-login/profiles/{name}/start", awsLogin)
+	// "Log out" of one profile: a plain request, nothing lives on in the Agent's memory.
+	mux.HandleFunc("POST /api/aws-login/profiles/{name}/logout", rest)
 	mux.HandleFunc("GET /api/aws-login/profiles/{name}/attempts/{attempt}", awsLogin)
+	// af-gcloud-exec's Console login (ADR 0107 decision 3): the same shape, every attempt
+	// read through its profile, and the code posted (bounded, audited, never logged) to it.
+	gcpLogin := proxy.withResolved(proxy.restLoginFlow)
+	mux.HandleFunc("GET /api/gcp-login", rest)
+	mux.HandleFunc("POST /api/gcp-login/{id}/start", gcpLogin)
+	mux.HandleFunc("POST /api/gcp-login/{id}/cancel", rest)
+	mux.HandleFunc("GET /api/gcp-login/profiles", rest)
+	mux.HandleFunc("POST /api/gcp-login/profiles/{name}/start", gcpLogin)
+	mux.HandleFunc("GET /api/gcp-login/profiles/{name}/attempts/{attempt}", gcpLogin)
+	mux.HandleFunc("POST /api/gcp-login/profiles/{name}/attempts/{attempt}/code", proxy.withResolved(proxy.gcpLoginCode))
 	mux.HandleFunc("POST /api/sessions/{name}/start", ws.withResolved(ws.sessionStart))
 	mux.HandleFunc("POST /api/ssm/instances", ws.withResolved(ws.ssmInstances))
 	// Structured transcript for the Console chat view (case-A).
@@ -580,6 +615,19 @@ func registerSSMRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /internal/aws-profiles", awsp.list)
 }
 
+// Google Cloud profiles (ADR 0107 decision 1) — per-member Settings rows, no secrets, and
+// the Agent's pull of them (gcp_profiles_bridge.go), authenticated by AF_GCP_PROFILES_TOKEN.
+func registerGCPRoutes(mux *http.ServeMux, cfg config) {
+	gcp := newGCPConfigAPI(cfg.mgr)
+	mux.HandleFunc("GET /api/gcp/profiles", gcp.withMembership(gcp.listProfiles))
+	mux.HandleFunc("POST /api/gcp/profiles", gcp.withMembership(gcp.createProfile))
+	mux.HandleFunc("PUT /api/gcp/profiles/{id}", gcp.withMembership(gcp.updateProfile))
+	mux.HandleFunc("DELETE /api/gcp/profiles/{id}", gcp.withMembership(gcp.deleteProfile))
+	exemptPrefix("/internal/")
+	bridge := newGCPProfilesBridgeAPI(cfg.mgr)
+	mux.HandleFunc("GET /internal/gcp-profiles", bridge.list)
+}
+
 // Work item inbox (docs/log/80) — external tickets in the left rail. The list and the refresh
 // button need the Runtime handle (the Agent does the fetching, holding the tokens), so
 // they are withResolved; the saved queries and the ledger are pure CP rows and stay on
@@ -665,6 +713,10 @@ func registerScheduleRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /internal/schedules/{id}/resume", s.withScheduleToken(s.resume))
 	mux.HandleFunc("POST /internal/schedules/{id}/run-now", s.withScheduleToken(s.runNow))
 	mux.HandleFunc("GET /internal/schedules/{id}/runs", s.withScheduleToken(s.runs))
+	// The Agent's report that a fired run's prompt was dropped before it ran (#1257).
+	mux.HandleFunc("POST /internal/schedules/{id}/runs/not-executed", s.withScheduleToken(s.runNotExecuted))
+	// The Agent's report that a run answered with the silent sentinel (#1560).
+	mux.HandleFunc("POST /internal/schedules/{id}/runs/silent", s.withScheduleToken(s.runSilent))
 
 	// Console member routes (P5): the logged-in member manages their own schedules. No
 	// create here — authoring a schedule from natural language is the operator's NL->spec
@@ -745,8 +797,15 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	// Re-authentication of an existing SVN working copy (docs/log/41 amendment).
 	mux.HandleFunc("GET /api/repos/{name}/svn-auth", rest)
 	mux.HandleFunc("POST /api/repos/{name}/svn-auth", rest)
+	// Read-only SVN history and local changes (#1705) — proxied to the Agent.
+	mux.HandleFunc("GET /api/repos/{name}/svn-log", rest)
+	mux.HandleFunc("GET /api/repos/{name}/svn-show", rest)
+	mux.HandleFunc("GET /api/repos/{name}/svn-changes", rest)
+	mux.HandleFunc("GET /api/repos/{name}/svn-diff", rest)
 	// Launch prompt templates (repo launch modal) — proxied to the Agent.
 	mux.HandleFunc("GET /api/repos/{name}/prompt-templates", rest)
+	// Launch modal skill picker — the mirror's list before the session exists.
+	mux.HandleFunc("GET /api/repos/{name}/skills", rest)
 	// Branch naming resolver (ADR 0103 decision 7) — proxied to the Agent.
 	mux.HandleFunc("GET /api/repos/{name}/branch-rule", rest)
 	mux.HandleFunc("POST /api/repos/{name}/branch-name", rest)
@@ -788,6 +847,12 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	// flushing stream proxy passes through before the ingress idle timeout.
 	mux.HandleFunc("POST /api/fs/suggest-edit", proxy.withResolved(proxy.stream))
 	mux.HandleFunc("GET /api/fs/download", rest)
+	// A picture's width and height from its header — read-only, a bounded header read per
+	// path (workspace/agent/fs_imagesize.go).
+	mux.HandleFunc("POST /api/fs/imagesize", rest)
+	// Every picture under a folder as one flat list — read-only, a walk bounded by depth,
+	// folders, files and time (workspace/agent/fs_images.go).
+	mux.HandleFunc("GET /api/fs/images", rest)
 	mux.HandleFunc("POST /api/fs/upload", rest)
 	mux.HandleFunc("GET /api/fs/changes", rest)
 	mux.HandleFunc("GET /api/fs/linemarks", rest)
@@ -835,6 +900,16 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/agents/memory/tree", rest)
 	mux.HandleFunc("POST /api/agents/memory/restore", rest)
 	mux.HandleFunc("PUT /api/agents/memory/settings", rest)
+	// AF-owned agent memory (ADR 0108): the change list and the way back from a change. The
+	// tools' own routes (/agents/memory/entries, …/search, …/read, …/forget) stay unrelayed:
+	// agents reach them on loopback.
+	mux.HandleFunc("GET /api/agents/memory/entries/changes", rest)
+	mux.HandleFunc("GET /api/agents/memory/entries/diff", rest)
+	mux.HandleFunc("POST /api/agents/memory/entries/revert", rest)
+	// The one-time import of claude's own memory: sources, a read-only preview, and the apply.
+	mux.HandleFunc("GET /api/agents/memory/claude-import", rest)
+	mux.HandleFunc("GET /api/agents/memory/claude-import/preview", rest)
+	mux.HandleFunc("POST /api/agents/memory/claude-import", rest)
 	// Transfer between environments (P3). export streams the body with its
 	// Content-Disposition untouched and import hands the multipart straight to the
 	// Agent; rest passes body and headers through.

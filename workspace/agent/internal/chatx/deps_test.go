@@ -203,7 +203,9 @@ func testDeps() Deps {
 		},
 		MaybePushOperatorReply: func(string, string) {},
 		StopArmedSession:       func(string) error { return nil },
+		SweepSpendCaps:         func(time.Time) {},
 		RateLimitState:         func(string) (string, string, bool) { return "", "", false },
+		SessionTurns:           testSessionTurns,
 	}
 }
 

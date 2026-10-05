@@ -1,6 +1,6 @@
 ---
 audience: "anyone wondering what a mark on the screen means"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # Icons, badges, and menus — common Console reference
@@ -45,14 +45,27 @@ A row can also carry **"Shared"** (visible to another member —
 [02](02-sessions.md#sharing-a-conversation-shared-sessions)) and **"Delete-locked"** (excluded from deletion and
 automatic tidying — [02](02-sessions.md#tidying-up-in-bulk-cleanup)).
 
+A row can grow a **second line** with links. The first is the GitHub pull request of the
+branch the session works on — the icon says open, draft, merged or closed, and an open one
+carries its CI result (passed / failing / running; nothing when no check ran). Click it to open
+the PR on GitHub. It appears only for a working copy whose origin is on github.com while GitHub
+is connected (Settings > Connections), never for the repository's default branch, and it is
+refreshed every couple of minutes, so a merge can take that long to show. The others are the
+ports the session's own processes listen on (`:5173`): click one to open it in a browser pane,
+Ctrl / middle-click for a new pane ([browser pane](../ref/browser-pane.md)); on a deployment with no
+browser pane (Kubernetes, a preview runtime) it opens in the lightweight preview instead. Only servers bound
+to `127.0.0.1` or every interface count — the pane opens `http://127.0.0.1:{port}` — and another
+session's servers never show; tool commands run by the shared codex / opencode Managed servers
+are not attributed to any session.
+
 ## Repository status display
 
 | Badge | Meaning |
 |---|---|
 | Uncommitted | There are uncommitted changes |
-| = parent | Same commit as the parent working copy |
+| = parent | Same commit as the parent ("parent" here is the upstream of the parent working copy's branch, e.g. `origin/develop`, or the parent working copy's HEAD when it has none; the chip's tooltip names it; commits the parent working copy has not pushed are not compared) |
 | unmerged N | There are N worktree-specific commits not contained in the parent |
-| parent+N, FF ok | The worktree's HEAD is contained in the parent, which is N commits ahead. **"Fast-forward from the parent"** in the menu brings them in ([04](03-code.md)) |
+| parent+N, FF ok | The worktree's HEAD is contained in the parent, which is N commits ahead. **"Fast-forward from origin/develop"** in the menu (**"Fast-forward from parent"** without an upstream) brings them in ([04](03-code.md)) |
 | diverged N↕M, no FF | Both the worktree and the parent have their own commits; a merge or rebase is needed |
 | n/a | The relation to the parent can't be determined (detached HEAD etc.) |
 | ↑N | N commits ahead of origin |
@@ -100,6 +113,12 @@ connection. Not this deployment's engine."** together with the model the last ch
 
 ## Other badges
 
+- **The AWS and Google Cloud badges** in the WS bar (the AWS mark, the Google mark) — your Settings profiles' logins,
+  shown only while the workspace runs and you have such profiles. The badge names the one logged-in profile, or
+  counts them ("1/3"); green when something is logged in, plain when nothing is, amber when an AWS login ends soon
+  or an agent waits for a Google Cloud login. Press it for each profile's state and its **Log in** button (AWS:
+  **Log out** too; Google Cloud: **Log in again**). Neither picks a default profile: each command names one
+  ([10](10-integrations.md#the-google-cloud-badge-in-the-ws-bar)).
 - Colored `1`, `2`… — the number of the pane it is shown in. Press to jump to that pane.
 - "Untracked", "Added", "Modified", "Renamed", "Deleted" — the file's Git change type.
 - The number on an assistant row — the conversation's message count.
@@ -110,6 +129,8 @@ connection. Not this deployment's engine."** together with the model the last ch
   prompt you did not type came from: the fleet operator, a schedule, an auto-resume after an interruption, and
   [a message from another session](02-sessions.md#messages-between-sessions).
 - **"Paused"** on a schedule row — that schedule is suspended ([11](08-organising.md)).
+- **The budget mark** (a pulse icon) on a stopped session — its estimated spend reached its budget and it was
+  stopped; **"Raise budget & resume…"** in its menu carries on ([02](02-sessions.md#a-spend-budget-pausing-a-session-that-spends-too-much)).
 - **"N awaiting approval"** on shared sessions — proposals from a recipient are waiting for you
   ([02](02-sessions.md#sharing-a-conversation-shared-sessions)).
 - **"Safe" / "Review" / "Keep"** in the cleanup modal — whether it is fine to tidy away
@@ -126,13 +147,15 @@ set** appears here too (an item shown ticked but unclickable is one that follows
 automatically).
 If the session has made images with `generate_image`, **"Generated images (N)"** appears too (N is how many;
 absent for sessions that have not, and while the workspace is stopped — [04](04-files.md#image-gallery)).
+**"Spend budget…"** sets the session's budget; on a session its budget stopped it reads **"Raise budget &
+resume…"** ([02](02-sessions.md#a-spend-budget-pausing-a-session-that-spends-too-much)).
 Archive keeps the conversation but hides it from the list; recreate archives the current conversation and starts
 a new one in the same place. When there is no working folder, resume, handoff, and recreate are not shown.
 
 ### Repositories / worktrees
 
 You can open the commit graph, open the folder, commit changes, switch branches, copy the branch name,
-Fast-Forward (on a worktree, **"Fast-forward from the parent"**), project settings, **Share…**, **assignment to
+Fast-Forward (on a worktree, **"Fast-forward from origin/develop"** or similar), project settings, **Share…**, **assignment to
 a working set**, launch a session by kind, **stop the sessions below**, and delete the working copy. Stop
 opens a modal listing the sessions running in that row and in the copies nested under it
 ([02](02-sessions.md#stopping-and-tidying-up-sessions)); Delete opens a confirmation
@@ -150,7 +173,9 @@ file and use "Send" in the viewer.
 
 ### Cards in the image gallery
 
-A picture's card offers **copy the path**, **copy the file name**, **rename the file** (within the same
+A picture's card offers **"Send to a session / assistant…"** (the same send as the file viewer's:
+a session gets the file's path, an assistant opens a chat with the file attached and your comment
+drafted), **copy the path**, **copy the file name**, **rename the file** (within the same
 folder — a slash is refused) and **delete the file** (through a confirmation). A folder's card offers the
 same for the folder, plus **"Open in another pane"** (a plain click moves this pane into it), and deleting
 a folder takes everything in it. Where the folder holds a session's generated images, **"Open …, the

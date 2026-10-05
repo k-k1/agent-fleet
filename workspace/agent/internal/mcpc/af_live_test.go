@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
 )
 
 var buildAgentBinOnce struct {
@@ -50,7 +51,7 @@ var buildAgentBinOnce struct {
 // fired (buildAgentBinOnce.dir stays "" and RemoveAll("") is a no-op... except
 // os.RemoveAll("") actually errors "no such file", so the empty check guards that).
 func TestMain(m *testing.M) {
-	code := m.Run()
+	code := testguard.Run(m, nil)
 	if buildAgentBinOnce.dir != "" {
 		_ = os.RemoveAll(buildAgentBinOnce.dir)
 	}

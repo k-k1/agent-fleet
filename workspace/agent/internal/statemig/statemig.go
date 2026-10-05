@@ -80,6 +80,9 @@ var Entries = []string{
 	// Per-agent id ledgers and message rings (agents.NewSidStore / NewMsgLedger).
 	"claude-sid",
 	"codex-sid",
+	// An open PreCompact on a Terminal codex session (codex.MarkCompacting). Introduced
+	// directly under AgentStateDir; it never existed under .config.
+	"codex-compacting",
 	"opencode-sid",
 	"copilot-sid",
 	"cursor-sid",
@@ -106,8 +109,12 @@ var Entries = []string{
 	// AF's own mirror of each muse conversation, written from the live item stream
 	// (transcript.go explains why muse's own at-rest file cannot be read instead).
 	"muse-transcripts",
+	// The past-session search index (sessionsearch, ADR 0110), a rebuildable cache. Introduced
+	// directly under AgentStateDir; it never existed under .config.
+	"session-search",
 	// Chat bridge: the outbound queue and the per-provider binding ledgers.
 	"bridge-queue",
+	"bridge-sent",
 	"bridge-approvals",
 	"bridge-answers",
 	"bridge-operator-turn",
@@ -122,6 +129,11 @@ var Entries = []string{
 	"notification-markers",
 	"completion-key",
 	"instr-ledger",
+	// A scheduled run's latest answer, kept for its delivery (#1560). Introduced directly
+	// under AgentStateDir, so run() no-ops on a source that was never there.
+	"schedule-claims",
+	"schedule-outcome",
+	"schedule-turn-verdict",
 	"browser-handoff-ledger",
 	// af-aws-exec's Console login requests and cancel markers (ADR 0102). Introduced
 	// directly under AgentStateDir, so run() no-ops on a source that was never there.

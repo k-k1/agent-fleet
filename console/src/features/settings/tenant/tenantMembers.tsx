@@ -17,8 +17,9 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 // component renders nothing itself, so no condition is kept here.
 import { useT } from "../../../lib/i18n/index.ts";
 import { remainingShort } from "../../../lib/sessionview.ts";
-import { fmtGbHint, ladderFor, slotFor, slotMemLabel, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
-import type { Member, MemberIdle, WsSizing } from "../parts/adminShared.ts";
+import { fmtGbHint, ladderFor, memberClassID, slotFor, slotMemLabel, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
+import type { Member, MemberAutoStop, MemberIdle, WsSizing } from "../parts/adminShared.ts";
+import { startDeadlineBody } from "../../notifications/wording.ts";
 
 // MembersPanel — the roster and "add member", as one component so the tenant settings modal
 // and the admin modal use the same implementation.
@@ -84,6 +85,7 @@ export function MembersPanel({
               <span className="mr-role">{m.status === "removed" ? tr("admin.member_removed") : m.role}</span>
               <MemberSizeChips m={m} sizing={sizing} />
               <MemberIdleChip idle={m.idle} state={m.state} />
+              <MemberAutoStopChip autoStop={m.auto_stop} />
               <Icon name="chevron-right" className="mr-go" />
             </button>
           ))}
@@ -197,6 +199,53 @@ export function MemberIdleDetail({ idle, state }: { idle?: MemberIdle; state?: s
   );
 }
 
+// MemberAutoStopChip — the workspace is down because the Control Plane stopped it, not
+// because anybody asked (#1384). Without it the roster reads plain "stopped", and the member's
+// notification is the only record of why. Warning colour: nothing restarts it, and the
+// member may be waiting on the admin to fix what blocked the launch.
+function MemberAutoStopChip({ autoStop }: { autoStop?: MemberAutoStop }) {
+  const tr = useT();
+  if (!autoStop) return null;
+  return (
+    <span className="mr-idle hold" title={autoStopReason(autoStop)}>
+      {autoStopTitle(autoStop, tr)}
+    </span>
+  );
+}
+
+// The kinds the CP writes: "start-deadline" (start_deadline.go) and "home-wipe-failed", a
+// member's Recreate / Clean home that failed after its request was answered (ecs, #1537).
+// An unknown kind is shown raw rather than hidden: a newer CP may write one.
+function autoStopTitle(a: MemberAutoStop, tr: ReturnType<typeof useT>): string {
+  if (a.kind === "start-deadline") return tr("noti.kind_start_deadline");
+  if (a.kind === "home-wipe-failed") return tr("admin.auto_stop_home_wipe");
+  return a.kind;
+}
+
+function autoStopReason(a: MemberAutoStop): string {
+  return a.kind === "start-deadline" ? startDeadlineBody(a.limit_minutes, a.phase) : a.phase;
+}
+
+// MemberAutoStopDetail — the same record in the member detail, with the raw phase in full
+// (on ecs-ec2 it is the ECS sentence naming the constraint the admin has to fix) and when.
+export function MemberAutoStopDetail({ autoStop }: { autoStop?: MemberAutoStop }) {
+  const tr = useT();
+  if (!autoStop) return null;
+  return (
+    <section className="admin-panel">
+      <h4>{autoStopTitle(autoStop, tr)}</h4>
+      <p>{autoStopReason(autoStop)}</p>
+      <p className="admin-hint">
+        {/* Only the start deadline writes the member a notification; a failed home wipe reaches
+            them as a toast in a Console that happens to be open, so it claims nothing. */}
+        {tr(autoStop.kind === "home-wipe-failed" ? "admin.auto_stop_home_wipe_at" : "admin.auto_stop_at", {
+          at: new Date(autoStop.stopped_at).toLocaleString(),
+        })}
+      </p>
+    </section>
+  );
+}
+
 // MemberSizeChips — what this member is sized to.
 //
 // Exported because the member detail's "Size and limits" card states the same thing above
@@ -218,8 +267,9 @@ export function MemberIdleDetail({ idle, state }: { idle?: MemberIdle; state?: s
 export function MemberSizeChips({ m, sizing }: { m: Member; sizing: WsSizing }) {
   const tr = useT();
   const onSlots = sizing.mem_meaning === "slot" && !!sizing.slots?.length;
-  const cls = (sizing.slot_classes ?? []).find((c) => c.id === (m.slot_class || sizing.default_slot_class));
-  const box = onSlots ? slotFor(ladderFor(sizing, m.slot_class ?? ""), m.mem_limit ? Math.round(m.mem_limit / 1048576) : 0) : null;
+  const classID = memberClassID(m);
+  const cls = (sizing.slot_classes ?? []).find((c) => c.id === (classID || sizing.default_slot_class));
+  const box = onSlots ? slotFor(ladderFor(sizing, classID), m.mem_limit ? Math.round(m.mem_limit / 1048576) : 0) : null;
 
   const out: ReactNode[] = [];
   if (box) {
@@ -266,7 +316,7 @@ function AddMember({ slug, isSuper, onAdded }: { slug: string; isSuper: boolean;
   };
   return (
     <form className="form add-member" onSubmit={submit}>
-      <div className="sub-head">{tr("admin.add_member")}</div>
+      <h5 className="admin-subhead">{tr("admin.add_member")}</h5>
       <div className="form-row">
         <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email" />
         <input value={key} onChange={(e) => setKey(e.target.value)} placeholder={tr("admin.or_user_key")} />

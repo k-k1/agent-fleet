@@ -12,9 +12,9 @@
 // the folded tiers being able to CHECK them is enough. The summary must always show the
 // values the launch will actually use, so nothing is ever launched from a setting the fold
 // hid.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { KeyboardEvent, ClipboardEvent, ReactNode } from "react";
+import type { KeyboardEvent, ClipboardEvent, DragEvent, ReactNode } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -23,8 +23,8 @@ import { Trans } from "../../lib/i18n/Trans.tsx";
 import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
-import { readPromptHistory } from "../../lib/promptHistory.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
+import { parseCap } from "../sessions/spendBudget.ts";
 import { requiresConcreteModel, useAutoConcreteModel, useEffortOptions } from "../../lib/agentModels.ts";
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
 import { readLaunchOpen, writeLaunchOpen } from "./launchPrefs.ts";
@@ -34,7 +34,7 @@ import { makeAttachment, useAttachDraft } from "../../lib/attachDraft.ts";
 import { AttachChips } from "../mirror/parts/AttachChips.tsx";
 import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
 import { useBackClose } from "../../lib/backClose.ts";
-import { repoPromptTemplates } from "./api.ts";
+import { repoPromptTemplates, repoSkills } from "./api.ts";
 import type { PromptTemplateGroup } from "./api.ts";
 import { api } from "../../core/api/client.ts";
 import { BranchList } from "./BranchList.tsx";
@@ -45,6 +45,9 @@ import { SESSION_TITLE_MAX, clampSessionTitle } from "../../lib/sessionTitle.ts"
 import { coarsePointer } from "../../lib/device.ts";
 import { useLaunchBranchName } from "./useLaunchBranchName.ts";
 import { GitflowInitModal } from "./GitflowInitModal.tsx";
+import { useSkillPicker } from "../mirror/parts/useSkillPicker.ts";
+import { SkillButton, SkillList } from "../mirror/parts/SkillList.tsx";
+import { PromptTemplateButton, PromptTemplatePopover } from "./PromptTemplatePicker.tsx";
 import { bitbucketPending, warningText } from "./branchRule.ts";
 import type { BranchItem } from "./branchRule.ts";
 
@@ -66,8 +69,8 @@ export interface LaunchOpts {
   prompt: string;
 	/** Optional user-visible session name, supplied by a handoff proposal or edited here. */
   title: string;
-  // Pasted images awaiting upload. Held as raw Files (not yet uploaded) because no
-  // session exists at compose time — the caller uploads them once the session is
+  // Staged attachments (any file type) awaiting upload. Held as raw Files (not yet uploaded)
+  // because no session exists at compose time — the caller uploads them once the session is
   // minted and embeds the saved paths into the first prompt (claude Read-tool flow).
   images: File[];
   worktree: boolean;
@@ -78,6 +81,9 @@ export interface LaunchOpts {
   base: string;
   newBranch: string;
   useExisting?: boolean; // check out the existing branch instead of creating one
+  /** The session's spend budget in USD (#1054). undefined = the user's default, which the Agent
+   *  applies; 0 = none. Only for kinds with a transcript to price. */
+  spendCapUsd?: number;
 }
 
 // LaunchResult: close on ok, else stay open and offer a fix for a name collision.
@@ -237,11 +243,14 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
   // the create API's rule here — otherwise it stays editable yet the launch alone fails with
   // bad_title.
   const [title, setTitle] = useState(() => clampSessionTitle(initialTitle ?? ""));
-  // Pasted images awaiting the launch: the raw File + an object URL for the chip preview.
-  // Uploaded only after the session is minted (in onStartWork), then referenced in the
-  // first prompt. Agents without the imagePaste cap (shell/ssm) make paste a no-op.
-  // Persisted per repo like the prompt above (lib/attachDraft): closing the dialog to go
-  // look at a branch and coming back must not cost the screenshot that was pasted in.
+  // Empty = the user's default budget (Settings › Agents), resolved by the Agent.
+  const [budget, setBudget] = useState("");
+  // Attachments awaiting the launch: the raw File (+ an object URL when it is an image).
+  // Any file type, as in the mirror composer. Uploaded only after the session is minted (in
+  // onStartWork), then referenced in the first prompt. Agents without the imagePaste cap
+  // (shell/ssm) make attaching a no-op. Persisted per repo like the prompt above
+  // (lib/attachDraft): closing the dialog to go look at a branch and coming back must not
+  // cost the screenshot that was pasted in.
   const attach = useAttachDraft(launchAttachKey(repo));
   const images = attach.items;
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -304,7 +313,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
     };
   }, [existingMode, branches, repo]);
 
-  // Template sources fetched once for this repo; history comes from localStorage.
+  // The repository's template sources, fetched once; history and personal templates are ui-prefs.
   const [srvGroups, setSrvGroups] = useState<PromptTemplateGroup[]>([]);
   useEffect(() => {
     let alive = true;
@@ -356,12 +365,20 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
   const placeWarned = worktree && !existingMode && naming.warnings.length > 0;
   // Advanced does the opposite and lists only what moved off its default; all-defaults gets a
   // single word. Always printing 5 items turns the line into another grey band nobody reads.
+  const hasBudget = agentOf(kind).caps.transcript;
+  const budgetCap = parseCap(budget);
+  const budgetInvalid = hasBudget && Number.isNaN(budgetCap);
   const advParts = [
     agentOf(kind).managedDriver ? tr(driverManaged ? "launch.sum.driver_managed" : "launch.sum.driver_terminal") : "",
     hasEffort && effort ? tr("launch.sum.effort", { v: effortOptions.find(([v]) => v === effort)?.[1] || effort }) : "",
     hasStartMode && startMode === "plan" ? "Plan" : "",
     hasPermChoice && !skipPermEffective ? tr("launch.sum.permissions_on") : "",
     title.trim() ? tr("launch.sum.title", { name: title.trim() }) : "",
+    hasBudget && budget.trim() && !budgetInvalid
+      ? budgetCap > 0
+        ? tr("launch.sum.budget", { v: "$" + budgetCap.toFixed(2) })
+        : tr("launch.sum.budget_none")
+      : "",
   ].filter(Boolean);
   const advSummary = advParts.length ? advParts.join(" · ") : tr("launch.sum.defaults");
 
@@ -374,23 +391,23 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
     if (!coarsePointer()) textRef.current?.focus({ preventScroll: true });
   }, []);
 
-  // Switching to an agent without image support drops any staged images (they'd have
+  // Switching to an agent without attachment support drops any staged files (they'd have
   // nowhere to go) — including the persisted draft. Runs only on that transition.
   useEffect(() => {
     if (!canPasteImage) attach.clear();
   }, [canPasteImage]);
 
-  // Stage image File(s) as pending attachments (raw File + a preview URL). Actual upload
-  // waits for the session (onStartWork). Shared by clipboard paste and the + picker.
-  const addImages = (files: File[]) => {
+  // Stage File(s) as pending attachments (raw File + a preview URL for images). Actual upload
+  // waits for the session (onStartWork). Shared by clipboard paste, drop and the + picker.
+  const addFiles = (files: File[]) => {
     if (!canPasteImage || !files.length) return;
     attach.add(files.map((f) => makeAttachment(f)));
   };
 
-  // Paste image(s) into the prompt. Non-image pastes fall through to the default (text).
+  // Paste file(s) into the prompt. Text pastes fall through to the default.
   // NOTE: mobile soft keyboards (e.g. Gboard) can't commit an image into a plain
   // <textarea> — they refuse it ("paste not supported here"). The + picker beside the
-  // label is the phone path; it funnels into the same addImages as this handler.
+  // label is the phone path; it funnels into the same addFiles as this handler.
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     if (!canPasteImage) return;
     const items = e.clipboardData?.items;
@@ -398,17 +415,29 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
     const files: File[] = [];
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
-      if (it.kind === "file" && it.type.startsWith("image/")) {
+      if (it.kind === "file") {
         const f = it.getAsFile();
         if (f) files.push(f);
       }
     }
     if (!files.length) return; // ordinary text paste — let it happen
     e.preventDefault();
-    addImages(files);
+    addFiles(files);
   };
 
-  const removeImage = (i: number) => attach.remove(i);
+  // Drop file(s) onto the prompt field. Anything else (dragged text) keeps the textarea's
+  // default drop.
+  const dropsFiles = (e: DragEvent) => canPasteImage && !!e.dataTransfer?.types.includes("Files");
+  const onDragOver = (e: DragEvent) => {
+    if (dropsFiles(e)) e.preventDefault();
+  };
+  const onDrop = (e: DragEvent) => {
+    if (!dropsFiles(e)) return;
+    e.preventDefault();
+    addFiles(Array.from(e.dataTransfer.files || []));
+  };
+
+  const removeFile = (i: number) => attach.remove(i);
   // The staged image shown enlarged, if any. Esc and Back peel it before the dialog: both
   // are layered stacks, and this layer joins after the Modal's.
   const [zoom, setZoom] = useState<string | null>(null);
@@ -418,21 +447,72 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
   const expand = (body: string) =>
     body.replaceAll("{{repo}}", repo).replaceAll("{{branch}}", branch || "").replaceAll("{{path}}", path || "");
 
-  // History first, then in-repo sources. command/skill are claude-flavored.
-  const history = readPromptHistory(repo);
-  const groups: PromptTemplateGroup[] = [
-    ...(history.length
-      ? [{ source: "history", label: tr("launch.history"), items: history.map((h, i) => ({ id: "h" + i, label: h, body: h })) }]
-      : []),
-    ...srvGroups.filter((g) => kind === "claude" || (g.source !== "command" && g.source !== "skill")),
-  ];
-  const flatItems = groups.flatMap((g) => g.items.map((it) => it.body));
-  const hasTemplates = flatItems.length > 0;
+  // The repository's own template file. Its .claude commands and skills are left to the skill
+  // picker (PromptTemplatePicker.tsx says why); history and personal templates come from ui-prefs.
+  const fileItems = useMemo(() => srvGroups.filter((g) => g.source === "file").flatMap((g) => g.items), [srvGroups]);
+  const [tmplOpen, setTmplOpen] = useState(false);
+  const tmplBtnRef = useRef<HTMLButtonElement>(null);
 
-  const pick = (body: string) => {
-    setPrompt(expand(body));
-    setTimeout(() => textRef.current?.focus(), 0);
+  // Never discards typed text silently: the picker asks first when the prompt holds any, and
+  // "cursor" puts the template at the caret on a line of its own.
+  //
+  // On a fine pointer the text goes in as a native edit (execCommand "insertText" over the range
+  // it replaces), so Ctrl/⌘+Z takes an insert or a "replace all" back; assigning the controlled
+  // value instead leaves the browser's undo history unable to restore the typed text. The input
+  // event it fires updates the state through onChange. A touch device keeps the plain state write:
+  // the native edit needs focus, which would pop the keyboard (and phones offer no Ctrl+Z).
+  const insertTemplate = (text: string, how: "replace" | "cursor") => {
+    const el = textRef.current;
+    let from = 0;
+    let to = prompt.length;
+    let ins = text;
+    let caret = text.length;
+    if (how === "cursor") {
+      from = to = Math.min(el?.selectionEnd ?? prompt.length, prompt.length);
+      const before = prompt.slice(0, from);
+      const after = prompt.slice(from);
+      const lead = before && !before.endsWith("\n") ? "\n" : "";
+      ins = lead + text + (after && !after.startsWith("\n") ? "\n" : "");
+      caret = from + lead.length + text.length;
+    }
+    const next = prompt.slice(0, from) + ins + prompt.slice(to);
+    if (el && !coarsePointer()) {
+      el.focus();
+      el.setSelectionRange(from, to);
+      let native = false;
+      try {
+        native = typeof document.execCommand === "function" && document.execCommand("insertText", false, ins);
+      } catch {
+        native = false;
+      }
+      if (native && el.value === next) {
+        el.setSelectionRange(caret, caret);
+        return;
+      }
+    }
+    setPrompt(next);
+    // The caret lands right after the template on every device; only the focus is desktop-only.
+    requestAnimationFrame(() => {
+      const box = textRef.current;
+      if (!box) return;
+      box.setSelectionRange(caret, caret);
+      if (!coarsePointer()) box.focus();
+    });
   };
+
+  // The mirror's skill picker over the first prompt. No session exists yet, so the list is
+  // what this kind would see in this working copy (and subdir); a worktree launch is answered
+  // from this copy's tree, as the worktree is only created by the launch.
+  const skillPicker = useSkillPicker({
+    source: { key: [repo, kind, subdir].join("\u0000"), load: () => repoSkills(repo, kind, subdir) },
+    agent: agentOf(kind),
+    managed: driverManaged && !!agentOf(kind).managedDriver,
+    draft: prompt,
+    setDraft: setPrompt,
+    setHistIdx: () => {},
+    inputRef: textRef,
+    composerLocked: busy,
+  });
 
   // start fires the launch. `resolveCollision` is the conflict panel's re-run: the
   // typed name turned out to exist, so check THAT branch out instead of creating it.
@@ -458,6 +538,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
       base: worktree ? wtBase : "",
       newBranch: worktree && !useExisting ? newBranch : "",
       useExisting,
+      spendCapUsd: hasBudget && budget.trim() && !budgetInvalid ? budgetCap : undefined,
     });
     if (r?.ok) {
       // A successful launch means this text and its attachments reached the new session in
@@ -483,11 +564,12 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
   // A kind that requires a concrete model (lcpp) with none resolved yet — the catalog is
   // still loading, or came back empty — must not launch with an empty model (docs/log/109).
   const modelPending = hasModel && requiresConcreteModel(kind) && !model;
-  const canLaunch = !!kinds.length && (!existingMode || !!existingBranch) && !modelPending;
+  const canLaunch = !!kinds.length && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid;
 
   // Follow the shared composer send-key setting: Ctrl/⌘+Enter (default), or
   // Enter with Shift+Enter reserved for a newline.
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (skillPicker.handleKeyDown(e)) return; // an open skill list takes ↑↓/Enter/Tab/Esc
     if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
     const mod = e.metaKey || e.ctrlKey;
     const submitWithKey = settings.mirrorSend !== "enter" ? mod : !e.shiftKey && !mod;
@@ -558,69 +640,78 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
         {/* First prompt (optional) — below agent/model. Initial focus is applied by the
             useEffect above (preventScroll instead of the autoFocus attribute, and never on a
             touch device). */}
-        <div className="ui-field">
+        <div className="ui-field launch-prompt-field">
+          {skillPicker.listVisible && (
+            <SkillList
+              popRef={skillPicker.popRef}
+              selRef={skillPicker.selRef}
+              passive={skillPicker.passive}
+              skills={skillPicker.skills}
+              items={skillPicker.items}
+              more={skillPicker.more}
+              trigger={skillPicker.trigger}
+              sel={skillPicker.sel}
+              query={skillPicker.query}
+              onHover={skillPicker.setSel}
+              onPick={skillPicker.pick}
+              onMore={skillPicker.unfold}
+            />
+          )}
           <span className="ui-field-label launch-prompt-label">
             <span>{tr("launch.first_prompt")}</span>
             <span className="launch-prompt-tools">
               {/* + attach: the paste-less path. Mobile keyboards can't paste images into
-                  a <textarea>, so a phone can only attach through this picker. */}
+                  a <textarea>, so a phone can only attach through this picker. Any file
+                  type, like the mirror composer's picker. */}
               {canPasteImage && (
                 <>
                   <input
                     ref={fileRef}
                     type="file"
-                    accept="image/*"
                     multiple
                     hidden
                     onChange={(e) => {
-                      const files = Array.from(e.target.files || []).filter((f) => f.type.startsWith("image/"));
+                      const files = Array.from(e.target.files || []);
                       e.target.value = ""; // allow re-picking the same file
-                      addImages(files);
+                      addFiles(files);
                     }}
                   />
                   <button
                     type="button"
                     className="ghost launch-attach-btn"
-                    title={tr("launch.attach_image")}
+                    title={tr("launch.attach_file")}
                     onClick={() => fileRef.current?.click()}
                   >
                     <Icon name="add" />
                   </button>
                 </>
               )}
-              {hasTemplates && (
-                <select
-                  className="launch-tmpl-select"
-                  value=""
-                  title={tr("launch.template_insert_title")}
-                  onChange={(e) => {
-                    if (e.target.value === "") return;
-                    const i = Number(e.target.value);
-                    if (Number.isInteger(i) && flatItems[i] !== undefined) pick(flatItems[i]);
-                  }}
-                >
-                  <option value="">{tr("launch.template_insert")}</option>
-                  {(() => {
-                    let idx = 0;
-                    return groups.map((g) => {
-                      const start = idx;
-                      idx += g.items.length;
-                      return (
-                        <optgroup key={g.source} label={g.label}>
-                          {g.items.map((it, j) => (
-                            <option key={g.source + ":" + it.id} value={start + j}>
-                              {it.label}
-                            </option>
-                          ))}
-                        </optgroup>
-                      );
-                    });
-                  })()}
-                </select>
+              <PromptTemplateButton btnRef={tmplBtnRef} open={tmplOpen} disabled={busy} onToggle={() => setTmplOpen((o) => !o)} />
+              {skillPicker.canSkills && (
+                <SkillButton
+                  btnRef={skillPicker.btnRef}
+                  open={skillPicker.listVisible}
+                  disabled={busy}
+                  trigger={skillPicker.trigger}
+                  onToggle={skillPicker.toggleFromButton}
+                />
               )}
             </span>
           </span>
-          <AttachChips attachments={images} pasting={false} onRemove={removeImage} onOpen={setZoom} />
+          {/* In the flow, between the label row and the box: the dialog body scrolls, and an
+              absolutely placed panel this tall was cut off at its bottom edge. */}
+          {tmplOpen && (
+            <PromptTemplatePopover
+              repo={repo}
+              fileItems={fileItems}
+              expand={expand}
+              hasText={!!prompt.trim()}
+              btnRef={tmplBtnRef}
+              onInsert={insertTemplate}
+              onClose={() => setTmplOpen(false)}
+            />
+          )}
+          <AttachChips attachments={images} pasting={false} onRemove={removeFile} onOpen={setZoom} />
           {/* Rendered inside the Modal's panel (the portal keeps the React tree), so a click on
               the lightbox's backdrop stops at the panel instead of also closing the dialog. */}
           {zoom &&
@@ -628,15 +719,21 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
           <textarea
             ref={textRef}
             value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
+            onChange={(e) => {
+              setPrompt(e.target.value);
+              skillPicker.trackTyping(e.target.value, e.target.selectionStart ?? e.target.value.length);
+            }}
+            onSelect={(e) => skillPicker.trackCaret(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
             onKeyDown={onKey}
             onPaste={onPaste}
+            onDragOver={onDragOver}
+            onDrop={onDrop}
             rows={4}
             placeholder={tr("launch.first_prompt_ph")}
           />
           <span className="ui-field-hint">
             {tr("launch.first_prompt_note")}
-            {canPasteImage && " " + tr("launch.image_paste_note")}
+            {canPasteImage && " " + tr("launch.attach_note")}
           </span>
         </div>
 
@@ -758,6 +855,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
                         }}
                         placeholder={tr("launch.branch_ph")}
                       />
+                      {naming.provisional && <span className="ui-field-hint launch-branch-provisional">{tr("launch.branch_provisional")}</span>}
                     </label>
                     {/* Advisory only (decision 8): nothing here stops the launch. */}
                     {naming.warnings.length > 0 && (
@@ -931,6 +1029,25 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
               placeholder={tr("launch.title_ph")}
             />
           </div>
+          {hasBudget && (
+            <div className="ui-field">
+              <span className="ui-field-label">{tr("launch.field.budget")}</span>
+              <input
+                value={budget}
+                inputMode="decimal"
+                onChange={(e) => setBudget(e.target.value)}
+                aria-invalid={budgetInvalid || undefined}
+                placeholder={
+                  settings.sessionSpendCapUsd > 0
+                    ? tr("launch.budget_ph_default", { v: "$" + settings.sessionSpendCapUsd })
+                    : tr("launch.budget_ph_none")
+                }
+              />
+              <span className="ui-field-hint">
+                {budgetInvalid ? tr("sess.budget_invalid") : tr("launch.budget_hint")}
+              </span>
+            </div>
+          )}
         </LaunchSection>
       </div>
 

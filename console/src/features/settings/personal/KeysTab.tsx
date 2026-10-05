@@ -4,7 +4,7 @@
 // live everywhere. Only direct accelerators and the three app chords (leader / palette /
 // cheat-sheet) are rebindable; leader SEQUENCES (p r, w t …) are structural and fixed.
 // Action / section names are i18n keys (resolved with cmdLabel); chrome uses t().
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useSettings, setSetting, MIRROR_SEND_MODES } from "../../../lib/settings.ts";
 import { Kbd } from "../../../ui/Kbd.tsx";
 import { OnOff, Row, Choice } from "../parts/controls.tsx";
@@ -195,6 +195,7 @@ export function KeysTab() {
   const s = useSettings();
   useLocale();
   const [recording, setRecording] = useState<string | null>(null);
+  const assignTitleId = useId();
 
   const sections = rebindSections();
   const conflicts = bindingConflicts();
@@ -238,8 +239,10 @@ export function KeysTab() {
       </section>
 
       <section className="ds-group">
-        <div className="kb-head">
-          <h4 className="ds-title">{t("keys.kt.assignTitle")}</h4>
+        {/* The reset button sits inside the heading so the underline spans the row; the label
+            keeps the button's text out of the heading's accessible name. */}
+        <h4 className="ds-title kb-head" aria-labelledby={assignTitleId}>
+          <span id={assignTitleId}>{t("keys.kt.assignTitle")}</span>
           <button
             type="button"
             className="btn-ghost kb-reset-all"
@@ -251,7 +254,7 @@ export function KeysTab() {
           >
             {t("keys.kt.resetAll")}
           </button>
-        </div>
+        </h4>
         <p className="muted ds-note">{t("keys.kt.assignNote")}</p>
 
         {sections.map((sec) => (

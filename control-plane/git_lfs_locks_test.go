@@ -22,7 +22,7 @@ func (e *lfsEnv) addMember(t *testing.T, email, key, role string) string {
 	if err != nil {
 		t.Fatalf("membership: %v", err)
 	}
-	return mintGitToken(gitSignKey(e.g.mgr.master32), mem.ID)
+	return mintGitToken(gitSignKey(e.g.mgr.master32), mem.ID, 0)
 }
 
 func (e *lfsEnv) lockCall(h http.HandlerFunc, method, url, token string, body any, pv map[string]string) *httptest.ResponseRecorder {

@@ -3,6 +3,34 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.28.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.28.0) — 2026-10-04
+
+Past sessions' conversations can be searched from the command palette and by agents, and sessions can
+be found by the issue or pull request they belong to. A session can carry a spend budget and stops
+after its turn when it reaches it. Agents can share an Agent Fleet memory across every agent kind,
+off until each member turns it on. GitHub can be connected through a built-in app, the inpaint mask
+is painted on the picture, and a LAN ComfyUI can be set from the admin panel. On AWS, member secrets
+can be sealed with a KMS key.
+
+## [0.27.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.27.0) — 2026-10-03
+
+Members can run Google Cloud commands as themselves with `af-gcloud-exec`, from profiles in Settings with
+a Console login, as they already could for AWS. The WS bar shows which AWS and Google Cloud profiles are
+signed in, and a single AWS profile can be logged out. Peer, operator and scheduled messages queued for a
+Managed session now survive a stop or an Agent restart. On ECS, Recreate, Clean home and Destroy reach
+the EFS home, and ecs-ec2 slots can be reserved for replacement at their next start. The CP task role on
+ECS is narrowed further; operators of a custom AMI or a restricted deployer have something to check.
+
+## [0.26.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.26.0) — 2026-10-01
+
+Each version is now one GitHub Release that carries the workspace rootfs too, and the native package
+ships for arm64 Linux as well as amd64. Stop in a Managed session now takes two steps: the first ends
+the running turn and keeps what is queued, and a second also discards the queue. The mirror shows a
+claude reply while it is being written. On AWS, Recreate and Clean home used to report success and
+remove nothing; they now work on ecs-ec2 and are refused on ecs. AWS credentials of the workspace or
+its host are no longer handed to agent sessions; operators of AWS and cloud Docker deployments have
+steps to take.
+
 ## [0.25.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.25.0) — 2026-09-29
 
 Branch names for a session started from a work item now follow the repository's own rules — its

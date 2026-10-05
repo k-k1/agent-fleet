@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 224
+# count: 255
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -47,6 +47,31 @@ engineObjectRow.placement string
 engineObjectRow.role_dir string
 engineObjectRow.source string,omitempty
 engineObjectRow.state string
+gcpProfileDTO.account string
+gcpProfileDTO.conflict.labels [string]
+gcpProfileDTO.conflict.reason string
+gcpProfileDTO.id string
+gcpProfileDTO.impersonateServiceAccount string
+gcpProfileDTO.label string
+gcpProfileDTO.loginMethod string
+gcpProfileDTO.name string
+gcpProfileDTO.project string
+gcpProfileDTO.quotaProject string
+gcpProfileDTO.region string
+gcpProfileDTO.zone string
+gcpProfilesResponse.conflicts[].labels [string]
+gcpProfilesResponse.conflicts[].name string
+gcpProfilesResponse.profiles[].account string
+gcpProfilesResponse.profiles[].id string
+gcpProfilesResponse.profiles[].impersonateServiceAccount string
+gcpProfilesResponse.profiles[].label string
+gcpProfilesResponse.profiles[].loginMethod string
+gcpProfilesResponse.profiles[].name string
+gcpProfilesResponse.profiles[].project string
+gcpProfilesResponse.profiles[].quotaProject string
+gcpProfilesResponse.profiles[].region string
+gcpProfilesResponse.profiles[].updatedAt string
+gcpProfilesResponse.profiles[].zone string
 imageInfo.digest string,omitempty
 imageInfo.repo string
 imageInfo.tag string,omitempty
@@ -73,6 +98,7 @@ notificationDTO.target.kind string,omitempty
 notificationDTO.target.type string
 scheduleDTO.agent_kind string,omitempty
 scheduleDTO.created_at string,omitempty
+scheduleDTO.deliver_to [string]
 scheduleDTO.enabled bool
 scheduleDTO.id string,omitempty
 scheduleDTO.last_run string,omitempty
@@ -92,6 +118,7 @@ scheduleDTO.reuse_session string,omitempty
 scheduleDTO.reuse_target string,omitempty
 scheduleDTO.rotation string,omitempty
 scheduleDTO.session_mode string,omitempty
+scheduleDTO.silent bool
 scheduleDTO.spec string
 scheduleDTO.spec_kind string
 scheduleDTO.spec_label string,omitempty
@@ -131,10 +158,14 @@ sessionWire.locked bool,omitempty
 sessionWire.name string
 sessionWire.origin string,omitempty
 sessionWire.originSession string,omitempty
+sessionWire.ports [number],omitempty
+sessionWire.pr raw,omitempty
 sessionWire.rateLimitResumeAt string,omitempty
 sessionWire.remoteUrl string
 sessionWire.repo string
 sessionWire.resumable bool
+sessionWire.spendCapHitAt string,omitempty
+sessionWire.spendCapUsd number,omitempty
 sessionWire.started string
 sessionWire.state string
 sessionWire.stopAfterTurnAt string,omitempty

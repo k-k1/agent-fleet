@@ -145,6 +145,9 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # recommendation (suppressed by --no-install-recommends). Bump the ARG after Debian
 # publishes the same security build for both architectures. Fonts and fontconfig are
 # explicit so Japanese pages render without depending on a transient recommendation.
+# deploy/local/apt-pin-check.sh checks the pin against both architectures' indexes and
+# prints the version to bump to; cli-drift.yml runs it daily and goes red when the pin
+# is gone for either architecture.
 # ⚠ trixie-security は「現行ビルドだけ」を持ち、古い版はミラーから消える。ピンを
 # 放置すると、この層のキャッシュが破れた次のビルドで `Version ... was not found` と
 # 落ちる（＝別の ARG を触った瞬間に無関係に見える形で発火する）。上流のセキュリティ
@@ -154,7 +157,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # スイートと main スイートは別の版を指すので、片方を security・片方を main で読むと
 # **存在しない版差が出る**。実際それで「trixie にすると chromium が下がる」という誤った
 # 代償が 1 度記録され、ベース更新の判断を狂わせた。ここに書くのは常に security の版。
-ARG CHROMIUM_VERSION=154.0.8037.57-1~deb13u1
+ARG CHROMIUM_VERSION=154.0.8037.92-1~deb13u1
 # BAKE_OPTIONAL_TOOLS=0（native lean rootfs）は chromium 本体・CJK フォントを焼かず
 # オンデマンド DL（P2 の install-chromium、CHROMIUM_DL_VERSION ピン）に回すが、
 # その DL 版が動くための実行時ライブラリと fontconfig/DejaVu はここで明示導入する
@@ -278,7 +281,7 @@ RUN set -eux; \
 # Bump RTK_VERSION to upgrade (ARG change busts the cache; same idiom as GH_VERSION).
 # The AF_AGENT_SELF_UPDATE opt-in also updates rtk in place at start (entrypoint).
 ARG BAKE_RTK=1
-ARG RTK_VERSION=0.50.0
+ARG RTK_VERSION=0.51.0
 RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -314,10 +317,10 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.285
-ARG OPENCODE_VERSION=1.18.33
-ARG CODEX_VERSION=0.159.2
-ARG COPILOT_VERSION=1.0.89
+ARG CLAUDE_CODE_VERSION=2.1.288
+ARG OPENCODE_VERSION=1.18.34
+ARG CODEX_VERSION=0.160.0
+ARG COPILOT_VERSION=1.0.91
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}" \
@@ -343,10 +346,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.2.13
-ARG AGY_RELEASE_BUILD=6662628811079680
-ARG AGY_SHA256_X64=b0f195d37973be7b08c3b705d7fbbcd948dacb4a3c2176ee52ca29f7159bdc21
-ARG AGY_SHA256_ARM64=43bf59be5895475f8a32d4f94f1241f665986ea41a3622579e03b74e1b63dcfb
+ARG AGY_VERSION=1.2.16
+ARG AGY_RELEASE_BUILD=5594158052802560
+ARG AGY_SHA256_X64=d4247430e04cebdbe1ca93d9ccb483cd2f3daeb4cdb0ace5a71cd130e0bdab84
+ARG AGY_SHA256_ARM64=a6d269d2764e5636ab2bcda73b78c587fe9d00ead767aa3974574229585ee0d3
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -390,9 +393,9 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 # setTimeout(...).unref() で走るが `disableAutoUpdate || channel==="static"` でスキップ）。
 # 焼き込みでは AF が起動フラグ `--disable-auto-update`（全経路）＋ entrypoint の
 # cli-config.json `channel:"static"` 再固定の二重で封じる（詳細 docs/log/40 Track B）。
-ARG CURSOR_VERSION=2026.09.28-64d2043
-ARG CURSOR_SHA256_X64=6e4cd936a4866b8a77c50ff51a564460d715772fabc477a01aa0f0455d9559f0
-ARG CURSOR_SHA256_ARM64=c737599b27d3d8d6743c72b487204e335f3a8ea2fdbaf18302ee207a646ffd8d
+ARG CURSOR_VERSION=2026.10.01-e373342
+ARG CURSOR_SHA256_X64=a79726c6e644520e993970be4c45775a6889802b67abe461a677a53219ae28e8
+ARG CURSOR_SHA256_ARM64=785c5f6bf2a60eb1121e27ed8c14f5ee07ed1b5b6692324f2d9a997238245eb5
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -432,9 +435,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.26.0
-ARG KIRO_SHA256_X64=fad32095530facd3ed28d4210798804d2340373643b69f256492798f9befd479
-ARG KIRO_SHA256_ARM64=8715b1c199fdc3176d929d839398175cab48269db0644ffa6dad5813d64c9817
+ARG KIRO_VERSION=2.27.1
+ARG KIRO_SHA256_X64=e68927fe0bffb752746a573010cb68792b0f3e97be3a6ce73792c9cc02f08007
+ARG KIRO_SHA256_ARM64=937ff1ae3df373717b66cc09aec79c3b7f0b8e53968d746e3a4545722e1e4587
 # Muse Code（kind="muse"、ADR 0095 決定 8）。プロプライエタリなので **配布イメージには
 # 入らない**（BAKE_AGENT_CLIS=0 既定・理由は本ファイル冒頭と NOTICE）。既定の経路は
 # per-user のオンデマンド導入（workspace-agent install-muse）で、ここのピンは
@@ -452,9 +455,9 @@ ARG KIRO_SHA256_ARM64=8715b1c199fdc3176d929d839398175cab48269db0644ffa6dad5813d6
 # MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 362,440,920 B / 323,360,856 B（1.4.1-R4503.1）。
 # ⚠️ 版文字列は `Muse Code 1.3.0 (1.3.0-R3401.1)`＝**括弧内のビルド id** がピンと突合する値。
 # agy の `tr -dc '0-9.'` 流儀だと `-R3401.1` が落ちて毎回不一致になる（install_muse.go）。
-ARG MUSE_VERSION=1.4.1-R4503.1
-ARG MUSE_SHA256_X64=8b53c9cdbc025bc2d9068bc7016e2c1e51c3a0c608821da17528ad23be900a12
-ARG MUSE_SHA256_ARM64=a6d46239975adac282aa829d2a5bd1cd3119334c18ecfa776d4377daebddb595
+ARG MUSE_VERSION=1.4.2-R4684.1
+ARG MUSE_SHA256_X64=dfb3096c91f4767c4d98006460800b7ba906a0b1a408280a926a8dc19a1af64f
+ARG MUSE_SHA256_ARM64=fa6974c23307a0d5db91367549e41505a5e7b55dcd66c672eb2dd89c1a125ad6
 # Postgres供給ピン（ADR 0086 P0 供給レーン）: Zonky embedded-postgres 17.11.0 jar のハッシュ。
 # sha256 は `curl -sfL <jar-url> | sha256sum` で確認した値。
 # 他メジャー（16/17/18）は install-postgres が Maven Central の .sha256 サイドカーで動的に取得する。
@@ -542,16 +545,27 @@ RUN chown 1000:1000 /var/lib/af/claude /var/lib/af/keep /usr/local/share/agent-f
 # 無いので所有者を渡しておく。docker / native では CP が AF_WS_SCRATCH を注入しない
 # ので空のまま使われない。
 RUN mkdir -p /scratch && chown 1000:1000 /scratch
+# Google Cloud SDK pin (ADR 0107 decision 4). Never baked: it unpacks to ~486 MB, which every
+# cold image pull would pay for a tool a fraction of members use. `workspace-agent
+# install-gcloud` installs this version into ~/.local on demand and refuses an archive whose
+# sha256 differs from the one recorded for the build arch. Google publishes checksums only for
+# the current release, so a bump downloads both archives
+# (dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-<ver>-linux-{x86_64,arm}.tar.gz)
+# and records `sha256sum` of each here.
+ARG GCLOUD_VERSION=587.0.0
+ARG GCLOUD_SHA256_X64=57df2448d259c654796a3703af8e5b53a02d439715b2034d6bb811efc2d6dd7b
+ARG GCLOUD_SHA256_ARM64=8349b151da42f07136294da0908624fe8ea16fea200cb2f4412ad081a86e890c
 RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in \
-      amd64) agy_sha="${AGY_SHA256_X64}"; cursor_sha="${CURSOR_SHA256_X64}"; kiro_sha="${KIRO_SHA256_X64}"; muse_sha="${MUSE_SHA256_X64}"; pg_sha="${POSTGRES_SHA256_X64}"; mysql_sha="${MYSQL_SHA256_X64}" ;; \
-      arm64) agy_sha="${AGY_SHA256_ARM64}"; cursor_sha="${CURSOR_SHA256_ARM64}"; kiro_sha="${KIRO_SHA256_ARM64}"; muse_sha="${MUSE_SHA256_ARM64}"; pg_sha="${POSTGRES_SHA256_ARM64}"; mysql_sha="${MYSQL_SHA256_ARM64}" ;; \
-      *) agy_sha=""; cursor_sha=""; kiro_sha=""; muse_sha=""; pg_sha=""; mysql_sha="" ;; \
+      amd64) agy_sha="${AGY_SHA256_X64}"; cursor_sha="${CURSOR_SHA256_X64}"; kiro_sha="${KIRO_SHA256_X64}"; muse_sha="${MUSE_SHA256_X64}"; pg_sha="${POSTGRES_SHA256_X64}"; mysql_sha="${MYSQL_SHA256_X64}"; gcloud_sha="${GCLOUD_SHA256_X64}" ;; \
+      arm64) agy_sha="${AGY_SHA256_ARM64}"; cursor_sha="${CURSOR_SHA256_ARM64}"; kiro_sha="${KIRO_SHA256_ARM64}"; muse_sha="${MUSE_SHA256_ARM64}"; pg_sha="${POSTGRES_SHA256_ARM64}"; mysql_sha="${MYSQL_SHA256_ARM64}"; gcloud_sha="${GCLOUD_SHA256_ARM64}" ;; \
+      *) agy_sha=""; cursor_sha=""; kiro_sha=""; muse_sha=""; pg_sha=""; mysql_sha=""; gcloud_sha="" ;; \
     esac; \
-    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_build":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","muse":"%s","muse_sha256":"%s","postgres":"%s","postgres_sha256":"%s","mysql":"%s","mysql_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","aws_mcp_proxy":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
+    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_build":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","muse":"%s","muse_sha256":"%s","postgres":"%s","postgres_sha256":"%s","mysql":"%s","mysql_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","aws_mcp_proxy":"%s","awscli":"%s","session_manager_plugin":"%s","gcloud":"%s","gcloud_sha256":"%s"}\n' \
       "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$AGY_RELEASE_BUILD" "$agy_sha" "$COPILOT_VERSION" "$CURSOR_VERSION" "$cursor_sha" "$KIRO_VERSION" "$kiro_sha" "$MUSE_VERSION" "$muse_sha" "$POSTGRES_VERSION" "$pg_sha" "$MYSQL_VERSION" "$mysql_sha" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
       "$CHROMIUM_CFT_VERSION" "$CHROMIUM_DL_VERSION" "$NOTO_CJK_VERSION" "$MCP_GRAFANA_VERSION" "$CLOUDWATCH_MCP_VERSION" "$AWS_MCP_PROXY_VERSION" "$AWSCLI_VERSION" "$SESSION_MANAGER_PLUGIN_VERSION" \
+      "$GCLOUD_VERSION" "$gcloud_sha" \
       > /usr/local/share/agent-fleet/versions.json
 
 # The baked claude is a root-owned npm-global install run as the non-root `dev`
@@ -682,13 +696,19 @@ COPY af-scratch.sh /usr/local/bin/af-scratch
 # ADR 0086 P0 シム: workspace-agent af-db へ転送する /usr/local/bin/af-db。
 # af-scratch と同じ形——実装は workspace-agent 側（L2 レーン）が持つ。
 COPY af-db.sh /usr/local/bin/af-db
+# AF agent memory from the command line (ADR 0108): same shape as af-db, the implementation is
+# `workspace-agent af-memory`.
+COPY af-memory.sh /usr/local/bin/af-memory
 # アーキ変更後に利用者自身の ~/.local 導入物を同じ版で戻す（entrypoint から呼ばれる）。
 # entrypoint に埋めず別ファイルにしてあるのは、単体で走らせて検証できるようにするため。
 COPY af-arch-repair.sh /usr/local/bin/af-arch-repair
 # Runs one command under one SSO profile's short-lived credentials, never the workload
 # role (issue #998). Same shape as af-db: the implementation is `workspace-agent aws-exec`.
 COPY af-aws-exec.sh /usr/local/bin/af-aws-exec
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/svn /usr/local/bin/af-scratch /usr/local/bin/af-db /usr/local/bin/af-arch-repair /usr/local/bin/af-aws-exec
+# Runs one command with one Google Cloud profile's access token from the Agent's own gcloud
+# store, never the VM's or node's identity (ADR 0107 decision 2): `workspace-agent gcloud-exec`.
+COPY af-gcloud-exec.sh /usr/local/bin/af-gcloud-exec
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/svn /usr/local/bin/af-scratch /usr/local/bin/af-db /usr/local/bin/af-memory /usr/local/bin/af-arch-repair /usr/local/bin/af-aws-exec /usr/local/bin/af-gcloud-exec
 # opencode plugins source (seeded into ~/.config/opencode/plugin at runtime):
 # agent-fleet-status.js (session working/idle bridge — seeded by the entrypoint) +
 # agent-fleet-caller.js (stamps the calling opencode session on af's MCP tools so a

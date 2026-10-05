@@ -3,7 +3,7 @@
 // ordinary session's answer, still interrupt; the row itself stays in the center.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useNotificationStore, type FleetNotification } from "./store.ts";
-import { childIdleMuted } from "./childIdle.ts";
+import { notificationRow } from "./effects.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { setSetting } from "../../lib/settings.ts";
 import { announce } from "../chat/tts.ts";
@@ -71,8 +71,8 @@ describe("childIdleNotify", () => {
   });
 
   it("uses the session passed in before the list", () => {
-    setSetting("childIdleNotify", false);
-    expect(childIdleMuted("not-listed", { origin: "session" })).toBe(true);
-    expect(childIdleMuted("not-listed")).toBe(false);
+    const idle = { kind: "answer-ready", target: { type: "session", id: "not-listed" } };
+    expect(notificationRow(idle, { origin: "session" })).toBe("turn-child");
+    expect(notificationRow(idle)).toBe("turn-own");
   });
 });

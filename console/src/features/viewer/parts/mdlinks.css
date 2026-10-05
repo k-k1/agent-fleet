@@ -86,6 +86,16 @@
 :root[data-theme="light"] .markdown a.md-session-link {
   color: #0e4a75;
 }
+/* A session link that opens a context menu on a long press. On a touch screen the browser's own
+   long press would select the word and show the iOS callout over that menu. Touch only: on a
+   desktop a selection may still start on the slug. */
+@media (hover: none) and (pointer: coarse) {
+  .markdown a.md-session-link.md-has-menu {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+}
 /* Assistant-conversation slug ("a…") → that chat pane. Violet keeps it apart from the
    blue session slug and the amber commit hash. */
 .markdown a.md-conv-link {
@@ -96,6 +106,17 @@
 }
 :root[data-theme="light"] .markdown a.md-conv-link {
   color: #5b21b6;
+}
+/* A ticket reference (`#956`, `owner/name#956`, `PROJ-123`) → the work item detail modal.
+   Teal, apart from the four hues above. */
+.markdown a.md-workitem-link {
+  color: #6cc4c0;
+}
+.markdown a.md-workitem-link:hover {
+  color: #9adbd8;
+}
+:root[data-theme="light"] .markdown a.md-workitem-link {
+  color: #0b5e5b;
 }
 /* An existing file path written as inline code (`docs/log/65-drawio-viewer.md`) → that file's
    pane. The anchor lives INSIDE the <code>, so it inherits the code chip's font and

@@ -7,9 +7,13 @@ import { marked, repairFullwidthTables, splitYamlFrontMatter } from "../../lib/m
 import { useSettings } from "../../lib/settings.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { openSessionChat, openSessionChatSplit } from "../sessions/open.ts";
+import { useSessionLinkMenu } from "../sessions/SessionLinkMenu.tsx";
 import { useChatStore, ensureConvs } from "../chat/store.ts";
 import { openChat, openChatSplit } from "../chat/open.ts";
 import { useFilesStore } from "../files/store.ts";
+import { ensureWorkItems, useWorkItemStore } from "../workitems/store.ts";
+import { useReposStore } from "../repos/store.ts";
+import { cloneHosts, cloneHostsInputs, originOf, WORK_ITEM_HINT_RE, workItemRefInputs } from "../workitems/refs.ts";
 import { markRepairedTables, renderFrontMatter } from "./parts/mdFrontMatter.ts";
 import { renderEmoji } from "./parts/mdEmoji.ts";
 import { CONV_HINT_RE, linkifyPathRefs, linkifyRefs } from "./parts/mdRefLinks.ts";
@@ -59,6 +63,10 @@ interface MarkdownViewProps {
   // highlight layer sends it back when a mark is created; the Agent re-checks it, because
   // only kinds whose text crosses the shared DTO verbatim may carry one (docs/log/69 §69.4).
   markKind?: string;
+  // Link ticket references (`#956` against `repo`'s origin, `owner/name#956`, a Jira key the
+  // inbox knows) to the work item detail modal (#1659). Opt-in: on by the mirror and the
+  // assistant chat, never on a shared session (the viewer has not the sharer's inbox).
+  workItemRefs?: boolean;
 }
 
 export function MarkdownView({
@@ -74,6 +82,7 @@ export function MarkdownView({
   onOpenConversation,
   markRoot,
   markKind,
+  workItemRefs = false,
 }: MarkdownViewProps) {
   const ref = useRef<HTMLDivElement>(null);
   const toast = useToast();
@@ -94,11 +103,31 @@ export function MarkdownView({
   onOpenDirRef.current = onOpenDir;
   onOpenSessionRef.current = onOpenSession;
   onOpenConversationRef.current = onOpenConversation;
+  // Session links get a context menu only under a SessionLinkMenuHost (the mirror, the
+  // assistant chat); elsewhere they keep the browser's own menu.
+  const openSessionMenu = useSessionLinkMenu();
+  const openSessionMenuRef = useRef(openSessionMenu);
+  openSessionMenuRef.current = openSessionMenu;
+  const hasSessionMenu = openSessionMenu !== null;
+
+  // What a ticket link's classification depends on besides the text (#1659). The repository list
+  // and the inbox can both land after the message rendered (a deep link, a push adding a Jira
+  // project); a change re-runs the linkifier alone, never the parse. "" when the surface is off.
+  const wiOrigin = useReposStore((s) => {
+    const o = workItemRefs && repo ? originOf(s.repos.find((r) => r.name === repo)) : null;
+    return o ? `${o.provider}:${o.path}` : "";
+  });
+  // The clones' hosts decide whether an uncached `owner/name#N` is guessed onto GitHub.
+  const wiClones = useReposStore((s) => (workItemRefs ? cloneHostsInputs(cloneHosts(s.repos)) : ""));
+  const wiCache = useWorkItemStore((s) => (workItemRefs ? workItemRefInputs(null, s.payload?.items || []) : ""));
+  const wiInputs = `${wiOrigin}#${wiClones}#${wiCache}`;
+  const relink = useRef<{ run: () => void; inputs: string } | null>(null);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     let alive = true;
+    relink.current = null;
 
     const frontMatter = splitYamlFrontMatter(source ?? "");
     const body = frontMatter?.body ?? source ?? "";
@@ -165,14 +194,24 @@ export function MarkdownView({
           else if (openInNew) openChatSplit(id);
           else openChat(id);
         },
+        hasSessionMenu ? (name, x, y) => openSessionMenuRef.current?.(name, x, y) : undefined,
+        workItemRefs,
       );
     runLinkify();
+    relink.current = { run: runLinkify, inputs: wiInputs };
     // A conv slug can only be existence-checked once the conversation list is in the
     // store. When this document mentions one before any surface has loaded the list
     // (e.g. a mirror opened straight from a deep link, left rail not mounted yet),
     // fetch it once and re-run the linkifier — idempotent: existing anchors are skipped.
     if (useChatStore.getState().convs === null && CONV_HINT_RE.test(source ?? "")) {
       void ensureConvs().then(() => {
+        if (alive) runLinkify();
+      });
+    }
+    // The same for ticket references: a Jira key (and a Bitbucket number) links only against the
+    // inbox cache, which a surface without the rail may not have loaded yet.
+    if (workItemRefs && !useWorkItemStore.getState().loaded && WORK_ITEM_HINT_RE.test(source ?? "")) {
+      void ensureWorkItems().then(() => {
         if (alive) runLinkify();
       });
     }
@@ -252,7 +291,16 @@ export function MarkdownView({
       alive = false;
       stickyCleanup();
     };
-  }, [source, basePath, baseDir, repo, breaks, streaming, theme, codeWrapDefault, toast]);
+    // wiInputs is read for the relink bookkeeping only: a change to it is the effect below.
+  }, [source, basePath, baseDir, repo, breaks, streaming, theme, codeWrapDefault, toast, hasSessionMenu, workItemRefs]);
+
+  // Idempotent: existing anchors are skipped, and the links already there re-classify on click.
+  useEffect(() => {
+    const r = relink.current;
+    if (!r || r.inputs === wiInputs) return;
+    r.inputs = wiInputs;
+    r.run();
+  }, [wiInputs]);
 
   return (
     <div

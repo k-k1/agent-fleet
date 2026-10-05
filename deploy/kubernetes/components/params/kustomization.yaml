@@ -1,0 +1,101 @@
+# Carries the values of an overlay's deployment.yaml (ConfigMap af-deployment) into every
+# manifest that needs them. List this component LAST in an overlay, after any component
+# that patches in more placeholders, because replacements run where they are listed.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+replacements:
+  # --- the CP namespace --------------------------------------------------------
+  - source:
+      kind: ConfigMap
+      name: af-deployment
+      fieldPath: data.cpNamespace
+    targets:
+      - select:
+          namespace: af-placeholder-cp
+        fieldPaths: [metadata.namespace]
+      - select:
+          kind: Namespace
+          name: af-placeholder-cp
+        fieldPaths: [metadata.name]
+      - select:
+          kind: RoleBinding
+        fieldPaths: [subjects.0.namespace]
+      - select:
+          kind: ClusterRoleBinding
+        fieldPaths: [subjects.0.namespace]
+      - select: { kind: NetworkPolicy, name: agent-from-cp }
+        fieldPaths:
+          - spec.ingress.0.from.0.namespaceSelector.matchLabels.[kubernetes.io/metadata.name]
+      - select: { kind: NetworkPolicy, name: egress-cp-internal }
+        fieldPaths:
+          - spec.egress.0.to.0.namespaceSelector.matchLabels.[kubernetes.io/metadata.name]
+      - select:
+          kind: Deployment
+          name: af-cp
+        fieldPaths:
+          - spec.template.spec.containers.[name=cp].env.[name=AF_CP_INTERNAL_URL].value
+        options:
+          delimiter: "."
+          index: 1
+      # The cluster-scoped names carry the CP namespace, so two deployments in one
+      # cluster do not share them.
+      - select:
+          kind: ClusterRole
+        fieldPaths: [metadata.name]
+        options:
+          delimiter: ":"
+          index: 1
+      - select:
+          kind: ClusterRoleBinding
+        fieldPaths: [metadata.name, roleRef.name]
+        options:
+          delimiter: ":"
+          index: 1
+  # --- the workspace namespace -------------------------------------------------
+  - source:
+      kind: ConfigMap
+      name: af-deployment
+      fieldPath: data.wsNamespace
+    targets:
+      - select:
+          namespace: af-placeholder-ws
+        fieldPaths: [metadata.namespace]
+      - select:
+          kind: Namespace
+          name: af-placeholder-ws
+        fieldPaths: [metadata.name]
+      - select:
+          kind: Deployment
+          name: af-cp
+        fieldPaths:
+          - spec.template.spec.containers.[name=cp].env.[name=AF_K8S_NAMESPACE].value
+  # --- the StorageClass --------------------------------------------------------
+  - source:
+      kind: ConfigMap
+      name: af-deployment
+      fieldPath: data.storageClass
+    targets:
+      - select:
+          kind: ClusterRole
+        fieldPaths: [rules.0.resourceNames.0]
+      - select:
+          kind: PersistentVolumeClaim
+          name: af-cp-data
+        fieldPaths: [spec.storageClassName]
+      - select:
+          kind: Deployment
+          name: af-cp
+        fieldPaths:
+          - spec.template.spec.containers.[name=cp].env.[name=AF_K8S_STORAGE_CLASS].value
+  # --- the workspace image -----------------------------------------------------
+  - source:
+      kind: ConfigMap
+      name: af-deployment
+      fieldPath: data.workspaceImage
+    targets:
+      - select:
+          kind: Deployment
+          name: af-cp
+        fieldPaths:
+          - spec.template.spec.containers.[name=cp].env.[name=AF_K8S_WORKSPACE_IMAGE].value

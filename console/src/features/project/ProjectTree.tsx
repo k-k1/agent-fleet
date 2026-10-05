@@ -5,14 +5,15 @@
 // decorated flat list — and folding the base folds the whole project. The
 // section header carries the repo actions (clone / refresh) and the
 // session-maintenance actions (tidy / archive).
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button, IconButton } from "../../ui/Button.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { useReposStore, useLaunchTarget } from "../repos/store.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
+import { useReposStore, useLaunchTarget, useRepoReveal } from "../repos/store.ts";
 import { NewRepoModal } from "../repos/NewRepoModal.tsx";
 import { cloneRepo, svnCheckout, initRepo } from "../repos/clone.ts";
 import type { CloneRequest, SvnCheckoutRequest } from "../repos/clone.ts";
@@ -22,16 +23,23 @@ import { RepoJobRow } from "../repos/RepoJobRow.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useSessionUI } from "../sessions/ui.ts";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
+import { refQuery } from "../sessions/refSearch.ts";
+import { useLedgerWhile, useRefIndex } from "../sessions/useRefIndex.ts";
 import { repoTree, filterRepoTree, countRepoNodes, sessionsInFolder } from "../../lib/project.ts";
 import { useActiveWorkingSet, repoInSet, autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useProjectFilter, normQuery, repoMatches, sessionMatches } from "./filter.ts";
 import { RepoNode } from "./RepoNode.tsx";
 import { useRailRoving } from "./useRailRoving.ts";
 import { useT } from "../../lib/i18n/index.ts";
+import { usePublishedHeight } from "../../lib/usePublishedHeight.ts";
 import { ShareListModal } from "../sharing/ShareListModal.tsx";
+
+const SECTION_KEY = "af-section-repos";
 
 export const ProjectTree = memo(function ProjectTree() {
   const tr = useT();
+  // Sticky tiers below the filter (repo / worktree headers, file-search groups) offset by this.
+  const filterBarRef = usePublishedHeight<HTMLDivElement>("--proj-filter-h");
   const repos = useReposStore((s) => s.repos);
   const refreshRepos = useReposStore((s) => s.refresh);
   const clearRepos = useReposStore((s) => s.clear);
@@ -42,14 +50,35 @@ export const ProjectTree = memo(function ProjectTree() {
   const ctx = useRepoRailContext();
   const actions = useSessionActions(); // one instance shared by every node's rows
   const running = ctx.running;
+  const tenant = useTenantStore((s) => s.tenant);
 
+  // The section's fold is held here rather than inside Section so a reveal can open it: folded,
+  // the section mounts no RepoNode, so the reveal (command palette, the session menu's
+  // repository item) would expand nothing and find no row. Same af-section-repos key Section
+  // itself would use, so an existing choice carries over.
+  const [secOpen, setSecOpen] = useState(() => localStorage.getItem(SECTION_KEY) !== "0");
+  const setSection = (open: boolean) => {
+    localStorage.setItem(SECTION_KEY, open ? "1" : "0");
+    setSecOpen(open);
+  };
+  // Only a reveal made while mounted opens it: the counter is never reset, so comparing with
+  // the value at mount keeps an old reveal from unfolding the section on every remount.
+  const revealN = useRepoReveal((s) => s.n);
+  const [mountRevealN] = useState(revealN);
+  useEffect(() => {
+    if (revealN !== mountRevealN) setSection(true);
+  }, [revealN, mountRevealN]);
   const [showClone, setShowClone] = useState(false);
   const [showShares, setShowShares] = useState(false);
   const jobs = useRepoJobsStore((s) => s.jobs);
   const q = useProjectFilter((f) => f.q);
   const setQ = useProjectFilter((f) => f.setQ);
   const nq = normQuery(q);
+  const refs = useRefIndex();
   const rail = useRailRoving();
+  // Issue keys live in the work-item ledger, which nothing has loaded when the work-items
+  // section is hidden; only a ticket-shaped query is worth the request.
+  useLedgerWhile(!!refQuery(nq));
 
   // Right after a WS start the agent is still unreachable and the CP answers GET /api/repos with
   // a plain-text 502. The store's refresh() treats that as a transient failure, keeps repos and
@@ -67,7 +96,8 @@ export const ProjectTree = memo(function ProjectTree() {
       clearRepos(); // stopped WS — settle to empty
       return true;
     },
-    [refreshRepos, clearRepos, running],
+    // tenant: a switch between two running workspaces changes nothing else here.
+    [refreshRepos, clearRepos, running, tenant],
   );
 
   // Working sets (docs/log/52): scope to the active set first — a whole project
@@ -77,7 +107,7 @@ export const ProjectTree = memo(function ProjectTree() {
   // Filtering: a working copy is visible when it matches itself or hosts a
   // matching session; an ancestor also stays as the anchor of a matching descendant.
   const visible = (r: (typeof repos)[number]) =>
-    repoMatches(r, nq) || sessionsInFolder(sessions, r.name).some((s) => sessionMatches(s, nq));
+    repoMatches(r, nq) || sessionsInFolder(sessions, r.name).some((s) => sessionMatches(s, nq, refs));
   const roots = nq ? filterRepoTree(scoped, visible) : scoped;
 
   // The Agent-side job is the source of truth for import progress (docs/log/78). This only
@@ -113,6 +143,8 @@ export const ProjectTree = memo(function ProjectTree() {
   return (
     <Section
       id="repos"
+      open={secOpen}
+      onToggle={() => setSection(!secOpen)}
       title={tr("pj.repos")}
       icon="repo"
       count={wset ? countRepoNodes(scoped) : repos.length}
@@ -138,7 +170,7 @@ export const ProjectTree = memo(function ProjectTree() {
     >
       {/* Quick filter: narrows repos + sessions (this tree and the other-sessions section).
           Escape clears. Files are untouched — the tree below is lazy-loaded. */}
-      <div className="proj-filter-bar">
+      <div ref={filterBarRef} className="proj-filter-bar">
         <div className="proj-filter">
           <Icon name="search" />
           <input

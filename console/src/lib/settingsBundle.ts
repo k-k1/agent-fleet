@@ -4,6 +4,7 @@
 // no secrets:
 //   prefs        - Console personal settings (exactly what ui-prefs syncs)
 //   ssm          - AWS SSM profiles / hosts (CP database, per member)
+//   gcpProfiles  - Google Cloud profiles (CP database, per member; ADR 0107)
 //   instructions - user instructions (~/.config/agent-fleet/user-notes.md)
 // Connections (Git / agent / AWS tokens) are never included. The bundle is plain text meant
 // to travel by mail or chat, so a single secret in it would change how the whole file must
@@ -26,8 +27,8 @@
 export const BUNDLE_KIND = "agent-fleet-settings";
 export const BUNDLE_VERSION = 1;
 
-export type SectionKey = "prefs" | "ssm" | "instructions";
-export const SECTION_KEYS: SectionKey[] = ["prefs", "ssm", "instructions"];
+export type SectionKey = "prefs" | "ssm" | "gcpProfiles" | "instructions";
+export const SECTION_KEYS: SectionKey[] = ["prefs", "ssm", "gcpProfiles", "instructions"];
 
 export interface SsmProfileEntry {
   label: string;
@@ -52,6 +53,19 @@ export interface SsmSection {
   hosts: SsmHostEntry[];
 }
 
+/** A Google Cloud profile as the bundle carries it: the row without its id and its
+ *  CP-computed name, both of which the destination assigns again. */
+export interface GcpProfileEntry {
+  label: string;
+  loginMethod: string;
+  project: string;
+  quotaProject: string;
+  account: string;
+  region: string;
+  zone: string;
+  impersonateServiceAccount: string;
+}
+
 export interface InstructionsSection {
   text: string;
   enabled: boolean;
@@ -61,6 +75,7 @@ export interface InstructionsSection {
 export interface BundleSections {
   prefs?: Record<string, unknown>;
   ssm?: SsmSection;
+  gcpProfiles?: GcpProfileEntry[];
   instructions?: InstructionsSection;
 }
 
@@ -112,6 +127,25 @@ export function toSsmSection(profiles: any[], hosts: any[]): SsmSection {
       region: str(h?.region),
     })),
   };
+}
+
+function gcpEntry(raw: any): GcpProfileEntry {
+  return {
+    label: str(raw?.label),
+    loginMethod: str(raw?.loginMethod) || "google",
+    project: str(raw?.project),
+    quotaProject: str(raw?.quotaProject),
+    account: str(raw?.account),
+    region: str(raw?.region),
+    zone: str(raw?.zone),
+    impersonateServiceAccount: str(raw?.impersonateServiceAccount),
+  };
+}
+
+/** Convert the CP's Google Cloud rows into the bundle shape: only the fields a person
+ *  entered, so `id`, `name` and `conflict` never travel. */
+export function toGcpSection(profiles: any[]): GcpProfileEntry[] {
+  return (profiles || []).map(gcpEntry);
 }
 
 /** Convert the user-notes GET response (targets is an array) into the bundle shape
@@ -175,6 +209,9 @@ export function parseBundle(text: string): { bundle: SettingsBundle } | { error:
       hosts: Array.isArray(src.ssm.hosts) ? src.ssm.hosts : [],
     };
   }
+  if (Array.isArray(src.gcpProfiles)) {
+    sections.gcpProfiles = src.gcpProfiles;
+  }
   if (src.instructions && typeof src.instructions === "object") {
     const t = src.instructions.targets;
     sections.instructions = {
@@ -183,7 +220,7 @@ export function parseBundle(text: string): { bundle: SettingsBundle } | { error:
       targets: t && typeof t === "object" && !Array.isArray(t) ? (t as Record<string, boolean>) : {},
     };
   }
-  if (!sections.prefs && !sections.ssm && !sections.instructions) return { error: "empty" };
+  if (!sections.prefs && !sections.ssm && !sections.gcpProfiles && !sections.instructions) return { error: "empty" };
   return { bundle: { kind: raw.kind, version: raw.version, exportedAt: str(raw.exportedAt), sections } };
 }
 
@@ -347,12 +384,43 @@ export function profileIdByLabel(profiles: any[]): Map<string, string> {
   return m;
 }
 
+// --- Import (Google Cloud) -----------------------------------------------------
+
+export interface GcpPlan {
+  profiles: GcpProfileEntry[];
+  skipped: { label: string; reason: SkipReason }[];
+}
+
+/** Narrow the section to the profiles that will be created. Same rules as the AWS profiles:
+ *  a label that already exists (case-insensitive) is left alone, and an entry the CP would
+ *  refuse for want of a label, a project or a supported login method is skipped with a
+ *  reason instead of turning into a row of 400s. */
+export function planGcpImport(section: GcpProfileEntry[], existing: any[]): GcpPlan {
+  const plan: GcpPlan = { profiles: [], skipped: [] };
+  const have = new Set((existing || []).map((p) => key(str(p?.label))));
+  for (const raw of section || []) {
+    const p = gcpEntry(raw);
+    if (!p.label || !p.project || p.loginMethod !== "google") {
+      plan.skipped.push({ label: p.label, reason: "invalid" });
+      continue;
+    }
+    if (have.has(key(p.label))) {
+      plan.skipped.push({ label: p.label, reason: "exists" });
+      continue;
+    }
+    have.add(key(p.label));
+    plan.profiles.push(p);
+  }
+  return plan;
+}
+
 // --- Summary --------------------------------------------------------------------
 
 export interface BundleSummary {
   prefs: number;
   profiles: number;
   hosts: number;
+  gcpProfiles: number;
   instructionBytes: number;
   instructions: boolean;
 }
@@ -363,6 +431,7 @@ export function summarizeBundle(b: SettingsBundle): BundleSummary {
     prefs: s.prefs ? Object.keys(s.prefs).length : 0,
     profiles: s.ssm?.profiles.length ?? 0,
     hosts: s.ssm?.hosts.length ?? 0,
+    gcpProfiles: s.gcpProfiles?.length ?? 0,
     instructionBytes: s.instructions ? utf8Bytes(s.instructions.text) : 0,
     instructions: !!s.instructions,
   };
