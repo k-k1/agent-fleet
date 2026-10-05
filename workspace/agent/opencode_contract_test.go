@@ -28,20 +28,21 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
-// tmuxSession starts prog in a detached pane on the DEFAULT tmux server under an isolated
-// HOME. The name is test-specific and killed on cleanup, so a live fleet's sessions are
-// untouched. A private server would also work — product tmux calls go through tmuxx.Cmd,
-// which honours AF_TMUX_SOCKET (shutdown_isolation_test.go) — but this test does not use one.
+// tmuxSession starts prog in a detached pane under an isolated HOME. The caller isolates the
+// tmux server first (testguard.IsolateTmux): a send-keys on the default socket would reach the
+// workspace's live sessions, and the test guard fails the run for it.
 func tmuxSession(t *testing.T, name, dir, prog string) {
 	t.Helper()
-	_ = exec.Command("tmux", "kill-session", "-t", name).Run()
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", name, "-x", "120", "-y", "40", "-c", dir, prog)
+	_ = tmuxx.Cmd("kill-session", "-t", name).Run()
+	cmd := tmuxx.Cmd("new-session", "-d", "-s", name, "-x", "120", "-y", "40", "-c", dir, prog)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("tmux new-session: %v: %s", err, out)
 	}
-	t.Cleanup(func() { _ = exec.Command("tmux", "kill-session", "-t", name).Run() })
+	t.Cleanup(func() { _ = tmuxx.Cmd("kill-session", "-t", name).Run() })
 }
 
 func requireBins(t *testing.T, bins ...string) {
@@ -86,6 +87,7 @@ func isolatedHomeEnv(home string) []string {
 // (the launch-seed readiness signal) and that it tracks the live agent (the mode chip).
 func TestContractOpencodeTUIPaneMode(t *testing.T) {
 	requireBins(t, "opencode", "tmux")
+	testguard.IsolateTmux(t)
 	home, dir := t.TempDir(), t.TempDir()
 	name := "af-contract-opencode"
 	// Prefix the env onto the command itself: tmux -e sets the session environment, which
@@ -104,7 +106,7 @@ func TestContractOpencodeTUIPaneMode(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 	}
 	if got == "" {
-		pane, _ := exec.Command("tmux", "capture-pane", "-p", "-t", name).Output()
+		pane, _ := tmuxx.Cmd("capture-pane", "-p", "-t", name).Output()
 		t.Fatalf("paneMode never resolved for opencode %s — opencodeStatusAgentRe no longer matches the composer "+
 			"status line, so the Console shows no mode chip and the launch seed falls back to a fixed beat.\npane:\n%s", ver, pane)
 	}
@@ -113,7 +115,7 @@ func TestContractOpencodeTUIPaneMode(t *testing.T) {
 	}
 
 	// Tab cycles the agent; the chip must follow the TUI's own state.
-	if err := exec.Command("tmux", "send-keys", "-t", name, "Tab").Run(); err != nil {
+	if err := tmuxx.Cmd("send-keys", "-t", name, "Tab").Run(); err != nil {
 		t.Fatalf("send-keys Tab: %v", err)
 	}
 	deadline = time.Now().Add(15 * time.Second)
@@ -123,7 +125,7 @@ func TestContractOpencodeTUIPaneMode(t *testing.T) {
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
-	pane, _ := exec.Command("tmux", "capture-pane", "-p", "-t", name).Output()
+	pane, _ := tmuxx.Cmd("capture-pane", "-p", "-t", name).Output()
 	t.Errorf("after Tab paneMode = %q, want \"Plan\" — the agent/mode readout moved in opencode %s.\npane:\n%s", got, ver, pane)
 }
 

@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
 )
 
 // The prompt must make the model think without calling a tool: in manual mode Bash and
@@ -53,6 +54,8 @@ const (
 )
 
 func TestClaudeTUIContractLive(t *testing.T) {
+	// Raw tmux calls would land on the default socket, where the workspace's live sessions are.
+	testguard.IsolateTmux(t)
 	for _, b := range []string{"tmux", "claude"} {
 		if _, err := exec.LookPath(b); err != nil {
 			t.Skipf("%s is missing — this test is meant to run inside the real image", b)
@@ -93,10 +96,10 @@ func runContract(t *testing.T, mode string, args []string) {
 	preTrustFolder(t, dir)
 
 	argv := append([]string{"new-session", "-d", "-s", tn, "-x", "200", "-y", "50", "-c", dir, "claude"}, args...)
-	if out, err := exec.Command("tmux", argv...).CombinedOutput(); err != nil {
+	if out, err := Cmd(argv...).CombinedOutput(); err != nil {
 		t.Fatalf("tmux new-session: %v: %s", err, out)
 	}
-	t.Cleanup(func() { _ = exec.Command("tmux", "kill-session", "-t", tn).Run() })
+	t.Cleanup(func() { _ = Cmd("kill-session", "-t", tn).Run() })
 
 	waitReady(t, name, tn)
 
@@ -111,11 +114,11 @@ func runContract(t *testing.T, mode string, args []string) {
 	}
 
 	// Send the turn.
-	if out, err := exec.Command("tmux", "send-keys", "-t", tn, contractPrompt).CombinedOutput(); err != nil {
+	if out, err := Cmd("send-keys", "-t", tn, contractPrompt).CombinedOutput(); err != nil {
 		t.Fatalf("send-keys: %v: %s", err, out)
 	}
 	time.Sleep(time.Second)
-	if out, err := exec.Command("tmux", "send-keys", "-t", tn, "Enter").CombinedOutput(); err != nil {
+	if out, err := Cmd("send-keys", "-t", tn, "Enter").CombinedOutput(); err != nil {
 		t.Fatalf("send-keys Enter: %v: %s", err, out)
 	}
 
@@ -206,7 +209,7 @@ func waitReady(t *testing.T, name, tn string) {
 		// is harness onboarding rather than the composer contract under test.
 		if strings.Contains(s, "Syntax theme:") &&
 			(strings.Contains(s, "Dark mode") || strings.Contains(s, "Light mode")) {
-			_ = exec.Command("tmux", "send-keys", "-t", tn, "Enter").Run()
+			_ = Cmd("send-keys", "-t", tn, "Enter").Run()
 			time.Sleep(2 * time.Second)
 			continue
 		}
@@ -419,10 +422,10 @@ func chooseTrustYes(t *testing.T, tn string) {
 			break // no selection marker found — report the whole frame below
 		}
 		if strings.Contains(cur, yes) {
-			_ = exec.Command("tmux", "send-keys", "-t", tn, "Enter").Run()
+			_ = Cmd("send-keys", "-t", tn, "Enter").Run()
 			return
 		}
-		_ = exec.Command("tmux", "send-keys", "-t", tn, "Down").Run()
+		_ = Cmd("send-keys", "-t", tn, "Down").Run()
 		time.Sleep(500 * time.Millisecond)
 	}
 	t.Fatalf("could not select the %q row in the trust dialog (the option shape may have changed)\n%s", yes, frameDump(tn))

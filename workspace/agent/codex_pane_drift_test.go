@@ -30,6 +30,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 func needBin(t *testing.T, bin string) {
@@ -51,6 +53,7 @@ func needBin(t *testing.T, bin string) {
 func TestDriftCodexPaneMode(t *testing.T) {
 	needBin(t, "codex")
 	needBin(t, "tmux")
+	testguard.IsolateTmux(t)
 
 	home := t.TempDir()
 	work := t.TempDir()
@@ -80,13 +83,13 @@ func TestDriftCodexPaneMode(t *testing.T) {
 	// pid-scoped so a concurrent run (or a leftover from a killed one) can't collide.
 	// The name is outside the fleet's own claude_*/codex_* namespace by construction.
 	tn := fmt.Sprintf("af-drift-codex-%d", os.Getpid())
-	_ = exec.Command("tmux", "kill-session", "-t", tn).Run()
+	_ = tmuxx.Cmd("kill-session", "-t", tn).Run()
 	launch := "env HOME=" + home + " " + plan.Program
-	if out, err := exec.Command("tmux", "new-session", "-d", "-s", tn,
+	if out, err := tmuxx.Cmd("new-session", "-d", "-s", tn,
 		"-x", "200", "-y", "50", "-c", plan.Cwd, launch).CombinedOutput(); err != nil {
 		t.Fatalf("tmux new-session: %v: %s", err, out)
 	}
-	defer func() { _ = exec.Command("tmux", "kill-session", "-t", tn).Run() }()
+	defer func() { _ = tmuxx.Cmd("kill-session", "-t", tn).Run() }()
 
 	// Default mode: footer is "<model> <effort> · <cwd>" with no "Plan mode" label.
 	if got := awaitPaneMode(t, tn, "Default"); got != "Default" {
@@ -99,7 +102,7 @@ func TestDriftCodexPaneMode(t *testing.T) {
 	// Plan mode: shift+tab cycles. Up through 0.144 the footer gained a "Plan mode"
 	// label; 0.145 removed that label but prints a trusted TUI system message confirming
 	// the transition. Production persists mirror-driven mode changes in session meta.
-	if out, err := exec.Command("tmux", "send-keys", "-t", tn, "BTab").CombinedOutput(); err != nil {
+	if out, err := tmuxx.Cmd("send-keys", "-t", tn, "BTab").CombinedOutput(); err != nil {
 		t.Fatalf("send-keys BTab: %v: %s", err, out)
 	}
 	if got, pane := awaitCodexPlanTransition(t, tn); got != "Plan" &&
@@ -163,7 +166,7 @@ func awaitPaneMode(t *testing.T, tn, want string) string {
 }
 
 func capturePane(tn string) string {
-	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", tn).Output()
+	out, err := tmuxx.Cmd("capture-pane", "-p", "-t", tn).Output()
 	if err != nil {
 		return "(capture failed: " + err.Error() + ")"
 	}
