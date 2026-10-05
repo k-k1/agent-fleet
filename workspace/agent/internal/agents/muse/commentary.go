@@ -6,8 +6,8 @@ package muse
 // Measured on 1.4.0 and again on 1.4.2-R4684.1: the host's runtime log records it as
 // `assistant_message_committed` with `phase: "commentary"`, but no `item/*` notification and no
 // `session/read` item carries it — 83 commentary messages across every local session, 0 of them
-// in AF's store, and neither version's MSP schema has a phase field on Item. Without it a question that says "apply the proposal
-// above?" points at nothing.
+// // in AF's store, and neither version's MSP schema has a phase field on Item. Without it a
+// question that says "apply the proposal above?" points at nothing.
 //
 // This reads muse's internal session.jsonl, which transcript.go's header rules out as the
 // transcript source because the format carries no stability promise. The exception is kept
@@ -32,21 +32,28 @@ type commentaryMsg struct {
 	id, text, at string
 }
 
-// commentaryReader tails one session.jsonl. Only commentary text is held, keyed by the
-// response that carries the tool calls, and it is dropped once taken. A resumed handle reads
-// from the start, so commentary of calls that went by before the resume stays held — the
-// session's commentary text at most, which is what it costs to catch a turn in flight.
+// commentaryReader tails one session.jsonl. What it holds is scoped to the turn in flight:
+// forgetTurn drops it when the turn ends, and a resume drops what the history already settled
+// (forgetSettled), so a long session costs one turn's worth, not its whole history.
 type commentaryReader struct {
-	mu      sync.Mutex
-	path    string
-	off     int64
-	partial []byte
-	byResp  map[string][]commentaryMsg // response id → commentary not yet attached
-	byCall  map[string]string          // call id → response id, only for responses in byResp
+	mu       sync.Mutex
+	path     string
+	ident    os.FileInfo // the file the offset belongs to; a replaced file is read from 0
+	off      int64
+	partial  []byte
+	byResp   map[string][]commentaryMsg // response id → commentary not yet attached
+	callResp map[string]string          // call id → response id, for every call seen this turn
 }
 
 func newCommentaryReader(path string) *commentaryReader {
-	return &commentaryReader{path: path, byResp: map[string][]commentaryMsg{}, byCall: map[string]string{}}
+	r := &commentaryReader{path: path}
+	r.resetMaps()
+	return r
+}
+
+func (r *commentaryReader) resetMaps() {
+	r.byResp = map[string][]commentaryMsg{}
+	r.callResp = map[string]string{}
 }
 
 // runtimeEvent is the slice of a session.jsonl record this file reads.
@@ -71,41 +78,79 @@ var (
 	kindToolCalls  = []byte(`"assistant_tool_calls_committed"`)
 )
 
-// take returns the commentary that introduced callID, once: a second call for the same id
-// (the tool call's later revisions) returns nothing.
-func (r *commentaryReader) take(callID string) []commentaryMsg {
+// lookup reads what was appended and answers for one call. known is false while the log has
+// not yet recorded the call (the host writes it around the time the item goes out, so it may
+// be late): the caller asks again later. Once known, the commentary is handed out once — a
+// sibling call of the same response, or a later revision, gets none.
+func (r *commentaryReader) lookup(callID string) (msgs []commentaryMsg, known bool) {
 	if r == nil || callID == "" {
-		return nil
+		return nil, false
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.scanLocked()
-	resp, ok := r.byCall[callID]
+	resp, ok := r.callResp[callID]
 	if !ok {
-		return nil
+		return nil, false
 	}
-	out := r.byResp[resp]
+	msgs = r.byResp[resp]
 	delete(r.byResp, resp)
-	for c, rid := range r.byCall {
-		if rid == resp {
-			delete(r.byCall, c)
-		}
+	return msgs, true
+}
+
+// scan reads what was appended without answering anything: a resume's catch-up, so the first
+// live item does not pay for the whole history on the MSP reader.
+func (r *commentaryReader) scan() {
+	if r == nil {
+		return
 	}
-	return out
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.scanLocked()
+}
+
+// forgetTurn drops everything held: nothing of an ended turn is attached any more.
+func (r *commentaryReader) forgetTurn() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.resetMaps()
+}
+
+// forgetSettled keeps only commentary whose tool calls the log has not recorded yet — a
+// response still being produced — and drops the rest, which a resume has already attached.
+func (r *commentaryReader) forgetSettled() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, resp := range r.callResp {
+		delete(r.byResp, resp)
+	}
+	r.callResp = map[string]string{}
 }
 
 // scanLocked reads whatever was appended since the last call. A line still being written is
-// kept in partial until its newline arrives; a file that shrank (replaced) is read again from
-// the start.
+// kept in partial until its newline arrives. A file that is not the one the offset was taken
+// on, or that shrank, is read again from the start with nothing carried over.
 func (r *commentaryReader) scanLocked() {
 	f, err := os.Open(r.path)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	if fi, err := f.Stat(); err == nil && fi.Size() < r.off {
-		r.off, r.partial = 0, nil
+	fi, err := f.Stat()
+	if err != nil {
+		return
 	}
+	if r.ident != nil && (!os.SameFile(r.ident, fi) || fi.Size() < r.off) {
+		r.off, r.partial = 0, nil
+		r.resetMaps()
+	}
+	r.ident = fi
 	if _, err := f.Seek(r.off, io.SeekStart); err != nil {
 		return
 	}
@@ -147,30 +192,27 @@ func (r *commentaryReader) consume(line []byte) {
 		}
 		r.byResp[e.ResponseID] = append(r.byResp[e.ResponseID], commentaryMsg{id: e.MessageID, text: e.Text, at: at})
 	case e.Kind == "assistant_tool_calls_committed":
-		if _, ok := r.byResp[e.ResponseID]; !ok {
-			return
-		}
 		for _, c := range e.ToolCalls {
 			if c.CallID != "" {
-				r.byCall[c.CallID] = e.ResponseID
+				r.callResp[c.CallID] = e.ResponseID
 			}
 		}
 	}
 }
 
-// commentaryItems turns the commentary that introduced a tool call into agentMessage items
-// placed in that call's turn.
-func commentaryItems(r *commentaryReader, call msp.Item) []msp.Item {
-	if call.Kind != msp.ItemKindToolCall || call.CallID == nil {
-		return nil
+// commentaryRecords turns the commentary that introduced call into store records anchored in
+// front of it, and reports whether the log has answered for the call yet.
+func commentaryRecords(r *commentaryReader, call msp.Item, model string) ([]record, bool) {
+	if call.CallID == nil {
+		return nil, true
 	}
-	var out []msp.Item
-	for _, c := range r.take(*call.CallID) {
+	msgs, known := r.lookup(*call.CallID)
+	var out []record
+	for _, c := range msgs {
 		it := msp.Item{
 			// The commit's message_id is exactly the itemId the wire gives an agentMessage, so
 			// should a host start sending commentary itself, the store folds both into one item
-			// rather than showing the text twice. Until then the host never lists the id, and a
-			// resume backfill's mergeOrder keeps it where it was seen.
+			// rather than showing the text twice.
 			ItemID:   c.id,
 			Kind:     msp.ItemKindAgentMessage,
 			Revision: 1,
@@ -181,7 +223,7 @@ func commentaryItems(r *commentaryReader, call msp.Item) []msp.Item {
 		if c.at != "" {
 			it.RecordedAt = strPtr(c.at)
 		}
-		out = append(out, it)
+		out = append(out, record{Item: it, Model: model, Before: call.ItemID})
 	}
-	return out
+	return out, known
 }

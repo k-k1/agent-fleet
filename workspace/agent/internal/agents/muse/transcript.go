@@ -29,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -54,6 +55,11 @@ type record struct {
 	// Order, on a line with no item, is the host's own item order as of a resume backfill
 	// (backfill.go). An older Agent skips the line as an item without an id.
 	Order []string `json:"order,omitempty"`
+	// Before, on an item AF recovered rather than received (commentary.go), is the item it
+	// belongs in front of. First-seen order would otherwise put text that was recovered late
+	// (the log not yet written when its tool call arrived, or a resume) under whatever
+	// followed the call.
+	Before string `json:"before,omitempty"`
 }
 
 // store is one session's append-only item log.
@@ -168,7 +174,7 @@ func (s *store) itemsWithMeta() ([]msp.Item, map[string]itemMeta, error) {
 		}
 		prev, seen := byID[r.Item.ItemID]
 		if !seen {
-			order = append(order, r.Item.ItemID)
+			order = insertBefore(order, r.Item.ItemID, r.Before)
 		}
 		if seen && r.Item.Revision < prev.Revision {
 			continue
@@ -190,6 +196,16 @@ func (s *store) itemsWithMeta() ([]msp.Item, map[string]itemMeta, error) {
 		items = append(items, byID[id])
 	}
 	return items, meta, sc.Err()
+}
+
+// insertBefore appends id, or places it in front of anchor when anchor is already in order.
+func insertBefore(order []string, id, anchor string) []string {
+	if anchor != "" {
+		if i := slices.Index(order, anchor); i >= 0 {
+			return slices.Insert(order, i, id)
+		}
+	}
+	return append(order, id)
 }
 
 // mergeOrder puts the items in the host's order where the host has spoken, and keeps every
