@@ -41,6 +41,9 @@ const attemptExitWait = 5 * time.Second
 type profileLogoutWire struct {
 	// Revoked is true once AWS answered the Logout call with success.
 	Revoked bool `json:"revoked"`
+	// AlreadyEnded: AWS refused to renew the expired login, so its portal session is over and
+	// there was nothing left to revoke. Not a warning.
+	AlreadyEnded bool `json:"alreadyEnded,omitempty"`
 	// NoToken: there was no cached token, so there was nothing to revoke.
 	NoToken bool   `json:"noToken,omitempty"`
 	Message string `json:"message,omitempty"`
@@ -59,44 +62,168 @@ var ssoPortalURL = func(region string) string {
 	return "https://" + host
 }
 
+// ssoOIDCURL is the SSO OIDC endpoint of region; overridden by tests. Like the portal host
+// it is built only from a region that passed ssoRegionRe.
+var ssoOIDCURL = func(region string) string {
+	host := "oidc." + region + ".amazonaws.com"
+	if strings.HasPrefix(region, "cn-") {
+		host += ".cn"
+	}
+	return "https://" + host
+}
+
+// errRefreshRefused: AWS answered the refresh token with invalid_grant or expired_token, so
+// the portal session behind it is over. Other refusals (invalid_client, invalid_request,
+// slow_down, an unreadable body) say nothing about the session and stay ordinary errors.
+var errRefreshRefused = errors.New("AWS refused the refresh token")
+
+// awsClient never follows a redirect: the AWS APIs have none, and a 307/308 would replay the
+// client secret and refresh token (or the bearer token) to a host the region check never saw.
+var awsClient = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}}
+
+// refreshSSOToken turns the cached refresh token into a fresh access token (SSO OIDC
+// CreateToken, grant_type=refresh_token). The result lives in memory only: the token file
+// is already off disk and is never written back. Only a 400/401 whose error code is
+// invalid_grant or expired_token is errRefreshRefused; the error text never carries a token
+// or the response body.
+func refreshSSOToken(ctx context.Context, region, clientID, clientSecret, refreshToken string) (string, error) {
+	body, err := json.Marshal(map[string]string{
+		"clientId": clientID, "clientSecret": clientSecret,
+		"grantType": "refresh_token", "refreshToken": refreshToken,
+	})
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ssoOIDCURL(region)+"/token", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := awsClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("could not reach AWS to renew the login: %v", err)
+	}
+	defer res.Body.Close()
+	switch {
+	case res.StatusCode == http.StatusBadRequest || res.StatusCode == http.StatusUnauthorized:
+		var e struct {
+			Error string `json:"error"`
+		}
+		// A body that does not parse cleanly proves nothing, even if Decode left a field set.
+		if json.NewDecoder(io.LimitReader(res.Body, 4<<10)).Decode(&e) == nil &&
+			(e.Error == "invalid_grant" || e.Error == "expired_token") {
+			return "", errRefreshRefused
+		}
+		return "", fmt.Errorf("AWS answered %d to the login renewal", res.StatusCode)
+	case res.StatusCode != http.StatusOK:
+		return "", fmt.Errorf("AWS answered %d to the login renewal", res.StatusCode)
+	}
+	var out struct {
+		AccessToken string `json:"accessToken"`
+	}
+	if err := json.NewDecoder(io.LimitReader(res.Body, 64<<10)).Decode(&out); err != nil || out.AccessToken == "" {
+		return "", fmt.Errorf("AWS answered the login renewal without an access token")
+	}
+	return out.AccessToken, nil
+}
+
 // revokeSSOToken asks AWS to end the session the cached login doc belongs to (the SSO
 // portal's Logout: POST /logout with the access token in x-amz-sso_bearer_token).
-// fallbackRegion is used when the cache records none. The token never leaves this function
-// except in that header.
-func revokeSSOToken(cached []byte, fallbackRegion string) error {
+// fallbackRegion is used when the cache records none. A token past its expiresAt (or one the
+// portal answers 401) is first renewed in memory with the refresh token, because the CLI
+// renews only on use and a logout long after the last use would otherwise leave the portal
+// session running. ended is true when AWS refused that renewal: the session is already over
+// and there is nothing left to revoke. Tokens never leave this function except in the
+// request headers and bodies to AWS, and no error text carries one.
+func revokeSSOToken(cached []byte, fallbackRegion string) (ended bool, err error) {
 	var doc struct {
-		AccessToken string `json:"accessToken"`
-		Region      string `json:"region"`
+		AccessToken           string `json:"accessToken"`
+		Region                string `json:"region"`
+		ExpiresAt             string `json:"expiresAt"`
+		RefreshToken          string `json:"refreshToken"`
+		ClientID              string `json:"clientId"`
+		ClientSecret          string `json:"clientSecret"`
+		RegistrationExpiresAt string `json:"registrationExpiresAt"`
 	}
 	if json.Unmarshal(cached, &doc) != nil || doc.AccessToken == "" {
-		return fmt.Errorf("the cached login holds no access token")
+		return false, fmt.Errorf("the cached login holds no access token")
 	}
 	region := doc.Region
 	if region == "" {
 		region = fallbackRegion
 	}
 	if !ssoRegionRe.MatchString(region) {
-		return fmt.Errorf("the cached login names no usable region (%q)", region)
+		return false, fmt.Errorf("the cached login names no usable region (%q)", region)
 	}
+	// One budget for the renewal and the logout together.
 	ctx, cancel := context.WithTimeout(context.Background(), ssoLogoutTimeout)
 	defer cancel()
+
+	now := time.Now()
+	canRefresh := false
+	if doc.RefreshToken != "" && doc.ClientID != "" && doc.ClientSecret != "" {
+		reg, ok := parseCacheTime(doc.RegistrationExpiresAt)
+		canRefresh = ok && reg.After(now)
+	}
+	token := doc.AccessToken
+	refreshed := false
+	refresh := func() error {
+		refreshed = true
+		fresh, err := refreshSSOToken(ctx, region, doc.ClientID, doc.ClientSecret, doc.RefreshToken)
+		if err != nil {
+			return err
+		}
+		token = fresh
+		return nil
+	}
+	if exp, ok := parseCacheTime(doc.ExpiresAt); ok && !exp.After(now) && canRefresh {
+		if err := refresh(); errors.Is(err, errRefreshRefused) {
+			return true, nil
+		} else if err != nil {
+			return false, err
+		}
+	}
+	for {
+		status, body, err := portalLogout(ctx, region, token)
+		if err != nil {
+			return false, err
+		}
+		if status == http.StatusOK {
+			return false, nil
+		}
+		// 401 on a token the expiry did not catch (clock skew, an expiresAt the cache lacks):
+		// renew once and retry.
+		if status == http.StatusUnauthorized && canRefresh && !refreshed {
+			if err := refresh(); errors.Is(err, errRefreshRefused) {
+				return true, nil
+			} else if err != nil {
+				return false, err
+			}
+			continue
+		}
+		return false, fmt.Errorf("AWS answered %d: %s", status, body)
+	}
+}
+
+// portalLogout calls the portal's Logout with token and returns the status and a capped body.
+func portalLogout(ctx context.Context, region, token string) (int, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ssoPortalURL(region)+"/logout", nil)
 	if err != nil {
-		return err
+		return 0, "", err
 	}
-	req.Header.Set("x-amz-sso_bearer_token", doc.AccessToken)
-	res, err := http.DefaultClient.Do(req)
+	req.Header.Set("x-amz-sso_bearer_token", token)
+	res, err := awsClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("could not reach AWS: %v", err)
+		return 0, "", fmt.Errorf("could not reach AWS: %v", err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode == http.StatusOK {
-		return nil
+		return res.StatusCode, "", nil
 	}
-	// An expired access token is refused (401) even while the session behind it could still
-	// be renewed: that session then runs to its end.
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 300))
-	return fmt.Errorf("AWS answered %d: %s", res.StatusCode, strings.TrimSpace(string(body)))
+	return res.StatusCode, strings.TrimSpace(string(body)), nil
 }
 
 // ssoRoleCachePath is where the CLI keeps the role credentials it got for an sso-session
@@ -273,12 +400,16 @@ func HandleProfileLogout(w http.ResponseWriter, r *http.Request) {
 	gate.Unlock()
 	gateHeld = false
 	if !out.NoToken {
-		if err := revokeSSOToken(snap, sp.SSORegion); err != nil {
+		ended, err := revokeSSOToken(snap, sp.SSORegion)
+		switch {
+		case err != nil:
 			out.Message = err.Error()
-		} else {
+		case ended:
+			out.AlreadyEnded = true
+		default:
 			out.Revoked = true
 		}
 	}
-	log.Printf("aws-login: logout profile=%s revoked=%t no_token=%t relayed=%t", sp.Name, out.Revoked, out.NoToken, cloudlogin.RelayedByCP(r))
+	log.Printf("aws-login: logout profile=%s revoked=%t already_ended=%t no_token=%t relayed=%t", sp.Name, out.Revoked, out.AlreadyEnded, out.NoToken, cloudlogin.RelayedByCP(r))
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

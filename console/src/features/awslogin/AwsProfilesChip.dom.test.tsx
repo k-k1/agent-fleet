@@ -243,6 +243,15 @@ describe("AWS profiles chip", () => {
     expect(toasts).toEqual([]);
   });
 
+  it("shows the normal toast, not the warning, when the AWS session had already ended", async () => {
+    logoutReply = { revoked: false, alreadyEnded: true };
+    await mount();
+    await openPop();
+    await act(async () => rows()[0].querySelector<HTMLButtonElement>(".ws-aws-logout")!.click());
+    await tick(0);
+    expect(toasts).toEqual([{ msg: "Logged out of Production.", kind: "success" }]);
+  });
+
   it("says so when AWS could not be told, and why the Agent refused", async () => {
     logoutReply = { revoked: false, message: "Could not connect to the endpoint URL" };
     await mount();
