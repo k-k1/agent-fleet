@@ -754,6 +754,7 @@ func TestProfileLogoutClassifiesTheRenewalRefusal(t *testing.T) {
 		{"slow_down", `{"error":"slow_down"}`, 400, false},
 		{"unknown code", `{"error":"whatever"}`, 400, false},
 		{"bad json", `<html>`, 400, false},
+		{"type error after the code", `{"error":"invalid_grant","error":42}`, 400, false},
 		{"empty 400", ``, 400, false},
 		{"empty 401", ``, 401, false},
 	} {

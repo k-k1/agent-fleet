@@ -111,8 +111,9 @@ func refreshSSOToken(ctx context.Context, region, clientID, clientSecret, refres
 		var e struct {
 			Error string `json:"error"`
 		}
-		json.NewDecoder(io.LimitReader(res.Body, 4<<10)).Decode(&e)
-		if e.Error == "invalid_grant" || e.Error == "expired_token" {
+		// A body that does not parse cleanly proves nothing, even if Decode left a field set.
+		if json.NewDecoder(io.LimitReader(res.Body, 4<<10)).Decode(&e) == nil &&
+			(e.Error == "invalid_grant" || e.Error == "expired_token") {
 			return "", errRefreshRefused
 		}
 		return "", fmt.Errorf("AWS answered %d to the login renewal", res.StatusCode)
