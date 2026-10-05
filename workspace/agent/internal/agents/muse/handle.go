@@ -875,7 +875,8 @@ func (h *threadHandle) onUserInput(p msp.UserInputRequestParams) {
 		// Every question carries the INTERACTION id, not the model's own question id: the
 		// Console answers and cancels with `pending[0].id`, and Respond refuses anything but
 		// inter.ID. The wire answer is keyed by ask.questions, so the model's id is not lost.
-		tq := transcript.Question{ID: inter.ID, Header: q.Header, Question: q.Question}
+		tq := transcript.Question{ID: inter.ID, Header: q.Header, Question: q.Question,
+			MultiSelect: q.Selection.Mode == msp.UserInputSelectionModeMultiple}
 		for _, o := range q.Options {
 			opt := transcript.Option{Label: o.Label}
 			if o.Description != nil {
@@ -1550,24 +1551,11 @@ func approved(reply agents.InteractionReply) bool {
 func (h *threadHandle) answerUserInput(cl *msp.Client, sid string, ask *pendingAsk, reply agents.InteractionReply) error {
 	answers := make([]msp.UserInputAnswer, 0, len(ask.questions))
 	for i, q := range ask.questions {
-		a := msp.UserInputAnswer{QuestionID: q.ID}
+		var r agents.InteractionAnswer
 		if i < len(reply.Answers) {
-			r := reply.Answers[i]
-			if r.Text != "" {
-				a.FreeText = strPtr(r.Text)
-			}
-			// The wire takes LABELS, not indexes, so an out-of-range index is dropped
-			// rather than sent as a label the host would refuse.
-			for _, idx := range r.Options {
-				if idx >= 0 && idx < len(q.Options) {
-					a.SelectedLabels = append(a.SelectedLabels, q.Options[idx].Label)
-				}
-			}
-			if len(a.SelectedLabels) == 1 {
-				a.SelectedLabel = strPtr(a.SelectedLabels[0])
-			}
+			r = reply.Answers[i]
 		}
-		answers = append(answers, a)
+		answers = append(answers, userInputAnswer(q, r))
 	}
 	return cl.CallInto(msp.MethodUserInputAnswer, msp.UserInputAnswerParams{
 		CommandID:   msp.NewCommandID(),
@@ -1575,6 +1563,39 @@ func (h *threadHandle) answerUserInput(cl *msp.Client, sid string, ask *pendingA
 		UserInputID: ask.userInputID,
 		Answers:     answers,
 	}, callTimeout, nil)
+}
+
+// userInputAnswer builds one question's answer. The host takes EXACTLY ONE of selectedLabel
+// (single mode), selectedLabels (multiple mode) or freeText, plus an optional note, and refuses
+// anything else -32057 userInputAnswerInvalid — the schema leaves all four optional, so only the
+// host's own field docs say so (read out of 1.4.2-R4684.1; sending both label fields was refused
+// with reason invalid_target). Typed text beside a pick therefore rides as the note.
+func userInputAnswer(q msp.UserInputQuestion, r agents.InteractionAnswer) msp.UserInputAnswer {
+	a := msp.UserInputAnswer{QuestionID: q.ID}
+	// The wire takes LABELS, not indexes, so an out-of-range index is dropped rather than sent
+	// as a label the host would refuse.
+	var labels []string
+	for _, idx := range r.Options {
+		if idx >= 0 && idx < len(q.Options) {
+			labels = append(labels, q.Options[idx].Label)
+		}
+	}
+	text := strings.TrimSpace(r.Text)
+	switch {
+	case len(labels) == 0:
+		if text != "" {
+			a.FreeText = strPtr(text)
+		}
+		return a
+	case q.Selection.Mode == msp.UserInputSelectionModeMultiple:
+		a.SelectedLabels = labels
+	default:
+		a.SelectedLabel = strPtr(labels[0])
+	}
+	if text != "" {
+		a.Note = strPtr(text)
+	}
+	return a
 }
 
 func (h *threadHandle) Events() <-chan agents.Event { return h.events }
