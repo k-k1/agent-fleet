@@ -87,6 +87,12 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	}
 	sid := slotSid(m)
 	li.State = status.EffectiveModal(sid, status.LiveState(sid))
+	// The status file only ever holds what MarkTurnStart/End wrote, so a prompt waiting on the
+	// member reads "working" until the turn ends: the chip says in progress and no question
+	// notification fires. The handle's Interaction is the truth, as for managed codex.
+	if st := pendingState(m.Name); st != "" {
+		li.State = st
+	}
 	// A tool call left running by an earlier turn is work behind the idle prompt, the case
 	// claude's badge covers with its process scans; here it is an in-memory read.
 	if li.State == "idle" {
@@ -98,6 +104,25 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	li.Context = overviewContext(m.Name)
 	li.TokenSpends = ManagedSpends(m.Name)
 	return li
+}
+
+// pendingState is "question" or "permission" while the live handle holds a prompt of that
+// channel, "" otherwise.
+func pendingState(name string) string {
+	h := handleFor(name)
+	if h == nil {
+		return ""
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	switch {
+	case h.inter == nil:
+		return ""
+	case h.inter.Kind == agents.InteractionApproval:
+		return "permission"
+	default:
+		return "question"
+	}
 }
 
 // BackgroundWork is the agents.BackgroundReporter read: a tool call an earlier turn left

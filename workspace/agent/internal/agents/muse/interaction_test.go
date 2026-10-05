@@ -9,6 +9,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp/msptest"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 func approvalParams() msp.ApprovalRequestParams {
@@ -805,5 +806,46 @@ func TestCancelledQuestionSendsUserInputCancelAndKeepsTheQueue(t *testing.T) {
 					pending != nil, queued, running)
 			}
 		})
+	}
+}
+
+// The status file holds the "working" turn/started wrote for the whole turn, so the session
+// list read "in progress" while a question card was waiting. The live prompt decides instead,
+// and the state goes back to working once it is answered.
+func TestWireLiveReportsAPendingPromptOverWorking(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Kind: session.KindMuse, Name: "wl-" + t.Name(), Dir: t.TempDir(), Driver: session.DriverManaged}
+	h := &threadHandle{name: m.Name, slotSid: slotSid(m)}
+	host := newTestHandle(t, h)
+	registerHandle(t, m.Name, h)
+	host.Handle(msp.MethodUserInputCancel, func(msptest.Message) (any, *msp.Error) {
+		return msp.CommandAcceptedResult{}, nil
+	})
+
+	host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{TurnID: "t-1", SessionID: h.sid})
+	waitEvent(t, h, agents.TurnRunning)
+	if st := New().WireLive(m, true).State; st != "working" {
+		t.Fatalf("state during the turn = %q, want working", st)
+	}
+
+	host.Notify(msp.NotificationUserInputRequested, msp.UserInputRequestParams{
+		UserInputID: "ui-wl", SessionID: h.sid,
+		Questions: []msp.UserInputQuestion{{ID: "q1", Question: "which?"}},
+	})
+	inter := waitInteraction(t, h)
+	if st := New().WireLive(m, true).State; st != "question" {
+		t.Errorf("state with a question waiting = %q, want question", st)
+	}
+	if err := h.Respond(agents.InteractionReply{ID: inter.ID, Decision: agents.DecisionCancel}); err != nil {
+		t.Fatal(err)
+	}
+	if st := New().WireLive(m, true).State; st != "working" {
+		t.Errorf("state after the cancel = %q, want working", st)
+	}
+
+	host.Notify(msp.NotificationApprovalRequested, approvalParams())
+	waitInteraction(t, h)
+	if st := New().WireLive(m, true).State; st != "permission" {
+		t.Errorf("state with an approval waiting = %q, want permission", st)
 	}
 }
