@@ -594,7 +594,7 @@ func TestManagedTurnNotifiesCompletion(t *testing.T) {
 	// The notifier runs on its own goroutine (agents.notify is async on purpose), so it is
 	// not ordered against the state we just waited for. Wait for the signal itself; the
 	// ceiling only exists so a notification that never comes fails instead of hanging, and
-	// is far above anything a loaded runner needs (a 3 s budget was exceeded in a full
+	// is far above anything a loaded runner needs (measured: a 3 s budget was exceeded in a full
 	// -p 2 run).
 	notifyDeadline := time.NewTimer(30 * time.Second)
 	defer notifyDeadline.Stop()
