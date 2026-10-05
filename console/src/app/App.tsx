@@ -6,6 +6,8 @@
 // the per-tenant sync effect loads that tenant's layout. History (back/forward)
 // traverses layout states.
 import { useEffect, useRef, useState } from "react";
+import { useRetryLoad } from "../lib/retryLoad.ts";
+import { reloadCloudProfiles } from "./cloudProfilesReload.ts";
 import { useTenantStore } from "../core/store/tenant.ts";
 import { useT } from "../lib/i18n/index.ts";
 import { startPushChannel, restartPush } from "../core/push/events.ts";
@@ -25,6 +27,9 @@ import { useSessionsStore, startSessionsPolling } from "../features/sessions/sto
 import { wireSessionPaneReconcile } from "../features/sessions/paneReconcile.ts";
 import { SessionModals } from "../features/sessions/SessionModals.tsx";
 import { AwsLoginHost } from "../features/awslogin/AwsLoginHost.tsx";
+import { useAwsLoginStore } from "../features/awslogin/store.ts";
+import { useGcpLoginStore } from "../features/gcplogin/store.ts";
+import { clearCachedConns } from "../features/repos/connsCache.ts";
 import { GcpLoginHost } from "../features/gcplogin/GcpLoginHost.tsx";
 import { AuthExpiredModal } from "../features/auth/AuthExpiredModal.tsx";
 import { ProviderRequiredModal } from "../features/auth/ProviderRequiredModal.tsx";
@@ -32,7 +37,7 @@ import { NotProvisioned } from "../features/auth/NotProvisioned.tsx";
 import { WsStartingDialog } from "./WsStartingDialog.tsx";
 import { useSessionNotifications } from "../features/sessions/useSessionNotifications.ts";
 import { useReposStore, startReposPolling } from "../features/repos/store.ts";
-import { startRepoJobsPolling } from "../features/repos/jobs.ts";
+import { startRepoJobsPolling, useRepoJobsStore } from "../features/repos/jobs.ts";
 import { useFilesStore } from "../features/files/store.ts";
 import { wireFilesSessionRefresh } from "../features/files/sessionRefresh.ts";
 import { useChatStore, startChatPolling } from "../features/chat/store.ts";
@@ -164,6 +169,7 @@ export function App() {
   // (clear + re-hydrate) the accumulated keys on an ACTUAL tenant change, not on the
   // effect's initial post-boot run.
   const prefsSyncedTenantRef = useRef<string | null>(null);
+  const profilesReloadRef = useRef(false);
   const browserAttachmentActionHandledRef = useRef(false);
 
   // Detect a newer deployed build and offer a one-tap, cache-busting reload.
@@ -368,6 +374,23 @@ export function App() {
     // tenant's copy.
     if (prefsSyncedTenantRef.current !== null && prefsSyncedTenantRef.current !== tenant) {
       void resyncAccumulatedForIdentitySwitch();
+      // The rail's repos are the previous tenant's workspace. When both workspaces are running
+      // no running edge fires, so nothing else drops them; ProjectTree reloads on the switch.
+      useReposStore.getState().clear();
+      // Same for the other workspace-proxied snapshots: the Agent's answers (connections, import
+      // jobs, cloud logins, the chat list) are not keyed on the tenant, so drop and re-ask. The
+      // FILES tree, the connection hook and the chat rail reload on the tenant themselves.
+      clearCachedConns();
+      useRepoJobsStore.getState().reset();
+      void useRepoJobsStore.getState().refresh();
+      useChatStore.getState().resetConvs();
+      const aws = useAwsLoginStore.getState();
+      aws.reset();
+      void aws.refresh();
+      const gcp = useGcpLoginStore.getState();
+      gcp.reset();
+      void gcp.refresh();
+      profilesReloadRef.current = true; // the retrying load below asks for the profiles
     }
     prefsSyncedTenantRef.current = tenant;
     // pane ids are tab-local, not tenant-global. Never carry an ephemeral Page
@@ -398,6 +421,18 @@ export function App() {
     void useWorkspaceStore.getState().refresh();
     void useSessionsStore.getState().refresh();
   }, [booted, tenant]);
+
+  // The cloud-login profiles after a tenant switch (cloudProfilesReload.ts).
+  useRetryLoad(
+    async (signal) => {
+      if (!profilesReloadRef.current) return true;
+      const done = await reloadCloudProfiles();
+      if (signal.aborted) return true;
+      if (done) profilesReloadRef.current = false;
+      return done;
+    },
+    [tenant],
+  );
 
   usePaneLayoutSync(booted, tenant, paneLayout, popout);
 

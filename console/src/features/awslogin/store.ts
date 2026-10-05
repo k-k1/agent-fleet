@@ -3,7 +3,7 @@
 // account, role, who asks — always comes from GET /api/aws-login, which the Agent joins
 // with Settings. An id the Agent does not list shows nothing.
 import { create } from "zustand";
-import { api } from "../../core/api/client.ts";
+import { api, getTenant } from "../../core/api/client.ts";
 
 export interface AwsLoginWaiter {
   session?: string;
@@ -62,6 +62,8 @@ interface AwsLoginState {
   /** The request whose login modal is open, if any. */
   modal: string | null;
   refresh(): Promise<void>;
+  /** Back to the never-asked state: everything here describes the previous tenant's workspace. */
+  reset(): void;
   hide(id: string): void;
   open(id: string): void;
   close(): void;
@@ -104,6 +106,7 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
   hidden: {},
   modal: null,
   async refresh() {
+    const tenant = getTenant();
     let d: { requests?: AwsLoginRequest[]; error?: unknown } | null = null;
     try {
       d = await api("api/aws-login");
@@ -111,7 +114,11 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
       return; // a dropped connection proves nothing; the next poll asks again
     }
     if (!d || d.error || !Array.isArray(d.requests)) return;
+    if (getTenant() !== tenant) return; // asked under the previous tenant
     set({ requests: d.requests });
+  },
+  reset() {
+    set({ requests: [], hidden: {}, modal: null, profiles: null, expiring: [], hiddenExpiry: {}, profileModal: null });
   },
   hide(id) {
     set((s) => ({ hidden: { ...s.hidden, [id]: true } }));
@@ -127,6 +134,7 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
   hiddenExpiry: {},
   profileModal: null,
   async refreshExpiry() {
+    const tenant = getTenant();
     let d: { profiles?: unknown[]; error?: unknown } | null = null;
     try {
       d = await api("api/aws-login/profiles");
@@ -134,6 +142,7 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
       return null;
     }
     if (!d || d.error || !Array.isArray(d.profiles)) return null;
+    if (getTenant() !== tenant) return null; // asked under the previous tenant
     const profiles: AwsProfileState[] = [];
     for (const raw of d.profiles) {
       const p = raw as Record<string, unknown>;

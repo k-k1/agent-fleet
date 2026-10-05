@@ -13,6 +13,7 @@ let logoutReply: Json = { revoked: true };
 let confirmAnswer = true;
 const toasts: { msg: string; kind?: string }[] = [];
 vi.mock("../../core/api/client.ts", () => ({
+  getTenant: () => "",
   api: vi.fn(async (path: string, opts?: RequestInit) => {
     calls.push(opts?.method ? `${opts.method} ${path}` : path);
     if (path === "api/aws-login/profiles") return { profiles };

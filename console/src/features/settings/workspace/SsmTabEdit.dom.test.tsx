@@ -23,6 +23,7 @@ const failGet = new Set<string>();
 let delReply: { ok: boolean; status: number; body: unknown } = { ok: true, status: 204, body: null };
 
 vi.mock("../../../core/api/client.ts", () => ({
+  getTenant: () => "",
   api: vi.fn(async (path: string) => {
     gets.push(path);
     if (failGet.has(path)) throw new Error("HTTP 502");

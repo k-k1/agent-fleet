@@ -12,6 +12,7 @@ let listed: Json[] = [];
 let attemptReplies: Json[] = [];
 
 vi.mock("../../core/api/client.ts", () => ({
+  getTenant: () => "",
   api: vi.fn(async (path: string) => {
     calls.push({ path, method: "GET" });
     if (path === "api/aws-login") return { requests: listed };

@@ -14,6 +14,7 @@ let states: Json[] = [];
 let logoutGate: Promise<void> = Promise.resolve();
 
 vi.mock("../../../core/api/client.ts", () => ({
+  getTenant: () => "",
   api: vi.fn(async (path: string, opts?: RequestInit) => {
     calls.push({ path, method: opts?.method ?? "GET" });
     if (path.endsWith("/logout")) {

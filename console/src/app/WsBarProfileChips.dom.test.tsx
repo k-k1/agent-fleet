@@ -20,7 +20,7 @@ const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 const awsRefresh = vi.fn(async () => null);
-const gcpRefresh = vi.fn(async () => {});
+const gcpRefresh = vi.fn(async () => true);
 const gcpRequests = vi.fn(async () => {});
 
 beforeEach(() => {

@@ -13,6 +13,7 @@ let attemptReplies: Json[] = [];
 let codeReply: Json = { ok: true };
 
 vi.mock("../../core/api/client.ts", () => ({
+  getTenant: () => "",
   api: vi.fn(async (path: string, opts?: RequestInit) => {
     calls.push({ path, method: opts?.method || "GET", body: String(opts?.body ?? "") });
     if (path === "api/gcp-login") return { requests: listed };

@@ -20,6 +20,7 @@ vi.mock("../../core/api/client.ts", () => ({
     return {};
   }),
   isTransientErr: () => false,
+  getTenant: () => "",
 }));
 
 const { ProjectTree } = await import("./ProjectTree.tsx");
