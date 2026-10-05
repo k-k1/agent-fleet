@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -218,8 +220,7 @@ func fetchWorkItemQuery(s *secrets.Data, q workItemQueryIn) ([]workItemOut, int,
 // advanced_search=true is what lets a saved query use `OR` and parentheses. Members need them
 // to ask one query for "assigned to me OR mine OR waiting on my review" — `assignee:` alone
 // never matches a pull request they opened, because GitHub does not make a PR's author its
-// assignee. Without the parameter GitHub answers 422 and the rail says only "could not parse
-// the query", which reads as their typo. Measured before turning it on: queries that use no
+// assignee. Without the parameter GitHub answers 422, which reads as their typo. Measured before turning it on: queries that use no
 // operator return the identical rows either way (`author:@me is:open`, `assignee:@me is:pr`),
 // so it does not reinterpret the queries members already saved.
 //
@@ -232,6 +233,71 @@ func fetchWorkItemQuery(s *secrets.Data, q workItemQueryIn) ([]workItemOut, int,
 // host is fixed to github.com: GitHub Enterprise Server is out of scope for v1, exactly
 // as for the `gh` wrapper (docs/build/08 §8.3).
 func githubSearchWorkItems(token, queryID, query string) ([]workItemOut, int, error) {
+	rows, total, err := githubSearchOnce(token, queryID, query)
+	var rej *githubQueryRejected
+	if errors.As(err, &rej) && rej.needsTypeQualifier() && !githubQueryHasTypeQualifier(query) {
+		// GitHub rolls the "must include is:issue or is:pull-request" requirement out per
+		// account, so a saved query that worked yesterday can start failing with no edit.
+		// The combined qualifier loses nothing (measured: 342 = 97 issues + 245 PRs). One retry,
+		// never a loop; a second failure reports GitHub's own words.
+		return githubSearchOnce(token, queryID, "(is:issue OR is:pull-request) ("+query+")")
+	}
+	return rows, total, err
+}
+
+// githubQueryRejected is a 422 from /search/issues carrying GitHub's explanation.
+type githubQueryRejected struct{ msg string }
+
+func (e *githubQueryRejected) Error() string { return "github rejected the query: " + e.msg }
+
+// needsTypeQualifier reports the one 422 that is fixable without the member: GitHub's
+// "Query must include 'is:issue' or 'is:pull-request'".
+func (e *githubQueryRejected) needsTypeQualifier() bool {
+	m := strings.ToLower(e.msg)
+	return strings.Contains(m, "must include") && strings.Contains(m, "is:issue") && strings.Contains(m, "is:pull-request")
+}
+
+// githubTypeQualifierRe matches the qualifiers that already say what kind of item is wanted.
+var githubTypeQualifierRe = regexp.MustCompile(`(?i)(?:^|[\s(\-])(?:is:(?:issue|pr|pull-request)|type:\S)`)
+
+func githubQueryHasTypeQualifier(query string) bool { return githubTypeQualifierRe.MatchString(query) }
+
+// githubErrorText extracts GitHub's explanation from an error body (`message` plus any
+// `errors[].message`), stripped of control bytes and bounded: it ends up in a row the Console
+// renders, and the body is remote input.
+func githubErrorText(body []byte) string {
+	var e struct {
+		Message string `json:"message"`
+		Errors  []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	text := ""
+	if json.Unmarshal(body, &e) == nil {
+		text = e.Message
+		for _, x := range e.Errors {
+			if x.Message != "" && !strings.Contains(text, x.Message) {
+				text += "; " + x.Message
+			}
+		}
+	}
+	text = strings.Join(strings.Fields(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, text)), " ")
+	if r := []rune(text); len(r) > 300 {
+		text = string(r[:300]) + "…"
+	}
+	if text == "" {
+		return "no reason given"
+	}
+	return text
+}
+
+// githubSearchOnce is one GET /search/issues call.
+func githubSearchOnce(token, queryID, query string) ([]workItemOut, int, error) {
 	u := "https://api.github.com/search/issues?per_page=" + fmt.Sprint(workItemFetchGitHub) +
 		"&sort=updated&order=desc&advanced_search=true&q=" + url.QueryEscape(query)
 	req, err := http.NewRequest("GET", u, nil)
@@ -255,7 +321,7 @@ func githubSearchWorkItems(token, queryID, query string) ([]workItemOut, int, er
 			}
 			return nil, 0, fmt.Errorf("github rejected the token (re-connect GitHub)")
 		case http.StatusUnprocessableEntity:
-			return nil, 0, fmt.Errorf("github could not parse the query")
+			return nil, 0, &githubQueryRejected{githubErrorText(body)}
 		}
 		return nil, 0, fmt.Errorf("github search %d", resp.StatusCode)
 	}

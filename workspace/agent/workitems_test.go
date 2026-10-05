@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -92,8 +93,7 @@ func TestParseGitHubSearchItems(t *testing.T) {
 // The request GitHub actually receives. `advanced_search=true` is not cosmetic: it is the only
 // mode in which `OR` and parentheses parse, and a member needs them to write "assigned to me OR
 // mine OR waiting on my review" — `assignee:` matches no pull request at all. Without the
-// parameter GitHub answers 422 and the row says nothing but "could not parse the query", which
-// reads as the member's typo (observed on a deployment still running the previous Agent).
+// parameter GitHub answers 422, which reads as the member's typo (observed on a deployment still running the previous Agent).
 func TestGitHubSearchRequestEnablesAdvancedSearch(t *testing.T) {
 	var got *url.URL
 	orig := workItemHTTPClient.Transport
@@ -266,5 +266,89 @@ func TestWorkItemsFetchEmptyRequest(t *testing.T) {
 	// An array is returned even when empty: the Console cannot tell null apart from broken.
 	if got := strings.TrimSpace(w.Body.String()); !strings.Contains(got, `"items":[]`) {
 		t.Errorf("body = %s, want an empty items array", got)
+	}
+}
+
+const typeQualifier422 = `{"message":"Query must include 'is:issue' or 'is:pull-request'","status":"422"}`
+
+// stubGitHubSearch answers each /search/issues call with the next canned (status, body) and
+// records the q parameter of every request.
+func stubGitHubSearch(t *testing.T, answers ...[2]string) *[]string {
+	t.Helper()
+	var qs []string
+	orig := workItemHTTPClient.Transport
+	workItemHTTPClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		qs = append(qs, r.URL.Query().Get("q"))
+		i := len(qs) - 1
+		if i >= len(answers) {
+			t.Fatalf("unexpected request #%d: %s", i+1, r.URL)
+		}
+		code := 200
+		fmt.Sscan(answers[i][0], &code)
+		return &http.Response{StatusCode: code, Header: http.Header{},
+			Body: io.NopCloser(strings.NewReader(answers[i][1]))}, nil
+	})
+	t.Cleanup(func() { workItemHTTPClient.Transport = orig })
+	return &qs
+}
+
+// #1690: GitHub's 422 explanation used to be replaced by a fixed string.
+func TestGitHubSearch422SurfacesGitHubMessage(t *testing.T) {
+	qs := stubGitHubSearch(t, [2]string{"422",
+		"{\"message\":\"Validation Failed\\u0007\",\"errors\":[{\"message\":\"bad\\nqualifier\"}]}"})
+	_, _, err := githubSearchWorkItems("tok-secret", "q1", "is:open foo:bar")
+	if err == nil || err.Error() != "github rejected the query: Validation Failed ; bad qualifier" {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.ContainsAny(err.Error(), "\x07\n") || strings.Contains(err.Error(), "tok-secret") {
+		t.Errorf("unsanitised error: %q", err)
+	}
+	if len(*qs) != 1 {
+		t.Errorf("requests = %d, want 1 (no retry for other 422s)", len(*qs))
+	}
+}
+
+func TestGitHubErrorTextIsBounded(t *testing.T) {
+	got := githubErrorText([]byte(`{"message":"` + strings.Repeat("x", 5000) + `"}`))
+	if n := len([]rune(got)); n > 301 {
+		t.Errorf("len = %d", n)
+	}
+}
+
+func TestGitHubSearchRetriesOnceWithTypeQualifier(t *testing.T) {
+	qs := stubGitHubSearch(t, [2]string{"422", typeQualifier422},
+		[2]string{"200", `{"total_count":342,"items":[]}`})
+	_, total, err := githubSearchWorkItems("tok", "q1", "is:open involves:@me")
+	if err != nil || total != 342 {
+		t.Fatalf("total=%d err=%v", total, err)
+	}
+	want := []string{"is:open involves:@me", "(is:issue OR is:pull-request) (is:open involves:@me)"}
+	if len(*qs) != 2 || (*qs)[0] != want[0] || (*qs)[1] != want[1] {
+		t.Errorf("queries = %q, want %q", *qs, want)
+	}
+}
+
+func TestGitHubSearchRetryFailureSurfacesMessageAndDoesNotLoop(t *testing.T) {
+	qs := stubGitHubSearch(t, [2]string{"422", typeQualifier422},
+		[2]string{"422", `{"message":"still wrong"}`})
+	_, _, err := githubSearchWorkItems("tok", "q1", "involves:@me")
+	if err == nil || err.Error() != "github rejected the query: still wrong" {
+		t.Errorf("err = %v", err)
+	}
+	if len(*qs) != 2 {
+		t.Errorf("requests = %d, want 2", len(*qs))
+	}
+}
+
+func TestGitHubSearchNoRetryWhenQueryHasTypeQualifier(t *testing.T) {
+	for _, q := range []string{"is:issue involves:@me", "(is:pr OR author:@me)", "type:bug is:open", "is:open is:pull-request"} {
+		qs := stubGitHubSearch(t, [2]string{"422", typeQualifier422})
+		_, _, err := githubSearchWorkItems("tok", "q1", q)
+		if err == nil || !strings.Contains(err.Error(), "Query must include") {
+			t.Errorf("%q: err = %v", q, err)
+		}
+		if len(*qs) != 1 {
+			t.Errorf("%q: requests = %d, want 1", q, len(*qs))
+		}
 	}
 }
