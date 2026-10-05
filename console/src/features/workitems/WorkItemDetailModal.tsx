@@ -47,6 +47,8 @@ import {
   canComment,
   canReadLive,
   checksText,
+  detailStateLabel,
+  detailStateTone,
   checksTone,
   fullLocal,
   readWorkItemDetail,
@@ -92,7 +94,7 @@ function StartSection({ fold, title, children }: { fold: boolean; title: string;
  * A stopped Workspace answers 409 and is NOT started for a panel (ADR 0061 decision 1). That is
  * the feature working as designed, not a failure, so it is told apart from a real error: the
  * panel keeps the cached row and says which of the two happened. */
-function useLiveDetail(item: WorkItem) {
+function useLiveDetail(item: WorkItem, reference: boolean) {
   const [detail, setDetail] = useState<WorkItemDetail | null>(null);
   const [err, setErr] = useState("");
   const [stopped, setStopped] = useState(false);
@@ -100,7 +102,7 @@ function useLiveDetail(item: WorkItem) {
   const [attempt, setAttempt] = useState(0);
   const { provider, key, kind } = item;
   useEffect(() => {
-    if (!canReadLive({ provider, kind })) return;
+    if (!canReadLive({ provider, kind }, reference)) return;
     // The panel can be re-pointed at another row while a read is in flight (or closed under it).
     // Without this guard the late answer would paint the previous pull request's numbers onto
     // the one now on screen.
@@ -109,7 +111,8 @@ function useLiveDetail(item: WorkItem) {
     setErr("");
     setStopped(false);
     setDetail(null);
-    void workItemDetail({ provider, key })
+    // A stand-in's kind is a guess, so it is sent empty and the Agent resolves it (#1697).
+    void workItemDetail({ provider, key, kind: reference ? "" : kind })
       .then((res) => {
         if (!current) return;
         const got = readWorkItemDetail(res);
@@ -130,7 +133,7 @@ function useLiveDetail(item: WorkItem) {
     return () => {
       current = false;
     };
-  }, [provider, key, kind, attempt]);
+  }, [provider, key, kind, reference, attempt]);
   return { detail, err, stopped, busy, retry: () => setAttempt((n) => n + 1) };
 }
 
@@ -178,13 +181,16 @@ export function WorkItemDetailModal({
   onReport,
 }: Props) {
   const tr = useT();
-  const live = useLiveDetail(item);
+  const live = useLiveDetail(item, reference);
   // A pull request's panel is a place to decide whether to pick the review up, so the live read
   // leads and the cached row is the fallback — never the other way round.
   const view = live.detail || item;
   const isPR = item.kind === "pr";
-  // A GitHub number names an issue or a pull request alike, and a stand-in cannot tell which.
-  const kindKnown = !reference || item.provider !== "github";
+  // A GitHub number names an issue or a pull request alike, and a stand-in cannot tell which —
+  // until the live read has answered. `isPR` stays the item's own kind on purpose: it picks the
+  // launch flow, and a stand-in keeps the plain one.
+  const kindKnown = !reference || item.provider !== "github" || !!live.detail;
+  const shownPR = live.detail ? live.detail.kind === "pr" : isPR;
   const providerName = PROVIDER_NAMES[item.provider] || item.provider;
   const bases = useMemo(() => repos.filter((r) => !r.worktree), [repos]);
   // Default repository: the query's hint, then the item's repo, then the first one. A worktree
@@ -213,6 +219,8 @@ export function WorkItemDetailModal({
   // hand keeps whatever branch it is already on (§80.24.4: never launch off a value the user
   // cannot see). "" when the live read never resolved one (stopped, failed, or not a PR).
   const reviewBranch = isPR ? d?.headBranch || "" : "";
+  // A stand-in's own state is unread, so the dot and the State row come from the live answer.
+  const stateText = d ? detailStateLabel(d) : view.state ? stateLabel(view.state) : "";
 
   // If the review branch already has a working copy, default straight to it. Left at "new
   // worktree" (the initial default), "start" would try to check the branch out a second time —
@@ -270,7 +278,7 @@ export function WorkItemDetailModal({
     <Modal
       title={
         kindKnown
-          ? tr("wi.detail_title", { kind: tr(item.kind === "pr" ? "wi.kind_pr" : "wi.kind_issue"), key: item.key })
+          ? tr("wi.detail_title", { kind: tr(shownPR ? "wi.kind_pr" : "wi.kind_issue"), key: item.key })
           : item.key
       }
       onClose={onClose}
@@ -282,8 +290,8 @@ export function WorkItemDetailModal({
       <div className="ui-modal-body">
         <div className="wi-dhead">
           {/* No state read (a stand-in) is muted: stateTone's default would paint it as open. */}
-          <span className={`wi-dot tone-${view.state ? stateTone(view.state) : "muted"}`} title={view.state ? stateLabel(view.state) : undefined}>
-            <Icon name={!kindKnown ? "link" : isPR ? "git-pull-request" : "issues"} />
+          <span className={`wi-dot tone-${d ? detailStateTone(d) : view.state ? stateTone(view.state) : "muted"}`} title={stateText || undefined}>
+            <Icon name={!kindKnown ? "link" : shownPR ? "git-pull-request" : "issues"} />
           </span>
           {/* Never ellipsised here: this is the panel people open to read what the rail row cut
               to one line, so it wraps and shows the title in full. */}
@@ -303,7 +311,7 @@ export function WorkItemDetailModal({
         {/* Always say which of the two this is. A panel that silently shows a five-minute-old
             row looks exactly like one showing the live pull request, and the difference is the
             whole point of the live read (§80.24). */}
-        {canReadLive(item) && (
+        {canReadLive(item, reference) && (
           <p className={"wi-dlive" + (live.err ? " bad" : "")} role="status" title={live.err || undefined}>
             <Icon
               name={live.busy ? "sync" : live.err ? "warning" : live.stopped ? "debug-pause" : "check"}
@@ -313,10 +321,10 @@ export function WorkItemDetailModal({
               {live.busy
                 ? tr("wi.detail_live_loading")
                 : live.err
-                  ? tr("wi.detail_live_failed")
+                  ? tr(reference ? "wi.detail_live_failed_ref" : "wi.detail_live_failed")
                   : live.stopped
-                    ? tr("wi.detail_live_stopped")
-                    : tr("wi.detail_live_fresh")}
+                    ? tr(reference ? "wi.detail_live_stopped_ref" : "wi.detail_live_stopped")
+                    : tr(reference ? "wi.detail_live_fresh_ref" : "wi.detail_live_fresh")}
             </span>
             {!live.busy && (live.err || live.stopped) && (
               <button type="button" className="linklike" onClick={live.retry}>
@@ -329,16 +337,16 @@ export function WorkItemDetailModal({
         {/* Exactly the fields the CP holds. A row with no value is not drawn; a column of
             em-dashes only adds things to read. */}
         <dl className="wi-dfacts">
-          {view.state && (
+          {stateText && (
             <>
               <dt>{tr("wi.detail_state")}</dt>
-              <dd>{stateLabel(view.state)}</dd>
+              <dd>{stateText}</dd>
             </>
           )}
           {kindKnown && (
             <>
               <dt>{tr("wi.detail_kind")}</dt>
-              <dd>{isPR ? tr("wi.kind_pr") : tr("wi.kind_issue")}</dd>
+              <dd>{shownPR ? tr("wi.kind_pr") : tr("wi.kind_issue")}</dd>
             </>
           )}
           <dt>{tr("wi.detail_provider")}</dt>
@@ -353,8 +361,8 @@ export function WorkItemDetailModal({
           )}
           {view.assignee && (
             <>
-              <dt>{tr("wi.detail_assignee")}</dt>
-              <dd>@{view.assignee}</dd>
+              <dt>{tr(d && d.assignees.length > 1 ? "wi.detail_assignees" : "wi.detail_assignee")}</dt>
+              <dd>{(d && d.assignees.length > 0 ? d.assignees : [view.assignee]).map((a) => `@${a}`).join(", ")}</dd>
             </>
           )}
           {view.repo && (
@@ -376,7 +384,7 @@ export function WorkItemDetailModal({
               </dd>
             </>
           )}
-          {d && (
+          {d && d.kind === "pr" && (
             <>
               <dt>{tr("wi.detail_merge")}</dt>
               <dd className={d.mergeable === "conflict" && !d.merged ? "tone-bad" : undefined}>{mergeText(d)}</dd>

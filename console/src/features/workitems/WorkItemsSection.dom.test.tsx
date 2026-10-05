@@ -1042,7 +1042,7 @@ describe("WorkItemDetailModal — a pull request", () => {
     workItemDetail.mockResolvedValue(detail);
     const modal = await openPR();
 
-    expect(workItemDetail).toHaveBeenCalledWith({ provider: "github", key: "acme/web#518" });
+    expect(workItemDetail).toHaveBeenCalledWith({ provider: "github", key: "acme/web#518", kind: "pr" });
     expect(modal.textContent).toContain(t("wi.detail_live_fresh"));
     expect(modal.textContent).toContain("develop");
     expect(modal.textContent).toContain("feature/x");
@@ -1388,5 +1388,89 @@ describe("WorkItemModalHost — opened from a ticket link outside the rail (#165
     });
     expect(document.querySelectorAll(".wi-dmodal")).toHaveLength(1);
     expect(document.querySelector(".wi-dmodal .wi-dtitle")?.textContent).toBe("acme/web#9");
+  });
+
+  // #1697: a reference's kind is unknown, so the live read decides what it is and where it stands.
+  describe("live read for a reference", () => {
+    const settle = async () => {
+      for (let i = 0; i < 4; i++) {
+        await act(async () => {
+          await Promise.resolve();
+        });
+      }
+    };
+    const live = (over: Record<string, unknown>) => ({
+      provider: "github", key: "acme/web#7", kind: "issue", title: "Crash on save", state: "done", url: "https://github.com/acme/web/issues/7",
+      author: "alice", assignee: "bob", assignees: ["bob", "carol"], stateReason: "", labels: [], labelColors: {}, repo: "acme/web",
+      updatedAt: "2026-10-01T00:00:00Z", draft: false, merged: false, mergeable: "unknown", baseBranch: "", headBranch: "",
+      additions: 0, deletions: 0, changedFiles: 0, comments: 0, reviews: [], checks: { state: "", total: 0, failed: 0, pending: 0 }, ...over,
+    });
+    const openRef = async (key = "acme/web#7") => {
+      workItemList.mockResolvedValue({ items: [], queries: [query], sessions: [], fetchedAt: "", running: true });
+      await render();
+      const { item: ref } = resolveWorkItemRef({ provider: "github", key }, []);
+      await act(async () => {
+        useWorkItemModal.getState().openDetail(ref, { reference: true });
+      });
+      await settle();
+      return document.querySelector(".wi-dmodal")!;
+    };
+
+    it("shows a merged pull request as Merged, with its title", async () => {
+      workItemDetail.mockResolvedValue(live({ kind: "pr", merged: true, headBranch: "feat", baseBranch: "develop" }));
+      const modal = await openRef();
+      expect(workItemDetail).toHaveBeenCalledWith({ provider: "github", key: "acme/web#7", kind: "" });
+      expect(modal.querySelector(".wi-dtitle")?.textContent).toBe("Crash on save");
+      expect(modal.querySelector(".wi-dot")?.className).toContain("tone-merged");
+      expect(modal.textContent).toContain(t("wi.detail_merge_merged"));
+      expect(modal.textContent).toContain(t("wi.detail_live_fresh_ref"));
+      expect(modal.querySelector(".wi-dref")).toBeNull();
+    });
+
+    it("tells a closed pull request from a merged one", async () => {
+      workItemDetail.mockResolvedValue(live({ kind: "pr", merged: false }));
+      const modal = await openRef();
+      expect(modal.querySelector(".wi-dfacts dd")?.textContent).toBe(t("wi.state_closed"));
+      expect(modal.querySelector(".wi-dot")?.className).not.toContain("tone-merged");
+    });
+
+    it("shows an issue closed as not planned with all its assignees", async () => {
+      workItemDetail.mockResolvedValue(live({ stateReason: "not_planned" }));
+      const modal = await openRef();
+      expect(modal.textContent).toContain(t("wi.state_closed_not_planned"));
+      expect(modal.textContent).toContain("@bob, @carol");
+      // An issue has no merge row.
+      expect(modal.textContent).not.toContain(t("wi.detail_merge"));
+    });
+
+    it("falls back to the reference note when GitHub has no such item", async () => {
+      workItemDetail.mockResolvedValue({ error: { code: "provider_error", message: "github has no acme/web#7 visible to this connection" } });
+      const modal = await openRef();
+      expect(modal.querySelector(".wi-dref")?.textContent).toBe(t("wi.detail_ref_note", { name: "GitHub" }));
+      expect(modal.querySelector(".wi-dtitle")?.textContent).toBe("acme/web#7");
+      expect(modal.textContent).not.toContain(t("wi.detail_state"));
+    });
+
+    it("falls back to the note, and says so, when the workspace is stopped", async () => {
+      workItemDetail.mockResolvedValue({ error: { code: "agent_outdated" } });
+      const modal = await openRef();
+      expect(modal.querySelector(".wi-dref")).not.toBeNull();
+      expect(modal.querySelector(".wi-dlive")?.textContent).toContain(t("wi.detail_live_stopped_ref"));
+    });
+
+    it("does not paint a late answer onto the item the panel was re-pointed to", async () => {
+      let release: (v: unknown) => void = () => {};
+      workItemDetail.mockImplementationOnce(() => new Promise((r) => (release = r)));
+      await openRef("acme/web#7");
+      workItemDetail.mockResolvedValueOnce({ error: { code: "workspace_stopped" } });
+      const { item: other } = resolveWorkItemRef({ provider: "github", key: "acme/web#8" }, []);
+      await act(async () => {
+        useWorkItemModal.getState().openDetail(other, { reference: true });
+      });
+      await settle();
+      await act(async () => release(live({ title: "STALE" })));
+      await settle();
+      expect(document.querySelector(".wi-dmodal")?.textContent).not.toContain("STALE");
+    });
   });
 });

@@ -558,6 +558,10 @@ func (a workItemsAPI) detail(w http.ResponseWriter, r *http.Request, res *resolv
 	var in struct {
 		Provider string `json:"provider"`
 		Key      string `json:"key"`
+		// Kind is relayed untouched: "pr" for a cached row, empty for a reference that is not in
+		// the inbox, which the Agent resolves (#1697). Dropping it here turns every lookup into a
+		// pull request read.
+		Kind string `json:"kind"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})

@@ -7,6 +7,7 @@ import {
   checksText,
   canComment,
   canReadLive,
+  detailStateLabel,
   checksTone,
   dedupeWorkItems,
   matchWorkItem,
@@ -590,6 +591,10 @@ describe("live read helpers", () => {
     expect(canReadLive({ kind: "pr", provider: "bitbucket" })).toBe(true);
     expect(canReadLive({ kind: "issue", provider: "github" })).toBe(false);
     expect(canReadLive({ kind: "pr", provider: "jira" })).toBe(false);
+    // A stand-in's kind is unknown; only GitHub can resolve it (#1697).
+    expect(canReadLive({ kind: "issue", provider: "github" }, true)).toBe(true);
+    expect(canReadLive({ kind: "issue", provider: "jira" }, true)).toBe(false);
+    expect(canReadLive({ kind: "issue", provider: "bitbucket" }, true)).toBe(false);
   });
 
   it("counts reviews by standing, with anything undecided pending", () => {
@@ -608,5 +613,23 @@ describe("live read helpers", () => {
     expect(checksTone({ state: "success", total: 3, failed: 0, pending: 0 })).toBe("ok");
     expect(checksTone({ state: "failure", total: 3, failed: 1, pending: 0 })).toBe("bad");
     expect(checksTone({ state: "pending", total: 3, failed: 0, pending: 1 })).toBe("warn");
+  });
+});
+
+describe("detailStateLabel (#1697)", () => {
+  const base = { kind: "pr", state: "done", merged: false, draft: false, stateReason: "" };
+  it("keeps merged, closed, draft and open apart for a pull request", () => {
+    const labels = [
+      detailStateLabel({ ...base, merged: true }),
+      detailStateLabel(base),
+      detailStateLabel({ ...base, state: "in_progress", draft: true }),
+      detailStateLabel({ ...base, state: "open" }),
+    ];
+    expect(new Set(labels).size).toBe(4);
+  });
+  it("keeps completed and not planned apart for an issue", () => {
+    const a = detailStateLabel({ ...base, kind: "issue", stateReason: "completed" });
+    const b = detailStateLabel({ ...base, kind: "issue", stateReason: "not_planned" });
+    expect(a).not.toBe(b);
   });
 });

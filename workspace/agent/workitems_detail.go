@@ -93,6 +93,13 @@ type workItemDetailOut struct {
 	UpdatedAt string `json:"updatedAt"`
 	Draft     bool   `json:"draft"`
 	Merged    bool   `json:"merged"`
+	// StateReason is an issue's close reason: "completed" / "not_planned" ("" while open, for a
+	// pull request, or when the provider says nothing). It is what tells a finished issue from a
+	// declined one, which "done" alone cannot.
+	StateReason string `json:"stateReason"`
+	// Assignees is every assignee of an issue (Assignee keeps the first for the shared rows).
+	// Never nil: the Console iterates it.
+	Assignees []string `json:"assignees"`
 	// Mergeable is "clean" / "conflict" / "unknown". GitHub computes it asynchronously and
 	// answers null while it is still thinking, and Bitbucket does not expose it at all — both
 	// are "unknown", because claiming "clean" from a missing field is how a member is sent to
@@ -113,6 +120,9 @@ func handleWorkItemsDetail(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Provider string `json:"provider"`
 		Key      string `json:"key"`
+		// Kind is what the caller believes the item is: "pr", or "" / "issue" for a reference
+		// that is not in the inbox (`#N` names either). Only GitHub tells the two apart for us.
+		Kind string `json:"kind"`
 	}
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
@@ -135,7 +145,11 @@ func handleWorkItemsDetail(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", "GitHub is not connected")
 			return
 		}
-		out, err = githubPullRequestDetail(e.Token, key)
+		if strings.TrimSpace(in.Kind) == "pr" {
+			out, err = githubPullRequestDetail(e.Token, key)
+		} else {
+			out, err = githubReferenceDetail(e.Token, key)
+		}
 	case "bitbucket":
 		out, err = bitbucketPullRequestDetail(s, key)
 	default:
@@ -156,6 +170,77 @@ func handleWorkItemsDetail(w http.ResponseWriter, r *http.Request) {
 
 // --- GitHub -------------------------------------------------------------------
 
+// githubAPIBase is a variable only so a test can point the detail reads at a local server.
+var githubAPIBase = "https://api.github.com"
+
+// githubReferenceDetail reads a GitHub reference whose kind is unknown (a `#N` clicked in the
+// mirror that is not in the inbox). /issues/{n} answers for both kinds; when it carries
+// `pull_request` the existing pull request read takes over, otherwise the issue row is the
+// answer. Like the PR read it fetches no body — the issue object's `body` is never decoded.
+func githubReferenceDetail(token, key string) (*workItemDetailOut, error) {
+	repo, number, ok := parseGitHubIssueKey(key)
+	if !ok {
+		return nil, fmt.Errorf("cannot read %q (expected owner/name#number)", key)
+	}
+	body, err := githubGetJSON(token, fmt.Sprintf("%s/repos/%s/issues/%d", githubAPIBase, gitx.EscapeRepoPath(repo), number), key)
+	if err != nil {
+		return nil, err
+	}
+	out, isPR, err := parseGitHubIssue(body, key)
+	if err != nil {
+		return nil, err
+	}
+	if isPR {
+		return githubPullRequestDetail(token, key)
+	}
+	return out, nil
+}
+
+// parseGitHubIssue maps an issue object. isPR is true when GitHub says the number is a pull
+// request, in which case the caller discards the row and reads the pull request instead.
+func parseGitHubIssue(body []byte, key string) (out *workItemDetailOut, isPR bool, err error) {
+	var is struct {
+		Title       string          `json:"title"`
+		State       string          `json:"state"`
+		StateReason string          `json:"state_reason"`
+		HTMLURL     string          `json:"html_url"`
+		UpdatedAt   string          `json:"updated_at"`
+		Comments    int             `json:"comments"`
+		PullRequest json.RawMessage `json:"pull_request"`
+		User        struct {
+			Login string `json:"login"`
+		} `json:"user"`
+		Assignees []struct {
+			Login string `json:"login"`
+		} `json:"assignees"`
+		Labels []gitHubLabel `json:"labels"`
+	}
+	if err := json.Unmarshal(body, &is); err != nil {
+		return nil, false, err
+	}
+	if len(is.PullRequest) > 0 && string(is.PullRequest) != "null" {
+		return nil, true, nil
+	}
+	repo, _, _ := parseGitHubIssueKey(key)
+	out = &workItemDetailOut{
+		Provider: "github", Key: key, Kind: "issue", Title: is.Title,
+		State: normalizeGitHubState(is.State, false), StateReason: is.StateReason, URL: is.HTMLURL,
+		Author: is.User.Login, Repo: repo, UpdatedAt: is.UpdatedAt, Comments: is.Comments,
+		Mergeable: "unknown", Labels: []string{}, LabelColors: gitHubLabelColors(is.Labels),
+		Assignees: []string{}, Reviews: []workItemReviewOut{},
+	}
+	for _, a := range is.Assignees {
+		out.Assignees = append(out.Assignees, a.Login)
+	}
+	if len(out.Assignees) > 0 {
+		out.Assignee = out.Assignees[0]
+	}
+	for _, l := range is.Labels {
+		out.Labels = append(out.Labels, l.Name)
+	}
+	return out, false, nil
+}
+
 // githubPullRequestDetail reads one PR: the pull request itself, its reviews, and the check
 // runs of its head commit.
 //
@@ -167,7 +252,7 @@ func githubPullRequestDetail(token, key string) (*workItemDetailOut, error) {
 	if !ok {
 		return nil, fmt.Errorf("cannot read %q (expected owner/name#number)", key)
 	}
-	base := "https://api.github.com/repos/" + gitx.EscapeRepoPath(repo)
+	base := githubAPIBase + "/repos/" + gitx.EscapeRepoPath(repo)
 	body, err := githubGetJSON(token, fmt.Sprintf("%s/pulls/%d", base, number), key)
 	if err != nil {
 		return nil, err
@@ -270,6 +355,10 @@ func parseGitHubPullRequest(body []byte, key string) (*workItemDetailOut, string
 		// Empty slices, never nil: a nil slice marshals to JSON null and the Console iterates
 		// these (the null-labels white screen, docs/log/80 §80.17.5).
 		Labels: []string{}, LabelColors: gitHubLabelColors(pr.Labels), Reviews: []workItemReviewOut{},
+		Assignees: []string{},
+	}
+	for _, a := range pr.Assignees {
+		out.Assignees = append(out.Assignees, a.Login)
 	}
 	if len(pr.Assignees) > 0 {
 		out.Assignee = pr.Assignees[0].Login
@@ -532,6 +621,7 @@ func parseBitbucketPullRequest(body []byte, key string) (*workItemDetailOut, err
 		BaseBranch:  pr.Destination.Branch.Name,
 		HeadBranch:  pr.Source.Branch.Name,
 		Comments:    pr.CommentCount,
+		Assignees:   []string{},
 		Labels:      []string{},
 		LabelColors: map[string]string{},
 		Reviews:     []workItemReviewOut{},

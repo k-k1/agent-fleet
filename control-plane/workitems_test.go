@@ -434,6 +434,30 @@ func TestWorkItemDetailOldAgentSaysSo(t *testing.T) {
 	}
 }
 
+// The Agent decides issue vs. pull request from `kind`, so the relay has to carry it through:
+// empty for a reference outside the inbox, "pr" for a cached row (#1697).
+func TestWorkItemDetailRelaysKind(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{`{"provider":"github","key":"acme/web#7"}`, ""},
+		{`{"provider":"github","key":"acme/web#7","kind":"pr"}`, "pr"},
+	} {
+		env := newWorkItemEnv(t, "running")
+		var got struct{ Kind string }
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&got)
+			_, _ = w.Write([]byte(`{"key":"acme/web#7"}`))
+		}))
+		env.res = &resolved{rt: stubRuntime{endpoint: srv.URL, token: "tok", state: "running"}, mv: env.res.mv}
+		req := httptest.NewRequest("POST", "/api/work-items/detail", strings.NewReader(tc.in))
+		w := httptest.NewRecorder()
+		env.api.detail(w, req, env.res)
+		srv.Close()
+		if w.Code != http.StatusOK || got.Kind != tc.want {
+			t.Errorf("%s → status %d, agent saw kind %q, want %q", tc.in, w.Code, got.Kind, tc.want)
+		}
+	}
+}
+
 func TestWorkItemWireNeverCarriesNullArrays(t *testing.T) {
 	if got := splitLabels(""); got == nil {
 		t.Error("splitLabels(\"\") returned nil — it marshals as JSON null")
