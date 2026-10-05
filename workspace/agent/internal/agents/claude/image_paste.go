@@ -3,6 +3,8 @@ package claude
 import (
 	"regexp"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 )
 
 // readToolInstructions are the attachment lines an image-bearing claude prompt ends with
@@ -15,6 +17,12 @@ var readToolInstructions = []string{
 
 // imagePathRe matches the image extensions claude's paste handler treats as an image file.
 var imagePathRe = regexp.MustCompile(`(?i)\.(?:png|jpe?g|gif|webp)$`)
+
+// attachmentDirRe matches the directories Agent Fleet saves attachments to: the session/chat
+// paste uploads (sessionx/session_paste.go) and the memo images (memo_paste.go). Only those
+// are quoted. A path the member typed stays bare, because the Console's echo keeps it bare
+// and only skips the paths it recognises as its own uploads (pastedImages.ts PASTE_PATH_RE).
+var attachmentDirRe = regexp.MustCompile(`/agent-fleet/(?:pasted/[^/]+|memo-images)/[^/]+$`)
 
 // QuoteImagePaths wraps the absolute image paths of the attachment line in backticks before
 // the prompt is typed into claude's composer.
@@ -32,9 +40,13 @@ var imagePathRe = regexp.MustCompile(`(?i)\.(?:png|jpe?g|gif|webp)$`)
 // Whatever compares the typed text against the transcript or the pane (injection source
 // tags, delivery confirmation) has to compare this form, not the prompt it was given.
 func QuoteImagePaths(text string) string {
+	// An image studio send carries its signal line after the attachment line
+	// (composerSend.ts withStudioSignal); keep it aside, untouched.
+	body := imagegen.StripStudioSignal(text)
+	signal := text[len(body):]
 	i := -1
 	for _, instr := range readToolInstructions {
-		if j := strings.LastIndex(text, instr); j >= 0 && j+len(instr) > i {
+		if j := strings.LastIndex(body, instr); j >= 0 && j+len(instr) > i {
 			i = j + len(instr)
 		}
 	}
@@ -44,20 +56,21 @@ func QuoteImagePaths(text string) string {
 	// Only a tail made of absolute paths alone is our attachment line. Anything else — the
 	// member's own text, or a tail already quoted — is typed as it is, which also makes the
 	// rewrite idempotent: the delivery check re-applies it to the prompt it holds.
-	fields := strings.Fields(text[i:])
+	quote := func(tok string) bool { return imagePathRe.MatchString(tok) && attachmentDirRe.MatchString(tok) }
+	fields := strings.Fields(body[i:])
 	hasImage := false
 	for _, f := range fields {
 		if !strings.HasPrefix(f, "/") {
 			return text
 		}
-		hasImage = hasImage || imagePathRe.MatchString(f)
+		hasImage = hasImage || quote(f)
 	}
 	if !hasImage {
 		return text
 	}
 	var b strings.Builder
-	b.WriteString(text[:i])
-	rest := text[i:]
+	b.WriteString(body[:i])
+	rest := body[i:]
 	for rest != "" {
 		// Copy whitespace verbatim, then handle one token.
 		j := strings.IndexFunc(rest, func(r rune) bool { return r != ' ' && r != '\t' && r != '\n' && r != '\r' })
@@ -72,11 +85,12 @@ func QuoteImagePaths(text string) string {
 			k = len(rest)
 		}
 		tok := rest[:k]
-		if imagePathRe.MatchString(tok) {
+		if quote(tok) {
 			tok = "`" + tok + "`"
 		}
 		b.WriteString(tok)
 		rest = rest[k:]
 	}
+	b.WriteString(signal)
 	return b.String()
 }

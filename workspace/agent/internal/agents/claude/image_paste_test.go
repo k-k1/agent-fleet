@@ -46,6 +46,23 @@ func TestQuoteImagePaths(t *testing.T) {
 			"Open the following file(s) with the Read tool: " + p1 + " and compare",
 		},
 		{
+			// The member typed the whole instruction: the echo keeps a non-attachment path bare.
+			"full instruction with a path that is not an upload",
+			"Open the following file(s) with the Read tool: /tmp/a.png",
+			"Open the following file(s) with the Read tool: /tmp/a.png",
+		},
+		{
+			"memo images",
+			"Open the following file(s) with the Read tool: /home/dev/.cache/agent-fleet/memo-images/paste-9.png\n",
+			"Open the following file(s) with the Read tool: `/home/dev/.cache/agent-fleet/memo-images/paste-9.png`\n",
+		},
+		{
+			// composerSend.ts withStudioSignal puts the studio line after the attachment line.
+			"image studio signal line kept after the quoted paths",
+			"確認して Open the following file(s) with the Read tool: " + p1 + "\n\n[studio v4 · draft changed → get_image_studio]",
+			"確認して Open the following file(s) with the Read tool: `" + p1 + "`\n\n[studio v4 · draft changed → get_image_studio]",
+		},
+		{
 			"CRLF and tabs kept",
 			"x\r\nOpen the following file(s) with the Read tool:\t" + p1 + "\r\n",
 			"x\r\nOpen the following file(s) with the Read tool:\t`" + p1 + "`\r\n",
