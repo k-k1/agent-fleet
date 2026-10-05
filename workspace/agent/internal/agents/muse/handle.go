@@ -872,7 +872,10 @@ func (h *threadHandle) onUserInput(p msp.UserInputRequestParams) {
 	}
 	inter := &agents.Interaction{ID: "ask-" + p.UserInputID, Kind: agents.InteractionQuestion}
 	for _, q := range p.Questions {
-		tq := transcript.Question{ID: q.ID, Header: q.Header, Question: q.Question}
+		// Every question carries the INTERACTION id, not the model's own question id: the
+		// Console answers and cancels with `pending[0].id`, and Respond refuses anything but
+		// inter.ID. The wire answer is keyed by ask.questions, so the model's id is not lost.
+		tq := transcript.Question{ID: inter.ID, Header: q.Header, Question: q.Question}
 		for _, o := range q.Options {
 			opt := transcript.Option{Label: o.Label}
 			if o.Description != nil {

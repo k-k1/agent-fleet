@@ -2,6 +2,7 @@ package muse
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -716,6 +717,45 @@ func TestTranscriptKeepsUserInputAQuestion(t *testing.T) {
 	}
 	if td.PendingApproval != nil {
 		t.Errorf("a question was surfaced as an approval: %+v", td.PendingApproval)
+	}
+}
+
+// The Console replies with the id of the card's first question (`pending[0].id`), not with the
+// Interaction's. When that was the model's own question id ("apply-labels"), Respond refused
+// both the answer and the cancel, and the card could not be dismissed.
+func TestQuestionAnswersByTheIDTheCardCarries(t *testing.T) {
+	for _, d := range []agents.Decision{agents.DecisionCancel, agents.DecisionAnswer} {
+		t.Run(string(d), func(t *testing.T) {
+			h := &threadHandle{}
+			host := newTestHandle(t, h)
+			host.Handle(msp.MethodUserInputCancel, func(m msptest.Message) (any, *msp.Error) {
+				return msp.CommandAcceptedResult{}, nil
+			})
+			host.Handle(msp.MethodUserInputAnswer, func(m msptest.Message) (any, *msp.Error) {
+				return msp.CommandAcceptedResult{}, nil
+			})
+			host.Notify(msp.NotificationUserInputRequested, msp.UserInputRequestParams{
+				UserInputID: "ui-card", SessionID: h.sid,
+				Questions: []msp.UserInputQuestion{{ID: "apply-labels", Question: "apply?",
+					Options: []msp.UserInputOption{{Label: "yes"}}}},
+			})
+			inter := waitInteraction(t, h)
+			reply := agents.InteractionReply{ID: inter.Questions[0].ID, Decision: d}
+			if d == agents.DecisionAnswer {
+				reply.Answers = []agents.InteractionAnswer{{Options: []int{0}}}
+			}
+			if err := h.Respond(reply); err != nil {
+				t.Fatalf("respond with the card's id %q: %v", reply.ID, err)
+			}
+			if d == agents.DecisionAnswer {
+				m := waitSent(t, host, isMethod(msp.MethodUserInputAnswer))
+				if !strings.Contains(string(m.Params), `"questionId":"apply-labels"`) {
+					t.Errorf("the answer lost the model's question id: %s", m.Params)
+				}
+			} else {
+				waitSent(t, host, isMethod(msp.MethodUserInputCancel))
+			}
+		})
 	}
 }
 
