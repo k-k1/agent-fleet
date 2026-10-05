@@ -29,7 +29,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 )
 
 type commentaryMsg struct {
@@ -52,7 +51,7 @@ type commentaryLog struct {
 	pending map[string]pendingResp // stream id → response waiting for its tool calls
 	byResp  map[string][]commentaryMsg
 	byCall  map[string]string // call id → response id, only for responses with commentary
-	used    time.Time
+	used    uint64            // commentaryReads at the last read; the lowest is evicted first
 }
 
 // commentaryLogCap bounds how many logs stay cached. A read past it costs one re-read of that
@@ -67,6 +66,7 @@ type pendingResp struct {
 var (
 	commentaryLogsMu sync.Mutex
 	commentaryLogs   = map[string]*commentaryLog{}
+	commentaryReads  uint64 // a read counter rather than a clock: two reads never tie
 )
 
 // commentaryFor returns what path's log holds now, as a set the caller owns. Empty for an
@@ -78,14 +78,17 @@ func commentaryFor(path string) *commentarySet {
 	commentaryLogsMu.Lock()
 	l := commentaryLogs[path]
 	if l == nil {
+		// Evicted before it is added: a new reader carries no use time yet and would itself
+		// be the oldest, so every log past the cap would be re-read from 0 on each read.
+		if len(commentaryLogs) >= commentaryLogCap {
+			evictOldestLog()
+		}
 		l = &commentaryLog{path: path}
 		l.reset()
 		commentaryLogs[path] = l
-		if len(commentaryLogs) > commentaryLogCap {
-			evictOldestLog()
-		}
 	}
-	l.used = time.Now()
+	commentaryReads++
+	l.used = commentaryReads
 	commentaryLogsMu.Unlock()
 	return l.snapshot()
 }
@@ -93,9 +96,9 @@ func commentaryFor(path string) *commentarySet {
 // evictOldestLog drops the least recently read log. Caller holds commentaryLogsMu.
 func evictOldestLog() {
 	var oldest string
-	var at time.Time
+	var at uint64
 	for p, l := range commentaryLogs {
-		if oldest == "" || l.used.Before(at) {
+		if oldest == "" || l.used < at {
 			oldest, at = p, l.used
 		}
 	}

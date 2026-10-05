@@ -192,3 +192,41 @@ func TestTranscriptWithoutARuntimeLogIsUnchanged(t *testing.T) {
 		t.Errorf("nil set: %+v", got)
 	}
 }
+
+// Past the cap, the least recently read log goes and the new one stays: a new reader that
+// evicted itself would re-read its whole log on every read.
+func TestCommentaryCacheEvictsTheLeastRecentlyReadLog(t *testing.T) {
+	commentaryLogsMu.Lock()
+	saved := commentaryLogs
+	commentaryLogs = map[string]*commentaryLog{}
+	commentaryLogsMu.Unlock()
+	t.Cleanup(func() {
+		commentaryLogsMu.Lock()
+		commentaryLogs = saved
+		commentaryLogsMu.Unlock()
+	})
+	dir := t.TempDir()
+	paths := make([]string, commentaryLogCap+1)
+	for i := range paths {
+		paths[i] = filepath.Join(dir, fmt.Sprintf("%d.jsonl", i))
+		appendFile(t, paths[i], finalLine)
+	}
+	for _, p := range paths[:commentaryLogCap] {
+		commentaryFor(p)
+	}
+	commentaryFor(paths[0]) // paths[1] is now the least recently read
+	commentaryFor(paths[commentaryLogCap])
+	commentaryLogsMu.Lock()
+	defer commentaryLogsMu.Unlock()
+	if len(commentaryLogs) != commentaryLogCap {
+		t.Errorf("cache holds %d logs, want %d", len(commentaryLogs), commentaryLogCap)
+	}
+	for _, c := range []struct {
+		path string
+		want bool
+	}{{paths[commentaryLogCap], true}, {paths[0], true}, {paths[1], false}} {
+		if _, ok := commentaryLogs[c.path]; ok != c.want {
+			t.Errorf("%s cached = %v, want %v", filepath.Base(c.path), ok, c.want)
+		}
+	}
+}
