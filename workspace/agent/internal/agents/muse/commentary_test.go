@@ -9,6 +9,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // The two record shapes, trimmed from a real 1.4.0 session.jsonl (the commentary that a
@@ -41,7 +42,7 @@ func appendFile(t *testing.T, path, s string) {
 
 func toolCall(id, callID string, rev int64) msp.Item {
 	return msp.Item{ItemID: id, Kind: msp.ItemKindToolCall, CallID: strPtr(callID),
-		Tool: strPtr("request_user_input"), Status: msp.ItemStatusInProgress, Revision: rev}
+		Tool: strPtr("bash"), Status: msp.ItemStatusInProgress, Revision: rev}
 }
 
 func streamLine(stream, line string) string {
@@ -228,5 +229,61 @@ func TestCommentaryCacheEvictsTheLeastRecentlyReadLog(t *testing.T) {
 		if _, ok := commentaryLogs[c.path]; ok != c.want {
 			t.Errorf("%s cached = %v, want %v", filepath.Base(c.path), ok, c.want)
 		}
+	}
+}
+
+func askItem(id, out string, rev int64) msp.Item {
+	args := `{"questions":[{"header":"Color","id":"color","options":[{"label":"Red"},{"label":"Blue"}],"question":"Which color?"},` +
+		`{"header":"Size","id":"size","options":[{"label":"Small"},{"label":"Large"}],"question":"Which size?","selection":{"mode":"multiple"}}]}`
+	it := msp.Item{ItemID: id, Kind: msp.ItemKindToolCall, CallID: strPtr("call-" + id), Tool: strPtr("request_user_input"),
+		Args: strPtr(args), Status: msp.ItemStatusCompleted, Revision: rev}
+	if out != "" {
+		it.VisibleOutput = strPtr(out)
+	}
+	return it
+}
+
+// A settled request_user_input stays in the history as a question block, as claude's and
+// codex's do; one still waiting adds nothing, because the pending card stands for it.
+func TestUserInputCallRendersAsAQuestionOnceSettled(t *testing.T) {
+	for _, c := range []struct {
+		name, out string
+		want      bool
+		answer    string
+		declined  bool
+	}{
+		{"waiting", "", false, "", false},
+		{"declined", `{"status":"cancelled","answers":[],"reason":"declined by the user"}`, true, "declined by the user", true},
+		{"aborted", `{"status":"aborted","answers":[],"reason":"run_aborted"}`, true, "run_aborted", true},
+		{"answered camel", `{"status":"answered","answers":[{"questionId":"size","selectedLabels":["Small","Large"]},{"questionId":"color","selectedLabel":"Red"}]}`,
+			true, `"Which color?"="Red", "Which size?"="Small, Large"`, false},
+		{"answered snake", `{"status":"answered","answers":[{"question_id":"color","selected_label":"Blue"},{"question_id":"size","free_text":"Medium"}]}`,
+			true, `"Which color?"="Blue", "Which size?"="Medium"`, false},
+		{"unreadable", `not json`, true, "not json", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			turns := turnsFromItems([]msp.Item{u1, askItem("ask1", c.out, 2)})
+			var parts []transcript.Part
+			if len(turns) > 1 {
+				parts = turns[1].Parts
+			}
+			if !c.want {
+				if len(parts) != 0 {
+					t.Fatalf("a waiting question rendered %+v", parts)
+				}
+				return
+			}
+			if len(parts) != 1 || parts[0].Kind != "question" {
+				t.Fatalf("parts = %+v, want one question", parts)
+			}
+			p := parts[0]
+			if p.Answer != c.answer || p.Declined != c.declined {
+				t.Errorf("answer %q declined %v, want %q %v", p.Answer, p.Declined, c.answer, c.declined)
+			}
+			if len(p.Questions) != 2 || p.Questions[0].ID != "" || p.Questions[1].ID != "" ||
+				p.Questions[0].MultiSelect || !p.Questions[1].MultiSelect || len(p.Questions[1].Options) != 2 {
+				t.Errorf("questions = %+v (want ids dropped, size multi-select)", p.Questions)
+			}
+		})
 	}
 }
