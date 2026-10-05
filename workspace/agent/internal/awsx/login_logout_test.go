@@ -553,6 +553,10 @@ type oidc struct {
 	bodies []map[string]string
 	status int
 	region string
+	// reply is the body of a non-200 answer; "" means the invalid_grant error.
+	reply string
+	// bad lists requests that do not have the CreateToken shape (POST /token, JSON body).
+	bad []string
 }
 
 func fakeOIDC(t *testing.T) *oidc {
@@ -562,12 +566,18 @@ func fakeOIDC(t *testing.T) *oidc {
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		var b map[string]string
-		json.NewDecoder(r.Body).Decode(&b)
+		if r.Method != http.MethodPost || r.URL.Path != "/token" || r.Header.Get("Content-Type") != "application/json" ||
+			json.NewDecoder(r.Body).Decode(&b) != nil {
+			o.bad = append(o.bad, r.Method+" "+r.URL.Path+" "+r.Header.Get("Content-Type"))
+		}
 		o.bodies = append(o.bodies, b)
 		w.WriteHeader(o.status)
-		if o.status == http.StatusOK {
+		switch {
+		case o.status == http.StatusOK:
 			w.Write([]byte(`{"accessToken":"fresh-access","expiresIn":3600}`))
-		} else {
+		case o.reply != "":
+			w.Write([]byte(o.reply))
+		default:
 			w.Write([]byte(`{"error":"invalid_grant"}`))
 		}
 	}))
@@ -603,6 +613,9 @@ func TestProfileLogoutRenewsAnExpiredTokenInMemoryThenRevokes(t *testing.T) {
 	rec, out := profileLogout(t, "prod")
 	if rec.Code != http.StatusOK || !out.Revoked || out.AlreadyEnded || out.Message != "" {
 		t.Fatalf("logout = %d %s", rec.Code, rec.Body.String())
+	}
+	if len(o.bad) != 0 {
+		t.Fatalf("malformed CreateToken requests: %q", o.bad)
 	}
 	if o.count() != 1 || o.bodies[0]["grantType"] != "refresh_token" || o.bodies[0]["refreshToken"] != "secret-refresh" ||
 		o.bodies[0]["clientId"] != "cid" || o.bodies[0]["clientSecret"] != "secret-client" || o.region != "ap-northeast-1" {
@@ -722,5 +735,91 @@ func TestProfileLogoutWarnsWhenTheRegistrationExpiredToo(t *testing.T) {
 	_, out := profileLogout(t, "prod")
 	if out.Revoked || out.AlreadyEnded || !strings.Contains(out.Message, "401") || o.count() != 0 {
 		t.Fatalf("out = %+v, oidc = %d", out, o.count())
+	}
+}
+
+// Only invalid_grant and expired_token show that the session is over; every other refusal
+// says nothing about it and keeps the warning, without echoing the body.
+func TestProfileLogoutClassifiesTheRenewalRefusal(t *testing.T) {
+	for _, c := range []struct {
+		name, reply string
+		status      int
+		ended       bool
+	}{
+		{"invalid_grant", `{"error":"invalid_grant"}`, 400, true},
+		{"expired_token", `{"error":"expired_token"}`, 400, true},
+		{"expired_token 401", `{"error":"expired_token"}`, 401, true},
+		{"invalid_client", `{"error":"invalid_client","error_description":"leak-me"}`, 401, false},
+		{"invalid_request", `{"error":"invalid_request"}`, 400, false},
+		{"slow_down", `{"error":"slow_down"}`, 400, false},
+		{"unknown code", `{"error":"whatever"}`, 400, false},
+		{"bad json", `<html>`, 400, false},
+		{"empty 400", ``, 400, false},
+		{"empty 401", ``, 401, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			p := fakePortal(t)
+			o := fakeOIDC(t)
+			o.status, o.reply = c.status, c.reply
+			if c.reply == "" {
+				o.reply = " "
+			}
+			logoutFixture(t)
+			refreshableCache(t, time.Now().Add(-2*time.Hour))
+
+			rec, out := profileLogout(t, "prod")
+			if out.AlreadyEnded != c.ended || out.Revoked {
+				t.Fatalf("out = %+v", out)
+			}
+			if !c.ended && (out.Message == "" || len(p.seen()) != 0) {
+				t.Fatalf("want a warning and no portal call: %s, portal %q", rec.Body.String(), p.seen())
+			}
+			if strings.Contains(rec.Body.String(), "leak-me") || strings.Contains(rec.Body.String(), "secret-") {
+				t.Fatalf("body leaked: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+// A redirect from either AWS endpoint is a warning: following it would replay the secrets to
+// a host the region check never saw.
+func TestProfileLogoutDoesNotFollowRedirects(t *testing.T) {
+	var hits int
+	var mu sync.Mutex
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits++
+		mu.Unlock()
+	}))
+	t.Cleanup(target.Close)
+	redir := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/x", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(redir.Close)
+	oldO, oldP := ssoOIDCURL, ssoPortalURL
+	t.Cleanup(func() { ssoOIDCURL, ssoPortalURL = oldO, oldP })
+
+	for _, c := range []struct {
+		name    string
+		expires time.Duration
+	}{{"oidc", -2 * time.Hour}, {"portal", 30 * time.Minute}} {
+		t.Run(c.name, func(t *testing.T) {
+			ssoOIDCURL = func(string) string { return redir.URL }
+			ssoPortalURL = func(string) string { return redir.URL }
+			logoutFixture(t)
+			refreshableCache(t, time.Now().Add(c.expires))
+			rec, out := profileLogout(t, "prod")
+			if out.Revoked || out.AlreadyEnded || !strings.Contains(out.Message, "307") {
+				t.Fatalf("out = %+v", out)
+			}
+			if strings.Contains(rec.Body.String(), target.URL) || strings.Contains(rec.Body.String(), "secret-") {
+				t.Fatalf("body leaked: %s", rec.Body.String())
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if hits != 0 {
+				t.Fatalf("the redirect target was called %d times", hits)
+			}
+		})
 	}
 }

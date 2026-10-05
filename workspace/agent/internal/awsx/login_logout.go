@@ -72,13 +72,22 @@ var ssoOIDCURL = func(region string) string {
 	return "https://" + host
 }
 
-// errRefreshRefused: AWS refused the refresh token, so the portal session behind it is over.
+// errRefreshRefused: AWS answered the refresh token with invalid_grant or expired_token, so
+// the portal session behind it is over. Other refusals (invalid_client, invalid_request,
+// slow_down, an unreadable body) say nothing about the session and stay ordinary errors.
 var errRefreshRefused = errors.New("AWS refused the refresh token")
+
+// awsClient never follows a redirect: the AWS APIs have none, and a 307/308 would replay the
+// client secret and refresh token (or the bearer token) to a host the region check never saw.
+var awsClient = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}}
 
 // refreshSSOToken turns the cached refresh token into a fresh access token (SSO OIDC
 // CreateToken, grant_type=refresh_token). The result lives in memory only: the token file
-// is already off disk and is never written back. A 400/401 answer is errRefreshRefused;
-// the error text never carries a token or the response body.
+// is already off disk and is never written back. Only a 400/401 whose error code is
+// invalid_grant or expired_token is errRefreshRefused; the error text never carries a token
+// or the response body.
 func refreshSSOToken(ctx context.Context, region, clientID, clientSecret, refreshToken string) (string, error) {
 	body, err := json.Marshal(map[string]string{
 		"clientId": clientID, "clientSecret": clientSecret,
@@ -92,14 +101,21 @@ func refreshSSOToken(ctx context.Context, region, clientID, clientSecret, refres
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	res, err := http.DefaultClient.Do(req)
+	res, err := awsClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("could not reach AWS to renew the login: %v", err)
 	}
 	defer res.Body.Close()
 	switch {
 	case res.StatusCode == http.StatusBadRequest || res.StatusCode == http.StatusUnauthorized:
-		return "", errRefreshRefused
+		var e struct {
+			Error string `json:"error"`
+		}
+		json.NewDecoder(io.LimitReader(res.Body, 4<<10)).Decode(&e)
+		if e.Error == "invalid_grant" || e.Error == "expired_token" {
+			return "", errRefreshRefused
+		}
+		return "", fmt.Errorf("AWS answered %d to the login renewal", res.StatusCode)
 	case res.StatusCode != http.StatusOK:
 		return "", fmt.Errorf("AWS answered %d to the login renewal", res.StatusCode)
 	}
@@ -197,7 +213,7 @@ func portalLogout(ctx context.Context, region, token string) (int, string, error
 		return 0, "", err
 	}
 	req.Header.Set("x-amz-sso_bearer_token", token)
-	res, err := http.DefaultClient.Do(req)
+	res, err := awsClient.Do(req)
 	if err != nil {
 		return 0, "", fmt.Errorf("could not reach AWS: %v", err)
 	}

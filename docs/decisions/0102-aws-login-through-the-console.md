@@ -399,6 +399,8 @@ about an hour and the CLI renews it only on use, so a logout long after the last
 session running (#1689). The Agent now renews an expired token (or one the portal answers 401) in memory through
 SSO OIDC `CreateToken` (`grant_type=refresh_token`), when the cache holds the refresh token, client id and secret
 and an unexpired registration, and revokes with the fresh token. Nothing is written back to the cache. If AWS
-refuses the renewal (400/401) the portal session is already over: the answer carries `alreadyEnded: true` and the
-Console shows the normal "logged out" toast. The "AWS could not be told" warning stays for network failures, 5xx
+answers the renewal with `invalid_grant` or `expired_token` (400/401) the portal session is already over: the
+answer carries `alreadyEnded: true` and the Console shows the normal "logged out" toast. Other refusals
+(`invalid_client`, `invalid_request`, `slow_down`, an unreadable body) say nothing about the session and keep the
+warning. Redirects from the AWS endpoints are not followed. The "AWS could not be told" warning stays for network failures, 5xx
 and a renewal that is impossible. The decision above is unchanged.
