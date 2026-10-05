@@ -74,7 +74,7 @@ var AgentMemoryEnabled func() bool
 func agentMemRequireEnabled(w http.ResponseWriter) bool {
 	if AgentMemoryEnabled == nil || !AgentMemoryEnabled() {
 		httpx.WriteErr(w, http.StatusForbidden, errCodeMemoryDisabled,
-			"Agent Fleet memory is turned off for sessions in Settings > Agents")
+			"Agent Fleet memory is turned off for sessions in Settings > Agent memory")
 		return false
 	}
 	return true

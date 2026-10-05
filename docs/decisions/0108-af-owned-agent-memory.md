@@ -77,7 +77,7 @@ that is safe when what one session writes is read by every kind.
    because Markdown is not merged mechanically ([0022](0022-agent-memory-management.md) on 3-way
    merge). Publishing a change, its commit in the 0022 history and the index update happen as one
    step per project, so each published change is one commit with its author.
-   The tools are **off by default**, behind a per-user switch (Settings → Agents, ui-prefs
+   The tools are **off by default**, behind a per-user switch (Settings → Agent memory, beside the change list; ui-prefs
    `agentMemory`): what one session saves is read by every kind in later sessions, so a member turns
    that on knowingly rather than finding it on after an upgrade. Off means the af server is launched
    without the tools *and* the Agent's tool routes refuse, because the routes answer anything that

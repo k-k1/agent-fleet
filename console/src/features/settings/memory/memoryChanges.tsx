@@ -12,6 +12,8 @@ import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { Diff } from "../../scm/GitDiff.tsx";
+import { OnOff, Row } from "../parts/controls.tsx";
+import { setSetting, useSettings } from "../../../lib/settings.ts";
 import { useT, tMaybe } from "../../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { ClaudeImportPanel } from "./memoryClaudeImport.tsx";
@@ -22,6 +24,7 @@ const opLabel = (op: string): string => tMaybe("mem.af_op_" + op) ?? op;
 
 export function AgentMemorySection({ reload, onChanged }: { reload: number; onChanged: () => void }) {
   const tr = useT();
+  const enabled = useSettings().agentMemory;
   const toast = useToast();
   const askConfirm = useConfirm();
   const [changes, setChanges] = useState<MemoryChange[] | null>(null);
@@ -144,6 +147,12 @@ export function AgentMemorySection({ reload, onChanged }: { reload: number; onCh
         <h3>{tr("mem.af_title")}</h3>
       </div>
       <p className="muted ds-hint">{tr("mem.af_intro")}</p>
+      {/* The sessions' switch (ui-prefs agentMemory, default off). The list, the diff and the way
+          back below work either way; only the import's confirm needs it on. */}
+      <Row label={tr("mem.af_switch")}>
+        <OnOff value={enabled} onChange={(v) => setSetting("agentMemory", v)} />
+      </Row>
+      <p className="muted ds-note">{tr("mem.af_switch_note")}</p>
       {loadErr && <p className="mem-warn">{loadErr}</p>}
       {withheld > 0 && <p className="mem-warn">{tr("mem.af_withheld", { n: withheld })}</p>}
       <div className="mem-body">

@@ -16,6 +16,8 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
 import { AgentMemorySection } from "./memoryChanges.tsx";
 import { ConfirmProvider } from "../../../ui/ConfirmProvider.tsx";
 import { ToastProvider } from "../../../ui/ToastProvider.tsx";
+import { getSettings, setSettings, settingsDefaults } from "../../../lib/settings.ts";
+import { t } from "../../../lib/i18n/index.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -95,6 +97,23 @@ afterEach(() => {
 });
 
 describe("AgentMemorySection", () => {
+  // ADR 0108: the sessions' switch sits at the top of this section (#1735). It defaults OFF (an
+  // upgrade must not switch it on) and writes the ui-prefs key the Agent reads (uiprefs.AgentMemory).
+  it("carries the Agent Fleet memory switch, off by default, saving agentMemory", async () => {
+    setSettings(settingsDefaults());
+    await mount();
+    const row = Array.from(host!.querySelectorAll(".ds-row")).find(
+      (r) => r.querySelector(".ds-label")?.textContent === t("mem.af_switch"),
+    );
+    expect(row).toBeTruthy();
+    expect(getSettings().agentMemory).toBe(false);
+    const [on, off] = Array.from(row!.querySelectorAll<HTMLButtonElement>(".seg-btn"));
+    expect(off.className).toContain("active");
+    await act(async () => on.click());
+    expect(getSettings().agentMemory).toBe(true);
+    setSettings(settingsDefaults());
+  });
+
   it("lists who changed what and offers the way back on the newest change only", async () => {
     await mount();
     const rows = Array.from(host!.querySelectorAll(".mem-list .mem-snap"));

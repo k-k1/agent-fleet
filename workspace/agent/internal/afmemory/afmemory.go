@@ -36,7 +36,7 @@ Usage:
   af-memory --help
 
 <slug> is a name from import-sources. The import needs "Agent Fleet memory" turned on in
-Settings > Agents; a file the secret scan flags is listed and skipped, never imported.
+Settings > Agent memory; a file the secret scan flags is listed and skipped, never imported.
 `
 
 // Client is the Agent REST as this command uses it.

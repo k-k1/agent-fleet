@@ -216,7 +216,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.memory_not_found": "That memory does not exist.",
   "err.memory_conflict": "The memory was changed first. Read it again and retry.",
   "err.memory_no_project": "This session has no working copy, so it has no project memory.",
-  "err.memory_disabled": "Agent Fleet memory is turned off in Settings > Agents.",
+  "err.memory_disabled": "Agent Fleet memory is turned off in Settings > Agent memory.",
   "err.tenant_idp_link_claim_required":
     "This deployment already has a sign-in method for the same issuer. That issuer gives each app registration a different subject for the same person, so without \"how the same account is recognised\", everybody already using this deployment would be refused at login as a duplicate address.",
 
