@@ -7,13 +7,13 @@ English | [日本語](README.ja.md) · [agent-fleet.org](https://agent-fleet.org
 Run Claude Code, Codex, Copilot, Cursor, and other coding agents in parallel on your
 server, as they are, and operate them all from one console. Close your laptop; the
 agents keep working. There is no need to stay glued to
-a terminal—attach to any session whenever you need it. Check progress and send the
+a terminal: attach to any session whenever you need it. Check progress and send the
 next instruction from Discord, Slack, or your phone's browser, wherever you are.
 Session titles and suggested next instructions keep you from losing track of what
 you delegated and what to ask for next.
 
 Distribution artifacts for [Agent Fleet](https://github.com/k-k1/agent-fleet).
-**There is no source code here** — binaries and bundles are attached to Releases.
+**There is no source code here.** Binaries and bundles are attached to Releases.
 
 ![The Agent Fleet Console: repo tree with live sessions, a chat mirror of a running agent, and the repository's commit graph side by side](docs/img/console-en.webp)
 
@@ -23,48 +23,48 @@ Agent Fleet is not another agent framework: the CLIs you already use run unchang
 with their own sign-in, models and behaviour, and Agent Fleet takes on the operations
 around them. It is a self-hosted web console for running AI coding agents
 (Claude Code, Codex CLI, GitHub Copilot CLI, Antigravity CLI, Cursor CLI,
-Kiro, OpenCode, Muse Code, and the fleet's own llama.cpp harness) as a managed fleet. Each member gets an isolated workspace — a
+Kiro, OpenCode, Muse Code, and the fleet's own llama.cpp harness) as a managed fleet. Each member gets an isolated workspace, a
 Docker container with cgroup CPU/memory quotas (or a bubblewrap-sandboxed
-rootfs in the native edition) with a persistent home and git working copies —
+rootfs in the native edition) with a persistent home and git working copies,
 and starts, drives and monitors agent sessions from the browser. A Go control plane orchestrates the
 workspaces.
 
-Key features:
+Main features:
 
-- **Nine agent kinds, one console** — run Claude Code / Codex / GitHub Copilot /
+- **Nine agent kinds, one console**: run Claude Code / Codex / GitHub Copilot /
   Antigravity / Cursor / Kiro / OpenCode / Muse Code sessions, and llama.cpp sessions on
   the fleet's own chat engine, side by side, with per-session model choice. CLI versions are pinned to verified combinations (opt-in self-update), and a daily watcher runs contract tests against the real CLIs when upstream publishes a new version ([how](https://github.com/k-k1/agent-fleet/blob/develop/docs/build/10-development.md#detecting-upstream-cli-breakage)).
-- **Agents that work together, across kinds** — a session can start child sessions of
+- **Agents that work together, across kinds**: a session can start child sessions of
   any other kind (claude handing a review to codex, codex farming a subtask out to
   opencode), each in its own worktree; it steers them, reads their output and gets one
   report back when they finish. Sessions also send each other short messages directly,
   and a stopped one is resumed to receive it. Both are opt-in per workspace
-  (Settings › Agents › Session), and the fleet graph draws the whole family — who
+  (Settings › Agents › Session), and the fleet graph draws the whole family: who
   started whom, what passed between them, and when each one was working.
-- **Parallel sessions on real git repos** — clone over HTTPS (GitHub /
+- **Parallel sessions on real git repos**: clone over HTTPS (GitHub /
   Bitbucket tokens or OAuth device flow) with **Git LFS, submodules (incl.
   nested) and git-worktree support**; run multiple sessions per repo isolated
   in worktrees, follow each conversation live in a mirror view with terminal
   access, queue input while the agent works, and open plain **shell sessions**
-  next to agent sessions. **Subversion works too** — check out over URL + basic
+  next to agent sessions. **Subversion works too**: check out over URL + basic
   auth (subtree and multiple-path checkouts, optional per-server trust for
   self-signed certificates, automatic working-copy lock recovery).
-- **Project-centric console** — file browser, commit graph and diffs, session
+- **Project-centric console**: file browser, commit graph and diffs, session
   state badges (working / awaiting input), a memo queue with image attachments,
   a notification center, English/Japanese UI, keyboard-first operation
   (command palette / leader key), and optional text-to-speech for replies
   (VOICEVOX / Zundamon, AWS Polly).
-- **Live app preview** — web apps started inside a workspace (Vite HMR,
+- **Live app preview**: web apps started inside a workspace (Vite HMR,
   WebSocket, Spring Boot, …) render in an embedded browser pane; ports are
   reachable through lightweight previews.
-- **Multi-user by design** — sign-in with your company's IdP (Google, Microsoft Entra ID, Okta
+- **Multi-user by design**: sign-in with your company's IdP (Google, Microsoft Entra ID, Okta
   and other OIDC providers), tenants and roles
   (member / admin / operator), per-user network isolation, envelope encryption
   for secrets at rest, and per-workspace memory quotas. Workspaces stay
   isolated, yet a conversation can be **shared with another member per session
-  or per project** (view-only, or may-propose — a proposal reaches the agent
+  or per project** (view-only, or may-propose, where a proposal reaches the agent
   only after the owner approves it).
-- **Usage visibility** — see each agent account's usage and rate limits (and
+- **Usage visibility**: see each agent account's usage and rate limits (and
   when they reset) at a glance, plus per-session context usage with warnings
   and summarized handover before the context window fills up. A **token ledger
   breaks spend down by feature, agent and model** (Settings › Usage), so the
@@ -72,44 +72,44 @@ Key features:
   (title suggestions, compaction, reply suggestions…) are measured on one
   yardstick. Calls from CLIs that report no tokens are counted as *unmeasured*
   rather than zero, so nothing looks free that wasn't.
-- **Assistant chat & fleet orchestration** — a built-in assistant that can
-  drive the fleet: start and steer multiple agent sessions, orchestrate work
-  across different agents and hand tasks over between them with summarized
-  context, and act as an **SRE assistant** through PagerDuty / Grafana /
+- **Assistant chat & fleet orchestration**: a built-in assistant can drive
+  the fleet. It starts and steers multiple agent sessions, orchestrates work
+  across different agents and hands tasks over between them with summarized
+  context, and acts as an **SRE assistant** through PagerDuty / Grafana /
   CloudWatch integrations and AWS SSM login sessions to your servers.
-- **Scheduled execution** — have the assistant schedule recurring agent runs in
+- **Scheduled execution**: have the assistant schedule recurring agent runs in
   plain language ("every weekday at 9:00, review yesterday's changes"): the
   control plane fires them on a wall-clock (cron / interval / one-off, timezone-
   and DST-aware), **waking a stopped workspace**, running the prompt, and
-  reporting back — so timed work happens even while nobody is watching. Reuse a
+  reporting back, so timed work happens even while nobody is watching. Reuse a
   long-lived session to build up context across runs, or start fresh each time;
   browse the schedule list and per-run history (with the session each run drove)
   from the left rail.
-- **Chat bridge (Discord / Slack)** — connect a bot from the Console (guided,
+- **Chat bridge (Discord / Slack)**: connect a bot from the Console (guided,
   token-paste wizard) and each session gets its own thread: replies ready,
   questions, plan approvals, permission requests, abnormal exits and completion
   reports arrive there. Reply in the thread to steer the session, answer
   questions and approve plans with buttons, or @mention the fleet operator to
-  drive the whole fleet from chat — destructive actions triggered from chat
+  drive the whole fleet from chat. Destructive actions triggered from chat
   stop at an approve/deny gate first. An opt-in full-text mode posts the
   agent's actual replies (with automatic secret redaction).
-- **MCP in three directions** — ① **built-in integrations** (PagerDuty /
+- **MCP in three directions**: ① **built-in integrations** (PagerDuty /
   Grafana / CloudWatch / Agent Toolkit for AWS) that connect by entering
   credentials; ② **your own MCP servers** (stdio or remote HTTP) registered and
-  handed to assistants and sessions — values are stored with envelope encryption
+  handed to assistants and sessions; values are stored with envelope encryption
   and passed only when the server starts, a tenant admin can distribute one to
   everybody, and on an egress-restricted deployment a host goes through an
   approval flow; ③ **from an external Claude Code / Claude Desktop**, drive your
   own workspace with a scoped, expiring token.
-- **Keep agent behaviour consistent across the org** — fleet-wide policy
+- **Keep agent behaviour consistent across the org**: fleet-wide policy
   (distributed by the operator) and per-user instructions are delivered to every
   agent kind in each CLI's own idiom. The memory an agent accumulates by itself
   (Claude's auto-memory, Codex's memories) is snapshotted and can be rolled back
   to any point.
-- **Operable** — backup/restore scripts, forward-only DB migrations for
+- **Operable**: backup/restore scripts, forward-only DB migrations for
   upgrades, and air-gap installation paths. A turn cut short by a dropped
   connection or a temporary rate limit resumes itself, and a session stopped by
-  a usage limit picks up again when the limit lifts — so unattended work does
+  a usage limit picks up again when the limit lifts, so unattended work does
   not sit dead until morning.
 
 Each user signs in to the agent CLIs with **their own account/seat** (e.g. a
@@ -121,21 +121,21 @@ share any AI-provider credentials.
 | | |
 |---|---|
 | ![Launch dialog: pick the agent CLI, its model, reasoning effort, start mode and whether to run in a fresh git worktree](docs/img/launch-en.webp) | ![Chat mirror: the agent's question rendered as an answerable card with the options it offered](docs/img/mirror-en.webp) |
-| **Start anything from one dialog** — agent, model, reasoning effort, start mode, and a fresh git worktree or the working copy as-is. | **Follow and steer from the browser** — the agent's questions, plans and permission prompts arrive as cards you answer in place. |
+| **Start anything from one dialog**: pick the agent, model, reasoning effort and start mode, and run in a fresh git worktree or the working copy as it is. | **Follow and steer from the browser**: the agent's questions, plans and permission prompts arrive as cards you answer in place. |
 | ![Three panes: the chat mirror, a live terminal attached to a shell session, and the repository's working-tree changes with a commit box](docs/img/split-en.webp) | ![Split panes: the commit graph with branch lanes on the left, the selected commit's diff on the right](docs/img/scm-en.webp) |
-| **Split panes** — mirror, live terminal and working-tree changes side by side; each pane can also pop out into its own tab. | **Real git, in the console** — commit graph beside the selected commit's diff, plus staging and commit, per working copy and worktree. |
+| **Split panes**: the mirror, a live terminal and the working-tree changes side by side. Each pane can also pop out into its own tab. | **Real git, in the console**: the commit graph beside the selected commit's diff, with staging and commit, for each working copy and worktree. |
 | ![Usage tab: a stacked per-feature token chart over 30 days, KPI tiles for tokens, calls, cache reads, API-equivalent cost and unmeasured calls, and breakdowns by feature, agent and model](docs/img/usage-en.webp) | ![A terminal pane attached to a shell session, showing a build and a git status run](docs/img/terminal-en.webp) |
-| **See where the tokens went** — per feature, per agent and per model, over 24h / 7d / 30d. Calls that report no tokens are counted separately, never as zero. | **A real terminal, too** — every session (agent or plain shell) is attachable as a live PTY. |
+| **See where the tokens went**: token use by feature, agent and model, over 24h / 7d / 30d. Calls that report no tokens are counted separately, never as zero. | **A real terminal, too**: every session (agent or plain shell) can be attached as a live PTY. |
 | ![Sessions overview: one card per running session, grouped by repository, with the state chip, model and context usage on each](docs/img/overview-en.webp) | ![Fleet graph: one lane per session on a time axis, children under their parent, arrows for what passed between sessions, and each lane's state chip](docs/img/fleetgraph-en.webp) |
-| **Every running session at a glance** — one card per session, grouped by repository and family; the ones waiting on you are coloured so they stand out. | **The fleet over time** — one lane per session, children under their parent, and arrows for what passed between them; pan and zoom through the day. |
+| **Every running session at a glance**: one card per session, grouped by repository and family. The ones waiting on you are coloured so they stand out. | **The fleet over time**: one lane per session, children under their parent, and arrows for what passed between them. Pan and zoom through the day. |
 
 <sub>Screenshots use a demo dataset; the same views in Japanese are in
 [README.ja.md](README.ja.md).</sub>
 
 ## Which agent does what
 
-Not every capability is available on every agent CLI — some are gated by what the
-upstream CLI exposes. This matrix is the quick reference (✓ = supported,
+Not every capability is available on every agent CLI; some depend on what the
+CLI itself exposes. This matrix is the quick reference (✓ = supported,
 — = not applicable / not supported):
 
 | Capability | Claude | Codex | Cursor | Copilot | Kiro | Antigravity | OpenCode | llama.cpp | Muse Code | Shell |
@@ -161,7 +161,7 @@ upstream CLI exposes. This matrix is the quick reference (✓ = supported,
 ² Cursor and Antigravity fold the reasoning effort into the model name, so there is
 no separate control. Kiro accepts an effort flag but exposes no per-model effort picker.
 
-³ Cursor's managed (default) execution keeps no local transcript — a **stopped** Cursor
+³ Cursor's managed (default) execution keeps no local transcript, so a **stopped** Cursor
 session has no history to show (the live mirror works while running, and running Cursor
 as Terminal (CLI) does persist a readable history). Kiro, by contrast, persists a readable
 transcript even under managed execution, so a stopped Kiro session still shows its history.
@@ -172,11 +172,11 @@ Muse Code is installed on demand into your home and driven over its own session 
 Muse's OS sandbox cannot run in a workspace, so a Muse session never asks before running a
 tool.
 
-The WS-bar usage chip needs an account-level limit to show — opencode (bring-your-own
+The WS-bar usage chip needs an account-level limit to show; opencode (bring-your-own
 provider API keys), Cursor and Kiro expose none. **SSM** sessions (remote login over AWS SSM)
 behave like Shell: terminal only, no conversation, and not tied to a workspace worktree.
 
-**Default model for the assistant chat** — each assistant can pin its own, and Claude's
+**Default model for the assistant chat**: each assistant can pin its own, and Claude's
 default is also settable deployment-wide via `AF_CHAT_MODEL`. Pin nothing and it uses the
 "recommended" tier, picked from the connected catalogue to favour the fast, low-cost tiers
 that suit a conversation (the settings screen shows what it currently resolves to; at the
@@ -211,7 +211,7 @@ af start
   place with `af update`.
 - **Automatic updates:** the installer enables a daily systemd user timer that
   runs `af update` to *stage* the latest release (sha256-verified). It never
-  restarts a running service — apply it when convenient via
+  restarts a running service. Apply it when convenient via
   `systemctl --user restart agent-fleet` or the Console's "restart to apply"
   button, so live agent sessions are never dropped. Opt out with
   `AF_NO_AUTOUPDATE=1 bash install.sh`.
@@ -224,25 +224,25 @@ af start
 ### Cloning private repos (git-provider OAuth)
 
 Each user connects their own GitHub / Bitbucket from the Console
-(**⚙ Settings → Git hosting**) — pasting a token works out of the box. To also light up
+(**⚙ Settings → Git hosting**), and pasting a token works out of the box. To also light up
 the one-click **"Connect via OAuth"** buttons, register your OAuth app **in the
 Console**, under **Tenant settings → Integrations → Git provider OAuth**:
 
 | Provider | What to enter | Notes |
 |---|---|---|
 | **GitHub** (device flow) | `client_id` only | Create an OAuth App with **"Enable Device Flow" ON**. The client_id is **not a secret**; no callback URL is needed, so it works on plain `localhost`. |
-| **Bitbucket** (auth code) | Key + Secret | The consumer's Callback URL must exactly equal `<PUBLIC_BASE_URL>/api/oauth/bitbucket/callback` — the screen shows you the exact string. |
+| **Bitbucket** (auth code) | Key + Secret | The consumer's Callback URL must exactly equal `<PUBLIC_BASE_URL>/api/oauth/bitbucket/callback`; the screen shows you the exact string. |
 
 There is **no environment variable** for this. `GITHUB_OAUTH_CLIENT_ID` and
 `BITBUCKET_OAUTH_KEY`/`_SECRET` are not read: the app is a per-tenant setting, so it
 applies the moment it is saved and needs no restart. On the native edition the single
 `AUTH=dev` user is a super_admin, so that screen is reachable right after `af start`.
 
-Without any of this, token/PAT paste in the Console still works — OAuth is only a
+Without any of this, token/PAT paste in the Console still works. OAuth is only a
 convenience.
 
 Run it as a service instead of foreground `af start` (systemd is on by default in
-WSL2) — create `~/.config/systemd/user/agent-fleet.service`:
+WSL2): create `~/.config/systemd/user/agent-fleet.service`:
 
 ```ini
 [Unit]
@@ -288,12 +288,12 @@ pulls anyway). Prefer the manual path? Download the bundle, then
 `sha256sum -c --ignore-missing SHA256SUMS` and `tar xzf`.
 
 Hosts that cannot reach a registry at all can build the images from source and
-`docker load` them — see `load-images.sh` in the bundle and
+`docker load` them: see `load-images.sh` in the bundle and
 `deploy/compose/release.sh --save` in the source repository.
 
 The bundled `README.md` is the full runbook: prerequisites, key generation,
 TLS/domain setup, backup/restore, upgrades and troubleshooting. (Git-provider OAuth
-is not in `.env` — it is registered per tenant in the Console.)
+is not in `.env`; it is registered per tenant in the Console.)
 
 ## Uninstalling / removing data (native edition)
 
@@ -312,7 +312,7 @@ rm -rf ~/.local/opt/agent-fleet
 ```
 
 - Steps 2 and 3 are independent: to uninstall but **keep your data** (e.g. before
-  reinstalling), skip step 2 — data lives in `~/.local/share/agent-fleet`
+  reinstalling), skip step 2. Data lives in `~/.local/share/agent-fleet`
   (or `$WS_DATA` if you overrode it), separate from the program.
 - If `af` is already gone, remove the data manually. Note that Go module caches
   inside workspace homes are write-protected, so restore write permission first:
@@ -340,17 +340,17 @@ What changed in each version is in the notes on every release, indexed in
 
 ## License / bundled software
 
-- Agent Fleet is licensed under the **Apache License, Version 2.0** — see
+- Agent Fleet is licensed under the **Apache License, Version 2.0**; see
   [LICENSE](LICENSE), with the attribution notices in [NOTICE](NOTICE).
 - **This repository is the primary distribution.** Official releases are published
   only here: <https://github.com/k-k1/agent-fleet-dist>. If you redistribute Agent
-  Fleet, Apache-2.0 §4(d) requires you to carry the notices in `NOTICE` forward —
-  which includes that URL — so recipients can find the original.
+  Fleet, Apache-2.0 §4(d) requires you to carry the notices in `NOTICE` forward
+  (they include that URL), so recipients can find the original.
 - The distributed images and rootfs are a **lean build**: the agent CLIs
   (Claude Code / Codex / GitHub Copilot / Antigravity / Cursor / Kiro / OpenCode /
   Muse Code) are not bundled. Each user fetches verified, pinned versions from the
-  respective upstream and signs in with their own account — most on a workspace's
-  first start, while Kiro (~855MB) is fetched the first time a Kiro session starts and
+  respective upstream and signs in with their own account. Most CLIs are fetched on a
+  workspace's first start, while Kiro (~855MB) is fetched the first time a Kiro session starts and
   Muse Code when the user installs it from its connection card. This distribution
   intentionally does not redistribute the proprietary CLIs.
 - For attribution of the bundled OSS, see the `NOTICE` file inside each tar.
@@ -374,5 +374,5 @@ This software is distributed under the **Apache License 2.0** and, as stated in
 that license, is provided **"AS IS", WITHOUT WARRANTIES OR CONDITIONS OF ANY
 KIND**; the authors and contributors accept **no liability** for any damage, data
 loss, downtime, or cost arising from its use (see `LICENSE`, sections 7–8). The
-same applies to the third-party agent CLIs and services you connect — their use is
+same applies to the third-party agent CLIs and services you connect; their use is
 governed by their own terms.
