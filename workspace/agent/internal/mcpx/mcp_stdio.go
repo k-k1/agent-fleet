@@ -1033,9 +1033,12 @@ func mcpStdioMemoryTools() []map[string]any {
 	return []map[string]any{
 		{
 			"name": "memory_index",
-			"description": "Agent Fleet memory shared by every agent kind: list the memories for this session's project and the user-wide ones (name, scope, description; no bodies). " +
-				"Call it when you start work on a task. " + mcpMemoryEvidence,
-			"inputSchema": map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{}},
+			"description": "Agent Fleet memory shared by every agent kind: list the memories for this session's project and the user-wide ones (name, scope, short description; no bodies). " +
+				"The index is partial by design: feedback and newest first, within a size budget, then only the names of the rest. " +
+				"Call it when you start work on a task, then memory_search with the task's keywords before re-deriving something. " + mcpMemoryEvidence,
+			"inputSchema": map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{
+				"budget": map[string]any{"type": "integer", "minimum": 4096, "maximum": 65536, "description": "Size of the described part in bytes (default 24576)"},
+			}},
 		},
 		{
 			"name":        "memory_search",

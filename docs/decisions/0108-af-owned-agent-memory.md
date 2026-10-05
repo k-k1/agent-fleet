@@ -92,6 +92,21 @@ that is safe when what one session writes is read by every kind.
    entries come back from `memory_index`, scoped by the calling session. lcpp, whose system prompt
    is built per session, may inject them directly. cursor gets the guidance in the tools'
    descriptions.
+   `memory_index` is partial by design (#1702; usage-based ranking and pinned memories are
+   follow-ups in #1703, relevance ranking stays with #1558). The Agent bounds it, so every client
+   gets the same answer:
+   - The described part is limited to a byte budget of rendered lines (default 24 KiB; the
+     optional `budget` argument is clamped to 4–64 KiB), in rank order: `feedback` and `user`
+     first, then the rest, newer first within a tier. A line carries the description cut to 80
+     characters; `memory_read` and `memory_search` keep the full text.
+   - What did not fit is listed as names only, within a separate 8 KiB: names cut to 32 bytes
+     with "…" (a prefix), grouped by first hyphen segment (`adr-{0072-…,0079-…}`). Past that, "and
+     N more (use memory_search)".
+   - The guidance says the index is partial and to `memory_search` with the task's keywords
+     before re-deriving something. Today that is the `memory_index` tool description; the
+     distributed block itself is not built yet and must carry the same wording within its cap.
+   Measured on the 473 imported claude memories: 111 KB of full lines became 117 described
+   lines (24.4 KB) plus a 8.2 KB tail naming 355 more; one was left to the count.
 6. **claude's own auto-memory: a one-time seed now, one memory later.**
    - Step 1: the member imports claude's existing memory for a project, as an explicit Console
      action or with `af-memory import`. It reads `<claude config>/projects/<slug>/memory/*.md`

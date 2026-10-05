@@ -2,6 +2,7 @@ package mcpx
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -260,5 +261,64 @@ func TestGetMemorySnapshotAsksForNativeDiff(t *testing.T) {
 	}
 	if q, _ := url.ParseQuery(listQuery); q.Get("native") != "1" {
 		t.Fatalf("snapshots query = %q, want native=1", listQuery)
+	}
+}
+
+// The budget is measured on the Agent's line text, so the formatter must print the same bytes
+// (memoryx pins the same literal in agent_memory_index_test.go).
+func TestMemoryIndexLineFormatIsPinned(t *testing.T) {
+	out := mcpMemoryFormatIndex(`{"project":{"display":"p"},"entries":[{"name":"n","scope":"user","description":"d","type":"feedback","kinds":["claude"],"updated":"2026-10-04T09:00:00Z"}]}`)
+	if want := "- [user] n — d (feedback; for claude; 2026-10-04)\n"; !strings.Contains(out, want) {
+		t.Fatalf("index = %q, want a line %q", out, want)
+	}
+}
+
+func TestMemoryIndexRendersTailAndOmittedAsTheAgentCutThem(t *testing.T) {
+	out := mcpMemoryFormatIndex(`{"project":{"display":"p"},"entries":[{"name":"a","scope":"user","description":"d"}],"more":["adr-{1,2}","solo"],"omitted":7,"truncated":true}`)
+	for _, want := range []string{"names only", "prefix", "memory_search", "adr-{1,2} solo\n", "and 7 more (use memory_search)\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in %q", want, out)
+		}
+	}
+	if strings.Contains(out, "truncated") {
+		t.Errorf("the formatter must not invent its own truncation note: %q", out)
+	}
+	// Nothing cut: no tail, no count.
+	if out := mcpMemoryFormatIndex(`{"project":{"display":"p"},"entries":[{"name":"a","scope":"user","description":"d"}]}`); strings.Contains(out, "names only") || strings.Contains(out, "more (use") {
+		t.Errorf("unexpected tail: %q", out)
+	}
+}
+
+// The Agent reserves agentMemIndexTailOverhead (256) of its 8 KiB tail budget for what this
+// formatter adds; the real tail, header and count line included, must stay within 8 KiB.
+func TestMemoryIndexTailWithinBudgetWithOverhead(t *testing.T) {
+	names := make([]string, 0, 1000)
+	size := 0
+	for i := 0; size+len("n0000 ") <= 8192-256; i++ {
+		n := fmt.Sprintf("n%04d", i)
+		names = append(names, n)
+		size += len(n) + 1
+	}
+	more, _ := json.Marshal(names)
+	out := mcpMemoryFormatIndex(`{"project":{"display":"p"},"entries":[],"more":` + string(more) + `,"omitted":99999}`)
+	i := strings.Index(out, "Not listed above")
+	if i < 0 {
+		t.Fatalf("no tail: %q", out)
+	}
+	if tail := len(out) - i; tail > 8192 {
+		t.Fatalf("tail = %d bytes, over 8192", tail)
+	}
+}
+
+// Nothing described does not mean nothing known: names and the count still render, alongside withheld.
+func TestMemoryIndexWithNoDescribedLinesStillRendersTail(t *testing.T) {
+	out := mcpMemoryFormatIndex(`{"project":{"display":"p"},"entries":[],"more":["real-memory"],"omitted":3,"withheld":1,"truncated":true}`)
+	for _, want := range []string{"real-memory", "and 3 more", "1 memory file(s) are withheld"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in %q", want, out)
+		}
+	}
+	if strings.Contains(out, "No memories yet") {
+		t.Errorf("claimed an empty store: %q", out)
 	}
 }

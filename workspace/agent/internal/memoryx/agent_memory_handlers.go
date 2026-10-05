@@ -92,13 +92,16 @@ func agentMemCallerFrom(w http.ResponseWriter, name string) (agentMemCaller, boo
 	return c, true
 }
 
-// HandleAgentMemoryIndex lists the memories the calling session sees, without bodies.
+// HandleAgentMemoryIndex lists the memories the calling session sees, without bodies, ranked and
+// cut to the optional `budget` (bytes; see agentMemClampBudget).
 func HandleAgentMemoryIndex(w http.ResponseWriter, r *http.Request) {
-	c, ok := agentMemCallerFrom(w, r.URL.Query().Get("session"))
+	q := r.URL.Query()
+	c, ok := agentMemCallerFrom(w, q.Get("session"))
 	if !ok {
 		return
 	}
-	out, err := agentMemListIndex(c)
+	budget, _ := strconv.Atoi(q.Get("budget"))
+	out, err := agentMemListIndex(c, budget)
 	if err != nil {
 		agentMemWriteErr(w, err)
 		return

@@ -57,7 +57,6 @@ const (
 	agentMemMaxLine        = 4 << 10
 	agentMemMaxDescription = 300
 	agentMemMaxKinds       = 16
-	agentMemIndexCap       = 500
 	agentMemSearchDefault  = 20
 	agentMemSearchMax      = 50
 	agentMemSnippetLines   = 3
@@ -571,20 +570,27 @@ func agentMemAppliesTo(e agentMemEntry, kind string) bool {
 	return false
 }
 
-// agentMemIndex is the answer to memory_index: no bodies, newest first.
+// agentMemIndex is the answer to memory_index: no bodies, ranked and cut to a byte budget.
+// Entries are the described part (descriptions shortened), More the grouped, abbreviated names
+// of what did not fit, Omitted the count beyond even those.
 type agentMemIndex struct {
-	Project   *agentMemProject `json:"project"`
-	Entries   []agentMemEntry  `json:"entries"`
-	Truncated bool             `json:"truncated,omitempty"`
+	Project *agentMemProject `json:"project"`
+	Entries []agentMemEntry  `json:"entries"`
+	More    []string         `json:"more,omitempty"`
+	Omitted int              `json:"omitted,omitempty"`
+	// Truncated is true when any memory is not in Entries.
+	Truncated bool `json:"truncated,omitempty"`
 	// Withheld counts files left out because they failed the secret scan or are malformed
 	// beyond reading; their names are not shown either.
 	Withheld int `json:"withheld,omitempty"`
 }
 
-func agentMemListIndex(c agentMemCaller) (agentMemIndex, error) {
+// agentMemListIndex ranks what the caller sees and applies the byte budget (0 = default).
+func agentMemListIndex(c agentMemCaller, budget int) (agentMemIndex, error) {
 	agentMemMu.RLock()
 	defer agentMemMu.RUnlock()
 	out := agentMemIndex{Project: c.Project, Entries: []agentMemEntry{}}
+	var all []agentMemEntry
 	for _, scope := range agentMemScopes(c) {
 		es, withheld, err := agentMemLoadScope(scope, c)
 		if err != nil {
@@ -594,14 +600,13 @@ func agentMemListIndex(c agentMemCaller) (agentMemIndex, error) {
 		for _, e := range es {
 			if agentMemAppliesTo(e, c.Kind) {
 				e.Body = ""
-				out.Entries = append(out.Entries, e)
+				all = append(all, e)
 			}
 		}
 	}
-	sort.SliceStable(out.Entries, func(i, j int) bool { return out.Entries[i].Updated > out.Entries[j].Updated })
-	if len(out.Entries) > agentMemIndexCap {
-		out.Entries, out.Truncated = out.Entries[:agentMemIndexCap], true
-	}
+	agentMemRank(all)
+	out.Entries, out.More, out.Omitted = agentMemBudgetIndex(all, budget)
+	out.Truncated = len(out.Entries) < len(all)
 	return out, nil
 }
 
