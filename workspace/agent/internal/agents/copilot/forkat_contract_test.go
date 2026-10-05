@@ -81,9 +81,11 @@ func TestContractLiveCopilotForkAt(t *testing.T) {
 	// HOME is NOT replaced — copilot's authentication comes from there (replacing it exits
 	// 1). The single sids entry written below is cleaned up instead.
 
+	// The codewords are not guessable words: a session with no history asked for "the
+	// codeword" answered "ALPHA-17" in 1 of 3 probes, which would pass as carried history.
 	src := copilotUUID(t)
-	copilotPrompt(t, home, work, src, "Remember the codeword ALPHA. Reply exactly: OK")
-	copilotPrompt(t, home, work, src, "Forget that. The codeword is now BETA. Reply exactly: OK")
+	copilotPrompt(t, home, work, src, "Remember the codeword MARMOT. Reply exactly: OK")
+	copilotPrompt(t, home, work, src, "Forget that. The codeword is now QUILL. Reply exactly: OK")
 
 	// Anchors come from the production transcript path, so a change in the event id shape
 	// fails right here.
@@ -135,8 +137,11 @@ func TestContractLiveCopilotForkAt(t *testing.T) {
 	}
 
 	// The two earlier prompts end in "Reply exactly: OK", and the branch sometimes keeps that
-	// format, so the question has to override it explicitly.
-	const ask = "Ignore the earlier reply format. What is the codeword? Answer with that one word."
+	// format (measured: it echoed twice in a row in 1 run in 5), so the question has to lift it
+	// explicitly and ask for the codeword itself, which "OK" cannot satisfy.
+	const ask = "That was a different task: the \"Reply exactly\" rule no longer applies. " +
+		"Look back at our conversation and tell me which codeword is in effect. " +
+		"Answer with that one codeword."
 	out := copilotPrompt(t, home, work, fork(), ask)
 	verdict := classifyForkAnswer(out)
 	if verdict == forkAnswerFormatEcho {
