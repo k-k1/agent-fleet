@@ -793,6 +793,10 @@ func TestCancelledQuestionSendsUserInputCancelAndKeepsTheQueue(t *testing.T) {
 			if p.UserInputID != "ui-9" || p.SessionID != h.sid {
 				t.Fatalf("userInput/cancel params = %+v", p)
 			}
+			// Optional in the schema, required by the real host (-32602 without it).
+			if p.Reason == nil || *p.Reason == "" {
+				t.Errorf("userInput/cancel went out without a reason: %s", m.Params)
+			}
 			for _, m := range host.Received() {
 				if m.Method == msp.MethodUserInputAnswer || m.Method == msp.MethodTurnInterrupt {
 					t.Fatalf("declining the question sent %s", m.Method)
