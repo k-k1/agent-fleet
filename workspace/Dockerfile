@@ -317,7 +317,7 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.288
+ARG CLAUDE_CODE_VERSION=2.1.289
 ARG OPENCODE_VERSION=1.18.34
 ARG CODEX_VERSION=0.160.0
 ARG COPILOT_VERSION=1.0.91
@@ -346,10 +346,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.2.16
-ARG AGY_RELEASE_BUILD=5594158052802560
-ARG AGY_SHA256_X64=d4247430e04cebdbe1ca93d9ccb483cd2f3daeb4cdb0ace5a71cd130e0bdab84
-ARG AGY_SHA256_ARM64=a6d269d2764e5636ab2bcda73b78c587fe9d00ead767aa3974574229585ee0d3
+ARG AGY_VERSION=1.2.17
+ARG AGY_RELEASE_BUILD=6683332533157888
+ARG AGY_SHA256_X64=b0ed8a7c375b5af3af973f08a601e41aebb38bac7e80b922ab54d973a4275493
+ARG AGY_SHA256_ARM64=4a1af1bb91352b72f40fce373a028023bf0e47f5fceb3dfa48249816c0f0caec
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
