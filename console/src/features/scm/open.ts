@@ -34,3 +34,8 @@ export const openChanges = (repo: string): void =>
  * is "here is where it lives". */
 export const openRepoScm = (repo: string): void =>
   useLayoutStore.getState().openTarget({ content: { kind: "scm", scmRepo: repo } });
+
+/** Open a working copy's history pane, filtered to `path` (working-copy relative). For a git
+ * copy `path` names a submodule; for an SVN copy it is the Show log path filter. */
+export const openRepoLog = (repo: string, path?: string): void =>
+  useLayoutStore.getState().openTarget({ content: { kind: "scm", scmRepo: repo, ...(path ? { scmPath: path } : {}) } });

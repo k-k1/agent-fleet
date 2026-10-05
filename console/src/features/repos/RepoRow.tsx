@@ -397,11 +397,19 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
       {menu &&
         createPortal(
           <ul className="ui-menu repo-ctxmenu" ref={menuRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
-            {/* Source Control view + git-only ops — hidden for svn (flat working copy). */}
+            {/* Source Control view + git-only ops — hidden for svn (flat working copy), which
+                gets the read-only Show log and local-changes panes instead (#1705). */}
             {!isSvn && (
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpen(); }}>
                   <Icon name="source-control" /> {tr("repo.open_scm")}
+                </button>
+              </li>
+            )}
+            {isSvn && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpen(); }}>
+                  <Icon name="history" /> {tr("repo.svn_show_log")}
                 </button>
               </li>
             )}
@@ -416,6 +424,13 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpenChanges(); }}>
                   <Icon name="git-commit" /> {tr("repo.commit_changes")}
+                </button>
+              </li>
+            )}
+            {isSvn && onOpenChanges && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpenChanges(); }}>
+                  <Icon name="git-commit" /> {tr("repo.svn_changes")}
                 </button>
               </li>
             )}

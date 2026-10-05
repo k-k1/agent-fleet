@@ -13,6 +13,7 @@ import { SessionMenu } from "../sessions/SessionMenu.tsx";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
 import { useUnreadSessions } from "../notifications/unread.ts";
 import { isWaiting } from "../sessions/waiting.ts";
+import { ScmPane } from "../scm/ScmPane.tsx";
 import { shownSession } from "../sessions/shown.ts";
 import { isContextMenuKey, synthContextMenu } from "../project/contextMenuKey.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
@@ -20,10 +21,6 @@ import { placeFixed } from "../../lib/placeFixed.ts";
 import { TerminalView } from "../terminal/TerminalView.tsx";
 import { MirrorView } from "../mirror/MirrorView.tsx";
 import { agentOf } from "../../agents/registry.ts";
-import { SourceControlView } from "../scm/SourceControlView.tsx";
-import { ChangesView } from "../scm/ChangesView.tsx";
-import { CommitDetailView } from "../scm/CommitDetailView.tsx";
-import { WorkingDiffView } from "../scm/WorkingDiffView.tsx";
 import { FileView } from "../viewer/FileView.tsx";
 import { ReaderView } from "../viewer/ReaderView.tsx";
 import { DocView } from "../viewer/DocView.tsx";
@@ -756,28 +753,10 @@ function PopulatedPane({
           headerActions={tabHeaderActions}
         />
       )}
-      {pane.content.kind === "scm" && (
-        <SourceControlView repo={pane.content.scmRepo} path={pane.content.scmPath} headerActions={tabHeaderActions} />
-      )}
-      {pane.content.kind === "changes" && <ChangesView repo={pane.content.scmRepo} headerActions={tabHeaderActions} />}
-      {pane.content.kind === "commit" && (
-        <CommitDetailView
-          repo={pane.content.scmRepo}
-          path={pane.content.scmPath}
-          sha={pane.content.commitSha}
-          wrap={wrapOn}
-          headerActions={tabHeaderActions}
-        />
-      )}
-      {pane.content.kind === "wtdiff" && (
-        <WorkingDiffView
-          repo={pane.content.scmRepo}
-          path={pane.content.filePath}
-          staged={pane.content.diffStaged}
-          wrap={wrapOn}
-          headerActions={tabHeaderActions}
-        />
-      )}
+      {(pane.content.kind === "scm" ||
+        pane.content.kind === "changes" ||
+        pane.content.kind === "commit" ||
+        pane.content.kind === "wtdiff") && <ScmPane content={pane.content} wrap={wrapOn} headerActions={tabHeaderActions} />}
       {pane.content.kind === "file" && (
         <FileView
           key={pane.content.filePath}

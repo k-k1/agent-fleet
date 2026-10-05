@@ -797,6 +797,11 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	// Re-authentication of an existing SVN working copy (docs/log/41 amendment).
 	mux.HandleFunc("GET /api/repos/{name}/svn-auth", rest)
 	mux.HandleFunc("POST /api/repos/{name}/svn-auth", rest)
+	// Read-only SVN history and local changes (#1705) — proxied to the Agent.
+	mux.HandleFunc("GET /api/repos/{name}/svn-log", rest)
+	mux.HandleFunc("GET /api/repos/{name}/svn-show", rest)
+	mux.HandleFunc("GET /api/repos/{name}/svn-changes", rest)
+	mux.HandleFunc("GET /api/repos/{name}/svn-diff", rest)
 	// Launch prompt templates (repo launch modal) — proxied to the Agent.
 	mux.HandleFunc("GET /api/repos/{name}/prompt-templates", rest)
 	// Launch modal skill picker — the mirror's list before the session exists.

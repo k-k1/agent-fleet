@@ -2,21 +2,29 @@
 // graph). Port of views/CommitDetailView.
 import { useState } from "react";
 import type { ReactNode } from "react";
-import { api, isTransientErr } from "../../core/api/client.ts";
+import { api, errText, isTransientErr } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useT } from "../../lib/i18n/index.ts";
+import { SvnAuthModal } from "../repos/SvnAuthModal.tsx";
+import { isSvnAuthError } from "./svnLog.ts";
 import { CommitDetail } from "./GitDiff.tsx";
 import type { CommitData, FoldSignal } from "./GitDiff.tsx";
 
-export function CommitDetailView({ repo, path, sha, wrap, headerActions }: { repo: string; path?: string; sha: string; wrap?: boolean; headerActions?: ReactNode }) {
+// `vcs` = "svn": `sha` is a revision number and `path` the log's path filter, and the detail
+// comes from svn-show (a network call on the server, so it is made once per opened revision).
+export function CommitDetailView({ repo, path, sha, vcs = "git", wrap, headerActions }: { repo: string; path?: string; sha: string; vcs?: "git" | "svn"; wrap?: boolean; headerActions?: ReactNode }) {
   const tr = useT();
   const enc = encodeURIComponent(repo || "");
   const [commit, setCommit] = useState<CommitData | null>(null);
   const [localWrap, setLocalWrap] = useState<boolean | null>(null);
   const effWrap = localWrap ?? !!wrap;
+  // svn only: svn-show is a server call, so a missing or refused credential is answered with the
+  // re-authentication dialog, and saving it re-fetches (the same flow as the log pane).
+  const [authOpen, setAuthOpen] = useState(false);
+  const [reload, setReload] = useState(0);
   const [fold, setFold] = useState<FoldSignal | undefined>(undefined);
   const foldAll = (open: boolean) => setFold((f) => ({ n: (f?.n ?? 0) + 1, open }));
 
@@ -31,15 +39,20 @@ export function CommitDetailView({ repo, path, sha, wrap, headerActions }: { rep
     setCommit(null);
     let d;
     try {
-      d = await api(`api/repos/${enc}/show?sha=${encodeURIComponent(sha)}${path ? `&path=${encodeURIComponent(path)}` : ""}`);
+      const pathQ = path ? `&path=${encodeURIComponent(path)}` : "";
+      d = await api(
+        vcs === "svn" ? `api/repos/${enc}/svn-show?rev=${encodeURIComponent(sha)}${pathQ}` : `api/repos/${enc}/show?sha=${encodeURIComponent(sha)}${pathQ}`,
+      );
     } catch {
       return false; // network drop — retry
     }
     if (signal.aborted) return true;
     if (isTransientErr(d)) return false;
-    setCommit(d);
+    if (vcs === "svn" && isSvnAuthError(d)) setAuthOpen(true);
+    // An svn-show refusal (no credential, unknown revision) is a terminal answer, not data.
+    setCommit(d?.error ? { error: true, message: errText(d.error) } : d);
     return true;
-  }, [enc, sha, repo, path]);
+  }, [enc, sha, repo, path, vcs, reload]);
 
   if (!sha) {
     return (
@@ -55,7 +68,7 @@ export function CommitDetailView({ repo, path, sha, wrap, headerActions }: { rep
           spaced by the head's own 10px gap today. */}
       <ViewHead actions={headerActions}>
         <span className="view-title" title={repo || ""}>
-          <Icon name="git-commit" /> {repo}{path ? ` / ${path}` : ""} · {(sha || "").slice(0, 10)}
+          <Icon name="git-commit" /> {repo}{path ? ` / ${path}` : ""} · {vcs === "svn" ? `r${sha}` : (sha || "").slice(0, 10)}
         </span>
         <span className="view-spacer" />
         <button type="button" className="ui-btn ui-btn-ghost ui-btn-sm" title={tr("scm.expand_all_diffs")} onClick={() => foldAll(true)}>
@@ -77,6 +90,16 @@ export function CommitDetailView({ repo, path, sha, wrap, headerActions }: { rep
       <div className="scm-scroll">
         <CommitDetail commit={commit} wrap={effWrap} fold={fold} />
       </div>
+      {authOpen && (
+        <SvnAuthModal
+          repo={repo}
+          onClose={() => setAuthOpen(false)}
+          onSaved={() => {
+            setAuthOpen(false);
+            setReload((n) => n + 1);
+          }}
+        />
+      )}
     </div>
   );
 }
