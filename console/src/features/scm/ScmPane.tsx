@@ -2,7 +2,7 @@
 // (scm / changes / commit / wtdiff). The pane CONTENT stays the same shape for both: for an SVN
 // working copy `commitSha` carries the revision number and `scmPath` the Show log path filter,
 // so layout persistence, tab identity, titles and badges need no SVN branch of their own.
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { ReactNode } from "react";
 import type { PaneContent } from "../../layout/types.ts";
 import { SourceControlView } from "./SourceControlView.tsx";
@@ -13,6 +13,7 @@ import { SvnLogView } from "./SvnLogView.tsx";
 import { SvnChangesView } from "./SvnChangesView.tsx";
 import { useRepoVcs } from "./useRepoVcs.ts";
 import { useReposStore } from "../repos/store.ts";
+import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { useT } from "../../lib/i18n/index.ts";
 
 type ScmContent = Extract<PaneContent, { kind: "scm" | "changes" | "commit" | "wtdiff" }>;
@@ -25,15 +26,14 @@ export function ScmPane({ content, wrap, headerActions }: { content: ScmContent;
   // once and mount nothing until it answers. If the answer still does not hold the repo it is
   // treated as git, which then reports its own "no such repo" as it always did.
   const [settledFor, setSettledFor] = useState("");
-  useEffect(() => {
-    if (known !== undefined) return;
-    let alive = true;
-    void refreshRepos().then((ok) => {
-      if (alive && ok) setSettledFor(content.scmRepo);
-    });
-    return () => {
-      alive = false;
-    };
+  // A transient failure (the workspace agent still booting answers 502) is retried: settling on
+  // it would mount the git view for what may be an SVN copy.
+  useRetryLoad(async (signal) => {
+    if (known !== undefined) return true;
+    const ok = await refreshRepos();
+    if (signal.aborted) return true;
+    if (ok) setSettledFor(content.scmRepo);
+    return ok;
   }, [known, content.scmRepo, refreshRepos]);
   if (known === undefined && settledFor !== content.scmRepo) {
     return <div className="scmview"><pre className="diff muted">{tr("scm.loading")}</pre></div>;

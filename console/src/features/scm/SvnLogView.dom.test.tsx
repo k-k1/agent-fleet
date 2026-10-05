@@ -19,7 +19,7 @@ vi.mock("../../core/api/client.ts", () => ({
   apiJSON: async () => ({}),
   rawJSON: async () => ({ ok: true, json: async () => ({}) }),
   errText: (e: unknown) => String((e as { message?: string })?.message ?? e),
-  isTransientErr: () => false,
+  isTransientErr: (d: { error?: { status?: number } } | null) => (d?.error?.status ?? 0) >= 500,
   getTenant: () => "",
 }));
 
@@ -174,14 +174,53 @@ describe("ScmPane", () => {
     expect(api.mock.calls.map((c) => c[0])).toEqual(["api/repos", "api/repos/gone/show?sha=abc1234"]);
   });
 
-  it("opens the re-authentication dialog from an svn revision's detail and refetches after saving", async () => {
+  it("recovers from a transient repo-list failure: svn repo present, then repo absent", async () => {
+    for (const [repos, want] of [
+      [[{ name: "docs", vcs: "svn" }], "api/repos/docs/svn-show?rev=7"],
+      [[], "api/repos/docs/show?sha=7"],
+    ] as const) {
+      api.mockReset();
+      useReposStore.setState({ repos: [] });
+      let n = 0;
+      api.mockImplementation(async (path: string) =>
+        path === "api/repos" ? (n++ === 0 ? { error: { code: "http_502", status: 502 } } : { repos }) : { subject: "s", diff: "" },
+      );
+      await mount(<ScmPane content={{ kind: "commit", scmRepo: "docs", commitSha: "7" }} />);
+      expect(api.mock.calls.map((c) => c[0])).toEqual(["api/repos"]); // nothing mounted on the failure
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 900));
+      });
+      expect(api.mock.calls.map((c) => c[0])).toEqual(["api/repos", "api/repos", want]);
+      act(() => root?.unmount());
+      host?.remove();
+    }
+  });
+
+  it("re-authenticates from an svn revision's detail and refetches it after saving", async () => {
     useReposStore.setState({ repos: [{ name: "docs", vcs: "svn" } as never] });
-    api.mockImplementation(async (path: string) =>
-      path.includes("/svn-show") ? { error: { code: "svn_auth_required", message: "E170001" } } : { url: "svn://h/r/trunk", urlPrefix: "svn://h/r" },
-    );
+    let authed = false;
+    api.mockImplementation(async (path: string) => {
+      if (path.includes("/svn-show")) return authed ? { subject: "ok", diff: "" } : { error: { code: "svn_auth_required", message: "E170001" } };
+      return { url: "svn://h/r/trunk", urlPrefix: "svn://h/r" };
+    });
     await mount(<ScmPane content={{ kind: "commit", scmRepo: "docs", commitSha: "7" }} />);
-    expect(api.mock.calls.some((c) => String(c[0]).endsWith("/svn-auth"))).toBe(true);
-    expect(document.body.querySelector("input[type=password]")).not.toBeNull();
+    const pw = document.body.querySelector("input[type=password]") as HTMLInputElement;
+    expect(pw).not.toBeNull();
+    authed = true;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(pw, "pw");
+      pw.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const submit = [...document.body.querySelectorAll("button")].find((b) => b.getAttribute("type") === "submit")!;
+    await act(async () => {
+      submit.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(api.mock.calls.filter((c) => String(c[0]).includes("/svn-show")).length).toBe(2);
+    expect(document.body.querySelector("input[type=password]")).toBeNull();
   });
 
   it("renders the svn views and routes to the svn endpoints for an svn working copy", async () => {

@@ -154,6 +154,9 @@ type svnStatusEntry struct {
 	WCStatus struct {
 		Item  string `xml:"item,attr"`
 		Props string `xml:"props,attr"`
+		// A tree conflict (local edit vs. upstream delete/move) leaves item "added" or "normal",
+		// never "conflicted"; only this attribute says so.
+		TreeConflicted string `xml:"tree-conflicted,attr"`
 	} `xml:"wc-status"`
 }
 
@@ -213,6 +216,10 @@ func parseSvnStatusXML(data []byte) ([]svnChange, error) {
 			p := filepath.ToSlash(filepath.Clean(e.Path))
 			// The root entry (".") stays when IT carries a change (a property edit such as
 			// svn:ignore); a clean root has no letter and is dropped with every other clean entry.
+			tree := e.WCStatus.TreeConflicted == "true"
+			if letter == "" && tree {
+				letter = "C"
+			}
 			if letter == "" {
 				continue
 			}
@@ -220,7 +227,7 @@ func parseSvnStatusXML(data []byte) ([]svnChange, error) {
 			if e.WCStatus.Props != "none" && e.WCStatus.Props != "" && e.WCStatus.Item != "normal" {
 				c.Props = e.WCStatus.Props
 			}
-			c.Conflict = letter == "C" || e.WCStatus.Props == "conflicted"
+			c.Conflict = letter == "C" || e.WCStatus.Props == "conflicted" || tree
 			out = append(out, c)
 		}
 	}

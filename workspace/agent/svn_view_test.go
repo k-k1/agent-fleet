@@ -119,6 +119,23 @@ func TestParseSvnStatusRootProps(t *testing.T) {
 	}
 }
 
+func TestParseSvnStatusTreeConflict(t *testing.T) {
+	const x = `<status><target path=".">
+<entry path="added.txt"><wc-status props="none" item="added" revision="-1" tree-conflicted="true"></wc-status></entry>
+<entry path="normal.txt"><wc-status props="none" item="normal" revision="3" tree-conflicted="true"></wc-status></entry>
+</target></status>`
+	got, err := parseSvnStatusXML([]byte(x))
+	if err != nil || len(got) != 2 {
+		t.Fatalf("tree conflicts = %+v, %v", got, err)
+	}
+	if got[0].Status != "A" || !got[0].Conflict {
+		t.Errorf("added + tree conflict = %+v", got[0])
+	}
+	if got[1].Status != "C" || !got[1].Conflict {
+		t.Errorf("normal + tree conflict = %+v", got[1])
+	}
+}
+
 func TestSvnURLPathUnder(t *testing.T) {
 	cases := [][3]string{
 		{"svn://h/r", "svn://h/r", "/"},
