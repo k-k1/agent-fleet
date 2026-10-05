@@ -591,12 +591,19 @@ func TestManagedTurnNotifiesCompletion(t *testing.T) {
 	}
 	waitState(t, h, agents.TurnCompleted)
 
+	// The notifier runs on its own goroutine (agents.notify is async on purpose), so it is
+	// not ordered against the state we just waited for. Wait for the signal itself; the
+	// ceiling only exists so a notification that never comes fails instead of hanging, and
+	// is far above anything a loaded runner needs (a 3 s budget was exceeded in a full
+	// -p 2 run).
+	notifyDeadline := time.NewTimer(30 * time.Second)
+	defer notifyDeadline.Stop()
 	select {
 	case tr := <-got:
 		if tr[0] != h.ocSid || tr[1] != "working" || tr[2] != "idle" {
 			t.Fatalf("transition = %v, want %s working→idle", tr, h.ocSid)
 		}
-	case <-time.After(3 * time.Second):
+	case <-notifyDeadline.C:
 		t.Fatal("turn completed without notifying the state seam - no report is sent")
 	}
 }
