@@ -726,3 +726,43 @@ func TestAnImageOnlyUserTurnBecomesItsPath(t *testing.T) {
 		t.Fatalf("turn = %+v, want the path alone", tn)
 	}
 }
+
+// A hookRun item (muse 1.4.3) must reach the mirror, and a blocked one must not look like a
+// success: the schema's rule is that unknown kinds render generically, never vanish.
+func TestHookRunItemsRenderGenerically(t *testing.T) {
+	ok := item(msp.ItemKindHookRun, "h-1", 1)
+	ok.Status = msp.ItemStatusCompleted
+	ok.Label = sp("lint on save")
+
+	blocked := item(msp.ItemKindHookRun, "h-2", 1)
+	blocked.Status = msp.ItemStatusRejected
+	blocked.Label = sp("deny rm")
+	rs := msp.HookRunStatusBlocked
+	blocked.RunStatus = &rs
+
+	turns := turnsFromItems([]msp.Item{ok, blocked})
+	if len(turns) != 1 || len(turns[0].Parts) != 2 {
+		t.Fatalf("hookRun items were dropped or split: %+v", turns)
+	}
+	p := turns[0].Parts
+	if p[0].Tool != "hookRun" || p[0].Info != "lint on save" || p[0].Output != "" {
+		t.Errorf("completed hook = %+v", p[0])
+	}
+	if p[1].Info != "deny rm" || p[1].Output != "blocked" {
+		t.Errorf("blocked hook = %+v", p[1])
+	}
+}
+
+// A kind no client knows yet takes the same path, carrying the host's fallbackText.
+func TestUnknownItemKindRendersWithFallbackText(t *testing.T) {
+	it := item(msp.ItemKind("somethingNew"), "x-1", 1)
+	it.Status = msp.ItemStatusCompleted
+	it.FallbackText = sp("did a new thing")
+	turns := turnsFromItems([]msp.Item{it})
+	if len(turns) != 1 || len(turns[0].Parts) != 1 {
+		t.Fatalf("unknown kind dropped: %+v", turns)
+	}
+	if p := turns[0].Parts[0]; p.Tool != "somethingNew" || p.Info != "did a new thing" {
+		t.Errorf("part = %+v", p)
+	}
+}

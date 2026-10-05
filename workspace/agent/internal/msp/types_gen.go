@@ -8,7 +8,7 @@ import "encoding/json"
 // rendered from. A different fingerprint only says the bundle is behind the host;
 // whether these types can still speak to it is schemagen.Compare's question, asked of
 // the installed binary by fingerprint_test.go.
-const SchemaFingerprint = "sha256:36466f634c8c78a812462ec941187fd4547b232ee06153e5feb2a1482f0d3d7f"
+const SchemaFingerprint = "sha256:4cb671082574037fc1070a136db7c0c8dc24e65e78cf3d209a10944ff9f9845f"
 
 // SchemaVersion is MSP's own version, carried in `initialize`.
 const SchemaVersion = 1
@@ -17,14 +17,17 @@ const SchemaVersion = 1
 const (
 	MethodApprovalDecide            = "approval/decide"
 	MethodApprovalListPending       = "approval/listPending"
+	MethodFeedbackSubmit            = "feedback/submit"
 	MethodGoalClear                 = "goal/clear"
 	MethodGoalEdit                  = "goal/edit"
 	MethodGoalPause                 = "goal/pause"
 	MethodGoalResume                = "goal/resume"
 	MethodGoalSet                   = "goal/set"
+	MethodHookList                  = "hook/list"
 	MethodInitialize                = "initialize"
 	MethodItemReadOutput            = "item/readOutput"
 	MethodModelList                 = "model/list"
+	MethodPluginList                = "plugin/list"
 	MethodSessionCompact            = "session/compact"
 	MethodSessionFork               = "session/fork"
 	MethodSessionList               = "session/list"
@@ -57,6 +60,7 @@ const (
 	MethodUserInputAnswer           = "userInput/answer"
 	MethodUserInputCancel           = "userInput/cancel"
 	MethodUserInputClarify          = "userInput/clarify"
+	MethodUserInputInterrupt        = "userInput/interrupt"
 	MethodViewPage                  = "view/page"
 	MethodViewSubscribe             = "view/subscribe"
 	MethodViewUnsubscribe           = "view/unsubscribe"
@@ -91,11 +95,13 @@ const (
 	NotificationSessionViewHealthChanged      = "session/viewHealthChanged"
 	NotificationSkillChanged                  = "skill/changed"
 	NotificationTurnCompleted                 = "turn/completed"
+	NotificationTurnForegroundCompleted       = "turn/foregroundCompleted"
 	NotificationTurnRetracted                 = "turn/retracted"
 	NotificationTurnRetryScheduled            = "turn/retryScheduled"
 	NotificationTurnStarted                   = "turn/started"
 	NotificationTurnUnqueued                  = "turn/unqueued"
 	NotificationUsageChanged                  = "usage/changed"
+	NotificationUserInputEngaged              = "userInput/engaged"
 	NotificationUserInputRequested            = "userInput/requested"
 	NotificationUserInputSettled              = "userInput/settled"
 	NotificationViewGap                       = "view/gap"
@@ -177,11 +183,13 @@ var notificationParams = map[string]string{
 	"session/viewHealthChanged":      "SessionViewHealthChangedParams",
 	"skill/changed":                  "SkillChangedParams",
 	"turn/completed":                 "TurnCompletedParams",
+	"turn/foregroundCompleted":       "TurnForegroundCompletedParams",
 	"turn/retracted":                 "TurnRetractedParams",
 	"turn/retryScheduled":            "TurnRetryScheduledParams",
 	"turn/started":                   "TurnStartedParams",
 	"turn/unqueued":                  "TurnUnqueuedParams",
 	"usage/changed":                  "SubscriptionUsage",
+	"userInput/engaged":              "UserInputEngagedParams",
 	"userInput/requested":            "UserInputRequestParams",
 	"userInput/settled":              "UserInputSettledParams",
 	"view/gap":                       "ViewGapParams",
@@ -456,8 +464,12 @@ var ApprovalResolvedByValues = []ApprovalResolvedBy{
 
 // ApprovalResolvedParams `approval/resolved` params: the first durable terminal decision.
 type ApprovalResolvedParams struct {
-	Amendment          *ApprovalAmendment      `json:"amendment,omitempty"`
-	ApprovalID         string                  `json:"approvalId"`
+	Amendment  *ApprovalAmendment `json:"amendment,omitempty"`
+	ApprovalID string             `json:"approvalId"`
+	// The decision time as RFC3339, projected from the durable `DecisionApplied` record's own
+	// stamp (ADR 45450 D3): optional on the wire so decoders tolerate its absence, always
+	// populated by current hosts.
+	DecidedAt          *string                 `json:"decidedAt,omitempty"`
 	DecidedByCommandID *string                 `json:"decidedByCommandId,omitempty"`
 	Decision           ApprovalDecision        `json:"decision"`
 	ItemID             string                  `json:"itemId"`
@@ -599,6 +611,7 @@ const (
 	CapabilityNameUserShell         CapabilityName = "userShell"
 	CapabilityNameSessionMCP        CapabilityName = "sessionMcp"
 	CapabilityNameSessionListStream CapabilityName = "sessionListStream"
+	CapabilityNameFeedback          CapabilityName = "feedback"
 )
 
 // CapabilityNameValues are every CapabilityName the bundle declares, in schema order.
@@ -606,6 +619,7 @@ var CapabilityNameValues = []CapabilityName{
 	CapabilityNameUserShell,
 	CapabilityNameSessionMCP,
 	CapabilityNameSessionListStream,
+	CapabilityNameFeedback,
 }
 
 // ClientCapabilities The client's requested capability posture (SS1.4.1). Every member defaults; an absent
@@ -760,8 +774,58 @@ type ContextUsage struct {
 	WindowTokens *int64 `json:"windowTokens,omitempty"`
 }
 
-// CumulativeTokenUsage Session running totals of counted-once usage (tdd SS4.6.5).
+// CronReceipt Cron's `details` payload (ADR 42728 D2, thirteenth directive). Every field a family owns
+// lives here, under the container's one `details` key, rather than flat beside the
+// discriminators — ADR 43399 D5 as amended. Each is a **bounded machine fact**: scalars,
+// short identifiers and a small fixed-shape array of those.
+type CronReceipt struct {
+	// Cron `create` and `delete`: the job id. On `delete`'s `missing` arm this is the caller's
+	// own id echoed back under ADR 43399 D1's declared echo — that arm has no server-side
+	// subject to name. Also the field ADR 42728 D4's D8 declaration names as conveying the
+	// hidden fact on the declared `created` + `cancelled` pairing: a job row was committed and
+	// will fire.
+	JobID *string `json:"jobId,omitempty"`
+	// Cron `list`: the served jobs in server order, `active` and `firing` rows only.
+	Jobs []CronReceiptJob `json:"jobs,omitempty"`
+	// Cron `create` (`created`, `duplicate`): absolute epoch-milliseconds of the job's next
+	// scheduled fire (the existing job's on `duplicate`, ADR 42728 D2).
+	NextFireAtMs *int64 `json:"nextFireAtMs,omitempty"`
+}
+
+// CronReceiptJob One row of the Cron `list` receipt's `jobs` array (ADR 42728 D2). Server order, and
+// **`active` + `firing` rows only** — the owner's `Serve active+firing only` directive.
+// A small fixed-shape array of scalars, which is what keeps it inside D5's
+// bounded-machine-fact rule.
+type CronReceiptJob struct {
+	// The job's server-owned id.
+	JobID string `json:"jobId"`
+	// Absolute epoch-milliseconds of the job's next scheduled fire.
+	NextFireAtMs int64 `json:"nextFireAtMs"`
+}
+
+// CumulativeCost Server-computed session cost member of [`CumulativeTokenUsage`] (tdd SS4.6.5, Amendment
+// #41610 FR-41610-2/3).
+type CumulativeCost struct {
+	// True when at least one leg lacked price data — clients render `(partial)`.
+	Partial bool `json:"partial"`
+	// Estimated USD total, finite and non-negative.
+	Usd float64 `json:"usd"`
+}
+
+// CumulativeTokenUsage Session running totals of counted-once usage (tdd SS4.6.5). Amendment #41610: the cache
+// splits and server-computed `cost` join the counters. The counters stay accumulate-only;
+// `cost` is the documented exception — it may move either way on price re-adoption and
+// is labeled estimate (INV-41610-1). `Copy` was dropped for the `cost` member.
 type CumulativeTokenUsage struct {
+	// Cache-read tokens, session total (FR-41610-1): saturating sum of the per-completion
+	// splits; an absent split contributes 0. Additive-optional: absent on the wire reads as 0
+	// and zero totals are omitted, so pre-feature bytes decode and re-encode identically.
+	CacheReadTokens *int64 `json:"cacheReadTokens,omitempty"`
+	// Cache-write tokens, session total (FR-41610-1). Additive-optional like the read split.
+	CacheWriteTokens *int64 `json:"cacheWriteTokens,omitempty"`
+	// Server-computed session cost (FR-41610-2): `None` (wire-absent) when no leg is priced
+	// — clients omit the row. Additive-optional: absent reads as unpriced.
+	Cost *CumulativeCost `json:"cost,omitempty"`
 	// Output tokens, session total.
 	OutputTokens int64 `json:"outputTokens"`
 	// Counted-once prompt tokens, session total.
@@ -981,6 +1045,109 @@ type ErrorResponse struct {
 	Jsonrpc JSONRPCVersion `json:"jsonrpc"`
 }
 
+// FeedbackClassification `feedback/submit` classification (tdd SS3.25): the four TUI classes in camelCase wire
+// spelling. **Closed**: a client-selected param vocabulary (#22785 E2).
+type FeedbackClassification string
+
+const (
+	FeedbackClassificationBug        FeedbackClassification = "bug"
+	FeedbackClassificationBadResult  FeedbackClassification = "badResult"
+	FeedbackClassificationGoodResult FeedbackClassification = "goodResult"
+	FeedbackClassificationOther      FeedbackClassification = "other"
+)
+
+// FeedbackClassificationValues are every FeedbackClassification the bundle declares, in schema order.
+var FeedbackClassificationValues = []FeedbackClassification{
+	FeedbackClassificationBug,
+	FeedbackClassificationBadResult,
+	FeedbackClassificationGoodResult,
+	FeedbackClassificationOther,
+}
+
+// FeedbackSubmitOutcome `feedback/submit` result `outcome` (tdd SS3.25): how one confirmed submit resolved,
+// mirroring the TUI `FeedbackSubmitOutcome` taxonomy. **Open**: a server-produced result
+// vocabulary (#22785 E2) — an older client reading a newer value it does not know
+// follows the open-enum tolerance rule instead of rejecting it.
+type FeedbackSubmitOutcome string
+
+const (
+	FeedbackSubmitOutcomeUploaded               FeedbackSubmitOutcome = "uploaded"
+	FeedbackSubmitOutcomeRecorded               FeedbackSubmitOutcome = "recorded"
+	FeedbackSubmitOutcomeAcceptedWithoutReceipt FeedbackSubmitOutcome = "acceptedWithoutReceipt"
+	FeedbackSubmitOutcomeTrackingFailed         FeedbackSubmitOutcome = "trackingFailed"
+	FeedbackSubmitOutcomeTrackingUncertain      FeedbackSubmitOutcome = "trackingUncertain"
+	FeedbackSubmitOutcomeDark                   FeedbackSubmitOutcome = "dark"
+	FeedbackSubmitOutcomeDisabled               FeedbackSubmitOutcome = "disabled"
+	FeedbackSubmitOutcomeNoCredential           FeedbackSubmitOutcome = "noCredential"
+	FeedbackSubmitOutcomeAuthRejected           FeedbackSubmitOutcome = "authRejected"
+	FeedbackSubmitOutcomeRateLimited            FeedbackSubmitOutcome = "rateLimited"
+	FeedbackSubmitOutcomeFailed                 FeedbackSubmitOutcome = "failed"
+)
+
+// FeedbackSubmitOutcomeValues are every FeedbackSubmitOutcome the bundle declares, in schema order.
+var FeedbackSubmitOutcomeValues = []FeedbackSubmitOutcome{
+	FeedbackSubmitOutcomeUploaded,
+	FeedbackSubmitOutcomeRecorded,
+	FeedbackSubmitOutcomeAcceptedWithoutReceipt,
+	FeedbackSubmitOutcomeTrackingFailed,
+	FeedbackSubmitOutcomeTrackingUncertain,
+	FeedbackSubmitOutcomeDark,
+	FeedbackSubmitOutcomeDisabled,
+	FeedbackSubmitOutcomeNoCredential,
+	FeedbackSubmitOutcomeAuthRejected,
+	FeedbackSubmitOutcomeRateLimited,
+	FeedbackSubmitOutcomeFailed,
+}
+
+// FeedbackSubmitParams `feedback/submit` params (tdd SS3.25): mirrors the TUI confirm-time `FeedbackRequest`.
+// The call itself is the explicit confirm.
+type FeedbackSubmitParams struct {
+	// Consent to attach the session record; honored only for `bug`/`badResult` with
+	// `session_id` present. `true` with `with_files: false`, with a non-`bug`/`badResult`
+	// classification, or without `session_id` is `invalidParams` (F4, F8). Defaults to
+	// `false`.
+	AttachSessionRecord *bool `json:"attachSessionRecord,omitempty"`
+	// The report class (required).
+	Classification FeedbackClassification `json:"classification"`
+	// An absolute same-host path to a client-packed bundle, admitted only as a regular file
+	// under a size cap.
+	ClientArtifactsPath *string `json:"clientArtifactsPath,omitempty"`
+	// The user report text (required; non-empty for `bug`).
+	Note string `json:"note"`
+	// Names the session this call is about when present (F8, superseding F3): the bundle lands
+	// in that session's dir. Names a session this host owns. When absent, the bundle lands in
+	// the host-level feedback folder and the `session_id` tag is omitted.
+	SessionID *string `json:"sessionId,omitempty"`
+	// The files-consent decision (required).
+	WithFiles bool `json:"withFiles"`
+}
+
+// FeedbackSubmitResult `feedback/submit` result (tdd SS3.25): the upload receipt.
+type FeedbackSubmitResult struct {
+	// The host-local absolute path of the always-written local bundle.
+	BundlePath string `json:"bundlePath"`
+	// The failure cause on the `failed`, `acceptedWithoutReceipt`, `trackingFailed`, and
+	// `trackingUncertain` arms.
+	Cause *string `json:"cause,omitempty"`
+	// The consent-vs-reality local-tracing note, kept for display.
+	LocalTracingNote *string `json:"localTracingNote,omitempty"`
+	// How the submit resolved.
+	Outcome FeedbackSubmitOutcome `json:"outcome"`
+	// The effective retry delay in milliseconds, on `rateLimited`.
+	RetryAfterMs *int64 `json:"retryAfterMs,omitempty"`
+	// The consent-vs-reality session note, kept for display.
+	SessionNote *string `json:"sessionNote,omitempty"`
+	// Whether the consented session record rode at all.
+	SessionRecordAttached bool `json:"sessionRecordAttached"`
+	// Whether the consented session record rode shortened to fit.
+	SessionRecordTruncated bool `json:"sessionRecordTruncated"`
+	// The internal receipt-Task id once that Task succeeds.
+	TaskID *string `json:"taskId,omitempty"`
+	// The intake's accept id — always present on the `uploaded` arm, optional on
+	// `trackingFailed`/`trackingUncertain`; never fabricated on `recorded`.
+	UploadID *string `json:"uploadId,omitempty"`
+}
+
 // ForkCutPoint Where a fork cuts the source history (tdd SS2.5.3). Turn ids are used instead of counts
 // because ids stay stable across compaction and concurrent appends while indices do not.
 type ForkCutPoint struct {
@@ -1145,6 +1312,125 @@ var HistoryPreferenceValues = []HistoryPreference{
 	HistoryPreferenceAnchored,
 }
 
+// HookCatalogEntry One installed handler (tdd SS3.26.1).
+type HookCatalogEntry struct {
+	// The row's own switch (tdd SS3.26.1). Non-enabled rows are included as `false`, never
+	// dropped.
+	Enabled bool `json:"enabled"`
+	// The event the handler runs on (ADR 33398 D7 item 2).
+	Event HookEventName `json:"event"`
+	// Where the handler comes from (ADR 33398 D7 item 1).
+	HandlerKind HookHandlerKind `json:"handlerKind"`
+	// The handler key (config key or plugin hook id).
+	Key string `json:"key"`
+}
+
+// HookEventName Hook event names (tdd SS3.26.1, ADR 33398 D7 item 2): the lowercase-first-letter
+// spelling of every `HookEventKind::all()` variant. Open (server-produced result
+// vocabulary, the #22785 enum-openness rule): a future event value is additive.
+type HookEventName string
+
+const (
+	HookEventNameSessionStart       HookEventName = "sessionStart"
+	HookEventNameUserPromptSubmit   HookEventName = "userPromptSubmit"
+	HookEventNamePreToolUse         HookEventName = "preToolUse"
+	HookEventNamePermissionRequest  HookEventName = "permissionRequest"
+	HookEventNamePostToolUse        HookEventName = "postToolUse"
+	HookEventNamePreCompact         HookEventName = "preCompact"
+	HookEventNamePostCompact        HookEventName = "postCompact"
+	HookEventNameSubagentStart      HookEventName = "subagentStart"
+	HookEventNameSubagentStop       HookEventName = "subagentStop"
+	HookEventNameStop               HookEventName = "stop"
+	HookEventNameSessionEnd         HookEventName = "sessionEnd"
+	HookEventNameNotification       HookEventName = "notification"
+	HookEventNamePostToolUseFailure HookEventName = "postToolUseFailure"
+	HookEventNameStopFailure        HookEventName = "stopFailure"
+	HookEventNamePostToolBatch      HookEventName = "postToolBatch"
+	HookEventNameInterrupt          HookEventName = "interrupt"
+	HookEventNameSessionFork        HookEventName = "sessionFork"
+	HookEventNamePreLLMCall         HookEventName = "preLLMCall"
+	HookEventNamePostLLMCall        HookEventName = "postLLMCall"
+)
+
+// HookEventNameValues are every HookEventName the bundle declares, in schema order.
+var HookEventNameValues = []HookEventName{
+	HookEventNameSessionStart,
+	HookEventNameUserPromptSubmit,
+	HookEventNamePreToolUse,
+	HookEventNamePermissionRequest,
+	HookEventNamePostToolUse,
+	HookEventNamePreCompact,
+	HookEventNamePostCompact,
+	HookEventNameSubagentStart,
+	HookEventNameSubagentStop,
+	HookEventNameStop,
+	HookEventNameSessionEnd,
+	HookEventNameNotification,
+	HookEventNamePostToolUseFailure,
+	HookEventNameStopFailure,
+	HookEventNamePostToolBatch,
+	HookEventNameInterrupt,
+	HookEventNameSessionFork,
+	HookEventNamePreLLMCall,
+	HookEventNamePostLLMCall,
+}
+
+// HookHandlerKind A hook row's origin (tdd SS3.26.1, ADR 33398 D7 item 1): the config `HookSourceKind`
+// values plus plugin-contributed. Open (server-produced result vocabulary, the #22785
+// enum-openness rule): a future origin is additive.
+type HookHandlerKind string
+
+const (
+	HookHandlerKindManaged HookHandlerKind = "managed"
+	HookHandlerKindUser    HookHandlerKind = "user"
+	HookHandlerKindProject HookHandlerKind = "project"
+	HookHandlerKindPlugin  HookHandlerKind = "plugin"
+)
+
+// HookHandlerKindValues are every HookHandlerKind the bundle declares, in schema order.
+var HookHandlerKindValues = []HookHandlerKind{
+	HookHandlerKindManaged,
+	HookHandlerKindUser,
+	HookHandlerKindProject,
+	HookHandlerKindPlugin,
+}
+
+// HookListParams `hook/list` params (tdd SS3.26.1). Per-session because hook scope follows the session's
+// workspace and plugin state.
+type HookListParams struct {
+	// The target session.
+	SessionID string `json:"sessionId"`
+}
+
+// HookListResult `hook/list` result (tdd SS3.26.1): one row per installed handler per event — a
+// `ResolvedHookHandler` carries one event, and grouping would lose matcher/command
+// identity (ADR 33398 D7 item 1).
+type HookListResult struct {
+	// The session's installed hook rows (tdd SS3.26.1 promises the set, not an order).
+	Hooks []HookCatalogEntry `json:"hooks"`
+}
+
+// HookRunStatus `hookRun` durable outcome (tdd SS4.5.11). Open: new outcomes are additive, and clients
+// MUST render unknown values generically.
+type HookRunStatus string
+
+const (
+	HookRunStatusCompleted HookRunStatus = "completed"
+	HookRunStatusBlocked   HookRunStatus = "blocked"
+	HookRunStatusFailed    HookRunStatus = "failed"
+	HookRunStatusTimedOut  HookRunStatus = "timedOut"
+	HookRunStatusCancelled HookRunStatus = "cancelled"
+)
+
+// HookRunStatusValues are every HookRunStatus the bundle declares, in schema order.
+var HookRunStatusValues = []HookRunStatus{
+	HookRunStatusCompleted,
+	HookRunStatusBlocked,
+	HookRunStatusFailed,
+	HookRunStatusTimedOut,
+	HookRunStatusCancelled,
+}
+
 // IfBusy Disposition when a turn is already running (tdd SS3.2). The wire default is `queue`: an
 // SDK caller who has not looked at session state should not silently mutate an in-flight
 // turn.
@@ -1197,7 +1483,7 @@ type InitializeResult struct {
 }
 
 // Item One transcript item at one revision (tdd SS4.4.1 common fields plus the per-kind fields
-// of SS4.5.2–4.5.10, all optional and owned by the kind their doc names).
+// of SS4.5.2–4.5.11, all optional and owned by the kind their doc names).
 // `item/started`, `item/updated`, and `item/completed` carry the full object; `item/delta`
 // appends to it by field path.
 type Item struct {
@@ -1217,6 +1503,10 @@ type Item struct {
 	// `toolCall`: who backgrounded the task; absent on pre-split records — never inferred
 	// (tdd SS4.5.5).
 	BackgroundInitiator *BackgroundInitiator `json:"backgroundInitiator,omitempty"`
+	// `reminderChild`: `true` when this child is a blocking reminder (it holds the turn open
+	// until it settles); absent otherwise, never `false` (ADR 41191 D4). The status word stays
+	// off the wire; clients name the reminder from `reminderAgentId`.
+	Blocking *bool `json:"blocking,omitempty"`
 	// `toolCall`: the provider call id (`call_...`), opaque.
 	CallID *string `json:"callId,omitempty"`
 	// `subagent`/`reminderChild`: the child's own session id, readable via
@@ -1241,10 +1531,14 @@ type Item struct {
 	Depth *int64 `json:"depth,omitempty"`
 	// `userMessage`: presentation form (tdd SS3.2); absent when the client sent none.
 	DisplayText *string `json:"displayText,omitempty"`
-	// `userShell`/`subagent`: observed wall-clock duration.
+	// `userShell`/`subagent`: observed wall-clock duration. `workflow`: the run's wall time
+	// from launch to reconciliation, set only on the settling `item/completed` — never a sum
+	// of child durations.
 	DurationMs *int64 `json:"durationMs,omitempty"`
 	// `workflow`: launched entry identity.
 	EntryID *string `json:"entryId,omitempty"`
+	// `hookRun`: the hook event in Q2 camelCase vocabulary (tdd SS4.5.11).
+	Event *HookEventName `json:"event,omitempty"`
 	// `userShell`: the process exit code, when it exited by code.
 	ExitCode *int64 `json:"exitCode,omitempty"`
 	// `userShell`: the terminating signal NUMBER, when signalled (e.g. 9) — the durable
@@ -1261,6 +1555,8 @@ type Item struct {
 	FallbackText *string `json:"fallbackText,omitempty"`
 	// `reminderChild`: the reminder generation.
 	GenerationID *int64 `json:"generationId,omitempty"`
+	// `hookRun`: the durable `hook_key` (tdd SS4.5.11).
+	HookKey *string `json:"hookKey,omitempty"`
 	// Bare UUIDv7; the item's identity across its whole lifecycle. Identity rule (tdd
 	// SS4.4.1): the task id for task-backed kinds (`toolCall`, `subagent`), the pre-minted
 	// commit `message_id` for delta-streamed kinds (`agentMessage`, `reasoning`), and the
@@ -1269,12 +1565,15 @@ type Item struct {
 	// The item kind (open enum): clients MUST render unknown kinds generically — kind name
 	// plus `status` plus `fallbackText` (tdd SS4.10).
 	Kind ItemKind `json:"kind"`
+	// `hookRun`: capped display label (tdd SS4.5.11).
+	Label *string `json:"label,omitempty"`
 	// `workflow`: the reconciled terminal message, set on completion.
 	Message *string `json:"message,omitempty"`
 	// `toolCall`: rich content the model saw beyond text; base64 is not inlined on the view
 	// (tdd SS4.5.5).
 	ModelVisibleContent []ModelVisibleContent `json:"modelVisibleContent,omitempty"`
-	// `subagent`: objective as spawned.
+	// `subagent`: objective as spawned, bounded on the wire at the 64 KiB retained-text budget
+	// (tdd SS4.5.4, ADR 35691 D9); a cut sets `truncated`. The durable record stays verbatim.
 	Objective *string `json:"objective,omitempty"`
 	// `compaction`: terminal only — folds installed/fallback status.
 	Outcome *CompactionOutcome `json:"outcome,omitempty"`
@@ -1292,7 +1591,8 @@ type Item struct {
 	// `reasoning`: provider reasoning item id (e.g. `rs_...`), for provider-side correlation.
 	ProviderItemID *string `json:"providerItemId,omitempty"`
 	// `compaction`: noop/failure reason, verbatim (snake_case durable vocabulary, e.g.
-	// `"no_compactable_history"`).
+	// `"no_compactable_history"`). `hookRun`: terminal-only capped terminal reason (tdd
+	// SS4.5.11).
 	Reason *string `json:"reason,omitempty"`
 	// RFC3339 timestamp of the item's driving durable record. Absent on ephemeral-opened items
 	// until first durable re-emission (tdd SS4.4.1).
@@ -1311,6 +1611,9 @@ type Item struct {
 	Revision int64 `json:"revision"`
 	// `subagent`: role as spawned.
 	Role *string `json:"role,omitempty"`
+	// `hookRun`: terminal-only durable outcome; stays `blocked` when the item settles
+	// `rejected` (tdd SS4.5.11).
+	RunStatus *HookRunStatus `json:"runStatus,omitempty"`
 	// `workflow`: launched script identity.
 	ScriptID *string `json:"scriptId,omitempty"`
 	// Open enum; terminal = anything other than `"inProgress"`. Unknown values MUST be treated
@@ -1343,6 +1646,13 @@ type Item struct {
 	TokensBefore *int64 `json:"tokensBefore,omitempty"`
 	// `toolCall`: tool name.
 	Tool *string `json:"tool,omitempty"`
+	// `toolCall`: the shared semantic receipt — what the operation did, as machine-readable
+	// fact (ADR 43399 D1, tdd SS4.5.5). Optional and additive: absence is always valid and is
+	// never an error (D3). When present, a server serves the **same** receipt on every item
+	// path — `item/completed`, `view/page`, seeded snapshots and resume (D3). Observation
+	// only; carries no control authority (D4), and no field in it enters model-visible content
+	// (D7).
+	ToolReceipt *ToolReceipt `json:"toolReceipt,omitempty"`
 	// `compaction`: what initiated the compaction.
 	Trigger *CompactionTrigger `json:"trigger,omitempty"`
 	// `workflow`: camelCased `WorkflowLaunchTriggerSource`, verbatim (durable runtime
@@ -1350,7 +1660,11 @@ type Item struct {
 	TriggerSource *string `json:"triggerSource,omitempty"`
 	// `true` when the server's per-surface text budget saturated a streamed surface
 	// (`agentMessage.text`, `reasoning.summary[*]`, `toolCall.visibleOutput`,
-	// `userShell.visibleOutput`); the durable full text remains in the log (tdd SS4.5.4).
+	// `userShell.visibleOutput`), or cut a `subagent` surface (`objective`, `fallbackText`,
+	// `result.summary`, `result.text`). On a `subagent` item the flag is item-level and never
+	// cleared: once any of those four is cut, every later update keeps it, even when
+	// `result.text` arrives whole (ADR 35691 D9). The durable full text remains in the log
+	// (tdd SS4.5.4).
 	Truncated *bool `json:"truncated,omitempty"`
 	// The owning turn (== the submitting `commandId` for fresh turns, tdd SS3.1.4). `null`
 	// only for `userShell` — the one kind outside a turn (tdd SS4.5.6).
@@ -1401,7 +1715,7 @@ type ItemDeltaParams struct {
 	ViewCursor string `json:"viewCursor"`
 }
 
-// ItemKind The nine v1 item kinds (tdd SS4.5.2–4.5.10). Open: a new kind is additive evolution,
+// ItemKind The ten v1 item kinds (tdd SS4.5.2–4.5.11). Open: a new kind is additive evolution,
 // and clients MUST render unknown kinds generically (tdd SS4.10).
 type ItemKind string
 
@@ -1415,6 +1729,7 @@ const (
 	ItemKindWorkflow      ItemKind = "workflow"
 	ItemKindReminderChild ItemKind = "reminderChild"
 	ItemKindCompaction    ItemKind = "compaction"
+	ItemKindHookRun       ItemKind = "hookRun"
 )
 
 // ItemKindValues are every ItemKind the bundle declares, in schema order.
@@ -1428,6 +1743,7 @@ var ItemKindValues = []ItemKind{
 	ItemKindWorkflow,
 	ItemKindReminderChild,
 	ItemKindCompaction,
+	ItemKindHookRun,
 }
 
 // ItemReadOutputEncoding The `item/readOutput` content encoding (tdd SS4.7.4). Closed: text media is ALWAYS
@@ -1547,9 +1863,34 @@ var JSONRPCVersionValues = []JSONRPCVersion{
 	JSONRPCVersion20,
 }
 
+// LastTurn The last `turn/completed` the session-view fold applied, restated on `session/resume`
+// and `session/read` so a reopened session can report a failed last turn (tdd SS2.5.2, ADR
+// 36635 D2/D3).
+type LastTurn struct {
+	// Copied when the `turn/completed` carried it: runtime `failed` terminals do, host-death
+	// `failed` terminals do not (ADR 36635 D2).
+	Error *TurnError `json:"error,omitempty"`
+	// Copied when the `turn/completed` carried it; a synthesized host-death `failed` terminal
+	// carries only this (`crash`, `crash_inferred`, or `incomplete`). Free display text:
+	// clients never branch on it.
+	Reason *string `json:"reason,omitempty"`
+	// The turn's terminal (tdd SS4.5.1; open enum).
+	Terminal TurnTerminal `json:"terminal"`
+	// The turn's id, as on its `turn/completed`; clients deduplicate a live `turn/completed`
+	// against this member by it (ADR 36635 D2).
+	TurnID string `json:"turnId"`
+}
+
 // MessageAttachment `userMessage` image attachment metadata (tdd SS4.5.2): metadata only — the durable
 // bytes live in the log and are reachable on the raw altitude.
 type MessageAttachment struct {
+	// This attachment's name, `<itemId>/<n>` — the item's id plus this entry's 1-based
+	// position in its `attachments` array (tdd SS4.5.2, D-071, ADR 42850; #42850). Name only:
+	// no link form and no byte read by id (#42648). Set by the server on every attachment
+	// entry it emits, and identical on live, paging, snapshot and rebuild paths (tdd SS4.5.2).
+	// Optional in the schema so older servers stay valid; clients compare and store the whole
+	// string and MUST NOT parse it (ADR 42850).
+	AttachmentID *string `json:"attachmentId,omitempty"`
 	// Pixel height, when known.
 	Height *int64 `json:"height,omitempty"`
 	// The image media type (e.g. `"image/png"`).
@@ -1568,6 +1909,10 @@ type ModelCatalogEntry struct {
 	ContextLimit *int64 `json:"contextLimit,omitempty"`
 	// Cost block; `null` when the catalog source declared nothing.
 	Cost *ModelCost `json:"cost,omitempty"`
+	// The row's catalog default. Optional only for decoding older hosts; a present value is
+	// never null and is always a member of `variants`. Absent under `"unknown"` (ADR 33400
+	// D2).
+	DefaultReasoningEffort *ReasoningEffort `json:"defaultReasoningEffort,omitempty"`
 	// Description; `null` when the catalog source declared nothing.
 	Description *string `json:"description,omitempty"`
 	// Presentation label.
@@ -1585,6 +1930,10 @@ type ModelCatalogEntry struct {
 	ProfileID *string `json:"profileId,omitempty"`
 	// Provider routing.
 	ProviderID string `json:"providerId"`
+	// Described selectable tiers, a same-order subset of `variants`. Optional only for
+	// decoding older hosts; a present value is never null. Absent under `"unknown"` (ADR 33400
+	// D2).
+	ReasoningEffortVariants []ModelDescribedReasoningEffort `json:"reasoningEffortVariants,omitempty"`
 	// Release date; `null` when the catalog source declared nothing.
 	ReleaseDate *string `json:"releaseDate,omitempty"`
 	// Complete ordered selectable efforts. Optional only for decoding older hosts; a present
@@ -1640,6 +1989,16 @@ type ModelCost struct {
 	Input string `json:"input"`
 	// Output cost, a decimal string.
 	Output string `json:"output"`
+}
+
+// ModelDescribedReasoningEffort One described reasoning-effort tier of a `model/list` row (tdd SS3.10, ADR 33400 D2): a
+// selectable tier plus the catalog's display string for it when declared.
+type ModelDescribedReasoningEffort struct {
+	// The catalog's per-tier display string; absent when the catalog declared none. Optional
+	// only for decoding; a present value is never null.
+	Description *string `json:"description,omitempty"`
+	// The tier, in the closed D-024 vocabulary.
+	Tier ReasoningEffort `json:"tier"`
 }
 
 // ModelListParams `model/list` params (tdd SS3.10): the discovery half of the model-picker gesture. **A
@@ -1862,6 +2221,53 @@ var PlatformOSValues = []PlatformOS{
 	PlatformOSWindows,
 }
 
+// PluginCatalogEntry One installed plugin record (tdd SS3.26.2).
+type PluginCatalogEntry struct {
+	// The record's own install switch; non-enabled rows are included as `false`, never
+	// dropped.
+	Enabled bool `json:"enabled"`
+	// The installed plugin's identifier.
+	ID string `json:"id"`
+	// The installed record's source provenance (ADR 33398 D7 item 3).
+	Source PluginSource `json:"source"`
+	// The installed version.
+	Version string `json:"version"`
+}
+
+// PluginListParams `plugin/list` params (tdd SS3.26.2). Per-session params; rows are the installed plugin
+// records.
+type PluginListParams struct {
+	// The target session.
+	SessionID string `json:"sessionId"`
+}
+
+// PluginListResult `plugin/list` result (tdd SS3.26.2): one row per installed plugin record; the spec
+// promises the set, not an order.
+type PluginListResult struct {
+	// The installed plugin rows.
+	Plugins []PluginCatalogEntry `json:"plugins"`
+}
+
+// PluginSource A plugin row's source provenance (tdd SS3.26.2, ADR 33398 D7 item 3): camelCase of
+// `PluginSourceProvenance`. Open (server-produced result vocabulary, the #22785
+// enum-openness rule): a future provenance is additive.
+type PluginSource string
+
+const (
+	PluginSourceCurated              PluginSource = "curated"
+	PluginSourceMarketplaceUserAdded PluginSource = "marketplaceUserAdded"
+	PluginSourceForeignImport        PluginSource = "foreignImport"
+	PluginSourceNativeLocal          PluginSource = "nativeLocal"
+)
+
+// PluginSourceValues are every PluginSource the bundle declares, in schema order.
+var PluginSourceValues = []PluginSource{
+	PluginSourceCurated,
+	PluginSourceMarketplaceUserAdded,
+	PluginSourceForeignImport,
+	PluginSourceNativeLocal,
+}
+
 // ReasoningEffort The reasoning-effort tier sampled at submission (tdd SS3.2, SS3.3). The **same closed
 // tier vocabulary** on both the fresh-turn and steer lanes, spelled identically; invalid
 // tiers are invalid params. `none` is a tier of the vocabulary (ask for no reasoning), not
@@ -2006,11 +2412,25 @@ type Session struct {
 	Branch *string `json:"branch,omitempty"`
 	// RFC3339. For a fork this is the fork session id's UUIDv7 mint instant (tdd SS2.4).
 	CreatedAt string `json:"createdAt"`
+	// The handshake `ClientInfo` recorded when the session was opened (FR-003), echoed
+	// verbatim — provenance, never an interpretation, and never a visibility gate (INV-005).
+	// **Additive-optional**; absence has four indistinguishable causes (INV-004): an
+	// in-process open; a pre-#23124 record; a half stamp where only one of name/version was
+	// recorded (FM-005) and `ClientInfo` requires both; and a session with no admitting
+	// handshake of its own — a fork child or a subagent — which never carries a stamp to
+	// begin with.
+	CreatedByClient *ClientInfo `json:"createdByClient,omitempty"`
 	// Derived first-user-prompt preview (tdd SS2.14.1, #27598). **Additive-optional**, omitted
 	// when underivable.
 	FirstUserPrompt *string `json:"firstUserPrompt,omitempty"`
 	// `null` for root sessions; fork provenance otherwise (tdd SS2.4).
 	ForkedFrom *ForkProvenance `json:"forkedFrom,omitempty"`
+	// What kind of session this is (spec 42713 FR-001, ADR 42713 D1/D4). **Open enum**, v1
+	// values `"root"` and `"subagent"`; a client treats an unknown value as an
+	// unknown-but-present kind and renders it, never rejecting the row. **Additive-optional**:
+	// absence asserts nothing — the host could not determine the home shape (FM-001), or the
+	// value is not yet available to serve (FM-003).
+	Kind *SessionKind `json:"kind,omitempty"`
 	// Content-activity recency, RFC3339 (tdd SS2.4, ADR 31983 D5). **Additive-optional**:
 	// omitted when no content record exists. Never advanced by lifecycle bookkeeping (the
 	// resume marker, re-stamps) or a fork's copied seed-replay records, and never precedes
@@ -2023,6 +2443,14 @@ type Session struct {
 	// otherwise — absent is never fabricated. Authoritative and renameable via
 	// `session/rename`.
 	Name *string `json:"name,omitempty"`
+	// The containing session's id when `kind` is `"subagent"` (FR-002, INV-002) — the id of
+	// the TOP-LEVEL session whose home holds this child, which is **not necessarily the
+	// session that spawned it**: native-child homes are physical siblings under the outer
+	// session's `subagent/` directory, so a subagent spawned by another subagent resolves to
+	// the outer session, not to its spawner. A client building a tree from this field gets one
+	// level, not a chain. Flat rather than nested: there is exactly one fact to carry, unlike
+	// `forkedFrom`'s four-field `ForkProvenance`. **Additive-optional**; a root carries none.
+	ParentSessionID *string `json:"parentSessionId,omitempty"`
 	// Absolute path of the session's durable log; non-nullable. Under the ephemeral session
 	// profile it is the **empty string**, meaning "no durable log exists" (tdd SS2.13.2) —
 	// the one value a client must not hand to a filesystem call.
@@ -2132,7 +2560,8 @@ type SessionCompactParams struct {
 	SessionID string `json:"sessionId"`
 	// The run whose context to compact. Omit and the server resolves the session's
 	// current/latest run; a session with no resolvable run rejects with `commandRejected`
-	// reason `missing_run` (tdd SS3.7).
+	// reason `missing_run` (tdd SS3.7). Any syntactically valid UUID: a turn from an older
+	// session may carry a v4 or v5 id. A malformed id is `invalidParams`.
 	TurnID *string `json:"turnId,omitempty"`
 }
 
@@ -2181,98 +2610,6 @@ type SessionContextUsageParams struct {
 	// The effective context-window size from the host's pressure basis; absent when the basis
 	// has no limit — the limit part is omitted, never invented (tdd SS4.6.6).
 	WindowTokens *int64 `json:"windowTokens,omitempty"`
-}
-
-// SessionDeleteCompletedParams The persisted deletion terminal, separate from admission (SS3.24). The shared schema is
-// one object. Actual failed producers send both optional fields; completed producers omit
-// both. Clients enforce those obligations before interpreting a known outcome. Preserve
-// unknown strings without treating them as successful completion.
-type SessionDeleteCompletedParams struct {
-	// Idempotency key of the original deletion command.
-	CommandID string `json:"commandId"`
-	// Deletion result; an unknown value leaves the command pending.
-	Outcome SessionDeleteOutcome `json:"outcome"`
-	// Erasure evidence for a failed result; omitted for a completed result.
-	PhysicalChange *SessionDeletePhysicalChange `json:"physicalChange,omitempty"`
-	// Required for a failed result and omitted for a completed result.
-	Reason *SessionDeleteFailureReason `json:"reason,omitempty"`
-	// Session named by the original deletion command.
-	SessionID string `json:"sessionId"`
-}
-
-// SessionDeleteFailureReason Stable deletion-failure vocabulary known to this version (SS3.24). The server emits only
-// these values. Future reason strings remain an open result vocabulary; consumers cannot
-// infer completion from any reason.
-type SessionDeleteFailureReason string
-
-const (
-	SessionDeleteFailureReasonOwnershipUnavailable SessionDeleteFailureReason = "ownershipUnavailable"
-	SessionDeleteFailureReasonSharedSource         SessionDeleteFailureReason = "sharedSource"
-	SessionDeleteFailureReasonWriterBusy           SessionDeleteFailureReason = "writerBusy"
-	SessionDeleteFailureReasonUnsafeSource         SessionDeleteFailureReason = "unsafeSource"
-	SessionDeleteFailureReasonSourceChanged        SessionDeleteFailureReason = "sourceChanged"
-	SessionDeleteFailureReasonQuiescenceFailed     SessionDeleteFailureReason = "quiescenceFailed"
-	SessionDeleteFailureReasonCancelled            SessionDeleteFailureReason = "cancelled"
-	SessionDeleteFailureReasonStorageFailure       SessionDeleteFailureReason = "storageFailure"
-	SessionDeleteFailureReasonCleanupIncomplete    SessionDeleteFailureReason = "cleanupIncomplete"
-	SessionDeleteFailureReasonUnsupportedLayout    SessionDeleteFailureReason = "unsupportedLayout"
-)
-
-// SessionDeleteFailureReasonValues are every SessionDeleteFailureReason the bundle declares, in schema order.
-var SessionDeleteFailureReasonValues = []SessionDeleteFailureReason{
-	SessionDeleteFailureReasonOwnershipUnavailable,
-	SessionDeleteFailureReasonSharedSource,
-	SessionDeleteFailureReasonWriterBusy,
-	SessionDeleteFailureReasonUnsafeSource,
-	SessionDeleteFailureReasonSourceChanged,
-	SessionDeleteFailureReasonQuiescenceFailed,
-	SessionDeleteFailureReasonCancelled,
-	SessionDeleteFailureReasonStorageFailure,
-	SessionDeleteFailureReasonCleanupIncomplete,
-	SessionDeleteFailureReasonUnsupportedLayout,
-}
-
-// SessionDeleteOutcome Known terminal outcomes. A future outcome cannot authorize success or exit.
-type SessionDeleteOutcome string
-
-const (
-	SessionDeleteOutcomeCompleted SessionDeleteOutcome = "completed"
-	SessionDeleteOutcomeFailed    SessionDeleteOutcome = "failed"
-)
-
-// SessionDeleteOutcomeValues are every SessionDeleteOutcome the bundle declares, in schema order.
-var SessionDeleteOutcomeValues = []SessionDeleteOutcome{
-	SessionDeleteOutcomeCompleted,
-	SessionDeleteOutcomeFailed,
-}
-
-// SessionDeleteParams `session/delete` params. The host validates a non-nil legacy-valid UUID target and a
-// UUID-v7 command identity before admission. Unknown members are ignored and do not enter
-// the normalized command identity (SS1.5.4).
-type SessionDeleteParams struct {
-	// UUID-v7 idempotency key for this deletion command.
-	CommandID string `json:"commandId"`
-	// Non-nil UUID of the session selected for deletion.
-	SessionID string `json:"sessionId"`
-}
-
-// SessionDeletePhysicalChange The failed attempt's immutable snapshot of persisted physical evidence. `possible` is
-// recorded before a detach/unlink, `confirmed` after a proved owned effect. A failure
-// never resets that evidence merely because the session path is absent. Unknown strings
-// remain representable; consumers must treat them conservatively as `possible`.
-type SessionDeletePhysicalChange string
-
-const (
-	SessionDeletePhysicalChangeNone      SessionDeletePhysicalChange = "none"
-	SessionDeletePhysicalChangePossible  SessionDeletePhysicalChange = "possible"
-	SessionDeletePhysicalChangeConfirmed SessionDeletePhysicalChange = "confirmed"
-)
-
-// SessionDeletePhysicalChangeValues are every SessionDeletePhysicalChange the bundle declares, in schema order.
-var SessionDeletePhysicalChangeValues = []SessionDeletePhysicalChange{
-	SessionDeletePhysicalChangeNone,
-	SessionDeletePhysicalChangePossible,
-	SessionDeletePhysicalChangeConfirmed,
 }
 
 // SessionDurability Whether this host writes its sessions to disk (SS1.4.1, SS2.13). A property of the host
@@ -2348,6 +2685,31 @@ type SessionHistory struct {
 	Snapshot *ViewSnapshot `json:"snapshot,omitempty"`
 }
 
+// SessionKind What kind of session this is (spec 42713 FR-001/FR-005, ADR 42713 D1/D4). **Open**: a
+// new kind is additive evolution, and a client MUST render an unknown value as an
+// unknown-but-present kind rather than rejecting the row. Both v1 values are terms the
+// tree already uses — the child log directory is `subagent` and `ItemKind` already
+// carries a `subagent` variant — so no new vocabulary is minted.
+type SessionKind string
+
+const (
+	SessionKindRoot     SessionKind = "root"
+	SessionKindSubagent SessionKind = "subagent"
+)
+
+// SessionKindValues are every SessionKind the bundle declares, in schema order.
+var SessionKindValues = []SessionKind{
+	SessionKindRoot,
+	SessionKindSubagent,
+}
+
+// SessionListBranchFilter Exact branch selection (#42035 FR-42035-2).
+type SessionListBranchFilter struct {
+	// 1–32 nonempty branch names, each 1–256 UTF-8 bytes, counted before deduplication;
+	// `null` selects sessions with no branch.
+	AnyOf []string `json:"anyOf"`
+}
+
 // SessionListChangedParams `session/listChanged` params (#33084, ADR 33084 D3): one changed row of the
 // `session/list` shape — the full SS2.4 Session object as the answering host's list face
 // serves it at emission (the ADR 29243 live-overlaid row), a replace, never a delta.
@@ -2359,12 +2721,30 @@ type SessionListChangedParams struct {
 	Session Session `json:"session"`
 }
 
+// SessionListFilter The `session/list` filter (#42035, spec 207 FR-42035-2..5). Members are ANDed with each
+// other and with the top-level `workspaceRoot` and `updatedAfter`; values inside each
+// `anyOf` are ORed. The canonical form the server echoes deduplicates and sorts every set,
+// spells session IDs as canonical UUIDs, lowercases text terms, and orders `text.fields`
+// `name` then `title`.
+type SessionListFilter struct {
+	// Only sessions whose branch is one of these.
+	Branch *SessionListBranchFilter `json:"branch,omitempty"`
+	// Only sessions whose ID is one of these.
+	SessionID *SessionListSessionIDFilter `json:"sessionId,omitempty"`
+	// Only sessions whose served name or title matches these token prefixes.
+	Text *SessionListTextFilter `json:"text,omitempty"`
+}
+
 // SessionListParams `session/list` params (tdd SS2.5.4). Read-only; never touches leases.
 type SessionListParams struct {
 	// Opaque page cursor from a prior result. Page cursors are a distinct opaque-string family
 	// from view cursors and stream cursors, valid only for re-issuing the same listing (tdd
 	// SS2.5.4). Omitted and explicit `null` both mean "first page" (#23468).
 	Cursor *string `json:"cursor,omitempty"`
+	// Optional structured selection applied inside the bounded index query before paging
+	// (#42035, spec 207 FR-42035-1). Present — including `{}` — makes a supporting server
+	// echo its canonical form as `appliedFilter`; omitted keeps the pre-#42035 behavior.
+	Filter *SessionListFilter `json:"filter,omitempty"`
 	// Page size; default 50, max 200 — the cap is published under #22785 E6c (owner-ruled
 	// 2026-08-26).
 	Limit *int64 `json:"limit,omitempty"`
@@ -2376,10 +2756,55 @@ type SessionListParams struct {
 
 // SessionListResult `session/list` result (tdd SS2.5.4). Ordering is `updatedAt` descending.
 type SessionListResult struct {
+	// The canonical filter the server applied, present exactly when the request carried
+	// `filter` (#42035, spec 207 FR-42035-1). The probe is per-predicate PRESENCE (ADR 42035
+	// D6): a client that requires filtering checks that every predicate it sent comes back as
+	// a member here, and treats a missing member as unsupported. Value equality is the wrong
+	// test — canonicalization trims, lowercases, NFC-normalizes, dedupes and sorts, so the
+	// echoed values often differ from the sent ones on a correctly filtered page.
+	AppliedFilter *SessionListFilter `json:"appliedFilter,omitempty"`
 	// The next page's cursor; `null` on the last page.
 	NextCursor *string `json:"nextCursor,omitempty"`
 	// The page of stored sessions.
 	Sessions []Session `json:"sessions"`
+}
+
+// SessionListSessionIDFilter Exact session-ID selection (#42035 FR-42035-2).
+type SessionListSessionIDFilter struct {
+	// 1–200 session UUIDs, counted before deduplication.
+	AnyOf []string `json:"anyOf"`
+}
+
+// SessionListTextField A served session field `session/list` text search reads (#42035 FR-42035-3). The client
+// selects it, so the set is closed.
+type SessionListTextField string
+
+const (
+	SessionListTextFieldName  SessionListTextField = "name"
+	SessionListTextFieldTitle SessionListTextField = "title"
+)
+
+// SessionListTextFieldValues are every SessionListTextField the bundle declares, in schema order.
+var SessionListTextFieldValues = []SessionListTextField{
+	SessionListTextFieldName,
+	SessionListTextFieldTitle,
+}
+
+// SessionListTextFilter Name/title token-prefix search (#42035 FR-42035-3/FR-42035-4). Each term is trimmed,
+// lowercased with ordinary Unicode lowercase, then NFC- normalized, and matches the
+// beginning of an alphanumeric token, accent-sensitively (`check` matches `Checkout`;
+// `eck` does not). NFC means a decomposed and a precomposed spelling of one term are the
+// same term, and the echo returns the composed form. Matching never reorders rows.
+type SessionListTextFilter struct {
+	// Every term must match at least one selected field.
+	AllOf []string `json:"allOf,omitempty"`
+	// At least one term must match a selected field. `allOf` plus `anyOf` carry 1–16 terms
+	// in total, each 1–128 UTF-8 bytes in its canonical form (trimmed, lowercased, NFC) —
+	// the bytes `appliedFilter` echoes. Lowercasing and NFC can both lengthen a term, so a
+	// term inside the bound raw may still exceed it canonically.
+	AnyOf []string `json:"anyOf,omitempty"`
+	// The 1–2 unique served fields searched.
+	Fields []SessionListTextField `json:"fields"`
 }
 
 // SessionMCPServerConfig One native MCP server supplied at session construction (ADR 32760 D1). **Closed union**
@@ -2510,6 +2935,8 @@ type SessionReadParams struct {
 type SessionReadResult struct {
 	// The served history.
 	History SessionHistory `json:"history"`
+	// Same member as `session/resume` (tdd SS2.5.5, ADR 36635 D2).
+	LastTurn *LastTurn `json:"lastTurn,omitempty"`
 	// The same pointer shape as `session/resume`. Because `session/read` never subscribes this
 	// is a point-in-time log read only: no requests are re-issued after it (tdd SS2.5.5).
 	PendingRequests []PendingRequestPointer `json:"pendingRequests"`
@@ -2589,6 +3016,9 @@ type SessionResumeParams struct {
 type SessionResumeResult struct {
 	// The served history.
 	History SessionHistory `json:"history"`
+	// How the last folded turn ended (tdd SS2.5.2, ADR 36635 D2). **Additive-optional**;
+	// absence is a non-assertion.
+	LastTurn *LastTurn `json:"lastTurn,omitempty"`
 	// The late-joiner pointer set; empty when nothing is pending.
 	PendingRequests []PendingRequestPointer `json:"pendingRequests"`
 	// The loaded session.
@@ -2698,6 +3128,15 @@ type SessionStartParams struct {
 	SessionID *string `json:"sessionId,omitempty"`
 	// Absolute path, folded into the first metadata record.
 	WorkspaceRoot *string `json:"workspaceRoot,omitempty"`
+	// The session's initial runtime workspace-root set: ordered absolute canonical existing
+	// directory paths; the first root is the CWD and plays the primary-root role; every root
+	// receives the ADR 11237 `:workspace_roots` rules; extra roots grant no Project Trust.
+	// When `workspaceRoot` is also present the two must name the same folder, compared on
+	// canonical forms (the raw `workspaceRoot` is canonicalized first; ADR 37313 D9), or the
+	// request is invalid params, and so is explicit `null` (the D-049 null-tolerant set is
+	// closed and excludes this member). Omitted preserves single-root behavior (tdd SS2.5.1,
+	// ADR 37313, #37313).
+	WorkspaceRoots []string `json:"workspaceRoots,omitempty"`
 }
 
 // SessionStartResult `session/start` result (tdd SS2.5.1).
@@ -3091,9 +3530,12 @@ type SubagentResult struct {
 	EvidenceRefs []string `json:"evidenceRefs"`
 	// Structured result data, verbatim, when present.
 	StructuredData json.RawMessage `json:"structuredData,omitempty"`
-	// Bounded result summary (<=512 chars, runtime-enforced).
+	// Result summary, bounded on the wire at the 64 KiB retained-text budget (tdd SS4.5.4 and
+	// SS4.5.7, ADR 35691 D9); a cut sets the item's `truncated`. The durable record stays
+	// verbatim.
 	Summary string `json:"summary"`
-	// Result text (<=32 KiB), when present.
+	// Result text, when present, bounded on the wire at the same 64 KiB budget (ADR 35691 D9);
+	// a cut sets the item's `truncated`.
 	Text *string `json:"text,omitempty"`
 }
 
@@ -3266,6 +3708,54 @@ type TokenUsage struct {
 	ReasoningTokens int64 `json:"reasoningTokens"`
 }
 
+type ToolReceipt struct {
+	Details   *CronReceipt         `json:"details,omitempty"`
+	Family    string               `json:"family"`
+	Operation ToolReceiptOperation `json:"operation"`
+	Outcome   ToolReceiptOutcome   `json:"outcome"`
+}
+
+// ToolReceiptOperation Which operation within the family the receipt describes (ADR 43399 D1/D2). Open —
+// registered per family, never derived from the tool name.
+type ToolReceiptOperation string
+
+const (
+	ToolReceiptOperationCreate ToolReceiptOperation = "create"
+	ToolReceiptOperationDelete ToolReceiptOperation = "delete"
+	ToolReceiptOperationList   ToolReceiptOperation = "list"
+)
+
+// ToolReceiptOperationValues are every ToolReceiptOperation the bundle declares, in schema order.
+var ToolReceiptOperationValues = []ToolReceiptOperation{
+	ToolReceiptOperationCreate,
+	ToolReceiptOperationDelete,
+	ToolReceiptOperationList,
+}
+
+// ToolReceiptOutcome What the operation did (ADR 43399 D1/D2). Open, and a **single shared vocabulary**: a
+// value appearing in two families means the same thing in both, which is why the permitted
+// `status` values are bound to the value here rather than per family.
+type ToolReceiptOutcome string
+
+const (
+	ToolReceiptOutcomeCreated   ToolReceiptOutcome = "created"
+	ToolReceiptOutcomeDuplicate ToolReceiptOutcome = "duplicate"
+	ToolReceiptOutcomeDeleted   ToolReceiptOutcome = "deleted"
+	ToolReceiptOutcomeMissing   ToolReceiptOutcome = "missing"
+	ToolReceiptOutcomeListed    ToolReceiptOutcome = "listed"
+	ToolReceiptOutcomeRejected  ToolReceiptOutcome = "rejected"
+)
+
+// ToolReceiptOutcomeValues are every ToolReceiptOutcome the bundle declares, in schema order.
+var ToolReceiptOutcomeValues = []ToolReceiptOutcome{
+	ToolReceiptOutcomeCreated,
+	ToolReceiptOutcomeDuplicate,
+	ToolReceiptOutcomeDeleted,
+	ToolReceiptOutcomeMissing,
+	ToolReceiptOutcomeListed,
+	ToolReceiptOutcomeRejected,
+}
+
 // TraceContext Optional W3C trace context, on requests in both directions only — never on responses
 // or notifications (SS1.8).
 type TraceContext struct {
@@ -3283,7 +3773,9 @@ type TurnCancelParams struct {
 	CommandID string `json:"commandId"`
 	// The target session.
 	SessionID string `json:"sessionId"`
-	// The exact turn to cancel; omit to target the current foreground turn.
+	// The exact turn to cancel; omit to target the current foreground turn. Any syntactically
+	// valid UUID: a turn from an older session may carry a v4 or v5 id. A malformed id is
+	// `invalidParams`.
 	TurnID *string `json:"turnId,omitempty"`
 }
 
@@ -3301,8 +3793,9 @@ type TurnCancelResult struct {
 type TurnCompletedParams struct {
 	// Turn duration; absent means unmeasured, never fabricated.
 	DurationMs *int64 `json:"durationMs,omitempty"`
-	// Present iff `terminal` is `"failed"` (tdd SS4.5.1): mid-turn failures reach the client
-	// here — never as a JSON-RPC error.
+	// Present when `terminal` is `"failed"`, except on a synthesized host-death terminal,
+	// which carries `reason` instead (tdd SS4.5.1, ADR 36635 D2): mid-turn failures reach the
+	// client here — never as a JSON-RPC error.
 	Error *TurnError `json:"error,omitempty"`
 	// The runtime's free-text terminal reason, verbatim. Display and diagnostics only; never
 	// branch on it.
@@ -3362,6 +3855,24 @@ var TurnErrorKindValues = []TurnErrorKind{
 	TurnErrorKindModelError,
 	TurnErrorKindLaunchError,
 	TurnErrorKindAuthRequired,
+}
+
+// TurnForegroundCompletedParams `turn/foregroundCompleted` params (tdd SS4.5.12): the turn's foreground work is done and
+// named background reminder checks hold the turn open. Explicitly non-terminal: the turn
+// ends only at `turn/completed` / `turn/unqueued`.
+type TurnForegroundCompletedParams struct {
+	// `reminderAgentId`s of the firing's blocking set, never empty; agent ids, never display
+	// names. Live-best-effort: reads, resume, and replay may narrow it to the linked subset.
+	BlockingAgents []string `json:"blockingAgents"`
+	// The owning session.
+	SessionID string `json:"sessionId"`
+	// The durable records this event folded from, anchored at the first blocking link of the
+	// firing window.
+	SourceRange SourceRange `json:"sourceRange"`
+	// The turn whose foreground completed.
+	TurnID string `json:"turnId"`
+	// Opaque, strictly monotonic view cursor (tdd SS4.1).
+	ViewCursor string `json:"viewCursor"`
 }
 
 // TurnInputPart One ordered content part of a turn submission (tdd SS3.2). File mentions are text, not a
@@ -3432,7 +3943,9 @@ type TurnInterruptParams struct {
 	// The target session.
 	SessionID string `json:"sessionId"`
 	// The exact turn to interrupt. Omit to target the session's current foreground turn,
-	// resolved at admission; prefer passing the explicit id when you have one (tdd SS3.4).
+	// resolved at admission; prefer passing the explicit id when you have one (tdd SS3.4). Any
+	// syntactically valid UUID: a turn from an older session may carry a v4 or v5 id. A
+	// malformed id is `invalidParams`.
 	TurnID *string `json:"turnId,omitempty"`
 }
 
@@ -3538,6 +4051,13 @@ type TurnStartParams struct {
 	ReasoningEffort *ReasoningEffort `json:"reasoningEffort,omitempty"`
 	// The target session.
 	SessionID string `json:"sessionId"`
+	// A sticky REPLACEMENT of the session's runtime workspace-root set, binding at this turn's
+	// launch and persisting for subsequent turns until replaced again — unlike
+	// `reasoningEffort`, which is this-turn-only. Same shape and validation as
+	// `session/start.workspaceRoots`; invalid params on an explicit `ifBusy: "steer"` submit
+	// and so is explicit `null` (the D-049 null-tolerant set is closed); omitted means
+	// "unchanged", never "reset" (tdd SS3.2, ADR 37313 D3, #37313).
+	WorkspaceRoots []string `json:"workspaceRoots,omitempty"`
 }
 
 // TurnStartResult `turn/start` result (tdd SS3.2).
@@ -3577,7 +4097,8 @@ type TurnSteerParams struct {
 	CommandID string `json:"commandId"`
 	// The turn you believe is running. Closes the race where the turn completes or is replaced
 	// between your read and your steer: input meant for turn A can never leak into turn B (tdd
-	// SS3.3).
+	// SS3.3). Any syntactically valid UUID: a turn from an older session may carry a v4 or v5
+	// id. A malformed id is `invalidParams`; an id that is not the running turn is refused.
 	ExpectedTurnID string `json:"expectedTurnId"`
 	// Same content parts as `turn/start`.
 	Input []TurnInputPart `json:"input"`
@@ -3625,6 +4146,8 @@ type TurnUnqueueParams struct {
 	SessionID string `json:"sessionId"`
 	// The queued turn to reclaim, exactly as the queueing `turn/start`'s ack minted it and as
 	// snapshot `queuedTurns` lists it. Required, and never "whichever is newest" (tdd SS3.6).
+	// Any syntactically valid UUID: a turn from an older session may carry a v4 or v5 id. A
+	// malformed id is `invalidParams`.
 	TurnID string `json:"turnId"`
 }
 
@@ -3802,6 +4325,42 @@ type UserInputClarifyResult struct {
 	UserInputID string `json:"userInputId"`
 }
 
+// UserInputEngagedParams `userInput/engaged` params (tdd SS5.10.4, ADR 45450 D2): a fire-and-forget engagement
+// note — the user started interacting with a timed prompt, so the host disarms that
+// prompt's auto-resolution countdown. No result, no errors, no `commandId`, no ledger row.
+type UserInputEngagedParams struct {
+	// The target session.
+	SessionID string `json:"sessionId"`
+	// The prompt being engaged.
+	UserInputID string `json:"userInputId"`
+}
+
+// UserInputInterruptParams `userInput/interrupt` params (tdd SS5.10.2, ADR 45450 D1): interrupt the named prompt
+// carrying confirmed partial answers, then stop the turn. `answers` is optional and, when
+// present, follows exactly the `userInput/answer` shape and limits (same `questionId` +
+// one-of + `note` rules, same -32057 `userInputAnswerInvalid` on mismatch); absent or
+// empty means interrupt with no confirmed answers.
+type UserInputInterruptParams struct {
+	// Confirmed partial answers the named settlement carries.
+	Answers []UserInputAnswer `json:"answers,omitempty"`
+	// The SS3.1.1 idempotency handle (UUIDv7).
+	CommandID string `json:"commandId"`
+	// The target session.
+	SessionID string `json:"sessionId"`
+	// The prompt being interrupted.
+	UserInputID string `json:"userInputId"`
+}
+
+// UserInputInterruptResult `userInput/interrupt` result (tdd SS5.10.2).
+type UserInputInterruptResult struct {
+	// Echoes the client's id.
+	CommandID string `json:"commandId"`
+	// Admission status.
+	Status CommandStatus `json:"status"`
+	// The prompt this interruption settled.
+	UserInputID string `json:"userInputId"`
+}
+
 type UserInputOption struct {
 	Description *string                 `json:"description,omitempty"`
 	Label       string                  `json:"label"`
@@ -3877,15 +4436,20 @@ var UserInputSelectionModeValues = []UserInputSelectionMode{
 
 // UserInputSettledParams `userInput/settled` params: the first durable prompt settlement.
 type UserInputSettledParams struct {
-	Answers            []UserInputAnswer       `json:"answers"`
-	Clarification      *UserInputClarification `json:"clarification,omitempty"`
-	DecidedByCommandID *string                 `json:"decidedByCommandId,omitempty"`
-	Outcome            UserInputOutcome        `json:"outcome"`
-	Reason             *string                 `json:"reason,omitempty"`
-	SessionID          string                  `json:"sessionId"`
-	SourceRange        SourceRange             `json:"sourceRange"`
-	UserInputID        string                  `json:"userInputId"`
-	ViewCursor         string                  `json:"viewCursor"`
+	Answers       []UserInputAnswer       `json:"answers"`
+	Clarification *UserInputClarification `json:"clarification,omitempty"`
+	// The decision time as RFC3339, projected from the durable settlement record's own stamp
+	// (ADR 45450 D3, ruling 2026-10-01): always present on the wire (schema-required,
+	// `null`-able); decoders still tolerate its absence (`default`, never skipped — SS5.10.3
+	// keeps every member present), and current hosts always populate it.
+	DecidedAt          *string          `json:"decidedAt,omitempty"`
+	DecidedByCommandID *string          `json:"decidedByCommandId,omitempty"`
+	Outcome            UserInputOutcome `json:"outcome"`
+	Reason             *string          `json:"reason,omitempty"`
+	SessionID          string           `json:"sessionId"`
+	SourceRange        SourceRange      `json:"sourceRange"`
+	UserInputID        string           `json:"userInputId"`
+	ViewCursor         string           `json:"viewCursor"`
 }
 
 // UserInputSettlementSummary Winning terminal returned to a late user-input command.
@@ -4068,6 +4632,14 @@ type WorkflowChild struct {
 	ChildID string `json:"childId"`
 	// The child's observed duration, when recorded.
 	DurationMs *int64 `json:"durationMs,omitempty"`
+	// The attempt's machine failure class, verbatim when recorded (open, snake_case durable
+	// runtime vocabulary — the SS1.6 casing exemption). The attempt's outcome (`terminal`,
+	// else `status`) stays authoritative, except that `"completed"` with `failureKind` present
+	// means it failed (#17769).
+	FailureKind *string `json:"failureKind,omitempty"`
+	// The attempt's failure reason text, verbatim when recorded except cut to at most 2,048
+	// UTF-8 bytes ending in U+2026 when longer.
+	FailureReason *string `json:"failureReason,omitempty"`
 	// The child's display label, when recorded.
 	Label *string `json:"label,omitempty"`
 	// The child's phase, when recorded.
