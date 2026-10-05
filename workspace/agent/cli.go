@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/afmemory"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
@@ -52,6 +53,14 @@ var subcommands = []subcommand{
 		operands: "<verb>",
 		summary:  "per-working-copy Postgres for tests: up|url|env|reset|down|status",
 		run:      runAFDB,
+	},
+	{
+		// Behind the af-memory PATH shim (ADR 0108): the command-line side of AF memory, talking
+		// to this workspace's own Agent.
+		name:     "af-memory",
+		operands: "<verb>",
+		summary:  "AF agent memory: changes|import-sources|import --project <slug> [--dry-run]",
+		run:      afmemory.Run,
 	},
 	{
 		// Behind the af-aws-exec PATH shim (issue #998): one command under one SSO

@@ -17,7 +17,7 @@ const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.met
 // memoryTransfer (export and import), so the family is concatenated and read as one tab body.
 // Add any new file here: forget one and the check that is supposed to watch for unregistered
 // REST paths silently stops covering it.
-const tab = ["./MemoryTab.tsx", "./memoryTypes.ts", "./memoryRestore.tsx", "./memoryTransfer.tsx", "./memoryChanges.tsx"]
+const tab = ["./MemoryTab.tsx", "./memoryTypes.ts", "./memoryRestore.tsx", "./memoryTransfer.tsx", "./memoryChanges.tsx", "./memoryClaudeImport.tsx"]
   .map(read)
   .join("\n");
 const dialog = read("../SettingsDialog.tsx");
@@ -50,6 +50,8 @@ describe("agent memory tab in the settings modal", () => {
         // ADR 0108: entries/changes and entries/revert (the regex stops at "entries"; both full
         // paths are checked below).
         "api/agents/memory/entries",
+        // The claude-memory import (the regex stops at the hyphen; full paths are checked below).
+        "api/agents/memory/claude",
       ]),
     );
     for (const p of new Set(paths)) {
@@ -75,6 +77,17 @@ describe("agent memory tab in the settings modal", () => {
       expect(cpRoutes).toContain("/" + p);
       expect(agentRoutes).toContain(p.replace(/^api\//, "/"));
     }
+  });
+
+  it("registers the claude-memory import (sources, preview, apply) on both sides", () => {
+    for (const p of ["api/agents/memory/claude-import", "api/agents/memory/claude-import/preview"]) {
+      expect(tab).toContain(p);
+      expect(cpRoutes).toContain("/" + p);
+      expect(agentRoutes).toContain(p.replace(/^api\//, "/"));
+    }
+    // The apply goes to the same path as the sources list, by POST.
+    expect(cpRoutes).toContain('"POST /api/agents/memory/claude-import"');
+    expect(agentRoutes).toContain('"POST /agents/memory/claude-import"');
   });
 
   it("registers import/apply on both sides too (it is the one path that goes missing alone)", () => {

@@ -267,3 +267,44 @@
   }
 
 }
+
+/* Import from Claude Code (ADR 0108 decision 6). */
+.mem-ci {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.mem-ci h4 {
+  margin: 0 0 4px;
+}
+
+.mem-ci-group {
+  margin: 6px 0;
+}
+
+.mem-ci-items {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.mem-ci-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.mem-badge.ci-secret,
+.mem-badge.ci-invalid {
+  color: var(--err);
+  border-color: var(--err);
+}
+
+.mem-badge.ci-update {
+  color: var(--accent);
+  border-color: var(--accent);
+}

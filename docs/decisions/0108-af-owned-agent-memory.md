@@ -5,7 +5,8 @@ English | [日本語](0108-af-owned-agent-memory.ja.md)
 - Status: **proposed** (2026-10-03). Built so far (P1 without the claude seed): the store, the
   five MCP tools, revisions, authorship, the one-commit history under `af/` and the secret scan
   (`memoryx/agent_memory.go`); the Console change list with revert and forget
-  (`memoryx/agent_memory_changes.go`, Settings → Agent memory). Not built: the claude seed. The figures
+  (`memoryx/agent_memory_changes.go`, Settings → Agent memory); the one-time claude import
+  (`memoryx/agent_memory_claude_import.go`, decision 6 step 1, and the `af-memory` command). The figures
   below were measured on one workspace on 2026-10-03; the claude settings named in decision 6 were
   found as strings in the Claude Code 2.1.288 binary and **their behaviour is not measured**.
   Revised 2026-10-04 before any of it was built: decision 8 now publishes changes directly instead
@@ -92,11 +93,21 @@ that is safe when what one session writes is read by every kind.
    is built per session, may inject them directly. cursor gets the guidance in the tools'
    descriptions.
 6. **claude's own auto-memory: a one-time seed now, one memory later.**
-   - Step 1: the member imports claude's existing memory for a project once, as an explicit Console
-     action. The Console first shows what would be imported and what the secret scan (decision 9)
-     found; the member confirms, and each imported memory records `source` / `source_hash` and the
-     author as unknown. There is no continuous sync: claude → AF on every trigger would resurrect
-     memories forgotten in AF and overwrite AF edits with claude's older text.
+   - Step 1: the member imports claude's existing memory for a project, as an explicit Console
+     action or with `af-memory import`. It reads `<claude config>/projects/<slug>/memory/*.md`
+     (claude's `MEMORY.md` index excluded); a slug cannot be decoded, so each working copy under
+     `~/repos` is mapped forward to its key and a slug that no working copy, or two projects,
+     claim is listed but not importable. The Console first shows what would be imported and what
+     the secret scan (decision 9) found; the member confirms, and each imported memory records
+     `source` / `source_hash` and the author as unknown, committed once per memory with the
+     operation `import` and the member as the commit's author. Running it again is safe: a
+     memory whose claude file is unchanged is skipped, one whose claude file is **newer** than the
+     AF memory (and differs) is updated — this overwrites an edit made in AF after the import,
+     which the member chose — and one that was ever forgotten or whose import was reverted is
+     **never brought back**. Applying needs the switch on (decision 4's setting); the preview and
+     the command's `--dry-run` work while it is off. There is no continuous sync: claude → AF on
+     every trigger would resurrect memories forgotten in AF and overwrite AF edits with claude's
+     older text.
    - Step 2 (decided after measuring): switch claude's auto-memory off (`autoMemoryEnabled` /
      `CLAUDE_CODE_DISABLE_AUTO_MEMORY`) and let claude use the MCP tools like every other kind.
      Pointing claude's native writer at the store (`autoMemoryDirectory`) is acceptable **only** if
@@ -128,10 +139,12 @@ that is safe when what one session writes is read by every kind.
    import, a restore, and anything claude's native writer produced (decision 6) — is scanned with the
    0022 rules (`memory_secrets.go`) before it is published. A hit in an agent's write is refused:
    the agent is told the rule and the line so it can rewrite the memory without the value, and
-   there is no override on the MCP side. A hit in the import or a restore — a restore is included
+   there is no override on the MCP side. A hit in the claude import is skipped and listed with its rule, field, line and masked hint; there
+   is no acknowledgement, as with claude's own team-memory sync: the member fixes the claude file and
+   imports again. A hit in a restore — a restore is included
    although 0022's restore copies history without a scan today — blocks unless the member
    acknowledges it in the Console, and an acknowledgement given for one body does not carry over to
-   another. The value is never returned or logged — rule, path, line and a masked hint, as at export today.
+   another (this part is unchanged). The value is never returned or logged — rule, path, line and a masked hint, as at export today.
    Memories that already exist are scanned before they are first exposed through read or index.
    `memory_forget` removes a memory from what is published; it does not remove it from history, so
    purging a secret from history is a separate, member-only operation (open question 3).

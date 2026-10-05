@@ -70,10 +70,18 @@ func agentMemErrKind(err error) string {
 // sessions may do, and the member can still review and undo what was written while it was on.
 var AgentMemoryEnabled func() bool
 
-func agentMemCallerFrom(w http.ResponseWriter, name string) (agentMemCaller, bool) {
+// agentMemRequireEnabled answers 403 and returns false while the switch is off.
+func agentMemRequireEnabled(w http.ResponseWriter) bool {
 	if AgentMemoryEnabled == nil || !AgentMemoryEnabled() {
 		httpx.WriteErr(w, http.StatusForbidden, errCodeMemoryDisabled,
 			"Agent Fleet memory is turned off for sessions in Settings > Agents")
+		return false
+	}
+	return true
+}
+
+func agentMemCallerFrom(w http.ResponseWriter, name string) (agentMemCaller, bool) {
+	if !agentMemRequireEnabled(w) {
 		return agentMemCaller{}, false
 	}
 	c, err := agentMemResolveCaller(name)
@@ -200,6 +208,41 @@ func HandleAgentMemoryRevert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := agentMemRevert(req, time.Now())
+	if err != nil {
+		agentMemWriteErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// HandleAgentMemoryClaudeSources lists the claude projects that have memory to import. Like the
+// preview it works while the switch is off: reading claude's own files changes nothing.
+func HandleAgentMemoryClaudeSources(w http.ResponseWriter, r *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, agentMemImportList())
+}
+
+// HandleAgentMemoryClaudePreview says what an import of one claude project would do.
+func HandleAgentMemoryClaudePreview(w http.ResponseWriter, r *http.Request) {
+	pv, err := agentMemImportPreviewFor(r.URL.Query().Get("slug"))
+	if err != nil {
+		agentMemWriteErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, pv)
+}
+
+// HandleAgentMemoryClaudeApply imports the listed items. Unlike the two reads above it needs
+// the switch on: it writes to the store the sessions read.
+func HandleAgentMemoryClaudeApply(w http.ResponseWriter, r *http.Request) {
+	if !agentMemRequireEnabled(w) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	var req agentMemImportReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	res, err := agentMemImportApply(req, time.Now())
 	if err != nil {
 		agentMemWriteErr(w, err)
 		return

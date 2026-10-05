@@ -39,14 +39,14 @@ var agentMemMember = agentMemCaller{Session: "console", Kind: "member"}
 var (
 	agentMemRepoPathRe = regexp.MustCompile(`^af/(user|projects/[a-z0-9._-]{1,80})/([a-z0-9][a-z0-9-]{0,63})\.md$`)
 	agentMemCommitRe   = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
-	agentMemOps        = map[string]bool{"create": true, "update": true, "forget": true, "revert": true}
+	agentMemOps        = map[string]bool{"create": true, "update": true, "forget": true, "revert": true, "import": true}
 )
 
 // agentMemChangeView is one published change as the Console lists it.
 type agentMemChangeView struct {
 	Commit        string           `json:"commit"`
 	At            string           `json:"at"`
-	Op            string           `json:"op"` // create | update | forget | revert
+	Op            string           `json:"op"` // create | update | forget | revert | import
 	Scope         string           `json:"scope"`
 	Project       *agentMemProject `json:"project,omitempty"`
 	Name          string           `json:"name"`
