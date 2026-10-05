@@ -1038,3 +1038,13 @@ Follow-ups: #1716（報告）、#1718（readiness と参照画像の測定）。
 **未測定。** 画像生成が本当に提供されないアカウントでの「使えない」返答（判定は前の追記で測った
 1.2.16 の文言に対して試験したもので、そのようなアカウントでは試していない）、および 1.2.16 より前の
 CLI での `generate_image` 直接呼びの代替。
+
+**補遺（2026-10-05・#1721 のレビュー）— `..` セグメントでは許可は広がらない。** 画像を生成しない 2 つ目の
+対照で、サブエージェントに `<wd>/../.gemini/antigravity-cli/<ファイル>`（OAuth トークンのリンクがある
+ディレクトリ）を `view_file` させた。パスは検査前に正規化されて拒否された：「Permission denied for
+read_file(<home>/.gemini/antigravity-cli/<ファイル>). Matches hardcoded system protection boundary
+rule」— CLI は許可リストとは別に自分の `.gemini` を保護している。この拒否は結果の `denied_actions` に
+**載らなかった**（実行は `SUCCESS`・一覧なし）。サブエージェントの転写にあるステップのエラー文にだけ
+出た。つまり `denied_actions` が報告するのは許可リストによる拒否で、拒否された読み取りの全部ではない。
+`wd` から外へ向かう symlink は未測定：`Generate` が `wd` に置くのは通常ファイルのコピーだけで、
+`readRequestFile` を通して読む（symlink の元は拒否される）。

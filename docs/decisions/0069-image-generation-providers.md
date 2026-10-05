@@ -1114,3 +1114,13 @@ poll, which `Ready()`'s contract rules out.
 **Not measured.** The unavailable reply on an account that really lacks image generation (the
 recogniser is tested against the measured 1.2.16 wording from the earlier follow-up, not against
 such an account), and the pre-1.2.16 direct `generate_image` fallback.
+
+**Addendum (2026-10-05, review of #1721) — a `..` segment does not widen the grant.** A second
+no-generation control asked the subagent to `view_file` `<wd>/../.gemini/antigravity-cli/<file>`
+(the directory holding the OAuth token link). The path was cleaned before the check and refused:
+"Permission denied for read_file(<home>/.gemini/antigravity-cli/<file>). Matches hardcoded system
+protection boundary rule" — the CLI protects its own `.gemini` directory independently of the allow
+list. This denial did NOT appear in the result's `denied_actions` (the run was `SUCCESS` with none);
+it surfaced only as the step's error text in the subagent's transcript. So `denied_actions` reports
+allow-list denials, not every refused read. Symlinks out of `wd` were not measured: `Generate`
+only places regular copies there, read through `readRequestFile`, which refuses a symlink source.

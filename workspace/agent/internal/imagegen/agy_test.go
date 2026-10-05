@@ -515,6 +515,8 @@ func TestAgyNamesAnAccountThatIsNotOfferedImageGeneration(t *testing.T) {
 		"Image generation is not available to me.":  true,
 		"I could not make it, sorry.":               false,
 		"The shell is unavailable.":                 false,
+		"The reference image is unavailable.":       false,
+		"Image step failed, shell unavailable.":     false,
 	} {
 		exe, _, _ := fakeAgy(t, nil, stream(reply), 0)
 		_, err := newAgyTestProvider(t, exe).Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a cat"})
@@ -525,5 +527,22 @@ func TestAgyNamesAnAccountThatIsNotOfferedImageGeneration(t *testing.T) {
 		if got != wantAccount || (!got && !strings.Contains(err.Error(), "generated no image")) {
 			t.Fatalf("%q: err = %v, account-error=%v want %v", reply, err, got, wantAccount)
 		}
+	}
+}
+
+// A reference that was swapped for a symlink after staging must not be followed.
+func TestAgyRefusesASymlinkedReference(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.png")
+	if err := os.WriteFile(real, tinyPNG(t, 4, 4), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.png")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if home, _, err := newAgyTestProvider(t, "agy").prepareHome([]string{link}); err == nil {
+		os.RemoveAll(home)
+		t.Fatal("a symlink was followed")
 	}
 }

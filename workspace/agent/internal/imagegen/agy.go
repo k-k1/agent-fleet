@@ -269,12 +269,13 @@ func (p *agyProvider) Generate(ctx context.Context, req Request) (Result, error)
 
 // agyImageUnavailable recognises the driver saying the image tool or subagent is not there, as
 // the prompt tells it to ("the image generation tool is unavailable"). It is deliberately narrow:
-// both an image word and an unavailability word must appear, and a false negative only leaves the
+// "generat" (image generation) and an unavailability word must appear, so a reply about an
+// unavailable reference image or shell stays the generic error, and a false negative only leaves the
 // generic "generated no image" error, while a false positive would blame the account for a
 // failure that is not about it.
 func agyImageUnavailable(reply string) bool {
 	r := strings.ToLower(reply)
-	if !strings.Contains(r, "image") {
+	if !strings.Contains(r, "image") || !strings.Contains(r, "generat") {
 		return false
 	}
 	for _, w := range []string{"unavailable", "not available", "isn't available", "is not offered", "not offered"} {
@@ -370,7 +371,8 @@ func parseRatio(s string) (float64, bool) {
 //
 // inputs are copied into the working directory under neutral names and their new paths returned:
 // the subagent's view_file is denied outside it (measured 2026-10-05), and the one allow entry
-// `read_file(<wd>/*)` opens exactly that directory, which holds nothing but these copies.
+// `read_file(<wd>/*)` opens exactly that directory, which holds nothing but these copies. The
+// pattern embeds the temp path verbatim, so it assumes TMPDIR holds no rule metacharacters.
 func (p *agyProvider) prepareHome(inputs []string) (home string, refs []string, err error) {
 	home, err = os.MkdirTemp("", "af-imagegen-agy-")
 	if err != nil {
@@ -439,12 +441,24 @@ func stageAgyReference(wd string, n int, src string) (string, error) {
 	if !isImageExt(src) {
 		return "", fmt.Errorf("reference image %s is not a png/jpg/gif/webp file", filepath.Base(src))
 	}
-	data, err := os.ReadFile(src)
+	// Through the gate every provider reads a request's pictures by (refuses a symlink swapped in
+	// after staging). agy.go is not in providerSources because it also reads its own output with
+	// os.ReadFile, which that AST check would flag; this is the one place it reads a request path.
+	data, err := readRequestFile(src)
 	if err != nil {
 		return "", fmt.Errorf("reading reference image: %w", err)
 	}
 	dst := filepath.Join(wd, "ref_"+strconv.Itoa(n)+strings.ToLower(filepath.Ext(src)))
-	if err := os.WriteFile(dst, data, 0o600); err != nil {
+	// O_EXCL like copyInputInto. The size is bounded by the staging gate (inputMaxBytes), not here.
+	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return "", err
+	}
+	if err := f.Close(); err != nil {
 		return "", err
 	}
 	return dst, nil
