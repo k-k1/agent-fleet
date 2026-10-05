@@ -200,7 +200,7 @@ func svnStatusLetter(item, props string) string {
 }
 
 // parseSvnStatusXML decodes `svn status --xml`, run from the working copy root with target
-// ".", so paths are working-copy relative. The root entry itself (".") is dropped.
+// ".", so paths are working-copy relative.
 func parseSvnStatusXML(data []byte) ([]svnChange, error) {
 	var x svnStatusXML
 	if err := xml.Unmarshal(data, &x); err != nil {
@@ -211,7 +211,9 @@ func parseSvnStatusXML(data []byte) ([]svnChange, error) {
 		for _, e := range es {
 			letter := svnStatusLetter(e.WCStatus.Item, e.WCStatus.Props)
 			p := filepath.ToSlash(filepath.Clean(e.Path))
-			if letter == "" || p == "." {
+			// The root entry (".") stays when IT carries a change (a property edit such as
+			// svn:ignore); a clean root has no letter and is dropped with every other clean entry.
+			if letter == "" {
 				continue
 			}
 			c := svnChange{Path: p, Status: letter, Untracked: letter == "?"}
@@ -282,6 +284,23 @@ func parseSvnRev(s string) (int, bool) {
 	}
 	n, err := strconv.Atoi(s)
 	return n, err == nil && n > 0
+}
+
+// svnURLPathUnder returns the DECODED repository path of url below root ("/trunk space"),
+// "/" when they are the same. `svn info` prints percent-encoded URLs while `svn log -v` prints
+// decoded paths, so the two must be brought to one form before they are compared or joined;
+// svnURLJoin then encodes exactly once.
+func svnURLPathUnder(root, rawURL string) string {
+	ru, err1 := url.Parse(root)
+	wu, err2 := url.Parse(rawURL)
+	if err1 != nil || err2 != nil {
+		return "/"
+	}
+	p := strings.TrimPrefix(strings.TrimRight(wu.Path, "/"), strings.TrimRight(ru.Path, "/"))
+	if p == "" {
+		return "/"
+	}
+	return p
 }
 
 // svnURLJoin appends a slash-separated repository path to a repository URL, escaping each
@@ -532,11 +551,7 @@ func handleSvnShow(w http.ResponseWriter, r *http.Request) {
 	diffTarget := root
 	paths := e.Paths
 	if rel != "" {
-		prefix := strings.TrimPrefix(wcURL, root)
-		if prefix == "" {
-			prefix = "/"
-		}
-		repoPath := path.Join(prefix, rel)
+		repoPath := path.Join(svnURLPathUnder(root, wcURL), rel)
 		diffTarget = svnURLJoin(root, strings.TrimLeft(repoPath, "/"))
 		kept := []svnLogPath{}
 		for _, p := range paths {

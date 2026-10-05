@@ -8,6 +8,8 @@ import { Icon } from "../../ui/Icon.tsx";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useT } from "../../lib/i18n/index.ts";
+import { SvnAuthModal } from "../repos/SvnAuthModal.tsx";
+import { isSvnAuthError } from "./svnLog.ts";
 import { CommitDetail } from "./GitDiff.tsx";
 import type { CommitData, FoldSignal } from "./GitDiff.tsx";
 
@@ -19,6 +21,10 @@ export function CommitDetailView({ repo, path, sha, vcs = "git", wrap, headerAct
   const [commit, setCommit] = useState<CommitData | null>(null);
   const [localWrap, setLocalWrap] = useState<boolean | null>(null);
   const effWrap = localWrap ?? !!wrap;
+  // svn only: svn-show is a server call, so a missing or refused credential is answered with the
+  // re-authentication dialog, and saving it re-fetches (the same flow as the log pane).
+  const [authOpen, setAuthOpen] = useState(false);
+  const [reload, setReload] = useState(0);
   const [fold, setFold] = useState<FoldSignal | undefined>(undefined);
   const foldAll = (open: boolean) => setFold((f) => ({ n: (f?.n ?? 0) + 1, open }));
 
@@ -42,10 +48,11 @@ export function CommitDetailView({ repo, path, sha, vcs = "git", wrap, headerAct
     }
     if (signal.aborted) return true;
     if (isTransientErr(d)) return false;
+    if (vcs === "svn" && isSvnAuthError(d)) setAuthOpen(true);
     // An svn-show refusal (no credential, unknown revision) is a terminal answer, not data.
     setCommit(d?.error ? { error: true, message: errText(d.error) } : d);
     return true;
-  }, [enc, sha, repo, path, vcs]);
+  }, [enc, sha, repo, path, vcs, reload]);
 
   if (!sha) {
     return (
@@ -83,6 +90,16 @@ export function CommitDetailView({ repo, path, sha, vcs = "git", wrap, headerAct
       <div className="scm-scroll">
         <CommitDetail commit={commit} wrap={effWrap} fold={fold} />
       </div>
+      {authOpen && (
+        <SvnAuthModal
+          repo={repo}
+          onClose={() => setAuthOpen(false)}
+          onSaved={() => {
+            setAuthOpen(false);
+            setReload((n) => n + 1);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -102,6 +102,75 @@ func TestParseSvnStatusXML(t *testing.T) {
 	}
 }
 
+func TestParseSvnStatusRootProps(t *testing.T) {
+	const x = `<status><target path=".">
+<entry path="."><wc-status props="modified" item="normal" revision="2"></wc-status></entry>
+</target></status>`
+	got, err := parseSvnStatusXML([]byte(x))
+	if err != nil || len(got) != 1 || got[0].Path != "." || got[0].Status != "M" {
+		t.Fatalf("root props change = %+v, %v", got, err)
+	}
+	const c = `<status><target path=".">
+<entry path="."><wc-status props="conflicted" item="normal" revision="2"></wc-status></entry>
+</target></status>`
+	got, _ = parseSvnStatusXML([]byte(c))
+	if len(got) != 1 || !got[0].Conflict {
+		t.Fatalf("root props conflict = %+v", got)
+	}
+}
+
+func TestSvnURLPathUnder(t *testing.T) {
+	cases := [][3]string{
+		{"svn://h/r", "svn://h/r", "/"},
+		{"svn://h/r/", "svn://h/r/trunk/", "/trunk"},
+		{"svn://h/r", "svn://h/r/trunk%20space/%E6%97%A5%E6%9C%AC%20100%25", "/trunk space/日本 100%"},
+	}
+	for _, c := range cases {
+		if got := svnURLPathUnder(c[0], c[1]); got != c[2] {
+			t.Errorf("svnURLPathUnder(%q,%q) = %q, want %q", c[0], c[1], got, c[2])
+		}
+	}
+}
+
+// TestSvnShowEncodedCheckoutPath: a working copy checked out from a URL with a space, Japanese
+// and '%' in it must still diff with a path filter (the info URL is percent-encoded, the log's
+// paths are not; joining them unconverted double-encoded the diff URL and failed E160013).
+func TestSvnShowEncodedCheckoutPath(t *testing.T) {
+	if !svnAvailable() {
+		t.Skip("svn not installed")
+	}
+	if _, err := exec.LookPath("svnadmin"); err != nil {
+		t.Skip("svnadmin not installed")
+	}
+	t.Setenv("HOME", t.TempDir())
+	repo := filepath.Join(t.TempDir(), "repo")
+	if out, err := exec.Command("svnadmin", "create", repo).CombinedOutput(); err != nil {
+		t.Fatalf("svnadmin: %v: %s", err, out)
+	}
+	base := "file://" + repo
+	dirName := "trunk space/日本 100%"
+	scratch := filepath.Join(t.TempDir(), "s")
+	svnRun(t, "", "checkout", base, scratch)
+	if err := os.MkdirAll(filepath.Join(scratch, dirName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(scratch, dirName, "a.txt"), []byte("hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svnRun(t, scratch, "add", "--parents", "trunk space")
+	svnRun(t, scratch, "commit", "-m", "add")
+	wc := filepath.Join(gitx.ReposRoot(), "enc")
+	svnRun(t, "", "checkout", svnURLJoin(base, dirName), wc)
+
+	var show svnShowResp
+	if rec := svnView(t, handleSvnShow, "enc", "rev=1&path=a.txt", &show); rec.Code != http.StatusOK {
+		t.Fatalf("svn-show = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(show.Diff, "+hi") || len(show.Paths) != 1 || show.Paths[0].Path != "/"+dirName+"/a.txt" {
+		t.Errorf("show = %+v", show)
+	}
+}
+
 func TestSvnRelPath(t *testing.T) {
 	ok := map[string]string{"": "", ".": "", "/": "", "a/b.txt": "a/b.txt", "/a//b/../c": "a/c", "日本語/x": "日本語/x", "a@b": "a@b"}
 	for in, want := range ok {

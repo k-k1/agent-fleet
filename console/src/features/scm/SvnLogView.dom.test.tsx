@@ -121,6 +121,69 @@ describe("SvnLogView", () => {
 });
 
 describe("ScmPane", () => {
+  it("follows scmPath: another Show log path in the same repo reloads with that filter", async () => {
+    useReposStore.setState({ repos: [{ name: "docs", vcs: "svn" } as never] });
+    api.mockResolvedValue({ revisions: [rev(3)], hasMore: false, wcRevision: "3" });
+    await mount(<ScmPane content={{ kind: "scm", scmRepo: "docs", scmPath: "src/a" }} />);
+    expect(api.mock.calls[0][0]).toBe("api/repos/docs/svn-log?limit=50&path=src%2Fa");
+    await act(async () => {
+      root!.render(
+        <ToastProvider>
+          <ScmPane content={{ kind: "scm", scmRepo: "docs", scmPath: "src/b" }} />
+        </ToastProvider>,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(api.mock.calls.at(-1)![0]).toBe("api/repos/docs/svn-log?limit=50&path=src%2Fb");
+    expect((host!.querySelector(".svnlog-filter input") as HTMLInputElement).value).toBe("src/b");
+  });
+
+  it("mounts nothing until the repo list answers, then the matching view", async () => {
+    useReposStore.setState({ repos: [] });
+    let answer!: (v: unknown) => void;
+    api.mockImplementation((path: string) =>
+      path === "api/repos" ? new Promise((r) => (answer = r)) : Promise.resolve({ changes: [] }),
+    );
+    await mount(<ScmPane content={{ kind: "changes", scmRepo: "docs" }} />);
+    expect(api.mock.calls.map((c) => c[0])).toEqual(["api/repos"]);
+    await act(async () => {
+      answer({ repos: [{ name: "docs", vcs: "svn" }] });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(api.mock.calls.map((c) => c[0])).toEqual(["api/repos", "api/repos/docs/svn-changes"]);
+  });
+
+  it("treats a listed repo without vcs as git, and an unlisted one as git once the list has answered", async () => {
+    useReposStore.setState({ repos: [{ name: "g" } as never] });
+    api.mockResolvedValue({ subject: "s", diff: "" });
+    await mount(<ScmPane content={{ kind: "commit", scmRepo: "g", commitSha: "abc1234" }} />);
+    expect(api.mock.calls[0][0]).toBe("api/repos/g/show?sha=abc1234");
+    act(() => root?.unmount());
+    host?.remove();
+    api.mockReset();
+    useReposStore.setState({ repos: [] });
+    api.mockImplementation(async (path: string) => (path === "api/repos" ? { repos: [] } : { subject: "s", diff: "" }));
+    await mount(<ScmPane content={{ kind: "commit", scmRepo: "gone", commitSha: "abc1234" }} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(api.mock.calls.map((c) => c[0])).toEqual(["api/repos", "api/repos/gone/show?sha=abc1234"]);
+  });
+
+  it("opens the re-authentication dialog from an svn revision's detail and refetches after saving", async () => {
+    useReposStore.setState({ repos: [{ name: "docs", vcs: "svn" } as never] });
+    api.mockImplementation(async (path: string) =>
+      path.includes("/svn-show") ? { error: { code: "svn_auth_required", message: "E170001" } } : { url: "svn://h/r/trunk", urlPrefix: "svn://h/r" },
+    );
+    await mount(<ScmPane content={{ kind: "commit", scmRepo: "docs", commitSha: "7" }} />);
+    expect(api.mock.calls.some((c) => String(c[0]).endsWith("/svn-auth"))).toBe(true);
+    expect(document.body.querySelector("input[type=password]")).not.toBeNull();
+  });
+
   it("renders the svn views and routes to the svn endpoints for an svn working copy", async () => {
     useReposStore.setState({ repos: [{ name: "docs", vcs: "svn" } as never] });
     api.mockResolvedValue({ changes: [{ path: "a.txt", status: "M", untracked: false, conflict: false }] });
