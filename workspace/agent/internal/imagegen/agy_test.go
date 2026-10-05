@@ -191,7 +191,7 @@ func TestAgyPassesAspectRatioAndKeepsThePromptOffArgv(t *testing.T) {
 // phrase below is an operative instruction: delegate once, never run both paths, carry the ratio
 // into the subagent's prompt, and keep the direct call as the fallback.
 func TestAgyPromptDelegatesToTheImageSubagent(t *testing.T) {
-	got := agyPrompt(Request{Prompt: "a cat"}, "16:9")
+	got := agyPrompt(Request{Prompt: "a cat"}, "16:9", nil)
 	for _, want := range []string{
 		"image-generator subagent with the invoke_subagent tool, exactly once",
 		"put the full description in the subagent's prompt",
@@ -206,24 +206,73 @@ func TestAgyPromptDelegatesToTheImageSubagent(t *testing.T) {
 			t.Fatalf("prompt lacks %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(agyPrompt(Request{Prompt: "a cat"}, ""), "AspectRatio") {
+	if strings.Contains(agyPrompt(Request{Prompt: "a cat"}, "", nil), "AspectRatio") {
 		t.Fatal("the ratio line was written without a ratio")
 	}
 }
 
-// The subagent cannot open a reference image under this route's allow-list (measured: its
-// view_file came back denied and the run produced no picture), so the route must not advertise
-// edit or accept inputs — a caller is sent to a provider that can.
-func TestAgyDoesNotOfferEditOrReferenceImages(t *testing.T) {
+// Edit is offered again because the reference images are copied into the working directory and
+// one scoped read grant opens it (measured 2026-10-05: view_file inside it succeeded, outside it
+// came back denied). The cap is the tool's own.
+func TestAgyOffersEditWithinTheToolCap(t *testing.T) {
 	p := newAgyTestProvider(t, "agy")
-	if c := p.Caps(""); c.Supports(OpEdit) || c.MaxInputs != 0 {
-		t.Fatalf("caps = %+v, want generate only and no inputs", c)
+	if c := p.Caps(""); !c.Supports(OpEdit) || c.MaxInputs != 3 {
+		t.Fatalf("caps = %+v, want generate+edit and 3 inputs", c)
 	}
-	if _, err := p.Generate(context.Background(), Request{Op: OpEdit, Prompt: "a cat", Inputs: []string{"/x/ref.png"}}); err == nil {
-		t.Fatal("an edit request was accepted")
+	if _, err := p.Generate(context.Background(), Request{Op: OpEdit, Prompt: "a cat", Inputs: []string{"/a.png", "/b.png", "/c.png", "/d.png"}}); err == nil ||
+		!strings.Contains(err.Error(), "at most 3") {
+		t.Fatalf("err = %v, want the cap refusal", err)
 	}
-	if _, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a cat", Inputs: []string{"/x/ref.png"}}); err == nil {
-		t.Fatal("a reference image was accepted on generate")
+}
+
+// The reference images reach the subagent only as copies in wd under neutral names, opened by
+// exactly one scoped read grant — never a blanket read_file, and no grant at all without inputs.
+func TestAgyStagesReferencesUnderOneScopedRead(t *testing.T) {
+	p := newAgyTestProvider(t, "agy")
+	src := filepath.Join(t.TempDir(), "My Secret Name.PNG")
+	if err := os.WriteFile(src, tinyPNG(t, 4, 4), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	home, refs, err := p.prepareHome([]string{src})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(home)
+	wd := filepath.Join(home, "wd")
+	if len(refs) != 1 || refs[0] != filepath.Join(wd, "ref_1.png") {
+		t.Fatalf("refs = %v, want one neutral copy in wd", refs)
+	}
+	if b, err := os.ReadFile(refs[0]); err != nil || len(b) == 0 {
+		t.Fatalf("the copy is missing or empty: %v", err)
+	}
+	for _, f := range []string{
+		filepath.Join(home, ".gemini", "antigravity-cli", "settings.json"),
+		filepath.Join(home, ".gemini", "config", "config.json"),
+	} {
+		var cfg struct {
+			Permissions struct {
+				Allow []string `json:"allow"`
+			} `json:"permissions"`
+		}
+		readJSON(t, f, &cfg)
+		want := "generate_image,invoke_subagent,read_file(" + wd + "/*)"
+		if got := strings.Join(cfg.Permissions.Allow, ","); got != want {
+			t.Fatalf("%s allow = %s, want %s", filepath.Base(f), got, want)
+		}
+	}
+	prompt := agyPrompt(Request{Prompt: "a cat"}, "", refs)
+	if !strings.Contains(prompt, "- "+refs[0]+"\n") || strings.Contains(prompt, "Secret") {
+		t.Fatalf("prompt must list the staged copy and not the original name:\n%s", prompt)
+	}
+}
+
+func TestAgyRejectsAReferenceItCannotStage(t *testing.T) {
+	p := newAgyTestProvider(t, "agy")
+	for _, in := range []string{"rel/ref.png", "/nonexistent/ref.png", "/etc/passwd"} {
+		if home, _, err := p.prepareHome([]string{in}); err == nil {
+			os.RemoveAll(home)
+			t.Fatalf("%s was accepted", in)
+		}
 	}
 }
 
@@ -233,7 +282,7 @@ func TestAgyDoesNotOfferEditOrReferenceImages(t *testing.T) {
 // denied action).
 func TestAgyIsolatedHomeIsTheSandbox(t *testing.T) {
 	p := newAgyTestProvider(t, "agy")
-	home, err := p.prepareHome()
+	home, _, err := p.prepareHome(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +444,7 @@ func TestAgyReadyIsTokenAndBinaryOnly(t *testing.T) {
 // leave the user's own as stale as it was.
 func TestAgyFoldsARotatedTokenBack(t *testing.T) {
 	p := newAgyTestProvider(t, "agy")
-	home, err := p.prepareHome()
+	home, _, err := p.prepareHome(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,4 +500,30 @@ func TestAgyEnvCarriesTheMaskAndTheIsolatedHome(t *testing.T) {
 			}
 		}
 	})
+}
+
+// The account is not offered image generation: the CLI still lists the tool, the driver says it
+// is unavailable, and no file appears. That has to read as an account problem, not a generic
+// "no image"; any other prose keeps the generic error.
+func TestAgyNamesAnAccountThatIsNotOfferedImageGeneration(t *testing.T) {
+	stream := func(reply string) string {
+		return `{"event":"init","conversation_id":"conv-1"}
+{"event":"result","result":{"conversation_id":"conv-1","status":"SUCCESS","response":"` + reply + `","usage":{"input_tokens":10,"output_tokens":2}}}`
+	}
+	for reply, wantAccount := range map[string]bool{
+		"The image generation tool is unavailable.": true,
+		"Image generation is not available to me.":  true,
+		"I could not make it, sorry.":               false,
+		"The shell is unavailable.":                 false,
+	} {
+		exe, _, _ := fakeAgy(t, nil, stream(reply), 0)
+		_, err := newAgyTestProvider(t, exe).Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a cat"})
+		if err == nil {
+			t.Fatalf("%q: no error", reply)
+		}
+		got := strings.Contains(err.Error(), "not offered image generation")
+		if got != wantAccount || (!got && !strings.Contains(err.Error(), "generated no image")) {
+			t.Fatalf("%q: err = %v, account-error=%v want %v", reply, err, got, wantAccount)
+		}
+	}
 }

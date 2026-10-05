@@ -1073,3 +1073,44 @@ to run a shell command was refused by the driver itself, so it says nothing abou
 subagent could be allowed to read reference images from the working directory (#1718).
 
 Follow-ups: #1716 (the report), #1718 (readiness, and the reference-image measurement).
+
+## Follow-up — reference images return, and an account without image generation (2026-10-05)
+
+**Scoped read works; edit is offered again.** The subagent's `view_file` is checked against the
+route's allow-list. With the reference image copied into the throwaway home's `wd` and one extra
+entry `read_file(<wd>/*)` in `permissions.allow` (the rule syntax the CLI's own strings show as
+`read_file(*)` / `command(*)`), measured on agy 1.2.17 with `gemini-3.8-flash-low`:
+
+- One reference: the subagent ran `view_file` on it (a step with the file's contents, no denial),
+  then `generate_image` with `ImagePaths: [<wd>/ref_1.png]`; `SUCCESS`, no `denied_actions`, a
+  1024x1024 JPEG in 43 s, ~37k input tokens.
+- Through the provider itself, two references (a red circle, a checkerboard) and a prompt to put
+  the circle on the checkerboard: one picture with both, 1024x1024, no warnings, 43 s, ~38k input
+  tokens. The JPEG's C2PA block lists two input ingredients.
+- Negative control (no image generated): the same allow-list, a reference outside `wd`, the
+  subagent asked only to `view_file` it. The result carried
+  `denied_actions: [{action: read_file, display_name: ViewFile}]`. So the grant is scoped to `wd`;
+  nothing broader was allowed.
+
+How a denied subagent action shows up: the run still ends `SUCCESS`, the denial is listed in the
+print result's `denied_actions` with `action` (`read_file`) and `display_name` (`ViewFile`), and the
+driver's own reply claims the delegation went fine; `Generate` turns the list into an error.
+
+`Caps` lists `generate` and `edit` again with `MaxInputs` 3 (the tool's own cap on `ImagePaths`).
+`Generate` copies each input into `wd` as `ref_<n><ext>` (neutral name, image extensions only), and
+adds the read entry only when the request has inputs; the prompt lists the copies and tells the
+driver to leave opening them to the subagent. Two real generations were spent in total across
+this follow-up: one single-reference probe and one provider run with two references (the control
+generated nothing).
+
+**Readiness.** The CLI's `init` event lists `generate_image` whatever the account is offered, so
+`Ready()` cannot know. When a run ends with no file and the driver's reply says the image
+tool/subagent is unavailable (an image word plus an unavailability word, nothing looser),
+`Generate` now fails with "the signed-in Antigravity/Gemini account is not offered image
+generation" instead of the generic `agy generated no image`. An up-front probe in `Ready()` was
+not added: the only way to learn it is a model turn (seconds, a driver-model call) on every status
+poll, which `Ready()`'s contract rules out.
+
+**Not measured.** The unavailable reply on an account that really lacks image generation (the
+recogniser is tested against the measured 1.2.16 wording from the earlier follow-up, not against
+such an account), and the pre-1.2.16 direct `generate_image` fallback.
