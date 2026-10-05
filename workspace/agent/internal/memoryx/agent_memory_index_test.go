@@ -39,7 +39,7 @@ func TestAgentMemBudgetIndexBounds472(t *testing.T) {
 	if size > agentMemIndexBudgetDefault || len(desc) == 0 {
 		t.Fatalf("described part = %d bytes (%d entries), budget %d", size, len(desc), agentMemIndexBudgetDefault)
 	}
-	if tail := agentMemTailSize(more); tail > agentMemIndexTailBudget || len(more) == 0 {
+	if tail := agentMemTailSize(more); tail > agentMemIndexTailBudget-agentMemIndexTailOverhead || len(more) == 0 {
 		t.Fatalf("tail = %d bytes, budget %d", tail, agentMemIndexTailBudget)
 	}
 	// Every entry is described, named in the tail, or counted.
@@ -140,7 +140,7 @@ func TestAgentMemTailOverflowCountsTheRest(t *testing.T) {
 		es[i] = agentMemEntry{Name: fmt.Sprintf("n%04d", i), Scope: "user", Description: "d", Updated: "2026-01-01T00:00:00Z"}
 	}
 	desc, more, omitted := agentMemBudgetIndex(es, agentMemIndexBudgetMin)
-	if omitted == 0 || agentMemTailSize(more) > agentMemIndexTailBudget {
+	if omitted == 0 || agentMemTailSize(more) > agentMemIndexTailBudget-agentMemIndexTailOverhead {
 		t.Fatalf("omitted=%d tail=%d", omitted, agentMemTailSize(more))
 	}
 	if len(desc)+len(more)+omitted != len(es) {
