@@ -1012,4 +1012,4 @@ Codex with a ChatGPT account」で終わり、Codex の画像呼び出しは画�
 `modelfallback.ImagegenCodexDriver` は廃止した。400「model not supported」には
 `AF_IMAGEGEN_CODEX_MODEL` を名指しする案内を付ける。2026-10-05 実測（codex-cli 0.160.0、
 `auth_mode=chatgpt`）: 画像を作らない小さなターンは `gpt-6-luna` で受理され、`gpt-5.4-mini` では
-同じ 400 を再現した。新しいドライバーでの実画像生成は未実施（プラン枠のため）。
+同じ 400 を再現した。新しいドライバーでの実画像生成は未実施（プラン枠のため）。Follow-ups: #1722。

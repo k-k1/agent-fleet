@@ -71,7 +71,42 @@ func TestCodexModelRejectionNamesTheOverride(t *testing.T) {
 		t.Fatalf("err = %v, want a hint naming AF_IMAGEGEN_CODEX_MODEL", err)
 	}
 	// An unrelated failure carries no such hint.
-	if h := modelHint("rate limited", "m"); h != "" {
+	if h := modelHint("rate limited", "m", false); h != "" {
 		t.Fatalf("hint on unrelated error: %q", h)
+	}
+}
+
+// Status is polled under the MCP 3 s budget; it must never spawn the catalog CLI.
+func TestCodexStatusDoesNotReadTheCatalog(t *testing.T) {
+	t.Setenv("AF_IMAGEGEN_CODEX_MODEL", "")
+	old := codexCatalog
+	t.Cleanup(func() { codexCatalog = old })
+	codexCatalog = func() []agents.ModelChoice { t.Fatal("status read the catalog"); return nil }
+	if got := codexDriverModel(); got != "" {
+		t.Fatalf("status model = %q", got)
+	}
+	t.Setenv("AF_IMAGEGEN_CODEX_MODEL", "pinned-x")
+	if got := codexDriverModel(); got != "pinned-x" {
+		t.Fatalf("status model = %q", got)
+	}
+}
+
+// A model the catalog marks retiring is not picked, as in the assistant chat.
+func TestCodexDriverSkipsRetiring(t *testing.T) {
+	t.Setenv("AF_IMAGEGEN_CODEX_MODEL", "")
+	stubCatalog(t, "gpt-6-luna", "gpt-5.6-luna")
+	old := codexRetiring
+	t.Cleanup(func() { codexRetiring = old })
+	codexRetiring = func(id string) bool { return id == "gpt-6-luna" }
+	if got := codexDriver(); got != "gpt-5.6-luna" {
+		t.Fatalf("driver = %q, want the older non-retiring luna", got)
+	}
+}
+
+// An explicitly requested model that is rejected is a request problem, not an env one.
+func TestCodexExplicitModelRejectionDoesNotPointAtEnv(t *testing.T) {
+	h := modelHint("The 'x' model is not supported", "x", true)
+	if h == "" || strings.Contains(h, "AF_IMAGEGEN_CODEX_MODEL") {
+		t.Fatalf("hint = %q", h)
 	}
 }
