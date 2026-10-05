@@ -17,7 +17,7 @@ const (
 	ChatClaude = "claude-sonnet-5"
 	// ChatCodex is the codex assistant default when the live catalog cannot be read; with a
 	// catalog the newest "-luna" it lists is used instead.
-	ChatCodex = "gpt-5.6-luna"
+	ChatCodex = "gpt-6-luna"
 	// ChatOpencode is the opencode assistant default for an account that does not list
 	// ChatOpencodeGo: a free model every opencode account can run.
 	ChatOpencode = "opencode/nemotron-3-ultra-free"
@@ -64,7 +64,7 @@ var Entries = []Entry{
 	},
 	{
 		ID: ChatCodex, Kind: "codex", Owner: "assistant chat (chatx.codexNewestLuna) and the codex image route's last-resort driver (imagegen.codexDriver)",
-		Source:           "product choice: the high-volume Luna tier for conversation (feat(chat) 92d298584)",
+		Source:           "product choice: the high-volume Luna tier for conversation, at the newest generation (gpt-6-luna lists at half of gpt-5.6-luna on input)",
 		WhyNotDiscovered: "used only when the codex catalog cannot be read; with a catalog the newest -luna it lists wins (#972)",
 	},
 	{
