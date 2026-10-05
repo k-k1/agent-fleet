@@ -8,19 +8,19 @@ updated: "2026-09"
 
 English | [日本語](08-borrowed-engine.ja.md)
 
-The fleet's own GPU engines — the `llm` role behind chat completions, the `image`
-role behind `generate_image` — are bought on AWS, so they exist on the `ecs-ec2`
+The fleet's own GPU engines (the `llm` role behind chat completions, the `image`
+role behind `generate_image`) are bought on AWS, so they exist on the `ecs-ec2`
 target only. [07 Image generation on your own ComfyUI](07-image-engine.md) is one way
 around that: point at a machine you already run. **This chapter is the other one.**
 
 If you already operate an Agent Fleet on AWS, a second deployment on your own host
 (`compose`, `native` or `docker`) can **use that one's engines**. The near deployment
-relays; the far one keeps doing what it already does — deciding that something wants a
+relays; the far one keeps doing what it already does: deciding that something wants a
 GPU, buying the instance, loading the model, letting it go again. Nothing in a session
 knows the difference: the borrowed models appear wherever this deployment's own would.
 
-**What you get.** Both roles, `llm` and `image`, or just the one you name. No new
-code on the far deployment, no port opened there, no VPN, no change to any workspace.
+**What you get.** Both roles, `llm` and `image`, or just the one you name, with no new
+code on the far deployment, no port opened there, no VPN and no change to any workspace.
 
 **What you do not get.**
 
@@ -48,7 +48,7 @@ before them. Changing any of them is a CP restart.
 |---|---|
 | `AF_REMOTE_ENGINE_URL` | The far fleet's base URL, **with no path**: `https://af.example.com`. Setting it is what turns borrowing on. |
 | `AF_REMOTE_ENGINE_TOKEN` | The `afei_…` issuing token of a membership on the far deployment (next section). |
-| `AF_REMOTE_ENGINE_KEYS` | Optional. Comma-separated role names — `image` to borrow only that one. Empty borrows every role the far fleet offers. |
+| `AF_REMOTE_ENGINE_KEYS` | Optional. Comma-separated role names; `image` borrows only that one. Empty borrows every role the far fleet offers. |
 
 **Both or neither.** A URL with no token could only ever be refused, so a half
 declaration borrows nothing and says which half is missing in the log at boot.
@@ -58,11 +58,11 @@ Where to put them depends on the target:
 
 | Target | Where |
 |---|---|
-| compose / docker | the `.env` next to the compose file — [deploy/compose/README.md](../../deploy/compose/README.md) |
-| native | the environment of `af start`, or `Environment=` in the systemd unit — [deploy/native/README.md](../../deploy/native/README.md) |
+| compose / docker | the `.env` next to the compose file; see [deploy/compose/README.md](../../deploy/compose/README.md) |
+| native | the environment of `af start`, or `Environment=` in the systemd unit; see [deploy/native/README.md](../../deploy/native/README.md) |
 
 **Do not point `AF_COMFY_URL` at the far fleet instead.** It looks like it should
-work — see the last section for why it costs money and still fails.
+work; see the last section for why it costs money and still fails.
 
 ### The rows appear when the far fleet answers, not at boot
 
@@ -76,7 +76,7 @@ The consequence is operational:
 
 - The catalogue is fetched at startup and then **every 2 minutes**. A borrowed role
   becomes available on the first fetch that succeeds, and when a fetch finds the far
-  catalogue changed, every running workspace is told at once — a checkpoint enabled
+  catalogue changed, every running workspace is told at once. A checkpoint enabled
   over there reaches a session here in about two minutes, without restarting anything.
 - **A far fleet that is unreachable when the CP starts leaves the launch menu without
   those models**, and the only signal is a line in the CP log. It recovers on its own
@@ -91,18 +91,18 @@ The consequence is operational:
 ## The credential
 
 The far deployment already mints, for every membership, an **issuing token**
-(`afei_…`). It opens exactly two routes over there — "give me a session-scoped engine
-token" and "which engines do you offer" — and nothing else: no git, no MCP, no memos,
+(`afei_…`). It opens exactly two routes over there ("give me a session-scoped engine
+token" and "which engines do you offer") and nothing else: no git, no MCP, no memos,
 no API. That is the credential this feature wants.
 
 🔴 **Never use a person's issuing token, including your own.** It is derived
 deterministically from the far deployment's signing master, so there is no way to
-invalidate one of them. Invalidating it means rotating that master — and the same
+invalidate one of them. Invalidating it means rotating that master, and the same
 master is behind the git, memo and schedule tokens, so **every member of that fleet
 is logged out**. One borrower you wanted to cut off costs you the whole fleet.
 
 So the token must belong to **a membership used for nothing else**. Invite one on the
-far deployment — it needs no workspace and never has to run anything — and then ask
+far deployment (it needs no workspace and never has to run anything) and then ask
 that deployment for its token.
 
 **The far deployment's super-admin issues it.** The route is
@@ -115,8 +115,7 @@ handed a token that would only ever answer 401.
 ⚠️ **An older far deployment may not have that route.** If it answers 404, the
 credential is still reachable the long way, and it is worth knowing why that way is so
 awkward: the token exists only inside that membership's own workspace container, and no
-administrative route starts another member's workspace or opens a session in one — the
-admin surface offers stop, clean-home, destroy and read-only lists. So on an older far
+administrative route starts another member's workspace or opens a session in one; the admin surface offers stop, clean-home, destroy and read-only lists. So on an older far
 deployment the procedure is to invite a member with **a real address that the far
 sign-in provider will actually authenticate**, sign in as it once, read
 `AF_ENGINE_ISSUE_TOKEN` out of its container's environment, and stop that workspace.
@@ -132,9 +131,9 @@ Treat the value like any other secret: it belongs in the same place your other
 ## What the far catalogue decides, and what you cannot change here
 
 Under **Admin → Inference engines** a borrowed role looks like any externally managed
-one, and it carries the far fleet's URL. What it shows about models — the ids, the
+one, and it carries the far fleet's URL. What it shows about models (the ids, the
 sizes, each row's own negative prompt, and the deployment-wide "excluded from every
-image" list — is **a mirror of the far deployment's catalogue, read-only**.
+image" list) is **a mirror of the far deployment's catalogue, read-only**.
 
 Every write in that panel is refused for a borrowed role, with `400 engine_not_ours`
 and a message naming the far deployment:
@@ -145,13 +144,13 @@ and a message naming the far deployment:
 - editing "excluded from every image".
 
 All of those are done **in the far deployment's own admin panel**, by whoever
-administers it. A change there reaches this deployment within one poll — about two
-minutes — and running sessions see it without being restarted.
+administers it. A change there reaches this deployment within one poll (about two
+minutes), and running sessions see it without being restarted.
 
 What you *can* still do here:
 
-- **on / off.** "off" closes the route on this deployment — sessions stop being
-  offered the engine — and does absolutely nothing to the far fleet's instance.
+- **on / off.** "off" closes the route on this deployment (sessions stop being
+  offered the engine) and does absolutely nothing to the far fleet's instance.
 - Nothing else. **"on demand" is refused**, exactly as it is for a ComfyUI of your
   own: it is a promise to release an instance, and there is no instance here to release.
 
@@ -165,13 +164,13 @@ enabled model was removed. On this side that arrives as **zero models for that r
   model — an administrator has to select one",
 - the launch menu stops offering them.
 
-The administrator who has to select one is **the far one**. Within one poll — about
-two minutes — of them switching it back on, it works again.
+The administrator who has to select one is **the far one**. Within one poll (about
+two minutes) of them switching it back on, it works again.
 
 ## What the first request waits for
 
 A borrowed engine is usually asleep. The far deployment buys a GPU instance when something
-asks for one, and **the first request after that pays for the whole cold start** —
+asks for one, and **the first request after that pays for the whole cold start**:
 instance, image, model into VRAM.
 
 - **Measured on the far deployment's own requests** (ADR 0071): 527 s for the `llm`
@@ -187,15 +186,15 @@ What happens while that runs, so that a long first request is not read as a fail
 - **Everything else (non-streaming).** The far deployment holds the request for
   about 45 seconds and then answers `503 engine_waking` with a `Retry-After`; that
   answer is relayed through unchanged. This deployment holds a **borrowed** row for
-  75 seconds — deliberately longer, so the far side's own sentence is usually the one
-  that arrives — against 45 seconds for a row it manages itself.
+  75 seconds, deliberately longer so that the far side's own sentence is usually the one
+  that arrives, against 45 seconds for a row it manages itself.
 - **If this side's hold expires first, the answer is still `engine_waking`**, never
   `engine_unavailable`. That distinction is load-bearing: the image tool retries
   `engine_waking` for up to 16 minutes and does not retry `engine_unavailable` at
   all, so getting it wrong would turn an instance on its way up into a permanent failure.
 
 🔴 **The far side's 45 seconds is its own setting and you cannot read it.** If its
-operator raised it, this side's hold expires first again whatever you do — which is
+operator raised it, this side's hold expires first again whatever you do, which is
 fine, because of the previous point. `AF_ENGINE_PLAIN_HOLD` overrides the hold if you
 set it, but it is **one value for every row**, so raising it for a borrowed engine
 also raises it for any engine this deployment manages itself. On `ecs-ec2` that is
@@ -207,7 +206,7 @@ reason.
 - **Externally managed**, carrying the far fleet's URL. It is not "managed" here,
   because there is no service here to manage.
 - **warm** is **what the far deployment last observed about its own engine**, as its
-  catalogue reports it — not a check made from here. Nothing on this side ever probes
+  catalogue reports it, not a check made from here. Nothing on this side ever probes
   a borrowed engine, on the panel or anywhere else; probing would land on the far
   fleet's gateway, record demand and buy an instance.
 - **Left out rather than guessed:** state, desired count, which instance, when it will
@@ -227,15 +226,15 @@ What is *recorded* differs by role, and the difference matters if you are the on
 being borrowed from:
 
 - **Chat (`llm`): this deployment writes a usage row**, as it does for any engine
-  traffic, into the asking member's own ledger. The far deployment builds the same row
-  — carrying **the borrowing session's name**, stated by this deployment and taken as
-  given over there; it is a label, not a permission — but it has nowhere to deliver it,
+  traffic, into the asking member's own ledger. The far deployment builds the same row,
+  carrying **the borrowing session's name** (stated by this deployment and taken as
+  given over there; it is a label, not a permission), but it has nowhere to deliver it,
   because a borrowing membership has no workspace. So the far side **keeps** it instead
   (see below). No unrelated member's ledger is touched either way.
 - **Images: no engine usage row on either side.** An image answer carries no token
   counts, so nothing is written for it on the engine ledger, here or there. On this
   side a member's image generation is still visible, because the image tool writes
-  its own usage row as it stores the file — counted in pictures, not tokens.
+  its own usage row as it stores the file, counted in pictures, not tokens.
 
 ### If you are the one being borrowed from
 
@@ -247,17 +246,17 @@ super-admin of **that** deployment:
 GET /api/admin/engines/<key>/attribution?from=YYYY-MM-DD&to=YYYY-MM-DD
 ```
 
-- `memberships` — requests, successes, milliseconds and tokens per membership per hour,
+- `memberships`: requests, successes, milliseconds and tokens per membership per hour,
   for **both roles**. This is the only count the image role has, and it is what answers
   "whose work was that instance doing". 🔴 A request is counted when it is **admitted**, which
-  is also when the instance is bought — so a request that bought a GPU and then failed still
+  is also when the instance is bought, so a request that bought a GPU and then failed still
   appears, and `requests` minus `ok_requests` is the failure count.
-- `undelivered` — the chat rows kept whole, each with the borrowing session's name and
+- `undelivered`: the chat rows kept whole, each with the borrowing session's name and
   the reason it could not be delivered (`no_workspace` is the ordinary borrowing case).
 
 What the instance itself cost is in that deployment's **audit log**, not here: its Control
 Plane writes one line per purchase (`engine.<key>.offer`) naming the instance type it
-actually got and the hourly price — the offer only names a range of types, so this line is
+actually got and the hourly price. The offer only names a range of types, so this line is
 what answers "why is this engine on the expensive one" a day later.
 
 Two things to know about it:
@@ -277,29 +276,29 @@ grepping for:
 | Line says | Meaning |
 |---|---|
 | `borrowing is declared but … is unset` | only one of URL / token is set; nothing is borrowed |
-| `is borrowed from …` | the role was adopted — this is the success line |
+| `is borrowed from …` | the role was adopted; this is the success line |
 | `reading the borrowed catalogue from … failed` | the far fleet is unreachable, or refused. The status is in the line |
 | `is already served by a … row` | a local row holds that role; the far one is ignored |
 | `declares lifecycle "remote" but AF_REMOTE_ENGINE_URL / AF_REMOTE_ENGINE_TOKEN are unset` | a hand-written table row with nothing to borrow from; the role is not served |
 
 And the answers a session can see:
 
-- **`401` in the catalogue log line** — the borrowing membership was removed on the
+- **`401` in the catalogue log line**: the borrowing membership was removed on the
   far deployment, or the token is wrong. Both look the same from here, which is
   correct: a removed member and a bad credential are the same amount of access.
-- **`400 engine_not_ours`** — a write in this deployment's engine panel for a
+- **`400 engine_not_ours`**: a write in this deployment's engine panel for a
   borrowed role. Do it in the far deployment's panel.
-- **`503 engine_unavailable` with "no enabled model"** — the far side turned that
+- **`503 engine_unavailable` with "no enabled model"**: the far side turned that
   role off, or it has nothing enabled.
-- **`503 engine_waking`** — normal for a cold start. It carries a `Retry-After` and
+- **`503 engine_waking`**: normal for a cold start. It carries a `Retry-After` and
   the image tool keeps asking.
 
 🔴 **One shortcut to avoid.** Pointing `AF_COMFY_URL` at the far fleet's image route
 (`https://…/engine/image/v1`) looks like it would work without any of this, and it is
 the worst of both: that row is health-checked from here, the check lands on the far
-gateway, **records demand and buys a GPU instance** — and then fails anyway, because it
+gateway, **records demand and buys a GPU instance**, and then fails anyway, because it
 allows five seconds against a cold start of minutes. A failed check that buys a GPU
 instance by the hour is the one outcome worth going out of your way to avoid.
 
-Which target supports which engine arrangement is in
-[ref/deploy-targets.md](../ref/deploy-targets.md).
+See [ref/deploy-targets.md](../ref/deploy-targets.md) for which target
+supports which engine arrangement.

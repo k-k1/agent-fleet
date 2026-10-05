@@ -14,15 +14,15 @@ workflow is assumed; a general grounding in Docker, DNS, OAuth and backups is.
 
 ## Chapters
 
-1. [Choosing a deployment target](01-choose.md) — which one, and what ECS really costs
-2. [Install](02-install.md) — generating secrets, sign-in configuration, first start, first tenant
-3. [Running it](03-run.md) — backup, restore, upgrades, air-gapped networks, shutdown
-4. [Securing it](04-secure.md) — threat model, the residual risks, egress control, reporting channel
-5. [Sign-in methods](05-signin.md) — end to end: what to create at Google / Entra ID / GitHub / another OIDC provider, which value goes where, and how to check it
-6. [Diagnosing it](06-diagnose.md) — incident response and FAQ, including the three constraints that break silently
-7. [Image generation on your own ComfyUI](07-image-engine.md) — pointing sessions at a ComfyUI on your own network, and the network that is then yours to close
-8. [Borrowing another deployment's engines](08-borrowed-engine.md) — using an AWS fleet's llm and image engines from a deployment on your own host, and where the boundary between the two administrators falls
-9. [Chat inference on your own llama.cpp](09-llm-lan.md) — pointing sessions' chat completions at a llama.cpp on your own network, the chat counterpart of chapter 7
+1. [Choosing a deployment target](01-choose.md): which one, and what ECS really costs
+2. [Install](02-install.md): generating secrets, sign-in configuration, first start, first tenant
+3. [Running it](03-run.md): backup, restore, upgrades, air-gapped networks, shutdown
+4. [Securing it](04-secure.md): threat model, the residual risks, egress control, reporting channel
+5. [Sign-in methods](05-signin.md): end to end: what to create at Google / Entra ID / GitHub / another OIDC provider, which value goes where, and how to check it
+6. [Diagnosing it](06-diagnose.md): incident response and FAQ, including the three constraints that break silently
+7. [Image generation on your own ComfyUI](07-image-engine.md): pointing sessions at a ComfyUI on your own network, and the network that is then yours to close
+8. [Borrowing another deployment's engines](08-borrowed-engine.md): using an AWS fleet's llm and image engines from a deployment on your own host, and where the boundary between the two administrators falls
+9. [Chat inference on your own llama.cpp](09-llm-lan.md): pointing sessions' chat completions at a llama.cpp on your own network, the chat counterpart of chapter 7
 
 What each target supports is [ref/deploy-targets.md](../ref/deploy-targets.md); who may
 do what is [ref/roles.md](../ref/roles.md).
@@ -43,7 +43,7 @@ has them:
 | kubernetes (preview) | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 Inside a workspace the same files are staged as `operate/runbooks/*.md` beside this
-shelf, so they are readable from the container too — which is where you will want them
+shelf, so they are readable from the container too, which is where you will want them
 when something is on fire.
 
 If a command in this shelf ever contradicts the script it describes, **the script is
@@ -54,7 +54,7 @@ right and this shelf has a bug.**
 Read this first for a technical evaluation.
 
 **What it can do.** Your team uses CLI coding agents from a browser. Each member gets
-an isolated environment — a dedicated container — clones repositories, and drives agent
+an isolated environment (a dedicated container), clones repositories, and drives agent
 and shell sessions. There is a chat-centred way of working for people who would rather
 not touch a terminal. Administrators add members, set limits, see usage and audit logs,
 and observe outbound destinations, all from the browser. Splitting departments into
@@ -75,12 +75,12 @@ and observe outbound destinations, all from the browser. Splitting departments i
 **Delivery model and security posture.** One company, one deployment, on its own
 infrastructure. Isolation between companies is guaranteed by **separate deployments**,
 not by in-process boundaries, so the blast radius of a compromise is confined to one
-deployment — on AWS, only when each deployment has its own AWS account
+deployment; on AWS, only when each deployment has its own AWS account
 ([04 Securing it](04-secure.md)). Inside a workspace, the boundaries assume the agent **executes arbitrary
 code**; what is protected is other users' data, the control plane and host, the
 secrets, and exfiltration.
 
-**Four residual risks are disclosed honestly** — `docker.sock` is host-root equivalent,
+**Four residual risks are disclosed:** `docker.sock` is host-root equivalent,
 losing `AF_MASTER_KEY` is a crypto-shred, backups are sensitive, and host access is
 total control. They are in [04 Securing it](04-secure.md) and in
 `SECURITY.md`. **Read them before deciding to adopt.**
@@ -101,13 +101,13 @@ runtime. This has consequences that surprise people:
 - Conversely, "stopping compose stops everything" is false. Forcibly stopping every
   workspace is a separate operation ([03 Running it](03-run.md)).
 
-Persistent data lives **entirely under `DATA_DIR`** — the database, each user's home,
+Persistent data lives **entirely under `DATA_DIR`**: the database, each user's home,
 the envelope-encrypted credentials, Caddy's certificates. That directory is what you
 back up. The sole exception is `AF_MASTER_KEY`, which belongs in neither `DATA_DIR` nor
 the backup.
 
 Driving the host's Docker daemon from a container has **three constraints that break
-things silently when violated** — host networking, an identical absolute `DATA_DIR`
+things silently when violated**: host networking, an identical absolute `DATA_DIR`
 path, and the docker group GID. The compose definition contains them;
 [06 Diagnosing it](06-diagnose.md) explains them from the "what does this symptom mean"
 side.
@@ -121,11 +121,11 @@ side.
 - [ ] The restore procedure **actually rehearsed once**, including the `DATA_DIR`
       basename constraint.
 - [ ] A backup taken before every upgrade. **There is no downgrade.**
-- [ ] The login allowlist configured. Empty means deny-all — it fails closed.
+- [ ] The login allowlist configured. Empty means deny-all (it fails closed).
 - [ ] If signing in with Entra ID, the issuer pinned to your own tenant GUID. The
       common endpoint would put every Microsoft account in front of your login screen.
-- [ ] The set of people with SSH, sudo or docker rights on the host kept minimal —
-      that is host-root equivalent.
+- [ ] The set of people with SSH, sudo or docker rights on the host kept minimal; that is
+      host-root equivalent.
 - [ ] If introducing egress control, the staged policy understood: observe in log-only
       mode first, then move to enforce.
 - [ ] The procedure for reporting a vulnerability known

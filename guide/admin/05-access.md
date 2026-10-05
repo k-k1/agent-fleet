@@ -12,7 +12,7 @@ read-only for you, and one is yours to register but somebody else's to approve.
 
 | Screen | Yours? |
 |---|---|
-| **Sign-in methods** | register and edit — a deployment administrator approves |
+| **Sign-in methods** | register and edit; a deployment administrator approves |
 | **Login rules** | read-only |
 | **Allowed networks** | yours |
 | **Integration OAuth apps** | yours |
@@ -23,7 +23,7 @@ By default your tenant is reachable from anywhere the deployment itself is reach
 from. **Source networks** narrows that to a list you write: comma-separated CIDR ranges
 or single addresses, IPv4 or IPv6. Leaving it empty means no restriction.
 
-The screen shows **your address, as this deployment sees it** — and that is the value a
+The screen shows **your address, as this deployment sees it**. That is the value a
 rule is matched against, *not* what your browser believes its address is. Check it
 before you save. If the deployment cannot determine the source of the request, the
 screen says so and the rules cannot be applied; that is a deployment-side setting
@@ -55,7 +55,7 @@ GitHub's card does not start empty. You pick which app the button talks to:
 |---|---|---|
 | **Built-in OAuth App** | One authorization. The token reaches every repository the member can access (scopes `repo` and `workflow`). | Individuals, small setups. This is the **default** of a deployment's first tenant, so a personal install has the button from the start. |
 | **Built-in GitHub App** | Install the app on their account or organisation, choose the repositories, then authorize. | Teams that want narrower, per-repository access. In an organisation only an owner can install it. |
-| **Your own app** | Whatever your app is — an OAuth App or a GitHub App you registered. | Organisations that keep their own app. |
+| **Your own app** | Whatever your app is: an OAuth App or a GitHub App you registered. | Organisations that keep their own app. |
 | **None** | No button; members paste a token. | |
 
 The built-in apps need nothing from you, and they cannot see members' tokens: the
@@ -68,7 +68,7 @@ For **your own app**, paste its client_id. Whether it is an OAuth App or a GitHu
 the card shows an estimate, which the first member's connection confirms. Two things to
 set on GitHub's side:
 
-- Tick **Enable Device Flow** — a client_id without it is refused when you save.
+- Tick **Enable Device Flow**: a client_id without it is refused when you save.
 - For a GitHub App, turn **Expire user authorization tokens** off (af does not renew
   them yet, so connections would stop after about eight hours), and enter the app's page
   (`https://github.com/apps/<name>`) as the install page. A GitHub App reaches only the
@@ -90,46 +90,46 @@ To register one:
 
 > **Jira: turn Sharing on as well.** An Atlassian 3LO app is "in development" until you
 > enable Sharing under its **Distribution**, and until then **only the person who created
-> it can authorize it** — so your own test passes and every other member is stopped by
+> it can authorize it**, so your own test passes and every other member is stopped by
 > Atlassian's *"You don't have access to this app"*. That page is before the consent
 > screen, so nothing comes back to af: the member simply stays unconnected, with no error
 > anywhere. Enabling Sharing asks for a **Vendor name**, **Contact link** and **Privacy
-> policy URL**, which the members authorizing the app can see — put your company name and
+> policy URL**, which the members authorizing the app can see; put your company name and
 > a support address there, not a personal name or inbox. It does not list the app on the
 > Atlassian Marketplace. Members will still see a notice that the app has not been
 > reviewed by Atlassian; that is expected for an app you registered yourself.
 
 The secret is **encrypted on save and never shown again**. When you edit the
-registration later, leaving the secret field empty keeps the stored one — fill it in
+registration later, leaving the secret field empty keeps the stored one; fill it in
 only when you actually want to change it. **Remove registration** takes the OAuth
 button away again; members who connected with a token are unaffected.
 
 This is per provider and per tenant. It does not widen what members may do with the
-provider — that is decided by the app's own scopes and by each member's permissions
+provider; that is decided by the app's own scopes and by each member's permissions
 there.
 
 ## Sign-in methods, and login rules
 
 **Sign-in methods** is where you register your own company's IdP, or a GitHub
 organisation, as a way into this tenant. Registering is not enough: a deployment
-administrator approves it, and a later change — adding an organisation, changing how
-the same account is recognised — sends the row back for approval.
+administrator approves it, and a later change (adding an organisation, changing how
+the same account is recognised) sends the row back for approval.
 
 **Login rules** shows the join mode and the domains in force. It is read-only for you.
 It exists so you can see *why* an invitation was refused without having to ask anyone.
 
-Both screens have sharp edges that are easier to hit than to notice, and they are
-covered in detail in the deployment administrator's chapter on sign-in
-([operate/](../operate/README.md)) — most importantly:
+Both screens have sharp edges that are easier to hit than to notice. The
+deployment administrator's chapter on sign-in
+([operate/](../operate/README.md)) covers them in detail; the most important are:
 
 - **Narrowing what your tenant accepts can lock out people who belong to another
   tenant too.** The same address at a different IdP is a *different login*. Leave their
   method accepted and just stop showing its button instead.
 - **Clearing "show button" keeps a method accepted.** People already using it still
   can; it just stops appearing on the sign-in page. You cannot clear it on every
-  method — a sign-in page with no buttons is a dead end, so the setting is ignored.
+  method: a sign-in page with no buttons is a dead end, so the setting is ignored.
 - If someone holds both accounts, they can link the second method to their own account
-  themselves, under their personal account settings. Nothing for you to do.
+  themselves, under their personal account settings. You have nothing to do.
 
 ---
 

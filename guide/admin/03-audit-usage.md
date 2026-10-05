@@ -15,13 +15,13 @@ available from the tenant settings rail, scoped to your own tenant.
 The **"Audit"** section is the **record of change operations** that happened within the tenant. Each
 row is one operation, with the following columns.
 
-- **Time** — when it was done.
-- **Action** — what was done (`fs.*` = file operations, `git.*` = commits, checkouts, and so on,
+- **Time**: when it was done.
+- **Action**: what was done (`fs.*` = file operations, `git.*` = commits, checkouts, and so on,
   `repo.*` = repository creation / deletion, `session.*` = session creation / fork / stop,
   `engine.*` = the self-hosted inference engines, etc.).
-- **Actor** — who did it (email address). Besides human operations, the actor can also be an
+- **Actor**: who did it (email address). Besides human operations, the actor can also be an
   external Claude client (MCP) or a system action (auto-stop, etc.).
-- **Target** — which file, repository, or session it was done to.
+- **Target**: which file, repository, or session it was done to.
 
 Typing "Action / target / user" into the search field at the top filters the list. The log does not
 auto-refresh, so press the refresh button when you want the latest. The item count appears at the
@@ -32,7 +32,7 @@ top right.
 Only **operations that change or destroy something** are recorded. This is a deliberate line, so
 keep it in mind.
 
-- **Recorded** — operations that "change state": file upload / creation / rename / deletion, git
+- **Recorded**: operations that "change state": file upload / creation / rename / deletion, git
   commit / checkout / fetch, repository clone / deletion, session creation / fork / stop, and so on.
   The self-hosted inference engines write here too, because they spend money without anybody
   asking: `engine.<engine>.offer` is one line per GPU instance bought, and its detail carries the
@@ -41,7 +41,7 @@ keep it in mind.
   `engine.<engine>.model.complete` are models taken in or completed; `engine.hf_token` and
   `engine.civitai_token` are the API tokens registered or removed. These lines belong to the
   deployment rather than to a tenant, so they appear in a deployment administrator's audit view.
-- **Not recorded** — plain **reads** (just opening and viewing a file, just browsing a list) are
+- **Not recorded**: plain **reads** (just opening and viewing a file, just browsing a list) are
   not kept by default. And **raw terminal input/output (the very characters flowing across the
   screen) is not stored**. This is by design, to avoid the risk of passwords or tokens slipping in.
 
@@ -54,7 +54,7 @@ sign-in method and deleting or renaming an internal repository are recorded **be
 detail: what was done, what could not be deleted, or the error. If the request cannot be written
 to the audit log, the operation is refused with "the audit log could not record who asked for it"
 and nothing is done; try again once the database is back. A `.requested` row with no outcome row
-after it means the outcome was lost, not that nothing happened — check the target.
+after it means the outcome was lost, not that nothing happened; check the target.
 
 Therefore the audit log cannot trace "what exactly that member typed in the terminal". What it can
 trace is "when, who, against which file or session, made what kind of change". The design intent
@@ -63,16 +63,16 @@ behind the recording scope is laid out in the developer documentation.
 ## Running time ("Running time")
 
 The **"Running time"** section tallies each member's **workspace running time**. What is counted is
-"how much infrastructure was occupied" — the time a workspace was up — not Claude fees. Claude is
+"how much infrastructure was occupied" (the time a workspace was up), not Claude fees. Claude is
 "bring your own" (BYO): each member logs in with their own subscription (seat), so the cost borne
 by the operator is the occupancy time. The value is sampled roughly every 5 minutes, so it is an
 approximation with some margin of error.
 
-- **Period** — set dates with "From" and "To", and press "Apply" to take effect.
-- **Per member** — each member's running time appears as a bar chart, with "Total running" and the
+- **Period**: set dates with "From" and "To", and press "Apply" to take effect.
+- **Per member**: each member's running time appears as a bar chart, with "Total running" and the
   "Members" count at the top.
-- **CSV** — the "CSV" button exports the data for the displayed period and scope as-is (usable for
-  cost allocation — showback — and internal reporting).
+- **CSV**: the "CSV" button exports the data for the displayed period and scope as-is (usable for
+  cost allocation, known as showback, and internal reporting).
 
 The option to switch tenants appears only for super_admin. Your running-time screen is always scoped
 to your own tenant.
@@ -125,8 +125,8 @@ remain. The member can start it again from the Console.
 Look at **Settings → Toolchain**, at the line under the tool-version table: "Upstream release
 watch: last clean run …". Upstream releases are watched daily, and the versions this deployment
 bakes only move when that watch reports one. When the line is recent and carries no warning, the
-versions really have not moved and there is nothing to do. When it warns — that the watch could
-not read a particular source, or that it has had no clean run for over 48 hours — the version
+versions really have not moved and there is nothing to do. When it warns (that the watch could
+not read a particular source, or that it has had no clean run for over 48 hours), the version
 standing still says nothing about upstream, and it is your deployment administrator's monitoring
 that needs looking at ([operate/](../operate/README.md)). If the line is **absent altogether**,
 this deployment cannot reach GitHub and simply does not know; that is not itself a fault.

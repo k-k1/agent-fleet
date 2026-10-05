@@ -16,12 +16,12 @@ Start wherever you fit.
 | Someone managing a team's members and limits | [Administering a tenant](admin/README.md) | How do I run this for my team? |
 | Someone installing and keeping a deployment alive | [Operating a deployment](operate/README.md) | How do I stand it up and keep it running? |
 
-**The [Reference](ref/README.md)** is the shelf everyone consults — what exists and who
-may use it, per agent, per repository kind, per deployment target and per role. What a
-word means is in the [Glossary](ref/glossary.md).
+**The [Reference](ref/README.md)** is the shelf everyone consults: what exists and who
+may use it, per agent, per repository kind, per deployment target and per role. See the
+[Glossary](ref/glossary.md) for what a word means.
 
-**The [release history](../deploy/release/notes/SUMMARY.md)** is what changed in each
-release — which release a feature arrived in and which one fixed a problem, one line per
+**The [release history](../deploy/release/notes/SUMMARY.md)** lists what changed in each
+release: which release a feature arrived in and which one fixed a problem, one line per
 item, newest release first, with each release's full notes one click away.
 
 If you would rather never open a terminal, the [Simple guide](member/lite.md) is the

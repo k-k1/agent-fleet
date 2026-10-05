@@ -7,22 +7,22 @@ updated: "2026-08"
 
 English | [日本語](09-collaboration.ja.md)
 
-This chapter covers the parts of the Console that are about **more than one person**, or
-about **what happens to work after it is finished**: highlighting a line so somebody
+This chapter covers the parts of the Console for **more than one person** and for
+**what happens to work after it is finished**: highlighting a line so somebody
 else sees it, seeing what a session actually changed, and clearing away what has piled
 up without losing anything you still want.
 
 ## Highlighting a line in a conversation
 
-Select text in a conversation and a **Highlight** pill appears. Pick a colour — yellow,
-green, blue or pink — and the passage stays marked.
+Select text in a conversation and a **Highlight** pill appears. Pick a colour (yellow,
+green, blue or pink) and the passage stays marked.
 
 - The marks are part of the conversation, not of your browser. Anyone the session is
   shared with sees the same passage marked, in the same place, and the **Highlights**
   strip under the conversation header lists them with the number of people who added
   them.
 - **Remove highlight** takes yours away. Removing one does not touch anybody else's.
-- Colour carries no meaning the product enforces — it means whatever your team decides.
+- Colour carries no meaning the product enforces; it means whatever your team decides.
 - On a phone or tablet the colours appear in a bar at the **bottom of the screen** instead of
   beside the selection: your browser's own Copy / Share menu already covers the space just above
   whatever you selected.
@@ -37,19 +37,19 @@ actually touched, and takes you straight to one. Click its heading to fold it op
 closed; the choice is remembered per session. **Ctrl+P** (**⌘P** on macOS), then **Tab**
 to "Changed files", reaches the same list.
 
-It answers the question you have at review time — "what did this thing do to my
-working copy?" — without reading the whole conversation back. It is derived from the
+It answers the question you have at review time ("what did this thing do to my
+working copy?") without reading the whole conversation back. It is derived from the
 conversation and the repository together, so it reflects what happened, not what the
 agent said it would do.
 
 ## Reply suggestions
 
 Under the message box, **Suggest replies with AI (from the recent conversation)** offers
-a few things you might plausibly want to send next. They are suggestions, not actions —
+a few things you might plausibly want to send next. They are suggestions, not actions:
 nothing is sent until you choose one.
 
 - **Always show (pin)** keeps a suggestion around.
-- **Stop suggesting this** removes one; sending the same text yourself brings it back.
+- **Stop suggesting this** removes one, and sending the same text yourself brings it back.
 - If the conversation is still short, or no AI is available for it, you are told so
   rather than shown an empty box.
 
@@ -77,13 +77,13 @@ ends up running for a month.
 
 ## Having a session stop when it is done
 
-The opposite case: you want the session to **stop once the work is finished** — you left a
+The opposite case: you want the session to **stop once the work is finished**: you left a
 long job running overnight and would rather it did not hold the workspace up afterwards.
 
 There are two ways to ask, and both set the same thing:
 
-- **Tell the session** — "stop when this is done". It arms the stop itself.
-- **Stop when this turn ends** in the ⋯ menu — set it yourself. Cancelling is in the same place.
+- **Tell the session**: "stop when this is done". It arms the stop itself.
+- **Stop when this turn ends** in the ⋯ menu: set it yourself. Cancelling is in the same place.
 
 An armed row carries a badge. The stop happens **after the running turn ends**: it will not
 stop while a question is waiting for you or while work is still going. It is the resumable
@@ -96,14 +96,14 @@ in front of you, not about whatever you ask for next.
 This is tidying rather than cost control: a session that has finished is not what keeps the
 workspace awake, so stopping it does not change when the workspace stops. What you get is
 the memory it was holding, back right away, and a list where "finished" reads as "stopped".
-Idle auto-stop does the same thing on a delay — except that it skips a session while you
+Idle auto-stop does the same thing on a delay, except that it skips a session while you
 have it open, so stopping one while you watch it work is something only this can do.
 
 ## Locking something against deletion
 
 **Lock against deletion** in the ⋯ menu marks a session as one that must not go away.
 A locked session carries a badge saying so, and is **skipped by cleanup and by
-automatic tidying** — both the manual sweep below and anything that would have removed
+automatic tidying**, both the manual sweep below and anything that would have removed
 it on its own.
 
 Use it for the conversation you will need at the end of the quarter, and for the
@@ -116,7 +116,7 @@ around you.
 **Clean up** surveys the stopped sessions, unneeded worktrees and merged branches that
 have accumulated, and lets you clear them in one pass.
 
-Every candidate is graded, and the grade is the point:
+Every candidate is graded:
 
 | Grade | Means |
 |---|---|
@@ -128,13 +128,13 @@ Every candidate is graded, and the grade is the point:
 destroyed: sessions and branches go to **Trash (restore)**, the second tab of the same
 dialog, and can be brought back.
 
-Archived sessions are a separate thing from the trash and are not part of cleanup —
-they have their own browser.
+Archived sessions are a separate thing from the trash and are not part of cleanup.
+They have their own browser.
 
 ## When a turn is interrupted
 
-An agent's turn can be cut off by something outside the conversation — a provider
-error, a dropped connection, a usage limit. When that happens the conversation is not
+An agent's turn can be cut off by something outside the conversation, such as a provider
+error, a dropped connection or a usage limit. When that happens the conversation is not
 silently left half-finished:
 
 - You are notified, including when a run resumes after a usage limit resets.

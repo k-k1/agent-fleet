@@ -9,8 +9,8 @@ updated: "2026-09"
 English | [日本語](04-secure.ja.md)
 
 This chapter summarizes the **assumptions an operator must understand** and the **day-to-day
-controls to apply** in order to run Agent Fleet safely. It is not a list of hidden bugs; it
-**honestly discloses properties inherent in the architecture and shows how to handle them in
+controls to apply** in order to run Agent Fleet safely. It
+**discloses properties inherent in the architecture and shows how to handle them in
 operations**. The external-facing threat model is in `SECURITY.md`
 (English), and the design background is in `docs/build/07-security.md`; this
 document expands those into operational procedures.
@@ -27,7 +27,7 @@ it is single-user, and its one user is the operator (`SECURITY.md` → "`docker`
 
 Skipping every tool approval is the **default, not a fixed rule**: each user can turn approvals
 back on per agent kind (Settings > Agents) or for a single session at launch. That changes how
-much a mistake costs, **not where the boundary is** — only some agent kinds offer the choice,
+much a mistake costs, **not where the boundary is**: only some agent kinds offer the choice,
 the mode can be cycled back from inside the TUI, and the CLI's own settings are not locked down. Treat tool
 approval as a way to catch accidents, and keep treating the workspace boundary as the only real
 containment on the multi-user targets.
@@ -38,12 +38,12 @@ containment on the multi-user targets.
   collapses all at once**.
 - **Companies are separated by separate deployments.** The impact above is **confined to the
   inside of that single deployment** and does not spread to other companies (= other
-  deployments) — on AWS, only when each deployment has its own AWS account. This is the core
+  deployments); on AWS, only when each deployment has its own AWS account. This is the core
   strength of the one-company = one-deployment delivery model.
 
 ## Residual risks: what to do about them
 
-The list of residual risks — what each one is and why — is `SECURITY.md` → "Known residual
+The list of residual risks (what each one is and why) is `SECURITY.md` → "Known residual
 risks", grouped by deployment target (every target, `docker` and `native`, `ecs` /
 `ecs-ec2`). Read it for the risks themselves; this section keeps only the operational steps.
 
@@ -117,14 +117,14 @@ in the Console.
 
 **Rolling it out in stages is the core of the design.** Proceed in this order.
 
-1. **log-only (observe only — the default)** — blocks nothing; it only records destinations.
+1. **log-only (observe only, the default)**: blocks nothing; it only records destinations.
    Per-host counts of allow/block candidates accumulate under "Observed destinations" in the
    Admin panel. Start here to **understand the actual traffic**.
-2. **Firm up the allowlist** — while reviewing the observations, add the legitimate
+2. **Firm up the allowlist**: while reviewing the observations, add the legitimate
    destinations to the allowlist. The allowlist is versioned (active / proposed / retired); the
-   AI only **proposes — approval is done by humans** (approve/reject under "Proposed (needs
+   AI only **proposes; approval is done by humans** (approve/reject under "Proposed (needs
    approval)" in the Admin panel).
-3. **Switch to enforce** — once the allowlist is sufficiently solid, switch the mode to
+3. **Switch to enforce**: once the allowlist is sufficiently solid, switch the mode to
    enforce. From then on, traffic outside the allowlist is **blocked**. The Admin UI also warns
    you to confirm reality in log-only first before switching.
 
@@ -134,8 +134,8 @@ in the Console.
 > into every workspace container (off by default), so programs that honour those variables go through
 > the proxy. The ecs / ecs-ec2 targets do not pass this setting on to workspaces. What is **not built
 > yet** is forcing
-> traffic through it — an internal network or security-group egress rule that leaves the proxy as
-> the only way out, and templates that run the proxy — so a process that ignores the variables
+> traffic through it (an internal network or security-group egress rule that leaves the proxy as
+> the only way out, and templates that run the proxy), so a process that ignores the variables
 > still goes straight out, and **switching to enforce does not yet constrain a workspace**
 > ([#1181](https://github.com/k-k1/agent-fleet/issues/1181)).
 > For now, understand that you can operate up to the "observe and grow the allowlist" stage.
@@ -155,7 +155,7 @@ an operator.
   registration may still use stdio).
 - **It is coupled to egress.** A registration does nothing if its destination host is not on the
   allowlist. A user's request for one arrives in the Admin egress tab as "Proposed (needs
-  approval)" — see the procedure above.
+  approval)"; see the procedure above.
 - **There is an inbound door too.** A user can issue an **MCP token** and drive their workspace
   from Claude Code / Claude Desktop on their own machine. The endpoint is `/mcp` (Bearer auth);
   on the deployment side it depends on the feature flag (`AF_MCP_ENABLED`) and on whether the
@@ -177,7 +177,7 @@ into answers, logs or commits is part of the agent-side instructions as well.
   logins are rejected. `_EMAILS_FILE` is re-read on every login, so **additions take effect
   without a CP restart** (removals likewise). The check runs **on every request**, not just at
   sign-in, so removing someone locks them out on their very next request instead of waiting out
-  `AF_SESSION_TTL` — that is the offboarding path. Configuration is in [02 §6](02-install.md).
+  `AF_SESSION_TTL`. That is the offboarding path. Configuration is in [02 §6](02-install.md).
 - **Being invited is itself permission to reach the login.** Somebody added to a tenant in the
   Admin panel can sign in without also appearing in `AF_OAUTH_ALLOWED_*`, so a deployment run
   on invitations keeps one roster instead of two lists that drift apart. Passing the door does
@@ -198,7 +198,7 @@ into answers, logs or commits is part of the agent-side instructions as well.
   messaging (`/list-agents` / `SendMessage`) is one: **enabling it also brings back Claude's
   usage telemetry**, so it stays off as a self-hosted default. The same capability is provided by
   Agent Fleet's own implementation instead (Settings > Agents > session-to-session messaging,
-  **off by default**), where delivery and attribution are under your control — messages stay
+  **off by default**), where delivery and attribution are under your control; messages stay
   within one workspace, and the receiving side is told explicitly that it is not an instruction
   from the user. When a user reports that "`/list-agents` doesn't work", it is this decision, not
   a fault.
@@ -208,7 +208,7 @@ into answers, logs or commits is part of the agent-side instructions as well.
   (`docs/build/07-security.md` §7.6).
 - **Workspaces do not get the host's cloud identity.** A workspace container can reach the
   cloud metadata endpoint (`169.254.169.254`) of the machine it runs on, and an AWS SDK with no
-  member credentials falls back to whatever role it finds there — on an EC2 host with an
+  member credentials falls back to whatever role it finds there: on an EC2 host with an
   instance profile, that role, in every session, without an error. The Control Plane starts
   every workspace with `AWS_EC2_METADATA_DISABLED=true` (docker) or withholds the task role
   and sets it (ECS), which stops the SDKs from asking; the network block is the host's job:
@@ -217,13 +217,13 @@ into answers, logs or commits is part of the agent-side instructions as well.
     one hop and can still use an instance profile; a workspace on a docker bridge is two and
     gets no token. For an instance that already exists, apply it with
     `aws ec2 modify-instance-metadata-options --instance-id <id> --http-tokens required
-    --http-put-response-hop-limit 1` — a stack update can replace the instance when the
+    --http-put-response-hop-limit 1`. A stack update can replace the instance when the
     Ubuntu AMI parameter has moved.
   - **Any other docker host in a cloud**: the same metadata settings, or a host firewall rule
     in Docker's `DOCKER-USER` chain that rejects `169.254.169.254` from the workspace bridges
     (it needs root on the host; compose itself needs nothing new).
   - **ecs-ec2**: the slot user data sets `ECS_AWSVPC_BLOCK_IMDS=true`; retained slots have to
-    be replaced — reserve them in Settings → Admin → Slots ([03-run](03-run.md), "ecs-ec2:
+    be replaced: reserve them in Settings → Admin → Slots ([03-run](03-run.md), "ecs-ec2:
     replacing slots after a launch template change").
 
   `AF_WS_WORKLOAD_AWS=1` on the Control Plane hands the ECS task role back to workspaces and
@@ -258,8 +258,8 @@ deployment admits people.
 | The allowlist (`AF_OAUTH_ALLOWED_*`) | Remove them from it | The next request (the check runs per request) |
 | Tenant membership (an invitation) | **Admin panel → the tenant → the member → "Remove member"** | The next request |
 
-**Sessions cannot be revoked individually.** The session cookie is stateless — a signed
-`{email, exp}` and nothing else, with no server-side session store — so there is no "sign out
+**Sessions cannot be revoked individually.** The session cookie is stateless: a signed
+`{email, exp}` and nothing else, with no server-side session store, so there is no "sign out
 of all devices" and a cookie stays technically valid for up to `AF_SESSION_TTL` (7 days by
 default). What actually shuts the door is the per-request re-check above. So:
 
@@ -267,11 +267,11 @@ default). What actually shuts the door is the per-request re-check above. So:
 > stops them getting a *new* session; the one already in their browser keeps working until you
 > also remove them from the allowlist or from the tenant.
 
-Take the steps in this order — the first one is what revokes access, the rest are cleanup:
+Take the steps in this order; the first one is what revokes access, the rest are cleanup:
 
 1. **Remove the membership** (or take them off the allowlist).
 2. **Stop the workspace** (Admin panel → the member → "Force-stop the workspace").
-3. **Clean the home** — only after they have pushed anything they still want. `~/repos` is not
+3. **Clean the home**: only after they have pushed anything they still want. `~/repos` is not
    recoverable afterwards. It keeps their logins and connections, and on deployments that take
    backups of homes it keeps those too; "Delete backups" and destroying the workspace remove
    them. Where the deployment does not offer Clean home, destroying the workspace is the step
@@ -286,8 +286,8 @@ Two asymmetries are worth knowing *before* somebody leaves rather than after:
 
 ### The emergency stop: rotating `AF_COOKIE_SECRET`
 
-If you need everyone's session invalidated *right now* — a leaked cookie, a laptop lost, an
-account you cannot reach — the only immediate switch is to change the cookie signing key:
+If you need everyone's session invalidated *right now* (a leaked cookie, a laptop lost, an
+account you cannot reach), the only immediate switch is to change the cookie signing key:
 
 ```sh
 openssl rand -base64 32          # generate a new value
@@ -297,20 +297,20 @@ docker compose up -d cp
 
 Every session cookie signed with the old key stops verifying, so **everybody is logged out and
 signs in again**. It is blunt, it costs everyone one sign-in, and it is the only thing that
-works within seconds. Note what it does *not* do: it does not remove anyone's access — if the
+works within seconds. Note what it does *not* do: it does not remove anyone's access: if the
 person is still on the allowlist or still holds a membership, they simply sign in again. Use it
 together with the removal steps above, not instead of them.
 
 ## Handing over `super_admin`
 
 `SUPER_ADMIN_EMAILS` (the host's env) is the single source of truth for who administers the
-deployment, and it is read **once at startup** — so a change needs a CP restart. Deliberately,
+deployment, and it is read **once at startup**, so a change needs a CP restart. Deliberately,
 there is no way to promote a super_admin from inside the Console: the people who can run the
 whole deployment should be exactly the people who can edit the host's files.
 
 1. Edit `SUPER_ADMIN_EMAILS` (add the successor, remove the predecessor) and restart the CP.
-2. On restart the CP **also revokes the role in the database** for any account no longer listed
-   — it logs `super_admin revoked (not in SUPER_ADMIN_EMAILS): …`. Without this step the old
+2. On restart the CP **also revokes the role in the database** for any account no longer listed.
+   It logs `super_admin revoked (not in SUPER_ADMIN_EMAILS): …`. Without this step the old
    administrator would keep the role in the database forever, because the natural fix ("sync it
    at login") never reaches somebody who has left and never logs in again.
 3. The successor gets the role on their first sign-in.
@@ -318,10 +318,10 @@ whole deployment should be exactly the people who can edit the host's files.
 
 > If the only super_admin leaves without handing over, this is recoverable: whoever can edit
 > the host's env adds themselves and restarts. The one prerequisite is that **somebody in the
-> company can still reach the host** — worth checking before you need it.
+> company can still reach the host**, which is worth checking before you need it.
 
 ## Reporting vulnerabilities
 
-If you find a vulnerability, **do not open a public issue** — report it privately. The
+If you find a vulnerability, **do not open a public issue**; report it privately. The
 channels, what to include in a report, and which versions receive fixes are in `SECURITY.md`
 → "Reporting a vulnerability" and "Supported versions".

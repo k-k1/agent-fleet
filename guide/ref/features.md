@@ -154,7 +154,7 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 
 ## Rows with no Details yet
 
-A dash means the feature exists and works, but no reader-facing page covers it — the
+A dash means the feature exists and works, but no reader-facing page covers it; the
 old guide never caught up with it. Those gaps are the reason this catalogue exists,
 Phase P2 closed them all: highlights, changed files, reply suggestions, deletion lock,
 cleanup and the trash, and abort auto-resume are in

@@ -26,11 +26,11 @@ In a word, it's a feature that lets you **"hire a site foreman for your sessions
 
 ### See (read)
 
-- **Session list and states** — what is running where right now, and whether each is working, idle, or asking a question.
-- **Session output** — reads the recent portion of each session's conversation / terminal output to grasp progress and conclusions.
-- **Repository list** — the working copies under `~/repos`. Material for choosing where to launch a new session.
-- **Agent usage and limits** — claude / codex / Muse Code subscription usage (5-hour window and weekly window), copilot account credit balance, and agy quota balance, plus each agent's plan and account in use, and when limits reset. It answers "How much do I have left?", "When does the limit reset?", "Which plan?" with actual values, and this also informs decisions before assigning a big task (opencode is excluded because it uses per-provider API keys and has no notion of subscription usage). Muse Code's figures are the last reading a muse session saw: there are none until a muse session in this workspace has finished a turn, and they carry the plan but not the signed-in account.
-- **Per-session context volume and cumulative consumption** — how full each session's context is (fill ratio against the window) and the cumulative tokens consumed so far. This helps you spot sessions with tight context and decide on a handover (splitting into a new session).
+- **Session list and states**: what is running where right now, and whether each is working, idle, or asking a question.
+- **Session output**: reads the recent portion of each session's conversation / terminal output to grasp progress and conclusions.
+- **Repository list**: the working copies under `~/repos`. Material for choosing where to launch a new session.
+- **Agent usage and limits**: claude / codex / Muse Code subscription usage (5-hour window and weekly window), copilot account credit balance, and agy quota balance, plus each agent's plan and account in use, and when limits reset. It answers "How much do I have left?", "When does the limit reset?", "Which plan?" with actual values, and this also informs decisions before assigning a big task (opencode is excluded because it uses per-provider API keys and has no notion of subscription usage). Muse Code's figures are the last reading a muse session saw: there are none until a muse session in this workspace has finished a turn, and they carry the plan but not the signed-in account.
+- **Per-session context volume and cumulative consumption**: how full each session's context is (fill ratio against the window) and the cumulative tokens consumed so far. This helps you spot sessions with tight context and decide on a handover (splitting into a new session).
 
 With questions like "Summarize the state of the sessions running right now" or
 "Is session ◯◯ stuck on anything?", it answers after checking the actual state, not by
@@ -39,12 +39,12 @@ guessing. Note that reading usage and context volume is also available to other 
 
 ### Drive (write)
 
-- **Send instructions to running sessions** — delivers prompts just as if you typed them into the terminal. It states which session it will send what to before executing.
-- **Launch new sessions** — pick a repository (dir), agent kind (claude / codex / cursor / copilot / kiro / agy / opencode / lcpp / muse / shell), and model, then start. Models are specified after checking the actually selectable list (claude uses tier names fable / opus / sonnet / haiku plus user-registered full IDs; codex / cursor / copilot / kiro / opencode use a catalog reflecting connection state). With a **worktree** you can carve out an independent working copy plus branch, so parallel work doesn't collide. If you pass an **initial task (initial_prompt)**, work starts right after launch.
-- **Stop and resume sessions** — fold up sessions that are no longer needed, running away, or hogging resources, and resume them later with their conversation history intact. It confirms which one to stop before executing, and stopped sessions can also be resumed from the Console. The operator can only perform a **resumable "stop"**; destructive deletion of a session is limited to Console-side operations.
+- **Send instructions to running sessions**: delivers prompts just as if you typed them into the terminal. It states which session it will send what to before executing.
+- **Launch new sessions**: pick a repository (dir), agent kind (claude / codex / cursor / copilot / kiro / agy / opencode / lcpp / muse / shell), and model, then start. Models are specified after checking the actually selectable list (claude uses tier names fable / opus / sonnet / haiku plus user-registered full IDs; codex / cursor / copilot / kiro / opencode use a catalog reflecting connection state). With a **worktree** you can carve out an independent working copy plus branch, so parallel work doesn't collide. If you pass an **initial task (initial_prompt)**, work starts right after launch.
+- **Stop and resume sessions**: fold up sessions that are no longer needed, running away, or hogging resources, and resume them later with their conversation history intact. It confirms which one to stop before executing, and stopped sessions can also be resumed from the Console. The operator can only perform a **resumable "stop"**; destructive deletion of a session is limited to Console-side operations.
   - For a session that is still working you can ask it to **stop when that work is done**: the running turn finishes and its report arrives before the session is folded away, so nothing is cut off. Use it to reclaim a fan-out one session at a time as each finishes (sending the session a new instruction releases it).
-- **Memo queue operations** — check, add, and organize queued memos, and **batch-send selected memos** (operate the memo queue from [07](07-chat-memo.md) over chat).
-- **Consulting other assistants** — when a decision needs specialist knowledge, it asks the SRE assistant or others for advice before acting (the consulted assistant only returns advice; it does no work).
+- **Memo queue operations**: check, add, and organize queued memos, and **batch-send selected memos** (operate the memo queue from [07](07-chat-memo.md) over chat).
+- **Consulting other assistants**: when a decision needs specialist knowledge, it asks the SRE assistant or others for advice before acting (the consulted assistant only returns advice; it does no work).
 
 Prompts the operator sends to a session get a **"From operator"** badge in that session's
 chat view. They don't get mixed up with instructions you typed yourself, so you can trace
@@ -60,7 +60,7 @@ A session the operator instructed reports back to the conversation automatically
 - **When a session stops at plan approval, an interim report arrives as well.** From chat you can approve ("approve it") or send revision feedback ("have it fix ◯◯"), and asking "have another session review it" makes the operator broker the plan review → feedback → approval.
 - Turning ON **"Auto-pilot"** in ⚙Settings → Assistant makes the operator answer questions with the session's recommendation automatically, and drive plans through review by another session, feedback, and approval (every decision is shared in chat; unclear questions and choices/plans involving destructive or irreversible operations still come to you first). Default OFF.
 - When a report arrives, by default the operator **replies automatically** (summarizing results, sending follow-up instructions, deciding whether to start the next task, and so on). You can turn this auto-reply off with **"Auto-respond to session reports"** in ⚙Settings → the **Assistant** tab.
-- To prevent runaway loops, **auto-replies without any input from you are capped** (⚙Settings → Assistant "Unattended auto-reply limit", default 10, max 50 — unlimited is not available). When the cap is reached, a pause notice appears, and sending your next message resumes it. The design ensures your judgment is inserted periodically even in long hauls.
+- To prevent runaway loops, **auto-replies without any input from you are capped** (⚙Settings → Assistant "Unattended auto-reply limit", default 10, max 50; unlimited is not available). When the cap is reached, a pause notice appears, and sending your next message resumes it. The design ensures your judgment is inserted periodically even in long hauls.
 - Reports **also arrive in the notification center**, so you notice them even while looking at another screen (clicking opens that conversation).
 
 ## Basic usage
@@ -70,7 +70,7 @@ A session the operator instructed reports back to the conversation automatically
    - "Launch a worktree session in the console repo and have it fix the ◯◯ bug"
    - "Summarize what each of the 3 sessions running right now is doing"
    - "When session ◯◯ finishes, follow up and have it run the tests"
-3. For operations that consume resources — launching a session, batch-sending memos, etc. — the operator presents "where and what" and **asks for confirmation**. If it looks good, reply with your approval.
+3. For operations that consume resources (launching a session, batch-sending memos, etc.), the operator presents "where and what" and **asks for confirmation**. If it looks good, reply with your approval.
 4. After that, watch the report cards and auto-replies, and chime in only where needed. If you keep the conversation pane open, reports and auto-replies are reflected every few seconds.
 
 ## Use-case patterns
@@ -79,12 +79,12 @@ From here on, these are suggested patterns for "this is how to use it effectivel
 
 ### Pattern 1: research session → handover to the operator → parallel implementation → integration
 
-The most recommended pattern. The operator manages a flow where you **change headcount between research and implementation**.
+This is the most recommended pattern. The operator manages a flow where you **change headcount between research and implementation**.
 
-1. **Research** — first launch one session normally and have it investigate. The trick is to request output in a form you can divide later, like "Investigate the cause and produce a **fix plan split into work units that can proceed independently**." If the plan gets large, having the session write the plan to a file and commit it is more reliable (since reading session output focuses on the recent portion).
-2. **Handover** — ask the operator: "Read the research results from session ◯◯ and proceed with a separate session per work unit." The operator reads the source session's output and hands over by **summarizing the key points and embedding them into each new session's initial task** (it doesn't duplicate the whole conversation; it passes only the necessary context, distilled).
-3. **Parallel implementation** — a **worktree session** is launched per work unit, so they proceed in parallel without stepping on each other's files. You can also ask here to vary the agent or model by the weight of the work (a light model for minor fixes, a heavy model for the hard parts).
-4. **Integration** — once the reports from all sessions are in, have the operator summarize the results and instruct an integration session (or one of the existing ones) to "pull in each branch and get the tests passing." You do the final review and merge yourself.
+1. **Research**: first launch one session normally and have it investigate. The trick is to request output in a form you can divide later, like "Investigate the cause and produce a **fix plan split into work units that can proceed independently**." If the plan gets large, having the session write the plan to a file and commit it is more reliable (since reading session output focuses on the recent portion).
+2. **Handover**: ask the operator: "Read the research results from session ◯◯ and proceed with a separate session per work unit." The operator reads the source session's output and hands over by **summarizing the key points and embedding them into each new session's initial task** (it doesn't duplicate the whole conversation; it passes only the necessary context, distilled).
+3. **Parallel implementation**: a **worktree session** is launched per work unit, so they proceed in parallel without stepping on each other's files. You can also ask here to vary the agent or model by the weight of the work (a light model for minor fixes, a heavy model for the hard parts).
+4. **Integration**: once the reports from all sessions are in, have the operator summarize the results and instruct an integration session (or one of the existing ones) to "pull in each branch and get the tests passing." You do the final review and merge yourself.
 
 ### Pattern 2: fan-out of same-kind fixes
 
@@ -103,13 +103,13 @@ is something only the operator, watching across agents as the command center, ca
 - "Have claude and codex each solve this problem in separate sessions. When both reports are in, compare the differences in approach in a table."
 - "Have session B, on a different agent, review session A's implementation. Send the findings back to A as a follow-up."
 
-Useful for design problems where approaches diverge, or when you want a different pair of eyes on a review.
+It is useful for design problems where approaches diverge, or when you want a different pair of eyes on a review.
 
 ### Pattern 4: serial pipeline (implement → test → review)
 
 A pattern that uses reports as the "trigger for the next stage." If you describe the
-sequence up front — "when implementation finishes, run the tests; if tests fail, follow up
-with fixes; if they pass, do another pass from a review perspective" — the operator judges
+sequence up front ("when implementation finishes, run the tests; if tests fail, follow up
+with fixes; if they pass, do another pass from a review perspective"), the operator judges
 each report and advances the stages. Because of the auto-reply cap (default 10, up to
 50 in settings), plan long pipelines with the expectation that you'll say "continue"
 at milestones, or raise the limit.
@@ -118,11 +118,11 @@ at milestones, or raise the limit.
 
 Even the "see" side alone, without driving anything, is useful.
 
-- **Briefing** — after stepping away or the next morning: "Summarize the current state of the sessions running since yesterday and why any are stopped." It actually reads states and output before reporting.
-- **Memo triage** — "Route the memos piled up in the memo queue to the appropriate sessions by content and send them." You can finish off the capture-as-you-go flow ([07](07-chat-memo.md)) from chat.
-- **Cleanup** — "Check which sessions have served their purpose and stop the ones no longer needed." After parallel work, you can fold up scattered sessions and free resources (stopped = resumable, so nothing disappears).
-- **Assignment based on remaining quota** — "Between claude and codex, which still has room in its window?" "Given the limits, which should this larger task go to?" It checks actual usage ratios and reset times, so you can discuss assignments that avoid agents close to their limits.
-- **Context watching and handover** — "Are any sessions getting tight on context?" When it finds a session with a high fill ratio, that feeds the decision to summarize the key points and hand over to a new session (the steps of Pattern 1) instead of piling on more instructions.
+- **Briefing** (after stepping away or the next morning): "Summarize the current state of the sessions running since yesterday and why any are stopped." It actually reads states and output before reporting.
+- **Memo triage**: "Route the memos piled up in the memo queue to the appropriate sessions by content and send them." You can finish off the capture-as-you-go flow ([07](07-chat-memo.md)) from chat.
+- **Cleanup**: "Check which sessions have served their purpose and stop the ones no longer needed." After parallel work, you can fold up scattered sessions and free resources (stopped = resumable, so nothing disappears).
+- **Assignment based on remaining quota**: "Between claude and codex, which still has room in its window?" "Given the limits, which should this larger task go to?" It checks actual usage ratios and reset times, so you can discuss assignments that avoid agents close to their limits.
+- **Context watching and handover**: "Are any sessions getting tight on context?" When it finds a session with a high fill ratio, that feeds the decision to summarize the key points and hand over to a new session (the steps of Pattern 1) instead of piling on more instructions.
 
 ## Scheduled runs
 
@@ -144,10 +144,10 @@ next run time, so check that it matches your intent.
   context," **long-lived session reuse** (with rebuild conditions such as every N runs or
   per time period) is also possible.
 - It can also **stop when it is done**. Tick **"Stop when done"** in Details & edit (ask the
-  operator for `stop_after_run`) and the session stops once that run has finished — report
+  operator for `stop_after_run`) and the session stops once that run has finished: report
   first, stop after, and resumable. It keeps the session an unattended run leaves behind from
   holding its memory for the rest of the night (it does not change when the workspace itself
-  stops — a finished session was never what kept it awake).
+  stops; a finished session was never what kept it awake).
 - **Where the report goes** is chosen per schedule. With the report on, **"Deliver to"** in
   Details & edit (`deliver_to` for the operator) takes any of: the **assistant conversation**
   (the default, and what every schedule did before), the **notification center**, and your
@@ -161,7 +161,7 @@ next run time, so check that it matches your intent.
 - **Stay silent when there is nothing to report.** For a monitoring schedule ("check the
   nightly jobs and tell me only if something failed"), tick **"Stay silent when there is
   nothing to report"** (`silent`). The agent is then told to answer exactly `[SILENT]` when
-  all is well. Such a run delivers nothing — no report, no notification, no chat post — and
+  all is well. Such a run delivers nothing (no report, no notification, no chat post) and
   its history row reads **"Success (silent)"**. The match is the whole answer, trimmed and
   case-sensitive, so `[SILENT]` inside a longer answer is delivered as usual. **Failures are
   never silent**: a run that errors, is cut off or dies still reaches the notification center

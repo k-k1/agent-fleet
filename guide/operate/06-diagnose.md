@@ -33,7 +33,7 @@ included here as well. The working directory is `deploy/compose/`.
 | Symptom | What to check |
 |------|-------------|
 | CP does not start | `docker compose logs cp`. Whether `curl -s http://127.0.0.1:8099/healthz` returns `ok` |
-| Everything returns 500 but health is `ok` | `/readyz`. A `503` there means the database. On a managed database whose password rotates, a Control Plane that has been running since before the rotation may be holding the old one — `grep DB_UNAVAILABLE` and `grep DB_SECRET_REFRESH_FAILED` in the CP log. Replacing the CP task makes it read the password again |
+| Everything returns 500 but health is `ok` | `/readyz`. A `503` there means the database. On a managed database whose password rotates, a Control Plane that has been running since before the rotation may be holding the old one (`grep DB_UNAVAILABLE` and `grep DB_SECRET_REFRESH_FAILED` in the CP log). Replacing the CP task makes it read the password again |
 | "permission denied" on docker.sock | Whether `DOCKER_GID` matches the host's docker group GID (DooD constraint C) |
 | Workspace starts but home is empty | Whether `DATA_DIR` is the same absolute path inside and outside the CP. The same path at restore time too (DooD constraint B) |
 | Cannot reach a started Workspace | Whether both the CP and Caddy have `network_mode: host` (DooD constraint A) |
@@ -47,7 +47,7 @@ included here as well. The working directory is `deploy/compose/`.
 | Every GitHub sign-in is rejected | The org has not approved the OAuth app (`grep "returned 403"` in the CP log), or the person's primary verified address is outside `AF_GITHUB_ALLOWED_DOMAINS` |
 | GitHub users must sign in again after a CP restart | Expected. The org-membership cache is in memory; they are re-verified, not rejected |
 | A tenant registered a sign-in method but no button appears | It is still *waiting for approval*, or it was approved and its settings are incomplete. Admin → the tenant → **Sign-in methods** says which, and so does the **Sign-in method register** in the rail (which also carries the approve/suspend buttons, so you do not have to walk into the tenant); `grep -i "tenant login provider"` in the CP log names the fault |
-| "This email address is already used by another sign-in method" | A tenant-defined method asserted an address that already belongs to an account someone has signed in as. This is deliberate — that method may not take over an existing account. They sign in the way they normally do. The **same GitHub account** (deployment-wide GitHub ⇄ a tenant's GitHub) resolves to one person, so this only appears for a *different* IdP. If they hold **both accounts**, have them sign in the way they normally do and add the other method under **Settings → Personal → Account → Add a sign-in method** (only a method asserting the same address, and its own org / domain rules still apply). If somebody has no account on the other side at all, leave their method on **Accept** for that tenant and, if the button is in the way, clear **Show button** on it |
+| "This email address is already used by another sign-in method" | A tenant-defined method asserted an address that already belongs to an account someone has signed in as. This is deliberate: that method may not take over an existing account. They sign in the way they normally do. The **same GitHub account** (deployment-wide GitHub ⇄ a tenant's GitHub) resolves to one person, so this only appears for a *different* IdP. If they hold **both accounts**, have them sign in the way they normally do and add the other method under **Settings → Personal → Account → Add a sign-in method** (only a method asserting the same address, and its own org / domain rules still apply). If somebody has no account on the other side at all, leave their method on **Accept** for that tenant and, if the button is in the way, clear **Show button** on it |
 
 ## Diagnosing the 3 DooD constraints ("starts but silently doesn't work")
 
@@ -57,24 +57,24 @@ without producing errors**; the compose definition keeps them contained. Look he
 have customized compose yourself, or when you want to narrow things down from symptoms. The
 background on how this works is in `docs/build/09-deploy.md`.
 
-- **(A) host network** — the CP publishes workspaces on `127.0.0.1:<port>` via the host daemon,
+- **(A) host network**: the CP publishes workspaces on `127.0.0.1:<port>` via the host daemon,
   so they are unreachable unless the host's loopback is shared. Both the CP and Caddy must have
   `network_mode: host`. **Symptom: the browser cannot connect to a started Workspace.**
-- **(B) identical absolute path bind for `DATA_DIR`** — the CP passes host paths to the host
+- **(B) identical absolute path bind for `DATA_DIR`**: the CP passes host paths to the host
   daemon to create the Workspace's `-v` mounts, so `DATA_DIR` must resolve to the same absolute
   path inside the CP too. If they diverge, **an empty home gets mounted**. **Symptom: the
   Workspace starts but home is empty / the work is missing.** If this symptom appears after a
   restore, check whether the destination `DATA_DIR` diverges from the original in path (at
   least in basename) ([02](03-run.md)).
-- **(C) `user: "1000:1000"` + `group_add: <DOCKER_GID>`** — homes are created owned by uid 1000
+- **(C) `user: "1000:1000"` + `group_add: <DOCKER_GID>`**: homes are created owned by uid 1000
   (the Workspace's `dev` user), and the CP needs the host's docker group to use the docker
   socket. With the wrong `DOCKER_GID`, you get **permission denied on the socket**. **Symptom:
   trying to start a Workspace yields permission denied, or the start itself fails.**
 
 ## Cannot log in
 
-> Setting an IdP up in the first place — what to create at Google / Entra ID / GitHub / another
-> OIDC IdP, which value goes where, and how to confirm it — is
+> For setting an IdP up in the first place (what to create at Google / Entra ID / GitHub / another
+> OIDC IdP, which value goes where, and how to confirm it), see
 > [05-signin.md](05-signin.md). Come here when it is configured and still refuses.
 
 - **Always rejected** → if the allowlist (`AF_OAUTH_ALLOWED_EMAILS` / `_DOMAINS` /
@@ -90,7 +90,7 @@ background on how this works is in `docs/build/09-deploy.md`.
 - **A person you removed is still working** → removing their account at the IdP does not end
   the session they already hold; the signed cookie stays valid for up to `AF_SESSION_TTL`
   (7 days by default) and cannot be revoked individually. Take them off the roster (Admin →
-  tenant → member → **Remove member**) or out of the allowlist — either takes effect on their
+  tenant → member → **Remove member**) or out of the allowlist; either takes effect on their
   very next request. To cut every session at once, rotate `AF_COOKIE_SECRET`
   ([04 §Offboarding](04-secure.md)).
 - **redirect URI mismatch** → check that the authorized redirect URI registered at the IdP
@@ -100,7 +100,7 @@ background on how this works is in `docs/build/09-deploy.md`.
   enable.
 - **A sign-in button you configured is not on the login page** → that provider was disabled at
   startup because its settings were incomplete (one broken IdP must not lock everyone out).
-  `docker compose logs cp | grep -i "login provider"` names the missing variable —
+  `docker compose logs cp | grep -i "login provider"` names the missing variable,
   most often `AF_OIDC_<ID>_TRUST`, which has no default on purpose.
 - **The CP exits complaining about a multi-tenant issuer** → an Entra ID issuer of `/common/`
   or `/organizations/` with no `AF_OIDC_<ID>_ALLOWED_TIDS`. On those endpoints every Microsoft
@@ -127,7 +127,7 @@ background on how this works is in `docs/build/09-deploy.md`.
 When Caddy cannot obtain a certificate from Let's Encrypt, the usual causes are these 3: DNS
 A/AAAA do not point to this host, 80/443 are not reachable from outside (firewall), or you hit
 Let's Encrypt rate limits. In environments where public DNS is not available, such as air-gapped
-networks, don't use ACME at all — switch to `tls internal` (self-signed)
+networks, don't use ACME at all; switch to `tls internal` (self-signed)
 ([02 §4](02-install.md)).
 
 ## Triage flow for user inquiries
@@ -147,7 +147,7 @@ problem or a CP/deployment-wide problem**.
    - Can log in but their Workspace misbehaves → the state of that person's Workspace
      (`af-ws-<user>`). If home is empty, it's DooD (B) (though that should hit everyone); if
      Claude won't connect, it's a problem with that person's own Claude login (BYO), and the
-     person themselves — not the operator — re-logs-in from the Console.
+     person themselves, not the operator, re-logs-in from the Console.
    - How to operate the Console itself → the scope of the member volume / lite volume (outside
      the operator's remit).
 3. When you just cannot narrow it down, the CP's logs show what is happening for that user
@@ -191,11 +191,11 @@ whole host down, `docker stop` the remaining `af-ws-*` separately ([02](03-run.m
 A. The delivery model is one company = one deployment. On compose the CP drives one host's
 Docker daemon, so workspaces do not spread across hosts; the ecs / ecs-ec2 targets place
 workspaces on AWS instead ([01](01-choose.md)). The Control Plane itself runs as a single
-instance on every target — there is no HA configuration.
+instance on every target. There is no HA configuration.
 
 **Q. I want to use authentication other than Google (Microsoft 365 / LDAP / SAML, etc.).**
 A. Natively (`AUTH=oauth`) the CP speaks OIDC, so **Microsoft Entra ID, Okta, Keycloak, Auth0,
-Cognito and GitLab work with configuration alone** — `AF_OIDC_PROVIDERS` plus a few
+Cognito and GitLab work with configuration alone**: `AF_OIDC_PROVIDERS` plus a few
 `AF_OIDC_<ID>_*` variables, and one redirect URI at the IdP ([05](05-signin.md)). You can
 enable several at once; the login page then shows one button per provider.
 SAML-only IdPs (HENNGE One / TrustLogin / CloudGate, etc.) and LDAP are not implemented in the

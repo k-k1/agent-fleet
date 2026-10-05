@@ -8,8 +8,8 @@ updated: "2026-09"
 
 English | [日本語](agents.ja.md)
 
-Eleven session kinds exist. Nine drive (or are meant to drive) a coding agent — lcpp and
-muse are managed-only and have no Terminal (CLI) route at all, see the footnote on that row;
+Eleven session kinds exist. Nine drive (or are meant to drive) a coding agent (lcpp and
+muse are managed-only and have no Terminal (CLI) route at all; see the footnote on that row).
 `shell` and `ssm` are terminals with no agent behind them, and they are in the table
 because "does this apply to a plain shell session?" is a real question.
 
@@ -58,7 +58,7 @@ the repository are still offered to them by injection.
 
 muse is the exception on this row, and it is a different mechanism from the other ✓s: its
 own protocol carries the list, so what the picker offers is the running session's own
-answer — Muse Code's bundled skills, plugin skills, your own under `~/.config/muse/skills`,
+answer: Muse Code's bundled skills, plugin skills, your own under `~/.config/muse/skills`,
 and the working copy's `.agents/skills/`. Picking one sends it as a skill invocation rather
 than as the text of its name, which is what makes it run. It needs a running session,
 because the list belongs to the session; before that, and for a stopped one, the injection
@@ -120,7 +120,7 @@ answer in the terminal. Text sent from anywhere while it waits is refused, becau
 menu would take its Enter as "run" or "build".
 
 `shell` and `ssm` have no conversation and therefore no state model and no
-notifications. agy's states are not separately documented — treat its mirror as
+notifications. agy's states are not separately documented; treat its mirror as
 best-effort.
 
 ## Choosing one
@@ -133,51 +133,51 @@ an AWS Builder ID or a Kiro plan → **kiro**.
 All of them show the conversation, let you answer from the mirror, and hand a
 conversation off to another agent. The differences that most often decide it in
 practice are the context gauge (claude / codex / opencode / kiro / muse), image paste, and
-whether you want Managed execution — Codex and opencode carry no per-session process
+whether you want Managed execution: Codex and opencode carry no per-session process
 at all, which is what makes them comfortable to run many of at once.
 
 ## lcpp: what hardware measurement found
 
 `lcpp` (ADR 0093) runs its own instance of the llama.cpp engine instead of a vendor's
-hosted API, and hardware measurement across sixteen live runs found real,
-worth-knowing costs before your first session.
+hosted API, and hardware measurement across sixteen live runs found costs
+worth knowing before your first session.
 
 - **The first turn can take minutes.** If the engine instance was stopped, waking it
-  is a genuine cold start — measured at roughly 3.5 to 7 minutes, most runs landing
+  is a genuine cold start, measured at roughly 3.5 to 7 minutes, most runs landing
   in the 4–5 minute band (one measured run hit 302 seconds and timed out). The
   session is not stuck; it is buying and starting an instance. Every turn after the
   first, while the instance stays warm, is fast.
 - **Choose a context window of 8000 tokens or more.** At a window of 3500, some
   model families compact so often the harness deliberately stops rather than loop
-  forever — reproduced on both Gemma and Qwen3-Coder. At 8000 both complete
+  forever, reproduced on both Gemma and Qwen3-Coder. At 8000 both complete
   cleanly; at 24000 compaction never fires at all. That stop is working as
   designed, not a malfunction.
 - **The same task costs a very different number of turns by family**, even at the
   same window. On one measured benchmark (five fixes to a small project plus a
   recall question), Qwen3.8 took 29–30 turns, Gemma-4 took 63, GPT-OSS took 95, and
   Qwen3-Coder took 164 (Gemma-4 and Qwen3-Coder both at window 8000). All four
-  finished the task correctly — the gap is cost, not correctness.
+  finished the task correctly, so the gap is cost, not correctness.
 - **Verified working model families: Qwen3, GPT-OSS and Gemma** (four checkpoints
   measured). `llama-3.1-8b-instruct-q4_k_m` specifically does **not** work: this
   engine build has no Llama-specific tool-call parser, so its tool calls fail to
-  parse. Not every catalogue entry behaves the same — stick to a verified family.
+  parse. Not every catalogue entry behaves the same; stick to a verified family.
 - **Swapping the model does not require swapping the instance.** Across every
   measured run after the first, moving to a different model on the same engine
   never triggered another cold start. Only the very first purchase pays that cost.
 
-`lcpp` has no Terminal (CLI) route at all — see footnote 9 above — it only runs
+`lcpp` has no Terminal (CLI) route at all (see footnote 9 above); it only runs
 Managed.
 
 ## muse: what Agent Fleet does not see
 
 Muse Code brings its own versions of things Agent Fleet also does. They keep working
-inside a muse session, and Agent Fleet has no view of them — so if you use them, use
-them knowing that no Agent Fleet screen will show what happened.
+inside a muse session, and Agent Fleet has no view of them, so if you use them, expect
+that no Agent Fleet screen will show what happened.
 
 - **Runs a muse session schedules for itself.** A muse session can put a prompt on its
   own timer and run it later without you. Those are Muse Code's jobs, not Agent Fleet's:
   they do not appear in the Console's scheduled runs, Agent Fleet cannot cancel one, and
-  only the session itself can list or delete them — ask it to. They fire while that
+  only the session itself can list or delete them: ask it to. They fire while that
   session is running, and a repeating one expires by itself after seven days. Agent Fleet
   cannot switch the feature off, either: Muse Code has no setting for it, and its one
   control that would remove those tools removes every integration (MCP) tool along with
@@ -202,26 +202,26 @@ them knowing that no Agent Fleet screen will show what happened.
 - Per-kind quirks that matter only while debugging a driver belong in
   `docs/build/`.
 
-> Agents run commands, edit files and push on your behalf — unattended in scheduled
+> Agents run commands, edit files and push on your behalf: unattended in scheduled
 > runs, and without asking each time in permission-skipping modes. `shell` and `ssm`
 > run what you send verbatim. Keep backups, use least-privilege credentials, and lean
 > on the approval gates.
 
-¹¹ Two things have to be true before muse appears — in the launch menu, and equally in the
+¹¹ Two things have to be true before muse appears in the launch menu, and equally in the
 assistant's choice of agent: Muse Code is proprietary and not included in the image, so it has
 to be installed on demand (the Muse Code connection card offers it, ~299MB into your home), and
-you have to be signed in — an unauthenticated session would accept work and then fail every
+you have to be signed in: an unauthenticated session would accept work and then fail every
 turn. As the assistant, muse answers one prompt per turn as its own headless run, and it
 remembers the conversation: ask a follow-up and it has the earlier turns. It answers rather than
-acts — Agent Fleet runs those turns with shell, file writing and web tools switched off, and
+acts: Agent Fleet runs those turns with shell, file writing and web tools switched off, and
 measured twice, a chat turn asked to write a file made no tool call and wrote nothing.
 
 ¹² Agent Fleet keeps its own copy of a muse conversation as it happens, so a stopped
 session still shows its history. Muse Code's own session file is a runtime log in its
 internal format rather than a readable transcript, so it is not the source here.
 
-¹³ 🔴 A muse session asks for no tool approvals, so there is nothing to choose to skip —
-and this is the one row where the dash means *less* safety, not a missing feature. Muse
+¹³ 🔴 A muse session asks for no tool approvals, so there is nothing to choose to skip.
+This is the one row where the dash means *less* safety, not a missing feature. Muse
 Code's own sandbox cannot be built inside a Workspace container (the container's security
 profile refuses it), and the flag that turns the sandbox off also leaves the session's
 filesystem and local network unrestricted: every tool call is allowed by policy before any
@@ -229,7 +229,7 @@ approval is considered. Measured, a muse turn wrote a file outside its working c
 prompt. So treat a muse session as having the same reach over this container as `shell`
 does, and read the warning above as applying to it in full.
 
-¹⁴ Muse Code's catalogue lists a "-contributor" twin of every model — the same model at the
+¹⁴ Muse Code's catalogue lists a "-contributor" twin of every model: the same model at the
 same price, except that Meta may use those conversations, including messages between
 sessions, to improve the product. It is Muse Code's own default. Agent Fleet does not pick it
 for you: a session launched on **Default** runs on the newest model without that clause, and
@@ -251,31 +251,31 @@ workspace policy and your own instructions have to go there. Agent Fleet writes 
 marked blocks and leaves everything else in the file alone, so rules you put there yourself
 survive. The workspace's topic files arrive separately, as skills under
 `~/.config/muse/skills/`. Your repository's own `AGENTS.md` is read as well, because sessions
-run with the workspace trusted — and note that Muse Code treats `AGENTS.md` and `CLAUDE.md` as
+run with the workspace trusted. Note that Muse Code treats `AGENTS.md` and `CLAUDE.md` as
 a precedence, not a sum: with both present it uses `AGENTS.md` and says it is skipping the
 other.
 
-¹⁷ muse is one of the two kinds (lcpp is the other — footnote 18) whose integration servers
+¹⁷ muse is one of the two kinds (lcpp is the other; see footnote 18) whose integration servers
 Agent Fleet does not write into a
 configuration file: they are handed to Muse Code when the session starts, which means the set
 can differ per session rather than being one list for your whole workspace. Two things follow.
-A server you add starts being used by sessions launched **after** the change — a running
+A server you add starts being used by sessions launched **after** the change; a running
 session keeps the set it was given. And each server starts when the session's first turn runs,
 not when the session opens, so a brand-new session shows nothing connected until you send
 something. Every server is passed as optional, so one that fails to start costs you that
 integration and not the session.
 
-¹⁸ lcpp has no configuration file either — it drives no vendor CLI, so the enabled servers are
+¹⁸ lcpp has no configuration file either: it drives no vendor CLI, so the enabled servers are
 read at the **start of every turn** and connected by Agent Fleet itself. A server you enable or
 disable therefore takes effect on the next turn of a session that is already open; you do not
 have to restart it (this is where lcpp differs from muse, footnote 17). A server that cannot be
-reached costs you its tools for that turn and never the turn itself — the failure is noted once
+reached costs you its tools for that turn and never the turn itself; the failure is noted once
 in the conversation rather than on every turn. One consequence of lcpp running the tools itself:
 **every tool an integration server offers asks for your permission before it runs**, because
 nothing in the MCP protocol tells Agent Fleet which of them only read.
 
 ¹⁹ lcpp's model list is your own llama.cpp server's, so it has no "let the tool decide" entry
-the way the vendor CLIs do — a launch waits until you pick one. Which model you pick is the
+the way the vendor CLIs do: a launch waits until you pick one. Which model you pick is the
 cost decision on this kind: on one measured benchmark the same task took 29 turns on one
 family and 164 on another, and both finished it correctly. Swapping models later does not buy
 a new instance (see "lcpp: what hardware measurement found" above).

@@ -8,11 +8,11 @@ updated: "2026-09"
 English | [日本語](12-settings.ja.md)
 
 How each setting is *used* belongs to the other chapters, so read this one as a
-**map**. Items with a fuller explanation elsewhere link to that chapter.
+**map**.
 
 ## Opening it, and how it is organised
 
-**⚙ Settings** in the top bar. The left rail is split into three groups.
+**⚙ Settings** is in the top bar. The left rail is split into three groups.
 
 | Group | What is in it |
 |---|---|
@@ -51,13 +51,13 @@ saved; until then the agents act on the previous settings, so press **Retry**.
 
 Everything about appearance.
 
-- **Colour theme** — besides the app itself, you can theme the **session**, **shared session** and **assistant**
+- **Colour theme**: besides the app itself, you can theme the **session**, **shared session** and **assistant**
   surfaces separately ("inherit" follows the app theme). Different colours per surface make a grid of panes
   readable at a glance.
-- **Terminal** — font and font size ([03](05-terminal.md)).
-- **File viewer** — tab width, line numbers, wrapping, minimap, Markdown rendering ([05](04-files.md)).
+- **Terminal**: font and font size ([03](05-terminal.md)).
+- **File viewer**: tab width, line numbers, wrapping, minimap, Markdown rendering ([05](04-files.md)).
 - **Reader view** / **file icons** (icon set).
-- **Main area layout** — **split panes** (drag the dividers) or **tabbed grid** (each cell switches by tab).
+- **Main area layout**: **split panes** (drag the dividers) or **tabbed grid** (each cell switches by tab).
   Stored **on this device only**, and the two layouts are remembered separately, so moving between them does not
   disturb either ([03](05-terminal.md)). If you switch often, the same choice sits in **Appearance** (the paint
   can) in the top bar.
@@ -67,36 +67,36 @@ Everything about appearance.
 The **sign-in methods** linked to your account (Google / Microsoft / GitHub …). Whichever one you use, you
 land in the same workspace, the same home and the same settings.
 
-- **Add a sign-in method** — when your company offers more than one (say Microsoft at head office and GitHub
+- **Add a sign-in method**: when your company offers more than one (say Microsoft at head office and GitHub
   at the subsidiary you are seconded to), you can add a second one to your account. The button takes you
   through that method's sign-in and back; the list then shows it.
 - Only a method that asserts **the same email address as this account** can be added. Accounts under
   different addresses cannot be merged into one (it could not be undone).
-- That method's own entry rules still apply — organization membership for GitHub, the allowed email domains.
+- That method's own entry rules still apply: organization membership for GitHub, the allowed email domains.
   Linking is not a way around them.
 - A method already used by **somebody else's account** cannot be added.
 - If the sign-in page told you "this email address is already used by another sign-in method", the fix is to
   **sign in the way you normally do** and add the other method here.
-- **Remove** — a method you no longer use can be taken off the list. Your workspace, home and secrets are
+- **Remove**: a method you no longer use can be taken off the list. Your workspace, home and secrets are
   untouched, and you can add the same method again later. Two of them cannot be removed, and hovering the
   disabled button says which case you are in:
-  - **the method you are signed in with right now** — sign in with another one first, then remove it.
-  - **the only method left** — removing it would leave you unable to sign in at all, with no way to undo it
+  - **the method you are signed in with right now**: sign in with another one first, then remove it.
+  - **the only method left**: removing it would leave you unable to sign in at all, with no way to undo it
     yourself (this deployment has no password and sends no email).
 
 ### Keys
 
-- **Shortcut assignment** — you can change the direct keys (`Alt+1` …) and the three app-wide keys. Sequences
+- **Shortcut assignment**: you can change the direct keys (`Alt+1` …) and the three app-wide keys. Sequences
   under the leader (e.g. leader → `p` → `r`) are structural and cannot be changed. **?** opens the cheat sheet
   at any time.
-- **Terminal input priority** — while a terminal has focus, every Ctrl-key goes to the terminal. Only the leader
+- **Terminal input priority**: while a terminal has focus, every Ctrl-key goes to the terminal. Only the leader
   survives on the app side, and everything remains reachable from the command menu / palette.
-- **Pass every key to shell / SSM terminals** — stronger than the above: the leader (Ctrl/⌘+K) and the palette
+- **Pass every key to shell / SSM terminals**: stronger than the above. The leader (Ctrl/⌘+K) and the palette
   (Ctrl/⌘+P) are passed through too, making it a pure terminal. It applies only to shell / SSM, not to agent
   terminals. Off by default.
-- **Send key** — **Ctrl+Enter to send (Enter for a newline — the default)** or **Enter to send
+- **Send key**: **Ctrl+Enter to send (Enter for a newline, the default)** or **Enter to send
   (Shift+Enter for a newline)**. It applies to both session chat and assistant chat.
-- **Reply suggestions** — chips with short replies above the composer ([07](07-chat-memo.md)). This is also
+- **Reply suggestions**: chips with short replies above the composer ([07](07-chat-memo.md)). This is also
   where you clear what has been learned or unpin pinned chips. There are two ways to clear: **Clear used-once**
   drops only the throwaway phrasings you sent exactly once (pinned ones stay, and sending one again learns it
   back), while **Clear all learned** wipes both what was learned and the dismissed list, back to the initial state.
@@ -105,26 +105,26 @@ land in the same workspace, the same home and the same settings.
 
 Reads out replies from sessions and assistants.
 
-- **Voice** — engine (Zundamon (VOICEVOX) / Polly / auto), speaker, **a different voice per session** (assigned
+- **Voice**: engine (Zundamon (VOICEVOX) / Polly / auto), speaker, **a different voice per session** (assigned
   from a character pool), emotion, reading speed.
-- **Auto-read** — read new replies automatically, **read the work in progress in a quiet voice**, read in every
+- **Auto-read**: read new replies automatically, **read the work in progress in a quiet voice**, read in every
   open pane, summarise long replies, read out confirmations and questions.
-- **How it reads** — abbreviate code fragments, pause after particles, read English as kana, and a
+- **How it reads**: abbreviate code fragments, pause after particles, read English as kana, and a
   **pronunciation dictionary** (`written=reading`, one per line).
-- **Advanced** — background playback and volume, panning to match the pane position, audio cache.
-- **Audio notifications** — announce session state changes and usage-limit resets by voice; which ones is
+- **Advanced**: background playback and volume, panning to match the pane position, audio cache.
+- **Audio notifications**: announce session state changes and usage-limit resets by voice; which ones is
   chosen in the Notifications tab.
-- **Read-aloud language** — Auto (follows the display language) / Japanese / English. With the engine on
+- **Read-aloud language**: Auto (follows the display language) / Japanese / English. With the engine on
   "auto", English switches to a Polly English voice. This is separate from the assistant's **Output language**.
 - "Reset to defaults" resets the speech settings only (the pronunciation dictionary is kept).
 
 ### Notifications
 
-- **Allow desktop notifications** — shown while the browser has not been asked yet; it asks for permission.
+- **Allow desktop notifications**: shown while the browser has not been asked yet; it asks for permission.
   If the browser blocked notifications for this site, the tab says so: only the site settings can undo it.
-- **Session voice notifications** on / off — the master switch for the "Read aloud" column below (also the
+- **Session voice notifications** on / off: the master switch for the "Read aloud" column below (also the
   speaker button in the notification centre).
-- **The notification table** — one row per kind of notification, one switch per effect:
+- **The notification table**: one row per kind of notification, one switch per effect:
 
   | Row | Covers |
   |---|---|
@@ -140,18 +140,18 @@ Reads out replies from sessions and assistants.
   | Terminal notifications | a program in a session sent OSC 9 / 99 / 777 |
   | Other notices | assistant chat paused or near its context limit, submodule sync, stop after turn, a workspace start that was stopped, and any kind added later |
 
-  - **Unread dot** — off marks the notification read the moment it arrives: no red dot on the session and no
+  - **Unread dot**: off marks the notification read the moment it arrives: no red dot on the session and no
     unread count, while the notification centre keeps it as a read row. This column follows you to your
     other devices (the read mark does anyway). It cannot be turned off for "Needs your answer", "Handoffs"
     and "Cloud sign-in", which wait for a person.
-  - **OS notification** and **Read aloud** — this device only, so a phone and a desk can differ. Read aloud
+  - **OS notification** and **Read aloud**: this device only, so a phone and a desk can differ. Read aloud
     also needs "Session voice notifications" on; a usage-limit reset speaks whenever "Read aloud" is on in
     the speech tab instead.
   - Everything is on by default, which is how notifications behaved before the table. The two switches it
     replaced carry over as they were: "Notify when a child session is waiting for input" became the
     child-session row (all three cells), "Limit-reset notifications" the usage-limit row.
   - Nothing pops up or speaks for the session in the pane you are working in, whatever the table says.
-- **Service notifications** — stop sending to Discord / Slack **without disconnecting**. The connection itself,
+- **Service notifications**: stop sending to Discord / Slack **without disconnecting**. The connection itself,
   and which events each service receives, live in the "Chat integration" tab ([08](10-integrations.md)).
 - History is in the **notification centre** (last 7 days), opened from the bell in the top bar. An entry
   you have not read puts a red dot on its session; **"Mark all as read"** clears them all at once
@@ -161,67 +161,67 @@ Reads out replies from sessions and assistants.
 
 The behaviour of assistant chat and the fleet operator ([07](07-chat-memo.md), [11](08-organising.md)).
 
-- **Output language** — follow the input / 日本語 / English. It changes chat replies only (the read-aloud
+- **Output language**: follow the input / 日本語 / English. It changes chat replies only (the read-aloud
   language lives on the **Speech** tab).
-- **Agent priority** — the first connected CLI from the top of this list runs the assistants. Titles, reply
+- **Agent priority**: the first connected CLI from the top of this list runs the assistants. Titles, reply
   suggestions and the like are ranked separately (the **AI assistance** tab).
-- **Assistant models** — per CLI. "Recommended (currently: …)" picks a safe default from the live catalogue and
+- **Assistant models**: per CLI. "Recommended (currently: …)" picks a safe default from the live catalogue and
   shows what it currently resolves to. Under the select, the chosen model's (for "Recommended", the resolved
   model's) API list price, context window and release date are shown ([Agents](06-agents.md)).
-- **Auto-reply to session reports** — the operator takes one turn automatically when a report arrives.
-  **Automatic reply limit** (default 10, max 50 — it cannot be unlimited), **model for automatic replies**
+- **Auto-reply to session reports**: the operator takes one turn automatically when a report arrives.
+  **Automatic reply limit** (default 10, max 50; it cannot be unlimited), **model for automatic replies**
   (reading a report is routine work, so a lighter model saves a lot), **batching window** (reports arriving
   within it are handled in one turn), **quiet completion reports** (a normal completion delivers the card and
   the notification but takes no turn).
-- **Autopilot** — carries questions and plan approvals through automatically. Off by default
+- **Autopilot**: carries questions and plan approvals through automatically. Off by default
   ([11](08-organising.md)).
-- **Auto-resume after an interruption** — resumes a turn cut short by a dropped connection or a temporary rate
+- **Auto-resume after an interruption**: resumes a turn cut short by a dropped connection or a temporary rate
   limit. On by default.
-- **Automatic context compaction** and its **threshold** — summarise and hand a long conversation forward.
-- **Session output fetch limit** — how much of a session's output the operator reads at once (default 32 KiB).
+- **Automatic context compaction** and its **threshold**: summarise and hand a long conversation forward.
+- **Session output fetch limit**: how much of a session's output the operator reads at once (default 32 KiB).
   The larger it is, the more accumulates in the conversation and the more tokens every later turn costs. The
   full output is always readable in the chat view.
-- **Appearance** — theme and background colour of the assistant surface (this device only).
+- **Appearance**: theme and background colour of the assistant surface (this device only).
 
 ### AI assistance
 
 Settings for the **one-shot AI generations** that appear on sessions, the mirror and the File pane. These are not
-the assistant conversation — they share an implementation, but they surface somewhere else.
+the assistant conversation: they share an implementation, but they surface somewhere else.
 
-- **Agent priority** — the CLI order used for assistance, ranked separately from the assistant. The chat wants
+- **Agent priority**: the CLI order used for assistance, ranked separately from the assistant. The chat wants
   the strongest model; assistance runs constantly and wants the cheapest one that works.
-- **Model for short labels** / **Model for prose** — short covers titles, branch names and reply suggestions;
+- **Model for short labels** / **Model for prose**: short covers titles, branch names and reply suggestions;
   prose covers File pane edit suggestions and chat plan updates. Different needs, so different defaults.
   "Recommended" for short labels is **the model with the lowest models.dev list price** among the ones that CLI
-  lists (codex and agy — a cheaper model that ships is picked up on its own); for prose it is a fixed tier one step
+  lists (codex and agy; a cheaper model that ships is picked up on its own); for prose it is a fixed tier one step
   up. Without prices it falls back to the previous defaults. "Recommended (currently: …)" shows what it resolves
   to right now. For muse, both are the newest model that is neither a `-contributor` one nor one you hid;
   if there is none (or muse's model list cannot be read), the assistance is not generated rather than run on
   its contributor default.
-- **Features that use AI assistance** — one card per feature (8 in total). Turning one off hides its button
+- **Features that use AI assistance**: one card per feature (8 in total). Turning one off hides its button
   entirely and folds away that card's agent/model rows.
-  - **Session title suggestion** — the banner that proposes a title, plus "Ask AI" in a session's rename dialog.
-  - **Chat title suggestion** — "Ask AI" in the assistant's rename dialog. A chat has no banner of its own.
-  - **Branch name suggestion** — used when creating a worktree or renaming a branch.
-  - **Reply suggestions (session)** / **Reply suggestions (chat)** — the ✨ button on the mirror and the chat
+  - **Session title suggestion**: the banner that proposes a title, plus "Ask AI" in a session's rename dialog.
+  - **Chat title suggestion**: "Ask AI" in the assistant's rename dialog. A chat has no banner of its own.
+  - **Branch name suggestion**: used when creating a worktree or renaming a branch.
+  - **Reply suggestions (session)** / **Reply suggestions (chat)**: the ✨ button on the mirror and the chat
     composer, each its own switch; it spends tokens only when pressed. Turning one off does not affect the
     other. The **reply suggestions** learned from your own input history (Keys tab) use no AI and are separate.
-  - **File edit suggestions** — turns a selection plus your instruction into a proposed replacement.
-  - **Work-plan update** — the "refresh" button that re-derives the assistant chat's plan from the recent
+  - **File edit suggestions**: turns a selection plus your instruction into a proposed replacement.
+  - **Work-plan update**: the "refresh" button that re-derives the assistant chat's plan from the recent
     exchange.
-  - **Answer translation (mirror)** — the "Translate" button on a mirror answer that came back in another
+  - **Answer translation (mirror)**: the "Translate" button on a mirror answer that came back in another
     language. It spends tokens only when pressed and **uses no session turn** (the conversation does not
     move). A translation is kept until that session is deleted, so the same text with the **same agent/model**
     is free from the second press on. Changing this feature's agent or model means there is no translation yet
     for that combination, so the next press generates a fresh one (the earlier agent/model's translation is
-    not lost — it comes back if you switch back).
-  - **Translate automatically** — presses that button for you the moment a turn finishes (off by default).
+    not lost; it comes back if you switch back).
+  - **Translate automatically**: presses that button for you the moment a turn finishes (off by default).
     Only answers that **arrive while you are watching that session** qualify; answers already on screen when
     you open it are never translated on their own, and the button is still there for them. This is the one
     translation setting that spends without being asked.
 
   Each card can also be pinned to its own agent, separate from the priority order above (default: "auto —
-  priority order"). Once pinned to one agent, that card can also pick that agent's own model — left on "auto"
+  priority order"). Once pinned to one agent, that card can also pick that agent's own model: left on "auto"
   a card follows the default and cannot pick one concrete model. A card's "currently uses" line names the
   agent it will actually run on right now (blank until the Agent has an answer).
 
@@ -236,39 +236,39 @@ See [06 Agents](06-agents.md#agent-instructions-write-down-how-you-work-once).
 Version control over the memory an agent accumulates by itself (claude's auto-memory, codex's memories), so
 "it learned something it shouldn't have" and "when did this go wrong" are fixable after the fact.
 
-- **Agent Fleet memory (shared by every agent)** — memory Agent Fleet keeps itself, which every kind of agent
+- **Agent Fleet memory (shared by every agent)**: memory Agent Fleet keeps itself, which every kind of agent
   reads and writes with the af tools `memory_index` / `memory_search` / `memory_read` / `memory_save` /
   `memory_forget`. It is per project (a worktree shares its repository's), plus one user-wide scope, so what one
   agent learns survives a switch of kind, a handoff and a child of another kind. **It is off by default**: turn on
   Agent Fleet memory under Settings > Agents first. A save is shared at once,
-  **without your approval**; text that looks like a secret is refused. The list shows every change — when, which
-  agent and session, what — newest first. On a memory's newest change you can **revert it** (the earlier text
+  **without your approval**; text that looks like a secret is refused. The list shows every change (when, which
+  agent and session, what), newest first. On a memory's newest change you can **revert it** (the earlier text
   comes back) or **forget the memory**; either is recorded as a new change, so it can be undone too. If the text
   you bring back looks like a secret, you are shown the masked findings and asked to confirm.
-  - **Import from Claude Code** — below the list, brings the memory Claude Code kept for a project into Agent
+  - **Import from Claude Code**: below the list, brings the memory Claude Code kept for a project into Agent
     Fleet memory, once. Pick a project and you see what would happen before anything is written: **new**,
-    **newer in Claude** (will overwrite the Agent Fleet copy, even one you edited since — both times are shown),
+    **newer in Claude** (will overwrite the Agent Fleet copy, even one you edited since; both times are shown),
     **unchanged**, **forgotten** (a memory you forgot, or whose import you reverted, is never brought back),
-    **possible secrets** (skipped, with masked findings — fix the Claude file and preview again; there is no
+    **possible secrets** (skipped, with masked findings. Fix the Claude file and preview again; there is no
     way to import it anyway) and **cannot import** (with the reason). A description over 300 bytes is
     shortened and its full text becomes the first paragraph of the memory. A Claude project is matched to a
     working copy under `~/repos`; one with no match, or two, is listed but cannot be imported. Importing needs
     Agent Fleet memory to be on; the preview works either way. The imported memories show in the list as
     **imported**, with the author unknown, and each can be reverted like any other change.
-  - **From a terminal** — `af-memory import-sources`, `af-memory import --project <slug> --dry-run` (preview) and
+  - **From a terminal**: `af-memory import-sources`, `af-memory import --project <slug> --dry-run` (preview) and
     `af-memory import --project <slug>` (import); `af-memory changes` lists the latest changes. The import is
     gated by the same switch and the same secret scan as the Console.
 
-- **Targets** — what can be versioned, with file count, size and the last snapshot. codex has memory disabled by
+- **Targets**: what can be versioned, with file count, size and the last snapshot. codex has memory disabled by
   default, so enable it here if you want it.
-- **Automatic snapshots** — taken a few minutes after an agent stops (nothing is stored if nothing changed).
+- **Automatic snapshots**: taken a few minutes after an agent stops (nothing is stored if nothing changed).
   "Snapshot now" takes one by hand. On some deployments the operator has disabled automatic snapshots.
-- **History** — newest first, with the time and the trigger (automatic / manual / pre-restore / restore /
+- **History**: newest first, with the time and the trigger (automatic / manual / pre-restore / restore /
   import). You can also jump to a point in time by date.
-- **Restore to this point** — pick the scope (everything, or select what to restore). **The state just before
+- **Restore to this point**: pick the scope (everything, or select what to restore). **The state just before
   the restore is snapshotted too**, so the restore itself can be undone. You are warned if a session of that
   kind is running.
-- **Export / import** — bundle (full history) or tar.gz (latest only). If what you are about to export looks
+- **Export / import**: bundle (full history) or tar.gz (latest only). If what you are about to export looks
   like it contains secrets, you are warned and asked to confirm first.
 
 ---
@@ -281,7 +281,7 @@ Connecting and configuring claude / codex / opencode / GitHub Copilot / Cursor /
 Antigravity): default model, **models you don't use**, **extra Claude models**, expanded thinking, RTK. The
 **llama.cpp** card holds its on / off switch and **your own connection** to a llama-server on your network;
 the **Muse Code** card holds its one-time install, the sign-in and the model / effort choice. The
-**Sessions** group holds **when stopped sessions are archived** (Default — the deployment's period, 7 days unless the deployment changed it — 1 / 3 / 7 / 14 / 30 days, or Off), **session-to-session messaging**, **starting sessions from sessions** (with
+**Sessions** group holds **when stopped sessions are archived** (Default, which is the deployment's period (7 days unless the deployment changed it), 1 / 3 / 7 / 14 / 30 days, or Off), **session-to-session messaging**, **starting sessions from sessions** (with
 **children per session**), **fleet observation from sessions**, **past-session search** (on by default: lets a
 session search this workspace's past conversations with the `search_sessions` tool; the command palette's
 "Conversations" mode works either way, see [05](05-terminal.md#command-palette)),
@@ -300,36 +300,36 @@ GitHub / Bitbucket (authentication for clone / push). **Connecting GitHub also c
 ### Ops & monitoring
 
 Connect PagerDuty / Grafana / CloudWatch / AWS so the **SRE assistant** can talk through an incident against
-real data. CloudWatch and AWS only need a profile picked from your SSM connections — no secret to type. AWS
+real data. CloudWatch and AWS only need a profile picked from your SSM connections, with no secret to type. AWS
 **write tools are off by default**. → [13 Ops tooling](13-ops-tooling.md)
 
 ### Issue tracker
 
-Where the work items in the left rail's **Issue tracker** section come from — Jira issues, GitHub
-issues and pull requests, Bitbucket pull requests — so that a session can be started from a row.
+Where the work items in the left rail's **Issue tracker** section come from (Jira issues, GitHub
+issues and pull requests, Bitbucket pull requests), so that a session can be started from a row.
 
 - **Saved queries** are the whole of it: GitHub search syntax, Jira JQL or a Bitbucket filter
   expression, saved exactly as written. **Nothing is fetched until you save one**, and the query is
-  the only filter — nothing is synced in bulk.
+  the only filter, and nothing is synced in bulk.
 - **GitHub: `assignee:` lists no pull request.** GitHub does not make a PR's author its assignee, so a
   query of `assignee:@me` alone shows issues and nothing else. The default `is:open involves:@me`
   covers what you authored, are assigned, were mentioned in or commented on. **Reviews requested of
-  you are not in it** — add `is:open review-requested:@me` as a second query (an item matched by both
+  you are not in it**. Add `is:open review-requested:@me` as a second query (an item matched by both
   still takes one row). `OR` and parentheses work too, but only once your workspace is running an
   up-to-date agent; on an older one the row says "could not parse the query".
 - **Jira** is connected here, either with **OAuth** or with **your email address and an API token**
   (the address is half of that credential). **GitHub and Bitbucket ride on the Git hosting
   connection**, so they need nothing of their own.
 - **Bitbucket** has no search across an account, so its query is **assembled from your connected
-  repositories** — what to list × which target — instead of being typed by hand. Bitbucket items are
+  repositories** (what to list × which target) instead of being typed by hand. Bitbucket items are
   **read only**: nothing is written back to them.
-- **Branch name template** — what a session started from a row branches as. Empty means the
+- **Branch name template**: what a session started from a row branches as. Empty means the
   default `{prefix}{ref}-{slug}` (e.g. `feature/45-empty-list`, `fix/PROJ-123`); the placeholders
   are `{ref}` `{num}` `{key}` `{project}` `{type}` `{prefix}` `{slug}`, and the example under the
   field shows what yours produces. A repository's own rules (git-flow and the like) win at launch.
 
-The list itself, and starting a session from a row, are in
-[02 Sessions](02-sessions.md#starting-from-the-issue-tracker).
+See [02 Sessions](02-sessions.md#starting-from-the-issue-tracker) for the list itself and for
+starting a session from a row.
 
 ### Chat integration
 
@@ -339,20 +339,20 @@ Connect a Discord / Slack bot to follow session progress in chat and drive it by
 ### MCP servers
 
 **Register the MCP servers you want to use here** and they become available to your assistants and sessions.
-This is where you add tools Agent Fleet does not ship with — an internal wiki, an issue tracker, a document
+This is where you add tools Agent Fleet does not ship with, such as an internal wiki, an issue tracker, a document
 search.
 
-- **Transport** — **stdio** (run an executable inside the workspace: command, arguments, environment variables)
+- **Transport**: **stdio** (run an executable inside the workspace: command, arguments, environment variables)
   or **remote (HTTP)** (URL and headers). **Environment variable and header values are stored encrypted**. The
   configuration handed to the CLI that runs the server can still contain them (in an owner-only file in your
   home, never in a repository). Put credentials in a header, not in the URL.
-- **Targets** — whether it is handed to **assistants**, **sessions**, or both (clear both and the entry stays
+- **Targets**: whether it is handed to **assistants**, **sessions**, or both (clear both and the entry stays
   but goes nowhere). Leave **target agents** empty to cover every agent.
-- **Connection test** — reports the server name, version, tool count and round-trip time.
-- **Enabled / disabled** — disabling keeps the definition but stops handing it out.
+- **Connection test**: reports the server name, version, tool count and round-trip time.
+- **Enabled / disabled**: disabling keeps the definition but stops handing it out.
 - Sessions pick it up **from the next session you start**. For assistants, choose it in the assistant's own
   edit form under "MCP servers" ([07](07-chat-memo.md)).
-- Entries are labelled by origin: **user** (yours), **tenant** (distributed by an admin — a user entry with the
+- Entries are labelled by origin: **user** (yours), **tenant** (distributed by an admin: a user entry with the
   same name is not used; some are distributed such that only the values are asked of each member), and
   **built-in** (Agent Fleet's own server and the ops & monitoring integrations).
 - On a deployment with restricted egress, you get a flow to **request access** for the host and wait for an
@@ -361,7 +361,7 @@ search.
   the repository row's menu, with per-agent status and warnings (a secret already under Git, a name clash,
   files that disagree with each other).
 
-> **Agent Fleet's own MCP** is the "built-in" entry handed to every session from the start — no setup needed.
+> **Agent Fleet's own MCP** is the "built-in" entry handed to every session from the start, with no setup needed.
 > It is what lets a session report that it finished, or propose a handoff to the next session.
 
 ### MCP tokens
@@ -384,7 +384,7 @@ service account to impersonate, a region and a zone. No Google credentials are s
 service-account keys are not accepted. Two labels that make the same name are not available in the workspace
 until you rename one; the row says so. Each available row has **Log in** to sign the workspace in to Google for
 that profile from the Console: it opens a login window, the sign-in starts only when you press **Log in** there, and
-you paste the verification code Google shows into that same window — and only into a login you started yourself.
+you paste the verification code Google shows into that same window, and only into a login you started yourself.
 A logged-in row says **"Logged in as <account>"** and offers **Log in again**, which signs in afresh for a login you
 know was revoked. The WS bar's Google Cloud badge lists the same logins.
 → [10 Going further](10-integrations.md#running-commands-in-google-cloud-as-you-af-gcloud-exec)
@@ -399,24 +399,24 @@ The ledger of **what your tokens went on**. Alongside the sessions themselves, i
 Agent Fleet makes behind the scenes (title suggestions, summarised handoffs, reply suggestions …) on the same
 scale.
 
-- **Range** — 24 hours / 7 days / 30 days.
-- **Split by** — feature / agent / model / session origin (started by a person, created by the operator, created
+- **Range**: 24 hours / 7 days / 30 days.
+- **Split by**: feature / agent / model / session origin (started by a person, created by the operator, created
   by a schedule, handoff, started by a session) / trigger (user, automatic, schedule, operator, bridge …).
-- **Metric** — tokens spent / number of calls / cache reads / **API-equivalent cost (estimated)** — tokens ×
+- **Metric**: tokens spent / number of calls / cache reads / **API-equivalent cost (estimated)**, which is tokens ×
   each model's published API list price (cache writes ×1.25, cache reads ×0.1), shown with a `≈`. **It is not
   what a flat subscription bills you.** Sessions themselves carry no measured cost, so this column used to read
   "—" (only claude's auxiliary calls return one). The measured figure is still there: hover the amount and it is
-  shown alongside — never added to the estimate.
+  shown alongside, never added to the estimate.
 - Rates come from a built-in table for Anthropic and from the **models.dev price catalog** for everything else.
   The Agent fetches that catalog once a day (where it cannot, it reads the copy opencode keeps). **Hover an amount to see which rate was used and where it came from.**
-  Consumption that went through opencode is priced at opencode's own rates — that is closer to what you actually pay.
+  Consumption that went through opencode is priced at opencode's own rates, which is closer to what you actually pay.
 - Models missing from the catalog too are **not** estimated. That consumption is reported under "what is
-  measurable" as "N% of the consumption runs on models with no price on file" — which is not an amount of 0.
+  measurable" as "N% of the consumption runs on models with no price on file", which is not an amount of 0.
   The same instance shows **when the catalog was fetched**, because a newer catalog changes past estimates as well.
 - Clicking a series in the time chart filters to it. There is also a **feature × model** matrix.
 - **Measurement coverage** is stated explicitly. Calls that do not report tokens are shown as counted-only
   (which does not mean they were free).
-- **RTK gain** — cumulative tokens saved, average saving rate and command count, daily / weekly / monthly
+- **RTK gain**: cumulative tokens saved, average saving rate and command count, daily / weekly / monthly
   (RTK is in [06](06-agents.md#rtk-token-savings)).
 
 ### Cloud cost
@@ -424,16 +424,16 @@ scale.
 What your own workspace costs to run in the cloud. **The tab is only there on a deployment running on
 AWS**, because nowhere else has a cloud bill to read.
 
-- The figure is **what is directly attributable to your workspace** — its slot hours, its persistent
-  home volume and that volume's snapshots — and the screen labels it "directly attributable to your
+- The figure is **what is directly attributable to your workspace** (its slot hours, its persistent
+  home volume and that volume's snapshots), and the screen labels it "directly attributable to your
   workspace (shared not included)". Shared infrastructure (NAT, DNS, load balancer, database, the idle
   slot pool) is deliberately **never divided up between members**, so this is **not** the full cost of
   running your workspace, and it is not "your cost".
-- **It runs about 24 hours behind, and the current day is not final** — the most recent days still
+- **It runs about 24 hours behind, and the current day is not final**: the most recent days still
   move.
 - A **date range**, the **daily trend** and **what it was spent on**. Amounts are in the currency the
   bill is in (US dollars); nothing is converted.
-- **Nothing at all is available from before the day cost attribution was switched on** — it only
+- **Nothing at all is available from before the day cost attribution was switched on**: it only
   counts from that moment and cannot be backfilled. The screen says which day that is.
 
 ### Running time
@@ -443,10 +443,10 @@ square is one hour.
 
 - **The colour is not money.** Cloud costs are only available per day, so there is no such thing as
   an hourly charge here (that is the Cloud cost tab next door). What this shows is how long the
-  workspace ran and how many sessions were open — usually the *reason* a particular day's cost
+  workspace ran and how many sessions were open, usually the *reason* a particular day's cost
   looks the way it does.
 - **There are three kinds of square.** Grey means **stopped**, a coloured square means **running**
-  (warmer = more sessions), and a **blank square means "not recorded"** — the control plane was not
+  (warmer = more sessions), and a **blank square means "not recorded"**: the control plane was not
   watching that hour. Blank and grey do not mean the same thing.
 - **You can switch what the shading means**: sessions open / sessions actually working / running
   time.
@@ -471,32 +471,32 @@ administrator's to set.
   the one to look at when a build is being killed.
 - A size or class your admin changes applies **at the next start**, so when the running instance and the
   configuration disagree, **both** are shown.
-- **Usage** — a moving chart of memory and vCPU (one sample every 4 seconds, up to an hour) plus the
+- **Usage**: a moving chart of memory and vCPU (one sample every 4 seconds, up to an hour) plus the
   home disk's usage. **The disk figure is only yours on an instance of your own**; on a shared host it is
   the whole filesystem home sits on (labelled so, and never coloured as a warning), because other
-  members fill it too. **The ceilings are the rows above** — this workspace's memory limit and its core
-  count — so "70% of what?" is answered on the same screen. The chart keeps moving while a value is
+  members fill it too. **The ceilings are the rows above** (this workspace's memory limit and its core
+  count), so "70% of what?" is answered on the same screen. The chart keeps moving while a value is
   unchanged (the control plane is what guarantees it is unchanged) but **breaks the line for any period
   it could not read**, and it says so when a process was killed for memory during the window.
-- **Disk used by Agent Fleet** — what Agent Fleet itself keeps under `~/.cache/agent-fleet`, broken
+- **Disk used by Agent Fleet**: what Agent Fleet itself keeps under `~/.cache/agent-fleet`, broken
   down (generated images, thumbnails, pasted and attached files, …), how much of it belongs to deleted
   sessions, and the size of the cleanup trash. Generated images expire after 30 days and thumbnails after
   14 on their own; **"Open cleanup"** closes Settings and opens the cleanup modal, where the deleted
   sessions' share and the trash can be tidied up ([02 Sessions](02-sessions.md#tidying-up-in-bulk-cleanup)).
   Working copies and tool caches are not counted here.
-- **Tool caches** — the caches go, npm, uv and pip keep in your home (`~/.cache/go-build`,
+- **Tool caches**: the caches go, npm, uv and pip keep in your home (`~/.cache/go-build`,
   `~/.npm/_cacache`, …). They grow without limit (tens of GB is common) and are never emptied
   automatically. **"Measure"** counts them (it reads every file, so only on a press); **"Empty"** deletes
   one after a confirmation. The next build or install that needs it is slower once. A cache a running
   build or install is using shows **"In use"** and cannot be emptied until that finishes.
   Old versions of the Copilot and Cursor CLIs are not listed here: they are removed automatically when
   the Workspace starts, keeping the current version, the pinned one, and any a running session still uses.
-- **Leftover files** — things nothing reads again: throwaway profiles that killed headless Chromium
+- **Leftover files**, meaning things nothing reads again: throwaway profiles that killed headless Chromium
   runs left under `~/.config/chromium-headless` and `~/.cache/chromium-headless`, `~/.af-work` folders
   whose session (in the trash included) and working copy are gone, Node.js patches a newer patch of the
   same major replaced, and Kiro versions other than the installed and the pinned one. The Agent removes
   them each time it starts; this section is for a workspace that runs for weeks without a restart.
-  **"Measure"** counts what would go now, and **"Delete"** removes one kind right away — without a
+  **"Measure"** counts what would go now, and **"Delete"** removes one kind right away, without a
   confirmation, because unlike a tool cache nothing gets slower afterwards. Anything in use by a
   process or changed within the last hour is kept.
 - The **Machine and usage** link in the WS bar's **Resources** popover opens this screen directly.
@@ -509,7 +509,7 @@ default), and applying an Agent Fleet update.
 
 ### Databases
 
-PostgreSQL and MySQL for this workspace — what database-backed tests run against. Each engine's
+PostgreSQL and MySQL for this workspace, which is what database-backed tests run against. Each engine's
 state, version, memory, port and connection URL, with installing, starting and stopping it,
 creating, deleting and resetting a database by name, a shell already connected to one, and
 **Start with the workspace** (off by default). The same things from a terminal are `af-db`.
@@ -536,13 +536,13 @@ account. It carries four things: **personal settings** (display, keys, notificat
 your **AWS profiles/SSM** registrations, your **Google Cloud** profiles, and your **agent instructions**.
 
 - **Connections (Git / agent / AWS tokens and API keys, Google logins) are NOT included.** Sign in again wherever you
-  import. The flip side is that **this file is safe to hand to someone else** — handing a team the whole
+  import. The flip side is that **this file is safe to hand to someone else**: handing a team the whole
   set of SSM registrations works.
 - Importing only **adds**. A profile with the same name, or the same host (alias + instance), is left as it
   is and reported back as "already there". A Google Cloud profile counts as already there when one with the
   same label (ignoring case) exists; one without a label or project is skipped.
-- Personal settings are **merged onto** what you have now. Things that accumulate — learned quick replies,
-  key bindings — are never emptied just because the imported file has none.
+- Personal settings are **merged onto** what you have now. Things that accumulate (learned quick replies,
+  key bindings) are never emptied just because the imported file has none.
 - Agent instructions are the one exception: they **replace** the text you have now (you are asked to
   confirm first).
 - The result stays on screen as counts, and **what did not go in is on the same line**.
@@ -568,7 +568,7 @@ appears only on deployments that can perform them.
 | Have replies read out loud | Speech |
 | Silence Slack without disconnecting | Notifications (service notifications) |
 | Make the assistant answer in English | Assistant (output language) |
-| Let the operator run ahead — or stop it | Assistant (autopilot, auto-reply) |
+| Let the operator run ahead, or stop it | Assistant (autopilot, auto-reply) |
 | Stop AI from writing titles or reply suggestions | AI assistance (per-feature on/off) |
 | Run only the assistance on a cheap model | AI assistance (priority, models) |
 | I keep typing the same preamble | Agent instructions |

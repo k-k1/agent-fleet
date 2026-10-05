@@ -7,8 +7,8 @@ updated: "2026-09"
 
 English | [日本語](02-sessions.ja.md)
 
-A session bundles one job you delegate to the AI into a single unit — its **conversation,
-working location, and execution state**. It is a separate concept from whether a terminal
+A session bundles one job you delegate to the AI into a single unit: its **conversation,
+working location, and execution state**. It is separate from whether a terminal
 exists: Codex / opencode / GitHub Copilot / Cursor / Kiro also run as sessions under managed
 execution, without a black screen, and lcpp / muse run no other way. In the left pane, sessions
 appear under the **repository** that matches their working location; those that don't belong to
@@ -17,18 +17,18 @@ with its own independent conversation and working folder.
 
 ## Session types
 
-- **claude** — launches Claude Code.
-- **codex** — launches Codex.
-- **cursor** — launches Cursor (needs a Cursor plan; appears once connected — [06](06-agents.md)).
-- **copilot** — launches GitHub Copilot (rides on the GitHub connection — [06](06-agents.md)).
-- **kiro** — launches Kiro (needs a device-flow sign-in; appears once connected — [06](06-agents.md)).
-- **agy** — launches Antigravity (experimental slot; appears once connected).
-- **opencode** — launches OpenCode.
-- **lcpp** — the fleet's own llama.cpp engine, run as a Managed session (no sign-in; it is in "Start"
-  while **"Use llama.cpp"** is On in ⚙ Settings → Agents — [06](06-agents.md#lcpp)).
-- **muse** — launches Muse Code as a Managed session (appears once Muse Code is installed and you are
-  signed in — [06](06-agents.md#muse-code)).
-- **shell** — a plain shell (bash). Opens right away from "Start".
+- **claude**: launches Claude Code.
+- **codex**: launches Codex.
+- **cursor**: launches Cursor (needs a Cursor plan; appears once connected; [06](06-agents.md)).
+- **copilot**: launches GitHub Copilot (rides on the GitHub connection; [06](06-agents.md)).
+- **kiro**: launches Kiro (needs a device-flow sign-in; appears once connected; [06](06-agents.md)).
+- **agy**: launches Antigravity (experimental slot; appears once connected).
+- **opencode**: launches OpenCode.
+- **lcpp**: the fleet's own llama.cpp engine, run as a Managed session (no sign-in; it is in "Start"
+  while **"Use llama.cpp"** is On in ⚙ Settings → Agents; [06](06-agents.md#lcpp)).
+- **muse**: launches Muse Code as a Managed session (appears once Muse Code is installed and you are
+  signed in; [06](06-agents.md#muse-code)).
+- **shell**: a plain shell (bash). Opens right away from "Start".
 
 claude / codex / cursor / opencode / copilot / kiro / agy appear in "Start" once you connect the corresponding
 agent (connections: [06 Agents](06-agents.md)). lcpp and muse have no terminal of their own and always
@@ -38,18 +38,18 @@ covered in [10 Advanced usage](10-integrations.md).)
 ## Execution method — Managed and Terminal (CLI)
 
 On the start screen for Codex / cursor / opencode / GitHub Copilot / Kiro you can choose the
-**execution method** (lcpp and muse offer no choice — they are Managed only). This is the
+**execution method** (lcpp and muse offer no choice, because they are Managed only). This is the
 difference in the path Agent Fleet uses to run the agent and deliver your instructions
-(internally, the "driver"). It chooses **how a session of the same kind is run** — it does not
+(internally, the "driver"). It chooses **how a session of the same kind is run**, and does not
 give the conversation a separate storage location or a separate working folder.
 
-- **Managed (recommended, default)** — Agent Fleet controls the agent directly.
+- **Managed (recommended, default)**: Agent Fleet controls the agent directly.
   You operate it through the chat view; there is no terminal. Codex / opencode run on a shared
   execution runtime and have no per-session CLI process, so they save memory and suit
   parallel work (GitHub Copilot, cursor, and Kiro run a dedicated per-session process even when managed,
   so their memory use is on par with Terminal (CLI)). lcpp runs inside the workspace's Agent with no
   process of its own; muse runs one process per session.
-- **Terminal (CLI)** — launches the agent's CLI per session, and you can operate its
+- **Terminal (CLI)**: launches the agent's CLI per session, and you can operate its
   interactive screen directly from the terminal. Suited to cases that need CLI-specific screens
   or commands; each session uses extra memory.
 
@@ -70,19 +70,19 @@ never need to operate that keep-alive mechanism yourself.
 **"+ Start"** in the workspace action bar is the entry point for launching. Pressing it opens the
 **"Start"** screen, where you begin by choosing **where to work**.
 
-- **Chat (assistant)** — starts a simple chat that doesn't use a repository
+- **Chat (assistant)**: starts a simple chat that doesn't use a repository
   ([07 Chat and memos](07-chat-memo.md)).
-- **Launch an agent in a repository** — search for and pick a cloned repository, and you move
+- **Launch an agent in a repository**: search for and pick a cloned repository, and you move
   straight on to **"Start working"** (agent, model, worktree, first prompt). This is the same
   screen as "Launch" on a repository row (see below).
-- **Clone a new repository…** — sits below the repository list. Clone by picking from a
+- **Clone a new repository…**: sits below the repository list. Clone by picking from a
   connection or entering a URL by hand; when it completes you continue straight into
   "Start working" (you can specify a new branch, and the worktree folder name is generated
   automatically).
-- **Launch an agent in home** — runs an agent in home (~).
+- **Launch an agent in home**: runs an agent in home (~).
   For drafts, research, and throwaway work.
-- **shell** — pressing it opens bash immediately.
-- **SSM — log in to another host** — shown when SSM is configured; pick the host to log in to
+- **shell**: pressing it opens bash immediately.
+- **SSM — log in to another host**: shown when SSM is configured; pick the host to log in to
   and connect.
 
 **"Back to Start"** at the bottom left of each step (or the browser back button) takes you one
@@ -90,7 +90,7 @@ step back. Sessions are named automatically (repository name + timestamp) and ca
 later (see below).
 
 You can press "Start" even while the workspace is stopped. After you confirm, it **starts the
-workspace, and the "Start" screen opens automatically once it's ready** — no need to wait for
+workspace, and the "Start" screen opens automatically once it's ready**, so there is no need to wait for
 startup and press the button again.
 
 ### Worktrees and new branches — the key to parallel work
@@ -99,14 +99,14 @@ When you want to advance multiple tasks in the same repository at the same time,
 working folder makes them trample each other. By default, Agent Fleet prevents this by carving
 out an independent working copy (worktree) per session.
 
-- In **"Start working"** — opened from "Start" or from "Launch" on the base repository — the
+- In **"Start working"** (opened from "Start" or from "Launch" on the base repository), the
   **"Location"** row states in one line where the session will run. Open it with **"Change"**
   to choose between **"New worktree"** (default) and **"Directly in this copy"**.
 - With "New worktree" you specify the base branch and an optional branch name. If the branch
   name is empty you get a provisional name `temp/…`; if you enter one, the worktree folder
   name is generated automatically from the branch name.
 - **The start point is brought up to origin's tip.** Right after the worktree is created, it is
-  fast-forwarded to `origin/<base branch>` — inside the new worktree only. A working copy's
+  fast-forwarded to `origin/<base branch>`, inside the new worktree only. A working copy's
   local branches are never moved by a fetch, so without this a session forked from an old clone
   silently starts weeks behind. **The parent working copy is left alone** (someone may be
   working in it, and files must not be swapped out under them). When the local base is ahead or
@@ -117,7 +117,7 @@ out an independent working copy (worktree) per session.
 ### Working folder — starting inside a subfolder
 
 **"Working folder"**, under **"More"** in "Start working", narrows where the agent starts: leave it empty to start
-at the working copy root (the default), or pick a folder beneath it — useful in a monorepo where
+at the working copy root (the default), or pick a folder beneath it, which is useful in a monorepo where
 a task only concerns `console/` or `apps/web`. Type the path or press **"Browse"** to walk the
 repository's folders.
 
@@ -134,8 +134,8 @@ exists ([04](03-code.md)). This is a separate path from creating a worktree in "
 
 ## Starting from the issue tracker
 
-The **Issue tracker** section of the left pane lists your work items — Jira issues, GitHub issues
-and pull requests, Bitbucket pull requests — so that a session can start with the ticket's context
+The **Issue tracker** section of the left pane lists your work items (Jira issues, GitHub issues
+and pull requests, Bitbucket pull requests) so that a session can start with the ticket's context
 already in place. It is drawn **whether or not the workspace is running**, because deciding what to
 work on happens before a session exists, which is exactly when the workspace tends to be stopped.
 
@@ -148,7 +148,7 @@ synced in bulk.
 - The count beside the section name is the **unfinished** items, and the line under it says **when
   the list was last fetched**. While the workspace is stopped it says so as well: the list stays
   readable, but nothing here starts your workspace just to draw a list.
-- A long list **folds at 10 rows**, with "Show more (N left)" underneath — the count keeps counting
+- A long list **folds at 10 rows**, with "Show more (N left)" underneath; the count keeps counting
   all of them. Past ten rows you also get a **one-line filter**, which searches the rows already on
   screen (key, title, assignee, labels, repository); **×** or Escape clears it. When it finds
   nothing, or a query fetched only part of its matches, **Search the tracker** asks the tracker
@@ -158,9 +158,9 @@ synced in bulk.
   is drawn.
 - A row carries **only what differs between rows**: when every row of a query has the same assignee
   or repository, that line is dropped. A relative time appears only on rows that have **not moved
-  for a day or more** — for the rest, being near the top already says it.
+  for a day or more**; for the rest, being near the top already says it.
 - **🔗** opens the item in its own tracker. A **dot badge** means somebody has already started this
-  one, and clicking it opens that session — it is there to stop a second person *before* the launch.
+  one, and clicking it opens that session. It is there to stop a second person *before* the launch.
 - The details list **Sessions already on this** by name. One that has since been archived can be
   restored from there (it asks first; if its working folder is gone it restores but cannot resume),
   and one that was deleted says so.
@@ -172,11 +172,11 @@ moved, and a link to the original page. **The description is not shown here.** A
 the session, where `gh` and the Jira MCP server can fetch it, and the list has to work while the
 workspace is stopped.
 
-- Pick the **repository** and **where to work** — a new worktree, the base copy itself, or an
-  existing worktree — then **Start**. A ticket does not know which working copy its work happens
+- Pick the **repository** and **where to work** (a new worktree, the base copy itself, or an
+  existing worktree), then **Start**. A ticket does not know which working copy its work happens
   in: a GitHub item names a repository but not a copy, and a Jira issue names neither.
 - The usual launch dialog then opens, with the agent, model and first instruction filled in. **That
-  instruction carries the key, the title, the URL and where to read the body** — not the body
+  instruction carries the key, the title, the URL and where to read the body**, not the body
   itself.
 - For an issue, the launch dialog is filled in with a branch name and a base branch from the
   branch naming rules: by default the issue type or labels pick the prefix, then the number and
@@ -190,7 +190,7 @@ workspace is stopped.
   branches gets the name the dialog would show instead of inventing its own.
 - Once work is under way, **Comment the work back** appears in the details. The draft holds the
   branch and the changed files, and **the sentence is yours**: it is posted exactly as written and
-  nothing is written for you. Bitbucket items have no such button — Agent Fleet only reads from
+  nothing is written for you. Bitbucket items have no such button, because Agent Fleet only reads from
   Bitbucket.
 
 While the workspace runs the list refreshes about every 5 minutes; **⟳** fetches immediately.
@@ -202,7 +202,7 @@ shows what the cached list cannot carry: **draft or not, conflicts, where the re
 CI is green, base ← head and the size of the diff**. Every one of those can change between two
 five-minute refreshes, and a stale copy of them is worse than none.
 
-- The first line always says which of the two you are looking at — the live pull request, or the
+- The first line always says which of the two you are looking at: the live pull request, or the
   last fetched copy. While the workspace is stopped there is nothing to read it with (**opening a
   panel never starts your workspace**), so the fetched copy stays on screen; if the read fails, a
   "Try again" appears.
@@ -218,7 +218,7 @@ five-minute refreshes, and a stale copy of them is worse than none.
 ### From a ticket number in the conversation
 
 In the mirror and the assistant chat, **ticket references the agent writes become links** that open
-the same details panel — even with the left pane collapsed. Ctrl/⌘-click or a middle click goes
+the same details panel, even with the left pane collapsed. Ctrl/⌘-click or a middle click goes
 straight to the tracker instead.
 
 - A `#956` in running text links, merged and closed ones included.
@@ -229,7 +229,7 @@ straight to the tracker instead.
 - A Jira key (`PROJ-123`) links when the list holds an issue of that project (in backticks, only
   when it holds that issue); look-alikes such as `UTF-8` or `SHA-256` stay text. In a Bitbucket
   working copy, `#N` links only the pull requests the list holds.
-- A ticket that is not in the list opens with just its key and a link to the original page; a session can still be started from it. **Nothing is fetched for it** — as with
+- A ticket that is not in the list opens with just its key and a link to the original page; a session can still be started from it. **Nothing is fetched for it**: as with
   the list, opening it never starts a stopped workspace.
 - Someone reading a shared session sees these as plain text.
 
@@ -237,7 +237,7 @@ straight to the tracker instead.
 
 In each row of the list, the colored icon at the front shows the agent kind, and the state icon
 at the end shows the current state. Hover over the state icon to see the state name. States that
-need action from you — **Question**, **Plan ready**, **Awaiting permission** — also show text.
+need action from you (**Question**, **Plan ready**, **Awaiting permission**) also show text.
 Active sessions refresh automatically every 4 seconds.
 
 | State display | Meaning |
@@ -247,7 +247,7 @@ Active sessions refresh automatically every 4 seconds.
 | Plan ready | A proposed plan is waiting for your review |
 | Awaiting permission | It is asking for permission to act |
 | Waiting for limit reset | Stopped at a usage limit (when a time is shown, it resumes automatically around then) |
-| Spend limit — needs a raise | Stopped at the spend / credit limit (waiting will not clear it — raise the limit or add credit) |
+| Spend limit — needs a raise | Stopped at the spend / credit limit (waiting will not clear it; raise the limit or add credit) |
 | Ready | Idle, waiting for your next instruction |
 | Ready · running in background | Awaiting input, but something is still running behind the scenes |
 | Running | shell and the like (kinds with no working / awaiting-input distinction) |
@@ -256,18 +256,18 @@ Active sessions refresh automatically every 4 seconds.
 | Ended (out of memory) | May have been force-terminated, e.g. by the memory limit |
 | Force-killed / Crashed | SIGKILL, a signal, a non-zero exit, etc. was detected |
 
-For the other marks shown on a row — colored pane numbers, reading aloud, branch-switch
-warnings, and so on — see [Icons, badges, and menus](badges-and-menus.md).
+For the other marks shown on a row (colored pane numbers, reading aloud, branch-switch
+warnings, and so on), see [Icons, badges, and menus](badges-and-menus.md).
 
 When a state changes while you're not watching, a **browser notification** appears (suppressed
-while you have that screen open). When the work pauses — the session becomes Ready — you're
-notified with **"A reply is ready"**; when a question arrives, with **"A question is waiting"** —
-the session name is included in the body. This suits use cases like waiting for a reply on your
+while you have that screen open). When the work pauses (the session becomes Ready) you're
+notified with **"A reply is ready"**; when a question arrives, with **"A question is waiting"**.
+The session name is included in the body. This suits use cases like waiting for a reply on your
 phone during a commute (shell / ssm don't notify). Which kinds of notification pop up, speak, or
 leave an unread dot is chosen per kind in [Settings › Notifications](12-settings.md#notifications).
 
 When a program running in a session **asks its terminal for a notification** (the OSC 9 / 99 /
-777 escape sequences — you can emit one yourself, e.g. `printf '\e]9;Build done\a'`), it
+777 escape sequences; you can emit one yourself, e.g. `printf '\e]9;Build done\a'`), it
 arrives in the notification center as **"Terminal notification"**, with a browser notification
 too (not while that session is in the active pane, nor when the browser has not been allowed to notify).
 That lets a shell session tell you when a long build finishes. claude / codex / opencode already
@@ -280,14 +280,14 @@ notification too, unless claude held it back because you were active in that ter
 row in the left pane (on the corner of its icon) and on its tab, and rolls up onto a collapsed
 project row or section, so a folded parent still shows that something inside is waiting. The dot
 clears once that session is on screen in one of your panes, or when you press **"Mark all as
-read"** in the notification centre — merely opening the bell marks nothing as read. A session's
+read"** in the notification centre. Merely opening the bell marks nothing as read. A session's
 **report** is the exception: it was posted to an operator conversation, so it clears when that
 conversation is on screen (or you open it from the notification centre), not when the session is.
 
 ## Stopping and tidying up sessions
 
 The operations live in the session row's **⋯ menu** (or right-click). When in doubt, choose
-**"Stop"**. It keeps both the conversation and the list entry — the safest operation.
+**"Stop"**. It keeps both the conversation and the list entry, which makes it the safest operation.
 
 | What you want to do | Operation | Afterwards | Reversible? |
 |---|---|---|---|
@@ -305,7 +305,7 @@ working copies are removed only by "Delete the working copy" below or by cleanup
 **A session left stopped moves to the archive on its own after 7 days** (change the period, or turn it off, in [Settings → Agents](12-settings.md#agents); shortening it archives the sessions already past the new period on the next list refresh), so the everyday list
 does not fill up with work that is over. It is a move, not a deletion: the conversation is intact
 and you restore it from the archive list exactly as if you had archived it yourself. **Nothing
-leaves the archive on its own** — a session is only ever removed for good when someone deletes it
+leaves the archive on its own**: a session is only ever removed for good when someone deletes it
 from the cleanup modal, and even then it goes to the bin first. So, to keep something, archive it
 (or lock it, which also keeps the row in the everyday list); to be rid of it, delete it. Leaving
 it alone never destroys it.
@@ -322,7 +322,7 @@ says what it will get: **"stop now"**, or **"after the turn"** for a session tha
 which is armed to stop when its turn ends so nothing half-written is lost. Tick **"Stop the
 running sessions right away too (N)"** to cut those off instead. A session waiting on a question,
 a limit or an expired sign-in is always stopped right away (there is no turn to wait for), and
-shell / ssm rows and sessions pinned awake start unticked — ticking one is your say-so. Stopping
+shell / ssm rows and sessions pinned awake start unticked, since ticking one is your say-so. Stopping
 is reversible: the conversation stays and the session can be resumed.
 
 ### Tidying up in bulk (cleanup)
@@ -331,10 +331,10 @@ When things get untidy, open the cleanup modal from the trash icon **"Open clean
 tidy)"** in the **Repositories** heading. It is split into two stages so that **the riskier
 things stop for you first**.
 
-- **① Tidy sessions** — **"Tidy all"** archives stopped AI sessions and moves shell / SSM to the trash.
-- **② Delete working copies and branches** — **"Delete the safe ones"** removes only what was
+- **① Tidy sessions**: **"Tidy all"** archives stopped AI sessions and moves shell / SSM to the trash.
+- **② Delete working copies and branches**: **"Delete the safe ones"** removes only what was
   judged safe.
-- **Cache of deleted sessions** — files you pasted or attached into a session, and images codex
+- **Cache of deleted sessions**: files you pasted or attached into a session, and images codex
   looked at, stay on disk after the session is deleted. Once the session (or assistant chat) is
   gone **and not in the trash**, nothing can refer to them again; they are listed here, one row per
   kind with its size, and **"Delete all"** removes them. Anything a trashed session, or a fork made
@@ -344,7 +344,7 @@ Every candidate carries a **safety** rating and a reason. You can also pick them
 
 | Safety | Meaning |
 |---|---|
-| **Safe** | Merged and clean — nothing is lost by removing it |
+| **Safe** | Merged and clean; nothing is lost by removing it |
 | **Review** | A stopped session, a clean but unmerged worktree, and the like. Look before you decide |
 | **Keep** | Running, uncommitted / unpushed, or delete-locked. Cleanup leaves it alone |
 
@@ -354,21 +354,21 @@ The **⋯** menu on a session offers a **delete lock**, which takes it out of cl
 **Deleting too much is recoverable.** Sessions and branches are stashed in the **trash** before
 they are removed. The **"Trash (restore)"** tab of the cleanup modal **restores** them, and
 **"Delete permanently"** reclaims the space once you are sure (if a restore of that archive stopped
-part way, restore it again first — deleting it is refused until then). The trash never empties on its
+part way, restore it again first, because deleting it is refused until then). The trash never empties on its
 own; when it has grown, **"Delete permanently: older than 30 days"** in the trash tab reclaims it in
 one go (its size is also shown in **Settings → Machine**). **Deleting a worktree goes
 through the trash too.** Just before the delete it records the commit, the branch and the uncommitted
 changes (untracked files included, ignored ones not), and protects the commit from git's garbage
 collection. **Restoring** the entry recreates the worktree at the same path with those changes (all
 unstaged) and puts the sessions that delete shelved back in the list. When it cannot come back as it
-was — the branch moved after the delete, or another working copy has it checked out — the restore
+was (the branch moved after the delete, or another working copy has it checked out), the restore
 creates nothing and opens the recreate dialog instead (the same one as "Recreate working copy",
 below), which brings it back on a new branch. **Deleting it permanently** from the trash removes the protection, and from then on it
 cannot be brought back. The worktree is not deleted if the record cannot be written (a full disk), or if it holds a
 repository git does not track (a clone inside it, whose contents the trash cannot keep). A new file
 that was staged comes back as an untracked file.
 The stopped AI sessions that lived in it **move to the archive** (the conversation stays
-readable, but it cannot resume until the folder is recreated — see below), and shell / SSM move to the trash. **Deleting the cache of deleted sessions cannot be undone either** (it skips the trash), but
+readable, but it cannot resume until the folder is recreated; see below), and shell / SSM move to the trash. **Deleting the cache of deleted sessions cannot be undone either** (it skips the trash), but
 it only ever covers sessions that are already gone for good.
 
 Archived sessions are a "shelf" that cleanup does not touch (restore them from the archive
@@ -379,8 +379,8 @@ You can also ask the fleet operator to do the same survey and tidy-up from chat
 
 ### Clearing one finished job (deleting a working copy)
 
-Cleanup surveys the **whole workspace**. When what you want to clear is **one finished job** — a
-parent worktree and the worktrees of the child sessions it spawned — right-click that row and
+Cleanup surveys the **whole workspace**. When what you want to clear is **one finished job** (a
+parent worktree and the worktrees of the child sessions it spawned), right-click that row and
 choose **"Delete the working copy"**. The copies the left pane nests under that row are listed as
 they are, so **archiving the sessions and deleting the copies happen in one go** (stopped AI sessions
 go to the archive, shell / SSM to the trash).
@@ -391,10 +391,10 @@ go to the archive, shell / SSM to the trash).
 - **Rows with a running session are not a dead end.** Tick **"Stop the running sessions first
   (N)"** and the modal stops them as part of the same tidy-up, ticking for you the rows that only
   needed stopping (a turn in flight is cut off). **Rows locked against deletion cannot be
-  ticked**; the reason is shown under the row — remove the lock first.
+  ticked**; the reason is shown under the row. Remove the lock first.
 - Ticking **"Delete the merged branches too"** also removes the throwaway `temp/…` branches (the
   trash can restore them). Adding **"Delete the branch on the remote (origin) too"** removes it on
-  origin as well — **that one cannot be undone**. A branch that is not in the parent's history
+  origin as well. **That one cannot be undone.** A branch that is not in the parent's history
   cannot be deleted through this route at all.
 
 ### A spend budget — pausing a session that spends too much
@@ -407,18 +407,18 @@ runs on to **twice** the budget, the session is halted at once, mid-turn, and th
 
 - **Setting it.** In the start dialog under **Advanced → Budget (USD)**; later from the session's
   menu, **"Spend budget…"**. Settings › Agents › **"Budget for new sessions"** is the default for
-  every launch that names none — including sessions started by `create_session` and by schedules.
+  every launch that names none, including sessions started by `create_session` and by schedules.
   0 means no budget.
-- **Seeing it.** The chat's context row shows **"≈$1.84 / $5.00"** — amber from 80%, red at the
+- **Seeing it.** The chat's context row shows **"≈$1.84 / $5.00"**, amber from 80% and red at the
   budget. Press it to change the budget. For a session that started others with `create_session`,
   **"children ≈$X"** sits beside it: their spend is shown here but **not** counted against this
-  session's budget — each child has its own.
+  session's budget, because each child has its own.
 - **Carrying on.** A stopped row shows the budget mark. **"Raise budget & resume…"** (in the row's
   menu and on the notification) sets a higher budget and resumes in one step; it only accepts a
   budget above what is already spent. Resuming without raising it gives the session one more turn,
   after which it stops again.
-- **What the figure is.** An estimate at list price from the session's own transcript — or the
-  CLI's own reported cost where it gives one (opencode) — **not your bill**. On a subscription plan
+- **What the figure is.** An estimate at list price from the session's own transcript, or the
+  CLI's own reported cost where it gives one (opencode); **not your bill**. On a subscription plan
   it is the API-equivalent figure. A model with no price cannot be estimated, so a budget has no
   effect on it (the dialog says so); kinds that record no token counts (Kiro, Cursor, Antigravity)
   and the self-hosted engine ($0) are never stopped by one. A fork starts from $0: the history it
@@ -463,7 +463,7 @@ last settings the conversation recorded** rather than the ones it was launched w
 claude, codex and kiro, a model switch with no message sent after it is not recorded by the CLI
 itself, so the session resumes on its launch model.
 
-Even while the workspace is stopped, **the list itself stays visible**. You can't operate on the
+Even while the workspace is stopped, the list itself stays visible. You can't operate on the
 contents, but you can check "which sessions were there" even from a phone.
 
 ### The warning when the branch has been swapped
@@ -477,7 +477,7 @@ happened. For parallel work, giving each session its own worktree avoids this co
 ## Seeing every running session at once (the sessions overview)
 
 Once several sessions are running, the left pane makes you read them one row at a time. The
-**sessions overview** lays them out as **cards in a grid** — one card per session, with the same
+**sessions overview** lays them out as **cards in a grid**, one card per session, with the same
 kind colour, name, working copy and state chip as its row, plus the model, the context usage and
 when it started. The states that need you now (a question, a plan to review, a permission prompt)
 colour the whole card, so they can be spotted from across the room.
@@ -487,10 +487,10 @@ colour the whole card, so they can be spotted from across the room.
 - **Opening it**: **"Sessions"** on the action bar (next to Split right / Split down / Close all),
   the same button on the layout map at the top of the left pane, or the leader keys **`g` → `s`** / **`s` → `l`**.
   It is an ordinary pane: split it, tab it, pop it out, and it is there again after a reload.
-- **How many columns** depends on the width of the pane it is in — one column in a narrow side
+- **How many columns** depends on the width of the pane it is in: one column in a narrow side
   column, four or more across a wide one.
 - **Cards sit under one heading per project (repository)**. Every working copy of the same
-  repository shares a heading — the base clone, each `@wip-*` worktree, and a second clone under
+  repository shares a heading: the base clone, each `@wip-*` worktree, and a second clone under
   another folder name (what is matched is where it was cloned from, not the folder name).
   Sessions running in no working copy trail under "Other". Headings keep a fixed name order.
 - **Inside a heading the cards are grouped by family.** A session started from another one (a
@@ -505,7 +505,7 @@ colour the whole card, so they can be spotted from across the room.
   layout a tap opens a new tab even on a phone, and the grid stays one tab away.
 - **What one card shows**: the state at the top right (Ready / Working… / stopped), the project
   and branch on the line below with **the distance from the parent** right of it
-  ("親+2・FF可", "3 unmerged" — the same chip as the repo row in the left pane), under that
+  ("親+2・FF可", "3 unmerged"; the same chip as the repo row in the left pane), under that
   **how full the context is and a graph of the tokens each reply spent** (the same strip the
   chat view shows), and at the bottom **the model that answered last**, time since it started
   and **how long it has been waiting for you** ("since your reply" once you have answered).
@@ -516,7 +516,7 @@ colour the whole card, so they can be spotted from across the room.
   stopped sessions too). A long line is cut off, and hovering shows it in full. On a
   session that has not said anything yet, the line is not there at all.
 - **Right-click, the ⋯ button, or the Menu key on a card gives the same menu as the row in the
-  left pane** — stop, rename, hand off, share, lock, keep awake, archive, and the rest
+  left pane**: stop, rename, hand off, share, lock, keep awake, archive, and the rest
   ([Icons, badges, and menus](badges-and-menus.md)).
 - **A family folds from its parent's card.** The parent carries **"Collapse child sessions"**
   (and **"Expand child sessions"** to undo it); folded, it shows **"+N"** for how many are
@@ -540,7 +540,7 @@ between them, and when each one was working, waiting or idle.
 ![The fleet graph: one lane per session on a time axis, children under their parent, arrows for what passed between sessions, and each lane's state chip](../assets/fleetgraph-en.webp)
 
 - **Opening it**: **"Graph"** in the sessions overview's header (the graph's own header has
-  **"List"** to go back — each swaps the other into the same pane, and Ctrl (⌘) + click or
+  **"List"** to go back; each swaps the other into the same pane, and Ctrl (⌘) + click or
   middle-click opens a new pane), the leader keys **`g` → `f`**, or the command palette. It is
   an ordinary pane like the grid.
 - **The window starts as the last 24 hours, with now at the right edge.** The arrows in the
@@ -548,24 +548,24 @@ between them, and when each one was working, waiting or idle.
   reset button returns to the last 24 hours. A sideways scroll or a drag on the figure moves
   through time; scrolling up and down moves through the lanes; on a phone, two fingers pinch the
   time axis. The scale stays pinned at the top however far you scroll.
-- **The label column** carries the kind icon, the session's name and its state chip — the same
+- **The label column** carries the kind icon, the session's name and its state chip, the same
   words as the row in the left pane, or, for a lane the list no longer carries, **Stopped —
   resumable**, **Archived — restorable** or **Gone**. **The name is what opens the session**
   (beside the figure, or in a new pane with Ctrl (⌘) or the middle button); the lane itself opens
   nothing, so dragging across it never opens a session by accident.
 - **What a lane looks like says whether it is still there.** A running session is a solid line
-  with a coloured band — working, waiting for you, or idle — that pulses at the right edge. A
+  with a coloured band (working, waiting for you, or idle) that pulses at the right edge. A
   stopped session is **dashed** from its × to the right edge: it can be resumed. An archived or
   deleted one **ends at the ×**. The × is when its end was first noticed, which can be later than
   when it actually stopped, and its tooltip says so. A session stopped and resumed is one lane
   with several runs.
-- **Families sit together**: a session started from another one — a child session, a fork or a
-  handoff — is drawn directly under its parent, with a line from the parent to its birth. A
+- **Families sit together**: a session started from another one (a child session, a fork or a
+  handoff) is drawn directly under its parent, with a line from the parent to its birth. A
   parent's row folds its descendants away (**"+N"**), the same control as the grid's. If the
   parent is off the left edge or gone, the child is marked as having a parent that is not drawn.
 - **Arrows are what passed between sessions**: a spawn, a fork, a handoff, an instruction and its
-  report, and session-to-session messages. Something that is not a session — a conversation, a
-  person, a scheduled run, the Discord / Slack bridge, an automatic resume — is a short stub with
+  report, and session-to-session messages. Something that is not a session (a conversation, a
+  person, a scheduled run, the Discord / Slack bridge, an automatic resume) is a short stub with
   a dot at its end, coloured and labelled by where it came from. Clicking an arrow opens that
   conversation or lane.
 - **"Archived"** in the header shows or hides archived lanes (shown by default, unlike the grid,
@@ -580,7 +580,7 @@ between them, and when each one was working, waiting or idle.
 Once you are carrying several pieces of work, the left pane fills up with the repositories and
 conversations of all the others. A **working set** groups **repositories, conversations,
 sessions and schedules by piece of work and switches what the left pane shows**. Nothing is
-moved or copied — only **what you see** changes.
+moved or copied. Only **what you see** changes.
 
 - The bar pinned at the top of the left pane (**"All"** by default) switches between groups. It
   stays visible however far the pane scrolls, so before you panic that "a session disappeared",
@@ -639,7 +639,7 @@ Once it is on, a session starts a child when it judges the work splits, and tell
 doing so and what for. You can also ask for one ("have a codex session write the tests for
 this in parallel").
 
-- **A child can be any agent that is not a raw shell** — claude, codex, opencode, agy, copilot,
+- **A child can be any agent that is not a raw shell**: claude, codex, opencode, agy, copilot,
   cursor, kiro, lcpp or muse, with any model you have not excluded. A claude session can start
   a codex child, so different agents can work on one job together. shell and ssm cannot be
   started this way.
@@ -660,7 +660,7 @@ this in parallel").
   one, and rename one. **Once you rename a child yourself, your name stays** and the parent can
   no longer change it.
 - **What it may not do**: add instructions to a child, answer its questions or approve its plans
-  or permission prompts on your behalf, or delete or archive it — and nothing with sessions it
+  or permission prompts on your behalf, or delete or archive it. It can do nothing with sessions it
   did not start beyond the messages and the read-only output peek of the next section. Removing
   a child is done by you, in the Console, like any other session. To give a child more work, the
   parent sends it a message (next section).
@@ -669,7 +669,7 @@ this in parallel").
   grows further without you launching something.
 
 **The parent is not told how the child is getting on.** By default the child is asked to send
-its parent **one message when it is done** — the outcome only, no progress reports — and that
+its parent **one message when it is done** (the outcome only, no progress reports), and that
 message travels over the channel of the next section, so it arrives only while **"Messages
 between sessions"** is on as well. With it off, the parent checks its children's state and
 output itself.
@@ -678,7 +678,7 @@ output itself.
 last turn the parent is told to list the children it leaves behind and their state. Read that
 list: only you can delete a child, and each one is a whole agent, holding memory on your
 workspace and spending that agent's plan usage on your account. In the **Agent usage** tab their
-spend appears under **"Started by a session"**, on its own — it is not added to the parent's
+spend appears under **"Started by a session"**, on its own, and it is not added to the parent's
 figures.
 
 **Where a family shows.** In the left pane a child's worktree sits under the working copy of the
@@ -696,9 +696,9 @@ passes the whole context, this passes one line.
 
 It earns its keep in situations like these:
 
-- A session working in another worktree landed a change that breaks yours — "I just rebased
+- A session working in another worktree landed a change that breaks yours: "I just rebased
   develop; pull `api.ts` before you carry on"
-- A decision the other session was blocked on got settled — "auth is OAuth, go ahead"
+- A decision the other session was blocked on got settled: "auth is OAuth, go ahead"
 - A long-running job reports its result back to the session you are watching
 
 **It is off by default.** Turn it on in **Settings > Agents > Session > "Messages between
@@ -708,8 +708,8 @@ keep their current tools until they restart.
 Once it is on, an agent sends a message when it judges one is needed, and you can also ask for
 one ("tell the session next door what we just did").
 
-- **Messages cross agent kinds** — claude to codex, opencode to cursor, and so on.
-- **They reach a stopped session** — it is resumed first, then the message is delivered.
+- **Messages cross agent kinds**: claude to codex, opencode to cursor, and so on.
+- **They reach a stopped session**: it is resumed first, then the message is delivered.
 - **Delivery is confirmed; being read or acted on is not.** A reply is not guaranteed either.
   A **Managed** session that is in the middle of a turn gets the message as its next turn, once
   the current one ends. Stopping that run does not throw the message away, and neither does
@@ -737,13 +737,13 @@ one ("tell the session next door what we just did").
   itself, and cannot read shell / ssm sessions, or claude sessions while this workspace's claude
   login has expired. It only ever sees sessions in this workspace, never sessions other people
   shared with you. Turning the switch on exposes what your sessions' agents wrote to your other
-  sessions **as is — nothing is masked**, so a secret or a sign-in code an agent quoted in its
+  sessions **as is, with nothing masked**, so a secret or a sign-in code an agent quoted in its
   reply can be read too.
 
 Messages are deliberately curt. Every one of them costs the receiving session a whole turn, so
 sessions are told to drop greetings and thanks and to lead with the point. Each message also
 carries a **kind**, badged in the chat view, and the kind decides what comes back: **Request**
-(act on it — the sender hears back only if it *can't* be done), **Question** (one short answer
+(act on it; the sender hears back only if it *can't* be done), **Question** (one short answer
 comes back), **Answer** (closes a question, nothing follows), **FYI** (nothing follows). So
 silence after a request usually means it was done rather than ignored; the work itself shows up
 in that session's chat and changed files.
@@ -756,7 +756,7 @@ with its sender, so it never blends into what you typed.
 
 ### How this differs from Claude Code's own version
 
-Claude Code has a feature for the same purpose (cross-session messaging — `/list-agents` and
+Claude Code has a feature for the same purpose (cross-session messaging with `/list-agents` and
 `SendMessage`), but **it is disabled in Agent Fleet**. Enabling it also switches Claude's
 usage telemetry back on, which we chose not to make the default for a self-hosted fleet. That
 is why `/list-agents` does nothing here; use the Agent Fleet version above instead.
@@ -767,7 +767,7 @@ is why `/list-agents` does nothing here; use the Agent Fleet version above inste
 | A stopped session | Can't be reached | **Resumed, then delivered** |
 | Record of it | One collapsed line in the terminal | A badge with the sender in the chat view |
 | Sessions on another machine or the web | Can reply to them | **Not supported** (same workspace only) |
-| Holding or refusing on the receiving side | Available | Not offered — every session in a workspace is yours, so there is no one to refuse; only the workspace-wide on/off |
+| Holding or refusing on the receiving side | Available | Not offered: every session in a workspace is yours, so there is no one to refuse; only the workspace-wide on/off |
 
 The block is applied **through the launch settings** (a version shipped where environment variables
 no longer closed it). If something does arrive over Claude's own channel anyway, **it shows up in
@@ -785,12 +785,12 @@ running keep their current tools until restarted.
 
 It opens exactly four things.
 
-- **Another session's state** — working, waiting for input, or stopped. A session can check
+- **Another session's state**: working, waiting for input, or stopped. A session can check
   whether the peer it handed work to is still going, without asking you.
-- **Context usage** — how full its own context has become. It can decide to hand the rest
+- **Context usage**: how full its own context has become. It can decide to hand the rest
   over to a fresh session before it runs out mid-task (that is the handoff above).
-- **Reading the memo queue** — what is already waiting there.
-- **Adding one memo** — leaving you a note about something outside what you asked for. "There
+- **Reading the memo queue**: what is already waiting there.
+- **Adding one memo**: leaving you a note about something outside what you asked for. "There
   is another bug next to the function I fixed", "this runbook is out of date": **a report set
   down without interrupting the work**. When and where the queue gets sent stays your call.
 
@@ -801,12 +801,12 @@ job of the fleet operator ([08](08-organising.md)) and Console.
 There is one deliberate limit. A session can see **that** another session is stopped on a
 question or waiting for plan approval, **but not the text of it**. Being able to read it would
 give the session the material to answer, on your behalf, a question meant for you. **Approval
-is your job** — a session that finds a stopped peer goes as far as telling you.
+is your job**; a session that finds a stopped peer goes as far as telling you.
 
 ## Having a session generate an image
 
-A session can **generate an image from a prompt** — a rough diagram, a stand-in mock, a
-picture for a README: the things you cannot hand over in prose.
+A session can **generate an image from a prompt**: a rough diagram, a stand-in mock, or a
+picture for a README, the things you cannot hand over in prose.
 
 **Off by default.** Turn it on under **Settings > Agents > Session > "Image generation"**. The
 change applies to **sessions started from then on**; sessions already running keep their
@@ -814,11 +814,11 @@ current tools until restarted. The list of checkpoints and LoRAs is different: w
 administrator enables or disables one, running sessions are told within about a minute and see
 the new list **without a restart**.
 
-- **Every kind of session gets it** — claude and opencode, but codex and agy too. What is left
+- **Every kind of session gets it**: claude and opencode, but codex and agy too. What is left
   out is **the one route that runs the session's own CLI**: a codex session cannot pick the
   Codex route, an agy session cannot pick the Antigravity one. That CLI already has image
   generation built in, and starting a second copy of it only pays twice. **The picture from the
-  missing route is still available from that session's own built-in tool** — including "make
+  missing route is still available from that session's own built-in tool**, including "make
   the same prompt on both so I can compare", which is one call to each. Only when no route is
   left does the tool itself disappear.
 - **A session attached to an image studio does not get it.** There the agent refines the draft
@@ -835,9 +835,9 @@ the new list **without a restart**.
 - **You can name one in the request.** Say "make it with Codex", name one of the deployment's
   engines as it appears in that list, or say "make the same prompt on both so I can compare",
   and the agent picks that provider. A named provider is used on its
-  own with no fall-through — nothing is billed to a service you did not choose — and
+  own with no fall-through, so nothing is billed to a service you did not choose, and
   **comparing costs one image on each plan.** Say nothing and the order above decides.
-- **Every image made on a CLI route spends the included usage of that plan** — the ChatGPT plan
+- **Every image made on a CLI route spends the included usage of that plan**: the ChatGPT plan
   for Codex, the Gemini/Antigravity plan for Antigravity, both 3–5× faster than a text
   exchange. An image made on one of the deployment's own engines spends none of your plans. Image generation is not available at all on ChatGPT Free. **Which plan is drawn
   down is decided by that order**, so move the other one up if you would rather not spend one
@@ -855,13 +855,13 @@ the new list **without a restart**.
   steps, cfg, sampler and scheduler (and a seed, the negative prompt and LoRA weights), plus three
   settings one family each reads: clip skip (SD1.5, SDXL), guidance (FLUX.1, which has no cfg) and
   shift (Anima). Anything left out runs at the checkpoint's published values, and a setting the
-  model's family does not read — cfg on FLUX.1, a named scheduler on FLUX.2 klein — is **named in
+  model's family does not read (cfg on FLUX.1, a named scheduler on FLUX.2 klein) is **named in
   the result as not applied** rather than dropped in silence.
 - **A LoRA asked for from chat carries its trigger words.** The tool lists each adapter with the
-  words it was trained on and tells the agent to put one in the prompt — an adapter loaded
+  words it was trained on and tells the agent to put one in the prompt, because an adapter loaded
   without its trigger costs the whole generation and changes nothing visible.
 - **The picture appears in the conversation as a card** (click to enlarge, or open it in a
-  pane). Anything the request did not get is noted above it — "asked for 1024x1024, got
+  pane). Anything the request did not get is noted above it, e.g. "asked for 1024x1024, got
   1536x1024".
 - Results are kept under `~/.cache/agent-fleet/generated/` and also open in the file pane.
   They are removed after 30 days.
@@ -870,7 +870,7 @@ the new list **without a restart**.
 
 ## Sharing a conversation (shared sessions)
 
-You can show a session's conversation to another member of the same tenant, **read-only** —
+You can show a session's conversation to another member of the same tenant, **read-only**:
 "keep an eye on where this investigation goes", "while you review it, here is how we got here".
 
 **Sharing it**
@@ -878,14 +878,14 @@ You can show a session's conversation to another member of the same tenant, **re
 1. Choose **"Share"** from the **⋯** menu of a session row or a repository row (you can also
    create one from ⚙ "Shares" in the left pane's **Shared sessions** section → **"New share…"**).
 2. There are three kinds of **target**.
-   - **Session** — that one session.
-   - **Project** — the base working copy **plus the sessions in the worktrees under it**. If you
+   - **Session**: that one session.
+   - **Project**: the base working copy **plus the sessions in the worktrees under it**. If you
      give each session its own worktree, this is usually the one you want.
-   - **WT** — a single worktree.
+   - **WT**: a single worktree.
 3. Pick the **recipient** by searching for their email address.
 4. Pick the **permission**.
-   - **View only** — reading, nothing else.
-   - **May propose** — the recipient can **propose** something to send, and **it does not reach
+   - **View only**: reading, nothing else.
+   - **May propose**: the recipient can **propose** something to send, and **it does not reach
      the agent until you approve it**.
 5. **"Unshare"** in the share list ends it.
 
@@ -912,7 +912,7 @@ to where you were** (reloading the browser starts from the latest again).
 **Approving** (as the owner): the Shared sessions section shows **"N awaiting approval"**;
 review the content and choose **"Approve and send"** or **"Reject"**.
 
-> **Sharing exposes the whole conversation** — your prompts, the agent's replies, and tool
+> **Sharing exposes the whole conversation**: your prompts, the agent's replies, and tool
 > output. Secrets that ended up in the conversation are not detected for you. The recipient can
 > save what they see, so **unsharing cannot recall the copy they already have.** Think once about
 > what is on screen before you share. Archiving a session drops it from the recipient's list (the
@@ -920,8 +920,8 @@ review the content and choose **"Approve and send"** or **"Reject"**.
 
 ## Changing the title and branch name
 
-- **Rename** — changes the identifying name in the list. Saving it empty reverts to the automatic name (repository name + timestamp). **"Ask AI to suggest"** has a name proposed from the conversation contents — a session started from an issue keeps the issue's key (`#1146`, `PROJ-123`) at the front; adopt it with "Use this".
-- **Rename the branch** — appears only for sessions running in a worktree. Renames that worktree's branch (the folder — that is, the session — stays as is). Buttons let you swap the prefix for one of the repository's branch naming rules (`feature/` `fix/` `hotfix/` … by default), and **"Ask AI to suggest"** proposes a branch name from the conversation, composed by the same rules — a session started from an issue keeps the issue's number in it. A name outside the rules only gets a note. Use it to give a meaningful name later to a session started under a provisional name (`temp/…`).
+- **Rename**: changes the identifying name in the list. Saving it empty reverts to the automatic name (repository name + timestamp). **"Ask AI to suggest"** has a name proposed from the conversation contents. A session started from an issue keeps the issue's key (`#1146`, `PROJ-123`) at the front; adopt it with "Use this".
+- **Rename the branch**: appears only for sessions running in a worktree. Renames that worktree's branch (the folder, that is the session, stays as is). Buttons let you swap the prefix for one of the repository's branch naming rules (`feature/` `fix/` `hotfix/` … by default), and **"Ask AI to suggest"** proposes a branch name from the conversation, composed by the same rules. A session started from an issue keeps the issue's number in it. A name outside the rules only gets a note. Use it to give a meaningful name later to a session started under a provisional name (`temp/…`).
 
 ## Reading an answer in your own language (translation)
 
@@ -941,7 +941,7 @@ agent's own text back.
   were. Marks (highlights) stay on the original, so they are hidden while the translation is shown.
 - The button appears only on an answer **written in a language other than your own**. An answer that
   genuinely mixes both does not get one (re-saying what you can already read buys nothing), though a
-  few words in the other language — a Console label quoted as-is, a product name — do not withhold
+  few words in the other language (a Console label quoted as-is, a product name) do not withhold
   it. Someone else's shared session does not get one either: a translation runs in the owner's
   Workspace.
 - Turn it off under Settings > AI assistance, **Answer translation (mirror)**.
