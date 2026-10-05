@@ -684,8 +684,11 @@ func userInputQuestions(args string) ([]transcript.Question, []string) {
 // userInputOutcome turns the tool's output into the answer text the question block reads, and
 // whether the prompt was declined rather than answered.
 //
-// Measured on 1.4.2-R4684.1, a declined or aborted prompt reads
-// {"status":"cancelled"|"aborted","answers":[],"reason":"…"}. A declined block still needs a
+// Measured on 1.4.2-R4684.1, an answered prompt reads
+// {"status":"answered","answers":[{"id":"color","selected_label":"Red"},…]} — keyed by `id`,
+// snake_case — and a declined or aborted one {"status":"cancelled"|"aborted","answers":[],
+// "reason":"…"}. The camelCase keys of the wire's own UserInputAnswer are read too, in case a
+// release aligns the two. A declined block still needs a
 // non-empty answer to show as settled, so it carries the reason. An output this cannot read is
 // shown verbatim rather than dropped.
 func userInputOutcome(out string, qs []transcript.Question, ids []string) (string, bool) {
@@ -741,6 +744,7 @@ func userInputOutcome(out string, qs []transcript.Question, ids []string) (strin
 // rest is the member's own words).
 func userInputAnswerText(raw json.RawMessage) (string, string) {
 	var a struct {
+		ID             string   `json:"id"`
 		QuestionID     string   `json:"questionId"`
 		QuestionIDSn   string   `json:"question_id"`
 		SelectedLabel  string   `json:"selectedLabel"`
@@ -753,7 +757,7 @@ func userInputAnswerText(raw json.RawMessage) (string, string) {
 	if json.Unmarshal(raw, &a) != nil {
 		return "", strings.TrimSpace(string(raw))
 	}
-	id := firstNonEmpty(a.QuestionID, a.QuestionIDSn)
+	id := firstNonEmpty(a.ID, a.QuestionID, a.QuestionIDSn)
 	labels := append(a.Labels, a.LabelsS...)
 	if len(labels) == 0 {
 		if l := firstNonEmpty(a.SelectedLabel, a.SelectedLabelS); l != "" {
