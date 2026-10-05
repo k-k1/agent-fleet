@@ -1013,3 +1013,51 @@ Codex with a ChatGPT account」で終わり、Codex の画像呼び出しは画�
 `AF_IMAGEGEN_CODEX_MODEL` を名指しする案内を付ける。2026-10-05 実測（codex-cli 0.160.0、
 `auth_mode=chatgpt`）: 画像を作らない小さなターンは `gpt-6-luna` で受理され、`gpt-5.4-mini` では
 同じ 400 を再現した。新しいドライバーでの実画像生成は未実施（プラン枠のため）。Follow-ups: #1722。
+
+## 追記 — 参照画像の復活と、画像生成が提供されないアカウント（2026-10-05）
+
+**スコープ付きの読み取りは通り、edit を再び提供する。** サブエージェントの `view_file` はこの経路の
+許可リストで検査される。参照画像を使い捨てホームの `wd` にコピーし、`permissions.allow` に
+`read_file(<wd>/*)` を 1 件足すと（規則の書式は CLI 自身の文字列に `read_file(*)` / `command(*)` と
+ある）、agy 1.2.17・`gemini-3.8-flash-low` で次のとおりだった：
+
+- 参照 1 枚：サブエージェントがそれに `view_file` を実行し（拒否なし）、続けて
+  `ImagePaths: [<wd>/ref_1.png]` 付きで `generate_image`。`SUCCESS`・`denied_actions` なし・
+  1024x1024 の JPEG・43 秒・入力約 3.7 万トークン。
+- 経路そのものを通して参照 2 枚（赤い円・市松模様）と「円を市松の上に置く」指示：両方を使った 1 枚
+  （1024x1024・warning なし・43 秒・入力約 3.8 万トークン）。JPEG の C2PA に入力 ingredient が 2 件ある。
+- 陰性対照（画像は生成しない）：同じ許可リストで `wd` の外の参照を、サブエージェントに `view_file`
+  だけさせた。結果に `denied_actions: [{action: read_file, display_name: ViewFile}]` が付いた。
+  許可は `wd` に限られ、それ以上は開いていない。
+
+サブエージェントの拒否の見え方：実行は `SUCCESS` で終わり、拒否は print 結果の `denied_actions` に
+`action`（`read_file`）と `display_name`（`ViewFile`）で載る。ドライバー自身の返答は委譲が成功したと
+述べるため、`Generate` がこの一覧をエラーにする。
+
+`Caps` は `generate` と `edit` を再び挙げ、`MaxInputs` はツール自身の `ImagePaths` 上限の 3。
+`Generate` は入力を `wd` に `ref_<n><拡張子>`（中立な名前・画像拡張子のみ）でコピーし、読み取りの
+許可は入力があるときだけ足す。プロンプトはコピーを列挙し、開くのはサブエージェントに任せるよう
+ドライバーへ指示する。この追記に費やした実生成は、参照 1 枚のプローブ 1 回と、参照 2 枚の経路実行
+1 回の計 2 回（対照は生成なし）。
+
+**Readiness。** CLI の `init` イベントはアカウントが何を提供されるかに関係なく `generate_image` を
+挙げるので、`Ready()` には分からない。実行がファイルなしで終わり、ドライバーの返答が画像ツール／
+サブエージェントは使えないと言っている場合（画像を指す語と使えないを指す語の両方が必要で、それ以上
+緩くしない）、`Generate` は汎用の `agy generated no image` でなく「サインイン中の Antigravity/Gemini
+アカウントは画像生成が提供されていない」で失敗する。`Ready()` への事前プローブは入れなかった：
+知る手段がモデルのターン（数秒・ドライバーモデルの呼び出し）しかなく、それを状態確認のたびに行うのは
+`Ready()` の契約が許さない。
+
+**未測定。** 画像生成が本当に提供されないアカウントでの「使えない」返答（判定は前の追記で測った
+1.2.16 の文言に対して試験したもので、そのようなアカウントでは試していない）、および 1.2.16 より前の
+CLI での `generate_image` 直接呼びの代替。
+
+**補遺（2026-10-05・#1721 のレビュー）— `..` セグメントでは許可は広がらない。** 画像を生成しない 2 つ目の
+対照で、サブエージェントに `<wd>/../.gemini/antigravity-cli/<ファイル>`（OAuth トークンのリンクがある
+ディレクトリ）を `view_file` させた。パスは検査前に正規化されて拒否された：「Permission denied for
+read_file(<home>/.gemini/antigravity-cli/<ファイル>). Matches hardcoded system protection boundary
+rule」— CLI は許可リストとは別に自分の `.gemini` を保護している。この拒否は結果の `denied_actions` に
+**載らなかった**（実行は `SUCCESS`・一覧なし）。サブエージェントの転写にあるステップのエラー文にだけ
+出た。つまり `denied_actions` が報告するのは許可リストによる拒否で、拒否された読み取りの全部ではない。
+`wd` から外へ向かう symlink は未測定：`Generate` が `wd` に置くのは通常ファイルのコピーだけで、
+`readRequestFile` を通して読む（symlink の元は拒否される）。
