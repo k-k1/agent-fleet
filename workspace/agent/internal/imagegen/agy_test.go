@@ -186,9 +186,26 @@ func TestAgyPassesAspectRatioAndKeepsThePromptOffArgv(t *testing.T) {
 	}
 }
 
+// agy 1.2.16+ never offers the main agent generate_image; the prompt has to ask for the
+// image-generator subagent, or the driver answers "the tool is unavailable" and stops.
+func TestAgyPromptDelegatesToTheImageSubagent(t *testing.T) {
+	got := agyPrompt(Request{Prompt: "a cat", Inputs: []string{"/x/ref.png"}}, "16:9")
+	for _, want := range []string{
+		"image-generator subagent with the invoke_subagent tool",
+		"Set AspectRatio to 16:9",
+		"/x/ref.png",
+		"a cat",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("prompt lacks %q:\n%s", want, got)
+		}
+	}
+}
+
 // The isolated home IS the sandbox: an empty MCP config so one picture does not spawn the
-// user's whole materialized MCP fleet, and an allow-list of exactly one tool so print mode
-// auto-denies everything else (measured: run_command comes back as a denied action).
+// user's whole materialized MCP fleet, and an allow-list of only the image tool and the subagent
+// hand-off so print mode auto-denies everything else (measured: run_command comes back as a
+// denied action).
 func TestAgyIsolatedHomeIsTheSandbox(t *testing.T) {
 	p := newAgyTestProvider(t, "agy")
 	home, err := p.prepareHome()
@@ -222,8 +239,10 @@ func TestAgyIsolatedHomeIsTheSandbox(t *testing.T) {
 	if settings.Telemetry {
 		t.Fatal("telemetry was left on")
 	}
-	if len(settings.Permissions.Allow) != 1 || settings.Permissions.Allow[0] != "generate_image" {
-		t.Fatalf("allow = %v, want exactly the image tool", settings.Permissions.Allow)
+	// invoke_subagent is the hand-off to agy 1.2.16+'s image-generator; without it the
+	// delegation is auto-denied and the route produces nothing.
+	if got := strings.Join(settings.Permissions.Allow, ","); got != "generate_image,invoke_subagent" {
+		t.Fatalf("allow = %v, want exactly the image tool and the subagent hand-off", settings.Permissions.Allow)
 	}
 	if len(settings.Trusted) != 1 || settings.Trusted[0] != filepath.Join(home, "wd") {
 		t.Fatalf("trusted workspaces = %v, want only the empty working dir", settings.Trusted)

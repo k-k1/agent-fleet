@@ -12,6 +12,7 @@ English | [日本語](0069-image-generation-providers.ja.md)
   correction to the "another agent CLI is not the way" aside**; **P3 let the caller NAME a
   provider (`generate_image`'s `provider` argument) and settled the default order on the merits**.
   What each phase deliberately left out is in its *Implementation notes* at the end. Tiers 2 and 3 (Decision 3) are not started.
+- Follow-ups: #1716, #1718
 - Related: [0013-tts-zundamon.md](0013-tts-zundamon.md) (the provider-abstraction precedent
   this copies: `ttsProvider` + `chooseTTSProvider`, and "pre-processing belongs outside the
   provider") / [0031-mcp-registry.md](0031-mcp-registry.md) (the registry is one list; the
@@ -1035,3 +1036,31 @@ right. The enum is, and a name outside it is refused as `bad_params` with the li
 `comfy_workflows_test.go`. A live check wants one model, one seed and two samplers far apart
 (`euler` and `dpmpp_2m`), which is two images, plus one call putting a `scheduler` on klein to see
 the warning.
+
+## Follow-up — the agy route after agy 1.2.16 (2026-10-05)
+
+The route stopped producing images when the baked-in agy moved from 1.1.x to 1.2.16: every call
+came back `agy generated no image (The image generation tool is unavailable.)`.
+
+**Root cause.** agy's changelog for 1.2.16 says the agent now hands image requests to a built-in
+`image-generator` subagent. Measured on 1.2.16 and 1.2.17, under the isolated home and under the
+real one: the CLI's `init` event still lists `generate_image`, but asked for its callable tools
+the driver names `run_command`, `view_file`, `invoke_subagent` and others — not `generate_image` —
+and answers an image request with "the tool is unavailable" in about 3 s, without a tool step.
+A second driver (`gemini-3.8-flash-medium`) behaved the same.
+
+**Fix.** `permissions.allow` gains `invoke_subagent`, and the prompt asks for the subagent (with
+`generate_image` kept as the fallback for a CLI that still offers it). Collection is unchanged:
+the picture lands at the top level of the PARENT conversation's `brain/<conversation_id>/`, named
+by the subagent (`red_circle_<epoch_ms>.jpg`), which `agyOutputFiles` already reads by extension.
+
+**Measured 2026-10-05 (agy 1.2.17, `gemini-3.8-flash-low`).** A hand-driven probe with the two
+allow entries produced one `invoke_subagent` step (`type_name: image-generator`) and a 1024x1024
+JPEG in about 42 s, ~37k tokens for the turn. Through the provider itself, `AspectRatio: 16:9`
+stated in the prompt came back **1376x768**, no warnings, 49 s, ~50k input tokens: the ratio
+survives the subagent, as it survived the driver on 1.1.5.
+
+**Not measured.** Reference images (`ImagePaths`) are now written into the delegated prompt rather
+than passed to a tool parameter; whether the subagent opens them is unchecked.
+
+Follow-ups: #1716 (the report), #1718 (readiness, and the reference-image measurement).

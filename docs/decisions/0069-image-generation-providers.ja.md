@@ -11,6 +11,7 @@
   軸・優先順位の設定 UI・「別のエージェント CLI は筋が悪い」という余談への訂正が入り、P3 で
   呼び出し側が provider を名指しできるようにした（`generate_image` の `provider` 引数）**。
   各段階が意図して落としたものは末尾の各「実装メモ」にある。第 2・第 3 層（決定 3）は未着手。
+- Follow-ups: #1716, #1718
 - 関連: [0013-tts-zundamon.ja.md](0013-tts-zundamon.ja.md)（写した前例。`ttsProvider` と
   `chooseTTSProvider`、そして「前処理は provider の外」）/
   [0031-mcp-registry.ja.md](0031-mcp-registry.ja.md)（レジストリは 1 本のリスト。`af`
@@ -962,3 +963,31 @@ vendor の API が公開している欄ではない。sdcpp は受けない―�
 **実機未検証。** 7 ファミリーが `sampler_name` を受けることは `comfy_workflows_test.go` が固定して
 いる。実機で見るなら、モデル 1 つ・seed 1 つ・sampler を離した 2 点（`euler` と `dpmpp_2m`）
 ＝画像 2 枚と、klein に `scheduler` を渡して warning が出ることの 1 回である。
+
+## 追記 — agy 1.2.16 以降の agy 経路（2026-10-05）
+
+焼き込みの agy が 1.1.x から 1.2.16 に上がったあと、この経路は画像を作らなくなった。毎回
+`agy generated no image (The image generation tool is unavailable.)` が返る。
+
+**根本原因。** agy の 1.2.16 の変更履歴に、エージェントが画像の依頼を内蔵の `image-generator`
+サブエージェントへ渡すようになったとある。1.2.16 と 1.2.17 で、隔離ホストでも本物のホストでも
+測った結果：CLI の `init` イベントは今も `generate_image` を列挙するが、呼べるツールを尋ねると
+ドライバーは `run_command`・`view_file`・`invoke_subagent` などを挙げ、`generate_image` は挙げない。
+画像を頼むと、ツールの手順を踏まずに約 3 秒で「ツールは使えない」と答える。別のドライバー
+（`gemini-3.8-flash-medium`）でも同じだった。
+
+**修正。** `permissions.allow` に `invoke_subagent` を足し、プロンプトでサブエージェントを頼む
+（`generate_image` を今も出す CLI のために、直接呼びは代替として残す）。回収は変えない：画像は
+**親**会話の `brain/<conversation_id>/` の直下にサブエージェントが付けた名前
+（`red_circle_<epoch_ms>.jpg`）で置かれ、`agyOutputFiles` が拡張子で既に拾う。
+
+**2026-10-05 の実測（agy 1.2.17・`gemini-3.8-flash-low`）。** 許可 2 件で手動のプローブを回すと、
+`invoke_subagent` の手順が 1 つ（`type_name: image-generator`）と 1024x1024 の JPEG が約 42 秒で
+でき、そのターンは約 3.7 万トークン。経路そのものを通すと、プロンプトに書いた
+`AspectRatio: 16:9` は **1376x768**・warning なし・49 秒・入力約 5 万トークンで返った：
+縦横比は、1.1.5 でドライバーを越えたのと同じく、サブエージェントを越える。
+
+**未測定。** 参照画像（`ImagePaths`）はツールの引数ではなく委譲先のプロンプトへ書くようになった。
+サブエージェントがそれを開くかは未確認。
+
+Follow-ups: #1716（報告）、#1718（readiness と参照画像の測定）。
