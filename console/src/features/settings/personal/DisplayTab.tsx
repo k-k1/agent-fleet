@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useTenantStore } from "../../../core/store/tenant.ts";
 import {
   useSettings,
   setSetting,
@@ -33,6 +34,7 @@ import type { ChoiceProps } from "../parts/controls.tsx";
 export function DisplayTab() {
   const s = useSettings();
   const tr = useT();
+  const showPicker = useTenantStore((x) => x.showPicker);
   return (
     <div className="display-settings">
       <section className="ds-group">
@@ -82,6 +84,14 @@ export function DisplayTab() {
           />
         </Row>
         <p className="muted ds-note">{tr("display.region_theme_note")}</p>
+        {showPicker && (
+          <>
+            <Row label={tr("display.per_tenant")}>
+              <OnOff value={s.appearancePerTenant} onChange={(v) => setSetting("appearancePerTenant", v)} />
+            </Row>
+            <p className="muted ds-note">{tr("display.per_tenant_note")}</p>
+          </>
+        )}
         {/* assistantColor + assistantTheme moved to the Assistant tab (its appearance
             lives with its behavior); every other surface color stays here. */}
         {SURFACE_TARGETS.filter((t) => t.key !== "assistantColor").map((t) => (

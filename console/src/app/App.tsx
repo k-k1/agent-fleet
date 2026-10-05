@@ -41,7 +41,7 @@ import { startRepoJobsPolling, useRepoJobsStore } from "../features/repos/jobs.t
 import { useFilesStore } from "../features/files/store.ts";
 import { wireFilesSessionRefresh } from "../features/files/sessionRefresh.ts";
 import { useChatStore, startChatPolling } from "../features/chat/store.ts";
-import { getSettings, hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setPrefsOwnerSource, useSettings } from "../lib/settings.ts";
+import { applyTenantAppearance, getSettings, hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setPrefsOwnerSource, useSettings } from "../lib/settings.ts";
 import { getTenant, getUser } from "../core/api/client.ts";
 import { MOBILE_QUERY, coarsePointer } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
@@ -330,6 +330,7 @@ export function App() {
       // The local settings copy records whose server copy it was merged with; until whoami has
       // answered the user is "", which ui-prefs treats as an unknown owner.
       setPrefsOwnerSource(() => (getUser() ? `${getTenant()}|${getUser()}` : ""));
+      applyTenantAppearance();
       await hydrateUIPrefs();
       if (!alive) return;
       prefsReady = true;
@@ -374,6 +375,7 @@ export function App() {
     // tenant's copy.
     if (prefsSyncedTenantRef.current !== null && prefsSyncedTenantRef.current !== tenant) {
       void resyncAccumulatedForIdentitySwitch();
+      applyTenantAppearance();
       // The rail's repos are the previous tenant's workspace. When both workspaces are running
       // no running edge fires, so nothing else drops them; ProjectTree reloads on the switch.
       useReposStore.getState().clear();

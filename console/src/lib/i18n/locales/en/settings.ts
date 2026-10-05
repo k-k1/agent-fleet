@@ -28,6 +28,9 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "display.assistant_theme": "Assistant theme",
   "display.region_theme_note":
     "The session chat and the assistant chat can use their own theme (dark/light), separate from the app itself (“Match app” follows the app). You can also set each one's background color below.",
+  "display.per_tenant": "Separate appearance per tenant",
+  "display.per_tenant_note":
+    "Remember the theme and surface colors separately for each tenant on this device and switch to them with the tenant. Off keeps the look you see now for every tenant; saved looks are kept.",
   "display.cjk_font": "Japanese font",
   "display.cjk_font_sample": "①②③⑩ ㈱ ㍻ Ⅰ Ⅱ Ⅲ と漢字とかなの並び",
   "display.cjk_font_note":

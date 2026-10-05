@@ -25,6 +25,9 @@ export const settings = {
   "display.assistant_theme": "アシスタントのテーマ",
   "display.region_theme_note":
     "セッションのチャットとアシスタントのチャットは、アプリ本体とは別のテーマ（ダーク／ライト）で表示できます（「アプリに合わせる」で本体に追従）。背景色も下でそれぞれ指定できます。",
+  "display.per_tenant": "テナントごとに外観を分ける",
+  "display.per_tenant_note":
+    "テーマと背景色をこの端末でテナントごとに覚え、テナントの切り替えに合わせて切り替えます。オフにすると、今見えている外観がすべてのテナントで使われます（保存済みの外観は残ります）。",
   "display.cjk_font": "和文フォント",
   "display.cjk_font_sample": "①②③⑩ ㈱ ㍻ Ⅰ Ⅱ Ⅲ と漢字とかなの並び",
   "display.cjk_font_note":

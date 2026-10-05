@@ -311,6 +311,9 @@ export interface Settings {
   chatColor: string;
   sharedColor: string;
   assistantColor: string;
+  // Keep a separate appearance (APPEARANCE_KEYS) per tenant on this device. Device-local, off by
+  // default; only offered to members with two or more memberships.
+  appearancePerTenant: boolean;
   mirrorSend: string;
   // Default claude model for new sessions (launch dialog + repo launch). Usually a tier
   // alias (opus/sonnet/haiku), but may be a user-registered full id to pin a release.
@@ -1161,6 +1164,7 @@ const DEFAULTS: Settings = {
   chatColor: "default",
   sharedColor: "default",
   assistantColor: "default",
+  appearancePerTenant: false,
   // Markdown mirror composer: "mod-enter" = Ctrl/⌘+Enter submits, Enter inserts a
   // newline (phone-friendly default); "enter" = Enter submits, Shift+Enter newline.
   mirrorSend: "mod-enter",
@@ -1892,6 +1896,7 @@ const DEVICE_LOCAL = new Set<keyof Settings>([
   "chatColor",
   "sharedColor",
   "assistantColor",
+  "appearancePerTenant", // per-tenant appearance switch (the snapshots it governs are local too)
   "workingSetActive", // working set currently shown (docs/log/52 — a different one per device)
 ]);
 
@@ -2204,6 +2209,55 @@ export function resyncAccumulatedForIdentitySwitch(): Promise<boolean> {
   return hydrateUIPrefs();
 }
 
+// Per-tenant appearance. The snapshots live in localStorage under "<tenant>|<user>" (the same
+// owner string as the prefs record) and never reach ui-prefs: putting them on the server would
+// make them follow the member onto every device, and unreadable while the workspace is stopped.
+// An empty owner (user not resolved yet) means "unknown": every step below does nothing then,
+// rather than filing a look under the wrong tenant.
+const APPEARANCE_KEYS = [
+  "theme", "mirrorTheme", "sharedTheme", "assistantTheme",
+  "topbarColor", "leftpaneColor", "viewerColor", "chatColor", "sharedColor", "assistantColor",
+] as const satisfies readonly (keyof Settings)[];
+const APPEARANCE_SNAPSHOT_PREFIX = "af-appearance-tenant:";
+
+function readAppearanceSnapshot(owner: string): Partial<Settings> | null {
+  try {
+    const raw = JSON.parse(localStorage.getItem(APPEARANCE_SNAPSHOT_PREFIX + owner) || "null");
+    if (!raw || typeof raw !== "object") return null;
+    const out: Record<string, string> = {};
+    for (const k of APPEARANCE_KEYS) if (typeof raw[k] === "string") out[k] = raw[k];
+    return Object.keys(out).length ? (out as Partial<Settings>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeAppearanceSnapshot(owner: string): void {
+  const snap: Record<string, unknown> = {};
+  for (const k of APPEARANCE_KEYS) snap[k] = state[k];
+  try {
+    localStorage.setItem(APPEARANCE_SNAPSHOT_PREFIX + owner, JSON.stringify(snap));
+  } catch {}
+}
+
+/** Show the current tenant's saved appearance (boot, tenant switch). A tenant with no snapshot
+ * keeps what is shown and files it as its first snapshot. Does nothing with the switch off. */
+export function applyTenantAppearance(): void {
+  const owner = ownerSource();
+  if (!state.appearancePerTenant || !owner) return;
+  const snap = readAppearanceSnapshot(owner);
+  if (!snap) {
+    writeAppearanceSnapshot(owner);
+    return;
+  }
+  state = { ...state, ...snap };
+  try {
+    localStorage.setItem(KEY, JSON.stringify(state));
+  } catch {}
+  applyTheme(state);
+  subs.forEach((fn) => fn());
+}
+
 // The generic signature ties key and value together in the type system, preventing mismatches
 // such as passing a boolean for "theme".
 export function setSetting<K extends keyof Settings>(key: K, value: Settings[K]): void {
@@ -2214,7 +2268,18 @@ export function setSetting<K extends keyof Settings>(key: K, value: Settings[K])
 // save. Used where many keys change together, such as a reset: calling setSetting 17 times would
 // run that many re-renders and debounced saves.
 export function setSettings(patch: Partial<Settings>): void {
+  // Turning the switch on brings back this tenant's earlier snapshot, if any, over the shared
+  // look; with none, the look shown becomes the snapshot (written below).
+  const owner = ownerSource();
+  if (patch.appearancePerTenant && !state.appearancePerTenant && owner) {
+    patch = { ...readAppearanceSnapshot(owner), ...patch };
+  }
   state = { ...state, ...patch };
+  if (state.appearancePerTenant && owner && (
+    "appearancePerTenant" in patch || APPEARANCE_KEYS.some((k) => k in patch)
+  )) {
+    writeAppearanceSnapshot(owner);
+  }
   for (const k of Object.keys(patch) as (keyof Settings)[]) {
     if (!isDeviceLocalSetting(k)) unsaved.set(k, ++changeSeq);
   }
