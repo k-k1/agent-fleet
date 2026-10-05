@@ -34,10 +34,30 @@ func TestQuoteImagePaths(t *testing.T) {
 			"Open the following image(s) with the Read tool: " + p1,
 			"Open the following image(s) with the Read tool: `" + p1 + "`",
 		},
+		{
+			// Not our attachment line: a member's sentence that merely ends the same way.
+			"partial instruction left alone",
+			"Inspect with the Read tool: /tmp/a.png",
+			"Inspect with the Read tool: /tmp/a.png",
+		},
+		{
+			"text after the paths means it is not the attachment line",
+			"Open the following file(s) with the Read tool: " + p1 + " and compare",
+			"Open the following file(s) with the Read tool: " + p1 + " and compare",
+		},
+		{
+			"CRLF and tabs kept",
+			"x\r\nOpen the following file(s) with the Read tool:\t" + p1 + "\r\n",
+			"x\r\nOpen the following file(s) with the Read tool:\t`" + p1 + "`\r\n",
+		},
 	}
 	for _, c := range cases {
 		if got := QuoteImagePaths(c.in); got != c.want {
 			t.Errorf("%s:\n got %q\nwant %q", c.name, got, c.want)
+		}
+		// The delivery check re-applies it to what was already typed.
+		if again := QuoteImagePaths(c.want); again != c.want {
+			t.Errorf("%s: not idempotent: %q", c.name, again)
 		}
 	}
 }

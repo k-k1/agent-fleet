@@ -5,11 +5,13 @@ import (
 	"strings"
 )
 
-// readToolInstruction ends the attachment line every image-bearing claude prompt carries
-// ("Open the following file(s) with the Read tool: <paths>", console/src/lib/pastedImages.ts
-// FILE_PROMPT and control-plane/memo.go). Only paths after it are rewritten: a path inside
-// the member's own words would stop matching the Console's optimistic echo.
-const readToolInstruction = "with the Read tool:"
+// readToolInstructions are the attachment lines an image-bearing claude prompt ends with
+// ("<instruction> <paths>"): console/src/lib/pastedImages.ts FILE_PROMPT (also sent by the
+// memo flush, control-plane/memo.go) and the older IMG_PROMPT wording.
+var readToolInstructions = []string{
+	"Open the following file(s) with the Read tool:",
+	"Open the following image(s) with the Read tool:",
+}
 
 // imagePathRe matches the image extensions claude's paste handler treats as an image file.
 var imagePathRe = regexp.MustCompile(`(?i)\.(?:png|jpe?g|gif|webp)$`)
@@ -26,12 +28,33 @@ var imagePathRe = regexp.MustCompile(`(?i)\.(?:png|jpe?g|gif|webp)$`)
 // "Pending") and the mirror loses the thumbnail. A path wrapped in backticks is never a
 // piece of its own, so the prompt is typed verbatim; the Read tool reads the path all the
 // same, and the mirror's paste-path match ignores the backticks.
+//
+// Whatever compares the typed text against the transcript or the pane (injection source
+// tags, delivery confirmation) has to compare this form, not the prompt it was given.
 func QuoteImagePaths(text string) string {
-	i := strings.LastIndex(text, readToolInstruction)
+	i := -1
+	for _, instr := range readToolInstructions {
+		if j := strings.LastIndex(text, instr); j >= 0 && j+len(instr) > i {
+			i = j + len(instr)
+		}
+	}
 	if i < 0 {
 		return text
 	}
-	i += len(readToolInstruction)
+	// Only a tail made of absolute paths alone is our attachment line. Anything else — the
+	// member's own text, or a tail already quoted — is typed as it is, which also makes the
+	// rewrite idempotent: the delivery check re-applies it to the prompt it holds.
+	fields := strings.Fields(text[i:])
+	hasImage := false
+	for _, f := range fields {
+		if !strings.HasPrefix(f, "/") {
+			return text
+		}
+		hasImage = hasImage || imagePathRe.MatchString(f)
+	}
+	if !hasImage {
+		return text
+	}
 	var b strings.Builder
 	b.WriteString(text[:i])
 	rest := text[i:]
@@ -49,7 +72,7 @@ func QuoteImagePaths(text string) string {
 			k = len(rest)
 		}
 		tok := rest[:k]
-		if strings.HasPrefix(tok, "/") && imagePathRe.MatchString(tok) {
+		if imagePathRe.MatchString(tok) {
 			tok = "`" + tok + "`"
 		}
 		b.WriteString(tok)

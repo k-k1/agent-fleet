@@ -6,6 +6,8 @@ package sessionx
 import (
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 )
 
 func TestPromptDraftVisible(t *testing.T) {
@@ -109,5 +111,18 @@ func TestPromptDraftVisibleIgnoresScrollback(t *testing.T) {
 	captured := "❯ /scout\n● done\n──────── [AF] 定時 ──\n❯ \n────────\n  ⏵⏵ bypass permissions on\n"
 	if promptDraftVisible(captured, "/scout") {
 		t.Fatal("an earlier submission above an empty composer must not read as a draft")
+	}
+}
+
+// confirmPromptDelivery compares the typed (image-path-quoted) form. With a short path the
+// prompt's last 12 runes reach past the path's start, so only the quoted form is found in a
+// composer scrolled to show just the attachment line.
+func TestPromptDraftVisibleQuotedImagePath(t *testing.T) {
+	prompt := strings.Repeat("long caption ", 20) + "Open the following file(s) with the Read tool: /x.png"
+	captured := "❯ with the Read tool: `/x.png`\n" +
+		"────────────────────────────────────────────────────────────────────────────────\n" +
+		"  ⏵⏵ bypass permissions on (shift+tab to cycle)\n"
+	if !promptDraftVisible(captured, claude.QuoteImagePaths(prompt)) {
+		t.Fatal("the quoted draft must read as a draft when compared in its typed form")
 	}
 }
