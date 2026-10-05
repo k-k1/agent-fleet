@@ -9,7 +9,7 @@ file refer to it.
 > **Preview.** This runtime profile is a preview: accepted on a GKE Standard cluster, not yet
 > supported for production. Known limits: no browser features on this runtime (below), and the
 > regional SSD quota on GKE ("Disk quota (GKE)" under Preconditions). Still being measured: the
-> bill ("The bill"), and the load balancer's 24-hour WebSocket cut ("7. The load balancer").
+> load balancer's 24-hour WebSocket cut ("7. The load balancer"). What it costs is "The bill".
 > The rest of the acceptance run is tracked in issue #1468.
 
 | Path | What it is |
@@ -897,8 +897,13 @@ Its shape follows [docs/build/09 §9.8](../../docs/build/09-deploy.md): a **floo
 management fee, the system pool, Cloud SQL, Cloud NAT and its address, the load balancer),
 **per-workspace capacity while running** (the workspace pool scales with the running
 workspaces), and **two persistent disks per workspace that bill while stopped**, as an EBS home
-does. A cluster you already run removes the cluster from the floor. The measured numbers come
-with the acceptance run (#1468).
+does. A cluster you already run removes the cluster from the floor.
+
+Measured on GKE with `deploy/gcp/gke`'s defaults (asia-northeast1, list prices): **~¥2,140/day
+running with no workspace, ~¥600/day paused, plus ~¥78 per workspace node-hour** — about four
+times the ECS floor when idle, mostly from the high-availability choices. The table per item,
+the measurement conditions, what keeps billing while paused, and the levers are in
+[deploy/gcp/gke, "Cost"](../gcp/gke/README.md#cost).
 
 ## The live harness
 

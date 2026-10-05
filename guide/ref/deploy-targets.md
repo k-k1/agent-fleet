@@ -24,8 +24,9 @@ deployment" is the most expensive kind of documentation error here.
 > cluster but is not yet supported for production. Known limits: there are no browser features
 > on this runtime (no browser pane, no headless Chromium), and on GKE the region's SSD disk quota
 > has to hold the deployment before you start ([Preconditions](../../deploy/kubernetes/README.md#preconditions)). Still being
-> measured: what it costs ([The bill](../../deploy/kubernetes/README.md#the-bill)) and how the load balancer's 24-hour
-> WebSocket cut affects day-long sessions ([7. The load balancer](../../deploy/kubernetes/README.md#7-the-load-balancer)).
+> measured: how the load balancer's 24-hour WebSocket cut affects day-long sessions
+> ([7. The load balancer](../../deploy/kubernetes/README.md#7-the-load-balancer)). What it costs on
+> GKE, measured: [The bill](../../deploy/kubernetes/README.md#the-bill).
 
 `docker` also answers to `local`, `ecs` to `aws`, `native` to `wsl`, and `kubernetes` to `k8s`. Anything else
 is rejected at boot rather than quietly defaulting. `ecs` and `ecs-ec2` are separate
