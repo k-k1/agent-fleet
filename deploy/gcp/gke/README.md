@@ -73,22 +73,23 @@ the management fee alone is ~¥11,300.
 8 core-hours at ¥6.385 plus 32 GiB-hours at ¥0.852), plus its 200 GB boot disk while the node
 exists. The node is billed whole, whether one workspace runs on it or as many as its allocatable
 resources hold; the pool goes back to zero nodes when none runs. Every member's two claims
-(50 GB home, 5 GB state, pd-balanced) bill **always**, stopped or not, as an EBS home does on
-ECS. A full acceptance day with a workspace node up about 18.5 hours came to ¥2,325.
+(50 GB home, 5 GB state, pd-balanced) bill **always**, stopped or not, as a member's persistent
+home does on ECS. A full acceptance day with a workspace node up about 18.5 hours came to ¥2,325.
 
 Not measured: egress (negligible in the test), Cloud Logging volume under real use, and the
 growth of the CP disk's snapshots.
 
 **Against ECS.** The ECS deployment's standing cost is ~$107/month
 ([deploy/aws/ecs, "Cost & ephemerality"](../../aws/ecs/README.md#cost--ephemerality), Tokyo
-region): the GKE defaults cost about four times that idle. The gap is the high-availability
-choices, not Kubernetes itself — Cloud SQL `REGIONAL`, a system node in each of two zones, the
+region). Converted at ¥150 to the dollar — an assumption, not part of the measurement — that
+is ~¥16,000/month, so the GKE defaults cost roughly four times as much idle. The gap is the
+high-availability choices, not Kubernetes itself — Cloud SQL `REGIONAL`, a system node in each of two zones, the
 regional cluster's management fee (one zonal cluster per billing account falls under GKE's free
 tier) — and the workspace pool's whole-node billing, where ECS bills each workspace's own
 Fargate task (1 vCPU + 2 GB). Some of it is already a variable (`sql_availability_type`,
 `sql_tier`, `system_machine_type`, `node_zones`, `workspace_machine_type`; a workspace pod must
-still fit on one node); the cluster itself is always regional. A small, zonal profile and its
-estimate are [#1728](https://github.com/k-k1/agent-fleet/issues/1728).
+still fit on one node); the cluster itself is always regional. A proposed small, zonal profile and
+its cost estimate are tracked in [#1728](https://github.com/k-k1/agent-fleet/issues/1728).
 
 **Paused** means the CP scaled to 0, both node pools at 0 nodes and Cloud SQL stopped; the data
 is kept. What still bills is in the right-hand column: the management fee, the forwarding rule,

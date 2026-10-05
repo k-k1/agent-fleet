@@ -19,7 +19,7 @@ file refer to it.
 | `components/gke/` | What GKE adds: the Cloud SQL Auth Proxy sidecar, Workload Identity, the workspace node pool, the global external Application Load Balancer (Gateway API) and the CP namespace's ingress policy |
 | `overlays/gke/` | The overlay to copy for a GKE deployment |
 | `overlays/generic/` | The overlay to copy for any other cluster |
-| [`../gcp/gke/`](../gcp/gke/) | Terraform for everything around a GKE cluster |
+| [`../gcp/gke/`](https://github.com/k-k1/agent-fleet/tree/develop/deploy/gcp/gke) | Terraform for everything around a GKE cluster |
 
 > **No browser features on this runtime.** Chromium's sandbox cannot start in a workspace pod
 > (Pod Security `restricted`: NoNewPrivs stops the setuid helper, RuntimeDefault seccomp refuses
@@ -900,10 +900,11 @@ workspaces), and **two persistent disks per workspace that bill while stopped**,
 does. A cluster you already run removes the cluster from the floor.
 
 Measured on GKE with `deploy/gcp/gke`'s defaults (asia-northeast1, list prices): **~¥2,140/day
-running with no workspace, ~¥600/day paused, plus ~¥78 per workspace node-hour** — about four
-times the ECS floor when idle, mostly from the high-availability choices. The table per item,
-the measurement conditions, what keeps billing while paused, and the levers are in
-[deploy/gcp/gke, "Cost"](../gcp/gke/README.md#cost).
+running with no workspace, ~¥600/day paused, plus ~¥78 per workspace node-hour** — idle, roughly
+four times the ECS floor at ¥150 to the dollar, mostly from the high-availability choices. The
+table per item, the measurement conditions, what keeps billing while paused, and the levers are
+in
+[deploy/gcp/gke, "Cost"](https://github.com/k-k1/agent-fleet/blob/develop/deploy/gcp/gke/README.md#cost).
 
 ## The live harness
 
