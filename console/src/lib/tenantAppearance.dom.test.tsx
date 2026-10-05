@@ -75,10 +75,51 @@ describe("per-tenant appearance", () => {
     expect(s2.getSettings().theme).toBe("dark");
     s2.applyTenantAppearance();
     expect(s2.getSettings().theme).toBe("light");
+  });
+
+  it("never sends appearance keys in a ui-prefs PUT", async () => {
+    apiMock.mockResolvedValue({ chatSize: 16 });
+    const { s } = await fresh();
+    await s.hydrateUIPrefs();
+    s.setSettings({ appearancePerTenant: true, theme: "light", topbarColor: "red", iconSet: "seti" });
     await vi.advanceTimersByTimeAsync(2_000);
-    for (const [, , body] of apiJSONMock.mock.calls as [string, string, Record<string, unknown>][]) {
-      for (const k of ["theme", "topbarColor", "appearancePerTenant"]) expect(body ?? {}).not.toHaveProperty(k);
+    const bodies = (apiJSONMock.mock.calls as [string, string, Record<string, unknown>][]).map((c) => c[2]);
+    expect(bodies.length).toBeGreaterThan(0); // a PUT did happen, so the absence below means something
+    for (const b of bodies) {
+      for (const k of ["theme", "mirrorTheme", "sharedTheme", "assistantTheme", "topbarColor", "leftpaneColor", "viewerColor", "chatColor", "sharedColor", "assistantColor", "appearancePerTenant"]) {
+        expect(b).not.toHaveProperty(k);
+      }
     }
+  });
+
+  it("applies the snapshot once the owner resolves later (failed whoami, user change)", async () => {
+    const { s, setOwner } = await fresh();
+    setOwner("a|u1");
+    s.setSetting("appearancePerTenant", true);
+    s.setSetting("theme", "light"); // a|u1: light
+    setOwner("a|u2");
+    s.applyTenantAppearance();
+    s.setSetting("theme", "dark"); // a|u2: dark
+    setOwner("");
+    s.applyTenantAppearance(); // unknown owner: nothing
+    setOwner("a|u1");
+    s.applyTenantAppearance();
+    expect(s.getSettings().theme).toBe("light");
+  });
+
+  it("does not file the previous tenant's look under a new owner before App re-applies", async () => {
+    const { s, setOwner } = await fresh();
+    s.setSetting("appearancePerTenant", true);
+    s.setSetting("theme", "light"); // a: light, all keys
+    setOwner("b|u1");
+    s.applyTenantAppearance();
+    s.setSettings({ theme: "dark", topbarColor: "red" }); // b: dark + red
+    setOwner("a|u1"); // the owner moves first ...
+    s.setSetting("theme", "dark"); // ... a hotkey writes before App's effect runs
+    expect(s.getSettings().topbarColor).not.toBe("red"); // a's own snapshot came in first
+    setOwner("b|u1");
+    s.applyTenantAppearance();
+    expect(s.getSettings().topbarColor).toBe("red"); // b's snapshot was not overwritten
   });
 
   it("does nothing while the switch is off", async () => {

@@ -2243,19 +2243,30 @@ function writeAppearanceSnapshot(owner: string): void {
 /** Show the current tenant's saved appearance (boot, tenant switch). A tenant with no snapshot
  * keeps what is shown and files it as its first snapshot. Does nothing with the switch off. */
 export function applyTenantAppearance(): void {
-  const owner = ownerSource();
-  if (!state.appearancePerTenant || !owner) return;
-  const snap = readAppearanceSnapshot(owner);
-  if (!snap) {
-    writeAppearanceSnapshot(owner);
-    return;
-  }
-  state = { ...state, ...snap };
+  if (!syncAppearanceOwner(ownerSource())) return;
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
   } catch {}
   applyTheme(state);
   subs.forEach((fn) => fn());
+}
+
+// Whose snapshot the appearance in `state` currently is. The tenant API's owner changes the
+// moment setTenant runs, but App re-applies in a later effect; a write in between (a theme
+// hotkey) must not file the previous tenant's look under the new owner, so setSettings swaps
+// the owner first through this function. Returns whether `state` changed.
+let appearanceOwner = "";
+
+function syncAppearanceOwner(owner: string): boolean {
+  if (!state.appearancePerTenant || !owner || owner === appearanceOwner) return false;
+  appearanceOwner = owner;
+  const snap = readAppearanceSnapshot(owner);
+  if (!snap) {
+    writeAppearanceSnapshot(owner);
+    return false;
+  }
+  state = { ...state, ...snap };
+  return true;
 }
 
 // The generic signature ties key and value together in the type system, preventing mismatches
@@ -2273,6 +2284,11 @@ export function setSettings(patch: Partial<Settings>): void {
   const owner = ownerSource();
   if (patch.appearancePerTenant && !state.appearancePerTenant && owner) {
     patch = { ...readAppearanceSnapshot(owner), ...patch };
+    appearanceOwner = owner;
+  } else if (patch.appearancePerTenant === false) {
+    appearanceOwner = "";
+  } else {
+    syncAppearanceOwner(owner);
   }
   state = { ...state, ...patch };
   if (state.appearancePerTenant && owner && (

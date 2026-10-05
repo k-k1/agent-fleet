@@ -465,6 +465,9 @@ export function App() {
     if (!booted || identityRev === identityRevDoneRef.current) return;
     identityRevDoneRef.current = identityRev;
     void resyncAccumulatedForIdentitySwitch();
+    // A whoami that failed at boot, or a user change inside one tenant, moves the owner without
+    // a tenant change, so the per-tenant effect above never re-applied the look.
+    applyTenantAppearance();
     void confirmDirtyNavigation("layout").then((proceed) => {
       if (!proceed) return; // keep the shared-key layout rather than drop unsaved buffers
       const popped = popoutSeedRef.current;
