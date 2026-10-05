@@ -41,7 +41,7 @@ import { startRepoJobsPolling, useRepoJobsStore } from "../features/repos/jobs.t
 import { useFilesStore } from "../features/files/store.ts";
 import { wireFilesSessionRefresh } from "../features/files/sessionRefresh.ts";
 import { useChatStore, startChatPolling } from "../features/chat/store.ts";
-import { getSettings, hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setPrefsOwnerSource, useSettings } from "../lib/settings.ts";
+import { applyTenantAppearance, getSettings, hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setPrefsOwnerSource, useSettings } from "../lib/settings.ts";
 import { getTenant, getUser } from "../core/api/client.ts";
 import { MOBILE_QUERY, coarsePointer } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
@@ -330,9 +330,12 @@ export function App() {
       // The local settings copy records whose server copy it was merged with; until whoami has
       // answered the user is "", which ui-prefs treats as an unknown owner.
       setPrefsOwnerSource(() => (getUser() ? `${getTenant()}|${getUser()}` : ""));
+      applyTenantAppearance();
       await hydrateUIPrefs();
       if (!alive) return;
       prefsReady = true;
+      // The owner may have resolved while the hydrate above was waiting.
+      applyTenantAppearance();
       setBooted(true);
     })();
     // Chat-bridge notification links (?session=<name>) open that session's pane.
@@ -393,6 +396,9 @@ export function App() {
       profilesReloadRef.current = true; // the retrying load below asks for the profiles
     }
     prefsSyncedTenantRef.current = tenant;
+    // Unconditional (idempotent per owner): the first run skips the branch above, yet a whoami
+    // retry or tenant re-selection can have moved the owner while the boot hydrate was waiting.
+    applyTenantAppearance();
     // pane ids are tab-local, not tenant-global. Never carry an ephemeral Page
     // owned by the previous membership into a same-named pane in the next tenant.
     disposeAllBrowsers();
@@ -463,6 +469,9 @@ export function App() {
     if (!booted || identityRev === identityRevDoneRef.current) return;
     identityRevDoneRef.current = identityRev;
     void resyncAccumulatedForIdentitySwitch();
+    // A whoami that failed at boot, or a user change inside one tenant, moves the owner without
+    // a tenant change, so the per-tenant effect above never re-applied the look.
+    applyTenantAppearance();
     void confirmDirtyNavigation("layout").then((proceed) => {
       if (!proceed) return; // keep the shared-key layout rather than drop unsaved buffers
       const popped = popoutSeedRef.current;

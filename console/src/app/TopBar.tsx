@@ -321,6 +321,23 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     ))}
                   </div>
                 </div>
+                {showPicker && (
+                  <div className="appr-seg-row">
+                    <span className="appr-seg-lbl" title={tr("display.per_tenant_note")}>{tr("display.per_tenant")}</span>
+                    <div className="ui-seg choice-seg acct-theme-seg">
+                      {([true, false] as const).map((on) => (
+                        <button
+                          key={String(on)}
+                          type="button"
+                          className={"seg-btn" + (!!s.appearancePerTenant === on ? " active" : "")}
+                          onClick={() => setSetting("appearancePerTenant", on)}
+                        >
+                          {tr(on ? "common.on" : "common.off")}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {SURFACE_TARGETS.map((t) => (
                   <SwatchRow key={t.key} label={tr(t.shortKey)} theme={s.theme} value={s[t.key]} onPick={(v) => setSetting(t.key, v)} />
                 ))}
