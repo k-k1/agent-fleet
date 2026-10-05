@@ -194,7 +194,7 @@ func thumbnail(src io.ReadSeeker, ident string, size int64, modTime time.Time, e
 	if _, err := src.Seek(0, io.SeekStart); err != nil {
 		return nil, "", false
 	}
-	img, _, err := image.Decode(src)
+	img, format, err := image.Decode(src)
 	if err != nil {
 		return nil, "", false
 	}
@@ -205,7 +205,13 @@ func thumbnail(src io.ReadSeeker, ident string, size int64, modTime time.Time, e
 	// decode's worth of time to change nothing.
 	var small image.Image = img
 	if factor > 1 {
-		small = boxDownscale(img, factor)
+		rgba := boxDownscale(img, factor)
+		// After the downscale, so the transform walks the small copy and memory stays bounded.
+		// The re-encoded JPEG carries no EXIF; without this a phone photo is drawn sideways.
+		if format == "jpeg" {
+			rgba = orientRGBA(rgba, headerOrientation(src))
+		}
+		small = rgba
 	}
 
 	var buf bytes.Buffer
@@ -230,6 +236,61 @@ func thumbnail(src io.ReadSeeker, ident string, size int64, modTime time.Time, e
 	}
 	writeThumbCache(key, contentType, buf.Bytes())
 	return buf.Bytes(), contentType, true
+}
+
+// headerOrientation reads the EXIF Orientation (0 when absent or unreadable) from the start of
+// src. A failure is "no orientation": the thumbnail is still better upright-or-not than missing.
+func headerOrientation(src io.ReadSeeker) int {
+	if _, err := src.Seek(0, io.SeekStart); err != nil {
+		return 0
+	}
+	b, err := io.ReadAll(io.LimitReader(src, imageSizeMaxHeader))
+	if err != nil {
+		return 0
+	}
+	return jpegOrientation(b)
+}
+
+// orientRGBA applies an EXIF Orientation (2-8) to img and returns the upright picture. 0 and 1
+// return img itself, so an unrotated source encodes byte-identically to before. Pix is indexed
+// directly: At()/Set() allocate per pixel. Orientations 5-8 swap width and height, which
+// longEdge and the factor computations are indifferent to.
+func orientRGBA(img *image.RGBA, o int) *image.RGBA {
+	if o < 2 || o > 8 {
+		return img
+	}
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	dw, dh := w, h
+	if o >= 5 {
+		dw, dh = h, w
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, dw, dh))
+	for dy := 0; dy < dh; dy++ {
+		for dx := 0; dx < dw; dx++ {
+			var sx, sy int
+			switch o {
+			case 2:
+				sx, sy = w-1-dx, dy
+			case 3:
+				sx, sy = w-1-dx, h-1-dy
+			case 4:
+				sx, sy = dx, h-1-dy
+			case 5:
+				sx, sy = dy, dx
+			case 6:
+				sx, sy = dy, h-1-dx
+			case 7:
+				sx, sy = w-1-dy, h-1-dx
+			case 8:
+				sx, sy = w-1-dy, dx
+			}
+			si := img.PixOffset(b.Min.X+sx, b.Min.Y+sy)
+			di := dst.PixOffset(dx, dy)
+			copy(dst.Pix[di:di+4], img.Pix[si:si+4])
+		}
+	}
+	return dst
 }
 
 // previewFactor is `preview`'s downscale factor: rounded rather than truncated, which matters
@@ -383,9 +444,11 @@ func pathWithin(p, dir string) bool {
 }
 
 // thumbCacheKey names one cache entry. scale is the asked edge for modeDownscale and the
-// downscale factor for modePreview (see thumbnail).
+// downscale factor for modePreview (see thumbnail). The leading version is bumped whenever the
+// bytes for an unchanged file change: v2 applies the JPEG EXIF orientation, and v1 entries
+// (sideways) must never be served again.
 func thumbCacheKey(ident string, size int64, modTime time.Time, scale int, mode thumbMode) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%d\x00%d\x00%d", ident, size, modTime.UnixNano(), scale, mode)))
+	sum := sha256.Sum256([]byte(fmt.Sprintf("v2\x00%s\x00%d\x00%d\x00%d\x00%d", ident, size, modTime.UnixNano(), scale, mode)))
 	return hex.EncodeToString(sum[:])
 }
 

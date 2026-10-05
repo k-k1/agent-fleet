@@ -680,3 +680,11 @@ decode, not the scale).
 4. **Generated images of an archived or deleted session.** The images survive 30 days, but once the
    session leaves the list so does decision 8's entry. The tree still opens it, so P0 leaves this
    alone and watches whether the `generated` surface (open question 3) is the answer.
+
+## Notes
+
+- **2026-10-05 (#1643):** `thumb` / `preview` copies of a JPEG now apply its EXIF Orientation
+  (2-8) to the downscaled pixels, reusing decision 17's `jpegOrientation`; the re-encoded bytes
+  carry no EXIF, so before this a phone photo was drawn sideways. The thumbnail cache key gained a
+  version component so entries written before the change are never served. Old entries stay on
+  disk until the cache's own eviction removes them.

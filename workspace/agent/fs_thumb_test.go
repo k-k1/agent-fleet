@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -765,5 +768,120 @@ func TestWarmGeneratedIsBounded(t *testing.T) {
 	}
 	if done["/gen/notes.txt"]+done["/gen/pic.webp"] != 0 {
 		t.Error("a file no decoder reads was queued for warming")
+	}
+}
+
+// exifAPP1 builds a JPEG APP1 segment whose IFD0 holds only an Orientation entry.
+func exifAPP1(orientation uint16) []byte {
+	t := []byte{'M', 'M', 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, byte(orientation >> 8), byte(orientation), 0, 0, 0, 0, 0, 0}
+	seg := append([]byte("Exif\x00\x00"), t...)
+	n := len(seg) + 2
+	return append([]byte{0xFF, 0xE1, byte(n >> 8), byte(n)}, seg...)
+}
+
+// quadrantJPEG writes a noisy 1200x800 JPEG (noise keeps it over thumbMinSourceBytes) whose
+// quadrants are red / green (top) and blue / yellow (bottom). app1 is spliced in after SOI.
+func quadrantJPEG(t *testing.T, path string, app1 []byte) {
+	t.Helper()
+	const w, h = 1200, 800
+	cols := [2][2]color.RGBA{{{220, 20, 20, 255}, {20, 220, 20, 255}}, {{20, 20, 220, 255}, {220, 220, 20, 255}}}
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	rng := rand.New(rand.NewPCG(3, 4))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			c := cols[y*2/h][x*2/w]
+			n := func(v uint8) uint8 { return uint8(int(v) + int(rng.UintN(41)) - 20) }
+			img.SetRGBA(x, y, color.RGBA{n(c.R), n(c.G), n(c.B), 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 95}); err != nil {
+		t.Fatal(err)
+	}
+	b := buf.Bytes()
+	out := append(append(append([]byte{}, b[:2]...), app1...), b[2:]...)
+	if len(out) < thumbMinSourceBytes {
+		t.Fatalf("fixture is only %d bytes", len(out))
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func near(c color.Color, want color.RGBA) bool {
+	r, g, b, _ := c.RGBA()
+	d := func(a uint32, w uint8) bool {
+		x := int(a>>8) - int(w)
+		return x > -45 && x < 45
+	}
+	return d(r, want.R) && d(g, want.G) && d(b, want.B)
+}
+
+// The thumbnail is re-encoded without EXIF, so the rotation has to be baked into its pixels.
+func TestFSDownloadThumbAppliesJPEGOrientation(t *testing.T) {
+	red, green, blue, yellow := color.RGBA{220, 20, 20, 255}, color.RGBA{20, 220, 20, 255}, color.RGBA{20, 20, 220, 255}, color.RGBA{220, 220, 20, 255}
+	cases := []struct {
+		name           string
+		app1           []byte
+		w, h           int
+		tl, tr, bl, br color.RGBA
+	}{
+		{"none", nil, 400, 266, red, green, blue, yellow},
+		{"1", exifAPP1(1), 400, 266, red, green, blue, yellow},
+		{"6", exifAPP1(6), 266, 400, blue, red, yellow, green},
+		{"8", exifAPP1(8), 266, 400, green, yellow, red, blue},
+		{"3", exifAPP1(3), 400, 266, yellow, blue, green, red},
+		{"2", exifAPP1(2), 400, 266, green, red, yellow, blue},
+		{"4", exifAPP1(4), 400, 266, blue, yellow, red, green},
+		{"5", exifAPP1(5), 266, 400, red, blue, green, yellow},
+		{"7", exifAPP1(7), 266, 400, yellow, green, blue, red},
+		// An IFD offset past the segment is "no orientation", never a failed thumbnail.
+		{"malformed", []byte{0xFF, 0xE1, 0, 16, 'E', 'x', 'i', 'f', 0, 0, 'M', 'M', 0, 42, 0xFF, 0xFF, 0xFF, 0xFF}, 400, 266, red, green, blue, yellow},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := thumbRoots(t)
+			quadrantJPEG(t, filepath.Join(root, "p.jpg"), c.app1)
+			rec := download(t, "path=p.jpg&thumb=400")
+			img, _, err := image.Decode(bytes.NewReader(rec.Body.Bytes()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			b := img.Bounds()
+			if b.Dx() != c.w || b.Dy() != c.h {
+				t.Fatalf("size = %dx%d, want %dx%d", b.Dx(), b.Dy(), c.w, c.h)
+			}
+			for _, q := range []struct {
+				n    string
+				x, y int
+				want color.RGBA
+			}{{"tl", 3, 3, c.tl}, {"tr", b.Dx() - 4, 3, c.tr}, {"bl", 3, b.Dy() - 4, c.bl}, {"br", b.Dx() - 4, b.Dy() - 4, c.br}} {
+				if !near(img.At(q.x, q.y), q.want) {
+					t.Errorf("%s corner = %v, want near %v", q.n, img.At(q.x, q.y), q.want)
+				}
+			}
+		})
+	}
+}
+
+// Orientation 1 must not change a single byte of today's output.
+func TestThumbOrientationOneIsByteIdentical(t *testing.T) {
+	root := thumbRoots(t)
+	quadrantJPEG(t, filepath.Join(root, "a.jpg"), nil)
+	quadrantJPEG(t, filepath.Join(root, "b.jpg"), exifAPP1(1))
+	a := download(t, "path=a.jpg&thumb=400").Body.Bytes()
+	b := download(t, "path=b.jpg&thumb=400").Body.Bytes()
+	if !bytes.Equal(a, b) {
+		t.Errorf("orientation 1 output differs from no-EXIF output (%d vs %d bytes)", len(b), len(a))
+	}
+}
+
+// An entry written before orientation was applied is sideways; it must sit under a key no
+// request computes any more.
+func TestThumbCacheKeyIsNotTheUnversionedOne(t *testing.T) {
+	when := time.Unix(1700000000, 0)
+	old := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%d\x00%d\x00%d", "/r/p.jpg", 4096, when.UnixNano(), 512, modeDownscale)))
+	if thumbCacheKey("/r/p.jpg", 4096, when, 512, modeDownscale) == hex.EncodeToString(old[:]) {
+		t.Error("cache key is unchanged, so pre-orientation entries would still be served")
 	}
 }
