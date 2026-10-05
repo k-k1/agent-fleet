@@ -14,9 +14,9 @@ updated: "2026-08"
 1. **設定 > 運用・監視** タブを開き、各カードに接続情報を入れて「接続」:
    - **PagerDuty**: API キー。**読み取り専用キー**を推奨します（PagerDuty の Integrations > API Access Keys で「Read-only」を選択）。EU アカウントはトグルをオンにしてください。
    - **Grafana**: インスタンス URL と**サービスアカウントトークン**（Viewer 権限を推奨）。セルフホスト / Grafana Cloud / **Amazon Managed Grafana** のいずれも可（AMG は URL に workspace endpoint を指定。トークンの発行方法と 30 日期限は後述の AMG 節を参照）。
-   - **CloudWatch**: プルダウンから **SSM 接続のプロファイルを選ぶ**だけ（リージョンは任意で上書き可）。**秘密の入力はありません** — プロファイルの SSO 設定（非秘密）から専用の設定ファイルを生成し、コンテナ内の AWS 資格をそのまま読みます。SSO ログインがまだ／期限切れの場合はツールがエラーになるので、該当の SSM セッションを一度開くか、ターミナルで `aws sso login --profile プロファイル名 --use-device-code --no-browser` を実行してください。自分で `~/.aws` を管理している人は「手動入力」でプロファイル名を直接指定できます。
+   - **CloudWatch**: プルダウンから **SSM 接続のプロファイルを選ぶ**だけ（リージョンは任意で上書き可）。**秘密の入力はありません**。プロファイルの SSO 設定（非秘密）から専用の設定ファイルを生成し、コンテナ内の AWS 資格をそのまま読みます。SSO ログインがまだ／期限切れの場合はツールがエラーになるので、該当の SSM セッションを一度開くか、ターミナルで `aws sso login --profile プロファイル名 --use-device-code --no-browser` を実行してください。自分で `~/.aws` を管理している人は「手動入力」でプロファイル名を直接指定できます。
    - **AWS**（Agent Toolkit for AWS）: AWS が提供する MCP サーバーに接続します。プロファイルの指定は CloudWatch と同じ（SSM 接続のプロファイルを選ぶだけ・秘密の入力なし）。加えて 2 つ設定があります。
-     - **MCP エンドポイント**: MCP サーバー自体が動くリージョン（`us-east-1` / `eu-central-1`）。**自分のリソースがあるリージョンとは別物**で、そちらは上の「リージョン」欄に入れます。
+     - **MCP エンドポイント**: MCP サーバー自体が動くリージョン（`us-east-1` / `eu-central-1`）。**自分のリソースがあるリージョンとは別のもの**で、そちらは上の「リージョン」欄に入れます。
      - **書き込みツール**: 既定オフ（読み取り専用）。オンにすると AWS API 呼び出し（`call_aws`）とスクリプト実行（`run_script`）が使えるようになり、**実際に AWS のリソースを作成・変更・削除できます**。必要なときだけオンにしてください。
      - AWS だけは**対話セッションからも使えます**（他の 3 つはチャット専用）。AWS ドキュメント検索・スキル取得・AWS API 参照が、コードを書いているセッションでそのまま使えます。
      - SSO ログインがまだ／期限切れの場合は、該当の SSM セッションを一度開くか、ターミナルで `aws sso login --profile プロファイル名 --use-device-code --no-browser` を実行してください。
@@ -46,7 +46,7 @@ pip install --user uv
 
 ## 1. Grafana（メトリクス・ログ・アラート・OnCall）
 
-Go 単一バイナリで最軽量・最充実。**検証済み**: v0.17.1 は `-disable-write -disable-admin` で read-only 52 ツール（Prometheus/Loki クエリ、ダッシュボード検索、アラート、Incident/OnCall 参照、Sift 分析。create/update/delete/install 系ゼロ）になる。Grafana のデータソース経由で CloudWatch / Athena / Elasticsearch 等を引くツールも同梱。
+Go の単一バイナリで、最も軽量で、機能も最も充実している。**検証済み**: v0.17.1 は `-disable-write -disable-admin` で read-only 52 ツール（Prometheus/Loki クエリ、ダッシュボード検索、アラート、Incident/OnCall 参照、Sift 分析。create/update/delete/install 系ゼロ）になる。Grafana のデータソース経由で CloudWatch / Athena / Elasticsearch 等を引くツールも同梱。
 
 ```bash
 # バイナリ取得（~/.local/bin に置くと永続）
@@ -113,7 +113,7 @@ aws logs get-query-results --query-id $qid
 
 ### 3b. MCP で繋ぐ（アラーム分析・異常検知ツールが欲しいとき）
 
-AWS 公式（awslabs）。資格は焼き込み済み aws CLI と同じチェーンを読むので、**SSO プロファイルがあれば追加の秘密は不要**。全ツール read-only（メトリクス取得・アラーム履歴・ロググループの異常パターン分析・Logs Insights クエリなど）。
+AWS 公式（awslabs）の MCP サーバ。資格は焼き込み済み aws CLI と同じチェーンを読むので、**SSO プロファイルがあれば追加の秘密は不要**。全ツール read-only（メトリクス取得・アラーム履歴・ロググループの異常パターン分析・Logs Insights クエリなど）。
 
 ```bash
 # 事前にコンテナ内で aws sso login 済みであること（SSM セッションと同じ流儀）

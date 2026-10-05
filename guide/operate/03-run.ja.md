@@ -8,7 +8,7 @@ updated: "2026-09"
 
 [English](03-run.md) | 日本語
 
-構築後の定常運用 — バックアップ、リストア、アップグレード、閉域網、Workspace の停止 — を、
+構築後の定常運用（バックアップ、リストア、アップグレード、閉域網、Workspace の停止）を、
 判断ポイントとともに説明します。**実際のコマンド（`backup.sh` / `restore.sh` / upgrade /
 air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/README.md) が正**です。
 ここではコマンドを複製せず、「何が起きるか・何に注意するか」を補います。作業ディレクトリは
@@ -17,22 +17,22 @@ air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/RE
 ## バックアップ
 
 `deploy/compose/backup.sh` が `DATA_DIR` を丸ごと timestamped な `tar.gz` に固めます。コマンドと
-オプション（`OUT_DIR` / `KEEP` / `--no-stop`）は runbook の "Backup & restore" 節を参照。
+オプション（`OUT_DIR` / `KEEP` / `--no-stop`）は runbook の "Backup & restore" 節を参照してください。
 
 ### 何が入り、何が入らないか
 
-アーカイブに**入る**もの（= これだけあれば別ホストへ復元できる）:
+アーカイブに**入る**もの（= これだけあれば別ホストへ復元できる）：
 
-- `control-plane.db` — テナント / メンバー / ポート / トークンのグラフ。
+- `control-plane.db`：テナント / メンバー / ポート / トークンのグラフ。
 - 各ユーザーの home（作業ツリー・dotfiles・封筒暗号された `secrets.enc`）。
 - 各ユーザーの `claude-config`（**平文の Claude ログイン状態**）。
 - Caddy の証明書（復元時に Let's Encrypt のレート制限を避けるため）。
 
-**入らない**もの:
+**入らない**もの：
 
 - `shared/jvm`（再取得可能で巨大な Temurin JDK）は意図的に除外。
 - **`AF_MASTER_KEY` は入りません。** これは `.env` にあり、設計上アーカイブに含めません。
-  **データ領域の外に置いてください** — アーカイブにはテナント定義のサインイン方法の
+  **データ領域の外に置いてください**。アーカイブにはテナント定義のサインイン方法の
   client secret（この鍵で封印済み）も入るようになったため、鍵をデータの隣に置くと
   封筒暗号の意味そのものが無くなります。
 
@@ -45,7 +45,7 @@ air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/RE
 ### ユーザーへの影響
 
 `backup.sh` は既定で **CP と Caddy を一瞬だけ停止**して SQLite の整合スナップショットを取り、
-すぐ再開します。このとき**ユーザーの Workspace（`af-ws-*`）は compose 管理外なので止まりません** —
+すぐ再開します。このとき**ユーザーの Workspace（`af-ws-*`）は compose 管理外なので止まりません**。
 セッションは切れず、作業は継続します。停止中の数秒は Console のログインや API 中継が一時的に
 応答しなくなる程度です。呼び出し側で静止を保証済みなら `--no-stop` で無停止取得もできます。
 
@@ -57,10 +57,10 @@ air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/RE
 
 ## リストア
 
-クリーンなホスト、またはデータ喪失後の復旧手順です。コマンドは runbook の "Backup & restore"。
+クリーンなホスト、またはデータ喪失後の復旧手順です。コマンドは runbook の "Backup & restore" 節にあります。
 
 流れは「`.env` を用意（**バックアップ元と同一の `AF_MASTER_KEY`** を金庫から復元）→ `restore.sh
-<archive>` → `docker compose up -d` → Console から各 Workspace を**起動**」です。要点を 3 つ。
+<archive>` → `docker compose up -d` → Console から各 Workspace を**起動**」です。要点は 3 つです。
 
 1. **`AF_MASTER_KEY` は元と同一値でなければならない。** 違う／欠落していると wrapped DEK を
    unwrap できず、資格情報は復号できません。金庫からの復元を最初に確認します。
@@ -68,7 +68,7 @@ air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/RE
    起動時に各 Workspace の on-disk root を現在の `DATA_DIR` へ付け替えます。ただしアーカイブ先頭の
    ディレクトリ名（= 元 `DATA_DIR` の basename）と、復元先 `DATA_DIR` の basename は**一致**させて
    ください。`restore.sh` がこれを検証し、不一致なら拒否します。
-3. **Workspace は Console からの「起動」で再水和する。** リストア直後には Workspace コンテナは
+3. **Workspace は Console からの「起動」で作り直される。** リストア直後には Workspace コンテナは
    存在しません（compose 管理外だから）。ユーザー（または管理者）が Console で「起動」を押すと、CP が
    復元済み DB のポート/トークンで `af-ws-*` を再作成し、home の `secrets.enc` と `claude-config`
    からユーザーの接続と Claude ログインが復活します。
@@ -76,7 +76,7 @@ air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/RE
 ## アップグレード
 
 `.env` の `VERSION` を新しいタグに変え、image を pull（またはビルド）して `up -d` するだけです。
-コマンドは runbook の "Upgrade" 節。
+コマンドは runbook の "Upgrade" 節にあります。
 
 - **image は GHCR から取得します**（`ghcr.io/k-k1/agent-fleet/*`。`REGISTRY` + `VERSION` で解決）。
   pull にレジストリログインは不要です。**Workspace image は compose のサービスではない**ので
@@ -127,7 +127,7 @@ ADR 0037 以降、image は GHCR で配布し
 **リリースに image tar は添付しません**。レジストリに到達できないホストは、
 `ghcr.io/k-k1/agent-fleet/*` を社内レジストリにミラーして `REGISTRY` をそこへ向けるか、
 image を手で持ち込みます（ネット接続のあるマシンで `release.sh --save` してビルド＆
-`docker save` → 対象ホストで `load-images.sh`）。コマンドは runbook の "Air-gapped install" 節。
+`docker save` → 対象ホストで `load-images.sh`）。コマンドは runbook の "Air-gapped install" 節にあります。
 
 判断ポイントが 4 つあります。
 
@@ -143,7 +143,7 @@ image を手で持ち込みます（ネット接続のあるマシンで `releas
 - **図のアイコン（`.drawio`）**: 同梱の drawio ビューアはオフラインでも図を描けますが、
   ベンダーアイコンの図案（`shape=mxgraph.aws4.*`・GCP・Azure・Kubernetes・ラック機器…）は
   **同梱していません**（全部で 40.8 MB あるため）。通常は初回に Control Plane が取得して
-  キャッシュしますが、外に出られないとその取得が失敗し、図は**枠と色とラベルだけに黙って
+  キャッシュしますが、外に出られないとその取得が失敗し、図は**枠と色とラベルだけに気づかないうちに
   劣化します**。避けるには、持ち込んだディレクトリからキャッシュを埋めておきます:
 
   ```sh
@@ -209,7 +209,7 @@ Control Plane を公開ホスト名で出すと、**数時間のうちに脆弱�
   遮断は AWS WAF です。CP 側で個別に弾く仕組みは、認証の外に新しい判断を増やすだけなので
   入れていません。AWS 版は `30-ingress` に**既定オフの WAF** があり、
   `WafRateLimitPer5Min`（レート制限）と `WafIpReputation`（AWS の IP 評価リスト）の 2 つだけを
-  提供します。⚠️ **署名系（Core rule set・SQLi・XSS）は意図的に用意していません**——この製品は
+  提供します。**署名系（Core rule set・SQLi・XSS）は意図的に用意していません**。この製品は
   チャット・ファイル書き込み・ターミナル入力という**普通の本文にコードとシェルコマンドが流れる**ので、
   `'; DROP TABLE` や `../../etc/passwd` が正当な通信として現れ、正常な操作がランダムに 403 になります。
   しかも原因が WAF だと気づくまでが長い。
@@ -218,7 +218,7 @@ Control Plane を公開ホスト名で出すと、**数時間のうちに脆弱�
 
 ## 2 つのデプロイを見分ける（色とラベル）
 
-デプロイが 2 つになった時点で——本番の隣にステージング、さらに手元のノート PC——タブに並ぶ
+デプロイが 2 つになった時点（本番の隣にステージング、さらに手元のノート PC）で、タブに並ぶ
 アイコンも、スマホのホーム画面も、同じ青緑の猫になります。ログイン画面もどちらのものか
 わかりません。Control Plane の設定 2 つで区別できます。どちらも見た目だけの設定で、
 アクセス権やデータには一切影響しません。
@@ -240,7 +240,7 @@ AF_BRAND_LABEL=staging
 ```
 
 compose は `.env` から読みます。AWS ECS ではスタックパラメータ `BrandColor` / `BrandLabel`、
-native ランタイムと `run-dev.sh` は環境変数です。**再起動するだけ**で反映されます——
+native ランタイムと `run-dev.sh` は環境変数です。**再起動するだけ**で反映されます。
 Control Plane が配信時に同梱の画像を塗り替えるので、環境ごとにイメージを作る必要はありません。
 
 - ラベルが**前置き**なのは意図的です。混み合ったタブもスマホのランチャーも**末尾から**削るので、
@@ -249,14 +249,14 @@ Control Plane が配信時に同梱の画像を塗り替えるので、環境ご
   Android ではこれらがインストール済みアプリに焼き込まれるので、同じデプロイをブラウザの
   タブで見ると新しい色なのに、アプリの中のステータスバーだけ古い色のまま、ということが
   起きます。Chrome はいずれ裏でアプリを作り直しますが数日かかります。**すぐ反映したい
-  ときは入れ直してください**——アイコンを長押ししてアンインストールし、ブラウザから
+  ときは入れ直してください**。アイコンを長押ししてアンインストールし、ブラウザから
   もう一度インストールします。
 - 知らない色名を書いても止まりません。ログに残して `teal` のまま動きます。
 
 ## アイドル停止と force-stop
 
 - **終わらない起動は停止されます**: タスクが動かないまま **30 分**起動中の Workspace
-  （ECS なら、たいていクラスターがタスクを配置できない場合）を停止し、容量を掴み続けないようにします。
+  （ECS なら、たいていクラスターがタスクを配置できない場合）を停止し、容量を占有し続けないようにします。
   原因を直せばユーザーはもう一度 **「起動」** を押せます。30 分は最後の起動から数えます。Control Plane
   がそれより後に初めて起動中と見た場合（Control Plane の再起動後など）はその時点から数えます。判定は
   usage のサンプルごと（5 分）なので、停止は最大 1 サンプル分遅れます。メンバーには Console の通知センターに
@@ -270,7 +270,7 @@ Control Plane が配信時に同梱の画像を塗り替えるので、環境ご
   `AF_SESSION_IDLE_TIMEOUT` / `AF_INTERACTION_IDLE_TIMEOUT`（質問や承認待ちで止まっているセッション）/ `AF_WS_IDLE_TIMEOUT` / `AF_PRESENCE_IDLE_TIMEOUT`（打鍵の無い端末を在席と数える猶予・既定 30 分）で変えられます（テナント単位の上書きは Admin UI。
   テナントが `0` を入れればそのテナントだけ無効、env に `0` を入れればデプロイ全体で無効）。
   停止した Workspace は、ユーザーが **「起動」を押せば**戻ります。加えて `AF_AUTOSTART`（既定 on）が、
-  「今から使う」が明確な操作 — セッションの作成・fork・再開、持ち越し質問への回答、SSM ノード探索 —
+  「今から使う」が明確な操作（セッションの作成・fork・再開、持ち越し質問への回答、SSM ノード探索）
   のときだけ自動で起こします。**ターミナルを開いても起動しませんし、閲覧や Console のリロードでも
   起動しません**（「停止しています。起動してください」を返します）。開きっぱなしのタブが Workspace を
   温め続けることはありません。
