@@ -207,22 +207,16 @@ describe("停止中セッションのアーカイブ期間（#982）", () => {
   });
 });
 
-// ADR 0108: the Agent Fleet memory switch defaults OFF (an upgrade must not switch it on) and
-// writes the ui-prefs key the Agent reads (uiprefs.AgentMemory).
+// ADR 0108: the Agent Fleet memory switch lives on the Agent memory page (#1735); this tab only
+// says where it is, beside the other af tool switches.
 describe("Agent Fleet memory switch", () => {
-  it("is off by default and saves agentMemory when turned on", async () => {
+  it("is not a toggle here, only a pointer to the Agent memory page", async () => {
     setSettings(settingsDefaults());
     respond();
     await mount();
-    const row = Array.from(host!.querySelectorAll(".ds-row")).find(
-      (r) => r.querySelector(".ds-label")?.textContent === t("agents.agent_memory"),
-    );
-    expect(row).toBeTruthy();
-    expect(getSettings().agentMemory).toBe(false);
-    const [on, off] = Array.from(row!.querySelectorAll<HTMLButtonElement>(".seg-btn"));
-    expect(off.className).toContain("active");
-    await act(async () => on.click());
-    expect(getSettings().agentMemory).toBe(true);
+    expect(host!.textContent).toContain(t("agents.note_agent_memory_moved"));
+    const labels = Array.from(host!.querySelectorAll(".ds-label")).map((l) => l.textContent);
+    expect(labels).not.toContain(t("mem.af_switch"));
   });
 });
 

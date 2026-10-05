@@ -240,7 +240,9 @@ Version control over the memory an agent accumulates by itself (claude's auto-me
   reads and writes with the af tools `memory_index` / `memory_search` / `memory_read` / `memory_save` /
   `memory_forget`. It is per project (a worktree shares its repository's), plus one user-wide scope, so what one
   agent learns survives a switch of kind, a handoff and a child of another kind. **It is off by default**: turn on
-  Agent Fleet memory under Settings > Agents first. A save is shared at once,
+  "Let sessions use Agent Fleet memory" right under this heading first (on reaches sessions started from then
+  on; off refuses running sessions' reads and writes at once; the list, the diffs and the way back work either
+  way). A save is shared at once,
   **without your approval**; text that looks like a secret is refused. The list shows every change (when, which
   agent and session, what), newest first. On a memory's newest change you can **revert it** (the earlier text
   comes back) or **forget the memory**; either is recorded as a new change, so it can be undone too. If the text
@@ -284,9 +286,7 @@ the **Muse Code** card holds its one-time install, the sign-in and the model / e
 **Sessions** group holds **when stopped sessions are archived** (Default, which is the deployment's period (7 days unless the deployment changed it), 1 / 3 / 7 / 14 / 30 days, or Off), **session-to-session messaging**, **starting sessions from sessions** (with
 **children per session**), **fleet observation from sessions**, **past-session search** (on by default: lets a
 session search this workspace's past conversations with the `search_sessions` tool; the command palette's
-"Conversations" mode works either way, see [05](05-terminal.md#command-palette)),
-**Agent Fleet memory** (off by default: lets sessions read and write the memory every kind shares, see
-[Agent memory](#agent-memory)), **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes), auto-resume after a rate
+"Conversations" mode works either way, see [05](05-terminal.md#command-palette)), **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes), auto-resume after a rate
 limit resets, and auto-resume of an interrupted turn.
 → [06 Agents](06-agents.md), [02 Sessions](02-sessions.md#messages-between-sessions),
 [02 Sessions](02-sessions.md#starting-sessions-from-a-session-child-sessions),
@@ -577,7 +577,7 @@ appears only on deployments that can perform them.
 | Keep stopped sessions in the list longer, or out of it sooner | Agents (archive stopped sessions after) |
 | Let sessions talk to each other | Agents (session-to-session messaging) |
 | Stop sessions from searching past conversations | Agents (past-session search) |
-| Let agents share what they learn across kinds | Agents (Agent Fleet memory) |
+| Let agents share what they learn across kinds | Agent memory (Agent Fleet memory) |
 | Let a session see what the other sessions are doing | Agents (fleet observation from sessions) |
 | Have a session leave you a note about what it noticed | Agents (fleet observation from sessions) |
 | Clone a private repository | Git hosting |

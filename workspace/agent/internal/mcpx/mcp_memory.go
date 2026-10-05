@@ -51,7 +51,7 @@ func mcpMemoryCall(id json.RawMessage, name string, raw json.RawMessage) []byte 
 		return mcpToolErr(id, name+" はセッション側の Agent Fleet サーバー専用です")
 	}
 	if !mcpAgentMemoryEnabled {
-		return mcpToolErr(id, "Agent Fleet memory is not enabled for this session (Settings > Agents)")
+		return mcpToolErr(id, "Agent Fleet memory is not enabled for this session (Settings > Agent memory)")
 	}
 	var a struct {
 		Query       string   `json:"query"`
@@ -151,7 +151,7 @@ func mcpMemoryErr(err error) string {
 	_ = json.Unmarshal([]byte(he.Body), &body)
 	switch {
 	case body.Error.Code == "memory_disabled":
-		return "Agent Fleet memory is turned off in Settings > Agents; do not retry, and keep notes in your own memory instead."
+		return "Agent Fleet memory is turned off in Settings > Agent memory; do not retry, and keep notes in your own memory instead."
 	case body.Error.Code == "memory_secret_detected":
 		parts := make([]string, 0, len(body.Findings))
 		for _, f := range body.Findings {

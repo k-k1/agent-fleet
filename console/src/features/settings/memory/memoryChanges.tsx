@@ -12,6 +12,8 @@ import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { Diff } from "../../scm/GitDiff.tsx";
+import { OnOff, Row } from "../parts/controls.tsx";
+import { setSetting, useSettings } from "../../../lib/settings.ts";
 import { useT, tMaybe } from "../../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { ClaudeImportPanel } from "./memoryClaudeImport.tsx";
@@ -19,6 +21,22 @@ import type { ChangeDiff, MemoryChange, SecretFinding } from "./memoryTypes.ts";
 
 // An unknown op from a newer Agent is printed raw rather than breaking the row.
 const opLabel = (op: string): string => tMaybe("mem.af_op_" + op) ?? op;
+
+// AgentMemorySwitch is the sessions' switch (ui-prefs agentMemory, default off). It is a
+// ui-pref, not Agent state, so it must stay reachable while the workspace is stopped: the member
+// decides it for the next start, and this page is its only home.
+export function AgentMemorySwitch() {
+  const tr = useT();
+  const enabled = useSettings().agentMemory;
+  return (
+    <>
+      <Row label={tr("mem.af_switch")}>
+        <OnOff value={enabled} onChange={(v) => setSetting("agentMemory", v)} />
+      </Row>
+      <p className="muted ds-note">{tr("mem.af_switch_note")}</p>
+    </>
+  );
+}
 
 export function AgentMemorySection({ reload, onChanged }: { reload: number; onChanged: () => void }) {
   const tr = useT();
@@ -144,6 +162,9 @@ export function AgentMemorySection({ reload, onChanged }: { reload: number; onCh
         <h3>{tr("mem.af_title")}</h3>
       </div>
       <p className="muted ds-hint">{tr("mem.af_intro")}</p>
+      {/* The list, the diff and the way back below work with the switch either way; only the
+          import's confirm needs it on. */}
+      <AgentMemorySwitch />
       {loadErr && <p className="mem-warn">{loadErr}</p>}
       {withheld > 0 && <p className="mem-warn">{tr("mem.af_withheld", { n: withheld })}</p>}
       <div className="mem-body">

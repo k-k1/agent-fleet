@@ -221,11 +221,10 @@ export function AgentsTab() {
         <OnOff value={s.sessionSearch} onChange={(v) => setSetting("sessionSearch", v)} />
       </Row>
       <p className="muted ds-note">{tr("agents.note_session_search")}</p>
-      {/* AF memory (ADR 0108): one more af MCP tool set every kind gets, so it sits here too. */}
-      <Row label={tr("agents.agent_memory")}>
-        <OnOff value={s.agentMemory} onChange={(v) => setSetting("agentMemory", v)} />
-      </Row>
-      <p className="muted ds-note">{tr("agents.note_agent_memory")}</p>
+      {/* AF memory (ADR 0108) is another af tool set every kind gets, but its switch lives on the
+          Agent memory page beside the change list and the import that needs it on; this line only
+          says where, so a member looking among the tool switches still finds it. */}
+      <p className="muted ds-note">{tr("agents.note_agent_memory_moved")}</p>
       {/* Image generation (ADR 0069) sits next to it for the same reason: one tool distributed
           to every kind through af's own MCP server, not any one agent's setting. */}
       <Row label={tr("agents.image_generation")}>

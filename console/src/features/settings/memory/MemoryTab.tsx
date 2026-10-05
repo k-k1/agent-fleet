@@ -33,7 +33,7 @@ import type { RestoreBody } from "./memoryRestore.tsx";
 import type { RestoreScopeState } from "./memoryRestore.tsx";
 import { RestorePanel } from "./memoryRestore.tsx";
 import { TransferSection } from "./memoryTransfer.tsx";
-import { AgentMemorySection } from "./memoryChanges.tsx";
+import { AgentMemorySection, AgentMemorySwitch } from "./memoryChanges.tsx";
 
 // Trigger label. The trailer value the Agent returns (auto/manual/pre-restore/restore/import/agent-memory)
 // is used as the key directly and an unknown value is printed raw, so adding a new trigger
@@ -226,6 +226,13 @@ export function MemoryTab() {
             {wsStartBusy(wsState) ? tr("common.starting") : tr("mem.start_ws")}
           </Button>
         </EmptyState>
+        {/* The sessions' switch is a ui-pref, settable before the next start (#1735). */}
+        <section className="mem-section">
+          <div className="mem-head">
+            <h3>{tr("mem.af_title")}</h3>
+          </div>
+          <AgentMemorySwitch />
+        </section>
       </div>
     );
   }

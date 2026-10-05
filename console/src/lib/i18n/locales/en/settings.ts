@@ -182,8 +182,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.session_search": "Past-session search",
   "agents.note_session_search":
     "Lets a session search what was said in this workspace's past sessions — every kind, stopped and archived included (search_sessions). Read-only, and only conversation text is indexed: no tool output or thinking. The command palette's Conversations mode works whatever this is set to. Turning it on reaches sessions started from now on; turning it off refuses running sessions' searches as soon as it is saved. Default ON.",
-  "agents.agent_memory": "Agent Fleet memory",
-  "agents.note_agent_memory": "Lets sessions read and write a memory every kind of agent shares, with af's memory_* tools. What one session saves is read by every kind in later sessions, without approval (text that looks like a secret is refused). Turning it on reaches sessions started from now on; turning it off refuses running sessions' reads and writes as soon as it is saved. Saved memories are kept, and Settings > Agent memory still lists and reverts them. Default OFF.",
+  "agents.note_agent_memory_moved": "Agent Fleet memory (the memory every kind of agent shares through af's memory_* tools) is turned on and off in Settings > Agent memory.",
   "agents.image_generation": "Image generation",
   "agents.note_image_generation":
     "Lets a session generate an image from a prompt (the generate_image tool). It uses a connected CLI's own image generation, spending that plan's usage each time. Applies to sessions started from now on. Default OFF.",
