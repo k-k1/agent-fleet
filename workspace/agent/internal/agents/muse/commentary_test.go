@@ -259,6 +259,10 @@ func TestUserInputCallRendersAsAQuestionOnceSettled(t *testing.T) {
 			true, `"Which color?"="Red", "Which size?"="Small, Large"`, false},
 		{"answered snake", `{"status":"answered","answers":[{"question_id":"color","selected_label":"Blue"},{"question_id":"size","free_text":"Medium"}]}`,
 			true, `"Which color?"="Blue", "Which size?"="Medium"`, false},
+		// The measured shape (1.4.2-R4684.1), here out of question order so only the id can
+		// place each answer.
+		{"answered measured", `{"status":"answered","answers":[{"id":"size","selected_label":"Large"},{"id":"color","selected_label":"Red"}]}`,
+			true, `"Which color?"="Red", "Which size?"="Large"`, false},
 		{"unreadable", `not json`, true, "not json", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
