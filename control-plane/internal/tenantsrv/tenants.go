@@ -341,6 +341,12 @@ func (a Admin) ListMembers(w http.ResponseWriter, r *http.Request) {
 					row["idle"] = f
 				}
 			}
+			// The class the member's next start lands on (user → tenant default →
+			// deployment default), for every row including those with no stored limits:
+			// the stored slot_class alone cannot show a member who follows the tenant
+			// default. "" when the deployment declares no classes.
+			row["slot_class_effective"], _ = a.cp.ResolveSlotClass(r.Context(),
+				store.Workspace{MembershipID: m.MembershipID, TenantID: t.ID})
 			if ul, ok, _ := a.cp.Store().GetUserLimit(r.Context(), m.MembershipID); ok {
 				row["max_sessions"] = ul.MaxSessions
 				row["mem_limit"] = ul.MemLimit

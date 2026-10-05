@@ -415,8 +415,7 @@ func (m *manager) runtimeForUnattended(ctx context.Context, res *resolved) (runt
 	if err != nil {
 		return nil, err
 	}
-	ws := res.ws
-	ws.MemBytes, ws.CPUUnits, ws.DiskGB = m.resolveWorkspaceSize(ctx, ws)
+	ws := m.withResolvedSize(ctx, res.ws)
 	env := append(m.workspaceExtraEnv(ctx, ws), runtime.UnattendedStartEnv)
 	return m.runtimeFor(ws, dekHex, env...), nil
 }
@@ -446,8 +445,7 @@ func (m *manager) armPreviewForStart(ctx context.Context, res *resolved, extraEn
 	}
 	ws := res.ws
 	ws.PreviewSlug = slug
-	ws.MemBytes, ws.CPUUnits, ws.DiskGB = m.resolveWorkspaceSize(ctx, ws)
-	ws.SlotClass, _ = m.resolveSlotClass(ctx, ws)
+	ws = m.withResolvedSize(ctx, ws)
 	return m.runtimeFor(ws, dekHex, append(m.workspaceExtraEnv(ctx, ws), extraEnv...)...)
 }
 
@@ -474,8 +472,7 @@ func (m *manager) refreshGitTokenForStart(ctx context.Context, res *resolved, ex
 		return nil
 	}
 	ws := res.ws
-	ws.MemBytes, ws.CPUUnits, ws.DiskGB = m.resolveWorkspaceSize(ctx, ws)
-	ws.SlotClass, _ = m.resolveSlotClass(ctx, ws)
+	ws = m.withResolvedSize(ctx, ws)
 	// Next resolve rebuilds the memo too, so the stale env is not kept for later starts.
 	m.evictMembershipCache(res.ws.MembershipID)
 	return m.runtimeFor(ws, dekHex, append(m.workspaceExtraEnv(ctx, ws), extraEnv...)...)
@@ -699,6 +696,17 @@ func (m *manager) resolveWorkspaceSize(ctx context.Context, ws store.Workspace) 
 		}
 	}
 	return memBytes, cpuUnits, diskGB
+}
+
+// withResolvedSize returns ws with every axis the next container start depends on
+// resolved onto it: memory, CPU, disk and machine class. Every path that builds a
+// runtime for a start (or a resize) goes through it; resolving only the size axes
+// leaves SlotClass empty, and ecs-ec2 then places the member on the deployment default
+// class instead of the tenant's.
+func (m *manager) withResolvedSize(ctx context.Context, ws store.Workspace) store.Workspace {
+	ws.MemBytes, ws.CPUUnits, ws.DiskGB = m.resolveWorkspaceSize(ctx, ws)
+	ws.SlotClass, _ = m.resolveSlotClass(ctx, ws)
+	return ws
 }
 
 // resolveSlotClass returns the machine class ws's NEXT container start lands on, and

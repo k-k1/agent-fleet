@@ -335,6 +335,25 @@ describe("member machine class", () => {
     await act(async () => buttonWith("省コスト（Arm）")!.click()); // x86_64 → arm64
     expect(warned()).toBe(true);
   });
+
+  // A member with no stored class follows the TENANT default, not the deployment default: the
+  // baseline of the warning and the ladder shown for "tenant default" are the effective class.
+  it("takes the baseline from the effective class when none is stored", async () => {
+    useSizing(SIZING_CLASSES);
+    const follower = { ...MEMBER, slot_class: "", slot_class_effective: "arm" };
+    await mount(follower);
+    await openEditor();
+    const warned = () => !!document.querySelector(".limit-edit .admin-hint.warn");
+    const units = () => Array.from(document.querySelectorAll(".limit-edit .af-unit")).map((e) => (e.textContent || "").trim());
+    expect(units()).toContain("→ m7g.large（2 vCPU / 8 GiB・専有）");
+    expect(warned()).toBe(false);
+
+    await act(async () => buttonWith("省コスト（Arm）")!.click()); // arm64 → arm64
+    expect(warned()).toBe(false);
+
+    await act(async () => buttonWith("標準（Intel）")!.click()); // arm64 → x86_64
+    expect(warned()).toBe(true);
+  });
 });
 
 // `member` is a snapshot taken when its row was clicked — the parent never refreshes it

@@ -17,7 +17,7 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 // component renders nothing itself, so no condition is kept here.
 import { useT } from "../../../lib/i18n/index.ts";
 import { remainingShort } from "../../../lib/sessionview.ts";
-import { fmtGbHint, ladderFor, slotFor, slotMemLabel, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
+import { fmtGbHint, ladderFor, memberClassID, slotFor, slotMemLabel, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
 import type { Member, MemberAutoStop, MemberIdle, WsSizing } from "../parts/adminShared.ts";
 import { startDeadlineBody } from "../../notifications/wording.ts";
 
@@ -267,8 +267,9 @@ export function MemberAutoStopDetail({ autoStop }: { autoStop?: MemberAutoStop }
 export function MemberSizeChips({ m, sizing }: { m: Member; sizing: WsSizing }) {
   const tr = useT();
   const onSlots = sizing.mem_meaning === "slot" && !!sizing.slots?.length;
-  const cls = (sizing.slot_classes ?? []).find((c) => c.id === (m.slot_class || sizing.default_slot_class));
-  const box = onSlots ? slotFor(ladderFor(sizing, m.slot_class ?? ""), m.mem_limit ? Math.round(m.mem_limit / 1048576) : 0) : null;
+  const classID = memberClassID(m);
+  const cls = (sizing.slot_classes ?? []).find((c) => c.id === (classID || sizing.default_slot_class));
+  const box = onSlots ? slotFor(ladderFor(sizing, classID), m.mem_limit ? Math.round(m.mem_limit / 1048576) : 0) : null;
 
   const out: ReactNode[] = [];
   if (box) {

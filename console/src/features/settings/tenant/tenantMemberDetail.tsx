@@ -27,7 +27,7 @@ import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { useTenantStore } from "../../../core/store/tenant.ts";
 import { stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
 import type { HomeResize, Member, WsSizing, WsSlot } from "../parts/adminShared.ts";
-import { fmtG, fmtPct, fmtGbHint, ladderFor, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
+import { fmtG, fmtPct, fmtGbHint, ladderFor, memberClassID, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
 import { MemberAutoStopDetail, MemberIdleDetail, MemberSizeChips } from "./tenantMembers.tsx";
 import { MemberEngineAccessPanel } from "./tenantEngineAccess.tsx";
 
@@ -231,14 +231,18 @@ export function MemberView({
   // switching class re-draws them and "you land on" recomputes — the same number can
   // land on a different box in a different class, and that is the whole point.
   const classes = onSlots ? (sizing.slot_classes ?? []) : [];
-  const ladder = onSlots ? ladderFor(sizing, slotClass) : undefined;
+  // "Follow the tenant default" is drawn from the class the CP says the member follows, which is
+  // only known while the stored value is "" (otherwise the effective one is the member's own).
+  const followClass = cur.slot_class ? "" : (cur.slot_class_effective ?? "");
+  const ladder = onSlots ? ladderFor(sizing, slotClass || followClass) : undefined;
   const landed = onSlots ? slotFor(ladder, +memMb || 0) : null;
   // Warn only when there is a home to migrate. A member who has never started has
   // nothing architecture-dependent on disk yet, so the warning would be noise.
   const classChanged = classes.length > 0 && slotClass !== (cur.slot_class ?? "");
   const archOf = (id: string) => classes.find((c) => c.id === id)?.arch ?? "";
   const archChanged =
-    classChanged && archOf(slotClass || (sizing.default_slot_class ?? "")) !== archOf(cur.slot_class || (sizing.default_slot_class ?? ""));
+    classChanged && archOf(slotClass || followClass || (sizing.default_slot_class ?? "")) !==
+      archOf(memberClassID(cur) || (sizing.default_slot_class ?? ""));
   const memHint = !landed
     ? +memMb > 0
       ? tr("admin.eq_hint", { hint: fmtGbHint(+memMb) })
@@ -371,6 +375,7 @@ export function MemberView({
       // the substitution (when there is one) is reported separately rather than
       // silently rewritten into the control.
       slot_class: typeof res?.slot_class === "string" ? res.slot_class : slotClass,
+      slot_class_effective: typeof res?.slot_class_effective === "string" ? res.slot_class_effective : undefined,
     });
     setResize(res?.home_resize ?? null);
     setLimitOpen(false);
