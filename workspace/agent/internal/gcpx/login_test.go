@@ -142,17 +142,20 @@ func fakeGcloudLogin(dir string, args []string) int {
 	if acct == "" {
 		acct = rd("login-account")
 	}
-	// "slow" stretches the exchange so a test can look at the lock while gcloud still runs.
-	if has("slow") {
-		time.Sleep(300 * time.Millisecond)
-	}
 	// gcloud asks before it overwrites a stored credential; stdin is closed by then, so the
 	// default (yes) is taken.
 	fmt.Fprint(os.Stderr, "Do you wish to proceed and overwrite existing credentials?\n\nDo you want to continue (Y/n)?  ")
 	rest, _ := in.ReadString('\n')
 	appendTo(filepath.Join(dir, "after-code"), strconv.Quote(rest))
-	if has("slow") {
-		time.Sleep(1500 * time.Millisecond)
+	// "hold" parks the exchange after the question until the test creates "release", so a
+	// test can look at the lock while gcloud still runs without racing a timer. "holding"
+	// tells the test the fake has got here. The poll is bounded so a test that died before
+	// releasing does not leave the fake behind.
+	if has("hold") {
+		appendTo(filepath.Join(dir, "holding"), "1")
+		for deadline := time.Now().Add(60 * time.Second); !has("release") && time.Now().Before(deadline); {
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 	refresh := rd("refresh")
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(cfg, "credentials.db")+"?_pragma=busy_timeout(5000)")
@@ -926,7 +929,8 @@ func TestOnlyAVerifiedLoginSettlesARequest(t *testing.T) {
 // question) must not let go of the lock the submit took while gcloud still writes.
 func TestLockHeldFromTheCodeUntilExit(t *testing.T) {
 	l := setupLogin(t, prod())
-	l.put(t, "slow", "")
+	l.put(t, "hold", "")
+	t.Cleanup(func() { l.put(t, "release", "") })
 	id := l.start(t, "/gcp-login/profiles/prod/start")
 	l.waitPhase(t, "prod", id, cloudlogin.PhaseAuthorize)
 	if _, unlock, err := lockRootNonBlocking(); err != nil {
@@ -937,10 +941,18 @@ func TestLockHeldFromTheCodeUntilExit(t *testing.T) {
 	if c, _ := l.submit(t, "prod", id, l.code); c != http.StatusOK {
 		t.Fatalf("submit: %d", c)
 	}
-	// After the post-code question is printed, before gcloud stores the credential.
-	time.Sleep(800 * time.Millisecond)
+	// After the post-code question is printed, before gcloud stores the credential: the fake
+	// reports it is parked there and stays until released, whatever the host's load.
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(filepath.Join(l.dir, "holding")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the fake never reached its hold point")
+		}
+	}
 	if a := logins.Attempt(id); !a.Live() {
-		t.Fatal("the fake finished too early for this check")
+		t.Fatal("the attempt ended while the fake is held")
 	}
 	if _, unlock, err := lockRootNonBlocking(); !errors.Is(err, errRootBusy) {
 		if err == nil {
@@ -948,6 +960,7 @@ func TestLockHeldFromTheCodeUntilExit(t *testing.T) {
 		}
 		t.Fatalf("the lock was let go while gcloud still runs: %v", err)
 	}
+	l.put(t, "release", "")
 	l.waitPhase(t, "prod", id, cloudlogin.PhaseDone)
 	waitExited(t, logins.Attempt(id))
 	_, unlock, err := lockRootNonBlocking()
