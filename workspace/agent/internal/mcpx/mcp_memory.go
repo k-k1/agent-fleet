@@ -63,6 +63,7 @@ func mcpMemoryCall(id json.RawMessage, name string, raw json.RawMessage) []byte 
 		Type        string   `json:"type"`
 		Kinds       []string `json:"kinds"`
 		Revision    int      `json:"revision"`
+		Budget      int      `json:"budget"`
 	}
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &a); err != nil {
@@ -79,6 +80,9 @@ func mcpMemoryCall(id json.RawMessage, name string, raw json.RawMessage) []byte 
 
 	switch name {
 	case mcpToolMemoryIndex:
+		if a.Budget > 0 {
+			q.Set("budget", fmt.Sprint(a.Budget)) // the Agent clamps it
+		}
 		out, err := agentDo(http.MethodGet, "/agents/memory/entries?"+q.Encode(), nil)
 		if err != nil {
 			return mcpToolErr(id, mcpMemoryErr(err))
@@ -163,12 +167,15 @@ func mcpMemoryErr(err error) string {
 	return he.Error()
 }
 
-// mcpMemoryFormatIndex prints one line per memory: an index is read every time work starts, so
-// it is kept far smaller than the JSON it comes from.
+// mcpMemoryFormatIndex prints one line per described memory, then the names of the rest: an
+// index is read every time work starts, so the Agent bounds it (memoryx.agentMemBudgetIndex)
+// and the line text must stay identical to memoryx.agentMemIndexLine, which the budget measures.
 func mcpMemoryFormatIndex(raw string) string {
 	var v struct {
 		Project   *mcpMemoryProject `json:"project"`
 		Entries   []mcpMemoryEntry  `json:"entries"`
+		More      []string          `json:"more"`
+		Omitted   int               `json:"omitted"`
 		Truncated bool              `json:"truncated"`
 		Withheld  int               `json:"withheld"`
 	}
@@ -194,8 +201,14 @@ func mcpMemoryFormatIndex(raw string) string {
 	for _, e := range v.Entries {
 		fmt.Fprintf(&b, "- [%s] %s — %s%s\n", e.Scope, e.Name, e.Description, mcpMemoryTags(e))
 	}
-	if v.Truncated {
-		b.WriteString("(truncated: use memory_search to find older memories)\n")
+	// The Agent already ranked and cut; render exactly that and add nothing back.
+	if len(v.More) > 0 {
+		b.WriteString("Not listed above (names only; a name ending in \"…\" is a prefix — memory_search matches names, or memory_read with the full name):\n")
+		b.WriteString(strings.Join(v.More, " "))
+		b.WriteByte('\n')
+	}
+	if v.Omitted > 0 {
+		fmt.Fprintf(&b, "and %d more (use memory_search)\n", v.Omitted)
 	}
 	b.WriteString("Read one with memory_read before relying on it.\n")
 	return b.String()

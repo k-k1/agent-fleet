@@ -262,3 +262,28 @@ func TestGetMemorySnapshotAsksForNativeDiff(t *testing.T) {
 		t.Fatalf("snapshots query = %q, want native=1", listQuery)
 	}
 }
+
+// The budget is measured on the Agent's line text, so the formatter must print the same bytes
+// (memoryx pins the same literal in agent_memory_index_test.go).
+func TestMemoryIndexLineFormatIsPinned(t *testing.T) {
+	out := mcpMemoryFormatIndex(`{"project":{"display":"p"},"entries":[{"name":"n","scope":"user","description":"d","type":"feedback","kinds":["claude"],"updated":"2026-10-04T09:00:00Z"}]}`)
+	if want := "- [user] n — d (feedback; for claude; 2026-10-04)\n"; !strings.Contains(out, want) {
+		t.Fatalf("index = %q, want a line %q", out, want)
+	}
+}
+
+func TestMemoryIndexRendersTailAndOmittedAsTheAgentCutThem(t *testing.T) {
+	out := mcpMemoryFormatIndex(`{"project":{"display":"p"},"entries":[{"name":"a","scope":"user","description":"d"}],"more":["adr-{1,2}","solo"],"omitted":7,"truncated":true}`)
+	for _, want := range []string{"names only", "prefix", "memory_search", "adr-{1,2} solo\n", "and 7 more (use memory_search)\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in %q", want, out)
+		}
+	}
+	if strings.Contains(out, "truncated") {
+		t.Errorf("the formatter must not invent its own truncation note: %q", out)
+	}
+	// Nothing cut: no tail, no count.
+	if out := mcpMemoryFormatIndex(`{"project":{"display":"p"},"entries":[{"name":"a","scope":"user","description":"d"}]}`); strings.Contains(out, "names only") || strings.Contains(out, "more (use") {
+		t.Errorf("unexpected tail: %q", out)
+	}
+}
