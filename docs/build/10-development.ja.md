@@ -104,7 +104,7 @@ CLI は通常 §10.2.2 が自動で開く版上げ PR で上がる。下の手�
 
 `cli-pin-bump.yml` は、新しい版で contract がすでに通ったエージェント CLI のピンをまとめて
 上げる PR を、固定ブランチ `automation/cli-pin-bump` から `develop` へ**1 本だけ**保つ。
-contract ワークフローが終わったとき、保険として毎日 08:00 JST、手動 dispatch で走る。判断と
+contract ワークフローが終わったとき、保険として2 時間ごと（奇数時）、手動 dispatch で走る。判断と
 書き換えは `deploy/local/cli-pin-bump.sh`、それを固定するのが
 `deploy/local/cli-pin-bump-stub-test.sh`。
 
@@ -320,7 +320,7 @@ cd console-e2e && npm ci && npx playwright test
 | 見る物 | 版の**番号**（ピン vs 公開 latest） | 実 CLI に当てた**挙動** |
 | 答える問い | 「見に行くべき時か？」 | 「実際に壊れたか？」 |
 | 費用 | 無料 | 無料〜サブスク枠（Tier による） |
-| 頻度 | 毎日 | main への PR（関連パス）+ 週次 cron + dispatch（claude・copilot・agy・cursor・kiro は dispatch 専用）|
+| 頻度 | 2 時間ごと | main への PR（関連パス）+ 週次 cron + dispatch（claude・copilot・agy・cursor・kiro は dispatch 専用）|
 | 赤くなる時 | 検査自体が失敗したときだけ | 契約が破れたとき（外部サービスに依存するステップは報告のみのことがある。例: opencode の live な Tier B ターン）|
 
 ドリフトは**常態**（数日で版が進む CLI もある）なので、ドリフトのワークフローは赤くならない。
@@ -337,11 +337,16 @@ trixie・trixie-updates・trixie-security のどれかに載っていること�
 なくビルドが壊れた状態なので、このジョブは赤くなる。出力には両アーキテクチャで配られている
 最新版が出るので、ARG はその版へ手で上げる。判定は `deploy/local/apt-pin-check-test.sh` が固定する。
 
-もう 1 本の `cli-release-watch.yml` は毎日公開版を比べ、**版が実際に変わった CLI だけ**
+もう 1 本の `cli-release-watch.yml` は 2 時間ごとに（drift が :00、watcher が :30、版上げの保険が次の奇数時）公開版を比べ、**版が実際に変わった CLI だけ**
 contract を dispatch する（対象の kind は `deploy/local/cli-release-edges.sh` の `KINDS`）。
 状態は 1 本の issue に置く: `tested` と `seen` の印はコメントとして追記する。repository
 variables は既定のトークンで書けないためである（`deploy/local/cli-release-state.sh`）。
-`tested` を記録するのは contract が成功したときだけなので、失敗は翌日に再試行される。
+`tested` を記録するのは contract が成功したときだけなので、`latest` に対して contract が赤で終わると、その版に `red` の印を書き（drift 追跡 issue の
+`Red contracts` 欄にも行が出る。この欄は `develop` で直近 2 回続けて落ちた contract
+ワークフローも示す: `deploy/local/cli-contract-report.sh`）、watcher は同じ版を再度
+dispatch しない。赤い版が contract の枠を 1 日 12 回使うのを防ぐためである。新しい版・
+成功した実行（`tested == latest` が優先）・手動 dispatch で解除される。キャンセルや
+タイムアウトは印を残さないので再試行される。
 クレデンシャルを無人で供給できない CLI は dispatch しない。secret が無い場合と、
 クレデンシャルが回転する cursor・kiro がこれに当たる。それらは `seen` を記録し、secret を
 更新したあとで contract を手動 dispatch する——「検出した」を「テストした」として記録する
@@ -360,7 +365,7 @@ watcher が赤くなるのは、どの取得元も答えなかったときだけ
 `<kind>-contract.yml`）。パス条件も dispatch の入力もワークフロー単位なので、1 ファイルに
 まとめると (1) 無関係な変更で走り、(2) 入力が混ざる——実際に codex の Tier 2 と claude の
 L4 が 1 つの `live` 入力を共有し、1 回の dispatch で両方の枠が減った。ファイルを分ければこの
-結合は構造的に起きない。横断の例外は毎日の watcher 2 本と、`mcp-config-contract.yml`
+結合は構造的に起きない。横断の例外は定期実行の watcher 2 本と、`mcp-config-contract.yml`
 （クレデンシャル不要）: レジストリ側の 1 つの契約——af が各 CLI のために書くグローバル MCP
 設定ファイルの形——を複数の CLI にまたがって一度に検証する。CI が見るのは claude・codex・
 opencode・copilot・cursor で、kiro（ログインが要る）と agy（ランナーで起動しない）はそこでは

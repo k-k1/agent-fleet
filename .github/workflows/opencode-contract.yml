@@ -30,6 +30,7 @@
 name: opencode-contract
 
 permissions:
+  actions: read # the failure report lists this run's failed steps
   contents: read
   issues: write
 
@@ -107,3 +108,17 @@ jobs:
           version="$(printf '%s' "$EFFECTIVE" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
           [ -n "$version" ]
           deploy/local/cli-release-state.sh set tested opencode "$version"
+          deploy/local/cli-contract-report.sh success opencode || echo "::warning::could not clear the red-contract row"
+
+      # A red run of `latest` is written into the drift tracking issue and, for kinds the
+      # watcher dispatches by itself, stops it re-dispatching this version every 2 hours
+      # (deploy/local/cli-contract-report.sh). A cancelled or timed-out run is not
+      # `failure()`, so it leaves no marker and the version is retried.
+      - name: report failed contract for latest
+        if: failure() && matrix.version == 'latest' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EFFECTIVE: ${{ steps.cli.outputs.version }}
+        run: |
+          version="$(printf '%s' "$EFFECTIVE" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1 || true)"
+          deploy/local/cli-contract-report.sh failure opencode "${version:-unknown}"

@@ -302,6 +302,40 @@ out_has '^watcher_failed=none$'
 sum_has "No public version changed"
 sum_hasnt "could not be read"
 
+echo "== case 11b: a red marker for latest holds the dispatch back, and only that kind =="
+# The brake: at a 2-hour cadence a version whose contract is red would otherwise be
+# re-dispatched ~12 times a day. codex has a real edge here, so it must still go out.
+run_edges RED_CLAUDE=2.1.267 LATEST_CLAUDE=2.1.267 LATEST_CODEX=0.146.0
+out_hasnt '^claude=true$'
+out_has '^codex=true$'
+out_has '^count=1$'
+out_has '^red=claude=2.1.267$'
+sum_has "contract already failed"
+
+echo "== case 11c: POSITIVE CONTROL -- without the marker the same edge dispatches =="
+run_edges LATEST_CLAUDE=2.1.267
+out_has '^claude=true$'
+out_has '^red=$'
+
+echo "== case 11d: a new latest clears the brake =="
+run_edges RED_CLAUDE=2.1.267 LATEST_CLAUDE=2.1.268
+out_has '^claude=true$'
+out_has '^red=$'
+
+echo "== case 11e: tested == latest wins over a stale red marker =="
+# A manual dispatch that passed records tested; the marker must not make the kind look held.
+run_edges RED_CLAUDE=2.1.267 LATEST_CLAUDE=2.1.267 TESTED_CLAUDE=2.1.267
+out_hasnt '^claude=true$'
+out_has '^red=$'
+out_has '^count=0$'
+
+echo "== case 11f: cursor and kiro keep their behaviour: a red marker does not hold them =="
+run_edges RED_CURSOR=1.1.0 LATEST_CURSOR=1.1.0 RED_KIRO=0.2.0 LATEST_KIRO=0.2.0
+out_has '^cursor=true$'
+out_has '^kiro=true$'
+out_has '^count=2$'
+out_has '^red=$'
+
 # --- cli-release-state.sh, watcher namespace -----------------------------------------
 #
 # The watcher block is a read-modify-write of the issue BODY, not another comment: it is
@@ -382,5 +416,118 @@ rc=$?
 set -e
 [ "$rc" = 2 ] || fail "expected exit 2 for a watcher value containing a space, got $rc"
 err_has "invalid value"
+
+# --- cli-contract-report.sh ----------------------------------------------------------
+#
+# Two issues now: the state issue (7) and the drift tracking issue (8). The stub tells them
+# apart by the title in `issue list --search` / `issue create --title`.
+REPORT="$HERE/cli-contract-report.sh"
+export STUB_DRIFT_ISSUE="$WORK/drift" STUB_RUNS="$WORK/runs"
+mkdir -p "$STUB_DRIFT_ISSUE" "$STUB_RUNS"
+: > "$STUB_DRIFT_ISSUE/body"
+cat > "$STUB/gh" <<'FAKE'
+#!/usr/bin/env bash
+echo "gh $*" >> "$STUB_LOG"
+dir_for() { case "$1" in 8) echo "$STUB_DRIFT_ISSUE" ;; *) echo "$STUB_ISSUE" ;; esac; }
+arg_after() { local want="$1"; shift; local prev="" a; for a in "$@"; do [ "$prev" = "$want" ] && { printf '%s' "$a"; return; }; prev="$a"; done; }
+case "$1 $2" in
+  "issue list")
+    case "$*" in
+      *"CLI version drift"*) [ -s "$STUB_DRIFT_ISSUE/body" ] && echo 8 ;;
+      *) [ -s "$STUB_ISSUE/body" ] && echo 7 ;;
+    esac ;;
+  "issue create")
+    title="$(arg_after --title "$@")"
+    case "$title" in
+      "CLI version drift"*) cp "$(arg_after --body-file "$@")" "$STUB_DRIFT_ISSUE/body"; echo "https://github.com/k-k1/agent-fleet/issues/8" ;;
+      *) printf '%s\n' "$(arg_after --body "$@")" > "$STUB_ISSUE/body"; echo "https://github.com/k-k1/agent-fleet/issues/7" ;;
+    esac ;;
+  "issue view")
+    d="$(dir_for "$3")"
+    case "$*" in *"body,comments"*) cat "$d/body" "$d/comments" 2>/dev/null ;; *) cat "$d/body" ;; esac ;;
+  "issue edit")
+    cp "$(arg_after --body-file "$@")" "$(dir_for "$3")/body" ;;
+  "issue comment")
+    printf '%s\n' "$(arg_after --body "$@")" >> "$(dir_for "$3")/comments" ;;
+  "api repos/k-k1/agent-fleet/actions/runs/555/jobs?per_page=100")
+    cat "$STUB_RUNS/steps" ;;
+  "run list")
+    cat "$STUB_RUNS/$(arg_after --workflow "$@" | sed 's/\.yml$//').json" ;;
+esac
+exit 0
+FAKE
+chmod +x "$STUB/gh"
+: > "$STUB_ISSUE/comments"; : > "$STUB_DRIFT_ISSUE/comments"
+drift_has()   { grep -qF -- "$1" "$STUB_DRIFT_ISSUE/body" || fail "drift issue missing: $1"; }
+drift_hasnt() { if grep -qF -- "$1" "$STUB_DRIFT_ISSUE/body"; then fail "drift issue must not contain: $1"; fi; }
+export GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=k-k1/agent-fleet GITHUB_RUN_ID=555
+
+# What the jobs API says, already reduced by the --jq in the script: one failed step name per
+# line, with a duplicate (a matrix repeats the same step name per leg).
+printf '%s\n' 'real TUI pane drift contract' 'real models catalog drift contract' 'real TUI pane drift contract' > "$STUB_RUNS/steps"
+
+echo "== case 16: a red contract with no tracking issue creates one with the section =="
+"$REPORT" failure codex 0.146.0
+drift_has 'Red contracts'
+drift_has '`codex` `0.146.0`'
+drift_has 'failing step: `real TUI pane drift contract`, `real models catalog drift contract`'
+drift_has 'actions/runs/555'
+n="$(grep -o 'real TUI pane drift contract' "$STUB_DRIFT_ISSUE/body" | wc -l)"
+[ "$n" = 1 ] || fail "a repeated step name must be listed once, got $n"
+state_is red codex 0.146.0
+
+echo "== case 17: a second kind adds a row; the same kind replaces its own =="
+"$REPORT" failure claude 2.1.270
+: > "$STUB_RUNS/steps"
+"$REPORT" failure codex 0.146.0
+n="$(grep -c '<!-- cli-contract-failure ' "$STUB_DRIFT_ISSUE/body")"
+[ "$n" = 2 ] || fail "expected 2 failure rows, got $n"
+drift_has 'failing step not captured'   # codex's replaced row
+grep -F '<!-- cli-contract-failure codex -->' "$STUB_DRIFT_ISSUE/body" | grep -qF 'real TUI pane' && fail "codex kept its old row's steps"
+n="$(grep -c 'cli-contract-failures:begin' "$STUB_DRIFT_ISSUE/body")"
+[ "$n" = 1 ] || fail "the section fence appears $n times"
+state_is red claude 2.1.270
+
+echo "== case 18: cursor is reported but gets no red marker =="
+"$REPORT" failure cursor 1.2.0
+drift_has '`cursor` `1.2.0`'
+state_is red cursor ""
+
+echo "== case 19: cli-drift's body rewrite keeps the section (carry) =="
+printf 'fresh drift report\n' > "$WORK/newbody.md"
+"$REPORT" carry 8 "$WORK/newbody.md"
+grep -qF 'fresh drift report' "$WORK/newbody.md" || fail "carry dropped the new body"
+grep -qF '`claude` `2.1.270`' "$WORK/newbody.md" || fail "carry dropped the section"
+"$REPORT" active || fail "active must be true while rows exist"
+
+echo "== case 20: success removes only its own row; prune drops a superseded version =="
+"$REPORT" success cursor
+drift_hasnt '`cursor`'
+LATEST_CLAUDE=2.1.271 LATEST_CODEX=0.146.0 "$REPORT" prune
+drift_hasnt '`claude` `2.1.270`'
+drift_has '`codex` `0.146.0`'
+LATEST_CODEX= "$REPORT" prune   # an unread latest keeps the row
+drift_has '`codex` `0.146.0`'
+"$REPORT" success codex
+drift_hasnt 'Red contracts'
+if "$REPORT" active; then fail "active must be false once the section is empty"; fi
+
+echo "== case 21: N=2 red runs in a row flags the workflow; a newer green clears it =="
+cat > "$STUB_RUNS/codex-contract.json" <<'J'
+[{"conclusion":"failure","url":"https://x/run/3"},{"conclusion":"failure","url":"https://x/run/2"},{"conclusion":"success","url":"https://x/run/1"}]
+J
+"$REPORT" streak codex-contract 2
+drift_has '`codex-contract` failed its last 2 runs'
+drift_has 'https://x/run/3'
+cat > "$STUB_RUNS/codex-contract.json" <<'J'
+[{"conclusion":"failure","url":"https://x/run/4"},{"conclusion":"success","url":"https://x/run/3"},{"conclusion":"failure","url":"https://x/run/2"}]
+J
+"$REPORT" streak codex-contract 2
+drift_hasnt 'Red contracts'
+
+echo "== case 22: fewer than N finished runs is not a streak =="
+echo '[{"conclusion":"failure","url":"https://x/run/9"}]' > "$STUB_RUNS/claude-tui-contract.json"
+"$REPORT" streak claude-tui-contract 2
+drift_hasnt 'claude-tui-contract'
 
 echo "OK: one unreadable release source no longer stops the watcher"

@@ -151,14 +151,14 @@ lcpp は例外です。ベンダーの CLI を動かさず、話し相手の lla
 実エンジンに対して手で走らせるオプトインの live テスト（`internal/harness/live_contract_test.go`、
 ビルドタグ `contract_manual`）です。
 
-毎日のリリース監視 `cli-release-watch.yml` に登録し、公開版が変わったら dispatch されるようにします。
+2 時間ごとのリリース監視 `cli-release-watch.yml` に登録し、公開版が変わったら dispatch されるようにします。
 `cli-drift.yml` はピンの遅れを報告するだけで、何も dispatch しません。登録は 4 か所です。
 
 - `deploy/local/cli-release-edges.sh` の `KINDS` に種別を足す。
 - `deploy/local/cli-drift-check.sh` に行を足す。
 - ワークフローの状態・エッジ・dispatch の各ステップに行を足す。
 - contract 自身に、成功時に `deploy/local/cli-release-state.sh set tested <kind> <version>` を
-  走らせるステップを置く。**これが無いと、監視はそのリリースを毎日新しいと見て、毎日 dispatch します。**
+  走らせるステップを置く。**これが無いと、監視はそのリリースを実行のたびに新しいと見て、2 時間ごとに dispatch します。** 無人で dispatch される contract は、失敗も `cli-contract-report.sh failure <kind> <version>` で報告してください（ほかの contract を参照）。赤い版の再 dispatch を止めるのがこれです。
   記録する版は、監視がその種別の最新として読む版と同じ形にします。muse の版はビルド ID を含む
   （`1.4.0-R4302.1`）ので、`1.4.0` に削るとエッジが閉じません。
 

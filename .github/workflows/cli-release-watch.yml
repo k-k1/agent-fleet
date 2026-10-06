@@ -7,7 +7,13 @@
 # Successful contracts append a "tested" marker to the release-state issue. An
 # unavailable credential appends a separate "seen" marker after the tracking issue is
 # updated (one report per release); a failed dispatched contract never advances tested
-# state, so the watcher retries it the next day.
+# state, so the watcher retries it on its next run - unless it finished red (see below).
+#
+# A contract that finishes red writes a `red` marker for that version (and a row in the
+# drift tracking issue). At a 2-hour cadence the watcher would otherwise spend the
+# contract's LLM quota ~12 times a day on a version that keeps failing; cli-release-edges.sh
+# skips a `latest` that carries the marker. A newer release, a passing run or a manual
+# dispatch releases it.
 #
 # One unreadable release source holds back that row and nothing else. It used to abort
 # the job: on 2026-09-09 claude 2.1.267 was detected, rtk's GitHub Releases call failed,
@@ -19,7 +25,7 @@ name: cli-release-watch
 
 on:
   schedule:
-    - cron: "30 20 * * *" # daily 05:30 JST, after cli-drift at 05:00
+    - cron: "30 */2 * * *" # every 2 hours at :30, after cli-drift at :00
   workflow_dispatch:
 
 permissions:
@@ -48,6 +54,7 @@ jobs:
           for name in claude codex opencode copilot agy cursor kiro muse; do
             echo "tested_$name=$(deploy/local/cli-release-state.sh get tested "$name")" >> "$GITHUB_OUTPUT"
             echo "seen_$name=$(deploy/local/cli-release-state.sh get seen "$name")" >> "$GITHUB_OUTPUT"
+            echo "red_$name=$(deploy/local/cli-release-state.sh get red "$name")" >> "$GITHUB_OUTPUT"
           done
 
       - name: fetch all public versions
@@ -68,13 +75,21 @@ jobs:
         env:
           FAILED: ${{ steps.versions.outputs.failed }}
           TESTED_CLAUDE: ${{ steps.state.outputs.tested_claude }}
+          RED_CLAUDE: ${{ steps.state.outputs.red_claude }}
           TESTED_CODEX: ${{ steps.state.outputs.tested_codex }}
+          RED_CODEX: ${{ steps.state.outputs.red_codex }}
           TESTED_OPENCODE: ${{ steps.state.outputs.tested_opencode }}
+          RED_OPENCODE: ${{ steps.state.outputs.red_opencode }}
           TESTED_COPILOT: ${{ steps.state.outputs.tested_copilot }}
+          RED_COPILOT: ${{ steps.state.outputs.red_copilot }}
           TESTED_AGY: ${{ steps.state.outputs.tested_agy }}
+          RED_AGY: ${{ steps.state.outputs.red_agy }}
           TESTED_CURSOR: ${{ steps.state.outputs.tested_cursor }}
+          RED_CURSOR: ${{ steps.state.outputs.red_cursor }}
           TESTED_KIRO: ${{ steps.state.outputs.tested_kiro }}
+          RED_KIRO: ${{ steps.state.outputs.red_kiro }}
           TESTED_MUSE: ${{ steps.state.outputs.tested_muse }}
+          RED_MUSE: ${{ steps.state.outputs.red_muse }}
           LATEST_CLAUDE: ${{ steps.versions.outputs.latest_claude }}
           LATEST_CODEX: ${{ steps.versions.outputs.latest_codex }}
           LATEST_OPENCODE: ${{ steps.versions.outputs.latest_opencode }}

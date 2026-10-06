@@ -13,6 +13,9 @@
 # Namespaces:
 #   tested   a successful automated contract, appended as a comment (one per version)
 #   seen     a fleet-probe issue was emitted, likewise
+#   red      a dispatched contract for this version finished red, written by the contract
+#            itself on `failure()`. cli-release-edges.sh skips re-dispatching that version;
+#            see its header for how the brake is released.
 #   watcher  the watcher's own liveness, keyed by item rather than CLI: `ok` (the last
 #            run where every release source was readable), `failed` (the rows the last
 #            run could not read, or `none`) and `at` (when that run was). Without it a
@@ -36,8 +39,8 @@ version="${4:-}"
 title="CLI release watcher state"
 
 case "$namespace" in
-  tested|seen|watcher) ;;
-  *) echo "namespace must be tested, seen or watcher" >&2; exit 2 ;;
+  tested|seen|red|watcher) ;;
+  *) echo "namespace must be tested, seen, red or watcher" >&2; exit 2 ;;
 esac
 [[ "$cli" =~ ^[a-z0-9-]+$ ]] || { echo "invalid CLI name: $cli" >&2; exit 2; }
 
@@ -140,7 +143,7 @@ case "$cmd" in
     ensure_issue >/dev/null
     ;;
   *)
-    echo "usage: $0 get <tested|seen|watcher> <cli|item> | set <tested|seen|watcher> <cli|item> <value> | evidence <tested|seen> <cli> <value> | ensure <namespace> <cli>" >&2
+    echo "usage: $0 get <tested|seen|red|watcher> <cli|item> | set <tested|seen|red|watcher> <cli|item> <value> | evidence <tested|seen> <cli> <value> | ensure <namespace> <cli>" >&2
     exit 2
     ;;
 esac

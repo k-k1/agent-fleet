@@ -123,7 +123,7 @@ remain. The member can start it again from the Console.
 
 **Q. A member says their agent CLI has been the same version for weeks. Is that normal?**
 Look at **Settings → Toolchain**, at the line under the tool-version table: "Upstream release
-watch: last clean run …". Upstream releases are watched daily, and the versions this deployment
+watch: last clean run …". Upstream releases are watched every 2 hours, and the versions this deployment
 bakes only move when that watch reports one. When the line is recent and carries no warning, the
 versions really have not moved and there is nothing to do. When it warns (that the watch could
 not read a particular source, or that it has had no clean run for over 48 hours), the version

@@ -116,7 +116,7 @@ dispatched the contract, and nothing is being tested while it is down.
 
 `cli-pin-bump.yml` keeps **one** pull request against `develop`, on the fixed branch
 `automation/cli-pin-bump`, that raises every agent-CLI pin whose new version has already
-passed its contract. It runs when a contract workflow completes, daily at 08:00 JST as a
+passed its contract. It runs when a contract workflow completes, every 2 hours (odd hours) as a
 backstop, and on dispatch. The decision and the edit are `deploy/local/cli-pin-bump.sh`;
 `deploy/local/cli-pin-bump-stub-test.sh` pins them.
 
@@ -357,7 +357,7 @@ Two complementary systems close it — neither works alone:
 | Watches | the version **number** (pin vs published latest) | the **behaviour**, against the real CLI |
 | Answers | "is it time to look?" | "did it actually break?" |
 | Cost | free | free to subscription quota, by tier |
-| Frequency | daily | PRs to main (relevant paths), a weekly cron, and dispatch (claude, copilot, agy, cursor and kiro are dispatch-only) |
+| Frequency | every 2 hours | PRs to main (relevant paths), a weekly cron, and dispatch (claude, copilot, agy, cursor and kiro are dispatch-only) |
 | Goes red | only if the check itself fails | when a contract breaks (a step that depends on an outside service can be report-only, e.g. opencode's live Tier B turn) |
 
 Drift is **the normal state** — some CLIs move every few days — so the drift workflow
@@ -376,12 +376,19 @@ broken build, not steady-state drift, so this job goes red; its output names the
 version served on both architectures, which is what the ARG is bumped to by hand.
 `deploy/local/apt-pin-check-test.sh` pins its verdicts.
 
-A second workflow, `cli-release-watch.yml`, compares the published versions daily and
+A second workflow, `cli-release-watch.yml`, compares the published versions every 2 hours (drift at :00, the watcher at :30, the
+pin-bump backstop at the next odd hour) and
 dispatches a contract **only for the CLIs whose version actually changed** (the kinds
 are `KINDS` in `deploy/local/cli-release-edges.sh`). Its state lives in one issue:
 `tested` and `seen` markers are appended as comments, because repository variables
 cannot be written with the default token (`deploy/local/cli-release-state.sh`). It
-records `tested` only when the contract succeeds, so a failure is retried the next day.
+records `tested` only when the contract succeeds. A contract that finishes red for
+`latest` writes a `red` marker for that version (and a row in the `Red contracts` section
+of the drift tracking issue, which also flags a contract workflow that failed its last 2
+runs on `develop`; `deploy/local/cli-contract-report.sh`), and the watcher does not
+dispatch that version again, so a failing release does not spend the contract's quota
+12 times a day. A new release, a passing run (`tested == latest` wins) or a manual dispatch
+releases it; a cancelled or timed-out run leaves no marker and is retried.
 A CLI whose credential cannot be supplied unattended is not dispatched. This covers a
 missing secret, and cursor and kiro, whose credentials rotate. For those it records
 `seen`, and the contract is dispatched by hand once the secret is refreshed — "detected"
@@ -403,7 +410,7 @@ the others). Path filters and dispatch inputs are per workflow, so putting them 
 file means (1) unrelated changes trigger runs and (2) inputs get mixed up — which really
 happened: codex's Tier 2 and claude's L4 shared a single `live` input, and one dispatch
 spent both quotas. Separate files make that coupling structurally impossible. The
-cross-cutting exceptions are the two daily watchers, and `mcp-config-contract.yml`
+cross-cutting exceptions are the two scheduled watchers, and `mcp-config-contract.yml`
 (no credentials), which verifies one registry-side contract across several CLIs at
 once: the shape of the global MCP config file af writes for each CLI. CI covers
 claude, codex, opencode, copilot and cursor; kiro (needs a login) and agy (will not

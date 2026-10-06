@@ -164,7 +164,7 @@ release watcher covers it. Its contract with that server's API is an opt-in live
 by hand against a real engine (`internal/harness/live_contract_test.go`, build tag
 `contract_manual`).
 
-Register it with the daily release watcher, `cli-release-watch.yml`, so that a published
+Register it with the release watcher (every 2 hours), `cli-release-watch.yml`, so that a published
 version change dispatches it. `cli-drift.yml` only reports pins that fall behind; it
 dispatches nothing. Registering takes four places:
 
@@ -173,7 +173,7 @@ dispatches nothing. Registering takes four places:
 - its lines in the workflow's state, edge and dispatch steps;
 - in the contract itself, a success step that runs
   `deploy/local/cli-release-state.sh set tested <kind> <version>`. **Without it, the
-  watcher sees the release as new every day and dispatches it every day.**
+  watcher sees the release as new on every run and dispatches it every 2 hours.** A contract that dispatches unattended should also report its failure (`cli-contract-report.sh failure <kind> <version>`, see the other contracts), which is what stops that loop for a red version.
   Record the version in the same shape as the watcher's latest for that kind: muse's
   carries its build id (`1.4.0-R4302.1`), so cutting it to `1.4.0` leaves the edge open.
 
