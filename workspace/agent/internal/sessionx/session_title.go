@@ -1057,7 +1057,7 @@ func HandleSessionRenameBranch(w http.ResponseWriter, r *http.Request) {
 				where = "リモート"
 			}
 			httpx.WriteErr(w, http.StatusConflict, "branch_exists",
-				fmt.Sprintf("%sに同名ブランチ %q が既にあります。別の名前にしてください。", where, newName))
+				fmt.Sprintf("%sに同名ブランチ %q がすでにあります。別の名前にしてください。", where, newName))
 			return
 		}
 	}

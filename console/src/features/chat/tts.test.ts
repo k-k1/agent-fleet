@@ -512,7 +512,7 @@ describe("applyBuiltinReadings / applyReadings (the built-in reading corrections
   });
 
   it("the prefix 誤 before a kanji reads ご (誤表示 -> ごひょうじ); with okurigana, 誤る / 誤り stay あやま", () => {
-    expect(applyBuiltinReadings("「5時間制限」と誤表示")).toBe("「5時間制限」とご表示"); // reported from a real device
+    expect(applyBuiltinReadings("「5 時間制限」と誤表示")).toBe("「5 時間制限」とご表示"); // reported from a real device
     expect(applyBuiltinReadings("誤検知と誤動作と誤操作")).toBe("ご検知とご動作とご操作");
     // okurigana forms (the kun reading あやま) are left alone
     expect(applyBuiltinReadings("設定を誤ると誤りが出る")).toBe("設定を誤ると誤りが出る");
