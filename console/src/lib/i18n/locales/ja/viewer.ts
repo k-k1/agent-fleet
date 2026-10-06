@@ -146,7 +146,7 @@ export const viewer = {
   "view.pause": "一時停止",
   "view.stop_reading": "朗読を停止",
   "view.stop": "停止",
-  "view.reader_voice_tip": "朗読の声（朗読中に変えると次の文から切り替え）",
+  "view.reader_voice_tip": "朗読の声（朗読中に変えると次の文から切り替わります）",
   "view.switch_horizontal": "横書きに切り替え",
   "view.switch_vertical": "縦書きに切り替え",
   "view.horizontal": "横書き",
@@ -166,7 +166,7 @@ export const viewer = {
   "view.open_conversation": "チャット {slug} を開く",
   "view.conversation_not_found": "会話が見つかりません: {slug}",
   "view.table_repaired":
-    "このテーブルは半角 | ではなく全角 ｜ で書かれているため、補正して表示しています。他の Markdown ビューアでは崩れたまま表示されます。",
+    "このテーブルは半角 | ではなく全角 ｜ で書かれているため、補正して表示しています。他の Markdown ビューアでは表示が乱れたままになります。",
   "view.frontmatter_invalid":
     "この front matter は YAML として無効なため、`キー: 値` の行として読んで表示しています。他の Markdown ビューアでは本文に混ざって表示されます。値の先頭が ` や @ などの記号になっている行は、値全体を引用符で囲ってください。",
 
@@ -187,7 +187,7 @@ export const viewer = {
   "editor.cancel": "キャンセル",
   "editor.validation.too_large": "2 MiBを超える変更は適用できません。",
   "editor.validation.binary_not_supported": "NULを含む変更は適用できません。",
-  "editor.validation.unsupported_newline": "CR/CRLFは使用できません。LFのみ対応しています。",
+  "editor.validation.unsupported_newline": "CR/CRLFは使用できません。LFだけに対応しています。",
   "editor.validation.invalid_unicode": "不正なUnicode surrogateを含む変更は適用できません。",
   "editor.status.saving": "保存中",
   "editor.status.saved": "保存しました",
