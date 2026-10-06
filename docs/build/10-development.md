@@ -732,9 +732,13 @@ and the [glossary](../../guide/ref/glossary.md).
 All rules preserve code spans, placeholders' contents, complete Trans slots
 (`<n>…</n>`/`<n/>`), quoted text (including Japanese bracket quotes), identifiers,
 paths, URLs and environment variables. Unbalanced markup is skipped.
-Agent-facing `plan.review_prompt_*`, notification speech, `err.*`, `chat.report.*`
-and `clean.reason*` are excluded. Escaped characters and boundaries between
-concatenated literals are skipped when an edit cannot map to unchanged source
+Agent-facing `plan.review_prompt_*` and `wi.prompt_*`, notification speech
+(including `speech_bare` and other speech variants), `err.*`, `chat.report.*`
+and `clean.reason*` are excluded. UI descriptions such as `launch.first_prompt_note`
+remain eligible. Valid Unicode surrogate escape pairs are decoded for reports and
+matching while their original escape bytes stay intact; unpaired surrogate escapes
+are refused before any catalogue or artifact writes. Escaped characters and
+boundaries between concatenated literals are skipped when an edit cannot map to unchanged source
 syntax. The scanner mirrors the catalogue guard's tokenizer and edits only
 literal contents; keys, comments, quote style, escapes, line breaks, entry order
 and `en/` stay intact. Unsupported expressions, duplicate keys and symlink
@@ -765,9 +769,10 @@ Dry-run is the default; `--all` is dry-run only. Report and allowance outputs ar
 optional during planning. Applying Workspace changes requires
 `--allow-terms-out`; without it the tool refuses before writing. Use fresh output
 paths: existing artifacts, identical report/allowance paths, catalogue/script
-paths and git metadata paths are refused. Artifact creation happens before catalogue
-writes, so an artifact write failure leaves the catalogue intact. Keep the applied allowance file until
-the PR is reviewed. A second apply with reviewed dirty files and `--force` makes
+paths and git metadata paths are refused, including a worktree's actual private
+and shared Git directories when `.git` is a gitdir file. Artifact creation happens
+before catalogue writes, so an artifact write failure leaves the catalogue intact.
+Keep the applied allowance file until the PR is reviewed. A second apply with reviewed dirty files and `--force` makes
 no additional catalogue edits; it must not overwrite the first allowance file
 with an empty plan. In a Managed session where `AF_WORK_DIR` is unset, use
 `~/.af-work/<working-copy-directory>/` instead and clean up afterwards.

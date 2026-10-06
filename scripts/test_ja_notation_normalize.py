@@ -135,6 +135,30 @@ class RuleTests(unittest.TestCase):
             self.assertEqual(p.new, p.value.text)
             self.assertTrue(p.skipped)
 
+    def check_excluded_variants(self, keys):
+        text = '既に Git表示が30日で終わる。Workspace を起動。'
+        for key in keys:
+            for rule in mod.RULES:
+                with self.subTest(key=key, rule=rule):
+                    p = proposal(text, key=key, rules=(rule,))
+                    self.assertEqual(p.new, text)
+                    self.assertFalse(p.edits)
+                    self.assertFalse(p.allowances)
+                    self.assertTrue(p.skipped)
+                    self.assertTrue(all('excluded agent-facing' in skip[2] for skip in p.skipped))
+
+    def test_agent_prompt_variants_excluded(self):
+        self.check_excluded_variants(['wi.prompt_review', 'wi.prompt_read_generic', 'wi.prompt_future'])
+
+    def test_speech_variants_excluded(self):
+        self.check_excluded_variants(['notif.terminal.speech_bare', 'notif.terminal.speech_short',
+                                      'notif.result.failed_speech_bare', 'notif.terminal.speech.future'])
+
+    def test_prompt_ui_description_remains_eligible(self):
+        p = proposal('既に Git表示を確認しました。Workspace を起動。', key='launch.first_prompt_note')
+        self.assertNotEqual(p.new, p.value.text)
+        self.assertEqual({e[3] for e in p.edits}, set(mod.RULES))
+
     def test_idempotence(self):
         for text in ['Gitホスティング', '30日後', '{n}人が参加', '既に保存済みです。', 'Workspace を起動します。']:
             first = proposal(text)
@@ -198,6 +222,8 @@ class MutantTests(unittest.TestCase):
             ("if word == '無く' and re.match", "if False and re.match", 'test_nouns_and_verbs'),
             ("elif re.search(r'[A-Za-z]+\\s+$', before) or re.match(r'\\s+[A-Za-z]+', after):", "elif False:", 'test_product_names'),
             ("if forbidden_key(value.key):", "if False:", 'test_excluded_keys'),
+            ("'wi.prompt_', ", "", 'test_agent_prompt_variants_excluded'),
+            ("speech(?:[._]|$)", "speech$", 'test_speech_variants_excluded'),
             ("JP = r'[ぁ-ゖァ-ヺ一-鿿々〆ー]'", "JP = r'[ぁ-ゖァ-ヺ一-鿿々〆ー、。：「」（）・]'", 'test_punctuation_ends_and_existing_spaces'),
         ]
         original = globals()['mod']
@@ -221,7 +247,7 @@ class MutantTests(unittest.TestCase):
 @unittest.skipUnless(shutil.which('git') and shutil.which('node'), 'git and node required')
 class CliTests(unittest.TestCase):
     def setUp(self):
-        base = Path(os.environ.get('AF_WORK_DIR') or Path.home() / '.af-work/ja-notation-tests')
+        base = Path(os.environ.get('AF_WORK_DIR') or Path.home() / '.af-work' / HERE.parent.name)
         base.mkdir(parents=True, exist_ok=True)
         self.tmp = tempfile.TemporaryDirectory(dir=base)
         self.addCleanup(self.tmp.cleanup)
@@ -401,6 +427,90 @@ class CliTests(unittest.TestCase):
             code = mod.main(['--domain', 'dom', '--apply', '--allow-terms-out', str(self.repo / 'terms.tsv')])
         self.assertEqual(code, 2)
         self.assertIn('not writable', error.getvalue())
+        self.assertEqual((self.ja / 'dom.ts').read_bytes(), before)
+
+    def test_nonbmp_escape_pair_applies_without_changing_escape_bytes(self):
+        source = 'export const dom = {"probe.surrogate": "\\uD83D\\uDE00 Git表示です。"};\n'
+        path = self.ja / 'dom.ts'
+        for with_report in (False, True):
+            with self.subTest(with_report=with_report):
+                path.write_bytes(source.encode('utf-8'))
+                args = ['--domain', 'dom', '--apply', '--force']
+                report = self.repo / 'pair-report.txt'
+                if with_report:
+                    args += ['--report', str(report)]
+                p = self.run_cli(*args)
+                self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+                self.assertEqual(path.read_bytes(), source.replace('Git表示', 'Git 表示').encode('utf-8'))
+                self.assertIn('😀 Git 表示です。', p.stdout)
+                if with_report:
+                    self.assertEqual(report.read_text(encoding='utf-8'), p.stdout)
+
+    def test_unpaired_surrogates_refuse_before_catalogue_or_artifact_writes(self):
+        path = self.ja / 'dom.ts'
+        for suffix, escape in enumerate(['\\uD83D', '\\uDE00', '\\uD83D\\uD83D']):
+            for with_report in (False, True):
+                with self.subTest(escape=escape, with_report=with_report):
+                    source = 'export const dom = {"probe.surrogate": "' + escape + ' Git表示です。"};\n'
+                    before = source.encode('utf-8')
+                    path.write_bytes(before)
+                    args = ['--domain', 'dom', '--apply', '--force']
+                    report = self.repo / f'unpaired-report-{suffix}.txt'
+                    if with_report:
+                        args += ['--report', str(report)]
+                    p = self.run_cli(*args)
+                    self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+                    self.assertIn('unpaired Unicode surrogate', p.stderr)
+                    self.assertEqual(path.read_bytes(), before)
+                    self.assertFalse(report.exists())
+
+    def assert_metadata_outputs_refused(self, repo, metadata_dirs):
+        before = (repo / mod.JA / 'dom.ts').read_bytes()
+        for i, directory in enumerate(metadata_dirs):
+            for option in ('--report', '--allow-terms-out'):
+                for apply in (False, True):
+                    with self.subTest(directory=directory, option=option, apply=apply):
+                        output = directory / f'unexpected-{i}-{option[2:]}-{apply}.txt'
+                        allowance = repo / f'outside-allowance-{i}-{option[2:]}.tsv'
+                        args = ['--domain', 'dom', option, str(output)]
+                        if apply:
+                            args += ['--apply', '--force']
+                            if option == '--report':
+                                args += ['--allow-terms-out', str(allowance)]
+                        p = subprocess.run([sys.executable, str(SCRIPT), *args], cwd=repo,
+                                           capture_output=True, text=True)
+                        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+                        self.assertIn('git metadata', p.stderr)
+                        self.assertFalse(output.exists())
+                        self.assertFalse(allowance.exists())
+                        self.assertEqual((repo / mod.JA / 'dom.ts').read_bytes(), before)
+
+    def test_separate_git_dir_artifact_outputs_refused(self):
+        metadata = self.repo / 'real-metadata'
+        shutil.move(self.repo / '.git', metadata)
+        (self.repo / '.git').write_text(f'gitdir: {metadata}\n')
+        self.assert_metadata_outputs_refused(self.repo, [metadata])
+        p = self.run_cli('--domain', 'dom', '--report', str(self.repo / 'valid-report.txt'))
+        self.assertEqual(p.returncode, 0, p.stderr)
+
+    def test_linked_worktree_git_and_common_dirs_artifact_outputs_refused(self):
+        linked = self.repo / 'linked'
+        self.run_git('worktree', 'add', '--detach', str(linked), 'HEAD')
+        absolute_git_dir = Path(subprocess.check_output(['git', 'rev-parse', '--absolute-git-dir'], cwd=linked, text=True).strip())
+        common_dir = (linked / subprocess.check_output(['git', 'rev-parse', '--git-common-dir'], cwd=linked, text=True).strip()).resolve()
+        self.assertNotEqual(absolute_git_dir, common_dir)
+        self.assertTrue((linked / '.git').is_file())
+        self.assert_metadata_outputs_refused(linked, [absolute_git_dir, common_dir])
+
+    def test_agent_and_speech_values_are_untouched_by_apply(self):
+        self.write('dom', {key: '既に Git表示が30日で終わる。Workspace を起動。' for key in
+                           ['wi.prompt_review', 'wi.prompt_read_generic', 'notif.terminal.speech_bare']})
+        self.run_git('add', '-A')
+        self.commit()
+        before = (self.ja / 'dom.ts').read_bytes()
+        p = self.run_cli('--domain', 'dom', '--apply')
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn('changed=0', p.stdout)
         self.assertEqual((self.ja / 'dom.ts').read_bytes(), before)
 
     def test_symlink_refusal(self):

@@ -94,7 +94,16 @@ def decode(token):
                 digits = raw[end + 1:end + 1 + count]
                 if len(digits) != count or not re.fullmatch(r'[0-9a-fA-F]+', digits):
                     raise Refusal('unsupported Unicode escape')
-                char, end = chr(int(digits, 16)), end + 1 + count
+                codepoint, end = int(digits, 16), end + 1 + count
+                if 0xD800 <= codepoint <= 0xDBFF:
+                    low = re.match(r'\\u([0-9a-fA-F]{4})', raw[end:])
+                    if not low or not 0xDC00 <= int(low[1], 16) <= 0xDFFF:
+                        raise Refusal('unpaired Unicode surrogate escape')
+                    codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + int(low[1], 16) - 0xDC00
+                    end += len(low[0])
+                elif 0xDC00 <= codepoint <= 0xDFFF:
+                    raise Refusal('unpaired Unicode surrogate escape')
+                char = chr(codepoint)
             else:
                 raise Refusal('unsupported escape; review manually')
         chars.append(char)
@@ -201,8 +210,8 @@ class Proposal:
 
 
 def forbidden_key(key):
-    return key.startswith(('plan.review_prompt_', 'err.', 'chat.report.', 'clean.reason')) or \
-        (key.startswith('notif.') and key.endswith(('speech', 'failed_speech')))
+    return key.startswith(('plan.review_prompt_', 'wi.prompt_', 'err.', 'chat.report.', 'clean.reason')) or \
+        (key.startswith('notif.') and re.search(r'(?:^|[._])speech(?:[._]|$)', key) is not None)
 
 
 def normalize(value, rules=RULES, approved=None, terms=()):
@@ -402,14 +411,18 @@ def main(argv=None):
                 proposal.skipped.extend((r, s, 'shared label would SPLIT: ' + ', '.join(sorted(others)), proposal.value.text)
                                         for s, _, _, r, *_ in proposal.edits)
                 proposal.new, proposal.edits, proposal.allowances = proposal.value.text, [], []
+        # Worktrees use a gitdir file; shared metadata can live outside the working copy.
+        git_dirs = {(root / '.git').resolve(),
+                    Path(git(root, 'rev-parse', '--absolute-git-dir').strip()).resolve(),
+                    (root / git(root, 'rev-parse', '--git-common-dir').strip()).resolve()}
         outputs = [p for p in (args.report, args.allow_terms_out) if p is not None]
         if len({p.absolute().resolve() for p in outputs}) != len(outputs):
             raise Refusal('output paths must be distinct')
         for path in outputs:
             target = path.absolute().resolve()
-            if target.is_relative_to((root / '.git').resolve()) or target.is_relative_to(root / JA.parent) or \
+            if any(target.is_relative_to(directory) for directory in git_dirs) or target.is_relative_to(root / JA.parent) or \
                     target.is_relative_to(root / 'scripts') or (target.exists() and not target.is_file()):
-                raise Refusal('output paths must not overwrite catalogue, scripts, or directories')
+                raise Refusal('output paths must not overwrite catalogue, scripts, git metadata, or directories')
             if path.is_symlink() or target in [p.absolute().resolve() for p in outputs if p != path]:
                 raise Refusal('output paths must be distinct regular files')
             if target.exists():
