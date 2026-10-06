@@ -560,6 +560,11 @@ to explain fails too. The `failures:` line gets an `allow=` entry only when an a
 given, so a run without the flags prints exactly what it printed before. Counting rules are
 the existing ones (substring in ja, so `既定` inside `既定値` counts; word boundary in en).
 
+A term that two categories count (an en ALL_CAPS glossary term such as `DEFAULT`: glossary,
+case-insensitive, and caps, exact) is summed per (category, unit), so `default DEFAULT` →
+`standard standard` needs both `Default>standard` and `DEFAULT>standard`. Messages name the
+category (`[glossary]`, `[caps]`, `[latin]`, `[direct]` for a term no category counts).
+
 Allowances of one key that repeat the same OLD and NEW add up (two `OFF>オフ` equal `*2`). A
 term that is OLD in one allowance and NEW in another of the same key (reversed or chained) is
 refused with exit 2, because the two would cancel; state the net change as one allowance. In
