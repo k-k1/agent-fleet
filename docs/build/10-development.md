@@ -871,6 +871,9 @@ outside CI. Introducing them changes no catalogue or guide terminology.
 The registry permits transformations, not senses. It never supplies a reason
 for a decision. New pairs require review and positive/negative tests; a plan
 cannot introduce arbitrary words, spaces, reordered text or ellipses in prose.
+Opposite directions of the same pair within one value are refused: a term swap
+can hide both changes from glossary counts. Independent pairs such as
+ON → オン and OFF → オフ are still permitted.
 Protection rules may still refuse a registered pair, for example removal of
 edge whitespace. Such a refusal is a manual case, not grounds to use `--force`.
 
@@ -901,17 +904,29 @@ limits report rows, not statistics. Excluded values remain visible to the judge.
 UI references are exact quoted-key matches with file/line attribution, not
 inferred control roles; assembled/dynamic keys need manual investigation.
 
+F-fold also discovers 畳み, 畳ま, 畳ん and 畳も to expose additional inflections,
+but these four stems have no apply pairs. Leave them unchanged or obtain a
+separately reviewed pair with tests; a discovery row is not an apply permission.
+F-device discovers 端末 and このブラウザ only. Existing bare ブラウザ is outside
+this automated discovery scope, and ブラウザ → このブラウザ is not an apply pair.
+Search `rg -n 'ブラウザ' console/src/lib/i18n/locales/ja` when reviewing existing
+browser wording. Although 端末 → ブラウザ can preserve particles such as
+ほかの, it does not authorize converting every browser reference to このブラウザ.
+
 **Judge's checklist:** read the entire value, containing sentence, neighbouring
 keys, English ambiguity reference, cited guide lines and
 `guide/ref/glossary.ja.md`. Read the component for button
-behaviour, control names or unclear scope. Record why this key has that sense
-and which evidence establishes it. Keep labels and sentences in separate
+behaviour, control names or unclear scope. Check the characters around every
+match: pairs also match inside compounds such as 外枠, 携帯端末, 折り畳む and
+ログインID. A mechanical match does not establish the sense: keep terminal
+emulator 端末 and verbal デプロイする, and review compounds individually.
+Record why this key has that sense and which evidence establishes it. Keep labels and sentences in separate
 batches, include every shared-label key with the same new value, and leave
 ambiguous cases unchanged. Agent-facing `*prompt*`, speech variants, `err.*`,
 `chat.report.*` and `clean.reason*` cannot be changed. Glossary rows require a
 separate explicit decision; the apply tool edits only catalogue literals.
 
-The UTF-8 plan has no header and contains exactly five TAB-separated fields:
+The UTF-8 plan has no BOM or header and contains exactly five TAB-separated fields:
 
 ```text
 key<TAB>old_value<TAB>new_value<TAB>family<TAB>reason

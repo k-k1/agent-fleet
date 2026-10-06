@@ -60,6 +60,35 @@ class VerificationTests(unittest.TestCase):
             with self.subTest(r=r), self.assertRaises(common.Refusal):
                 common.verify_plan([r], {r.key: entry(r.old)})
 
+    def test_opposite_directions_in_one_value_are_rejected(self):
+        for family, old, new in [
+                ('F-login', 'ログインとサインイン。', 'サインインとログイン。'),
+                ('F-deploy', '配備とデプロイ。', 'デプロイと配備。'),
+                ('F-onoff', 'オンと有効。', '有効とオン。')]:
+            with self.subTest(family=family), self.assertRaisesRegex(common.Refusal, 'opposite directions'):
+                common.verify_plan([row(old, new, family)], {'d.login': entry(old)})
+        for family, old, new in [
+                ('F-login', 'ログインとログイン。', 'サインインとサインイン。'),
+                ('F-onoff', 'ON/OFF', 'オン/オフ'),
+                ('F-onoff', 'オンとオフ。', '有効と無効。')]:
+            with self.subTest(family=family):
+                common.verify_plan([row(old, new, family)], {'d.login': entry(old)})
+
+    def test_discovery_only_and_manual_terms(self):
+        for stem, old, new in [('畳み', '畳みます。', '停止します。'),
+                               ('畳ま', '畳まない。', '停止しない。'),
+                               ('畳ん', '畳んじゃいます。', '停止しちゃいます。'),
+                               ('畳も', '畳もう。', '停止しよう。')]:
+            with self.subTest(stem=stem):
+                self.assertEqual(common.occurrences(old, 'F-fold'), [(0, len(stem), stem)])
+                with self.assertRaisesRegex(common.Refusal, 'unapproved rewrite'):
+                    common.substitution_edits(old, new, 'F-fold')
+        self.assertFalse(common.occurrences('ブラウザに保存します。', 'F-device'))
+        self.assertEqual(common.occurrences('このブラウザに保存します。', 'F-device')[0][2], 'このブラウザ')
+        common.substitution_edits('ほかの端末。', 'ほかのブラウザ。', 'F-device')
+        with self.assertRaisesRegex(common.Refusal, 'unapproved rewrite'):
+            common.substitution_edits('ブラウザに保存します。', 'このブラウザに保存します。', 'F-device')
+
     def test_current_and_missing_key(self):
         with self.assertRaisesRegex(common.Refusal, 'byte for byte'):
             common.verify_plan([row()], {'d.login': entry('ログイン ')})
@@ -141,7 +170,8 @@ class VerificationTests(unittest.TestCase):
 
 class MutantTests(unittest.TestCase):
     def test_each_verification_removal_breaks_its_negative_control(self):
-        mutants = [('verify_current', lambda r, e: False, 'test_current_and_missing_key'),
+        mutants = [('verify_edit_directions', lambda o, e, f: None, 'test_opposite_directions_in_one_value_are_rejected'),
+                   ('verify_current', lambda r, e: False, 'test_current_and_missing_key'),
                    ('substitution_edits', lambda o, n, f: [], 'test_wrong_family_and_free_form_rewrites'),
                    ('verify_protections', lambda r, e: None, 'test_protected_changes'),
                    ('verify_excluded', lambda r: None, 'test_excluded_keys'),
@@ -336,6 +366,29 @@ class CliTests(unittest.TestCase):
         # A newly introduced old label cannot be omitted on reapply.
         self.write('f', {'f.login': 'ログイン'})
         self.assertIn('SPLIT', self.apply('--apply').stderr)
+
+    def test_swap_and_bom_refusals_before_any_write(self):
+        self.write('d', {'d.swap': 'ログインとサインイン。'})
+        self.commit()
+        self.plan_rows([row('ログインとサインイン。', 'サインインとログイン。', 'F-login', 'd.swap')])
+        before = (self.ja / 'd.ts').read_bytes()
+        terms, report = self.repo / 'allow.tsv', self.repo / 'report.txt'
+        for flag, extra in [('--check-only', []),
+                            ('--apply', ['--allow-terms-out', str(terms), '--report', str(report)])]:
+            with self.subTest(flag=flag):
+                p = self.apply(flag, *extra)
+                self.assertEqual(p.returncode, 2, p.stdout)
+                self.assertIn('d.swap', p.stderr)
+                self.assertIn('opposite directions', p.stderr)
+                self.assertEqual((self.ja / 'd.ts').read_bytes(), before)
+                self.assertFalse(terms.exists())
+                self.assertFalse(report.exists())
+        self.plan.write_text('\ufeff' + self.plan.read_text(), encoding='utf-8')
+        p = self.apply('--check-only')
+        self.assertEqual(p.returncode, 2)
+        self.assertIn('UTF-8 BOM', p.stderr)
+        self.assertNotIn('key is absent', p.stderr)
+        self.assertEqual((self.ja / 'd.ts').read_bytes(), before)
 
     def test_newlines_backslashes_and_tsv_errors(self):
         old, new = 'ログイン\n`C:\\dir`\tします。', 'サインイン\n`C:\\dir`\tします。'

@@ -169,7 +169,10 @@ class Row:
 
 def read_plan(path):
     rows, seen = [], set()
-    for no, line in enumerate(notation.read_source(path).split('\n'), 1):
+    source = notation.read_source(path)
+    if source.startswith('\ufeff'):
+        raise Refusal(f'{path}: UTF-8 BOM is unsupported; save UTF-8 without a BOM')
+    for no, line in enumerate(source.split('\n'), 1):
         line = line.removesuffix('\r')
         if not line.strip() or line.lstrip().startswith('#'):
             continue
@@ -188,6 +191,17 @@ def read_plan(path):
     if not rows:
         raise Refusal('empty plan')
     return rows
+
+
+def verify_edit_directions(old, edits, family):
+    # Opposite edits can swap senses while hiding all glossary-count changes.
+    directions = set()
+    for start, end, replacement in edits:
+        original = old[start:end]
+        if (replacement, original) in directions:
+            raise Refusal(f'{family}: opposite directions of the same pair in one value: '
+                          f'{original!r} <-> {replacement!r} at old offset {start}')
+        directions.add((original, replacement))
 
 
 def substitution_edits(old, new, family):
@@ -233,7 +247,9 @@ def substitution_edits(old, new, family):
         state, edit = predecessors[state]
         if edit:
             edits.append(edit)
-    return sorted(edits)
+    edits.sort()
+    verify_edit_directions(old, edits, family)
+    return edits
 
 
 def verify_protections(row, edits):
