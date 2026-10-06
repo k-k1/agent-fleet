@@ -284,3 +284,27 @@ hardware that has not happened, and a residual that a review left.
   forbidden-token scans the repository runs. Write it as carefully as a public commit:
   no hostnames of real deployments, account IDs, tokens or customer names.
 
+## 11. Japanese notation in UI text and the guide
+
+Terms are decided by the "Screen" column of `guide/ref/glossary.md`. This section covers
+**notation**. It applies to the Japanese catalogue
+(`console/src/lib/i18n/locales/ja/`) and the Japanese guide alike, and not to English.
+
+- **Half-width space.** Put a space between Latin letters and Japanese, and between
+  digits and Japanese (`Git ホスティング`, `{n} 人`, `30 日`).
+- **Ellipsis and spelling variants.** "…" goes only on in-progress displays (`保存中…`) and on
+  buttons that open a dialog. Everywhere else use the majority form (`送信`,
+  `セッションを削除`, `API トークン`).
+- **Kana.** Write すでに and ない in hiragana, not 既に / 無い.
+- **Button form.** Buttons use the noun form only (`削除`, `停止`, `再開`). The する form
+  (`削除する`) is allowed only on a confirmation dialog's execute button.
+- **Boilerplate becomes sentences.** Rewrite noun-ended fixed phrases as sentences
+  ("既定 OFF。" → "既定ではオフです。", "1〜10・既定 3。" → "1〜10 の範囲で指定します。既定は 3 です。",
+  "0 = 無制限" → "0 を指定すると無制限になります。"). Do not join sentences with "＝" or "—";
+  split them or use a connective.
+- **Exception: badges, table cells and input placeholders** keep the short form
+  ("要ログイン", "（任意）", "商用可"). A label's "0 = …" uses a half-width `=`.
+  Placeholders are unified as "空欄: 配備の既定（1h）".
+
+Apply these rules in the PR that edits the text for another reason. A notation-only change
+ships separately for labels and for sentences.
