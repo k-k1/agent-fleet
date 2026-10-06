@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -70,8 +71,52 @@ class RuleTests(unittest.TestCase):
 
     def test_workspace_positive_and_allowance(self):
         p = proposal('この Workspace と別の Workspace を開く。')
-        self.assertEqual(p.new, 'この ワークスペース と別の ワークスペース を開く。')
+        self.assertEqual(p.new, 'このワークスペースと別のワークスペースを開く。')
         self.assertEqual(p.allowances, [('dom.value', 'Workspace', 'ワークスペース', 2)])
+
+    def test_workspace_reglue_neighbour_types(self):
+        cases = [('Workspace を破棄', 'ワークスペースを破棄'),
+                 ('この Workspace が動く。', 'このワークスペースが動く。'),
+                 ('Workspace 、次の操作。', 'ワークスペース、次の操作。'),
+                 ('Workspace 。次の操作。', 'ワークスペース。次の操作。'),
+                 ('Workspace 「起動」', 'ワークスペース「起動」'),
+                 ('「起動」 Workspace', '「起動」ワークスペース'),
+                 ('Workspace （起動中）', 'ワークスペース（起動中）'),
+                 ('（起動中） Workspace', '（起動中）ワークスペース'),
+                 ('{key} の Workspace を破棄しますか？', '{key} のワークスペースを破棄しますか？'),
+                 ('{name} Workspace を起動。', '{name} ワークスペースを起動。'),
+                 ('起動した Workspace {name}', '起動したワークスペース {name}'),
+                 ('`home` Workspace を起動。', '`home` ワークスペースを起動。'),
+                 ('起動した Workspace `home`', '起動したワークスペース `home`'),
+                 ('30 Workspace が動く。', '30 ワークスペースが動く。'),
+                 ('起動した Workspace 30', '起動したワークスペース 30'),
+                 ('起動した Workspace', '起動したワークスペース'),
+                 ('この  Workspace  を破棄。', 'このワークスペースを破棄。')]
+        for old, new in cases:
+            with self.subTest(old=old):
+                p = proposal(old)
+                self.assertEqual(p.new, new)
+                self.assertEqual(p.allowances, [('dom.value', 'Workspace', 'ワークスペース', 1)])
+                self.assertEqual(proposal(new).new, new)
+
+    def test_workspace_reglue_preserves_non_japanese_neighbour_spaces(self):
+        cases = [('home Workspace を起動。', 'home ワークスペースを起動。'),
+                 ('起動した Workspace home', '起動したワークスペース home'),
+                 ('{key} Workspace を起動。', '{key} ワークスペースを起動。'),
+                 ('30 Workspace を起動。', '30 ワークスペースを起動。'),
+                 ('`home` Workspace を起動。', '`home` ワークスペースを起動。')]
+        for old, new in cases:
+            with self.subTest(old=old):
+                m = mod.WORKSPACE.search(old)
+                start, end = mod.workspace_replacement_span(old, m.start(), m.end())
+                self.assertEqual(old[:start] + 'ワークスペース' + old[end:], new)
+
+    def test_workspace_reglue_preserves_edges_and_line_breaks(self):
+        for old, new in [(' Workspace を起動。 ', ' ワークスペースを起動。 '),
+                         ('この Workspace ', 'このワークスペース '),
+                         ('この\nWorkspace を起動。', 'この\nワークスペースを起動。'),
+                         ('この\tWorkspace を起動。', 'この\tワークスペースを起動。')]:
+            self.assertEqual(proposal(old).new, new)
 
     def check_exclusion(self, name):
         text, reason = EXCLUSIONS[name]
@@ -224,6 +269,8 @@ class MutantTests(unittest.TestCase):
             ("if forbidden_key(value.key):", "if False:", 'test_excluded_keys'),
             ("'wi.prompt_', ", "", 'test_agent_prompt_variants_excluded'),
             ("speech(?:[._]|$)", "speech$", 'test_speech_variants_excluded'),
+            ("start, end = workspace_replacement_span(old, m.start(), m.end())",
+             "start, end = m.start(), m.end()", 'test_workspace_reglue_neighbour_types'),
             ("JP = r'[ぁ-ゖァ-ヺ一-鿿々〆ー]'", "JP = r'[ぁ-ゖァ-ヺ一-鿿々〆ー、。：「」（）・]'", 'test_punctuation_ends_and_existing_spaces'),
         ]
         original = globals()['mod']
@@ -332,6 +379,24 @@ class CliTests(unittest.TestCase):
         self.assertEqual(current, {'dom.ws': 'このワークスペースを開く。', 'dom.git': '日本語 Git です。'})
         p = self.run_guard('--allow-labels', '--allow-terms-file', str(self.repo / 'terms.tsv'))
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+
+    def test_workspace_reglue_apply_matches_plan_and_guard(self):
+        old = '{key} の Workspace を破棄しますか？ 別の Workspace も破棄します。'
+        new = '{key} のワークスペースを破棄しますか？ 別のワークスペースも破棄します。'
+        self.write('dom', {'dom.ws': old})
+        self.run_git('add', '-A')
+        self.commit()
+        terms = self.repo / 'reglue.tsv'
+        p = self.run_cli('--domain', 'dom', '--apply', '--allow-terms-out', str(terms))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn(new, p.stdout)
+        self.assertEqual(mod.values((self.ja / 'dom.ts').read_text())[0].text, new)
+        self.assertEqual(mod.guard.read_allowance_file(str(terms))[0][:4], ('dom.ws', 'Workspace', 'ワークスペース', 2))
+        guard = self.run_guard('--allow-labels', '--allow-terms-file', str(terms))
+        self.assertEqual(guard.returncode, 0, guard.stdout + guard.stderr)
+        second = self.run_cli('--domain', 'dom', '--apply', '--force')
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn('changed=0', second.stdout)
 
     def test_dirty_refusal_preflights_every_domain(self):
         self.write('ext', {'ext.git': 'Git表示'})
@@ -519,6 +584,21 @@ class CliTests(unittest.TestCase):
         (self.ja / 'dom.ts').unlink()
         (self.ja / 'dom.ts').symlink_to(target)
         self.assertEqual(self.run_cli('--domain', 'dom', '--apply', '--force').returncode, 2)
+
+
+@unittest.skipUnless(shutil.which('git') and (HERE.parent / mod.JA).is_dir(), 'real catalogue required')
+class RealCatalogueTests(unittest.TestCase):
+    def test_all_proposals_have_no_workspace_space_before_japanese(self):
+        p = subprocess.run([sys.executable, str(SCRIPT), '--all'], cwd=HERE.parent,
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        proposals = [line.split(' | ', 2) for line in p.stdout.splitlines() if len(line.split(' | ', 2)) == 3]
+        self.assertTrue(proposals, 'the real catalogue scan must produce proposals')
+        self.assertTrue(any(key == 'admin.destroy_ws' for key, _, _ in proposals))
+        stray = r'ワークスペース +[ぁ-んァ-ヶ一-龠]'
+        self.assertRegex('ワークスペース を破棄', stray)
+        hits = [f'{key} | {new}' for key, _, new in proposals if re.search(stray, new)]
+        self.assertFalse(hits, '\n'.join(hits))
 
 
 if __name__ == '__main__':

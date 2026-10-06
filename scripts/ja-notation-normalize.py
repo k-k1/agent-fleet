@@ -19,6 +19,7 @@ JA = Path(guard.JA_DIR)
 RULES = ('R1', 'R2', 'R3')
 JP = r'[ぁ-ゖァ-ヺ一-鿿々〆ー]'
 JAPANESE = re.compile(JP)
+JAPANESE_NEIGHBOUR = re.compile(JP + r'|[、。「」『』（）：；！？・…]')
 BOUNDARY = re.compile(r'(?<=[A-Za-z0-9])(?=' + JP + r')|(?<=' + JP + r')(?=[A-Za-z0-9])|(?<=\})(?=' + JP + r')|(?<=' + JP + r')(?=\{\w+\})')
 NUMERIC_PLACEHOLDERS = {'n', 'count', 'days', 'profiles', 'hosts', 'bytes', 'applied'}
 KANA = re.compile(r'既に|無い|無く|無し|無[料効制視理事限駄数]')
@@ -214,6 +215,21 @@ def forbidden_key(key):
         (key.startswith('notif.') and re.search(r'(?:^|[._])speech(?:[._]|$)', key) is not None)
 
 
+def workspace_replacement_span(text, start, end):
+    """Include Latin spacing beside Japanese, preserving edge whitespace and markup."""
+    left = start
+    while left > 0 and text[left - 1] == ' ':
+        left -= 1
+    if left > 0 and JAPANESE_NEIGHBOUR.fullmatch(text[left - 1]):
+        start = left
+    right = end
+    while right < len(text) and text[right] == ' ':
+        right += 1
+    if right < len(text) and JAPANESE_NEIGHBOUR.fullmatch(text[right]):
+        end = right
+    return start, end
+
+
 def normalize(value, rules=RULES, approved=None, terms=()):
     old = value.text
     proposal = Proposal(value, old)
@@ -223,6 +239,9 @@ def normalize(value, rules=RULES, approved=None, terms=()):
     def offer(rule, start, end, replacement, extra=None):
         reason = extra
         for a, b, why in spans:
+            # A separated numeric count does not turn the approved Workspace noun into a Latin unit.
+            if rule == 'R3' and why == 'unit' and re.fullmatch(r'\d+(?:\.\d+)? +Workspace', old[a:b]):
+                continue
             overlaps = ((a < start < b) if why == 'placeholder' else (a <= start <= b)) if start == end else (a < end and start < b)
             if overlaps:
                 reason = why
@@ -268,7 +287,8 @@ def normalize(value, rules=RULES, approved=None, terms=()):
                 reason = 'adjacent Latin word; possible product name'
             elif not JAPANESE.search(old):
                 reason = 'no running Japanese text; standalone/English label'
-            offer('R3', m.start(), m.end(), 'ワークスペース', reason)
+            start, end = workspace_replacement_span(old, m.start(), m.end())
+            offer('R3', start, end, 'ワークスペース', reason)
     # Ranges and escapes must map to a single literal, without touching its syntax.
     safe = []
     for start, end, replacement, rule in edits:

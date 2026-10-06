@@ -724,7 +724,12 @@ and the [glossary](../../guide/ref/glossary.md).
 - **R3:** a plain `Workspace` word in running Japanese text becomes
   `ワークスペース`. Identifiers and adjacent Latin words (possible product names,
   including the catalogue's `Google Workspace` and `Workspace Agent`) are
-  protected; the standalone `Workspace` label is skipped. Existing spaces stay.
+  protected; the standalone `Workspace` label is skipped. As part of R3, remove
+  half-width spaces between the converted word and Japanese letters, particles or
+  punctuation (`Workspace を破棄` → `ワークスペースを破棄`). Keep spaces next to
+  Latin words, digits, placeholders and code. Edge whitespace, tabs and line
+  breaks stay intact. The dry-run shows this final Japanese text; R1 itself never
+  removes spaces.
   Each affected key emits `KEY<TAB>Workspace<TAB>ワークスペース<TAB>N`, accepted
   by `catalog-diff-check.py --allow-terms-file`. Other unexplained glossary or
   Latin-token drift causes the entire value's proposal to be skipped.
@@ -820,14 +825,25 @@ with an empty plan. In a Managed session where `AF_WORK_DIR` is unset, use
    and sentence batches separate when required by the revision plan. Run the
    pre-commit hook, commit, push and open the PR against `develop`.
 
-The initial scratch settings acceptance run inspected all 30 changed values:
+The scratch settings acceptance run with R3 spacing cleanup inspected all
+30 changed values:
 0 wrong proposals (100% precision), 36 R1 insertions, 8 R2 replacements and 1 R3
 replacement, with 9 skipped occurrences. An earlier 32-value plan had two unsafe
 `{msg}` boundary proposals; restricting placeholder spacing to inspected numeric
-names removed them. The complete catalogue dry-run took about one second over
+names removed them. The R3 replacement also removes spaces that existed only
+because Workspace was Latin; retaining those spaces had left incorrectly spaced
+Japanese values. The complete catalogue dry-run took about one second over
 23 domains. The scratch guard initially returned 1 with 20 PINNED hits and no
 structural/invariant failures; after guide rewriting and manual citation sync,
 the final guard returned 0. No acceptance edits are committed to the catalogue.
 The suite also removes each protected-span recognizer and selected other exclusions
 and proves that their negative controls fail; the real guard fixture fails without
 the emitted Workspace allowance and passes with it.
+
+The R3 cleanup keeps the full-catalogue plan at 16 changed values (17 Workspace
+occurrences). Checking both sides of `ワークスペース`, `すでに`, `ない` and `なく`
+for spaces beside Japanese letters went from 16 hits to zero. A further scratch
+run of `admin,settings,workitems` changed 64 values with 13 accepted allowance
+rows. The initial guard reported only 32 PINNED hits; citation, anchor and coverage
+ledger updates brought the final guard and docs check to exit 0. A second dry-run
+proposed no changes. The scratch repository was removed after verification.
