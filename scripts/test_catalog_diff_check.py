@@ -21,10 +21,13 @@ SCRIPT = Path(os.environ.get("CATALOG_DIFF_CHECK") or HERE / "catalog-diff-check
 FIXTURES = HERE / "catalog_diff_check_fixtures"
 JA = "console/src/lib/i18n/locales/ja/dom.ts"
 EN = "console/src/lib/i18n/locales/en/dom.ts"
+EN_EXT = "console/src/lib/i18n/locales/en/ext.ts"
 
 
-@unittest.skipUnless(shutil.which("node") and shutil.which("git"), "node and git are required")
-class CatalogDiffCheckTests(unittest.TestCase):
+NEEDS = unittest.skipUnless(shutil.which("node") and shutil.which("git"), "node and git are required")
+
+
+class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(dir=os.environ.get("AF_WORK_DIR") or None)
         self.addCleanup(self.tmp.cleanup)
@@ -61,6 +64,10 @@ class CatalogDiffCheckTests(unittest.TestCase):
         self.assertGreater(self.counts(out)[category], 0, out)
         return out
 
+
+
+@NEEDS
+class CatalogDiffCheckTests(Base):
     # Negative controls.
 
     def test_identical_passes_and_prints_counts(self):
@@ -301,6 +308,298 @@ class CatalogDiffCheckTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("guide/member/page.ja.md:3\t", out)
         self.assertNotIn("failures:", out)
+
+
+@NEEDS
+class CatalogDiffCheckEnTests(Base):
+    """--lang en: the same fixtures, with locales/en/ as the target."""
+
+    def run_en(self, *args):
+        return self.run_check("--lang", "en", *args)
+
+    def assertEnTrips(self, category, *args):
+        code, out = self.run_en(*args)
+        self.assertEqual(code, 1, out)
+        self.assertGreater(self.counts(out)[category], 0, out)
+        return out
+
+    def commit_all(self, msg):
+        subprocess.run(["git", "add", "-A"], cwd=self.repo, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", msg],
+                       cwd=self.repo, check=True)
+
+    # Negative controls.
+
+    def test_en_identical_passes_and_prints_counts(self):
+        code, out = self.run_en(EN, EN_EXT)
+        self.assertEqual(code, 0, out)
+        self.assertIn("2 file(s), 20 value(s) checked, 0 changed", out)
+        self.assertEqual(set(self.counts(out).values()), {0})
+        self.assertIn("warnings: restriction=0", out)
+
+    def test_en_no_changed_file_checks_nothing(self):
+        code, out = self.run_en()
+        self.assertEqual(code, 0, out)
+        self.assertIn("0 file(s), 0 value(s) checked", out)
+
+    def test_en_pure_wording_rewrite_passes(self):
+        self.edit(EN, "Save your settings — then close this screen.", "Save your settings. Then close this screen.")
+        code, out = self.run_en()
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 changed", out)
+        self.assertNotIn("WARN", out)
+
+    def test_en_restriction_word_warns_but_passes(self):
+        self.edit(EN_EXT, "Only admins can change this.", "Admins can change this.")
+        code, out = self.run_en()
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"WARN restriction: .*ext\.restr: only 1 -> 0")
+        self.assertIn("warnings: restriction=1", out)
+
+    def test_en_contraction_counts_as_the_restriction_word(self):
+        self.edit(EN, "This cannot be undone, so take care before you continue.",
+                  "This can't be undone, so take care before you continue.")
+        code, out = self.run_en()
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("WARN", out)
+
+    def test_en_ja_guide_and_readme_are_not_searched(self):
+        self.write("guide/member/page.ja.md", "This cannot be undone, so take care before you continue.\n")
+        self.write("guide/README.md", "This cannot be undone, so take care before you continue.\n")
+        self.write("workspace/agent/knowledge/af-usage.md", "This cannot be undone, so take care before you continue.\n")
+        self.edit(EN, "This cannot be undone, so take care before you continue.", "Take care: this is permanent.")
+        code, out = self.run_en()
+        self.assertEqual(code, 0, out)
+
+    def test_en_unchanged_clause_still_quoted_is_not_pinned(self):
+        self.write("guide/member/page.md", "# Page\n\nThis cannot be undone, so take care before you continue.\n")
+        self.commit_all("quote")
+        self.edit(EN, "This cannot be undone, so take care before you continue.",
+                  "This cannot be undone, so take care before you continue. Really.")
+        code, out = self.run_en()
+        self.assertEqual(code, 0, out)
+
+    # Structure.
+
+    def test_en_skeleton_comment_change(self):
+        self.edit(EN, "a comment that must not move", "a comment that moved")
+        self.assertEnTrips("skeleton")
+
+    def test_en_key_order(self):
+        text = (self.repo / EN).read_text(encoding="utf-8")
+        a = '  "dom.label": "Stop",\n'
+        b = '  "dom.pinned": "This cannot be undone, so take care before you continue.",\n'
+        (self.repo / EN).write_text(text.replace(a + b, b + a), encoding="utf-8")
+        self.assertEnTrips("keys")
+
+    def test_en_key_added_and_file_removed(self):
+        self.edit(EN, '  "dom.label": "Stop",\n', '  "dom.label": "Stop",\n  "dom.new": "Added",\n')
+        self.assertIn("dom.new", self.assertEnTrips("keys"))
+        (self.repo / EN).unlink()
+        self.assertEnTrips("keys", EN)
+
+    def test_en_concatenation_structure(self):
+        self.edit(EN, '"First half. " + "Second half."', '"First half. Second half."')
+        self.assertEnTrips("skeleton")
+
+    def test_en_ja_edit_is_outside(self):
+        self.edit(JA, "自動保存は OFF です。", "自動保存は オフ です。")
+        out = self.assertEnTrips("outside")
+        self.assertIn("ja/dom.ts changed", out)
+
+    def test_en_untracked_ja_file_is_outside(self):
+        self.write("console/src/lib/i18n/locales/ja/new.ts", "export const n = {};\n")
+        self.assertEnTrips("outside")
+
+    def test_en_ja_file_is_refused_as_target(self):
+        code, out = self.run_en(JA)
+        self.assertEqual(code, 2, out)
+
+    # Meaning-carrying content of a value.
+
+    def test_en_placeholder(self):
+        self.edit(EN, "{profiles} profiles", "{profile} profiles")
+        self.assertEnTrips("placeholders")
+
+    def test_en_trans_slot_dropped(self):
+        self.edit(EN, "Change this in <0>Settings</0>.<1/>", "Change this in <0>Settings</0>.")
+        self.assertEnTrips("slots")
+
+    def test_en_digits(self):
+        self.edit(EN, "after 3 days", "after 5 days")
+        self.assertEnTrips("digits")
+
+    def test_en_code_span(self):
+        self.edit(EN, "`npm test`", "`npm run test`")
+        self.assertEnTrips("code")
+
+    def test_en_newline_removed(self):
+        self.edit(EN, "Line one.\\nLine two.", "Line one. Line two.")
+        self.assertEnTrips("newlines")
+
+    def test_en_edge_whitespace(self):
+        self.edit(EN, '" Leading space here."', '"Leading space here."')
+        self.assertEnTrips("edge")
+
+    def test_en_all_caps_word_changed(self):
+        self.edit(EN, "Autosave is OFF.", "Autosave is off.")
+        self.assertEnTrips("caps")
+
+    def test_en_env_var_changed(self):
+        self.edit(EN_EXT, "AF_MASTER_KEY", "AF_SECRET")
+        out = self.assertEnTrips("caps")
+        self.assertGreater(self.counts(out)["idents"], 0, out)
+
+    def test_en_path_changed(self):
+        self.edit(EN_EXT, "settings.json", "config.json")
+        self.assertEnTrips("idents")
+
+    def test_en_cli_name_changed_or_recased(self):
+        for new in ("claude", "Codex"):
+            with self.subTest(new=new):
+                self.edit(EN_EXT, "Use codex or opencode", f"Use {new} or opencode")
+                self.assertEnTrips("idents")
+                self.edit(EN_EXT, f"Use {new} or opencode", "Use codex or opencode")
+
+    def test_en_and_or_is_not_a_path(self):
+        self.edit(EN_EXT, "Use codex or opencode here.", "Use codex and/or opencode here.")
+        code, out = self.run_en()
+        self.assertEqual(code, 0, out)
+
+    def test_en_quoted_label_content_changed(self):
+        self.edit(EN, 'Press \\"Restart\\"', 'Press \\"Reboot\\"')
+        self.assertEnTrips("quoted")
+
+    def test_en_arrow_dropped(self):
+        self.edit(EN_EXT, "Open Settings → Connections.", "Open Settings, then Connections.")
+        self.assertEnTrips("marks")
+
+    def test_en_warning_mark_dropped(self):
+        self.edit(EN_EXT, "⚠ This will stop every session.", "This will stop every session.")
+        self.assertEnTrips("marks")
+
+    def test_en_glossary_term_replaced_by_synonym(self):
+        self.edit(EN, "Starting the Workspace.", "Starting the Environment.")
+        out = self.assertEnTrips("glossary")
+        self.assertIn('"Workspace" 1 -> 0', out)
+
+    def test_en_glossary_is_case_insensitive_and_plural_tolerant(self):
+        self.edit(EN_EXT, "stop every session", "stop all sessions")
+        code, out = self.run_en()
+        self.assertEqual(code, 0, out)  # session -> sessions is the same word
+        self.assertIn("1 changed", out)
+
+    def test_en_glossary_paren_note_dropped(self):
+        self.edit(EN, "Starting the Workspace.", "Starting the Terminal.")
+        out = self.assertEnTrips("glossary")
+        self.assertIn('"Terminal" 0 -> 1', out)
+
+    # Labels.
+
+    def test_en_label_change_needs_flag(self):
+        self.edit(EN, '"dom.label": "Stop"', '"dom.label": "Halt"')
+        self.assertEnTrips("label")
+
+    def test_en_label_change_with_flag_prints_old_and_new(self):
+        self.edit(EN, '"dom.label": "Stop"', '"dom.label": "Halt"')
+        code, out = self.run_en("--allow-labels")
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"LABEL .*dom\.label: Stop -> Halt")
+
+    def test_en_label_threshold_is_30_chars_without_sentence_end(self):
+        self.edit(EN, '"dom.label": "Stop"', '"dom.label": "Stop the whole thing right now"')
+        self.assertEnTrips("label")  # 29 chars
+        self.edit(EN, '"dom.lang": "Language"', '"dom.lang": "Language, as shown on screen."')
+        self.assertEqual(self.counts(self.run_en("--allow-labels")[1])["label"], 0)  # a sentence
+
+    def test_en_label_still_held_to_invariants(self):
+        self.edit(EN, '"dom.label": "Stop"', '"dom.label": "STOP"')
+        code, out = self.run_en("--allow-labels")
+        self.assertEqual(code, 1, out)
+        self.assertGreater(self.counts(out)["caps"], 0, out)
+
+    # Pins.
+
+    def en_pinned(self, rel, text, *args):
+        self.write(rel, text)
+        self.edit(EN, "This cannot be undone, so take care before you continue.", "Take care: this is permanent.")
+        out = self.assertEnTrips("pinned", *args)
+        self.assertRegex(out, r"PINNED: .*dom\.pinned: .*" + re.escape(rel))
+        return out
+
+    def test_en_pinned_in_english_guide_page(self):
+        out = self.en_pinned("guide/member/page.md", "# Page\n\nThis cannot be undone, so take care before you continue.\n")
+        self.assertIn("page.md:3", out)
+
+    def test_en_pinned_in_guide_even_when_wrapped(self):
+        self.en_pinned("guide/member/page.md", "# Page\n\nThis cannot be undone,\n  so take care before you continue.\n")
+
+    def test_en_pinned_in_console_test(self):
+        self.en_pinned("console/src/x.test.tsx", 'expect(t).toBe("This cannot be undone, so take care before you continue");\n')
+
+    def test_en_pinned_in_go_source(self):
+        self.en_pinned("control-plane/msg.go", 'package p\n\nvar m = "This cannot be undone, so take care before you continue"\n')
+
+    def test_en_pinned_label_in_bold_and_quotes(self):
+        for text in ("Press **Stop** now\n", 'Press "Stop" now\n'):
+            with self.subTest(text=text):
+                self.write("guide/member/page.md", text)
+                self.edit(EN, '"dom.label": "Stop"', '"dom.label": "Halt"')
+                code, out = self.run_en("--allow-labels")
+                self.assertEqual(code, 1, out)
+                self.assertGreater(self.counts(out)["pinned"], 0, out)
+                self.edit(EN, '"dom.label": "Halt"', '"dom.label": "Stop"')
+
+    def test_en_citation_updated_in_same_change_passes(self):
+        self.write("guide/member/page.md", "Press **Halt** now\n")
+        self.edit(EN, '"dom.label": "Stop"', '"dom.label": "Halt"')
+        code, out = self.run_en("--allow-labels")
+        self.assertEqual(code, 0, out)
+
+    def test_en_list_pinned_prints_locations_and_exits_zero(self):
+        self.write("guide/member/page.md", "# Page\n\nPress **Stop** now\n")
+        self.edit(EN, '"dom.label": "Stop"', '"dom.label": "Halt"')
+        code, out = self.run_en("--list-pinned")
+        self.assertEqual(code, 0, out)
+        self.assertIn("guide/member/page.md:3\t", out)
+        self.assertNotIn("failures:", out)
+
+    def test_en_exempt_pin(self):
+        self.write("guide/member/page.md", "Press **Stop** now\n")
+        self.edit(EN, '"dom.label": "Stop"', '"dom.label": "Halt"')
+        code, out = self.run_en("--allow-labels", "--exempt-pin=dom.label@guide/member/page.md")
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 pin(s) exempted", out)
+        code, out = self.run_en("--allow-labels", "--exempt-pin=dom.label@guide/member/other.md")
+        self.assertEqual(code, 1, out)
+        self.assertIn("matched nothing", out)
+
+    # --triples.
+
+    def test_en_triples_prints_ja_old_new_and_exits_zero(self):
+        self.edit(EN, '"dom.label": "Stop"', '"dom.label": "Halt"')
+        self.edit(EN, "{profiles} profiles", "{profile} profiles")  # a failing change still lists
+        self.edit(EN, "Line one.\\nLine two.", "Line one. Line two.")
+        code, out = self.run_en("--triples")
+        self.assertEqual(code, 0, out)
+        rows = [l.split("\t") for l in out.splitlines()]
+        self.assertEqual(rows[0], ["key", "ja", "en old", "en new"])
+        self.assertIn(["dom.label", "停止", "Stop", "Halt"], rows)
+        self.assertIn(["dom.multi", "1 行目です。\\n2 行目です。", "Line one.\\nLine two.", "Line one. Line two."], rows)
+        self.assertNotIn("FAIL", out)
+
+    def test_en_triples_with_nothing_changed_prints_only_the_header(self):
+        code, out = self.run_en("--triples")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out.splitlines()[0], "key\tja\ten old\ten new")
+
+    def test_triples_needs_lang_en(self):
+        code, out = self.run_check("--triples")
+        self.assertEqual(code, 2, out)
+
+    def test_en_unknown_ref(self):
+        p = subprocess.run([sys.executable, str(SCRIPT), "no-such-ref", "--lang", "en"], cwd=self.repo, capture_output=True, text=True)
+        self.assertEqual(p.returncode, 2, p.stderr)
 
 
 if __name__ == "__main__":
