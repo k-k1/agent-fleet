@@ -518,7 +518,7 @@ export const admin = {
   "admin.engines_civitai_red": "Civitai Red（NSFW の姉妹ドメイン）",
   "admin.engines_civitai_red_show": "モデル検索に Civitai Red のタブを出す",
   "admin.engines_civitai_red_note":
-    "civitai.red は Civitai が NSFW 表示のために分けた姉妹ドメインで、このタブだけが nsfw=true を付けて検索します。作例画像はぼかさずに並びます。内容の絞り込みではありません——既定の Civitai タブにも nsfwLevel が 0 でないモデルは含まれます。取り込みフォームへの civitai.red の URL の貼り付けは、この設定に関わらず通ります。",
+    "civitai.red は Civitai が NSFW 表示のために分けた姉妹ドメインで、このタブだけが nsfw=true を付けて検索します。作例画像はぼかさずに並びます。内容の絞り込みではありません。既定の Civitai タブにも nsfwLevel が 0 でないモデルは含まれます。取り込みフォームへの civitai.red の URL の貼り付けは、この設定に関わらず通ります。",
   "admin.engines_civitai_red_unavailable": "この配備には Civitai Red がありません。Control Plane に AF_ENGINE_CIVITAI_RED を設定すると、ここで切り替えられるようになります。",
   // 🔴 この赤い行は FLUX 専用ではなくクラス全体に出る（engineCommercialUse が
   // non-commercial / -nc / cc-by-nc を含む名前すべてに `no` を返す）。CC-BY-NC と BFL の
@@ -528,7 +528,7 @@ export const admin = {
   // 配備を有料で提供する形態が無いので起きない状況を警告していたうえ、S3 に置くこと自体は
   // 商用利用ではない（ADR 0072 決定 10 は「取り込みは拒まない」と決めている）。
   "admin.engines_ingest_noncommercial":
-    "🔴 非商用ライセンスです。商用の場面での利用と、生成物の商用利用が制限されえます。有効にする前にライセンス本文を確認してください。",
+    "🔴 非商用ライセンスです。商用の場面での利用と、生成物の商用利用が制限される場合があります。有効にする前にライセンス本文を確認してください。",
   // The GPU rung this role buys (ADR 0074). The hourly figure comes from the ladder the
   // operator declared, never from a number written here: the box is selectable now.
   "admin.engines_class": "インスタンスクラス: ",
@@ -560,20 +560,20 @@ export const admin = {
   // スタートを待つこと。その 2 つを読んだ人だけがチェックを入れられる文面にする。
   "admin.engines_spot_allow": "中断を許容する（Spot のインスタンスを買ってよい）",
   "admin.engines_spot_note":
-    "Spot のインスタンスは AWS に取り上げられることがあります。取り上げられると、その時点で処理中の応答は失われ、次の要求はコールドスタート（llm 約 9 分・image 約 3 分）を待ちます。同じ提案が続けて 2 回取り上げられたら、その提案はその回の起動では飛ばされるので、最後は VRAM の合うオンデマンドに着地します。",
+    "Spot のインスタンスは AWS に取り上げられることがあります。取り上げられると、その時点で処理中の応答は失われ、次の要求はコールドスタート（llm 約 9 分・image 約 3 分）を待ちます。同じ提案が続けて 2 回取り上げられたら、その提案はその回の起動では飛ばされるので、最後は VRAM の合うオンデマンドが使われます。",
   "admin.engines_spot_blocked": "中断の許容が要ります",
   "admin.engines_spot_pin_ignored":
-    "固定している提案は Spot なので、いまは使われません（自動選択に落ちています）。中断を許容するか、別の提案を選んでください。",
+    "固定している提案は Spot なので、いまは使われません（自動選択になっています）。中断を許容するか、別の提案を選んでください。",
   "admin.engines_spot_running":
-    "いま動いているインスタンスは Spot です。チェックを外しても取り上げられなくなるわけではありません——次に買うインスタンスから効きます。",
-  "admin.engines_class_pending": "いま動いているのは {t} のインスタンスです。選んだクラスは次に買うインスタンスから効きます。入れ替えるとコールドスタート 1 回ぶん（llm 約 9 分・image 約 3 分）かかり、旧いインスタンスが退場するまで新しいインスタンスは起動しません。",
+    "いま動いているインスタンスは Spot です。チェックを外しても取り上げられなくなるわけではありません。次に買うインスタンスから反映されます。",
+  "admin.engines_class_pending": "いま動いているのは {t} のインスタンスです。選んだクラスは次に買うインスタンスから反映されます。入れ替えるとコールドスタート 1 回ぶん（llm 約 9 分・image 約 3 分）かかり、旧いインスタンスが退場するまで新しいインスタンスは起動しません。",
   "admin.engines_class_replace": "いま入れ替える",
   // 🔴 The choice is SAVED before it is applied, so a failed apply leaves the picker showing a
   // class the capacity provider does not hold — and picking it again is no change at all. The
   // retry has to be a button of its own, or the only way out is a detour through another class.
   "admin.engines_class_apply_failed": "クラスは保存しましたが、キャパシティプロバイダへの書き込みに失敗しました。次に買うインスタンスはまだ前のクラスのままです: {m}",
   "admin.engines_class_apply_retry": "もう一度適用する",
-  "admin.engines_class_vram_ok": "有効なモデルのうち最大は {id} で {n} MiB（{src}）、このクラスは {m} MiB です。",
+  "admin.engines_class_vram_ok": "有効なモデルのうち最大は {id} で {n} MiB（{src}）です。このクラスは {m} MiB です。",
   "admin.engines_class_vram_over": "有効なモデルのうち最大は {id} で {n} MiB（{src}）ですが、このクラスは {m} MiB です。載らない可能性があります。",
   "admin.engines_class_vram_unknown": "有効なモデルが必要とする VRAM は分かりません（誰も測っていません）。「収まる」という意味ではありません。",
   // ⚠️ 上の比較は「和」ではなく「最大」である（VRAM に載るのは 1 つずつだから）。llm と
@@ -586,7 +586,7 @@ export const admin = {
   // キーを連結して作るので、存在しないキーをそのまま描いていた。
   "admin.engines_vram_src_weights_kv": "重み＋KV キャッシュの下限",
   "admin.engines_vram_src_unknown": "不明",
-  "admin.engines_vram_confirm": "{id} は {n} MiB（{src}）を必要としますが、いま選んでいるクラスは {m} MiB です。CUDA は VRAM が足りないと遅くなるのではなく落ちます。量子化やオフロードで載ることもあるので、承知のうえなら続けてください。",
+  "admin.engines_vram_confirm": "{id} は {n} MiB（{src}）を必要としますが、いま選んでいるクラスは {m} MiB です。CUDA は VRAM が足りないと遅くなるのではなく失敗します。量子化やオフロードで載ることもあるので、承知のうえなら続けてください。",
   "admin.engines_vram_confirm_go": "承知のうえで有効にする",
   "admin.engines_model_vram": "VRAM {n} MiB",
   "admin.engines_model_window_context": "コンテキスト",
@@ -634,7 +634,7 @@ export const admin = {
   "admin.engines_uptime_none": "この期間に動いていた記録はありません。",
   "admin.engines_uptime_error": "稼働実績を読み込めませんでした。",
   "admin.engines_uptime_note":
-    "約 {n} 秒ごとのサンプリングです。「インスタンスがあった時間」には、まだ応答できない起動中（実測 165〜197 秒）と、タスクが消えたあともインスタンスが残っている後始末（実測 427〜477 秒）が入ります——どちらも課金されますが、要求には答えていません。記録を始める前の時間は空白のままで、後から取ることはできません。金額ではありません。",
+    "約 {n} 秒ごとのサンプリングです。「インスタンスがあった時間」には、まだ応答できない起動中（実測 165〜197 秒）と、タスクが消えたあともインスタンスが残っている後始末（実測 427〜477 秒）が入ります。どちらも課金されますが、要求には答えていません。記録を始める前の時間は空白のままで、後から取ることはできません。金額ではありません。",
   // 左レールのグループ見出し（ルート）。テナント＝一覧と登録簿、デプロイ全体＝
   // デプロイに 1 つしかない面、横断で見る＝全テナントを跨いで数える面。
   "admin.group_tenants": "テナント",
@@ -659,12 +659,12 @@ export const admin = {
   "admin.delete_member_row_title": "{key} を名簿から完全に削除しますか？",
   "admin.delete_member_row_confirm": "完全に削除する",
   "admin.delete_member_row_body": "外した記録ごと、この人の行を削除します。取り消せません。もう一度招待すると、まっさらな新しいメンバーとして始まります。",
-  "admin.delete_member_row_gone": "消えるもの: 上限設定・アクセストークン・SSM の設定・定時実行・メモ・通知・セッション共有。",
-  "admin.delete_member_row_kept": "残るもの: 監査ログ・クラウド費用・稼働時間。過去の記録と請求は書き換えません。",
+  "admin.delete_member_row_gone": "上限設定・アクセストークン・SSM の設定・定時実行・メモ・通知・セッション共有が消えます。",
+  "admin.delete_member_row_kept": "監査ログ・クラウド費用・稼働時間は残ります。過去の記録と請求は書き換えません。",
   // テナントの削除（super_admin・空のテナントだけ）
   "admin.delete_tenant": "テナントを削除",
   "admin.delete_tenant_title": "テナントの削除",
-  "admin.delete_tenant_hint": "空になったテナントだけ削除できます。メンバーが 1 人でも残っている、Workspace が残っている、内部 git リポジトリが残っている場合は拒否します——DB の行は、クラウドやディスクに残った実体への唯一の手掛かりだからです。",
+  "admin.delete_tenant_hint": "空になったテナントだけ削除できます。メンバーが 1 人でも残っている、ワークスペースが残っている、内部 git リポジトリが残っている場合は拒否します。DB の行は、クラウドやディスクに残った実体への唯一の手掛かりだからです。",
   "admin.delete_tenant_repo_hint": "⚠️ 内部 git リポジトリは、メンバーが名簿に残っているうちに削除してください。最後の 1 人を外すと、リポジトリを削除する画面へ誰も入れなくなります。",
   "admin.delete_tenant_confirm_title": "テナント {slug} を削除しますか？",
   "admin.delete_tenant_confirm": "削除する",
@@ -688,7 +688,7 @@ export const admin = {
     "配布するのはヘッダ名だけです。値は各メンバーが自分のワークスペースで入力します。",
   "admin.mcp_user_secret_hint":
     "配布するのは接続先とヘッダ名だけになり、値は各メンバーが自分のワークスペースに入力します。ここで値を配布すると、そのトークンは全メンバーのコンテナ内で平文で読めます。",
-  "admin.mcp_url_hint": "MCP エンドポイントの URL。資格情報は URL ではなくヘッダに入れてください。",
+  "admin.mcp_url_hint": "MCP エンドポイントの URL です。資格情報は URL ではなくヘッダに入れてください。",
   "admin.mcp_enabled_hint": "無効にすると定義は残したまま、どのメンバーにも配布されなくなります。",
   "admin.mcp_restart_note":
     "各メンバーのワークスペースは 5 分ごとに取得します。反映されるのは、その後に起動したセッションからです。",
@@ -711,7 +711,7 @@ export const admin = {
   "admin.no_matching_audit": "一致するログがありません。",
   "admin.mode_label": "モード",
   "admin.egress_enforce_note": "enforce: 許可リスト外の通信を遮断します。先に log-only で実態を確認してから切り替えてください。",
-  "admin.egress_logonly_note": "log-only: 観測のみで遮断しません。許可リストを固めてから enforce へ。",
+  "admin.egress_logonly_note": "log-only: 観測だけで遮断しません。許可リストを固めてから enforce へ切り替えてください。",
   "admin.egress_proposed": "提案中（要承認）",
   "admin.approve": "承認",
   "admin.reject": "却下",
@@ -719,14 +719,14 @@ export const admin = {
   "admin.egress_entry_ph": "host か .suffix.example.com",
   "admin.egress_reason_ph": "理由（任意）",
   "admin.add": "追加",
-  "admin.egress_no_entries": "追加の許可エントリはありません（製品既定の許可のみ有効）。",
+  "admin.egress_no_entries": "追加の許可エントリはありません（製品既定の許可だけが有効です）。",
   "admin.retire": "取消",
   "admin.egress_observed": "観測された宛先",
   "admin.period": "期間",
   "admin.days_1": "1日",
   "admin.days_7": "7日",
   "admin.days_30": "30日",
-  "admin.egress_no_records": "記録がありません（egress プロキシ未設定か、対象期間に通信なし）。",
+  "admin.egress_no_records": "記録がありません（egress プロキシが未設定か、対象期間に通信がありません）。",
   "admin.egress_allowed": "{n} 許可",
   "admin.egress_blocked": "遮断",
   "admin.egress_blocked_candidate": "遮断候補",
@@ -748,15 +748,15 @@ export const admin = {
   "admin.tts_polly_sep": " ／ Polly: ",
   "admin.tts_polly_ready": "利用可",
   "admin.tts_polly_unset": "未設定",
-  "admin.tts_starting_note": "起動には 1〜2 分かかります。準備が整うまで、日本語の読み上げは Polly が代読します（Polly 未設定なら無音）。",
+  "admin.tts_starting_note": "起動には 1〜2 分かかります。準備が整うまで、日本語の読み上げは Polly が代読します（Polly 未設定なら音声は出ません）。",
   "admin.tts_stopping_note":
-    "無効にしました。読み上げはすでに Polly へ切り替わっています。エンジンの停止は約 1 分後です（押し間違いや、すぐ有効に戻す操作で、2GB の pull と 70〜80 秒の起動を払い直さないための猶予）。この間に有効へ戻せば、停止も再起動も起きません。",
+    "無効にしました。読み上げはすでに Polly へ切り替わっています。エンジンの停止は約 1 分後です（押し間違いや、すぐ有効に戻す操作で、2 GB の pull と 70〜80 秒の起動を繰り返さないための猶予）。この間に有効へ戻せば、停止も再起動も起きません。",
   "admin.tts_ondemand_note":
     "オンデマンド: 読み上げの需要（5 分間で 2,000 文字）が溜まった時点で自動起動し、30 分だれも読み上げなければ自動停止します。起動が終わるまでの日本語は Polly が代読します。自動の起動・停止はすべて監査ログに残ります。",
   "admin.tts_no_engine":
     "この環境には VOICEVOX エンジンがありません（ECS 管理下でもないため、この画面から起動することもできません）。有効にしてもずんだもんへは一切流れないので、無効で固定しています。エンジンを用意すれば自動で操作できるようになります。",
   "admin.tts_disable_note":
-    "無効にすると、読み上げはただちに Polly へ回り、AWS では約 1 分後に ECS の desired count が 0 になります（停止中コスト 0）。読み上げ自体はユーザー設定（音声読み上げ）側で ON/OFF します。",
+    "無効にすると、読み上げはただちに Polly に切り替わり、AWS では約 1 分後に ECS の desired count が 0 になります（停止中のコストは 0 です）。読み上げ自体はユーザー設定（音声読み上げ）側でオン／オフします。",
   "admin.tts_dict_title": "テナント共通の読み仮名辞書",
   "admin.saving": "保存中…",
   "admin.tts_dict_ph": "表記=読み（1 行に 1 件）\n例）agent-fleet=エージェントフリート\n# コメント行",
@@ -771,7 +771,7 @@ export const admin = {
   "tenant.tab_cost": "クラウド費用",
   "admin.usage_title": "稼働時間（ワークスペースの占有）",
   "admin.usage_intro":
-    "インフラ占有＝ワークスペースが起動していた時間の集計です（Claude 利用料は各自のサブスクで、ここには含みません）。約 5 分ごとのサンプリングのため誤差があります。",
+    "インフラ占有とは、ワークスペースが起動していた時間の集計です（Claude 利用料は各自のサブスクで、ここには含みません）。約 5 分ごとのサンプリングのため誤差があります。",
   "admin.from": "開始",
   "admin.to": "終了",
   "admin.apply": "適用",
@@ -837,7 +837,7 @@ export const admin = {
   "admin.ws_stop": "ワークスペース停止まで",
   "admin.interaction_halt": "判断待ちの halt まで",
   "admin.interaction_ph": "空 = 左に従う",
-  "admin.interaction_hint": "「判断待ち」= 質問・計画の承認待ち・許可待ち・利用上限メニュー・認証切れ。答えが返るまでコンテナが動き続けるので、通常のアイドルとは別に決められます。畳んでも対話は失われません（再開後にミラーのカードから回答すると届きます）。",
+  "admin.interaction_hint": "「判断待ち」は、質問・計画の承認待ち・許可待ち・利用上限メニュー・認証切れを指します。答えが返るまでコンテナが動き続けるので、通常のアイドルとは別に決められます。停止しても対話は失われません（再開後にミラーのカードから回答すると届きます）。",
   "admin.idle_ph_30m": "例 30m（空=デプロイ既定 1h）",
   "admin.idle_ph_60m": "例 60m（空=デプロイ既定 2h）",
   "admin.idle_hint_1": "放置された Claude セッションは「セッション停止まで」で停止中（再開可）になり、接続も稼働もないワークスペースは「ワークスペース停止まで」で停止します。書式は ",
@@ -869,7 +869,7 @@ export const admin = {
   "admin.agent_cli_update": "エージェント CLI の更新",
   "admin.allow_self_update": "メンバーがエージェント CLI と rtk を自分で最新へ更新するのを許可",
   "admin.allow_self_update_hint":
-    "対象は claude / opencode / codex / Copilot / Antigravity（agy）/ rtk。OFF（既定）は全員がこのデプロイのイメージ版で固定。ON にすると各メンバーが自分の設定で「起動時に最新へ更新」を選べます（コンテナ内 in-place 更新・Stop → Start で反映／戻せます）。",
+    "対象は claude / opencode / codex / Copilot / Antigravity（agy）/ rtk です。オフ（既定）では全員がこの配備のイメージ版で固定されます。オンにすると各メンバーが自分の設定で「起動時に最新へ更新」を選べます（コンテナ内 in-place 更新・Stop → Start で反映／戻せます）。",
   "admin.engine_ingest_title": "推論エンジンのモデル取り込み",
   "admin.allow_engine_ingest": "このテナントの管理者がモデルを取り込むのを許可",
   "admin.allow_engine_ingest_hint":
@@ -878,7 +878,7 @@ export const admin = {
   "admin.allow_engine_llm": "セルフホストのチャットエンジン（llm）の利用を許可",
   "admin.allow_engine_image": "セルフホストの画像生成エンジン（image）の利用を許可",
   "admin.engine_use_hint":
-    "GPU のインスタンスは時間課金なので、このテナントがそれを使ってよいかという費用の判断です。役（llm / image）単位で、モデル単位ではありません——カタログはデプロイに 1 つのままです（上のモデル取り込みとは別の権限）。オフにすると、起動メニューとカタログからその役が消え、既存のセッションも次の要求で拒否されます。",
+    "GPU のインスタンスは時間課金なので、このテナントがそれを使ってよいかという費用の判断です。役（llm / image）単位で、モデル単位ではありません。カタログは配備に 1 つのままです（上のモデル取り込みとは別の権限）。オフにすると、起動メニューとカタログからその役が消え、既存のセッションも次の要求で拒否されます。",
   "admin.saved": "保存しました",
   "admin.no_members": "メンバーがいません。下のフォームから追加してください。",
   "admin.add_failed": "追加に失敗: {msg}",
@@ -940,8 +940,8 @@ export const admin = {
     "この種類は CPU の系統が変わります。次回起動時に、ホーム内のこの系統向けでない導入物（各エージェント CLI・node・Chromium など）を入れ直します（数分）。~/repos 配下の node_modules / target / .venv は消えませんが、そのままでは動かないので各自で入れ直してください。",
   "admin.ws_cpu_na": "このランタイムでは CPU を選べません（インスタンスを丸ごと使うため）。",
   "admin.ws_disk_home": "ワークスペースの home（永続）",
-  "admin.ws_disk_home_hint": "0 = デプロイ既定 {n} GiB。home の作成時にだけ反映され、あとから縮められません。",
-  "admin.ws_disk_quota_hint": "0 = 制限なし。表示用の目安で、強制はされません。",
+  "admin.ws_disk_home_hint": "0 を指定すると配備の既定の {n} GiB になります。home の作成時にだけ反映され、あとから縮められません。",
+  "admin.ws_disk_quota_hint": "0 を指定すると制限なしになります。表示用の目安で、強制はされません。",
   "admin.ws_disk_work_hint": "0 = デプロイ既定 {n} GiB",
   // --- サイズと上限（ADR 0045 補遺）。「操作」から独立した 1 枚に出す。並んでいた
   // 相手が home 掃除とメンバー削除で、設定の変更が取り消せない操作と同じ列にいた。---
@@ -954,7 +954,7 @@ export const admin = {
   // home が拡張できるランタイム（ecs-ec2）での言い方。増やす方向だけが今ある home に
   // 効き、減らす方向は次に作り直したときにしか効かない——EBS の制約で、方針ではない。
   "admin.ws_disk_home_grow_hint":
-    "0 = デプロイ既定 {n} GiB。増やすと今ある home がそのまま拡張されます。減らしても今ある home は変わりません（EBS は縮小できません）。",
+    "0 を指定すると配備の既定の {n} GiB になります。増やすと今ある home がそのまま拡張されます。減らしても今ある home は変わりません（EBS は縮小できません）。",
   "admin.home_resize_growing": "home を {from} → {to} GiB へ拡張しています。ワークスペースは止まりません。",
   "admin.home_resize_shrink":
     "今ある home は {from} GiB のままです（EBS は縮小できません）。{to} GiB は次に home を作り直したときに使われます。",
@@ -1013,7 +1013,7 @@ export const admin = {
   "admin.invite_domains": "招待できるドメイン",
   "admin.invite_domains_unit": "メンバー追加時のガードのみ",
   "admin.login_rules_hint":
-    "「招待できるドメイン」はメンバー追加時にだけ効きます。既にメンバーの人は、別ドメインでもそのまま使えます（外すには下のメンバー詳細から「メンバーを外す」）。" +
+    "「招待できるドメイン」はメンバー追加時にだけ適用されます。すでにメンバーの人は、別ドメインでもそのまま使えます（外すには下のメンバー詳細から「メンバーを外す」）。" +
     "「自動参加ドメイン」は 1 ドメインにつき 1 テナントだけ設定できます。",
   "admin.login_url": "このテナント専用のログイン URL:",
 
@@ -1028,7 +1028,7 @@ export const admin = {
   // --- テナント定義の認証方式（docs/log/61 §61.11・P4）。子会社ごとに Entra が違う場合。
   // 作るのはテナント管理者、有効化はデプロイ管理者（決定 30）。この非対称が本体。---
   "admin.idp_title": "このテナントで使えるサインイン方法",
-  "admin.idp_note": "自前の方式の有効化にはデプロイ管理者の承認が必要",
+  "admin.idp_note": "自前の方式の有効化にはデプロイ管理者の承認が必要です",
   "admin.idp_hint":
     "このテナントに入るのに使える方法の全部です。デプロイ共通の方式と、このテナント専用に登録した方式が並びます。" +
     "自社の IdP（Entra / Okta / Keycloak など）や GitHub の組織は「サインイン方法を追加」から登録でき、" +
@@ -1041,7 +1041,7 @@ export const admin = {
   "admin.idp_show": "ボタンに出す",
   "admin.idp_deployment_wide": "デプロイ共通",
   "admin.idp_accept_last":
-    "最後の 1 つは外せません。すべて外すと「制限なし＝全部受け入れる」の意味になり、絞ったつもりで全開になります。",
+    "最後の 1 つは外せません。すべて外すと「制限なし＝全部受け入れる」の意味になり、絞ったつもりでもすべて受け入れることになります。",
   "admin.idp_show_last":
     "最後の 1 つは外せません。すべて隠すとボタンの無いログイン画面になるため、指定ごと無視されます。",
   "admin.idp_show_needs_accept": "受け入れていないので、ログイン画面には出ません。",
@@ -1062,15 +1062,15 @@ export const admin = {
   "admin.idp_kind_github": "GitHub の組織",
   "admin.idp_orgs": "許可する GitHub 組織",
   "admin.idp_orgs_hint":
-    "カンマ区切り（必須）。このいずれかに「アクティブなメンバー」として所属していることが、サインインの条件になります。" +
+    "カンマ区切りでの入力が必須です。このいずれかに「アクティブなメンバー」として所属していることが、サインインの条件になります。" +
     "組織側でサードパーティ OAuth App を制限している場合は、組織の管理者がこの OAuth App を承認するまで全員が拒否されます。",
   "admin.idp_github_app_hint":
     "GitHub の設定でこのテナント用の OAuth App を作り、コールバック URL に {url} を登録してから、client_id と client_secret をここに入れてください。",
   "admin.idp_github_domains_note":
     "GitHub が渡すのは本人が検証済みのアドレス 1 件だけです。会社ドメイン以外のアドレスが主アドレスになっている人は、" +
-    "ここで落としてください（通すと、その人は既存のワークスペースではなく新しいワークスペースに入ります）。",
+    "ここで除外してください（通すと、その人は既存のワークスペースではなく新しいワークスペースに入ります）。",
   "admin.idp_issuer": "issuer（発行者 URL）",
-  "admin.idp_issuer_hint": "IdP の issuer URL。Entra は自社テナントの GUID を含む URL を指定します（common / organizations は tid の指定が必須）。",
+  "admin.idp_issuer_hint": "IdP の issuer URL です。Entra は自社テナントの GUID を含む URL を指定します（common / organizations は tid の指定が必須です）。",
   "admin.idp_client_id": "client_id",
   "admin.idp_client_secret": "client_secret",
   "admin.idp_secret_hint": "保存時に暗号化され、画面に表示されることはありません。",
@@ -1081,10 +1081,10 @@ export const admin = {
   "admin.idp_trust_email": "IdP が email_verified を返す",
   "admin.idp_domains": "受け入れるメールドメイン",
   "admin.idp_domains_hint":
-    "この方式でサインインできるドメイン（必須）。空にはできません — この方式はデプロイ共通の許可リストを使わないため、空だと誰も入れなくなります。" +
+    "この方式でサインインできるドメインです（必須）。空にはできません。この方式は配備共通の許可リストを使わないため、空だと誰も入れなくなります。" +
     "同じドメインを 2 つのテナントが持つことはできません。",
   "admin.idp_tids": "許可する tenant id（Entra の tid・任意）",
-  "admin.idp_tids_hint": "カンマ区切り。issuer が common / organizations の場合は必須です。",
+  "admin.idp_tids_hint": "カンマ区切りで入力します。issuer が common / organizations の場合は必須です。",
   "admin.idp_link_claim": "同一アカウントの見分け方",
   "admin.idp_link_claim_none": "既定（sub で見分ける）",
   "admin.idp_link_claim_hint":
@@ -1103,15 +1103,15 @@ export const admin = {
     "★ 自テナントの方式だけに絞ると、他テナントの方式で入っている兼務の人は、このテナントに切り替えられなくなります" +
     "（同じアドレスでも、別の IdP のアカウントは別のログインとして扱われるため）。" +
     "その人が使う方式は「受け入れる」のままにして「ボタンに出す」だけ外せば、このテナントのログイン画面には出ません。" +
-    "受け入れても入れる人が増えるわけではありません — 誰がこのテナントに入れるかを決めるのは名簿です。",
+    "受け入れても入れる人が増えるわけではありません。誰がこのテナントに入れるかを決めるのは名簿です。",
   "admin.login_rules_methods_moved":
-    "★ どのサインイン方法を受け入れるか・ログイン画面のボタンに出すかは、「サインイン方法」の面で行ごとに切り替えます。",
+    "★ どのサインイン方法を受け入れるか・ログイン画面のボタンに出すかは、「サインイン方法」の画面で行ごとに切り替えます。",
   // ★ 停止の順序ガード（docs/log/61 §61.17.4）。拒否ではなく確認 — 停止は「漏れた IdP を
   // 止める」手段でもあるので、常に始めるより速くあってよい。人数は CP の文言を出す。
   "admin.idp_suspend_title": "{name} を停止する",
   "admin.idp_suspend_body":
     "先に、その人たちに別のサインイン方法を紐づけてもらってください（設定 → 個人設定 → アカウント）。" +
-    "停止したあとでは、本人が自分で足すことはできません — 紐づけにはサインインが必要で、そのサインインに使うのがこの方式だからです。",
+    "停止したあとでは、本人が自分で足すことはできません。紐づけにはサインインが必要で、そのサインインに使うのがこの方式だからです。",
   "admin.idp_suspend_members":
     "この方式しか使ったことのない現役メンバーが {n} 人います。停止するとその人たちが締め出されます。",
   "admin.idp_delete_title": "{name} を削除する",
@@ -1129,7 +1129,7 @@ export const admin = {
   "admin.remove_title": "{key} を {slug} から外す",
   "admin.remove_confirm": "外す",
   "admin.remove_body": "このメンバーを {slug} の名簿から外します。次のリクエストからアクセスできなくなります。",
-  "admin.remove_keeps": "ワークスペース・home・保存済みの認証情報は残ります（消すには先に「home を掃除」）。",
+  "admin.remove_keeps": "ワークスペース・home・保存済みの認証情報は残ります（消すには先に「home を掃除」を使ってください）。",
   "admin.remove_undo": "戻すには、同じメールアドレスでもう一度「メンバー追加」してください。",
 
   // --- テナント設定モーダル（テナント管理者の面）。管理モーダル＝デプロイ全体、
@@ -1147,14 +1147,14 @@ export const admin = {
   "tenant.net_on": "制限あり",
   "tenant.net_off": "制限なし",
   "tenant.net_allowed": "許可するネットワーク",
-  "tenant.net_allowed_unit": "CIDR か単独アドレスをカンマ区切りで（IPv4/IPv6）。空 = 制限なし。",
+  "tenant.net_allowed_unit": "CIDR か単独アドレスをカンマ区切りで指定します（IPv4/IPv6）。空欄なら制限しません。",
   "tenant.net_your_ip": "このデプロイから見えているあなたのアドレス",
-  "tenant.net_your_ip_unit": "規則はこの値と照合されます（ブラウザが自分で思っているアドレスではありません）。",
+  "tenant.net_your_ip_unit": "規則はこの値と照合されます（ブラウザ自身が認識しているアドレスではありません）。",
   "tenant.net_ip_unknown": "判定できません",
   "tenant.net_ip_unknown_hint": "この要求の送信元をコントロールプレーンが特定できないため、規則を適用できません。AF_TRUSTED_PROXY_HOPS の設定を運用者に確認してください。",
-  "tenant.net_proxy_not_configured": "コントロールプレーンの手前にプロキシがありますが、デプロイがそれを申告していません（AF_TRUSTED_PROXY_HOPS）。このままだと全員がそのプロキシから来ているように見えるため、保存を止めています——絞ったつもりで全員を通す設定になってしまいます。運用者に連絡してください。",
+  "tenant.net_proxy_not_configured": "コントロールプレーンの手前にプロキシがありますが、配備がそれを申告していません（AF_TRUSTED_PROXY_HOPS）。このままだと全員がそのプロキシから来ているように見えるため、保存を止めています。絞ったつもりで全員を通す設定になってしまいます。運用者に連絡してください。",
   "tenant.net_scope_hint": "制限されるのはテナントの「利用」で、サイトへの到達ではありません。ログイン画面はどこからでも開けますしサインインも通りますが、一覧に無いネットワークからはこのテナントの中身を開けません。",
-  "tenant.net_exempt_hint": "対象外: MCP と内蔵 Git です（本人のワークスペースの中から呼ばれるので、人がどこにいるかを表しません）。これらを止めるにはメンバーシップを無効化してください。デプロイ管理者はこの規則の対象外で、設定を間違えても必ず戻せます。",
+  "tenant.net_exempt_hint": "MCP と内蔵 Git は対象外です（本人のワークスペースの中から呼ばれるので、人がどこにいるかを表しません）。これらを止めるにはメンバーシップを無効化してください。配備管理者はこの規則の対象外で、設定を間違えても必ず戻せます。",
   "tenant.net_layers_hint": "これはアクセス制限であってネットワーク防御ではありません（要求はコントロールプレーンまで届き、セッションを検証したあとで拒否されます）。届く前に止めるには、運用者がロードバランサ側で絞ります。",
   // 連携（docs/log/71）— 外部サービス側にテナントが用意した資格情報の登録。
   "tenant.group_integrations": "連携",
@@ -1171,8 +1171,8 @@ export const admin = {
   "tenant.git_oauth_no_base_url": "このデプロイには PUBLIC_BASE_URL が設定されていないため、登録するコールバック URL を組み立てられません。登録しても「OAuth で接続」は失敗します（コードグラントの戻り先が無いため）。運用者に PUBLIC_BASE_URL の設定を依頼してください。",
   "tenant.git_oauth_jira_access": "アプリ作成時の Access type は Resource-level を推奨します（認可したサイト 1 つだけに権限が限られます）。Account-level はアカウント内の全サイトに恒久的な権限を渡すことになります。",
   "tenant.git_oauth_bb_scopes": "Bitbucket は認可 URL にスコープを載せないので、コンシューマの Permissions がそのまま権限になります。Account: Read と Repositories: Read/Write（clone / push 用）に加え、課題管理レールに PR を出すなら Pull requests: Read も入れてください。後から足した場合、既に接続済みのメンバーは接続し直しが必要です（古い権限がトークンに焼かれているため）。",
-  "tenant.git_oauth_jira_scopes": "Jira は Atlassian の 3LO アプリです（Bitbucket のコンシューマとは別に登録します）。Permissions に Jira API を追加し、read:jira-work / read:jira-user / write:jira-work の 3 つを許可してください（write は「作業の報告をコメントする」に要ります）。offline_access は Permissions の一覧には出てきません —— OAuth 側のスコープで、af が認可 URL に付けるので設定は不要です。",
-  "tenant.git_oauth_jira_sharing": "アプリの Distribution で Sharing を有効にしてください。3LO アプリは既定で「開発中」で、そのままだと作成者本人しか認可できません —— 他のメンバーは Atlassian の「You don't have access to this app」で止まり、af には何も返らないので無言で未接続のままになります。有効化には Vendor name・Contact link・Privacy policy URL の入力が要り、これらは認可するメンバーに見えます（個人名や私用アドレスではなく、会社名と問い合わせ窓口を入れてください）。Marketplace には載りません。",
+  "tenant.git_oauth_jira_scopes": "Jira は Atlassian の 3LO アプリです（Bitbucket のコンシューマとは別に登録します）。Permissions に Jira API を追加し、read:jira-work / read:jira-user / write:jira-work の 3 つを許可してください（write は「作業の報告をコメントする」に要ります）。offline_access は Permissions の一覧には出てきません。OAuth 側のスコープで、af が認可 URL に付けるので設定は不要です。",
+  "tenant.git_oauth_jira_sharing": "アプリの Distribution で Sharing を有効にしてください。3LO アプリは既定で「開発中」で、そのままだと作成者本人しか認可できません。他のメンバーは Atlassian の「You don't have access to this app」で止まり、af には何も返らないので無言で未接続のままになります。有効化には Vendor name・Contact link・Privacy policy URL の入力が要り、これらは認可するメンバーに見えます（個人名や私用アドレスではなく、会社名と問い合わせ窓口を入れてください）。Marketplace には載りません。",
   "tenant.git_oauth_gh_device": "GitHub はデバイスフローを使うため secret もコールバックも不要です。ただしアプリ側で「Enable Device Flow」を有効にしてください（無効だと接続開始で失敗します）。",
   "tenant.git_oauth_where": "アプリの登録先:",
   "tenant.git_oauth_remove": "登録を削除",
@@ -1184,7 +1184,7 @@ export const admin = {
   "tenant.gh_src_builtin_app": "組み込みの GitHub App",
   "tenant.gh_src_builtin_app_sub": "登録不要ですぐ使えます。メンバーはアプリを自分のアカウントや organization にインストールし、届くリポジトリを選んでから認可します。権限が絞られ、organization ではインストールとして管理できます。",
   "tenant.gh_src_custom": "自前のアプリ",
-  "tenant.gh_src_custom_sub": "自社の GitHub organization に登録した OAuth App または GitHub App。どちらなのかは保存時に GitHub に問い合わせて判別します。",
+  "tenant.gh_src_custom_sub": "自社の GitHub organization に登録した OAuth App または GitHub App です。どちらなのかは保存時に GitHub に問い合わせて判別します。",
   "tenant.gh_src_none": "使わない",
   "tenant.gh_src_none_sub": "「OAuth で接続」を出しません。メンバーはアクセストークンの貼り付けで接続します。",
   "tenant.gh_builtin_off": "この環境では運用者が組み込みアプリを無効にしています（AF_GITHUB_BUILTIN_APPS=off）。",
@@ -1235,12 +1235,12 @@ export const admin = {
   "tenant.engine_access_load_failed": "設定を読み込めませんでした。時間をおいて開き直してください。",
   "tenant.engine_access_save_failed": "保存できませんでした。接続を確かめてもう一度お試しください。",
   "tenant.engine_access_state_tenant_off": "テナント全体で停止中のため使えません（デプロイ管理者の設定）。",
-  "tenant.engine_access_state_everyone": "いまはメンバー全員が使えます。チェックは「許可したメンバーだけ」にしたときに効きます。",
+  "tenant.engine_access_state_everyone": "いまはメンバー全員が使えます。チェックは「許可したメンバーだけ」にしたときに適用されます。",
   "tenant.engine_access_state_granted": "使えます（許可したメンバーだけ）。",
   "tenant.engine_access_state_not_granted": "使えません（許可したメンバーだけ・未許可）。",
   "tenant.engine_access_member_note": "「メンバー全員／許可したメンバーだけ」の切り替えは「運用 › 推論エンジンの利用者」で行います。",
   "tenant.engine_access_ticks_note":
-    "チェックが効くのは「許可したメンバーだけ」を選んだ種類だけです。テナント管理者も自動では許可されません。変更は実行中のワークスペースにもすぐ届きます。",
+    "チェックが適用されるのは「許可したメンバーだけ」を選んだ種類だけです。テナント管理者も自動では許可されません。変更は実行中のワークスペースにもすぐ届きます。",
   "tenant.picker": "テナント",
   "tenant.none": "管理しているテナントがありません。",
   "tenant.forbidden": "このテナントの設定を見る権限がありません。",
@@ -1250,7 +1250,7 @@ export const admin = {
     "これらの規則そのものを変えるには、デプロイ管理者に依頼してください。",
   "tenant.rules_unset": "未設定（制限なし）",
   "tenant.rules_autojoin_note": "このドメインのメールアドレスの人は、初回ログインでこのテナントに参加します。",
-  "tenant.rules_invite_note": "メンバーを追加するときだけ効くガードです。既にメンバーの人には影響しません。",
+  "tenant.rules_invite_note": "メンバーを追加するときだけ適用されるガードです。すでにメンバーの人には影響しません。",
 
   // === 掃除パネル（features/sessions/CleanupModal.tsx・docs/log/32）===
   "clean.title": "掃除",
@@ -1336,7 +1336,7 @@ export const admin = {
   "clean.purge_old_title": "{days} 日より古いアーカイブを完全に削除しますか？",
   "clean.purge_old_body": "{count} 件（{size}）が元に戻せなくなります。ごみ箱は自動では空になりません。",
   "clean.purge_old_done": "{count} 件を完全に削除しました（{size}）。",
-  "clean.purge_old_done_kept": "{count} 件を完全に削除しました。復元が途中で止まっているなどで {kept} 件は残しました。",
+  "clean.purge_old_done_kept": "{count} 件を完全に削除しました。復元が途中で止まっているなどの理由で {kept} 件は残しました。",
   "clean.purge_restore_incomplete": "このアーカイブの復元が途中で止まっています。もう一度「復元」してから削除してください。",
   // 掃除候補の「理由」（Agent は clean.reason.* のキーだけを返す・ADR 0033）。
   "clean.reason.locked": "ロック中（削除保護。解除するまで掃除対象外）",
