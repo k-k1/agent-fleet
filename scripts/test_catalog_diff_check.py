@@ -787,6 +787,16 @@ class CatalogDiffCheckEnTests(Base):
         self.assertIn("ALLOWED term: ", out)
         self.assertIn("2 of 2 term allowance(s) applied", out)
 
+    def test_en_allow_term_case_variants_sum_as_one_glossary_unit(self):
+        self.edit(EN, '"dom.default_a": "The default setting."', '"dom.default_a": "The default default setting."')
+        self.commit_all("two defaults")
+        self.edit(EN, "The default default setting.", "The standard standard setting.")
+        code, out = self.run_en("--allow-term", "dom.default_a:Default>standard",
+                                "--allow-term", "dom.default_a:default>standard")
+        self.assertEqual(code, 0, out)
+        self.assertIn("2 of 2 term allowance(s) applied", out)
+        self.assertEnTrips("allow", "--allow-term", "dom.default_a:Default>standard")
+
     def test_en_allow_term_caps_word(self):
         self.edit(EN, "Autosave is OFF.", "Autosave is off.")
         code, out = self.run_en("--allow-term", "dom.toggle:OFF>off")

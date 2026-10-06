@@ -551,10 +551,12 @@ def main(argv):
                 if mine:
                     # An allowance holds only if every category counting OLD and NEW moved by
                     # exactly the stated amount; items shared by several allowances sum up.
+                    # en glossary terms are counted case-insensitively: Default and default are one unit.
+                    canon = lambda t: t.lower() if en and item_domains(en, t, terms) == ['glossary'] else t
                     want = collections.defaultdict(int)
                     for _, (_, old_t, new_t, cnt, _) in mine:
-                        want[old_t] -= cnt
-                        want[new_t] += cnt
+                        want[canon(old_t)] -= cnt
+                        want[canon(new_t)] += cnt
                     bad = set()
                     seen = {}
                     for item, w in want.items():
@@ -564,19 +566,19 @@ def main(argv):
                             bad.add(item)
                     for ai, a in mine:
                         spec = ai
-                        if a[1] in bad or a[2] in bad:
+                        if canon(a[1]) in bad or canon(a[2]) in bad:
                             allow_why[spec].append(f'{where}: ' + ', '.join(
-                                f'{i} {seen[i][0][1]} -> {seen[i][0][2]} (allowed {want[i]:+d})' for i in (a[1], a[2])))
+                                f'{i} {seen[i][0][1]} -> {seen[i][0][2]} (allowed {want[i]:+d})' for i in (canon(a[1]), canon(a[2]))))
                             continue
                         allow_applied.setdefault(spec, []).append(where)
-                        for item, sign in ((a[1], -1), (a[2], 1)):
+                        for item, sign in ((canon(a[1]), -1), (canon(a[2]), 1)):
                             for d, _, _ in seen[item]:
                                 if d:
                                     k = next(t for t in terms if t.lower() == item.lower()) if en and d == 'glossary' else item
                                     adj[d][k] += sign * a[3]
                         if not listing:
                             print(f'ALLOWED term: {where}: {a[1]} -> {a[2]} x{a[3]} '
-                                  f'({a[1]} {seen[a[1]][0][1]} -> {seen[a[1]][0][2]}, {a[2]} {seen[a[2]][0][1]} -> {seen[a[2]][0][2]})')
+                                  f'({a[1]} {seen[canon(a[1])][0][1]} -> {seen[canon(a[1])][0][2]}, {a[2]} {seen[canon(a[2])][0][1]} -> {seen[canon(a[2])][0][2]})')
                 for name, extract in (INVARIANTS_EN if en else {k: v.findall for k, v in INVARIANTS.items()}).items():
                     a, b = collections.Counter(extract(o)), collections.Counter(extract(n))
                     if name in adj:
