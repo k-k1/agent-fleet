@@ -63,7 +63,7 @@ export const notifications = {
   "notif.start_deadline.body_phase": "{limit}。最後の段階：{phase}",
   "notif.start_deadline.speech": "ワークスペースの起動が終わらなかったため、自動で停止しました。",
   "notif.submodules_incomplete.title": "submodule が未取得のまま作業を開始しました",
-  "notif.submodules_incomplete.body": "{repo}：{paths} が取得できていません。取得を続行/再試行しています。",
+  "notif.submodules_incomplete.body": "{repo}：{paths} が取得できていません。取得を続行または再試行しています。",
   "notif.submodules_incomplete.speech": "{repo} の submodule が未取得のまま作業を開始しました。",
   "notif.schedule_failed.title": "定時実行が失敗しました",
   "notif.schedule_failed.speech": "定時実行「{name}」が実行できませんでした。",
