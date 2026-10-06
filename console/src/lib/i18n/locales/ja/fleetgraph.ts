@@ -12,7 +12,7 @@ export const fleetgraph = {
   "fgraph.zoom_out": "縮小（表示範囲を広げる）",
   "fgraph.pan_left": "過去へ",
   "fgraph.pan_right": "未来へ",
-  "fgraph.reset_window": "直近24時間に戻す",
+  "fgraph.reset_window": "直近 24 時間に戻す",
   "fgraph.empty": "レーンがありません",
   "fgraph.load_failed": "フリート俯瞰図の読み込みに失敗しました",
 

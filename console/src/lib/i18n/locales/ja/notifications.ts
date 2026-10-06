@@ -85,7 +85,7 @@ export const notifications = {
   "notif.usage_reset.title": "{source} の制限がリセットされました",
   "notif.usage_reset.body": "{window}がリセットされました。",
   "notif.usage_reset.speech": "{source}の{window}がリセットされました。",
-  "notif.window.5h": "5時間枠",
+  "notif.window.5h": "5 時間枠",
   "notif.window.week": "週間枠",
 
   // === P5 通知センター（NotificationCenter） ===
@@ -125,7 +125,7 @@ export const notifications = {
   "noti.conversation_untitled": "無題",
   "noti.notifications": "通知",
   "noti.center": "通知センター",
-  "noti.past_7_days": "過去7日間",
+  "noti.past_7_days": "過去 7 日間",
   "noti.tts_on": "音声通知：オン（クリックでオフ）",
   "noti.tts_off": "音声通知：オフ（クリックでオン）",
   "noti.tts_aria": "セッションの音声通知",
