@@ -43,13 +43,13 @@ export const mirror = {
   "mirror.exec_settings_edit": "モデル・推論 effort・モードを変更",
   "mirror.exec_settings_after_resume": "再開後に実行設定を変更できます",
   "mirror.exec_settings": "実行設定",
-  "mirror.plan_mode_note": "Plan モード — 承認するまで実装しません",
+  "mirror.plan_mode_note": "Plan モードです。承認するまで実装しません。",
   // 再開／アップデート注意カード
   "mirror.resume_choice_note":
     "ターミナルで再開方法の選択待ちです。コンテキストをそのまま維持するには「2. Resume full session as-is」を選んでください。",
   "mirror.open_terminal": "ターミナルを開く",
   "mirror.codex_update_note":
-    "codex のアップデート確認待ちです。「1. Update now」を選ぶとプロセスが終了しセッションが切れるため、スキップを推奨します（更新はイメージ再ビルドで反映）。",
+    "codex のアップデート確認待ちです。「1. Update now」を選ぶとプロセスが終了しセッションが切れるため、スキップを推奨します（更新はイメージ再ビルドで反映されます）。",
   "mirror.skip_continue": "スキップして続行",
   "mirror.compacting": "コンテキストを圧縮中…",
   // タイトル提案
@@ -68,7 +68,7 @@ export const mirror = {
   "mirror.plan_pending": "プラン承認待ち",
   // プランレビュー（doc ペインで選択 → コメント → セッションのチャットから送信）
   "plan.review_tag": "レビュー",
-  "plan.review_hint": "本文を選択するとコメントを追加できます。送信はセッションのチャットのプランカードから。",
+  "plan.review_hint": "本文を選択するとコメントを追加できます。送信はセッションのチャットのプランカードから行います。",
   "plan.add_comment": "コメント",
   "plan.comment_placeholder": "この箇所への指摘（Ctrl+Enter で追加）",
   "plan.comment_placeholder_enter": "この箇所への指摘（Enter で追加・Shift+Enter で改行）",
@@ -126,7 +126,7 @@ export const mirror = {
   "mirror.ws_stopped": "ワークスペース停止中",
   "mirror.resume_continue": "再開して続ける",
   "mirror.viewing_history_resume": "履歴を閲覧中（入力するには再開）",
-  "mirror.folder_missing_history": "作業フォルダが存在しないため再開できません（履歴のみ閲覧可）",
+  "mirror.folder_missing_history": "作業フォルダが存在しないため再開できません（履歴だけ閲覧可）",
   "mirror.viewing_history_ws_stopped": "履歴を閲覧中（ワークスペース停止中）",
   "mirror.select_in_terminal": "ターミナルで選択",
   "mirror.resume_choice_hint": "再開方法の選択待ち（コンテキスト維持は「2」）",
@@ -305,7 +305,7 @@ export const mirror = {
   "mirror.from_schedule_manual_title": "スケジュールの手動発火（今すぐ発火）で投入されたプロンプトです。",
   "mirror.from_auto_resume": "自動再開",
   "mirror.from_auto_resume_title":
-    "ターンが中断（接続断・一時的なレート制限など）したため、Agent が続きを走らせるために自動で送ったプロンプトです。あなたもアシスタントも入力していません。",
+    "ターンが中断（接続断・一時的なレート制限など）したため、Agent が続きを実行するために自動で送ったプロンプトです。あなたもアシスタントも入力していません。",
   "mirror.from_chat": "{provider} から",
   "mirror.from_chat_title": "チャット（{provider} など）から返信で送られた入力です。コンソールで入力したものではありません。",
   "mirror.from_peer": "別のセッションから",
@@ -321,10 +321,10 @@ export const mirror = {
   "mirror.peer_intent.answer": "回答",
   "mirror.peer_intent.notice": "共有",
   "mirror.peer_intent_title.request":
-    "このセッションに行動を求めるメッセージです。送信側には「返事はできないときだけ来る」と伝えてあります（返事が無い＝やった、です）。",
+    "このセッションに行動を求めるメッセージです。送信側には「返事はできないときだけ来る」と伝えてあります（返事がないことは、やったことを示します）。",
   "mirror.peer_intent_title.question": "情報を求めるメッセージです。結論だけが1通返ります。",
   "mirror.peer_intent_title.answer":
-    "このセッションが送った質問への返答です。ここで打ち切りで、返信は送りません。",
+    "このセッションが送った質問への返答です。ここで打ち切りです。返信は送りません。",
   "mirror.peer_intent_title.notice": "知らせるだけのメッセージです。返信はしません。",
   "mirror.effort_hint": "推論の努力度（codex reasoning_effort / opencode variant）",
   "mirror.token_hint": "入力(文脈)↑ / 出力↓ トークン",
