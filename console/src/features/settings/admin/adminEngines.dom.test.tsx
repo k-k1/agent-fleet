@@ -196,7 +196,7 @@ describe("EnginesAdminView", () => {
   it("leaves a row naming a servable provider unmarked", async () => {
     api.mockResolvedValue({ super_admin: true, engines: [row({ provider: "comfy" })] });
     await mount();
-    expect(host!.textContent).not.toContain("comfy」を名乗っていますが");
+    expect(host!.textContent).not.toContain("comfy」として設定されていますが");
   });
 
   it("warns about the bill only while an engine is pinned on, and names no price of its own", async () => {
