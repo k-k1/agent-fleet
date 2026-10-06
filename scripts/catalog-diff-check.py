@@ -550,35 +550,43 @@ def main(argv):
                 mine = [(i, a) for i, a in enumerate(allowances) if a[0] == key]
                 if mine:
                     # An allowance holds only if every category counting OLD and NEW moved by
-                    # exactly the stated amount; items shared by several allowances sum up.
-                    # en glossary terms are counted case-insensitively: Default and default are one unit.
-                    canon = lambda t: t.lower() if en and item_domains(en, t, terms) == ['glossary'] else t
+                    # exactly the stated amount. Amounts sum per (category, counted unit), where
+                    # the unit is what that category counts: en glossary terms are
+                    # case-insensitive (Default and default are one unit), caps stay exact.
+                    def units(item):
+                        out = []
+                        for d in item_domains(en, item, terms) or [None]:
+                            out.append((d, item.lower() if en and d == 'glossary' else item))
+                        return out
                     want = collections.defaultdict(int)
                     for _, (_, old_t, new_t, cnt, _) in mine:
-                        want[canon(old_t)] -= cnt
-                        want[canon(new_t)] += cnt
-                    bad = set()
+                        for t, sign in ((old_t, -1), (new_t, 1)):
+                            for u in units(t):
+                                want[u] += sign * cnt
                     seen = {}
-                    for item, w in want.items():
-                        doms = item_domains(en, item, terms) or [None]
-                        seen[item] = [(d, item_count(en, d, item, o, terms), item_count(en, d, item, n, terms)) for d in doms]
-                        if any(nc - oc != w for _, oc, nc in seen[item]):
-                            bad.add(item)
+                    bad = set()
+                    for (d, k), w in want.items():
+                        seen[(d, k)] = (item_count(en, d, k, o, terms), item_count(en, d, k, n, terms))
+                        if seen[(d, k)][1] - seen[(d, k)][0] != w:
+                            bad.add((d, k))
                     for ai, a in mine:
                         spec = ai
-                        if canon(a[1]) in bad or canon(a[2]) in bad:
+                        us = units(a[1]) + units(a[2])
+                        if any(u in bad for u in us):
                             allow_why[spec].append(f'{where}: ' + ', '.join(
-                                f'{i} {seen[i][0][1]} -> {seen[i][0][2]} (allowed {want[i]:+d})' for i in (canon(a[1]), canon(a[2]))))
+                                f'{u[1]}{"" if u[0] is None else " [" + u[0] + "]"} {seen[u][0]} -> {seen[u][1]} (allowed {want[u]:+d})'
+                                for u in us if u in bad))
                             continue
                         allow_applied.setdefault(spec, []).append(where)
-                        for item, sign in ((canon(a[1]), -1), (canon(a[2]), 1)):
-                            for d, _, _ in seen[item]:
+                        for item, sign in ((a[1], -1), (a[2], 1)):
+                            for d, k in units(item):
                                 if d:
-                                    k = next(t for t in terms if t.lower() == item.lower()) if en and d == 'glossary' else item
+                                    k = next(t for t in terms if t.lower() == item.lower()) if en and d == 'glossary' else k
                                     adj[d][k] += sign * a[3]
                         if not listing:
+                            c1, c2 = seen[units(a[1])[0]], seen[units(a[2])[0]]
                             print(f'ALLOWED term: {where}: {a[1]} -> {a[2]} x{a[3]} '
-                                  f'({a[1]} {seen[canon(a[1])][0][1]} -> {seen[canon(a[1])][0][2]}, {a[2]} {seen[canon(a[2])][0][1]} -> {seen[canon(a[2])][0][2]})')
+                                  f'({a[1]} {c1[0]} -> {c1[1]}, {a[2]} {c2[0]} -> {c2[1]})')
                 for name, extract in (INVARIANTS_EN if en else {k: v.findall for k, v in INVARIANTS.items()}).items():
                     a, b = collections.Counter(extract(o)), collections.Counter(extract(n))
                     if name in adj:

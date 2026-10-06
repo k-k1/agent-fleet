@@ -364,13 +364,13 @@ class CatalogDiffCheckTests(Base):
     def test_allow_term_wrong_delta_fails(self):
         self.edit(JA, "自動保存は OFF です。", "自動保存はオフです。")
         out = self.assertTrips("allow", "--allow-term", "dom.toggle:OFF>オフ*2")
-        self.assertIn("OFF 1 -> 0 (allowed -2)", out)
+        self.assertIn("OFF [latin] 1 -> 0 (allowed -2)", out)
         self.assertGreater(self.counts(out)["latin"], 0, out)
 
     def test_allow_term_more_change_than_allowed_fails(self):
         self.edit(JA, "自動保存は OFF です。", "自動保存はオフです。オフです。")
         out = self.assertTrips("allow", "--allow-term", "dom.toggle:OFF>オフ")
-        self.assertIn("オフ 0 -> 2 (allowed +1)", out)
+        self.assertIn("オフ [glossary] 0 -> 2 (allowed +1)", out)
 
     def test_allow_term_count_covers_repeats(self):
         self.edit(JA, "自動保存は OFF です。", "OFF と OFF です。")
@@ -796,6 +796,19 @@ class CatalogDiffCheckEnTests(Base):
         self.assertEqual(code, 0, out)
         self.assertIn("2 of 2 term allowance(s) applied", out)
         self.assertEnTrips("allow", "--allow-term", "dom.default_a:Default>standard")
+
+    def test_en_allow_term_glossary_and_caps_units_sum_per_category(self):
+        self.edit(EN, '"dom.default_a": "The default setting."', '"dom.default_a": "The default DEFAULT setting."')
+        self.commit_all("default DEFAULT")
+        self.edit(EN, "The default DEFAULT setting.", "The standard standard setting.")
+        code, out = self.run_en("--allow-term", "dom.default_a:Default>standard",
+                                "--allow-term", "dom.default_a:DEFAULT>standard")
+        self.assertEqual(code, 0, out)
+        self.assertIn("2 of 2 term allowance(s) applied", out)
+        # An unapproved caps drift stays red: only the glossary half is allowed.
+        code, out = self.run_en("--allow-term", "dom.default_a:Default>standard*2")
+        self.assertEqual(code, 1, out)
+        self.assertGreater(self.counts(out)["caps"], 0, out)
 
     def test_en_allow_term_caps_word(self):
         self.edit(EN, "Autosave is OFF.", "Autosave is off.")
