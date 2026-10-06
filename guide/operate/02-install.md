@@ -57,7 +57,7 @@ There are 2 secrets in `.env` that you generate yourself. The generation command
 
 In addition, set the `DOCKER_GID` used by the CP to match the host's docker group GID (how to
 find the value is in the runbook). Getting this wrong results in permission denied on the docker
-socket after startup ([04](06-diagnose.md)).
+socket after startup ([06](06-diagnose.md)).
 
 ## 3. Configure the login IdP
 
@@ -75,7 +75,7 @@ https://<PUBLIC_DOMAIN>/oauth2/callback
 ```
 
 This path must match `<PUBLIC_BASE_URL>/oauth2/callback` exactly. If they diverge, you get
-"redirect URI mismatch" at login (a common failure; see [04](06-diagnose.md)).
+"redirect URI mismatch" at login (a common failure; see [06](06-diagnose.md)).
 
 Which keys you fill in depends on the IdP:
 
@@ -291,7 +291,7 @@ deployment.
 > (`AF_OAUTH_ALLOWED_EMAILS` / `_DOMAINS` / `_EMAILS_FILE`) **empty, and nobody invited to a
 > tenant yet, all logins are rejected** (fail-closed = designed to fail safe). On a first
 > install nobody is invited yet, so set at least one of them to get your first administrator in.
-> Details in [04](06-diagnose.md).
+> Details in [06](06-diagnose.md).
 
 ## 7. The first tenant and members
 

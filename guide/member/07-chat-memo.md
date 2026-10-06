@@ -311,7 +311,7 @@ flushing them to a session together later** (the **Memo queue** in the left pane
 say, jot down "want to fix that" items on your phone during the commute, then hand them
 over in one go at your PC.
 
-- **Capture**: write into "Add a quick memo… (send them together later)" and press "Add". You can also open a file and capture from "Send" in [05](04-files.md). Memos are grouped by repository and category.
+- **Capture**: write into "Add a quick memo… (send them together later)" and press "Add". You can also open a file and capture from "Send" in [04](04-files.md). Memos are grouped by repository and category.
 - **Capture straight into a category**: the **+** at the right of a category heading opens the input under that heading, and what you write lands in that category (and repository). No need to type the category name again.
 - **Read a long memo, then close it again**: a memo body is clamped to two lines; click it to open the full text (a long one stops at half the pane and scrolls inside the memo from there). **Collapse**, under the body or in the row's **⋯** menu, puts it back to two lines. Clicking the body again while it is open starts editing. The same **⋯** menu also has **Copy**, which puts the memo's text on the clipboard as written.
 - **Tidy up with AI**: select memos and hit **"Organize the selected memos with an assistant"**; it turns scribbles into clear instructions and suggests categories. The result is **always previewed** and nothing is applied until you approve with "Apply N item(s)".

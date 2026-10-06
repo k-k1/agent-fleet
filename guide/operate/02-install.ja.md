@@ -49,7 +49,7 @@ base64 化）は runbook の "Quick start" に載っています。
 > 詳細は [04-secure.md](04-secure.ja.md) と `docs/build/07-security.ja.md` §7.6。
 
 あわせて、CP が使う `DOCKER_GID` をホストの docker グループ GID に合わせます（値の求め方は
-runbook）。これを間違えると起動後に docker ソケットで permission denied になります（[04](06-diagnose.ja.md)）。
+runbook）。これを間違えると起動後に docker ソケットで permission denied になります（[06](06-diagnose.ja.md)）。
 
 ## 3. ログイン IdP を設定する
 
@@ -66,7 +66,7 @@ https://<PUBLIC_DOMAIN>/oauth2/callback
 ```
 
 このパスは `<PUBLIC_BASE_URL>/oauth2/callback` と完全に一致していなければなりません。ここが
-ズレるとログイン時に "redirect URI mismatch" になります（よくある失敗・[04](06-diagnose.ja.md)）。
+ズレるとログイン時に "redirect URI mismatch" になります（よくある失敗・[06](06-diagnose.ja.md)）。
 
 どのキーを埋めるかは IdP によって違います。
 
@@ -272,7 +272,7 @@ Console に盾アイコンの **Admin パネル**が見え、デプロイ全体�
 > / `_DOMAINS` / `_EMAILS_FILE`）が**すべて空で、かつまだ誰もテナントに招待されていないと全ログインを
 > 拒否**します（fail-closed = 安全側を優先する設計）。新規設置の時点では当然まだ誰も招待されていないので、
 > **最初の管理者を入れるために少なくとも 1 つは設定**してください。
-> 詳細は [04](06-diagnose.ja.md)。
+> 詳細は [06](06-diagnose.ja.md)。
 
 ## 7. 最初のテナントとメンバー
 

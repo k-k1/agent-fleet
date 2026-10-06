@@ -94,12 +94,12 @@ Use **"Check outcome"** to find out where it stands
 
 - Private repositories need a GitHub / Bitbucket **connection** first (⚙ Settings → "Git hosting" tab). Check whether it says "Not connected".
 - Double-check the spelling of the URL and branch name.
-- Submodules are fetched best-effort after the clone; even if they fail, the parent clone itself succeeds ([04](03-code.md)).
+- Submodules are fetched best-effort after the clone; even if they fail, the parent clone itself succeeds ([03](03-code.md)).
 
 ### A session says the submodules are missing / broken
 
 - A large submodule may not finish fetching inside the launch. The fetch keeps going in the
-  background, and the notification center tells you when it lands ([04](03-code.md)).
+  background, and the notification center tells you when it lands ([03](03-code.md)).
 - A submodule left half-fetched is repaired the next time a session launches in that working
   copy. To fix it right away, run `git submodule update --init --recursive` there in a terminal.
 
@@ -107,7 +107,7 @@ Use **"Check outcome"** to find out where it stands
 
 In ⚙ Settings → the "Git hosting" tab, check that the provider in question is **"Connected"**.
 If it isn't, connect via OAuth or a token. Once connected, authentication is transparent, so
-from then on you can clone / push without entering tokens ([04](03-code.md) · [06](06-agents.md)).
+from then on you can clone / push without entering tokens ([03](03-code.md) · [06](06-agents.md)).
 
 ### The browser pane shows `target-unreachable` / goes blank or 404
 
@@ -122,7 +122,7 @@ from then on you can clone / push without entering tokens ([04](03-code.md) · [
   **If preview subdomains are issued on your deployment, open it there first**: the app is served at the root, so
   the problem cannot arise. Otherwise switch to **"Open in pane"** (browser pane). If you really must use the
   lightweight preview, set `server.forward-headers-strategy=framework` (or `native`) for Spring Boot,
-  or adjust the base path on the app side for anything else ([08](10-integrations.md)).
+  or adjust the base path on the app side for anything else ([10](10-integrations.md)).
 
 ### The preview URL I gave a colleague returns 404
 
@@ -135,7 +135,7 @@ from then on you can clone / push without entering tokens ([04](03-code.md) · [
   **from their very next request**, even mid-session; that is deliberate.
 - **"Stopped" on their side** means your workspace is not running. **They cannot start your
   workspace**. Start it and tell them.
-- Removing the port from the exposed-ports list also produces a 404 ([08](10-integrations.md)).
+- Removing the port from the exposed-ports list also produces a 404 ([10](10-integrations.md)).
 
 ### HMR (live reload) doesn't work / no automatic refresh / the shell renders but no data
 
@@ -145,13 +145,13 @@ from then on you can clone / push without entering tokens ([04](03-code.md) · [
   **blocks cross-origin access to `/_next/*` by default**, so HMR never connects and hydration never finishes.
   `⚠ Blocked cross-origin request to Next.js dev resource` in the dev server log confirms it. Add
   **`allowedDevOrigins`** to `next.config.ts` (the URL changes on every start, so a wildcard is required;
-  see [08](10-integrations.md) for the exact form).
+  see [10](10-integrations.md) for the exact form).
 - **The lightweight preview and the preview subdomains both pass WebSocket and SSE through.** If HMR still does not
   connect, the dev server may be **embedding its own port into the client** (Vite does this). Then the app needs a
   setting such as `server.hmr.clientPort: 443`.
 - To avoid adding configuration, or to isolate the cause, use **"Open in pane"** (browser pane). A browser inside
   the workspace opens `127.0.0.1` directly, so HMR, WebSocket and SSE behave exactly like plain localhost
-  ([08](10-integrations.md)).
+  ([10](10-integrations.md)).
 
 ### Every API call in the preview returns 401 (`preview requires sign-in`)
 
@@ -159,7 +159,7 @@ from then on you can clone / push without entering tokens ([04](03-code.md) · [
   Next.js's `rewrites()` `destination` as **`http://127.0.0.1:8080`**. The proxy is a **server-side** call made
   by the dev server inside the container; it does not carry the login state your browser has, so pointing it at
   a preview URL gets it rejected at authentication. Assuming the frontend "cannot see" 8080 is the usual way
-  into this mistake ([08](10-integrations.md)).
+  into this mistake ([10](10-integrations.md)).
 - **If the browser is calling the 8080 URL directly**, note that signing in is per port. Open
   `https://<random>-8080.…` **in a tab once** to sign in there too. And if the page on 3000 calls 8080
   directly, turn on **"Allow calls between ports"** in the settings (off by default).
@@ -171,7 +171,7 @@ from then on you can clone / push without entering tokens ([04](03-code.md) · [
 - **`crashed`** means the browser inside the workspace terminated abnormally. Reopen it with **"Reconnect"**.
 - **If it keeps dying within a short time**, workspace memory pressure is the likely suspect. Clean up heavy builds, watchers, and
   browser panes left open, and keep in mind that browser panes are limited to **2** at a time. For how to check memory and
-  what to do about it, also see the FAQ entry "Builds die / freeze from running out of memory" below ([08](10-integrations.md)).
+  what to do about it, also see the FAQ entry "Builds die / freeze from running out of memory" below ([10](10-integrations.md)).
 
 ### No notifications arrive
 
@@ -272,7 +272,7 @@ message**. The limit is in ⚙ Settings → Assistant (it cannot be unlimited).
 
 If you only want normal completions to stay quiet, turn on **"Quiet completion reports"** in
 the same tab: the card and the notification still arrive, but no automatic turn runs
-([11](08-organising.md)).
+([08](08-organising.md)).
 
 ### The chat says the context went over the limit and won't answer
 
@@ -295,13 +295,13 @@ Check its row in the **Schedules** section of the left pane.
   the operator chat).
 - **"Run now"** exercises the same path as a timed firing (allow up to about a minute).
 - If there is no Schedules section at all, scheduled execution is disabled on this deployment
-  ([11](08-organising.md#scheduled-runs)).
+  ([08](08-organising.md#scheduled-runs)).
 
 ### Ctrl+C doesn't work in the terminal / I can't copy-paste
 
 Working as intended. In the terminal, Ctrl+C is passed to the program as an interrupt (SIGINT). **Copy is
 automatic on select, or Ctrl+Shift+C; paste with right-click / middle-click / Ctrl+Shift+V**
-([03](05-terminal.md)).
+([05](05-terminal.md)).
 
 ### App shortcuts such as the command palette don't work
 
@@ -314,19 +314,19 @@ terminal.
 - **"Pass every key to shell / SSM terminals"**: even the leader and the palette go through.
   Move focus to another pane to get the app operations back.
 
-**?** opens the list of what is bound to what ([03](05-terminal.md#shortcuts),
+**?** opens the list of what is bound to what ([05](05-terminal.md#shortcuts),
 [12](12-settings.md#keys)).
 
 ### On a phone, the keyboard pops up on its own / it's hard to operate
 
 The **control key row** under the terminal (`Esc` `Tab` arrows `^C` `⏎`) sends keys without
 bringing up the soft keyboard. You can scroll back through past output with a **one-finger vertical swipe**. Toggle the left pane
-with the **≡ (menu)** at the top left of the screen ([03](05-terminal.md)).
+with the **≡ (menu)** at the top left of the screen ([05](05-terminal.md)).
 
 ### Only the terminal stays dark on the light theme
 
 This is known behavior. Even after switching themes, the terminal (the black screen) background stays dark. The file
-viewer and other screens follow the theme ([03](05-terminal.md)).
+viewer and other screens follow the theme ([05](05-terminal.md)).
 
 ### The workspace has stopped without me noticing
 
@@ -343,16 +343,16 @@ cannot be undone (the conversation log files themselves remain). For the differe
 
 **Q. Can I use it from both my work PC and my home PC?**
 Yes. Your login and connections, as well as display settings like font / text size, are stored on the server
-and follow you on other devices and browsers ([03](05-terminal.md)).
+and follow you on other devices and browsers ([05](05-terminal.md)).
 
 **Q. If I stop the workspace, is my work lost?**
 No. Clones, uncommitted changes, the session list, and connections all remain. However,
 uncommitted changes exist only inside the workspace, so commit / push for long-term safekeeping
-([01](01-first-day.md) · [04](03-code.md)).
+([01](01-first-day.md) · [03](03-code.md)).
 
 **Q. Is it OK to run several tasks at the same time?**
 Yes. If each session works in its own independent worktree, edits won't collide. Worktrees are
-created by default ([02](02-sessions.md) · [04](03-code.md)).
+created by default ([02](02-sessions.md) · [03](03-code.md)).
 
 **Q. What's the difference between "Stop", "Delete", "Archive", and "Recreate"?**
 Stop = just pause (resumable), Delete = remove from the list (throwaway kinds), Archive = hide (restorable),

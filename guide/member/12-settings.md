@@ -54,12 +54,12 @@ Everything about appearance.
 - **Colour theme**: besides the app itself, you can theme the **session**, **shared session** and **assistant**
   surfaces separately ("inherit" follows the app theme). Different colours per surface make a grid of panes
   readable at a glance.
-- **Terminal**: font and font size ([03](05-terminal.md)).
-- **File viewer**: tab width, line numbers, wrapping, minimap, Markdown rendering ([05](04-files.md)).
+- **Terminal**: font and font size ([05](05-terminal.md)).
+- **File viewer**: tab width, line numbers, wrapping, minimap, Markdown rendering ([04](04-files.md)).
 - **Reader view** / **file icons** (icon set).
 - **Main area layout**: **split panes** (drag the dividers) or **tabbed grid** (each cell switches by tab).
   Stored **on this device only**, and the two layouts are remembered separately, so moving between them does not
-  disturb either ([03](05-terminal.md)). If you switch often, the same choice sits in **Appearance** (the paint
+  disturb either ([05](05-terminal.md)). If you switch often, the same choice sits in **Appearance** (the paint
   can) in the top bar.
 
 ### Account
@@ -152,14 +152,14 @@ Reads out replies from sessions and assistants.
     child-session row (all three cells), "Limit-reset notifications" the usage-limit row.
   - Nothing pops up or speaks for the session in the pane you are working in, whatever the table says.
 - **Service notifications**: stop sending to Discord / Slack **without disconnecting**. The connection itself,
-  and which events each service receives, live in the "Chat integration" tab ([08](10-integrations.md)).
+  and which events each service receives, live in the "Chat integration" tab ([10](10-integrations.md)).
 - History is in the **notification centre** (last 7 days), opened from the bell in the top bar. An entry
   you have not read puts a red dot on its session; **"Mark all as read"** clears them all at once
   ([02](02-sessions.md#reading-state-badges-and-notifications)).
 
 ### Assistant
 
-The behaviour of assistant chat and the fleet operator ([07](07-chat-memo.md), [11](08-organising.md)).
+The behaviour of assistant chat and the fleet operator ([07](07-chat-memo.md), [08](08-organising.md)).
 
 - **Output language**: follow the input / 日本語 / English. It changes chat replies only (the read-aloud
   language lives on the **Speech** tab).
@@ -174,7 +174,7 @@ The behaviour of assistant chat and the fleet operator ([07](07-chat-memo.md), [
   within it are handled in one turn), **quiet completion reports** (a normal completion delivers the card and
   the notification but takes no turn).
 - **Autopilot**: carries questions and plan approvals through automatically. Off by default
-  ([11](08-organising.md)).
+  ([08](08-organising.md)).
 - **Auto-resume after an interruption**: resumes a turn cut short by a dropped connection or a temporary rate
   limit. On by default.
 - **Automatic context compaction** and its **threshold**: summarise and hand a long conversation forward.

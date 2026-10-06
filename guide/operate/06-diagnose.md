@@ -65,7 +65,7 @@ background on how this works is in `docs/build/09-deploy.md`.
   path inside the CP too. If they diverge, **an empty home gets mounted**. **Symptom: the
   Workspace starts but home is empty / the work is missing.** If this symptom appears after a
   restore, check whether the destination `DATA_DIR` diverges from the original in path (at
-  least in basename) ([02](03-run.md)).
+  least in basename) ([03](03-run.md)).
 - **(C) `user: "1000:1000"` + `group_add: <DOCKER_GID>`**: homes are created owned by uid 1000
   (the Workspace's `dev` user), and the CP needs the host's docker group to use the docker
   socket. With the wrong `DOCKER_GID`, you get **permission denied on the socket**. **Symptom:
@@ -158,12 +158,12 @@ problem or a CP/deployment-wide problem**.
 **Q. What happens if I lose `AF_MASTER_KEY`?**
 A. All stored credentials and **every past backup become permanently undecryptable**
 (crypto-shred). There is no recovery. That is precisely why you store it in a vault separate
-from the data and back it up independently ([03](04-secure.md)).
+from the data and back it up independently ([04](04-secure.md)).
 
 **Q. What goes into a backup, and what does not?**
 A. Included: the DB, each user's home, plaintext Claude state, and Caddy certificates. Not
 included: `shared/jvm` (re-fetchable) and **`AF_MASTER_KEY`**. Details in
-[02](03-run.md).
+[03](03-run.md).
 
 **Q. The Workspace starts but home is empty.**
 A. Almost certainly DooD constraint (B). Check that `DATA_DIR` is the same absolute path inside
@@ -174,18 +174,18 @@ document).
 A. Yes, with caveats. Releases no longer ship an image tar, so either mirror the GHCR images
 into an internal registry and point `REGISTRY` at it, or carry them in with
 `release.sh --save` + `load-images.sh`. Use `tls internal` for TLS, and a baked-in image with
-`CLAUDE_INSTALL=0` for Claude (the air-gap section of [02](03-run.md)). Note that the
+`CLAUDE_INSTALL=0` for Claude (the air-gap section of [03](03-run.md)). Note that the
 fleet will start but the agents cannot work without reaching their model endpoints.
 
 **Q. I want to downgrade.**
 A. Not supported. Migrations are forward-compatible and applied automatically, and an older CP
 cannot understand the new schema. Rolling back is done not by "going back to the old image" but
-by "restoring from the backup taken before the upgrade" ([02](03-run.md)).
+by "restoring from the backup taken before the upgrade" ([03](03-run.md)).
 
 **Q. I ran `docker compose down` but Workspaces are still there.**
 A. That is normal. Workspaces (`af-ws-*`) are outside compose management; the CP started them
 with `docker run`. To stop them for sure, use force-stop in the Admin panel; or, if bringing the
-whole host down, `docker stop` the remaining `af-ws-*` separately ([02](03-run.md)).
+whole host down, `docker stop` the remaining `af-ws-*` separately ([03](03-run.md)).
 
 **Q. Can it be distributed across multiple hosts (HA / horizontal scaling)?**
 A. The delivery model is one company = one deployment. On compose the CP drives one host's

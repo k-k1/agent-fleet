@@ -15,7 +15,7 @@ be running).
 Six major CLI coding agents are compared in the table below. Two more run Managed only:
 **Muse Code** (muse, [below](#muse-code)) and the fleet's own llama.cpp engine
 (**lcpp**, [below](#lcpp)). The experimental Antigravity (agy) slot is covered in
-[08](10-integrations.md). All of them have a column in the
+[10](10-integrations.md). All of them have a column in the
 [feature matrix](#feature-matrix-all-agent-kinds). Connection changes take effect
 immediately; behavior settings apply **from each agent's new sessions**.
 
@@ -62,8 +62,8 @@ new session ([02](02-sessions.md)).
 The table at the top compares the six main CLI agents. This one adds Antigravity (agy),
 the Managed-only agents (lcpp and muse), and the non-agent session kinds (shell / SSM),
 and rolls in the cross-cutting features covered elsewhere in this guide: worktrees
-([04](03-code.md)), scheduled runs and the chat bridge ([11](08-organising.md),
-[08](10-integrations.md)). ✓ = supported, — = not applicable / not supported.
+([03](03-code.md)), scheduled runs and the chat bridge ([08](08-organising.md),
+[10](10-integrations.md)). ✓ = supported, — = not applicable / not supported.
 
 | Capability | claude | codex | cursor | copilot | kiro | agy | opencode | lcpp | muse | shell | ssm |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|

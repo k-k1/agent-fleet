@@ -115,7 +115,7 @@ Clean home → Delete backups** (where offered), in that order ("Removing a memb
 
 **Q. Where is egress (external traffic) control?**
 Egress (external traffic) control is super_admin only. When traffic control becomes necessary,
-consult your IT department ([operator/README.md](../operate/README.md)).
+consult your IT department ([operate/README.md](../operate/README.md)).
 
 **Q. If I force-stop a workspace, does that member's work disappear?**
 No. The container merely stops for the moment; the contents of home (repositories and settings)

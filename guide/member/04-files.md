@@ -23,7 +23,7 @@ See [Icons, badges, and menus](badges-and-menus.md) for when each item appears.
 
 To add files, **upload by drag & drop** or create them via "New file" in the right-click menu.
 If a file with the same name exists, an overwrite confirmation is shown. **Ctrl+click** (or
-middle-click) a file to **open it in a new pane** while keeping the current view ([03](05-terminal.md)).
+middle-click) a file to **open it in a new pane** while keeping the current view ([05](05-terminal.md)).
 
 The tree is **refreshed automatically**, so there is normally no need to refresh by hand:
 
@@ -54,7 +54,7 @@ name, format, size, and line count.
 
 - **Syntax highlighting, line numbers, minimap**: code is highlighted with language detection. Toggle line numbers and the minimap under "File viewer" in ⚙Settings → the "Display" tab.
 - **Huge files**: files that are extremely large or have extremely long lines automatically switch to "Plain view" (no highlighting or line numbers).
-- **LFS pointers**: files whose Git LFS content has not been fetched show an "LFS pointer" badge. Enter the repository in a terminal and run `git lfs pull` to fetch the content ([04](03-code.md)).
+- **LFS pointers**: files whose Git LFS content has not been fetched show an "LFS pointer" badge. Enter the repository in a terminal and run `git lfs pull` to fetch the content ([03](03-code.md)).
 
 ### Markdown and Mermaid
 
@@ -86,7 +86,7 @@ the file is read-only, so you can always drop down to the XML.
 - **Zoom and pan**: Ctrl (⌘) + wheel, or a two-finger pinch, zooms around the pointer; a plain wheel or drag pans. Double-click / double-tap toggles between fit and actual size.
 - **The theme follows the Console**: the diagram is redrawn in dark or light with you, keeping the page, zoom and position you were on.
 - **Nothing leaves your deployment.** The viewer is bundled, so the diagram is never sent to a third-party service, and the drawing works with no external network at all.
-- **Vendor icons** (AWS, GCP, Azure, Kubernetes, rack gear …) are fetched once per icon set by the Control Plane and cached for everyone. In a network-restricted deployment they may be missing, and then the shapes keep their size, colour, border and labels but the artwork inside is blank, but the diagram still opens. Your operator can pre-seed them ([operator 02](../operate/03-run.md)).
+- **Vendor icons** (AWS, GCP, Azure, Kubernetes, rack gear …) are fetched once per icon set by the Control Plane and cached for everyone. In a network-restricted deployment they may be missing, and then the shapes keep their size, colour, border and labels but the artwork inside is blank, but the diagram still opens. Your operator can pre-seed them ([operator 03](../operate/03-run.md)).
 
 There is a sample to try in this repository: **[`docs/assets/architecture.drawio`](../assets/architecture.drawio)**
 (the deployment shape of Agent Fleet itself, on AWS and on a single Docker Compose host).

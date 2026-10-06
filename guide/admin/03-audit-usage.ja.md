@@ -109,7 +109,7 @@ home を掃除 → バックアップを削除**（出ている場合）の順�
 
 **Q. 外部通信（egress）の統制はどこですか。**
 egress（外部通信）統制は super_admin 専用です。通信の制御が必要になったら情シスへ相談してください
-（[operator/README.md](../operate/README.ja.md)）。
+（[operate/README.md](../operate/README.ja.md)）。
 
 **Q. ワークスペースを強制停止すると、そのメンバーの作業は消えますか？**
 消えません。コンテナがいったん止まるだけで、home の中身（リポジトリや設定）は残ります。メンバーは

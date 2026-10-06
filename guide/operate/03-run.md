@@ -44,7 +44,7 @@ What is **not included**:
 > wherever you store it. At the same time, possessing the archive alone is not enough: without
 > `AF_MASTER_KEY`, the envelope-encrypted credentials cannot be decrypted. Conversely, if you
 > lose `AF_MASTER_KEY`, every past archive becomes permanently undecryptable (crypto-shred;
-> see [03](04-secure.md)). **Keep the key and the data separate, but back up both.**
+> see [04](04-secure.md)). **Keep the key and the data separate, but back up both.**
 
 ### Impact on users
 
@@ -307,4 +307,4 @@ art as it serves it.
   force-stops it from the Admin panel in the Console. When the whole host must be brought fully
   down for maintenance, after stopping the CP/Caddy you also need to `docker stop` the remaining
   `af-ws-*` containers separately (this also comes up in the troubleshooting chapter,
-  [04](06-diagnose.md)).
+  [06](06-diagnose.md)).

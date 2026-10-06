@@ -130,7 +130,7 @@ repository's folders.
 
 The standalone "Add" under **Repositories** in the left pane also lets you specify a different
 folder name when you specify a new branch or when a working copy with the same name already
-exists ([04](03-code.md)). This is a separate path from creating a worktree in "Start working".
+exists ([03](03-code.md)). This is a separate path from creating a worktree in "Start working".
 
 ## Starting from the issue tracker
 
@@ -375,7 +375,7 @@ Archived sessions are a "shelf" that cleanup does not touch (restore them from t
 browser). "Delete old ones" in the archive list deletes items older than 30 days in one go (they go to the trash too).
 
 You can also ask the fleet operator to do the same survey and tidy-up from chat
-([11](08-organising.md)).
+([08](08-organising.md)).
 
 ### Clearing one finished job (deleting a working copy)
 

@@ -44,7 +44,7 @@ in the Admin modal and never appears for you. What you can read is the current v
 
 The "Limits — Workspace: X / Session: Y" shown under **Tenant › Limits & idle** is the value
 currently in effect. When you want it changed, ask your IT department / deployment administrator
-([operator/README.md](../operate/README.md)).
+([operate/README.md](../operate/README.md)).
 
 ### Who may use the inference engines (you can set this)
 
@@ -246,7 +246,7 @@ run**. The point is that an employee leaving should not become a ticket for IT. 
 confirmation dialog says it keeps and deletes before you press it. **Situations that need heavier
 measures** (the container is broken and restarting doesn't fix it, host-side intervention is
 needed) **are the domain of your IT department / deployment administrator**
-([operator/README.md](../operate/README.md)).
+([operate/README.md](../operate/README.md)).
 
 ## What members experience when a limit is hit
 

@@ -11,7 +11,7 @@ English | [日本語](README.ja.md)
 You are your team's **tenant administrator**. From tenant settings you add members,
 keep an eye on how resources are being used, and review the audit log and usage. Many
 administrators are also working members: for everyday development read
-[use/](../member/README.md), and treat this shelf as the "managing the team" half.
+[member/](../member/README.md), and treat this shelf as the "managing the team" half.
 
 ## The short version
 
@@ -80,6 +80,6 @@ time at month end.
   include.
 
 What does not: capability facts (they are [ref/](../ref/README.md)), anything a member
-does for themselves ([use/](../member/README.md)), standing up or upgrading the
+does for themselves ([member/](../member/README.md)), standing up or upgrading the
 deployment ([operate/](../operate/README.md)), and implementation vocabulary: a tenant
 administrator has no shell on the host, and this shelf never assumes one.

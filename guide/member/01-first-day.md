@@ -89,7 +89,7 @@ inactivity (idle auto-stop). It saves resources, so if stopping it explicitly fe
 chore, it's fine to just leave it.
 
 However, **uncommitted changes exist only inside the workspace**. For long-running work,
-committing and pushing frequently is the safe habit ([04](03-code.md)).
+committing and pushing frequently is the safe habit ([03](03-code.md)).
 
 ### "A new version is available" and the **Restart needed** badge
 

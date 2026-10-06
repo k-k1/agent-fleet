@@ -136,10 +136,10 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Feature | Who | Where | Details |
 |---|---|---|---|
 | Deployment targets | deployment admin | before start | [deploy-targets.md](deploy-targets.md) |
-| Install, upgrade, back up, restore | deployment admin | a shell | [operator 01](../operate/02-install.md) / [02](../operate/03-run.md) |
-| Ingress, TLS and sign-in providers | deployment admin | a shell | [operator 03](../operate/04-secure.md) |
-| Audit log and egress control | deployment admin | Admin | [operator 03](../operate/04-secure.md) |
-| Monitoring integrations | deployment admin | Settings → Ops & monitoring | [member 10](../member/13-ops-tooling.md) |
+| Install, upgrade, back up, restore | deployment admin | a shell | [operator 02](../operate/02-install.md) / [03](../operate/03-run.md) |
+| Ingress, TLS and sign-in providers | deployment admin | a shell | [operator 04](../operate/04-secure.md) |
+| Audit log and egress control | deployment admin | Admin | [operator 04](../operate/04-secure.md) |
+| Monitoring integrations | deployment admin | Settings → Ops & monitoring | [member 13](../member/13-ops-tooling.md) |
 | Slot pool and instance classes | deployment admin | Admin | [deploy-targets.md](deploy-targets.md) |
 | The inference engines' GPU class | deployment admin (super_admin) | Admin → Inference engines | [admin 04](../admin/04-mcp-egress.md) |
 | Taking a model in — search, plan card, one press | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engine models | [admin 04](../admin/04-mcp-egress.md) |

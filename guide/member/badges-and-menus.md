@@ -65,7 +65,7 @@ are not attributed to any session.
 | Uncommitted | There are uncommitted changes |
 | = parent | Same commit as the parent ("parent" here is the upstream of the parent working copy's branch, e.g. `origin/develop`, or the parent working copy's HEAD when it has none; the chip's tooltip names it; commits the parent working copy has not pushed are not compared) |
 | unmerged N | There are N worktree-specific commits not contained in the parent |
-| parent+N, FF ok | The worktree's HEAD is contained in the parent, which is N commits ahead. **"Fast-forward from origin/develop"** in the menu (**"Fast-forward from parent"** without an upstream) brings them in ([04](03-code.md)) |
+| parent+N, FF ok | The worktree's HEAD is contained in the parent, which is N commits ahead. **"Fast-forward from origin/develop"** in the menu (**"Fast-forward from parent"** without an upstream) brings them in ([03](03-code.md)) |
 | diverged N↕M, no FF | Both the worktree and the parent have their own commits; a merge or rebase is needed |
 | n/a | The relation to the parent can't be determined (detached HEAD etc.) |
 | ↑N | N commits ahead of origin |
@@ -128,7 +128,7 @@ connection. Not this deployment's engine."** together with the model the last ch
 - **"From the operator", "Scheduled", "Manual run", "Auto-resume", "From <name>"** in the chat view: where a
   prompt you did not type came from: the fleet operator, a schedule, an auto-resume after an interruption, and
   [a message from another session](02-sessions.md#messages-between-sessions).
-- **"Paused"** on a schedule row: that schedule is suspended ([11](08-organising.md)).
+- **"Paused"** on a schedule row: that schedule is suspended ([08](08-organising.md)).
 - **The budget mark** (a pulse icon) on a stopped session: its estimated spend reached its budget and it was
   stopped; **"Raise budget & resume…"** in its menu carries on ([02](02-sessions.md#a-spend-budget-pausing-a-session-that-spends-too-much)).
 - **"N awaiting approval"** on shared sessions: proposals from a recipient are waiting for you
@@ -199,12 +199,12 @@ create a new branch based at that commit. While viewing a submodule, the branch-
 At the top right of a pane you get, depending on its content, **toggle wrapping**, **pop out into another tab**
 (the pane moves into a browser tab of its own) and **close** (middle-click / Ctrl+click closes without
 confirmation). Panes that cannot be popped out don't show the button
-([03](05-terminal.md#arranging-multiple-views-panes)).
+([05](05-terminal.md#arranging-multiple-views-panes)).
 
 ### Tabs (tabbed grid)
 
 Right-clicking **a session's tab** gives the same menu as that session's row in the left pane
-([03](05-terminal.md#arranging-multiple-views-panes)). Tabs that are not sessions, and every tab while the
+([05](05-terminal.md#arranging-multiple-views-panes)). Tabs that are not sessions, and every tab while the
 workspace is stopped, keep the browser's own menu.
 
 ### Cards in the sessions overview
