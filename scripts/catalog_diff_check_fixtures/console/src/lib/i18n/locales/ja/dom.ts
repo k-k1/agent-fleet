@@ -14,5 +14,8 @@ export const dom = {
   "dom.wording": "設定を保存してから、画面を閉じてください。",
   "dom.concat": "前半です。" + "後半です。",
   "dom.lang": "言語",
+  "dom.off_b": "同期は OFF です。",
+  "dom.default_a": "既定の設定です。",
+  "dom.default_b": "既定の設定です。",
   "dom.edge": " 先頭に空白があります。",
 };

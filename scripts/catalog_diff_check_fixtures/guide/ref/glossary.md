@@ -7,4 +7,5 @@
 | Terminal (CLI) | PTY | A terminal |
 | Mirror | transcript | The rendered view |
 | Input set (not on screen) | input set | The note in brackets is dropped |
+| Default | default | The initial value |
 | A | x | One-character terms are skipped |

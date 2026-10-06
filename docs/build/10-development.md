@@ -538,3 +538,43 @@ count as their long forms) in a changed value prints `WARN restriction` and is t
 `--triples` prints `key`, the current ja value, the old en and the new en for every changed
 value as TSV (tabs and line breaks escaped) and exits 0, for the reviewer comparing meaning
 against ja. Not part of CI.
+
+**Approving an intended term change** (`--allow-term`, `--allow-terms-file`). A rewrite that
+applies a terminology decision changes the glossary counts (and, in ja, the Latin-word counts:
+`OFF` → `オフ`), which the checks above report. Approve exactly that change, per key:
+
+```
+--allow-term KEY:OLD>NEW[*N]              repeatable; N defaults to 1
+--allow-terms-file PATH                   lines KEY<TAB>OLD<TAB>NEW[<TAB>N]; blank lines and # comments skipped
+```
+
+The allowance holds only if, in that key's changed value, the count of OLD fell by exactly N
+and the count of NEW rose by exactly N, in every category that counts the term (the glossary,
+and the Latin-word rule in ja or the ALL_CAPS rule in en; a term no category counts is
+counted directly). Everything else in the value is still held to the unchanged checks, the
+same term changing in another key still fails, and `--allow-labels`, PINNED and the other
+categories are not relaxed. Each applied allowance is printed (`ALLOWED term: … OLD -> NEW xN
+(OLD a -> b, NEW c -> d)`). An allowance that did not apply (wrong direction, wrong count, the
+key unchanged or absent) is `FAIL allow` with the counts it saw, and the drift it was meant
+to explain fails too. The `failures:` line gets an `allow=` entry only when an allowance is
+given, so a run without the flags prints exactly what it printed before. Counting rules are
+the existing ones (substring in ja, so `既定` inside `既定値` counts; word boundary in en).
+
+Allowances of one key that repeat the same OLD and NEW add up (two `OFF>オフ` equal `*2`). A
+term that is OLD in one allowance and NEW in another of the same key (reversed or chained) is
+refused with exit 2, because the two would cancel; state the net change as one allowance. In
+the TSV file the fields are taken as they are, so terms may contain `>`, `*` or `:`; on the
+command line `KEY` ends at the first `:`, `OLD` at the first `>`, and a trailing `*digits`
+on NEW is the count (use the file for a term that ends that way).
+
+Worked example (ja; `既定 OFF。` → `既定ではオフです。`, `デフォルト` → `既定`):
+
+```
+python3 scripts/catalog-diff-check.py origin/develop --allow-labels \
+  --allow-term 'agents.note_x:OFF>オフ' --allow-term 'surface_color.default:デフォルト>既定'
+```
+
+Without the flags this reports `FAIL latin` (`OFF` removed), `FAIL glossary` (`オフ` 0 → 1)
+and `FAIL glossary` (`既定` 0 → 1); with them, two `ALLOWED term:` lines and exit 0. Applying
+the same decision to a second key needs a second allowance. en works the same way
+(`--lang en --allow-term KEY:OFF>off`; glossary terms are matched case-insensitively).

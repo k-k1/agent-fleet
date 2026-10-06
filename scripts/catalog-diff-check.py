@@ -5,7 +5,7 @@ Compares console/src/lib/i18n/locales/ja/<domain>.ts with its content at a git r
 fails when a rewrite changed anything but the wording of values. Local use only; it is
 not wired into CI (the same stance as scripts/guide-diff-check.py).
 
-    python3 scripts/catalog-diff-check.py <ref> [--lang en] [--allow-labels] [--list-pinned] [files...]
+    python3 scripts/catalog-diff-check.py <ref> [--lang en] [--allow-labels] [--allow-term KEY:OLD>NEW] [--list-pinned] [files...]
 
 With no files, it checks every ja/*.ts file that differs from <ref> in the working tree.
 Per file, it fails (category in brackets) when:
@@ -41,6 +41,12 @@ reply language, say). After reading the hit and confirming it does not cite the 
 string, accept exactly that hit with `--exempt-pin KEY@PATH[:LINE]` (repeatable; without
 LINE every hit of the key in that file). Exempted hits are printed as EXEMPT and counted,
 unmatched exemptions are warned about, and other hits of the key still fail.
+Term changes: a rewrite that applies a terminology decision moves glossary (and, in ja, Latin
+word) counts on purpose. Approve it per key with `--allow-term KEY:OLD>NEW[*N]` (repeatable) or
+`--allow-terms-file PATH` (lines KEY<TAB>OLD<TAB>NEW[<TAB>N]): in that key's changed value OLD
+must fall by exactly N and NEW rise by exactly N (default 1), else the allowance is an error
+[allow] and the drift still fails; the same term moving in another key still fails. Applied
+allowances are printed as ALLOWED. Nothing else is relaxed. See docs/build/10-development.md §10.6.
 Limitation: a guide quote that reproduces only the start of a sentence (under 8 characters,
 or cut before the part the rewrite changed) is invisible here, because there is no old
 fragment to match. After a rewrite, also search the guide for the first words of each
@@ -270,6 +276,72 @@ def glossary_terms(text):
     return sorted({t for t in terms if len(t) >= 2 and '/' not in t})
 
 
+ALLOW_SPEC = re.compile(r'^([^:>\s]+):([^>]+)>(.+?)(?:\*(\d+))?$')
+CAPS_ITEM = re.compile(r'[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*')
+
+
+def parse_allowance(spec):
+    """KEY:OLD>NEW[*N] -> (key, old, new, n, spec)."""
+    m = ALLOW_SPEC.match(spec)
+    if not m:
+        raise ValueError(spec)
+    key, old, new, n = m.groups()
+    return make_allowance(key, old, new, int(n) if n else 1)
+
+
+def make_allowance(key, old, new, n):
+    if not (key and old and new) or old == new or n < 1:
+        raise ValueError(f'{key}:{old}>{new}*{n}')
+    return key, old, new, n, f'{key}:{old}>{new}' + (f'*{n}' if n != 1 else '')
+
+
+def read_allowance_file(path):
+    """Lines `KEY<TAB>OLD<TAB>NEW[<TAB>N]`; blank lines and `#` comments are skipped."""
+    out = []
+    with open(path, encoding='utf-8') as fh:
+        for no, line in enumerate(fh, 1):
+            line = line.rstrip('\n')
+            if not line.strip() or line.lstrip().startswith('#'):
+                continue
+            f = line.split('\t')
+            if len(f) not in (3, 4) or not all(f) or (len(f) == 4 and not f[3].isdigit()):
+                raise ValueError(f'{path}:{no}: want KEY<TAB>OLD<TAB>NEW[<TAB>N]')
+            out.append(make_allowance(f[0], f[1], f[2], int(f[3]) if len(f) == 4 else 1))
+    return out
+
+
+def item_domains(en, item, terms):
+    """The invariant categories that count `item`: what an allowance for it must also explain."""
+    doms = []
+    if en:
+        if item.lower() in {t.lower() for t in terms}:
+            doms.append('glossary')
+        if len(item) >= 2 and CAPS_ITEM.fullmatch(item):
+            doms.append('caps')
+    else:
+        if item in terms:
+            doms.append('glossary')
+        if re.fullmatch(r'[A-Za-z]+', item):
+            doms.append('latin')
+    return doms
+
+
+def item_count(en, dom, item, text, terms):
+    """How often `item` is counted in `text` by category `dom` (None: no category counts it)."""
+    if dom == 'glossary':
+        if en:
+            rx = next(r for t, r in terms.items() if t.lower() == item.lower())
+            return len(rx.findall(text))
+        return text.count(item)
+    if dom == 'latin':
+        return collections.Counter(INVARIANTS['latin'].findall(text))[item]
+    if dom == 'caps':
+        return collections.Counter(INVARIANTS_EN['caps'](text))[item]
+    if en:
+        return len(re.findall(r'(?<!\w)%s(?!\w)' % re.escape(item), text))
+    return text.count(item)
+
+
 def label_like(v):
     return len(v) <= LABEL_MAX and '。' not in v
 
@@ -344,7 +416,7 @@ class Sources:
 
 
 def main(argv):
-    ap = argparse.ArgumentParser(prog='catalog-diff-check.py', usage='%(prog)s <ref> [--lang en] [--allow-labels] [--list-pinned] [--triples] [files...]')
+    ap = argparse.ArgumentParser(prog='catalog-diff-check.py', usage='%(prog)s <ref> [--lang en] [--allow-labels] [--allow-term KEY:OLD>NEW] [--list-pinned] [--triples] [files...]')
     ap.add_argument('ref')
     ap.add_argument('files', nargs='*')
     ap.add_argument('--lang', choices=['ja', 'en'], default='ja',
@@ -355,6 +427,10 @@ def main(argv):
     ap.add_argument('--list-pinned', action='store_true')
     ap.add_argument('--exempt-pin', action='append', default=[], metavar='KEY@PATH[:LINE]',
                     help='accept one reviewed PINNED hit that is not a citation of the value')
+    ap.add_argument('--allow-term', action='append', default=[], metavar='KEY:OLD>NEW[*N]',
+                    help='approve one reviewed term change in one key: OLD count -N, NEW count +N')
+    ap.add_argument('--allow-terms-file', action='append', default=[], metavar='PATH',
+                    help='the same, one KEY<TAB>OLD<TAB>NEW[<TAB>N] per line')
     args = ap.parse_args(argv)
     en = args.lang == 'en'
     if args.triples and not en:
@@ -371,6 +447,15 @@ def main(argv):
             print(f'error: bad --exempt-pin {spec!r} (want KEY@PATH[:LINE])', file=sys.stderr)
             return 2
         exempt.append((key, path, line, spec))
+    allowances = []
+    try:
+        for spec in args.allow_term:
+            allowances.append(parse_allowance(spec))
+        for path in args.allow_terms_file:
+            allowances += read_allowance_file(path)
+    except (ValueError, OSError) as e:
+        print(f'error: bad term allowance {e} (want KEY:OLD>NEW[*N], OLD != NEW)', file=sys.stderr)
+        return 2
     used = set()
     exempted = 0
     fails = collections.Counter()
@@ -399,6 +484,19 @@ def main(argv):
     except Fail as e:
         print(f'error: {e}', file=sys.stderr)
         return 2
+
+    # An item that is OLD in one allowance of a key and NEW in another would let the two
+    # cancel (A>B with B>A, or a chain), so neither would have to hold on its own.
+    for key in {a[0] for a in allowances}:
+        fold = lambda t: t.lower() if en and 'glossary' in item_domains(en, t, terms) else t
+        olds = {fold(a[1]) for a in allowances if a[0] == key}
+        news = {fold(a[2]) for a in allowances if a[0] == key}
+        if olds & news:
+            print(f'error: {key}: {sorted(olds & news)[0]} is both an OLD and a NEW term of its allowances '
+                  '(reversed or chained; state the net change as one allowance)', file=sys.stderr)
+            return 2
+    allow_applied = {}
+    allow_why = collections.defaultdict(list)
 
     # Anything under locales/ outside the target dir must not move in a rewrite.
     outside = set(git('diff', '--name-only', '-z', args.ref, '--', CATALOGUE).split('\0'))
@@ -448,9 +546,49 @@ def main(argv):
                 if args.triples:
                     triples.append((path, key, o, n))
                     continue
+                adj = collections.defaultdict(lambda: collections.defaultdict(int))
+                mine = [(i, a) for i, a in enumerate(allowances) if a[0] == key]
+                if mine:
+                    # An allowance holds only if every category counting OLD and NEW moved by
+                    # exactly the stated amount; items shared by several allowances sum up.
+                    # en glossary terms are counted case-insensitively: Default and default are one unit.
+                    canon = lambda t: t.lower() if en and item_domains(en, t, terms) == ['glossary'] else t
+                    want = collections.defaultdict(int)
+                    for _, (_, old_t, new_t, cnt, _) in mine:
+                        want[canon(old_t)] -= cnt
+                        want[canon(new_t)] += cnt
+                    bad = set()
+                    seen = {}
+                    for item, w in want.items():
+                        doms = item_domains(en, item, terms) or [None]
+                        seen[item] = [(d, item_count(en, d, item, o, terms), item_count(en, d, item, n, terms)) for d in doms]
+                        if any(nc - oc != w for _, oc, nc in seen[item]):
+                            bad.add(item)
+                    for ai, a in mine:
+                        spec = ai
+                        if canon(a[1]) in bad or canon(a[2]) in bad:
+                            allow_why[spec].append(f'{where}: ' + ', '.join(
+                                f'{i} {seen[i][0][1]} -> {seen[i][0][2]} (allowed {want[i]:+d})' for i in (canon(a[1]), canon(a[2]))))
+                            continue
+                        allow_applied.setdefault(spec, []).append(where)
+                        for item, sign in ((canon(a[1]), -1), (canon(a[2]), 1)):
+                            for d, _, _ in seen[item]:
+                                if d:
+                                    k = next(t for t in terms if t.lower() == item.lower()) if en and d == 'glossary' else item
+                                    adj[d][k] += sign * a[3]
+                        if not listing:
+                            print(f'ALLOWED term: {where}: {a[1]} -> {a[2]} x{a[3]} '
+                                  f'({a[1]} {seen[canon(a[1])][0][1]} -> {seen[canon(a[1])][0][2]}, {a[2]} {seen[canon(a[2])][0][1]} -> {seen[canon(a[2])][0][2]})')
                 for name, extract in (INVARIANTS_EN if en else {k: v.findall for k, v in INVARIANTS.items()}).items():
                     a, b = collections.Counter(extract(o)), collections.Counter(extract(n))
-                    if a != b:
+                    if name in adj:
+                        d = {k: b[k] - a[k] for k in set(a) | set(b)}
+                        for k, v in adj[name].items():
+                            d[k] = d.get(k, 0) - v
+                        d = {k: v for k, v in d.items() if v}
+                        if d:
+                            fail(name, f'{where}: removed={[k for k, v in d.items() if v < 0 for _ in range(-v)][:6]} added={[k for k, v in d.items() if v > 0 for _ in range(v)][:6]} (after allowances)')
+                    elif a != b:
                         fail(name, f'{where}: removed={list((a - b).elements())[:6]} added={list((b - a).elements())[:6]}')
                 if o.count('\n') != n.count('\n'):
                     fail('newlines', f'{where}: {o.count(chr(10))} -> {n.count(chr(10))}')
@@ -460,7 +598,7 @@ def main(argv):
                 if en:
                     for t, rx in terms.items():
                         oc, nc = len(rx.findall(o)), len(rx.findall(n))
-                        if oc != nc:
+                        if oc + adj['glossary'].get(t, 0) != nc:
                             fail('glossary', f'{where}: "{t}" {oc} -> {nc}')
                     ro, rn = restriction_counts(o), restriction_counts(n)
                     if ro != rn:
@@ -470,7 +608,7 @@ def main(argv):
                             print(f'WARN restriction: {where}: {diff}')
                 else:
                     for t in terms:
-                        if o.count(t) != n.count(t):
+                        if o.count(t) + adj['glossary'].get(t, 0) != n.count(t):
                             fail('glossary', f'{where}: 「{t}」 {o.count(t)} -> {n.count(t)}')
                 lab = label_like_en if en else label_like
                 if lab(o) or lab(n):
@@ -520,10 +658,17 @@ def main(argv):
         print('changed labels:')
         for where, o, n in labels:
             print(f'  LABEL {where}: {o} -> {n}')
+    for ai, (_, _, _, _, spec) in enumerate(allowances):
+        if ai not in allow_applied:
+            why = '; '.join(allow_why[ai]) or 'the key was not among the changed values'
+            fail('allow', f'--allow-term {spec} matched no change (stale, wrong direction or wrong count): {why}')
     for _, _, _, spec in exempt:
         if spec not in used:
             print(f'WARN: --exempt-pin {spec} matched nothing (stale exemption)')
     print(f'{len(files)} file(s), {checked} value(s) checked, {changed_n} changed, {exempted} pin(s) exempted')
+    if allowances:
+        print(f'{len(allow_applied)} of {len(allowances)} term allowance(s) applied')
+        cats = [*cats, 'allow']
     print('failures: ' + ', '.join(f'{c}={fails[c]}' for c in cats))
     if en:
         print(f'warnings: restriction={len(warns)}')

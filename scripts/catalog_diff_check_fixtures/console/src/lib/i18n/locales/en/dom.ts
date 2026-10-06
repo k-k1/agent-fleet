@@ -13,5 +13,8 @@ export const dom = {
   "dom.wording": "Save your settings — then close this screen.",
   "dom.concat": "First half. " + "Second half.",
   "dom.lang": "Language",
+  "dom.off_b": "Sync is OFF.",
+  "dom.default_a": "The default setting.",
+  "dom.default_b": "The default setting.",
   "dom.edge": " Leading space here.",
 };
