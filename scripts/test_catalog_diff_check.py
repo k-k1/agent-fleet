@@ -833,5 +833,210 @@ class CatalogDiffCheckEnTests(Base):
         self.assertNotIn("allow", out)
 
 
+@NEEDS
+class LabelSyncTests(Base):
+    def sync_path(self, lang='ja', other=False):
+        return f"console/src/lib/i18n/locales/{lang}/sync{'_other' if other else ''}.ts"
+
+    def change_unique(self, lang='ja'):
+        self.edit(self.sync_path(lang), '操作ボタン' if lang == 'ja' else 'Action button',
+                  '実行ボタン' if lang == 'ja' else 'Run button')
+
+    def sync_run(self, *args, lang='ja'):
+        return self.run_check('--lang', lang, '--allow-labels', *args)
+
+    def page(self, text, lang='ja'):
+        path = f"guide/member/sync{'.ja' if lang == 'ja' else ''}.md"
+        self.write(path, text)
+        self.commit_all('citation fixture')
+        return path
+
+    def test_split_partial_change_fails_across_domains(self):
+        for lang, old, new in [('ja', '共通ラベル', '統一ラベル'), ('en', 'Shared label', 'Unified label')]:
+            with self.subTest(lang=lang):
+                self.edit(self.sync_path(lang), old, new)
+                code, out = self.sync_run(self.sync_path(lang), lang=lang)
+                self.assertEqual(code, 1, out)
+                self.assertIn('FAIL split:', out)
+                self.assertIn('sync.other', out)
+                self.edit(self.sync_path(lang), new, old)
+
+    def test_split_all_keys_changed_passes(self):
+        self.edit(self.sync_path(), '共通ラベル', '統一ラベル')
+        self.edit(self.sync_path(other=True), '共通ラベル', '統一ラベル')
+        code, out = self.sync_run()
+        self.assertEqual(code, 0, out)
+        self.assertNotIn('split=', out)
+
+    def test_split_approval_requires_all_participants_and_rejects_stale(self):
+        self.edit(self.sync_path(), '共通ラベル', '統一ラベル')
+        code, out = self.sync_run('--allow-split=sync.shared')
+        self.assertEqual(code, 1, out)
+        code, out = self.sync_run('--allow-split=sync.shared,sync.other')
+        self.assertEqual(code, 0, out)
+        self.assertIn('ALLOWED split:', out)
+        code, out = self.sync_run('--allow-split=sync.shared,sync.other,absent')
+        self.assertEqual(code, 1, out)
+        self.assertIn('stale approval', out)
+        self.assertEqual(self.sync_run('--allow-split=sync.shared,')[0], 2)
+
+    def test_approved_split_is_never_auto_rewritten(self):
+        page = self.page('**共通ラベル**\n')
+        self.edit(self.sync_path(), '共通ラベル', '統一ラベル')
+        code, out = self.sync_run('--rewrite-guide', '--allow-split=sync.shared,sync.other')
+        self.assertEqual(code, 1, out)
+        self.assertEqual((self.repo / page).read_text(), '**共通ラベル**\n')
+
+    def test_rewrite_bold_and_quote_but_not_prose_or_longer_words(self):
+        page = self.page('**操作ボタン**と「操作ボタン」。\n操作ボタン\n「操作ボタン中」 **操作ボタン中** 操作ボタン中\n')
+        self.change_unique()
+        code, out = self.sync_run('--rewrite-guide')
+        self.assertEqual(code, 1, out)
+        self.assertIn('bare-in-prose-exact-match', out)
+        self.assertEqual((self.repo / page).read_text(),
+                         '**実行ボタン**と「実行ボタン」。\n操作ボタン\n「操作ボタン中」 **操作ボタン中** 操作ボタン中\n')
+
+    def test_rewrite_menu_segments(self):
+        page = self.page('設定 > 操作ボタン > 詳細\n設定 → 操作ボタン\n操作ボタン → 詳細\n設定 > 操作ボタン中\n')
+        self.change_unique()
+        code, out = self.sync_run('--rewrite-guide')
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.repo / page).read_text(),
+                         '設定 > 実行ボタン > 詳細\n設定 → 実行ボタン\n実行ボタン → 詳細\n設定 > 操作ボタン中\n')
+
+    def test_rewrite_heading_left_unresolved(self):
+        page = self.page('# **操作ボタン**\n\n操作ボタン\n---\n\n**操作ボタン**\n')
+        self.change_unique()
+        code, out = self.sync_run('--rewrite-guide')
+        self.assertEqual(code, 1, out)
+        self.assertIn('\theading\t', out)
+        self.assertIn('# **操作ボタン**', (self.repo / page).read_text())
+        self.assertTrue((self.repo / page).read_text().endswith('**実行ボタン**\n'))
+
+    def test_rewrite_test_citation_left_unresolved(self):
+        self.write('console/src/sync.test.ts', 'expect(value).toBe("操作ボタン");\n')
+        page = self.page('**操作ボタン**\n')
+        self.change_unique()
+        code, out = self.sync_run('--rewrite-guide')
+        self.assertEqual(code, 1, out)
+        self.assertIn('console/src/sync.test.ts:1', out)
+        self.assertEqual((self.repo / page).read_text(), '**実行ボタン**\n')
+        code, out = self.sync_run('--rewrite-guide', '--exempt-pin=sync.unique@console/src/sync.test.ts:1')
+        self.assertEqual(code, 0, out)
+        self.assertIn('EXEMPT:', out)
+
+    def test_exemption_protects_independent_span_from_rewrite(self):
+        page = self.page('**操作ボタン**\n「操作ボタン」\n')
+        self.change_unique()
+        code, out = self.sync_run('--rewrite-guide', '--exempt-pin=sync.unique@' + page + ':1')
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.repo / page).read_text(), '**操作ボタン**\n「実行ボタン」\n')
+        self.assertIn('1 pin(s) exempted', out)
+
+    def test_list_citations_sections_exactness_and_read_only(self):
+        self.write('console/src/sync.test.ts', 'const label = "操作ボタン"; const longer = "操作ボタン中";\n')
+        self.write('workspace/agent/knowledge/af-usage.md', '**操作ボタン**\n')
+        self.write('workspace/agent/knowledge/af-usage.coverage.tsv', 'fixture\t操作ボタン\t操作ボタン中\n')
+        self.write('control-plane/sync.go', 'package fixture\nvar label = "操作ボタン"\n')
+        page = self.page('「操作ボタン」 **操作ボタン**\n操作ボタン\n# 操作ボタン\n設定 > 操作ボタン\n「操作ボタン中」 **操作ボタン中**\n')
+        original = (self.repo / page).read_bytes()
+        self.change_unique()
+        code, out = self.sync_run('--list-citations')
+        self.assertEqual(code, 0, out)
+        rows = [l.split('\t') for l in out.splitlines() if '\t' in l]
+        self.assertEqual(len(rows), 9, out)
+        self.assertTrue(all(len(r) == 5 and r[2:] == ['操作ボタン', '実行ボタン', 'sync.unique'] for r in rows), out)
+        self.assertEqual({r[1] for r in rows}, {'bracket-quote', 'bold', 'bare-in-prose-exact-match', 'heading', 'menu-segment', 'quoted', 'tsv-cell'})
+        self.assertEqual((self.repo / page).read_bytes(), original)
+        code, out = self.sync_run('--rewrite-guide')
+        self.assertEqual(code, 1, out)
+        for section in ('af-usage.md', 'af-usage.coverage.tsv', 'Go sources'):
+            self.assertIn('# ' + section, out)
+
+    def test_rewrite_idempotent(self):
+        page = self.page('「操作ボタン」 **操作ボタン**\n')
+        self.change_unique()
+        code, out = self.sync_run('--rewrite-guide')
+        self.assertEqual(code, 0, out)
+        first = (self.repo / page).read_bytes()
+        code, out = self.sync_run('--rewrite-guide')
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.repo / page).read_bytes(), first)
+        self.assertNotRegex(out, r'guide/[^\n]+ 操作ボタン -> 実行ボタン')
+
+    def test_rewrite_dirty_refusal_and_force(self):
+        page = self.page('**操作ボタン**\n')
+        self.change_unique()
+        self.write(page, '**操作ボタン**\nUser edit\n')
+        code, out = self.sync_run('--rewrite-guide')
+        self.assertEqual(code, 2, out)
+        self.assertIn('dirty guide file:', out)
+        self.assertEqual((self.repo / page).read_text(), '**操作ボタン**\nUser edit\n')
+        code, out = self.sync_run('--rewrite-guide', '--force')
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.repo / page).read_text(), '**実行ボタン**\nUser edit\n')
+
+    def test_dirty_preflight_never_partially_writes(self):
+        first = self.page('**操作ボタン**\n')
+        second = 'guide/member/z-sync.ja.md'
+        self.write(second, '**操作ボタン**\n')
+        self.change_unique()
+        self.assertEqual(self.sync_run('--rewrite-guide')[0], 2)
+        self.assertEqual((self.repo / first).read_text(), '**操作ボタン**\n')
+
+    def test_settings_first_column_rewritten_and_warned(self):
+        for lang, old, new in [('ja', '専用タブ', '特別タブ'), ('en', 'Special tab', 'Dedicated tab')]:
+            with self.subTest(lang=lang):
+                page = f"guide/ref/settings{'.ja' if lang == 'ja' else ''}.md"
+                self.write(page, f'| {old} | {old}説明 |\n')
+                self.commit_all('settings fixture')
+                self.edit(self.sync_path(lang), old, new)
+                code, out = self.sync_run('--list-citations', lang=lang)
+                self.assertEqual(code, 0, out)
+                self.assertIn('WARN SETTINGS TAB', out)
+                self.assertIn('\ttable-cell\t', out)
+                code, out = self.sync_run('--rewrite-guide', lang=lang)
+                self.assertEqual(code, 0, out)
+                self.assertEqual((self.repo / page).read_text(), f'| {new} | {old}説明 |\n')
+                self.edit(self.sync_path(lang), new, old)
+
+    def test_en_twin_rewrites_only_english_guide(self):
+        ja = self.page('**Action button**\n')
+        en = self.page('**Action button**\nSettings > Action button\n', lang='en')
+        self.change_unique('en')
+        code, out = self.sync_run('--rewrite-guide', lang='en')
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.repo / ja).read_text(), '**Action button**\n')
+        self.assertEqual((self.repo / en).read_text(), '**Run button**\nSettings > Run button\n')
+
+    def test_rewrite_fenced_code_is_manual(self):
+        page = self.page('```md\n**操作ボタン**\n```\n')
+        self.change_unique()
+        code, out = self.sync_run('--rewrite-guide')
+        self.assertEqual(code, 1, out)
+        self.assertIn('\tcode\t', out)
+        self.assertEqual((self.repo / page).read_text(), '```md\n**操作ボタン**\n```\n')
+
+    def test_rewrite_refuses_symlink_outside_guide(self):
+        outside = self.repo / 'manual.ja.md'
+        outside.write_text('**操作ボタン**\n')
+        page = self.repo / 'guide/member/sync.ja.md'
+        page.symlink_to(outside)
+        self.commit_all('symlink fixture')
+        self.change_unique()
+        code, out = self.sync_run('--rewrite-guide', '--force')
+        self.assertEqual(code, 2, out)
+        self.assertIn('outside guide/', out)
+        self.assertEqual(outside.read_text(), '**操作ボタン**\n')
+
+    def test_rewrite_refuses_chains_for_idempotence(self):
+        self.page('**操作ボタン** **専用タブ**\n')
+        self.edit(self.sync_path(), '操作ボタン', '専用タブ')
+        self.edit(self.sync_path(), '"set.tab_fixture": "専用タブ"', '"set.tab_fixture": "特別タブ"')
+        code, out = self.sync_run('--rewrite-guide')
+        self.assertEqual(code, 2, out)
+        self.assertIn('idempotently', out)
+
+
 if __name__ == "__main__":
     unittest.main()

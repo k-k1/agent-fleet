@@ -590,3 +590,72 @@ Without the flags this reports `FAIL latin` (`OFF` removed), `FAIL glossary` (`�
 and `FAIL glossary` (`既定` 0 → 1); with them, two `ALLOWED term:` lines and exit 0. Applying
 the same decision to a second key needs a second allowance. en works the same way
 (`--lang en --allow-term KEY:OFF>off`; glossary terms are matched case-insensitively).
+
+**Label sync** (`--list-citations`, `--rewrite-guide`, `--allow-split`). A label
+rewrite must keep every citation in sync in the same PR. The always-on SPLIT check
+looks across **all domains of the selected language**, even when explicit file
+arguments restrict the review: every key with the same old label must change to the
+same new text. Otherwise `FAIL split` lists the divergent keys and exits 1.
+`--allow-split KEY,KEY` (repeatable) approves a reviewed independent use only when
+all participants in the reported split are named, including the changed key;
+malformed lists exit 2 and stale keys fail. An approved split is still never
+rewritten automatically, because a citation cannot identify which key it means.
+Runs without a split or new flags retain their previous output.
+
+```
+python3 scripts/catalog-diff-check.py origin/develop --list-citations
+python3 scripts/catalog-diff-check.py origin/develop --allow-labels --rewrite-guide
+```
+
+`--list-citations` is read-only and exits 0, including for a split. Its sections are
+`guide`, `console tests`, `af-usage.md`, `af-usage.coverage.tsv`, and `Go sources`.
+Every row is `path:line<TAB>form<TAB>old<TAB>new<TAB>key`; backslashes, tabs and line
+breaks in values are escaped. Shared keys each receive their own rows. These modes,
+`--list-pinned`, and `--triples` are mutually exclusive.
+
+Matching is exact and case-sensitive: the complete contents of `「…」`, `**…**`,
+quoted strings (`"…"`, `'…'`, backticks, curly double quotes), or a menu segment
+separated by ` > ` or `→` must equal the old label. Menu cells end at the next
+separator, line end, or punctuation such as parentheses, commas and table bars;
+whitespace and formatting delimiters are retained. A bare match in guide prose
+must have no Unicode letter, number or underscore immediately before or after it.
+A label inside a longer quoted/bold span is excluded, so `保存` does not match
+`「保存中」`, `**保存中**`, or `保存中`. Console tests and Go require exact quoted,
+bracket or bold matches; the knowledge ledger additionally matches complete TSV
+cells. ATX and setext headings are marked `heading`, regardless of their span form.
+Fenced guide code is marked `code`. This conservative matching cannot identify
+Japanese words embedded in prose or menu cells with explanatory suffixes: search
+those manually as well.
+
+`--rewrite-guide` writes only `guide/**/*.ja.md`; `--lang en` instead writes
+`guide/**/*.md` excluding `*.ja.md` (including English README pages). It replaces
+only exact bracket-quote, bold and menu spans on non-heading lines outside fenced
+code. The first column of `guide/ref/settings.ja.md` (English: `settings.md`) is
+also rewritable as `table-cell`. Changed `set.tab_*` or `tenant.tab_*` keys produce
+`WARN SETTINGS TAB`: update those cells so `scripts/docs-check.py` continues to
+pass; its rules are unchanged. Japanese personal tabs also need the matching
+`guide/member/12-settings.ja.md` section heading updated manually; table replacement
+alone does not satisfy that check. Every edit prints `path:line old -> new`.
+
+The tool checks every target's git status before writing any file. A staged,
+unstaged or untracked dirty target is refused with exit 2; review its edits and use
+`--force` to allow it. A second run makes no edits. Chained/swapped label mappings
+are refused for automatic rewriting to prevent a later run from cascading into a
+second replacement; handle those guide edits manually. Symlink targets outside
+`guide/` are refused. Existing structure, term and label checks still apply.
+
+After rewriting, the remaining citations are printed in the same TSV sections.
+Headings (and their anchors and inbound links, including site `/ja/features/`
+links), bare prose, other quoted forms, fenced code, tests, both knowledge files,
+and Go sources need manual updates. Any remaining citation exits 1; reviewed
+independent matches can use the existing `--exempt-pin KEY@PATH[:LINE]`, with
+EXEMPT output and stale-exemption warnings. Exempted spans are also protected from
+automatic rewriting. Re-run after the manual edits.
+
+Worked example: when changing `保存` to `保存する`, first change **every** catalogue
+key whose old text is `保存`, then run `--list-citations`. After review,
+`--allow-labels --rewrite-guide` changes `「保存」` and `**保存**` to the new label,
+but leaves `保存中` untouched and reports a heading such as `## 保存` and a test
+assertion such as `toBe("保存")`. Update the heading, its links, and that assertion
+in the same PR, then rerun the guard and `scripts/docs-check.py`. No catalogue
+rewrite is needed to adopt this tooling, and it remains local-only, outside CI.
