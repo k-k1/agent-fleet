@@ -109,7 +109,7 @@ export const mirror = {
   "mirror.perm_pending": "許可待ち",
   "mirror.perm_asking": "許可を求めています（編集・コマンド等）",
   "mirror.allow": "許可",
-  "mirror.auto_allow": "以降このセッションでは自動許可（2番目の選択肢）",
+  "mirror.auto_allow": "以降このセッションでは自動許可（2 番目の選択肢）",
   "mirror.always_allow": "常に許可",
   "mirror.deny": "拒否",
   "mirror.perm_hint": "対象（ファイル・コマンド）や差分はターミナルで確認できます",
@@ -136,12 +136,12 @@ export const mirror = {
   // コンポーザ
   "mirror.suggest_hint":
     "クリックで入力欄へ・Ctrl/⌘/Alt＋クリックで即送信（入力途中なら Tab で候補を順に補完・入力欄が空なら Tab で候補へ・←/→ で候補選択／右クリック・長タップでピン留めと削除）",
-  "mirror.suggest_ai": "AIに返信候補を出してもらう（直近の会話から）",
+  "mirror.suggest_ai": "AI に返信候補を出してもらう（直近の会話から）",
   "mirror.suggest_forget": "この候補をもう出さない（同じ文を自分で送れば戻ります）",
   "mirror.suggest_pin": "常に表示（ピン留め）",
   "mirror.suggest_unpin": "ピン留めを解除",
   "mirror.suggest_forget_item": "この候補を消す",
-  "mirror.suggest_none": "返信候補を作れませんでした（会話が浅いか、利用できるAIがありません）",
+  "mirror.suggest_none": "返信候補を作れませんでした（会話が浅いか、利用できる AI がありません）",
   "mirror.suggest_failed": "返信候補の生成に失敗しました",
   "mirror.prev_input": "前の入力",
   "mirror.next_input": "次の入力",
@@ -273,7 +273,7 @@ export const mirror = {
   "mirror.pending": "反映待ち",
   "mirror.mark.pill": "マーカーを引く",
   "mirror.mark.strip_title": "マーカー",
-  "mirror.mark.strip_authors": "{n}人",
+  "mirror.mark.strip_authors": "{n} 人",
   "mirror.mark.paint": "{color}のマーカーを引く",
   "mirror.mark.remove": "マーカーを消す",
   "mirror.mark.color.yellow": "黄",
@@ -322,7 +322,7 @@ export const mirror = {
   "mirror.peer_intent.notice": "共有",
   "mirror.peer_intent_title.request":
     "このセッションに行動を求めるメッセージです。送信側には「返事はできないときだけ来る」と伝えてあります（返事がないことは、やったことを示します）。",
-  "mirror.peer_intent_title.question": "情報を求めるメッセージです。結論だけが1通返ります。",
+  "mirror.peer_intent_title.question": "情報を求めるメッセージです。結論だけが 1 通返ります。",
   "mirror.peer_intent_title.answer":
     "このセッションが送った質問への返答です。ここで打ち切りです。返信は送りません。",
   "mirror.peer_intent_title.notice": "知らせるだけのメッセージです。返信はしません。",

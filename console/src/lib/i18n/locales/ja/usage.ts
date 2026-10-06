@@ -17,7 +17,7 @@ export const usage = {
   "usage.empty_title": "この期間の記録はありません",
   "usage.empty_hint": "セッション本体は過去分を遡って取り込みますが、補助呼び出しは計測を入れた日以降だけが残ります。",
   "usage.range_label": "期間",
-  "usage.range_24h": "24時間",
+  "usage.range_24h": "24 時間",
   "usage.range_7d": "7日",
   "usage.range_30d": "30日",
   "usage.by_label": "割り方",
@@ -30,7 +30,7 @@ export const usage = {
   "usage.metric_spend": "消費トークン",
   "usage.metric_calls": "呼び出し回数",
   "usage.metric_cread": "キャッシュ読取",
-  "usage.metric_cost": "API換算相当額（推定）",
+  "usage.metric_cost": "API 換算相当額（推定）",
   "usage.reload": "再取得",
   "usage.folding": "取り込み中",
   "usage.folding_hint":
@@ -48,8 +48,8 @@ export const usage = {
   "usage.col_bucket": "期間",
   "usage.col_calls": "回数",
   "usage.col_spend": "消費",
-  "usage.calls_shared": "この呼び出しは複数のモデルにまたがっています（回数は最も消費したモデルに1回だけ計上されます）",
-  "usage.col_avg": "1回あたり",
+  "usage.calls_shared": "この呼び出しは複数のモデルにまたがっています（回数は最も消費したモデルに 1 回だけ計上されます）",
+  "usage.col_avg": "1 回あたり",
   "usage.col_cost": "推定換算額",
   "usage.breakdown_feature": "機能別",
   "usage.breakdown_kind": "エージェント別",
@@ -57,7 +57,7 @@ export const usage = {
   "usage.no_rows": "データがありません",
   "usage.matrix_title": "機能 × モデル",
   "usage.matrix_hint":
-    "その機能がどのモデルで動いているかを見ます。補助呼び出しが CLI 既定のフラッグシップに流れていれば、ここに回数と1回あたりの消費で出ます。",
+    "その機能がどのモデルで動いているかを見ます。補助呼び出しが CLI 既定のフラッグシップに流れていれば、ここに回数と 1 回あたりの消費で出ます。",
   "usage.kpi_spend": "消費トークン",
   "usage.kpi_calls": "呼び出し",
   "usage.kpi_cread": "キャッシュ読取",
@@ -65,7 +65,7 @@ export const usage = {
   "usage.kpi_pixels": "生成したピクセル",
   "usage.kpi_images_hint":
     "フリート自身の画像エンジンで作った絵（tool.imagegen）。費用はテナントの GPU 時間であって API の金額ではないので、推定換算額には入りません。",
-  "usage.kpi_cost": "API換算相当額",
+  "usage.kpi_cost": "API 換算相当額",
   "usage.kpi_cost_hint":
     "推定です。トークン数 × 各モデルの公表 API 単価（キャッシュ書込 ×1.25・読取 ×0.1）で算出しています。この消費を API で払っていたらいくらになるかを示す額であって、サブスク定額の請求額ではありません。",
   "usage.cost_est_hint":
@@ -73,7 +73,7 @@ export const usage = {
   "usage.cost_measured": "エージェント報告値 {v}（claude の補助呼び出しと opencode のセッションのみ）",
   "usage.cost_unpriced_hint":
     "このモデルの公表単価を持っていないため、金額を推定していません（消費 0 ではありません）。",
-  "usage.price_line": "単価 {in} / {out}（100万トークンあたり・入力/出力）。",
+  "usage.price_line": "単価 {in} / {out}（100 万トークンあたり・入力/出力）。",
   "usage.price_src_builtin": "出所: 内蔵の単価表（Anthropic 公表値）。",
   "usage.price_src_catalog": "出所: models.dev のカタログ（{ref}）。",
   "usage.price_ambiguous": "同じモデル名でもエージェントによって単価が違います（表示は消費の多い方）。",

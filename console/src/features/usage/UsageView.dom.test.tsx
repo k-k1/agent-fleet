@@ -153,7 +153,7 @@ describe("UsageView estimated amount", () => {
     await mount();
     // "14.50", i.e. 12.5 plus 2, must never appear: one number never mixes two ways of
     // measuring.
-    expect(kpiText("API換算相当額")).toBe("≈$12.50");
+    expect(kpiText("API 換算相当額")).toBe("≈$12.50");
   });
 
   it("declares unpriceable consumption together with its share", async () => {
