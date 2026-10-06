@@ -99,3 +99,40 @@ func TestEnsureStatusHooksCoexistsWithUserMatchers(t *testing.T) {
 		t.Fatalf("got %d entries, want 6", len(arr))
 	}
 }
+
+func TestRTKToggleAcrossMatchers(t *testing.T) {
+	for _, matcher := range []string{"Bash|Write", "", "Write"} {
+		t.Run(matcher, func(t *testing.T) {
+			entry := map[string]any{"matcher": matcher, "hooks": []any{commandHook(rtkHookCommand), commandHook("user-guard")}, "extra": "keep"}
+			m := map[string]any{"hooks": map[string]any{"PreToolUse": []any{entry}}}
+			if !rtkEnabled(m) {
+				t.Fatal("RTK command not detected")
+			}
+			setRTK(m, false)
+			if rtkEnabled(m) {
+				t.Fatal("RTK remains enabled")
+			}
+			if !reflect.DeepEqual(entry["hooks"], []any{commandHook("user-guard")}) || entry["extra"] != "keep" {
+				t.Fatal("user hook or attributes lost")
+			}
+		})
+	}
+}
+
+func TestEnsureStatusHooksPreservesWorkingAlternateExe(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	// The current executable exists outside paths treated as volatile by repair.
+	exe := "/proc/self/exe"
+	entries := []any{}
+	for matcher, state := range map[string]string{"AskUserQuestion": "question", "ExitPlanMode": "plan", permToolMatcher: "permtool"} {
+		entries = append(entries, map[string]any{"matcher": matcher, "hooks": []any{commandHook(exe + " session-status " + state)}})
+	}
+	if err := writeSettings(map[string]any{"hooks": map[string]any{"PreToolUse": entries}}); err != nil {
+		t.Fatal(err)
+	}
+	EnsureStatusHooks()
+	EnsureStatusHooks()
+	if !reflect.DeepEqual(hooksMap(readSettings())["PreToolUse"], entries) {
+		t.Fatal("working alternate hooks changed or duplicated")
+	}
+}

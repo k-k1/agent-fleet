@@ -207,7 +207,8 @@ func hooksMap(m map[string]any) map[string]any {
 }
 
 // hookCommandMatches compares command arguments, allowing a working alternate agent
-// path for status hooks. Mentions inside scripts or prompt hooks are not ours.
+// path for status hooks. Fleet writes absolute paths; relative commands,
+// mentions inside scripts, and prompt hooks are not ours.
 func hookCommandMatches(h any, command string) bool {
 	hm, _ := h.(map[string]any)
 	if hm["type"] != "command" {
@@ -218,8 +219,11 @@ func hookCommandMatches(h any, command string) bool {
 	if len(got) != len(want) || len(want) == 0 {
 		return false
 	}
-	if len(want) == 3 && want[1] == "session-status" {
-		return filepath.IsAbs(got[0]) && got[1] == want[1] && got[2] == want[2]
+	if len(want) >= 2 && want[1] == "session-status" {
+		if !filepath.IsAbs(got[0]) {
+			return false
+		}
+		got, want = got[1:], want[1:]
 	}
 	for i := range want {
 		if got[i] != want[i] {
@@ -229,11 +233,12 @@ func hookCommandMatches(h any, command string) bool {
 	return true
 }
 
+// preToolUseHasCommand accepts an empty matcher to search all PreToolUse entries.
 func preToolUseHasCommand(hooks map[string]any, matcher, command string) bool {
 	arr, _ := hooks["PreToolUse"].([]any)
 	for _, e := range arr {
 		em, _ := e.(map[string]any)
-		if em["matcher"] != matcher {
+		if matcher != "" && em["matcher"] != matcher {
 			continue
 		}
 		list, _ := em["hooks"].([]any)
@@ -259,15 +264,11 @@ func ensurePreToolUseCommand(hooks map[string]any, matcher, command string) {
 
 // removePreToolUseCommand removes individual managed hooks, preserving siblings
 // and entry attributes when a user groups commands under the same matcher.
-func removePreToolUseCommand(hooks map[string]any, matcher, command string) {
+func removePreToolUseCommand(hooks map[string]any, command string) {
 	arr, _ := hooks["PreToolUse"].([]any)
 	out := []any{}
 	for _, e := range arr {
 		em, _ := e.(map[string]any)
-		if em["matcher"] != matcher {
-			out = append(out, e)
-			continue
-		}
 		list, _ := em["hooks"].([]any)
 		kept := []any{}
 		removed := false
@@ -297,7 +298,7 @@ func removePreToolUseCommand(hooks map[string]any, matcher, command string) {
 const rtkHookCommand = "rtk hook claude"
 
 func rtkEnabled(m map[string]any) bool {
-	return preToolUseHasCommand(hooksMap(m), "Bash", rtkHookCommand)
+	return preToolUseHasCommand(hooksMap(m), "", rtkHookCommand)
 }
 
 // setRTK toggles only RTK's command, preserving user and session-state hooks.
@@ -306,7 +307,7 @@ func setRTK(m map[string]any, on bool) {
 	if on {
 		ensurePreToolUseCommand(hooks, "Bash", rtkHookCommand)
 	} else {
-		removePreToolUseCommand(hooks, "Bash", rtkHookCommand)
+		removePreToolUseCommand(hooks, rtkHookCommand)
 	}
 	if len(hooks) == 0 {
 		delete(m, "hooks")
