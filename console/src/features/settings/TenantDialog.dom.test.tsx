@@ -138,7 +138,7 @@ describe("TenantDialog", () => {
     expect(vals).toHaveLength(2);
     expect(vals[0]).toBe("@sales.acme.co.jp");
     expect(vals[1]).toContain("未設定");
-    expect(content.textContent).toContain("「サインイン方法」の面で行ごとに切り替え");
+    expect(content.textContent).toContain("「サインイン方法」の画面で行ごとに切り替え");
     // The tenant's own login URL also appears on the rules surface — a human hands it out
     // (decision 28).
     expect(content.textContent).toContain("login/acme");

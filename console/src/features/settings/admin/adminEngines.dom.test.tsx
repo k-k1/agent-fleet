@@ -580,9 +580,9 @@ describe("EnginesAdminView", () => {
     await mount();
     const gate = host!.querySelector(".engines-spot")!.textContent || "";
     // The pin cannot be honoured, so the picker is sitting on an offer nothing is buying.
-    expect(gate).toContain("自動選択に落ちています");
+    expect(gate).toContain("自動選択になっています");
     // And withdrawing consent is not a stop: it reaches the next purchase, like a rung.
-    expect(gate).toContain("次に買うインスタンスから効きます");
+    expect(gate).toContain("次に買うインスタンスから反映されます");
   });
 
   it("states a pin permanently and takes it off in one click", async () => {
