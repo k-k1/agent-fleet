@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -111,7 +113,9 @@ func ensureFolderTrusted(dir string) {
 // The checkout is core.worktree of <common>/config when set (submodules and
 // --separate-git-dir, where <common> is not <checkout>/.git); otherwise the parent of a
 // <common> named ".git". Anything else (a bare repository) yields nil: guessing would
-// write trust for a directory that is not a checkout.
+// write trust for a directory that is not a checkout. Known gap: a --separate-git-dir store
+// named ".git" without core.worktree is indistinguishable from a plain checkout, so its
+// parent is returned (harmless extra entry; the real main stays untrusted as before).
 func mainCheckoutOf(dir string) []string {
 	b, err := os.ReadFile(filepath.Join(dir, ".git"))
 	if err != nil {
@@ -140,27 +144,22 @@ func mainCheckoutOf(dir string) []string {
 	return []string{filepath.Dir(common)}
 }
 
-// coreWorktree returns core.worktree from <common>/config as an absolute path, or "".
+// coreWorktree returns core.worktree from <common>/config as an absolute path, or "". It
+// asks git (sections, key case, last-wins, quoting and comments are git's to parse); with
+// git absent or the key unset the answer is "" and the caller falls back to the layout rule.
 func coreWorktree(common string) string {
-	b, err := os.ReadFile(filepath.Join(common, "config"))
-	if err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "config", "--file", filepath.Join(common, "config"),
+		"--get", "core.worktree").Output()
+	v := strings.TrimRight(string(out), "\r\n")
+	if err != nil || v == "" {
 		return ""
 	}
-	for _, line := range strings.Split(string(b), "\n") {
-		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
-		if !ok || strings.TrimSpace(k) != "worktree" {
-			continue
-		}
-		v = strings.Trim(strings.TrimSpace(v), `"`)
-		if v == "" {
-			return ""
-		}
-		if !filepath.IsAbs(v) {
-			v = filepath.Join(common, v)
-		}
-		return filepath.Clean(v)
+	if !filepath.IsAbs(v) {
+		v = filepath.Join(common, v)
 	}
-	return ""
+	return filepath.Clean(v)
 }
 
 // settingsMu serializes read-modify-write cycles on settings.json inside this process, so

@@ -3,6 +3,7 @@ package claude
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -136,5 +137,34 @@ func TestEnsureFolderTrustedPlainCheckoutTrustsOnlyItself(t *testing.T) {
 	}
 	if _, present := trustedIn(t, base); present {
 		t.Error("parent got an entry")
+	}
+}
+
+// core.worktree is parsed by git: other sections, key case, last-wins, comments and quoting.
+func TestCoreWorktreeGitSyntax(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	cases := map[string]struct{ cfg, want string }{
+		"other section ignored": {"[tool]\n\tworktree = /tmp/unrelated\n", ""},
+		"key case":              {"[core]\n\tWorkTree = ../actual\n", "actual"},
+		"last wins":             {"[core]\n\tworktree = ../stale\n\tworktree = ../actual\n", "actual"},
+		"trailing comment":      {"[core]\n\tworktree = ../actual # why\n", "actual"},
+		"quoted escape":         {"[core]\n\tworktree = \"../actual\\\"quoted\"\n", "actual\"quoted"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			common := t.TempDir()
+			if err := os.WriteFile(filepath.Join(common, "config"), []byte(c.cfg), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			want := ""
+			if c.want != "" {
+				want = filepath.Join(filepath.Dir(common), c.want)
+			}
+			if got := coreWorktree(common); got != want {
+				t.Errorf("got %q, want %q", got, want)
+			}
+		})
 	}
 }
