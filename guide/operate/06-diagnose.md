@@ -14,7 +14,7 @@ of [deploy/compose/README.md](../../deploy/compose/README.md)**; this chapter ex
 and adds diagnostic perspectives. One-or-two-line log checks and health checks are exceptionally
 included here as well. The working directory is `deploy/compose/`.
 
-## The first 2 places to look
+## The first 3 places to look
 
 - **CP logs**: `docker compose logs -f cp` (the reason for startup failures and
   authentication rejections is almost always here).
