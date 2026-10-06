@@ -156,7 +156,7 @@ When the browser pane fails to render properly, a status appears in the pane.
 |------|------|------|
 | `target-unreachable` | The browser started, but the connection to that port/path hasn't been established yet. **Waiting for the dev server to start** is also this state. | Check the port number, the path, and whether the server is listening; once it's up, press **"Reload"**. If it persists, press **"Reconnect"**. |
 | `disconnected` | Communication with the pane (WebSocket) was lost. This is not necessarily a browser crash. | Check that the workspace is running and connectivity is back, then press **"Reconnect"**. |
-| `crashed` | The browser inside the workspace terminated abnormally and cannot continue that display. | Reopen with **"Reconnect"**. If it keeps happening, check the workspace's memory usage and the target app ([09](11-troubleshooting.md)). |
+| `crashed` | The browser inside the workspace terminated abnormally and cannot continue that display. | Reopen with **"Reconnect"**. If it keeps happening, check the workspace's memory usage and the target app ([11](11-troubleshooting.md)). |
 
 If you try to open it while the workspace is stopped or starting, a dedicated notice appears. Reopen once the
 workspace is running.
@@ -757,7 +757,7 @@ the workspace from the workspace bar works everywhere.
 
 In short: "**only `~/repos` is deleted, and the container is rebuilt from the latest image. The rest of home
 (logins, connections, `~/.local`, etc.) stays**". Use it when you want to pick up an image update or the
-environment is broken. **Uncommitted changes are lost**, so push / commit before running it ([04](03-code.md)).
+environment is broken. **Uncommitted changes are lost**, so push / commit before running it ([03](03-code.md)).
 
 ### Cleaning home (an even deeper reset)
 

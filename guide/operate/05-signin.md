@@ -10,7 +10,7 @@ English | [日本語](05-signin.ja.md)
 
 This page is the **source of truth for configuring sign-in**: what to create on the IdP's side,
 which values to write down, which key in `.env` (or which field in the Console) they go into,
-how to confirm it worked, and what usually goes wrong. [01-install §3](02-install.md) gives the
+how to confirm it worked, and what usually goes wrong. [02-install §3](02-install.md) gives the
 one-paragraph version and points here; when the two disagree, **this page wins**.
 
 Read it top to bottom for the IdP you are adding; one pass should be enough to get the door
@@ -362,7 +362,7 @@ register** in the rail (*Tenant-defined sign-in methods*) carries the approve an
 buttons for every tenant at once.
 
 > Whether to split into tenants at all, and how a tenant's login rules interact with people who
-> belong to two tenants, is a decision that stays in [01-install §4](02-install.md).
+> belong to two tenants, is a decision that stays in [02-install §4](02-install.md).
 
 ### 7.1 What the tenant administrator fills in
 

@@ -95,5 +95,5 @@ else:
 
 The tab rows come from the Console's own labels, so this table cannot silently miss a
 screen. What each tab means in practice is covered on the reader's shelves,
-[use/](../member/README.md) and [admin/](../admin/README.md); the procedures for the
+[member/](../member/README.md) and [admin/](../admin/README.md); the procedures for the
 variables are in [operate/](../operate/README.md).

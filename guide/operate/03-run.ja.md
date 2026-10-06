@@ -39,7 +39,7 @@ air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/RE
 > この 2 点が運用の肝です。バックアップアーカイブは**平文の Claude 状態を含む機微データ**なので、
 > 保管先の権限・暗号化を厳格にしてください。同時に、アーカイブだけを持っていても
 > `AF_MASTER_KEY` が無ければ封筒暗号された資格情報は復号できません。逆に `AF_MASTER_KEY` を
-> 失えば、すべての過去アーカイブが復号不能になります（crypto-shred・[03](04-secure.ja.md)）。**鍵と
+> 失えば、すべての過去アーカイブが復号不能になります（crypto-shred・[04](04-secure.ja.md)）。**鍵と
 > データは別々に、しかし両方をバックアップする**のが正解です。
 
 ### ユーザーへの影響
@@ -280,4 +280,4 @@ Control Plane が配信時に同梱の画像を塗り替えるので、環境ご
   管理外）。特定の Workspace を確実に止めたいときは、super_admin が Console の Admin パネルから
   force-stop します。ホスト全体をメンテナンスで完全に落とす必要があるときは、CP/Caddy を止めた
   うえで、残る `af-ws-*` コンテナを別途 `docker stop` する必要があります（この点は障害対応の
-  [04](06-diagnose.ja.md) でも触れます）。
+  [06](06-diagnose.ja.md) でも触れます）。

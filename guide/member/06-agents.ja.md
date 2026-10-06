@@ -13,7 +13,7 @@ updated: "2026-09"
 
 下の表で主要 6 つの CLI コーディングエージェントを比べています。ほかにマネージド専用の
 **Muse Code**（muse、[後述](#muse-code)）と、フリート自前の llama.cpp エンジン
-（**lcpp**、[後述](#lcpp)）があり、実験枠の Antigravity（agy）は [08](10-integrations.ja.md) で
+（**lcpp**、[後述](#lcpp)）があり、実験枠の Antigravity（agy）は [10](10-integrations.ja.md) で
 扱います。どれも[機能対応の早見表](#機能対応の早見表全種別)に列があります。
 接続の変更は即時、挙動設定は各エージェントの**新しいセッションから**反映されます。
 
@@ -58,8 +58,8 @@ Codex / opencode / copilot / cursor / kiro の**マネージド実行**は、会
 
 冒頭の表は主要 6 CLI エージェントの比較です。こちらは Antigravity（agy）・マネージド専用の
 lcpp と muse・エージェント以外のセッション種別（shell / SSM）を加え、本ガイドの他章で扱う
-横断的な機能の worktree（[04](03-code.ja.md)）、定時実行とチャットブリッジ
-（[11](08-organising.ja.md)、[08](10-integrations.ja.md)）もまとめたものです。
+横断的な機能の worktree（[03](03-code.ja.md)）、定時実行とチャットブリッジ
+（[08](08-organising.ja.md)、[10](10-integrations.ja.md)）もまとめたものです。
 ✓ = 対応、— = 非対応 / 該当なし。
 
 | 機能 | claude | codex | cursor | copilot | kiro | agy | opencode | lcpp | muse | shell | ssm |
