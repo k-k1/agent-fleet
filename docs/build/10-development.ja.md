@@ -19,7 +19,7 @@ updated: "2026-10"
 | `e2e/` | フリート E2E（独立 Go モジュール・stdlib のみ）。CP + 実コンテナの疎通検証（§10.4）|
 | `console-e2e/` | Console UI E2E（Playwright）。ブラウザ → CP → 実コンテナの縦串検証（§10.4）|
 | `guide/` ・ `docs/` | 全コンテナに同梱される利用ガイドと、開発者向けドキュメント。両方の規範は [CONVENTIONS](../CONVENTIONS.ja.md) |
-| `scripts/` | リポジトリの検査: `docs-check.py`（リンク・front matter・`guide/ref` の表）、`guide-diff-check.py` と `catalog-diff-check.py`（ガイドと ja カタログの文面書き換え用のローカル専用の番人・§10.6）、`vet-build-tags.sh`、`model-id-lint/`（フォールバック登録簿の外のモデル ID） |
+| `scripts/` | リポジトリの検査: `docs-check.py`（リンク・front matter・`guide/ref` の表）、`vet-build-tags.sh`、`model-id-lint/`（フォールバック登録簿の外のモデル ID） |
 
 ファイル単位の地図は [90-code-map](90-code-map.ja.md)。
 
@@ -451,6 +451,6 @@ opencode・copilot・cursor で、kiro（ログインが要る）と agy（ラ�
 ようにします。変更した値の旧文面が `guide/**/*.ja.md`・Console のテスト・Go のソース・
 `workspace/agent/knowledge/af-usage.md` にまだ引用されていれば PINNED として `file:line` つきで
 報告して失敗します。その引用は同じ PR で直します（`--list-pinned` はその場所だけを出します）。
-ガイドが文の頭の 8 文字未満だけを引用している場合は見つけられません。意味の良し悪しは判定
+文の頭だけの引用や、旧い節を丸ごとは含まない引用は検索されません。書き換えたあとで、変更した値の書き出しをガイドで手検索してください。意味の良し悪しは判定
 しません。`scripts/guide-diff-check.py` と同じくローカル専用で CI には載せません。テストは
 `python3 -m unittest discover -s scripts -p test_catalog_diff_check.py` です。

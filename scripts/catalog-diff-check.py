@@ -170,8 +170,8 @@ def clauses(old, new):
 
 
 class Sources:
-    """Every file a quote of a catalogue value could live in, with newlines folded away so
-    a sentence wrapped across lines still matches."""
+    """Every file a quote of a catalogue value could live in, with hard wraps folded away so
+    a sentence wrapped across lines (even indented) still matches."""
 
     def __init__(self):
         self.files = {}
@@ -186,8 +186,11 @@ class Sources:
                     text = fh.read()
             except (OSError, UnicodeDecodeError):
                 continue
+            # Fold hard wraps: a continuation line loses its indentation, and a blank
+            # line is a barrier so text from two paragraphs never joins into a quote.
             starts, flat, pos = [], [], 0
             for ln in text.split('\n'):
+                ln = ln.strip() and ln.lstrip(' \t') or '\0'
                 starts.append(pos)
                 flat.append(ln)
                 pos += len(ln)

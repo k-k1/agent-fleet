@@ -219,6 +219,17 @@ class CatalogDiffCheckTests(unittest.TestCase):
         out = self.pinned("guide/member/page.ja.md", "# ページ\n\nこの操作は取り消せません\nので注意してください。\n")
         self.assertIn("page.ja.md:", out)
 
+    def test_pinned_in_indented_continuation_with_right_line(self):
+        out = self.pinned("guide/member/page.ja.md",
+                          "# ページ\n\n- 手順\n  この操作は取り消せません\n  ので注意してください。\n")
+        self.assertIn("page.ja.md:4", out)
+
+    def test_paragraph_break_is_not_joined_into_a_quote(self):
+        self.write("guide/member/page.ja.md", "この操作は取り消せません\n\nので注意してください。\n")
+        self.edit(JA, "この操作は取り消せませんので注意してください。", "元に戻せません。注意してください。")
+        code, out = self.run_check()
+        self.assertEqual(code, 0, out)
+
     def test_pinned_in_af_usage(self):
         self.pinned("workspace/agent/knowledge/af-usage.md", "この操作は取り消せませんので注意してください\n")
 

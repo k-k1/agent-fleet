@@ -19,7 +19,7 @@ English | [日本語](10-development.ja.md)
 | `e2e/` | Fleet end-to-end tests (a separate Go module, standard library only) — the CP against real containers (§10.4) |
 | `console-e2e/` | Console UI end-to-end tests (Playwright) — browser through CP to a real container (§10.4) |
 | `guide/` · `docs/` | The user guide that ships inside every container, and the developer documentation. The norms for both are [CONVENTIONS](../CONVENTIONS.md) |
-| `scripts/` | Repository checks: `docs-check.py` (links, front matter, the `guide/ref` tables), `guide-diff-check.py` and `catalog-diff-check.py` (local-only guards for wording rewrites of the guide and the ja catalogue, §10.6), `vet-build-tags.sh` and `model-id-lint/` (model ids outside the fallback registry) |
+| `scripts/` | Repository checks: `docs-check.py` (links, front matter, the `guide/ref` tables), `vet-build-tags.sh` and `model-id-lint/` (model ids outside the fallback registry) |
 
 The file-level map is [90-code-map](90-code-map.md).
 
@@ -506,7 +506,8 @@ only on purpose: it fails without `--allow-labels`, and with it every `old -> ne
 printed for review. A changed value whose old text is still quoted in `guide/**/*.ja.md`,
 console tests, Go sources or `workspace/agent/knowledge/af-usage.md` is reported as PINNED
 with `file:line` and fails; update that citation in the same PR (`--list-pinned` prints
-just those locations). A guide quote that reproduces only the start of a sentence (under
-8 characters) cannot be found. It does not judge meaning, and, like
+just those locations). A guide quote that reproduces only the start of a sentence, or any
+quote that does not contain a whole old clause, is not searched; after a rewrite, search
+the guide by hand for the opening words of each changed value. It does not judge meaning, and, like
 `scripts/guide-diff-check.py`, it is for local use and is not part of CI. Its tests are
 `python3 -m unittest discover -s scripts -p test_catalog_diff_check.py`.
