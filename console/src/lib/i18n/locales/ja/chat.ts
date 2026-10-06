@@ -20,7 +20,7 @@ export const chat = {
   "chat.compact_tip": "会話を要約し、要約だけを新しいセッションへ引き継いでコンテキストを圧縮します（この画面の履歴は残ります）",
   "chat.compact_confirm_title": "コンテキストを圧縮しますか？",
   "chat.compact_confirm_body":
-    "これまでの会話を要約し、要約だけを新しいセッションへ引き継ぎます。この画面の会話履歴はそのまま残りますが、引き継がれるのは要約のみです。要約の作成に1ターン分のトークンを消費します。",
+    "これまでの会話を要約し、要約だけを新しいセッションへ引き継ぎます。この画面の会話履歴はそのまま残りますが、引き継がれるのは要約だけです。要約の作成に1ターン分のトークンを消費します。",
   "chat.compacting": "圧縮中…",
   "chat.compact_failed": "コンテキストの圧縮に失敗しました",
   "chat.switch_agent": "エージェントを切り替え",
@@ -140,6 +140,6 @@ export const chat = {
   "chat.ph_mod": "メッセージを入力（Ctrl+Enter で送信 / Enter で改行）",
   "chat.ph_enter": "メッセージを入力（Enter で送信 / Shift+Enter で改行）",
   "chat.ph_loading": "読み込み中…",
-  "chat.intro": "セッションの通知を Discord / Slack に送ります。通知の ON/OFF は 個人設定 › 通知 で切り替えます。",
+  "chat.intro": "セッションの通知を Discord / Slack に送ります。通知のオン／オフは 個人設定 › 通知 で切り替えます。",
   "chat.settings": "通知設定",
 };
