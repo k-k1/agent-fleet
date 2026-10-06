@@ -476,3 +476,34 @@ not, cannot, default, required, unless, except。`can't`・`n't` は長い形と
 その書き換えは人の目で見る価値があります。`--triples` は変更した値ごとに `key`・現在の ja の値・
 旧 en・新 en を TSV（タブと改行はエスケープ）で出して終了コード 0 で終わり、ja との意味の
 一致を見るレビュー役に渡します。CI には載せません。
+
+**意図した用語変更の承認**（`--allow-term`、`--allow-terms-file`）。用語の決定を適用する書き換えは
+glossary の個数（ja ではさらに英字語の個数：`OFF` → `オフ`）を変えるため、上のチェックが報告します。
+その変更だけをキー単位で承認します。
+
+```
+--allow-term KEY:OLD>NEW[*N]              繰り返し可。N の既定は 1
+--allow-terms-file PATH                   1 行 KEY<TAB>OLD<TAB>NEW[<TAB>N]。空行と # 行は無視
+```
+
+承認が成り立つのは、そのキーの変更後の値で OLD の個数がちょうど N 減り、NEW の個数がちょうど
+N 増え、その語を数えるすべてのカテゴリ（glossary、ja の英字語規則、en の ALL_CAPS 規則）で
+そうなっているときだけです（どのカテゴリも数えない語は直接数えます）。値のそれ以外の部分は
+従来のチェックのままで、別のキーで同じ語が変わると失敗し、`--allow-labels`・PINNED・
+ほかのカテゴリは緩めません。適用した承認は 1 件ずつ出力します（`ALLOWED term: … OLD -> NEW xN
+(OLD a -> b, NEW c -> d)`）。適用されなかった承認（向きや個数が違う、キーが未変更・存在しない）は
+見えた個数つきの `FAIL allow` になり、それで説明するはずだった差分も失敗のままです。`failures:`
+行の `allow=` は承認を渡したときだけ付くので、フラグ無しの出力は従来と同一です。数え方は
+既存の規則のままです（ja は部分文字列なので `既定値` の中の `既定` も数え、en は単語境界）。
+
+例（ja：`既定 OFF。` → `既定ではオフです。`、`デフォルト` → `既定`）：
+
+```
+python3 scripts/catalog-diff-check.py origin/develop --allow-labels \
+  --allow-term 'agents.note_x:OFF>オフ' --allow-term 'surface_color.default:デフォルト>既定'
+```
+
+フラグ無しだと `FAIL latin`（`OFF` が消えた）と `FAIL glossary`（`オフ` 0 → 1、`既定` 0 → 1）、
+付けると `ALLOWED term:` が 2 行出て終了コード 0 です。同じ決定を別のキーに適用するなら承認も
+もう 1 つ要ります。en も同様です（`--lang en --allow-term KEY:OFF>off`。glossary の語は大文字小文字を
+区別せずに照合します）。

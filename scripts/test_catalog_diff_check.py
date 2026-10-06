@@ -58,6 +58,11 @@ class Base(unittest.TestCase):
         line = next(l for l in out.splitlines() if l.startswith("failures:"))
         return {k: int(v) for k, v in re.findall(r"(\w+)=(\d+)", line)}
 
+    def commit_all(self, msg):
+        subprocess.run(["git", "add", "-A"], cwd=self.repo, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", msg],
+                       cwd=self.repo, check=True)
+
     def assertTrips(self, category, *args):
         code, out = self.run_check(*args)
         self.assertEqual(code, 1, out)
@@ -73,7 +78,7 @@ class CatalogDiffCheckTests(Base):
     def test_identical_passes_and_prints_counts(self):
         code, out = self.run_check(JA)
         self.assertEqual(code, 0, out)
-        self.assertIn("14 value(s) checked, 0 changed", out)
+        self.assertIn("17 value(s) checked, 0 changed", out)
         self.assertEqual(set(self.counts(out).values()), {0})
 
     def test_no_changed_file_checks_nothing_but_says_so(self):
@@ -310,6 +315,105 @@ class CatalogDiffCheckTests(Base):
         self.assertNotIn("failures:", out)
 
 
+    # Term allowances (--allow-term, --allow-terms-file).
+
+    def test_allow_term_latin_to_glossary_passes_and_is_printed(self):
+        self.edit(JA, "自動保存は OFF です。", "自動保存はオフです。")
+        code, out = self.run_check("--allow-term", "dom.toggle:OFF>オフ")
+        self.assertEqual(code, 0, out)
+        self.assertIn("ALLOWED term: ", out)
+        self.assertRegex(out, r"dom\.toggle: OFF -> オフ x1 \(OFF 1 -> 0, オフ 0 -> 1\)")
+        self.assertIn("1 of 1 term allowance(s) applied", out)
+        self.assertEqual(self.counts(out)["allow"], 0)
+
+    def test_allow_term_missing_flag_still_fails_both_categories(self):
+        self.edit(JA, "自動保存は OFF です。", "自動保存はオフです。")
+        out = self.assertTrips("latin")
+        self.assertGreater(self.counts(out)["glossary"], 0, out)
+        self.assertNotIn("allow", self.counts(out))
+
+    def test_allow_term_glossary_synonym_passes(self):
+        self.edit(JA, '"dom.default_a": "既定の設定です。"', '"dom.default_a": "オフの設定です。"')
+        code, out = self.run_check("--allow-term", "dom.default_a:既定>オフ")
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"既定 -> オフ x1 \(既定 1 -> 0, オフ 0 -> 1\)")
+
+    def test_allow_term_non_glossary_new_is_counted_directly(self):
+        self.edit(JA, '"dom.default_a": "既定の設定です。"', '"dom.default_a": "デフォルトの設定です。"')
+        code, out = self.run_check("--allow-term", "dom.default_a:既定>デフォルト")
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"既定 1 -> 0, デフォルト 0 -> 1")
+        self.assertTrips("allow", "--allow-term", "dom.default_a:既定>デフォルト*2")
+
+    def test_allow_term_does_not_cover_the_same_change_in_another_key(self):
+        self.edit(JA, '"dom.default_a": "既定の設定です。"', '"dom.default_a": "オフの設定です。"')
+        self.edit(JA, '"dom.default_b": "既定の設定です。"', '"dom.default_b": "オフの設定です。"')
+        out = self.assertTrips("glossary", "--allow-term", "dom.default_a:既定>オフ")
+        self.assertRegex(out, r"FAIL glossary: \S+ dom\.default_b: ")
+        self.assertNotRegex(out, r"FAIL glossary: \S+ dom\.default_a: ")
+        code, out = self.run_check("--allow-term", "dom.default_a:既定>オフ", "--allow-term", "dom.default_b:既定>オフ")
+        self.assertEqual(code, 0, out)
+        self.assertIn("2 of 2 term allowance(s) applied", out)
+
+    def test_allow_term_wrong_direction_fails_and_is_stale(self):
+        self.edit(JA, "自動保存は OFF です。", "自動保存はオフです。")
+        out = self.assertTrips("allow", "--allow-term", "dom.toggle:オフ>OFF")
+        self.assertIn("matched no change", out)
+        self.assertGreater(self.counts(out)["latin"], 0, out)
+
+    def test_allow_term_wrong_delta_fails(self):
+        self.edit(JA, "自動保存は OFF です。", "自動保存はオフです。")
+        out = self.assertTrips("allow", "--allow-term", "dom.toggle:OFF>オフ*2")
+        self.assertIn("OFF 1 -> 0 (allowed -2)", out)
+        self.assertGreater(self.counts(out)["latin"], 0, out)
+
+    def test_allow_term_more_change_than_allowed_fails(self):
+        self.edit(JA, "自動保存は OFF です。", "自動保存はオフです。オフです。")
+        out = self.assertTrips("allow", "--allow-term", "dom.toggle:OFF>オフ")
+        self.assertIn("オフ 0 -> 2 (allowed +1)", out)
+
+    def test_allow_term_count_covers_repeats(self):
+        self.edit(JA, "自動保存は OFF です。", "OFF と OFF です。")
+        self.commit_all("two OFF")
+        self.edit(JA, "OFF と OFF です。", "オフとオフです。")
+        code, out = self.run_check("--allow-term", "dom.toggle:OFF>オフ*2")
+        self.assertEqual(code, 0, out)
+        self.assertIn("x2", out)
+        self.assertTrips("allow", "--allow-term", "dom.toggle:OFF>オフ")
+
+    def test_allow_term_unrelated_drift_in_the_same_value_still_fails(self):
+        self.edit(JA, "自動保存は OFF です。", "自動保存はオフです。ワークスペース")
+        out = self.assertTrips("glossary", "--allow-term", "dom.toggle:OFF>オフ")
+        self.assertIn("ワークスペース", out)
+
+    def test_allow_term_stale_when_nothing_changed(self):
+        out = self.assertTrips("allow", "--allow-term", "dom.toggle:OFF>オフ")
+        self.assertIn("the key was not among the changed values", out)
+        out = self.assertTrips("allow", "--allow-term", "dom.nothing:OFF>オフ")
+        self.assertIn("stale", out)
+
+    def test_allow_term_does_not_exempt_other_checks(self):
+        self.edit(JA, "自動保存は OFF です。", "自動保存はオフです。 3 日")
+        out = self.assertTrips("digits", "--allow-term", "dom.toggle:OFF>オフ")
+        self.assertEqual(self.counts(out)["allow"], 0, out)
+
+    def test_allow_terms_file(self):
+        self.edit(JA, "自動保存は OFF です。", "自動保存はオフです。")
+        self.edit(JA, '"dom.default_a": "既定の設定です。"', '"dom.default_a": "オフの設定です。"')
+        self.write("allow.tsv", "# reviewed\n\ndom.toggle\tOFF\tオフ\ndom.default_a\t既定\tオフ\t1\n")
+        code, out = self.run_check("--allow-terms-file", "allow.tsv")
+        self.assertEqual(code, 0, out)
+        self.assertIn("2 of 2 term allowance(s) applied", out)
+        self.write("allow.tsv", "dom.toggle\tOFF\n")
+        code, out = self.run_check("--allow-terms-file", "allow.tsv")
+        self.assertEqual(code, 2, out)
+
+    def test_bad_allow_term_spec(self):
+        for spec in ("dom.toggle", "dom.toggle:OFF", "dom.toggle:OFF>OFF", "dom.toggle:OFF>オフ*0", ":OFF>オフ"):
+            code, out = self.run_check("--allow-term", spec)
+            self.assertEqual(code, 2, f"{spec}: {out}")
+
+
 @NEEDS
 class CatalogDiffCheckEnTests(Base):
     """--lang en: the same fixtures, with locales/en/ as the target."""
@@ -323,17 +427,12 @@ class CatalogDiffCheckEnTests(Base):
         self.assertGreater(self.counts(out)[category], 0, out)
         return out
 
-    def commit_all(self, msg):
-        subprocess.run(["git", "add", "-A"], cwd=self.repo, check=True)
-        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", msg],
-                       cwd=self.repo, check=True)
-
     # Negative controls.
 
     def test_en_identical_passes_and_prints_counts(self):
         code, out = self.run_en(EN, EN_EXT)
         self.assertEqual(code, 0, out)
-        self.assertIn("2 file(s), 20 value(s) checked, 0 changed", out)
+        self.assertIn("2 file(s), 23 value(s) checked, 0 changed", out)
         self.assertEqual(set(self.counts(out).values()), {0})
         self.assertIn("warnings: restriction=0", out)
 
@@ -641,6 +740,37 @@ class CatalogDiffCheckEnTests(Base):
     def test_en_unknown_ref(self):
         p = subprocess.run([sys.executable, str(SCRIPT), "no-such-ref", "--lang", "en"], cwd=self.repo, capture_output=True, text=True)
         self.assertEqual(p.returncode, 2, p.stderr)
+
+
+    # Term allowances, en mode.
+
+    def test_en_allow_term_glossary_synonym_passes_and_other_key_fails(self):
+        self.edit(EN, '"dom.default_a": "The default setting."', '"dom.default_a": "The standard setting."')
+        self.edit(EN, '"dom.default_b": "The default setting."', '"dom.default_b": "The standard setting."')
+        out = self.assertEnTrips("glossary", "--allow-term", "dom.default_a:Default>standard")
+        self.assertRegex(out, r"dom\.default_b: \"Default\" 1 -> 0")
+        self.assertNotRegex(out, r"FAIL glossary: \S+ dom\.default_a: ")
+        code, out = self.run_en("--allow-term", "dom.default_a:Default>standard",
+                                "--allow-term", "dom.default_b:default>standard")
+        self.assertEqual(code, 0, out)
+        self.assertIn("ALLOWED term: ", out)
+        self.assertIn("2 of 2 term allowance(s) applied", out)
+
+    def test_en_allow_term_caps_word(self):
+        self.edit(EN, "Autosave is OFF.", "Autosave is off.")
+        code, out = self.run_en("--allow-term", "dom.toggle:OFF>off")
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"OFF 1 -> 0, off 0 -> 1")
+        self.assertEnTrips("allow", "--allow-term", "dom.toggle:off>OFF")
+        self.assertEnTrips("allow", "--allow-term", "dom.toggle:OFF>off*2")
+        self.assertEnTrips("caps")
+
+    def test_en_allow_term_stale_and_default_output_unchanged(self):
+        out = self.assertEnTrips("allow", "--allow-term", "dom.toggle:OFF>off")
+        self.assertIn("stale", out)
+        code, out = self.run_en()
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("allow", out)
 
 
 if __name__ == "__main__":
