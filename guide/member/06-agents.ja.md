@@ -126,7 +126,7 @@ muse のセッションはツールの承認を一度も求めません。承認
 通知はありません。
 
 **アシスタントチャットの既定モデル**：各アシスタントで個別にモデルを指定でき、claude の
-既定はデプロイ全体で `AF_CHAT_MODEL` でも変更できます。会話用途のため高速・低コストの
+既定は配備全体で `AF_CHAT_MODEL` でも変更できます。会話用途のため高速・低コストの
 ティアを既定にしています: claude → Sonnet 5 · codex → 一覧にある最新の Luna（執筆時点で `gpt-6-luna`） · opencode →
 一覧にあれば `opencode-go/glm-5.2`、無ければ `opencode/nemotron-3-ultra-free` · agy → Gemini 3.5 Flash · cursor → Cursor 自身の既定
 （Auto）。なお cursor のアシスタントは**読み取り専用**（`--mode ask`）です。kiro は
@@ -253,7 +253,7 @@ GitHub を連携すると自動的に「接続済み」になります**（「Gi
 - **オンデマンド導入。** Kiro の CLI は大きい（~855MB）ため、既定では**イメージに焼き込まれ
   ません**。初めて使うときに各自の home ディレクトリへダウンロードされます。接続カードに
   進捗付きの **「インストール」** ボタンが出てから、サインインへ進みます
-  （`BAKE_AGENT_CLIS=1` を立てたデプロイでは同梱済みです）。
+  （`BAKE_AGENT_CLIS=1` を立てた配備では同梱済みです）。
 - 起動時のモデル選択肢はライブ取得で、**Free プランでも named モデルが選べます**
   （Auto、Claude Sonnet / Haiku ほか）。reasoning effort の別ピッカーはありません。
 - **マネージド（既定）** と **ターミナル（CLI）** の両方に対応します。cursor と違い、

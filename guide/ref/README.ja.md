@@ -16,7 +16,7 @@ updated: "2026-08"
 | [features.md](features.ja.md) | そもそも何ができて、誰ができる？ |
 | [agents.md](agents.ja.md) | このエージェントでできる？ |
 | [repos.md](repos.ja.md) | このリポジトリ種別に対してできる？ |
-| [deploy-targets.md](deploy-targets.ja.md) | このデプロイ形態にある？ |
+| [deploy-targets.md](deploy-targets.ja.md) | この配備形態にある？ |
 | [roles.md](roles.ja.md) | このロールに許されている？ |
 | [settings.md](settings.ja.md) | どこで設定する？ 変数名は？ |
 | [limits.md](limits.ja.md) | 既定はいくつ？ 上限は？ |

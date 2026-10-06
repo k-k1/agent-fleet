@@ -89,12 +89,12 @@ describe("tenant default machine class", () => {
     });
     await mount();
     expect(chips().map((b) => (b.textContent || "").trim())).toEqual([
-      "デプロイの既定",
+      "配備の既定",
       "標準（Intel）",
       "省コスト（Arm）",
     ]);
     expect(chipWith("省コスト（Arm）")!.className).toContain("on");
-    expect(chipWith("デプロイの既定")!.className).not.toContain("on");
+    expect(chipWith("配備の既定")!.className).not.toContain("on");
     // One line per class saying what it actually buys you.
     const specs = Array.from(document.querySelectorAll(".machine-specs li")).map((e) => e.textContent || "");
     expect(specs[0]).toContain("m7i.large–m7i.2xlarge");
@@ -111,7 +111,7 @@ describe("tenant default machine class", () => {
     });
     apiJSON.mockResolvedValue({ tenant: "acme", slot_class: "" });
     await mount();
-    await act(async () => chipWith("デプロイの既定")!.click());
+    await act(async () => chipWith("配備の既定")!.click());
     expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/slot-class", "PUT", { slot_class: "" });
   });
 });

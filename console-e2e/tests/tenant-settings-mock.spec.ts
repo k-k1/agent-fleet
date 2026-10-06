@@ -130,7 +130,7 @@ test("tenant admin: sign-in methods are editable but approval is not offered, an
   await expect(rows).toHaveCount(2);
   await expect(rows.nth(0).locator(".as-name")).toHaveText("Google でサインイン");
   await expect(rows.nth(0).locator("code")).toHaveText("google");
-  await expect(rows.nth(0).locator(".idp-state")).toHaveText("デプロイ共通");
+  await expect(rows.nth(0).locator(".idp-state")).toHaveText("配備共通");
   // The tenant's own row is present: a tenant admin can manage their own IdP.
   await expect(rows.nth(1).locator(".as-name")).toHaveText("entra");
   await expect(rows.nth(1).locator(".idp-state")).toHaveText("承認待ち");
@@ -352,7 +352,7 @@ test("deployment admin: deployment-wide methods appear in the tenant's list with
   await expect(rows.nth(1).locator("code")).toHaveText("entra");
   // issuer is returned only to super_admin (§61.17.9 (1)); when it is, show it on the row.
   await expect(rows.nth(1).locator(".as-repo")).toHaveText(IDP.issuer);
-  await expect(rows.nth(1).locator(".idp-state")).toHaveText("デプロイ共通");
+  await expect(rows.nth(1).locator(".idp-state")).toHaveText("配備共通");
   // The tenant's own row comes last (off, since it is not yet approved). Deployment-wide
   // methods offer neither edit nor delete.
   await expect(rows.nth(2).locator(".as-name")).toHaveText("entra");

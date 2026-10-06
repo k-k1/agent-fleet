@@ -638,7 +638,7 @@ export const admin = {
   // 左レールのグループ見出し（ルート）。テナント＝一覧と登録簿、デプロイ全体＝
   // デプロイに 1 つしかない面、横断で見る＝全テナントを跨いで数える面。
   "admin.group_tenants": "テナント",
-  "admin.group_deployment": "デプロイ全体",
+  "admin.group_deployment": "配備全体",
   "admin.group_across": "横断で見る",
   "admin.all_tenants_back": "すべてのテナント",
   // レールの項目名は短く（本文の見出しは admin.idp_register のまま）。
@@ -801,7 +801,7 @@ export const admin = {
   "admin.max_ws_mem": "ワークスペースごとのメモリ上限",
   "admin.per_container": "= {hint}／1 コンテナ",
   "admin.zero_no_tenant_cap": "0 = テナント上限なし",
-  "admin.ws_mem_hint_1": "「ワークスペースごとのメモリ上限」は 1 コンテナに割り当て可能なメモリの天井（テナント内の各ユーザー設定はこの範囲に収まります）。0 = テナント上限なし（デプロイ既定 ",
+  "admin.ws_mem_hint_1": "「ワークスペースごとのメモリ上限」は 1 コンテナに割り当て可能なメモリの天井（テナント内の各ユーザー設定はこの範囲に収まります）。0 = テナント上限なし（配備の既定 ",
   "admin.ws_mem_hint_2": " と、あればホスト天井 ",
   "admin.ws_mem_hint_3": " のみ）。個々の割当はメンバー詳細で設定し、",
   "admin.ws_mem_hint_bold": "次回のコンテナ起動／作り直しで反映",
@@ -832,22 +832,22 @@ export const admin = {
   "admin.idle_hold_pin": "自動停止しないピン",
   "admin.idle_hold_watching": "操作中で停止しない",
   "admin.idle_hold_more": " ほか {n} 件",
-  "admin.empty_deploy_default": "空 = デプロイ既定に従う",
+  "admin.empty_deploy_default": "空 = 配備の既定に従う",
   "admin.session_halt": "セッション停止まで",
   "admin.ws_stop": "ワークスペース停止まで",
   "admin.interaction_halt": "判断待ちの halt まで",
   "admin.interaction_ph": "空 = 左に従う",
   "admin.interaction_hint": "「判断待ち」は、質問・計画の承認待ち・許可待ち・利用上限メニュー・認証切れを指します。答えが返るまでコンテナが動き続けるので、通常のアイドルとは別に決められます。停止しても対話は失われません（再開後にミラーのカードから回答すると届きます）。",
-  "admin.idle_ph_30m": "例 30m（空=デプロイ既定 1h）",
-  "admin.idle_ph_60m": "例 60m（空=デプロイ既定 2h）",
+  "admin.idle_ph_30m": "例 30m（空=配備の既定 1h）",
+  "admin.idle_ph_60m": "例 60m（空=配備の既定 2h）",
   "admin.idle_hint_1": "放置された Claude セッションは「セッション停止まで」で停止中（再開可）になり、接続も稼働もないワークスペースは「ワークスペース停止まで」で停止します。書式は ",
-  "admin.idle_hint_2": "。空欄はデプロイ既定（セッション 1h／ワークスペース 2h）に従い、",
+  "admin.idle_hint_2": "。空欄は配備の既定（セッション 1h／ワークスペース 2h）に従い、",
   "admin.idle_hint_3": " で明示的に無効化します。",
   // home の退避（AF_RUNTIME=ecs-ec2 のみ・ADR 0045 決定 13-2）。ここだけが「利用者の home を
   // 自動で今の置き場から動かす」設定なので、可逆であることと初日が遅くなることを必ず書く。
   "admin.hibernate_title": "使われない home の退避",
   "admin.hibernate_after": "退避するまで",
-  "admin.hibernate_ph": "例 720h＝30 日（空=デプロイ既定）",
+  "admin.hibernate_ph": "例 720h＝30 日（空=配備の既定）",
   "admin.hibernate_hint":
     "この期間だれも開かなかった home は snapshot にして、ディスクを解放します。次に起動したときに戻すので失われるものはありませんが、その回の起動は少し長くなり、戻した直後の数時間はディスクが遅くなります。",
   "admin.hibernate_warn":
@@ -856,7 +856,7 @@ export const admin = {
   // 「なぜ要るのか」を先に書く。RPO の語は使わず「どれだけ巻き戻ってよいか」で言う。
   "admin.backup_title": "home の予備を取る",
   "admin.backup_every": "取る間隔",
-  "admin.backup_ph": "例 24h（空=デプロイ既定）",
+  "admin.backup_ph": "例 24h（空=配備の既定）",
   "admin.backup_hint":
     "home は 1 つのアベイラビリティゾーンの中にあり、そのゾーンごと失われると home も失われます。予備はゾーンの外に置かれるので、そこから作り直せます。ここで決めるのは「最悪どれだけ巻き戻ってよいか」です。",
   "admin.backup_warn":
@@ -873,7 +873,7 @@ export const admin = {
   "admin.engine_ingest_title": "推論エンジンのモデル取り込み",
   "admin.allow_engine_ingest": "このテナントの管理者がモデルを取り込むのを許可",
   "admin.allow_engine_ingest_hint":
-    "OFF（既定）では取り込みを起動できるのは super_admin だけです。ON にすると、このテナントの tenant_admin が Hugging Face / Civitai / URL からモデルを取り込めます。有効化・選択中チェックポイントの変更・行の削除・デプロイの Hugging Face トークンは super_admin のままです。カタログはデプロイに 1 つなので、取り込まれたモデルの id はどのテナントからも見えます。",
+    "OFF（既定）では取り込みを起動できるのは super_admin だけです。ON にすると、このテナントの tenant_admin が Hugging Face / Civitai / URL からモデルを取り込めます。有効化・選択中チェックポイントの変更・行の削除・配備の Hugging Face トークンは super_admin のままです。カタログは配備に 1 つなので、取り込まれたモデルの id はどのテナントからも見えます。",
   "admin.engine_use_title": "推論エンジンの利用可否",
   "admin.allow_engine_llm": "セルフホストのチャットエンジン（llm）の利用を許可",
   "admin.allow_engine_image": "セルフホストの画像生成エンジン（image）の利用を許可",
@@ -887,7 +887,7 @@ export const admin = {
   "admin.checking": "確認中…",
   "admin.running_state": "稼働中",
   "admin.stopped_state": "停止中",
-  "admin.super_admin_deploy_title": "super_admin（デプロイ全体）",
+  "admin.super_admin_deploy_title": "super_admin（配備全体）",
   "admin.tenant_admin_paren": "（テナント管理者）",
   "admin.ws_resources": "ワークスペースのリソース",
   "admin.ws_stopped": "ワークスペースは停止中です{suffix}。",
@@ -899,7 +899,7 @@ export const admin = {
   "admin.sessions_heading": "セッション",
   "admin.no_sessions": "セッションなし",
   "admin.permissions": "権限",
-  "admin.super_admin_note_1": "このユーザーはデプロイ全体の super_admin です（env ",
+  "admin.super_admin_note_1": "このユーザーは配備全体の super_admin です（env ",
   "admin.super_admin_note_2": " で管理）。",
   "admin.tenant_admin_role": "テナント管理者（tenant_admin）",
   "admin.revoke_admin": "管理者権限を解除",
@@ -914,7 +914,7 @@ export const admin = {
   "admin.ws_disk": "ワークスペースの作業ディスク",
   "admin.ws_size_preset": "サイズ",
   "admin.ws_size_custom": "カスタム",
-  "admin.zero_deploy_default_cpu": "0 = デプロイ既定",
+  "admin.zero_deploy_default_cpu": "0 = 配備の既定",
   "admin.ws_disk_hint": "0 = 既定 20 GiB（無料枠）",
   "admin.ws_disk_warn": "作業ディスクは停止すると消えます。永続するのはホームだけです。",
   "admin.ws_cpu_vcpu": "= {n} vCPU",
@@ -929,7 +929,7 @@ export const admin = {
   "tenant.machine_title": "既定のマシン種別",
   "tenant.machine_note":
     "このテナントのメンバーが、自分の指定を持たないときに載るマシンです。メンバー毎の指定はメンバー詳細から行い、そちらが優先されます。",
-  "tenant.machine_deploy_default": "デプロイの既定",
+  "tenant.machine_deploy_default": "配備の既定",
   "tenant.machine_member_note":
     "自分で種類を選んでいるメンバーは、ここを変えても影響を受けません。反映は各メンバーの次回起動時です。",
   "admin.roster_spec": "{n} vCPU / {mem}",
@@ -942,12 +942,12 @@ export const admin = {
   "admin.ws_disk_home": "ワークスペースの home（永続）",
   "admin.ws_disk_home_hint": "0 を指定すると配備の既定の {n} GiB になります。home の作成時にだけ反映され、あとから縮められません。",
   "admin.ws_disk_quota_hint": "0 を指定すると制限なしになります。表示用の目安で、強制はされません。",
-  "admin.ws_disk_work_hint": "0 = デプロイ既定 {n} GiB",
+  "admin.ws_disk_work_hint": "0 = 配備の既定 {n} GiB",
   // --- サイズと上限（ADR 0045 補遺）。「操作」から独立した 1 枚に出す。並んでいた
   // 相手が home 掃除とメンバー削除で、設定の変更が取り消せない操作と同じ列にいた。---
   "admin.ws_size_heading": "サイズと上限",
   "admin.ws_size_change": "変更",
-  "admin.ws_size_unset": "すべてデプロイの既定",
+  "admin.ws_size_unset": "すべて配備の既定",
   "admin.ws_size_group": "ワークスペースのサイズ",
   "admin.session_limit_group": "セッション上限",
   "admin.danger_zone": "取り消せない操作",
@@ -964,7 +964,7 @@ export const admin = {
   "admin.max_sessions_label": "最大セッション数",
   "admin.ws_memory": "ワークスペースのメモリ",
   "admin.eq_hint": "= {hint}",
-  "admin.zero_deploy_default": "0 = デプロイ既定",
+  "admin.zero_deploy_default": "0 = 配備の既定",
   "admin.mem_clamp_1": "メモリはテナント上限にクランプされ、",
   "admin.mem_clamp_2": "されます（実行中コンテナには即時反映されません）。",
   "admin.stop_ws_title": "{key} のワークスペースを停止",
@@ -978,7 +978,7 @@ export const admin = {
   "admin.rotate_git_not_running": "新しい git トークンを発行しました。ワークスペースは次の起動で受け取ります。",
   "admin.rotate_git_pending": "新しい git トークンを発行しました。ワークスペースは起動中で、起動が終わると受け取ります。",
   "admin.rotate_git_failed": "新しい git トークンを発行しましたが、起動中のワークスペースが受け取れませんでした。ワークスペースを再起動して新しいトークンを渡してください。",
-  "admin.rotate_git_disabled": "新しい git トークンを発行しました。このデプロイでは内部 git が有効になっていません。",
+  "admin.rotate_git_disabled": "新しい git トークンを発行しました。この配備では内部 git が有効になっていません。",
   "admin.clean_title": "{key} の home を掃除",
   "admin.clean_confirm": "掃除する",
   "admin.clean_body": "このユーザーのワークスペースの home を掃除します。コンテナは停止されます。",
@@ -1020,7 +1020,7 @@ export const admin = {
   // --- デプロイの方式＝既定テナントの方式（docs/log/61 §61.17）。P7-0 で、テナントの
   // サインイン方法の一覧に「デプロイ共通」の行として並ぶようになった。表示名を主に、
   // id は <code> で添える（技術識別子を主役にしない）。---
-  "admin.providers_none": "このデプロイにはサインイン方法が設定されていません（ログイン画面にボタンが出ません）。",
+  "admin.providers_none": "この配備にはサインイン方法が設定されていません（ログイン画面にボタンが出ません）。",
   // ★ 「0 件」と「読めなかった」を必ず別文言にする。以前は 403 を空配列に潰していて、
   // 権限の無い相手に「設定されていません」と嘘を表示していた（docs/log/61 §61.17.9 ②）。
   "admin.providers_unreadable": "サインイン方法の一覧を読み込めませんでした。権限がないか、一時的に取得できていません。",
@@ -1028,18 +1028,18 @@ export const admin = {
   // --- テナント定義の認証方式（docs/log/61 §61.11・P4）。子会社ごとに Entra が違う場合。
   // 作るのはテナント管理者、有効化はデプロイ管理者（決定 30）。この非対称が本体。---
   "admin.idp_title": "このテナントで使えるサインイン方法",
-  "admin.idp_note": "自前の方式の有効化にはデプロイ管理者の承認が必要です",
+  "admin.idp_note": "自前の方式の有効化には配備管理者の承認が必要です",
   "admin.idp_hint":
-    "このテナントに入るのに使える方法の全部です。デプロイ共通の方式と、このテナント専用に登録した方式が並びます。" +
+    "このテナントに入るのに使える方法の全部です。配備共通の方式と、このテナント専用に登録した方式が並びます。" +
     "自社の IdP（Entra / Okta / Keycloak など）や GitHub の組織は「サインイン方法を追加」から登録でき、" +
-    "登録した時点では「承認待ち」で、デプロイ管理者が承認するまでログイン画面にボタンは出ず、サインインもできません。",
-  "admin.idp_none": "このテナント専用の方式はまだありません（上のデプロイ共通の方式は使えます）。",
+    "登録した時点では「承認待ち」で、配備管理者が承認するまでログイン画面にボタンは出ず、サインインもできません。",
+  "admin.idp_none": "このテナント専用の方式はまだありません（上の配備共通の方式は使えます）。",
   "admin.idp_add": "サインイン方法を追加",
   // --- 行ごとの 2 トグル（docs/log/61 §61.17.5）。DB は CSV 2 本のままで、画面だけが変わる。
   // ★ 「出す」は「受け入れる」の従属 — 受け入れていない方式は ON にしても出ない。---
   "admin.idp_accept": "受け入れる",
   "admin.idp_show": "ボタンに出す",
-  "admin.idp_deployment_wide": "デプロイ共通",
+  "admin.idp_deployment_wide": "配備共通",
   "admin.idp_accept_last":
     "最後の 1 つは外せません。すべて外すと「制限なし＝全部受け入れる」の意味になり、絞ったつもりでもすべて受け入れることになります。",
   "admin.idp_show_last":
@@ -1148,7 +1148,7 @@ export const admin = {
   "tenant.net_off": "制限なし",
   "tenant.net_allowed": "許可するネットワーク",
   "tenant.net_allowed_unit": "CIDR か単独アドレスをカンマ区切りで指定します（IPv4/IPv6）。空欄なら制限しません。",
-  "tenant.net_your_ip": "このデプロイから見えているあなたのアドレス",
+  "tenant.net_your_ip": "この配備から見えているあなたのアドレス",
   "tenant.net_your_ip_unit": "規則はこの値と照合されます（ブラウザ自身が認識しているアドレスではありません）。",
   "tenant.net_ip_unknown": "判定できません",
   "tenant.net_ip_unknown_hint": "この要求の送信元をコントロールプレーンが特定できないため、規則を適用できません。AF_TRUSTED_PROXY_HOPS の設定を運用者に確認してください。",
@@ -1168,7 +1168,7 @@ export const admin = {
   "tenant.git_oauth_secret_kept": "保存済み（空のままなら変更しません）",
   "tenant.git_oauth_secret_unit": "保存時に暗号化され、二度と表示されません。変更するときだけ入力してください。",
   "tenant.git_oauth_redirect": "プロバイダ側のアプリ登録に、このコールバック URL を設定してください:",
-  "tenant.git_oauth_no_base_url": "このデプロイには PUBLIC_BASE_URL が設定されていないため、登録するコールバック URL を組み立てられません。登録しても「OAuth で接続」は失敗します（コードグラントの戻り先がないため）。運用者に PUBLIC_BASE_URL の設定を依頼してください。",
+  "tenant.git_oauth_no_base_url": "この配備には PUBLIC_BASE_URL が設定されていないため、登録するコールバック URL を組み立てられません。登録しても「OAuth で接続」は失敗します（コードグラントの戻り先がないため）。運用者に PUBLIC_BASE_URL の設定を依頼してください。",
   "tenant.git_oauth_jira_access": "アプリ作成時の Access type は Resource-level を推奨します（認可したサイト 1 つだけに権限が限られます）。Account-level はアカウント内の全サイトに恒久的な権限を渡すことになります。",
   "tenant.git_oauth_bb_scopes": "Bitbucket は認可 URL にスコープを載せないので、コンシューマの Permissions がそのまま権限になります。Account: Read と Repositories: Read/Write（clone / push 用）に加え、課題管理レールに PR を出すなら Pull requests: Read も入れてください。後から足した場合、すでに接続済みのメンバーは接続し直しが必要です（古い権限がトークンに焼かれているため）。",
   "tenant.git_oauth_jira_scopes": "Jira は Atlassian の 3LO アプリです（Bitbucket のコンシューマとは別に登録します）。Permissions に Jira API を追加し、read:jira-work / read:jira-user / write:jira-work の 3 つを許可してください（write は「作業の報告をコメントする」に要ります）。offline_access は Permissions の一覧には出てきません。OAuth 側のスコープで、af が認可 URL に付けるので設定は不要です。",
@@ -1201,7 +1201,7 @@ export const admin = {
   "tenant.gh_type_by_none": "GitHub に届かず client_id の形からも分かりません。最初の接続で判明します",
   "tenant.gh_github_app_expiry": "GitHub App の場合は、アプリ設定の「Expire user authorization tokens」をオフにしてください。af はまだこのトークンを更新しないため、約 8 時間で接続が切れます。",
   "tenant.gh_reset": "既定に戻す",
-  "tenant.summary_note": "テナント全体の上限を決めるのはデプロイ管理者です",
+  "tenant.summary_note": "テナント全体の上限を決めるのは配備管理者です",
   "tenant.group_manage": "運用",
   "tenant.tab_members": "メンバー",
   "tenant.tab_sessions": "セッション",
@@ -1225,16 +1225,16 @@ export const admin = {
   "tenant.tab_engine_access": "推論エンジンの利用者",
   "tenant.engine_access_title": "推論エンジンを使えるメンバー",
   "tenant.engine_access_note":
-    "セルフホストのチャットエンジン（llm）と画像生成エンジン（image）を、全員に開くか、許可したメンバーだけに絞るかを種類ごとに選びます。テナント全体で使えるかどうかはデプロイ管理者が決め、ここではその範囲内でしか許可できません。",
+    "セルフホストのチャットエンジン（llm）と画像生成エンジン（image）を、全員に開くか、許可したメンバーだけに絞るかを種類ごとに選びます。テナント全体で使えるかどうかは配備管理者が決め、ここではその範囲内でしか許可できません。",
   "tenant.engine_access_llm": "チャット（llm）",
   "tenant.engine_access_image": "画像生成（image）",
   "tenant.engine_access_everyone": "メンバー全員",
   "tenant.engine_access_members_only": "許可したメンバーだけ",
-  "tenant.engine_access_tenant_denied": "このテナントではデプロイ管理者が利用を止めています。ここでは変更できません。",
+  "tenant.engine_access_tenant_denied": "このテナントでは配備管理者が利用を止めています。ここでは変更できません。",
   "tenant.engine_access_admin": "テナント管理者",
   "tenant.engine_access_load_failed": "設定を読み込めませんでした。時間をおいて開き直してください。",
   "tenant.engine_access_save_failed": "保存できませんでした。接続を確かめてもう一度お試しください。",
-  "tenant.engine_access_state_tenant_off": "テナント全体で停止中のため使えません（デプロイ管理者の設定）。",
+  "tenant.engine_access_state_tenant_off": "テナント全体で停止中のため使えません（配備管理者の設定）。",
   "tenant.engine_access_state_everyone": "いまはメンバー全員が使えます。チェックは「許可したメンバーだけ」にしたときに適用されます。",
   "tenant.engine_access_state_granted": "使えます（許可したメンバーだけ）。",
   "tenant.engine_access_state_not_granted": "使えません（許可したメンバーだけ・未許可）。",
@@ -1244,10 +1244,10 @@ export const admin = {
   "tenant.picker": "テナント",
   "tenant.none": "管理しているテナントがありません。",
   "tenant.forbidden": "このテナントの設定を見る権限がありません。",
-  "tenant.rules_readonly_note": "変更できるのはデプロイ管理者だけです",
+  "tenant.rules_readonly_note": "変更できるのは配備管理者だけです",
   "tenant.rules_hint":
     "「自動参加ドメイン」は 1 ドメインにつき 1 テナントだけ設定できます。" +
-    "これらの規則そのものを変えるには、デプロイ管理者に依頼してください。",
+    "これらの規則そのものを変えるには、配備管理者に依頼してください。",
   "tenant.rules_unset": "未設定（制限なし）",
   "tenant.rules_autojoin_note": "このドメインのメールアドレスの人は、初回ログインでこのテナントに参加します。",
   "tenant.rules_invite_note": "メンバーを追加するときだけ適用されるガードです。すでにメンバーの人には影響しません。",
