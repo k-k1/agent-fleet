@@ -13,7 +13,7 @@ export const tools = {
   "mcp.intro":
     "任意の MCP サーバーを登録して、アシスタントチャットと対話セッションから使えるようにします。環境変数とヘッダの値はワークスペース内に暗号化保存され、この画面には返りません。",
   "mcp.project_scope_note":
-    "プロジェクトスコープ（リポジトリの .mcp.json 等）はここでは扱いません → リポジトリの右クリックメニュー「プロジェクト設定…」から",
+    "プロジェクトスコープ（リポジトリの .mcp.json 等）はここでは扱いません。リポジトリの右クリックメニュー「プロジェクト設定…」から扱います。",
   "mcp.empty": "登録済みの MCP サーバーはありません。",
   "mcp.add": "MCP サーバーを追加",
   "mcp.edit": "編集",
@@ -44,7 +44,7 @@ export const tools = {
   "mcp.tenant_note":
     "テナント管理者が配布した定義です。編集はできませんが、自分のワークスペースでは無効化できます。",
   "mcp.session_restart_note":
-    "セッションへ反映されるのは次に起動したセッションからです（起動中のセッションには効きません）。",
+    "セッションへ反映されるのは次に起動したセッションからです（起動中のセッションには適用されません）。",
   "mcp.f_name": "名前",
   "mcp.f_name_hint": "各 CLI の設定に載るサーバー名。英数字・ハイフン・アンダースコアで 48 文字以内。",
   "mcp.f_name_bad": "英数字・ハイフン・アンダースコア 48 文字以内で、先頭は英数字にしてください。",
@@ -53,7 +53,7 @@ export const tools = {
   "mcp.f_label_placeholder": "社内 Wiki",
   "mcp.f_transport": "接続方式",
   "mcp.f_transport_hint":
-    "stdio はコンテナ内でコマンドを起動します。リモートは Streamable HTTP のみ対応です。",
+    "stdio はコンテナ内でコマンドを起動します。リモートは Streamable HTTP だけに対応しています。",
   "mcp.f_command": "コマンド",
   "mcp.f_command_hint": "ワークスペース内で実行する実行ファイル。PATH 上の名前か絶対パス。",
   "mcp.f_args": "引数",
@@ -71,7 +71,7 @@ export const tools = {
   "mcp.f_kinds_hint": "何も選ばなければ全エージェントが対象です。",
   "mcp.f_timeout": "タイムアウト (ms)",
   "mcp.f_timeout_hint":
-    "1000〜120000。空欄なら各 CLI の既定値に従います。opencode と cursor には該当する設定が無いため、指定しても無視されます。",
+    "1000〜120000 の範囲で指定します。空欄なら各 CLI の既定値に従います。opencode と cursor には該当する設定が無いため、指定しても無視されます。",
   "mcp.f_enabled": "有効",
   "mcp.f_enabled_hint": "無効にすると、定義は残したままどこにも渡されなくなります。",
   "mcp.enabled_on": "有効にする",
@@ -155,7 +155,7 @@ export const tools = {
   "env.node_install_timeout": "時間内にダウンロードが終わりませんでした",
   "env.go_default": "既定 (image の go)",
   "env.preview_cross_origin_label": "ポート間の呼び出しを許可する",
-  "env.preview_cross_origin_note": "3000 の画面から 8080 を直接 fetch する構成のときだけオンにしてください（dev サーバーの proxy や rewrites で 1 オリジンにまとめられるなら、そちらが安全です）。オンにすると URL を知っている第三者のページからも、あなたのブラウザ経由で叩けるようになります。",
+  "env.preview_cross_origin_note": "3000 の画面から 8080 を直接 fetch する構成のときだけオンにしてください（dev サーバーの proxy や rewrites で 1 オリジンにまとめられるなら、そちらが安全です）。オンにすると URL を知っている第三者のページからも、あなたのブラウザ経由で呼び出せるようになります。",
   "env.preview_reissue_label": "URL の再発行",
   "env.preview_reissue": "いま捨てて発行し直す",
   "env.preview_reissue_note": "URL を渡す相手を間違えたときに使います。今開いているタブはすぐ 404 になります。稼働中のコンテナは作り直さないので、中の AF_PREVIEW_URL_* は次の起動まで古いままです。",
@@ -165,10 +165,10 @@ export const tools = {
   "env.preview_reissue_done": "新しいプレビュー URL を発行しました。前の URL はもう開けません。",
   "env.preview_reissue_nothing": "発行済みの URL はありませんでした（停止中）。次に起動すると新しい URL になります。",
   "env.preview_title": "プレビュー用サブドメイン",
-  "env.preview_unavailable": "このデプロイではプレビュー用サブドメインは発行されません。ワークスペース操作バーの「プレビュー」からペインで開いてください。",
+  "env.preview_unavailable": "この配備ではプレビュー用サブドメインは発行されません。ワークスペース操作バーの「プレビュー」からペインで開いてください。",
   "env.preview_current_label": "いまの URL",
   "env.preview_current_none": "未発行（ワークスペースを起動すると発行されます）",
-  "env.preview_current_note": "このデプロイのプレビュー用ドメインは {domain} で、URL は https://＜ランダム＞-＜ポート＞.{domain}/ の形になります。起動のたびに発行し直され、停止すると開けなくなります。",
+  "env.preview_current_note": "この配備のプレビュー用ドメインは {domain} で、URL は https://＜ランダム＞-＜ポート＞.{domain}/ の形になります。起動のたびに発行し直され、停止すると開けなくなります。",
   "env.preview_ports_label": "公開するポート",
   "env.preview_ports_note": "カンマ区切りで最大 {n} 個（既定は 3000, 8080）。ここに無いポートのサブドメインは開けません。意図せず立っているサービスを外に出さないための一覧です。",
   "env.preview_fixed_label": "URL を固定する",
@@ -181,7 +181,7 @@ export const tools = {
   "env.agent_update_title": "エージェント CLI の更新",
   "env.agent_update_label": "起動時にエージェント CLI と rtk を最新へ更新する",
   "env.agent_update_note":
-    "対象は claude / opencode / codex / Copilot / Antigravity（agy）/ rtk。OFF（既定）はシステムが焼いたイメージ版で固定。ON にすると次の起動時にそれぞれ最新へ更新します（Stop → Start で反映／OFF に戻して再起動すればイメージ版へ戻ります）。停止中でも変更できます。",
+    "対象は claude / opencode / codex / Copilot / Antigravity（agy）/ rtk。オフ（既定）では、システムが焼いたイメージ版に固定されます。オンにすると次の起動時にそれぞれ最新へ更新します（Stop → Start で反映／オフに戻して再起動すればイメージ版へ戻ります）。停止中でも変更できます。",
   // --- データベース（features/settings/workspace/EnvTabDatabases.tsx — ADR 0086 P1 決定 9）---
   "env.db_title": "データベース",
   "env.db_intro":
@@ -332,7 +332,7 @@ export const tools = {
   "env.recreate_confirm_body": "コンテナを破棄し、最新イメージで新しく作り直します。",
   "env.cleanhome_confirm_title": "ホームを掃除しますか？",
   "env.cleanhome_confirm_body":
-    "ログイン・接続を除くホーム全体を削除し、最新イメージで作り直します。作り直しより深いリセットで、ホーム側が壊れて作り直しでも直らないときに使います。",
+    "ログイン・接続を除くホーム全体を削除し、最新イメージで作り直します。作り直しより深いリセットで、ホーム側が使えなくなり、作り直しでも直らないときに使います。",
   "env.dz_keep_login": "ログイン・接続（GitHub / Bitbucket / Claude）は保持されます",
   "env.dz_keep_home_1": " 以外のホーム（",
   "env.dz_keep_home_2": " など）は残ります",
@@ -556,13 +556,13 @@ export const tools = {
   "tts.warn_voicevox_missing":
     "音声エンジンに「ずんだもん」が選ばれていますが、この環境には VOICEVOX エンジンがありません。このままでは読み上げに失敗します。「自動」または「Polly」に変更してください。",
   "tts.note_zundamon_volume":
-    "ずんだもんは他のキャラより声が大きめなので、少し下げて他の声や通知音と音量を揃えられます。ずんだもんの声で読むときだけ効きます。",
+    "ずんだもんは他のキャラより声が大きめなので、少し下げて他の声や通知音と音量を揃えられます。ずんだもんの声で読むときだけ適用されます。",
   "tts.note_voice_per_session":
     "セッション名から話者（VOICEVOX 標準の 14 キャラ／Polly 3 声）を自動で割り当てます。同じセッションは常に同じ声になり、複数セッションの読み上げ・音声通知を声で聞き分けられます。アシスタント・チャットや朗読ビューは上で選んだ話者のままです。",
   "tts.note_characters":
     "セッションに割り当てるキャラと、キャラごとの基準スタイル・速度を選べます（朗読ビューの声の選択肢もここで有効にしたキャラになります）。▶ で試聴。一覧は VOICEVOX エンジンから取得するので、エンジンにいるキャラ・スタイルがすべて選べます。速度の「既定」は上の「読み上げ速度」に従います。",
   "tts.note_emotion":
-    "エラー・失敗を含む文はツンツン、成功・完了を含む文はあまあまのスタイルで読みます（文ごとに判定）。スタイルを持つ話者（ずんだもん・四国めたん・九州そら・玄野武宏・白上虎太郎など）のときだけ効き、Polly には影響しません。",
+    "エラー・失敗を含む文はツンツン、成功・完了を含む文はあまあまのスタイルで読みます（文ごとに判定）。スタイルを持つ話者（ずんだもん・四国めたん・九州そら・玄野武宏・白上虎太郎など）のときだけ適用され、Polly には影響しません。",
   "tts.note_autoread_mirror":
     "アクティブなペインのチャットに新しい回答が届いたら、自動でカラオケ・ハイライト付きで読み上げます。読み上げ中に次の回答が届いたら、終わってから順番に読みます（見ていないセッションは「セッションの音声通知」が担当）。",
   "tts.note_workread":
@@ -578,10 +578,10 @@ export const tools = {
   "tts.note_particle_pause":
     "「を・は・で・に・と」の直後に漢字が続くところで、読点ひとつぶんの小さな間を入れて読みます（例:「神は細部に宿る」→「神は、細部に、宿る」）。文の切れ目の一拍より短い「息継ぎ」で、語の切れ目が聞き取りやすくなります。",
   "tts.note_english_kana":
-    "英単語をカタカナ英語に変換して、ずんだもんの声のまま「それっぽく」読みます（CMU 発音辞書ベースの音写。定着した和製カタカナ＝コーヒー等ではなく音写＝カフィー等になります）。AWS サービスや開発用語（EC2→イーシーツー, Dao→ダオ, nginx 等）は専用辞書で補正、辞書外の一般語は綴りのまま。",
+    "英単語をカタカナ英語に変換して、ずんだもんの声のまま「それっぽく」読みます（CMU 発音辞書ベースの音写。定着した和製カタカナ（コーヒー等）ではなく音写（カフィー等）になります）。AWS サービスや開発用語（EC2→イーシーツー, Dao→ダオ, nginx 等）は専用辞書で補正、辞書外の一般語は綴りのまま。",
   "tts.userdict_placeholder": "表記=読み（1 行に 1 件）\n例）GPT-4=ジーピーティーフォー\n神=かみ",
   "tts.note_userdict":
-    "読み上げ前に、テキスト中の「表記」を指定した「読み」に置き換えます。英語・日本語・記号どれでも可。1 行に 1 件「表記=読み」、# 始まりはコメント。長い表記から優先し、「英語をカタカナ読み」よりも先に当たります。管理者が設定したテナント共通辞書がある場合はそれも一緒に適用され、同じ表記はここでの指定が優先されます。",
+    "読み上げ前に、テキスト中の「表記」を指定した「読み」に置き換えます。英語・日本語・記号どれでも可。1 行に 1 件「表記=読み」、# 始まりはコメント。長い表記から優先し、「英語をカタカナ読み」よりも先に適用されます。管理者が設定したテナント共通辞書がある場合はそれも一緒に適用され、同じ表記はここでの指定が優先されます。",
   "tts.note_cache":
     "一度読み上げた文言の音声をメモリに保持し、同じ文言の再読み上げを待ちなしで再生します。上限は合計の再生時間で、超えた分は古いものから消えます（ページを再読み込みしても消えます）。",
   "tts.note_session_notify":
@@ -627,7 +627,7 @@ export const tools = {
   "git.identity_title": "コミット identity（このプロバイダの既定）",
   "git.identity_saved": "コミット identity を保存しました",
   "git.name_placeholder_ex": "name（例: 山田太郎）",
-  "git.identity_help": "空欄なら接続アカウントを使用。端末 / claude のコミットにも適用され、リポジトリごとに上書きできます。",
+  "git.identity_help": "空欄なら接続アカウントを使用します。端末 / claude のコミットにも適用され、リポジトリごとに上書きできます。",
   // --- Subversion credentials (GitTab, docs/log/41 amendment) ---
   "git.cat_svn": "Subversion",
   "git.svn_saved_n": "{n} 件保存済み",
@@ -638,7 +638,7 @@ export const tools = {
   "git.svn_pass_ph": "パスワード",
   "git.svn_trust": "このサーバーの証明書を信頼する（自己署名・不明な CA）",
   "git.svn_hint":
-    "リポジトリまたはサーバー全体の URL（例: https://svn.example.com/proj）。最長プレフィックス一致で選ばれるので、リポジトリ単位の登録がサーバー全体の登録より優先されます。チェックアウトと更新のほか、セッションで自分が叩く `svn` でも使われます。",
+    "リポジトリまたはサーバー全体の URL（例: https://svn.example.com/proj）。最長プレフィックス一致で選ばれるので、リポジトリ単位の登録がサーバー全体の登録より優先されます。チェックアウトと更新のほか、セッションで自分が実行する `svn` でも使われます。",
   "git.global_identity_cat": "既定のコミット identity（すべての Git）",
   "git.global_identity_saved": "既定 identity を保存しました",
   "git.global_identity_help":
@@ -661,7 +661,7 @@ export const tools = {
   "git.oauth_waiting": "承認待ち…",
   "git.oauth_expired": "期限切れ。やり直してください",
   "git.oauth_failed": "失敗: {msg}",
-  "git.github_desc": "OAuth（デバイスフロー）か Personal Access Token で接続。",
+  "git.github_desc": "OAuth（デバイスフロー）か Personal Access Token で接続します。",
   "git.connect_oauth": "OAuth で接続",
   "git.recommended": "推奨",
   "git.github_oauth_sub": "ブラウザで承認するデバイスフロー。",
@@ -675,7 +675,7 @@ export const tools = {
   "git.bitbucket_oauth_unconfigured": "このテナントに Bitbucket の OAuth アプリが登録されていません。テナント管理者に「テナント設定 › 連携 › git プロバイダ OAuth」での登録を依頼するか、メール＋アプリトークンで接続してください。",
   "git.bb_waiting": "別タブで承認してください…",
   "git.bb_timeout": "タイムアウト。やり直してください",
-  "git.bitbucket_desc": "OAuth（コードグラント）か メール＋アプリトークンで接続。",
+  "git.bitbucket_desc": "OAuth（コードグラント）か メール＋アプリトークンで接続します。",
   "git.bb_oauth_sub": "別タブで承認するコードグラント。",
   "git.connect_apptoken": "アプリトークンで接続",
   "git.bb_token_sub": "Atlassian メール＋API トークン。",
@@ -773,7 +773,7 @@ export const tools = {
   "mem.intro":
     "エージェントが書き溜めるメモリ（claude の自動メモリ・codex の memories）の履歴です。変更のたびにスナップショットを積み、差分の確認と任意時点への巻き戻しができます。メモリには個人的な内容が含まれることがあるため、共有する前に中身を確認してください。",
   "mem.ws_required_title": "ワークスペースが停止しています",
-  "mem.ws_required_hint": "メモリの履歴はワークスペース内で管理しているため、起動中のみ操作できます。",
+  "mem.ws_required_hint": "メモリの履歴はワークスペース内で管理しているため、起動中だけ操作できます。",
   "mem.start_ws": "ワークスペースを起動",
   "mem.roots_title": "対象",
   "mem.no_roots": "版管理の対象になるメモリがありません。",
@@ -808,8 +808,8 @@ export const tools = {
   "mem.trigger_agent_memory": "エージェントの記録",
   "mem.af_title": "Agent Fleet のメモリ（全エージェント共通）",
   "mem.af_switch": "セッションに Agent Fleet のメモリを使わせる",
-  "mem.af_switch_note": "セッションに af の memory_* ツールを渡します。あるセッションが保存したことは、承認なしで以後のすべての種類のセッションに読まれます（秘密情報らしき記述は拒否されます）。オンにした分は次に起動するセッションから使えるようになり、オフは保存した時点で起動中のセッションの読み書きも断ります。保存済みのメモリは消えず、下の一覧で確かめたり元に戻したりできます。既定 OFF。",
-  "mem.af_intro": "エージェントが af の memory_* ツールで書いたメモリは、承認なしですぐ全種類のエージェントに共有されます（ツールは下のスイッチをオンにしたときだけ使えます。既定はオフ）。誰が・いつ・何を変えたかをここで確かめ、まずい変更は元に戻すか忘れさせてください。戻しても履歴は消えず、新しい変更として記録されます。",
+  "mem.af_switch_note": "セッションに af の memory_* ツールを渡します。あるセッションが保存した内容は、承認なしで以後のすべての種類のセッションに読まれます（秘密情報らしき記述は拒否されます）。オンにした分は次に起動するセッションから使えるようになり、オフは保存した時点で起動中のセッションの読み書きも断ります。保存済みのメモリは消えず、下の一覧で確かめたり元に戻したりできます。既定ではオフです。",
+  "mem.af_intro": "エージェントが af の memory_* ツールで書いたメモリは、承認なしですぐ全種類のエージェントに共有されます（ツールは下のスイッチをオンにしたときだけ使えます。既定はオフ）。誰が・いつ・何を変えたかをここで確かめ、問題のある変更は元に戻すか忘れさせてください。戻しても履歴は消えず、新しい変更として記録されます。",
   "mem.af_empty": "まだ変更はありません。",
   "mem.af_scope_user": "全プロジェクト共通",
   "mem.af_by_member": "あなた（Console）",
@@ -862,7 +862,7 @@ export const tools = {
   "mem.af_forget_title": "メモリを忘れさせますか？",
   "mem.af_forget_body": "「{name}」（{where}）を全エージェントから見えなくします。内容は履歴に残るので、この操作も元に戻せます。",
   "mem.af_secret_title": "秘密情報らしき記述があります",
-  "mem.af_secret_body": "戻そうとしている内容が秘密情報の検査に引っかかりました。値は伏せてあります。本物の秘密でないと確かめた場合だけ続けてください（この 1 回だけ有効です）。",
+  "mem.af_secret_body": "戻そうとしている内容が秘密情報の検査で検出されました。値は伏せてあります。本物の秘密でないと確かめた場合だけ続けてください（この 1 回だけ有効です）。",
   "mem.af_secret_line": "{line} 行目",
   "mem.af_secret_ack": "確認したので続ける",
   "mem.af_reverted": "「{name}」を元に戻しました",
@@ -899,7 +899,7 @@ export const tools = {
   "mem.export_secret_title": "秘密情報らしき記述が見つかりました",
   "mem.export_secret_body": "書き出す内容に、秘密情報らしき記述が{n}件あります。",
   "mem.export_secret_hint":
-    "値そのものは表示していません（先頭数文字のみ）。確認のうえ問題なければ、このまま書き出せます。",
+    "値そのものは表示していません（先頭数文字だけ）。確認のうえ問題なければ、このまま書き出せます。",
   "mem.export_secret_history": "（過去の版）",
   "mem.export_anyway": "確認のうえ書き出す",
   "mem.import_hint":
@@ -908,7 +908,7 @@ export const tools = {
   "mem.import_summary": "{format} / スナップショット{snapshots}件 / 最終 {when}",
   "mem.import_none": "この環境に取り込める内容がありません。",
   "mem.import_rejected": "対象外として取り込まなかった項目が{n}件あります。",
-  "mem.import_unavailable": "この環境に受け皿がないため取り込めません: {kinds}",
+  "mem.import_unavailable": "この環境に取り込み先がないため取り込めません: {kinds}",
   "mem.import_secrets": "取り込む内容に、秘密情報らしき記述が{n}件あります。",
   "mem.import_secret_scan_failed": "取り込む内容の秘密情報スキャンに失敗しました。「秘密は無い」ことは確認できていません。",
   "mem.import_do": "取り込む",
