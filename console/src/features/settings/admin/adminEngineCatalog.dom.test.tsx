@@ -820,7 +820,7 @@ describe("registered rows and the bucket", () => {
       await mountRegistered();
       const row = document.querySelector<HTMLElement>(`.engine-ledger-row[aria-label="${key}"]`)!;
       expect(row.textContent).toContain("取り込み中");
-      expect(row.textContent).toContain("取り込みのタスクが走っています");
+      expect(row.textContent).toContain("取り込みのタスクが実行中です");
       expect(labelled(`登録: ${key}`)).toBeUndefined();
       expect(labelled(`消す: ${key}`)).toBeUndefined();
 
@@ -897,7 +897,7 @@ describe("registered rows and the bucket", () => {
       const row = document.querySelector<HTMLElement>('.engine-ledger-row[aria-label="image/text_encoders/loose.safetensors"]')!;
       expect(row.className).toContain("deleting");
       expect(row.textContent).toContain("削除中");
-      expect(row.textContent).toContain("削除のタスクが走っています");
+      expect(row.textContent).toContain("削除のタスクが実行中です");
       expect(labelled("消す: image/text_encoders/loose.safetensors")).toBeUndefined();
 
       const before = reads;
