@@ -610,3 +610,36 @@ setext 見出しは下線直前の 1 行だけでなく、直前の Markdown 段
 引用・リスト内で行をまたぐ見出しも同様です。参照リンク定義にもコンテナの正規化を適用し、
 行き先・次の行に続く行き先・折り返したタイトルを metadata として保護します。空行で
 ブロックが終わるため、前後の通常の段落の引用には通常の置換規則を適用できます。
+
+### B1 表記統一（`ja-notation-normalize.py`）
+
+日本語 i18n 改訂のフェーズ B1 は `console/src/lib/i18n/locales/ja/<domain>.ts`
+の*表記*を揃えます（用語決定 17、21、22、29）。
+`scripts/ja-notation-normalize.py` は機械的な部分を安全に切り出すための道具です。
+ドメインごとに弱い実行者が走らせても壊れないよう、判断はすべて道具側の保守的な
+規則に閉じ込め、曖昧な箇所は推測せず SKIPPED として報告だけします。
+
+規則: R1 欧文・数字と日本語の境界の半角スペース（決定 21）、R2 かな
+（既に → すでに、無い → ない、無く → なく。形容詞・補助の用法だけ。決定 29）、
+R3 地の文の Workspace → ワークスペース（決定 17。ガード用の
+`--allow-terms-file` 形式の許可ファイルを出します）。決定 22（表記ゆれ）は自動化せず
+候補の列挙だけです。触らないもの: `plan.review_prompt_*`、
+`clean.reason.*` / `chat.report.*`（Go と同文）、`*.speech`、`*_ph` /
+`*badge*` キー。`「…」` の中は決して変えません（ガードの kagi 規則に許可の仕組みが
+ないため）。既存のスペースは消しません。ローカル専用で CI 対象外です。
+
+使い方（既定は dry-run。`--apply` は 1 ドメインファイルの値だけを変え、
+引用符・escape・改行を保ち、冪等で、dirty なファイルは `--force` なしに拒否します）:
+
+```
+python3 scripts/ja-notation-normalize.py --all
+python3 scripts/ja-notation-normalize.py --domain settings --allow-terms-out allow-settings.tsv --report report-settings.txt
+python3 scripts/ja-notation-normalize.py --domain settings --apply --allow-terms-out allow-settings.tsv
+```
+
+ドメインごとの手順: まず `--all` で件数を掴み、以後は 1 ドメインずつ —
+dry-run して `key | old | new` の全行と SKIPPED を目視し、適用したら
+`python3 scripts/catalog-diff-check.py origin/develop --allow-labels
+--allow-terms-file <出したファイル>`（終了コード 0 を期待）、ラベルは
+`--list-citations` / `--rewrite-guide`、最後にテスト一式。テストは
+`python3 -m unittest discover -s scripts -p test_ja_notation_normalize.py` です。

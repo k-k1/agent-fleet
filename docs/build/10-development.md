@@ -692,3 +692,39 @@ also applies to reference-link definitions: their destinations, continued
 next-line destinations and wrapped titles are protected as metadata. Blank lines
 end these blocks, so ordinary citations in surrounding paragraphs remain eligible
 for the normal rewrite rules.
+
+### B1 notation unification (`ja-notation-normalize.py`)
+
+Phase B1 of the Japanese i18n revision unifies *notation* in
+`console/src/lib/i18n/locales/ja/<domain>.ts` (term decisions 17, 21, 22, 29).
+`scripts/ja-notation-normalize.py` makes the mechanical part trivially safe when
+run per domain by weaker executors: all judgement lives in the tool's
+conservative rules, and every ambiguous case is SKIPPED and REPORTED, never
+guessed.
+
+Rules: R1 spacing at Latin/digit–Japanese boundaries (decision 21), R2 kana
+(既に → すでに, 無い → ない, 無く → なく as adjective/auxiliary only, decision
+29), R3 Workspace → ワークスペース in running Japanese text (decision 17,
+emitting a `--allow-terms-file` allowances file for the guard). Decision 22
+(spelling variants) is never automated, only listed as candidates. Never
+touched: `plan.review_prompt_*`, `clean.reason.*` / `chat.report.*` (Go twins),
+`*.speech`, `*_ph` / `*badge*` keys. Nothing inside `「…」` ever changes (the
+guard's kagi rule has no allowance mechanism), and existing spaces are never
+removed. The tool is for local use only and is not part of CI.
+
+Usage (dry-run is the default; `--apply` edits one domain file's values only,
+preserves quoting/escapes/line breaks, is idempotent, and refuses a dirty file
+unless `--force`):
+
+```
+python3 scripts/ja-notation-normalize.py --all
+python3 scripts/ja-notation-normalize.py --domain settings --allow-terms-out allow-settings.tsv --report report-settings.txt
+python3 scripts/ja-notation-normalize.py --domain settings --apply --allow-terms-out allow-settings.tsv
+```
+
+Per-domain runbook: `--all` for the counts, then one domain at a time —
+dry-run, review every `key | old | new` line plus every SKIPPED entry, apply,
+then `python3 scripts/catalog-diff-check.py origin/develop --allow-labels
+--allow-terms-file <emitted file>` (exit 0 expected), `--list-citations` /
+`--rewrite-guide` for labels, then the test suites. Its tests are `python3 -m
+unittest discover -s scripts -p test_ja_notation_normalize.py`.
