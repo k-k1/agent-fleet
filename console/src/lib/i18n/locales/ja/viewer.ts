@@ -141,7 +141,7 @@ export const viewer = {
   "view.read_out": "読み上げ",
   "view.sentences": "文",
   "view.read_from_start": "冒頭から朗読",
-  "view.enable_tts_tip": "設定で音声読み上げを有効にしてください",
+  "view.enable_tts_tip": "設定で音声読み上げをオンにしてください",
   "view.resume": "再開",
   "view.pause": "一時停止",
   "view.stop_reading": "朗読を停止",
