@@ -151,8 +151,8 @@ func coreWorktree(common string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "git", "config", "--file", filepath.Join(common, "config"),
-		"--get", "core.worktree").Output()
-	v := strings.TrimRight(string(out), "\r\n")
+		"--includes", "--null", "--get", "core.worktree").Output()
+	v := strings.TrimSuffix(string(out), "\x00") // --null: a value may itself end in a newline
 	if err != nil || v == "" {
 		return ""
 	}

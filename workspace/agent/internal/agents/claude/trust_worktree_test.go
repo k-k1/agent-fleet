@@ -99,6 +99,9 @@ func TestEnsureFolderTrustedMainOnlyAndGitdirForms(t *testing.T) {
 // Submodules and --separate-git-dir keep the common dir outside <checkout>/.git; the checkout
 // is core.worktree. A separate dir without it must not trust the store's parent.
 func TestMainCheckoutOfCoreWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
 	base := t.TempDir()
 	checkout := filepath.Join(base, "outer", "sub")
 	common := filepath.Join(base, "outer", ".git", "modules", "sub")
@@ -152,9 +155,16 @@ func TestCoreWorktreeGitSyntax(t *testing.T) {
 		"trailing comment":      {"[core]\n\tworktree = ../actual # why\n", "actual"},
 		"quoted escape":         {"[core]\n\tworktree = \"../actual\\\"quoted\"\n", "actual\"quoted"},
 	}
+	cases["include"] = struct{ cfg, want string }{"[include]\n\tpath = extra.config\n", "actual"}
+	cases["trailing newline in value"] = struct{ cfg, want string }{"[core]\n\tworktree = \"../actual\\n\"\n", "actual\n"}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			common := t.TempDir()
+			if name == "include" {
+				if err := os.WriteFile(filepath.Join(common, "extra.config"), []byte("[core]\n\tworktree = ../actual\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if err := os.WriteFile(filepath.Join(common, "config"), []byte(c.cfg), 0o644); err != nil {
 				t.Fatal(err)
 			}
