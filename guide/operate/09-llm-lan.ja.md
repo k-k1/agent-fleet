@@ -90,7 +90,7 @@ llama-server -hf <repo>:<quant> --alias <目録の id> -c <窓> -ngl 99 --jinja 
   8192 以上です。
 - `--host 0.0.0.0` が無いと loopback にしか応答しません。**`--port` も明示してください**。llama.cpp は既定ポートを変える予告を出しています。
 - 🔴 **`--api-key` を付けないと、その llama-server は LAN に認証なしで開きます。**
-- `--jinja` は llama-server の既定で オン ですが、古いビルドに備えて明示しておくと安全です。
+- `--jinja` は llama-server の既定でオンですが、古いビルドに備えて明示しておくと安全です。
 - gated な Hugging Face リポジトリを使うなら `HF_TOKEN=...`(または `-hft <token>`)。
 - 任意で `--sleep-idle-seconds <N>`。アイドルで眠らせて VRAM を返せます。この配備の
   `llm` ロールがしている「常時起動」を、llama-server の機能で一部緩められます。
