@@ -138,6 +138,30 @@ class VerificationTests(unittest.TestCase):
         with self.assertRaisesRegex(common.Refusal, 'duplicate'):
             common.verify_plan([row(), row()], {'d.login': entry('ログイン')})
 
+    def test_reviewed_sense_approvals_are_complete_and_scoped(self):
+        entries = {'d.login': entry('ログイン'), 'e.login': entry('ログイン', 'e.login', 'e')}
+        common.verify_plan([row()], entries, split_approvals={'d.login', 'e.login'})
+        self.assertTrue(common.verify_plan([row()], {'d.login': entry('サインイン'), 'e.login': entries['e.login']},
+                                         split_approvals={'d.login', 'e.login'})['d.login'][0])
+        for keys in [{'d.login'}, {'d.login', 'e.login', 'absent'}]:
+            with self.subTest(keys=keys), self.assertRaises(common.Refusal):
+                common.verify_plan([row()], entries, split_approvals=keys)
+        r = row(key='err.auth')
+        common.verify_plan([r], {r.key: entry(r.old, r.key)}, user_errors={r.key})
+        for key in ['err.prompt', 'err.speech', 'd.login', 'absent']:
+            with self.subTest(key=key), self.assertRaises(common.Refusal):
+                common.verify_plan([row(key=key)], {key: entry('ログイン', key)}, user_errors={key})
+        r = row('「ログインして承認」を押します。', '「サインインして承認」を押します。')
+        common.verify_plan([r], {r.key: entry(r.old)}, quoted_terms={r.key})
+        for old, new, family in [('`ログイン`', '`サインイン`', 'F-login'),
+                                 ('<0>ログイン</0>', '<0>サインイン</0>', 'F-login'),
+                                 ('「ログイン」 12', '「サインイン」 13', 'F-login'),
+                                 ('「ログイン」', '「サインイン追加」', 'F-login'),
+                                 ('「デフォルト」', '「既定」', 'F-default'),
+                                 ('ログイン', 'サインイン', 'F-login')]:
+            with self.subTest(old=old), self.assertRaises(common.Refusal):
+                common.verify_plan([row(old, new, family)], {'d.login': entry(old)}, quoted_terms={'d.login'})
+
     def test_source_offsets_and_unsafe_expressions(self):
         src = 'export const d = {"d.login": "ログイン\\n" + "文字列"};\r\n'
         v = common.notation.values(src)[0]
@@ -288,6 +312,46 @@ class CliTests(unittest.TestCase):
         self.assertFalse(terms.exists())
         self.assertEqual(before, path.read_bytes())
         self.assertEqual(self.apply('--apply', '--force', '--allow-terms-out', str(terms)).returncode, 0)
+
+    @unittest.skipUnless(shutil.which('node'), 'real guard requires node')
+    def test_reviewed_quotes_preserve_guard_negative_controls(self):
+        self.write('d', {'d.quote': '「サインインして承認」を押してください。',
+                         'err.auth': 'サインインを開始できませんでした'})
+        self.commit()
+        self.plan_rows([row('「サインインして承認」を押してください。', '「ログインして承認」を押してください。',
+                            key='d.quote'),
+                        row('サインインを開始できませんでした', 'ログインを開始できませんでした', key='err.auth')])
+        before = (self.ja / 'd.ts').read_bytes()
+        terms = self.repo / 'allow.tsv'
+        self.assertEqual(self.apply('--check-only').returncode, 2)
+        self.assertEqual(before, (self.ja / 'd.ts').read_bytes())
+        flags = ['--allow-user-error', 'err.auth', '--allow-quoted-terms', 'd.quote']
+        p = self.apply('--apply', '--allow-terms-out', str(terms), *flags)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.apply('--check-only', *flags).returncode, 0)
+        negative = self.guard('--allow-labels', '--allow-terms-file', str(terms))
+        self.assertEqual(negative.returncode, 1, negative.stdout)
+        self.assertIn('FAIL kagi', negative.stdout)
+        positive = self.guard('--allow-labels', '--allow-terms-file', str(terms), '--allow-quoted-terms', 'd.quote')
+        self.assertEqual(positive.returncode, 0, positive.stdout + positive.stderr)
+        for extra in [['--allow-quoted-terms', 'absent'], ['--allow-quoted-terms', 'err.auth']]:
+            bad = self.guard('--allow-labels', '--allow-terms-file', str(terms), '--allow-quoted-terms', 'd.quote', *extra)
+            self.assertEqual(bad.returncode, 1, bad.stdout)
+            self.assertIn('stale quoted-term approval', bad.stdout)
+        path = self.ja / 'd.ts'
+        path.write_text(path.read_text().replace('ログインして承認', 'ログインして削除'))
+        bad = self.guard('--allow-labels', '--allow-terms-file', str(terms), '--allow-quoted-terms', 'd.quote')
+        self.assertEqual(bad.returncode, 1, bad.stdout)
+        self.assertIn('FAIL kagi', bad.stdout)
+
+    def test_reviewed_split_cli_rejects_incomplete_and_stale_approvals(self):
+        self.write('e', {'e.login': 'ログイン'})
+        self.commit()
+        self.plan_rows([row()])
+        for spec in ['d.login', 'd.login,e.login,absent', 'd.login,']:
+            self.assertEqual(self.apply('--check-only', '--allow-split', spec).returncode, 2)
+        p = self.apply('--check-only', '--allow-split', 'd.login,e.login')
+        self.assertEqual(p.returncode, 0, p.stderr)
 
     @unittest.skipUnless(shutil.which('node'), 'real guard requires node')
     def test_real_guard_rejects_without_and_accepts_emitted_allowances(self):

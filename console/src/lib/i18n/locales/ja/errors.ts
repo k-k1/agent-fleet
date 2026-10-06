@@ -217,18 +217,18 @@ export const errors = {
   "err.memory_disabled": "Agent Fleet のメモリは設定でオフになっています（設定 → エージェントメモリ）",
   "err.tenant_idp_link_claim_required":
     "このデプロイには、同じ発行元のサインイン方法がすでにあります。この発行元はアプリ登録ごとに同じ人へ違う subject を割り当てるため、" +
-    "「同一アカウントの見分け方」を指定しないと、すでにこのデプロイを使っている人が全員ログインできなくなります（メールアドレス重複として拒否されます）。",
+    "「同一アカウントの見分け方」を指定しないと、すでにこのデプロイを使っている人が全員サインインできなくなります（メールアドレス重複として拒否されます）。",
 
   // Agent sign-in / OAuth (opencode, kiro, agy, cursor). The codes are shared across
   // drivers on purpose: the wording holds for every one of them, and the driver-specific
   // cause arrives as the server's message, which errDetail appends.
   "err.already_connected": "すでに接続済みです。再認証するには一度切断してください",
   "err.no_url": "エージェントがログイン URL を返しませんでした",
-  "err.no_selector": "エージェントがサインイン方式の選択肢を表示しませんでした",
+  "err.no_selector": "エージェントがログイン方式の選択肢を表示しませんでした",
   "err.serve_unavailable": "エージェントのサービスを起動できませんでした",
   "err.login_failed": "ログインが完了しませんでした",
-  "err.bad_method": "サインイン方式の指定が不正です",
-  "err.method_unsupported": "このサインイン方式はまだ使えません",
+  "err.bad_method": "ログイン方式の指定が不正です",
+  "err.method_unsupported": "このログイン方式はまだ使えません",
   "err.opencode_unsupported": "opencode が見つかりません（イメージが古い可能性があります）",
   "err.kiro_unsupported": "kiro-cli が見つかりません（未導入の可能性があります）",
   "err.cursor_unsupported": "cursor-agent が見つかりません（イメージが古い可能性があります）",
@@ -238,12 +238,12 @@ export const errors = {
   // 🔴 これは拒否であって失敗ではない。`muse auth set` は provider の項目を丸ごと置き換える
   // ので、アカウントのサインインの上に API キーを書くとサインインが消えたうえ従量課金になる。
   "err.account_login_present":
-    "アカウントでサインイン済みです。API キーを保存するとそのサインインが失われ、定額プランから従量課金に切り替わります。API キーを使うなら先に切断してください。",
+    "アカウントでログイン済みです。API キーを保存するとそのログインが失われ、定額プランから従量課金に切り替わります。API キーを使うなら先に切断してください。",
   "err.auth_failed": "API キーを保存できませんでした",
   // These carry err.Error() as the whole message, so the catalogue supplies the human
   // framing and errDetail appends the raw cause after it.
-  "err.oauth_start_failed": "サインインを開始できませんでした",
-  "err.oauth_poll_failed": "サインインの完了を確認できませんでした",
+  "err.oauth_start_failed": "ログインを開始できませんでした",
+  "err.oauth_poll_failed": "ログインの完了を確認できませんでした",
   "err.oauth_disconnect_failed": "切断できませんでした",
   "err.oauth_error": "認可サーバがエラーを返しました",
   "err.logout_failed": "サインアウトできませんでした",
@@ -253,7 +253,7 @@ export const errors = {
     "この opencode serve は別のプロセスが起動したもので、Agent からは入れ替えられません。設定を反映するにはワークスペースを再起動してください",
   "err.serve_not_ready": "エージェントのサービスが応答しませんでした",
   "err.agy_unsupported": "agy が見つかりません（イメージが古い可能性があります）",
-  "err.no_flow": "サインインの手続きが見つからないか期限切れです。やり直してください",
+  "err.no_flow": "ログインの手続きが見つからないか期限切れです。やり直してください",
   "err.bad_code": "コードを入力してください",
   "err.bad_key": "キーを入力してください",
   "err.bad_env": "環境変数名が不正です（ANTHROPIC_API_KEY のように大文字と _ で指定してください）",

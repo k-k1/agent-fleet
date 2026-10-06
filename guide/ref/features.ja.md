@@ -120,7 +120,7 @@ updated: "2026-09"
 | 上限とアイドル自動停止 | テナント管理者（読み取り）| 上限・自動停止 | [admin 02](../admin/02-limits.ja.md) |
 | このテナントが llm / image エンジンを使ってよいか | 配備管理者（super_admin）| テナント設定 → 上限 | [admin 02](../admin/02-limits.ja.md) |
 | ワークスペースのサイズ | 配備管理者 | — | [deploy-targets.md](deploy-targets.ja.md) |
-| サインイン方式とログイン規則 | テナント管理者 | サインイン方式 / ログイン規則 | [operator 05](../operate/05-signin.ja.md) |
+| サインイン方式とサインイン規則 | テナント管理者 | サインイン方式 / サインイン規則 | [operator 05](../operate/05-signin.ja.md) |
 | 接続元の制限 | テナント管理者 | 接続元の制限 | [admin 05](../admin/05-access.ja.md) |
 | 連携アプリの OAuth | テナント管理者 | 連携アプリの OAuth | [admin 05](../admin/05-access.ja.md) |
 | 連携サーバーの配布 | テナント管理者 | MCP 配布 | [admin 04](../admin/04-mcp-egress.ja.md) |
@@ -144,7 +144,7 @@ updated: "2026-09"
 | S3 Bucket — 配備が実際に持っているものの台帳 | 配備管理者（super_admin）| 管理 → 推論エンジンのモデル → バケット | [admin 04](../admin/04-mcp-egress.ja.md) |
 | 目録のモデル名・作例・ファミリー分類 | 配備管理者（super_admin）、または許可されたテナント管理者 | 管理 → 推論エンジンのモデル → 登録済み | [admin 04](../admin/04-mcp-egress.ja.md) |
 | 配布元の量子化一覧と、GPU クラスに収まるかの判定 | 配備管理者（super_admin）、または許可されたテナント管理者 | 管理 → 推論エンジンのモデル → 登録済み | [admin 04](../admin/04-mcp-egress.ja.md) |
-| Hugging Face / Civitai のトークン（ログインが要る取り込み）| 配備管理者（super_admin）| 管理 → API トークン | [admin 04](../admin/04-mcp-egress.ja.md) |
+| Hugging Face / Civitai のトークン（サインインが要る取り込み）| 配備管理者（super_admin）| 管理 → API トークン | [admin 04](../admin/04-mcp-egress.ja.md) |
 | 検索の出所としての Civitai Red（NSFW の姉妹ドメイン）| 配備管理者（super_admin）、配備がそれを与えられている場合 | 管理 → API トークン | [admin 04](../admin/04-mcp-egress.ja.md) |
 | 自前の ComfyUI での画像生成 | 配備管理者（super_admin）| 端末、それから 管理 → 推論エンジン | [operator 07](../operate/07-image-engine.ja.md) |
 | 別の配備の llm / image エンジンを借りる | 配備管理者（super_admin）| 端末と、向こうの配備のメンバーシップ 1 つ | [operator 08](../operate/08-borrowed-engine.ja.md) |

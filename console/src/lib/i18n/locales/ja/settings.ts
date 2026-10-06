@@ -103,10 +103,10 @@ export const settings = {
   "provider.disconnect_confirm_title": "接続を切断しますか？",
   "provider.disconnect_confirm_body": "保存された認証情報はワークスペースから削除されます。再接続はいつでも可能です。",
   "provider.reauth": "再認証",
-  "provider.reauth_title": "サインインし直す（トークンの期限切れ・失効時）",
+  "provider.reauth_title": "ログインし直す（トークンの期限切れ・失効時）",
   "provider.reauth_confirm_title": "再認証しますか？",
   "provider.reauth_confirm_body":
-    "一度サインアウトしてから、サインイン画面を開き直します。稼働中のセッションは終了しません。",
+    "一度サインアウトしてから、ログイン画面を開き直します。稼働中のセッションは終了しません。",
   "provider.step_copy_code": "コードをコピー",
   "provider.step_open_link": "リンクを開いて貼り付け",
   "provider.step_open_link_only": "リンクを開く",
@@ -119,7 +119,7 @@ export const settings = {
   "backup.intro":
     "自分の設定を 1 個のファイルにまとめて持ち出し、別の環境やアカウントで読み戻せます。",
   "backup.secrets_note":
-    "接続（Git・エージェント・AWS のトークンや API キー）は含みません。移った先ではもう一度サインインしてください。",
+    "接続（Git・エージェント・AWS のトークンや API キー）は含みません。移った先ではもう一度ログインしてください。",
   "backup.export_title": "書き出す",
   "backup.import_title": "取り込む",
   "backup.cat_prefs": "個人設定",
@@ -240,9 +240,9 @@ export const settings = {
   "agents.behavior": "動作設定",
   "agents.conn_paused": "ワークスペースを起動すると接続できます。",
   "agents.claude_auth_failed": "Claude の認証を開始できませんでした: {msg}",
-  "agents.claude_desc_flow": "Claude Code に OAuth で接続します。サインインは新しいタブで開きます。",
+  "agents.claude_desc_flow": "Claude Code に OAuth で接続します。ログインは新しいタブで開きます。",
   "agents.claude_hint_1": "タブが自動で開かない場合は ",
-  "agents.claude_signin_link": "サインインリンク ↗",
+  "agents.claude_signin_link": "ログインリンク ↗",
   "agents.claude_hint_2": " から。承認後にコードを貼り付けます。",
   "agents.paste_code": "コードを貼付",
   "agents.complete": "完了",
@@ -250,7 +250,7 @@ export const settings = {
   "agents.oauth_connect": "OAuth 接続",
   "agents.agy_auth_failed": "Antigravity の認証を開始できませんでした: {msg}",
   "agents.agy_desc": "Antigravity CLI（agy）に Google OAuth で接続します。承認後にコードを貼り付けて完了します。",
-  "agents.agy_desc_flow": "Antigravity CLI に Google OAuth で接続します。サインインは新しいタブで開きます。",
+  "agents.agy_desc_flow": "Antigravity CLI に Google OAuth で接続します。ログインは新しいタブで開きます。",
   "agents.agy_exp_label": "実験枠（クォータ小・Antigravity IDE / Jules と共有）",
   "agents.agy_method_label": "認証方式",
   "agents.agy_method_oauth": "Google OAuth",
@@ -267,23 +267,23 @@ export const settings = {
   "agents.copilot_rtk_note":
     "copilot は preToolUse フック（$COPILOT_HOME/hooks）でシェルコマンドを rtk 経由に自動書換します。codex/agy の指示ベースと違い、決定的に適用されます。新規セッションに適用されます。",
   "agents.copilot_unsupported": "このコンテナイメージでは利用できません（{reason}）",
-  "agents.cursor_desc": "Cursor にサインインします。承認はブラウザで完結します（貼り付けるコードはありません）。",
-  "agents.cursor_connect": "Cursor にサインイン",
+  "agents.cursor_desc": "Cursor にログインします。承認はブラウザで完結します（貼り付けるコードはありません）。",
+  "agents.cursor_connect": "Cursor にログイン",
   "agents.cursor_connect_note": "認可リンクを開きます。ブラウザで承認してください。",
-  "agents.cursor_auth_failed": "Cursor のサインイン開始に失敗しました: {msg}",
+  "agents.cursor_auth_failed": "Cursor のログイン開始に失敗しました: {msg}",
   "agents.cursor_hint_1": "Cursor アカウントが必要です。プランや請求は ",
   "agents.cursor_dashboard": "Cursor ダッシュボード",
   "agents.cursor_hint_2": " で管理できます。",
   "agents.cursor_unsupported": "このコンテナイメージでは利用できません（{reason}）",
-  "agents.kiro_desc": "Kiro にサインインします。承認はブラウザで完結します（貼り付けるコードはありません）。",
-  "agents.kiro_connect": "Kiro にサインイン",
+  "agents.kiro_desc": "Kiro にログインします。承認はブラウザで完結します（貼り付けるコードはありません）。",
+  "agents.kiro_connect": "Kiro にログイン",
   "agents.kiro_connect_note": "認可リンクとコードを表示します。ブラウザで承認してください。",
-  "agents.kiro_auth_failed": "Kiro のサインイン開始に失敗しました: {msg}",
-  "agents.kiro_hint": "Builder ID（無料）でサインインできます。",
+  "agents.kiro_auth_failed": "Kiro のログイン開始に失敗しました: {msg}",
+  "agents.kiro_hint": "Builder ID（無料）でログインできます。",
   "agents.kiro_install_desc": "Kiro はこのワークスペースにまだ導入されていません。初回だけ導入が必要です。",
   "agents.kiro_install": "Kiro を導入",
   "agents.kiro_install_note": "約 855MB をあなたのホームボリュームにダウンロードします（数分かかります）。",
-  "agents.kiro_installing": "Kiro を導入中です…（約 855MB・数分かかります）。完了すると自動でサインイン画面に切り替わります。",
+  "agents.kiro_installing": "Kiro を導入中です…（約 855MB・数分かかります）。完了すると自動でログイン画面に切り替わります。",
   "agents.kiro_install_error": "導入に失敗しました。回線状況を確認して再試行してください。",
   "agents.kiro_install_failed": "Kiro の導入開始に失敗しました: {msg}",
   "agents.kiro_update_avail": "新しい版が利用できます（導入済み {cur} → ピン {pin}）。更新しない間は導入済みの版が使われます。",
@@ -293,24 +293,24 @@ export const settings = {
   // --- Muse Code（ADR 0095）---
   // 🔴 このカードは「接続済み」だけでは真実にならない。metered / env_key / API キーの拒否の
   // 3 つは、どれも利用者の請求に直接関わる（決定 9・P2-6 の実測）。
-  "agents.muse_desc": "Muse Code にサインインします。ブラウザで承認するだけで、貼り戻すコードはありません。",
-  "agents.muse_connect": "Meta アカウントでサインイン",
+  "agents.muse_desc": "Muse Code にログインします。ブラウザで承認するだけで、貼り戻すコードはありません。",
+  "agents.muse_connect": "Meta アカウントでログイン",
   "agents.muse_connect_note": "承認リンクとコードを表示します。ブラウザで承認してください。サブスク契約ならこちらです。",
   "agents.muse_use_key": "API キーを使う",
   "agents.muse_use_key_note": "従量課金の経路です。サブスク契約なら上を選んでください。",
-  "agents.muse_hint": "Muse Code は配布イメージに含まれません（プロプライエタリ）。サインインの前に一度だけ導入が必要です。",
+  "agents.muse_hint": "Muse Code は配布イメージに含まれません（プロプライエタリ）。ログインの前に一度だけ導入が必要です。",
   "agents.muse_metered":
-    "この接続は API キー（従量課金）です。使うたびに課金されます。定額プランを使うには一度切断して、Meta アカウントでサインインしてください。",
+    "この接続は API キー（従量課金）です。使うたびに課金されます。定額プランを使うには一度切断して、Meta アカウントでログインしてください。",
   "agents.muse_env_key":
-    "環境変数 META_API_KEY が設定されています。これはサインインより優先されるため、上の表示に関わらず従量課金になります。定額プランを使うには、ワークスペースの環境変数からこれを外してください。",
+    "環境変数 META_API_KEY が設定されています。これはログインより優先されるため、上の表示に関わらず従量課金になります。定額プランを使うには、ワークスペースの環境変数からこれを外してください。",
   "agents.muse_key_warn":
-    "API キーを保存すると、保存済みのアカウントのサインインは消えます（Muse Code が資格情報の項目を丸ごと置き換えるため）。定額プランからも外れて従量課金になります。アカウントでサインイン済みの場合は、先に切断する必要があります。",
+    "API キーを保存すると、保存済みのアカウントのログインは消えます（Muse Code が資格情報の項目を丸ごと置き換えるため）。定額プランからも外れて従量課金になります。アカウントでログイン済みの場合は、先に切断する必要があります。",
   "agents.muse_key_placeholder": "LLM|… で始まる Meta の API キー",
-  "agents.muse_auth_failed": "Muse Code のサインインを開始できませんでした: {msg}",
+  "agents.muse_auth_failed": "Muse Code のログインを開始できませんでした: {msg}",
   "agents.muse_install_desc": "Muse Code はまだこのワークスペースに導入されていません（プロプライエタリのため配布イメージに含まれません）。一度だけ導入が必要です。",
   "agents.muse_install": "Muse Code を導入",
   "agents.muse_install_note": "約 299MB をホームボリュームにダウンロードします（数分かかります）。",
-  "agents.muse_installing": "Muse Code を導入中…（約 299MB・数分かかります）。終わると自動でサインイン画面になります。",
+  "agents.muse_installing": "Muse Code を導入中…（約 299MB・数分かかります）。終わると自動でログイン画面になります。",
   "agents.muse_install_error": "導入に失敗しました。接続を確認してやり直してください。",
   "agents.muse_install_failed": "Muse Code の導入を開始できませんでした: {msg}",
   "agents.muse_update_avail": "新しい版があります（導入済み {cur} → ピン {pin}）。更新するまで導入済みの版が使われ続けます。",
@@ -344,22 +344,22 @@ export const settings = {
   "agents.oc_key_count": "{count} キー",
   "agents.oc_account": "opencode アカウント",
   "agents.oc_account_desc":
-    "opencode.ai のアカウントでサインインします。承認はブラウザで完結し、Console に入力し直すものはありません。API キーと併用でき、どちらか一方だけでも使えます。",
-  "agents.oc_account_connect": "opencode にサインイン",
+    "opencode.ai のアカウントでログインします。承認はブラウザで完結し、Console に入力し直すものはありません。API キーと併用でき、どちらか一方だけでも使えます。",
+  "agents.oc_account_connect": "opencode にログイン",
   "agents.oc_account_connect_note": "認可リンクを開きます。ブラウザで承認してください。",
   "agents.oc_account_connected": "アカウント接続済み",
   "agents.oc_account_only": "アカウント",
-  "agents.oc_account_failed": "サインインを開始できませんでした{msg}",
+  "agents.oc_account_failed": "ログインを開始できませんでした{msg}",
   "agents.oc_account_denied": "承認されませんでした{msg}",
   "agents.oc_account_note":
-    "サインインすると、その組織で使えるモデルが起動時の一覧に反映されます（稼働中のセッションは次のターンから／ターミナル（CLI）のセッションは再起動後）。",
-  "agents.oc_account_disabled": "このワークスペースではマネージドの opencode が無効なため、アカウントのサインインは使えません。",
+    "ログインすると、その組織で使えるモデルが起動時の一覧に反映されます（稼働中のセッションは次のターンから／ターミナル（CLI）のセッションは再起動後）。",
+  "agents.oc_account_disabled": "このワークスペースではマネージドの opencode が無効なため、アカウントのログインは使えません。",
   "agents.oc_desc": "複数プロバイダの API キーを保存し、opencode 起動時に env として注入します。",
   "agents.oc_desc_own":
     "使いたい LLM プロバイダの API キーを保存し、opencode 起動時に env として注入します。この枠では opencode.ai のキー（OPENCODE_API_KEY）は使いません。",
   "agents.oc_preset_opencode": "opencode.ai（Go / Zen 共通キー）",
   "agents.oc_key_not_injected": "この枠では注入しません",
-  "agents.oc_hint": " でサインイン → 課金設定 → API キーを発行して貼り付け（Go と Zen で同じキーです）。",
+  "agents.oc_hint": " でログイン → 課金設定 → API キーを発行して貼り付け（Go と Zen で同じキーです）。",
   "agents.oc_ws_open": "Go の利用状況を開く ↗",
   "agents.oc_ws_desc":
     "利用枠ページの URL（または wrk_… の ID）を貼ると、このカードから利用状況を開けます。利用率の数値は opencode.ai 側に API がないため取り込めません（ページはブラウザのログインが必要です）。上限に当たったときは、その内容をここに表示します。",
@@ -382,7 +382,7 @@ export const settings = {
   "agents.oc_enabled_off": "オフ",
   "agents.oc_enabled_on": "オン",
   "agents.oc_enabled_note_off":
-    "opencode を一切使いません。API キーを保存済みでも、アカウントにサインイン済みでも起動されません（セキュリティポリシーで無断の外部送信を禁じているワークスペース向け）。新しいワークスペースはこの状態から始まります。キーを後から追加しても動かない、明示的に止めておく設定です。",
+    "opencode を一切使いません。API キーを保存済みでも、アカウントにログイン済みでも起動されません（セキュリティポリシーで無断の外部送信を禁じているワークスペース向け）。新しいワークスペースはこの状態から始まります。キーを後から追加しても動かない、明示的に止めておく設定です。",
   "agents.oc_enabled_note_on":
     "どこに課金するかを下で選びます。どの選択でも、直接つないだプロバイダ（anthropic/… など）と自前エンジンのモデルは一覧に残ります。ここで選ぶのは opencode.ai の使い方だけです。",
   "agents.oc_usage": "opencode.ai への課金",
@@ -396,9 +396,9 @@ export const settings = {
   "agents.oc_usage_note_free":
     "opencode.ai 側は、認証なしで使える無料モデルだけにします（OPENCODE_API_KEY は注入しません）。接続がなくても opencode を起動できますが、混雑や無料枠の上限に左右されます。",
   "agents.oc_usage_note_go":
-    "opencode.ai 側は、サブスクの opencode-go/… だけにします。Go のモデルは API キーに紐づくため、キーの登録が必要です（アカウントのサインインは任意）。",
+    "opencode.ai 側は、サブスクの opencode-go/… だけにします。Go のモデルは API キーに紐づくため、キーの登録が必要です（アカウントのログインは任意）。",
   "agents.oc_usage_note_zen":
-    "opencode.ai 側は、従量課金の opencode/… を出します（Go 契約もあれば両方）。アカウントのサインインか API キーのどちらかが必要です。",
+    "opencode.ai 側は、従量課金の opencode/… を出します（Go 契約もあれば両方）。アカウントのログインか API キーのどちらかが必要です。",
   "agents.oc_route_fallback":
     "「{chosen}」のモデルが 1 つも無かったため、起動一覧は「{applied}」で出しています。意図した枠で課金したい場合は、認証か契約を確認してください。",
   // 状態チップ用の短い言い方（一覧の見出しは説明として読ませる長さなので、緑の点の横には合わない）
@@ -644,7 +644,7 @@ export const settings = {
   // === アカウント（サインイン方法の紐づけ・docs/log/61 §61.16 + 決定 37） ===
   "set.tab_account": "アカウント",
   "account.intro": "このアカウントに紐づいたサインイン方法です。どの方法で入っても、同じワークスペース・同じホーム・同じ秘密情報になります。",
-  "account.disabled": "このデプロイはサインイン方法の追加に対応していません（IdP を使うログインが有効なときだけ使えます）。",
+  "account.disabled": "このデプロイはサインイン方法の追加に対応していません（IdP を使うサインインが有効なときだけ使えます）。",
   "account.load_failed": "サインイン方法を取得できませんでした。",
   "account.th_method": "サインイン方法",
   "account.th_email": "名乗ったメールアドレス",
@@ -661,10 +661,10 @@ export const settings = {
   "account.detach_last": "残り 1 つのサインイン方法です。解除するとどの方法でも入れなくなります。",
 
   // === P5 ログイン切れモーダル（AuthExpiredModal） ===
-  "auth.expired_title": "ログインの有効期限が切れました",
-  "auth.expired_body": "ログインセッションの有効期限が切れました。作業中のセッションはワークスペース上でそのまま動き続けています（ブラウザのログイン切れでは停止しません）。",
-  "auth.expired_relogin_hint": "再ログインすると、この画面に戻って作業を続けられます。",
-  "auth.relogin": "再ログイン",
+  "auth.expired_title": "サインインの有効期限が切れました",
+  "auth.expired_body": "サインインセッションの有効期限が切れました。作業中のセッションはワークスペース上でそのまま動き続けています（ブラウザのサインイン切れでは停止しません）。",
+  "auth.expired_relogin_hint": "再サインインすると、この画面に戻って作業を続けられます。",
+  "auth.relogin": "再サインイン",
 
   // === サインイン方法が違うテナント（ProviderRequiredModal・docs/log/61 §61.9.4） ===
   "auth.provider_required_title": "このテナントには別のサインインが必要です",

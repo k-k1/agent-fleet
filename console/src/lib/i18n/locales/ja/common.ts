@@ -254,7 +254,7 @@ export const common = {
   "onb.starting": "起動中…",
   "onb.start": "起動",
   "onb.connect_agent": "エージェントを接続",
-  "onb.connect_agent_hint": "Claude / Codex / opencode のいずれかにサインイン",
+  "onb.connect_agent_hint": "Claude / Codex / opencode のいずれかにログイン",
   "onb.connect": "接続する",
   "onb.connect_git": "git プロバイダを接続",
   "onb.optional": "任意",

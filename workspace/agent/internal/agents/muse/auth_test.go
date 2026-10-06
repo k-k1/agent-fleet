@@ -195,7 +195,7 @@ func TestResumeRefusesWithoutACredential(t *testing.T) {
 	if err == nil {
 		t.Fatal("Resume started a session with no credential stored")
 	}
-	if !strings.Contains(err.Error(), "サインイン") {
+	if !strings.Contains(err.Error(), "ログイン") {
 		t.Fatalf("the refusal does not point at the sign-in: %v", err)
 	}
 	if ManagedAlive("no-cred") {
@@ -204,7 +204,7 @@ func TestResumeRefusesWithoutACredential(t *testing.T) {
 
 	writeAuth(t, accountJSON)
 	_, err = NewDriver().Resume(session.Meta{Kind: session.KindMuse, Name: "with-cred", Dir: t.TempDir()})
-	if err != nil && strings.Contains(err.Error(), "サインイン") {
+	if err != nil && strings.Contains(err.Error(), "ログイン") {
 		t.Fatalf("a signed-in session was still refused by the credential gate: %v", err)
 	}
 }

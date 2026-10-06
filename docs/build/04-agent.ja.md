@@ -209,9 +209,9 @@ managed driver は `managedDrivers`（`internal/sessionx/session_turn.go`）に�
 
 **kind は対応する driver の面を埋める**。面は毎回同じ。どれもコード上の契約で、以下では claude・
 codex・opencode を実例に使う。
-どの kind がどの driver に対応するか、利用者が各 kind にどうサインインするかは
-[ref/agents](../../guide/ref/agents.ja.md)（サインインは
-[サインインの仕方](../../guide/ref/agents.ja.md#サインインの仕方)の節）。サインインのフローは
+どの kind がどの driver に対応するか、利用者が各 kind にどうログインするかは
+[ref/agents](../../guide/ref/agents.ja.md)（ログインは
+[ログインの仕方](../../guide/ref/agents.ja.md#ログインの仕方)の節）。ログインのフローは
 [08](08-integrations.ja.md)。
 
 - **tmux での起動と id の持ち方**（Terminal の経路を持つ kind）: kind の `BuildLaunch` が
