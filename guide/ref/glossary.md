@@ -15,7 +15,7 @@ thing.
 
 | Screen | Implementation | Means |
 |---|---|---|
-| Workspace | container / task | One person's private environment: their repositories, work in progress and sessions. Runs as a dedicated container, or as sandboxed host processes on the Docker-less target |
+| Workspace | container / task | One person's private environment: their repositories, work in progress and sessions. Runs as a dedicated container, or as sandboxed host processes on the Docker-less target. The Japanese UI always writes it in katakana (ワークスペース), never Latin "Workspace" |
 | Workspace action bar | — | The strip that starts and stops the workspace and holds Start, Preview and pane splitting |
 | Session | session | One task's conversation, working location and execution state. **It does not imply a terminal** |
 | Execution method | driver | How Agent Fleet runs an agent and delivers instructions to it |
@@ -44,6 +44,16 @@ thing.
 | Tenant | tenant | One team or department. Members of different tenants are invisible to each other |
 | Slot | slot | On the EC2 target, one pooled instance a workspace can be placed on |
 | Deployment | deployment | One installation of Agent Fleet. One company runs one |
+| Start / spawn | start / spawn | A person starting a session or workspace is "start" (起動). Only a session starting a child session is "spawn" (起こす) |
+| Sign in | sign-in (IdP) | Authenticating to Agent Fleet itself. Authenticating to an external CLI or service (claude, Civitai, gcloud) is "log in" (ログイン) in the Japanese UI |
+| Log in | login | Authenticating to an external CLI or service (claude, Civitai, gcloud). Authenticating to Agent Fleet itself is "sign in" (サインイン) |
+| Deploy | deploy | Used only as a verb (デプロイする). The noun is "deployment" (配備): "deployment default", "deployment-wide" |
+| This browser | browser-local | The scope of settings stored in the browser you are using (Japanese: このブラウザ, never この端末). "端末" is reserved for the terminal emulator |
+| Usage limit | usage limit / quota | The cap on how much you may use (利用枠). The cap on the number of child sessions is "child cap" (子の上限); "slot" is only the EC2 sense |
+| Child cap | child session cap | The most child sessions one session may start (子の上限) |
+| Collapse / fold | collapse / fold | Folding something away on screen only (畳む). Ending a session is written "stop" or "end" (停止 / 終了) |
+| On / Off | on / off | Switches in prose are "オン／オフ", never Latin ON / OFF. When the control's own name is "有効" / "無効" (enabled / disabled), follow it |
+| Default | default | A setting's initial value is 既定 (never デフォルト) |
 | Inference engine | engine / role (`llm`, `image`) | A model server the deployment runs, points at, or borrows (one for chat, one for images). What the top-bar pills report on |
 | Engine row | engine row / `lifecycle` | One declared engine: the deployment's own GPU, a ComfyUI on your network (external), one borrowed from another deployment (remote), or any OpenAI-compatible image server. Which row draws a picture is decided by the row, not by the server's type |
 | Borrowed engine | remote engine | An engine another deployment runs and lends through its gateway. Its catalogue is a read-only copy here; starting, stopping and editing happen over there |
