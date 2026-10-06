@@ -692,3 +692,158 @@ also applies to reference-link definitions: their destinations, continued
 next-line destinations and wrapped titles are protected as metadata. Blank lines
 end these blocks, so ordinary citations in surrounding paragraphs remain eligible
 for the normal rewrite rules.
+
+### Japanese notation batches (`ja-notation-normalize.py`, phase B1)
+
+`scripts/ja-notation-normalize.py` is a deterministic, local-only planner and editor
+for notation in `console/src/lib/i18n/locales/ja/<domain>.ts`. It is not wired into
+CI and does not evaluate TypeScript or call a service. This tool's introduction
+changes no catalogue values. Terminology choices (sign-in/login, deployment,
+terminal, limits, collapse) belong to B2; spelling decisions involving button
+behaviour remain manual. The rules follow [Japanese notation conventions](../CONVENTIONS.md#11-japanese-notation-in-ui-text-and-the-guide)
+and the [glossary](../../guide/ref/glossary.md).
+
+- **R1:** insert a half-width space at Latin/Japanese and digit/Japanese boundaries,
+  e.g. `Gitホスティング` → `Git ホスティング`, `30日後` → `30 日後`.
+  Placeholder boundaries are eligible only for the inspected numeric names
+  `n`, `count`, `days`, `profiles`, `hosts`, `bytes`, `applied`; `{n}人` becomes
+  `{n} 人`. Other names such as `{msg}` and `{name}` are skipped and reported.
+  Existing spaces, string ends and Japanese punctuation/brackets
+  (`、。「」（）・：`) are never changed. Single-token labels of at most three
+  characters are skipped. Latin units, ranges, times, versions and multipliers
+  (`30GB`, `30 GB`, `1〜10`, `12:30`, `v1.2`, `3x`, `×1.25`) are protected,
+  including boundaries touching those tokens.
+- **R2:** `既に` → `すでに`. `無い` → `ない` and `無く` → `なく` require an
+  inspected key and its exact original value in `scripts/ja_notation_contexts.json`.
+  Each occurrence is printed as `CONTEXT R2 key@offset token | full value`,
+  including protected and rejected contexts. The adjective/auxiliary whitelist
+  cannot approve a different key or changed sentence. Compound nouns (`無料`,
+  `無効`, `無制限`, `無視`, `無理`, `無事`, `無限`, `無駄`, `無数`), noun `無し`
+  and verb forms `無くす`/`無くなる` are never converted. Adding a new whitelist
+  entry requires grammatical inspection; batch executors must not add approvals.
+- **R3:** a plain `Workspace` word in running Japanese text becomes
+  `ワークスペース`. Identifiers and adjacent Latin words (possible product names,
+  including the catalogue's `Google Workspace` and `Workspace Agent`) are
+  protected; the standalone `Workspace` label is skipped. As part of R3, remove
+  half-width spaces between the converted word and Japanese letters, particles or
+  punctuation (`Workspace を破棄` → `ワークスペースを破棄`). Keep spaces next to
+  Latin words, digits, placeholders and code. Edge whitespace, tabs and line
+  breaks stay intact. The dry-run shows this final Japanese text; R1 itself never
+  removes spaces.
+  Each affected key emits `KEY<TAB>Workspace<TAB>ワークスペース<TAB>N`, accepted
+  by `catalog-diff-check.py --allow-terms-file`. Other unexplained glossary or
+  Latin-token drift causes the entire value's proposal to be skipped.
+
+All rules preserve code spans, placeholders' contents, complete Trans slots
+(`<n>…</n>`/`<n/>`), quoted text (including Japanese bracket quotes), identifiers,
+paths, URLs and environment variables. Unbalanced markup is skipped.
+Agent-facing `plan.review_prompt_*` and `wi.prompt_*`, notification speech
+(including `speech_bare` and other speech variants), `err.*`, `chat.report.*`
+and `clean.reason*` are excluded. UI descriptions such as `launch.first_prompt_note`
+remain eligible. Valid Unicode surrogate escape pairs are decoded for reports and
+matching while their original escape bytes stay intact; unpaired surrogate escapes
+are refused before any catalogue or artifact writes. Escaped characters and
+boundaries between concatenated literals are skipped when an edit cannot map to unchanged source
+syntax. The scanner mirrors the catalogue guard's tokenizer and edits only
+literal contents; keys, comments, quote style, escapes, line breaks, entry order
+and `en/` stay intact. Unsupported expressions, duplicate keys and symlink
+catalogues are refused. Selected dirty catalogue files (staged, unstaged or
+untracked) are refused before any edit unless `--force` is explicitly supplied
+after review. This flag does not override any notation exclusion.
+
+The report lists every proposed `key | old | new`, skips with reasons, and per-rule
+replacement and skip counts per domain. `CANDIDATE (manual only)` lists label
+pairs that differ by spaces, `…` or `を`, across domain boundaries; it never
+chooses a spelling or changes ellipses. Shared labels are checked across the whole
+catalogue: a proposal that would cause SPLIT is skipped with the other keys listed.
+Select those domains together only when the batch's scope allows it.
+
+```sh
+python3 scripts/ja-notation-normalize.py --all
+python3 scripts/ja-notation-normalize.py --domain settings --dry-run \
+  --report "$AF_WORK_DIR/settings-plan.txt" \
+  --allow-terms-out "$AF_WORK_DIR/settings-plan.tsv"
+python3 scripts/ja-notation-normalize.py --domain settings --apply \
+  --allow-terms-out "$AF_WORK_DIR/settings-applied.tsv" \
+  --report "$AF_WORK_DIR/settings-applied.txt"
+# Comma-separated domains and a nonempty subset of R1,R2,R3 are supported:
+python3 scripts/ja-notation-normalize.py --domain settings,repos --rules R1,R2
+```
+
+Dry-run is the default; `--all` is dry-run only. Report and allowance outputs are
+optional during planning. Applying Workspace changes requires
+`--allow-terms-out`; without it the tool refuses before writing. Use fresh output
+paths: existing artifacts, identical report/allowance paths, catalogue/script
+paths and git metadata paths are refused, including a worktree's actual private
+and shared Git directories when `.git` is a gitdir file. Artifact creation happens
+before catalogue writes, so an artifact write failure leaves the catalogue intact.
+Keep the applied allowance file until the PR is reviewed. A second apply with reviewed dirty files and `--force` makes
+no additional catalogue edits; it must not overwrite the first allowance file
+with an empty plan. In a Managed session where `AF_WORK_DIR` is unset, use
+`~/.af-work/<working-copy-directory>/` instead and clean up afterwards.
+
+**Per-domain executor runbook:**
+
+1. Start with a clean catalogue on the assigned branch. Run `--all` for sizing,
+   then the selected domain's dry-run with fresh report/allowance paths. Read
+   **every proposal, CONTEXT and SKIPPED**. Leave skipped cases unchanged; send
+   grammatical/product-name decisions to the reviewer. Do not broaden the rules
+   or whitelist and do not perform B2 terminology work.
+2. Apply the same domains and rules, emitting a fresh applied allowance file.
+   Inspect the diff for value-only changes and verify that a second dry-run has
+   zero proposals. An untracked or edited catalogue requires review before
+   `--force`; it is not a shortcut around the clean starting point.
+3. Run the printed guard command. Keep the allowance argument in every checking
+   or rewriting invocation:
+
+   ```sh
+   python3 scripts/catalog-diff-check.py origin/develop --allow-labels \
+     --allow-terms-file "$AF_WORK_DIR/settings-applied.tsv"
+   python3 scripts/catalog-diff-check.py origin/develop --allow-labels \
+     --allow-terms-file "$AF_WORK_DIR/settings-applied.tsv" --list-citations
+   python3 scripts/catalog-diff-check.py origin/develop --allow-labels \
+     --allow-terms-file "$AF_WORK_DIR/settings-applied.tsv" --rewrite-guide
+   ```
+
+   The required final guard exit is **0**. Before citation sync, exit 1 for
+   PINNED is expected when labels still have citations; it is not permission to
+   ignore failures. Resolve all other categories before continuing. The guide
+   rewrite can return 1 for remaining manual citations. Update headings and
+   inbound anchors, bare prose, tests, knowledge and Go citations in the same
+   notation PR. Read each `--list-citations` hit; `--exempt-pin` is only for a
+   reviewed independent use, and SPLIT requires all participants or a separately
+   reviewed `--allow-split` decision. Also manually search sentence prefixes,
+   because the guard cannot find every shortened quote.
+4. Rerun the guard to exit 0, `python3 scripts/docs-check.py`, and the relevant
+   Console tests **from `console/`** with capped workers. Check the new and
+   existing script suites if rules change:
+   `python3 -m unittest discover -s scripts -p test_ja_notation_normalize.py` and
+   `python3 -m unittest discover -s scripts -p test_catalog_diff_check.py`.
+5. The PR body records domains/rules, proposed/changed/skipped counts, inspected
+   precision (wrong proposals / all proposals), allowance rows, citation updates
+   and manual decisions, exact verification commands and exit codes. Keep labels
+   and sentence batches separate when required by the revision plan. Run the
+   pre-commit hook, commit, push and open the PR against `develop`.
+
+The scratch settings acceptance run with R3 spacing cleanup inspected all
+30 changed values:
+0 wrong proposals (100% precision), 36 R1 insertions, 8 R2 replacements and 1 R3
+replacement, with 9 skipped occurrences. An earlier 32-value plan had two unsafe
+`{msg}` boundary proposals; restricting placeholder spacing to inspected numeric
+names removed them. The R3 replacement also removes spaces that existed only
+because Workspace was Latin; retaining those spaces had left incorrectly spaced
+Japanese values. The complete catalogue dry-run took about one second over
+23 domains. The scratch guard initially returned 1 with 20 PINNED hits and no
+structural/invariant failures; after guide rewriting and manual citation sync,
+the final guard returned 0. No acceptance edits are committed to the catalogue.
+The suite also removes each protected-span recognizer and selected other exclusions
+and proves that their negative controls fail; the real guard fixture fails without
+the emitted Workspace allowance and passes with it.
+
+The R3 cleanup keeps the full-catalogue plan at 16 changed values (17 Workspace
+occurrences). Checking both sides of `ワークスペース`, `すでに`, `ない` and `なく`
+for spaces beside Japanese letters went from 16 hits to zero. A further scratch
+run of `admin,settings,workitems` changed 64 values with 13 accepted allowance
+rows. The initial guard reported only 32 PINNED hits; citation, anchor and coverage
+ledger updates brought the final guard and docs check to exit 0. A second dry-run
+proposed no changes. The scratch repository was removed after verification.
