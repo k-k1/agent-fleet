@@ -87,7 +87,7 @@ Which keys you fill in depends on the IdP:
 
 > **Not here: the git providers' OAuth apps.** The "Connect with OAuth" buttons for cloning
 > GitHub / Bitbucket repositories are **per-tenant**, registered in the Console by a tenant
-> administrator under **Tenant settings → Integrations → Git provider OAuth**. There is no
+> administrator under **Tenant settings → Integrations → Integration OAuth apps**. There is no
 > deployment-level setting for them and `BITBUCKET_OAUTH_KEY` / `_SECRET` are not read at all;
 > `GITHUB_OAUTH_CLIENT_ID` above means the sign-in app only. The tenant administrator's
 > side of it is [admin/05 Access](../admin/05-access.md).
@@ -212,7 +212,7 @@ tenant, with its own issuer, client ID and secret, or **a GitHub organization** 
 subsidiary is the obvious case, but so is a business still being merged, an outsourcing partner,
 or a division that simply runs its own directory. Rather than adding each one to `.env` and
 restarting the CP, that tenant's own administrator registers it
-from the Console: **Tenant settings → "Sign-in methods"** (the account menu's *Tenant settings*),
+from the Console: **Tenant settings → Sign-in → "Sign-in methods"** (the account menu's *Tenant settings*),
 which you reach from **Admin → the tenant → "Sign-in methods."** Nothing here needs a restart.
 
 **The step-by-step (what the tenant fills in, what to check before approving, and the GitHub
