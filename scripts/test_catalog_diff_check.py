@@ -408,6 +408,37 @@ class CatalogDiffCheckTests(Base):
         code, out = self.run_check("--allow-terms-file", "allow.tsv")
         self.assertEqual(code, 2, out)
 
+    def test_allow_term_reversed_pair_cannot_cancel_out(self):
+        self.edit(JA, "設定を保存してから、画面を閉じてください。", "先に設定を保存し、そのあと画面を閉じてください。")
+        code, out = self.run_check("--allow-term", "dom.wording:OFF>オフ", "--allow-term", "dom.wording:オフ>OFF")
+        self.assertEqual(code, 2, out)
+        self.assertIn("both an OLD and a NEW", out)
+
+    def test_allow_term_chain_is_refused(self):
+        code, out = self.run_check("--allow-term", "dom.wording:OFF>オフ", "--allow-term", "dom.wording:オフ>既定")
+        self.assertEqual(code, 2, out)
+
+    def test_allow_term_same_direction_duplicates_sum(self):
+        self.edit(JA, "自動保存は OFF です。", "OFF と OFF です。")
+        self.commit_all("two OFF")
+        self.edit(JA, "OFF と OFF です。", "オフとオフです。")
+        code, out = self.run_check("--allow-term", "dom.toggle:OFF>オフ", "--allow-term", "dom.toggle:OFF>オフ")
+        self.assertEqual(code, 0, out)  # 1 + 1 = the stated total of 2
+        self.assertTrips("allow", "--allow-term", "dom.toggle:OFF>オフ*2", "--allow-term", "dom.toggle:OFF>オフ")
+
+    def test_allow_terms_file_keeps_delimiter_characters_in_terms(self):
+        self.edit(JA, "設定を保存してから", "あ>い を保存してから")
+        self.commit_all("odd term")
+        self.edit(JA, "あ>い を保存してから", "う*い を保存してから")
+        self.write("allow.tsv", "dom.wording\tあ>い\tう*い\n")
+        code, out = self.run_check("--allow-terms-file", "allow.tsv")
+        self.assertEqual(code, 0, out)
+        self.assertIn("あ>い -> う*い x1", out)
+        self.write("allow.tsv", "dom.wording:x\tあ>い\tう*い\n")
+        code, out = self.run_check("--allow-terms-file", "allow.tsv")
+        self.assertEqual(code, 1, out)  # a colon in the key is part of the key, not a term
+        self.assertIn("matched no change", out)
+
     def test_bad_allow_term_spec(self):
         for spec in ("dom.toggle", "dom.toggle:OFF", "dom.toggle:OFF>OFF", "dom.toggle:OFF>オフ*0", ":OFF>オフ"):
             code, out = self.run_check("--allow-term", spec)

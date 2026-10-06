@@ -560,6 +560,13 @@ to explain fails too. The `failures:` line gets an `allow=` entry only when an a
 given, so a run without the flags prints exactly what it printed before. Counting rules are
 the existing ones (substring in ja, so `既定` inside `既定値` counts; word boundary in en).
 
+Allowances of one key that repeat the same OLD and NEW add up (two `OFF>オフ` equal `*2`). A
+term that is OLD in one allowance and NEW in another of the same key (reversed or chained) is
+refused with exit 2, because the two would cancel; state the net change as one allowance. In
+the TSV file the fields are taken as they are, so terms may contain `>`, `*` or `:`; on the
+command line `KEY` ends at the first `:`, `OLD` at the first `>`, and a trailing `*digits`
+on NEW is the count (use the file for a term that ends that way).
+
 Worked example (ja; `既定 OFF。` → `既定ではオフです。`, `デフォルト` → `既定`):
 
 ```

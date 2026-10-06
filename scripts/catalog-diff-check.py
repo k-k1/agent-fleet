@@ -286,10 +286,13 @@ def parse_allowance(spec):
     if not m:
         raise ValueError(spec)
     key, old, new, n = m.groups()
-    n = int(n) if n else 1
-    if old == new or n < 1:
-        raise ValueError(spec)
-    return key, old, new, n, spec
+    return make_allowance(key, old, new, int(n) if n else 1)
+
+
+def make_allowance(key, old, new, n):
+    if not (key and old and new) or old == new or n < 1:
+        raise ValueError(f'{key}:{old}>{new}*{n}')
+    return key, old, new, n, f'{key}:{old}>{new}' + (f'*{n}' if n != 1 else '')
 
 
 def read_allowance_file(path):
@@ -303,8 +306,7 @@ def read_allowance_file(path):
             f = line.split('\t')
             if len(f) not in (3, 4) or not all(f) or (len(f) == 4 and not f[3].isdigit()):
                 raise ValueError(f'{path}:{no}: want KEY<TAB>OLD<TAB>NEW[<TAB>N]')
-            spec = f'{f[0]}:{f[1]}>{f[2]}' + (f'*{f[3]}' if len(f) == 4 else '')
-            out.append(parse_allowance(spec))
+            out.append(make_allowance(f[0], f[1], f[2], int(f[3]) if len(f) == 4 else 1))
     return out
 
 
@@ -454,8 +456,6 @@ def main(argv):
     except (ValueError, OSError) as e:
         print(f'error: bad term allowance {e} (want KEY:OLD>NEW[*N], OLD != NEW)', file=sys.stderr)
         return 2
-    allow_applied = {}
-    allow_why = collections.defaultdict(list)
     used = set()
     exempted = 0
     fails = collections.Counter()
@@ -484,6 +484,19 @@ def main(argv):
     except Fail as e:
         print(f'error: {e}', file=sys.stderr)
         return 2
+
+    # An item that is OLD in one allowance of a key and NEW in another would let the two
+    # cancel (A>B with B>A, or a chain), so neither would have to hold on its own.
+    for key in {a[0] for a in allowances}:
+        fold = lambda t: t.lower() if en and 'glossary' in item_domains(en, t, terms) else t
+        olds = {fold(a[1]) for a in allowances if a[0] == key}
+        news = {fold(a[2]) for a in allowances if a[0] == key}
+        if olds & news:
+            print(f'error: {key}: {sorted(olds & news)[0]} is both an OLD and a NEW term of its allowances '
+                  '(reversed or chained; state the net change as one allowance)', file=sys.stderr)
+            return 2
+    allow_applied = {}
+    allow_why = collections.defaultdict(list)
 
     # Anything under locales/ outside the target dir must not move in a rewrite.
     outside = set(git('diff', '--name-only', '-z', args.ref, '--', CATALOGUE).split('\0'))
@@ -534,12 +547,12 @@ def main(argv):
                     triples.append((path, key, o, n))
                     continue
                 adj = collections.defaultdict(lambda: collections.defaultdict(int))
-                mine = [a for a in allowances if a[0] == key]
+                mine = [(i, a) for i, a in enumerate(allowances) if a[0] == key]
                 if mine:
                     # An allowance holds only if every category counting OLD and NEW moved by
                     # exactly the stated amount; items shared by several allowances sum up.
                     want = collections.defaultdict(int)
-                    for _, old_t, new_t, cnt, _ in mine:
+                    for _, (_, old_t, new_t, cnt, _) in mine:
                         want[old_t] -= cnt
                         want[new_t] += cnt
                     bad = set()
@@ -549,8 +562,8 @@ def main(argv):
                         seen[item] = [(d, item_count(en, d, item, o, terms), item_count(en, d, item, n, terms)) for d in doms]
                         if any(nc - oc != w for _, oc, nc in seen[item]):
                             bad.add(item)
-                    for a in mine:
-                        spec = a[4]
+                    for ai, a in mine:
+                        spec = ai
                         if a[1] in bad or a[2] in bad:
                             allow_why[spec].append(f'{where}: ' + ', '.join(
                                 f'{i} {seen[i][0][1]} -> {seen[i][0][2]} (allowed {want[i]:+d})' for i in (a[1], a[2])))
@@ -643,9 +656,9 @@ def main(argv):
         print('changed labels:')
         for where, o, n in labels:
             print(f'  LABEL {where}: {o} -> {n}')
-    for _, _, _, _, spec in allowances:
-        if spec not in allow_applied:
-            why = '; '.join(allow_why[spec]) or 'the key was not among the changed values'
+    for ai, (_, _, _, _, spec) in enumerate(allowances):
+        if ai not in allow_applied:
+            why = '; '.join(allow_why[ai]) or 'the key was not among the changed values'
             fail('allow', f'--allow-term {spec} matched no change (stale, wrong direction or wrong count): {why}')
     for _, _, _, spec in exempt:
         if spec not in used:
