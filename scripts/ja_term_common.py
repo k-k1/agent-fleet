@@ -252,17 +252,25 @@ def substitution_edits(old, new, family):
     return edits
 
 
-def verify_protections(row, edits):
+def verify_protections(row, edits, quoted_terms=False):
     spans = notation.protected_spans(row.old)
     spans += [(m.start(), m.end(), 'digits/newlines') for m in re.finditer(r'\d+|[\r\n]', row.old)]
     for start, end, _ in edits:
         for a, b, why in spans:
+            if quoted_terms and why == 'quote' and row.old[a:b].startswith('「'):
+                # A renamed authentication button must also change its quoted instructions.
+                # The caller has already proved that every edit is an F-login substitution.
+                continue
             if row.family == 'F-onoff' and why == 'identifier' and re.fullmatch(r'(?:ON|OFF)/(?:ON|OFF)', row.old[a:b]):
                 continue
             if a < end and start < b or start == end and a < start < b:
                 raise Refusal(f'{row.key}: protected {why} at old offsets {a}:{b}')
     for name, rx in guard.INVARIANTS.items():
-        if name != 'latin' and rx.findall(row.old) != rx.findall(row.new):
+        before = row.old
+        if quoted_terms and name == 'kagi':
+            for start, end, replacement in reversed(edits):
+                before = before[:start] + replacement + before[end:]
+        if name != 'latin' and rx.findall(before) != rx.findall(row.new):
             raise Refusal(f'{row.key}: {name} changed')
     for char in ('\n', '\r'):
         if row.old.count(char) != row.new.count(char):
@@ -287,8 +295,9 @@ def verify_excluded(row):
         raise Refusal(f'{row.key}: excluded prompt/speech/error/Go-twin key')
 
 
-def verify_split(rows, entries):
+def verify_split(rows, entries, approvals=frozenset()):
     by_key = {r.key: r for r in rows}
+    used = set()
     for row in rows:
         if not (guard.label_like(row.old) or guard.label_like(row.new)):
             continue
@@ -297,23 +306,43 @@ def verify_split(rows, entries):
                         if (by_key[k].old if k in by_key else v.text) == row.old)
         missing = [k for k in others if k not in by_key or by_key[k].new != row.new]
         if missing:
-            raise Refusal(f'{row.key}: shared label would SPLIT; all keys need the same new value: ' + ', '.join(missing))
+            if not set(others) <= approvals:
+                raise Refusal(f'{row.key}: shared label would SPLIT; all keys need the same new value: ' + ', '.join(missing))
+            used.update(others)
+    if approvals - used:
+        raise Refusal('stale SPLIT approval: ' + ', '.join(sorted(approvals - used)))
 
 
-def verify_plan(rows, entries):
+def verify_plan(rows, entries, split_approvals=frozenset(), user_errors=frozenset(), quoted_terms=frozenset()):
     if len({r.key for r in rows}) != len(rows):
         raise Refusal('duplicate/conflicting plan key')
     checked = {}
+    by_key = {r.key: r for r in rows}
+    for key in user_errors | quoted_terms:
+        if key not in by_key or by_key[key].family != 'F-login':
+            raise Refusal(f'{key}: approval requires an F-login plan row')
+    for key in user_errors:
+        if not key.startswith('err.') or 'prompt' in key.lower() or re.search(r'(?:^|[._])speech(?:[._]|$)', key):
+            raise Refusal(f'{key}: user-error approval requires a user-visible err.* key')
     for row in rows:
         applied = verify_current(row, entries)
-        verify_excluded(row)
+        if row.key not in user_errors:
+            verify_excluded(row)
         try:
             edits = substitution_edits(row.old, row.new, row.family)
-            verify_protections(row, edits)
+            if row.key in quoted_terms:
+                if guard.INVARIANTS['kagi'].findall(row.old) == guard.INVARIANTS['kagi'].findall(row.new):
+                    raise Refusal(f'{row.key}: stale quoted-term approval')
+                verify_protections(row, edits, quoted_terms=True)
+            else:
+                verify_protections(row, edits)
         except Refusal as e:
             raise Refusal(f'plan line {row.line}, {row.key}: {e}') from e
         checked[row.key] = (applied, edits)
-    verify_split(rows, entries)
+    if split_approvals:
+        verify_split(rows, entries, split_approvals)
+    else:
+        verify_split(rows, entries)
     return checked
 
 

@@ -926,6 +926,21 @@ ambiguous cases unchanged. Agent-facing `*prompt*`, speech variants, `err.*`,
 `chat.report.*` and `clean.reason*` cannot be changed. Glossary rows require a
 separate explicit decision; the apply tool edits only catalogue literals.
 
+F-login sense review has three explicit, repeatable exceptions; the default
+protections above remain unchanged. `--allow-split KEY,KEY` on the apply tool
+requires every key sharing the old label, including retained external-service
+labels, and rejects incomplete or stale approvals. Pass the same groups to the
+guard and review each citation manually: an approved split is never rewritten
+automatically. `--allow-user-error KEY` permits one reviewed user-visible
+`err.*` F-login value; prompt/speech keys, error identifiers and other families
+remain protected. `--allow-quoted-terms KEY` permits registered F-login
+substitutions inside that key's `「…」` label references. Pass it to the guard
+with the emitted term allowances: the guard normalizes only verified
+サインイン/ログイン pairs inside those quotes, while preserving their remaining
+contents. Both tools reject stale quote approvals; code, placeholders, Trans
+slots, other quote forms and other families stay protected. Record these
+exceptions and their per-key sense evidence in the PR.
+
 The UTF-8 plan has no BOM or header and contains exactly five TAB-separated fields:
 
 ```text

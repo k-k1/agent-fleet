@@ -143,13 +143,14 @@ test("tenant admin: sign-in methods are editable but approval is not offered, an
   await expect(modal.locator(".idp-flags input")).toHaveCount(0);
 
   // Login rules: the values are readable, but there is no input and no save button.
-  await modal.locator(".settings-rail-item", { hasText: "ログイン規則" }).click();
+  await expect(modal.locator(".settings-rail-head", { hasText: /^サインイン$/ })).toHaveCount(1);
+  await modal.locator(".settings-rail-item", { hasText: "サインイン規則" }).click();
   // The two method columns left this panel in P7-0 (§61.17.5): only the two domain columns
   // remain, and methods are reduced to a one-line hint pointing at the sign-in methods screen.
   await expect(modal.locator(".af-val")).toHaveCount(2);
   await expect(modal.locator(".af-val").nth(0)).toHaveText("@sales.acme.co.jp");
   await expect(modal.locator(".af-val").nth(1)).toContainText("未設定");
-  await expect(modal.locator(".admin-hint", { hasText: "「サインイン方法」の面で行ごとに切り替えます" })).toHaveCount(1);
+  await expect(modal.locator(".admin-hint", { hasText: "「サインイン方法」の画面で行ごとに切り替えます" })).toHaveCount(1);
   await expect(modal.locator(".settings-content input")).toHaveCount(0);
   await expect(modal.locator(".settings-content .admin-actions")).toHaveCount(0);
 });

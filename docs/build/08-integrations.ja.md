@@ -210,8 +210,8 @@ refresh token 付き）。エンドポイントは `POST /api/connections/claude
 
 ## 8.6 その他のエージェント CLI
 
-どの kind がサインインでき、メンバーが Console からどうするかは
-[ref/agents](../../guide/ref/agents.ja.md#サインインの仕方)。この節はその下の契約だけを
+どの kind がログインでき、メンバーが Console からどうするかは
+[ref/agents](../../guide/ref/agents.ja.md#ログインの仕方)。この節はその下の契約だけを
 書く。**どの kind も CP のコールバックを要さない。** kind に資格が届く道は 3 つ:
 
 - **CLI 自身のログインを Agent が駆動**し、その後 CLI が自分の資格を書く: codex・cursor・

@@ -30,7 +30,7 @@ Agent Fleet は 0.x のリリースとして出荷していて、リリースノ
 | 論点 | 決定 | 理由・補足 |
 |------|------|-----------|
 | 提供モデル | パッケージ製品・会社ごとに自社ホスト | 1 社 1 配備。SaaS は ToS の理由で断念（[decisions/0001](../decisions/0001-self-host-vs-saas.ja.md)） |
-| エージェント認証 | エージェント CLI のアカウントは各メンバーが自分のものを持ち込み、Console から接続する | 会社ごとに自社ホストする理由がこれ（[decisions/0001](../decisions/0001-self-host-vs-saas.ja.md)）。例外は `lcpp` で、配備のエンジンか、メンバーが指した llama.cpp サーバの上で動き、サインインが無い。kind ごとのサインインの仕方は [ref/agents](../../guide/ref/agents.ja.md#サインインの仕方) |
+| エージェント認証 | エージェント CLI のアカウントは各メンバーが自分のものを持ち込み、Console から接続する | 会社ごとに自社ホストする理由がこれ（[decisions/0001](../decisions/0001-self-host-vs-saas.ja.md)）。例外は `lcpp` で、配備のエンジンか、メンバーが指した llama.cpp サーバの上で動き、ログインが無い。kind ごとのログインの仕方は [ref/agents](../../guide/ref/agents.ja.md#ログインの仕方) |
 | 利用者の隔離 | メンバーシップ（テナントの中の 1 人）ごとに 1 ワークスペース | `native` 以外のすべての形態でコンテナ。`native` は設計上 1 人用（[ref/deploy-targets](../../guide/ref/deploy-targets.ja.md)）。タスクごとの環境でなくメンバーごとに長寿命のワークスペースを 1 つ持たせる理由は [decisions/0104](../decisions/0104-long-lived-member-workspace.ja.md) |
 | 想定規模 | 1 配備あたり数十〜100 人程度・同時 20 人程度を想定した大きさ | どちらも想定であって実測した上限ではない。1 台のホストか 1 つの ECS クラスタで足りるつもりで作っている。配備全体の上限はコードに無く、テナントにはワークスペース数とセッション数の上限を設定できる（[ref/limits](../../guide/ref/limits.ja.md)） |
 | デプロイ層 | 1 つの中核。ランタイムアダプタは `AF_RUNTIME` で選ぶ | `docker`（既定）・`native`・`ecs`・`ecs-ec2` をポートとアダプタの裏に置く（[01 §1.6](01-architecture.ja.md)）。形態ごとの違いは [ref/deploy-targets](../../guide/ref/deploy-targets.ja.md) |
