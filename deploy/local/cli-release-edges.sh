@@ -21,10 +21,26 @@
 #   FAILED           `failed=` from cli-drift-check.sh: rows whose source could not be read
 #   LATEST_<KIND>    public version, uppercase kind; empty means "unknown"
 #   TESTED_<KIND>    version the contract last passed against
+#   RED_<KIND>       version whose dispatched contract last finished red (the `red`
+#                    marker the contract itself writes on failure)
 #   NOW              timestamp for the watcher state (default: now, UTC)
 # Out:
-#   $GITHUB_OUTPUT   <kind>=true per edge, count, skipped, watcher_ok, watcher_failed
+#   $GITHUB_OUTPUT   <kind>=true per edge, count, skipped, red, watcher_ok, watcher_failed
 #   $GITHUB_STEP_SUMMARY   the human half
+#
+# ## The red marker
+#
+# The watcher runs every 2 hours, and `tested != latest` stays true for as long as a
+# contract is red. Without a brake a failing version would spend the contract's LLM quota
+# about 12 times a day. A contract that fails writes `red=<latest>`; an edge whose `latest`
+# equals that value is not dispatched again (listed in `red=` and the summary instead).
+# The brake is released by anything that changes the pair: a new `latest` (the value no
+# longer matches), a passing run (`tested == latest` is checked first and always wins),
+# (`none` after a pass), or a manual dispatch, which never goes through this script. The
+# marker is written by the
+# contract on `failure()` and not by the watcher at dispatch, so a run that was cancelled
+# or timed out leaves no marker and the version is retried. Kinds without an unattended
+# contract (cursor, kiro) ignore it: their edge feeds the `seen` report, not a dispatch.
 #
 # `FAILED` may name rows that are not dispatch kinds at all — rtk is baked and
 # self-updated like a CLI but has no contract and no `seen`/`tested` state, so its
@@ -40,7 +56,13 @@ NOW="${NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 is_failed() { case ",${FAILED:-}," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
 is_kind() { case " $KINDS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
+# Kinds whose contract the watcher dispatches by itself, hence the only ones a red marker
+# may hold back.
+RED_KINDS="${RED_KINDS:-claude codex opencode copilot agy muse}"
+
+# `red=` is a summary output for the job log and the step outputs; no later step reads it.
 changed=()   # kind=version, one per dispatch edge
+red=()       # kind=version, edges not dispatched because that version's contract is red
 held=()      # dispatch kinds skipped because their source could not be read
 other=()     # failed rows that are not dispatch kinds (rtk today)
 
@@ -56,6 +78,12 @@ for kind in $KINDS; do
   fi
   # shellcheck disable=SC2154 # assigned by the eval above
   [ "$latest" != "$tested" ] || continue
+  eval "redver=\${RED_${upper}:-}"
+  # shellcheck disable=SC2154 # assigned by the eval above
+  if [ "$redver" = "$latest" ] && case " $RED_KINDS " in *" $kind "*) true ;; *) false ;; esac; then
+    red+=("$kind=$latest")
+    continue
+  fi
   printf '%s=true\n' "$kind" >> "$OUT"
   changed+=("$kind=$latest")
 done
@@ -71,6 +99,7 @@ fi
 {
   printf 'count=%s\n' "${#changed[@]}"
   printf 'skipped=%s\n' "$(IFS=,; printf '%s' "${held[*]-}")"
+  printf 'red=%s\n' "$(IFS=,; printf '%s' "${red[*]-}")"
   # The watcher's own liveness, so a stale `tested` can be told apart from a quiet
   # upstream after the fact. `ok` only moves when every row was readable.
   if [ -z "${FAILED:-}" ]; then
@@ -89,6 +118,14 @@ fi
     echo "No public version changed; all contract dispatches skipped."
   else
     printf -- "- \`%s\`\n" "${changed[@]}"
+  fi
+  if [ "${#red[@]}" -gt 0 ]; then
+    echo
+    echo "### Not re-dispatched: this version's contract already failed"
+    echo
+    printf -- "- \`%s\`\n" "${red[@]}"
+    echo
+    echo "Dispatch the contract by hand once the cause is fixed, or wait for a newer release."
   fi
   if [ "${#held[@]}" -gt 0 ] || [ "${#other[@]}" -gt 0 ]; then
     echo

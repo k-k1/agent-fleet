@@ -28,7 +28,7 @@ on:
       - muse-contract
     types: [completed]
   schedule:
-    - cron: "0 23 * * *" # daily 08:00 JST, a backstop after the 05:30 watcher's dispatches
+    - cron: "0 1-23/2 * * *" # every 2 hours at the odd hours, a backstop 30 minutes after the watcher
   workflow_dispatch:
 
 permissions:

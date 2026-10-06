@@ -22,12 +22,15 @@ name: cli-drift
 
 on:
   schedule:
-    - cron: "0 20 * * *" # daily 05:00 JST
+    # Every 2 hours, on the hour. The order drift (:00) -> watcher (:30) -> pin-bump (next
+    # odd hour, :00) is what the three schedules are tuned to; keep them together.
+    - cron: "0 */2 * * *"
   workflow_dispatch:
   # No push trigger (spreads billing; develop-trunk workflow). Verifying script
-  # changes via the daily cron or workflow_dispatch is enough.
+  # changes via the cron or workflow_dispatch is enough.
 
 permissions:
+  actions: read # contract-health lists the contract workflows' recent runs
   contents: read
   issues: write
 
@@ -60,6 +63,33 @@ jobs:
           # 1 = drift (= steady state). Handled via the issue; keep the job green.
           if [ "$code" = 2 ]; then exit 2; fi
 
+      # Red contracts live in one section of the tracking issue body (a failing contract
+      # writes its own row; see deploy/local/cli-contract-report.sh). Refreshed before the
+      # issue is looked up, because a streak can create the issue and the steps below must
+      # then find it instead of opening a second one.
+      #
+      # N = 2. Contract runs are rare (a release edge, plus a weekly cron for three of them),
+      # so waiting for 3 would take weeks to notice a harness regression, while one run alone
+      # is what a single bad release or a flaky network already produces. Two in a row is the
+      # smallest count that says "not this version". Cancelled runs do not count either way.
+      - name: contract health (stale rows, consecutive red runs)
+        env:
+          LATEST_CLAUDE: ${{ steps.check.outputs.latest_claude }}
+          LATEST_CODEX: ${{ steps.check.outputs.latest_codex }}
+          LATEST_OPENCODE: ${{ steps.check.outputs.latest_opencode }}
+          LATEST_COPILOT: ${{ steps.check.outputs.latest_copilot }}
+          LATEST_AGY: ${{ steps.check.outputs.latest_agy }}
+          LATEST_CURSOR: ${{ steps.check.outputs.latest_cursor }}
+          LATEST_KIRO: ${{ steps.check.outputs.latest_kiro }}
+          LATEST_MUSE: ${{ steps.check.outputs.latest_muse }}
+        run: |
+          # A reporting failure must not turn the drift check itself red.
+          deploy/local/cli-contract-report.sh prune || echo "::warning::could not prune the red-contract rows"
+          for wf in claude-tui-contract codex-contract opencode-contract copilot-contract \
+                    agy-contract cursor-contract kiro-contract muse-contract; do
+            deploy/local/cli-contract-report.sh streak "$wf" 2 || echo "::warning::streak check failed for $wf"
+          done
+
       - name: find tracking issue
         id: issue
         run: |
@@ -89,7 +119,10 @@ jobs:
           1. Inspect the corresponding `cli-release-watch` dispatch/result.
           2. For a CLI without an unattended contract, run its signed-in fleet TUI/mirror
              probe from the companion issue.
-          3. Kinds whose latest passed its contract are bumped by `cli-pin-bump.yml` in one
+          3. A `Red contracts` section below (when present) lists the contracts that failed
+             for the current latest or keep failing on `develop`. The watcher does not
+             re-dispatch a version whose contract failed; fix the cause, then dispatch it.
+          4. Kinds whose latest passed its contract are bumped by `cli-pin-bump.yml` in one
              PR (`automation/cli-pin-bump`); cursor and kiro need their contract dispatched
              by hand first, and rtk is bumped by hand.
 
@@ -97,10 +130,10 @@ jobs:
           to latest.</sub>
           TAIL
           } > /tmp/body.md
-
+          # `rewrite` keeps the `Red contracts` section: this step replaces the whole body.
           gh label create cli-drift --color FBCA04 --description "upstream CLI version drift" 2>/dev/null || true
           if [ -n "${{ steps.issue.outputs.num }}" ]; then
-            gh issue edit "${{ steps.issue.outputs.num }}" --body-file /tmp/body.md
+            deploy/local/cli-contract-report.sh rewrite "${{ steps.issue.outputs.num }}" /tmp/body.md
             echo "updated issue #${{ steps.issue.outputs.num }}"
           else
             gh issue create --title "$TITLE" --body-file /tmp/body.md --label cli-drift
@@ -112,6 +145,11 @@ jobs:
       - name: close tracking issue when back in sync
         if: steps.check.outputs.code == '0' && steps.check.outputs.failed == '' && steps.issue.outputs.num != ''
         run: |
+          # A red-contract row keeps the issue open: it is the only place that reports it.
+          if deploy/local/cli-contract-report.sh active; then
+            echo "red contracts are still reported; leaving the issue open"
+            exit 0
+          fi
           gh issue close "${{ steps.issue.outputs.num }}" \
             --comment "Pins have caught up to npm latest (cli-drift.yml)."
 

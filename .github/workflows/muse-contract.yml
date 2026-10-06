@@ -173,13 +173,14 @@ jobs:
   # of reach of the binary the drift job executes.
   record:
     needs: drift
-    # Only a passing `version=latest` run records (the watcher's dispatch, or a manual one): a
-    # pin run that recorded an older version would move `tested` backwards and dispatch the
-    # contract again the next day.
-    if: inputs.version == 'latest'
+    # Only a `version=latest` run records (the watcher's dispatch, or a manual one): a pin run
+    # that recorded an older version would move `tested` backwards and dispatch the contract
+    # again. `always()` so a red drift job is reported too; a cancelled one is neither.
+    if: always() && inputs.version == 'latest' && (needs.drift.result == 'success' || needs.drift.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      actions: read # the failure report lists the run's failed steps
       contents: read
       issues: write
     steps:
@@ -190,7 +191,20 @@ jobs:
       # `1.4.0-R4302.1`, and the digits-only extraction the other contracts use would leave
       # that edge open forever.
       - name: remember successfully tested latest
+        if: needs.drift.result == 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VER: ${{ needs.drift.outputs.version }}
-        run: deploy/local/cli-release-state.sh set tested muse "$VER"
+        run: |
+          deploy/local/cli-release-state.sh set tested muse "$VER"
+          deploy/local/cli-contract-report.sh success muse || echo "::warning::could not clear the red-contract row"
+
+      # Red `latest`: tracking-issue row plus the watcher's brake (cli-contract-report.sh). The
+      # version is empty when the job died before reading the channel; the report then names the
+      # run only and writes no brake.
+      - name: report failed contract for latest
+        if: needs.drift.result == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VER: ${{ needs.drift.outputs.version }}
+        run: deploy/local/cli-contract-report.sh failure muse "${VER:-unknown}"
