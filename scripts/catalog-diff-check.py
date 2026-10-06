@@ -831,6 +831,10 @@ def main(argv):
     ap.add_argument('--allow-quoted-terms', action='append', default=[], metavar='KEY',
                     help='ja only: apply verified sign-in/login allowances inside Japanese label quotes')
     args = ap.parse_args(argv)
+    for key in args.allow_quoted_terms:
+        if 'prompt' in key.lower() or re.search(r'(?:^|[._])speech(?:[._]|$)', key) or \
+                key.startswith(('chat.report.', 'clean.reason')):
+            ap.error(f'{key}: quoted-term approval cannot target an excluded prompt/speech/report/reason key')
     if (args.list_citations or args.rewrite_guide) and sum((args.list_pinned, args.list_citations, args.triples, args.rewrite_guide)) > 1:
         ap.error('listing and rewrite modes are mutually exclusive')
     if args.force and not args.rewrite_guide:

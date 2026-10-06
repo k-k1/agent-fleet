@@ -344,6 +344,25 @@ class CliTests(unittest.TestCase):
         self.assertEqual(bad.returncode, 1, bad.stdout)
         self.assertIn('FAIL kagi', bad.stdout)
 
+    @unittest.skipUnless(shutil.which('node'), 'real guard requires node')
+    def test_quoted_guard_rejects_excluded_keys(self):
+        old = '「サインインして承認」を押してください。'
+        new = '「ログインして承認」を押してください。'
+        keys = ['d.quote', 'd.prompt', 'd.Prompt', 'd.speech', 'd_speech',
+                'chat.report.auth', 'clean.reason.auth']
+        self.write('d', dict.fromkeys(keys, old))
+        self.commit()
+        for key in keys:
+            with self.subTest(key=key):
+                values = dict.fromkeys(keys, old)
+                values[key] = new
+                self.write('d', values)
+                p = self.guard('--allow-labels', '--allow-term', f'{key}:サインイン>ログイン',
+                               '--allow-quoted-terms', key)
+                self.assertEqual(p.returncode, 0 if key == 'd.quote' else 2, p.stdout + p.stderr)
+                if key != 'd.quote':
+                    self.assertIn('excluded prompt/speech/report/reason key', p.stderr)
+
     def test_reviewed_split_cli_rejects_incomplete_and_stale_approvals(self):
         self.write('e', {'e.login': 'ログイン'})
         self.commit()
