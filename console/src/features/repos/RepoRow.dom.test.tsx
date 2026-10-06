@@ -174,7 +174,7 @@ describe("RepoRow origin ahead/behind chip", () => {
 
   it("shows only the parts that apply", async () => {
     await render({ ...WT, behind: 2 });
-    expect(parts()).toEqual(["↓2", "FF 可"]);
+    expect(parts()).toEqual(["↓2", "FF可"]);
     await render({ ...WT, ahead: 3 });
     expect(parts()).toEqual(["↑3"]);
   });
