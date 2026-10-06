@@ -319,8 +319,8 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
 ARG CLAUDE_CODE_VERSION=2.1.289
 ARG OPENCODE_VERSION=1.18.34
-ARG CODEX_VERSION=0.160.0
-ARG COPILOT_VERSION=1.0.91
+ARG CODEX_VERSION=0.160.1
+ARG COPILOT_VERSION=1.0.92
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}" \
@@ -455,9 +455,9 @@ ARG KIRO_SHA256_ARM64=937ff1ae3df373717b66cc09aec79c3b7f0b8e53968d746e3a4545722e
 # MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 362,440,920 B / 323,360,856 B（1.4.1-R4503.1）。
 # ⚠️ 版文字列は `Muse Code 1.3.0 (1.3.0-R3401.1)`＝**括弧内のビルド id** がピンと突合する値。
 # agy の `tr -dc '0-9.'` 流儀だと `-R3401.1` が落ちて毎回不一致になる（install_muse.go）。
-ARG MUSE_VERSION=1.4.2-R4684.1
-ARG MUSE_SHA256_X64=dfb3096c91f4767c4d98006460800b7ba906a0b1a408280a926a8dc19a1af64f
-ARG MUSE_SHA256_ARM64=fa6974c23307a0d5db91367549e41505a5e7b55dcd66c672eb2dd89c1a125ad6
+ARG MUSE_VERSION=1.4.3-R5018.1
+ARG MUSE_SHA256_X64=e671790882bc88d65edb4ae0f713becf378ebf91011034ab75abebe3592dde4f
+ARG MUSE_SHA256_ARM64=6426c76a0081f20d60f6cad03308a147d79ce45758f1a89fd2713253cf475497
 # Postgres供給ピン（ADR 0086 P0 供給レーン）: Zonky embedded-postgres 17.11.0 jar のハッシュ。
 # sha256 は `curl -sfL <jar-url> | sha256sum` で確認した値。
 # 他メジャー（16/17/18）は install-postgres が Maven Central の .sha256 サイドカーで動的に取得する。
