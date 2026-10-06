@@ -6,6 +6,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp/msptest"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -129,5 +130,100 @@ func TestWireLiveReportsLimited(t *testing.T) {
 	h.mu.Unlock()
 	if li := (agentImpl{}).WireLive(m, true); li.State != agents.StateLimited {
 		t.Errorf("state = %q, want %q", li.State, agents.StateLimited)
+	}
+}
+
+// An Agent restart drops the in-memory mark; session/resume restates the last turn, and a
+// quota failure there must come back, or an episode whose booking failed has nothing left to
+// retry against and the row reads idle.
+func TestResumeRestoresTheLimitFromLastTurn(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		lastTurn any
+		want     bool
+	}{
+		{"quota failure", map[string]any{"turnId": "t-9", "terminal": "failed",
+			"error": map[string]any{"kind": "modelError", "message": measuredQuotaMessage, "retryable": false}}, true},
+		{"other failure", map[string]any{"turnId": "t-9", "terminal": "failed",
+			"error": map[string]any{"kind": "modelError", "message": "API error 500", "retryable": true}}, false},
+		{"completed", map[string]any{"turnId": "t-9", "terminal": "completed"}, false},
+		// finishTurn marks only a failed terminal; the restatement follows the same rule.
+		{"cancelled with the quota text", map[string]any{"turnId": "t-9", "terminal": "cancelled",
+			"error": map[string]any{"kind": "modelError", "message": measuredQuotaMessage, "retryable": false}}, false},
+		{"absent", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			h := &threadHandle{slotSid: "00000000-0000-5000-8000-0000000000c1"}
+			host := newTestHandle(t, h)
+			registerHandle(t, h.name, h)
+			writeSession(h.slotSid, museSession{ID: "01a0c1d6-0000-7000-8000-0000000000c2", Path: "/tmp/old.jsonl"})
+			sess := map[string]any{"sessionId": "01a0c1d6-0000-7000-8000-0000000000c2", "path": "/tmp/s.jsonl", "status": "idle", "createdAt": "", "updatedAt": "", "turnCount": 1}
+			host.Handle(msp.MethodSessionResume, func(msptest.Message) (any, *msp.Error) {
+				res := map[string]any{"session": sess, "history": map[string]any{"mode": "inline", "items": []any{}},
+					"pendingRequests": []any{}, "viewCursor": "c1"}
+				if tc.lastTurn != nil {
+					res["lastTurn"] = tc.lastTurn
+				}
+				return res, nil
+			})
+			if err := h.openSession(h.cl, agents.ThreadSettings{Model: "muse-spark-1.3"}); err != nil {
+				t.Fatalf("openSession: %v", err)
+			}
+			if got := IsRateLimited(h.name); got != tc.want {
+				t.Errorf("IsRateLimited after resume = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// After settleIdle closes T1 and T2 completes, neither turnID nor starting is left to reject a
+// late turn/completed for T1. It must not overwrite what T2 said about the limit, in either
+// direction.
+func TestLateCompletionOfAnOlderTurnLeavesTheLimitAlone(t *testing.T) {
+	quota := &msp.TurnError{Kind: "modelError", Message: measuredQuotaMessage}
+	for _, tc := range []struct {
+		name        string
+		t2, staleT1 *msp.TurnError
+		want        bool
+	}{
+		{"stale success after a limited T2", quota, nil, true},
+		{"stale quota failure after a good T2", nil, quota, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			h := &threadHandle{}
+			host := newTestHandle(t, h)
+			registerHandle(t, h.name, h)
+			terminal := func(e *msp.TurnError) msp.TurnTerminal {
+				if e != nil {
+					return msp.TurnTerminalFailed
+				}
+				return msp.TurnTerminalCompleted
+			}
+
+			host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{TurnID: "t-1", SessionID: h.sid})
+			waitEvent(t, h, agents.TurnRunning)
+			h.mu.Lock()
+			gen := h.runGen
+			h.mu.Unlock()
+			h.settleIdle(gen) // T1 closed by the idle fallback; its completion is still in flight
+			waitEvent(t, h, agents.TurnCompleted)
+
+			host.Notify(msp.NotificationTurnStarted, msp.TurnStartedParams{TurnID: "t-2", SessionID: h.sid})
+			waitEvent(t, h, agents.TurnRunning)
+			host.Notify(msp.NotificationTurnCompleted, msp.TurnCompletedParams{
+				TurnID: "t-2", SessionID: h.sid, Terminal: terminal(tc.t2), Error: tc.t2,
+			})
+			waitEvent(t, h, map[bool]agents.TurnState{true: agents.TurnFailed, false: agents.TurnCompleted}[tc.t2 != nil])
+
+			host.Notify(msp.NotificationTurnCompleted, msp.TurnCompletedParams{
+				TurnID: "t-1", SessionID: h.sid, Terminal: terminal(tc.staleT1), Error: tc.staleT1,
+			})
+			waitEvent(t, h, map[bool]agents.TurnState{true: agents.TurnFailed, false: agents.TurnCompleted}[tc.staleT1 != nil])
+			if got := IsRateLimited(h.name); got != tc.want {
+				t.Errorf("IsRateLimited = %v, want %v (T2's verdict)", got, tc.want)
+			}
+		})
 	}
 }

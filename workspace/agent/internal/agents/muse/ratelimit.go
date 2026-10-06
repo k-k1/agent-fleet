@@ -85,6 +85,25 @@ func ResetAt(name string, now time.Time) (time.Time, string, bool) {
 	return time.Time{}, "", false
 }
 
+// restoreLimitLocked carries a usage limit across a host restart: the mark lives in memory, so
+// an Agent restart (or a workspace woken for the booked resume) would otherwise read the
+// session as idle and leave an unbooked episode with nothing to retry against. session/resume
+// restates the last turn's terminal for exactly this. A turn that has already started on this
+// handle is newer than the restatement and wins. Caller holds h.mu.
+func (h *threadHandle) restoreLimitLocked(lt *msp.LastTurn) {
+	if lt == nil || h.running || (h.lastTurn != "" && h.lastTurn != lt.TurnID) {
+		return
+	}
+	h.lastTurn = lt.TurnID
+	h.limit = nil
+	if lt.Terminal != msp.TurnTerminalFailed {
+		return
+	}
+	if lim, ok := usageLimitOf(lt.Error); ok {
+		h.limit = &lim
+	}
+}
+
 func limitOf(name string) (usageLimit, bool) {
 	h := handleFor(name)
 	if h == nil {
