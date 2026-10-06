@@ -873,7 +873,7 @@ export const admin = {
   "admin.engine_ingest_title": "推論エンジンのモデル取り込み",
   "admin.allow_engine_ingest": "このテナントの管理者がモデルを取り込むのを許可",
   "admin.allow_engine_ingest_hint":
-    "オフ（既定）では取り込みを起動できるのは super_admin だけです。オン にすると、このテナントの tenant_admin が Hugging Face / Civitai / URL からモデルを取り込めます。有効化・選択中チェックポイントの変更・行の削除・デプロイの Hugging Face トークンは super_admin のままです。カタログはデプロイに 1 つなので、取り込まれたモデルの id はどのテナントからも見えます。",
+    "オフ（既定）では取り込みを起動できるのは super_admin だけです。オンにすると、このテナントの tenant_admin が Hugging Face / Civitai / URL からモデルを取り込めます。有効化・選択中チェックポイントの変更・行の削除・デプロイの Hugging Face トークンは super_admin のままです。カタログはデプロイに 1 つなので、取り込まれたモデルの id はどのテナントからも見えます。",
   "admin.engine_use_title": "推論エンジンの利用可否",
   "admin.allow_engine_llm": "セルフホストのチャットエンジン（llm）の利用を許可",
   "admin.allow_engine_image": "セルフホストの画像生成エンジン（image）の利用を許可",
