@@ -492,3 +492,24 @@ repeats what an agent needs at commit time and points back there.
 What to update when you change what is the
 [update-trigger table](README.md#update-trigger). The norms every shelf follows are
 [CONVENTIONS](../CONVENTIONS.md).
+
+### Rewriting the Japanese Console catalogue (`catalog-diff-check.py`)
+
+A wording pass over `console/src/lib/i18n/locales/ja/<domain>.ts` may change prose and
+nothing else. `scripts/catalog-diff-check.py <ref>` compares the files at `<ref>` with the
+working tree and fails on a change outside string-literal contents (keys, order, comments,
+`+` structure), on a changed key set, on any edit under `locales/` outside `ja/`, and, per
+changed value, on any difference in the multisets of `{placeholders}`, Trans slots,
+digits, ASCII words, 「…」 contents, `code` spans, line breaks, edge whitespace and the
+terms of `guide/ref/glossary.ja.md`. Reword a UI label (at most 15 characters, no 「。」)
+only on purpose: it fails without `--allow-labels`, and with it every `old -> new` pair is
+printed for review. A changed value whose old text is still quoted in `guide/**/*.ja.md`,
+console tests, Go sources or `workspace/agent/knowledge/af-usage.md` is reported as PINNED
+with `file:line` and fails; update that citation in the same PR (`--list-pinned` prints
+just those locations). A short common-word label can also be quoted for another purpose;
+after reading the hit, accept exactly that one with `--exempt-pin KEY@PATH[:LINE]` (printed
+as EXEMPT and counted, other hits still fail). A guide quote that reproduces only the start of a sentence, or any
+quote that does not contain a whole old clause, is not searched; after a rewrite, search
+the guide by hand for the opening words of each changed value. It does not judge meaning, and, like
+`scripts/guide-diff-check.py`, it is for local use and is not part of CI. Its tests are
+`python3 -m unittest discover -s scripts -p test_catalog_diff_check.py`.

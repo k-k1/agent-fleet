@@ -438,3 +438,19 @@ opencode・copilot・cursor で、kiro（ログインが要る）と agy（ラ�
 
 何を変えたら何を更新するかは [更新トリガの表](README.ja.md#更新トリガ)。全棚が従う規範は
 [CONVENTIONS](../CONVENTIONS.ja.md)。
+
+### 日本語 Console カタログの書き換え（`catalog-diff-check.py`）
+
+`console/src/lib/i18n/locales/ja/<ドメイン>.ts` の言い回しの見直しで変えてよいのは文面だけです。
+`scripts/catalog-diff-check.py <ref>` は `<ref>` の内容と作業ツリーを比べ、文字列リテラルの
+中身以外の変更（キー・順序・コメント・`+` の構造）、キー集合の変化、`locales/` の `ja/` 以外
+への変更を失敗にします。値ごとには、`{プレースホルダ}`・Trans のスロット・数字・ASCII の語・
+「…」の中身・`code` スパン・改行・前後の空白・`guide/ref/glossary.ja.md` の用語の多重集合が
+前後で同じであることを求めます。UI ラベル（15 文字以下で「。」なし）を言い換えるのは意図した
+ときだけで、`--allow-labels` が無いと失敗し、付けると `旧 -> 新` を全部出して目で確かめられる
+ようにします。変更した値の旧文面が `guide/**/*.ja.md`・Console のテスト・Go のソース・
+`workspace/agent/knowledge/af-usage.md` にまだ引用されていれば PINNED として `file:line` つきで
+報告して失敗します。その引用は同じ PR で直します（`--list-pinned` はその場所だけを出します）。短い一般語のラベルは別の用途で引用されていることもあります。中身を読んで Console の文字列の引用でないと確かめたその 1 件だけを `--exempt-pin KEY@PATH[:LINE]` で外せます（EXEMPT として出力・計上され、ほかの一致は失敗のままです）。
+文の頭だけの引用や、旧い節を丸ごとは含まない引用は検索されません。書き換えたあとで、変更した値の書き出しをガイドで手検索してください。意味の良し悪しは判定
+しません。`scripts/guide-diff-check.py` と同じくローカル専用で CI には載せません。テストは
+`python3 -m unittest discover -s scripts -p test_catalog_diff_check.py` です。
