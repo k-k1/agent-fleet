@@ -121,6 +121,10 @@ type threadHandle struct {
 	ctxWindow   *int64      // windowTokens; nil when the basis carries no limit
 	ctxHasUsage bool        // false until the first notification arrives
 	spends      []turnSpend // per-turn token trend from session/tokenUsage, newest last (context.go)
+
+	// limit is set when the last turn failed on the usage limit and cleared when the next turn
+	// starts (ratelimit.go). Guarded by mu.
+	limit *usageLimit
 }
 
 // pendingAsk is the wire identity of the thing an Interaction is standing in for. Two
@@ -414,6 +418,7 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 		}
 		h.mu.Lock()
 		h.turnID, h.running = p.TurnID, true
+		h.limit = nil // a turn that runs is past the limit, whatever happened before
 		h.runGen++
 		h.state = agents.TurnRunning
 		h.turnModel = h.model
@@ -749,10 +754,14 @@ func (h *threadHandle) finishTurn(p msp.TurnCompletedParams) {
 	// cannot fix: it is aborted, so the operator is told to fix the credential and nudge it
 	// rather than being shown a completed answer that never existed.
 	failure := ""
+	var limit *usageLimit
 	if p.Error != nil {
 		failure = p.Error.Message
 		if p.Error.Kind == museAuthRequired {
 			st = agents.TurnAborted
+		}
+		if lim, ok := usageLimitOf(p.Error); ok && st == agents.TurnFailed {
+			limit = &lim
 		}
 	}
 	h.mu.Lock()
@@ -768,6 +777,7 @@ func (h *threadHandle) finishTurn(p msp.TurnCompletedParams) {
 	h.settleHeadLocked()
 	h.dropResumedLocked(true)
 	h.running, h.state, h.turnID = false, st, ""
+	h.limit = limit
 	h.mu.Unlock()
 	agents.MarkTurnEndErr(h.slotSid, st, failure)
 	h.emit(agents.Event{Kind: "turn_state", TurnState: st})

@@ -42,6 +42,10 @@ type rateLimitFixture struct {
 	codexLimited bool
 	codexReset   time.Time
 	codexResetOK bool
+	// muse's: its handle's last turn error, and the instant that error named.
+	museLimited bool
+	museReset   time.Time
+	museResetOK bool
 }
 
 func newRateLimitFixture(t *testing.T) *rateLimitFixture {
@@ -70,10 +74,16 @@ func newRateLimitFixture(t *testing.T) *rateLimitFixture {
 	codexResetAt = func(time.Time) (time.Time, string, bool) {
 		return f.codexReset, "codex:5h", f.codexResetOK
 	}
+	origMuseLimited, origMuseReset := museRateLimited, museResetAt
+	museRateLimited = func(string) bool { return f.museLimited }
+	museResetAt = func(string, time.Time) (time.Time, string, bool) {
+		return f.museReset, "error", f.museResetOK
+	}
 	t.Cleanup(func() {
 		dismissRateLimitModal, putRateLimitSchedule = origDismiss, origPut
 		dropRateLimitSchedule, rateLimitResetAt = origDrop, origReset
 		codexRateLimited, codexResetAt = origLimited, origCodexReset
+		museRateLimited, museResetAt = origMuseLimited, origMuseReset
 	})
 	return f
 }
@@ -562,6 +572,42 @@ func TestRateLimitCodexManagedBooksWithoutAMenu(t *testing.T) {
 	}
 }
 
+// TestRateLimitMuseBooksAtTheErrorInstant (#1766): a muse turn that failed on the subscription
+// quota gets the codex treatment — a booking at the instant its error named, no key press, and
+// neither claude's nor codex's reset lookup consulted.
+func TestRateLimitMuseBooksAtTheErrorInstant(t *testing.T) {
+	f := newRateLimitFixture(t)
+	now := time.Now()
+	f.museLimited, f.museResetOK = true, true
+	f.museReset = now.Add(40 * time.Minute)
+	m := session.Meta{Name: "rlmuse1", Dir: "/tmp/rlmuse1", Kind: session.KindMuse, Driver: session.DriverManaged}
+	session.WriteMeta(m)
+
+	if kind, at := atUsageLimit(m); !at || kind != claude.LimitWindow {
+		t.Fatalf("atUsageLimit = %q / %v, want window / true", kind, at)
+	}
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitWindow)
+
+	st := stateOf(t, m.Name)
+	if f.scheduled != 1 || st.ScheduleID != "sch_test" {
+		t.Fatalf("bookings = %d / id=%q, want 1 / sch_test", f.scheduled, st.ScheduleID)
+	}
+	if !f.scheduleAt.Equal(f.museReset) || st.Source != "error" {
+		t.Errorf("booked %v (%s), want %v (error)", f.scheduleAt, st.Source, f.museReset)
+	}
+	if f.resetCalls != 0 || f.dismissed != 0 {
+		t.Errorf("claude reset lookups = %d, dismissals = %d, want 0 / 0", f.resetCalls, f.dismissed)
+	}
+	if got := notice.List(); len(got) != 1 || got[0].Kind != rateLimitNoticeReached {
+		t.Fatalf("notices = %+v, want 1 reached", got)
+	}
+
+	f.museLimited = false
+	if _, at := atUsageLimit(m); at {
+		t.Error("atUsageLimit stayed true after the handle cleared its limit")
+	}
+}
+
 // TestRateLimitCodexWithoutAResetInstantBooksNothing: codex records no usable window (a login
 // with no reading yet, or one whose windows have already reset). Waking on a guess only hits
 // the same limit, so the episode opens and notifies but reserves nothing.
@@ -598,6 +644,7 @@ func TestRateLimitWatchedKinds(t *testing.T) {
 		{"codex managed", session.Meta{Kind: session.KindCodex, Driver: session.DriverManaged}, true},
 		// The TUI codex has no signal saying THIS session's turn died on the limit.
 		{"codex tui", session.Meta{Kind: session.KindCodex}, false},
+		{"muse", session.Meta{Kind: session.KindMuse, Driver: session.DriverManaged}, true},
 		{"opencode managed", session.Meta{Kind: session.KindOpencode, Driver: session.DriverManaged}, false},
 		{"copilot managed", session.Meta{Kind: session.KindCopilot, Driver: session.DriverManaged}, false},
 	} {
