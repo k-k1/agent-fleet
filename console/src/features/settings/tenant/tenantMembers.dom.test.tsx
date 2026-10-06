@@ -144,13 +144,13 @@ describe("cleanup of a removed member", () => {
   it("offers only remove while the member is still present", async () => {
     await mount();
     expect(buttonWith("メンバーを外す")).toBeTruthy();
-    expect(buttonWith("Workspace を破棄")).toBeFalsy();
+    expect(buttonWith("ワークスペースを破棄")).toBeFalsy();
     expect(buttonWith("メンバーを完全に削除")).toBeFalsy();
   });
 
   it("offers only discard just after removal, while the workspace still exists", async () => {
     await mount({ ...MEMBER, status: "removed", state: "stopped" });
-    expect(buttonWith("Workspace を破棄")).toBeTruthy();
+    expect(buttonWith("ワークスペースを破棄")).toBeTruthy();
     // Home and the cloud resources are still alive; deleting the row would leave nothing
     // pointing at them.
     expect(buttonWith("メンバーを完全に削除")).toBeFalsy();
@@ -159,7 +159,7 @@ describe("cleanup of a removed member", () => {
   it("offers permanent deletion only once discarded (state=none), and sends DELETE", async () => {
     const onRemoved = vi.fn();
     await mount({ ...MEMBER, status: "removed", state: "none" }, onRemoved);
-    expect(buttonWith("Workspace を破棄")).toBeFalsy();
+    expect(buttonWith("ワークスペースを破棄")).toBeFalsy();
 
     await act(async () => buttonWith("メンバーを完全に削除")!.click());
     const confirm = buttonWith("完全に削除する");

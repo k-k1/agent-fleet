@@ -31,7 +31,7 @@ export const admin = {
   "admin.brand_pwa_note": "保存するとこのタブにはすぐ反映されます。他のタブは再読み込み、インストール済みの PWA は入れ直すとアイコンと名前が変わります。",
   "admin.mode_pool": "スロット",
   "admin.mode_engines": "推論エンジン",
-  "admin.mode_engine_tokens": "APIトークン",
+  "admin.mode_engine_tokens": "API トークン",
   "admin.engines_none": "この配備は自前の推論エンジンを動かしていません。",
   // 各行の「モデルカタログ」ボタンで開くペイン（テナント設定側で tenant.tab_engines が
   // 権限のあるテナント管理者に開くのと同じモデル画面）。
@@ -343,7 +343,7 @@ export const admin = {
   "admin.catalog_commercial_unknown": "商用可否は不明",
   "admin.catalog_started": "取り込みを開始しました。進み具合は「登録済み」タブのバケットで見られます。",
   // 再利用と移設はネットワークを渡らない。「ダウンロード中」と書くと、出てこない通信を待たせる。
-  "admin.catalog_started_no_download": "配備が既に持っているバイト列から作りました（ダウンロードはありません）。「登録済み」タブのバケットで確認できます。",
+  "admin.catalog_started_no_download": "配備がすでに持っているバイト列から作りました（ダウンロードはありません）。「登録済み」タブのバケットで確認できます。",
   // --- バケツ（ADR 0085 決定 2・7）。S3 が持っているものそのもの。---
   "admin.catalog_ledger_title": "バケット",
   "admin.catalog_ledger_note": "このエンジンのプレフィックスにあるオブジェクトです。どの行も宣言していないもの（孤児）と、ローダーが一覧できない場所にあるもの（誤配置）を先に並べます。",
@@ -643,16 +643,16 @@ export const admin = {
   "admin.all_tenants_back": "すべてのテナント",
   // レールの項目名は短く（本文の見出しは admin.idp_register のまま）。
   "admin.tab_register": "サインイン方法の登録簿",
-  "admin.destroy_ws": "Workspace を破棄",
-  "admin.destroy_title": "{key} の Workspace を破棄しますか？",
+  "admin.destroy_ws": "ワークスペースを破棄",
+  "admin.destroy_title": "{key} のワークスペースを破棄しますか？",
   "admin.destroy_confirm": "破棄する",
-  "admin.destroy_body": "home と、ランタイムがこの人のために作ったものを完全に削除します。取り消せません。再招待しても空の Workspace になります。",
-  "admin.destroy_locks": "本人がかけた削除ロックも越えます。ロックは home の中にあり、停止中の Workspace からは読めないためです。",
+  "admin.destroy_body": "home と、ランタイムがこの人のために作ったものを完全に削除します。取り消せません。再招待しても空のワークスペースになります。",
+  "admin.destroy_locks": "本人がかけた削除ロックも越えます。ロックは home の中にあり、停止中のワークスペースからは読めないためです。",
   "admin.destroy_efs": "AWS のランタイム（Fargate と EC2 スロットプール）では、このメンバーが EFS に持つディレクトリを別のタスクで削除するため数分かかります。結果と、消せなかったものは監査ログに記録します。",
   "admin.destroy_leftovers": "破棄しましたが、次のものは削除できませんでした: {list}",
-  "admin.destroy_started": "Workspace を破棄しています。home の削除には数分かかります。結果は監査ログに記録します。",
-  "admin.remove_purge_started": "削除しました。Workspace の破棄には数分かかります。結果は監査ログに記録します。",
-  "admin.remove_purge": "Workspace と home も破棄する（取り消せません）",
+  "admin.destroy_started": "ワークスペースを破棄しています。home の削除には数分かかります。結果は監査ログに記録します。",
+  "admin.remove_purge_started": "削除しました。ワークスペースの破棄には数分かかります。結果は監査ログに記録します。",
+  "admin.remove_purge": "ワークスペースと home も破棄する（取り消せません）",
   "admin.remove_purge_warn": "home と、ランタイムがこの人のために作ったものを削除します。再招待しても戻りません。",
   // 後始末の 3 段目（docs/log/61 §61.18）。Workspace を破棄し終えた行にだけ出る。
   "admin.delete_member_row": "メンバーを完全に削除",
@@ -824,14 +824,14 @@ export const admin = {
   "admin.idle_observed": "{at} 時点の観測（最大でスイープ間隔ぶん古い場合があります）",
   "admin.idle_stop_at": "自動停止の予定: {at}（reaper の直近の観測）",
   "admin.idle_off": "自動停止 無効",
-  "admin.idle_off_hint": "このテナントでは Workspace の自動停止が無効です（ws_idle_timeout = 0）。",
+  "admin.idle_off_hint": "このテナントではワークスペースの自動停止が無効です（ws_idle_timeout = 0）。",
   "admin.idle_hold_working": "実行中で停止しない",
   "admin.idle_hold_background": "背景作業で停止しない",
   "admin.idle_hold_repojob": "リポジトリ取り込み中で停止しない",
   "admin.idle_hold_imagejob": "画像生成中で停止しない",
   "admin.idle_hold_pin": "自動停止しないピン",
   "admin.idle_hold_watching": "操作中で停止しない",
-  "admin.idle_hold_more": " ほか{n}件",
+  "admin.idle_hold_more": " ほか {n} 件",
   "admin.empty_deploy_default": "空 = デプロイ既定に従う",
   "admin.session_halt": "セッション停止まで",
   "admin.ws_stop": "ワークスペース停止まで",
@@ -847,7 +847,7 @@ export const admin = {
   // 自動で今の置き場から動かす」設定なので、可逆であることと初日が遅くなることを必ず書く。
   "admin.hibernate_title": "使われない home の退避",
   "admin.hibernate_after": "退避するまで",
-  "admin.hibernate_ph": "例 720h＝30日（空=デプロイ既定）",
+  "admin.hibernate_ph": "例 720h＝30 日（空=デプロイ既定）",
   "admin.hibernate_hint":
     "この期間だれも開かなかった home は snapshot にして、ディスクを解放します。次に起動したときに戻すので失われるものはありませんが、その回の起動は少し長くなり、戻した直後の数時間はディスクが遅くなります。",
   "admin.hibernate_warn":
@@ -895,7 +895,7 @@ export const admin = {
   "admin.res_memory": "メモリ",
   "admin.res_disk": "ディスク",
   "admin.disk_home_sub": "（ホーム使用量）",
-  "admin.cpu_sub": "1コア = 100%",
+  "admin.cpu_sub": "1 コア = 100%",
   "admin.sessions_heading": "セッション",
   "admin.no_sessions": "セッションなし",
   "admin.permissions": "権限",
@@ -1023,7 +1023,7 @@ export const admin = {
   "admin.providers_none": "このデプロイにはサインイン方法が設定されていません（ログイン画面にボタンが出ません）。",
   // ★ 「0 件」と「読めなかった」を必ず別文言にする。以前は 403 を空配列に潰していて、
   // 権限の無い相手に「設定されていません」と嘘を表示していた（docs/log/61 §61.17.9 ②）。
-  "admin.providers_unreadable": "サインイン方法の一覧を読み込めませんでした。権限が無いか、一時的に取得できていません。",
+  "admin.providers_unreadable": "サインイン方法の一覧を読み込めませんでした。権限がないか、一時的に取得できていません。",
 
   // --- テナント定義の認証方式（docs/log/61 §61.11・P4）。子会社ごとに Entra が違う場合。
   // 作るのはテナント管理者、有効化はデプロイ管理者（決定 30）。この非対称が本体。---
@@ -1043,7 +1043,7 @@ export const admin = {
   "admin.idp_accept_last":
     "最後の 1 つは外せません。すべて外すと「制限なし＝全部受け入れる」の意味になり、絞ったつもりでもすべて受け入れることになります。",
   "admin.idp_show_last":
-    "最後の 1 つは外せません。すべて隠すとボタンの無いログイン画面になるため、指定ごと無視されます。",
+    "最後の 1 つは外せません。すべて隠すとボタンのないログイン画面になるため、指定ごと無視されます。",
   "admin.idp_show_needs_accept": "受け入れていないので、ログイン画面には出ません。",
   "admin.idp_approve": "承認して有効化",
   "admin.idp_suspend": "停止する",
@@ -1153,7 +1153,7 @@ export const admin = {
   "tenant.net_ip_unknown": "判定できません",
   "tenant.net_ip_unknown_hint": "この要求の送信元をコントロールプレーンが特定できないため、規則を適用できません。AF_TRUSTED_PROXY_HOPS の設定を運用者に確認してください。",
   "tenant.net_proxy_not_configured": "コントロールプレーンの手前にプロキシがありますが、配備がそれを申告していません（AF_TRUSTED_PROXY_HOPS）。このままだと全員がそのプロキシから来ているように見えるため、保存を止めています。絞ったつもりで全員を通す設定になってしまいます。運用者に連絡してください。",
-  "tenant.net_scope_hint": "制限されるのはテナントの「利用」で、サイトへの到達ではありません。ログイン画面はどこからでも開けますしサインインも通りますが、一覧に無いネットワークからはこのテナントの中身を開けません。",
+  "tenant.net_scope_hint": "制限されるのはテナントの「利用」で、サイトへの到達ではありません。ログイン画面はどこからでも開けますしサインインも通りますが、一覧にないネットワークからはこのテナントの中身を開けません。",
   "tenant.net_exempt_hint": "MCP と内蔵 Git は対象外です（本人のワークスペースの中から呼ばれるので、人がどこにいるかを表しません）。これらを止めるにはメンバーシップを無効化してください。配備管理者はこの規則の対象外で、設定を間違えても必ず戻せます。",
   "tenant.net_layers_hint": "これはアクセス制限であってネットワーク防御ではありません（要求はコントロールプレーンまで届き、セッションを検証したあとで拒否されます）。届く前に止めるには、運用者がロードバランサ側で絞ります。",
   // 連携（docs/log/71）— 外部サービス側にテナントが用意した資格情報の登録。
@@ -1168,9 +1168,9 @@ export const admin = {
   "tenant.git_oauth_secret_kept": "保存済み（空のままなら変更しません）",
   "tenant.git_oauth_secret_unit": "保存時に暗号化され、二度と表示されません。変更するときだけ入力してください。",
   "tenant.git_oauth_redirect": "プロバイダ側のアプリ登録に、このコールバック URL を設定してください:",
-  "tenant.git_oauth_no_base_url": "このデプロイには PUBLIC_BASE_URL が設定されていないため、登録するコールバック URL を組み立てられません。登録しても「OAuth で接続」は失敗します（コードグラントの戻り先が無いため）。運用者に PUBLIC_BASE_URL の設定を依頼してください。",
+  "tenant.git_oauth_no_base_url": "このデプロイには PUBLIC_BASE_URL が設定されていないため、登録するコールバック URL を組み立てられません。登録しても「OAuth で接続」は失敗します（コードグラントの戻り先がないため）。運用者に PUBLIC_BASE_URL の設定を依頼してください。",
   "tenant.git_oauth_jira_access": "アプリ作成時の Access type は Resource-level を推奨します（認可したサイト 1 つだけに権限が限られます）。Account-level はアカウント内の全サイトに恒久的な権限を渡すことになります。",
-  "tenant.git_oauth_bb_scopes": "Bitbucket は認可 URL にスコープを載せないので、コンシューマの Permissions がそのまま権限になります。Account: Read と Repositories: Read/Write（clone / push 用）に加え、課題管理レールに PR を出すなら Pull requests: Read も入れてください。後から足した場合、既に接続済みのメンバーは接続し直しが必要です（古い権限がトークンに焼かれているため）。",
+  "tenant.git_oauth_bb_scopes": "Bitbucket は認可 URL にスコープを載せないので、コンシューマの Permissions がそのまま権限になります。Account: Read と Repositories: Read/Write（clone / push 用）に加え、課題管理レールに PR を出すなら Pull requests: Read も入れてください。後から足した場合、すでに接続済みのメンバーは接続し直しが必要です（古い権限がトークンに焼かれているため）。",
   "tenant.git_oauth_jira_scopes": "Jira は Atlassian の 3LO アプリです（Bitbucket のコンシューマとは別に登録します）。Permissions に Jira API を追加し、read:jira-work / read:jira-user / write:jira-work の 3 つを許可してください（write は「作業の報告をコメントする」に要ります）。offline_access は Permissions の一覧には出てきません。OAuth 側のスコープで、af が認可 URL に付けるので設定は不要です。",
   "tenant.git_oauth_jira_sharing": "アプリの Distribution で Sharing を有効にしてください。3LO アプリは既定で「開発中」で、そのままだと作成者本人しか認可できません。他のメンバーは Atlassian の「You don't have access to this app」で止まり、af には何も返らないので無言で未接続のままになります。有効化には Vendor name・Contact link・Privacy policy URL の入力が要り、これらは認可するメンバーに見えます（個人名や私用アドレスではなく、会社名と問い合わせ窓口を入れてください）。Marketplace には載りません。",
   "tenant.git_oauth_gh_device": "GitHub はデバイスフローを使うため secret もコールバックも不要です。ただしアプリ側で「Enable Device Flow」を有効にしてください（無効だと接続開始で失敗します）。",
@@ -1288,7 +1288,7 @@ export const admin = {
   "clean.clear_selection": "選択を解除",
   "clean.selected_n": "{count} 件を選択中",
   "clean.run_selected": "選択したものを片付ける",
-  "clean.keep_hint": "保持（稼働中・未コミット/未push）。片付けるには停止か push、または Console で強制削除してください。",
+  "clean.keep_hint": "保持（稼働中・未コミット/未 push）。片付けるには停止か push、または Console で強制削除してください。",
   "clean.collapse_all": "たたむ",
   "clean.expand_all": "ひろげる",
   "clean.group_main": "（本体）",
@@ -1308,10 +1308,10 @@ export const admin = {
   "clean.cache_stage_run_title": "もうどこからも参照されないキャッシュを削除します（ごみ箱には入りません）",
   "clean.cache_stage_empty": "片付けられるキャッシュはありません。",
   "clean.cache_stage_confirm_title": "削除済みセッションのキャッシュを削除",
-  "clean.cache_stage_confirm_body": "{size} を削除します。削除済みでごみ箱にも無いセッション・会話のものだけが対象ですが、元に戻すことはできません。",
+  "clean.cache_stage_confirm_body": "{size} を削除します。削除済みでごみ箱にもないセッション・会話のものだけが対象ですが、元に戻すことはできません。",
   "clean.confirm_body_cache": "キャッシュの削除はごみ箱を経由せず、元に戻せません。",
   "clean.confirm_title": "選択した {count} 件を片付けますか？",
-  "clean.confirm_body": "削除するセッション・ブランチは復元用にごみ箱へ退避されます。worktree を削除すると、中の停止中セッションはアーカイブへ（shell/ssm はごみ箱へ）移ります。worktree の削除は取り消せません（未コミット/未pushは保護されます）。",
+  "clean.confirm_body": "削除するセッション・ブランチは復元用にごみ箱へ退避されます。worktree を削除すると、中の停止中セッションはアーカイブへ（shell/ssm はごみ箱へ）移ります。worktree の削除は取り消せません（未コミット/未 push は保護されます）。",
   "clean.confirm_do": "{count} 件を片付ける",
   "clean.run_done": "{done} 件を片付けました。{failed} 件は失敗しました。",
   "clean.run_done_ok": "{done} 件を片付けました。",
