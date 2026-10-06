@@ -988,7 +988,8 @@ class LabelSyncTests(Base):
         for lang, old, new in [('ja', '専用タブ', '特別タブ'), ('en', 'Special tab', 'Dedicated tab')]:
             with self.subTest(lang=lang):
                 page = f"guide/ref/settings{'.ja' if lang == 'ja' else ''}.md"
-                self.write(page, f'| {old} | {old}説明 |\n')
+                header = '| タブ | 説明 |\n|---|---|\n' if lang == 'ja' else '| Tab | Description |\n|---|---|\n'
+                self.write(page, header + f'| {old} | {old}説明 |\n')
                 self.commit_all('settings fixture')
                 self.edit(self.sync_path(lang), old, new)
                 code, out = self.sync_run('--list-citations', lang=lang)
@@ -997,7 +998,7 @@ class LabelSyncTests(Base):
                 self.assertIn('\ttable-cell\t', out)
                 code, out = self.sync_run('--rewrite-guide', lang=lang)
                 self.assertEqual(code, 0, out)
-                self.assertEqual((self.repo / page).read_text(), f'| {new} | {old}説明 |\n')
+                self.assertEqual((self.repo / page).read_text(), header + f'| {new} | {old}説明 |\n')
                 self.edit(self.sync_path(lang), new, old)
 
     def test_en_twin_rewrites_only_english_guide(self):
@@ -1016,6 +1017,58 @@ class LabelSyncTests(Base):
         self.assertEqual(code, 1, out)
         self.assertIn('\tcode\t', out)
         self.assertEqual((self.repo / page).read_text(), '```md\n**操作ボタン**\n```\n')
+
+    def test_container_headings_and_setext_citations_stay_manual(self):
+        text = ('> ## **操作ボタン**\n- ## **操作ボタン**\n'
+                '> - ### 「操作ボタン」\n\n'
+                '> **操作ボタン**\n> ---\n\n'
+                '- 「操作ボタン」\n  ===\n\n'
+                '**操作ボタン**\n')
+        page = self.page(text)
+        self.change_unique()
+        code, out = self.sync_run('--list-citations')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out.count('\theading\t'), 5, out)
+        code, out = self.sync_run('--rewrite-guide')
+        self.assertEqual(code, 1, out)
+        self.assertEqual((self.repo / page).read_text(),
+                         text[:-len('**操作ボタン**\n')] + '**実行ボタン**\n')
+
+    def test_settings_cell_requires_tab_header_and_tab_key(self):
+        for lang, unique, unique_new, tab, tab_new, header in [
+                ('ja', '操作ボタン', '実行ボタン', '専用タブ', '特別タブ', 'タブ'),
+                ('en', 'Action button', 'Run button', 'Special tab', 'Dedicated tab', 'Tab')]:
+            with self.subTest(lang=lang):
+                page = f"guide/ref/settings{'.ja' if lang == 'ja' else ''}.md"
+                text = (f'# Settings\n\n| Layer | Description |\n|---|---|\n'
+                        f'| {unique} | concept |\n| {tab} | independent concept |\n\n'
+                        f'## Personal settings\n\n| {header} | Description |\n|---|---|\n'
+                        f'| {tab} | feature |\n| {unique} | independent concept |\n')
+                self.write(page, text)
+                self.commit_all('settings tables fixture')
+                self.change_unique(lang)
+                self.edit(self.sync_path(lang), tab, tab_new)
+                code, out = self.sync_run('--list-citations', lang=lang)
+                self.assertEqual(code, 0, out)
+                self.assertEqual(out.count('\ttable-cell\t'), 1, out)
+                code, out = self.sync_run('--rewrite-guide', lang=lang)
+                self.assertEqual(code, 1, out)
+                self.assertEqual((self.repo / page).read_text(),
+                                 text.replace(f'| {tab} | feature |', f'| {tab_new} | feature |'))
+                self.edit(self.sync_path(lang), unique_new, unique)
+                self.edit(self.sync_path(lang), tab_new, tab)
+
+    def test_tenant_tab_cell_is_rewritten_under_tab_header(self):
+        path = 'console/src/lib/i18n/locales/ja/tenant_fixture.ts'
+        self.write(path, 'export const t = {"tenant.tab_fixture": "借用タブ"};\n')
+        page = 'guide/ref/settings.ja.md'
+        self.write(page, '## テナント設定\n\n| タブ | 説明 |\n|---|---|\n| 借用タブ | feature |\n')
+        self.commit_all('tenant table fixture')
+        self.edit(path, '借用タブ', '管理タブ')
+        code, out = self.sync_run('--rewrite-guide')
+        self.assertEqual(code, 0, out)
+        self.assertIn('| 管理タブ |', (self.repo / page).read_text())
+        self.assertIn('WARN SETTINGS TAB', out)
 
     def test_markdown_inline_code_targets_and_attributes_stay_manual(self):
         text = ('`「操作ボタン」`\n'

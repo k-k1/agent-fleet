@@ -676,3 +676,12 @@ untracked, deleted or moved domain files produce an explicit error and exit 2,
 instead of a misleading empty citation list. These modes also report the number
 of compared files and changed labels on stderr; a zero result distinguishes no
 catalogue diff against the ref from a diff with no changed labels.
+
+Heading protection also applies inside blockquote and list containers, including
+setext headings: their citation text and anchors remain manual. The settings
+`table-cell` exception is limited to a changed `set.tab_*` / `tenant.tab_*` key's
+first-column cell beneath a valid `タブ` (Japanese) or `Tab` (English) table header
+and separator. Concept/layer tables and non-tab keys retain ordinary manual prose
+handling. SPLIT remains always on: a partial shared-label rewrite intentionally
+changes the failure output and exit status even without new flags. Byte-identical
+legacy output is preserved for runs without a SPLIT violation or new flags.

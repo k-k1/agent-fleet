@@ -526,6 +526,33 @@ def line_citations(line, label, settings=False):
     return sorted(set(spans))
 
 
+def markdown_content(line):
+    """Remove container markers before interpreting headings or fences."""
+    while True:
+        stripped = re.sub(r'^ {0,3}(?:>[ \t]?|(?:[-+*]|\d+[.)])[ \t]+)', '', line)
+        if stripped == line:
+            return line
+        line = stripped
+
+
+def settings_table_rows(lines, lang):
+    """Only Tab/target-language headers identify tables governed by docs-check."""
+    rows = set()
+    header = 'タブ' if lang == 'ja' else 'Tab'
+    for i, line in enumerate(lines[:-1]):
+        cells = markdown_content(line).strip().strip('|').split('|')
+        if not line.lstrip().startswith('|') or cells[0].strip() != header:
+            continue
+        separator = lines[i + 1].strip().strip('|').split('|')
+        if not separator or not all(re.fullmatch(r'\s*:?-{3,}:?\s*', c) for c in separator):
+            continue
+        j = i + 2
+        while j < len(lines) and lines[j].lstrip().startswith('|'):
+            rows.add(j)
+            j += 1
+    return rows
+
+
 class MarkdownProtection:
     """Conservative source ranges: changing code or link metadata can break navigation."""
 
@@ -537,12 +564,7 @@ class MarkdownProtection:
         front = bool(lines and lines[0].lstrip('\ufeff').strip() == '---')
         for i, line in enumerate(lines):
             starts.append(offset)
-            content = line
-            while True:
-                stripped = re.sub(r'^ {0,3}(?:>[ \t]?|(?:[-+*]|\d+[.)])[ \t]+)', '', content)
-                if stripped == content:
-                    break
-                content = stripped
+            content = markdown_content(line)
             if front:
                 self.ranges.append((offset, offset + len(line), 'metadata'))
                 if i and line.strip() in ('---', '...'):
@@ -634,15 +656,17 @@ def citations(changes, lang):
         texts[path] = text
         lines = text.splitlines(keepends=True)
         protection = MarkdownProtection(text) if section == 'guide' else None
+        tab_rows = settings_table_rows(lines, lang) if path == (
+            'guide/ref/settings' + ('.ja' if lang == 'ja' else '') + '.md') else set()
         for i, line in enumerate(lines):
-            heading = bool(HEADING.match(line) or
-                           i + 1 < len(lines) and re.fullmatch(r'\s*(?:=+|-+)\s*', lines[i + 1])
-                           and line.strip())
-            settings = path == 'guide/ref/settings' + ('.ja' if lang == 'ja' else '') + '.md'
+            content = markdown_content(line)
+            heading = bool(HEADING.match(content) or
+                           i + 1 < len(lines) and re.fullmatch(r'\s*(?:=+|-+)\s*', markdown_content(lines[i + 1]))
+                           and content.strip())
             for key, _, o, n in changes:
                 if o not in line:
                     continue
-                matches = line_citations(line, o, settings)
+                matches = line_citations(line, o, i in tab_rows and key.startswith(('set.tab_', 'tenant.tab_')))
                 if section in ('console tests', 'Go sources'):
                     matches = [m for m in matches if m[2] in ('quoted', 'bracket-quote', 'bold')]
                 if section == 'af-usage.coverage.tsv':
