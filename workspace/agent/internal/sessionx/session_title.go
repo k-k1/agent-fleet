@@ -158,7 +158,7 @@ func generateSessionTitle(name string, turns []transcript.Turn) {
 // conversation's language (an English speaker debugging a Japanese codebase still wants
 // an English list). Deliberately NOT retroactive: switching the language later leaves
 // existing titles alone (they are the user's data, and re-suggesting is a user action —
-// the rename dialog's "ask the AI" (AIに提案してもらう) button regenerates in the new
+// the rename dialog's "ask the AI" (AI に提案してもらう) button regenerates in the new
 // language on demand).
 func titleLang() string { return uiprefs.Locale() }
 
@@ -774,7 +774,7 @@ func writeTitleGenErr(w http.ResponseWriter, err error) {
 }
 
 // HandleSuggestTitle previews a title suggestion WITHOUT touching session.Meta —
-// used by the manual rename dialog's "ask the AI" (AIに提案してもらう) button, which just fills
+// used by the manual rename dialog's "ask the AI" (AI に提案してもらう) button, which just fills
 // the text field for the user to edit/accept themselves. Works even when the
 // session already has a title (renaming is exactly the case where one already
 // exists) and never drives the accept/dismiss banner flow — the banner is offered

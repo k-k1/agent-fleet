@@ -115,7 +115,7 @@ export const assistant = {
   "asst.title_rename_title": "タイトルを変更",
   "asst.title_label": "タイトル",
   "asst.title_ph": "例: 請求 API のリファクタ相談",
-  "asst.ai_suggest": "AIに提案してもらう",
+  "asst.ai_suggest": "AI に提案してもらう",
   "asst.proposal": "提案",
   "asst.adopt": "この案にする",
   "asst.suggest_fetch_failed": "提案の取得に失敗しました（通信エラー）",
