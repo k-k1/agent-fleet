@@ -54,8 +54,8 @@ describe("tCount (plurals)", () => {
   beforeEach(() => setLocale("ja"));
 
   it("ja is single-form: 1 and 2 both use _other", () => {
-    expect(tCount("common.count_ken", 1)).toBe("1件");
-    expect(tCount("common.count_ken", 2)).toBe("2件");
+    expect(tCount("common.count_ken", 1)).toBe("1 件");
+    expect(tCount("common.count_ken", 2)).toBe("2 件");
   });
 
   it("en selects one/other by Intl.PluralRules", () => {

@@ -5,7 +5,7 @@ package chatx
 // structured chatMessage slice, so no conversion to transcript.Turn is needed (simpler than a
 // session, which also has sidechain and tool-only turns). There is no equivalent of the
 // session's automatic suggestion banner (SuggestedTitle pending -> accept/reject): this serves
-// only the rename dialog's "ask the AI" (AIに提案してもらう) button, and never writes conv.Title.
+// only the rename dialog's "ask the AI" (AI に提案してもらう) button, and never writes conv.Title.
 
 import (
 	"context"
@@ -81,7 +81,7 @@ func runChatTitleSuggestLLM(ctx context.Context, msgs []ChatMessage) (string, er
 
 // handleChatSuggestTitle previews an AI title suggestion for a conversation WITHOUT
 // persisting it — mirrors handleSuggestTitle (session_title.go): the rename dialog's
-// "ask the AI" (AIに提案してもらう) button fills the text field for the user to edit/accept themselves.
+// "ask the AI" (AI に提案してもらう) button fills the text field for the user to edit/accept themselves.
 // Works even when the conversation already has a title (renaming is exactly that case).
 func HandleChatSuggestTitle(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

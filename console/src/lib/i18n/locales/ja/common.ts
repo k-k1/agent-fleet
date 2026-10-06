@@ -99,8 +99,8 @@ export const common = {
   // === P2: 複数形インフラの例（tCount）＋ <Trans> の例。ja は単一形なので _one/_other は同値。===
   "common.days_left_one": "あと {count} 日",
   "common.days_left_other": "あと {count} 日",
-  "common.count_ken_one": "{count}件",
-  "common.count_ken_other": "{count}件",
+  "common.count_ken_one": "{count} 件",
+  "common.count_ken_other": "{count} 件",
 
   // === P2 共有: セッション状態チップ（lib/sessionview.ts の stateInfo）===
   "state.folder_missing": "フォルダ無し — 再開不可",
