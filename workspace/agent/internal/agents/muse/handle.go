@@ -266,6 +266,9 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 	h.resetUsage() // a different conversation from here on
 	h.mu.Lock()
 	h.bg = nil
+	// The old conversation's limit is not this one's: a fresh session has no cut-off request
+	// to resume, and a mark carried over would book a wake-up for it.
+	h.limit, h.lastTurn = nil, ""
 	h.mu.Unlock()
 
 	// A slot born from a fork opens by copying the source rather than starting empty. It is

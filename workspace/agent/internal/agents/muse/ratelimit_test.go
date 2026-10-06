@@ -227,3 +227,32 @@ func TestLateCompletionOfAnOlderTurnLeavesTheLimitAlone(t *testing.T) {
 		})
 	}
 }
+
+// A stored session the host no longer knows falls back to a fresh conversation on the same
+// handle. The old conversation's mark must not follow it: the new one has nothing to resume.
+func TestFreshStartDropsTheOldConversationsLimit(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	h := &threadHandle{slotSid: "00000000-0000-5000-8000-0000000000d1", limit: &usageLimit{}, lastTurn: "old-turn"}
+	host := newTestHandle(t, h)
+	registerHandle(t, h.name, h)
+	writeSession(h.slotSid, museSession{ID: "01a0c1d6-0000-7000-8000-0000000000d2", Path: "/tmp/old.jsonl"})
+	sess := map[string]any{"sessionId": "01a0c1d6-0000-7000-8000-0000000000d3", "path": "/tmp/s.jsonl", "status": "idle", "createdAt": "", "updatedAt": "", "turnCount": 0}
+	host.Handle(msp.MethodSessionResume, func(msptest.Message) (any, *msp.Error) {
+		return nil, &msp.Error{Code: msp.ErrCodeSessionNotFound, Message: "gone"}
+	})
+	host.Handle(msp.MethodSessionStart, func(msptest.Message) (any, *msp.Error) {
+		return map[string]any{"session": sess, "viewCursor": "c1"}, nil
+	})
+	if err := h.openSession(h.cl, agents.ThreadSettings{Model: "muse-spark-1.3"}); err != nil {
+		t.Fatalf("openSession: %v", err)
+	}
+	h.mu.Lock()
+	sid, last := h.sid, h.lastTurn
+	h.mu.Unlock()
+	if sid != "01a0c1d6-0000-7000-8000-0000000000d3" {
+		t.Fatalf("sid = %q, want the fresh session", sid)
+	}
+	if IsRateLimited(h.name) || last != "" {
+		t.Errorf("IsRateLimited = %v, lastTurn = %q after a fresh start, want false / empty", IsRateLimited(h.name), last)
+	}
+}
