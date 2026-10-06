@@ -847,3 +847,206 @@ run of `admin,settings,workitems` changed 64 values with 13 accepted allowance
 rows. The initial guard reported only 32 PINNED hits; citation, anchor and coverage
 ledger updates brought the final guard and docs check to exit 0. A second dry-run
 proposed no changes. The scratch repository was removed after verification.
+
+### Reviewed Japanese term plans (phase B2)
+
+B2 separates sense judgement from application. A model/human judge reads
+`scripts/ja-term-candidates.py`, writes a reviewed plan, and uses
+`scripts/ja-term-apply.py --check-only` before applying it. Both tools are
+local-only, use B1's literal tokenizer without evaluating TypeScript, and are
+outside CI. Introducing them changes no catalogue or guide terminology.
+
+| Family | Judge's decision and permitted forms |
+|---|---|
+| F-login | Agent Fleet's own IdP uses サインイン; external CLIs/services, including GitHub as a service, use ログイン. Both substitution directions are available; review the tenant group label and guide citations. |
+| F-deploy | Nouns use 配備; the verb デプロイする stays. Includes デプロイ既定 → 配備の既定 and デプロイ全体 → 配備全体. |
+| F-device | Browser/device scope uses このブラウザ. この端末 → このブラウザ and 端末 → ブラウザ cover existing particles such as ほかの端末; 端末 → このブラウザ is also explicit. Keep terminal-emulator 端末. |
+| F-slot | 枠 → 利用枠 or 子の上限; 利用枠 → 子の上限 is available for a mistaken child cap. Judge period/free quotas separately; スロット is EC2 only. |
+| F-fold | Keep UI collapse 畳む; session ending uses 停止/終了. Explicit forms cover 畳む, 畳まれ, 畳んだ, 畳んで and 畳め. Data roll-up is a separate sense: leave it outside this batch. |
+| F-onoff | ON/OFF → オン/オフ in prose; オン/オフ ↔ 有効/無効 follows the control's actual name. Latin matches must be complete words, including beside Japanese. |
+| F-buttons | Sixteen explicit noun/する pairs in `BUTTONS` of `scripts/ja_term_common.py`. Use nouns on ordinary buttons; する only on a confirmation dialog's execute button. |
+| F-default | デフォルト → 既定. |
+| F-variants | Explicit whole-label pairs in `VARIANTS` of the shared module (保存中/保存中…, 送信/送信…, セッション削除/セッションを削除, APIトークン/API トークン and others). … is for in-progress displays and dialog-opening buttons only; otherwise judge the majority form. |
+
+The registry permits transformations, not senses. It never supplies a reason
+for a decision. New pairs require review and positive/negative tests; a plan
+cannot introduce arbitrary words, spaces, reordered text or ellipses in prose.
+Opposite directions of the same pair within one value are refused: a term swap
+can hide both changes from glossary counts. Independent pairs such as
+ON → オン and OFF → オフ are still permitted.
+Protection rules may still refuse a registered pair, for example removal of
+edge whitespace. Such a refusal is a manual case, not grounds to use `--force`.
+
+```sh
+python3 scripts/ja-term-candidates.py --stats
+python3 scripts/ja-term-candidates.py --family F-login,F-deploy --domain settings --format tsv
+python3 scripts/ja-term-candidates.py --family F-device,F-fold --format md --limit 20
+python3 scripts/ja-term-apply.py --plan "$AF_WORK_DIR/term-plan.tsv" --check-only
+python3 scripts/ja-term-apply.py --plan "$AF_WORK_DIR/term-plan.tsv" --dry-run
+python3 scripts/ja-term-apply.py --plan "$AF_WORK_DIR/term-plan.tsv" --apply \
+  --allow-terms-out "$AF_WORK_DIR/term-allowances.tsv" --report "$AF_WORK_DIR/term-report.txt"
+```
+
+Candidates are one row per matched occurrence, ordered by domain file, key
+source order, registry family order and decoded offset. They include the key,
+domain, label/sentence kind (15 characters, no 。), complete value, match,
+`[start,end)` Unicode code-point offsets, containing sentence, previous/next
+keys and values in the file, English value, guide hit count and first two lines,
+test/Go/knowledge hit locations, exact key references in UI source, all keys sharing the value, exclusions and sense
+criteria. Previous/next keys can cross a card boundary; no card membership is
+inferred. Empty English cells mean the key was absent; empty hit lists mean
+only that this scanner found nothing. Exact label citations use the existing
+guard citation machinery; sentences use its hard-wrap-aware PINNED clauses.
+Hits are attributed matches that the judge must read, including coincidental
+common clauses. `--stats` counts occurrences, values, labels and excluded
+occurrences per family/domain, with measured runtime on stderr. `--limit`
+limits report rows, not statistics. Excluded values remain visible to the judge.
+UI references are exact quoted-key matches with file/line attribution, not
+inferred control roles; assembled/dynamic keys need manual investigation.
+
+F-fold also discovers 畳み, 畳ま, 畳ん and 畳も to expose additional inflections,
+but these four stems have no apply pairs. Leave them unchanged or obtain a
+separately reviewed pair with tests; a discovery row is not an apply permission.
+F-device discovers 端末 and このブラウザ only. Existing bare ブラウザ is outside
+this automated discovery scope, and ブラウザ → このブラウザ is not an apply pair.
+Search `rg -n 'ブラウザ' console/src/lib/i18n/locales/ja` when reviewing existing
+browser wording. Although 端末 → ブラウザ can preserve particles such as
+ほかの, it does not authorize converting every browser reference to このブラウザ.
+
+**Judge's checklist:** read the entire value, containing sentence, neighbouring
+keys, English ambiguity reference, cited guide lines and
+`guide/ref/glossary.ja.md`. Read the component for button
+behaviour, control names or unclear scope. Check the characters around every
+match: pairs also match inside compounds such as 外枠, 携帯端末, 折り畳む and
+ログインID. A mechanical match does not establish the sense: keep terminal
+emulator 端末 and verbal デプロイする, and review compounds individually.
+Record why this key has that sense and which evidence establishes it. Keep labels and sentences in separate
+batches, include every shared-label key with the same new value, and leave
+ambiguous cases unchanged. Agent-facing `*prompt*`, speech variants, `err.*`,
+`chat.report.*` and `clean.reason*` cannot be changed. Glossary rows require a
+separate explicit decision; the apply tool edits only catalogue literals.
+
+The UTF-8 plan has no BOM or header and contains exactly five TAB-separated fields:
+
+```text
+key<TAB>old_value<TAB>new_value<TAB>family<TAB>reason
+surface_color.default<TAB>デフォルト<TAB>既定<TAB>F-default<TAB>Initial setting; checked glossary and English
+```
+
+`<TAB>` above means a literal tab. Blank lines and `#` comments are skipped.
+Use `\\`, `\t`, `\n`, `\r` to encode backslashes, tabs and line breaks in
+fields; candidates use the same reversible encoding. Unknown escapes are
+refused. Save the exact current decoded value; do not normalize it when copying.
+
+Before any write, apply verifies every row: one existing Japanese key with the
+exact old value (or the exact already-applied new value), only declared family
+substitutions, unchanged placeholders/slots/digits/code/quotes/newlines/edge
+whitespace, eligible key class, complete shared-label groups and no duplicate
+keys. Unsupported syntax, symlinks and edits crossing escaped characters or
+concatenated literals are refused. It verifies reconstructed values and the
+unchanged source skeleton. Dirty target files require reviewed `--force`;
+that flag overrides no validation. A second apply is a no-op even while its
+previous edits are dirty. Mixed old/new rows can resume a partially applied
+plan; retain the original plan and allowance file.
+
+Applying pending edits requires a fresh allowance output, even if empty.
+It emits `KEY<TAB>OLD<TAB>NEW<TAB>N` in the guard's count semantics, and validates
+the complete glossary/Latin drift before publishing it. Reports and allowances
+are created exclusively before catalogue edits; existing artifacts, tracked
+source, catalogue/script paths, plan aliases, symlinks and Git metadata are
+refused. Use distinct fresh paths. `--check-only` writes neither artifacts nor
+catalogues; dry-run can emit review artifacts. Where `AF_WORK_DIR` is unset,
+use `~/.af-work/<working-copy-directory>/` and clean up afterwards.
+
+For a direct term that is not itself a glossary/Latin unit, the guard excludes
+occurrences inside a counted unit named in that key's allowances. Thus
+`枠 → 利用枠` removes one standalone 枠 and adds one glossary 利用枠; an already
+present 利用枠 does not masquerade as a second old 枠. Glossary/Latin counts
+and the requested N remain exact. English counting is unchanged.
+
+**Apply and sync pipeline:** keep the emitted allowance in every guard invocation.
+
+```sh
+python3 scripts/catalog-diff-check.py origin/develop --allow-labels \
+  --allow-terms-file "$AF_WORK_DIR/term-allowances.tsv"
+python3 scripts/catalog-diff-check.py origin/develop --allow-labels \
+  --allow-terms-file "$AF_WORK_DIR/term-allowances.tsv" --list-citations
+python3 scripts/catalog-diff-check.py origin/develop --allow-labels \
+  --allow-terms-file "$AF_WORK_DIR/term-allowances.tsv" --rewrite-guide
+(cd console && npm test -- --maxWorkers=2)
+# From the repository root, after resolving manual citations:
+python3 scripts/docs-check.py
+```
+
+An initial guard exit 1 for PINNED is expected when citations are stale; all
+other categories must be resolved. `--list-citations` is for labels: use
+`--list-pinned` and manual prefix searches for sentences. Read every citation,
+manually update headings/anchors, tests, console-e2e, both knowledge files and
+Go twins, and rerun the guard to exit 0. `--rewrite-guide` protects headings,
+code and metadata. `--exempt-pin KEY@PATH[:LINE]` is only for a reviewed
+independent use; a zero-hit scan is never proof of no dependencies.
+
+**B1 lessons:** the FULL Console test suite above is mandatory for every wording
+batch. Assembled strings, goldens, console-e2e expectations and Go twins can be
+invisible to PINNED; targeted wording tests alone missed CI failures. Regenerate
+goldens only with the project's update flag in the owning test, after reading
+the diff; never replace them blindly. Run the relevant console-e2e/Go checks
+when those references change. Never claim pass/fail without the real summary
+line and the command's exit status (no status-hiding `| tail` pipelines).
+For tool changes, run `python3 -m unittest discover -s scripts -p 'test_*.py'`,
+Python compilation, docs-check and the staged pre-commit hook. The B2 suite
+includes verification-removal mutants and a real guard negative/positive pair.
+
+#### B2 tooling acceptance evidence
+
+At the introduction's catalogue snapshot, all-family statistics over 23 domains
+took 2.8 seconds. Counts include already-standard forms and excluded values;
+they are discovery counts, not proposed edits.
+
+| Family | Occurrences | Values | Labels | Excluded occurrences |
+|---|---:|---:|---:|---:|
+| F-login | 294 | 238 | 52 | 22 |
+| F-deploy | 122 | 111 | 12 | 24 |
+| F-device | 34 | 29 | 5 | 3 |
+| F-slot | 28 | 26 | 7 | 0 |
+| F-fold | 10 | 9 | 3 | 1 |
+| F-onoff | 242 | 187 | 38 | 10 |
+| F-buttons | 81 | 81 | 81 | 0 |
+| F-default | 143 | 140 | 51 | 3 |
+| F-variants | 83 | 83 | 83 | 0 |
+
+The device/fold smoke report was read in full (44 occurrence rows). The judge
+assessment below accounts for every key; repeated occurrences take the same
+decision. It is sample evidence, not a production plan or authorization to
+rewrite the tracked catalogue.
+
+| Family / keys | Assessment and evidence |
+|---|---|
+| F-device: `noti.table_note` (2), `launch.tmpl.err.not_loaded`, `awslogin.close_hint`, `display.per_tenant_note`, `display.pane_layout_note`, `set.prefs_unsynced`, `gcplogin.close_hint` | Change 端末 to ブラウザ (この端末 to このブラウザ): English describes device-local settings or access from other devices; the neighbours describe preferences/login requests. Seven values, eight occurrences. |
+| F-device: `assistant.note_appearance`, `noti.os_unsupported`, `ovw.waiting_hint` | Keep: already このブラウザ; local appearance, browser notification support and local observations. |
+| F-device: `err.plan_pending`, `err.permission_pending`, `err.interaction_pending` | Excluded; these also mean the terminal fallback for interaction cards. |
+| F-device: `admin.idle_hold_watching_row` | Keep in this batch: an activity/idle-stop hold, including keystrokes and Console interaction, not a browser-local setting. The added UI reference lets a judge inspect its hold-kind rendering. |
+| F-device: `admin.term_log_hint`, `onb.rtt_title`, `noti.kind_terminal_notification`, `srow.keep_awake_hint`, `agents.skip_permissions_off_note` | Keep: recorded terminal output, terminal echo path, terminal-origin notifications, closed-terminal work and terminal permission replies respectively. |
+| F-device: `keys.kt.termPrioTitle`, `keys.kt.termPrioLabel` (2), `keys.kt.termPrioNote` (2), `keys.kt.shellPassLabel`, `keys.kt.shellPassNote` (3) | Keep all nine occurrences: terminal focus and key forwarding. Neighbours/English explicitly name shell, tmux and terminal input. |
+| F-device: `ssm.term_color`, `ssm.term_preview_title`, `ssm.term_label`, `git.identity_help`, `view.lfs_tip` | Keep: terminal colour/preview, terminal commits and terminal execution of git lfs pull. |
+| F-fold: `fgraph.collapse`, `ovw.collapse`, `wsbar.usage.fold_hint`, `wsbar.usage.place_fold`, `wsbar.usage.place_fold_title`, `agents.expand_thinking_note` | Keep all six UI-collapse occurrences. English says collapse/popover; next keys expose expand, placement and display controls. |
+| F-fold: `agents.skip_permissions_off_note` (2) | Sample judge decision: 畳まれ → 停止され in both occurrences. The interaction timeout ends the running session; it preserves the pending conversation. The permission-card UI reference confirms prose, not an agent prompt. |
+| F-fold: `plan.review_prompt_reply` | Excluded agent prompt, even though its sense is session ending. |
+| F-fold: `usage.truncated_hint` | Keep outside this batch: English says roll-up/pruning of retained data, not UI collapse or session ending. The usage-chart UI reference confirms the separate sense. |
+
+Full values, neighbours, English and attributed citations were enough for the
+device/fold decisions; UI key references were added for ambiguous roles and for
+later button judges. They are starting points for source inspection, not proof
+of a button's behaviour. Common sentence hits still need review, and shortened
+citations remain a manual search.
+
+A SAMPLE device plan was applied only to a scratch archive: 7 values in 4 files,
+8 substitutions and 4 emitted allowances. Reapplying reported 7 already applied,
+0 pending. The real guard checked 2,412 values and accepted 4 of 4 allowances:
+initially only `pinned=1` failed, at the notification settings prose. The
+label-citation mode correctly reported 4 compared files, 0 changed labels.
+Manual inspection updated two guide phrases in the scratch copy; the second
+shortened phrase was invisible to PINNED. The final guard and guide rewrite
+returned 0 with every failure category zero. No scratch wording or golden
+updates are part of this tooling PR; the complete Console test run belongs to
+the later real wording batch.

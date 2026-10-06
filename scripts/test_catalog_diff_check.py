@@ -345,6 +345,18 @@ class CatalogDiffCheckTests(Base):
         self.assertRegex(out, r"既定 1 -> 0, デフォルト 0 -> 1")
         self.assertTrips("allow", "--allow-term", "dom.default_a:既定>デフォルト*2")
 
+    def test_allow_term_direct_old_inside_new_glossary_unit(self):
+        glossary = self.repo / "guide/ref/glossary.ja.md"
+        glossary.write_text(glossary.read_text() + "| 利用枠 | quota | Usage |\n")
+        self.edit(JA, "設定を保存してから、画面を閉じてください。", "利用枠と枠です。")
+        self.commit_all("quota baseline")
+        self.edit(JA, "利用枠と枠です。", "利用枠と利用枠です。")
+        self.assertTrips("glossary")
+        code, out = self.run_check("--allow-term", "dom.wording:枠>利用枠")
+        self.assertEqual(code, 0, out)
+        self.assertIn("枠 1 -> 0, 利用枠 1 -> 2", out)
+        self.assertTrips("allow", "--allow-term", "dom.wording:枠>利用枠*2")
+
     def test_allow_term_does_not_cover_the_same_change_in_another_key(self):
         self.edit(JA, '"dom.default_a": "既定の設定です。"', '"dom.default_a": "オフの設定です。"')
         self.edit(JA, '"dom.default_b": "既定の設定です。"', '"dom.default_b": "オフの設定です。"')

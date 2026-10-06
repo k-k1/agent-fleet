@@ -47,6 +47,8 @@ word) counts on purpose. Approve it per key with `--allow-term KEY:OLD>NEW[*N]` 
 must fall by exactly N and NEW rise by exactly N (default 1), else the allowance is an error
 [allow] and the drift still fails; the same term moving in another key still fails. Applied
 allowances are printed as ALLOWED. Nothing else is relaxed. See docs/build/10-development.md §10.6.
+In ja, a direct term excludes occurrences inside a counted unit named in the same key's
+allowances: 枠 -> 利用枠 removes a standalone 枠, not the character inside 利用枠.
 Limitation: a guide quote that reproduces only the start of a sentence (under 8 characters,
 or cut before the part the rewrite changed) is invisible here, because there is no old
 fragment to match. After a rewrite, also search the guide for the first words of each
@@ -349,6 +351,20 @@ def item_count(en, dom, item, text, terms):
     if en:
         return len(re.findall(r'(?<!\w)%s(?!\w)' % re.escape(item), text))
     return text.count(item)
+
+
+def allowance_count(en, dom, item, text, terms, counted_units):
+    """Direct terms exclude occurrences contained in another counted allowance unit.
+
+    A quota (枠) -> usage quota (利用枠) change removes the standalone term even
+    though the new word contains it. Category counts must still move exactly.
+    """
+    if en or dom is not None:
+        return item_count(en, dom, item, text, terms)
+    spans = [(m.start(), m.end()) for unit in counted_units if item != unit and item in unit
+             for m in re.finditer(re.escape(unit), text)]
+    return sum(not any(a <= m.start() and m.end() <= b for a, b in spans)
+               for m in re.finditer(re.escape(item), text))
 
 
 def label_like(v):
@@ -1007,8 +1023,10 @@ def main(argv):
                                 want[u] += sign * cnt
                     seen = {}
                     bad = set()
+                    counted_units = {k for d, k in want if d is not None}
                     for (d, k), w in want.items():
-                        seen[(d, k)] = (item_count(en, d, k, o, terms), item_count(en, d, k, n, terms))
+                        seen[(d, k)] = (allowance_count(en, d, k, o, terms, counted_units),
+                                       allowance_count(en, d, k, n, terms, counted_units))
                         if seen[(d, k)][1] - seen[(d, k)][0] != w:
                             bad.add((d, k))
                     for ai, a in mine:

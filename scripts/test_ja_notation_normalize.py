@@ -592,9 +592,11 @@ class RealCatalogueTests(unittest.TestCase):
         p = subprocess.run([sys.executable, str(SCRIPT), '--all'], cwd=HERE.parent,
                            capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        proposals = [line.split(' | ', 2) for line in p.stdout.splitlines() if len(line.split(' | ', 2)) == 3]
-        self.assertTrue(proposals, 'the real catalogue scan must produce proposals')
-        self.assertTrue(any(key == 'admin.destroy_ws' for key, _, _ in proposals))
+        proposals = [line.split(' | ', 2) for line in p.stdout.splitlines()
+                     if re.match(r'^[\w.]+ \| .* \[R[123](?:,R[123])*\]$', line)]
+        self.assertIn('DOMAIN admin:', p.stdout)
+        self.assertIn('DOMAIN settings:', p.stdout)
+        self.assertEqual(proposal('この Workspace を破棄', rules=('R3',)).new, 'このワークスペースを破棄')
         stray = r'ワークスペース +[ぁ-んァ-ヶ一-龠]'
         self.assertRegex('ワークスペース を破棄', stray)
         hits = [f'{key} | {new}' for key, _, new in proposals if re.search(stray, new)]
