@@ -19,7 +19,7 @@ English | [日本語](10-development.ja.md)
 | `e2e/` | Fleet end-to-end tests (a separate Go module, standard library only) — the CP against real containers (§10.4) |
 | `console-e2e/` | Console UI end-to-end tests (Playwright) — browser through CP to a real container (§10.4) |
 | `guide/` · `docs/` | The user guide that ships inside every container, and the developer documentation. The norms for both are [CONVENTIONS](../CONVENTIONS.md) |
-| `scripts/` | Repository checks: `docs-check.py` (links, front matter, the `guide/ref` tables), `vet-build-tags.sh` and `model-id-lint/` (model ids outside the fallback registry) |
+| `scripts/` | Repository checks: `docs-check.py` (links, front matter, the `guide/ref` tables), `guide-diff-check.py` and `catalog-diff-check.py` (local-only guards for wording rewrites of the guide and the ja catalogue, §10.6), `vet-build-tags.sh` and `model-id-lint/` (model ids outside the fallback registry) |
 
 The file-level map is [90-code-map](90-code-map.md).
 
@@ -492,3 +492,21 @@ repeats what an agent needs at commit time and points back there.
 What to update when you change what is the
 [update-trigger table](README.md#update-trigger). The norms every shelf follows are
 [CONVENTIONS](../CONVENTIONS.md).
+
+### Rewriting the Japanese Console catalogue (`catalog-diff-check.py`)
+
+A wording pass over `console/src/lib/i18n/locales/ja/<domain>.ts` may change prose and
+nothing else. `scripts/catalog-diff-check.py <ref>` compares the files at `<ref>` with the
+working tree and fails on a change outside string-literal contents (keys, order, comments,
+`+` structure), on a changed key set, on any edit under `locales/` outside `ja/`, and, per
+changed value, on any difference in the multisets of `{placeholders}`, Trans slots,
+digits, ASCII words, 「…」 contents, `code` spans, line breaks, edge whitespace and the
+terms of `guide/ref/glossary.ja.md`. Reword a UI label (at most 15 characters, no 「。」)
+only on purpose: it fails without `--allow-labels`, and with it every `old -> new` pair is
+printed for review. A changed value whose old text is still quoted in `guide/**/*.ja.md`,
+console tests, Go sources or `workspace/agent/knowledge/af-usage.md` is reported as PINNED
+with `file:line` and fails; update that citation in the same PR (`--list-pinned` prints
+just those locations). A guide quote that reproduces only the start of a sentence (under
+8 characters) cannot be found. It does not judge meaning, and, like
+`scripts/guide-diff-check.py`, it is for local use and is not part of CI. Its tests are
+`python3 -m unittest discover -s scripts -p test_catalog_diff_check.py`.
