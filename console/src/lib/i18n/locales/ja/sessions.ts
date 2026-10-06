@@ -181,7 +181,7 @@ export const sessions = {
   // リソースタイル（tile のツールチップ）
   "wsbar.tile.ws_mem": "ワークスペースのメモリ: {mem}G",
   "wsbar.tile.ws_mem_oom_note":
-    "⚠ 直近数分以内にコンテナ内でプロセスが OOM kill されました（メモリ上限に達しました。ビルドやエージェントが強制終了された可能性があります）",
+    "⚠ 直近数分以内にコンテナ内でプロセスが OOM kill されました（メモリ上限に達しました。ビルド/エージェントが強制終了された可能性があります）",
   "wsbar.tile.ws_cpu": "ワークスペースの CPU 使用率（1コア = 100%）",
   "wsbar.tile.host_load": "ホスト ロードアベレージ(1分): {load} / {ncpu}コア（管理者のみ）",
   "wsbar.tile.host_mem": "ホスト メモリ: {mem}G（管理者のみ）",
@@ -617,7 +617,7 @@ export const sessions = {
   "sx.branch_label": "ブランチ名",
   "sx.branch_ph": "例: feat/login-redirect",
   "sx.branch_hint_pre": "この worktree のブランチを ",
-  "sx.branch_hint_post": " で改名します（フォルダとセッションはそのままです）。",
+  "sx.branch_hint_post": " で改名します（フォルダ＝セッションはそのまま）。",
   "sx.ai_suggest": "AIに提案してもらう",
   "sx.proposal": "提案",
   "sx.adopt": "この案にする",
