@@ -17,6 +17,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
 // atLimitProbe replaces the transcript probe and counts the calls: this is the list-polling
@@ -270,5 +271,46 @@ func TestWireSessionCodexTuiIsNotWatched(t *testing.T) {
 	}
 	if *calls != 0 {
 		t.Errorf("the managed handle was probed %d times for a tui codex", *calls)
+	}
+}
+
+// TestWireSessionMuseRateLimit (#1766): a muse whose last turn failed on the quota reads
+// "limited" in the list (with the booked instant) and in the mirror/chat chip, and reads idle
+// again once the handle clears the mark.
+func TestWireSessionMuseRateLimit(t *testing.T) {
+	isolateAgentState(t)
+	claudeCalls := atLimitProbe(t, claude.LimitWindow) // must stay untouched for a muse row
+	limited := true
+	orig := museRateLimited
+	museRateLimited = func(string) bool { return limited }
+	t.Cleanup(func() { museRateLimited = orig })
+	now := time.Now()
+	resume := now.Add(30 * time.Minute).Format(time.RFC3339)
+	m := session.Meta{Name: "rlwiremuse1", Dir: t.TempDir(), Kind: session.KindMuse, Driver: session.DriverManaged}
+	session.WriteMeta(m)
+	status.Persist(session.UUID(m.Dir, m.Name), "idle")
+	if err := RateLimitStates.Write(m.Name, rateLimitState{
+		At: now.Format(time.RFC3339), ResumeAt: resume, ScheduleID: "sch_x",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := wireSession(m, true)
+	if s.State != agents.StateLimited || s.RateLimitResumeAt != resume {
+		t.Errorf("wireSession = %q / %q, want %q / %q", s.State, s.RateLimitResumeAt, agents.StateLimited, resume)
+	}
+	if got := DriveState(m, true, false); got != agents.StateLimited {
+		t.Errorf("DriveState = %q, want %q", got, agents.StateLimited)
+	}
+	if *claudeCalls != 0 {
+		t.Errorf("claude's transcript was read %d times for a muse session", *claudeCalls)
+	}
+
+	limited = false
+	if s := wireSession(m, true); s.State == agents.StateLimited || s.RateLimitResumeAt != "" {
+		t.Errorf("after the limit cleared: state = %q / resumeAt = %q", s.State, s.RateLimitResumeAt)
+	}
+	if got := DriveState(m, true, false); got == agents.StateLimited {
+		t.Error("DriveState stayed limited after the limit cleared")
 	}
 }

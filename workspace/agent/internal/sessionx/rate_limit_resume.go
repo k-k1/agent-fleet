@@ -45,6 +45,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
@@ -121,6 +122,8 @@ var (
 	claudeUsageLimitAbort = claude.UsageLimitAbort
 	codexRateLimited      = codex.IsRateLimited
 	codexResetAt          = codex.ResetAt
+	museRateLimited       = muse.IsRateLimited
+	museResetAt           = muse.ResetAt
 )
 
 // StartRateLimitWatch runs the sweep for the life of the agent.
@@ -183,11 +186,12 @@ func rateLimitTick(now time.Time) {
 // the app-server hands back a typed usageLimitExceeded for the turn it refused. A codex driven
 // through its TUI leaves nothing behind that says "this turn died on the limit" (the rollout
 // records the account's percentages, which are the same whether or not this session was the
-// one that ran into the wall), so there is nothing to key an episode off. opencode and the
+// one that ran into the wall), so there is nothing to key an episode off. muse has only the
+// managed driver, and its failed turn carries the 429 (muse/ratelimit.go). opencode and the
 // other kinds have neither half yet.
 func rateLimitWatched(m session.Meta) bool {
 	switch NormalizeKind(m.Kind) {
-	case session.KindClaude:
+	case session.KindClaude, session.KindMuse:
 		return true
 	case session.KindCodex:
 		return m.DriverKind() == session.DriverManaged
@@ -205,6 +209,11 @@ func atUsageLimit(m session.Meta) (claude.LimitKind, bool) {
 		// so this is an in-memory read - unlike the claude branch it opens no file.
 		return claude.LimitWindow, codexRateLimited(m.Name)
 	}
+	if NormalizeKind(m.Kind) == session.KindMuse {
+		// The same shape as codex: a subscription window that waiting clears, read from the
+		// handle's last turn error in memory.
+		return claude.LimitWindow, museRateLimited(m.Name)
+	}
 	_, kind, atLimit := claudeUsageLimitAbort(session.UUID(m.Dir, m.Name))
 	return kind, atLimit
 }
@@ -214,6 +223,9 @@ func atUsageLimit(m session.Meta) (claude.LimitKind, bool) {
 func usageLimitResetAt(m session.Meta, st rateLimitState, now time.Time) (time.Time, string, bool) {
 	if NormalizeKind(m.Kind) == session.KindCodex {
 		return codexResetAt(now)
+	}
+	if NormalizeKind(m.Kind) == session.KindMuse {
+		return museResetAt(m.Name, now)
 	}
 	at, source, ok := rateLimitResetAt(session.UUID(m.Dir, m.Name), now)
 	// For a limit without a menu the instant is trusted only when it comes from the banner,

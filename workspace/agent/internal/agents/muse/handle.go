@@ -121,6 +121,14 @@ type threadHandle struct {
 	ctxWindow   *int64      // windowTokens; nil when the basis carries no limit
 	ctxHasUsage bool        // false until the first notification arrives
 	spends      []turnSpend // per-turn token trend from session/tokenUsage, newest last (context.go)
+
+	// limit is set when the last turn failed on the usage limit and cleared when the next turn
+	// starts (ratelimit.go). lastTurn is the newest turn this handle has seen start (or the
+	// one session/resume restated): only that turn's terminal may set or clear limit, because
+	// after settleIdle neither turnID nor starting is left to reject a late completion of an
+	// older turn. Both guarded by mu.
+	limit    *usageLimit
+	lastTurn string
 }
 
 // pendingAsk is the wire identity of the thing an Interaction is standing in for. Two
@@ -243,6 +251,7 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 			h.sid, h.path = prev.ID, prev.Path
 			h.setModelLocked(res.Session.ModelID)
 			h.rebuildBgLocked(items)
+			h.restoreLimitLocked(res.LastTurn)
 			h.mu.Unlock()
 			if ok {
 				h.backfillMirror(items)
@@ -257,6 +266,9 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 	h.resetUsage() // a different conversation from here on
 	h.mu.Lock()
 	h.bg = nil
+	// The old conversation's limit is not this one's: a fresh session has no cut-off request
+	// to resume, and a mark carried over would book a wake-up for it.
+	h.limit, h.lastTurn = nil, ""
 	h.mu.Unlock()
 
 	// A slot born from a fork opens by copying the source rather than starting empty. It is
@@ -414,6 +426,8 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 		}
 		h.mu.Lock()
 		h.turnID, h.running = p.TurnID, true
+		h.limit = nil // a turn that runs is past the limit, whatever happened before
+		h.lastTurn = p.TurnID
 		h.runGen++
 		h.state = agents.TurnRunning
 		h.turnModel = h.model
@@ -749,13 +763,18 @@ func (h *threadHandle) finishTurn(p msp.TurnCompletedParams) {
 	// cannot fix: it is aborted, so the operator is told to fix the credential and nudge it
 	// rather than being shown a completed answer that never existed.
 	failure := ""
+	var limit *usageLimit
 	if p.Error != nil {
 		failure = p.Error.Message
 		if p.Error.Kind == museAuthRequired {
 			st = agents.TurnAborted
 		}
+		if lim, ok := usageLimitOf(p.Error); ok && st == agents.TurnFailed {
+			limit = &lim
+		}
 	}
 	h.mu.Lock()
+	newest := p.TurnID == "" || h.lastTurn == "" || p.TurnID == h.lastTurn || p.TurnID == h.starting
 	// A completion for a turn this handle no longer tracks (settleIdle already closed it and
 	// the queue has moved on) must not end the turn that replaced it.
 	if p.TurnID != "" && (h.turnID != "" || h.starting != "") && p.TurnID != h.turnID && p.TurnID != h.starting {
@@ -768,6 +787,12 @@ func (h *threadHandle) finishTurn(p msp.TurnCompletedParams) {
 	h.settleHeadLocked()
 	h.dropResumedLocked(true)
 	h.running, h.state, h.turnID = false, st, ""
+	if newest {
+		h.limit = limit
+		if p.TurnID != "" {
+			h.lastTurn = p.TurnID
+		}
+	}
 	h.mu.Unlock()
 	agents.MarkTurnEndErr(h.slotSid, st, failure)
 	h.emit(agents.Event{Kind: "turn_state", TurnState: st})

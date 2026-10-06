@@ -215,6 +215,10 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	if m.DriverKind() == session.DriverManaged && NormalizeKind(m.Kind) == session.KindCodex && state == "idle" && codex.IsRateLimited(m.Name) {
 		return agents.StateLimited
 	}
+	// muse: the same reading as its WireLive, from the handle's last turn error.
+	if m.Kind == session.KindMuse && state == "idle" && museRateLimited(m.Name) {
+		return agents.StateLimited
+	}
 	// Folding on pane.IdleSettled (not the raw pane.Idle) for the same reason as WireLive:
 	// while claude renders an answer it draws the same picture as the ready prompt, so a single
 	// frame cannot tell them apart (measured, tmuxx/idlesettle.go). Leaving Idle here would put

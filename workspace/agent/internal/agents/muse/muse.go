@@ -93,6 +93,11 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	if st := PendingState(m.Name); st != "" {
 		li.State = st
 	}
+	// A turn that failed on the usage limit leaves the session idle, but resending gets the
+	// same 429 until the window lifts, so it reads "limited", as for managed codex.
+	if li.State == "idle" && IsRateLimited(m.Name) {
+		li.State = agents.StateLimited
+	}
 	// A tool call left running by an earlier turn is work behind the idle prompt, the case
 	// claude's badge covers with its process scans; here it is an in-memory read.
 	if li.State == "idle" {
