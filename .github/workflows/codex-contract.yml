@@ -78,6 +78,7 @@ jobs:
           agent: codex
           version: ${{ matrix.version }}
       - name: codex drift (Tier 1, ${{ matrix.version }})
+        id: contract_0
         working-directory: workspace/agent
         env:
           # Fail instead of skip when the CLI is missing (a silent skip is a false green).
@@ -100,9 +101,11 @@ jobs:
       # A red run of `latest` is written into the drift tracking issue and, for kinds the
       # watcher dispatches by itself, stops it re-dispatching this version every 2 hours
       # (deploy/local/cli-contract-report.sh). A cancelled or timed-out run is not
-      # `failure()`, so it leaves no marker and the version is retried.
+      # `failure()`, so it leaves no marker and the version is retried. Only a failed contract
+      # step counts: a setup or credential-guard failure ran no test and spent no quota, so it
+      # is retried by the next watcher run instead of being held until a human acts.
       - name: report failed contract for latest
-        if: failure() && matrix.version == 'latest' && github.event_name != 'pull_request'
+        if: failure() && (steps.contract_0.conclusion == 'failure') && matrix.version == 'latest' && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EFFECTIVE: ${{ steps.cli.outputs.version }}

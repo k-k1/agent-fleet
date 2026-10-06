@@ -130,14 +130,10 @@ jobs:
           to latest.</sub>
           TAIL
           } > /tmp/body.md
-          # Keep the `Red contracts` section: this step rewrites the whole body.
-          if [ -n "${{ steps.issue.outputs.num }}" ]; then
-            deploy/local/cli-contract-report.sh carry "${{ steps.issue.outputs.num }}" /tmp/body.md
-          fi
-
+          # `rewrite` keeps the `Red contracts` section: this step replaces the whole body.
           gh label create cli-drift --color FBCA04 --description "upstream CLI version drift" 2>/dev/null || true
           if [ -n "${{ steps.issue.outputs.num }}" ]; then
-            gh issue edit "${{ steps.issue.outputs.num }}" --body-file /tmp/body.md
+            deploy/local/cli-contract-report.sh rewrite "${{ steps.issue.outputs.num }}" /tmp/body.md
             echo "updated issue #${{ steps.issue.outputs.num }}"
           else
             gh issue create --title "$TITLE" --body-file /tmp/body.md --label cli-drift

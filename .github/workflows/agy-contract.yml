@@ -44,6 +44,7 @@ jobs:
           agent: agy
           version: ${{ inputs.cli_version }}
       - name: real TUI pane drift contract
+        id: contract_0
         working-directory: workspace/agent
         env:
           E2E_REQUIRE: "1"
@@ -56,6 +57,7 @@ jobs:
       # (internal/agents/agy/trustprompt.go): while the pre-trust works no prompt appears,
       # and this goes red on the day it stops working.
       - name: real /usage scrape contract
+        id: contract_1
         working-directory: workspace/agent
         env:
           AF_AGY_LIVE: "1"
@@ -74,6 +76,7 @@ jobs:
       # silently on a different model, visible nowhere except one warning line in the real
       # TUI. A separate concern from the pane contract above, hence a separate step.
       - name: real models catalog drift contract
+        id: contract_2
         working-directory: workspace/agent
         env:
           E2E_REQUIRE: "1"
@@ -92,9 +95,11 @@ jobs:
       # A red run of `latest` is written into the drift tracking issue and, for kinds the
       # watcher dispatches by itself, stops it re-dispatching this version every 2 hours
       # (deploy/local/cli-contract-report.sh). A cancelled or timed-out run is not
-      # `failure()`, so it leaves no marker and the version is retried.
+      # `failure()`, so it leaves no marker and the version is retried. Only a failed contract
+      # step counts: a setup or credential-guard failure ran no test and spent no quota, so it
+      # is retried by the next watcher run instead of being held until a human acts.
       - name: report failed contract for latest
-        if: failure() && inputs.cli_version == 'latest'
+        if: failure() && (steps.contract_0.conclusion == 'failure' || steps.contract_1.conclusion == 'failure' || steps.contract_2.conclusion == 'failure') && inputs.cli_version == 'latest'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EFFECTIVE: ${{ steps.cli.outputs.version }}

@@ -55,6 +55,7 @@ jobs:
           agent: kiro
           version: ${{ inputs.cli_version }}
       - name: real TUI and mirror contract
+        id: contract_0
         working-directory: workspace/agent
         env:
           E2E_REQUIRE: "1"
@@ -73,9 +74,11 @@ jobs:
       # A red run of `latest` is written into the drift tracking issue and, for kinds the
       # watcher dispatches by itself, stops it re-dispatching this version every 2 hours
       # (deploy/local/cli-contract-report.sh). A cancelled or timed-out run is not
-      # `failure()`, so it leaves no marker and the version is retried.
+      # `failure()`, so it leaves no marker and the version is retried. Only a failed contract
+      # step counts: a setup or credential-guard failure ran no test and spent no quota, so it
+      # is retried by the next watcher run instead of being held until a human acts.
       - name: report failed contract for latest
-        if: failure() && inputs.cli_version == 'latest'
+        if: failure() && (steps.contract_0.conclusion == 'failure') && inputs.cli_version == 'latest'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EFFECTIVE: ${{ steps.cli.outputs.version }}

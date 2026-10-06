@@ -6,6 +6,7 @@
 #   cli-contract-report.sh streak <workflow> <n>                    N red runs in a row?
 #   cli-contract-report.sh prune                                    drop rows for old versions
 #   cli-contract-report.sh carry <issue-number> <body-file>         re-append the section
+#   cli-contract-report.sh rewrite <issue-number> <body-file>       carry, then edit the issue
 #   cli-contract-report.sh active                                   exit 0 when any row is set
 #
 # ## Why one section in the body
@@ -25,7 +26,11 @@
 # ## Failure modes
 #
 # - Several contracts can fail at the same moment and each does a read-modify-write of the
-#   body. Every write is read back and retried (3 attempts) until the row is really there.
+#   body. Every write is read back and re-applied (4 attempts) until the intended change
+#   holds in what the issue now says. There is no compare-and-swap on an issue body: a
+#   cli-drift.yml rewrite landing in the seconds between its `carry` and its edit can still
+#   drop a row written in that window, which the next failure or streak run restores.
+# - A streak row is only kept while the newest of its runs is under 14 days old.
 # - No tracking issue yet (the pins are in sync but a contract failed): one is created, with
 #   only this section. cli-drift.yml neither closes nor rewrites it away while a row remains.
 # - `failure` also writes the `red` marker (see cli-release-edges.sh) for kinds the watcher
@@ -62,9 +67,16 @@ render() { # render <body-file> <rows-file>  -> stdout
 }
 
 # mutate <rows-transform-function>: read the issue, transform its rows, write back, verify.
+#
+# Verification is of the INTENT, not of the bytes written: after the write the rows are read
+# again and the transform is applied to them once more; the write counts only when that
+# changes nothing (as a set). A concurrent writer that read the body before ours landed and
+# then wrote over it leaves our row missing, the second application is not a no-op, and the
+# loop re-reads and re-applies. Comparing against our own output would pass in exactly the
+# case that loses a row.
 mutate() {
   local fn="$1" num attempt
-  for attempt in 1 2 3; do
+  for attempt in 1 2 3 4; do
     num="$(issue_number)"
     if [ -n "$num" ]; then
       gh issue view "$num" --json body --jq .body > "$tmp"
@@ -78,18 +90,22 @@ mutate() {
     if [ -z "$num" ]; then
       # Nothing to remove from an issue that does not exist.
       [ -s "$tmp.rows.new" ] || return 0
+      # Another reporter may have created it since the lookup above: re-read instead of
+      # opening a second tracking issue.
+      if [ -n "$(issue_number)" ]; then continue; fi
       gh label create cli-drift --color FBCA04 --description "upstream CLI version drift" 2>/dev/null || true
       gh issue create --title "$TITLE" --body-file "$tmp.new" --label cli-drift >/dev/null
     else
       gh issue edit "$num" --body-file "$tmp.new" >/dev/null
     fi
-    # Read back: a concurrent writer may have replaced the body between our read and write.
     num="$(issue_number)"
     gh issue view "$num" --json body --jq .body | rows_of > "$tmp.check"
-    if cmp -s "$tmp.check" "$tmp.rows.new"; then return 0; fi
+    "$fn" "$tmp.check" | sort > "$tmp.check.applied"
+    sort "$tmp.check" > "$tmp.check.sorted"
+    if cmp -s "$tmp.check.sorted" "$tmp.check.applied"; then return 0; fi
     sleep $((attempt * 2))
   done
-  echo "could not write the red-contracts section after 3 attempts" >&2
+  echo "could not write the red-contracts section after 4 attempts" >&2
   return 1
 }
 
@@ -125,6 +141,19 @@ case "$cmd" in
     kind="${2:?kind}"
     drop_row() { grep -v "<!-- cli-contract-failure $kind -->" "$1" || true; }
     mutate drop_row
+    # Release the watcher's brake too, so `get red` never reports a version that has since
+    # passed. `none` is the cleared value: the state script has no delete.
+    if [ -n "$("$HERE/cli-release-state.sh" get red "$kind")" ] &&
+       [ "$("$HERE/cli-release-state.sh" get red "$kind")" != none ]; then
+      "$HERE/cli-release-state.sh" set red "$kind" none
+    fi
+    ;;
+  rewrite)
+    # rewrite <issue> <file>: replace the whole body with <file> but keep the section as it
+    # is NOW (read immediately before the edit, to keep the window small).
+    num="${2:?issue}"; file="${3:?body file}"
+    "$0" carry "$num" "$file"
+    gh issue edit "$num" --body-file "$file" >/dev/null
     ;;
   streak)
     wf="${2:?workflow}"; n="${3:?n}"
@@ -132,11 +161,15 @@ case "$cmd" in
     # Newest first. Cancelled and skipped runs say nothing about the harness, so they are
     # neither red nor green: only the newest N that finished decide.
     conclusions="$(gh run list --workflow "$wf.yml" --branch develop --status completed --limit 30 \
-      --json conclusion,url --jq '[.[] | select(.conclusion == "success" or .conclusion == "failure")]')"
+      --json conclusion,url,createdAt --jq '[.[] | select(.conclusion == "success" or .conclusion == "failure")]')"
     total="$(jq 'length' <<< "$conclusions")"
     reds="$(jq --argjson n "$n" '[.[:$n][] | select(.conclusion == "failure")] | length' <<< "$conclusions")"
     url="$(jq -r '.[0].url // ""' <<< "$conclusions")"
-    if [ "$total" -ge "$n" ] && [ "$reds" -eq "$n" ]; then
+    # A dispatch-only workflow gets no new run until the next release, so an old red streak
+    # that nobody has re-run is history, not news: past STREAK_MAX_AGE_DAYS the row is not
+    # (re)created and an existing one is dropped.
+    fresh="$(jq --argjson d "${STREAK_MAX_AGE_DAYS:-14}" '(.[0].createdAt // "1970-01-01T00:00:00Z" | fromdateiso8601) > (now - $d * 86400)' <<< "$conclusions")"
+    if [ "$total" -ge "$n" ] && [ "$reds" -eq "$n" ] && [ "$fresh" = true ]; then
       row="- \`$wf\` failed its last $n runs on \`develop\`, whatever the version — [latest run]($url) <!-- cli-contract-streak $wf -->"
       set_row() { grep -v "<!-- cli-contract-streak $wf -->" "$1" || true; printf '%s\n' "$row"; }
       mutate set_row
@@ -177,7 +210,7 @@ case "$cmd" in
     gh issue view "$num" --json body --jq .body | rows_of | grep -q .
     ;;
   *)
-    echo "usage: $0 failure <kind> <version> | success <kind> | streak <workflow> <n> | prune | carry <issue> <file> | active" >&2
+    echo "usage: $0 failure <kind> <version> | success <kind> | rewrite <issue> <file> | streak <workflow> <n> | prune | carry <issue> <file> | active" >&2
     exit 2
     ;;
 esac

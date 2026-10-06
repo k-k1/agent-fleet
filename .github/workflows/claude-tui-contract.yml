@@ -81,6 +81,7 @@ jobs:
       # Pass credentials via env (never typed or logged) and drive the real interactive
       # CLI in a real tmux pane. The Go test calls production tmuxx functions directly.
       - name: TUI contract probe
+        id: contract_0
         working-directory: workspace/agent
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.E2E_CLAUDE_OAUTH_TOKEN }}
@@ -97,6 +98,7 @@ jobs:
       # ロックはどちらも緑のままだったので、実 TUI で「既定行は必ず Yes」「承認の結果が
       # 承認と読める」「決着に計画本文が混ざらない」まで通す。実ターン 1 回（短いプラン）。
       - name: plan approval contract (ExitPlanMode)
+        id: contract_1
         working-directory: workspace/agent
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.E2E_CLAUDE_OAUTH_TOKEN }}
@@ -111,6 +113,7 @@ jobs:
       # print モードで済むので TUI は要らないが、実クレデンシャルが要る点は同じなので
       # このジョブに相乗りする。3 ターン（haiku・各 1 行）。
       - name: fork-at transcript contract (docs/log/55)
+        id: contract_2
         working-directory: workspace/agent
         env:
           CLAUDE_CONTRACT_LIVE: "1"
@@ -159,9 +162,11 @@ jobs:
       # A red run of `latest` is written into the drift tracking issue and, for kinds the
       # watcher dispatches by itself, stops it re-dispatching this version every 2 hours
       # (deploy/local/cli-contract-report.sh). A cancelled or timed-out run is not
-      # `failure()`, so it leaves no marker and the version is retried.
+      # `failure()`, so it leaves no marker and the version is retried. Only a failed contract
+      # step counts: a setup or credential-guard failure ran no test and spent no quota, so it
+      # is retried by the next watcher run instead of being held until a human acts.
       - name: report failed contract for latest
-        if: failure() && inputs.cli_version == 'latest'
+        if: failure() && (steps.contract_0.conclusion == 'failure' || steps.contract_1.conclusion == 'failure' || steps.contract_2.conclusion == 'failure') && inputs.cli_version == 'latest'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EFFECTIVE: ${{ steps.cli.outputs.version }}

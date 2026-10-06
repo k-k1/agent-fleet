@@ -36,7 +36,8 @@
 # equals that value is not dispatched again (listed in `red=` and the summary instead).
 # The brake is released by anything that changes the pair: a new `latest` (the value no
 # longer matches), a passing run (`tested == latest` is checked first and always wins),
-# or a manual dispatch, which never goes through this script. The marker is written by the
+# (`none` after a pass), or a manual dispatch, which never goes through this script. The
+# marker is written by the
 # contract on `failure()` and not by the watcher at dispatch, so a run that was cancelled
 # or timed out leaves no marker and the version is retried. Kinds without an unattended
 # contract (cursor, kiro) ignore it: their edge feeds the `seen` report, not a dispatch.
@@ -59,6 +60,7 @@ is_kind() { case " $KINDS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 # may hold back.
 RED_KINDS="${RED_KINDS:-claude codex opencode copilot agy muse}"
 
+# `red=` is a summary output for the job log and the step outputs; no later step reads it.
 changed=()   # kind=version, one per dispatch edge
 red=()       # kind=version, edges not dispatched because that version's contract is red
 held=()      # dispatch kinds skipped because their source could not be read

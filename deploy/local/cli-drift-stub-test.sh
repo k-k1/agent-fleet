@@ -446,7 +446,13 @@ case "$1 $2" in
     d="$(dir_for "$3")"
     case "$*" in *"body,comments"*) cat "$d/body" "$d/comments" 2>/dev/null ;; *) cat "$d/body" ;; esac ;;
   "issue edit")
-    cp "$(arg_after --body-file "$@")" "$(dir_for "$3")/body" ;;
+    d="$(dir_for "$3")"
+    if [ -e "$STUB_RUNS/clobber" ]; then
+      # A concurrent writer holding a stale copy overwrites this edit with the old body.
+      rm -f "$STUB_RUNS/clobber"
+    else
+      cp "$(arg_after --body-file "$@")" "$d/body"
+    fi ;;
   "issue comment")
     printf '%s\n' "$(arg_after --body "$@")" >> "$(dir_for "$3")/comments" ;;
   "api repos/k-k1/agent-fleet/actions/runs/555/jobs?per_page=100")
@@ -513,21 +519,49 @@ drift_hasnt 'Red contracts'
 if "$REPORT" active; then fail "active must be false once the section is empty"; fi
 
 echo "== case 21: N=2 red runs in a row flags the workflow; a newer green clears it =="
-cat > "$STUB_RUNS/codex-contract.json" <<'J'
-[{"conclusion":"failure","url":"https://x/run/3"},{"conclusion":"failure","url":"https://x/run/2"},{"conclusion":"success","url":"https://x/run/1"}]
+NOWISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+OLDISO="$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)"
+cat > "$STUB_RUNS/codex-contract.json" <<J
+[{"conclusion":"failure","url":"https://x/run/3","createdAt":"$NOWISO"},{"conclusion":"failure","url":"https://x/run/2","createdAt":"$NOWISO"},{"conclusion":"success","url":"https://x/run/1","createdAt":"$NOWISO"}]
 J
 "$REPORT" streak codex-contract 2
 drift_has '`codex-contract` failed its last 2 runs'
 drift_has 'https://x/run/3'
-cat > "$STUB_RUNS/codex-contract.json" <<'J'
-[{"conclusion":"failure","url":"https://x/run/4"},{"conclusion":"success","url":"https://x/run/3"},{"conclusion":"failure","url":"https://x/run/2"}]
+cat > "$STUB_RUNS/codex-contract.json" <<J
+[{"conclusion":"failure","url":"https://x/run/4","createdAt":"$NOWISO"},{"conclusion":"success","url":"https://x/run/3","createdAt":"$NOWISO"},{"conclusion":"failure","url":"https://x/run/2","createdAt":"$NOWISO"}]
 J
 "$REPORT" streak codex-contract 2
 drift_hasnt 'Red contracts'
 
 echo "== case 22: fewer than N finished runs is not a streak =="
-echo '[{"conclusion":"failure","url":"https://x/run/9"}]' > "$STUB_RUNS/claude-tui-contract.json"
+echo '[{"conclusion":"failure","url":"https://x/run/9","createdAt":"'"$NOWISO"'"}]' > "$STUB_RUNS/claude-tui-contract.json"
 "$REPORT" streak claude-tui-contract 2
 drift_hasnt 'claude-tui-contract'
+
+echo "== case 22b: a red streak whose newest run is 30 days old is history, and is dropped =="
+cat > "$STUB_RUNS/agy-contract.json" <<J
+[{"conclusion":"failure","url":"https://x/run/8","createdAt":"$NOWISO"},{"conclusion":"failure","url":"https://x/run/7","createdAt":"$NOWISO"}]
+J
+"$REPORT" streak agy-contract 2
+drift_has '`agy-contract` failed its last 2 runs'   # control: fresh -> flagged
+cat > "$STUB_RUNS/agy-contract.json" <<J
+[{"conclusion":"failure","url":"https://x/run/8","createdAt":"$OLDISO"},{"conclusion":"failure","url":"https://x/run/7","createdAt":"$OLDISO"}]
+J
+"$REPORT" streak agy-contract 2
+drift_hasnt 'agy-contract'
+
+echo "== case 23: a write overwritten by a stale concurrent writer is re-applied =="
+"$REPORT" failure kiro 0.3.0
+touch "$STUB_RUNS/clobber"
+"$REPORT" failure opencode 1.2.0
+[ ! -e "$STUB_RUNS/clobber" ] || fail "the clobber hook never fired; the case proves nothing"
+drift_has '`opencode` `1.2.0`'
+drift_has '`kiro` `0.3.0`'
+
+echo "== case 24: success clears the red marker as well as the row =="
+state_is red opencode 1.2.0
+"$REPORT" success opencode
+state_is red opencode none
+drift_hasnt '`opencode`'
 
 echo "OK: one unreadable release source no longer stops the watcher"
