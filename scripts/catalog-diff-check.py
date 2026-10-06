@@ -5,7 +5,7 @@ Compares console/src/lib/i18n/locales/ja/<domain>.ts with its content at a git r
 fails when a rewrite changed anything but the wording of values. Local use only; it is
 not wired into CI (the same stance as scripts/guide-diff-check.py).
 
-    python3 scripts/catalog-diff-check.py <ref> [--allow-labels] [--list-pinned] [files...]
+    python3 scripts/catalog-diff-check.py <ref> [--lang en] [--allow-labels] [--list-pinned] [files...]
 
 With no files, it checks every ja/*.ts file that differs from <ref> in the working tree.
 Per file, it fails (category in brackets) when:
@@ -46,6 +46,27 @@ or cut before the part the rewrite changed) is invisible here, because there is 
 fragment to match. After a rewrite, also search the guide for the first words of each
 changed value that is cited by sentence.
 
+--lang en  checks the English catalogue (locales/en/*.ts) instead. ja is the canonical source
+and en is derived from it, so an en rewrite must keep meaning parity with ja; the script holds
+the structure and the facts, a reviewer judges the meaning (see --triples). Differences:
+
+  target     en/*.ts may change; anything else under locales/ (ja/ included) fails [outside]
+  invariants placeholders, slots, digits, code, newlines, edge as in ja, plus (instead of
+             latin) caps (ALL_CAPS words), idents (paths, env vars, snake_case, dotted names,
+             --flags, camelCase, CLI/product names), quoted ("..." contents), marks (-> and
+             the warning sign)
+  glossary   the Screen column of guide/ref/glossary.md, matched case-insensitively on word
+             boundaries (a plural s is the same word), counted as multisets
+  labels     at most 30 characters and no sentence-ending punctuation
+  PINNED     clauses split at sentence ends, {x} and line breaks, at least 20 characters;
+             searched in guide/**/*.md except *.ja.md and README*.md, console tests, Go
+             sources (not af-usage.md); a label also as "label", **label**, 'label', `label`
+  warnings   per changed value, a change in the count of a restriction word (only, never,
+             must, not, cannot, default, required, unless, except) is printed as WARN and
+             counted on a "warnings:" line; it never fails the run
+  --triples  prints key, current ja, en old, en new for every changed en value (TSV) and
+             exits 0, for the reviewer who judges meaning parity. Read-only.
+
 Counts are always printed: values checked, values changed, failures per category.
 Exit status: 0 clean, 1 any FAIL or PINNED, 2 the check could not run (bad ref, no node).
 It does not judge meaning. Pair it with a read of the diff.
@@ -81,9 +102,92 @@ CATEGORIES = ['skeleton', 'keys', 'outside', *INVARIANTS, 'newlines', 'edge', 'g
               'label', 'pinned']
 
 # Where an old quote may still live. Matched against `git ls-files` paths.
+PIN_GLOBS_EN = ['guide/*.md', 'console/*.test.*', 'console-e2e/*.ts', 'control-plane/*.go',
+                'workspace/*.go', 'e2e/*.go', 'deploy/*.go']
 PIN_GLOBS = ['guide/*.ja.md', 'console/*.test.*', 'console-e2e/*.ts', 'control-plane/*.go',
              'workspace/*.go', 'e2e/*.go', 'deploy/*.go', 'workspace/agent/knowledge/af-usage.md']
 CODE_SUFFIXES = ('.go', '.ts', '.tsx', '.js', '.jsx', '.mjs')
+
+EN_DIR = CATALOGUE + '/en/'
+GLOSSARY_EN = 'guide/ref/glossary.md'
+LABEL_MAX_EN = 30
+FRAGMENT_MIN_EN = 20
+SPLIT_CLAUSE_EN = re.compile(r'[.!?]\s+|\{\w+\}|</?\d+/?>|\n')
+# CLI and product names that must survive a rewrite verbatim (case included).
+PRODUCT_NAMES = ['claude', 'codex', 'agy', 'opencode', 'kiro', 'copilot', 'rovo', 'muse',
+                 'cursor', 'tmux', 'git', 'gh', 'npm', 'ssh', 'aws', 'gcloud', 'kubectl', 'docker',
+                 'github', 'gitlab', 'bitbucket', 'jira', 'svn', 'ssm', 'ecs', 'lcpp', 'ollama']
+NOT_PATHS = {'and/or', 'either/or', 'his/her', 'he/she', 'w/o', 'n/a'}
+RESTRICTION_WORDS = ['only', 'never', 'must', 'not', 'cannot', 'default', 'required',
+                     'unless', 'except']
+
+_PATH = re.compile(r'(?<![\w<])(?:/[\w.~@-]+)+|[\w.~@-]+(?:/[\w.~@-]+)+')
+_IDENT = re.compile('|'.join([
+    r'\b[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+\b',            # snake_case, AF_MASTER_KEY
+    r'\b\w+(?:\.\w{2,})+\b',                          # config.json, 127.0.0.1
+    r'(?<!\w)--?[A-Za-z][\w-]*',                      # --flag
+    r'\b[a-z]+[A-Z]\w*|\b[A-Z][a-z]+[A-Z]\w*',        # camelCase, ComfyUI
+]))
+# Case-insensitive to find them, kept verbatim so Codex and codex are different items.
+_PRODUCT = re.compile(r'\b(?:%s)\b' % '|'.join(PRODUCT_NAMES), re.I)
+
+
+def en_idents(v):
+    return ([m for m in _PATH.findall(v) if m not in NOT_PATHS] + _IDENT.findall(v)
+            + _PRODUCT.findall(v))
+
+
+def _rx(pattern):
+    return re.compile(pattern).findall
+
+
+INVARIANTS_EN = {
+    'placeholders': INVARIANTS['placeholders'].findall,
+    'slots': INVARIANTS['slots'].findall,
+    'digits': INVARIANTS['digits'].findall,
+    'code': INVARIANTS['code'].findall,
+    'caps': _rx(r'\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*\b(?<=[A-Z0-9_]{2})'),
+    'idents': en_idents,
+    'quoted': lambda v: [a or b for a, b in re.findall(r'"([^"]*)"|“([^”]*)”', v)],
+    'marks': _rx('→|⚠'),
+}
+CATEGORIES_EN = ['skeleton', 'keys', 'outside', *INVARIANTS_EN, 'newlines', 'edge', 'glossary',
+                 'label', 'pinned']
+
+
+def en_glossary_terms(text):
+    """Screen-column terms of glossary.md as case-insensitive word-boundary patterns."""
+    terms = {}
+    for line in text.split('\n'):
+        if not line.startswith('|'):
+            continue
+        cell = line.strip('|').split('|')[0].replace('`', '').strip()
+        if not cell or set(cell) <= set('-: ') or cell == 'Screen':
+            continue
+        base = re.split(r'\s*\(', cell)[0].strip()
+        if len(base) >= 2 and '/' not in base:
+            terms.setdefault(base.lower(), base)
+    return {t: re.compile(r'\b%s(?:es|s)?\b' % re.escape(t), re.I) for t in sorted(terms.values(), key=str.lower)}
+
+
+def label_like_en(v):
+    return len(v) <= LABEL_MAX_EN and not re.search(r'[.!?](\s|$)', v)
+
+
+def clauses_en(old, new):
+    out = []
+    for s in SPLIT_CLAUSE_EN.split(old):
+        s = s.strip().rstrip('.!?').strip()
+        if len(s) >= FRAGMENT_MIN_EN and s not in new:
+            out.append(s)
+    return out
+
+
+def restriction_counts(v):
+    v = v.replace('’', "'")
+    v = re.sub(r"\bcan't\b", 'cannot', v, flags=re.I)
+    v = re.sub(r"\b(?:\w+)n't\b", 'not', v, flags=re.I)
+    return collections.Counter(w for w in re.findall(r'[a-z]+', v.lower()) if w in RESTRICTION_WORDS)
 
 
 class Fail(Exception):
@@ -178,13 +282,19 @@ class Sources:
     """Every file a quote of a catalogue value could live in, with hard wraps folded away so
     a sentence wrapped across lines (even indented) still matches."""
 
-    def __init__(self):
+    def __init__(self, lang='ja'):
+        self.lang = lang
         self.files = {}
         names = git('ls-files', '-co', '--exclude-standard', '-z').split('\0')
         for name in names:
             if not name or name.startswith(CATALOGUE + '/'):
                 continue
-            if not any(fnmatch.fnmatch(name, g) for g in PIN_GLOBS):
+            if lang == 'en':
+                base = name.rsplit('/', 1)[-1]
+                if name.endswith('.ja.md') or base.startswith('README') or \
+                        not any(fnmatch.fnmatch(name, g) for g in PIN_GLOBS_EN):
+                    continue
+            elif not any(fnmatch.fnmatch(name, g) for g in PIN_GLOBS):
                 continue
             try:
                 with open(name, encoding='utf-8') as fh:
@@ -193,12 +303,14 @@ class Sources:
                 continue
             # Fold hard wraps: a continuation line loses its indentation, and a blank
             # line is a barrier so text from two paragraphs never joins into a quote.
+            # English words are separated by the line break that wrapped them; Japanese has none.
+            sep = ' ' if lang == 'en' else ''
             starts, flat, pos = [], [], 0
             for ln in text.split('\n'):
                 ln = ln.strip() and ln.lstrip(' \t') or '\0'
                 starts.append(pos)
-                flat.append(ln)
-                pos += len(ln)
+                flat.append(ln + sep)
+                pos += len(ln) + len(sep)
             self.files[name] = (''.join(flat), starts)
 
     def find(self, needle):
@@ -214,7 +326,10 @@ class Sources:
         hits = []
         for name in self.files:
             forms = ['「%s」' % label, '**%s**' % label]
-            if name.endswith(CODE_SUFFIXES):
+            if self.lang == 'en':
+                forms = ['**%s**' % label, '"%s"' % label, '“%s”' % label, "'%s'" % label,
+                         '`%s`' % label]
+            elif name.endswith(CODE_SUFFIXES):
                 forms += ['"%s"' % label, "'%s'" % label, '`%s`' % label]
             for f in forms:
                 hits += [h for h in self.find_in(name, f)]
@@ -229,14 +344,24 @@ class Sources:
 
 
 def main(argv):
-    ap = argparse.ArgumentParser(prog='catalog-diff-check.py', usage='%(prog)s <ref> [--allow-labels] [--list-pinned] [files...]')
+    ap = argparse.ArgumentParser(prog='catalog-diff-check.py', usage='%(prog)s <ref> [--lang en] [--allow-labels] [--list-pinned] [--triples] [files...]')
     ap.add_argument('ref')
     ap.add_argument('files', nargs='*')
+    ap.add_argument('--lang', choices=['ja', 'en'], default='ja',
+                    help='catalogue to check (default ja)')
+    ap.add_argument('--triples', action='store_true',
+                    help='en only: print key, ja, en old, en new for every changed value, exit 0')
     ap.add_argument('--allow-labels', action='store_true')
     ap.add_argument('--list-pinned', action='store_true')
     ap.add_argument('--exempt-pin', action='append', default=[], metavar='KEY@PATH[:LINE]',
                     help='accept one reviewed PINNED hit that is not a citation of the value')
     args = ap.parse_args(argv)
+    en = args.lang == 'en'
+    if args.triples and not en:
+        print('error: --triples needs --lang en', file=sys.stderr)
+        return 2
+    target = EN_DIR if en else JA_DIR
+    cats = CATEGORIES_EN if en else CATEGORIES
 
     exempt = []
     for spec in args.exempt_pin:
@@ -249,7 +374,7 @@ def main(argv):
     used = set()
     exempted = 0
     fails = collections.Counter()
-    listing = args.list_pinned
+    listing = args.list_pinned or args.triples
 
     def fail(cat, msg):
         fails[cat] += 1
@@ -262,28 +387,30 @@ def main(argv):
         if subprocess.run(['git', 'rev-parse', '--verify', '--quiet', args.ref + '^{commit}'],
                           capture_output=True).returncode:
             raise Fail(f'unknown ref {args.ref!r}')
-        changed = [f for f in git('diff', '--name-only', '-z', args.ref, '--', JA_DIR).split('\0') if f]
-        changed += [f for f in git('ls-files', '-o', '--exclude-standard', '-z', '--', JA_DIR).split('\0') if f]
+        changed = [f for f in git('diff', '--name-only', '-z', args.ref, '--', target).split('\0') if f]
+        changed += [f for f in git('ls-files', '-o', '--exclude-standard', '-z', '--', target).split('\0') if f]
         files = args.files or sorted(set(f for f in changed if f.endswith('.ts')))
         for f in files:
-            if not (f.startswith(JA_DIR) and f.endswith('.ts')):
-                raise Fail(f'{f}: not a {JA_DIR}*.ts file')
-        with open(GLOSSARY, encoding='utf-8') as fh:
-            terms = glossary_terms(fh.read())
-        sources = Sources()
+            if not (f.startswith(target) and f.endswith('.ts')):
+                raise Fail(f'{f}: not a {target}*.ts file')
+        with open(GLOSSARY_EN if en else GLOSSARY, encoding='utf-8') as fh:
+            terms = en_glossary_terms(fh.read()) if en else glossary_terms(fh.read())
+        sources = Sources(args.lang)
     except Fail as e:
         print(f'error: {e}', file=sys.stderr)
         return 2
 
-    # Anything under locales/ outside ja/: en catalogues must not move in a ja rewrite.
+    # Anything under locales/ outside the target dir must not move in a rewrite.
     outside = set(git('diff', '--name-only', '-z', args.ref, '--', CATALOGUE).split('\0'))
     outside |= set(git('ls-files', '-o', '--exclude-standard', '-z', '--', CATALOGUE).split('\0'))
-    for f in sorted(x for x in outside if x and not x.startswith(JA_DIR)):
-        fail('outside', f'{f} changed (only ja/*.ts may change)')
+    for f in sorted(x for x in outside if x and not x.startswith(target)):
+        fail('outside', f'{f} changed (only {"en" if en else "ja"}/*.ts may change)')
 
     checked = changed_n = 0
     labels = []
     pins = []
+    warns = []
+    triples = []
     tmpdir = tempfile.TemporaryDirectory(dir=os.environ.get('AF_WORK_DIR') or None)
     try:
         for path in files:
@@ -318,8 +445,11 @@ def main(argv):
                     continue
                 changed_n += 1
                 where = f'{path} {key}'
-                for name, rx in INVARIANTS.items():
-                    a, b = collections.Counter(rx.findall(o)), collections.Counter(rx.findall(n))
+                if args.triples:
+                    triples.append((path, key, o, n))
+                    continue
+                for name, extract in (INVARIANTS_EN if en else {k: v.findall for k, v in INVARIANTS.items()}).items():
+                    a, b = collections.Counter(extract(o)), collections.Counter(extract(n))
                     if a != b:
                         fail(name, f'{where}: removed={list((a - b).elements())[:6]} added={list((b - a).elements())[:6]}')
                 if o.count('\n') != n.count('\n'):
@@ -327,17 +457,30 @@ def main(argv):
                 if o[:len(o) - len(o.lstrip())] != n[:len(n) - len(n.lstrip())] or \
                         o[len(o.rstrip()):] != n[len(n.rstrip()):]:
                     fail('edge', f'{where}: leading/trailing whitespace changed')
-                for t in terms:
-                    if o.count(t) != n.count(t):
-                        fail('glossary', f'{where}: 「{t}」 {o.count(t)} -> {n.count(t)}')
-                if label_like(o) or label_like(n):
+                if en:
+                    for t, rx in terms.items():
+                        oc, nc = len(rx.findall(o)), len(rx.findall(n))
+                        if oc != nc:
+                            fail('glossary', f'{where}: "{t}" {oc} -> {nc}')
+                    ro, rn = restriction_counts(o), restriction_counts(n)
+                    if ro != rn:
+                        diff = ', '.join(f'{w} {ro[w]} -> {rn[w]}' for w in RESTRICTION_WORDS if ro[w] != rn[w])
+                        warns.append(where)
+                        if not listing:
+                            print(f'WARN restriction: {where}: {diff}')
+                else:
+                    for t in terms:
+                        if o.count(t) != n.count(t):
+                            fail('glossary', f'{where}: 「{t}」 {o.count(t)} -> {n.count(t)}')
+                lab = label_like_en if en else label_like
+                if lab(o) or lab(n):
                     labels.append((where, o, n))
                     if not args.allow_labels:
                         fail('label', f'{where}: label {o!r} -> {n!r} (pass --allow-labels to reword labels)')
                 found = set()
-                for frag in clauses(o, n):
+                for frag in (clauses_en if en else clauses)(o, n):
                     found.update((h, frag) for h in sources.find(frag))
-                if label_like(o):
+                if lab(o):
                     found.update((h, o) for h in sources.find_label(o))
                 for (name, line), text in sorted(found):
                     hit = next((e for e in exempt if e[0] == key and e[1] == name and e[2] in ('', str(line))), None)
@@ -352,6 +495,22 @@ def main(argv):
     finally:
         tmpdir.cleanup()
 
+    if args.triples:
+        # The ja value is read from the working tree: ja is canonical and untouched by an en rewrite.
+        ja_cache = {}
+        print('key\tja\ten old\ten new')
+        for path, key, o, n in triples:
+            ja_path = JA_DIR + path[len(EN_DIR):]
+            if ja_path not in ja_cache:
+                try:
+                    ja_cache[ja_path] = evaluate(ja_path) if os.path.exists(ja_path) else {}
+                except Fail as e:
+                    print(f'error: {ja_path}: {e}', file=sys.stderr)
+                    return 2
+            esc = lambda v: v.replace('\\', '\\\\').replace('\t', '\\t').replace('\n', '\\n')
+            print('\t'.join([key, esc(ja_cache[ja_path].get(key, '')), esc(o), esc(n)]))
+        print(f'{len(triples)} changed value(s)', file=sys.stderr)
+        return 0
     if listing:
         for key, loc, text in pins:
             print(f'{loc}\t{key}\t{text}')
@@ -365,7 +524,9 @@ def main(argv):
         if spec not in used:
             print(f'WARN: --exempt-pin {spec} matched nothing (stale exemption)')
     print(f'{len(files)} file(s), {checked} value(s) checked, {changed_n} changed, {exempted} pin(s) exempted')
-    print('failures: ' + ', '.join(f'{c}={fails[c]}' for c in CATEGORIES))
+    print('failures: ' + ', '.join(f'{c}={fails[c]}' for c in cats))
+    if en:
+        print(f'warnings: restriction={len(warns)}')
     return 1 if fails else 0
 
 

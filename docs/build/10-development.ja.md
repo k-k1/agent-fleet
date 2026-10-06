@@ -454,3 +454,25 @@ opencode・copilot・cursor で、kiro（ログインが要る）と agy（ラ�
 文の頭だけの引用や、旧い節を丸ごとは含まない引用は検索されません。書き換えたあとで、変更した値の書き出しをガイドで手検索してください。意味の良し悪しは判定
 しません。`scripts/guide-diff-check.py` と同じくローカル専用で CI には載せません。テストは
 `python3 -m unittest discover -s scripts -p test_catalog_diff_check.py` です。
+
+#### `--lang en`: 英語カタログ
+
+`--lang en` は同じスクリプトを `locales/en/<ドメイン>.ts` に向け、英語文言の見直しを守ります。
+正本は ja で en は ja から派生するため、書き換えは ja との意味の一致を保つ必要があります。
+スクリプトが守るのは構造と事実で、意味の良し悪しは人が判断します。フラグなし（既定）は上の
+ja モードのままで、結果は変わりません。en モードでは `en/` 以外（`ja/` を含む）の変更は失敗で、
+キー・順序・ファイルの扱いは同じです。変更した値ごとに、ASCII の語の規則の代わりに、
+`{プレースホルダ}`・Trans のスロット・数字・`code` スパン・改行・前後の空白に加えて、全大文字の語、
+識別子（パス、`AF_MASTER_KEY` のような環境変数、snake_case やドット区切りの名前、`--flag`、
+`codex` のような CLI・製品名。大文字小文字も含む）、`"…"` の中身、→ と ⚠ の多重集合が前後で
+同じであることを求めます。用語は `guide/ref/glossary.md` の Screen 列で、大文字小文字を区別せず
+単語境界で数えます（複数形の `s` は同じ語）。ラベルは 30 文字以下で文末記号なしの値です
+（`--allow-labels` は従来どおり）。PINNED は旧文面を文末・`{x}`・改行で分けた 20 文字以上の節で、
+`*.ja.md` と `README*.md` を除く `guide/**/*.md`・Console のテスト・Go のソースを検索します（日本語文書の `workspace/agent/knowledge/af-usage.md` は対象外）。ラベルは
+`**label**`・`"label"`・`'label'`・`` `label` `` の形でも探します。
+`--list-pinned` と `--exempt-pin` は ja モードと同じです。変更した値で制限語（only, never, must,
+not, cannot, default, required, unless, except。`can't`・`n't` は長い形として数える）の個数が
+変わると `WARN restriction` を出して `warnings:` 行に合算します。失敗にはしませんが、
+その書き換えは人の目で見る価値があります。`--triples` は変更した値ごとに `key`・現在の ja の値・
+旧 en・新 en を TSV（タブと改行はエスケープ）で出して終了コード 0 で終わり、ja との意味の
+一致を見るレビュー役に渡します。CI には載せません。

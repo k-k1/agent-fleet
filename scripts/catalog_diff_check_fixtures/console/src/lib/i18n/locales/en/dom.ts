@@ -1,3 +1,17 @@
 export const dom = {
   "dom.toggle": "Autosave is OFF.",
+  // a comment that must not move
+  "dom.days": "Archived after 3 days.",
+  "dom.profiles": "{profiles} profiles found.",
+  "dom.trans": "Change this in <0>Settings</0>.<1/>",
+  "dom.quote": "Press \"Restart\" to continue.",
+  "dom.code": "Run `npm test` now.",
+  "dom.multi": "Line one.\nLine two.",
+  "dom.gloss": "Starting the Workspace.",
+  "dom.label": "Stop",
+  "dom.pinned": "This cannot be undone, so take care before you continue.",
+  "dom.wording": "Save your settings — then close this screen.",
+  "dom.concat": "First half. " + "Second half.",
+  "dom.lang": "Language",
+  "dom.edge": " Leading space here.",
 };

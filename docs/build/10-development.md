@@ -513,3 +513,28 @@ quote that does not contain a whole old clause, is not searched; after a rewrite
 the guide by hand for the opening words of each changed value. It does not judge meaning, and, like
 `scripts/guide-diff-check.py`, it is for local use and is not part of CI. Its tests are
 `python3 -m unittest discover -s scripts -p test_catalog_diff_check.py`.
+
+#### `--lang en`: the English catalogue
+
+`--lang en` points the same script at `locales/en/<domain>.ts` to guard a wording pass over
+the English strings. ja is the canonical source and en is derived from it, so a rewrite must
+keep meaning parity with ja; the script holds the structure and the facts, a reviewer judges
+the meaning. The default (no flag) is the ja mode above, unchanged. In en mode any change
+outside `en/` (`ja/` included) fails, and the key, order and file rules are the same. Per
+changed value, instead of the ASCII-word rule it compares the multisets of `{placeholders}`,
+Trans slots, digits, `code` spans, line breaks and edge whitespace, plus ALL_CAPS words,
+identifiers (paths, env vars such as `AF_MASTER_KEY`, snake_case and dotted names, `--flags`,
+CLI and product names such as `codex`, case included), the contents of `"…"` quotes and the
+→ and ⚠ marks. The glossary is the Screen column of `guide/ref/glossary.md`, matched
+case-insensitively on word boundaries (a plural `s` is the same word). A label is at most 30
+characters with no sentence-ending punctuation (`--allow-labels` as before). PINNED splits the old
+text at sentence ends, `{x}` slots and line breaks (clauses of 20+ characters) and searches
+`guide/**/*.md` except `*.ja.md` and `README*.md`, console tests and Go sources (not `workspace/agent/knowledge/af-usage.md`, a Japanese
+document); a label is also looked for as `**label**`, `"label"`, `'label'` and `` `label` ``;
+`--list-pinned` and `--exempt-pin` work as in ja mode. A change in the count of a restriction
+word (only, never, must, not, cannot, default, required, unless, except; `can't` and `n't`
+count as their long forms) in a changed value prints `WARN restriction` and is totalled on a
+`warnings:` line; it never fails the run, but the rewrite deserves a human look.
+`--triples` prints `key`, the current ja value, the old en and the new en for every changed
+value as TSV (tabs and line breaks escaped) and exits 0, for the reviewer comparing meaning
+against ja. Not part of CI.
