@@ -83,6 +83,7 @@ func TestContractLiveCopilotForkAt(t *testing.T) {
 
 	// The codewords are not guessable words: a session with no history asked for "the
 	// codeword" answered "ALPHA-17" in 1 of 3 probes, which would pass as carried history.
+	// 0 of 5 no-history probes named MARMOT or QUILL; keep them unlike everyday words.
 	src := copilotUUID(t)
 	copilotPrompt(t, home, work, src, "Remember the codeword MARMOT. Reply exactly: OK")
 	copilotPrompt(t, home, work, src, "Forget that. The codeword is now QUILL. Reply exactly: OK")
