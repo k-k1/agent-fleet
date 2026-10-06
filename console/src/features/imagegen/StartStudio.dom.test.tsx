@@ -242,7 +242,7 @@ describe("start a studio from a working-copy row", () => {
     await act(async () => root.render(<AttachAgentModal onClose={() => {}} onAttach={async () => true} />));
     await settle();
     expect(summary()).toBeNull();
-    expect(document.body.textContent).toContain("親のクローンが一覧に無い");
+    expect(document.body.textContent).toContain("親のクローンが一覧にない");
   });
 
   it("names the image model and the agent's model apart", async () => {
