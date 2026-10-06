@@ -165,12 +165,12 @@ describe("relTime", () => {
 
   it("changes unit at each step", () => {
     expect(at("2026-08-27T11:59:40Z")).toBe("たった今");
-    expect(at("2026-08-27T11:25:00Z")).toBe("35分前");
-    expect(at("2026-08-27T09:00:00Z")).toBe("3時間前");
-    expect(at("2026-08-24T12:00:00Z")).toBe("3日前");
-    expect(at("2026-08-06T12:00:00Z")).toBe("3週間前");
-    expect(at("2026-05-29T12:00:00Z")).toBe("3か月前");
-    expect(at("2024-08-27T12:00:00Z")).toBe("2年前");
+    expect(at("2026-08-27T11:25:00Z")).toBe("35 分前");
+    expect(at("2026-08-27T09:00:00Z")).toBe("3 時間前");
+    expect(at("2026-08-24T12:00:00Z")).toBe("3 日前");
+    expect(at("2026-08-06T12:00:00Z")).toBe("3 週間前");
+    expect(at("2026-05-29T12:00:00Z")).toBe("3 か月前");
+    expect(at("2024-08-27T12:00:00Z")).toBe("2 年前");
   });
 
   it("says nothing for an empty or broken value, rather than drawing an empty clock", () => {
@@ -192,8 +192,8 @@ describe("railWhen", () => {
   });
 
   it("appears only on rows that have been sitting", () => {
-    expect(at("2026-08-24T12:00:00Z")).toBe("3日前");
-    expect(at("2026-05-29T12:00:00Z")).toBe("3か月前");
+    expect(at("2026-08-24T12:00:00Z")).toBe("3 日前");
+    expect(at("2026-05-29T12:00:00Z")).toBe("3 か月前");
   });
 
   it("says nothing for an empty or broken value", () => {
