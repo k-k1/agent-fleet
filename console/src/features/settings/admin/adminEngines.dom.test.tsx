@@ -190,7 +190,7 @@ describe("EnginesAdminView", () => {
   it("marks a row naming an images provider this build does not implement", async () => {
     api.mockResolvedValue({ super_admin: true, engines: [row({ provider_unserved: true })] });
     await mount();
-    expect(host!.textContent).toContain("sdcpp」を名乗っていますが");
+    expect(host!.textContent).toContain("sdcpp」として設定されていますが");
   });
 
   it("leaves a row naming a servable provider unmarked", async () => {
