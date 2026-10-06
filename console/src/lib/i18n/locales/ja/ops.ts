@@ -10,7 +10,7 @@ export const ops = {
   "ops.ws_required_hint": "API キーはコンテナ内の Agent が暗号化保存するため、ワークスペースの起動が必要です。",
   "ops.start_ws": "ワークスペースを起動",
   "ops.intro":
-    "インシデント対応・監視運用・クラウド構築の連携です。接続すると「SRE アシスタント」がこれらを読み取り専用で参照して壁打ちに使います（AWS は対話セッションからも使えます）。接続の変更は次のチャット送信・次のセッション起動から反映されます（ワークスペースの再起動は不要）。",
+    "インシデント対応・監視運用・クラウド構築の連携です。接続すると「SRE アシスタント」がこれらを読み取り専用で参照して壁打ちに使います（AWS は対話セッションからも使えます）。接続の変更は次のチャット送信・次のセッション起動から反映されます（ワークスペースの再起動は不要です）。",
   "ops.cat_incident": "インシデント管理",
   "ops.cat_monitoring": "監視 / メトリクス",
   "ops.cat_cloud": "クラウド（構築・運用）",
@@ -24,7 +24,7 @@ export const ops = {
   "ops.grafana_url_placeholder": "Grafana URL（https://grafana.example.com）",
   "ops.grafana_token_placeholder": "サービスアカウントトークン",
   "ops.grafana_hint":
-    "Viewer 権限のサービスアカウントトークンを推奨します。トークンはワークスペース内に暗号化保存され、MCP サーバーの起動時にだけ渡されます（書き込み・管理ツールは無効で起動）。Amazon Managed Grafana の場合は URL に workspace endpoint（g-xxxx.grafana-workspace.リージョン.amazonaws.com）を指定してください（トークンは最長30日で失効するため、失効したら貼り直します）。",
+    "Viewer 権限のサービスアカウントトークンを推奨します。トークンはワークスペース内に暗号化保存され、MCP サーバーの起動時にだけ渡されます（書き込み・管理ツールは無効にして起動されます）。Amazon Managed Grafana の場合は URL に workspace endpoint（g-xxxx.grafana-workspace.リージョン.amazonaws.com）を指定してください（トークンは最長30日で失効するため、失効したら貼り直します）。",
   "ops.cw_profile_select": "プロファイルを選択…",
   "ops.cw_manual_option": "手動入力（自分の ~/.aws のプロファイル）",
   "ops.cw_no_profiles": "SSO プロファイルが未登録のため手動入力になります。",
@@ -32,7 +32,7 @@ export const ops = {
   "ops.cw_manual_placeholder": "~/.aws のプロファイル名",
   "ops.cw_region_placeholder": "リージョン（任意）",
   "ops.cw_hint":
-    "秘密は保存しません。SSM 接続のプロファイルを選ぶと、その SSO 設定（非秘密）から専用の設定ファイルを生成して使います。ログの検索・アラーム履歴・メトリクス分析など読み取り専用ツールのみです。SSO ログインがまだ（または期限切れ）の場合は、該当の SSM セッションを一度開くか、ターミナルで `AWS_CONFIG_FILE=~/.aws/af-ops/cloudwatch.config aws sso login --profile プロファイル名` を実行してください。",
+    "秘密は保存しません。SSM 接続のプロファイルを選ぶと、その SSO 設定（非秘密）から専用の設定ファイルを生成して使います。ログの検索・アラーム履歴・メトリクス分析など読み取り専用ツールだけです。SSO ログインがまだ（または期限切れ）の場合は、該当の SSM セッションを一度開くか、ターミナルで `AWS_CONFIG_FILE=~/.aws/af-ops/cloudwatch.config aws sso login --profile プロファイル名` を実行してください。",
   "ops.aws_endpoint_option": "MCP エンドポイント: {region}",
   "ops.aws_write": "書き込みツール",
   "ops.aws_write_sub":
@@ -40,7 +40,7 @@ export const ops = {
   "ops.aws_mode_read": "読み取り専用",
   "ops.aws_mode_write": "書き込み可",
   "ops.aws_hint":
-    "AWS が提供する MCP サーバー（Agent Toolkit for AWS）に、公式プロキシ経由で接続します。秘密は保存せず、選んだプロファイルの AWS 認証情報でリクエストに署名します。AWS ドキュメント検索・スキル取得・AWS API 参照などが使えます。CloudWatch と違い、アシスタントだけでなく対話セッションにも接続されます。エンドポイントは MCP サーバー自体が動くリージョン、上のリージョン欄は自分のリソースがあるリージョンです。SSO ログインがまだ（または期限切れ）の場合は、該当の SSM セッションを一度開くか、ターミナルで `AWS_CONFIG_FILE=~/.aws/af-ops/aws.config aws sso login --profile プロファイル名` を実行してください。",
+    "AWS が提供する MCP サーバー（Agent Toolkit for AWS）に、公式プロキシ経由で接続します。秘密は保存せず、選んだプロファイルの AWS 認証情報でリクエストに署名します。AWS ドキュメント検索・スキル取得・AWS API 参照などが使えます。CloudWatch と違い、アシスタントだけでなく対話セッションにも接続されます。エンドポイントは MCP サーバー自体が動くリージョンで、上のリージョン欄は自分のリソースがあるリージョンです。SSO ログインがまだ（または期限切れ）の場合は、該当の SSM セッションを一度開くか、ターミナルで `AWS_CONFIG_FILE=~/.aws/af-ops/aws.config aws sso login --profile プロファイル名` を実行してください。",
   "ops.cat_chat": "チャット通知（ブリッジ）",
   "ops.dc_token_placeholder": "Discord Bot トークン",
   "ops.dc_verify": "トークンを検証",
@@ -49,25 +49,25 @@ export const ops = {
   "ops.dc_channel_select": "通知先チャンネルを選択…",
   "ops.dc_advanced_dm": "上級者向け: DM に送る（ユーザーID 手入力）",
   "ops.dc_advanced_channel": "チャンネル選択に戻す",
-  "ops.dc_test_sent": "テスト通知を送りました — Discord に届いていれば設定完了です",
+  "ops.dc_test_sent": "テスト通知を送りました。Discord に届いていれば設定完了です",
   "ops.dc_test_failed": "接続は保存しましたがテスト送信に失敗しました: {msg}",
   "ops.dc_user_placeholder": "自分の Discord ユーザー ID（数字）",
   "ops.dc_threads_label": "セッション毎にスレッド分割",
-  "ops.dc_threads_sub": "初回通知からスレッドを起こし、以後の通知を同じスレッドにまとめます（24時間で自動アーカイブ・投稿で自動復帰）",
+  "ops.dc_threads_sub": "初回通知からスレッドを作り、以後の通知を同じスレッドにまとめます（24時間で自動でアーカイブされ、投稿があると自動で復帰します）",
   "ops.dc_mention_label": "メンション先ユーザー ID",
   "ops.dc_mention_auto": "サーバーオーナー @{name} を自動設定（あなた自身のはず — 違う場合のみ書き換え）",
   "ops.dc_mention_placeholder": "空でメンションなし",
   "ops.dc_receive_label": "返信で操縦（双方向）",
-  "ops.dc_receive_sub": "セッションのスレッドに返信すると、その本文がセッションへ入力されます。質問・許可・プラン承認はボタンで回答できます。専用スレッド「🛰 フリート・オペレーター」も作成され、そこへ返信するとフリート・オペレーターと会話できます（稼働確認・セッション起動・指示）。Discord 開発者ポータルで Bot の MESSAGE CONTENT INTENT を有効化してください（本人の返信・押下のみ届きます）",
+  "ops.dc_receive_sub": "セッションのスレッドに返信すると、その本文がセッションへ入力されます。質問・許可・プラン承認はボタンで回答できます。専用スレッド「🛰 フリート・オペレーター」も作成され、そこへ返信するとフリート・オペレーターと会話できます（稼働確認・セッション起動・指示）。Discord 開発者ポータルで Bot の MESSAGE CONTENT INTENT を有効化してください（届くのは本人の返信・押下だけです）",
   "ops.dc_mirror_label": "入力もスレッドへ写す",
-  "ops.dc_mirror_sub": "Console で送った入力を、そのセッションのスレッドにも投稿します（スレッドが双方向の写しになります・既定オン）。オペレーターや MCP 由来の注入は対象外です",
+  "ops.dc_mirror_sub": "Console で送った入力を、そのセッションのスレッドにも投稿します（スレッドが双方向の写しになります。既定ではオンです）。オペレーターや MCP 由来の注入は対象外です",
   "ops.dc_pill_threads": "スレッド",
   "ops.dc_pill_receive": "受信",
   "ops.dc_pill_operator": "オペレーター",
   "ops.dc_pill_fulltext": "全文",
   "ops.dc_pill_mirror": "入力写し",
   "ops.dc_fulltext_label": "全文モード（応答本文をチャットに載せる）",
-  "ops.dc_fulltext_sub": "応答完了時に、最終ターンの本文をチャットへ投稿します。Console を外から開けないローカル環境向け（既定オフ）。秘密の疑いは自動で伏字化し、2000字ごとに分割します。本人が両端を所有する前提でのみ有効化してください",
+  "ops.dc_fulltext_sub": "応答完了時に、最終ターンの本文をチャットへ投稿します。Console を外から開けないローカル環境向けで、既定ではオフです。秘密の疑いは自動で伏字化し、2000字ごとに分割します。本人が両端を所有する前提でのみ有効化してください",
   "ops.dc_edit": "編集",
   "ops.dc_events_all": "すべて",
   "ops.dc_events_label": "送る通知",
@@ -79,16 +79,16 @@ export const ops = {
   "ops.ev_exit": "異常終了",
   "ops.ev_report": "完了報告",
   "ops.dc_hint":
-    "Discord Developer Portal（discord.com/developers/applications）で New Application → Bot → Reset Token でトークンを取得して貼り付けます。あとは表示される「サーバーへ招待」リンクで自分の私設サーバーに Bot を追加し、チャンネルを選ぶだけです（数字 ID のコピーは不要）。トークンはワークスペース内に暗号化保存され、通知の送信にだけ使われます（セッションの表示名と状態のみ送信・ログや秘密は送りません）。",
+    "Discord Developer Portal（discord.com/developers/applications）で New Application → Bot → Reset Token でトークンを取得して貼り付けます。あとは表示される「サーバーへ招待」リンクで自分の私設サーバーに Bot を追加し、チャンネルを選ぶだけです（数字 ID のコピーは不要）。トークンはワークスペース内に暗号化保存され、通知の送信にだけ使われます（送るのはセッションの表示名と状態だけで、ログや秘密は送りません）。",
   "ops.sl_bot_placeholder": "Slack Bot トークン（xoxb-…）",
   "ops.sl_app_placeholder": "App-level トークン（xapp-…）— 双方向受信のときだけ必要",
   "ops.sl_user_placeholder": "自分の Slack メンバー ID（U…）",
   "ops.sl_waiting_channel": "Bot がチャンネルに参加するのを待っています…（/invite @Bot 名 で招待してから選んでください）",
   "ops.sl_user_label": "自分の Slack メンバー ID",
-  "ops.sl_user_sub": "メールから自動入力。@メンション先＝返信/ボタンを信頼する本人（双方向では必須）。",
+  "ops.sl_user_sub": "メールから自動入力されます。@メンション先は、返信/ボタンを信頼する本人です（双方向では必須です）。",
   "ops.sl_receive_sub": "セッションのスレッドに返信するとその本文がセッションへ送られ、ボタンで質問/許可に回答できます。App-level トークンが必要です。",
   "ops.sl_hint":
-    "Slack アプリを作成し（api.slack.com/apps → From scratch）、Socket Mode を有効化、Bot スコープ（chat:write, channels:read, channels:history, groups:history, im:history, reactions:write, users:read, users:read.email）と connections:write を持つ App-level トークンを追加、message 系イベントを購読してからインストールし、/invite で Bot をチャンネルに招待します。両方のトークンをここに貼り付けてください。トークンはワークスペース内に暗号化保存され、通知の送信にだけ使われます（表示名と状態のみ・ログや秘密は送りません）。",
+    "Slack アプリを作成し（api.slack.com/apps → From scratch）、Socket Mode を有効化します。Bot スコープ（chat:write, channels:read, channels:history, groups:history, im:history, reactions:write, users:read, users:read.email）と connections:write を持つ App-level トークンを追加し、message 系イベントを購読してからインストールして、/invite で Bot をチャンネルに招待します。両方のトークンをここに貼り付けてください。トークンはワークスペース内に暗号化保存され、通知の送信にだけ使われます（送るのは表示名と状態だけで、ログや秘密は送りません）。",
   // --- EC2 スロットプール（features/settings/ec2Pool.tsx・AF_RUNTIME=ecs-ec2 のみ）---
   "pool.not_ec2": "このデプロイは EC2 スロットプールを使っていません。",
   "pool.slots_title": "スロット",
@@ -106,8 +106,8 @@ export const ops = {
   "pool.timers_terminate": "停止したまま {terminate} 経過したスロットは終了し、root ボリュームの課金も終わります（次にその大きさを使う人の起動は 110 秒ではなく 135 秒になります）。",
   "pool.timers_no_terminate": "スロットを終了しない設定です。インスタンスは上限 {max} 台まで残り続け、その root ボリュームを課金し続けます（Ec2SlotTerminateAfterSec）。",
   "pool.budget_over": "テナント上限の合計は同時 {allocated} Workspace で、このプールが賄える {capacity} を超えています（インスタンスの上限 {max} − golden の焼き直しに空けておく {reserved}）。上限に達した起動は待たされるのではなく、最も長く休眠しているメンバーのスロットの立ち退きになるか、失敗します。",
-  "pool.budget_unbounded": "{tenants} には同時利用の上限がありません（0＝無制限）。合計がプールを縛らないので、1 テナントが埋め切ると他テナントの次の起動は立ち退きになります。",
-  "pool.budget_denominator": "⚠️ この 2 つは別のものを数えています。テナント上限が数えるのは「同時に動いている」Workspace、プール上限が数えるのは「存在している」インスタンスです。停止中の Workspace は Ec2SlotTerminateAfterSec が回収するまでインスタンスを掴んだままで、どのテナント上限にも数えられません。合計が枠内なのは必要条件であって十分条件ではありません。",
+  "pool.budget_unbounded": "{tenants} には同時利用の上限がありません（0 を指定すると無制限になります）。合計がプールを縛らないので、1 テナントが埋め切ると他テナントの次の起動は立ち退きになります。",
+  "pool.budget_denominator": "⚠️ この 2 つは別のものを数えています。テナント上限が数えるのは「同時に動いている」Workspace、プール上限が数えるのは「存在している」インスタンスです。停止中の Workspace は Ec2SlotTerminateAfterSec が回収するまでインスタンスを確保したままで、どのテナント上限にも数えられません。合計が枠内なのは必要条件であって十分条件ではありません。",
   "pool.off": "しない",
   "pool.no_slots": "スロットはありません。最初の起動で 1 台作られます。",
   "pool.col_instance": "インスタンス",
@@ -158,8 +158,8 @@ export const ops = {
   "pool.detached": "未接続",
   "pool.golden_title": "golden snapshot",
   "pool.golden_none": "ありません。新規 home は空から作られるので、新しいメンバーは初回起動で boot-install とキャッシュ空を払います。通常は CP が {image} 用を自動で焼きます（スロットが 2 つ空くまで待ちます）。自動焼きを切っている場合は deploy/aws/ecs/bake-golden.sh で焼いてください。",
-  "pool.golden_baking": "{image} 用を用意しています。焼いたあと、それが本当に起動することを確かめてから使い始めます。それまで新規 home は空から作られます（初回起動が遅いだけで、壊れはしません）。",
-  "pool.golden_rejected": "{snapshot} は使いません: {reason}。起動を確かめられなかったものは配らないので、新規 home は空から作られます（初回起動が遅いだけで、壊れはしません）。同じイメージでの焼き直しは 2 回で打ち切ります。",
+  "pool.golden_baking": "{image} 用を用意しています。焼いたあと、それが本当に起動することを確かめてから使い始めます。それまで新規 home は空から作られます（初回起動が遅いだけで、使えなくなることはありません）。",
+  "pool.golden_rejected": "{snapshot} は使いません: {reason}。起動を確かめられなかったものは配らないので、新規 home は空から作られます（初回起動が遅いだけで、使えなくなることはありません）。同じイメージでの焼き直しは 2 回で打ち切ります。",
   "pool.golden_stale": "{snapshot} は {baked} から焼かれていますが、このデプロイは {running} を動かしています。この golden は使われず、焼き直すまで新規 home は空から作られます（初回起動が遅くなります）。",
   "pool.golden_ok": "{image} から焼いたもの",
   // 焼き込みの進み具合（docs/log/64 §64.30）。焼きは 11 分前後かかり、前半には snapshot が
@@ -173,18 +173,18 @@ export const ops = {
   "pool.bake_step_published": "公開",
   "pool.bake_running": "{image} 用を焼いています。",
   "pool.bake_meanwhile":
-    "焼けたものは、そこから実際に workspace が起動できることを確かめてから使い始めます。それまで新規 home は空から作られます（初回起動が遅いだけで、壊れはしません）。",
+    "焼けたものは、そこから実際に workspace が起動できることを確かめてから使い始めます。それまで新規 home は空から作られます（初回起動が遅いだけで、使えなくなることはありません）。",
   "pool.bake_detail_seed": "種:",
   "pool.bake_detail_probe_ws": "probe:",
   "pool.bake_detail_probe": "{snapshot} から probe を起こして、本当に起動するか確かめています。",
   "pool.bake_owner": "golden 焼き込み用",
   "pool.bake_blocked":
-    "スロットの空きを待っています（{used}/{max} 使用中）。焼き込みには種と probe で 2 つ空きが必要で、誰かを立ち退かせてまでは焼きません。空くまで新規 home は空から作られます（初回起動が遅いだけ）。",
+    "スロットの空きを待っています（{used}/{max} 使用中）。焼き込みには種と probe で 2 つ空きが必要で、誰かを立ち退かせてまでは焼きません。空くまで新規 home は空から作られます（初回起動が遅いだけです）。",
   "pool.bake_gave_up":
     "{snapshot} は使いません: {reason}。同じイメージで 2 回失敗したので、焼き直しは打ち切りました。イメージを直して入れ替えるまで、新規 home は空から作られます。",
   "pool.bake_retry_left": "同じイメージであと 1 回だけ焼き直します。",
   "pool.bake_off":
-    "自動焼きは切られています（AF_ECS_EC2_GOLDEN_AUTOBAKE=0）。golden が無い間、新規 home は空から作られます（初回起動が遅いだけ）。焼くなら deploy/aws/ecs/bake-golden.sh です。",
+    "自動焼きは切られています（AF_ECS_EC2_GOLDEN_AUTOBAKE=0）。golden が無い間、新規 home は空から作られます（初回起動が遅いだけです）。焼くなら deploy/aws/ecs/bake-golden.sh です。",
   "pool.elapsed_sec": "（{s} 秒経過）",
   "pool.elapsed_min": "（{m} 分 {s} 秒経過）",
   "pool.elapsed_hour": "（{h} 時間 {m} 分経過）",
@@ -198,7 +198,7 @@ export const ops = {
   // ⚠️ この文言こそが本体である。実測では請求のうち人に紐づけられるのは 2 割ほどで、
   // それを「あなたのコスト」と呼ぶと、実際に払っている額の 1/5 を指すことになる。
   "cost.my_intro":
-    "あなたのワークスペースに直接ひも付いている分です（スロットの稼働時間・永続ホームのボリューム・そのスナップショット）。共有インフラ（NAT・DNS・ロードバランサ・データベース・空きスロット）は含みませんので、ワークスペースを動かす費用の全部ではありません。",
+    "あなたのワークスペースに直接ひも付いている分です（スロットの稼働時間・永続ホームのボリューム・そのスナップショット）。共有インフラ（NAT・DNS・ロードバランサ・データベース・空きスロット）は含まないため、ワークスペースを動かす費用の全部ではありません。",
   "cost.my_total_label": "あなたのワークスペースに直接ひも付く費用（共有分は含みません）",
   "cost.attributed_label": "メンバーにひも付く費用",
   // メンバー詳細（管理）向け。⚠️ 「このメンバーのコスト」とは絶対に書かない——
@@ -210,7 +210,7 @@ export const ops = {
   "cost.member_total_label": "このメンバーに直接ひも付く費用（共有分は含みません）",
   "cost.shared_title": "共有インフラ",
   "cost.shared_intro":
-    "誰か 1 人のものではない費用です。あえてメンバーに割り振っていません——割り振った時点で、それは請求ではなく見積になります。誰も使っていない空きスロットもここに入ります（プールを大きく持っている分の実費です）。",
+    "誰か 1 人のものではない費用です。あえてメンバーに割り振っていません。割り振った時点で、それは請求ではなく見積になるからです。誰も使っていない空きスロットもここに入ります（プールを大きく持っている分の実費です）。",
   "cost.shared_label": "共有（割り当てなし）",
   "cost.shared_centres": "内訳の区分:",
   "cost.account_scope": "この AWS アカウント全体を集計しています。同じアカウントで他のものを動かしていれば、それも共有の額に入ります。",
@@ -221,7 +221,7 @@ export const ops = {
   "cost.estimated_note": "直近の日はまだ確定しておらず、あとから変わります。",
   // ⚠️ 有効化は遡らないので、これは読み込み中ではなく恒久的な欠測である。
   "cost.no_backfill":
-    "{day} より前は取得できません。コスト配分タグは有効化した時点より後にしか効かず、遡って埋めることはできません。",
+    "{day} より前は取得できません。コスト配分タグは有効化した時点より後にしか適用されず、遡って埋めることはできません。",
   "cost.unverified_runtime":
     "このランタイムでのタグ付けは実環境でまだ確認できていないため、数字が欠けている可能性があります。",
   "cost.poll_error": "Cost Explorer を読めていないため、この数字は古いか空です:",
@@ -265,7 +265,7 @@ export const ops = {
   "cost.role_backup": "バックアップ",
   "uptime.my_title": "ワークスペースが動いていた時間",
   "uptime.my_intro":
-    "1 マスが 1 時間です。灰色は停止していた時間、濃いほど同時に開いていたセッションが多い時間です。金額ではありません — その日のクラウド費用がそうなっている理由の方です。",
+    "1 マスが 1 時間です。灰色は停止していた時間、濃いほど同時に開いていたセッションが多い時間です。金額ではありません。その日のクラウド費用がそうなっている理由の方です。",
   "uptime.member_title": "このワークスペースが動いていた時間",
   "uptime.member_intro":
     "1 マスが 1 時間です。夜通し帯が続いているときは、働いていたのではなく止め忘れていることの方が多いです。",
