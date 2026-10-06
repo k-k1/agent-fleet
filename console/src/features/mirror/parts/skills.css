@@ -58,7 +58,10 @@
    vertical padding 5px -> 2px, line-height down to 1.15 and a smaller description absorb it.
    Every number here is that measured balance, so re-measure if you touch font-size or
    line-height. */
+/* flex: none - overflow: hidden zeroes the item's automatic min-height, so with the default
+   shrink the items squeeze to fit max-height and clip line 2 instead of the list scrolling. */
 .mirror-skill-item {
+  flex: none;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -156,6 +159,7 @@
    own entries. One line, muted, selectable like an item (sel-index), with the "//" shortcut at
    the right edge in the same key style as the keyboard help. */
 .mirror-skill-more {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
