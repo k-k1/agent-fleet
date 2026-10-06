@@ -5,7 +5,7 @@ Compares console/src/lib/i18n/locales/ja/<domain>.ts with its content at a git r
 fails when a rewrite changed anything but the wording of values. Local use only; it is
 not wired into CI (the same stance as scripts/guide-diff-check.py).
 
-    python3 scripts/catalog-diff-check.py <ref> [--lang en] [--allow-labels] [--allow-term KEY:OLD>NEW] [--list-pinned] [files...]
+    python3 scripts/catalog-diff-check.py <ref> [--list-citations | --rewrite-guide] [--lang en] [--allow-labels] [--allow-term KEY:OLD>NEW] [--list-pinned] [files...]
 
 With no files, it checks every ja/*.ts file that differs from <ref> in the working tree.
 Per file, it fails (category in brackets) when:
@@ -72,6 +72,15 @@ the structure and the facts, a reviewer judges the meaning (see --triples). Diff
              counted on a "warnings:" line; it never fails the run
   --triples  prints key, current ja, en old, en new for every changed en value (TSV) and
              exits 0, for the reviewer who judges meaning parity. Read-only.
+
+LABEL SYNC: shared old labels must move to the same new text in every domain, or
+FAIL split. --allow-split KEY,KEY explicitly approves every divergent participant;
+stale approvals fail. --list-citations lists exact label citations as TSV and exits 0.
+--rewrite-guide changes exact bracket-quote, bold and menu segments (and the settings
+reference's first-column cells) in the selected language's guide only. Headings,
+prose, code, tests, knowledge and Go citations remain manual and fail until updated
+or reviewed with --exempt-pin. Dirty guide targets require --force. Chained/swapped
+labels require manual guide edits to preserve idempotence. See §10.6 for matching rules.
 
 Counts are always printed: values checked, values changed, failures per category.
 Exit status: 0 clean, 1 any FAIL or PINNED, 2 the check could not run (bad ref, no node).
@@ -415,8 +424,369 @@ class Sources:
             at = flat.find(needle, at + 1)
 
 
+def catalogue_snapshot(ref, target):
+    """Evaluate all domains in one Node process; shared labels cross domain boundaries."""
+    names = [p for p in git('ls-tree', '-r', '--name-only', ref, '--', target).splitlines()
+             if p.endswith('.ts')]
+    with tempfile.TemporaryDirectory(dir=os.environ.get('AF_WORK_DIR') or None) as tmp:
+        paths = []
+        for i, name in enumerate(names):
+            before = os.path.join(tmp, f'{i}.ts')
+            with open(before, 'w', encoding='utf-8') as fh:
+                fh.write(git('show', f'{ref}:{name}'))
+            paths.append(before)
+            paths.append(os.path.abspath(name) if os.path.exists(name) else before)
+        program = ('const out=[]; for(const p of JSON.parse(process.argv[1])) '
+                   '{const m=await import(p); out.push(Object.values(m)[0]);} '
+                   'process.stdout.write(JSON.stringify(out));')
+        p = subprocess.run(['node', '--experimental-strip-types', '--no-warnings',
+                            '--input-type=module', '-e', program, json.dumps(paths)],
+                           capture_output=True, text=True)
+        if p.returncode:
+            raise Fail(f'node could not evaluate catalogue: {p.stderr.strip()[:300]}')
+        values = json.loads(p.stdout)
+    old, new = {}, {}
+    for i, name in enumerate(names):
+        old.update({k: (name, v) for k, v in values[2 * i].items()})
+        if os.path.exists(name):
+            new.update(values[2 * i + 1])
+    return old, new
+
+
+def split_labels(changes, old, new, approvals):
+    problems, used = {}, set()
+    for key, _, o, n in changes:
+        others = sorted(k for k, (_, v) in old.items()
+                        if v == o and k != key and new.get(k) != n)
+        if others:
+            problems[key] = others
+            used.update(k for k in [key, *others] if k in approvals)
+    return problems, used
+
+
+# The offsets are in the original line, so swaps and chains never cascade within a run.
+KAGI_SPAN = re.compile(r'「([^」\n]*)」')
+BOLD_SPAN = re.compile(r'\*\*([^*\n]*)\*\*')
+HEADING = re.compile(r'^ {0,3}#{1,6}(?:\s|$)')
+BARE_EDGE = r'\w'
+QUOTED = re.compile(r'"([^"\n]*)"|\'([^\'\n]*)\'|`([^`\n]*)`|“([^”\n]*)”')
+SYNC_SECTIONS = ('guide', 'console tests', 'af-usage.md', 'af-usage.coverage.tsv', 'Go sources')
+
+
+def citation_files(lang):
+    sections = {}
+    for name in sorted(set(git('ls-files', '-co', '--exclude-standard', '-z').split('\0'))):
+        if name.startswith('guide/') and name.endswith('.md'):
+            if name.endswith('.ja.md') == (lang == 'ja'):
+                sections[name] = 'guide'
+        elif (name.startswith('console/') and '.test.' in name or
+              name.startswith('console-e2e/') and name.endswith(CODE_SUFFIXES)):
+            sections[name] = 'console tests'
+        elif name in ('workspace/agent/knowledge/af-usage.md',
+                      'workspace/agent/knowledge/af-usage.coverage.tsv'):
+            sections[name] = name.rsplit('/', 1)[-1]
+        elif name.endswith('.go'):
+            sections[name] = 'Go sources'
+    return sections
+
+
+def line_citations(line, label, settings=False):
+    """Exact spans win over menu segments, which win over bounded bare text."""
+    spans = []
+    for pattern, form in ((KAGI_SPAN, 'bracket-quote'), (BOLD_SPAN, 'bold')):
+        for m in pattern.finditer(line):
+            if m.group(1) == label:
+                spans.append((m.start(1), m.end(1), form))
+    if settings and line.lstrip().startswith('|'):
+        cell = re.search(r'\|\s*([^|]*?)\s*\|', line)
+        if cell and cell.group(1) == label:
+            spans.append((cell.start(1), cell.end(1), 'table-cell'))
+    # A menu segment must fill its delimiter-bounded cell. Wrappers are retained.
+    for m in re.finditer(r'[^\n|、。,.!?;:()（）「」\[\]*`]+', line):
+        chunk = m.group()
+        if not re.search(r'\s>\s|\s*→\s*', chunk):
+            continue
+        for segment in re.finditer(r'(?:^|[>→])([^>→]+)', chunk):
+            raw = segment.group(1)
+            if raw.strip() == label:
+                start = m.start() + segment.start(1) + len(raw) - len(raw.lstrip())
+                if not any(a <= start < b for a, b, _ in spans):
+                    spans.append((start, start + len(label), 'menu-segment'))
+    for m in QUOTED.finditer(line):
+        for group in range(1, 5):
+            if m.group(group) == label and not any(a <= m.start(group) < b for a, b, _ in spans):
+                spans.append((m.start(group), m.end(group), 'quoted'))
+    for m in re.finditer(r'(?<![' + BARE_EDGE + '])' + re.escape(label) +
+                         r'(?![' + BARE_EDGE + '])', line):
+        if not any(a <= m.start() < b for a, b, _ in spans):
+            # Do not treat an exact word inside a longer quoted/bold span as a label.
+            if any(s.start() <= m.start() < s.end() for s in [*KAGI_SPAN.finditer(line), *BOLD_SPAN.finditer(line), *QUOTED.finditer(line)]):
+                continue
+            spans.append((m.start(), m.end(), 'bare-in-prose-exact-match'))
+    return sorted(set(spans))
+
+
+def markdown_content(line):
+    """Remove container markers before interpreting headings or fences."""
+    while True:
+        stripped = re.sub(r'^ {0,3}(?:>[ \t]?|(?:[-+*]|\d+[.)])[ \t]+)', '', line)
+        if stripped == line:
+            return line
+        line = stripped
+
+
+def markdown_heading_rows(lines):
+    contents = [markdown_content(line) for line in lines]
+    headings = {i for i, line in enumerate(contents) if HEADING.match(line)}
+    underline = re.compile(r'^ {0,3}(?:=+|-+)[ \t]*\r?\n?$')
+    for i, line in enumerate(contents):
+        if not underline.fullmatch(line):
+            continue
+        j = i - 1
+        # A setext underline applies to the whole preceding paragraph, not its last line.
+        while j >= 0 and contents[j].strip():
+            if HEADING.match(contents[j]) or underline.fullmatch(contents[j]) or contents[j].lstrip().startswith('|'):
+                break
+            headings.add(j)
+            j -= 1
+    return headings
+
+
+def open_reference_title(text):
+    opening = re.search(r'(?:^|\s)(["\'(])', text)
+    if not opening:
+        return None
+    closer = ')' if opening[1] == '(' else opening[1]
+    return closer if reference_title_continues(text[opening.end():], closer) else None
+
+
+def reference_title_continues(text, closer):
+    i = 0
+    while i < len(text):
+        if text[i] == '\\':
+            i += 2
+            continue
+        if text[i] == closer:
+            return False
+        i += 1
+    return True
+
+
+def settings_table_rows(lines, lang):
+    """Only Tab/target-language headers identify tables governed by docs-check."""
+    rows = set()
+    header = 'タブ' if lang == 'ja' else 'Tab'
+    for i, line in enumerate(lines[:-1]):
+        cells = markdown_content(line).strip().strip('|').split('|')
+        if not line.lstrip().startswith('|') or cells[0].strip() != header:
+            continue
+        separator = lines[i + 1].strip().strip('|').split('|')
+        if not separator or not all(re.fullmatch(r'\s*:?-{3,}:?\s*', c) for c in separator):
+            continue
+        j = i + 2
+        while j < len(lines) and lines[j].lstrip().startswith('|'):
+            rows.add(j)
+            j += 1
+    return rows
+
+
+class MarkdownProtection:
+    """Conservative source ranges: changing code or link metadata can break navigation."""
+
+    def __init__(self, text):
+        self.ranges = []
+        lines = text.splitlines(keepends=True)
+        starts, offset = [], 0
+        fence = None
+        front = bool(lines and lines[0].lstrip('\ufeff').strip() == '---')
+        for i, line in enumerate(lines):
+            starts.append(offset)
+            content = markdown_content(line)
+            if front:
+                self.ranges.append((offset, offset + len(line), 'metadata'))
+                if i and line.strip() in ('---', '...'):
+                    front = False
+            elif fence:
+                self.ranges.append((offset, offset + len(line), 'code'))
+                char, length = fence
+                if re.fullmatch(r' {0,3}' + re.escape(char) + '{' + str(length) + r',}[ \t]*\r?\n?', content):
+                    fence = None
+            else:
+                opener = re.match(r'^ {0,3}(`{3,}|~{3,})([^\r\n]*)', content)
+                if opener and (opener[1][0] != '`' or '`' not in opener[2]):
+                    fence = (opener[1][0], len(opener[1]))
+                    self.ranges.append((offset, offset + len(line), 'code'))
+                elif re.match(r'^(?: {4}| {0,3}\t)', content):
+                    self.ranges.append((offset, offset + len(line), 'code'))
+            offset += len(line)
+        # Code spans may cross lines; a closing run must have exactly the opener's length.
+        ticks = list(re.finditer(r'(?<!`)`+(?!`)', text))
+        i = 0
+        while i < len(ticks):
+            opening = ticks[i]
+            prefix = text[:opening.start()]
+            escaped = (len(prefix) - len(prefix.rstrip('\\'))) % 2
+            if escaped or self.at(opening.start(), opening.end()):
+                i += 1
+                continue
+            closing = next((j for j in range(i + 1, len(ticks))
+                            if len(ticks[j][0]) == len(opening[0])
+                            and not self.at(ticks[j].start(), ticks[j].end())), None)
+            if closing is None:
+                i += 1
+            else:
+                self.ranges.append((opening.start(), ticks[closing].end(), 'code'))
+                i = closing + 1
+        for match in re.finditer(r'<!--.*?(?:-->|\Z)|<(?:/?[A-Za-z][\w:-]*\b|!|\?)(?:"[^"]*"|\'[^\']*\'|[^\'">])*>', text, re.S):
+            self.ranges.append((match.start(), match.end(), 'metadata'))
+        # Protect balanced destinations and optional titles, retaining visible link text.
+        for match in re.finditer(r'\]\s*\(', text):
+            if self.at(match.start(), match.end()):
+                continue
+            start, pos, depth = match.start() + 1, match.end(), 1
+            quote, angle = None, False
+            while pos < len(text) and depth:
+                if text[pos] == '\\':
+                    pos += 2
+                    continue
+                char = text[pos]
+                if quote:
+                    if char == quote:
+                        quote = None
+                elif char in '"\'':
+                    quote = char
+                elif char == '<':
+                    angle = True
+                elif char == '>':
+                    angle = False
+                elif not angle and char == '(':
+                    depth += 1
+                elif not angle and char == ')':
+                    depth -= 1
+                pos += 1
+            self.ranges.append((start, pos, 'metadata'))
+        for i, line in enumerate(lines):
+            content = markdown_content(line)
+            definition = re.match(r'^ {0,3}\[[^\]\r\n]+\]:', content)
+            if not definition:
+                continue
+            self.ranges.append((starts[i], starts[i] + len(line), 'metadata'))
+            tail = content[definition.end():]
+            destination_missing = not tail.strip()
+            title = open_reference_title(tail)
+            j = i + 1
+            while j < len(lines):
+                continuation = markdown_content(lines[j])
+                if not continuation.strip() or not (destination_missing or title or
+                        re.match(r'^[ \t]+|^ {0,3}["\'(]', continuation)):
+                    break
+                self.ranges.append((starts[j], starts[j] + len(lines[j]), 'metadata'))
+                if title:
+                    if not reference_title_continues(continuation, title):
+                        title = None
+                else:
+                    title = open_reference_title(continuation)
+                destination_missing = False
+                j += 1
+        for match in re.finditer(r'(?:https?://|mailto:)[^\s<>]+', text):
+            self.ranges.append((match.start(), match.end(), 'metadata'))
+        self.starts = starts
+
+    def at(self, start, end):
+        forms = {form for a, b, form in self.ranges if start < b and end > a}
+        return 'code' if 'code' in forms else 'metadata' if forms else None
+
+    def form(self, line, start, end):
+        offset = self.starts[line]
+        return self.at(offset + start, offset + end)
+
+
+def citations(changes, lang):
+    hits, texts = [], {}
+    if any(not o for _, _, o, _ in changes):
+        changes = [c for c in changes if c[2]]
+    for path, section in citation_files(lang).items():
+        try:
+            with open(path, encoding='utf-8', newline='') as fh:
+                text = fh.read()
+        except (OSError, UnicodeDecodeError):
+            continue
+        texts[path] = text
+        lines = text.splitlines(keepends=True)
+        protection = MarkdownProtection(text) if section == 'guide' else None
+        tab_rows = settings_table_rows(lines, lang) if path == (
+            'guide/ref/settings' + ('.ja' if lang == 'ja' else '') + '.md') else set()
+        heading_rows = markdown_heading_rows(lines) if path.endswith('.md') else set()
+        for i, line in enumerate(lines):
+            heading = i in heading_rows
+            for key, _, o, n in changes:
+                if o not in line:
+                    continue
+                matches = line_citations(line, o, i in tab_rows and key.startswith(('set.tab_', 'tenant.tab_')))
+                if section in ('console tests', 'Go sources'):
+                    matches = [m for m in matches if m[2] in ('quoted', 'bracket-quote', 'bold')]
+                if section == 'af-usage.coverage.tsv':
+                    matches = [m for m in matches if m[2] != 'bare-in-prose-exact-match']
+                    offset = 0
+                    for cell in line.rstrip('\r\n').split('\t'):
+                        if cell == o:
+                            matches.append((offset, offset + len(o), 'tsv-cell'))
+                        offset += len(cell) + 1
+                for a, b, form in matches:
+                    protected = protection.form(i, a, b) if protection else None
+                    if protected:
+                        form = protected
+                    elif heading:
+                        form = 'heading'
+                    hits.append((section, path, i + 1, form, o, n, key, a, b))
+    return hits, texts
+
+
+def print_citations(hits):
+    esc = lambda s: s.replace('\\', '\\\\').replace('\t', '\\t').replace('\n', '\\n').replace('\r', '\\r')
+    for section in SYNC_SECTIONS:
+        print(f'# {section}')
+        for sec, path, line, form, o, n, key, _, _ in hits:
+            if sec == section:
+                print('\t'.join([f'{path}:{line}', form, esc(o), esc(n), key]))
+
+
+def rewrite_guide(hits, texts, blocked, force, changes):
+    edits = collections.defaultdict(lambda: collections.defaultdict(dict))
+    mapping = {o: n for _, _, o, n in changes}
+    if any(n in mapping for n in mapping.values()):
+        raise Fail('chained or swapped labels cannot be rewritten idempotently; update guide manually')
+    for section, path, line, form, o, n, key, a, b in hits:
+        if section != 'guide' or form not in ('bracket-quote', 'bold', 'menu-segment', 'table-cell') or key in blocked:
+            continue
+        real = os.path.realpath(path)
+        if not real.startswith(os.path.abspath('guide') + os.sep):
+            raise Fail(f'refusing guide path outside guide/: {path}')
+        if real != os.path.abspath(path):
+            raise Fail(f'refusing symlink guide path: {path}')
+        if any(a < end and b > start and (a, b) != (start, end)
+               for start, end in edits[path][line]):
+            raise Fail(f'overlapping label rewrites at {path}:{line}; update manually')
+        existing = edits[path][line].get((a, b))
+        if existing and existing != (o, n):
+            raise Fail(f'ambiguous label rewrite at {path}:{line}')
+        edits[path][line][a, b] = (o, n)
+    # Preflight every target before the first write; a refusal leaves the guide intact.
+    for path in edits:
+        if not force and git('status', '--porcelain', '--', path).strip():
+            raise Fail(f'dirty guide file: {path} (review it, then use --force)')
+    for path, by_line in edits.items():
+        lines = texts[path].splitlines(keepends=True)
+        for line, spans in by_line.items():
+            for (a, b), (o, n) in sorted(spans.items(), reverse=True):
+                lines[line - 1] = lines[line - 1][:a] + n + lines[line - 1][b:]
+                print(f'{path}:{line} {o} -> {n}')
+        with open(path, 'w', encoding='utf-8', newline='') as fh:
+            fh.write(''.join(lines))
+
+
 def main(argv):
-    ap = argparse.ArgumentParser(prog='catalog-diff-check.py', usage='%(prog)s <ref> [--lang en] [--allow-labels] [--allow-term KEY:OLD>NEW] [--list-pinned] [--triples] [files...]')
+    ap = argparse.ArgumentParser(prog='catalog-diff-check.py', usage='%(prog)s <ref> [--lang en] [--allow-labels] [--allow-term KEY:OLD>NEW] [--list-pinned | --list-citations | --rewrite-guide | --triples] [files...]')
     ap.add_argument('ref')
     ap.add_argument('files', nargs='*')
     ap.add_argument('--lang', choices=['ja', 'en'], default='ja',
@@ -425,6 +795,11 @@ def main(argv):
                     help='en only: print key, ja, en old, en new for every changed value, exit 0')
     ap.add_argument('--allow-labels', action='store_true')
     ap.add_argument('--list-pinned', action='store_true')
+    ap.add_argument('--list-citations', action='store_true', help='list exact label citations as TSV, exit 0')
+    ap.add_argument('--rewrite-guide', action='store_true', help='rewrite exact guide spans and list manual citations')
+    ap.add_argument('--force', action='store_true', help='allow rewriting reviewed dirty guide files')
+    ap.add_argument('--allow-split', action='append', default=[], metavar='KEY,KEY',
+                    help='approve listed keys participating in a reviewed label split')
     ap.add_argument('--exempt-pin', action='append', default=[], metavar='KEY@PATH[:LINE]',
                     help='accept one reviewed PINNED hit that is not a citation of the value')
     ap.add_argument('--allow-term', action='append', default=[], metavar='KEY:OLD>NEW[*N]',
@@ -432,6 +807,16 @@ def main(argv):
     ap.add_argument('--allow-terms-file', action='append', default=[], metavar='PATH',
                     help='the same, one KEY<TAB>OLD<TAB>NEW[<TAB>N] per line')
     args = ap.parse_args(argv)
+    if (args.list_citations or args.rewrite_guide) and sum((args.list_pinned, args.list_citations, args.triples, args.rewrite_guide)) > 1:
+        ap.error('listing and rewrite modes are mutually exclusive')
+    if args.force and not args.rewrite_guide:
+        ap.error('--force needs --rewrite-guide')
+    split_approvals = set()
+    for spec in args.allow_split:
+        keys = spec.split(',')
+        if any(not re.fullmatch(r'[\w.-]+', k) for k in keys):
+            ap.error('--allow-split needs KEY,KEY (no empty keys or spaces)')
+        split_approvals.update(keys)
     en = args.lang == 'en'
     if args.triples and not en:
         print('error: --triples needs --lang en', file=sys.stderr)
@@ -459,7 +844,7 @@ def main(argv):
     used = set()
     exempted = 0
     fails = collections.Counter()
-    listing = args.list_pinned or args.triples
+    listing = args.list_pinned or args.triples or args.list_citations
 
     def fail(cat, msg):
         fails[cat] += 1
@@ -480,8 +865,65 @@ def main(argv):
                 raise Fail(f'{f}: not a {target}*.ts file')
         with open(GLOSSARY_EN if en else GLOSSARY, encoding='utf-8') as fh:
             terms = en_glossary_terms(fh.read()) if en else glossary_terms(fh.read())
+        sync_changes = []
+        split_problems = {}
+        split_used = set()
+        if args.list_citations or args.rewrite_guide:
+            base_files = set(git('ls-tree', '-r', '--name-only', args.ref, '--', target).splitlines())
+            for path in files:
+                if path not in base_files or not os.path.isfile(path):
+                    raise Fail(f'{path}: cannot compare old and new catalogue values '
+                               '(added, deleted or moved file); label sync requires existing files')
+        if files and not args.triples:
+            old_catalogue, new_catalogue = catalogue_snapshot(args.ref, target)
+            lab = label_like_en if en else label_like
+            sync_changes = [(k, p, o, new_catalogue[k]) for k, (p, o) in old_catalogue.items()
+                            if p in files and k in new_catalogue and o != new_catalogue[k]
+                            and (lab(o) or lab(new_catalogue[k]))]
+            split_problems, split_used = split_labels(sync_changes, old_catalogue, new_catalogue, split_approvals)
+        for key, others in split_problems.items():
+            missing = sorted(set([key, *others]) - split_approvals)
+            if missing:
+                fail('split', f'{key}: old label shared with keys not changed to the same new text: '
+                     + ', '.join(others) + '; unapproved: ' + ', '.join(missing))
+            elif not listing:
+                print(f'ALLOWED split: {key}: ' + ', '.join(others))
+        for key in sorted(split_approvals - split_used):
+            fail('split', f'--allow-split {key} matched no split (stale approval)')
+        if args.list_citations or args.rewrite_guide:
+            print(f'label sync: {len(files)} compared file(s), {len(sync_changes)} changed label(s)'
+                  + ('; no catalogue diff against ref' if not changed else
+                     '; no changed labels in compared values' if not sync_changes else ''), file=sys.stderr)
+            for key, _, _, _ in sync_changes:
+                if key.startswith(('set.tab_', 'tenant.tab_')):
+                    print(f'WARN SETTINGS TAB: {key}: update the first-column cell in guide/ref/settings'
+                          + ('.md' if en else '.ja.md') + '; scripts/docs-check.py requires exact labels and '
+                          'Japanese personal-tab headings (manual; update anchors/links too)', file=sys.stderr)
+            sync_hits, sync_texts = citations(sync_changes, args.lang)
+            if args.list_citations:
+                print_citations(sync_hits)
+                return 0
+            # Even an approved split is unsafe for automatic citation rewriting.
+            rewritable_hits = [h for h in sync_hits if not any(
+                e[0] == h[6] and e[1] == h[1] and e[2] in ('', str(h[2])) for e in exempt)]
+            rewrite_guide(rewritable_hits, sync_texts, set(split_problems), args.force, sync_changes)
+            sync_hits, _ = citations(sync_changes, args.lang)
+            remaining = []
+            for hit in sync_hits:
+                _, name, line, form, _, _, key, _, _ = hit
+                approval = next((e for e in exempt if e[0] == key and e[1] == name
+                                 and e[2] in ('', str(line))), None)
+                if approval:
+                    used.add(approval[3])
+                    exempted += 1
+                    print(f'EXEMPT: {key}: reviewed, not a citation: {name}:{line}')
+                else:
+                    remaining.append(hit)
+                    fail('pinned', f'{key}: remaining {form} citation at {name}:{line}')
+            print('remaining manual citations:')
+            print_citations(remaining)
         sources = Sources(args.lang)
-    except Fail as e:
+    except (Fail, OSError) as e:
         print(f'error: {e}', file=sys.stderr)
         return 2
 
@@ -626,9 +1068,9 @@ def main(argv):
                     if not args.allow_labels:
                         fail('label', f'{where}: label {o!r} -> {n!r} (pass --allow-labels to reword labels)')
                 found = set()
-                for frag in (clauses_en if en else clauses)(o, n):
+                for frag in ([] if args.rewrite_guide and lab(o) else (clauses_en if en else clauses)(o, n)):
                     found.update((h, frag) for h in sources.find(frag))
-                if lab(o):
+                if lab(o) and not args.rewrite_guide:
                     found.update((h, o) for h in sources.find_label(o))
                 for (name, line), text in sorted(found):
                     hit = next((e for e in exempt if e[0] == key and e[1] == name and e[2] in ('', str(line))), None)
@@ -664,6 +1106,8 @@ def main(argv):
             print(f'{loc}\t{key}\t{text}')
         print(f'{len(pins)} pinned location(s)', file=sys.stderr)
         return 0
+    if fails['split'] or args.allow_split or args.rewrite_guide:
+        cats = [*cats, 'split']
     if labels and args.allow_labels:
         print('changed labels:')
         for where, o, n in labels:
