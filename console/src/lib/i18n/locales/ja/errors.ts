@@ -30,7 +30,7 @@ export const errors = {
   "err.worktree_dirty":
     "この worktree には未コミット/未pushの変更があります。強制削除すると失われます。",
   "err.has_worktrees":
-    "この作業コピーには派生した worktree がぶら下がっています。先に worktree 側を削除してください。",
+    "この作業コピーには派生した worktree があります。先に worktree 側を削除してください。",
   "err.locked":
     "削除ロックがかかっています。先にロックを解除してから削除してください。",
   "err.locked_sessions":
@@ -64,9 +64,9 @@ export const errors = {
   "err.question_pending":
     "エージェントが質問への回答を待っています。質問カードから回答してから送信してください。",
   "err.plan_pending":
-    "エージェントがプランの承認待ちです。プランカード（無いときは端末）から承認・却下してから送信してください（テキストは承認ダイアログに飲まれ、そのまま承認になります）。",
+    "エージェントがプランの承認待ちです。プランカード（ないときは端末）から承認・却下してから送信してください（テキストは承認ダイアログに取り込まれ、そのまま承認になります）。",
   "err.permission_pending":
-    "エージェントが許可の判断待ちです。許可カード（無いときは端末）から許可・拒否してから送信してください（テキストは許可メニューに飲まれ、そのまま許可になります）。",
+    "エージェントが許可の判断待ちです。許可カード（ないときは端末）から許可・拒否してから送信してください（テキストは許可メニューに取り込まれ、そのまま許可になります）。",
   "err.interaction_pending":
     "エージェントが対話中のプロンプトを表示しています。カード（無いときは端末）から回答してから送信してください。",
   "err.auth_expired":
@@ -104,7 +104,7 @@ export const errors = {
   "err.user_key_reserved": "このユーザーキーは Control Plane が自身のファイルに使う名前のため、既定テナントに追加できません。",
   "err.user_key_conflict": "このユーザーキーは既にテナントのディレクトリ名として使われているため、既定テナントに追加できません。管理者に相談してください。",
   "err.unknown_provider": "そのサインイン方法はこのデプロイで有効になっていません。",
-  "err.self_removal": "自分の最後のメンバーシップは外せません（戻る道が無くなるため）。他の管理者に依頼してください。",
+  "err.self_removal": "自分の最後のメンバーシップは外せません（戻る方法がなくなるため）。他の管理者に依頼してください。",
   "err.bad_share": "共有リクエストが不正です。",
   "err.member_not_found": "指定した相手は同じテナントのメンバーではありません。検索候補から選び直してください。",
   "err.share_self": "自分自身を共有先に指定することはできません。",
@@ -151,15 +151,15 @@ export const errors = {
   "err.conn_slack_app_token_required": "返信の受信には App-level トークン（xapp-）が必要です",
   // MCP レジストリ（docs/log/48 / workspace/agent/mcp_servers.go + internal/mcpreg/def.go）
   "err.mcp_not_found": "MCP サーバーが見つかりません",
-  "err.mcp_read_only": "このサーバーは編集できません（無効化のみ可能です）",
+  "err.mcp_read_only": "このサーバーは編集できません（無効化だけが可能です）",
   "err.mcp_name_taken": "同じ名前のサーバーが既に登録されています",
   "err.mcp_invalid": "MCP サーバーの定義が不正です",
   "err.mcp_name_invalid": "名前は英数字・ハイフン・アンダースコア 48 文字以内で、先頭は英数字にしてください",
   "err.mcp_name_reserved": "その名前は Agent Fleet が使用する予約名です",
-  "err.mcp_transport_unsupported": "未対応の接続方式です（stdio / リモート HTTP のみ）",
+  "err.mcp_transport_unsupported": "未対応の接続方式です（対応しているのは stdio / リモート HTTP だけです）",
   "err.mcp_command_required": "stdio サーバーにはコマンドが必要です",
   "err.mcp_stdio_no_url": "stdio サーバーに URL / ヘッダは指定できません",
-  "err.mcp_tenant_stdio": "テナント配布の MCP サーバーは stdio を使えません（リモートのみ）",
+  "err.mcp_tenant_stdio": "テナント配布の MCP サーバーは stdio を使えません（リモートだけに対応しています）",
   "err.mcp_url_required": "リモートサーバーには URL が必要です",
   "err.mcp_url_invalid": "URL を解釈できません",
   "err.mcp_url_scheme": "URL は http / https で指定してください",
@@ -177,7 +177,7 @@ export const errors = {
     "許可リストにはホスト名か .suffix.example.com の形式を指定してください（スキーム・ポート・パスは使えません）",
   "err.egress_entry_too_broad": "TLD 全体（.com など）は申請できません。ドメイン単位で指定してください",
   "err.egress_too_many_proposals": "承認待ちの申請が多すぎます。管理者に処理を依頼してください",
-  "err.mcp_tenant_bridge_off": "テナント配布はこの環境では利用できません（CP の公開URL/トークンが未設定）",
+  "err.mcp_tenant_bridge_off": "テナント配布はこの環境では利用できません（CP の公開 URL/トークンが設定されていません）",
   "err.mcp_tenant_fetch_failed": "テナント配布を取得できませんでした",
   "err.assistant_not_found": "アシスタントが見つかりません",
   "err.assistant_builtin_readonly_edit": "ビルトインは編集できません",
@@ -188,14 +188,14 @@ export const errors = {
   "err.assistant_integration_unsupported": "未対応の連携です",
   "err.paste_too_large": "ファイルが大きすぎます",
   "err.paste_unsupported_kind": "このセッション種別には画像を渡せません",
-  "err.paste_unsupported_agent": "画像を渡せるのは claude / codex のアシスタントのみです",
+  "err.paste_unsupported_agent": "画像を渡せるのは claude / codex のアシスタントだけです",
   "err.fork_unsupported_kind": "このセッション種別は分岐に対応していません",
   "err.fork_missing_dir": "作業フォルダが存在しないため分岐できません",
-  "err.fork_at_unsupported": "このセッションは発言時点からの分岐に対応していません（managed のセッションでのみ使えます）",
+  "err.fork_at_unsupported": "このセッションは発言時点からの分岐に対応していません（managed のセッションでだけ使えます）",
   "err.fork_bad_anchor": "この分岐点は使えません。チャットを読み込み直してからやり直してください",
-  "err.title_feature_disabled": "AI 提案が無効です（表示設定のタイトル自動提案をオンに）",
+  "err.title_feature_disabled": "AI 提案が無効です（表示設定のタイトル自動提案をオンにしてください）",
   "err.title_no_content": "会話がまだ足りません（数往復してから試してください）",
-  "err.translate_disabled": "回答の翻訳が無効です（設定 > AI アシストでオンに）",
+  "err.translate_disabled": "回答の翻訳が無効です（設定 > AI アシストでオンにしてください）",
   "err.translate_empty": "翻訳する本文がありません",
   "err.translate_too_long": "この回答は長すぎて翻訳できません",
   "err.memory_bad_request": "リクエストの形式が不正です",
@@ -299,9 +299,9 @@ export const errors = {
   // 履歴から 1 行を消すときの 2 つの断り。「まだ走っています」は待てば済む話で、行を消しても
   // ECS のタスクは止まらない（終わったらカタログ行を書く）ことがそのまま理由になる。
   "err.ingest_job_unknown": "その取り込み履歴はこのエンジンにありません",
-  "err.ingest_job_live": "その取り込みはまだ走っているので、履歴だけを消すことはできません",
+  "err.ingest_job_live": "その取り込みはまだ実行中なので、履歴だけを消すことはできません",
   "err.engine_plan_stale": "画面の取り込み計画は最新ではありません。新しい計画で取り込み直してください",
-  "err.engine_comfy_url_invalid": "ホストを含む http:// または https:// の URL を入力してください（クエリやフラグメントは不可）",
+  "err.engine_comfy_url_invalid": "ホストを含む http:// または https:// の URL を入力してください（クエリやフラグメントは使えません）",
   "err.engine_comfy_url_credentials": "URL にユーザー名やパスワードが含まれています。Bearer はキーの欄に入れてください",
   "err.engine_comfy_managed": "画像エンジンはこの配備のエンジンスタックが管理しており、パネルより優先されます",
   "err.engine_comfy_unsupported": "この Control Plane には ComfyUI の URL を保存する場所がありません",
@@ -318,7 +318,7 @@ export const errors = {
   "err.civitai_token_put_failed": "トークンを配備の秘密に書き込めませんでした",
   // --- 画像生成の待ち行列（ADR 0081 レーン A）。これまで proxy されていなかった経路なので、
   // 符号はここが初出になる。Agent の message は英語なので、目録に無いと英語がそのまま出る。
-  "err.queue_full": "画像の待ち行列がいっぱいです。今の分が捌けてから投入してください。",
+  "err.queue_full": "画像の待ち行列がいっぱいです。今の分が処理されてから投入してください。",
   "err.trial_pending": "試走が既に待っています。1 枚見てから次を頼んでください。",
   "err.bad_params": "steps / cfg / sampler / scheduler のどれかがこのエンジンで使えない値です。",
   "err.bad_prompt": "プロンプトが空です。",
@@ -336,7 +336,7 @@ export const errors = {
   "err.cancel_failed": "エンジンに取消が届きませんでした。",
   "err.no_browse_root": "ワークスペースのファイル領域を読めませんでした。",
   "err.not_found": "見つかりませんでした。",
-  "err.imagegen_no_provider": "この要求を捌ける画像エンジンがありません。",
+  "err.imagegen_no_provider": "この要求を処理できる画像エンジンがありません。",
   "err.imagegen_unknown_provider": "その画像エンジンはこの配備にありません。",
   "err.home_wipe_unsupported": "この配備では使えない操作です。ホームが Control Plane から届かない場所にあるため、何も停止せずに断りました。",
   "err.home_wipe_while_starting": "ワークスペースがまだ起動中です。何も停止していません。起動し終わってからもう一度実行してください。",
