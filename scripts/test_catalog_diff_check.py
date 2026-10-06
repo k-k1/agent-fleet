@@ -1017,6 +1017,129 @@ class LabelSyncTests(Base):
         self.assertIn('\tcode\t', out)
         self.assertEqual((self.repo / page).read_text(), '```md\n**操作ボタン**\n```\n')
 
+    def test_markdown_inline_code_targets_and_attributes_stay_manual(self):
+        text = ('`「操作ボタン」`\n'
+                '``**操作ボタン**``\n'
+                '``code ` 「操作ボタン」``\n'
+                '`code 「操作ボタン」\\`\n'
+                '``multiline\n「操作ボタン」``\n'
+                '[link](https://example.invalid/「操作ボタン」)\n'
+                '[**操作ボタン**](https://example.invalid/「操作ボタン」)\n'
+                '[id]: /「操作ボタン」\n'
+                '[link](url \"title )「操作ボタン」\")\n'
+                'https://example.invalid/「操作ボタン」\n'
+                '<a id="「操作ボタン」" href="/「操作ボタン」">x</a>\n'
+                '<a href="/path\n「操作ボタン」">x</a>\n'
+                '<!-- 「操作ボタン」 -->\n'
+                '    「操作ボタン」\n'
+                '\t**操作ボタン**\n'
+                '  \t「操作ボタン」\n'
+                '「操作ボタン」\n')
+        page = self.page(text)
+        self.change_unique()
+        code, out = self.sync_run('--list-citations')
+        self.assertEqual(code, 0, out)
+        self.assertIn('\tcode\t', out)
+        self.assertIn('\tmetadata\t', out)
+        code, out = self.sync_run('--rewrite-guide')
+        self.assertEqual(code, 1, out)
+        expected = text.replace('[**操作ボタン**]', '[**実行ボタン**]')
+        expected = expected[:-len('「操作ボタン」\n')] + '「実行ボタン」\n'
+        self.assertEqual((self.repo / page).read_text(), expected)
+        self.assertIn('remaining code citation', out)
+        self.assertIn('remaining metadata citation', out)
+
+    def test_markdown_front_matter_is_manual(self):
+        text = '---\ntitle: 「操作ボタン」\nsummary: **操作ボタン**\n---\n「操作ボタン」\n'
+        page = self.page(text)
+        self.change_unique()
+        code, out = self.sync_run('--rewrite-guide')
+        self.assertEqual(code, 1, out)
+        self.assertEqual((self.repo / page).read_text(),
+                         text[:-len('「操作ボタン」\n')] + '「実行ボタン」\n')
+        self.assertIn('\tmetadata\t', out)
+
+    def test_markdown_fences_require_matching_kind_length_and_closing_syntax(self):
+        for prefix in ('', '> ', '- ', '- > ', '> - '):
+            with self.subTest(prefix=prefix):
+                continuation = {'- ': '  ', '- > ': '  > ', '> - ': '>   '}.get(prefix, prefix)
+                text = (prefix + '````md\n' + continuation + '```\n'
+                        + continuation + '~~~~\n' + continuation + '````not-a-close\n'
+                        + continuation + '「操作ボタン」\n' + continuation + '`````\n'
+                        + '「操作ボタン」\n')
+                page = self.page(text)
+                self.change_unique()
+                code, out = self.sync_run('--rewrite-guide')
+                self.assertEqual(code, 1, out)
+                self.assertIn('\tcode\t', out)
+                self.assertEqual((self.repo / page).read_text(),
+                                 text[:-len('「操作ボタン」\n')] + '「実行ボタン」\n')
+                self.edit(self.sync_path(), '実行ボタン', '操作ボタン')
+
+    def test_markdown_tilde_fence_backticks_cannot_close_it(self):
+        text = '~~~~md\n````\n「操作ボタン」\n~~~~\n「操作ボタン」\n'
+        page = self.page(text)
+        self.change_unique()
+        code, out = self.sync_run('--rewrite-guide')
+        self.assertEqual(code, 1, out)
+        self.assertEqual((self.repo / page).read_text(),
+                         text[:-len('「操作ボタン」\n')] + '「実行ボタン」\n')
+
+    def test_nested_exact_spans_are_listed_and_rewritten_once(self):
+        page = self.page('「**操作ボタン**」\n**「操作ボタン」**\n')
+        self.change_unique()
+        code, out = self.sync_run('--list-citations')
+        self.assertEqual(code, 0, out)
+        rows = [line.split('\t') for line in out.splitlines() if '\t' in line]
+        self.assertEqual(len(rows), 2, out)
+        self.assertEqual({row[1] for row in rows}, {'bold', 'bracket-quote'})
+        code, out = self.sync_run('--rewrite-guide')
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.repo / page).read_text(), '「**実行ボタン**」\n**「実行ボタン」**\n')
+        self.assertEqual(len(re.findall(r'guide/[^\n]+ 操作ボタン -> 実行ボタン', out)), 2, out)
+
+    def test_overlapping_nested_labels_are_refused_before_writing(self):
+        path = 'console/src/lib/i18n/locales/ja/decorated.ts'
+        self.write(path, 'export const d = {"sync.decorated": "**操作ボタン**"};\n')
+        page = self.page('「**操作ボタン**」\n')
+        self.change_unique()
+        self.edit(path, '**操作ボタン**', '書式付きボタン')
+        code, out = self.sync_run('--rewrite-guide')
+        self.assertEqual(code, 2, out)
+        self.assertIn('overlapping label rewrites', out)
+        self.assertEqual((self.repo / page).read_text(), '「**操作ボタン**」\n')
+
+    def test_label_sync_added_catalogue_is_not_an_empty_listing(self):
+        path = 'console/src/lib/i18n/locales/ja/new.ts'
+        self.write(path, 'export const n = {"new.key": "操作する"};\n')
+        for mode in ('--list-citations', '--rewrite-guide'):
+            code, out = self.sync_run(mode)
+            self.assertEqual(code, 2, out)
+            self.assertIn('cannot compare old and new catalogue values', out)
+            self.assertNotIn('# guide', out)
+
+    def test_label_sync_deleted_catalogue_is_not_an_empty_listing(self):
+        (self.repo / self.sync_path()).unlink()
+        code, out = self.sync_run('--list-citations')
+        self.assertEqual(code, 2, out)
+        self.assertIn('cannot compare old and new catalogue values', out)
+
+    def test_label_sync_moved_catalogue_is_not_an_empty_listing(self):
+        source = self.repo / self.sync_path()
+        source.rename(source.with_name('moved.ts'))
+        code, out = self.sync_run('--list-citations')
+        self.assertEqual(code, 2, out)
+        self.assertIn('cannot compare old and new catalogue values', out)
+
+    def test_empty_label_listing_explains_comparison_scope(self):
+        code, out = self.sync_run('--list-citations')
+        self.assertEqual(code, 0, out)
+        self.assertIn('0 compared file(s), 0 changed label(s); no catalogue diff against ref', out)
+        self.edit(JA, '設定を保存してから、画面を閉じてください。', '先に設定を保存し、そのあと画面を閉じてください。')
+        code, out = self.sync_run('--list-citations')
+        self.assertEqual(code, 0, out)
+        self.assertIn('1 compared file(s), 0 changed label(s); no changed labels in compared values', out)
+
     def test_rewrite_refuses_symlink_outside_guide(self):
         outside = self.repo / 'manual.ja.md'
         outside.write_text('**操作ボタン**\n')

@@ -465,7 +465,8 @@ def split_labels(changes, old, new, approvals):
 
 
 # The offsets are in the original line, so swaps and chains never cascade within a run.
-SPAN = re.compile(r'「([^」\n]*)」|\*\*([^*\n]*)\*\*')
+KAGI_SPAN = re.compile(r'「([^」\n]*)」')
+BOLD_SPAN = re.compile(r'\*\*([^*\n]*)\*\*')
 HEADING = re.compile(r'^ {0,3}#{1,6}(?:\s|$)')
 BARE_EDGE = r'\w'
 QUOTED = re.compile(r'"([^"\n]*)"|\'([^\'\n]*)\'|`([^`\n]*)`|“([^”\n]*)”')
@@ -492,10 +493,10 @@ def citation_files(lang):
 def line_citations(line, label, settings=False):
     """Exact spans win over menu segments, which win over bounded bare text."""
     spans = []
-    for m in SPAN.finditer(line):
-        group = 1 if m.group(1) is not None else 2
-        if m.group(group) == label:
-            spans.append((m.start(group), m.end(group), 'bracket-quote' if group == 1 else 'bold'))
+    for pattern, form in ((KAGI_SPAN, 'bracket-quote'), (BOLD_SPAN, 'bold')):
+        for m in pattern.finditer(line):
+            if m.group(1) == label:
+                spans.append((m.start(1), m.end(1), form))
     if settings and line.lstrip().startswith('|'):
         cell = re.search(r'\|\s*([^|]*?)\s*\|', line)
         if cell and cell.group(1) == label:
@@ -519,10 +520,105 @@ def line_citations(line, label, settings=False):
                          r'(?![' + BARE_EDGE + '])', line):
         if not any(a <= m.start() < b for a, b, _ in spans):
             # Do not treat an exact word inside a longer quoted/bold span as a label.
-            if any(s.start() <= m.start() < s.end() for s in [*SPAN.finditer(line), *QUOTED.finditer(line)]):
+            if any(s.start() <= m.start() < s.end() for s in [*KAGI_SPAN.finditer(line), *BOLD_SPAN.finditer(line), *QUOTED.finditer(line)]):
                 continue
             spans.append((m.start(), m.end(), 'bare-in-prose-exact-match'))
     return sorted(set(spans))
+
+
+class MarkdownProtection:
+    """Conservative source ranges: changing code or link metadata can break navigation."""
+
+    def __init__(self, text):
+        self.ranges = []
+        lines = text.splitlines(keepends=True)
+        starts, offset = [], 0
+        fence = None
+        front = bool(lines and lines[0].lstrip('\ufeff').strip() == '---')
+        for i, line in enumerate(lines):
+            starts.append(offset)
+            content = line
+            while True:
+                stripped = re.sub(r'^ {0,3}(?:>[ \t]?|(?:[-+*]|\d+[.)])[ \t]+)', '', content)
+                if stripped == content:
+                    break
+                content = stripped
+            if front:
+                self.ranges.append((offset, offset + len(line), 'metadata'))
+                if i and line.strip() in ('---', '...'):
+                    front = False
+            elif fence:
+                self.ranges.append((offset, offset + len(line), 'code'))
+                char, length = fence
+                if re.fullmatch(r' {0,3}' + re.escape(char) + '{' + str(length) + r',}[ \t]*\r?\n?', content):
+                    fence = None
+            else:
+                opener = re.match(r'^ {0,3}(`{3,}|~{3,})([^\r\n]*)', content)
+                if opener and (opener[1][0] != '`' or '`' not in opener[2]):
+                    fence = (opener[1][0], len(opener[1]))
+                    self.ranges.append((offset, offset + len(line), 'code'))
+                elif re.match(r'^(?: {4}| {0,3}\t)', content):
+                    self.ranges.append((offset, offset + len(line), 'code'))
+            offset += len(line)
+        # Code spans may cross lines; a closing run must have exactly the opener's length.
+        ticks = list(re.finditer(r'(?<!`)`+(?!`)', text))
+        i = 0
+        while i < len(ticks):
+            opening = ticks[i]
+            prefix = text[:opening.start()]
+            escaped = (len(prefix) - len(prefix.rstrip('\\'))) % 2
+            if escaped or self.at(opening.start(), opening.end()):
+                i += 1
+                continue
+            closing = next((j for j in range(i + 1, len(ticks))
+                            if len(ticks[j][0]) == len(opening[0])
+                            and not self.at(ticks[j].start(), ticks[j].end())), None)
+            if closing is None:
+                i += 1
+            else:
+                self.ranges.append((opening.start(), ticks[closing].end(), 'code'))
+                i = closing + 1
+        for match in re.finditer(r'<!--.*?(?:-->|\Z)|<(?:/?[A-Za-z][\w:-]*\b|!|\?)(?:"[^"]*"|\'[^\']*\'|[^\'">])*>', text, re.S):
+            self.ranges.append((match.start(), match.end(), 'metadata'))
+        # Protect balanced destinations and optional titles, retaining visible link text.
+        for match in re.finditer(r'\]\s*\(', text):
+            if self.at(match.start(), match.end()):
+                continue
+            start, pos, depth = match.start() + 1, match.end(), 1
+            quote, angle = None, False
+            while pos < len(text) and depth:
+                if text[pos] == '\\':
+                    pos += 2
+                    continue
+                char = text[pos]
+                if quote:
+                    if char == quote:
+                        quote = None
+                elif char in '"\'':
+                    quote = char
+                elif char == '<':
+                    angle = True
+                elif char == '>':
+                    angle = False
+                elif not angle and char == '(':
+                    depth += 1
+                elif not angle and char == ')':
+                    depth -= 1
+                pos += 1
+            self.ranges.append((start, pos, 'metadata'))
+        for match in re.finditer(r'^ {0,3}\[[^\]\n]+\]:[^\n]*(?:\n[ \t]+[^\n]+)*', text, re.M):
+            self.ranges.append((match.start(), match.end(), 'metadata'))
+        for match in re.finditer(r'(?:https?://|mailto:)[^\s<>]+', text):
+            self.ranges.append((match.start(), match.end(), 'metadata'))
+        self.starts = starts
+
+    def at(self, start, end):
+        forms = {form for a, b, form in self.ranges if start < b and end > a}
+        return 'code' if 'code' in forms else 'metadata' if forms else None
+
+    def form(self, line, start, end):
+        offset = self.starts[line]
+        return self.at(offset + start, offset + end)
 
 
 def citations(changes, lang):
@@ -537,10 +633,8 @@ def citations(changes, lang):
             continue
         texts[path] = text
         lines = text.splitlines(keepends=True)
-        fenced = False
+        protection = MarkdownProtection(text) if section == 'guide' else None
         for i, line in enumerate(lines):
-            if re.match(r'^\s*(`{3,}|~{3,})', line):
-                fenced = not fenced
             heading = bool(HEADING.match(line) or
                            i + 1 < len(lines) and re.fullmatch(r'\s*(?:=+|-+)\s*', lines[i + 1])
                            and line.strip())
@@ -559,10 +653,11 @@ def citations(changes, lang):
                             matches.append((offset, offset + len(o), 'tsv-cell'))
                         offset += len(cell) + 1
                 for a, b, form in matches:
-                    if heading:
+                    protected = protection.form(i, a, b) if protection else None
+                    if protected:
+                        form = protected
+                    elif heading:
                         form = 'heading'
-                    elif fenced and section == 'guide':
-                        form = 'code'
                     hits.append((section, path, i + 1, form, o, n, key, a, b))
     return hits, texts
 
@@ -589,6 +684,9 @@ def rewrite_guide(hits, texts, blocked, force, changes):
             raise Fail(f'refusing guide path outside guide/: {path}')
         if real != os.path.abspath(path):
             raise Fail(f'refusing symlink guide path: {path}')
+        if any(a < end and b > start and (a, b) != (start, end)
+               for start, end in edits[path][line]):
+            raise Fail(f'overlapping label rewrites at {path}:{line}; update manually')
         existing = edits[path][line].get((a, b))
         if existing and existing != (o, n):
             raise Fail(f'ambiguous label rewrite at {path}:{line}')
@@ -690,6 +788,12 @@ def main(argv):
         sync_changes = []
         split_problems = {}
         split_used = set()
+        if args.list_citations or args.rewrite_guide:
+            base_files = set(git('ls-tree', '-r', '--name-only', args.ref, '--', target).splitlines())
+            for path in files:
+                if path not in base_files or not os.path.isfile(path):
+                    raise Fail(f'{path}: cannot compare old and new catalogue values '
+                               '(added, deleted or moved file); label sync requires existing files')
         if files and not args.triples:
             old_catalogue, new_catalogue = catalogue_snapshot(args.ref, target)
             lab = label_like_en if en else label_like
@@ -707,6 +811,9 @@ def main(argv):
         for key in sorted(split_approvals - split_used):
             fail('split', f'--allow-split {key} matched no split (stale approval)')
         if args.list_citations or args.rewrite_guide:
+            print(f'label sync: {len(files)} compared file(s), {len(sync_changes)} changed label(s)'
+                  + ('; no catalogue diff against ref' if not changed else
+                     '; no changed labels in compared values' if not sync_changes else ''), file=sys.stderr)
             for key, _, _, _ in sync_changes:
                 if key.startswith(('set.tab_', 'tenant.tab_')):
                     print(f'WARN SETTINGS TAB: {key}: update the first-column cell in guide/ref/settings'

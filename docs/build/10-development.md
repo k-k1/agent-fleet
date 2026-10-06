@@ -659,3 +659,20 @@ but leaves `保存中` untouched and reports a heading such as `## 保存` and a
 assertion such as `toBe("保存")`. Update the heading, its links, and that assertion
 in the same PR, then rerun the guard and `scripts/docs-check.py`. No catalogue
 rewrite is needed to adopt this tooling, and it remains local-only, outside CI.
+
+Automatic rewrites also protect Markdown source contexts: inline code (including
+multiple backticks and multiline spans), fenced and indented code, initial YAML
+front matter, HTML tags/attributes and comments, URLs, inline link destinations
+and titles, and reference-link definitions. Exact citations in these contexts
+are still listed as `code` or `metadata`, require manual review or `--exempt-pin`,
+and are never automatically rewritten. Fences retain their opener's character
+and length; only a same-character closing fence of at least that length, with no
+trailing content, closes them. Blockquote and list containers are recognized.
+Nested exact citations such as `「**label**」` and `**「label」**` are listed and
+rewritten at their inner label range once; overlapping edits are refused.
+
+Label-sync modes require both versions of each compared catalogue file. Added,
+untracked, deleted or moved domain files produce an explicit error and exit 2,
+instead of a misleading empty citation list. These modes also report the number
+of compared files and changed labels on stderr; a zero result distinguishes no
+catalogue diff against the ref from a diff with no changed labels.
