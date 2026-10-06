@@ -66,19 +66,19 @@ func EnsureStatusHooks() {
 	// states (not suppressed by --dangerously-skip-permissions). Their tool_use is
 	// written to the transcript only after it's resolved, so the hook is how the
 	// Console learns about the pending question / plan.
-	if !preToolUseHasMatcher(hooks, "AskUserQuestion") {
-		ensurePreToolUseMatcher(hooks, "AskUserQuestion", statusHookCmd("question"))
+	if !preToolUseHasCommand(hooks, "AskUserQuestion", statusHookCmd("question")) {
+		ensurePreToolUseCommand(hooks, "AskUserQuestion", statusHookCmd("question"))
 		changed = true
 	}
-	if !preToolUseHasMatcher(hooks, "ExitPlanMode") {
-		ensurePreToolUseMatcher(hooks, "ExitPlanMode", statusHookCmd("plan"))
+	if !preToolUseHasCommand(hooks, "ExitPlanMode", statusHookCmd("plan")) {
+		ensurePreToolUseCommand(hooks, "ExitPlanMode", statusHookCmd("plan"))
 		changed = true
 	}
 	// Edit/command tools: record what's about to run so the permission block (below)
 	// can name the file/command. Matcher is a regex over the tool name; permtool never
 	// changes status, so it's harmless when no prompt follows (bypass/accept modes).
-	if !preToolUseHasMatcher(hooks, permToolMatcher) {
-		ensurePreToolUseMatcher(hooks, permToolMatcher, statusHookCmd("permtool"))
+	if !preToolUseHasCommand(hooks, permToolMatcher, statusHookCmd("permtool")) {
+		ensurePreToolUseCommand(hooks, permToolMatcher, statusHookCmd("permtool"))
 		changed = true
 	}
 	// PostToolUse(*) → working: a catch-all heartbeat. Every completed tool re-asserts
