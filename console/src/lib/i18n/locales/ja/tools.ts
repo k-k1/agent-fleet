@@ -1043,7 +1043,7 @@ export const tools = {
   "gcplogin.replaced": "このプロファイルで別のサインインが始まったため、こちらは止めました。このコードはもう使えません。",
   "gcplogin.cancelled": "このサインインは取り消されました。",
   "gcplogin.gone": "このサインインはもう動いていません（ワークスペースが再起動した可能性があります）。",
-  "gcplogin.close_hint": "閉じても依頼は残ります（ほかの端末のコンソールにも出ます）。このログインが不要なときだけ依頼を取り消してください。",
+  "gcplogin.close_hint": "閉じても依頼は残ります（ほかのブラウザのコンソールにも出ます）。このログインが不要なときだけ依頼を取り消してください。",
   "gcplogin.cancel_request": "依頼を取り消す",
   "gcplogin.close": "閉じる",
   "gcplogin.not_pending": "このログイン依頼はもう保留中ではありません。",

@@ -85,8 +85,8 @@ export const notifications = {
   "notif.usage_reset.title": "{source} の制限がリセットされました",
   "notif.usage_reset.body": "{window}がリセットされました。",
   "notif.usage_reset.speech": "{source}の{window}がリセットされました。",
-  "notif.window.5h": "5 時間枠",
-  "notif.window.week": "週間枠",
+  "notif.window.5h": "5 時間利用枠",
+  "notif.window.week": "週間利用枠",
 
   // === P5 通知センター（NotificationCenter） ===
   "noti.kind_answer_ready": "回答が返ってきました",
@@ -138,7 +138,7 @@ export const notifications = {
   "noti.col_voice": "読み上げ",
   "noti.cell_aria": "{row}：{effect}",
   "noti.cell_fixed": "常にオン（人の対応を待つ通知です）",
-  "noti.table_note": "未読ドットをオフにすると、届いた時点で既読にします（セッションの赤いドットも未読数も付かず、通知センターには既読の行として残ります）。この列はほかの端末にも反映されます。OS の通知と読み上げは、この端末だけの設定です。読み上げは上の「セッションの音声通知」がオンのときに鳴ります（利用上限のリセットだけは、読み上げタブの「音声読み上げ」がオンなら鳴ります）。作業中のペインに出ているセッションの通知は表示しません。",
+  "noti.table_note": "未読ドットをオフにすると、届いた時点で既読にします（セッションの赤いドットも未読数も付かず、通知センターには既読の行として残ります）。この列はほかのブラウザにも反映されます。OS の通知と読み上げは、このブラウザだけの設定です。読み上げは上の「セッションの音声通知」がオンのときに鳴ります（利用上限のリセットだけは、読み上げタブの「音声読み上げ」がオンなら鳴ります）。作業中のペインに出ているセッションの通知は表示しません。",
   "noti.os_permission_denied": "このサイトのデスクトップ通知はブラウザでブロックされています。サイトの設定から許可してください。",
   "noti.os_unsupported": "このブラウザはデスクトップ通知を表示できません。",
   "noti.row_turn_own": "ターン完了",
@@ -148,7 +148,7 @@ export const notifications = {
   "noti.row_needs_input": "回答が必要",
   "noti.row_needs_input_hint": "確認・計画の承認・許可の要求",
   "noti.row_usage_reset": "利用上限のリセット",
-  "noti.row_usage_reset_hint": "当たっていた Claude／Codex の 5 時間枠・週次枠がリセットされた",
+  "noti.row_usage_reset_hint": "当たっていた Claude／Codex の 5 時間利用枠・週次利用枠がリセットされた",
   "noti.row_session_report": "セッションからの報告",
   "noti.row_session_report_hint": "セッションがアシスタントの会話に報告した",
   "noti.row_rate_limit": "レート制限",

@@ -27,7 +27,7 @@ export const settings = {
     "セッションのチャットとアシスタントのチャットは、アプリ本体とは別のテーマ（ダーク／ライト）で表示できます（「アプリに合わせる」を選ぶと本体と同じテーマになります）。背景色も下でそれぞれ指定できます。",
   "display.per_tenant": "テナントごとに外観を分ける",
   "display.per_tenant_note":
-    "テーマと背景色をこの端末でテナントごとに覚え、テナントの切り替えに合わせて切り替えます。オフにすると、今見えている外観がすべてのテナントで使われます（保存済みの外観は残ります）。",
+    "テーマと背景色をこのブラウザでテナントごとに覚え、テナントの切り替えに合わせて切り替えます。オフにすると、今見えている外観がすべてのテナントで使われます（保存済みの外観は残ります）。",
   "display.cjk_font": "和文フォント",
   "display.cjk_font_sample": "①②③⑩ ㈱ ㍻ Ⅰ Ⅱ Ⅲ と漢字とかなの並び",
   "display.cjk_font_note":
@@ -212,7 +212,7 @@ export const settings = {
   "agents.skip_permissions": "権限確認",
   "agents.skip_permissions_sub": "ツール実行のたびに許可を求めるか",
   "agents.skip_permissions_off_note":
-    "オフ（許可を求める）にすると、編集やコマンドのたびに承認待ちで止まります。承認はミラーの許可カードか端末で答えてください。答えないまま放置すると「判断待ち」の時計で畳まれます（畳まれても対話は持ち越されます）。無人で動かす定時実行やオペレーターの起動には向きません。",
+    "オフ（許可を求める）にすると、編集やコマンドのたびに承認待ちで止まります。承認はミラーの許可カードか端末で答えてください。答えないまま放置すると「判断待ち」の時計で停止されます（停止されても対話は持ち越されます）。無人で動かす定時実行やオペレーターの起動には向きません。",
   "agents.mode_normal": "通常",
   "agents.note_launch_defaults":
     "新しいセッションの初期値です。リポジトリで前回使った設定があれば、そちらを優先します。ドライバが対応しない項目は起動時に適用されません。",
@@ -330,7 +330,7 @@ export const settings = {
   "agents.openai_key_placeholder": "OpenAI API キー (sk-…)",
   "agents.codex_desc": "ChatGPT サブスク（推奨）か OpenAI API キーで接続します。",
   "agents.codex_connect_sub": "ChatGPT サブスクで接続",
-  "agents.codex_sub_note": "Plus / Pro の枠を使います。追加課金はありません。",
+  "agents.codex_sub_note": "Plus / Pro の利用枠を使います。追加課金はありません。",
   "agents.codex_connect_key": "API キーで接続",
   "agents.codex_key_note": "OpenAI API の従量課金です（sk-…）。",
   "agents.codex_hint2_1": "ChatGPT サブスクで接続するには、先に ChatGPT の ",
@@ -373,7 +373,7 @@ export const settings = {
   "agents.oc_restart_done": "opencode serve を再起動しました。設定を反映しています。",
   "agents.oc_restart_failed": "再起動できませんでした: {msg}",
   "agents.oc_ws_limit": "直近の上限: {name}（{at} にリセット）",
-  "agents.oc_ws_limit_unknown": "枠不明",
+  "agents.oc_ws_limit_unknown": "利用枠不明",
   // 2 つのコントロールに割った（docs/log/103）。「使う」は種別ぜんぶの電源で、
   // 「opencode.ai への課金」は opencode.ai の側だけを決める——1 本の 4 択だったころは
   // 後者が前者と同じ広さに見え、しかも直結プロバイダの鍵にはどの値も効かないことが
@@ -603,7 +603,7 @@ export const settings = {
   "display.pane_layout": "メイン領域の配置",
   "display.pane_layout_split": "分割ペイン",
   "display.pane_layout_tabs": "タブ付きグリッド",
-  "display.pane_layout_note": "この端末だけに適用され、分割方式とタブ方式の配置はそれぞれ保存されます。",
+  "display.pane_layout_note": "このブラウザだけに適用され、分割方式とタブ方式の配置はそれぞれ保存されます。",
   "keys.cmd.memoAdd": "メモを追加",
 
   // === P5 設定ダイアログ枠（SettingsDialog タブ/タイトル） ===
@@ -638,7 +638,7 @@ export const settings = {
   "set.group_connections": "接続",
   "set.group_workspace": "ワークスペース",
   "set.back": "設定一覧",
-  "set.prefs_unsynced": "設定をサーバーに保存できていません。変更はこの端末にだけあり、エージェントは前の設定のまま動きます。",
+  "set.prefs_unsynced": "設定をサーバーに保存できていません。変更はこのブラウザにだけあり、エージェントは前の設定のまま動きます。",
   "set.prefs_retry": "再送",
 
   // === アカウント（サインイン方法の紐づけ・docs/log/61 §61.16 + 決定 37） ===

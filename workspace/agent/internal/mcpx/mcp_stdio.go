@@ -2065,7 +2065,7 @@ var mcpStdioTools = []map[string]any{
 	},
 	{
 		"name":        "get_agent_usage",
-		"description": "各エージェント CLI のサブスクリプション使用量とレート制限を返す（claude / codex / agy / muse。opencode / copilot / cursor / kiro は使用量ソースが無いため含まれない）。claude / codex は fiveHour（5時間枠）と sevenDay（週間枠）の pct が使用率（0–100）、resetsAt が解除日時（ISO 8601）で、codex は planType や resetCredits も付く。agy は形が異なり、account / plan と groups（クォータ枠ごとに label・remainingPct・resetsAt。実験枠 Starter 等）を返す。muse は claude / codex と同じ形だが、値はホストが最後に観測したもので、稼働中の muse セッションがターンを1つも終えていない間は ok=false になる（使用量ゼロではなく観測が無いという意味）。windowMins は現在の枠の長さ（分）。authed=false はその CLI に未ログイン、ageSec は計測の古さ（秒）。『あとどれくらい使える?』『制限はいつ解除?』と聞かれた時や、大きなタスクをセッションに振る前の判断材料に呼ぶ。",
+		"description": "各エージェント CLI のサブスクリプション使用量とレート制限を返す（claude / codex / agy / muse。opencode / copilot / cursor / kiro は使用量ソースが無いため含まれない）。claude / codex は fiveHour（5時間利用枠）と sevenDay（週間利用枠）の pct が使用率（0–100）、resetsAt が解除日時（ISO 8601）で、codex は planType や resetCredits も付く。agy は形が異なり、account / plan と groups（クォータ枠ごとに label・remainingPct・resetsAt。実験枠 Starter 等）を返す。muse は claude / codex と同じ形だが、値はホストが最後に観測したもので、稼働中の muse セッションがターンを1つも終えていない間は ok=false になる（使用量ゼロではなく観測が無いという意味）。windowMins は現在の利用枠の長さ（分）。authed=false はその CLI に未ログイン、ageSec は計測の古さ（秒）。『あとどれくらい使える?』『制限はいつ解除?』と聞かれた時や、大きなタスクをセッションに振る前の判断材料に呼ぶ。",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 	},
 	{
