@@ -765,7 +765,8 @@ Dry-run is the default; `--all` is dry-run only. Report and allowance outputs ar
 optional during planning. Applying Workspace changes requires
 `--allow-terms-out`; without it the tool refuses before writing. Use fresh output
 paths: existing artifacts, identical report/allowance paths, catalogue/script
-paths and git metadata paths are refused. Keep the applied allowance file until
+paths and git metadata paths are refused. Artifact creation happens before catalogue
+writes, so an artifact write failure leaves the catalogue intact. Keep the applied allowance file until
 the PR is reviewed. A second apply with reviewed dirty files and `--force` makes
 no additional catalogue edits; it must not overwrite the first allowance file
 with an empty plan. In a Managed session where `AF_WORK_DIR` is unset, use

@@ -451,11 +451,11 @@ def main(argv=None):
                       'FOLLOW-UP ' + command + ' --rewrite-guide',
                       'Then resolve remaining citations, rerun the guard, and run tests (see development §10.6).'])
         report = '\n'.join(lines) + '\n'
+        rewritten = {}
         if args.apply:
             replacements = collections.defaultdict(list)
             for key, p in proposals.items():
                 replacements[all_values[key][0]].extend(p.edits)
-            rewritten = {}
             for domain, edits in replacements.items():
                 source = sources[domain]
                 for _, _, replacement, _, a, b in sorted(edits, key=lambda e: e[4], reverse=True):
@@ -471,12 +471,15 @@ def main(argv=None):
             for domain in domains:
                 if read_source(ja / (domain + '.ts')) != sources[domain]:
                     raise Refusal('catalogue changed during planning; rerun')
-            for domain, source in rewritten.items():
-                (ja / (domain + '.ts')).write_bytes(source.encode('utf-8'))
+        # Write approvals before catalogues; exclusive creation prevents racing artifact overwrites.
         if args.allow_terms_out:
-            args.allow_terms_out.write_text(''.join('\t'.join(map(str, row)) + '\n' for row in rows), encoding='utf-8')
+            with args.allow_terms_out.open('x', encoding='utf-8') as fh:
+                fh.write(''.join('\t'.join(map(str, row)) + '\n' for row in rows))
         if args.report:
-            args.report.write_text(report, encoding='utf-8')
+            with args.report.open('x', encoding='utf-8') as fh:
+                fh.write(report)
+        for domain, source in rewritten.items():
+            (ja / (domain + '.ts')).write_bytes(source.encode('utf-8'))
         print(report, end='')
         return 0
     except (Refusal, guard.Fail, OSError, ValueError) as e:

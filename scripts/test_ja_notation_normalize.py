@@ -2,7 +2,9 @@
 
 Run: python3 -m unittest discover -s scripts -p test_ja_notation_normalize.py
 """
+import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -383,6 +385,22 @@ class CliTests(unittest.TestCase):
         self.assertEqual(existing.read_text(), 'keep')
         path = self.repo / 'same.txt'
         self.assertEqual(self.run_cli('--domain', 'dom', '--report', str(path), '--allow-terms-out', str(path)).returncode, 2)
+        self.assertEqual((self.ja / 'dom.ts').read_bytes(), before)
+
+    def test_artifact_write_failure_leaves_catalogue_intact(self):
+        before = (self.ja / 'dom.ts').read_bytes()
+        original_open = Path.open
+
+        def fail_artifact(path, mode='r', *args, **kwargs):
+            if mode == 'x':
+                raise PermissionError('fixture: artifact output is not writable')
+            return original_open(path, mode, *args, **kwargs)
+
+        with contextlib.chdir(self.repo), patch.object(Path, 'open', fail_artifact), \
+                contextlib.redirect_stderr(io.StringIO()) as error:
+            code = mod.main(['--domain', 'dom', '--apply', '--allow-terms-out', str(self.repo / 'terms.tsv')])
+        self.assertEqual(code, 2)
+        self.assertIn('not writable', error.getvalue())
         self.assertEqual((self.ja / 'dom.ts').read_bytes(), before)
 
     def test_symlink_refusal(self):
