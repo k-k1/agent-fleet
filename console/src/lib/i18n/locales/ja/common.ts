@@ -97,8 +97,8 @@ export const common = {
   "out_lang.en": "English",
 
   // === P2: 複数形インフラの例（tCount）＋ <Trans> の例。ja は単一形なので _one/_other は同値。===
-  "common.days_left_one": "あと{count}日",
-  "common.days_left_other": "あと{count}日",
+  "common.days_left_one": "あと {count} 日",
+  "common.days_left_other": "あと {count} 日",
   "common.count_ken_one": "{count}件",
   "common.count_ken_other": "{count}件",
 
@@ -122,11 +122,11 @@ export const common = {
   "state.rate_limited": "制限解除待ち",
   "state.rate_limited_at": "制限解除待ち · {at}",
   "state.auth_expired": "認証切れ — 再認証が必要",
-  "state.idle_bg": "入力待ち · BG実行中",
+  "state.idle_bg": "入力待ち · BG 実行中",
   // 何が走っているかまで分かったときの文言（backgroundBusyReason）。理由が付かない／
   // 知らない値のときは上の汎用文言に落ちる。
   "state.idle_bg_subagent": "入力待ち · サブエージェント実行中",
-  "state.idle_bg_shell": "入力待ち · BGコマンド実行中",
+  "state.idle_bg_shell": "入力待ち · BG コマンド実行中",
   "state.idle": "入力待ち",
   // 未起動の引き継ぎ提案が残っている（propose_session_handoff）。カードはミラーの中にしか無く
   // 通知も出ないので、行が「入力待ち」のままだと次の一歩が誰にも見えない。handoff_short は
@@ -224,7 +224,7 @@ export const common = {
   "pane.kind.chat": "チャット",
   "pane.kind.read": "朗読ビュー",
   "pane.kind.browser": "ブラウザ",
-  "pane.kind.browser_attach": "Chromium操作画面",
+  "pane.kind.browser_attach": "Chromium 操作画面",
   "pane.kind.engine_add": "モデルカタログ",
   "pane.kind.sessions": "セッション一覧",
   "pane.kind.gallery": "画像ギャラリー",
@@ -265,14 +265,14 @@ export const common = {
   "onb.which_start": "どちらから始めますか？（あとから両方使えます）",
   "onb.tile_chat_title": "AI に質問・翻訳を頼む",
   "onb.tile_chat_desc": "使い捨てのチャット。git もターミナルも不要で、そのまま使えます。",
-  "onb.chat_needs_setup": "上の2ステップを済ませると使えます",
+  "onb.chat_needs_setup": "上の 2 ステップを済ませると使えます",
   "onb.start_chat": "チャットをはじめる",
   "onb.tile_dev_title": "リポジトリで開発する",
   "onb.tile_dev_desc": "git を接続し、リポジトリをクローンして AI セッションを起動します。",
   "onb.collapse_steps": "手順をたたむ",
   "onb.to_dev_setup": "開発のセットアップへ",
   "onb.welcome": "Agent Fleet へようこそ",
-  "onb.welcome_sub": "まず2ステップ。そのあとは目的を選ぶだけです",
+  "onb.welcome_sub": "まず 2 ステップ。そのあとは目的を選ぶだけです",
   "onb.later": "あとで",
   "onb.guide_title": "はじめかたガイド",
   "onb.guide_sub": "済んだ項目には自動でチェックが付きます",
@@ -369,7 +369,7 @@ export const common = {
   "ui.close_pane_hint": "このペインを閉じる（中クリック / Ctrl+クリックで直接閉じる）",
   "ui.close_tab_hint": "このタブを閉じる",
   "ui.popout_pane_hint": "別タブで開く（このペインは移動します）",
-  "ui.popout_expand": "フルConsoleに展開",
+  "ui.popout_expand": "フル Console に展開",
   "popout.blocked": "別タブを開けませんでした。ブラウザのポップアップブロックを確認してください",
   "popout.stale_link": "このポップアウトリンクは無効です。通常画面を開きました",
   "popout.cannot": "このペインは別タブへ切り離せません",
@@ -380,7 +380,7 @@ export const common = {
   "ui.next_key": "次のキー",
   "ui.wk_groups": "サブメニュー",
   "ui.wk_actions": "アクション",
-  "ui.wk_back": "1つ戻る",
+  "ui.wk_back": "1 つ戻る",
   "ui.wk_cancel": "キャンセル",
   "ui.new_version_available": "新しいバージョンがあります",
   "ui.update_sessions_safe": "更新しても実行中のセッションは止まりません。",

@@ -71,7 +71,7 @@ export const tools = {
   "mcp.f_kinds_hint": "何も選ばなければ全エージェントが対象です。",
   "mcp.f_timeout": "タイムアウト (ms)",
   "mcp.f_timeout_hint":
-    "1000〜120000 の範囲で指定します。空欄なら各 CLI の既定値に従います。opencode と cursor には該当する設定が無いため、指定しても無視されます。",
+    "1000〜120000 の範囲で指定します。空欄なら各 CLI の既定値に従います。opencode と cursor には該当する設定がないため、指定しても無視されます。",
   "mcp.f_enabled": "有効",
   "mcp.f_enabled_hint": "無効にすると、定義は残したままどこにも渡されなくなります。",
   "mcp.enabled_on": "有効にする",
@@ -80,7 +80,7 @@ export const tools = {
   // --- 外部通信の許可リスト連携（docs/log/48 §9・EgressNote.tsx）---
   // 遮断されている / これから遮断される宛先を、まだ直せる場所（登録画面）で伝える。
   "mcp.egress_blocked":
-    "この宛先（{host}）は外部通信の許可リストに無いため、ワークスペースから接続できません。",
+    "この宛先（{host}）は外部通信の許可リストにないため、ワークスペースから接続できません。",
   "mcp.egress_would_block":
     "この宛先（{host}）は外部通信の許可リストにありません。現在は記録のみのため接続できますが、遮断モードに切り替わると使えなくなります。",
   "mcp.egress_pending": "{host} の許可を申請済みです（管理者の承認待ち）。",
@@ -170,7 +170,7 @@ export const tools = {
   "env.preview_current_none": "未発行（ワークスペースを起動すると発行されます）",
   "env.preview_current_note": "この配備のプレビュー用ドメインは {domain} で、URL は https://＜ランダム＞-＜ポート＞.{domain}/ の形になります。起動のたびに発行し直され、停止すると開けなくなります。",
   "env.preview_ports_label": "公開するポート",
-  "env.preview_ports_note": "カンマ区切りで最大 {n} 個（既定は 3000, 8080）。ここに無いポートのサブドメインは開けません。意図せず立っているサービスを外に出さないための一覧です。",
+  "env.preview_ports_note": "カンマ区切りで最大 {n} 個（既定は 3000, 8080）。ここにないポートのサブドメインは開けません。意図せず立っているサービスを外に出さないための一覧です。",
   "env.preview_fixed_label": "URL を固定する",
   "env.preview_fixed_note": "既定は起動のたびに URL を発行し直します。外部 IdP（Google / GitHub ログインなど）のリダイレクト URI を登録して使う場合だけ固定してください。固定しても文字列はランダムなままです。",
   "env.preview_public_label": "ログインなしで公開する",
@@ -249,7 +249,7 @@ export const tools = {
   "machine.usage_cpu_of": "{pct}% / {max}%",
   "machine.usage_oom": "この間にメモリ不足でプロセスが強制終了されました（コンテナ自体は生きています）。",
   "machine.usage_note":
-    "4 秒ごとに 1 点、最大 1 時間ぶん。値が変わらない間もグラフは進みます（変化が無いことは制御側が保証しています）。取得できなかった時間は線を切って表しています。",
+    "4 秒ごとに 1 点、最大 1 時間ぶん。値が変わらない間もグラフは進みます（変化がないことは制御側が保証しています）。取得できなかった時間は線を切って表しています。",
   "machine.disk_title": "Agent Fleet が使っているディスク",
   "machine.disk_failed": "ディスクの内訳を取得できませんでした。",
   "machine.disk_cache": "キャッシュ",
@@ -299,7 +299,7 @@ export const tools = {
   "machine.left_deleted": "{name} を {count} 個削除しました（{size}）。",
   "machine.left_failed_delete": "{name} を削除できませんでした: ",
   "machine.left_partial": "一部は削除できませんでした: ",
-  "machine.left_note": "強制終了した Chromium が残したプロファイル、もう無いセッションの ~/.af-work、新しいパッチに置き換わった Node.js、入れ替わった Kiro です。二度と読まれないので、消しても次のビルドは遅くなりません。Agent の起動時にも自動で消します。使用中のものと、1 時間以内に変更されたものは残します。",
+  "machine.left_note": "強制終了した Chromium が残したプロファイル、もうないセッションの ~/.af-work、新しいパッチに置き換わった Node.js、入れ替わった Kiro です。二度と読まれないので、消しても次のビルドは遅くなりません。Agent の起動時にも自動で消します。使用中のものと、1 時間以内に変更されたものは残します。",
   "machine.note_who_changes":
     "サイズとマシンの種類はテナント管理者が決めます。変更は次にワークスペースを起動したときに反映されます。",
 
@@ -478,9 +478,9 @@ export const tools = {
   "tts.polly_kazuha": "Kazuha（女性）",
   "tts.polly_tomoko": "Tomoko（女性）",
   "tts.cache_none": "なし",
-  "tts.cache_5m": "5分（約30MB）",
-  "tts.cache_15m": "15分（約90MB）",
-  "tts.cache_30m": "30分（約180MB）",
+  "tts.cache_5m": "5 分（約30MB）",
+  "tts.cache_15m": "15 分（約90MB）",
+  "tts.cache_30m": "30 分（約180MB）",
   "tts.speed_slow": "ゆっくり",
   "tts.speed_normal": "標準",
   "tts.speed_fast": "はやめ",
@@ -566,7 +566,7 @@ export const tools = {
   "tts.note_autoread_mirror":
     "アクティブなペインのチャットに新しい回答が届いたら、自動でカラオケ・ハイライト付きで読み上げます。読み上げ中に次の回答が届いたら、終わってから順番に読みます（見ていないセッションは「セッションの音声通知」が担当）。",
   "tts.note_workread":
-    "ツール実行で途中経過と確定した応答だけを小声で読み、最終回答は通常の声へ戻します。同じキャラに対応スタイルが無い場合や Polly では、同じ声の音量を下げて読みます。",
+    "ツール実行で途中経過と確定した応答だけを小声で読み、最終回答は通常の声へ戻します。同じキャラに対応スタイルがない場合や Polly では、同じ声の音量を下げて読みます。",
   "tts.note_autoread_all":
     "アクティブなペインだけでなく、開いているすべてのチャットペインの新着回答（確認・質問も）を読み上げます。複数ペインの回答は 1 本の音声に順番に並びます。「セッションごとに声を変える」と組み合わせると、どのセッションの回答かを声で聞き分けられます。ペインで読むセッションには「セッションの音声通知」の短い告知を重ねません。",
   "tts.note_summary_read":
@@ -623,7 +623,7 @@ export const tools = {
   "git.deleted": "「{name}」を削除しました",
   "git.rename_failed": "リネームに失敗: {msg}",
   "git.renamed": "「{old}」→「{new}」にリネームしました",
-  "git.clone_url_copied": "クローンURLをコピーしました",
+  "git.clone_url_copied": "クローン URL をコピーしました",
   "git.identity_title": "コミット identity（このプロバイダの既定）",
   "git.identity_saved": "コミット identity を保存しました",
   "git.name_placeholder_ex": "name（例: 山田太郎）",
@@ -643,7 +643,7 @@ export const tools = {
   "git.global_identity_saved": "既定 identity を保存しました",
   "git.global_identity_help":
     "どのプロバイダにも紐づかないリポジトリ（remote 無し等）で使う ~/.gitconfig の既定値。解決順は「リポ上書き ＞ プロバイダ ＞ この既定」。",
-  "git.copy_clone_url": "クローンURLをコピー",
+  "git.copy_clone_url": "クローン URL をコピー",
   "git.browse": "参照",
   "git.browse_title": "参照（クローン不要）",
   "git.rename": "リネーム",
@@ -722,7 +722,7 @@ export const tools = {
   "pmcp.kind_unverified": "未検証（要ログインのため実測できていません）",
   "pmcp.dialect_none": "展開なし",
   "pmcp.gate_approval": "承認が必要（未承認の間は起動しません）",
-  "pmcp.gate_trust": "trust 設定が必要（無いと読み込まれません）",
+  "pmcp.gate_trust": "trust 設定が必要（ないと読み込まれません）",
   "pmcp.gate_none": "次に起動するセッションから有効",
   "pmcp.w_file_unreadable": "{file} を読み取れませんでした（形式が壊れている可能性があります）",
   "pmcp.w_name_hijack":
@@ -731,7 +731,7 @@ export const tools = {
   "pmcp.w_dialect_broken":
     "{file} の \"{server}\" の値が {dialect} を使っていますが、{kind} では正しく展開されず、気づかないうちに使えなくなります",
   "pmcp.w_dialect_mismatch": "{file} の \"{server}\" の値が {dialect} を使っていますが、{kind} では展開されません",
-  "pmcp.w_secret_tracked": "{file} の \"{server}\" の {key} は秘密情報に見え、既に Git 管理下にあります",
+  "pmcp.w_secret_tracked": "{file} の \"{server}\" の {key} は秘密情報に見え、すでに Git 管理下にあります",
   "pmcp.w_secret_vcs_uncertain":
     "{file} の \"{server}\" の {key} は秘密情報に見えますが、バージョン管理の状態を判定できません",
   "pmcp.w_server_diverged": "\"{server}\" は複数のファイルに定義されており内容が異なります: {files}",
@@ -742,7 +742,7 @@ export const tools = {
   "pmcp.copy_title": "\"{server}\"（{file}）をコピー",
   "pmcp.copy_change_target": "コピー先を選び直す",
   "pmcp.copy_no_targets": "コピー先にできるエージェントがありません。",
-  "pmcp.copy_will_overwrite": "{file} に同名のエントリが既にあります。上書きします。",
+  "pmcp.copy_will_overwrite": "{file} に同名のエントリがすでにあります。上書きします。",
   "pmcp.with_secrets_label": "値もコピーする（既定はキー名のみ）",
   "pmcp.with_secrets_warn": "コピー元とコピー先の Git 管理状態によっては、値が新たにコミット対象になる場合があります。",
   "pmcp.apply_action": "コピーする",
@@ -752,7 +752,7 @@ export const tools = {
   "pmcp.op_source_unreadable": "コピー元のファイルを読み取れませんでした",
   "pmcp.op_source_missing": "コピー元のサーバーが見つかりませんでした",
   "pmcp.op_dest_unreadable": "コピー先のファイルを読み取れませんでした",
-  "pmcp.op_conflict": "コピー先に同名のエントリが既にあります",
+  "pmcp.op_conflict": "コピー先に同名のエントリがすでにあります",
   "pmcp.summary_command": "コマンド",
   "pmcp.summary_url": "URL",
   "pmcp.summary_env": "環境変数",
@@ -762,9 +762,9 @@ export const tools = {
   "pmcp.ignore_exclude": ".git/info/exclude（既定・コミットされません）",
   "pmcp.ignore_gitignore": ".gitignore（コミットされ、同僚にも共有されます）",
   "pmcp.ignore_exclude_hint": "この作業コピー（親クローンと全 worktree に共通）だけに適用されます。取り返しがつきます。",
-  "pmcp.ignore_gitignore_hint": "リポジトリ全体・同僚全員に影響します。既に追跡済みのファイルには適用されません。",
+  "pmcp.ignore_gitignore_hint": "リポジトリ全体・同僚全員に影響します。すでに追跡済みのファイルには適用されません。",
   "pmcp.ignore_add_action": "追加",
-  "pmcp.ignore_already": "既に無視設定に含まれています",
+  "pmcp.ignore_already": "すでに無視設定に含まれています",
   "pmcp.ignore_added": "無視設定に追加しました",
 
   // === エージェントメモリの版管理（docs/log/39 P2 / ADR 0022・features/settings/MemoryTab.tsx） ===
@@ -796,7 +796,7 @@ export const tools = {
   "mem.codex_disabled_toast": "Codex のメモリ機能を無効にしました。取得済みの履歴は残ります。",
   "mem.history_title": "履歴",
   "mem.history_empty": "スナップショットはまだありません。",
-  "mem.n_files": "{n}ファイル",
+  "mem.n_files": "{n} ファイル",
   "mem.jump_at": "日時指定",
   "mem.jump_go": "この日時時点へ",
   "mem.jump_none": "その日時以前のスナップショットがありません",
@@ -839,7 +839,7 @@ export const tools = {
   "mem.ci_apply": "{n} 件を取り込む",
   "mem.ci_progress": "{done} / {total}",
   "mem.ci_done": "{n} 件を取り込みました",
-  "mem.ci_done_skipped": "{n} 件を取り込み、{skipped} 件は見送りました（プレビュー後にファイルが変わった、または既に処理済み）",
+  "mem.ci_done_skipped": "{n} 件を取り込み、{skipped} 件は見送りました（プレビュー後にファイルが変わった、またはすでに処理済み）",
   "mem.ci_failed": "結果を確認できませんでした。プレビューを読み直したので、取り込まれた内容を確かめてください。",
   "mem.ci_reason_no_project": "~/repos に対応する作業コピーがありません",
   "mem.ci_reason_ambiguous": "対応する作業コピーが複数あります",
@@ -897,7 +897,7 @@ export const tools = {
   "mem.export_note":
     "メモリには個人的な内容が含まれます。共有する前に中身を確認してください。書き出したファイルは暗号化されていません。",
   "mem.export_secret_title": "秘密情報らしき記述が見つかりました",
-  "mem.export_secret_body": "書き出す内容に、秘密情報らしき記述が{n}件あります。",
+  "mem.export_secret_body": "書き出す内容に、秘密情報らしき記述が {n} 件あります。",
   "mem.export_secret_hint":
     "値そのものは表示していません（先頭数文字だけ）。確認のうえ問題なければ、このまま書き出せます。",
   "mem.export_secret_history": "（過去の版）",
@@ -907,9 +907,9 @@ export const tools = {
   "mem.import_failed": "取り込みに失敗しました",
   "mem.import_summary": "{format} / スナップショット{snapshots}件 / 最終 {when}",
   "mem.import_none": "この環境に取り込める内容がありません。",
-  "mem.import_rejected": "対象外として取り込まなかった項目が{n}件あります。",
+  "mem.import_rejected": "対象外として取り込まなかった項目が {n} 件あります。",
   "mem.import_unavailable": "この環境に取り込み先がないため取り込めません: {kinds}",
-  "mem.import_secrets": "取り込む内容に、秘密情報らしき記述が{n}件あります。",
+  "mem.import_secrets": "取り込む内容に、秘密情報らしき記述が {n} 件あります。",
   "mem.import_secret_scan_failed": "取り込む内容の秘密情報スキャンに失敗しました。「秘密は無い」ことは確認できていません。",
   "mem.import_do": "取り込む",
   "mem.import_mode_label": "適用のしかた",

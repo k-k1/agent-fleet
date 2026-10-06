@@ -68,7 +68,7 @@ describe("tCount (plurals)", () => {
 
   it("count is auto-injected into vars", () => {
     setLocale("ja");
-    expect(tCount("common.days_left", 5)).toBe("あと5日");
+    expect(tCount("common.days_left", 5)).toBe("あと 5 日");
   });
 });
 
