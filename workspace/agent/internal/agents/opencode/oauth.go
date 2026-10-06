@@ -272,7 +272,7 @@ func waitOAuthMethod(addr string, timeout time.Duration) error {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return errors.New("opencode serve の初期化が終わらず、アカウントのサインインを開始できませんでした（少し待って再試行してください）")
+			return errors.New("opencode serve の初期化が終わらず、アカウントのログインを開始できませんでした（少し待って再試行してください）")
 		}
 		time.Sleep(oauthReadyPoll)
 	}

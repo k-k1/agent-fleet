@@ -3,6 +3,7 @@
 import argparse
 import collections
 from pathlib import Path
+import re
 import shlex
 import sys
 
@@ -96,6 +97,12 @@ def main(argv=None):
     ap.add_argument('--force', action='store_true', help='apply to reviewed dirty catalogue files')
     ap.add_argument('--allow-terms-out', type=Path)
     ap.add_argument('--report', type=Path)
+    ap.add_argument('--allow-split', action='append', default=[], metavar='KEY,KEY',
+                    help='approve every key in a reviewed independent label group')
+    ap.add_argument('--allow-user-error', action='append', default=[], metavar='KEY',
+                    help='approve a user-visible err.* value in an F-login plan')
+    ap.add_argument('--allow-quoted-terms', action='append', default=[], metavar='KEY',
+                    help='approve F-login substitutions in Japanese label quotes for this key')
     args = ap.parse_args(argv)
     if args.force and not args.apply:
         ap.error('--force requires --apply')
@@ -105,7 +112,14 @@ def main(argv=None):
         root = common.root_dir()
         rows = common.read_plan(args.plan)
         entries, sources, _ = common.load_catalogue(root)
-        verified = common.verify_plan(rows, entries)
+        split_approvals = set()
+        for spec in args.allow_split:
+            keys = spec.split(',')
+            if any(not re.fullmatch(r'[\w.-]+', k) for k in keys):
+                raise common.Refusal('--allow-split requires KEY,KEY without empty keys or spaces')
+            split_approvals.update(keys)
+        verified = common.verify_plan(rows, entries, split_approvals,
+                                      set(args.allow_user_error), set(args.allow_quoted_terms))
         terms = common.guard.glossary_terms(common.notation.read_source(root / common.guard.GLOSSARY))
         allowed = []
         replacements = collections.defaultdict(list)
@@ -142,6 +156,8 @@ def main(argv=None):
                  f'{sum(not v[0] for v in verified.values())} pending; allowances={len(allowed)}']
         lines.extend('\t'.join(common.escape(x) for x in (r.key, r.old, r.new, r.family, r.reason)) for r in rows)
         lines.extend(follow_up(args.allow_terms_out))
+        lines.extend('RETAIN GUARD OPTION --allow-split ' + shlex.quote(spec) for spec in args.allow_split)
+        lines.extend('RETAIN GUARD OPTION --allow-quoted-terms ' + shlex.quote(key) for key in args.allow_quoted_terms)
         report = '\n'.join(lines) + '\n'
         # Exclusive artifacts are created before edits so artifact failures cannot mutate catalogues.
         if args.allow_terms_out:

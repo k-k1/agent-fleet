@@ -105,7 +105,7 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	// be applied on every path that could spawn a host, and a sign-in that arrives later must
 	// not find an unclamped file waiting for it.
 	if !readCredential().Present {
-		return nil, errors.New("Muse Code にサインインしていません（設定 > 接続 の Muse Code カードでサインイン）")
+		return nil, errors.New("Muse Code にログインしていません（設定 > 接続 の Muse Code カードでログイン）")
 	}
 
 	handlesMu.Lock()

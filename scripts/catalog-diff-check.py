@@ -801,6 +801,12 @@ def rewrite_guide(hits, texts, blocked, force, changes):
             fh.write(''.join(lines))
 
 
+def apply_quoted_terms(text, pairs):
+    for old, new in pairs:
+        text = text.replace(old, new)
+    return text
+
+
 def main(argv):
     ap = argparse.ArgumentParser(prog='catalog-diff-check.py', usage='%(prog)s <ref> [--lang en] [--allow-labels] [--allow-term KEY:OLD>NEW] [--list-pinned | --list-citations | --rewrite-guide | --triples] [files...]')
     ap.add_argument('ref')
@@ -822,7 +828,13 @@ def main(argv):
                     help='approve one reviewed term change in one key: OLD count -N, NEW count +N')
     ap.add_argument('--allow-terms-file', action='append', default=[], metavar='PATH',
                     help='the same, one KEY<TAB>OLD<TAB>NEW[<TAB>N] per line')
+    ap.add_argument('--allow-quoted-terms', action='append', default=[], metavar='KEY',
+                    help='ja only: apply verified sign-in/login allowances inside Japanese label quotes')
     args = ap.parse_args(argv)
+    for key in args.allow_quoted_terms:
+        if 'prompt' in key.lower() or re.search(r'(?:^|[._])speech(?:[._]|$)', key) or \
+                key.startswith(('chat.report.', 'clean.reason')):
+            ap.error(f'{key}: quoted-term approval cannot target an excluded prompt/speech/report/reason key')
     if (args.list_citations or args.rewrite_guide) and sum((args.list_pinned, args.list_citations, args.triples, args.rewrite_guide)) > 1:
         ap.error('listing and rewrite modes are mutually exclusive')
     if args.force and not args.rewrite_guide:
@@ -834,6 +846,8 @@ def main(argv):
             ap.error('--allow-split needs KEY,KEY (no empty keys or spaces)')
         split_approvals.update(keys)
     en = args.lang == 'en'
+    if en and args.allow_quoted_terms:
+        ap.error('--allow-quoted-terms is Japanese only')
     if args.triples and not en:
         print('error: --triples needs --lang en', file=sys.stderr)
         return 2
@@ -955,6 +969,7 @@ def main(argv):
             return 2
     allow_applied = {}
     allow_why = collections.defaultdict(list)
+    quoted_used = set()
 
     # Anything under locales/ outside the target dir must not move in a rewrite.
     outside = set(git('diff', '--name-only', '-z', args.ref, '--', CATALOGUE).split('\0'))
@@ -1050,7 +1065,17 @@ def main(argv):
                                                  for d, k in us)
                             print(f'ALLOWED term: {where}: {a[1]} -> {a[2]} x{a[3]} ({shown(a[1])}, {shown(a[2])})')
                 for name, extract in (INVARIANTS_EN if en else {k: v.findall for k, v in INVARIANTS.items()}).items():
-                    a, b = collections.Counter(extract(o)), collections.Counter(extract(n))
+                    before = o
+                    if name == 'kagi' and key in args.allow_quoted_terms:
+                        approved = [(a[1], a[2]) for ai, a in mine if ai in allow_applied and
+                                    {a[1], a[2]} == {'ログイン', 'サインイン'}]
+                        before = INVARIANTS['kagi'].sub(
+                            lambda m: apply_quoted_terms(m[0], approved), o)
+                        if extract(o) != extract(before):
+                            quoted_used.add(key)
+                            if not listing:
+                                print(f'ALLOWED quoted terms: {where}')
+                    a, b = collections.Counter(extract(before)), collections.Counter(extract(n))
                     if name in adj:
                         d = {k: b[k] - a[k] for k in set(a) | set(b)}
                         for k, v in adj[name].items():
@@ -1134,12 +1159,15 @@ def main(argv):
         if ai not in allow_applied:
             why = '; '.join(allow_why[ai]) or 'the key was not among the changed values'
             fail('allow', f'--allow-term {spec} matched no change (stale, wrong direction or wrong count): {why}')
+    for key in set(args.allow_quoted_terms) - quoted_used:
+        fail('allow', f'{key}: stale quoted-term approval or no verified sign-in/login allowance')
     for _, _, _, spec in exempt:
         if spec not in used:
             print(f'WARN: --exempt-pin {spec} matched nothing (stale exemption)')
     print(f'{len(files)} file(s), {checked} value(s) checked, {changed_n} changed, {exempted} pin(s) exempted')
     if allowances:
         print(f'{len(allow_applied)} of {len(allowances)} term allowance(s) applied')
+    if allowances or args.allow_quoted_terms:
         cats = [*cats, 'allow']
     print('failures: ' + ', '.join(f'{c}={fails[c]}' for c in cats))
     if en:
