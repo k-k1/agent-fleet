@@ -121,7 +121,7 @@ export const imggen = {
   "imggen.mask_canvas_thin": "細い筆はエンジンが追える細かさを下回ります。塗り直しは線の形どおりにはなりません。",
   "imggen.mask_canvas_underlay_unreadable": "今のマスクを読めなかったので、白紙から塗ります。",
   "imggen.mask_canvas_underlay_aspect": "このマスクは絵と縦横比が違います。ここでは絵に合わせて引き伸ばして表示し、生成でも同じく引き伸ばされます。",
-  "imggen.mask_canvas_underlay_alpha": "このマスクは透過を含み、見た目と反映のされ方が違います。重ねずに白紙から塗ります。",
+  "imggen.mask_canvas_underlay_alpha": "このマスクは透過を含み、見た目と反映のしかたが違います。重ねずに白紙から塗ります。",
   "imggen.mask_canvas_sideways": "絵が読み込まれる向きと違う向きで表示されているため、塗れません。",
   "imggen.mask_canvas_picture_failed": "この絵はブラウザで表示できないため、上に塗れません。",
   "imggen.mask_canvas_blank": "まだ何も塗られていません。塗り直す所を白で塗ってください。",
