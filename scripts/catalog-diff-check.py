@@ -115,7 +115,8 @@ FRAGMENT_MIN_EN = 20
 SPLIT_CLAUSE_EN = re.compile(r'[.!?]\s+|\{\w+\}|</?\d+/?>|\n')
 # CLI and product names that must survive a rewrite verbatim (case included).
 PRODUCT_NAMES = ['claude', 'codex', 'agy', 'opencode', 'kiro', 'copilot', 'rovo', 'muse',
-                 'tmux', 'git', 'gh', 'npm', 'ssh', 'aws', 'gcloud', 'kubectl', 'docker']
+                 'cursor', 'tmux', 'git', 'gh', 'npm', 'ssh', 'aws', 'gcloud', 'kubectl', 'docker',
+                 'github', 'gitlab', 'bitbucket', 'jira', 'svn', 'ssm', 'ecs', 'lcpp', 'ollama']
 NOT_PATHS = {'and/or', 'either/or', 'his/her', 'he/she', 'w/o', 'n/a'}
 RESTRICTION_WORDS = ['only', 'never', 'must', 'not', 'cannot', 'default', 'required',
                      'unless', 'except']
@@ -147,7 +148,7 @@ INVARIANTS_EN = {
     'code': INVARIANTS['code'].findall,
     'caps': _rx(r'\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*\b(?<=[A-Z0-9_]{2})'),
     'idents': en_idents,
-    'quoted': _rx(r'"[^"]*"|“[^”]*”'),
+    'quoted': lambda v: [a or b for a, b in re.findall(r'"([^"]*)"|“([^”]*)”', v)],
     'marks': _rx('→|⚠'),
 }
 CATEGORIES_EN = ['skeleton', 'keys', 'outside', *INVARIANTS_EN, 'newlines', 'edge', 'glossary',
@@ -183,6 +184,7 @@ def clauses_en(old, new):
 
 
 def restriction_counts(v):
+    v = v.replace('’', "'")
     v = re.sub(r"\bcan't\b", 'cannot', v, flags=re.I)
     v = re.sub(r"\b(?:\w+)n't\b", 'not', v, flags=re.I)
     return collections.Counter(w for w in re.findall(r'[a-z]+', v.lower()) if w in RESTRICTION_WORDS)
@@ -325,8 +327,9 @@ class Sources:
         for name in self.files:
             forms = ['「%s」' % label, '**%s**' % label]
             if self.lang == 'en':
-                forms = ['**%s**' % label, '"%s"' % label, '“%s”' % label]
-            if name.endswith(CODE_SUFFIXES):
+                forms = ['**%s**' % label, '"%s"' % label, '“%s”' % label, "'%s'" % label,
+                         '`%s`' % label]
+            elif name.endswith(CODE_SUFFIXES):
                 forms += ['"%s"' % label, "'%s'" % label, '`%s`' % label]
             for f in forms:
                 hits += [h for h in self.find_in(name, f)]

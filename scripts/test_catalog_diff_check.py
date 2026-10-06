@@ -470,6 +470,35 @@ class CatalogDiffCheckEnTests(Base):
         self.edit(EN, 'Press \\"Restart\\"', 'Press \\"Reboot\\"')
         self.assertEnTrips("quoted")
 
+    def test_en_quote_style_alone_is_not_a_change(self):
+        self.edit(EN, 'Press \\"Restart\\"', 'Press “Restart”')
+        code, out = self.run_en()
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 changed", out)
+
+    def test_en_curly_quoted_content_changed(self):
+        self.edit(EN, 'Press \\"Restart\\"', 'Press “Reboot”')
+        self.assertEnTrips("quoted")
+
+    def test_en_product_name_recased(self):
+        self.edit(EN_EXT, "Use codex or opencode here.", "Use codex or opencode here. Sign in to Cursor.")
+        self.commit_all("cursor")
+        self.edit(EN_EXT, "Sign in to Cursor.", "Sign in to cursor.")
+        self.assertEnTrips("idents")
+
+    def test_en_curly_apostrophe_contraction_is_same_word(self):
+        self.edit(EN, "This cannot be undone", "This can’t be undone")
+        code, out = self.run_en()
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("WARN", out)
+
+    def test_en_negation_added_or_removed_warns(self):
+        self.edit(EN_EXT, "Only admins can change this.", "Only admins can’t change this.")
+        code, out = self.run_en()
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"WARN restriction: .*ext\.restr: .*cannot 0 -> 1")
+        self.assertIn("warnings: restriction=1", out)
+
     def test_en_arrow_dropped(self):
         self.edit(EN_EXT, "Open Settings → Connections.", "Open Settings, then Connections.")
         self.assertEnTrips("marks")
@@ -548,6 +577,18 @@ class CatalogDiffCheckEnTests(Base):
                 code, out = self.run_en("--allow-labels")
                 self.assertEqual(code, 1, out)
                 self.assertGreater(self.counts(out)["pinned"], 0, out)
+                self.edit(EN, '"dom.label": "Halt"', '"dom.label": "Stop"')
+
+    def test_en_pinned_label_in_markdown_quote_forms(self):
+        for text in ("Click `Stop` now\n", "Click 'Stop' now\n"):
+            with self.subTest(text=text):
+                self.write("guide/member/page.md", text)
+                self.edit(EN, '"dom.label": "Stop"', '"dom.label": "Halt"')
+                self.assertEnTrips("pinned", "--allow-labels")
+                code, out = self.run_en("--list-pinned")
+                self.assertIn("guide/member/page.md:1\t", out)
+                code, out = self.run_en("--allow-labels", "--exempt-pin=dom.label@guide/member/page.md")
+                self.assertEqual(code, 0, out)
                 self.edit(EN, '"dom.label": "Halt"', '"dom.label": "Stop"')
 
     def test_en_citation_updated_in_same_change_passes(self):

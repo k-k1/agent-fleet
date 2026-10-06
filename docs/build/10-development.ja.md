@@ -468,7 +468,8 @@ ja モードのままで、結果は変わりません。en モードでは `en/
 同じであることを求めます。用語は `guide/ref/glossary.md` の Screen 列で、大文字小文字を区別せず
 単語境界で数えます（複数形の `s` は同じ語）。ラベルは 30 文字以下で文末記号なしの値です
 （`--allow-labels` は従来どおり）。PINNED は旧文面を文末・`{x}`・改行で分けた 20 文字以上の節で、
-`*.ja.md` と `README*.md` を除く `guide/**/*.md`・Console のテスト・Go のソースを検索します。
+`*.ja.md` と `README*.md` を除く `guide/**/*.md`・Console のテスト・Go のソースを検索します（日本語文書の `workspace/agent/knowledge/af-usage.md` は対象外）。ラベルは
+`**label**`・`"label"`・`'label'`・`` `label` `` の形でも探します。
 `--list-pinned` と `--exempt-pin` は ja モードと同じです。変更した値で制限語（only, never, must,
 not, cannot, default, required, unless, except。`can't`・`n't` は長い形として数える）の個数が
 変わると `WARN restriction` を出して `warnings:` 行に合算します。失敗にはしませんが、

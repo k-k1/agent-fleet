@@ -529,7 +529,8 @@ CLI and product names such as `codex`, case included), the contents of `"…"` q
 case-insensitively on word boundaries (a plural `s` is the same word). A label is at most 30
 characters with no sentence-ending punctuation (`--allow-labels` as before). PINNED splits the old
 text at sentence ends, `{x}` slots and line breaks (clauses of 20+ characters) and searches
-`guide/**/*.md` except `*.ja.md` and `README*.md`, console tests and Go sources;
+`guide/**/*.md` except `*.ja.md` and `README*.md`, console tests and Go sources (not `workspace/agent/knowledge/af-usage.md`, a Japanese
+document); a label is also looked for as `**label**`, `"label"`, `'label'` and `` `label` ``;
 `--list-pinned` and `--exempt-pin` work as in ja mode. A change in the count of a restriction
 word (only, never, must, not, cannot, default, required, unless, except; `can't` and `n't`
 count as their long forms) in a changed value prints `WARN restriction` and is totalled on a
