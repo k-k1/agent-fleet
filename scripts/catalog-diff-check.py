@@ -574,7 +574,7 @@ def main(argv):
                         us = units(a[1]) + units(a[2])
                         if any(u in bad for u in us):
                             allow_why[spec].append(f'{where}: ' + ', '.join(
-                                f'{u[1]}{"" if u[0] is None else " [" + u[0] + "]"} {seen[u][0]} -> {seen[u][1]} (allowed {want[u]:+d})'
+                                f'{u[1]} [{u[0] or "direct"}] {seen[u][0]} -> {seen[u][1]} (allowed {want[u]:+d})'
                                 for u in us if u in bad))
                             continue
                         allow_applied.setdefault(spec, []).append(where)
@@ -584,9 +584,11 @@ def main(argv):
                                     k = next(t for t in terms if t.lower() == item.lower()) if en and d == 'glossary' else k
                                     adj[d][k] += sign * a[3]
                         if not listing:
-                            c1, c2 = seen[units(a[1])[0]], seen[units(a[2])[0]]
-                            print(f'ALLOWED term: {where}: {a[1]} -> {a[2]} x{a[3]} '
-                                  f'({a[1]} {c1[0]} -> {c1[1]}, {a[2]} {c2[0]} -> {c2[1]})')
+                            def shown(item):
+                                us = units(item)
+                                return ', '.join(f'{item}{f" [{d or "direct"}]" if len(us) > 1 else ""} {seen[(d, k)][0]} -> {seen[(d, k)][1]}'
+                                                 for d, k in us)
+                            print(f'ALLOWED term: {where}: {a[1]} -> {a[2]} x{a[3]} ({shown(a[1])}, {shown(a[2])})')
                 for name, extract in (INVARIANTS_EN if en else {k: v.findall for k, v in INVARIANTS.items()}).items():
                     a, b = collections.Counter(extract(o)), collections.Counter(extract(n))
                     if name in adj:

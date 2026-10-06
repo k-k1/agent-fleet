@@ -361,6 +361,11 @@ class CatalogDiffCheckTests(Base):
         self.assertIn("matched no change", out)
         self.assertGreater(self.counts(out)["latin"], 0, out)
 
+    def test_allow_term_failure_labels_direct_count_units(self):
+        self.edit(JA, "設定を保存してから、画面を閉じてください。", "先に設定を保存し、そのあと画面を閉じてください。")
+        out = self.assertTrips("allow", "--allow-term", "dom.wording:画面>表示")
+        self.assertIn("表示 [direct] 0 -> 0 (allowed +1)", out)
+
     def test_allow_term_wrong_delta_fails(self):
         self.edit(JA, "自動保存は OFF です。", "自動保存はオフです。")
         out = self.assertTrips("allow", "--allow-term", "dom.toggle:OFF>オフ*2")
@@ -805,6 +810,7 @@ class CatalogDiffCheckEnTests(Base):
                                 "--allow-term", "dom.default_a:DEFAULT>standard")
         self.assertEqual(code, 0, out)
         self.assertIn("2 of 2 term allowance(s) applied", out)
+        self.assertIn("DEFAULT [glossary] 2 -> 0, DEFAULT [caps] 1 -> 0, standard 0 -> 2", out)
         # An unapproved caps drift stays red: only the glossary half is allowed.
         code, out = self.run_en("--allow-term", "dom.default_a:Default>standard*2")
         self.assertEqual(code, 1, out)
