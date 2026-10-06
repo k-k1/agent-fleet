@@ -1,6 +1,4 @@
 """Plan safety, real-guard integration and verification-removal mutants for local B2 tools."""
-import contextlib
-import io
 import json
 import os
 from pathlib import Path
@@ -55,6 +53,8 @@ class VerificationTests(unittest.TestCase):
         for r in [row('ログイン', '既定'), row('ログインの設定', '設定のサインイン'),
                   row('端末', 'このパソコン', 'F-device'),
                   row('保存します。', '保存…します。', 'F-variants'),
+                  row('JSON', 'JSオン', 'F-onoff'),
+                  row('ON_FLAG', 'オン_FLAG', 'F-onoff'),
                   row('削除する前に確認。', '削除前に確認。', 'F-buttons'),
                   row('デプロイ既定', '配備既定ではあります', 'F-deploy')]:
             with self.subTest(r=r), self.assertRaises(common.Refusal):
@@ -87,7 +87,7 @@ class VerificationTests(unittest.TestCase):
     def test_excluded_keys(self):
         for key in ['plan.review_prompt_reply', 'wi.prompt_read', 'launch.first_prompt_note',
                     'notif.speech', 'notif.failed_speech_bare', 'notif.speech.future',
-                    'err.auth', 'chat.report.lang', 'clean.reason.blocked']:
+                    'err.auth', 'chat.report.lang', 'clean.reason.blocked', 'clean.reason_future']:
             with self.subTest(key=key), self.assertRaisesRegex(common.Refusal, 'excluded'):
                 common.verify_plan([row(key=key)], {key: entry('ログイン', key)})
 
@@ -107,7 +107,7 @@ class VerificationTests(unittest.TestCase):
 
     def test_duplicate_plan(self):
         with self.assertRaisesRegex(common.Refusal, 'duplicate'):
-            common.verify_plan([row(), row(new='ログイン')], {'d.login': entry('ログイン')})
+            common.verify_plan([row(), row()], {'d.login': entry('ログイン')})
 
     def test_source_offsets_and_unsafe_expressions(self):
         src = 'export const d = {"d.login": "ログイン\\n" + "文字列"};\r\n'
@@ -127,6 +127,16 @@ class VerificationTests(unittest.TestCase):
     def test_variant_end_insertion(self):
         v = entry('保存中')[1]
         self.assertEqual(common.source_edits(v, common.substitution_edits('保存中', '保存中…', 'F-variants'))[0][2], '…')
+
+    def test_english_type_only_wrapper_and_latin_occurrences(self):
+        source = 'import type { d as jaD } from "../ja/d.ts"; export const d: Record<keyof typeof jaD, string> = {"d.login": "Sign in"};'
+        self.assertEqual(common.english_values(source)[0].text, 'Sign in')
+        for bad in [source.replace('import type', 'import'), source.replace('Record', 'Unknown'),
+                    source.replace('export const', 'unsafe const'), source[:source.index(' = {') + 2]]:
+            with self.assertRaises(common.Refusal):
+                common.english_values(bad)
+        self.assertFalse(common.occurrences('JSON XON ON_FLAG', 'F-onoff'))
+        self.assertEqual([m[2] for m in common.occurrences('ONにするか OFF/OFF', 'F-onoff')], ['ON', 'OFF', 'OFF'])
 
 
 class MutantTests(unittest.TestCase):
@@ -178,6 +188,9 @@ class CliTests(unittest.TestCase):
         (self.repo / 'guide/ref/example.ja.md').write_text('「ログイン」を選びます。\n')
         test = self.repo / 'console/sample.test.ts'
         test.write_text('expect(label).toBe("ログイン");\n')
+        ui = self.repo / 'console/src/Auth.tsx'
+        ui.parent.mkdir(parents=True, exist_ok=True)
+        ui.write_text('const label = tr("d.login");\n')
         self.git('init', '-q')
         self.commit()
         self.plan = self.repo / 'plan.tsv'
@@ -266,6 +279,28 @@ class CliTests(unittest.TestCase):
         self.assertIn('failures:', positive.stdout)
         self.assertIn('ALLOWED term:', positive.stdout)
 
+    @unittest.skipUnless(shutil.which('node'), 'real guard requires node')
+    def test_slot_allowance_embedded_old_term_and_exact_count(self):
+        glossary = self.repo / common.guard.GLOSSARY
+        glossary.write_text(glossary.read_text() + '| 利用枠 | Quota |\n| 子の上限 | Child cap |\n')
+        self.write('d', {'d.slot': '枠', 'd.slot_sentence': '利用枠と週間枠です。'})
+        self.commit()
+        self.plan_rows([row('枠', '利用枠', 'F-slot', 'd.slot'),
+                        row('利用枠と週間枠です。', '利用枠と週間利用枠です。', 'F-slot', 'd.slot_sentence')])
+        terms = self.repo / 'slot-allow.tsv'
+        p = self.apply('--apply', '--allow-terms-out', str(terms))
+        self.assertEqual(p.returncode, 0, p.stderr)
+        negative = self.guard('--allow-labels')
+        self.assertEqual(negative.returncode, 1, negative.stdout + negative.stderr)
+        self.assertIn('FAIL glossary:', negative.stdout)
+        positive = self.guard('--allow-labels', '--allow-terms-file', str(terms))
+        self.assertEqual(positive.returncode, 0, positive.stdout + positive.stderr)
+        self.assertIn('2 of 2 term allowance(s) applied', positive.stdout)
+        terms.write_text(terms.read_text().replace('\t1\n', '\t2\n'))
+        wrong = self.guard('--allow-labels', '--allow-terms-file', str(terms))
+        self.assertEqual(wrong.returncode, 1, wrong.stdout + wrong.stderr)
+        self.assertIn('FAIL allow:', wrong.stdout)
+
     def test_all_or_nothing_multiple_domains_and_invalid_late_row(self):
         self.write('e', {'e.login': 'ログインします。'})
         self.commit()
@@ -353,6 +388,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(record['guide_count'], '2')
         self.assertIn('guide/ref/example.ja.md:1:', record['guide_first_two'])
         self.assertIn('console/sample.test.ts:1', record['tests_hits'])
+        self.assertIn('console/src/Auth.tsx:1', record['ui_hits'])
         self.assertEqual(self.cli('--family', 'F-login', '--limit', '0', script=CANDIDATES).stdout.count('\n'), 1)
         md = self.cli('--family', 'F-login', '--format', 'md', script=CANDIDATES)
         self.assertIn('| family | key |', md.stdout)

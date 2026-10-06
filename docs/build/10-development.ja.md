@@ -742,3 +742,171 @@ R3 の空白処理後も全カタログの計画は 16 変更値（Workspace の
 64 値を変更し、13 行の承認がすべて適用されました。最初のガードは PINNED のみ 32 件を
 報告し、引用・アンカー・カバレッジ台帳を同期した後のガードと docs-check は終了コード 0
 です。2 回目の dry-run は提案 0 件で、検証後に作業用コピーを削除しました。
+
+### 判断をレビューする日本語の用語計画（B2）
+
+B2 は語義の判断と適用を分けます。モデル・人が
+`scripts/ja-term-candidates.py` の候補を読み、理由を添えた計画を書き、
+`scripts/ja-term-apply.py --check-only` で検証してから適用します。
+両ツールは B1 の文字列リテラル tokenizer を使い、TypeScript を実行しません。
+ローカル専用で CI には組み込みません。ツールの導入ではカタログ・ガイドの用語を変更しません。
+
+| ファミリー | 判断と許される形 |
+|---|---|
+| F-login | Agent Fleet 自身の IdP はサインイン。外部の CLI・サービス（サービスとしての GitHub も）はログイン。双方向の置換を許します。テナントのグループ名とガイドの引用も確認します。 |
+| F-deploy | 名詞は配備、動詞のデプロイするはそのまま。デプロイ既定 → 配備の既定、デプロイ全体 → 配備全体も含みます。 |
+| F-device | ブラウザ・デバイスの範囲はこのブラウザ。この端末 → このブラウザ、端末 → ブラウザ（ほかの端末など）、端末 → このブラウザを明示します。ターミナルエミュレータの端末は保持します。 |
+| F-slot | 枠 → 利用枠／子の上限。子の数を誤って利用枠と呼んだ場合の利用枠 → 子の上限も含みます。期間・無料の枠は個別に判断し、スロットは EC2 だけに使います。 |
+| F-fold | UI の折りたたみは畳む、セッションを終える意味は停止／終了。畳む・畳まれ・畳んだ・畳んで・畳めの形を明示します。データの集約は別の語義なのでこのバッチでは見送ります。 |
+| F-onoff | 本文の ON/OFF → オン/オフ。コントロール自身の名前に合わせてオン/オフ ↔ 有効/無効。欧文は日本語に隣接していても単語全体だけを対象にします。 |
+| F-buttons | `scripts/ja_term_common.py` の `BUTTONS` にある 16 組の名詞／する。通常のボタンは名詞、する形は確認ダイアログの実行ボタンだけです。 |
+| F-default | デフォルト → 既定。 |
+| F-variants | 共通モジュールの `VARIANTS` にある値全体の組（保存中／保存中…、送信／送信…、セッション削除／セッションを削除、APIトークン／API トークンなど）。… は進行中の表示とダイアログを開くボタンだけ。ほかは多数派の形を判断します。 |
+
+置換表は語義を決めず、判断の理由も生成しません。新しい組にはレビューと正例・負例のテストが
+必要です。計画で任意の語・空白・並べ替え・本文の … を持ち込めません。登録された組でも、
+行端の空白を消すなど保護規則に反する置換は拒否します。手動で扱う事例であり、
+`--force` で回避する理由にはなりません。
+
+```sh
+python3 scripts/ja-term-candidates.py --stats
+python3 scripts/ja-term-candidates.py --family F-login,F-deploy --domain settings --format tsv
+python3 scripts/ja-term-candidates.py --family F-device,F-fold --format md --limit 20
+python3 scripts/ja-term-apply.py --plan "$AF_WORK_DIR/term-plan.tsv" --check-only
+python3 scripts/ja-term-apply.py --plan "$AF_WORK_DIR/term-plan.tsv" --dry-run
+python3 scripts/ja-term-apply.py --plan "$AF_WORK_DIR/term-plan.tsv" --apply \
+  --allow-terms-out "$AF_WORK_DIR/term-allowances.tsv" --report "$AF_WORK_DIR/term-report.txt"
+```
+
+候補は出現ごとに 1 行で、ドメインのファイル・キーのソース順・登録されたファミリー順・
+デコード後の位置の順に並びます。キー、ドメイン、ラベル／文（15 文字以内で 。 なし）、
+値全体、該当語、Unicode コードポイントの `[start,end)`、該当文、前後のキーと値、
+英語の値、ガイドの一致数と最初の 2 行、テスト・Go・知識の一致位置、UI ソースのキー参照、同じ値を共有する
+全キー、除外、語義の基準を含みます。前後のキーはファイル内の位置で、カードをまたぐ
+場合があります。カードの所属は推測しません。英語の空欄はキーの欠落、一致の空欄は
+走査器が見つけなかったことだけを示します。ラベルは既存ガードの引用機構、文は改行を
+つないで検索する PINNED の句を使います。共通の短い文が偶然一致する場合もあり、
+判定者が読んで引用かどうかを確かめます。`--stats` はファミリー・ドメインごとの
+出現数・値数・ラベル数・除外出現数を表示し、stderr に実測時間を出します。
+`--limit` は候補行だけを制限し、統計は制限しません。除外された値も候補には残します。
+UI の参照は引用されたキーの完全一致のファイル・行で、コントロールの役割は推測しません。
+組み立てたキー・動的なキーは手動で確認します。
+
+**判定者の確認事項:** 値全体、該当文、前後のキー、曖昧さを確かめる英語、ガイドの引用、
+[`glossary.ja.md`](../../guide/ref/glossary.ja.md) を読みます。
+ボタンの動作・コントロール名・範囲が不明ならコンポーネントも読みます。そのキーの語義と、
+何を根拠に決めたかを理由に記録します。ラベルと文を別バッチにし、共有ラベルは全キーを
+同じ新しい値で揃え、曖昧な場合はそのままにします。`*prompt*`、speech の派生、
+`err.*`、`chat.report.*`、`clean.reason*` は変更できません。用語集の行には別途明示的な
+判断が必要です。apply が編集するのはカタログのリテラルだけです。
+
+UTF-8 の計画にはヘッダーを付けず、TAB 区切りで次の 5 フィールドを指定します。
+
+```text
+key<TAB>old_value<TAB>new_value<TAB>family<TAB>reason
+surface_color.default<TAB>デフォルト<TAB>既定<TAB>F-default<TAB>Initial setting; checked glossary and English
+```
+
+`<TAB>` は実際のタブです。空行と `#` コメントは無視します。
+フィールド内のバックスラッシュ・タブ・改行は `\\`・`\t`・`\n`・`\r` と書きます。
+候補も同じ可逆なエンコードです。不明なエスケープは拒否します。現在のデコード済みの値を
+そのまま写し、コピー時に正規化しないでください。
+
+書き込む前に全行を検証します。ja にキーが 1 回だけ存在して旧値（適用済みなら新値）と
+完全に一致すること、宣言したファミリーの置換だけであること、placeholder・slot・数字・
+コード・引用・改行・行端の空白が変わらないこと、除外でないこと、共有ラベルの全キーが
+揃うこと、重複キーがないことを確かめます。未対応の構文、symlink、エスケープされた文字や
+連結リテラルの境界をまたぐ変更は拒否します。組み直した値とソースの骨格も照合します。
+対象ファイルが dirty ならレビュー後の `--force` が必要ですが、検証は緩めません。
+適用済みの計画を再度適用しても、前回の編集が dirty のままで追加の変更はありません。
+旧値・新値が混在する計画も再開できます。元の計画と承認ファイルは保持してください。
+
+未適用の編集には、新規の承認出力先が必要です（内容が空でも指定します）。
+ガードの数え方に合わせた `KEY<TAB>OLD<TAB>NEW<TAB>N` を生成し、用語集・欧文の増減を
+すべて検証してから出力します。レポート・承認はカタログの編集より先に排他的に作成し、
+既存の成果物、追跡済みのソース、カタログ・スクリプトのパス、計画の別名、symlink、
+Git のメタデータへの出力は拒否します。別々の新規パスを使います。`--check-only` は
+成果物もカタログも書かず、dry-run はレビュー用の成果物を出力できます。
+`AF_WORK_DIR` がない場合は `~/.af-work/<作業コピーのディレクトリ名>/` を使って後片付けします。
+
+用語集・欧文の単位ではない直接の語については、そのキーの承認にある計数単位の内部の出現を
+ガードの数から除きます。`枠 → 利用枠` は単独の枠が 1 個減って、用語集の利用枠が 1 個増える
+置換です。すでにある利用枠を旧語の枠として重複して数えません。用語集・欧文の計数と
+指定した N は厳密なままで、英語の計数は変更しません。
+
+**適用と引用同期:** 生成した承認を、すべてのガード呼び出しに付けます。
+
+```sh
+python3 scripts/catalog-diff-check.py origin/develop --allow-labels \
+  --allow-terms-file "$AF_WORK_DIR/term-allowances.tsv"
+python3 scripts/catalog-diff-check.py origin/develop --allow-labels \
+  --allow-terms-file "$AF_WORK_DIR/term-allowances.tsv" --list-citations
+python3 scripts/catalog-diff-check.py origin/develop --allow-labels \
+  --allow-terms-file "$AF_WORK_DIR/term-allowances.tsv" --rewrite-guide
+(cd console && npm test -- --maxWorkers=2)
+# Run from the repository root after resolving manual citations.
+python3 scripts/docs-check.py
+```
+
+引用が古いと最初のガードは PINNED で 1 になります。ほかの失敗はすべて解消します。
+`--list-citations` はラベル用で、文は `--list-pinned` と文頭の手検索も使います。
+引用を全部読み、見出し・アンカー、テスト、console-e2e、両方の知識ファイル、Go の対応文を
+手動で更新し、ガードを再実行して 0 にします。`--rewrite-guide` は見出し・コード・
+メタデータを保護します。`--exempt-pin KEY@PATH[:LINE]` は確認済みの独立した用途だけです。
+一致 0 件は依存がない証明ではありません。
+
+**B1 の教訓:** 文言バッチでは上の Console の全テストが必須です。組み立てた文字列、
+golden、console-e2e の期待値、Go の対応文は PINNED に見えない場合があり、
+対象を絞ったテストだけでは CI の失敗を見逃しました。golden は担当テストが定めた
+更新フラグだけで再生成して差分を読み、無条件に置き換えないでください。
+引用を変更したら関連する console-e2e・Go の検証も実行します。実際の集計行と終了コードを
+読まずに成功・失敗を宣言しません（終了コードを隠す `| tail` は使いません）。
+ツールを直したら `python3 -m unittest discover -s scripts -p 'test_*.py'`、Python の
+コンパイル、docs-check、ステージ済みの pre-commit フックを実行します。B2 のテストには
+検証を外す変異と、実ガードによる承認なしの負例・承認ありの正例が含まれます。
+
+#### B2 ツールの受け入れ確認
+
+導入時点の 23 ドメインの統計は 2.8 秒でした。すでに標準の形と除外された値も含む探索の数で、
+変更の提案数ではありません。
+
+| ファミリー | 出現数 | 値数 | ラベル数 | 除外出現数 |
+|---|---:|---:|---:|---:|
+| F-login | 294 | 238 | 52 | 22 |
+| F-deploy | 122 | 111 | 12 | 24 |
+| F-device | 34 | 29 | 5 | 3 |
+| F-slot | 28 | 26 | 7 | 0 |
+| F-fold | 10 | 9 | 3 | 1 |
+| F-onoff | 242 | 187 | 38 | 10 |
+| F-buttons | 81 | 81 | 81 | 0 |
+| F-default | 143 | 140 | 51 | 3 |
+| F-variants | 83 | 83 | 83 | 0 |
+
+device/fold の全 44 出現行を読みました。下の判断は全キーを含み、複数出現にも同じ判断を
+適用します。確認用の例であり、本番の計画や追跡されたカタログの変更承認ではありません。
+
+| ファミリー・キー | 判断と根拠 |
+|---|---|
+| F-device: `noti.table_note`（2）、`launch.tmpl.err.not_loaded`、`awslogin.close_hint`、`display.per_tenant_note`、`display.pane_layout_note`、`set.prefs_unsynced`、`gcplogin.close_hint` | 端末 → ブラウザ、この端末 → このブラウザ。英語はデバイス単位の設定や別デバイスからのアクセス、前後は設定・ログイン依頼です。7 値・8 出現。 |
+| F-device: `assistant.note_appearance`、`noti.os_unsupported`、`ovw.waiting_hint` | すでにこのブラウザなので保持。外観・ブラウザの通知・観測の範囲です。 |
+| F-device: `err.plan_pending`、`err.permission_pending`、`err.interaction_pending` | 除外。意味も対話カードがない場合の端末です。 |
+| F-device: `admin.idle_hold_watching_row` | このバッチでは保持。打鍵と Console の操作による自動停止の保留で、ブラウザ単位の設定ではありません。追加した UI の参照で保留の種類の描画を確認できます。 |
+| F-device: `admin.term_log_hint`、`onb.rtt_title`、`noti.kind_terminal_notification`、`srow.keep_awake_hint`、`agents.skip_permissions_off_note` | 端末出力の保存・エコーの経路・端末からの通知・端末を閉じた作業・端末での許可への返答なので保持します。 |
+| F-device: `keys.kt.termPrioTitle`、`keys.kt.termPrioLabel`（2）、`keys.kt.termPrioNote`（2）、`keys.kt.shellPassLabel`、`keys.kt.shellPassNote`（3） | 全 9 出現を保持。前後と英語が shell・tmux・端末の入力を明示します。 |
+| F-device: `ssm.term_color`、`ssm.term_preview_title`、`ssm.term_label`、`git.identity_help`、`view.lfs_tip` | 端末の色・プレビュー・コミット・git lfs pull の実行なので保持します。 |
+| F-fold: `fgraph.collapse`、`ovw.collapse`、`wsbar.usage.fold_hint`、`wsbar.usage.place_fold`、`wsbar.usage.place_fold_title`、`agents.expand_thinking_note` | UI の折りたたみの 6 出現を保持。英語と次のキーが展開・popover・配置・表示のコントロールを示します。 |
+| F-fold: `agents.skip_permissions_off_note`（2） | 確認用の判断は両方の畳まれ → 停止され。対話の期限で実行中のセッションを止め、保留中の会話は持ち越します。許可カードの参照で本文でありエージェント向け prompt でないと分かります。 |
+| F-fold: `plan.review_prompt_reply` | セッションを終える意味でもエージェント向け prompt なので除外します。 |
+| F-fold: `usage.truncated_hint` | このバッチでは保持。英語と使用量グラフの参照が保持期間後の集約・削除を示し、UI の折りたたみやセッションの終了とは別です。 |
+
+値全体・前後・英語・出典付きの一致で device/fold の判断ができ、曖昧な役割と後のボタンの
+判定のために UI のキー参照を追加しました。参照はソース確認の出発点で、ボタンの動作の
+証明ではありません。共通の文の一致は読む必要があり、短縮した引用は手検索が必要です。
+
+SAMPLE の device 計画は作業用のアーカイブだけに適用しました。4 ファイル・7 値・8 置換、
+承認は 4 行です。再適用は適用済み 7・未適用 0。実ガードは 2,412 値を照合し、4 行全部の
+承認を認め、最初の失敗は通知設定の本文の `pinned=1` だけでした。ラベルの引用モードは
+4 比較ファイル・変更ラベル 0 を明示しました。手動でガイドの 2 句を直しました。
+2 つ目は短縮した引用で PINNED には見えませんでした。最終ガードとガイド書き換えは 0、
+失敗の各項目も全部 0 です。作業用の文言・golden の更新はこのツールの PR に含めません。
+Console の全テストは後の実際の文言バッチで実行します。

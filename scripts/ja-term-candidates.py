@@ -3,6 +3,7 @@
 import argparse
 import collections
 from pathlib import Path
+import re
 import sys
 import time
 
@@ -11,7 +12,7 @@ import ja_term_common as common
 FIELDS = ('family', 'key', 'domain', 'kind', 'value', 'matched_term', 'start', 'end',
           'sentence', 'previous_key', 'previous_value', 'next_key', 'next_value', 'en_value',
           'guide_count', 'guide_first_two', 'tests_hits', 'go_hits', 'af_usage_hits',
-          'split_keys', 'excluded', 'sense', 'source')
+          'split_keys', 'excluded', 'sense', 'ui_hits', 'source')
 
 
 def sentence(text, start, end):
@@ -45,8 +46,28 @@ def references(entries):
     return result, texts
 
 
+def ui_locations(entries):
+    result = collections.defaultdict(set)
+    if not entries:
+        return result
+    rx = re.compile(r'(["\x27\x60])(' + '|'.join(re.escape(k) for k in sorted(entries)) + r')\1')
+    for path in sorted(set(common.guard.git('ls-files', '-co', '--exclude-standard', '-z').split('\0'))):
+        if not path.startswith('console/src/') or path.startswith(common.guard.CATALOGUE + '/') or \
+                '.test.' in path or not path.endswith(common.guard.CODE_SUFFIXES):
+            continue
+        try:
+            text = common.notation.read_source(Path(path))
+        except (OSError, UnicodeError):
+            continue
+        for line, content in enumerate(text.splitlines(), 1):
+            for match in rx.finditer(content):
+                result[match[2]].add((path, line))
+    return result
+
+
 def render_rows(entries, all_entries, neighbours, en, selected):
     refs, texts = references(entries)
+    uses = ui_locations(entries)
     shared = collections.defaultdict(list)
     for key, (_, v) in all_entries.items():
         shared[v.text].append(key)
@@ -72,6 +93,7 @@ def render_rows(entries, all_entries, neighbours, en, selected):
                        '; '.join(filter(None, (locations('af-usage.md'), locations('af-usage.coverage.tsv')))),
                        ','.join(sorted(shared[value.text])) if len(shared[value.text]) > 1 else '',
                        'yes' if common.excluded(key) else 'no', common.SENSES[family],
+                       '; '.join(f'{p}:{n}' for p, n in sorted(uses[key])),
                        str(common.JA / (domain + '.ts')))
 
 

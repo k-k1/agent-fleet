@@ -1,5 +1,4 @@
 """Shared, local-only B2 term registry and conservative catalogue operations."""
-import collections
 from dataclasses import dataclass
 import importlib.util
 from pathlib import Path
@@ -58,7 +57,7 @@ SENSES = {
     'F-deploy': 'Noun: 配備 (配備の既定, 配備全体); verb デプロイする stays.',
     'F-device': 'Browser-local/device settings: ブラウザ; terminal emulator: 端末 stays.',
     'F-slot': 'Usage quota: 利用枠; child count: 子の上限; EC2 only: スロット. Review each period/free quota.',
-    'F-fold': 'UI collapse: 畳む stays; ending a session: 停止/終了. Agent prompts are excluded.',
+    'F-fold': 'UI collapse: 畳む stays; ending a session: 停止/終了. Data roll-up is a separate sense; defer it. Agent prompts are excluded.',
     'F-onoff': 'Prose: オン/オフ; follow a control named 有効/無効; never Latin ON/OFF in prose.',
     'F-buttons': 'Noun on buttons; する only on a confirmation dialog execute button. Read the component.',
     'F-default': 'Initial setting: 既定.',
@@ -69,7 +68,7 @@ WHOLE = {'F-buttons', 'F-variants'}
 
 def excluded(key):
     return 'prompt' in key.lower() or re.search(r'(?:^|[._])speech(?:[._]|$)', key) is not None or \
-        key.startswith(('err.', 'chat.report.', 'clean.reason.'))
+        key.startswith(('err.', 'chat.report.', 'clean.reason'))
 
 
 def escape(text):
@@ -127,8 +126,9 @@ def english_values(source):
             raise Refusal('unsupported en type-only import wrapper')
         tokens = tokens[10:]
     if len(tokens) > 3 and tokens[3].text == ':':
-        if [t.text for t in tokens[3:8]] != [':', 'Record', '<', 'keyof', 'typeof'] or \
-                [t.text for t in tokens[9:13]] != [',', 'string', '>', '=']:
+        if len(tokens) < 14 or [t.text for t in tokens[:2]] != ['export', 'const'] or \
+                [t.text for t in tokens[3:8]] != [':', 'Record', '<', 'keyof', 'typeof'] or \
+                [t.text for t in tokens[9:14]] != [',', 'string', '>', '=', '{']:
             raise Refusal('unsupported en type annotation')
         return notation.values('export const en = ' + source[tokens[13].start:])
     return notation.values(source[tokens[0].start:] if tokens else source)
@@ -151,7 +151,9 @@ def occurrences(text, family):
         terms = {'畳む', '畳まれ', '畳んだ', '畳んで', '畳め', '畳み', '畳ま', '畳ん', '畳も'}
     if family == 'F-default':
         terms.add('既定')
-    rx = '|'.join(re.escape(t) for t in sorted(terms, key=lambda t: (-len(t), t)))
+    rx = '|'.join(('(?<![A-Za-z0-9_])' + re.escape(t) + '(?![A-Za-z0-9_])')
+                  if t in ('ON', 'OFF') else re.escape(t)
+                  for t in sorted(terms, key=lambda t: (-len(t), t)))
     return [(m.start(), m.end(), m[0]) for m in re.finditer(rx, text)]
 
 
@@ -213,6 +215,9 @@ def substitution_edits(old, new, family):
             moves.append((i + 1, j + 1, None))
         for a, b in pairs:
             if old.startswith(a, i) and new.startswith(b, j):
+                if a in ('ON', 'OFF') and (i and re.fullmatch(r'[A-Za-z0-9_]', old[i - 1]) or
+                                          i + len(a) < len(old) and re.fullmatch(r'[A-Za-z0-9_]', old[i + len(a)])):
+                    continue
                 moves.append((i + len(a), j + len(b), (i, i + len(a), b)))
         for ni, nj, edit in moves:
             if (ni, nj) not in predecessors:

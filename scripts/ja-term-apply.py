@@ -43,7 +43,9 @@ def allowances(row, edits, terms):
                 if category:
                     adj[category][term] += sign * n
     for (category, term), n in wants.items():
-        if common.guard.item_count(False, category, term, row.new, terms) - common.guard.item_count(False, category, term, row.old, terms) != n:
+        counted_units = {t for d, t in wants if d is not None}
+        if common.guard.allowance_count(False, category, term, row.new, terms, counted_units) - \
+                common.guard.allowance_count(False, category, term, row.old, terms, counted_units) != n:
             raise common.Refusal(f'{row.key}: allowance cannot explain net {category or "direct"} count of {term!r}')
     for category, counted in (
         ('glossary', lambda text: collections.Counter({t: text.count(t) for t in terms})),
@@ -76,7 +78,7 @@ def follow_up(path):
     return ['FOLLOW-UP ' + command, 'FOLLOW-UP ' + command + ' --list-citations',
             'FOLLOW-UP ' + command + ' --rewrite-guide',
             'Resolve remaining citations and rerun the guard to exit 0.',
-            'FOLLOW-UP cd console && npm test -- --maxWorkers=2',
+            'FOLLOW-UP (cd console && npm test -- --maxWorkers=2)',
             'FOLLOW-UP python3 scripts/docs-check.py',
             'WARNING: Regenerate goldens only with the project\'s update flag (inspect the owning test).',
             'Full npm test is mandatory: assembled strings, goldens, console-e2e and Go twins can be invisible to PINNED.',
