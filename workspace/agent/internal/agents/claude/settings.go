@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -47,6 +49,11 @@ func claudeJSONPath() string {
 //	hasTrustDialogAccepted: the per-dir "Is this a project you trust?" prompt that
 //	  otherwise stalls a fresh dir (every repo, and /home/dev after node→dev).
 //
+// A linked git worktree whose .claude/settings.json pre-approves tools (permissions.allow)
+// is judged by the MAIN checkout's trust, not its own (measured, 2.1.288/2.1.289: the
+// dialog reappears with only the worktree trusted and goes away once the main checkout is).
+// So the main checkout is trusted too; an explicit false there is overwritten.
+//
 // Writes once, only when something changed, atomically (rename), to minimize racing
 // with claude's own writes.
 func ensureFolderTrusted(dir string) {
@@ -73,15 +80,17 @@ func ensureFolderTrusted(dir string) {
 	if projects == nil {
 		projects = map[string]any{}
 	}
-	entry, _ := projects[dir].(map[string]any)
-	if entry == nil {
-		entry = map[string]any{}
-	}
-	if trusted, _ := entry["hasTrustDialogAccepted"].(bool); !trusted {
-		entry["hasTrustDialogAccepted"] = true
-		projects[dir] = entry
-		root["projects"] = projects
-		changed = true
+	for _, d := range append([]string{dir}, mainCheckoutOf(dir)...) {
+		entry, _ := projects[d].(map[string]any)
+		if entry == nil {
+			entry = map[string]any{}
+		}
+		if trusted, _ := entry["hasTrustDialogAccepted"].(bool); !trusted {
+			entry["hasTrustDialogAccepted"] = true
+			projects[d] = entry
+			root["projects"] = projects
+			changed = true
+		}
 	}
 
 	if !changed {
@@ -95,6 +104,62 @@ func ensureFolderTrusted(dir string) {
 	if os.WriteFile(tmp, b, 0o600) == nil {
 		_ = os.Rename(tmp, p)
 	}
+}
+
+// mainCheckoutOf returns the main checkout's root when dir is a linked git worktree
+// (its .git is a file "gitdir: <common>/worktrees/<name>"), else nil. Read from the files
+// rather than exec'd git: this runs on every launch and must not depend on PATH.
+//
+// The checkout is core.worktree of <common>/config when set (submodules and
+// --separate-git-dir, where <common> is not <checkout>/.git); otherwise the parent of a
+// <common> named ".git". Anything else (a bare repository) yields nil: guessing would
+// write trust for a directory that is not a checkout. Known gap: a --separate-git-dir store
+// named ".git" without core.worktree is indistinguishable from a plain checkout, so its
+// parent is returned (harmless extra entry; the real main stays untrusted as before).
+func mainCheckoutOf(dir string) []string {
+	b, err := os.ReadFile(filepath.Join(dir, ".git"))
+	if err != nil {
+		return nil
+	}
+	gitdir, ok := strings.CutPrefix(strings.TrimSpace(string(b)), "gitdir:")
+	if !ok {
+		return nil
+	}
+	gitdir = strings.TrimSpace(gitdir)
+	if !filepath.IsAbs(gitdir) {
+		gitdir = filepath.Join(dir, gitdir)
+	}
+	gitdir = filepath.Clean(gitdir) // git accepts a trailing "/" or "/."
+	worktrees := filepath.Dir(gitdir)
+	if filepath.Base(worktrees) != "worktrees" {
+		return nil
+	}
+	common := filepath.Dir(worktrees)
+	if wt := coreWorktree(common); wt != "" {
+		return []string{wt}
+	}
+	if filepath.Base(common) != ".git" {
+		return nil
+	}
+	return []string{filepath.Dir(common)}
+}
+
+// coreWorktree returns core.worktree from <common>/config as an absolute path, or "". It
+// asks git (sections, key case, last-wins, quoting and comments are git's to parse); with
+// git absent or the key unset the answer is "" and the caller falls back to the layout rule.
+func coreWorktree(common string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "config", "--file", filepath.Join(common, "config"),
+		"--includes", "--null", "--get", "core.worktree").Output()
+	v := strings.TrimSuffix(string(out), "\x00") // --null: a value may itself end in a newline
+	if err != nil || v == "" {
+		return ""
+	}
+	if !filepath.IsAbs(v) {
+		v = filepath.Join(common, v)
+	}
+	return filepath.Clean(v)
 }
 
 // settingsMu serializes read-modify-write cycles on settings.json inside this process, so
