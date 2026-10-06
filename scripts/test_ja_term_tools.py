@@ -348,7 +348,7 @@ class CliTests(unittest.TestCase):
     def test_quoted_guard_rejects_excluded_keys(self):
         old = '「サインインして承認」を押してください。'
         new = '「ログインして承認」を押してください。'
-        keys = ['d.quote', 'd.prompt', 'd.Prompt', 'd.speech', 'd_speech',
+        keys = ['d.quote', 'd.prompt', 'd.Prompt', 'd.speech', 'd_speech', 'notif.speech_bare',
                 'chat.report.auth', 'clean.reason.auth']
         self.write('d', dict.fromkeys(keys, old))
         self.commit()
