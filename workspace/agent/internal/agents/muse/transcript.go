@@ -400,9 +400,41 @@ func turnsWithCommentary(items []msp.Item, cs *commentarySet) []transcript.Turn 
 				Text:  text,
 			})
 			assistant = -1
+
+		default:
+			// `hookRun` and any kind a later muse adds: the schema's rule is that an unknown
+			// kind is rendered generically, never skipped — a dropped item is a hook that ran
+			// (and perhaps blocked a tool) with no trace in the mirror.
+			t := openAssistant(it)
+			t.Parts = append(t.Parts, genericPart(it))
+			applyUsage(t, it)
 		}
 	}
 	return turns
+}
+
+// genericPart renders an item whose kind this client has no dedicated shape for: the kind name
+// as the tool, the one-line summary the host supplies as the info, and — only when the item
+// did not complete — the reason, so a blocked or failed hook is not shown as a silent success.
+// A `hookRun` carries its summary in `label`; other kinds in `fallbackText` (tdd SS4.10).
+func genericPart(it msp.Item) transcript.Part {
+	p := transcript.Part{Kind: "tool", Tool: string(it.Kind)}
+	for _, s := range []string{str(it.Label), str(it.FallbackText), str(it.DisplayText)} {
+		if s != "" {
+			p.Info = transcript.Clip(s)
+			break
+		}
+	}
+	if p.Info == "" && it.Event != nil {
+		p.Info = string(*it.Event)
+	}
+	if it.Status != msp.ItemStatusCompleted {
+		p.Output = failureText(it)
+		if it.RunStatus != nil && *it.RunStatus != msp.HookRunStatusCompleted && str(it.Reason) == "" {
+			p.Output = string(*it.RunStatus)
+		}
+	}
+	return p
 }
 
 // toolPart renders a tool call. `visibleOutput` is the host's own already-redacted rendering

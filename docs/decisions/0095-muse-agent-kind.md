@@ -3072,3 +3072,20 @@ measured) and against any older `muse` on PATH until the pin moves. Measured aga
 binaries with the current bundle: 1.4.2 red with that single break before the change and green
 after it (25 additions, two of them `feedback`), the 1.4.1 pin green, and 1.4.2 red again when the checked-in bundle was
 mutated to drop `running` from `SessionStatus`.
+
+### Note 2026-10-06: bundle re-exported for 1.4.3-R5018.1 (#1741)
+
+1.4.3-R5018.1 is the first release whose export is not a superset of the bundle: the five
+`SessionDelete*` types are gone (`session/delete` and `session/deleteCompleted` stay, so the
+driver never used them) and `ItemKind` gained `hookRun`, a type the client switches on. Per
+P2-24 that is a reason to re-export, so `internal/msp/schema` and `types_gen.go` now carry the
+1.4.3 export (fingerprint `sha256:4cb67108…`).
+
+`turnsWithCommentary` had no `default`, so an item kind it did not list was skipped. It now renders
+`hookRun` and any later unknown kind through `genericPart` (kind name, `label`/`fallbackText`, and
+the reason when the item did not complete), which is what the schema asks of clients.
+
+The cost the 2026-09 note describes applies again: the 1.4.3 bundle is red against a 1.4.2 binary
+(the bundle declares `hookRun` and the other 1.4.3 additions, which a 1.4.2 binary lacks, so they
+read as removed), so `muse-contract.yml` on the Dockerfile pin stays red until
+`MUSE_VERSION` moves; measured: 1.4.3 green, 1.4.2 red. The pin bump is cli-pin-bump's.
