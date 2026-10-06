@@ -25,7 +25,7 @@ export const admin = {
   "admin.brand_label_note": "アプリ名の先頭に「[dev] 」の形で入ります。タブもランチャーも末尾から削るため、前置きです。空にすると付きません。",
   "admin.brand_preview_none": "（なし）",
   "admin.brand_reset": "環境変数に戻す",
-  "admin.brand_src_admin": "この画面の設定が有効です（環境変数 AF_BRAND_* の {color} / {label} より優先）。",
+  "admin.brand_src_admin": "この画面の設定が有効です（環境変数 AF_BRAND_* の {color} / {label} より優先されます）。",
   "admin.brand_src_env": "いまは環境変数 AF_BRAND_* の値です。保存するとこの画面の設定が優先されます。",
   "admin.brand_src_default": "いまは既定（同梱の teal・ラベルなし）です。",
   "admin.brand_pwa_note": "保存するとこのタブにはすぐ反映されます。他のタブは再読み込み、インストール済みの PWA は入れ直すとアイコンと名前が変わります。",
@@ -46,7 +46,7 @@ export const admin = {
   "admin.engines_loras_empty": "このエンジンに LoRA はありません。",
   "admin.engines_models_label": "モデル",
   "admin.engines_always_on_note": "常時稼働は GPU のインスタンスを止めません（時間単価はインスタンスクラスによります）。用が済んだらオンデマンドへ戻してください。",
-  "admin.engines_provider_unserved": "この行は images provider「{p}」を名乗っていますが、この build はその provider のクライアントを実装していません。行を comfy か openai-compat に向け直すまで、ここで generate_image は動きません。",
+  "admin.engines_provider_unserved": "この行は images provider「{p}」として設定されていますが、この build はその provider のクライアントを実装していません。行を comfy か openai-compat に向け直すまで、ここで generate_image は動きません。",
   "admin.engines_tenant_scope":
     "ここではモデルの取り込みと、取り込んだ行の確認ができます。モデルの有効化・エンジンの起動と停止・GPU の選択・行の削除は配備管理者（super_admin）の担当なので、この画面には出ません。カタログは配備に 1 つで、取り込んだモデルの id はどのテナントからも見えます。",
   "admin.engines_note": "「無効」にすると、そのエンジンは起動メニューからも generate_image からも消え、要求は 503 で断られます。「オンデマンド」は要求が来たときだけインスタンスを買い、アイドルで自分で止まります。",
@@ -72,7 +72,7 @@ export const admin = {
   "admin.engines_remote_model_loaded": "（借用元が最後に見た時点で読み込み済）",
   "admin.engines_remote_model_declared": "（宣言。借用元はまだ読み込みを見ていません）",
   "admin.engines_note_remote": "借用エンジンは、別の Agent Fleet のゲートウェイ越しに使っています。起動と停止・GPU の選択・カタログの編集は、いずれも借用元の配備の管理画面で行います。「無効」はこちら側の経路を閉じるだけで、向こうのインスタンスは止めません。",
-  "admin.engines_remote_catalog": "このカタログは借用元の配備のものを写したものです。この画面からは変更できません（取り込み・有効化・削除は借用元で）。借用元:",
+  "admin.engines_remote_catalog": "このカタログは借用元の配備のものを写したものです。この画面からは変更できません（取り込み・有効化・削除は借用元で行います）。借用元:",
   // --- 借用トークンの発行（ADR 0079 決定 3・貸す側）---
   // エンジンを持っている側の super_admin が、借りる配備の要る発行トークン 1 本を見せる導線。
   // これが無かったときの手順は「向こうの IdP に専用アカウントを招く → 一度サインインする →
@@ -112,7 +112,7 @@ export const admin = {
   "admin.engines_issue_revoke": "{t}/{k} のメンバーシップを削除してください。メンバーシップは要求ごとに解決されているので、次の要求から 401 になります。",
   "admin.engines_issue_revoke_only": "⚠️ これ以外の失効手段は署名マスタの回転だけです。git・メモ・スケジュールのトークンも同じマスタから出ているので、回すとこの配備の全員がログアウトします。",
   "admin.engines_issue_has_workspace_tag": "ワークスペースあり",
-  "admin.engines_issue_has_workspace": "⚠️ このメンバーシップにはワークスペースがあります ＝ 人が使っているメンバーシップの形です。人の発行トークンを貸すと、取り消す手段は「この配備の全員がログアウトする」署名マスタの回転しか残りません。借用専用のメンバーシップを別に作ってから発行してください。",
+  "admin.engines_issue_has_workspace": "⚠️ このメンバーシップにはワークスペースがあります。人が使っているメンバーシップの形です。人の発行トークンを貸すと、取り消す手段は「この配備の全員がログアウトする」署名マスタの回転しか残りません。借用専用のメンバーシップを別に作ってから発行してください。",
   "admin.engines_issue_no_workspace": "このメンバーシップにワークスペースはありません（借用専用のメンバーシップとして期待される形です）。",
   // --- エンジンの現況（features/settings/admin/adminEngines.tsx の EngineStatus）---
   // ⚠️ ここの文言は「分からないことは書かない」で通っている。CP が答えを持たない行は
@@ -156,7 +156,7 @@ export const admin = {
   // 🔴 これをコンテンツフィルタと読ませないための 1 文。これはネガティブプロンプト——
   // サンプラーへの傾きであって門ではなく、蒸留系のファミリーには席すら無い。
   "admin.engines_negative_note":
-    "このエンジンが作る全画像のネガティブプロンプトに、モデル自身のものと要求のものに足して加えられます。フィルタではなく誘導です——ネガティブを持たないチェックポイントのファミリーが 2 つあり、その要求では警告にそう出ます。",
+    "このエンジンが作る全画像のネガティブプロンプトに、モデル自身のものと要求のものに足して加えられます。フィルタではなく誘導です。ネガティブを持たないチェックポイントのファミリーが 2 つあり、その要求では警告にそう出ます。",
   "admin.engines_negative_too_long": "長すぎます。ここはキーワードの列挙であって、方針の文書ではありません。",
   "admin.engines_model_add_lora_base": "土台のモデル",
   "admin.engines_model_add_lora_base_pick": "微調整の対象を選んでください",
@@ -199,7 +199,7 @@ export const admin = {
   "admin.engines_ingest_browse_go": "人気を見る",
   "admin.engines_browse_kind_gguf": "LLM（GGUF）",
   "admin.engines_browse_kind_checkpoint": "画像（checkpoint）",
-  "admin.engines_browse_note": "閲覧だけです。取り込むには 60-engines を配備してエンジンを作る必要があります——ここで見ているのは Hugging Face の公開情報で、Control Plane はトークンもバケットも使っていません。",
+  "admin.engines_browse_note": "閲覧だけです。取り込むには 60-engines を配備してエンジンを作る必要があります。ここで見ているのは Hugging Face の公開情報で、Control Plane はトークンもバケットも使っていません。",
   "admin.engines_ingest_sort_downloads": "DL数",
   "admin.engines_ingest_sort_trending": "話題",
   "admin.engines_ingest_sort_likes": "いいね",
@@ -289,7 +289,7 @@ export const admin = {
   "admin.engines_refit_failed": "書き換えが完了しなかったモデル:",
   "admin.engines_refit_stored_unpublished": "窓は保存されましたが、エンジンへの反映指示が失敗しました:",
   "admin.engines_refit_unchanged": "設定は元のままです:",
-  "admin.engines_refit_next_start": "反映は次にエンジンが起動したときからです（走行中の箱は起動時の窓のままです）。",
+  "admin.engines_refit_next_start": "反映は次にエンジンが起動したときからです（稼働中のインスタンスは起動時の窓のままです）。",
   "admin.engines_refit_stuck": "この段に合わせられなかったモデル:",
   "admin.catalog_edit_window_fit": "このクラスに収まる最大 {n} にする",
   "admin.fit_kv_from": "KV は {f} のヘッダから読みました（同じ配布元でも版によって少し違います）。",
@@ -310,7 +310,7 @@ export const admin = {
   "admin.catalog_complete": "揃える",
   "admin.catalog_complete_busy": "揃えています…",
   "admin.catalog_complete_none": "この行に足りないものはありません。",
-  "admin.catalog_complete_attached": "配備が既に持っていたファイルから宣言しました——ダウンロードは発生していません。",
+  "admin.catalog_complete_attached": "配備がすでに持っていたファイルから宣言しました。ダウンロードは発生していません。",
   // 🔴 ダウンロードとは別の言葉で言う。バケツの中のサーバ側コピーなので転送は起きず、
   // 「取り込み中」と書くと出てこない通信を待たせることになる。
   "admin.catalog_complete_moving": "この行のファイルをバケットの中で移しています（ダウンロードはありません）。完了するとローダーが読めるようになります。",
@@ -347,7 +347,7 @@ export const admin = {
   // --- バケツ（ADR 0085 決定 2・7）。S3 が持っているものそのもの。---
   "admin.catalog_ledger_title": "バケット",
   "admin.catalog_ledger_note": "このエンジンのプレフィックスにあるオブジェクトです。どの行も宣言していないもの（孤児）と、ローダーが一覧できない場所にあるもの（誤配置）を先に並べます。",
-  "admin.catalog_ledger_note_acts": "部品に単体のボタンはありません——付け直すのは、それを読むモデル行の「揃える」です。",
+  "admin.catalog_ledger_note_acts": "部品に単体のボタンはありません。付け直すのは、それを読むモデル行の「揃える」です。",
   "admin.catalog_ledger_checked": "確認 {t}",
   "admin.catalog_ledger_empty": "このエンジンのプレフィックスにオブジェクトはありません。",
   "admin.catalog_ledger_unavailable": "バケットの一覧を取得できませんでした。再読み込みしてください。",
@@ -363,8 +363,8 @@ export const admin = {
   // 🔴 既にバイト列があるキーに上書きで取り込むと、台帳の state は present のままで job だけが
   // uploading になる。行の操作を state だけで決めると、取り込み中のキーに 登録 が出て 409
   // `already declared by` を返す（af-sandbox 実測）。
-  "admin.catalog_ledger_uploading_note": "取り込みのタスクが走っています。完了するとこの行に宣言が付きます。",
-  "admin.catalog_ledger_deleting_note": "削除のタスクが走っています。完了するとこの行は一覧から消えます（数分かかることがあります）。",
+  "admin.catalog_ledger_uploading_note": "取り込みのタスクが実行中です。完了するとこの行に宣言が付きます。",
+  "admin.catalog_ledger_deleting_note": "削除のタスクが実行中です。完了するとこの行は一覧から消えます（数分かかることがあります）。",
   "admin.catalog_ledger_missing_note": "{m} がこのキーを指していますが、バケットにバイト列がありません。その行を「揃える」と取り直します。",
   "admin.catalog_ledger_orphan": "どの行も宣言していません",
   "admin.catalog_ledger_declared": "宣言: {m}",
@@ -428,7 +428,7 @@ export const admin = {
   // --- 推奨パラメータ（作者の説明文から拾ったもの）---
   // 🔴 正規表現が他人の散文から拾った値である。だから引用した一文を必ず隣に出し、押す前に
   // 人が読んで直せるようにする。保存されるのは押したときだけ。
-  "admin.engines_params_note": "空欄はファミリーの既定のまま。埋めた欄だけがこのモデルで置き換わります。",
+  "admin.engines_params_note": "空欄はファミリーの既定のままです。埋めた欄だけがこのモデルで置き換わります。",
   "admin.engines_params_hint_found": "作者の記述から拾いました（未検証）:",
   "admin.engines_params_hint_apply": "この値を入れる",
   "admin.engines_params_none": "生成パラメータ: 宣言なし（ファミリーの既定のまま）",
@@ -447,7 +447,7 @@ export const admin = {
   "admin.engines_params_save": "保存",
   // 🔴 flux1 / klein の CFG は別の摘み（FluxGuidance・蒸留パス）なので、当てても効かない。
   "admin.engines_params_cfg_ignored": "このファミリーでは CFG は使われません（ガイダンスが別の入力です）。",
-  "admin.engines_params_clip_skip_note": "clip skip が効くのは SD1.5 と SDXL だけです。SDXL は最初から 2 相当なので、絵が変わるのは 3 以上です。",
+  "admin.engines_params_clip_skip_note": "clip skip が適用されるのは SD1.5 と SDXL だけです。SDXL は最初から 2 相当なので、絵が変わるのは 3 以上です。",
   // ファミリーの推定。決定 2 のとおり宣言するのは運用者なので、入れておくだけで、外せる。
   "admin.engines_ingest_go": "取り込む",
   // 🔴 押す前に「載るかどうか」を言う。実機で借りた llm は L4（24 GB）に重み 17 GB を載せた
@@ -473,9 +473,9 @@ export const admin = {
   // 🔴 Hugging Face の gated とは別物で、こちらには鍵が無い。CivitAI のメタデータは誰にでも
   // 200 を返し、ダウンロードの可否だけが投稿者ごとに分かれる（実機で 5 資産が 200/401/403）。
   // トークン欄を作らない判断なので、「別の資産を選ぶ・手で置いて登録する」を言い切る。
-  "admin.engines_ingest_civitai_account_first": "この資産は投稿者がダウンロードを制限しています。取り込みは登録済みの Civitai アカウントとして実行されます——そのアカウントが投稿者の条件を満たしていない場合は、ダウンロードが 401 で返り、ジョブにその旨が出ます。",
-  "admin.engines_ingest_civitai_login": "この資産は、投稿者がログイン済みのアカウントからのダウンロードだけを許しています。この配備は匿名で取り込むため、登録済みの Civitai トークンのアカウントがすでに条件を満たしているかはここでは確かめられません——未登録なら「APIトークン」から登録するか、別の資産を選んでください。",
-  "admin.engines_ingest_gated_accept_first": "gated のリポジトリです。トークンは登録済みですが、そのアカウントがこのリポジトリの条項に同意しているかは Control Plane からは確かめられません（匿名で調べているため）。未同意だと取り込みは 403 で落ちるので、先に Hugging Face のモデルページで同意しておいてください。",
+  "admin.engines_ingest_civitai_account_first": "この資産は投稿者がダウンロードを制限しています。取り込みは登録済みの Civitai アカウントとして実行されます。そのアカウントが投稿者の条件を満たしていない場合は、ダウンロードが 401 で返り、ジョブにその旨が出ます。",
+  "admin.engines_ingest_civitai_login": "この資産は、投稿者がログイン済みのアカウントからのダウンロードだけを許しています。この配備は匿名で取り込むため、登録済みの Civitai トークンのアカウントがすでに条件を満たしているかはここでは確かめられません。未登録なら「APIトークン」から登録するか、別の資産を選んでください。",
+  "admin.engines_ingest_gated_accept_first": "gated のリポジトリです。トークンは登録済みですが、そのアカウントがこのリポジトリの条項に同意しているかは Control Plane からは確かめられません（匿名で調べているため）。未同意だと取り込みは 403 で失敗するので、先に Hugging Face のモデルページで同意しておいてください。",
   "admin.engines_comfy_lan": "LAN の ComfyUI（画像エンジン）",
   "admin.engines_comfy_lan_source_panel": "使用中: {url}（このパネルで設定）",
   "admin.engines_comfy_lan_source_env": "使用中: {url}（Control Plane の環境変数 AF_COMFY_URL）",
@@ -503,18 +503,18 @@ export const admin = {
   "admin.engines_hf_token_save": "登録する",
   "admin.engines_hf_token_remove": "削除する",
   "admin.engines_hf_token_unset": "未登録です。gated ではないリポジトリだけ取り込めます。",
-  "admin.engines_hf_token_set": "登録済み（{who} / {when}）。値は表示できません——Control Plane は書き込みだけができ、読み戻す権限を持ちません。",
+  "admin.engines_hf_token_set": "登録済み（{who} / {when}）。値は表示できません。Control Plane は書き込みだけができ、読み戻す権限を持ちません。",
   "admin.engines_hf_token_stack": "この配備のトークンは CloudFormation のパラメータで設定されています。Console からの登録・削除はできませんが、gated のリポジトリは取り込めます。",
   "admin.engines_hf_token_unsupported": "この配備のエンジンスタックにはトークンの置き場がありません。60-engines を更新すると Console から登録できるようになります。",
-  "admin.engines_hf_token_note": "配備全体で 1 つです。値は暗号化して保存し、取り込みのたびに配備の秘密へ書き込みます——読むのは取り込みタスクだけで、エンジンのインスタンスには渡りません。",
+  "admin.engines_hf_token_note": "配備全体で 1 つです。値は暗号化して保存し、取り込みのたびに配備の秘密へ書き込みます。読むのは取り込みタスクだけで、エンジンのインスタンスには渡りません。",
   "admin.engines_civitai_token": "Civitai のトークン",
   "admin.engines_civitai_token_field": "トークン",
   "admin.engines_civitai_token_save": "登録する",
   "admin.engines_civitai_token_remove": "削除する",
   "admin.engines_civitai_token_unset": "未登録です。ログイン必須の資産は取り込めません。",
-  "admin.engines_civitai_token_set": "登録済み（{who} / {when}）。値は表示できません——Control Plane は書き込みだけができ、読み戻す権限を持ちません。",
+  "admin.engines_civitai_token_set": "登録済み（{who} / {when}）。値は表示できません。Control Plane は書き込みだけができ、読み戻す権限を持ちません。",
   "admin.engines_civitai_token_unsupported": "この配備のエンジンスタックにはトークンの置き場がありません。60-engines を更新すると Console から登録できるようになります。",
-  "admin.engines_civitai_token_note": "配備全体で 1 つで、上の Hugging Face のトークンとは別物です。値は暗号化して保存し、取り込みのたびに配備の秘密へ書き込みます——読むのは取り込みタスクだけで、エンジンのインスタンスには渡りません。",
+  "admin.engines_civitai_token_note": "配備全体で 1 つで、上の Hugging Face のトークンとは別物です。値は暗号化して保存し、取り込みのたびに配備の秘密へ書き込みます。読むのは取り込みタスクだけで、エンジンのインスタンスには渡りません。",
   "admin.engines_civitai_red": "Civitai Red（NSFW の姉妹ドメイン）",
   "admin.engines_civitai_red_show": "モデル検索に Civitai Red のタブを出す",
   "admin.engines_civitai_red_note":
