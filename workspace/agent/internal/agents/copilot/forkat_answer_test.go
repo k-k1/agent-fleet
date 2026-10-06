@@ -12,11 +12,11 @@ import (
 type forkAnswer int
 
 const (
-	// forkAnswerCarried: the branch named ALPHA and not BETA — it restored exactly the
+	// forkAnswerCarried: the branch named MARMOT and not QUILL — it restored exactly the
 	// truncated history.
 	forkAnswerCarried forkAnswer = iota
-	// forkAnswerLeaked: BETA appears, so the branch knows the turn we cut away. This wins
-	// over ALPHA: "ALPHA, later changed to BETA" still proves the leak.
+	// forkAnswerLeaked: QUILL appears, so the branch knows the turn we cut away. This wins
+	// over MARMOT: "MARMOT, later changed to QUILL" still proves the leak.
 	forkAnswerLeaked
 	// forkAnswerFormatEcho: the reply is only the earlier prompts' "Reply exactly: OK". That
 	// is model nondeterminism, not evidence about the restore, so it may be asked once more.
@@ -26,19 +26,19 @@ const (
 )
 
 var (
-	alphaWord = regexp.MustCompile(`(?i)\bALPHA\b`)
-	betaWord  = regexp.MustCompile(`(?i)\bBETA\b`)
+	marmotWord = regexp.MustCompile(`(?i)\bMARMOT\b`)
+	quillWord  = regexp.MustCompile(`(?i)\bQUILL\b`)
 )
 
 // classifyForkAnswer reads `copilot -p` output. Only the first paragraph is the model's
 // reply; copilot prints a stats footer (Changes / AI Credits / Tokens / Resume) after a
 // blank line, so the echo test must not look at the whole output. The codewords match as
-// whole words only: "ALPHABET" proves no restore and "BETAMAX" proves no leak.
+// whole words only: "MARMOTS" proves no restore and "QUILLMAX" proves no leak.
 func classifyForkAnswer(out string) forkAnswer {
 	switch {
-	case betaWord.MatchString(out):
+	case quillWord.MatchString(out):
 		return forkAnswerLeaked
-	case alphaWord.MatchString(out):
+	case marmotWord.MatchString(out):
 		return forkAnswerCarried
 	}
 	out = strings.ReplaceAll(out, "\r\n", "\n")
@@ -59,10 +59,10 @@ func TestClassifyForkAnswer(t *testing.T) {
 		name, out string
 		want      forkAnswer
 	}{
-		{"alpha", "ALPHA" + footer, forkAnswerCarried},
-		{"alpha lower case in a sentence", "The codeword is alpha." + footer, forkAnswerCarried},
-		{"beta", "BETA" + footer, forkAnswerLeaked},
-		{"both words: beta means the cut turn leaked", "It was ALPHA, then BETA." + footer, forkAnswerLeaked},
+		{"marmot", "MARMOT" + footer, forkAnswerCarried},
+		{"marmot lower case in a sentence", "The codeword is marmot." + footer, forkAnswerCarried},
+		{"quill", "QUILL" + footer, forkAnswerLeaked},
+		{"both words: quill means the cut turn leaked", "It was MARMOT, then QUILL." + footer, forkAnswerLeaked},
 		{"bare OK", "OK" + footer, forkAnswerFormatEcho},
 		{"OK with a period", "OK." + footer, forkAnswerFormatEcho},
 		{"ok lower case, no footer", "  ok\n", forkAnswerFormatEcho},
@@ -70,12 +70,12 @@ func TestClassifyForkAnswer(t *testing.T) {
 		{"other text", "I don't know." + footer, forkAnswerUnanswered},
 		{"empty", "", forkAnswerUnanswered},
 		{"footer only", strings.TrimLeft(footer, "\n"), forkAnswerUnanswered},
-		{"alpha in markdown", "**ALPHA**" + footer, forkAnswerCarried},
-		{"alpha quoted", "> \"Alpha\"" + footer, forkAnswerCarried},
-		{"alpha in a code fence", "```\nALPHA\n```" + footer, forkAnswerCarried},
-		{"ALPHABET is not ALPHA", "ALPHABET" + footer, forkAnswerUnanswered},
-		{"BETAMAX is not BETA", "BETAMAX" + footer, forkAnswerUnanswered},
-		{"BETAMAX does not hide ALPHA", "ALPHA, not BETAMAX" + footer, forkAnswerCarried},
+		{"marmot in markdown", "**MARMOT**" + footer, forkAnswerCarried},
+		{"marmot quoted", "> \"Marmot\"" + footer, forkAnswerCarried},
+		{"marmot in a code fence", "```\nMARMOT\n```" + footer, forkAnswerCarried},
+		{"MARMOTS is not MARMOT", "MARMOTS" + footer, forkAnswerUnanswered},
+		{"QUILLMAX is not QUILL", "QUILLMAX" + footer, forkAnswerUnanswered},
+		{"QUILLMAX does not hide MARMOT", "MARMOT, not QUILLMAX" + footer, forkAnswerCarried},
 		{"OK with CRLF footer", "OK" + strings.ReplaceAll(footer, "\n", "\r\n"), forkAnswerFormatEcho},
 		{"OK after leading blank lines", "\n\nOK" + footer, forkAnswerFormatEcho},
 		{"OK after leading CRLF blank lines", "\r\n\r\nOK\r\n\r\nChanges    +0 -0\r\n", forkAnswerFormatEcho},
