@@ -105,8 +105,13 @@ func ensureFolderTrusted(dir string) {
 }
 
 // mainCheckoutOf returns the main checkout's root when dir is a linked git worktree
-// (its .git is a file "gitdir: <common>/worktrees/<name>"), else nil. Read from the file
+// (its .git is a file "gitdir: <common>/worktrees/<name>"), else nil. Read from the files
 // rather than exec'd git: this runs on every launch and must not depend on PATH.
+//
+// The checkout is core.worktree of <common>/config when set (submodules and
+// --separate-git-dir, where <common> is not <checkout>/.git); otherwise the parent of a
+// <common> named ".git". Anything else (a bare repository) yields nil: guessing would
+// write trust for a directory that is not a checkout.
 func mainCheckoutOf(dir string) []string {
 	b, err := os.ReadFile(filepath.Join(dir, ".git"))
 	if err != nil {
@@ -120,11 +125,42 @@ func mainCheckoutOf(dir string) []string {
 	if !filepath.IsAbs(gitdir) {
 		gitdir = filepath.Join(dir, gitdir)
 	}
-	common := filepath.Dir(filepath.Dir(gitdir)) // <common>/worktrees/<name> -> <common>
-	if filepath.Base(filepath.Dir(gitdir)) != "worktrees" || filepath.Base(common) != ".git" {
+	gitdir = filepath.Clean(gitdir) // git accepts a trailing "/" or "/."
+	worktrees := filepath.Dir(gitdir)
+	if filepath.Base(worktrees) != "worktrees" {
+		return nil
+	}
+	common := filepath.Dir(worktrees)
+	if wt := coreWorktree(common); wt != "" {
+		return []string{wt}
+	}
+	if filepath.Base(common) != ".git" {
 		return nil
 	}
 	return []string{filepath.Dir(common)}
+}
+
+// coreWorktree returns core.worktree from <common>/config as an absolute path, or "".
+func coreWorktree(common string) string {
+	b, err := os.ReadFile(filepath.Join(common, "config"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok || strings.TrimSpace(k) != "worktree" {
+			continue
+		}
+		v = strings.Trim(strings.TrimSpace(v), `"`)
+		if v == "" {
+			return ""
+		}
+		if !filepath.IsAbs(v) {
+			v = filepath.Join(common, v)
+		}
+		return filepath.Clean(v)
+	}
+	return ""
 }
 
 // settingsMu serializes read-modify-write cycles on settings.json inside this process, so
