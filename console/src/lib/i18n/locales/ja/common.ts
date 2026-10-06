@@ -165,9 +165,9 @@ export const common = {
 
   // === P2 TopBar（app/TopBar.tsx）===
   "topbar.nav_toggle": "左パネル: クリックで開閉 / ダブルクリックで表示切替（Push⇄オーバーレイ）",
-  "topbar.tts.stop_off": "読み上げを停止して オフ",
-  "topbar.tts.on": "音声読み上げ: オン（クリックで オフ）",
-  "topbar.tts.off": "音声読み上げ: オフ（クリックで オン）",
+  "topbar.tts.stop_off": "読み上げを停止してオフ",
+  "topbar.tts.on": "音声読み上げ: オン（クリックでオフ）",
+  "topbar.tts.off": "音声読み上げ: オフ（クリックでオン）",
   "topbar.tts.generating": "音声を生成中",
   "topbar.tts.speaking": "読み上げ中",
   "topbar.fullscreen_exit": "全画面解除",
