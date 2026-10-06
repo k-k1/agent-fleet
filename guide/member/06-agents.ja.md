@@ -221,7 +221,7 @@ Claude の挙動は同じ画面で切り替えられます。
 ## GitHub Copilot
 
 **copilot**（GitHub Copilot CLI）に個別のログインはありません。**git プロバイダの
-GitHub を連携すると自動的に「接続済み」になります**（「Gitホスティング」タブ > GitHub。切断も GitHub
+GitHub を連携すると自動的に「接続済み」になります**（「Git ホスティング」タブ > GitHub。切断も GitHub
 側に連動します）。前提として、その GitHub アカウントに **Copilot のサブスクリプション**
 （Free プラン含む）が必要です。無い場合は最初の指示でエラーになります。
 
