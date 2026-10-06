@@ -36,6 +36,11 @@ value) counts, and so does a label quoted exactly as 「label」 or **label** (i
 as "label", 'label' or `label`). Each hit is printed with file:line and fails the run [pinned];
 update that citation in the same PR. `--list-pinned` prints only those locations (key,
 file:line, old text) and exits 0, for the label-sync step.
+A short common-word label can also be quoted for another purpose (a test asserting a
+reply language, say). After reading the hit and confirming it does not cite the Console
+string, accept exactly that hit with `--exempt-pin KEY@PATH[:LINE]` (repeatable; without
+LINE every hit of the key in that file). Exempted hits are printed as EXEMPT and counted,
+unmatched exemptions are warned about, and other hits of the key still fail.
 Limitation: a guide quote that reproduces only the start of a sentence (under 8 characters,
 or cut before the part the rewrite changed) is invisible here, because there is no old
 fragment to match. After a rewrite, also search the guide for the first words of each
@@ -229,8 +234,20 @@ def main(argv):
     ap.add_argument('files', nargs='*')
     ap.add_argument('--allow-labels', action='store_true')
     ap.add_argument('--list-pinned', action='store_true')
+    ap.add_argument('--exempt-pin', action='append', default=[], metavar='KEY@PATH[:LINE]',
+                    help='accept one reviewed PINNED hit that is not a citation of the value')
     args = ap.parse_args(argv)
 
+    exempt = []
+    for spec in args.exempt_pin:
+        key, sep, loc = spec.partition('@')
+        path, _, line = loc.partition(':')
+        if not (sep and key and path) or (line and not line.isdigit()):
+            print(f'error: bad --exempt-pin {spec!r} (want KEY@PATH[:LINE])', file=sys.stderr)
+            return 2
+        exempt.append((key, path, line, spec))
+    used = set()
+    exempted = 0
     fails = collections.Counter()
     listing = args.list_pinned
 
@@ -323,6 +340,13 @@ def main(argv):
                 if label_like(o):
                     found.update((h, o) for h in sources.find_label(o))
                 for (name, line), text in sorted(found):
+                    hit = next((e for e in exempt if e[0] == key and e[1] == name and e[2] in ('', str(line))), None)
+                    if hit:
+                        used.add(hit[3])
+                        exempted += 1
+                        if not listing:
+                            print(f'EXEMPT: {where}: reviewed, not a citation: {name}:{line}')
+                        continue
                     pins.append((key, f'{name}:{line}', text))
                     fail('pinned', f'{where}: old text still at {name}:{line}: {text[:40]!r}')
     finally:
@@ -337,7 +361,10 @@ def main(argv):
         print('changed labels:')
         for where, o, n in labels:
             print(f'  LABEL {where}: {o} -> {n}')
-    print(f'{len(files)} file(s), {checked} value(s) checked, {changed_n} changed')
+    for _, _, _, spec in exempt:
+        if spec not in used:
+            print(f'WARN: --exempt-pin {spec} matched nothing (stale exemption)')
+    print(f'{len(files)} file(s), {checked} value(s) checked, {changed_n} changed, {exempted} pin(s) exempted')
     print('failures: ' + ', '.join(f'{c}={fails[c]}' for c in CATEGORIES))
     return 1 if fails else 0
 

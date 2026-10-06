@@ -450,7 +450,7 @@ opencode・copilot・cursor で、kiro（ログインが要る）と agy（ラ�
 ときだけで、`--allow-labels` が無いと失敗し、付けると `旧 -> 新` を全部出して目で確かめられる
 ようにします。変更した値の旧文面が `guide/**/*.ja.md`・Console のテスト・Go のソース・
 `workspace/agent/knowledge/af-usage.md` にまだ引用されていれば PINNED として `file:line` つきで
-報告して失敗します。その引用は同じ PR で直します（`--list-pinned` はその場所だけを出します）。
+報告して失敗します。その引用は同じ PR で直します（`--list-pinned` はその場所だけを出します）。短い一般語のラベルは別の用途で引用されていることもあります。中身を読んで Console の文字列の引用でないと確かめたその 1 件だけを `--exempt-pin KEY@PATH[:LINE]` で外せます（EXEMPT として出力・計上され、ほかの一致は失敗のままです）。
 文の頭だけの引用や、旧い節を丸ごとは含まない引用は検索されません。書き換えたあとで、変更した値の書き出しをガイドで手検索してください。意味の良し悪しは判定
 しません。`scripts/guide-diff-check.py` と同じくローカル専用で CI には載せません。テストは
 `python3 -m unittest discover -s scripts -p test_catalog_diff_check.py` です。

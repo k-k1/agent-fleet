@@ -66,7 +66,7 @@ class CatalogDiffCheckTests(unittest.TestCase):
     def test_identical_passes_and_prints_counts(self):
         code, out = self.run_check(JA)
         self.assertEqual(code, 0, out)
-        self.assertIn("13 value(s) checked, 0 changed", out)
+        self.assertIn("14 value(s) checked, 0 changed", out)
         self.assertEqual(set(self.counts(out).values()), {0})
 
     def test_no_changed_file_checks_nothing_but_says_so(self):
@@ -242,6 +242,44 @@ class CatalogDiffCheckTests(unittest.TestCase):
                 self.assertEqual(code, 1, out)
                 self.assertGreater(self.counts(out)["pinned"], 0, out)
                 self.edit(JA, '"dom.label": "中断"', '"dom.label": "停止"')
+
+    def reword_lang(self):
+        self.write("workspace/agent/chat_test.go", 'package p\n\nvar a = strings.Contains(out, "言語")\n\nvar b = strings.Contains(out, "言語")\n')
+        self.write("console/src/z.test.tsx", 'getByText("言語");\n')
+        self.edit(JA, '"dom.lang": "言語"', '"dom.lang": "表示言語"')
+
+    def test_exempt_pin_accepts_only_the_reviewed_hit(self):
+        self.reword_lang()
+        go = "workspace/agent/chat_test.go"
+        code, out = self.run_check("--allow-labels", f"--exempt-pin=dom.lang@{go}")
+        self.assertEqual(code, 1, out)  # the real getByText citation still fails
+        self.assertIn("z.test.tsx:1", out)
+        self.assertEqual(out.count("EXEMPT:"), 2)
+        self.write("console/src/z.test.tsx", 'getByText("表示言語");\n')
+        code, out = self.run_check("--allow-labels", f"--exempt-pin=dom.lang@{go}")
+        self.assertEqual(code, 0, out)
+        self.assertIn("2 pin(s) exempted", out)
+
+    def test_exempt_pin_with_line_and_stale_warning(self):
+        self.reword_lang()
+        self.write("console/src/z.test.tsx", "\n")
+        go = "workspace/agent/chat_test.go"
+        code, out = self.run_check("--allow-labels", f"--exempt-pin=dom.lang@{go}:3")
+        self.assertEqual(code, 1, out)  # line 5 is not exempted
+        self.assertIn("chat_test.go:5", out)
+        code, out = self.run_check("--allow-labels", f"--exempt-pin=dom.lang@{go}", "--exempt-pin=dom.lang@nowhere.go")
+        self.assertEqual(code, 0, out)
+        self.assertIn("WARN: --exempt-pin dom.lang@nowhere.go matched nothing", out)
+
+    def test_exempt_pin_other_key_does_not_apply(self):
+        self.reword_lang()
+        self.write("console/src/z.test.tsx", "\n")
+        code, out = self.run_check("--allow-labels", "--exempt-pin=dom.other@workspace/agent/chat_test.go")
+        self.assertEqual(code, 1, out)
+
+    def test_bad_exempt_pin_spec(self):
+        code, out = self.run_check("--exempt-pin=oops")
+        self.assertEqual(code, 2, out)
 
     def test_pinned_label_quoted_in_test_code(self):
         self.write("console/src/y.test.tsx", 'getByText("停止");\n')

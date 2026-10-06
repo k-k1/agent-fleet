@@ -506,7 +506,9 @@ only on purpose: it fails without `--allow-labels`, and with it every `old -> ne
 printed for review. A changed value whose old text is still quoted in `guide/**/*.ja.md`,
 console tests, Go sources or `workspace/agent/knowledge/af-usage.md` is reported as PINNED
 with `file:line` and fails; update that citation in the same PR (`--list-pinned` prints
-just those locations). A guide quote that reproduces only the start of a sentence, or any
+just those locations). A short common-word label can also be quoted for another purpose;
+after reading the hit, accept exactly that one with `--exempt-pin KEY@PATH[:LINE]` (printed
+as EXEMPT and counted, other hits still fail). A guide quote that reproduces only the start of a sentence, or any
 quote that does not contain a whole old clause, is not searched; after a rewrite, search
 the guide by hand for the opening words of each changed value. It does not judge meaning, and, like
 `scripts/guide-diff-check.py`, it is for local use and is not part of CI. Its tests are

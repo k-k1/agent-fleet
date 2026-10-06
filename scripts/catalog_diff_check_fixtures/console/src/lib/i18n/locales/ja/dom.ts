@@ -13,5 +13,6 @@ export const dom = {
   "dom.pinned": "この操作は取り消せませんので注意してください。",
   "dom.wording": "設定を保存してから、画面を閉じてください。",
   "dom.concat": "前半です。" + "後半です。",
+  "dom.lang": "言語",
   "dom.edge": " 先頭に空白があります。",
 };
