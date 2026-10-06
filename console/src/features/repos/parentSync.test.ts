@@ -6,9 +6,9 @@ describe("parentSyncLabel", () => {
   beforeEach(() => setLocale("ja"));
 
   it("makes the parent-relative lag and fast-forward direction explicit", () => {
-    expect(parentSyncLabel({ relation: "contained", targetUnique: 3, worktreeUnique: 0 })).toBe("親+3・FF可");
+    expect(parentSyncLabel({ relation: "contained", targetUnique: 3, worktreeUnique: 0 })).toBe("親+3・FF 可");
     expect(parentSyncLabel({ relation: "unmerged", targetUnique: 0, worktreeUnique: 2 })).toBe("未取込 2");
-    expect(parentSyncLabel({ relation: "diverged", targetUnique: 3, worktreeUnique: 2 })).toBe("分岐 2↕3・FF不可");
+    expect(parentSyncLabel({ relation: "diverged", targetUnique: 3, worktreeUnique: 2 })).toBe("分岐 2↕3・FF 不可");
   });
 
   it("keeps the concise state labels localized", () => {
@@ -25,8 +25,8 @@ describe("parentSyncLabel", () => {
 
   it("names the upstream as the target in the tooltip, menu item and toasts", () => {
     const up = { name: "wt", worktree: true, integration: { relation: "contained" as const, targetBranch: "origin/develop", targetUpstream: true, targetUnique: 2, worktreeUnique: 0 } };
-    expect(parentSyncLabel(up.integration)).toBe("親+2・FF可");
-    expect(parentSyncTitle(up.integration)).toBe("比較先: origin/develop\nWTのHEADはGit履歴上、比較先に含まれています（比較先固有 2コミット）。比較先から fast-forward で取り込めます");
+    expect(parentSyncLabel(up.integration)).toBe("親+2・FF 可");
+    expect(parentSyncTitle(up.integration)).toBe("比較先: origin/develop\nWT の HEAD は Git 履歴上、比較先に含まれています（比較先固有 2 コミット）。比較先から fast-forward で取り込めます");
     expect(parentFFMenuLabel(up)).toBe("origin/develop を Fast-Forward で取り込む");
     expect(parentFFSuccessText(up)).toBe("wt: origin/develop を fast-forward で取り込みました");
     expect(parentFFFailedText(up, "boom")).toBe("origin/develop の fast-forward 取り込みに失敗しました: boom");

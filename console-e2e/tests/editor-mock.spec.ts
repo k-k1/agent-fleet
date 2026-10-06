@@ -195,7 +195,7 @@ test("CodeMirror save, conflict, dirty navigation guard, ARIA", async ({ page })
   const alert = page.getByRole("alert", { name: /リビジョン競合|Revision conflict/ });
   await expect(alert).toContainText("mine");
   await expect(alert).toContainText("remote");
-  await alert.getByRole("button", { name: /remoteをbaseに手動マージ|Use remote as base for manual merge/ }).click();
+  await alert.getByRole("button", { name: /remote を base に手動マージ|Use remote as base for manual merge/ }).click();
   await expect(page.locator(".fileview").getByRole("status")).toContainText(/未保存の変更|Unsaved changes/);
 
   await page.locator(".pane-close").click();

@@ -121,7 +121,7 @@ test("edit text -> save by keyboard and by button -> CAS conflict shown while ke
   await expect(conflict).toBeVisible();
   await expect(conflict).toContainText(mine.trim());
   await expect(conflict).toContainText(remote.trim());
-  await conflict.getByRole("button", { name: /remoteを採用|Adopt remote/ }).click();
+  await conflict.getByRole("button", { name: /remote を採用|Adopt remote/ }).click();
   await expect(page.locator(".fileview").getByRole("status")).toContainText(/^保存済み/);
   await expect(cm).toContainText(remote.trim());
 });
