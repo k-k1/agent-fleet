@@ -685,3 +685,10 @@ and separator. Concept/layer tables and non-tab keys retain ordinary manual pros
 handling. SPLIT remains always on: a partial shared-label rewrite intentionally
 changes the failure output and exit status even without new flags. Byte-identical
 legacy output is preserved for runs without a SPLIT violation or new flags.
+
+For setext headings, every line of the preceding Markdown paragraph is manual,
+including wrapped headings inside quote/list containers. Container normalization
+also applies to reference-link definitions: their destinations, continued
+next-line destinations and wrapped titles are protected as metadata. Blank lines
+end these blocks, so ordinary citations in surrounding paragraphs remain eligible
+for the normal rewrite rules.

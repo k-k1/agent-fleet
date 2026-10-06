@@ -535,6 +535,43 @@ def markdown_content(line):
         line = stripped
 
 
+def markdown_heading_rows(lines):
+    contents = [markdown_content(line) for line in lines]
+    headings = {i for i, line in enumerate(contents) if HEADING.match(line)}
+    underline = re.compile(r'^ {0,3}(?:=+|-+)[ \t]*\r?\n?$')
+    for i, line in enumerate(contents):
+        if not underline.fullmatch(line):
+            continue
+        j = i - 1
+        # A setext underline applies to the whole preceding paragraph, not its last line.
+        while j >= 0 and contents[j].strip():
+            if HEADING.match(contents[j]) or underline.fullmatch(contents[j]) or contents[j].lstrip().startswith('|'):
+                break
+            headings.add(j)
+            j -= 1
+    return headings
+
+
+def open_reference_title(text):
+    opening = re.search(r'(?:^|\s)(["\'(])', text)
+    if not opening:
+        return None
+    closer = ')' if opening[1] == '(' else opening[1]
+    return closer if reference_title_continues(text[opening.end():], closer) else None
+
+
+def reference_title_continues(text, closer):
+    i = 0
+    while i < len(text):
+        if text[i] == '\\':
+            i += 2
+            continue
+        if text[i] == closer:
+            return False
+        i += 1
+    return True
+
+
 def settings_table_rows(lines, lang):
     """Only Tab/target-language headers identify tables governed by docs-check."""
     rows = set()
@@ -628,8 +665,29 @@ class MarkdownProtection:
                     depth -= 1
                 pos += 1
             self.ranges.append((start, pos, 'metadata'))
-        for match in re.finditer(r'^ {0,3}\[[^\]\n]+\]:[^\n]*(?:\n[ \t]+[^\n]+)*', text, re.M):
-            self.ranges.append((match.start(), match.end(), 'metadata'))
+        for i, line in enumerate(lines):
+            content = markdown_content(line)
+            definition = re.match(r'^ {0,3}\[[^\]\r\n]+\]:', content)
+            if not definition:
+                continue
+            self.ranges.append((starts[i], starts[i] + len(line), 'metadata'))
+            tail = content[definition.end():]
+            destination_missing = not tail.strip()
+            title = open_reference_title(tail)
+            j = i + 1
+            while j < len(lines):
+                continuation = markdown_content(lines[j])
+                if not continuation.strip() or not (destination_missing or title or
+                        re.match(r'^[ \t]+|^ {0,3}["\'(]', continuation)):
+                    break
+                self.ranges.append((starts[j], starts[j] + len(lines[j]), 'metadata'))
+                if title:
+                    if not reference_title_continues(continuation, title):
+                        title = None
+                else:
+                    title = open_reference_title(continuation)
+                destination_missing = False
+                j += 1
         for match in re.finditer(r'(?:https?://|mailto:)[^\s<>]+', text):
             self.ranges.append((match.start(), match.end(), 'metadata'))
         self.starts = starts
@@ -658,11 +716,9 @@ def citations(changes, lang):
         protection = MarkdownProtection(text) if section == 'guide' else None
         tab_rows = settings_table_rows(lines, lang) if path == (
             'guide/ref/settings' + ('.ja' if lang == 'ja' else '') + '.md') else set()
+        heading_rows = markdown_heading_rows(lines) if path.endswith('.md') else set()
         for i, line in enumerate(lines):
-            content = markdown_content(line)
-            heading = bool(HEADING.match(content) or
-                           i + 1 < len(lines) and re.fullmatch(r'\s*(?:=+|-+)\s*', markdown_content(lines[i + 1]))
-                           and content.strip())
+            heading = i in heading_rows
             for key, _, o, n in changes:
                 if o not in line:
                     continue

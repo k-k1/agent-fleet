@@ -1034,6 +1034,42 @@ class LabelSyncTests(Base):
         self.assertEqual((self.repo / page).read_text(),
                          text[:-len('**操作ボタン**\n')] + '**実行ボタン**\n')
 
+    def test_multiline_setext_heading_protects_entire_paragraph(self):
+        for prefix, continuation in [('', ''), ('> ', '> '), ('- ', '  '), ('> - ', '>   ')]:
+            with self.subTest(prefix=prefix):
+                text = ('「操作ボタン」\n\n' + prefix + '**操作ボタン**\n'
+                        + continuation + 'の手順\n' + continuation + '===\n\n'
+                        + '「操作ボタン」\n')
+                page = self.page(text)
+                self.change_unique()
+                code, out = self.sync_run('--list-citations')
+                self.assertEqual(code, 0, out)
+                self.assertEqual(out.count('\theading\t'), 1, out)
+                code, out = self.sync_run('--rewrite-guide')
+                self.assertEqual(code, 1, out)
+                self.assertEqual((self.repo / page).read_text(),
+                                 text.replace('「操作ボタン」', '「実行ボタン」'))
+                self.edit(self.sync_path(), '実行ボタン', '操作ボタン')
+
+    def test_container_reference_destinations_and_wrapped_titles_stay_manual(self):
+        for prefix, continuation in [('> ', '> '), ('- ', '  '), ('> - ', '>   ')]:
+            with self.subTest(prefix=prefix):
+                text = (prefix + '[id]: /「操作ボタン」\n' + continuation + '[link][id]\n\n'
+                        + prefix + '[next]:\n' + continuation + '/「操作ボタン」\n'
+                        + continuation + ' "title 「操作ボタン」\n'
+                        + continuation + '「操作ボタン」 end"\n\n'
+                        + '「操作ボタン」\n')
+                page = self.page(text)
+                self.change_unique()
+                code, out = self.sync_run('--list-citations')
+                self.assertEqual(code, 0, out)
+                self.assertEqual(out.count('\tmetadata\t'), 4, out)
+                code, out = self.sync_run('--rewrite-guide')
+                self.assertEqual(code, 1, out)
+                self.assertEqual((self.repo / page).read_text(),
+                                 text[:-len('「操作ボタン」\n')] + '「実行ボタン」\n')
+                self.edit(self.sync_path(), '実行ボタン', '操作ボタン')
+
     def test_settings_cell_requires_tab_header_and_tab_key(self):
         for lang, unique, unique_new, tab, tab_new, header in [
                 ('ja', '操作ボタン', '実行ボタン', '専用タブ', '特別タブ', 'タブ'),
