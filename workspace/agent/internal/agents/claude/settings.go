@@ -47,6 +47,11 @@ func claudeJSONPath() string {
 //	hasTrustDialogAccepted: the per-dir "Is this a project you trust?" prompt that
 //	  otherwise stalls a fresh dir (every repo, and /home/dev after node→dev).
 //
+// A linked git worktree whose .claude/settings.json pre-approves tools (permissions.allow)
+// is judged by the MAIN checkout's trust, not its own (measured, 2.1.288/2.1.289: the
+// dialog reappears with only the worktree trusted and goes away once the main checkout is).
+// So the main checkout is trusted too; an explicit false there is overwritten.
+//
 // Writes once, only when something changed, atomically (rename), to minimize racing
 // with claude's own writes.
 func ensureFolderTrusted(dir string) {
@@ -73,15 +78,17 @@ func ensureFolderTrusted(dir string) {
 	if projects == nil {
 		projects = map[string]any{}
 	}
-	entry, _ := projects[dir].(map[string]any)
-	if entry == nil {
-		entry = map[string]any{}
-	}
-	if trusted, _ := entry["hasTrustDialogAccepted"].(bool); !trusted {
-		entry["hasTrustDialogAccepted"] = true
-		projects[dir] = entry
-		root["projects"] = projects
-		changed = true
+	for _, d := range append([]string{dir}, mainCheckoutOf(dir)...) {
+		entry, _ := projects[d].(map[string]any)
+		if entry == nil {
+			entry = map[string]any{}
+		}
+		if trusted, _ := entry["hasTrustDialogAccepted"].(bool); !trusted {
+			entry["hasTrustDialogAccepted"] = true
+			projects[d] = entry
+			root["projects"] = projects
+			changed = true
+		}
 	}
 
 	if !changed {
@@ -95,6 +102,29 @@ func ensureFolderTrusted(dir string) {
 	if os.WriteFile(tmp, b, 0o600) == nil {
 		_ = os.Rename(tmp, p)
 	}
+}
+
+// mainCheckoutOf returns the main checkout's root when dir is a linked git worktree
+// (its .git is a file "gitdir: <common>/worktrees/<name>"), else nil. Read from the file
+// rather than exec'd git: this runs on every launch and must not depend on PATH.
+func mainCheckoutOf(dir string) []string {
+	b, err := os.ReadFile(filepath.Join(dir, ".git"))
+	if err != nil {
+		return nil
+	}
+	gitdir, ok := strings.CutPrefix(strings.TrimSpace(string(b)), "gitdir:")
+	if !ok {
+		return nil
+	}
+	gitdir = strings.TrimSpace(gitdir)
+	if !filepath.IsAbs(gitdir) {
+		gitdir = filepath.Join(dir, gitdir)
+	}
+	common := filepath.Dir(filepath.Dir(gitdir)) // <common>/worktrees/<name> -> <common>
+	if filepath.Base(filepath.Dir(gitdir)) != "worktrees" || filepath.Base(common) != ".git" {
+		return nil
+	}
+	return []string{filepath.Dir(common)}
 }
 
 // settingsMu serializes read-modify-write cycles on settings.json inside this process, so
