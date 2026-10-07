@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import DOMPurify from "dompurify";
-import { HTML_TAGS } from "./markdown.ts";
+import { Marked } from "marked";
+import { HTML_TAGS, marked } from "./markdown.ts";
 
 // HTML_TAGS is the list of names raw HTML is honored for, and its whole justification is that
 // the sanitizer MarkdownView runs afterwards keeps them: a name on the list that DOMPurify
@@ -38,5 +39,97 @@ describe("HTML_TAGS", () => {
       expect(DOMPurify.sanitize(`<${tag}>x</${tag}>`)).not.toContain(`<${tag}`);
       expect(HTML_TAGS.has(tag)).toBe(false);
     }
+  });
+});
+
+// The path MarkdownView takes: parse, sanitize, then innerHTML. The leak is a property of the
+// parsed DOM, so it is asserted there rather than on strings.
+function render(renderer: Marked, source: string): HTMLElement {
+  const el = document.createElement("div");
+  el.innerHTML = DOMPurify.sanitize(renderer.parse(source) as string);
+  return el;
+}
+
+const STOCK = new Marked();
+const FORMATTING = "a b big code em font i nobr s small strike strong tt u".split(" ");
+
+// The paragraph after the stray opener is the thing that must stay outside every formatting
+// element; its text must survive too.
+function leaks(el: HTMLElement, marker: string): boolean {
+  const p = [...el.querySelectorAll("p")].find((x) => x.textContent === marker);
+  if (!p) return true;
+  return FORMATTING.some((name) => p.closest(name) !== null) || p.querySelector(FORMATTING.join(",")) !== null;
+}
+
+describe("a formatting tag that is never closed", () => {
+  it.each(FORMATTING)("<%s> in prose does not wrap the next paragraph", (name) => {
+    for (const open of [`<${name}>`, `<${name}/>`]) {
+      const source = `Use ${open} here.\n\nSecond.`;
+      // Positive control: the stock tokenizer really leaks, so the assertion can fail.
+      expect(leaks(render(STOCK, source), "Second.")).toBe(true);
+      const el = render(marked, source);
+      expect(leaks(el, "Second.")).toBe(false);
+      expect(el.textContent).toContain(open);
+    }
+  });
+
+  it("keeps block-level raw HTML from leaking", () => {
+    for (const source of [
+      "<a download>\ntext\n\nSecond.",
+      "<p>Use <a download>. End.</p>\n\nSecond.",
+      "<div><a download>x</div>\n\nSecond.",
+    ]) {
+      expect(leaks(render(STOCK, source), "Second.")).toBe(true);
+      expect(leaks(render(marked, source), "Second.")).toBe(false);
+    }
+  });
+
+  it("does not take a closing tag in code, a comment or an attribute for a closer", () => {
+    for (const source of [
+      "Use <a download> then `</a>`\n\nSecond.",
+      "Use <a download> <!-- </a> -->\n\nSecond.",
+      'Use <a download> <span title="</a>">x</span>\n\nSecond.',
+      "Use <a download> \\</a>\n\nSecond.",
+    ]) {
+      expect(leaks(render(marked, source), "Second.")).toBe(false);
+    }
+  });
+
+  it("pairs each closer with one opener when the same name nests", () => {
+    const el = render(marked, "Use <b>outer <b>inner</b> after\n\nSecond.");
+    expect(leaks(el, "Second.")).toBe(false);
+    expect(el.querySelectorAll("b").length).toBe(1);
+  });
+
+  it("covers headings, list items and table cells", () => {
+    for (const source of [
+      "# Title <a download>\n\nSecond.",
+      "- item <a download>\n\nSecond.",
+      "| h |\n| - |\n| <a download> |\n\nSecond.",
+    ]) {
+      expect(leaks(render(marked, source), "Second.")).toBe(false);
+    }
+  });
+
+  it("leaves a stray tag in a Markdown link label from leaking", () => {
+    expect(leaks(render(marked, "[<b>x](https://example.com)\n\nSecond."), "Second.")).toBe(false);
+  });
+
+  it("keeps pairs that are closed", () => {
+    for (const [source, selector] of [
+      ['Use <a href="x">one\ntwo</a> ok', "a[href]"],
+      ["Use <B>bold</b> ok", "b"],
+      ['*<a href="x">y*</a>', "a[href]"],
+      ['<a href="x">\n\n![i](y)\n\n</a>', "a[href] img"],
+      ["| h |\n| - |\n| <b>x</b> |", "td b"],
+    ] as const) {
+      expect(render(marked, source).querySelector(selector), source).not.toBeNull();
+    }
+  });
+
+  it("leaves containers and void elements as they were", () => {
+    expect(render(marked, "<div>\n\nx\n\n</div>").querySelector("div p")).not.toBeNull();
+    expect(render(marked, "a<br>b").querySelector("br")).not.toBeNull();
+    expect(render(marked, "<details><summary>s</summary>\n\nx\n\n</details>").querySelector("details")).not.toBeNull();
   });
 });

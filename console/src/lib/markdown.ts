@@ -1,5 +1,5 @@
 import { load, YAML11_SCHEMA, mergeTag } from "js-yaml";
-import { Marked, Tokenizer } from "marked";
+import { Marked, Tokenizer, type Token, type Tokens } from "marked";
 
 export interface YamlFrontMatter {
   attributes: Record<string, unknown>;
@@ -250,6 +250,133 @@ export function isRenderedHtmlTag(raw: string): boolean {
   return !name || HTML_TAGS.has(name[1].toLowerCase());
 }
 
+// An opening tag that is never closed does not stay where it was written. The HTML parser
+// closes a formatting element at the end of its paragraph and re-opens it in the next one, so
+// prose that merely names `<a download>` colours every later paragraph as a link — measured on
+// the sanitized output, so DOMPurify does not prevent it. These 14 are the elements the parser
+// re-opens (the HTML Standard's "formatting" category); containers such as <div>, and <span>
+// inside a paragraph, are closed with their paragraph and keep their behavior.
+//
+// Pairing is decided on lexed tokens, never on the source text: a `</a>` inside a code span,
+// a comment or an escape is a different token and cannot close anything. An opener without a
+// closer is turned back into text, which is what the author typed. The stock tokenizer is left
+// alone on purpose — it would set `inLink` on `<a` before we could know.
+const FORMATTING_TAGS = new Set("a b big code em font i nobr s small strike strong tt u".split(" "));
+
+interface TagEvent {
+  name: string;
+  open: boolean;
+}
+
+function formattingEvent(raw: string): TagEvent | null {
+  const name = TAG_NAME.exec(raw)?.[1].toLowerCase();
+  return name && FORMATTING_TAGS.has(name) ? { name, open: !raw.startsWith("</") } : null;
+}
+
+// Pairs each closer with the nearest unmatched opener of the same name; `finish` reports the
+// openers nothing closed. A closer with no opener is left alone, as the HTML parser does.
+class TagPairing {
+  private open: { name: string; stray: () => void }[] = [];
+
+  push(event: TagEvent, stray: () => void): void {
+    if (event.open) {
+      this.open.push({ name: event.name, stray });
+      return;
+    }
+    for (let i = this.open.length - 1; i >= 0; i--) {
+      if (this.open[i].name === event.name) {
+        this.open.splice(i, 1);
+        return;
+      }
+    }
+  }
+
+  finish(): void {
+    for (const o of this.open) o.stray();
+    this.open = [];
+  }
+}
+
+// One inline unit (paragraph, heading, list-item text, table cell) is paired as a whole,
+// recursing into emphasis and links so `*<a href="x">y*</a>` still counts as closed.
+function pairInline(tokens: Token[], pairing: TagPairing): void {
+  for (const t of tokens) {
+    if (t.type === "html") {
+      const event = formattingEvent(t.raw);
+      if (event) {
+        pairing.push(event, () => {
+          const token = t as Tokens.Generic;
+          token.type = "text";
+          token.text = t.raw;
+          delete token.escaped;
+        });
+      }
+    } else if ("tokens" in t && Array.isArray(t.tokens)) {
+      pairInline(t.tokens, pairing);
+    }
+  }
+}
+
+function pairUnit(tokens: Token[]): void {
+  const unit = new TagPairing();
+  pairInline(tokens, unit);
+  unit.finish();
+}
+
+// A comment (skipped) or a tag with quoted attributes, inside block-level raw HTML.
+const HTML_RUN = /<!--[\s\S]*?-->|<\/?[a-zA-Z][a-zA-Z0-9-]*(?:"[^"]*"|'[^']*'|[^'">])*>/g;
+
+// Raw HTML blocks are paired across the whole document: `<a href>` alone on a line may be
+// closed by a later block. Strays are escaped once the document is done, right to left so
+// the earlier offsets stay valid.
+function pairBlockHtml(token: Tokens.HTML, pairing: TagPairing, escapes: (() => void)[]): void {
+  const strays: number[] = [];
+  for (const m of token.text.matchAll(HTML_RUN)) {
+    const event = formattingEvent(m[0]);
+    if (event) pairing.push(event, () => strays.push(m.index));
+  }
+  escapes.push(() => {
+    let text = token.text;
+    for (const at of strays.sort((a, b) => b - a)) text = text.slice(0, at) + "&lt;" + text.slice(at + 1);
+    token.text = text;
+  });
+}
+
+function walkBlocks(tokens: Token[], pairing: TagPairing, escapes: (() => void)[]): void {
+  for (const t of tokens) {
+    switch (t.type) {
+      case "paragraph":
+      case "heading":
+      case "text":
+        pairUnit((t as Tokens.Paragraph).tokens ?? []);
+        break;
+      case "html":
+        pairBlockHtml(t as Tokens.HTML, pairing, escapes);
+        break;
+      case "list":
+        for (const item of (t as Tokens.List).items) walkBlocks(item.tokens, pairing, escapes);
+        break;
+      case "blockquote":
+        walkBlocks((t as Tokens.Blockquote).tokens, pairing, escapes);
+        break;
+      case "table": {
+        const table = t as Tokens.Table;
+        for (const cell of [...table.header, ...table.rows.flat()]) pairUnit(cell.tokens);
+        break;
+      }
+    }
+  }
+}
+
+export function neutralizeStrayFormattingTags(tokens: Token[]): Token[] {
+  const doc = new TagPairing();
+  const escapes: (() => void)[] = [];
+  walkBlocks(tokens, doc, escapes);
+  doc.finish();
+  for (const apply of escapes) apply();
+  return tokens;
+}
+
 // CommonMark decides whether `**` opens or closes emphasis from the two characters around
 // it: a delimiter next to punctuation only counts when the character on its other side is
 // whitespace or punctuation too. Every CJK bracket, 、。！？…・ and every fullwidth form is
@@ -363,6 +490,9 @@ function retryWithCjkRules<T>(
 // out empty, and every later `[保留]` in the document silently becomes a link to it.
 // Definitions are still honored — but only when the destination could actually be one.
 export const marked = new Marked({
+  hooks: {
+    processAllTokens: neutralizeStrayFormattingTags,
+  },
   tokenizer: {
     def(src) {
       // Marked's own rule decides whether this is a definition and where it ends;
