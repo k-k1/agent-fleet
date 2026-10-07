@@ -1062,3 +1062,64 @@ func TestCodeThenFastExit(t *testing.T) {
 	}
 	unlock()
 }
+
+// TestConsoleEligibleAtATerminal: a run at a member's own terminal asks the Console too;
+// an agent's terminal, --login, --no-login and a run outside a workspace do not.
+func TestConsoleEligibleAtATerminal(t *testing.T) {
+	base := ExecOptions{Login: "auto", ConsoleLogin: true, ConsoleWait: time.Minute}
+	for name, tc := range map[string]struct {
+		mut  func(*ExecOptions)
+		want bool
+	}{
+		"no terminal":             {func(o *ExecOptions) {}, true},
+		"member's terminal":       {func(o *ExecOptions) { o.Interactive, o.TerminalConsole = true, true }, true},
+		"agent's terminal":        {func(o *ExecOptions) { o.Interactive = true }, false},
+		"--login":                 {func(o *ExecOptions) { o.Interactive, o.TerminalConsole, o.Login = true, true, "always" }, false},
+		"--no-login":              {func(o *ExecOptions) { o.Interactive, o.TerminalConsole, o.Login = true, true, "never" }, false},
+		"outside a workspace":     {func(o *ExecOptions) { o.Interactive, o.TerminalConsole, o.ConsoleLogin = true, true, false }, false},
+		"no wait (not a Console)": {func(o *ExecOptions) { o.Interactive, o.TerminalConsole, o.ConsoleWait = true, true, 0 }, false},
+	} {
+		o := base
+		tc.mut(&o)
+		if got := consoleEligible(o); got != tc.want {
+			t.Errorf("%s: consoleEligible = %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+// TestTerminalRunCtrlCEndsTheConsoleWait: Ctrl-C at the terminal ends the wait with exit 3
+// and the request stays pending for the Console.
+func TestTerminalRunCtrlCEndsTheConsoleWait(t *testing.T) {
+	l := setupLogin(t, prod())
+	o := execOpts(l.env, prod())
+	o.Login, o.ConsoleLogin, o.ConsoleWait = "auto", true, time.Minute
+	o.Interactive, o.TerminalConsole = true, true
+	stderr := &syncBuf{}
+	o.Stderr = stderr
+	helper := make(chan struct{})
+	go func() {
+		defer close(helper)
+		path := logins.RequestPath(ConfigName("prod"))
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			if _, err := os.Stat(path); err == nil {
+				break
+			}
+		}
+		syscall.Kill(os.Getpid(), syscall.SIGINT)
+	}()
+	t.Cleanup(func() { <-helper })
+	start := time.Now()
+	_, _, _, err := PlanExec(l.gcloud, hostile(t), o)
+	if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "stopped waiting") {
+		t.Fatalf("err = %v\n%s", err, stderr.String())
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Fatal("Ctrl-C did not end the wait")
+	}
+	if _, ok := logins.Read(ConfigName("prod")); !ok {
+		t.Fatal("the request did not stay pending")
+	}
+	if !strings.Contains(stderr.String(), "Ctrl-C") {
+		t.Fatalf("the run did not say how to stop: %q", stderr.String())
+	}
+}

@@ -62,6 +62,11 @@ type ExecOptions struct {
 	ConsoleLogin bool
 	ConsoleWait  time.Duration
 	Waiter       LoginWaiter
+	// TerminalConsole makes a run at a person's terminal (Interactive) ask the Console
+	// too, instead of running the device-code login in the terminal; Ctrl-C ends the wait.
+	// Set only for a terminal that is not an agent's (an agent's run keeps its own path).
+	// --login still forces the in-terminal login.
+	TerminalConsole bool
 }
 
 // ErrLoginRequired means the SSO login is missing or expired and no login was attempted.
@@ -397,16 +402,21 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		}
 		hint := fmt.Sprintf("%saws sso login --profile %s --use-device-code --no-browser", prefix, session.ShellQuote(o.Profile))
 		switch {
-		case o.Login == "always" || (o.Login != "never" && o.Interactive):
-			if lerr := deviceLogin(awsBin, aws.env, ssoOnlyProfile, o.Stderr); lerr != nil {
-				return "", nil, nil, fmt.Errorf("aws sso login for profile %s: %w", o.Profile, lerr)
-			}
-			if creds, err = exportSSOCreds(aws, sso.Session); err != nil {
-				return "", nil, nil, fmt.Errorf("credentials for profile %q after login: %w", o.Profile, err)
+		case o.Login == "always" || (o.Login != "never" && o.Interactive && !(o.TerminalConsole && consoleEligible(sso, o))):
+			creds, err = terminalLogin(aws, awsBin, sso, o)
+			if err != nil {
+				return "", nil, nil, err
 			}
 		case consoleEligible(sso, o):
 			if creds, err = consoleLogin(aws, sso, snap, o, err, hint); err != nil {
-				return "", nil, nil, err
+				// At a terminal, a Console that cannot be asked at all is no reason to
+				// stop: the in-terminal login still works.
+				if !(o.TerminalConsole && errors.Is(err, errConsoleNotAsked)) {
+					return "", nil, nil, err
+				}
+				if creds, err = terminalLogin(aws, awsBin, sso, o); err != nil {
+					return "", nil, nil, err
+				}
 			}
 		default:
 			return "", nil, nil, fmt.Errorf("%w for profile %q: %v\nlog in with: %s", ErrLoginRequired, o.Profile, err, hint)
@@ -862,6 +872,19 @@ func exportCreds(aws awsRunner, profile string) (processCreds, error) {
 		return processCreds{}, errNoSessionToken
 	}
 	return c, nil
+}
+
+// terminalLogin runs the device-code login in the person's terminal and then reads the
+// credentials it produced.
+func terminalLogin(aws awsRunner, awsBin string, sso ssoInfo, o ExecOptions) (processCreds, error) {
+	if lerr := deviceLogin(awsBin, aws.env, ssoOnlyProfile, o.Stderr); lerr != nil {
+		return processCreds{}, fmt.Errorf("aws sso login for profile %s: %w", o.Profile, lerr)
+	}
+	creds, err := exportSSOCreds(aws, sso.Session)
+	if err != nil {
+		return processCreds{}, fmt.Errorf("credentials for profile %q after login: %w", o.Profile, err)
+	}
+	return creds, nil
 }
 
 // deviceLogin runs the device-code login with the person's terminal attached. Its

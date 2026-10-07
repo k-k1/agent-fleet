@@ -2,8 +2,50 @@ package cloudlogin
 
 import (
 	"errors"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
+
+// Interrupt returns a channel that closes on the first SIGINT or SIGTERM, and a stop
+// function that releases the handler. A run at a person's terminal installs it for the
+// length of the Console wait only, so Ctrl-C ends the wait (exit 3) instead of killing
+// the process mid-poll; outside the wait the default signal behaviour is untouched.
+func Interrupt() (<-chan struct{}, func()) {
+	sig := make(chan os.Signal, 1)
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		select {
+		case <-sig:
+			close(done)
+		case <-stopped:
+		}
+	}()
+	return done, func() {
+		signal.Stop(sig)
+		select {
+		case <-stopped:
+		default:
+			close(stopped)
+		}
+	}
+}
+
+// sleep waits d, or until cancel closes; it reports whether the full time passed. A nil
+// cancel never fires.
+func sleep(d time.Duration, cancel <-chan struct{}) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-cancel:
+		return false
+	}
+}
 
 // WaitSpec is one wrapper run that asks the Console for the login and waits for the
 // member (ADR 0102 decisions 1 and 5).
@@ -22,6 +64,9 @@ type WaitSpec[C any] struct {
 	// caller kills on a timeout has still said it. FiledAgain runs when the request was
 	// gone and a new one had to be filed.
 	Filed, FiledAgain func()
+	// Cancel, when it closes, ends the wait with WaitInterrupted and leaves the request
+	// as it is, for the next run or the Console to settle (Ctrl-C at a terminal).
+	Cancel <-chan struct{}
 }
 
 // WaitReason says why a wait ended without credentials.
@@ -39,6 +84,8 @@ const (
 	WaitCancelled
 	// WaitTimedOut: the request is still pending when the wait ran out.
 	WaitTimedOut
+	// WaitInterrupted: Cancel closed; the request, if filed, is left pending.
+	WaitInterrupted
 )
 
 // WaitError is how Wait ends without credentials. The backend words it: the wrapper's
@@ -57,7 +104,10 @@ func (e *WaitError) Error() string {
 
 func (e *WaitError) Unwrap() error { return e.Err }
 
-var errUnsettled = errors.New("the credential state kept changing")
+var (
+	errUnsettled   = errors.New("the credential state kept changing")
+	errInterrupted = errors.New("interrupted")
+)
 
 // settle applies the snapshot rule (ADR 0102 decision 1) after a failed check that was
 // made against snap: while the state differs from the snapshot a check was made against,
@@ -76,7 +126,9 @@ func settle[S comparable, C any](s *Store[S], w *WaitSpec[C], snap S, deadline t
 		}
 		snap = cur
 		// A state that keeps moving must not turn this into back-to-back checks.
-		time.Sleep(w.Poll)
+		if !sleep(w.Poll, w.Cancel) {
+			return snap, zero, false, errInterrupted
+		}
 		c, err := w.Check()
 		if err == nil {
 			return snap, c, true, nil
@@ -98,6 +150,8 @@ func Wait[S comparable, C any](s *Store[S], snap S, w WaitSpec[C]) (C, error) {
 	switch {
 	case errors.Is(err, errUnsettled):
 		return zero, &WaitError{Reason: WaitUnsettled}
+	case errors.Is(err, errInterrupted):
+		return zero, &WaitError{Reason: WaitInterrupted}
 	case err != nil:
 		return zero, &WaitError{Reason: WaitCheckFailed, Err: err}
 	case ok:
@@ -120,7 +174,9 @@ func Wait[S comparable, C any](s *Store[S], snap S, w WaitSpec[C]) (C, error) {
 	// worth another check.
 	lost := false
 	for time.Now().Before(deadline) {
-		time.Sleep(w.Poll)
+		if !sleep(w.Poll, w.Cancel) {
+			return zero, &WaitError{Reason: WaitInterrupted}
+		}
 		state := s.stateOf(w.Key, req.ID)
 		if state == requestCancelled {
 			return zero, &WaitError{Reason: WaitCancelled}
@@ -140,6 +196,8 @@ func Wait[S comparable, C any](s *Store[S], snap S, w WaitSpec[C]) (C, error) {
 		switch {
 		case errors.Is(err, errUnsettled):
 			continue
+		case errors.Is(err, errInterrupted):
+			return zero, &WaitError{Reason: WaitInterrupted}
 		case err != nil:
 			return zero, &WaitError{Reason: WaitCheckFailed, Err: err}
 		case ok:

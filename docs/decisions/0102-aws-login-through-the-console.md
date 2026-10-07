@@ -404,3 +404,31 @@ answer carries `alreadyEnded: true` and the Console shows the normal "logged out
 (`invalid_client`, `invalid_request`, `slow_down`, an unreadable body) say nothing about the session and keep the
 warning. Redirects from the AWS endpoints are not followed. The "AWS could not be told" warning stays for network failures, 5xx
 and a renewal that is impossible. The decision above is unchanged.
+
+## Note — a run at a member's terminal asks the Console too (2026-10-08)
+
+Issue #1512. Decision 6 kept the in-terminal login for a run with a terminal and gave no reason beyond leaving
+existing behaviour alone; inside a workspace nearly every terminal is a Console pane, so the member got two login
+flows depending on who ran the command. Decision 6's first bullet is amended; decisions 1 to 5 stand.
+
+- **Inside a workspace** (`AF_CP_BASE_URL` set), a run **at a terminal** with the default `--login` mode and a
+  Console-eligible profile (decision 1: a Settings profile, no `source_profile` chain) files the request, says so,
+  and waits like an agent's run. Everything else at a terminal is as before: `--login` runs the device-code login
+  in the terminal, `--no-login` never asks, a profile the Console cannot vouch for, and a run outside a workspace,
+  keep the in-terminal login.
+- **Whose terminal.** Only a terminal that is not an agent's: the session behind `AF_SESSION_NAME` is a shell or
+  ssm session, or there is none. A run with a terminal inside an agent session (a pty-backed tool) keeps its
+  in-terminal login and its per-kind wait, so what an agent does is unchanged.
+- **Wait.** Ten minutes (`consoleLoginTerminalWait`), about the device-code lifetime; a person is at the keyboard
+  and no agent tool times the command out. A run that ends without approval exits 3 with the request still
+  pending, as decision 5 has it. **Ctrl-C** (SIGINT or SIGTERM, caught only during the wait) ends the wait with
+  exit 3 and leaves the request for the Console or the next run.
+- **Console cannot be asked** (the request cannot be filed): a terminal run falls back to the in-terminal login
+  instead of exit 3. Whether a Console is open to show the toast cannot be known; `--login` and Ctrl-C are the way
+  out, and the message names both.
+- **Concurrency.** Unchanged: one request per sso-session; an agent's run and a terminal run for the same profile
+  join the same request and both continue when it resolves. The terminal run only files and polls; the device
+  code, URL and approval stay behind the Console's routes and the member's own press, so a terminal run cannot
+  approve anyone's login.
+
+`af-gcloud-exec` follows the same rule (ADR 0107 note of this date).

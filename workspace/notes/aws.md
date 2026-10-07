@@ -51,7 +51,9 @@ plain `--profile` cannot:
   cannot read an SSO profile (older SDKs such as the AWS SDK for Java v1, common in Gradle/Maven
   plugins) works.
 - A missing SSO login is requested in the user's Console (exit 3 while it waits, below), instead of
-  an SSO token error you cannot fix.
+  an SSO token error you cannot fix. This holds for the user's own terminal in a workspace too: it
+  waits up to ten minutes for them to approve and Ctrl-C ends it with exit 3; `--login` is the
+  in-terminal device-code login.
 - It refuses a profile name that means different identities to different tools (keys or a role
   beside the SSO settings, a conflicting definition in `~/.aws`).
 - `--region` pins the region against a stale `AWS_REGION` in the shell, and `AWS_ENDPOINT_URL*`

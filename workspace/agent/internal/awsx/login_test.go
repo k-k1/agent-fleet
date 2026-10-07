@@ -731,3 +731,147 @@ func TestARowLoginDoesNotKeepARequestPastItsTTL(t *testing.T) {
 	}
 	logins.Attempt(a).End(cloudlogin.PhaseFailed, "")
 }
+
+// terminalOpts is consoleOpts for a run at a member's own terminal (a Shell pane): stdin
+// and stderr are terminals and the run is not an agent's.
+func terminalOpts(stderr *bytes.Buffer, wait time.Duration) ExecOptions {
+	o := consoleOpts(stderr, wait)
+	o.Interactive, o.TerminalConsole = true, true
+	return o
+}
+
+func TestTerminalRunAsksTheConsoleAndContinuesOnApproval(t *testing.T) {
+	bin, state := fakeAWS(t, ssoProfile)
+	fastPoll(t)
+	helper := make(chan struct{})
+	go func() {
+		defer close(helper)
+		if path := logins.RequestPath("af-prod"); !fileAppears(path) {
+			t.Errorf("%s never appeared", path)
+			return
+		}
+		if err := putSSOCache("fresh", time.Now().Add(time.Hour)); err != nil {
+			t.Errorf("writing the SSO cache: %v", err)
+			return
+		}
+		os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600)
+	}()
+	t.Cleanup(func() { <-helper })
+	var stderr bytes.Buffer
+	_, _, env, err := PlanExec(bin, workloadEnv, terminalOpts(&stderr, 5*time.Second))
+	if err != nil {
+		t.Fatalf("err = %v\n%s", err, stderr.String())
+	}
+	if envMap(env)["AWS_ACCESS_KEY_ID"] != "ASIAFAKE" {
+		t.Fatal("no credentials after the Console login")
+	}
+	if !strings.Contains(stderr.String(), "requested in the Agent Fleet Console") || !strings.Contains(stderr.String(), "Ctrl-C") {
+		t.Fatalf("the run never said where the login is or how to stop: %q", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(state, "loginArgs")); err == nil {
+		t.Fatal("a device login ran in the terminal")
+	}
+}
+
+func TestTerminalRunKeepsTheInTerminalLoginWhereTheConsoleIsNotAsked(t *testing.T) {
+	cases := map[string]func(*ExecOptions){
+		"--login":                 func(o *ExecOptions) { o.Login = "always" },
+		"outside a WS":            func(o *ExecOptions) { o.ConsoleLogin, o.TerminalConsole = false, false },
+		"an agent's own terminal": func(o *ExecOptions) { o.TerminalConsole = false },
+		"not in Settings":         func(o *ExecOptions) { o.Settings = nil; o.Account = "123456789012" },
+	}
+	for name, mut := range cases {
+		t.Run(name, func(t *testing.T) {
+			bin, state := fakeAWS(t, ssoProfile)
+			var stderr bytes.Buffer
+			o := terminalOpts(&stderr, time.Second)
+			mut(&o)
+			if _, _, _, err := PlanExec(bin, workloadEnv, o); err != nil {
+				t.Fatalf("err = %v\n%s", err, stderr.String())
+			}
+			args, _ := os.ReadFile(filepath.Join(state, "loginArgs"))
+			if !strings.Contains(string(args), "--use-device-code") {
+				t.Fatalf("no device-code login ran: %q", args)
+			}
+			if _, ok := logins.Read("af-prod"); ok {
+				t.Fatal("filed a Console login request")
+			}
+		})
+	}
+}
+
+func TestTerminalRunNoLoginStillExits3WithoutAsking(t *testing.T) {
+	bin, _ := fakeAWS(t, ssoProfile)
+	var stderr bytes.Buffer
+	o := terminalOpts(&stderr, time.Second)
+	o.Login = "never"
+	_, _, _, err := PlanExec(bin, workloadEnv, o)
+	if !errors.Is(err, ErrLoginRequired) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, ok := logins.Read("af-prod"); ok {
+		t.Fatal("--no-login filed a request")
+	}
+}
+
+func TestTerminalRunCtrlCEndsTheWaitAndLeavesTheRequest(t *testing.T) {
+	bin, _ := fakeAWS(t, ssoProfile)
+	fastPoll(t)
+	helper := make(chan struct{})
+	go func() {
+		defer close(helper)
+		if path := logins.RequestPath("af-prod"); !fileAppears(path) {
+			t.Errorf("%s never appeared", path)
+			return
+		}
+		// The handler is installed before the request is filed, so this is Ctrl-C.
+		syscall.Kill(os.Getpid(), syscall.SIGINT)
+	}()
+	t.Cleanup(func() { <-helper })
+	var stderr bytes.Buffer
+	start := time.Now()
+	_, _, _, err := PlanExec(bin, workloadEnv, terminalOpts(&stderr, time.Minute))
+	if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "stopped waiting") {
+		t.Fatalf("err = %v", err)
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Fatal("Ctrl-C did not end the wait")
+	}
+	if _, ok := logins.Read("af-prod"); !ok {
+		t.Fatal("the interrupted run withdrew the request; it must stay for the Console")
+	}
+}
+
+func TestTerminalRunTimesOutWithExit3AndTheRequestPending(t *testing.T) {
+	bin, _ := fakeAWS(t, ssoProfile)
+	fastPoll(t)
+	var stderr bytes.Buffer
+	_, _, _, err := PlanExec(bin, workloadEnv, terminalOpts(&stderr, 150*time.Millisecond))
+	if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "waiting for the member to approve") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, ok := logins.Read("af-prod"); !ok {
+		t.Fatal("no request left pending")
+	}
+}
+
+func TestTerminalRunFallsBackToTheTerminalWhenTheRequestCannotBeFiled(t *testing.T) {
+	bin, state := fakeAWS(t, ssoProfile)
+	// A directory where the request file goes: filing fails.
+	if err := os.MkdirAll(logins.RequestPath("af-prod"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	if _, _, _, err := PlanExec(bin, workloadEnv, terminalOpts(&stderr, time.Second)); err != nil {
+		t.Fatalf("err = %v\n%s", err, stderr.String())
+	}
+	if args, _ := os.ReadFile(filepath.Join(state, "loginArgs")); !strings.Contains(string(args), "--use-device-code") {
+		t.Fatalf("no in-terminal login after the Console could not be asked: %q", args)
+	}
+	// The same failure at an agent's run (no terminal) still ends with exit 3.
+	os.Remove(filepath.Join(state, "loggedIn"))
+	o := consoleOpts(&stderr, time.Second)
+	if _, _, _, err := PlanExec(bin, workloadEnv, o); !errors.Is(err, ErrLoginRequired) {
+		t.Fatalf("agent run: err = %v", err)
+	}
+}

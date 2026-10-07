@@ -58,6 +58,10 @@ type ExecOptions struct {
 	ConsoleLogin bool
 	ConsoleWait  time.Duration
 	Waiter       cloudlogin.Waiter
+	// TerminalConsole makes a run at a person's terminal (Interactive) ask the Console
+	// too, instead of running the login in the terminal; Ctrl-C ends the wait. Set only
+	// for a terminal that is not an agent's. --login still forces the in-terminal login.
+	TerminalConsole bool
 	// Now is the clock for the remaining-life check (time.Now when nil).
 	Now func() time.Time
 }
@@ -137,10 +141,15 @@ func PlanExec(gcloudBin string, environ []string, o ExecOptions) (string, []stri
 	if errors.Is(err, ErrLoginRequired) {
 		hint := fmt.Sprintf("af-gcloud-exec --profile %s --project %s --login -- true", session.ShellQuote(p.Name), session.ShellQuote(p.Project))
 		switch {
-		case o.Login == "always" || (o.Login != "never" && o.Interactive):
+		case o.Login == "always" || (o.Login != "never" && o.Interactive && !(o.TerminalConsole && consoleEligible(o))):
 			tok, account, err = loginAndMint(gcloudBin, agentEnv, p, stderr, waiting, errors.Is(err, errCredentialRejected))
 		case consoleEligible(o):
+			rejected := errors.Is(err, errCredentialRejected)
 			tok, account, err = consoleLogin(gcloudBin, agentEnv, p, snap, o, err, hint)
+			if err != nil && o.TerminalConsole && errors.Is(err, errConsoleNotAsked) {
+				// A Console that cannot be asked at all is no reason to stop at a terminal.
+				tok, account, err = loginAndMint(gcloudBin, agentEnv, p, stderr, waiting, rejected)
+			}
 			if err != nil {
 				return "", nil, nil, fmt.Errorf("profile %q: %w", p.Name, err)
 			}
