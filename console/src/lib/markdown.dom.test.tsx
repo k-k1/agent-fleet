@@ -132,4 +132,32 @@ describe("a formatting tag that is never closed", () => {
     expect(render(marked, "a<br>b").querySelector("br")).not.toBeNull();
     expect(render(marked, "<details><summary>s</summary>\n\nx\n\n</details>").querySelector("details")).not.toBeNull();
   });
+
+  it("does not take an image alt for tags in the body", () => {
+    expect(leaks(render(marked, "Use <a download> ![</a>](image.png)\n\nSecond."), "Second.")).toBe(false);
+    // A made-up opener in the alt must not steal the closer of a real, closed pair.
+    expect(render(marked, "Use <b>actual ![<b>](image.png) </b>").querySelector("b")).not.toBeNull();
+  });
+
+  it("lets a later paragraph close an opener that stood alone as a block", () => {
+    const el = render(marked, '<a href="x">\n\none </a> after\n\nSecond.');
+    expect([...el.querySelectorAll("a[href]")].map((x) => x.textContent)).toContain("one ");
+    expect(el.textContent).not.toContain("<a");
+  });
+
+  it("shows every stray tag in a block, in place, and no anchor in a table cell", () => {
+    const el = render(marked, "<div>before <B/> middle <A download> tail</div>");
+    expect(el.textContent).toBe("before <B/> middle <A download> tail");
+    expect(el.querySelector("a,b")).toBeNull();
+    const cell = render(marked, "| h |\n| - |\n| x <a download> y |");
+    expect(cell.querySelector("td")?.textContent).toBe("x <a download> y");
+    expect(cell.querySelector("a")).toBeNull();
+  });
+
+  it("still links bare URLs after a stray <a>, and not inside a real anchor", () => {
+    const stray = render(marked, "Use <a download> and https://example.com\n\nhttps://example.org");
+    expect(stray.querySelectorAll("a[href]").length).toBe(2);
+    const real = render(marked, '<a href="x">see https://example.com</a>');
+    expect(real.querySelectorAll("a").length).toBe(1);
+  });
 });

@@ -254,8 +254,8 @@ export function isRenderedHtmlTag(raw: string): boolean {
 // closes a formatting element at the end of its paragraph and re-opens it in the next one, so
 // prose that merely names `<a download>` colours every later paragraph as a link — measured on
 // the sanitized output, so DOMPurify does not prevent it. These 14 are the elements the parser
-// re-opens (the HTML Standard's "formatting" category); containers such as <div>, and <span>
-// inside a paragraph, are closed with their paragraph and keep their behavior.
+// re-opens (the HTML Standard's "formatting" category). Containers such as <div> stay open
+// on purpose, and an inline <span> is closed with its paragraph, so neither is touched.
 //
 // Pairing is decided on lexed tokens, never on the source text: a `</a>` inside a code span,
 // a comment or an escape is a different token and cannot close anything. An opener without a
@@ -277,6 +277,8 @@ function formattingEvent(raw: string): TagEvent | null {
 // openers nothing closed. A closer with no opener is left alone, as the HTML parser does.
 class TagPairing {
   private open: { name: string; stray: () => void }[] = [];
+  // Closers that found no opener here; a block opener elsewhere may own them.
+  readonly orphans: TagEvent[] = [];
 
   push(event: TagEvent, stray: () => void): void {
     if (event.open) {
@@ -289,6 +291,7 @@ class TagPairing {
         return;
       }
     }
+    this.orphans.push(event);
   }
 
   finish(): void {
@@ -301,6 +304,8 @@ class TagPairing {
 // recursing into emphasis and links so `*<a href="x">y*</a>` still counts as closed.
 function pairInline(tokens: Token[], pairing: TagPairing): void {
   for (const t of tokens) {
+    // An image's children become its alt attribute, never tags in the body.
+    if (t.type === "image") continue;
     if (t.type === "html") {
       const event = formattingEvent(t.raw);
       if (event) {
@@ -317,10 +322,14 @@ function pairInline(tokens: Token[], pairing: TagPairing): void {
   }
 }
 
-function pairUnit(tokens: Token[]): void {
+// A closer the unit cannot pair is offered to the document, so `<a href>` alone on a line
+// can still be closed by `</a>` in a later paragraph. The reverse — an inline opener closed by
+// a later block — is not honored: a paragraph's own stray opener must not reach past it.
+function pairUnit(tokens: Token[], doc: TagPairing): void {
   const unit = new TagPairing();
   pairInline(tokens, unit);
   unit.finish();
+  for (const event of unit.orphans) doc.push(event, () => {});
 }
 
 // A comment (skipped) or a tag with quoted attributes, inside block-level raw HTML.
@@ -348,7 +357,7 @@ function walkBlocks(tokens: Token[], pairing: TagPairing, escapes: (() => void)[
       case "paragraph":
       case "heading":
       case "text":
-        pairUnit((t as Tokens.Paragraph).tokens ?? []);
+        pairUnit((t as Tokens.Paragraph).tokens ?? [], pairing);
         break;
       case "html":
         pairBlockHtml(t as Tokens.HTML, pairing, escapes);
@@ -361,7 +370,7 @@ function walkBlocks(tokens: Token[], pairing: TagPairing, escapes: (() => void)[
         break;
       case "table": {
         const table = t as Tokens.Table;
-        for (const cell of [...table.header, ...table.rows.flat()]) pairUnit(cell.tokens);
+        for (const cell of [...table.header, ...table.rows.flat()]) pairUnit(cell.tokens, pairing);
         break;
       }
     }
@@ -513,7 +522,13 @@ export const marked = new Marked({
     // downstream (see HTML_TAGS). `undefined` means "no tag here", so the run falls through to
     // text and is escaped, which is how the author wrote it.
     tag(src) {
+      const before = this.lexer.state.inLink;
       const token = Tokenizer.prototype.tag.call(this, src);
+      // The stock rule sets `inLink` on `<a`, which switches bare-URL linking off until a `</a>`
+      // that a stray opener never gets. Keep that only when a closer follows in this source.
+      if (token && /^<a[\s/>]/i.test(token.raw) && !/<\/a\s*>/i.test(src.slice(token.raw.length))) {
+        this.lexer.state.inLink = before;
+      }
       return token && !isRenderedHtmlTag(token.raw) ? undefined : token;
     },
     html(src) {
