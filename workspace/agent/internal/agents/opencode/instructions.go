@@ -56,7 +56,7 @@ func ApplyFleetNotes(fleet string) error {
 	if fleet == "" {
 		return nil
 	}
-	return mdblock.EditFile(AgentsPath(), 0o644, false, func(s string) (string, error) {
+	return mdblock.EditFile(AgentsPath(), 0o644, 0o755, false, func(s string) (string, error) {
 		if !mdblock.Has(s, "fleet") {
 			s = mdblock.StripLegacyPrefix(s, fleet)
 		}
@@ -143,7 +143,7 @@ func writeAtomic(path string, b []byte, mode os.FileMode) error {
 // user-notes file: that one is referenced from opencode.json and is the member's switch, while
 // this follows the Agent memory switch.
 func ApplyMemoryGuide(body string) error {
-	return mdblock.EditFile(AgentsPath(), 0o644, false, func(s string) (string, error) {
+	return mdblock.EditFile(AgentsPath(), 0o644, 0o755, false, func(s string) (string, error) {
 		return mdblock.SetSafe(s, "memory-guide", body)
 	})
 }

@@ -72,7 +72,7 @@ func TestEditFileWritesThroughASymlinkKeepingModeAndLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	add := func(s string) (string, error) { return SetSafe(s, "memory-guide", "guide") }
-	if err := EditFile(link, 0o644, true, add); err != nil {
+	if err := EditFile(link, 0o644, 0o755, true, add); err != nil {
 		t.Fatal(err)
 	}
 	if fi, _ := os.Lstat(link); fi.Mode()&os.ModeSymlink == 0 {
@@ -89,7 +89,7 @@ func TestEditFileWritesThroughASymlinkKeepingModeAndLink(t *testing.T) {
 	if err := os.WriteFile(target, []byte(gs+"\nguide\n"+ge+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := EditFile(link, 0o644, true, func(s string) (string, error) { return SetSafe(s, "memory-guide", "") }); err != nil {
+	if err := EditFile(link, 0o644, 0o755, true, func(s string) (string, error) { return SetSafe(s, "memory-guide", "") }); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(link); err != nil {
@@ -106,7 +106,7 @@ func TestEditFileRefusesADanglingLink(t *testing.T) {
 	if err := os.Symlink(filepath.Join(dir, "nowhere"), link); err != nil {
 		t.Fatal(err)
 	}
-	if err := EditFile(link, 0o644, true, func(s string) (string, error) { return "x", nil }); err == nil {
+	if err := EditFile(link, 0o644, 0o755, true, func(s string) (string, error) { return "x", nil }); err == nil {
 		t.Fatal("a dangling link must not be replaced")
 	}
 	if fi, _ := os.Lstat(link); fi.Mode()&os.ModeSymlink == 0 {

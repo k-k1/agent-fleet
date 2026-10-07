@@ -38,13 +38,13 @@ func ApplyUserInstructions(body string) error {
 // shares with the user: only the named block changes, and a file that would end up
 // empty is removed rather than left as a stray.
 func setMarkedFile(path, name, body string) error {
-	return mdblock.EditFile(path, 0o644, true, func(s string) (string, error) { return mdblock.Set(s, name, body), nil })
+	return mdblock.EditFile(path, 0o644, 0o755, true, func(s string) (string, error) { return mdblock.Set(s, name, body), nil })
 }
 
 // setMarkedFileSafe is setMarkedFile for a block that must never eat the member's text: a file
 // with damaged markers is left alone and reported.
 func setMarkedFileSafe(path, name, body string) error {
-	return mdblock.EditFile(path, 0o644, true, func(s string) (string, error) { return mdblock.SetSafe(s, name, body) })
+	return mdblock.EditFile(path, 0o644, 0o755, true, func(s string) (string, error) { return mdblock.SetSafe(s, name, body) })
 }
 
 // ApplyMemoryGuide writes (or removes, when body is empty) the memory-guide block (ADR 0108

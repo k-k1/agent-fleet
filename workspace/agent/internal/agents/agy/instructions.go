@@ -46,7 +46,7 @@ func editAgents(edit func(string) string) error {
 // editAgentsE is editAgents for an edit that can refuse (damaged markers); a symlinked file is
 // written through.
 func editAgentsE(edit func(string) (string, error)) error {
-	return mdblock.EditFile(agentsPath(), 0o644, false, edit)
+	return mdblock.EditFile(agentsPath(), 0o644, 0o755, false, edit)
 }
 
 // ApplyMemoryGuide writes (or removes, when body is empty) the memory-guide block (ADR 0108

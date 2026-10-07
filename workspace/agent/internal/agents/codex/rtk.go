@@ -56,5 +56,5 @@ func editAgents(edit func(string) string) error {
 // editAgentsE is editAgents for an edit that can refuse (damaged markers). The file goes through
 // mdblock.EditFile: a symlinked AGENTS.md is written through, not replaced.
 func editAgentsE(edit func(string) (string, error)) error {
-	return mdblock.EditFile(AgentsPath(), 0o644, false, edit)
+	return mdblock.EditFile(AgentsPath(), 0o644, 0o755, false, edit)
 }

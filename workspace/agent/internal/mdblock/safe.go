@@ -53,8 +53,9 @@ func SetSafe(s, name, body string) (string, error) {
 // followed: the target is rewritten (keeping its mode) and the link stays, so a link into
 // persistent storage is never replaced by a copy. A dangling link is an error. When the edit
 // leaves nothing, a regular file is removed if removeEmpty, and a link's target is emptied
-// rather than the link deleted. An edit that changes nothing writes nothing.
-func EditFile(path string, perm os.FileMode, removeEmpty bool, edit func(string) (string, error)) error {
+// rather than the link deleted. A missing parent directory is created with dirPerm (a private
+// config home must not come out world-searchable). An edit that changes nothing writes nothing.
+func EditFile(path string, perm, dirPerm os.FileMode, removeEmpty bool, edit func(string) (string, error)) error {
 	real := path
 	isLink := false
 	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
@@ -86,7 +87,7 @@ func EditFile(path string, perm os.FileMode, removeEmpty bool, edit func(string)
 		}
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(real), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(real), dirPerm); err != nil {
 		return err
 	}
 	tmp := real + ".af-tmp"

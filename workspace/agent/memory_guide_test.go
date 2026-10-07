@@ -291,3 +291,18 @@ func TestMemoryGuideWritesThroughLinkedInstructionFiles(t *testing.T) {
 		}
 	}
 }
+
+// muse's config home holds auth.json beside AGENTS.md, so the first distribution that creates it
+// must make it private (0700), not world-searchable.
+func TestMuseConfigHomeIsCreatedPrivate(t *testing.T) {
+	instrEnv(t)
+	setAgentMemory(t, true)
+	reconcileAgentInstructions()
+	fi, err := os.Stat(filepath.Dir(muse.AgentsPath()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o700 {
+		t.Fatalf("muse config home mode = %v, want 0700", fi.Mode().Perm())
+	}
+}
