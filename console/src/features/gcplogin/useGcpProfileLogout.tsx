@@ -16,20 +16,21 @@ export function useGcpProfileLogout(): (p: { name: string; label: string }) => P
   const askConfirm = useConfirm();
   const toast = useToast();
   const logoutProfile = useGcpLoginStore((s) => s.logoutProfile);
-  const refreshProfiles = useGcpLoginStore((s) => s.refreshProfiles);
+  const loadProfiles = useGcpLoginStore((s) => s.loadProfiles);
   return useCallback(
     async (p) => {
       const profile = p.label || p.name;
       // Everything below is about the workspace of the tenant pressed under; the store sends
       // nothing once another is selected.
       const tenant = getTenant();
-      // The list the confirmation names must be the Agent's current one, not the last poll's:
-      // without it the confirmation could leave out a profile the logout signs out.
-      if (!(await refreshProfiles())) {
+      // The list the confirmation names must be the Agent's answer to this very ask, not the
+      // store's (an older ask answering later can put its list there): without it the
+      // confirmation could leave out a profile the logout signs out.
+      const list = await loadProfiles();
+      if (!list) {
         if (getTenant() === tenant) toast(tr("gcplogin.logout_unreadable"));
         return false;
       }
-      const list = useGcpLoginStore.getState().profiles ?? [];
       const me = list.find((x) => x.name === p.name);
       // Not signed in any more (or gone): the refreshed row already says so.
       if (!me || me.state !== "signed_in" || !me.account) return false;
@@ -80,6 +81,6 @@ export function useGcpProfileLogout(): (p: { name: string; label: string }) => P
       );
       return true;
     },
-    [tr, askConfirm, toast, logoutProfile, refreshProfiles],
+    [tr, askConfirm, toast, logoutProfile, loadProfiles],
   );
 }

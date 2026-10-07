@@ -18,6 +18,8 @@ const logoutBodies: string[] = [];
 // Set: the profile list cannot be read. holds: each logout, in turn, answers only once its promise settles.
 let profilesFail = false;
 const holds: Promise<void>[] = [];
+// Profile-list answers to give, in turn, each once its promise settles; then `profiles`.
+const profileAnswers: { hold: Promise<void>; list: Json[] }[] = [];
 // Runs while the confirmation is open, before the member answers.
 let duringConfirm: (() => void) | null = null;
 const confirms: { title: string; body: ReactNode }[] = [];
@@ -27,7 +29,14 @@ vi.mock("../../core/api/client.ts", () => ({
   getTenant: () => tenant,
   api: vi.fn(async (path: string, opts?: RequestInit) => {
     calls.push(`${opts?.method || "GET"} ${path}`);
-    if (path === "api/gcp-login/profiles") return profilesFail ? { error: { code: "x" } } : { profiles };
+    if (path === "api/gcp-login/profiles") {
+      const a = profileAnswers.shift();
+      if (a) {
+        await a.hold;
+        return { profiles: a.list };
+      }
+      return profilesFail ? { error: { code: "x" } } : { profiles };
+    }
     if (path === "api/gcp-login") return { requests: [] };
     if (path.endsWith("/logout")) {
       logoutBodies.push(String(opts?.body ?? ""));
@@ -144,6 +153,7 @@ beforeEach(() => {
   logoutBodies.length = 0;
   profilesFail = false;
   holds.length = 0;
+  profileAnswers.length = 0;
   duringConfirm = null;
   useGcpLoginStore.setState({
     profiles: null,
@@ -270,6 +280,30 @@ describe("Google Cloud profile logout", () => {
     expect(confirms).toHaveLength(1);
     expect(logoutBodies).toEqual([]);
     expect(toasts).toEqual([]);
+  });
+
+  it("confirms with its own ask's list, not an older ask's that answered after it", async () => {
+    await mount(<GcpProfilesChip />);
+    await openPop();
+    let releaseOld!: () => void;
+    let releaseNew!: () => void;
+    profileAnswers.push(
+      { hold: new Promise<void>((r) => (releaseOld = r)), list: [prod, { ...stg, state: "none", account: "" }, ops, dev] },
+      { hold: new Promise<void>((r) => (releaseNew = r)), list: [prod, stg, ops, dev] },
+    );
+    // Declined, so no logout re-reads the list afterwards and the store shows which answer won.
+    confirmAnswer = false;
+    // An earlier ask (the tab coming back, say) still waits when the logout asks.
+    const older = useGcpLoginStore.getState().refreshProfiles();
+    await act(async () => logoutOf(1)!.click());
+    await act(async () => {
+      releaseNew();
+      releaseOld();
+      await older;
+    });
+    await flush();
+    expect(bodyText(confirms[0].body)).toContain("Also signed out: Staging");
+    expect(useGcpLoginStore.getState().profiles!.find((p) => p.name === "stg")!.state).toBe("signed_in");
   });
 
   it("does not let the previous tenant's answer free the next tenant's running logout", async () => {

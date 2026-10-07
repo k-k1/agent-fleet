@@ -61,6 +61,11 @@ interface GcpLoginState {
   /** true once the Agent answered (and the answer is still for the current tenant). */
   refreshProfiles(): Promise<boolean>;
   /**
+   * refreshProfiles for a caller that acts on the answer: the list this ask got, or null. The
+   * store keeps the answer of the latest ask only, so a slower, older one never overwrites it.
+   */
+  loadProfiles(): Promise<GcpProfileState[] | null>;
+  /**
    * Settings changed a profile. The Agent reads Settings on its own pull, every five minutes
    * (cloudbridge.PollInterval), and its profile list is that pull's, so this asks now and
    * once more after the next pull is due; a later change re-arms the one wait.
@@ -106,6 +111,7 @@ function asRequest(raw: unknown): GcpLoginRequest | null {
 export const SETTINGS_SYNC_MS = 5 * 60_000 + 15_000;
 let syncTimer: ReturnType<typeof setTimeout> | undefined;
 let logoutSeq = 0;
+let profilesSeq = 0;
 
 export const useGcpLoginStore = create<GcpLoginState>((set, get) => ({
   requests: [],
@@ -138,15 +144,19 @@ export const useGcpLoginStore = create<GcpLoginState>((set, get) => ({
   },
   profiles: null,
   async refreshProfiles() {
+    return (await get().loadProfiles()) !== null;
+  },
+  async loadProfiles() {
     const tenant = getTenant();
+    const seq = ++profilesSeq;
     let d: { profiles?: unknown[]; error?: unknown } | null = null;
     try {
       d = await api("api/gcp-login/profiles");
     } catch {
-      return false;
+      return null;
     }
-    if (!d || d.error || !Array.isArray(d.profiles)) return false;
-    if (getTenant() !== tenant) return false; // asked under the previous tenant
+    if (!d || d.error || !Array.isArray(d.profiles)) return null;
+    if (getTenant() !== tenant) return null; // asked under the previous tenant
     const profiles: GcpProfileState[] = [];
     for (const raw of d.profiles) {
       const p = raw as Record<string, unknown>;
@@ -159,8 +169,8 @@ export const useGcpLoginStore = create<GcpLoginState>((set, get) => ({
         state: String(p.state ?? ""),
       });
     }
-    set({ profiles });
-    return true;
+    if (seq === profilesSeq) set({ profiles });
+    return profiles;
   },
   settingsChanged() {
     void get().refreshProfiles();
