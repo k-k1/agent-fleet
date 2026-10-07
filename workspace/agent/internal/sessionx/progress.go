@@ -152,10 +152,14 @@ func fillProgress(s *session.Session, m session.Meta, p progressProbes) {
 // It is APPROXIMATE, and the two sources are both upper bounds on the true start:
 //   - the first poll that observed the state (kept in memory per session, so it resets when the
 //     Agent restarts, and a state that flipped away and back between two polls is not seen);
-//   - for hook kinds, the status file's mtime while the stored state equals this one. A hook
-//     can rewrite the same state, which moves the mtime later than the real start.
+//   - for kinds whose hooks or driver write the state boundary (claude, codex, opencode, managed),
+//     the status file's mtime while the stored state equals this one. A hook can rewrite the
+//     same state, which moves the mtime later than the real start. Terminal agy / copilot /
+//     cursor / kiro are excluded: their status is written by /input and never cleared by the
+//     poll that sees the turn end, so a 21 h old "working" can sit there under a new turn.
 //
-// The OLDER of the two is reported, since each can only be late. Only busy rows carry it.
+// The OLDER of the two is reported, since each can only be late, and the start once adopted is
+// kept for as long as the same busy state continues. Only busy rows carry it.
 
 type stateSeen struct {
 	state string
@@ -198,14 +202,29 @@ func stateSinceOf(m session.Meta, state string, alive bool, p sinceProbes) (time
 		e = stateSeen{state: state, since: now}
 		stateSeenMap[m.Name] = e
 	}
-	since := e.since
-	sid := session.UUID(m.Dir, m.Name)
-	if st, ok := p.statusState(sid); ok && st == state {
-		if at, ok := p.statusAt(sid); ok && at.Before(since) && !at.After(now) {
-			since = at
+	if statusMarksBoundary(m) {
+		sid := session.UUID(m.Dir, m.Name)
+		if st, ok := p.statusState(sid); ok && st == state {
+			if at, ok := p.statusAt(sid); ok && at.Before(e.since) && !at.After(now) {
+				e.since = at
+				stateSeenMap[m.Name] = e
+			}
 		}
 	}
-	return since, true
+	return e.since, true
+}
+
+// statusMarksBoundary: the status file's mtime can stand for the start of the current state. Not
+// for Terminal rows of the hook-less kinds (see above).
+func statusMarksBoundary(m session.Meta) bool {
+	if m.DriverKind() == session.DriverManaged {
+		return true
+	}
+	switch NormalizeKind(m.Kind) {
+	case session.KindAgy, session.KindCopilot, session.KindCursor, session.KindKiro:
+		return false
+	}
+	return true
 }
 
 // fillStateSince sets Session.StateSince from stateSinceOf.

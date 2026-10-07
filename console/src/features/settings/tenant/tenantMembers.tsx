@@ -150,7 +150,7 @@ function MemberIdleChip({ idle, state }: { idle?: MemberIdle; state?: string }) 
 // ", working for 21h" — how long a "working" holder has been in that state, so a session stuck
 // for a day reads differently from one that started a turn a minute ago (#1819). "" for any
 // other holder, or when the Agent did not report when the state began.
-function workingFor(h: { kind: string; since?: string }, tr: (k: never, p?: never) => string): string {
+function workingFor(h: { kind: string; since?: string }, tr: ReturnType<typeof useT>): string {
   if (h.kind !== "working") return "";
   const f = elapsedShort(h.since);
   return f ? tr("admin.idle_hold_for", { for: f }) : "";
@@ -162,7 +162,7 @@ function holdersTitle(holders: NonNullable<MemberIdle["holders"]>, tr: (k: never
 
 // The detail row's tail for a "working" holder: how long it has been working and when the hold
 // lapses if the session stays frozen. Either part is left out when the Agent did not report it.
-function workingDetail(h: { since?: string; lapseAt?: string }, tr: (k: never, p?: never) => string): string {
+function workingDetail(h: { since?: string; lapseAt?: string }, tr: ReturnType<typeof useT>): string {
   const f = elapsedShort(h.since);
   const left = remainingShort(h.lapseAt);
   return (f ? tr("admin.idle_hold_for_row", { for: f }) : "") + (left ? tr("admin.idle_hold_lapse_row", { left }) : "");
