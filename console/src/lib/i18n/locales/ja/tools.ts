@@ -778,7 +778,7 @@ export const tools = {
   "mem.roots_title": "対象",
   "mem.no_roots": "版管理の対象になるメモリがありません。",
   "mem.root_stats": "{files}ファイル・{size}",
-  "mem.busy_badge": "実行中",
+  "mem.busy_badge": "実行中…",
   "mem.last_snapshot": "最終スナップショット: {when}",
   "mem.never": "スナップショットはまだありません",
   "mem.snapshot_now": "今すぐスナップショット",

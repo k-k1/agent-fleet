@@ -109,7 +109,7 @@ export const notifications = {
   "noti.kind_spend_budget": "予算に達して停止",
   "noti.row_spend_budget": "予算による停止",
   "noti.row_spend_budget_hint": "セッションの推定の費用が予算に達して停止した",
-  "noti.budget_action": "予算を上げて再開",
+  "noti.budget_action": "予算を上げて再開…",
   "noti.kind_handoff_offer": "引き継ぎが届きました",
   "noti.kind_handoff_accepted": "引き継がれました",
   "noti.kind_handoff_expired": "引き継ぎが期限切れになりました",

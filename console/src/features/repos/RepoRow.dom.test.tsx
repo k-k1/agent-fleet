@@ -124,19 +124,19 @@ describe("RepoRow Initialize Git Flow", () => {
     const open = vi.fn();
     await render(CLONE, { onGitflowInit: open });
     await openMenu();
-    await act(async () => itemFor("Git Flow を初期化")!.click());
+    await act(async () => itemFor("Git Flow を初期化…")!.click());
     expect(open).toHaveBeenCalledTimes(1);
   });
 
   it("is not offered on a worktree or an svn working copy", async () => {
     await render(WT, { onGitflowInit: () => {} });
     await openMenu();
-    expect(itemFor("Git Flow を初期化")).toBeUndefined();
+    expect(itemFor("Git Flow を初期化…")).toBeUndefined();
     act(() => root!.unmount());
     root = createRoot(host);
     await render({ ...CLONE, vcs: "svn" }, { onGitflowInit: () => {} });
     await openMenu();
-    expect(itemFor("Git Flow を初期化")).toBeUndefined();
+    expect(itemFor("Git Flow を初期化…")).toBeUndefined();
   });
 });
 

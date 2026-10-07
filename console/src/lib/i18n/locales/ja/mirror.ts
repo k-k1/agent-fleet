@@ -336,7 +336,7 @@ export const mirror = {
   "mirror.translate_off_title": "原文に戻す",
   // DelegationCard
   "mirror.task.requested": "依頼済み",
-  "mirror.task.running": "進行中",
+  "mirror.task.running": "進行中…",
   "mirror.task.completed": "完了",
   "mirror.task.failed": "失敗",
   "mirror.delegation_title": "{name}サブエージェントに依頼",

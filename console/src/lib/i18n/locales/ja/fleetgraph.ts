@@ -32,7 +32,7 @@ export const fleetgraph = {
   "fgraph.erased_label": "削除済み · {id}",
 
   // 稼働帯の状態語（LedgerState。types/fleetgraph.ts の SessionState とは別語彙）。
-  "fgraph.state.working": "進行中",
+  "fgraph.state.working": "進行中…",
   "fgraph.state.compacting": "圧縮中（進行中）",
   "fgraph.state.idle": "入力待ち",
   "fgraph.state.question": "質問あり",

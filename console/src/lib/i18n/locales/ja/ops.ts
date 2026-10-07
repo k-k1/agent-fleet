@@ -25,7 +25,7 @@ export const ops = {
   "ops.grafana_token_placeholder": "サービスアカウントトークン",
   "ops.grafana_hint":
     "Viewer 権限のサービスアカウントトークンを推奨します。トークンはワークスペース内に暗号化保存され、MCP サーバーの起動時にだけ渡されます（書き込み・管理ツールは無効にして起動されます）。Amazon Managed Grafana の場合は URL に workspace endpoint（g-xxxx.grafana-workspace.リージョン.amazonaws.com）を指定してください（トークンは最長 30 日で失効するため、失効したら貼り直します）。",
-  "ops.cw_profile_select": "プロファイルを選択…",
+  "ops.cw_profile_select": "プロファイルを選択",
   "ops.cw_manual_option": "手動入力（自分の ~/.aws のプロファイル）",
   "ops.cw_no_profiles": "SSO プロファイルが未登録のため手動入力になります。",
   "ops.cw_open_ssm": "AWS プロファイル/SSM で設定",
