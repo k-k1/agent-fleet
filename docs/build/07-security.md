@@ -183,7 +183,9 @@ attacker would try it:
 - **No symlink is ever followed.** The start folder, every child folder and every file is opened
   with `openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)` relative to a root fd, *when it is used*, so
   a swap after the walk fails the open. A symlink in the start path is a 400; one inside the folder
-  is left out and counted. The `.codex/generated_images` single-image read exception is **not**
+  is left out and counted — and so is **any regular file with more than one name**
+  (`st_nlink > 1`, at the walk and again on the open descriptor): a hard link to a denylisted
+  file is not a symlink, so `NO_SYMLINKS` cannot see it. The `.codex/generated_images` single-image read exception is **not**
   carried over (`resolveZipRoot` is its own resolver).
 - **The denylist (`fsDeny`) prunes before descending**, by browse-relative path, so exporting an
   ancestor never includes a denied tree. The temp archive lives under the agent state dir, which
@@ -191,7 +193,9 @@ attacker would try it:
 - **Hostile names fail the export** (422) rather than being rewritten or dropped: invalid UTF-8,
   backslash, control characters, `.`/`..`/empty components, a drive prefix, duplicates.
 - **Resource bound.** Files, folders, depth, entries looked at, name volume, bytes read (counted
-  on the bytes actually read), bytes written, walk-and-build time and transfer time are all capped,
+  on the bytes actually read), bytes written, walk-and-build time and transfer time are all capped
+  (the time limit is cooperative: a system call already stuck on a hung volume is not interrupted
+  and holds the slot until it returns),
   one build runs at a time per workspace, and the temp file is unlinked at creation so a crash
   cannot leak it. The limits are in [guide/ref/limits](../../guide/ref/limits.md).
 - **Not audited** (ordinary reads are not, `proxy.go`); whether a bulk export should be is open

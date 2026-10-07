@@ -32,17 +32,22 @@ and its sub-folders (empty ones too) and Unicode names intact.
 
 - **Left out, on purpose:** `.git` and `node_modules` folders *below* the one you chose (if you
   choose one of those yourself, it is exported whole), folders the file browser never shows
-  (credential and agent-state folders), and symbolic links and special files (the toast counts
-  them). The menu item's tooltip names the first two before you press.
+  (credential and agent-state folders), and symbolic links, hard-linked files (more than one name
+  for the same file) and special files (the toast counts them). The menu item's tooltip names
+  the first two before you press.
 - **Too large is refused, not cut short.** Past 20,000 files, 4,000 folders, 32 levels, 512 MB
-  or 45 seconds of reading ([limits](../ref/limits.md#fixed-in-the-product)) you get a message
-  naming the limit and no download starts. Select a smaller folder.
+  or 45 seconds of reading ([limits](../ref/limits.md#fixed-in-the-product)) you normally get a
+  message naming the limit and no download starts. Select a smaller folder. The check cannot see
+  what only reading finds (a full disk, an I/O error, a file that grows, a slow volume running
+  out of time): then the download itself fails and **only your browser's download list says so**,
+  without a message in the Console. You never get a partial zip.
 - **A name that cannot be stored in a zip** (a backslash, a control character, bytes that are not
   valid UTF-8) stops the whole download with a message naming the file; nothing is renamed or
   dropped silently.
 - **It is not a snapshot.** Files are read one after another while the archive is built, so a file
   that is still being written may be caught part-way. If a file disappears or is swapped for a
-  link while that happens, you get "The folder changed while the zip was being made. Try again."
+  link after the Console's check, the download fails (the server answers "The folder changed
+  while the zip was being made. Try again."), which your browser shows as a failed download.
 - **One zip is built at a time per workspace**; a second press while one is in progress says the
   workspace is busy. Your home folder itself (the root of the tree) cannot be downloaded this way.
 - Not every browser has been checked: touch long-press and the download itself were verified in

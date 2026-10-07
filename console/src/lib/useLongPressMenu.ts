@@ -10,7 +10,7 @@
 //     the flag would eat the next left click).
 //   - `clickSwallowed()` is read first in the element's onClick: the lift of a fired long press
 //     must not also open the folder it was pressed on. The flag is consumed by the call.
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, PointerEvent as RPointerEvent, TouchEvent as RTouchEvent } from "react";
 import { createLongPress } from "./longPress.ts";
 
@@ -34,6 +34,20 @@ export type LongPressMenu = {
 export function useLongPressMenu(): LongPressMenu {
   const [press] = useState(createLongPress);
   const swallow = useRef(false);
+  const swallowTimer = useRef<number | null>(null);
+  const dropSwallowTimer = () => {
+    if (swallowTimer.current !== null) window.clearTimeout(swallowTimer.current);
+    swallowTimer.current = null;
+  };
+  // A card or row that goes away mid-press (the listing refreshed, the pane moved on) must not
+  // open a menu for something that is no longer on screen when its timer fires.
+  useEffect(
+    () => () => {
+      press.end();
+      dropSwallowTimer();
+    },
+    [press],
+  );
   return {
     props: (open) => ({
       // The press that dismisses an open menu never reaches here (useDismiss eats it), which is
@@ -47,7 +61,11 @@ export function useLongPressMenu(): LongPressMenu {
           return;
         }
         const { clientX, clientY } = t;
+        // One hook can serve many rows (the Files tree), so the element that was pressed — not
+        // the hook — is what has to still be there.
+        const pressed = e.currentTarget as Element;
         press.start(clientX, clientY, () => {
+          if (!pressed.isConnected) return;
           swallow.current = true;
           open(clientX, clientY);
         });
@@ -63,7 +81,11 @@ export function useLongPressMenu(): LongPressMenu {
           if (e.cancelable) e.preventDefault();
           // The lift's click, when the browser sends one anyway, comes straight after. A flag
           // that outlived it would eat the next unrelated click.
-          window.setTimeout(() => (swallow.current = false), SWALLOW_MS);
+          dropSwallowTimer();
+          swallowTimer.current = window.setTimeout(() => {
+            swallow.current = false;
+            swallowTimer.current = null;
+          }, SWALLOW_MS);
         }
         press.end();
       },

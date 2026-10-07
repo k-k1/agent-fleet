@@ -37,7 +37,8 @@ func zipEnv(t *testing.T) string {
 	t.Cleanup(func() {
 		zipMaxFiles, zipMaxDirs, zipMaxDepth, zipMaxNameBytes, zipMaxLooked, zipMaxBytes, zipBuildLimit, zipReadBatch, zipSlotWait =
 			files, dirs, depth, names, looked, bytesCap, build, batch, wait
-		zipAfterPlan = nil
+		zipAfterPlan, zipAfterBuild = nil, nil
+		zipReadDir = func(f *os.File, n int) ([]os.DirEntry, error) { return f.ReadDir(n) }
 	})
 	return home
 }
@@ -609,6 +610,22 @@ func TestZipUnreadableFileFailsTheExport(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantZipErr(t, zipGet(t, "u"), 403, "denied")
+	// The check opens what the build will open, so the Console can show this refusal; a bare
+	// walk would have answered 200 and left it to a failed browser download.
+	wantZipErr(t, zipGet(t, "u", "check", "1"), 403, "denied")
+}
+
+func TestZipCheckCannotSeeWhatOnlyReadingFinds(t *testing.T) {
+	home := zipEnv(t)
+	zipPut(t, home, "g/a", "1234")
+	// Honest limit of the design (ADR 0111 decision 6): growth past the byte cap shows only
+	// while reading, so the check says 200 and the download itself answers 413.
+	zipMaxBytes = 10
+	zipAfterPlan = func() { zipPut(t, home, "g/a", strings.Repeat("x", 64)) }
+	if rec := zipGet(t, "g", "check", "1"); rec.Code != 200 {
+		t.Fatalf("check = %d", rec.Code)
+	}
+	wantZipErr(t, zipGet(t, "g"), 413, "zip_too_large")
 }
 
 func TestZipSlotHeldForTheWholeRequestAndReleased(t *testing.T) {
@@ -772,4 +789,137 @@ func TestZipThroughTheServerStack(t *testing.T) {
 	if _, err := zip.NewReader(bytes.NewReader(body), int64(len(body))); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// A hard link is a regular file under another name: RESOLVE_NO_SYMLINKS cannot tell that
+// ~/.ssh/key linked into the folder is the denylisted inode. Such files are left out and counted.
+func TestZipHardLinksAreLeftOutAndCounted(t *testing.T) {
+	home := zipEnv(t)
+	zipPut(t, home, ".ssh/review-secret", "SECRET")
+	zipPut(t, home, "export/ok.txt", "ok")
+	if err := os.Link(filepath.Join(home, ".ssh", "review-secret"), filepath.Join(home, "export", "linked")); err != nil {
+		t.Skipf("filesystem refuses hard links: %v", err)
+	}
+	// Two names inside the folder: the same file twice is not a way round the rule either.
+	zipPut(t, home, "export/twin-a", "twin")
+	if err := os.Link(filepath.Join(home, "export", "twin-a"), filepath.Join(home, "export", "twin-b")); err != nil {
+		t.Fatal(err)
+	}
+	rec := zipGet(t, "export")
+	got := zipContents(t, rec)
+	for name, body := range got {
+		if strings.Contains(body, "SECRET") || strings.Contains(name, "linked") || strings.Contains(name, "twin") {
+			t.Fatalf("hard-linked file packed: %q", name)
+		}
+	}
+	if got["export/ok.txt"] != "ok" {
+		t.Fatalf("ordinary file missing: %v", sortedKeys(got))
+	}
+	var chk fsZipCheck
+	_ = json.Unmarshal(zipGet(t, "export", "check", "1").Body.Bytes(), &chk)
+	if chk.Skipped != 3 || chk.Files != 1 {
+		t.Fatalf("check = %+v, want 3 skipped and 1 file", chk)
+	}
+}
+
+func TestZipHardLinkSwappedInAfterWalkFails(t *testing.T) {
+	home := zipEnv(t)
+	zipPut(t, home, ".ssh/review-secret", "SECRET")
+	zipPut(t, home, "export/a.txt", "a")
+	zipAfterPlan = func() {
+		p := filepath.Join(home, "export", "a.txt")
+		_ = os.Remove(p)
+		_ = os.Link(filepath.Join(home, ".ssh", "review-secret"), p)
+	}
+	rec := zipGet(t, "export")
+	if _, err := os.Stat(filepath.Join(home, "export", "a.txt")); err != nil {
+		t.Skip("filesystem refuses hard links")
+	}
+	wantZipErr(t, rec, 409, "changed_during_zip")
+	if strings.Contains(rec.Body.String(), "SECRET") {
+		t.Fatal("denylisted content reached the archive")
+	}
+}
+
+// A selected folder is re-opened at build time like a file, so one that vanished or turned
+// into a link or a file is a 409, not an empty folder entry in a 200.
+func TestZipSelectedFolderSwappedAfterWalkFails(t *testing.T) {
+	home := zipEnv(t)
+	outside := t.TempDir()
+	swaps := map[string]func(p string){
+		"folder vanishes":       func(p string) { _ = os.Remove(p) },
+		"folder becomes a link": func(p string) { _ = os.Remove(p); _ = os.Symlink(outside, p) },
+		"folder becomes a file": func(p string) { _ = os.Remove(p); _ = os.WriteFile(p, []byte("x"), 0o600) },
+		"parent becomes a link": func(p string) { _ = os.RemoveAll(filepath.Dir(p)); _ = os.Symlink(outside, filepath.Dir(p)) },
+	}
+	n := 0
+	for name, swap := range swaps {
+		n++
+		rel := "dirs" + strconv.Itoa(n)
+		t.Run(name, func(t *testing.T) {
+			if err := os.MkdirAll(filepath.Join(home, rel, "mid", "empty"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(home, rel, "mid", "empty")
+			zipAfterPlan = func() { swap(target) }
+			wantZipErr(t, zipGet(t, rel), 409, "changed_during_zip")
+		})
+	}
+}
+
+// The budget is checked after the last I/O too: a read, a build or a Close that crossed the
+// limit is over the limit, however little it returned.
+func TestZipLimitIsCheckedAfterTheLastIO(t *testing.T) {
+	home := zipEnv(t)
+	if err := os.MkdirAll(filepath.Join(home, "empty"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	zipBuildLimit = 20 * time.Millisecond
+	t.Run("walk: the last directory read", func(t *testing.T) {
+		zipReadDir = func(f *os.File, n int) ([]os.DirEntry, error) {
+			time.Sleep(80 * time.Millisecond)
+			return f.ReadDir(n)
+		}
+		wantZipErr(t, zipGet(t, "empty", "check", "1"), 413, "zip_too_large")
+		wantZipErr(t, zipGet(t, "empty"), 413, "zip_too_large")
+	})
+	t.Run("build: after Close", func(t *testing.T) {
+		zipReadDir = func(f *os.File, n int) ([]os.DirEntry, error) { return f.ReadDir(n) }
+		zipAfterBuild = func() { time.Sleep(80 * time.Millisecond) }
+		wantZipErr(t, zipGet(t, "empty"), 413, "zip_too_large")
+		if len(zipSlots) != 0 {
+			t.Fatal("slot not released")
+		}
+	})
+	t.Run("build function itself, not the handler around it", func(t *testing.T) {
+		zipAfterBuild = func() { time.Sleep(80 * time.Millisecond) }
+		fd, err := unix.Open(filepath.Join(home, "empty"), unix.O_RDONLY|unix.O_DIRECTORY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer unix.Close(fd)
+		plan := &zipPlan{entries: []zipEntry{{name: "empty", dir: true, mode: 0o755}}}
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		if aerr := buildZip(ctx, fd, plan, io.Discard); aerr == nil || aerr.status != 413 {
+			t.Fatalf("buildZip past its budget answered %+v", aerr)
+		}
+	})
+	t.Run("copy: the read that returns EOF", func(t *testing.T) {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		go func() {
+			time.Sleep(80 * time.Millisecond)
+			w.Close()
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		var read int64
+		if err := copyZipFile(ctx, io.Discard, r, make([]byte, 16), &read); err == nil {
+			t.Fatal("a copy that crossed the limit in its last read was reported as done")
+		}
+	})
 }

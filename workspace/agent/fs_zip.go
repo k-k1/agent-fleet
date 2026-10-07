@@ -23,7 +23,12 @@ package main
 //
 // Left out on purpose, and reported by the check: .git and node_modules below the start folder
 // (the start itself is exported whatever it is called), anything the browse denylist names,
-// symlinks and special files.
+// symlinks, hard-linked files (more than one name) and special files.
+//
+// The time limit is cooperative: the context is checked between directory batches, entries,
+// read chunks and after the last I/O, but it cannot interrupt a syscall that is already stuck
+// (a hung network volume). Such a call holds the slot until the kernel returns it, and other
+// requests meanwhile get 503.
 
 import (
 	"archive/zip"
@@ -76,8 +81,9 @@ var (
 	zipSlots    = make(chan struct{}, 1)
 	zipSlotWait = 2 * time.Second
 	// Seams for tests.
-	zipReadDir   = func(f *os.File, n int) ([]os.DirEntry, error) { return f.ReadDir(n) }
-	zipAfterPlan func()
+	zipReadDir    = func(f *os.File, n int) ([]os.DirEntry, error) { return f.ReadDir(n) }
+	zipAfterPlan  func()
+	zipAfterBuild func()
 	// zipSkipNames are the folders left out below the start folder.
 	zipSkipNames = map[string]bool{".git": true, "node_modules": true}
 )
@@ -233,6 +239,12 @@ func planZip(ctx context.Context, startFD int, zr zipRoot, base string, startMod
 		f := os.NewFile(uintptr(dfd), "dir")
 		for {
 			ents, rerr := zipReadDir(f, zipReadBatch)
+			// The call itself is not interruptible; what it can do is not be believed once the
+			// budget is gone, however empty the folder it just read.
+			if ctx.Err() != nil {
+				f.Close()
+				return nil, planCtxErr(ctx)
+			}
 			for _, e := range ents {
 				if ctx.Err() != nil {
 					f.Close()
@@ -253,7 +265,11 @@ func planZip(ctx context.Context, startFD int, zr zipRoot, base string, startMod
 					return nil, zipOpenError(err, rel, "entry")
 				}
 				kind := st.Mode & unix.S_IFMT
-				if kind == unix.S_IFLNK || (kind != unix.S_IFDIR && kind != unix.S_IFREG) {
+				// A second name for a regular file is a link like a symlink is, and is left out
+				// for the same reason with a sharper edge: a hard link is a real file, so
+				// RESOLVE_NO_SYMLINKS cannot see that it is the same inode as one the denylist
+				// hides (~/.ssh/key linked into the folder). Counted, never packed.
+				if kind == unix.S_IFLNK || (kind != unix.S_IFDIR && kind != unix.S_IFREG) || (kind == unix.S_IFREG && st.Nlink > 1) {
 					plan.skipped++
 					continue
 				}
@@ -313,6 +329,9 @@ func planZip(ctx context.Context, startFD int, zr zipRoot, base string, startMod
 			}
 		}
 		f.Close()
+	}
+	if ctx.Err() != nil {
+		return nil, planCtxErr(ctx)
 	}
 	return plan, nil
 }
@@ -384,6 +403,12 @@ func buildZip(ctx context.Context, startFD int, plan *zipPlan, out io.Writer) *f
 		}
 		hdr := &zip.FileHeader{Name: e.name, Method: zip.Store, Modified: e.mod}
 		if e.dir {
+			// A selected folder is re-opened beneath the root like a file: one that vanished or
+			// became a link or a file since the walk must fail the request, not be written as
+			// an empty folder entry. The start folder is already held open.
+			if aerr := zipReopenDir(startFD, e); aerr != nil {
+				return aerr
+			}
 			hdr.Name += "/"
 			hdr.SetMode(fs.ModeDir | e.mode.Perm())
 			if _, err := zw.CreateHeader(hdr); err != nil {
@@ -392,17 +417,9 @@ func buildZip(ctx context.Context, startFD int, plan *zipPlan, out io.Writer) *f
 			continue
 		}
 		hdr.SetMode(e.mode.Perm())
-		// O_NONBLOCK: a file replaced by a FIFO after the walk must fail the fstat below, not
-		// block this open forever while holding the slot.
-		ffd, err := openat2NoSymlinks(startFD, e.rel, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK)
-		if err != nil {
-			return zipOpenError(err, e.rel, "file")
-		}
-		f := os.NewFile(uintptr(ffd), "file")
-		var st unix.Stat_t
-		if err := unix.Fstat(ffd, &st); err != nil || st.Mode&unix.S_IFMT != unix.S_IFREG {
-			f.Close()
-			return fsErr(409, errCodeZipChanged, fmt.Sprintf("file %q changed while the archive was being made; try again", e.rel))
+		f, aerr := zipOpenFile(startFD, e)
+		if aerr != nil {
+			return aerr
 		}
 		w, err := zw.CreateHeader(hdr)
 		if err != nil {
@@ -417,6 +434,74 @@ func buildZip(ctx context.Context, startFD int, plan *zipPlan, out io.Writer) *f
 	}
 	if err := zw.Close(); err != nil {
 		return zipBuildError(ctx, err, "")
+	}
+	if zipAfterBuild != nil {
+		zipAfterBuild()
+	}
+	// The last write and Close are I/O like any other: a build that crossed the limit inside
+	// them is over the limit, not finished.
+	if ctx.Err() != nil {
+		return planCtxErr(ctx)
+	}
+	return nil
+}
+
+// zipReopenDir re-opens a selected folder beneath the root. The start itself (rel "") is the fd
+// the caller already holds.
+func zipReopenDir(startFD int, e zipEntry) *fsAPIError {
+	if e.rel == "" {
+		return nil
+	}
+	dfd, err := openat2NoSymlinks(startFD, e.rel, unix.O_RDONLY|unix.O_DIRECTORY)
+	if err != nil {
+		return zipOpenError(err, e.rel, "folder")
+	}
+	_ = unix.Close(dfd)
+	return nil
+}
+
+// zipOpenFile opens a selected file for reading and re-checks what the walk saw: still a
+// regular file, still the only name for its inode.
+func zipOpenFile(startFD int, e zipEntry) (*os.File, *fsAPIError) {
+	// O_NONBLOCK: a file replaced by a FIFO after the walk must fail the fstat below, not
+	// block this open forever while holding the slot.
+	ffd, err := openat2NoSymlinks(startFD, e.rel, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK)
+	if err != nil {
+		return nil, zipOpenError(err, e.rel, "file")
+	}
+	f := os.NewFile(uintptr(ffd), "file")
+	var st unix.Stat_t
+	if err := unix.Fstat(ffd, &st); err != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Nlink > 1 {
+		f.Close()
+		return nil, fsErr(409, errCodeZipChanged, fmt.Sprintf("file %q changed while the archive was being made; try again", e.rel))
+	}
+	return f, nil
+}
+
+// probeZip is what the check adds to the walk: every selected file and folder is opened exactly
+// as the build will open it, and closed unread. A deterministic refusal — a file the agent
+// cannot read, a folder it cannot enter — is then answered by the check, where the Console can
+// show it. What it cannot see is what only reading finds: a disk that fills, an I/O error
+// mid-file, a file that grows, a build that runs out of time on a slow volume.
+func probeZip(ctx context.Context, startFD int, plan *zipPlan) *fsAPIError {
+	for _, e := range plan.entries {
+		if ctx.Err() != nil {
+			return planCtxErr(ctx)
+		}
+		if e.dir {
+			if aerr := zipReopenDir(startFD, e); aerr != nil {
+				return aerr
+			}
+			continue
+		}
+		f, aerr := zipOpenFile(startFD, e)
+		if aerr != nil {
+			return aerr
+		}
+		f.Close()
+	}
+	if ctx.Err() != nil {
+		return planCtxErr(ctx)
 	}
 	return nil
 }
@@ -436,7 +521,7 @@ func copyZipFile(ctx context.Context, dst io.Writer, src *os.File, buf []byte, r
 			}
 		}
 		if rerr == io.EOF {
-			return nil
+			return ctx.Err()
 		}
 		if rerr != nil {
 			return rerr
@@ -513,7 +598,9 @@ func zipDisposition(base string) string {
 
 // fsZipCheck is the answer to `check=1`: what a download of the same query would pack, so the
 // Console can show the numbers (and the exclusions) before any byte is built, and show a
-// refusal as a message instead of a failed download.
+// refusal as a message instead of a failed download. It walks and opens every selected entry
+// but reads none, so refusals that only reading finds (disk full, an I/O error, growth, a build
+// out of time) are still the real download's to report.
 type fsZipCheck struct {
 	Name     string   `json:"name"`
 	Files    int      `json:"files"`
@@ -573,6 +660,10 @@ func handleFSDownloadZip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if check {
+		if aerr := probeZip(ctx, startFD, plan); aerr != nil {
+			writeZipErr(w, aerr)
+			return
+		}
 		excluded := make([]string, 0, len(plan.excluded))
 		for n := range plan.excluded {
 			excluded = append(excluded, n)
@@ -599,6 +690,10 @@ func handleFSDownloadZip(w http.ResponseWriter, r *http.Request) {
 	defer tmp.Close()
 	if aerr := buildZip(ctx, startFD, plan, tmp); aerr != nil {
 		writeZipErr(w, aerr)
+		return
+	}
+	if ctx.Err() != nil {
+		writeZipErr(w, planCtxErr(ctx))
 		return
 	}
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {

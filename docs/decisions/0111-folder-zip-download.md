@@ -66,8 +66,13 @@ so a path swapped for a symlink after the walk fails the open instead of reading
 
 - **A symlink anywhere in the start path** (including the final component) is refused: 400
   `symlink_not_allowed`. No alias is resolved for the user.
-- **A symlink or special file inside the folder** (FIFO, socket, device) is left out and **counted**;
-  the check reports the count. A FIFO is never opened, so it cannot block the walk.
+- **A symlink, a special file (FIFO, socket, device) or a hard-linked file inside the folder** is
+  left out and **counted**; the check reports the count. A FIFO is never opened, so it cannot
+  block the walk. The hard link is the sharp one: it is a regular file, so
+  `RESOLVE_NO_SYMLINKS` cannot see that `export/linked` is the same inode as a denylisted
+  `.ssh/key` (reproduced in review). Any regular file with `st_nlink > 1` is therefore not
+  packed — at the walk and again on the fstat of the open descriptor at build time. The cost is
+  that a legitimately multi-named file (a deduplicating cache) is omitted, which the count says.
 - **The `.codex/generated_images` single-image exception is not inherited.** The path resolver is
   its own (`resolveZipRoot`), not `resolveFDReadPath`: the exception is a reader for one announced
   image, not a licence to enumerate a private state tree. Such a path is 403 `denied`.
@@ -106,13 +111,21 @@ each file once, when its turn comes. So:
 | a file grows | the bytes read are packed; the **byte cap is enforced on bytes read**, 413 if exceeded |
 | a file shrinks | the bytes read are packed |
 | a file is replaced by another regular file | the new file's bytes are packed |
-| a file or folder vanishes, or becomes a symlink, a FIFO or a folder | 409 `changed_during_zip` ("try again") |
+| a file or folder vanishes, or becomes a symlink, a FIFO, a hard-linked file or another kind of entry | 409 `changed_during_zip` ("try again"); selected folders are re-opened beneath the root at build time too, so an empty one cannot be written for a path that is gone |
 | a file cannot be read (`EACCES`, I/O error) | 403 `denied` / 500 `read_failed` for the whole request |
 
 The archive is therefore **not a point-in-time snapshot** (different files are from different
 moments, and a file being written may be caught mid-write), and it is **never a silently shorter
 one**: anything selected either goes in or fails the request. The documented exclusions of
 decision 3 are the only omissions.
+
+**The time limit is cooperative.** The context is checked between directory batches, entries and
+read chunks, and again after the last read, after the final directory read, after `Close` and
+before the response, so a build that crossed 45 s inside its last call is refused rather than
+sent. It cannot interrupt a system call that is already stuck: a hung network volume can hold the
+one slot beyond 45 s until the kernel returns, and other requests meanwhile get 503. Closing the
+descriptor does not wake a blocked read of a regular file, so there is no cheaper guarantee than
+this one; it is a known constraint, separate from the unmeasured cold-storage timing in #1844.
 
 ### 5. Every axis is bounded, and one slot is held for the whole request
 
@@ -150,19 +163,28 @@ A bare `<a href download>` cannot show a 413, 503, 401, 403, 404 or a stopped wo
 fetch-based session-expiry notice does not run for it, and an expired session may redirect the tab
 to the login page. So a press does:
 
-1. `GET api/fs/download-zip?path=…&check=1` over `fetch` — the same route and the same walk, no
-   build. It answers `{name, files, dirs, bytes, excluded[], skipped}` or the error envelope. A
+1. `GET api/fs/download-zip?path=…&check=1` over `fetch` — the same route and the same walk, and
+   every selected file and folder is opened exactly as the build will open it, then closed
+   unread, so a deterministic refusal (a file the agent cannot read, a name that cannot be
+   stored, a limit the listing already breaks) is answered here. It answers `{name, files, dirs, bytes, excluded[], skipped}` or the error envelope. A
    refusal becomes a toast with the localized `err.<code>` text plus the server's detail (which
    limit).
 2. On success, a hidden same-origin anchor with `download` is clicked and a toast says what is in
    it and what was left out. The browser streams the file to disk; the Console never reads the zip
    into a Blob.
 
-Rejected: a "prepare, then fetch a token" API (server state to expire and clean for no gain over
-check-then-download) and reading the response into a Blob (memory, and no progress for the
-browser's own download manager). The residual race — the folder grows between the check and the
-download — is a failed download in the browser, not a short archive. The check costs one extra
-walk (stats only, bounded the same way); it takes the same slot.
+Rejected: a "prepare, then fetch a token" API (server state to expire and clean, and a prepared
+temp file that has to outlive the request that made it, for the one class of failure below) and
+reading the response into a Blob (memory, and no progress for the browser's own download
+manager). **What this leaves to the browser's download manager.** The check reads nothing, so a
+refusal that only reading finds is not shown in the Console: the real request answers it with the
+same JSON error, which a browser reports as a failed download — a disk that fills (507), an I/O
+error mid-file, a file that grows past the byte cap, a build that runs out of its 45 s on a slow
+volume, a folder that changes between the check and the request (409). Never a short or partial
+archive, but also no Console message. If that proves common, the next step is a bounded prepare
+step that builds the archive and downloads it by token; it is a UX improvement, not a safety
+one, and is noted in #1844. The check costs one extra walk and one open per entry (measured 0.2 s
+for the walk of 20 000 files; the opens were not timed separately); it takes the same slot.
 
 The tenant is captured before the check and the URL built for it; a switch while the check is out
 drops the result silently.
