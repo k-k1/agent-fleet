@@ -406,3 +406,12 @@ Agent は `GET /repos/{o}/{r}/issues/{n}`（Issue と PR の両方に答える�
   Jira にある（＝決定 13 で既に対応済み）。要望が出てから。
 - **GHE（GitHub Enterprise Server）を v1 で対象にする。** `gh` ラッパーも直叩きも github.com 固定で、
   host を接続に持たせる別作業になる。要望が出てから。
+
+## 追記（2026-10-08・#1715）: 既定クエリが種別を名指しするようになった
+
+決定 19 の「既定に `OR` を使ってはならない」は GitHub の既定には当てはまらなくなった。`OR` は
+0.19.0（2026 年 9 月）の Agent から解釈され、一方 GitHub は `is:issue` も `is:pull-request` も
+含まない検索を一部アカウントで 422 にするため、更新ごとに検索が 2 回かかっていた（Agent が 1 回
+再試行する）。既定は `is:open (is:issue OR is:pull-request) involves:@me` になった。保存済みの
+クエリは書き換えない。Console は Agent のバージョンを見られないので、古いイメージのままの
+Workspace は再起動するまで「クエリを解釈できない」と出る。元の決定は上記のまま残す。

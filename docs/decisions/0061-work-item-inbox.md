@@ -456,3 +456,13 @@ open ones the query asked for.
   Jira (already covered by decision 13). When someone asks.
 - **Cover GHE (GitHub Enterprise Server) in v1.** Both the `gh` wrapper and the direct calls are fixed
   to github.com, and giving the connection a host is separate work. When someone asks.
+
+## Note (2026-10-08, #1715): the default now names the type
+
+Decision 19's "a default must never use `OR`" no longer holds for GitHub's default. `OR` has parsed
+since the Agent in 0.19.0 (September 2026), and GitHub now answers some accounts' searches that
+name neither `is:issue` nor `is:pull-request` with 422, which cost two search requests per refresh
+(the Agent retries once). The default is now `is:open (is:issue OR is:pull-request) involves:@me`.
+Saved queries are not rewritten. The Console cannot see the Agent's version, so a workspace still on
+an older image shows "could not parse the query" until it restarts. The original decision stands as
+written above.

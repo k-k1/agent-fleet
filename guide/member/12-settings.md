@@ -312,7 +312,8 @@ issues and pull requests, Bitbucket pull requests), so that a session can be sta
   expression, saved exactly as written. **Nothing is fetched until you save one**, and the query is
   the only filter, and nothing is synced in bulk.
 - **GitHub: `assignee:` lists no pull request.** GitHub does not make a PR's author its assignee, so a
-  query of `assignee:@me` alone shows issues and nothing else. The default `is:open involves:@me`
+  query of `assignee:@me` alone shows issues and nothing else. The default `is:open (is:issue OR is:pull-request) involves:@me`
+  (GitHub rejects some accounts' searches that name neither `is:issue` nor `is:pull-request`)
   covers what you authored, are assigned, were mentioned in or commented on. **Reviews requested of
   you are not in it**. Add `is:open review-requested:@me` as a second query (an item matched by both
   still takes one row). `OR` and parentheses work too, but only once your workspace is running an

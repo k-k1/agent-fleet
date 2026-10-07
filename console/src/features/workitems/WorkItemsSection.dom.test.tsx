@@ -866,6 +866,26 @@ describe("WorkItemsSection", () => {
     expect(expr.value).toContain("currentUser()");
   });
 
+  it("prefills the GitHub default with a type qualifier", async () => {
+    workItemList.mockResolvedValue({ items: [], queries: [], sessions: [], fetchedAt: "", running: true });
+    await render();
+    const modal = await openQueries();
+    const expr = [...modal.querySelectorAll<HTMLInputElement>(".wi-qform input")].pop()!;
+    // GitHub answers 422 to a search naming neither is:issue nor is:pull-request.
+    expect(expr.value).toBe("is:open (is:issue OR is:pull-request) involves:@me");
+    expect(modal.textContent).toContain(t("wi.query_gh_hint"));
+    expect(t("wi.query_gh_hint")).toMatch(/is:issue/);
+  });
+
+  it("does not prefill the default over a query that is already saved", async () => {
+    workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
+    await render();
+    const modal = await openQueries();
+    const expr = [...modal.querySelectorAll<HTMLInputElement>(".wi-qform input")].pop()!;
+    expect(expr.value).toBe("");
+    expect(modal.textContent).toContain(query.query);
+  });
+
   // --- The branch template's preview comes from the Agent's resolver (ADR 0103) ---
 
   const waitPreview = async () => {
