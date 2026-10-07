@@ -897,3 +897,31 @@ func TestAgentMemoryRoutesRefuseWhenSwitchedOff(t *testing.T) {
 		t.Fatalf("the memory itself is kept: %v", err)
 	}
 }
+
+// IndexJSONFor is what lcpp's system prompt is built from: the project's entries for a working
+// copy and a kind, with no session to name, bounded by the budget.
+func TestIndexJSONForServesAWorkingCopyWithoutASession(t *testing.T) {
+	_, clone, wt := agentMemTestEnv(t)
+	now := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
+	c := agentMemCallerT(t, "claude-main")
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "build-cmd", Description: "how to build", Body: "run make", Type: "project"}, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{clone, wt} { // a worktree shares its clone's memory
+		raw, err := IndexJSONFor(dir, "lcpp", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(raw, `"build-cmd"`) || strings.Contains(raw, "run make") {
+			t.Errorf("%s: want the entry without its body, got %s", dir, raw)
+		}
+	}
+	// Outside ~/repos there is no project: user scope only, so the project's entry is absent.
+	raw, err := IndexJSONFor(t.TempDir(), "lcpp", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw, "build-cmd") {
+		t.Errorf("a directory outside ~/repos must not see the project's memory: %s", raw)
+	}
+}

@@ -147,3 +147,22 @@ func writeAtomic(path string, b []byte, mode os.FileMode) error {
 	}
 	return os.Rename(tmp, path)
 }
+
+// ApplyMemoryGuide composes the memory-guide block (ADR 0108 decision 5) into the global
+// AGENTS.md beside the fleet policy, or removes it when body is empty. It does not go into the
+// user-notes file: that one is referenced from opencode.json and is the member's switch, while
+// this follows the Agent memory switch.
+func ApplyMemoryGuide(body string) error {
+	path := AgentsPath()
+	orig := ""
+	if b, err := os.ReadFile(path); err == nil {
+		orig = string(b)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	out := mdblock.Set(orig, "memory-guide", body)
+	if out == orig {
+		return nil
+	}
+	return writeAtomic(path, []byte(out), 0o644)
+}

@@ -51,7 +51,7 @@ func editAgents(edit func(string) string) error {
 		return err
 	}
 	out := edit(orig)
-	if out == orig || out == "" {
+	if out == orig {
 		return nil // no change, or nothing to write
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -62,4 +62,11 @@ func editAgents(edit func(string) string) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// ApplyMemoryGuide writes (or removes, when body is empty) the memory-guide block (ADR 0108
+// decision 5): its own block, apart from user-notes, so the Agent memory switch adds and
+// removes exactly this and nothing of the member's text.
+func ApplyMemoryGuide(body string) error {
+	return editAgents(func(s string) string { return mdblock.Set(s, "memory-guide", body) })
 }

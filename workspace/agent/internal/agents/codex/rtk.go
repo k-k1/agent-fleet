@@ -59,8 +59,10 @@ func editAgents(edit func(string) string) error {
 		return err
 	}
 	out := edit(orig)
-	if out == orig || out == "" {
-		return nil // no change, or nothing to write (no base file & nothing to add)
+	if out == orig {
+		// Equal also covers "no base file, nothing to add". An edit that empties an existing
+		// file is NOT equal and must be written, or a removed block would stay.
+		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

@@ -64,3 +64,9 @@ func setMarkedFile(path, name, body string) error {
 	}
 	return os.Rename(tmp, path)
 }
+
+// ApplyMemoryGuide writes (or removes, when body is empty) the memory-guide block (ADR 0108
+// decision 5) in the same file, apart from the user-notes block.
+func ApplyMemoryGuide(body string) error {
+	return setMarkedFile(UserInstructionsPath(), "memory-guide", body)
+}

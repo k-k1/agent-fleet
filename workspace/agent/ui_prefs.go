@@ -316,6 +316,11 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 		uiprefs.AgentMemory() != agentMemoryBefore {
 		mcpx.MaterializeAll()
 	}
+	// The memory guidance block follows the same switch (ADR 0108 decision 5): written while it
+	// is on, removed when it goes off. Sessions already running have read their instructions.
+	if uiprefs.AgentMemory() != agentMemoryBefore {
+		reconcileAgentInstructions()
+	}
 	// Switching the tier changes the env that is injected (the free tier drops
 	// OPENCODE_API_KEY). Treated like a key change: without recreating the running serve, it
 	// keeps the old environment.

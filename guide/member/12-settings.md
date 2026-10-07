@@ -242,7 +242,10 @@ Version control over the memory an agent accumulates by itself (claude's auto-me
   agent learns survives a switch of kind, a handoff and a child of another kind. **It is off by default**: turn on
   "Let sessions use Agent Fleet memory" right under this heading first (on reaches sessions started from then
   on; off refuses running sessions' reads and writes at once; the list, the diffs and the way back work either
-  way). A save is shared at once,
+  way). While it is on, every kind is also told, in its own instruction file, that the tools exist and when to
+  call them (a short fixed note; it never contains memories, and turning the switch off removes it without
+  touching your own text there). Local-model (lcpp) sessions additionally start with the project's memory index
+  in their system prompt; Cursor has no such file, so its guidance is in the tool descriptions. A save is shared at once,
   **without your approval**; text that looks like a secret is refused. The list shows every change (when, which
   agent and session, what), newest first. On a memory's newest change you can **revert it** (the earlier text
   comes back) or **forget the memory**; either is recorded as a new change, so it can be undone too. If the text

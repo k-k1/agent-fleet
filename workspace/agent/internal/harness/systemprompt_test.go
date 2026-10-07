@@ -204,3 +204,36 @@ func TestForeignSkillsAdvertisesOnlyWhatTheReadToolCanOpen(t *testing.T) {
 		}
 	}
 }
+
+// The memory section sits after the user's instructions and before the project layer, the order
+// the other kinds' files have (fleet, user, memory guide, rtk), and is absent when the hook is
+// nil or answers "" (the switch is off).
+func TestSystemPromptPlacesMemorySectionAfterUserBeforeProject(t *testing.T) {
+	home := isolateHome(t)
+	stubRTKAvailable(t, false)
+	writeFile(t, filepath.Join(home, ".config", "agent-fleet", "user-notes.md"), "USER NOTES TEXT")
+	repo := filepath.Join(home, "repo")
+	writeFile(t, filepath.Join(repo, "AGENTS.md"), "PROJECT TEXT")
+
+	old := MemoryPrompt
+	t.Cleanup(func() { MemoryPrompt = old })
+
+	MemoryPrompt = func(cwd, kind string) string {
+		if cwd != repo || kind != "lcpp" {
+			t.Errorf("hook got (%q, %q)", cwd, kind)
+		}
+		return "MEMORY SECTION"
+	}
+	got := SystemPrompt(repo, "lcpp")
+	u, m, p := strings.Index(got, "USER NOTES TEXT"), strings.Index(got, "MEMORY SECTION"), strings.Index(got, "PROJECT TEXT")
+	if u < 0 || m < 0 || p < 0 || !(u < m && m < p) {
+		t.Fatalf("order user(%d) < memory(%d) < project(%d) broken:\n%s", u, m, p, got)
+	}
+
+	for _, off := range []func(string, string) string{nil, func(string, string) string { return "" }} {
+		MemoryPrompt = off
+		if got := SystemPrompt(repo, "lcpp"); strings.Contains(got, "MEMORY SECTION") {
+			t.Fatalf("memory section present with the hook off:\n%s", got)
+		}
+	}
+}

@@ -208,3 +208,13 @@ bundle での移送・輸出時の秘密検査（`memoryx/memory_secrets.go`）�
   変更一覧、claude からの 1 回だけの種まき。
 - **P2** — 配る案内ブロックと、lcpp のセッションごとの注入。
 - **P3** — 実測後に決定 6 の段 2。#1559（自動レビュー）・#1558（検索）との結合。
+
+## 追記（2026-10-08）：案内ブロック（P2、#1733）
+
+実装済み：スイッチ（ui-prefs `agentMemory`、設定 → Agent memory）がオンの間、0042 の配布役が固定の案内
+（`userinstr.MemoryGuide`、上限 `MemoryGuideMaxBytes`、テストで固定）を書き、オフで消します。claude の
+`CLAUDE.md` と codex・agy・muse・opencode の `AGENTS.md` では `user-notes` の隣の `memory-guide` マーカー
+ブロック、copilot と kiro では AF 専用ファイルです。スイッチの保存で即座に反映されます。lcpp はシステム
+プロンプトに案内と、そのプロジェクトの `memory_index`（予算の下限 4 KiB）を毎ターン載せます。cursor は変更なし
+（ツールの説明がすでに「いつ呼ぶか」を言っており、テストで固定）。この PR では未実装：使用実績に基づく並べ替え
+（#1703）。

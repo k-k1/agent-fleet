@@ -76,3 +76,14 @@ func writeOwnedFile(path, body string) error {
 	}
 	return os.Rename(tmp, path)
 }
+
+// MemoryGuidePath is the AF-owned file carrying the memory guidance (ADR 0108 decision 5): a
+// file of its own because it follows the Agent memory switch, not the user's instructions.
+func MemoryGuidePath() string {
+	return filepath.Join(Home(), "instructions", "agent-fleet-memory.instructions.md")
+}
+
+// ApplyMemoryGuide writes (or removes, when body is empty) that file.
+func ApplyMemoryGuide(body string) error {
+	return writeOwnedFile(MemoryGuidePath(), body)
+}
