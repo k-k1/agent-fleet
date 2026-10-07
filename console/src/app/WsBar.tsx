@@ -22,7 +22,7 @@ import { Icon } from "../ui/Icon.tsx";
 import { Sparkline } from "../ui/Sparkline.tsx";
 import { useConfirm } from "../ui/ConfirmProvider.tsx";
 import { useIsMobile } from "../lib/device.ts";
-import { useWsBarFold } from "./wsBarFold.ts";
+import { useWsBarFold, useWsBarPhoneFold } from "./wsBarFold.ts";
 import { machineSummary, type WsMachine } from "../lib/machine.ts";
 import { useDismiss } from "../lib/useDismiss.ts";
 import { listBrowserAttachments } from "../features/browser/attachmentService.ts";
@@ -1185,6 +1185,7 @@ export function WsBar() {
   const isMobile = useIsMobile();
   const barRef = useRef<HTMLDivElement>(null);
   const { foldUsage, foldMore, noteUsageLayout } = useWsBarFold(barRef, !isMobile);
+  const phoneFold = useWsBarPhoneFold(barRef, isMobile);
   const [port, setPort] = useState("");
   const [previewPath, setPreviewPath] = useState("/");
   const [pvOpen, setPvOpen] = useState(false); // desktop port-preview popover
@@ -1714,6 +1715,59 @@ export function WsBar() {
     </>
   );
 
+  // The pane buttons that fold into ⋯ on a narrow phone (wsBarFold.ts, useWsBarPhoneFold) are
+  // rendered from these in both places, so the bar's copy and the popover's copy cannot drift.
+  const splitDownBtn = (
+    <Button
+      variant="ghost"
+      className="ws-split"
+      title={tr("wsbar.split_down_title") + hintSuffix("pane.splitDown")}
+      aria-label={tr("wsbar.split_down")}
+      disabled={!canSplitDown}
+      onClick={() => activePaneId && splitDown(activePaneId)}
+    >
+      <Icon name="split-vertical" />
+      <span className="lbl">{tr("wsbar.split_down")}</span>
+    </Button>
+  );
+  const closeAllBtn = (
+    <Button
+      variant="ghost"
+      className="ws-closeall"
+      title={tr("wsbar.close_all_title") + hintSuffix("pane.closeAll")}
+      aria-label={tr("wsbar.close_all")}
+      disabled={!canCloseAll}
+      onClick={() => resetToTerminal()}
+    >
+      <Icon name="close-all" />
+      <span className="lbl">{tr("wsbar.close_all")}</span>
+    </Button>
+  );
+  const overviewBtn = (
+    <Button
+      variant="ghost"
+      className="ws-split ws-overview"
+      title={tr("wsbar.overview_title") + hintSuffix("open.sessions")}
+      aria-label={tr("wsbar.overview")}
+      onClick={() => openSessionsOverview()}
+    >
+      <Icon name="dashboard" />
+      <span className="lbl">{tr("wsbar.overview")}</span>
+    </Button>
+  );
+  const imagegenBtn = imagegenAvailable && (
+    <Button
+      variant="ghost"
+      className="ws-split ws-imagegen"
+      title={tr("wsbar.imagegen_title") + hintSuffix("open.imagegen")}
+      aria-label={tr("wsbar.imagegen")}
+      onClick={() => void openImagegen()}
+    >
+      <Icon name="wand" />
+      <span className="lbl">{tr("wsbar.imagegen")}</span>
+    </Button>
+  );
+
   return (
     <div className="wsbar" ref={barRef}>
       <span className="ws-label">
@@ -1848,58 +1902,18 @@ export function WsBar() {
           <span className="lbl">{tr("wsbar.split_right")}</span>
         </Button>
       )}
-      <Button
-        variant="ghost"
-        className="ws-split"
-        title={tr("wsbar.split_down_title") + hintSuffix("pane.splitDown")}
-        aria-label={tr("wsbar.split_down")}
-        disabled={!canSplitDown}
-        onClick={() => activePaneId && splitDown(activePaneId)}
-      >
-        <Icon name="split-vertical" />
-        <span className="lbl">{tr("wsbar.split_down")}</span>
-      </Button>
-      <Button
-        variant="ghost"
-        className="ws-closeall"
-        title={tr("wsbar.close_all_title") + hintSuffix("pane.closeAll")}
-        aria-label={tr("wsbar.close_all")}
-        disabled={!canCloseAll}
-        onClick={() => resetToTerminal()}
-      >
-        <Icon name="close-all" />
-        <span className="lbl">{tr("wsbar.close_all")}</span>
-      </Button>
+      {splitDownBtn}
+      {closeAllBtn}
       {/* The sessions overview (ADR 0078). It sits with the pane buttons because it IS a
           pane; the rail's layout map has the same button, but that map hides itself while
           there is a single pane — which is exactly when someone reaches for the overview. */}
-      <Button
-        variant="ghost"
-        className="ws-split ws-overview"
-        title={tr("wsbar.overview_title") + hintSuffix("open.sessions")}
-        aria-label={tr("wsbar.overview")}
-        onClick={() => openSessionsOverview()}
-      >
-        <Icon name="dashboard" />
-        <span className="lbl">{tr("wsbar.overview")}</span>
-      </Button>
+      {overviewBtn}
       {/* The image-generation studio (ADR 0081), beside the overview for the same reason:
           it is a pane, and the layout map's copy of this button hides itself while there is
           only one pane. Shown only while the fleet has an image engine to offer (decision 1):
           a button that opens onto "the engine cannot be used" is a promise the bar cannot
           keep, and most fleets have no engine at all. */}
-      {imagegenAvailable && (
-        <Button
-          variant="ghost"
-          className="ws-split ws-imagegen"
-          title={tr("wsbar.imagegen_title") + hintSuffix("open.imagegen")}
-          aria-label={tr("wsbar.imagegen")}
-          onClick={() => void openImagegen()}
-        >
-          <Icon name="wand" />
-          <span className="lbl">{tr("wsbar.imagegen")}</span>
-        </Button>
-      )}
+      {imagegenBtn}
 
       <span className="ws-spacer" />
 
@@ -1915,6 +1929,16 @@ export function WsBar() {
           </Button>
           {moreOpen && (
             <div className="ws-more-pop">
+              {/* The pane buttons the bar had no room for (the phone fold); a tap runs the action
+                  and closes the popover. In bar order, so the popover reads like the bar did. */}
+              {phoneFold > 0 && (
+                <div className="ws-more-actions" onClick={() => setMoreOpen(false)}>
+                  {phoneFold > 1 && splitDownBtn}
+                  {phoneFold > 1 && closeAllBtn}
+                  {overviewBtn}
+                  {imagegenBtn}
+                </div>
+              )}
               {/* statsBlock is always a truthy Fragment (each chip hides itself by returning
                   null), so emptiness cannot be tested here; the padding of an empty block is
                   folded away by CSS :empty (wsbar.css). */}

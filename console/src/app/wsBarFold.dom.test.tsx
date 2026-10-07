@@ -5,7 +5,7 @@
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { useWsBarFold } from "./wsBarFold.ts";
+import { useWsBarFold, useWsBarPhoneFold, type PhoneFoldStep } from "./wsBarFold.ts";
 
 let host: HTMLDivElement | null = null;
 let root: Root | null = null;
@@ -143,5 +143,55 @@ describe("useWsBarFold", () => {
     await mount(300, false);
     expect(attrs()).toBe("");
     expect(folds()).toEqual({ foldUsage: false, foldMore: false });
+  });
+});
+
+// useWsBarPhoneFold: the phone bar's step follows the width it has. As above, jsdom has no layout:
+// the bar's width and the content's width are supplied, so this proves the wiring (attribute set
+// before the measure, step returned, cleared when the phone layout ends) and NOT that the real
+// buttons add up to those widths — that is measured in a browser (see the PR for #1650).
+let phoneSeen: PhoneFoldStep = 0;
+function phoneMeasure(bar: HTMLElement) {
+  const s = Number(bar.getAttribute("data-fold-phone") || 0);
+  return 500 - s * 80; // 500 / 420 / 340
+}
+function PhoneBar({ enabled = true }: { enabled?: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  phoneSeen = useWsBarPhoneFold(ref, enabled, phoneMeasure);
+  return <div ref={ref} className="wsbar" />;
+}
+async function mountPhone(width: number, enabled = true) {
+  avail = width;
+  await act(async () => root!.render(<PhoneBar enabled={enabled} />));
+}
+
+describe("useWsBarPhoneFold", () => {
+  it("folds nothing when the bar fits", async () => {
+    await mountPhone(500);
+    expect(phoneSeen).toBe(0);
+    expect(bar().hasAttribute("data-fold-phone")).toBe(false);
+  });
+
+  it("steps up as the bar narrows and back down as it widens", async () => {
+    await mountPhone(430);
+    expect(phoneSeen).toBe(1);
+    expect(bar().getAttribute("data-fold-phone")).toBe("1");
+    await resize(390);
+    expect(phoneSeen).toBe(2);
+    expect(bar().getAttribute("data-fold-phone")).toBe("2");
+    await resize(520);
+    expect(phoneSeen).toBe(0);
+    expect(bar().hasAttribute("data-fold-phone")).toBe(false);
+  });
+
+  it("stops at the last step when even that does not fit", async () => {
+    await mountPhone(200);
+    expect(phoneSeen).toBe(2);
+  });
+
+  it("leaves the bar alone outside the phone layout", async () => {
+    await mountPhone(200, false);
+    expect(phoneSeen).toBe(0);
+    expect(bar().hasAttribute("data-fold-phone")).toBe(false);
   });
 });

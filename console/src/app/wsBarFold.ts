@@ -216,3 +216,92 @@ export function useWsBarFold(
 
   return { foldUsage: enabled && foldUsage, foldMore: enabled && foldMore, noteUsageLayout };
 }
+
+// The phone bar (#1650).
+//
+// A phone has no spare width for any fixed breakpoint either: power, state, two pills, Start,
+// the pane buttons and ⋯ already come to ~330px, and the bar must never be wider than the
+// screen — an overflowing bar widens the document, which makes the page zoomable and takes the
+// edge swipe that opens the left pane with it (wsbar.css). The right-hand chips already live in
+// ⋯, so what is left to fold is the pane buttons, least-used first, into the same popover:
+//
+//   1  overview and image generation
+//   2  also split down and close all
+//
+// Step 2 is the end: what remains (power, state at its min-width, the pills, Start, ⋯) fits
+// 320px with both pills. Every folded action stays reachable from the ⋯ popover.
+
+export const PHONE_STEP_MAX = 2;
+export type PhoneFoldStep = 0 | 1 | 2;
+
+/** planPhoneFold picks the first step whose content (`measure(step)`) fits `avail`. */
+export function planPhoneFold(measure: (step: PhoneFoldStep) => number, avail: number): PhoneFoldStep {
+  for (const s of [0, 1] as const) if (measure(s) <= avail) return s;
+  return PHONE_STEP_MAX;
+}
+
+function applyPhoneStep(bar: HTMLElement, step: PhoneFoldStep) {
+  if (step === 0) bar.removeAttribute("data-fold-phone");
+  else bar.setAttribute("data-fold-phone", String(step));
+}
+
+/**
+ * useWsBarPhoneFold folds the phone bar's pane buttons into ⋯ by measured width while
+ * `enabled` (the phone layout) and returns the step. Same wiring as useWsBarFold: the CSS step
+ * is an attribute applied and measured inside one layout pass, so the bar settles before it is
+ * painted. Measuring relies on `.ws-state` keeping a min-width (wsbar.css): it is the one item
+ * that shrinks, and without a floor the bar would always "fit" with the state text gone.
+ */
+export function useWsBarPhoneFold(
+  barRef: RefObject<HTMLElement | null>,
+  enabled: boolean,
+  measureWidth: (bar: HTMLElement) => number = barContentWidth,
+): PhoneFoldStep {
+  const [step, setStep] = useState<PhoneFoldStep>(0);
+
+  const settle = useCallback(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    const next = planPhoneFold((s) => {
+      applyPhoneStep(bar, s);
+      return measureWidth(bar);
+    }, bar.clientWidth);
+    applyPhoneStep(bar, next);
+    setStep(next);
+  }, [barRef, measureWidth]);
+
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    if (!enabled) {
+      applyPhoneStep(bar, 0);
+      setStep(0);
+      return;
+    }
+    settle();
+    // The window (ResizeObserver on the bar alone, see useWsBarFold) and the content (a pill
+    // appearing, a state label changing language, a late font), both settled before paint.
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => settle());
+    ro?.observe(bar);
+    let queued = false;
+    const soon = () => {
+      if (queued) return;
+      queued = true;
+      queueMicrotask(() => {
+        queued = false;
+        settle();
+      });
+    };
+    const mo = new MutationObserver(soon);
+    mo.observe(bar, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["class", "style"] });
+    const fonts = typeof document !== "undefined" ? document.fonts : undefined;
+    fonts?.addEventListener?.("loadingdone", soon);
+    return () => {
+      ro?.disconnect();
+      mo.disconnect();
+      fonts?.removeEventListener?.("loadingdone", soon);
+    };
+  }, [barRef, enabled, settle]);
+
+  return enabled ? step : 0;
+}

@@ -128,9 +128,10 @@
   .ws-state {
     /* The only shrinkable item on the row, deliberately: whatever is added to the bar
        later squeezes this text (and ellipsizes it) instead of pushing the bar off the
-       screen edge again. */
+       screen edge again. The floor is what app/wsBarFold.ts measures against: past it the
+       pane buttons fold into ⋯ rather than the state text vanishing. */
     flex: 0 1 auto;
-    min-width: 0;
+    min-width: 56px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -141,6 +142,31 @@
   .wsbar button {
     padding: 3px 9px;
   }
+}
+
+/* Phone fold steps (useWsBarPhoneFold): the pane buttons the bar has no room for move into
+   the ⋯ popover. `>` keeps the popover's own copies visible. */
+@media (max-width: 760px) {
+  .wsbar[data-fold-phone] > :is(.ws-overview, .ws-imagegen),
+  .wsbar[data-fold-phone="2"] > :is(.ws-closeall, .ws-split:not(.ws-newsession)) {
+    display: none;
+  }
+}
+/* In the popover the buttons are a list, so they keep their labels (the bar's are icon-only). */
+.ws-more-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+.ws-more-actions .ui-btn {
+  justify-content: flex-start;
+}
+.ws-more-actions .ui-btn .lbl {
+  display: inline;
+}
+.ws-more-actions:empty {
+  display: none;
 }
 
 /* Resource tiles: label + trend sparkline + current value, tinted by threshold. */
