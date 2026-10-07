@@ -625,3 +625,11 @@ cursor の TUI 転写 JSONL は**存在しない**ことを確認済み（`find 
 `permission` の答えだけになる**（それも事実は残る）。逆に、**現状で最も静かに損をしているのは
 `plan` と `backgroundBusy` の 2 つ** — どちらも tier2 が止める側なのに、止めた事実を利用者に伝える
 経路が無い。
+
+## 75.12 Addendum (2026-10-07): bounding `machineBusy` for a frozen working row (#1818)
+
+`sessionActivity` treated `working` / `compacting` as busy without limit. It now consults the
+Agent's `progressAt` (newest of status mtime, the kind's state source mtime, pane repaint, a live
+tool process): a busy row older than one hour is `unknown`, so tier 2 can stop the workspace.
+`holdersOf` goes through the same `progressLapsed` predicate (decision 11); the pin and
+`backgroundBusy` come first and are exempt. See ADR 0055's 2026-10-07 addendum.

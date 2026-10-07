@@ -201,3 +201,20 @@ judgement has drifted twice already).
   measured (docs/75 §75.10.1 G). Capturing **permissions** for cursor / kiro / copilot stops at unit
   tests, because the permission request itself could not be reproduced on real hardware (ibid. J) — we
   do not write "it should work".
+
+## Addendum (2026-10-07): a frozen "working" row no longer holds the container forever (#1818)
+
+Decision 9's `machineBusy` had no upper bound: a row whose kind-derived `working` never recorded a
+turn end (agy's conversation DB, copilot's `events.jsonl`, a cursor transcript, kiro's footer) kept the
+workspace awake indefinitely (~21 h measured, #1811). The decisions above are unchanged; this adds one
+bound inside `machineBusy`:
+
+- The Agent reports `progressAt` per live busy row: the newest of the status file's mtime, the kind's
+  own state source's mtime, the pane's last repaint, and "now" while a tool process lives under the pane.
+- A `working` / `compacting` row whose `progressAt` is older than one hour (`busyProgressLapse`) is
+  classified `unknown`: not a reason to stay awake, and not foldable by tier 1 either. Tier 2 may then
+  stop the workspace.
+- Checked after the pin and `backgroundBusy`, which are never subject to it. An absent or unparseable
+  `progressAt` keeps the old behaviour (hold). `holdersOf` goes through the same predicate (decision 11).
+- Known gap: a managed session has no pane and no reachable per-session process root, so only the status
+  file and the kind's state source count for it.

@@ -7,6 +7,7 @@ package agents
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -337,6 +338,15 @@ type ContextReporter interface {
 // must not block: it runs on the list poll.
 type BackgroundReporter interface {
 	BackgroundWork(m session.Meta) (busy bool, reason string)
+}
+
+// ProgressReporter is an optional Agent capability: the mtime of the file or store the kind's
+// own working verdict is read from (transcript, events.jsonl, rollout, conversation DB). It
+// feeds LiveInfo-adjacent Session.ProgressAt, so it must be one stat, never a parse, and must
+// name a source private to THIS session — a database shared by every session would move on
+// someone else's writes and keep a dead turn looking alive.
+type ProgressReporter interface {
+	StateSourceModTime(m session.Meta) (time.Time, bool)
 }
 
 // UsageReader is an optional Agent capability: the conversation as the usage fold reads it,

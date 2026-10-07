@@ -106,37 +106,5 @@ func toolProcessAlive(name string) bool {
 	if root == 0 {
 		return false
 	}
-	return toolProcessIn(root, procx.Snapshot())
-}
-
-// toolProcessIn reports whether a tool process lives under root. agy runs each run_command
-// as a child that is its own session leader, while its long-lived helpers (MCP servers) share
-// agy's session, so "session leader other than the pane's" separates the two without naming
-// any helper. A helper that setsid()s itself would read as a tool and only delay the
-// withdrawal (status quo), never end a live tool early.
-func toolProcessIn(root int, tab map[int]procx.Info) bool {
-	rootInfo, ok := tab[root]
-	if !ok {
-		return false
-	}
-	kids := procx.Children(tab)
-	seen := map[int]bool{root: true}
-	queue := append([]int(nil), kids[root]...)
-	for len(queue) > 0 {
-		pid := queue[0]
-		queue = queue[1:]
-		if seen[pid] {
-			continue
-		}
-		seen[pid] = true
-		pi, ok := tab[pid]
-		if !ok {
-			continue
-		}
-		queue = append(queue, kids[pid]...)
-		if pi.State != 'Z' && pi.Sid == pid && pi.Sid != rootInfo.Sid {
-			return true
-		}
-	}
-	return false
+	return procx.ToolProcessIn(root, procx.Snapshot())
 }

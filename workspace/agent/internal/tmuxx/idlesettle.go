@@ -117,3 +117,22 @@ func FooterSettled(name, frame string, idle func(frame string) bool) bool {
 	settled := observeFrame(name, frame)
 	return settled && idle(frame)
 }
+
+// paneSightingFresh bounds how stale the last observation may be for PaneChangedAt to speak.
+// A kind that stopped reading frames leaves its sighting frozen, and a frozen "changed" would
+// read as a pane that stopped repainting.
+const paneSightingFresh = time.Minute
+
+// PaneChangedAt is when the session's pane last differed from the frame before it, as seen by
+// whichever poll last recorded a frame (observeFrame). ok=false when no recent poll has read
+// the pane: the caller must then treat the pane as having no opinion, never as "unchanged".
+// It reads the clock already kept for the idle-settle verdict, so it costs no capture-pane.
+func PaneChangedAt(name string) (time.Time, bool) {
+	sightMu.Lock()
+	defer sightMu.Unlock()
+	s, ok := sights[name]
+	if !ok || idleSettleNow().Sub(s.seen) > paneSightingFresh {
+		return time.Time{}, false
+	}
+	return s.changed, true
+}

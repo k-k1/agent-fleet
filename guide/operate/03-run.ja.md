@@ -275,7 +275,10 @@ Control Plane が配信時に同梱の画像を塗り替えるので、環境ご
   起動しません**（「停止しています。起動してください」を返します）。開きっぱなしのタブが Workspace を
   温め続けることはありません。
   資源の節約に有効です。env の意味は `deploy/compose/.env.example`、仕組みは
-  `docs/build/09-deploy.ja.md` §9.4。
+  `docs/build/09-deploy.ja.md` §9.4。「作業中」と表示されるセッションが Workspace を起こし続けるのは、
+  生きている兆候がある間だけです。出力・状態の変化・実行中のツールプロセスのいずれも **1 時間**
+  無ければ数えなくなるため、固まったセッションが Workspace を際限なく抱えることはありません
+  （バックグラウンド作業と「自動停止しない」ピンはこの上限の対象外です）。
 - **force-stop（力業）**: `docker compose down` では**ユーザーの Workspace は止まりません**（compose
   管理外）。特定の Workspace を確実に止めたいときは、super_admin が Console の Admin パネルから
   force-stop します。ホスト全体をメンテナンスで完全に落とす必要があるときは、CP/Caddy を止めた

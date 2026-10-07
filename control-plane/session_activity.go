@@ -66,10 +66,41 @@ func busyState(state string) bool {
 	return false
 }
 
+// busyProgressLapse is how long a working / compacting row may show no sign of progress
+// before it stops holding the Workspace awake (#1818).
+//
+// The Agent's progressAt already counts a pane repaint and a live tool process as progress,
+// so a legitimate long run (a build, a long answer being drawn) keeps it fresh; only a row
+// frozen on every axis — a dead turn whose source never records an end — lapses. Generous on
+// purpose: wrongly folding a working turn costs more than holding an idle Workspace for an
+// extra hour.
+const busyProgressLapse = time.Hour
+
+// progressLapsed reports whether a busy row's progressAt is older than busyProgressLapse.
+// Absent or unparseable means "no evidence", and that holds (today's behaviour), so an older
+// Agent behind a newer CP changes nothing. The pin and BackgroundBusy are decided before
+// this and are never subject to it.
+//
+// The reaper (sessionActivity) and the forecast (holdersOf) both go through here, so the
+// screen and the decision cannot disagree (docs/log/75 decision 11).
+func progressLapsed(s sessionWire, now time.Time) bool {
+	if s.ProgressAt == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, s.ProgressAt)
+	if err != nil {
+		return false
+	}
+	return now.Sub(t) > busyProgressLapse
+}
+
 // sessionActivity classifies one live session row.
 //
 // A row that is not alive is activityUnknown: neither foldable, nor a reason to stay awake.
-func sessionActivity(s sessionWire) activity {
+func sessionActivity(s sessionWire) activity { return sessionActivityAt(s, time.Now()) }
+
+// sessionActivityAt is sessionActivity at a given instant, so the progress bound is testable.
+func sessionActivityAt(s sessionWire, now time.Time) activity {
 	if !s.Alive {
 		return activityUnknown
 	}
@@ -77,7 +108,7 @@ func sessionActivity(s sessionWire) activity {
 	// ssm — the only escape hatch those have — state is empty, i.e. unknown, so none of
 	// the branches below would ever catch it. It applies to live rows only (the !Alive
 	// check above), so a pin on a dead session cannot hold the container.
-	if keepAwake(s.KeepAwakeUntil, time.Now()) {
+	if keepAwake(s.KeepAwakeUntil, now) {
 		return activityMachineBusy
 	}
 	// BackgroundBusy is orthogonal to state: with state idle there can still be a
@@ -88,6 +119,11 @@ func sessionActivity(s sessionWire) activity {
 		return activityMachineBusy
 	}
 	if busyState(s.State) {
+		if progressLapsed(s, now) {
+			// Not holding, and not foldable either: what the row is doing is not known any
+			// more, and a halt of something that may still be running is not ours to decide.
+			return activityUnknown
+		}
 		return activityMachineBusy
 	}
 	switch s.State {

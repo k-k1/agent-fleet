@@ -180,3 +180,21 @@ ACP の Interaction も agy の合成メニューも、Console に選択カー�
   専用 tmux ソケットで立てた本物の Agent に対する 1 周は実測済み（docs/75 §75.10.1 G）。
   cursor / kiro / copilot の**許可**の写し取りは、実機で許可要求そのものを再現できず
   単体テスト止まり（同 J）— 動くはず、とは書かない。
+
+## 追記（2026-10-07）— 凍った「working」行がコンテナを抱え続けない（#1818）
+
+決定 9 の `machineBusy` には上限が無く、kind 由来の `working`（agy の会話 DB、copilot の
+`events.jsonl`、cursor の転写、kiro のフッター）がターン終了を記録しないまま止まると、
+Workspace が際限なく起き続けた（実測で約 21 時間、#1811）。上の決定は変えず、`machineBusy`
+の内側に上限を 1 つ足す:
+
+- Agent は生きている busy 行ごとに `progressAt` を報告する。status ファイルの mtime・kind
+  自身の状態源の mtime・ペインの最後の再描画・ペイン配下でツールプロセスが生きている間の
+  「いま」のうち最も新しいもの。
+- `working` / `compacting` の行で `progressAt` が 1 時間（`busyProgressLapse`）より古いものは
+  `unknown` に分類する。起きている理由にならず、tier 1 の畳み対象にもならない。これで tier 2 が
+  Workspace を止められる。
+- ピンと `backgroundBusy` を先に判定し、これらは対象外。`progressAt` が無い／読めない場合は
+  従来どおり抱える。`holdersOf` も同じ述語を通す（決定 11）。
+- 既知の穴: managed セッションはペインも到達できるプロセス根も無いため、status ファイルと
+  kind の状態源だけが効く。

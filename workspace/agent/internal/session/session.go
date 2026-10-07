@@ -228,6 +228,11 @@ type Session struct {
 	// BackgroundBusy, this only chooses its wording, so an unknown
 	// (or dropped) value falls back to the generic "running in background".
 	BackgroundBusyReason string `json:"backgroundBusyReason,omitempty"`
+	// ProgressAt (RFC3339) is the newest sign that a working / compacting row is still doing
+	// something: its state file, the kind's own state source, a pane repaint, or a live tool
+	// process (now). The Control Plane stops letting a busy row hold the Workspace awake once
+	// it is older than an hour. "" = unknown or not busy — the CP then keeps today's behaviour.
+	ProgressAt string `json:"progressAt,omitempty"`
 	// RateLimitResumeAt is set ONLY when State == agents.StateLimited: the time (RFC3339) of
 	// the scheduled automatic resume. Empty = stopped at the limit with no resume armed
 	// (auto-resume off, nothing to derive the reset time from, or a per-model limit —

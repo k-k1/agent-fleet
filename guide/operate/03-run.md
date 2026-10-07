@@ -301,7 +301,10 @@ art as it serves it.
   left open never keeps a Workspace warm. This is effective for
   saving resources. For the meaning of the env vars, see
   `deploy/compose/.env.example`; for how it works, see
-  `docs/build/09-deploy.md` §9.4.
+  `docs/build/09-deploy.md` §9.4. A session showing "working" keeps the Workspace awake only while
+  it shows signs of life: if it has produced no output, state change or running tool process for
+  **1 hour**, it stops counting, so a hung session cannot hold the Workspace open indefinitely
+  (background work and the "do not auto-stop" pin are not subject to this limit).
 - **force-stop (brute force)**: `docker compose down` **does not stop user Workspaces** (they
   are outside compose management). To stop a specific Workspace for sure, a super_admin
   force-stops it from the Admin panel in the Console. When the whole host must be brought fully

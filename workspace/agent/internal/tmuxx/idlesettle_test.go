@@ -159,3 +159,22 @@ func TestFooterSettledBusyFrameRewindsClock(t *testing.T) {
 		t.Fatal("A should settle after a full window")
 	}
 }
+
+func TestPaneChangedAt(t *testing.T) {
+	now := withFakeClock(t)
+	if _, ok := PaneChangedAt("p1"); ok {
+		t.Fatal("a pane nobody has read answered")
+	}
+	first := *now
+	observeFrame("p1", "frame A")
+	*now = now.Add(30 * time.Second)
+	observeFrame("p1", "frame A") // unchanged: the clock must not move
+	got, ok := PaneChangedAt("p1")
+	if !ok || !got.Equal(first) {
+		t.Fatalf("PaneChangedAt = %v, %v; want %v (the repaint, not the poll)", got, ok, first)
+	}
+	*now = now.Add(paneSightingFresh + time.Second)
+	if _, ok := PaneChangedAt("p1"); ok {
+		t.Fatal("a sighting no poll refreshed still spoke: a frozen clock would read as a frozen pane")
+	}
+}
