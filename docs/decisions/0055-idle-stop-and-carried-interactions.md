@@ -2,7 +2,7 @@
 
 English | [日本語](0055-idle-stop-and-carried-interactions.ja.md)
 
-- Status: **adopted** (2026-08-24). The record of the investigation and the measurements is [docs/75](../log/75-idle-stop-and-pending-interactions.md).
+- Status: **adopted** (2026-08-24). Follow-ups: #1830 (bound the hold for managed sessions and the remaining kinds). The record of the investigation and the measurements is [docs/75](../log/75-idle-stop-and-pending-interactions.md).
 - See also: [0030-turn-abort-auto-resume.md](0030-turn-abort-auto-resume.md) (splitting live state by "the next move to prompt") /
   [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md) (stopping = releasing a slot = cost) /
   [docs/history/p3-9-idle-stop.md](../log/p3-9-idle-stop.md) (the prototype of the two-tier arrangement)
@@ -219,6 +219,6 @@ bound inside `machineBusy`:
 - A `working` / `compacting` row whose progress age exceeds one hour (`busyProgressLapse`) is
   classified `unknown`: not a reason to stay awake, and not foldable by tier 1 either. Tier 2 may then
   stop the workspace.
-- Checked after the pin and `backgroundBusy`, which are never subject to it. An absent or unparseable
-  `progressAt` keeps the old behaviour (hold). `holdersOf` goes through the same predicate (decision 11).
+- Checked after the pin and `backgroundBusy`, which are never subject to it. An absent (or zero)
+  `progressAgeSec` keeps the old behaviour (hold); the lapse reads the age only, never `progressAt`. `holdersOf` goes through the same predicate (decision 11).
 - Not covered (still unbounded): managed sessions and every kind other than claude / agy.

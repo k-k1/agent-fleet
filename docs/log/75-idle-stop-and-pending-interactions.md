@@ -635,3 +635,4 @@ kind's state source mtime, pane repaint, a live tool process): a busy row older 
 other kinds keep holding until a live signal is measured for them.
 `holdersOf` goes through the same `progressLapsed` predicate (decision 11); the pin and
 `backgroundBusy` come first and are exempt. See ADR 0055's 2026-10-07 addendum.
+Follow-ups: #1830.
