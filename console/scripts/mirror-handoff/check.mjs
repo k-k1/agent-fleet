@@ -139,8 +139,14 @@ const probeIn = (scroller) => `(() => {
 const PROBE = probeIn(`document.querySelector(".mirror-body") || document.querySelector(".mirror-scroll")`);
 const PROBE_SHARED = probeIn(`document.querySelector(".shared-view-body")`);
 
-const pane = { id: "p0", session: null, content: { kind: "terminal", chat: true }, wrap: null };
-const layout = { cols: [{ id: "c0", rowRatio: 0.5, panes: [pane] }], colRatios: [1], activeId: "p0" };
+// An empty Tabbed layout (one cell, no views): the script opens the session by clicking its row.
+const layout = {
+  version: 3,
+  mode: "tabs",
+  cols: [{ id: "c0", rowRatio: 0.5, cells: [{ id: "cell0", selectedViewId: null, views: [] }] }],
+  colRatios: [1],
+  activeCellId: "cell0",
+};
 
 async function run(mode, { shared = false } = {}) {
   const stub = spawn(
