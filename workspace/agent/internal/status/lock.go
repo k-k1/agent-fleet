@@ -9,10 +9,9 @@ import (
 // lockWait bounds how long a session-status writer waits for the per-sid lock. The Stop hook
 // is on claude's critical path (its latency delays the TUI's turn end), and the lock is held
 // for one temp+rename write, so the wait is normally microseconds; this is the ceiling for a
-// holder stalled mid-write. Past it the hook writes without the lock, which is the one case
-// the conditional heal can still lose to (see PersistIf): it takes a stall longer than this
-// ceiling inside a few milliseconds of I/O. Var so tests can shorten it.
-var lockWait = 2 * time.Second
+// pathological holder. Raising it buys probability, not correctness (see PersistIf), and every
+// persist on the hook's critical path pays it behind a stalled holder.
+var lockWait = 300 * time.Millisecond
 
 const lockPoll = 2 * time.Millisecond
 
@@ -82,8 +81,8 @@ var afterCheck = func() {}
 // PersistIf writes {state} for sid only if the record is still the one the caller decided
 // from: wasRev is its Rev and existed whether there was a record at all. Under the per-sid
 // lock it re-reads the record, so a closed turn the Stop hook (another process) persisted
-// since the caller's read is never overwritten. It reports whether it wrote; a lock timeout
-// counts as not written.
+// since the caller's read is not overwritten, except for a holder stalled past lockWait
+// (below). It reports whether it wrote; a lock timeout counts as not written.
 func PersistIf(sid, state string, wasRev string, existed bool) bool {
 	unlock, ok := lockSid(sid)
 	defer unlock()
@@ -99,7 +98,8 @@ func PersistIf(sid, state string, wasRev string, existed bool) bool {
 	// The hook gives up waiting after lockWait and writes without the lock, so a holder that
 	// has been stalled (descheduled, slow I/O) longer than half of that may no longer be
 	// excluding it. Give way rather than commit on a check that old. What remains is a stall
-	// of more than lockWait/2 inside the few instructions between this test and the rename.
+	// of more than lockWait/2 inside the I/O between this test and the rename: temp+rename has no
+	// atomic conditional commit, so this narrows the race and does not close it.
 	if time.Since(acquired) > lockWait/2 {
 		return false
 	}

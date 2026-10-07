@@ -9,12 +9,12 @@ import (
 	"time"
 )
 
-// TestRaceChildHelper is the "Stop hook" process of TestPersistIfKeepsHookClosedTurn: for each
-// line on stdin it persists a closed turn, as `workspace-agent session-status idle` does.
 // isolate gives the test its own store, so a rerun (-count=N) starts clean. The helper process
 // inherits the environment and so shares it.
 func isolate(t *testing.T) { t.Helper(); t.Setenv("HOME", t.TempDir()) }
 
+// TestRaceChildHelper is the "Stop hook" process of TestPersistIfKeepsHookClosedTurn: for each
+// line on stdin it persists a closed turn, as `workspace-agent session-status idle` does.
 func TestRaceChildHelper(t *testing.T) {
 	sid := os.Getenv("AF_STATUS_RACE_SID")
 	if sid == "" {
