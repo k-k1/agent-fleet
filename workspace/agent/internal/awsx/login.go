@@ -115,7 +115,18 @@ func exportSSOCreds(aws awsRunner, ssoSession string) (processCreds, error) {
 // stops those.
 func exportLocked(aws awsRunner, profile, ssoSession string) (processCreds, error) {
 	if ssoSession != "" {
-		unlock, err := logins.LockKey(ssoSession, true)
+		var cancel <-chan struct{}
+		var deadline time.Time
+		if aws.ctx != nil {
+			cancel = aws.ctx.Done()
+			deadline, _ = aws.ctx.Deadline()
+		}
+		unlock, err := logins.LockKeyCancel(ssoSession, true, cancel, deadline)
+		if err != nil && aws.ctx != nil && aws.ctx.Err() != nil {
+			// A Console wait's Ctrl-C or budget ended the wait for the lock (a logout holds
+			// it across its network call); the wait classifies it like a killed child.
+			return processCreds{}, fmt.Errorf("stopped: %w", aws.ctx.Err())
+		}
 		if err != nil {
 			return processCreds{}, fmt.Errorf("could not lock the cached login of sso-session %s: %w", ssoSession, err)
 		}

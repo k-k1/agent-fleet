@@ -116,11 +116,16 @@ var ErrLockTimeout = errors.New("timed out waiting for a lock")
 // with the run's own Ctrl-C and wait budget, not with the holder. nil cancel and a zero
 // deadline wait for as long as the holder does.
 func FlockEx(f *os.File, cancel <-chan struct{}, deadline time.Time) error {
+	return flockWait(f, syscall.LOCK_EX, cancel, deadline)
+}
+
+// flockWait is FlockEx for any flock mode (LOCK_EX or LOCK_SH).
+func flockWait(f *os.File, how int, cancel <-chan struct{}, deadline time.Time) error {
 	if cancel == nil && deadline.IsZero() {
-		return syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+		return syscall.Flock(int(f.Fd()), how)
 	}
 	for {
-		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		err := syscall.Flock(int(f.Fd()), how|syscall.LOCK_NB)
 		if err == nil {
 			return nil
 		}
@@ -443,6 +448,13 @@ func (s *Store[S]) Gate(key string) *sync.Mutex {
 // that read the login just before a logout would otherwise write fresh credentials back after
 // the logout deleted them.
 func (s *Store[S]) LockKey(key string, shared bool) (func(), error) {
+	return s.LockKeyCancel(key, shared, nil, time.Time{})
+}
+
+// LockKeyCancel is LockKey whose wait ends with cancel or a non-zero deadline
+// (ErrLockInterrupted, ErrLockTimeout): a logout holds the exclusive lock across its network
+// call, and a waiting run's Ctrl-C and budget must not wait for it.
+func (s *Store[S]) LockKeyCancel(key string, shared bool, cancel <-chan struct{}, deadline time.Time) (func(), error) {
 	if err := os.MkdirAll(s.dir(), 0o700); err != nil {
 		return nil, err
 	}
@@ -454,7 +466,7 @@ func (s *Store[S]) LockKey(key string, shared bool) (func(), error) {
 	if shared {
 		how = syscall.LOCK_SH
 	}
-	if err := syscall.Flock(int(f.Fd()), how); err != nil {
+	if err := flockWait(f, how, cancel, deadline); err != nil {
 		f.Close()
 		return nil, err
 	}

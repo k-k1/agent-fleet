@@ -881,7 +881,7 @@ func TestTerminalRunFallsBackToTheTerminalWhenTheRequestCannotBeFiled(t *testing
 // records its pid, from now on.
 func slowExport(t *testing.T, state string) {
 	t.Helper()
-	hook := "echo $$ > \"" + filepath.Join(state, "exportPid") + "\"\n[ -f \"" + filepath.Join(state, "slow") + "\" ] && exec sleep 60\n"
+	hook := "if [ -f \"" + filepath.Join(state, "slow") + "\" ]; then echo $$ > \"" + filepath.Join(state, "exportPid") + "\"; exec sleep 60; fi\n"
 	if err := os.WriteFile(filepath.Join(state, "onExport"), []byte(hook), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -918,8 +918,10 @@ func TestTerminalRunSIGTERMKillsASlowCheck(t *testing.T) {
 			t.Errorf("%v", err)
 			return
 		}
-		fileAppears(filepath.Join(state, "exportPid"))
-		time.Sleep(200 * time.Millisecond)
+		// Only the slow export writes its pid: the check is running and blocked.
+		if !fileAppears(filepath.Join(state, "exportPid")) {
+			t.Errorf("the slow export never started")
+		}
 		syscall.Kill(os.Getpid(), syscall.SIGTERM)
 	}()
 	t.Cleanup(func() { <-helper })
@@ -961,5 +963,61 @@ func TestTerminalRunBudgetKillsASlowCheck(t *testing.T) {
 	}
 	if !processGone(filepath.Join(state, "exportPid")) {
 		t.Fatal("the slow `aws` child outlived the wait")
+	}
+}
+
+// A logout holds the cached-login lock across its network call; a waiting run's check blocks
+// on it before it starts `aws`, and Ctrl-C (SIGTERM) or the budget must still end the run
+// with exit 3 instead of waiting for the logout.
+func TestTerminalRunCacheLockHeldByALogout(t *testing.T) {
+	for name, tc := range map[string]struct {
+		wait time.Duration
+		term bool
+		want string
+	}{
+		"SIGTERM": {time.Minute, true, "stopped waiting"},
+		"budget":  {500 * time.Millisecond, false, "waiting for the member to approve"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			bin, state := fakeAWS(t, ssoProfile)
+			fastPoll(t)
+			helper, ended := make(chan struct{}), make(chan struct{})
+			go func() {
+				defer close(helper)
+				if !fileAppears(logins.RequestPath("af-prod")) {
+					t.Errorf("request never appeared")
+					return
+				}
+				// The logout starts after the run's first check, and holds the lock for good.
+				unlock, err := logins.LockKey("af-prod", false)
+				if err != nil {
+					t.Errorf("%v", err)
+					return
+				}
+				defer unlock()
+				// A login lands: the check runs and blocks on the lock.
+				if err := putSSOCache("fresh", time.Now().Add(time.Hour)); err != nil {
+					t.Errorf("%v", err)
+					return
+				}
+				os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600)
+				if tc.term {
+					time.Sleep(300 * time.Millisecond)
+					syscall.Kill(os.Getpid(), syscall.SIGTERM)
+				}
+				<-ended
+			}()
+			t.Cleanup(func() { <-helper })
+			var stderr bytes.Buffer
+			start := time.Now()
+			_, _, _, err := PlanExec(bin, workloadEnv, terminalOpts(&stderr, tc.wait))
+			close(ended)
+			if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v", err)
+			}
+			if time.Since(start) > 10*time.Second {
+				t.Fatalf("the held lock kept the run for %s", time.Since(start))
+			}
+		})
 	}
 }

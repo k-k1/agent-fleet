@@ -426,7 +426,7 @@ flows depending on who ran the command. Decision 6's first bullet is amended; de
   running wins over that check's outcome (even a success), and the waits for the request directory's lock and the
   gcloud root's lock end with the Ctrl-C or the wait budget instead of with the lock's holder. The check's
   `aws` / `gcloud` child runs under a context that ends with the Ctrl-C (SIGTERM included) or the budget: it is
-  killed and the check returns only after it exited, so nothing outlives the wait. A lock or child that runs
+  killed and the check returns only after it exited, so nothing outlives the wait. The wait for the cached-login lock, which a logout holds across its network call, ends with the same context. A lock or child that runs
   out the budget ends the run as a timeout (exit 3, request pending), never as a Console that could not be
   asked, so no terminal login follows it.
 - **Console cannot be asked** (the request cannot be filed): a terminal run falls back to the in-terminal login
