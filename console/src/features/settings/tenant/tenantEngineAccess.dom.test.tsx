@@ -103,7 +103,7 @@ describe("tenant engine access", () => {
     expect(seg("llm", "メンバー全員").disabled).toBe(false);
     expect(seg("image", "許可したメンバーだけ").disabled).toBe(true);
     expect(tick("bob 画像生成（image）").disabled).toBe(true);
-    expect(group("image").textContent).toContain("デプロイ管理者");
+    expect(group("image").textContent).toContain("配備管理者");
   });
 });
 

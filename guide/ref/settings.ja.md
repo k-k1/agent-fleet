@@ -79,7 +79,7 @@ Control Plane の起動前に設定します。注釈つきの一覧は
 
 | 変数 | 決めるもの |
 |---|---|
-| `AF_RUNTIME` | デプロイ形態（[deploy-targets.md](deploy-targets.ja.md)）。不明な値は**起動時に拒否**される |
+| `AF_RUNTIME` | 配備形態（[deploy-targets.md](deploy-targets.ja.md)）。不明な値は**起動時に拒否**される |
 | `AUTH` | サインインの方式。`dev`（単独）/ `oauth`（CP 内蔵）/ `proxy`（前段のゲートウェイ）|
 | `DATA_DIR` | 永続する状態がすべてここにあるため、**バックアップすべき対象** |
 | `AF_MASTER_KEY` | at-rest 暗号の根。**失うと保存済みの資格情報は復元できない** |

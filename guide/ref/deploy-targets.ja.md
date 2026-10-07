@@ -4,7 +4,7 @@ source_of_truth: "この表（行は Control Plane が受け付ける runtime �
 updated: "2026-10"
 ---
 
-# デプロイ形態 — どこに何が在るか
+# 配備形態 — どこに何が在るか
 
 [English](deploy-targets.md) | 日本語
 

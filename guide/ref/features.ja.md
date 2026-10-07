@@ -133,7 +133,7 @@ updated: "2026-09"
 
 | 機能 | 誰が | どこ | 詳細 |
 |---|---|---|---|
-| デプロイ形態 | 配備管理者 | 起動前 | [deploy-targets.md](deploy-targets.ja.md) |
+| 配備形態 | 配備管理者 | 起動前 | [deploy-targets.md](deploy-targets.ja.md) |
 | 導入・更新・バックアップ・復旧 | 配備管理者 | 端末 | [operator 02](../operate/02-install.ja.md) / [03](../operate/03-run.ja.md) |
 | 入口・TLS・サインイン方式 | 配備管理者 | 端末 | [operator 04](../operate/04-secure.ja.md) |
 | 監査ログと egress 統制 | 配備管理者 | 管理 | [operator 04](../operate/04-secure.ja.md) |

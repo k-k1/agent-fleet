@@ -48,7 +48,7 @@ const emptyIdP = (): TenantIdP => ({
 // TenantSignInMethods — every sign-in method usable in this tenant (docs/log/61 §61.17.5).
 //
 // One list holds both the tenant's own rows (creatable, editable, needing approval) and the
-// deployment methods, i.e. the default tenant's methods (badged "deployment-wide"「デプロイ共通」
+// deployment methods, i.e. the default tenant's methods (badged "deployment-wide" (「配備共通」)
 // and not editable). Each row carries two toggles: accept, and show as a button. The point is
 // that the screen shows the whole gate; when deployment methods were not listed, a company
 // signing in with Google every day still saw this view empty (§61.17).

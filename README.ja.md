@@ -82,7 +82,7 @@ Docker Compose の Linux 1 台でも AWS ECS でも動きます。
 ## 試す
 
 どのエディションが合うかは 20 分で決められます。判断材料は
-[デプロイ形態を選ぶ](guide/operate/01-choose.ja.md)にまとめてあります。
+[配備形態を選ぶ](guide/operate/01-choose.ja.md)にまとめてあります。
 
 | エディション | 向いている相手 |
 |---|---|

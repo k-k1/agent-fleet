@@ -221,7 +221,7 @@ describe("merged sign-in method list", () => {
     expect(rows).toHaveLength(3);
     expect(rows[0].querySelector(".as-name")?.textContent).toBe("Google でサインイン");
     expect(rows[0].querySelector("code")?.textContent).toBe("google");
-    expect(rows[0].textContent).toContain("デプロイ共通");
+    expect(rows[0].textContent).toContain("配備共通");
     expect(rows[2].querySelector(".as-name")?.textContent).toBe("entra");
   });
 

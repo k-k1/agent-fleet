@@ -90,7 +90,7 @@ export const ops = {
   "ops.sl_hint":
     "Slack アプリを作成し（api.slack.com/apps → From scratch）、Socket Mode を有効化します。Bot スコープ（chat:write, channels:read, channels:history, groups:history, im:history, reactions:write, users:read, users:read.email）と connections:write を持つ App-level トークンを追加し、message 系イベントを購読してからインストールして、/invite で Bot をチャンネルに招待します。両方のトークンをここに貼り付けてください。トークンはワークスペース内に暗号化保存され、通知の送信にだけ使われます（送るのは表示名と状態だけで、ログや秘密は送りません）。",
   // --- EC2 スロットプール（features/settings/ec2Pool.tsx・AF_RUNTIME=ecs-ec2 のみ）---
-  "pool.not_ec2": "このデプロイは EC2 スロットプールを使っていません。",
+  "pool.not_ec2": "この配備は EC2 スロットプールを使っていません。",
   "pool.slots_title": "スロット",
   "pool.provisioned": "確保中",
   "pool.of_max": "上限 {n} 台",
@@ -101,7 +101,7 @@ export const ops = {
   "pool.free": "空き",
   "pool.free_sub": "上のうち home が付いていないもの",
   "pool.at_cap": "上限に達しています。次に起動する人には新しいスロットではなく、最も長く休眠しているユーザーのスロットが割り当てられます（立ち退き）。",
-  "pool.timers": "タスクが無くなって {sleep} でスロットを停止します。home はテナント側で指定が無ければ {hibernate} で snapshot へ退避します（デプロイ既定）。",
+  "pool.timers": "タスクが無くなって {sleep} でスロットを停止します。home はテナント側で指定が無ければ {hibernate} で snapshot へ退避します（配備の既定）。",
   "pool.timers_no_hibernate": "タスクが無くなって {sleep} でスロットを停止します。home の退避はテナント側で指定しない限り行いません（テナント → 使われない home の退避）。",
   "pool.timers_terminate": "停止したまま {terminate} 経過したスロットは終了し、root ボリュームの課金も終わります（次にその大きさを使う人の起動は 110 秒ではなく 135 秒になります）。",
   "pool.timers_no_terminate": "スロットを終了しない設定です。インスタンスは上限 {max} 台まで残り続け、その root ボリュームを課金し続けます（Ec2SlotTerminateAfterSec）。",
@@ -160,7 +160,7 @@ export const ops = {
   "pool.golden_none": "ありません。新規 home は空から作られるので、新しいメンバーは初回起動で boot-install とキャッシュ空を払います。通常は CP が {image} 用を自動で焼きます（スロットが 2 つ空くまで待ちます）。自動焼きを切っている場合は deploy/aws/ecs/bake-golden.sh で焼いてください。",
   "pool.golden_baking": "{image} 用を用意しています。焼いたあと、それが本当に起動することを確かめてから使い始めます。それまで新規 home は空から作られます（初回起動が遅いだけで、使えなくなることはありません）。",
   "pool.golden_rejected": "{snapshot} は使いません: {reason}。起動を確かめられなかったものは配らないので、新規 home は空から作られます（初回起動が遅いだけで、使えなくなることはありません）。同じイメージでの焼き直しは 2 回で打ち切ります。",
-  "pool.golden_stale": "{snapshot} は {baked} から焼かれていますが、このデプロイは {running} を動かしています。この golden は使われず、焼き直すまで新規 home は空から作られます（初回起動が遅くなります）。",
+  "pool.golden_stale": "{snapshot} は {baked} から焼かれていますが、この配備は {running} を動かしています。この golden は使われず、焼き直すまで新規 home は空から作られます（初回起動が遅くなります）。",
   "pool.golden_ok": "{image} から焼いたもの",
   // 焼き込みの進み具合（docs/log/64 §64.30）。焼きは 11 分前後かかり、前半には snapshot が
   // まだ存在しない——「用意しています」の 1 行だけでは、動いているのか固まっているのか

@@ -4,7 +4,7 @@ source_of_truth: "各形態が何に対応しているかは ref/deploy-targets.
 updated: "2026-10"
 ---
 
-# 01. デプロイ形態を選ぶ
+# 01. 配備形態を選ぶ
 
 [English](01-choose.md) | 日本語
 

@@ -31,7 +31,7 @@ export const common = {
   "iconset.seti": "Seti（単色・タイプ別着色）",
 
   // --- サーフェス色（lib/settings.ts SURFACE_COLORS）---
-  "surface_color.default": "デフォルト",
+  "surface_color.default": "既定",
   "surface_color.slate": "スレート",
   "surface_color.blue": "ブルー",
   "surface_color.green": "グリーン",
