@@ -112,7 +112,7 @@ export const admin = {
   "admin.engines_issue_revoke": "{t}/{k} のメンバーシップを削除してください。メンバーシップは要求ごとに解決されているので、次の要求から 401 になります。",
   "admin.engines_issue_revoke_only": "⚠️ これ以外の失効手段は署名マスタの回転だけです。git・メモ・スケジュールのトークンも同じマスタから出ているので、回すとこの配備の全員がログアウトします。",
   "admin.engines_issue_has_workspace_tag": "ワークスペースあり",
-  "admin.engines_issue_has_workspace": "⚠️ このメンバーシップにはワークスペースがあります。人が使っているメンバーシップの形です。人の発行トークンを貸すと、取り消す手段は「この配備の全員がログアウトする」署名マスタの回転しか残りません。借用専用のメンバーシップを別に作ってから発行してください。",
+  "admin.engines_issue_has_workspace": "⚠️ このメンバーシップにはワークスペースがあります。人が使っているメンバーシップの形です。人の発行トークンを貸すと、取り消すには、その人のメンバーシップを削除して本人も使えなくするか、この配備の全員がログアウトする署名マスタの回転をするしかありません。借用専用のメンバーシップを別に作ってから発行してください。",
   "admin.engines_issue_no_workspace": "このメンバーシップにワークスペースはありません（借用専用のメンバーシップとして期待される形です）。",
   // --- エンジンの現況（features/settings/admin/adminEngines.tsx の EngineStatus）---
   // ⚠️ ここの文言は「分からないことは書かない」で通っている。CP が答えを持たない行は
@@ -393,7 +393,7 @@ export const admin = {
   // ログイン必須は Civitai のメタデータからは分からず、CP が DL URL を HEAD して初めて出る
   // 事実なので、「分からなかった」は空欄——「誰でも DL 可」とは別物として扱う。
   "admin.engines_hit_login_required": "要ログイン",
-  "admin.engines_hit_login_note": "このファイルは Civitai のアカウントでログインした人にしか配られません。この配備は Civitai の資格情報を持たないので、取り込みは 401 で失敗します。",
+  "admin.engines_hit_login_note": "このファイルは Civitai のアカウントでログインした人にしか配られません。取り込みは登録済みの Civitai アカウントとして実行されます。登録がなければ 401 で失敗し、あっても投稿者の条件を満たしているかは検索の時点では分かりません。",
   "admin.engines_limit_gated_auto": "gated（規約に同意）",
   "admin.engines_limit_gated_manual": "gated（作者の承認待ち）",
   "admin.engines_limit_noncommercial": "商用不可",
@@ -473,8 +473,8 @@ export const admin = {
   // 🔴 Hugging Face の gated とは別物で、こちらには鍵が無い。CivitAI のメタデータは誰にでも
   // 200 を返し、ダウンロードの可否だけが投稿者ごとに分かれる（実機で 5 資産が 200/401/403）。
   // トークン欄を作らない判断なので、「別の資産を選ぶ・手で置いて登録する」を言い切る。
-  "admin.engines_ingest_civitai_account_first": "この資産は投稿者がダウンロードを制限しています。取り込みは登録済みの Civitai アカウントとして実行されます。そのアカウントが投稿者の条件を満たしていない場合は、ダウンロードが 401 で返り、ジョブにその旨が出ます。",
-  "admin.engines_ingest_civitai_login": "この資産は、投稿者がログイン済みのアカウントからのダウンロードだけを許しています。この配備は匿名で取り込むため、登録済みの Civitai トークンのアカウントがすでに条件を満たしているかはここでは確かめられません。未登録なら「APIトークン」から登録するか、別の資産を選んでください。",
+  "admin.engines_ingest_civitai_account_first": "この資産は投稿者がダウンロードを制限しています。資産の検索は匿名ですが、取り込みは登録済みの Civitai アカウントとして実行されます。そのアカウントが投稿者の条件を満たしているかはここでは確かめられません。満たしていない場合は、ダウンロードが 401 で返り、ジョブにその旨が出ます。",
+  "admin.engines_ingest_civitai_login": "この資産は、投稿者がログイン済みのアカウントからのダウンロードだけを許しています。この配備には Civitai のトークンが登録されていないため、取り込めません。「APIトークン」から登録するか、別の資産を選んでください。",
   "admin.engines_ingest_gated_accept_first": "gated のリポジトリです。トークンは登録済みですが、そのアカウントがこのリポジトリの条項に同意しているかは Control Plane からは確かめられません（匿名で調べているため）。未同意だと取り込みは 403 で失敗するので、先に Hugging Face のモデルページで同意しておいてください。",
   "admin.engines_comfy_lan": "LAN の ComfyUI（画像エンジン）",
   "admin.engines_comfy_lan_source_panel": "使用中: {url}（このパネルで設定）",

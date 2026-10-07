@@ -120,7 +120,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_issue_revoke": "Remove the membership {t}/{k}. It is resolved on every request, so the next request gets a 401.",
   "admin.engines_issue_revoke_only": "⚠️ The only other way to revoke it is rotating the signing master — and the git, memo and schedule tokens come from that same master, so rotating it logs out everyone on this deployment.",
   "admin.engines_issue_has_workspace_tag": "has a workspace",
-  "admin.engines_issue_has_workspace": "⚠️ This membership has a workspace, which is what a person's membership looks like. Lend a person's issuing token and the only way to take it back is the signing-master rotation that logs out everyone on this deployment. Make a separate membership for borrowing and issue for that one.",
+  "admin.engines_issue_has_workspace": "⚠️ This membership has a workspace, which is what a person's membership looks like. Lend a person's issuing token and taking it back means either removing that person's membership, which locks them out too, or rotating the signing master, which logs out everyone on this deployment. Make a separate membership for borrowing and issue for that one.",
   "admin.engines_issue_no_workspace": "This membership has no workspace, which is what a membership kept only for borrowing should look like.",
   // --- engine status (adminEngines.tsx, EngineStatus) ---
   // ⚠️ Every line here follows "do not write down what you do not know". A line the CP has no
@@ -402,7 +402,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // "Login required" is not in Civitai's metadata at all — the CP has to HEAD the download to
   // learn it — so "could not tell" is blank, and is not the same answer as "anyone may".
   "admin.engines_hit_login_required": "login required",
-  "admin.engines_hit_login_note": "Civitai hands this file only to a logged-in account. This deployment holds no Civitai credentials, so the ingest would fail with 401.",
+  "admin.engines_hit_login_note": "Civitai hands this file only to a logged-in account. The ingest runs as the registered Civitai account: with none registered it fails with 401, and with one registered, whether it meets the uploader's condition is unknown at search time.",
   "admin.engines_limit_gated_auto": "gated (accept the terms)",
   "admin.engines_limit_gated_manual": "gated (the author approves)",
   "admin.engines_limit_noncommercial": "non-commercial",
@@ -486,8 +486,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // 🔴 A different wall from Hugging Face's gating, and there is no key to it: Civitai answers
   // its metadata 200 for everybody and only the DOWNLOAD is per uploader (five assets measured,
   // split 200/401/403). No token field is being added, so the sentence says what to do instead.
-  "admin.engines_ingest_civitai_account_first": "This asset is download-restricted by its uploader. The ingest will run as the registered Civitai account — if that account does not already meet the uploader's condition, the download answers 401 and the job says so.",
-  "admin.engines_ingest_civitai_login": "The person who uploaded this asset only allows downloads from a logged-in account. This deployment ingests anonymously, so whether a registered Civitai token's own account already clears that cannot be checked here \u2014 register one under \u201cAPI tokens\u201d if none is set, or pick another asset.",
+  "admin.engines_ingest_civitai_account_first": "This asset is download-restricted by its uploader. Looking it up here is anonymous, but the ingest runs as the registered Civitai account. Whether that account meets the uploader's condition cannot be checked here; if it does not, the download answers 401 and the job says so.",
+  "admin.engines_ingest_civitai_login": "The uploader of this asset only allows downloads from a logged-in account. This deployment has no Civitai token registered, so it cannot ingest this asset. Register one under “API tokens”, or pick another asset.",
   "admin.engines_ingest_gated_accept_first": "A gated repository. A token is registered, but whether that account has accepted this repository's terms is something the Control Plane cannot check (it resolves anonymously). If it has not, the ingest fails with a 403 — so accept them on the Hugging Face model page first.",
   "admin.engines_comfy_lan": "LAN ComfyUI (image engine)",
   "admin.engines_comfy_lan_source_panel": "In effect: {url} — set in this panel.",
