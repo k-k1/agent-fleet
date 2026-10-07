@@ -242,6 +242,20 @@ export const remainingShort = (until: string | undefined, now: Date = new Date()
   return m ? `${h}h${m}m` : `${h}h`;
 };
 
+// Elapsed time since `since`, in the same compact form as remainingShort ("45m", "21h", "2d3h").
+// "" for an unparseable instant; a time in the future (clock skew) reads as "0m".
+export const elapsedShort = (since: string | undefined, now: Date = new Date()): string => {
+  const t = new Date(since ?? "");
+  if (isNaN(t.getTime())) return "";
+  const mins = Math.max(0, Math.floor((now.getTime() - t.getTime()) / 60000));
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  if (h < 48) return `${h}h`;
+  const d = Math.floor(h / 24);
+  const rh = h % 24;
+  return rh ? `${d}d${rh}h` : `${d}d`;
+};
+
 // How long a single pin holds. The Agent caps it at 24h; extending means pressing again
 // (docs/log/75).
 export const KEEP_AWAKE_HOURS = 4;

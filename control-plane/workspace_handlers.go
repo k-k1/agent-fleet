@@ -777,6 +777,10 @@ type sessionWire struct {
 	// with its threshold (the CP's clock may disagree with the Workspace's). Dropped here,
 	// nothing ever lapses.
 	ProgressAgeSec int `json:"progressAgeSec,omitempty"`
+	// StateSince passes through when the row's busy state began (RFC3339, approximate: the
+	// Agent's first observation or its status file). Dropped here, the admin forecast cannot say
+	// how long a session has been holding the Workspace. Not persisted to the DB mirror.
+	StateSince string `json:"stateSince,omitempty"`
 	// RateLimitResumeAt passes through the Agent's scheduled auto-resume time (RFC3339,
 	// present only while state == "limited"). Dropped, the Console's chip can only say it
 	// is waiting for the limit to lift and not when work will resume. No DB-mirror column

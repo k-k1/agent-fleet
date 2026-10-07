@@ -58,6 +58,7 @@ export interface Session {
   // RFC3339: the Agent's newest sign that a working row is still moving (state file, state
   // source, pane repaint, live tool process). Read by the Control Plane's reaper, not drawn.
   progressAt?: string;
+  stateSince?: string; // RFC3339, approximate: when a working row's current state began (admin forecast)
   progressAgeSec?: number; // the same instant as an age on the Workspace's clock; what the reaper reads
   // The reserved auto-resume instant (RFC3339), present only while state === "limited"
   // (waiting for a usage limit to reset). Empty = no resume is scheduled (auto-resume off,

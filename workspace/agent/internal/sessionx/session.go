@@ -173,6 +173,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 			s.RateLimitResumeAt = at
 		}
 	}
+	fillStateSince(&s, m, realSinceProbes)
 	if alive {
 		fillProgress(&s, m, realProgressProbes)
 	}

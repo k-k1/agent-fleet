@@ -107,7 +107,15 @@ export interface MemberIdle {
    *  holders is empty. */
   stopAt?: string;
   /** What is holding it open. Empty = nothing is, and the countdown to stopAt is running. */
-  holders?: Array<{ kind: string; session?: string; until?: string }>;
+  holders?: Array<{
+    kind: string;
+    session?: string;
+    until?: string;
+    /** kind "working": when the session's busy state began (approximate), and when the hold
+     *  stops counting if nothing moves. lapseAt is absent for an Agent that reports no progress. */
+    since?: string;
+    lapseAt?: string;
+  }>;
   /** When it was observed. It is one sweep interval stale, and is shown so nobody asserts
    *  anything to the second. */
   observedAt: string;

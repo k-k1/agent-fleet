@@ -63,3 +63,24 @@ func TestForecastAgreesWithReaperOnLapse(t *testing.T) {
 		}
 	}
 }
+
+// The forecast's working holder carries when the state began and when the hold lapses (#1819).
+func TestWorkingHolderSinceAndLapse(t *testing.T) {
+	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	h := holdersOf([]sessionWire{{
+		Name: "s1", Alive: true, State: stateWorking,
+		StateSince: "2026-10-06T15:00:00Z", ProgressAt: "2020-01-01T00:00:00Z", ProgressAgeSec: 20 * 60,
+	}}, false, now, 0, 0)
+	if len(h) != 1 || h[0].Since != "2026-10-06T15:00:00Z" {
+		t.Fatalf("holders = %+v, want the Agent's since", h)
+	}
+	// 1h bound minus the 20 min age, on the CP clock (the skewed progressAt string is not used).
+	if want := now.Add(40 * time.Minute).Format(time.RFC3339); h[0].LapseAt != want {
+		t.Errorf("LapseAt = %q, want %q", h[0].LapseAt, want)
+	}
+	// An older Agent (no progress, no since) shows neither: the hold is unbounded for that row.
+	h = holdersOf([]sessionWire{{Name: "s1", Alive: true, State: stateWorking}}, false, now, 0, 0)
+	if len(h) != 1 || h[0].Since != "" || h[0].LapseAt != "" {
+		t.Errorf("holders = %+v, want no since / lapseAt", h)
+	}
+}
