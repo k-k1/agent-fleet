@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -125,6 +126,24 @@ func TestStopIfIdleRefusesWhileNeeded(t *testing.T) {
 	}
 }
 
+// uniqueGen hands each test run a generation number no other run has used. The lifecycle log
+// is process-wide and capped at lifecycleKeep entries, so a test cannot count entries (the
+// count stops moving once the log is full); it looks its own record up by generation.
+// Measured: with a fixed gen and -count=50, runs 17 onward all failed with an empty delta.
+var genSeq atomic.Int64
+
+func uniqueGen() int { return int(1_000_000 + genSeq.Add(1)) }
+
+func lifecycleFor(gen int) []LifecycleEvent {
+	var out []LifecycleEvent
+	for _, e := range Lifecycle() {
+		if e.Gen == gen {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // Deciding deliberateness from s.cmd files a crash as an orderly stop: a daemon that dies
 // on its own is replaced by the next Ensure within milliseconds, so the waiter reaches the
 // lock to find s.cmd already pointing elsewhere. Measured: 727 daemon generations in one
@@ -142,12 +161,12 @@ func TestUnexpectedDeathIsRecordedEvenAfterEnsureReplacedTheProcess(t *testing.T
 	s.up, s.cmd, s.askedStop = true, &exec.Cmd{}, nil
 	s.mu.Unlock()
 
-	before := len(Lifecycle())
-	s.waitDaemon(cmd, nil, 7)
+	gen := uniqueGen()
+	s.waitDaemon(cmd, nil, gen)
 
-	ev := Lifecycle()
-	if len(ev) != before+1 || ev[len(ev)-1].Event != "died" {
-		t.Fatalf("a death nobody asked for must be recorded, got %+v", ev[before:])
+	ev := lifecycleFor(gen)
+	if len(ev) != 1 || ev[0].Event != "died" {
+		t.Fatalf("a death nobody asked for must be recorded, got %+v", ev)
 	}
 }
 
@@ -163,11 +182,11 @@ func TestDeliberateStopIsNotRecordedAsDeath(t *testing.T) {
 	s.up, s.cmd, s.askedStop = true, cmd, cmd // stopIfIdle / Restart / Shutdown set this
 	s.mu.Unlock()
 
-	before := len(Lifecycle())
-	s.waitDaemon(cmd, nil, 7)
+	gen := uniqueGen()
+	s.waitDaemon(cmd, nil, gen)
 
-	if ev := Lifecycle(); len(ev) != before {
-		t.Fatalf("a teardown we asked for must not be filed as a death, got %+v", ev[before:])
+	if ev := lifecycleFor(gen); len(ev) != 0 {
+		t.Fatalf("a teardown we asked for must not be filed as a death, got %+v", ev)
 	}
 }
 
