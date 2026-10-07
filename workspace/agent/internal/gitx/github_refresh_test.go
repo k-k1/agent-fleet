@@ -625,3 +625,24 @@ func TestGitHubTokenDoesNotReturnATokenThatExpiredDuringTheRetries(t *testing.T)
 		t.Fatalf("tok=%q err=%v", tok, err)
 	}
 }
+
+// A snapshot taken before the store file exists is a real snapshot: a first GitHub
+// connection added after it must survive its Save.
+func TestStaleSaveKeepsAConnectionAddedToAStoreThatDidNotExist(t *testing.T) {
+	withAgentHome(t)
+	if _, err := os.Stat(secrets.Path()); !os.IsNotExist(err) {
+		t.Fatalf("setup: store exists (%v)", err)
+	}
+	stale, err := secrets.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedExpiring(t, "fake-access-0", "fake-refresh-0", time.Now().Add(time.Hour).Unix(), time.Now().Add(100*24*time.Hour).Unix())
+	stale.GitIdentity = map[string]secrets.GitIdentity{"github.com": {Name: "n"}}
+	if err := stale.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if got := storedGitHub(t); got.Token != "fake-access-0" {
+		t.Fatalf("the first connection was wiped: %+v", got)
+	}
+}

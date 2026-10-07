@@ -172,6 +172,8 @@ func GitHubForceRefreshContext(ctx context.Context, s *secrets.Data, rejected st
 
 // RenewRejectedGitHubToken is GitHubForceRefresh for a caller that holds no snapshot.
 func RenewRejectedGitHubToken(ctx context.Context, rejected string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, githubRefreshBudget) // the first Load is bounded too
+	defer cancel()
 	s, err := secrets.LoadContext(ctx)
 	if err != nil {
 		return "", err
@@ -213,7 +215,9 @@ func WithGitHubToken(s *secrets.Data, notConnected error, fn func(token string) 
 // lock, and returns the entry now in force. The whole call — the wait for the lock, the
 // grant and its retries — is bounded by githubRefreshBudget and ctx: a holder that is
 // stopped or slow costs the others that long, never indefinitely. Running out of time is
-// a transient failure and never marks the connection.
+// a transient failure and never marks the connection. Writing the grant's result is the
+// one step outside that bound: it has its own short deadline (storeWriteContext, up to
+// three tries), so a call can run that much past the budget rather than lose a spent pair.
 //
 // A renewal is reported as done only once it is in the store. When the write fails the
 // spent refresh token cannot be asked again, so the new pair is kept in this process

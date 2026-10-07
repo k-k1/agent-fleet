@@ -574,6 +574,9 @@ func load() (*Data, error) {
 	b, err := os.ReadFile(Path())
 	if err != nil {
 		if os.IsNotExist(err) {
+			// A store not yet created is a successful, empty snapshot: Save must still tell
+			// a GitHub connection added after it from one the caller made.
+			s.ghBase, s.ghBaseSet = ghSnap{}, true
 			return s, nil
 		}
 		return s, err
