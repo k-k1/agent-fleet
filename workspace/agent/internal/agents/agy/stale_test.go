@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/procx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -102,40 +101,13 @@ func TestHasIdleFooter(t *testing.T) {
 	}
 }
 
-// Shapes measured on the real agy (see stale.go): pane root agy (sid 100), its MCP server in
-// the same session, a run_command as its own session leader.
-func TestToolProcessIn(t *testing.T) {
-	const root = 100
-	idle := func() map[int]procx.Info {
-		return map[int]procx.Info{
-			root: {PPID: 1, State: 'S', Comm: "agy", Pgrp: root, Sid: root},
-			101:  {PPID: root, State: 'S', Comm: "workspace-agent", Pgrp: root, Sid: root},
-		}
+func TestStateSourceModTimeIsTheConversationDB(t *testing.T) {
+	m, _ := staleFixture(t, "src", [][3]any{{1, 2, "x"}}, nil, 3*time.Hour)
+	got, ok := agentImpl{}.StateSourceModTime(m)
+	if !ok || time.Since(got) < 2*time.Hour {
+		t.Fatalf("StateSourceModTime = %v, %v; want the DB's 3h-old mtime", got, ok)
 	}
-	if toolProcessIn(root, idle()) {
-		t.Fatal("agy's MCP server alone read as a tool process")
-	}
-	tab := idle()
-	tab[200] = procx.Info{PPID: root, State: 'S', Comm: "bash", Pgrp: 200, Sid: 200}
-	tab[201] = procx.Info{PPID: 200, State: 'S', Comm: "sleep", Pgrp: 200, Sid: 200}
-	if !toolProcessIn(root, tab) {
-		t.Fatal("a run_command (own-session bash > sleep) was not seen")
-	}
-	tab[200] = procx.Info{PPID: root, State: 'Z', Comm: "bash", Pgrp: 200, Sid: 200}
-	delete(tab, 201)
-	if toolProcessIn(root, tab) {
-		t.Fatal("a zombie tool counted as running")
-	}
-	// Wrapper shell as the pane root with agy beneath it, same session.
-	wrapped := map[int]procx.Info{
-		50:  {PPID: 1, State: 'S', Comm: "sh", Pgrp: 50, Sid: 50},
-		100: {PPID: 50, State: 'S', Comm: "agy", Pgrp: 100, Sid: 50},
-		101: {PPID: 100, State: 'S', Comm: "workspace-agent", Pgrp: 50, Sid: 50},
-	}
-	if toolProcessIn(50, wrapped) {
-		t.Fatal("agy under a wrapper shell read as a tool process")
-	}
-	if toolProcessIn(999, wrapped) {
-		t.Fatal("unknown root read as a tool process")
+	if _, ok := (agentImpl{}).StateSourceModTime(session.Meta{Dir: "/other", Name: "none"}); ok {
+		t.Fatal("a session with no conversation answered")
 	}
 }

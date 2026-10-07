@@ -2,7 +2,7 @@
 
 English | [日本語](0055-idle-stop-and-carried-interactions.ja.md)
 
-- Status: **adopted** (2026-08-24). The record of the investigation and the measurements is [docs/75](../log/75-idle-stop-and-pending-interactions.md).
+- Status: **adopted** (2026-08-24). Follow-ups: #1830 (bound the hold for managed sessions and the remaining kinds). The record of the investigation and the measurements is [docs/75](../log/75-idle-stop-and-pending-interactions.md).
 - See also: [0030-turn-abort-auto-resume.md](0030-turn-abort-auto-resume.md) (splitting live state by "the next move to prompt") /
   [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md) (stopping = releasing a slot = cost) /
   [docs/history/p3-9-idle-stop.md](../log/p3-9-idle-stop.md) (the prototype of the two-tier arrangement)
@@ -201,3 +201,24 @@ judgement has drifted twice already).
   measured (docs/75 §75.10.1 G). Capturing **permissions** for cursor / kiro / copilot stops at unit
   tests, because the permission request itself could not be reproduced on real hardware (ibid. J) — we
   do not write "it should work".
+
+## Addendum (2026-10-07): a frozen "working" row no longer holds the container forever (#1818)
+
+Decision 9's `machineBusy` had no upper bound: a row whose kind-derived `working` never recorded a
+turn end (agy's conversation DB, copilot's `events.jsonl`, a cursor transcript, kiro's footer) kept the
+workspace awake indefinitely (~21 h measured, #1811). The decisions above are unchanged; this adds one
+bound inside `machineBusy`:
+
+- The Agent reports `progressAt` per live busy row, plus `progressAgeSec` (its age on the Workspace's own
+  clock; the CP compares only the age, so clock skew cannot lapse a live row): the newest of the status
+  file's mtime, the kind's own state source's mtime, the pane's last repaint, and "now" while a tool
+  process lives under the pane. Future mtimes are ignored.
+- It is reported only where those signals are observable: Terminal claude and agy. Managed sessions and
+  the other kinds (codex, cursor, copilot, kiro, ...) report nothing and keep holding, because a long
+  silent build there would otherwise look frozen. Widening the set needs a measured live signal per kind.
+- A `working` / `compacting` row whose progress age exceeds one hour (`busyProgressLapse`) is
+  classified `unknown`: not a reason to stay awake, and not foldable by tier 1 either. Tier 2 may then
+  stop the workspace.
+- Checked after the pin and `backgroundBusy`, which are never subject to it. An absent (or zero)
+  `progressAgeSec` keeps the old behaviour (hold); the lapse reads the age only, never `progressAt`. `holdersOf` goes through the same predicate (decision 11).
+- Not covered (still unbounded): managed sessions and every kind other than claude / agy.

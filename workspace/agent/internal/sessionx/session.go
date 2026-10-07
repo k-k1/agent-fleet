@@ -173,6 +173,9 @@ func wireSession(m session.Meta, alive bool) session.Session {
 			s.RateLimitResumeAt = at
 		}
 	}
+	if alive {
+		fillProgress(&s, m, realProgressProbes)
+	}
 	// When the login in force was written. Sent for a stopped session too: the mirror of a
 	// session that died on an expired login is exactly where the reader goes to see whether
 	// re-authenticating took (docs/log/47 §4-11). Costs one stat, and the credential parse

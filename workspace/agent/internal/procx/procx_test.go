@@ -42,3 +42,41 @@ func TestParseSession(t *testing.T) {
 		t.Fatalf("got %+v ok=%v, want Pgrp 1234 Sid 1100", pi, ok)
 	}
 }
+
+// Shapes measured on the real agy (docs/log/32): pane root agy (sid 100), its MCP server in
+// the same session, a run_command as its own session leader.
+func TestToolProcessIn(t *testing.T) {
+	const root = 100
+	idle := func() map[int]Info {
+		return map[int]Info{
+			root: {PPID: 1, State: 'S', Comm: "agy", Pgrp: root, Sid: root},
+			101:  {PPID: root, State: 'S', Comm: "workspace-agent", Pgrp: root, Sid: root},
+		}
+	}
+	if ToolProcessIn(root, idle()) {
+		t.Fatal("agy's MCP server alone read as a tool process")
+	}
+	tab := idle()
+	tab[200] = Info{PPID: root, State: 'S', Comm: "bash", Pgrp: 200, Sid: 200}
+	tab[201] = Info{PPID: 200, State: 'S', Comm: "sleep", Pgrp: 200, Sid: 200}
+	if !ToolProcessIn(root, tab) {
+		t.Fatal("a run_command (own-session bash > sleep) was not seen")
+	}
+	tab[200] = Info{PPID: root, State: 'Z', Comm: "bash", Pgrp: 200, Sid: 200}
+	delete(tab, 201)
+	if ToolProcessIn(root, tab) {
+		t.Fatal("a zombie tool counted as running")
+	}
+	// Wrapper shell as the pane root with agy beneath it, same session.
+	wrapped := map[int]Info{
+		50:  {PPID: 1, State: 'S', Comm: "sh", Pgrp: 50, Sid: 50},
+		100: {PPID: 50, State: 'S', Comm: "agy", Pgrp: 100, Sid: 50},
+		101: {PPID: 100, State: 'S', Comm: "workspace-agent", Pgrp: 50, Sid: 50},
+	}
+	if ToolProcessIn(50, wrapped) {
+		t.Fatal("agy under a wrapper shell read as a tool process")
+	}
+	if ToolProcessIn(999, wrapped) {
+		t.Fatal("unknown root read as a tool process")
+	}
+}

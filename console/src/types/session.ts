@@ -55,6 +55,10 @@ export interface Session {
   resumable?: boolean; // a stopped session whose dir still exists (false = archive only)
   backgroundBusy?: boolean; // idle by hook but a run_in_background task is still running
   backgroundBusyReason?: string;
+  // RFC3339: the Agent's newest sign that a working row is still moving (state file, state
+  // source, pane repaint, live tool process). Read by the Control Plane's reaper, not drawn.
+  progressAt?: string;
+  progressAgeSec?: number; // the same instant as an age on the Workspace's clock; what the reaper reads
   // The reserved auto-resume instant (RFC3339), present only while state === "limited"
   // (waiting for a usage limit to reset). Empty = no resume is scheduled (auto-resume off,
   // nothing to derive a time from, or a per-model limit). Display-only, so the chip can say

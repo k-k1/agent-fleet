@@ -115,3 +115,35 @@ func Children(t map[int]Info) map[int][]int {
 	}
 	return kids
 }
+
+// ToolProcessIn reports whether a tool process lives under root. A CLI such as agy runs each run_command
+// as a child that is its own session leader, while its long-lived helpers (MCP servers) share
+// the CLI's session, so "session leader other than the pane's" separates the two without naming
+// any helper. A helper that setsid()s itself would read as a tool and only delay the
+// lapse (status quo), never end a live tool early.
+func ToolProcessIn(root int, tab map[int]Info) bool {
+	rootInfo, ok := tab[root]
+	if !ok {
+		return false
+	}
+	kids := Children(tab)
+	seen := map[int]bool{root: true}
+	queue := append([]int(nil), kids[root]...)
+	for len(queue) > 0 {
+		pid := queue[0]
+		queue = queue[1:]
+		if seen[pid] {
+			continue
+		}
+		seen[pid] = true
+		pi, ok := tab[pid]
+		if !ok {
+			continue
+		}
+		queue = append(queue, kids[pid]...)
+		if pi.State != 'Z' && pi.Sid == pid && pi.Sid != rootInfo.Sid {
+			return true
+		}
+	}
+	return false
+}

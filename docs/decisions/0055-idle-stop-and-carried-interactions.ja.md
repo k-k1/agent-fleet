@@ -2,7 +2,7 @@
 
 [English](0055-idle-stop-and-carried-interactions.md) | 日本語
 
-- 状態: **採用**（2026-08-24）。検討・実測の記録は [docs/75](../log/75-idle-stop-and-pending-interactions.md)。
+- 状態: **採用**（2026-08-24）。検討・実測の記録は [docs/75](../log/75-idle-stop-and-pending-interactions.md)。後続: #1830（managed と残りの kind の上限）。
 - 関連: [0030-turn-abort-auto-resume.md](0030-turn-abort-auto-resume.ja.md)（live 状態を「促す次の一手」で分ける） /
   [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.ja.md)（停止＝スロット解放＝費用） /
   [docs/history/p3-9-idle-stop.md](../log/p3-9-idle-stop.md)（二段構えの原型）
@@ -180,3 +180,24 @@ ACP の Interaction も agy の合成メニューも、Console に選択カー�
   専用 tmux ソケットで立てた本物の Agent に対する 1 周は実測済み（docs/75 §75.10.1 G）。
   cursor / kiro / copilot の**許可**の写し取りは、実機で許可要求そのものを再現できず
   単体テスト止まり（同 J）— 動くはず、とは書かない。
+
+## 追記（2026-10-07）— 凍った「working」行がコンテナを抱え続けない（#1818）
+
+決定 9 の `machineBusy` には上限が無く、kind 由来の `working`（agy の会話 DB、copilot の
+`events.jsonl`、cursor の転写、kiro のフッター）がターン終了を記録しないまま止まると、
+Workspace が際限なく起き続けた（実測で約 21 時間、#1811）。上の決定は変えず、`machineBusy`
+の内側に上限を 1 つ足す:
+
+- Agent は生きている busy 行ごとに `progressAt` と `progressAgeSec`（Workspace 自身の時計での
+  経過秒。CP は経過秒だけを比べるので時計のずれで生きた行が落ちない）を報告する。値は status
+  ファイルの mtime・kind 自身の状態源の mtime・ペインの最後の再描画・ペイン配下でツール
+  プロセスが生きている間の「いま」のうち最も新しいもの。未来の mtime は無視する。
+- 報告するのは信号が観測できる行だけ: Terminal の claude と agy。managed と他の kind
+  （codex・cursor・copilot・kiro ほか）は何も報告せず従来どおり抱える（無出力の長いビルドが
+  凍結に見えるため）。対象を広げるには kind ごとに実測した生存信号が要る。
+- `working` / `compacting` の行で経過秒が 1 時間（`busyProgressLapse`）を超えるものは
+  `unknown` に分類する。起きている理由にならず、tier 1 の畳み対象にもならない。これで tier 2 が
+  Workspace を止められる。
+- ピンと `backgroundBusy` を先に判定し、これらは対象外。`progressAgeSec` が無い（0 を含む）場合は
+  従来どおり抱える（失効の判定は経過秒だけを読み、`progressAt` は読まない）。`holdersOf` も同じ述語を通す（決定 11）。
+- 対象外（従来どおり上限なし）: managed セッションと claude / agy 以外の kind。

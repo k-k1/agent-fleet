@@ -60,11 +60,12 @@ func holdersOf(sessions []sessionWire, watched bool, now time.Time, repoJobs, im
 			out = append(out, idleHolder{Kind: "pin", Session: s.Name, Until: s.KeepAwakeUntil})
 		case s.BackgroundBusy:
 			out = append(out, idleHolder{Kind: "background", Session: s.Name})
-		case busyState(s.State):
+		case busyState(s.State) && !progressLapsed(s):
 			// Never enumerate state names here — go through the same predicate the
 			// reaper's busy check (sessionActivity) uses. Listing them by hand made
 			// compacting machineBusy for the reaper while the screen showed empty
-			// holders and a StopAt (docs/log/75 decision 11).
+			// holders and a StopAt (docs/log/75 decision 11). A busy row whose progress
+			// lapsed (progressLapsed) is not a holder, exactly as in sessionActivity.
 			out = append(out, idleHolder{Kind: "working", Session: s.Name})
 		}
 	}
