@@ -166,7 +166,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.stopped_archive_days_other": "{count} days",
   "agents.stopped_archive_never": "Off",
   "agents.note_stopped_archive":
-    "How long a session left stopped stays in the session list before it moves to the archive. Nothing is deleted, and you can restore it from the archive at any time. A session locked against deletion stays in the list. A stopped child session holds its slot until then; with Off, until you archive or delete it. Applies from the next list refresh, so shortening it moves sessions already past the new period to the archive at once. Default is the deployment's period: 7 days unless the deployment changed it.",
+    "How long a session left stopped stays in the session list before it moves to the archive. Nothing is deleted, and you can restore it from the archive at any time. A session locked against deletion stays in the list. A stopped child session still counts toward the child cap until then; with Off, until you archive or delete it. Applies from the next list refresh, so shortening it moves sessions already past the new period to the archive at once. Default is the deployment's period: 7 days unless the deployment changed it.",
   "agents.spend_cap_default": "Budget for new sessions",
   "agents.spend_cap_none": "None",
   "agents.note_spend_cap_default": "The spend budget a session gets when its launch names none (including sessions started by create_session or a schedule). When its estimated spend (at list price; not your bill) reaches the budget, the session stops after its turn. Change one session's budget from its menu (Spend budget…).",
@@ -175,7 +175,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
     "Lets a session send a short message to another session in this workspace. It reaches a stopped session by resuming it, and the recipient is told this is not an instruction from you. Applies to sessions started from now on. Default OFF.",
   "agents.fleet_spawn": "Starting sessions from sessions",
   "agents.note_fleet_spawn":
-    "Lets a session start another session, hand it a task, and look after the ones it started: listing them, reading their output, stopping, resuming and renaming them. It cannot add instructions to any session, answer a session's questions for it, or delete or archive one. How many children it may have is set below (deleting or archiving one frees its slot). No grandchildren and no shell sessions. Each child takes a whole agent's worth of memory and quota, and the usage is billed to you. Applies to sessions started from now on. Default OFF.",
+    "Lets a session start another session, hand it a task, and look after the ones it started: listing them, reading their output, stopping, resuming and renaming them. It cannot add instructions to any session, answer a session's questions for it, or delete or archive one. How many children it may have is set below (a child you delete or archive no longer counts toward it). No grandchildren and no shell sessions. Each child takes a whole agent's worth of memory and quota, and the usage is billed to you. Applies to sessions started from now on. Default OFF.",
   "agents.spawn_child_limit": "Children per session",
   "agents.note_spawn_child_limit":
     "How many children one session may have at a time. It is per parent, not per workspace, so more parents mean more sessions. Each child uses a whole agent's memory. 1–10, default 3.",

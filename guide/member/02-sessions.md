@@ -630,10 +630,9 @@ it shows up in the left pane, the sessions overview and the fleet graph like any
 sessions"**. The change applies to **sessions started from then on**; sessions already running
 keep their current tools until they restart. Under it, **"Children per session"** (1–10, default 3)
 sets **how many children one session may have at a time**. The limit is per parent, not per
-workspace, so two parents can each have that many. **A slot frees when you delete or archive a
-child**, or when a child left stopped is archived on its own after the usual window
-([Stopping and tidying up](#stopping-and-tidying-up-sessions)); stopping a child does not free
-it right away.
+workspace, so two parents can each have that many. **A child stops counting toward the limit when you delete or
+archive it**, or when a child left stopped is archived on its own after the usual window
+([Stopping and tidying up](#stopping-and-tidying-up-sessions)); a stopped child still counts.
 
 Once it is on, a session starts a child when it judges the work splits, and tells you it is
 doing so and what for. You can also ask for one ("have a codex session write the tests for
