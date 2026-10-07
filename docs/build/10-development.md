@@ -1031,7 +1031,11 @@ includes verification-removal mutants and a real guard negative/positive pair.
    rejects whitespace edits) and two reviewers all missed them; #1809 fixed them.
    Run the check as a Python regex, not `git grep -E` with Japanese ranges: its
    locale error ("Invalid collation character") is hidden by `2>/dev/null` and
-   reads as "0 hits".
+   reads as "0 hits". `python3 scripts/ja-notation-normalize.py --all --lint-spaces`
+   automates it: it lists half-width spaces between two Japanese characters that
+   `origin/develop` (or the ref given as its argument) did not have, and exits 1 on
+   any. Spaces already in the catalogue (menu paths such as 接続 > Git, ・ separators)
+   are deliberate, so the lint reports only new ones.
 2. **A pass/fail claim without the real summary line is not evidence.** B1 batches
    reported `npm test` exit 0 and still failed CI: strings built by code, goldens
    and console-e2e are invisible to the guard's PINNED scan. Run the FULL console

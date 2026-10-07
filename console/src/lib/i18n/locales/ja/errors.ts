@@ -24,7 +24,7 @@ export const errors = {
   "err.sessions_running":
     "この作業コピーでは稼働中のセッションがあります。切り替えると足元の作業ツリーが入れ替わり壊れるため、ここでは切り替えできません。ブランチは別の作業コピーとして開いてください。",
   "err.branch_in_use":
-    "このブランチは別の作業コピーが既にチェックアウトしています。git は同じブランチを2つの作業コピーに置けません。そちらの作業コピーを開くか、別のブランチを選んでください。",
+    "このブランチは別の作業コピーがすでにチェックアウトしています。git は同じブランチを2つの作業コピーに置けません。そちらの作業コピーを開くか、別のブランチを選んでください。",
   "err.sessions_running_delete":
     "この作業コピーでは稼働中のセッションがあります。削除すると足元の作業ディレクトリが消えて壊れるため、先にそれらのセッションを停止してください。",
   "err.worktree_dirty":
@@ -37,7 +37,7 @@ export const errors = {
     "この作業コピーには削除ロック中のセッションがあります。削除すると再開できなくなるため、先にそのセッションのロックを解除してください。",
   "err.worktree_remove_failed": "worktree の削除に失敗しました。",
   "err.recreate_path_exists":
-    "そのパスには既に何かがあります。作り直せるのは消えたフォルダだけです。",
+    "そのパスにはすでに何かがあります。作り直せるのは消えたフォルダだけです。",
   "err.recreate_parent_missing":
     "この worktree の元になった作業コピーが見つからないため、作り直せません。",
   "err.recreate_stale":
@@ -97,12 +97,12 @@ export const errors = {
   "err.not_provisioned": "所属するテナントがありません。管理者に追加を依頼してください。",
   "err.domain_not_allowed": "このテナントに招待できるメールアドレスのドメインではありません。",
   "err.email_required": "このテナントはドメインで招待を制限しています。メールアドレスで招待してください。",
-  "err.auto_join_conflict": "その自動参加ドメインは既に別のテナントが使っています。",
+  "err.auto_join_conflict": "その自動参加ドメインはすでに別のテナントが使っています。",
   // A tenant slug or a default-tenant user key would share a directory under the data root.
   "err.tenant_slug_reserved": "そのスラグは Control Plane が自身のファイルに使う名前です。別のスラグを選んでください。",
   "err.tenant_slug_conflict": "そのスラグは既定テナントのメンバーのホームディレクトリと同じ名前です。別のスラグを選んでください。",
   "err.user_key_reserved": "このユーザーキーは Control Plane が自身のファイルに使う名前のため、既定テナントに追加できません。",
-  "err.user_key_conflict": "このユーザーキーは既にテナントのディレクトリ名として使われているため、既定テナントに追加できません。管理者に相談してください。",
+  "err.user_key_conflict": "このユーザーキーはすでにテナントのディレクトリ名として使われているため、既定テナントに追加できません。管理者に相談してください。",
   "err.unknown_provider": "そのサインイン方法はこの配備で有効になっていません。",
   "err.self_removal": "自分の最後のメンバーシップは外せません（戻る方法がなくなるため）。他の管理者に依頼してください。",
   "err.bad_share": "共有リクエストが不正です。",
@@ -158,7 +158,7 @@ export const errors = {
   // MCP レジストリ（docs/log/48 / workspace/agent/mcp_servers.go + internal/mcpreg/def.go）
   "err.mcp_not_found": "MCP サーバーが見つかりません",
   "err.mcp_read_only": "このサーバーは編集できません（無効化だけが可能です）",
-  "err.mcp_name_taken": "同じ名前のサーバーが既に登録されています",
+  "err.mcp_name_taken": "同じ名前のサーバーがすでに登録されています",
   "err.mcp_invalid": "MCP サーバーの定義が不正です",
   "err.mcp_name_invalid": "名前は英数字・ハイフン・アンダースコア 48 文字以内で、先頭は英数字にしてください",
   "err.mcp_name_reserved": "その名前は Agent Fleet が使用する予約名です",
@@ -301,7 +301,7 @@ export const errors = {
   "err.ingest_unavailable": "この配備では Console からの取り込みが構成されていません",
   "err.license_not_accepted": "ライセンスへの同意が必要です",
   "err.gated_no_token": "gated のリポジトリですが、この配備に Hugging Face のトークンがありません",
-  "err.model_id_exists": "その id のモデルはこのエンジンに既にあります",
+  "err.model_id_exists": "その id のモデルはこのエンジンにすでにあります",
   // 履歴から 1 行を消すときの 2 つの断り。「まだ走っています」は待てば済む話で、行を消しても
   // ECS のタスクは止まらない（終わったらカタログ行を書く）ことがそのまま理由になる。
   "err.ingest_job_unknown": "その取り込み履歴はこのエンジンにありません",
@@ -325,7 +325,7 @@ export const errors = {
   // --- 画像生成の待ち行列（ADR 0081 レーン A）。これまで proxy されていなかった経路なので、
   // 符号はここが初出になる。Agent の message は英語なので、目録に無いと英語がそのまま出る。
   "err.queue_full": "画像の待ち行列がいっぱいです。今の分が処理されてから投入してください。",
-  "err.trial_pending": "試走が既に待っています。1 枚見てから次を頼んでください。",
+  "err.trial_pending": "試走がすでに待っています。1 枚見てから次を頼んでください。",
   "err.bad_params": "steps / cfg / sampler / scheduler のどれかがこのエンジンで使えない値です。",
   "err.bad_prompt": "プロンプトが空です。",
   "err.bad_op": "その操作はできません。",

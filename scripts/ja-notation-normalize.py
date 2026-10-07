@@ -338,6 +338,26 @@ def normalize(value, rules=RULES, approved=None, terms=()):
     return proposal
 
 
+def stray_spaces(text):
+    """Offsets of half-width spaces with Japanese on both sides and no protected span around them.
+
+    B1 spaces only separate Japanese from Latin, digits, a placeholder or code. A Latin to
+    Japanese substitution leaves the old spaces behind (measured: #1805 left 36 lines).
+    """
+    spans = protected_spans(text)
+    out = []
+    for m in re.finditer(r' +', text):
+        before, after = text[m.start() - 1:m.start()], text[m.end():m.end() + 1]
+        if before and after and JAPANESE_NEIGHBOUR.fullmatch(before) and JAPANESE_NEIGHBOUR.fullmatch(after) \
+                and not any(a <= m.start() < b for a, b, _ in spans):
+            out.append(m.start())
+    return out
+
+
+def stray_contexts(text):
+    return collections.Counter(text[max(0, pos - 3):pos + 4] for pos in stray_spaces(text))
+
+
 def read_source(path):
     return path.read_bytes().decode('utf-8')
 
@@ -377,6 +397,10 @@ def main(argv=None):
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument('--dry-run', action='store_true')
     mode.add_argument('--apply', action='store_true')
+    mode.add_argument('--lint-spaces', metavar='BASE_REF', nargs='?', const='origin/develop',
+                      help='list stray half-width spaces between Japanese characters that BASE_REF '
+                           '(default origin/develop) did not have; exit 1 on any hit. Deliberate ones '
+                           '(menu paths, ・ separators) already exist, so only new ones are reported')
     ap.add_argument('--force', action='store_true', help='apply to reviewed dirty catalogue files')
     ap.add_argument('--allow-terms-out', type=Path)
     ap.add_argument('--report', type=Path)
@@ -412,6 +436,20 @@ def main(argv=None):
                 if value.key in all_values:
                     raise Refusal(f'duplicate key across domains: {value.key}')
                 all_values[value.key] = (domain, value)
+        if args.lint_spaces:
+            base = {}
+            for d in domains:
+                try:
+                    base.update({v.key: v.text for v in values(git(root, 'show', f'{args.lint_spaces}:{JA}/{d}.ts'))})
+                except Refusal:
+                    pass  # a domain the base lacks: every stray space in it is new
+            hits = []
+            for key, (d, v) in all_values.items():
+                if d in domains:
+                    new = stray_contexts(v.text) - stray_contexts(base.get(key, ''))
+                    hits.extend(f'{key}: {escaped(c)}' for c in new.elements())
+            print('\n'.join(hits) if hits else 'no new stray spaces')
+            return 1 if hits else 0
         proposals = {key: normalize(v, rules, approved, terms) for key, (d, v) in all_values.items() if d in domains}
         # Fixed point: rejecting one participant can make another shared-label edit unsafe.
         while True:
