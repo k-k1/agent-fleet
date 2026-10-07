@@ -401,6 +401,9 @@ deployment). It is what `~/.claude` is on your own machine.
   `~/repos`) and a home clean-up do not touch it.
 - **Edit it from a shell or Terminal (CLI) session.** The Console's file browser hides this folder
   (it also holds your login). Don't copy `.credentials.json` or `.claude.json` anywhere.
+  **Keep secrets out of `settings.json`, your hook commands and the committed `.claude/`**: no API
+  keys or tokens in `env` or in a command line. Sign-ins and credentials belong in
+  **⚙Settings → Connections**.
 - **Don't edit Fleet's own hook entries in `settings.json`.** The Agent adds hooks that feed the
   Console (running / waiting for your answer, a pending question or plan, a permission prompt,
   forwarded notifications). They are the entries whose command runs `session-status` or
@@ -413,7 +416,7 @@ deployment). It is what `~/.claude` is on your own machine.
   `session-status` is mistaken for Fleet's, so don't use that word in your own hook commands.
 - **Write hooks for the Workspace, not for your laptop.** Depend only on what the image has
   (bash, jq, node, python) or on what you installed under `~/.local`. A path into your own
-  machine does not exist here, and anything outside your home is reset to the image on Recreate.
+  machine does not exist here, and paths such as `/usr`, `/opt` and `/tmp` revert to the image, so keep scripts in your home.
 - **A hook that starts `claude -p` needs `env -u AF_SESSION_NAME`.** The child inherits the
   session's identity and the same `settings.json`, with Fleet's status hooks. Those hooks then
   report the child's activity as the parent session's, which can scramble its status. Start it as
@@ -421,5 +424,6 @@ deployment). It is what `~/.claude` is on your own machine.
   your own hook once and watch that the session's status stays right.
 
 The workspace policy file that tells **agents** not to read or touch `~/.claude` and the other
-agent state is written for the agents themselves. It does not forbid you from the above, and an
-agent works in these files only when you ask it to.
+agent state is written for the agents themselves. It does not forbid you from the above. You can
+ask an agent to add or edit your personal skills, subagents and hooks; credentials and Fleet's own
+hook entries stay off limits to it.
