@@ -3,6 +3,13 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.29.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.29.0) — 2026-10-07
+
+SVN の作業コピーでログとローカルの変更を見られるようになり、claude の既存の自動メモリを Agent Fleet のメモリへ
+取り込めるようになりました。進まなくなったターミナル（CLI）の claude と Antigravity のセッションが、ワークスペースを
+動かし続けることはなくなりました。Antigravity と codex による画像生成は再び動き、Muse Code の質問に答えられるようになり、
+Console の日本語は 1 つの用語集に沿って揃えました。
+
 ## [0.28.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.28.0) — 2026-10-04
 
 過去のセッションの会話を、コマンドパレットからもエージェントからも検索できるようになりました。セッションは、
