@@ -200,7 +200,7 @@ export const common = {
 
   // === P2 モーダル・行 共通の頻出語（common.cancel/close/delete は既存を再利用）===
   "common.send": "送信",
-  "common.delete_do": "削除する",
+  "common.delete_do": "削除",
   "common.delete_failed": "削除に失敗しました",
   "common.send_failed": "送信に失敗しました",
   "common.copy_failed": "コピーに失敗しました",
