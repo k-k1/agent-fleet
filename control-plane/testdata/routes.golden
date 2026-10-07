@@ -287,6 +287,7 @@ GET /api/fleet-graph
 GET /api/fs/changes
 DELETE /api/fs/delete
 GET /api/fs/download
+GET /api/fs/download-zip
 GET /api/fs/file
 PUT /api/fs/file
 GET /api/fs/images

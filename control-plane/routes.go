@@ -847,6 +847,10 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	// flushing stream proxy passes through before the ingress idle timeout.
 	mux.HandleFunc("POST /api/fs/suggest-edit", proxy.withResolved(proxy.stream))
 	mux.HandleFunc("GET /api/fs/download", rest)
+	// A folder as one zip (workspace/agent/fs_zip.go, ADR 0111). The Agent builds the archive
+	// into a temp file first, so a refusal is a JSON error and a success has a Content-Length;
+	// the relay below passes both through. Not audited (ordinary read, ADR 0111 open point).
+	mux.HandleFunc("GET /api/fs/download-zip", rest)
 	// A picture's width and height from its header — read-only, a bounded header read per
 	// path (workspace/agent/fs_imagesize.go).
 	mux.HandleFunc("POST /api/fs/imagesize", rest)

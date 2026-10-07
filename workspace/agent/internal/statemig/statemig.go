@@ -75,6 +75,9 @@ var Entries = []string{
 	// The reply claude is still streaming (status/livetext.go). Introduced directly under
 	// AgentStateDir; it never existed under .config.
 	"live-text",
+	// Archives being built for a folder download (fs_zip.go). Introduced directly under
+	// AgentStateDir, and empty between requests; listed only so the drift check stays honest.
+	"zip-export",
 	"plan-file",
 	"plan-review",
 	// Per-agent id ledgers and message rings (agents.NewSidStore / NewMsgLedger).

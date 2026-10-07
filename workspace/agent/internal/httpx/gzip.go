@@ -82,6 +82,10 @@ func (w *gzipWriter) Write(p []byte) (int, error) {
 	return w.ResponseWriter.Write(p)
 }
 
+// Unwrap lets http.NewResponseController reach the real connection through the wrapper — the
+// zip download sets a write deadline on it, and without this the call would be a silent no-op.
+func (w *gzipWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func (w *gzipWriter) Flush() {
 	if w.gz != nil {
 		_ = w.gz.Flush()

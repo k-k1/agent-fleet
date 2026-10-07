@@ -25,6 +25,12 @@ These do not vary by deployment.
 | Browser pane: frame rate | 12 fps while visible | Not usable for video |
 | Browser pane: hidden page retention | 60 seconds | After that the page is released and rebuilt from the saved port and path on return |
 | Browser pane: console messages kept | 200 | Oldest are dropped; this is not a persistent log |
+| Folder zip download: files / folders / depth | 20,000 / 4,000 / 32 levels | Refused with 413 and a message naming the limit; nothing is truncated (ADR 0111) |
+| Folder zip download: bytes read | 512 MB | Counted on the bytes actually read, not the listing, so a file that grows mid-build is caught; refused with 413 |
+| Folder zip download: entries looked at / summed name length | 100,000 / 4 MiB | Refused with 413 |
+| Folder zip download: reading time | 45 s | Refused with 413 (below the load balancer's 60 s idle timeout, because nothing is sent until the archive is built) |
+| Folder zip download: transfer time | 15 min | The connection is closed; a stalled client cannot hold the one build slot longer |
+| Folder zip download: concurrent builds | 1 per workspace | A second press waits up to 2 s, then 503 "busy"; each build holds a temp file of up to the byte limit on the home volume |
 
 > **Why the title limit is worth naming.** It used to differ per layer: a handoff
 > proposal accepted 512 bytes, showed it on the card and in the launch dialog and let

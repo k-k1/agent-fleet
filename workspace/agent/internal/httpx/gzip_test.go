@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func gzipGet(t *testing.T, h http.Handler, hdr map[string]string) *httptest.ResponseRecorder {
@@ -122,5 +123,26 @@ func TestGzipFlushStreamsIncrementally(t *testing.T) {
 	plain, _ := io.ReadAll(zr)
 	if string(plain) != "chunk1" {
 		t.Fatalf("flushed body mismatch: %q", plain)
+	}
+}
+
+// A handler behind Gzip must still be able to reach the connection through
+// http.NewResponseController: the folder zip download sets its transfer deadline that way, and
+// without Unwrap the call fails with ErrNotSupported and the deadline silently never exists.
+func TestGzipWriterUnwrapsForResponseController(t *testing.T) {
+	var got error
+	srv := httptest.NewServer(Gzip(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(time.Minute))
+	})))
+	defer srv.Close()
+	req, _ := http.NewRequest("GET", srv.URL, nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	resp, err := http.DefaultTransport.RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got != nil {
+		t.Fatalf("SetWriteDeadline through the gzip wrapper: %v", got)
 	}
 }

@@ -18,6 +18,8 @@ import { t, useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
+import { useLongPressMenu } from "../../lib/useLongPressMenu.ts";
+import { downloadFolderZip } from "../files/folderZip.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
@@ -168,6 +170,9 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   const askConfirm = useConfirm();
   const tr = useT();
   const toast = useToast();
+  // iOS never fires a native contextmenu on a long press of a row, and a folder row is the one
+  // that has the zip download in its menu (ADR 0111): the press opens the same menu.
+  const longPress = useLongPressMenu();
 
   const ac = activePane(layout)?.content;
   const activeFile = ac && ac.kind === "file" ? ac.filePath : "";
@@ -1137,6 +1142,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
               // the one place it reads whole.
               title={isDir ? r.path : r.path + "\n" + tr("proj.open_new_pane")}
               onClick={(e) => {
+                if (isDir && longPress.clickSwallowed()) return; // the lift of the press that opened the menu
                 if (!isDir && (e.ctrlKey || e.metaKey)) {
                   setSelected(r.path);
                   showFileSplit(r.path);
@@ -1147,8 +1153,10 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
+                if (isDir) longPress.onContextMenu(e);
                 setMenu({ x: e.clientX, y: e.clientY, row: r });
               }}
+              {...(isDir ? longPress.props((x, y) => setMenu({ x, y, row: r })) : {})}
               onDragOver={isDir ? onDragOverTo(r.path) : undefined}
               onDrop={isDir ? onDropTo(r.path) : undefined}
               {...(isDir ? {} : onAuxOpen(r.path))}
@@ -1274,6 +1282,18 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
                 <a className="ui-menu-item files-ctx-a" href={downloadURL(menu.row.path)} download onClick={() => setMenu(null)}>
                   <Icon name="cloud-download" /> {tr("proj.download")}
                 </a>
+              </li>
+            )}
+            {menu.row.type === "dir" && (
+              <li>
+                <button
+                  type="button"
+                  className="ui-menu-item"
+                  title={tr("proj.download_zip_title")}
+                  onClick={() => runMenu(() => void downloadFolderZip(menu.row.path, toast))}
+                >
+                  <Icon name="cloud-download" /> {tr("proj.download_zip")}
+                </button>
               </li>
             )}
             {menu.row.type === "file" && (

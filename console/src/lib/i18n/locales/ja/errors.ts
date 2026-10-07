@@ -123,6 +123,12 @@ export const errors = {
   "err.binary_not_supported": "バイナリまたは未対応の文字コードのファイルは編集できません",
   "err.unsupported_newline": "CRLFまたはCR改行のファイルはまだ編集できません",
   "err.read_failed": "ファイルの読み込みに失敗しました",
+  "err.zip_too_large": "このフォルダは大きすぎて zip にできません",
+  "err.unsafe_name": "このフォルダには zip に入れられないファイル名があります",
+  "err.changed_during_zip": "zip の作成中にフォルダが変わりました。もう一度お試しください",
+  "err.zip_no_space": "zip を作る空き容量がワークスペースにありません",
+  "err.zip_not_dir": "フォルダではありません",
+  "err.zip_busy": "ワークスペースが混み合っています。しばらくしてからお試しください",
   "err.write_failed": "ファイルの保存に失敗しました",
   "err.write_state_unknown": "保存内容は反映されていますが、永続化の成否を確認できません",
   // docs/log/28 P3: workspace/agent ハンドラの安定コード（errcodes.go と対）。

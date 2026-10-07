@@ -37,6 +37,10 @@ const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
 });
 vi.stubGlobal("fetch", fetchMock);
 
+// The download itself is folderZip's own test; here only that the menu hands it the right folder.
+const downloadFolderZip = vi.fn(async (_path: string, _notify: unknown) => {});
+vi.mock("../files/folderZip.ts", () => ({ downloadFolderZip: (p: string, n: unknown) => downloadFolderZip(p, n) }));
+
 const writeText = vi.fn(() => Promise.resolve());
 vi.stubGlobal("navigator", Object.assign(globalThis.navigator, { clipboard: { writeText } }));
 
@@ -98,6 +102,7 @@ const click = async (el: Element | null | undefined) => {
 beforeEach(() => {
   setLocale("ja"); // these assert on catalogue wording; jsdom's navigator says en-US
   writes = [];
+  downloadFolderZip.mockClear();
   writeText.mockClear();
   fetchMock.mockClear();
   clearGalleryCache();
@@ -283,5 +288,134 @@ describe("フォルダカードの右クリックメニュー", () => {
     await click(itemFor("夜の絵"));
     const opened = allViews(useLayoutStore.getState().layout).find((v) => v.content.kind === "terminal");
     expect(opened?.session).toBe("s2");
+  });
+});
+
+describe("フォルダカードの「zip でダウンロード」（ADR 0111）", () => {
+  beforeEach(() => {
+    served = [img("image-1.png"), { name: "uuid-2", type: "dir" }];
+  });
+
+  it("フォルダのメニューにだけ出て、そのフォルダのパスで zip を頼む", async () => {
+    await render();
+    await openFolderMenu(1);
+    await click(itemFor("フォルダを zip でダウンロード"));
+    expect(downloadFolderZip).toHaveBeenCalledTimes(1);
+    expect(downloadFolderZip.mock.calls[0][0]).toBe("gen/uuid-1/uuid-2");
+    // The menu closes like every other item's.
+    expect(document.querySelector(".gal-ctxmenu")).toBeNull();
+  });
+
+  it("画像カードのメニューには出ない", async () => {
+    await render();
+    await openMenu();
+    expect(itemFor("zip でダウンロード")).toBeUndefined();
+  });
+
+  it("含めないものを、押す前に項目の title で言う", async () => {
+    await render();
+    await openFolderMenu(1);
+    expect(itemFor("フォルダを zip でダウンロード")?.title).toContain("node_modules");
+  });
+});
+
+describe("フォルダカードのタッチ長押し", () => {
+  beforeEach(() => {
+    served = [img("image-1.png"), { name: "uuid-2", type: "dir" }];
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => vi.useRealTimers());
+
+  const touch = (el: Element, type: string, x = 20, y = 20) => {
+    const e = new Event(type, { bubbles: true, cancelable: true });
+    const pts = type === "touchend" || type === "touchcancel" ? [] : [{ clientX: x, clientY: y }];
+    Object.defineProperty(e, "touches", { value: pts });
+    el.dispatchEvent(e);
+    return e;
+  };
+  const pointer = (el: Element, pointerType: string) => {
+    const e = new Event("pointerdown", { bubbles: true });
+    Object.defineProperty(e, "pointerType", { value: pointerType });
+    el.dispatchEvent(e);
+  };
+  const hold = async (el: Element, ms: number) => {
+    await act(async () => {
+      pointer(el, "touch");
+      touch(el, "touchstart");
+      vi.advanceTimersByTime(ms);
+    });
+  };
+
+  it("500ms 押し続けるとメニューが開き、指を離してもフォルダは開かない", async () => {
+    await render();
+    const card = folderCards()[1];
+    const enter = card.querySelector<HTMLElement>(".gal-enter")!;
+    await hold(card, 520);
+    expect(document.querySelector(".gal-ctxmenu")).not.toBeNull();
+    expect(itemFor("フォルダを zip でダウンロード")).toBeDefined();
+    let lift!: Event;
+    await act(async () => {
+      lift = touch(card, "touchend");
+      enter.dispatchEvent(new MouseEvent("click", { bubbles: true })); // a browser that sends it anyway
+    });
+    expect(lift.defaultPrevented).toBe(true);
+    // The card the press began on did not navigate: the pane is still on the folder it was in.
+    expect(document.querySelector(".gal-ctxmenu")).not.toBeNull();
+    const pane = allViews(useLayoutStore.getState().layout).find((v) => v.content.kind === "gallery");
+    expect(pane?.content).toMatchObject({ galleryPath: "gen/uuid-1" });
+  });
+
+  it("短い押下ではメニューは出ず、そのまま開く", async () => {
+    await render();
+    const card = folderCards()[1];
+    await hold(card, 200);
+    await act(async () => {
+      touch(card, "touchend");
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(document.querySelector(".gal-ctxmenu")).toBeNull();
+  });
+
+  it("指が動いたら（スクロール）長押しにしない", async () => {
+    await render();
+    const card = folderCards()[1];
+    await act(async () => {
+      pointer(card, "touch");
+      touch(card, "touchstart", 20, 20);
+      touch(card, "touchmove", 20, 60);
+      vi.advanceTimersByTime(800);
+    });
+    expect(document.querySelector(".gal-ctxmenu")).toBeNull();
+  });
+
+  it("touchcancel で取り消される", async () => {
+    await render();
+    const card = folderCards()[1];
+    await act(async () => {
+      pointer(card, "touch");
+      touch(card, "touchstart");
+      touch(card, "touchcancel");
+      vi.advanceTimersByTime(800);
+    });
+    expect(document.querySelector(".gal-ctxmenu")).toBeNull();
+  });
+
+  it("マウスの押下は長押しにならない", async () => {
+    await render();
+    const card = folderCards()[1];
+    await act(async () => {
+      pointer(card, "mouse");
+      touch(card, "touchstart");
+      vi.advanceTimersByTime(800);
+    });
+    expect(document.querySelector(".gal-ctxmenu")).toBeNull();
+  });
+
+  it("「上へ」カードは長押ししてもメニューを出さない", async () => {
+    await render();
+    await hold(folderCards()[0], 600);
+    expect(document.querySelector(".gal-ctxmenu")).toBeNull();
   });
 });

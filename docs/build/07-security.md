@@ -170,6 +170,33 @@ the context window the running engine started with (`engine_gateway.go`):
 VOICEVOX is not behind this gateway: the Console asks the CP (`/api/tts/*`, behind the
 normal login), and the CP calls the engine, whose security group admits the CP only.
 
+### 7.2.2 Exporting a folder (`GET /api/fs/download-zip`)
+
+The one file-browser route that reads an unbounded number of files for one request
+([decisions/0111](../decisions/0111-folder-zip-download.md)). Its boundary, in the order an
+attacker would try it:
+
+- **Same reach as a file read, not wider.** The CP route is an explicit allowlist line behind the
+  ordinary identity and tenant resolution (`withResolved`); the Agent route sits behind the same
+  token as every other. A browse-relative path, or an absolute one under the scratch or staged-docs
+  root, and nothing else; **a root itself is refused**.
+- **No symlink is ever followed.** The start folder, every child folder and every file is opened
+  with `openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)` relative to a root fd, *when it is used*, so
+  a swap after the walk fails the open. A symlink in the start path is a 400; one inside the folder
+  is left out and counted. The `.codex/generated_images` single-image read exception is **not**
+  carried over (`resolveZipRoot` is its own resolver).
+- **The denylist (`fsDeny`) prunes before descending**, by browse-relative path, so exporting an
+  ancestor never includes a denied tree. The temp archive lives under the agent state dir, which
+  is itself denylisted.
+- **Hostile names fail the export** (422) rather than being rewritten or dropped: invalid UTF-8,
+  backslash, control characters, `.`/`..`/empty components, a drive prefix, duplicates.
+- **Resource bound.** Files, folders, depth, entries looked at, name volume, bytes read (counted
+  on the bytes actually read), bytes written, walk-and-build time and transfer time are all capped,
+  one build runs at a time per workspace, and the temp file is unlinked at creation so a crash
+  cannot leak it. The limits are in [guide/ref/limits](../../guide/ref/limits.md).
+- **Not audited** (ordinary reads are not, `proxy.go`); whether a bulk export should be is open
+  (decisions/0111, Status line).
+
 ## 7.3 L1 Console authentication — three modes
 
 Selected by `AUTH`. All three sanitise the resolved email into the identity key

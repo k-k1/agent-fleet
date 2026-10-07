@@ -18,8 +18,35 @@ working copy, folding the others keeps things tidy.
 
 Right-clicking a file or folder offers "New file", "New folder", "Copy the name",
 "Copy the relative path", "Rename", and "Delete". Files also show "Open in reader" and
-"Download". Deleting a folder removes its contents too, so a confirmation is shown.
+"Download"; folders also show **"Download as zip"** (below). Deleting a folder removes its
+contents too, so a confirmation is shown.
 See [Icons, badges, and menus](badges-and-menus.md) for when each item appears.
+
+### Download a folder as zip
+
+Right-click a folder (or press the Menu key on it, or **long-press it on a touch screen**) →
+**"Download as zip"**. The same item is in the image gallery's folder menu. The Console first checks
+the folder — a toast then tells you the file name, how many files and how large it is, and what was
+left out — and your browser saves `<folder>.zip`, with every file under one top-level `<folder>/`
+and its sub-folders (empty ones too) and Unicode names intact.
+
+- **Left out, on purpose:** `.git` and `node_modules` folders *below* the one you chose (if you
+  choose one of those yourself, it is exported whole), folders the file browser never shows
+  (credential and agent-state folders), and symbolic links and special files (the toast counts
+  them). The menu item's tooltip names the first two before you press.
+- **Too large is refused, not cut short.** Past 20,000 files, 4,000 folders, 32 levels, 512 MB
+  or 45 seconds of reading ([limits](../ref/limits.md#fixed-in-the-product)) you get a message
+  naming the limit and no download starts. Select a smaller folder.
+- **A name that cannot be stored in a zip** (a backslash, a control character, bytes that are not
+  valid UTF-8) stops the whole download with a message naming the file; nothing is renamed or
+  dropped silently.
+- **It is not a snapshot.** Files are read one after another while the archive is built, so a file
+  that is still being written may be caught part-way. If a file disappears or is swapped for a
+  link while that happens, you get "The folder changed while the zip was being made. Try again."
+- **One zip is built at a time per workspace**; a second press while one is in progress says the
+  workspace is busy. Your home folder itself (the root of the tree) cannot be downloaded this way.
+- Not every browser has been checked: touch long-press and the download itself were verified in
+  tests only, not on a real iPhone or Android phone.
 
 To add files, **upload by drag & drop** or create them via "New file" in the right-click menu.
 If a file with the same name exists, an overwrite confirmation is shown. **Ctrl+click** (or

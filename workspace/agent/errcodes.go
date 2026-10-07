@@ -20,6 +20,14 @@ const (
 	errCodeFSReadFailed         = "read_failed"
 	errCodeFSWriteFailed        = "write_failed"
 	errCodeFSWriteStateUnknown  = "write_state_unknown"
+	// Folder zip download (fs_zip.go, ADR 0111). zip_too_large rides 413 and says which limit
+	// in its message; changed_during_zip rides 409 ("try again").
+	errCodeZipTooLarge = "zip_too_large"
+	errCodeZipBusy     = "zip_busy"
+	errCodeZipUnsafe   = "unsafe_name"
+	errCodeZipChanged  = "changed_during_zip"
+	errCodeZipNoSpace  = "zip_no_space"
+	errCodeZipNotDir   = "zip_not_dir"
 	// Sent only when the client already abandoned the request (timeout /
 	// disconnect observed at mutex acquisition), so no live client ever renders
 	// it — deliberately absent from the Console i18n catalogs.
