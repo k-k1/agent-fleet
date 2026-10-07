@@ -108,3 +108,12 @@ func ForgetPane(name string) {
 	delete(sights, name)
 	sightMu.Unlock()
 }
+
+// FooterSettled is the idle-settle verdict for kinds whose own idle test lives outside tmuxx
+// (agy's footer): idle(frame) AND the pane unrepainted for idleSettleWindow. Every frame is
+// recorded, idle or not, so a busy frame in between rewinds the clock; recording only idle
+// frames let "idle A, busy B, idle A" read as settled the moment A came back.
+func FooterSettled(name, frame string, idle func(frame string) bool) bool {
+	settled := observeFrame(name, frame)
+	return settled && idle(frame)
+}

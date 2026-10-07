@@ -820,6 +820,26 @@ when already false なので追加コストなし）。なお TUI `/config` の
 予告なく描画される要素で、ミラーの launch-seed 自動投入や PTY スクレイプ
 （画面テキストのパターンマッチ依存）とは共存させない方が安全なため。
 
+### `LiveState` の "working" に上限を付ける実測（2026-10-07、#1811）
+
+会話 DB が "working" のまま閉じない（agy が落ちる／API が固まる）と、本番で約 21 時間 Workspace を
+起こし続けた。隔離 tmux で実機 agy を動かして測った値（コードコメントは `agents/agy/stale.go`）:
+
+- フッターは生成・思考・run_command の間ずっと `esc to cancel`、ターン終了行（executor_metadata）が
+  入った同じ 2 秒サンプルで `? for shortcuts` に切り替わった。DB が working の間にアイドルフッターは
+  1 度も出なかった → 「アイドルフッターが静止している間は idle」を採用。
+- run_command は起動の約 2 秒後にバックグラウンドタスク化され、ターンはそこで終わる。`sleep 25` は
+  ステップ状態 2 のまま 25 秒プロセスが生存し、その間 DB は idle・フッターは
+  `? for shortcuts · 1 task(s)`。
+- そのタスクの間 DB / WAL は書かれない（`sleep 420` で mtime が 35 秒 → 177 秒と古くなる一方）。
+  長いビルドは DB だけ見ると古く見えるため、ツールプロセスの有無を併用する。
+- ペイン直下の常駐子は MCP サーバ 1 本（agy と同じセッション）。run_command は agy の直接の子 `bash` で
+  自分がセッションリーダー（sid == pid）。この違いでツールと常駐子を分ける（`procx` に /proc 読みを共通化）。
+
+方針: DB が working でも (1) フッターがアイドルで 45 秒静止なら idle、(2) DB/WAL が 1 時間無更新かつ
+ツールプロセス無しなら "" （idle ではない＝完了通知を出さず、Workspace を保持しない）。
+CP / Console 側の裏打ちは #1818 / #1819。
+
 ## ユーザーに依頼する事項（並行作業のブロッカー解消）
 
 1. **GCP プロジェクトの用意**（D1/M2 用）: 課金有効化済みプロジェクト ID を Connections 設定時に使える形で。

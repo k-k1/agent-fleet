@@ -139,3 +139,23 @@ func streamingFrames(t *testing.T) []streamFrame {
 	}
 	return out
 }
+
+// idle A -> busy B -> idle A must not read as settled when A comes back: B was a repaint.
+func TestFooterSettledBusyFrameRewindsClock(t *testing.T) {
+	now := withFakeClock(t)
+	idle := func(f string) bool { return f == "A" }
+	FooterSettled("agyfoot", "A", idle)
+	*now = now.Add(2 * idleSettleWindow)
+	if !FooterSettled("agyfoot", "A", idle) {
+		t.Fatal("unchanged idle frame should be settled")
+	}
+	FooterSettled("agyfoot", "B", idle)
+	*now = now.Add(time.Second)
+	if FooterSettled("agyfoot", "A", idle) {
+		t.Fatal("idle A right after busy B read as settled")
+	}
+	*now = now.Add(idleSettleWindow)
+	if !FooterSettled("agyfoot", "A", idle) {
+		t.Fatal("A should settle after a full window")
+	}
+}

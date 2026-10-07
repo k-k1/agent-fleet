@@ -7,11 +7,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/procx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // Background-activity detection. A claude session can launch a run_in_background
@@ -28,71 +27,7 @@ import (
 // setsid, ppid→1) wouldn't be seen; run_in_background tasks stay tracked children,
 // which is the case this covers.
 
-type procInfo struct {
-	ppid  int
-	state byte // R running, S sleeping, D disk-wait, Z zombie, T stopped, …
-	comm  string
-}
-
-// procSnapshot caches a full /proc scan briefly so one session-list poll (which
-// wires every session) triggers at most one scan, not one per session.
-var (
-	procMu  sync.Mutex
-	procAt  time.Time
-	procTab map[int]procInfo
-)
-
-const procTTL = 750 * time.Millisecond
-
-func procSnapshot() map[int]procInfo {
-	procMu.Lock()
-	defer procMu.Unlock()
-	if procTab != nil && time.Since(procAt) < procTTL {
-		return procTab
-	}
-	procTab = scanProc()
-	procAt = time.Now()
-	return procTab
-}
-
-func scanProc() map[int]procInfo {
-	tab := map[int]procInfo{}
-	ents, err := os.ReadDir("/proc")
-	if err != nil {
-		return tab
-	}
-	for _, e := range ents {
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil {
-			continue // not a pid dir
-		}
-		b, err := os.ReadFile(filepath.Join("/proc", e.Name(), "stat"))
-		if err != nil {
-			continue // exited between readdir and read
-		}
-		if pi, ok := parseStat(pid, string(b)); ok {
-			tab[pid] = pi
-		}
-	}
-	return tab
-}
-
-// parseStat pulls state + ppid from /proc/<pid>/stat. comm sits inside the FIRST
-// '(' … LAST ')' (it may itself contain spaces and parens), so the fixed fields we
-// want are read from after the closing paren.
-func parseStat(pid int, s string) (procInfo, bool) {
-	l := strings.IndexByte(s, '(')
-	r := strings.LastIndexByte(s, ')')
-	if l < 1 || r < l {
-		return procInfo{}, false
-	}
-	rest := strings.Fields(s[r+1:])
-	if len(rest) < 2 || rest[0] == "" {
-		return procInfo{}, false
-	}
-	ppid, _ := strconv.Atoi(rest[1])
-	return procInfo{ppid: ppid, state: rest[0][0], comm: s[l+1 : r]}, true
-}
+type procInfo = procx.Info
 
 // shellComm are the interactive/wrapper shells that run a background command but
 // aren't the work themselves — the real worker is their (non-shell) child, which we
@@ -101,32 +36,17 @@ var shellComm = map[string]bool{
 	"bash": true, "sh": true, "zsh": true, "fish": true, "dash": true, "ash": true,
 }
 
-// paneRootPID returns the pane's root process (the shell/program tmux launched for
-// the session), the root of the tree we search. 0 if it can't be resolved.
-func paneRootPID(tn string) int {
-	pane := tmuxx.SessionPaneID(tn)
-	if pane == "" {
-		return 0
-	}
-	out, err := tmuxx.Cmd("display-message", "-p", "-t", pane, "#{pane_pid}").Output()
-	if err != nil {
-		return 0
-	}
-	pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
-	return pid
-}
-
 // BackgroundBusy reports whether a live worker process runs under the
 // session's pane — a run_in_background task still going while claude is idle.
 func BackgroundBusy(name string) bool {
-	root := paneRootPID(session.TmuxName(name))
+	root := procx.PaneRoot(name)
 	if root == 0 {
 		return false
 	}
-	tab := procSnapshot()
+	tab := procx.Snapshot()
 	kids := map[int][]int{}
 	for pid, pi := range tab {
-		kids[pi.ppid] = append(kids[pi.ppid], pid)
+		kids[pi.PPID] = append(kids[pi.PPID], pid)
 	}
 	// BFS the descendants of the pane root (root itself excluded).
 	seen := map[int]bool{root: true}
@@ -143,13 +63,13 @@ func BackgroundBusy(name string) bool {
 			continue
 		}
 		queue = append(queue, kids[pid]...)
-		if pi.state != 'R' && pi.state != 'D' {
+		if pi.State != 'R' && pi.State != 'D' {
 			continue // not actively running / in I/O → not "in progress"
 		}
-		if shellComm[pi.comm] {
+		if shellComm[pi.Comm] {
 			continue // a shell wrapper; its real child is judged on its own
 		}
-		if pi.comm == "claude" || isClaudeProc(pid) {
+		if pi.Comm == "claude" || isClaudeProc(pid) {
 			continue // claude itself (native comm, or node whose cmdline names claude),
 			// momentarily R while redrawing — or our own agent (MCP helper).
 		}
@@ -213,17 +133,17 @@ func BackgroundWork(name, sid string) (bool, string) {
 // hanging off node is a backgrounded one. State is ignored on purpose: the whole
 // point is to catch the S-state loop BackgroundBusy misses.
 func BackgroundShellBusy(name string) bool {
-	root := paneRootPID(session.TmuxName(name))
+	root := procx.PaneRoot(name)
 	if root == 0 {
 		return false
 	}
-	return backgroundShellBusyIn(root, procSnapshot())
+	return backgroundShellBusyIn(root, procx.Snapshot())
 }
 
 // backgroundShellBusyIn is the pure core of BackgroundShellBusy, split out so the
 // process-tree signature can be tested against a fixtured proc table.
 func backgroundShellBusyIn(root int, tab map[int]procInfo) bool {
-	kids := childrenOf(tab)
+	kids := procx.Children(tab)
 	// BFS the descendants of the pane root (root itself excluded).
 	seen := map[int]bool{root: true}
 	queue := append([]int(nil), kids[root]...)
@@ -239,10 +159,10 @@ func backgroundShellBusyIn(root int, tab map[int]procInfo) bool {
 			continue
 		}
 		queue = append(queue, kids[pid]...)
-		if !shellComm[pi.comm] {
+		if !shellComm[pi.Comm] {
 			continue // only a shell carries the background-loop signature
 		}
-		if !procIsClaude(pi.ppid, tab[pi.ppid]) {
+		if !procIsClaude(pi.PPID, tab[pi.PPID]) {
 			continue // not spawned by claude → not a claude-backgrounded shell
 		}
 		if subtreeHasClaude(pid, kids, tab) {
@@ -253,20 +173,11 @@ func backgroundShellBusyIn(root int, tab map[int]procInfo) bool {
 	return false
 }
 
-// childrenOf inverts a proc table into a ppid → children index.
-func childrenOf(tab map[int]procInfo) map[int][]int {
-	kids := map[int][]int{}
-	for pid, pi := range tab {
-		kids[pi.ppid] = append(kids[pi.ppid], pid)
-	}
-	return kids
-}
-
 // procIsClaude reports whether pid is a claude process. claude's node process sets
 // its comm to "claude" (or "claude.exe"), so that alone decides it without a /proc
 // read; isClaudeProc is the fallback for a node whose comm stayed "node".
 func procIsClaude(pid int, pi procInfo) bool {
-	return pi.comm == "claude" || pi.comm == "claude.exe" || isClaudeProc(pid)
+	return pi.Comm == "claude" || pi.Comm == "claude.exe" || isClaudeProc(pid)
 }
 
 // subtreeHasClaude reports whether any descendant of pid is a claude process, used to

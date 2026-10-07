@@ -16,8 +16,8 @@ func TestBackgroundShellBusyIn(t *testing.T) {
 	// base is the quiescent tree: login shell → claude(node), nothing else.
 	base := func() map[int]procInfo {
 		return map[int]procInfo{
-			root: {ppid: 1, state: 'S', comm: "bash"},
-			node: {ppid: root, state: 'S', comm: "claude"},
+			root: {PPID: 1, State: 'S', Comm: "bash"},
+			node: {PPID: root, State: 'S', Comm: "claude"},
 		}
 	}
 
@@ -30,7 +30,7 @@ func TestBackgroundShellBusyIn(t *testing.T) {
 	t.Run("monitor poll loop (S-state bash under claude)", func(t *testing.T) {
 		tab := base()
 		// The Monitor's `while …; sleep 30; done` bash, sleeping between polls.
-		tab[200] = procInfo{ppid: node, state: 'S', comm: "bash"}
+		tab[200] = procInfo{PPID: node, State: 'S', Comm: "bash"}
 		if !backgroundShellBusyIn(root, tab) {
 			t.Fatal("S-state background shell under claude must be true")
 		}
@@ -38,8 +38,8 @@ func TestBackgroundShellBusyIn(t *testing.T) {
 
 	t.Run("monitor mid-poll (transient gh child)", func(t *testing.T) {
 		tab := base()
-		tab[200] = procInfo{ppid: node, state: 'S', comm: "bash"}
-		tab[201] = procInfo{ppid: 200, state: 'S', comm: "gh"} // network-waiting child
+		tab[200] = procInfo{PPID: node, State: 'S', Comm: "bash"}
+		tab[201] = procInfo{PPID: 200, State: 'S', Comm: "gh"} // network-waiting child
 		if !backgroundShellBusyIn(root, tab) {
 			t.Fatal("background shell with a poll child must be true")
 		}
@@ -50,8 +50,8 @@ func TestBackgroundShellBusyIn(t *testing.T) {
 		// not exist, so the parent is NOT recognized as claude and the shell is not
 		// flagged. Guards that we do not flag a shell under a non-claude parent.
 		tab := base()
-		tab[node] = procInfo{ppid: root, state: 'S', comm: "node"}
-		tab[200] = procInfo{ppid: node, state: 'S', comm: "bash"}
+		tab[node] = procInfo{PPID: root, State: 'S', Comm: "node"}
+		tab[200] = procInfo{PPID: node, State: 'S', Comm: "bash"}
 		if backgroundShellBusyIn(root, tab) {
 			t.Fatal("without a comm=claude parent, a synthetic tree must not flag")
 		}
@@ -68,8 +68,8 @@ func TestBackgroundShellBusyIn(t *testing.T) {
 		// bash(300) under claude, but it wraps another claude(301) — a launcher, not
 		// work. subtreeHasClaude must veto it.
 		tab := base()
-		tab[300] = procInfo{ppid: node, state: 'S', comm: "bash"}
-		tab[301] = procInfo{ppid: 300, state: 'S', comm: "claude"}
+		tab[300] = procInfo{PPID: node, State: 'S', Comm: "bash"}
+		tab[301] = procInfo{PPID: 300, State: 'S', Comm: "claude"}
 		if backgroundShellBusyIn(root, tab) {
 			t.Fatal("a shell wrapping a nested claude must not be flagged")
 		}
@@ -79,7 +79,7 @@ func TestBackgroundShellBusyIn(t *testing.T) {
 		// A bare compiler process (not a shell) hanging off claude is BackgroundBusy's
 		// job (R/D); this detector only owns the shell signature.
 		tab := base()
-		tab[400] = procInfo{ppid: node, state: 'R', comm: "cc1"}
+		tab[400] = procInfo{PPID: node, State: 'R', Comm: "cc1"}
 		if backgroundShellBusyIn(root, tab) {
 			t.Fatal("non-shell worker is out of this detector's scope")
 		}

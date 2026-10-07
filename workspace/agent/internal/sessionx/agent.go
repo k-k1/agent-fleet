@@ -117,6 +117,14 @@ func DriveState(m session.Meta, alive, heal bool) string {
 			notifyPolledTurnEnd(m, st)
 			return st
 		}
+		// No opinion: also what a stale "working" (agy.LiveState withdraws it after an hour
+		// with no tool running) turns into. The stored optimistic "working" must not stand in
+		// for it past the warm-up, or the chip says in progress forever; nothing is persisted
+		// and no notification fires, so a turn that really finishes later still reports.
+		sid := session.UUID(m.Dir, m.Name)
+		if status.LiveState(sid) == "working" && !status.RecentlyWorking(sid) {
+			return "idle"
+		}
 	}
 	// copilot: no hooks either — the classification derived from events.jsonl is the only
 	// state source (state.go; under managed the child process writes the same file, so the
