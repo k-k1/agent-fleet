@@ -52,8 +52,9 @@ const { check, report } = checker();
 let code = 1;
 try {
   await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+    // paneLayout "split": the layout seeded below is the split-mode key; the Tabbed default reads `….tabs` and would ignore it.
     source: `try {
-      localStorage.setItem("af-display-settings", ${JSON.stringify(JSON.stringify({ locale: LOCALE, theme: "dark" }))});
+      localStorage.setItem("af-display-settings", ${JSON.stringify(JSON.stringify({ locale: LOCALE, theme: "dark", paneLayout: "split" }))});
       localStorage.setItem("af-tenant", "demo");
       localStorage.setItem("af.layout2.demo@example.com.demo", ${JSON.stringify(JSON.stringify(layout))});
     } catch {}`,

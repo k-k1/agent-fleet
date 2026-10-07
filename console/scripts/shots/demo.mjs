@@ -252,10 +252,11 @@ try {
   // The browser state a returning user would have: locale, theme, the scenario's saved pane layout
   // (af.layout2.<user>.<tenant>, console/src/layout/migrate.ts) and rail sections
   // (console/src/ui/Section.tsx), plus whatever else the scenario remembers.
+  // paneLayout "split": the seeded layout is the split-mode key; the Tabbed default reads `….tabs` and would ignore it.
   const seed = S.seed(LOCALE);
   const store = [
     ...Object.entries(seed.sections || {}).map(([id, v]) => [`af-section-${id}`, String(v)]),
-    ["af-display-settings", JSON.stringify({ locale: LOCALE, theme: "dark" })],
+    ["af-display-settings", JSON.stringify({ locale: LOCALE, theme: "dark", paneLayout: "split" })],
     ["af-tenant", "demo"],
     ...(seed.layout ? [["af.layout2.demo@example.com.demo", JSON.stringify(seed.layout)]] : []),
     ...Object.entries(seed.storage || {}),
