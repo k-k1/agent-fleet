@@ -1,6 +1,6 @@
 ---
 audience: "anyone looking for a setting"
-updated: "2026-09"
+updated: "2026-10"
 ---
 
 # 12. Settings — every tab of the ⚙ settings dialog
@@ -230,6 +230,10 @@ the assistant conversation: they share an implementation, but they surface somew
 Adds your own standing instructions to every agent newly started in this workspace, with a per-target row
 showing which file it was written to and whether it is in effect.
 See [06 Agents](06-agents.md#agent-instructions-write-down-how-you-work-once).
+
+This covers instructions only. Personal Claude Code hooks, skills and subagents have no settings screen: they
+are files in claude's configuration folder, which survives Recreate. See
+[06 Agents](06-agents.md#bringing-your-personal-claude-code-setup).
 
 ### Agent memory
 
