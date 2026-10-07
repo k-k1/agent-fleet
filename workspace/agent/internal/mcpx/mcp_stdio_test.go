@@ -90,7 +90,9 @@ func TestMCPSendToSessionDoesNotMaskConflictAsSuccess(t *testing.T) {
 // The shared GET relay (list_repos, list_my_sessions, get_session_status, ...) answers with a
 // complete result.
 func TestMCPReadRelayResultIsComplete(t *testing.T) {
+	var got string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Path
 		_, _ = w.Write([]byte(`[]`))
 	}))
 	defer srv.Close()
@@ -99,6 +101,9 @@ func TestMCPReadRelayResultIsComplete(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]any{"name": "list_repos", "arguments": json.RawMessage(`{}`)})
 	requireResultComplete(t, mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params}))
+	if got != "/repos" {
+		t.Fatalf("agent path = %q, want /repos", got)
+	}
 }
 
 func TestMCPGetSessionOutputRequestsTailClip(t *testing.T) {

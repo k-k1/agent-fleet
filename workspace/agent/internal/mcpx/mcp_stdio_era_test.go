@@ -91,8 +91,10 @@ func TestStdioLegacyInitializeStillWorks(t *testing.T) {
 	}
 }
 
-// requireResultComplete fails unless a tools/call answer carries resultType "complete": a
-// 2026-07-28 client discards a result without it, so the tool silently becomes unusable.
+// requireResultComplete fails unless a tools/call answer is a success carrying resultType
+// "complete": a 2026-07-28 client discards a result without it, so the tool silently becomes
+// unusable. isError is refused too — every error helper sets resultType, so an early refusal
+// would pass without ever reaching the success path under test.
 func requireResultComplete(t *testing.T, resp []byte) {
 	t.Helper()
 	var m struct {
@@ -103,6 +105,9 @@ func requireResultComplete(t *testing.T, resp []byte) {
 	}
 	if m.Result["resultType"] != "complete" {
 		t.Fatalf("tools/call result has resultType = %v, want complete: %s", m.Result["resultType"], resp)
+	}
+	if m.Result["isError"] == true {
+		t.Fatalf("tools/call answered with an error, not the success path: %s", resp)
 	}
 }
 
