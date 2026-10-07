@@ -92,10 +92,10 @@ describe("HfTokenPanel", () => {
     expect(input).toBeTruthy();
     expect(ui().textContent).toContain("未登録");
     // Empty is not a removal: the register button stays disabled until something is typed.
-    expect(button("登録する")?.disabled).toBe(true);
+    expect(button("登録")?.disabled).toBe(true);
 
     await typeInto(input, "hf_typed_value");
-    await click(button("登録する"));
+    await click(button("登録"));
 
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/hf-token", "PUT", {
       token: "hf_typed_value",
@@ -126,7 +126,7 @@ describe("HfTokenPanel", () => {
     await mount(<HfTokenPanel />);
     const input = tokenInput()!;
     await typeInto(input, "hf_typed_value");
-    await click(button("登録する"));
+    await click(button("登録"));
 
     const panel = ui().querySelector(".admin-panel")!;
     expect(panel.querySelector(".form-err")?.textContent).toContain("配備の秘密");
@@ -159,7 +159,7 @@ describe("CivitaiTokenPanel", () => {
     expect(ui().textContent).toContain("未登録");
 
     await typeInto(input, "civitai_typed_value");
-    await click(button("登録する"));
+    await click(button("登録"));
 
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/civitai-token", "PUT", {
       token: "civitai_typed_value",
@@ -183,7 +183,7 @@ describe("CivitaiTokenPanel", () => {
     await mount(<CivitaiTokenPanel />);
     expect(ui().textContent).toContain("登録済み");
 
-    await click(button("削除する"));
+    await click(button("削除"));
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/civitai-token", "DELETE");
   });
 });
