@@ -23,11 +23,11 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.quota_sessions":
     "You've reached the limit on concurrently running sessions. Stop one of the running sessions before creating another.",
   "err.sessions_running":
-    "This working copy has running sessions. Switching would swap and break the working tree underfoot, so it's blocked here. Open the branch as a separate working copy instead.",
+    "This working copy has running sessions. Switching would swap the files those sessions are using for another branch's and corrupt their work, so it's blocked here. Open the branch as a separate working copy instead.",
   "err.branch_in_use":
     "Another working copy already has this branch checked out. git allows one working copy per branch — open that copy, or pick a different branch.",
   "err.sessions_running_delete":
-    "This working copy has running sessions. Deleting would remove the working directory underfoot and break them, so stop those sessions first.",
+    "This working copy has running sessions. Deleting would remove the working directory those sessions run in and leave them unable to continue, so stop those sessions first.",
   "err.worktree_dirty":
     "This worktree has uncommitted/unpushed changes. Force-deleting it will lose them.",
   "err.has_worktrees":
