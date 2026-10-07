@@ -167,6 +167,10 @@ func mcpMemoryErr(err error) string {
 	return he.Error()
 }
 
+// FormatMemoryIndex renders an index answer the way the memory_index tool prints it, for the one
+// caller that has no MCP round trip: lcpp's per-session system prompt.
+func FormatMemoryIndex(raw string) string { return mcpMemoryFormatIndex(raw) }
+
 // mcpMemoryFormatIndex prints one line per described memory, then the names of the rest: an
 // index is read every time work starts, so the Agent bounds it (memoryx.agentMemBudgetIndex)
 // and the line text must stay identical to memoryx.agentMemIndexLine, which the budget measures.

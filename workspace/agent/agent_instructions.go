@@ -19,11 +19,12 @@ package main
 // composes it with markers, and everything outside the markers survives.
 //
 // Order matters: the order within the file IS the order it is applied in (fleet ->
-// user-notes -> rtk), so reconcile must always call them in that order.
+// user-notes -> memory-guide -> rtk), so reconcile must always call them in that order.
 
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -40,8 +41,11 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetskills"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mdblock"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/userinstr"
 )
 
@@ -157,10 +161,50 @@ func applyInstructionsLocked() {
 	note("muse", muse.ApplyUserInstructions(st.Body("muse")))
 	// lcpp has nothing to write: harness.SystemPrompt reads userinstr on every turn.
 
+	// 2b. The memory guidance (ADR 0108 decision 5): fixed text, present exactly while the Agent
+	// memory switch is on, in a block or file of its own so the switch never touches the user's
+	// notes. lcpp gets it from harness.MemoryPrompt instead. cursor has no local user layer;
+	// its tool descriptions carry the same guidance.
+	guide := ""
+	if uiprefs.AgentMemory() {
+		guide = userinstr.MemoryGuide
+	}
+	note("claude", claude.ApplyMemoryGuide(guide))
+	note("codex", codex.ApplyMemoryGuide(guide))
+	note("opencode", opencode.ApplyMemoryGuide(guide))
+	note("copilot", copilot.ApplyMemoryGuide(guide))
+	note("agy", agy.ApplyMemoryGuide(guide))
+	note("kiro", kiro.ApplyMemoryGuide(guide))
+	note("muse", muse.ApplyMemoryGuide(guide))
+
 	// 3. rtk is always last (it comes last within the file too).
 	applyRTKLocked()
 
 	instrErrs = errs
+}
+
+// lcppMemoryBudget is the described part of the index folded into lcpp's system prompt, in
+// bytes: the floor memory_index accepts. A local model's window is small and the prompt is paid
+// on every turn; the tool is still there for the rest.
+const lcppMemoryBudget = 4 << 10
+
+func init() {
+	harness.MemoryPrompt = lcppMemoryPrompt
+}
+
+// lcppMemoryPrompt is harness.MemoryPrompt: while the Agent memory switch is on, the fixed
+// guidance and the project's budgeted index. A session with no working copy (the Console
+// preview) gets nothing, so the preview never prints memories.
+func lcppMemoryPrompt(cwd, kind string) string {
+	if !uiprefs.AgentMemory() || cwd == "" {
+		return ""
+	}
+	raw, err := memoryx.IndexJSONFor(cwd, kind, lcppMemoryBudget)
+	if err != nil {
+		log.Printf("lcpp: memory index for the system prompt: %v", err)
+		return userinstr.MemoryGuide
+	}
+	return userinstr.MemoryGuide + "\n\n### Memories now\n\n" + mcpx.FormatMemoryIndex(raw)
 }
 
 func errCode(err error) string {

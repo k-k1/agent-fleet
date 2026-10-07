@@ -238,3 +238,14 @@ that is safe when what one session writes is read by every kind.
 - **P2** — the distributed guidance block, and lcpp's per-session injection.
 - **P3** — decision 6 step 2 after measuring; tie-in with #1559 (automated review) and #1558
   (search).
+
+## Note (2026-10-08): the guidance block (P2, #1733)
+
+Built: the 0042 distributor writes the fixed guidance (`userinstr.MemoryGuide`, cap
+`MemoryGuideMaxBytes`, pinned by a test) while the switch (ui-prefs `agentMemory`, Settings → Agent
+memory) is on and removes it when off. It is a `memory-guide` marker block beside `user-notes` in
+claude's `CLAUDE.md` and in the codex, agy, muse and opencode `AGENTS.md`, and an AF-owned file for
+copilot and kiro; saving the switch reconciles at once. lcpp's system prompt carries the guidance and
+the project's `memory_index` at the 4 KiB budget floor, per turn. cursor was not changed: the tool
+descriptions already say when to call (pinned by a test). Not done here: usage-based ranking (#1703).
+

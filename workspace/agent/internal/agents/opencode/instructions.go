@@ -56,22 +56,12 @@ func ApplyFleetNotes(fleet string) error {
 	if fleet == "" {
 		return nil
 	}
-	path := AgentsPath()
-	orig := ""
-	if b, err := os.ReadFile(path); err == nil {
-		orig = string(b)
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	out := orig
-	if !mdblock.Has(out, "fleet") {
-		out = mdblock.StripLegacyPrefix(out, fleet)
-	}
-	out = mdblock.Set(out, "fleet", fleet)
-	if out == orig {
-		return nil
-	}
-	return writeAtomic(path, []byte(out), 0o644)
+	return mdblock.EditFile(AgentsPath(), 0o644, 0o755, false, func(s string) (string, error) {
+		if !mdblock.Has(s, "fleet") {
+			s = mdblock.StripLegacyPrefix(s, fleet)
+		}
+		return mdblock.Set(s, "fleet", fleet), nil
+	})
 }
 
 // ApplyUserInstructions writes the AF-owned instruction file and points opencode's
@@ -146,4 +136,14 @@ func writeAtomic(path string, b []byte, mode os.FileMode) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// ApplyMemoryGuide composes the memory-guide block (ADR 0108 decision 5) into the global
+// AGENTS.md beside the fleet policy, or removes it when body is empty. It does not go into the
+// user-notes file: that one is referenced from opencode.json and is the member's switch, while
+// this follows the Agent memory switch.
+func ApplyMemoryGuide(body string) error {
+	return mdblock.EditFile(AgentsPath(), 0o644, 0o755, false, func(s string) (string, error) {
+		return mdblock.SetSafe(s, "memory-guide", body)
+	})
 }

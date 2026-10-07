@@ -322,3 +322,18 @@ func TestMemoryIndexWithNoDescribedLinesStillRendersTail(t *testing.T) {
 		t.Errorf("claimed an empty store: %q", out)
 	}
 }
+
+// cursor has no local user layer for the 0042 distributor (ADR 0108 decision 5), so the guidance
+// on when to call the tools lives in their descriptions; they must keep saying it.
+func TestMemoryToolDescriptionsCarryTheWhenToCallGuidance(t *testing.T) {
+	desc := map[string]string{}
+	for _, tool := range mcpStdioMemoryTools() {
+		desc[tool["name"].(string)], _ = tool["description"].(string)
+	}
+	if !strings.Contains(desc["memory_index"], "start work") {
+		t.Errorf("memory_index no longer says when to call it: %q", desc["memory_index"])
+	}
+	if !strings.Contains(desc["memory_search"], "before re-deriving") {
+		t.Errorf("memory_search no longer says when to call it: %q", desc["memory_search"])
+	}
+}

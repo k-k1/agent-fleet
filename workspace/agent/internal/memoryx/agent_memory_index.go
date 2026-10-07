@@ -4,6 +4,7 @@ package memoryx
 // tool, any other client and the tests all see the same answer.
 
 import (
+	"encoding/json"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -192,4 +193,18 @@ func agentMemBudgetIndex(ranked []agentMemEntry, budget int) (described []agentM
 		taken++
 	}
 	return described, more, len(rest) - taken
+}
+
+// IndexJSONFor is memory_index's answer for a working copy and an agent kind, as the JSON the
+// route would send, for a caller that has no session to name: lcpp builds its system prompt per
+// session in-process (ADR 0108 decision 5). It honours the same budget clamp and the same secret
+// scan; the switch is the caller's to check.
+func IndexJSONFor(dir, kind string, budget int) (string, error) {
+	c := agentMemCaller{Session: agentMemUnknown, Kind: kind, Project: agentMemProjectFor(dir)}
+	out, err := agentMemListIndex(c, budget)
+	if err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(out)
+	return string(b), err
 }

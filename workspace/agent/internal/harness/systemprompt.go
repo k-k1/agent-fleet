@@ -29,7 +29,7 @@ import (
 )
 
 // SystemPrompt composes decision 5's system prompt for one turn: the baked fleet policy, the
-// workspace owner's own instructions, the working copy's own AGENTS.md/CLAUDE.md chain (cwd
+// workspace owner's own instructions, the Agent memory guidance and index (MemoryPrompt), the working copy's own AGENTS.md/CLAUDE.md chain (cwd
 // upward to the nearest git root), a listing of the foreign SKILL.md trees this kind has no
 // native way to invoke (decision 5: "スキルは foreign のみ"), and — last, per decision 5's own
 // fleet -> user -> project -> rtk order — the rtk note (only when rtk is actually available;
@@ -46,6 +46,11 @@ func SystemPrompt(cwd, kind string) string {
 	if user := strings.TrimSpace(userinstr.Load().Body(kind)); user != "" {
 		parts = append(parts, user)
 	}
+	if MemoryPrompt != nil {
+		if mem := strings.TrimSpace(MemoryPrompt(cwd, kind)); mem != "" {
+			parts = append(parts, mem)
+		}
+	}
 	if proj := projectInstructions(cwd); proj != "" {
 		parts = append(parts, proj)
 	}
@@ -57,6 +62,12 @@ func SystemPrompt(cwd, kind string) string {
 	}
 	return strings.Join(parts, "\n\n")
 }
+
+// MemoryPrompt returns the Agent memory section for one working copy: the fixed guidance plus the
+// budgeted memory_index for the session's project (ADR 0108 decision 5), or "" while the switch
+// is off. A func-var because the memory store is not this package's to import (the same seam as
+// EngineToken); nil means no section.
+var MemoryPrompt func(cwd, kind string) string
 
 // projectInstructionFiles is the per-directory filenames decision 5's project layer reads, in
 // the order they compose WITHIN one directory: AGENTS.md before CLAUDE.md, the same order
