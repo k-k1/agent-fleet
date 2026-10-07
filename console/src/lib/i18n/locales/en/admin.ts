@@ -117,7 +117,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_issue_opens_only": "Those routes and nothing else. This token opens no git, no MCP, no memos and no API.",
   "admin.engines_issue_deterministic": "⚠️ This value is derived deterministically from the signing master, so every issue returns the same string. There is no way to invalidate one copy of it.",
   "admin.engines_issue_revoke_label": "How to revoke it",
-  "admin.engines_issue_revoke": "Remove the membership {t}/{k}. It is resolved on every single request, so access stops at the next one.",
+  "admin.engines_issue_revoke": "Remove the membership {t}/{k}. It is resolved on every request, so the next request gets a 401.",
   "admin.engines_issue_revoke_only": "⚠️ The only other way to revoke it is rotating the signing master — and the git, memo and schedule tokens come from that same master, so rotating it logs out everyone on this deployment.",
   "admin.engines_issue_has_workspace_tag": "has a workspace",
   "admin.engines_issue_has_workspace": "⚠️ This membership has a workspace, which is what a person's membership looks like. Lend a person's issuing token and the only way to take it back is the signing-master rotation that logs out everyone on this deployment. Make a separate membership for borrowing and issue for that one.",

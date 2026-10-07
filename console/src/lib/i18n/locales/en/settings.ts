@@ -175,7 +175,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
     "Lets a session send a short message to another session in this workspace. It reaches a stopped session by resuming it, and the recipient is told this is not an instruction from you. Applies to sessions started from now on. Default OFF.",
   "agents.fleet_spawn": "Starting sessions from sessions",
   "agents.note_fleet_spawn":
-    "Lets a session start another session, hand it a task, and look after the ones it started: listing them, reading their output, stopping and resuming them. It cannot instruct, answer for or delete any session. How many children it may have is set below (deleting or archiving one frees its slot). No grandchildren and no shell sessions. Each child takes a whole agent's worth of memory and quota, and the usage is billed to you. Applies to sessions started from now on. Default OFF.",
+    "Lets a session start another session, hand it a task, and look after the ones it started: listing them, reading their output, stopping, resuming and renaming them. It cannot add instructions to any session, answer a session's questions for it, or delete or archive one. How many children it may have is set below (deleting or archiving one frees its slot). No grandchildren and no shell sessions. Each child takes a whole agent's worth of memory and quota, and the usage is billed to you. Applies to sessions started from now on. Default OFF.",
   "agents.spawn_child_limit": "Children per session",
   "agents.note_spawn_child_limit":
     "How many children one session may have at a time. It is per parent, not per workspace, so more parents mean more sessions. Each child uses a whole agent's memory. 1–10, default 3.",
@@ -382,7 +382,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.oc_enabled_off": "Off",
   "agents.oc_enabled_on": "On",
   "agents.oc_enabled_note_off":
-    "opencode is never used. It won't launch even with a stored API key or a signed-in account (for workspaces whose security policy forbids reaching an outside service without permission). A fresh workspace starts here. It is an explicit, tamper-resistant lock: adding a key later still won't turn it on.",
+    "opencode is never used. It won't launch even with a stored API key or a signed-in account (for workspaces whose security policy forbids reaching an outside service without permission). A fresh workspace starts here. This setting explicitly keeps opencode disabled; adding a key later still won't turn it on.",
   "agents.oc_enabled_note_on":
     "Choose below what opencode.ai may be billed for. On every choice the directly connected providers (anthropic/… and the like) and the fleet's own engines stay in the list. This setting only picks how opencode.ai is used.",
   "agents.oc_usage": "opencode.ai billing",

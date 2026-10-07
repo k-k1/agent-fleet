@@ -201,7 +201,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.fork_missing_dir": "Can't fork: the working folder doesn't exist.",
   "err.fork_at_unsupported": "This session can't branch from a past message (managed sessions only).",
   "err.fork_bad_anchor": "That branch point can't be used. Reload the chat and try again.",
-  "err.title_feature_disabled": "AI suggestions are off (turn on title auto-suggestion in Display settings).",
+  "err.title_feature_disabled": "This AI feature is off (turn it on under \"Features that use AI assistance\" in Settings > AI assistance).",
   "err.title_no_content": "Not enough conversation yet (try again after a few exchanges).",
   "err.translate_disabled": "Answer translation is off (turn it on in Settings > AI assistance).",
   "err.translate_empty": "There is no text to translate.",
