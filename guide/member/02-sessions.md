@@ -651,6 +651,8 @@ this in parallel").
   exception is the parent's own working copy, and only on an explicit request
   (`worktree=false` with `allow_shared_working_copy=true`): parent and child then share one checkout,
   index and branch, and the child is told not to switch branches or stash and to commit by path.
+  It only works while the parent is running and was started in a path without a symlink; otherwise
+  the request is refused like any other busy directory.
 - **The task arrives as the child's first instruction**, and the chat view badges it
   **"Started by ‹parent›"** so it never reads as something you typed. The child is told the
   instruction came from a session, not from you: it **cannot stand in for your approval** (a

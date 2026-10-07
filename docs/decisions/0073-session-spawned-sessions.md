@@ -441,7 +441,11 @@ refusal above stays the default. The session-side `create_session` gains `allow_
 implements, the other reviews). The decision itself is not reversed:
 
 - It is honoured only with `worktree=false`, and only when the resolved `dir` is the **parent's own**
-  canonical working copy (compared canonically on both sides). Any other directory in use stays
+  canonical working copy (compared canonically on both sides) **and the parent is live there now**:
+  it must not be stopped or archived, and its stored `Dir` must itself be canonical. `Meta.Dir`
+  keeps the launch spelling, so a parent started through a symlink that has since been retargeted
+  cannot prove where it runs; it gets the normal refusal (the child's `dir` may still be spelled
+  through an alias). Any other directory in use stays
   refused with the flag; with `worktree=true` the flag changes nothing, and the MCP tool says so
   instead of ignoring it. `worktree=false` alone is still refused, so a mistaken call cannot share a
   checkout silently.

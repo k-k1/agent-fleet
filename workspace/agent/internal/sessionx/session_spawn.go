@@ -297,9 +297,18 @@ func workingCopyKey(dir string) string {
 // owns has not agreed to a second writer. An unreadable parent meta also refuses: when in doubt
 // the answer is "busy".
 func spawnWorkingCopyRefusal(dir, parent string, allowShared bool) *SpawnRefusal {
+	ref, _ := spawnWorkingCopyCheck(dir, parent, allowShared)
+	return ref
+}
+
+// spawnWorkingCopyCheck is spawnWorkingCopyRefusal plus the answer it acted on: shared is true
+// when the guard was waived for the parent's own copy. The caller applies the canonical dir and
+// the warning from THAT answer — asking liveness a second time lets a parent that stops in
+// between waive the guard and skip both.
+func spawnWorkingCopyCheck(dir, parent string, allowShared bool) (ref *SpawnRefusal, shared bool) {
 	target := workingCopyKey(dir)
 	if allowShared && spawnOwnWorkingCopy(parent, target) {
-		return nil
+		return nil, true
 	}
 	for _, m := range session.ListMetas() {
 		if m.Archived || m.Dir == "" {
@@ -312,10 +321,12 @@ func spawnWorkingCopyRefusal(dir, parent string, allowShared bool) *SpawnRefusal
 			Message: fmt.Sprintf("%s では既にセッション %s が動いています。"+
 				"worktree=true（既定）で起こすか、別の作業コピーを指定してください。"+
 				"自分自身の作業コピーを意図して共有するなら worktree=false と "+
-				"allow_shared_working_copy=true を併せて指定します（他セッションの作業コピーは共有できません）",
-				m.Dir, m.Name)}
+				"allow_shared_working_copy=true を併せて指定します（自分が symlink を含まない正規のパスで"+
+				"起動している場合に限ります。他セッションの作業コピーは共有できません）。"+
+				"フラグを付けても同じ拒否になるなら、このコピーは共有できないので、同じ呼び出しを繰り返さないでください",
+				m.Dir, m.Name)}, false
 	}
-	return nil
+	return nil, false
 }
 
 // spawnOwnWorkingCopy reports whether target (a workingCopyKey) is the working copy the parent is

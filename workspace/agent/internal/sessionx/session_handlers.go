@@ -1034,13 +1034,15 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// A worktree launch has replaced req.Dir with the fresh worktree by now and cannot collide,
 	// which is why the check is scoped to the non-worktree case rather than the raw flag.
 	if spawnParent != "" && !req.Worktree {
-		if ref := spawnWorkingCopyRefusal(req.Dir, spawnParent, req.AllowSharedWorkingCopy); ref != nil {
+		ref, shared := spawnWorkingCopyCheck(req.Dir, spawnParent, req.AllowSharedWorkingCopy)
+		if ref != nil {
 			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 			return
 		}
-		if req.AllowSharedWorkingCopy && spawnOwnWorkingCopy(spawnParent, workingCopyKey(req.Dir)) {
+		if shared {
 			// Launch through the canonical spelling so Meta.Dir matches what the delete and
-			// checkout guards compare, and tell the child it is not alone in the checkout.
+			// checkout guards compare, and tell the child it is not alone in the checkout. Taken
+			// from the check's own answer: a second liveness read could disagree.
 			req.Dir = workingCopyKey(req.Dir)
 			req.InitialPrompt = SharedWorkingCopyWarning(spawnParent, req.InitialPrompt)
 		}

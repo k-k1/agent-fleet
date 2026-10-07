@@ -1145,7 +1145,9 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 				"To run a child in YOUR OWN working copy on purpose (e.g. a reviewer on what you are implementing), " +
 				"pass worktree=false and allow_shared_working_copy=true: it shares your checkout, index and branch, so tell it " +
 				"(and keep to) no checkout/switch/stash/branch changes and stage and commit explicitly by path. " +
-				"Another session's working copy cannot be shared this way. " +
+				"It works only while you are running in a canonical path (no symlink in the one you were started with; " +
+				"naming the target dir through an alias is fine) and only for your own copy: another session's working " +
+				"copy cannot be shared this way, and if the refusal repeats with the flag, do not retry - use a worktree. " +
 				"Limits: at most " + strconv.Itoa(session.SpawnChildLimit()) + " children at a time (a slot frees when the user deletes or " +
 				"archives that child" + stoppedChildExpiryClause() + " - list_child_sessions shows what " +
 				"you have), a session you started cannot start its own, and shell sessions cannot be started " +
@@ -1166,7 +1168,7 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 					"effort":                    map[string]any{"type": "string", "description": "Reasoning effort (optional; default: the model's defaultEffort). Needs model: use one of that model's efforts from list_models; anything else, or an effort without model, is refused. opencode and kiro list none: their value is not checked here, and a wrong one fails the child's first turn. agy and cursor fold effort into the model id instead"},
 					"initial_prompt":            map[string]any{"type": "string", "description": "The task, delivered as the child's first instruction. Write it for someone with none of your context: what to do, where, what done looks like. If it has to wait for a message (from you or another session), tell it to end its turn while it waits: a message to a busy session can be held until its turn ends, and waiting inside a tool (a sleep loop, a blocking wait) keeps that turn from ending"},
 					"worktree":                  map[string]any{"type": "boolean", "description": "Start in a new worktree off dir. Default TRUE from a session - two agents in one working copy corrupt each other's work"},
-					"allow_shared_working_copy": map[string]any{"type": "boolean", "description": "Opt in to starting the child in YOUR OWN working copy while you are running in it (default false). Needs worktree=false and dir = your working copy; any other directory in use is still refused. You and the child then share one checkout, index and branch: no checkout/switch/stash/branch changes, stage and commit explicitly by path"},
+					"allow_shared_working_copy": map[string]any{"type": "boolean", "description": "Opt in to starting the child in YOUR OWN working copy while you are running in it (default false). Needs worktree=false, dir = your working copy (an alias spelling of it is fine) and that you were started in a canonical path (no symlink); any other directory in use is still refused, and a repeated refusal means it cannot work - do not retry You and the child then share one checkout, index and branch: no checkout/switch/stash/branch changes, stage and commit explicitly by path"},
 					"branch":                    map[string]any{"type": "string", "description": "Base branch for the worktree (optional; default: current HEAD)"},
 					"new_branch":                map[string]any{"type": "string", "description": "Name of the branch to create in the worktree (optional; default: generated)"},
 					"subdir":                    map[string]any{"type": "string", "description": "Relative path inside the working copy to start in, e.g. console (optional)"},

@@ -302,3 +302,37 @@ func TestCreateIdempotencyKeyFingerprintSeesSharedFlag(t *testing.T) {
 		t.Fatal("the fallback key ignores allow_shared_working_copy")
 	}
 }
+
+// The guard is waived on ONE liveness answer and the launch applies what that answer said: a
+// parent that stops between two reads must not get the waiver without the canonical dir and the
+// warning.
+func TestSharedWorkingCopyDecidedOnceEvenIfParentStopsMidCreate(t *testing.T) {
+	env, repo, _, prompts := sharedCopyEnv(t)
+	reads := 0
+	sessionAliveFn = func(m session.Meta) bool {
+		if m.Name != "parent1" {
+			return m.Name == "stranger"
+		}
+		reads++
+		return reads == 1 // alive for the first read only
+	}
+	code, raw := env.create(sharedBody(repo, map[string]any{"initial_prompt": "review", "idempotency_key": "once"}))
+	if code != http.StatusCreated {
+		t.Fatalf("create = %d %s", code, raw)
+	}
+	if p := <-prompts; !strings.Contains(p, "[agent-fleet:shared-working-copy]") {
+		t.Fatalf("waived guard without the warning: %q", p)
+	}
+}
+
+// The busy refusal tells the caller the precondition, so it does not repeat a call that cannot work.
+func TestSharedWorkingCopyBusyMessageNamesPrecondition(t *testing.T) {
+	ref := func() *SpawnRefusal {
+		env, repo, _, _ := sharedCopyEnv(t)
+		_ = env
+		return spawnWorkingCopyRefusal(repo, "stranger", false)
+	}()
+	if ref == nil || !strings.Contains(ref.Message, "symlink") {
+		t.Fatalf("busy message omits the canonical-path precondition: %v", ref)
+	}
+}
