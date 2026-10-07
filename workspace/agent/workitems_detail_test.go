@@ -420,3 +420,41 @@ func TestJiraReferenceDetailErrorsCarryNoUpstreamText(t *testing.T) {
 		}
 	}
 }
+
+// An expired OAuth token is renewed through the CP bridge, whose failure text (a response body,
+// or an internal URL when unreachable) must not become the panel's error.
+func TestJiraReferenceDetailOAuthRefreshFailureCarriesNoBridgeText(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	hits := 0
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":"invalid_grant","message":"BRIDGE_SENTINEL"}}`))
+	}))
+	s, err := secrets.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.GitOAuthBridge = &secrets.CPBridge{BaseURL: bridge.URL, Token: "afo_x"}
+	s.Jira = &secrets.JiraCreds{AuthKind: "oauth", AccessToken: "old", RefreshToken: "rt0", Expiry: 1, CloudID: "cid", Site: "https://x.atlassian.net"}
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	for _, unreachable := range []bool{false, true} {
+		if unreachable {
+			bridge.Close()
+		}
+		hits = 0
+		cur, _ := secrets.Load()
+		_, err = jiraReferenceDetail(cur.Jira, "PROJ-1")
+		if err == nil {
+			t.Fatal("want an error")
+		}
+		if !unreachable && hits != 1 {
+			t.Fatalf("the bridge was not exercised (hits=%d)", hits)
+		}
+		if m := err.Error(); strings.Contains(m, "BRIDGE_SENTINEL") || strings.Contains(m, "invalid_grant") || strings.Contains(m, "127.0.0.1") {
+			t.Errorf("unreachable=%v: error leaks bridge text: %v", unreachable, err)
+		}
+	}
+}

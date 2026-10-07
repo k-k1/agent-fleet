@@ -192,6 +192,26 @@ func handleWorkItemsDetail(w http.ResponseWriter, r *http.Request) {
 // else — a slash, a dot, a query — would let the caller steer the request elsewhere on the site.
 var jiraKeyRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*-[1-9][0-9]{0,9}$`)
 
+// jiraReferenceError words a jiraGet failure for the panel from its status code alone. The
+// error's own text is never forwarded: a 400 carries Jira's errorMessages (worded for a JQL
+// failure), and the OAuth renewal path (jiraEnsureFresh) returns the refresh bridge's response
+// body or an internal URL as a plain error.
+func jiraReferenceError(err error, key string) error {
+	je, ok := err.(*jiraHTTPError)
+	if !ok {
+		return fmt.Errorf("could not reach Jira or renew its authorization (re-connect Jira if this persists)")
+	}
+	switch je.code {
+	case http.StatusNotFound, http.StatusGone:
+		return fmt.Errorf("jira has no %s visible to this connection", key)
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return fmt.Errorf("jira rejected the credentials (re-connect Jira)")
+	case http.StatusTooManyRequests:
+		return fmt.Errorf("jira rate limit reached")
+	}
+	return fmt.Errorf("jira answered %d for %s", je.code, key)
+}
+
 // jiraReferenceDetail reads one Jira issue. The `fields=` list is the no-body promise written
 // into the request: no description, no comments.
 func jiraReferenceDetail(c *secrets.JiraCreds, key string) (*workItemDetailOut, error) {
@@ -200,15 +220,7 @@ func jiraReferenceDetail(c *secrets.JiraCreds, key string) (*workItemDetailOut, 
 	}
 	body, err := jiraGet(c, jiraAPIBase(c)+"/rest/api/3/issue/"+key+"?fields=summary,status,assignee,labels,issuetype,updated")
 	if err != nil {
-		if isJiraNotFound(err) {
-			return nil, fmt.Errorf("jira has no %s visible to this connection", key)
-		}
-		// jiraGet's 400 text carries Jira's own errorMessages and is worded for a JQL parse
-		// failure; neither belongs in a single-issue answer. Every other text is fixed.
-		if je, ok := err.(*jiraHTTPError); ok && je.code == http.StatusBadRequest {
-			return nil, fmt.Errorf("jira refused the request for %s (400)", key)
-		}
-		return nil, err
+		return nil, jiraReferenceError(err, key)
 	}
 	// The search parser's issue shape is the same; wrap the one issue as a page of one.
 	rows, err := parseJiraSearchIssues([]byte(`{"issues":[`+string(body)+`]}`), c.Site, "")
