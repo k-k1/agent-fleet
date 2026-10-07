@@ -25,6 +25,8 @@ import { useT } from "../../lib/i18n/index.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
+import { useLongPressMenu } from "../../lib/useLongPressMenu.ts";
+import { downloadFolderZip } from "../files/folderZip.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -909,6 +911,20 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
                 </button>
               </li>
             )}
+            {/* The whole folder as one zip (ADR 0111). The check runs first and shows a refusal
+                as a toast, which a plain download link cannot. */}
+            {menu.kind === "folder" && (
+              <li>
+                <button
+                  type="button"
+                  className="ui-menu-item"
+                  title={tr("gallery.download_zip_title")}
+                  onClick={() => runMenu(() => void downloadFolderZip(menu.path, showToast))}
+                >
+                  <Icon name="cloud-download" /> {tr("gallery.download_zip")}
+                </button>
+              </li>
+            )}
             {/* The whole file by path to a session, or attached to an assistant's chat — the
                 file pane's own send (SendSelectionModal), not a transport of the gallery's. A
                 folder is left out: "look at this folder" is not what either path carries. */}
@@ -1015,9 +1031,13 @@ function FolderCard({
   const hoverTimer = useRef(0);
   const disarm = () => window.clearTimeout(hoverTimer.current);
   useEffect(() => disarm, []);
+  // iOS has no native contextmenu for a long press here; the folder's menu carries the zip
+  // download (ADR 0111), so a touch press opens it and its lift must not also open the folder.
+  const longPress = useLongPressMenu();
   const onContextMenu = (e: RMouseEvent) => {
     if (!onMenu) return; // no menu here, so leave the browser's own alone
     e.preventDefault();
+    longPress.onContextMenu(e);
     onMenu(e.clientX, e.clientY);
   };
   const onKeyDown = (e: RKeyboardEvent<HTMLDivElement>) => {
@@ -1037,12 +1057,16 @@ function FolderCard({
       role="listitem"
       onContextMenu={onContextMenu}
       onKeyDown={onKeyDown}
+      {...(onMenu ? longPress.props(onMenu) : {})}
     >
       <button
         type="button"
         className="gal-enter"
         title={title}
-        onClick={(e) => onOpen(e.ctrlKey || e.metaKey)}
+        onClick={(e) => {
+          if (longPress.clickSwallowed()) return;
+          onOpen(e.ctrlKey || e.metaKey);
+        }}
         // Pointer-down, not just hover: a touch has no hover at all, and on a mouse it is still
         // a frame or two ahead of the click.
         onPointerDown={() => onPrefetch?.()}

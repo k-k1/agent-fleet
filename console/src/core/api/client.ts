@@ -371,6 +371,38 @@ export function downloadURL(path: string, thumb?: number, version?: number): str
 }
 
 /**
+ * The URL of a folder's zip (GET api/fs/download-zip, ADR 0111): a top-level navigation like
+ * downloadURL, so the tenant rides in the query. Each request builds its own archive on the
+ * Agent, which is why the caller asks `fsZipCheck` first — a refusal (too large, busy, a name
+ * that cannot be zipped) is then a message in the Console instead of a failed download.
+ */
+export function downloadZipURL(path: string): string {
+  const u = new URL(rel("api/fs/download-zip"));
+  u.searchParams.set("path", path);
+  if (selectedTenant) u.searchParams.set("tenant", selectedTenant);
+  return u.toString();
+}
+
+/** What a folder's zip would hold, answered by the same walk that builds it (`check=1`). */
+export type FsZipCheck = {
+  /** The file name the browser will save it under. */
+  name: string;
+  files: number;
+  dirs: number;
+  /** Listing-time total; the archive is limited by the bytes actually read. */
+  bytes: number;
+  /** Folder names left out below the start: `.git`, `node_modules`, denylisted ones. */
+  excluded: string[];
+  /** Symbolic links and special files, which are never packed. */
+  skipped: number;
+};
+
+// fetch-based on purpose: unlike the download anchor it surfaces 401 (session expiry), 413,
+// 503 and a stopped workspace as {error} for the caller to show.
+export const fsZipCheck = (path: string): Promise<(FsZipCheck & { error?: undefined }) | { error: ApiError }> =>
+  api(`api/fs/download-zip?path=${encodeURIComponent(path)}&check=1`);
+
+/**
  * The URL for a surface that SHOWS a picture at up to `edge` on its longest side — a lightbox,
  * not a card. It differs from `downloadURL(path, edge)` in one case, and that case is the
  * common one: when there is nothing to downscale, `thumb` hands back the original file, while

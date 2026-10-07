@@ -404,6 +404,8 @@ func buildMux() *http.ServeMux {
 	// that never touches the fs.
 	mux.HandleFunc("POST /fs/suggest-edit", httpx.HeldOpen(handleFSSuggestEdit))
 	mux.HandleFunc("GET /fs/download", handleFSDownload)
+	// A folder as one zip (ADR 0111): read-only, bounded on every axis, built into a temp file.
+	mux.HandleFunc("GET /fs/download-zip", handleFSDownloadZip)
 	// A picture's width and height from its header, many paths per request (fs_imagesize.go).
 	mux.HandleFunc("POST /fs/imagesize", handleFSImageSize)
 	// Every picture under a folder, a bounded walk, flattened into one list (fs_images.go).

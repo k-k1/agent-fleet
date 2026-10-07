@@ -124,6 +124,12 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.binary_not_supported": "Binary files and unsupported text encodings can't be edited.",
   "err.unsupported_newline": "Files with CRLF or CR newlines can't be edited yet.",
   "err.read_failed": "Failed to read the file.",
+  "err.zip_too_large": "This folder is too large to download as a zip.",
+  "err.unsafe_name": "A file name in this folder can't be stored in a zip.",
+  "err.changed_during_zip": "The folder changed while the zip was being made. Try again.",
+  "err.zip_no_space": "The workspace has no space left for the zip.",
+  "err.zip_not_dir": "That is not a folder.",
+  "err.zip_busy": "The workspace is busy. Try again in a moment.",
   "err.write_failed": "Failed to save the file.",
   "err.write_state_unknown": "The content is live, but its durability couldn't be confirmed.",
   // docs/log/28 P3: workspace/agent handler stable codes (mirror of errcodes.go).

@@ -51,6 +51,8 @@ export const gallery = {
   "gallery.open_session": "生成したセッション「{name}」を開く",
   "gallery.session_gone": "このセッションはもう開けません",
   "gallery.copy_folder_name": "フォルダ名をコピー",
+  "gallery.download_zip": "フォルダを zip でダウンロード",
+  "gallery.download_zip_title": "フォルダ内の .git と node_modules は含めません",
   "gallery.rename_folder": "フォルダ名を変更",
   "gallery.rename_folder_prompt": "新しいフォルダ名",
   "gallery.delete_folder": "フォルダを削除",

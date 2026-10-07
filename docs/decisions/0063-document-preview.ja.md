@@ -71,3 +71,8 @@ anydoc は OCR を持たないので、スキャン PDF は `needsOcr` を返す
 - Console の配布物が +2.5 MB（cMap と標準フォント）。主チャンクは不変。
 - `console/package.json` に `pdfjs-dist` と `@firecrawl/anydoc-wasm` が増える（どちらも遅延読み込み）。
 - バックエンドの変更は無い。既存の `api/fs/download` が生バイトを返し、Range も通る。
+
+## 追記（2026-10-07）— 生バイトの口はもう 1 つではない（#1829）
+
+`api/fs/download` が生バイトを返す唯一の口ではなくなった。フォルダは `api/fs/download-zip` で 1 つの zip として
+取れる（[0111](0111-folder-zip-download.ja.md)）。あちらはこの口の生成画像の例外を引き継がず、Range にも応じない。

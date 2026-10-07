@@ -80,3 +80,9 @@ it locally.
 - The Console build grows by 2.5 MB (cMaps and standard fonts). The main chunk is unchanged.
 - `console/package.json` gains `pdfjs-dist` and `@firecrawl/anydoc-wasm` (both lazily loaded).
 - No backend change. The existing `api/fs/download` returns the raw bytes and honours Range.
+
+## Notes
+
+- **2026-10-07 (#1829):** `api/fs/download` is no longer the only raw-bytes door: a folder can be
+  fetched as one zip through `api/fs/download-zip` ([0111](0111-folder-zip-download.md)), which
+  does not inherit this endpoint's generated-images exception and does not honour Range.
