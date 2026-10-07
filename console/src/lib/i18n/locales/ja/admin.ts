@@ -724,7 +724,7 @@ export const admin = {
   "admin.egress_observed": "観測された宛先",
   "admin.period": "期間",
   "admin.days_1": "1日",
-  "admin.days_7": "7日",
+  "admin.days_7": "7 日",
   "admin.days_30": "30 日",
   "admin.egress_no_records": "記録がありません（egress プロキシが未設定か、対象期間に通信がありません）。",
   "admin.egress_allowed": "{n} 許可",

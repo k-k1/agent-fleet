@@ -103,7 +103,7 @@ export const errors = {
   "err.tenant_slug_conflict": "そのスラグは既定テナントのメンバーのホームディレクトリと同じ名前です。別のスラグを選んでください。",
   "err.user_key_reserved": "このユーザーキーは Control Plane が自身のファイルに使う名前のため、既定テナントに追加できません。",
   "err.user_key_conflict": "このユーザーキーは既にテナントのディレクトリ名として使われているため、既定テナントに追加できません。管理者に相談してください。",
-  "err.unknown_provider": "そのサインイン方法はこのデプロイで有効になっていません。",
+  "err.unknown_provider": "そのサインイン方法はこの配備で有効になっていません。",
   "err.self_removal": "自分の最後のメンバーシップは外せません（戻る方法がなくなるため）。他の管理者に依頼してください。",
   "err.bad_share": "共有リクエストが不正です。",
   "err.member_not_found": "指定した相手は同じテナントのメンバーではありません。検索候補から選び直してください。",
@@ -193,9 +193,9 @@ export const errors = {
   "err.fork_missing_dir": "作業フォルダが存在しないため分岐できません",
   "err.fork_at_unsupported": "このセッションは発言時点からの分岐に対応していません（managed のセッションでだけ使えます）",
   "err.fork_bad_anchor": "この分岐点は使えません。チャットを読み込み直してからやり直してください",
-  "err.title_feature_disabled": "AI 提案が無効です（表示設定のタイトル自動提案をオンにしてください）",
+  "err.title_feature_disabled": "AI 提案がオフです（表示設定のタイトル自動提案をオンにしてください）",
   "err.title_no_content": "会話がまだ足りません（数往復してから試してください）",
-  "err.translate_disabled": "回答の翻訳が無効です（設定 > AI アシストでオンにしてください）",
+  "err.translate_disabled": "回答の翻訳がオフです（設定 > AI アシストでオンにしてください）",
   "err.translate_empty": "翻訳する本文がありません",
   "err.translate_too_long": "この回答は長すぎて翻訳できません",
   "err.memory_bad_request": "リクエストの形式が不正です",
@@ -216,8 +216,8 @@ export const errors = {
   "err.memory_no_project": "このセッションには作業コピーが無いため、プロジェクトのメモリを使えません",
   "err.memory_disabled": "Agent Fleet のメモリは設定でオフになっています（設定 → エージェントメモリ）",
   "err.tenant_idp_link_claim_required":
-    "このデプロイには、同じ発行元のサインイン方法がすでにあります。この発行元はアプリ登録ごとに同じ人へ違う subject を割り当てるため、" +
-    "「同一アカウントの見分け方」を指定しないと、すでにこのデプロイを使っている人が全員サインインできなくなります（メールアドレス重複として拒否されます）。",
+    "この配備には、同じ発行元のサインイン方法がすでにあります。この発行元はアプリ登録ごとに同じ人へ違う subject を割り当てるため、" +
+    "「同一アカウントの見分け方」を指定しないと、すでにこの配備を使っている人が全員サインインできなくなります（メールアドレス重複として拒否されます）。",
 
   // Agent sign-in / OAuth (opencode, kiro, agy, cursor). The codes are shared across
   // drivers on purpose: the wording holds for every one of them, and the driver-specific

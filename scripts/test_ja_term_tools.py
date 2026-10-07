@@ -40,7 +40,13 @@ class VerificationTests(unittest.TestCase):
                  ('F-default', 'デフォルト', '既定'),
                  ('F-variants', 'セッション削除', 'セッションを削除'),
                  ('F-variants', '保存中', '保存中…'),
-                 ('F-variants', 'APIトークン', 'API トークン')]
+                 ('F-variants', 'APIトークン', 'API トークン'),
+                 ('F-variants', '7日', '7 日'),
+                 ('F-variants', '変更ファイルを検索…', '変更ファイルを検索'),
+                 ('F-variants', 'ファイルを検索…', 'ファイルを検索'),
+                 ('F-variants', 'このセッションが直したファイルを検索…', 'このセッションが直したファイルを検索'),
+                 ('F-variants', 'セッションを検索…', 'セッションを検索'),
+                 ('F-variants', '過去のセッションの会話を検索…', '過去のセッションの会話を検索')]
         cases += [('F-buttons', n + 'する', n) for n in common.BUTTONS]
         for family, old, new in cases:
             with self.subTest(family=family, old=old):
@@ -151,6 +157,33 @@ class VerificationTests(unittest.TestCase):
         for key in ['err.prompt', 'err.speech', 'd.login', 'absent']:
             with self.subTest(key=key), self.assertRaises(common.Refusal):
                 common.verify_plan([row(key=key)], {key: entry('ログイン', key)}, user_errors={key})
+        # Reviewed user-visible err.* values: F-login, F-deploy and F-onoff only, per key.
+        for old, new, family in [('このデプロイで有効', 'この配備で有効', 'F-deploy'),
+                                 ('AI 提案が無効です', 'AI 提案がオフです', 'F-onoff')]:
+            r = row(old, new, family, 'err.reviewed')
+            with self.subTest(old=old):
+                self.assertFalse(common.verify_plan([r], {r.key: entry(old, r.key)}, user_errors={r.key})[r.key][0])
+                with self.assertRaisesRegex(common.Refusal, 'excluded'):
+                    common.verify_plan([r], {r.key: entry(old, r.key)})
+                for key in ['err.prompt_x', 'err.speech', 'chat.report.x', 'clean.reason.x', 'd.deploy']:
+                    other = row(old, new, family, key)
+                    with self.assertRaises(common.Refusal):
+                        common.verify_plan([other], {key: entry(old, key)}, user_errors={key})
+                with self.assertRaisesRegex(common.Refusal, 'user-error approval requires'):
+                    common.verify_plan([r], {r.key: entry(old, r.key)}, user_errors={r.key, 'err.not_in_plan'})
+                # Only declared substitutions pass, even with the approval.
+                bad = row(old, new + '追加', family, 'err.reviewed')
+                with self.assertRaises(common.Refusal):
+                    common.verify_plan([bad], {bad.key: entry(old, bad.key)}, user_errors={bad.key})
+        for old, new, family in [('デフォルト', '既定', 'F-default'), ('端末', 'ブラウザ', 'F-device'),
+                                 ('保存中', '保存中…', 'F-variants'), ('枠', '利用枠', 'F-slot')]:
+            r = row(old, new, family, 'err.reviewed')
+            with self.subTest(family=family), self.assertRaisesRegex(common.Refusal, 'user-error approval requires'):
+                common.verify_plan([r], {r.key: entry(old, r.key)}, user_errors={r.key})
+        # Quoted-term approval stays F-login only.
+        r = row('「デプロイ」', '「配備」', 'F-deploy', 'd.quote')
+        with self.assertRaisesRegex(common.Refusal, 'F-login'):
+            common.verify_plan([r], {r.key: entry(r.old, r.key)}, quoted_terms={r.key})
         r = row('「ログインして承認」を押します。', '「サインインして承認」を押します。')
         common.verify_plan([r], {r.key: entry(r.old)}, quoted_terms={r.key})
         for old, new, family in [('`ログイン`', '`サインイン`', 'F-login'),
@@ -205,6 +238,11 @@ class MutantTests(unittest.TestCase):
                 result = unittest.TestResult()
                 VerificationTests(test).run(result)
                 self.assertTrue(result.failures, f'{name} mutant survived: {result.errors}')
+        # Widening the user-error family list must break the scoped-approval negative control.
+        with patch.object(common, 'USER_ERROR_FAMILIES', (*common.PAIRS,)):
+            result = unittest.TestResult()
+            VerificationTests('test_reviewed_sense_approvals_are_complete_and_scoped').run(result)
+            self.assertTrue(result.failures, f'family-scope mutant survived: {result.errors}')
         source = Path(common.__file__).read_text()
         marker = 'if len({r.key for r in rows}) != len(rows):'
         self.assertEqual(source.count(marker), 1)

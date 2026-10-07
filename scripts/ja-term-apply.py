@@ -100,7 +100,7 @@ def main(argv=None):
     ap.add_argument('--allow-split', action='append', default=[], metavar='KEY,KEY',
                     help='approve every key in a reviewed independent label group')
     ap.add_argument('--allow-user-error', action='append', default=[], metavar='KEY',
-                    help='approve a user-visible err.* value in an F-login plan')
+                    help='approve a user-visible err.* value in an F-login, F-deploy or F-onoff plan')
     ap.add_argument('--allow-quoted-terms', action='append', default=[], metavar='KEY',
                     help='approve F-login substitutions in Japanese label quotes for this key')
     args = ap.parse_args(argv)

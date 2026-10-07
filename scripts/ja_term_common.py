@@ -34,6 +34,11 @@ VARIANTS = (
     ('…ほか {count} 件', 'ほか {count} 件'), ('Git Flow を初期化', 'Git Flow を初期化…'),
     ('コマンド・セッションを検索', 'コマンド・セッションを検索…'),
     ('Gitホスティング', 'Git ホスティング'), ('{n}ファイル', '{n} ファイル'),
+    ('7日', '7 日'), ('変更ファイルを検索…', '変更ファイルを検索'),
+    ('ファイルを検索…', 'ファイルを検索'),
+    ('このセッションが直したファイルを検索…', 'このセッションが直したファイルを検索'),
+    ('セッションを検索…', 'セッションを検索'),
+    ('過去のセッションの会話を検索…', '過去のセッションの会話を検索'),
 )
 PAIRS = {
     'F-login': both((('サインイン', 'ログイン'),)),
@@ -64,6 +69,8 @@ SENSES = {
     'F-variants': '… only for in-progress displays/dialog-opening buttons; otherwise majority spelling. Read the component.',
 }
 WHOLE = {'F-buttons', 'F-variants'}
+# Families whose reviewed plan rows may include a user-visible err.* value (--allow-user-error).
+USER_ERROR_FAMILIES = ('F-login', 'F-deploy', 'F-onoff')
 
 
 def excluded(key):
@@ -318,7 +325,10 @@ def verify_plan(rows, entries, split_approvals=frozenset(), user_errors=frozense
         raise Refusal('duplicate/conflicting plan key')
     checked = {}
     by_key = {r.key: r for r in rows}
-    for key in user_errors | quoted_terms:
+    for key in user_errors:
+        if key not in by_key or by_key[key].family not in USER_ERROR_FAMILIES:
+            raise Refusal(f'{key}: user-error approval requires a plan row of ' + '/'.join(USER_ERROR_FAMILIES))
+    for key in quoted_terms:
         if key not in by_key or by_key[key].family != 'F-login':
             raise Refusal(f'{key}: approval requires an F-login plan row')
     for key in user_errors:
