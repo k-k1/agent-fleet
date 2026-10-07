@@ -3089,3 +3089,13 @@ The cost the 2026-09 note describes applies again: the 1.4.3 bundle is red again
 (the bundle declares `hookRun` and the other 1.4.3 additions, which a 1.4.2 binary lacks, so they
 read as removed), so `muse-contract.yml` on the Dockerfile pin stays red until
 `MUSE_VERSION` moves; measured: 1.4.3 green, 1.4.2 red. The pin bump is cli-pin-bump's.
+
+### Note 2026-10-08: #1796 was a stale installed binary, not a bundle problem
+
+`TestInstalledBinaryIsCompatibleWithTheBundle` was red in a Workspace whose home still held
+1.4.2-R4684.1 while the Dockerfile pin and the bundle are 1.4.3-R5018.1 (the cost the 2026-10-06
+note predicted: `hook/list`, `plugin/list` and `hookRun` read as removed, and
+`FeedbackSubmitParams.sessionId` as newly required). Measured: the 1.4.3-R5018.1 artifact, sha256
+verified against the pin, passes the test; 1.4.2 fails it. No client code calls a removed method.
+The bundle and types are unchanged. The test now names the installed build and the pin when they
+differ, so the next stale home reads as "run `workspace-agent install-muse`".
