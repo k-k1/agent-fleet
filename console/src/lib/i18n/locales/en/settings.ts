@@ -229,7 +229,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.claude_custom_models_remove": "Remove {model} from choices",
   "agents.expand_thinking": "Show thinking expanded",
   "agents.expand_thinking_note":
-    "When on, the mirror's “Thinking” block starts expanded. When off (the default) it stays collapsed, and you click the heading to read it. Display only; the agent's behavior is unchanged.",
+    "When on, the mirror's “Thinking” block starts expanded. When off (the default), it stays collapsed. Click the heading to read it. Display only; the agent's behavior is unchanged.",
   "agents.stream_replies": "Stream replies in the chat view",
   "agents.stream_replies_lines": "Line by line",
   "agents.stream_replies_typewriter": "Typewriter",
