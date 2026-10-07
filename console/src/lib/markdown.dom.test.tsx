@@ -160,4 +160,34 @@ describe("a formatting tag that is never closed", () => {
     const real = render(marked, '<a href="x">see https://example.com</a>');
     expect(real.querySelectorAll("a").length).toBe(1);
   });
+
+  it("keeps a bare URL inside a real anchor as plain text, however the anchor is nested", () => {
+    for (const source of [
+      '<a href="x">see https://example.com</a>',
+      '*<a href="x">see https://example.com*</a>',
+      '**<a href="x">see https://example.com** after </a>',
+    ]) {
+      const anchors = [...render(marked, source).querySelectorAll("a")];
+      expect(anchors.map((a) => a.getAttribute("href")), source).toEqual(["x", ...(source.includes("after") ? ["x"] : [])]);
+    }
+  });
+
+  it("links bare URLs after a stray <a> whatever fake closer follows", () => {
+    for (const source of [
+      "Use <a download> https://example.com `</a>`\n\nhttps://example.org",
+      "Use <a download> https://example.com <!-- </a> -->\n\nhttps://example.org",
+      "Use <a download> https://example.com ![</a>](i.png)\n\nhttps://example.org",
+    ]) {
+      expect(render(marked, source).querySelectorAll("a[href^='https://']").length, source).toBe(2);
+    }
+  });
+
+  it("does not let a table cell close an opener outside the table", () => {
+    for (const source of [
+      "<a download>\n\n| h |\n| - |\n| </a> |\n\nSecond.",
+      "<b>\n\n| </b> |\n| - |\n| content |\n\nSecond.",
+    ]) {
+      expect(leaks(render(marked, source), "Second.")).toBe(false);
+    }
+  });
 });

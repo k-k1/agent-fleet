@@ -276,17 +276,20 @@ function formattingEvent(raw: string): TagEvent | null {
 // Pairs each closer with the nearest unmatched opener of the same name; `finish` reports the
 // openers nothing closed. A closer with no opener is left alone, as the HTML parser does.
 class TagPairing {
-  private open: { name: string; stray: () => void }[] = [];
+  private open: { name: string; stray: () => void; at: number }[] = [];
+  // Matched pairs by position, for the caller that needs to know what lies between them.
+  readonly pairs: { name: string; from: number; to: number }[] = [];
   // Closers that found no opener here; a block opener elsewhere may own them.
   readonly orphans: TagEvent[] = [];
 
-  push(event: TagEvent, stray: () => void): void {
+  push(event: TagEvent, stray: () => void, at = 0): void {
     if (event.open) {
-      this.open.push({ name: event.name, stray });
+      this.open.push({ name: event.name, stray, at });
       return;
     }
     for (let i = this.open.length - 1; i >= 0; i--) {
       if (this.open[i].name === event.name) {
+        this.pairs.push({ name: event.name, from: this.open[i].at, to: at });
         this.open.splice(i, 1);
         return;
       }
@@ -301,35 +304,58 @@ class TagPairing {
 }
 
 // One inline unit (paragraph, heading, list-item text, table cell) is paired as a whole,
-// recursing into emphasis and links so `*<a href="x">y*</a>` still counts as closed.
-function pairInline(tokens: Token[], pairing: TagPairing): void {
+// recursing into emphasis and links so `*<a href="x">y*</a>` still counts as closed. The walk
+// is flat and in document order; `at` is a token's position in it.
+type InlineItem = { tag: TagEvent; token: Token } | { url: Tokens.Link };
+
+function collectInline(tokens: Token[], items: InlineItem[]): void {
   for (const t of tokens) {
     // An image's children become its alt attribute, never tags in the body.
     if (t.type === "image") continue;
     if (t.type === "html") {
-      const event = formattingEvent(t.raw);
-      if (event) {
-        pairing.push(event, () => {
-          const token = t as Tokens.Generic;
-          token.type = "text";
-          token.text = t.raw;
-          delete token.escaped;
-        });
-      }
+      const tag = formattingEvent(t.raw);
+      if (tag) items.push({ tag, token: t });
+    } else if (t.type === "link" && t.raw === t.text) {
+      items.push({ url: t as Tokens.Link }); // a bare URL (GFM autolink extension)
     } else if ("tokens" in t && Array.isArray(t.tokens)) {
-      pairInline(t.tokens, pairing);
+      collectInline(t.tokens, items);
     }
   }
 }
 
-// A closer the unit cannot pair is offered to the document, so `<a href>` alone on a line
-// can still be closed by `</a>` in a later paragraph. The reverse — an inline opener closed by
-// a later block — is not honored: a paragraph's own stray opener must not reach past it.
-function pairUnit(tokens: Token[], doc: TagPairing): void {
+function toText(t: Token): void {
+  const token = t as Tokens.Generic;
+  token.type = "text";
+  token.text = t.raw;
+  delete token.escaped;
+  delete token.tokens;
+  delete token.href;
+}
+
+// `doc` is where a closer this unit cannot pair is offered, so `<a href>` alone on a line can
+// still be closed by `</a>` in a later paragraph. The reverse — an inline opener closed by a
+// later block — is not honored: a paragraph's own stray opener must not reach past it. A table
+// cell passes no `doc`: the HTML parser stops a closer at the cell boundary.
+//
+// The stock tokenizer would otherwise decide bare-URL linking by `inLink`, set on `<a` before
+// anyone knows whether it is closed; instead bare URLs are always lexed, and the ones that end
+// up inside a real `<a>…</a>` are turned back into text here, so they never nest an anchor.
+function pairUnit(tokens: Token[], doc?: TagPairing): void {
+  const items: InlineItem[] = [];
+  collectInline(tokens, items);
   const unit = new TagPairing();
-  pairInline(tokens, unit);
+  items.forEach((item, at) => {
+    if ("tag" in item) unit.push(item.tag, () => toText(item.token), at);
+  });
   unit.finish();
-  for (const event of unit.orphans) doc.push(event, () => {});
+  for (const { name, from, to } of unit.pairs) {
+    if (name !== "a") continue;
+    for (let at = from + 1; at < to; at++) {
+      const item = items[at];
+      if ("url" in item) toText(item.url);
+    }
+  }
+  if (doc) for (const event of unit.orphans) doc.push(event, () => {});
 }
 
 // A comment (skipped) or a tag with quoted attributes, inside block-level raw HTML.
@@ -370,7 +396,7 @@ function walkBlocks(tokens: Token[], pairing: TagPairing, escapes: (() => void)[
         break;
       case "table": {
         const table = t as Tokens.Table;
-        for (const cell of [...table.header, ...table.rows.flat()]) pairUnit(cell.tokens, pairing);
+        for (const cell of [...table.header, ...table.rows.flat()]) pairUnit(cell.tokens);
         break;
       }
     }
@@ -524,11 +550,9 @@ export const marked = new Marked({
     tag(src) {
       const before = this.lexer.state.inLink;
       const token = Tokenizer.prototype.tag.call(this, src);
-      // The stock rule sets `inLink` on `<a`, which switches bare-URL linking off until a `</a>`
-      // that a stray opener never gets. Keep that only when a closer follows in this source.
-      if (token && /^<a[\s/>]/i.test(token.raw) && !/<\/a\s*>/i.test(src.slice(token.raw.length))) {
-        this.lexer.state.inLink = before;
-      }
+      // `<a` / `</a>` flip `inLink` in the stock rule; neutralizeStrayFormattingTags decides
+      // what a bare URL inside an anchor does once it knows which anchors are real.
+      this.lexer.state.inLink = before;
       return token && !isRenderedHtmlTag(token.raw) ? undefined : token;
     },
     html(src) {
