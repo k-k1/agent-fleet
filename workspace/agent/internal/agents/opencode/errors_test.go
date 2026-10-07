@@ -254,6 +254,11 @@ func TestAbortWeAskedForStaysCancelled(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	waitState(t, h, agents.TurnRunning)
+	// TurnRunning is stamped before /message is issued, so it does not mean serve holds the
+	// turn yet: an abort that lands first finds nothing to cut (ADR 0105 decision 3) and the
+	// 30 s turn then outlives waitState. waitTurns returns once the mock holds the turn,
+	// which is when its abort gate is armed (turns and gate are set under one lock).
+	waitTurns(t, m, 1)
 	DropHandle(h.name)
 	waitState(t, h, agents.TurnCancelled)
 }
