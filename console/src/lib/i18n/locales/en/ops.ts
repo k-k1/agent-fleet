@@ -26,7 +26,7 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "ops.grafana_url_placeholder": "Grafana URL (https://grafana.example.com)",
   "ops.grafana_token_placeholder": "Service-account token",
   "ops.grafana_hint":
-    "A Viewer-role service-account token is recommended. The token is stored encrypted inside the workspace and passed only when the MCP server starts (write/admin tools start disabled). For Amazon Managed Grafana, set the URL to the workspace endpoint (g-xxxx.grafana-workspace.<region>.amazonaws.com) — tokens expire after at most 30 days, so re-paste when they do.",
+    "A Viewer-role service-account token is recommended. The token is stored encrypted inside the workspace and passed only when the MCP server starts (write/admin tools start disabled). For Amazon Managed Grafana, set the URL to the workspace endpoint (g-xxxx.grafana-workspace.<region>.amazonaws.com). Tokens expire after at most 30 days, so re-paste when they do.",
   "ops.cw_profile_select": "Select a profile…",
   "ops.cw_manual_option": "Manual entry (a profile in your own ~/.aws)",
   "ops.cw_no_profiles": "No SSO profiles yet, so this falls back to manual entry.",
@@ -42,7 +42,7 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "ops.aws_mode_read": "Read-only",
   "ops.aws_mode_write": "Writes enabled",
   "ops.aws_hint":
-    "Connects to the AWS-operated MCP Server (Agent Toolkit for AWS) through the official proxy. No secret is stored — requests are signed with the credentials of the profile you pick. Gives you AWS documentation search, skill retrieval, AWS API lookups and more. Unlike CloudWatch it attaches to interactive sessions as well as the assistant. The endpoint is the region the MCP server itself runs in; the region field above is where your own resources live. If you haven't logged in to SSO (or it's expired), open the matching SSM session once, or run `AWS_CONFIG_FILE=~/.aws/af-ops/aws.config aws sso login --profile <profile>` in a terminal.",
+    "Connects to the AWS-operated MCP Server (Agent Toolkit for AWS) through the official proxy. No secret is stored, and requests are signed with the credentials of the profile you pick. Gives you AWS documentation search, skill retrieval, AWS API lookups and more. Unlike CloudWatch it attaches to interactive sessions as well as the assistant. The endpoint is the region the MCP server itself runs in; the region field above is where your own resources live. If you haven't logged in to SSO (or it's expired), open the matching SSM session once, or run `AWS_CONFIG_FILE=~/.aws/af-ops/aws.config aws sso login --profile <profile>` in a terminal.",
   "ops.cat_chat": "Chat notifications (bridge)",
   "ops.dc_token_placeholder": "Discord bot token",
   "ops.dc_verify": "Verify token",
@@ -51,13 +51,13 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "ops.dc_channel_select": "Select a channel…",
   "ops.dc_advanced_dm": "Advanced: send as DM (enter your user ID)",
   "ops.dc_advanced_channel": "Back to channel picker",
-  "ops.dc_test_sent": "Test notification sent — if it arrived in Discord, you're all set.",
+  "ops.dc_test_sent": "Test notification sent. If it arrived in Discord, you're all set.",
   "ops.dc_test_failed": "Connection saved, but the test send failed: {msg}",
   "ops.dc_user_placeholder": "Your Discord user ID (numeric)",
   "ops.dc_threads_label": "Thread per session",
   "ops.dc_threads_sub": "Starts a thread from a session's first notification and groups the rest there (auto-archives after 24h; posting revives it)",
   "ops.dc_mention_label": "User ID to @mention",
-  "ops.dc_mention_auto": "Auto-filled with server owner @{name} (that should be you — edit only if not)",
+  "ops.dc_mention_auto": "Auto-filled with server owner @{name} (that should be you; edit only if not)",
   "ops.dc_mention_placeholder": "Empty = no mention",
   "ops.dc_receive_label": "Reply to steer (two-way)",
   "ops.dc_receive_sub": "Replying in a session's thread sends the text into that session; questions, permissions, and plan approvals are answerable with buttons. A dedicated \"🛰 Fleet Operator\" thread is also created — reply there to talk to the fleet operator (check status, launch sessions, steer work). Enable the bot's MESSAGE CONTENT INTENT in the Discord Developer Portal (only your own replies and clicks are routed)",
@@ -105,11 +105,11 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "pool.at_cap": "The pool is at its cap. The next person to start takes a slot from the longest-dormant occupant instead of getting a new one.",
   "pool.timers": "A slot sleeps after {sleep} without a task. Unless a tenant sets its own, a home hibernates to a snapshot after {hibernate} (the deployment default).",
   "pool.timers_no_hibernate": "A slot sleeps after {sleep} without a task. Homes are never hibernated unless a tenant asks for it (Tenants → the tenant → Hibernate unused homes).",
-  "pool.timers_terminate": "A slot asleep for {terminate} is terminated, which is what gives its root volume back — the next person to need that size waits ~135s instead of ~110s.",
+  "pool.timers_terminate": "A slot asleep for {terminate} is terminated, which is what gives its root volume back. The next person to need that size waits ~135s instead of ~110s.",
   "pool.timers_no_terminate": "Slots are never terminated, so their root volumes are kept and billed until the pool reaches its cap of {max} (Ec2SlotTerminateAfterSec).",
-  "pool.budget_over": "Tenant quotas total {allocated} concurrent workspaces, more than the {capacity} this pool can serve ({max} slots less {reserved} a golden bake needs free). Past the cap a start does not queue — it evicts the longest-dormant member, or fails.",
+  "pool.budget_over": "Tenant quotas total {allocated} concurrent workspaces, more than the {capacity} this pool can serve ({max} slots less {reserved} a golden bake needs free). Past the cap a start does not queue: it evicts the longest-dormant member, or fails.",
   "pool.budget_unbounded": "{tenants} has no concurrency cap (0 = unlimited), so no total bounds this pool. One tenant can fill it and every other tenant's next start becomes an eviction.",
-  "pool.budget_denominator": "⚠️ These count different things. A tenant's cap counts workspaces RUNNING at once; the pool cap counts instances that EXIST — and a stopped workspace still holds its instance until Ec2SlotTerminateAfterSec collects it, while counting toward no tenant's cap. Staying inside the total is necessary, not sufficient.",
+  "pool.budget_denominator": "⚠️ These count different things. A tenant's cap counts workspaces RUNNING at once; the pool cap counts instances that EXIST, and a stopped workspace still holds its instance until Ec2SlotTerminateAfterSec collects it, while counting toward no tenant's cap. Staying inside the total is necessary, not sufficient.",
   "pool.off": "never",
   "pool.no_slots": "No slots. The first Start will create one.",
   "pool.col_instance": "Instance",
@@ -127,7 +127,7 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "pool.terminate": "Terminate",
   "pool.terminate_title": "Terminate slot {id}?",
   "pool.terminate_body":
-    "This deletes the instance and its root volume. There is no undo — if there is anything left to look at inside it, do that first.",
+    "This deletes the instance and its root volume. There is no undo, so if there is anything left to look at inside it, do that first.",
   "pool.terminate_reason": "Quarantined because: {reason}",
   "pool.terminate_failed": "Could not terminate it: {msg}",
   "pool.col_template": "Template",
@@ -160,9 +160,9 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "pool.detached": "detached",
   "pool.golden_title": "Golden snapshot",
   "pool.golden_none": "None. New homes are built empty, so a new member pays boot-install and a cold cache on their first start. The CP normally bakes one for {image} by itself (it waits until two slots are free). If auto-baking is off, bake one with deploy/aws/ecs/bake-golden.sh.",
-  "pool.golden_baking": "Preparing one for {image}. Once it is baked, it is only used after something has actually started from it. Until then new homes are built empty — a slow first start, nothing broken.",
-  "pool.golden_rejected": "{snapshot} is not being used: {reason}. Nothing that could not be shown to boot is handed out, so new homes are built empty — a slow first start, nothing broken. Re-baking the same image stops after two attempts.",
-  "pool.golden_stale": "{snapshot} was baked from {baked}, but this deployment runs {running}. It is NOT being used — new homes are built empty (slow first start) until it is re-baked.",
+  "pool.golden_baking": "Preparing one for {image}. Once it is baked, it is only used after something has actually started from it. Until then new homes are built empty: a slow first start, nothing broken.",
+  "pool.golden_rejected": "{snapshot} is not being used: {reason}. Nothing that could not be shown to boot is handed out, so new homes are built empty: a slow first start, nothing broken. Re-baking the same image stops after two attempts.",
+  "pool.golden_stale": "{snapshot} was baked from {baked}, but this deployment runs {running}. It is NOT being used, so new homes are built empty (slow first start) until it is re-baked.",
   "pool.golden_ok": "baked from {image}",
   // How far a bake has got (docs/log/64 §64.30). A bake takes ~11 minutes and produces no
   // snapshot at all for the first half of it, so a single "preparing one" line leaves an
@@ -175,13 +175,13 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "pool.bake_step_published": "published",
   "pool.bake_running": "Baking one for {image}.",
   "pool.bake_meanwhile":
-    "What is baked is only used once a workspace has actually started from it. Until then new homes are built empty — a slow first start, nothing broken.",
+    "What is baked is only used once a workspace has actually started from it. Until then new homes are built empty: a slow first start, nothing broken.",
   "pool.bake_detail_seed": "seed:",
   "pool.bake_detail_probe_ws": "probe:",
   "pool.bake_detail_probe": "Booting a probe from {snapshot} to confirm it really starts.",
   "pool.bake_owner": "for the golden bake",
   "pool.bake_blocked":
-    "Waiting for free slots ({used}/{max} in use). A bake needs two — one for the seed, one for the probe — and it will not evict anybody to get them. Until then new homes are built empty (slow first start).",
+    "Waiting for free slots ({used}/{max} in use). A bake needs two (one for the seed, one for the probe) and it will not evict anybody to get them. Until then new homes are built empty (slow first start).",
   "pool.bake_gave_up":
     "{snapshot} is not being used: {reason}. Two candidates failed on this image, so re-baking has stopped. New homes stay empty until the image is fixed and rolled out.",
   "pool.bake_retry_left": "One more attempt will be made on this image.",
@@ -195,7 +195,7 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "pool.idle_day": "{n} d",
   "cost.admin_title": "Cloud cost by member",
   "cost.admin_intro":
-    "The AWS invoice, attributed per member by cost allocation tag. Only what is tagged to a person appears here — shared infrastructure is listed separately and is never divided up.",
+    "The AWS invoice, attributed per member by cost allocation tag. Only what is tagged to a person appears here. Shared infrastructure is listed separately and is never divided up.",
   "cost.my_title": "Cloud cost for your workspace",
   // ⚠️ This wording is the feature. Measured on a real deployment, roughly a fifth of
   // the bill can be attributed to anyone at all; calling that "your cost" would name a
@@ -213,7 +213,7 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "cost.member_total_label": "Directly attributable to this member (shared not included)",
   "cost.shared_title": "Shared infrastructure",
   "cost.shared_intro":
-    "Costs that belong to no one person and are deliberately not split among members — splitting them would turn the invoice into an estimate. Warm slots nobody is holding land here too, which is what an oversized pool costs.",
+    "Costs that belong to no one person and are deliberately not split among members, because splitting them would turn the invoice into an estimate. Warm slots nobody is holding land here too, which is what an oversized pool costs.",
   "cost.shared_label": "Shared (not attributed)",
   "cost.shared_centres": "Cost centres:",
   "cost.account_scope": "Aggregated over this whole AWS account, so anything else running in it is included in the shared figure.",
@@ -268,7 +268,7 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "cost.role_backup": "Backups",
   "uptime.my_title": "When your workspace was running",
   "uptime.my_intro":
-    "Each square is one hour: grey means the workspace was stopped, warmer means more sessions were open. Nothing here is a charge — it is what your workspace was doing, which is usually the reason a day's cloud cost looks the way it does.",
+    "Each square is one hour: grey means the workspace was stopped, warmer means more sessions were open. Nothing here is a charge. It is what your workspace was doing, which is usually the reason a day's cloud cost looks the way it does.",
   "uptime.member_title": "When this workspace was running",
   "uptime.member_intro":
     "One hour per square. A warm band running through the night usually means a workspace nobody stopped, rather than work being done.",
@@ -298,7 +298,7 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "uptime.load_error": "Could not load running time.",
   "uptime.hint": "Point at a square for the detail.",
   "uptime.note_sampling":
-    "Sampled about every {n} minutes, so a square is accurate to within one sample. Hours before this was first recorded stay blank — they cannot be recovered.",
+    "Sampled about every {n} minutes, so a square is accurate to within one sample. Hours before this was first recorded stay blank and cannot be recovered.",
   "uptime.note_halfhour":
     "Your time zone is not a whole number of hours from UTC, so squares are rounded to the hour they start in.",
   "ops.jira_site_placeholder": "https://example.atlassian.net",
