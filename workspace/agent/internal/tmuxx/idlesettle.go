@@ -108,3 +108,8 @@ func ForgetPane(name string) {
 	delete(sights, name)
 	sightMu.Unlock()
 }
+
+// FrameSettled records frame for the named session and reports whether the pane has stood
+// still for idleSettleWindow — observeFrame for kinds whose own idle test lives outside
+// tmuxx (agy's footer).
+func FrameSettled(name, frame string) bool { return observeFrame(name, frame) }
