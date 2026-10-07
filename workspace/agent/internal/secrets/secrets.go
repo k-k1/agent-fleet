@@ -13,11 +13,13 @@
 package secrets
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -25,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
@@ -365,7 +368,23 @@ type MCPTargets struct {
 	Session   bool `json:"session"`   // materialized into the agent CLIs' native config
 }
 
+// GitHubRotation is the part of the GitHub entry that rotates under the Agent's own
+// hands: every renewal replaces all of it, and the old values are dead the moment GitHub
+// answers.
+type GitHubRotation struct {
+	Token, RefreshToken   string
+	Expiry, RefreshExpiry int64
+	ReconnectNeeded       bool
+}
+
+func rotationOf(e GitEntry) GitHubRotation {
+	return GitHubRotation{e.Token, e.RefreshToken, e.Expiry, e.RefreshExpiry, e.ReconnectNeeded}
+}
+
 type Data struct {
+	// ghBase is the GitHub rotation state as this snapshot was loaded (or last saved). Save
+	// uses it to tell "the caller left the GitHub pair alone" from "the caller changed it".
+	ghBase      GitHubRotation
 	Git         map[string]GitEntry    `json:"git"`                   // host -> https cred
 	GitIdentity map[string]GitIdentity `json:"gitIdentity,omitempty"` // host -> explicit commit identity
 	Claude      string                 `json:"claude"`                // CLAUDE_CODE_OAUTH_TOKEN
@@ -454,6 +473,16 @@ func withFileLock(fn func() error) error {
 // different lock from the store's own, so fn may call Load / Update — but must never be
 // called from inside an Update, or two such callers can deadlock in opposite orders.
 func WithLock(name string, fn func() error) error {
+	return WithLockContext(context.Background(), name, fn)
+}
+
+// ErrLockTimeout is WithLockContext giving up its wait.
+var ErrLockTimeout = errors.New("timed out waiting for the credential store lock")
+
+// WithLockContext is WithLock that stops waiting for the lock when ctx ends. A holder that
+// is stopped or stuck must not hold every other process (the git credential helper runs
+// under git's own patience) behind it.
+func WithLockContext(ctx context.Context, name string, fn func() error) error {
 	lockPath := Path() + "." + name + ".lock"
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
 		return err
@@ -463,8 +492,19 @@ func WithLock(name string, fn func() error) error {
 		return err
 	}
 	defer f.Close()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		return err
+	for {
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if err != syscall.EWOULDBLOCK && err != syscall.EINTR {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ErrLockTimeout
+		case <-time.After(20 * time.Millisecond):
+		}
 	}
 	defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
 	return fn()
@@ -523,13 +563,34 @@ func load() (*Data, error) {
 	if s.Git == nil {
 		s.Git = map[string]GitEntry{}
 	}
+	s.ghBase = rotationOf(s.Git["github.com"])
 	return s, nil
 }
 
+// Save writes the whole snapshot, so a snapshot loaded before a GitHub token renewal would
+// write the spent pair back over the renewed one — and the next renewal would find its
+// refresh token already used. Inside the lock Save therefore compares the stored GitHub
+// pair with the one this snapshot was loaded with: when the store has moved on and the
+// caller did not touch the pair itself, the stored pair is kept. A caller that did change
+// it (a reconnect) wins. Code that rewrites other fields should still prefer Update.
 func (s *Data) Save() error {
 	storeMu.Lock()
 	defer storeMu.Unlock()
-	return withFileLock(s.save)
+	return withFileLock(func() error {
+		if cur, err := load(); err == nil {
+			ce := cur.Git["github.com"]
+			if e, ok := s.Git["github.com"]; ok && rotationOf(e) == s.ghBase && rotationOf(ce) != s.ghBase && ce.Token != "" {
+				e.Token, e.RefreshToken, e.Expiry, e.RefreshExpiry, e.ReconnectNeeded =
+					ce.Token, ce.RefreshToken, ce.Expiry, ce.RefreshExpiry, ce.ReconnectNeeded
+				s.Git["github.com"] = e
+			}
+		}
+		if err := s.save(); err != nil {
+			return err
+		}
+		s.ghBase = rotationOf(s.Git["github.com"])
+		return nil
+	})
 }
 
 // save writes the store atomically (tmp + rename): every git token, OAuth,

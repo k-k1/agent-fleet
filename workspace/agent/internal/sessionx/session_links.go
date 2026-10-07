@@ -26,7 +26,7 @@ const portsTTL = 10 * time.Second
 const originTTL = 5 * time.Minute
 
 var (
-	sessionPRs   = branchpr.New(githubToken)
+	sessionPRs   = newSessionPRs()
 	sessionPorts = &listenports.Cache{Root: "/proc", TTL: portsTTL}
 
 	// Replaced in tests: the PR lookup starts a goroutine that reads the credential store and
@@ -35,6 +35,12 @@ var (
 	lookupPorts = sessionPorts.Get
 	originOf    = cachedGitHubRepo
 )
+
+func newSessionPRs() *branchpr.Cache {
+	c := branchpr.New(githubToken)
+	c.Renew = gitx.RenewRejectedGitHubToken
+	return c
+}
 
 // githubToken is the Connections token for github.com, "" when GitHub is not connected. A store
 // that cannot be read is an error, not a disconnection: the cache then keeps what it showed.

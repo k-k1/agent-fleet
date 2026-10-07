@@ -173,8 +173,10 @@ ticked Device flow and pasted the client_id. Two project-owned apps now ship wit
   to the access token; the Agent renews the access token itself, shortly before expiry and on a 401,
   with `POST /login/oauth/access_token` (`client_id`, `grant_type=refresh_token`, `refresh_token`) —
   no client_secret is stored anywhere. Refresh tokens are single use, so the grant runs under a
-  cross-process lock and the new pair is written before it is used. When GitHub refuses the refresh
-  token (revoked, or the 6 months ran out) the connection is marked "reconnect needed" in
+  cross-process lock with a bounded wait, and a renewal counts as done only once the new pair is in
+  the store (a pair the store refuses is kept in that process and written first on its next call; a
+  one-shot credential helper cannot keep it, and the member then reconnects). When GitHub refuses
+  the refresh token (revoked, or unused for about six months — each renewal issues a new one) the connection is marked "reconnect needed" in
   Connections. A token with no refresh token behaves as before. The admin form no longer asks to
   switch expiration off; the warning after connecting remains only for a workspace whose Agent
   predates renewal.

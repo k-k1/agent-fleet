@@ -1,6 +1,7 @@
 package gitx
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,7 +53,16 @@ const githubHost = "github.com"
 var (
 	githubTokenURL       = "https://github.com/login/oauth/access_token"
 	githubRefreshBackoff = []time.Duration{500 * time.Millisecond, 2 * time.Second}
-	githubRefreshClient  = &http.Client{Timeout: 15 * time.Second}
+	// The client refuses every redirect: the request body carries the refresh token and
+	// the client id, and nothing at github.com's token endpoint legitimately redirects.
+	githubRefreshClient = &http.Client{
+		Timeout:       10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	// githubRefreshBudget bounds one renewal end to end: waiting for the lock, the grant
+	// and its retries. git's credential helper and the worktree plan both sit in front of
+	// it.
+	githubRefreshBudget = 30 * time.Second
 )
 
 // githubRefreshMargin is how long before expiry a token is renewed. Longer than a clone
@@ -62,6 +72,12 @@ const githubRefreshMargin = 5 * time.Minute
 // errGitHubNotConnected is the sentinel the handlers hand WithGitHubToken so they can
 // keep their own "not connected" answer.
 var errGitHubNotConnected = errors.New("GitHub is not connected")
+
+// errStoreWrite: GitHub renewed the pair but the store would not take it. Carries no secret.
+var errStoreWrite = errors.New("github token was renewed but could not be saved to the credential store; retrying on the next use (reconnect GitHub if this persists)")
+
+// errRefreshBusy: the renewal lock stayed taken for the whole budget. Transient.
+var errRefreshBusy = errors.New("github token renewal is busy; retrying on the next use")
 
 var errNoRefresh = errors.New("no github refresh token stored")
 
@@ -95,6 +111,12 @@ func GitHubReconnectNeeded(e secrets.GitEntry) bool {
 // updated in place when a renewal happened. A transient renewal failure keeps the old
 // token while it is still valid; the next call retries.
 func GitHubToken(s *secrets.Data) (string, error) {
+	return GitHubTokenContext(context.Background(), s)
+}
+
+// GitHubTokenContext is GitHubToken whose wait (for the renewal lock and for GitHub) also
+// ends with ctx, on top of githubRefreshBudget.
+func GitHubTokenContext(ctx context.Context, s *secrets.Data) (string, error) {
 	e, ok := s.Git[githubHost]
 	if !ok || e.Token == "" {
 		return "", nil
@@ -102,19 +124,24 @@ func GitHubToken(s *secrets.Data) (string, error) {
 	if e.RefreshToken == "" {
 		return e.Token, nil
 	}
-	if GitHubReconnectNeeded(e) {
-		return "", ErrGitHubReconnect
-	}
 	now := time.Now()
-	if e.Expiry == 0 || now.Before(time.Unix(e.Expiry, 0).Add(-githubRefreshMargin)) {
-		return e.Token, nil
+	// A pair this process renewed but could not write is saved before anything else:
+	// the stored one is spent, and a reconnect flag a racing caller set meanwhile
+	// does not make the held pair any less good.
+	if !hasGitHubPending(e.Token) {
+		if GitHubReconnectNeeded(e) {
+			return "", ErrGitHubReconnect
+		}
+		if e.Expiry == 0 || now.Before(time.Unix(e.Expiry, 0).Add(-githubRefreshMargin)) {
+			return e.Token, nil
+		}
 	}
-	ne, err := refreshGitHub(e.Token)
+	ne, err := refreshGitHub(ctx, e.Token)
 	if err != nil {
-		if errors.Is(err, ErrGitHubReconnect) {
+		if errors.Is(err, ErrGitHubReconnect) || errors.Is(err, errStoreWrite) {
 			return "", err
 		}
-		if now.Before(time.Unix(e.Expiry, 0)) {
+		if e.Expiry != 0 && now.Before(time.Unix(e.Expiry, 0)) {
 			log.Printf("github token refresh failed, using the current token until it expires: %v", err)
 			return e.Token, nil
 		}
@@ -128,12 +155,21 @@ func GitHubToken(s *secrets.Data) (string, error) {
 // recorded expiry says (clock skew, or a token GitHub revoked early). When another
 // caller already renewed, that newer token comes back without a second grant.
 func GitHubForceRefresh(s *secrets.Data, rejected string) (string, error) {
-	ne, err := refreshGitHub(rejected)
+	ne, err := refreshGitHub(context.Background(), rejected)
 	if err != nil {
 		return "", err
 	}
 	s.Git[githubHost] = ne
 	return ne.Token, nil
+}
+
+// RenewRejectedGitHubToken is GitHubForceRefresh for a caller that holds no snapshot.
+func RenewRejectedGitHubToken(rejected string) (string, error) {
+	s, err := secrets.Load()
+	if err != nil {
+		return "", err
+	}
+	return GitHubForceRefresh(s, rejected)
 }
 
 // WithGitHubToken runs fn with the current GitHub token and, when GitHub answers it with
@@ -167,10 +203,21 @@ func WithGitHubToken(s *secrets.Data, notConnected error, fn func(token string) 
 }
 
 // refreshGitHub renews the pair whose access token is `seen`, under the cross-process
-// lock, and returns the entry now in force.
-func refreshGitHub(seen string) (secrets.GitEntry, error) {
+// lock, and returns the entry now in force. The whole call — the wait for the lock, the
+// grant and its retries — is bounded by githubRefreshBudget and ctx: a holder that is
+// stopped or slow costs the others that long, never indefinitely. Running out of time is
+// a transient failure and never marks the connection.
+//
+// A renewal is reported as done only once it is in the store. When the write fails the
+// spent refresh token cannot be asked again, so the new pair is kept in this process
+// (ghPending) and the next call here writes it first. That rescue lives only as long as
+// the process: a git credential helper exits after one answer, and the pair is then lost
+// — the next renewal finds GitHub refusing the spent token and the member reconnects.
+func refreshGitHub(ctx context.Context, seen string) (secrets.GitEntry, error) {
+	ctx, cancel := context.WithTimeout(ctx, githubRefreshBudget)
+	defer cancel()
 	var out secrets.GitEntry
-	err := secrets.WithLock("github-refresh", func() error {
+	err := secrets.WithLockContext(ctx, "github-refresh", func() error {
 		cur, err := secrets.Load()
 		if err != nil {
 			return err
@@ -180,26 +227,32 @@ func refreshGitHub(seen string) (secrets.GitEntry, error) {
 		if e.Token == "" || e.RefreshToken == "" {
 			return errNoRefresh
 		}
+		if next, ok := takeGitHubPending(e.Token); ok {
+			switch perr := persistGitHub(e.Token, next); {
+			case perr == nil:
+				out = next
+				return nil
+			case errors.Is(perr, errSuperseded):
+				out = reloadGitHub(out)
+				return nil
+			default:
+				setGitHubPending(e.Token, next)
+				log.Printf("github token refresh: still cannot write the renewed pair: %v", perr)
+				return errStoreWrite
+			}
+		}
 		if e.Token != seen {
 			return nil // somebody else renewed, or the member reconnected
 		}
 		if e.ReconnectNeeded {
 			return ErrGitHubReconnect
 		}
-		if next, ok := takeGitHubPending(e.Token); ok {
-			if perr := persistGitHub(e.Token, next); perr != nil && !errors.Is(perr, errSuperseded) {
-				setGitHubPending(e.Token, next)
-				log.Printf("github token refresh: still cannot write the renewed pair: %v", perr)
-			}
-			out = next
-			return nil
-		}
 		now := time.Now().Unix()
 		if e.RefreshExpiry > 0 && now >= e.RefreshExpiry {
 			markGitHubReconnect(e.Token)
 			return ErrGitHubReconnect
 		}
-		grant, err := postGitHubRefresh(e.ClientID, e.RefreshToken)
+		grant, err := postGitHubRefresh(ctx, e.ClientID, e.RefreshToken)
 		if err != nil {
 			if errors.Is(err, ErrGitHubReconnect) {
 				markGitHubReconnect(e.Token)
@@ -224,21 +277,30 @@ func refreshGitHub(seen string) (secrets.GitEntry, error) {
 				break
 			}
 		}
-		if perr != nil && !errors.Is(perr, errSuperseded) {
-			// The old refresh token is gone: keep the new pair in memory so this process
-			// can still serve calls and write it as soon as the store accepts writes.
+		switch {
+		case perr == nil:
+			out = next
+		case errors.Is(perr, errSuperseded):
+			out = reloadGitHub(e)
+		default:
 			setGitHubPending(e.Token, next)
 			log.Printf("github token refresh: renewed, but writing the store failed: %v", perr)
-		}
-		out = next
-		if errors.Is(perr, errSuperseded) {
-			if again, lerr := secrets.Load(); lerr == nil {
-				out = again.Git[githubHost]
-			}
+			return errStoreWrite
 		}
 		return nil
 	})
+	if errors.Is(err, secrets.ErrLockTimeout) {
+		return out, errRefreshBusy
+	}
 	return out, err
+}
+
+// reloadGitHub returns the entry the store holds now, or fallback when it cannot be read.
+func reloadGitHub(fallback secrets.GitEntry) secrets.GitEntry {
+	if d, err := secrets.Load(); err == nil {
+		return d.Git[githubHost]
+	}
+	return fallback
 }
 
 // persistGitHub writes next over the entry whose access token is still `from`. Fields
@@ -275,6 +337,12 @@ func setGitHubPending(from string, next secrets.GitEntry) {
 	ghPending.from, ghPending.next, ghPending.set = from, next, true
 }
 
+func hasGitHubPending(from string) bool {
+	ghPending.mu.Lock()
+	defer ghPending.mu.Unlock()
+	return ghPending.set && ghPending.from == from
+}
+
 func takeGitHubPending(from string) (secrets.GitEntry, bool) {
 	ghPending.mu.Lock()
 	defer ghPending.mu.Unlock()
@@ -297,7 +365,7 @@ type githubGrant struct {
 // bounded number of times; an `error` answer from GitHub is final and means reconnect.
 // Neither the request nor the response body ever reaches an error string — both carry
 // tokens.
-func postGitHubRefresh(clientID, refreshToken string) (githubGrant, error) {
+func postGitHubRefresh(ctx context.Context, clientID, refreshToken string) (githubGrant, error) {
 	if clientID == "" {
 		return githubGrant{}, ErrGitHubReconnect // an entry from before the id was stored
 	}
@@ -305,9 +373,13 @@ func postGitHubRefresh(clientID, refreshToken string) (githubGrant, error) {
 	var lastErr error
 	for attempt := 0; attempt <= len(githubRefreshBackoff); attempt++ {
 		if attempt > 0 {
-			time.Sleep(githubRefreshBackoff[attempt-1])
+			select {
+			case <-ctx.Done():
+				return githubGrant{}, lastErr
+			case <-time.After(githubRefreshBackoff[attempt-1]):
+			}
 		}
-		req, err := http.NewRequest("POST", githubTokenURL, strings.NewReader(form.Encode()))
+		req, err := http.NewRequestWithContext(ctx, "POST", githubTokenURL, strings.NewReader(form.Encode()))
 		if err != nil {
 			return githubGrant{}, fmt.Errorf("github refresh: build request")
 		}
@@ -320,6 +392,10 @@ func postGitHubRefresh(clientID, refreshToken string) (githubGrant, error) {
 		}
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 		resp.Body.Close()
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			// Not followed, and the Location (which may carry anything) is not repeated.
+			return githubGrant{}, fmt.Errorf("github refresh: unexpected redirect (%d)", resp.StatusCode)
+		}
 		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
 			lastErr = fmt.Errorf("github refresh: github.com answered %d", resp.StatusCode)
 			continue

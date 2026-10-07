@@ -159,8 +159,10 @@ key/secret を必須にしているため、**アップグレードの窓で 1 �
   refresh token・両方の有効期間・アプリの client_id を、access token と一緒にメンバーの Agent へ渡す。
   Agent は期限の直前と 401 のときに `POST /login/oauth/access_token`（`client_id`・
   `grant_type=refresh_token`・`refresh_token`）で自分で更新する。client_secret はどこにも保存しない。
-  refresh token は 1 回しか使えないので、更新はプロセスをまたぐロックの下で行い、新しい組を使う前に
-  書き込む。GitHub が refresh token を拒否したとき（取り消し、または 6 か月が過ぎた）は、
+  refresh token は 1 回しか使えないので、更新は待ち時間に上限のあるプロセス間ロックの下で行い、
+  新しい組がストアに入って初めて更新済みとする（ストアが拒んだ組はそのプロセスが保持し、次の呼び出しで
+  最初に書く。1 回で終わる credential helper は保持できず、その場合メンバーが再接続する）。GitHub が
+  refresh token を拒否したとき（取り消し、または約 6 か月未使用——更新のたびに新しいものが出る）は、
   接続画面に「再接続が必要」と出す。refresh token の無いトークンは従来どおり。管理画面は期限を
   オフにするよう案内しなくなった。接続後の警告は、更新に対応する前の Agent のワークスペースに
   限って残る。

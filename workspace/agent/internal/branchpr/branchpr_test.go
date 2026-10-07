@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -297,5 +298,48 @@ func TestLookupAsksOnceForAKeyManySessionsShare(t *testing.T) {
 	c.Lookup(keys, time.Now())
 	if calls.Load() != 1 || aliases.Load() != 1 {
 		t.Fatalf("calls=%d aliases=%d, want one call with one alias", calls.Load(), aliases.Load())
+	}
+}
+
+// A 401 for a token whose recorded expiry is still in the future (clock skew, or a renewal
+// by another process) is renewed once and the batch asked again.
+func TestA401RenewsTheTokenAndRetriesTheBatchOnce(t *testing.T) {
+	var calls atomic.Int32
+	var seen []string
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		mu.Lock()
+		seen = append(seen, r.Header.Get("Authorization"))
+		mu.Unlock()
+		if r.Header.Get("Authorization") == "Bearer old" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":{"r0":{"owner":{"login":"o"},"defaultBranchRef":{"name":"main"},"pullRequests":{"nodes":[]}}}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := newTestCache(srv.URL, "old")
+	renewals := 0
+	c.Renew = func(rejected string) (string, error) {
+		renewals++
+		if rejected != "old" {
+			t.Errorf("rejected = %q", rejected)
+		}
+		return "new", nil
+	}
+	c.Lookup([]Key{{"o/r", "a"}}, time.Now())
+	if renewals != 1 || calls.Load() != 2 || strings.Join(seen, ",") != "Bearer old,Bearer new" {
+		t.Fatalf("renewals=%d calls=%d seen=%v", renewals, calls.Load(), seen)
+	}
+}
+
+func TestA401WithoutRenewAsksOnce(t *testing.T) {
+	var calls atomic.Int32
+	srv := server(t, &calls, http.StatusUnauthorized, nil)
+	c := newTestCache(srv.URL, "tok")
+	c.Lookup([]Key{{"o/r", "a"}}, time.Now())
+	if calls.Load() != 1 {
+		t.Fatalf("calls = %d", calls.Load())
 	}
 }

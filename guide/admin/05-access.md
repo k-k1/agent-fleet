@@ -70,8 +70,8 @@ set on GitHub's side:
 
 - Tick **Enable Device Flow**: a client_id without it is refused when you save.
 - For a GitHub App, **Expire user authorization tokens** may stay on: af renews those
-  tokens itself and stores no client secret. A member whose authorization is revoked or
-  runs out (about six months) sees "reconnect needed" in Connections and connects again.
+  tokens itself and stores no client secret. A member whose authorization is revoked, or
+  whose refresh token goes unused for about six months, sees "reconnect needed" in Connections and connects again.
   Enter the app's page (`https://github.com/apps/<name>`) as the install page. A GitHub App reaches only the
   repositories it is installed on; members are sent there to install it, and are warned
   after connecting if it is installed nowhere.
