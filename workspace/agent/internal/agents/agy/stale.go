@@ -108,3 +108,18 @@ func toolProcessAlive(name string) bool {
 	}
 	return procx.ToolProcessIn(root, procx.Snapshot())
 }
+
+// bgReasonProcess is claude.BGReasonProcess's wire value, which the Console maps to its badge
+// wording.
+const bgReasonProcess = "process"
+
+// backgroundWork reports a tool process still running behind an idle turn. Only "idle" is
+// asked: a working row is already held awake, and probing then would cost a /proc scan for
+// nothing. The scan is the shared snapshot (procx.ttl), so a list poll over every session
+// triggers one scan.
+func backgroundWork(m session.Meta, state string, p liveProbes) (bool, string) {
+	if state == "idle" && p.toolAlive(m.Name) {
+		return true, bgReasonProcess
+	}
+	return false, ""
+}
