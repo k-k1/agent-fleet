@@ -187,12 +187,33 @@ func RunSessionStatusHook(args []string) {
 		// wakeup — but the report reconciler (a separate process on this route) no longer
 		// needs that call to arrive before its next tick to learn why.
 		notifyState, notifyText = turnEndLabel(sid, state, turnText)
-		status.PersistTurnEndReason(sid, state, turnEndReasonFor(notifyState))
+		status.PersistTurnEndFor(sid, state, turnEndReasonFor(notifyState), turnPromptID(sid, h))
+	} else if state == "working" {
+		// A heartbeat without its own prompt_id (a subagent's, or a hook that carries none)
+		// keeps the turn the record already names.
+		open := previous.PromptID
+		if h.promptID != "" && h.agentID == "" {
+			open = h.promptID
+		}
+		status.PersistOpen(sid, state, open)
 	} else {
 		status.Persist(sid, state)
 	}
 	applyPendingPayloads(sid, state, h)
 	RecordSessionNotification(sid, previous.State, notifyState, notifyText)
+}
+
+// turnPromptID names the turn a Stop hook closes: its own prompt_id, else the one the turn's
+// opening hooks recorded. A Stop with neither leaves the ledger empty, which reads as "pane
+// decides" — the pre-ledger behaviour. A hook from inside a subagent closes nothing.
+func turnPromptID(sid string, h hookInput) string {
+	if h.agentID != "" {
+		return ""
+	}
+	if h.promptID != "" {
+		return h.promptID
+	}
+	return status.ReadLivePrompt(sid)
 }
 
 // claudeAbortInfo is the transcript-tail verdict (docs/log/47), replaceable in tests.

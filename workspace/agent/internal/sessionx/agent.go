@@ -81,6 +81,9 @@ func SessionAlive(m session.Meta) bool {
 // musePendingState is muse.PendingState, a variable so a test can stand in for a live handle.
 var musePendingState = muse.PendingState
 
+// readPane is tmuxx.ReadPane, replaceable in tests.
+var readPane = tmuxx.ReadPane
+
 // DriveState is the live state for the drive endpoints (status/output/messages):
 // "stopped" when not alive, else idle-or-recorded. heal self-corrects a stale
 // non-idle cache when the claude pane is back at its ready prompt (killed+resumed,
@@ -193,7 +196,7 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	// capture whenever either of those two needs it.
 	var pane tmuxx.PaneRead
 	if heal || isClaude {
-		pane = tmuxx.ReadPane(m.Name)
+		pane = readPane(m.Name)
 	}
 	// claude pins the pane on the usage-limit menu, waiting for a human (see the comment on
 	// agents.StateBlocked). The same verdict as WireLive is repeated here because chat and the
@@ -243,12 +246,13 @@ func DriveState(m session.Meta, alive, heal bool) string {
 		} else {
 			status.Remove(sid)
 		}
-	} else if heal && state == "idle" && pane.Busy {
+	} else if heal && state == "idle" && pane.Busy && claude.PaneMayReopen(sid) {
 		// Reverse-heal: the hook state reads idle (its "working" file was never written,
 		// or the self-heal above removed it during a transient prompt frame) but the pane
 		// is plainly mid-turn (interrupt affordance shown). Trust the live TUI and persist
 		// working so the chat shows "in progress" + the stop button, and the eventual Stop still
 		// fires the answer-ready notification (recorded off the previous "working" state).
+		// A turn the Stop hook closed is not reopened here: see claude.PaneMayReopen.
 		state = "working"
 		status.Persist(sid, "working")
 	}

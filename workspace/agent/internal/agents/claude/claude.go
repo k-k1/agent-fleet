@@ -126,6 +126,9 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	}, nil
 }
 
+// readPane is tmuxx.ReadPane, replaceable in tests.
+var readPane = tmuxx.ReadPane
+
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	li := agents.LiveInfo{Resumable: true}
 	sid := session.UUID(m.Dir, m.Name)
@@ -146,7 +149,7 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		li.State = status.EffectiveModal(sid, status.LiveState(sid))
 		// Every pane-derived verdict is taken from ONE frame, read once (tmuxx.ReadPane).
 		// A capture-pane per predicate would cost sessions × poll interval.
-		pane := tmuxx.ReadPane(m.Name)
+		pane := readPane(m.Name)
 		// The session is pinned on the usage-limit menu waiting for a human
 		// (tmuxx.AtRateLimitModal). The turn is already over, yet that menu carries
 		// "Esc to cancel" and replaces the composer together with the mode footer, so the
@@ -203,7 +206,9 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		// busy session would wrongly read idle. IsBusy trusts the live TUI (interrupt
 		// affordance shown) and persists working — self-limiting to one capture per turn,
 		// since the next poll then reads "working" from the file.
-		if li.State == "idle" && pane.Busy {
+		//
+		// Not when the Stop hook closed this turn: see PaneMayReopen.
+		if li.State == "idle" && pane.Busy && PaneMayReopen(sid) {
 			li.State = "working"
 			status.Persist(sid, "working")
 		}
