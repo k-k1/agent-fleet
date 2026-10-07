@@ -176,6 +176,7 @@ GET /fleet-graph
 GET /fs/changes
 DELETE /fs/delete
 GET /fs/download
+GET /fs/download-zip
 GET /fs/file
 PUT /fs/file
 GET /fs/images

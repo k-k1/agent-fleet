@@ -166,7 +166,9 @@ Ctrl / ⌘+click or middle-click opens the commit graph in a new pane.
 ### Files / folders
 
 You can create a new file, create a new folder, copy the name, copy the relative path, rename, and delete.
-Files additionally show "Open in reader" and "Download". Folders and **image files** also show
+Files additionally show "Open in reader" and "Download"; **folders show "Download as zip"** (the same
+item is in the gallery's folder menu; a touch long-press on a folder row opens the menu;
+[04](04-files.md#download-a-folder-as-zip)). Folders and **image files** also show
 **"Open in gallery"** (never other file types; from an image it opens the parent folder's gallery with that
 image enlarged; see [04](04-files.md#image-gallery)). To hand a file to a session or an assistant, open the
 file and use "Send" in the viewer.
@@ -177,7 +179,8 @@ A picture's card offers **"Send to a session / assistant…"** (the same send as
 a session gets the file's path, an assistant opens a chat with the file attached and your comment
 drafted), **copy the path**, **copy the file name**, **rename the file** (within the same
 folder; a slash is refused) and **delete the file** (through a confirmation). A folder's card offers the
-same for the folder, plus **"Open in another pane"** (a plain click moves this pane into it), and deleting
+same for the folder, plus **"Open in another pane"** (a plain click moves this pane into it) and
+**"Download the folder as zip"** (a touch long-press on the card opens the menu too), and deleting
 a folder takes everything in it. Where the folder holds a session's generated images, **"Open …, the
 session that generated this"** jumps to that conversation, and the same name sits in the breadcrumb row
 as a button; neither appears once that session is gone. The menu opens from a right-click, the Menu key or

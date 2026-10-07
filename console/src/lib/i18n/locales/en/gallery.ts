@@ -53,6 +53,8 @@ export const gallery: Record<keyof typeof jaGallery, string> = {
   "gallery.open_session": "Open {name}, the session that generated this",
   "gallery.session_gone": "That session can no longer be opened",
   "gallery.copy_folder_name": "Copy the folder name",
+  "gallery.download_zip": "Download the folder as zip",
+  "gallery.download_zip_title": ".git and node_modules inside the folder are left out",
   "gallery.rename_folder": "Rename the folder",
   "gallery.rename_folder_prompt": "New folder name",
   "gallery.delete_folder": "Delete the folder",

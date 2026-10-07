@@ -688,3 +688,7 @@ decode, not the scale).
   carry no EXIF, so before this a phone photo was drawn sideways. The thumbnail cache key gained a
   version component so entries written before the change are never served. Old entries stay on
   disk until the cache's own eviction removes them.
+- **2026-10-07 (#1829):** the folder card's menu, and the Files tree's folder menu, gained
+  "Download as zip" and both folder surfaces a touch long-press ([0111](0111-folder-zip-download.md)).
+  The `GET /fs/images` walk's bounds and slot were reused; its plain `os.Open` and symlink skip
+  were not, because that endpoint reads names and this one reads bytes.
