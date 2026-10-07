@@ -96,3 +96,20 @@ func TestNewPromptAfterStopIsWorking(t *testing.T) {
 		t.Fatalf("new prompt: got %q, want working", got)
 	}
 }
+
+// A real Stop that lands while the StopContinued transcript scan runs must win over the heal
+// that decided from the record before it (#1836).
+func TestWireLiveStopDuringTranscriptScanIsNotOverwritten(t *testing.T) {
+	m, sid := ledgerSession(t)
+	status.PersistTurnEndFor(sid, "idle", "", "P1") // a Stop that was blocked: heal may reopen
+	stopContinued = func(string, time.Time) bool {
+		status.PersistTurnEndFor(sid, "idle", "", "P2") // the next real Stop, mid-scan
+		return true
+	}
+	if got := (agentImpl{}).WireLive(m, true).State; got != "idle" {
+		t.Fatalf("got %q, want idle", got)
+	}
+	if st, _ := status.Read(sid); st.State != "idle" || st.PromptID != "P2" || !st.TurnEnd {
+		t.Fatalf("closed turn overwritten: %+v", st)
+	}
+}
