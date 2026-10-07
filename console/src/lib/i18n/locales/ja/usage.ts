@@ -18,7 +18,7 @@ export const usage = {
   "usage.empty_hint": "セッション本体は過去分を遡って取り込みますが、補助呼び出しは計測を入れた日以降だけが残ります。",
   "usage.range_label": "期間",
   "usage.range_24h": "24 時間",
-  "usage.range_7d": "7日",
+  "usage.range_7d": "7 日",
   "usage.range_30d": "30 日",
   "usage.by_label": "割り方",
   "usage.by_feature": "機能",

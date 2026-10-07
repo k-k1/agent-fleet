@@ -866,7 +866,7 @@ outside CI. Introducing them changes no catalogue or guide terminology.
 | F-onoff | ON/OFF → オン/オフ in prose; オン/オフ ↔ 有効/無効 follows the control's actual name. Latin matches must be complete words, including beside Japanese. |
 | F-buttons | Sixteen explicit noun/する pairs in `BUTTONS` of `scripts/ja_term_common.py`. Use nouns on ordinary buttons; する only on a confirmation dialog's execute button. |
 | F-default | デフォルト → 既定. |
-| F-variants | Explicit whole-label pairs in `VARIANTS` of the shared module (保存中/保存中…, 送信/送信…, セッション削除/セッションを削除, APIトークン/API トークン and others). … is for in-progress displays and dialog-opening buttons only; otherwise judge the majority form. |
+| F-variants | Explicit whole-label pairs in `VARIANTS` of the shared module (保存中/保存中…, 送信/送信…, セッション削除/セッションを削除, APIトークン/API トークン, 7日/7 日, the five keys.palette placeholders without … and others). … is for in-progress displays and dialog-opening buttons only; otherwise judge the majority form. |
 
 The registry permits transformations, not senses. It never supplies a reason
 for a decision. New pairs require review and positive/negative tests; a plan
@@ -932,8 +932,14 @@ requires every key sharing the old label, including retained external-service
 labels, and rejects incomplete or stale approvals. Pass the same groups to the
 guard and review each citation manually: an approved split is never rewritten
 automatically. `--allow-user-error KEY` permits one reviewed user-visible
-`err.*` F-login value; prompt/speech keys, error identifiers and other families
-remain protected. `--allow-quoted-terms KEY` permits registered F-login
+`err.*` value in an F-login, F-deploy or F-onoff plan row (`USER_ERROR_FAMILIES`
+in the shared module; decision 25's デプロイ → 配備 and decision 23's 無効 → オフ
+in error text); an approval for a key that is not in the plan, is not `err.*`,
+or whose row is in another family is refused, so approvals cannot go stale or
+widen. Prompt/speech keys, `chat.report.*`, `clean.reason*`, error identifiers
+and all other families remain protected. Check Go for a twin of the sentence
+before applying; the stable error code never changes.
+`--allow-quoted-terms KEY` permits registered F-login
 substitutions inside that key's `「…」` label references. Pass it to the guard
 with the emitted term allowances: the guard normalizes only verified
 サインイン/ログイン pairs inside those quotes, while preserving their remaining
