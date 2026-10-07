@@ -69,20 +69,22 @@ interface GcpLoginState {
   profileModal: GcpProfileModal | null;
   showProfile(m: GcpProfileModal): void;
   closeProfile(): void;
-  /** Profiles a logout is running for; their buttons stay off until it answers. */
-  loggingOut: Record<string, true>;
-  /** Signs the workspace out of the profile's account, then re-reads the list. A second call while one runs is refused. */
-  logoutProfile(name: string): Promise<GcpLogoutResult>;
+  /** Profiles a logout is running for, each with its call's id; their buttons stay off until it answers. */
+  loggingOut: Record<string, number>;
+  /**
+   * Signs the workspace out of account, the profile's account the member confirmed, then
+   * re-reads the list. tenant is the tenant the member pressed under: under any other the call
+   * sends nothing ("tenant_changed"). A second call while one runs is refused ("in_flight").
+   */
+  logoutProfile(name: string, account: string, tenant: string): Promise<GcpLogoutResult>;
 }
 
 /**
  * The Agent's answer to a logout. gcloud's store is per account, so every profile that
- * selected the account (profiles) is signed out with it; account is "" when the profile
- * selected none. Nothing is revoked at Google.
+ * selected the account (profiles) is signed out with it. "account_changed": a login selected
+ * another account since the confirmation. Nothing is revoked at Google.
  */
-export type GcpLogoutResult =
-  | { ok: true; account: string; profiles: string[] }
-  | { ok: false; code: string; message: string };
+export type GcpLogoutResult = { ok: true; account: string; profiles: string[] } | { ok: false; code: string; message: string };
 
 function asRequest(raw: unknown): GcpLoginRequest | null {
   const r = raw as Record<string, unknown>;
@@ -103,6 +105,7 @@ function asRequest(raw: unknown): GcpLoginRequest | null {
 // The Agent's Settings pull interval plus slack for the pull itself.
 export const SETTINGS_SYNC_MS = 5 * 60_000 + 15_000;
 let syncTimer: ReturnType<typeof setTimeout> | undefined;
+let logoutSeq = 0;
 
 export const useGcpLoginStore = create<GcpLoginState>((set, get) => ({
   requests: [],
@@ -172,22 +175,34 @@ export const useGcpLoginStore = create<GcpLoginState>((set, get) => ({
     set({ profileModal: null });
   },
   loggingOut: {},
-  async logoutProfile(name) {
-    // === true, not truthiness: a profile named "constructor" would read Object.prototype's.
+  async logoutProfile(name, account, tenant) {
+    // The request carries the selected tenant at the time it is sent: a press made under
+    // another one would sign out a same-named profile of a different workspace.
+    if (getTenant() !== tenant) return { ok: false, code: "tenant_changed", message: "" };
+    // typeof, not truthiness: a profile named "constructor" would read Object.prototype's.
     // "in_flight", not the Agent's "busy" (another login holds the store), which is shown.
-    if (get().loggingOut[name] === true) return { ok: false, code: "in_flight", message: "" };
-    set((s) => ({ loggingOut: { ...s.loggingOut, [name]: true } }));
+    if (typeof get().loggingOut[name] === "number") return { ok: false, code: "in_flight", message: "" };
+    const id = ++logoutSeq;
+    set((s) => ({ loggingOut: { ...s.loggingOut, [name]: id } }));
     let d: { account?: unknown; profiles?: unknown; error?: { code?: string; message?: string } } | null;
     try {
-      d = await api(`api/gcp-login/profiles/${encodeURIComponent(name)}/logout`, { method: "POST" });
+      d = await api(`api/gcp-login/profiles/${encodeURIComponent(name)}/logout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account }),
+      });
     } catch (e) {
-      return { ok: false, code: "", message: String((e as Error)?.message || e) };
+      d = { error: { code: "", message: String((e as Error)?.message || e) } };
     } finally {
+      // Only this call's mark: after a tenant switch (reset) the name may be another call's.
       set((s) => {
+        if (s.loggingOut[name] !== id) return {};
         const { [name]: _, ...rest } = s.loggingOut;
         return { loggingOut: rest };
       });
     }
+    // An answer about the previous tenant's workspace says nothing about this one.
+    if (getTenant() !== tenant) return { ok: false, code: "tenant_changed", message: "" };
     // Whatever the answer, the store may have changed under the list.
     void get().refreshProfiles();
     if (!d || d.error) return { ok: false, code: d?.error?.code || "", message: d?.error?.message || "" };

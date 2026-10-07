@@ -30,9 +30,19 @@ import (
 // kill is SIGKILL to its process group, so this is only scheduling latency.
 const attemptExitWait = 5 * time.Second
 
+// maxLogoutBody bounds the logout's body: one account address.
+const maxLogoutBody = 4 << 10
+
+// logoutWire is the logout's body: the account the member confirmed signing out of. A login
+// can select another account between the confirmation and the press reaching here, and that
+// account, and the profiles using it, were never shown to the member.
+type logoutWire struct {
+	Account string `json:"account"`
+}
+
 type profileLogoutWire struct {
-	// Account is the account signed out, "" when the profile selected none.
-	Account string `json:"account,omitempty"`
+	// Account is the account signed out.
+	Account string `json:"account"`
 	// Profiles are the configurations that selected Account, by profile name: each is signed
 	// out with it.
 	Profiles []string `json:"profiles"`
@@ -146,12 +156,17 @@ func clearLoginAccount(root, name string) error {
 }
 
 // HandleProfileLogout is POST /gcp-login/profiles/{name}/logout: the "Log out" of a Settings
-// profile. Under the root's lock, so no af-gcloud-exec run mints and no login stores a
+// profile, for the account the body names, which must still be the one the profile selects. Under the root's lock, so no af-gcloud-exec run mints and no login stores a
 // credential meanwhile, it ends the login attempts of every profile selecting the account,
 // deletes the account's credential, and clears the selection the login made. The answer
 // names the profiles that were signed out.
 func HandleProfileLogout(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	var body logoutWire
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxLogoutBody)).Decode(&body); err != nil || !emailRe.MatchString(body.Account) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "the body must be {\"account\": \"<the account confirmed>\"}")
+		return
+	}
 	if _, ok := loginSettings()[name]; !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_a_settings_profile", "no Settings profile with that name reached this workspace")
 		return
@@ -166,9 +181,8 @@ func HandleProfileLogout(w http.ResponseWriter, r *http.Request) {
 	defer unlock()
 	out := profileLogoutWire{Profiles: []string{}}
 	account := readProperty(configPath(root, name), "core", "account")
-	if account == "" || !emailRe.MatchString(account) {
-		log.Printf("gcp-login: logout profile=%s signed_out=0 relayed=%t", name, cloudlogin.RelayedByCP(r))
-		httpx.WriteJSON(w, http.StatusOK, out)
+	if account != body.Account {
+		httpx.WriteErr(w, http.StatusConflict, "account_changed", "the profile's account changed since the logout was confirmed; look again")
 		return
 	}
 	names, err := selecting(root, account)

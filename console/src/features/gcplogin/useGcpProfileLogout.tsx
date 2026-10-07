@@ -7,6 +7,7 @@ import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { GCP_REFUSALS } from "./GcpProfileLoginModal.tsx";
+import { getTenant } from "../../core/api/client.ts";
 import { useGcpLoginStore } from "./store.ts";
 
 /** Returns a function that asks, logs out and says how it went; it resolves true once logged out. */
@@ -19,10 +20,20 @@ export function useGcpProfileLogout(): (p: { name: string; label: string }) => P
   return useCallback(
     async (p) => {
       const profile = p.label || p.name;
-      // The list the confirmation names must be the Agent's current one, not the last poll's.
-      await refreshProfiles();
+      // Everything below is about the workspace of the tenant pressed under; the store sends
+      // nothing once another is selected.
+      const tenant = getTenant();
+      // The list the confirmation names must be the Agent's current one, not the last poll's:
+      // without it the confirmation could leave out a profile the logout signs out.
+      if (!(await refreshProfiles())) {
+        if (getTenant() === tenant) toast(tr("gcplogin.logout_unreadable"));
+        return false;
+      }
       const list = useGcpLoginStore.getState().profiles ?? [];
-      const account = list.find((x) => x.name === p.name)?.account ?? "";
+      const me = list.find((x) => x.name === p.name);
+      // Not signed in any more (or gone): the refreshed row already says so.
+      if (!me || me.state !== "signed_in" || !me.account) return false;
+      const account = me.account;
       const labelOf = (name: string) => {
         const x = list.find((y) => y.name === name);
         return x?.label || name;
@@ -34,7 +45,7 @@ export function useGcpProfileLogout(): (p: { name: string; label: string }) => P
         title: tr("gcplogin.logout_confirm_title", { profile }),
         body: (
           <>
-            <p>{tr("gcplogin.logout_confirm_body", { account: account || "—" })}</p>
+            <p>{tr("gcplogin.logout_confirm_body", { account })}</p>
             {others.length > 0 && (
               <p className="gcp-logout-others">
                 {tr("gcplogin.logout_confirm_others", {
@@ -48,11 +59,12 @@ export function useGcpProfileLogout(): (p: { name: string; label: string }) => P
         danger: true,
       });
       if (!ok) return false;
-      const r = await logoutProfile(p.name);
-      // Another press of the same profile is already running; its toast will say how it went.
-      if (!r.ok && r.code === "in_flight") return false;
+      const r = await logoutProfile(p.name, account, tenant);
+      // Another press of the same profile is already running, and its toast will say how it
+      // went; or the member moved to another tenant, whose screen this is not about.
+      if (!r.ok && (r.code === "in_flight" || r.code === "tenant_changed")) return false;
       if (!r.ok) {
-        const key = GCP_REFUSALS[r.code];
+        const key = r.code === "account_changed" ? "gcplogin.logout_account_changed" : GCP_REFUSALS[r.code];
         toast(key ? tr(key) : tr("gcplogin.logout_failed", { msg: r.message || r.code }));
         return false;
       }

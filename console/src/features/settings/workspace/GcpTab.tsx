@@ -280,7 +280,7 @@ export function GcpTab() {
                         <button
                           className="ghost gcp-logout"
                           title={tr("gcplogin.logout_title")}
-                          disabled={busy || loggingOut[p.name] === true}
+                          disabled={busy || typeof loggingOut[p.name] === "number"}
                           onClick={() => void logout(p).then((done) => done && loadStates())}
                         >
                           {tr("gcplogin.logout")}

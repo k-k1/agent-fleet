@@ -1067,4 +1067,6 @@ export const tools = {
   "gcplogin.logout_done": "{profile} からログアウトしました。",
   "gcplogin.logout_done_with": "{profile} と、同じアカウントの {profiles} からログアウトしました。",
   "gcplogin.logout_failed": "ログアウトできませんでした: {msg}",
+  "gcplogin.logout_unreadable": "いまワークスペースからプロファイルのログイン状態を読めなかったため、何もログアウトしていません。少し待ってからもう一度試してください。",
+  "gcplogin.logout_account_changed": "確認の後でプロファイルのアカウントが変わったため、何もログアウトしていません。一覧を見直してからもう一度試してください。",
 };

@@ -163,7 +163,7 @@ export function GcpProfilesChip({ hidden = false, passive = false }: { hidden?: 
                           variant="ghost"
                           className="ws-aws-logout ws-gcp-logout"
                           title={tr("gcplogin.logout_title")}
-                          disabled={loggingOut[p.name] === true}
+                          disabled={typeof loggingOut[p.name] === "number"}
                           onClick={() => {
                             // The confirm dialog sits outside the popover, whose dismiss
                             // layer would close it on the first press there.

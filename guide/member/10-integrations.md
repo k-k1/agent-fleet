@@ -656,7 +656,8 @@ profile's Google account. The workspace keeps one login per account, so every pr
 logged out with it; the confirmation names them before anything is deleted. Your sign-in at Google, and gcloud on
 your other machines, are not touched, and a token a command already received stays valid until it expires (at most
 an hour). A sign-in waiting for its code in one of those profiles' login windows stops. To use the profile again,
-log in again.
+log in again. If the profile's account changed between the confirmation and the logout (another login finished
+meanwhile), nothing is logged out and the Console says so.
 
 **When an agent's command needs the login**, it asks you in the Console: `af-gcloud-exec` prints "Google Cloud
 login for profile … requested in the Agent Fleet Console", and a toast at the bottom of the screen says **"An agent

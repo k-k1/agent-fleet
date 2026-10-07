@@ -12,16 +12,27 @@ let logoutReply: Json = {};
 // What the Agent lists once the logout went through.
 let afterLogout: Json[] | null = null;
 let confirmAnswer = true;
+let tenant = "t1";
+// The bodies of the logout POSTs, in order.
+const logoutBodies: string[] = [];
+// Set: the profile list cannot be read. holds: each logout, in turn, answers only once its promise settles.
+let profilesFail = false;
+const holds: Promise<void>[] = [];
+// Runs while the confirmation is open, before the member answers.
+let duringConfirm: (() => void) | null = null;
 const confirms: { title: string; body: ReactNode }[] = [];
 const toasts: { msg: string; kind?: string }[] = [];
 
 vi.mock("../../core/api/client.ts", () => ({
-  getTenant: () => "",
+  getTenant: () => tenant,
   api: vi.fn(async (path: string, opts?: RequestInit) => {
     calls.push(`${opts?.method || "GET"} ${path}`);
-    if (path === "api/gcp-login/profiles") return { profiles };
+    if (path === "api/gcp-login/profiles") return profilesFail ? { error: { code: "x" } } : { profiles };
     if (path === "api/gcp-login") return { requests: [] };
     if (path.endsWith("/logout")) {
+      logoutBodies.push(String(opts?.body ?? ""));
+      const h = holds.shift();
+      if (h) await h;
       profiles = afterLogout ?? profiles;
       return logoutReply;
     }
@@ -56,6 +67,7 @@ vi.mock("../../ui/ToastProvider.tsx", () => ({
 vi.mock("../../ui/ConfirmProvider.tsx", () => ({
   useConfirm: () => (o: { title: string; body: ReactNode }) => {
     confirms.push(o);
+    duringConfirm?.();
     return Promise.resolve(confirmAnswer);
   },
 }));
@@ -128,6 +140,11 @@ beforeEach(() => {
   profiles = [prod, stg, ops, dev];
   logoutReply = { account: "dev@example.com", profiles: ["prod", "stg"] };
   afterLogout = null;
+  tenant = "t1";
+  logoutBodies.length = 0;
+  profilesFail = false;
+  holds.length = 0;
+  duringConfirm = null;
   useGcpLoginStore.setState({
     profiles: null,
     requests: [],
@@ -210,10 +227,76 @@ describe("Google Cloud profile logout", () => {
   });
 
   it("sends one logout while one is running", async () => {
-    useGcpLoginStore.setState({ loggingOut: { prod: true } });
-    const r = await useGcpLoginStore.getState().logoutProfile("prod");
+    useGcpLoginStore.setState({ loggingOut: { prod: 99 } });
+    const r = await useGcpLoginStore.getState().logoutProfile("prod", "dev@example.com", "t1");
     expect(r).toEqual({ ok: false, code: "in_flight", message: "" });
     expect(calls.some((c) => c.endsWith("/logout"))).toBe(false);
+  });
+
+  it("sends the confirmed account, and says so when the Agent finds another one selected", async () => {
+    logoutReply = { error: { code: "account_changed", message: "x" } };
+    await mount(<GcpProfilesChip />);
+    await openPop();
+    await act(async () => logoutOf(1)!.click());
+    await flush();
+    expect(logoutBodies).toEqual([JSON.stringify({ account: "dev@example.com" })]);
+    expect(toasts).toEqual([
+      {
+        msg: "The profile's account changed since you confirmed, so nothing was logged out. Look at the list again and retry.",
+        kind: undefined,
+      },
+    ]);
+  });
+
+  it("asks nothing and sends nothing when the profiles cannot be read now", async () => {
+    await mount(<GcpProfilesChip />);
+    await openPop();
+    profilesFail = true;
+    await act(async () => logoutOf(1)!.click());
+    await flush();
+    expect(confirms).toEqual([]);
+    expect(logoutBodies).toEqual([]);
+    expect(toasts[0].msg).toContain("nothing was logged out");
+  });
+
+  it("sends nothing once another tenant is selected during the confirmation", async () => {
+    await mount(<GcpProfilesChip />);
+    await openPop();
+    duringConfirm = () => {
+      tenant = "t2";
+    };
+    await act(async () => logoutOf(1)!.click());
+    await flush();
+    expect(confirms).toHaveLength(1);
+    expect(logoutBodies).toEqual([]);
+    expect(toasts).toEqual([]);
+  });
+
+  it("does not let the previous tenant's answer free the next tenant's running logout", async () => {
+    let release1!: () => void;
+    let release2!: () => void;
+    holds.push(new Promise<void>((r) => (release1 = r)), new Promise<void>((r) => (release2 = r)));
+    const first = useGcpLoginStore.getState().logoutProfile("prod", "dev@example.com", "t1");
+    await flush();
+    // The tenant switch resets the store; the new tenant's logout of a same-named profile runs.
+    tenant = "t2";
+    useGcpLoginStore.getState().reset();
+    const second = useGcpLoginStore.getState().logoutProfile("prod", "other@example.com", "t2");
+    await flush();
+    const mark = useGcpLoginStore.getState().loggingOut.prod;
+    expect(typeof mark).toBe("number");
+    release1();
+    expect(await first).toEqual({ ok: false, code: "tenant_changed", message: "" });
+    expect(useGcpLoginStore.getState().loggingOut.prod).toBe(mark);
+    expect(await useGcpLoginStore.getState().logoutProfile("prod", "other@example.com", "t2")).toEqual({
+      ok: false,
+      code: "in_flight",
+      message: "",
+    });
+    release2();
+    expect((await second).ok).toBe(true);
+    expect(useGcpLoginStore.getState().loggingOut.prod).toBeUndefined();
+    expect(logoutBodies).toHaveLength(2);
   });
 
   it("offers Log out on a signed-in Settings row and re-reads the states after it", async () => {

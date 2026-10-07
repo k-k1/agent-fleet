@@ -96,7 +96,7 @@ func TestLogoutSignsOutTheAccount(t *testing.T) {
 		t.Fatalf("before: %v", s)
 	}
 
-	code, out := l.do(t, "POST", "/gcp-login/profiles/prod/logout", "")
+	code, out := l.do(t, "POST", "/gcp-login/profiles/prod/logout", `{"account":"dev@example.com"}`)
 	if code != http.StatusOK || out["account"] != "dev@example.com" || strings.Join(toStrings(out["profiles"]), ",") != "prod,stg" {
 		t.Fatalf("logout = %d %v", code, out)
 	}
@@ -161,13 +161,14 @@ func TestLogoutEndsAWaitingLogin(t *testing.T) {
 	addCredential(t, "dev@example.com", "authorized_user")
 	id := l.start(t, "/gcp-login/profiles/prod/start?force=1")
 	l.waitPhase(t, "prod", id, cloudlogin.PhaseAuthorize)
-	if code, out := l.do(t, "POST", "/gcp-login/profiles/stg/logout", ""); code != http.StatusOK || len(toStrings(out["profiles"])) != 0 {
+	if code, out := l.do(t, "POST", "/gcp-login/profiles/stg/logout", `{"account":"dev@example.com"}`); code != http.StatusConflict ||
+		errCode(out) != "account_changed" {
 		t.Fatalf("stg selects nothing: %d %v", code, out)
 	}
 	if a := logins.Attempt(id); a == nil || a.View().Phase != cloudlogin.PhaseAuthorize {
 		t.Fatal("a logout of another account ended the login")
 	}
-	if code, out := l.do(t, "POST", "/gcp-login/profiles/prod/logout", ""); code != http.StatusOK || strings.Join(toStrings(out["profiles"]), ",") != "prod" {
+	if code, out := l.do(t, "POST", "/gcp-login/profiles/prod/logout", `{"account":"dev@example.com"}`); code != http.StatusOK || strings.Join(toStrings(out["profiles"]), ",") != "prod" {
 		t.Fatalf("logout = %d %v", code, out)
 	}
 	if a := logins.Attempt(id); a != nil && a.View().Phase == cloudlogin.PhaseAuthorize {
@@ -185,7 +186,7 @@ func TestLogoutEndsAWaitingLogin(t *testing.T) {
 func TestLogoutRefusals(t *testing.T) {
 	l := setupLogin(t, prod())
 	addCredential(t, "dev@example.com", "authorized_user")
-	if code, out := l.do(t, "POST", "/gcp-login/profiles/nope/logout", ""); code != http.StatusNotFound || errCode(out) != "not_a_settings_profile" {
+	if code, out := l.do(t, "POST", "/gcp-login/profiles/nope/logout", `{"account":"dev@example.com"}`); code != http.StatusNotFound || errCode(out) != "not_a_settings_profile" {
 		t.Fatalf("unknown profile: %d %v", code, out)
 	}
 	_, unlock, err := lockRoot()
@@ -195,7 +196,7 @@ func TestLogoutRefusals(t *testing.T) {
 	old := rootBusyWait
 	rootBusyWait = 100 * time.Millisecond
 	t.Cleanup(func() { rootBusyWait = old })
-	code, out := l.do(t, "POST", "/gcp-login/profiles/prod/logout", "")
+	code, out := l.do(t, "POST", "/gcp-login/profiles/prod/logout", `{"account":"dev@example.com"}`)
 	unlock()
 	if code != http.StatusConflict || errCode(out) != "busy" {
 		t.Fatalf("held root: %d %v", code, out)
@@ -209,4 +210,33 @@ func errCode(out map[string]any) string {
 	e, _ := out["error"].(map[string]any)
 	c, _ := e["code"].(string)
 	return c
+}
+
+// TestLogoutOnlyOfTheConfirmedAccount: the member confirmed signing out of one account; a
+// login that selected another one since is refused, and nothing is deleted. A body without
+// an account is refused too.
+func TestLogoutOnlyOfTheConfirmedAccount(t *testing.T) {
+	l := setupLogin(t, stg(), ops())
+	root := ConfigRoot()
+	setFakeAccount(root, ConfigName("stg"), "bob@example.com")
+	setFakeAccount(root, ConfigName("ops"), "bob@example.com")
+	addCredential(t, "alice@example.com", "authorized_user")
+	addCredential(t, "bob@example.com", "authorized_user")
+	for _, body := range []string{"", "{}", `{"account":"not an address"}`} {
+		if code, out := l.do(t, "POST", "/gcp-login/profiles/stg/logout", body); code != http.StatusBadRequest {
+			t.Fatalf("body %q: %d %v", body, code, out)
+		}
+	}
+	code, out := l.do(t, "POST", "/gcp-login/profiles/stg/logout", `{"account":"alice@example.com"}`)
+	if code != http.StatusConflict || errCode(out) != "account_changed" {
+		t.Fatalf("logout = %d %v", code, out)
+	}
+	for _, a := range []string{"alice@example.com", "bob@example.com"} {
+		if kind, _ := credentialType(root, a); kind != "authorized_user" {
+			t.Fatalf("%s: credential = %q", a, kind)
+		}
+	}
+	if ConfiguredAccount("stg") != "bob@example.com" || ConfiguredAccount("ops") != "bob@example.com" {
+		t.Fatal("a refused logout changed a selection")
+	}
 }

@@ -1066,4 +1066,6 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "gcplogin.logout_done": "Logged out of {profile}.",
   "gcplogin.logout_done_with": "Logged out of {profile}, and of {profiles} with the same account.",
   "gcplogin.logout_failed": "Could not log out: {msg}",
+  "gcplogin.logout_unreadable": "Could not read the profiles' logins from the workspace just now, so nothing was logged out. Try again in a moment.",
+  "gcplogin.logout_account_changed": "The profile's account changed since you confirmed, so nothing was logged out. Look at the list again and retry.",
 };

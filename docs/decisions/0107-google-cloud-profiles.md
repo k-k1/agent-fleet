@@ -565,7 +565,9 @@ account the profile selects, and every profile selecting that account with it; t
 them first. Under the root's lock the Agent ends the login attempts of those profiles, deletes the
 account's rows from `credentials.db` and `access_tokens.db`, its `legacy_credentials/<account>` files
 (they hold the refresh token too) and its login mark, and clears a login-owned `core/account`; an account
-named in Settings stays, signed out all the same. Pending requests are left alone.
+named in Settings stays, signed out all the same. Pending requests are left alone. The request names the
+account the member confirmed, and the Agent refuses (`account_changed`) when the profile selects another
+one by then: a login in between would otherwise sign out an account, and profiles, never shown.
 
 **Nothing is revoked at Google.** `gcloud auth revoke` calls Google first and removes nothing locally when
 that call fails (SDK 587.0.0, `store.Revoke`), and whether revoking one gcloud refresh token ends the
