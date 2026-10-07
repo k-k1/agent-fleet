@@ -188,13 +188,16 @@ ACP の Interaction も agy の合成メニューも、Console に選択カー�
 Workspace が際限なく起き続けた（実測で約 21 時間、#1811）。上の決定は変えず、`machineBusy`
 の内側に上限を 1 つ足す:
 
-- Agent は生きている busy 行ごとに `progressAt` を報告する。status ファイルの mtime・kind
-  自身の状態源の mtime・ペインの最後の再描画・ペイン配下でツールプロセスが生きている間の
-  「いま」のうち最も新しいもの。
-- `working` / `compacting` の行で `progressAt` が 1 時間（`busyProgressLapse`）より古いものは
+- Agent は生きている busy 行ごとに `progressAt` と `progressAgeSec`（Workspace 自身の時計での
+  経過秒。CP は経過秒だけを比べるので時計のずれで生きた行が落ちない）を報告する。値は status
+  ファイルの mtime・kind 自身の状態源の mtime・ペインの最後の再描画・ペイン配下でツール
+  プロセスが生きている間の「いま」のうち最も新しいもの。未来の mtime は無視する。
+- 報告するのは信号が観測できる行だけ: Terminal の claude と agy。managed と他の kind
+  （codex・cursor・copilot・kiro ほか）は何も報告せず従来どおり抱える（無出力の長いビルドが
+  凍結に見えるため）。対象を広げるには kind ごとに実測した生存信号が要る。
+- `working` / `compacting` の行で経過秒が 1 時間（`busyProgressLapse`）を超えるものは
   `unknown` に分類する。起きている理由にならず、tier 1 の畳み対象にもならない。これで tier 2 が
   Workspace を止められる。
 - ピンと `backgroundBusy` を先に判定し、これらは対象外。`progressAt` が無い／読めない場合は
   従来どおり抱える。`holdersOf` も同じ述語を通す（決定 11）。
-- 既知の穴: managed セッションはペインも到達できるプロセス根も無いため、status ファイルと
-  kind の状態源だけが効く。
+- 対象外（従来どおり上限なし）: managed セッションと claude / agy 以外の kind。

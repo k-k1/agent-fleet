@@ -629,7 +629,9 @@ cursor の TUI 転写 JSONL は**存在しない**ことを確認済み（`find 
 ## 75.12 Addendum (2026-10-07): bounding `machineBusy` for a frozen working row (#1818)
 
 `sessionActivity` treated `working` / `compacting` as busy without limit. It now consults the
-Agent's `progressAt` (newest of status mtime, the kind's state source mtime, pane repaint, a live
-tool process): a busy row older than one hour is `unknown`, so tier 2 can stop the workspace.
+Agent's `progressAgeSec` (age of `progressAt` on the Workspace's clock; newest of status mtime, the
+kind's state source mtime, pane repaint, a live tool process): a busy row older than one hour is
+`unknown`, so tier 2 can stop the workspace. Reported only for Terminal claude / agy; managed and
+other kinds keep holding until a live signal is measured for them.
 `holdersOf` goes through the same `progressLapsed` predicate (decision 11); the pin and
 `backgroundBusy` come first and are exempt. See ADR 0055's 2026-10-07 addendum.

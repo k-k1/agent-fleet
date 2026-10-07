@@ -69,29 +69,25 @@ func busyState(state string) bool {
 // busyProgressLapse is how long a working / compacting row may show no sign of progress
 // before it stops holding the Workspace awake (#1818).
 //
-// The Agent's progressAt already counts a pane repaint and a live tool process as progress,
+// The Agent's progress age already counts a pane repaint and a live tool process as progress,
 // so a legitimate long run (a build, a long answer being drawn) keeps it fresh; only a row
 // frozen on every axis — a dead turn whose source never records an end — lapses. Generous on
 // purpose: wrongly folding a working turn costs more than holding an idle Workspace for an
 // extra hour.
 const busyProgressLapse = time.Hour
 
-// progressLapsed reports whether a busy row's progressAt is older than busyProgressLapse.
-// Absent or unparseable means "no evidence", and that holds (today's behaviour), so an older
-// Agent behind a newer CP changes nothing. The pin and BackgroundBusy are decided before
-// this and are never subject to it.
+// progressLapsed reports whether a busy row's progress is older than busyProgressLapse.
+//
+// The decision reads ProgressAgeSec, the age the Agent computed on its own clock: comparing
+// ProgressAt with this process's clock would lapse every row of a Workspace whose clock runs an
+// hour behind, live tool or not. Absent means "no evidence" (an older Agent, or a row whose
+// live signals the Agent could not observe) and holds, today's behaviour. The pin and
+// BackgroundBusy are decided before this and are never subject to it.
 //
 // The reaper (sessionActivity) and the forecast (holdersOf) both go through here, so the
 // screen and the decision cannot disagree (docs/log/75 decision 11).
-func progressLapsed(s sessionWire, now time.Time) bool {
-	if s.ProgressAt == "" {
-		return false
-	}
-	t, err := time.Parse(time.RFC3339, s.ProgressAt)
-	if err != nil {
-		return false
-	}
-	return now.Sub(t) > busyProgressLapse
+func progressLapsed(s sessionWire) bool {
+	return time.Duration(s.ProgressAgeSec)*time.Second > busyProgressLapse
 }
 
 // sessionActivity classifies one live session row.
@@ -119,7 +115,7 @@ func sessionActivityAt(s sessionWire, now time.Time) activity {
 		return activityMachineBusy
 	}
 	if busyState(s.State) {
-		if progressLapsed(s, now) {
+		if progressLapsed(s) {
 			// Not holding, and not foldable either: what the row is doing is not known any
 			// more, and a halt of something that may still be running is not ours to decide.
 			return activityUnknown

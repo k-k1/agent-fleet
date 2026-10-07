@@ -233,6 +233,10 @@ type Session struct {
 	// process (now). The Control Plane stops letting a busy row hold the Workspace awake once
 	// it is older than an hour. "" = unknown or not busy — the CP then keeps today's behaviour.
 	ProgressAt string `json:"progressAt,omitempty"`
+	// ProgressAgeSec is the age of ProgressAt on the Workspace's own clock, which the CP
+	// compares with its threshold so that a Workspace clock behind or ahead of the CP's cannot
+	// lapse a live row. 0 / absent = fresh or unknown: both hold.
+	ProgressAgeSec int `json:"progressAgeSec,omitempty"`
 	// RateLimitResumeAt is set ONLY when State == agents.StateLimited: the time (RFC3339) of
 	// the scheduled automatic resume. Empty = stopped at the limit with no resume armed
 	// (auto-resume off, nothing to derive the reset time from, or a per-model limit —

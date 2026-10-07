@@ -174,7 +174,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		}
 	}
 	if alive {
-		s.ProgressAt = progressAt(m, s.State, realProgressProbes)
+		fillProgress(&s, m, realProgressProbes)
 	}
 	// When the login in force was written. Sent for a stopped session too: the mirror of a
 	// session that died on an expired login is exactly where the reader goes to see whether
