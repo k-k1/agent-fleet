@@ -74,13 +74,18 @@ interface Props {
 // which read in the rail as "PRs are not shown at all".
 //
 // It is deliberately NOT the `(assignee:@me OR author:@me OR review-requested:@me)` form that
-// would also cover reviews requested of you. `OR` and parentheses only parse with the Agent's
-// `advanced_search=true`, and the workspace keeps running the Agent it started with: after an
-// upgrade every workspace runs the previous image until it is restarted. A default that 422s
-// there puts af's own words under "github could not parse the query", which reads as the member
-// having typed the query wrong. So the default stays in the dialect every Agent understands, and
-// the hint says to add `review-requested:@me` — as a second saved query, or ORed into this one.
-// (Overlapping queries are fine: the rail already keeps one row per provider+key.)
+// would also cover reviews requested of you: the hint says to add `review-requested:@me` as a
+// second saved query, or ORed into this one. (Overlapping queries are fine: the rail already
+// keeps one row per provider+key.)
+//
+// It does name the type, `(is:issue OR is:pull-request)`: GitHub answers some accounts' searches
+// with 422 "Query must include 'is:issue' or 'is:pull-request'", and without the qualifier each
+// refresh of such an account costs two search requests (the Agent retries once). The union
+// returns exactly the `is:issue` and `is:pull-request` results (#1715). `OR` needs the Agent's
+// `advanced_search=true`, which shipped in 0.19.0; the Console cannot see the Agent's version,
+// and a workspace still on an older image would show "could not parse the query" until it is
+// restarted. That window was judged closed. A saved query is never rewritten: only the prefill
+// of an empty form changes.
 //
 // Bitbucket's default is the one that cannot be used as-is (docs/log/80 §80.19.1). Measured: the
 // original bet that putting the words needing replacement into the default would make the error
@@ -88,7 +93,7 @@ interface Props {
 // 404 was read as some other error. The assembly UI appears whenever the repository list can be
 // fetched, so this default is only reached by someone who dropped to free text.
 const DEFAULT_QUERY: Record<string, string> = {
-  github: "is:open involves:@me",
+  github: "is:open (is:issue OR is:pull-request) involves:@me",
   jira: "assignee = currentUser() AND statusCategory != Done",
   bitbucket: 'workspace/repo reviewers.uuid="@me"',
 };

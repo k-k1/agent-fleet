@@ -310,7 +310,8 @@ Bitbucket のプルリクエスト）の取得元です。行からそのまま�
   ここが唯一の絞り込みで、全件は取り込みません。
 - **GitHub は `assignee:` だけではプルリクエストが出ません。** GitHub は PR の作者を
   アサインにしないので、`assignee:@me` だけのクエリでは Issue しか並びません。既定の
-  `is:open involves:@me` なら、自分が作成・アサイン・メンション・コメントした項目を拾います。
+  `is:open (is:issue OR is:pull-request) involves:@me`（`is:issue` も `is:pull-request` も無い検索を
+  拒否する GitHub アカウントがあります）なら、自分が作成・アサイン・メンション・コメントした項目を拾います。
   **自分へのレビュー依頼は含まれない**ので、`is:open review-requested:@me` を 2 本目として
   足してください（両方に当たった項目も 1 行にまとまります）。`OR` と括弧も使えますが、
   Workspace の Agent が更新されてからです。古いままだと行に「クエリを解釈できない」と出ます。
