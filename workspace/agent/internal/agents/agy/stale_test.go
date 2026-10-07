@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -161,6 +162,24 @@ func TestWireLiveBackgroundBusy(t *testing.T) {
 		}
 		if tc.busy && li.BackgroundBusyReason != "process" {
 			t.Errorf("%s: reason %q", tc.name, li.BackgroundBusyReason)
+		}
+	}
+}
+
+func TestAgentIsBackgroundReporter(t *testing.T) {
+	var a agents.Agent = agentImpl{}
+	br, ok := a.(agents.BackgroundReporter)
+	if !ok {
+		t.Fatal("agy must implement agents.BackgroundReporter")
+	}
+	saved := realProbes
+	defer func() { realProbes = saved }()
+	for _, tool := range []bool{true, false} {
+		realProbes.toolAlive = func(string) bool { return tool }
+		busy, reason := br.BackgroundWork(session.Meta{Name: "br"})
+		wb, wr := backgroundWork(session.Meta{Name: "br"}, "idle", realProbes)
+		if busy != tool || busy != wb || reason != wr {
+			t.Errorf("tool=%v: got %v %q, WireLive-side %v %q", tool, busy, reason, wb, wr)
 		}
 	}
 }

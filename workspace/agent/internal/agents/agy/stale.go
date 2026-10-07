@@ -123,3 +123,10 @@ func backgroundWork(m session.Meta, state string, p liveProbes) (bool, string) {
 	}
 	return false, ""
 }
+
+// BackgroundWork is the agents.BackgroundReporter read, so the /messages mirror header answers
+// as WireLive does. The caller has already gated on idle; the shared /proc snapshot keeps it
+// cheap and non-blocking.
+func (agentImpl) BackgroundWork(m session.Meta) (bool, string) {
+	return backgroundWork(m, "idle", realProbes)
+}
