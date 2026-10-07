@@ -336,3 +336,32 @@ func TestSharedWorkingCopyBusyMessageNamesPrecondition(t *testing.T) {
 		t.Fatalf("busy message omits the canonical-path precondition: %v", ref)
 	}
 }
+
+// The launch directory is the canonical target the check validated. An alias retargeted between
+// the check and the launch must not move the child into another session's copy.
+func TestSharedWorkingCopyLaunchesInTheCheckedDirNotAReResolvedAlias(t *testing.T) {
+	env, repo, other, _ := sharedCopyEnv(t)
+	link := filepath.Join(env.home, "repos", "hop")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	realRepo, _ := filepath.EvalSymlinks(repo)
+	swapped := false
+	sessionAliveFn = func(m session.Meta) bool {
+		if m.Name == "parent1" && !swapped {
+			swapped = true
+			_ = os.Remove(link)
+			_ = os.Symlink(other, link) // the stranger's copy, after the target was resolved
+		}
+		return m.Name == "parent1" || m.Name == "stranger"
+	}
+	code, raw := env.create(sharedBody(repo, map[string]any{"dir": link, "initial_prompt": "review", "idempotency_key": "hop"}))
+	if code != http.StatusCreated {
+		t.Fatalf("create = %d %s", code, raw)
+	}
+	var created session.Session
+	_ = json.Unmarshal(raw, &created)
+	if m, _ := session.ReadMeta(created.Name); m.Dir != realRepo {
+		t.Fatalf("child Dir = %q, want the checked %q (the alias was resolved again)", m.Dir, realRepo)
+	}
+}

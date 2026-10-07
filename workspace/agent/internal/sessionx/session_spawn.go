@@ -301,14 +301,15 @@ func spawnWorkingCopyRefusal(dir, parent string, allowShared bool) *SpawnRefusal
 	return ref
 }
 
-// spawnWorkingCopyCheck is spawnWorkingCopyRefusal plus the answer it acted on: shared is true
-// when the guard was waived for the parent's own copy. The caller applies the canonical dir and
-// the warning from THAT answer — asking liveness a second time lets a parent that stops in
-// between waive the guard and skip both.
-func spawnWorkingCopyCheck(dir, parent string, allowShared bool) (ref *SpawnRefusal, shared bool) {
+// spawnWorkingCopyCheck is spawnWorkingCopyRefusal plus the answer it acted on: sharedDir is the
+// canonical directory the guard was waived for (the parent's own copy), empty when it was not.
+// The caller launches in exactly that directory and adds the warning from THAT answer — neither
+// liveness nor an alias may be resolved a second time, or a parent that stops, or a symlink that
+// is retargeted, between the check and the launch moves the child somewhere never checked.
+func spawnWorkingCopyCheck(dir, parent string, allowShared bool) (ref *SpawnRefusal, sharedDir string) {
 	target := workingCopyKey(dir)
 	if allowShared && spawnOwnWorkingCopy(parent, target) {
-		return nil, true
+		return nil, target
 	}
 	for _, m := range session.ListMetas() {
 		if m.Archived || m.Dir == "" {
@@ -324,9 +325,9 @@ func spawnWorkingCopyCheck(dir, parent string, allowShared bool) (ref *SpawnRefu
 				"allow_shared_working_copy=true を併せて指定します（自分が symlink を含まない正規のパスで"+
 				"起動している場合に限ります。他セッションの作業コピーは共有できません）。"+
 				"フラグを付けても同じ拒否になるなら、このコピーは共有できないので、同じ呼び出しを繰り返さないでください",
-				m.Dir, m.Name)}, false
+				m.Dir, m.Name)}, ""
 	}
-	return nil, false
+	return nil, ""
 }
 
 // spawnOwnWorkingCopy reports whether target (a workingCopyKey) is the working copy the parent is
