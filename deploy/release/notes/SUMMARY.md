@@ -14,6 +14,13 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 
 ---
 
+## [0.29.1](0.29.1.md) — 2026-10-07
+
+**Fixed**
+
+- **[MCP]** `list_repos`, `get_session_output` and other af tools failed in claude 2.1.292 with a schema validation error ([#1842](https://github.com/k-k1/agent-fleet/issues/1842))
+- **[session state]** A claude session stayed "in progress" 45–60 s after its answer while the Stop hook ran ([#1834](https://github.com/k-k1/agent-fleet/issues/1834), [#1836](https://github.com/k-k1/agent-fleet/issues/1836))
+
 ## [0.29.0](0.29.0.md) — 2026-10-07
 
 **CLI pins** — Claude Code 2.1.292, Codex 0.160.1, OpenCode 1.18.35, Copilot 1.0.92, Antigravity 1.3.0, Kiro 2.28.0, Muse Code 1.4.3-R5018.1

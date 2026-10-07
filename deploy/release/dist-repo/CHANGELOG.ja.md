@@ -3,6 +3,11 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.29.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.29.1) — 2026-10-07
+
+0.29.0 の修正版です。0.29.0 に入っている Claude Code の版で Agent Fleet 自身の MCP ツールが再び使えるようになり、
+答え終わった claude のセッションが最大 1 分ほど実行中と表示されることもなくなりました。
+
 ## [0.29.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.29.0) — 2026-10-07
 
 SVN の作業コピーでログとローカルの変更を見られるようになり、claude の既存の自動メモリを Agent Fleet のメモリへ

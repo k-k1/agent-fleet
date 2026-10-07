@@ -13,6 +13,13 @@
 
 ---
 
+## [0.29.1](0.29.1.ja.md) — 2026-10-07
+
+**Fixed**
+
+- **[MCP]** claude 2.1.292 で `list_repos`・`get_session_output` などの af ツールがスキーマ検証のエラーで失敗した ([#1842](https://github.com/k-k1/agent-fleet/issues/1842))
+- **[セッション状態]** Stop フックが動いている間、claude のセッションが答えた後も 45〜60 秒「実行中」のままだった ([#1834](https://github.com/k-k1/agent-fleet/issues/1834), [#1836](https://github.com/k-k1/agent-fleet/issues/1836))
+
 ## [0.29.0](0.29.0.ja.md) — 2026-10-07
 
 **CLI ピン** — Claude Code 2.1.292 / Codex 0.160.1 / OpenCode 1.18.35 / Copilot 1.0.92 / Antigravity 1.3.0 / Kiro 2.28.0 / Muse Code 1.4.3-R5018.1

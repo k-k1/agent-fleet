@@ -3,6 +3,11 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.29.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.29.1) — 2026-10-07
+
+A fix release for 0.29.0: Agent Fleet's own MCP tools work again with the Claude Code version 0.29.0
+ships, and a finished claude session no longer shows as in progress for up to a minute.
+
 ## [0.29.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.29.0) — 2026-10-07
 
 SVN working copies get a Show log and a Local changes view, and claude's existing auto-memory can be
