@@ -1932,7 +1932,18 @@ export function WsBar() {
               {/* The pane buttons the bar had no room for (the phone fold); a tap runs the action
                   and closes the popover. In bar order, so the popover reads like the bar did. */}
               {phoneFold > 0 && (
-                <div className="ws-more-actions" onClick={() => setMoreOpen(false)}>
+                <div
+                  className="ws-more-actions"
+                  onClick={(e) => {
+                    // Closing unmounts the focused button; hand focus back to the trigger so a
+                    // keyboard user is not dropped on <body>. Only when focus is still here: an
+                    // action that moved it elsewhere (a pane) keeps it.
+                    if (e.currentTarget.contains(document.activeElement)) {
+                      moreRef.current?.querySelector<HTMLElement>(".ws-more-btn")?.focus();
+                    }
+                    setMoreOpen(false);
+                  }}
+                >
                   {phoneFold > 1 && splitDownBtn}
                   {phoneFold > 1 && closeAllBtn}
                   {overviewBtn}
