@@ -71,7 +71,7 @@ describe("DangerTab", () => {
     whoami = { home_wipe: false };
     await mount();
     expect(buttonWith("作り直す")).toBeUndefined();
-    expect(buttonWith("掃除する")).toBeUndefined();
+    expect(buttonWith("掃除")).toBeUndefined();
     expect(document.body.textContent).toContain("この配備ではワークスペースの作り直しとホームの掃除を使えません");
   });
 

@@ -200,7 +200,7 @@ export const common = {
 
   // === P2 モーダル・行 共通の頻出語（common.cancel/close/delete は既存を再利用）===
   "common.send": "送信",
-  "common.delete_do": "削除する",
+  "common.delete_do": "削除",
   "common.delete_failed": "削除に失敗しました",
   "common.send_failed": "送信に失敗しました",
   "common.copy_failed": "コピーに失敗しました",
@@ -255,7 +255,7 @@ export const common = {
   "onb.start": "起動",
   "onb.connect_agent": "エージェントを接続",
   "onb.connect_agent_hint": "Claude / Codex / opencode のいずれかにログイン",
-  "onb.connect": "接続する",
+  "onb.connect": "接続",
   "onb.connect_git": "git プロバイダを接続",
   "onb.optional": "任意",
   "onb.connect_git_hint": "private リポジトリをクローン / push するなら接続します",

@@ -161,7 +161,7 @@ describe("issuing a borrowing token (ADR 0079 decision 3)", () => {
     // this panel shows the dots. Copying it does not need it revealed.
     expect(text()).not.toContain(TOKEN);
     expect(btn("トークンをコピー")).toBeTruthy();
-    await click(btn("表示する"));
+    await click(btn("表示"));
     expect(text()).toContain(TOKEN);
     // Where the borrowing deployment puts it (decision 2), named by the CP rather than by this
     // screen, plus the ready-to-paste assignment.
@@ -175,7 +175,7 @@ describe("issuing a borrowing token (ADR 0079 decision 3)", () => {
   it("takes the value off the screen on request", async () => {
     await mount(superAnswer);
     await issue(ISSUED);
-    await click(btn("表示する"));
+    await click(btn("表示"));
     expect(text()).toContain(TOKEN);
     await click(btn("画面から消す"));
     expect(text()).not.toContain(TOKEN);

@@ -242,7 +242,7 @@ test("deployment admin: can approve and enable from a row in the register", asyn
   expect(approved).toEqual({ path: "/api/admin/tenants/acme/idp/idp1/status", body: { status: "active" } });
   // Re-read after the click: an approved row turns into a suspend action, and the register does
   // not go empty.
-  await expect(register.locator("button", { hasText: "停止する" })).toHaveCount(1);
+  await expect(register.getByRole("button", { name: "停止", exact: true })).toHaveCount(1);
   await expect(register.locator("button", { hasText: "承認して有効化" })).toHaveCount(0);
 });
 

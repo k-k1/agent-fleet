@@ -332,7 +332,7 @@ export const sessions = {
     "このセッションの作業コピーは起動時のブランチ「{from}」から「{to}」へ切り替わっています。稼働中エージェントの作業ツリーが入れ替わり、編集や差分が食い違っている可能性があります。",
   "srow.speaking": "このセッションの回答を読み上げ中",
   "srow.menu": "メニュー",
-  "srow.resume": "再開する",
+  "srow.resume": "再開",
   "srow.relogin_resume": "再ログインして再開",
   "srow.stop": "停止する（あとで再開できる）",
   "srow.open_remote": "リモートセッションを開く",

@@ -92,16 +92,16 @@ describe("SignInMethodRegister", () => {
       status: "active",
     });
     expect(api).toHaveBeenCalledTimes(2); // approving re-reads
-    // An approved row switches to suspend (「停止する」); the ledger keeps the row.
+    // An approved row switches to suspend (「停止」); the ledger keeps the row.
     expect(findButton("承認して有効化")).toBeFalsy();
-    expect(findButton("停止する")).toBeTruthy();
+    expect(findButton("停止")).toBeTruthy();
   });
 
   it("suspends from an active row", async () => {
     api.mockResolvedValue({ providers: [{ ...ROW, status: "active", usable: true }] });
     apiJSON.mockResolvedValue({});
     await mount();
-    const suspend = findButton("停止する");
+    const suspend = findButton("停止");
     expect(suspend).toBeTruthy();
     await act(async () => {
       suspend!.click();
@@ -299,7 +299,7 @@ describe("suspending a sign-in method", () => {
       Promise.resolve(path === "api/admin/providers" ? { providers: [] } : { providers: [ROW_ACTIVE] }),
     );
   const clickSuspend = async () => {
-    const b = findButton("停止する");
+    const b = findButton("停止");
     await act(async () => {
       b!.click();
     });
@@ -326,7 +326,7 @@ describe("suspending a sign-in method", () => {
     // plain querySelectorAll("button") grabs that one and re-sends without confirm.
     const ok = Array.from(
       document.querySelectorAll<HTMLButtonElement>(".confirm-actions button"),
-    ).find((b) => (b.textContent || "").includes("停止する"));
+    ).find((b) => (b.textContent || "").includes("停止"));
     await act(async () => {
       ok!.click();
     });

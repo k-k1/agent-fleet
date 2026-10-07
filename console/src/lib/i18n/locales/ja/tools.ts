@@ -327,7 +327,7 @@ export const tools = {
   "env.cleanhome_head": "ホームを掃除する",
   "env.cleanhome_desc_1": "ログイン・接続以外のホーム（",
   "env.cleanhome_desc_2": "・各種キャッシュ）を消して作り直します。より深いリセット。",
-  "env.cleanhome_btn": "掃除する",
+  "env.cleanhome_btn": "掃除",
   "env.recreate_confirm_title": "ワークスペースを作り直しますか？",
   "env.recreate_confirm_body": "コンテナを破棄し、最新イメージで新しく作り直します。",
   "env.cleanhome_confirm_title": "ホームを掃除しますか？",
