@@ -101,7 +101,8 @@ in their browser and pastes the verification code into that same Console window.
 continues with the token if the login finishes within the wait. If not, it exits 3 saying the login
 is waiting in the Console: tell the user, and rerun once they say it is done. One request per
 profile; a second run joins it. The user can also log a profile in (or "Log in again", for a login
-they know was revoked) from Settings > Google Cloud.
+they know was revoked) from Settings > Google Cloud, and log it out there or from the WS bar badge; a logout
+signs the workspace out of the profile's Google account, so every profile using that account then needs a login.
 
 **The paste rule — tell the user if they ask: paste a code only into a login you started yourself.**
 A Google verification code is redeemable only by the gcloud whose sign-in URL produced it (PKCE), and

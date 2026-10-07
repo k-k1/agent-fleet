@@ -26,6 +26,8 @@ vi.mock("../../core/api/client.ts", () => ({
   }),
 }));
 
+vi.mock("../../ui/ConfirmProvider.tsx", () => ({ useConfirm: () => () => Promise.resolve(true) }));
+
 const { GcpProfilesChip } = await import("./GcpProfilesChip.tsx");
 const { GcpLoginHost } = await import("./GcpLoginHost.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");

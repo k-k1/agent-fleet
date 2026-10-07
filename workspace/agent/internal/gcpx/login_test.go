@@ -293,6 +293,7 @@ func setupLogin(t *testing.T, ps ...Profile) *loginEnv {
 	l.mux.HandleFunc("POST /gcp-login/{id}/cancel", HandleLoginCancel)
 	l.mux.HandleFunc("GET /gcp-login/profiles", HandleProfileLoginStates)
 	l.mux.HandleFunc("POST /gcp-login/profiles/{name}/start", HandleProfileLoginStart)
+	l.mux.HandleFunc("POST /gcp-login/profiles/{name}/logout", HandleProfileLogout)
 	l.mux.HandleFunc("GET /gcp-login/profiles/{name}/attempts/{attempt}", HandleProfileLoginAttempt)
 	l.mux.HandleFunc("POST /gcp-login/profiles/{name}/attempts/{attempt}/code", HandleProfileLoginCode)
 	return l

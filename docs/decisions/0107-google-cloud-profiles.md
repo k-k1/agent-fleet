@@ -555,3 +555,22 @@ explicit token only when this variable is set, and `cloud.google.com/go/storage`
 Python's explicit `Credentials` does not read it (it takes `quota_project_id=`), so the notes keep that
 advice. A caller's own `GOOGLE_CLOUD_QUOTA_PROJECT` is still removed with every other `GOOGLE_*`
 variable before the wrapper sets its value; the child-environment test covers both.
+
+## Note — logging a profile out (2026-10-08)
+
+Issue #1850, decided by the user. Settings > Google Cloud and the WS bar badge gain **Log out** on a
+logged-in row, as AWS has (`POST /gcp-login/profiles/{name}/logout`, relayed and audited by the CP as
+`gcp.logout`). Because the store is per account (decision 1), a logout signs the Agent's store out of the
+account the profile selects, and every profile selecting that account with it; the confirmation names
+them first. Under the root's lock the Agent ends the login attempts of those profiles, deletes the
+account's rows from `credentials.db` and `access_tokens.db`, its `legacy_credentials/<account>` files
+(they hold the refresh token too) and its login mark, and clears a login-owned `core/account`; an account
+named in Settings stays, signed out all the same. Pending requests are left alone. The request names the
+account the member confirmed, and the Agent refuses (`account_changed`) when the profile selects another
+one by then: a login in between would otherwise sign out an account, and profiles, never shown.
+
+**Nothing is revoked at Google.** `gcloud auth revoke` calls Google first and removes nothing locally when
+that call fails (SDK 587.0.0, `store.Revoke`), and whether revoking one gcloud refresh token ends the
+grant of gcloud's OAuth client for the user — the member's gcloud on other machines — is not measured.
+That is different from the rejected revoke above, which was about undoing a wrong-account login. A token
+a command already received stays valid until it expires.

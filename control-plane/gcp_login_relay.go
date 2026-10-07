@@ -55,6 +55,8 @@ func gcpLoginAudit(r *http.Request, p string, q url.Values) (action, target stri
 	switch {
 	case strings.HasPrefix(rest, "profiles/") && strings.HasSuffix(rest, "/code"):
 		return "gcp.login.code", "profile: " + name + ", attempt: " + gcpAttemptRef(r.PathValue("attempt")), true
+	case strings.HasPrefix(rest, "profiles/") && strings.HasSuffix(rest, "/logout"):
+		return "gcp.logout", "profile: " + name, true
 	case strings.HasPrefix(rest, "profiles/") && strings.HasSuffix(rest, "/start"):
 		if q.Get("force") == "1" {
 			return "gcp.login.start", "profile: " + name + " (log in again)", true

@@ -651,6 +651,14 @@ revoked (the workspace cannot see that until a command is refused). If you press
 window or device, the first sign-in stops and its code no longer works. A sign-in that is not finished within
 15 minutes ends; **Start again** begins a new one.
 
+**Log out** on a logged-in row (in Settings or in the badge) deletes the login the workspace stored for the
+profile's Google account. The workspace keeps one login per account, so every profile using that account is
+logged out with it; the confirmation names them before anything is deleted. Your sign-in at Google, and gcloud on
+your other machines, are not touched, and a token a command already received stays valid until it expires (at most
+an hour). A sign-in waiting for its code in one of those profiles' login windows stops. To use the profile again,
+log in again. If the profile's account changed between the confirmation and the logout (another login finished
+meanwhile), nothing is logged out and the Console says so.
+
 **When an agent's command needs the login**, it asks you in the Console: `af-gcloud-exec` prints "Google Cloud
 login for profile … requested in the Agent Fleet Console", and a toast at the bottom of the screen says **"An agent
 is waiting for a Google Cloud login"**, with the profile, its project and which session and command ask. Press
@@ -692,7 +700,8 @@ Google mark beside the AWS one. It names your logged-in profile when there is ex
 them ("1/3", one of three logged in). It is green when something is logged in, plain when nothing is, and amber
 while an agent's command is waiting for a profile's login. Press it for the list: each profile with **Logged in**
 or **Not logged in**, its name, project and account, **"An agent is waiting for this login"** on the row an agent
-is waiting for, and **Log in** / **Log in again**, which open the login window above. There is no default profile:
+is waiting for, **Log in** / **Log in again**, which open the login window above, and **Log out** on a logged-in
+row (see above). There is no default profile:
 every logged-in profile can be used at the same time, and each command picks one with
 `af-gcloud-exec --profile <name>`. **Google Cloud settings** at the bottom opens the Settings tab.
 

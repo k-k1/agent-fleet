@@ -55,6 +55,7 @@ func TestAuditActionTarget(t *testing.T) {
 		{"POST", "/api/gcp-login/0123456789abcdef01234567/cancel?profile=prod", "", "gcp.login.cancel", "0123456789abcdef01234567 (profile hint: prod)", true},
 		{"POST", "/api/gcp-login/profiles/prod/start", "prod", "gcp.login.start", "profile: prod", true},
 		{"POST", "/api/gcp-login/profiles/prod/start?force=1", "prod", "gcp.login.start", "profile: prod (log in again)", true},
+		{"POST", "/api/gcp-login/profiles/prod/logout", "prod", "gcp.logout", "profile: prod", true},
 		{"POST", "/api/gcp-login/profiles/prod/attempts/abc/code", "prod", "gcp.login.code", "profile: prod, attempt: " + gcpAttemptRef("abc"), true},
 		{"GET", "/api/gcp-login/profiles/prod/attempts/abc", "prod", "", "", false},
 		{"GET", "/api/gcp-login/profiles", "", "", "", false},

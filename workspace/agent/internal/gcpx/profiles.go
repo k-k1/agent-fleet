@@ -309,8 +309,10 @@ func configProps(p Profile, account string) map[string]string {
 }
 
 // renderConfig is the whole configuration file: Settings' properties and the account.
-func renderConfig(p Profile, account string) string {
-	props := configProps(p, account)
+func renderConfig(p Profile, account string) string { return renderProps(configProps(p, account)) }
+
+// renderProps writes properties (section/key) in the layout renderConfig gives a file.
+func renderProps(props map[string]string) string {
 	var b strings.Builder
 	b.WriteString("# Written by the agent-fleet Agent from Settings > Google Cloud; rewritten on every sync.\n")
 	for i, section := range []string{"core", "billing", "compute", "auth"} {
