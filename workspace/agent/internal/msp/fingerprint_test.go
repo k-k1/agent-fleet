@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -117,10 +118,44 @@ func TestInstalledBinaryIsCompatibleWithTheBundle(t *testing.T) {
 		t.Logf("msp-compat addition: %s", a)
 	}
 	if !r.Compatible() {
-		t.Errorf("the installed binary speaks a protocol these types cannot:\n%s"+
+		t.Errorf("the installed binary speaks a protocol these types cannot:\n%s%s"+
 			"Re-export the bundle into internal/msp/schema and run `go generate ./internal/msp/...`,"+
-			" then re-read ADR 0095 for what moved.", r)
+			" then re-read ADR 0095 for what moved.", r, museVersionHint(bin))
 	}
+}
+
+var (
+	dockerfileMusePin = regexp.MustCompile(`(?m)^ARG MUSE_VERSION=(\S+)`)
+	museBuildID       = regexp.MustCompile(`\(([^()\s]+)\)`)
+)
+
+// museVersionHint says whether the red above is a stale binary or a real protocol move. The
+// bundle is exported for the Dockerfile's pin, and a home that outlives an image keeps the
+// older binary (a bundle newer than the binary reads as removals, ADR 0095 2026-10-06 note), so
+// a binary that is not the pin is fixed by `workspace-agent install-muse`, not by touching the
+// bundle. Empty when the binary is the pin or either side cannot be read.
+func museVersionHint(bin string) string {
+	df, err := os.ReadFile(filepath.Join("..", "..", "..", "Dockerfile"))
+	if err != nil {
+		return ""
+	}
+	cmd := exec.Command(bin, "--version")
+	cmd.Env = append(os.Environ(), "MUSE_NO_AUTO_UPDATE=1")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return staleMuseHint(string(df), string(out))
+}
+
+func staleMuseHint(dockerfile, versionOutput string) string {
+	pin := dockerfileMusePin.FindStringSubmatch(dockerfile)
+	have := museBuildID.FindStringSubmatch(versionOutput)
+	if pin == nil || have == nil || pin[1] == have[1] {
+		return ""
+	}
+	return "note: the installed muse is " + have[1] + " but the Dockerfile pin (the version the bundle was" +
+		" exported for) is " + pin[1] + "; run `workspace-agent install-muse` before changing the bundle.\n"
 }
 
 // museBinary resolves the binary the deployment installed, or skips. AF_MUSE_BIN is the
