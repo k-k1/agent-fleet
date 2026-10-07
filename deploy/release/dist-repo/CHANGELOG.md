@@ -3,6 +3,13 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.29.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.29.0) — 2026-10-07
+
+SVN working copies get a Show log and a Local changes view, and claude's existing auto-memory can be
+imported into Agent Fleet memory. A Terminal claude or Antigravity session that stops making progress
+no longer keeps its workspace awake. Image generation through Antigravity and codex works again, Muse
+Code questions can be answered, and the Console's Japanese wording follows one glossary.
+
 ## [0.28.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.28.0) — 2026-10-04
 
 Past sessions' conversations can be searched from the command palette and by agents, and sessions can

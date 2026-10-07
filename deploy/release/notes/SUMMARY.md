@@ -14,6 +14,39 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 
 ---
 
+## [0.29.0](0.29.0.md) — 2026-10-07
+
+**CLI pins** — Claude Code 2.1.292, Codex 0.160.1, OpenCode 1.18.35, Copilot 1.0.92, Antigravity 1.3.0, Kiro 2.28.0, Muse Code 1.4.3-R5018.1
+
+**New / Improved**
+
+- **[svn]** Show log and Local changes views with diffs for SVN working copies ([#1705](https://github.com/k-k1/agent-fleet/issues/1705))
+- **[agent memory]** Import claude's auto-memory into Agent Fleet memory from Settings › Agent memory or `af-memory` ([#1569](https://github.com/k-k1/agent-fleet/issues/1569))
+- **[display]** Separate appearance per tenant, applied on a tenant switch ([#1692](https://github.com/k-k1/agent-fleet/issues/1692))
+- **[idle stop]** A Terminal claude or Antigravity session with no progress for an hour no longer holds its workspace; the outlook shows how long it has been working ([#1811](https://github.com/k-k1/agent-fleet/issues/1811), [#1818](https://github.com/k-k1/agent-fleet/issues/1818), [#1819](https://github.com/k-k1/agent-fleet/issues/1819))
+- **[agent memory]** The Agent Fleet memory switch moved to Settings › Agent memory ([#1735](https://github.com/k-k1/agent-fleet/issues/1735))
+- **[agent memory]** `memory_index` is ranked and bounded, and names what did not fit ([#1702](https://github.com/k-k1/agent-fleet/issues/1702))
+- **[sessions]** Archived sessions opens quickly and is wider ([#1701](https://github.com/k-k1/agent-fleet/issues/1701))
+- **[work items]** A linked PR or issue outside the inbox shows its title, state and assignees ([#1697](https://github.com/k-k1/agent-fleet/issues/1697))
+- **[image generation]** Antigravity edits from up to three reference images and reports an account without image generation ([#1718](https://github.com/k-k1/agent-fleet/issues/1718))
+- **[i18n]** The Console's Japanese follows one glossary and notation; plainer English settings text
+- **[guide]** The user guide rewritten in plainer English and Japanese; stale chapter links and facts corrected ([#1725](https://github.com/k-k1/agent-fleet/issues/1725), [#1726](https://github.com/k-k1/agent-fleet/issues/1726))
+
+**Fixed**
+
+- **[image generation]** The Antigravity route produced nothing and the codex route failed on ChatGPT accounts ([#1716](https://github.com/k-k1/agent-fleet/issues/1716), [#1711](https://github.com/k-k1/agent-fleet/issues/1711))
+- **[muse]** Questions could not be answered or cancelled, and a waiting question showed as in progress ([#1695](https://github.com/k-k1/agent-fleet/issues/1695))
+- **[muse]** A session stopped by its usage limit was neither marked nor auto-resumed ([#1766](https://github.com/k-k1/agent-fleet/issues/1766))
+- **[agents]** Turning RTK on or off removed the user's own Claude Code Bash hooks ([#1779](https://github.com/k-k1/agent-fleet/issues/1779))
+- **[worktrees]** A claude session in a worktree stopped at the folder-trust dialog ([#1784](https://github.com/k-k1/agent-fleet/issues/1784))
+- **[composer]** A long prompt with an image in claude Terminal arrived as `[Image #N]` ([#1686](https://github.com/k-k1/agent-fleet/issues/1686))
+- **[tenants]** The left pane and top bar kept the previous tenant's data after a switch ([#1680](https://github.com/k-k1/agent-fleet/issues/1680))
+- **[tenants]** The tenant's default machine class was ignored on a scheduled wake and a home resize ([#1687](https://github.com/k-k1/agent-fleet/issues/1687))
+- **[work items]** GitHub refresh failed with a bare 422; the reason is shown and the query retried ([#1690](https://github.com/k-k1/agent-fleet/issues/1690))
+- **[AWS]** Profile logout did not end the AWS session once the SSO token had expired ([#1689](https://github.com/k-k1/agent-fleet/issues/1689))
+- **[gallery]** Thumbnails of rotated JPEG photos were sideways ([#1643](https://github.com/k-k1/agent-fleet/issues/1643))
+- **[mirror]** Skill picker entries lost their description line; the spawn badge tooltip names the parent ([#1782](https://github.com/k-k1/agent-fleet/issues/1782), [#1752](https://github.com/k-k1/agent-fleet/issues/1752))
+
 ## [0.28.0](0.28.0.md) — 2026-10-04
 
 **New / Improved**

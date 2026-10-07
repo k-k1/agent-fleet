@@ -13,6 +13,39 @@
 
 ---
 
+## [0.29.0](0.29.0.ja.md) — 2026-10-07
+
+**CLI ピン** — Claude Code 2.1.292 / Codex 0.160.1 / OpenCode 1.18.35 / Copilot 1.0.92 / Antigravity 1.3.0 / Kiro 2.28.0 / Muse Code 1.4.3-R5018.1
+
+**New / Improved**
+
+- **[svn]** SVN の作業コピーで、差分付きのログとローカルの変更を表示 ([#1705](https://github.com/k-k1/agent-fleet/issues/1705))
+- **[メモリ管理]** claude の自動メモリを 設定 › エージェントメモリ や `af-memory` から Agent Fleet のメモリへ取り込む ([#1569](https://github.com/k-k1/agent-fleet/issues/1569))
+- **[表示]** テナントごとに外観を分け、テナントの切り替えで反映 ([#1692](https://github.com/k-k1/agent-fleet/issues/1692))
+- **[アイドル停止]** 1 時間進まないターミナル（CLI）の claude と Antigravity のセッションは、ワークスペースの自動停止を妨げない。見通しに実行中の時間を表示 ([#1811](https://github.com/k-k1/agent-fleet/issues/1811), [#1818](https://github.com/k-k1/agent-fleet/issues/1818), [#1819](https://github.com/k-k1/agent-fleet/issues/1819))
+- **[メモリ管理]** Agent Fleet のメモリのスイッチを 設定 › エージェントメモリ へ移動 ([#1735](https://github.com/k-k1/agent-fleet/issues/1735))
+- **[メモリ管理]** `memory_index` を順位付けして上限内に収め、入りきらないものは名前を挙げる ([#1702](https://github.com/k-k1/agent-fleet/issues/1702))
+- **[セッション]** 「アーカイブ済みセッション」がすぐに開き、幅も広い ([#1701](https://github.com/k-k1/agent-fleet/issues/1701))
+- **[課題管理]** 一覧にない PR や Issue のリンクも、タイトル・状態・担当者を表示 ([#1697](https://github.com/k-k1/agent-fleet/issues/1697))
+- **[画像生成]** Antigravity で参照画像 3 枚までの編集。画像生成のないアカウントはそう伝える ([#1718](https://github.com/k-k1/agent-fleet/issues/1718))
+- **[i18n]** Console の日本語を用語集と表記の規則に統一し、英語の設定の文を平易に
+- **[ガイド]** 利用ガイドを平易な英語と日本語で書き直し、古い章番号のリンクと記述の食い違いを修正 ([#1725](https://github.com/k-k1/agent-fleet/issues/1725), [#1726](https://github.com/k-k1/agent-fleet/issues/1726))
+
+**Fixed**
+
+- **[画像生成]** Antigravity では何も作られず、codex では ChatGPT のアカウントで失敗した ([#1716](https://github.com/k-k1/agent-fleet/issues/1716), [#1711](https://github.com/k-k1/agent-fleet/issues/1711))
+- **[muse]** 質問に答えることも取り消すこともできず、質問中も実行中と表示された ([#1695](https://github.com/k-k1/agent-fleet/issues/1695))
+- **[muse]** 使用量の上限で止まったセッションが表示も自動再開もされなかった ([#1766](https://github.com/k-k1/agent-fleet/issues/1766))
+- **[エージェント]** RTK をオン／オフすると自分の Claude Code の Bash フックが消えた ([#1779](https://github.com/k-k1/agent-fleet/issues/1779))
+- **[ワークツリー]** ワークツリーの claude のセッションがフォルダーの信頼の確認で止まった ([#1784](https://github.com/k-k1/agent-fleet/issues/1784))
+- **[コンポーザー]** ターミナル（CLI）の claude で画像付きの長いプロンプトが `[Image #N]` として届いた ([#1686](https://github.com/k-k1/agent-fleet/issues/1686))
+- **[テナント]** 切り替えた後も左ペインと上部バーに前のテナントのデータが残った ([#1680](https://github.com/k-k1/agent-fleet/issues/1680))
+- **[テナント]** スケジュールでの起動とホームの容量変更で、テナントの既定のマシンの種類が使われなかった ([#1687](https://github.com/k-k1/agent-fleet/issues/1687))
+- **[課題管理]** GitHub の更新が理由のない 422 で失敗した。理由を表示し、検索をやり直す ([#1690](https://github.com/k-k1/agent-fleet/issues/1690))
+- **[AWS]** SSO のトークンが期限切れになった後、プロファイルのログアウトで AWS 側のセッションが終わらなかった ([#1689](https://github.com/k-k1/agent-fleet/issues/1689))
+- **[ギャラリー]** 回転情報を持つ JPEG の写真のサムネイルが横倒しだった ([#1643](https://github.com/k-k1/agent-fleet/issues/1643))
+- **[ミラー]** スキルピッカーの項目で説明の行が消えた。子セッションのバッジのツールチップに親の名前を表示 ([#1782](https://github.com/k-k1/agent-fleet/issues/1782), [#1752](https://github.com/k-k1/agent-fleet/issues/1752))
+
 ## [0.28.0](0.28.0.ja.md) — 2026-10-04
 
 **New / Improved**
