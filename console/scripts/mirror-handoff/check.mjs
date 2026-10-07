@@ -139,8 +139,14 @@ const probeIn = (scroller) => `(() => {
 const PROBE = probeIn(`document.querySelector(".mirror-body") || document.querySelector(".mirror-scroll")`);
 const PROBE_SHARED = probeIn(`document.querySelector(".shared-view-body")`);
 
-const pane = { id: "p0", session: null, content: { kind: "terminal", chat: true }, wrap: null };
-const layout = { cols: [{ id: "c0", rowRatio: 0.5, panes: [pane] }], colRatios: [1], activeId: "p0" };
+// An empty Tabbed layout (one cell, no views): the script opens the session by clicking its row.
+const layout = {
+  version: 3,
+  mode: "tabs",
+  cols: [{ id: "c0", rowRatio: 0.5, cells: [{ id: "cell0", selectedViewId: null, views: [] }] }],
+  colRatios: [1],
+  activeCellId: "cell0",
+};
 
 async function run(mode, { shared = false } = {}) {
   const stub = spawn(
@@ -158,10 +164,13 @@ async function run(mode, { shared = false } = {}) {
     // than the screen, so anything below it is invisible.
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: 420, height: 780, deviceScaleFactor: 1, mobile: false });
     await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+      // Tabbed (the default) on purpose: at this phone width the split layout keeps the left pane in a
+      // drawer, so the session row the script clicks is not in the DOM. The layout is seeded under the
+      // Tabbed key (`….tabs`) so the seed is read rather than ignored.
       source: `try {
-        localStorage.setItem("af-display-settings", '{"locale":"ja","theme":"dark"}');
+        localStorage.setItem("af-display-settings", '{"locale":"ja","theme":"dark","paneLayout":"tabs"}');
         localStorage.setItem("af-tenant", "demo");
-        localStorage.setItem("af.layout2.demo@example.com.demo", ${JSON.stringify(JSON.stringify(layout))});
+        localStorage.setItem("af.layout2.demo@example.com.demo.tabs", ${JSON.stringify(JSON.stringify(layout))});
       } catch (e) {}`,
     });
     await cdp.send("Page.navigate", { url: BASE });
