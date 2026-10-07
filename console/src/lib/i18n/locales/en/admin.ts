@@ -11,7 +11,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.title": "Admin",
   "admin.forbidden": "You don't have permission (super_admin only).",
   "admin.deploy_warn_plaintext_secrets":
-    "This deployment has no master key (AF_MASTER_KEY), so members' stored credentials — git tokens, the Claude token, API keys, MCP and chat connections — are kept unencrypted in their homes. Set the key in the Control Plane's environment and restart it, then stop and start every existing workspace (a running one has no key yet), and only then have members reconnect what they had stored. The old unencrypted file stays in each home and in backups until deleted, so delete it and rotate those credentials.",
+    "This deployment has no master key (AF_MASTER_KEY), so members' stored credentials (git tokens, the Claude token, API keys, MCP and chat connections) are kept unencrypted in their homes. Set the key in the Control Plane's environment and restart it, then stop and start every existing workspace (a running one has no key yet), and only then have members reconnect what they had stored. The old unencrypted file stays in each home and in backups until deleted, so delete it and rotate those credentials.",
   "admin.mode_sessions": "Sessions",
   "admin.mode_usage": "Running time",
   "admin.mode_audit": "Audit",
@@ -20,7 +20,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mode_tts": "Read aloud",
   "admin.mode_brand": "Appearance",
   "admin.brand_title": "This deployment's colour and name",
-  "admin.brand_note": "Ship the same image to several environments and every tab — and every home-screen icon — looks identical. A colour and a label tell them apart through the favicon, the PWA icon and the app name. Cosmetic only: nothing about access or data depends on it.",
+  "admin.brand_note": "Ship the same image to several environments and every tab and every home-screen icon looks identical. A colour and a label tell them apart through the favicon, the PWA icon and the app name. Cosmetic only: nothing about access or data depends on it.",
   "admin.brand_color": "Colour",
   "admin.brand_label": "Label",
   "admin.brand_label_ph": "dev, staging, …",
@@ -61,7 +61,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // one an operator has to read: this deployment neither starts nor stops it.
   "admin.engines_external": " (externally managed: this deployment neither starts nor stops it)",
   "admin.engines_url_label": "Endpoint",
-  "admin.engines_note_external": "An externally managed engine is a URL this deployment points at. Disabled only closes the route — it does not stop the other side, which this deployment neither starts nor stops. Changing the URL means restarting the Control Plane.",
+  "admin.engines_note_external": "An externally managed engine is a URL this deployment points at. Disabled only closes the route. It does not stop the other side, which this deployment neither starts nor stops. Changing the URL means restarting the Control Plane.",
   // --- borrowed engines (ADR 0079) ---
   // 🔴 Do not reuse "externally managed". For a LAN box "nobody starts it" is right; on the other
   // end of a borrowed row is another Agent Fleet with an admin panel of its own, and starting it,
@@ -76,8 +76,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // unqualified "loaded" would be this panel asserting something about a box it does not hold.
   "admin.engines_remote_model_loaded": "(loaded, as the lending deployment last saw it)",
   "admin.engines_remote_model_declared": "(declared; the lending deployment has not seen it loaded)",
-  "admin.engines_note_remote": "A borrowed engine is reached through another Agent Fleet's gateway. Starting and stopping it, choosing its GPU and editing its catalogue all happen on that deployment's admin panel. Disabled closes the route on this side only — it does not stop their instance.",
-  "admin.engines_remote_catalog": "This catalogue is a mirror of the lending deployment's. It cannot be changed from here — ingest, enable and forget all happen over there. Lending deployment:",
+  "admin.engines_note_remote": "A borrowed engine is reached through another Agent Fleet's gateway. Starting and stopping it, choosing its GPU and editing its catalogue all happen on that deployment's admin panel. Disabled closes the route on this side only; it does not stop their instance.",
+  "admin.engines_remote_catalog": "This catalogue is a mirror of the lending deployment's. It cannot be changed from here: ingest, enable and forget all happen over there. Lending deployment:",
   // --- issuing a borrowing token (ADR 0079 decision 3, the LENDING side) ---
   // The super_admin of the deployment that owns the engines mints the one issuing token a
   // borrowing deployment needs. Without this panel the procedure was four steps — invite a
@@ -111,14 +111,14 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_issue_copy_env": "Copy as {v}=",
   "admin.engines_issue_copied": "Copied",
   "admin.engines_issue_clear": "Clear it from the screen",
-  "admin.engines_issue_autoclear": "This value clears itself from the screen after {m} minutes. Press \"Clear it from the screen\" when you are done with it — issuing again returns the same value.",
+  "admin.engines_issue_autoclear": "This value clears itself from the screen after {m} minutes. Press \"Clear it from the screen\" when you are done with it. Issuing again returns the same value.",
   "admin.engines_issue_env_label": "Where the borrower puts it",
   "admin.engines_issue_opens_label": "What this token opens",
   "admin.engines_issue_opens_only": "Those routes and nothing else. This token opens no git, no MCP, no memos and no API.",
   "admin.engines_issue_deterministic": "⚠️ This value is derived deterministically from the signing master, so every issue returns the same string. There is no way to invalidate one copy of it.",
   "admin.engines_issue_revoke_label": "How to revoke it",
   "admin.engines_issue_revoke": "Remove the membership {t}/{k}. It is resolved on every request, so the next request gets a 401.",
-  "admin.engines_issue_revoke_only": "⚠️ The only other way to revoke it is rotating the signing master — and the git, memo and schedule tokens come from that same master, so rotating it logs out everyone on this deployment.",
+  "admin.engines_issue_revoke_only": "⚠️ The only other way to revoke it is rotating the signing master. The git, memo and schedule tokens come from that same master, so rotating it logs out everyone on this deployment.",
   "admin.engines_issue_has_workspace_tag": "has a workspace",
   "admin.engines_issue_has_workspace": "⚠️ This membership has a workspace, which is what a person's membership looks like. Lend a person's issuing token and taking it back means either removing that person's membership, which locks them out too, or rotating the signing master, which logs out everyone on this deployment. Make a separate membership for borrowing and issue for that one.",
   "admin.engines_issue_no_workspace": "This membership has no workspace, which is what a membership kept only for borrowing should look like.",
@@ -167,8 +167,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // prompt: a nudge to the sampler, absent altogether on the distilled checkpoint families,
   // and no guarantee about what comes out.
   "admin.engines_negative_note":
-    "Added to the negative prompt of every image this engine makes, on top of the model's own and the request's. It is guidance, not a filter — two checkpoint families sample without a negative prompt at all, and those requests say so in their warnings.",
-  "admin.engines_negative_too_long": "Too long — this is a keyword list, not a policy document.",
+    "Added to the negative prompt of every image this engine makes, on top of the model's own and the request's. It is guidance, not a filter. Two checkpoint families sample without a negative prompt at all, and requests for them say so in their warnings.",
+  "admin.engines_negative_too_long": "Too long. This is a keyword list, not a policy document.",
   "admin.engines_model_add_lora_base": "applies to",
   "admin.engines_model_add_lora_base_pick": "choose the model it fine-tunes",
   "admin.engines_model_add_family_pick": "choose one",
@@ -182,7 +182,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_discover_checkpoints": "Checkpoints",
   "admin.engines_discover_loras": "LoRAs",
   "admin.engines_discover_vaes": "VAEs",
-  "admin.engines_discover_vae_hint": "These are not rows of their own — they are filenames to use as `--vae` when building a checkpoint row.",
+  "admin.engines_discover_vae_hint": "These are not rows of their own; they are filenames to use as `--vae` when building a checkpoint row.",
   "admin.engines_discover_add": "Add a row with this name",
   "admin.engines_discover_added": "Added",
   "admin.engines_discover_empty": "No checkpoint, LoRA or VAE files were found on this engine.",
@@ -205,7 +205,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_browse_go": "Browse",
   "admin.engines_browse_kind_gguf": "LLM (GGUF)",
   "admin.engines_browse_kind_checkpoint": "Image (checkpoint)",
-  "admin.engines_browse_note": "Browsing only. Taking one in needs 60-engines deployed and an engine to stage it into — what is shown here is Hugging Face's public metadata, read without a token and without touching any bucket.",
+  "admin.engines_browse_note": "Browsing only. Taking one in needs 60-engines deployed and an engine to stage it into. What is shown here is Hugging Face's public metadata, read without a token and without touching any bucket.",
   "admin.engines_ingest_sort_downloads": "Downloads",
   "admin.engines_ingest_sort_trending": "Trending",
   "admin.engines_ingest_sort_likes": "Likes",
@@ -296,10 +296,10 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_refit_failed": "Models whose re-fit did not complete:",
   "admin.engines_refit_stored_unpublished": "the window was stored, but telling the engine failed:",
   "admin.engines_refit_unchanged": "its setting is unchanged:",
-  "admin.engines_refit_next_start": "It takes effect the next time the engine starts — a running box keeps the window it was started with.",
+  "admin.engines_refit_next_start": "It takes effect the next time the engine starts; a running box keeps the window it was started with.",
   "admin.engines_refit_stuck": "Models this class could not be fitted to:",
   "admin.catalog_edit_window_fit": "Use the largest this class holds ({n})",
-  "admin.fit_kv_from": "The KV figure was read from {f}'s header — builds in one repository differ a little.",
+  "admin.fit_kv_from": "The KV figure was read from {f}'s header (builds in one repository differ a little).",
   "admin.engines_ingest_ctx_ceiling": "Ceiling {n}",
   // --- The repository card (ADR 0089). The ladder opens on a press, because opening it reads
   // upstream.
@@ -319,7 +319,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.catalog_complete": "Complete",
   "admin.catalog_complete_busy": "Completing…",
   "admin.catalog_complete_none": "Nothing is missing from this row.",
-  "admin.catalog_complete_attached": "Declared from files this deployment already held — nothing was downloaded.",
+  "admin.catalog_complete_attached": "Declared from files this deployment already held. Nothing was downloaded.",
   // 🔴 Said apart from a download: this is a server-side copy inside the bucket, so nothing
   // crosses the internet and "taking it in" would have somebody watching for a transfer.
   "admin.catalog_complete_moving": "Moving this row's files inside the bucket (no download). The loader can read them when it lands.",
@@ -356,7 +356,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // --- The bucket (ADR 0085 decisions 2 and 7): what S3 holds, as it holds it. ---
   "admin.catalog_ledger_title": "Bucket",
   "admin.catalog_ledger_note": "The objects under this engine's prefix. Ones no row declares (orphans) and ones no loader can list (misplaced) sort first.",
-  "admin.catalog_ledger_note_acts": "A part has no button of its own — it is attached by the Complete of the model that reads it.",
+  "admin.catalog_ledger_note_acts": "A part has no button of its own; the Complete of the model that reads it attaches it.",
   "admin.catalog_ledger_checked": "checked {t}",
   "admin.catalog_ledger_empty": "There are no objects under this engine's prefix.",
   "admin.catalog_ledger_unavailable": "The bucket listing could not be read. Reload to try again.",
@@ -472,7 +472,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // that never reach the engine table. f16 is assumed and said so — a deployment running a
   // quantised cache is over-estimated, which is the safe direction for "will this fit".
   "admin.engines_ingest_fit_kv": "KV cache {n} MiB (at {c} tokens, assuming f16)",
-  "admin.engines_ingest_fit_kv_unread": "the KV cache could not be read — this is the weights alone",
+  "admin.engines_ingest_fit_kv_unread": "the KV cache could not be read, so this figure is the weights alone",
   "admin.engines_ingest_fit_card": "{n} MiB in total, against a {c} MiB card",
   // 🔴 The total above is the files added up, which overstates a split family — its text encoder
   // is evicted once it has encoded. A family somebody read /system_stats for shows that number
@@ -482,18 +482,18 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_vram_measured_use": "Use the measured {n}",
   "admin.engines_vram_measured_after": "Enter it under Measured VRAM from the row's Edit once the ingest finishes.",
   "admin.engines_ingest_accept": "I accept this model's licence (on behalf of everyone this deployment serves)",
-  "admin.engines_ingest_gated_no_token": "A gated repository, and this deployment has no Hugging Face token. Register the operator's token under \u201cHugging Face token\u201d below — it is read by the ingest task only.",
+  "admin.engines_ingest_gated_no_token": "A gated repository, and this deployment has no Hugging Face token. Register the operator's token under \u201cHugging Face token\u201d below. It is read by the ingest task only.",
   // 🔴 A different wall from Hugging Face's gating, and there is no key to it: Civitai answers
   // its metadata 200 for everybody and only the DOWNLOAD is per uploader (five assets measured,
   // split 200/401/403). No token field is being added, so the sentence says what to do instead.
   "admin.engines_ingest_civitai_account_first": "This asset is download-restricted by its uploader. Looking it up here is anonymous, but the ingest runs as the registered Civitai account. Whether that account meets the uploader's condition cannot be checked here; if it does not, the download answers 401 and the job says so.",
   "admin.engines_ingest_civitai_login": "The uploader of this asset only allows downloads from a logged-in account. This deployment has no Civitai token registered, so it cannot ingest this asset. Register one under “API tokens”, or pick another asset.",
-  "admin.engines_ingest_gated_accept_first": "A gated repository. A token is registered, but whether that account has accepted this repository's terms is something the Control Plane cannot check (it resolves anonymously). If it has not, the ingest fails with a 403 — so accept them on the Hugging Face model page first.",
+  "admin.engines_ingest_gated_accept_first": "A gated repository. A token is registered, but whether that account has accepted this repository's terms is something the Control Plane cannot check (it resolves anonymously). If it has not, the ingest fails with a 403, so accept them first on the Hugging Face model page.",
   "admin.engines_comfy_lan": "LAN ComfyUI (image engine)",
-  "admin.engines_comfy_lan_source_panel": "In effect: {url} — set in this panel.",
-  "admin.engines_comfy_lan_source_env": "In effect: {url} — from AF_COMFY_URL in the Control Plane's environment.",
-  "admin.engines_comfy_lan_source_table": "In effect: {url} — from this deployment's engine table.",
-  "admin.engines_comfy_lan_source_remote": "In effect: {url} — borrowed from another Agent Fleet.",
+  "admin.engines_comfy_lan_source_panel": "In effect: {url} (set in this panel).",
+  "admin.engines_comfy_lan_source_env": "In effect: {url} (from AF_COMFY_URL in the Control Plane's environment).",
+  "admin.engines_comfy_lan_source_table": "In effect: {url} (from this deployment's engine table).",
+  "admin.engines_comfy_lan_source_remote": "In effect: {url} (borrowed from another Agent Fleet).",
   "admin.engines_comfy_lan_source_none": "No image engine is configured.",
   "admin.engines_comfy_lan_unavailable": "The image engine is managed by this deployment's engine stack, which takes precedence over this panel. Take the role out of the stack to point it at a ComfyUI on your network.",
   "admin.engines_comfy_lan_url": "URL",
@@ -508,33 +508,33 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_comfy_lan_fallback_env": "A URL saved here takes precedence over AF_COMFY_URL. Removing it returns images to {url} (AF_COMFY_URL).",
   "admin.engines_comfy_lan_fallback_table": "Removing the URL saved here returns images to {url}, an external row of the engine table.",
   "admin.engines_comfy_lan_fallback_remote": "Removing the URL saved here returns images to {url}, borrowed from another Agent Fleet.",
-  "admin.engines_comfy_lan_fallback_borrow": "Removing the URL saved here can hand images to the engine borrowed from AF_REMOTE_ENGINE_URL, if that fleet offers one — it does not necessarily stop image generation.",
+  "admin.engines_comfy_lan_fallback_borrow": "Removing the URL saved here can hand images to the engine borrowed from AF_REMOTE_ENGINE_URL, if that fleet offers one; image generation does not necessarily stop.",
   "admin.engines_comfy_lan_fallback_none": "Nothing else is configured for images, so removing the URL saved here takes the image engine away.",
-  "admin.engines_comfy_lan_note": "Changes apply immediately, without restarting the Control Plane. The key is stored encrypted and is sent only to the URL saved here — never the AF_COMFY_API_KEY of the environment.",
+  "admin.engines_comfy_lan_note": "Changes apply immediately, without restarting the Control Plane. The key is stored encrypted and is sent only to the URL saved here, never the AF_COMFY_API_KEY of the environment.",
   "admin.engines_hf_token": "Hugging Face token",
   "admin.engines_hf_token_field": "Token",
   "admin.engines_hf_token_save": "Register",
   "admin.engines_hf_token_remove": "Remove",
   "admin.engines_hf_token_unset": "Not registered. Only ungated repositories can be taken in.",
-  "admin.engines_hf_token_set": "Registered ({who} / {when}). The value cannot be shown — the Control Plane can write it and has no permission to read it back.",
+  "admin.engines_hf_token_set": "Registered ({who} / {when}). The value cannot be shown: the Control Plane can write it but has no permission to read it back.",
   "admin.engines_hf_token_stack": "This deployment's token comes from a CloudFormation parameter. It cannot be registered or removed from the Console, but gated repositories can be taken in.",
   "admin.engines_hf_token_unsupported": "This deployment's engine stack has nowhere to keep a token. Update 60-engines and it can be registered from here.",
-  "admin.engines_hf_token_note": "One token for the whole deployment. It is stored encrypted and written into the deployment's secret before every ingest — read by the ingest task only, and never handed to an engine instance.",
+  "admin.engines_hf_token_note": "One token for the whole deployment. It is stored encrypted and written into the deployment's secret before every ingest. Only the ingest task reads it, and it is never handed to an engine instance.",
   "admin.engines_civitai_token": "Civitai token",
   "admin.engines_civitai_token_field": "Token",
   "admin.engines_civitai_token_save": "Register",
   "admin.engines_civitai_token_remove": "Remove",
   "admin.engines_civitai_token_unset": "Not registered. Assets that require a logged-in account cannot be taken in.",
-  "admin.engines_civitai_token_set": "Registered ({who} / {when}). The value cannot be shown — the Control Plane can write it and has no permission to read it back.",
+  "admin.engines_civitai_token_set": "Registered ({who} / {when}). The value cannot be shown: the Control Plane can write it but has no permission to read it back.",
   "admin.engines_civitai_token_unsupported": "This deployment's engine stack has nowhere to keep a token. Update 60-engines and it can be registered from here.",
-  "admin.engines_civitai_token_note": "One token for the whole deployment, separate from the Hugging Face one above. It is stored encrypted and written into the deployment's secret before every ingest — read by the ingest task only, and never handed to an engine instance.",
+  "admin.engines_civitai_token_note": "One token for the whole deployment, separate from the Hugging Face one above. It is stored encrypted and written into the deployment's secret before every ingest. Only the ingest task reads it, and it is never handed to an engine instance.",
   "admin.engines_civitai_red": "Civitai Red (the NSFW sister domain)",
   "admin.engines_civitai_red_show": "Offer the Civitai Red tab in the model search",
   "admin.engines_civitai_red_note":
-    "civitai.red is the sister domain Civitai split off for NSFW browsing, and this tab is the only search that sends nsfw=true. Example images are drawn unblurred. It is not a content filter — the plain Civitai tab also answers models with a non-zero nsfwLevel. Pasting a civitai.red URL into the ingest form works either way.",
+    "civitai.red is the sister domain Civitai split off for NSFW browsing, and this tab is the only search that sends nsfw=true. Example images are drawn unblurred. It is not a content filter: the plain Civitai tab also answers models with a non-zero nsfwLevel. Pasting a civitai.red URL into the ingest form works either way.",
   "admin.engines_civitai_red_unavailable": "This deployment does not have Civitai Red. Set AF_ENGINE_CIVITAI_RED on the Control Plane and the switch appears here.",
   "admin.engines_ingest_noncommercial":
-    "🔴 A non-commercial licence. Both commercial use of the model and commercial use of what it generates may be restricted — read the licence before enabling this.",
+    "🔴 A non-commercial licence. Both commercial use of the model and commercial use of what it generates may be restricted. Read the licence before enabling this.",
   // The GPU rung this role buys (ADR 0074). The hourly figure comes from the ladder the
   // operator declared, never from a number written here: the instance is selectable now.
   "admin.engines_class": "Instance class: ",
@@ -574,7 +574,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_spot_pin_ignored":
     "The pinned offer is Spot, so it is not being used (the role has fallen back to choosing automatically). Accept interruption, or pin a different offer.",
   "admin.engines_spot_running":
-    "The instance running right now is a Spot one. Un-ticking this does not make it safe from being taken away — it applies to the NEXT instance.",
+    "The instance running right now is a Spot one. Un-ticking this does not make it safe from being taken away; it applies to the NEXT instance.",
   "admin.engines_class_pending": "What is running is a {t} instance. The class you chose applies to the NEXT instance. Replacing it costs one cold start (about 9 minutes for llm, 3 for image), and the new instance does not start until the old one has left.",
   "admin.engines_class_replace": "Replace it now",
   // 🔴 The choice is SAVED before it is applied, so a failed apply leaves the picker showing a
@@ -584,19 +584,19 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_class_apply_retry": "Apply it again",
   "admin.engines_class_vram_ok": "The largest enabled model is {id} at {n} MiB ({src}); this class has {m} MiB.",
   "admin.engines_class_vram_over": "The largest enabled model is {id} at {n} MiB ({src}) and this class has {m} MiB. It may not fit.",
-  "admin.engines_class_vram_unknown": "How much VRAM the enabled models need is not known — nobody measured it. That is not the same as saying they fit.",
+  "admin.engines_class_vram_unknown": "How much VRAM the enabled models need is not known: nobody measured it. That is not the same as saying they fit.",
   // ⚠️ The comparison above is a maximum, not a sum, because one model is in VRAM at a time.
   // That is exactly true of llm and sd-server and CONSERVATIVE of comfy, which picks a
   // checkpoint per request and keeps loaded ones cached — so this sentence is added there
   // rather than the number being turned into a sum nobody would read past.
-  "admin.engines_class_vram_many": "This engine chooses a checkpoint per request and keeps loaded ones in VRAM, so several can be resident at once — the figure above is the largest ONE of them.",
+  "admin.engines_class_vram_many": "This engine chooses a checkpoint per request and keeps loaded ones in VRAM, so several can be resident at once; the figure above is the largest ONE of them.",
   "admin.engines_vram_src_declared": "measured",
   "admin.engines_vram_src_floor": "a weights-only floor",
   // The CP answers this source too (engine_class.go), and until now neither catalogue had a word
   // for it — the confirmation dialog built its key by concatenation and drew a missing one.
   "admin.engines_vram_src_weights_kv": "a floor of the weights plus the KV cache",
   "admin.engines_vram_src_unknown": "unknown",
-  "admin.engines_vram_confirm": "{id} wants {n} MiB ({src}) and the class you have chosen has {m} MiB. Short VRAM does not slow CUDA down, it crashes it. Quantisation or offloading may still fit it — continue if you know that.",
+  "admin.engines_vram_confirm": "{id} wants {n} MiB ({src}) and the class you have chosen has {m} MiB. Short VRAM does not slow CUDA down; it crashes it. Quantisation or offloading may still fit it, so continue if you know that.",
   "admin.engines_vram_confirm_go": "Enable it anyway",
   "admin.engines_model_vram": "VRAM {n} MiB",
   "admin.engines_model_window_context": "Context",
@@ -645,7 +645,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_uptime_none": "Nothing was recorded as running in this period.",
   "admin.engines_uptime_error": "Could not load the history.",
   "admin.engines_uptime_note":
-    "Sampled about every {n} seconds. \"An instance existed\" includes the cold start, when it cannot answer yet (165-197 s measured), and the drain, when the task is gone but the instance is not (427-477 s measured) — both bill, neither answers a request. Hours from before recording began stay blank and cannot be filled in later. This is not money.",
+    "Sampled about every {n} seconds. \"An instance existed\" includes the cold start, when it cannot answer yet (165-197 s measured), and the drain, when the task is gone but the instance is not (427-477 s measured). Both bill, but neither answers a request. Hours from before recording began stay blank and cannot be filled in later. This is not money.",
   "admin.group_tenants": "Tenants",
   "admin.group_deployment": "Deployment",
   "admin.group_across": "Across tenants",
@@ -654,7 +654,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.destroy_ws": "Destroy workspace",
   "admin.destroy_title": "Destroy {key}'s workspace?",
   "admin.destroy_confirm": "Destroy",
-  "admin.destroy_body": "This deletes their home and everything the runtime created for them — permanently. There is no undo, and re-inviting them gives them an empty workspace.",
+  "admin.destroy_body": "This deletes their home and everything the runtime created for them, permanently. There is no undo, and re-inviting them gives them an empty workspace.",
   "admin.destroy_locks": "It also overrides any deletion locks they set: those live inside the home, which cannot be read while the workspace is stopped.",
   "admin.destroy_efs": "On the AWS runtimes (Fargate and the EC2 slot pool) the directories this member keeps on EFS are removed by a separate task, which takes a few minutes; the outcome, and anything that could not be removed, is written to the audit log.",
   "admin.destroy_leftovers": "Destroyed, but these could not be deleted: {list}",
@@ -673,7 +673,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // Deleting a tenant (super_admin; empty tenants only)
   "admin.delete_tenant": "Delete tenant",
   "admin.delete_tenant_title": "Delete this tenant",
-  "admin.delete_tenant_hint": "Only an empty tenant can be deleted. It is refused while a member is still on the roster, a workspace row still exists, or an internal git repository is still there — the database row is the only handle left on a resource that lives in the cloud or on disk.",
+  "admin.delete_tenant_hint": "Only an empty tenant can be deleted. It is refused while a member is still on the roster, a workspace row still exists, or an internal git repository is still there, because the database row is the only handle left on a resource that lives in the cloud or on disk.",
   "admin.delete_tenant_repo_hint": "⚠️ Delete the internal git repositories while a member is still on the roster: once the last one is removed, nobody can reach the screen that deletes them.",
   "admin.delete_tenant_confirm_title": "Delete the tenant {slug}?",
   "admin.delete_tenant_confirm": "Delete",
@@ -681,7 +681,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.delete_tenant_kept": "The audit log, cloud cost and occupancy are kept (their tenant column will be blank).",
   // --- Tenant-distributed MCP servers (docs/log/48 P4, AdminTab's McpAdminView) ---
   "admin.mcp_intro":
-    "MCP servers distributed to every member of the tenant. Only remote (Streamable HTTP) servers can be distributed — a stdio server cannot, because distributing a command is equivalent to running arbitrary code in every member's container.",
+    "MCP servers distributed to every member of the tenant. Only remote (Streamable HTTP) servers can be distributed. A stdio server cannot, because distributing a command is equivalent to running arbitrary code in every member's container.",
   "admin.mcp_distributed": "Distributed MCP servers",
   "admin.mcp_none": "No MCP servers are distributed.",
   "admin.mcp_add": "Distribute an MCP server",
@@ -694,7 +694,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mcp_headers_hint":
     "Values are stored encrypted and distributed to every member. Put a bearer token in the Authorization header.",
   "admin.mcp_headers_names_hint":
-    "Header names only — each member fills in the values in their own workspace.",
+    "Header names only; each member fills in the values in their own workspace.",
   "admin.mcp_user_secret_hint":
     "Only the endpoint and the header names are distributed; each member enters the values in their own workspace. A value distributed here is readable in plaintext inside every member's container.",
   "admin.mcp_url_hint": "The MCP endpoint URL. Put credentials in a header, not in the URL.",
@@ -760,7 +760,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.tts_polly_unset": "Not set",
   "admin.tts_starting_note": "Startup takes 1–2 minutes. Until it's ready, Japanese read-aloud is covered by Polly (silent if Polly isn't set).",
   "admin.tts_stopping_note":
-    "Disabled. Read-aloud has already moved to Polly; the engine itself stops in about a minute. That grace is there so a mis-click — or turning it straight back on — doesn't pay for another 2 GB pull and 70–80 seconds of startup. Switch it back on within it and nothing stops or restarts at all.",
+    "Disabled. Read-aloud has already moved to Polly; the engine itself stops in about a minute. That grace is there so that a mis-click, or turning it straight back on, doesn't pay for another 2 GB pull and 70–80 seconds of startup. Switch it back on within it and nothing stops or restarts at all.",
   "admin.tts_ondemand_note":
     "On demand: the engine starts once read-aloud demand builds up (2,000 characters in 5 minutes) and stops after 30 minutes with nobody listening. Japanese is read by Polly until it is up. Every automatic start and stop is recorded in the audit log.",
   "admin.tts_no_engine":
@@ -850,7 +850,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.ws_stop": "Workspace stop after",
   "admin.interaction_halt": "Halt when awaiting a decision",
   "admin.interaction_ph": "empty = same as session",
-  "admin.interaction_hint": "\"Awaiting a decision\" = a question, a plan awaiting approval, a permission prompt, the usage-limit menu, an expired login. These hold a container up until someone answers, so they get their own clock. Nothing is lost when one is folded away — the answer is delivered on resume from the card in the mirror.",
+  "admin.interaction_hint": "\"Awaiting a decision\" means a question, a plan awaiting approval, a permission prompt, the usage-limit menu, an expired login. These hold a container up until someone answers, so they get their own clock. Nothing is lost when one is folded away: the answer is delivered on resume from the card in the mirror.",
   "admin.idle_ph_30m": "e.g. 30m (empty = the deploy default, 1h)",
   "admin.idle_ph_60m": "e.g. 60m (empty = the deploy default, 2h)",
   "admin.idle_hint_1": "Idle claude sessions are folded to stopped (resumable) after Session halt after, and workspaces with no connection or activity are docker-stopped after Workspace stop after. Format: ",
@@ -863,7 +863,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.hibernate_after": "Hibernate after",
   "admin.hibernate_ph": "e.g. 720h = 30 days (empty = deploy default)",
   "admin.hibernate_hint":
-    "A home nobody has opened for this long is captured as a snapshot and its disk released. The next start brings it back, so nothing is lost — but that start takes longer, and the disk is slower for a few hours afterwards.",
+    "A home nobody has opened for this long is captured as a snapshot and its disk released. The next start brings it back, so nothing is lost, but that start takes longer, and the disk is slower for a few hours afterwards.",
   "admin.hibernate_warn":
     "Only hibernation is automatic; nothing is ever destroyed this way. The unit goes up to hours, so write days as a multiple of 24h. Enter 0 to never hibernate this tenant's homes.",
   // Home backups (ADR 0045 決定 17). Losing a whole AZ is a story only this runtime has,
@@ -874,7 +874,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.backup_hint":
     "A home lives inside one Availability Zone, and losing that zone loses the home with it. A spare copy is kept outside the zone, so the home can be rebuilt from it. What you are choosing here is how far back the worst case may throw someone.",
   "admin.backup_warn":
-    "The copy is taken while the home is in use, so it is the same picture a power cut would leave. It is never restored automatically — that is an operator decision. Enter 0 to take no copies for this tenant.",
+    "The copy is taken while the home is in use, so it is the same picture a power cut would leave. It is never restored automatically; that is an operator decision. Enter 0 to take no copies for this tenant.",
   "admin.term_log_title": "Terminal-log retention",
   "admin.retention": "Retention",
   "admin.retention_off": "Disabled (standard short-lived history only)",
@@ -892,7 +892,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.allow_engine_llm": "Allow using the self-hosted chat engine (llm)",
   "admin.allow_engine_image": "Allow using the self-hosted image engine (image)",
   "admin.engine_use_hint":
-    "A GPU instance is billed by the hour, so this is a cost decision: may this tenant use it at all. Role-grained (llm / image), not model-grained — the catalogue stays one per deployment either way (a separate grant from model ingest above). Turning a role off removes it from the launch menu and the catalogue, and refuses existing sessions on their next request.",
+    "A GPU instance is billed by the hour, so this is a cost decision: may this tenant use it at all. It applies per role (llm / image), not per model. The catalogue stays one per deployment either way (a separate grant from model ingest above). Turning a role off removes it from the launch menu and the catalogue, and refuses existing sessions on their next request.",
   "admin.saved": "Saved",
   "admin.no_members": "No members. Add one from the form below.",
   "admin.add_failed": "Failed to add: {msg}",
@@ -936,7 +936,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.ws_slot_lands": "→ {type} ({spec}, dedicated)",
   "admin.ws_slot_zero": "0 = smallest slot ({type})",
   "admin.ws_slot_usable": "{n} (of {box})",
-  "admin.ws_slot_note": "The slot is used by one person and the task reserves nothing, so the whole instance is available — this number only chooses which instance.",
+  "admin.ws_slot_note": "The slot is used by one person and the task reserves nothing, so the whole instance is available; this number only chooses which instance.",
   "tenant.machine_title": "Default machine",
   "tenant.machine_note":
     "Which machine this tenant's members land on when they have no choice of their own. A per-member choice is made from the member's page and wins over this.",
@@ -948,11 +948,11 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.ws_machine": "Machine",
   "admin.ws_machine_tenant_default": "Tenant default",
   "admin.ws_machine_arch_warn":
-    "This machine has a different CPU family. On the next start the home reinstalls the tools that were built for the old one (the agent CLIs, node, Chromium — a few minutes). Anything under ~/repos is left alone, so node_modules / target / .venv survive but will not run until you reinstall them yourself.",
+    "This machine has a different CPU family. On the next start the home reinstalls the tools that were built for the old one (the agent CLIs, node, Chromium and so on; a few minutes). Anything under ~/repos is left alone, so node_modules / target / .venv survive but will not run until you reinstall them yourself.",
   "admin.ws_cpu_na": "CPU is not selectable on this runtime: a workspace gets the whole instance.",
   "admin.ws_disk_home": "Workspace home (persistent)",
   "admin.ws_disk_home_hint": "0 = deployment default {n} GiB. Applied when the home volume is created, and it cannot be shrunk afterwards.",
-  "admin.ws_disk_quota_hint": "0 = no quota. Reported for reference only — nothing enforces it.",
+  "admin.ws_disk_quota_hint": "0 = no quota. Reported for reference only; nothing enforces it.",
   "admin.ws_disk_work_hint": "0 = deployment default {n} GiB",
   // --- Size and limits (ADR 0045 addendum). Its own card, out of "Operations": what it
   // used to sit next to was cleaning a home and removing a member, which put changing a
@@ -966,13 +966,13 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // How to say it on a runtime whose home can grow (ecs-ec2). Only the raising direction
   // reaches the home that exists; lowering reaches the next one. EBS's rule, not a policy.
   "admin.ws_disk_home_grow_hint":
-    "0 = deployment default {n} GiB. Raising this grows the home they already have. Lowering it leaves that home as it is — EBS cannot shrink.",
+    "0 = deployment default {n} GiB. Raising this grows the home they already have. Lowering it leaves that home as it is, because EBS cannot shrink.",
   "admin.home_resize_growing": "Growing the home from {from} to {to} GiB. The workspace keeps running.",
   "admin.home_resize_shrink":
-    "The existing home stays at {from} GiB — EBS cannot shrink. {to} GiB is what the next home created for this member will be.",
+    "The existing home stays at {from} GiB because EBS cannot shrink. {to} GiB is what the next home created for this member will be.",
   "admin.home_resize_no_home": "There is no home yet. The next one created will be {to} GiB.",
   "admin.home_resize_failed":
-    "The home could not be grown. The setting is saved, so try saving again later — one volume can only be modified once every 6 hours: {detail}",
+    "The home could not be grown. The setting is saved, so try saving again later (one volume can only be modified once every 6 hours): {detail}",
   "admin.max_sessions_label": "Max sessions",
   "admin.ws_memory": "Workspace memory",
   "admin.eq_hint": "= {hint}",
@@ -1037,7 +1037,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // ★ "none" and "could not read" must never share a string. The 403 used to collapse
   // into an empty array, which told an unauthorized reader the deployment was
   // unconfigured (docs/log/61 §61.17.9 ②).
-  "admin.providers_unreadable": "Could not load the list of sign-in methods — you may not have permission, or it is temporarily unavailable.",
+  "admin.providers_unreadable": "Could not load the list of sign-in methods. You may not have permission, or it is temporarily unavailable.",
 
   // --- tenant-defined sign-in methods (docs/log/61 §61.11 · P4), for a group whose
   // subsidiaries each have their own Entra tenant. The tenant admin writes the
@@ -1083,7 +1083,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.idp_github_app_hint":
     "Create an OAuth App for this tenant in GitHub, add {url} as its callback URL, then enter its client ID and secret here.",
   "admin.idp_github_domains_note":
-    "GitHub hands over exactly one address it has verified. Someone whose primary GitHub address is outside your company domain should be stopped here — letting them through lands them in a NEW workspace rather than their existing one.",
+    "GitHub hands over exactly one address it has verified. Someone whose primary GitHub address is outside your company domain should be stopped here: letting them through lands them in a NEW workspace rather than their existing one.",
   "admin.idp_issuer": "Issuer URL",
   "admin.idp_issuer_hint": "The IdP's issuer URL. For Entra ID, use the URL containing your own tenant GUID (common / organizations require tenant ids below).",
   "admin.idp_client_id": "Client ID",
@@ -1103,18 +1103,18 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.idp_link_claim": "How the same account is recognised",
   "admin.idp_link_claim_none": "Default (recognise by sub)",
   "admin.idp_link_claim_hint":
-    "Use this when the same issuer has more than one app registration. Entra's sub differs per app registration, so one person pressing head office's button and this one looks like two accounts. Picking oid makes them one. Only values the IdP assigns can be picked — never one somebody can assert, such as an email address. Changing it sends the row back for approval.",
+    "Use this when the same issuer has more than one app registration. Entra's sub differs per app registration, so one person pressing head office's button and this one looks like two accounts. Picking oid makes them one. Only values the IdP assigns can be picked, never one somebody can assert, such as an email address. Changing it sends the row back for approval.",
   "admin.idp_label_ja": "Button label (Japanese)",
   "admin.idp_label_en": "Button label (English)",
   "admin.idp_repend_hint":
-    "Changing the issuer, the client ID, the trust rule, the kind or how the same account is recognised — or adding a domain, tenant id or GitHub organization — sends the method back for approval, " +
+    "Changing the issuer, the client ID, the trust rule, the kind or how the same account is recognised, or adding a domain, tenant id or GitHub organization, sends the method back for approval, " +
     "because the approval was given to that identity source for that scope.",
   // ★ P7-1 (docs/log/61 §61.17.6) removed the "has no effect on the plain /login"
   // workaround. What is left is the one misreading worth heading off: hidden ≠ gone.
   "admin.hidden_still_accepted_note":
-    "★ A method without a button is still accepted. People signing in with it — someone who also belongs to another tenant, typically — keep getting in; it simply stops appearing on this tenant's sign-in page.",
+    "★ A method without a button is still accepted. People signing in with it (typically someone who also belongs to another tenant) keep getting in; it simply stops appearing on this tenant's sign-in page.",
   "admin.allowed_providers_shared_note":
-    "★ Narrowing this to your own methods locks out people who also belong to another tenant and sign in there: an account at a different IdP is a different login, even with the same address. Leave the method those people use on \"Accept\" and just clear \"Show button\", so it stays usable without appearing here. Accepting a method does not widen who can enter — the roster decides that.",
+    "★ Narrowing this to your own methods locks out people who also belong to another tenant and sign in there: an account at a different IdP is a different login, even with the same address. Leave the method those people use on \"Accept\" and just clear \"Show button\", so it stays usable without appearing here. Accepting a method does not widen who can enter; the roster decides that.",
   "admin.login_rules_methods_moved":
     "★ Which sign-in methods this tenant accepts, and which of them get a button on the sign-in page, are set per row under \"Sign-in methods\".",
   // ★ The suspend ordering guard (docs/log/61 §61.17.4). A confirmation, not a refusal —
@@ -1123,7 +1123,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.idp_suspend_title": "Suspend {name}",
   "admin.idp_suspend_body":
     "Have those people link another sign-in method first (Settings → Personal → Account). " +
-    "After you suspend it they cannot add one themselves — linking needs a session, and this is the method they sign in with.",
+    "After you suspend it they cannot add one themselves, because linking needs a session and this is the method they sign in with.",
   "admin.idp_suspend_members":
     "{n} active member(s) have never used any other sign-in method. Suspending this one locks them out.",
   "admin.idp_delete_title": "Delete {name}",
@@ -1161,17 +1161,17 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "tenant.net_allowed": "Allowed networks",
   "tenant.net_allowed_unit": "Comma-separated CIDR ranges or single addresses (IPv4/IPv6). Empty = no restriction.",
   "tenant.net_your_ip": "Your address, as this deployment sees it",
-  "tenant.net_your_ip_unit": "This is what a rule is matched against — not what your browser thinks its address is.",
+  "tenant.net_your_ip_unit": "This is what a rule is matched against, not what your browser thinks its address is.",
   "tenant.net_ip_unknown": "cannot be determined",
   "tenant.net_ip_unknown_hint": "The control plane cannot work out where this request came from, so a rule could not be enforced. Ask the operator to check AF_TRUSTED_PROXY_HOPS.",
-  "tenant.net_proxy_not_configured": "A proxy sits in front of the control plane but the deployment has not declared it (AF_TRUSTED_PROXY_HOPS), so every request looks like it comes from that proxy. Saving a rule is blocked until an operator fixes it — otherwise the rule would let everyone in while appearing to restrict.",
+  "tenant.net_proxy_not_configured": "A proxy sits in front of the control plane but the deployment has not declared it (AF_TRUSTED_PROXY_HOPS), so every request looks like it comes from that proxy. Saving a rule is blocked until an operator fixes it, because otherwise the rule would let everyone in while appearing to restrict.",
   "tenant.net_scope_hint": "This restricts USE of the tenant, not reaching the site: the sign-in page still loads and signing in still works from anywhere, but nothing in this tenant can be opened from a network that is not listed.",
   "tenant.net_exempt_hint": "Not covered: MCP and the internal Git provider, which are called from inside a member's own workspace and say nothing about where the person is. Revoke those by deactivating the membership. Deployment administrators are exempt from this rule so a mistake here can always be undone.",
-  "tenant.net_layers_hint": "This is an access rule, not a network defence — the request still reaches the control plane and is refused after the session is verified. To stop traffic before it arrives, an operator restricts it at the load balancer instead.",
+  "tenant.net_layers_hint": "This is an access rule, not a network defence: the request still reaches the control plane and is refused after the session is verified. To stop traffic before it arrives, an operator restricts it at the load balancer instead.",
   // Integrations (docs/log/71) — credentials the tenant created on the other service.
   "tenant.group_integrations": "Integrations",
   "tenant.tab_git_oauth": "Integration OAuth apps",
-  "tenant.git_oauth_intro": "Decides which OAuth app the “Connect with OAuth” buttons use for your members (GitHub and Bitbucket under Connections › Git, Jira under Connections › Issue tracker). The app is created in your own GitHub org / Bitbucket workspace / Atlassian account, so a tenant administrator registers it here. It takes effect the moment you save — there is no approval step.",
+  "tenant.git_oauth_intro": "Decides which OAuth app the “Connect with OAuth” buttons use for your members (GitHub and Bitbucket under Connections › Git, Jira under Connections › Issue tracker). The app is created in your own GitHub org / Bitbucket workspace / Atlassian account, so a tenant administrator registers it here. It takes effect the moment you save. There is no approval step.",
   "tenant.git_oauth_optional": "Members can connect without this by pasting a token. Registering an app here is what makes “Connect with OAuth” appear for that provider.",
   "tenant.git_oauth_on": "registered",
   "tenant.git_oauth_off": "not registered",
@@ -1180,12 +1180,12 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "tenant.git_oauth_secret_kept": "stored — leave empty to keep it",
   "tenant.git_oauth_secret_unit": "Encrypted on save and never shown again. Fill this in only when you want to change it.",
   "tenant.git_oauth_redirect": "Register this callback URL with the provider's app:",
-  "tenant.git_oauth_no_base_url": "This deployment has no PUBLIC_BASE_URL, so there is no callback URL to register with Bitbucket. Connecting via OAuth will fail even once you save this — the code grant has nowhere to come back to. Ask the operator to set PUBLIC_BASE_URL.",
-  "tenant.git_oauth_jira_access": "Choose Resource-level as the Access type when creating the app — it limits the grant to the one site authorized. Account-level hands the app permanent access to every site in the account.",
-  "tenant.git_oauth_bb_scopes": "Bitbucket puts no scope in the authorization URL — the consumer's Permissions are what members grant. Alongside Account: Read and Repositories: Read/Write (clone and push), tick Pull requests: Read if the issue tracker rail should list pull requests. Adding it later means members who are already connected have to connect again (their token carries the old permissions).",
-  "tenant.git_oauth_jira_scopes": "Jira uses an Atlassian 3LO app, registered separately from the Bitbucket consumer. Add the Jira API under Permissions and grant read:jira-work, read:jira-user and write:jira-work (write is for “comment the work back”). offline_access is not in that list — it is an OAuth-level scope that af puts in the authorization URL, so there is nothing to configure for it.",
-  "tenant.git_oauth_jira_sharing": "Turn Sharing on under the app's Distribution. A 3LO app is “in development” by default, which lets only its creator authorize it — every other member is stopped by Atlassian's “You don't have access to this app”, and since that is before the consent screen nothing comes back to af, so the connection just stays silently unmade. Enabling it asks for a Vendor name, Contact link and Privacy policy URL, which the members authorizing the app can see — use a company name and a support address, not a personal name or inbox. It does not put the app on the Marketplace.",
-  "tenant.git_oauth_gh_device": "GitHub uses the device flow, so it needs neither a secret nor a callback — but the app must have “Enable Device Flow” ticked, or starting a connection fails.",
+  "tenant.git_oauth_no_base_url": "This deployment has no PUBLIC_BASE_URL, so there is no callback URL to register with Bitbucket. Connecting via OAuth will fail even once you save this, because the code grant has nowhere to come back to. Ask the operator to set PUBLIC_BASE_URL.",
+  "tenant.git_oauth_jira_access": "Choose Resource-level as the Access type when creating the app. It limits the grant to the one site authorized. Account-level hands the app permanent access to every site in the account.",
+  "tenant.git_oauth_bb_scopes": "Bitbucket puts no scope in the authorization URL, so the consumer's Permissions are what members grant. Alongside Account: Read and Repositories: Read/Write (clone and push), tick Pull requests: Read if the issue tracker rail should list pull requests. Adding it later means members who are already connected have to connect again (their token carries the old permissions).",
+  "tenant.git_oauth_jira_scopes": "Jira uses an Atlassian 3LO app, registered separately from the Bitbucket consumer. Add the Jira API under Permissions and grant read:jira-work, read:jira-user and write:jira-work (write is for “comment the work back”). offline_access is not in that list: it is an OAuth-level scope that af puts in the authorization URL, so there is nothing to configure for it.",
+  "tenant.git_oauth_jira_sharing": "Turn Sharing on under the app's Distribution. A 3LO app is “in development” by default, which lets only its creator authorize it. Every other member is stopped by Atlassian's “You don't have access to this app”, and since that is before the consent screen nothing comes back to af, so the connection just stays silently unmade. Enabling it asks for a Vendor name, Contact link and Privacy policy URL, which the members authorizing the app can see, so use a company name and a support address, not a personal name or inbox. It does not put the app on the Marketplace.",
+  "tenant.git_oauth_gh_device": "GitHub uses the device flow, so it needs neither a secret nor a callback, but the app must have “Enable Device Flow” ticked, or starting a connection fails.",
   "tenant.git_oauth_where": "Where to register the app:",
   "tenant.git_oauth_remove": "Remove registration",
   "tenant.gh_source_label": "Which GitHub app members connect through",
@@ -1202,7 +1202,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "tenant.gh_builtin_off": "The operator has switched the built-in apps off for this deployment (AF_GITHUB_BUILTIN_APPS=off).",
   "tenant.gh_builtin_missing": "This build does not include that built-in app, so members have no OAuth button. Choose another option.",
   "tenant.gh_install_url": "Install page (GitHub App only)",
-  "tenant.gh_install_url_unit": "https://github.com/apps/<app name>. GitHub cannot look this up from the client_id, and a GitHub App only reaches repositories it is installed on — members are sent here to install it. Leave empty for an OAuth App.",
+  "tenant.gh_install_url_unit": "https://github.com/apps/<app name>. GitHub cannot look this up from the client_id, and a GitHub App only reaches repositories it is installed on, so members are sent here to install it. Leave empty for an OAuth App.",
   "tenant.gh_detected": "Detected: {type} — {how}",
   "tenant.gh_type_oauth_app": "OAuth App",
   "tenant.gh_type_github_app": "GitHub App",
