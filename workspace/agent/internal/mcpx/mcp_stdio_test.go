@@ -87,6 +87,20 @@ func TestMCPSendToSessionDoesNotMaskConflictAsSuccess(t *testing.T) {
 	}
 }
 
+// The shared GET relay (list_repos, list_my_sessions, get_session_status, ...) answers with a
+// complete result.
+func TestMCPReadRelayResultIsComplete(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	params, _ := json.Marshal(map[string]any{"name": "list_repos", "arguments": json.RawMessage(`{}`)})
+	requireResultComplete(t, mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params}))
+}
+
 func TestMCPGetSessionOutputRequestsTailClip(t *testing.T) {
 	var got string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -108,6 +122,7 @@ func TestMCPGetSessionOutputRequestsTailClip(t *testing.T) {
 	if !strings.Contains(string(resp), "clipped") {
 		t.Fatalf("MCP response should pass the body through: %s", resp)
 	}
+	requireResultComplete(t, resp)
 
 	// tail is attached even without since (no conversation id means no cursor memory).
 	args, _ = json.Marshal(map[string]any{"name": "slot01"})

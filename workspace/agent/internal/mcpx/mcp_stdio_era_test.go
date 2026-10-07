@@ -91,6 +91,21 @@ func TestStdioLegacyInitializeStillWorks(t *testing.T) {
 	}
 }
 
+// requireResultComplete fails unless a tools/call answer carries resultType "complete": a
+// 2026-07-28 client discards a result without it, so the tool silently becomes unusable.
+func requireResultComplete(t *testing.T, resp []byte) {
+	t.Helper()
+	var m struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(resp, &m); err != nil || m.Result == nil {
+		t.Fatalf("no result in %s (err=%v)", resp, err)
+	}
+	if m.Result["resultType"] != "complete" {
+		t.Fatalf("tools/call result has resultType = %v, want complete: %s", m.Result["resultType"], resp)
+	}
+}
+
 // tools/list works in both eras and carries resultType for new-era clients. ttlMs and
 // cacheScope are required fields of a 2026-07-28 list result: without them a new-era client
 // (measured with opencode 1.18.8) fails validation and disconnects the whole server.
