@@ -1,6 +1,7 @@
 package sessionx
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
@@ -38,7 +39,9 @@ var (
 
 func newSessionPRs() *branchpr.Cache {
 	c := branchpr.New(githubToken)
-	c.Renew = gitx.RenewRejectedGitHubToken
+	c.Renew = func(rejected string) (string, error) {
+		return gitx.RenewRejectedGitHubToken(context.Background(), rejected)
+	}
 	return c
 }
 

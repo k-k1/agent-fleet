@@ -1,6 +1,7 @@
 package gitx
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -487,5 +489,139 @@ func TestGitHubStoreFileHoldsNoClientSecret(t *testing.T) {
 	}
 	if strings.Contains(string(b), "client_secret") {
 		t.Fatalf("no client secret may be stored: %s", b)
+	}
+}
+
+// Save must not turn an older snapshot into the truth about the GitHub connection: a
+// replaced connection keeps its own client id, a removed one stays removed, and one added
+// meanwhile survives.
+func TestStaleSaveRespectsReplacedRemovedAndAddedConnections(t *testing.T) {
+	withAgentHome(t)
+	seedExpiring(t, "fake-access-A", "fake-refresh-A", time.Now().Add(time.Hour).Unix(), time.Now().Add(100*24*time.Hour).Unix())
+
+	// Replaced by another app's connection.
+	stale, _ := secrets.Load()
+	if err := secrets.Update(func(d *secrets.Data) error {
+		d.Git["github.com"] = secrets.GitEntry{User: "x-access-token", Token: "fake-access-B", RefreshToken: "fake-refresh-B",
+			ClientID: "fake-client-B", Expiry: time.Now().Add(time.Hour).Unix()}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stale.GitIdentity = map[string]secrets.GitIdentity{"github.com": {Name: "n"}}
+	if err := stale.Save(); err != nil {
+		t.Fatal(err)
+	}
+	got := storedGitHub(t)
+	if got.ClientID != "fake-client-B" || got.RefreshToken != "fake-refresh-B" || got.Login != "" {
+		t.Fatalf("the replaced connection must come through whole, without the old account cache: %+v", got)
+	}
+
+	// Removed meanwhile.
+	stale, _ = secrets.Load()
+	if err := secrets.Update(func(d *secrets.Data) error { delete(d.Git, "github.com"); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	stale.GitIdentity = map[string]secrets.GitIdentity{"github.com": {Name: "m"}}
+	if err := stale.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := secrets.Load(); len(d.Git["github.com"].Token) != 0 || d.GitIdentity["github.com"].Name != "m" {
+		t.Fatalf("a stale save must not revive a disconnect: %+v", d.Git)
+	}
+
+	// Added meanwhile (the snapshot saw no GitHub connection).
+	stale, _ = secrets.Load()
+	seedExpiring(t, "fake-access-C", "fake-refresh-C", time.Now().Add(time.Hour).Unix(), time.Now().Add(100*24*time.Hour).Unix())
+	stale.GitIdentity = map[string]secrets.GitIdentity{"github.com": {Name: "k"}}
+	if err := stale.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if got := storedGitHub(t); got.Token != "fake-access-C" {
+		t.Fatalf("a connection added after the snapshot was dropped: %+v", got)
+	}
+
+	// The caller's own removal, in the same snapshot, is still honoured.
+	own, _ := secrets.Load()
+	delete(own.Git, "github.com")
+	if err := own.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if got := storedGitHub(t); got.Token != "" {
+		t.Fatalf("an intended disconnect must stick: %+v", got)
+	}
+}
+
+// A snapshot that itself renewed (and so holds the newer pair) must not be mistaken for one
+// that changed the connection: another process renews again, then this one saves.
+func TestSaveAfterTheSnapshotItselfRenewedKeepsTheNewerPair(t *testing.T) {
+	withAgentHome(t)
+	newFakeGitHubTokens(t, "fake-refresh-0")
+	seedExpiring(t, "fake-access-0", "fake-refresh-0", time.Now().Add(time.Minute).Unix(), time.Now().Add(100*24*time.Hour).Unix())
+	s, _ := secrets.Load()
+	if tok, err := GitHubToken(s); err != nil || tok != "fake-access-1" {
+		t.Fatalf("tok=%q err=%v", tok, err)
+	}
+	other, _ := secrets.Load()
+	if tok, err := GitHubForceRefresh(other, "fake-access-1"); err != nil || tok != "fake-access-2" {
+		t.Fatalf("tok=%q err=%v", tok, err)
+	}
+	s.GitIdentity = map[string]secrets.GitIdentity{"github.com": {Name: "n"}}
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if got := storedGitHub(t); got.Token != "fake-access-2" || got.RefreshToken != "fake-refresh-2" {
+		t.Fatalf("the spent pair was written back: %+v", got)
+	}
+}
+
+// Every store wait on the renewal path ends with the context, the process mutex and the
+// store's own flock included — not only the renewal lock.
+func TestGitHubTokenContextStopsWaitingForTheStoreLock(t *testing.T) {
+	withAgentHome(t)
+	f, _ := newFakeGitHubTokens(t, "fake-refresh-0")
+	seedExpiring(t, "fake-access-0", "fake-refresh-0", time.Now().Add(-time.Minute).Unix(), time.Now().Add(100*24*time.Hour).Unix())
+	d, _ := secrets.Load()
+	held, release := make(chan struct{}), make(chan struct{})
+	go func() {
+		// Holds the store's own flock the way a wedged writer would.
+		f, err := os.OpenFile(secrets.Path()+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			t.Error(err)
+			close(held)
+			return
+		}
+		defer f.Close()
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+		close(held)
+		<-release
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	}()
+	<-held
+	t.Cleanup(func() { close(release) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := GitHubTokenContext(ctx, d)
+	if err == nil || time.Since(start) > 2*time.Second {
+		t.Fatalf("err=%v after %v", err, time.Since(start))
+	}
+	if f.calls != 0 {
+		t.Fatalf("calls=%d", f.calls)
+	}
+}
+
+// A token that ran out while the renewal was retrying is not handed back as good.
+func TestGitHubTokenDoesNotReturnATokenThatExpiredDuringTheRetries(t *testing.T) {
+	withAgentHome(t)
+	f, _ := newFakeGitHubTokens(t, "fake-refresh-0")
+	f.status = http.StatusBadGateway
+	githubRefreshBackoff = []time.Duration{1100 * time.Millisecond}
+	seedExpiring(t, "fake-access-0", "fake-refresh-0", time.Now().Add(time.Second).Unix(), time.Now().Add(100*24*time.Hour).Unix())
+	d, _ := secrets.Load()
+	tok, err := GitHubToken(d)
+	if err == nil || tok != "" {
+		t.Fatalf("tok=%q err=%v", tok, err)
 	}
 }

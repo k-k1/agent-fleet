@@ -30,7 +30,7 @@ var (
 	// githubToken is read under the plan's own deadline (ctx), so a renewal that has to
 	// wait cannot make the plan wait longer than forgeLookupTimeout.
 	githubToken = func(ctx context.Context) string {
-		s, err := secrets.Load()
+		s, err := secrets.LoadContext(ctx)
 		if err != nil {
 			return ""
 		}
@@ -165,7 +165,7 @@ func githubMergedPR(ctx context.Context, token, repo, branch string) (string, in
 			// The recorded expiry can be wrong (clock skew, a renewal by another process):
 			// renew once and ask this page again.
 			renewed = true
-			if nt, err := githubRenew(token); err == nil && nt != "" && nt != token {
+			if nt, err := githubRenew(ctx, token); err == nil && nt != "" && nt != token && ctx.Err() == nil {
 				token = nt
 				prs, ok, _ = githubClosedPullsPage(ctx, token, repo, owner+":"+branch, page)
 			}

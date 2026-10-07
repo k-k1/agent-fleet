@@ -25,7 +25,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -368,23 +367,26 @@ type MCPTargets struct {
 	Session   bool `json:"session"`   // materialized into the agent CLIs' native config
 }
 
-// GitHubRotation is the part of the GitHub entry that rotates under the Agent's own
-// hands: every renewal replaces all of it, and the old values are dead the moment GitHub
-// answers.
-type GitHubRotation struct {
-	Token, RefreshToken   string
-	Expiry, RefreshExpiry int64
-	ReconnectNeeded       bool
+// ghSnap is the GitHub entry as a snapshot saw it: whether there was one, and what it held.
+type ghSnap struct {
+	Exists bool
+	E      GitEntry
 }
 
-func rotationOf(e GitEntry) GitHubRotation {
-	return GitHubRotation{e.Token, e.RefreshToken, e.Expiry, e.RefreshExpiry, e.ReconnectNeeded}
+// sameConn reports whether two snapshots describe the same connection: the same entry
+// (existence, user, tokens, expiries, client id, flag). The cached Login/Email are the
+// account lookup's to refine and do not make a different connection.
+func (a ghSnap) sameConn(b ghSnap) bool {
+	a.E.Login, a.E.Email, b.E.Login, b.E.Email = "", "", "", ""
+	return a == b
 }
 
 type Data struct {
-	// ghBase is the GitHub rotation state as this snapshot was loaded (or last saved). Save
-	// uses it to tell "the caller left the GitHub pair alone" from "the caller changed it".
-	ghBase      GitHubRotation
+	// ghBase is the GitHub entry as this snapshot was loaded (or last saved); ghBaseSet is
+	// false for a Data that did not come from the store. Save uses it to tell "the caller
+	// left the GitHub connection alone" from "the caller changed it".
+	ghBase      ghSnap
+	ghBaseSet   bool
 	Git         map[string]GitEntry    `json:"git"`                   // host -> https cred
 	GitIdentity map[string]GitIdentity `json:"gitIdentity,omitempty"` // host -> explicit commit identity
 	Claude      string                 `json:"claude"`                // CLAUDE_CODE_OAUTH_TOKEN
@@ -446,44 +448,37 @@ func Path() string {
 
 // storeMu serializes this process's access to the store file; the flock below
 // extends that across processes (the git cred helper is a separate binary).
-var storeMu sync.Mutex
+var storeMu = make(ctxMutex, 1)
+
+// ctxMutex is a mutex whose wait can end with a context, so the bounded entry points
+// (LoadContext, UpdateContext) honour their deadline here as well as at the file lock.
+type ctxMutex chan struct{}
+
+func (m ctxMutex) Lock()   { m <- struct{}{} }
+func (m ctxMutex) Unlock() { <-m }
+func (m ctxMutex) LockContext(ctx context.Context) error {
+	select {
+	case m <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ErrLockTimeout
+	}
+}
 
 // withFileLock runs fn while holding an exclusive flock on <store>.lock. The
 // lockfile is separate from the store itself so the atomic rename in Save never
 // replaces the locked inode.
 func withFileLock(fn func() error) error {
-	lockPath := Path() + ".lock"
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		return err
-	}
-	defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
-	return fn()
+	return withFileLockContext(context.Background(), fn)
 }
 
-// WithLock runs fn while holding an exclusive flock on <store>.<name>.lock, across
-// processes (the agent and the git credential helper are separate binaries). It is a
-// different lock from the store's own, so fn may call Load / Update — but must never be
-// called from inside an Update, or two such callers can deadlock in opposite orders.
-func WithLock(name string, fn func() error) error {
-	return WithLockContext(context.Background(), name, fn)
+func withFileLockContext(ctx context.Context, fn func() error) error {
+	return flockedContext(ctx, Path()+".lock", fn)
 }
 
-// ErrLockTimeout is WithLockContext giving up its wait.
-var ErrLockTimeout = errors.New("timed out waiting for the credential store lock")
-
-// WithLockContext is WithLock that stops waiting for the lock when ctx ends. A holder that
-// is stopped or stuck must not hold every other process (the git credential helper runs
-// under git's own patience) behind it.
-func WithLockContext(ctx context.Context, name string, fn func() error) error {
-	lockPath := Path() + "." + name + ".lock"
+// flockedContext runs fn under an exclusive flock on lockPath, giving up with
+// ErrLockTimeout when ctx ends first.
+func flockedContext(ctx context.Context, lockPath string, fn func() error) error {
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
 		return err
 	}
@@ -510,14 +505,40 @@ func WithLockContext(ctx context.Context, name string, fn func() error) error {
 	return fn()
 }
 
+// WithLock runs fn while holding an exclusive flock on <store>.<name>.lock, across
+// processes (the agent and the git credential helper are separate binaries). It is a
+// different lock from the store's own, so fn may call Load / Update — but must never be
+// called from inside an Update, or two such callers can deadlock in opposite orders.
+func WithLock(name string, fn func() error) error {
+	return WithLockContext(context.Background(), name, fn)
+}
+
+// ErrLockTimeout is WithLockContext giving up its wait.
+var ErrLockTimeout = errors.New("timed out waiting for the credential store lock")
+
+// WithLockContext is WithLock that stops waiting for the lock when ctx ends. A holder that
+// is stopped or stuck must not hold every other process (the git credential helper runs
+// under git's own patience) behind it.
+func WithLockContext(ctx context.Context, name string, fn func() error) error {
+	return flockedContext(ctx, Path()+"."+name+".lock", fn)
+}
+
 // Update atomically applies fn to the store under the process mutex + file lock:
 // load → fn → save as ONE critical section, so concurrent writers (HTTP handlers,
 // the cred helper process) cannot lose each other's changes. Prefer this over a
 // bare Load→modify→Save for any read-modify-write.
 func Update(fn func(*Data) error) error {
-	storeMu.Lock()
+	return UpdateContext(context.Background(), fn)
+}
+
+// UpdateContext is Update whose wait for the store (this process's mutex and the file
+// lock) ends with ctx. Once the lock is held the update itself runs to the end.
+func UpdateContext(ctx context.Context, fn func(*Data) error) error {
+	if err := storeMu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer storeMu.Unlock()
-	return withFileLock(func() error {
+	return withFileLockContext(ctx, func() error {
 		s, err := load()
 		if err != nil {
 			return err
@@ -529,11 +550,16 @@ func Update(fn func(*Data) error) error {
 	})
 }
 
-func Load() (*Data, error) {
-	storeMu.Lock()
-	defer storeMu.Unlock()
+func Load() (*Data, error) { return LoadContext(context.Background()) }
+
+// LoadContext is Load whose wait for the store ends with ctx (ErrLockTimeout).
+func LoadContext(ctx context.Context) (*Data, error) {
 	var s *Data
-	err := withFileLock(func() (lerr error) {
+	if err := storeMu.LockContext(ctx); err != nil {
+		return &Data{Git: map[string]GitEntry{}}, err
+	}
+	defer storeMu.Unlock()
+	err := withFileLockContext(ctx, func() (lerr error) {
 		s, lerr = load()
 		return lerr
 	})
@@ -563,32 +589,54 @@ func load() (*Data, error) {
 	if s.Git == nil {
 		s.Git = map[string]GitEntry{}
 	}
-	s.ghBase = rotationOf(s.Git["github.com"])
+	e, ok := s.Git["github.com"]
+	s.ghBase, s.ghBaseSet = ghSnap{ok, e}, true
 	return s, nil
 }
 
-// Save writes the whole snapshot, so a snapshot loaded before a GitHub token renewal would
-// write the spent pair back over the renewed one — and the next renewal would find its
-// refresh token already used. Inside the lock Save therefore compares the stored GitHub
-// pair with the one this snapshot was loaded with: when the store has moved on and the
-// caller did not touch the pair itself, the stored pair is kept. A caller that did change
-// it (a reconnect) wins. Code that rewrites other fields should still prefer Update.
+// AdoptGitHub replaces the snapshot's GitHub entry with e, which was read from the store
+// (a renewal's result), and moves the baseline along with it. Assigning s.Git directly
+// would leave the baseline behind, and a later Save would take the newer entry for a
+// change the caller meant and write the old pair over it.
+func (s *Data) AdoptGitHub(e GitEntry) {
+	s.Git["github.com"] = e
+	s.ghBase, s.ghBaseSet = ghSnap{true, e}, true
+}
+
+// Save writes the whole snapshot, so a snapshot loaded before the GitHub connection
+// changed would write the old one back: a spent token pair after a renewal (the next
+// renewal would meet bad_refresh_token), a connection that was replaced (its client id
+// with the new tokens), one that was removed, or one added meanwhile. Inside the lock Save
+// compares the stored GitHub entry with the one this snapshot was loaded with. When the
+// store has moved on and the caller left the connection alone, the stored state wins as a
+// whole — present, absent or replaced — and the caller's cached Login/Email ride along only
+// while the stored entry still carries the account they were read for. A caller that did
+// change the connection (a reconnect, a disconnect) wins. Code that rewrites other fields
+// should still prefer Update.
 func (s *Data) Save() error {
 	storeMu.Lock()
 	defer storeMu.Unlock()
 	return withFileLock(func() error {
-		if cur, err := load(); err == nil {
-			ce := cur.Git["github.com"]
-			if e, ok := s.Git["github.com"]; ok && rotationOf(e) == s.ghBase && rotationOf(ce) != s.ghBase && ce.Token != "" {
-				e.Token, e.RefreshToken, e.Expiry, e.RefreshExpiry, e.ReconnectNeeded =
-					ce.Token, ce.RefreshToken, ce.Expiry, ce.RefreshExpiry, ce.ReconnectNeeded
-				s.Git["github.com"] = e
+		if cur, err := load(); err == nil && s.ghBaseSet {
+			ep, ok := s.Git["github.com"]
+			ce, cok := cur.Git["github.com"]
+			if (ghSnap{ok, ep}).sameConn(s.ghBase) && !(ghSnap{cok, ce}).sameConn(s.ghBase) {
+				if !cok {
+					delete(s.Git, "github.com")
+				} else {
+					if ok && s.ghBase.Exists && s.ghBase.E.Login != "" &&
+						ce.Login == s.ghBase.E.Login && ce.Email == s.ghBase.E.Email {
+						ce.Login, ce.Email = ep.Login, ep.Email
+					}
+					s.Git["github.com"] = ce
+				}
 			}
 		}
 		if err := s.save(); err != nil {
 			return err
 		}
-		s.ghBase = rotationOf(s.Git["github.com"])
+		e, ok := s.Git["github.com"]
+		s.ghBase, s.ghBaseSet = ghSnap{ok, e}, true
 		return nil
 	})
 }

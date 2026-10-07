@@ -415,7 +415,7 @@ func TestGitHubMergedPRRenewsAfterA401(t *testing.T) {
 	base, renew := githubAPIBase, githubRenew
 	githubAPIBase = srv.URL
 	renewals := 0
-	githubRenew = func(rejected string) (string, error) {
+	githubRenew = func(_ context.Context, rejected string) (string, error) {
 		renewals++
 		if rejected != "old" {
 			t.Errorf("rejected = %q", rejected)
@@ -428,5 +428,32 @@ func TestGitHubMergedPRRenewsAfterA401(t *testing.T) {
 	}
 	if renewals != 1 || strings.Join(seen, ",") != "Bearer old,Bearer new" {
 		t.Fatalf("renewals=%d seen=%v", renewals, seen)
+	}
+}
+
+// The 401 renewal runs under the plan's deadline, and a plan whose time ran out while it
+// renewed does not ask again.
+func TestGitHubMergedPRDoesNotRetryAfterTheDeadlineEndedDuringRenewal(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	base, renew := githubAPIBase, githubRenew
+	githubAPIBase = srv.URL
+	ctx, cancel := context.WithCancel(context.Background())
+	var gotCtx context.Context
+	githubRenew = func(c context.Context, _ string) (string, error) {
+		gotCtx = c
+		cancel() // the plan's time is gone by the time the renewal returns
+		return "new", nil
+	}
+	t.Cleanup(func() { githubAPIBase, githubRenew = base, renew })
+	if sha, _, _ := githubMergedPR(ctx, "old", "o/r", "sq"); sha != "" {
+		t.Fatalf("sha=%q", sha)
+	}
+	if hits != 1 || gotCtx != ctx {
+		t.Fatalf("hits=%d, renewal got the plan's ctx: %v", hits, gotCtx == ctx)
 	}
 }

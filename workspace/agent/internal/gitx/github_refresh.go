@@ -141,13 +141,15 @@ func GitHubTokenContext(ctx context.Context, s *secrets.Data) (string, error) {
 		if errors.Is(err, ErrGitHubReconnect) || errors.Is(err, errStoreWrite) {
 			return "", err
 		}
-		if e.Expiry != 0 && now.Before(time.Unix(e.Expiry, 0)) {
+		// Judged when the failure is known, not before the waits: the token may have run
+		// out while the renewal was retrying.
+		if e.Expiry != 0 && time.Now().Before(time.Unix(e.Expiry, 0)) {
 			log.Printf("github token refresh failed, using the current token until it expires: %v", err)
 			return e.Token, nil
 		}
 		return "", err
 	}
-	s.Git[githubHost] = ne
+	s.AdoptGitHub(ne)
 	return ne.Token, nil
 }
 
@@ -155,21 +157,26 @@ func GitHubTokenContext(ctx context.Context, s *secrets.Data) (string, error) {
 // recorded expiry says (clock skew, or a token GitHub revoked early). When another
 // caller already renewed, that newer token comes back without a second grant.
 func GitHubForceRefresh(s *secrets.Data, rejected string) (string, error) {
-	ne, err := refreshGitHub(context.Background(), rejected)
+	return GitHubForceRefreshContext(context.Background(), s, rejected)
+}
+
+// GitHubForceRefreshContext is GitHubForceRefresh bounded by ctx as well.
+func GitHubForceRefreshContext(ctx context.Context, s *secrets.Data, rejected string) (string, error) {
+	ne, err := refreshGitHub(ctx, rejected)
 	if err != nil {
 		return "", err
 	}
-	s.Git[githubHost] = ne
+	s.AdoptGitHub(ne)
 	return ne.Token, nil
 }
 
 // RenewRejectedGitHubToken is GitHubForceRefresh for a caller that holds no snapshot.
-func RenewRejectedGitHubToken(rejected string) (string, error) {
-	s, err := secrets.Load()
+func RenewRejectedGitHubToken(ctx context.Context, rejected string) (string, error) {
+	s, err := secrets.LoadContext(ctx)
 	if err != nil {
 		return "", err
 	}
-	return GitHubForceRefresh(s, rejected)
+	return GitHubForceRefreshContext(ctx, s, rejected)
 }
 
 // WithGitHubToken runs fn with the current GitHub token and, when GitHub answers it with
@@ -218,7 +225,7 @@ func refreshGitHub(ctx context.Context, seen string) (secrets.GitEntry, error) {
 	defer cancel()
 	var out secrets.GitEntry
 	err := secrets.WithLockContext(ctx, "github-refresh", func() error {
-		cur, err := secrets.Load()
+		cur, err := secrets.LoadContext(ctx)
 		if err != nil {
 			return err
 		}
@@ -295,9 +302,18 @@ func refreshGitHub(ctx context.Context, seen string) (secrets.GitEntry, error) {
 	return out, err
 }
 
+// storeWriteContext bounds a store write that follows a grant. It is deliberately not the
+// renewal's budget: the budget may be spent by then, and the spent refresh token makes
+// writing the result the one thing that must still be tried.
+func storeWriteContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 10*time.Second)
+}
+
 // reloadGitHub returns the entry the store holds now, or fallback when it cannot be read.
 func reloadGitHub(fallback secrets.GitEntry) secrets.GitEntry {
-	if d, err := secrets.Load(); err == nil {
+	ctx, cancel := storeWriteContext()
+	defer cancel()
+	if d, err := secrets.LoadContext(ctx); err == nil {
 		return d.Git[githubHost]
 	}
 	return fallback
@@ -306,7 +322,9 @@ func reloadGitHub(fallback secrets.GitEntry) secrets.GitEntry {
 // persistGitHub writes next over the entry whose access token is still `from`. Fields
 // the renewal does not own (the cached login and email) are kept from the stored entry.
 func persistGitHub(from string, next secrets.GitEntry) error {
-	return secrets.Update(func(d *secrets.Data) error {
+	ctx, cancel := storeWriteContext()
+	defer cancel()
+	return secrets.UpdateContext(ctx, func(d *secrets.Data) error {
 		cur := d.Git[githubHost]
 		if cur.Token != from {
 			return errSuperseded
@@ -320,7 +338,9 @@ func persistGitHub(from string, next secrets.GitEntry) error {
 }
 
 func markGitHubReconnect(from string) {
-	_ = secrets.Update(func(d *secrets.Data) error {
+	ctx, cancel := storeWriteContext()
+	defer cancel()
+	_ = secrets.UpdateContext(ctx, func(d *secrets.Data) error {
 		cur := d.Git[githubHost]
 		if cur.Token != from {
 			return errSuperseded
