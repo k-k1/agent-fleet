@@ -246,7 +246,7 @@ func DriveState(m session.Meta, alive, heal bool) string {
 		} else {
 			status.Remove(sid)
 		}
-	} else if heal && state == "idle" && pane.Busy && claude.PaneMayReopen(sid) {
+	} else if heal && state == "idle" && pane.Busy && claude.ReopenFromPane(sid) {
 		// Reverse-heal: the hook state reads idle (its "working" file was never written,
 		// or the self-heal above removed it during a transient prompt frame) but the pane
 		// is plainly mid-turn (interrupt affordance shown). Trust the live TUI and persist
@@ -254,7 +254,6 @@ func DriveState(m session.Meta, alive, heal bool) string {
 		// fires the answer-ready notification (recorded off the previous "working" state).
 		// A turn the Stop hook closed is not reopened here: see claude.PaneMayReopen.
 		state = "working"
-		status.Persist(sid, "working")
 	}
 	// After a turn cut off by a usage limit (the menu has already been dismissed, and a
 	// per-model limit shows no menu at all) the pane returns to the ready prompt, so the state

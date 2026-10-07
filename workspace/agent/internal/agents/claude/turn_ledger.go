@@ -24,13 +24,30 @@ var stopContinued = StopContinued
 // hooks not wired or the sid unresolved, a record from an older agent (no prompt id), or one
 // a heal removed or wrote without a prompt id.
 func PaneMayReopen(sid string) bool {
-	st, ok := status.Read(sid)
-	if !ok || st.State != "idle" || !st.TurnEnd || st.PromptID == "" {
-		return true
+	_, _, ok := paneMayReopen(sid)
+	return ok
+}
+
+// paneMayReopen is PaneMayReopen that also returns the record it decided from (its Rev, and
+// whether there was one), the precondition of ReopenFromPane's write.
+func paneMayReopen(sid string) (rev string, existed, ok bool) {
+	st, existed := status.Read(sid)
+	if !existed || st.State != "idle" || !st.TurnEnd || st.PromptID == "" {
+		return st.Rev, existed, true
 	}
 	at, err := time.Parse(time.RFC3339, st.TS)
 	if err != nil {
-		return false
+		return st.Rev, existed, false
 	}
-	return stopContinued(sid, at)
+	return st.Rev, existed, stopContinued(sid, at)
+}
+
+// ReopenFromPane is the pane reverse-heal: when PaneMayReopen allows it, persist working,
+// but only if the record is still the one that decision read. The Stop hook is another
+// process and may close the turn between the read (and, for StopContinued, a transcript scan)
+// and this write; a blind write would erase that closed turn and bring #1834's phantom
+// working back. Reports whether working was written; false means leave the state as read.
+func ReopenFromPane(sid string) bool {
+	rev, existed, ok := paneMayReopen(sid)
+	return ok && status.PersistIf(sid, "working", rev, existed)
 }
