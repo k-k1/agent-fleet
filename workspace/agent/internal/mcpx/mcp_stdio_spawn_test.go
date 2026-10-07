@@ -264,6 +264,38 @@ func TestCreateSessionFromSessionStampsLineageAndDefaults(t *testing.T) {
 		t.Fatalf("explicit worktree=false was overridden: %v", body["worktree"])
 	}
 
+	// The shared-working-copy opt-in is forwarded only when set, and only with worktree=false.
+	if _, present := body["allow_shared_working_copy"]; present {
+		t.Fatalf("flag sent although not requested: %v", body["allow_shared_working_copy"])
+	}
+	plainKey, _ := body["idempotency_key"].(string)
+	call(map[string]any{"dir": "/repos/app", "initial_prompt": "rebase onto develop", "worktree": false,
+		"allow_shared_working_copy": true})
+	if body["allow_shared_working_copy"] != true || body["worktree"] != false {
+		t.Fatalf("opt-in not forwarded: shared=%v worktree=%v", body["allow_shared_working_copy"], body["worktree"])
+	}
+	if key, _ := body["idempotency_key"].(string); key == plainKey {
+		t.Fatalf("the opt-in does not change the idempotency key (%s)", key)
+	}
+	body = nil // Decode merges into an existing map; start clean
+	call(map[string]any{"dir": "/repos/app", "initial_prompt": "rebase onto develop", "worktree": false,
+		"allow_shared_working_copy": false})
+	if _, present := body["allow_shared_working_copy"]; present {
+		t.Fatalf("explicit false was forwarded as %v", body["allow_shared_working_copy"])
+	}
+	// With the default worktree the flag is a mistake, and says so instead of being ignored.
+	hits := 0
+	recording := srv.Config.Handler
+	defer func() { srv.Config.Handler = recording }()
+	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++ })
+	a, _ := json.Marshal(map[string]any{"dir": "/repos/app", "initial_prompt": "x", "allow_shared_working_copy": true})
+	params, _ := json.Marshal(map[string]any{"name": "create_session", "arguments": json.RawMessage(a)})
+	if resp := mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params}); !strings.Contains(string(resp), `"isError":true`) ||
+		!strings.Contains(string(resp), "worktree=false") || hits != 0 {
+		t.Fatalf("flag with the default worktree: hits=%d resp=%s", hits, resp)
+	}
+	srv.Config.Handler = recording
+
 	// report_back=false drops the line but keeps the task.
 	call(map[string]any{"dir": "/repos/app", "initial_prompt": "rebase onto develop", "report_back": false})
 	if prompt, _ := body["initial_prompt"].(string); strings.Contains(prompt, "send_to_peer_session") {

@@ -191,12 +191,27 @@ func sessionsInDir(metas []session.Meta, alive func(session.Meta) bool, dir stri
 		if m.Archived || !alive(m) {
 			continue
 		}
-		if m.Dir == dir || strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) {
+		if dirWithin(m.Dir, dir) {
 			names = append(names, session.Display(m))
 		}
 	}
 	sort.Strings(names)
 	return names
+}
+
+// dirWithin reports whether d is dir or sits beneath it, comparing canonical paths: Meta.Dir
+// keeps the spelling the launch request used, so a session started through a symlink or a `..`
+// path (a shared-working-copy child can be) would otherwise be missed by the delete / checkout
+// guards the moment the session that launched it through the canonical spelling stops.
+func dirWithin(d, dir string) bool {
+	if d == dir || strings.HasPrefix(d, dir+string(os.PathSeparator)) {
+		return true
+	}
+	if d == "" || dir == "" {
+		return false
+	}
+	cd, cdir := workingCopyKey(d), workingCopyKey(dir)
+	return cd == cdir || strings.HasPrefix(cd, cdir+string(os.PathSeparator))
 }
 
 // LockedSessionsInDir returns the display names of DELETE-LOCKED sessions (docs/log/45)
@@ -210,7 +225,7 @@ func LockedSessionsInDir(metas []session.Meta, dir string) []string {
 		if !m.Locked {
 			continue
 		}
-		if m.Dir == dir || strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) {
+		if dirWithin(m.Dir, dir) {
 			names = append(names, session.Display(m))
 		}
 	}

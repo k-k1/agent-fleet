@@ -1142,6 +1142,12 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 				"Tell the user you are starting one, and what for. " +
 				"It starts in a NEW worktree by default, so it never shares your working copy; pass " +
 				"worktree=false only for a directory nobody is working in. " +
+				"To run a child in YOUR OWN working copy on purpose (e.g. a reviewer on what you are implementing), " +
+				"pass worktree=false and allow_shared_working_copy=true: it shares your checkout, index and branch, so tell it " +
+				"(and keep to) no checkout/switch/stash/branch changes and stage and commit explicitly by path. " +
+				"It works only while you are running in a canonical path (no symlink in the one you were started with; " +
+				"naming the target dir through an alias is fine) and only for your own copy: another session's working " +
+				"copy cannot be shared this way, and if the refusal repeats with the flag, do not retry - use a worktree. " +
 				"Limits: at most " + strconv.Itoa(session.SpawnChildLimit()) + " children at a time (a slot frees when the user deletes or " +
 				"archives that child" + stoppedChildExpiryClause() + " - list_child_sessions shows what " +
 				"you have), a session you started cannot start its own, and shell sessions cannot be started " +
@@ -1155,18 +1161,19 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 			"inputSchema": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
-					"dir":            map[string]any{"type": "string", "description": "Working directory (a path from list_repos, or your own). Default: home"},
-					"title":          map[string]any{"type": "string", "description": "Short display name saying what the task is (optional)"},
-					"kind":           map[string]any{"type": "string", "description": "Agent kind: claude (default) | codex | opencode | agy | copilot | cursor | kiro | lcpp | muse. shell/ssm are refused"},
-					"model":          map[string]any{"type": "string", "description": "Model id from list_models for that kind (optional)"},
-					"effort":         map[string]any{"type": "string", "description": "Reasoning effort (optional; default: the model's defaultEffort). Needs model: use one of that model's efforts from list_models; anything else, or an effort without model, is refused. opencode and kiro list none: their value is not checked here, and a wrong one fails the child's first turn. agy and cursor fold effort into the model id instead"},
-					"initial_prompt": map[string]any{"type": "string", "description": "The task, delivered as the child's first instruction. Write it for someone with none of your context: what to do, where, what done looks like. If it has to wait for a message (from you or another session), tell it to end its turn while it waits: a message to a busy session can be held until its turn ends, and waiting inside a tool (a sleep loop, a blocking wait) keeps that turn from ending"},
-					"worktree":       map[string]any{"type": "boolean", "description": "Start in a new worktree off dir. Default TRUE from a session - two agents in one working copy corrupt each other's work"},
-					"branch":         map[string]any{"type": "string", "description": "Base branch for the worktree (optional; default: current HEAD)"},
-					"new_branch":     map[string]any{"type": "string", "description": "Name of the branch to create in the worktree (optional; default: generated)"},
-					"subdir":         map[string]any{"type": "string", "description": "Relative path inside the working copy to start in, e.g. console (optional)"},
-					"report_back":    map[string]any{"type": "boolean", "description": "Ask the child to send you one message when it finishes. Default true. Turn it off when you will read the result in the Console instead"},
-					"spend_cap_usd":  map[string]any{"type": "number", "description": "The child's own spend budget in USD, an estimate at list price (optional; default: the user's default budget; 0 = none). Past it the child stops after its turn. It is not charged to yours"},
+					"dir":                       map[string]any{"type": "string", "description": "Working directory (a path from list_repos, or your own). Default: home"},
+					"title":                     map[string]any{"type": "string", "description": "Short display name saying what the task is (optional)"},
+					"kind":                      map[string]any{"type": "string", "description": "Agent kind: claude (default) | codex | opencode | agy | copilot | cursor | kiro | lcpp | muse. shell/ssm are refused"},
+					"model":                     map[string]any{"type": "string", "description": "Model id from list_models for that kind (optional)"},
+					"effort":                    map[string]any{"type": "string", "description": "Reasoning effort (optional; default: the model's defaultEffort). Needs model: use one of that model's efforts from list_models; anything else, or an effort without model, is refused. opencode and kiro list none: their value is not checked here, and a wrong one fails the child's first turn. agy and cursor fold effort into the model id instead"},
+					"initial_prompt":            map[string]any{"type": "string", "description": "The task, delivered as the child's first instruction. Write it for someone with none of your context: what to do, where, what done looks like. If it has to wait for a message (from you or another session), tell it to end its turn while it waits: a message to a busy session can be held until its turn ends, and waiting inside a tool (a sleep loop, a blocking wait) keeps that turn from ending"},
+					"worktree":                  map[string]any{"type": "boolean", "description": "Start in a new worktree off dir. Default TRUE from a session - two agents in one working copy corrupt each other's work"},
+					"allow_shared_working_copy": map[string]any{"type": "boolean", "description": "Opt in to starting the child in YOUR OWN working copy while you are running in it (default false). Needs worktree=false, dir = your working copy (an alias spelling of it is fine) and that you were started in a canonical path (no symlink); any other directory in use is still refused, and a repeated refusal means it cannot work - do not retry. You and the child then share one checkout, index and branch: no checkout/switch/stash/branch changes, stage and commit explicitly by path"},
+					"branch":                    map[string]any{"type": "string", "description": "Base branch for the worktree (optional; default: current HEAD)"},
+					"new_branch":                map[string]any{"type": "string", "description": "Name of the branch to create in the worktree (optional; default: generated)"},
+					"subdir":                    map[string]any{"type": "string", "description": "Relative path inside the working copy to start in, e.g. console (optional)"},
+					"report_back":               map[string]any{"type": "boolean", "description": "Ask the child to send you one message when it finishes. Default true. Turn it off when you will read the result in the Console instead"},
+					"spend_cap_usd":             map[string]any{"type": "number", "description": "The child's own spend budget in USD, an estimate at list price (optional; default: the user's default budget; 0 = none). Past it the child stops after its turn. It is not charged to yours"},
 				},
 			},
 		},
@@ -2676,10 +2683,13 @@ func mcpStdioCall(req mcpReq) []byte {
 		// Worktree is a POINTER because the default differs by surface: false for the
 		// operator, true for a session (ADR 0073 decision 7). A plain bool cannot tell
 		// "worktree=false, work right here" from "not mentioned".
-		Worktree  *bool  `json:"worktree"`
-		Branch    string `json:"branch"`
-		NewBranch string `json:"new_branch"`
-		Subdir    string `json:"subdir"`
+		Worktree *bool `json:"worktree"`
+		// AllowSharedWorkingCopy is a session's explicit opt-in to share its own working copy
+		// with the child (needs worktree=false; the Agent enforces which directory).
+		AllowSharedWorkingCopy bool   `json:"allow_shared_working_copy"`
+		Branch                 string `json:"branch"`
+		NewBranch              string `json:"new_branch"`
+		Subdir                 string `json:"subdir"`
 		// ReportBack asks a spawned child to send one intent=answer peer message home when it
 		// finishes (ADR 0073 decision 9). A pointer for the same reason as On: omitted means
 		// on, and a plain bool would silently turn the report off for every caller that did
@@ -3248,6 +3258,12 @@ func mcpStdioCall(req mcpReq) []byte {
 		if parent != "" && a.Worktree == nil {
 			worktree = true
 		}
+		// The opt-in only means something against a worktree=false launch from a session; with
+		// the default worktree it would be silently ignored, so say so instead.
+		shared := parent != "" && a.AllowSharedWorkingCopy
+		if shared && worktree {
+			return mcpToolErr(req.ID, "allow_shared_working_copy は worktree=false と一緒に指定してください（既定の worktree=true では作業コピーは共有されません）")
+		}
 		initialPrompt := a.InitialPrompt
 		if parent != "" {
 			initialPrompt = spawnPromptFor(parent, initialPrompt, a.ReportBack)
@@ -3273,7 +3289,7 @@ func mcpStdioCall(req mcpReq) []byte {
 				return mcpToolErr(req.ID, err.Error())
 			}
 		}
-		idemKey := CreateSessionKey(scope, a.Dir, a.Subdir, a.Kind, model, effort, initialPrompt, worktree, a.Branch, a.NewBranch)
+		idemKey := CreateSessionKey(scope, a.Dir, a.Subdir, a.Kind, model, effort, initialPrompt, worktree, a.Branch, a.NewBranch, shared)
 		body := map[string]any{
 			"dir":             a.Dir,
 			"subdir":          a.Subdir,
@@ -3296,6 +3312,9 @@ func mcpStdioCall(req mcpReq) []byte {
 			"origin":         origin,
 			"origin_conv":    originConv,
 			"origin_session": parent,
+		}
+		if shared {
+			body["allow_shared_working_copy"] = true
 		}
 		if a.SpendCapUSD != nil {
 			body["spend_cap_usd"] = *a.SpendCapUSD
@@ -4612,12 +4631,12 @@ func agentDoTimeoutHeaders(method, path string, body []byte, timeout time.Durati
 // conversation id, a session its own name (ADR 0073 decision 2). The scope is not optional —
 // an empty one would fold two sessions' identical launches into a single child, and the second
 // caller would be handed the first's session as if it were the one it asked for.
-func CreateSessionKey(scope, dir, subdir, kind, model, effort, prompt string, worktree bool, branch, newBranch string) string {
+func CreateSessionKey(scope, dir, subdir, kind, model, effort, prompt string, worktree bool, branch, newBranch string, allowShared bool) string {
 	if scope == "" {
 		return ""
 	}
 	h := sha256.New()
-	for _, f := range []string{scope, dir, subdir, kind, model, effort, prompt, strconv.FormatBool(worktree), branch, newBranch} {
+	for _, f := range []string{scope, dir, subdir, kind, model, effort, prompt, strconv.FormatBool(worktree), branch, newBranch, strconv.FormatBool(allowShared)} {
 		h.Write([]byte(f))
 		h.Write([]byte{0})
 	}

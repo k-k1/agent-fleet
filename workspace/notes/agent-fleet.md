@@ -127,6 +127,12 @@ whole agent's memory on a host you share with every other session, so it is not 
 work you could simply do.
 
 - It starts in a **new worktree** by default: never point a child at the working copy you are in.
+  The one exception is explicit: `worktree=false` plus `allow_shared_working_copy=true`, and only
+  for **your own** working copy (e.g. a reviewer on what you implement). You then share checkout,
+  index and branch with the child: no checkout / switch / stash / branch changes, and stage and
+  commit explicitly by path. It works only while you are live in a canonical path (a parent started
+  through a symlink is refused; the child's `dir` may be an alias). Another session's working copy
+  is still refused, and a repeated refusal with the flag means it cannot work: use a worktree.
 - **You are not told when it finishes.** Poll `get_session_status`, or leave `report_back` on and
   the child sends you one message when it is done.
 - **You may only steer what you started** — list them, read their output, stop one, book a stop,
