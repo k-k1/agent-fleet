@@ -435,6 +435,26 @@ An explicit `worktree=false` is refused when another live session is working on 
 - Stopped sessions do not count: what this guards is two processes running at once, not a quota
   (decision 6 has the other purpose).
 
+**Amendment (2026-10-07, #1826): an explicit opt-in to share the PARENT's own working copy.** The
+refusal above stays the default. The session-side `create_session` gains `allow_shared_working_copy`
+(boolean, default false) for the case where parent and child are meant to work on one checkout (one
+implements, the other reviews). The decision itself is not reversed:
+
+- It is honoured only with `worktree=false`, and only when the resolved `dir` is the **parent's own**
+  canonical working copy (compared canonically on both sides). Any other directory in use stays
+  refused with the flag; with `worktree=true` the flag changes nothing, and the MCP tool says so
+  instead of ignoring it. `worktree=false` alone is still refused, so a mistaken call cannot share a
+  checkout silently.
+- Depth, the child budget and the shell/ssm refusal are unchanged.
+- The child's first instruction carries a standing warning: shared checkout, index and branch; no
+  checkout, switch, stash or branch changes; stage and commit explicitly by path (a commit takes the
+  shared index, so "commit only your files" is not enough).
+- The child is launched through the canonical path, and the delete / branch-switch guards compare
+  canonical paths, so an alias spelling cannot hide a live session from them once the session that
+  used the canonical one stops.
+- No "shared" marker is added to the session wire; no central (Settings) switch either. Both stay
+  open until someone needs them.
+
 ### 8. `kind=shell` and `ssm` are refused
 
 The reasoning of ADR 0041 decision 5. Launching a shell is arbitrary command execution, and a

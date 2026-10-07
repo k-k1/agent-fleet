@@ -290,8 +290,17 @@ func workingCopyKey(dir string) string {
 // root and another under console/ still share a checkout, an index and a branch, which is the
 // accident this refuses. Stopped sessions do not count; what is guarded here is two processes
 // running at once, not a quota (that is SpawnChildLimit, which counts the other way round).
-func spawnWorkingCopyRefusal(dir string) *SpawnRefusal {
+//
+// allowShared is the caller's explicit opt-in (allow_shared_working_copy, ADR 0073 decision 7,
+// amendment 2026-10-07) and is honoured for exactly one directory: the PARENT's own canonical
+// working copy. A foreign directory stays refused even with the flag — a session another session
+// owns has not agreed to a second writer. An unreadable parent meta also refuses: when in doubt
+// the answer is "busy".
+func spawnWorkingCopyRefusal(dir, parent string, allowShared bool) *SpawnRefusal {
 	target := workingCopyKey(dir)
+	if allowShared && spawnOwnWorkingCopy(parent, target) {
+		return nil
+	}
 	for _, m := range session.ListMetas() {
 		if m.Archived || m.Dir == "" {
 			continue
@@ -301,9 +310,34 @@ func spawnWorkingCopyRefusal(dir string) *SpawnRefusal {
 		}
 		return &SpawnRefusal{Status: 409, Code: "spawn_working_copy_busy",
 			Message: fmt.Sprintf("%s では既にセッション %s が動いています。"+
-				"worktree=true（既定）で起こすか、別の作業コピーを指定してください", m.Dir, m.Name)}
+				"worktree=true（既定）で起こすか、別の作業コピーを指定してください。"+
+				"自分自身の作業コピーを意図して共有するなら worktree=false と "+
+				"allow_shared_working_copy=true を併せて指定します（他セッションの作業コピーは共有できません）",
+				m.Dir, m.Name)}
 	}
 	return nil
+}
+
+// spawnOwnWorkingCopy reports whether target (a workingCopyKey) is the parent's own working
+// copy, compared canonically on both sides so an alias spelling cannot stand in for it.
+func spawnOwnWorkingCopy(parent, target string) bool {
+	m, ok := session.ReadMeta(parent)
+	return ok && m.Dir != "" && workingCopyKey(m.Dir) == target
+}
+
+// SharedWorkingCopyWarning is appended to the first instruction of a child that was started
+// INTO its parent's live working copy. Built here for the reason SpawnEnvelope is: a caller
+// cannot omit it. "Commit only your files" is not enough — a commit takes the shared index —
+// so the rule is to stage and commit explicitly by path.
+func SharedWorkingCopyWarning(prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return prompt
+	}
+	return prompt + "\n\n[agent-fleet:shared-working-copy] You share this working copy, its index and its " +
+		"branch with your parent session, which is working in it right now. Do not checkout, switch, " +
+		"stash, reset or change branches. Stage and commit explicitly by path (git add <path>; " +
+		"git commit <path> -m ...), never git add -A / commit -a: another session's changes sit in the same index."
 }
 
 // spawnKindRefusal refuses raw shells (ADR 0073 decision 8, the reasoning of ADR 0041

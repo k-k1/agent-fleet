@@ -139,15 +139,15 @@ func TestSpawnRefusesSharedWorkingCopy(t *testing.T) {
 	t.Cleanup(func() { sessionAliveFn = orig })
 
 	// Subdir takes no part: the same checkout is the same checkout.
-	if got := spawnWorkingCopyRefusal(repo); got == nil || got.Code != "spawn_working_copy_busy" {
+	if got := spawnWorkingCopyRefusal(repo, "root", false); got == nil || got.Code != "spawn_working_copy_busy" {
 		t.Fatalf("same working copy: got %v, want spawn_working_copy_busy", got)
 	}
 	// A `..` spelling and a SYMLINK to the same checkout are the same target. Without resolving
 	// them the refusal is decorative — a caller only has to spell the path differently.
-	if got := spawnWorkingCopyRefusal(filepath.Join(repo, "console", "..")); got == nil {
+	if got := spawnWorkingCopyRefusal(filepath.Join(repo, "console", ".."), "root", false); got == nil {
 		t.Fatal("a `..` spelling walked past the check")
 	}
-	if got := spawnWorkingCopyRefusal(link); got == nil {
+	if got := spawnWorkingCopyRefusal(link, "root", false); got == nil {
 		t.Fatal("a symlink to the busy working copy walked past the check")
 	}
 	// The reverse direction too: the session registered under a symlinked path, the spawn
@@ -156,13 +156,13 @@ func TestSpawnRefusesSharedWorkingCopy(t *testing.T) {
 		session.Meta{Name: "root", Kind: session.KindClaude, Origin: session.OriginUser},
 		session.Meta{Name: "busy", Kind: session.KindShell, Dir: link, Origin: session.OriginUser},
 	)
-	if got := spawnWorkingCopyRefusal(repo); got == nil {
+	if got := spawnWorkingCopyRefusal(repo, "root", false); got == nil {
 		t.Fatal("a session registered under a symlinked path was not seen")
 	}
 	// That a worktree create skips this check entirely is the CALLER's decision, so it is
 	// asserted where the caller is: TestCreateSessionSpawnWorkingCopyGuard.
 	// Somewhere nobody is working.
-	if got := spawnWorkingCopyRefusal(free); got != nil {
+	if got := spawnWorkingCopyRefusal(free, "root", false); got != nil {
 		t.Fatalf("free working copy refused: %v", got)
 	}
 }

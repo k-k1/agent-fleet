@@ -335,6 +335,11 @@ type CreateReq struct {
 	// it points inside the FRESH worktree). The session's Dir keeps recording the
 	// working copy itself; only the launched process starts deeper (Meta.CWD).
 	Subdir string `json:"subdir"`
+	// AllowSharedWorkingCopy is a session-spawned create's explicit opt-in to run in its
+	// PARENT's own live working copy (ADR 0073 decision 7, amendment 2026-10-07). Honoured only
+	// with worktree=false and only for that one directory; everywhere else it changes nothing,
+	// so the spawn_working_copy_busy refusal stays the default.
+	AllowSharedWorkingCopy bool `json:"allow_shared_working_copy"`
 	// IdempotencyKey dedupes a retried/concurrent create so a client that times out
 	// (but whose request the backend actually completed) can't spawn a duplicate on
 	// retry. The stdio MCP create_session tool derives it deterministically from the
@@ -1029,9 +1034,15 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// A worktree launch has replaced req.Dir with the fresh worktree by now and cannot collide,
 	// which is why the check is scoped to the non-worktree case rather than the raw flag.
 	if spawnParent != "" && !req.Worktree {
-		if ref := spawnWorkingCopyRefusal(req.Dir); ref != nil {
+		if ref := spawnWorkingCopyRefusal(req.Dir, spawnParent, req.AllowSharedWorkingCopy); ref != nil {
 			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 			return
+		}
+		if req.AllowSharedWorkingCopy && spawnOwnWorkingCopy(spawnParent, workingCopyKey(req.Dir)) {
+			// Launch through the canonical spelling so Meta.Dir matches what the delete and
+			// checkout guards compare, and tell the child it is not alone in the checkout.
+			req.Dir = workingCopyKey(req.Dir)
+			req.InitialPrompt = SharedWorkingCopyWarning(req.InitialPrompt)
 		}
 	}
 	// Subdir (optional): the CWD narrows to a folder beneath the resolved working copy.

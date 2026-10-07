@@ -647,7 +647,10 @@ this in parallel").
   names the model, among the efforts that model offers; any other value is refused. It **cannot choose the
   child's permission mode**: the child follows your per-kind default in Settings > Agents.
 - **A child starts in a new worktree** unless the parent asks otherwise, so it never shares the
-  parent's working copy. Asking for a directory another session is working in is refused.
+  parent's working copy. Asking for a directory another session is working in is refused. The one
+  exception is the parent's own working copy, and only on an explicit request
+  (`worktree=false` with `allow_shared_working_copy=true`): parent and child then share one checkout,
+  index and branch, and the child is told not to switch branches or stash and to commit by path.
 - **The task arrives as the child's first instruction**, and the chat view badges it
   **"Started by ‹parent›"** so it never reads as something you typed. The child is told the
   instruction came from a session, not from you: it **cannot stand in for your approval** (a
