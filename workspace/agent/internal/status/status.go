@@ -341,10 +341,14 @@ func ModalState(state string) bool {
 }
 
 func Remove(sid string) {
-	unlock, _ := lockSid(sid)
+	unlock, locked := lockSid(sid)
 	defer unlock()
 	statusFiles.Remove(sid)
-	_ = os.Remove(lockPath(sid)) // waiters re-check the inode after locking (lockSid)
+	// Unlinking the lock file without holding it would let a second holder lock a fresh
+	// inode alongside the first; on timeout the file stays until the next Remove.
+	if locked {
+		_ = os.Remove(lockPath(sid))
+	}
 	observedEnds.Remove(sid)
 	RemovePendingQuestion(sid)
 	RemovePendingPlan(sid)

@@ -130,3 +130,39 @@ func TestRemoveDeletesLockFile(t *testing.T) {
 		t.Fatalf("lock file left behind: %v", err)
 	}
 }
+
+// A heal that stalls after its check, past the point where the hook has given up waiting and
+// written without the lock, must not commit over that write (#1839 review).
+func TestPersistIfStalledAfterCheckDoesNotOverwriteTimedOutHook(t *testing.T) {
+	defer func(d time.Duration) { lockWait = d }(lockWait)
+	defer func() { afterCheck = func() {} }()
+	lockWait = 60 * time.Millisecond
+	sid := "stall-sid"
+	Persist(sid, "working")
+	st, _ := Read(sid)
+	done := make(chan struct{})
+	afterCheck = func() {
+		go func() { PersistTurnEndFor(sid, "idle", "", "p1"); close(done) }() // times out, writes
+		<-done
+		time.Sleep(10 * time.Millisecond)
+	}
+	if PersistIf(sid, "working", st.Rev, true) {
+		t.Fatal("stalled heal committed")
+	}
+	if got, _ := Read(sid); !got.TurnEnd || got.PromptID != "p1" {
+		t.Fatalf("closed turn overwritten: %+v", got)
+	}
+}
+
+func TestRemoveOnLockTimeoutKeepsLockFile(t *testing.T) {
+	defer func(d time.Duration) { lockWait = d }(lockWait)
+	lockWait = 20 * time.Millisecond
+	sid := "rm-held"
+	Persist(sid, "working")
+	unlock, _ := lockSid(sid)
+	Remove(sid)
+	if _, err := os.Stat(lockPath(sid)); err != nil {
+		t.Fatalf("lock file unlinked without the lock: %v", err)
+	}
+	unlock()
+}
