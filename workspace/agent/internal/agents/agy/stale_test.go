@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -109,5 +110,76 @@ func TestStateSourceModTimeIsTheConversationDB(t *testing.T) {
 	}
 	if _, ok := (agentImpl{}).StateSourceModTime(session.Meta{Dir: "/other", Name: "none"}); ok {
 		t.Fatal("a session with no conversation answered")
+	}
+}
+
+func TestBackgroundWork(t *testing.T) {
+	m := session.Meta{Name: "bg"}
+	alive := func(v bool) liveProbes { return liveProbes{toolAlive: func(string) bool { return v }} }
+	for _, tc := range []struct {
+		name, state string
+		tool        bool
+		busy        bool
+		reason      string
+	}{
+		{"idle with a tool process", "idle", true, true, "process"},
+		{"idle, no tool process", "idle", false, false, ""},
+		{"working is not asked", "working", true, false, ""},
+		{"no opinion", "", true, false, ""},
+		{"question", "question", true, false, ""},
+	} {
+		busy, reason := backgroundWork(m, tc.state, alive(tc.tool))
+		if busy != tc.busy || reason != tc.reason {
+			t.Errorf("%s: got %v %q, want %v %q", tc.name, busy, reason, tc.busy, tc.reason)
+		}
+	}
+}
+
+// WireLive end to end: the measured shape of a backgrounded run_command — the DB step stays
+// running, the pane is back at the idle footer, a tool process lives.
+func TestWireLiveBackgroundBusy(t *testing.T) {
+	const user, tool = 14, 132
+	running := [][3]any{{user, stepStatusDone, []byte("x")}, {tool, stepStatusRunning, []byte("x")}}
+	for _, tc := range []struct {
+		name  string
+		tool  bool
+		alive bool
+		busy  bool
+	}{
+		{"tool process lives", true, true, true},
+		{"no tool process (negative control)", false, true, false},
+		{"pane dead", true, false, false},
+	} {
+		m, now := staleFixture(t, "wl", running, [][]byte{executorRow(4, 0)}, time.Minute)
+		saved := realProbes
+		realProbes = probesAt(now)
+		realProbes.paneIdleSettled = func(string) bool { return true }
+		realProbes.toolAlive = func(string) bool { return tc.tool }
+		li := agentImpl{}.WireLive(m, tc.alive)
+		realProbes = saved
+		if li.BackgroundBusy != tc.busy {
+			t.Errorf("%s: BackgroundBusy=%v (state %q), want %v", tc.name, li.BackgroundBusy, li.State, tc.busy)
+		}
+		if tc.busy && li.BackgroundBusyReason != "process" {
+			t.Errorf("%s: reason %q", tc.name, li.BackgroundBusyReason)
+		}
+	}
+}
+
+func TestAgentIsBackgroundReporter(t *testing.T) {
+	var a agents.Agent = agentImpl{}
+	br, ok := a.(agents.BackgroundReporter)
+	if !ok {
+		t.Fatal("agy must implement agents.BackgroundReporter")
+	}
+	saved := realProbes
+	defer func() { realProbes = saved }()
+	for _, tool := range []bool{true, false} {
+		realProbes.toolAlive = func(string) bool { return tool }
+		busy, reason := br.BackgroundWork(session.Meta{Name: "br"})
+		wb, wr := backgroundWork(session.Meta{Name: "br"}, "idle", realProbes)
+		if busy != tool || busy != wb || reason != wr {
+			t.Errorf("tool=%v: got %v %q, WireLive-side %v %q", tool, busy, reason, wb, wr)
+		}
 	}
 }

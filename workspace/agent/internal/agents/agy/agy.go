@@ -103,6 +103,10 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		if li.State = LiveState(m); li.State == "" && status.RecentlyWorking(session.UUID(m.Dir, m.Name)) {
 			li.State = "working"
 		}
+		// agy ends the turn ~2 s after a run_command starts and leaves the command running, so
+		// an idle verdict says nothing about a tool still going. The CP reaper treats a row
+		// without this flag as idle-wait and may halt it or stop the Workspace mid-build.
+		li.BackgroundBusy, li.BackgroundBusyReason = backgroundWork(m, li.State, realProbes)
 	}
 	// Capture on BOTH sides of alive. Alive polls adopt the UUID via the
 	// brain-dir diff as soon as the first prompt lands (what lights the live
