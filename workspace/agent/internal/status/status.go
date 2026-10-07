@@ -64,6 +64,13 @@ type SessionStatus struct {
 	// same second are indistinguishable, and the writers here are two routes reaching the
 	// same turn boundary milliseconds apart.
 	Rev string `json:"rev,omitempty"`
+	// PromptID is the claude prompt_id of the turn this write belongs to: the working a
+	// UserPromptSubmit / PostToolUse hook wrote opens it, the Stop hook's idle closes it
+	// (TurnEnd). It is the turn ledger the pane reverse-heal consults (claude.PaneMayReopen):
+	// a turn the Stop hook closed must not be reopened by the spinner claude keeps drawing
+	// while that hook runs. Empty on a record written by an older agent, by a heal, or by a
+	// kind without hooks — all of which read as "no ledger", i.e. the pane decides.
+	PromptID string `json:"promptId,omitempty"`
 }
 
 // ExitInfo records WHY a session's agent process terminated, so the sessions list can
@@ -166,6 +173,15 @@ func Persist(sid, state string) {
 	}
 }
 
+// PersistOpen is Persist for a write made by a hook of turn promptID (UserPromptSubmit,
+// PostToolUse, …): it opens that turn in the ledger (SessionStatus.PromptID).
+func PersistOpen(sid, state, promptID string) {
+	persist(sid, SessionStatus{State: state, PromptID: promptID})
+	if state == "working" {
+		RemoveCompletionKey(sid)
+	}
+}
+
 // TurnEndReasonFailed / TurnEndReasonAborted are the qualifiers PersistTurnEndReason
 // accepts (see SessionStatus.TurnEndReason). Their values are the wire contract with
 // chatx.ReportReasonTurnFailed / ReportReasonTurnAborted, which alias these constants
@@ -191,11 +207,17 @@ func PersistTurnEnd(sid, state string) { PersistTurnEndReason(sid, state, "") }
 // splitting them, so that a caller persists the end now and reports the reason later over a
 // separate channel, is exactly the bug this function exists to rule out.
 func PersistTurnEndReason(sid, state, reason string) {
+	PersistTurnEndFor(sid, state, reason, "")
+}
+
+// PersistTurnEndFor is PersistTurnEndReason that also closes turn promptID in the ledger
+// (SessionStatus.PromptID). An empty promptID writes no ledger entry.
+func PersistTurnEndFor(sid, state, reason, promptID string) {
 	at := ObservedTurnEnd(sid)
 	if at == "" {
 		at = time.Now().Format(time.RFC3339)
 	}
-	persist(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason})
+	persist(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason, PromptID: promptID})
 	WriteCompletionKey(sid, at) // idempotent — first write wins; survives status.Remove
 }
 
