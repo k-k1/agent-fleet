@@ -115,3 +115,93 @@ func TestProgressTrusted(t *testing.T) {
 		}
 	}
 }
+
+func TestStateSinceOf(t *testing.T) {
+	t0 := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	now := t0
+	var stState string
+	var stAt time.Time
+	stOK := false
+	p := sinceProbes{
+		now:         func() time.Time { return now },
+		statusState: func(string) (string, bool) { return stState, stOK },
+		statusAt:    func(string) (time.Time, bool) { return stAt, stOK },
+	}
+	m := session.Meta{Dir: "/d", Name: "since-test"}
+	t.Cleanup(func() { stateSinceOf(m, "idle", true, p) })
+
+	got, ok := stateSinceOf(m, "working", true, p)
+	if !ok || !got.Equal(t0) {
+		t.Fatalf("first poll: %v %v, want %v", got, ok, t0)
+	}
+	now = t0.Add(3 * time.Hour)
+	if got, _ := stateSinceOf(m, "working", true, p); !got.Equal(t0) {
+		t.Errorf("a later poll moved since to %v; it is the FIRST observation", got)
+	}
+	// A hook kind: the status file says the state began earlier than this Agent has watched.
+	stState, stAt, stOK = "working", t0.Add(-5*time.Hour), true
+	if got, _ := stateSinceOf(m, "working", true, p); !got.Equal(t0.Add(-5 * time.Hour)) {
+		t.Errorf("status mtime older than the observation was not used: %v", got)
+	}
+	// A status file holding another state, or a future mtime, says nothing (fresh stretches: an
+	// adopted start is kept while the state continues).
+	stateSinceOf(m, "idle", true, p)
+	stState = "idle"
+	base := now
+	if got, _ := stateSinceOf(m, "working", true, p); !got.Equal(base) {
+		t.Errorf("a status file in another state was used: %v", got)
+	}
+	stateSinceOf(m, "idle", true, p)
+	stState, stAt = "working", now.Add(time.Hour)
+	if got, _ := stateSinceOf(m, "working", true, p); !got.Equal(base) {
+		t.Errorf("a future status mtime was used: %v", got)
+	}
+	// Going idle forgets; the next working starts a new clock.
+	if _, ok := stateSinceOf(m, "idle", true, p); ok {
+		t.Error("an idle row has a since")
+	}
+	stOK = false
+	if got, _ := stateSinceOf(m, "working", true, p); !got.Equal(now) {
+		t.Errorf("a new working stretch kept the old start: %v", got)
+	}
+	// compacting after working is a different state: the clock restarts.
+	now = now.Add(time.Hour)
+	if got, _ := stateSinceOf(m, "compacting", true, p); !got.Equal(now) {
+		t.Errorf("compacting did not restart the clock: %v", got)
+	}
+}
+
+// The start adopted from an old status file survives a later rewrite of the same state (F3), and
+// a Terminal hook-less kind never adopts a status mtime, which can belong to a previous turn (F2).
+func TestStateSinceKeepsAdoptedStartAndSkipsHooklessStatus(t *testing.T) {
+	t0 := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	now := t0
+	stState, stAt := "working", t0.Add(-21*time.Hour)
+	p := sinceProbes{
+		now:         func() time.Time { return now },
+		statusState: func(string) (string, bool) { return stState, true },
+		statusAt:    func(string) (time.Time, bool) { return stAt, true },
+	}
+	hook := session.Meta{Dir: "/d", Name: "since-hook", Kind: session.KindClaude}
+	t.Cleanup(func() { stateSinceOf(hook, "idle", true, p) })
+	if got, _ := stateSinceOf(hook, "working", true, p); !got.Equal(stAt) {
+		t.Fatalf("first poll after a restart: %v, want the status mtime %v", got, stAt)
+	}
+	// A hook rewrites the same state 10 minutes later: the 21 h must not shrink to 10 min.
+	now = t0.Add(10 * time.Minute)
+	stAt = now
+	if got, _ := stateSinceOf(hook, "working", true, p); !got.Equal(t0.Add(-21 * time.Hour)) {
+		t.Errorf("a status rewrite rejuvenated the start: %v", got)
+	}
+
+	// Terminal cursor: a stuck "working" status from 21 h ago, an idle poll, then a new turn.
+	now = t0
+	stAt = t0.Add(-21 * time.Hour)
+	cur := session.Meta{Dir: "/d", Name: "since-cursor", Kind: session.KindCursor}
+	t.Cleanup(func() { stateSinceOf(cur, "idle", true, p) })
+	stateSinceOf(cur, "idle", true, p)
+	now = t0.Add(time.Hour)
+	if got, _ := stateSinceOf(cur, "working", true, p); !got.Equal(now) {
+		t.Errorf("a new Terminal turn took the previous turn's status mtime: %v, want %v", got, now)
+	}
+}

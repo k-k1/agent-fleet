@@ -238,6 +238,11 @@ type Session struct {
 	// compares with its threshold so that a Workspace clock behind or ahead of the CP's cannot
 	// lapse a live row. 0 / absent = fresh or unknown: both hold.
 	ProgressAgeSec int `json:"progressAgeSec,omitempty"`
+	// StateSince (RFC3339) is when a working / compacting row's current state began, so the
+	// admin forecast can show how long a session has been holding the Workspace. Approximate:
+	// the older of the first poll that observed the state (in memory, resets when the Agent
+	// restarts) and, for hook kinds, the status file's mtime. "" = not busy.
+	StateSince string `json:"stateSince,omitempty"`
 	// RateLimitResumeAt is set ONLY when State == agents.StateLimited: the time (RFC3339) of
 	// the scheduled automatic resume. Empty = stopped at the limit with no resume armed
 	// (auto-resume off, nothing to derive the reset time from, or a per-model limit —

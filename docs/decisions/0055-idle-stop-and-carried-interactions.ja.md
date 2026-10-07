@@ -201,3 +201,7 @@ Workspace が際限なく起き続けた（実測で約 21 時間、#1811）。�
 - ピンと `backgroundBusy` を先に判定し、これらは対象外。`progressAgeSec` が無い（0 を含む）場合は
   従来どおり抱える（失効の判定は経過秒だけを読み、`progressAt` は読まない）。`holdersOf` も同じ述語を通す（決定 11）。
 - 対象外（従来どおり上限なし）: managed セッションと claude / agy 以外の kind。
+- 管理画面の見通し（#1819）は、抱えているセッションがどれだけ作業中か・いつ抱えなくなるかを出す。
+  Agent は `stateSince`（近似: 状態を最初に観測した poll、または status ファイルの mtime の古い方。
+  Agent 再起動で戻る）を報告し、`working` の `idleHolder` が `since` と `lapseAt`（経過秒の上限を
+  CP の時計で換算）を持つ。

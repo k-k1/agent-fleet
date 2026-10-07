@@ -222,3 +222,7 @@ bound inside `machineBusy`:
 - Checked after the pin and `backgroundBusy`, which are never subject to it. An absent (or zero)
   `progressAgeSec` keeps the old behaviour (hold); the lapse reads the age only, never `progressAt`. `holdersOf` goes through the same predicate (decision 11).
 - Not covered (still unbounded): managed sessions and every kind other than claude / agy.
+- The admin forecast (#1819) shows how long the holding session has been working and when the hold would
+  lapse: the Agent reports `stateSince` (approximate: the first poll that saw the state, or the status
+  file's mtime if older; resets on Agent restart), and `idleHolder` for `working` carries `since` and
+  `lapseAt` (progress age bound, on the CP's clock).

@@ -106,3 +106,32 @@ describe("auto-stop outlook on the member roster", () => {
     expect(document.querySelectorAll(".mr-idle").length).toBe(0);
   });
 });
+
+describe("how long the holding session has been working (#1819)", () => {
+  const agoHours = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+
+  it("shows the elapsed time next to the holding session on the roster", async () => {
+    await mountRoster([
+      {
+        user_key: "a",
+        role: "member",
+        state: "running",
+        idle: {
+          enabled: true,
+          holders: [{ kind: "working", session: "s5", since: agoHours(21), lapseAt: inHours(0.5) }],
+          observedAt: new Date().toISOString(),
+        },
+      },
+      {
+        user_key: "b",
+        role: "member",
+        state: "running",
+        idle: { enabled: true, holders: [{ kind: "working", session: "s6" }], observedAt: new Date().toISOString() },
+      },
+    ]);
+    expect(rowText(0)).toMatch(/s5.*21h/);
+    // An Agent that reports no start leaves the label as it was.
+    expect(rowText(1)).toContain("(s6)");
+    expect(rowText(1)).not.toMatch(/\dh|経過/);
+  });
+});

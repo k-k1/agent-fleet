@@ -42,6 +42,13 @@ type idleHolder struct {
 	Session string `json:"session,omitempty"`
 	// Until is the pin's expiry, set only when Kind=="pin".
 	Until string `json:"until,omitempty"`
+	// Since is when the holding session's current busy state began (RFC3339), set when Kind ==
+	// "working" and the Agent reported it. Approximate; see session.Session.StateSince.
+	Since string `json:"since,omitempty"`
+	// LapseAt is when this "working" hold stops counting if nothing moves: the last sign of
+	// progress plus busyProgressLapse, on this process's clock. Set only when the Agent reported
+	// a progress age (absent = the hold never lapses for this row).
+	LapseAt string `json:"lapseAt,omitempty"`
 }
 
 // holdersOf builds the reasons not to stop from one sweep's session list and presence. A
@@ -66,7 +73,7 @@ func holdersOf(sessions []sessionWire, watched bool, now time.Time, repoJobs, im
 			// compacting machineBusy for the reaper while the screen showed empty
 			// holders and a StopAt (docs/log/75 decision 11). A busy row whose progress
 			// lapsed (progressLapsed) is not a holder, exactly as in sessionActivity.
-			out = append(out, idleHolder{Kind: "working", Session: s.Name})
+			out = append(out, workingHolder(s, now))
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Session < out[j].Session })
@@ -88,6 +95,17 @@ func holdersOf(sessions []sessionWire, watched bool, now time.Time, repoJobs, im
 		out = append(out, idleHolder{Kind: "watching"})
 	}
 	return out
+}
+
+// workingHolder is the "working" holder for a row the reaper counts as busy. lapseAt is derived
+// from the Agent-computed age and this process's clock, never from the Agent's absolute time,
+// for the same skew reason progressLapsed reads the age only.
+func workingHolder(s sessionWire, now time.Time) idleHolder {
+	h := idleHolder{Kind: "working", Session: s.Name, Since: s.StateSince}
+	if s.ProgressAt != "" {
+		h.LapseAt = now.Add(busyProgressLapse - time.Duration(s.ProgressAgeSec)*time.Second).Format(time.RFC3339)
+	}
+	return h
 }
 
 // putIdleForecast records the reaper's latest read of one workspace.

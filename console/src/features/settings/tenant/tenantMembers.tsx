@@ -16,7 +16,7 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 // Cloud cost in the member detail (docs/log/67 §67.15). On a deployment without billing the
 // component renders nothing itself, so no condition is kept here.
 import { useT } from "../../../lib/i18n/index.ts";
-import { remainingShort } from "../../../lib/sessionview.ts";
+import { elapsedShort, remainingShort } from "../../../lib/sessionview.ts";
 import { fmtGbHint, ladderFor, memberClassID, slotFor, slotMemLabel, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
 import type { Member, MemberAutoStop, MemberIdle, WsSizing } from "../parts/adminShared.ts";
 import { startDeadlineBody } from "../../notifications/wording.ts";
@@ -134,7 +134,7 @@ function MemberIdleChip({ idle, state }: { idle?: MemberIdle; state?: string }) 
     const more = holders.length > 1 ? tr("admin.idle_hold_more", { n: String(holders.length - 1) }) : "";
     return (
       <span className="mr-idle hold" title={holdersTitle(holders, tr)}>
-        {(h.session ? `${label} (${h.session})` : label) + more}
+        {(h.session ? `${label} (${h.session}${workingFor(h, tr)})` : label) + more}
       </span>
     );
   }
@@ -147,8 +147,25 @@ function MemberIdleChip({ idle, state }: { idle?: MemberIdle; state?: string }) 
   );
 }
 
+// ", working for 21h" — how long a "working" holder has been in that state, so a session stuck
+// for a day reads differently from one that started a turn a minute ago (#1819). "" for any
+// other holder, or when the Agent did not report when the state began.
+function workingFor(h: { kind: string; since?: string }, tr: ReturnType<typeof useT>): string {
+  if (h.kind !== "working") return "";
+  const f = elapsedShort(h.since);
+  return f ? tr("admin.idle_hold_for", { for: f }) : "";
+}
+
 function holdersTitle(holders: NonNullable<MemberIdle["holders"]>, tr: (k: never, p?: never) => string): string {
   return holders.map((h) => (h.session ? `${h.kind}: ${h.session}` : h.kind)).join(" / ");
+}
+
+// The detail row's tail for a "working" holder: how long it has been working and when the hold
+// lapses if the session stays frozen. Either part is left out when the Agent did not report it.
+function workingDetail(h: { since?: string; lapseAt?: string }, tr: ReturnType<typeof useT>): string {
+  const f = elapsedShort(h.since);
+  const left = remainingShort(h.lapseAt);
+  return (f ? tr("admin.idle_hold_for_row", { for: f }) : "") + (left ? tr("admin.idle_hold_lapse_row", { left }) : "");
 }
 
 // MemberIdleDetail — the auto-stop outlook in the member detail.
@@ -181,7 +198,7 @@ export function MemberIdleDetail({ idle, state }: { idle?: MemberIdle; state?: s
                 {h.kind === "pin"
                   ? tr("admin.idle_hold_pin_row", { session: h.session ?? "", left: remainingShort(h.until) || "–" })
                   : h.kind === "working"
-                    ? tr("admin.idle_hold_working_row", { session: h.session ?? "" })
+                    ? tr("admin.idle_hold_working_row", { session: h.session ?? "" }) + workingDetail(h, tr)
                     : h.kind === "background"
                       ? tr("admin.idle_hold_background_row", { session: h.session ?? "" })
                       : h.kind === "repojob"

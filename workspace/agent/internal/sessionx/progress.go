@@ -1,6 +1,7 @@
 package sessionx
 
 import (
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -142,5 +143,93 @@ func fillProgress(s *session.Session, m session.Meta, p progressProbes) {
 	s.ProgressAt = at.Format(time.RFC3339)
 	if age := int(p.now().Sub(at) / time.Second); age > 0 {
 		s.ProgressAgeSec = age
+	}
+}
+
+// Session.StateSince (#1819): when a working / compacting row's current state began, so the
+// admin forecast can say "working for 21h" next to the session holding a Workspace awake.
+//
+// It is APPROXIMATE, and the two sources are both upper bounds on the true start:
+//   - the first poll that observed the state (kept in memory per session, so it resets when the
+//     Agent restarts, and a state that flipped away and back between two polls is not seen);
+//   - for kinds whose hooks or driver write the state boundary (claude, codex, opencode, managed),
+//     the status file's mtime while the stored state equals this one. A hook can rewrite the
+//     same state, which moves the mtime later than the real start. Terminal agy / copilot /
+//     cursor / kiro are excluded: their status is written by /input and never cleared by the
+//     poll that sees the turn end, so a 21 h old "working" can sit there under a new turn.
+//
+// The OLDER of the two is reported, since each can only be late, and the start once adopted is
+// kept for as long as the same busy state continues. Only busy rows carry it.
+
+type stateSeen struct {
+	state string
+	since time.Time
+}
+
+var (
+	stateSeenMu  sync.Mutex
+	stateSeenMap = map[string]stateSeen{}
+)
+
+// sinceProbes are the world inputs of stateSinceOf, injectable for tests.
+type sinceProbes struct {
+	now         func() time.Time
+	statusState func(sid string) (string, bool)
+	statusAt    func(sid string) (time.Time, bool)
+}
+
+var realSinceProbes = sinceProbes{
+	now: time.Now,
+	statusState: func(sid string) (string, bool) {
+		st, ok := status.Read(sid)
+		return st.State, ok
+	},
+	statusAt: status.StateAt,
+}
+
+// stateSinceOf records this poll's observation and returns when the row's current busy state
+// began (ok=false for a row that is not busy, which also forgets it).
+func stateSinceOf(m session.Meta, state string, alive bool, p sinceProbes) (time.Time, bool) {
+	stateSeenMu.Lock()
+	defer stateSeenMu.Unlock()
+	if !alive || (state != "working" && state != "compacting") {
+		delete(stateSeenMap, m.Name)
+		return time.Time{}, false
+	}
+	now := p.now()
+	e, ok := stateSeenMap[m.Name]
+	if !ok || e.state != state {
+		e = stateSeen{state: state, since: now}
+		stateSeenMap[m.Name] = e
+	}
+	if statusMarksBoundary(m) {
+		sid := session.UUID(m.Dir, m.Name)
+		if st, ok := p.statusState(sid); ok && st == state {
+			if at, ok := p.statusAt(sid); ok && at.Before(e.since) && !at.After(now) {
+				e.since = at
+				stateSeenMap[m.Name] = e
+			}
+		}
+	}
+	return e.since, true
+}
+
+// statusMarksBoundary: the status file's mtime can stand for the start of the current state. Not
+// for Terminal rows of the hook-less kinds (see above).
+func statusMarksBoundary(m session.Meta) bool {
+	if m.DriverKind() == session.DriverManaged {
+		return true
+	}
+	switch NormalizeKind(m.Kind) {
+	case session.KindAgy, session.KindCopilot, session.KindCursor, session.KindKiro:
+		return false
+	}
+	return true
+}
+
+// fillStateSince sets Session.StateSince from stateSinceOf.
+func fillStateSince(s *session.Session, m session.Meta, p sinceProbes) {
+	if at, ok := stateSinceOf(m, s.State, s.Alive, p); ok {
+		s.StateSince = at.Format(time.RFC3339)
 	}
 }

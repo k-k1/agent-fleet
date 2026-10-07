@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { displayName, remainingShort, resumeClock, stateInfo, stripLabelTag } from "./sessionview.ts";
+import { displayName, elapsedShort, remainingShort, resumeClock, stateInfo, stripLabelTag } from "./sessionview.ts";
 import { t } from "./i18n/index.ts";
 
 // The state-chip mapping. What is pinned here is that "auth expired" (docs/log/47 §4-8) gets a chip
@@ -247,5 +247,20 @@ describe("stripLabelTag", () => {
     const s = { name: "s6bbilu", kind: "claude", label: "[AF:s6bbilu] agent-fleet @0831-1922" };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect(displayName(s as any)).toBe("agent-fleet @0831-1922");
+  });
+});
+
+describe("elapsedShort", () => {
+  const now = new Date("2026-10-07T12:00:00Z");
+  it("formats minutes, hours and days compactly", () => {
+    expect(elapsedShort("2026-10-07T11:15:00Z", now)).toBe("45m");
+    expect(elapsedShort("2026-10-06T15:00:00Z", now)).toBe("21h");
+    expect(elapsedShort("2026-10-04T09:00:00Z", now)).toBe("3d3h");
+    expect(elapsedShort("2026-10-05T12:00:00Z", now)).toBe("2d");
+  });
+  it("is empty for a missing or unparseable instant and clamps the future", () => {
+    expect(elapsedShort(undefined, now)).toBe("");
+    expect(elapsedShort("nope", now)).toBe("");
+    expect(elapsedShort("2026-10-07T13:00:00Z", now)).toBe("0m");
   });
 });
