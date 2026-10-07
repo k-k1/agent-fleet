@@ -19,6 +19,7 @@ import { RegionSelect } from "../parts/RegionSelect.tsx";
 import { FieldGroup, deleteRow, pick, postJSON } from "./SsmTab.tsx";
 import { GcpProfileLoginModal, type GcpLoginProfile } from "../../gcplogin/GcpProfileLoginModal.tsx";
 import { useGcpLoginStore } from "../../gcplogin/store.ts";
+import { useGcpProfileLogout } from "../../gcplogin/useGcpProfileLogout.tsx";
 
 /** One row of GET /api/gcp/profiles. */
 export interface GcpProfile {
@@ -74,6 +75,8 @@ export function GcpTab() {
       .catch(() => setStates({}));
   }, []);
   useEffect(loadStates, [loadStates]);
+  const logout = useGcpProfileLogout();
+  const loggingOut = useGcpLoginStore((s) => s.loggingOut);
 
   // A failed GET keeps the last list (null if none ever loaded) and says so, as SsmTab does:
   // replacing it with [] would close an open edit form as if its row had been deleted.
@@ -273,6 +276,16 @@ export function GcpTab() {
                       >
                         {tr(states[p.name]?.state === "signed_in" ? "gcplogin.login_again" : "gcplogin.login")}
                       </button>
+                      {states[p.name]?.state === "signed_in" && (
+                        <button
+                          className="ghost gcp-logout"
+                          title={tr("gcplogin.logout_title")}
+                          disabled={busy || loggingOut[p.name] === true}
+                          onClick={() => void logout(p).then((done) => done && loadStates())}
+                        >
+                          {tr("gcplogin.logout")}
+                        </button>
+                      )}
                     </>
                   )}
                   <button

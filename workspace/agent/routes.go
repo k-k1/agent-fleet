@@ -205,6 +205,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /gcp-login/{id}/cancel", gcpx.HandleLoginCancel)
 	mux.HandleFunc("GET /gcp-login/profiles", gcpx.HandleProfileLoginStates)
 	mux.HandleFunc("POST /gcp-login/profiles/{name}/start", gcpx.HandleProfileLoginStart)
+	mux.HandleFunc("POST /gcp-login/profiles/{name}/logout", gcpx.HandleProfileLogout)
 	mux.HandleFunc("GET /gcp-login/profiles/{name}/attempts/{attempt}", gcpx.HandleProfileLoginAttempt)
 	mux.HandleFunc("POST /gcp-login/profiles/{name}/attempts/{attempt}/code", gcpx.HandleProfileLoginCode)
 	mux.HandleFunc("POST /ssm/instances", handleSSMInstances)

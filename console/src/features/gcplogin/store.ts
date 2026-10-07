@@ -69,7 +69,20 @@ interface GcpLoginState {
   profileModal: GcpProfileModal | null;
   showProfile(m: GcpProfileModal): void;
   closeProfile(): void;
+  /** Profiles a logout is running for; their buttons stay off until it answers. */
+  loggingOut: Record<string, true>;
+  /** Signs the workspace out of the profile's account, then re-reads the list. A second call while one runs is refused. */
+  logoutProfile(name: string): Promise<GcpLogoutResult>;
 }
+
+/**
+ * The Agent's answer to a logout. gcloud's store is per account, so every profile that
+ * selected the account (profiles) is signed out with it; account is "" when the profile
+ * selected none. Nothing is revoked at Google.
+ */
+export type GcpLogoutResult =
+  | { ok: true; account: string; profiles: string[] }
+  | { ok: false; code: string; message: string };
 
 function asRequest(raw: unknown): GcpLoginRequest | null {
   const r = raw as Record<string, unknown>;
@@ -109,7 +122,7 @@ export const useGcpLoginStore = create<GcpLoginState>((set, get) => ({
   },
   reset() {
     clearTimeout(syncTimer);
-    set({ requests: [], hidden: {}, modal: null, profiles: null, profileModal: null });
+    set({ requests: [], hidden: {}, modal: null, profiles: null, profileModal: null, loggingOut: {} });
   },
   hide(id) {
     set((s) => ({ hidden: { ...s.hidden, [id]: true } }));
@@ -157,6 +170,29 @@ export const useGcpLoginStore = create<GcpLoginState>((set, get) => ({
   },
   closeProfile() {
     set({ profileModal: null });
+  },
+  loggingOut: {},
+  async logoutProfile(name) {
+    // === true, not truthiness: a profile named "constructor" would read Object.prototype's.
+    // "in_flight", not the Agent's "busy" (another login holds the store), which is shown.
+    if (get().loggingOut[name] === true) return { ok: false, code: "in_flight", message: "" };
+    set((s) => ({ loggingOut: { ...s.loggingOut, [name]: true } }));
+    let d: { account?: unknown; profiles?: unknown; error?: { code?: string; message?: string } } | null;
+    try {
+      d = await api(`api/gcp-login/profiles/${encodeURIComponent(name)}/logout`, { method: "POST" });
+    } catch (e) {
+      return { ok: false, code: "", message: String((e as Error)?.message || e) };
+    } finally {
+      set((s) => {
+        const { [name]: _, ...rest } = s.loggingOut;
+        return { loggingOut: rest };
+      });
+    }
+    // Whatever the answer, the store may have changed under the list.
+    void get().refreshProfiles();
+    if (!d || d.error) return { ok: false, code: d?.error?.code || "", message: d?.error?.message || "" };
+    const profiles = Array.isArray(d.profiles) ? d.profiles.filter((p): p is string => typeof p === "string") : [];
+    return { ok: true, account: String(d.account ?? ""), profiles };
   },
 }));
 

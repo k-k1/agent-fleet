@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd workspace/agent && go test -run TestRouteTableGolden -update-routes-golden .
 # ANY = registered without a method.
-# count: 353
+# count: 355
 GET /agents/memory/claude-import
 POST /agents/memory/claude-import
 GET /agents/memory/claude-import/preview
@@ -194,6 +194,7 @@ GET /gcp-login
 GET /gcp-login/profiles
 GET /gcp-login/profiles/{name}/attempts/{attempt}
 POST /gcp-login/profiles/{name}/attempts/{attempt}/code
+POST /gcp-login/profiles/{name}/logout
 POST /gcp-login/profiles/{name}/start
 POST /gcp-login/{id}/cancel
 POST /gcp-login/{id}/start

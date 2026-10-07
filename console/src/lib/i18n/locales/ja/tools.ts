@@ -1059,4 +1059,12 @@ export const tools = {
   "gcplogin.login_title": "このプロファイルでワークスペースを Google にログインさせる",
   "gcplogin.login_again_title": "保存済みのログインを使わずにログインし直す（失効したと分かっているときに使います）",
   "gcplogin.signed_in_as": "{account} でログイン済み",
+  "gcplogin.logout": "ログアウト",
+  "gcplogin.logout_title": "このプロファイルの Google アカウントからワークスペースをログアウトします",
+  "gcplogin.logout_confirm_title": "{profile} からログアウトしますか？",
+  "gcplogin.logout_confirm_body": "ワークスペースに保存された {account} の Google ログインを削除します。ログインは Google アカウントごとに 1 つなので、このアカウントを使うプロファイルはすべてログアウトします。Google 側のサインインと、ほかのマシンの gcloud には影響しません。実行中のコマンドがすでに受け取ったトークンは期限（最長 1 時間）まで有効です。再び使うにはログインし直してください。",
+  "gcplogin.logout_confirm_others": "一緒にログアウトするプロファイル: {profiles}",
+  "gcplogin.logout_done": "{profile} からログアウトしました。",
+  "gcplogin.logout_done_with": "{profile} と、同じアカウントの {profiles} からログアウトしました。",
+  "gcplogin.logout_failed": "ログアウトできませんでした: {msg}",
 };

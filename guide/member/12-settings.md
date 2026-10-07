@@ -386,7 +386,8 @@ until you rename one; the row says so. Each available row has **Log in** to sign
 that profile from the Console: it opens a login window, the sign-in starts only when you press **Log in** there, and
 you paste the verification code Google shows into that same window, and only into a login you started yourself.
 A logged-in row says **"Logged in as <account>"** and offers **Log in again**, which signs in afresh for a login you
-know was revoked. The WS bar's Google Cloud badge lists the same logins.
+know was revoked, and **Log out**, which deletes the workspace's login for that account (every profile using the
+account is logged out with it; nothing changes at Google). The WS bar's Google Cloud badge lists the same logins.
 → [10 Going further](10-integrations.md#running-commands-in-google-cloud-as-you-af-gcloud-exec)
 
 ---

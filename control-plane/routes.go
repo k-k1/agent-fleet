@@ -446,6 +446,8 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/gcp-login/{id}/cancel", rest)
 	mux.HandleFunc("GET /api/gcp-login/profiles", rest)
 	mux.HandleFunc("POST /api/gcp-login/profiles/{name}/start", gcpLogin)
+	// "Log out" of one profile: a plain request, as for AWS.
+	mux.HandleFunc("POST /api/gcp-login/profiles/{name}/logout", rest)
 	mux.HandleFunc("GET /api/gcp-login/profiles/{name}/attempts/{attempt}", gcpLogin)
 	mux.HandleFunc("POST /api/gcp-login/profiles/{name}/attempts/{attempt}/code", proxy.withResolved(proxy.gcpLoginCode))
 	mux.HandleFunc("POST /api/sessions/{name}/start", ws.withResolved(ws.sessionStart))

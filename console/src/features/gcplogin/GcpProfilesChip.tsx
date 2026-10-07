@@ -25,6 +25,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useGcpLoginStore, type GcpProfileState } from "./store.ts";
+import { useGcpProfileLogout } from "./useGcpProfileLogout.tsx";
 
 export const isLoggedIn = (p: GcpProfileState) => p.state === "signed_in";
 
@@ -45,6 +46,8 @@ export function GcpProfilesChip({ hidden = false, passive = false }: { hidden?: 
   const refresh = useGcpLoginStore((s) => s.refreshProfiles);
   const showProfile = useGcpLoginStore((s) => s.showProfile);
   const openSettings = useSettingsUI((s) => s.openSettings);
+  const loggingOut = useGcpLoginStore((s) => s.loggingOut);
+  const logout = useGcpProfileLogout();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const shown = running && !!profiles && profiles.length > 0;
@@ -155,6 +158,22 @@ export function GcpProfilesChip({ hidden = false, passive = false }: { hidden?: 
                       >
                         {tr(on ? "gcplogin.login_again" : "gcplogin.login")}
                       </Button>
+                      {on && (
+                        <Button
+                          variant="ghost"
+                          className="ws-aws-logout ws-gcp-logout"
+                          title={tr("gcplogin.logout_title")}
+                          disabled={loggingOut[p.name] === true}
+                          onClick={() => {
+                            // The confirm dialog sits outside the popover, whose dismiss
+                            // layer would close it on the first press there.
+                            setOpen(false);
+                            void logout(p);
+                          }}
+                        >
+                          {tr("gcplogin.logout")}
+                        </Button>
+                      )}
                     </span>
                   </div>
                 </li>
