@@ -208,9 +208,8 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		// since the next poll then reads "working" from the file.
 		//
 		// Not when the Stop hook closed this turn: see PaneMayReopen.
-		if li.State == "idle" && pane.Busy && PaneMayReopen(sid) {
+		if li.State == "idle" && pane.Busy && ReopenFromPane(sid) {
 			li.State = "working"
-			status.Persist(sid, "working")
 		}
 		// Still idle: background work may yet be running — surface it so "waiting for input"
 		// isn't mistaken for "done".

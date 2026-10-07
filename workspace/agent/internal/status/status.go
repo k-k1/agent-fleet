@@ -300,6 +300,14 @@ func ObservedTurnEnd(sid string) string {
 }
 
 func persist(sid string, s SessionStatus) {
+	// A timeout still writes: the hook's record is authoritative, and only the conditional
+	// heal (PersistIf) is allowed to give way.
+	unlock, _ := lockSid(sid)
+	defer unlock()
+	persistLocked(sid, s)
+}
+
+func persistLocked(sid string, s SessionStatus) {
 	s.TS = time.Now().Format(time.RFC3339)
 	s.Rev = newRev()
 	write(sid, s)
@@ -333,7 +341,14 @@ func ModalState(state string) bool {
 }
 
 func Remove(sid string) {
+	unlock, locked := lockSid(sid)
+	defer unlock()
 	statusFiles.Remove(sid)
+	// Unlinking the lock file without holding it would let a second holder lock a fresh
+	// inode alongside the first; on timeout the file stays until the next Remove.
+	if locked {
+		_ = os.Remove(lockPath(sid))
+	}
 	observedEnds.Remove(sid)
 	RemovePendingQuestion(sid)
 	RemovePendingPlan(sid)
