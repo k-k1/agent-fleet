@@ -92,12 +92,15 @@ func HandleListRemoteRepos(w http.ResponseWriter, r *http.Request) {
 	}
 	switch host {
 	case "github.com":
-		e, ok := s.Git[host]
-		if !ok || e.Token == "" {
+		var repos []remoteRepo
+		err := WithGitHubToken(s, errGitHubNotConnected, func(tok string) (e error) {
+			repos, e = githubListRepos(tok)
+			return e
+		})
+		if errors.Is(err, errGitHubNotConnected) {
 			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", "GitHub is not connected")
 			return
 		}
-		repos, err := githubListRepos(e.Token)
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadGateway, "provider_error", err.Error())
 			return
@@ -142,12 +145,16 @@ func HandleListRemoteBranches(w http.ResponseWriter, r *http.Request) {
 	}
 	switch host {
 	case "github.com":
-		e, ok := s.Git[host]
-		if !ok || e.Token == "" {
+		var branches []remoteBranch
+		var def string
+		err := WithGitHubToken(s, errGitHubNotConnected, func(tok string) (e error) {
+			branches, def, e = githubListBranches(tok, repo)
+			return e
+		})
+		if errors.Is(err, errGitHubNotConnected) {
 			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", "GitHub is not connected")
 			return
 		}
-		branches, def, err := githubListBranches(e.Token, repo)
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadGateway, "provider_error", err.Error())
 			return
@@ -245,7 +252,7 @@ func githubListBranches(token, repo string) ([]remoteBranch, string, error) {
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			if resp.StatusCode == http.StatusUnauthorized {
-				return nil, "", fmt.Errorf("github token rejected (re-connect GitHub)")
+				return nil, "", NewGitHubUnauthorized("github token rejected (re-connect GitHub)")
 			}
 			return nil, "", fmt.Errorf("github graphql %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
 		}
@@ -403,7 +410,7 @@ func githubReposPage(client *http.Client, token, url string) ([]remoteRepo, stri
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		msg := strings.TrimSpace(string(b))
 		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, "", fmt.Errorf("github token rejected (re-connect GitHub)")
+			return nil, "", NewGitHubUnauthorized("github token rejected (re-connect GitHub)")
 		}
 		return nil, "", fmt.Errorf("github %d: %s", resp.StatusCode, msg)
 	}

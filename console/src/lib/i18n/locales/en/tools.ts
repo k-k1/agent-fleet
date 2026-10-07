@@ -652,7 +652,8 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "git.github_app_install_link": "Install the app / choose repositories",
   "git.github_app_not_installed": "Connected, but the GitHub App is not installed on any account you can see, so no repository is reachable yet. Install it and choose the repositories.",
   "git.github_app_connected_hint": "If this connection went through the tenant's GitHub App, it reaches only the repositories the app is installed on. To add or change them:",
-  "git.github_token_expires": "Connected, but this GitHub App issues tokens that expire in about eight hours and af does not renew them yet. Ask your tenant administrator to turn off “Expire user authorization tokens” in the app's settings.",
+  "git.github_token_expires": "Connected, but this GitHub App issues tokens that expire in about eight hours, and this workspace's Agent is too old to renew them. Restart the workspace to update the Agent, then reconnect GitHub.",
+  "git.github_reconnect_needed": "GitHub could not renew this connection: the authorization has expired or was revoked. Disconnect and connect GitHub again.",
   // Shown when the OAuth option is not offered at all (docs/log/71). A button nobody can
   // make work is worse than no button: the setting belongs to their tenant admin.
   "git.oauth_unregistered": "Connecting with OAuth isn't offered because this tenant has no OAuth app registered. Ask a tenant administrator to add one under Tenant settings › Integrations › Git provider OAuth.",

@@ -34,6 +34,18 @@ type GitEntry struct {
 	Token string `json:"token"`
 	Login string `json:"login,omitempty"` // cached real provider account/handle (resolved from the API)
 	Email string `json:"email,omitempty"` // cached account email (resolved from the API)
+
+	// Renewal state of an expiring GitHub App user token from the device flow. All empty
+	// for a pasted PAT and for a non-expiring app token, which is how those keep their
+	// old behaviour: no RefreshToken, nothing to renew. No client secret is stored — the
+	// device flow's refresh grant takes only the ClientID.
+	RefreshToken  string `json:"refresh_token,omitempty"`
+	Expiry        int64  `json:"expiry,omitempty"`         // access token expiry, unix seconds; 0 = unknown
+	RefreshExpiry int64  `json:"refresh_expiry,omitempty"` // refresh token expiry, unix seconds; 0 = unknown
+	ClientID      string `json:"client_id,omitempty"`      // the OAuth app that minted the pair
+	// ReconnectNeeded is set once GitHub has refused the refresh token for good (expired,
+	// revoked, app uninstalled). Only a new connect clears it.
+	ReconnectNeeded bool `json:"reconnect_needed,omitempty"`
 }
 
 // GitIdentity is a provider's explicit commit identity (user.name / user.email),
@@ -422,6 +434,27 @@ var storeMu sync.Mutex
 // replaces the locked inode.
 func withFileLock(fn func() error) error {
 	lockPath := Path() + ".lock"
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
+	return fn()
+}
+
+// WithLock runs fn while holding an exclusive flock on <store>.<name>.lock, across
+// processes (the agent and the git credential helper are separate binaries). It is a
+// different lock from the store's own, so fn may call Load / Update — but must never be
+// called from inside an Update, or two such callers can deadlock in opposite orders.
+func WithLock(name string, fn func() error) error {
+	lockPath := Path() + "." + name + ".lock"
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
 		return err
 	}

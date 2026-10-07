@@ -964,7 +964,12 @@ func gitConnStatus(s *secrets.Data, host string) map[string]any {
 	if !ok {
 		return m
 	}
-	if host == "github.com" && (e.Login == "" || e.Email == "") && e.Token != "" {
+	if host == "github.com" && gitx.GitHubReconnectNeeded(e) {
+		// An expiring app token that can no longer be renewed: the Console shows
+		// "reconnect needed" instead of a connection that fails on every use.
+		m["reconnect_needed"] = true
+	}
+	if host == "github.com" && (e.Login == "" || e.Email == "") && e.Token != "" && !gitx.GitHubReconnectNeeded(e) {
 		if login, email, err := gitx.GithubAccount(e.Token); err == nil && login != "" {
 			e.Login, e.Email = login, email
 			s.Git[host] = e
@@ -997,6 +1002,13 @@ type gitConnReq struct {
 	Token    string `json:"token"`
 	Name     string `json:"name"`  // optional git author name (for commits)
 	Email    string `json:"email"` // optional git author email
+
+	// Renewal data of an expiring GitHub App user token (device flow), github.com only.
+	// Sent by the Control Plane next to the access token; a pasted token carries none.
+	RefreshToken     string `json:"refresh_token"`
+	ExpiresIn        int64  `json:"expires_in"`
+	RefreshExpiresIn int64  `json:"refresh_token_expires_in"`
+	ClientID         string `json:"client_id"`
 }
 
 // handlePutGitConn stores an HTTPS credential for a provider in the encrypted store,
@@ -1048,13 +1060,31 @@ func handlePutGitConn(w http.ResponseWriter, r *http.Request) {
 		warn = w2
 	}
 
-	if err := upsertGitCredential(host, user, token); err != nil {
+	entry := secrets.GitEntry{User: user, Token: token}
+	if rt := strings.TrimSpace(req.RefreshToken); rt != "" && host == "github.com" {
+		// Without the OAuth app's client id the refresh grant cannot be asked for, so a
+		// pair without one is stored as a plain token rather than half-renewable.
+		if cid := strings.TrimSpace(req.ClientID); cid != "" {
+			now := time.Now().Unix()
+			entry.RefreshToken, entry.ClientID = rt, cid
+			if req.ExpiresIn > 0 {
+				entry.Expiry = now + req.ExpiresIn
+			}
+			if req.RefreshExpiresIn > 0 {
+				entry.RefreshExpiry = now + req.RefreshExpiresIn
+			}
+		}
+	}
+	if err := storeGitCredential(host, entry); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
 	// Commit identity is set separately (per provider) via /identity — not clobbered
 	// into the global config at connect time.
 	resp := map[string]any{"connected": true, "host": host, "username": user}
+	if entry.RefreshToken != "" {
+		resp["renewable"] = true // the CP drops its "this token will expire" warning on this
+	}
 	if warn != "" {
 		resp["warn"] = warn
 	}
@@ -1080,8 +1110,14 @@ func handleDeleteGitConn(w http.ResponseWriter, r *http.Request) {
 // upsertGitCredential stores an HTTPS credential for host in the encrypted store
 // and ensures the cred helper is the active git credential source.
 func upsertGitCredential(host, user, token string) error {
+	return storeGitCredential(host, secrets.GitEntry{User: user, Token: token})
+}
+
+// storeGitCredential is upsertGitCredential for a prepared entry (one that carries the
+// renewal data of an expiring GitHub token).
+func storeGitCredential(host string, e secrets.GitEntry) error {
 	if err := secrets.Update(func(s *secrets.Data) error {
-		s.Git[host] = secrets.GitEntry{User: user, Token: token}
+		s.Git[host] = e
 		return nil
 	}); err != nil {
 		return err

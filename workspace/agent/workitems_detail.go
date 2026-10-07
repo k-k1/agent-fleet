@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -147,15 +148,18 @@ func handleWorkItemsDetail(w http.ResponseWriter, r *http.Request) {
 	var out *workItemDetailOut
 	switch strings.TrimSpace(in.Provider) {
 	case "", "github":
-		e, ok := s.Git["github.com"]
-		if !ok || e.Token == "" {
+		errNotConnected := errors.New("GitHub is not connected")
+		err = gitx.WithGitHubToken(s, errNotConnected, func(tok string) (e error) {
+			if kind == "pr" {
+				out, e = githubPullRequestDetail(tok, key)
+			} else {
+				out, e = githubReferenceDetail(tok, key)
+			}
+			return e
+		})
+		if errors.Is(err, errNotConnected) {
 			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", "GitHub is not connected")
 			return
-		}
-		if kind == "pr" {
-			out, err = githubPullRequestDetail(e.Token, key)
-		} else {
-			out, err = githubReferenceDetail(e.Token, key)
 		}
 	case "bitbucket":
 		out, err = bitbucketPullRequestDetail(s, key)
@@ -296,6 +300,9 @@ func githubGetJSON(token, u, key string) ([]byte, error) {
 		case http.StatusUnauthorized, http.StatusForbidden:
 			if strings.Contains(strings.ToLower(string(body)), "rate limit") {
 				return nil, fmt.Errorf("github rate limit reached")
+			}
+			if resp.StatusCode == http.StatusUnauthorized {
+				return nil, gitx.NewGitHubUnauthorized(fmt.Sprintf("github refused this read (%d)", resp.StatusCode))
 			}
 			return nil, fmt.Errorf("github refused this read (%d)", resp.StatusCode)
 		case http.StatusNotFound:

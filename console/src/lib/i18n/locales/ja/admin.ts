@@ -1202,7 +1202,7 @@ export const admin = {
   "tenant.gh_type_by_token": "メンバーの接続で確認済み",
   "tenant.gh_type_by_prefix": "GitHub に届かなかったため client_id の形から推定",
   "tenant.gh_type_by_none": "GitHub に届かず client_id の形からも分かりません。最初の接続で判明します",
-  "tenant.gh_github_app_expiry": "GitHub App の場合は、アプリ設定の「Expire user authorization tokens」をオフにしてください。af はまだこのトークンを更新しないため、約 8 時間で接続が切れます。",
+  "tenant.gh_github_app_expiry": "GitHub App では「Expire user authorization tokens」をオンのままにできます。af がクライアントシークレットなしでトークンを自分で更新します。認可が取り消された、または期限（約 6 か月）が切れたメンバーには、もう一度の接続を案内します。",
   "tenant.gh_reset": "既定に戻す",
   "tenant.summary_note": "テナント全体の上限を決めるのは配備管理者です",
   "tenant.group_manage": "運用",

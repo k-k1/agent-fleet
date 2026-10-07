@@ -5,6 +5,8 @@ English | [日本語](0052-tenant-git-oauth.ja.md)
 - Status: **adopted** (2026-08-22). The record of the investigation is [docs/71](../log/71-tenant-git-oauth.md).
   Amended 2026-10-04 (issue #1667): GitHub gains built-in apps and app-kind detection — decisions 8
   and 9, which partly supersede decisions 1 and 2.
+  Amended 2026-10-08 (issue #1676): the Agent now renews expiring GitHub App user tokens — see the
+  dated note under decision 8's last bullet.
 - See also: [0043-login-idp.md](0043-login-idp.md) decisions 29/30 (a tenant-defined IdP — the side
   that **requires approval**) and decisions 24/25 (what reaches outside the tenant belongs to the
   operator; what stays inside belongs to the tenant admin) /
@@ -166,6 +168,16 @@ ticked Device flow and pasted the client_id. Two project-owned apps now ship wit
   on returns an 8-hour token and a refresh token. A device-flow token can be refreshed without a
   client_secret, but af stores only the access token today, so the connection is made, the member is
   warned, and the admin form says to switch expiration off. Renewal is #1676.
+  🔴 **Amended 2026-10-08 (#1676):** the bullet above describes 2026-10-04 and no longer holds. The
+  CP now hands the refresh token, both lifetimes and the app's client_id to the member's Agent next
+  to the access token; the Agent renews the access token itself, shortly before expiry and on a 401,
+  with `POST /login/oauth/access_token` (`client_id`, `grant_type=refresh_token`, `refresh_token`) —
+  no client_secret is stored anywhere. Refresh tokens are single use, so the grant runs under a
+  cross-process lock and the new pair is written before it is used. When GitHub refuses the refresh
+  token (revoked, or the 6 months ran out) the connection is marked "reconnect needed" in
+  Connections. A token with no refresh token behaves as before. The admin form no longer asks to
+  switch expiration off; the warning after connecting remains only for a workspace whose Agent
+  predates renewal.
 
 ## Decision 9 — the kind of a custom app is **detected**, not asked (2026-10-04, #1667)
 

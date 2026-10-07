@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -51,12 +52,15 @@ func handleWorkItemsComment(w http.ResponseWriter, r *http.Request) {
 	var url string
 	switch strings.TrimSpace(in.Provider) {
 	case "", "github":
-		e, ok := s.Git["github.com"]
-		if !ok || e.Token == "" {
+		errNotConnected := errors.New("GitHub is not connected")
+		err = gitx.WithGitHubToken(s, errNotConnected, func(tok string) (e error) {
+			url, e = githubPostIssueComment(tok, key, body)
+			return e
+		})
+		if errors.Is(err, errNotConnected) {
 			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", "GitHub is not connected")
 			return
 		}
-		url, err = githubPostIssueComment(e.Token, key, body)
 	case "jira":
 		if !jiraConnected(s.Jira) {
 			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", "Jira is not connected")
@@ -123,7 +127,11 @@ func githubPostIssueComment(token, key, body string) (string, error) {
 		case http.StatusUnauthorized, http.StatusForbidden:
 			// Reads can succeed while only the post gets a 403 (token scope, or a closed/locked
 			// issue), so do not flatly tell the user to reconnect.
-			return "", fmt.Errorf("github refused the comment (%d) — the token may lack write access, or the issue is locked", resp.StatusCode)
+			msg := fmt.Sprintf("github refused the comment (%d) — the token may lack write access, or the issue is locked", resp.StatusCode)
+			if resp.StatusCode == http.StatusUnauthorized {
+				return "", gitx.NewGitHubUnauthorized(msg)
+			}
+			return "", fmt.Errorf("%s", msg)
 		case http.StatusNotFound:
 			return "", fmt.Errorf("github has no %s", key)
 		}

@@ -5,6 +5,8 @@
 - 状態: **採用**（2026-08-22）。検討の記録は [docs/71](../log/71-tenant-git-oauth.md)。
   2026-10-04 改訂（issue #1667）: GitHub に組み込みアプリと種類の自動判別を追加——決定 8・9。
   決定 1・2 を一部置き換える。
+  2026-10-08 改訂（issue #1676）: Agent が期限付きの GitHub App ユーザートークンを更新するように
+  なった——決定 8 の最後の箇条にある日付付きの注記を参照。
 - 関連: [0043-login-idp.md](0043-login-idp.ja.md) 決定 29/30（テナント定義の IdP＝**承認が要る**側）・
   決定 24/25（テナントの外へ届くものは運用者、中で閉じるものはテナント管理者） /
   [0047-tenant-network-restriction.md](0047-tenant-network-restriction.ja.md) 決定 6（同じ線引き）
@@ -153,6 +155,15 @@ key/secret を必須にしているため、**アップグレードの窓で 1 �
   GitHub App は 8 時間の token と refresh token を返す。device flow で得た token は client_secret
   なしで更新できるが、af は今は access token しか保存しないので、接続はしたうえでメンバーに
   警告し、管理画面では期限をオフにするよう案内する。更新への対応は #1676。
+  🔴 **2026-10-08 改訂（#1676）:** 上の箇条は 2026-10-04 時点の記述で、今は当てはまらない。CP は
+  refresh token・両方の有効期間・アプリの client_id を、access token と一緒にメンバーの Agent へ渡す。
+  Agent は期限の直前と 401 のときに `POST /login/oauth/access_token`（`client_id`・
+  `grant_type=refresh_token`・`refresh_token`）で自分で更新する。client_secret はどこにも保存しない。
+  refresh token は 1 回しか使えないので、更新はプロセスをまたぐロックの下で行い、新しい組を使う前に
+  書き込む。GitHub が refresh token を拒否したとき（取り消し、または 6 か月が過ぎた）は、
+  接続画面に「再接続が必要」と出す。refresh token の無いトークンは従来どおり。管理画面は期限を
+  オフにするよう案内しなくなった。接続後の警告は、更新に対応する前の Agent のワークスペースに
+  限って残る。
 
 ## 決定 9 — 自前アプリの種類は**尋ねずに判別する**（2026-10-04・#1667）
 

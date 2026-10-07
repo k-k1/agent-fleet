@@ -1,6 +1,7 @@
 package sessionx
 
 import (
+	"errors"
 	"sync"
 	"time"
 
@@ -42,7 +43,11 @@ func githubToken() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return s.Git["github.com"].Token, nil
+	tok, err := gitx.GitHubToken(s)
+	if errors.Is(err, gitx.ErrGitHubReconnect) {
+		return "", nil // a connection that cannot be renewed looks up nothing
+	}
+	return tok, err
 }
 
 type originEntry struct {

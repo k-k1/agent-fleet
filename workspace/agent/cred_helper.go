@@ -80,6 +80,17 @@ func credHelperGet(r io.Reader, w io.Writer) {
 		fmt.Fprintf(w, "username=x-token-auth\npassword=%s\n", c.AccessToken)
 		return
 	}
+	if host == "github.com" && s.Git[host].RefreshToken != "" {
+		// An expiring GitHub App token: renew it if due. After a refusal there is no
+		// credential to offer, and git fails with an authentication error instead of
+		// sending a dead token.
+		tok, err := gitx.GitHubToken(s)
+		if err != nil || tok == "" {
+			return
+		}
+		fmt.Fprintf(w, "username=%s\npassword=%s\n", s.Git[host].User, tok)
+		return
+	}
 	if e, ok := s.Git[host]; ok {
 		user := e.User
 		// A Bitbucket API token can't authenticate git-over-HTTPS with the Atlassian

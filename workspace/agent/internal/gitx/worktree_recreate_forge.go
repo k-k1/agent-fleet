@@ -32,7 +32,10 @@ var (
 		if err != nil {
 			return ""
 		}
-		return s.Git["github.com"].Token
+		// A renewal failure leaves the token empty: the forge lookup then runs
+		// anonymously, which is how it already degrades.
+		tok, _ := GitHubToken(s)
+		return tok
 	}
 )
 
