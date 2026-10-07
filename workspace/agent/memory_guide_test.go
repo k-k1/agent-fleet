@@ -224,3 +224,70 @@ func TestUIPrefsPutOfAgentMemoryAddsAndRemovesTheGuide(t *testing.T) {
 		t.Fatal("guide still present after switching memory off")
 	}
 }
+
+// A shared file whose guide block lost its end marker is left byte for byte as it was, with the
+// error reported, on and off, for every kind that composes the block.
+func TestMemoryGuideLeavesADamagedFileAlone(t *testing.T) {
+	instrEnv(t)
+	shared, _ := memoryGuideTargets()
+	damaged := "USER BEFORE\n<!-- agent-fleet:memory-guide -->\nold\nUSER AFTER\n"
+	for _, p := range shared {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(damaged), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, on := range []bool{true, false} {
+		setAgentMemory(t, on)
+		reconcileAgentInstructions()
+		for k, p := range shared {
+			// Other AF blocks (fleet, rtk) may still be appended after the member's text; what
+			// must stay byte for byte is the damaged region and everything before it.
+			if got := read(t, p); !strings.HasPrefix(got, damaged) || strings.Count(got, "<!-- agent-fleet:memory-guide -->") != 1 {
+				t.Fatalf("%s (on=%v): damaged file rewritten:\n%q", k, on, got)
+			}
+			if instrErrs[k] == "" {
+				t.Errorf("%s (on=%v): damage not reported", k, on)
+			}
+		}
+	}
+}
+
+// A linked instruction file keeps its link: on writes the target, off with only the block left
+// empties the target, and the link is never replaced or removed (claude included, where the file
+// was otherwise deleted when it ended up empty).
+func TestMemoryGuideWritesThroughLinkedInstructionFiles(t *testing.T) {
+	instrEnv(t)
+	shared, _ := memoryGuideTargets()
+	store := t.TempDir()
+	for k, p := range shared {
+		target := filepath.Join(store, k+".md")
+		if err := os.WriteFile(target, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		os.Remove(p)
+		if err := os.Symlink(target, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, on := range []bool{true, false} {
+		setAgentMemory(t, on)
+		reconcileAgentInstructions()
+		for k, p := range shared {
+			if fi, err := os.Lstat(p); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("%s (on=%v): link replaced or gone (%v)", k, on, err)
+			}
+			if got := mdblock.Has(read(t, filepath.Join(store, k+".md")), "memory-guide"); got != on {
+				t.Fatalf("%s: target has guide = %v, want %v", k, got, on)
+			}
+			if fi, _ := os.Stat(filepath.Join(store, k+".md")); fi.Mode().Perm() != 0o600 {
+				t.Fatalf("%s: mode changed to %v", k, fi.Mode().Perm())
+			}
+		}
+	}
+}

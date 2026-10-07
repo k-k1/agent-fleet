@@ -20,4 +20,9 @@ Agent Fleet keeps a memory that every agent kind shares, through the af MCP tool
 // MemoryGuideMaxBytes is MemoryGuide's own cap, apart from MaxBytes (the member's text): the
 // block rides in every session of every kind on every turn, so its cost is bounded for the same
 // reason 0042 decision 7 bounds the user's body — cost, not truncation. Raise it on purpose.
+// The cap is on the body; the marker lines the distributor adds around it are not counted.
 const MemoryGuideMaxBytes = 1200
+
+// The cap is enforced where the text is defined: a MemoryGuide over MemoryGuideMaxBytes does not
+// compile (the constant would be a negative uint), so no run of the distributor can exceed it.
+const _ = uint(MemoryGuideMaxBytes - len(MemoryGuide))

@@ -42,5 +42,5 @@ func ApplyUserInstructions(body string) error {
 // decision 5): its own block, apart from user-notes, so the Agent memory switch adds and
 // removes exactly this and nothing of the member's text.
 func ApplyMemoryGuide(body string) error {
-	return editAgents(func(s string) string { return mdblock.Set(s, "memory-guide", body) })
+	return editAgentsE(func(s string) (string, error) { return mdblock.SetSafe(s, "memory-guide", body) })
 }

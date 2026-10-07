@@ -28,7 +28,6 @@ package muse
 // exactly what `fleetskills.Apply` produces.
 
 import (
-	"os"
 	"path/filepath"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mdblock"
@@ -63,30 +62,18 @@ func ApplyUserInstructions(body string) error {
 // nothing writes nothing — this runs on every Console save and on every Agent start, and a
 // rewrite with identical bytes would still move the mtime muse's own caching may look at.
 func editAgents(edit func(string) string) error {
-	path := AgentsPath()
-	orig := ""
-	if b, err := os.ReadFile(path); err == nil {
-		orig = string(b)
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	out := edit(orig)
-	if out == orig {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	tmp := path + ".af-tmp"
-	if err := os.WriteFile(tmp, []byte(out), 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return editAgentsE(func(s string) (string, error) { return edit(s), nil })
+}
+
+// editAgentsE is editAgents for an edit that can refuse (damaged markers); a symlinked file is
+// written through.
+func editAgentsE(edit func(string) (string, error)) error {
+	return mdblock.EditFile(AgentsPath(), 0o644, false, edit)
 }
 
 // ApplyMemoryGuide writes (or removes, when body is empty) the memory-guide block (ADR 0108
 // decision 5): its own block, apart from user-notes, so the Agent memory switch adds and
 // removes exactly this and nothing of the member's text.
 func ApplyMemoryGuide(body string) error {
-	return editAgents(func(s string) string { return mdblock.Set(s, "memory-guide", body) })
+	return editAgentsE(func(s string) (string, error) { return mdblock.SetSafe(s, "memory-guide", body) })
 }

@@ -17,7 +17,6 @@ package claude
 // survives.
 
 import (
-	"os"
 	"path/filepath"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mdblock"
@@ -39,34 +38,17 @@ func ApplyUserInstructions(body string) error {
 // shares with the user: only the named block changes, and a file that would end up
 // empty is removed rather than left as a stray.
 func setMarkedFile(path, name, body string) error {
-	orig := ""
-	if b, err := os.ReadFile(path); err == nil {
-		orig = string(b)
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	out := mdblock.Set(orig, name, body)
-	if out == orig {
-		return nil
-	}
-	if out == "" {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	tmp := path + ".af-tmp"
-	if err := os.WriteFile(tmp, []byte(out), 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return mdblock.EditFile(path, 0o644, true, func(s string) (string, error) { return mdblock.Set(s, name, body), nil })
+}
+
+// setMarkedFileSafe is setMarkedFile for a block that must never eat the member's text: a file
+// with damaged markers is left alone and reported.
+func setMarkedFileSafe(path, name, body string) error {
+	return mdblock.EditFile(path, 0o644, true, func(s string) (string, error) { return mdblock.SetSafe(s, name, body) })
 }
 
 // ApplyMemoryGuide writes (or removes, when body is empty) the memory-guide block (ADR 0108
 // decision 5) in the same file, apart from the user-notes block.
 func ApplyMemoryGuide(body string) error {
-	return setMarkedFile(UserInstructionsPath(), "memory-guide", body)
+	return setMarkedFileSafe(UserInstructionsPath(), "memory-guide", body)
 }

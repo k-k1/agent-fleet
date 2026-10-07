@@ -1,7 +1,6 @@
 package codex
 
 import (
-	"os"
 	"path/filepath"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mdblock"
@@ -51,25 +50,11 @@ func ApplyRTK(on bool) {
 // cannot race each other into a half-written file (docs/log/60 §60.7, "one file, one
 // writer"). Everything outside agent-fleet's markers is preserved.
 func editAgents(edit func(string) string) error {
-	path := AgentsPath()
-	orig := ""
-	if b, err := os.ReadFile(path); err == nil {
-		orig = string(b)
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	out := edit(orig)
-	if out == orig {
-		// Equal also covers "no base file, nothing to add". An edit that empties an existing
-		// file is NOT equal and must be written, or a removed block would stay.
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	tmp := path + ".af-tmp"
-	if err := os.WriteFile(tmp, []byte(out), 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return editAgentsE(func(s string) (string, error) { return edit(s), nil })
+}
+
+// editAgentsE is editAgents for an edit that can refuse (damaged markers). The file goes through
+// mdblock.EditFile: a symlinked AGENTS.md is written through, not replaced.
+func editAgentsE(edit func(string) (string, error)) error {
+	return mdblock.EditFile(AgentsPath(), 0o644, false, edit)
 }
