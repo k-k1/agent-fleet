@@ -15,7 +15,7 @@ export const aiassist: Record<keyof typeof jaAiassist, string> = {
     "Used for session and chat titles, branch names, and AI reply suggestions. These return a single short line, so a fast, cheap model is enough. The CLI follows the priority above. \"Recommended\" picks an available fast, low-cost model and falls back safely to the CLI default when there is none.",
   "aiassist.prose_models": "Model for prose",
   "aiassist.note_prose_models":
-    "Used for File pane edit suggestions and chat plan updates. These write text you read and accept, so the default sits above the short-label tier. The CLI follows the priority above. These used to share one setting with short labels, so choosing a lightweight model for titles quietly downgraded edit suggestions too.",
+    "Used for File pane edit suggestions and chat plan updates. These write text you read and accept, so the default sits above the short-label tier. This is separate from the short-label model, so choosing a lightweight model for titles does not change it. The CLI follows the priority above.",
 
   "aiassist.features": "Features that use AI assistance",
   "aiassist.note_features":
@@ -25,15 +25,15 @@ export const aiassist: Record<keyof typeof jaAiassist, string> = {
   "aiassist.note_chat_title":
     "Enables/disables the \"Ask AI\" button in the assistant chat's rename dialog. Unlike sessions, a chat has no banner that proposes a title on its own — it generates only when you press the button.",
   "aiassist.note_branch_name":
-    "When creating a worktree or renaming a branch, suggests a short git-safe branch name from the conversation. A work-item launch whose title is not in English also gets an English slug for its branch name, once per title. It used to be silently gated by \"Session title suggestion\" — which no label ever said.",
+    "When creating a worktree or renaming a branch, suggests a short git-safe branch name from the conversation. A work-item launch whose title is not in English also gets an English slug for its branch name, once per title. It is a separate setting from \"Session title suggestion\".",
   "aiassist.note_reply_suggest_session":
     "Shows a ✨ button on the session mirror's composer that drafts replies from the recent exchange. Tokens are spent only when you press it. Quick replies learned from your own input history (Settings > Keys) use no LLM and are a separate feature, not covered here.",
   "aiassist.note_reply_suggest_chat":
-    "Shows a ✨ button on the assistant chat's composer that drafts replies from the recent exchange. Tokens are spent only when you press it. This used to read the session mirror's own setting under a misspelled key that never actually matched, so the chat's ✨ ran unconditionally regardless of this switch. It is its own setting from here on.",
+    "Shows a ✨ button on the assistant chat's composer that drafts replies from the recent exchange. Tokens are spent only when you press it. It is a separate setting from the session reply suggestion.",
   "aiassist.note_edit_suggest":
-    "While editing a file in the File pane, proposes a replacement for the selection from your instruction (you review it before accepting or discarding). This previously had no setting and was always on.",
+    "While editing a file in the File pane, proposes a replacement for the selection from your instruction (you review it before accepting or discarding). Turn it off and no suggestion is offered.",
   "aiassist.note_plan_update":
-    "Enables/disables the assistant chat's \"refresh\" button, which re-derives the work plan from the recent exchange. Separate from the automatic summary carry-forward (context compaction) — this is the button you press explicitly. This previously had no setting and was always on.",
+    "Enables/disables the assistant chat's \"refresh\" button, which re-derives the work plan from the recent exchange. Separate from the automatic summary carry-forward (context compaction) — this is the button you press explicitly. Turn it off and the button is hidden.",
   "aiassist.note_mirror_translate":
     "Shows a \"Translate\" button on mirror answers that came back in another language. Tokens are spent only when you press it, and no session turn is used. A translation is kept until that session is deleted, so the same text with the same agent/model is free from the second press on. Changing this feature's agent or model means there is no translation yet for that combination, so the next press generates a fresh one (the earlier agent/model's translation is not lost — it comes back if you switch back).",
   "aiassist.mirror_auto_translate": "Translate automatically",
