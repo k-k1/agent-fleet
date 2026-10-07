@@ -42,10 +42,16 @@ func consoleLogin(aws awsRunner, sso ssoInfo, snap CacheState, o ExecOptions, fi
 		cancel, stop = cloudlogin.Interrupt()
 		defer stop()
 	}
+	// The check's `aws` ends with the wait: Ctrl-C and the budget kill it, and the check
+	// returns after it exited.
+	ctx, stopCtx := cloudlogin.Context(cancel, time.Now().Add(o.ConsoleWait))
+	defer stopCtx()
+	checkAWS := aws
+	checkAWS.ctx = ctx
 	creds, err := cloudlogin.Wait(logins, snap, cloudlogin.WaitSpec[processCreds]{
 		Profile: o.Profile, Key: sso.Session, Waiter: o.Waiter,
 		Wait: o.ConsoleWait, Poll: loginPollInterval, Cancel: cancel,
-		Check:       func() (processCreds, error) { return exportSSOCreds(aws, sso.Session) },
+		Check:       func() (processCreds, error) { return exportSSOCreds(checkAWS, sso.Session) },
 		LoginNeeded: func(err error) bool { return loginNeeded(err.Error()) },
 		Filed: func() {
 			fmt.Fprintf(stderr, "af-aws-exec: SSO login for profile %q requested in the Agent Fleet Console; "+

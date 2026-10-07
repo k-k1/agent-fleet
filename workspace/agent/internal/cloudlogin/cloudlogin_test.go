@@ -1,9 +1,11 @@
 package cloudlogin
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"go/parser"
 	"go/token"
 	"os"
@@ -419,4 +421,35 @@ func TestCancelEndsTheWaitForTheStoreLock(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("Ctrl-C did not end the wait for the lock")
 	}
+}
+
+// The wait's own budget running out is a timeout (exit 3 for a rerun), not a failure of the
+// request or the check, and never a reason to fall back to a terminal login.
+func TestLockOrCheckTimeoutIsATimeout(t *testing.T) {
+	t.Run("store lock held past the budget", func(t *testing.T) {
+		s := newStore(t)
+		unlock, err := s.lock()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer unlock()
+		spec := waitSpec(s, nil, func() (string, error) { return "", errors.New("login") })
+		spec.Wait = 100 * time.Millisecond
+		_, err = Wait(s, testState{Mark: "old"}, spec)
+		var we *WaitError
+		if !errors.As(err, &we) || we.Reason != WaitTimedOut {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("check ended by the lock timeout or the deadline", func(t *testing.T) {
+		for name, cerr := range map[string]error{"lock": ErrLockTimeout, "deadline": context.DeadlineExceeded} {
+			s := newStore(t)
+			spec := waitSpec(s, nil, func() (string, error) { return "", fmt.Errorf("check: %w", cerr) })
+			_, err := Wait(s, testState{}, spec)
+			var we *WaitError
+			if !errors.As(err, &we) || we.Reason != WaitTimedOut {
+				t.Fatalf("%s: err = %v", name, err)
+			}
+		}
+	})
 }

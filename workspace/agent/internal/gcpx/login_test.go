@@ -3,6 +3,7 @@ package gcpx
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -1137,7 +1138,7 @@ func TestMintLockedEndsWithCancelWhileTheRootIsHeld(t *testing.T) {
 	time.AfterFunc(50*time.Millisecond, func() { close(cancel) })
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := mintLockedCancel(l.gcloud, hostile(t), prod(), nil, cancel, time.Now().Add(time.Minute))
+		_, _, err := mintLockedCancel(context.Background(), l.gcloud, hostile(t), prod(), nil, cancel, time.Now().Add(time.Minute))
 		done <- err
 	}()
 	select {
@@ -1149,7 +1150,88 @@ func TestMintLockedEndsWithCancelWhileTheRootIsHeld(t *testing.T) {
 		t.Fatal("the mint stayed blocked on the root lock after Ctrl-C")
 	}
 	// The deadline ends it too.
-	if _, _, err := mintLockedCancel(l.gcloud, hostile(t), prod(), nil, nil, time.Now().Add(100*time.Millisecond)); !errors.Is(err, cloudlogin.ErrLockTimeout) {
+	if _, _, err := mintLockedCancel(context.Background(), l.gcloud, hostile(t), prod(), nil, nil, time.Now().Add(100*time.Millisecond)); !errors.Is(err, cloudlogin.ErrLockTimeout) {
 		t.Fatalf("deadline: %v", err)
+	}
+}
+
+// slowMintRun starts a terminal run's Console wait, makes a login land while gcloud is slow,
+// and returns after the run ended.
+func slowMintRun(t *testing.T, l *loginEnv, wait time.Duration, afterSlow func()) (time.Duration, error) {
+	t.Helper()
+	o := execOpts(l.env, prod())
+	o.Login, o.ConsoleLogin, o.ConsoleWait = "auto", true, wait
+	o.Interactive, o.TerminalConsole = true, true
+	o.Stderr = &syncBuf{}
+	helper := make(chan struct{})
+	go func() {
+		defer close(helper)
+		path := logins.RequestPath(ConfigName("prod"))
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			if _, err := os.Stat(path); err == nil {
+				break
+			}
+		}
+		os.WriteFile(filepath.Join(l.fakeDir, "slow"), nil, 0o600)
+		addCredential(t, "dev@example.com", "authorized_user")
+		root, unlock, err := lockRootNotify(nil)
+		if err != nil {
+			t.Errorf("lock: %v", err)
+			return
+		}
+		err = recordLogin(root, "dev@example.com")
+		unlock()
+		if err != nil {
+			t.Errorf("recordLogin: %v", err)
+			return
+		}
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			if _, err := os.Stat(filepath.Join(l.fakeDir, "slowpid")); err == nil {
+				break
+			}
+		}
+		if afterSlow != nil {
+			afterSlow()
+		}
+	}()
+	t.Cleanup(func() { <-helper })
+	start := time.Now()
+	_, _, _, err := PlanExec(l.gcloud, hostile(t), o)
+	return time.Since(start), err
+}
+
+func pidGone(path string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	return pid > 0 && syscall.Kill(pid, 0) != nil
+}
+
+// SIGTERM to the parent while gcloud is slow ends the wait with exit 3 at once and kills it.
+func TestTerminalRunSIGTERMKillsASlowMint(t *testing.T) {
+	l := setupLogin(t, prod())
+	took, err := slowMintRun(t, l, time.Minute, func() {
+		time.Sleep(100 * time.Millisecond)
+		syscall.Kill(os.Getpid(), syscall.SIGTERM)
+	})
+	if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "stopped waiting") {
+		t.Fatalf("err = %v", err)
+	}
+	if took > 15*time.Second || !pidGone(filepath.Join(l.fakeDir, "slowpid")) {
+		t.Fatalf("took %s; gcloud gone = %v", took, pidGone(filepath.Join(l.fakeDir, "slowpid")))
+	}
+}
+
+// The wait's budget ends a slow mint too, as exit 3.
+func TestTerminalRunBudgetKillsASlowMint(t *testing.T) {
+	l := setupLogin(t, prod())
+	took, err := slowMintRun(t, l, 700*time.Millisecond, nil)
+	if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "waiting for the member") {
+		t.Fatalf("err = %v", err)
+	}
+	if took > 15*time.Second || !pidGone(filepath.Join(l.fakeDir, "slowpid")) {
+		t.Fatalf("took %s; gcloud gone = %v", took, pidGone(filepath.Join(l.fakeDir, "slowpid")))
 	}
 }

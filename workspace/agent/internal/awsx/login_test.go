@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -873,5 +874,92 @@ func TestTerminalRunFallsBackToTheTerminalWhenTheRequestCannotBeFiled(t *testing
 	o := consoleOpts(&stderr, time.Second)
 	if _, _, _, err := PlanExec(bin, workloadEnv, o); !errors.Is(err, ErrLoginRequired) {
 		t.Fatalf("agent run: err = %v", err)
+	}
+}
+
+// slowExport makes every `aws configure export-credentials` of the fake take long, and
+// records its pid, from now on.
+func slowExport(t *testing.T, state string) {
+	t.Helper()
+	hook := "echo $$ > \"" + filepath.Join(state, "exportPid") + "\"\n[ -f \"" + filepath.Join(state, "slow") + "\" ] && exec sleep 60\n"
+	if err := os.WriteFile(filepath.Join(state, "onExport"), []byte(hook), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// landLogin makes a check run during the wait: the login "lands" while export is slow.
+func landLogin(t *testing.T, state string) error {
+	if !fileAppears(logins.RequestPath("af-prod")) {
+		return errors.New("request never appeared")
+	}
+	os.WriteFile(filepath.Join(state, "slow"), nil, 0o600)
+	return putSSOCache("fresh", time.Now().Add(time.Hour))
+}
+
+func processGone(pidFile string) bool {
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		return false
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	return pid > 0 && syscall.Kill(pid, 0) != nil
+}
+
+// SIGTERM to the parent while the check's `aws` is slow ends the wait with exit 3 at once,
+// the child is gone, and nothing runs afterwards.
+func TestTerminalRunSIGTERMKillsASlowCheck(t *testing.T) {
+	bin, state := fakeAWS(t, ssoProfile)
+	slowExport(t, state)
+	fastPoll(t)
+	helper := make(chan struct{})
+	go func() {
+		defer close(helper)
+		if err := landLogin(t, state); err != nil {
+			t.Errorf("%v", err)
+			return
+		}
+		fileAppears(filepath.Join(state, "exportPid"))
+		time.Sleep(200 * time.Millisecond)
+		syscall.Kill(os.Getpid(), syscall.SIGTERM)
+	}()
+	t.Cleanup(func() { <-helper })
+	var stderr bytes.Buffer
+	start := time.Now()
+	_, _, _, err := PlanExec(bin, workloadEnv, terminalOpts(&stderr, time.Minute))
+	if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "stopped waiting") {
+		t.Fatalf("err = %v", err)
+	}
+	if time.Since(start) > 15*time.Second {
+		t.Fatalf("SIGTERM did not end the slow check (%s)", time.Since(start))
+	}
+	if !processGone(filepath.Join(state, "exportPid")) {
+		t.Fatal("the slow `aws` child outlived the wait")
+	}
+}
+
+// The wait's budget ends a slow check too, as exit 3 (not exit 1).
+func TestTerminalRunBudgetKillsASlowCheck(t *testing.T) {
+	bin, state := fakeAWS(t, ssoProfile)
+	slowExport(t, state)
+	fastPoll(t)
+	helper := make(chan struct{})
+	go func() {
+		defer close(helper)
+		if err := landLogin(t, state); err != nil {
+			t.Errorf("%v", err)
+		}
+	}()
+	t.Cleanup(func() { <-helper })
+	var stderr bytes.Buffer
+	start := time.Now()
+	_, _, _, err := PlanExec(bin, workloadEnv, terminalOpts(&stderr, 500*time.Millisecond))
+	if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "waiting for the member to approve") {
+		t.Fatalf("err = %v", err)
+	}
+	if time.Since(start) > 15*time.Second {
+		t.Fatalf("the budget did not end the slow check (%s)", time.Since(start))
+	}
+	if !processGone(filepath.Join(state, "exportPid")) {
+		t.Fatal("the slow `aws` child outlived the wait")
 	}
 }

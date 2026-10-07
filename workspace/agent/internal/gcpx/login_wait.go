@@ -45,11 +45,15 @@ func consoleLogin(gcloudBin string, env []string, p Profile, snap LoginState, o 
 		defer stop()
 	}
 	deadline := time.Now().Add(o.ConsoleWait)
+	// The check's gcloud ends with the wait: Ctrl-C and the budget kill it, and the check
+	// returns after it exited.
+	ctx, stopCtx := cloudlogin.Context(cancel, deadline)
+	defer stopCtx()
 	m, err := cloudlogin.Wait(logins, snap, cloudlogin.WaitSpec[minted]{
 		Profile: p.Name, Key: ConfigName(p.Name), Waiter: o.Waiter,
 		Wait: o.ConsoleWait, Poll: loginPollInterval, Cancel: cancel,
 		Check: func() (minted, error) {
-			tok, account, err := mintLockedCancel(gcloudBin, env, p, nil, cancel, deadline)
+			tok, account, err := mintLockedCancel(ctx, gcloudBin, env, p, nil, cancel, deadline)
 			return minted{tok, account}, err
 		},
 		LoginNeeded: func(err error) bool { return errors.Is(err, ErrLoginRequired) },

@@ -2,6 +2,7 @@ package awsx
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -282,14 +283,26 @@ func checkSSOProfile(keys map[string]string, profile string) error {
 type awsRunner struct {
 	bin string
 	env []string
+	// ctx, when set, kills the child when it ends and makes out return only after the child
+	// exited (a Console wait's Ctrl-C and budget); nil runs to the child's own end.
+	ctx context.Context
 }
 
 func (r awsRunner) out(args ...string) (string, error) {
-	cmd := exec.Command(r.bin, args...)
+	var cmd *exec.Cmd
+	if r.ctx != nil {
+		cmd = exec.CommandContext(r.ctx, r.bin, args...)
+		cmd.WaitDelay = 2 * time.Second
+	} else {
+		cmd = exec.Command(r.bin, args...)
+	}
 	cmd.Env = r.env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
+		if r.ctx != nil && r.ctx.Err() != nil {
+			return "", fmt.Errorf("stopped: %w", r.ctx.Err())
+		}
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = err.Error()

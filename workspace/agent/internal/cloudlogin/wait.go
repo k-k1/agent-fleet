@@ -1,6 +1,7 @@
 package cloudlogin
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/signal"
@@ -32,6 +33,33 @@ func Interrupt() (<-chan struct{}, func()) {
 			close(stopped)
 		}
 	}
+}
+
+// Context returns a context that ends when cancel closes or the deadline passes; stop
+// releases it. A run hands it to the credential check's subprocesses, so exec.CommandContext
+// kills them and the check returns only after they have exited: nothing outlives the wait.
+func Context(cancel <-chan struct{}, deadline time.Time) (context.Context, context.CancelFunc) {
+	ctx, stop := context.WithDeadline(context.Background(), deadline)
+	if cancel != nil {
+		go func() {
+			select {
+			case <-cancel:
+				stop()
+			case <-ctx.Done():
+			}
+		}()
+	}
+	return ctx, stop
+}
+
+// failure classifies an error that ends the wait without credentials: the wait's own
+// budget running out (a lock not obtained, or a check killed by the deadline) is a
+// timeout like any other, not a failure of the check.
+func failure(err error, otherwise WaitReason) *WaitError {
+	if errors.Is(err, ErrLockTimeout) || errors.Is(err, context.DeadlineExceeded) {
+		return &WaitError{Reason: WaitTimedOut}
+	}
+	return &WaitError{Reason: otherwise, Err: err}
 }
 
 // cancelled reports whether cancel has closed.
@@ -168,7 +196,7 @@ func Wait[S comparable, C any](s *Store[S], snap S, w WaitSpec[C]) (C, error) {
 	case errors.Is(err, errInterrupted):
 		return zero, &WaitError{Reason: WaitInterrupted}
 	case err != nil:
-		return zero, &WaitError{Reason: WaitCheckFailed, Err: err}
+		return zero, failure(err, WaitCheckFailed)
 	case ok:
 		return c, nil
 	}
@@ -181,7 +209,7 @@ func Wait[S comparable, C any](s *Store[S], snap S, w WaitSpec[C]) (C, error) {
 		return zero, &WaitError{Reason: WaitCancelled}
 	}
 	if err != nil {
-		return zero, &WaitError{Reason: WaitNotFiled, Err: err}
+		return zero, failure(err, WaitNotFiled)
 	}
 	if w.Filed != nil {
 		w.Filed()
@@ -211,7 +239,7 @@ func Wait[S comparable, C any](s *Store[S], snap S, w WaitSpec[C]) (C, error) {
 			return c, nil
 		}
 		if !w.LoginNeeded(err) {
-			return zero, &WaitError{Reason: WaitCheckFailed, Err: err}
+			return zero, failure(err, WaitCheckFailed)
 		}
 		st, c, ok, err := settle(s, &w, cur, deadline)
 		switch {
@@ -220,7 +248,7 @@ func Wait[S comparable, C any](s *Store[S], snap S, w WaitSpec[C]) (C, error) {
 		case errors.Is(err, errInterrupted):
 			return zero, &WaitError{Reason: WaitInterrupted}
 		case err != nil:
-			return zero, &WaitError{Reason: WaitCheckFailed, Err: err}
+			return zero, failure(err, WaitCheckFailed)
 		case ok:
 			return c, nil
 		}
