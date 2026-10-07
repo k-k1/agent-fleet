@@ -1012,6 +1012,43 @@ For tool changes, run `python3 -m unittest discover -s scripts -p 'test_*.py'`,
 Python compilation, docs-check and the staged pre-commit hook. The B2 suite
 includes verification-removal mutants and a real guard negative/positive pair.
 
+**Lessons from the B1/B2 batches** (each is a check to run, not background):
+
+1. **Stray spaces after a Latin→Japanese substitution.** B1 puts a space between
+   Latin/digits and Japanese; when ON/OFF or Workspace is replaced by katakana or
+   kanji, the spaces that existed only for the Latin neighbour stay behind
+   (「音声読み上げを オン にしました」). After EVERY substitution batch, check the
+   changed lines for a space between the substituted word and an adjacent Japanese
+   character and remove it in the same PR. Keep a space only next to Latin, digits,
+   a `{placeholder}`, `code` or the string edge. Evidence: PR #1805 left 36 such
+   lines; the guard (it does not count interior spaces), `ja-term-apply` (it
+   rejects whitespace edits) and two reviewers all missed them; #1809 fixed them.
+   Run the check as a Python regex, not `git grep -E` with Japanese ranges: its
+   locale error ("Invalid collation character") is hidden by `2>/dev/null` and
+   reads as "0 hits".
+2. **A pass/fail claim without the real summary line is not evidence.** B1 batches
+   reported `npm test` exit 0 and still failed CI: strings built by code, goldens
+   and console-e2e are invisible to the guard's PINNED scan. Run the FULL console
+   suite, read the `Test Files` / `Tests` / failed counts, and regenerate goldens
+   only with the project's update flag.
+3. **Parallel batches conflict on shared values.** Families overlap (measured: 10
+   keys in F-login ∩ F-onoff, 9 in F-deploy ∩ F-login, 14 in F-deploy ∩ F-onoff,
+   27 in F-default ∩ F-onoff), so whichever batch merges second conflicts.
+   Procedure: merge develop (merge only; never rebase or force-push). For a
+   conflicted catalogue file take develop's version and re-apply the plan after
+   rebuilding the OLD values with `ja-term-candidates.py`. For a conflicted guide,
+   knowledge or test file take develop's version of the whole FILE and re-apply only
+   the term substitution (`--list-citations` / `--rewrite-guide` plus minimal manual
+   edits). Never hand-merge hunks. Merge one PR at a time and let the next one
+   rebuild; then re-run the guard, docs-check and the full suite.
+4. **Reviewers miss what the guard cannot see.** Hand the reviewer the concrete
+   checks: the blind-spot list above, the stray-space check, and a histogram of
+   replaced fragments (`git diff -U0 --word-diff=porcelain`) that must show only
+   the declared substitution pairs.
+5. **Tool limits.** `ja-term-apply` rejects whitespace edits, `err.*` values
+   (use `--allow-user-error` per key, with a reason) and some F-variants cases.
+   File a follow-up issue rather than working around the tool.
+
 #### B2 tooling acceptance evidence
 
 At the introduction's catalogue snapshot, all-family statistics over 23 domains
