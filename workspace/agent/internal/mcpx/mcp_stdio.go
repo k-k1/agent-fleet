@@ -3706,9 +3706,7 @@ func mcpStdioCall(req mcpReq) []byte {
 	if p.Name == "get_session_status" && selfReportOnly() {
 		body = withoutPendingInteraction(body)
 	}
-	return mcpResult(req.ID, map[string]any{
-		"content": []any{map[string]any{"type": "text", "text": body}},
-	})
+	return mcpTextResult(req.ID, body)
 }
 
 // withoutPendingInteraction drops `questions` and `plan` from a session status before a
@@ -4448,12 +4446,12 @@ func mcpSessionOutput(id json.RawMessage, name string, since *int64) []byte {
 			}
 		}
 	}
-	return mcpResult(id, map[string]any{
-		"content": []any{map[string]any{"type": "text", "text": body}},
-	})
+	return mcpTextResult(id, body)
 }
 
-// mcpTextResult returns a tools/call RESULT carrying a single text content block.
+// mcpTextResult returns a tools/call RESULT carrying a single text content block. Every
+// tools/call success goes through here or mcpStructuredResult: a 2026-07-28 client rejects a
+// result without resultType outright, so the model never sees the tool's answer.
 func mcpTextResult(id json.RawMessage, text string) []byte {
 	return mcpResult(id, map[string]any{
 		"resultType": "complete",

@@ -168,9 +168,7 @@ func mcpStudioCall(req mcpReq, name string, args json.RawMessage) []byte {
 	if err != nil {
 		return mcpToolErr(req.ID, "画像スタジオへの問い合わせに失敗しました: "+agentErrDetail(err))
 	}
-	return mcpResult(req.ID, map[string]any{
-		"content": []any{map[string]any{"type": "text", "text": out}},
-	})
+	return mcpTextResult(req.ID, out)
 }
 
 // The agent trial's wait (decision 3). The press answers at once with the job; waiting for the

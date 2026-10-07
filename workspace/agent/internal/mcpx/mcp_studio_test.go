@@ -193,8 +193,9 @@ func TestRelativeReferencesAreMadeAbsoluteFromTheSessionFolder(t *testing.T) {
 		t.Cleanup(srv.Close)
 		u, _ := url.Parse(srv.URL)
 		t.Setenv("AGENT_ADDR", u.Host)
-		mcpStudioCall(mcpReq{ID: json.RawMessage("1")}, "set_image_draft",
+		resp := mcpStudioCall(mcpReq{ID: json.RawMessage("1")}, "set_image_draft",
 			json.RawMessage(`{"prompt":"snow","inputs":["docs/ref.png","/abs/x.png"]}`))
+		requireResultComplete(t, resp)
 		body := <-got
 		draft, _ := body["draft"].(map[string]any)
 		inputs, _ := draft["inputs"].([]any)
