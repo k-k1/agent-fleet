@@ -9,8 +9,10 @@ import (
 // lockWait bounds how long a session-status writer waits for the per-sid lock. The Stop hook
 // is on claude's critical path (its latency delays the TUI's turn end), and the lock is held
 // for one temp+rename write, so the wait is normally microseconds; this is the ceiling for a
-// pathological holder. Var so tests can shorten it.
-var lockWait = 300 * time.Millisecond
+// holder stalled mid-write. Past it the hook writes without the lock, which is the one case
+// the conditional heal can still lose to (see PersistIf): it takes a stall longer than this
+// ceiling inside a few milliseconds of I/O. Var so tests can shorten it.
+var lockWait = 2 * time.Second
 
 const lockPoll = 2 * time.Millisecond
 

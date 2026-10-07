@@ -11,6 +11,10 @@ import (
 
 // TestRaceChildHelper is the "Stop hook" process of TestPersistIfKeepsHookClosedTurn: for each
 // line on stdin it persists a closed turn, as `workspace-agent session-status idle` does.
+// isolate gives the test its own store, so a rerun (-count=N) starts clean. The helper process
+// inherits the environment and so shares it.
+func isolate(t *testing.T) { t.Helper(); t.Setenv("HOME", t.TempDir()) }
+
 func TestRaceChildHelper(t *testing.T) {
 	sid := os.Getenv("AF_STATUS_RACE_SID")
 	if sid == "" {
@@ -28,6 +32,7 @@ func TestRaceChildHelper(t *testing.T) {
 // closes the turn, and the heal's write lands immediately after. A blind write loses the
 // closed turn in the rounds where the hook wins; PersistIf must lose none.
 func TestPersistIfKeepsHookClosedTurn(t *testing.T) {
+	isolate(t)
 	sid := "race-sid"
 	cmd := exec.Command(os.Args[0], "-test.run=^TestRaceChildHelper$")
 	cmd.Env = append(os.Environ(), "AF_STATUS_RACE_SID="+sid)
@@ -83,6 +88,7 @@ func TestPersistIfKeepsHookClosedTurn(t *testing.T) {
 }
 
 func TestPersistIfRequiresTheDecidedRecord(t *testing.T) {
+	isolate(t)
 	sid := "cas-sid"
 	if !PersistIf(sid, "working", "", false) {
 		t.Fatal("no record decided from, none present: want write")
@@ -100,6 +106,7 @@ func TestPersistIfRequiresTheDecidedRecord(t *testing.T) {
 }
 
 func TestPersistIfSkipsOnLockTimeoutButHookWrites(t *testing.T) {
+	isolate(t)
 	defer func(d time.Duration) { lockWait = d }(lockWait)
 	lockWait = 30 * time.Millisecond
 	sid := "held-sid"
@@ -120,6 +127,7 @@ func TestPersistIfSkipsOnLockTimeoutButHookWrites(t *testing.T) {
 }
 
 func TestRemoveDeletesLockFile(t *testing.T) {
+	isolate(t)
 	sid := "rm-sid"
 	Persist(sid, "working")
 	if _, err := os.Stat(lockPath(sid)); err != nil {
@@ -134,6 +142,7 @@ func TestRemoveDeletesLockFile(t *testing.T) {
 // A heal that stalls after its check, past the point where the hook has given up waiting and
 // written without the lock, must not commit over that write (#1839 review).
 func TestPersistIfStalledAfterCheckDoesNotOverwriteTimedOutHook(t *testing.T) {
+	isolate(t)
 	defer func(d time.Duration) { lockWait = d }(lockWait)
 	defer func() { afterCheck = func() {} }()
 	lockWait = 60 * time.Millisecond
@@ -155,6 +164,7 @@ func TestPersistIfStalledAfterCheckDoesNotOverwriteTimedOutHook(t *testing.T) {
 }
 
 func TestRemoveOnLockTimeoutKeepsLockFile(t *testing.T) {
+	isolate(t)
 	defer func(d time.Duration) { lockWait = d }(lockWait)
 	lockWait = 20 * time.Millisecond
 	sid := "rm-held"
