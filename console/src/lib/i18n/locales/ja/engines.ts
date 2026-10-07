@@ -13,7 +13,7 @@ export const engines = {
   "engine.state_in_use": "使用中",
   "engine.state_ready": "準備済み",
   "engine.state_running": "稼働中",
-  "engine.state_starting": "起動中",
+  "engine.state_starting": "起動中…",
   "engine.state_stopping": "停止処理中",
   "engine.state_stopped": "停止中",
   "engine.state_available": "利用可",

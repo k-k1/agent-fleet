@@ -14,7 +14,7 @@ export const chat = {
   "chat.image_paste_failed_net": "画像の貼り付けに失敗しました（通信エラー）",
   "chat.label": "チャット",
   "chat.tts_source_work": "チャット・作業過程",
-  "chat.state_running": "進行中",
+  "chat.state_running": "進行中…",
   "chat.state_idle": "待機中",
   "chat.compact_btn": "圧縮",
   "chat.compact_tip": "会話を要約し、要約だけを新しいセッションへ引き継いでコンテキストを圧縮します（この画面の履歴は残ります）",

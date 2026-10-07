@@ -189,7 +189,7 @@ export const viewer = {
   "editor.validation.binary_not_supported": "NUL を含む変更は適用できません。",
   "editor.validation.unsupported_newline": "CR/CRLFは使用できません。LF だけに対応しています。",
   "editor.validation.invalid_unicode": "不正な Unicode surrogate を含む変更は適用できません。",
-  "editor.status.saving": "保存中",
+  "editor.status.saving": "保存中…",
   "editor.status.saved": "保存しました",
   "editor.status.risk_accepted": "リスクを承認して保存済みとしました",
   "editor.status.unknown": "保存状態を確認できません",

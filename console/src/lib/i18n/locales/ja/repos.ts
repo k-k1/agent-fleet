@@ -448,7 +448,7 @@ export const repos = {
   "scm.no_file_selected": "(ファイル未選択)",
   "repo.start_studio": "画像スタジオを始める",
   // --- Initialize Git Flow (ADR 0103 decision 9) ---
-  "repo.gitflow_init": "Git Flow を初期化",
+  "repo.gitflow_init": "Git Flow を初期化…",
   "gitflow.title": "Git Flow を初期化 — {name}",
   "gitflow.intro":
     "git-flow の設定（gitflow.* キー）を、git flow init と同じようにこのクローンの git 設定へ書き込みます。以後、作業項目から作るブランチはこれに従います。コミットもチェックアウトもしません。origin にだけあるブランチには、それを追跡するローカルブランチを作ります。",

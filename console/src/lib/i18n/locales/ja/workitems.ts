@@ -63,7 +63,7 @@ export const workitems = {
   "wi.report_worked_on": "{key} の作業を行いました。",
   "wi.report_branch": "ブランチ: {branch}",
   "wi.report_files": "変更したファイル（{count} 件）:",
-  "wi.report_files_more": "…ほか {count} 件",
+  "wi.report_files_more": "ほか {count} 件",
   "wi.report_no_files": "このセッションでのファイル変更はありません。",
   "wi.query_provider": "取得元",
   "wi.bb_intent": "何を出すか",

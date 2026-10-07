@@ -126,7 +126,7 @@ export const assistant = {
   "asst.edit": "編集",
   "asst.section_title": "アシスタント",
   "asst.empty": "チャットはまだありません。＋ から開始できます。",
-  "asst.in_progress": "進行中",
+  "asst.in_progress": "進行中…",
   "asst.waiting": "待機中",
   "asst.focus_pane": "ペイン {n} にフォーカス",
   "asst.lock": "削除ロックをかける",

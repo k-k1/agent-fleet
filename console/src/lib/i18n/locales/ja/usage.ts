@@ -19,7 +19,7 @@ export const usage = {
   "usage.range_label": "期間",
   "usage.range_24h": "24 時間",
   "usage.range_7d": "7日",
-  "usage.range_30d": "30日",
+  "usage.range_30d": "30 日",
   "usage.by_label": "割り方",
   "usage.by_feature": "機能",
   "usage.by_kind": "エージェント",

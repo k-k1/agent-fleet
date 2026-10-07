@@ -73,7 +73,7 @@ export const memo = {
   "memo.target_assistant_sub": "セッションを使わず相談・下書き",
   "memo.launch_send": "起動して送信",
   "memo.state_waiting": "入力待ち",
-  "memo.state_busy": "実行中",
+  "memo.state_busy": "実行中…",
   "memo.no_targets": "送信先がありません。",
   "memo.new_hint": "起動後、この内容を最初のプロンプトとして送ります。メモはキューに残ります。",
   "memo.assistant_hint": "アシスタントチャットを開いて、この内容を送ります。メモはキューに残ります。",
