@@ -603,5 +603,23 @@ class RealCatalogueTests(unittest.TestCase):
         self.assertFalse(hits, '\n'.join(hits))
 
 
+class StraySpaceLintTests(unittest.TestCase):
+    def test_flags_space_between_japanese_characters(self):
+        self.assertEqual(mod.stray_spaces('音声読み上げを オン にしました'), [7, 10])
+
+    def test_spaces_next_to_latin_digits_placeholders_and_code_are_kept(self):
+        for text in ('Git を開く', 'を Git で開く', '{n} 件を表示', '最大 {n} 件', '`x` を開く', '3 日後', '開く Git'):
+            self.assertEqual(mod.stray_spaces(text), [], text)
+
+    def test_spaces_inside_protected_spans_are_kept(self):
+        self.assertEqual(mod.stray_spaces('「表示 設定」を開く'), [])
+        self.assertEqual(mod.stray_spaces('`表示 設定`を開く'), [])
+
+    def test_contexts_count_only_new_strays(self):
+        old, new = '再開 中です', '再開 中です。起動 中です'
+        added = mod.stray_contexts(new) - mod.stray_contexts(old)
+        self.assertEqual(sum(added.values()), 1)
+
+
 if __name__ == '__main__':
     unittest.main()
