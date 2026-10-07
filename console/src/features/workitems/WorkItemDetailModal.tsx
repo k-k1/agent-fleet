@@ -329,10 +329,10 @@ export function WorkItemDetailModal({
               {live.busy
                 ? tr("wi.detail_live_loading")
                 : live.err
-                  ? tr(reference ? "wi.detail_live_failed_ref" : "wi.detail_live_failed")
+                  ? reference ? tr("wi.detail_live_failed_ref", { name: providerName }) : tr("wi.detail_live_failed")
                   : live.stopped
-                    ? tr(reference ? "wi.detail_live_stopped_ref" : "wi.detail_live_stopped")
-                    : tr(reference ? "wi.detail_live_fresh_ref" : "wi.detail_live_fresh")}
+                    ? reference ? tr("wi.detail_live_stopped_ref", { name: providerName }) : tr("wi.detail_live_stopped")
+                    : reference ? tr("wi.detail_live_fresh_ref", { name: providerName }) : tr("wi.detail_live_fresh")}
             </span>
             {!live.busy && (live.err || live.stopped) && (
               <button type="button" className="linklike" onClick={live.retry}>

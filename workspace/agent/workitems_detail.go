@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
@@ -159,11 +160,21 @@ func handleWorkItemsDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	case "bitbucket":
 		out, err = bitbucketPullRequestDetail(s, key)
+	case "jira":
+		// A Jira key has no pull request behind it; this is the single-issue read for a key
+		// that is not in the inbox (a finished ticket a status table cites).
+		if kind == "pr" {
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "a Jira key is never a pull request")
+			return
+		}
+		if !jiraConnected(s.Jira) {
+			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", "Jira is not connected")
+			return
+		}
+		out, err = jiraReferenceDetail(s.Jira, key)
 	default:
-		// Jira lands here. There is no pull request behind a Jira key, so this is not a gap to
-		// fill later — the Console asks only for rows whose kind is "pr".
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_provider",
-			"pull request details are available for GitHub and Bitbucket only")
+			"details are available for GitHub, Bitbucket and Jira only")
 		return
 	}
 	if err != nil {
@@ -173,6 +184,45 @@ func handleWorkItemsDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// --- Jira ---------------------------------------------------------------------
+
+// jiraKeyRe is the whole shape a key must have before it is put into a request path. Anything
+// else — a slash, a dot, a query — would let the caller steer the request elsewhere on the site.
+var jiraKeyRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*-[1-9][0-9]{0,9}$`)
+
+// jiraReferenceDetail reads one Jira issue. The `fields=` list is the no-body promise written
+// into the request: no description, no comments.
+func jiraReferenceDetail(c *secrets.JiraCreds, key string) (*workItemDetailOut, error) {
+	if !jiraKeyRe.MatchString(key) {
+		return nil, fmt.Errorf("cannot read %q (expected a Jira key such as PROJ-123)", key)
+	}
+	body, err := jiraGet(c, jiraAPIBase(c)+"/rest/api/3/issue/"+key+"?fields=summary,status,assignee,labels,issuetype,updated")
+	if err != nil {
+		if isJiraNotFound(err) {
+			return nil, fmt.Errorf("jira has no %s visible to this connection", key)
+		}
+		return nil, err
+	}
+	// The search parser's issue shape is the same; wrap the one issue as a page of one.
+	rows, err := parseJiraSearchIssues([]byte(`{"issues":[`+string(body)+`]}`), c.Site, "")
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) != 1 {
+		return nil, fmt.Errorf("jira answered without an issue for %s", key)
+	}
+	r := rows[0]
+	out := &workItemDetailOut{
+		Provider: "jira", Key: r.Key, Kind: "issue", Title: r.Title, State: r.State, URL: r.URL,
+		Assignee: r.Assignee, Labels: r.Labels, LabelColors: map[string]string{},
+		UpdatedAt: r.UpdatedAt, Mergeable: "unknown", Assignees: []string{}, Reviews: []workItemReviewOut{},
+	}
+	if r.Assignee != "" {
+		out.Assignees = append(out.Assignees, r.Assignee)
+	}
+	return out, nil
 }
 
 // --- GitHub -------------------------------------------------------------------

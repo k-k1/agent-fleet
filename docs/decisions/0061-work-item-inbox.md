@@ -397,6 +397,24 @@ Rejected: **storing the answer in the cache so the next click is free.** It woul
 into the rail's history (the same reason as decision 24), and a closed item would then sit among the
 open ones the query asked for.
 
+**27 (#1661). The same read for a Jira key and a Bitbucket number that are not in the inbox.**
+Decision 26 reached GitHub only, on the reasoning that a Jira key is in the inbox when it matters.
+That does not hold for a finished ticket: status tables in the mirror cite done Jira issues, and the
+inbox's default query (`statusCategory != Done`) never holds them. No new route is needed: `POST
+/work-items/detail` accepts `provider: "jira"`, and the Agent asks `GET /rest/api/3/issue/{key}?fields=
+summary,status,assignee,labels,issuetype,updated` (the `fields=` list is the no-body promise, as in the
+list adapter), reusing the list adapter's issue mapping. A Bitbucket reference needed no Agent change
+(its pull request read already ignores `kind`); the Console now asks for it. Same promises as decisions
+24 and 26: a human opening the panel is the only trigger, nothing is stored, a stopped workspace is not
+started (409), and any failure — 404, no connection, refused credentials, rate limit, an Agent from
+before this change (it answers 400 `bad_provider`) — lands on the "af has no details" note. The key is
+validated against `^[A-Z][A-Z0-9_]*-[1-9][0-9]{0,9}$` before it is put into a request path, so it cannot
+steer the request elsewhere on the site. The panel says "Done" for a finished Jira issue, never
+"Closed (completed)": Jira has no close reason.
+
+Not done, tracked in #1661: Jira project keys the user can read but has no saved query for still do not
+link (the link decision is made from the cache before any read); and `#N` in Markdown files (DocView).
+
 ## Options rejected
 
 - **Cache what the live pull request read returns on the CP** (the alternative to decision 24). It

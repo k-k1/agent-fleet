@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // docs/log/80 §80.24 — the live pull request read. What is pinned here is the folding: four
@@ -212,11 +214,13 @@ func TestParseBitbucketDiffstat(t *testing.T) {
 	}
 }
 
-// A Jira row has no pull request behind it, and the answer has to say so rather than 500.
-func TestWorkItemsDetailRejectsProvidersWithoutPullRequests(t *testing.T) {
+// A provider the route does not know, and a Jira key asked as a pull request, are refused
+// before any read.
+func TestWorkItemsDetailRejectsUnknownProviders(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	for _, tc := range []struct{ body, want string }{
-		{`{"provider":"jira","key":"G3-1"}`, "GitHub and Bitbucket"},
+		{`{"provider":"linear","key":"G3-1"}`, "GitHub, Bitbucket and Jira"},
+		{`{"provider":"jira","key":"G3-1","kind":"pr"}`, "never a pull request"},
 		{`{"provider":"github","key":"  "}`, "key is required"},
 	} {
 		req := httptest.NewRequest("POST", "/work-items/detail", strings.NewReader(tc.body))
@@ -330,5 +334,69 @@ func TestWorkItemsDetailRejectsUnknownKind(t *testing.T) {
 	}
 	if len(*hits) != 0 {
 		t.Errorf("GitHub was reached: %v", *hits)
+	}
+}
+
+func fakeJira(t *testing.T, routes map[string]string) (*secrets.JiraCreds, *[]string) {
+	t.Helper()
+	var hits []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits = append(hits, r.URL.RequestURI())
+		body, ok := routes[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return &secrets.JiraCreds{Site: srv.URL, Email: "a@example.com", Token: "t"}, &hits
+}
+
+func TestJiraReferenceDetail(t *testing.T) {
+	c, hits := fakeJira(t, map[string]string{"/rest/api/3/issue/PROJ-12": `{"key":"PROJ-12","fields":{
+		"summary":"Fix login","updated":"2026-10-01T10:00:00.000+0900",
+		"status":{"name":"Shipped","statusCategory":{"key":"done"}},
+		"assignee":{"displayName":"Bob"},"labels":["auth"],"issuetype":{"name":"Bug"},
+		"description":"SECRET BODY"}}`})
+	out, err := jiraReferenceDetail(c, "PROJ-12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Provider != "jira" || out.Kind != "issue" || out.Title != "Fix login" || out.State != "done" ||
+		out.Assignee != "Bob" || len(out.Assignees) != 1 || out.UpdatedAt != "2026-10-01T01:00:00Z" ||
+		out.URL != c.Site+"/browse/PROJ-12" || out.Reviews == nil || out.LabelColors == nil {
+		t.Errorf("row wrong: %+v", out)
+	}
+	if b, _ := json.Marshal(out); strings.Contains(string(b), "SECRET") {
+		t.Errorf("a body leaked into the answer: %s", b)
+	}
+	if len(*hits) != 1 || !strings.Contains((*hits)[0], "fields=summary,status,assignee,labels,issuetype,updated") {
+		t.Errorf("the request must project fields (no body): %v", *hits)
+	}
+}
+
+func TestJiraReferenceDetailRefusesBadKeysAndMissing(t *testing.T) {
+	c, hits := fakeJira(t, nil)
+	for _, k := range []string{"../../myself", "PROJ-1/../x", "proj-1", "PROJ-0", "PROJ-1?x=1", "PROJ", "PROJ-1 "} {
+		if _, err := jiraReferenceDetail(c, k); err == nil {
+			t.Errorf("%q must be refused", k)
+		}
+	}
+	if len(*hits) != 0 {
+		t.Errorf("a malformed key reached Jira: %v", *hits)
+	}
+	if _, err := jiraReferenceDetail(c, "PROJ-404"); err == nil || !strings.Contains(err.Error(), "no PROJ-404 visible") {
+		t.Fatalf("want a not-visible error, got %v", err)
+	}
+}
+
+func TestWorkItemsDetailJiraNotConnected(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	req := httptest.NewRequest("POST", "/work-items/detail", strings.NewReader(`{"provider":"jira","key":"G3-1"}`))
+	w := httptest.NewRecorder()
+	handleWorkItemsDetail(w, req)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "not_connected") {
+		t.Fatalf("got %d %s, want 400 not_connected", w.Code, w.Body.String())
 	}
 }

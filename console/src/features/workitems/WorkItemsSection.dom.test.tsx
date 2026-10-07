@@ -1443,8 +1443,25 @@ describe("WorkItemModalHost — opened from a ticket link outside the rail (#165
       expect(modal.querySelector(".wi-dtitle")?.textContent).toBe("Crash on save");
       expect(modal.querySelector(".wi-dot")?.className).toContain("tone-merged");
       expect(modal.textContent).toContain(t("wi.detail_merge_merged"));
-      expect(modal.textContent).toContain(t("wi.detail_live_fresh_ref"));
+      expect(modal.textContent).toContain(t("wi.detail_live_fresh_ref", { name: "GitHub" }));
       expect(modal.querySelector(".wi-dref")).toBeNull();
+    });
+
+    it("reads a Jira key live and says Jira, without a completed/not-planned reason", async () => {
+      workItemDetail.mockResolvedValue(live({ provider: "jira", key: "PROJ-12", kind: "issue", title: "Fix login", assignee: "Bob", assignees: ["Bob"], url: "https://x.atlassian.net/browse/PROJ-12" }));
+      workItemList.mockResolvedValue({ items: [], queries: [query], sessions: [], fetchedAt: "", running: true });
+      await render();
+      const { item: ref } = resolveWorkItemRef({ provider: "jira", key: "PROJ-12" }, []);
+      await act(async () => {
+        useWorkItemModal.getState().openDetail(ref, { reference: true });
+      });
+      await settle();
+      const modal = document.querySelector(".wi-dmodal")!;
+      expect(workItemDetail).toHaveBeenCalledWith({ provider: "jira", key: "PROJ-12", kind: "" });
+      expect(modal.querySelector(".wi-dtitle")?.textContent).toBe("Fix login");
+      expect(modal.textContent).toContain(t("wi.detail_live_fresh_ref", { name: "Jira" }));
+      expect(modal.textContent).toContain(t("wi.state_done"));
+      expect(modal.textContent).not.toContain(t("wi.state_closed_completed"));
     });
 
     it("tells a closed pull request from a merged one", async () => {
@@ -1498,7 +1515,7 @@ describe("WorkItemModalHost — opened from a ticket link outside the rail (#165
       workItemDetail.mockResolvedValue({ error: { code: "agent_outdated" } });
       const modal = await openRef();
       expect(modal.querySelector(".wi-dref")).not.toBeNull();
-      expect(modal.querySelector(".wi-dlive")?.textContent).toContain(t("wi.detail_live_stopped_ref"));
+      expect(modal.querySelector(".wi-dlive")?.textContent).toContain(t("wi.detail_live_stopped_ref", { name: "GitHub" }));
     });
 
     it("does not paint a late answer onto the item the panel was re-pointed to", async () => {
