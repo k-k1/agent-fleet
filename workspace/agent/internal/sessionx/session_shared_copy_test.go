@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -146,5 +147,158 @@ func TestSessionsInDirSeesAliasPaths(t *testing.T) {
 	locked := []session.Meta{{Name: "a", Dir: link, Title: "x", Locked: true}}
 	if got := LockedSessionsInDir(locked, repo); len(got) != 1 {
 		t.Fatalf("LockedSessionsInDir(real path) = %v, want the alias-launched one", got)
+	}
+}
+
+func sharedBody(repo string, extra map[string]any) map[string]any {
+	b := map[string]any{"dir": repo, "worktree": false, "allow_shared_working_copy": true}
+	for k, v := range extra {
+		b[k] = v
+	}
+	return spawnBody(b)
+}
+
+// A shared child with NO task still hears about the shared copy, under the spawn envelope —
+// otherwise its user later hands it work and it edits the checkout as if it were alone. Both
+// launch paths.
+func TestSharedWorkingCopyEmptyTaskStillWarns(t *testing.T) {
+	env, repo, _, prompts := sharedCopyEnv(t)
+	sends := useFakeManagedDriver(t, session.KindCodex)
+
+	code, raw := env.create(sharedBody(repo, map[string]any{"idempotency_key": "empty-tui"}))
+	if code != http.StatusCreated {
+		t.Fatalf("tui create = %d %s", code, raw)
+	}
+	p := <-prompts
+	if !strings.HasPrefix(p, "[agent-fleet:spawn from=parent1] ") || !strings.Contains(p, "[agent-fleet:shared-working-copy]") {
+		t.Fatalf("tui: no envelope or warning without a task: %q", p)
+	}
+
+	code, raw = env.create(sharedBody(repo, map[string]any{"kind": session.KindCodex, "driver": session.DriverManaged,
+		"idempotency_key": "empty-managed"}))
+	if code != http.StatusCreated {
+		t.Fatalf("managed create = %d %s", code, raw)
+	}
+	d := <-sends
+	if !strings.HasPrefix(d.prompt, "[agent-fleet:spawn from=parent1] ") ||
+		!strings.Contains(d.prompt, "[agent-fleet:shared-working-copy]") {
+		t.Fatalf("managed: no envelope or warning without a task: %q", d.prompt)
+	}
+	if want := (agents.Origin{Kind: agents.OriginSpawn, From: "parent1"}); d.origin != want {
+		t.Fatalf("managed origin = %+v, want %+v", d.origin, want)
+	}
+	if d.source != TurnSourceSpawn {
+		t.Fatalf("managed injection source = %q, want %q", d.source, TurnSourceSpawn)
+	}
+}
+
+// Managed success with a task, and the replay of an identical shared create.
+func TestSharedWorkingCopyManagedAndReplay(t *testing.T) {
+	env, repo, _, _ := sharedCopyEnv(t)
+	sends := useFakeManagedDriver(t, session.KindCodex)
+	b := sharedBody(repo, map[string]any{"kind": session.KindCodex, "driver": session.DriverManaged,
+		"initial_prompt": "review it", "idempotency_key": "replay-1"})
+	code, raw := env.create(b)
+	if code != http.StatusCreated {
+		t.Fatalf("create = %d %s", code, raw)
+	}
+	var first session.Session
+	_ = json.Unmarshal(raw, &first)
+	d := <-sends
+	if !strings.Contains(d.prompt, "review it") || !strings.Contains(d.prompt, "[agent-fleet:shared-working-copy]") {
+		t.Fatalf("managed prompt: %q", d.prompt)
+	}
+	code, raw = env.create(b)
+	var again session.Session
+	_ = json.Unmarshal(raw, &again)
+	if code != http.StatusOK || again.Name != first.Name {
+		t.Fatalf("replay = %d %s, want 200 with %s", code, raw, first.Name)
+	}
+	if len(sends) != 0 {
+		t.Fatal("the replay delivered a second first instruction")
+	}
+}
+
+// The opt-in is for the copy the parent is running in NOW: not one a stopped or archived parent
+// merely used to run in, and not one its stored (alias) Dir names today.
+func TestSharedWorkingCopyNeedsLiveParentInCanonicalDir(t *testing.T) {
+	env, repo, _, _ := sharedCopyEnv(t)
+	busy := func(code int, raw []byte) bool {
+		return code == http.StatusConflict && strings.Contains(string(raw), "spawn_working_copy_busy")
+	}
+	// A stranger is working in repo, the parent is stopped.
+	env.fixture(session.Meta{Name: "intruder", Kind: session.KindClaude, Dir: repo, Origin: session.OriginUser})
+	alive := sessionAliveFn
+	sessionAliveFn = func(m session.Meta) bool { return m.Name == "intruder" || m.Name == "stranger" }
+	t.Cleanup(func() { sessionAliveFn = alive })
+	if code, raw := env.create(sharedBody(repo, map[string]any{"idempotency_key": "stopped"})); !busy(code, raw) {
+		t.Fatalf("stopped parent = %d %s, want 409 busy", code, raw)
+	}
+	// Archived (still "alive" by the liveness seam).
+	sessionAliveFn = func(m session.Meta) bool { return true }
+	pm, _ := session.ReadMeta("parent1")
+	pm.Archived = true
+	session.WriteMeta(pm)
+	if code, raw := env.create(sharedBody(repo, map[string]any{"idempotency_key": "archived"})); !busy(code, raw) {
+		t.Fatalf("archived parent = %d %s, want 409 busy", code, raw)
+	}
+	pm.Archived = false
+	session.WriteMeta(pm)
+
+	// A parent launched through a symlink that now points elsewhere: its stored Dir does not
+	// prove where it runs, so the opt-in is not honoured and the stranger's copy stays guarded.
+	realA := filepath.Join(env.home, "repos", "a")
+	realB := filepath.Join(env.home, "repos", "b")
+	for _, d := range []string{realA, realB} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(env.home, "repos", "link")
+	if err := os.Symlink(realB, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	pm.Dir = link // launched as link -> a, retargeted to b since
+	session.WriteMeta(pm)
+	env.fixture(session.Meta{Name: "inb", Kind: session.KindClaude, Dir: realB, Origin: session.OriginUser})
+	if code, raw := env.create(sharedBody(realB, map[string]any{"idempotency_key": "retarget"})); !busy(code, raw) {
+		t.Fatalf("retargeted alias parent = %d %s, want 409 busy", code, raw)
+	}
+}
+
+// worktree=true must still reach EnsureWorktree with the flag set: a new directory, no shared
+// warning, same as without it.
+func TestSharedWorkingCopyFlagDoesNotTouchWorktreeLaunch(t *testing.T) {
+	env, repo, _, prompts := sharedCopyEnv(t)
+	gitInit(t, repo)
+	for i, extra := range []map[string]any{{}, {"allow_shared_working_copy": true}} {
+		b := spawnBody(map[string]any{"dir": repo, "worktree": true, "initial_prompt": "go",
+			"idempotency_key": "wt-git-" + string(rune('a'+i))})
+		for k, v := range extra {
+			b[k] = v
+		}
+		code, raw := env.create(b)
+		if code != http.StatusCreated {
+			t.Fatalf("case %d: = %d %s", i, code, raw)
+		}
+		var created session.Session
+		_ = json.Unmarshal(raw, &created)
+		m, _ := session.ReadMeta(created.Name)
+		if m.Dir == repo || m.Dir == "" {
+			t.Fatalf("case %d: Dir = %q, want a new worktree", i, m.Dir)
+		}
+		if p := <-prompts; strings.Contains(p, "shared-working-copy") {
+			t.Fatalf("case %d: worktree launch got the shared warning: %q", i, p)
+		}
+	}
+}
+
+// Without an explicit key the fingerprint is the dedupe: it must tell a shared create from a
+// plain one.
+func TestCreateIdempotencyKeyFingerprintSeesSharedFlag(t *testing.T) {
+	a := &CreateReq{ReportTo: "conv", Dir: "/d", InitialPrompt: "x"}
+	b := &CreateReq{ReportTo: "conv", Dir: "/d", InitialPrompt: "x", AllowSharedWorkingCopy: true}
+	if createIdempotencyKey(a) == "" || createIdempotencyKey(a) == createIdempotencyKey(b) {
+		t.Fatal("the fallback key ignores allow_shared_working_copy")
 	}
 }

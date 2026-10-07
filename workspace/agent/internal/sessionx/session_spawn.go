@@ -318,26 +318,42 @@ func spawnWorkingCopyRefusal(dir, parent string, allowShared bool) *SpawnRefusal
 	return nil
 }
 
-// spawnOwnWorkingCopy reports whether target (a workingCopyKey) is the parent's own working
-// copy, compared canonically on both sides so an alias spelling cannot stand in for it.
+// spawnOwnWorkingCopy reports whether target (a workingCopyKey) is the working copy the parent is
+// running in RIGHT NOW. Three conditions, each closing a way to share a copy the parent is not
+// using:
+//   - the parent is live and not archived: a stopped parent's stored Dir says where it WAS, and a
+//     stranger may be the one working there now;
+//   - the parent's stored Dir is already canonical: Meta.Dir keeps the spelling the launch used, and
+//     a symlink retargeted since then makes the stored string name a copy the parent never ran in.
+//     An alias-launched parent therefore cannot opt in (conservative: its real cwd is unprovable);
+//   - the canonical forms match.
 func spawnOwnWorkingCopy(parent, target string) bool {
 	m, ok := session.ReadMeta(parent)
-	return ok && m.Dir != "" && workingCopyKey(m.Dir) == target
+	if !ok || m.Archived || m.Dir == "" || !sessionAliveFn(m) {
+		return false
+	}
+	key := workingCopyKey(m.Dir)
+	return key == filepath.Clean(m.Dir) && key == target
 }
 
-// SharedWorkingCopyWarning is appended to the first instruction of a child that was started
-// INTO its parent's live working copy. Built here for the reason SpawnEnvelope is: a caller
-// cannot omit it. "Commit only your files" is not enough — a commit takes the shared index —
-// so the rule is to stage and commit explicitly by path.
-func SharedWorkingCopyWarning(prompt string) string {
-	prompt = strings.TrimSpace(prompt)
-	if prompt == "" {
-		return prompt
-	}
-	return prompt + "\n\n[agent-fleet:shared-working-copy] You share this working copy, its index and its " +
+// SharedWorkingCopyWarning is the standing warning for a child that was started INTO its parent's
+// live working copy. Built here for the reason SpawnEnvelope is: a caller cannot omit it. "Commit
+// only your files" is not enough — a commit takes the shared index — so the rule is to stage and
+// commit explicitly by path.
+//
+// With a task it is appended to it. Without one it IS the first instruction, under the spawn
+// envelope: a child that heard nothing about the shared copy would edit it as if it were alone
+// once its user hands it work.
+func SharedWorkingCopyWarning(parent, prompt string) string {
+	const warning = "[agent-fleet:shared-working-copy] You share this working copy, its index and its " +
 		"branch with your parent session, which is working in it right now. Do not checkout, switch, " +
 		"stash, reset or change branches. Stage and commit explicitly by path (git add <path>; " +
 		"git commit <path> -m ...), never git add -A / commit -a: another session's changes sit in the same index."
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return SpawnEnvelope(parent, warning+" No task has been given yet: wait for one.")
+	}
+	return prompt + "\n\n" + warning
 }
 
 // spawnKindRefusal refuses raw shells (ADR 0073 decision 8, the reasoning of ADR 0041

@@ -1042,7 +1042,7 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 			// Launch through the canonical spelling so Meta.Dir matches what the delete and
 			// checkout guards compare, and tell the child it is not alone in the checkout.
 			req.Dir = workingCopyKey(req.Dir)
-			req.InitialPrompt = SharedWorkingCopyWarning(req.InitialPrompt)
+			req.InitialPrompt = SharedWorkingCopyWarning(spawnParent, req.InitialPrompt)
 		}
 	}
 	// Subdir (optional): the CWD narrows to a folder beneath the resolved working copy.
