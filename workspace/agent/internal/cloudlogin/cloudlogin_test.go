@@ -338,3 +338,85 @@ func TestASubmitStuckOnAFullPipeDoesNotBlockCancel(t *testing.T) {
 		t.Fatal("the cancel did not end the stuck write")
 	}
 }
+
+// waitSpec is a Wait whose first check is made only after a login "lands" (Filed sets the
+// mark), and whose check is check.
+func waitSpec(s *Store[testState], cancel <-chan struct{}, check func() (string, error)) WaitSpec[string] {
+	return WaitSpec[string]{
+		Profile: "p", Key: "k", Wait: 5 * time.Second, Poll: 5 * time.Millisecond, Cancel: cancel,
+		Check:       check,
+		LoginNeeded: func(err error) bool { return err.Error() == "login" },
+		Filed: func() {
+			b := s.Backend.(testBackend)
+			b.state["k"] = testState{Mark: "landed"}
+		},
+	}
+}
+
+// A Ctrl-C that arrives while the check runs wins over the check's outcome, success or not:
+// carrying on into the command would swallow the person's request to stop.
+func TestCancelDuringCheckWinsOverItsOutcome(t *testing.T) {
+	for name, outcome := range map[string]error{"success": nil, "other failure": errors.New("boom"), "login needed": errors.New("login")} {
+		t.Run(name, func(t *testing.T) {
+			s := newStore(t)
+			cancel := make(chan struct{})
+			spec := waitSpec(s, cancel, func() (string, error) {
+				close(cancel)
+				if outcome == nil {
+					return "creds", nil
+				}
+				return "", outcome
+			})
+			c, err := Wait(s, testState{}, spec)
+			var we *WaitError
+			if !errors.As(err, &we) || we.Reason != WaitInterrupted || c != "" {
+				t.Fatalf("got %q, %v; want WaitInterrupted", c, err)
+			}
+		})
+	}
+}
+
+// Waiting for a lock somebody else holds ends with Cancel or the deadline, not the holder.
+func TestFlockExEndsWithCancelOrDeadline(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "l")
+	holder, _ := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	defer holder.Close()
+	if err := FlockEx(holder, nil, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	f, _ := os.OpenFile(path, os.O_RDWR, 0o600)
+	defer f.Close()
+	if err := FlockEx(f, nil, time.Now().Add(80*time.Millisecond)); !errors.Is(err, ErrLockTimeout) {
+		t.Fatalf("deadline: %v", err)
+	}
+	cancel := make(chan struct{})
+	time.AfterFunc(50*time.Millisecond, func() { close(cancel) })
+	start := time.Now()
+	if err := FlockEx(f, cancel, time.Now().Add(time.Minute)); !errors.Is(err, ErrLockInterrupted) || time.Since(start) > 2*time.Second {
+		t.Fatalf("cancel: %v after %s", err, time.Since(start))
+	}
+}
+
+// Filing the request waits for the store's directory lock; Ctrl-C ends that wait too.
+func TestCancelEndsTheWaitForTheStoreLock(t *testing.T) {
+	s := newStore(t)
+	unlock, err := s.lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	cancel := make(chan struct{})
+	time.AfterFunc(50*time.Millisecond, func() { close(cancel) })
+	spec := waitSpec(s, cancel, func() (string, error) { return "", errors.New("login") })
+	done := make(chan error, 1)
+	go func() { _, err := Wait(s, testState{Mark: "old"}, spec); done <- err }()
+	select {
+	case err := <-done:
+		var we *WaitError
+		if !errors.As(err, &we) || we.Reason != WaitInterrupted {
+			t.Fatalf("err = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Ctrl-C did not end the wait for the lock")
+	}
+}

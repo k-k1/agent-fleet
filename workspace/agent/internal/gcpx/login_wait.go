@@ -44,11 +44,12 @@ func consoleLogin(gcloudBin string, env []string, p Profile, snap LoginState, o 
 		cancel, stop = cloudlogin.Interrupt()
 		defer stop()
 	}
+	deadline := time.Now().Add(o.ConsoleWait)
 	m, err := cloudlogin.Wait(logins, snap, cloudlogin.WaitSpec[minted]{
 		Profile: p.Name, Key: ConfigName(p.Name), Waiter: o.Waiter,
 		Wait: o.ConsoleWait, Poll: loginPollInterval, Cancel: cancel,
 		Check: func() (minted, error) {
-			tok, account, err := mintLocked(gcloudBin, env, p, nil)
+			tok, account, err := mintLockedCancel(gcloudBin, env, p, nil, cancel, deadline)
 			return minted{tok, account}, err
 		},
 		LoginNeeded: func(err error) bool { return errors.Is(err, ErrLoginRequired) },

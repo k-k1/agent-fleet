@@ -29,9 +29,11 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudbridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudexec"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudlogin"
 )
 
 // ErrBridgeOff reports that this deployment injects no bridge. A normal state, not a
@@ -134,6 +136,12 @@ func lockRoot() (string, func(), error) { return lockRootNotify(nil) }
 // (a terminal login holds it for as long as the person takes), so a wrapper can say why it
 // does not start.
 func lockRootNotify(waiting func()) (string, func(), error) {
+	return lockRootCancel(waiting, nil, time.Time{})
+}
+
+// lockRootCancel is lockRootNotify whose wait ends with cancel or a non-zero deadline, so a
+// Console wait's Ctrl-C and budget are not held hostage by whoever holds the root.
+func lockRootCancel(waiting func(), cancel <-chan struct{}, deadline time.Time) (string, func(), error) {
 	root, f, err := openRootLock()
 	if err != nil {
 		return "", nil, err
@@ -142,7 +150,7 @@ func lockRootNotify(waiting func()) (string, func(), error) {
 		if waiting != nil {
 			waiting()
 		}
-		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		if err := cloudlogin.FlockEx(f, cancel, deadline); err != nil {
 			f.Close()
 			return "", nil, err
 		}

@@ -34,6 +34,16 @@ func Interrupt() (<-chan struct{}, func()) {
 	}
 }
 
+// cancelled reports whether cancel has closed.
+func cancelled(cancel <-chan struct{}) bool {
+	select {
+	case <-cancel:
+		return true
+	default:
+		return false
+	}
+}
+
 // sleep waits d, or until cancel closes; it reports whether the full time passed. A nil
 // cancel never fires.
 func sleep(d time.Duration, cancel <-chan struct{}) bool {
@@ -130,6 +140,11 @@ func settle[S comparable, C any](s *Store[S], w *WaitSpec[C], snap S, deadline t
 			return snap, zero, false, errInterrupted
 		}
 		c, err := w.Check()
+		// A Ctrl-C that arrived during the check wins over its outcome: the person asked to
+		// stop, and a success here would carry on into the command they meant to abandon.
+		if cancelled(w.Cancel) {
+			return snap, zero, false, errInterrupted
+		}
 		if err == nil {
 			return snap, c, true, nil
 		}
@@ -158,7 +173,10 @@ func Wait[S comparable, C any](s *Store[S], snap S, w WaitSpec[C]) (C, error) {
 		return c, nil
 	}
 
-	req, _, err := s.File(w.Profile, w.Key, snap, w.Waiter)
+	req, _, err := s.FileCancel(w.Profile, w.Key, snap, w.Waiter, w.Cancel, deadline)
+	if errors.Is(err, ErrLockInterrupted) {
+		return zero, &WaitError{Reason: WaitInterrupted}
+	}
 	if errors.Is(err, ErrHeld) {
 		return zero, &WaitError{Reason: WaitCancelled}
 	}
@@ -186,6 +204,9 @@ func Wait[S comparable, C any](s *Store[S], snap S, w WaitSpec[C]) (C, error) {
 			continue
 		}
 		c, err := w.Check()
+		if cancelled(w.Cancel) {
+			return zero, &WaitError{Reason: WaitInterrupted}
+		}
 		if err == nil {
 			return c, nil
 		}
@@ -206,7 +227,10 @@ func Wait[S comparable, C any](s *Store[S], snap S, w WaitSpec[C]) (C, error) {
 		// Still no login, against a state that held still: the Agent may already have
 		// dropped the request as resolved, so file again (or join) rather than wait on a
 		// request that is gone.
-		next, created, err := s.File(w.Profile, w.Key, st, w.Waiter)
+		next, created, err := s.FileCancel(w.Profile, w.Key, st, w.Waiter, w.Cancel, deadline)
+		if errors.Is(err, ErrLockInterrupted) {
+			return zero, &WaitError{Reason: WaitInterrupted}
+		}
 		if errors.Is(err, ErrHeld) {
 			return zero, &WaitError{Reason: WaitCancelled}
 		}

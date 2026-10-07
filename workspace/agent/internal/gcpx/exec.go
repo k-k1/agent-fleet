@@ -218,7 +218,12 @@ func pickProfile(o ExecOptions) (Profile, error) {
 // mintLocked mints under the root's lock, so a sync or a login cannot change the
 // configuration between the checks and the mint.
 func mintLocked(gcloudBin string, env []string, p Profile, waiting func()) (Token, string, error) {
-	root, unlock, err := lockRootNotify(waiting)
+	return mintLockedCancel(gcloudBin, env, p, waiting, nil, time.Time{})
+}
+
+// mintLockedCancel is mintLocked whose wait for the root lock ends with cancel or deadline.
+func mintLockedCancel(gcloudBin string, env []string, p Profile, waiting func(), cancel <-chan struct{}, deadline time.Time) (Token, string, error) {
+	root, unlock, err := lockRootCancel(waiting, cancel, deadline)
 	if err != nil {
 		return Token{}, "", err
 	}

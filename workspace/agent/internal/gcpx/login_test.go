@@ -1123,3 +1123,33 @@ func TestTerminalRunCtrlCEndsTheConsoleWait(t *testing.T) {
 		t.Fatalf("the run did not say how to stop: %q", stderr.String())
 	}
 }
+
+// A Console wait's Ctrl-C and budget are not held hostage by whoever holds the root lock
+// (a login in another terminal): the check's mint ends with the cancel.
+func TestMintLockedEndsWithCancelWhileTheRootIsHeld(t *testing.T) {
+	l := setupLogin(t, prod())
+	_, unlock, err := lockRootNotify(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	cancel := make(chan struct{})
+	time.AfterFunc(50*time.Millisecond, func() { close(cancel) })
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := mintLockedCancel(l.gcloud, hostile(t), prod(), nil, cancel, time.Now().Add(time.Minute))
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, cloudlogin.ErrLockInterrupted) {
+			t.Fatalf("err = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the mint stayed blocked on the root lock after Ctrl-C")
+	}
+	// The deadline ends it too.
+	if _, _, err := mintLockedCancel(l.gcloud, hostile(t), prod(), nil, nil, time.Now().Add(100*time.Millisecond)); !errors.Is(err, cloudlogin.ErrLockTimeout) {
+		t.Fatalf("deadline: %v", err)
+	}
+}

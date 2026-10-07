@@ -422,7 +422,10 @@ flows depending on who ran the command. Decision 6's first bullet is amended; de
 - **Wait.** Ten minutes (`consoleLoginTerminalWait`), about the device-code lifetime; a person is at the keyboard
   and no agent tool times the command out. A run that ends without approval exits 3 with the request still
   pending, as decision 5 has it. **Ctrl-C** (SIGINT or SIGTERM, caught only during the wait) ends the wait with
-  exit 3 and leaves the request for the Console or the next run.
+  exit 3 and leaves the request for the Console or the next run. A Ctrl-C that arrives while a credential check is
+  running wins over that check's outcome (even a success), and the waits for the request directory's lock and the
+  gcloud root's lock end with the Ctrl-C or the wait budget instead of with the lock's holder. A `aws` or
+  `gcloud` child already started is not killed by the Agent; at a terminal it receives the same Ctrl-C.
 - **Console cannot be asked** (the request cannot be filed): a terminal run falls back to the in-terminal login
   instead of exit 3. Whether a Console is open to show the toast cannot be known; `--login` and Ctrl-C are the way
   out, and the message names both.
