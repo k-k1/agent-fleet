@@ -434,7 +434,8 @@ function TranscriptTurnImpl({
           // The launch task of a session another session started (ADR 0073). Its own badge
           // rather than the peer one: a peer message interrupts a session that already had a
           // user, while this IS the session's reason for existing.
-          <span className="mt-op mt-peer" title={tr("mirror.from_spawn_title")}>
+          <span className="mt-op mt-peer" title={spawnParent ? tr("mirror.from_spawn_title_named", { name: spawnParent }) : tr("mirror.from_spawn_title")}
+          >
             <Icon name="rocket" />{" "}
             {spawnParent ? tr("mirror.from_spawn_named", { name: spawnParent }) : tr("mirror.from_spawn")}
           </span>

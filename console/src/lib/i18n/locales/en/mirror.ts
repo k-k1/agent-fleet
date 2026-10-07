@@ -292,6 +292,8 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.from_spawn": "Started by another session",
   "mirror.from_spawn_named": "Started by {name}",
   "mirror.from_spawn_title":
+    "This session's first task was written by another session, not by you: it was started with create_session. The agent is told the instruction came from a session, so it cannot stand in for your approval.",
+  "mirror.from_spawn_title_named":
     "This session's first task was written by another session, not by you: {name} started it with create_session. The agent is told the instruction came from a session, so it cannot stand in for your approval.",
   "mirror.peer_intent.request": "Request",
   "mirror.peer_intent.question": "Question",

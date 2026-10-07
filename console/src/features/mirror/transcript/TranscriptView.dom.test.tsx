@@ -19,7 +19,7 @@ import { THINKING_FOOT_MIN_PX, thinkingPreview } from "./blocks.tsx";
 import { groupTurns } from "./model.ts";
 import type { TranscriptCaps } from "./capabilities.ts";
 import type { Part, Turn } from "./types.ts";
-import { t as tr } from "../../../lib/i18n/index.ts";
+import { t as tr, setLocale } from "../../../lib/i18n/index.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -555,6 +555,35 @@ describe("how an incoming peer message looks (docs/log/58 §58.14)", () => {
       RECIPIENT,
     );
     expect(el.querySelector(".mt-peer")?.textContent).toContain("build-api");
+  });
+});
+
+// The spawn badge's tooltip names the parent in both locales. en's sentence carries {name}, and
+// t() leaves a placeholder alone when no vars are passed, so a call site that forgets them shows
+// "{name}" to the reader verbatim.
+describe("the spawn badge tooltip", () => {
+  const SPAWNED: Turn[] = [{ role: "user", text: "[agent-fleet:spawn from=build-api] 直して", idx: 1 }];
+
+  afterEach(() => setLocale("ja"));
+
+  it.each([
+    ["en", "build-api started it with create_session"],
+    ["ja", "build-api が create_session で起こしました"],
+  ])("names the parent session (%s)", (locale, phrase) => {
+    setLocale(locale);
+    const title = render(SPAWNED, RECIPIENT).querySelector(".mt-peer")?.getAttribute("title") ?? "";
+    expect(title).toContain(phrase);
+    expect(title).not.toMatch(/\{\w+\}/);
+  });
+
+  // A spawn origin tag with no envelope (the turn was fetched before the envelope was written)
+  // leaves no name; the tooltip must then read whole rather than show a hole.
+  it.each(["en", "ja"])("reads whole when the parent is unknown (%s)", (locale) => {
+    setLocale(locale);
+    const el = render([{ role: "user", text: "直して", idx: 1, source: "spawn" }], RECIPIENT);
+    const title = el.querySelector(".mt-peer")?.getAttribute("title") ?? "";
+    expect(title).toContain("create_session");
+    expect(title).not.toMatch(/\{\w+\}/);
   });
 });
 
