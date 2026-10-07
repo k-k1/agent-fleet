@@ -5,20 +5,12 @@ package agy
 // running(2)/streaming(8), or the newest turn end is behind the last step. A session stuck
 // there read "working" for ~21 h in production and kept its Workspace awake.
 //
-// Measured on the real agy in this container (isolated tmux probe, 2026-10-07):
-//   - The footer read "esc to cancel" for the whole of a generation, a thinking phase and a
-//     foreground run_command, and flipped to "? for shortcuts" in the same 2 s sample in which
-//     the turn-end executor_metadata row landed: no sample showed the idle footer while the DB
-//     said working.
-//   - agy moves a run_command to a background task ~2 s after it starts and ends the turn: a
-//     `sleep 25` kept its step at status 2 and its process alive for all 25 s while the DB said
-//     idle and the footer "? for shortcuts · 1 task(s)".
-//   - While that task runs the DB is untouched: a `sleep 420` left the db/-wal mtime ageing
-//     35 s → 177 s without a write, so a long build can look stale from the DB alone.
-//   - Under the pane (agy is the pane root) the permanent child is one MCP server
-//     (`workspace-agent mcp-stdio`, agy's session). A run_command is a direct child `bash` that
-//     is its own session leader (sid == pid): `sleep 25` ran as bash > sleep, a pipeline as
-//     bash > {bash > sleep, cat}.
+// Invariants (measurements: docs/log/32, "LiveState の "working" に上限を付ける実測"):
+//   - The footer reads "esc to cancel" for the whole of a turn, so an idle footer that stays
+//     unpainted is the TUI waiting for input whatever the DB says.
+//   - A long run_command is a background task that ends the turn and writes nothing to the DB,
+//     so DB staleness alone must never withdraw "working" while a tool process lives.
+//   - A tool is a child that is its own session leader; agy's MCP helpers share agy's session.
 
 import (
 	"os"
@@ -86,10 +78,7 @@ func dbModTime(conv string) (time.Time, bool) {
 
 func paneIdleSettled(name string) bool {
 	frame := tmuxx.CapturePane(session.TmuxName(name))
-	if !hasIdleFooter(frame) {
-		return false
-	}
-	return tmuxx.FrameSettled(name, frame)
+	return tmuxx.FooterSettled(name, frame, hasIdleFooter)
 }
 
 // hasIdleFooter reports whether the composer footer in the pane's last lines is the idle one.
