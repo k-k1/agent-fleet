@@ -48,6 +48,20 @@ describe("i18n runtime", () => {
   it("en covers every ja key and adds none (completeness guard at runtime too)", () => {
     expect(Object.keys(en).sort()).toEqual(Object.keys(ja).sort());
   });
+
+  // t() leaves a {placeholder} in place when the call site passes no such var, and a call site
+  // passes one set of vars for both locales. A key whose placeholders differ between ja and en
+  // therefore shows a literal "{name}" in one of them (the spawn badge tooltip did). Measured
+  // today: no key differs. Add an entry to this allowlist only with the reason it is intended.
+  const PLACEHOLDER_PARITY_ALLOWLIST = new Set<string>([]);
+  it("every key has the same {placeholder} names in ja and en", () => {
+    const names = (s: string) => [...new Set([...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]))].sort().join(",");
+    const differ = Object.keys(ja)
+      .filter((k) => !PLACEHOLDER_PARITY_ALLOWLIST.has(k))
+      .filter((k) => names((ja as Record<string, string>)[k]) !== names((en as Record<string, string>)[k]))
+      .map((k) => `${k}: ja {${names((ja as Record<string, string>)[k])}} vs en {${names((en as Record<string, string>)[k])}}`);
+    expect(differ).toEqual([]);
+  });
 });
 
 describe("tCount (plurals)", () => {

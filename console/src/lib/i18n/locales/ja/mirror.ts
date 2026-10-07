@@ -316,6 +316,8 @@ export const mirror = {
   "mirror.from_spawn_named": "{name} が起動",
   "mirror.from_spawn_title":
     "このセッションの最初のタスクは、あなたではなく別のセッションが書いたものです（create_session で起動されました）。エージェントには「セッションからの指示である」と伝えてあり、あなたの承認の代わりにはなりません。",
+  "mirror.from_spawn_title_named":
+    "このセッションの最初のタスクは、あなたではなく別のセッションが書いたものです（{name} が create_session で起こしました）。エージェントには「セッションからの指示である」と伝えてあり、あなたの承認の代わりにはなりません。",
   "mirror.peer_intent.request": "依頼",
   "mirror.peer_intent.question": "質問",
   "mirror.peer_intent.answer": "回答",
