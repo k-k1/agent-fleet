@@ -400,3 +400,23 @@ func TestWorkItemsDetailJiraNotConnected(t *testing.T) {
 		t.Fatalf("got %d %s, want 400 not_connected", w.Code, w.Body.String())
 	}
 }
+
+// jiraGet words a 400 for a JQL failure and appends Jira's own errorMessages; a single-issue
+// read must neither say "JQL" nor pass the upstream text on.
+func TestJiraReferenceDetailErrorsCarryNoUpstreamText(t *testing.T) {
+	for _, code := range []int{400, 401, 403, 429, 500} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(code)
+			_, _ = w.Write([]byte(`{"errorMessages":["UPSTREAM_SENTINEL"]}`))
+		}))
+		c := &secrets.JiraCreds{Site: srv.URL, Email: "a@example.com", Token: "t"}
+		_, err := jiraReferenceDetail(c, "PROJ-1")
+		srv.Close()
+		if err == nil {
+			t.Fatalf("%d: want an error", code)
+		}
+		if strings.Contains(err.Error(), "UPSTREAM_SENTINEL") || strings.Contains(err.Error(), "JQL") {
+			t.Errorf("%d: error leaks upstream text or JQL wording: %v", code, err)
+		}
+	}
+}

@@ -203,6 +203,11 @@ func jiraReferenceDetail(c *secrets.JiraCreds, key string) (*workItemDetailOut, 
 		if isJiraNotFound(err) {
 			return nil, fmt.Errorf("jira has no %s visible to this connection", key)
 		}
+		// jiraGet's 400 text carries Jira's own errorMessages and is worded for a JQL parse
+		// failure; neither belongs in a single-issue answer. Every other text is fixed.
+		if je, ok := err.(*jiraHTTPError); ok && je.code == http.StatusBadRequest {
+			return nil, fmt.Errorf("jira refused the request for %s (400)", key)
+		}
 		return nil, err
 	}
 	// The search parser's issue shape is the same; wrap the one issue as a page of one.
