@@ -2,7 +2,7 @@
 
 English | [日本語](0111-member-collaboration.ja.md)
 
-- Status: **proposed** (2026-10-07). Nothing is built. Two rounds of design review by a second model
+- Status: **proposed** (2026-10-07). Nothing is built. Three rounds of design review by a second model
   are folded in.
 - Tracking: #1840
 - Related: [0057](0057-member-handoff.md) (handover between members: execution never crosses) /
@@ -38,8 +38,9 @@ What exists, and where it falls short, was checked against the code:
   (`workspace/agent/internal/mcpx/mcp_stdio.go`). Flushing concatenates bodies, so their origin is lost.
 - **The CP already pulls from running workspaces.** The idle reaper sweeps serially, by default once a
   minute (`AF_IDLE_SWEEP_INTERVAL`), and calls `GET /sessions` on each running Agent
-  (`agentSessionsEnv`, `control-plane/agent_client.go`). It skips a tenant whose idle tiers are all off
-  (`tierClocks.anyOn`, `control-plane/reaper.go`), and it does not run at all when the interval is 0.
+  (`agentSessionsEnv`, `control-plane/agent_client.go`). It skips a tenant where none of its
+  features (session, interaction and workspace idle, hibernate, backup) is on (`tierClocks.anyOn`,
+  `control-plane/reaper.go`), and it does not run at all when the interval is 0.
   The envelope carries the live states `limited` (with an optional `rateLimitResumeAt`) and
   `spend_limit`. The notification outbox is drained only when a Console asks or just before a stop
   (`control-plane/notification.go`, `drainAgentOutbox`). The reaper's `GET /sessions` does not drain it.
@@ -131,8 +132,16 @@ plain DM has no claim, and any recipient may take it in.
 - Agents never report links. Finding the PR automatically through the git connections is a separate,
   later step. It has to handle branch-name collisions and lost access.
 
-Unread is not the same as unhandled. A request stays in the sender's and the assignee's "open" list
-until it reaches a final state, whether or not anyone has read it.
+Unread is not the same as unhandled, and reading is not declining. Until a request reaches a final
+state, whether or not anyone has read it:
+
+- while `open` (including after a release), it stays in the sender's list and in the "waiting for
+  someone" list of every recipient who has not declined and can still take it;
+- while `claimed`, the sender and the assignee track it as in progress, and the other recipients see
+  it as taken.
+
+A recipient whose membership is removed, or who has blocked the sender, can no longer take it. They
+leave the waiting list, and they are not counted when deciding whether every recipient has declined.
 
 ### 3. The inbox is its own store. The recipient takes items into the memo queue explicitly
 
@@ -187,7 +196,7 @@ A recipe holds the prompt, a suggested kind / model / effort, and optionally a r
 - The snapshot is optional and isolated. A malformed or unknown-version snapshot makes only that
   kind's quota `unknown`. It never fails decoding of the sessions, repo jobs or image jobs, and never
   changes an idle, busy or presence decision.
-- **Coverage.** The reaper reaches only running workspaces in tenants with an idle tier on, at its
+- **Coverage.** The reaper reaches only running workspaces in tenants where `tierClocks.anyOn()` is true, at its
   configured interval, serially. Where it does not reach, the browser post is the source. The board
   promises no refresh rate.
 
@@ -285,7 +294,7 @@ The handover picker may show a recipient's published limit state as a hint.
 
 | Thing | Ends when |
 |---|---|
-| Inbox item body | retention expiry after a final state, or the last participant's membership is removed |
+| Inbox item body | a DM: retention counted from `createdAt`. A request: retention counted from its final state (an open request never expires silently). Either: when the last participant's membership is removed |
 | Request state and links | kept with the item |
 | A recipe taken into the memo queue | it is the recipient's memo from then on and follows memo retention; it is never pulled back |
 | A share grant made with a message | an ordinary share, revoked like any other |
@@ -297,8 +306,10 @@ The handover picker may show a recipient's published limit state as a hint.
   filter expired rows before decryption. Deletion from the live database is stated separately from
   how long backups keep a copy.
 - **Open requests do not expire silently.** After a threshold they are marked as long-open in the
-  sender's and assignee's lists, and either side can close them: the sender withdraws, the assignee
-  releases or marks done. They count against the pending limit (decision 10) until then.
+  lists above. A request ends only as `done`, `withdrawn`, or `declined` by every recipient. The
+  sender can always withdraw it. A release only hands the assignment back: the request stays open,
+  stays long-open, and keeps counting against the pending limit (decision 10). Marking `done` is not
+  a way to tidy up.
 - The audit log records who sent which kind of item to whom, and when. It never records a body.
 
 ### 10. Receiving is under the recipient's control
@@ -376,7 +387,7 @@ If the audience model is not settled, the feature waits for its own ADR.
 | **P1-A, first half** | The inbox: durable store, membership-only REST and stream, receive controls, DMs, requests with the state table, session links recorded at launch, manual PR links. Agent drafts through `add_memo`. |
 | **P1-A, second half** | Recipes: explicit take-in with origin, assignee-only and idempotent take-in for requests. Session attachments that create a share, once decision 5's transaction is verified alone. |
 | **P1-B** (independent of A) | The limit board: the lightweight snapshot, the observation contract, the login epoch, hidden by default, server-side reduction, P1 coverage only. |
-| **P2** | Limit hint in the handover picker. Session follow, starting as the last observed state with its time. RO review. `workItem` / `pr` attachments. Tenant announcements, if asked for. |
+| **P2** | Limit hint in the handover picker. Session follow (explicit opt-in, shared sessions only), starting as the last observed state with its time. RO review. `workItem` / `pr` attachments. Tenant announcements, if asked for. |
 | **P3** | An opt-in list of closed requests and completion reports, then a digest if it gets used. A versioned recipe shelf. Small rooms. Edit-overlap candidates, once audience and repository identity are settled (or a separate ADR). |
 | **Separate ADRs** | Pair mode (not recommended). Skill distribution. Team knowledge memory. Chat bridge mirroring. |
 
@@ -386,7 +397,7 @@ Dependencies, per feature:
 |---|---|
 | Inbox (P1-A) | P0's acceptance conditions only. It does not wait for the handover run. |
 | Handover hint (P2) | P1-B and the two-account handover run. Not the inbox. |
-| Session follow (P2) | As state only: P1-B's snapshot path. As transition notifications: a durable event path from running workspaces with no browser open (outbox drain with ack and event ids, drain before stop). That is its own piece of work. Permission and question contents and answer buttons never reach other members. |
+| Session follow (P2) | Always: an explicit subscription, allowed only for a session the follower can already see through the share ACL. The ACL is checked again on every projection. Unsharing, leaving the tenant or unsubscribing stops further delivery and clears what was shown. Publishing limits is not permission to follow a session. As state only: P1-B's snapshot path. As transition notifications: a durable event path from running workspaces with no browser open (outbox drain with ack and event ids, drain before stop). That is its own piece of work. Permission and question contents and answer buttons never reach other members. |
 | RO review (P2) | A new annotate-only permission, and review comments stored in the CP rather than as marks in the owner's workspace. |
 | Session attachments with a new share | Decision 5's transaction. |
 
@@ -402,8 +413,11 @@ Dependencies, per feature:
 - **A browser-fed limit board only.** It updates only while the member has a tab open, which is exactly
   when others least need to know.
 - **A dedicated Agent→CP push endpoint and token for limits.** The reaper's existing authenticated
-  pull already reaches running workspaces. A new inbound path would add a credential for no coverage
-  the browser fallback does not already give.
+  pull already reaches most running workspaces, and the product prefers it to adding an inbound path,
+  a credential and its operation. The cost is accepted as a P1 limit: a workspace the reaper does
+  not reach (it is off, or the tenant has none of its features on), while the member has no browser
+  open, is not updated, and shows as stale or unknown. If a tenant needs updates in that case, the
+  collection path is reconsidered.
 - **State visible by default.** "State only" still exposes working hours and billing trouble. Opt-in
   means hidden until chosen.
 - **Treating a past reset as 0%.** A capture that stopped would read as fresh headroom.
@@ -415,7 +429,8 @@ Dependencies, per feature:
 
 ## Open questions
 
-- Retention defaults (proposal: items 90 days after a final state; long-open marking after 14 days).
+- Retention defaults (proposal: DMs 90 days from creation, requests 90 days from their final state;
+  long-open marking after 14 days).
 - Admin read or export of bodies: none, or audited and visible to the participants.
 - For a member of several tenants, whether one publication setting covers all of them.
 - Which subscription contracts the tenant's members hold, and whether its admin wants the limit board
