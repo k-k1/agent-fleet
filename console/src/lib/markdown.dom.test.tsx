@@ -214,10 +214,11 @@ describe("a formatting tag that is never closed", () => {
     }
   });
 
-  it("does not let a closer inside a cell, caption or marquee close an opener outside", () => {
+  it("does not let a closer inside a cell or caption close an opener outside", () => {
     for (const source of [
       "<a download>\n\n<table><tr><td></a></td></tr></table>\n\nSecond.",
-      "<div><a download>x<marquee></a></marquee></div>\n\nSecond.",
+      "<a download>\n\n<table><tr><td>Use </a>\n\nSecond.",
+      "<a download>\n\nUse <table><tr><td></a>\n\nSecond.",
       "<div><a download>x<table><caption></a></caption></table></div>\n\nSecond.",
     ]) {
       expect(leaks(render(STOCK, source), "Second."), source).toBe(true);
@@ -237,9 +238,60 @@ describe("a formatting tag that is never closed", () => {
       ['<div><a href="x">l</a><textarea></a></textarea></div>', "div > a[href]"],
       ['<table><tr><td><a href="x">l</a></td></tr></table>', "td a[href]"],
       ['<div><!-- c --><a href="x">l</a></div>', "div > a[href]"],
-      ['<div><a href="x"><marquee>m</marquee>l</a></div>', "div > a[href]"],
+      // End tags that HTML lets an author leave out must not leave a boundary behind.
+      ['<div><a href="x">o<table><tr><td>i</tr></table>t</a></div>', "div > a[href]"],
+      ['<div><a href="x">o<table><tr><td>i<td>j</table>t</a></div>', "div > a[href]"],
+      ['<div><a href="x">o<table><caption>c<tr><td>i</table>t</a></div>', "div > a[href]"],
+      // A cell outside any table is dropped by the parser, so it bounds nothing.
+      ['Use <a href="x">before<td> inside</a> after', "a[href]"],
+      ['<div><a href="x">o<td>i</a></div>', "div > a[href]"],
     ] as const) {
       expect(render(marked, source).querySelector(selector), source).not.toBeNull();
     }
+  });
+
+  it("keeps <marquee> from becoming markup, which would scroll the text around it", () => {
+    for (const source of ["Use <marquee>moves</marquee> here.", "Use <marquee> here, never closed."]) {
+      const el = render(marked, source);
+      expect(el.querySelector("marquee"), source).toBeNull();
+      expect(el.textContent).toContain("<marquee>");
+    }
+  });
+
+  it("does not offer a closer a scope stopped to an opener outside it", () => {
+    // The closer sits in an inline paragraph, so it is an orphan of its unit.
+    const el = render(marked, "<a download>\n\nUse <table><tr><td></a>\n\nSecond.");
+    expect(leaks(el, "Second.")).toBe(false);
+  });
+
+  // What the hand-written pairing cannot see, the parser check catches (#1876). The stock
+  // renderer is the positive control; the pairing alone is what the second assertion would
+  // show without the check.
+  it("catches leaks the pairing does not model, by asking the parser", () => {
+    for (const source of [
+      '<div><textarea>\n\n<div title="</textarea>"><a download></div>\n\nSecond.',
+      "<div><a download>outer<table><tr><td><template></td></a></template></td></tr></table></div>\n\nSecond.",
+      "<div><a download>x<table></a></table></div>\n\nSecond.",
+      "<div><a download>x<script><!--<script></script></a>--></script></div>\n\nSecond.",
+      "<div><a download>x<!--\n\n<div></a>--></div>\n\nSecond.",
+      "<div><a download>x<textarea></textarea\u00a0></a></textarea></div>\n\nSecond.",
+    ]) {
+      expect(leaks(render(STOCK, source), "Second."), source).toBe(true);
+      expect(leaks(render(marked, source), "Second."), source).toBe(false);
+    }
+  });
+
+  it("removes several strays from one block, whatever order it finds them in", () => {
+    const source = "<div><a download>x<b>y<i>z<table></a></b></i></table></div>\n\nSecond.";
+    expect(leaks(render(STOCK, source), "Second.")).toBe(true);
+    const el = render(marked, source);
+    expect(leaks(el, "Second.")).toBe(false);
+    expect(el.textContent).toContain("<a download>x<b>y<i>z");
+  });
+
+  it("leaves real anchors alone when it looks, even beside a stray one", () => {
+    const el = render(marked, '<div><a download>x<table></a></table> <a href="y">keep</a></div>\n\nSecond.');
+    expect(leaks(el, "Second.")).toBe(false);
+    expect(el.querySelector('a[href="y"]')?.textContent).toBe("keep");
   });
 });

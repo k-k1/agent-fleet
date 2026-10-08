@@ -101,13 +101,13 @@ export const viewer: Record<keyof typeof jaViewer, string> = {
   "view.doc.cannot_convert": "(Could not convert this document)",
   "view.doc.unsupported": "(This format is not supported)",
   "view.doc.encrypted": "(This document is password-protected)",
-  "view.doc.needs_ocr": "(The pages are images only — reading their text needs OCR, which is not available here)",
+  "view.doc.needs_ocr": "(The pages are images only. Reading their text needs OCR, which is not available here)",
   "view.doc.too_large": "(Too large to convert here)",
   "view.doc.download_hint": "Open the original through the download link in the info bar.",
   "view.pdf.pages_meta": " · {n} pages",
   "view.pdf.loading": "Loading the PDF…",
   "view.pdf.cannot_load": "(Cannot display this PDF)",
-  "view.pdf.password": "(This PDF is password-protected — download it to open it)",
+  "view.pdf.password": "(This PDF is password-protected. Download it to open it)",
   "view.pdf.broken": "(The PDF is damaged or in an unsupported format)",
   "view.pdf.page_of": "{n} / {total}",
   "view.pdf.prev_page": "Previous page",
@@ -170,7 +170,7 @@ export const viewer: Record<keyof typeof jaViewer, string> = {
   "view.table_repaired":
     "This table is written with the fullwidth ｜ instead of |, so it is shown repaired here. Other Markdown viewers will still render it as plain text.",
   "view.frontmatter_invalid":
-    "This front matter is not valid YAML, so it is read line by line as `key: value` here. Other Markdown viewers will render it as body text — quote any value that starts with a reserved character such as ` or @.",
+    "This front matter is not valid YAML, so it is read line by line as `key: value` here. Other Markdown viewers will render it as body text. Quote any value that starts with a reserved character such as ` or @.",
 
   // === Text/code editor (docs/log/44 Phase 2) ===
   "editor.aria_label": "{path} editor",
