@@ -95,6 +95,8 @@ interface CopyPending {
   expect: boolean; // still inside the dispatch that started the copy
   candidate: number | undefined; // selEpoch of the selection being copied
   start: number | undefined; // selEpoch when the copy started
+  succeeded: boolean; // the write resolved, the record timer has not run yet
+  done: boolean; // settled: recorded, rejected as stale, or voided by a newer selection
 }
 const copyPending = new WeakMap<Terminal, CopyPending>();
 function copySelection(term: Terminal, opts: { notify?: boolean; clear?: boolean } = {}) {
@@ -105,13 +107,14 @@ function copySelection(term: Terminal, opts: { notify?: boolean; clear?: boolean
   copyGen.set(term, gen);
   copiedEpoch.delete(term);
   // xterm confirms a mouse selection (fires onSelectionChange) from a document mouseup listener,
-  // i.e. AFTER our term.element mouseup copy starts but within the same dispatch. The first
-  // selection event of that dispatch is the confirmation of the text being copied and fixes
-  // the candidate epoch; a timer ends the window (and defaults the candidate to the epoch at
-  // copy start when xterm confirmed earlier). Positions and text are never compared: output
-  // scrolling the selection or redrawing its cells fires no event, while any later selection
-  // event, even over the same cells, changes selEpoch and so voids the record.
-  const pend: CopyPending = { expect: true, candidate: undefined, start: selEpoch.get(term) };
+  // after our term.element mouseup copy starts. The first selection event after the copy starts
+  // and before the timer below runs is taken as that confirmation and fixes the candidate epoch;
+  // if none arrives the candidate is the epoch at copy start. Positions and text are never
+  // compared: output scrolling the selection or redrawing its cells fires no event, while a
+  // later selection event, even over the same cells, changes selEpoch and so voids the record.
+  // Between the write succeeding and the record being written (timers can be throttled) the
+  // key handler treats the selection as copied, so an interrupt is never lost to that gap.
+  const pend: CopyPending = { expect: true, candidate: undefined, start: selEpoch.get(term), succeeded: false, done: false };
   copyPending.set(term, pend);
   setTimeout(() => {
     pend.expect = false;
@@ -123,10 +126,12 @@ function copySelection(term: Terminal, opts: { notify?: boolean; clear?: boolean
   // copyable, so the user's explicit Ctrl+C retry copies instead of interrupting.
   navigator.clipboard.writeText(sel).then(
     () => {
+      if (copyGen.get(term) === gen) pend.succeeded = true;
       // Run after the window-closing timer above (timers fire in order).
       setTimeout(() => {
         if (copyGen.get(term) === gen && pend.candidate !== undefined && selEpoch.get(term) === pend.candidate)
           copiedEpoch.set(term, pend.candidate);
+        pend.done = true;
       }, 0);
       if (opts.notify) toast(tr("term.copied"), { kind: "success", key: "term-clipboard", duration: 1500 });
     },
@@ -484,7 +489,9 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
     const n = (selEpoch.get(term) ?? 0) + 1;
     selEpoch.set(term, n);
     const pend = copyPending.get(term);
-    if (pend?.expect && pend.candidate === undefined) pend.candidate = n;
+    if (!pend) return;
+    if (pend.expect && pend.candidate === undefined) pend.candidate = n;
+    else if (pend.candidate !== undefined && n !== pend.candidate) pend.done = true; // a newer selection
   });
   // OSC 52: with `set-clipboard on`, tmux emits the just-copied selection as an
   // OSC 52 sequence to its outer terminal (us). xterm has no built-in OSC 52 handler,
@@ -597,7 +604,9 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
     // preventDefault so the browser's own paste event cannot paste a second time.
     // Ctrl+C copies only a selection the user made and that is not yet on the clipboard.
     const sel = term.hasSelection();
-    const stale = sel && e.ctrlKey && e.code === "KeyC" && (selEpoch.get(term) === undefined || selEpoch.get(term) === copiedEpoch.get(term));
+    const stale = sel && e.ctrlKey && e.code === "KeyC" && (selEpoch.get(term) === undefined ||
+        selEpoch.get(term) === copiedEpoch.get(term) ||
+        (copyPending.get(term)?.succeeded && !copyPending.get(term)?.done));
     const act = clipAction(e, sel, getSettings().termCtrlCV, stale);
     if (act) {
       if (act === "paste") pasteClipboard(term);
