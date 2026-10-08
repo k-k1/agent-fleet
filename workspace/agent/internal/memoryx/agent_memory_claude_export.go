@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -29,6 +30,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 )
@@ -343,38 +346,29 @@ func agentMemExportHasOwnFiles(p *agentMemProject) bool {
 	return false
 }
 
-// agentMemExportOpenDir opens projects/<slug>/memory below the config dir, every component with
-// O_NOFOLLOW, so a symlink inside claude's store can neither redirect a write nor be followed.
-// The config dir itself is resolved first: it is where the member put claude's store (it may be
-// a deliberate link onto other storage), not something inside it. With create, a missing
-// component below it is made; the handle that comes back is the one to keep using.
+// agentMemExportOpenDir opens <config dir>/projects/<slug>/memory from the filesystem root, every
+// component with O_NOFOLLOW: a symlink anywhere on the path, the config dir and its ancestors
+// included, is refused rather than followed. With create, a missing component of
+// projects/<slug>/memory is made through the already verified parent. The handle that comes back
+// is the one to keep using.
 func agentMemExportOpenDir(slug string, create bool) (*os.File, error) {
 	flags := syscall.O_RDONLY | syscall.O_DIRECTORY | syscall.O_NOFOLLOW | syscall.O_CLOEXEC
-	if create {
-		if err := os.MkdirAll(claude.ConfigDir(), 0o700); err != nil {
-			return nil, err
-		}
-	}
-	base, err := filepath.EvalSymlinks(claude.ConfigDir())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, syscall.ENOENT
-		}
-		return nil, err
+	cfg := filepath.Clean(claude.ConfigDir())
+	if !filepath.IsAbs(cfg) {
+		return nil, syscall.EINVAL
 	}
 	fd, err := syscall.Open("/", flags, 0)
 	if err != nil {
 		return nil, err
 	}
-	below := 0
-	segs := append(strings.Split(strings.Trim(filepath.ToSlash(base), "/"), "/"), "projects", slug, "memory")
+	segs := append(strings.Split(strings.Trim(filepath.ToSlash(cfg), "/"), "/"), "projects", slug, "memory")
 	firstNew := len(segs) - 3
 	for i, seg := range segs {
 		if seg == "" {
 			continue
 		}
 		next, err := syscall.Openat(fd, seg, flags, 0)
-		if err == syscall.ENOENT && create && i >= firstNew {
+		if err == syscall.ENOENT && create && i >= firstNew-1 {
 			if err = syscall.Mkdirat(fd, seg, 0o700); err == nil || err == syscall.EEXIST {
 				next, err = syscall.Openat(fd, seg, flags, 0)
 			}
@@ -384,7 +378,6 @@ func agentMemExportOpenDir(slug string, create bool) (*os.File, error) {
 			return nil, err
 		}
 		fd = next
-		below++
 	}
 	return os.NewFile(uintptr(fd), "memory"), nil
 }
@@ -650,11 +643,11 @@ func claudeExportBuildIndex(rows []claudeExportIndexRow) (text string, listed in
 // indexText renders MEMORY.md as it will be once the apply is done. AF's memories come first in
 // AF's ranking, then native files that stay, newest first. over names the conflicts that are
 // replaced with AF's text.
-func (pv *agentMemExportPreview) indexText(over, failed map[string]bool) (text string, listed, total int) {
+func (pv *agentMemExportPreview) indexText(over map[string]bool, failed map[string]*agentMemExportNative) (text string, listed, total int) {
 	var ranked []agentMemEntry
 	for i := range pv.Items {
 		it := &pv.Items[i]
-		if it.entry == nil || failed[it.Name] {
+		if _, bad := failed[it.Name]; it.entry == nil || bad {
 			continue
 		}
 		switch it.Status {
@@ -673,23 +666,37 @@ func (pv *agentMemExportPreview) indexText(over, failed map[string]bool) (text s
 		rows = append(rows, claudeExportIndexRow{e.Name, e.Description})
 		seen[e.Name] = true
 	}
-	var rest []*agentMemExportItem
+	// Natives that stay are listed as they are in the directory now: for a name whose write did
+	// not happen that is a fresh reading, not the evaluation's.
+	type kept struct {
+		name, desc string
+		mtime      time.Time
+	}
+	var rest []kept
 	for i := range pv.Items {
 		it := &pv.Items[i]
-		if seen[it.Name] || it.native == nil || it.native.bad != "" {
+		if seen[it.Name] {
 			continue
 		}
-		if it.Status == claudeExportNativeOnly || it.Status == claudeExportConflict || failed[it.Name] {
-			rest = append(rest, it)
+		n := it.native
+		cur, wasFailed := failed[it.Name]
+		if wasFailed {
+			n = cur
+		} else if it.Status != claudeExportNativeOnly && it.Status != claudeExportConflict {
+			continue
 		}
-	}
-	sort.SliceStable(rest, func(i, j int) bool { return rest[i].native.mtime.After(rest[j].native.mtime) })
-	for _, it := range rest {
-		d := it.native.desc
+		if n == nil || n.absent || n.bad != "" {
+			continue
+		}
+		d := n.desc
 		if len(agentMemScanText("description", d)) > 0 {
 			d = ""
 		}
-		rows = append(rows, claudeExportIndexRow{it.Name, d})
+		rest = append(rest, kept{it.Name, d, n.mtime})
+	}
+	sort.SliceStable(rest, func(i, j int) bool { return rest[i].mtime.After(rest[j].mtime) })
+	for _, k := range rest {
+		rows = append(rows, claudeExportIndexRow{k.name, k.desc})
 	}
 	text, listed = claudeExportBuildIndex(rows)
 	return text, listed, len(rows)
@@ -783,48 +790,101 @@ func agentMemExportTempName() string {
 	return fmt.Sprintf(".tmp-af-%d-%d", os.Getpid(), time.Now().UnixNano())
 }
 
-// agentMemExportWriteAt writes name in the pinned directory by temp file and rename.
-func agentMemExportWriteAt(mem *os.File, name string, data []byte) error {
+const (
+	renameNoReplace = unix.RENAME_NOREPLACE
+	renameExchange  = unix.RENAME_EXCHANGE
+)
+
+// errAgentMemExportRaced: the leaf was not what the evaluation saw when the commit reached it.
+var errAgentMemExportRaced = errors.New("the file changed during the write-back")
+
+// renameat2 renames within the pinned directory with flags. RENAME_NOREPLACE never overwrites;
+// RENAME_EXCHANGE swaps two names atomically, which is how a racing file is kept, not replaced.
+func agentMemExportRenameat2(mem *os.File, oldName, newName string, flags uint) error {
+	fd := int(mem.Fd())
+	return unix.Renameat2(fd, oldName, fd, newName, flags)
+}
+
+// agentMemExportStage writes data to a fresh temp name and returns it; nothing at a real name
+// is visible until the commit.
+func agentMemExportStage(mem *os.File, data []byte) (string, error) {
 	fd := int(mem.Fd())
 	tmp := agentMemExportTempName()
 	wfd, err := syscall.Openat(fd, tmp, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_EXCL|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0o600)
 	if err != nil {
-		return err
+		return "", err
 	}
 	f := os.NewFile(uintptr(wfd), "tmp")
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		_ = syscall.Unlinkat(fd, tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		_ = syscall.Unlinkat(fd, tmp)
-		return err
-	}
-	if err := syscall.Renameat(fd, tmp, fd, name); err != nil {
-		_ = syscall.Unlinkat(fd, tmp)
-		return err
-	}
-	return nil
-}
-
-// agentMemExportCreateAt creates name and fails when anything is already there, so a new file can
-// never replace one that appeared after the evaluation.
-func agentMemExportCreateAt(mem *os.File, name string, data []byte) error {
-	fd := int(mem.Fd())
-	wfd, err := syscall.Openat(fd, name, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_EXCL|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0o600)
-	if err != nil {
-		return err
-	}
-	f := os.NewFile(uintptr(wfd), "new")
 	_, err = f.Write(data)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
 	if err != nil {
-		_ = syscall.Unlinkat(fd, name)
+		_ = syscall.Unlinkat(fd, tmp)
+		return "", err
 	}
-	return err
+	return tmp, nil
+}
+
+// agentMemExportPublishAt makes name hold data. expectFH is the hash of the file that must be
+// there ("" = nothing). The new text is complete under a temp name first. With nothing expected it
+// is renamed in without replacing; otherwise it is swapped with the leaf, and the file that came
+// out is checked: if it is not the expected one the swap is undone, so whatever raced in is put
+// back instead of lost.
+func agentMemExportPublishAt(mem *os.File, name string, data []byte, expectFH string) error {
+	fd := int(mem.Fd())
+	tmp, err := agentMemExportStage(mem, data)
+	if err != nil {
+		return err
+	}
+	agentMemExportHook("after-stage:" + name)
+	if expectFH == "" {
+		if err := agentMemExportRenameat2(mem, tmp, name, renameNoReplace); err != nil {
+			_ = syscall.Unlinkat(fd, tmp)
+			if err == syscall.EEXIST {
+				return errAgentMemExportRaced
+			}
+			return err
+		}
+		return nil
+	}
+	if err := agentMemExportRenameat2(mem, tmp, name, renameExchange); err != nil {
+		_ = syscall.Unlinkat(fd, tmp)
+		if err == syscall.ENOENT {
+			return errAgentMemExportRaced
+		}
+		return err
+	}
+	if agentMemExportLeafIs(mem, tmp, expectFH) {
+		_ = syscall.Unlinkat(fd, tmp)
+		return nil
+	}
+	if err := agentMemExportRenameat2(mem, tmp, name, renameExchange); err != nil {
+		return err // the displaced file stays under its temp name rather than being deleted
+	}
+	_ = syscall.Unlinkat(fd, tmp)
+	return errAgentMemExportRaced
+}
+
+// agentMemExportRemoveAt removes name when it is still the file with hash expectFH: it is moved
+// aside first, checked, and put back if it turns out to be something else.
+func agentMemExportRemoveAt(mem *os.File, name, expectFH string) error {
+	fd := int(mem.Fd())
+	q := agentMemExportTempName()
+	agentMemExportHook("before-remove:" + name)
+	if err := agentMemExportRenameat2(mem, name, q, renameNoReplace); err != nil {
+		if err == syscall.ENOENT {
+			return errAgentMemExportRaced
+		}
+		return err
+	}
+	if agentMemExportLeafIs(mem, q, expectFH) {
+		return syscall.Unlinkat(fd, q)
+	}
+	if err := agentMemExportRenameat2(mem, q, name, renameNoReplace); err != nil {
+		return err // something new is at the name; the moved file stays under its temp name
+	}
+	return errAgentMemExportRaced
 }
 
 // agentMemExportLeafIs says whether the leaf is still what the evaluation saw: absent when fh is
@@ -945,7 +1005,11 @@ func agentMemExportApply(req agentMemExportReq, now time.Time) (agentMemExportAp
 	}
 
 	agentMemExportHook("before-write")
-	failed := map[string]bool{}
+	failed := map[string]*agentMemExportNative{}
+	fail := func(name, file string) {
+		cur := agentMemExportReadNative(mem, file)
+		failed[name] = &cur
+	}
 	for _, a := range todo {
 		res := agentMemExportResult{Name: a.it.Name, Result: a.kind}
 		file := a.it.Name + ".md"
@@ -953,17 +1017,18 @@ func agentMemExportApply(req agentMemExportReq, now time.Time) (agentMemExportAp
 		switch {
 		case !agentMemExportLeafIs(mem, file, a.it.nativeFH):
 			res.Result, res.Reason = "skipped", "changed_since_preview"
-			failed[a.it.Name] = true
+			fail(a.it.Name, file)
 		case a.kind == "removed":
-			werr = syscall.Unlinkat(int(mem.Fd()), file)
-		case a.it.nativeFH == "":
-			werr = agentMemExportCreateAt(mem, file, a.it.data)
+			werr = agentMemExportRemoveAt(mem, file, a.it.nativeFH)
 		default:
-			werr = agentMemExportWriteAt(mem, file, a.it.data)
+			werr = agentMemExportPublishAt(mem, file, a.it.data, a.it.nativeFH)
 		}
-		if werr != nil {
+		if werr == errAgentMemExportRaced {
+			res.Result, res.Reason = "skipped", "changed_since_preview"
+			fail(a.it.Name, file)
+		} else if werr != nil {
 			res.Result, res.Reason = "skipped", "write_failed"
-			failed[a.it.Name] = true
+			fail(a.it.Name, file)
 			fmt.Fprintf(os.Stderr, "agent memory: export: %s\n", agentMemErrKind(werr))
 		}
 		out.Results = append(out.Results, res)
@@ -980,7 +1045,7 @@ func agentMemExportApply(req agentMemExportReq, now time.Time) (agentMemExportAp
 	case !agentMemExportLeafIs(mem, agentMemImportIndex, pv.indexOldFH):
 		out.Index = "failed"
 	default:
-		if err := agentMemExportWriteAt(mem, agentMemImportIndex, []byte(indexText)); err != nil {
+		if err := agentMemExportPublishAt(mem, agentMemImportIndex, []byte(indexText), pv.indexOldFH); err != nil {
 			out.Index = "failed"
 			fmt.Fprintf(os.Stderr, "agent memory: export: %s\n", agentMemErrKind(err))
 		} else {

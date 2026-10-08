@@ -469,10 +469,10 @@ func TestClaudeExportListingCapDoesNotHideFiles(t *testing.T) {
 	}
 }
 
-// The config dir is the member's own redirect and is resolved once; everything below it is
-// opened without following links.
-func TestClaudeExportConfigDirLinkResolvesInPlace(t *testing.T) {
+// A symlink anywhere on the path, the config dir included, is refused.
+func TestClaudeExportConfigDirLinkRefused(t *testing.T) {
 	e := newClaudeExportEnv(t)
+	e.save("one", "d", "project", "b")
 	cfg := filepath.Dir(filepath.Dir(filepath.Dir(e.memDir(e.slug))))
 	real := cfg + "-real"
 	if err := os.Rename(cfg, real); err != nil {
@@ -481,10 +481,14 @@ func TestClaudeExportConfigDirLinkResolvesInPlace(t *testing.T) {
 	if err := os.Symlink(real, cfg); err != nil {
 		t.Fatal(err)
 	}
-	e.save("one", "d", "project", "b")
-	e.apply()
-	if _, err := os.Stat(filepath.Join(real, "projects", e.slug, "memory", "one.md")); err != nil {
-		t.Errorf("not written into the link's target: %v", err)
+	if _, err := agentMemExportPreviewFor(e.pid); agentMemCode(err) != errCodeMemoryConflict {
+		t.Errorf("preview through a linked config dir = %v", err)
+	}
+	if _, err := agentMemExportApply(agentMemExportReq{Project: e.pid}, e.now); err == nil {
+		t.Error("apply through a linked config dir should refuse")
+	}
+	if _, err := os.Stat(filepath.Join(real, "projects", e.slug, "memory", "one.md")); err == nil {
+		t.Error("written through the link")
 	}
 }
 
@@ -660,5 +664,108 @@ func TestClaudeExportLastForgottenProjectStillListed(t *testing.T) {
 	}
 	if src, _ := agentMemExportList(); len(src.Projects) != 0 {
 		t.Errorf("still listed after removal: %+v", src)
+	}
+}
+
+// The commit itself is race-safe: a file that appears or changes between the check and the
+// rename is kept, and a new file only becomes visible complete.
+func TestClaudeExportCommitRaces(t *testing.T) {
+	e := newClaudeExportEnv(t)
+	e.save("one", "d", "project", "b")
+	e.save("two", "d", "project", "b")
+	dir := e.memDir(e.slug)
+	e.setHook(func(stage string) {
+		switch stage {
+		case "after-stage:one.md":
+			if e.read("one.md") != "" {
+				t.Error("a half-written file is visible under the final name")
+			}
+			memoryWrite(t, filepath.Join(dir, "one.md"), "---\nname: one\ndescription: member one\n---\nmine\n")
+		}
+	})
+	out := e.apply()
+	if r := exportResult(out, "one"); r.Result != "skipped" || r.Reason != "changed_since_preview" {
+		t.Errorf("new over an appeared file = %+v", r)
+	}
+	if !strings.Contains(e.read("one.md"), "mine") {
+		t.Error("the member file that appeared was replaced")
+	}
+	// It is listed in the rewritten index with its current description, written complete.
+	if !strings.Contains(e.read("MEMORY.md"), "(one.md) — member one") {
+		t.Errorf("index = %q", e.read("MEMORY.md"))
+	}
+	e.setHook(nil)
+	_ = os.Remove(filepath.Join(dir, "one.md"))
+	e.apply()
+
+	// An update whose leaf becomes a symlink, then a different member file, after staging.
+	e.save("one", "d", "project", "b2")
+	target := filepath.Join(t.TempDir(), "t.md")
+	memoryWrite(t, target, "target\n")
+	e.setHook(func(stage string) {
+		if stage == "after-stage:one.md" {
+			_ = os.Remove(filepath.Join(dir, "one.md"))
+			_ = os.Symlink(target, filepath.Join(dir, "one.md"))
+		}
+	})
+	out = e.apply()
+	if r := exportResult(out, "one"); r.Result != "skipped" {
+		t.Errorf("update raced by a symlink = %+v", r)
+	}
+	if st, err := os.Lstat(filepath.Join(dir, "one.md")); err != nil || st.Mode()&os.ModeSymlink == 0 {
+		t.Error("the racing symlink was replaced")
+	}
+	_ = os.Remove(filepath.Join(dir, "one.md"))
+	e.setHook(nil)
+	e.apply()
+
+	// An update whose leaf is edited by the member after staging: the edit survives and the
+	// index shows its current description.
+	e.save("one", "d", "project", "b3")
+	e.setHook(func(stage string) {
+		if stage == "after-stage:one.md" {
+			memoryWrite(t, filepath.Join(dir, "one.md"), "---\nname: one\ndescription: edited just now\n---\nmine\n")
+		}
+	})
+	out = e.apply()
+	if !strings.Contains(e.read("one.md"), "mine") || !strings.Contains(e.read("MEMORY.md"), "edited just now") {
+		t.Errorf("edit lost or index stale: %q / %q", e.read("one.md"), e.read("MEMORY.md"))
+	}
+	if r := exportResult(out, "one"); r.Result != "skipped" {
+		t.Errorf("raced update = %+v", r)
+	}
+	e.setHook(nil)
+
+	// A removal whose leaf is replaced by a member file just before the move.
+	e2 := newClaudeExportEnv(t)
+	e2.save("gone", "d", "project", "b")
+	e2.apply()
+	if _, err := agentMemForget(e2.c, agentMemForgetReq{Name: "gone", Revision: 1}, e2.now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	dir2 := e2.memDir(e2.slug)
+	e2.setHook(func(stage string) {
+		if stage == "before-remove:gone.md" {
+			memoryWrite(t, filepath.Join(dir2, "gone.md"), "---\nname: gone\ndescription: new member file\n---\nmine\n")
+		}
+	})
+	e2.apply()
+	if !strings.Contains(e2.read("gone.md"), "mine") {
+		t.Error("a member file that replaced the leaf was deleted")
+	}
+
+	// The index is swapped by the member after staging: it is kept and reported.
+	e3 := newClaudeExportEnv(t)
+	e3.save("x", "d", "project", "b")
+	e3.raw(e3.slug, "MEMORY.md", "old\n")
+	dir3 := e3.memDir(e3.slug)
+	e3.setHook(func(stage string) {
+		if stage == "after-stage:MEMORY.md" {
+			memoryWrite(t, filepath.Join(dir3, "MEMORY.md"), "member edit\n")
+		}
+	})
+	out = e3.apply()
+	if out.Index != "failed" || e3.read("MEMORY.md") != "member edit\n" {
+		t.Errorf("index = %s %q", out.Index, e3.read("MEMORY.md"))
 	}
 }
