@@ -218,5 +218,22 @@ describe("画像の W×H をまとめて聞く", () => {
       expect(bodies).toEqual([["kept.png", "pinned.png"]]);
       await act(async () => a.unmount());
     });
+
+    it("古い hook の後片付けは、同じキーの新しい問い合わせを取り消さない", async () => {
+      const hostA = document.createElement("div");
+      const hostB = document.createElement("div");
+      const a = createRoot(hostA);
+      const b = createRoot(hostB);
+      await act(async () => a.render(<Probe path="same.png" />));
+      await settle();
+      expect(hostA.textContent).toBe("832x1216");
+      dims = { w: 10, h: 20 };
+      await act(async () => b.render(<Probe path="same.png" />));
+      await act(async () => a.unmount());
+      await settle();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(hostB.textContent).toBe("10x20");
+      await act(async () => b.unmount());
+    });
   });
 });
