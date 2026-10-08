@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -103,48 +104,87 @@ func TestBuildProgramBlocksNativePeerChannel(t *testing.T) {
 	}
 }
 
-// TestBuildProgramSwitchesAutoMemoryOffWithAFMemory: while the Agent memory switch is on, every
-// launch shape (new, resume, fork) carries autoMemoryEnabled:false in its one --settings, and
-// with the switch off or unwired none does (ADR 0108 decision 6 step 2).
-func TestBuildProgramSwitchesAutoMemoryOffWithAFMemory(t *testing.T) {
-	os.Unsetenv("AGENT_SESSION_CMD")
-	t.Cleanup(func() { AutoMemoryOff = nil })
-	const sid = "88888888-8888-4888-8888-888888888new"
-
-	AutoMemoryOff = nil
-	if got := buildProgram(sid, "", "", "", "", "", true); strings.Contains(got, "autoMemoryEnabled") {
-		t.Errorf("unwired hook must leave claude's memory alone: %q", got)
+// launchSettingsOf decodes the one --settings argument of a built command line.
+func launchSettingsOf(t *testing.T, program string) map[string]any {
+	t.Helper()
+	if n := strings.Count(program, "--settings"); n != 1 {
+		t.Fatalf("want exactly one --settings, got %d: %q", n, program)
 	}
-	AutoMemoryOff = func() bool { return false }
-	if got := buildProgram(sid, "", "", "", "", "", true); strings.Contains(got, "autoMemoryEnabled") {
-		t.Errorf("switch off must leave claude's memory alone: %q", got)
+	_, rest, _ := strings.Cut(program, "--settings '")
+	raw, _, ok := strings.Cut(rest, "'")
+	if !ok {
+		t.Fatalf("--settings argument is not single-quoted: %q", program)
 	}
-
-	AutoMemoryOff = func() bool { return true }
-	for name, got := range map[string]string{
-		"new":       buildProgram(sid, "", "", "", "", "", true),
-		"plan":      buildProgram(sid, "m", "e", "plan", "lbl", "", false),
-		"fork":      buildProgram(sid, "", "", "", "", "99999999-9999-4999-8999-999999999999", true),
-		"flags-env": withFlags(t, sid),
-	} {
-		if !strings.Contains(got, "--settings '"+nativePeerSettingsNoAutoMemory+"'") {
-			t.Errorf("%s: auto-memory not switched off: %q", name, got)
-		}
-		if n := strings.Count(got, "--settings"); n != 1 {
-			t.Errorf("%s: want exactly one --settings, got %d: %q", name, n, got)
-		}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		t.Fatalf("--settings is not valid JSON (%v): %s", err, raw)
 	}
-
-	// The memory variant must keep every entry of the peer-channel block.
-	base := strings.TrimSuffix(nativePeerSettings, "}")
-	if !strings.HasPrefix(nativePeerSettingsNoAutoMemory, base) ||
-		!strings.Contains(nativePeerSettingsNoAutoMemory, `"autoMemoryEnabled":false`) ||
-		strings.Contains(nativePeerSettingsNoAutoMemory, "'") {
-		t.Errorf("memory variant drifted from the peer block: %s", nativePeerSettingsNoAutoMemory)
-	}
+	return m
 }
 
-func withFlags(t *testing.T, sid string) string {
-	t.Setenv("AGENT_CLAUDE_FLAGS", "--verbose")
-	return buildProgram(sid, "", "", "", "", "", true)
+// TestBuildProgramSwitchesAutoMemoryOffWithAFMemory: while the Agent memory switch is on, every
+// launch shape (new, resume, drifted resume, fork) carries autoMemoryEnabled:false in its one
+// --settings, and with the switch off or unwired none does (ADR 0108 decision 6 step 2). The
+// JSON is decoded, so a malformed constant fails here rather than at claude's start.
+func TestBuildProgramSwitchesAutoMemoryOffWithAFMemory(t *testing.T) {
+	cfg := isolateSlot(t)
+	t.Cleanup(func() { AutoMemoryOff = nil })
+	const sid = "88888888-8888-4888-8888-888888888new"
+	writeSlotJSONL(t, cfg, "-tmp-repo", testSlotSID)
+	writeSlotJSONL(t, cfg, "-tmp-repo", testLiveSID)
+
+	shapes := map[string]func() string{
+		"new":    func() string { return buildProgram(sid, "", "", "", "", "", true) },
+		"plan":   func() string { return buildProgram(sid, "m", "e", "plan", "lbl", "", false) },
+		"fork":   func() string { return buildProgram(sid, "", "", "", "", "99999999-9999-4999-8999-999999999999", true) },
+		"resume": func() string { return buildProgram(testSlotSID, "", "", "", "", "", true) },
+		"flags-env": func() string {
+			t.Setenv("AGENT_CLAUDE_FLAGS", "--verbose")
+			return buildProgram(sid, "", "", "", "", "", true)
+		},
+		"drifted-resume": func() string {
+			sids.Write(testSlotSID, testLiveSID)
+			return buildProgram(testSlotSID, "", "", "", "", "", true)
+		},
+	}
+	// The resume shapes must really take the --resume branch, or they would test nothing.
+	for _, name := range []string{"resume", "drifted-resume"} {
+		AutoMemoryOff = nil
+		if got := shapes[name](); !strings.Contains(got, "claude --resume ") {
+			t.Fatalf("%s: not a resume command: %q", name, got)
+		}
+	}
+
+	for _, tc := range []struct {
+		label string
+		hook  func() bool
+		off   bool
+	}{
+		{"unwired", nil, false},
+		{"switch off", func() bool { return false }, false},
+		{"switch on", func() bool { return true }, true},
+	} {
+		AutoMemoryOff = tc.hook
+		for name, build := range shapes {
+			m := launchSettingsOf(t, build())
+			v, has := m["autoMemoryEnabled"]
+			if tc.off && v != false {
+				t.Errorf("%s/%s: autoMemoryEnabled = %v, want false", tc.label, name, v)
+			}
+			if !tc.off && has {
+				t.Errorf("%s/%s: autoMemoryEnabled must be absent, got %v", tc.label, name, v)
+			}
+			// The peer-channel block survives in both variants.
+			if m["crossSessionInbound"] != "refuse" {
+				t.Errorf("%s/%s: crossSessionInbound lost: %v", tc.label, name, m)
+			}
+			perms, _ := m["permissions"].(map[string]any)
+			if deny, _ := perms["deny"].([]any); len(deny) != 2 {
+				t.Errorf("%s/%s: permissions.deny lost: %v", tc.label, name, m)
+			}
+		}
+	}
+	if strings.Contains(nativePeerSettingsNoAutoMemory, "'") {
+		t.Errorf("settings containing a single quote break under ShellQuote")
+	}
 }

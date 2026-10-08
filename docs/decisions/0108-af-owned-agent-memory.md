@@ -140,7 +140,8 @@ that is safe when what one session writes is read by every kind.
      weeks of 767 sessions claude made 52 native memory Writes and 15 Edits against 2
      `memory_save` calls. Consequences: only launches after the change are affected; native
      memories written after the last import are not read until the member imports again, so the
-     Console and the guide say to import once more before turning the switch on; switching off
+     Console and the guide say to turn the switch on and import once more (applying needs the switch
+     on; preview works while off) before starting new claude sessions; switching off
      returns claude to its own memory and what was saved in AF does not appear there (one way).
 7. **A memory is evidence, not an order.** The read tools' descriptions say so, and say that a
    file, function or flag a memory names must be checked before it is relied on. A memory never
