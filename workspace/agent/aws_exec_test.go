@@ -45,3 +45,36 @@ func TestConsoleLoginWaitByKind(t *testing.T) {
 		}
 	}
 }
+
+// A terminal that is not an agent's (Shell or SSM pane, a login with no session) asks the
+// Console and waits the long time; an agent's run keeps its per-kind wait and, even with a
+// pty, its own path.
+func TestConsoleLoginWaitForATerminal(t *testing.T) {
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	session.WriteMeta(session.Meta{Name: "c1", Kind: session.KindClaude})
+	session.WriteMeta(session.Meta{Name: "s1", Kind: session.KindShell})
+	session.WriteMeta(session.Meta{Name: "m1", Kind: session.KindSSM})
+	for _, tc := range []struct {
+		name        string
+		interactive bool
+		wait        time.Duration
+		terminal    bool
+	}{
+		{"s1", true, consoleLoginTerminalWait, true},
+		{"m1", true, consoleLoginTerminalWait, true},
+		{"", true, consoleLoginTerminalWait, true},
+		{"nosuch", true, consoleLoginTerminalWait, true},
+		{"c1", true, 90 * time.Second, false},
+		{"c1", false, 90 * time.Second, false},
+		{"s1", false, consoleLoginUnmeasuredWait, false},
+		{"", false, consoleLoginUnmeasuredWait, false},
+	} {
+		wait, terminal := consoleLoginWaitFor(tc.name, tc.interactive)
+		if wait != tc.wait || terminal != tc.terminal {
+			t.Errorf("%q interactive=%v: (%s, %v), want (%s, %v)", tc.name, tc.interactive, wait, terminal, tc.wait, tc.terminal)
+		}
+	}
+	if consoleLoginTerminalWait != 10*time.Minute {
+		t.Errorf("terminal wait = %s", consoleLoginTerminalWait)
+	}
+}

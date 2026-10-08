@@ -58,6 +58,10 @@ type ExecOptions struct {
 	ConsoleLogin bool
 	ConsoleWait  time.Duration
 	Waiter       cloudlogin.Waiter
+	// TerminalConsole makes a run at a person's terminal (Interactive) ask the Console
+	// too, instead of running the login in the terminal; Ctrl-C ends the wait. Set only
+	// for a terminal that is not an agent's. --login still forces the in-terminal login.
+	TerminalConsole bool
 	// Now is the clock for the remaining-life check (time.Now when nil).
 	Now func() time.Time
 }
@@ -137,10 +141,15 @@ func PlanExec(gcloudBin string, environ []string, o ExecOptions) (string, []stri
 	if errors.Is(err, ErrLoginRequired) {
 		hint := fmt.Sprintf("af-gcloud-exec --profile %s --project %s --login -- true", session.ShellQuote(p.Name), session.ShellQuote(p.Project))
 		switch {
-		case o.Login == "always" || (o.Login != "never" && o.Interactive):
+		case o.Login == "always" || (o.Login != "never" && o.Interactive && !(o.TerminalConsole && consoleEligible(o))):
 			tok, account, err = loginAndMint(gcloudBin, agentEnv, p, stderr, waiting, errors.Is(err, errCredentialRejected))
 		case consoleEligible(o):
+			rejected := errors.Is(err, errCredentialRejected)
 			tok, account, err = consoleLogin(gcloudBin, agentEnv, p, snap, o, err, hint)
+			if err != nil && o.TerminalConsole && errors.Is(err, errConsoleNotAsked) {
+				// A Console that cannot be asked at all is no reason to stop at a terminal.
+				tok, account, err = loginAndMint(gcloudBin, agentEnv, p, stderr, waiting, rejected)
+			}
 			if err != nil {
 				return "", nil, nil, fmt.Errorf("profile %q: %w", p.Name, err)
 			}
@@ -209,18 +218,28 @@ func pickProfile(o ExecOptions) (Profile, error) {
 // mintLocked mints under the root's lock, so a sync or a login cannot change the
 // configuration between the checks and the mint.
 func mintLocked(gcloudBin string, env []string, p Profile, waiting func()) (Token, string, error) {
-	root, unlock, err := lockRootNotify(waiting)
+	return mintLockedCancel(context.Background(), gcloudBin, env, p, waiting, nil, time.Time{})
+}
+
+// mintLockedCancel is mintLocked whose wait for the root lock ends with cancel or deadline.
+func mintLockedCancel(ctx context.Context, gcloudBin string, env []string, p Profile, waiting func(), cancel <-chan struct{}, deadline time.Time) (Token, string, error) {
+	root, unlock, err := lockRootCancel(waiting, cancel, deadline)
 	if err != nil {
 		return Token{}, "", err
 	}
 	defer unlock()
-	return mintHeld(gcloudBin, env, root, p)
+	return mintHeldCtx(ctx, gcloudBin, env, root, p)
 }
 
 // mintHeld mints for a caller that holds the root's lock (root is resolved). The
 // configuration must be exactly the version of p this run read from Settings (syncedAs), so
 // the account checked, the impersonation passed and what is printed are the ones gcloud uses.
 func mintHeld(gcloudBin string, env []string, root string, p Profile) (Token, string, error) {
+	return mintHeldCtx(context.Background(), gcloudBin, env, root, p)
+}
+
+// mintHeldCtx is mintHeld whose gcloud child ends with ctx.
+func mintHeldCtx(ctx context.Context, gcloudBin string, env []string, root string, p Profile) (Token, string, error) {
 	env = cloudexec.SetEnv(env, "CLOUDSDK_CONFIG="+root)
 	account, err := syncedAs(root, p)
 	if err != nil {
@@ -243,7 +262,7 @@ func mintHeld(gcloudBin string, env []string, root string, p Profile) (Token, st
 		return Token{}, "", fmt.Errorf("%s holds a %q credential in the Agent's gcloud store, not a user login; af-gcloud-exec only mints "+
 			"from a user login", account, kind)
 	}
-	tok, err := mint(gcloudBin, env, p)
+	tok, err := mintCtx(ctx, gcloudBin, env, p)
 	return tok, account, err
 }
 
@@ -314,20 +333,30 @@ func credentialType(root, account string) (string, error) {
 // print-access-token does only inside its own ~5 minute window (measured on 587.0.0; ADR
 // 0107 note of 2026-10-02).
 func mint(gcloudBin string, env []string, p Profile) (Token, error) {
+	return mintCtx(context.Background(), gcloudBin, env, p)
+}
+
+// mintCtx is mint whose gcloud ends with ctx (and with its own two-minute limit).
+func mintCtx(ctx context.Context, gcloudBin string, env []string, p Profile) (Token, error) {
 	args := []string{"config", "config-helper", "--configuration", ConfigName(p.Name),
 		"--min-expiry", fmt.Sprintf("%dm", int(MinRemaining/time.Minute)),
 		"--format", "json(credential.access_token,credential.token_expiry)", "--quiet"}
 	if p.ImpersonateServiceAccount != "" {
 		args = append(args, "--impersonate-service-account", p.ImpersonateServiceAccount)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	parent := ctx
+	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, gcloudBin, args...)
+	cmd.WaitDelay = 2 * time.Second
 	cmd.Env = env
 	cmd.Stdin = nil
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
+		if perr := parent.Err(); perr != nil {
+			return Token{}, fmt.Errorf("gcloud was stopped: %w", perr)
+		}
 		msg := gcloudError(errb.String())
 		if loginNeeded(errb.String()) {
 			return Token{}, fmt.Errorf("%w: %w: %s", ErrLoginRequired, errCredentialRejected, msg)

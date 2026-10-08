@@ -38,16 +38,21 @@ credential_source, web identity and mfa_serial are refused.
                      By default its config defines only the chosen profile, so a tool that
                      names another one fails with "could not be found": fix the tool rather
                      than reaching for this flag.
-  --login            always start the device-code login when the SSO login is not usable
+  --login            always run the device-code login in this terminal when the SSO login is
+                     not usable
   --no-login         never prompt; exit 3 with the login command instead
-                     (default: prompt only when stdin and stderr are a terminal)
+                     (default: inside a workspace, ask the Agent Fleet Console to show the
+                     login and wait for the member to approve it there, at a terminal too;
+                     Ctrl-C stops waiting with exit 3. Outside a workspace: the device-code
+                     login in the terminal when stdin and stderr are one)
   --list             pull the profiles from Settings now and list them with account and role
   -q                 do not print the principal the command runs as
   -h, --help         print this help
   --version          print the version (the workspace-agent build it belongs to)
 
 Exit status: the command's own on success; 2 usage error; 3 SSO login required but not
-started (no terminal, or --no-login); 1 any other refusal or failure.
+started (--no-login, no Console
+answer in time, or Ctrl-C while waiting for it); 1 any other refusal or failure.
 `
 
 // awsExec is af-aws-exec's skeleton: its name, usage text and version line.
@@ -148,7 +153,8 @@ func runAWSExec(args []string) {
 	// Inside a workspace the Agent can show the login in the Console (ADR 0102).
 	if os.Getenv("AF_CP_BASE_URL") != "" {
 		name := os.Getenv("AF_SESSION_NAME")
-		o.ConsoleLogin, o.ConsoleWait = true, consoleLoginWait(name)
+		o.ConsoleLogin = true
+		o.ConsoleWait, o.TerminalConsole = consoleLoginWaitFor(name, o.Interactive)
 		o.Waiter = awsx.LoginWaiter{Session: name, Command: filepath.Base(o.Argv[0])}
 	}
 	prog, argv, env, err := awsx.PlanExec(awsBin, os.Environ(), o)
@@ -200,6 +206,36 @@ func consoleLoginWait(sessionName string) time.Duration {
 		}
 	}
 	return consoleLoginUnmeasuredWait
+}
+
+// consoleLoginTerminalWait is how long a run at a member's own terminal waits for the
+// Console login: about the device-code lifetime (ten minutes), because a person is at the
+// keyboard and no agent tool is timing the command out; Ctrl-C ends it earlier.
+const consoleLoginTerminalWait = 10 * time.Minute
+
+// consoleLoginWaitFor is consoleLoginWait for a run that may be at a terminal. A run with
+// a terminal that is not an agent's (a Shell or SSM pane, an ssh login: no session, or a
+// session of a kind that is no agent) asks the Console and waits the long time. An
+// agent's own run keeps its per-kind wait and, if it somehow has a terminal, its
+// in-terminal login, so what an agent does does not depend on this path.
+func consoleLoginWaitFor(sessionName string, interactive bool) (time.Duration, bool) {
+	if interactive && !agentSession(sessionName) {
+		return consoleLoginTerminalWait, true
+	}
+	return consoleLoginWait(sessionName), false
+}
+
+// agentSession reports whether the session is of a kind with a measured wait, an agent.
+func agentSession(sessionName string) bool {
+	if !session.ValidName(sessionName) {
+		return false
+	}
+	m, ok := session.ReadMeta(sessionName)
+	if !ok {
+		return false
+	}
+	_, agent := consoleLoginWaits[m.Kind]
+	return agent
 }
 
 // parseAWSExecArgs reads the flags up to "--"; everything after it is the command.

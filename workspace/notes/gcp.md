@@ -95,7 +95,8 @@ Which tools the token reaches (measured on SDK 587.0.0 against a local mock that
 ## The login: the user finishes it in the Console
 
 When a profile needs a login and the run has no terminal (any agent's shell tool), `af-gcloud-exec`
-asks the Agent Fleet Console instead: stderr says "Google Cloud login for profile … requested in the
+asks the Agent Fleet Console instead (so does a run at the user's own terminal in a workspace, which
+waits up to ten minutes and ends with exit 3 on Ctrl-C; `--login` runs the sign-in in that terminal): stderr says "Google Cloud login for profile … requested in the
 Agent Fleet Console; waiting up to …", the user sees a toast, presses **Log in**, signs in to Google
 in their browser and pastes the verification code into that same Console window. The run waits, and
 continues with the token if the login finishes within the wait. If not, it exits 3 saying the login

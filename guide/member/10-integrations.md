@@ -449,8 +449,9 @@ Agents in the workspace follow the same rule.
   name with a Settings profile. The source keys stay in your `~/.aws` files as before; `af-aws-exec` never hands them
   to the command.
 - The workload role is **blocked** for that command: if the login is missing or expired, it fails instead of
-  falling back. At a terminal it starts the device-code login for you.
-- **When an agent's command needs the login**, it asks you in the Console instead: a toast at the bottom of the
+  falling back. Inside a workspace, at a terminal too, it asks you in the Console (next item); `--login` runs the
+  device-code login in that terminal instead.
+- **When a command needs the login** (an agent's, or yours in a shell session's terminal), it asks you in the Console: a toast at the bottom of the
   screen names the profile, its account and role from Settings, and which session asks. Press **Log in** to open the
   login window, check what it is for, and press **Log in** there; only then is a sign-in code created, and only
   that window shows it. Check the code, press **Sign in and approve**, and approve it on the page that opens. The
@@ -461,6 +462,12 @@ Agents in the workspace follow the same rule.
   again. Closing the toast only hides it in that tab. **Log in** on the profile's row in Settings works at any time, also
   during that minute. This covers your Settings profiles; for a profile you defined
   yourself, or with `--no-login`, the command exits with code 3 and the login command to run in a terminal.
+  **At your own terminal** (a shell or SSM session) the command prints that it asked the Console and waits up to ten
+  minutes, as long as the device code lives, for you to approve there, then carries on without a rerun. **Ctrl-C**
+  stops waiting: the command exits with code 3 and the request stays in the Console. Add `--login` to run the
+  device-code login in that terminal instead (it prints the URL and code there); that is also what happens when
+  the Console cannot be asked at all, and for the profiles above that the Console does not cover. Outside a
+  workspace nothing changes: the terminal login starts at a terminal and the command exits with code 3 without one.
 - The command gets an AWS config that defines **only the profile you chose** (it hands back the same short-lived
   credentials), no credentials file, and no `AWS_ENDPOINT_URL*` overrides. A tool that names that same profile
   works. A tool that names a different one (Terraform's `profile = "staging"`, `cdk deploy --profile staging`,
@@ -672,9 +679,12 @@ code 3, and for about a minute that profile is not asked for again. Closing the 
 **Log in** on the profile's row in Settings, or in the badge, works at any time; a sign-in there settles the
 request too.
 
-**At a terminal**, `af-gcloud-exec` starts the Google sign-in itself when the profile has no usable login. It prints
-a URL: open it in your browser, sign in, and paste the verification code the page shows back into **that**
-terminal. The same rule holds: paste only a code from a sign-in you started yourself just now. A command that
+**At a terminal** in a workspace, `af-gcloud-exec` asks the Console like an agent's command, and waits up to ten
+minutes for you to finish the login there; Ctrl-C stops waiting with exit code 3 and leaves the request in the
+Console. With `--login` it starts the Google sign-in in that terminal itself (and does so outside a workspace, or when
+the Console cannot be asked): it prints a URL, you open it in your browser, sign in, and paste the verification code
+the page shows back into **that** terminal. The same rule holds: paste only a code from a sign-in you started yourself
+just now. A command that
 cannot ask the Console (with `--no-login`, or outside a workspace) exits with code 3 and prints the command to run
 in a terminal of your own (a shell session, or in Claude Code type it after `!` at the prompt):
 

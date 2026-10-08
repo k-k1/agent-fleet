@@ -59,6 +59,7 @@ fi
 prev=; cfgname=; for a; do [ "$prev" = --configuration ] && cfgname=$a; prev=$a; done
 case "$1 $2" in
 "config config-helper")
+  if [ -f "$D/slow" ]; then echo $$ > "$D/slowpid"; exec sleep 60; fi
   if [ -f "$D/fail" ]; then cat "$D/fail" >&2; exit 1; fi
   if [ -f "$D/fail-sticky" ]; then cat "$D/fail-sticky" >&2; exit 1; fi
   if [ -f "$D/stdout" ]; then cat "$D/stdout"; exit 0; fi

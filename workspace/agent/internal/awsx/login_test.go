@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -730,4 +731,293 @@ func TestARowLoginDoesNotKeepARequestPastItsTTL(t *testing.T) {
 		t.Fatalf("a row's login kept request %s past its TTL", r.ID)
 	}
 	logins.Attempt(a).End(cloudlogin.PhaseFailed, "")
+}
+
+// terminalOpts is consoleOpts for a run at a member's own terminal (a Shell pane): stdin
+// and stderr are terminals and the run is not an agent's.
+func terminalOpts(stderr *bytes.Buffer, wait time.Duration) ExecOptions {
+	o := consoleOpts(stderr, wait)
+	o.Interactive, o.TerminalConsole = true, true
+	return o
+}
+
+func TestTerminalRunAsksTheConsoleAndContinuesOnApproval(t *testing.T) {
+	bin, state := fakeAWS(t, ssoProfile)
+	fastPoll(t)
+	helper := make(chan struct{})
+	go func() {
+		defer close(helper)
+		if path := logins.RequestPath("af-prod"); !fileAppears(path) {
+			t.Errorf("%s never appeared", path)
+			return
+		}
+		if err := putSSOCache("fresh", time.Now().Add(time.Hour)); err != nil {
+			t.Errorf("writing the SSO cache: %v", err)
+			return
+		}
+		os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600)
+	}()
+	t.Cleanup(func() { <-helper })
+	var stderr bytes.Buffer
+	_, _, env, err := PlanExec(bin, workloadEnv, terminalOpts(&stderr, 5*time.Second))
+	if err != nil {
+		t.Fatalf("err = %v\n%s", err, stderr.String())
+	}
+	if envMap(env)["AWS_ACCESS_KEY_ID"] != "ASIAFAKE" {
+		t.Fatal("no credentials after the Console login")
+	}
+	if !strings.Contains(stderr.String(), "requested in the Agent Fleet Console") || !strings.Contains(stderr.String(), "Ctrl-C") {
+		t.Fatalf("the run never said where the login is or how to stop: %q", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(state, "loginArgs")); err == nil {
+		t.Fatal("a device login ran in the terminal")
+	}
+}
+
+func TestTerminalRunKeepsTheInTerminalLoginWhereTheConsoleIsNotAsked(t *testing.T) {
+	cases := map[string]func(*ExecOptions){
+		"--login":                 func(o *ExecOptions) { o.Login = "always" },
+		"outside a WS":            func(o *ExecOptions) { o.ConsoleLogin, o.TerminalConsole = false, false },
+		"an agent's own terminal": func(o *ExecOptions) { o.TerminalConsole = false },
+		"not in Settings":         func(o *ExecOptions) { o.Settings = nil; o.Account = "123456789012" },
+	}
+	for name, mut := range cases {
+		t.Run(name, func(t *testing.T) {
+			bin, state := fakeAWS(t, ssoProfile)
+			var stderr bytes.Buffer
+			o := terminalOpts(&stderr, time.Second)
+			mut(&o)
+			if _, _, _, err := PlanExec(bin, workloadEnv, o); err != nil {
+				t.Fatalf("err = %v\n%s", err, stderr.String())
+			}
+			args, _ := os.ReadFile(filepath.Join(state, "loginArgs"))
+			if !strings.Contains(string(args), "--use-device-code") {
+				t.Fatalf("no device-code login ran: %q", args)
+			}
+			if _, ok := logins.Read("af-prod"); ok {
+				t.Fatal("filed a Console login request")
+			}
+		})
+	}
+}
+
+func TestTerminalRunNoLoginStillExits3WithoutAsking(t *testing.T) {
+	bin, _ := fakeAWS(t, ssoProfile)
+	var stderr bytes.Buffer
+	o := terminalOpts(&stderr, time.Second)
+	o.Login = "never"
+	_, _, _, err := PlanExec(bin, workloadEnv, o)
+	if !errors.Is(err, ErrLoginRequired) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, ok := logins.Read("af-prod"); ok {
+		t.Fatal("--no-login filed a request")
+	}
+}
+
+func TestTerminalRunCtrlCEndsTheWaitAndLeavesTheRequest(t *testing.T) {
+	bin, _ := fakeAWS(t, ssoProfile)
+	fastPoll(t)
+	helper := make(chan struct{})
+	go func() {
+		defer close(helper)
+		if path := logins.RequestPath("af-prod"); !fileAppears(path) {
+			t.Errorf("%s never appeared", path)
+			return
+		}
+		// The handler is installed before the request is filed, so this is Ctrl-C.
+		syscall.Kill(os.Getpid(), syscall.SIGINT)
+	}()
+	t.Cleanup(func() { <-helper })
+	var stderr bytes.Buffer
+	start := time.Now()
+	_, _, _, err := PlanExec(bin, workloadEnv, terminalOpts(&stderr, time.Minute))
+	if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "stopped waiting") {
+		t.Fatalf("err = %v", err)
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Fatal("Ctrl-C did not end the wait")
+	}
+	if _, ok := logins.Read("af-prod"); !ok {
+		t.Fatal("the interrupted run withdrew the request; it must stay for the Console")
+	}
+}
+
+func TestTerminalRunTimesOutWithExit3AndTheRequestPending(t *testing.T) {
+	bin, _ := fakeAWS(t, ssoProfile)
+	fastPoll(t)
+	var stderr bytes.Buffer
+	_, _, _, err := PlanExec(bin, workloadEnv, terminalOpts(&stderr, 150*time.Millisecond))
+	if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "waiting for the member to approve") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, ok := logins.Read("af-prod"); !ok {
+		t.Fatal("no request left pending")
+	}
+}
+
+func TestTerminalRunFallsBackToTheTerminalWhenTheRequestCannotBeFiled(t *testing.T) {
+	bin, state := fakeAWS(t, ssoProfile)
+	// A directory where the request file goes: filing fails.
+	if err := os.MkdirAll(logins.RequestPath("af-prod"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	if _, _, _, err := PlanExec(bin, workloadEnv, terminalOpts(&stderr, time.Second)); err != nil {
+		t.Fatalf("err = %v\n%s", err, stderr.String())
+	}
+	if args, _ := os.ReadFile(filepath.Join(state, "loginArgs")); !strings.Contains(string(args), "--use-device-code") {
+		t.Fatalf("no in-terminal login after the Console could not be asked: %q", args)
+	}
+	// The same failure at an agent's run (no terminal) still ends with exit 3.
+	os.Remove(filepath.Join(state, "loggedIn"))
+	o := consoleOpts(&stderr, time.Second)
+	if _, _, _, err := PlanExec(bin, workloadEnv, o); !errors.Is(err, ErrLoginRequired) {
+		t.Fatalf("agent run: err = %v", err)
+	}
+}
+
+// slowExport makes every `aws configure export-credentials` of the fake take long, and
+// records its pid, from now on.
+func slowExport(t *testing.T, state string) {
+	t.Helper()
+	hook := "if [ -f \"" + filepath.Join(state, "slow") + "\" ]; then echo $$ > \"" + filepath.Join(state, "exportPid") + "\"; exec sleep 60; fi\n"
+	if err := os.WriteFile(filepath.Join(state, "onExport"), []byte(hook), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// landLogin makes a check run during the wait: the login "lands" while export is slow.
+func landLogin(t *testing.T, state string) error {
+	if !fileAppears(logins.RequestPath("af-prod")) {
+		return errors.New("request never appeared")
+	}
+	os.WriteFile(filepath.Join(state, "slow"), nil, 0o600)
+	return putSSOCache("fresh", time.Now().Add(time.Hour))
+}
+
+func processGone(pidFile string) bool {
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		return false
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	return pid > 0 && syscall.Kill(pid, 0) != nil
+}
+
+// SIGTERM to the parent while the check's `aws` is slow ends the wait with exit 3 at once,
+// the child is gone, and nothing runs afterwards.
+func TestTerminalRunSIGTERMKillsASlowCheck(t *testing.T) {
+	bin, state := fakeAWS(t, ssoProfile)
+	slowExport(t, state)
+	fastPoll(t)
+	helper := make(chan struct{})
+	go func() {
+		defer close(helper)
+		if err := landLogin(t, state); err != nil {
+			t.Errorf("%v", err)
+			return
+		}
+		// Only the slow export writes its pid: the check is running and blocked.
+		if !fileAppears(filepath.Join(state, "exportPid")) {
+			t.Errorf("the slow export never started")
+		}
+		syscall.Kill(os.Getpid(), syscall.SIGTERM)
+	}()
+	t.Cleanup(func() { <-helper })
+	var stderr bytes.Buffer
+	start := time.Now()
+	_, _, _, err := PlanExec(bin, workloadEnv, terminalOpts(&stderr, time.Minute))
+	if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "stopped waiting") {
+		t.Fatalf("err = %v", err)
+	}
+	if time.Since(start) > 15*time.Second {
+		t.Fatalf("SIGTERM did not end the slow check (%s)", time.Since(start))
+	}
+	if !processGone(filepath.Join(state, "exportPid")) {
+		t.Fatal("the slow `aws` child outlived the wait")
+	}
+}
+
+// The wait's budget ends a slow check too, as exit 3 (not exit 1).
+func TestTerminalRunBudgetKillsASlowCheck(t *testing.T) {
+	bin, state := fakeAWS(t, ssoProfile)
+	slowExport(t, state)
+	fastPoll(t)
+	helper := make(chan struct{})
+	go func() {
+		defer close(helper)
+		if err := landLogin(t, state); err != nil {
+			t.Errorf("%v", err)
+		}
+	}()
+	t.Cleanup(func() { <-helper })
+	var stderr bytes.Buffer
+	start := time.Now()
+	_, _, _, err := PlanExec(bin, workloadEnv, terminalOpts(&stderr, 500*time.Millisecond))
+	if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), "waiting for the member to approve") {
+		t.Fatalf("err = %v", err)
+	}
+	if time.Since(start) > 15*time.Second {
+		t.Fatalf("the budget did not end the slow check (%s)", time.Since(start))
+	}
+	if !processGone(filepath.Join(state, "exportPid")) {
+		t.Fatal("the slow `aws` child outlived the wait")
+	}
+}
+
+// A logout holds the cached-login lock across its network call; a waiting run's check blocks
+// on it before it starts `aws`, and Ctrl-C (SIGTERM) or the budget must still end the run
+// with exit 3 instead of waiting for the logout.
+func TestTerminalRunCacheLockHeldByALogout(t *testing.T) {
+	for name, tc := range map[string]struct {
+		wait time.Duration
+		term bool
+		want string
+	}{
+		"SIGTERM": {time.Minute, true, "stopped waiting"},
+		"budget":  {500 * time.Millisecond, false, "waiting for the member to approve"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			bin, state := fakeAWS(t, ssoProfile)
+			fastPoll(t)
+			helper, ended := make(chan struct{}), make(chan struct{})
+			go func() {
+				defer close(helper)
+				if !fileAppears(logins.RequestPath("af-prod")) {
+					t.Errorf("request never appeared")
+					return
+				}
+				// The logout starts after the run's first check, and holds the lock for good.
+				unlock, err := logins.LockKey("af-prod", false)
+				if err != nil {
+					t.Errorf("%v", err)
+					return
+				}
+				defer unlock()
+				// A login lands: the check runs and blocks on the lock.
+				if err := putSSOCache("fresh", time.Now().Add(time.Hour)); err != nil {
+					t.Errorf("%v", err)
+					return
+				}
+				os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600)
+				if tc.term {
+					time.Sleep(300 * time.Millisecond)
+					syscall.Kill(os.Getpid(), syscall.SIGTERM)
+				}
+				<-ended
+			}()
+			t.Cleanup(func() { <-helper })
+			var stderr bytes.Buffer
+			start := time.Now()
+			_, _, _, err := PlanExec(bin, workloadEnv, terminalOpts(&stderr, tc.wait))
+			close(ended)
+			if !errors.Is(err, ErrLoginRequired) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v", err)
+			}
+			if time.Since(start) > 10*time.Second {
+				t.Fatalf("the held lock kept the run for %s", time.Since(start))
+			}
+		})
+	}
 }

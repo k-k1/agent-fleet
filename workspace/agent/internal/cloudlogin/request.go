@@ -105,8 +105,49 @@ func (s *Store[S]) markerPath(key string) string {
 	return filepath.Join(s.dir(), fileKey(key)+".cancel.json")
 }
 
+// ErrLockInterrupted is FlockEx ending because cancel closed.
+var ErrLockInterrupted = errors.New("interrupted while waiting for a lock")
+
+// ErrLockTimeout is FlockEx ending because the deadline passed.
+var ErrLockTimeout = errors.New("timed out waiting for a lock")
+
+// FlockEx takes an exclusive flock on f like a blocking LOCK_EX, but gives up when cancel
+// closes or a non-zero deadline passes: a wait for a lock somebody else holds must end
+// with the run's own Ctrl-C and wait budget, not with the holder. nil cancel and a zero
+// deadline wait for as long as the holder does.
+func FlockEx(f *os.File, cancel <-chan struct{}, deadline time.Time) error {
+	return flockWait(f, syscall.LOCK_EX, cancel, deadline)
+}
+
+// flockWait is FlockEx for any flock mode (LOCK_EX or LOCK_SH).
+func flockWait(f *os.File, how int, cancel <-chan struct{}, deadline time.Time) error {
+	if cancel == nil && deadline.IsZero() {
+		return syscall.Flock(int(f.Fd()), how)
+	}
+	for {
+		err := syscall.Flock(int(f.Fd()), how|syscall.LOCK_NB)
+		if err == nil {
+			return nil
+		}
+		if err != syscall.EWOULDBLOCK && err != syscall.EINTR {
+			return err
+		}
+		select {
+		case <-cancel:
+			return ErrLockInterrupted
+		default:
+		}
+		if !deadline.IsZero() && !time.Now().Before(deadline) {
+			return ErrLockTimeout
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // lock takes the one lock every reader-writer of the directory shares.
-func (s *Store[S]) lock() (func(), error) {
+func (s *Store[S]) lock() (func(), error) { return s.lockCancel(nil, time.Time{}) }
+
+func (s *Store[S]) lockCancel(cancel <-chan struct{}, deadline time.Time) (func(), error) {
 	if err := os.MkdirAll(s.dir(), 0o700); err != nil {
 		return nil, err
 	}
@@ -114,7 +155,7 @@ func (s *Store[S]) lock() (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	if err := FlockEx(f, cancel, deadline); err != nil {
 		f.Close()
 		return nil, err
 	}
@@ -217,7 +258,13 @@ var ErrHeld = errors.New("the login request was cancelled in the Console")
 // run saw before its failing check. A new request also writes the notification that
 // carries its id to the Console.
 func (s *Store[S]) File(profile, key string, snap S, w Waiter) (Request[S], bool, error) {
-	unlock, err := s.lock()
+	return s.FileCancel(profile, key, snap, w, nil, time.Time{})
+}
+
+// FileCancel is File whose wait for the directory lock ends with cancel or deadline
+// (ErrLockInterrupted, ErrLockTimeout).
+func (s *Store[S]) FileCancel(profile, key string, snap S, w Waiter, cancel <-chan struct{}, deadline time.Time) (Request[S], bool, error) {
+	unlock, err := s.lockCancel(cancel, deadline)
 	if err != nil {
 		return Request[S]{}, false, err
 	}
@@ -401,6 +448,13 @@ func (s *Store[S]) Gate(key string) *sync.Mutex {
 // that read the login just before a logout would otherwise write fresh credentials back after
 // the logout deleted them.
 func (s *Store[S]) LockKey(key string, shared bool) (func(), error) {
+	return s.LockKeyCancel(key, shared, nil, time.Time{})
+}
+
+// LockKeyCancel is LockKey whose wait ends with cancel or a non-zero deadline
+// (ErrLockInterrupted, ErrLockTimeout): a logout holds the exclusive lock across its network
+// call, and a waiting run's Ctrl-C and budget must not wait for it.
+func (s *Store[S]) LockKeyCancel(key string, shared bool, cancel <-chan struct{}, deadline time.Time) (func(), error) {
 	if err := os.MkdirAll(s.dir(), 0o700); err != nil {
 		return nil, err
 	}
@@ -412,7 +466,7 @@ func (s *Store[S]) LockKey(key string, shared bool) (func(), error) {
 	if shared {
 		how = syscall.LOCK_SH
 	}
-	if err := syscall.Flock(int(f.Fd()), how); err != nil {
+	if err := flockWait(f, how, cancel, deadline); err != nil {
 		f.Close()
 		return nil, err
 	}

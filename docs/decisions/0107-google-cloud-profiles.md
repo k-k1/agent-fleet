@@ -574,3 +574,12 @@ that call fails (SDK 587.0.0, `store.Revoke`), and whether revoking one gcloud r
 grant of gcloud's OAuth client for the user — the member's gcloud on other machines — is not measured.
 That is different from the rejected revoke above, which was about undoing a wrong-account login. A token
 a command already received stays valid until it expires.
+
+## Note — a run at a member's terminal asks the Console too (2026-10-08)
+
+Issue #1512, following the ADR 0102 note of this date. In decision 3, a run at a terminal now asks the Console
+like an agent's run when it is inside a workspace, is at a terminal that is not an agent's, and has no `--login`
+or `--no-login`: it files the request, waits up to ten minutes, and Ctrl-C ends the wait with exit 3 and leaves the
+request. `--login` keeps the in-terminal sign-in (and is what the printed hint carries); outside a workspace, or
+when the request cannot be filed, the terminal sign-in runs as before. The paste rule is unchanged: the code
+field exists only in the Console window where the member pressed **Log in**.

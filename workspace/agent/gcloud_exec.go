@@ -29,9 +29,13 @@ Your own ~/.config/gcloud is neither read nor changed.
   --project <id>  must be the profile's project. A user token is not bound to a project,
                   so this only checks that you and the profile agree on where the command
                   points by default; a command's own --project still wins.
-  --login         always start the gcloud login when the profile has no usable login
+  --login         always run the gcloud login in this terminal when the profile has no
+                  usable login
   --no-login      never prompt; exit 3 with the command to run in a terminal instead
-                  (default: prompt only when stdin and stderr are a terminal)
+                  (default: inside a workspace, ask the Agent Fleet Console to show the
+                  login and wait for the member there, at a terminal too; Ctrl-C stops
+                  waiting with exit 3. Outside a workspace: the login in the terminal
+                  when stdin and stderr are one)
   --list          pull the profiles from Settings now and list them
   -q              do not print the account and the token's remaining minutes
   -h, --help      print this help
@@ -41,7 +45,8 @@ The token lasts what remained when it was minted (at least 10 minutes); it is no
 refreshed during the command, so a command that outlives it fails.
 
 Exit status: the command's own on success; 2 usage error; 3 login required but not
-started (no terminal, or --no-login); 1 any other refusal or failure.
+started (--no-login, no Console
+answer in time, or Ctrl-C while waiting for it); 1 any other refusal or failure.
 `
 
 // gcloudExec is af-gcloud-exec's skeleton: its name, usage text and version line.
@@ -87,7 +92,8 @@ func runGCloudExec(args []string) {
 	// with the same per-kind wait as af-aws-exec's.
 	if os.Getenv("AF_CP_BASE_URL") != "" {
 		name := os.Getenv("AF_SESSION_NAME")
-		o.ConsoleLogin, o.ConsoleWait = true, consoleLoginWait(name)
+		o.ConsoleLogin = true
+		o.ConsoleWait, o.TerminalConsole = consoleLoginWaitFor(name, o.Interactive)
 		o.Waiter = cloudlogin.Waiter{Session: name, Command: filepath.Base(o.Argv[0])}
 	}
 	prog, argv, env, err := gcpx.PlanExec(gcloudBin, os.Environ(), o)
