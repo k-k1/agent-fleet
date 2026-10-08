@@ -788,6 +788,74 @@
       ],
       "type": "object"
     },
+    "CodeModeLanguage": {
+      "description": "The language a Code Mode cell ran in (ADR 42727 D2). Open: values are\nlowercase VS Code language identifiers, and only `javascript` (the V8\nengine) is minted today.",
+      "enum": [
+        "javascript"
+      ],
+      "type": "string",
+      "x-msp-openness": "open"
+    },
+    "CodeModeOutputSpan": {
+      "description": "One public-output span inside the item's `visibleOutput` (ADR 42727 D3).\n\nOffsets index the UTF-8 encoding of the **decoded** `visibleOutput`\nstring, never the JSON-escaped wire text; both ends fall on code-point\nboundaries; named and measured like `item/readOutput`'s byte range.",
+      "properties": {
+        "lengthBytes": {
+          "description": "Length of the span, in bytes.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "offsetBytes": {
+          "description": "Start of the span, in bytes.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stream": {
+          "$ref": "#/$defs/CodeModeOutputStream",
+          "description": "What the bytes are."
+        }
+      },
+      "required": [
+        "lengthBytes",
+        "offsetBytes",
+        "stream"
+      ],
+      "type": "object"
+    },
+    "CodeModeOutputStream": {
+      "description": "What a Code Mode output span's bytes are (ADR 42727 D3). Open: each\nengine mints its own values.",
+      "enum": [
+        "transcript"
+      ],
+      "type": "string",
+      "x-msp-openness": "open"
+    },
+    "CodeModeReceipt": {
+      "description": "Code Mode's `details` payload (ADR 42727 D2/D3).\n\nEvery member is absent when it does not apply, never `null`; an empty\n`outputSpans` list is never served.",
+      "properties": {
+        "cellItemId": {
+          "description": "`wait` only, when the producer resolved it: the `itemId` of the\n`execute` item that started the cell.",
+          "type": "string"
+        },
+        "language": {
+          "$ref": "#/$defs/CodeModeLanguage",
+          "description": "`execute`, and `wait` when the producer resolved the originating\nexecute: the language the cell ran in."
+        },
+        "outputSpans": {
+          "description": "The public cell-output spans, ascending and non-overlapping; absent\nwhen there is no cell body or a hook rewrote the served body.",
+          "items": {
+            "$ref": "#/$defs/CodeModeOutputSpan"
+          },
+          "type": "array"
+        },
+        "sourceArg": {
+          "description": "`execute` only: the top-level key of the item's `args` object whose\nvalue is the cell source. A pointer, never source bytes.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "CommandAcceptedResult": {
       "description": "The uniform SS3.1.2 command acknowledgement: admission only, never an\noutcome. `session/compact` alone may answer `\"noop\"`; every other command\nanswers `\"accepted\"`.",
       "properties": {
@@ -851,6 +919,101 @@
       ],
       "type": "string",
       "x-msp-openness": "open"
+    },
+    "ComputerUseBlockedApp": {
+      "description": "One row of the Settings blocked-apps list.",
+      "properties": {
+        "bundleId": {
+          "description": "The app's bundle ID, or the family prefix when `prefix` is true.",
+          "type": "string"
+        },
+        "locked": {
+          "description": "A built-in block, which Settings cannot remove (ADR 630 D18.8).",
+          "type": "boolean"
+        },
+        "prefix": {
+          "description": "A built-in family row: it blocks every bundle ID that starts with\n`bundleId`. Omitted means false; only locked rows are prefixes.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "bundleId",
+        "locked"
+      ],
+      "type": "object"
+    },
+    "ComputerUseChoice": {
+      "description": "A capability dropdown's value (ADR 630 D18.4). **Open**: the read result\ncarries it, so an older client tolerates a value it does not know.",
+      "enum": [
+        "ask",
+        "alwaysAllow"
+      ],
+      "type": "string",
+      "x-msp-openness": "open"
+    },
+    "ComputerUseSettings": {
+      "description": "`computerUseSettings/read` result, also answered by\n`computerUseSettings/update`.",
+      "properties": {
+        "blockedApps": {
+          "description": "The user's blocks in the order they were added, then the built-in\nblocks when `showBuiltIns` asked for them.",
+          "items": {
+            "$ref": "#/$defs/ComputerUseBlockedApp"
+          },
+          "type": "array"
+        },
+        "computerControl": {
+          "$ref": "#/$defs/ComputerUseChoice",
+          "description": "The computer-control dropdown, as it applies: `ask` while the stored\nblocked-apps list can't be read (ADR 630 D18.4)."
+        },
+        "screenshots": {
+          "$ref": "#/$defs/ComputerUseChoice",
+          "description": "The screenshots dropdown, under the same rule."
+        }
+      },
+      "required": [
+        "blockedApps",
+        "computerControl",
+        "screenshots"
+      ],
+      "type": "object"
+    },
+    "ComputerUseSettingsReadParams": {
+      "description": "`computerUseSettings/read` params.",
+      "properties": {
+        "showBuiltIns": {
+          "description": "Also list the built-in blocks as locked rows (the D18.8 toggle).\nOmitted means false.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "ComputerUseSettingsUpdateParams": {
+      "description": "`computerUseSettings/update` params: a patch. Omitted members are left\nalone; the whole patch applies or none of it does.",
+      "properties": {
+        "blockApps": {
+          "description": "Bundle IDs to add to the user's blocked apps. A built-in block is\nrefused: it is already blocked.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "computerControl": {
+          "$ref": "#/$defs/ComputerUseChoice",
+          "description": "The new computer-control dropdown value."
+        },
+        "screenshots": {
+          "$ref": "#/$defs/ComputerUseChoice",
+          "description": "The new screenshots dropdown value."
+        },
+        "unblockApps": {
+          "description": "Bundle IDs to remove from the user's blocked apps. Only the user's own\nentries can be removed; a built-in block stays.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
     },
     "ContextPressureLevel": {
       "description": "Context pressure level (tdd SS4.6.6): hard threshold first, both\ninclusive `>=`. Open.",
@@ -1144,6 +1307,10 @@
           "$ref": "#/$defs/UserInputSettlementSummary",
           "description": "Winning settlement on `userInputAlreadySettled`."
         },
+        "uploadId": {
+          "description": "The rejected upload id on `uploadNotFound` (`-32038`, SS3.33).",
+          "type": "string"
+        },
         "userInputId": {
           "description": "User-input prompt identity on SS5.10 errors.",
           "type": "string"
@@ -1186,6 +1353,8 @@
         "commandRejected",
         "backpressured",
         "skillNotFound",
+        "computerUseUnavailable",
+        "uploadNotFound",
         "viewTruncated",
         "outputUnavailable",
         "boundaryPruned",
@@ -1647,6 +1816,7 @@
         "postToolBatch",
         "interrupt",
         "sessionFork",
+        "toolUseStart",
         "preLLMCall",
         "postLLMCall"
       ],
@@ -1825,6 +1995,13 @@
           "description": "`toolCall`: the provider call id (`call_...`), opaque.",
           "type": "string"
         },
+        "childPromptRefs": {
+          "description": "`workflow`: one `outputRef`-shaped link per recorded child spawn\nwith an objective (`kind: \"workflow_child_prompt\"`), fetched via\n`item/readOutput` (tdd SS4.5.8/SS4.7.4, #45449).",
+          "items": {
+            "$ref": "#/$defs/OutputRef"
+          },
+          "type": "array"
+        },
         "childSessionId": {
           "description": "`subagent`/`reminderChild`: the child's own session id, readable via\n`session/read`/`view/page` — child transcript drill-down without a\nsecond protocol (tdd SS4.5.7).",
           "type": "string"
@@ -1851,6 +2028,10 @@
         "controlStatus": {
           "$ref": "#/$defs/SubagentControlStatus",
           "description": "`subagent`: camelCased `SubagentControlStatus` (open enum); `status`\nstays the generic item vocabulary."
+        },
+        "declaredPhase": {
+          "description": "`workflow`: the run-level declared-phase label — the last `Phase`\ndetail-row label of the reconciled projection; terminal-only, absent\nwhile live (tdd SS4.5.8, #45449).",
+          "type": "string"
         },
         "depth": {
           "description": "`subagent`: nesting depth.",
@@ -1890,6 +2071,10 @@
         },
         "fallbackText": {
           "description": "Server-provided one-line human summary any kind MAY carry, for\ngeneric rendering of kinds a client does not recognize; new kinds\nSHOULD carry it during their first release cycle (tdd SS4.10).",
+          "type": "string"
+        },
+        "finalSummary": {
+          "description": "`workflow`: the human terminal summary projected from the reconciled\nLaunch envelope, bounded at the 64 KiB surface budget; terminal-only\n(tdd SS4.5.8, #45449).",
           "type": "string"
         },
         "generationId": {
@@ -1943,6 +2128,10 @@
           "$ref": "#/$defs/PatchSummary",
           "description": "`toolCall`: server-authored edit-family diff summary (#33025)\n— always beside `patchRef`; absent = no diff available (tdd SS4.5.5)."
         },
+        "paused": {
+          "description": "`workflow`: `true` only while a durable pause fact is in force for\nthe run's generation; absent otherwise, never `false` (tdd SS4.5.8,\nADR 45437 D2; the fold sets it on pause commit and clears it on\nresume-commit supersession or the generation's terminal).",
+          "type": "boolean"
+        },
         "providerItemId": {
           "description": "`reasoning`: provider reasoning item id (e.g. `rs_...`), for\nprovider-side correlation.",
           "type": "string"
@@ -1987,12 +2176,48 @@
           "description": "`workflow`: launched script identity.",
           "type": "string"
         },
+        "sideSessionId": {
+          "description": "`sideChat`: the side's own session id, readable via\n`session/read`/`view/page` — drill-down without a second protocol\n(tdd SS4.5.13; ADR 45435 D3).",
+          "type": "string"
+        },
         "status": {
           "$ref": "#/$defs/ItemStatus",
           "description": "Open enum; terminal = anything other than `\"inProgress\"`. Unknown\nvalues MUST be treated as terminal-unknown and rendered generically\n(tdd SS4.4.1)."
         },
+        "statusAttempt": {
+          "$ref": "#/$defs/StatusAttempt",
+          "description": "`toolCall`: the latest external-attempt facet, field-for-field —\ncountdown inputs the client renders the tick from; absent when the\nlatest detail carries none (tdd SS4.5.5, #45448)."
+        },
+        "statusChildren": {
+          "$ref": "#/$defs/StatusChildren",
+          "description": "`toolCall`: the latest child-summary facet, field-for-field; absent\nwhen the latest detail carries none (tdd SS4.5.5, #45448)."
+        },
+        "statusHealth": {
+          "$ref": "#/$defs/StatusHealth",
+          "description": "`toolCall`: the latest health facet, field-for-field; absent when\nthe latest detail carries none (tdd SS4.5.5, #45448)."
+        },
+        "statusLine": {
+          "description": "`toolCall`: the task's visible latest-status line — the latest\n`Status` message through the shared detail normalization; absent\nwhen no status folded or nothing displayable remains (tdd SS4.5.5,\n#45448).",
+          "type": "string"
+        },
+        "statusPhase": {
+          "description": "`toolCall`: the latest detail's phase row, verbatim; absent when the\nlatest detail carries none (tdd SS4.5.5, #45448).",
+          "type": "string"
+        },
+        "statusProgress": {
+          "$ref": "#/$defs/StatusProgress",
+          "description": "`toolCall`: the latest progress facet, field-for-field; absent when\nthe latest detail carries none (tdd SS4.5.5, #45448)."
+        },
+        "statusStep": {
+          "$ref": "#/$defs/StatusStep",
+          "description": "`toolCall`: the latest active-step facet, field-for-field; absent\nwhen the latest detail carries none (tdd SS4.5.5, #45448)."
+        },
         "steered": {
           "description": "`userMessage`: `true` when injected mid-turn via `turn/steer` or\n`ifBusy: \"steer\"`; absent otherwise.",
+          "type": "boolean"
+        },
+        "stopAvailable": {
+          "description": "`workflow`: display-only stop affordance — `true` while the run is\nopen, `false` once settled; stopping rides `workflow/cancel`\n(tdd SS4.5.8, #45449). Authorizes nothing.",
           "type": "boolean"
         },
         "strategyId": {
@@ -2021,6 +2246,10 @@
         "text": {
           "description": "`userMessage`: the prompt text as submitted. `agentMessage`: the\naccumulated reply, streamed via `item/delta` field `\"text\"`.\n`reasoning`: raw committed reasoning text where the provider exposes\nit (never streamed in v1, tdd SS4.5.4).",
           "type": "string"
+        },
+        "tokenBudget": {
+          "$ref": "#/$defs/WorkflowTokenBudget",
+          "description": "`workflow`: the run's launch token budget, set from the launch fact\n(tdd SS4.5.8, #45449); absent when the launch carried none."
         },
         "tokensAfter": {
           "description": "`compaction`: token budget snapshot after, when measured.",
@@ -2139,7 +2368,7 @@
       "type": "object"
     },
     "ItemKind": {
-      "description": "The ten v1 item kinds (tdd SS4.5.2–4.5.11). Open: a new kind is additive\nevolution, and clients MUST render unknown kinds generically (tdd\nSS4.10).",
+      "description": "The eleven v1 item kinds (tdd SS4.5.2–4.5.13). Open: a new kind is additive\nevolution, and clients MUST render unknown kinds generically (tdd\nSS4.10).",
       "enum": [
         "userMessage",
         "agentMessage",
@@ -2150,7 +2379,8 @@
         "workflow",
         "reminderChild",
         "compaction",
-        "hookRun"
+        "hookRun",
+        "sideChat"
       ],
       "type": "string",
       "x-msp-openness": "open"
@@ -2332,6 +2562,67 @@
       "required": [
         "terminal",
         "turnId"
+      ],
+      "type": "object"
+    },
+    "MediaUploadParams": {
+      "description": "`media/upload` params (tdd SS3.33, ADR 45443 D5): one chunk of a\nclient-minted upload. All members required.",
+      "properties": {
+        "chunkBase64": {
+          "description": "This chunk's bytes; each call's frame stays in the SS1.1 budget.",
+          "type": "string"
+        },
+        "chunkCount": {
+          "description": "The upload's chunk total; positive.",
+          "type": "integer"
+        },
+        "chunkIndex": {
+          "description": "This chunk's 0-based position.",
+          "type": "integer"
+        },
+        "commandId": {
+          "description": "One per call; SS3.1.1 replay answers the recorded receipt.",
+          "type": "string"
+        },
+        "mediaType": {
+          "description": "`video/mp4` or `video/quicktime`, matching `VideoInput`.",
+          "type": "string"
+        },
+        "sessionId": {
+          "description": "The session owning the video store.",
+          "type": "string"
+        },
+        "totalBytes": {
+          "description": "The assembled byte count; must equal the bytes the chunks deliver.",
+          "type": "integer"
+        },
+        "uploadId": {
+          "description": "The client-minted upload id (UUIDv7), sent on every chunk.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chunkBase64",
+        "chunkCount",
+        "chunkIndex",
+        "commandId",
+        "mediaType",
+        "sessionId",
+        "totalBytes",
+        "uploadId"
+      ],
+      "type": "object"
+    },
+    "MediaUploadResult": {
+      "description": "`media/upload` result (tdd SS3.33): echoes the client-minted id, on\nevery chunk and replay.",
+      "properties": {
+        "uploadId": {
+          "description": "The receipt the turn part references.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "uploadId"
       ],
       "type": "object"
     },
@@ -3156,6 +3447,10 @@
         "sessionId": {
           "description": "The session identity.",
           "type": "string"
+        },
+        "sideFrom": {
+          "$ref": "#/$defs/SideProvenance",
+          "description": "`null` for root sessions and forks; side provenance otherwise (tdd\nSS2.4/SS2.5.7; ADR 45435 D2). A session carries at most one of\n`forkedFrom` and `sideFrom`."
         },
         "status": {
           "$ref": "#/$defs/SessionStatus",
@@ -4247,6 +4542,55 @@
       ],
       "type": "object"
     },
+    "SessionSideChatParams": {
+      "description": "`session/sideChat` params (tdd SS2.5.7; ADR 45435 D2).",
+      "properties": {
+        "commandId": {
+          "description": "The SS2.5 idempotency handle (UUIDv7).",
+          "type": "string"
+        },
+        "sessionId": {
+          "description": "The source main session.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "commandId",
+        "sessionId"
+      ],
+      "type": "object"
+    },
+    "SessionSideChatResult": {
+      "description": "`session/sideChat` result (tdd SS2.5.7; ADR 45435 D2): the\n`session/resume` envelope for the **new** side session, whose\n`session.sideFrom` carries the provenance. The side opens empty.",
+      "properties": {
+        "history": {
+          "$ref": "#/$defs/SessionHistory",
+          "description": "The served history (inline; SS2.5.7's empty-items half is #49416 —\ninherited turns surface until the boundary-aware fold lands)."
+        },
+        "pendingRequests": {
+          "description": "The late-joiner pointer set.",
+          "items": {
+            "$ref": "#/$defs/PendingRequestPointer"
+          },
+          "type": "array"
+        },
+        "session": {
+          "$ref": "#/$defs/Session",
+          "description": "The new side session, carrying `sideFrom` provenance."
+        },
+        "viewCursor": {
+          "description": "The new side session's view head.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "history",
+        "pendingRequests",
+        "session",
+        "viewCursor"
+      ],
+      "type": "object"
+    },
     "SessionStartParams": {
       "description": "`session/start` params (tdd SS2.5.1).",
       "properties": {
@@ -4320,7 +4664,7 @@
       "type": "object"
     },
     "SessionStartedParams": {
-      "description": "`session/started` params (tdd SS2.6.1; enrolled by #33065): a session\nbecame newly loaded on this host via `session/start` or `session/fork`\n(never `session/resume` — Appendix C, OQ-F), broadcast to every\ninitialized connection.\n\nThe one member is the same `$defs/Session` object the\n`session/start`/`session/fork` results carry, so the broadcast and the\nresult describe one fact through one type — the host builds the broadcast\npayload as a `$defs/Session` — the fresh-start arm reuses the result's\n`session` member, the start-replay arm builds the live attach snapshot —\nand the emission is\nparity-gated against this type at the producer\n(`session-server` prod-assembly capture) and over the committed\ntranscript corpus (conformance `session_lifecycle_enrollment`).",
+      "description": "`session/started` params (tdd SS2.6.1; enrolled by #33065): a session\nbecame newly loaded on this host via `session/start`, `session/fork`, or\n`session/sideChat` (never `session/resume` — Appendix C, OQ-F),\nbroadcast to every initialized connection.\n\nThe one member is the same `$defs/Session` object the\n`session/start`/`session/fork` results carry, so the broadcast and the\nresult describe one fact through one type — the host builds the broadcast\npayload as a `$defs/Session` — the fresh-start arm reuses the result's\n`session` member, the start-replay arm builds the live attach snapshot —\nand the emission is\nparity-gated against this type at the producer\n(`session-server` prod-assembly capture) and over the committed\ntranscript corpus (conformance `session_lifecycle_enrollment`).",
       "properties": {
         "session": {
           "$ref": "#/$defs/Session",
@@ -4547,6 +4891,50 @@
       ],
       "type": "object"
     },
+    "SideProvenance": {
+      "description": "Side provenance folded from the durable side provenance\n(`SideChatProvenance`, tdd SS2.4/SS2.5.7; ADR 45435 D2).",
+      "properties": {
+        "commandId": {
+          "description": "The `commandId` of the `session/sideChat` that created it.",
+          "type": "string"
+        },
+        "cutCursor": {
+          "description": "An **opaque provenance string** preserved verbatim from the durable\nside provenance (`source_cut_cursor`). Display-only — not one of the\ncursor families: clients MUST NOT parse it and no method accepts it\n(tdd SS2.4).",
+          "type": "string"
+        },
+        "sessionId": {
+          "description": "The source main session this side was opened from.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "commandId",
+        "cutCursor",
+        "sessionId"
+      ],
+      "type": "object"
+    },
+    "SkillActivationScope": {
+      "description": "`skill/setActivation` activation target (tdd SS3.30.1). **Closed**: a\nclient-selected write vocabulary (ADR 45433 D2) — a write must fail a\nscope the host does not implement rather than record activation against\nan unknown target. Contrast the open read-side [`SkillSource`].",
+      "enum": [
+        "user",
+        "project",
+        "bundled",
+        "plugin"
+      ],
+      "type": "string",
+      "x-msp-openness": "closed"
+    },
+    "SkillActivationState": {
+      "description": "The three-state skill activation (tdd SS3.30.1, ADR 10512 — no new\nstate). **Closed**: a client-selected write vocabulary (ADR 45433 D2).",
+      "enum": [
+        "on",
+        "userInvocableOnly",
+        "off"
+      ],
+      "type": "string",
+      "x-msp-openness": "closed"
+    },
     "SkillCatalogEntry": {
       "description": "One typed-invocable shortcut spelling (tdd SS3.22.1). A plugin skill may\ncontribute two rows: its bare-name winner and its qualified\n`<pluginId>:<skillId>` form.",
       "properties": {
@@ -4597,7 +4985,7 @@
       "type": "object"
     },
     "SkillListParams": {
-      "description": "`skill/list` params (tdd SS3.22.1). Per-session because skill scope\nfollows the session's workspace and plugin state.",
+      "description": "`skill/list` params (tdd SS3.22.1, SS3.30.3). Per-session because skill\nscope follows the session's workspace and plugin state.",
       "properties": {
         "sessionId": {
           "description": "The target session.",
@@ -4622,6 +5010,77 @@
       },
       "required": [
         "skills"
+      ],
+      "type": "object"
+    },
+    "SkillSetActivationParams": {
+      "description": "`skill/setActivation` params (tdd SS3.30.1, #45433): turn one skill on\nor off in any scope through the single\n`SkillsService::set_activation` seam.",
+      "properties": {
+        "activation": {
+          "$ref": "#/$defs/SkillActivationState",
+          "description": "The activation to apply."
+        },
+        "commandId": {
+          "description": "The SS3.1.1 idempotency handle (UUIDv7).",
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/SkillActivationScope",
+          "description": "The activation target."
+        },
+        "selector": {
+          "description": "Names one skill: a bare or plugin-qualified token from the session's\nfull catalog (tdd SS3.30.3), the SS3.22.1 row vocabulary.",
+          "type": "string"
+        },
+        "sessionId": {
+          "description": "The target session.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "activation",
+        "commandId",
+        "scope",
+        "selector",
+        "sessionId"
+      ],
+      "type": "object"
+    },
+    "SkillSetActivationResult": {
+      "description": "`skill/setActivation` result (tdd SS3.30.1, #45433): the ack envelope\nplus the applied state.",
+      "properties": {
+        "activation": {
+          "$ref": "#/$defs/SkillActivationState",
+          "description": "The applied activation."
+        },
+        "commandId": {
+          "description": "Echoes the client's id.",
+          "type": "string"
+        },
+        "previous": {
+          "$ref": "#/$defs/SkillActivationState",
+          "description": "The activation value in force for that `(selector, scope)`\nimmediately before the write: the same value a full-catalog\n`skill/list` row would have carried in `activation` for it."
+        },
+        "scope": {
+          "$ref": "#/$defs/SkillActivationScope",
+          "description": "Echoes the applied write's scope."
+        },
+        "selector": {
+          "description": "Echoes the applied write's selector.",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/CommandStatus",
+          "description": "Admission status."
+        }
+      },
+      "required": [
+        "activation",
+        "commandId",
+        "previous",
+        "scope",
+        "selector",
+        "status"
       ],
       "type": "object"
     },
@@ -4801,6 +5260,153 @@
         "first",
         "last",
         "stream"
+      ],
+      "type": "object"
+    },
+    "StatusAttempt": {
+      "description": "`toolCall.statusAttempt` (tdd SS4.5.5, #45448): the latest\n`TaskExternalAttemptDetail`, field-for-field — countdown inputs the\nclient renders the tick from, so no event spam.",
+      "properties": {
+        "attempt": {
+          "description": "The attempt number.",
+          "type": "integer"
+        },
+        "errorKind": {
+          "description": "The error kind (durable vocabulary, verbatim), when recorded.",
+          "type": "string"
+        },
+        "httpStatus": {
+          "description": "The HTTP status, when recorded.",
+          "type": "integer"
+        },
+        "maxAttempts": {
+          "description": "The maximum attempts, when known.",
+          "type": "integer"
+        },
+        "nextAttempt": {
+          "description": "The scheduled next attempt, when known.",
+          "type": "integer"
+        },
+        "operation": {
+          "description": "The operation (durable vocabulary, verbatim).",
+          "type": "string"
+        },
+        "retryDelayMs": {
+          "description": "The retry delay in ms, when known.",
+          "type": "integer"
+        },
+        "system": {
+          "description": "The external system (durable vocabulary, verbatim).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt",
+        "operation",
+        "system"
+      ],
+      "type": "object"
+    },
+    "StatusChildren": {
+      "description": "`toolCall.statusChildren` (tdd SS4.5.5, #45448): the latest\n`TaskChildSummaryDetail`, field-for-field.",
+      "properties": {
+        "active": {
+          "description": "Active children.",
+          "type": "integer"
+        },
+        "cancelled": {
+          "description": "Cancelled children.",
+          "type": "integer"
+        },
+        "completed": {
+          "description": "Completed children.",
+          "type": "integer"
+        },
+        "failed": {
+          "description": "Failed children.",
+          "type": "integer"
+        },
+        "total": {
+          "description": "Total children, when known.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "active",
+        "cancelled",
+        "completed",
+        "failed"
+      ],
+      "type": "object"
+    },
+    "StatusHealth": {
+      "description": "`toolCall.statusHealth` (tdd SS4.5.5, #45448): the latest\n`TaskHealthDetail`, field-for-field.",
+      "properties": {
+        "level": {
+          "$ref": "#/$defs/StatusHealthLevel",
+          "description": "The health level (the durable `TaskHealthLevel` vocabulary verbatim)."
+        },
+        "reason": {
+          "description": "The reason, when recorded.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "level"
+      ],
+      "type": "object"
+    },
+    "StatusHealthLevel": {
+      "description": "`toolCall.statusHealth.level` (tdd SS4.5.5, #45448): the durable\n`TaskHealthLevel` vocabulary verbatim. Open — runtime vocabulary may\ngrow additively, and clients MUST render unknown levels generically.",
+      "enum": [
+        "ok",
+        "waiting",
+        "degraded",
+        "retrying",
+        "blocked",
+        "failed"
+      ],
+      "type": "string",
+      "x-msp-openness": "open"
+    },
+    "StatusProgress": {
+      "description": "`toolCall.statusProgress` (tdd SS4.5.5, #45448): the latest\n`TaskProgressDetail`, field-for-field.",
+      "properties": {
+        "current": {
+          "description": "Completed units.",
+          "type": "integer"
+        },
+        "total": {
+          "description": "Total units, when known.",
+          "type": "integer"
+        },
+        "unit": {
+          "description": "Unit label, when recorded.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "current"
+      ],
+      "type": "object"
+    },
+    "StatusStep": {
+      "description": "`toolCall.statusStep` (tdd SS4.5.5, #45448): the latest\n`TaskActiveStepDetail`, field-for-field.",
+      "properties": {
+        "index": {
+          "description": "The step index, when known.",
+          "type": "integer"
+        },
+        "label": {
+          "description": "The active step's label.",
+          "type": "string"
+        },
+        "total": {
+          "description": "The step count, when known.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "label"
       ],
       "type": "object"
     },
@@ -5096,6 +5702,78 @@
       ],
       "type": "object"
     },
+    "TaskListEntry": {
+      "description": "One background-task inventory row (tdd SS3.31). The row is the stable\ncontract: `kind` and `status` stay open so a future state extends them\nwithout breaking clients.",
+      "properties": {
+        "backgroundInitiator": {
+          "$ref": "#/$defs/BackgroundInitiator",
+          "description": "Who backgrounded the task, mirroring the item field.\n**Additive-optional**: absent on pre-split records and\nregistry-only rows, never inferred."
+        },
+        "kind": {
+          "description": "What the workload is: `\"tool\"` or `\"tool.*\"` for item rows (the\nrecorded kind when the registry records one, else `\"tool\"`); the\nrecorded registry kind string verbatim for registry-only rows.\nOpen vocabulary — clients MUST ignore unknown kinds. A `String`,\nnot an enum: registry kind strings are unbounded.",
+          "type": "string"
+        },
+        "startedAt": {
+          "description": "The host-known task start, RFC3339. **Additive-optional**: omitted,\nnever guessed, when the host does not know it.",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/TaskListStatus",
+          "description": "`\"inProgress\"` — the only value at this increment, since every\nlisted row is non-terminal by construction."
+        },
+        "taskId": {
+          "description": "The `toolCall` item's `itemId` for item rows; the runtime registry\nid for registry-only rows.",
+          "type": "string"
+        },
+        "tool": {
+          "description": "The short tool name on item-visible tool rows only; never a label,\nnever arguments. **Additive-optional**: absent elsewhere.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "status",
+        "taskId"
+      ],
+      "type": "object"
+    },
+    "TaskListParams": {
+      "description": "`task/list` params (tdd SS3.31): the session whose background-task\ninventory to read. A read-only query in the `skill/list` mold: no\n`commandId`, no durable record, no view event.",
+      "properties": {
+        "sessionId": {
+          "description": "The target session.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "type": "object"
+    },
+    "TaskListResult": {
+      "description": "`task/list` result (tdd SS3.31): one row per running background\nworkload in `task/stopAll` reach, oldest first; empty when nothing is\nrunning.",
+      "properties": {
+        "tasks": {
+          "description": "The session's live background-task rows.",
+          "items": {
+            "$ref": "#/$defs/TaskListEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "tasks"
+      ],
+      "type": "object"
+    },
+    "TaskListStatus": {
+      "description": "A task row's status (tdd SS3.31). Open (server-produced result\nvocabulary, the #22785 enum-openness rule): a future state is\nadditive, and clients MUST ignore unknown statuses.",
+      "enum": [
+        "inProgress"
+      ],
+      "type": "string",
+      "x-msp-openness": "open"
+    },
     "TaskStopAllParams": {
       "description": "`task/stopAll` params (tdd §3.15): stop every stoppable background\nworkload live at admission.",
       "properties": {
@@ -5278,13 +5956,37 @@
         {
           "properties": {
             "details": {
+              "$ref": "#/$defs/CodeModeReceipt"
+            },
+            "family": {
+              "const": "codeMode",
+              "type": "string"
+            },
+            "operation": {
+              "$ref": "#/$defs/ToolReceiptOperation"
+            },
+            "outcome": {
+              "$ref": "#/$defs/ToolReceiptOutcome"
+            }
+          },
+          "required": [
+            "family",
+            "operation",
+            "outcome"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "details": {
               "properties": {},
               "type": "object"
             },
             "family": {
               "not": {
                 "enum": [
-                  "cron"
+                  "cron",
+                  "codeMode"
                 ]
               },
               "type": "string"
@@ -5311,7 +6013,9 @@
       "enum": [
         "create",
         "delete",
-        "list"
+        "list",
+        "execute",
+        "wait"
       ],
       "type": "string",
       "x-msp-openness": "open"
@@ -5324,7 +6028,12 @@
         "deleted",
         "missing",
         "listed",
-        "rejected"
+        "rejected",
+        "completed",
+        "pending",
+        "failed",
+        "timedOut",
+        "cancelled"
       ],
       "type": "string",
       "x-msp-openness": "open"
@@ -5555,6 +6264,10 @@
           "$ref": "#/$defs/TurnInputPartType",
           "description": "The part type."
         },
+        "uploadId": {
+          "description": "The upload receipt, required on a `video` part (tdd SS3.2, SS3.33;\nADR 45443 D5): the client-minted id `media/upload` echoed.",
+          "type": "string"
+        },
         "width": {
           "description": "Pixel width; must be provided together with `height` or not at all\n(tdd SS3.2). Published as a `dependentRequired` pair under #22785 E6c.",
           "type": "integer"
@@ -5570,7 +6283,8 @@
       "enum": [
         "text",
         "image",
-        "skill"
+        "skill",
+        "video"
       ],
       "type": "string",
       "x-msp-openness": "closed"
@@ -5630,6 +6344,14 @@
         "commandId": {
           "description": "The `commandId` of the submit that minted it.",
           "type": "string"
+        },
+        "displayText": {
+          "description": "`queuedTurns[]` only (#45455; ADR 45443 D7): the queued submit's\npresentation text, so a late joiner can render it without waiting for\nlaunch. A current host sets it on every entry it admits; absent means\nan older host (or a pre-feature restored entry). Never set on\n`activeTurn`: the running turn's text is its `userMessage` item.",
+          "type": "string"
+        },
+        "truncated": {
+          "description": "`queuedTurns[]` only: set when `displayText` was cut to the\ncommitted-surface budget, mirroring `userMessage.truncated`\n(tdd SS4.5.2). Absent unless `true`.",
+          "type": "boolean"
         },
         "turnId": {
           "description": "The turn's id, pre-minted per tdd SS3.1.4.",
@@ -6878,7 +7600,7 @@
       "type": "object"
     },
     "WorkflowControlResult": {
-      "description": "The shared SS3.19/SS3.20 admission-only ack: deliberately bare\n`{commandId, status}` — settlement arrives as the workflow item's view\nevents, never through the ack.",
+      "description": "The shared SS3.19/SS3.20/SS3.32 admission-only ack: deliberately bare\n`{commandId, status}` — settlement arrives as the workflow item's view\nevents, never through the ack.",
       "properties": {
         "commandId": {
           "description": "Echoes the client's id.",
@@ -6892,6 +7614,42 @@
       "required": [
         "commandId",
         "status"
+      ],
+      "type": "object"
+    },
+    "WorkflowPauseParams": {
+      "description": "`workflow/pause` params (tdd SS3.32, ADR 45437 D2): pause a live\nworkflow run, shaped exactly like `workflow/cancel`.",
+      "properties": {
+        "commandId": {
+          "description": "The SS3.1.1 idempotency handle (UUIDv7).",
+          "type": "string"
+        },
+        "sessionId": {
+          "description": "The target session.",
+          "type": "string"
+        },
+        "workflowRunId": {
+          "description": "The run to pause, exactly as the `workflow` item names it (SS4.5.8);\nrequired, non-empty.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "commandId",
+        "sessionId",
+        "workflowRunId"
+      ],
+      "type": "object"
+    },
+    "WorkflowTokenBudget": {
+      "description": "`workflow`: the run's launch token budget (tdd SS4.5.8, #45449).",
+      "properties": {
+        "total": {
+          "description": "The effective launch budget in tokens, verbatim from the launch fact.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total"
       ],
       "type": "object"
     }
@@ -7026,6 +7784,16 @@
       "retryable": false
     },
     {
+      "code": -32033,
+      "kind": "computerUseUnavailable",
+      "retryable": false
+    },
+    {
+      "code": -32038,
+      "kind": "uploadNotFound",
+      "retryable": false
+    },
+    {
       "code": -32040,
       "kind": "viewTruncated",
       "retryable": false
@@ -7102,6 +7870,24 @@
       },
       "result": {
         "$ref": "#/$defs/ApprovalListPendingResult"
+      }
+    },
+    "computerUseSettings/read": {
+      "description": "Reads the computer-use Settings: each capability's Always allow switch and the user's blocked apps from the approval policy store, plus the built-in blocks as locked rows when asked; computerUseUnavailable while the CUA gate is off (ADR 630 D18.17).",
+      "params": {
+        "$ref": "#/$defs/ComputerUseSettingsReadParams"
+      },
+      "result": {
+        "$ref": "#/$defs/ComputerUseSettings"
+      }
+    },
+    "computerUseSettings/update": {
+      "description": "Applies one Settings patch (capability dropdowns, blocked apps to add or remove) all-or-nothing and answers the user's Settings after it; a built-in block is refused in either list; computerUseUnavailable while the CUA gate is off (ADR 630 D18.17).",
+      "params": {
+        "$ref": "#/$defs/ComputerUseSettingsUpdateParams"
+      },
+      "result": {
+        "$ref": "#/$defs/ComputerUseSettings"
       }
     },
     "feedback/submit": {
@@ -7183,6 +7969,15 @@
       },
       "result": {
         "$ref": "#/$defs/ItemReadOutputResult"
+      }
+    },
+    "media/upload": {
+      "description": "Moves one video chunk into the session's video store; answers the \\\n              `uploadId` receipt on every chunk (tdd SS3.33, ADR 45443 D5).",
+      "params": {
+        "$ref": "#/$defs/MediaUploadParams"
+      },
+      "result": {
+        "$ref": "#/$defs/MediaUploadResult"
       }
     },
     "model/list": {
@@ -7284,6 +8079,15 @@
         "$ref": "#/$defs/SessionSetReasoningEffortResult"
       }
     },
+    "session/sideChat": {
+      "description": "Opens a side chat from a loaded main session, with durable provenance (SS2.5.7; ADR 45435 D2).",
+      "params": {
+        "$ref": "#/$defs/SessionSideChatParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionSideChatResult"
+      }
+    },
     "session/start": {
       "description": "Creates a brand-new session, loads it on this host, durably records the start, and auto-subscribes this connection (SS2.5.1).",
       "params": {
@@ -7309,6 +8113,15 @@
       },
       "result": {
         "$ref": "#/$defs/SkillListResult"
+      }
+    },
+    "skill/setActivation": {
+      "description": "Writes one skill's activation in any scope through the single \\\n              `SkillsService::set_activation` seam; answers the applied \\\n              state plus `previous`. `commandId`-idempotent; each \\\n              successful write is an SS3.22.2 detection point (tdd SS3.30.1, \\\n              ADR 45433 D2/D4/D5, #45433).",
+      "params": {
+        "$ref": "#/$defs/SkillSetActivationParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SkillSetActivationResult"
       }
     },
     "subagent/close": {
@@ -7537,6 +8350,15 @@
       "description": "Skips or retries one workflow child keyed by the item's (childId, attempt) pair; admission-only bare ack (tdd SS3.20, spec 14410; enrolled by the #33065 sweep).",
       "params": {
         "$ref": "#/$defs/WorkflowChildControlParams"
+      },
+      "result": {
+        "$ref": "#/$defs/WorkflowControlResult"
+      }
+    },
+    "workflow/pause": {
+      "description": "Pauses a live workflow run; admission-only bare ack, the pause folds as the workflow item's `paused` member (tdd SS3.32, ADR 45437 D2).",
+      "params": {
+        "$ref": "#/$defs/WorkflowPauseParams"
       },
       "result": {
         "$ref": "#/$defs/WorkflowControlResult"
