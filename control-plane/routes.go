@@ -913,6 +913,8 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/agents/memory/entries/changes", rest)
 	mux.HandleFunc("GET /api/agents/memory/entries/diff", rest)
 	mux.HandleFunc("POST /api/agents/memory/entries/revert", rest)
+	mux.HandleFunc("GET /api/agents/memory/entries/list", rest)
+	mux.HandleFunc("POST /api/agents/memory/entries/pin", rest)
 	// The one-time import of claude's own memory: sources, a read-only preview, and the apply.
 	mux.HandleFunc("GET /api/agents/memory/claude-import", rest)
 	mux.HandleFunc("GET /api/agents/memory/claude-import/preview", rest)

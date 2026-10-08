@@ -155,3 +155,15 @@ export interface ClaudeImportResult {
   reason?: string;
   commit?: string;
 }
+
+/** One memory in the Console's list (#1703): the pin is the member's, the count is the agents' use. */
+export interface MemoryListed {
+  name: string;
+  scope: "user" | "project";
+  project?: MemoryChangeProject;
+  description: string;
+  type?: string;
+  updated: string;
+  pinned: boolean;
+  uses: number;
+}

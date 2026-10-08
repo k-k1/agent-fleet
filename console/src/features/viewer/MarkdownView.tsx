@@ -28,7 +28,7 @@ import { wireImages, wireLinks } from "./parts/mdLinks.ts";
 // links open that file in the viewer via onOpenFile.
 let mermaidSeq = 0;
 
-interface MarkdownViewProps {
+export interface MarkdownViewProps {
   source?: string;
   basePath?: string;
   baseDir?: string; // cwd for an agent reply; relative file citations resolve from here

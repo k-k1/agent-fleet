@@ -182,6 +182,9 @@ func mcpMemoryFormatIndex(raw string) string {
 		Omitted   int               `json:"omitted"`
 		Truncated bool              `json:"truncated"`
 		Withheld  int               `json:"withheld"`
+
+		// Pinned memories that did not fit the budget; see memoryx.agentMemBudgetIndex.
+		PinnedOmitted int `json:"pinnedOmitted"`
 	}
 	if json.Unmarshal([]byte(raw), &v) != nil {
 		return raw
@@ -213,6 +216,9 @@ func mcpMemoryFormatIndex(raw string) string {
 	}
 	if v.Omitted > 0 {
 		fmt.Fprintf(&b, "and %d more (use memory_search)\n", v.Omitted)
+	}
+	if v.PinnedOmitted > 0 {
+		fmt.Fprintf(&b, "%d of these are pinned by your user (over the index budget)\n", v.PinnedOmitted)
 	}
 	b.WriteString("Read one with memory_read before relying on it.\n")
 	return b.String()

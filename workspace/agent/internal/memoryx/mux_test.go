@@ -51,6 +51,8 @@ var memoryTestRoutes = map[string]http.HandlerFunc{
 	"GET /agents/memory/entries/changes": HandleAgentMemoryChanges,
 	"GET /agents/memory/entries/diff":    HandleAgentMemoryChangeDiff,
 	"POST /agents/memory/entries/revert": HandleAgentMemoryRevert,
+	"GET /agents/memory/entries/list":    HandleAgentMemoryList,
+	"POST /agents/memory/entries/pin":    HandleAgentMemoryPin,
 
 	"GET /agents/memory/claude-import":         HandleAgentMemoryClaudeSources,
 	"GET /agents/memory/claude-import/preview": HandleAgentMemoryClaudePreview,

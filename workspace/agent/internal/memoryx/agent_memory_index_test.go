@@ -30,7 +30,7 @@ func agentMemIndexFixture(n int) []agentMemEntry {
 func TestAgentMemBudgetIndexBounds472(t *testing.T) {
 	es := agentMemIndexFixture(472)
 	agentMemRank(es)
-	desc, more, omitted := agentMemBudgetIndex(es, 0)
+	desc, more, omitted, _ := agentMemBudgetIndex(es, 0)
 
 	size := 0
 	for _, e := range desc {
@@ -71,7 +71,7 @@ func TestAgentMemBudgetIndexBounds472(t *testing.T) {
 func TestAgentMemBudgetIndexSmallStoreFitsAndKeepsOrder(t *testing.T) {
 	es := agentMemIndexFixture(5)
 	agentMemRank(es)
-	desc, more, omitted := agentMemBudgetIndex(es, 0)
+	desc, more, omitted, _ := agentMemBudgetIndex(es, 0)
 	if len(desc) != 5 || more != nil || omitted != 0 {
 		t.Fatalf("desc=%d more=%v omitted=%d", len(desc), more, omitted)
 	}
@@ -87,7 +87,7 @@ func TestAgentMemClampBudget(t *testing.T) {
 	// A budget below the minimum is raised, not honoured.
 	es := agentMemIndexFixture(472)
 	agentMemRank(es)
-	desc, _, _ := agentMemBudgetIndex(es, 100)
+	desc, _, _, _ := agentMemBudgetIndex(es, 100)
 	size := 0
 	for _, e := range desc {
 		size += len(agentMemIndexLine(e))
@@ -139,7 +139,7 @@ func TestAgentMemTailOverflowCountsTheRest(t *testing.T) {
 	for i := range es {
 		es[i] = agentMemEntry{Name: fmt.Sprintf("n%04d", i), Scope: "user", Description: "d", Updated: "2026-01-01T00:00:00Z"}
 	}
-	desc, more, omitted := agentMemBudgetIndex(es, agentMemIndexBudgetMin)
+	desc, more, omitted, _ := agentMemBudgetIndex(es, agentMemIndexBudgetMin)
 	if omitted == 0 || agentMemTailSize(more) > agentMemIndexTailBudget-agentMemIndexTailOverhead {
 		t.Fatalf("omitted=%d tail=%d", omitted, agentMemTailSize(more))
 	}

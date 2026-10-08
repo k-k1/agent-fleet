@@ -120,6 +120,26 @@
   border-color: var(--accent);
 }
 
+.mem-pins {
+  margin: 12px 0;
+}
+
+.mem-pin-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mem-pin-row .mem-snap-what {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .mem-af-name {
   font-family: var(--mono);
   font-size: 12px;
@@ -139,7 +159,8 @@
   align-items: start;
 }
 
-.mem-list {
+.mem-list,
+.mem-pin-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -262,6 +283,7 @@
     }
 
   .mem-list,
+  .mem-pin-list,
   .mem-diff {
     max-height: 240px;
   }
