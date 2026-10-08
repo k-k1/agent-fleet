@@ -77,7 +77,7 @@ function setSession(it: Inst, name: string | null) {
 // interrupts the foreground program.
 // A refused or unavailable clipboard (insecure context, denied permission, Safari outside a
 // gesture) toasts instead of failing silently; nothing here throws into the key handler.
-function clipFail(key: string) {
+function clipFail(key: "term.copy_failed" | "term.paste_failed") {
   toast(tr(key), { kind: "error", key: "term-clipboard" });
 }
 // Selection identity, per terminal, by change events rather than text: selEpoch counts
@@ -98,14 +98,24 @@ function copySelection(term: Terminal, opts: { notify?: boolean; clear?: boolean
   const gen = (copyGen.get(term) ?? 0) + 1;
   copyGen.set(term, gen);
   copiedEpoch.delete(term);
-  const epoch = selEpoch.get(term);
+  // xterm confirms a mouse selection (and fires onSelectionChange) from a document mouseup
+  // listener, i.e. AFTER our term.element mouseup copy starts, so the epoch cannot be read
+  // here. Remember where the copied selection sits and bind the epoch on success instead,
+  // provided the user has not selected something else in the meantime.
+  const pos = JSON.stringify(term.getSelectionPosition() ?? null);
   if (opts.clear) term.clearSelection();
   if (!navigator.clipboard?.writeText) return clipFail("term.copy_failed");
   // Recorded only once the write succeeded: a refused auto-copy must leave the selection
   // copyable, so the user's explicit Ctrl+C retry copies instead of interrupting.
   navigator.clipboard.writeText(sel).then(
     () => {
-      if (copyGen.get(term) === gen && epoch !== undefined) copiedEpoch.set(term, epoch);
+      const epoch = selEpoch.get(term);
+      if (
+        copyGen.get(term) === gen &&
+        epoch !== undefined &&
+        JSON.stringify(term.getSelectionPosition() ?? null) === pos
+      )
+        copiedEpoch.set(term, epoch);
       if (opts.notify) toast(tr("term.copied"), { kind: "success", key: "term-clipboard", duration: 1500 });
     },
     () => clipFail("term.copy_failed"),
