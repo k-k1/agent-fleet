@@ -19,6 +19,10 @@ function mount() {
   return term;
 }
 
+// A user selection: xterm fires onSelectionChange, which is what Ctrl+C trusts.
+let selLen = 0; // xterm fires only when the range changes, so grow it each time
+const userSelect = (term: any) => term.select(0, 0, ++selLen);
+
 const key = (code: string, o: KeyboardEventInit = {}) =>
   new KeyboardEvent("keydown", { code, cancelable: true, ...o });
 
@@ -35,6 +39,7 @@ describe("terminal clipboard keys", () => {
     Object.defineProperty(navigator, "clipboard", { value: { writeText, readText }, configurable: true });
     setSetting("termCtrlCV", true);
     const term: any = mount();
+    userSelect(term);
     const pasted = vi.spyOn(term, "paste").mockImplementation(() => {});
     const h: KeyHandler = (term as any)._core._customKeyEventHandler;
     expect(h).toBeTypeOf("function");
@@ -95,6 +100,7 @@ describe("terminal clipboard keys", () => {
     Object.defineProperty(navigator, "clipboard", { value: { writeText, readText: vi.fn() }, configurable: true });
     setSetting("termCtrlCV", true);
     const term: any = mount();
+    userSelect(term);
     vi.spyOn(term, "hasSelection").mockReturnValue(true);
     const getSel = vi.spyOn(term, "getSelection").mockReturnValue("drag");
     const h: KeyHandler = term._core._customKeyEventHandler;
@@ -105,8 +111,28 @@ describe("terminal clipboard keys", () => {
     expect(h(intr)).toBe(true);
     expect(intr.defaultPrevented).toBe(false);
     getSel.mockReturnValue("other");
+    userSelect(term);
     expect(h(key("KeyC", { ctrlKey: true }))).toBe(false);
     expect(writeText).toHaveBeenLastCalledWith("other");
+  });
+
+  it("Ctrl+C is an interrupt when the program rewrites the copied selection's text", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText, readText: vi.fn() }, configurable: true });
+    setSetting("termCtrlCV", true);
+    const term: any = mount();
+    userSelect(term);
+    vi.spyOn(term, "hasSelection").mockReturnValue(true);
+    const getSel = vi.spyOn(term, "getSelection").mockReturnValue("progress 10%");
+    const h: KeyHandler = term._core._customKeyEventHandler;
+    term.element.dispatchEvent(new MouseEvent("mouseup", { button: 0 }));
+    await Promise.resolve();
+    await Promise.resolve();
+    getSel.mockReturnValue("progress 11%"); // same cells, redrawn: no selection event
+    const intr = key("KeyC", { ctrlKey: true });
+    expect(h(intr)).toBe(true);
+    expect(intr.defaultPrevented).toBe(false);
+    expect(writeText).toHaveBeenCalledTimes(1);
   });
 
   it("a refused auto-copy leaves Ctrl+C free to retry the copy", async () => {
@@ -114,6 +140,7 @@ describe("terminal clipboard keys", () => {
     Object.defineProperty(navigator, "clipboard", { value: { writeText, readText: vi.fn() }, configurable: true });
     setSetting("termCtrlCV", true);
     const term: any = mount();
+    userSelect(term);
     vi.spyOn(term, "hasSelection").mockReturnValue(true);
     vi.spyOn(term, "getSelection").mockReturnValue("drag");
     const h: KeyHandler = term._core._customKeyEventHandler;
@@ -130,6 +157,7 @@ describe("terminal clipboard keys", () => {
     Object.defineProperty(navigator, "clipboard", { value: { writeText, readText: vi.fn() }, configurable: true });
     setSetting("termCtrlCV", true);
     const term: any = mount();
+    userSelect(term);
     vi.spyOn(term, "hasSelection").mockReturnValue(true);
     vi.spyOn(term, "getSelection").mockReturnValue("drag");
     const h: KeyHandler = term._core._customKeyEventHandler;

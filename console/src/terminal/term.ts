@@ -80,10 +80,14 @@ function setSession(it: Inst, name: string | null) {
 function clipFail(key: string) {
   toast(tr(key), { kind: "error", key: "term-clipboard" });
 }
-// The selection text last successfully written to the clipboard, per terminal. Copy-on-select leaves the
-// highlight in place, so without this a Ctrl+C meant as an interrupt would re-copy the stale
-// selection instead of reaching the PTY.
-const copiedSel = new WeakMap<Terminal, string>();
+// Selection identity, per terminal, by change events rather than text: selEpoch counts
+// onSelectionChange (the user's drag / double-click / select), copiedEpoch is the epoch whose
+// copy last succeeded. Copy-on-select leaves the highlight in place, and a program may redraw
+// the selected cells (a progress line rewritten with \r) without any user action, so text
+// comparison would call that a new selection and swallow an interrupt. Rule: Ctrl+C copies
+// only a selection the user created since the last successful copy; anything doubtful is ^C.
+const selEpoch = new WeakMap<Terminal, number>();
+const copiedEpoch = new WeakMap<Terminal, number>();
 // Attempt counter per terminal: a slow earlier write that resolves after a newer attempt began
 // must not re-record its text.
 const copyGen = new WeakMap<Terminal, number>();
@@ -93,14 +97,15 @@ function copySelection(term: Terminal, opts: { notify?: boolean; clear?: boolean
   // A new attempt voids any earlier success: it no longer says what the clipboard holds.
   const gen = (copyGen.get(term) ?? 0) + 1;
   copyGen.set(term, gen);
-  copiedSel.delete(term);
+  copiedEpoch.delete(term);
+  const epoch = selEpoch.get(term);
   if (opts.clear) term.clearSelection();
   if (!navigator.clipboard?.writeText) return clipFail("term.copy_failed");
   // Recorded only once the write succeeded: a refused auto-copy must leave the selection
   // copyable, so the user's explicit Ctrl+C retry copies instead of interrupting.
   navigator.clipboard.writeText(sel).then(
     () => {
-      if (copyGen.get(term) === gen) copiedSel.set(term, sel);
+      if (copyGen.get(term) === gen && epoch !== undefined) copiedEpoch.set(term, epoch);
       if (opts.notify) toast(tr("term.copied"), { kind: "success", key: "term-clipboard", duration: 1500 });
     },
     () => clipFail("term.copy_failed"),
@@ -453,6 +458,7 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
     term.loadAddon(new WebLinksAddon((e, uri) => window.open(uri, "_blank", "noopener")));
   } catch {}
   term.open(el);
+  term.onSelectionChange(() => selEpoch.set(term, (selEpoch.get(term) ?? 0) + 1));
   // OSC 52: with `set-clipboard on`, tmux emits the just-copied selection as an
   // OSC 52 sequence to its outer terminal (us). xterm has no built-in OSC 52 handler,
   // so a plain mouse drag-select in the terminal (which tmux, in mouse mode, turns into
@@ -562,10 +568,9 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
     if (e.type !== "keydown") return true;
     // Clipboard shortcuts — return false so xterm does NOT also forward them to the PTY, and
     // preventDefault so the browser's own paste event cannot paste a second time.
-    // Ctrl+C copies only a selection not yet on the clipboard (checked lazily: getSelection
-    // builds a string and this is the key hot path).
+    // Ctrl+C copies only a selection the user made and that is not yet on the clipboard.
     const sel = term.hasSelection();
-    const stale = sel && e.ctrlKey && e.code === "KeyC" && term.getSelection() === copiedSel.get(term);
+    const stale = sel && e.ctrlKey && e.code === "KeyC" && (selEpoch.get(term) === undefined || selEpoch.get(term) === copiedEpoch.get(term));
     const act = clipAction(e, sel, getSettings().termCtrlCV, stale);
     if (act) {
       if (act === "paste") pasteClipboard(term);
