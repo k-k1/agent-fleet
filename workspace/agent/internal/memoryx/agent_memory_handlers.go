@@ -252,3 +252,28 @@ func HandleAgentMemoryClaudeApply(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
+
+// HandleAgentMemoryList lists every memory of every scope for the Console, with the pin and the
+// use count. It is not a use of anything, so it does not touch the counts.
+func HandleAgentMemoryList(w http.ResponseWriter, r *http.Request) {
+	out, err := agentMemListAll()
+	if err != nil {
+		agentMemWriteErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// HandleAgentMemoryPin sets or clears the member's pin on one memory.
+func HandleAgentMemoryPin(w http.ResponseWriter, r *http.Request) {
+	var req agentMemPinReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	res, err := agentMemPin(req, time.Now())
+	if err != nil {
+		agentMemWriteErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}

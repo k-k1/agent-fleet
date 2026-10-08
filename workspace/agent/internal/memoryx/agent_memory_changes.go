@@ -39,14 +39,14 @@ var agentMemMember = agentMemCaller{Session: "console", Kind: "member"}
 var (
 	agentMemRepoPathRe = regexp.MustCompile(`^af/(user|projects/[a-z0-9._-]{1,80})/([a-z0-9][a-z0-9-]{0,63})\.md$`)
 	agentMemCommitRe   = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
-	agentMemOps        = map[string]bool{"create": true, "update": true, "forget": true, "revert": true, "import": true}
+	agentMemOps        = map[string]bool{"create": true, "update": true, "forget": true, "revert": true, "import": true, "pin": true}
 )
 
 // agentMemChangeView is one published change as the Console lists it.
 type agentMemChangeView struct {
 	Commit        string           `json:"commit"`
 	At            string           `json:"at"`
-	Op            string           `json:"op"` // create | update | forget | revert | import
+	Op            string           `json:"op"` // create | update | forget | revert | import | pin
 	Scope         string           `json:"scope"`
 	Project       *agentMemProject `json:"project,omitempty"`
 	Name          string           `json:"name"`
@@ -456,6 +456,7 @@ func agentMemRevert(req agentMemRevertReq, now time.Time) (agentMemWriteResult, 
 		if err != nil {
 			return agentMemWriteResult{}, err
 		}
+		agentMemClearUsage(scopeDir, name)
 		return agentMemWriteResult{Name: name, Scope: scope, Revision: agentMemRevOf(live, liveOK), Commit: rev, Deleted: true}, nil
 	}
 
@@ -464,6 +465,8 @@ func agentMemRevert(req agentMemRevertReq, now time.Time) (agentMemWriteResult, 
 		return agentMemWriteResult{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict, "the earlier version cannot be read as a memory")
 	}
 	e.Name, e.Scope = name, scope
+	// The pin comes back as `before` had it. Only the newest change can be reverted, so live is
+	// that change's result, and a change that moved the pin is a pin change alone.
 	e.Revision = floor + 1
 	e.AuthorKind, e.AuthorSession = agentMemMember.Kind, agentMemMember.Session
 	e.Updated = now.UTC().Format(time.RFC3339)
@@ -480,6 +483,7 @@ func agentMemRevert(req agentMemRevertReq, now time.Time) (agentMemWriteResult, 
 	}
 	if !liveOK {
 		agentMemRemoveTomb(scopeDir, name)
+		agentMemClearUsage(scopeDir, name)
 	}
 	return agentMemWriteResult{Name: name, Scope: scope, Revision: e.Revision, Commit: rev, Created: !liveOK}, nil
 }

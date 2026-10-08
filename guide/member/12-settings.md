@@ -254,6 +254,13 @@ Version control over the memory an agent accumulates by itself (claude's auto-me
   agent and session, what), newest first. On a memory's newest change you can **revert it** (the earlier text
   comes back) or **forget the memory**; either is recorded as a new change, so it can be undone too. If the text
   you bring back looks like a secret, you are shown the masked findings and asked to confirm.
+  - **Pinned memories**: above the list, every memory with how often agents have read it. **Pin** one and it
+    is always listed first in the index agents read when they start work, ahead of everything else. The rest
+    of the index is ordered by kind (feedback and user memories first), then by how often agents read it (a
+    read or a search hit that was returned counts), then by recency. Pins share the index's size limit: if
+    the pinned ones alone do not fit, the last of them drop to the names-only list and the agent is told so,
+    so pin only what every session needs. A pin is recorded as a change by you ("pin changed") and can be
+    reverted; an agent's later update of a pinned memory keeps the pin, and the af memory tools offer agents no way to pin or unpin. (Like every Agent route, the pin route is not a security boundary against a shell in the same workspace; the change is always recorded as made by you from the Console.)
   - **Import from Claude Code**: below the list, brings the memory Claude Code kept for a project into Agent
     Fleet memory, once. Pick a project and you see what would happen before anything is written: **new**,
     **newer in Claude** (will overwrite the Agent Fleet copy, even one you edited since; both times are shown),

@@ -625,7 +625,7 @@ func agentMemImportWrite(p agentMemProject, rel string, it *agentMemImportItem, 
 	stamp := now.UTC().Format(time.RFC3339)
 	e.Created, e.Updated = stamp, stamp
 	if it.live != nil {
-		e.Revision, e.Created, e.Kinds = it.live.Revision+1, it.live.Created, it.live.Kinds
+		e.Revision, e.Created, e.Kinds, e.Pinned = it.live.Revision+1, it.live.Created, it.live.Kinds, it.live.Pinned
 	} else {
 		tomb, err := agentMemTombRevision(rel, e.Name)
 		if err != nil {

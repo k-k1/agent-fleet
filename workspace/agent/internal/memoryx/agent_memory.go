@@ -322,7 +322,13 @@ type agentMemEntry struct {
 	Updated       string   `json:"updated"`
 	Source        string   `json:"source,omitempty"`
 	SourceHash    string   `json:"sourceHash,omitempty"`
-	Body          string   `json:"body,omitempty"`
+	// Pinned is the member's choice (agentMemPin): the entry sits first in the described part of
+	// the index. The Console is the way to set it (no MCP tool does); a save by an agent carries the stored value forward.
+	Pinned bool `json:"pinned,omitempty"`
+	// Uses is the read and search-hit count from the usage sidecar, filled by the loaders that
+	// rank or list. It is not stored in the memory file.
+	Uses int    `json:"uses,omitempty"`
+	Body string `json:"body,omitempty"`
 }
 
 // agentMemRender writes an entry as frontmatter plus body. String values are written as
@@ -354,6 +360,9 @@ func agentMemRender(e agentMemEntry) []byte {
 	}
 	if e.SourceHash != "" {
 		b.WriteString("source_hash: " + q(e.SourceHash) + "\n")
+	}
+	if e.Pinned {
+		b.WriteString("pinned: true\n")
 	}
 	b.WriteString("---\n")
 	b.WriteString(strings.TrimRight(e.Body, "\n"))
@@ -438,6 +447,8 @@ func agentMemParse(b []byte) (agentMemEntry, bool) {
 			e.Source = unq(v)
 		case "source_hash":
 			e.SourceHash = unq(v)
+		case "pinned":
+			e.Pinned = unq(v) == "true"
 		}
 	}
 	if !topType {
@@ -504,6 +515,11 @@ func agentMemLoadScope(scope string, c agentMemCaller) ([]agentMemEntry, int, er
 	if err != nil {
 		return nil, 0, err
 	}
+	return agentMemLoadDir(scope, rel)
+}
+
+// agentMemLoadDir is agentMemLoadScope for a scope directory already resolved.
+func agentMemLoadDir(scope, rel string) ([]agentMemEntry, int, error) {
 	dir, err := agentMemCheckDir(rel, false)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -578,6 +594,9 @@ type agentMemIndex struct {
 	Entries []agentMemEntry  `json:"entries"`
 	More    []string         `json:"more,omitempty"`
 	Omitted int              `json:"omitted,omitempty"`
+	// PinnedOmitted counts pinned memories that are in More or Omitted because the pins alone
+	// are larger than the budget (agentMemBudgetIndex).
+	PinnedOmitted int `json:"pinnedOmitted,omitempty"`
 	// Truncated is true when any memory is not in Entries.
 	Truncated bool `json:"truncated,omitempty"`
 	// Withheld counts files left out because they failed the secret scan or are malformed
@@ -597,6 +616,9 @@ func agentMemListIndex(c agentMemCaller, budget int) (agentMemIndex, error) {
 			return out, err
 		}
 		out.Withheld += withheld
+		if rel, err := agentMemScopeDir(scope, c); err == nil {
+			agentMemSetUses(es, rel)
+		}
 		for _, e := range es {
 			if agentMemAppliesTo(e, c.Kind) {
 				e.Body = ""
@@ -605,7 +627,7 @@ func agentMemListIndex(c agentMemCaller, budget int) (agentMemIndex, error) {
 		}
 	}
 	agentMemRank(all)
-	out.Entries, out.More, out.Omitted = agentMemBudgetIndex(all, budget)
+	out.Entries, out.More, out.Omitted, out.PinnedOmitted = agentMemBudgetIndex(all, budget)
 	out.Truncated = len(out.Entries) < len(all)
 	return out, nil
 }
@@ -672,6 +694,11 @@ func agentMemSearch(c agentMemCaller, query string, limit int) ([]agentMemHit, e
 	if len(hits) > limit {
 		hits = hits[:limit]
 	}
+	// Counted after the limit, under the read lock: a hit the caller never saw was not used, and
+	// a forget or re-create cannot slip between the search and the count.
+	for _, h := range hits {
+		agentMemRecordUses(c, h.agentMemEntry)
+	}
 	return hits, nil
 }
 
@@ -709,6 +736,9 @@ func agentMemRead(c agentMemCaller, scope, name string) (agentMemEntry, error) {
 			return agentMemEntry{}, memoryErrf(http.StatusUnprocessableEntity, errCodeMemorySecretDetected,
 				"this memory is withheld: its file looks like it contains a secret or cannot be checked; your user has to fix the file")
 		}
+		// Counted under the read lock: a forget or re-create (write lock) cannot slip between the
+		// read and the count and leave this use on a newer memory.
+		agentMemRecordUses(c, l.Entry)
 		return l.Entry, nil
 	}
 	return agentMemEntry{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound, "no memory by that name")
@@ -943,6 +973,7 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 	}
 	if exists {
 		e.Created, e.Source, e.SourceHash = cur.Entry.Created, cur.Entry.Source, cur.Entry.SourceHash
+		e.Pinned = cur.Entry.Pinned
 	}
 	data := agentMemRender(e)
 	repoRel := rel + "/" + req.Name + ".md"
@@ -968,6 +999,7 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 	}
 	if !exists {
 		agentMemRemoveTomb(rel, req.Name)
+		agentMemClearUsage(rel, req.Name)
 	}
 	return agentMemWriteResult{Name: e.Name, Scope: e.Scope, Revision: e.Revision, Commit: rev, Created: !exists}, nil
 }
@@ -1025,6 +1057,7 @@ func agentMemForget(c agentMemCaller, req agentMemForgetReq, now time.Time) (age
 		// The memory is back; a tombstone beside it is harmless (it is read only on create).
 		return agentMemWriteResult{}, err
 	}
+	agentMemClearUsage(rel, req.Name)
 	return agentMemWriteResult{Name: req.Name, Scope: req.Scope, Revision: cur.Entry.Revision, Commit: rev, Deleted: true}, nil
 }
 

@@ -289,18 +289,21 @@ func TestMemoryIndexRendersTailAndOmittedAsTheAgentCutThem(t *testing.T) {
 	}
 }
 
-// The Agent reserves agentMemIndexTailOverhead (256) of its 8 KiB tail budget for what this
+// The Agent reserves agentMemIndexTailOverhead (320) of its 8 KiB tail budget for what this
 // formatter adds; the real tail, header and count line included, must stay within 8 KiB.
 func TestMemoryIndexTailWithinBudgetWithOverhead(t *testing.T) {
 	names := make([]string, 0, 1000)
 	size := 0
-	for i := 0; size+len("n0000 ") <= 8192-256; i++ {
+	for i := 0; size+len("n0000 ") <= 8192-320; i++ {
 		n := fmt.Sprintf("n%04d", i)
 		names = append(names, n)
 		size += len(n) + 1
 	}
 	more, _ := json.Marshal(names)
-	out := mcpMemoryFormatIndex(`{"project":{"display":"p"},"entries":[],"more":` + string(more) + `,"omitted":99999}`)
+	out := mcpMemoryFormatIndex(`{"project":{"display":"p"},"entries":[],"more":` + string(more) + `,"omitted":99999,"pinnedOmitted":99999}`)
+	if !strings.Contains(out, "99999 of these are pinned") {
+		t.Fatalf("the pinned count is not printed: %q", out)
+	}
 	i := strings.Index(out, "Not listed above")
 	if i < 0 {
 		t.Fatalf("no tail: %q", out)

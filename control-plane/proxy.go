@@ -86,6 +86,10 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			// Only a commit id is copied into the ledger: the hint is free text the Agent never
 			// reads, so anything else is recorded as an empty target.
 			return "memory.entry.revert", auditCommitHint(q.Get("commit")), true
+		case p == "/api/agents/memory/entries/pin":
+			// #1703: the member pins or unpins a memory. The Console repeats the project id in the query;
+			// only an id-shaped value is recorded, never the free-text memory name.
+			return "memory.entry.pin", auditProjectHint(q.Get("project")), true
 		case p == "/api/agents/memory/claude-import":
 			// ADR 0108 decision 6: the one-time import of claude's memory writes the store. The
 			// Console repeats the project id in the query; only an id-shaped value is recorded.
