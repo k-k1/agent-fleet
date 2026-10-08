@@ -128,10 +128,6 @@ func HandleAgentMemorySearch(w http.ResponseWriter, r *http.Request) {
 		agentMemWriteErr(w, err)
 		return
 	}
-	// Counted after the limit: a hit the caller never saw was not used.
-	for _, h := range hits {
-		agentMemRecordUses(c, h.agentMemEntry)
-	}
 	httpx.WriteJSON(w, http.StatusOK, agentMemSearchWire{Project: c.Project, Hits: hits})
 }
 
@@ -147,7 +143,6 @@ func HandleAgentMemoryRead(w http.ResponseWriter, r *http.Request) {
 		agentMemWriteErr(w, err)
 		return
 	}
-	agentMemRecordUses(c, e)
 	httpx.WriteJSON(w, http.StatusOK, e)
 }
 

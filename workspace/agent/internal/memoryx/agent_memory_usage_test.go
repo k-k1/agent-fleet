@@ -265,3 +265,66 @@ func TestAgentMemoryListAndPinRoutes(t *testing.T) {
 		t.Errorf("second = %+v", e)
 	}
 }
+
+// A project id the generator can produce (leading "_", inner "..") is listed and pinnable.
+func TestAgentMemoryListAndPinForGeneratedIDs(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	now := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
+	for _, repo := range []string{"_demo", "app..old"} {
+		id := agentMemProjectID("/x/" + repo + "/.git")
+		c := agentMemCaller{Session: agentMemUnknown, Kind: "claude", Project: &agentMemProject{ID: id, Display: repo}}
+		agentMemSaveN(t, c, "m", "project", now)
+		out, err := agentMemListAll()
+		found := false
+		for _, e := range out.Entries {
+			found = found || (e.Project != nil && e.Project.ID == id)
+		}
+		if err != nil || !found {
+			t.Fatalf("%s: id %q not listed: %+v %v", repo, id, out, err)
+		}
+		if _, err := agentMemPin(agentMemPinReq{Scope: "project", Project: id, Name: "m", Pinned: true}, now); err != nil {
+			t.Fatalf("%s: pin %q: %v", repo, id, err)
+		}
+	}
+	for _, bad := range []string{".", "..", "a/b", ""} {
+		if _, err := agentMemPin(agentMemPinReq{Scope: "project", Project: bad, Name: "m", Pinned: true}, now); agentMemCode(err) != errCodeMemoryBadRequest {
+			t.Errorf("project %q accepted: %v", bad, err)
+		}
+	}
+}
+
+// Both ways the Console removes a memory, and a revert that restores one, reset its count.
+func TestAgentMemoryConsoleRemovalClearsUsage(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	rel := "projects/" + c.Project.ID
+	now := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
+	agentMemSaveN(t, c, "gone", "project", now)
+	for i := 0; i < 3; i++ {
+		if _, err := agentMemRead(c, "", "gone"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := agentMemLoadUsage(rel)["gone"]; got != 3 {
+		t.Fatalf("uses = %d, want 3 (agentMemRead counts under its own lock)", got)
+	}
+	ch, err := agentMemListChanges(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := agentMemRevert(agentMemRevertReq{Commit: ch.Changes[0].Commit, Forget: true}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := agentMemLoadUsage(rel)["gone"]; got != 0 {
+		t.Fatalf("uses after Console forget = %d", got)
+	}
+	// Restore it by reverting the forget, after a stray use landed on the sidecar.
+	agentMemRecordUse(rel, "gone")
+	if _, err := agentMemRevert(agentMemRevertReq{Commit: res.Commit}, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got := agentMemLoadUsage(rel)["gone"]; got != 0 {
+		t.Fatalf("uses after restore = %d", got)
+	}
+}

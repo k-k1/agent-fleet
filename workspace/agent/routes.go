@@ -475,7 +475,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /agents/memory/entries/changes", memoryx.HandleAgentMemoryChanges)
 	mux.HandleFunc("GET /agents/memory/entries/diff", memoryx.HandleAgentMemoryChangeDiff)
 	mux.HandleFunc("POST /agents/memory/entries/revert", memoryx.HandleAgentMemoryRevert)
-	// The member's list of every memory, and the pin (#1703). Agents cannot pin: no MCP tool
+	// The member's list of every memory, and the pin (#1703). No MCP tool
 	// reaches the pin route.
 	mux.HandleFunc("GET /agents/memory/entries/list", memoryx.HandleAgentMemoryList)
 	mux.HandleFunc("POST /agents/memory/entries/pin", memoryx.HandleAgentMemoryPin)

@@ -456,6 +456,7 @@ func agentMemRevert(req agentMemRevertReq, now time.Time) (agentMemWriteResult, 
 		if err != nil {
 			return agentMemWriteResult{}, err
 		}
+		agentMemClearUsage(scopeDir, name)
 		return agentMemWriteResult{Name: name, Scope: scope, Revision: agentMemRevOf(live, liveOK), Commit: rev, Deleted: true}, nil
 	}
 
@@ -482,6 +483,7 @@ func agentMemRevert(req agentMemRevertReq, now time.Time) (agentMemWriteResult, 
 	}
 	if !liveOK {
 		agentMemRemoveTomb(scopeDir, name)
+		agentMemClearUsage(scopeDir, name)
 	}
 	return agentMemWriteResult{Name: name, Scope: scope, Revision: e.Revision, Commit: rev, Created: !liveOK}, nil
 }

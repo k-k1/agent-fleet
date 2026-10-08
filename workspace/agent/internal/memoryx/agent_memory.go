@@ -323,7 +323,7 @@ type agentMemEntry struct {
 	Source        string   `json:"source,omitempty"`
 	SourceHash    string   `json:"sourceHash,omitempty"`
 	// Pinned is the member's choice (agentMemPin): the entry sits first in the described part of
-	// the index. Only the member sets it; a save by an agent carries the stored value forward.
+	// the index. The Console is the way to set it (no MCP tool does); a save by an agent carries the stored value forward.
 	Pinned bool `json:"pinned,omitempty"`
 	// Uses is the read and search-hit count from the usage sidecar, filled by the loaders that
 	// rank or list. It is not stored in the memory file.
@@ -694,6 +694,11 @@ func agentMemSearch(c agentMemCaller, query string, limit int) ([]agentMemHit, e
 	if len(hits) > limit {
 		hits = hits[:limit]
 	}
+	// Counted after the limit, under the read lock: a hit the caller never saw was not used, and
+	// a forget or re-create cannot slip between the search and the count.
+	for _, h := range hits {
+		agentMemRecordUses(c, h.agentMemEntry)
+	}
 	return hits, nil
 }
 
@@ -731,6 +736,9 @@ func agentMemRead(c agentMemCaller, scope, name string) (agentMemEntry, error) {
 			return agentMemEntry{}, memoryErrf(http.StatusUnprocessableEntity, errCodeMemorySecretDetected,
 				"this memory is withheld: its file looks like it contains a secret or cannot be checked; your user has to fix the file")
 		}
+		// Counted under the read lock: a forget or re-create (write lock) cannot slip between the
+		// read and the count and leave this use on a newer memory.
+		agentMemRecordUses(c, l.Entry)
 		return l.Entry, nil
 	}
 	return agentMemEntry{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound, "no memory by that name")

@@ -255,7 +255,8 @@ descriptions already say when to call (pinned by a test). Not done here: usage-b
 `memory_read` or a returned search hit; the Console's list is not one. The count lives in a sidecar,
 `<scope dir>/.usage/<name>`, one byte appended per use (O_APPEND, so no read-modify-write and no lost
 use; capped at 4096; not committed, not exported). It is cleared when the memory is forgotten or
-re-created. A pin is `pinned: true` in the frontmatter, set only by the member from the Console
+re-created. A pin is `pinned: true` in the frontmatter, set from the Console (no MCP tool pins; as with
+every Agent route, a shell in the same workspace is not kept out, and the author is recorded as the member by route)
 (`POST /agents/memory/entries/pin`, op `pin`, audited as `memory.entry.pin`); it changes neither the
 revision nor `updated`, and an agent's save carries it forward. The byte budget still holds: pins
 fill the described part first, and pins that do not fit fall to the names-only tail and are counted

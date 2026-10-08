@@ -260,7 +260,7 @@ Version control over the memory an agent accumulates by itself (claude's auto-me
     read or a search hit that was returned counts), then by recency. Pins share the index's size limit: if
     the pinned ones alone do not fit, the last of them drop to the names-only list and the agent is told so,
     so pin only what every session needs. A pin is recorded as a change by you ("pin changed") and can be
-    reverted; an agent's later update of a pinned memory keeps the pin, and agents cannot pin or unpin.
+    reverted; an agent's later update of a pinned memory keeps the pin, and the af memory tools offer agents no way to pin or unpin. (Like every Agent route, the pin route is not a security boundary against a shell in the same workspace; the change is always recorded as made by you from the Console.)
   - **Import from Claude Code**: below the list, brings the memory Claude Code kept for a project into Agent
     Fleet memory, once. Pick a project and you see what would happen before anything is written: **new**,
     **newer in Claude** (will overwrite the Agent Fleet copy, even one you edited since; both times are shown),

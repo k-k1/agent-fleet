@@ -224,8 +224,8 @@ bundle での移送・輸出時の秘密検査（`memoryx/memory_secrets.go`）�
 `memory_index` は、ピン留め → 種別の層 → 使用回数 → 新しさの順に並べます。使用とは `memory_read` と、返された
 検索ヒットで、Console の一覧表示は含みません。回数は `<範囲のディレクトリ>/.usage/<name>` の副ファイルに、
 使用ごとに 1 バイトを追記して持ちます（O_APPEND なので read-modify-write も取りこぼしもなく、上限 4096、
-コミットも書き出しもしません）。忘却や再作成で消えます。ピンはフロントマターの `pinned: true` で、付けられるのは
-メンバーが Console から行うときだけです（`POST /agents/memory/entries/pin`、op は `pin`、監査は `memory.entry.pin`）。
+コミットも書き出しもしません）。忘却や再作成で消えます。ピンはフロントマターの `pinned: true` で、付けるのは
+Console からです（MCP のピンツールはなく、ほかの Agent のルートと同じく同じ Workspace 内のシェルは防げません。書き手は経路でメンバーと記録されます）。`POST /agents/memory/entries/pin`、op は `pin`、監査は `memory.entry.pin`）。
 revision も `updated` も変えず、エージェントの保存はピンを引き継ぎます。バイト予算は守られます：ピンが先に説明つき
 の部分を埋め、収まらないピンは名前だけの末尾へ落ちて `pinnedOmitted` に数えられ、
 `memory_index` が表示します。検索の関連度は #1558 のままです。

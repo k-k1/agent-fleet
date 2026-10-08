@@ -33,7 +33,13 @@ const (
 	agentMemUsageCap = 4096
 )
 
-var agentMemProjectIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,79}$`)
+// agentMemProjectIDRe is what agentMemProjectID can produce (and what the change list accepts).
+// Dots are fine inside a name; only "." and ".." are not a single safe path element.
+var agentMemProjectIDRe = regexp.MustCompile(`^[a-z0-9._-]{1,80}$`)
+
+func agentMemValidProjectID(id string) bool {
+	return agentMemProjectIDRe.MatchString(id) && id != "." && id != ".."
+}
 
 // agentMemRecordUse counts one use of a memory. Best effort: a use that cannot be recorded must
 // never fail the read that caused it. The size check and the append are not one step, so
@@ -140,7 +146,7 @@ func agentMemListAll() (agentMemListAllOut, error) {
 	if dir, err := agentMemCheckDir("projects", false); err == nil {
 		if ents, err := os.ReadDir(dir); err == nil {
 			for _, d := range ents {
-				if d.IsDir() && agentMemProjectIDRe.MatchString(d.Name()) {
+				if d.IsDir() && agentMemValidProjectID(d.Name()) {
 					refs = append(refs, scopeRef{agentMemScopeProject, "projects/" + d.Name(), agentMemProjectInfo(d.Name())})
 				}
 			}
@@ -194,7 +200,7 @@ func agentMemPin(req agentMemPinReq, now time.Time) (agentMemWriteResult, error)
 	case agentMemScopeUser:
 		rel = "user"
 	case agentMemScopeProject:
-		if !agentMemProjectIDRe.MatchString(req.Project) || strings.Contains(req.Project, "..") {
+		if !agentMemValidProjectID(req.Project) {
 			return agentMemWriteResult{}, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "project is not a project id")
 		}
 		rel = "projects/" + req.Project
