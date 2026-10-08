@@ -26,8 +26,10 @@ const (
 	// agentMemIndexTailScan bounds the quadratic grouping below; whatever lies past it is counted.
 	agentMemIndexTailScan = 2000
 	// agentMemIndexDescRunes is the description length in an index line only; memory_read and
-	// memory_search keep the full text.
-	agentMemIndexDescRunes = 80
+	// memory_search keep the full text. 150 is claude's own advice for a description. Measured
+	// on 473 real memories of one project: 80 characters cut 218 descriptions and 150 cut 26,
+	// while the 24 KiB budget still described 103 lines instead of 114.
+	agentMemIndexDescRunes = 150
 	agentMemIndexNameBytes = 32
 )
 
