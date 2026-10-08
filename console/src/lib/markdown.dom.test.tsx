@@ -214,10 +214,11 @@ describe("a formatting tag that is never closed", () => {
     }
   });
 
-  it("does not let a closer inside a cell, caption or marquee close an opener outside", () => {
+  it("does not let a closer inside a cell or caption close an opener outside", () => {
     for (const source of [
       "<a download>\n\n<table><tr><td></a></td></tr></table>\n\nSecond.",
-      "<div><a download>x<marquee></a></marquee></div>\n\nSecond.",
+      "<a download>\n\n<table><tr><td>Use </a>\n\nSecond.",
+      "<a download>\n\nUse <table><tr><td></a>\n\nSecond.",
       "<div><a download>x<table><caption></a></caption></table></div>\n\nSecond.",
     ]) {
       expect(leaks(render(STOCK, source), "Second."), source).toBe(true);
@@ -237,9 +238,29 @@ describe("a formatting tag that is never closed", () => {
       ['<div><a href="x">l</a><textarea></a></textarea></div>', "div > a[href]"],
       ['<table><tr><td><a href="x">l</a></td></tr></table>', "td a[href]"],
       ['<div><!-- c --><a href="x">l</a></div>', "div > a[href]"],
-      ['<div><a href="x"><marquee>m</marquee>l</a></div>', "div > a[href]"],
+      // End tags that HTML lets an author leave out must not leave a boundary behind.
+      ['<div><a href="x">o<table><tr><td>i</tr></table>t</a></div>', "div > a[href]"],
+      ['<div><a href="x">o<table><tr><td>i<td>j</table>t</a></div>', "div > a[href]"],
+      ['<div><a href="x">o<table><caption>c<tr><td>i</table>t</a></div>', "div > a[href]"],
+      // A cell outside any table is dropped by the parser, so it bounds nothing.
+      ['Use <a href="x">before<td> inside</a> after', "a[href]"],
+      ['<div><a href="x">o<td>i</a></div>', "div > a[href]"],
     ] as const) {
       expect(render(marked, source).querySelector(selector), source).not.toBeNull();
     }
+  });
+
+  it("keeps <marquee> from becoming markup, which would scroll the text around it", () => {
+    for (const source of ["Use <marquee>moves</marquee> here.", "Use <marquee> here, never closed."]) {
+      const el = render(marked, source);
+      expect(el.querySelector("marquee"), source).toBeNull();
+      expect(el.textContent).toContain("<marquee>");
+    }
+  });
+
+  it("does not offer a closer a scope stopped to an opener outside it", () => {
+    // The closer sits in an inline paragraph, so it is an orphan of its unit.
+    const el = render(marked, "<a download>\n\nUse <table><tr><td></a>\n\nSecond.");
+    expect(leaks(el, "Second.")).toBe(false);
   });
 });
