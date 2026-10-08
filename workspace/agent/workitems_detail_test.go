@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // docs/log/80 §80.24 — the live pull request read. What is pinned here is the folding: four
@@ -212,11 +214,13 @@ func TestParseBitbucketDiffstat(t *testing.T) {
 	}
 }
 
-// A Jira row has no pull request behind it, and the answer has to say so rather than 500.
-func TestWorkItemsDetailRejectsProvidersWithoutPullRequests(t *testing.T) {
+// A provider the route does not know, and a Jira key asked as a pull request, are refused
+// before any read.
+func TestWorkItemsDetailRejectsUnknownProviders(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	for _, tc := range []struct{ body, want string }{
-		{`{"provider":"jira","key":"G3-1"}`, "GitHub and Bitbucket"},
+		{`{"provider":"linear","key":"G3-1"}`, "GitHub, Bitbucket and Jira"},
+		{`{"provider":"jira","key":"G3-1","kind":"pr"}`, "never a pull request"},
 		{`{"provider":"github","key":"  "}`, "key is required"},
 	} {
 		req := httptest.NewRequest("POST", "/work-items/detail", strings.NewReader(tc.body))
@@ -330,5 +334,127 @@ func TestWorkItemsDetailRejectsUnknownKind(t *testing.T) {
 	}
 	if len(*hits) != 0 {
 		t.Errorf("GitHub was reached: %v", *hits)
+	}
+}
+
+func fakeJira(t *testing.T, routes map[string]string) (*secrets.JiraCreds, *[]string) {
+	t.Helper()
+	var hits []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits = append(hits, r.URL.RequestURI())
+		body, ok := routes[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return &secrets.JiraCreds{Site: srv.URL, Email: "a@example.com", Token: "t"}, &hits
+}
+
+func TestJiraReferenceDetail(t *testing.T) {
+	c, hits := fakeJira(t, map[string]string{"/rest/api/3/issue/PROJ-12": `{"key":"PROJ-12","fields":{
+		"summary":"Fix login","updated":"2026-10-01T10:00:00.000+0900",
+		"status":{"name":"Shipped","statusCategory":{"key":"done"}},
+		"assignee":{"displayName":"Bob"},"labels":["auth"],"issuetype":{"name":"Bug"},
+		"description":"SECRET BODY"}}`})
+	out, err := jiraReferenceDetail(c, "PROJ-12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Provider != "jira" || out.Kind != "issue" || out.Title != "Fix login" || out.State != "done" ||
+		out.Assignee != "Bob" || len(out.Assignees) != 1 || out.UpdatedAt != "2026-10-01T01:00:00Z" ||
+		out.URL != c.Site+"/browse/PROJ-12" || out.Reviews == nil || out.LabelColors == nil {
+		t.Errorf("row wrong: %+v", out)
+	}
+	if b, _ := json.Marshal(out); strings.Contains(string(b), "SECRET") {
+		t.Errorf("a body leaked into the answer: %s", b)
+	}
+	if len(*hits) != 1 || !strings.Contains((*hits)[0], "fields=summary,status,assignee,labels,issuetype,updated") {
+		t.Errorf("the request must project fields (no body): %v", *hits)
+	}
+}
+
+func TestJiraReferenceDetailRefusesBadKeysAndMissing(t *testing.T) {
+	c, hits := fakeJira(t, nil)
+	for _, k := range []string{"../../myself", "PROJ-1/../x", "proj-1", "PROJ-0", "PROJ-1?x=1", "PROJ", "PROJ-1 "} {
+		if _, err := jiraReferenceDetail(c, k); err == nil {
+			t.Errorf("%q must be refused", k)
+		}
+	}
+	if len(*hits) != 0 {
+		t.Errorf("a malformed key reached Jira: %v", *hits)
+	}
+	if _, err := jiraReferenceDetail(c, "PROJ-404"); err == nil || !strings.Contains(err.Error(), "no PROJ-404 visible") {
+		t.Fatalf("want a not-visible error, got %v", err)
+	}
+}
+
+func TestWorkItemsDetailJiraNotConnected(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	req := httptest.NewRequest("POST", "/work-items/detail", strings.NewReader(`{"provider":"jira","key":"G3-1"}`))
+	w := httptest.NewRecorder()
+	handleWorkItemsDetail(w, req)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "not_connected") {
+		t.Fatalf("got %d %s, want 400 not_connected", w.Code, w.Body.String())
+	}
+}
+
+// jiraGet words a 400 for a JQL failure and appends Jira's own errorMessages; a single-issue
+// read must neither say "JQL" nor pass the upstream text on.
+func TestJiraReferenceDetailErrorsCarryNoUpstreamText(t *testing.T) {
+	for _, code := range []int{400, 401, 403, 429, 500} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(code)
+			_, _ = w.Write([]byte(`{"errorMessages":["UPSTREAM_SENTINEL"]}`))
+		}))
+		c := &secrets.JiraCreds{Site: srv.URL, Email: "a@example.com", Token: "t"}
+		_, err := jiraReferenceDetail(c, "PROJ-1")
+		srv.Close()
+		if err == nil {
+			t.Fatalf("%d: want an error", code)
+		}
+		if strings.Contains(err.Error(), "UPSTREAM_SENTINEL") || strings.Contains(err.Error(), "JQL") {
+			t.Errorf("%d: error leaks upstream text or JQL wording: %v", code, err)
+		}
+	}
+}
+
+// An expired OAuth token is renewed through the CP bridge, whose failure text (a response body,
+// or an internal URL when unreachable) must not become the panel's error.
+func TestJiraReferenceDetailOAuthRefreshFailureCarriesNoBridgeText(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	hits := 0
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":"invalid_grant","message":"BRIDGE_SENTINEL"}}`))
+	}))
+	s, err := secrets.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.GitOAuthBridge = &secrets.CPBridge{BaseURL: bridge.URL, Token: "afo_x"}
+	s.Jira = &secrets.JiraCreds{AuthKind: "oauth", AccessToken: "old", RefreshToken: "rt0", Expiry: 1, CloudID: "cid", Site: "https://x.atlassian.net"}
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	for _, unreachable := range []bool{false, true} {
+		if unreachable {
+			bridge.Close()
+		}
+		hits = 0
+		cur, _ := secrets.Load()
+		_, err = jiraReferenceDetail(cur.Jira, "PROJ-1")
+		if err == nil {
+			t.Fatal("want an error")
+		}
+		if !unreachable && hits != 1 {
+			t.Fatalf("the bridge was not exercised (hits=%d)", hits)
+		}
+		if m := err.Error(); strings.Contains(m, "BRIDGE_SENTINEL") || strings.Contains(m, "invalid_grant") || strings.Contains(m, "127.0.0.1") {
+			t.Errorf("unreachable=%v: error leaks bridge text: %v", unreachable, err)
+		}
 	}
 }

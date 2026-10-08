@@ -278,23 +278,25 @@ export function readWorkItemSearch(res: unknown): { result: WorkItemSearchResult
 /** Which rows get a live read: pull requests on the two providers that have one. A Jira key has
  * no pull request behind it, and an issue's cached row already says everything the panel shows.
  *
- * `reference` is a stand-in for an item that is not in the inbox (#1697): its kind is unknown,
- * and only GitHub can resolve a bare `#N` to an issue or a pull request. */
+ * `reference` is a stand-in for an item that is not in the inbox (#1697, #1661): all three
+ * providers answer a single-item read for it, and only GitHub needs the Agent to work out the kind
+ * (a bare `#N` is an issue or a pull request; a Jira key is an issue, a Bitbucket number a PR). */
 export function canReadLive(item: { kind: string; provider: string }, reference = false): boolean {
-  if (reference) return item.provider === "github";
+  if (reference) return item.provider === "github" || item.provider === "bitbucket" || item.provider === "jira";
   return item.kind === "pr" && (item.provider === "github" || item.provider === "bitbucket");
 }
 
 /** The state a live read reports, in words that keep "merged" apart from "closed" and "closed as
  * not planned" apart from "closed as completed" — `state` alone ("done") cannot. */
-export function detailStateLabel(d: Pick<WorkItemDetail, "kind" | "state" | "merged" | "draft" | "stateReason">): string {
+export function detailStateLabel(d: Pick<WorkItemDetail, "kind" | "state" | "merged" | "draft" | "stateReason" | "provider">): string {
   if (d.kind === "pr") {
     if (d.merged) return t("wi.detail_merge_merged");
     if (d.state === "done") return t("wi.state_closed");
     if (d.draft) return t("wi.detail_merge_draft_short");
     return stateLabel(d.state);
   }
-  if (d.state === "done") {
+  // Jira has no close reason, so "done" must not be dressed up as "completed".
+  if (d.state === "done" && d.provider !== "jira") {
     return d.stateReason === "not_planned" ? t("wi.state_closed_not_planned") : t("wi.state_closed_completed");
   }
   return stateLabel(d.state);

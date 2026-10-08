@@ -8,6 +8,7 @@ English | [日本語](0061-work-item-inbox.ja.md)
   Status update (2026-09-25): the query composer, the sort UI and grouping that decision 14 left unbuilt are not planned (decision 14; docs/log/80 §80.18.5). The detail pane was superseded by decision 20's detail modal.
   **2026-09-28: decision 25 added** — say when a query's page left matches out, and search the tracker on a press only (#1095). It departs narrowly from decision 14's line.
   **2026-10-05: decision 26 added** — a reference that is not in the inbox is read live too, GitHub only (#1697). It departs narrowly from decision 20.1's "no single-item read for an issue".
+  **2026-10-08: decision 27 added** — the same read for a Jira key and a Bitbucket number that are not in the inbox (#1661). Follow-ups: #1661.
 - See also: [0031-mcp-registry.md](0031-mcp-registry.md) (MCP means "each CLI speaks it directly and af only distributes the definitions"; OAuth MCP is a non-goal) / [0036-working-sets.md](0036-working-sets.md) (the unit of "a piece of work") /
   [0055-idle-stop-and-carried-interactions.md](0055-idle-stop-and-carried-interactions.md) (do not keep it warm) / [0052-tenant-git-oauth.md](0052-tenant-git-oauth.md) (the CP passes secrets through and does not hold them) / [0059-repo-import-jobs.md](0059-repo-import-jobs.md) (the relationship between self-running work and the busy check)
 
@@ -396,6 +397,24 @@ ambiguous on GitHub.
 Rejected: **storing the answer in the cache so the next click is free.** It would put a panel's look
 into the rail's history (the same reason as decision 24), and a closed item would then sit among the
 open ones the query asked for.
+
+**27 (#1661). The same read for a Jira key and a Bitbucket number that are not in the inbox.**
+Decision 26 reached GitHub only, on the reasoning that a Jira key is in the inbox when it matters.
+That does not hold for a finished ticket: status tables in the mirror cite done Jira issues, and the
+inbox's default query (`statusCategory != Done`) never holds them. No new route is needed: `POST
+/work-items/detail` accepts `provider: "jira"`, and the Agent asks `GET /rest/api/3/issue/{key}?fields=
+summary,status,assignee,labels,issuetype,updated` (the `fields=` list is the no-body promise, as in the
+list adapter), reusing the list adapter's issue mapping. A Bitbucket reference needed no Agent change
+(its pull request read already ignores `kind`); the Console now asks for it. Same promises as decisions
+24 and 26: a human opening the panel is the only trigger, nothing is stored, a stopped workspace is not
+started (409), and any failure — 404, no connection, refused credentials, rate limit, an Agent from
+before this change (it answers 400 `bad_provider`) — lands on the "af has no details" note. The key is
+validated against `^[A-Z][A-Z0-9_]*-[1-9][0-9]{0,9}$` before it is put into a request path, so it cannot
+steer the request elsewhere on the site. The panel says "Done" for a finished Jira issue, never
+"Closed (completed)": Jira has no close reason.
+
+Not done, tracked in #1661: Jira project keys the user can read but has no saved query for still do not
+link (the link decision is made from the cache before any read); and `#N` in Markdown files (DocView).
 
 ## Options rejected
 
