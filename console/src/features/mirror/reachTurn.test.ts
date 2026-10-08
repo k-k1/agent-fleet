@@ -79,7 +79,7 @@ describe("reachTurn", () => {
 
   it("never makes more requests than the page cap", async () => {
     // Each page only moves 50 back (a server that trims): the cap, not the gap, ends it.
-    let first = 7000;
+    let first = 400;
     let calls = 0;
     const out = await reachTurn(0, {
       oldestIdx: () => first,
@@ -88,8 +88,25 @@ describe("reachTurn", () => {
       page: async () => { calls++; first -= 50; return true; },
       cancelled: () => false,
     });
-    expect(out).toBe("failed");
+    expect(out).toBe("too-far");
     expect(calls).toBe(REACH_MAX_PAGES);
+  });
+
+  it("spends one budget across pages when the server trims them", async () => {
+    // Each page moves the cursor by the limit but the oldest idx only by 1000 (1 MiB trim): the
+    // idx gap stays open while the cursor walks. The cumulative cap, not 4 x 4000, ends it.
+    let cursor = 10000;
+    let oldest = 10000;
+    const limits: number[] = [];
+    const out = await reachTurn(3000, {
+      oldestIdx: () => oldest,
+      exhausted: () => cursor <= 0,
+      cursor: () => cursor,
+      page: async (limit) => { limits.push(limit); cursor = Math.max(0, cursor - limit); oldest -= 1000; return true; },
+      cancelled: () => false,
+    });
+    expect(out).toBe("too-far");
+    expect(limits.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(REACH_MAX_LINES);
   });
 
   it("stops between pages once cancelled", async () => {

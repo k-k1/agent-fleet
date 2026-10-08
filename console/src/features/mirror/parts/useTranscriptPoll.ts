@@ -408,6 +408,9 @@ export function useOlderHistory({
   // once its pages are mounted.
   const wantRef = useRef<ScrollMark | null>(null);
   const readyRef = useRef<ScrollMark | null>(null);
+  // The reader's input count and place when the jump was ACCEPTED: input while it waits (for the
+  // first window, or for the lock) counts against it as much as input while its pages load.
+  const wantAtRef = useRef<{ seq: number; place: ReturnType<typeof scroll.placeSnapshot> } | null>(null);
   const jumpGenRef = useRef(0);
   // The life a jump run belongs to (0 = none). A run of an older life never blocks a new one.
   const runningRef = useRef(0);
@@ -471,13 +474,16 @@ export function useOlderHistory({
     const mark = wantRef.current;
     if (!mark) return;
     wantRef.current = null;
+    const at = wantAtRef.current;
+    wantAtRef.current = null;
+    const seq = at ? at.seq : scroll.inputSeqRef.current;
+    const place = at ? at.place : scroll.placeSnapshot();
+    if (scroll.inputSeqRef.current !== seq || scroll.placeMoved(place)) return; // the reader took over while it waited
     const gen = jumpGenRef.current;
     const life = lifeRef.current;
     runningRef.current = life;
     loadingOlderRef.current = true;
     setLoadingOlder(true);
-    const seq = scroll.inputSeqRef.current;
-    const place = scroll.placeSnapshot();
     oldestRef.current = Math.min(Infinity, ...turnsRef.current.map((t) => (typeof t.idx === "number" ? t.idx : Infinity)));
     let outcome: ReachOutcome = "cancelled";
     try {
@@ -514,6 +520,7 @@ export function useOlderHistory({
       if (!m || !m.near || m.atBottom) return;
       jumpGenRef.current++; // supersedes a run in flight
       wantRef.current = m;
+      wantAtRef.current = { seq: scroll.inputSeqRef.current, place: scroll.placeSnapshot() };
       void serveJumps();
     };
     take(loadMark(session));

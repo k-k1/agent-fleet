@@ -18,6 +18,8 @@ export const REACH_MAX_LINES = 8000;
 export const REACH_MAX_PAGES = 4;
 /** The server's largest window per request (clampWindowLimit). */
 export const REACH_PAGE_LINES = 4000;
+/** The server's smallest window per request (clampWindowLimit). */
+export const REACH_MIN_PAGE = 50;
 /** Positions to mount beyond the hit, so the block that holds it starts inside the window. */
 export const REACH_MARGIN = 50;
 
@@ -41,14 +43,22 @@ export async function reachTurn(idx: number, deps: ReachDeps): Promise<ReachOutc
   const target = Math.max(0, idx - REACH_MARGIN);
   if (deps.oldestIdx() <= target || deps.exhausted()) return "mounted";
   if (deps.oldestIdx() - target > REACH_MAX_LINES) return "too-far";
+  // The budget is spent by what was asked for AND by how far the cursor really moved, whichever is
+  // more: the server trims a page to ~1 MiB keeping the newest turns, so the idx gap can stay open
+  // while the cursor walks on, and a sparse idx makes the gap an over-estimate of the cursor span.
+  const start = deps.cursor();
+  let asked = 0;
   for (let i = 0; i < REACH_MAX_PAGES; i++) {
     if (deps.cancelled()) return "cancelled";
     if (deps.oldestIdx() <= target || deps.exhausted()) return "reached";
     const before = deps.cursor();
-    const gap = deps.oldestIdx() - target;
-    if (!(await deps.page(Math.min(REACH_PAGE_LINES, gap)))) return deps.cancelled() ? "cancelled" : "failed";
+    const left = REACH_MAX_LINES - Math.max(asked, start - before);
+    if (left < REACH_MIN_PAGE) return "too-far";
+    const limit = Math.min(REACH_PAGE_LINES, deps.oldestIdx() - target, left);
+    asked += Math.max(limit, REACH_MIN_PAGE);
+    if (!(await deps.page(limit))) return deps.cancelled() ? "cancelled" : "failed";
     if (deps.cursor() >= before) return "failed"; // no progress: never loop on a stuck cursor
   }
   if (deps.cancelled()) return "cancelled";
-  return deps.oldestIdx() <= target || deps.exhausted() ? "reached" : "failed";
+  return deps.oldestIdx() <= target || deps.exhausted() ? "reached" : "too-far";
 }

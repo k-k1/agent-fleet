@@ -155,9 +155,9 @@ describe("useOlderHistory explicit jump", () => {
     act(() => root!.render(<Harness session="t" />));
     act(() => requestJump("t", { atBottom: false, idx: 300, offset: 0, near: true }));
     await flush();
+    expect(apiMock.mock.calls.some((c) => String(c[0]).includes("sessions/t/"))).toBe(true); // before s resolves
     await act(async () => release({ messages: [{ idx: 200 }], firstLine: 200, hasMore: true }));
     await flush();
-    expect(apiMock.mock.calls.some((c) => String(c[0]).includes("sessions/t/"))).toBe(true);
     expect(jumped).toHaveLength(1);
   });
 
@@ -170,6 +170,28 @@ describe("useOlderHistory explicit jump", () => {
     await act(async () => release({ messages: [{ idx: 0 }], firstLine: 0, hasMore: false }));
     await flush();
     expect(jumped).toHaveLength(1);
+  });
+
+  it("drops a jump when the reader acted while it waited behind another page", async () => {
+    let release: (v: unknown) => void = () => {};
+    apiMock.mockImplementationOnce(() => new Promise((r) => { release = r; }));
+    mount({ session: "s" });
+    act(() => { void older!(); });
+    act(() => requestJump("s", { atBottom: false, idx: 300, offset: 0, near: true }));
+    inputSeq.current++; // a wheel while the jump waits for the lock
+    await act(async () => release({ messages: [{ idx: 600 }], firstLine: 600, hasMore: true }));
+    await flush();
+    expect(jumped).toHaveLength(0);
+  });
+
+  it("drops a jump when the reader acted while it waited for the first window", async () => {
+    mount({ session: "s", loaded: false });
+    act(() => requestJump("s", { atBottom: false, idx: 300, offset: 0, near: true }));
+    inputSeq.current++;
+    act(() => root!.render(<Harness session="s" loaded />));
+    await flush();
+    expect(apiMock).not.toHaveBeenCalled();
+    expect(jumped).toHaveLength(0);
   });
 
   it("does nothing for a hit inside the window", async () => {
