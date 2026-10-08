@@ -32,6 +32,9 @@ func TestMemoryRoutesProxiedByCP(t *testing.T) {
 		{"GET", "/api/agents/memory/claude-import", "GET /api/agents/memory/claude-import"},
 		{"GET", "/api/agents/memory/claude-import/preview", "GET /api/agents/memory/claude-import/preview"},
 		{"POST", "/api/agents/memory/claude-import", "POST /api/agents/memory/claude-import"},
+		{"GET", "/api/agents/memory/claude-export", "GET /api/agents/memory/claude-export"},
+		{"GET", "/api/agents/memory/claude-export/preview", "GET /api/agents/memory/claude-export/preview"},
+		{"POST", "/api/agents/memory/claude-export", "POST /api/agents/memory/claude-export"},
 		// Must not be swallowed by the existing pattern route /api/agents/{kind}/models.
 		{"GET", "/api/agents/codex/models", "GET /api/agents/{kind}/models"},
 	} {
@@ -108,8 +111,19 @@ func TestMemorySnapshotIsAudited(t *testing.T) {
 	if !ok || action != "memory.claude_import" || target != "" {
 		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.claude_import with an empty target", action, target, ok)
 	}
+	// The write-back into claude's memory is audited the same way.
+	req = httptest.NewRequest(http.MethodPost, "/api/agents/memory/claude-export?project=agent-fleet-0123456789ab", nil)
+	action, target, ok = auditActionTarget(req)
+	if !ok || action != "memory.claude_export" || target != "agent-fleet-0123456789ab" {
+		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.claude_export/agent-fleet-0123456789ab", action, target, ok)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/agents/memory/claude-export?project=%2Fhome%2Fdev%2Frepos", nil)
+	action, target, ok = auditActionTarget(req)
+	if !ok || action != "memory.claude_export" || target != "" {
+		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.claude_export with an empty target", action, target, ok)
+	}
 	// The other read-only routes are not audited.
-	for _, p := range []string{"/api/agents/memory/snapshots", "/api/agents/memory/tree", "/api/agents/memory/diff", "/api/agents/memory/claude-import", "/api/agents/memory/claude-import/preview"} {
+	for _, p := range []string{"/api/agents/memory/snapshots", "/api/agents/memory/tree", "/api/agents/memory/diff", "/api/agents/memory/claude-import", "/api/agents/memory/claude-import/preview", "/api/agents/memory/claude-export", "/api/agents/memory/claude-export/preview"} {
 		if _, _, ok := auditActionTarget(httptest.NewRequest(http.MethodGet, p, nil)); ok {
 			t.Errorf("GET %s should not be audited", p)
 		}

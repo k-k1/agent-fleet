@@ -253,6 +253,43 @@ func HandleAgentMemoryClaudeApply(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
+// HandleAgentMemoryClaudeExportSources lists the AF projects that have memory to write back. The
+// write-back does not need the switch: it writes claude's store, not AF's, and its main use is
+// after the member turned AF memory off.
+func HandleAgentMemoryClaudeExportSources(w http.ResponseWriter, r *http.Request) {
+	out, err := agentMemExportList()
+	if err != nil {
+		agentMemWriteErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// HandleAgentMemoryClaudeExportPreview says what a write-back of one project would do.
+func HandleAgentMemoryClaudeExportPreview(w http.ResponseWriter, r *http.Request) {
+	pv, err := agentMemExportPreviewFor(r.URL.Query().Get("project"))
+	if err != nil {
+		agentMemWriteErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, pv)
+}
+
+// HandleAgentMemoryClaudeExportApply writes the previewed project into claude's memory.
+func HandleAgentMemoryClaudeExportApply(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
+	var req agentMemExportReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	res, err := agentMemExportApply(req, time.Now())
+	if err != nil {
+		agentMemWriteErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
 // HandleAgentMemoryList lists every memory of every scope for the Console, with the pin and the
 // use count. It is not a use of anything, so it does not touch the counts.
 func HandleAgentMemoryList(w http.ResponseWriter, r *http.Request) {

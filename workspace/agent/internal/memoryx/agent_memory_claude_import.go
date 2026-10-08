@@ -457,6 +457,10 @@ func agentMemImportEvaluate(mem *os.File, file, slug, rel string, history map[st
 		switch {
 		case le.SourceHash == it.SourceHash:
 			it.Status = claudeImportUnchanged
+		case agentMemExportWrittenBack(raw, rel, stem, e):
+			// A write-back (agent_memory_claude_export.go) stamps the file's mtime after AF's
+			// update; without this the import would read its own output as a newer claude edit.
+			it.Status = claudeImportUnchanged
 		case perr != nil:
 			// Overwriting needs proof that the claude file is newer.
 			return invalid("store_unreadable")

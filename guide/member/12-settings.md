@@ -278,17 +278,29 @@ Version control over the memory an agent accumulates by itself (claude's auto-me
     **Import from Claude Code** once more *before you start new Claude sessions*: what Claude saved or changed
     natively since the last import is not read until you do (applying needs the switch on). Turning the
     switch off again returns later Claude sessions to their own memory, but what was saved in Agent Fleet
-    memory does not appear there (one way only). And only Claude sessions *started* after the change are
+    memory does not appear there on its own (one way; **Write back to Claude Code**, below, carries it over when you ask). And only Claude sessions *started* after the change are
     affected; a running session keeps what it started with.
   - **From a terminal**: `af-memory import-sources`, `af-memory import --project <slug> --dry-run` (preview) and
     `af-memory import --project <slug>` (import); `af-memory changes` lists the latest changes. The import is
     gated by the same switch and the same secret scan as the Console.
+  - **Write back to Claude Code**: below the import, the other direction, once and only when you ask. When you
+    turn Agent Fleet memory off, Claude Code goes back to its own memory, which lacks what was learned through
+    Agent Fleet in between; this copies it over (Claude Code only; codex is not covered). Pick a project and you see what
+    would happen first: **new**, **newer in Agent Fleet** (updates a file written back earlier), **forgotten in
+    Agent Fleet** (removes a file written back earlier), **conflict** (a Claude file Agent Fleet did not write, or
+    that you changed since: kept unless you tick it), **possible secrets** (skipped), **unchanged** and **only in
+    Claude** (never deleted). User-scope memories are not written. `MEMORY.md` is rebuilt within Claude's load
+    limit (200 lines, 24 KiB) and replaces the old one; Claude's memory is snapshotted first
+    (trigger "pre-write-back"), so you can restore it from the history below. It works with the switch on or off;
+    while it is on, end Claude Code sessions started before it was switched on first.
+  - **From a terminal**: `af-memory export-sources`, `af-memory export --project <id|name> --dry-run` (preview) and
+    `af-memory export --project <id|name> [--overwrite <name>]...` (write back).
 
 - **Targets**: what can be versioned, with file count, size and the last snapshot. codex has memory disabled by
   default, so enable it here if you want it.
 - **Automatic snapshots**: taken a few minutes after an agent stops (nothing is stored if nothing changed).
   "Snapshot now" takes one by hand. On some deployments the operator has disabled automatic snapshots.
-- **History**: newest first, with the time and the trigger (automatic / manual / pre-restore / restore /
+- **History**: newest first, with the time and the trigger (automatic / manual / pre-restore / pre-write-back / restore /
   import). You can also jump to a point in time by date.
 - **Restore to this point**: pick the scope (everything, or select what to restore). **The state just before
   the restore is snapshotted too**, so the restore itself can be undone. You are warned if a session of that

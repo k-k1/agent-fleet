@@ -156,6 +156,49 @@ export interface ClaudeImportResult {
   commit?: string;
 }
 
+/** One AF project whose memory can be written back to claude's own (#1914). */
+export interface ClaudeExportSource {
+  project: MemoryChangeProject;
+  count: number;
+  /** no_root: no main working copy is recorded, so claude's directory is unknown. */
+  reason?: string;
+}
+export type ClaudeExportStatus = "new" | "update" | "remove" | "conflict" | "secret" | "unchanged" | "native_only";
+export interface ClaudeExportItem {
+  name: string;
+  status: ClaudeExportStatus;
+  reason?: string;
+  description?: string;
+  type?: string;
+  revision?: number;
+  afUpdated?: string;
+  nativeModified?: string;
+  findings?: SecretFinding[];
+}
+export interface ClaudeExportPreview {
+  project: MemoryChangeProject;
+  slug: string;
+  items: ClaudeExportItem[];
+  counts: Partial<Record<ClaudeExportStatus, number>>;
+  token: string;
+  nativeExists: boolean;
+  userScope: number;
+  notForClaude?: number;
+  withheld?: number;
+  index: "new" | "rewrite" | "unchanged" | "symlink";
+  indexListed: number;
+  indexMore: number;
+  switchOn: boolean;
+  truncated?: boolean;
+}
+export interface ClaudeExportResult {
+  name: string;
+  result: "written" | "updated" | "removed" | "skipped";
+  reason?: string;
+  /** A hidden file in Claude's memory directory that holds a newer edit which could not be put back. */
+  kept?: string;
+}
+
 /** One memory in the Console's list (#1703): the pin is the member's, the count is the agents' use. */
 export interface MemoryListed {
   name: string;

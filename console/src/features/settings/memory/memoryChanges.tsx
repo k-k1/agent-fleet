@@ -17,6 +17,7 @@ import { setSetting, useSettings } from "../../../lib/settings.ts";
 import { useT, tMaybe } from "../../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { ClaudeImportPanel } from "./memoryClaudeImport.tsx";
+import { ClaudeExportPanel } from "./memoryClaudeExport.tsx";
 import { MemoryPinsPanel } from "./memoryPins.tsx";
 import type { ChangeDiff, MemoryChange, SecretFinding } from "./memoryTypes.ts";
 
@@ -35,6 +36,7 @@ export function AgentMemorySwitch() {
         <OnOff value={enabled} onChange={(v) => setSetting("agentMemory", v)} />
       </Row>
       <p className="muted ds-note">{tr("mem.af_switch_note")}</p>
+      {!enabled && <p className="muted ds-note">{tr("mem.af_switch_off_export")}</p>}
     </>
   );
 }
@@ -241,6 +243,7 @@ export function AgentMemorySection({ reload, onChanged }: { reload: number; onCh
         </div>
       </div>
       <ClaudeImportPanel reload={reload} onChanged={() => setMine((n) => n + 1)} />
+      <ClaudeExportPanel reload={reload} />
     </section>
   );
 }
