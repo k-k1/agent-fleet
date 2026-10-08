@@ -1,6 +1,8 @@
 package sessionx
 
 import (
+	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -25,7 +27,7 @@ const portsTTL = 10 * time.Second
 const originTTL = 5 * time.Minute
 
 var (
-	sessionPRs   = branchpr.New(githubToken)
+	sessionPRs   = newSessionPRs()
 	sessionPorts = &listenports.Cache{Root: "/proc", TTL: portsTTL}
 
 	// Replaced in tests: the PR lookup starts a goroutine that reads the credential store and
@@ -35,6 +37,14 @@ var (
 	originOf    = cachedGitHubRepo
 )
 
+func newSessionPRs() *branchpr.Cache {
+	c := branchpr.New(githubToken)
+	c.Renew = func(rejected string) (string, error) {
+		return gitx.RenewRejectedGitHubToken(context.Background(), rejected)
+	}
+	return c
+}
+
 // githubToken is the Connections token for github.com, "" when GitHub is not connected. A store
 // that cannot be read is an error, not a disconnection: the cache then keeps what it showed.
 func githubToken() (string, error) {
@@ -42,7 +52,11 @@ func githubToken() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return s.Git["github.com"].Token, nil
+	tok, err := gitx.GitHubToken(s)
+	if errors.Is(err, gitx.ErrGitHubReconnect) {
+		return "", nil // a connection that cannot be renewed looks up nothing
+	}
+	return tok, err
 }
 
 type originEntry struct {

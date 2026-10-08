@@ -7,6 +7,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -59,7 +60,10 @@ func runCredHelper(args []string) {
 // remote URL does.
 func credHelperGet(r io.Reader, w io.Writer) {
 	host := credHelperHost(r)
-	s, err := secrets.Load()
+	// git waits on this process: a store held by a wedged writer must not hold git with it.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	s, err := secrets.LoadContext(ctx)
 	if err != nil {
 		return // emit nothing: git falls through / prompts
 	}
@@ -78,6 +82,17 @@ func credHelperGet(r io.Reader, w io.Writer) {
 			}
 		}
 		fmt.Fprintf(w, "username=x-token-auth\npassword=%s\n", c.AccessToken)
+		return
+	}
+	if host == "github.com" && s.Git[host].RefreshToken != "" {
+		// An expiring GitHub App token: renew it if due. After a refusal there is no
+		// credential to offer, and git fails with an authentication error instead of
+		// sending a dead token.
+		tok, err := gitx.GitHubTokenContext(ctx, s)
+		if err != nil || tok == "" {
+			return
+		}
+		fmt.Fprintf(w, "username=%s\npassword=%s\n", s.Git[host].User, tok)
 		return
 	}
 	if e, ok := s.Git[host]; ok {

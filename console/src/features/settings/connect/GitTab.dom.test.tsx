@@ -161,4 +161,27 @@ describe("GitTab GitHub App", () => {
     expect(host.textContent).not.toContain(t("git.github_app_not_installed"));
     expect(host.textContent).not.toContain(t("git.github_token_expires"));
   });
+
+  it("tells the member to reconnect when GitHub could no longer renew the connection", async () => {
+    serve({ configured: true, app_type: "github_app" });
+    const base = apiMock.getMockImplementation()!;
+    let reconnect = true;
+    apiMock.mockImplementation((p: string) =>
+      p === "api/git-oauth"
+        ? base(p)
+        : Promise.resolve({
+            github: { connected: true, username: "octo", ...(reconnect ? { reconnect_needed: true } : {}) },
+            bitbucket: { connected: false },
+          }),
+    );
+    await render();
+    expect(host.textContent).toContain(t("git.github_reconnect_needed"));
+
+    reconnect = false;
+    act(() => root?.unmount());
+    root = createRoot(host);
+    await render();
+    expect(host.textContent).toContain("octo");
+    expect(host.textContent).not.toContain(t("git.github_reconnect_needed"));
+  });
 });

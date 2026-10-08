@@ -653,7 +653,8 @@ export const tools = {
   "git.github_app_install_link": "アプリをインストール / リポジトリを選ぶ",
   "git.github_app_not_installed": "接続しましたが、GitHub App があなたから見えるどのアカウントにもインストールされていないため、まだどのリポジトリにも届きません。インストールしてリポジトリを選んでください。",
   "git.github_app_connected_hint": "テナントの GitHub App で接続した場合、届くのはアプリをインストールしたリポジトリだけです。追加・変更するには:",
-  "git.github_token_expires": "接続しましたが、この GitHub App のトークンは約 8 時間で失効し、af はまだ更新しません。テナント管理者に、アプリ設定の「Expire user authorization tokens」をオフにするよう依頼してください。",
+  "git.github_token_expires": "接続しましたが、この GitHub App のトークンは約 8 時間で失効し、このワークスペースの Agent は古くて更新できません。ワークスペースを再起動して Agent を更新してから、GitHub に接続し直してください。",
+  "git.github_reconnect_needed": "GitHub の接続を更新できませんでした。認可が期限切れになったか、取り消されています。切断してから、もう一度 GitHub に接続してください。",
   // OAuth の導線そのものを出さないときの説明（docs/log/71）。押せないボタンを置いても、
   // 押した本人には直せない（設定はテナント管理者のもの）。
   "git.oauth_unregistered": "このテナントには OAuth アプリが登録されていないため、OAuth での接続は出していません。テナント管理者に「テナント設定 › 連携 › git プロバイダ OAuth」での登録を依頼してください。",

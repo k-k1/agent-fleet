@@ -204,9 +204,11 @@ func (c config) handleGithubDevicePoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var resp struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		Error        string `json:"error"`
+		AccessToken      string `json:"access_token"`
+		RefreshToken     string `json:"refresh_token"`
+		ExpiresIn        int64  `json:"expires_in"`
+		RefreshExpiresIn int64  `json:"refresh_token_expires_in"`
+		Error            string `json:"error"`
 	}
 	form := url.Values{"client_id": {f.clientID}, "device_code": {f.deviceCode}, "grant_type": {ghDeviceGrant}}
 	if err := ghDevicePostForm(ghAccessTokenURL, form, &resp); err != nil {
@@ -215,7 +217,11 @@ func (c config) handleGithubDevicePoll(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case resp.AccessToken != "":
-		if aerr := c.storeGithubToken(r, f, resp.AccessToken); aerr != nil {
+		renewable, aerr := c.storeGithubToken(r, f, ghTokenPair{
+			Access: resp.AccessToken, Refresh: resp.RefreshToken,
+			ExpiresIn: resp.ExpiresIn, RefreshExpiresIn: resp.RefreshExpiresIn,
+		})
+		if aerr != nil {
 			// The grant is spent, so the flow is over either way — keeping it would only
 			// let the Console poll a device code GitHub has already consumed.
 			ghDeviceFlows.forget(req.FlowID)
@@ -223,7 +229,7 @@ func (c config) handleGithubDevicePoll(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ghDeviceFlows.forget(req.FlowID)
-		writeJSON(w, http.StatusOK, c.mgr.afterGithubGrant(r.Context(), f, resp.AccessToken, resp.RefreshToken != ""))
+		writeJSON(w, http.StatusOK, c.mgr.afterGithubGrant(r.Context(), f, resp.AccessToken, resp.RefreshToken != "" && !renewable))
 	case resp.Error == "authorization_pending":
 		writeJSON(w, http.StatusOK, map[string]any{"pending": true})
 	case resp.Error == "slow_down":
@@ -247,9 +253,10 @@ func (c config) handleGithubDevicePoll(w http.ResponseWriter, r *http.Request) {
 //   - A GitHub App token sees only the repositories the app is installed on. With no
 //     installation at all the connection looks fine and every clone fails, so say so
 //     now, with the install link.
-//   - A refresh_token means the GitHub App has user-token expiration on. af does not
-//     renew GitHub tokens yet, so the connection stops working after about eight hours
-//     unless the app's owner switches expiration off.
+//   - A refresh_token means the GitHub App has user-token expiration on. The Agent
+//     renews such a token itself, so that is no warning; `expires` is true only when it
+//     could not confirm it will (a workspace still running an Agent from before renewal),
+//     and the connection then stops working after about eight hours.
 //
 // The token is already stored when this runs, so the member's request may be gone (a
 // closed tab) by the time GitHub answers. The row writes therefore run on a context of
@@ -291,32 +298,60 @@ func (m *manager) afterGithubGrant(ctx context.Context, f *ghDeviceFlow, token s
 	return out
 }
 
+// ghTokenPair is what the device flow granted. Refresh is empty unless the GitHub App
+// expires its user tokens.
+type ghTokenPair struct {
+	Access, Refresh             string
+	ExpiresIn, RefreshExpiresIn int64
+}
+
 // storeGithubToken hands the access token to the member's Agent through the ordinary
 // connection endpoint, so the token lands exactly where a pasted PAT would (encrypted
 // store + credential helper + account lookup) with no second storage path to keep in
-// step.
-func (c config) storeGithubToken(r *http.Request, f *ghDeviceFlow, token string) *apiError {
+// step. An expiring token travels with its refresh token and the app's client id, which
+// is all the Agent's renewal needs: the device flow's refresh grant takes no client
+// secret, and none is sent. The pair goes to the member's own Agent and nowhere else;
+// it is never logged or put in an error. renewable is the Agent's own answer that it
+// stored the pair for renewal.
+func (c config) storeGithubToken(r *http.Request, f *ghDeviceFlow, tp ghTokenPair) (renewable bool, _ *apiError) {
 	rt, aerr := c.mgr.resolve(r.Context(), f.user, "", f.tenant)
 	if aerr != nil {
-		return aerr
+		return false, aerr
 	}
-	payload, _ := json.Marshal(map[string]any{"token": token})
-	areq, _ := http.NewRequest("PUT", rt.Endpoint()+"/connections/git/github.com", strings.NewReader(string(payload)))
+	return putGithubToken(rt.Endpoint(), rt.Token(), f.clientID, tp)
+}
+
+// putGithubToken is the CP→Agent leg of storeGithubToken: PUT the pair to the Agent at
+// endpoint, authenticated with the CP↔Agent bearer agentToken.
+func putGithubToken(endpoint, agentToken, clientID string, tp ghTokenPair) (bool, *apiError) {
+	body := map[string]any{"token": tp.Access}
+	if tp.Refresh != "" {
+		body["refresh_token"] = tp.Refresh
+		body["expires_in"] = tp.ExpiresIn
+		body["refresh_token_expires_in"] = tp.RefreshExpiresIn
+		body["client_id"] = clientID
+	}
+	payload, _ := json.Marshal(body)
+	areq, _ := http.NewRequest("PUT", endpoint+"/connections/git/github.com", strings.NewReader(string(payload)))
 	areq.Header.Set("Content-Type", "application/json")
-	if rt.Token() != "" {
-		areq.Header.Set("Authorization", "Bearer "+rt.Token()) // CP↔Agent auth
+	if agentToken != "" {
+		areq.Header.Set("Authorization", "Bearer "+agentToken) // CP↔Agent auth
 	}
 	aresp, err := agentHTTPClient.Do(areq)
 	if err != nil {
-		return &apiError{http.StatusBadGateway, "store_unreachable",
+		return false, &apiError{http.StatusBadGateway, "store_unreachable",
 			"authorized, but the workspace agent could not be reached to save the token (is the workspace running?): " + err.Error()}
 	}
 	defer aresp.Body.Close()
 	if aresp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(aresp.Body, 4096))
-		return &apiError{http.StatusBadGateway, "store_failed", "authorized, but saving the token failed: " + string(b)}
+		return false, &apiError{http.StatusBadGateway, "store_failed", "authorized, but saving the token failed: " + string(b)}
 	}
-	return nil
+	var ok struct {
+		Renewable bool `json:"renewable"`
+	}
+	_ = json.NewDecoder(io.LimitReader(aresp.Body, 4096)).Decode(&ok)
+	return ok.Renewable, nil
 }
 
 // ghDevicePostForm POSTs a urlencoded form and decodes a JSON response (GitHub returns

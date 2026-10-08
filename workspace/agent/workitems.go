@@ -191,11 +191,13 @@ func fetchWorkItemQuery(s *secrets.Data, q workItemQueryIn) ([]workItemOut, int,
 	}
 	switch strings.TrimSpace(q.Provider) {
 	case "", "github":
-		e, ok := s.Git["github.com"]
-		if !ok || e.Token == "" {
-			return nil, 0, fmt.Errorf("GitHub is not connected")
-		}
-		return githubSearchWorkItems(e.Token, q.ID, query)
+		var rows []workItemOut
+		var total int
+		err := gitx.WithGitHubToken(s, errors.New("GitHub is not connected"), func(tok string) (e error) {
+			rows, total, e = githubSearchWorkItems(tok, q.ID, query)
+			return e
+		})
+		return rows, total, err
 	case "jira":
 		if !jiraConnected(s.Jira) {
 			return nil, 0, fmt.Errorf("Jira is not connected")
@@ -325,6 +327,9 @@ func githubSearchOnce(token, queryID, query string) ([]workItemOut, int, error) 
 			// user told to re-connect re-authenticates for nothing.
 			if strings.Contains(strings.ToLower(string(body)), "rate limit") {
 				return nil, 0, fmt.Errorf("github rate limit reached")
+			}
+			if resp.StatusCode == http.StatusUnauthorized {
+				return nil, 0, gitx.NewGitHubUnauthorized("github rejected the token (re-connect GitHub)")
 			}
 			return nil, 0, fmt.Errorf("github rejected the token (re-connect GitHub)")
 		case http.StatusUnprocessableEntity:

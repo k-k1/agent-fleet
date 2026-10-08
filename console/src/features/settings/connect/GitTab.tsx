@@ -402,6 +402,7 @@ function GithubRow({ st, reload, oauthAvailable, installURL }: RowProps & { inst
             {st.email && <span className="p-pl">{st.email}</span>}
             <DisconnectButton onClick={disconnect} />
           </div>
+          {st.reconnect_needed && <Hint>{tr("git.github_reconnect_needed")}</Hint>}
           {grant?.notInstalled && <Hint>{tr("git.github_app_not_installed")}</Hint>}
           {grant?.expires && <Hint>{tr("git.github_token_expires")}</Hint>}
           {/* A GitHub App reaches only where it is installed, and adding a repository later is

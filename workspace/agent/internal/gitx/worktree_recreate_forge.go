@@ -27,13 +27,20 @@ import (
 // and a fake connection.
 var (
 	githubAPIBase = "https://api.github.com"
-	githubToken   = func() string {
-		s, err := secrets.Load()
+	// githubToken is read under the plan's own deadline (ctx), so a renewal that has to
+	// wait cannot make the plan wait longer than forgeLookupTimeout.
+	githubToken = func(ctx context.Context) string {
+		s, err := secrets.LoadContext(ctx)
 		if err != nil {
 			return ""
 		}
-		return s.Git["github.com"].Token
+		// A renewal failure leaves the token empty: the forge lookup then runs
+		// anonymously, which is how it already degrades.
+		tok, _ := GitHubTokenContext(ctx, s)
+		return tok
 	}
+	// githubRenew replaces a token the API rejected with a 401; replaced in tests.
+	githubRenew = RenewRejectedGitHubToken
 )
 
 // forgeLookupTimeout bounds the forge part of one plan — the API calls and any fetch of a
@@ -87,10 +94,11 @@ func (f *mergedPRFinder) head(branch string, after time.Time) (string, int) {
 	if !f.resolved {
 		f.resolved = true
 		if f.repo = githubRepoOf(f.dir); f.repo != "" {
-			f.token = githubToken()
-		}
-		if f.repo != "" && f.token != "" {
 			f.ctx, f.cancel = context.WithTimeout(context.Background(), forgeLookupTimeout)
+			if f.token = githubToken(f.ctx); f.token == "" {
+				f.cancel()
+				f.ctx = nil
+			}
 		}
 	}
 	if f.ctx == nil || f.ctx.Err() != nil {
@@ -150,8 +158,18 @@ func githubMergedPR(ctx context.Context, token, repo, branch string) (string, in
 	var sha string
 	var num int
 	var at time.Time
+	renewed := false
 	for page := 1; page <= githubPullsPages; page++ {
-		prs, ok := githubClosedPullsPage(ctx, token, repo, owner+":"+branch, page)
+		prs, ok, unauthorized := githubClosedPullsPage(ctx, token, repo, owner+":"+branch, page)
+		if unauthorized && !renewed {
+			// The recorded expiry can be wrong (clock skew, a renewal by another process):
+			// renew once and ask this page again.
+			renewed = true
+			if nt, err := githubRenew(ctx, token); err == nil && nt != "" && nt != token && ctx.Err() == nil {
+				token = nt
+				prs, ok, _ = githubClosedPullsPage(ctx, token, repo, owner+":"+branch, page)
+			}
+		}
 		if !ok {
 			break
 		}
@@ -186,27 +204,27 @@ type githubPull struct {
 	} `json:"head"`
 }
 
-func githubClosedPullsPage(ctx context.Context, token, repo, head string, page int) ([]githubPull, bool) {
+func githubClosedPullsPage(ctx context.Context, token, repo, head string, page int) (prs []githubPull, ok, unauthorized bool) {
 	q := url.Values{"state": {"closed"}, "head": {head},
 		"per_page": {strconv.Itoa(githubPullsPerPage)}, "page": {strconv.Itoa(page)}}
 	req, err := http.NewRequestWithContext(ctx, "GET", githubAPIBase+"/repos/"+EscapeRepoPath(repo)+"/pulls?"+q.Encode(), nil)
 	if err != nil {
-		return nil, false
+		return nil, false, false
 	}
 	GithubHeaders(req, token)
 	resp, err := githubHTTPClient.Do(req)
 	if err != nil {
-		return nil, false
+		return nil, false, false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, false
+		return nil, false, resp.StatusCode == http.StatusUnauthorized
 	}
-	var prs []githubPull
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&prs); err != nil {
-		return nil, false
+	var out []githubPull
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&out); err != nil {
+		return nil, false, false
 	}
-	return prs, true
+	return out, true, false
 }
 
 func isHexSHA(s string) bool {

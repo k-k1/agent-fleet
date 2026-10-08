@@ -15,6 +15,7 @@ package branchpr
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -82,6 +83,10 @@ type Cache struct {
 	// so connecting or disconnecting takes effect without a restart. An error means the store
 	// could not be read, which says nothing about the connection: the answers held are kept.
 	Token func() (string, error)
+	// Renew, when set, is asked for a replacement after GitHub answers a token with 401:
+	// the recorded expiry of a renewable token can be wrong. The batch is retried once with
+	// the token it returns.
+	Renew func(rejected string) (string, error)
 	// Endpoint is the GraphQL URL; tests point it at a local server.
 	Endpoint string
 	Client   *http.Client
@@ -93,6 +98,9 @@ type Cache struct {
 	inflight  bool
 	holdUntil time.Time
 }
+
+// errUnauthorized marks a 401 from the API: the token was rejected.
+var errUnauthorized = errors.New("token rejected")
 
 // New returns a cache that asks api.github.com.
 func New(token func() (string, error)) *Cache {
@@ -182,6 +190,12 @@ func (c *Cache) refresh(due []Key) {
 		batch := due[:n]
 		due = due[n:]
 		got, failed, wait, err := c.fetch(token, batch)
+		if errors.Is(err, errUnauthorized) && c.Renew != nil {
+			if nt, rerr := c.Renew(token); rerr == nil && nt != "" && nt != token {
+				token = nt
+				got, failed, wait, err = c.fetch(token, batch)
+			}
+		}
 		if err != nil {
 			hold = wait
 			return
@@ -247,6 +261,9 @@ func (c *Cache) fetch(token string, keys []Key) (map[Key]*PR, map[Key]bool, time
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
 			return nil, nil, rateWait(resp.Header, time.Now()), fmt.Errorf("github %d", resp.StatusCode)
+		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, nil, failBackoff, fmt.Errorf("github %d: %w", resp.StatusCode, errUnauthorized)
 		}
 		return nil, nil, failBackoff, fmt.Errorf("github %d", resp.StatusCode)
 	}
